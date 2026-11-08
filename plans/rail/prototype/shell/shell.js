@@ -184,7 +184,7 @@
   const inViewMax = () => (innerWidth <= 760 ? 1 : 5);   // five at most, named like tabs above 1100px; one on a phone
   let inViewMenu = false, inViewCur = '';
   addEventListener('resize', () => drawInView());
-  let inViewList = [{ type: 'task', id: 't4', chat: 'c4', title: 'Fix flaky login test' }];
+  let inViewList = window.RailFirstRun ? [] : [{ type: 'task', id: 't4', chat: 'c4', title: 'Fix flaky login test' }];
   const allTasksOf = (c) => { const out = []; const walk = (t) => { out.push(t); (t.after || []).forEach(walk); }; (c?.tasks || []).forEach(walk); return out; };
   function inViewNow(x) {
     const chats = window.RailChats?.data().chats || [];

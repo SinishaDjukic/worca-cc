@@ -50,8 +50,9 @@
       ${team() ? R.settingsSection({ title: 'Team', meta: 'From the worca-metrics branch: every teammate who shares their tasks.', rows: ['team', 'shipped', 'untagged'].map((id) => R.settingsRow({ name: Q[id].title, sentence: `<b>${esc(Q[id].word)}</b> · ${esc(Q[id].why)}`, end: R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-in-open': id } }) })).join('') }) : ''}
     </div></div></div>`;
   }
+  const here = () => (location.hash.slice(1) || '').split('/')[0] === 'insights';   // the page area is shared by every place: draw only while this one is open
   function draw() {
-    if (!bar || !page) return;
+    if (!bar || !page || !here()) return;
     ctl?.paint();
     page.innerHTML = Q[current] && (!Q[current].team || team()) ? pageHtml(current) : homeHtml();
     if (Q[current]) window.RailConversation?.dock(document.getElementById('in-dock'), { kind: 'question', title: Q[current].title, chat: '' });
@@ -64,6 +65,7 @@
       can: () => ['menu'], bulk: () => [], act: (id, rows) => { if (id === 'csv') say(`Exported ${Q[rows[0]._id].title} as CSV`); }, open: (r) => window.RailShell.go(`insights/${r._id}`), word: (id, v) => { view[id] = v; draw(); return false; }, say,
       active: () => /^#insights/.test(location.hash) } });
     page.addEventListener('click', (e) => {
+      if (!here()) return;   /* another place's page is showing */
       const on = (q) => e.target.closest(q); let hit;
       if ((hit = on('[data-in-open]'))) { window.RailShell.go(`insights/${hit.dataset.inOpen}`); return; }
       if (!Q[current]) return;
@@ -77,7 +79,7 @@
       }
       if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
     });
-    R.dismissOnOutside(document, { open: () => !!menu, inside: '#route-place .spick, #route-place .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
+    R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .spick, #route-place .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
   }
   window.RailPlaces = window.RailPlaces || {};
   window.RailPlaces.insights = { sample: 'spend', show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) menu = ''; current = arg || 'spend'; draw(); } };   /* no overview that repeats the bar: Insights opens on its first question */

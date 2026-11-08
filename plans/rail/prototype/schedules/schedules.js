@@ -8,12 +8,11 @@
   let data = M.seed(); /* the schedules that wait to run are in the one store too, so Pulse's Scheduled lists the same ones */
   const toStore = () => { for (const s of data.schedules) if (s.state !== 'paused' && window.RailWorld && !window.RailWorld.find(`sch-${s.id}`)) window.RailWorld.add({ id: `sch-${s.id}`, case: 'scheduled', title: s.title, project: s.project || '', detail: `${s.every.charAt(0).toUpperCase()}${s.every.slice(1)} at ${s.at}`, time: s.at, day: 'upcoming', when: s.day === 'today' ? 'today' : s.day === 'week' ? 'week' : 'tomorrow' }); };
   toStore(); window.RailWorld?.onChange(toStore);
-  const seen = new Set();   // motion.attention: a schedule that needs you breathes until you open it
   let current = '', view = { show: 'all', by: R.BY_DEFAULT }, ctl = null, menu = '', home = null;
   const say = (t, undo) => window.RailPulse?.say(t, undo);
   const st = (s) => R.runState(s.state), toneOf = (s) => (s.state === 'scheduled' ? 'idle' : R.markTone(st(s)));
   const SECTIONS = [['needs', R.runState('question').word], ['next', 'Next'], ['paused', R.runState('paused').word]];
-  const rowOf = (s) => ({ key: `sched:${s.id}`, _s: s, title: s.title, meta: '', mark: R.kindMark({ breathe: !seen.has(`${s.id}:${s.state}`), kind: 'schedule', tone: toneOf(s), title: `${st(s).word} · ${s.next}` }), end: s.time, current: s.id === current, tip: `${s.title}\n${s.project || 'No project'} · ${s.chat ? 'from a chat' : 'no chat'}\nRuns ${s.every} at ${s.at} · ${s.next}`,
+  const rowOf = (s) => ({ key: `sched:${s.id}`, _s: s, title: s.title, meta: '', mark: R.kindMark({ breathe: s.id !== current, kind: 'schedule', tone: toneOf(s), title: `${st(s).word} · ${s.next}` }), end: s.time, current: s.id === current, tip: `${s.title}\n${s.project || 'No project'} · ${s.chat ? 'from a chat' : 'no chat'}\nRuns ${s.every} at ${s.at} · ${s.next}`,
     menu: [{ id: 'run', text: 'Run now', help: 'Starts a task now; the schedule keeps its times' }, { id: 'in-view', text: window.RailShell?.inView.has('schedule', s.id) ? 'Out of view' : 'Keep in view', help: 'Its mark in the top bar, on every page' }, { id: 'pause', text: s.state === 'paused' ? 'Resume' : 'Pause', help: s.state === 'paused' ? 'It runs at its next time again' : 'It stops starting tasks until you resume it' }] });
   function act(id, rows) {
     const s = rows[0]?._s; if (!s) return;
@@ -74,7 +73,7 @@
   page.addEventListener('click', (e) => {
     const on = (q) => e.target.closest(q); let hit;
     if ((hit = on('[data-sched-run]'))) { window.RailShell.openTask(hit.dataset.schedRun, data.schedules.find((x) => x.id === current)?.chat || ''); return; }
-    if ((hit = on('[data-sched-now]'))) { say('Started: it runs as a task now, and the schedule keeps its times'); return; }
+    if ((hit = on('[data-sched-now]'))) { const s = data.schedules.find((x) => x.id === current); if (s) { s.runs.unshift({ day: 'today', title: s.title, case: 'working', stage: 0, git: 'branch', meta: 'Plan · writing the plan' }); draw(); } say('Started: it runs as a task now, and the schedule keeps its times'); return; }
     if (on('[data-sched-new]')) { window.RailConversation?.start('schedule'); return; }
     if ((hit = on('[data-menu-pick]'))) {
       const [id, v] = hit.dataset.menuPick.split('|'); const s = data.schedules.find((x) => x.id === current); menu = '';
@@ -86,5 +85,5 @@
     if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
   });
   R.dismissOnOutside(document, { open: () => !!menu, inside: '#route-schedule .spick, #route-schedule .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
-  window.RailSchedules = { find: (id) => data.schedules.find((s) => s.id === id), add: (s) => { data.schedules.unshift(s); ctl.paint(); window.RailWorld?.add({ id: `sch-${s.id}`, case: 'scheduled', title: s.title, project: s.project || '', detail: `${s.every.charAt(0).toUpperCase()}${s.every.slice(1)} at ${s.at}`, time: s.at, day: 'upcoming', when: 'tomorrow' }); } /* in the one store: Pulse's Scheduled lists it */, act: (id, v) => { const s = data.schedules.find((x) => x.id === id); if (s && v) more(s, v); }, show: (id) => { current = id || ''; const s = data.schedules.find((x) => x.id === current); if (s) seen.add(`${s.id}:${s.state}`); draw(); }, summary: () => ({ n: data.schedules.filter((s) => s.state !== 'paused').length, needs: data.schedules.filter((s) => s.section === 'needs').length }) };
+  window.RailSchedules = { find: (id) => data.schedules.find((s) => s.id === id), add: (s) => { data.schedules.unshift(s); ctl.paint(); window.RailWorld?.add({ id: `sch-${s.id}`, case: 'scheduled', title: s.title, project: s.project || '', detail: `${s.every.charAt(0).toUpperCase()}${s.every.slice(1)} at ${s.at}`, time: s.at, day: 'upcoming', when: 'tomorrow' }); } /* in the one store: Pulse's Scheduled lists it */, act: (id, v) => { const s = data.schedules.find((x) => x.id === id); if (s && v) more(s, v); }, show: (id) => { current = id || ''; draw(); }, summary: () => ({ n: data.schedules.filter((s) => s.state !== 'paused').length, needs: data.schedules.filter((s) => s.section === 'needs').length }) };
 })();

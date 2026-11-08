@@ -21,13 +21,18 @@
   // a proposal's line never restates its title: only the words the title had to cut
   const whyOf = (text) => (text.length <= 64 ? '' : `From this chat: ${text}`);
   // a task's name from what was asked: the clause before its details ("… that returns", "… with a test"), never cut mid-phrase
-  let lastProject = 'billing-api';
+  let lastProject = window.RailFirstRun ? 'No project' : 'billing-api';   // the first run has no project yet
   const nameOf = (core) => { if (core.length <= 56) return core; const m = core.slice(0, 57).match(/^(.{16,}?)\s+(?:that|which|with|so|so that|because|returning|using|where|when|to make|for)\b/i); return (m ? m[1] : core.slice(0, 56).replace(/\s+\S*$/, '')).replace(/[\s,;:]+(?:and|or|the|a|an|to|of|in|on)?$/i, ''); };
   const clip = (t, n = 64) => (t.length <= n ? t : `${t.slice(0, n).replace(/\s+\S*$/, '')}…`);
   // every change to a task goes to the store (shell/world.js), which tells every surface; a new task is linked into it first
   const put = (c, t) => { if (!t || t.kind === 'schedule') return; M.link(c || { project: '' }, t); window.RailWorld.move(t.run, t.case, t.detail, { stage: t.stage, title: t.title }); };
   // a task that starts sets up its worktree, then plans: Starting gives way to Plan by itself
-  const settleStart = (c, t) => setTimeout(() => { if (t.case === 'starting') { Object.assign(t, { case: 'working', stage: 0, detail: 'Plan · writing the plan' }); put(c, t); } }, 4000);
+  const settleStart = (c, t) => {
+    const step = (ms, from, to) => setTimeout(() => { if (t.case !== from || t.stage !== (from === 'starting' ? 0 : to.after)) return; Object.assign(t, to.set); put(c, t); refreshAll(); }, ms);
+    step(4000, 'starting', { set: { case: 'working', stage: 0, detail: 'Plan · writing the plan' } });
+    step(12000, 'working', { after: 0, set: { stage: 1, detail: 'Build · writing the change' } });
+    step(22000, 'working', { after: 1, set: { case: 'gate', stage: 2, detail: 'Waits for your OK on the review', why: ['Review passed with 2 small notes', 'The tests pass'] } });
+  };
   const chatOfT = (t) => data().chats.find((c) => (c.tasks || []).some(function w(y) { return y === t || (y.after || []).some(w); }));
   const slug = (t, n = 40) => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, n + 1).replace(/-[^-]*$/, '') || 'task';
   const data = () => window.RailChats.data();
@@ -51,7 +56,7 @@
   const pk = (id, text, items, tip) => R.sentencePicker({ id: `cp-${id}`, text, tip, items: items.map((x) => (typeof x === 'string' ? { id: x, text: x, checked: x === text } : { ...x, checked: x.id === text })), open: menu === `cp-${id}`, chevron: R.icon('chevron', 10) });
   const W = (t) => `<span>${t}</span>`;
   const MODES = [{ id: 'Ask', text: 'Ask', help: 'A question or a chat. Nothing starts by itself' }, { id: 'Task', text: 'Task', help: 'Starts work: a plan, a build, a review, a pull request' }, { id: 'Schedule', text: 'Schedule', help: 'Runs a task at its times' }];
-  const PROJECTS = ['billing-api', 'web-app', 'worca-cc', 'docs-site', 'No project'];
+  const PROJECTS = window.RailFirstRun ? ['No project'] : ['billing-api', 'web-app', 'worca-cc', 'docs-site', 'No project'];   // the first run lists only what you add
   // engine first, then its model: each engine's models under its name (Codex has its own)
   const ENGINE_MODELS = [['Claude Code', ['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']], ['Codex', ['Codex high', 'Codex medium']], ['Gemini CLI', ['Gemini Pro', 'Gemini Flash']]];
   const ENGINES = ENGINE_MODELS.flatMap(([, ms]) => ms);
@@ -164,20 +169,29 @@
   function cardAct(t, label) {
     if (!label) return;
     const ctx = { ...CTX, step: STAGES[t.stage] || 'the current step', value: '{value}' }, live = R.runFlow(ctx);   // {value} is the form's choice, filled when you act
-    const ANY = { Pause: live.pauseNow, Stop: live.stop, 'Report this task': live.report, Archive: live.archive, 'Save as preset': { dialog: 'preset', say: `Saved as a preset: ${t.title}` }, 'Run after…': { dialog: 'after', say: `Runs after ${t.title}` }, 'Start a follow-up': { followUp: true }, 'Ask Worca to fix it': { followUp: true, fix: true }, 'Show the log': { page: true }, 'Label…': { label: true }, 'Move to group…': { dialog: 'group', say: `${t.title} moved to the group` } };
+    const ANY = { Pause: live.pauseNow, Stop: live.stop, 'Report this task': live.report, Archive: live.archive, 'Save as preset': { dialog: 'preset', say: `Saved as a preset: ${t.title}` }, 'Run after…': { dialog: 'after', say: `Runs after ${t.title}` }, 'Start a follow-up': { followUp: true }, 'Tell Worca how to fix it': { followUp: true, fix: true }, 'Ask Worca to fix it': { autofix: true }, 'Show the log': { page: true }, 'Label…': { label: true }, 'Move to group…': { dialog: 'group', say: `${t.title} moved to the group` } };
     const f = R.actionFlow(RM.stateOf(t.case), ctx)[label] || ANY[label];
     if (!f) { say(label); return; }
-    if (f.page) { window.RailShell.openTaskPage(t.case, chatId, t.title); return; }   /* the log lives on its page, under What broke */
+    if (f.page) { window.RailShell.openTaskPage(t.case, chatId, t.title); return; }
+    if (f.autofix) { fixTry(t, 1); return; }   /* the log lives on its page, under What broke */
     if (f.followUp) { const x = turns().find((y) => y.task === t.id && y.t === 'task'); if (x) { x.asking = true; if (f.fix) x.askValue = `Fix what failed: ${(t.why || []).map((w) => w.replace(/^✗\s*/, '')).join('; ') || t.detail}`; paint(); root.querySelector(`[data-ask-changes="${x.id}"]`)?.focus(); } return; }   // a follow-up is asked under the card, tied to this task
     if (f.dialog) { taskList().forEach((y) => { y.form = null; }); t.confirm = null; t.form = { label, kind: f.dialog, flow: f, value: FORMS[f.dialog]?.value(t) ?? '' }; paint(); root.querySelector(`[data-card-form="${t.id}"] input, [data-card-form="${t.id}"] textarea`)?.focus(); return; }   // what dev asks in a dialog, asked under the card, with its choices
     if (f.confirm) { t.confirm = { label, text: f.confirm, flow: f }; paint(); return; }
     doAct(t, label, f);
   }
+  // Ask Worca to fix it: Worca reads what broke, says where it starts again and what it changes, and tries up to three
+  // times on its own; the card says which try it is on; after the third it asks you (the prototype's first try passes)
+  function fixTry(t, n) {
+    const what = (t.why || []).map((w) => w.replace(/^✗\s*/, '')), at = STAGES[Math.max(0, t.stage)] || 'Build';
+    Object.assign(t, { fixing: n, was: '', case: 'working', detail: `Fixing · try ${n} of 3: ${at} again, ${what.length ? `for ${what.length} ${what.length === 1 ? 'failure' : 'failures'}` : 'with what broke'}` });
+    put(chatOfT(t), t); paint(); say(`Worca fixes it: ${at} again, up to 3 tries, then it asks you`);
+    setTimeout(() => { if (t.fixing !== n) return; Object.assign(t, { fixing: 0, stage: Math.min(4, t.stage + 1), detail: `${STAGES[Math.min(4, t.stage + 1)]} · fixed on try ${n}: ${what.length || 'the'} failing ${what.length === 1 ? 'check passes' : 'checks pass'}`, why: null }); put(chatOfT(t), t); paint(); }, 5000);
+  }
   function doAct(t, label, f) {
     if (f.to === 'paused-you' && !t.was) { t.was = t.case; t.wasDetail = t.detail; }   // Resume goes back to where it was
     if (/^Resume/.test(label) && t.was) { t.case = t.was; t.detail = t.wasDetail; t.was = ''; }
     else if (f.to && RM.cases?.some?.((c) => c.id === f.to)) {
-      t.case = f.to; t.detail = R.runState(RM.stateOf(f.to), CTX).word;
+      t.case = f.to; t.detail = `${STAGES[Math.max(0, t.stage)] || 'Plan'} · carries on`;   /* the kicker says the state; the line says where it is */
       const again = /^Restart (\w+)/.exec(label); if (again) { const k = STAGES.findIndex((w) => w.toLowerCase() === again[1].toLowerCase()); if (k >= 0) { t.stage = k; t.detail = `${STAGES[k]} runs again`; } }   // it goes back where it says
       else { const st = RM.stageOf?.(f.to); if (st?.stage >= 0) t.stage = f.to === 'merged' ? 4 : st.stage; }
     }
@@ -360,11 +374,12 @@
     // Its one action and ⋯ are its state's own, as on its page; a question is answered under the card.
     // a live task with no step of its own to offer can always be paused or stopped from its card, as on dev's chat card
     const live = tone === 'run' && !st.action;
-    const main = below || t.confirm ? '' : st.action ?   /* while a confirm asks, its row holds the one button */ R.button({ label: st.action.label, kind: (st.action.primary || taskWaits(x)) && !t.confirm && !t.form ? 'primary' : '', attrs: { 'data-card-act': `${t.id}|${st.action.label}` } })
+    const fixFirst = tone === 'fail' && !t.fixing;   // a failure leads with Worca fixing it (Emil, 8 Nov): it picks where and how, tries 3 times, then asks
+    const main = below || t.confirm ? '' : fixFirst ? R.button({ label: 'Ask Worca to fix it', kind: 'primary', attrs: { 'data-card-act': `${t.id}|Ask Worca to fix it`, title: 'Worca reads what broke, picks where to start again and how, and tries up to 3 times before it asks you' } }) : st.action ?   /* while a confirm asks, its row holds the one button */ R.button({ label: st.action.label, kind: (st.action.primary || taskWaits(x)) && !t.confirm && !t.form ? 'primary' : '', attrs: { 'data-card-act': `${t.id}|${st.action.label}` } })
       : live ? R.button({ label: 'Pause', attrs: { 'data-card-act': `${t.id}|Pause`, title: 'Stops at once; Resume starts the current step again' } }) : '';
     // the card's ⋯: its state's own steps, then what any task can do, named as on its page (one ⋯, the same words)
     const done = ['ok', 'merged', 'stop', 'closed', 'idle'].includes(tone);
-    const more = cardMore(t, [...(tone === 'fail' ? [{ id: 'Ask Worca to fix it', text: 'Ask Worca to fix it', help: 'A follow-up on its branch, with what failed already written' }, { id: 'Show the log', text: 'Show the log', help: 'Opens its page at What broke, with the log' }] : []), ...(st.action?.items || []).filter((w) => typeof w === 'string'), ...(live ? [{ id: 'Stop', text: 'Stop', danger: true, help: 'Asks first; the branch and changes stay' }] : []), { sep: true },
+    const more = cardMore(t, [...(tone === 'fail' ? [...(st.action ? [{ id: st.action.label, text: st.action.label, help: 'Runs it again as it is, without a fix' }] : []), { id: 'Tell Worca how to fix it', text: 'Tell Worca how to fix it', help: 'A follow-up on its branch, with what failed already written' }, { id: 'Show the log', text: 'Show the log', help: 'Opens its page at What broke, with the log' }] : []), ...(st.action?.items || []).filter((w) => typeof w === 'string'), ...(live ? [{ id: 'Stop', text: 'Stop', danger: true, help: 'Asks first; the branch and changes stay' }] : []), { sep: true },
       ...(done ? [{ id: 'Start a follow-up', text: 'Start a follow-up', help: 'A new task on this one’s branch, with what you ask' }] : []), { id: 'Run after…', text: 'Run after…', help: 'Another task starts when this one finishes' },
       { id: 'Label…', text: 'Label…', help: 'Adds a label to this task' }, { id: 'Move to group…', text: 'Move to group…', help: 'Tracks it with related tasks' }, { id: 'Save as preset', text: 'Save as preset', help: 'Starts the next task with this one’s setup' },
       ...(done ? [{ id: 'Report this task', text: 'Report this task', help: 'Asks for a note, then sends it with the logs to the Worca team' }, { id: 'Archive', text: 'Archive', help: 'Removes the branch, worktree and logs; the remote branch and PR stay' }] : []),
@@ -633,7 +648,8 @@
     if ((hit = on('[data-cp-choice]'))) { const [id, v] = hit.dataset.cpChoice.split('|'), x = turns().find((y) => y.id === id); if (x) { x.picked = v; paint(); } return; }
     if ((hit = on('[data-act]'))) { const [id, k] = hit.dataset.act.split('|'), x = turns().find((y) => y.id === id); if (x) { x.done = x.actions[+k][2]; paint(); say(x.done); } return; }
     if ((hit = on('[data-cp-apply], [data-cp-decline], [data-cp-revert]'))) { const id = hit.dataset.cpApply || hit.dataset.cpDecline || hit.dataset.cpRevert, x = turns().find((y) => y.id === id); if (x && x.kind === 'Project' && x.how && hit.dataset.cpApply) {   // the project is added: its name joins every project picker, and the next words offer the first task
-      const f = x.f || {}, name = (f.name || f.dir || (f.url || '').split('/').pop()?.replace(/\.git$/, '') || (f.path || '~/src/billing-web').split('/').pop() || 'billing-web').trim();
+      const f = x.f || {}, name = (f.name || f.dir || (f.url || '').split('/').pop()?.replace(/\.git$/, '') || (f.path || '').split('/').pop() || '').trim();
+      if (!name) { say(x.how === 'Clone' ? 'Say which repository to clone first' : x.how === 'New' ? 'Name the project first' : 'Say which folder first'); root.querySelector('[data-pj-field]')?.focus(); return; }
       if (!PROJECTS.includes(name)) PROJECTS.splice(PROJECTS.length - 1, 0, name);
       comp.project = name; lastProject = name; window.RailProjects?.add({ id: name, path: f.path || f.dir || (f.url ? `~/src/${name}` : `~/Projects/${name}`) });   /* one store: Projects lists it */ const ch = chat(); if (ch && !ch.project) { ch.project = name; window.RailChats.refresh(); } x.done = `${name} added${x.how === 'Clone' ? ', cloned' : ''}`; const l = turns(); l.splice(l.indexOf(x) + 1, 0, { t: 'words', html: `<b>${esc(name)}</b> is in. Tell me the first thing to do in it, and I'll propose it as a task you check before it starts.` });
       paint(); say(`Added ${name}`); return; }
@@ -747,7 +763,7 @@
       return true;
     },
     show: (id) => { setTimeout(() => settle(id), 0); if (id !== chatId) { opened = new Set(); hover = null; menu = ''; comp = { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'No project' : lastProject };   /* a new chat starts on the project you added last */ } chatId = id || ''; paint(); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = 0; paintTimeline(); } } },
-    start: (mode, text) => { chatId = ''; comp = { ...fresh(mode), text: text || '' }; if (!side) window.RailShell.go('chat'); paint(); root.querySelector('[data-composer-t]')?.focus(); },
+    start: (mode, text, project) => { chatId = ''; comp = { ...fresh(mode), text: text || '', ...(project ? { project } : {}) }; if (!side) window.RailShell.go('chat'); paint(false); root.querySelector('[data-composer-t]')?.focus(); },   /* what another place hands over stays in the box, on its project */
     arm,   /* a starter armed from another place (Projects' New: Add project) */
   };
   mounted.push(api);

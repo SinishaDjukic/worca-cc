@@ -1,0 +1,59 @@
+<!doctype html>
+<!-- Mock (Wave 3, Phase 2): the task page's leftovers, on the card's own stream (Rail: the card is the page). Dev's functions:
+     the live workflow (each step with its runs, cycles, cost; the step running now; sub-agents), its step log, the artifacts
+     (by step, viewed in place, ← → through them, Download), findings to confirm as a small form, and applying a task made on a
+     copy of a folder. Library pieces: StageLine, StepDot, ListRow, ChangeProposal, Field, the list sentence; new: LogLines
+     (.mk-log). Render: node plans/rail/mocks/wave-3/render.mjs task-depth -->
+<html lang="en"><head><meta charset="utf-8"><title>Task depth</title>
+<link rel="stylesheet" href="../../prototype/app.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail-look.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail.css">
+<link rel="stylesheet" href="../../prototype/shell/shell.css">
+<style>
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);}
+  #m{width:760px;padding:28px 40px 36px;box-sizing:border-box;}
+  .case{margin:0 0 30px;} .case > h2{margin:0 0 10px;font:600 12px/1.4 var(--sans);color:var(--ink-2);}
+  .mk-log{margin:6px 0 4px 32px;padding:8px 10px;border-radius:var(--r-sm);background:var(--field);font:12px/19px var(--mono,ui-monospace,monospace);color:var(--ink-2);}
+  .mk-log .t{color:var(--ink-3);} .mk-log .s{color:var(--ink);}
+  .mk-log-h{display:flex;gap:6px;align-items:center;margin:4px 0 0 32px;font-size:var(--fs-meta);color:var(--ink-2);}
+  .mk-log-h .sp{flex:1;}
+  .mk-view{margin:4px 0 8px 32px;padding:10px 12px;border-radius:var(--r-sm);background:var(--field);font-size:var(--fs-body);line-height:1.5;}
+  .mk-view h3{margin:0 0 4px;font:600 var(--fs-body)/1.3 var(--sans);}
+  .mk-view-h{display:flex;gap:6px;align-items:center;margin:0 0 0 32px;font-size:var(--fs-meta);color:var(--ink-2);}
+  .mk-view-h .sp{flex:1;}
+  .mk-sev{font-size:var(--fs-meta);color:var(--amber-ink);} .mk-sev.min{color:var(--ink-2);}
+  .note{margin:6px 0 0 32px;font-size:12px;color:var(--ink-3);}
+</style></head>
+<body><div id="m"></div>
+<script src="../../prototype/components.js"></script>
+<script>
+  const R = window.RailUI;
+  const dot = (cls, word, icon) => R.stepDot({ dotCls: cls, word, icon });
+  const live = [
+    R.stageLine({ mark: dot('is-done', 'Done', 'check'), label: 'Plan', meta: '3 min · $0.40' }),
+    R.stageLine({ mark: dot('is-done', 'Done', 'check'), label: 'Build', meta: '2 cycles · 9 min · $1.06', parts: R.stagePart({ label: 'cycle 2 · fix', says: '6 min · $0.88' }) }),
+    R.stageLine({ mark: dot('is-working is-pulse', 'In progress', 'now'), label: 'Review', meta: 'cycle 2 of 3 · 4 agents running · $0.31 so far', next: true }),
+    R.stageLine({ mark: dot('is-future', 'Not yet', ''), label: 'PR', meta: '' }),
+  ].join('');
+  const log = `<div class="mk-log-h">Review's log · showing ${R.sentencePicker({ id: 'l', text: 'summaries', items: [], chevron: R.icon('chevron', 10) })} of ${R.sentencePicker({ id: 'c', text: 'cycle 2', items: [], chevron: R.icon('chevron', 10) })}<span class="sp"></span>${R.button({ label: 'Copy', kind: 'quiet' })}${R.button({ label: 'All logs', kind: 'quiet' })}</div>
+    <div class="mk-log"><div><span class="t">14:02:11 [reviewer]</span> Reading export.mjs and columns.mjs</div><div><span class="t">14:02:40 [reviewer ▸ security]</span> Checking the CSV for formula injection</div><div><span class="t">14:03:05 [reviewer ▸ browser]</span> <span class="s">Exporting 50k rows in the browser</span></div></div>`;
+  const arts = R.list({ groups: [{ title: 'Artifacts · 4', rows: [
+    R.listRow({ title: 'plan.md', meta: 'Plan · 4 KB', mark: R.kindMark({ kind: 'event' }), endText: '', open: {} }),
+    R.listRow({ title: 'review-cycle-2.md', meta: 'Review · cycle 2 · 2 KB', mark: R.kindMark({ kind: 'event' }), open: {}, current: true }),
+    R.listRow({ title: 'export-50k.png', meta: 'Review · screenshot · 180 KB', mark: R.kindMark({ kind: 'event' }), open: {} }),
+    R.listRow({ title: 'timings.csv', meta: 'Review · 12 KB', mark: R.kindMark({ kind: 'event' }), open: {} })] }] });
+  const viewer = `<div class="mk-view-h">review-cycle-2.md · Review · cycle 2<span class="sp"></span>${R.button({ label: 'Previous', kind: 'quiet', iconOnly: true, icon: R.icon('chevron', 12) })}${R.button({ label: 'Next', kind: 'quiet', iconOnly: true, icon: R.icon('chevron', 12) })}${R.button({ label: 'Open full', kind: 'quiet' })}${R.button({ label: 'Download', kind: 'quiet' })}</div>
+    <div class="mk-view"><h3>Review, cycle 2</h3>The export streams rows and the totals match. Two things to confirm: the retry lives in the caller, and the empty-list branch has no test.</div>`;
+  const findings = `${R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'ask', size: 16 }), text: '<b>Confirm these findings</b>' })}
+    ${R.settingsSection({ rows: [R.settingsRow({ name: 'Major', sentence: 'Plan deviation: the retry lives in the caller', end: R.button({ label: 'Confirm', kind: 'quiet' }) + R.button({ label: 'Dismiss', kind: 'quiet' }) }), R.settingsRow({ name: 'Minor', sentence: 'No unit test for the empty-list branch', end: R.button({ label: 'Confirm', kind: 'quiet' }) + R.button({ label: 'Dismiss', kind: 'quiet' }) })].join('') })}
+    <div style="margin:4px 0 0 32px">${R.field({ id: 'n', label: 'Notes', quietLabel: true, placeholder: 'Anything the next cycle should know (optional)', multiline: true })}</div><div style="margin:8px 0 0 32px">${R.button({ label: 'Send to Review', kind: 'primary' })}</div>`;
+  const apply = R.changeProposal({ kind: 'Changes', title: '3 files changed on a copy of docs-site', why: 'A folder without git: the task worked on a copy; apply it to the folder, or discard it', rows: [{ name: 'Adds', before: '', after: 'guides/export.md' }, { name: 'Updates', before: '', after: 'index.md, nav.yml' }, { name: 'Skips', before: '', after: 'nothing changed in the folder since it started' }], state: 'proposed', apply: 'Apply 3 files' });
+  document.getElementById('m').innerHTML = `<div class="convo-col" style="margin:0">
+    <section class="case"><h2>The live workflow, opened from the card (Show its stages): steps, cycles, cost, the step running now</h2><ol class="rd-route-list">${live}</ol></section>
+    <section class="case"><h2>A step's log, opened from its row: summaries or raw, by cycle, Copy, All logs</h2>${log}</section>
+    <section class="case"><h2>Its artifacts, by step; one open in place, ← → through them</h2>${arts}${viewer}</section>
+    <section class="case"><h2>Findings to confirm: a question as a small form (review list + notes)</h2>${findings}</section>
+    <section class="case"><h2>A task made on a copy of a folder: apply or discard</h2>${apply}</section>
+    <p class="note" style="margin-left:0">Mock. Telemetry (Labs) stays on the full page's Activity; syntax highlighting is the diff's own. New in the library: LogLines (a step's log lines with time and source).</p>
+  </div>`;
+</script></body></html>

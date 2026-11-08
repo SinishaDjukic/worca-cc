@@ -54,6 +54,7 @@
   };
   const seed = () => {
     const d = base(), f = window.RailWorld.facts().chats;
+    if (window.RailFirstRun) { d.groups = []; d.chats = d.chats.filter((c) => c.id === 'c0'); }   // the first run: Getting started alone
     for (const c of d.chats) {
       const walk = (t) => { link(c, t); (t.after || []).forEach(walk); }; (c.tasks || []).forEach(walk);   // every task in the store, once
       sync(c);

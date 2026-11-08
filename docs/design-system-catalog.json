@@ -1090,6 +1090,17 @@
       ]
     },
     {
+      "name": "PluginCard",
+      "code": "ui/public/design-system/components/kind-mark.mjs#pluginCard",
+      "kind": "showing",
+      "needs": [
+        "one plugin in the Marketplace: its brand, what it does, what it adds and asks for, one action"
+      ],
+      "rules": [
+        "panel.plugin-card"
+      ]
+    },
+    {
       "name": "CountBadge",
       "code": "ui/public/design-system/components/shell-parts.mjs#countBadge",
       "kind": "telling",

@@ -48,13 +48,13 @@
   function act(id, rows) {
     const p = rows[0]?._p; if (!p) return;
     if (id === 'act') return originAct(p);
-    if (id === 'task') { window.RailConversation?.start('task'); return; }
+    if (id === 'task') { window.RailConversation?.start('task', '', p.id); return; }
     if (id === 'tasks') { window.RailShell.go('runs'); return; }
     if (id === 'remove') { current = p.id; confirm = { what: 'remove', p }; window.RailShell.go(`projects/${p.id}`); }
   }
   function originAct(p) {
     if (p.origin === 'behind') { const n = p.behind; Object.assign(p, { origin: 'ok', behind: 0, checked: 'just now' }); draw(); say(`Synced ${p.id}: ${n} commits from ${p.base}`); return; }
-    if (p.origin === 'diverged') { window.RailConversation?.start('ask', `${p.id} has diverged from ${p.base}: ${p.ahead} ahead, ${p.behind} behind. How should we bring them together?`); return; }
+    if (p.origin === 'diverged') { window.RailConversation?.start('ask', `${p.id} has diverged from ${p.base}: ${p.ahead} ahead, ${p.behind} behind. How should we bring them together?`, p.id); return; }
     if (p.origin === 'offline') { p.origin = 'ok'; p.checked = 'just now'; draw(); say(`Reached ${p.base}`); return; }
     if (p.origin === 'folder') { Object.assign(p, { kind: 'Git', origin: 'local', branch: 'main' }); draw(); say(`${p.id} uses git now; the first task commits what is there`); return; }
     if (p.origin === 'missing') { confirm = { what: 'remove', p }; draw(); }
@@ -79,8 +79,9 @@
     </div></div><div class="convo-dock" id="pj-dock"></div></div>`;
   }
 
+  const here = () => (location.hash.slice(1) || '').split('/')[0] === 'projects';   // the page area is shared by every place: draw only while this one is open
   function draw() {
-    if (!bar || !page) return;
+    if (!bar || !page || !here()) return;
     ctl?.paint();
     const p = data.projects.find((x) => x.id === current);
     if (!p) { home ||= window.RailConversation?.mount(page, { mode: 'ask', where: '#route-place', title: 'Ask about a project', note: 'Every project is in the list beside; Add project is a conversation.' }); home?.show(''); return; }
@@ -96,6 +97,7 @@
       can: () => ['menu'], bulk: () => [], act, open: (r) => window.RailShell.go(`projects/${r._p.id}`), word: (id, v) => { view[id] = v; return false; }, say,
       active: () => /^#projects/.test(location.hash), emptyAct: () => window.RailConversation?.starter('project') } });
     page.addEventListener('click', (e) => {
+      if (!here()) return;   /* another place's page is showing */
       const on = (q) => e.target.closest(q); let hit; const p = data.projects.find((x) => x.id === current); if (!p || !page.querySelector('#pj-dock')) return;
       if ((hit = on('[data-pj-act]'))) { originAct(p); return; }
       if ((hit = on('[data-pj-open]'))) { const [cid, title] = hit.dataset.pjOpen.split('|'); window.RailShell.openTask(window.RailChats.data().chats.find((c) => c.id === cid)?.tasks.find((t) => t.title === title)?.case || '', cid, title); return; }
@@ -110,9 +112,10 @@
       }
       if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
     });
-    R.dismissOnOutside(document, { open: () => !!menu, inside: '#route-place .spick, #route-place .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
+    R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .spick, #route-place .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
   }
   window.RailProjects = { list: () => data.projects, add: (p) => { if (!data.projects.some((x) => x.id === p.id)) data.projects.push({ kind: 'Git', origin: 'local', branch: 'main', ...p }); ctl?.paint(); } };
+  if (window.RailFirstRun) data.projects = [];   // the first run: nothing added yet
   window.RailPlaces = window.RailPlaces || {};
   window.RailPlaces.projects = { sample: 'billing-api', newLabel: 'Add project', newAct: () => window.RailConversation?.starter('project'),
     show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) { menu = ''; if (confirm?.p?.id !== arg) confirm = null; } current = arg || ''; draw(); } };

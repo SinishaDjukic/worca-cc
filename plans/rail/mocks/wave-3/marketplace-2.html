@@ -1,0 +1,40 @@
+<!doctype html>
+<!-- Mock (Wave 3, Marketplace again): what happens with 100 plugins. The bar stops listing plugins: it holds what is yours
+     (updates, installed: a handful) and the ways in (the shelves with their counts, every source). A shelf opens on the page
+     as cards, with the list sentence (sort, search) and Show N more, never a 100-row bar. Library pieces: List, ListRow,
+     PlaceHead, PluginCard, the list sentence; new: none. Render: node plans/rail/mocks/wave-3/render.mjs marketplace-2 1280 -->
+<html lang="en"><head><meta charset="utf-8"><title>Marketplace at 100</title>
+<link rel="stylesheet" href="../../prototype/app.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail-look.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail.css">
+<link rel="stylesheet" href="../../prototype/shell/shell.css">
+<style>
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);}
+  #m{width:1280px;display:grid;grid-template-columns:280px 1fr;min-height:980px;}
+  .bar{background:var(--side,var(--panel));border-right:1px solid var(--line);padding:16px 12px;box-sizing:border-box;}
+  .bar h1{margin:4px 8px 14px;font:600 15px/1.2 var(--sans);display:flex;gap:8px;align-items:center;}
+  .main{padding:28px 0 36px;display:flex;justify-content:center;}
+  .col{width:680px;}
+  .sent{display:flex;gap:6px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);margin:18px 0 6px;}
+  .sent .field{flex:1;max-width:260px;margin-left:auto;}
+  .more{margin:14px 0 0;}
+  .note{margin:22px 0 0;font-size:12px;color:var(--ink-3);}
+</style></head>
+<body><div id="m"></div>
+<script src="../../prototype/components.js"></script>
+<script>
+  const R = window.RailUI;
+  const mk = (icon, tone = 'idle') => R.kindMark({ kind: 'plugin', icon, tone });
+  const row = (title, mark, end, cur = false) => R.listRow({ title, mark, endText: end, open: { 'data-x': title }, current: cur });
+  const bar = `<h1>${R.icon('worca-w', 18)} Marketplace</h1>${R.list({ groups: [
+    { title: 'Yours', rows: [row('Jira', mk('brand-jira', 'act'), 'Update'), row('Telegram', mk('brand-telegram', 'ok'), 'Installed'), row('Notion', mk('brand-notion', 'ok'), 'Installed')] },
+    { title: 'Browse', rows: [row('For you', R.kindMark({ kind: 'event' }), '3'), row('Bring tasks in', R.kindMark({ kind: 'plugin', icon: 'list' }), '18'), row('Talk to Worca from', R.kindMark({ kind: 'plugin', icon: 'kind-chat' }), '9'), row('Give tasks tools', R.kindMark({ kind: 'plugin', icon: 'plug' }), '47', true), row('New agents and workflows', R.kindMark({ kind: 'plugin', icon: 'kind-workflow' }), '24'), row('Everything', R.kindMark({ kind: 'plugin', icon: 'list' }), '100')] },
+    { title: 'Sources', rows: [row('Worca CC Official', R.kindMark({ kind: 'plugin', icon: 'brand-github' }), '61'), row('acme/worca-plugins', R.kindMark({ kind: 'plugin', icon: 'brand-github' }), '39'), row('Add a marketplace', R.kindMark({ kind: 'plugin', icon: 'plus' }), '')] }] })}`;
+  const P = [['Cloudflare', 'brand-cloudflare', 'The whole Cloudflare API and its docs.', 'Adds 2 MCP servers · asks for an API token'], ['Notion', 'brand-notion', 'Search, read and edit Notion pages.', 'Adds an MCP server · installed', 'ok'], ['GitHub', 'brand-github', 'Issues, pull requests and Actions, for tasks to read and act on.', 'Adds an MCP server · asks for a token'], ['Postgres', '', 'Query a database read-only, with its schema.', 'Adds an MCP server · asks for a connection'], ['Sentry', '', 'Read errors and their traces while a task fixes them.', 'Adds an MCP server · asks for a token'], ['Figma', '', 'Read frames and tokens from a design file.', 'Adds an MCP server · asks for a token']];
+  const cards = P.map(([t, ic, w, f, tone]) => R.pluginCard({ mark: mk(ic, tone || 'idle'), kicker: `MCP server${tone ? ' · installed' : ' · 0.1.0'}`, title: t, what: w, facts: f, action: R.button({ label: tone ? 'Set up' : 'Install', kind: tone ? 'quiet' : '' }), more: R.button({ label: 'What it asks for', kind: 'quiet' }) })).join('');
+  const page = `<div class="col convo-col" style="margin:0">${R.placeHead({ title: 'Give tasks tools', facts: '47 plugins · 2 installed · MCP servers and models a task can call' })}
+    <div class="sent">Showing ${R.sentencePicker({ id: 's', text: 'most used', items: [], chevron: R.icon('chevron', 10) })} from ${R.sentencePicker({ id: 'f', text: 'every source', items: [], chevron: R.icon('chevron', 10) })}${R.field({ id: 'q', label: 'Search plugins', quietLabel: true, placeholder: 'Search 47 plugins' })}</div>
+    <div class="pg-grid">${cards}</div><div class="more">${R.button({ label: 'Show 41 more', kind: 'quiet' })}</div>
+    <p class="note">Mock. The bar holds what is yours and the ways in; a shelf, a source or Everything opens here, sorted (most used, newest, A–Z) and searchable, six at a time. The home stays as agreed (the update, For you, each shelf's first cards with Show all).</p></div>`;
+  document.getElementById('m').innerHTML = `<aside class="bar pz-app rail-page">${bar}</aside><main class="main">${page}</main>`;
+</script></body></html>

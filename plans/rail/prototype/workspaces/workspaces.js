@@ -17,12 +17,13 @@
     { id: 'legacy', title: 'Legacy billing', home: '', runs: 0, scanned: 'never', model: '', about: '',
       projects: [['legacy-billing', 'missing'], ['billing-api', 'behind']], links: [] },
   ] };
-  const seen = new Set();   // motion.attention: a workspace that needs you breathes until you open it
   let current = '', menu = '', confirm = null, ctl = null, home = null, bar = null, page = null;
-  const count = (w) => w.projects.reduce((a, [, s]) => ({ ...a, [s]: (a[s] || 0) + 1 }), {});
+  const ORIGIN_TO = { ok: 'ok', behind: 'behind', diverged: 'diverged', missing: 'missing', offline: 'behind', uncommitted: 'behind', local: 'ok', folder: 'ok' };
+  const live = (w) => { const P = window.RailProjects?.list() || []; w.projects = w.projects.map(([id, st]) => { const p = P.find((x) => x.id === id); return [id, p ? ORIGIN_TO[p.origin] || st : st]; }); return w; };   // one truth: Projects
+  const count = (w) => live(w).projects.reduce((a, [, s]) => ({ ...a, [s]: (a[s] || 0) + 1 }), {});
   const standOf = (w) => { const c = count(w); return ['missing', 'diverged', 'behind', 'ok'].filter((k) => c[k]).map((k) => `${c[k]} ${k === 'ok' ? 'up to date' : WORD[k].toLowerCase()}`).join(' · '); };
   const toneOf = (w) => { const c = count(w); return c.missing ? 'fail' : c.diverged ? 'ask' : c.behind ? 'act' : 'idle'; };
-  const rowOf = (w) => ({ key: `ws:${w.id}`, _w: w, title: w.title, mark: R.kindMark({ breathe: !seen.has(`${w.id}:${standOf(w)}`), kind: 'workspace', tone: toneOf(w), title: standOf(w) }), end: `${w.projects.length} projects`, current: w.id === current, tip: `${w.title}\n${standOf(w)}`,
+  const rowOf = (w) => ({ key: `ws:${w.id}`, _w: w, title: w.title, mark: R.kindMark({ breathe: w.id !== current, kind: 'workspace', tone: toneOf(w), title: standOf(w) }), end: `${w.projects.length} projects`, current: w.id === current, tip: `${w.title}\n${standOf(w)}`,
     menu: [{ id: 'sync', text: 'Sync what is behind', help: 'Fast-forwards each project that is behind' }, { id: 'scan', text: 'Scan again', help: 'Reads every project and maps how they connect' }, { sep: true }, { id: 'delete', text: 'Delete…', danger: true, help: 'Its projects stay' }] });
   function act(id, w) {
     if (id === 'sync') { const n = w.projects.filter(([, s]) => s === 'behind').length; w.projects = w.projects.map(([p, s]) => [p, s === 'behind' ? 'ok' : s]); draw(); say(n ? `Synced ${n} ${n === 1 ? 'project' : 'projects'} in ${w.title}` : `Nothing in ${w.title} is behind`); return; }
@@ -44,8 +45,9 @@
     const about = R.settingsSection({ title: 'What Worca knows of it', rows: R.settingsRow({ name: 'In short', sentence: esc(w.about || 'Nothing yet: Scan again writes it.'), end: R.button({ label: 'Change in a chat', kind: 'quiet', attrs: { 'data-ws': 'about' } }) }) + (w.model ? R.settingsRow({ name: 'Scans with', sentence: esc(w.model) }) : '') });
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${strip}${projects}${links}${about}</div></div><div class="convo-dock" id="ws-dock"></div></div>`;
   }
+  const here = () => (location.hash.slice(1) || '').split('/')[0] === 'workspaces';   // the page area is shared by every place: draw only while this one is open
   function draw() {
-    if (!bar || !page) return;
+    if (!bar || !page || !here()) return;
     ctl?.paint();
     const w = data.spaces.find((x) => x.id === current);
     if (!w) { home ||= window.RailConversation?.mount(page, { mode: 'ask', where: '#route-place', title: 'Make a workspace', note: 'Projects that ship together; Worca maps how they connect, so a task can work across them.' }); home?.show(''); return; }
@@ -60,6 +62,7 @@
       can: () => ['menu'], bulk: () => [], act: (id, rows) => rows[0] && act(id, rows[0]._w), open: (r) => window.RailShell.go(`workspaces/${r._w.id}`), word: () => false, say,
       active: () => /^#workspaces/.test(location.hash), emptyAct: () => window.RailConversation?.starter('workspace') } });
     page.addEventListener('click', (e) => {
+      if (!here()) return;   /* another place's page is showing */
       const on = (q) => e.target.closest(q); let hit; const w = data.spaces.find((x) => x.id === current); if (!w || !page.querySelector('#ws-dock')) return;
       if ((hit = on('[data-ws]'))) { const v = hit.dataset.ws; if (v === 'about') window.RailConversation?.start('ask', `About ${w.title}: `); else act(v, w); return; }
       if ((hit = on('[data-ws-rm]'))) { const i = +hit.dataset.wsRm, gone = w.projects.splice(i, 1)[0]; draw(); say(`${gone[0]} left ${w.title}`, () => { w.projects.splice(i, 0, gone); draw(); }); return; }
@@ -68,9 +71,10 @@
       if ((hit = on('[data-menu-pick]'))) { const [id, v] = hit.dataset.menuPick.split('|'); menu = ''; if (id === 'ws-add') { w.projects.push([v, 'ok']); draw(); say(`${v} joined ${w.title}; a short scan maps it`); } else if (v === 'task') window.RailConversation?.start('task'); else act(v, w); return; }
       if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
     });
-    R.dismissOnOutside(document, { open: () => !!menu, inside: '#route-place .spick, #route-place .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
+    R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .spick, #route-place .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
   }
+  if (window.RailFirstRun) data.spaces = [];   // the first run: nothing added yet
   window.RailPlaces = window.RailPlaces || {};
   window.RailPlaces.workspaces = { sample: 'web-shop', newLabel: 'New workspace', newAct: () => window.RailConversation?.starter('workspace'),
-    show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) { menu = ''; if (confirm?.id !== arg) confirm = null; } current = arg || ''; const w = data.spaces.find((x) => x.id === current); if (w) seen.add(`${w.id}:${standOf(w)}`); draw(); } };
+    show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) { menu = ''; if (confirm?.id !== arg) confirm = null; } current = arg || ''; draw(); } };
 })();

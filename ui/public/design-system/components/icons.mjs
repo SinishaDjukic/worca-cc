@@ -4,6 +4,13 @@ const P = (d) => `<path d="${d}"></path>`;
 export const ICONS = {
   workflow: '<rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h3m0 0V7h3m-3 5v5h3"></path>',
   track: P('M3 12h4l2.5-6 4 12 2.5-6H21'),
+  // brands, in Rail's line (outlines after Tabler, MIT): a plugin's own mark, never its colours
+  'brand-github': P('M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21'),
+  'brand-slack': P('M12 12V6a2 2 0 0 1 4 0v6m0-2a2 2 0 1 1 2 2h-6') + P('M12 12h6a2 2 0 0 1 0 4h-6m2 0a2 2 0 1 1-2 2v-6') + P('M12 12v6a2 2 0 0 1-4 0v-6m0 2a2 2 0 1 1-2-2h6') + P('M12 12H6a2 2 0 0 1 0-4h6m-2 0a2 2 0 1 1 2-2v6'),
+  'brand-jira': P('M12 3l3.5 3.5L12 10 8.5 6.5Z') + P('M17.5 8.5L21 12l-3.5 3.5L14 12Z') + P('M12 14l3.5 3.5L12 21l-3.5-3.5Z') + P('M6.5 8.5L10 12l-3.5 3.5L3 12Z'),
+  'brand-notion': P('M11 17.5V11h.5l4 6h.5v-6.5') + P('M19.5 20.5L7 21c-1 0-2-.5-2.5-1L3 17.5V5c0-1 .5-1.5 1.5-2l11-1 2.5 1.5 2 2v13.5c0 1-.5 1.5-.5 1.5Z') + P('M4 4l3 3h12'),
+  'brand-cloudflare': P('M7 18a4.6 4.4 0 0 1 0-9 5 4.5 0 0 1 11 2h1a3.5 3.5 0 0 1 0 7Z'),
+  'brand-telegram': P('M15 10l-4 4 6 6 4-16-18 7 4 2 2 6 3-4'),
   plug: P('M12 22v-5') + P('M9 8V2') + P('M15 8V2') + P('M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z'),
   check: P('M5 12.5l4.5 4.5L19 7.5'),
   now: '<circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"></circle>',
@@ -53,6 +60,7 @@ export const ICONS = {
   'nav-runs': P('M8 5.5v13l10.5-6.5z'),
   'nav-schedules': '<circle cx="12" cy="12" r="8"></circle>' + P('M12 7.5V12l3 2'),
   'nav-stats': P('M6 20v-7M12 20V4M18 20v-11'),
+  'nav-insights': P('M6 20v-7M12 20V4M18 20v-11'),
   'nav-team-metrics': '<circle cx="9" cy="8" r="3"></circle>' + P('M3.5 19.5a5.5 5.5 0 0 1 11 0') + P('M16 5.5a3 3 0 0 1 0 5.5M18 14.5a5.5 5.5 0 0 1 2.5 5'),
   'nav-workflows': '<circle cx="6" cy="12" r="2.2"></circle><circle cx="18" cy="6" r="2.2"></circle><circle cx="18" cy="18" r="2.2"></circle>' + P('M8.2 12H12V6h3.8M12 12v6h3.8'),
   'nav-requirements': P('M6 3.5h9l3 3v14H6z') + P('M9 12h6M9 16h4'),

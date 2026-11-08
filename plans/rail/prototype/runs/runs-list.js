@@ -21,8 +21,8 @@
   const openCase = (r) => (r.archived ? 'archived' : r.case);
   const NEEDS = () => R.runState('question').word;
   // motion.attention: a task that needs you breathes in its colour until you open it, as it stands
-  const seen = new Set();
-  const markOf = (state, kind = 'task', cs, key = '') => { const st = R.runState(state); return R.kindMark({ breathe: !!key && !seen.has(`${key}:${state}`), kind, tone: R.markTone(st), title: st.word, ...(cs ? RM.stageOf(cs) : {}) }); };
+  let openId = ''; addEventListener('hashchange', () => { if (!/^#run\//.test(location.hash)) openId = ''; });   // the task you have open holds still
+  const markOf = (state, kind = 'task', cs, key = '') => { const st = R.runState(state); return R.kindMark({ breathe: !!key && key !== openId, kind, tone: R.markTone(st), title: st.word, ...(cs ? RM.stageOf(cs) : {}) }); };
   const gitOf = (r, state) => { if (!r.pr && (r.kind || 'Git') !== 'Git') return ''; const tone = R.markTone(R.runState(state)); const status = tone === 'merged' ? 'merged' : tone === 'closed' ? 'closed' : !r.pr ? 'branch' : /fail/.test(r.case) ? 'fail' : /conflict/.test(r.case) ? 'conflict' : state === 'approved' ? 'pass' : /draft/.test(r.case) ? 'draft' : 'open'; const watch = /round|pr-fixing/.test(r.case) ? 'fix' : ''; return R.gitMark({ status, watch, title: [r.pr, R.runState(state).word].filter(Boolean).join(' · ') }); };
   const membersOf = (g) => data.runs.filter((r) => r.group === g.id).sort((a, b) => (a.pos || 0) - (b.pos || 0));
   const groupState = (g) => RM.stateOf(g.case);
@@ -204,7 +204,7 @@
   }
   function openThing(row) {
     const x = row._x;
-    if (x.r) { x.r.unread = false; seen.add(`${x.r.id}:${stateOf(x.r)}`); }
+    if (x.r) { x.r.unread = false; openId = x.r.id; }
     window.RailShell.openRun(`run/${x.g ? x.g.case : openCase(x.r)}`, x.g ? x.g.title : x.r.title, x.g ? window.RailWorld.membersOf(x.g)[0]?.id : x.r.id);   // the task itself, so its own chat opens
   }
 

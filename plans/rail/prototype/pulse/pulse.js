@@ -11,7 +11,7 @@ const SM = window.SettingsModel, SV = window.SettingsView;   // Settings: its me
 const esc = R.esc;
 const svg = (name, size, cls) => R.icon(name, size, { cls });
 
-const caseOf = (id) => M.CASES.find((c) => c.id === id);
+const caseOf = (id) => { const c = M.CASES.find((x) => x.id === id); return window.RailFirstRun && c ? { ...c, updates: [], teamSetup: false, actions: [] } : c; };   // the first run: nothing has happened yet
 const groupOf = (id) => M.GROUPS.find((g) => g.id === id);
 function freshSettings(c) {
   return { desktop: c.desktop, badge: 'needs', sound: 'needs', warnAt: 80, mine: 'suggest', auto: 'move', groups: Object.fromEntries(M.GROUPS.map((g) => [g.id, { level: g.level, where: g.where, ex: {} }])) };

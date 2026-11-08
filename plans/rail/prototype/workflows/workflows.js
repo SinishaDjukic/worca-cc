@@ -74,8 +74,9 @@
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${strip}${exp}${body}</div></div><div class="convo-dock" id="wf-dock"></div></div>`;
   }
 
+  const here = () => (location.hash.slice(1) || '').split('/')[0] === 'workflows';   // the page area is shared by every place: draw only while this one is open
   function draw() {
-    if (!bar || !page) return;
+    if (!bar || !page || !here()) return;
     ctl?.paint();
     const { kind, x } = current ? find(current) : {};
     if (!x) { home ||= window.RailConversation?.mount(page, { mode: 'ask', where: '#route-place', title: 'Build a workflow', note: 'Say what it should do; Worca proposes its steps, and you save it.' }); home?.show(''); return; }
@@ -93,6 +94,7 @@
       can: () => ['menu'], bulk: () => [], act, open: (r) => window.RailShell.go(`workflows/${r._k}:${r._x.id}`), word: (id, v) => { view[id] = v; return false; }, say,
       active: () => /^#workflows/.test(location.hash), emptyAct: () => window.RailConversation?.starter('workflow') } });
     page.addEventListener('click', (e) => {
+      if (!here()) return;   /* another place's page is showing */
       const on = (q) => e.target.closest(q); let hit; const { kind, x } = current ? find(current) : {}; if (!x || !page.querySelector('#wf-dock')) return;
       if ((hit = on('[data-wf-act]'))) { act(hit.dataset.wfAct, [{ _k: kind, _x: x }]); return; }
       if ((hit = on('[data-wf-sw]'))) { x[hit.dataset.wfSw] = !x[hit.dataset.wfSw]; draw(); say(`${x.title}: ${hit.dataset.wfSw === 'asks' ? (x.asks ? 'asks questions' : 'never asks') : (x.fan ? 'sends helpers to read first' : 'reads the code itself')}`); return; }
@@ -112,7 +114,7 @@
       }
       if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
     });
-    R.dismissOnOutside(document, { open: () => !!menu && menu !== 'wf-export', inside: '#route-place .spick, #route-place .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
+    R.dismissOnOutside(document, { open: () => here() && !!menu && menu !== 'wf-export', inside: '#route-place .spick, #route-place .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
   }
   window.RailPlaces = window.RailPlaces || {};
   window.RailPlaces.workflows = { sample: 'workflow:default', newLabel: 'Build workflow', newAct: () => window.RailConversation?.starter('workflow'),

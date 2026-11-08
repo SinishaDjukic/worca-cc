@@ -815,6 +815,12 @@ test('barChart: one series, numbers only on the highest and the current, a table
   assert.equal(c.querySelector('.bc-plot').getAttribute('aria-hidden'), 'true'); assert.equal(c.querySelectorAll('.bc-table tr').length, 3);
   assert.match(c.querySelector('.bc-col').getAttribute('title'), /Mon: \$10/);
 });
+test('pluginCard: its brand, kind and version, what it does, Worca\'s reason, facts, one action', () => {
+  const c = dom(C.pluginCard({ mark: C.kindMark({ kind: 'plugin', icon: 'brand-github' }), kicker: 'Task source · 0.2.0', update: '0.3.0', title: 'GitHub Issues', what: 'Pull tasks', why: 'Your projects live on GitHub', facts: 'Adds a task source', action: '<button>Install</button>' }));
+  assert.ok(c.classList.contains('pg-card')); assert.equal(c.querySelector('.pg-t').textContent, 'GitHub Issues');
+  assert.match(c.querySelector('.pg-k').textContent, /Task source · 0.2.0 · update 0.3.0/); assert.ok(c.querySelector('.pg-why svg')); assert.equal(c.querySelector('.pg-a button').textContent, 'Install');
+  assert.notEqual(C.kindMark({ kind: 'plugin', icon: 'brand-github' }), C.kindMark({ kind: 'plugin' }), 'a brand takes the centre');
+});
 test('GitMark: its status in the tooltip, Watch as a ring', () => {
   assert.match(C.gitMark({ status: 'fail' }), /Checks failing/);
   assert.match(C.gitMark({ status: 'fail', watch: 'fix' }), /is-watch is-fix/);

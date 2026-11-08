@@ -45,9 +45,10 @@ export function markTone(st = {}) {
  * @param {string} [o.title]   the tooltip: its word, then its step
  * @param {boolean} [o.keepType]  the type stays in the centre whatever the state (a summary of many)
  * @param {boolean} [o.breathe]   it needs you and you have not opened it yet: it breathes in its state's colour (motion.attention)
+ * @param {string} [o.icon]       its own mark in place of its kind's (a plugin's brand: brand-github)
  */
-export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = STAGES, size = 20, title = '', keepType = false, breathe = false } = {}) {
-  const noRing = kind === 'event' || tone === 'idle' || (kind === 'schedule' && tone === 'wait');
+export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = STAGES, size = 20, title = '', keepType = false, breathe = false, icon: own = '' } = {}) {
+  const noRing = kind === 'event' || kind === 'plugin' ||   /* a plugin has no stages: its brand, coloured by its state */ tone === 'idle' || (kind === 'schedule' && tone === 'wait');
   const reach = tone === 'wait' ? 0 : stage < 0 ? 1 : Math.min(1, (stage + 1) / stages);
   const arc = (from, len, stroke, k = -1) => `<circle cx="10" cy="10" r="${R}" fill="none" stroke="${stroke}" stroke-width="1.1" stroke-dasharray="${len.toFixed(2)} ${(L - len).toFixed(2)}" stroke-dashoffset="${(L / 4 - from).toFixed(2)}"${k >= 0 ? ` style="--k:${k}"` : ''}></circle>`;   // --k: a filled step's order, so a changed mark's ring can fill in turn
   let ring = '';
@@ -57,7 +58,7 @@ export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = ST
     for (let k = 0; k < steps; k++) ring += arc(k * (L / 48), L / 48 + 0.15, `color-mix(in srgb, currentColor ${Math.round(30 + 70 * (k + 1) / steps)}%, var(--line-2))`, k);
   }
   const typed = TYPED.has(kind) && !NEEDS_YOU.has(tone);   // a Shaper task or a workflow run says so; only what needs you takes its centre
-  const centre = !noRing && !keepType && !typed && CENTRE[tone] ? CENTRE[tone] : KINDS[kind] || KINDS.task;
+  const centre = !noRing && !keepType && !typed && CENTRE[tone] ? CENTRE[tone] : own || KINDS[kind] || KINDS.task;
   const glyph = icon(centre, Math.round((noRing ? 15 : 11) * size / 20));
   return `<span class="kind-mark is-${tone}${breathe && NEEDS_YOU.has(tone) ? ' is-breathe' : ''}"${attrs({ style: `--km:${size}px`, title: title || null, role: title ? 'img' : null, 'aria-label': title || null, 'aria-hidden': title ? null : 'true' })}>${ring ? `<svg class="km-ring" width="${size}" height="${size}" viewBox="0 0 20 20" aria-hidden="true">${ring}</svg>` : ''}${glyph}</span>`;
 }
@@ -243,6 +244,27 @@ export function taskCard({ title, place = '', mark, word, detail = '', action = 
 export function placeHead({ title, facts = '', mark = '', word = '', why = '', action = '', menu = '' }) {
   const head = `<div class="place-head"><h1 class="place-title">${esc(title)}</h1>${facts ? `<div class="convo-head">${facts}</div>` : ''}</div>`;
   return head + (word ? `<div class="convo-card-line">${mark}<span class="convo-card-w">${esc(word)}${why ? `<span>${esc(why)}</span>` : ''}</span>${action}${menu}</div>` : '');
+}
+
+/**
+ * PluginCard: one plugin in the Marketplace, on the cards' rail like a task card in a chat: no box, its brand as the mark
+ * (a generic plug without one), its kind and version as the kicker (an update in its colour), its name, one line on what
+ * it does, Worca's reason when it suggests it, one line of facts (what it adds, what it asks for), one action and What it
+ * asks for (docs/rail/panels.md › panel.plugin-card).
+ * @param {object} o
+ * @param {string} o.mark     its KindMark
+ * @param {string} o.kicker   "Chat channel · 0.2.0"
+ * @param {string} [o.update] the newer version, said in its colour
+ * @param {string} o.title
+ * @param {string} o.what
+ * @param {string} [o.why]    Worca's reason, when it suggests it
+ * @param {string} [o.facts]
+ * @param {string} o.action   its one Button
+ * @param {string} [o.more]   a quiet second (What it asks for)
+ * @param {object} [o.attrs]
+ */
+export function pluginCard({ mark, kicker, update = '', title, what, why = '', facts = '', action, more = '', attrs: a = {} }) {
+  return `<article class="pg-card"${attrs(a)}>${mark}<span class="pg-k">${esc(kicker)}${update ? ` · <span class="pg-up">update ${esc(update)}</span>` : ''}</span><span class="pg-t">${esc(title)}</span><span class="pg-w">${esc(what)}</span>${why ? `<span class="pg-why">${icon('worca-w', 12)}${esc(why)}</span>` : ''}${facts ? `<span class="pg-f">${esc(facts)}</span>` : ''}<span class="pg-a">${action}${more}</span></article>`;
 }
 
 /**

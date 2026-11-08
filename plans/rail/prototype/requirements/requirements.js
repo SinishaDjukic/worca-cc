@@ -26,11 +26,11 @@
   ] };
   const SHOWS = [{ id: 'open', text: 'open', test: (f) => f.state !== 'archived' }, { id: 'needs', text: 'needs you', test: (f) => ['turn', 'decide'].includes(f.state) }, { id: 'ready', text: 'ready', test: (f) => f.state === 'ready' }, { id: 'started', text: 'started', test: (f) => f.state === 'started' }, { id: 'archived', text: 'archived', test: (f) => f.state === 'archived' }];
   const view = { show: 'open' };
-  let current = '', menu = '', ctl = null, home = null, bar = null, page = null, seen = new Set();
+  let current = '', menu = '', ctl = null, home = null, bar = null, page = null;
   const st = (f) => STATE[f.state];
   const checks = (f) => [['A goal with a success measure', !!f.goal], ['At least one acceptance criterion', f.criteria.length > 0], ['The interview finished', f.state !== 'turn'], ['No open questions', !f.questions], ['Every assumption decided', f.assumptions.every((a) => a.v)], ['Its project exists', !!f.project]];
   const mark = (f, size, breathe = false) => R.kindMark({ kind: 'requirement', tone: st(f).tone, size, breathe, title: `${st(f).word} · ${st(f).why(f)}` });
-  const rowOf = (f) => ({ key: `feat:${f.id}`, _f: f, title: f.title, mark: mark(f, 20, !seen.has(`${f.id}:${f.state}`)), end: st(f).word, current: f.id === current, tip: `${f.id} · ${f.title}\n${f.project} · ${f.cost} so far\n${st(f).why(f)}`,
+  const rowOf = (f) => ({ key: `feat:${f.id}`, _f: f, title: f.title, mark: mark(f, 20, f.id !== current), end: st(f).word, current: f.id === current, tip: `${f.id} · ${f.title}\n${f.project} · ${f.cost} so far\n${st(f).why(f)}`,
     menu: [{ id: 'next', text: st(f).act, help: st(f).why(f) }, { id: 'copy', text: 'Copy as Markdown', help: 'The spec, ready to paste' }, { sep: true }, { id: 'archive', text: f.state === 'archived' ? 'Restore' : 'Archive', help: 'Out of the way; nothing is deleted' }] });
 
   function act(id, f) {
@@ -39,8 +39,8 @@
     if (id === 'next') {
       if (f.state === 'turn') { window.RailShell.go(f.chat ? `chat/${f.chat}` : 'chat'); return; }
       if (f.state === 'decide') { page.querySelector('[data-rq-sec="assume"]')?.scrollIntoView({ block: 'center' }); return; }
-      if (f.state === 'ready') { Object.assign(f, { state: 'started', run: 'Plan · writing the plan' }); draw(); say(`Started ${f.id}: a task builds it from the spec`); return; }
-      if (f.state === 'started') window.RailShell.go('runs');
+      if (f.state === 'ready') { Object.assign(f, { state: 'started', run: 'Plan · writing the plan' }); window.RailWorld?.add({ id: `feat-${f.id}`, case: 'working', title: f.title, project: f.project, detail: 'Plan · writing the plan', time: 'now', day: 'today' }); draw(); say(`Started ${f.id}: a task builds it from the spec`); return; }
+      if (f.state === 'started') window.RailShell.openRun('run/working', f.title, `feat-${f.id}`);
     }
   }
   function pageHtml(f) {
@@ -55,8 +55,9 @@
     const ready = R.settingsSection({ title: `Ready to start · ${done} of 6`, rows: checks(f).map(([t, ok]) => R.settingsRow({ name: ok ? 'Done' : 'Not yet', sentence: esc(t) })).join('') });
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${spec}${assume}${ready}</div></div><div class="convo-dock" id="rq-dock"></div></div>`;
   }
+  const here = () => (location.hash.slice(1) || '').split('/')[0] === 'requirements';   // the page area is shared by every place: draw only while this one is open
   function draw() {
-    if (!bar || !page) return;
+    if (!bar || !page || !here()) return;
     ctl?.paint();
     const f = data.features.find((x) => x.id === current);
     if (!f) { home ||= window.RailConversation?.mount(page, { mode: 'ask', where: '#route-place', title: 'Shape a feature', note: 'Describe it in a few sentences; Worca interviews you, then writes the spec a task builds from.' }); home?.show(''); return; }
@@ -73,6 +74,7 @@
       can: () => ['menu'], bulk: () => [], act: (id, rows) => rows[0] && act(id, rows[0]._f), open: (r) => window.RailShell.go(`requirements/${r._f.id}`), word: (id, v) => { view[id] = v; return false; }, say,
       active: () => /^#requirements/.test(location.hash), emptyAct: () => window.RailConversation?.starter('pin:Shaper') } });
     page.addEventListener('click', (e) => {
+      if (!here()) return;   /* another place's page is showing */
       const on = (q) => e.target.closest(q); let hit; const f = data.features.find((x) => x.id === current); if (!f || !page.querySelector('#rq-dock')) return;
       if (on('[data-rq-next]')) { act('next', f); return; }
       if ((hit = on('[data-rq-yes], [data-rq-no], [data-rq-undo]'))) {
@@ -84,9 +86,10 @@
       if ((hit = on('[data-menu-pick]'))) { const [id, v] = hit.dataset.menuPick.split('|'); menu = ''; if (id === 'rq-more') { if (v === 'specs') { say(`Saved specs/${f.id.toLowerCase()}.md in ${f.project}`); draw(); } else act(v, f); } return; }
       if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
     });
-    R.dismissOnOutside(document, { open: () => !!menu, inside: '#route-place .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
+    R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
   }
+  if (window.RailFirstRun) data.features = [];   // the first run: nothing added yet
   window.RailPlaces = window.RailPlaces || {};
   window.RailPlaces.requirements = { sample: 'FEAT-2', newLabel: 'Shape a feature', newAct: () => window.RailConversation?.starter('pin:Shaper'),
-    show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) menu = ''; current = arg || ''; const f = data.features.find((x) => x.id === current); if (f) seen.add(`${f.id}:${f.state}`); draw(); } };
+    show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) menu = ''; current = arg || ''; draw(); } };
 })();

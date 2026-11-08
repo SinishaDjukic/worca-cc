@@ -3,6 +3,7 @@
 // written once, in `table`, and a case picks its runs; a page that acts on a run changes it here.
 (function () {
   const R = window.RailUI, RM = window.RunCardModel;
+  const FIRST = window.RailFirstRun = typeof location !== 'undefined' && /[?&]first\b/.test(location.search);   // the first run: a newcomer's empty Worca
   const run = (id, kase, title, project, detail, time, day, o = {}) => ({ id, case: kase, title, project, detail, time, day, labels: [], cost: null, archived: false, unread: false, pr: '', group: '', kind: 'Git', by: 'Emil Angelov', ...o });
   // not started yet: `when` is its group in Vitals › Scheduled
   const wait = (id, kase, when, title, project, detail, time, o) => run(id, kase, title, project, detail, time, 'upcoming', { when, ...o });
@@ -119,7 +120,7 @@
     const c = CASES[id], t = table();
     const groups = (c.groups || []);
     const ids = [...Object.keys(c.runs), ...groups.flatMap((g) => MEMBERS[g]), ...ENDED];
-    data = { groups: groups.map((g) => ({ ...GROUPS[g] })), runs: ids.map((x) => ({ ...t[x], ...(c.runs[x] || {}) })), userGroups: [{ id: 'g-rel', title: 'Release 1.20' }, { id: 'g-tidy', title: 'Tidy up' }, { id: 'g-sec', title: 'Security review' }] };
+    data = FIRST ? { groups: [], runs: [], userGroups: [] } : { groups: groups.map((g) => ({ ...GROUPS[g] })), runs: ids.map((x) => ({ ...t[x], ...(c.runs[x] || {}) })), userGroups: [{ id: 'g-rel', title: 'Release 1.20' }, { id: 'g-tidy', title: 'Tidy up' }, { id: 'g-sec', title: 'Security review' }] };
     titles();
   }
   // The run page's title, on any way in (a deep link, the case picker): the run this case's mock has in that state.
