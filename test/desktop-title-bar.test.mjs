@@ -2,13 +2,14 @@
 // the saved window-shell.json prefs (desktop/src/title-bar.mjs) and the window / tray icon choice (desktop/src/app-icons.mjs).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   TOP_BAR_HEIGHT, THEME_COLORS, TRAFFIC_LIGHTS, TRAFFIC_LIGHTS_SIZE, titleBarChrome, parseShellState, resolveScheme,
-  chromeWindowOptions, readShellPrefs, writeShellPrefs,
+  chromeWindowOptions, readShellPrefs, writeShellPrefs, DESKTOP_SHELL_CSS, readDesktopShellCss, titleDoubleClickAction,
+  TITLE_DBLCLICK_CHANNEL,
 } from '../desktop/src/title-bar.mjs';
 import { windowIconFile, trayImageFile, systemUIDark } from '../desktop/src/app-icons.mjs';
 
@@ -113,4 +114,36 @@ test('every file name trayImageFile and windowIconFile can return exists in desk
   }
   assert.deepEqual([...names].sort(), ['icon.png', 'tray-black.png', 'tray-white.png', 'trayTemplate.png']);
   for (const n of names) assert.ok(existsSync(join(ROOT, 'desktop/assets', n)), n);
+});
+
+test('readDesktopShellCss: the real part from the repo root; missing dir → null; empty → null', () => {
+  assert.deepEqual(DESKTOP_SHELL_CSS, ['ui', 'public', 'shell', 'desktop-shell.css']);
+  assert.ok(Object.isFrozen(DESKTOP_SHELL_CSS));
+  assert.equal(readDesktopShellCss(ROOT), readFileSync(join(ROOT, 'ui/public/shell/desktop-shell.css'), 'utf8'));
+  assert.match(readDesktopShellCss(ROOT), /data-shell-chrome="inset"/);
+  withDir((dir) => {
+    assert.equal(readDesktopShellCss(join(dir, 'missing')), null);
+    mkdirSync(join(dir, 'ui', 'public', 'shell'), { recursive: true });
+    writeFileSync(join(dir, 'ui', 'public', 'shell', 'desktop-shell.css'), '');
+    assert.equal(readDesktopShellCss(dir), null, 'an empty file');
+    writeFileSync(join(dir, 'ui', 'public', 'shell', 'desktop-shell.css'), 'a{}');
+    assert.equal(readDesktopShellCss(dir), 'a{}');
+  });
+  const paths = [];
+  assert.equal(readDesktopShellCss('/srv', { readFile: (p, enc) => { paths.push([p, enc]); return 'X'; } }), 'X');
+  assert.deepEqual(paths, [[join('/srv', 'ui', 'public', 'shell', 'desktop-shell.css'), 'utf8']]);
+  assert.equal(readDesktopShellCss('/srv', { readFile: () => { throw new Error('EACCES'); } }), null, 'a read error');
+  assert.equal(readDesktopShellCss(undefined), null, 'no root');
+});
+
+test('titleDoubleClickAction: macOS follows AppleActionOnDoubleClick (Maximize, Fill, Minimize, None, unset, junk); Windows and Linux toggle maximize', () => {
+  const mac = (appleAction) => titleDoubleClickAction({ platform: 'darwin', appleAction });
+  assert.equal(mac('Minimize'), 'minimize');
+  assert.equal(mac('None'), 'none');
+  for (const v of ['Maximize', 'Fill', '', null, undefined, 'minimize', 'none', 'NONE', ' Minimize', 42, true, {}, ['None']]) assert.equal(mac(v), 'maximize', JSON.stringify(v));
+  for (const platform of ['win32', 'linux', 'freebsd', undefined]) {
+    for (const appleAction of ['Minimize', 'None', null]) assert.equal(titleDoubleClickAction({ platform, appleAction }), 'maximize', `${platform} ${appleAction}`);
+  }
+  assert.equal(titleDoubleClickAction({}), 'maximize');
+  assert.equal(TITLE_DBLCLICK_CHANNEL, 'worca:title-dblclick');
 });

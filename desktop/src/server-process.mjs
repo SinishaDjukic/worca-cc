@@ -23,16 +23,22 @@ export function whichOnPath(name, { env = process.env, platform = process.platfo
   return null;
 }
 
+/** The server tree this app ships or runs from: <resources>/server when packaged, the checkout in dev. Never throws. */
+export function serverTreeRoot({ packaged, resourcesPath, desktopDir }) {
+  return packaged ? join(resourcesPath, 'server') : resolve(desktopDir, '..');
+}
+
 /** Which node runs which server tree: the bundled pair when packaged, the checkout + a system node in dev. */
 export function resolveServerRuntime({ packaged, resourcesPath, desktopDir, platform = process.platform, env = process.env, which = (n) => whichOnPath(n, { env, platform }) }) {
+  const serverRoot = serverTreeRoot({ packaged, resourcesPath, desktopDir });
   if (packaged) {
-    return { nodePath: join(resourcesPath, 'node', platform === 'win32' ? 'node.exe' : 'node'), serverRoot: join(resourcesPath, 'server') };
+    return { nodePath: join(resourcesPath, 'node', platform === 'win32' ? 'node.exe' : 'node'), serverRoot };
   }
   const nodePath = (env.WORCA_DESKTOP_NODE && String(env.WORCA_DESKTOP_NODE).trim()) || which('node');
   if (!nodePath) {
     throw Object.assign(new Error('Worca needs Node 22.19 or newer to run from a checkout: install it or set WORCA_DESKTOP_NODE'), { code: 'NODE_NOT_FOUND' });
   }
-  return { nodePath, serverRoot: resolve(desktopDir, '..') };
+  return { nodePath, serverRoot };
 }
 
 /**

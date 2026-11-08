@@ -19,10 +19,38 @@ export const TRAFFIC_LIGHTS = Object.freeze({
 });
 export const TRAFFIC_LIGHTS_SIZE = Object.freeze({ width: 52, height: 14 });
 
+/** The renderer's title-strip double-click (no payload); the sandboxed preload repeats the literal. */
+export const TITLE_DBLCLICK_CHANNEL = 'worca:title-dblclick';
+
+/** The desktop chrome CSS part, relative to a server tree (main injects it when a server it did not start serves the page). */
+export const DESKTOP_SHELL_CSS = Object.freeze(['ui', 'public', 'shell', 'desktop-shell.css']);
+
 const MODES = new Set(['system', 'light', 'dark']);
 const SCHEMES = new Set(['light', 'dark']);
 const PREFS_FILE = 'window-shell.json';
 const DEFAULT_PREFS = Object.freeze({ mode: 'system', rail: false });
+
+/** <serverRoot>/ui/public/shell/desktop-shell.css as text; null on any read error or an empty file. Never throws. */
+export function readDesktopShellCss(serverRoot, { readFile = readFileSync } = {}) {
+  try {
+    const text = String(readFile(join(serverRoot, ...DESKTOP_SHELL_CSS), 'utf8'));
+    return text ? text : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What a double-click on the title strip does: macOS follows "Double-click a window's title bar to…"
+ * (AppleActionOnDoubleClick: Minimize, None; Maximize, Fill, unset or anything else zoom); every other OS toggles
+ * maximize. 'maximize' means toggle: maximize, or restore when already maximized.
+ */
+export function titleDoubleClickAction({ platform, appleAction } = {}) {
+  if (platform !== 'darwin') return 'maximize';
+  if (appleAction === 'Minimize') return 'minimize';
+  if (appleAction === 'None') return 'none';
+  return 'maximize';
+}
 
 export function titleBarChrome(platform) {
   if (platform === 'darwin') return 'inset';

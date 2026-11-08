@@ -2,18 +2,21 @@
 // running on the shared store or start one (4317, else an OS port), a sandboxed window and a tray, close-to-tray, and
 // a Quit that stops only a server this app started. The window's title bar follows the OS and the page's theme
 // (title-bar.mjs): the preload reports { mode, scheme, rail } over `worca:shell-state`, accepted only from the main
-// window's own top frame on the app origin. `electron` and every helper are injected: tests pass fakes, and
+// window's own top frame on the app origin. A double-click on the title strip arrives over `worca:title-dblclick`
+// under the same guard and zooms, minimizes or does nothing as the OS setting says. A server this app did not start
+// may serve an older page without the desktop CSS, so main injects its own copy of desktop-shell.css into the main
+// window on every document load of the app origin. `electron` and every helper are injected: tests pass fakes, and
 // desktop/main.mjs is the only file that imports electron. Imports only node: builtins and sibling modules.
 import { createWriteStream, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { readLoginShellPath } from './shell-path.mjs';
 import { resolveStoreDir, findRunningServer, setupSingleInstance, shouldStartHidden } from './instance.mjs';
 import { choosePort, PREFERRED_PORT } from './ports.mjs';
-import { resolveServerRuntime, buildServerEnv, startServer, stopServer } from './server-process.mjs';
+import { resolveServerRuntime, serverTreeRoot, buildServerEnv, startServer, stopServer } from './server-process.mjs';
 import { windowOptions, permissionAllowed, applyContentsPolicy } from './window.mjs';
 import { trayMenuTemplate } from './tray-menu.mjs';
 import { APP_NAME, appMenuTemplate, aboutPanelOptions, readRootVersion, aboutVersion, devIconPath } from './app-menu.mjs';
-import { THEME_COLORS, TOP_BAR_HEIGHT, TRAFFIC_LIGHTS, titleBarChrome, parseShellState, resolveScheme, readShellPrefs, writeShellPrefs } from './title-bar.mjs';
+import { THEME_COLORS, TOP_BAR_HEIGHT, TRAFFIC_LIGHTS, TITLE_DBLCLICK_CHANNEL, DESKTOP_SHELL_CSS, titleBarChrome, titleDoubleClickAction, parseShellState, resolveScheme, readShellPrefs, writeShellPrefs, readDesktopShellCss } from './title-bar.mjs';
 import { windowIconFile, trayImageFile, systemUIDark } from './app-icons.mjs';
 
 /** <userData>/logs/server.log, truncated on every start. An open or write error is logged: createWriteStream reports
@@ -31,13 +34,14 @@ export function openServerLog(userDataDir, { onError = (err) => console.error(`w
   }
 }
 
-const DEFAULT_HELPERS = { readLoginShellPath, resolveStoreDir, findRunningServer, choosePort, resolveServerRuntime, buildServerEnv, startServer, stopServer, openServerLog, readRootVersion, readShellPrefs, writeShellPrefs };
+const DEFAULT_HELPERS = { readLoginShellPath, resolveStoreDir, findRunningServer, choosePort, resolveServerRuntime, buildServerEnv, startServer, stopServer, openServerLog, readRootVersion, readShellPrefs, writeShellPrefs, readDesktopShellCss, serverTreeRoot };
+const errText = (err) => (err && err.message ? err.message : String(err));
 const lastLines = (text, n) => String(text || '').split(/\r?\n/).filter((l) => l.trim()).slice(-n).join('\n');
 
 export function createDesktopController({ electron, platform = process.platform, argv = [], env = process.env, home, resourcesPath, packaged, desktopDir, helpers = {}, log = { info: console.log, error: console.error } }) {
-  const { app, BrowserWindow, Tray, Menu, shell, dialog, session, nativeImage, ipcMain, nativeTheme } = electron;
+  const { app, BrowserWindow, Tray, Menu, shell, dialog, session, nativeImage, ipcMain, nativeTheme, systemPreferences } = electron;
   const h = { ...DEFAULT_HELPERS, ...helpers };
-  const st = { url: null, owned: false, quitting: false, stopping: false, stopped: false, handle: null, starting: null, storeDir: null, loginPath: null, win: null, tray: null, trayFile: null, openAtLogin: false, logPath: null, logStream: null, pendingShow: false, chrome: titleBarChrome(platform), scheme: 'light', shellState: null, prefs: null };
+  const st = { url: null, owned: false, quitting: false, stopping: false, stopped: false, handle: null, starting: null, storeDir: null, loginPath: null, win: null, tray: null, trayFile: null, openAtLogin: false, logPath: null, logStream: null, pendingShow: false, chrome: titleBarChrome(platform), scheme: 'light', shellState: null, prefs: null, shellCss: undefined };
 
   const getAppOrigin = () => { try { return st.url ? new URL(st.url).origin : null; } catch { return null; } };
   const loginArgs = () => (platform === 'win32' ? { args: ['--hidden'] } : undefined);
@@ -116,21 +120,65 @@ export function createDesktopController({ electron, platform = process.platform,
 
   const sendFullScreen = (contents, on) => { if (contents && typeof contents.send === 'function') contents.send('worca:shell-fullscreen', !!on); };
 
-  /** The renderer's { mode, scheme, rail }: fail closed unless it comes from the main window's top frame on the app
-   *  origin (re-read per message: a Restart can move the port). A refused message changes nothing and gets no reply. */
-  function onShellState(event, payload) {
+  /** The main window when `event` comes from its own top frame on the app origin (re-read per message: a Restart can
+   *  move the port), else null. Every renderer message fails closed through it. */
+  function fromMainTopFrame(event) {
     const win = st.win;
-    if (!win || !event || event.sender !== win.webContents) return;
+    if (!win || !event || event.sender !== win.webContents) return null;
     const frame = event.senderFrame;
-    if (!frame || frame !== event.sender.mainFrame) return;
+    if (!frame || frame !== event.sender.mainFrame) return null;
     const appOrigin = getAppOrigin();
     let frameOrigin = null;
     try { frameOrigin = new URL(String(frame.url)).origin; } catch { /* not a URL: refused below */ }
-    if (!appOrigin || frameOrigin !== appOrigin) return;
+    if (!appOrigin || frameOrigin !== appOrigin) return null;
+    return win;
+  }
+
+  /** The renderer's { mode, scheme, rail }: a refused message changes nothing and gets no reply. */
+  function onShellState(event, payload) {
+    const win = fromMainTopFrame(event);
+    if (!win) return;
     const state = parseShellState(payload);
     if (!state) return;
     applyShellState(win, state);
     sendFullScreen(event.sender, typeof win.isFullScreen === 'function' && win.isFullScreen());
+  }
+
+  /** A double-click on the title strip (payload ignored): refused like a shell-state message, and a no-op in full
+   *  screen. macOS follows AppleActionOnDoubleClick; every other OS toggles maximize. */
+  function onTitleDoubleClick(event) {
+    const win = fromMainTopFrame(event);
+    if (!win) return;
+    if (typeof win.isFullScreen === 'function' && win.isFullScreen()) return;
+    let appleAction = null;
+    if (platform === 'darwin') {
+      try { appleAction = systemPreferences && typeof systemPreferences.getUserDefault === 'function' ? systemPreferences.getUserDefault('AppleActionOnDoubleClick', 'string') : null; } catch { appleAction = null; }
+    }
+    const action = titleDoubleClickAction({ platform, appleAction });
+    const call = (name) => { if (typeof win[name] === 'function') win[name](); };
+    if (action === 'maximize') call(typeof win.isMaximized === 'function' && win.isMaximized() ? 'unmaximize' : 'maximize');
+    else if (action === 'minimize') call('minimize');
+  }
+
+  /** Every document load: a server this app did not start may serve an older page without the desktop CSS, so the
+   *  app's own copy goes in (read once). Only for a reused server, a non-native chrome and the app origin; never throws. */
+  function injectShellCss(contents) {
+    try {
+      if (st.owned || st.chrome === 'native' || !contents) return;
+      const appOrigin = getAppOrigin();
+      let origin = null;
+      try { origin = new URL(String(contents.getURL())).origin; } catch { /* no URL: refused below */ }
+      if (!appOrigin || origin !== appOrigin) return;
+      if (st.shellCss === undefined) {
+        const root = h.serverTreeRoot({ packaged, resourcesPath, desktopDir });
+        st.shellCss = h.readDesktopShellCss(root);
+        if (st.shellCss === null) log.error(`worca desktop: ${join(root, ...DESKTOP_SHELL_CSS)} is missing; the window chrome falls back to the page's own CSS`);
+      }
+      if (!st.shellCss || typeof contents.insertCSS !== 'function') return;
+      Promise.resolve(contents.insertCSS(st.shellCss)).catch((err) => log.error(`worca desktop: injecting the desktop chrome CSS failed: ${errText(err)}`));
+    } catch (err) {
+      try { log.error(`worca desktop: injecting the desktop chrome CSS failed: ${errText(err)}`); } catch { /* a failing logger must not reach Electron */ }
+    }
   }
 
   /** Colours come from THEME_COLORS only; an unchanged state makes no window call and no write. */
@@ -161,6 +209,7 @@ export function createDesktopController({ electron, platform = process.platform,
     st.win = win;
     win.on('enter-full-screen', () => sendFullScreen(win.webContents, true));
     win.on('leave-full-screen', () => sendFullScreen(win.webContents, false));
+    win.webContents.on('dom-ready', () => injectShellCss(win.webContents));
     const ses = session.defaultSession;
     ses.setPermissionRequestHandler((_wc, permission, cb, details) => cb(permissionAllowed(permission, details && details.requestingUrl, getAppOrigin())));
     ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) => permissionAllowed(permission, requestingOrigin, getAppOrigin()));
@@ -243,7 +292,10 @@ export function createDesktopController({ electron, platform = process.platform,
     if (!setupSingleInstance(app, { onSecondInstance: showWindow })) return;
     await app.whenReady();
     setupAppIdentity();
-    if (ipcMain) ipcMain.on('worca:shell-state', onShellState);
+    if (ipcMain) {
+      ipcMain.on('worca:shell-state', onShellState);
+      ipcMain.on(TITLE_DBLCLICK_CHANNEL, onTitleDoubleClick);
+    }
     app.on('before-quit', (e) => {
       st.quitting = true;
       if (st.stopped) return;

@@ -1,7 +1,9 @@
 // desktop/preload.cjs — the main window's preload (docs/desktop.md "Window and icons"). Sandboxed: CommonJS, and the
 // only module it may require is electron. It marks <html> as the desktop shell (data-shell, data-shell-chrome; the
 // desktop-only CSS keys off them), reports the theme and the sidebar rail as enums ({ mode, scheme, rail }; main picks
-// the colours), and follows main's full-screen flag. It exposes nothing to the page: no bridge API, no globals.
+// the colours), and follows main's full-screen flag. A double-click on the title strip's empty space (the drag
+// regions of desktop-shell.css, never a control) goes to main over worca:title-dblclick, which zooms or minimizes
+// as the OS says. It exposes nothing to the page: no bridge API, no globals.
 'use strict';
 
 (() => {
@@ -9,6 +11,20 @@
   const CHROMES = ['inset', 'overlay', 'native'];
   const MODES = ['system', 'light', 'dark'];
   const ARG = '--worca-chrome=';
+  // The double-click mirrors desktop-shell.css: the strips that are app-region: drag per chrome, and every no-drag
+  // selector of its rules (test/desktop-preload.test.mjs checks NO_DRAG covers them all).
+  const SEND_CHROMES = ['inset', 'overlay'];
+  const STRIP = '.brand, .topnav';
+  const OVERLAY_STRIP = '.term-head';
+  const WORKFLOWS_STRIP = 'body.view-workflows .view[data-view="workflows"]';
+  const NO_DRAG = [
+    'a', 'button', 'input', 'select', 'textarea', 'label', 'summary', '[role="button"]', '[tabindex]', '[contenteditable]',
+    'dialog', '[popover]', '[role="dialog"]', '[role="alertdialog"]', '[role="menu"]', '[role="listbox"]', '[role="tooltip"]',
+    '.viewer-modal', '.guide-scrim', '.guide-ring', '.guide-balloon', '.apv', '.req-help', '.ss', '.session-expired',
+    '.chat-scrim', '.chat-panel', '.nav-fly', '.activity-pop', '.tsearch-pop', '.info-bubble', '.mention-popup', '.pp-bar',
+    '.pp-pop', '.wfv-menu', '.term-pane', '.chart-tip', '.cr-picker', '.tl-pop', '.group-picker', '.label-picker',
+    '.mk-tu-pop', '.req-dlg-wrap', '.wfv',
+  ];
 
   const argv = Array.isArray(process.argv) ? process.argv : [];
   const given = argv.find((a) => typeof a === 'string' && a.startsWith(ARG));
@@ -63,6 +79,26 @@
       if (typeof window.matchMedia === 'function') window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', report);
     } catch { /* no media queries: the scheme stays as reported */ }
   });
+
+  if (SEND_CHROMES.includes(chrome)) {
+    const strip = chrome === 'overlay' ? `${STRIP}, ${OVERLAY_STRIP}` : STRIP;
+    const noDrag = NO_DRAG.join(', ');
+    document.addEventListener('dblclick', (event) => {
+      if (!event || event.button !== 0) return;
+      const root = document.documentElement;
+      if (chrome === 'inset' && root && root.hasAttribute('data-shell-fullscreen')) return;
+      let el = event.target;
+      if (el && el.nodeType === 3) el = el.parentElement;
+      if (!el || el.nodeType !== 1) return;
+      const s = el.closest(strip) || (el.matches(WORKFLOWS_STRIP) ? el : null);
+      if (!s) return;
+      // As in the CSS, a strip sets drag itself: only a no-drag element inside it (a control, an overlay root) blocks,
+      // never a no-drag ancestor (.term-head sits inside the no-drag aside.term-pane).
+      const nd = el.closest(noDrag);
+      if (nd && s.contains(nd)) return;
+      ipcRenderer.send('worca:title-dblclick');
+    }, true);
+  }
 
   ipcRenderer.on('worca:shell-fullscreen', (_event, on) => {
     const root = document.documentElement;

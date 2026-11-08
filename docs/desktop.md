@@ -68,6 +68,14 @@ again only when the Electron version or the icon changes; `rm -r desktop/.dev-ap
   Worca, but the bold menu-bar title says "Electron": then only the packaged build shows the name.
 - On Windows and Linux `npm start` is exactly `electron .`.
 
+**Live check (macOS).** `node tools/desktop-live-check.mjs` launches the app in a sandbox home (needs
+`npm ci --prefix desktop`; macOS only) and measures what tests cannot: the wordmark and the logo row's controls clear
+the traffic lights, the drag strip, the collapsed rail, full screen and a double-click on the top bar. It prints one
+JSON line per check and exits 0 when all pass. `--reuse-old <git-ref>` first starts an older worca server from that
+commit, so the app reuses it; `--desktop-dir <dir>` launches another `desktop/` folder; `--os-click` also posts a real
+OS double-click, which needs Accessibility permission for the terminal; `--keep` keeps the sandbox. It is not part of
+`npm test` and never stops a process it did not start.
+
 ## How it behaves
 
 - **A Worca already running.** The app reads `<store>/ui.json` and asks that server's `/api/health`. If the pid
@@ -103,11 +111,23 @@ again only when the Electron version or the icon changes; `rm -r desktop/.dev-ap
 - **Linux:** the native title bar, as before.
 
 The logo row and the top bar move the window when dragged; their buttons, links and fields work as usual. The
-Workflows view, which has no top bar, gets a 48px strip at the top for this. At the window's narrowest width, the
+Workflows view, which has no top bar, gets a 48px strip at the top for this. A double-click on the empty part of
+that strip acts like a double-click on a title bar:
+
+- **macOS** follows System Settings › Desktop & Dock › "Double-click a window's title bar to": Zoom or Fill zooms the
+  window (a second double-click restores it), Minimize minimizes it, Do Nothing does nothing.
+- **Windows:** the top bar is the window's title bar, so it maximizes and restores. The open terminal's head works
+  the same way.
+- **Linux:** the native title bar does this itself.
+
+In full screen the double-click does nothing. At the window's narrowest width, the
 Chat page's run panel, the Help me answer panel and the export dialogs on the Requirements page fill the window; they
 start below the top bar, so the lights and buttons never cover their headers. These rules live in
 `ui/public/shell/desktop-shell.css` and apply only when the preload has set `data-shell-chrome` on the page, so
-the web UI in a browser looks exactly as before.
+the web UI in a browser looks exactly as before. A server this app did not start may serve an older page without the
+desktop CSS (for example an older CLI or web worca already running on the same store), so the app then adds its own
+copy of that file to the window on every page load. A newer server's page keeps its own rules; the added copy only
+repeats the app's.
 
 **Theme.** The preload tells the app the theme setting (System, Light or Dark), the resulting light or dark scheme
 and whether the sidebar is collapsed. The app then sets the window background (and on Windows the button colours)
@@ -115,22 +135,23 @@ from its own fixed colours, which match the UI's `--bg`, `--panel` and `--ink` t
 setting and the sidebar state (not colours) to `<userData>/window-shell.json`, so the next launch opens in the
 right colours with no flash. A missing or broken file means System and an expanded sidebar.
 
-**Icons.** Every icon is generated from the logo `desktop/build-resources/icon.png` by `tools/desktop-icons.mjs`
-(pure Node, no image library) and committed:
+**Icons.** Every icon is generated from the logo `desktop/build-resources/logo.png` by `tools/desktop-icons.mjs`
+(pure Node, no image library) and committed. The app icons put the whole black logo on an off-white rounded tile,
+so they read on a dark Dock or taskbar as well as on a light one:
 
 | File | Used for |
 |---|---|
-| `desktop/build-resources/icon.icns` | macOS Dock and app bundle (the circle at 824px inside 1024, Apple's icon grid) |
-| `desktop/build-resources/icon.ico` | Windows exe, taskbar, installer and uninstaller (16 to 256px) |
-| `desktop/build-resources/icons/<n>x<n>.png` | Linux (16 to 512px) |
-| `desktop/assets/icon.png` | the window icon on Windows and Linux (256px) |
+| `desktop/build-resources/icon.icns` | macOS Dock and app bundle (an off-white rounded tile, 824 inside 1024, with the logo centred) |
+| `desktop/build-resources/icon.png` | the same 1024px tile: the About panel, the Dock icon from a checkout and the dev `Worca.app` |
+| `desktop/build-resources/icon.ico` | Windows exe, taskbar, installer and uninstaller (16 to 256px, a full-bleed rounded tile) |
+| `desktop/build-resources/icons/<n>x<n>.png` | Linux (16 to 512px, the full-bleed tile) |
+| `desktop/assets/icon.png` | the window and taskbar icon on Windows and Linux (256px, the full-bleed tile) |
 | `desktop/assets/trayTemplate.png`, `@2x` | the macOS menu bar icon (a template image the menu bar tints) |
 | `desktop/assets/tray-white.png`, `tray-black.png`, `@2x` | the Windows and Linux tray icon: white on a dark taskbar, black on a light one, swapped when the OS theme changes |
 
 After changing the logo, run `node tools/desktop-icons.mjs` and commit the files.
 `node tools/desktop-icons.mjs --check` decodes the committed files and compares their pixels with a fresh
-generation (`test/desktop-icons.test.mjs` does the same). The logo's W is cut out, not painted: on a dark Dock the W
-shows the Dock through the black disc, as the logo itself does.
+generation (`test/desktop-icons.test.mjs` does the same).
 
 ## App name, menu and icon (macOS)
 
@@ -141,12 +162,13 @@ shows the Dock through the black disc, as the logo itself does.
 - **Developer tools.** Toggle Developer Tools is in the View menu only when the app runs from a checkout.
 - **About Worca** shows the name, the version and the icon. The packaged app shows its own version; from a checkout
   it shows the version of the checkout's root `package.json`.
-- **Icon.** The Dock and the app use the worca icon (`desktop/build-resources/icon.png`) in the packaged build and
-  from a checkout.
+- **Icon.** The Dock and the app show the off-white tile with the logo: `icon.icns` in the packaged build, the
+  generated `desktop/build-resources/icon.png` from a checkout.
 - **userData.** The app sets its name to Worca at start, the same name it already had, so the folder under
   `~/Library/Application Support/Worca` (logs, see [Logs](#logs)) does not move.
 
-Windows and Linux keep Electron's default menu.
+Windows and Linux keep Electron's default menu, which has no About item. Their window and taskbar icon is the tile
+(`desktop/assets/icon.png`).
 
 ## Updates
 

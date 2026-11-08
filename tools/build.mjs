@@ -145,7 +145,7 @@ export function desktopBuilderConfig({ version, platform, arch, signed, notarize
       ...(signed ? { entitlements, entitlementsInherit: entitlements } : {}),
       notarize: !!notarize,
     },
-    // The icons are generated from build-resources/icon.png by tools/desktop-icons.mjs (committed; --check verifies).
+    // The icons (and build-resources/icon.png) are generated from build-resources/logo.png by tools/desktop-icons.mjs (committed; --check verifies).
     win: { target: [{ target: 'nsis', arch: ['x64'] }], icon: 'build-resources/icon.ico' },
     nsis: { oneClick: false, perMachine: false, installerIcon: 'build-resources/icon.ico', uninstallerIcon: 'build-resources/icon.ico' },
     linux: { target: ['AppImage', 'deb'], category: 'Development', maintainer: 'Sinisha Djukic', icon: 'build-resources/icons' },

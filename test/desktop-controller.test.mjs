@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { windowOptions, linkPolicy, permissionAllowed, applyContentsPolicy } from '../desktop/src/window.mjs';
@@ -11,6 +11,7 @@ import { trayMenuTemplate } from '../desktop/src/tray-menu.mjs';
 import { createDesktopController, openServerLog } from '../desktop/src/controller.mjs';
 import { appMenuTemplate } from '../desktop/src/app-menu.mjs';
 import { TRAFFIC_LIGHTS, THEME_COLORS } from '../desktop/src/title-bar.mjs';
+import { serverTreeRoot } from '../desktop/src/server-process.mjs';
 
 const tick = () => new Promise((r) => setImmediate(r));
 async function until(cond, n = 100) { for (let i = 0; i < n && !cond(); i++) await tick(); assert.ok(cond(), 'condition reached'); }
@@ -23,12 +24,18 @@ function fakeContents() {
   wc.sent = [];
   wc.send = (...args) => { wc.sent.push(args); };
   wc.mainFrame = { url: '' };
+  wc.inserted = [];
+  wc.insertCSS = (css) => { wc.inserted.push(css); return Promise.resolve('key'); };
+  wc.getURL = () => wc.mainFrame.url;
   return wc;
 }
 const navEvent = () => { const e = { prevented: false, preventDefault() { e.prevented = true; } }; return e; };
 
-function fakeElectron({ lock = true, loginItem = { openAtLogin: false, wasOpenedAtLogin: false }, dark = false, systemUIDark = dark } = {}) {
-  const calls = { quit: 0, enableSandbox: 0, setLogin: [], getLogin: [], openExternal: [], errorBox: [], messageBox: [], windows: [], trays: [], menus: [], images: [], setName: [], order: [], about: [], setPath: [], dockIcon: [], appMenu: [] };
+const THROW = Symbol('throw');
+const MISSING = Symbol('missing');
+
+function fakeElectron({ lock = true, loginItem = { openAtLogin: false, wasOpenedAtLogin: false }, dark = false, systemUIDark = dark, appleAction } = {}) {
+  const calls = { userDefaults: [], quit: 0, enableSandbox: 0, setLogin: [], getLogin: [], openExternal: [], errorBox: [], messageBox: [], windows: [], trays: [], menus: [], images: [], setName: [], order: [], about: [], setPath: [], dockIcon: [], appMenu: [] };
   const app = new EventEmitter();
   app.isPackaged = false;
   app.requestSingleInstanceLock = () => lock;
@@ -49,7 +56,9 @@ function fakeElectron({ lock = true, loginItem = { openAtLogin: false, wasOpened
       this.opts = opts; this.visible = false; this.loaded = []; this.shows = 0; this.hides = 0; this.focuses = 0;
       this.webContents = fakeContents();
       this.chromeCalls = [];
+      this.winCalls = [];
       this.fullScreen = false;
+      this.maximized = false;
       calls.windows.push(this);
       app.emit('web-contents-created', {}, this.webContents);
     }
@@ -63,6 +72,10 @@ function fakeElectron({ lock = true, loginItem = { openAtLogin: false, wasOpened
     focus() { this.focuses++; }
     isVisible() { return this.visible; }
     isMinimized() { return false; }
+    isMaximized() { return this.maximized; }
+    maximize() { this.winCalls.push('maximize'); this.maximized = true; }
+    unmaximize() { this.winCalls.push('unmaximize'); this.maximized = false; }
+    minimize() { this.winCalls.push('minimize'); }
   }
   class Tray extends EventEmitter {
     constructor(img) { super(); this.img = img; this.menu = null; this.images = []; calls.trays.push(this); }
@@ -84,7 +97,10 @@ function fakeElectron({ lock = true, loginItem = { openAtLogin: false, wasOpened
   const nativeTheme = new EventEmitter();
   nativeTheme.shouldUseDarkColors = dark;
   nativeTheme.shouldUseDarkColorsForSystemIntegratedUI = systemUIDark;
-  return { electron: { app, BrowserWindow, Tray, Menu, shell, dialog, session, nativeImage, ipcMain, nativeTheme }, calls, handlers };
+  const systemPreferences = { getUserDefault: (key, type) => { calls.userDefaults.push([key, type]); if (appleAction === THROW) throw new Error('no defaults'); return appleAction; } };
+  const electron = { app, BrowserWindow, Tray, Menu, shell, dialog, session, nativeImage, ipcMain, nativeTheme, systemPreferences };
+  if (appleAction === MISSING) delete electron.systemPreferences;
+  return { electron, calls, handlers };
 }
 
 function fakeChildHandle(url, port, pid = 900) {
@@ -96,7 +112,7 @@ function fakeChildHandle(url, port, pid = 900) {
 }
 
 function fakeHelpers(over = {}) {
-  const seen = { find: 0, start: [], stop: [], choose: 0, prefs: [], writes: [] };
+  const seen = { find: 0, start: [], stop: [], choose: 0, prefs: [], writes: [], cssReads: [], treeRoots: [] };
   const helpers = {
     readLoginShellPath: async () => ({ path: '/opt/homebrew/bin:/usr/bin', source: 'login-shell' }),
     readRootVersion: () => '1.2.3',
@@ -110,13 +126,15 @@ function fakeHelpers(over = {}) {
     openServerLog: () => ({ stream: null, path: '/user-data/logs/server.log' }),
     readShellPrefs: (dir) => { seen.prefs.push(dir); return { mode: 'system', rail: false }; },
     writeShellPrefs: (dir, prefs, opts) => { seen.writes.push({ dir, prefs, onError: typeof opts?.onError }); },
+    readDesktopShellCss: (root) => { seen.cssReads.push(root); return 'CSS'; },
+    serverTreeRoot: (o) => { seen.treeRoots.push(o); return '/srv'; },
     ...over,
   };
   return { helpers, seen };
 }
 
-function makeController({ platform = 'darwin', argv = ['Worca'], lock, over, loginItem, packaged = false, log = { info() {}, error() {} }, dark, systemUIDark } = {}) {
-  const fe = fakeElectron({ lock, loginItem, dark, systemUIDark });
+function makeController({ platform = 'darwin', argv = ['Worca'], lock, over, loginItem, packaged = false, log = { info() {}, error() {} }, dark, systemUIDark, appleAction } = {}) {
+  const fe = fakeElectron({ lock, loginItem, dark, systemUIDark, appleAction });
   const { helpers, seen } = fakeHelpers(over);
   const ctl = createDesktopController({ electron: fe.electron, platform, argv, env: { PATH: '/usr/bin' }, home: '/Users/u', resourcesPath: '/res', packaged, desktopDir: '/app/desktop', helpers, log });
   return { ctl, ...fe, seen };
@@ -807,4 +825,221 @@ test('26. a throwing setApplicationMenu is logged and the window and tray still 
   assert.equal(calls.windows.length, 1);
   assert.equal(calls.trays.length, 1);
   assert.equal(calls.errorBox.length, 0);
+});
+
+const REUSED = { findRunningServer: async () => ({ url: APP, port: 4317, pid: 5, owned: false }) };
+const domReady = (win) => win.webContents.emit('dom-ready');
+
+test('27. a reused server: every dom-ready on the app origin inserts the app\'s desktop CSS (twice after a reload); read once', async () => {
+  const { ctl, calls, seen } = makeController({ over: REUSED });
+  await ctl.start();
+  const w = calls.windows[0];
+  assert.deepEqual(w.webContents.inserted, [], 'nothing before the document exists');
+  domReady(w);
+  assert.deepEqual(w.webContents.inserted, ['CSS']);
+  domReady(w);   // a reload
+  assert.deepEqual(w.webContents.inserted, ['CSS', 'CSS']);
+  assert.deepEqual(seen.cssReads, ['/srv'], 'read once per controller');
+  assert.deepEqual(seen.treeRoots, [{ packaged: false, resourcesPath: '/res', desktopDir: '/app/desktop' }]);
+  // Packaged: the CSS comes from the bundled server tree (<resources>/server), never the dev checkout.
+  const pkg = makeController({ packaged: true, over: { ...REUSED, serverTreeRoot } });
+  await pkg.ctl.start();
+  domReady(pkg.calls.windows[0]);
+  assert.deepEqual(pkg.calls.windows[0].webContents.inserted, ['CSS']);
+  assert.deepEqual(pkg.seen.cssReads, [join('/res', 'server')], 'packaged: <resources>/server');
+  // An owned server that dies and, on Restart, loses 4317 to a worca that won: now reused, so the CSS is injected.
+  let starts = 0;
+  let finds = 0;
+  const flip = makeController({ over: {
+    findRunningServer: async () => (++finds === 2 ? { url: APP, port: 4317, pid: 3, owned: false } : null),
+    startServer: async ({ env }) => {
+      if (++starts === 2) throw Object.assign(new Error('exited'), { code: 'SERVER_EXITED', portBusy: true, stderrTail: '' });
+      const hd = fakeChildHandle(APP, 4317); flip.seen.start.push({ env, handle: hd }); return hd;
+    },
+  } });
+  await flip.ctl.start();
+  const fw = flip.calls.windows[0];
+  domReady(fw);
+  assert.deepEqual(fw.webContents.inserted, [], 'owned: the server serves its own CSS');
+  flip.seen.start[0].handle.die(1);
+  await until(() => fw.loaded.length === 2);
+  assert.equal(flip.ctl.state().owned, false);
+  domReady(fw);
+  assert.deepEqual(fw.webContents.inserted, ['CSS'], 'st.owned is read at every dom-ready');
+});
+
+test('27b. an owned server, the native chrome (linux) or a foreign origin: no insertCSS', async () => {
+  const owned = makeController();
+  await owned.ctl.start();
+  domReady(owned.calls.windows[0]);
+  assert.deepEqual(owned.calls.windows[0].webContents.inserted, []);
+  assert.deepEqual(owned.seen.cssReads, []);
+  const lin = makeController({ platform: 'linux', over: REUSED });
+  await lin.ctl.start();
+  domReady(lin.calls.windows[0]);
+  assert.deepEqual(lin.calls.windows[0].webContents.inserted, []);
+  assert.deepEqual(lin.seen.cssReads, []);
+  const win = makeController({ platform: 'win32', over: REUSED });
+  await win.ctl.start();
+  domReady(win.calls.windows[0]);
+  assert.deepEqual(win.calls.windows[0].webContents.inserted, ['CSS'], 'the overlay chrome needs it too');
+  const mac = makeController({ over: REUSED });
+  await mac.ctl.start();
+  const w = mac.calls.windows[0];
+  for (const url of ['https://evil.example/', 'http://127.0.0.1:9999/#history', 'about:blank', 'not a url', '']) {
+    w.webContents.mainFrame.url = url;
+    domReady(w);
+    assert.deepEqual(w.webContents.inserted, [], url);
+  }
+  assert.deepEqual(mac.seen.cssReads, []);
+  w.webContents.getURL = undefined;
+  assert.doesNotThrow(() => domReady(w));
+  assert.deepEqual(w.webContents.inserted, [], 'no URL: refused');
+});
+
+test('27c. unreadable CSS logs once and inserts nothing; a rejected insertCSS is logged, never thrown', async () => {
+  const errors = [];
+  const log = { info() {}, error: (m) => errors.push(m) };
+  const none = makeController({ log, over: { ...REUSED, readDesktopShellCss: (root) => { none.seen.cssReads.push(root); return null; } } });
+  await none.ctl.start();
+  const w = none.calls.windows[0];
+  domReady(w); domReady(w);
+  assert.deepEqual(w.webContents.inserted, []);
+  assert.deepEqual(none.seen.cssReads, ['/srv'], 'a missing file is not read again');
+  assert.deepEqual(errors, [`worca desktop: ${join('/srv', 'ui', 'public', 'shell', 'desktop-shell.css')} is missing; the window chrome falls back to the page's own CSS`]);
+  errors.length = 0;
+  const bad = makeController({ log, over: REUSED });
+  await bad.ctl.start();
+  const bw = bad.calls.windows[0];
+  bw.webContents.insertCSS = () => Promise.reject(new Error('boom'));
+  assert.doesNotThrow(() => domReady(bw));
+  await tick();
+  assert.deepEqual(errors, ['worca desktop: injecting the desktop chrome CSS failed: boom']);
+  bw.webContents.insertCSS = () => { throw new Error('sync boom'); };
+  assert.doesNotThrow(() => domReady(bw));
+  assert.deepEqual(errors.at(-1), 'worca desktop: injecting the desktop chrome CSS failed: sync boom');
+  bw.webContents.insertCSS = undefined;
+  assert.doesNotThrow(() => domReady(bw));
+  const throwing = makeController({ log, over: { ...REUSED, readDesktopShellCss: () => { throw new Error('fs gone'); } } });
+  await throwing.ctl.start();
+  assert.doesNotThrow(() => domReady(throwing.calls.windows[0]));
+  assert.deepEqual(throwing.calls.windows[0].webContents.inserted, []);
+});
+
+const dbl = (mk, ev) => mk.electron.ipcMain.emit('worca:title-dblclick', ev ?? shellEvent(mk.calls.windows[0]), { evil: true });
+
+test('28. title double-click on darwin: unset/Maximize/Fill zoom then restore; Minimize minimizes; None does nothing; getUserDefault gets (AppleActionOnDoubleClick, string)', async () => {
+  for (const appleAction of [undefined, '', 'Maximize', 'Fill']) {
+    const mk = makeController({ appleAction });
+    await mk.ctl.start();
+    const w = mk.calls.windows[0];
+    dbl(mk);
+    assert.deepEqual(w.winCalls, ['maximize'], String(appleAction));
+    dbl(mk);
+    assert.deepEqual(w.winCalls, ['maximize', 'unmaximize'], String(appleAction));
+    assert.deepEqual(mk.calls.userDefaults, [['AppleActionOnDoubleClick', 'string'], ['AppleActionOnDoubleClick', 'string']], 'read per click');
+    assert.deepEqual(w.webContents.sent, [], 'no reply');
+  }
+  const min = makeController({ appleAction: 'Minimize' });
+  await min.ctl.start();
+  dbl(min);
+  assert.deepEqual(min.calls.windows[0].winCalls, ['minimize']);
+  const none = makeController({ appleAction: 'None' });
+  await none.ctl.start();
+  dbl(none); dbl(none);
+  assert.deepEqual(none.calls.windows[0].winCalls, []);
+  assert.equal(none.calls.userDefaults.length, 2);
+});
+
+test('28b. title double-click on win32 toggles maximize and never reads systemPreferences; a throwing or missing systemPreferences means maximize', async () => {
+  const win = makeController({ platform: 'win32', appleAction: 'None' });
+  await win.ctl.start();
+  dbl(win); dbl(win); dbl(win);
+  assert.deepEqual(win.calls.windows[0].winCalls, ['maximize', 'unmaximize', 'maximize']);
+  assert.deepEqual(win.calls.userDefaults, []);
+  for (const appleAction of [THROW, MISSING]) {
+    const mk = makeController({ appleAction });
+    await mk.ctl.start();
+    assert.doesNotThrow(() => dbl(mk));
+    assert.deepEqual(mk.calls.windows[0].winCalls, ['maximize'], String(appleAction));
+  }
+  const noFn = makeController({ appleAction: 'Minimize' });
+  noFn.electron.systemPreferences.getUserDefault = undefined;
+  await noFn.ctl.start();
+  dbl(noFn);
+  assert.deepEqual(noFn.calls.windows[0].winCalls, ['maximize'], 'no getUserDefault: the default');
+  const bare = makeController({ platform: 'win32' });
+  await bare.ctl.start();
+  const bw = bare.calls.windows[0];
+  bw.isMaximized = undefined; bw.maximize = undefined; bw.unmaximize = undefined; bw.minimize = undefined;
+  assert.doesNotThrow(() => dbl(bare), 'missing window methods do not throw');
+  const minNo = makeController({ appleAction: 'Minimize' });
+  await minNo.ctl.start();
+  minNo.calls.windows[0].minimize = undefined;
+  assert.doesNotThrow(() => dbl(minNo));
+});
+
+test('28d. desktop/main.mjs hands systemPreferences to the controller (else the macOS double-click setting is never read)', () => {
+  const main = readFileSync(new URL('../desktop/main.mjs', import.meta.url), 'utf8');
+  const m = /createDesktopController\(\{\s*electron:\s*\{([^}]*)\}/.exec(main);
+  assert.ok(m, 'main.mjs passes an electron object to createDesktopController');
+  assert.ok(m[1].split(',').map((x) => x.trim()).includes('systemPreferences'), m[1]);
+});
+
+test('28c. title double-click refused: another sender, a sub-frame, no frame, a foreign or stale origin, before the window exists; in full screen it does nothing; exactly one listener', async () => {
+  let n = 0;
+  const mk = makeController({ platform: 'darwin', over: {
+    startServer: async ({ env }) => { const port = ++n === 1 ? 4317 : 50777; const hd = fakeChildHandle(`http://127.0.0.1:${port}`, port, 900 + n); mk.seen.start.push({ env, handle: hd }); return hd; },
+  } });
+  await mk.ctl.start();
+  const w = mk.calls.windows[0];
+  const popup = fakeContents();
+  popup.mainFrame = { url: `${APP}/` };
+  const refused = [
+    { sender: popup, senderFrame: popup.mainFrame },
+    shellEvent(w, { senderFrame: { url: `${APP}/` } }),
+    shellEvent(w, { senderFrame: null }),
+    shellEvent(w, { senderFrame: undefined }),
+    { sender: w.webContents },
+    null,
+  ];
+  const check = (label) => {
+    assert.deepEqual(w.winCalls, [], label);
+    assert.deepEqual(w.webContents.sent, [], label);
+    assert.deepEqual(popup.sent, [], label);
+    assert.deepEqual(mk.calls.userDefaults, [], label);
+  };
+  for (const ev of refused) { assert.doesNotThrow(() => mk.electron.ipcMain.emit('worca:title-dblclick', ev)); check(JSON.stringify(ev && Object.keys(ev))); }
+  w.webContents.mainFrame = { url: 'https://evil.example/' };
+  dbl(mk);
+  check('foreign origin');
+  w.webContents.mainFrame = { url: `${APP}/#history` };
+  w.fullScreen = true;
+  dbl(mk);
+  check('full screen');
+  w.fullScreen = false;
+  mk.seen.start[0].handle.die(1);
+  await until(() => w.loaded.length === 2);
+  w.webContents.mainFrame = { url: `${APP}/#history` };   // still on the old port
+  dbl(mk);
+  check('stale origin after a Restart');
+  w.webContents.mainFrame = { url: 'http://127.0.0.1:50777/#history' };
+  dbl(mk);
+  assert.deepEqual(w.winCalls, ['maximize'], 'the new origin is accepted');
+  assert.equal(mk.electron.ipcMain.listenerCount('worca:title-dblclick'), 1, 'registered once');
+
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const early = makeController({ over: { startServer: async ({ env }) => { await gate; const hd = fakeChildHandle(APP, 4317); early.seen.start.push({ env, handle: hd }); return hd; } } });
+  const started = early.ctl.start();
+  await tick();
+  const wc = fakeContents();
+  wc.mainFrame = { url: `${APP}/` };
+  assert.doesNotThrow(() => early.electron.ipcMain.emit('worca:title-dblclick', { sender: wc, senderFrame: wc.mainFrame }));
+  assert.deepEqual(early.calls.userDefaults, []);
+  assert.deepEqual(wc.sent, []);
+  release();
+  await started;
+  assert.deepEqual(early.calls.windows[0].winCalls, []);
+  assert.equal(early.electron.ipcMain.listenerCount('worca:title-dblclick'), 1);
 });

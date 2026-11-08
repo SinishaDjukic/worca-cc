@@ -68,10 +68,24 @@ test('inset geometry: the wordmark clears the lights; the rail gets a taller top
   assert.equal(2 * expanded.y + height, TOP_BAR_HEIGHT, 'the lights are centred on the 48px logo row');
   assert.ok(Math.abs(2 * r.x + width - 60) <= 2, 'the lights are centred in the 60px rail');
   assert.equal(2 * r.y + height, px(rail['padding-top']), 'the lights are centred in the rail\'s top strip');
+  assert.ok(px(rail['padding-top']) >= r.y + height, 'the rail\'s top strip holds the whole light group');
+  assert.ok(px(brand['padding-left']) >= expanded.x + width + 12, 'the expanded wordmark keeps a 12px gap right of the lights');
+  for (const rule of rules) {
+    if (!/(^|;)\s*(padding[\w-]*|height)\s*:/.test(rule.body)) continue;
+    for (const s of selectors(rule)) if (s.startsWith(INSET) && /\.brand\b/.test(s)) assert.ok(s.startsWith(INSET_WINDOWED), `a .brand padding/height rule outside full screen only: ${s}`);
+  }
   for (const rule of rules) {
     if (!/padding|height|top:|background/.test(rule.body)) continue;
     for (const s of selectors(rule)) if (s.startsWith(INSET)) assert.ok(s.startsWith(INSET_WINDOWED), `full-screen scoped: ${s}`);
   }
+});
+
+test('the part is self-contained (no @import, no url()) so main can inject it as is', () => {
+  const code = partText.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(code, /@import/i);
+  assert.doesNotMatch(code, /\burl\s*\(/i);
+  const header = partText.slice(0, partText.indexOf(':root'));
+  assert.match(header.replace(/\s*\*\/\s*\/\*\s*/g, ' '), /main injects this file/, 'the header says why it must stay self-contained');
 });
 
 test('drag strips: the logo row and the top bar in both chromes; their controls and the overlay roots are no-drag', () => {

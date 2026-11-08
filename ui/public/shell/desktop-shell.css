@@ -17,6 +17,8 @@
 /* .info-bubble .mention-popup .pp-bar .pp-pop .wfv-menu .term-pane .chart-tip */
 /* .cr-picker .tl-pop .group-picker .label-picker .mk-tu-pop .req-dlg-wrap     */
 /* Add new fixed overlays here.                                                */
+/* If a server this app did not start serves the page, main injects this      */
+/* file (controller.mjs): keep it self-contained, no @import and no url().    */
 /* At 900px and narrower (the window's minWidth) three panels go full-window  */
 /* (position:fixed; inset:0): the Chat run panel, Help me answer and the      */
 /* export sheet. They start 48px down so their heads clear the lights and the */

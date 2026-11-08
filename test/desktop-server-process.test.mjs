@@ -11,7 +11,7 @@ import { devNull, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
-import { resolveServerRuntime, buildServerEnv, serverSpawnSpec, startServer, stopServer } from '../desktop/src/server-process.mjs';
+import { resolveServerRuntime, serverTreeRoot, buildServerEnv, serverSpawnSpec, startServer, stopServer } from '../desktop/src/server-process.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -55,6 +55,17 @@ test('resolveServerRuntime: packaged darwin/win32 paths; dev WORCA_DESKTOP_NODE 
   assert.equal(resolveServerRuntime({ packaged: false, desktopDir: '/repo/desktop', platform: 'darwin', env: {}, which: () => '/usr/local/bin/node' }).nodePath, '/usr/local/bin/node');
   assert.throws(() => resolveServerRuntime({ packaged: false, desktopDir: '/repo/desktop', platform: 'darwin', env: {}, which: () => null }),
     (e) => e.code === 'NODE_NOT_FOUND' && /Worca needs Node 22\.19 or newer to run from a checkout: install it or set WORCA_DESKTOP_NODE/.test(e.message));
+});
+
+test('serverTreeRoot: packaged → <resources>/server, dev → the checkout; resolveServerRuntime agrees', () => {
+  assert.equal(serverTreeRoot({ packaged: true, resourcesPath: '/A/Resources', desktopDir: '/repo/desktop' }), join('/A/Resources', 'server'));
+  assert.equal(serverTreeRoot({ packaged: false, resourcesPath: '/A/Resources', desktopDir: '/repo/desktop' }), '/repo');
+  assert.equal(serverTreeRoot({ packaged: false, desktopDir: join(ROOT, 'desktop') }), join(ROOT).replace(/[\\/]$/, ''));
+  for (const packaged of [true, false]) {
+    const o = { packaged, resourcesPath: '/A/Resources', desktopDir: '/repo/desktop' };
+    assert.equal(resolveServerRuntime({ ...o, platform: 'darwin', env: { WORCA_DESKTOP_NODE: '/n' }, which: () => null }).serverRoot, serverTreeRoot(o), `packaged ${packaged}`);
+  }
+  assert.doesNotThrow(() => serverTreeRoot({ packaged: false, desktopDir: '/x/desktop' }), 'needs no Node binary');
 });
 
 function fakeChild(pid = 4242, { exitsOn = ['SIGTERM', 'SIGKILL'] } = {}) {

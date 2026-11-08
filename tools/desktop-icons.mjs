@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// tools/desktop-icons.mjs — derive the desktop app's icons from the logo desktop/build-resources/icon.png
-// (docs/desktop.md "Window and icons"): the macOS .icns (framed 824 inside 1024), the Windows .ico, the Linux PNG set,
-// the runtime window icon and the tray art. Pure Node, no image library. The files are generated once and committed.
+// tools/desktop-icons.mjs — derive the desktop app's icons from the logo desktop/build-resources/logo.png
+// (docs/desktop.md "Window and icons"). The app icons are an off-white rounded tile with the logo centred on it, so
+// they read on a dark Dock or taskbar: the macOS .icns and build-resources/icon.png (an 824 tile inside 1024, Apple's
+// grid), the Windows .ico, the Linux PNG set and the runtime window icon (a full-bleed tile). The tray art is the
+// logo's silhouette. Pure Node, no image library. The files are generated once and committed.
 //   node tools/desktop-icons.mjs           # write every file
 //   node tools/desktop-icons.mjs --check   # decode the committed files and compare their pixels with a fresh render
 import { createHash } from 'node:crypto';
@@ -11,7 +13,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { crc32, deflateSync, inflateSync } from 'node:zlib';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const SOURCE = 'desktop/build-resources/icon.png';
+export const SOURCE = 'desktop/build-resources/logo.png';
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const USAGE = 'usage: node tools/desktop-icons.mjs [--check]';
 
@@ -155,13 +157,75 @@ export function resample(img, size) {
   return { width: size, height: size, data: out };
 }
 
-/** `img` resampled to content×content, centred on a transparent canvas×canvas. */
-export function framed(img, canvas, content) {
-  const inner = resample(img, content);
+/** The app icons' off-white tile colour (opaque). */
+export const TILE_RGB = Object.freeze([245, 244, 240]);
+const EDGE = Object.freeze({ width: 2, rgb: Object.freeze([0, 0, 0]), alpha: 31 });   // a 12% black hairline: the tile reads on a white Dock
+
+/** The tile layouts at the 1024 master: `mac` follows Apple's icon grid (824 inside 1024), `flat` is full-bleed. */
+export const ICON_LAYOUTS = Object.freeze({
+  mac: Object.freeze({ canvas: 1024, offset: 100, size: 824, radius: 185, disc: 576, edge: EDGE }),
+  flat: Object.freeze({ canvas: 1024, offset: 0, size: 1024, radius: 192, disc: 720, edge: EDGE }),
+});
+
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/**
+ * A size×size rounded square of `rgb` at (offset, offset) on a transparent canvas×canvas. Anti-aliased analytically
+ * per pixel centre (signed distance d, coverage clamp(0.5 − d)); `edge` blends a hairline over the outer `edge.width`
+ * pixels. Math.sqrt and integer rounding only, so every machine renders the same bytes.
+ */
+export function roundedTile(canvas, { offset, size, radius, rgb, edge }) {
   const out = new Uint8Array(canvas * canvas * 4);
-  const off = Math.floor((canvas - content) / 2);
-  for (let y = 0; y < content; y++) out.set(inner.data.subarray(y * content * 4, (y + 1) * content * 4), ((y + off) * canvas + off) * 4);
+  const half = size / 2;
+  const c = offset + half;
+  const inner = half - radius;
+  const ew = edge && edge.width > 0 ? edge.width : 0;
+  for (let y = 0; y < canvas; y++) {
+    const qy = Math.abs(y + 0.5 - c) - inner;
+    for (let x = 0; x < canvas; x++) {
+      const qx = Math.abs(x + 0.5 - c) - inner;
+      const mx = qx > 0 ? qx : 0;
+      const my = qy > 0 ? qy : 0;
+      const d = Math.sqrt(mx * mx + my * my) + Math.min(Math.max(qx, qy), 0) - radius;
+      const alpha = Math.round(255 * clamp01(0.5 - d));
+      if (alpha === 0) continue;
+      const o = (y * canvas + x) * 4;
+      const ha = ew ? Math.round(edge.alpha * clamp01(d + ew + 0.5)) : 0;
+      for (let k = 0; k < 3; k++) out[o + k] = ha ? Math.round((rgb[k] * (255 - ha) + edge.rgb[k] * ha) / 255) : rgb[k];
+      out[o + 3] = alpha;
+    }
+  }
   return { width: canvas, height: canvas, data: out };
+}
+
+/** `src` drawn over `dst` at (x, y), straight-alpha src-over, clipped to dst → a new image (dst is unchanged). */
+export function composite(dst, src, x, y) {
+  const data = new Uint8Array(dst.data);
+  for (let sy = 0; sy < src.height; sy++) {
+    const dy = sy + y;
+    if (dy < 0 || dy >= dst.height) continue;
+    for (let sx = 0; sx < src.width; sx++) {
+      const dx = sx + x;
+      if (dx < 0 || dx >= dst.width) continue;
+      const s = (sy * src.width + sx) * 4;
+      const sa = src.data[s + 3];
+      if (sa === 0) continue;
+      const o = (dy * dst.width + dx) * 4;
+      const da = data[o + 3];
+      const keep = (da * (255 - sa)) / 255;
+      const oa = sa + keep;
+      for (let k = 0; k < 3; k++) data[o + k] = Math.round((src.data[s + k] * sa + data[o + k] * keep) / oa);
+      data[o + 3] = Math.round(oa);
+    }
+  }
+  return { width: dst.width, height: dst.height, data };
+}
+
+/** The 1024 master of an app icon: the layout's tile with the logo resampled to the disc size and centred on it. */
+export function appIcon(logo, layout) {
+  const tile = roundedTile(layout.canvas, { offset: layout.offset, size: layout.size, radius: layout.radius, rgb: TILE_RGB, edge: layout.edge });
+  const off = Math.floor((layout.canvas - layout.disc) / 2);
+  return composite(tile, resample(logo, layout.disc), off, off);
 }
 
 /** Each pixel becomes the given colour with alpha a × (255 − luma) / 255: dark ink stays, light paint and holes go. */
@@ -288,12 +352,13 @@ const LINUX_SIZES = Object.freeze([16, 24, 32, 48, 64, 128, 256, 512]);
 const BLACK = Object.freeze([0, 0, 0]);
 const WHITE = Object.freeze([255, 255, 255]);
 
-/** Every generated file (repo-relative), from SOURCE. `art`: full | framed | silhouette with `rgb`. */
+/** Every generated file (repo-relative), from SOURCE. `art`: mac | flat (ICON_LAYOUTS) | silhouette with `rgb`. */
 export const ICON_OUTPUTS = Object.freeze([
-  { path: 'desktop/build-resources/icon.icns', kind: 'icns', art: 'framed', images: ICNS_TYPES.map(([type, size]) => ({ type, size })) },
-  { path: 'desktop/build-resources/icon.ico', kind: 'ico', art: 'full', images: ICO_SIZES.map((size) => ({ size })) },
-  ...LINUX_SIZES.map((n) => ({ path: `desktop/build-resources/icons/${n}x${n}.png`, kind: 'png', art: 'full', images: [{ size: n }] })),
-  { path: 'desktop/assets/icon.png', kind: 'png', art: 'full', images: [{ size: 256 }] },
+  { path: 'desktop/build-resources/icon.icns', kind: 'icns', art: 'mac', images: ICNS_TYPES.map(([type, size]) => ({ type, size })) },
+  { path: 'desktop/build-resources/icon.png', kind: 'png', art: 'mac', images: [{ size: 1024 }] },
+  { path: 'desktop/build-resources/icon.ico', kind: 'ico', art: 'flat', images: ICO_SIZES.map((size) => ({ size })) },
+  ...LINUX_SIZES.map((n) => ({ path: `desktop/build-resources/icons/${n}x${n}.png`, kind: 'png', art: 'flat', images: [{ size: n }] })),
+  { path: 'desktop/assets/icon.png', kind: 'png', art: 'flat', images: [{ size: 256 }] },
   { path: 'desktop/assets/trayTemplate.png', kind: 'png', art: 'silhouette', rgb: BLACK, images: [{ size: 18 }] },
   { path: 'desktop/assets/trayTemplate@2x.png', kind: 'png', art: 'silhouette', rgb: BLACK, images: [{ size: 36 }] },
   { path: 'desktop/assets/tray-black.png', kind: 'png', art: 'silhouette', rgb: BLACK, images: [{ size: 32 }] },
@@ -302,8 +367,8 @@ export const ICON_OUTPUTS = Object.freeze([
   { path: 'desktop/assets/tray-white@2x.png', kind: 'png', art: 'silhouette', rgb: WHITE, images: [{ size: 64 }] },
 ].map((o) => Object.freeze(o)));
 
-const FRAME_CANVAS = 1024;
-const FRAME_CONTENT = 824;
+if (ICON_OUTPUTS.some((o) => o.path === SOURCE)) throw fail('an output overwrites the source');
+
 const renderCache = new Map();
 
 /** The decoded rasters of every output: Map<path, { kind, images: [{ type?, size, img }] }>. No encoding. */
@@ -312,14 +377,18 @@ export function renderIcons(sourceBuf) {
   if (renderCache.has(key)) return renderCache.get(key);
   const src = decodePng(sourceBuf);
   const full = new Map();
-  const fullAt = (n) => { if (!full.has(n)) full.set(n, resample(src, n)); return full.get(n); };
-  const frame = framed(src, FRAME_CANVAS, FRAME_CONTENT);
-  const frameAt = new Map([[FRAME_CANVAS, frame]]);
-  const framedAt = (n) => { if (!frameAt.has(n)) frameAt.set(n, resample(frame, n)); return frameAt.get(n); };
+  const fullAt = (n) => { if (!full.has(n)) full.set(n, resample(src, n)); return full.get(n); };   // the tray art's input
+  const tiles = new Map();
+  const tileAt = (art, n) => {
+    if (!tiles.has(art)) { const master = appIcon(src, ICON_LAYOUTS[art]); tiles.set(art, new Map([[master.width, master]])); }
+    const sizes = tiles.get(art);
+    if (!sizes.has(n)) sizes.set(n, resample(sizes.get(ICON_LAYOUTS[art].canvas), n));
+    return sizes.get(n);
+  };
   const out = new Map();
   for (const o of ICON_OUTPUTS) {
     const images = o.images.map(({ type, size }) => {
-      const img = o.art === 'framed' ? framedAt(size) : o.art === 'silhouette' ? silhouette(fullAt(size), o.rgb) : fullAt(size);
+      const img = o.art === 'silhouette' ? silhouette(fullAt(size), o.rgb) : tileAt(o.art, size);
       return { ...(type ? { type } : {}), size, img };
     });
     out.set(o.path, { kind: o.kind, images });
