@@ -46,6 +46,37 @@ Rail finding, **D** is a dev area.
 8. **Calm motion:** a fade, a breath for what needs you, and nothing that travels across the screen.
 9. **Keep it simple.** Offer cuts before additions; when a page and Rail disagree, Rail's way wins, adapted.
 
+## The order, after two users challenged the plan (8 Nov)
+
+A daily user and a newcomer each read this plan beside the prototype (`review3/challenge-daily.md`, `challenge-new.md`).
+Both said: **interleave** — a person moves to Rail when the daily loop works, not when the polish is done — and **no
+dead ends first**: in the mode a newcomer gets (Simple), only Chat works of the nine places, Workflows hides the shell and
+Projects is blank. So the order is:
+
+1. **0.0 No dead ends** (new): every place under the W draws something true in every mode (a locked place says what it
+   needs and offers its one way on, `nav.locked`); Workflows keeps the bar and the top bar; nothing blank. R63.
+2. **1.0 The first minutes** (moved up): onboarding as a first chat ("Getting started", an ordinary chat in the bar), Add
+   project as its change card at dev's depth (New, Folder, Clone), working before Claude is signed in. D19, 39, 57.
+3. **0.1 Colour and contrast** (done, with the colour gate).
+4. **0.2 One card language**, **0.3 the task page as the card's stream**.
+5. **1.1 Starting a task at dev's depth** and **1.2 the conversation, complete**, now also holding what the daily user
+   found missing: the chat run panel (D14), whether Worca watches a PR (shown on the card, not only in ⋯), the failure's
+   reason on the card (the failing tests' names), one name per action (Restart Build, not also Try again), Tasks rows
+   saying what a running task does, `?` opening the shortcuts sheet (D3), syntax highlighting in diffs (D26), and the
+   server-unreachable and session notices (D6, D7).
+6. **0.4 Lists, bar and search**, extended: the places findable (the switcher visible, its name steady), a list you chose
+   stays when you open a task from it, In view explained (its tooltip and first use), Today in time order.
+7. **Phase 2** (the task page's leftovers) with **the terminal moved up**: Resolve in a terminal needs it (D60, with
+   Actions' command pattern, D43, D1).
+8. **0.5** shrinks: a schedule's runs as rows that lead to their cards (not a whole conversation). **0.6, 0.7, 0.8.**
+9. **Phases 3, 4, 5** as below. **1.3 Ask worca beside any page** and **1.4 Pinpoint** move to Phase 4: there are already
+   three ways to ask. The Away screensaver is cut.
+
+Also from the challenges: the audit findings R17 (done), R26 (a home's composer names what will happen: Start task;
+Customise under the words, as on the proposal) and R64 (Marketplace, Statistics, Team metrics captured → 4.1, 4.2) are
+named; Actions (D43) and the agent editor (D31) live in one phase each (3.1 and 3.2); the newcomer agent runs in the
+default mode on an empty store, the daily one in Expert on the seeded store.
+
 ## Phase 0: Rail's own debts (do first: everything after builds on them)
 
 | Slice | What | Findings | Size |
@@ -100,12 +131,12 @@ command pattern (D1, 43, 60), scripts, the agent editor, C4 and the code editor 
 
 1. **Onboarding is a first chat.** Worca greets you, signs Claude in as a change card, and proposes your first task. It
    replaces the tiles and the spotlight tour.
-2. **A project's page leads with its chats and tasks** (by date). Its settings sit behind its ⋯ and tabs, so the project
-   page is useful daily, not only at setup.
+2. ~~A project's page leads with its chats and tasks~~ → **a project filter on the Chat and Tasks lists** (both users: a
+   second home for things breaks "everything to its card").
 3. **One "something is running" pattern** (CommandRow) for commands, Actions, the terminal and the running-actions tile.
-4. **Insight answers questions.** "How did we do this week?" in chat answers with a small Insight card, and the Insight
-   place is the same cards together, not a dashboard.
-5. **The colour and contrast gate** (0.1) keeps Rail honest after this wave.
+4. **Insight answers questions** (deferred: on top of the cost report, never instead of it). "How did we do this week?" in
+   chat answers with a small Insight card.
+5. ~~The colour and contrast gate~~: it is 0.1's, done (`colour-check`).
 6. **Every place is a list beside the chat, in the one bar**: Projects, Workflows, Requirements and Marketplace each get
    the list sentence and rows, so learning one list teaches all of them.
 
