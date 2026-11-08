@@ -5,10 +5,11 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { windowOptions, linkPolicy, permissionAllowed, applyContentsPolicy } from '../desktop/src/window.mjs';
 import { trayMenuTemplate } from '../desktop/src/tray-menu.mjs';
 import { createDesktopController, openServerLog } from '../desktop/src/controller.mjs';
+import { appMenuTemplate } from '../desktop/src/app-menu.mjs';
 
 const tick = () => new Promise((r) => setImmediate(r));
 async function until(cond, n = 100) { for (let i = 0; i < n && !cond(); i++) await tick(); assert.ok(cond(), 'condition reached'); }
@@ -23,13 +24,18 @@ function fakeContents() {
 const navEvent = () => { const e = { prevented: false, preventDefault() { e.prevented = true; } }; return e; };
 
 function fakeElectron({ lock = true, loginItem = { openAtLogin: false, wasOpenedAtLogin: false } } = {}) {
-  const calls = { quit: 0, enableSandbox: 0, setLogin: [], getLogin: [], openExternal: [], errorBox: [], messageBox: [], windows: [], trays: [], menus: [], images: [] };
+  const calls = { quit: 0, enableSandbox: 0, setLogin: [], getLogin: [], openExternal: [], errorBox: [], messageBox: [], windows: [], trays: [], menus: [], images: [], setName: [], order: [], about: [], setPath: [], dockIcon: [], appMenu: [] };
   const app = new EventEmitter();
   app.isPackaged = false;
   app.requestSingleInstanceLock = () => lock;
   app.quit = () => { calls.quit++; const e = { defaultPrevented: false, preventDefault() { e.defaultPrevented = true; } }; app.emit('before-quit', e); calls.lastQuitEvent = e; };
   app.whenReady = async () => {};
-  app.enableSandbox = () => { calls.enableSandbox++; };
+  app.enableSandbox = () => { calls.enableSandbox++; calls.order.push('enableSandbox'); };
+  app.setName = (n) => { calls.setName.push(n); calls.order.push('setName'); };
+  app.getVersion = () => '0.0.0';
+  app.setAboutPanelOptions = (o) => { calls.about.push(o); };
+  app.setPath = (...a) => { calls.setPath.push(a); };
+  app.dock = { setIcon: (p) => calls.dockIcon.push(p) };
   app.setLoginItemSettings = (o) => { calls.setLogin.push(o); loginItem = { ...loginItem, openAtLogin: o.openAtLogin }; };
   app.getLoginItemSettings = (o) => { calls.getLogin.push(o); return loginItem; };
   app.getPath = () => '/user-data';
@@ -53,7 +59,7 @@ function fakeElectron({ lock = true, loginItem = { openAtLogin: false, wasOpened
     setContextMenu(m) { this.menu = m; }
     setToolTip() {}
   }
-  const Menu = { buildFromTemplate: (t) => { calls.menus.push(t); return { template: t }; } };
+  const Menu = { buildFromTemplate: (t) => { calls.menus.push(t); return { template: t }; }, setApplicationMenu: (m) => { calls.appMenu.push(m); } };
   const shell = { openExternal: (u) => { calls.openExternal.push(u); return Promise.resolve(); } };
   const dialog = {
     showErrorBox: (title, text) => calls.errorBox.push({ title, text }),
@@ -78,6 +84,7 @@ function fakeHelpers(over = {}) {
   const seen = { find: 0, start: [], stop: [], choose: 0 };
   const helpers = {
     readLoginShellPath: async () => ({ path: '/opt/homebrew/bin:/usr/bin', source: 'login-shell' }),
+    readRootVersion: () => '1.2.3',
     resolveStoreDir: () => '/store',
     findRunningServer: async () => { seen.find++; return null; },
     choosePort: async () => { seen.choose++; return 4317; },
@@ -91,10 +98,10 @@ function fakeHelpers(over = {}) {
   return { helpers, seen };
 }
 
-function makeController({ platform = 'darwin', argv = ['Worca'], lock, over, loginItem } = {}) {
+function makeController({ platform = 'darwin', argv = ['Worca'], lock, over, loginItem, packaged = false, log = { info() {}, error() {} } } = {}) {
   const fe = fakeElectron({ lock, loginItem });
   const { helpers, seen } = fakeHelpers(over);
-  const ctl = createDesktopController({ electron: fe.electron, platform, argv, env: { PATH: '/usr/bin' }, home: '/Users/u', resourcesPath: '/res', packaged: false, desktopDir: '/app/desktop', helpers, log: { info() {}, error() {} } });
+  const ctl = createDesktopController({ electron: fe.electron, platform, argv, env: { PATH: '/usr/bin' }, home: '/Users/u', resourcesPath: '/res', packaged, desktopDir: '/app/desktop', helpers, log });
   return { ctl, ...fe, seen };
 }
 
@@ -496,4 +503,91 @@ test('15. a second launch while the server starts shows the window once it exist
   await started;
   calls.windows[0].emit('ready-to-show');
   assert.equal(calls.windows[0].shows, 1);
+});
+
+const ICON = join('/app/desktop', 'build-resources', 'icon.png');
+const viewRoles = (template) => template.find((m) => m.label === 'View').submenu.map((i) => i.role || i.type);
+
+test('16. setName(\'Worca\') is the first app call, before enableSandbox, even when the lock is refused; setPath is never called', async () => {
+  for (const lock of [true, false]) {
+    const { ctl, calls } = makeController({ lock });
+    await ctl.start();
+    assert.deepEqual(calls.setName, ['Worca'], `lock ${lock}`);
+    assert.deepEqual(calls.order.slice(0, 2), ['setName', 'enableSandbox'], `lock ${lock}`);
+    assert.deepEqual(calls.setPath, [], `lock ${lock}`);
+  }
+  const packaged = makeController({ packaged: true });
+  await packaged.ctl.start();
+  assert.deepEqual(packaged.calls.setPath, []);
+});
+
+test('17. darwin: the app menu is set from appMenuTemplate after whenReady (DevTools in dev), before discovery; the tray menu is still calls.menus.at(-1)', async () => {
+  const snap = {};
+  let calls;
+  let seenRef;
+  const mk = makeController({ over: { readLoginShellPath: async () => { snap.appMenu = calls.appMenu.length; snap.find = seenRef.find; return { path: '/usr/bin', source: 'login-shell' }; } } });
+  calls = mk.calls; seenRef = mk.seen;
+  await mk.ctl.start();
+  assert.deepEqual(snap, { appMenu: 1, find: 0 }, 'the menu was set before discovery began');
+  assert.equal(calls.appMenu.length, 1);
+  const template = calls.appMenu[0].template;
+  assert.deepEqual(template, appMenuTemplate({ packaged: false }));
+  assert.deepEqual(template.map((m) => m.label), ['Worca', 'Edit', 'View', 'Window']);
+  assert.ok(viewRoles(template).includes('toggleDevTools'));
+  assert.equal(calls.menus[0], template, 'built from the template first');
+  assert.equal(calls.menus.at(-1).at(-1).label, 'Quit Worca (stops the Worca server)', 'the tray template stays last');
+});
+
+test('18. darwin dev: About shows Worca and the root version (1.2.3), iconPath = desktop/build-resources/icon.png; dock.setIcon gets that path; no extra nativeImage', async () => {
+  const { ctl, calls } = makeController();
+  await ctl.start();
+  assert.deepEqual(calls.about, [{ applicationName: 'Worca', applicationVersion: '1.2.3', version: '1.2.3', iconPath: ICON }]);
+  assert.deepEqual(calls.dockIcon, [ICON]);
+  assert.deepEqual(calls.images, [join('/app/desktop', 'assets', 'tray.png')]);
+});
+
+test('18b. darwin dev: readRootVersion null → About shows app.getVersion() and one log.error line', async () => {
+  const errors = [];
+  const { ctl, calls } = makeController({ over: { readRootVersion: () => null }, log: { info() {}, error: (m) => errors.push(m) } });
+  await ctl.start();
+  assert.equal(calls.about.length, 1);
+  assert.equal(calls.about[0].applicationVersion, '0.0.0');
+  assert.equal(calls.about[0].version, '0.0.0');
+  assert.deepEqual(errors, [`worca desktop: could not read the worca version from ${resolve('/app/desktop', '..', 'package.json')}; the About panel shows 0.0.0`]);
+  assert.equal(calls.windows.length, 1);
+});
+
+test('19. darwin packaged: About shows app.getVersion(); no dock.setIcon; no toggleDevTools in the menu', async () => {
+  let reads = 0;
+  const { ctl, calls } = makeController({ packaged: true, over: { readRootVersion: () => { reads++; return '1.2.3'; } } });
+  await ctl.start();
+  assert.equal(reads, 0, 'the root package.json is not read when packaged');
+  assert.deepEqual(calls.about, [{ applicationName: 'Worca', applicationVersion: '0.0.0', version: '0.0.0', iconPath: ICON }]);
+  assert.deepEqual(calls.dockIcon, []);
+  assert.equal(calls.appMenu.length, 1);
+  assert.ok(!viewRoles(calls.appMenu[0].template).includes('toggleDevTools'));
+});
+
+test('20. linux and win32: no setApplicationMenu, no About options, no dock calls; setName still called', async () => {
+  for (const platform of ['linux', 'win32']) {
+    const { ctl, calls } = makeController({ platform });
+    await ctl.start();
+    assert.deepEqual(calls.appMenu, [], platform);
+    assert.deepEqual(calls.about, [], platform);
+    assert.deepEqual(calls.dockIcon, [], platform);
+    assert.deepEqual(calls.setName, ['Worca'], platform);
+    assert.equal(calls.windows.length, 1, platform);
+  }
+});
+
+test('21. a throwing setApplicationMenu is logged and the window and tray still open', async () => {
+  const errors = [];
+  const { ctl, electron, calls, seen } = makeController({ log: { info() {}, error: (m) => errors.push(m) } });
+  electron.Menu.setApplicationMenu = () => { throw new Error('menu boom'); };
+  await ctl.start();
+  assert.deepEqual(errors, ['worca desktop: app menu/about setup failed: menu boom']);
+  assert.equal(seen.start.length, 1);
+  assert.equal(calls.windows.length, 1);
+  assert.equal(calls.trays.length, 1);
+  assert.equal(calls.errorBox.length, 0);
 });

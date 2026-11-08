@@ -14,7 +14,7 @@ import { pngSize } from '../tools/build-extension.mjs';
 import {
   TARGETS, DESKTOP_PLATFORMS, DESKTOP_ARCHES, parseArgs, buildRefusal, planWebBuild, hostDesktopPlatform, nodeRuntimeAsset,
   signingEnv, desktopBuilderConfig, builderCommand, packagedResourcesDir, fetchNodeRuntime, packJsonFromStdout,
-  withoutSigning, stageServer, checkSmoke, missingPackagedFiles, step,
+  withoutSigning, stageServer, checkSmoke, missingPackagedFiles, step, packagedAppPath, infoPlistProblems, checkPackagedInfoPlist,
 } from '../tools/build.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -154,6 +154,10 @@ test('desktopBuilderConfig: unsigned mac, asar, no rebuild, the extraResources (
   assert.deepEqual(c.mac.target, ['dmg', 'zip']);
   assert.equal(c.mac.icon, 'build-resources/icon.png');
   assert.match(c.mac.extendInfo.NSMicrophoneUsageDescription, /microphone/);
+  assert.equal(c.mac.extendInfo.CFBundleName, 'Worca', 'the bold menu-bar title');
+  assert.equal(c.mac.extendInfo.CFBundleDisplayName, 'Worca');
+  assert.equal(c.mac.extendInfo.CFBundleName, c.productName);
+  assert.equal(c.mac.extendInfo.CFBundleDisplayName, c.productName);
   assert.deepEqual(c.win.target, [{ target: 'nsis', arch: ['x64'] }]);
   assert.deepEqual(c.nsis, { oneClick: false, perMachine: false });
   assert.deepEqual(c.linux.target, ['AppImage', 'deb']);
@@ -195,6 +199,51 @@ test('packagedResourcesDir: where electron-builder leaves the unpacked app', () 
   assert.equal(packagedResourcesDir({ platform: 'mac', arch: 'x64', distDir: '/d' }), join('/d', 'mac', 'Worca.app', 'Contents', 'Resources'));
   assert.equal(packagedResourcesDir({ platform: 'win', arch: 'x64', distDir: '/d' }), join('/d', 'win-unpacked', 'resources'));
   assert.equal(packagedResourcesDir({ platform: 'linux', arch: 'x64', distDir: '/d' }), join('/d', 'linux-unpacked', 'resources'));
+});
+
+test('packagedAppPath: mac and mac-arm64 Worca.app', () => {
+  assert.equal(packagedAppPath({ arch: 'arm64', distDir: '/d' }), join('/d', 'mac-arm64', 'Worca.app'));
+  assert.equal(packagedAppPath({ arch: 'x64', distDir: '/d' }), join('/d', 'mac', 'Worca.app'));
+});
+
+test('infoPlistProblems: a Worca plist passes; Electron names, a wrong identifier, a missing icon file and a non-dict each reported', () => {
+  const good = { CFBundleName: 'Worca', CFBundleDisplayName: 'Worca', CFBundleIdentifier: 'dev.worca.desktop', CFBundleIconFile: 'icon.icns', CFBundleExecutable: 'Worca' };
+  assert.deepEqual(infoPlistProblems(good), []);
+  assert.deepEqual(infoPlistProblems({ ...good, CFBundleName: 'Electron' }), ['CFBundleName is "Electron", expected "Worca"']);
+  assert.deepEqual(infoPlistProblems({ ...good, CFBundleDisplayName: 'Electron' }), ['CFBundleDisplayName is "Electron", expected "Worca"']);
+  assert.deepEqual(infoPlistProblems({ ...good, CFBundleIdentifier: 'com.github.Electron' }), ['CFBundleIdentifier is "com.github.Electron", expected "dev.worca.desktop"']);
+  const { CFBundleIconFile, ...noIcon } = good;
+  assert.deepEqual(infoPlistProblems(noIcon), ['CFBundleIconFile is missing']);
+  assert.deepEqual(infoPlistProblems({ ...good, CFBundleIconFile: '' }), ['CFBundleIconFile is missing']);
+  assert.deepEqual(infoPlistProblems({ CFBundleName: 'Electron', CFBundleDisplayName: 'Electron', CFBundleIdentifier: 'com.github.Electron' }), [
+    'CFBundleName is "Electron", expected "Worca"',
+    'CFBundleDisplayName is "Electron", expected "Worca"',
+    'CFBundleIdentifier is "com.github.Electron", expected "dev.worca.desktop"',
+    'CFBundleIconFile is missing',
+  ]);
+  const { CFBundleName, ...noName } = good;
+  assert.deepEqual(infoPlistProblems(noName), ['CFBundleName is "undefined", expected "Worca"']);
+  for (const bad of [null, undefined, 'x', 3, ['Worca']]) assert.deepEqual(infoPlistProblems(bad), ['Info.plist is not a dictionary'], String(bad));
+  assert.deepEqual(infoPlistProblems({ ...good, CFBundleName: 'Other' }, { productName: 'Other' }), [
+    'CFBundleDisplayName is "Worca", expected "Other"',
+  ]);
+});
+
+test('checkPackagedInfoPlist: plutil -convert json of the given plist; a Worca plist returns it; Electron names, a failed or unstartable plutil and bad JSON each throw', () => {
+  const good = { CFBundleName: 'Worca', CFBundleDisplayName: 'Worca', CFBundleIdentifier: 'dev.worca.desktop', CFBundleIconFile: 'icon.icns' };
+  const calls = [];
+  const runWith = (r) => (command, args, opts) => { calls.push([command, args, opts]); return r; };
+  assert.deepEqual(checkPackagedInfoPlist({ plistPath: '/d/Worca.app/Contents/Info.plist', run: runWith({ status: 0, stdout: JSON.stringify(good), stderr: '' }) }), good);
+  assert.deepEqual(calls, [['plutil', ['-convert', 'json', '-o', '-', '/d/Worca.app/Contents/Info.plist'], { encoding: 'utf8' }]]);
+  assert.throws(() => checkPackagedInfoPlist({ plistPath: '/p', run: runWith({ status: 0, stdout: JSON.stringify({ ...good, CFBundleName: 'Electron', CFBundleDisplayName: 'Electron' }) }) }),
+    { message: 'Info.plist: CFBundleName is "Electron", expected "Worca"; CFBundleDisplayName is "Electron", expected "Worca"' });
+  assert.throws(() => checkPackagedInfoPlist({ plistPath: '/p', run: runWith({ status: 1, stdout: '', stderr: '/p: file does not exist\n' }) }),
+    { message: 'Info.plist unreadable: plutil exited with 1: /p: file does not exist' });
+  assert.throws(() => checkPackagedInfoPlist({ plistPath: '/p', run: runWith({ status: null, signal: 'SIGKILL', stdout: '' }) }),
+    { message: 'Info.plist unreadable: plutil exited with SIGKILL: ' });
+  assert.throws(() => checkPackagedInfoPlist({ plistPath: '/p', run: runWith({ status: null, error: new Error('spawnSync plutil ENOENT') }) }),
+    { message: 'Info.plist unreadable: spawnSync plutil ENOENT' });
+  assert.throws(() => checkPackagedInfoPlist({ plistPath: '/p', run: runWith({ status: 0, stdout: '{not json' }) }), /^Error: Info\.plist unreadable: /);
 });
 
 test('builderCommand: absolute projectDir and config, --publish never, --dir only when asked, .cmd + shell on win32', () => {
@@ -250,6 +299,8 @@ test('desktop/package.json: private, no dependencies, exactly electron + electro
   assert.deepEqual(Object.keys(d.devDependencies).sort(), ['electron', 'electron-builder']);
   for (const v of Object.values(d.devDependencies)) assert.match(v, /^\d+\.\d+\.\d+$/);
   assert.ok(Number(d.devDependencies.electron.split('.')[0]) >= 28, 'an ESM main needs Electron 28+');
+  assert.equal(d.scripts.start, 'node dev/start.mjs', 'npm start runs the dev launcher (the Worca.app copy)');
+  assert.ok(existsSync(join(ROOT, 'desktop/dev/start.mjs')));
   const lock = JSON.parse(readFileSync(join(ROOT, 'desktop/package-lock.json'), 'utf8'));
   assert.equal(lock.packages['node_modules/electron'].version, d.devDependencies.electron);
   assert.equal(lock.packages['node_modules/electron-builder'].version, d.devDependencies['electron-builder']);
@@ -259,6 +310,7 @@ test('.gitignore keeps desktop build output out of git', () => {
   const gi = readFileSync(join(ROOT, '.gitignore'), 'utf8');
   assert.match(gi, /^desktop\/build\/$/m);
   assert.match(gi, /^desktop\/dist\/$/m);
+  assert.match(gi, /^desktop\/\.dev-app\/$/m, 'the dev launcher\'s Worca.app copy');
 });
 
 test('icon 1024x1024; tray 32x32 and 64x64; the mac entitlements carry what the bundled node needs', () => {

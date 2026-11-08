@@ -137,7 +137,9 @@ export function desktopBuilderConfig({ version, platform, arch, signed, notarize
       target: ['dmg', 'zip'],
       category: 'public.app-category.developer-tools',
       icon: 'build-resources/icon.png',
-      extendInfo: { NSMicrophoneUsageDescription: 'Worca uses the microphone for voice input in chat.' },
+      // CFBundleName is the bold menu-bar title; electron-builder derives both names from productName, the explicit
+      // keys make this config the one testable source (extendInfo is merged last).
+      extendInfo: { NSMicrophoneUsageDescription: 'Worca uses the microphone for voice input in chat.', CFBundleName: 'Worca', CFBundleDisplayName: 'Worca' },
       identity: signed ? undefined : null,
       hardenedRuntime: !!signed,
       ...(signed ? { entitlements, entitlementsInherit: entitlements } : {}),
@@ -161,10 +163,44 @@ export function builderCommand({ platform, arch, dir, desktopDir, configPath, ho
   return { command: win ? winQuote(bin) : bin, args: win ? args.map(winQuote) : args, options: { cwd: projectDir, shell: win, stdio: 'inherit' } };
 }
 
+/** The unpacked mac app electron-builder leaves in distDir. */
+export function packagedAppPath({ arch, distDir }) {
+  return join(distDir, arch === 'arm64' ? 'mac-arm64' : 'mac', 'Worca.app');
+}
+
 export function packagedResourcesDir({ platform, arch, distDir }) {
-  if (platform === 'mac') return join(distDir, arch === 'arm64' ? 'mac-arm64' : 'mac', 'Worca.app', 'Contents', 'Resources');
+  if (platform === 'mac') return join(packagedAppPath({ arch, distDir }), 'Contents', 'Resources');
   if (platform === 'win') return join(distDir, 'win-unpacked', 'resources');
   return join(distDir, 'linux-unpacked', 'resources');
+}
+
+/** What is wrong with a built Worca.app's Info.plist (parsed to an object); [] when the app is named right. */
+export function infoPlistProblems(plist, { productName = 'Worca', appId = 'dev.worca.desktop' } = {}) {
+  if (!plist || typeof plist !== 'object' || Array.isArray(plist)) return ['Info.plist is not a dictionary'];
+  const problems = [];
+  for (const key of ['CFBundleName', 'CFBundleDisplayName']) {
+    if (plist[key] !== productName) problems.push(`${key} is "${plist[key]}", expected "${productName}"`);
+  }
+  if (plist.CFBundleIdentifier !== appId) problems.push(`CFBundleIdentifier is "${plist.CFBundleIdentifier}", expected "${appId}"`);
+  if (typeof plist.CFBundleIconFile !== 'string' || !plist.CFBundleIconFile) problems.push('CFBundleIconFile is missing');
+  return problems;
+}
+
+/** Read a built Worca.app's Info.plist with plutil and check it names the app right: returns the parsed plist, or
+ *  throws "Info.plist unreadable: …" or "Info.plist: <problems>". */
+export function checkPackagedInfoPlist({ plistPath, run = spawnSync }) {
+  const r = run('plutil', ['-convert', 'json', '-o', '-', plistPath], { encoding: 'utf8' });
+  let plist;
+  try {
+    if (r.error) throw r.error;
+    if (r.status !== 0) throw new Error(`plutil exited with ${r.status ?? r.signal}: ${String(r.stderr || '').trim()}`);
+    plist = JSON.parse(r.stdout);
+  } catch (err) {
+    throw new Error(`Info.plist unreadable: ${err && err.message ? err.message : err}`);
+  }
+  const problems = infoPlistProblems(plist);
+  if (problems.length) throw new Error(`Info.plist: ${problems.join('; ')}`);
+  return plist;
 }
 
 /** `npm pack --json` prints prepack's own output on stdout first: the JSON is the array that starts a line. */
@@ -335,6 +371,12 @@ async function buildDesktop(o) {
     const r = spawnSync(cmd.command, cmd.args, { ...cmd.options, env: signing.env });
     if (r.status !== 0) throw new Error(`electron-builder exited with ${r.status ?? r.signal ?? r.error?.message}`);
   });
+  if (platform === 'mac') {
+    await step('Info.plist', () => {
+      const plist = checkPackagedInfoPlist({ plistPath: join(packagedAppPath({ arch, distDir: DIST }), 'Contents', 'Info.plist') });
+      console.log(`build: Info.plist names the app ${plist.CFBundleName} (${plist.CFBundleIdentifier})`);
+    });
+  }
   if (o.smoke) {
     await step('smoke (packaged)', async () => {
       const res = packagedResourcesDir({ platform, arch, distDir: DIST });

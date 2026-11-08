@@ -3,13 +3,14 @@
 // a Quit that stops only a server this app started. `electron` and every helper are injected: tests pass fakes, and
 // desktop/main.mjs is the only file that imports electron. Imports only node: builtins and sibling modules.
 import { createWriteStream, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { readLoginShellPath } from './shell-path.mjs';
 import { resolveStoreDir, findRunningServer, setupSingleInstance, shouldStartHidden } from './instance.mjs';
 import { choosePort, PREFERRED_PORT } from './ports.mjs';
 import { resolveServerRuntime, buildServerEnv, startServer, stopServer } from './server-process.mjs';
 import { windowOptions, permissionAllowed, applyContentsPolicy } from './window.mjs';
 import { trayMenuTemplate } from './tray-menu.mjs';
+import { APP_NAME, appMenuTemplate, aboutPanelOptions, readRootVersion, aboutVersion, devIconPath } from './app-menu.mjs';
 
 /** <userData>/logs/server.log, truncated on every start. An open or write error is logged: createWriteStream reports
  *  it asynchronously, and an unhandled stream 'error' would end the main process. */
@@ -26,7 +27,7 @@ export function openServerLog(userDataDir, { onError = (err) => console.error(`w
   }
 }
 
-const DEFAULT_HELPERS = { readLoginShellPath, resolveStoreDir, findRunningServer, choosePort, resolveServerRuntime, buildServerEnv, startServer, stopServer, openServerLog };
+const DEFAULT_HELPERS = { readLoginShellPath, resolveStoreDir, findRunningServer, choosePort, resolveServerRuntime, buildServerEnv, startServer, stopServer, openServerLog, readRootVersion };
 const lastLines = (text, n) => String(text || '').split(/\r?\n/).filter((l) => l.trim()).slice(-n).join('\n');
 
 export function createDesktopController({ electron, platform = process.platform, argv = [], env = process.env, home, resourcesPath, packaged, desktopDir, helpers = {}, log = { info: console.log, error: console.error } }) {
@@ -137,6 +138,26 @@ export function createDesktopController({ electron, platform = process.platform,
     if (platform !== 'darwin') st.tray.on('click', showWindow);
   }
 
+  /** macOS: the Worca/Edit/View/Window menu, the About panel and (dev) the Dock icon. Cosmetic: a failure is logged
+   *  and never stops the server start. The menu-bar title itself comes from the bundle's CFBundleName. */
+  function setupAppIdentity() {
+    if (platform !== 'darwin') return;
+    try {
+      Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate({ packaged })));
+      const appVersion = app.getVersion();
+      const rootVersion = packaged ? null : h.readRootVersion(desktopDir);
+      if (!packaged && rootVersion === null) {
+        log.error(`worca desktop: could not read the worca version from ${resolve(desktopDir, '..', 'package.json')}; the About panel shows ${appVersion}`);
+      }
+      const iconPath = devIconPath(desktopDir);
+      app.setAboutPanelOptions(aboutPanelOptions({ version: aboutVersion({ packaged, appVersion, rootVersion }), iconPath }));
+      // A path, not a nativeImage: the stock Electron.app fallback in dev still gets the worca icon in the Dock.
+      if (!packaged && app.dock) app.dock.setIcon(iconPath);
+    } catch (err) {
+      log.error(`worca desktop: app menu/about setup failed: ${err && err.message ? err.message : err}`);
+    }
+  }
+
   async function onOwnedExit(handle, code) {
     if (st.quitting || st.stopping || handle !== st.handle) return;
     log.error(`worca desktop: the server stopped (exit ${code})`);
@@ -154,10 +175,12 @@ export function createDesktopController({ electron, platform = process.platform,
   }
 
   async function start() {
+    app.setName(APP_NAME);   // the same name the userData folder already has (productName): it does not move
     app.enableSandbox();
     app.on('web-contents-created', (_e, wc) => applyContentsPolicy(wc, { getAppOrigin, openExternal: (u) => shell.openExternal(u) }));
     if (!setupSingleInstance(app, { onSecondInstance: showWindow })) return;
     await app.whenReady();
+    setupAppIdentity();
     app.on('before-quit', (e) => {
       st.quitting = true;
       if (st.stopped) return;

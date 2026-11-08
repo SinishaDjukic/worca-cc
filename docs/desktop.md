@@ -34,7 +34,9 @@ What the build does:
 2. It downloads the pinned Node runtime (`desktop/node-runtime.json`) from nodejs.org into
    `desktop/build/cache/`, checks its SHA-256, and puts `node` and its `LICENSE` in `desktop/build/node/`.
 3. It starts that server with that Node, as the app would, and checks `/api/health` and the updater state.
-4. It runs electron-builder (`desktop/build/electron-builder.json`).
+4. It runs electron-builder (`desktop/build/electron-builder.json`). On macOS it then reads the built
+   `Worca.app/Contents/Info.plist` (`plutil`) and fails the build unless `CFBundleName` and `CFBundleDisplayName`
+   are `Worca`, `CFBundleIdentifier` is `dev.worca.desktop` and an icon file is set.
 5. It runs the same check against the server and Node inside the packaged app.
 
 `node tools/build.mjs` with no target (or `npm run build:web`) is the web build. It runs the package's `prepack`
@@ -53,6 +55,18 @@ npm start --prefix desktop
 From a checkout the app runs `ui/server.mjs` from the checkout with the `node` on your `PATH` (Node 22.19 or
 newer). Set `WORCA_DESKTOP_NODE=/path/to/node` to choose another. A Node shim that forks (Volta) fails the app's
 pid check: point `WORCA_DESKTOP_NODE` at the real binary.
+
+On macOS the menu bar takes its bold app name from the app bundle, and `electron .` runs the stock `Electron.app`.
+So `npm start` (`desktop/dev/start.mjs`) first copies that app to `desktop/.dev-app/Worca.app` (gitignored), sets
+its name to Worca and its icon to the worca icon, signs the copy ad hoc and runs it. The copy is built once, and
+again only when the Electron version or the icon changes; `rm -r desktop/.dev-app` forces a rebuild.
+`node dev/start.mjs --build-only` in `desktop/` builds or checks the copy without launching it.
+- The ad-hoc signature is new to macOS, so it may ask for the microphone once more in dev.
+- `WORCA_DESKTOP_DEV_BUNDLE=0 npm start --prefix desktop` skips the copy and runs the stock `Electron.app`.
+- If the copy cannot be built (a missing tool such as `codesign` without the Xcode command line tools, or any
+  failed step), the launcher prints one line saying why and runs the stock `Electron.app`. The menu items still say
+  Worca, but the bold menu-bar title says "Electron": then only the packaged build shows the name.
+- On Windows and Linux `npm start` is exactly `electron .`.
 
 ## How it behaves
 
@@ -75,6 +89,22 @@ pid check: point `WORCA_DESKTOP_NODE` at the real binary.
   tools from Homebrew, mise or nvm are found. Only `PATH` is read: other variables your shell exports are not.
 - **Links** to other sites open in your browser. The window is sandboxed, with no Node access, and only Worca's
   own pages may use the microphone (voice), notifications, the clipboard and full screen.
+
+## App name, menu and icon (macOS)
+
+- **Menus.** The menu bar shows **Worca** (About Worca, Services, Hide Worca, Hide Others, Show All, Quit Worca),
+  **Edit** (undo, redo, cut, copy, paste, paste and match style, delete, select all), **View** (reload, actual size,
+  zoom in, zoom out, full screen) and **Window** (minimize, zoom, close, bring all to front, and the window list).
+  Close (Cmd+W) hides the window to the tray. Quit Worca behaves like the tray's Quit.
+- **Developer tools.** Toggle Developer Tools is in the View menu only when the app runs from a checkout.
+- **About Worca** shows the name, the version and the icon. The packaged app shows its own version; from a checkout
+  it shows the version of the checkout's root `package.json`.
+- **Icon.** The Dock and the app use the worca icon (`desktop/build-resources/icon.png`) in the packaged build and
+  from a checkout.
+- **userData.** The app sets its name to Worca at start, the same name it already had, so the folder under
+  `~/Library/Application Support/Worca` (logs, see [Logs](#logs)) does not move.
+
+Windows and Linux keep Electron's default menu.
 
 ## Updates
 

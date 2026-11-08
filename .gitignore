@@ -32,6 +32,7 @@ extension/dist/
 # desktop app build output (tools/build.mjs --target desktop)
 desktop/build/
 desktop/dist/
+desktop/.dev-app/
 e2e/extension/test-results/
 e2e/extension/playwright-report/
 # demo video output (tools/demo/extension-video)

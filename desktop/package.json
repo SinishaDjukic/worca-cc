@@ -9,7 +9,7 @@
   "author": "Sinisha Djukic",
   "license": "MIT",
   "scripts": {
-    "start": "electron ."
+    "start": "node dev/start.mjs"
   },
   "devDependencies": {
     "electron": "45.2.3",
