@@ -331,7 +331,7 @@
     // Its one action and ⋯ are its state's own, as on its page; a question is answered under the card.
     // a live task with no step of its own to offer can always be paused or stopped from its card, as on dev's chat card
     const live = tone === 'run' && !st.action;
-    const main = below ? '' : st.action ? R.button({ label: st.action.label, kind: st.action.primary || taskWaits(x) ? 'primary' : '', attrs: { 'data-card-act': `${t.id}|${st.action.label}` } })
+    const main = below ? '' : st.action ? R.button({ label: st.action.label, kind: (st.action.primary || taskWaits(x)) && !t.confirm && !t.form ? 'primary' : '', attrs: { 'data-card-act': `${t.id}|${st.action.label}` } })
       : live ? R.button({ label: 'Pause', attrs: { 'data-card-act': `${t.id}|Pause`, title: 'Stops at once; Resume starts the current step again' } }) : '';
     // the card's ⋯: its state's own steps, then what any task can do, named as on its page (one ⋯, the same words)
     const done = ['ok', 'merged', 'stop', 'closed', 'idle'].includes(tone);
@@ -345,7 +345,7 @@
       const k = Math.max(0, u.stage ?? 0), st2 = R.runState(RM.stateOf(u.case)), tn = R.markTone(st2), merged = u.case === 'merged';
       return `<div class="own-stages">${STAGES.map((name, i) => R.stageLine({ mark: merged || i < k ? R.stepDot({ dotCls: 'is-done', word: 'Done', icon: 'check' }) : i === k ? R.kindMark({ kind: 'task', tone: tn, stage: k, size: 16 }) : R.stepDot({ dotCls: 'is-future', word: 'Not yet', icon: '' }), label: name, meta: merged || i < k ? 'done' : i === k ? (u.detail || st2.word).replace(new RegExp(`^${name} · `), '') : '', next: !merged && i > k, body: i === k && tn === 'fail' && u.why ? u.why.map((w) => `<p class="cmd-s">${esc(w)}</p>`).join('') : '' })).join('')}${R.textLink({ label: 'Open its full page', attrs: { 'data-open-task-page': u.id || '' } })}</div>`;
     };
-    const why = tone === 'fail' && t.why ? t.why.map((w) => R.turnRow({ mark: '', text: `<span class="cmd-s">${esc(w)}</span>` })).join('') : '';   // why it failed, on the card: the failing tests by name
+    const why = t.why && ['fail', 'ask', 'act', 'ok'].includes(tone) ? t.why.map((w) => R.turnRow({ mark: '', text: `<span class="cmd-s">${esc(w)}</span>` })).join('') : '';   // why it failed, on the card: the failing tests by name
     return R.taskCard({ rows: x.open ? '' : why, title: t.title, place: `<span class="rc-mid"><span class="rc-mid-a">${esc(t.branch || '')}</span></span><span>into dev</span>${gitOf(t)}${t.watch ? '<span class="rc-watch">· Worca watches it</span>' : ''}`, mark: taskMark(t), word, detail: t.detail || '', action: main, menu: more, stages: R.stageBar({ labels: STAGES, stage: t.stage, tone }), foot: R.button({ label: x.open ? 'Hide its stages' : 'Show its stages', kind: 'quiet', icon: R.icon(x.open ? 'chevron' : 'chevR', 12), attrs: { 'data-open-task': t.id, 'aria-expanded': String(!!x.open), title: x.open ? 'Folds its stages' : 'Opens its stages here, as its page has them' } }), open: !!x.open, stream: own(t), attrs: { 'data-anchor': x.id } }) + confirm + formHtml(t) + askChanges(x);
   }
 
@@ -624,7 +624,7 @@
         window.RailSchedules?.add({ id: s.id, title: s.title, project: px.project, chat: c.id, every: rep[1], at: rep[2], next: `Next at ${rep[2]}`, day: 'tomorrow', state: 'scheduled', time: rep[2], section: 'next', labels: [], runs: [] });
         window.RailChats.refresh(); paint(); say(`Scheduled ${rep[1]} at ${rep[2]}`); return;
       }
-      const t = { id: `t${n}`, title: px.title, case: 'starting', stage: 0, git: 'branch', branch: `feat/${slug(px.title)}`, detail: `Plan · ${px.workflow} on ${px.engine}` };
+      const t = { id: `t${n}`, title: px.title, case: 'starting', stage: 0, git: 'branch', branch: px.feature || `feat/${slug(px.title)}`, detail: `Plan · ${px.workflow} on ${px.engine}` };
       if (px.when && px.when !== 'now') { t.case = 'scheduled'; t.stage = -1; t.git = ''; t.detail = `Starts ${px.when}`; }
       if (px.workflow === 'Shaper' && t.case !== 'scheduled') Object.assign(t, { case: 'question', detail: 'Plan asks you below' });   // Shaper waits on your answers, not "Starting"
       c.tasks = [...(c.tasks || []), t]; c.state = 'following'; put(c, t); settleStart(c, t);
