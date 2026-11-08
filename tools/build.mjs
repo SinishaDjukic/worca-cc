@@ -123,7 +123,7 @@ export function desktopBuilderConfig({ version, platform, arch, signed, notarize
     productName: 'Worca',
     extraMetadata: { version },
     directories: { output: 'dist', buildResources: 'build-resources' },
-    files: ['main.mjs', 'src/**', 'assets/**', 'package.json'],
+    files: ['main.mjs', 'preload.cjs', 'src/**', 'assets/**', 'package.json'],
     asar: true,
     npmRebuild: false,
     // electron-builder always drops a top-level node_modules inside an extraResources source (app-builder-lib
@@ -136,7 +136,7 @@ export function desktopBuilderConfig({ version, platform, arch, signed, notarize
     mac: {
       target: ['dmg', 'zip'],
       category: 'public.app-category.developer-tools',
-      icon: 'build-resources/icon.png',
+      icon: 'build-resources/icon.icns',
       // CFBundleName is the bold menu-bar title; electron-builder derives both names from productName, the explicit
       // keys make this config the one testable source (extendInfo is merged last).
       extendInfo: { NSMicrophoneUsageDescription: 'Worca uses the microphone for voice input in chat.', CFBundleName: 'Worca', CFBundleDisplayName: 'Worca' },
@@ -145,9 +145,10 @@ export function desktopBuilderConfig({ version, platform, arch, signed, notarize
       ...(signed ? { entitlements, entitlementsInherit: entitlements } : {}),
       notarize: !!notarize,
     },
-    win: { target: [{ target: 'nsis', arch: ['x64'] }] },
-    nsis: { oneClick: false, perMachine: false },
-    linux: { target: ['AppImage', 'deb'], category: 'Development', maintainer: 'Sinisha Djukic' },
+    // The icons are generated from build-resources/icon.png by tools/desktop-icons.mjs (committed; --check verifies).
+    win: { target: [{ target: 'nsis', arch: ['x64'] }], icon: 'build-resources/icon.ico' },
+    nsis: { oneClick: false, perMachine: false, installerIcon: 'build-resources/icon.ico', uninstallerIcon: 'build-resources/icon.ico' },
+    linux: { target: ['AppImage', 'deb'], category: 'Development', maintainer: 'Sinisha Djukic', icon: 'build-resources/icons' },
     publish: null,
   };
 }

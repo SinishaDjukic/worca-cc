@@ -88,7 +88,49 @@ again only when the Electron version or the icon changes; `rm -r desktop/.dev-ap
   `PATH` from your login shell (`$SHELL -ilc`, 5 s limit) and gives it to the server, so `claude`, `git` and the
   tools from Homebrew, mise or nvm are found. Only `PATH` is read: other variables your shell exports are not.
 - **Links** to other sites open in your browser. The window is sandboxed, with no Node access, and only Worca's
-  own pages may use the microphone (voice), notifications, the clipboard and full screen.
+  own pages may use the microphone (voice), notifications, the clipboard and full screen. A preload
+  (`desktop/preload.cjs`) marks the page as the desktop shell and reports the theme; it exposes nothing to the page.
+
+## Window and icons
+
+**Title bar.** The window has no separate title bar where the OS allows it:
+
+- **macOS:** the title bar is hidden and the traffic lights sit in the sidebar's logo row; the Worca wordmark moves
+  right of them. When the sidebar is collapsed to its rail, the logo row gets a taller top and the lights sit above
+  the round mark. In full screen macOS hides the lights, and the logo row goes back to its normal layout.
+- **Windows:** the minimize, maximize and close buttons are drawn over the right end of the top bar, in the
+  theme's colours (light or dark). The top bar and the open terminal's head keep their own buttons clear of them.
+- **Linux:** the native title bar, as before.
+
+The logo row and the top bar move the window when dragged; their buttons, links and fields work as usual. The
+Workflows view, which has no top bar, gets a 48px strip at the top for this. At the window's narrowest width, the
+Chat page's run panel, the Help me answer panel and the export dialogs on the Requirements page fill the window; they
+start below the top bar, so the lights and buttons never cover their headers. These rules live in
+`ui/public/shell/desktop-shell.css` and apply only when the preload has set `data-shell-chrome` on the page, so
+the web UI in a browser looks exactly as before.
+
+**Theme.** The preload tells the app the theme setting (System, Light or Dark), the resulting light or dark scheme
+and whether the sidebar is collapsed. The app then sets the window background (and on Windows the button colours)
+from its own fixed colours, which match the UI's `--bg`, `--panel` and `--ink` tokens. It saves the theme
+setting and the sidebar state (not colours) to `<userData>/window-shell.json`, so the next launch opens in the
+right colours with no flash. A missing or broken file means System and an expanded sidebar.
+
+**Icons.** Every icon is generated from the logo `desktop/build-resources/icon.png` by `tools/desktop-icons.mjs`
+(pure Node, no image library) and committed:
+
+| File | Used for |
+|---|---|
+| `desktop/build-resources/icon.icns` | macOS Dock and app bundle (the circle at 824px inside 1024, Apple's icon grid) |
+| `desktop/build-resources/icon.ico` | Windows exe, taskbar, installer and uninstaller (16 to 256px) |
+| `desktop/build-resources/icons/<n>x<n>.png` | Linux (16 to 512px) |
+| `desktop/assets/icon.png` | the window icon on Windows and Linux (256px) |
+| `desktop/assets/trayTemplate.png`, `@2x` | the macOS menu bar icon (a template image the menu bar tints) |
+| `desktop/assets/tray-white.png`, `tray-black.png`, `@2x` | the Windows and Linux tray icon: white on a dark taskbar, black on a light one, swapped when the OS theme changes |
+
+After changing the logo, run `node tools/desktop-icons.mjs` and commit the files.
+`node tools/desktop-icons.mjs --check` decodes the committed files and compares their pixels with a fresh
+generation (`test/desktop-icons.test.mjs` does the same). The logo's W is cut out, not painted: on a dark Dock the W
+shows the Dock through the black disc, as the logo itself does.
 
 ## App name, menu and icon (macOS)
 
@@ -166,6 +208,11 @@ The desktop app does not install the `worca` command. To use it in a terminal, i
   output after the crash is not in `server.log`.
 - A Worca on 4317 for the same store whose `ui.json` is missing (its write failed) looks like another store's
   Worca. The app then starts a second server on the store.
+- When the app opens a window on an already running Worca that is older than the app, that Worca's page has no
+  desktop title bar rules: on macOS the traffic lights cover the wordmark, and the window moves only by its edges.
+  Restart that Worca from the new version to fix it.
+- Running `npm start --prefix desktop` from a checkout shows Electron's own Dock icon on macOS; the packaged app
+  shows Worca's.
 
 ## Third-party binaries
 

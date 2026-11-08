@@ -1,12 +1,15 @@
 // desktop/src/window.mjs — the desktop window's safe defaults and the link / navigation / permission policy that
 // every webContents gets (docs/desktop.md). The app origin is read on every call: a Restart may change the port.
-// Imports only node: builtins (none needed).
+// Only the main window gets a preload (desktop/preload.cjs): sandboxed, it can require nothing but electron, it is told
+// the title bar kind through additionalArguments, and it exposes nothing to the page. Imports only sibling modules.
+import { chromeWindowOptions } from './title-bar.mjs';
 
 const ALLOWED_PERMISSIONS = new Set(['media', 'notifications', 'clipboard-sanitized-write', 'fullscreen']);
 const EXTERNAL_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
 
-/** BrowserWindow options: sandboxed, isolated renderer, no Node, no preload; shown on ready-to-show. */
-export function windowOptions({ title = 'Worca', icon } = {}) {
+/** BrowserWindow options: sandboxed, isolated renderer, no Node; shown on ready-to-show. The title bar and background
+ *  follow `chrome` and `scheme`; a `preload` (absolute path) also gets `--worca-chrome=<chrome>`. */
+export function windowOptions({ title = 'Worca', icon, preload, chrome = 'native', scheme = 'light', rail = false } = {}) {
   return {
     title,
     width: 1280,
@@ -15,6 +18,7 @@ export function windowOptions({ title = 'Worca', icon } = {}) {
     minHeight: 600,
     show: false,
     ...(icon ? { icon } : {}),
+    ...chromeWindowOptions({ chrome, scheme, rail }),
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
@@ -22,6 +26,7 @@ export function windowOptions({ title = 'Worca', icon } = {}) {
       nodeIntegrationInWorker: false,
       webSecurity: true,
       spellcheck: true,
+      ...(preload ? { preload, additionalArguments: [`--worca-chrome=${chrome}`] } : {}),
     },
   };
 }
@@ -45,14 +50,15 @@ export function permissionAllowed(permission, requestingUrl, appOrigin) {
   return !!appOrigin && origin === appOrigin && ALLOWED_PERMISSIONS.has(permission);
 }
 
-/** Wire one webContents: window.open / target=_blank, will-navigate and will-redirect follow linkPolicy. */
-export function applyContentsPolicy(contents, { getAppOrigin, openExternal }) {
+/** Wire one webContents: window.open / target=_blank, will-navigate and will-redirect follow linkPolicy.
+ *  `getScheme` gives a popup the current theme's background (popups keep the native frame and get no preload). */
+export function applyContentsPolicy(contents, { getAppOrigin, openExternal, getScheme = () => 'light' }) {
   contents.setWindowOpenHandler((details) => {
     const url = details && details.url;
     const policy = linkPolicy(url, getAppOrigin());
     // A same-origin popup is a child app window with the same safe options; it must show (windowOptions hides
     // until ready-to-show, which only the main window waits for).
-    if (policy === 'internal') return { action: 'allow', overrideBrowserWindowOptions: { ...windowOptions(), show: true } };
+    if (policy === 'internal') return { action: 'allow', overrideBrowserWindowOptions: { ...windowOptions({ scheme: getScheme() }), show: true } };
     if (policy === 'external') openExternal(url);
     return { action: 'deny' };
   });

@@ -10,6 +10,7 @@ import { windowOptions, linkPolicy, permissionAllowed, applyContentsPolicy } fro
 import { trayMenuTemplate } from '../desktop/src/tray-menu.mjs';
 import { createDesktopController, openServerLog } from '../desktop/src/controller.mjs';
 import { appMenuTemplate } from '../desktop/src/app-menu.mjs';
+import { TRAFFIC_LIGHTS, THEME_COLORS } from '../desktop/src/title-bar.mjs';
 
 const tick = () => new Promise((r) => setImmediate(r));
 async function until(cond, n = 100) { for (let i = 0; i < n && !cond(); i++) await tick(); assert.ok(cond(), 'condition reached'); }
@@ -19,11 +20,14 @@ function fakeContents() {
   const wc = new EventEmitter();
   wc.openHandler = null;
   wc.setWindowOpenHandler = (fn) => { wc.openHandler = fn; };
+  wc.sent = [];
+  wc.send = (...args) => { wc.sent.push(args); };
+  wc.mainFrame = { url: '' };
   return wc;
 }
 const navEvent = () => { const e = { prevented: false, preventDefault() { e.prevented = true; } }; return e; };
 
-function fakeElectron({ lock = true, loginItem = { openAtLogin: false, wasOpenedAtLogin: false } } = {}) {
+function fakeElectron({ lock = true, loginItem = { openAtLogin: false, wasOpenedAtLogin: false }, dark = false, systemUIDark = dark } = {}) {
   const calls = { quit: 0, enableSandbox: 0, setLogin: [], getLogin: [], openExternal: [], errorBox: [], messageBox: [], windows: [], trays: [], menus: [], images: [], setName: [], order: [], about: [], setPath: [], dockIcon: [], appMenu: [] };
   const app = new EventEmitter();
   app.isPackaged = false;
@@ -44,10 +48,16 @@ function fakeElectron({ lock = true, loginItem = { openAtLogin: false, wasOpened
       super();
       this.opts = opts; this.visible = false; this.loaded = []; this.shows = 0; this.hides = 0; this.focuses = 0;
       this.webContents = fakeContents();
+      this.chromeCalls = [];
+      this.fullScreen = false;
       calls.windows.push(this);
       app.emit('web-contents-created', {}, this.webContents);
     }
-    loadURL(u) { this.loaded.push(u); return Promise.resolve(); }
+    loadURL(u) { this.loaded.push(u); this.webContents.mainFrame.url = `${u}/#history`; return Promise.resolve(); }
+    setBackgroundColor(c) { this.chromeCalls.push(['setBackgroundColor', c]); }
+    setTitleBarOverlay(o) { this.chromeCalls.push(['setTitleBarOverlay', o]); }
+    setWindowButtonPosition(p) { this.chromeCalls.push(['setWindowButtonPosition', p]); }
+    isFullScreen() { return this.fullScreen; }
     show() { this.shows++; this.visible = true; }
     hide() { this.hides++; this.visible = false; }
     focus() { this.focuses++; }
@@ -55,8 +65,9 @@ function fakeElectron({ lock = true, loginItem = { openAtLogin: false, wasOpened
     isMinimized() { return false; }
   }
   class Tray extends EventEmitter {
-    constructor(img) { super(); this.img = img; this.menu = null; calls.trays.push(this); }
+    constructor(img) { super(); this.img = img; this.menu = null; this.images = []; calls.trays.push(this); }
     setContextMenu(m) { this.menu = m; }
+    setImage(img) { this.images.push(img); }
     setToolTip() {}
   }
   const Menu = { buildFromTemplate: (t) => { calls.menus.push(t); return { template: t }; }, setApplicationMenu: (m) => { calls.appMenu.push(m); } };
@@ -68,8 +79,12 @@ function fakeElectron({ lock = true, loginItem = { openAtLogin: false, wasOpened
   };
   const handlers = {};
   const session = { defaultSession: { setPermissionRequestHandler: (fn) => { handlers.request = fn; }, setPermissionCheckHandler: (fn) => { handlers.check = fn; } } };
-  const nativeImage = { createFromPath: (p) => { calls.images.push(p); return { path: p, isEmpty: () => false }; } };
-  return { electron: { app, BrowserWindow, Tray, Menu, shell, dialog, session, nativeImage }, calls, handlers };
+  const nativeImage = { createFromPath: (p) => { calls.images.push(p); const img = { path: p, template: [], isEmpty: () => false, setTemplateImage: (v) => img.template.push(v) }; return img; } };
+  const ipcMain = new EventEmitter();
+  const nativeTheme = new EventEmitter();
+  nativeTheme.shouldUseDarkColors = dark;
+  nativeTheme.shouldUseDarkColorsForSystemIntegratedUI = systemUIDark;
+  return { electron: { app, BrowserWindow, Tray, Menu, shell, dialog, session, nativeImage, ipcMain, nativeTheme }, calls, handlers };
 }
 
 function fakeChildHandle(url, port, pid = 900) {
@@ -81,7 +96,7 @@ function fakeChildHandle(url, port, pid = 900) {
 }
 
 function fakeHelpers(over = {}) {
-  const seen = { find: 0, start: [], stop: [], choose: 0 };
+  const seen = { find: 0, start: [], stop: [], choose: 0, prefs: [], writes: [] };
   const helpers = {
     readLoginShellPath: async () => ({ path: '/opt/homebrew/bin:/usr/bin', source: 'login-shell' }),
     readRootVersion: () => '1.2.3',
@@ -93,26 +108,46 @@ function fakeHelpers(over = {}) {
     startServer: async ({ env }) => { const h = fakeChildHandle(`http://127.0.0.1:${env.PORT === '0' ? 50123 : env.PORT}`, Number(env.PORT) || 50123); seen.start.push({ env, handle: h }); return h; },
     stopServer: async (h, o) => { seen.stop.push({ h, o }); return { exitCode: 0, via: 'request' }; },
     openServerLog: () => ({ stream: null, path: '/user-data/logs/server.log' }),
+    readShellPrefs: (dir) => { seen.prefs.push(dir); return { mode: 'system', rail: false }; },
+    writeShellPrefs: (dir, prefs, opts) => { seen.writes.push({ dir, prefs, onError: typeof opts?.onError }); },
     ...over,
   };
   return { helpers, seen };
 }
 
-function makeController({ platform = 'darwin', argv = ['Worca'], lock, over, loginItem, packaged = false, log = { info() {}, error() {} } } = {}) {
-  const fe = fakeElectron({ lock, loginItem });
+function makeController({ platform = 'darwin', argv = ['Worca'], lock, over, loginItem, packaged = false, log = { info() {}, error() {} }, dark, systemUIDark } = {}) {
+  const fe = fakeElectron({ lock, loginItem, dark, systemUIDark });
   const { helpers, seen } = fakeHelpers(over);
   const ctl = createDesktopController({ electron: fe.electron, platform, argv, env: { PATH: '/usr/bin' }, home: '/Users/u', resourcesPath: '/res', packaged, desktopDir: '/app/desktop', helpers, log });
   return { ctl, ...fe, seen };
 }
 
-test('1. windowOptions: context isolation, sandbox, no node integration, no preload', () => {
+test('1. windowOptions: context isolation, sandbox, no node integration, no preload by default', () => {
   const o = windowOptions();
   assert.equal(o.webPreferences.contextIsolation, true);
   assert.equal(o.webPreferences.sandbox, true);
   assert.equal(o.webPreferences.nodeIntegration, false);
   assert.equal(o.webPreferences.nodeIntegrationInWorker, false);
   assert.ok(!('preload' in o.webPreferences));
+  assert.ok(!('additionalArguments' in o.webPreferences));
   assert.deepEqual([o.width, o.height, o.minWidth, o.minHeight, o.show], [1280, 860, 900, 600, false]);
+  assert.equal(o.backgroundColor, '#F1F1EF');
+  assert.ok(!('titleBarStyle' in o));
+});
+
+test('1b. windowOptions with a preload: the chrome argument, the inset title bar, the dark background; sandbox unchanged', () => {
+  const o = windowOptions({ preload: '/p.cjs', chrome: 'inset', scheme: 'dark', rail: true });
+  assert.equal(o.webPreferences.preload, '/p.cjs');
+  assert.deepEqual(o.webPreferences.additionalArguments, ['--worca-chrome=inset']);
+  assert.equal(o.titleBarStyle, 'hidden');
+  assert.deepEqual(o.trafficLightPosition, TRAFFIC_LIGHTS.rail);
+  assert.equal(o.backgroundColor, '#161614');
+  const { preload, additionalArguments, ...rest } = o.webPreferences;
+  assert.deepEqual(rest, windowOptions().webPreferences, 'the sandbox flags are unchanged');
+  assert.deepEqual([o.width, o.height, o.minWidth, o.minHeight, o.show], [1280, 860, 900, 600, false]);
+  const w = windowOptions({ preload: '/p.cjs', chrome: 'overlay', scheme: 'light' });
+  assert.deepEqual(w.titleBarOverlay, { color: '#FFFFFF', symbolColor: '#19191B', height: 48 });
+  assert.deepEqual(w.webPreferences.additionalArguments, ['--worca-chrome=overlay']);
 });
 
 test('2. linkPolicy: same origin internal; http(s)/mailto external; file/javascript/custom/garbage denied', () => {
@@ -288,6 +323,13 @@ test('10. applyContentsPolicy: external → openExternal + deny; internal → al
   assert.deepEqual(allow.overrideBrowserWindowOptions.webPreferences, windowOptions().webPreferences);
   assert.equal(allow.overrideBrowserWindowOptions.show, true);
   assert.deepEqual(wc.openHandler({ url: 'about:blank' }), { action: 'deny' });
+  const dark = fakeContents();
+  applyContentsPolicy(dark, { getAppOrigin: () => APP, openExternal: () => {}, getScheme: () => 'dark' });
+  const popup = dark.openHandler({ url: `${APP}/#chat` }).overrideBrowserWindowOptions;
+  assert.equal(popup.backgroundColor, '#161614', 'the popup takes the current scheme');
+  assert.ok(!('preload' in popup.webPreferences), 'no preload in a popup');
+  assert.ok(!('titleBarStyle' in popup), 'the popup keeps the native frame');
+  assert.equal(allow.overrideBrowserWindowOptions.backgroundColor, '#F1F1EF', 'no getScheme → light');
   for (const ev of ['will-navigate', 'will-redirect']) {
     const e = navEvent();
     wc.emit(ev, e, 'https://example.com/');
@@ -346,7 +388,7 @@ test('11. tray: no Launch at login on linux; darwin toggle args []; win32 args -
   assert.deepEqual(lin.map((i) => i.label || i.type), ['Open Worca', 'separator', 'Quit Worca (stops the Worca server)']);
   const mac = makeController({ platform: 'darwin' });
   await mac.ctl.start();
-  assert.deepEqual(mac.calls.images, [join('/app/desktop', 'assets', 'tray.png')]);
+  assert.deepEqual(mac.calls.images, [join('/app/desktop', 'assets', 'trayTemplate.png')], 'one image: darwin has no window icon');
   const item = mac.calls.menus.at(-1).find((i) => i.label === 'Launch at login');
   assert.equal(item.type, 'checkbox');
   assert.equal(item.checked, false);
@@ -505,10 +547,185 @@ test('15. a second launch while the server starts shows the window once it exist
   assert.equal(calls.windows[0].shows, 1);
 });
 
+/** A shell-state IPC event from the main window's own top frame (override any part to forge it). */
+function shellEvent(win, over = {}) {
+  const sender = win.webContents;
+  return { sender, senderFrame: sender.mainFrame, ...over };
+}
+const STATE = (o = {}) => ({ mode: 'system', scheme: 'light', rail: false, ...o });
+const fullScreenReplies = (win) => win.webContents.sent.filter(([c]) => c === 'worca:shell-fullscreen');
+
+test('16. darwin launch: the preload, the inset title bar, the saved dark mode and rail; no window icon', async () => {
+  const dirs = [];
+  const { ctl, calls } = makeController({ platform: 'darwin', over: { readShellPrefs: (dir) => { dirs.push(dir); return { mode: 'dark', rail: true }; } } });
+  await ctl.start();
+  const o = calls.windows[0].opts;
+  assert.equal(o.webPreferences.preload, join('/app/desktop', 'preload.cjs'));
+  assert.deepEqual(o.webPreferences.additionalArguments, ['--worca-chrome=inset']);
+  assert.equal(o.titleBarStyle, 'hidden');
+  assert.deepEqual(o.trafficLightPosition, TRAFFIC_LIGHTS.rail);
+  assert.equal(o.backgroundColor, THEME_COLORS.dark.background);
+  assert.ok(!('icon' in o), 'macOS takes the Dock icon from the bundle');
+  assert.deepEqual([ctl.state().chrome, ctl.state().scheme], ['inset', 'dark']);
+  assert.deepEqual(dirs, ['/user-data']);
+  assert.equal(o.webPreferences.sandbox, true);
+});
+
+test('16b. win32: the overlay follows the system scheme; linux: the native frame and assets/icon.png', async () => {
+  const win = makeController({ platform: 'win32', dark: true });
+  await win.ctl.start();
+  const wo = win.calls.windows[0].opts;
+  assert.deepEqual(wo.titleBarOverlay, { color: THEME_COLORS.dark.overlay, symbolColor: THEME_COLORS.dark.symbol, height: 48 });
+  assert.equal(wo.backgroundColor, THEME_COLORS.dark.background);
+  assert.equal(wo.icon, join('/app/desktop', 'assets', 'icon.png'));
+  assert.deepEqual(wo.webPreferences.additionalArguments, ['--worca-chrome=overlay']);
+  const lin = makeController({ platform: 'linux' });
+  await lin.ctl.start();
+  const lo = lin.calls.windows[0].opts;
+  assert.ok(!('titleBarStyle' in lo) && !('titleBarOverlay' in lo));
+  assert.equal(lo.icon, join('/app/desktop', 'assets', 'icon.png'));
+  assert.equal(lo.backgroundColor, THEME_COLORS.light.background);
+  assert.deepEqual(lo.webPreferences.additionalArguments, ['--worca-chrome=native']);
+});
+
+test('17. a valid state message: background, overlay (win32), button position on a rail flip (darwin), one write, a reply', async () => {
+  const mac = makeController({ platform: 'darwin' });
+  await mac.ctl.start();
+  const mw = mac.calls.windows[0];
+  mac.electron.ipcMain.emit('worca:shell-state', shellEvent(mw), STATE({ mode: 'dark', scheme: 'dark', rail: true }));
+  assert.deepEqual(mw.chromeCalls, [['setBackgroundColor', '#161614'], ['setWindowButtonPosition', TRAFFIC_LIGHTS.rail]]);
+  assert.deepEqual(mac.seen.writes, [{ dir: '/user-data', prefs: { mode: 'dark', rail: true }, onError: 'function' }]);
+  assert.deepEqual(fullScreenReplies(mw), [['worca:shell-fullscreen', false]]);
+  assert.equal(mac.ctl.state().scheme, 'dark');
+  mac.electron.ipcMain.emit('worca:shell-state', shellEvent(mw), STATE({ mode: 'dark', scheme: 'dark', rail: true }));
+  assert.equal(mw.chromeCalls.length, 2, 'the same state again: no window call');
+  assert.equal(mac.seen.writes.length, 1, 'and no write');
+  assert.equal(fullScreenReplies(mw).length, 2, 'only the reply');
+  mac.electron.ipcMain.emit('worca:shell-state', shellEvent(mw), STATE({ mode: 'dark', scheme: 'dark', rail: false }));
+  assert.deepEqual(mw.chromeCalls.slice(2), [['setBackgroundColor', '#161614'], ['setWindowButtonPosition', TRAFFIC_LIGHTS.expanded]]);
+  mac.electron.ipcMain.emit('worca:shell-state', shellEvent(mw), STATE({ mode: 'system', scheme: 'light', rail: false }));
+  assert.deepEqual(mw.chromeCalls.slice(4), [['setBackgroundColor', '#F1F1EF']], 'no button move without a rail change');
+  assert.equal(mac.seen.writes.length, 3);
+  mac.electron.ipcMain.emit('worca:shell-state', shellEvent(mw), STATE({ mode: 'system', scheme: 'dark', rail: false }));
+  assert.deepEqual(mw.chromeCalls.at(-1), ['setBackgroundColor', '#161614'], 'the OS turned dark under System');
+  assert.equal(mac.seen.writes.length, 3, 'the saved mode and rail did not change: no write');
+  mw.fullScreen = true;
+  mac.electron.ipcMain.emit('worca:shell-state', shellEvent(mw), STATE());
+  assert.deepEqual(fullScreenReplies(mw).at(-1), ['worca:shell-fullscreen', true], 'a reload in full screen learns it');
+  const win = makeController({ platform: 'win32' });
+  await win.ctl.start();
+  const ww = win.calls.windows[0];
+  win.electron.ipcMain.emit('worca:shell-state', shellEvent(ww), STATE({ mode: 'dark', scheme: 'dark', rail: true }));
+  assert.deepEqual(ww.chromeCalls, [['setBackgroundColor', '#161614'], ['setTitleBarOverlay', { color: '#222220', symbolColor: '#ECECE8', height: 48 }]]);
+  const popup = ww.webContents.openHandler({ url: `${APP}/#chat` }).overrideBrowserWindowOptions;
+  assert.equal(popup.backgroundColor, '#161614', 'a popup takes the last applied scheme');
+});
+
+test('17b. a state equal to the launch state changes nothing; missing window methods do not throw', async () => {
+  const { ctl, electron, calls, seen } = makeController({ platform: 'darwin' });
+  await ctl.start();
+  const w = calls.windows[0];
+  electron.ipcMain.emit('worca:shell-state', shellEvent(w), STATE());
+  assert.deepEqual(w.chromeCalls, []);
+  assert.deepEqual(seen.writes, []);
+  assert.equal(fullScreenReplies(w).length, 1);
+  w.setBackgroundColor = undefined; w.setWindowButtonPosition = undefined; w.isFullScreen = undefined;
+  assert.doesNotThrow(() => electron.ipcMain.emit('worca:shell-state', shellEvent(w), STATE({ mode: 'dark', scheme: 'dark', rail: true })));
+  assert.deepEqual(fullScreenReplies(w).at(-1), ['worca:shell-fullscreen', false]);
+  assert.equal(seen.writes.length, 1);
+});
+
+test('18. refused state messages change nothing: another sender, a sub-frame, no frame, a foreign or stale origin, a bad payload', async () => {
+  let n = 0;
+  const { ctl, electron, calls, seen } = makeController({ platform: 'win32', over: {
+    startServer: async ({ env }) => { const port = ++n === 1 ? 4317 : 50777; const hd = fakeChildHandle(`http://127.0.0.1:${port}`, port, 900 + n); seen.start.push({ env, handle: hd }); return hd; },
+  } });
+  await ctl.start();
+  const w = calls.windows[0];
+  const popup = fakeContents();
+  popup.mainFrame = { url: `${APP}/` };
+  const dark = STATE({ mode: 'dark', scheme: 'dark' });
+  const refused = [
+    [{ sender: popup, senderFrame: popup.mainFrame }, dark],
+    [shellEvent(w, { senderFrame: { url: `${APP}/` } }), dark],
+    [shellEvent(w, { senderFrame: null }), dark],
+    [shellEvent(w, { senderFrame: undefined }), dark],
+    [{ sender: w.webContents }, dark],
+    [shellEvent(w), { ...dark, rail: 'yes' }],
+    [shellEvent(w), '{"mode":"dark"}'],
+    [shellEvent(w), null],
+  ];
+  const foreign = () => { w.webContents.mainFrame = { url: 'https://evil.example/' }; return shellEvent(w); };
+  const check = (label) => {
+    assert.deepEqual(w.chromeCalls, [], label);
+    assert.deepEqual(seen.writes, [], label);
+    assert.deepEqual(w.webContents.sent, [], label);
+    assert.deepEqual(popup.sent, [], label);
+  };
+  for (const [ev, payload] of refused) { electron.ipcMain.emit('worca:shell-state', ev, payload); check(JSON.stringify(payload)); }
+  electron.ipcMain.emit('worca:shell-state', foreign(), dark);
+  check('foreign origin');
+  seen.start[0].handle.die(1);
+  await until(() => calls.windows[0].loaded.length === 2);
+  w.webContents.mainFrame = { url: `${APP}/#history` };   // still on the old port
+  electron.ipcMain.emit('worca:shell-state', shellEvent(w), dark);
+  check('stale origin after a Restart');
+  w.webContents.mainFrame = { url: 'http://127.0.0.1:50777/#history' };
+  electron.ipcMain.emit('worca:shell-state', shellEvent(w), dark);
+  assert.equal(w.chromeCalls.length, 2, 'the new origin is accepted');
+  assert.equal(seen.writes.length, 1);
+});
+
+test('18b. a state message before the window exists is ignored', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { ctl, electron, calls, seen } = makeController({ over: { startServer: async ({ env }) => { await gate; const hd = fakeChildHandle(APP, 4317); seen.start.push({ env, handle: hd }); return hd; } } });
+  const started = ctl.start();
+  await tick();
+  const wc = fakeContents();
+  wc.mainFrame = { url: `${APP}/` };
+  assert.doesNotThrow(() => electron.ipcMain.emit('worca:shell-state', { sender: wc, senderFrame: wc.mainFrame }, STATE({ mode: 'dark', scheme: 'dark' })));
+  assert.deepEqual(seen.writes, []);
+  assert.deepEqual(wc.sent, []);
+  release();
+  await started;
+  assert.equal(electron.ipcMain.listenerCount('worca:shell-state'), 1, 'registered once');
+  assert.equal(calls.windows.length, 1);
+});
+
+test('19. full screen: enter and leave are sent to the page', async () => {
+  const { ctl, calls } = makeController({ platform: 'darwin' });
+  await ctl.start();
+  const w = calls.windows[0];
+  w.emit('enter-full-screen');
+  w.emit('leave-full-screen');
+  assert.deepEqual(fullScreenReplies(w), [['worca:shell-fullscreen', true], ['worca:shell-fullscreen', false]]);
+});
+
+test('20. tray: a darwin template image; win32 white on a dark taskbar, swapped to black when the theme turns light', async () => {
+  const mac = makeController({ platform: 'darwin', systemUIDark: true });
+  await mac.ctl.start();
+  assert.deepEqual(mac.calls.trays[0].img.template, [true]);
+  assert.equal(mac.electron.nativeTheme.listenerCount('updated'), 0, 'macOS tints the template itself');
+  const win = makeController({ platform: 'win32', dark: false, systemUIDark: true });
+  await win.ctl.start();
+  const tray = win.calls.trays[0];
+  assert.equal(tray.img.path, join('/app/desktop', 'assets', 'tray-white.png'));
+  assert.deepEqual(tray.img.template, [], 'no template outside macOS');
+  win.electron.nativeTheme.emit('updated');
+  assert.deepEqual(tray.images, [], 'unchanged theme: no new image');
+  win.electron.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI = false;
+  win.electron.nativeTheme.emit('updated');
+  assert.deepEqual(tray.images.map((i) => i.path), [join('/app/desktop', 'assets', 'tray-black.png')]);
+  const lin = makeController({ platform: 'linux', dark: true, systemUIDark: undefined });
+  await lin.ctl.start();
+  assert.equal(lin.calls.trays[0].img.path, join('/app/desktop', 'assets', 'tray-white.png'), 'linux falls back to shouldUseDarkColors');
+});
+
 const ICON = join('/app/desktop', 'build-resources', 'icon.png');
 const viewRoles = (template) => template.find((m) => m.label === 'View').submenu.map((i) => i.role || i.type);
 
-test('16. setName(\'Worca\') is the first app call, before enableSandbox, even when the lock is refused; setPath is never called', async () => {
+test('21. setName(\'Worca\') is the first app call, before enableSandbox, even when the lock is refused; setPath is never called', async () => {
   for (const lock of [true, false]) {
     const { ctl, calls } = makeController({ lock });
     await ctl.start();
@@ -521,7 +738,7 @@ test('16. setName(\'Worca\') is the first app call, before enableSandbox, even w
   assert.deepEqual(packaged.calls.setPath, []);
 });
 
-test('17. darwin: the app menu is set from appMenuTemplate after whenReady (DevTools in dev), before discovery; the tray menu is still calls.menus.at(-1)', async () => {
+test('22. darwin: the app menu is set from appMenuTemplate after whenReady (DevTools in dev), before discovery; the tray menu is still calls.menus.at(-1)', async () => {
   const snap = {};
   let calls;
   let seenRef;
@@ -538,15 +755,15 @@ test('17. darwin: the app menu is set from appMenuTemplate after whenReady (DevT
   assert.equal(calls.menus.at(-1).at(-1).label, 'Quit Worca (stops the Worca server)', 'the tray template stays last');
 });
 
-test('18. darwin dev: About shows Worca and the root version (1.2.3), iconPath = desktop/build-resources/icon.png; dock.setIcon gets that path; no extra nativeImage', async () => {
+test('23. darwin dev: About shows Worca and the root version (1.2.3), iconPath = desktop/build-resources/icon.png; dock.setIcon gets that path; no extra nativeImage', async () => {
   const { ctl, calls } = makeController();
   await ctl.start();
   assert.deepEqual(calls.about, [{ applicationName: 'Worca', applicationVersion: '1.2.3', version: '1.2.3', iconPath: ICON }]);
   assert.deepEqual(calls.dockIcon, [ICON]);
-  assert.deepEqual(calls.images, [join('/app/desktop', 'assets', 'tray.png')]);
+  assert.deepEqual(calls.images, [join('/app/desktop', 'assets', 'trayTemplate.png')]);
 });
 
-test('18b. darwin dev: readRootVersion null → About shows app.getVersion() and one log.error line', async () => {
+test('23b. darwin dev: readRootVersion null → About shows app.getVersion() and one log.error line', async () => {
   const errors = [];
   const { ctl, calls } = makeController({ over: { readRootVersion: () => null }, log: { info() {}, error: (m) => errors.push(m) } });
   await ctl.start();
@@ -557,7 +774,7 @@ test('18b. darwin dev: readRootVersion null → About shows app.getVersion() and
   assert.equal(calls.windows.length, 1);
 });
 
-test('19. darwin packaged: About shows app.getVersion(); no dock.setIcon; no toggleDevTools in the menu', async () => {
+test('24. darwin packaged: About shows app.getVersion(); no dock.setIcon; no toggleDevTools in the menu', async () => {
   let reads = 0;
   const { ctl, calls } = makeController({ packaged: true, over: { readRootVersion: () => { reads++; return '1.2.3'; } } });
   await ctl.start();
@@ -568,7 +785,7 @@ test('19. darwin packaged: About shows app.getVersion(); no dock.setIcon; no tog
   assert.ok(!viewRoles(calls.appMenu[0].template).includes('toggleDevTools'));
 });
 
-test('20. linux and win32: no setApplicationMenu, no About options, no dock calls; setName still called', async () => {
+test('25. linux and win32: no setApplicationMenu, no About options, no dock calls; setName still called', async () => {
   for (const platform of ['linux', 'win32']) {
     const { ctl, calls } = makeController({ platform });
     await ctl.start();
@@ -580,7 +797,7 @@ test('20. linux and win32: no setApplicationMenu, no About options, no dock call
   }
 });
 
-test('21. a throwing setApplicationMenu is logged and the window and tray still open', async () => {
+test('26. a throwing setApplicationMenu is logged and the window and tray still open', async () => {
   const errors = [];
   const { ctl, electron, calls, seen } = makeController({ log: { info() {}, error: (m) => errors.push(m) } });
   electron.Menu.setApplicationMenu = () => { throw new Error('menu boom'); };

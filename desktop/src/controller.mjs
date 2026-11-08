@@ -1,6 +1,8 @@
 // desktop/src/controller.mjs — the desktop app's life cycle (docs/desktop.md): one instance, reuse a worca already
 // running on the shared store or start one (4317, else an OS port), a sandboxed window and a tray, close-to-tray, and
-// a Quit that stops only a server this app started. `electron` and every helper are injected: tests pass fakes, and
+// a Quit that stops only a server this app started. The window's title bar follows the OS and the page's theme
+// (title-bar.mjs): the preload reports { mode, scheme, rail } over `worca:shell-state`, accepted only from the main
+// window's own top frame on the app origin. `electron` and every helper are injected: tests pass fakes, and
 // desktop/main.mjs is the only file that imports electron. Imports only node: builtins and sibling modules.
 import { createWriteStream, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -11,6 +13,8 @@ import { resolveServerRuntime, buildServerEnv, startServer, stopServer } from '.
 import { windowOptions, permissionAllowed, applyContentsPolicy } from './window.mjs';
 import { trayMenuTemplate } from './tray-menu.mjs';
 import { APP_NAME, appMenuTemplate, aboutPanelOptions, readRootVersion, aboutVersion, devIconPath } from './app-menu.mjs';
+import { THEME_COLORS, TOP_BAR_HEIGHT, TRAFFIC_LIGHTS, titleBarChrome, parseShellState, resolveScheme, readShellPrefs, writeShellPrefs } from './title-bar.mjs';
+import { windowIconFile, trayImageFile, systemUIDark } from './app-icons.mjs';
 
 /** <userData>/logs/server.log, truncated on every start. An open or write error is logged: createWriteStream reports
  *  it asynchronously, and an unhandled stream 'error' would end the main process. */
@@ -27,13 +31,13 @@ export function openServerLog(userDataDir, { onError = (err) => console.error(`w
   }
 }
 
-const DEFAULT_HELPERS = { readLoginShellPath, resolveStoreDir, findRunningServer, choosePort, resolveServerRuntime, buildServerEnv, startServer, stopServer, openServerLog, readRootVersion };
+const DEFAULT_HELPERS = { readLoginShellPath, resolveStoreDir, findRunningServer, choosePort, resolveServerRuntime, buildServerEnv, startServer, stopServer, openServerLog, readRootVersion, readShellPrefs, writeShellPrefs };
 const lastLines = (text, n) => String(text || '').split(/\r?\n/).filter((l) => l.trim()).slice(-n).join('\n');
 
 export function createDesktopController({ electron, platform = process.platform, argv = [], env = process.env, home, resourcesPath, packaged, desktopDir, helpers = {}, log = { info: console.log, error: console.error } }) {
-  const { app, BrowserWindow, Tray, Menu, shell, dialog, session, nativeImage } = electron;
+  const { app, BrowserWindow, Tray, Menu, shell, dialog, session, nativeImage, ipcMain, nativeTheme } = electron;
   const h = { ...DEFAULT_HELPERS, ...helpers };
-  const st = { url: null, owned: false, quitting: false, stopping: false, stopped: false, handle: null, starting: null, storeDir: null, loginPath: null, win: null, tray: null, openAtLogin: false, logPath: null, logStream: null, pendingShow: false };
+  const st = { url: null, owned: false, quitting: false, stopping: false, stopped: false, handle: null, starting: null, storeDir: null, loginPath: null, win: null, tray: null, trayFile: null, openAtLogin: false, logPath: null, logStream: null, pendingShow: false, chrome: titleBarChrome(platform), scheme: 'light', shellState: null, prefs: null };
 
   const getAppOrigin = () => { try { return st.url ? new URL(st.url).origin : null; } catch { return null; } };
   const loginArgs = () => (platform === 'win32' ? { args: ['--hidden'] } : undefined);
@@ -110,10 +114,53 @@ export function createDesktopController({ electron, platform = process.platform,
     st.tray.setContextMenu(Menu.buildFromTemplate(template));
   }
 
+  const sendFullScreen = (contents, on) => { if (contents && typeof contents.send === 'function') contents.send('worca:shell-fullscreen', !!on); };
+
+  /** The renderer's { mode, scheme, rail }: fail closed unless it comes from the main window's top frame on the app
+   *  origin (re-read per message: a Restart can move the port). A refused message changes nothing and gets no reply. */
+  function onShellState(event, payload) {
+    const win = st.win;
+    if (!win || !event || event.sender !== win.webContents) return;
+    const frame = event.senderFrame;
+    if (!frame || frame !== event.sender.mainFrame) return;
+    const appOrigin = getAppOrigin();
+    let frameOrigin = null;
+    try { frameOrigin = new URL(String(frame.url)).origin; } catch { /* not a URL: refused below */ }
+    if (!appOrigin || frameOrigin !== appOrigin) return;
+    const state = parseShellState(payload);
+    if (!state) return;
+    applyShellState(win, state);
+    sendFullScreen(event.sender, typeof win.isFullScreen === 'function' && win.isFullScreen());
+  }
+
+  /** Colours come from THEME_COLORS only; an unchanged state makes no window call and no write. */
+  function applyShellState(win, state) {
+    const prev = st.shellState;
+    if (prev && prev.mode === state.mode && prev.scheme === state.scheme && prev.rail === state.rail) return;
+    st.shellState = state;
+    st.scheme = state.scheme;
+    const colors = THEME_COLORS[state.scheme];
+    if (typeof win.setBackgroundColor === 'function') win.setBackgroundColor(colors.background);
+    if (st.chrome === 'overlay' && typeof win.setTitleBarOverlay === 'function') win.setTitleBarOverlay({ color: colors.overlay, symbolColor: colors.symbol, height: TOP_BAR_HEIGHT });
+    if (st.chrome === 'inset' && (!prev || prev.rail !== state.rail) && typeof win.setWindowButtonPosition === 'function') win.setWindowButtonPosition({ ...TRAFFIC_LIGHTS[state.rail ? 'rail' : 'expanded'] });
+    if (!st.prefs || st.prefs.mode !== state.mode || st.prefs.rail !== state.rail) {
+      st.prefs = { mode: state.mode, rail: state.rail };
+      h.writeShellPrefs(app.getPath('userData'), st.prefs, { onError: (err) => log.error(`worca desktop: saving window-shell.json failed: ${err && err.message ? err.message : err}`) });
+    }
+  }
+
   function createWindow() {
-    const icon = platform === 'linux' ? join(desktopDir, 'assets', 'tray@2x.png') : undefined;
-    const win = new BrowserWindow(windowOptions({ icon }));
+    // The saved mode and rail (not colours) give the launch background, overlay and lights: no flash before the page reports.
+    const prefs = h.readShellPrefs(app.getPath('userData'));
+    st.prefs = { mode: prefs.mode, rail: prefs.rail };
+    st.scheme = resolveScheme(prefs.mode, !!(nativeTheme && nativeTheme.shouldUseDarkColors));
+    st.shellState = { mode: prefs.mode, scheme: st.scheme, rail: prefs.rail };
+    const iconFile = windowIconFile(platform);
+    const icon = iconFile ? join(desktopDir, 'assets', iconFile) : undefined;
+    const win = new BrowserWindow(windowOptions({ icon, preload: join(desktopDir, 'preload.cjs'), chrome: st.chrome, scheme: st.scheme, rail: prefs.rail }));
     st.win = win;
+    win.on('enter-full-screen', () => sendFullScreen(win.webContents, true));
+    win.on('leave-full-screen', () => sendFullScreen(win.webContents, false));
     const ses = session.defaultSession;
     ses.setPermissionRequestHandler((_wc, permission, cb, details) => cb(permissionAllowed(permission, details && details.requestingUrl, getAppOrigin())));
     ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) => permissionAllowed(permission, requestingOrigin, getAppOrigin()));
@@ -127,11 +174,26 @@ export function createDesktopController({ electron, platform = process.platform,
     win.loadURL(st.url);
   }
 
-  function createTray() {
-    const trayPath = join(desktopDir, 'assets', 'tray.png');
+  function trayImage(file) {
+    const trayPath = join(desktopDir, 'assets', file);
     const image = nativeImage.createFromPath(trayPath);
     if (!image || image.isEmpty()) log.error(`worca desktop: the tray image is empty: ${trayPath}`);
+    return image;
+  }
+
+  function createTray() {
+    st.trayFile = trayImageFile({ platform, darkSystemUI: systemUIDark(nativeTheme) });
+    const image = trayImage(st.trayFile);
+    if (platform === 'darwin' && image && typeof image.setTemplateImage === 'function') image.setTemplateImage(true);
     st.tray = new Tray(image);
+    if (platform !== 'darwin' && nativeTheme && typeof nativeTheme.on === 'function') {
+      nativeTheme.on('updated', () => {
+        const file = trayImageFile({ platform, darkSystemUI: systemUIDark(nativeTheme) });
+        if (!st.tray || file === st.trayFile) return;
+        st.trayFile = file;
+        if (typeof st.tray.setImage === 'function') st.tray.setImage(trayImage(file));
+      });
+    }
     if (typeof st.tray.setToolTip === 'function') st.tray.setToolTip('Worca');
     st.openAtLogin = platform === 'linux' ? false : !!app.getLoginItemSettings(loginArgs()).openAtLogin;
     buildTrayMenu();
@@ -177,10 +239,11 @@ export function createDesktopController({ electron, platform = process.platform,
   async function start() {
     app.setName(APP_NAME);   // the same name the userData folder already has (productName): it does not move
     app.enableSandbox();
-    app.on('web-contents-created', (_e, wc) => applyContentsPolicy(wc, { getAppOrigin, openExternal: (u) => shell.openExternal(u) }));
+    app.on('web-contents-created', (_e, wc) => applyContentsPolicy(wc, { getAppOrigin, openExternal: (u) => shell.openExternal(u), getScheme: () => st.scheme }));
     if (!setupSingleInstance(app, { onSecondInstance: showWindow })) return;
     await app.whenReady();
     setupAppIdentity();
+    if (ipcMain) ipcMain.on('worca:shell-state', onShellState);
     app.on('before-quit', (e) => {
       st.quitting = true;
       if (st.stopped) return;
@@ -213,6 +276,6 @@ export function createDesktopController({ electron, platform = process.platform,
 
   return {
     start,
-    state: () => ({ url: st.url, owned: st.owned, quitting: st.quitting, windowVisible: !!(st.win && st.win.isVisible()) }),
+    state: () => ({ url: st.url, owned: st.owned, quitting: st.quitting, windowVisible: !!(st.win && st.win.isVisible()), scheme: st.scheme, chrome: st.chrome }),
   };
 }

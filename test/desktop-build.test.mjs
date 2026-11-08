@@ -136,7 +136,7 @@ test('desktopBuilderConfig: unsigned mac, asar, no rebuild, the extraResources (
   assert.equal(c.productName, 'Worca');
   assert.equal(c.extraMetadata.version, PKG.version);
   assert.deepEqual(c.directories, { output: 'dist', buildResources: 'build-resources' });
-  assert.deepEqual(c.files, ['main.mjs', 'src/**', 'assets/**', 'package.json']);
+  assert.deepEqual(c.files, ['main.mjs', 'preload.cjs', 'src/**', 'assets/**', 'package.json']);
   assert.equal(c.asar, true);
   assert.equal(c.npmRebuild, false);
   // electron-builder always drops a top-level node_modules inside an extraResources source (app-builder-lib
@@ -152,21 +152,30 @@ test('desktopBuilderConfig: unsigned mac, asar, no rebuild, the extraResources (
   assert.equal(c.mac.notarize, false);
   assert.ok(!('entitlements' in c.mac) && !('entitlementsInherit' in c.mac));
   assert.deepEqual(c.mac.target, ['dmg', 'zip']);
-  assert.equal(c.mac.icon, 'build-resources/icon.png');
+  assert.equal(c.mac.icon, 'build-resources/icon.icns');
   assert.match(c.mac.extendInfo.NSMicrophoneUsageDescription, /microphone/);
   assert.equal(c.mac.extendInfo.CFBundleName, 'Worca', 'the bold menu-bar title');
   assert.equal(c.mac.extendInfo.CFBundleDisplayName, 'Worca');
   assert.equal(c.mac.extendInfo.CFBundleName, c.productName);
   assert.equal(c.mac.extendInfo.CFBundleDisplayName, c.productName);
   assert.deepEqual(c.win.target, [{ target: 'nsis', arch: ['x64'] }]);
-  assert.deepEqual(c.nsis, { oneClick: false, perMachine: false });
+  assert.equal(c.win.icon, 'build-resources/icon.ico');
+  assert.deepEqual(c.nsis, { oneClick: false, perMachine: false, installerIcon: 'build-resources/icon.ico', uninstallerIcon: 'build-resources/icon.ico' });
   assert.deepEqual(c.linux.target, ['AppImage', 'deb']);
+  assert.equal(c.linux.icon, 'build-resources/icons');
   const s = desktopBuilderConfig({ version: '1.0.0', platform: 'mac', arch: 'x64', signed: true, notarize: true });
   assert.ok(!('identity' in JSON.parse(JSON.stringify(s)).mac), 'signed: electron-builder picks the identity');
   assert.deepEqual([s.mac.hardenedRuntime, s.mac.entitlements, s.mac.entitlementsInherit, s.mac.notarize],
     [true, 'build-resources/entitlements.mac.plist', 'build-resources/entitlements.mac.plist', true]);
   assert.deepEqual(desktopBuilderConfig({ version: '1.0.0', platform: 'mac', arch: 'x64', signed: false, notarize: false }),
     desktopBuilderConfig({ version: '1.0.0', platform: 'mac', arch: 'arm64', signed: false, notarize: false }), 'arch-neutral');
+});
+
+test('desktopBuilderConfig: every icon path and packaged file the config names exists in desktop/', () => {
+  const c = desktopBuilderConfig({ version: '1.0.0', platform: 'mac', arch: 'arm64', signed: false, notarize: false });
+  for (const p of [c.mac.icon, c.win.icon, c.nsis.installerIcon, c.nsis.uninstallerIcon, c.linux.icon]) assert.ok(existsSync(join(ROOT, 'desktop', p)), p);
+  assert.ok(existsSync(join(ROOT, 'desktop', c.linux.icon, '512x512.png')), 'electron-builder reads NxN.png names from the folder');
+  for (const p of c.files.filter((x) => !x.includes('*'))) assert.ok(existsSync(join(ROOT, 'desktop', p)), p);
 });
 
 test('nodeRuntimeAsset: the four pinned targets, official dist URLs; an unpinned target throws', () => {
@@ -313,10 +322,12 @@ test('.gitignore keeps desktop build output out of git', () => {
   assert.match(gi, /^desktop\/\.dev-app\/$/m, 'the dev launcher\'s Worca.app copy');
 });
 
-test('icon 1024x1024; tray 32x32 and 64x64; the mac entitlements carry what the bundled node needs', () => {
+test('icon 1024x1024; window icon 256; tray 18/36 (template), 32/64 (black, white); the mac entitlements carry what the bundled node needs', () => {
   assert.deepEqual(pngSize(readFileSync(join(ROOT, 'desktop/build-resources/icon.png'))), { width: 1024, height: 1024 });
-  assert.deepEqual(pngSize(readFileSync(join(ROOT, 'desktop/assets/tray.png'))), { width: 32, height: 32 });
-  assert.deepEqual(pngSize(readFileSync(join(ROOT, 'desktop/assets/tray@2x.png'))), { width: 64, height: 64 });
+  assert.deepEqual(pngSize(readFileSync(join(ROOT, 'desktop/assets/icon.png'))), { width: 256, height: 256 });
+  const sizes = { 'trayTemplate.png': 18, 'trayTemplate@2x.png': 36, 'tray-black.png': 32, 'tray-black@2x.png': 64, 'tray-white.png': 32, 'tray-white@2x.png': 64 };
+  for (const [file, n] of Object.entries(sizes)) assert.deepEqual(pngSize(readFileSync(join(ROOT, 'desktop/assets', file))), { width: n, height: n }, file);
+  assert.equal(existsSync(join(ROOT, 'desktop/assets/tray.png')), false, 'the old tray art is gone');
   const plist = readFileSync(join(ROOT, 'desktop/build-resources/entitlements.mac.plist'), 'utf8');
   for (const k of ['com.apple.security.cs.allow-jit', 'com.apple.security.cs.allow-unsigned-executable-memory', 'com.apple.security.cs.disable-library-validation', 'com.apple.security.device.audio-input']) {
     assert.ok(plist.includes(`<key>${k}</key>`), k);

@@ -146,6 +146,7 @@
     "runs/smart-naming.css",
     "network-proxy/proxy-settings.css",
     "settings/away-screensaver.css",
+    "shell/desktop-shell.css",
     "chat/card-nesting.css"
   ],
   "html": [

@@ -1,0 +1,36 @@
+/* ========================================================================== */
+/* Desktop shell (docs/desktop.md "Window and icons"). desktop/preload.cjs    */
+/* sets data-shell and data-shell-chrome on <html>; the web build never has    */
+/* them, so every rule here is scoped to them and the web page is unchanged.  */
+/* inset (macOS): no title bar; the traffic lights sit in the logo row (the    */
+/* wordmark starts at 84px) or, on the 60px rail, in a 32px top strip. Not in  */
+/* full screen, where macOS hides the lights. overlay (Windows): the window    */
+/* controls are drawn over the top bar's right end; the bar keeps clear of     */
+/* them with the Window Controls Overlay env values (138px fallback).          */
+/* Drag strips: the logo row, the top bar, the Workflows view's 48px top strip */
+/* (that view hides both) and, overlay only, the terminal head. Their controls */
+/* are no-drag. Electron drag regions ignore stacking, so every overlay root   */
+/* that can cover a strip is no-drag too: dialog, popover and the dialog /     */
+/* menu / listbox / tooltip roles, plus the fixed and floating roots           */
+/* .viewer-modal .guide-scrim .guide-ring .guide-balloon .apv .req-help .ss    */
+/* .session-expired .chat-scrim .chat-panel .nav-fly .activity-pop .tsearch-pop */
+/* .info-bubble .mention-popup .pp-bar .pp-pop .wfv-menu .term-pane .chart-tip */
+/* .cr-picker .tl-pop .group-picker .label-picker .mk-tu-pop .req-dlg-wrap     */
+/* Add new fixed overlays here.                                                */
+/* At 900px and narrower (the window's minWidth) three panels go full-window  */
+/* (position:fixed; inset:0): the Chat run panel, Help me answer and the      */
+/* export sheet. They start 48px down so their heads clear the lights and the */
+/* window controls; the top bar and logo row above stay the drag strip.       */
+/* ========================================================================== */
+:root[data-shell-chrome="inset"] .brand,:root[data-shell-chrome="inset"] .topnav,:root[data-shell-chrome="overlay"] .brand,:root[data-shell-chrome="overlay"] .topnav{-webkit-app-region:drag;app-region:drag;}
+:root[data-shell-chrome="inset"] :is(.brand,.topnav) :is(a,button,input,select,textarea,label,summary,[role="button"],[tabindex],[contenteditable]),:root[data-shell-chrome="overlay"] :is(.brand,.topnav,.term-head) :is(a,button,input,select,textarea,label,summary,[role="button"],[tabindex],[contenteditable]){-webkit-app-region:no-drag;app-region:no-drag;}
+:root[data-shell-chrome="inset"] :is(dialog,[popover],[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"],[role="tooltip"],.viewer-modal,.guide-scrim,.guide-ring,.guide-balloon,.apv,.req-help,.ss,.session-expired,.chat-scrim,.chat-panel,.nav-fly,.activity-pop,.tsearch-pop,.info-bubble,.mention-popup,.pp-bar,.pp-pop,.wfv-menu,.term-pane,.chart-tip,.cr-picker,.tl-pop,.group-picker,.label-picker,.mk-tu-pop,.req-dlg-wrap),:root[data-shell-chrome="overlay"] :is(dialog,[popover],[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"],[role="tooltip"],.viewer-modal,.guide-scrim,.guide-ring,.guide-balloon,.apv,.req-help,.ss,.session-expired,.chat-scrim,.chat-panel,.nav-fly,.activity-pop,.tsearch-pop,.info-bubble,.mention-popup,.pp-bar,.pp-pop,.wfv-menu,.term-pane,.chart-tip,.cr-picker,.tl-pop,.group-picker,.label-picker,.mk-tu-pop,.req-dlg-wrap){-webkit-app-region:no-drag;app-region:no-drag;}
+:root[data-shell-chrome="inset"]:not([data-shell-fullscreen]) .brand{padding-left:84px;}
+:root[data-shell-chrome="inset"]:not([data-shell-fullscreen]) .sidebar.collapsed .brand{height:80px;padding-top:32px;padding-left:0;}
+:root[data-shell-chrome="overlay"] .topnav{padding-right:calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, calc(100vw - 138px)) + 16px);}
+:root[data-shell-chrome="overlay"] .term-head{padding-right:calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, calc(100vw - 138px)) + 12px);-webkit-app-region:drag;app-region:drag;}
+:root[data-shell-chrome="inset"]:not([data-shell-fullscreen]) body.view-workflows .view[data-view="workflows"],:root[data-shell-chrome="overlay"] body.view-workflows .view[data-view="workflows"]{-webkit-app-region:drag;app-region:drag;background:var(--panel);}
+:root[data-shell-chrome="inset"]:not([data-shell-fullscreen]) body.view-workflows .wfv,:root[data-shell-chrome="overlay"] body.view-workflows .wfv{top:48px;-webkit-app-region:no-drag;app-region:no-drag;}
+@media (max-width:900px){
+:root[data-shell-chrome="inset"]:not([data-shell-fullscreen]) .chat-page[data-panel="open"] .chat-panel,:root[data-shell-chrome="inset"]:not([data-shell-fullscreen]) .req-help,:root[data-shell-chrome="inset"]:not([data-shell-fullscreen]) .req-dlg-wrap.req-dlg-sheet .card.req-dialog.req-export,:root[data-shell-chrome="overlay"] .chat-page[data-panel="open"] .chat-panel,:root[data-shell-chrome="overlay"] .req-help,:root[data-shell-chrome="overlay"] .req-dlg-wrap.req-dlg-sheet .card.req-dialog.req-export{top:48px;}
+}
