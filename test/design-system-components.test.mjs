@@ -559,7 +559,7 @@ test('lineRow, fileRow and stackedPrRow: a row that opens says so; a made PR no 
 test('pulseRow: its mark, the tick box on the rail while selecting, its text opens it', () => {
   const r = dom(C.pulseRow({ title: 'a<b', meta: 'm', time: 't', tip: 'Opens', id: 'k', check: true, unread: true, resolved: true }));
   assert.ok(r.classList.contains('pz-row') && r.classList.contains('is-sel') && r.classList.contains('is-unread'));
-  assert.ok(r.querySelector('.pz-rail .pz-unread'));
+  assert.ok(!r.querySelector('.pz-unread') && r.querySelector('.pz-row-t.is-unread'));   // unread is weight, not a dot
   assert.equal(r.querySelector('.pz-check input').getAttribute('data-sel'), 'k');
   assert.equal(r.querySelector('.pz-check input').checked, true);
   assert.equal(r.querySelector('.pz-row-main').getAttribute('data-open'), 'k');

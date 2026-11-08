@@ -46,14 +46,14 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const POLICY = { prOpen: 'none', prSlices: 'each', capRun: '50', capAll: '2000', wsCap: '120', blockMcp: true, policyTitle: 'Gateway team policy', policyNotes: 'Ask #platform' };
   const PR_WORDS = { none: 'None', draft: 'Draft', ready: 'Ready' };
   const POLICY_WORDS = {
-    prOpen: (v) => `Create a PR: ${PR_WORDS[v]}`, prSlices: (v) => `A feature's PRs: ${v === 'each' ? 'one per slice' : 'one for all'}`, capRun: (v) => `Each run: ${usd(v)}`, capAll: (v) => `All runs: ${usd(v)} a month`,
+    prOpen: (v) => `Create a PR: ${PR_WORDS[v]}`, prSlices: (v) => `A feature's PRs: ${v === 'each' ? 'one per slice' : 'one for all'}`, capRun: (v) => `Each task: ${usd(v)}`, capAll: (v) => `All tasks: ${usd(v)} a month`,
     wsCap: (v) => `Workspace runs: ${usd(v)} a run`, blockMcp: () => 'Unknown MCP servers no longer blocked', policyTitle: (v) => `Title: ${v}`, policyNotes: () => 'Notes changed',
   };
   const pending = (sv, keys = Object.keys(POLICY)) => keys.filter((k) => sv[k] !== sv.pol[k]);
   const pendingWords = (sv) => { const n = pending(sv).length; return n ? `${plural(n, 'change')} not published` : 'Nothing to publish'; };
   const pendingChip = (...keys) => (sv) => (pending(sv, keys).length ? 'Not published' : '');
   const polEdit = (title, fields, check) => ({ label: 'Change…', edit: { title, yes: 'Add to changes', note: 'Nothing reaches your team until you publish.', fields, check, then: (v, sv) => { Object.assign(sv, v); return pendingWords(sv); } } });
-  // A cap has one behaviour: a run pauses at it (docs/rail/settings.md › Spending). The tighter of yours and your team's wins.
+  // A cap has one behaviour: a task pauses at it (docs/rail/settings.md › Spending). The tighter of yours and your team's wins.
   const runCap = (sv) => (!sv.perRun ? `**${usd(sv.pol.capRun)}** (your team's)` : +sv.perRun <= +sv.pol.capRun ? `**${usd(sv.perRun)}**` : `**${usd(sv.pol.capRun)}** (your team's; yours is ${usd(sv.perRun)})`);
   const totalCap = (sv) => { const team = `${usd(sv.pol.capAll)} a month`, own = `${usd(sv.total)} a ${sv.period}`;
     if (!sv.total) return `**${team}** (your team's)`;
@@ -138,7 +138,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         { title: 'Network', meta: v.saNet === 'proxy' ? `Through ${v.saHost}:${v.saPort}` : 'Direct' },
         { title: 'Access', meta: [v.saClaude && (window.RailUI.prefs.connected('claude') ? 'Claude Code' : 'Claude Code (not signed in)'), v.saCopilot && 'Copilot'].filter(Boolean).join(', ') || 'None' },
         { title: 'Roles', meta: { rec: 'Recommended', cheap: 'Cheaper', keep: 'As they are' }[v.saRoles] },
-        { title: 'Limits', meta: `Each run ${usd(v.saRun)}, all runs ${usd(v.saTotal)} a month` },
+        { title: 'Limits', meta: `Each task ${usd(v.saRun)}, all tasks ${usd(v.saTotal)} a month` },
       ] },
     ],
     then: (v, sv) => {
@@ -192,7 +192,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   // Another engine: a job's own model that it does not offer goes back to its role, and the toast says how many.
   const engineChanged = (sv) => { let n = 0; for (const [list, kind] of [[STEPS, 'jobStep'], [HELPERS, 'jobHelp']]) list.forEach((j, i) => { const k = kind + i; if (!jobOptions(j, kind)(sv).some((o) => o[0] === sv[k])) { sv[k] = 'follows'; n += 1; } }); return n ? `${plural(n, 'job')} back to its role` : ''; };
   const HELPERS = [
-    slot('Titles', 'Quick jobs', { detail: 'Writes the short title every run and chat gets.' }),
+    slot('Titles', 'Quick jobs', { detail: 'Writes the short title every task and chat gets.' }),
     slot('Auto workflow classifier', 'Everyday coding', { detail: 'Reads an Auto run\'s task and picks the workflow it runs.' }),
     slot('Run overview', 'Quick jobs', { detail: 'Writes the overview a finished run opens on.' }),
     slot('PR description', 'Quick jobs', { detail: 'Drafts the pull request description.' }),
@@ -223,7 +223,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const MOVES = window.RailUI?.TRACKER_MOVES || { jira: [] };   // the library's; the sweeps read this file for its section ids, without it
   const ruleWords = (m) => (m === 'none' ? 'Don\'t move' : m === 'done' ? 'Any Done status' : `Moves to ${m}`);
   const rule = (title, move, gone) => ({ title, move, gone, mark: gone ? 'is-amber' : '',
-    meta: gone ? `${title} has no status named ${gone} any more: pick another; until then a run leaves its tickets where they are` : ruleWords(move),
+    meta: gone ? `${title} has no status named ${gone} any more: pick another; until then a task leaves its tickets where they are` : ruleWords(move),
     menu: ['Change rule', 'Remove'],
     on: { 'Change rule': (r, x) => x.dialog({ title: `Rule for ${r.title}`, yes: 'Save', fields: [{ key: 'to', label: 'Move its ticket', value: r.move, options: [['none', 'Don\'t move'], ['done', 'Any Done status'], ...MOVES[r.tracker].filter((m) => m !== r.gone).map((m) => [m, m])] }], then: (v) => { r.move = v.to; r.gone = ''; r.meta = ruleWords(v.to); r.mark = ''; return `${r.title}: ${r.meta}`; } }) } });
 
@@ -248,7 +248,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const tracker = (title, id, meta, key, on, o, rules) => ({ ...plugin(title, meta, key, on, o), foldFlag: 'ticketUpdates', foldHelp: 'Ticket updates', moreList: rules.map((r) => ({ ...r, tracker: id })), empty: 'No project rules', more: [
     { name: 'Ticket updates', help: 'A project\'s own rule wins over All projects', say: 'What a finished run does to its ticket', acts: [{ label: 'Add rule', edit: (sv) => ({ title: 'Add a project rule', yes: 'Add', fields: [{ key: 'proj', label: 'Project', value: '', hint: id === 'github' ? 'A repository: owner/repo' : 'A project you work on' }, { key: 'to', label: 'Move its ticket', value: 'done', options: [['none', 'Don\'t move'], ['done', 'Any Done status'], ...MOVES[id].map((m) => [m, m])] }], check: (v) => (v.proj.trim() ? '' : 'A rule needs a project'), then: (v) => { const k = `plugins/Installed/Trackers/${title}`; (sv.__recs[k] ||= rules.map((r, i) => ({ ...r, tracker: id, id: 'r' + i }))).push({ ...rule(v.proj, v.to), tracker: id, id: 'n' + Date.now() }); return `Rule added for ${v.proj}`; } }) }] },
     { name: 'Projects', help: 'None picked means all projects', say: 'New run and Requirements list only **{tuProjects_' + id + '}**', vals: { ['tuProjects_' + id]: id === 'github' ? 'acme/worca' : id === 'azure' ? 'Billing' : 'WEB, API, INFRA' }, acts: [edit('Change your projects', [{ key: 'tuProjects_' + id, label: 'Projects you work on', hint: 'Comma-separated; none means all. Removing one keeps its rule' }], { done: 'Projects saved' })] },
-    { name: 'All projects', say: 'When a run finishes successfully, {tuAll_' + id + '}', picks: { ['tuAll_' + id]: P('done', O(['none', 'don\'t move its ticket'], ['done', 'move it to any Done status', 'One the ticket can reach, never Won\'t Do, Rejected or Duplicate']), 'Unless a project below says otherwise') } },
+    { name: 'All projects', say: 'When a task finishes successfully, {tuAll_' + id + '}', picks: { ['tuAll_' + id]: P('done', O(['none', 'don\'t move its ticket'], ['done', 'move it to any Done status', 'One the ticket can reach, never Won\'t Do, Rejected or Duplicate']), 'Unless a project below says otherwise') } },
   ] });
   // Plugins › Sources: the head's action opens them; a source's row opens the store it fills.
   function toStore(r, x) { x.sv.__dialog = null; return x.page('marketplace', 'Opens the Marketplace, the store in the sidebar'); }
@@ -292,7 +292,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       ] },
       { title: 'Storage', min: 'advanced', rows: [
         { name: 'Folders', say: 'Data lives in `{root}`; new projects go in `{projects}`', vals: { root: '~/.worca-cc', projects: '~/src' },
-          acts: [edit('Change the folders', [{ key: 'root', label: 'Worca folder', hint: 'Does not move data: Worca starts fresh here, and the old folder stays as it was' }, { key: 'projects', label: 'Projects folder', hint: 'Its CLAUDE.md, skills and .mcp.json reach every agent' }, { key: 'useDefaults', button: 'Use the defaults', hint: 'Fills in ~/.worca-cc and ~/src; Save applies them', when: (v) => v.root !== '~/.worca-cc' || v.projects !== '~/src', do: (v) => { v.root = '~/.worca-cc'; v.projects = '~/src'; return 'Save to start fresh in ~/.worca-cc'; } }], { done: 'Folders saved; new runs use them', check: (v) => (v.root.trim() && v.projects.trim() ? '' : 'A folder needs a path') })] },
+          acts: [edit('Change the folders', [{ key: 'root', label: 'Worca folder', hint: 'Does not move data: Worca starts fresh here, and the old folder stays as it was' }, { key: 'projects', label: 'Projects folder', hint: 'Its CLAUDE.md, skills and .mcp.json reach every agent' }, { key: 'useDefaults', button: 'Use the defaults', hint: 'Fills in ~/.worca-cc and ~/src; Save applies them', when: (v) => v.root !== '~/.worca-cc' || v.projects !== '~/src', do: (v) => { v.root = '~/.worca-cc'; v.projects = '~/src'; return 'Save to start fresh in ~/.worca-cc'; } }], { done: 'Folders saved; new tasks use them', check: (v) => (v.root.trim() && v.projects.trim() ? '' : 'A folder needs a path') })] },
         { name: 'Diagnostics', min: 'expert', say: 'Log each agent start in the run log: its binary, arguments and routing, never a credential. A set `WORCA_DEBUG_SPAWN` overrides this', sw: { key: 'spawnLog', on: false, why: 'Applies to runs started here and from the CLI, with no restart' } },
       ] },
       { title: 'Credentials', rows: [
@@ -335,9 +335,9 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
           { f: 'Create a PR', t: PR_WORDS[sv.pol.prOpen], k: 'Default', y: '', e: PR_WORDS[sv.pol.prOpen] },
         ] } },
       { title: 'Defaults', meta: 'A project, New run and the run page can change these.', rows: [
-        { name: 'Pull requests', help: 'Create a PR when a run finishes. If it cannot, a notification says why', chip: pendingChip('prOpen', 'prSlices'), say: (sv) => (sv.prOpen === 'none' ? 'When a run finishes, {prOpen}' : 'When a run finishes, {prOpen}; a feature gets {prSlices}'),
+        { name: 'Pull requests', help: 'Create a PR when a task finishes. If it cannot, a notification says why', chip: pendingChip('prOpen', 'prSlices'), say: (sv) => (sv.prOpen === 'none' ? 'When a task finishes, {prOpen}' : 'When a task finishes, {prOpen}; a feature gets {prSlices}'),
           picks: { prOpen: P('none', O(['none', 'don\'t create a PR'], ['draft', 'create a draft PR'], ['ready', 'create a PR ready for review']), 'Team default for every project'), prSlices: P('each', O(['each', 'a PR per slice, stacked'], ['one', 'one PR for the whole feature']), 'How a feature\'s slices become pull requests', true) } },
-        { name: 'Spending', chip: pendingChip('capRun', 'capAll'), say: (sv) => `Each run pauses at **${usd(sv.capRun)}**, all runs at **${usd(sv.capAll)} a month**; you can continue past, and that is recorded`, acts: [polEdit('Change the spending caps', [{ key: 'capRun', label: 'Per run (USD)' }, { key: 'capAll', label: 'Total a month (USD)' }], (v) => (isAmount(v.capRun) && isAmount(v.capAll) ? '' : 'A cap is an amount in dollars'))] },
+        { name: 'Spending', chip: pendingChip('capRun', 'capAll'), say: (sv) => `Each task pauses at **${usd(sv.capRun)}**, all tasks at **${usd(sv.capAll)} a month**; you can continue past, and that is recorded`, acts: [polEdit('Change the spending caps', [{ key: 'capRun', label: 'Per run (USD)' }, { key: 'capAll', label: 'Total a month (USD)' }], (v) => (isAmount(v.capRun) && isAmount(v.capAll) ? '' : 'A cap is an amount in dollars'))] },
         { name: 'Workspace runs', chip: pendingChip('wsCap'), say: (sv) => `A run across a workspace pauses at **${usd(sv.wsCap)}** instead`, acts: [polEdit('Change for workspace runs', [{ key: 'wsCap', label: 'Per run (USD)' }], (v) => (isAmount(v.wsCap) ? '' : 'A cap is an amount in dollars'))] },
       ] },
       { title: 'Rules', actions: [
@@ -357,7 +357,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         { title: 'Models', meta: 'Selectable everywhere a model is chosen.', list: [
           { title: 'Opus via Acme gateway', meta: 'Through Anthropic-compatible · roles for Claude and Codex only', openMin: 'expert', open: (r, x) => x.go('models') },
         ] },
-        { title: 'MCP servers', meta: 'What the policy adds to every run. Each waits for your consent.', list: [
+        { title: 'MCP servers', meta: 'What the policy adds to every task. Each waits for your consent.', list: [
           { title: 'github', meta: 'stdio · consented on 2 Oct', open: (r, x) => x.dialog({ title: 'github', view: true, yes: 'Close', note: 'Runs `npx @modelcontextprotocol/server-github`, with `GITHUB_TOKEN` from your settings.' }) },
         ] },
       ] },
@@ -380,21 +380,21 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
 
     runs: { title: 'Runs', meta: 'How tasks spend, start and wait.', sections: [
       { title: 'Spending', meta: spentWords, rows: [
-        { name: 'Budget', say: (sv) => `All runs pause at ${totalCap(sv)}; one run at ${runCap(sv)}`,
+        { name: 'Budget', say: (sv) => `All tasks pause at ${totalCap(sv)}; one run at ${runCap(sv)}`,
           acts: [{ label: 'Change…', edit: { title: 'Change the budget', yes: 'Save', note: 'Empty means only your team\'s cap applies. The tighter of the two wins.', check: (v) => (/^\d*(\.\d+)?$/.test(v.perRun) && /^\d*(\.\d+)?$/.test(v.total) ? '' : 'A limit is an amount in dollars'), fields: [
             { key: 'perRun', label: 'Per run (USD)', placeholder: 'No limit' }, { key: 'total', label: 'Total (USD)', placeholder: 'No limit' }, { key: 'period', label: 'The total starts again', options: O(['day', 'Each day, at midnight'], ['week', 'Each week, from Monday'], ['month', 'Each month, from the 1st']) },
           ], done: 'Budget saved' } }],
           more: [
-            { name: 'Team caps', say: 'Your team sets its own caps; you can continue past one when a run pauses, and that is recorded', min: 'advanced', acts: [{ label: 'Open', id: 'team', go: 'team', help: 'Settings › Team policy' }] },
+            { name: 'Team caps', say: 'Your team sets its own caps; you can continue past one when a task pauses, and that is recorded', min: 'advanced', acts: [{ label: 'Open', id: 'team', go: 'team', help: 'Settings › Team policy' }] },
             { name: 'Usage', say: 'What was spent, per harness', acts: [{ label: 'Open', id: 'usage', click: ['[data-acct]', '[data-sub="usage"]'], help: 'The profile menu\'s Usage and costs' }] },
           ] },
         { name: 'Hourly rate', say: 'Time saved is counted at **${rate}** an hour', vals: { rate: '35' }, acts: [edit('Change the hourly rate', [{ key: 'rate', label: 'USD an hour', hint: 'What an hour of a developer costs, for Statistics' }], { done: 'Hourly rate saved', check: (v) => (isAmount(v.rate) ? '' : 'A rate is an amount in dollars') })] },
-        { name: 'Cost tags', say: (sv) => { const tags = sv.__recs['runs/Spending/Cost tags'] || COST_TAGS, req = tags.filter((t) => t.required).map((t) => `**${t.title}**`); if (!tags.length) return 'No cost tags: spend is counted per run only'; return `Spend is counted by ${andList(tags.map((t) => `**${t.title}**`))}; ${sv.tagsReq && req.length ? `a run needs its ${andList(req)}` : 'a run starts without any'}`; }, acts: [{ label: 'Add tag', edit: (sv) => ({ title: 'Add a cost tag', yes: 'Add', fields: costTagFields('', '', false), check: (v) => (v.name.trim() ? '' : 'A tag needs a name'), then: (v) => { const k = 'runs/Spending/Cost tags'; sv.__recs[k] ||= COST_TAGS.map((it, i) => ({ ...it, id: 'r' + i })); sv.__recs[k].push({ ...costTag(v.name, v.vals, v.req), id: 'n' + Date.now() }); sv.__open = 'more:' + k; return `Cost tag added: ${v.name}`; } }) }], more: [
+        { name: 'Cost tags', say: (sv) => { const tags = sv.__recs['runs/Spending/Cost tags'] || COST_TAGS, req = tags.filter((t) => t.required).map((t) => `**${t.title}**`); if (!tags.length) return 'No cost tags: spend is counted per run only'; return `Spend is counted by ${andList(tags.map((t) => `**${t.title}**`))}; ${sv.tagsReq && req.length ? `a task needs its ${andList(req)}` : 'a task starts without any'}`; }, acts: [{ label: 'Add tag', edit: (sv) => ({ title: 'Add a cost tag', yes: 'Add', fields: costTagFields('', '', false), check: (v) => (v.name.trim() ? '' : 'A tag needs a name'), then: (v) => { const k = 'runs/Spending/Cost tags'; sv.__recs[k] ||= COST_TAGS.map((it, i) => ({ ...it, id: 'r' + i })); sv.__recs[k].push({ ...costTag(v.name, v.vals, v.req), id: 'n' + Date.now() }); sv.__open = 'more:' + k; return `Cost tag added: ${v.name}`; } }) }], more: [
           { name: 'Required', say: 'A run starts only with every required cost tag set', sw: { key: 'tagsReq', on: true } },
         ], moreList: COST_TAGS },
       ] },
       { title: 'Starting', rows: [
-        { name: 'Naming', flag: 'smartRunNaming', say: (sv) => (sv.naming ? `Suggest ${pickText(SUGGEST, sv.what)} ${pickText(SUGGEST_WHEN, sv.when)}` : 'You name each run; nothing is suggested'), sw: { key: 'naming', on: true, why: 'Labs › Smart run naming' }, more: [
+        { name: 'Naming', flag: 'smartRunNaming', say: (sv) => (sv.naming ? `Suggest ${pickText(SUGGEST, sv.what)} ${pickText(SUGGEST_WHEN, sv.when)}` : 'You name each task; nothing is suggested'), sw: { key: 'naming', on: true, why: 'Labs › Smart run naming' }, more: [
           { name: 'Suggestions', say: 'Suggest {what} for a new run, {when}', picks: { what: P('both', SUGGEST, 'What the model suggests'), when: P('typing', SUGGEST_WHEN, 'When it suggests', true) } },
           { name: 'Branch', help: 'A project can override the pattern and the types in its own Settings', say: 'Branches are named `{pattern}`, the type one of {types}', vals: { pattern: '{type}/{slug}', types: 'feat, fix, chore, docs, refactor, test' }, acts: [edit('Change the branch pattern', [{ key: 'pattern', label: 'Pattern', hint: '{type}, {slug}, {ticket} and {id} are filled in' }, { key: 'types', label: 'Types', hint: 'The model picks one of these' }], { done: 'Branch pattern saved' })] },
           { name: 'Add run id', say: 'Append the short run id when the pattern has no `{id}`', sw: { key: 'runId', on: false } },
@@ -402,7 +402,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
           { name: 'Defaults', say: 'Back to `{type}/{slug}` and the six types', acts: [{ label: 'Use defaults', do: (sv) => { sv.pattern = '{type}/{slug}'; sv.types = 'feat, fix, chore, docs, refactor, test'; sv.runId = false; return 'Naming: back to its defaults'; } }] },
         ] },
         { name: 'Sync', min: 'advanced', help: GIT_TIP, say: (sv) => (sv.sync ? 'Bring the source branch up to date first' : 'A run starts from the branch as it is'), sw: { key: 'sync', on: true }, more: [
-          { name: 'Remote', say: 'Sync from {remote}; if the branch has diverged, {div}', picks: { remote: P('origin', O('origin', 'upstream'), 'The remote to sync from'), div: P('ask', O(['ask', 'ask me'], ['origin', 'start from origin'], ['stop', 'don\'t run']), 'What a run does when the branch has diverged', true) } },
+          { name: 'Remote', say: 'Sync from {remote}; if the branch has diverged, {div}', picks: { remote: P('origin', O('origin', 'upstream'), 'The remote to sync from'), div: P('ask', O(['ask', 'ask me'], ['origin', 'start from origin'], ['stop', 'don\'t run']), 'What a task does when the branch has diverged', true) } },
           { name: 'Background checks', say: '{bg}', picks: { bg: P('10', O(['off', 'Never checks remotes'], ['5', 'Checks remotes every 5 minutes'], ['10', 'Checks remotes every 10 minutes'], ['30', 'Checks remotes every 30 minutes'], ['60', 'Checks remotes every hour']), 'How often Worca looks for new commits') } },
         ] },
         { name: 'Pull requests', help: GIT_TIP, say: (sv) => (sv.prDraft ? 'Draft the description with AI as the PR opens' : 'You write the description when the PR opens'), sw: { key: 'prDraft', on: false }, more: [
@@ -414,22 +414,22 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         ] },
       ] },
       { title: 'Limits', meta: 'Near a limit: a provider at or past the warning line.', rows: [
-        { name: 'Paused runs', say: 'A run paused at a usage limit {resume}', picks: { resume: P('auto', O(['auto', 'resumes after the reset', 'Worca schedules its resume for 5 minutes after the limit resets'], ['me', 'waits for you', 'It stays paused until you resume it']), 'What a run paused at a usage limit does when the limit resets') } },
+        { name: 'Paused runs', say: 'A run paused at a usage limit {resume}', picks: { resume: P('auto', O(['auto', 'resumes after the reset', 'Worca schedules its resume for 5 minutes after the limit resets'], ['me', 'waits for you', 'It stays paused until you resume it']), 'What a task paused at a usage limit does when the limit resets') } },
       ] },
       { title: 'Away mode', min: 'advanced', meta: 'Going away is the Away switch in your profile menu.', rows: [
         { name: 'Hours', say: 'Worca answers your runs\' questions from **{awayFrom} to {awayTo}**, {awayZone}', vals: { awayFrom: '22:00', awayTo: '07:00', awayZone: 'Europe/Sofia' }, acts: [edit('Change the away hours', [{ key: 'awayFrom', label: 'From', hint: 'A time, such as 22:00' }, { key: 'awayTo', label: 'To' }, { key: 'awayZone', label: 'Time zone' }], { done: 'Away hours saved', check: (v) => { const t = /^([01]\d|2[0-3]):[0-5]\d$/; return !t.test(v.awayFrom) || !t.test(v.awayTo) ? 'A time reads like 22:00' : v.awayZone.trim() ? '' : 'It needs a time zone'; } })], more: [
-          { name: 'Runs', say: 'Worca answers on {which}; by day, a marked run {byDay}', picks: { which: P('marked', O(['marked', 'runs you marked'], ['all', 'every run']), 'Which runs Worca answers on while you are away'), byDay: P('30', O(['never', 'waits for you'], ['15', 'is answered after 15 minutes'], ['30', 'is answered after 30 minutes'], ['60', 'is answered after an hour']), 'How long a question waits by day before Worca answers it', true) } },
+          { name: 'Runs', say: 'Worca answers on {which}; by day, a marked run {byDay}', picks: { which: P('marked', O(['marked', 'runs you marked'], ['all', 'every task']), 'Which runs Worca answers on while you are away'), byDay: P('30', O(['never', 'waits for you'], ['15', 'is answered after 15 minutes'], ['30', 'is answered after 30 minutes'], ['60', 'is answered after an hour']), 'How long a question waits by day before Worca answers it', true) } },
           { name: 'Decisions', say: (sv) => (sv.method === 'mixed' ? 'It {method}. An agent is sure at {sure}, with a lead of {lead}' : 'It {method}'), picks: { method: P('mixed', O(['mixed', 'trusts a sure agent, and otherwise weighs the options', 'Trusts the agent when it is sure; otherwise weighs the options'], ['trust', 'always trusts the agent'], ['weigh', 'always weighs the options']), 'How Worca picks an answer'), sure: P('60', O(['50', '50%'], ['60', '60%'], ['70', '70%'], ['80', '80%']), 'How sure the agent must be'), lead: P('25', O(['15', '15 points'], ['25', '25 points'], ['40', '40 points']), 'How far its pick must lead the next one', true) } },
           { name: 'Priorities', say: 'Matches past decisions **{pPast}** · easy to undo **{pUndo}** · changes least **{pLeast}** · conventions **{pConv}** · cheapest **{pCheap}**', vals: { pPast: '3', pUndo: '3', pLeast: '2', pConv: '2', pCheap: '1' }, acts: [edit('Change the priorities', [{ key: 'pPast', label: 'Matches past decisions', hint: '0 ignores it, 10 decides' }, { key: 'pUndo', label: 'Easy to undo' }, { key: 'pLeast', label: 'Changes the least' }, { key: 'pConv', label: 'Follows the conventions' }, { key: 'pCheap', label: 'Costs the least' }], { done: 'Priorities saved', check: (v) => (['pPast', 'pUndo', 'pLeast', 'pConv', 'pCheap'].every((k) => /^\d+$/.test(v[k]) && +v[k] <= 10) ? '' : 'A priority is a whole number from 0 to 10') })] },
           { name: 'Model', say: 'Weighs the options with {dmodel} at {deffort} effort', picks: { dmodel: P('run', O(['run', 'the run\'s own model'], ...MODEL), 'The model that weighs the options'), deffort: P('medium', EFFORT, 'Its effort') } },
-          { name: 'Limits', say: 'Pause a run after {answers} answers; while away, {spent}', picks: { answers: P('20', O('10', '20', '40'), 'Answers in one run before it pauses'), spent: P('none', O(['none', 'spending has no cap'], ['25', 'everything pauses at $25'], ['50', 'everything pauses at $50'], ['100', 'everything pauses at $100']), 'Spent while away before every run pauses', true) } },
-          { name: 'Review loops', say: (sv) => `Allow {extra} extra fix ${+sv.extra === 1 ? 'round' : 'rounds'}; at the team's cap a run {exceed}`, picks: { extra: P('0', O('0', '1', '2', '3'), 'Fix rounds beyond the workflow\'s own'), exceed: P('kept', O(['kept', 'pauses'], ['exceed', 'carries on, and is flagged']), 'Whether away answers may go past the team\'s cost cap', true) } },
+          { name: 'Limits', say: 'Pause a task after {answers} answers; while away, {spent}', picks: { answers: P('20', O('10', '20', '40'), 'Answers in one run before it pauses'), spent: P('none', O(['none', 'spending has no cap'], ['25', 'everything pauses at $25'], ['50', 'everything pauses at $50'], ['100', 'everything pauses at $100']), 'Spent while away before every task pauses', true) } },
+          { name: 'Review loops', say: (sv) => `Allow {extra} extra fix ${+sv.extra === 1 ? 'round' : 'rounds'}; at the team's cap a task {exceed}`, picks: { extra: P('0', O('0', '1', '2', '3'), 'Fix rounds beyond the workflow\'s own'), exceed: P('kept', O(['kept', 'pauses'], ['exceed', 'carries on, and is flagged']), 'Whether away answers may go past the team\'s cost cap', true) } },
           { name: 'Exceptions', say: 'Always waits for you on {awayEx}', vals: { awayEx: 'approving a plan, merging and deleting' }, acts: [edit('Change the exceptions', [{ key: 'awayEx', label: 'Waits for you on', hint: 'Comma-separated' }], { done: 'Exceptions saved' })] },
         ] },
       ] },
       { title: 'Machine', rows: [
         { name: 'Capacity', min: 'advanced', say: (sv) => `Up to {n} ${sv.n === '1' ? 'run' : 'runs'} at a time; finished runs ${pickText(ARCHIVE, sv.arch)}`, picks: { n: P('3', O('1', '2', '3', '4', '6', '8', '12', '20'), 'More runs wait in line') }, more: [
-          { name: 'Test workers', say: 'Each run tests with {w}', picks: { w: P('half', O(['half', 'half the cores'], ['1', '1 worker'], ['2', '2 workers'], ['4', '4 workers'], ['8', '8 workers']), 'Test workers per run') } },
+          { name: 'Test workers', say: 'Each task tests with {w}', picks: { w: P('half', O(['half', 'half the cores'], ['1', '1 worker'], ['2', '2 workers'], ['4', '4 workers'], ['8', '8 workers']), 'Test workers per run') } },
           { name: 'Archive', say: 'Finished runs {arch}', picks: { arch: P('never', ARCHIVE, 'Archiving removes the branch, worktree and logs') } },
           { name: 'Checkouts', help: GIT_TIP, say: 'An action\'s checkout is {keep}; {coMax}', picks: { keep: P('demand', O(['demand', 're-created when needed'], ['success', 'kept after a successful run'], ['pr', 'kept until the PR closes']), 'When a checkout is removed'), coMax: P('none', O(['none', 'any number are kept'], ['5', 'at most 5 are kept'], ['10', 'at most 10 are kept'], ['20', 'at most 20 are kept']), 'The oldest go first', true) } },
         ] },
@@ -438,7 +438,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
           { name: 'Editor', say: 'Opens folders with `{editor}` (found on this machine)', vals: { editor: 'code {folder}' }, acts: [{ label: 'Change…', edit: launcher('editor', 'Editor', O(['code {folder}', 'VS Code'], ['cursor {folder}', 'Cursor'], ['zed {folder}', 'Zed'])) }] },
           { name: 'Terminal', say: 'Opens shells with `{terminal}` (found on this machine)', vals: { terminal: 'open -a iTerm {folder}' }, acts: [{ label: 'Change…', edit: launcher('terminal', 'Terminal', O(['open -a iTerm {folder}', 'iTerm'], ['open -a Terminal {folder}', 'Terminal'], ['wezterm start --cwd {folder}', 'WezTerm'])) }] },
         ] },
-        { name: 'Network', say: (sv) => `${sv.proxy ? `Through ${sv.proxyHost}:${sv.proxyPort}` : 'A direct connection'}; ${sv.netWait ? `a run waits up to **${pickText(WAIT, sv.wait)}** offline` : 'a run fails when offline'}`, more: [
+        { name: 'Network', say: (sv) => `${sv.proxy ? `Through ${sv.proxyHost}:${sv.proxyPort}` : 'A direct connection'}; ${sv.netWait ? `a task waits up to **${pickText(WAIT, sv.wait)}** offline` : 'a task fails when offline'}`, more: [
           { name: 'Proxy', say: (sv) => (!sv.proxy ? 'Off: Worca connects directly. Turn it on to use **{proxyHost}:{proxyPort}**' : sv.auth === 'none' ? 'Through **{proxyHost}:{proxyPort}**, {auth}' : 'Through **{proxyHost}:{proxyPort}**, signing in with {auth}'), vals: { proxyHost: 'proxy.corp.example', proxyPort: '8080', proxyLocal: '' },
             picks: { auth: P('auto', O(['auto', 'NTLMv2'], ['basic', 'Basic', 'Sends the password in cleartext; cannot use a saved login'], ['digest', 'Digest', 'Cannot use a saved login'], ['none', 'with no login']), 'How Worca signs in to the proxy') },
             acts: [{ label: 'Change…', edit: (sv) => ({ title: 'Change the proxy', yes: 'Save and test', fields: [{ key: 'proxyHost', label: 'Host' }, { key: 'proxyPort', label: 'Port' }, { key: 'proxyLocal', label: 'Local port', hint: 'Empty: Worca picks one and keeps it', placeholder: 'Automatic' }], check: (v) => (!v.proxyHost.trim() ? 'A proxy needs a host' : !/^\d+$/.test(v.proxyPort) || +v.proxyPort > 65535 ? 'A port is a number up to 65535' : ''), then: (v, s) => { Object.assign(s, v); return `Reached ${v.proxyHost}:${v.proxyPort}: proxy saved${s.proxy ? '' : '; turn it on to use it'}`; } }) }], sw: { key: 'proxy', on: false, why: 'Off: Worca connects directly' } },
@@ -449,7 +449,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
             ] },
           { name: 'Bypass', when: (sv) => sv.proxy, say: 'These go direct: `{bypass}`', vals: { bypass: 'localhost, *.corp.example' }, acts: [edit('Change the bypass list', [{ key: 'bypass', label: 'Hosts', hint: 'Comma-separated; * matches any part' }], { done: 'Bypass list saved' })] },
           { name: 'Timeouts', when: (sv) => sv.proxy, min: 'expert', say: 'Connect within {ct}, sign in within {lt}, drop idle after {it}', picks: { ct: P('60', O(['30', '30s'], ['60', '60s'], ['120', '120s']), 'Connect timeout'), lt: P('60', O(['30', '30s'], ['60', '60s'], ['120', '120s']), 'Login timeout'), it: P('300', O(['120', '2 minutes'], ['300', '5 minutes'], ['600', '10 minutes']), 'Idle timeout', true) } },
-          { name: 'Offline', min: 'advanced', say: (sv) => (sv.netWait ? 'When the network drops, a run waits up to {wait}' : 'When the network drops, a run fails at once'), picks: { wait: P('4h', WAIT, 'How long it waits before it fails') }, sw: { key: 'netWait', on: true } },
+          { name: 'Offline', min: 'advanced', say: (sv) => (sv.netWait ? 'When the network drops, a task waits up to {wait}' : 'When the network drops, a task fails at once'), picks: { wait: P('4h', WAIT, 'How long it waits before it fails') }, sw: { key: 'netWait', on: true } },
         ] },
       ] },
     ] },
@@ -473,7 +473,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     automations: { min: 'advanced', flag: 'gitAutomations', title: 'Automations', meta: 'What runs by itself across projects; each project keeps its own rules.', sections: [
       { title: 'Waiting', empty: 'Nothing is waiting', list: [
         { title: 'Issue #1088', meta: 'A fix is proposed · worca-cc', mark: 'is-amber', fig: '2h ago', menu: ['Approve', 'Skip'], quick: ['Approve'],
-          on: { Approve: (r, x) => { x.remove(); x.add({ title: r.title, meta: 'Approved: a run started · worca-cc', fig: 'now' }, 'automations/Recent'); return 'Issue #1088: a run started'; }, Skip: (r, x) => { x.remove(); x.add({ title: r.title, meta: 'Skipped by you · worca-cc', fig: 'now' }, 'automations/Recent'); return 'Issue #1088: skipped'; } } },
+          on: { Approve: (r, x) => { x.remove(); x.add({ title: r.title, meta: 'Approved: a task started · worca-cc', fig: 'now' }, 'automations/Recent'); return 'Issue #1088: a task started'; }, Skip: (r, x) => { x.remove(); x.add({ title: r.title, meta: 'Skipped by you · worca-cc', fig: 'now' }, 'automations/Recent'); return 'Issue #1088: skipped'; } } },
       ] },
       { title: 'Projects', list: [
         { title: 'worca-cc', meta: 'Proposes a fix for new issues and reviews PRs · 3 rules', open: (r, x) => x.page('projects', 'Opens the project worca-cc, where its 3 rules are') },
@@ -487,8 +487,8 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
 
     models: { min: 'expert', title: 'Models', meta: 'The models every project can pick from, and the sign-ins they run through.', sections: [
       { title: 'Defaults', rows: [
-        { name: 'Roles', say: (sv) => `On Claude, **${roleName(sv, 'deep')}** plans and reviews, **${roleName(sv, 'every')}** writes the code, **${roleName(sv, 'quick')}** does quick jobs; every engine keeps its own`, help: 'Roles open at Simple through the link from a run or the setup assistant', more: ENGINES.map(roleRow) },
-        { name: 'Engine', say: (sv) => { const e = pickText(ENGINES, sv.eng).replace(' (beta)', ''); return sv.eng === 'claude' || sv.eng === 'codex' ? `New runs use {eng}; each step and helper job uses its ${e} role, unless set below` : `New runs use {eng}; each step uses its ${e} role, unless set below; helper jobs stay on Claude`; }, picks: { eng: { ...P('claude', ENGINES, 'The engine a new run starts on'), then: (sv) => engineChanged(sv) } } },
+        { name: 'Roles', say: (sv) => `On Claude, **${roleName(sv, 'deep')}** plans and reviews, **${roleName(sv, 'every')}** writes the code, **${roleName(sv, 'quick')}** does quick jobs; every engine keeps its own`, help: 'Roles open at Simple through the link from a task or the setup assistant', more: ENGINES.map(roleRow) },
+        { name: 'Engine', say: (sv) => { const e = pickText(ENGINES, sv.eng).replace(' (beta)', ''); return sv.eng === 'claude' || sv.eng === 'codex' ? `New tasks use {eng}; each step and helper job uses its ${e} role, unless set below` : `New tasks use {eng}; each step uses its ${e} role, unless set below; helper jobs stay on Claude`; }, picks: { eng: { ...P('claude', ENGINES, 'The engine a new run starts on'), then: (sv) => engineChanged(sv) } } },
       ] },
       { title: 'Jobs', meta: 'A step or a helper job follows its role until you override it.', rows: [
         { name: 'Step models', say: '{stepWords}', vals: { stepWords: (sv) => { const n = jobsSet(STEPS, 'jobStep', sv); return n ? `${n} of ${STEPS.length} have their own model; the rest follow their role` : `All ${STEPS.length} follow their role`; } }, more: jobRows(STEPS, 'jobStep') },
@@ -753,7 +753,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const NOTIFICATIONS = { title: 'Notifications', meta: 'Pulse keeps everything; these choices say what else reaches you.' };
   // What the Changed dot's tooltip calls a value in a row with several, and the words of a default that is not an option's.
   const VALUE_NAMES = { prOpen: 'Create a PR', prSlices: 'A feature\'s PRs', what: 'Suggests', when: 'When', remote: 'Remote', div: 'If diverged', late: 'Missed starts', lateMax: 'How late', fails: 'Failures',
-    which: 'Runs answered', byDay: 'By day', method: 'How it picks', sure: 'Sure at', lead: 'Lead', dmodel: 'Model', deffort: 'Effort', answers: 'Answers', spent: 'While away', extra: 'Fix rounds', exceed: 'At the team\'s cap',
+    which: 'Tasks answered', byDay: 'By day', method: 'How it picks', sure: 'Sure at', lead: 'Lead', dmodel: 'Model', deffort: 'Effort', answers: 'Answers', spent: 'While away', extra: 'Fix rounds', exceed: 'At the team\'s cap',
     keep: 'Checkout', coMax: 'Most kept', ct: 'Connect', lt: 'Sign in', it: 'Idle', auth: 'Signing in', wait: 'Wait', netWait: 'Wait for the network', web: 'Sites', webOn: 'Web access', proxy: 'Proxy', proxyHost: 'Host', proxyPort: 'Port', proxyLocal: 'Local proxy', period: 'Total starts again' };
   const VALUE_WORDS = { perRun: usd, total: (v, d) => `${usd(v)} a ${d.period}`, period: (v) => ({ day: 'each day', week: 'each week', month: 'each month' })[v] || v, rate: (v) => `$${v} an hour`, capRun: usd, capAll: (v) => `${usd(v)} a month`, wsCap: usd };
   window.SettingsModel = { ICONS: { runs: 'nav-runs', presets: 'set-presets', labels: 'set-labels', automations: 'set-automations', models: 'set-models', ask: 'nav-chat', memory: 'set-memory', team: 'set-policy', guardrails: 'set-guardrails', plugins: 'set-plugins', connectors: 'set-connectors', general: 'set-general', notifications: 'set-notifications', experimental: 'set-labs' }, SECTION_ICONS: { Spending: 'set-spending', Starting: 'nav-runs', Limits: 'set-limits', 'Away mode': 'set-away', Machine: 'set-machine' },

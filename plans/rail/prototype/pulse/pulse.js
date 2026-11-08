@@ -136,11 +136,11 @@ function row({ dot, mark: own, title, meta, time, tip, key, check, unreadDot, re
 }
 const dotOf = (u) => (u.sev === 'needs' && u.open ? 'is-amber' : '');
 // A run's mark and word come from the library's state.
-const runMark = (state) => { const st = R.runState(state); return R.statusDot({ tone: st.dot, sym: st.sym }); };
+const runMark = (state, stage = -1) => { const st = R.runState(state); return R.kindMark({ kind: 'task', tone: R.markTone(st), stage, size: 16, title: st.word }); };   // the sidebar's own mark: what it is and how it stands
 const metaOf = (r, detail = r.detail) => [r.project, detail].filter(Boolean).join(' · ');
-const runRow = (r, tip) => row({ mark: runMark(r.state), title: r.title, meta: metaOf(r), time: r.time, key: 'r:' + r.id, tip });
+const runRow = (r, tip) => row({ mark: runMark(r.state, r.stage ?? -1), title: r.title, meta: metaOf(r), time: r.time, key: 'r:' + r.id, tip });
 function updateRow(u, withCheck) {
-  return row({ dot: dotOf(u), title: u.title, meta: `${groupOf(u.g).name} · ${u.meta}`, time: u.time, key: u.id, check: withCheck ? ui.pick.ids.includes(u.id) : undefined,
+  return row({ mark: R.kindMark({ kind: 'event', tone: dotOf(u) ? 'ask' : 'idle', size: 16 }), title: u.title, meta: `${groupOf(u.g).name} · ${u.meta}`, time: u.time, key: u.id, check: withCheck ? ui.pick.ids.includes(u.id) : undefined,
     unreadDot: isUnread(u), resolved: u.resolved || isFixed(u), fix: !isFixed(u) && !ui.pick.on ? u.fix : '', fixLand: u.fixLand, fixTip: u.fixLand ? `${u.fix}: opens Settings › Runs, on Budget` : `${u.fix} from here; the row then reads Resolved`, flash: ui.flash === u.id, tip: `Opens ${u.to}${isUnread(u) ? ' and marks it read' : ''}` });
 }
 function vitalsSections() {
@@ -150,7 +150,7 @@ function vitalsSections() {
     { word: 'from', id: 'vitalsFrom', text: ui.vitalsFrom === 'all' ? 'all projects' : ui.vitalsFrom, items: [{ id: 'all', text: 'all projects', checked: ui.vitalsFrom === 'all', hint: String(vitalsN(vitalsShown(ui.vitalsShow, 'all'))) }, { sep: true }].concat(vitalsProjects().map((p) => ({ id: p, text: p, checked: ui.vitalsFrom === p, hint: String(vitalsN(vitalsShown(ui.vitalsShow, p))) }))), tip: 'Which project\'s runs it shows; limits belong to a harness and show for every project' }])}</span></div>`;
   const sec = (h, n, rows) => (n ? `<section class="pz-sec"><h3 class="pz-h">${h} <span class="n">${n}</span></h3><div class="pz-list">${rows}</div></section>` : '');
   const out = sec(R.runState('question').word, c.needs.length, c.needs.map((r) => runRow(r, 'Opens the run page at what it asks')).join(''))
-    + sec('Limits', lim.length, lim.map((l, i) => row({ dot: l.tone === 'over' ? 'is-red' : 'is-amber', title: l.title, meta: l.detail, time: l.time, key: 'lim' + i, tip: `${l.tip} · opens Usage and costs` })).join(''))
+    + sec('Limits', lim.length, lim.map((l, i) => row({ mark: R.kindMark({ kind: 'event', tone: l.tone === 'over' ? 'fail' : 'act', size: 16 }), title: l.title, meta: l.detail, time: l.time, key: 'lim' + i, tip: `${l.tip} · opens Usage and costs` })).join(''))
     + sec('Running', c.running.length, c.running.map((r) => runRow(r, 'Opens the live run')).join(''))
     + sec('Running actions', c.actions.length, c.actions.map((a) => R.pulseRow({ mark: runMark('working'), title: a.run, meta: a.label, time: '', id: 'act:' + a.id, tip: a.go ? `Opens ${a.run}` : 'Its run is gone; it can still be stopped',
       action: R.button({ label: 'Stop', kind: 'quiet', attrs: { 'data-act-stop': a.id, title: `Stop ${a.label} and free its port` } }) })).join(''))
@@ -162,7 +162,7 @@ function vitalsSections() {
 // Scheduled, by when: Missed, Today, Tomorrow, This week, Later, After a run; a group with nothing has no head.
 function scheduledSection(list) {
   if (!list.length) return '';
-  const rowOf = (r) => row({ dot: r.when === 'missed' ? 'is-amber' : 'is-grey-ring', title: r.title, meta: metaOf(r, r.on && !r.resumes ? startDetail(r) : r.detail), time: r.time, key: 'r:' + r.id, tip: r.resumes ? 'Opens the run: it resumes by itself' : r.queued ? 'Opens the run: it waits for a free slot' : 'Opens the run' });
+  const rowOf = (r) => row({ mark: R.kindMark({ kind: 'schedule', tone: r.when === 'missed' ? 'act' : 'idle', size: 16 }), title: r.title, meta: metaOf(r, r.on && !r.resumes ? startDetail(r) : r.detail), time: r.time, key: 'r:' + r.id, tip: r.resumes ? 'Opens the run: it resumes by itself' : r.queued ? 'Opens the run: it waits for a free slot' : 'Opens the run' });
   const groups = M.SCHED.filter(([id]) => list.some((r) => r.when === id)).map(([id, name]) => `<h4 class="pz-h pz-day">${name}</h4><div class="pz-list">${list.filter((r) => r.when === id).map(rowOf).join('')}</div>`).join('');
   return `<section class="pz-sec"><h3 class="pz-h">Scheduled <span class="n">${list.length}</span></h3>${groups}</section>`;
 }

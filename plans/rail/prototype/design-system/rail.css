@@ -996,6 +996,7 @@ body.view-chat #route-today:not([hidden]){flex:1 1 auto;min-height:0;display:fle
 .list-rows > .list-row > .lr-end > :is(.btn,.tip-wrap):has(+ :is(.btn,.tip-wrap)){grid-column:1;}
 .list-rows > .list-row > .lr-end > .switch{grid-column:3;grid-row:1;}
 .list-rows > .list-row > .lr-end > .rc-pop{grid-column:4;grid-row:1;}
+.list-rows > .list-row > .lr-end > :is(.btn,.tip-wrap):last-child{grid-column:4;}   /* a row's one action with no ⋯ ends where the others' ⋯ ends: one end edge */
 .list-rows > .list-row > .lr-main{grid-column:2;}
 
 /* Table: divided rows, tabular figures, no box per row. */

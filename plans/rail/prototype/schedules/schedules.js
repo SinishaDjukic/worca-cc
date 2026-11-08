@@ -35,12 +35,17 @@
     return [...R.dateSections({ rows: at('next'), dayOf: (s) => s.day, row: rowOf, head, days: R.NEXT_RUN_SECTIONS }), { id: 'paused', title: SECTIONS[2][1], rows: at('paused').map(rowOf) }];
   }
   const runMark = (r) => R.kindMark({ kind: 'task', tone: R.markTone(R.runState(RM.stateOf(r.case))), stage: r.stage, title: r.meta });
+  // each run is the task it started, in the chat's own card: its state, its stages, why it failed on the text edge, one way in
+  const STAGES = ['Plan', 'Build', 'Review', 'PR', 'Merged'];
+  const runCard = (r, day) => { const st = R.runState(RM.stateOf(r.case)), tone = R.markTone(st);
+    const why = r.log ? r.log.split('\n').map((w) => R.turnRow({ mark: '', text: `<span class="cmd-s">${esc(w.trim())}</span>` })).join('') : '';
+    return R.taskCard({ title: r.title, mark: runMark(r), word: `${st.word} · ${day}`, detail: r.meta === st.word ? '' : r.meta, place: R.gitMark({ status: r.git, title: r.meta }), rows: why, stages: R.stageBar({ labels: STAGES, stage: r.stage, tone }), action: R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-sched-run': r.case, title: 'Opens this task in its chat' } }) }); };
   function pageHtml(s) {
-    const groups = R.DAY_SECTIONS.filter(([d]) => s.runs.some((r) => r.day === d)).map(([d, title]) => ({ title, rows: s.runs.filter((r) => r.day === d).map((r) => R.listRow({ title: r.title, meta: r.meta, mark: runMark(r), end: R.gitMark({ status: r.git, title: r.meta }), open: { 'data-sched-run': r.case, title: 'Opens this task' }, after: r.log ? `<div class="tr-body">${esc(r.log)}</div>` : '' })) }));
+    const dayOf = Object.fromEntries(R.DAY_SECTIONS), cards = R.DAY_SECTIONS.flatMap(([d]) => s.runs.filter((r) => r.day === d)).map((r) => runCard(r, dayOf[r.day])).join('');   // one stream, newest first, as a chat's
     const pick = (id, text, items) => R.sentencePicker({ id, text, items: items.map((x) => ({ id: x, text: x, checked: x === text })), open: menu === id, chevron: R.icon('chevron', 10) });
-    return `<div class="convo"><div class="convo-scroll"><div class="convo-col"><div><h1 class="schedule-title">${esc(s.title)}</h1><div class="convo-head">${esc(s.project || 'No project')} · Runs ${pick('sc-every', s.every, R.REPEATS.filter((x) => x !== 'once'))} at ${pick('sc-at', s.at, R.TIMES_OF_DAY)}${(s.labels || []).map((l) => R.chip({ text: l })).join('')}</div></div>
+    return `<div class="convo"><div class="convo-scroll"><div class="convo-col"><div><h1 class="schedule-title">${esc(s.title)}</h1><div class="convo-head">${esc(s.project || 'No project')} · Repeats ${pick('sc-every', s.every, R.REPEATS.filter((x) => x !== 'once'))} at ${pick('sc-at', s.at, R.TIMES_OF_DAY)}${(s.labels || []).map((l) => R.chip({ text: l })).join('')}</div></div>
       <div class="convo-card-line">${R.kindMark({ kind: 'schedule', tone: toneOf(s), title: st(s).word })}<span class="convo-card-w schedule-word">${esc(st(s).word)}<span>${esc(s.next)}${s.chat ? ' · from a chat' : ''}</span></span>${R.button({ label: 'Run now', attrs: { 'data-sched-now': s.id } })}${R.moreMenu({ id: 'sc-more', label: `More for ${s.title}`, icon: R.icon('more', 16), open: menu === 'sc-more', items: [{ id: 'pause', text: s.state === 'paused' ? 'Resume' : 'Pause', help: s.state === 'paused' ? 'Runs at its times again' : 'Skips its times until you resume it' }, { id: 'skip', text: 'Skip the next run', help: 'Only the next one; the times stay' }, { sep: true }, { id: 'delete', text: 'Delete', danger: true, help: 'Removes the schedule; the tasks it ran stay. Undo in the notice' }] })}</div>
-      ${groups.length ? R.list({ groups }) : R.emptyState({ title: 'It has not run yet.' })}
+      ${cards || R.emptyState({ title: 'It has not run yet.' })}
     </div></div><div class="convo-dock" id="sched-dock"></div></div>`;
   }
   function draw() {
