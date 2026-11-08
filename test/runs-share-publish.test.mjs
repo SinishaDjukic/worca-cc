@@ -16,6 +16,7 @@ import { writeProjectSettings } from '../src/core/settings-cascade.mjs';
 import { writeTeamMetricsPrefs, readRunsSharePrefs } from '../src/core/config.mjs';
 import { persistPrState } from '../src/core/artifacts.mjs';
 import { getDb } from '../src/core/db.mjs';
+import { readServerSource } from '../src/core/read-server-source.mjs';
 import { personKey } from '../src/core/metrics/record.mjs';
 import { RECORD_KEYS } from '../src/core/runs-share/record.mjs';
 import { runGit } from '../src/core/metrics/sync.mjs';
@@ -430,7 +431,7 @@ test('a PR on a workspace run\'s row makes no git calls', { skip }, async () => 
 
 test('the server shutdown and the CLI exit drain run sharing', () => {
   const here = dirname(fileURLToPath(import.meta.url));
-  const server = readFileSync(join(here, '..', 'ui', 'server.mjs'), 'utf8');
+  const server = readServerSource();
   assert.match(server, /settleShutdownSteps\(\{[^\n]*runShare: \(\) => drainRunShare\(/);
   const cli = readFileSync(join(here, '..', 'src', 'cli', 'worca-cc.mjs'), 'utf8');
   const body = cli.slice(cli.indexOf('async function drainTeamPushes()'));
