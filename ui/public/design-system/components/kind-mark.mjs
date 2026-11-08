@@ -255,6 +255,9 @@ export function taskProposal({ title, why = '', sentence, more = '', open = fals
     + `<div class="tc-foot">${button({ label: open ? 'Hide Customise' : 'Customise', kind: 'quiet', icon: icon(open ? 'chevron' : 'chevR', 12), attrs: { 'aria-expanded': String(!!open), title: 'Title, labels, branch, memory, guardrails and more', ...(hooks.more || {}) } })}</div>${open && more ? `<div class="tp-custom composer-more">${more}</div>` : ''}</article>`;
 }
 
+// a change card's mark is its kind's, as in the bar (list.kind-mark): a schedule's clock, a project's folder
+const KIND_ICON = { Schedule: 'clock', Workflow: 'kind-workflow', 'Web access': 'plug', Away: 'away', Agent: 'you', Workspace: 'nav-workspaces', Project: 'folder', Clone: 'folder', Model: 'set-models', 'Sign-in': 'plug', Script: 'sliders', Changes: 'pr', Metrics: 'signal', Memory: 'set-memory', Guardrails: 'set-guardrails', Labels: 'tag' };
+
 /**
  * ChangeProposal: a change Worca proposes to something that is not a task (a setting, a workflow, a schedule): what it is,
  * one line why, each change as before → after (or a body such as a WorkflowGraph), then Apply beside a quiet Not now. Once
@@ -277,7 +280,7 @@ export function changeProposal({ kind, title, why = '', rows = [], body = '', st
   if (state === 'applied') return turnRow({ mark: icon('check', 14), text: `<b>${esc(title)}</b> ${esc(rows.map((r) => `${r.name}: ${r.after}`).join(' · ') || kind)}`, end: btn('Revert', 'quiet', hooks.revert), attrs: a });
   if (state !== 'proposed') return turnRow({ mark: kindMark({ kind: 'chat', tone: state === 'failed' ? 'fail' : 'idle', size: 16 }), text: `${state === 'failed' ? 'Could not change' : 'Not changed'}: <b>${esc(title)}</b>`, attrs: a });
   const list = rows.length ? `<dl class="cp-rows">${rows.map((r) => `<div class="cp-row"><dt>${esc(r.name)}</dt><dd>${r.before && r.before !== '—' ? `<s>${esc(r.before)}</s><span aria-hidden="true">→</span>` : ''}<b>${esc(r.after)}</b></dd></div>`).join('')}</dl>` : '';
-  return `<article class="task-card rc cp"${attrs(a)}>${cardHead({ mark: icon('set-general', 14), kicker: kind, title, why, menu })}`
+  return `<article class="task-card rc cp"${attrs(a)}>${cardHead({ mark: icon(KIND_ICON[kind] || 'set-general', 14), kicker: kind, title, why, menu })}`
     + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed change: ${title}` })}>${list}${body}<div class="tp-actions">${actions ? actions.map((x) => (x.kind === 'danger' ? btn(x.label, 'quiet', x.attrs, 'is-danger') : btn(x.label, x.kind || 'quiet', x.attrs))).join('') : `${btn(apply, 'primary', hooks.apply)}${btn('Not now', 'quiet', hooks.decline)}`}</div></section></article>`;
 }
 

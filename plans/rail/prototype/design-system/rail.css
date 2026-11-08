@@ -1181,7 +1181,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .convo-dock-note{max-width:680px;margin:4px auto 0;font-size:var(--fs-caption);color:var(--ink-3);}
 
 /* Composer: the one way to start anything. */
-.composer{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-lg);background:var(--bg);}
+.composer{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--bg);}   /* tight, as cards (no heavy rounding) */
 .composer-t,.composer-t:focus,.composer-t:focus-visible{width:100%;min-height:44px;max-height:200px;padding:0;border:0;outline:0;box-shadow:none;resize:none;background:none;color:var(--ink);font:var(--fs-body)/1.5 var(--sans);}
 .composer.is-plain{flex-direction:row;align-items:flex-end;gap:10px;}
 .composer.is-plain .composer-t{flex:1;align-self:center;min-height:22px;}
@@ -1412,9 +1412,9 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .is-flash{animation:card-flash var(--motion-flash) var(--ease) 1;border-radius:var(--r-md);}
 @media (prefers-reduced-motion: reduce){ .is-flash{animation:none;} }
 /* motion.attention: what needs you breathes softly in Rail's amber, like an unread mark, until you focus it or act on it; never a shake */
-@keyframes card-attn{0%,100%{box-shadow:0 0 0 0 transparent;background:transparent;}50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--amber) 14%,transparent);background:color-mix(in srgb,var(--amber) 5%,transparent);}}
-.is-attn{animation:card-attn 2.4s var(--ease) infinite;border-radius:var(--r-md);}   /* ds-ok: an unread mark's slow breath */
-@media (prefers-reduced-motion: reduce){ .is-attn{animation:none;box-shadow:0 0 0 2px color-mix(in srgb,var(--amber) 30%,transparent);} }
+@keyframes card-attn{0%,100%{box-shadow:-3px 0 0 0 transparent;}50%{box-shadow:-3px 0 0 0 color-mix(in srgb,var(--attn,var(--amber)) 70%,transparent);}}   /* an edge that breathes beside it, not a filled panel */
+.is-attn{animation:card-attn 2.4s var(--ease) infinite;}   /* ds-ok: an unread mark's slow breath */
+@media (prefers-reduced-motion: reduce){ .is-attn{animation:none;box-shadow:-3px 0 0 0 color-mix(in srgb,var(--attn,var(--amber)) 60%,transparent);} }
 
 /* A task card opened in place holds its task page's stage stream: the page's own head, trail and status are the card's already. */
 .tc-run-slot #card.is-lent :is(.rc-bar, .rc-head, .rc-figs){display:none;}
@@ -1487,7 +1487,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .cmd-row.is-fail .cmd-s,.cmd-failed{color:var(--red-ink-strong);}   /* red words hold 4.5:1; the mark red is for marks */
 .cmd-row.is-run .cmd-s{color:var(--ink);}
 .cmd-row.is-stopped .cmd-s{color:var(--ink-3);}
-.cmd-rows{display:flex;flex-direction:column;gap:10px;margin:8px 0 0 32px;}
+.cmd-rows{display:flex;flex-direction:column;gap:10px;margin:8px 0 0;}   /* rows' text on the head's text edge (one rail) */
 .cmd-detail{margin:6px 0 0 32px;display:flex;flex-direction:column;gap:6px;}
 .cmd-code{position:relative;padding:8px 40px 8px 10px;border-radius:var(--r-sm);background:var(--field);font:12px/18px var(--mono);color:var(--ink-2);white-space:pre-wrap;word-break:break-word;}
 .cmd-d,.cmd-op{color:var(--ink-3);}
@@ -1515,3 +1515,8 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 /* Add project's fields: under its sentence, on the card's text edge, one column */
 .pj-fields{display:flex;flex-direction:column;gap:10px;margin-top:10px;max-width:420px;}
 .pj-fields > .btn{align-self:flex-start;margin-left:-8px;}
+
+/* panel.conversation-cards: one shape, never a box inside a box: a card's body sits on its rail under its head, with no frame of its own */
+.convo-col .task-card > .rc-card{background:none;border:0;border-radius:0;padding:0;margin-top:10px;}
+/* motion.attention: the breath takes the state's colour (failed red, ready green); amber is for what asks */
+.is-attn[data-attn="fail"]{--attn:var(--red);} .is-attn[data-attn="ok"]{--attn:var(--green);}

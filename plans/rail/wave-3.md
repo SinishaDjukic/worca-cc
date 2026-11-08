@@ -45,6 +45,9 @@ Rail finding, **D** is a dev area.
    - Every state's mark meets 3:1 in both themes.
 8. **Calm motion:** a fade, a breath for what needs you, and nothing that travels across the screen.
 9. **Keep it simple.** Offer cuts before additions; when a page and Rail disagree, Rail's way wins, adapted.
+11. **Functions from dev, never its design** (Emil, 8 Nov): a slice lists what dev's feature *does* (actions, fields,
+    states, rules) and builds that on Rail's design. Dev's dialogs, boxes, tabs, pills and page shapes stay behind, so
+    the old design's principles never come back. "Dev's full form" below means its functions, designed fresh in Rail.
 10. **Ease of use first** (Emil, 8 Nov): every slice is judged by how easy and how simple it is for a person, then by Rail;
     the two personas score it, and under 8 it goes back.
 
