@@ -291,7 +291,8 @@ import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdow
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
 import { createRequirementsView } from './requirements-view.mjs';
-import { mountDesignView, pushDesignFrame, designHello, designNavCount, paintDesignNav } from './design/view.mjs';
+import { mountDesignView, pushDesignFrame, pushDesignAskFrame, repaintDesignChat, designHello, designNavCount, paintDesignNav } from './design/view.mjs';
+import { createDesignChat } from './design/chat.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, currentFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
 import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
@@ -1781,6 +1782,7 @@ function handleServerMessage(msg) {
     awayScreensaver?.onAskFrame(msg);   // chat turns and proposals it counts
     askPanel?.pushServerFrame(msg);
     wfvChat?.pushFrame(msg);          // the Workflows chat keeps only its own composer thread's frames
+    pushDesignAskFrame(msg);          // the open design's chat keeps only its own thread's frames
     // D12: a settled chat turn moves the combined spend — repaint the sidebar
     // indicator and, when open, the Statistics view. ask-error included: an
     // error turn that saw a result frame carries recorded spend. refreshBudget
@@ -33372,7 +33374,16 @@ onFlagChange('requirements', (on) => { if (!on && currentView() === 'requirement
 
 // Design (behind the design flag): the page module owns #design-host and the nav row's live count; app.js routes and
 // relays the design-* frames and hello's design list.
-const designView = mountDesignView({ doc: document, win: window, host: $('#design-host'), fetch: (...a) => fetch(...a), sendWs: (obj) => { const s = state.ws; if (s && state.wsReady) { try { s.send(JSON.stringify(obj)); } catch { /* ignore */ } } }, route: (p) => { location.hash = p ? `#design/${p}` : '#design'; }, prompt: (o) => promptModal(o) });
+const designView = mountDesignView({ doc: document, win: window, host: $('#design-host'), fetch: (...a) => fetch(...a), sendWs: (obj) => { const s = state.ws; if (s && state.wsReady) { try { s.send(JSON.stringify(obj)); } catch { /* ignore */ } } }, route: (p) => { location.hash = p ? `#design/${p}` : '#design'; }, prompt: (o) => promptModal(o),
+  createChat: createDesignChat, confirm: (o) => confirmModal(o),
+  // As the Workflows chat's: once marked loads, the open design chat paints its replies again.
+  renderMarkdown: (text, mount) => {
+    const out = hdMarkdown.render(text);
+    if (out && out.kind === 'md') { mount.classList.add('ask-md'); mount.replaceChildren(out.frag); return; }
+    mount.textContent = text;
+    if (!hdMarkdown.isReady() && !hdMarkdown.isFailed()) void hdMarkdown.ensure().then((ok) => { if (ok) repaintDesignChat(); });
+  },
+});
 onFlagChange('design', (on) => { if (!on && currentView() === 'design') showView('chat', ''); });
 
 /** The workspace read-model, loaded once: a scheduled run card names "Workspace · <name>", not an id. */

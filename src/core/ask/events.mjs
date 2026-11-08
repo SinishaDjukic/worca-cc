@@ -70,6 +70,9 @@ const CHAT_ACTION_TOOLS = new Set(['mcp__worca__change_setting', 'mcp__worca__pa
   'mcp__worca__pause_schedule', 'mcp__worca__resume_schedule', 'mcp__worca__propose_changes', 'mcp__worca__route_message']);
 // The Workflows chat's card tools (D13): their RESULT becomes a composer card in the parent (turn.mjs).
 const COMPOSER_CARD_TOOLS = new Set(['mcp__worca__edit_canvas', 'mcp__worca__build_workflow', 'mcp__worca__draft_agent', 'mcp__worca__draft_script']);
+// The Design chat's tools (Design P5): the child validated; the PARENT acts on the RESULT — starts or changes the build,
+// or posts the clarifying-questions card (turn.mjs _onDesignAction). Main stream only.
+const DESIGN_ACTION_TOOLS = new Set(['mcp__worca__start_design_build', 'mcp__worca__change_design', 'mcp__worca__design_questions']);
 /** True when a SUCCESSFUL call of `name` with `input` changed this thread's worktree rows. */
 export function worktreeMutatingCall(name, input) {
   if (!WORKTREE_TOOLS.has(name)) return false;
@@ -156,6 +159,10 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'draft_script': return 'Drafting a script';
     case 'get_agent': return input?.key ? `Reading agent: ${String(input.key).slice(0, 60)}` : 'Reading an agent';
     case 'get_workflow': return 'Reading a workflow';
+    case 'get_design': return 'Reading the design';
+    case 'start_design_build': return 'Starting the build';
+    case 'change_design': return 'Starting a change';
+    case 'design_questions': return 'Asking you';
     case 'read_file': { const base = String(input?.path ?? '').split(/[\\/]/).filter(Boolean).pop(); return base ? `Reading ${base.slice(0, 60)}` : 'Reading a file'; }
     case 'grep': return 'Searching files';
     case 'glob': return 'Listing files';
@@ -327,6 +334,7 @@ export function createTurnReducer({
   onScriptMutation = null,        // save_script RESULT { ok: true, key, created } → { key, action }
   onScriptApproval = null,        // G6: save_script / draft test_script RESULT { ok: true, pending: true } → the approval card
   onComposerResult = null,     // Workflows chat: edit_canvas / build_workflow / draft_* RESULT → a composer card (turn.mjs)
+  onDesignAction = null,       // Design chat: start_design_build / change_design / design_questions RESULT → the parent acts (turn.mjs)
   estimateLiveCost = null,
   attachmentNames = {},
   resolveCost = null,
@@ -735,6 +743,13 @@ export function createTurnReducer({
         // The RAW result text: the parent builds the card from what the child simulated and validated (D13).
         try {
           const ret = onComposerResult({ toolUseId: b.id, name: b.name, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (DESIGN_ACTION_TOOLS.has(b.name) && typeof onDesignAction === 'function') {
+        // Main stream only (a sub-agent's result never gets here: the !isMain branch above continues). settle() awaits it.
+        try {
+          const ret = onDesignAction({ toolUseId: b.id, name: short(b.name), text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }

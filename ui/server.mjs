@@ -136,7 +136,7 @@ import { effectiveHumanRateUsd } from '../src/core/human-rate.mjs';
 import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
   listThreads as askListThreads, updateThread as askUpdateThread, addThreadContexts as askAddThreadContexts,
-  deleteThread as askDeleteThread, sweepEmptyThreads, sweepStreamingMessages, sweepCloningCards,
+  deleteThread as askDeleteThread, sweepEmptyThreads, sweepStreamingMessages, sweepCloningCards, sweepDesignRoundCards,
   countThreads as askCountThreads, listThreadIds as askListThreadIds,
   countWorktrees as askCountWorktrees, countAttachments as askCountAttachments,
   appendMessage as askAppendMessage, getMessage as askGetMessage,
@@ -155,6 +155,7 @@ import {
   snapshotChatGroups as askSnapshotChatGroups, restoreChatGroups as askRestoreChatGroups,
   ChatGroupError, switchThreadEngine as askSwitchThreadEngine,
 } from '../src/core/ask/store.mjs';
+import { isSurfaceMode, turnHelperFlags } from '../src/core/ask/thread-modes.mjs';
 import { CHAT_BUSY, chatBusyReason, chatGroupBusyText } from '../src/shared/chat-busy.mjs';
 import { revealTargetFor as askRevealTargetFor } from '../src/core/ask/show-files-deps.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
@@ -168,12 +169,13 @@ import {
   buildSystemPrompt as askBuildSystemPrompt, buildComposerSystemPrompt as askBuildComposerSystemPrompt, buildContextHeader as askBuildContextHeader,
   buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt, renderChatContextPrompt as askRenderChatContextPrompt,
   buildHandoffPrompt as askBuildHandoffPrompt, handoffBudgetChars as askHandoffBudgetChars, needsHandoff as askNeedsHandoff,
-  selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
+  selectInlineAttachments as askSelectInlineAttachments, validateClientContext, buildDesignSystemPrompt,
 } from '../src/core/ask/prompt.mjs';
 import { askScriptPromptInput, scriptToolsEnabled, defaultScriptDeps as askScriptDeps } from '../src/core/ask/script-deps.mjs';
 import { applyScriptCard, scriptEventPrompt, scriptNoticeText } from '../src/core/ask/script-approval.mjs';
 import { validateComposerPayload, isComposerCard, composerCardPatch, composerHeaderCard } from '../src/core/ask/composer-payload.mjs';
 import { composerPromptBlock } from '../src/core/ask/composer-deps.mjs';
+import { designPromptBlock } from '../src/core/ask/design-deps.mjs';
 import { validateAttachmentUploads } from '../src/core/attachment-upload.mjs';
 import {
   listAskWorktrees as askListWorktrees,
@@ -361,8 +363,12 @@ import { recoverDesignBuilds } from '../src/core/design/recover.mjs';
 import { createPreviewGate, registerPreviewTokenRoute } from '../src/core/design/preview-gate.mjs';
 import { previewGrants } from '../src/core/design/preview-grants.mjs';
 import { renderPreviewDoc } from '../src/core/design/preview-doc.mjs';
-import { getDesign } from '../src/core/design/store.mjs';
+import { getDesign, getBuild } from '../src/core/design/store.mjs';
+import { createRoundReceipts, ROUND_STATE_OF } from '../src/core/design/round-receipts.mjs';
+import { createDesignChatActions } from '../src/core/design/chat-actions.mjs';
+import { stageDesignKit } from '../src/core/design/kit.mjs';
 import { designWorkDir } from '../src/core/design/paths.mjs';
+import { listVersions, restoreVersion, snapshotVersion } from '../src/core/design/versions.mjs';
 import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import { exportWorkflowToMarketplace, listPublishTargets } from '../src/core/marketplace-publish.mjs';
@@ -755,7 +761,15 @@ const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityC
 // system sleep while any pipeline run has agents working. syncKeepAwake() is cheap and idempotent: call it
 // wherever a run's status or pendingQuestion changes, and when the setting changes.
 const keepAwake = createKeepAwake({ deployment: DEPLOYMENT, log: (line) => console.warn(line) });
-const designBuilds = createDesignBuilds({ broadcast: (f) => broadcast(f), hosted: DEPLOYMENT === 'hosted', draining: () => DRAIN.on, onLiveChange: () => syncKeepAwake() });
+let designChatActions = null;   // a design chat's hand-off to the engine (Design P5), assigned below designRoundReceipts
+const designBuilds = createDesignBuilds({ broadcast: (f) => { broadcast(f); designRoundReceipts.onFrame(f); }, hosted: DEPLOYMENT === 'hosted', draining: () => DRAIN.on, onLiveChange: () => syncKeepAwake(), deps: { snapshotVersion } });
+const designRoundReceipts = createRoundReceipts({ threadOfDesign: (id) => getDesign(id)?.threadId || null, listMessages: askListMessages, flipCard, versionOf: (id) => getDesign(id)?.version ?? 0 });
+designChatActions = createDesignChatActions({
+  designBuilds, receipts: designRoundReceipts, flagOn: () => flagEnabled('design'),
+  brokerRefusal: (thread, ids) => (mockEnabled({}) ? null : brokerRefusalFor(() => (askSharedOwner(thread) ? thread.createdBy : null), ids)),
+  appendCardRow: (threadId, block) => { const message = askAppendMessage(threadId, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', ...block }] }); broadcast({ type: 'ask-message', threadId, message }); },
+  newCardId: () => newAskId('card'), stageKit: stageDesignKit,
+});
 const KEEP_AWAKE_EVENTS = new Set(['question', 'night-decision', 'done', 'error', 'exec', 'state']);
 function syncKeepAwake() {
   try { keepAwake.update(keepAwakeEnabled() ? countWorking(runs.values()) + designBuilds.liveAgentCount() : 0); }
@@ -1195,7 +1209,7 @@ function broadcast(obj) {
   let composer;                                                        // computed lazily, only if an extension socket is open
   for (const ws of sockets) {
     if (ws.worcaExtension && !askFrame) continue;                       // an extension sees its chat, nothing else
-    if (ws.worcaExtension && (composer ??= askFrameComposer(obj))) continue;   // never a composer thread's frames
+    if (ws.worcaExtension && (composer ??= askFrameComposer(obj))) continue;   // never a composer or design thread's frames
     if (owner && ws.worcaViewer && ws.worcaViewer !== owner) continue;   // someone else's Ask thread
     if (ws.readyState === ws.OPEN) {
       try {
@@ -1231,17 +1245,17 @@ function askFrameOwner(obj) {
   return owner;
 }
 
-// Browser extension: a composer (Workflows editor) thread's frames never reach an extension socket — they would leak
-// its id and streamed text. A thread's mode is fixed at creation and ids are random, so the cache never goes stale.
-const ASK_MODE_CACHE = new Map();   // threadId -> 'composer' | null
+// Browser extension: a surface thread's frames (thread-modes.mjs: a composer or a design chat) never reach an extension
+// socket — they would leak its id and streamed text. A mode is fixed at creation and ids are random: never a stale cache.
+const ASK_MODE_CACHE = new Map();   // threadId -> the thread's raw mode ('composer', 'design') | null
 function askFrameComposer(obj) {
   if (!obj || typeof obj.threadId !== 'string') return false;
-  if (ASK_MODE_CACHE.has(obj.threadId)) return ASK_MODE_CACHE.get(obj.threadId) === 'composer';
+  if (ASK_MODE_CACHE.has(obj.threadId)) return isSurfaceMode(ASK_MODE_CACHE.get(obj.threadId));
   let mode = null;
   try { mode = askGetThread(obj.threadId)?.mode || null; } catch { return true; }   // unreadable = do not leak
   if (ASK_MODE_CACHE.size > 5000) ASK_MODE_CACHE.clear();
   ASK_MODE_CACHE.set(obj.threadId, mode);
-  return mode === 'composer';
+  return isSurfaceMode(mode);
 }
 
 // Fire-and-forget "this entity set changed — refetch your counts" signal. Bare +
@@ -7300,7 +7314,7 @@ registerRequirementsRoutes(app, { broadcast, deps: {
   startRun: (body, opts) => invokeStartRun(body, null, opts),   // D6: through the run handler, as PR watch does
   runSummary: requirementsRunSummary,
 } });
-registerDesignRoutes(app, { broadcast, deps: { designBuilds, brokerStartRefusal, dropGrants: (id) => previewGrants.revokeDesign(id) } });
+registerDesignRoutes(app, { broadcast, deps: { designBuilds, brokerStartRefusal, deleteThread: deleteAskThreadFully, dropGrants: (id) => previewGrants.revokeDesign(id), versions: { list: listVersions, restore: (id, n) => restoreVersion({ designId: id, n }) }, postSystemNotice: postAskSystemNotice } });
 registerPreviewTokenRoute(app, { flagGate: requireFlag('design'), grants: previewGrants, getDesign, viewerOf: askViewer });
 /** These routes push notes off the machine or rewrite them: a browser page must be served by THIS Worca —
  *  isLocalRequest checks the hostname, never the port, and a body-less POST needs no CORS preflight (decision E8).
@@ -7795,20 +7809,21 @@ function askAgentRelay({ threadId, reader, web = null, engine = 'claude', model 
  * Credential-broker preflight for starting work with known models (an Ask message, a run
  * started with an explicit model): refused up front, naming each missing key and the key
  * page, instead of the first spawn failing. In single mode the one set of keys is checked.
- * Never blocks on a broker that can't be asked.
+ * Never blocks on a broker that can't be asked. Mock mode is the caller's check.
+ * @param {() => string|null} personOf whose keys count in multi mode (called only there); null = nobody's, so no check
  * @param {string[]} modelIds
  * @returns {Promise<string|null>} the refusal, or null to proceed
  */
-async function brokerStartRefusal(req, modelIds) {
+async function brokerRefusalFor(personOf, modelIds) {
   if (!brokerEnabled() || !modelIds || !modelIds.length) return null;
   try {
     try { await syncPluginSlots(); } catch { /* the spawn says why */ }
     const info = await brokerInfo();
     let person = 'local';
     if (info.mode === 'multi') {
-      const who = resolveIdentity(req);
-      if (!isSharedIdentity(who.source)) return null;
-      person = who.name;
+      const name = personOf();
+      if (name == null) return null;
+      person = name;
     }
     const r = missingCredentials(modelIds, modelSlot, (await personSlots(person)).slots || []);
     if (!r.missing.length && !r.errors.length) return null;
@@ -7823,6 +7838,12 @@ async function brokerStartRefusal(req, modelIds) {
   } catch {
     return null;
   }
+}
+
+/** brokerRefusalFor for a request (an Ask message, a run start): the person is the request's shared sign-in. A hand-off
+ *  from an event turn has no request and names the thread's owner instead (designChatActions). */
+async function brokerStartRefusal(req, modelIds) {
+  return brokerRefusalFor(() => { const who = resolveIdentity(req); return isSharedIdentity(who.source) ? who.name : null; }, modelIds);
 }
 
 /** Constant-time bearer check; `expected` is the boot-time token from ui.json. */
@@ -8562,7 +8583,7 @@ function askHello(ws = null) {
 
 /** Whether this socket may receive thread `threadId`'s frames (its owner, or not a shared viewer). */
 function askSocketSees(ws, threadId) {
-  if (ws?.worcaExtension) { try { if (askGetThread(threadId)?.mode === 'composer') return false; } catch { return false; } }
+  if (ws?.worcaExtension) { try { if (isSurfaceMode(askGetThread(threadId)?.mode)) return false; } catch { return false; } }
   if (!ws || !ws.worcaViewer) return true;
   let owner = null;
   try { owner = askGetThread(threadId)?.createdBy || null; } catch { return true; }
@@ -8742,6 +8763,11 @@ async function askComposerSystemPromptFor(catalog, { web = null, engine = 'claud
   // `enabled: true`: draft_script is ALWAYS a composer tool, so its program contract ("Scripts you can create") must
   // be in the prompt even when Ask's "Create and run scripts" setting is off (that setting gates test_script only).
   return askBuildComposerSystemPrompt(catalog, { scripts: await askScriptPromptInput({ enabled: true }), web, ...(engine !== 'claude' ? { engine } : {}) });
+}
+
+/** The Design chat's system prompt (Design P5): its own rules + the web section — no catalog, MCP, commands or hosting rule. */
+async function askDesignSystemPromptFor({ web = null, engine = 'claude' } = {}) {
+  return buildDesignSystemPrompt({ web, ...(engine !== 'claude' ? { engine } : {}) });
 }
 
 /** "scheduled Sat Sep 19, 02:00 (run 1a2b…)" / "repeats: Every weekday at 02:00 (sch_…)" / "proposes: …" — or ''. */
@@ -8928,7 +8954,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         // Workflows chat (D13): a composer card names its type, state and name — never the run-card shape.
         const cc = composerHeaderCard(b);
         if (cc) { cards.push(cc); continue; }
-        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away' || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'proxy')) {
+        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away' || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'proxy' || b.card.type === 'design-round' || b.card.type === 'design-questions')) {
           cards.push({ id: b.id, type: b.card.type, state: b.state, summary: b.card.summary || '' });
           continue;
         }
@@ -9080,6 +9106,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     return { ok: false, status: 409, error: 'this chat moved to another engine meanwhile: send your message again', code: 'engine-changed' };
   }
   const composerMode = thread.mode === 'composer';
+  const designMode = thread.mode === 'design';   // Design P5: a design's own chat
+  const surfaceMode = composerMode || designMode;   // a page's own chat: no MCP registry, skills, commands or join notice
   // D5 backstop, before anything is stored: an engine Ask does not run on (Cursor). The catalog filter
   // (ask/models.mjs) already makes such a model unknown to validateModelEffort.
   const modelEngine = model ? askTurnEngine(id, thread, model) : null;
@@ -9194,14 +9222,14 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // can attach (ask/mcp.mjs mcpForEngine): a locked-down chat's lockdown allows them by name beside worca's own server.
     const engine = ASK_ENGINES.includes(modelEngine) ? modelEngine : 'claude';
     const lockedDown = engine !== 'claude';
-    const mcp = composerMode ? { result: null } : await resolveAskMcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model, engine });
+    const mcp = surfaceMode ? { result: null } : await resolveAskMcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model, engine });
     // Skills registry §4.4: the same targets and choices for the skills from sets — resolved ONCE per turn; the turn
     // mounts them and appends the prompt section naming exactly what it wrote (a Codex chat reads them through read_file).
-    const skills = composerMode ? { result: null } : await resolveAskSkills({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff });
+    const skills = surfaceMode ? { result: null } : await resolveAskSkills({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff });
     // Agent mode (#574; worca Chat R5): an Ask chat is ALWAYS in agent mode where the host allows commands at all.
     // The thread's agentMode column and a message's agentMode are still validated and stored — never read here.
-    const agentOn = !composerMode && chatAgentModeFor(id, chatBound);
-    const systemPrompt = composerMode
+    const agentOn = !surfaceMode && chatAgentModeFor(id, chatBound);
+    const systemPrompt = designMode ? await askDesignSystemPromptFor({ web, engine }) : composerMode
       ? await askComposerSystemPromptFor(catalog, { web, engine })
       : await askSystemPromptFor(catalog, { web, mcp: await askMcpPromptInput(mcp), commands: agentOn, engine,
         chat: chatConv ? { platform: chatConv.platform } : null });
@@ -9209,8 +9237,9 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // the chat; an event turn leaves them for the next user turn).
     if (!synthetic && !chatBound && askCommandsEnabled()) headerCtx.personCommands = askCommands.takePersonCommands(id);
     const header = askBuildContextHeader(headerCtx);
-    // The open canvas rides the composer chat's turn prompt (never the 1 KB context header, which clips).
-    const composerBlock = composerMode ? await composerPromptBlock(askGetThread(id)) : '';
+    // The open canvas rides the composer chat's turn prompt (never the 1 KB context header, which clips); a design chat's
+    // [design chat] block (the design, its plan, the open build and the pins) rides it the same way.
+    const composerBlock = designMode ? await designPromptBlock(askGetThread(id)) : composerMode ? await composerPromptBlock(askGetThread(id)) : '';
     const prompt = askBuildTurnPrompt(composerBlock ? `${header}\n\n${composerBlock}` : header, text, inline,
       chatBlock ? askRenderChatContextPrompt(chatBlock) : '');
     const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
@@ -9227,13 +9256,15 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // A shared sign-in's name: the MCP child reads/marks notifications per person (step 3); Away mode
     // switches are attributed to it.
     const turnReader = reader || (thread.createdBy && askSharedOwner(thread) ? thread.createdBy : null);
+    // No hidden AI (L30): a design chat makes no title call and no suggestion call; an event turn makes neither.
+    const helpers = turnHelperFlags({ mode: thread.mode || null, synthetic: !!synthetic, userSeq: userMsg.seq, titleWasAuto });
     turn = createAskTurn({
       threadId: id, assistantMessageId: asstMsg.id, userMessageId: userMsg.id,
       reader: turnReader,
       prompt: handoff ? handoff.prompt : prompt, systemPrompt, restoredPrompt,
       model, effort,
       resumeSessionId: thread.sessionId || null,
-      firstTurn: !synthetic && userMsg.seq === 1 && titleWasAuto, // P3: an event never titles the thread (D13 guard kept)
+      firstTurn: helpers.firstTurn, // P3: an event never titles the thread (D13 guard kept)
       firstText: text,
       deterministicTitle,
       pinnedScope: pinned,                          // #397: proposal defaulting + mismatch flag
@@ -9242,7 +9273,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       skills: skills.result,
       agentMode: agentOn,
       composer: composerMode ? ((askGetThread(id) || {}).composer || null) : null,
-      suggest: !synthetic,                          // ask-suggestion: a user's message only — an event turn suggests nothing
+      design: designMode,
+      suggest: helpers.suggest,                     // ask-suggestion: a user's message only — an event turn suggests nothing
       ...(lockedDown ? {
         engine,
         // D16: this message's images ride the turn on an engine that takes them (`codex exec -i`); the route refused
@@ -9265,7 +9297,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         onWorktreeMutation: () => { emitAskWorktrees(id); },
         // §9.1 (D17): at turn end, name the copies a worktree opened this turn brings into the next one.
         // A Codex chat's notice names only the skills that join (#635): it starts no copy.
-        mcpJoinNotice: composerMode ? () => '' : () => askMcpJoinNotice({ before: { ...mcp, skills: skills.result }, ctx, threadId: id, off: askGetThread(id)?.mcpOff ?? null, model, engine }),
+        mcpJoinNotice: surfaceMode ? () => '' : () => askMcpJoinNotice({ before: { ...mcp, skills: skills.result }, ctx, threadId: id, off: askGetThread(id)?.mcpOff ?? null, model, engine }),
         // A remember/forget in the MCP child is the same scope change a REST write makes (B29).
         // The key is parsed out of worca's OWN tool result, never written by the model; shape-check
         // it anyway before it rides a broadcast (I2-#22).
@@ -9279,6 +9311,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
           { enabled: commandSummariesOpen, summariser: commandSummariser, flipCard, broadcast }); },
         // set_away_now / set_run_away_mode and (worca Chat P2) the chat's act-then-undo tools: askChatTurnDeps.
         ...askChatTurnDeps(turnReader),
+        // Design P5: a start_design_build / change_design result hands over to the engine, billed to the chat's person.
+        ...(designMode ? { designAction: (req, o = {}) => designChatActions.apply(req, { ...o, by: turnReader || thread.createdBy || 'local' }) } : {}),
         resolveMentions: resolveAskMentions,
         // pause / resume / skip / mark-read in the MCP child: the Schedules page and the badges repaint.
         onScheduleMutation: () => { emitChanged('schedules-changed', 'ask'); emitChanged('notifications-changed'); },
@@ -10069,6 +10103,8 @@ export async function bootMaintenance({ log } = {}) {
     // A clone job lives in this process: a clone card still `cloning` from the last one can never finish.
     const clones = sweepCloningCards();
     if (clones) console.log(`[worca-ui] ask sweep: ${clones} clone card(s) interrupted by the restart`);
+    // After recoverDesignBuilds: each open receipt takes its build row's state (a build started meanwhile maps to running).
+    sweepDesignRoundCards((bid) => { const row = getBuild(bid); return row ? ROUND_STATE_OF[row.status] ?? 'interrupted' : 'interrupted'; });
     summary.ask = { interrupted, emptyThreads };
     if (interrupted || emptyThreads) {
       console.log(`[worca-ui] ask sweep: ${interrupted} interrupted turn(s), ${emptyThreads} empty thread(s)`);
@@ -10440,7 +10476,7 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, designBuilds, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
+export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, designBuilds, designChatActions, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
 export const _testing = {
   chatBridge, invokeAskCard, askBus, chatAgentModeFor, chatTurnIdentity,
   updateChecker,

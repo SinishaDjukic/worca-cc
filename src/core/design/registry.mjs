@@ -28,6 +28,12 @@ const OWNER_CACHE_MAX = 5000;
  *  the others. */
 const CLAUDE_ENGINES = new Set(['claude', 'mock']);
 const DRAINING = 'worca is stopping: start this again once it is back';
+/** The refusal while a restore rewrites the design's work/ (P5 Task 10): a start, a Continue, a hand-off, a restore. */
+export const RESTORE_RUNNING = 'A restore is running: try again in a moment';
+/** A restore's, a Continue's and a Delete's refusal while a chat hand-off stages its round into work/ (P5 Task 7). */
+export const ROUND_STARTING = 'A round is starting: try again in a moment';
+/** The design's own build is open, paused included: `start` and a hand-off (P5 maps it to its chat notice). */
+const OPEN_BUILD = 'This design already has a build open: continue or stop it first';
 
 const noop = () => {};
 const messageOf = (err) => (err && typeof err.message === 'string' ? err.message : String(err));
@@ -49,6 +55,12 @@ function refusalOf(err) {
   const out = new DesignRefusal(500, messageOf(err));
   out.cause = err;
   return out;
+}
+
+/** The 409 for `design`'s current build when it is open, paused included, else null. */
+function openBuildRefusal(design) {
+  const current = design?.currentBuild ? getBuild(design.currentBuild) : null;
+  return current && OPEN_BUILD_STATUSES.includes(current.status) ? new DesignRefusal(409, OPEN_BUILD) : null;
 }
 
 /** The design's plan on disk when valid, else null. */
@@ -152,13 +164,83 @@ class DesignBuilds {
     this._builds = new Map();
     /** designId -> createdBy | null, for `frameOwner`. */
     this._owners = new Map();
+    /** designIds whose restore is running (whileRestoring). */
+    this._restoring = new Set();
+    /** designId -> { count, tail }: hand-offs queued or staging a round (whileStarting), and the last one's settle. */
+    this._starting = new Map();
+  }
+
+  /** Whether a restore of `designId` is running. */
+  restoring(designId) {
+    return this._restoring.has(designId);
+  }
+
+  /** Whether a chat hand-off of `designId` is queued or staging a round (whileStarting). */
+  starting(designId) {
+    return this._starting.has(designId);
+  }
+
+  /**
+   * Runs `fn`, a restore of `designId`'s work/, with the design held: `start`, `continueBuild`, a hand-off and another
+   * restore answer 409 RESTORE_RUNNING until it settles, a throw included. Refused 409 while a hand-off stages a round.
+   * The check and the hold are synchronous, so the caller's own checks just before stay atomic with them.
+   * @template T
+   * @param {string} designId
+   * @param {() => Promise<T>} fn
+   * @returns {Promise<T>}
+   * @throws {DesignRefusal}
+   */
+  async whileRestoring(designId, fn) {
+    if (this._restoring.has(designId)) throw new DesignRefusal(409, RESTORE_RUNNING);
+    if (this._starting.has(designId)) throw new DesignRefusal(409, ROUND_STARTING);
+    this._restoring.add(designId);
+    try {
+      return await fn();
+    } finally {
+      this._restoring.delete(designId);
+    }
+  }
+
+  /**
+   * Runs `fn`, a chat hand-off staging its round into `designId`'s work/ and calling `start`, with the design held
+   * against a restore, a Continue and a Delete (409 ROUND_STARTING) from this call until it settles. Refused 409
+   * RESTORE_RUNNING while a restore runs. Hand-offs of one design run one at a time, in call order, and each is
+   * refused before `fn` runs, in `start`'s order: 503 while draining, 404 once the design is gone (a Delete that
+   * landed before the hold: staging would recreate its folder with no row), and `start`'s open-build 409 while the
+   * design's build is open, paused included. So the second of two meets the first's build before it stages anything,
+   * and nothing is staged under a running build or for a deleted design.
+   * @template T
+   * @param {string} designId
+   * @param {() => Promise<T>} fn
+   * @returns {Promise<T>}
+   * @throws {DesignRefusal}
+   */
+  async whileStarting(designId, fn) {
+    if (this._restoring.has(designId)) throw new DesignRefusal(409, RESTORE_RUNNING);
+    const before = this._starting.get(designId);
+    let settle;
+    const tail = new Promise((res) => { settle = res; });
+    this._starting.set(designId, { count: (before?.count ?? 0) + 1, tail });
+    try {
+      if (before) await before.tail;
+      if (this._draining()) throw new DesignRefusal(503, DRAINING);
+      const design = getDesign(designId);
+      if (!design) throw new DesignRefusal(404, 'design not found');
+      const open = openBuildRefusal(design);
+      if (open) throw open;
+      return await fn();
+    } finally {
+      settle();
+      const now = this._starting.get(designId);
+      if (now.count > 1) this._starting.set(designId, { count: now.count - 1, tail: now.tail }); else this._starting.delete(designId);
+    }
   }
 
   /**
    * Starts a round: a first build from `brief`, or a change round when `instruction` is given (`brief` is then
    * ignored). Resolves `{buildId, round, kind}` once accepted, never when the round ends (M10). Refusals, in order:
    * draining 503; no design 404; an engine other than Claude 422; no brief and no instruction 422; this design's
-   * current build open, paused included, 409; a person (not `local`) with a build running here 409; pins `pinsBlock`
+   * current build open, paused included, 409; a restore of the design running 409 (P5); a person (not `local`) with a build running here 409; pins `pinsBlock`
    * refuses 422; worca's total cost limit 403; then the change round's own checks (a valid plan, known sections, 422),
    * the folder of an add the last round left unbuilt that cannot be cleared (409, either kind) and the store's, each
    * with its status.
@@ -175,10 +257,9 @@ class DesignBuilds {
     }
     const change = isText(instruction);
     if (!change && !isText(brief)) throw new DesignRefusal(422, 'A brief is required');
-    const current = design.currentBuild ? getBuild(design.currentBuild) : null;
-    if (current && OPEN_BUILD_STATUSES.includes(current.status)) {
-      throw new DesignRefusal(409, 'This design already has a build open: continue or stop it first');
-    }
+    const open = openBuildRefusal(design);
+    if (open) throw open;
+    if (this._restoring.has(designId)) throw new DesignRefusal(409, RESTORE_RUNNING);
     if (by && by !== 'local' && [...this._builds.values()].some((e) => e.person === by)) {
       throw new DesignRefusal(409, 'You already have a build running: stop it or wait for it.');
     }
@@ -287,7 +368,8 @@ class DesignBuilds {
 
   /**
    * Continue (M8): the build `buildId` of `designId`, rehydrated from its rows (L2.6) and driven again, billed to
-   * `by`. 503 while draining, 404 for an unknown build or one of another design, 409 while it runs here; then
+   * `by`. 503 while draining, 404 for an unknown build or one of another design, 409 while a restore of the design
+   * runs or a chat hand-off stages a round into it (P5), or while it runs here; then
    * `DesignBuild.continue`'s own refusals, synchronously. A refused Continue leaves nothing in memory.
    * @returns {{ buildId: string }}
    * @throws {DesignRefusal}
@@ -296,6 +378,8 @@ class DesignBuilds {
     if (this._draining()) throw new DesignRefusal(503, DRAINING);
     const row = getBuild(buildId);
     if (!row || row.designId !== designId) throw new DesignRefusal(404, 'build not found');
+    if (this._restoring.has(designId)) throw new DesignRefusal(409, RESTORE_RUNNING);
+    if (this._starting.has(designId)) throw new DesignRefusal(409, ROUND_STARTING);
     if (this._builds.has(buildId)) throw new DesignRefusal(409, 'This build is running');
     let build;
     let drive;

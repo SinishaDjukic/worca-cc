@@ -7,14 +7,16 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mockEnabled } from '../claude-runner.mjs';
+import { roundUsd } from '../cost-budget.mjs';
 import { requireFlag } from '../flags.mjs';
 import { actorOf, isSharedIdentity, resolveIdentity } from '../identity.mjs';
 import { listProjects } from '../projects.mjs';
 import { DesignRefusal } from './build.mjs';
+import { chatSpendUsd, createDesignThread } from './chat-thread.mjs';
 import { AGENT_ID_RE, BUILD_ID_RE, DESIGN_ID_RE, DesignError } from './ids.mjs';
 import { designWorkDir } from './paths.mjs';
 import { validatePlan } from './plan.mjs';
-import { createDesignBuilds } from './registry.mjs';
+import { createDesignBuilds, RESTORE_RUNNING, ROUND_STARTING } from './registry.mjs';
 import { resolveDesignModel } from './spawn-options.mjs';
 import {
   createDesign, deleteDesign, getBuild, getDesign, latestBuild, listAgents, listDesigns, updateDesign,
@@ -137,7 +139,9 @@ function recordOut(s) {
  * Registers every route of DESIGN_ROUTES on `app`, each behind the `design` flag.
  * @param {import('express').Express} app
  * @param {{ broadcast?: (frame: object) => void, deps?: { designBuilds?: object,
- *   versions?: { list: (id: string) => Promise<object[]>|object[], restore: (id: string, n: number) => Promise<unknown> },
+ *   versions?: { list: (id: string) => Promise<object[]>|object[],
+ *     restore: (id: string, n: number) => Promise<{ version: number, restoredFrom: number }|void> },
+ *   postSystemNotice?: (threadId: string, text: string) => unknown,
  *   dropGrants?: (id: string) => unknown, deleteThread?: (threadId: string) => Promise<unknown>,
  *   brokerStartRefusal?: (req: object, modelIds: string[]) => Promise<string|null> } }} [opts]
  */
@@ -149,7 +153,9 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
   const handlers = {
     [`GET ${P}`]: async (req, res) => {
       res.json(listDesigns({ visibleTo: viewerOf(req) }).map((x) => ({
-        id: x.id, title: x.title, kind: x.kind, status: x.status, updatedAt: x.updatedAt, costUsd: x.costUsd, thumb: null,
+        id: x.id, title: x.title, kind: x.kind, status: x.status, updatedAt: x.updatedAt, thumb: null,
+        // A design total is its builds plus its chat (P1 sums the build ledger only).
+        costUsd: roundUsd(x.costUsd + chatSpendUsd(x.threadId)),
       })));
     },
 
@@ -160,7 +166,9 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
         { kind: body.kind, title: body.title, fast: body.fast, projectKey: body.projectKey, engine: 'claude' },
         { by: actorOf(req) },
       );
-      res.status(201).json({ design, threadId: null });
+      // The design owns its titled thread from the start (P5): no title call can fire on its first message.
+      const thread = createDesignThread({ design, by: actorOf(req) });
+      res.status(201).json({ design: updateDesign(design.id, { threadId: thread.id }), threadId: thread.id });
     },
 
     [`GET ${ONE}`]: async (req, res) => {
@@ -175,7 +183,7 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
         build = { ...rest, costKnown: listAgents(row.id).every((a) => a.costKnown !== false) };
       }
       const versions = (await d.versions?.list(design.id)) ?? [];
-      res.json({ design, plan: planOf(design), build, sections, versions });
+      res.json({ design: { ...design, costUsd: roundUsd(design.costUsd + chatSpendUsd(design.threadId)) }, plan: planOf(design), build, sections, versions });
     },
 
     [`PATCH ${ONE}`]: async (req, res) => {
@@ -193,6 +201,10 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
     [`DELETE ${ONE}`]: async (req, res) => {
       const design = designFor(req, res);
       if (!design) return;
+      // A restore running, or a chat hand-off staging its round, would recreate work/ with no row once the folder is
+      // gone (P5). Checked in the same tick as the delete: a hand-off that comes later finds no design (404).
+      if (designBuilds.restoring(design.id)) throw new DesignRefusal(409, RESTORE_RUNNING);
+      if (designBuilds.starting(design.id)) throw new DesignRefusal(409, ROUND_STARTING);
       deleteDesign(design.id);
       await d.dropGrants?.(design.id);
       if (design.threadId) await d.deleteThread?.(design.threadId);
@@ -259,17 +271,32 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
       const design = designFor(req, res);
       if (!design) return;
       const n = req.params.n;
-      if (!VERSION_RE.test(n)) throw new DesignRefusal(400, 'version must be a whole number');
+      if (!VERSION_RE.test(n) || !Number.isSafeInteger(Number(n))) throw new DesignRefusal(400, 'version must be a whole number');
+      // `{round}` names the receipt the person went back from (P5 Task 10); a request with no body has none.
+      const body = req.body || {};
+      if (body.round !== undefined && !(Number.isInteger(body.round) && body.round >= 1)) throw new DesignRefusal(400, 'round must be a whole number');
       // A paused build counts as running here (L2.20), as the store's CONFLICT does.
       if (designBuilds.live().some((b) => b.designId === design.id)) throw new DesignRefusal(409, 'A build is running: stop it first');
       if (!d.versions) throw new DesignRefusal(404, VERSION_GONE);
+      let r;
       try {
-        await d.versions.restore(design.id, Number(n));
+        // No await since live(): the hold refuses a start, a Continue, a hand-off and another restore until this ends.
+        r = await designBuilds.whileRestoring(design.id, () => d.versions.restore(design.id, Number(n)));
       } catch (err) {
+        if (err instanceof DesignRefusal) throw err;
         if (err?.status === 404 || (err instanceof DesignError && err.code === 'NOT_FOUND')) throw new DesignRefusal(404, VERSION_GONE);
-        throw err;
+        // A file system error names server paths: the log keeps it, the browser gets words.
+        console.error(`[worca-design] restore of ${design.id} failed: ${messageOf(err)}`);
+        throw new DesignRefusal(500, 'The page was not restored: try again');
       }
-      res.json({ ok: true });
+      // A stub with no result (design-api.test.mjs) still answers `{ok:true}`.
+      const restored = r && Number.isInteger(r.version) ? { version: r.version, restoredFrom: r.restoredFrom } : null;
+      if (restored) {
+        // A notice row, never an AI turn (L30): the chat says what happened, the stage reloads on the frame.
+        if (design.threadId) await d.postSystemNotice?.(design.threadId, body.round ? `Back to before round ${body.round}` : 'Back to an earlier version');
+        broadcast?.({ type: 'design-restored', designId: design.id, ...restored, ts: Date.now() });
+      }
+      res.json({ ok: true, ...(restored ?? {}) });
     },
   };
 

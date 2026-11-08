@@ -15,7 +15,7 @@ import { prepare } from '../src/core/db.mjs';
 import { DesignBuild } from '../src/core/design/build.mjs';
 import { DesignError } from '../src/core/design/ids.mjs';
 import { designWorkDir } from '../src/core/design/paths.mjs';
-import { createDesignBuilds } from '../src/core/design/registry.mjs';
+import { createDesignBuilds, RESTORE_RUNNING, ROUND_STARTING } from '../src/core/design/registry.mjs';
 import { createAgent, createBuild, deleteDesign, getAgent, getBuild, latestBuild, listAgents, updateBuild } from '../src/core/design/store.mjs';
 
 useDesignEnv(after);
@@ -23,7 +23,7 @@ const mk = (over = {}) => { const frames = []; const r = createDesignBuilds({ br
 const status = (n) => (e) => e.status === n;
 // One home per file: live() reads every open row, and earlier tests leave paused builds open. Filter by design.
 const liveOf = (r, d, opts) => r.live(opts).filter((x) => x.designId === d.id);
-/** A pin as P5 sends it (M10); P2's `pinsBlock` refuses every non-empty list until P5 Task 11. */
+/** A pin as P5 sends it (M10); `pinsBlock` renders up to six and refuses a longer list, so `Array(7).fill(PIN)` is a 422. */
 const PIN = { id: 'p1', path: 'sections/hero/index.html', tag: 'h1', text: 'Hi', html: '<h1>Hi</h1>' };
 
 test('M10: start resolves {buildId, round, kind} at once, before the build ends', async () => {
@@ -80,8 +80,8 @@ test('the refusals answer in order: each one before the next', async () => {
   await r.start({ designId: d.id, brief: 'MOCK_HANG_LEAD', by: 'a@x.io' });
   await assert.rejects(r.start({ designId: d.id, brief: '', by: 'a@x.io' }), (e) => e.status === 422 && !/Claude/.test(e.message), 'the brief before the open build');
   await assert.rejects(r.start({ designId: d.id, brief: 'x', by: 'a@x.io' }), (e) => e.status === 409 && e.code === undefined && /this design/i.test(e.message), 'the design\'s open build before the person');
-  await assert.rejects(r.start({ designId: newDesign().id, brief: 'x', pins: [PIN], by: 'a@x.io' }), (e) => e.status === 409 && /You already have a build running/.test(e.message), 'the person before the pins');
-  await assert.rejects(mk(blocked).r.start({ designId: newDesign().id, brief: 'x', pins: [PIN], by: 'local' }), status(422), 'the pins before the budget');
+  await assert.rejects(r.start({ designId: newDesign().id, brief: 'x', pins: Array(7).fill(PIN), by: 'a@x.io' }), (e) => e.status === 409 && /You already have a build running/.test(e.message), 'the person before the pins');
+  await assert.rejects(mk(blocked).r.start({ designId: newDesign().id, brief: 'x', pins: Array(7).fill(PIN), by: 'local' }), status(422), 'the pins before the budget');
   await assert.rejects(mk(blocked).r.start({ designId: newDesign().id, instruction: 'x', sections: ['ghost'], by: 'local' }), status(403), 'the budget before the change checks');
   r.pauseAll(); await r.settled();
   const again = await r.start({ designId: newDesign().id, brief: 'MOCK_SECTIONS=1', by: 'a@x.io' });
@@ -141,8 +141,8 @@ test('a change round needs a plan and known sections; it returns kind change', a
   const got = await r.start({ designId: d.id, instruction: 'x', sections: ['hero'], needsLead: false, by: 'local' });
   assert.deepEqual([got.round, got.kind], [2, 'change']);
   await r.settled();
-  // pins before P5: non-empty pins -> 422 (P5 Task 11 flips this row)
-  await assert.rejects(r.start({ designId: d.id, instruction: 'x', sections: ['hero'], pins: [PIN], by: 'local' }), status(422));
+  // more than six pins -> 422, before any round starts
+  await assert.rejects(r.start({ designId: d.id, instruction: 'x', sections: ['hero'], pins: Array(7).fill(PIN), by: 'local' }), status(422));
   // no sections and no needsLead -> a lead round
   const lead = await r.start({ designId: d.id, instruction: 'Warmer', brief: 'ignored', by: 'local' });
   assert.deepEqual([lead.round, lead.kind], [3, 'change']);
@@ -422,4 +422,86 @@ test('methods live on the prototype, so a test can shadow live() and delete the 
   const { r } = mk(); const real = r.live();
   r.live = () => [{ designId: 'x' }]; assert.deepEqual(r.live(), [{ designId: 'x' }]);
   delete r.live; assert.deepEqual(r.live(), real);
+});
+
+test('P5: a restore holds its design: start, continueBuild, a hand-off and a second restore refuse 409 until it settles, a throw included', async () => {
+  const { r } = mk(); const d = newDesign(); const other = newDesign();
+  const { buildId } = await r.start({ designId: d.id, brief: 'MOCK_SECTIONS=1 MOCK_FAIL_SECTION=hero', by: 'local' });
+  await r.settled(); await r.stopBuild(buildId);
+  assert.equal(getBuild(buildId).status, 'stopped', 'continuable, and not live: only the hold refuses below');
+  const busy = (e) => e.status === 409 && e.message === RESTORE_RUNNING;
+  assert.equal(RESTORE_RUNNING, 'A restore is running: try again in a moment');
+  let release; const held = r.whileRestoring(d.id, () => new Promise((res) => { release = res; }));
+  assert.equal(r.restoring(d.id), true);
+  await assert.rejects(r.start({ designId: d.id, brief: 'x', by: 'local' }), busy);
+  assert.throws(() => r.continueBuild({ designId: d.id, buildId, by: 'local' }), busy);
+  await assert.rejects(r.whileRestoring(d.id, async () => 'no'), busy);
+  await assert.rejects(r.whileStarting(d.id, async () => 'no'), busy);
+  assert.equal(r.restoring(other.id), false, 'per design');
+  release('v'); assert.equal(await held, 'v');
+  await assert.rejects(r.whileRestoring(d.id, async () => { throw new Error('disk'); }), /disk/);
+  assert.equal(r.restoring(d.id), false, 'cleared in finally');
+  assert.deepEqual(r.continueBuild({ designId: d.id, buildId, by: 'local' }), { buildId }, 'the 409s came from the hold');
+  await r.settled();
+});
+test('P5: hand-offs of one design queue: each holds it against a restore and a Continue, and the next meets the open build before it stages anything', async () => {
+  const { r } = mk(); const d = newDesign(); const other = newDesign();
+  assert.equal(ROUND_STARTING, 'A round is starting: try again in a moment');
+  const { buildId: stopped } = await r.start({ designId: d.id, brief: 'MOCK_SECTIONS=1 MOCK_FAIL_SECTION=hero', by: 'local' });
+  await r.settled(); await r.stopBuild(stopped);
+  assert.equal(getBuild(stopped).status, 'stopped', 'continuable, and not open: only the hold refuses the Continue below');
+  const ran = [];
+  let release; const gate = new Promise((res) => { release = res; });
+  const one = r.whileStarting(d.id, async () => { ran.push('one'); await gate; return r.start({ designId: d.id, brief: 'MOCK_SECTIONS=1', by: 'local' }); });
+  const two = r.whileStarting(d.id, async () => { ran.push('two'); return 'staged under an open build'; });
+  assert.equal(await r.whileStarting(other.id, async () => 'other'), 'other', 'per design');
+  await new Promise((res) => setImmediate(res));
+  assert.deepEqual(ran, ['one'], 'the second waits for the first');
+  await assert.rejects(r.whileRestoring(d.id, async () => 'no'), (e) => e.status === 409 && e.message === ROUND_STARTING);
+  assert.throws(() => r.continueBuild({ designId: d.id, buildId: stopped, by: 'local' }), (e) => e.status === 409 && e.message === ROUND_STARTING);
+  release();
+  const { buildId } = await one;
+  await assert.rejects(two, (e) => e.status === 409 && e.message === 'This design already has a build open: continue or stop it first');
+  assert.deepEqual(ran, ['one'], 'refused before its fn ran: nothing staged under the open build');
+  await assert.rejects(r.whileStarting(d.id, async () => 'no'), (e) => e.status === 409, 'the first hand-off meets an open build too');
+  assert.equal(await r.whileRestoring(other.id, async () => 'free'), 'free');
+  assert.ok(buildId);
+  await r.settled();
+  assert.equal(await r.whileRestoring(d.id, async () => 'free'), 'free', 'released once the hand-offs settled');
+  const thrown = r.whileStarting(d.id, async () => { await null; throw new Error('copy'); });
+  const next = r.whileStarting(d.id, async () => 'next');
+  await assert.rejects(thrown, /copy/);
+  assert.equal(await next, 'next', 'a throw lets the queue go on');
+  assert.equal(await r.whileRestoring(d.id, async () => 'free'), 'free', 'released after a throw');
+});
+test('P5: starting() holds from a hand-off\'s call until its queue settles; a design deleted before a hand-off\'s turn is a 404 before its fn; a drain answers 503 before the open-build 409', async () => {
+  let drain = false;
+  const { r } = mk({ draining: () => drain }); const d = newDesign(); const gone = newDesign();
+  const gone404 = (e) => e.status === 404 && e.message === 'design not found';
+  const ran = [];
+  deleteDesign(gone.id);
+  assert.equal(r.starting(gone.id), false);
+  await assert.rejects(r.whileStarting(gone.id, async () => { ran.push('gone'); }), gone404);
+  assert.equal(r.starting(gone.id), false, 'let go after the refusal');
+  let release; const gate = new Promise((res) => { release = res; });
+  const one = r.whileStarting(d.id, async () => { ran.push('one'); await gate; return 'one'; });
+  const two = r.whileStarting(d.id, async () => { ran.push('two'); return 'staged for a design that is gone'; });
+  assert.equal(r.starting(d.id), true, 'held from the call, in the same tick');
+  assert.equal(r.starting(gone.id), false, 'per design');
+  await new Promise((res) => setImmediate(res));
+  deleteDesign(d.id);   // the store alone: the Delete route refuses while starting() is true
+  release();
+  assert.equal(await one, 'one');
+  await assert.rejects(two, gone404, 'the queued hand-off re-reads the design once its turn comes');
+  assert.deepEqual(ran, ['one'], 'nothing staged for a design that is gone');
+  assert.equal(r.starting(d.id), false, 'let go once the queue settled');
+  const p = newDesign();
+  const { buildId } = await r.start({ designId: p.id, brief: 'MOCK_SECTIONS=1 MOCK_FAIL_SECTION=hero', by: 'local' });
+  await r.settled();
+  assert.equal(getBuild(buildId).status, 'paused', 'an open build: the drain paused it');
+  drain = true;
+  await assert.rejects(r.whileStarting(p.id, async () => { ran.push('drain'); }), (e) => e.status === 503 && e.message === 'worca is stopping: start this again once it is back');
+  drain = false;
+  await assert.rejects(r.whileStarting(p.id, async () => { ran.push('open'); }), (e) => e.status === 409);
+  assert.deepEqual(ran, ['one']);
 });

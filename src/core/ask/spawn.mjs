@@ -177,8 +177,9 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
   // denied. Skills without `allowed-tools` (most set skills, bundled `simplify`, …) load without any rule.
   const skillAllows = sk && Array.isArray(sk.names) ? sk.names.filter((n) => typeof n === 'string' && QUALIFIED_SKILL_RE.test(n)).map((n) => `Skill(${n})`) : [];
   // With copies, ToolSearch keeps their schemas deferred: `--tools` without it sends every MCP schema in full (§16.1 #9).
-  // The Workflows chat (composer) gets no Task: a sub-agent's edit_canvas / draft_* calls would change the MCP child's
-  // working canvas, but only main-stream tool results become cards (events.mjs onToolResults) — the user would never see them.
+  // The Workflows and Design chats (turn.mjs surfaceLocked passes `composer`) get no Task: a sub-agent's edit_canvas /
+  // draft_* or start_design_build calls would act in the MCP child, but only main-stream tool results become cards or
+  // reach the parent (events.mjs onToolResults) — the user would never see them.
   const own = composer ? ASK_BUILTIN_TOOLS.filter((t) => t !== 'Task') : [...ASK_BUILTIN_TOOLS];
   const builtins = reg ? [...own, 'ToolSearch'] : own;
   // A stdio copy starts through the launcher, which reads the keep-list from the scrubbed claude env (§5.5.1).

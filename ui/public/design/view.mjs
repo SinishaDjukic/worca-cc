@@ -221,10 +221,15 @@ export function mountDesignView(deps = {}) {
       stage.pushFrame(f);
       chat?.pushDesignFrame?.(f);
     },
+    /** app.js's ask-* frames; the open chat keeps only its own thread's. */
+    pushAskFrame(f) { studio?.chat?.pushAskFrame?.(f); },
+    /** The open chat paints again (markdown finished loading). */
+    repaintChat() { studio?.chat?.repaint?.(); },
     onHello(list, opts) {
       live.hello(list);
       paint();
       studio?.stage.onHello(opts);
+      studio?.chat?.onHello?.();
     },
     /** The open stage, or null. */
     stage() { return studio ? studio.stage : null; },
@@ -242,6 +247,12 @@ export function mountDesignView(deps = {}) {
 
 /** app.js's socket router hands every design-* frame here; it goes to the mounted view. */
 export function pushDesignFrame(f) { current?.view.pushFrame(f); }
+
+/** app.js's socket router hands every ask-* frame here; the open design's chat takes its own thread's. */
+export function pushDesignAskFrame(f) { current?.view.pushAskFrame(f); }
+
+/** app.js's markdown loader calls this once marked is ready, so the open chat repaints its replies. */
+export function repaintDesignChat() { current?.view.repaintChat?.(); }
 
 /** app.js's hello hands its design list (and { rebooted }) here. */
 export function designHello(list, opts) { current?.view.onHello(list, opts); }

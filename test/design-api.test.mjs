@@ -9,13 +9,16 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import express from 'express';
 import { newDesign, useDesignEnv, waitForFrame, waitUntil } from './helpers/design-fixture.mjs';
+import { addAttachment, appendMessage, createThread } from '../src/core/ask/store.mjs';
 import { currentBillTo } from '../src/core/billing.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { prepare } from '../src/core/db.mjs';
 import { DesignRefusal } from '../src/core/design/build.mjs';
+import { createDesignChatActions } from '../src/core/design/chat-actions.mjs';
 import { DesignError } from '../src/core/design/ids.mjs';
+import { stageDesignKit } from '../src/core/design/kit.mjs';
 import { designDir, designWorkDir } from '../src/core/design/paths.mjs';
-import { createDesignBuilds } from '../src/core/design/registry.mjs';
+import { createDesignBuilds, ROUND_STARTING } from '../src/core/design/registry.mjs';
 import { DESIGN_ROUTES, registerDesignRoutes } from '../src/core/design/routes.mjs';
 import { getBuild, getDesign, listAgents, updateBuild, updateDesign } from '../src/core/design/store.mjs';
 
@@ -107,7 +110,7 @@ test('flag off: every route answers the flag gate 404', async () => {
 test('create, read, list, patch', async () => {
   const c = await call('POST', '/api/design', { kind: 'web', title: 'Ship', fast: true });
   assert.equal(c.status, 201);
-  assert.equal(c.json.threadId, null);
+  assert.match(c.json.threadId, /^ask_/);
   assert.match(c.json.design.id, /^d_[0-9a-f]{12}$/);
   assert.deepEqual([c.json.design.title, c.json.design.fast, c.json.design.engine, c.json.design.createdBy], ['Ship', true, 'claude', 'local']);
   const g = await call('GET', `/api/design/${c.json.design.id}`);
@@ -169,7 +172,7 @@ test('bad bodies are 400; a bad project is 400', async () => {
   const d = await make();
   assert.equal((await call('PATCH', `/api/design/${d.id}`, { status: 'done', currentBuild: 'b_000000000000', engine: 'codex', threadId: 't_x', version: 4 })).status, 200);
   const row = getDesign(d.id);
-  assert.deepEqual([row.status, row.currentBuild, row.engine, row.threadId, row.version], ['empty', null, 'claude', null, 0],
+  assert.deepEqual([row.status, row.currentBuild, row.engine, row.threadId, row.version], ['empty', null, 'claude', d.threadId, 0],
     'only title, fast and projectKey reach updateDesign, which accepts more');
   for (const b of [{ fast: 'yes' }, { title: 5 }, { title: 'x'.repeat(121) }, { projectKey: 7 }, { projectKey: 'nope' }]) {
     assert.equal((await call('PATCH', `/api/design/${d.id}`, b)).status, 400, JSON.stringify(b));
@@ -417,7 +420,7 @@ test('restore: 400 on a bad n, 409 while a build runs or is paused, delegates to
     },
   };
   const v = await mkApp({ designBuilds, versions });
-  for (const n of ['abc', '0', '01', '-1', '1.5', '1e3']) {
+  for (const n of ['abc', '0', '01', '-1', '1.5', '1e3', '9'.repeat(400)]) {   // the last one passes the pattern but is no safe integer
     assert.deepEqual(await v('POST', `/api/design/${d.id}/versions/${n}/restore`, {}), { status: 400, json: { error: 'version must be a whole number' } }, n);
   }
   assert.deepEqual(await v('POST', `/api/design/${d.id}/versions/3/restore`, {}), { status: 200, json: { ok: true } });
@@ -441,6 +444,79 @@ test('restore: 400 on a bad n, 409 while a build runs or is paused, delegates to
   assert.equal((await v('POST', `/api/design/${d.id}/versions/3/restore`, {})).status, 200);
 });
 
+test('P5: a restore holds the design: a second restore, a Continue and a Delete answer 409 while it runs; a failed restore is a 500 with no path', async () => {
+  const d = await make();
+  const { buildId } = await designBuilds.start({ designId: d.id, brief: 'MOCK_SECTIONS=1 MOCK_FAIL_SECTION=hero', by: 'local' });
+  await designBuilds.settled();
+  await call('POST', `/api/design/${d.id}/builds/${buildId}/stop`, {});
+  assert.equal(getBuild(buildId).status, 'stopped');
+  let entered; const inside = new Promise((res) => { entered = res; });
+  let release; const gate = new Promise((res) => { release = res; });
+  let entries = 0;
+  const leak = `EEXIST: file already exists, mkdir '${designWorkDir(d.id)}/assets'`;
+  const v = await mkApp({ designBuilds, versions: { list: async () => [], restore: async (id, n) => {
+    if (n === 7) throw Object.assign(new Error(leak), { code: 'EEXIST' });
+    entries += 1;
+    if (entries > 1) return { version: 5, restoredFrom: n };   // never parks a second one: an unheld route fails, not hangs
+    entered(); await gate; return { version: 4, restoredFrom: n };
+  } } });
+  const first = v('POST', `/api/design/${d.id}/versions/1/restore`, {});
+  await inside;
+  const busy = { status: 409, json: { error: 'A restore is running: try again in a moment' } };
+  assert.deepEqual(await v('POST', `/api/design/${d.id}/versions/1/restore`, {}), busy, 'a second restore (another tab)');
+  assert.deepEqual(await v('POST', `/api/design/${d.id}/builds/${buildId}/continue`, {}), busy, 'a Continue');
+  assert.deepEqual(await v('DELETE', `/api/design/${d.id}`), busy, 'a Delete: the restore would recreate work/ with no row');
+  await assert.rejects(designBuilds.start({ designId: d.id, brief: 'x', by: 'local' }), (e) => e.status === 409 && e.message === busy.json.error);
+  assert.equal(getBuild(buildId).status, 'stopped');
+  release();
+  assert.deepEqual(await first, { status: 200, json: { ok: true, version: 4, restoredFrom: 1 } });
+  const e = await v('POST', `/api/design/${d.id}/versions/7/restore`, {});
+  assert.deepEqual(e, { status: 500, json: { error: 'The page was not restored: try again' } }, 'no server path reaches the browser');
+  assert.equal((await v('POST', `/api/design/${d.id}/builds/${buildId}/continue`, {})).status, 202, 'released after the throw');
+  await designBuilds.settled();
+});
+test('P5: a chat hand-off holds the design against a Delete (409); a Delete before the hold leaves no folder, kit or upload copy behind', async () => {
+  const dropped = []; const threads = [];
+  const del = await mkApp({ designBuilds, dropGrants: (id) => { dropped.push(id); }, deleteThread: async (t) => { threads.push(t); } });
+  const withChat = () => {   // the route's deleteThread is a fake: the upload stays readable, as while the real one awaits
+    const d = newDesign(); const t = createThread({ mode: 'design', title: d.title });
+    updateDesign(d.id, { threadId: t.id });
+    addAttachment(t.id, appendMessage(t.id, { role: 'user', text: 'x' }).id, { name: 'logo.png', kind: 'image', mime: 'image/png', data: Buffer.from('private upload') });
+    return { d, t };
+  };
+  const actions = ({ broker, stage }) => createDesignChatActions({
+    designBuilds, receipts: { posted() {} }, flagOn: () => true, appendCardRow() {}, newCardId: () => 'card_00000001',
+    brokerRefusal: async () => { await broker?.(); return null; },
+    stageKit: async (o) => { await stage?.(); return stageDesignKit(o); },
+  });
+  const a = withChat();
+  let entered; const inside = new Promise((res) => { entered = res; });
+  let release; const gate = new Promise((res) => { release = res; });
+  const staging = actions({ stage: () => { entered(); return gate; } }).apply({ kind: 'design-start', brief: 'MOCK_SECTIONS=1' }, { threadId: a.t.id, by: 'local' });
+  await inside;
+  assert.deepEqual(await del('DELETE', `/api/design/${a.d.id}`), { status: 409, json: { error: ROUND_STARTING } }, 'the round being staged would recreate the folder with no row');
+  assert.ok(getDesign(a.d.id));
+  assert.ok(existsSync(designDir(a.d.id)));
+  assert.deepEqual([dropped, threads], [[], []], 'a refused delete drops nothing');
+  release();
+  assert.equal((await staging).ok, true);
+  await designBuilds.settled();
+  assert.deepEqual(await del('DELETE', `/api/design/${a.d.id}`), { status: 200, json: { ok: true } }, 'released once the round started');
+  assert.equal(existsSync(designDir(a.d.id)), false);
+  const b = withChat();
+  let asked; const atBroker = new Promise((res) => { asked = res; });
+  let open; const broker = new Promise((res) => { open = res; });
+  let staged = 0;
+  const handOff = actions({ broker: () => { asked(); return broker; }, stage: () => { staged += 1; } }).apply({ kind: 'design-start', brief: 'MOCK_SECTIONS=1' }, { threadId: b.t.id, by: 'local' });
+  await atBroker;
+  assert.deepEqual(await del('DELETE', `/api/design/${b.d.id}`), { status: 200, json: { ok: true } }, 'no hold yet: the Delete runs');
+  assert.equal(existsSync(designDir(b.d.id)), false);
+  open();
+  assert.deepEqual(await handOff, { ok: false, notice: 'Could not start the build: design not found.' });
+  assert.equal(staged, 0, 'refused before the kit is staged');
+  assert.equal(existsSync(designDir(b.d.id)), false, 'no folder recreated: no kit and no copy of the deleted upload');
+});
+
 test('M10: delete answers 409 on CONFLICT under an open build; after a stop it removes the folder and rows, keeps the ledger', async () => {
   const dropped = []; const threads = [];
   const del = await mkApp({ designBuilds, dropGrants: (id) => { dropped.push(id); }, deleteThread: async (t) => { threads.push(t); } });
@@ -460,7 +536,7 @@ test('M10: delete answers 409 on CONFLICT under an open build; after a stop it r
   assert.equal(getBuild(buildId), null);
   assert.ok(prepare('SELECT COUNT(*) n FROM design_cost_ledger WHERE design_id = ?').get(d.id).n > 0);
   assert.deepEqual([dropped, threads], [[d.id], ['t_x']]);
-  const plain = await make();
+  const plain = newDesign();
   assert.equal((await del('DELETE', `/api/design/${plain.id}`)).status, 200);
   assert.deepEqual([dropped, threads], [[d.id, plain.id], ['t_x']], 'a design with no thread never calls deleteThread');
 });

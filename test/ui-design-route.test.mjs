@@ -25,10 +25,12 @@ const hidden = (doc, view) => doc.querySelector(`[data-view="${view}"]`).classLi
 // A local copy of test/requirements-app.test.mjs's boot: GET /api/design answers [], and `extra` rides the hello frame.
 // `answer(url, init)` answers a request before the defaults (a reply, or nothing); `sent` holds every socket send and
 // `calls` every request. `raf` gives the window animation frames on its own timers (the stage paints per frame).
-async function boot(flags, extra = {}, { answer = null, raf = false } = {}) {
+// `hooks` becomes window.__worcaTestHooks before app.js loads (askMarkdown: the page's markdown loader).
+async function boot(flags, extra = {}, { answer = null, raf = false, hooks = null } = {}) {
   const dom = trackDom(new JSDOM(html, { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
+  if (hooks) window.__worcaTestHooks = hooks;
   if (raf) {
     window.requestAnimationFrame = (fn) => window.setTimeout(() => fn(window.performance.now()), 0);
     window.cancelAnimationFrame = (id) => window.clearTimeout(id);
@@ -181,5 +183,80 @@ test('in the real app: the library row opens the studio, which subscribes; a new
   window.location.hash = 'runs';
   await settle();
   assert.equal(host.children.length, 0, 'leaving Design empties its host');
+  assert.deepEqual(errors, [], 'no listener threw');
+});
+
+// The same studio, with the design's titled thread: the mount passes the real dock (createChat), app.js forwards
+// ask-* frames to it, and hello reaches it through the view. The dock's own tests inject all three.
+const APP_TID = 'ask_00000001';
+const designChatAnswer = (messages = []) => (url, init = {}) => {
+  const reply = (body) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
+  const method = String(init.method ?? 'GET').toUpperCase();
+  if (method === 'GET' && url === `/api/design/${APP_DID}`) {
+    return reply({
+      design: { id: APP_DID, kind: 'web', title: 'Apsida landing page', version: 0, threadId: APP_TID },
+      plan: null, sections: [], versions: [],
+      build: { id: APP_BID, designId: APP_DID, round: 1, kind: 'first', status: 'building', reason: null, agentsTotal: 1, layers: 0, costUsd: 0, costKnown: true, startedAt: '2026-11-05T10:00:00Z', endedAt: null },
+    });
+  }
+  if (method === 'GET' && url === '/api/ask/models') return reply({ default: { model: 'm', effort: 'e' }, models: [] });
+  if (method === 'GET' && url === `/api/ask/threads/${APP_TID}`) {
+    return reply({ thread: { id: APP_TID, mode: 'design', title: 'Apsida landing page', designId: APP_DID }, messages, attachments: [], runLinks: [], inFlight: null });
+  }
+  return designAnswer(url, init);
+};
+test('in the real app: the studio\'s chat is the design dock, and Ask frames and hello reach it', async () => {
+  const { window, doc, recv, calls } = await boot({ design: true }, {}, { answer: designChatAnswer(), raf: true });
+  const errors = [];
+  window.addEventListener('error', (e) => { errors.push(String(e.error?.stack ?? e.message)); });
+  const host = doc.getElementById('design-host');
+  window.location.hash = 'design';
+  await settle();
+  host.querySelector('.dz-lib .row-btn').click();
+  await settle();
+  assert.equal(window.location.hash, `#design/${APP_DID}`);
+  assert.ok(host.querySelector('.dz-chat-slot .dsc-input'), 'the mount passed createChat: the dock fills the chat slot');
+  const threadGets = () => calls.filter((c) => c.method === 'GET' && c.url === `/api/ask/threads/${APP_TID}`).length;
+  assert.ok(threadGets() >= 1, 'the dock loaded its thread');
+  recv({ type: 'ask-message', threadId: APP_TID, message: { id: 'msg_00000001', seq: 1, role: 'assistant', text: 'from the socket', blocks: [], status: 'done' } });
+  await settle();
+  assert.match(host.querySelector('.dsc-thread').textContent, /from the socket/, 'app.js forwards ask-* frames to the dock');
+  const before = threadGets();
+  recv({ type: 'hello', bootId: 'b', runs: [], flags: { design: true } });
+  await settle();
+  assert.equal(threadGets(), before + 1, 'hello reaches the chat: it reloads its thread');
+  assert.deepEqual(errors, [], 'no listener threw');
+});
+test('in the real app: the dock\'s replies use the page\'s markdown and repaint once it loads; Back to before this asks through the app\'s confirm', async () => {
+  let release = null;
+  const loaded = new Promise((r) => { release = r; });
+  const askMarkdown = () => loaded.then(async () => ({ marked: (await import('marked')).marked, createDOMPurify: (await import('dompurify')).default }));
+  const messages = [
+    { id: 'msg_00000001', seq: 1, role: 'assistant', text: 'Built the **hero**', blocks: [], status: 'done' },
+    { id: 'msg_00000002', seq: 2, role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id: 'card_00000002', state: 'done', card: { type: 'design-round', round: 2, baseVersion: 1, agents: 1, elapsedMs: 1000, costUsd: 0, costKnown: true, summary: 's' } }] },
+  ];
+  const { window, doc, calls } = await boot({ design: true }, {}, { answer: designChatAnswer(messages), raf: true, hooks: { askMarkdown } });
+  const errors = [];
+  window.addEventListener('error', (e) => { errors.push(String(e.error?.stack ?? e.message)); });
+  const host = doc.getElementById('design-host');
+  window.location.hash = 'design';
+  await settle();
+  host.querySelector('.dz-lib .row-btn').click();
+  await settle();
+  const thread = host.querySelector('.dz-chat-slot .dsc-thread');
+  assert.match(thread.textContent, /Built the \*\*hero\*\*/, 'plain text while marked loads');
+  release();
+  await settle();
+  assert.equal(thread.querySelector('.ask-md strong')?.textContent, 'hero', 'the mount\'s renderMarkdown, and its repaint once marked loads');
+  const restores = () => calls.filter((c) => c.method === 'POST' && c.url === `/api/design/${APP_DID}/versions/1/restore`).length;
+  host.querySelector('.dsc-round button').click();
+  await settle();
+  assert.equal(doc.getElementById('confirm-modal').classList.contains('hidden'), false, 'the app\'s confirm opened');
+  assert.deepEqual([doc.getElementById('confirm-title').textContent, doc.getElementById('confirm-ok').textContent, doc.getElementById('confirm-cancel').textContent],
+    ['Go back to before this round?', 'Go back', 'Stay']);
+  assert.equal(restores(), 0, 'nothing restores before the answer');
+  doc.getElementById('confirm-cancel').click();
+  await settle();
+  assert.equal(restores(), 0, 'Stay restores nothing');
   assert.deepEqual(errors, [], 'no listener threw');
 });

@@ -6,9 +6,14 @@ import { validateMcpOff } from '../../../src/core/ask/mcp.mjs';
 import { validateModelEffort } from '../../../src/core/ask/models.mjs';
 import { chatScopeOf, sameScope } from '../../../src/core/ask/scope.mjs';
 import { revealTargetFor as askRevealTargetFor } from '../../../src/core/ask/show-files-deps.mjs';
+import { isSurfaceMode } from '../../../src/core/ask/thread-modes.mjs';
 import { THREAD_SORTS, attachmentPath as askAttachmentPath, countThreads as askCountThreads, createThread as askCreateThread, getAttachment as askGetAttachment, getThread as askGetThread, listAttachments as askListAttachments, listMessages as askListMessages, listRunLinks as askListRunLinks, listThreadIds as askListThreadIds, listThreads as askListThreads, listThreadsPage as askListThreadsPage, readAttachmentText as askReadAttachmentText, setArchived as askSetArchived, setPinned as askSetPinned, updateThread as askUpdateThread } from '../../../src/core/ask/store.mjs';
 import { removeAskWorktree as askRemoveWorktree } from '../../../src/core/ask/worktrees.mjs';
 import { chatOrigins } from '../../../src/core/chat/conversations.mjs';
+import { createDesignThread } from '../../../src/core/design/chat-thread.mjs';
+import { DESIGN_ID_RE } from '../../../src/core/design/ids.mjs';
+import { getDesign, updateDesign } from '../../../src/core/design/store.mjs';
+import { flagEnabled } from '../../../src/core/flags.mjs';
 import { actorOf } from '../../../src/core/identity.mjs';
 import { CHAT_BUSY } from '../../../src/shared/chat-busy.mjs';
 import { spawn } from 'node:child_process';
@@ -47,8 +52,8 @@ app.get('/api/ask/threads', (req, res) => {
     const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 200) : 50;
     const visibleTo = askViewer(req);
-    // Browser extension: never lists composer (Workflows editor) threads.
-    const mode = !req.worcaExtension && req.query.mode === 'composer' ? 'composer' : null;
+    // Browser extension: never lists composer (Workflows editor) or design threads.
+    const mode = !req.worcaExtension && isSurfaceMode(req.query.mode) ? req.query.mode : null;
     // q = the History column's search (title or any message's text); the owner and surface filters above still apply.
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     // origin = the chat integration that opened the thread (null = started in the app), one lookup per page.
@@ -138,6 +143,18 @@ app.post('/api/ask/threads', (req, res) => {
       }
       title = body.title.trim() || null;
     }
+    // Design (P5): a design whose chat is gone (Settings › Delete all chat history) gets a fresh titled thread;
+    // one that still has its chat answers 409 with it. A design another person made reads 404, as on /api/design.
+    if (body.mode === 'design') {
+      if (!flagEnabled('design')) return res.status(404).json({ error: 'not found' });
+      const design = typeof body.designId === 'string' && DESIGN_ID_RE.test(body.designId) ? getDesign(body.designId) : null;
+      const viewer = askViewer(req);
+      if (!design || (viewer && design.createdBy && design.createdBy !== viewer)) return res.status(404).json({ error: 'design not found' });
+      if (design.threadId && askGetThread(design.threadId)) return res.status(409).json({ error: 'this design already has its chat', threadId: design.threadId });
+      const thread = createDesignThread({ design, by: actorOf(req) });
+      updateDesign(design.id, { threadId: thread.id });
+      return res.status(201).json({ thread: askGetThread(thread.id) });
+    }
     // Workflows view (D9): the editor's chat is a composer thread — its own toolset, prompt and history list.
     if (body.mode !== undefined && body.mode !== null && body.mode !== 'composer') return badRequest(res, 'mode must be "composer"');
     const thread = askCreateThread({ createdBy: actorOf(req), mode: body.mode === 'composer' ? 'composer' : null });
@@ -155,7 +172,7 @@ app.get('/api/ask/threads/:id', (req, res) => {
   try {
     const thread = askGetThread(id);
     if (!thread) return res.status(404).json({ error: 'thread not found' });
-    if (req.worcaExtension && thread.mode === 'composer') return res.status(403).json({ error: 'the browser extension uses Ask threads only', code: 'extension-route' });
+    if (req.worcaExtension && isSurfaceMode(thread.mode)) return res.status(403).json({ error: 'the browser extension uses Ask threads only', code: 'extension-route' });
     const job = askInFlight(id);
     res.json({
       // `engine`: the lock the server enforces (D12), so the panel locks on the same answer even when the chat's model
@@ -179,7 +196,7 @@ app.patch('/api/ask/threads/:id', async (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
   try {
-    if (req.worcaExtension && askGetThread(id)?.mode === 'composer') return res.status(403).json({ error: 'the browser extension uses Ask threads only', code: 'extension-route' });
+    if (req.worcaExtension && isSurfaceMode(askGetThread(id)?.mode)) return res.status(403).json({ error: 'the browser extension uses Ask threads only', code: 'extension-route' });
     const body = req.body || {};
     // #948 s2: archive and pin, alone in the body. Archive waits for an idle chat (chat-busy.mjs); unarchive and pin
     // never wait. Neither bumps the chat's Last activity.
