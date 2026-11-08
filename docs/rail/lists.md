@@ -2,6 +2,7 @@
 
 | Rule | What | Why | Held by |
 |---|---|---|---|
+| `list.bar-model` | Every place's bar is one model, Chat's: the head (W, the place, its +, hide), its sentence and then air, then sections: what needs you first and never folds, empty sections not drawn; a thing that holds things is a tree under its row, folding from its mark, starting folded when healthy; each row one line, kind mark, title, one end. A section of ways in counts on its rows, not its head. The + is where the place makes things, a menu when there is more than one way (Ask in chat, By hand); an action is never a row | Learn one bar, know them all | design-system-components |
 | `list.sentence` | What a list shows is a sentence above it, never a filter button | Narrowed the same way everywhere | by hand |
 | `list.sections` | Sections in a fixed order; empty ones not drawn; a long one shows less, never folds | Nothing hides | design-system-components |
 | `list.fold-keeps-current` | The row you are on never folds behind Show N more; a group that holds it starts open | You never lose your place | worca-sweep |

@@ -74,7 +74,7 @@ export function fitMenu(m, vw) {
  */
 export function listController({ root, spec }) {
   const doc = root.ownerDocument, win = doc.defaultView;
-  const s = { pick: selectClear(), menu: '', more: new Set(), shut: new Set(), treeShut: new Set(), opening: '', seen: new Set(), arrived: new Map(), groups: new Map(), rounds: new Set(), roundsAll: new Set(), confirm: null, pop: null, dialog: null, focus: '', flash: '', order: [], rows: new Map() };
+  const s = { pick: selectClear(), menu: '', more: new Set(), shut: new Set(), treeShut: new Set(), treeSeen: new Set(), opening: '', seen: new Set(), arrived: new Map(), groups: new Map(), rounds: new Set(), roundsAll: new Set(), confirm: null, pop: null, dialog: null, focus: '', flash: '', order: [], rows: new Map() };
   const dots = () => icon('more', 16);
   // folded date sections are kept per list, so Older stays folded when you come back
   const FOLD_KEY = `worca-rail.fold.${spec.noun}`;
@@ -92,6 +92,7 @@ export function listController({ root, spec }) {
       open: { 'data-open': r.key, title: r.tip || r.title }, attrs: { 'data-row': r.key },
       menu: r.menu ? { id: `row:${r.key}`, label: `More for ${r.title}`, icon: dots(), items: r.menu, open: s.menu === `row:${r.key}` } : null,
       check: selecting ? s.pick.ids.includes(r.key) : undefined, boxAttrs: { 'data-sel': r.key } };
+    if (r.tree && r.treeShut && !s.treeSeen.has(r.key)) { s.treeSeen.add(r.key); if (!r.tree.some((c) => c.current)) s.treeShut.add(r.key); }   // list.bar-model: a healthy parent starts folded; the row you are on keeps it open
     if (r.tree) { base.after = `<div class="lr-members lr-tree" role="list"><div class="list-rows">${r.tree.map(rowHtml).join('')}</div></div>`; if (r.tree.length) base.markFold = { open: !s.treeShut.has(r.key), attrs: { 'data-fold-tree': r.key } }; }
     if (r.endMark) base.end = r.endMark;
     if (r.members) return groupRow({ ...base, count: r.count, noun: r.noun, shown: groupOpen(r), toggle: { 'data-fold': r.key }, rows: r.members.map(rowHtml).join('') });
@@ -117,7 +118,7 @@ export function listController({ root, spec }) {
       // the row you are on never folds behind Show N more: it stays under the first ones (docs/rail/lists.md › list.fold-keeps-current)
       const rows = shut ? [] : all ? x.rows : [...x.rows.slice(0, limit), ...x.rows.slice(limit).filter((r) => r.current || r.holds)];
       const walk = (r) => { s.order.push(r.key); (r.tree || []).forEach(walk); if (r.members && groupOpen(r)) r.members.forEach(walk); }; rows.forEach(walk);
-      return { title: x.title, count: x.rows.length, chip: x.chip, rows: shut ? [''] : rows.map(rowHtml), fold: x.fold ? { open: !shut, attrs: { 'data-fold-section': x.id } } : null, more: all || shut || rows.length >= x.rows.length ? null : { n: x.rows.length - rows.length, attrs: { 'data-more': x.id } } };
+      return { title: x.title, count: x.noCount ? '' : x.rows.length, chip: x.chip, rows: shut ? [''] : rows.map(rowHtml), fold: x.fold ? { open: !shut, attrs: { 'data-fold-section': x.id } } : null, more: all || shut || rows.length >= x.rows.length ? null : { n: x.rows.length - rows.length, attrs: { 'data-more': x.id } } };
     }) : [];
     s.pick = selectPrune(s.pick, [...s.rows.keys()]);
     const shown = s.order;

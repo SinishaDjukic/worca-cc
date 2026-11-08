@@ -174,6 +174,7 @@
     if (id === 'export') { menu = 'wf-export'; draw(); return; }
     if (id === 'delete') { confirm = { kind, x }; draw(); }
   }
+  function handNew() { const c = { id: `new-${Date.now() % 1e5}`, title: 'New workflow', own: true, domain: 'coding', what: 'Built by hand.', tasks: 0, merged: 0, from: 'Built by hand', fresh: true, steps: [], loops: [], draft: { steps: [['Plan', 'planner', 'Opus 5.5', 'high', 3, 0.30], ['Build', 'implementer', 'Sonnet 5.5', 'high', 9, 0.22]], loops: [], changes: 0 } }; data.workflow.push(c); window.RailShell.go(`workflows/edit:${c.id}`); }
   function wire(b, pg) {
     bar = b; page = pg;
     const way = (key, title, mark, n) => ({ key: `way:${key}`, _way: key, title, mark, end: n === '' ? '' : String(n), current: current === `~${key}` || (key === 'workflows' && (current === '' || current.startsWith('workflow:'))) || (kindOfWay[key] && current.startsWith(`${kindOfWay[key]}:`)), tip: `${title}${n === '' ? '' : ` · ${n}`}` });
@@ -181,16 +182,15 @@
     const flow = ['Task', 'End', 'AND: waits for all', 'OR: the first wins', 'Combine'].map((t) => ({ key: `lib:flow:${t}`, _lib: ['flow', { title: t }], title: t, mark: R.kindMark({ kind: 'workflow' }), tip: `${t}: drop it between two steps` }));
     ctl = R.listController({ root: bar, spec: { noun: 'workflows', label: 'Selected', view: () => ({ state: 'ready', parts: [],
       sections: current.startsWith('edit:') ? [{ id: 'lib-a', title: 'Agents · add to the canvas', rows: data.agent.map((x) => lib('agent', x)) }, { id: 'lib-s', title: 'Scripts', rows: data.script.map((x) => lib('script', x)) }, { id: 'lib-f', title: 'Flow', rows: flow }]
-        : [{ id: 'yours', title: 'Yours', rows: [way('workflows', 'Workflows', markOf('workflow'), data.workflow.length), way('agents', 'Agents', markOf('agent'), data.agent.length), way('scripts', 'Scripts', markOf('script'), data.script.length), ...(allDrafts().length ? [way('drafts', 'Drafts', R.kindMark({ kind: 'plugin', icon: 'edit', tone: 'act' }), allDrafts().length)] : [])] },
-          { id: 'browse', title: 'Browse', rows: [way('for-you', 'For you', R.kindMark({ kind: 'plugin', icon: 'sparkle' }), data.workflow.filter((w) => !w.own && w.tasks < 5).length), way('team', 'Your team’s', R.kindMark({ kind: 'group' }), TEAM), way('market', 'From the Marketplace', R.kindMark({ kind: 'plugin', icon: 'nav-marketplace' }), MARKET)] },
-          ...(atLeast('expert') ? [{ id: 'hand', title: 'By hand', rows: [way('hand', 'Build it by hand', R.kindMark({ kind: 'plugin', icon: 'edit' }), '')] }] : [])] }),
+        : [{ id: 'yours', title: 'Yours', noCount: true, rows: [way('workflows', 'Workflows', markOf('workflow'), data.workflow.length), way('agents', 'Agents', markOf('agent'), data.agent.length), way('scripts', 'Scripts', markOf('script'), data.script.length), ...(allDrafts().length ? [way('drafts', 'Drafts', R.kindMark({ kind: 'plugin', icon: 'edit', tone: 'act' }), allDrafts().length)] : [])] },
+          { id: 'browse', title: 'Browse', noCount: true, rows: [way('for-you', 'For you', R.kindMark({ kind: 'plugin', icon: 'sparkle' }), data.workflow.filter((w) => !w.own && w.tasks < 5).length), way('team', 'Your team’s', R.kindMark({ kind: 'group' }), TEAM), way('market', 'From the Marketplace', R.kindMark({ kind: 'plugin', icon: 'nav-marketplace' }), MARKET)] },
+          ] }),
       can: () => [], bulk: () => [], act: () => {}, word: () => false, say, active: () => /^#workflows/.test(location.hash),
       open: (r) => {
         if (r._lib) { const [kind, x] = r._lib; if (kind === 'flow') { say(`${x.title}: drop it between two steps on the canvas`); return; }
           const at = ed.picked.startsWith('n') && /^n\d+$/.test(ed.picked) ? +ed.picked.slice(1) + 1 : ed.wf.steps.length;
           edChange(() => { ed.wf.steps.splice(at, 0, [x.title, x.id, kind === 'agent' ? x.model : '', kind === 'agent' ? x.effort : '', 3, 0.15]); ed.g = null; ed.picked = `n${at}`; }, `Added ${x.title} after ${ed.wf.steps[at - 1]?.[0] || 'the task'}`); return; }
         if (r._way === 'market') { window.RailShell.go('marketplace/~shelf-3'); return; }
-        if (r._way === 'hand') { const c = { id: `new-${Date.now() % 1e5}`, title: 'New workflow', own: true, domain: 'coding', what: 'Built by hand.', tasks: 0, merged: 0, from: 'Built by hand', fresh: true, steps: [], loops: [], draft: { steps: [['Plan', 'planner', 'Opus 5.5', 'high', 3, 0.30], ['Build', 'implementer', 'Sonnet 5.5', 'high', 9, 0.22]], loops: [], changes: 0 } }; data.workflow.push(c); window.RailShell.go(`workflows/edit:${c.id}`); return; }
         window.RailShell.go(r._way === 'workflows' ? 'workflows' : `workflows/~${r._way}`);
       } } });
     page.addEventListener('click', (e) => {
@@ -248,6 +248,6 @@
     R.prefs?.onChange?.(() => { if (here()) draw(); });   // the mode decides the graph, the pickers and the canvas
   }
   window.RailPlaces = window.RailPlaces || {};
-  window.RailPlaces.workflows = { search: (q) => Object.entries(data).flatMap(([k, l]) => l.filter((x) => x.title.toLowerCase().includes(q)).map((x) => ({ label: x.title, where: `${k === 'workflow' ? 'Workflow' : k === 'agent' ? 'Agent' : 'Script'} · ${x.own ? 'yours' : 'built-in'}`, hash: `workflows/${k}:${x.id}` }))), sample: 'workflow:default', newLabel: 'Build workflow', newAct: () => window.RailConversation?.starter('workflow'),
+  window.RailPlaces.workflows = { search: (q) => Object.entries(data).flatMap(([k, l]) => l.filter((x) => x.title.toLowerCase().includes(q)).map((x) => ({ label: x.title, where: `${k === 'workflow' ? 'Workflow' : k === 'agent' ? 'Agent' : 'Script'} · ${x.own ? 'yours' : 'built-in'}`, hash: `workflows/${k}:${x.id}` }))), sample: 'workflow:default', newLabel: 'Build workflow', newAct: () => window.RailConversation?.starter('workflow'), newMenu: () => (atLeast('expert') ? [{ header: 'Ask in chat' }, { id: 'bar-new|chat', text: 'Build a workflow' }, { sep: true }, { header: 'By hand' }, { id: 'bar-new|hand', text: 'Build it by hand…' }] : [{ id: 'bar-new|chat', text: 'Build a workflow' }]), newPick: (id) => { if (id === 'hand') handNew(); else window.RailConversation?.starter('workflow'); },
     show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) { if (menu !== 'wf-export') menu = ''; if (confirm && `${confirm.kind}:${confirm.x.id}` !== arg) confirm = null; } current = arg || ''; draw(); } };
 })();

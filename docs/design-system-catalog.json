@@ -1360,6 +1360,63 @@
       ]
     },
     {
+      "name": "LineChart",
+      "code": "ui/public/design-system/components/chart.mjs#lineChart",
+      "kind": "showing",
+      "needs": [
+        "a number over time drawn as lines, when you asked",
+        "the same number against the same weekdays before",
+        "a running total against a budget"
+      ],
+      "rules": [
+        "look.chart-play"
+      ]
+    },
+    {
+      "name": "MixChart",
+      "code": "ui/public/design-system/components/chart.mjs#mixChart",
+      "kind": "showing",
+      "needs": [
+        "what each period was made of, when you asked: a stacked mix in ink shades with a legend"
+      ],
+      "rules": [
+        "look.chart-play"
+      ]
+    },
+    {
+      "name": "WatchChart",
+      "code": "ui/public/design-system/components/chart.mjs#watchChart",
+      "kind": "showing",
+      "needs": [
+        "read a chart's point on hover or focus, open it on a click or Enter, narrow by a drag across"
+      ],
+      "rules": [
+        "look.chart-play"
+      ]
+    },
+    {
+      "name": "DiffWords",
+      "code": "ui/public/design-system/components/chart.mjs#diffWords",
+      "kind": "showing",
+      "needs": [
+        "what a number differs by, in words: +$27, +41%"
+      ],
+      "rules": [
+        "look.chart-play"
+      ]
+    },
+    {
+      "name": "FigureRows",
+      "code": "ui/public/design-system/components/chart.mjs#figureRows",
+      "kind": "showing",
+      "needs": [
+        "the same figures across rows where each whole row opens one target, a second level under its parent"
+      ],
+      "rules": [
+        "list.row-one-target"
+      ]
+    },
+    {
       "name": "SliderPick",
       "code": "ui/public/design-system/components/question-forms.mjs#sliderPick",
       "kind": "asking",

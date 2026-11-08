@@ -815,6 +815,46 @@ test('barChart: one series, numbers only on the highest and the current, a table
   assert.equal(c.querySelector('.bc-plot').getAttribute('aria-hidden'), 'true'); assert.equal(c.querySelectorAll('.bc-table tr').length, 3);
   assert.match(c.querySelector('.bc-col').getAttribute('title'), /Mon: \$10/);
 });
+test('lineChart: solid and dashed, a legend, a limit, a table, each point readable', () => {
+  const pts = (v) => v.map((n) => ({ value: n, text: `$${n}`, diff: '+$1, +5%' }));
+  const c = dom(C.lineChart({ label: 'Spend', labels: ['a', 'b', 'c'], series: [{ label: 'Now', points: pts([10, 40, 5]) }, { label: 'Before', dashed: true, points: pts([8, 30, 6]) }], limit: { value: 50, text: 'Budget $50' }, current: 2, hint: 'Drag across to narrow' }));
+  assert.equal(c.querySelectorAll('.ch-l.is-before').length, 1); assert.equal(c.querySelectorAll('.ch-l.is-limit').length, 1);
+  assert.deepEqual([...c.querySelectorAll('.ch-key')].map((k) => k.textContent), ['Now', 'Before', 'Budget $50']);
+  assert.deepEqual([...c.querySelectorAll('.ch-v')].map((v) => v.textContent), ['$40', '$5'], 'the highest and the current carry their number');
+  assert.equal(c.querySelectorAll('.ch-hit').length, 3); assert.equal(c.querySelector('.ch-hit').dataset.read, 'a|$10|+$1, +5%');
+  assert.equal(c.querySelectorAll('.bc-table tbody tr').length, 3); assert.equal(c.querySelector('.ch-hint').textContent, 'Drag across to narrow');
+  const one = dom(C.lineChart({ label: 'x', labels: ['a', 'b'], series: [{ label: 'Now', points: [{ value: 1, text: '1' }, null] }] }));
+  assert.equal(one.querySelector('.ch-legend'), null, 'one series, no legend'); assert.equal(one.querySelectorAll('.ch-hit').length, 1, 'no data, no point');
+});
+test('mixChart: stacks in ink shades with a legend and a table', () => {
+  const c = dom(C.mixChart({ label: 'Mix', labels: ['a', 'b'], parts: [{ label: 'acme', values: [3, 1] }, { label: 'globex', values: [1, 1] }], reads: ['$4', '$2'] }));
+  assert.equal(c.querySelectorAll('.ch-stack').length, 2); assert.equal(c.querySelectorAll('.ch-seg.is-s1').length, 2);
+  assert.deepEqual([...c.querySelectorAll('.ch-key')].map((k) => k.textContent), ['acme', 'globex']); assert.equal(c.querySelectorAll('.bc-table tbody tr').length, 2);
+});
+test('diffWords: the difference in words, nothing without a before', () => {
+  const usd = (n) => `$${n}`;
+  assert.equal(C.diffWords(93, 66, usd), '+$27, +41%'); assert.equal(C.diffWords(50, 100, usd), '−$50, −50%'); assert.equal(C.diffWords(5, null, usd), '');
+});
+test('watchChart: focus reads a point, Enter opens it, a drag across narrows', () => {
+  const fig = dom(C.barChart({ label: 'x', play: true, hint: 'Drag', bars: [1, 2, 3, 4].map((v) => ({ label: `d${v}`, value: v, text: `$${v}`, diff: '+$1' })) }));
+  const win = fig.ownerDocument.defaultView, plot = fig.querySelector('.bc-plot'); let opened = -1, range = null;
+  plot.getBoundingClientRect = () => ({ left: 0, width: 400 });
+  C.watchChart(fig, { open: (i) => { opened = i; }, narrow: (a, b) => { range = [a, b]; } });
+  const col = fig.querySelectorAll('.bc-col')[1];
+  col.dispatchEvent(new win.FocusEvent('focusin', { bubbles: true })); assert.equal(fig.querySelector('.ch-read').hidden, false); assert.match(fig.querySelector('.ch-read').textContent, /d2.*\$2.*\+\$1/);
+  col.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); assert.equal(opened, 1);
+  const p = (type, clientX) => { const e = new win.MouseEvent(type, { clientX, button: 0, bubbles: true }); plot.dispatchEvent(e); };
+  p('pointerdown', 110); p('pointermove', 320); assert.ok(plot.querySelector('.ch-brush')); p('pointerup', 320); assert.deepEqual(range, [1, 3]); assert.equal(plot.querySelector('.ch-brush'), null);
+});
+test('figureRows: each whole row is one button, a second level is marked', () => {
+  const c = dom(C.figureRows({ label: 'By project', columns: [{ label: 'Share' }, { label: 'AI spend', narrow: false }], rows: [{ name: 'a<b', cells: ['45%', '$186'], attrs: { 'data-x': '1' } }, { name: 'sub', cells: ['1%', '$2'], sub: true }] }));
+  assert.equal(c.querySelectorAll('button.fr-row').length, 2); assert.equal(c.querySelector('button .fr-name').textContent, 'a<b'); assert.ok(c.querySelector('button.fr-row.is-sub'));
+  assert.match(c.querySelector('button').getAttribute('aria-label'), /Share 45%, AI spend \$186/); assert.equal(c.querySelector('button').querySelectorAll('button').length, 0);
+});
+test('sideMenu: an item may carry a count', () => {
+  const c = dom(C.sideMenu({ label: 'x', groups: [{ title: 'T', items: [{ label: 'a', count: 18 }, { label: 'b' }] }] }));
+  assert.equal(c.querySelectorAll('.side-n').length, 1); assert.equal(c.querySelector('.side-n').textContent, '18');
+});
 test('pluginCard: its brand, kind and version, what it does, Worca\'s reason, facts, one action', () => {
   const c = dom(C.pluginCard({ mark: C.kindMark({ kind: 'plugin', icon: 'brand-github' }), kicker: 'Task source · 0.2.0', update: '0.3.0', title: 'GitHub Issues', what: 'Pull tasks', why: 'Your projects live on GitHub', facts: 'Adds a task source', action: '<button>Install</button>' }));
   assert.ok(c.classList.contains('pg-card')); assert.equal(c.querySelector('.pg-t').textContent, 'GitHub Issues');

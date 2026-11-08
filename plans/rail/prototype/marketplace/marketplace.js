@@ -23,7 +23,7 @@
   const view = { sort: 'used' };
   let current = '', form = null, ctl = null, home = null, bar = null, page = null, menu = '';
   const stOf = (p) => (p.update ? { word: 'Update available', tone: 'act', act: `Update to ${p.update}` } : p.installed ? { word: 'Installed', tone: 'ok', act: 'Set it up' } : { word: 'Not installed', tone: 'idle', act: 'Install' });
-  const SHELF_ICON = ['list', 'kind-chat', 'plug', 'kind-workflow'];
+  const SHELF_ICON = ['track', 'kind-chat', 'plug', 'kind-workflow'];
   const SORTS = { used: 'most used', new: 'newest', az: 'A–Z' };
   const shown = {};   // how many of a view's plugins are shown: six, then Show N more
   const SHELVES = [['Bring tasks in', 'Tickets become tasks; the result goes back to the ticket.', ['Task sources']], ['Talk to Worca from', 'Answer what needs you without opening Worca.', ['Chat channels']], ['Give tasks tools', 'MCP servers and models a task can call.', ['MCP servers', 'Models']], ['New agents and workflows', 'Steps and whole flows for your workflows.', ['Agents', 'Workflows', 'Scripts', 'Skills']]];
@@ -91,9 +91,9 @@
     bar = b; page = pg;
     const way = (key, title, mark, n) => ({ key: `way:${key}`, _way: key, title, mark, end: String(n), current: current === `~${key}`, tip: `${title} · ${n}` });
     ctl = R.listController({ root: bar, spec: { noun: 'plugins', label: 'Selected plugins', view: () => ({ state: 'ready', parts: [],
-      sections: [{ id: 'yours', title: 'Yours', rows: [way('updates', 'Updates', R.kindMark({ kind: 'plugin', icon: 'refresh', tone: data.plugins.some((p) => p.update) ? 'act' : 'idle' }), data.plugins.filter((p) => p.update).length), way('installed', 'Installed', R.kindMark({ kind: 'plugin', icon: 'check', tone: 'ok' }), data.plugins.filter((p) => p.installed).length)] },
-        { id: 'browse', title: 'Browse', rows: [way('for-you', 'For you', R.kindMark({ kind: 'plugin', icon: 'sparkle' }), data.plugins.filter((p) => p.why && !p.installed).length), ...SHELVES.map(([t, , kinds], n) => way(`shelf-${n}`, t, R.kindMark({ kind: 'plugin', icon: SHELF_ICON[n] }), data.plugins.filter((p) => kinds.includes(p.kind)).length)), way('all', 'Everything', R.kindMark({ kind: 'plugin', icon: 'list' }), data.plugins.length)] },
-        { id: 'sources', title: 'Sources', rows: data.markets.map((m) => way(`src-${m.id}`, m.name, R.kindMark({ kind: 'plugin', icon: 'brand-github' }), data.plugins.filter((p) => p.market === m.id).length)) }] }),
+      sections: [{ id: 'yours', title: 'Yours', noCount: true, rows: [way('updates', 'Updates', R.kindMark({ kind: 'plugin', icon: 'refresh', tone: data.plugins.some((p) => p.update) ? 'act' : 'idle' }), data.plugins.filter((p) => p.update).length), way('installed', 'Installed', R.kindMark({ kind: 'plugin', icon: 'check' }), data.plugins.filter((p) => p.installed).length)] },
+        { id: 'browse', title: 'Browse', noCount: true, rows: [way('for-you', 'For you', R.kindMark({ kind: 'plugin', icon: 'sparkle' }), data.plugins.filter((p) => p.why && !p.installed).length), ...SHELVES.map(([t, , kinds], n) => way(`shelf-${n}`, t, R.kindMark({ kind: 'plugin', icon: SHELF_ICON[n] }), data.plugins.filter((p) => kinds.includes(p.kind)).length)), way('all', 'Everything', R.kindMark({ kind: 'plugin', icon: 'list' }), data.plugins.length)] },
+        { id: 'sources', title: 'Sources', noCount: true, rows: data.markets.map((m) => way(`src-${m.id}`, m.name, R.kindMark({ kind: 'plugin', icon: 'brand-github' }), data.plugins.filter((p) => p.market === m.id).length)) }] }),
       can: () => [], bulk: () => [], act: () => {}, open: (r) => window.RailShell.go(`marketplace/~${r._way}`), word: () => false, say, active: () => /^#marketplace/.test(location.hash) } });
     page.addEventListener('click', (e) => {
       if (!here()) return;   /* another place's page is showing */

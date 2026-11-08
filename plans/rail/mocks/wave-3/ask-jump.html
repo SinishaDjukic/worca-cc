@@ -1,0 +1,27 @@
+<!doctype html>
+<!-- Explains the decision on ⌘J: no box beside a page; ⌘J goes to Chat with the page attached, and Back returns.
+     Render: node plans/rail/mocks/wave-3/render.mjs ask-jump 1240 -->
+<html lang="en"><head><meta charset="utf-8"><title>Ask goes to Chat</title>
+<link rel="stylesheet" href="../../prototype/app.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail-look.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail.css">
+<style>
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);}
+  #m{width:1240px;padding:28px 32px 32px;box-sizing:border-box;display:grid;grid-template-columns:1fr 90px 1fr;align-items:center;}
+  h2{margin:0 0 10px;font:600 15px/1.3 var(--sans);} .sc{height:430px;box-sizing:border-box;border:1px solid var(--line-2);border-radius:var(--r-md);padding:22px 24px;display:flex;flex-direction:column;background:var(--bg);}
+  .go{text-align:center;font-size:13px;color:var(--ink-2);line-height:1.5;} .go b{display:block;font-size:17px;color:var(--ink);margin-bottom:6px;} .ar{font-size:30px;color:var(--ink-2);line-height:1;}
+  .sp{flex:1;} .key{display:inline-block;margin-top:14px;font-size:13px;color:var(--ink-2);}
+  .top{display:flex;align-items:center;gap:6px;margin:0 0 14px;font-size:13px;color:var(--ink-2);}
+  .sug{display:grid;gap:2px;margin:6px 0 12px;justify-items:start;} .chips{display:flex;align-items:center;gap:4px;margin:0 0 8px;}
+  .h{font:600 18px/1.3 var(--sans);margin:0 0 4px;} .m{margin:0;font-size:13px;color:var(--ink-2);} .never{margin-top:10px;font-size:12px;color:var(--ink-3);}
+</style></head>
+<body><div id="m"></div>
+<script src="../../prototype/components.js"></script>
+<script>
+  const R = window.RailUI;
+  const box = (ph) => R.composer({ value: '', placeholder: ph, sentence: '', tools: R.button({ label: 'Add', kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15) }), send: R.button({ label: 'Send', kind: 'primary', iconOnly: true, icon: R.icon('up', 14) }) });
+  const left = `<div><h2>You are on a page</h2><div class="sc">${R.placeHead({ title: 'billing-api', facts: '~/src/billing-api · main', mark: R.kindMark({ kind: 'project' }), word: 'Behind by 3', why: 'Only your copy is older' })}<div class="sp"></div><p class="m">No chat box here. Press <b>⌘J</b>, or Ask in the top bar.</p><p class="never">There is no place to type on this page.</p></div></div>`;
+  const mid = `<div class="go"><b>⌘J</b><div class="ar">→</div><div style="margin:14px 0 0" class="ar">←</div>Back</div>`;
+  const right = `<div><h2>You are in Chat, and your page came with you</h2><div class="sc"><div class="top">${R.button({ label: 'Back to billing-api', kind: 'quiet', icon: R.icon('chevL', 12) })}</div><p class="h">Ask about billing-api</p><div class="sug">${['Why is it behind, and is it safe to sync?', 'What ran here this week, and what did it cost?', 'What needs me here?'].map((q) => R.button({ label: q, kind: 'quiet' })).join('')}</div><div class="sp"></div><div class="chips">${R.chip({ text: 'Project · billing-api', title: 'Worca reads this page with your question' })}${R.button({ label: 'Leave it out', kind: 'quiet', iconOnly: true, icon: R.icon('x', 12) })}</div>${box('Ask Worca…')}</div></div>`;
+  document.getElementById('m').innerHTML = left + mid + right;
+</script></body></html>

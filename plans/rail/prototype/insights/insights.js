@@ -1,86 +1,192 @@
-// Insights on Rail (Wave 3, 4.2): Statistics, the cost report and Team metrics as one place, with nothing said twice.
-// The bar lists questions, not pages: Yours (what your tasks cost, saved and did) and, in Expert with a team policy, Team.
-// A question's page says its answer in a sentence (the PlaceHead), picks what to look at in one sentence of pickers (of
-// which projects, by what, when), shows one chart for it over time and its breakdown as rows. Labels and cost tags are
-// not a third part: they are what "by" can read.
+// Insights on Rail (Wave 3): one feature; its bar holds its sub-features, grouped. Every page says the answer in a sentence
+// (the PlaceHead), draws one chart (bars unless you ask otherwise, look.chart-play), says what it shows in one sentence of
+// pickers, lists breakdown rows that open their tasks and ends with the composer. The numbers come from insights-model.js.
 (function () {
-  const R = window.RailUI;
+  const R = window.RailUI, M = window.RailInsightsModel;
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const say = (t, undo) => window.RailPulse?.say(t, undo);
-  const DAYS = ['1', '2', '3', '4', '5', '6', '7', '8'];
-  const usd = (n) => `$${Math.round(n).toLocaleString('en-US')}`;
-  // each question: its answer, why, its series by day (this month) and its breakdown by each "by"
-  const Q = {
-    spend: { title: 'Spend', team: false, word: '$412 of $1,000', why: 'On pace for $890 by 30 Nov · 12% more than October', series: [38, 61, 22, 74, 55, 9, 93, 60], fmt: usd,
-      by: { project: [['billing-api', 186], ['web-app', 131], ['worca-cc', 72], ['docs-site', 23]], workflow: [['Default', 241], ['Full', 102], ['Quick Fix', 69]], label: [['hotfix', 96], ['billing', 188], ['no label', 128]], tag: [['client:acme', 181], ['client:globex', 43], ['no tag', 188]] } },
-    saved: { title: 'Saved', team: false, word: '$1,240 saved', why: '≈ 47 hours of work at $35 an hour, 3× what it cost', series: [120, 180, 60, 240, 150, 30, 260, 200], fmt: usd,
-      by: { project: [['billing-api', 610], ['web-app', 380], ['worca-cc', 250]], workflow: [['Default', 720], ['Full', 340], ['Quick Fix', 180]], label: [['hotfix', 210], ['billing', 560], ['no label', 470]], tag: [['client:acme', 520], ['no tag', 720]] } },
-    outcomes: { title: 'How tasks went', team: false, word: '38 of 44 finished', why: '4 failed, 2 stopped · 9 PRs merged', series: [4, 6, 3, 7, 5, 1, 9, 9], fmt: (n) => `${n} tasks`,
-      by: { project: [['billing-api', 18], ['web-app', 14], ['worca-cc', 12]], workflow: [['Default', 26], ['Full', 10], ['Quick Fix', 8]], label: [['hotfix', 9], ['billing', 15], ['no label', 20]], tag: [['client:acme', 17], ['no tag', 27]] } },
-    time: { title: 'Time', team: false, word: '24 min a task', why: 'The middle task; 1 in 10 takes over 2 hours', series: [22, 31, 18, 40, 26, 12, 35, 24], fmt: (n) => `${n} min`,
-      by: { project: [['billing-api', 28], ['web-app', 21], ['worca-cc', 19]], workflow: [['Full', 52], ['Default', 23], ['Quick Fix', 9]], label: [['hotfix', 14], ['billing', 27]], tag: [['client:acme', 25], ['no tag', 23]] } },
-    team: { title: 'Team spend', team: true, word: '$2,860 of $6,000', why: 'Five people · on pace for $5,400 · pooled budget at 48%', series: [240, 410, 180, 520, 390, 60, 610, 450], fmt: usd,
-      by: { person: [['Maya', 920], ['Emil', 412], ['Jonas', 780], ['Priya', 510], ['Lee', 238]], project: [['billing-api', 1240], ['web-app', 980], ['worca-cc', 640]], tag: [['client:acme', 1460], ['client:globex', 610], ['no tag', 790]] } },
-    shipped: { title: 'Shipped', team: true, word: '27 PRs merged', why: '6 in review, 3 need attention · 2.1 days from start to merge', series: [2, 4, 1, 5, 3, 0, 7, 5], fmt: (n) => `${n} PRs`,
-      by: { person: [['Maya', 9], ['Jonas', 7], ['Emil', 5], ['Priya', 4], ['Lee', 2]], project: [['billing-api', 12], ['web-app', 9], ['worca-cc', 6]] } },
-    untagged: { title: 'Missing cost tags', team: true, word: '6 tasks without a cost centre', why: '$148 not counted to anyone; a cost centre is required', series: [1, 0, 2, 0, 1, 0, 2, 0], fmt: (n) => `${n} tasks`,
-      by: { person: [['Lee', 3], ['Priya', 2], ['Emil', 1]], project: [['web-app', 4], ['docs-site', 2]] } },
-  };
-  const BY = { day: 'day', project: 'project', workflow: 'workflow', label: 'label', tag: 'cost tag', person: 'person' };
-  const WHEN = ['this month', 'last month', 'this quarter', 'this year'];
-  const view = { of: 'all projects', when: 'this month' };
-  const byOf = {};
-  let current = '', menu = '', ctl = null, bar = null, page = null;
+  const AS = { bars: 'bars', lines: 'lines', running: 'running total', mix: 'mix', table: 'table' };
+  const AGAINST = { none: 'nothing', before: 'the same weekdays before', budget: 'the budget' };
+  const HINT = 'Drag across to narrow';
+  const ALIAS = { saved: 'time-saved', outcomes: 'ends', time: 'merge' };   // old links to what the page used to be called
+  const views = [{ id: 'v1', name: 'By client, then workflow', sub: 'spend', st: { by: 'client', then: 'workflow' } }, { id: 'v2', name: 'Monthly for finance', sub: 'spend', st: { by: 'costcenter', when: 'last month', as: 'table' } }];
+  const states = {};
+  let arg = 'spend', menu = '', bar = null, page = null, seq = 3, back = '';
   const team = () => R.shows('expert');
-  const rowOf = (id) => ({ key: `q:${id}`, _id: id, title: Q[id].title, mark: R.kindMark({ kind: 'event', tone: id === 'untagged' ? 'act' : 'idle' }), end: Q[id].word.split(' ')[0], current: id === current, tip: `${Q[id].title}\n${Q[id].word}\n${Q[id].why}`, menu: [{ id: 'csv', text: 'Export CSV', help: 'Its rows, for a spreadsheet' }] });
-  function pageHtml(id) {
-    const q = Q[id], by = byOf[id] || 'day';
-    const pick = (pid, text, items, tip) => R.sentencePicker({ id: pid, text, tip, items: items.map((v) => (typeof v === 'string' ? { id: v, text: v, checked: v === text } : v)), open: menu === pid, chevron: R.icon('chevron', 10) });
-    const facts = `Of ${pick('in-of', view.of, ['all projects', 'billing-api', 'web-app', 'worca-cc'], 'Which projects')} by ${pick('in-by', BY[by], ['day', ...Object.keys(q.by)].map((k) => ({ id: k, text: BY[k], checked: k === by })), 'What it is broken down by')} ${pick('in-when', view.when, WHEN, 'When')}`;
-    const head = R.placeHead({ title: q.title, facts, mark: R.kindMark({ kind: 'event', tone: id === 'untagged' ? 'act' : 'idle' }), word: q.word, why: q.why,
-      action: R.button({ label: 'Export CSV', attrs: { 'data-in-csv': '' } }), menu: R.moreMenu({ id: 'in-more', label: `More for ${q.title}`, icon: R.icon('more', 16), open: menu === 'in-more', items: [{ id: 'link', text: 'Copy a link', help: 'To this question, as you narrowed it' }, ...(id === 'untagged' ? [{ id: 'tasks', text: 'Show those tasks', help: 'In Tasks, to tag them' }] : [])] }) });
-    const chart = R.barChart({ label: `${q.title} by day, ${view.when}`, bars: q.series.map((v, i) => ({ label: `Nov ${DAYS[i]}`, value: v, text: q.fmt(v) })), current: q.series.length - 1 });
-    const rows = by === 'day' ? '' : (() => { const list = q.by[by] || [], total = list.reduce((a, [, v]) => a + v, 0) || 1;
-      return R.settingsSection({ title: `By ${BY[by]}`, rows: list.map(([name, v]) => R.settingsRow({ name, sentence: `${esc(q.fmt(v))} · ${Math.round((v / total) * 100)}%`, end: R.button({ label: 'Its tasks', kind: 'quiet', attrs: { 'data-in-tasks': name, title: `Tasks, narrowed to ${name}` } }) })).join('') }); })();
-    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${chart}${rows}</div></div><div class="convo-dock" id="in-dock"></div></div>`;
+  const subOf = (a) => { const v = views.find((x) => x.id === a), s = M.SUB[v ? v.sub : a]; return s && (!s.team || team()) ? s : M.SUB.spend; };
+  const key = () => (views.some((v) => v.id === arg) || (M.SUB[arg] && subOf(arg).id === arg) ? arg : 'spend');
+  function stateOf(k = key()) {
+    if (!states[k]) { const v = views.find((x) => x.id === k); states[k] = { ...M.defaults(subOf(k)), ...(v ? v.st : {}) }; }
+    return states[k];
   }
-  function homeHtml() {
-    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ title: 'Insights', facts: esc(`What your tasks cost, saved and did${team() ? ', and your team’s' : ''}, ${view.when}`) })}
-      ${R.settingsSection({ title: 'Yours', rows: ['spend', 'saved', 'outcomes', 'time'].map((id) => R.settingsRow({ name: Q[id].title, sentence: `<b>${esc(Q[id].word)}</b> · ${esc(Q[id].why)}`, end: R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-in-open': id } }) })).join('') })}
-      ${team() ? R.settingsSection({ title: 'Team', meta: 'From the worca-metrics branch: every teammate who shares their tasks.', rows: ['team', 'shipped', 'untagged'].map((id) => R.settingsRow({ name: Q[id].title, sentence: `<b>${esc(Q[id].word)}</b> · ${esc(Q[id].why)}`, end: R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-in-open': id } }) })).join('') }) : ''}
-    </div></div></div>`;
+  // ---- the bar: the SideMenu, a distinct icon for each question, no money in it ----
+  function barHtml() {
+    const k = key(), item = (id, label, icon, count) => ({ label, icon, count, current: id === k, attrs: { 'data-in-go': id } });
+    const groups = ['Cost', 'Value', 'Quality', 'Flow', 'Team'].flatMap((g) => { const items = M.SUBS.filter((s) => s.group === g && (!s.team || team())).map((s) => item(s.id, s.title, s.icon, s.count)); return items.length ? [{ title: g, items }] : []; });
+    return R.sideMenu({ label: 'Insights', groups: [...groups, ...(views.length ? [{ title: 'Your views', items: views.map((v) => item(v.id, v.name, 'sliders')) }] : [])] });
+  }
+  // ---- the sentence ----
+  const pick = (dims) => M.DIM_GROUPS.flatMap(([h, l]) => { const on = l.filter(([d]) => dims.includes(d)); return on.length ? [{ header: h }, ...on.map(([id, text]) => ({ id, text }))] : []; });
+  function filterItems(sub, st) {
+    const items = M.FILTERS.filter((d) => sub.src.rows[d]).flatMap((d) => [{ header: M.DIM[d] }, ...sub.src.rows[d].map((r) => ({ id: `${d}:${r.name}`, text: r.name, checked: st.filter.includes(`${d}:${r.name}`) }))]);
+    return [{ id: 'all', text: 'everything', checked: !st.filter.length }, ...items];
+  }
+  const filterWord = (st) => (st.filter.length ? st.filter.map((k) => k.slice(k.indexOf(':') + 1)).join(', ') : 'everything');
+  const forms = (sub, st) => sub.forms.filter((f) => f !== 'mix' || !M.TIME.has(st.by));
+  function againsts(sub, st, c) { return ['none', ...(c.P ? ['before'] : []), ...(sub.budget && st.when === 'this month' ? ['budget'] : [])]; }
+  function sentence(sub, st, c) {
+    const dims = M.dimsOf(sub.src, st);
+    const part = (word, id, text, items, extra = {}) => ({ word, id, text, items, ...extra });
+    const check = (list, cur) => list.map((v) => ({ id: v, text: v, checked: v === cur }));
+    const start = [
+      part('Showing', 'in-what', sub.noun, M.SUBS.filter((s) => s.group === sub.group && (!s.team || team())).map((s) => ({ id: s.id, text: s.noun, checked: s.id === sub.id })), { tip: 'What it shows' }),
+      part('by', 'in-by', M.DIM[st.by], [...pick(dims).map((it) => (it.header ? it : { ...it, checked: it.id === st.by })), { sep: true }, { id: '+then', text: st.then ? `Then by ${M.DIM[st.then]}` : 'Then by' }], { tip: 'What it is broken down by' }),
+      ...(st.then ? [part('then', 'in-then', M.DIM[st.then], [...pick(dims.filter((d) => d !== st.by)).map((it) => (it.header ? it : { ...it, checked: it.id === st.then })), { sep: true }, { id: 'none', text: 'No second level' }], { tip: 'The level under it' })] : []),
+      part('', 'in-when', c.timeWord, [...check(M.WHEN, st.narrow ? '' : st.when), { id: 'custom', text: 'custom' }], { tip: 'When' }),
+    ];
+    const clear = st.narrow ? R.button({ label: 'Back to the whole period', iconOnly: true, kind: 'quiet', icon: R.icon('x', 11), cls: 'ch-clear', attrs: { 'data-in-clear': '' } }) : '';
+    const rest = [
+      part('of', 'in-of', filterWord(st), filterItems(sub, st), { tip: 'Which of it' }),
+      part('as', 'in-as', AS[st.as], forms(sub, st).map((f) => ({ id: f, text: AS[f], checked: f === st.as })), { tip: 'How it is drawn' }),
+      part('against', 'in-vs', AGAINST[st.against], againsts(sub, st, c).map((v) => ({ id: v, text: AGAINST[v], checked: v === st.against })), { tip: 'What it is set against' }),
+    ];
+    const open = { open: menu, chevron: R.icon('chevron', 10) };
+    const words = (l, cls = '') => R.listSentence({ parts: l, ...open, menuCls: cls });
+    return `<div class="list-sentence">${words(start.slice(0, 1))} ${words(start.slice(1, 2), ' is-two-cols')} ${st.then ? words([start[2]], ' is-two-cols') : ''} ${words(start.slice(-1))}${clear} ${words(rest.slice(0, 1), ' is-two-cols')} ${words(rest.slice(1))}</div>`;
+  }
+  // ---- the chart ----
+  function chartHtml(sub, st, c) {
+    const label = `${sub.title} by day, ${c.timeWord}`, hint = c.labels.length > 2 ? HINT : '', cur = c.whole && st.when === 'this month' ? c.labels.length - 1 : -1;
+    const taskField = sub.src.fields.includes('tasks') ? 'tasks' : '';
+    const pointAt = (v, i) => ({ value: v ?? 0, text: v == null ? 'none' : sub.text(v), diff: c.before ? R.diffWords(v, c.before[i], sub.text) : '', note: taskField ? `${c.F.tasks[i]} ${c.F.tasks[i] === 1 ? 'task' : 'tasks'}, opens them` : 'Opens its tasks' });
+    const bars = c.labels.map((l, i) => ({ label: l, ...pointAt(c.points[i], i) }));
+    if (st.as === 'table') return `<div class="in-table">${R.table({ label, columns: [{ id: 'day', label: 'When' }, { id: 'v', label: sub.noun, num: true }, ...(c.before ? [{ id: 'b', label: 'The same weekdays before', num: true }, { id: 'd', label: 'Difference', num: true }] : [])], rows: c.labels.map((l, i) => ({ day: l, v: c.points[i] == null ? 'none' : sub.text(c.points[i]), b: c.before?.[i] == null ? '' : sub.text(c.before[i]), d: bars[i].diff })) })}</div>`;
+    if (st.as === 'mix') {
+      const top = c.rows.slice(0, 3), rest = c.rows.slice(3), weights = [...top, ...(rest.length ? [{ name: 'Other', [sub.num]: M.sum(rest.map((r) => r[sub.num])) }] : [])], perDay = c.labels.map((_, i) => M.allocate(weights.map((r) => r[sub.num]), c.F[sub.num][i]));
+      return R.mixChart({ label, labels: c.labels, hint, reads: c.points.map((v) => sub.text(v)), parts: weights.map((r, k) => ({ label: r.name, values: perDay.map((d) => d[k]), texts: perDay.map((d) => sub.text(d[k])) })) });
+    }
+    if (st.as === 'running' || st.as === 'lines') {
+      const running = st.as === 'running', acc = (l) => { let t = 0; return l.map((v) => { t += v || 0; return t; }); };
+      const now = running ? acc(c.points) : c.points, was = c.before && st.against === 'before' ? (running ? acc(c.before) : c.before) : null;
+      const labels = running && st.against === 'budget' && c.whole ? Array.from({ length: 30 }, (_, i) => `Nov ${i + 1}`) : c.labels;
+      const main = labels.map((_, i) => (i < now.length && now[i] != null ? { ...pointAt(c.points[i], i), value: now[i], text: sub.text(now[i]), diff: running ? '' : pointAt(c.points[i], i).diff } : null));
+      const series = [{ label: running ? 'Running total' : sub.title, points: main }];
+      if (was) series.push({ label: 'The same weekdays before', dashed: true, points: labels.map((_, i) => (i < was.length && was[i] != null ? { value: was[i], text: sub.text(was[i]) } : null)) });
+      let limit = null;
+      if (st.against === 'budget') {
+        limit = { value: sub.budget, text: `Budget ${M.usd(sub.budget)}` };
+        if (c.whole) { const lastAt = now.length - 1, pace = Math.round((now[lastAt] / now.length) * 30); series.push({ label: `On pace for ${M.usd(pace)}`, dashed: true, points: labels.map((_, i) => (i < lastAt ? null : { value: now[lastAt] + ((pace - now[lastAt]) * (i - lastAt)) / (29 - lastAt), text: sub.text(now[lastAt] + ((pace - now[lastAt]) * (i - lastAt)) / (29 - lastAt)) })) }); }
+      }
+      return R.lineChart({ label, labels, series, limit, current: cur, hint });
+    }
+    return R.barChart({ label, bars, current: cur, play: true, hint });
+  }
+  // ---- the rows ----
+  const cellsOf = (sub, c, r) => [`${r.sharePct}%`, ...sub.cols.map(([, get]) => get(r, c))];
+  const columns = (sub) => [{ label: 'Share' }, ...sub.cols.map(([label], i) => ({ label, narrow: i === 0 }))];
+  function rowsHtml(sub, c) {
+    const rowOf = (r, parent, s) => ({ name: r.name, cells: cellsOf(sub, c, r), sub: s, quiet: /^No /.test(r.name) || r.name === 'Other', attrs: { 'data-in-row': parent ? `${parent}, ${r.name}` : r.name, title: `Tasks, narrowed to ${parent ? `${parent}, ` : ''}${r.name}` } });
+    return R.figureRows({ label: `By ${M.DIM[c.st.by]}`, columns: columns(sub), rows: c.rows.flatMap((r) => [rowOf(r, '', false), ...(r.kids || []).map((k) => rowOf(k, r.name, true))]) });
+  }
+  function actions(sub, st, c) {
+    const tag = sub.id === 'untagged' || (sub.src === M.SUB.spend.src && st.by === 'client');
+    const noClient = sub.id === 'untagged' ? c.T.tasks : c.rows.find((r) => r.name === 'No client')?.tasks;
+    return `<div class="in-acts">${tag && noClient ? `${R.button({ label: `Tag these ${noClient} tasks`, attrs: { 'data-in-tag': noClient } })}${R.button({ label: 'Set a default for a project', kind: 'quiet', attrs: { 'data-in-default': '' } })}` : ''}${R.button({ label: 'Download CSV', kind: 'quiet', attrs: { 'data-in-csv': '' } })}${R.button({ label: 'Save this view', kind: 'quiet', attrs: { 'data-in-save': '' } })}</div>`;
+  }
+  const STANDS = 'Running web-app’s Build on Opus 5.5 would cost about $0.40 more a task and, on its last 11 tasks, save about one round.';
+  function pageHtml(sub, st, c) {
+    const plain = st.when === 'this month' && !st.narrow && !st.filter.length;
+    const scope = st.narrow ? (c.days === 1 ? 'on this day' : `in these ${c.days} days`) : st.when === 'all time' ? 'in all' : st.when;
+    const word = sub.wordAlways ? sub.wordAlways(c) : plain ? sub.word(c) : `${sub.text(c.v)} ${scope}`;
+    const why = sub.whyAlways ? sub.whyAlways(c) : plain ? sub.why(c) : M.cmp(c, sub);
+    const facts = st.narrow ? `${c.labels[0]} to ${c.labels[c.labels.length - 1]}, dragged out of ${st.when}` : st.filter.length ? `Only ${filterWord(st)}, ${st.when}` : `All your tasks and chats, ${st.when}`;
+    const head = R.placeHead({ title: sub.title, facts: esc(facts), mark: R.kindMark({ kind: 'plugin', icon: sub.icon }), word, why, menu: R.moreMenu({ id: 'in-more', label: `More for ${sub.title}`, icon: R.icon('more', 16), open: menu === 'in-more', items: [{ id: 'link', text: 'Copy a link', help: 'To this page, as you narrowed it' }] }) });
+    const stands = sub.id === 'why' ? `<p class="in-stands">What stands out: Review sends Build back most on <b>web-app</b>, on Sonnet 5.5. ${esc(STANDS)}</p><div class="in-acts">${R.button({ label: 'Try it in a chat', attrs: { 'data-in-try': '' } })}</div>` : '';
+    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${sentence(sub, st, c)}${chartHtml(sub, st, c)}${rowsHtml(sub, c)}${stands}${actions(sub, st, c)}</div></div><div class="convo-dock" id="in-dock"></div></div>`;
   }
   const here = () => (location.hash.slice(1) || '').split('/')[0] === 'insights';   // the page area is shared by every place: draw only while this one is open
   function draw() {
     if (!bar || !page || !here()) return;
-    ctl?.paint();
-    page.innerHTML = Q[current] && (!Q[current].team || team()) ? pageHtml(current) : homeHtml();
-    if (Q[current]) window.RailConversation?.dock(document.getElementById('in-dock'), { kind: 'question', title: Q[current].title, chat: '' });
+    const sub = subOf(arg), st = stateOf(), c = M.compute(sub, st);
+    const scroll = page.querySelector('.convo-scroll')?.scrollTop || 0, draft = page.querySelector('#in-dock [data-composer-t]')?.value || '';
+    bar.innerHTML = barHtml();
+    page.innerHTML = pageHtml(sub, st, c);
+    window.RailConversation?.dock(document.getElementById('in-dock'), { kind: 'question', title: sub.title, chat: '' });
+    const scroller = page.querySelector('.convo-scroll'); if (scroller) scroller.scrollTop = scroll;
+    const box = page.querySelector('#in-dock [data-composer-t]'); if (box && draft) box.value = draft;
+    R.watchChart(page.querySelector('[data-chart]'), {
+      open: (i) => { window.RailShell.go('runs'); say(`Tasks from ${c.labels[i]}`); },
+      narrow: (a, b) => { const base = st.narrow ? st.narrow[0] : 0; st.narrow = [base + a, base + b]; menu = ''; draw(); },
+    });
+    if (back) { page.querySelector(`[data-menu="${back}"]`)?.focus({ preventScroll: true }); back = ''; }
+  }
+  function choose(id, v) {
+    const sub = subOf(arg), st = stateOf();
+    if (id === 'in-what') { menu = ''; if (v !== sub.id) window.RailShell.go(`insights/${v}`); else draw(); return; }
+    if (id === 'in-by') {
+      if (v === '+then') { st.then = st.then || M.dimsOf(sub.src, st).find((d) => d !== st.by && !M.TIME.has(d)) || ''; menu = 'in-then'; draw(); return; }
+      st.by = v; if (st.then === v) st.then = '';
+      if (st.as === 'mix' && M.TIME.has(v)) st.as = 'bars';
+    }
+    if (id === 'in-then') st.then = v === 'none' ? '' : v;
+    if (id === 'in-when') {
+      st.narrow = null;
+      if (v === 'custom') { st.when = 'this month'; say('Drag across the chart to pick your days'); } else st.when = v;
+      if (st.against === 'budget' && st.when !== 'this month') st.against = 'none';
+      if (st.against === 'before' && st.when === 'all time') { st.against = 'none'; }
+    }
+    if (id === 'in-of') {
+      if (v === 'all') st.filter = [];
+      else st.filter = st.filter.includes(v) ? st.filter.filter((k) => k !== v) : [...st.filter, v];
+      draw(); return;   /* tick several: the menu stays open */
+    }
+    if (id === 'in-as') { st.as = v; if (v === 'bars' || v === 'mix') st.against = 'none'; if (v === 'lines' && st.against === 'budget') st.against = 'none'; }
+    if (id === 'in-vs') { st.against = v; if (v === 'budget') st.as = 'running'; else if (v === 'before' && st.as !== 'running' && st.as !== 'table') st.as = 'lines'; else if (v === 'none' && st.as === 'running' && !sub.forms.includes('running')) st.as = 'bars'; }
+    back = id; menu = ''; draw();
+  }
+  function csv(sub, st) {
+    const c = M.compute(sub, st, true), q = (t) => `"${String(t).replace(/"/g, '""')}"`, head = [M.DIM[st.by], ...(st.then ? [M.DIM[st.then]] : []), 'Share', ...sub.cols.map(([l]) => l)];
+    const lines = [head.map(q).join(',')];
+    let count = 0;
+    for (const r of c.rows) {
+      if (r.kids) for (const k of r.kids) { lines.push([r.name, k.name, ...cellsOf(sub, c, k)].map(q).join(',')); count += 1; }
+      else { lines.push([r.name, ...cellsOf(sub, c, r)].map(q).join(',')); count += 1; }
+    }
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' })), download: `insights-${sub.id}.csv` });
+    a.click(); URL.revokeObjectURL(a.href);
+    say(`Downloaded ${sub.title}, ${count} ${count === 1 ? 'row' : 'rows'}`);
+  }
+  function save(sub, st) {
+    const c = M.compute(sub, st), name = `${sub.title} by ${M.DIM[st.by]}${st.then ? `, then ${M.DIM[st.then]}` : ''}, ${c.timeWord}`;
+    if (views.some((v) => v.name === name)) { say(`${name} is already in Your views`); return; }
+    const id = `v${seq++}`, copy = { ...st, filter: [...st.filter], narrow: st.narrow ? [...st.narrow] : null };
+    views.push({ id, name, sub: sub.id, st: copy }); bar.innerHTML = barHtml();
+    say(`Saved ${name} to Your views`, () => { views.splice(views.findIndex((v) => v.id === id), 1); if (here()) bar.innerHTML = barHtml(); });
   }
   function wire(b, pg) {
     bar = b; page = pg;
-    ctl = R.listController({ root: bar, spec: { noun: 'questions', label: 'Selected', view: () => ({ state: 'ready',
-      parts: [{ word: 'Showing', id: 'when', text: view.when, tip: 'When', items: WHEN.map((w) => ({ id: w, text: w, checked: view.when === w })) }],
-      sections: [{ id: 'yours', title: 'Yours', rows: ['spend', 'saved', 'outcomes', 'time'].map(rowOf) }, ...(team() ? [{ id: 'team', title: 'Team', rows: ['team', 'shipped', 'untagged'].map(rowOf) }] : [])] }),
-      can: () => ['menu'], bulk: () => [], act: (id, rows) => { if (id === 'csv') say(`Exported ${Q[rows[0]._id].title} as CSV`); }, open: (r) => window.RailShell.go(`insights/${r._id}`), word: (id, v) => { view[id] = v; draw(); return false; }, say,
-      active: () => /^#insights/.test(location.hash) } });
+    bar.addEventListener('click', (e) => { if (!here()) return; const hit = e.target.closest('[data-in-go]'); if (hit) window.RailShell.go(`insights/${hit.dataset.inGo}`); });
     page.addEventListener('click', (e) => {
       if (!here()) return;   /* another place's page is showing */
       const on = (q) => e.target.closest(q); let hit;
-      if ((hit = on('[data-in-open]'))) { window.RailShell.go(`insights/${hit.dataset.inOpen}`); return; }
-      if (!Q[current]) return;
-      if (on('[data-in-csv]')) { say(`Exported ${Q[current].title}, ${view.when}, as CSV`); return; }
-      if ((hit = on('[data-in-tasks]'))) { window.RailShell.go('runs'); say(`Tasks from ${hit.dataset.inTasks}`); return; }
-      if ((hit = on('[data-menu-pick]'))) {
-        const [id, v] = hit.dataset.menuPick.split('|'); menu = '';
-        if (id === 'in-more') { if (v === 'tasks') window.RailShell.go('runs'); else say('Copied a link to this question'); draw(); return; }
-        if (id === 'in-of') view.of = v; if (id === 'in-when') view.when = v; if (id === 'in-by') byOf[current] = v;
-        draw(); return;
-      }
+      const sub = subOf(arg), st = stateOf();
+      if (on('[data-in-clear]')) { st.narrow = null; menu = ''; draw(); return; }
+      if (on('[data-in-csv]')) { csv(sub, st); return; }
+      if (on('[data-in-save]')) { save(sub, st); return; }
+      if (on('[data-in-try]')) { window.RailConversation?.start('ask', `Try web-app's Build on Opus 5.5 for a while: ${STANDS}`); return; }
+      if ((hit = on('[data-in-tag]'))) { window.RailShell.go('runs'); say(`Tasks without a client, ${hit.dataset.inTag} of them, to tag`); return; }
+      if (on('[data-in-default]')) { window.RailShell.go('projects'); say('Set it in a project: Every new task here gets'); return; }
+      if ((hit = on('[data-in-row]'))) { window.RailShell.go('runs'); say(`Tasks, narrowed to ${hit.dataset.inRow}`); return; }
+      if ((hit = on('[data-pick]'))) { const t = hit.dataset.pick, at = t.indexOf('|'); choose(t.slice(0, at), t.slice(at + 1)); return; }
+      if ((hit = on('[data-menu-pick]'))) { menu = ''; if (hit.dataset.menuPick.startsWith('in-more|')) say('Copied a link to this page'); draw(); return; }
       if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
     });
-    R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .spick, #route-place .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
+    R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .spick, #route-place .rc-pop, #route-place .pz-pick', back: () => null, close: () => { menu = ''; }, paint: draw });
   }
   window.RailPlaces = window.RailPlaces || {};
-  window.RailPlaces.insights = { sample: 'spend', show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) menu = ''; current = arg || 'spend'; draw(); } };   /* no overview that repeats the bar: Insights opens on its first question */
+  window.RailPlaces.insights = {
+    sample: 'spend',
+    search: (q) => [...M.SUBS.filter((s) => !s.team || team()).map((s) => ({ label: s.title, where: `Insights · ${s.group}`, hash: `insights/${s.id}` })), ...views.map((v) => ({ label: v.name, where: 'Insights · Your views', hash: `insights/${v.id}` }))].filter((x) => x.label.toLowerCase().includes(q)),
+    show: ({ bar: b, page: pg, arg: a }) => { if (b !== bar) wire(b, pg); const next = ALIAS[a] || a || 'spend'; if (arg !== next) menu = ''; arg = next; draw(); },
+  };
 })();

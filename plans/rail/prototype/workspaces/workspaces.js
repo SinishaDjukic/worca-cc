@@ -6,15 +6,15 @@
   const R = window.RailUI;
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const say = (t, undo) => window.RailPulse?.say(t, undo);
-  const WORD = { ok: '', behind: 'Behind', diverged: 'Moved apart', missing: 'Folder missing' };
+  const WORD = { ok: '', behind: 'Behind', diverged: 'Out of sync', missing: 'Folder missing' };
   const data = { spaces: [
-    { id: 'web-shop', title: 'Web shop', home: 'web-shop', runs: 12, scanned: 'yesterday', model: 'Sonnet 5.5 · medium', about: 'A shop front that calls a payments service, which mails receipts; both share a design kit.',
-      projects: [['web-app', 'ok'], ['payments-api', 'ok'], ['design-kit', 'ok'], ['email-service', 'ok']],
+    { id: 'web-shop', tags: ['team: shop'], labels: ['shop'], title: 'Web shop', home: 'web-shop', runs: 12, scanned: 'yesterday', model: 'Sonnet 5.5 · medium', about: 'A shop front that calls a payments service, which mails receipts; both share a design kit.',
+      projects: [['web-app', 'ok'], ['payments-api', 'ok'], ['design-kit', 'ok'], ['email-service', 'ok'], ['billing-api', 'behind']],
       links: [{ from: 'web-app', to: 'payments-api', kind: 'REST API', how: 'calls the API of', sure: 'verified', state: 'confirmed' }, { from: 'payments-api', to: 'email-service', kind: 'queue', how: 'sends receipts through a queue to', at: 'payments/receipts.ts:41', sure: 'heuristic', state: 'auto' }, { from: 'web-app', to: 'design-kit', kind: 'build dependency', how: 'builds on', sure: 'exact', state: 'auto' }] },
     { id: 'iot', title: 'IoT SP Platform', home: '', runs: 0, scanned: '3 days ago', model: 'Sonnet 5.5 · high', about: 'Devices report through a gateway into a time-series store; a dashboard reads it.',
       projects: [['ingest-gateway', 'diverged'], ['device-registry', 'behind'], ['telemetry-db', 'ok'], ['ops-dashboard', 'ok'], ['firmware-sdk', 'ok']],
       links: [{ from: 'ingest-gateway', to: 'telemetry-db', kind: 'shared database', how: 'writes readings to', at: 'gateway/store.go:88', sure: 'inferred', state: 'auto' }, { from: 'ops-dashboard', to: 'telemetry-db', kind: 'shared database', how: 'reads readings from', sure: 'verified', state: 'auto' }] },
-    { id: 'legacy', title: 'Legacy billing', home: '', runs: 0, scanned: 'never', model: '', about: '',
+    { id: 'legacy', tags: ['team: billing'], labels: ['legacy'], title: 'Legacy billing', home: '', runs: 0, scanned: 'never', model: '', about: '',
       projects: [['legacy-billing', 'missing'], ['billing-api', 'behind']], links: [] },
   ] };
   let current = '', menu = '', confirm = null, page = null, linksOpen = false, editing = '';
@@ -30,7 +30,7 @@
   const n = (k, one, many = `${one}s`) => `${k} ${k === 1 ? one : many}`;
   function lines(w) {
     const out = []; live(w);
-    w.projects.forEach(([p, s]) => { if (s === 'missing') out.push([`${p}: folder missing`, 'fail']); if (s === 'diverged') out.push([`${p} has moved apart`, 'ask']); });
+    w.projects.forEach(([p, s]) => { if (s === 'missing') out.push([`${p}: folder missing`, 'fail']); if (s === 'diverged') out.push([`${p} is out of sync`, 'ask']); });
     if (questions(w).length) out.push([n(questions(w).length, 'question') + ' for you', 'ask']);
     const r = running(w.projects.map(([p]) => p)); if (r) out.push([`${n(r, 'task')} running`]);
     const shared = w.projects.map(([p]) => [p, others(w, p)[0]]).find(([, o]) => o); if (shared) out.push([`shares ${shared[0]} with ${shared[1].title}`]);
@@ -65,7 +65,7 @@
     const free = (window.RailProjects?.list() || []).map((p) => p.id).filter((id) => !ids.includes(id));
     const edit = editing === w0.id ? R.settingsSection({ title: 'Its projects', meta: 'By hand: a draft until you save it.', rows: w.projects.map(([p], i) => R.settingsRow({ name: p, sentence: others(w0, p).length ? `Also in ${esc(others(w0, p).map((x) => x.title).join(', '))}` : '', end: R.button({ label: 'Take out', kind: 'quiet', attrs: { 'data-ws-rm': i, title: `${p} leaves the workspace; the project stays` } }) })).join('')
       + (free.length ? R.settingsRow({ name: 'Add one', sentence: `Add ${R.sentencePicker({ id: 'ws-add', text: 'a project', items: free.map((o) => ({ id: o, text: o })), open: menu === 'ws-add', chevron: R.icon('chevron', 10) })}` }) : '') }) : '';
-    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${strip}${draft}${ask}${about}</div><div class="pj-wide">${boxes}</div><div class="convo-col">${edit}${order}${links}</div></div><div class="convo-dock" id="ws-dock"></div></div>`;
+    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${strip}${draft}${ask}${about}</div><div class="pj-wide">${boxes}</div><div class="convo-col">${edit}${order}${links}${window.RailPlaces.projects.defaults(w0, [])}</div></div><div class="convo-dock" id="ws-dock"></div></div>`;
   }
   const here = () => location.hash === `#projects/ws:${current}`;   // this workspace is the one open: a click that just left the page is not ours
   function touch(w, fn) { w.draft ||= { projects: structuredClone(w.projects), changes: 0 }; fn(w.draft); w.draft.changes += 1; }
@@ -81,6 +81,7 @@
       if (!here()) return;
       const on = (q) => e.target.closest(q); let hit; const w = data.spaces.find((x) => x.id === current); if (!w) return;
       if ((hit = on('[data-ws]'))) { const v = hit.dataset.ws; if (v === 'chat') window.RailConversation?.start('ask', `Change ${w.title}: `); else if (v === 'edit') { editing = editing === w.id ? '' : w.id; redraw(); } else act(v, w); return; }
+      if (window.RailPlaces.projects.defaultsClick(e, w, redraw)) return;
       if (on('[data-ws-links]')) { linksOpen = !linksOpen; redraw(); return; }
       if ((hit = on('[data-ws-rm]'))) { const i = +hit.dataset.wsRm; touch(w, (d) => { d.projects.splice(i, 1); }); redraw(); say(`${w.title}: kept as a draft`); return; }
       if ((hit = on('[data-ws-yes], [data-ws-no], [data-ws-undo]'))) { const l = w.links[+(hit.dataset.wsYes ?? hit.dataset.wsNo ?? hit.dataset.wsUndo)]; l.state = hit.dataset.wsYes !== undefined ? 'confirmed' : hit.dataset.wsNo !== undefined ? 'rejected' : 'auto'; redraw(); say(l.state === 'auto' ? 'Back to what the scan found' : `${l.state[0].toUpperCase()}${l.state.slice(1)}: ${l.from} ${l.how} ${l.to}`); return; }
@@ -93,7 +94,7 @@
     R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .spick, #route-place .rc-pop', back: () => null, close: () => { menu = ''; }, paint: redraw });
   }
   if (window.RailFirstRun) data.spaces = [];   // the first run: nothing added yet
-  window.RailSpaces = { list: () => data.spaces, render, boxOf, toneOf, act, hint: (w) => n(w.projects.length, 'project'), rowWord: (w) => (questions(w).length ? n(questions(w).length, 'question') : lines(w)[0]?.[0] && toneOf(w) !== 'idle' ? (toneOf(w) === 'fail' ? 'Folder missing' : 'Moved apart') : String(w.projects.length)),
+  window.RailSpaces = { list: () => data.spaces, render, boxOf, toneOf, act, hint: (w) => n(w.projects.length, 'project'), rowWord: (w) => (questions(w).length ? n(questions(w).length, 'question') : lines(w)[0]?.[0] && toneOf(w) !== 'idle' ? (toneOf(w) === 'fail' ? 'Folder missing' : 'Out of sync') : ''),
     member: (id) => data.spaces.some((w) => w.projects.some(([p]) => p === id)),
     add: ({ title, projects = [], fresh = false }) => { const id = title.toLowerCase().replace(/[^a-z0-9]+/g, '-'); if (!data.spaces.some((w) => w.id === id)) data.spaces.push({ id, title, home: '', runs: 0, scanned: fresh ? 'never' : 'just now', model: '', about: '', projects: fresh ? [] : projects.map((p) => [p, 'ok']), links: [], ...(fresh ? { fresh: true, draft: { projects: projects.map((p) => [p, 'ok']), changes: 0 } } : {}) }); if (fresh) editing = id; return id; } };
 })();

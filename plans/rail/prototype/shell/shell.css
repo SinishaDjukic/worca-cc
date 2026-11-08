@@ -235,3 +235,7 @@ body .toasts{top:60px;bottom:auto;}   /* ds-ok: just under the 48px top bar */
 .bar-title-b:hover{background:var(--hover);}
 .bar-title-b svg{color:var(--ink-3);}
 .place-title{margin:0;font:600 var(--fs-subpage)/1.3 var(--sans);letter-spacing:-.02em;}   /* panel.place-head: a thing's page's title */
+
+/* list.bar-model: the same air under every bar's sentence */
+.bar-list .list-head{margin-bottom:12px;}
+.bar-list > .list > .list-sentence{display:block;margin-bottom:12px;}
