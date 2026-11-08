@@ -123,7 +123,8 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
   await step('the Chat list is by date', () => {}, () => /by\s*date/.test(document.querySelector('#bar-chat .list-sentence')?.textContent || '') && !!document.querySelector('#bar-chat [data-fold-section="day:today"]'));
   await step('a date section folds', () => document.querySelector('#bar-chat [data-fold-section="day:today"]').click(), () => !!document.querySelector('#bar-chat .list-group.is-shut [data-fold-section="day:today"]'));
-  await step('and opens again', () => document.querySelector('#bar-chat [data-fold-section="day:today"]').click(), () => !document.querySelector('#bar-chat .list-group.is-shut'));
+  await step('and opens again', () => document.querySelector('#bar-chat [data-fold-section="day:today"]').click(), () => !document.querySelector('#bar-chat .list-group.is-shut [data-fold-section="day:today"]'));
+  await step('every period but Today starts folded (list.sections-start-folded)', () => {}, () => !!document.querySelector('#bar-chat .list-group.is-shut [data-fold-section="day:older"]'));
   // the flows, as dev has them (plans/rail/chat-cards.md › Parity): a starter arms the composer and sends into its flow
   if (w > 760) {
     await p.goto(`${URL_}#chat`); await p.waitForTimeout(150);

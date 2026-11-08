@@ -78,8 +78,12 @@ export function listController({ root, spec }) {
   const dots = () => icon('more', 16);
   // folded date sections are kept per list, so Older stays folded when you come back
   const FOLD_KEY = `worca-rail.fold.${spec.noun}`;
-  try { JSON.parse(win.localStorage.getItem(FOLD_KEY) || '[]').forEach((id) => s.shut.add(id)); } catch { /* a remembered fold is a convenience */ }
-  const keepShut = () => { try { win.localStorage.setItem(FOLD_KEY, JSON.stringify([...s.shut])); } catch { /* as above */ } };
+  s.opened = new Set();
+  try { const kept = JSON.parse(win.localStorage.getItem(FOLD_KEY) || '[]'); (Array.isArray(kept) ? kept : kept.shut || []).forEach((id) => s.shut.add(id)); (kept.opened || []).forEach((id) => s.opened.add(id)); } catch { /* a remembered fold is a convenience */ }
+  const keepShut = () => { try { win.localStorage.setItem(FOLD_KEY, JSON.stringify({ shut: [...s.shut], opened: [...s.opened] })); } catch { /* as above */ } };
+  // list.sections-start-folded: a period other than Today starts folded unless you opened it, or it holds the row you are on
+  const openByDefault = (id) => /(^|:)(today|needs)$/.test(id);
+  const isShut = (x) => x.fold && (s.shut.has(x.id) || (!s.opened.has(x.id) && !openByDefault(x.id) && !x.rows.some((r) => r.current || r.holds)));
   const groupOpen = (r) => (s.groups.has(r.key) ? s.groups.get(r.key) : !!r.open || !!r.holds);   // a group that holds the row you are on starts open (list.fold-keeps-current)
 
   function rowHtml(r) {
@@ -108,7 +112,7 @@ export function listController({ root, spec }) {
     v.sections.forEach((x) => x.rows.forEach(note));
     const ready = !v.state || v.state === 'ready';
     const groups = ready ? v.sections.map((x) => {
-      const shut = x.fold && s.shut.has(x.id);
+      const shut = isShut(x);
       const limit = x.limit || LIST_SHOWN, all = s.more.has(x.id) || x.rows.length <= limit;
       // the row you are on never folds behind Show N more: it stays under the first ones (docs/rail/lists.md › list.fold-keeps-current)
       const rows = shut ? [] : all ? x.rows : [...x.rows.slice(0, limit), ...x.rows.slice(limit).filter((r) => r.current || r.holds)];
@@ -229,8 +233,9 @@ export function listController({ root, spec }) {
     if ((el = t('[data-fold-section]'))) {
       // a date section folds smoothly: its rows rise and fade, then it is drawn folded; opening, its rows come down (list.fold-motion)
       const id = el.dataset.foldSection, group = el.closest('.list-group'), still = win.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-      if (s.shut.has(id)) { s.shut.delete(id); s.opening = id; keepShut(); paint(); return; }
-      s.shut.add(id); keepShut();
+      const x = (spec.view().sections || []).find((y) => y.id === id);
+      if (x ? isShut(x) : s.shut.has(id)) { s.shut.delete(id); s.opened.add(id); s.opening = id; keepShut(); paint(); return; }
+      s.shut.add(id); s.opened.delete(id); keepShut();
       if (still || !group) { paint(); return; }
       group.classList.add('is-folding'); win.setTimeout(() => paint(), FOLD_MS); return;
     }

@@ -838,6 +838,18 @@ test('question forms: a slider with Worca\'s pick, an order with Up and Down, ro
   const f = dom(C.factsLine([{ n: '$1.84', word: 'so far', attrs: { 'data-cost': '' } }, { n: '23 min', word: '' }]));
   assert.ok(f.querySelector('button[data-cost]')); assert.equal(f.querySelectorAll('.q-fact').length, 2);
 });
+test('listController: every period but Today starts folded; the one holding your row starts open; your choice is kept (list.sections-start-folded)', () => {
+  const { document: doc } = new JSDOM('<body></body>', { url: 'http://localhost/' }).window;
+  const root = doc.createElement('div'); doc.body.append(root);
+  const rows = (k, cur) => [{ key: k, title: k, current: cur }];
+  const ctl = C.listController({ root, spec: { noun: `fold-${Math.random()}`, label: 'x', view: () => ({ state: 'ready', parts: [], sections: [{ id: 'today', title: 'Today', fold: true, rows: rows('a') }, { id: 'yesterday', title: 'Yesterday', fold: true, rows: rows('b') }, { id: 'week', title: 'Previous 7 days', fold: true, rows: rows('c', true) }] }), can: () => [], bulk: () => [], act() {}, open() {}, word() {}, say() {}, active: () => false } });
+  ctl.paint();
+  const shown = () => [...root.querySelectorAll('[data-row]')].map((r) => r.dataset.row);
+  assert.deepEqual(shown(), ['a', 'c'], 'Today open, Yesterday folded, the week open for your row');
+  root.querySelector('[data-fold-section="yesterday"]').click();
+  assert.deepEqual(shown(), ['a', 'b', 'c'], 'opened, it shows');
+  root.remove();
+});
 test('GitMark: its status in the tooltip, Watch as a ring', () => {
   assert.match(C.gitMark({ status: 'fail' }), /Checks failing/);
   assert.match(C.gitMark({ status: 'fail', watch: 'fix' }), /is-watch is-fix/);

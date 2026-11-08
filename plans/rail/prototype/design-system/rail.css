@@ -1139,10 +1139,10 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 /* motion.scroll-fade: the chat softens where it slides under the composer (and the top bar), only while there is more past that edge */
 @property --fade-b{syntax:'<length>';inherits:false;initial-value:0px;}
 @property --fade-t{syntax:'<length>';inherits:false;initial-value:0px;}
-:is(.convo-scroll,[data-scroll-fade]){--fade-b:0px;--fade-t:0px;transition:--fade-b var(--motion-change) var(--ease),--fade-t var(--motion-change) var(--ease);-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 var(--fade-t),#000 calc(100% - var(--fade-b)),transparent 100%);mask-image:linear-gradient(to bottom,transparent 0,#000 var(--fade-t),#000 calc(100% - var(--fade-b)),transparent 100%);}
-:is(.convo-scroll,[data-scroll-fade])[data-more-below]{--fade-b:48px;}   /* ds-ok: the fade's own reach */
-:is(.convo-scroll,[data-scroll-fade])[data-more-above]{--fade-t:36px;}   /* ds-ok: the fade's own reach */
-@media (prefers-reduced-motion: reduce){:is(.convo-scroll,[data-scroll-fade]){transition:none;}}
+:is(.convo-scroll,[data-scroll-fade],.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main){--fade-b:0px;--fade-t:0px;transition:--fade-b var(--motion-change) var(--ease),--fade-t var(--motion-change) var(--ease);-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 var(--fade-t),#000 calc(100% - var(--fade-b)),transparent 100%);mask-image:linear-gradient(to bottom,transparent 0,#000 var(--fade-t),#000 calc(100% - var(--fade-b)),transparent 100%);}
+:is(.convo-scroll,[data-scroll-fade],.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main)[data-more-below]{--fade-b:48px;}   /* ds-ok: the fade's own reach */
+:is(.convo-scroll,[data-scroll-fade],.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main)[data-more-above]{--fade-t:36px;}   /* ds-ok: the fade's own reach */
+@media (prefers-reduced-motion: reduce){:is(.convo-scroll,[data-scroll-fade],.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main){transition:none;}}
 .convo-col{max-width:680px;margin:0 auto;display:flex;flex-direction:column;gap:14px;font-size:var(--fs-body);line-height:1.55;color:var(--ink);}
 .convo-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2);}
 .convo-you{align-self:flex-end;max-width:72%;padding:6px 12px;border-radius:var(--r-md);background:var(--field);}
@@ -1267,7 +1267,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 /* Background B: home in full; other pages in the margins beside the reading column. */
 /* The background fades into the chat: full in the margins, half 50px before the rail, a quarter just before it, and its
    last faint dots end on the rail's marks (the column is 680px, its marks at its edge). It never moves. (look.backgrounds) */
-.page-bg{position:absolute;inset:0;pointer-events:none;-webkit-mask-image:linear-gradient(to right,#000 0,#000 calc(50% - 450px),rgba(0,0,0,.5) calc(50% - 400px),rgba(0,0,0,.25) calc(50% - 360px),transparent calc(50% - 322px),transparent calc(50% + 322px),rgba(0,0,0,.25) calc(50% + 360px),rgba(0,0,0,.5) calc(50% + 400px),#000 calc(50% + 450px),#000 100%);mask-image:linear-gradient(to right,#000 0,#000 calc(50% - 450px),rgba(0,0,0,.5) calc(50% - 400px),rgba(0,0,0,.25) calc(50% - 360px),transparent calc(50% - 322px),transparent calc(50% + 322px),rgba(0,0,0,.25) calc(50% + 360px),rgba(0,0,0,.5) calc(50% + 400px),#000 calc(50% + 450px),#000 100%);}   /* ds-ok: a mask, not a colour */
+.page-bg{position:absolute;inset:0;pointer-events:none;--bg-clear:calc(var(--col-w,680px) / 2 + 56px);-webkit-mask-image:linear-gradient(to right,#000 0,#000 calc(50% - var(--bg-clear) - 140px),rgba(0,0,0,.5) calc(50% - var(--bg-clear) - 70px),transparent calc(50% - var(--bg-clear)),transparent calc(50% + var(--bg-clear)),rgba(0,0,0,.5) calc(50% + var(--bg-clear) + 70px),#000 calc(50% + var(--bg-clear) + 140px),#000 100%);mask-image:linear-gradient(to right,#000 0,#000 calc(50% - var(--bg-clear) - 140px),rgba(0,0,0,.5) calc(50% - var(--bg-clear) - 70px),transparent calc(50% - var(--bg-clear)),transparent calc(50% + var(--bg-clear)),rgba(0,0,0,.5) calc(50% + var(--bg-clear) + 70px),#000 calc(50% + var(--bg-clear) + 140px),#000 100%);}   /* ds-ok: --col-w is the content column's width, set by a page that differs (680px by default). look.background-clear: the background keeps clear of the content column (its width plus the rail and air, from --col-w), and comes in softly beyond it */
 .page-bg .chat-home-bg{position:absolute;inset:0;}
 @media (max-width: 1180px){ .page-bg{display:none;} }
 .stage-stream{display:flex;flex-direction:column;gap:8px;padding-top:10px;}
@@ -1437,7 +1437,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 
 /* A home with its composer in the middle (Chat, Tasks, Schedules): the background surrounds it on every side and fades in
    toward the composer, joining at the centre, rather than stopping at a column's edge. (look.backgrounds) */
-.main:has(.chat-home[data-home]) .page-bg,.main:has(#route-runs:not([hidden]) .chat-home) .page-bg,.main:has(#route-schedule:not([hidden]) .chat-home),.main:has(#route-place:not([hidden]) .chat-home) .page-bg{-webkit-mask-image:radial-gradient(ellipse 560px 300px at 50% 52%,transparent 0,transparent 55%,rgba(0,0,0,.35) 75%,#000 100%);mask-image:radial-gradient(ellipse 560px 300px at 50% 52%,transparent 0,transparent 55%,rgba(0,0,0,.35) 75%,#000 100%);}   /* ds-ok: a mask, not a colour */
+.main:has(#route-chat:not([hidden]) .chat-home[data-home]) .page-bg,.main:has(#route-runs:not([hidden]) .chat-home) .page-bg,.main:has(#route-schedule:not([hidden]) .chat-home),.main:has(#route-place:not([hidden]) .chat-home) .page-bg{-webkit-mask-image:radial-gradient(ellipse 560px 300px at 50% 52%,transparent 0,transparent 55%,rgba(0,0,0,.35) 75%,#000 100%);mask-image:radial-gradient(ellipse 560px 300px at 50% 52%,transparent 0,transparent 55%,rgba(0,0,0,.35) 75%,#000 100%);}   /* ds-ok: a mask, not a colour */
 
 /* TaskProposal at parity: the workflow in a line, Shaper's perspectives, the brief, the agents lane, Open in the composer. */
 .tp-what{margin:0;flex:1 0 100%;font-size:var(--fs-meta);color:var(--ink-3);}   /* its own line under the sentence */
