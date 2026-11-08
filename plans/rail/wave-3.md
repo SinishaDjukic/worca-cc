@@ -273,3 +273,16 @@ Direction (Emil, 8 Nov): everything is defined in a chat; the places are views.
   step does in plain words; Build it by hand is the classic way, on the graph (Emil: keep the graph, keep the explanation).
   Proposed for the library: WorkflowGraph's flow variant (left to right, arrows, the loop drawn back), on the page, not only in a dialog.
 - Open: do Projects' and Workspaces' settings follow the same rule (shown on the page, changed in a chat)?
+
+Graph editor (Emil, 8 Nov: a hard requirement; resistance welcome, it is very complex). Dev's is a free canvas: agents and
+scripts from the Library, Task, End, AND, OR, Combine, typed ports and wires with checks, the inspector (model, effort,
+sub-agents, sessions, script inputs, timeout), auto-layout, zoom, Import, Export, Save, and a chat dock whose cards change
+the canvas; the chat's proposals draw with the same renderer. About 15,000 lines, 138 test files. Tried in a mock
+(graph-try, graph-mock.mjs bundles dev's view.mjs): it already draws in Rail's tokens with no change. The resistance:
+1. Keep the engine as it is; Rail is a skin (tokens, the inspector as sentences, the dock as Ask beside the page). A
+   rewrite would cost months and its 138 test files.
+2. It speaks engineering (ports typed md, await any, on blocking, model ids): a plain layer, ports shown only while you
+   wire, a model's name and effort in words.
+3. Hand-building is Expert (docs/ui-levels.md); Simple sees the view and Change it in a chat. A wide screen only; a
+   narrow one reads What each step does.
+4. The view draws fitted on its auto layout; the wrapped flow layout crosses its wires (seen in graph-try).
