@@ -1,0 +1,80 @@
+<!doctype html>
+<!-- Mock (Wave 3, second pass): Insights, one feature, its sub-features grouped in the bar: Cost, Value, Quality, Flow, Team
+     (Expert); every metric dev records, nothing invented. Each: the answer in a sentence, one chart, one "by" with every
+     dimension, breakdown rows that lead to their tasks. 1: Spend by project, with the whole "by" menu open. 2: why it cost:
+     rework and waste. 3: one level deeper, and what is not counted. 4: Quality. Chat first: it ends with the composer.
+     Library: List, ListRow, PlaceHead, BarChart, SentencePicker, CompactMenu, SettingsRow; new: none but a row of figures.
+     Render: node plans/rail/mocks/wave-3/render.mjs insights-2 1280 -->
+<html lang="en"><head><meta charset="utf-8"><title>Insights</title>
+<link rel="stylesheet" href="../../prototype/app.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail-look.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail.css">
+<link rel="stylesheet" href="../../prototype/shell/shell.css">
+<style>
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);}
+  #m{width:1280px;}
+  .fr{display:grid;grid-template-columns:280px 1fr;border-bottom:1px solid var(--line);}
+  .bar{background:var(--side,var(--panel));border-right:1px solid var(--line);padding:14px 12px;box-sizing:border-box;}
+  .bh{display:flex;align-items:center;gap:8px;margin:2px 6px 10px;font:600 15px/1.2 var(--sans);}
+  .main{padding:26px 0 30px;display:flex;justify-content:center;} .col{width:720px;}
+  .cap{margin:0 0 10px;font:600 12px/1.4 var(--sans);color:var(--ink-3);}
+  .note{margin:16px 0 0;font-size:12px;color:var(--ink-3);}
+  .sent{position:relative;display:flex;flex-wrap:wrap;gap:5px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);margin:14px 0 12px;}
+  .by{display:grid;grid-template-columns:repeat(3,1fr);gap:2px 18px;margin:0 0 14px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--panel);}
+  .by h4{margin:6px 0 3px;font:600 12px/1.3 var(--sans);color:var(--ink-2);} .by span{display:block;font-size:var(--fs-body);line-height:1.65;} .by .on{font-weight:600;} .by .off{color:var(--ink-3);}
+  .fig{display:grid;grid-template-columns:minmax(0,1.6fr) 64px 76px 76px 76px 56px 64px;gap:0 8px;align-items:center;font-size:var(--fs-body);font-variant-numeric:tabular-nums;padding:7px 0;border-top:1px solid var(--line);}
+  .fig.h{border-top:0;font-size:var(--fs-meta);color:var(--ink-2);padding:0 0 5px;} .fig > :not(:first-child){text-align:right;} .fig.sub{color:var(--ink-2);padding-left:18px;} .fig.quiet{color:var(--ink-2);}
+  .fig.three{grid-template-columns:minmax(0,1fr) 64px 76px 64px;} .fig b{font-weight:500;} .fig.h span{white-space:normal;line-height:1.2;}
+  .mix{display:flex;align-items:flex-end;gap:26px;height:96px;margin:0 4px;border-bottom:1px solid var(--line);} .mix div{flex:1;display:grid;align-content:end;gap:1px;} .mix i{display:block;}
+  .mixl{display:flex;gap:14px;margin:6px 4px 0;font-size:var(--fs-meta);color:var(--ink-2);} .mixl i{display:inline-block;width:9px;height:9px;margin-right:5px;} .acts{display:flex;gap:6px;margin:10px 0 0;}
+  .stand{margin:14px 0 0;line-height:1.55;}
+</style></head>
+<body><div id="m"></div>
+<script src="../../prototype/components.js"></script>
+<script>
+  const R = window.RailUI;
+  const row = (t, end, cur) => R.listRow({ title: t, endText: end || '', open: { 'data-x': t }, current: !!cur });
+  const inBar = (h) => `<div class="bar-list rail-page" style="padding:0;overflow:visible">${h}</div>`;
+  const bar = (cur) => `<div class="bh">${R.icon('nav-insights', 18)} Insights</div>${inBar(R.list({ groups: [
+    { title: 'Cost', rows: [row('Spend', '$412', cur === 'spend'), row('Per task'), row('Why it cost', '', cur === 'why'), row('Budget', '21%')] },
+    { title: 'Value', rows: [row('Time saved'), row('Value for spend')] },
+    { title: 'Quality', rows: [row('How tasks end'), row('Review', '', cur === 'review'), row('Where it fails'), row('Autonomy'), row('Cache')] },
+    { title: 'Flow', rows: [row('Shipped'), row('Start to merge'), row('Throughput'), row('Waiting on you')] },
+    { title: 'Team', rows: [row('By person'), row('Missing cost tags', '18')] },
+    { title: 'Your views', rows: [row('By client, then person'), row('Monthly for finance')] }] }))}`;
+  const pick = (t) => R.sentencePicker({ id: t, text: t, items: [], chevron: R.icon('chevron', 10) });
+  const days = [38, 61, 22, 74, 55, 9, 93, 60];
+  const chart = (vals, fmt) => R.barChart({ label: 'By day', bars: vals.map((v, i) => ({ label: `Nov ${i + 1}`, value: v, text: fmt(v) })), current: vals.length - 1, height: 96 });
+  const usd = (n) => `$${n}`;
+  const byMenu = `<div class="by">${[['Where', ['project', 'workspace', 'branch', 'ticket', 'pull request']], ['What did the work', ['workflow', 'stage', 'step and agent', 'sub-agents']], ['What it ran on', ['model', 'engine', 'effort', 'cache read or write', 'tokens in or out']], ['Why it cost', ['rework', 'retries', 'fix rounds', 'failed or stopped']], ['Who and how', ['person', 'chat, task, schedule', 'Requirements', 'Away or at the desk', 'status', 'API or subscription']], ['How you organise', ['client (cost tag)', 'team (cost tag)', 'cost-center (cost tag)', 'label']]].map(([h, l]) => `<div><h4>${h}</h4>${l.map((x) => `<span class="${x === 'project' ? 'on' : ''}">${x}</span>`).join('')}</div>`).join('')}<div style="grid-column:1/-1"><h4>When</h4><span>hour · day · week · month · time of day</span></div></div>`;
+  const fig = (name, share, spend, h, saved, per, n, cls = '') => `<div class="fig ${cls}"><b>${name}</b><span>${share}</span><span>${spend}</span><span>${h}</span><span>${saved}</span><span>${per}</span><span>${n}</span></div>`;
+  const hd = fig('', 'Share', 'AI spend', 'Hours saved', 'Saved', 'Cost per hour saved', 'Tasks', 'h');
+  const fig3 = (name, share, spend, n, cls = '') => `<div class="fig three ${cls}"><b>${name}</b><span>${share}</span><span>${spend}</span><span>${n}</span></div>`;
+  const sentence = (metric, by, then, when, chips = '') => `<div class="sent">Showing ${pick(metric)} by ${pick(by)}${then ? ` then ${pick(then)}` : ` ${R.button({ label: 'Then by', kind: 'quiet', icon: R.icon('plus', 11) })}`} ${pick(when)} ${chips}${R.button({ label: 'Filter', kind: 'quiet', icon: R.icon('plus', 11) })}</div>`;
+  const filt = (t) => R.chip({ text: t });
+  const more = R.moreMenu({ id: 'm', label: 'More', icon: R.icon('more', 16), open: false, items: [] });
+  const dock = (ph) => `<div style="margin:16px 0 0">${R.composer({ value: '', placeholder: ph, sentence: '', tools: R.button({ label: 'Add', kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15) }), send: R.button({ label: 'Send', kind: 'primary', iconOnly: true, icon: R.icon('up', 14) }) })}</div>`;
+  const f1 = `<div class="col convo-col" style="margin:0"><p class="cap">1 · Spend: the answer, one chart, one "by", every dimension behind it</p>${R.placeHead({ title: 'Spend', facts: 'All your tasks and chats, November', mark: R.kindMark({ kind: 'plugin', icon: 'nav-insights' }), word: '$412 of $2,000', why: 'Saved about $1,233, 3× what it cost · on pace for $1,545', menu: more })}
+    ${sentence('AI spend', 'project', '', 'this month')}${byMenu}${chart(days, usd)}
+    <div style="height:12px"></div>${hd}${fig('billing-api', '45%', '$186', '21 h', '$549', '$8.86', '18')}${fig('web-app', '32%', '$131', '14 h', '$359', '$9.36', '14')}${fig('worca-cc', '17%', '$72', '9 h', '$243', '$8.00', '9')}${fig('docs-site', '6%', '$23', '3 h', '$82', '$7.67', '3')}
+    <div class="acts">${R.button({ label: 'Download CSV', kind: 'quiet' })}${R.button({ label: 'Save this view', kind: 'quiet' })}</div>${dock('Ask about your spend…')}
+    <p class="note">Mock. The open menu is the "by" picker; closed it is one word. On pace is the last 8 days' rate, and its number opens the sum. Saved is hours saved at your hourly rate (Settings). The time picker holds today, this week, this month, last month, all time and custom; a comparison is always the same number of days before. One "by" holds every dimension dev records, grouped; one with no data this period is left out. A row filters by its value on a click, and its Tasks number opens those tasks. Rows are the top 5, then Other; the CSV has every row, on every page. The money adds up to the headline; Chat and Requirements are rows of their own unless a filter is on.</p></div>`;
+  const f2 = `<div class="col convo-col" style="margin:0"><p class="cap">2 · Why it cost: the money that bought nothing new</p>${R.placeHead({ title: 'Why it cost', facts: 'November', mark: R.kindMark({ kind: 'plugin', icon: 'nav-insights' }), word: '$131 of $412 went on rework and waste', why: '32%, up from 23% in the same days of October', menu: more })}
+    ${sentence('rework and waste', 'why', 'workflow', 'this month')}${chart([12, 21, 4, 28, 16, 2, 31, 17], usd)}
+    <div style="height:12px"></div>${fig3('', 'Share', 'AI spend', 'Tasks', 'h')}${fig3('Review sent it back', '17%', '$69', '11')}${fig3('Default', '11%', '$46', '8', 'sub')}${fig3('Security-first review', '6%', '$23', '3', 'sub')}${fig3('Failed or stopped tasks', '8%', '$33', '6')}${fig3('Retries', '4%', '$18', '9')}${fig3('PR fix rounds', '3%', '$11', '4')}
+    <p class="stand">What stands out: Review sends Build back most on <b>web-app</b>, on Sonnet 5.5. Running its Build on Opus 5.5 would cost about $0.40 more a task and, on its last 11 tasks, save about one round.</p><div class="acts">${R.button({ label: 'Try it in a chat' })}</div>${dock('Ask why it cost this much…')}
+    <p class="note">Mock. A then-by row sits under its parent; its share is of the whole. A task can be in more than one row; its money is split, never counted twice, so the rows add up to $131. The "what stands out" line is one suggestion from what was recorded, and leads to a chat; the numbers behind it are its tasks.</p></div>`;
+  const SHADES = [['acme', 'var(--ink)'], ['globex', 'var(--ink-3)'], ['No client', 'var(--line-2)']];
+  const mix = `<div class="mix">${[[16, 10, 12], [26, 13, 22], [9, 5, 8], [31, 16, 27], [23, 12, 20], [4, 2, 3], [39, 20, 34], [25, 13, 22]].map((c) => `<div>${c.map((v, k) => `<i style="height:${v * 1.1}px;background:${SHADES[k][1]}"></i>`).join('')}</div>`).join('')}</div><div class="mixl">${SHADES.map(([t, c]) => `<span><i style="background:${c}"></i>${t}</span>`).join('')}</div>`;
+  const f3 = `<div class="col convo-col" style="margin:0"><p class="cap">3 · What is not counted: every dollar has a place</p>${R.placeHead({ title: 'Spend', facts: 'November', mark: R.kindMark({ kind: 'plugin', icon: 'nav-insights' }), word: '$412 of $2,000', why: '$148 has no client', menu: more })}
+    ${sentence('the mix of AI spend', 'client (cost tag)', '', 'this month')}${mix}<div style="height:12px"></div>
+    ${hd}${fig('acme', '42%', '$173', '19 h', '$485', '$9.10', '16')}${fig('globex', '22%', '$91', '11 h', '$294', '$8.27', '10')}${fig('No client', '36%', '$148', '17 h', '$454', '$8.71', '18', 'quiet')}
+    <div class="acts">${R.button({ label: 'Tag these 18 tasks' })}${R.button({ label: 'Set a default for a project', kind: 'quiet' })}</div>
+    <p class="note">Mock. Showing can be the total or the mix over time; a filter is a chip, and clicking a row's value adds one. Default cost tags per project and workspace mean this row shrinks by itself; Set a default leads to the project's Every new task here gets.</p></div>`;
+  const rev = (name, n, raised, fixed, disputed, open) => `<div class="fig"><b>${name}</b><span>${n}</span><span>${raised}</span><span>${fixed}</span><span>${disputed}</span><span>${open}</span><span></span></div>`;
+  const f4 = `<div class="col convo-col" style="margin:0"><p class="cap">4 · Quality reads the same: the answer, one chart, one "by"</p>${R.placeHead({ title: 'Review', facts: 'Finished tasks, November', mark: R.kindMark({ kind: 'plugin', icon: 'nav-insights' }), word: '1.4 rounds a task', why: 'About the same as October · 71% pass the first time', menu: more })}
+    ${sentence('rounds a task', 'role', '', 'this month')}${chart([1, 2, 1, 2, 1, 1, 2, 1], (n) => `${n} ${n === 1 ? 'round' : 'rounds'}`)}
+    <div style="height:12px"></div><div class="fig h"><span>Role</span><span>Reviews</span><span>Raised</span><span>Fixed</span><span>Disputed</span><span>Open</span><span></span></div>${rev('Review of the change', '38', '57', '49', '6', '2')}${rev('Security check of the change', '11', '14', '12', '1', '1')}${rev('Review of the plan', '22', '19', '17', '2', '0')}</div>`;
+  const fr = (cur, x) => `<div class="fr"><aside class="bar pz-app rail-page">${bar(cur)}</aside><main class="main">${x}</main></div>`;
+  document.getElementById('m').innerHTML = fr('spend', f1) + fr('why', f2) + fr('spend', f3) + fr('review', f4);
+</script></body></html>
