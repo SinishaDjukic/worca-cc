@@ -5,7 +5,10 @@
   const bar = document.getElementById('bar-schedules'), page = document.getElementById('route-schedule');
   if (!bar || !page) return;
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  let data = M.seed(), current = '', view = { show: 'all', by: R.BY_DEFAULT }, ctl = null, menu = '', home = null;
+  let data = M.seed(); /* the schedules that wait to run are in the one store too, so Pulse's Scheduled lists the same ones */
+  const toStore = () => { for (const s of data.schedules) if (s.state !== 'paused' && window.RailWorld && !window.RailWorld.find(`sch-${s.id}`)) window.RailWorld.add({ id: `sch-${s.id}`, case: 'scheduled', title: s.title, project: s.project || '', detail: `${s.every.charAt(0).toUpperCase()}${s.every.slice(1)} at ${s.at}`, time: s.at, day: 'upcoming', when: s.day === 'today' ? 'today' : s.day === 'week' ? 'week' : 'tomorrow' }); };
+  toStore(); window.RailWorld?.onChange(toStore);
+  let current = '', view = { show: 'all', by: R.BY_DEFAULT }, ctl = null, menu = '', home = null;
   const say = (t, undo) => window.RailPulse?.say(t, undo);
   const st = (s) => R.runState(s.state), toneOf = (s) => (s.state === 'scheduled' ? 'idle' : R.markTone(st(s)));
   const SECTIONS = [['needs', R.runState('question').word], ['next', 'Next'], ['paused', R.runState('paused').word]];
@@ -15,7 +18,8 @@
     const s = rows[0]?._s; if (!s) return;
     if (id === 'in-view') { window.RailShell.inView.toggle({ type: 'schedule', id: s.id, title: s.title }); draw(); return; }
     if (id === 'run') { say(`Started ${s.title}`); return; }
-    if (id === 'pause') { s.state = s.state === 'paused' ? 'scheduled' : 'paused'; s.section = s.state === 'paused' ? 'paused' : 'next'; s.next = s.state === 'paused' ? 'Paused by you' : `Next at ${s.at}`; follow(s); draw(); say(s.state === 'paused' ? `Paused ${s.title}` : `Resumed ${s.title}`); }
+    if (id === 'pause') { const W = window.RailWorld, wid = `sch-${s.id}`; if (W?.find(wid)) W.move(wid, s.state === 'paused' ? 'scheduled' : 'stopped', s.state === 'paused' ? `Next at ${s.at}` : 'Paused by you');   // Pulse hears it
+      s.state = s.state === 'paused' ? 'scheduled' : 'paused'; s.section = s.state === 'paused' ? 'paused' : 'next'; s.next = s.state === 'paused' ? 'Paused by you' : `Next at ${s.at}`; follow(s); draw(); say(s.state === 'paused' ? `Paused ${s.title}` : `Resumed ${s.title}`); }
   }
   ctl = R.listController({ root: bar, spec: { noun: 'schedules', label: 'Selected schedules', view: () => ({ state: 'ready',
     parts: [{ word: 'Showing', id: 'show', text: view.show, tip: 'Which schedules the list shows', items: ['all', 'paused'].map((x) => ({ id: x, text: x, checked: view.show === x })) },

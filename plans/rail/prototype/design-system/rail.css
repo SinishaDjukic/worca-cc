@@ -383,8 +383,8 @@ html,body{height:auto;overflow:visible;margin:0;}
 .ov-areas code,.ov-arts code{font-family:var(--mono);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ov-bar{display:flex;height:4px;border-radius:var(--r-xs);overflow:hidden;background:var(--line);}
 .ov-bar i{display:block;height:100%;}
-.ov-bar .add,.ch-blocks .add{background:var(--green);}
-.ov-bar .del,.ch-blocks .del{background:var(--red);}
+.ov-bar .add,.ch-blocks .add{background:var(--ink-2);}   /* the squares echo the counts in ink; the +/− numbers carry the diff's colour once */
+.ov-bar .del,.ch-blocks .del{background:var(--ink-3);}
 .ct{display:inline-flex;gap:8px;font:400 var(--fs-meta)/1 var(--mono);font-variant-numeric:tabular-nums;}
 .ct .add{color:var(--green-ink-strong,var(--green));}
 .ct .del{color:var(--red-ink-strong,var(--red));}
@@ -402,7 +402,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .ch-row:hover .ch-name{text-decoration:underline;text-underline-offset:3px;}
 .ch-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
 .ch-st{justify-self:center;font:600 var(--fs-caption)/1 var(--mono);color:var(--ink-2);}
-.ch-st.is-A{color:var(--green-ink-strong,var(--green));}
+.ch-st.is-A{color:var(--ink-2);}   /* a file's letter is a fact, not a state: no colour (look.tokens) */
 .ch-name{display:flex;align-items:center;font:400 var(--fs-meta)/var(--lh-title) var(--mono);color:var(--ink);overflow:hidden;white-space:nowrap;}
 .ch-name .rc-mid{flex:0 1 auto;min-width:64px;color:inherit;}   /* a long file name loses its middle, never its end; its folder gives way first */
 .ch-notes{justify-self:end;font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;}
@@ -737,7 +737,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .el-t{color:var(--ink);font-weight:500;}
 .empty-line.is-err .el-t{color:var(--red-ink-strong);}   /* red only when a part could not be drawn */
 .el-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
-.rc .toasts{bottom:calc(24px + env(safe-area-inset-bottom, 0px));}   /* notices come in under the top bar, by Pulse, never over the composer's controls */
+.rc .toasts{top:64px;bottom:auto;}   /* notices come in under the top bar, by Pulse, never over the composer's controls */
 .rc-conn{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
 .rc-conn + .rc-pager{margin-left:12px;}
 

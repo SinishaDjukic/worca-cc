@@ -46,7 +46,8 @@
   }
   // What a place needs: the sidebar's own data-min-level and data-flag, as the app's sidebar.html has them.
   const needsOf = (view0) => { const view = view0 === 'schedule' ? 'schedules' : view0; const b = document.querySelector(`#side-rail nav.nav [data-nav="${view}"]`); return b ? { min: b.dataset.minLevel || '', flag: b.dataset.flag || '' } : {}; };
-  const lockOf = (view) => { const n = needsOf(view); return !R.shows(n.min) ? { min: n.min } : n.flag && !R.prefs.flag(n.flag) ? { flag: n.flag } : null; };
+  const lockOf = (view) => { if (view === 'schedule') return null;   /* a schedule you made opens in any mode; the Schedules list is Advanced */
+    const n = needsOf(view); return !R.shows(n.min) ? { min: n.min } : n.flag && !R.prefs.flag(n.flag) ? { flag: n.flag } : null; };
   // The sidebar draws again when the interface mode or a Labs flag changes; a group with no place left goes, with its head.
   function applyPrefs() {
     const nav = document.querySelector('#side-rail nav.nav');
@@ -171,7 +172,7 @@
     const rows = [...pinRows, ...seenRows].map((x) => R.listRow({ title: x.title, meta: x.meta, mark: x.mark, end: x.end ? `<span class="lr-fig" title="${x.tip}">${x.end}</span>` : '', endText: x.end ? '' : x.when || '', open: { 'data-back-to': x.hash, title: `Opens ${x.title}` } }));
     drawMini();
     drawInView();
-    document.getElementById('bar-back').innerHTML = R.list({ groups: [...(rows.length ? [{ title: 'Recent', rows, more: !pinsAll && morePins > 0 ? { n: morePins, attrs: { 'data-pins-all': '' } } : null }] : [])] });
+    document.getElementById('bar-back').innerHTML = R.list({ groups: [...(rows.length ? [{ title: pinRows.length ? 'Pinned and recent' : 'Recent', rows, more: !pinsAll && morePins > 0 ? { n: morePins, attrs: { 'data-pins-all': '' } } : null }] : [])] });
   }
 
   // ---- In view: what you keep an eye on, from any ⋯ or a task's head; its marks live in the top bar only, named like tabs, five at
@@ -442,14 +443,14 @@
     // A card opened in place borrows the task page itself (#card), so every stage, part and control works as on the page.
     embedRun: (slot, cs, ask) => {
       const card = document.getElementById('card'), pick = document.getElementById('case'); if (!card || !slot) return;
-      if (RM) { RM.asks = RM.asks || {}; RM.branches = RM.branches || {}; if (ask) { RM.asks[cs] = ask; RM.titles[cs] = ask; } const t = ask && findTask(ask); if (t?.branch) RM.branches[cs] = t.branch; }   // the lent page is this task's: its name and what it was asked   // the lent page says what this task was asked, not its mock's words
+      if (RM) { RM.asks = RM.asks || {}; RM.branches = RM.branches || {}; if (ask) { RM.asks[cs] = ask; RM.titles[cs] = ask; } const t = ask && findTask(ask); if (t?.branch) RM.branches[cs] = t.branch; if (t) { RM.asks[cs] = t.ask || t.title; RM.whys = RM.whys || {}; RM.whys[cs] = t.why || null; } }   // the lent page is this task's: its name and what it was asked   // the lent page says what this task was asked, not its mock's words
       if (!runAnchor) { runAnchor = document.createComment('the task page lives here'); card.before(runAnchor); }
       const lent = `${cs}|${ask || ''}`, again = lent !== lastLent; lastLent = lent;
       if (pick && (pick.value !== cs || again)) { /* drawn again for this task even when another task shares its case */ const at = location.hash; pick.value = cs; pick.dispatchEvent(new Event('change', { bubbles: true })); if (location.hash !== at) history.replaceState(null, '', at); }
       slot.append(card); card.classList.add('is-lent');
     },
     unembedRun: (from) => { const card = document.getElementById('card'); if (card && runAnchor && (!from || from.contains(card))) { runAnchor.after(card); card.classList.remove('is-lent'); } },
-    openTaskPage: (cs, chat, title) => { const t = title && findTask(title); if (RM && t?.branch) { RM.branches = RM.branches || {}; RM.branches[cs] = t.branch; } taskChat = chat || ''; if (RM && title) RM.titles[cs] = title; reopen = true; window.RailShell.go(`run/${cs}`); },
+    openTaskPage: (cs, chat, title) => { const t = title && findTask(title); if (RM && t?.branch) { RM.branches = RM.branches || {}; RM.branches[cs] = t.branch; } if (RM && t) { RM.asks = RM.asks || {}; RM.asks[cs] = t.ask || t.title; RM.whys = RM.whys || {}; RM.whys[cs] = t.why || null; }   /* the page says what this task was asked and what broke in it, never its mock's */ taskChat = chat || ''; if (RM && title) RM.titles[cs] = title; reopen = true; window.RailShell.go(`run/${cs}`); },
     openSchedule: (sid) => {
       const s = window.RailSchedules?.find?.(sid), cid = s?.chat || '';
       if (!cid) { window.RailShell.go(`schedule/${sid}`); return; }
@@ -476,6 +477,7 @@
   R.watchOrbs(document); R.watchTooltips(document); R.watchMenus(document); R.watchScrollFades(document);
   // a new person starts in Simple; the mode they pick is remembered (docs/ui-levels.md)
   try { const m = localStorage.getItem('worca-rail.mode'); R.prefs.setMode(R.MODES.includes(m) ? m : 'simple'); } catch { R.prefs.setMode('simple'); }
+  applyPrefs(); drawMini();   /* the sidebar drew before the mode was read: it shows only the places this mode has */
   R.prefs.onChange(() => { try { localStorage.setItem('worca-rail.mode', R.prefs.mode()); } catch { /* remembering is a nicety */ } });
   addEventListener('resize', () => { syncRail(); });
   // A change of mode or a Labs flag: the sidebar follows, and the page if that changes whether it is locked.

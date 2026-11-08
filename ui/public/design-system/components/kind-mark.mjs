@@ -256,7 +256,7 @@ export function taskProposal({ title, why = '', sentence, more = '', open = fals
 }
 
 // a change card's mark is its kind's, as in the bar (list.kind-mark): a schedule's clock, a project's folder
-const KIND_ICON = { Schedule: 'clock', Workflow: 'kind-workflow', 'Web access': 'plug', Away: 'away', Agent: 'you', Workspace: 'nav-workspaces', Project: 'folder', Clone: 'folder', Model: 'set-models', 'Sign-in': 'plug', Script: 'sliders', Changes: 'pr', Metrics: 'signal', Memory: 'set-memory', Guardrails: 'set-guardrails', Labels: 'tag' };
+const KIND_ICON = { Schedule: 'clock', Workflow: 'kind-workflow', 'Web access': 'plug', Away: 'away', Agent: 'you', Workspace: 'nav-workspaces', Project: 'folder', Clone: 'folder', Model: 'set-models', 'Sign-in': 'plug', Script: 'sliders', Changes: 'pr', Metrics: 'signal', Memory: 'set-memory', Guardrails: 'set-guardrails', Labels: 'tag', Requirements: 'list', Route: 'after' };
 
 /**
  * ChangeProposal: a change Worca proposes to something that is not a task (a setting, a workflow, a schedule): what it is,

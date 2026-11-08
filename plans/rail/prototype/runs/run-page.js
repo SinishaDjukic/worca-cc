@@ -103,6 +103,8 @@ function focusHtml(v) {
     return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">${esc(f.title)}</h2>${f.note ? `<p class="rl-note">${esc(f.note)}</p>` : ''}${issuesHtml(f.issues)}${f.roles.length ? rolesHtml(f.roles, 'ov') : ''}</section>`;
   }
   if (f.kind === 'broke') {
+    const own = SHELL && M.whys?.[ui.caseId];   /* a task lent from a chat: what broke in it, the same lines its card shows */
+    if (own?.length) return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">What broke</h2><div class="rtab-ev"><pre class="rtab-ev-l">${own.map((w) => esc(typeof w === 'string' ? w : w.t || w.text || '')).join('\n')}</pre>${logsShow() && !logsGone ? R.button({ label: f.ev.log, attrs: { 'data-key': 'ov-log', 'data-logstep': 'all' } }) : ''}</div></section>`;
     return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">What broke</h2>
       <div class="rtab-ev"><p class="rtab-ev-t">${esc(f.ev.title)}</p><pre class="rtab-ev-l">${f.ev.lines.map(esc).join('\n')}</pre>${logsShow() && !logsGone ? R.button({ label: f.ev.log, attrs: { 'data-key': 'ov-log', 'data-logstep': 'all' } }) : ''}</div></section>`;
   }
@@ -180,7 +182,7 @@ function actionsHtml(v) {
   const hook = (o) => (off ? Object.assign({ disabled: true, title: HOSTED_WHY }, o) : o);
   const svc = d.services.map((x) => { const on = !!ui.services[x.id];
     return R.listRow({ title: x.name, meta: on ? 'Running on port ' + x.port : 'Port ' + x.port, end: R.button({ label: ui.svcBusy === x.id ? (on ? 'Stopping…' : 'Starting…') : on ? 'Stop' : 'Start', kind: 'quiet', attrs: ui.svcBusy === x.id ? { disabled: true, title: 'Waiting for the service', 'data-key': 'svc:' + x.id } : hook({ 'data-service': x.id, 'data-key': 'svc:' + x.id }) }) + (on ? R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-say': 'Opened localhost:' + x.port, 'data-key': 'svc-open:' + x.id } }) : '') }); });
-  const tools = d.builtins.map((t, i) => R.button({ label: t, attrs: hook({ 'data-say': t + ': running in the worktree', 'data-key': 'builtin:' + i }) })).concat(R.button({ label: 'Download patch', attrs: { 'data-say': 'Downloading run.patch', 'data-key': 'act-patch' } })).join('');
+  const tools = d.builtins.map((t, i) => R.button({ label: t, kind: 'quiet', attrs: hook({ 'data-say': t + ': running in the worktree', 'data-key': 'builtin:' + i }) })).join('');   // quiet words, no grey boxes; Download patch is the Changes ▾'s (once)
   let members = '';
   if (v.isWorkspace) {
     const picked = ui.picked || d.members.map((m) => m.name);
@@ -593,7 +595,7 @@ function done(f, label) {
   if (f.leave) { if (SHELL) { ui = fresh('starting'); SHELL.go('runs'); window.RailPulse?.say(f.say); } else { goCase('deleted', {}); toast(f.say); } return; }
   if (f.fix) { ui.fixed = Object.assign({}, ui.fixed, { [f.fix]: true }); toast(f.say); pendingFocus = 'act-main'; return; }
   if (f.run) { f.run(); toast(f.say); pendingFocus = 'act-main'; }
-  else if (f.to) { const was = ui.caseId; goCase(f.to, f); toast(f.say); if (document.getElementById('card')?.classList.contains('is-lent')) document.dispatchEvent(new CustomEvent('rail:task-moved', { detail: { from: was, to: f.to, ask: M.asks?.[was] || '' } })); }   // lent to a card in a chat: the card, the bar and Pulse follow
+  else if (f.to) { const was = ui.caseId; if (SHELL && M.titles?.[was]) { M.titles[f.to] = M.titles[was]; if (M.branches?.[was]) M.branches[f.to] = M.branches[was]; if (M.asks?.[was]) M.asks[f.to] = M.asks[was]; if (M.whys) M.whys[f.to] = null; } goCase(f.to, f); toast(f.say); if (document.getElementById('card')?.classList.contains('is-lent')) document.dispatchEvent(new CustomEvent('rail:task-moved', { detail: { from: was, to: f.to, ask: M.asks?.[was] || '' } })); }   // lent to a card in a chat: the card, the bar and Pulse follow
   else { toast(f.say); pendingFocus = pendingFocus || 'act-main'; }
 }
 // Why a step fails here (a mock's reasons); a failure keeps the state as it was.

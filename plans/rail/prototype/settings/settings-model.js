@@ -282,7 +282,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     general: { title: 'General', meta: 'Setup, storage, and which version of Worca runs.', sections: [
       { title: 'Setup', rows: [
         { name: 'Setup assistant', say: 'Checks this machine, the network, model access and your limits', acts: [{ label: 'Run setup', edit: setup }] },
-        { name: 'Getting started', say: 'The first nine things to do, and the guided tour{gsWords}', vals: { gsWords: (sv) => (sv.gsShown ? ': back in the sidebar' : '') }, acts: [{ label: 'Show again', off: (sv) => (sv.gsShown ? 'The checklist is already showing' : ''), do: (sv) => { sv.gsShown = true; return 'The Getting started checklist is back in the sidebar'; } }] },
+        { name: 'Getting started', say: 'The Getting started chat: sign in, add a project, then your first task{gsWords}', vals: { gsWords: (sv) => (sv.gsShown ? ': back in the sidebar' : '') }, acts: [{ label: 'Show again', off: (sv) => (sv.gsShown ? 'The checklist is already showing' : ''), do: (sv) => { sv.gsShown = true; return 'The Getting started checklist is back in the sidebar'; } }] },
         { name: 'Browser extension', help: 'Works with a local Worca only', say: 'Add Worca to {browser}', picks: { browser: P('chrome', O(['chrome', 'Chrome'], ['edge', 'Edge'], ['firefox', 'Firefox']), 'Which browser to install it in') }, foldLabel: 'Paired browsers',
           acts: [{ label: 'How to install', edit: (sv) => ({ title: `Install in ${{ chrome: 'Chrome', edge: 'Edge', firefox: 'Firefox' }[sv.browser]}`, view: true, yes: 'Close', note: 'Load the folder `~/.worca-cc/extension` in the browser\'s extensions page, or take the zip from the latest release. It pairs on first use.' }) }],
           moreList: [

@@ -186,3 +186,24 @@ Built, each through every gate (sweep, DS check, the new colour gate, both click
 
 Persona round (before the last fixes): new user 5.9, daily user 6.1. Next: a fresh round on this build, then 1.2's
 remaining cards (route, requirements step, form questions, workflow at parity), 0.4–0.7, and Phases 2–5.
+
+Round 5 (daily 6.0, new user 6.1), fixed in this pass:
+- A slice's Show its stages works; a step on the full page keeps its task (name, branch, what was asked).
+- The full page says what this task was asked and what broke in it, the same lines as its card; the Node 24 task fails
+  for Node 24 reasons.
+- Simple shows only the places it has (the mode was read after the menu drew); a schedule you made opens in any mode.
+- A task's name is a whole clause ("Add a GET /health endpoint"), never cut mid-phrase; the brief keeps every word.
+- A schedule takes the time you wrote ("at 1am" → 01:00) and its name without the when; pausing it reaches Pulse.
+- The reply to what you sent comes into view (its Start is never under Latest); notices come in at the top.
+- Words: Sign in to Claude Code; Restart Build's tip; "Worca watches its PR", gone once merged; Settings opens on General
+  in Simple; a new chat starts on the project you added last; the composer keeps "on" when a starter is armed;
+  Shaper's requirements step and the route card; Artifacts without old colours.
+
+Still open from round 5 (next pass):
+- The full page's mock facts (cost, time, plan, activity) still come from its case's sample; the card is the truth.
+  Retire the page into the card (its functions as card rows) rather than patch the sample.
+- The card's ⋯ and the page's ⋯ offer different actions: one list, from the library.
+- Merge's confirm repeats the Merge PR button under the card; a merged chat folds into Show more and is lost.
+- A failed task offers only Restart: add Ask Worca to fix it and Show the log as the card's own actions.
+- Appearance: unlabelled theme and background swatches; Settings has no Appearance section and no way back but the menu.
+- New here: nothing on the first screen points to Getting started (it is pinned, but under Needs you).

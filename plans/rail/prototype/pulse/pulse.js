@@ -379,7 +379,7 @@ function runsPage() {
 // Every section is SettingsSections of SettingsRows (the components own the alignment). Notifications is drawn here,
 // from Pulse's model; every other section comes from settings-model.js through settings.js.
 const sp = (id, text, items, tip, right) => R.sentencePicker({ id, text, items, open: ui.menu === id, tip, chevron: svg('chevron', 12), right });
-const sectionId = () => ui.sset || SM.FIRST;
+const sectionId = () => ui.sset || (R.shows('advanced') ? SM.FIRST : 'general');   /* a newcomer lands on General, not on budgets */
 const menuGroups = () => SM.GROUPS.map((g) => ({ title: g.title, items: g.items.filter((id) => SM.visible(id, R.prefs.mode())).map((id) => ({ label: SM.title(id), icon: SM.ICONS?.[id] || '', current: id === sectionId(), attrs: { 'data-sset': id } })) })).filter((g) => g.items.length);   // a group with nothing at this mode has no head
 const settingsMenu = () => R.sideMenu({ label: 'Settings', cls: swapCls.trim(), back: SHELL ? null : { label: 'Back to Worca', icon: svg('chevL', 14), attrs: { 'data-go': 'runs', title: 'Back to the page you came from' } }, groups: menuGroups() });
 // The narrow screen's first view: the same menu as a list in the page.

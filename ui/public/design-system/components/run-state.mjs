@@ -515,7 +515,7 @@ const HELP = {
   Resume: "Goes on from the step it paused in",
   "Resume when the limit resets": "Waits for the limit, then goes on by itself",
   Stop: "Ends the run; the branch and changes stay",
-  "Restart Build": "Runs Build again with what Plan already made",
+  "Restart Build": "Build runs again with what Plan already made",
   "Report this run": "Asks for a note, then sends it with the logs to the Worca team",
   "Start a new run": "A fresh run with the same task",
   [CREATE_PR_LABEL]: "Creates a PR from this run’s branch into {base}",
