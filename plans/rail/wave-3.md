@@ -296,3 +296,14 @@ Selling point (Emil, 8 Nov): workflows and the graph sell Worca. The graph is sh
 a chat's proposal, a task card), drawn by dev's renderer in Rail's skin; only editing by hand is Expert. Mock workflows-2
 redone: frame 2 on dev's renderer (wider than the reading column, plain words), frame 3 the Expert canvas (Add as a menu
 in words, Auto-align beside zoom, the picked step as sentences on the right, Ask Worca as the one chat).
+
+Personas on workflows-2 (8 Nov). New user: browse 7, opened 5, editor 4. Daily user: 6, 7, 5. Taken:
+- Cards keep cost, time, merged; provenance and "Tasks that used it" cut; "Ready" cut; one set of step names everywhere.
+- The loop in words on the graph ("sends fixes back, up to 2×"); port types and await rows hidden on the view.
+- Editor: Undo, Redo, Import and Export in its head; the Library a list to drag from; Add closed; session and sub-agents
+  under More settings; a script step's inputs and a picked wire (what it carries, when, Delete) in the right panel; what
+  Ask Worca proposes shows on the graph to Apply or Undo; Edit by hand beside Change it in a chat for Expert.
+Open:
+- The daily user wants a step's model and effort editable on the view (conflicts with: pages are views, defined in a chat).
+- The new user reads the view's wiring as an engineer's diagram: a plain view mode in the renderer (a step's name, model
+  and one line, wires without port labels) is real work in view.mjs; the mock only hides words.

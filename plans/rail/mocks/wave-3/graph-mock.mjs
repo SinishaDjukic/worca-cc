@@ -7,9 +7,9 @@ import { manifestAgents } from '../../../../ui/public/graph/run-decor.mjs';
 
 const md = (id, extra = {}) => ({ id, type: 'md', ...extra });
 const AGENTS = {
-  planner: { key: 'planner', displayName: 'Planner', color: 'violet', inputs: [md('task', { required: true })], outputs: [md('plan', { when: 'always' })] },
-  implementer: { key: 'implementer', displayName: 'Implementation', color: 'blue', inputs: [md('plan', { required: true }), md('findings', { required: false, loop: true })], outputs: [md('change', { when: 'always' })] },
-  security: { key: 'security', displayName: 'Security review', color: 'amber', verdict: { filename: 's.json' }, inputs: [md('change', { required: true })], outputs: [md('findings', { when: 'blocking' }), md('clean', { when: 'clean' })] },
+  planner: { key: 'planner', displayName: 'Plan', color: 'violet', inputs: [md('task', { required: true })], outputs: [md('plan', { when: 'always' })] },
+  implementer: { key: 'implementer', displayName: 'Build', color: 'blue', inputs: [md('plan', { required: true }), md('findings', { required: false, loop: true })], outputs: [md('change', { when: 'always' })] },
+  security: { key: 'security', displayName: 'Security check', color: 'amber', verdict: { filename: 's.json' }, inputs: [md('change', { required: true })], outputs: [md('findings', { when: 'blocking' }), md('clean', { when: 'clean' })] },
   reviewer: { key: 'reviewer', displayName: 'Review', color: 'green', verdict: { filename: 'r.json' }, inputs: [md('clean', { required: true })], outputs: [md('pass', { type: 'md', when: 'clean' })] },
 };
 const TPL = { id: 'wf_sec', name: 'Security-first review', version: 2, domain: 'coding',
@@ -36,6 +36,7 @@ window.mockGraph = (host, { width = 680, mode = 'static', select = '' } = {}) =>
   view.render(manifestTemplate(m), {});
   const b = view.bounds(24); if (b) { host.style.width = `${width}px`; host.style.height = `${Math.ceil(b.h * Math.min(1, width / b.w)) + 8}px`; }
   view.fitToWidth(width);
+  if (mode === 'static') host.querySelectorAll('.wbadge').forEach((w) => { w.textContent = w.textContent.replace(/≤\s*(\d+)/, 'sends fixes back, up to $1×'); });   // the loop in words (the skin)
   if (select) host.querySelector(`[data-node-id="${select}"]`)?.classList.add('is-picked');
   return view;
 };
