@@ -222,7 +222,7 @@
   // show, the search's lock note. `go`: where it lands; a captured page just opens.
   const F = (kind, label, where, go, o) => ({ kind, label, where, go, ...o });
   const FINDS = [
-    F('place', 'Runs', 'Place', 'runs'), F('place', 'Chats', 'Place', 'chat'), F('place', 'Schedules', 'Place', 'schedules', { min: 'advanced' }), F('place', 'Statistics', 'Place', 'stats', { min: 'advanced' }), F('place', 'Team metrics', 'Place', 'team-metrics', { min: 'expert' }),
+    F('place', 'Tasks', 'Place', 'runs', { words: 'runs' }), F('place', 'Chats', 'Place', 'chat'), F('place', 'Schedules', 'Place', 'schedules', { min: 'advanced' }), F('place', 'Insights', 'Place', 'insights', { min: 'advanced', words: 'statistics spend cost' }), F('place', 'Team metrics', 'Place', 'team-metrics', { min: 'expert' }),
     F('place', 'Workflows', 'Place', 'workflows'), F('place', 'Requirements', 'Place', 'requirements', { flag: 'requirements' }), F('place', 'Marketplace', 'Place', 'marketplace', { min: 'advanced' }), F('place', 'Projects', 'Place', 'projects'), F('place', 'Workspaces', 'Place', 'workspaces', { min: 'advanced' }),
     F('project', 'billing-api', 'Project', 'projects'), F('project', 'web-app', 'Project', 'projects'), F('project', 'worca-cc', 'Project', 'projects'), F('project', 'docs-site', 'Project', 'projects'),
     F('workspace', 'platform-core', 'Workspace', 'workspaces', { min: 'advanced' }),
@@ -242,7 +242,7 @@
     const raw = q.trim().toLowerCase();
     const m = raw.match(/^label:\s*(.*)$/), runs = runFinds();
     if (m) return [...FINDS.filter((f) => f.kind === 'label' && f.label.includes(m[1])), ...runs.filter((f) => (f.labels || []).some((l) => l.includes(m[1]))).map((f) => ({ ...f, flag: 'runLabels' }))];
-    return [...FINDS, ...runs].filter((f) => f.label.toLowerCase().includes(raw) || f.kind.startsWith(raw));
+    return [...FINDS, ...runs].filter((f) => f.label.toLowerCase().includes(raw) || f.kind.startsWith(raw) || f.words?.includes(raw));
   }
 
   // The tone of a share: '' under the warning line, warn at or over it, over when used up.

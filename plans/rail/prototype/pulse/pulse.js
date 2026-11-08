@@ -27,9 +27,11 @@ let ui = fresh('afternoon');
 let opening = '';
 const inCls = (k) => (opening === k ? ' is-in' : '');
 // Appearance is the viewer's, not the case's: it outlives a case change.
+const KEY_LOOK = 'worca-rail.appearance';
 let appearance = 'system';
 function applyAppearance(m) {
   appearance = m;
+  try { localStorage.setItem(KEY_LOOK, m); } catch { /* remembering is a nicety */ }
   if (m === 'system') document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; else document.documentElement.dataset.theme = m;
   document.querySelectorAll('[data-theme-pick]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.themePick === document.documentElement.dataset.theme)));
 }
@@ -412,7 +414,7 @@ function notifications() {
     + R.settingsRow({ name: 'Badge', changed: changedFrom('badge', 'Badge', (v) => BADGE.find((b) => b.id === v).text), sentence: `The tab title ${sp('badge', BADGE.find((b) => b.id === s.badge).text, BADGE.map((b) => ({ ...b, checked: b.id === s.badge })), 'What the count in the tab title counts')}` })
     + R.settingsRow({ name: 'Sound', changed: changedFrom('sound', 'Sound', (v) => R.SOUND_CHOICES.find((x) => x.id === v).text), sentence: `${sp('sound', R.SOUND_CHOICES.find((x) => x.id === s.sound).text, R.SOUND_CHOICES.map((x) => ({ ...x, checked: x.id === s.sound })), 'What makes a sound as it arrives. Never during away hours; a burst plays once')}` })
     + R.settingsRow({ name: 'Breathing', changed: changedFrom('attnFor', 'Breathing', (v) => ATTN_FOR.find((x) => x.id === v).text), sentence: `What needs you keeps breathing ${sp('attnFor', ATTN_FOR.find((x) => x.id === s.attnFor).text, ATTN_FOR.map((x) => ({ ...x, checked: x.id === s.attnFor })), 'How long it breathes once you open it, before it counts as seen')} once you open it` })
-    + R.settingsRow({ name: 'Chat', sentence: esc(M.chatWords(SM.workingChannels(ui.sv))), end: R.shows('advanced', R.prefs.mode()) ? quiet('Channels', { 'data-sset': 'ask', title: 'Their switches and allow-lists are in Settings › Chat' }) : '' });
+    + R.settingsRow({ name: 'Chat channels', sentence: esc(M.chatWords(SM.workingChannels(ui.sv))), end: R.shows('advanced', R.prefs.mode()) ? quiet('Channels', { 'data-sset': 'ask', title: 'Their switches and allow-lists are in Settings › Chat' }) : '' });
   const groups = groupsShown().map((g) => {
     const gs = s.groups[g.id], g0 = startOf().groups[g.id], open = ui.custom === g.id, nEx = Object.keys(gs.ex).length;
     const groupWhere = (ev) => (M.qualifies(gs.level, ev[2]) ? gs.where : 'pulse');
@@ -508,7 +510,7 @@ function searchHits() {
   if (q.startsWith('label:')) return M.find(q);
   // a place first; then the name's start, the name, the words. One thing, one row: what shares a name merges into the first.
   const score = (e) => (plain(e.label).startsWith(q) ? 0 : plain(e.label).includes(q) ? 1 : 2) + (e.kind === 'place' ? -1 : 0);
-  const set = settingsFinds().filter((e) => plain(e.label).includes(q) || plain(e.words).includes(q)).sort((a, b) => score(a) - score(b));
+  const set = settingsFinds().filter((e) => plain(e.label).includes(q) || plain(e.words).includes(q)), setByName = set.filter((e) => plain(e.label).includes(q));
   const seen = new Set();
   const own = [];
   if (SHELL && window.RailChats) for (const c of window.RailChats.data().chats) {
@@ -525,12 +527,14 @@ function searchHits() {
     page.push({ label: t.slice(0, 60), where: head && head !== t ? head : 'This page', area: 'On this page', el });
     if (page.length >= 5) break;
   }
-  const places = Object.entries(window.RailPlaces || {}).flatMap(([k, m]) => (m.search ? m.search(q).slice(0, 4).map((x) => ({ ...x, area: m.area || k.charAt(0).toUpperCase() + k.slice(1) })) : []));
-  const rest = [...own, ...places, ...M.find(q).slice(0, 14), ...set].sort((a, b) => score(a) - score(b));
-  return [...page, ...rest].filter((e) => { const k = plain(e.label) + (e.area || ''); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 14);
+  const places = Object.entries(window.RailPlaces || {}).flatMap(([k, m]) => (m.search ? m.search(q).slice(0, 4).map((x) => ({ ...x, area: m.area || k.charAt(0).toUpperCase() + k.slice(1), ...(SHELL?.needs(k) || {}) })) : []));
+  const named = [...own, ...places, ...M.find(q).slice(0, 14)];
+  // a setting found only by the words of its sentence counts when nothing is found by name
+  const rest = [...named, ...(named.length || setByName.length ? setByName : set)].sort((a, b) => score(a) - score(b));
+  return [...page, ...rest].filter((e) => { const k = `${e.sset ? 'set|' : ''}${plain(e.label)}`; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 14);
 }
 // One search, everything it finds under the area it belongs to.
-const AREAS = [['On this page', 'eye'], ['Marketplace', 'nav-marketplace'], ['Projects', 'nav-projects'], ['Workflows', 'nav-workflows'], ['Settings', 'set-general'], ['Chats', 'kind-chat'], ['Tasks', 'kind-task'], ['Schedules', 'kind-schedule'], ['Places', 'home'], ['Other', 'list']];
+const AREAS = [['On this page', 'eye'], ['Places', 'home'], ['Marketplace', 'nav-marketplace'], ['Projects', 'nav-projects'], ['Workflows', 'nav-workflows'], ['Requirements', 'nav-requirements'], ['Chats', 'kind-chat'], ['Tasks', 'kind-task'], ['Schedules', 'kind-schedule'], ['Settings', 'set-general'], ['Other', 'list']];
 const areaOf = (e) => e.area || (e.sset ? 'Settings' : e.kind === 'place' ? 'Places' : /^(Runs|Run )/.test(e.where || '') || e.run ? 'Tasks' : /^Chat/.test(e.where || '') ? 'Chats' : /^Schedule/.test(e.where || '') ? 'Schedules' : 'Other');
 function searchResults() {
   if (!plain(ui.q).trim()) return '';
@@ -539,7 +543,7 @@ function searchResults() {
   const RMM = window.RunCardModel;
   const markOf = (e, area) => {
     if (area === 'On this page') return R.icon('eye', 14);
-    if (['Marketplace', 'Projects', 'Workflows'].includes(area)) return R.icon(`nav-${area.toLowerCase()}`, 14);
+    if (['Marketplace', 'Projects', 'Workflows', 'Requirements'].includes(area)) return R.icon(`nav-${area.toLowerCase()}`, 14);
     if (area === 'Chats') return R.kindMark({ kind: 'chat', size: 16 });
     if (area === 'Tasks') { const cs = e.hash?.startsWith('run/') ? e.hash.slice(4) : e.case || e.run?.case; try { return R.kindMark({ kind: 'task', tone: cs ? R.markTone(R.runState(RMM.stateOf(cs))) : 'idle', stage: -1, size: 16 }); } catch { return R.kindMark({ kind: 'task', size: 16 }); } }
     if (area === 'Schedules') return R.kindMark({ kind: 'schedule', size: 16 });
@@ -583,15 +587,20 @@ function stepUnlock() {
   const lock = locksOf(u.e)[0];
   if (!lock) { ui.unlock = null; goTo(u.e); return; }
   u.strip = lock.min || '';
-  if (lock.flag && u.flag !== lock.flag) { u.flag = lock.flag; land({ sset: 'experimental', label: flagName(lock.flag) }); toast(`Turn on ${flagName(lock.flag)} to go on to ${u.e.label}`); }
+  if (lock.flag && u.flag !== lock.flag) { u.flag = lock.flag; land({ sset: 'experimental', label: flagName(lock.flag) }); }
 }
 function pickResult(v) {
-  if (v === 'ask') { const q = askWords(); closeOverlays(); if (SHELL) SHELL.go('chat'); toast(`Asks Chat: ${q}`); render(); return; }
+  if (v === 'ask') {   // rail.hand-to-chat: the words wait in the composer, about the page you asked from; nothing is sent yet
+    const q = askWords(), ctx = SHELL?.pageContext(); closeOverlays();
+    if (SHELL) window.RailConversation?.handOver({ text: q, about: ctx && ctx.view !== 'chat' ? { kind: 'Page', name: ctx.name } : undefined }); else toast(`Would ask Chat: ${q}`);
+    render(); return;
+  }
   const e = found[+v]; if (!e) return;
   if (e.el) { closeOverlays(); render(); R.land(e.el.closest('.pg-card, .list-row, .set-row, .rc, .place-head, section') || e.el); return; }   // on this page: it lands where it is
   if (e.hash) { closeOverlays(); if (e.chat) SHELL.openTask(e.hash.split('/')[1], e.chat); else SHELL.go(e.hash); render(); return; }
   const locked = locksOf(e).length;
   closeOverlays();
+  if (locked && SHELL && e.go && SHELL.locked(e.go.split('/')[0])) { goTo(e); return; }   // nav.locked: a locked place's own line and way on
   if (locked) { ui.unlock = { e }; stepUnlock(); render(); return; }
   goTo(e);
 }
@@ -599,6 +608,8 @@ const flagName = (key) => (SM.FLAGS || []).find((f) => f.key === key)?.name || M
 // A yes or no asked on a Settings page: under the top bar, on screen wherever the page is scrolled (docs/rail/actions.md).
 const settingsStrip = () => (ui.page !== 'settings' ? '' : SV.strip(ui.sv) || (ui.confirm === 'reset' ? R.confirmStrip({ text: 'Reset every group to its defaults? Your channels stay as they are.', yes: 'Reset' }) : ''));
 const unlockStrip = () => (ui.unlock?.strip ? R.confirmStrip({ text: `${ui.unlock.e.label} needs ${cap(ui.unlock.strip)}. Switch to ${cap(ui.unlock.strip)}?`, yes: 'Switch' }) : '');
+// nav.locked: handed to Labs, the way back stays on screen until the switch is on or you stay on your own
+const labsBack = () => (ui.unlock?.flag && !ui.unlock.strip && !ui.unlock.stay ? R.confirmStrip({ text: `${flagName(ui.unlock.flag)} is in Labs. Turn on its switch to go on, or go back.`, yes: 'Go back', no: 'Stay here' }) : '');
 document.addEventListener('input', (e) => { if (e.target.matches?.('[data-search]')) { ui.q = e.target.value; document.querySelector('[data-search-res]').innerHTML = searchResults(); fitSearch(); } });
 function fitSearch() { const m = document.querySelector('.rl-search-res'); if (!m) return; m.style.left = ''; const r = m.getBoundingClientRect(), vw = document.documentElement.clientWidth; if (r.right > vw - 16) m.style.left = `${vw - 16 - r.right}px`; }
 
@@ -632,7 +643,7 @@ function renderInShell() {
   document.getElementById('rail-pulse-slot').innerHTML = pulseButton();
   document.querySelector('#topnav-new')?.setAttribute('aria-expanded', String(!!ui.nr));
   document.getElementById('side-foot').innerHTML = sideFoot();
-  document.getElementById('rail-strip').innerHTML = unlockStrip() || settingsStrip();
+  document.getElementById('rail-strip').innerHTML = unlockStrip() || settingsStrip() || labsBack();
   // a reply in a chat you left: the dot on the Chat row and on Ask worca, until you open Chat
   const chatDot = !!C().chatUnread && !ui.chatSeen;
   for (const id of ['nav-chat-unread', 'topnav-ask-dot']) { const d = document.getElementById(id); if (d) { d.hidden = !chatDot; d.title = 'A reply in a chat you left'; } }
@@ -724,7 +735,7 @@ function fitMenus() {
 const toastEl = () => document.querySelector('body > .rc-toast');   // the page's own: the run page's sits in a route that may be hidden
 let toastTimer = 0, undo = null;   // { tip, run }: what the toast's Undo does
 function toast(text, canUndo) {
-  ui.toast = text; undo = canUndo || null; clearTimeout(toastTimer);
+  ui.toast = text; undo = typeof canUndo === 'function' ? { tip: 'Undo', run: canUndo } : canUndo || null; clearTimeout(toastTimer);   // a place's Undo is a function, or { tip, run }
   toastTimer = setTimeout(() => { ui.toast = ''; undo = null; const el = toastEl(); if (el) { el.classList.remove('is-on'); el.textContent = ''; } }, 5000);
 }
 
@@ -817,7 +828,7 @@ document.addEventListener('click', (e) => {
     if (a === 'restore') { ui.cleared = ui.cleared.filter((x) => !ids.includes(x)); toast(`Restored ${plural(ids.length, 'update')}`, { tip: 'Clears them again', run: () => { ui.cleared = ui.cleared.concat(ids); toast('Cleared again'); } }); }
     render(); return;
   }
-  if ((el = tg('[data-undo]'))) { const u = undo; if (u) u.run(); render(); return; }
+  if ((el = tg('[data-undo]'))) { const u = undo; if (u) { u.run(); if (undo === u) toast('Undone'); } render(); return; }
   if ((el = tg('[data-open]'))) {
     const key = el.dataset.open, u = C().updates.find((x) => x.id === key);
     if (u) {
@@ -839,6 +850,7 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-custom]'))) { ui.custom = ui.custom === el.dataset.custom ? '' : el.dataset.custom; render(); return; }
   if ((el = tg('[data-backgroup]'))) { ui.s.groups[el.dataset.backgroup].ex = {}; toast('Every event follows the group again'); render(); return; }
   if ((el = tg('[data-reset]'))) { ui.confirm = 'reset'; render(); return; }
+  if ((el = tg('[data-confirm]')) && !settingsStrip() && labsBack()) { if (el.dataset.confirm === 'yes') { ui.unlock = null; history.back(); } else ui.unlock.stay = true; render(); return; }
   if ((el = tg('[data-confirm]')) && ui.unlock?.strip) { if (el.dataset.confirm === 'yes') R.prefs.setMode(ui.unlock.strip); else { ui.unlock = null; render(); } return; }
   if ((el = tg('[data-confirm]')) && ui.sv.__confirm) { const say = SV.confirm(ui.sv, el.dataset.confirm === 'yes'); if (say) toast(say); render(); return; }
   if ((el = tg('[data-confirm]'))) { if (el.dataset.confirm === 'yes') { const d = ui.s.desktop; ui.s = freshSettings(C()); ui.s.desktop = d; ui.custom = ''; toast('Every group is back to its defaults'); } ui.confirm = ''; render(); return; }
@@ -933,6 +945,7 @@ setInterval(() => {
   render();
 }, R.USAGE_REFRESH_MS);
 document.querySelectorAll('[data-theme-pick]').forEach((b) => b.addEventListener('click', () => { applyAppearance(b.dataset.themePick); render(); }));
+try { const look = localStorage.getItem(KEY_LOOK); if (['system', 'light', 'dark'].includes(look)) applyAppearance(look); } catch { /* remembering is a nicety */ }
 if (SHELL) { ui.bg = readBg(); setBg(ui.bg); setBreathe(readBreathe()); }
 window.RailPulse = {
   refresh: () => render(),   // a task moved elsewhere (a card in a chat): the badge and the lists read it again
@@ -946,6 +959,7 @@ window.RailPulse = {
     if (landing) { const e = landing; landing = null; landRow(e); }
   },
   say: (text, canUndo) => { toast(text, canUndo); render(); },
+  hasSection: (id) => id === 'notifications' || !!SM.SECTIONS[id],
 
   // A place or a section above the mode or behind Labs: its one way on (the page's EmptyState).
   unlock: (lock, to) => {

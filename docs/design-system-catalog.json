@@ -187,9 +187,23 @@
       ],
       "rules": [
         "opened from ⋯ or ▾",
-        "danger last, after a rule"
+        "danger last, after a rule",
+        "a head and its options are one block; in columns they stay together, two columns at most (comp.menu-groups)"
       ],
       "example": "Terminal, Copy link, Archive"
+    },
+    {
+      "name": "ResetView",
+      "code": "ui/public/design-system/components/list-parts.mjs#resetViewTool",
+      "kind": "acting",
+      "needs": [
+        "a list's Reset view tool"
+      ],
+      "rules": [
+        "changed: says the default in the sentence's own words",
+        "at the default: off, and says why (list.reset-view)"
+      ],
+      "example": "Back to all tasks, from all projects, by date"
     },
     {
       "name": "ConfirmStrip",
@@ -573,7 +587,8 @@
         "a workflow told in plain words: its steps, its loop, how a task goes through it"
       ],
       "rules": [
-        "panel.workflow-story"
+        "panel.workflow-story",
+        "thing.one-telling"
       ],
       "example": "A workflow's page"
     },
@@ -997,6 +1012,18 @@
       "example": "No runs yet; Could not show the changes"
     },
     {
+      "name": "NotFound",
+      "code": "ui/public/design-system/components/empty-state.mjs#notFound",
+      "kind": "telling",
+      "needs": [
+        "an address that names nothing here"
+      ],
+      "rules": [
+        "says what was asked for, and one way on; never shows something else (nav.not-found)"
+      ],
+      "example": "There is no project called nope"
+    },
+    {
       "name": "KindMark",
       "code": "ui/public/design-system/components/kind-mark.mjs#kindMark",
       "kind": "telling",
@@ -1101,7 +1128,8 @@
       "code": "ui/public/design-system/components/kind-mark.mjs#stageBar",
       "kind": "telling",
       "needs": [
-        "a thing's main stages on a card"
+        "a thing's main stages on a card",
+        "the progress line alone (bare), where a stage list under it names the stages (rail.one-place)"
       ],
       "rules": [
         "list.kind-mark"
@@ -1392,6 +1420,7 @@
       "kind": "showing",
       "needs": [
         "a number over time drawn as lines, when you asked",
+        "one line for each top row of a breakdown, in ink shades",
         "the same number against the same weekdays before",
         "a running total against a budget"
       ],
@@ -1726,6 +1755,13 @@
       "code": "ui/public/design-system/components/list-parts.mjs#REPEATS",
       "needs": [
         "every schedule picker offers the same repeats: every day, weekday, a weekday, monthly, hourly, once"
+      ]
+    },
+    {
+      "name": "A schedule's times in words",
+      "code": "ui/public/design-system/components/list-parts.mjs#scheduleWords",
+      "needs": [
+        "a repeat and a time as one sentence, its next-run status, its row end and its section (small.schedule-words)"
       ]
     },
     {

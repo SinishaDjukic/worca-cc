@@ -199,7 +199,7 @@ function commentsHtml(path, d) {
   const lines = d.hunk.lines.filter(([k]) => k !== ' ').map(([, t]) => t.trim());
   const on = ui.commentOn && ui.commentOn.path === path ? ui.commentOn : null;
   const pick = on ? R.sentencePicker({ id: 'cmtline', text: on.line, items: lines.map((t) => ({ id: t, text: t, checked: t === on.line })), open: ui.menu === 'cmtline', tip: 'Which line it is on', chevron: svg('chevron', 12) }) : '';
-  const form = on ? `<div class="ch-comment"><p class="rl-sentence">On ${pick}</p>${R.field({ id: 'cmt-text', label: 'Comment', value: on.text || '', error: on.err || '', multiline: true, attrs: { 'data-key': 'cmt-text' } })}<div class="rl-tools">${R.button({ label: 'Add comment', kind: 'primary', attrs: { 'data-cmt': 'add', 'data-key': 'cmt-add' } })}${R.button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-cmt': 'cancel', 'data-key': 'cmt-cancel' } })}</div></div>`
+  const form = on ? `<div class="ch-comment"><div class="rl-sentence">On ${pick}</div>${R.field({ id: 'cmt-text', label: 'Comment', value: on.text || '', error: on.err || '', multiline: true, attrs: { 'data-key': 'cmt-text' } })}<div class="rl-tools">${R.button({ label: 'Add comment', kind: 'primary', attrs: { 'data-cmt': 'add', 'data-key': 'cmt-add' } })}${R.button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-cmt': 'cancel', 'data-key': 'cmt-cancel' } })}</div></div>`
     : R.button({ label: 'Comment on a line', kind: 'quiet', attrs: { 'data-cmt': 'open', 'data-path': path, 'data-key': 'cmt-open' } });
   return `${all.length ? `<ul class="ch-thread" aria-label="Comments">${all.map((c) => `<li><b>${esc(c.who)}</b> on <code>${esc(c.line)}</code><span class="ov-why">${esc(c.t)}</span></li>`).join('')}</ul>` : ''}${form}`;
 }
@@ -270,7 +270,7 @@ function logsHtml(v) {
   const q = L.q.trim().toLowerCase(); const summaries = R.prefs.flag('commandSummaries'); const raw = !summaries || L.raw;
   const lines = v.logs.filter((l) => fs.every((f) => { const want = L[f.state || f.key]; return want === 'all' || String(l[f.key]) === want; }) && (!q || (l.sum + ' ' + l.raw).toLowerCase().includes(q)));
   const expert = R.runPartShows('logFilters', R.prefs.mode());
-  const sentence = expert ? `<p class="rl-sentence">Showing ${fs.map((f) => { const cur = L[f.state || f.key]; return R.sentencePicker({ id: f.id, text: cur === 'all' ? f.all : (f.key === 'cycle' ? 'cycle ' + cur : cur), open: ui.menu === f.id, chevron: svg('chevron', 12), items: [{ id: 'all', text: f.all, checked: cur === 'all' }].concat(f.vals.map((x) => ({ id: x, text: f.key === 'cycle' ? 'cycle ' + x : x, checked: cur === x }))) }); }).join(' · ')}</p>` : '';
+  const sentence = expert ? `<div class="rl-sentence">Showing ${fs.map((f) => { const cur = L[f.state || f.key]; return R.sentencePicker({ id: f.id, text: cur === 'all' ? f.all : (f.key === 'cycle' ? 'cycle ' + cur : cur), open: ui.menu === f.id, chevron: svg('chevron', 12), items: [{ id: 'all', text: f.all, checked: cur === 'all' }].concat(f.vals.map((x) => ({ id: x, text: f.key === 'cycle' ? 'cycle ' + x : x, checked: cur === x }))) }); }).join(' · ')}</div>` : '';
   const list = lines.length ? R.logLines({ label: 'Log', lines: lines.map((l) => ({ t: l.t, from: l.step, lvl: l.lvl, text: raw ? l.raw : l.sum })) }) : R.emptyState({ title: 'Nothing in the log matches', text: 'Change the filters or the search.' });
   return `<section class="rtab rl-sec" id="act-logs"><h2 class="rtab-h">Logs <span class="n">${lines.length} of ${v.logs.length} lines</span></h2>${sentence}
     <div class="rl-tools">${R.field({ id: 'log-q', label: 'Search the log', value: L.q, attrs: { 'data-key': 'log-q' } })}${summaries ? R.segmented({ label: 'Show', hook: 'logview', items: [{ id: 'sum', label: 'Summaries', pressed: !L.raw }, { id: 'raw', label: 'Raw', pressed: L.raw }] }) : ''}${v.bar.stop ? R.checkbox({ label: 'Auto-scroll', checked: L.follow, attrs: { id: 'log-follow', 'data-key': 'log-follow' } }) : ''}${R.button({ label: 'Copy', kind: 'quiet', attrs: { 'data-key': 'log-copy', 'data-say': `Copied ${lines.length} log lines` } })}</div>${list}</section>`;
@@ -283,7 +283,7 @@ function sessionsHtml(v) {
   if (!R.runPartShows('sessions', R.prefs.mode()) || !v.sessions.length) return '';
   const k = Math.min(ui.session, v.sessions.length - 1); const x = v.sessions[k];
   return `<section class="rtab rl-sec"><h2 class="rtab-h">Sessions <span class="n">${v.sessions.length}</span></h2>${R.table({ label: 'Sessions', columns: [{ id: 'name', label: 'Session' }, { id: 'turns', label: 'Turns', num: true, narrow: false }, { id: 'in', label: 'In', num: true, narrow: false }, { id: 'out', label: 'Out', num: true, narrow: false }, { id: 'cache', label: 'Cache', num: true, narrow: false }, { id: 'cost', label: 'Cost', num: true }], rows: v.sessions })}
-    <p class="rl-sentence">Session ${R.sentencePicker({ id: 'session', text: x.name, open: ui.menu === 'session', chevron: svg('chevron', 12), items: v.sessions.map((y, i) => ({ id: String(i), text: y.name, checked: i === k })) })}</p>
+    <div class="rl-sentence">Session ${R.sentencePicker({ id: 'session', text: x.name, open: ui.menu === 'session', chevron: svg('chevron', 12), items: v.sessions.map((y, i) => ({ id: String(i), text: y.name, checked: i === k })) })}</div>
     <div class="rl-tools">${R.button({ label: 'Open the transcript', kind: 'quiet', attrs: { 'data-transcript': k, 'data-key': 'session-open' } })}${R.button({ label: 'Copy its id', kind: 'quiet', attrs: { 'data-say': 'Copied ' + x.id, 'data-key': 'session-copy' } })}</div></section>`;
 }
 function usageHtml(v) {
@@ -411,7 +411,7 @@ function render() {
     ${SHELL ? '' : R.tabs({ label: 'Run detail', controls: 'rtab-panel', cls: 'rc-tabs', items: v.tabs.map((t) => ({ id: t.id, label: t.l, count: t.n, selected: t.sel })) })}
     ${prDialogHtml(v)}${viewDialogHtml(v)}${formDialogHtml()}
     ${R.toast({ text: ui.toast || '' })}
-    ${SHELL && PART_STAGE[ui.tab] && v.stages.some((st) => st.key === PART_STAGE[ui.tab]) ? '' : `<div class="rtab-panel" role="tabpanel" id="rtab-panel" aria-labelledby="tab-${sel}" tabindex="0">${panelHtml(v)}</div>`}
+    ${SHELL && PART_STAGE[ui.tab] && v.stages.some((st) => st.key === PART_STAGE[ui.tab]) ? '' : `<div class="rtab-panel" role="tabpanel" id="rtab-panel" aria-labelledby="tab-${sel}" tabindex="-1">${panelHtml(v)}</div>`}
     ${ui.crash ? R.errorToast({ title: 'Something went wrong', text: 'Worca hit an error it did not expect. Your runs keep going.', icon: svg('alert', 15), count: ui.crash.n,
     actions: R.button({ label: 'Reload', attrs: { 'data-crash': 'reload', 'data-key': 'crash-reload' } }) + R.button({ label: 'Copy details', kind: 'quiet', attrs: { 'data-say': DETAILS, 'data-key': 'crash-details' } }),
     close: R.button({ label: 'Close', kind: 'quiet', iconOnly: true, title: false, icon: svg('x', 14), attrs: { 'data-crash': 'close', 'data-key': 'crash-close' } }) }) : ''}
@@ -454,7 +454,7 @@ function stageStream(v, open) {
     const live = st.live, done = st.cells.every((c) => /is-(done|merged)/.test(c)), next = st.cells.every((c) => /is-next/.test(c));
     const mark = live ? R.kindMark({ kind: 'task', tone: R.markTone(v), stage: -1, size: 16 }) : svg(done ? 'check' : 'now', 14);
     const parts = Object.entries(PART_STAGE).filter(([, k]) => k === st.key).map(([id]) => partBtn(id)).join('');
-    return R.stageLine({ mark, label: st.label, meta: st.meta || '', parts, next, attrs: { 'data-stage-line': st.key }, body: (st.selected ? `<div class="rc-zone" role="tabpanel" id="stage-panel" aria-labelledby="st-${esc(st.key)}">${open}</div>` : '') + (partAt === st.key ? `<div class="rtab-panel stage-part" id="rtab-panel" tabindex="0">${panelHtml(v)}</div>` : '') });
+    return R.stageLine({ mark, label: st.label, meta: st.meta || '', parts, next, attrs: { 'data-stage-line': st.key }, body: (st.selected ? `<div class="rc-zone" role="tabpanel" id="stage-panel" aria-labelledby="st-${esc(st.key)}">${open}</div>` : '') + (partAt === st.key ? `<div class="rtab-panel stage-part" id="rtab-panel" tabindex="-1">${panelHtml(v)}</div>` : '') });
   };
   // what has no stage of its own (a group's runs) sits after the stages, as links
   const rest = v.tabs.slice(1).filter((t) => !(PART_STAGE[t.id] && v.stages.some((st) => st.key === PART_STAGE[t.id]))).map((t) => partBtn(t.id)).join('');
@@ -516,7 +516,7 @@ const AWAY = [{ id: 'away:auto', text: 'As set up', help: 'Follows Settings and 
 function stageBarOf(v) {
   const reach = v.stages.reduce((n, st, i) => (st.cells.some((c) => !/is-next/.test(c)) ? i : n), 0);
   const cells = v.stages[reach]?.cells || [], k = cells.filter((c) => !/is-next/.test(c)).length;   // its steps: those begun, of all
-  return R.stageBar({ labels: v.stages.map((st) => st.label), stage: reach, tone: R.markTone(v), step: cells.length > 1 ? [Math.max(1, k), cells.length] : null });
+  return R.stageBar({ labels: v.stages.map((st) => st.label), bare: true, stage: reach, tone: R.markTone(v), step: cells.length > 1 ? [Math.max(1, k), cells.length] : null });   // the stage list right under it names them (rail.one-place)
 }
 function moreItems(v) {
   const group = !!v.kind; const live = v.bar.stop;
@@ -732,7 +732,7 @@ function prDialogHtml(v) {
     const eye = R.previewToggle({ on: f.mode === 'preview', attrs: { 'data-pdmode': f.mode === 'preview' ? 'write' : 'preview', 'data-pi': i, 'data-key': 'pd-eye' + sfx } });
     const descField = f.mode === 'preview' ? R.suggestionPreview({ writing: f.gen, html: f.desc ? md(f.desc) : '<p class="rtab-dim">Nothing to preview yet.</p>' })
       : R.suggestionField({ id: 'pd-desc' + sfx, value: f.desc, rows: 7, placeholder: 'Optional: empty uses the title', writingPlaceholder: 'Writing from the run: what it did, its changes, how it was checked…', writing: f.gen, attrs: { 'data-key': 'pd-desc' + sfx } });
-    return `<div class="pd-f"><span class="pd-lab"><label for="pd-title${sfx}">Title</label>${f.titleSuggested && !f.genTitle ? sug : ''}</span>${titleField}${f.errTitle ? fail(f, i, sfx, 'gentitle') : ''}</div>
+    return `<div class="pd-f"><span class="pd-lab"><label for="pd-title${sfx}">Title</label>${f.titleSuggested && !f.genTitle ? sug : ''}</span>${titleField}${f.errTitle ? fail(f, i, sfx, 'gentitle') : ''}${f.errEmpty && !f.title.trim() ? '<span class="pd-hint is-warn" role="alert">A PR needs a title</span>' : ''}</div>
     <div class="pd-f"><span class="pd-lab"><label for="pd-desc${sfx}">Description</label>${f.descSuggested && !f.gen ? sug : ''}${f.gen ? stop : sparkle('gen', 'Write it from the run', 'Write the description from the run')}${eye}</span>${descField}${f.errDesc ? fail(f, i, sfx, 'gen') : ''}</div>`;
   };
   // A stack, reviewed by exception: the rows are the stack shown once (order, size, base); Worca writes every title
@@ -892,12 +892,13 @@ document.addEventListener('click', (e) => {
     else { ui.dialog = ''; ui.changesDraft = false; pendingFocus = 'act-main'; }
   }
   else if (d.pd === 'try') { ui.copy = true; toast('Checked out on this machine; the PR waits for you'); pendingFocus = 'pd-title'; }
-  else if (d.pd === 'ok') { const f = ui.dialogF; const pr = ui.pr; ui.pr.gen = false; follow(Object.assign({}, f, { dialog: '', fromDialog: true, say: f.say + (pr.draft ? ' as a draft' : '') + (pr.watch ? '; Worca watches it' : '') }), ui.dialogLabel); }
+  else if (d.pd === 'ok' && !ui.pr.genTitle && !(ui.dialogLabel === 'Create PR' ? ui.pr.title : 'x').trim()) { ui.pr.errEmpty = true; pendingFocus = 'pd-title'; }
+  else if (d.pd === 'ok') { const f = ui.dialogF; const pr = ui.pr; ui.pr.errEmpty = false; ui.pr.gen = false; follow(Object.assign({}, f, { dialog: '', fromDialog: true, say: f.say + (pr.draft ? ' as a draft' : '') + (pr.watch ? '; Worca watches it' : '') }), ui.dialogLabel); }
   else if (d.pd === 'cancel') { ui.dialog = ''; ui.busy = null; ui.pr.gen = false; pendingFocus = 'act-main'; }
   else if (d.pd === 'gen') { const i = +(d.pi ?? -1); generate(i < 0 ? ui.pr : ui.pr.prs[i], i); pendingFocus = 'pd-stop' + (i < 0 ? '' : '-' + i); }
   else if (d.pd === 'gentitle') { const i = +(d.pi ?? -1); generateTitle(i < 0 ? ui.pr : ui.pr.prs[i], i); pendingFocus = 'pd-gentitle' + (i < 0 ? '' : '-' + i); }
   else if (d.prrow !== undefined) { const f = ui.pr.prs[+d.prrow]; f.open = !f.open; pendingFocus = t.dataset.key; }
-  else if (d.pd === 'stop') { const i = +(d.pi ?? -1); (i < 0 ? ui.pr : ui.pr.prs[i]).gen = false; pendingFocus = 'pd-gen' + (i < 0 ? '' : '-' + i); toast('Stopped writing'); }
+  else if (d.pd === 'stop') { const i = +(d.pi ?? -1), w = i < 0 ? ui.pr : ui.pr.prs[i]; w.gen = false; w.genTitle = false; pendingFocus = 'pd-gen' + (i < 0 ? '' : '-' + i); toast('Stopped writing'); }
   else if (d.pdmode) { const i = +(d.pi ?? -1); (i < 0 ? ui.pr : ui.pr.prs[i]).mode = d.pdmode; pendingFocus = t.dataset.key; }
   else if (d.confirm) { if (d.confirm === 'yes') { ui.confirm.ok = true; follow(ui.confirm.f, ui.confirm.label); } else { ui.confirm = null; pendingFocus = 'act-main'; } }
   else if (d.run === 'stop') follow(M.runFlow.stop, 'Stop the run');

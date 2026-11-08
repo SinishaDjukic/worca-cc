@@ -715,7 +715,7 @@
     const facts = Object.fromEntries(RUN_FACTS.map((k) => [k, raw[k]]));
     if (t.runCases) return Object.assign({}, t, { title: raw.title });   // a plan cut into runs is a group from here on
     const held = /^(paused-you|paused-at|paused)$/.test(t.state || t.id);
-    return Object.assign({}, t, facts, { title: TITLES[raw.id] || raw.title, at: f.value && (t.state || t.id) === 'paused-at' ? f.value : raw.at, stages: movedSteps(raw, t, f), movedFrom: raw.id, figs: f.step === 'fresh' ? t.figs : raw.figs, spent: raw.spent,
+    return Object.assign({}, t, facts, { title: TITLES[raw.id] || raw.title || NAMELESS, at: f.value && (t.state || t.id) === 'paused-at' ? f.value : raw.at, stages: movedSteps(raw, t, f), movedFrom: raw.id, figs: f.step === 'fresh' ? t.figs : raw.figs, spent: raw.spent,
       resumeTo: held ? (raw.resumeTo || (LIVE_STATES.test(raw.state || raw.id) ? raw : undefined)) : undefined, restoreTo: to === 'archived' ? raw : undefined });
   }
   // Where a case is now: its own fixture, or what actions made of it.
@@ -822,7 +822,7 @@
     return {
       bar: { pause: live && c.word !== 'Paused' && c.sym !== 'q', stop: live, more: true, scope: runStages.length ? c.kind.toLowerCase() : '' },
       id: c.id, has: { changes: hasChanges, started, worktree: !gone && started && !!(c.folder || (c.branch === undefined || c.branch)) , try: hasChanges && !gone && !c.noTry && !c.mock, report: !gone && !c.mock && (started || /^Failed$/.test(c.word)), logsGone }, gone,
-      title: TITLES[c.id] || c.title || 'Unified page navigation: one head, breadcrumb in the top',
+      title: (c.movedFrom && c.title) || TITLES[c.id] || c.title || NAMELESS,   // a task that moved keeps its own name, not the name of whatever else sits in that state
       kind: runStages.length && c.kind ? c.kind : '',   // the stepper already counts the runs
       crumbs, pager: g ? { index: par.index, n: g.stages.filter((x) => x.run).length, prev: sibling(par.index - 1), next: sibling(par.index + 1), group: g.id } : null,
       // The place line: where the code lives and where it goes, the PR once it exists. Each part once on the page.
@@ -907,7 +907,7 @@
   const ADD = [{ kind: 'label', menu: 'Label', help: 'Find and filter runs by it in the Runs list', placeholder: 'Type or pick a label', suggest: ['ui', 'hotfix', 'needs demo'] },
     { kind: 'tag', menu: 'Cost tag', help: 'Splits this run’s cost in Statistics', placeholder: 'key: value', suggest: ['team: web', 'team: api', 'client: acme'] },
     { kind: 'group', menu: 'Add to group', help: 'Tracks it with related runs on one page', placeholder: 'New group name', suggest: ['Navigation', 'Billing export', 'Onboarding'] }];
-  const TITLES = {};
+  const TITLES = {}, NAMELESS = 'Unified page navigation: one head, breadcrumb in the top';
   // A host page may name a case's run as the row that opens it (the one Worca's Runs list); empty here.
   // The case picker's groups, by what you check.
   const CASE_GROUPS = ['Running', NEEDS_YOU, 'Paused', 'Waiting', 'Pull requests', 'Ready', 'Done', 'Ended', 'Kinds', 'Shaper', 'Groups'];

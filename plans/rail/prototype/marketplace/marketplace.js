@@ -16,12 +16,21 @@
       { id: 'telegram-chat', name: 'Telegram', brand: 'brand-telegram', ver: '0.1.0', kind: 'Chat channels', market: 'official', what: 'Notices and answers from Telegram.', adds: ['A chat channel: Telegram'], asks: ['A Telegram bot token'], installed: true },
       { id: 'cloudflare-mcp', name: 'Cloudflare', brand: 'brand-cloudflare', ver: '0.1.0', kind: 'MCP servers', market: 'official', what: 'The whole Cloudflare API and its docs, for your tasks.', adds: ['2 MCP servers'], asks: ['A Cloudflare API token'], installed: false },
       { id: 'notion-mcp', name: 'Notion', brand: 'brand-notion', ver: '0.1.0', kind: 'MCP servers', market: 'official', what: 'Search, read and edit Notion pages and databases.', adds: ['An MCP server: Notion'], asks: ['A Notion integration token'], installed: true },
+      { id: 'azure-source', name: 'Azure Boards', ver: '0.1.0', kind: 'Task sources', market: 'official', what: 'Pull tasks from Azure Boards work items.', adds: ['A task source: Azure Boards'], asks: ['An Azure DevOps token'], installed: true },
+      { id: 'discord-chat', name: 'Discord', ver: '0.1.0', kind: 'Chat channels', market: 'official', what: 'Notices and answers from Discord.', adds: ['A chat channel: Discord'], asks: ['A Discord bot token'], installed: true },
+      { id: 'teams-chat', name: 'Teams', ver: '0.1.0', kind: 'Chat channels', market: 'official', what: 'Notices and answers from Microsoft Teams.', adds: ['A chat channel: Teams'], asks: ['A Teams bot token'], installed: true },
+      { id: 'sentry-mcp', name: 'Sentry', ver: '0.1.0', kind: 'MCP servers', market: 'official', what: 'Read issues and traces from Sentry, for your tasks.', adds: ['An MCP server: Sentry'], asks: ['A Sentry auth token'], installed: false },
       { id: 'review-pack', name: 'Review pack', ver: '1.0.0', kind: 'Agents', market: 'official', what: 'A security and a performance reviewer, ready for your workflows.', adds: ['2 agents'], asks: [], installed: false },
       { id: 'promo-video', name: 'Promo video', ver: '0.3.0', kind: 'Workflows', market: 'official', what: 'From a feature to a 30-second video: script, shots, cut.', adds: ['A workflow and 3 agents'], asks: [], installed: false },
     ],
   };
   const view = { sort: 'used' };
-  let current = '', form = null, ctl = null, home = null, bar = null, page = null, menu = '';
+  let current = '', form = null, ctl = null, home = null, bar = null, page = null, menu = '', addVal = '', addErr = '';
+  const srcKey = (s) => s.trim().replace(/^https?:\/\/(www\.)?/, '').replace(/^github\.com\//, '').replace(/\.git$/, '').replace(/\/$/, '').toLowerCase();
+  const countOf = (m) => data.plugins.filter((p) => p.market === m.id).length;
+  const plugins = (n) => `${n} ${n === 1 ? 'plugin' : 'plugins'}`;
+  // the one reading of a source you typed: why it cannot be added, or ''
+  const addProblem = (v) => (!v ? 'Say which repository or folder first.' : v.length > 200 ? 'That is too long for a repository or a folder.' : !/^(https?:\/\/\S+|[.~]{0,2}\/\S*|[\w.-]+\/[\w.-]+)$/.test(v) ? 'Use owner/repo, a GitHub URL or a folder.' : data.markets.some((m) => srcKey(m.url) === srcKey(v)) ? 'That source is already added.' : '');
   const stOf = (p) => (p.update ? { word: 'Update available', tone: 'act', act: `Update to ${p.update}` } : p.installed ? { word: 'Installed', tone: 'ok', act: 'Set it up' } : { word: 'Not installed', tone: 'idle', act: 'Install' });
   const SHELF_ICON = ['track', 'kind-chat', 'plug', 'kind-workflow'];
   const SORTS = { used: 'most used', new: 'newest', az: 'A–Z' };
@@ -42,9 +51,10 @@
   }
   function pageHtml(p) {
     const st = stOf(p);
-    const head = R.placeHead({ title: nameOf(p), facts: esc(`${p.kind.replace(/s$/, '')} · ${p.id} ${p.ver} · ${marketOf(p)}`), mark: markOf(p), word: st.word, why: p.what,
-      action: R.button({ label: st.act, kind: p.installed && !p.update ? '' : 'primary', attrs: { 'data-mk-step': '' } }),
-      menu: R.moreMenu({ id: 'mk-more', label: `More for ${p.id}`, icon: R.icon('more', 16), open: menu === 'mk-more', items: [{ id: 'source', text: 'View its source', help: `${data.markets[0].url} · ${data.markets[0].sha}` }, ...(p.installed ? [{ sep: true }, { id: 'remove', text: 'Remove…', danger: true, help: 'Asks first; says what stops working' }] : [])] }) });
+    const asking = form?.id === p.id && form.k === 'install';   // the form below holds the one Install
+    const head = R.placeHead({ title: nameOf(p), facts: esc(`${p.kind.replace(/s$/, '')} · ${p.id} ${p.ver}`), mark: markOf(p), word: st.word, why: p.what,
+      action: asking ? '' : R.button({ label: st.act, kind: p.installed && !p.update ? '' : 'primary', attrs: { 'data-mk-step': '' } }),
+      menu: R.moreMenu({ id: 'mk-more', label: `More for ${p.id}`, icon: R.icon('more', 16), open: menu === 'mk-more', items: [{ id: 'source', text: 'View its source', help: 'Would open it on GitHub' }, ...(p.installed ? [{ sep: true }, { id: 'remove', text: 'Remove…', danger: true, help: 'Asks first; says what stops working' }] : [])] }) });
     const install = form?.id === p.id && form.k === 'install' ? `<div class="card-form">${R.confirmForm({ form: 'install', id: 'mk-install-t', text: `Install ${p.id} ${p.ver}? It adds ${p.adds.map((a) => a.charAt(0).toLowerCase() + a.slice(1)).join(' and ')}${p.asks.length ? `, and asks for ${p.asks.map((a) => a.charAt(0).toLowerCase() + a.slice(1)).join(' and ')}: you set ${p.asks.length > 1 ? 'them' : 'it'} up in Settings after` : ''}.`, body: R.confirmActions({ yes: 'Install' }) })}</div>`
       : form?.id === p.id && form.k === 'remove' ? R.confirmStrip({ text: `Remove ${p.id}? What it adds stops working; its settings and secrets stay until you purge them.`, yes: 'Remove', danger: true }) : '';
     const rows = R.settingsSection({ title: 'What it adds', rows: p.adds.map((a) => R.settingsRow({ name: 'Adds', sentence: esc(a) })).join('') })
@@ -63,10 +73,10 @@
   }
   function wayHtml(key) {
     const w = wayOf(key); if (!w) return homeHtml();
-    const sort = view.sort || 'used', list = w.list.sort((a, b) => (sort === 'az' ? nameOf(a).localeCompare(nameOf(b)) : sort === 'new' ? b.ver.localeCompare(a.ver) : (b.installed ? 1 : 0) - (a.installed ? 1 : 0))), n = shown[key] || 6;
+    const sort = view.sort || 'used', list = w.list.sort((a, b) => (sort === 'az' ? nameOf(a).localeCompare(nameOf(b)) : sort === 'new' ? b.ver.localeCompare(a.ver, undefined, { numeric: true }) : (b.installed ? 1 : 0) - (a.installed ? 1 : 0))), n = shown[key] || 6;
     const ups = key === 'updates' && list.length ? R.button({ label: list.length === 1 ? `Update ${nameOf(list[0])}` : `Update all ${list.length}`, attrs: { 'data-mk-update-all': '' } }) : '';
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ title: w.title, facts: esc(`${list.length} ${list.length === 1 ? 'plugin' : 'plugins'} · ${w.meta}`), ...(ups ? { mark: R.kindMark({ kind: 'plugin', icon: 'refresh', tone: 'act' }), word: `${list.length} to update`, why: 'Each asks for nothing new', action: ups } : {}) })}
-      <p class="convo-head">Showing ${R.sentencePicker({ id: 'mk-sort', text: SORTS[sort], items: Object.entries(SORTS).map(([id, text]) => ({ id, text, checked: id === sort })), open: menu === 'mk-sort', chevron: R.icon('chevron', 10) })} first</p>
+      <div class="convo-head">Showing ${R.sentencePicker({ id: 'mk-sort', text: SORTS[sort], items: Object.entries(SORTS).map(([id, text]) => ({ id, text, checked: id === sort })), open: menu === 'mk-sort', chevron: R.icon('chevron', 10) })} first</div>
       ${list.length ? `<div class="pg-grid">${list.slice(0, n).map((p) => cardOf(p, w.why)).join('')}</div>${list.length > n ? `<div style="margin:12px 0 0">${R.button({ label: `Show ${list.length - n} more`, kind: 'quiet', attrs: { 'data-mk-more': key } })}</div>` : ''}` : R.emptyState({ title: key === 'updates' ? 'Everything is up to date.' : 'Nothing here yet.' })}
     </div></div></div>`;
   }
@@ -77,7 +87,7 @@
       ...(ups.length ? { mark: R.kindMark({ kind: 'plugin', tone: 'act' }), word: `${ups.length} ${ups.length === 1 ? 'update' : 'updates'}`, why: `${ups.map((p) => `${nameOf(p)} ${p.update}`).join(', ')} asks for nothing new`, action: R.button({ label: ups.length === 1 ? `Update ${nameOf(ups[0])}` : 'Update all', attrs: { 'data-mk-update-all': '' } }) } : {}) })}
       ${shelf('For you', 'Worca suggests these from how you work; each says why.', forYou, 'pg-for')}
       ${SHELVES.map(([t, meta, kinds]) => shelf(t, meta, rest.filter((p) => kinds.includes(p.kind)))).join('')}
-      ${R.settingsSection({ title: 'Where plugins come from', rows: m.map((x) => R.settingsRow({ name: x.name, sentence: esc(`${x.url} · synced ${x.synced} · ${x.sha}`), end: R.button({ label: 'Sync', kind: 'quiet', attrs: { 'data-mk-sync': x.id } }) })).join('') + R.settingsRow({ name: 'Add one', sentence: R.field({ id: 'mk-add', label: 'Repository or folder', quietLabel: true, placeholder: 'owner/repo, a GitHub URL or a folder', attrs: { 'data-mk-add': '' } }), end: R.button({ label: 'Add', attrs: { 'data-mk-addgo': '' } }) }) })}</div></div></div>`;
+      ${R.settingsSection({ title: 'Where plugins come from', rows: m.map((x) => R.settingsRow({ name: x.name, sentence: esc(`${x.url} · synced ${x.synced} · ${x.sha}`), end: R.button({ label: 'Sync', kind: 'quiet', attrs: { 'data-mk-sync': x.id } }) })).join('') + R.settingsRow({ name: 'Add one', sentence: R.field({ id: 'mk-add', label: 'Repository or folder', quietLabel: true, placeholder: 'owner/repo, a GitHub URL or a folder', value: addVal, error: addErr, attrs: { 'data-mk-add': '' } }), end: R.button({ label: 'Add', attrs: { 'data-mk-addgo': '' } }) }) })}</div></div></div>`;
   }
   const here = () => (location.hash.slice(1) || '').split('/')[0] === 'marketplace';   // the page area is shared by every place: draw only while this one is open
   function draw() {
@@ -98,23 +108,29 @@
     page.addEventListener('click', (e) => {
       if (!here()) return;   /* another place's page is showing */
       const on = (q) => e.target.closest(q); let hit; const p = data.plugins.find((x) => x.id === current);
-      if ((hit = on('[data-mk-sync]'))) { data.markets.find((m) => m.id === hit.dataset.mkSync).synced = 'just now'; draw(); say('Synced: 6 plugins, nothing new'); return; }
+      if ((hit = on('[data-mk-sync]'))) { const m = data.markets.find((y) => y.id === hit.dataset.mkSync); m.synced = 'just now'; draw(); say(`Synced ${m.name}: ${plugins(countOf(m))}, nothing new`); return; }
       if ((hit = on('[data-mk-more]'))) { shown[hit.dataset.mkMore] = Infinity; draw(); return; }
       if ((hit = on('[data-menu-pick^="mk-sort|"]'))) { view.sort = hit.dataset.menuPick.split('|')[1]; menu = ''; draw(); return; }
       if (!p && (hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); return; }
       if ((hit = on('[data-mk-card]'))) { step(data.plugins.find((x) => x.id === hit.dataset.mkCard)); return; }
       if ((hit = on('[data-mk-open]'))) { window.RailShell.go(`marketplace/${hit.dataset.mkOpen}`); return; }
       if (on('[data-mk-update-all]')) { const ups = data.plugins.filter((x) => x.update); ups.forEach((x) => { x.ver = x.update; delete x.update; }); draw(); say(`Updated ${ups.map(nameOf).join(', ')}`); return; }
-      if (on('[data-mk-addgo]')) { const v = page.querySelector('[data-mk-add]')?.value.trim(); if (!v) { page.querySelector('[data-mk-add]')?.focus(); say('Say which repository or folder first'); return; } data.markets.push({ id: v, name: v.split('/').pop(), url: v, branch: 'main', sha: 'a1b2c3d', synced: 'just now' }); draw(); say(`Added ${v}: its plugins are in the list`); return; }
+      if (on('[data-mk-addgo]')) { const v = page.querySelector('[data-mk-add]')?.value.trim() || ''; addErr = addProblem(v); addVal = addErr ? v : ''; if (addErr) { draw(); page.querySelector('[data-mk-add]')?.focus(); return; } data.markets.push({ id: `s${data.markets.length}`, name: srcKey(v) === v.toLowerCase() ? v : v.replace(/^https?:\/\/(www\.)?(github\.com\/)?/, '').replace(/\.git$/, '').replace(/\/$/, ''), url: v, branch: 'main', sha: 'a1b2c3d', synced: 'just now' }); draw(); say(`Added ${data.markets[data.markets.length - 1].name}: no plugins from it yet`); return; }
       if (!p || !page.querySelector('#mk-dock')) return;
       if (on('[data-mk-step]')) { step(p); return; }
       if (on('[data-mk-setup]')) { window.RailShell.go('settings/plugins'); return; }
       if ((hit = on('[data-confirm]'))) { const yes = hit.dataset.confirm === 'yes', was = form?.k; form = null; if (yes && was === 'install') { p.installed = true; say(`Installed ${p.id}${p.asks.length ? ': set it up in Settings' : ''}`); } if (yes && was === 'remove') { p.installed = false; delete p.update; say(`Removed ${p.id}`); } draw(); return; }
-      if ((hit = on('[data-menu-pick]'))) { const [, v] = hit.dataset.menuPick.split('|'); menu = ''; if (v === 'remove') form = { k: 'remove', id: p.id }; else say(`${p.id}: ${data.markets[0].url} at ${data.markets[0].sha}`); draw(); return; }
+      if ((hit = on('[data-menu-pick]'))) { const [, v] = hit.dataset.menuPick.split('|'); menu = ''; if (v === 'remove') form = { k: 'remove', id: p.id }; else say(`Would open ${data.markets[0].url} at ${data.markets[0].sha} on GitHub`); draw(); return; }
       if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
     });
     R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .rc-pop, #route-place .spick', back: () => null, close: () => { menu = ''; }, paint: draw });
   }
   window.RailPlaces = window.RailPlaces || {};
-  window.RailPlaces.marketplace = { search: (q) => data.plugins.filter((p) => `${nameOf(p)} ${p.id} ${p.what}`.toLowerCase().includes(q)).map((p) => ({ label: nameOf(p), where: `${p.kind.replace(/s$/, '')}${p.installed ? ' · installed' : ''}`, hash: `marketplace/${p.id}` })), sample: 'slack-chat', show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) menu = ''; if (form && form.id !== arg) form = null; current = arg || ''; draw(); } };
+  const byName = (name) => data.plugins.find((p) => nameOf(p) === name);
+  window.RailPlaces.marketplace = { has: (a) => a.startsWith('~') || data.plugins.some((p) => p.id === a),
+    // the one truth of what is installed: Settings › Plugins and Workflows read it (undefined: not a plugin of this list)
+    isInstalled: (name) => byName(name)?.installed, setInstalled: (name, on) => { const p = byName(name); if (p) { p.installed = on; if (!on) delete p.update; } },
+    hasUpdate: (name) => !!byName(name)?.update, update: (name) => { const p = byName(name); if (p?.update) { p.ver = p.update; delete p.update; } },
+    shelfCount: (n) => data.plugins.filter((p) => SHELVES[n][2].includes(p.kind)).length,
+    search: (q) => data.plugins.filter((p) => `${nameOf(p)} ${p.id} ${p.what}`.toLowerCase().includes(q)).map((p) => ({ label: nameOf(p), where: `${p.kind.replace(/s$/, '')}${p.installed ? ' · installed' : ''}`, hash: `marketplace/${p.id}` })), sample: 'slack-chat', show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) menu = ''; if (form && form.id !== arg) form = null; current = arg || ''; draw(); } };
 })();

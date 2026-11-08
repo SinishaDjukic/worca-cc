@@ -13,7 +13,7 @@ The table is `SHORTCUTS` in `shortcuts.mjs`. A page names where the focus is, an
 
 | Where | Keys |
 |---|---|
-| Anywhere | ⌘K Search or ask · `?` this sheet · Esc closes what is on top |
+| Anywhere | ⌘K Search or ask, even from a field · `?` this sheet · Esc closes what is on top |
 | A list | ↑ ↓ or J K move · Enter opens; and, in a list that has the action (`can`): `.` row menu, ← → fold, S stop, E archive, R rename, P pin, G and ⇧G group, ⌫ delete |
 | A list with selecting | Space selects the row · ⇧↑ ⇧↓ extend · ⌘A selects all · Esc ends selecting, then closes the panel |
 | Chat | ⌥⌘N new chat · ⌘\\ show or hide the chats · ⌘⇧L go to the chats · ⌥↑ ⌥↓ previous and next chat |

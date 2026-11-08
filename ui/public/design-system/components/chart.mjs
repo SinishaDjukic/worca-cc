@@ -62,7 +62,7 @@ const readOf = (p) => [p.label, p.text, p.diff, p.note].filter(Boolean).join('|'
  * @param {object} o
  * @param {string} o.label     what it shows, for a screen reader
  * @param {string[]} o.labels  every column's axis word
- * @param {{label:string, dashed?:boolean, points:({value:number, text:string, diff?:string, note?:string}|null)[]}[]} o.series  the first is the one you read; null is no data yet
+ * @param {{label:string, dashed?:boolean, part?:number, points:({value:number, text:string, diff?:string, note?:string}|null)[]}[]} o.series  the first is the one you read; null is no data yet
  * @param {{value:number, text:string}} [o.limit]   a budget line
  * @param {number} [o.current]  the index of the period you are in
  * @param {number} [o.height]
@@ -72,13 +72,13 @@ const readOf = (p) => [p.label, p.text, p.diff, p.note].filter(Boolean).join('|'
 export function lineChart({ label, labels, series, limit = null, current = -1, height = 140, hint = '', caption = '' }) {
   const n = labels.length, x = (i) => ((i + 0.5) / n) * 100;
   const top = Math.max(1, limit ? limit.value : 0, ...series.flatMap((s) => s.points.map((p) => (p ? p.value : 0)))) * 1.12, y = (v) => 100 - (v / top) * 100;
-  const path = (s) => { const pts = s.points.map((p, i) => (p ? [x(i), y(p.value)] : null)).filter(Boolean); return pts.length ? `<path class="ch-l${s.dashed ? ' is-before' : ''}" vector-effect="non-scaling-stroke" d="${pts.map(([a, b], i) => `${i ? 'L' : 'M'}${a.toFixed(2)} ${b.toFixed(2)}`).join('')}"/>` : ''; };
+  const path = (s) => { const pts = s.points.map((p, i) => (p ? [x(i), y(p.value)] : null)).filter(Boolean); return pts.length ? `<path class="ch-l${s.dashed ? ' is-before' : ''}${s.part != null ? ` is-p${s.part}` : ''}" vector-effect="non-scaling-stroke" d="${pts.map(([a, b], i) => `${i ? 'L' : 'M'}${a.toFixed(2)} ${b.toFixed(2)}`).join('')}"/>` : ''; };
   const main = series[0].points, known = main.map((p, i) => (p ? i : -1)).filter((i) => i >= 0), peak = Math.max(...known.map((i) => main[i].value)), high = known.find((i) => main[i].value === peak);
   const lim = limit ? `<path class="ch-l is-limit" vector-effect="non-scaling-stroke" d="M0 ${y(limit.value).toFixed(2)}H100"/>` : '';
   const dots = known.map((i) => `<span class="ch-dot${i === current ? ' is-now' : ''}" data-dot="${i}" style="left:${x(i).toFixed(2)}%;top:${y(main[i].value).toFixed(2)}%"></span>`).join('');
   const nums = [...new Set([high, current].filter((i) => i >= 0 && main[i]))].map((i) => `<span class="ch-v" style="left:${x(i).toFixed(2)}%;top:${y(main[i].value).toFixed(2)}%">${esc(main[i].text)}</span>`).join('');
   const hits = labels.map((l, i) => (main[i] ? `<span class="ch-hit" data-i="${i}" tabindex="0" role="img" aria-label="${esc([l, main[i].text, main[i].diff].filter(Boolean).join(', '))}" data-read="${esc(readOf({ ...main[i], label: l }))}"></span>` : '<span class="ch-none"></span>')).join('');
-  const legend = series.length > 1 || limit ? legendOf([...series.map((s) => ({ cls: s.dashed ? 'is-before' : 'is-main', text: s.label })), ...(limit ? [{ cls: 'is-limit', text: limit.text }] : [])]) : '';
+  const legend = series.length > 1 || limit ? legendOf([...series.map((s) => ({ cls: s.part != null ? `is-line is-s${s.part}` : s.dashed ? 'is-before' : 'is-main', text: s.label })), ...(limit ? [{ cls: 'is-limit', text: limit.text }] : [])]) : '';
   const rows = labels.flatMap((l, i) => (main[i] ? [[l, ...series.map((s) => (s.points[i] ? s.points[i].text : ''))]] : []));
   return `<figure class="chart" style="--ch-h:${height}px" data-chart data-n="${n}" data-last="${known[known.length - 1] ?? 0}">${capOf(caption)}<div class="ch-read" hidden></div><div class="ch-plot"><svg class="ch-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${lim}${series.slice(1).map(path).join('')}${path(series[0])}</svg>${dots}${nums}<div class="ch-hits" style="--ch-n:${n}">${hits}</div></div>${axisOf(labels)}${legend}${hintOf(hint)}${srTable(label, series.map((s) => s.label), rows)}</figure>`;
 }

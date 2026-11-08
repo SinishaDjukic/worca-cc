@@ -5,6 +5,8 @@
 | `comp.one-per-need` | Each need has one component; a page names needs, not looks | One fix reaches every page | ds-check |
 | `comp.no-hand-markup` | A component in code is called, never rewritten by hand | Copies drift | rail-gate |
 | `comp.no-radio-cards` | A choice is never a full-width toggle or radio cards; a yes or no never covers the page | It stays in the sentence or place it changes | by hand |
+| `comp.menu-groups` | A menu's head stays with its options: CompactMenu makes them one block, so columns never part them; two columns at most, and a menu stays inside the window | A head alone at a column's foot names nothing | design-system-components |
+| `comp.sentence-block` | A sentence that holds a picker is a block (`div`), never a `<p>`: a menu cannot live in a paragraph, and the parser throws it out of place | The menu opens where the sentence is | rail-gate |
 | `comp.row` | A row in a list is row(): rail, text, end, ⋯; a changed file and a stacked PR are their own rows | One rail and one end on every list | rail-gate |
 | `comp.end-column` | A list's ends share one column, as wide as the widest, capped; the title gives way first | Figures and buttons line up down a list | ds-check |
 
@@ -57,7 +59,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | A task or a schedule in a conversation | TaskCard: its page's anatomy, compact before it starts | Add CSV export |
 | A stage of a task, read down | StageLine, its parts at its end | Plan · Decisions 3 |
 | A part of a task at its stage | StagePart: what is inside, said before it opens; its chevron turns open | Changes 5 files +358 −144 |
-| A task's stages on a card | StageBar: one line, a knot a stage, the stage it is on holding its steps, the one now breathing (look.stage-line) | Plan · Build · Review 2 of 3 |
+| A task's stages on a card | StageBar: one line, a knot a stage, the stage it is on holding its steps, the one now breathing (look.stage-line); `bare`, the line alone, where a stage list under it names the stages (rail.one-place) | Plan · Build · Review 2 of 3 |
 | What Worca did in a conversation | TurnRow: folds; a failure opens itself | Ran 4 commands |
 | Worca thinking in a conversation | ThinkingRow: one line, what it does now, its seconds; done, Thought for 8s, its steps folded | Searching the code · 4s |
 | A starter armed in the composer | IntentChip: its icon, its name, ✕ | Build workflow ✕ |

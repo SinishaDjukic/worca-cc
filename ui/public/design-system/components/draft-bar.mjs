@@ -13,5 +13,5 @@ import { button } from './button.mjs';
  */
 export function draftBar({ changes, fresh = false, save = 'Save', hooks = {} }) {
   const said = fresh ? 'never saved · nothing can run it yet' : `${changes} ${changes === 1 ? 'change' : 'changes'} · tasks still run the saved one`;
-  return `<div class="draft-bar" role="status"><b>Draft</b><span>${esc(said)}</span><span class="draft-sp"></span>${button({ label: fresh ? 'Discard it' : 'Discard', kind: 'quiet', attrs: hooks.discard || {} })}${button({ label: save, kind: 'primary', attrs: hooks.save || {} })}</div>`;
+  return `<div class="draft-bar" role="status"><b>Draft</b><span>${esc(said)}</span><span class="draft-sp"></span>${button({ label: 'Discard', kind: 'quiet', attrs: hooks.discard || {} })}${button({ label: save, kind: 'primary', attrs: hooks.save || {} })}</div>`;
 }

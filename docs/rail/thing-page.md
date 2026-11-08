@@ -6,6 +6,7 @@
 | `thing.slots` | Top bar, title, metadata line, StatusLine, progress, Figures, Tabs, in that order | Every thing reads the same | run-page-sweep |
 | `thing.work-phrase` | Where the work goes is one phrase that follows the run, never a badge | One fact, one place | design-system-logic |
 | `thing.list-home` | A list about a step is Overview's focus; a list about the whole is a tab; never both | One place per list | by hand |
+| `thing.one-telling` | On a thing's page a fact about one of its parts is told in one section: a count or a step's cost is not repeated by a head, a section's note or a row. What can be changed gets its control once, without restating the fact around it | `rail.one-place` for a page's parts: three tellings on one screen read as three facts | by hand |
 | `thing.by-exception` | A tab draws in full what needs you; what went fine is one line | The exception is the news | by hand |
 | `thing.opens` | A row opens its detail in place; a problem opens itself once; sections never collapse | Nothing is hidden when it matters | by hand |
 | `thing.tabs-by-level` | Inside the tabs, Logs, the graph, Sessions and Actions are Advanced, Agents and log filters Expert; a mode never removes a tab | The page keeps its shape in every mode | design-system-logic |

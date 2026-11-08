@@ -19,7 +19,7 @@ export const RESERVED = Object.freeze(['mod+t', 'mod+w', 'mod+n', 'mod+shift+n',
  */
 export const SHORTCUTS = Object.freeze([
   { scope: 'anywhere', title: 'Anywhere', col: 1, rows: [
-    { do: 'search', label: 'Search or ask', keys: [['mod', 'K']] },
+    { do: 'search', label: 'Search or ask', keys: [['mod', 'K']], inField: true },
     { do: 'help', label: 'This sheet', keys: [['?']] },
     { do: 'close', label: 'Close', keys: [['Escape']], inField: true },
   ] },

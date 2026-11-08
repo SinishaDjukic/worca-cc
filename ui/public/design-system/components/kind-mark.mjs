@@ -432,13 +432,13 @@ export function stagePart({ label, says = '', open = false, attrs: a = {} }) {
 /** The step a detail names ("Review · step 2 of 3"), for a StageBar: [2, 3], or null. */
 export const stageStep = (detail) => { const m = /step (\d+) of (\d+)/.exec(String(detail || '')); return m ? [+m[1], +m[2]] : null; };
 
-export function stageBar({ labels, stage, tone = 'run', step = null }) {
+export function stageBar({ labels, stage, tone = 'run', step = null, bare = false }) {   // bare: the line alone, where a stage list under it names them (rail.one-place)
   const n = labels.length, whole = tone === 'ok' || tone === 'merged';   // done and merged wear their colour all along; a failure, a question, a pause only where it is
   const at = (i) => (i / n) * 100, W = 100 / n, live = !whole && stage >= 0 && stage < n;
   const [k, m] = live && step && step[1] > 1 ? step : [0, 0];
   const notches = m ? Array.from({ length: m }, (_, j) => `<i class="sl-step${j < k - 1 ? ' is-done' : j === k - 1 ? ' is-now' : ''}" style="left:calc(${at(stage) + 1.5 + (j * (W - 3)) / m}% + 6px);width:calc(${(W - 3) / m}% - 9px)"></i>`).join('') : '';
   const knots = labels.map((_, i) => `<i class="sl-knot${whole || i < stage ? ' is-done' : i === stage ? ' is-now' : ''}" style="left:${at(i)}%"></i>`).join('');
-  return `<div class="stage-bar is-${tone}" style="--n:${n}"><div class="sl" aria-hidden="true"><i class="sl-base"></i><i class="sl-done${whole ? ' is-whole' : ''}" style="width:${whole ? 100 : at(Math.max(0, stage))}%"></i>${notches}${knots}</div><div class="sb-labels">${labels.map((l, i) => (i === stage ? `<b>${esc(l)}${m ? `<small>${k} of ${m}</small>` : ''}</b>` : `<span>${esc(l)}</span>`)).join('')}</div></div>`;
+  return `<div class="stage-bar is-${tone}" style="--n:${n}"><div class="sl" aria-hidden="true"><i class="sl-base"></i><i class="sl-done${whole ? ' is-whole' : ''}" style="width:${whole ? 100 : at(Math.max(0, stage))}%"></i>${notches}${knots}</div>${bare ? '' : `<div class="sb-labels">${labels.map((l, i) => (i === stage ? `<b>${esc(l)}${m ? `<small>${k} of ${m}</small>` : ''}</b>` : `<span>${esc(l)}</span>`)).join('')}</div>`}</div>`;
 }
 
 /**

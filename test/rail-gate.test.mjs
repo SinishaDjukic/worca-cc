@@ -32,6 +32,13 @@ test('the gate catches each thing by hand, and passes a page that calls the libr
   assert.deepEqual(scanText("import { button, runState } from './design-system/components/index.mjs'; el.innerHTML = button({ label: 'Go' }) + runState(id).word;"), {});
 });
 
+test('a sentence that holds a picker is never a paragraph: the parser would throw its menu out (comp.sentence-block)', () => {
+  const dir = join(ROOT, 'plans/rail/prototype');
+  const files = readdirSync(dir, { recursive: true }).filter((f) => /\.js$/.test(f) && !/(^|\/)(components|today|graph)\.js$/.test(f));
+  const inP = /<p[ >](?:(?!<\/p>).)*(?:sentencePicker|listSentence)\(/;
+  assert.deepEqual(files.filter((f) => readFileSync(join(dir, f), 'utf8').split('\n').some((l) => inP.test(l))), []);
+});
+
 test('the prototype\'s pages write nothing the library owns: no frozen count for them', () => {
   const dir = join(ROOT, 'plans/rail/prototype');
   const hits = {};

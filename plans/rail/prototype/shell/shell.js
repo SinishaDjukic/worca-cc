@@ -22,7 +22,7 @@
     requirements: ['Requirements: being redesigned with Rail', 'Feature specs by perspective, before a task starts; Shaper writes them in Chat today.'],
   };
   const TITLES = { chat: 'Chat', runs: 'Tasks', schedules: 'Schedules', stats: 'Statistics', 'team-metrics': 'Team metrics', workflows: 'Workflows',
-    requirements: 'Requirements', projects: 'Projects', workspaces: 'Workspaces', marketplace: 'Marketplace', insights: 'Insights' };
+    requirements: 'Requirements', projects: 'Projects', workspaces: 'Workspaces', marketplace: 'Marketplace', insights: 'Insights', lost: 'Not found' };
   // A place built on Rail (projects/, workflows/, …) registers here: its list in the one bar and its page, from the library.
   // { title, min, newLabel, newAct(), show({ bar, page, arg }) } — the shell owns the routing, the bar and the frame.
   window.RailPlaces = window.RailPlaces || {};
@@ -167,7 +167,7 @@
   // ---- the bar: what it holds now; the house opens the places over it ----
   const BAR_TITLE = { home: 'Worca', chat: 'Chat', tasks: 'Tasks', schedules: 'Schedules', settings: 'Settings' };
   let quickNav = false;   // nav.quick: the ▾ beside a bar's name
-  const quickItems = () => [...document.querySelectorAll('#side-rail nav.nav [data-nav]')].filter((b) => !b.hidden && !b.closest('[hidden]') && b.style.display !== 'none').map((b) => ({ id: `bar-go|${b.dataset.nav}`, text: b.querySelector('.nav-label, span')?.textContent.trim() || b.textContent.trim(), checked: b.dataset.nav === routed.view }));
+  const quickItems = () => [...document.querySelectorAll('#side-rail nav.nav [data-nav]')].filter((b) => !b.hidden && !b.closest('[hidden]') && b.style.display !== 'none').map((b) => ({ id: `bar-go|${b.dataset.nav}`, text: b.querySelector('.nav-label, span')?.textContent.trim() || b.textContent.trim(), checked: b.dataset.nav === routed.view, hint: b.dataset.flag ? 'Labs' : undefined }));   /* nav.labs: the word follows the row */
   let barMenu = false;   // the + as a menu, where a place makes things more than one way (list.bar-model)
   let homeOpen = false, taskChat = '', lastThing = null, visited = [], taskHome = null, pinsAll = false;
   const barOf = (view) => (placeMod(view) ? (lockOf(view) ? 'home' : 'place') : view === 'chat' ? 'chat' : view === 'runs' ? 'tasks' : view === 'run' ? (taskChat ? 'chat' : 'tasks') : view === 'schedules' || view === 'schedule' ? 'schedules' : view === 'settings' ? 'settings' : 'home');
@@ -269,27 +269,44 @@
     if (view === 'schedule') return 'Schedules';
     return TITLES[view];
   };
+  // nav.not-found: an address that names nothing here. null when it names something, or nothing in particular.
+  const NOUNS = { projects: 'project', workflows: 'workflow', requirements: 'feature', marketplace: 'plugin', insights: 'view' };
+  function goneOf(kind, arg0) {
+    let arg = arg0 || ''; try { arg = decodeURIComponent(arg); } catch { /* a stray % stays as typed */ }
+    if (!TITLES[kind] && !['run', 'settings', 'schedule'].includes(kind)) return { lost: true, what: 'page', name: kind, back: 'Chat', to: 'chat' };
+    if (!arg) return null;
+    if (kind === 'chat') return (window.RailChats?.data().chats || []).some((c) => c.id === arg) ? null : { what: 'chat', name: arg, back: 'Chat', to: 'chat' };
+    if (kind === 'schedule') return window.RailSchedules?.find(arg) ? null : { what: 'schedule', name: arg, back: 'Chat', to: 'chat' };
+    if (kind === 'run') { try { RM.stateOf(arg); return null; } catch { return { lost: true, what: 'task', name: arg, back: 'Chat', to: 'chat' }; } }
+    if (kind === 'settings') return window.RailPulse?.hasSection?.(arg) !== false ? null : { lost: true, what: 'setting', name: arg, back: 'Settings', to: 'settings' };
+    const has = placeMod(kind)?.has; return !has || has(arg) ? null : { what: arg.startsWith('ws:') ? 'workspace' : NOUNS[kind] || 'page', name: arg.replace(/^[a-z]+:/, ''), back: TITLES[kind], to: kind };
+  }
   function route() {
     const OLD = { stats: 'insights/spend', 'team-metrics': 'insights/team' };   /* Statistics and Team metrics are Insights now: an old link lands there */
     if (OLD[location.hash.slice(1)]) { location.replace(`#${OLD[location.hash.slice(1)]}`); return; }
     if (/^#workspaces(\/|$)/.test(location.hash)) { const w = location.hash.split('/')[1]; location.replace(w ? `#projects/ws:${w}` : '#projects'); return; }   // workspaces live in Projects now: an old link lands there
-    const [kind, arg] = (location.hash.slice(1) || 'chat').split('/');
-    const view = TITLES[kind] ? kind : kind === 'run' || kind === 'settings' || kind === 'schedule' ? kind : 'chat';
+    const [kind, arg0] = (location.hash.slice(1) || 'chat').split('/');
+    const gone = goneOf(kind, arg0), arg = gone ? '' : arg0;
+    const view = gone?.lost ? 'lost' : TITLES[kind] ? kind : kind === 'run' || kind === 'settings' || kind === 'schedule' ? kind : 'chat';
     drawer(false);
     homeOpen = false;
     const pane = { today: document.getElementById('route-today'), chat: document.getElementById('route-chat'), schedule: document.getElementById('route-schedule'), place: document.getElementById('route-place'), run: document.getElementById('route-run'), settings: document.getElementById('route-settings'), runs: document.getElementById('route-runs') };
-    const lock = (view === 'runs' || view === 'schedules' || view === 'schedule' || !!T.pages[view] && view !== 'chat') && lockOf(view);
+    const lock = !gone && (view === 'schedule' || !!TITLES[view] && view !== 'chat') && lockOf(view);   // nav.locked: every place, by the bar's own data
     const ownPage = !!placeMod(view) || view === 'run' || view === 'settings' || view === 'runs' || view === 'chat' || view === 'schedules' || view === 'schedule';
     pane.today.hidden = ownPage && !lock; pane.run.hidden = view !== 'run'; pane.settings.hidden = view !== 'settings';
     pane.runs.hidden = view !== 'runs' || !!lock; pane.chat.hidden = view !== 'chat'; pane.schedule.hidden = !(view === 'schedule' || view === 'schedules') || !!lock; pane.place.hidden = !placeMod(view) || !!lock;
     document.body.className = view === 'run' ? 'view-run' : view === 'settings' ? 'view-settings' : view === 'runs' ? 'view-runs' : view === 'chat' ? 'view-rail-chat' : view === 'schedule' || view === 'schedules' || placeMod(view) ? 'view-rail-chat' : (T.pages[view]?.body || '');
+    if (gone) { for (const p of Object.values(pane)) p.hidden = p !== pane.today; document.body.className = ''; }
     if (view !== 'run') taskChat = view === 'chat' ? taskChat : '';
     routed = { view, locked: !!lock };
     document.getElementById('topnav-title').textContent = pageTitle(view, arg);
     window.RailPulse?.show(view === 'settings' ? 'settings' : 'page', view === 'settings' ? arg || '' : '', view);   // first: it may give the sidebar back
     markNav(view);
     syncAsk(view);
-    if (lock) {   // a deep link above the mode, or a place whose Labs feature is off: one line, and its one way on
+    if (gone) {
+      pane.today.innerHTML = `<div class="rail-locked">${R.notFound({ what: gone.what, name: gone.name, back: gone.back, attrs: { 'data-nav': gone.to } })}</div>`;
+      scrollTo(0, 0);
+    } else if (lock) {   // a deep link above the mode, or a place whose Labs feature is off: one line, and its one way on
       document.body.className = '';
       const name = TITLES[view] || 'Schedules', need = lock.min ? lock.min[0].toUpperCase() + lock.min.slice(1) : '';
       pane.today.innerHTML = `<div class="rail-locked">${R.emptyState({ title: lock.min ? `${name} needs ${need}` : `${name} is in Labs`, actions: R.button({ label: lock.min ? `Switch to ${need}` : 'Turn on Labs', kind: 'quiet', attrs: { 'data-unlock': lock.min ? 'mode:' + lock.min : 'flag:' + lock.flag, 'data-to': view } }) })}</div>`;
@@ -450,6 +467,8 @@
     },
     runActive: () => !document.getElementById('route-run')?.hidden,
     pageContext: () => pageContext(),
+    needs: (view) => needsOf(view),
+    locked: (view) => !!lockOf(view),
     go: (hash) => { if (location.hash.slice(1) === hash) route(); else location.hash = hash; },
     // a run opened from Pulse or the search carries its own title
     openRun: (hash, title, run) => window.RailShell.openTask(hash.split('/')[1], '', title, run),   // Pulse and search: its card in its chat
@@ -503,6 +522,7 @@
   let routed = { view: '', locked: false };
   R.neverOutside(document, '.mk-tools');   // the prototype's own corner closes nothing
   // the drawer and the narrow search close on a click outside or Esc (docs/rail/panels.md)
+  R.dismissOnOutside(document, { open: () => quickNav, inside: '#bar-head', back: () => '[data-bar-house]', close: () => { quickNav = false; }, paint: () => drawBar() });
   R.dismissOnOutside(document, { open: () => inViewMenu, inside: '#in-view-slot', back: () => '[data-in-view-more]', close: () => { inViewMenu = false; }, paint: () => drawInView() });
   R.dismissOnOutside(document, { open: () => document.body.classList.contains('nav-open'), inside: '#side-rail, #mbar-menu', back: () => '#mbar-menu', close: () => drawer(false), paint: () => {} });
   R.dismissOnOutside(document, { open: () => !!document.querySelector('#topnav .tsearch.is-open'), inside: '.tsearch, #tsearch-open', back: () => '#tsearch-open', close: () => searchFold(false), paint: () => {} });
@@ -520,5 +540,5 @@
   document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') { e.preventDefault(); if (routed.view === 'chat') { document.querySelector('#route-chat [data-composer-t]')?.focus(); return; } askOpen = !askOpen; syncAsk(routed.view); if (askOpen) setTimeout(() => document.querySelector('#ask-side [data-composer-t]')?.focus(), 50); } });   // ⌘J: Ask worca beside this page
   // another Pulse case: the run page in view takes its title from it
   window.RailWorld.onChange(() => { drawInView(); if (routed.view === 'run') { reopen = true; route(); } });
-  window.RailShell.start = route;
+  window.RailShell.start = () => { applyPrefs(); drawMini(); route(); };   /* the places have registered by now: the first bar shows them */
 })();

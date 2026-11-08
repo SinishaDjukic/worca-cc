@@ -57,6 +57,7 @@ function mount(host, wf, { width = 680, mode = 'static', aligned = false, select
   const b = view.bounds(24); if (b) host.style.height = `${Math.ceil(b.h * Math.min(1, width / b.w)) + 8}px`;
   view.fitToWidth(width);
   host.querySelectorAll('.wbadge').forEach((w) => { if (mode === 'static') w.textContent = w.textContent.replace(/≤\s*(\d+)/, 'sends fixes back, up to $1×'); });
+  if (mode === 'static') host.querySelectorAll('[tabindex]').forEach((n) => n.removeAttribute('tabindex'));   // a drawing: nothing in it takes a key
   if (select) host.querySelector(`[data-node-id="${select}"]`)?.classList.add('is-picked');
   return { g: graph, view };
 }

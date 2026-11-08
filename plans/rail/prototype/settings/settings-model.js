@@ -63,8 +63,9 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const spentWords = (sv) => { const own = sv.total ? sv.period : 'month', [when, table] = SPENT[own], n = own === 'month' && sv.spentNow != null ? sv.spentNow : table, of = sv.total && own !== 'month' ? +sv.total : sv.total ? Math.min(+sv.total, +sv.pol.capAll) : +sv.pol.capAll; return `Spent ${when}: $${n} of ${usd(of)}.`; };
 
   // ---- Plugins and Chat › Channels read one fact from here: what is installed, and whether a channel has its token ----
-  const installed = (sv, title) => !sv.gone[title];
-  const uninstall = (title) => (r, x) => x.confirm({ text: `Uninstall ${title}?`, yes: 'Uninstall', danger: true, then: (s) => { s.gone = { ...s.gone, [title]: true }; return `Uninstalled: ${title}`; } });
+  const store = () => window.RailPlaces?.marketplace;   // the Marketplace holds what is installed; a plugin it does not list falls back to this page's own
+  const installed = (sv, title) => store()?.isInstalled?.(title) ?? !sv.gone[title];
+  const uninstall = (title) => (r, x) => x.confirm({ text: `Uninstall ${title}?`, yes: 'Uninstall', danger: true, then: (s) => { s.gone = { ...s.gone, [title]: true }; store()?.setInstalled?.(title, false); return `Uninstalled: ${title}`; } });
   const CHANNELS = [['Telegram', 'chTelegram'], ['Discord', 'chDiscord'], ['Slack', 'chSlack'], ['Teams', 'chTeams']];
   const channelState = (sv, title, key) => (!sv.chToken[title] ? 'Not set up' : sv[key] ? 'Connected' : 'Off');
   const workingChannels = (sv) => CHANNELS.filter(([t, k]) => installed(sv, t) && channelState(sv, t, k) === 'Connected').map(([t]) => t);
@@ -227,18 +228,18 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     menu: ['Change rule', 'Remove'],
     on: { 'Change rule': (r, x) => x.dialog({ title: `Rule for ${r.title}`, yes: 'Save', fields: [{ key: 'to', label: 'Move its ticket', value: r.move, options: [['none', 'Don\'t move'], ['done', 'Any Done status'], ...MOVES[r.tracker].filter((m) => m !== r.gone).map((m) => [m, m])] }], then: (v) => { r.move = v.to; r.gone = ''; r.meta = ruleWords(v.to); r.mark = ''; return `${r.title}: ${r.meta}`; } }) } });
 
-  const plugin = (title, meta, key, on, o = {}) => ({ title, meta, sw: { key, on }, mark: o.mark, menu: o.menu || ['Settings', 'Uninstall'], when: (sv) => installed(sv, title),
+  const plugin = (title, meta, key, on, o = {}) => ({ title, meta, sw: { key, on }, mark: o.mark, menu: o.menu ? (r) => (store()?.hasUpdate?.(title) === false ? ['Settings', 'Uninstall'] : o.menu) : ['Settings', 'Uninstall'], when: (sv) => installed(sv, title), live: () => (store()?.hasUpdate?.(title) === false ? meta.replace(' · 1 update', '') : meta),
     on: {
       Settings: (r, x) => x.dialog({ title: `${title} settings`, fields: o.fields || [{ key: 'url', label: 'Address', value: o.url || '' }], done: `${title} saved` }),
-      Update: (r) => { r.meta = meta.replace(' · 1 update', ''); r.mark = ''; r.menu = ['Settings', 'Uninstall']; return `${title} updated`; },
+      Update: (r) => { store()?.update?.(title); r.meta = meta.replace(' · 1 update', ''); r.mark = ''; r.menu = ['Settings', 'Uninstall']; return `${title} updated`; },
       Uninstall: uninstall(title),
     }, open: (r, x) => r.on.Settings(r, x) });
   // A chat channel's plugin installs it and sets it up; its switch and state are Chat's, one link away.
   const channelPlugin = (title, key) => ({ title, meta: 'A chat channel', when: (sv) => installed(sv, title),
     live: (sv) => (sv.chToken[title] ? `A chat channel · ${channelState(sv, title, key) === 'Off' ? 'off' : 'on'} in Chat` : 'A chat channel · needs a bot token'),
-    menu: (r, sv) => (sv.chToken[title] ? ['Open in Chat', 'Settings', 'Uninstall'] : ['Set up…', 'Uninstall']),
+    menu: (r, sv) => (sv.chToken[title] ? ['Channel in Settings › Chat', 'Settings', 'Uninstall'] : ['Set up…', 'Uninstall']),
     on: {
-      'Open in Chat': (r, x) => x.go('ask'),
+      'Channel in Settings › Chat': (r, x) => x.go('ask'),
       Settings: (r, x) => x.dialog({ title: `${title} settings`, yes: 'Save', fields: [{ key: 'allowed', label: 'Allowed chat IDs', value: x.sv.chAllowed[title] || '', hint: 'Replies from these chats count' }], then: (v, sv) => { sv.chAllowed = { ...sv.chAllowed, [title]: v.allowed }; return `${title} saved`; } }),
       'Set up…': (r, x) => x.dialog({ title: `Set up ${title}`, yes: 'Save', fields: [{ key: 'tok', label: 'Bot token', value: '', hint: 'Kept in a file only you can read' }], check: (v) => (v.tok.trim() ? '' : 'It needs a bot token'), then: (v, sv) => { sv.chToken = { ...sv.chToken, [title]: true }; sv[key] = true; return `${title} is set up and on, in Chat`; } }),
       Uninstall: uninstall(title),

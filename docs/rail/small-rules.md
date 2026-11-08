@@ -4,6 +4,8 @@
 |---|---|---|---|
 | `small.names` | A name is the thing, 1–3 words, a plain noun; one thing, one name | The same word everywhere | ds-check |
 | `small.disabled-why` | A disabled control says why in its tooltip | It teaches what is coming and where | click-check |
+| `small.schedule-words` | A schedule's repeat and time read from one function (`scheduleWords`); every hour has no time of day | The sentence, the status, the row and its section cannot drift | design-system-components |
+| `small.sentence-pair` | In a sentence of pickers, a linking word (on, with, from, then, at) stays on one line with its picker | A word left at a line's end reads as a broken sentence | by hand |
 | `small.no-emoji` | No emoji and no exclamation marks | Calm | by hand |
 | `small.sound` | A new event plays one soft chime for what the person chose; info never, a burst once, never in away hours | Hearing it is for what needs you; a sound that cries wolf gets turned off | design-system-logic |
 | `small.usage-rings` | Rings around the avatar show live usage of connected providers only, refreshed every minute; figures and money live in Usage and costs | What is drawn is what can stop a run now | worca-sweep |

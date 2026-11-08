@@ -112,13 +112,13 @@ export function listController({ root, spec }) {
     const note = (r) => { s.rows.set(r.key, r); (r.members || []).forEach(note); (r.tree || []).forEach(note); };
     v.sections.forEach((x) => x.rows.forEach(note));
     const ready = !v.state || v.state === 'ready';
-    const groups = ready ? v.sections.map((x) => {
+    const groups = ready ? v.sections.filter((x) => x.rows.length).map((x) => {   // list.sections: an empty one is not drawn
       const shut = isShut(x);
       const limit = x.limit || LIST_SHOWN, all = s.more.has(x.id) || x.rows.length <= limit;
       // the row you are on never folds behind Show N more: it stays under the first ones (docs/rail/lists.md › list.fold-keeps-current)
       const rows = shut ? [] : all ? x.rows : [...x.rows.slice(0, limit), ...x.rows.slice(limit).filter((r) => r.current || r.holds)];
       const walk = (r) => { s.order.push(r.key); (r.tree || []).forEach(walk); if (r.members && groupOpen(r)) r.members.forEach(walk); }; rows.forEach(walk);
-      return { title: x.title, count: x.noCount ? '' : x.rows.length, chip: x.chip, rows: shut ? [''] : rows.map(rowHtml), fold: x.fold ? { open: !shut, attrs: { 'data-fold-section': x.id } } : null, more: all || shut || rows.length >= x.rows.length ? null : { n: x.rows.length - rows.length, attrs: { 'data-more': x.id } } };
+      return { title: x.title, count: x.noCount ? '' : x.rows.length, chip: x.chip, rows: shut ? [''] : rows.map(rowHtml), fold: x.fold ? { open: !shut, attrs: { 'data-fold-section': x.id } } : null, more: shut || x.rows.length <= limit ? null : s.more.has(x.id) ? { less: true, attrs: { 'data-less': x.id } } : rows.length >= x.rows.length ? null : { n: x.rows.length - rows.length, attrs: { 'data-more': x.id } } };
     }) : [];
     s.pick = selectPrune(s.pick, [...s.rows.keys()]);
     const shown = s.order;
@@ -231,6 +231,7 @@ export function listController({ root, spec }) {
     if ((el = t('[data-rounds-all]'))) { s.roundsAll.add(el.dataset.roundsAll); paint(); return; }
     if ((el = t('[data-open-round]'))) { const [k, n] = el.dataset.openRound.split('|'); spec.openRound?.(s.rows.get(k), +n); return; }
     if ((el = t('[data-more]'))) { s.more.add(el.dataset.more); paint(); return; }
+    if ((el = t('[data-less]'))) { s.more.delete(el.dataset.less); paint(); return; }
     if ((el = t('[data-fold-section]'))) {
       // a date section folds smoothly: its rows rise and fade, then it is drawn folded; opening, its rows come down (list.fold-motion)
       const id = el.dataset.foldSection, group = el.closest('.list-group'), still = win.matchMedia?.('(prefers-reduced-motion: reduce)').matches;

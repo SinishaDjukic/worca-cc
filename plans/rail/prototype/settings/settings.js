@@ -203,7 +203,13 @@
   }
   document.addEventListener('input', (e) => {
     const id = e.target && e.target.id, d = cur && cur.__dialog;
-    if (d && id && id.startsWith('sv-f-')) d.vals[id.slice(5)] = e.target.value;
+    if (!d || !id || !id.startsWith('sv-f-')) return;
+    d.vals[id.slice(5)] = e.target.value;
+    // a Dialog that checks its Fields says what is wrong as you type, and its Save waits (the Dialog's Yes is off, with why)
+    const s = d.steps ? d.steps[d.at] : d, wrong = (s.check && s.check(d.vals, cur)) || '', root = e.target.closest('.dlg');
+    if (!s.check || !root) return;
+    d.status = wrong; root.querySelector('.dlg-status').textContent = wrong;
+    const yes = root.querySelector('[data-dialog="yes"]'); yes.disabled = !!wrong; yes.title = wrong;
   });
   // The whole section: a flag that is off leaves its section empty, with the way to turn it on.
   function section(id, sv, c0) {

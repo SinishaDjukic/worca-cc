@@ -18,5 +18,5 @@ import { button } from './button.mjs';
 export function artifactView({ name, meta = '', body, at = 0, of = 1, hooks = {}, attrs: a = {} }) {
   const b = (label, k, h, ic, off) => button({ label, kind: 'quiet', iconOnly: !!ic, icon: ic ? icon(ic, 13) : undefined, attrs: { ...(h || {}), disabled: off ? true : null } });
   const step = of > 1 ? b('Previous', 'quiet', hooks.prev, 'chevL', at <= 0) + b('Next', 'quiet', hooks.next, 'chevR', at >= of - 1) : '';
-  return `<section class="av"${attrs({ 'aria-label': name, ...a })}><div class="av-h"><b>${esc(name)}</b>${meta ? `<span>${esc(meta)}</span>` : ''}${of > 1 ? `<span class="av-n">${at + 1} of ${of}</span>` : ''}<span class="av-sp"></span>${step}${b('Open full', 'quiet', hooks.full)}${b('Download', 'quiet', hooks.download)}</div><div class="av-body">${body}</div></section>`;
+  return `<section class="av"${attrs({ 'aria-label': name, ...a })}><div class="av-h"><b>${esc(name)}</b>${meta ? `<span>${esc(meta)}</span>` : ''}${of > 1 ? `<span class="av-n">${at + 1} of ${of}</span>` : ''}<span class="av-sp"></span>${step}${hooks.full ? b('Open full', 'quiet', hooks.full) : ''}${b('Download', 'quiet', hooks.download)}</div><div class="av-body">${body}</div></section>`;
 }

@@ -79,12 +79,24 @@ export function dateSections({ rows, dayOf, row = (r) => r, head = [], days = DA
 export const NEXT_RUN_SECTIONS = Object.freeze([['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['later', 'Later']]);
 
 /** How often a schedule repeats, in the words every schedule picker offers. */
-export const REPEATS = Object.freeze(['every day', 'every weekday', 'every Monday', 'every Tuesday', 'every Wednesday', 'every Thursday', 'every Friday', 'every month on the 1st', 'every hour', 'once']);
+export const REPEATS = Object.freeze(['every day', 'every weekday', 'every Monday', 'every Tuesday', 'every Wednesday', 'every Thursday', 'every Friday', 'every Saturday', 'every Sunday', 'every weekend', 'every month on the 1st', 'every hour', 'once']);
+/**
+ * A repeat and a time in words, and where the next run falls (small.schedule-words): every hour has no time of day.
+ * @param {{every:string, at:string, nowAt?:string}} o  nowAt: the clock, "HH:MM", to place today's run
+ * @returns {{says:string, runs:string, next:string, time:string, day:string}} says "Every day at 07:30"; runs, its sentence; next, the status; time, the row's end; day, a NEXT_RUN_SECTIONS id
+ */
+export function scheduleWords({ every, at, nowAt = '15:00' }) {
+  const hourly = every === 'every hour', when = every.replace(/^every /, '');
+  const runs = hourly ? every : `${every} at ${at}`, day = /^(Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day$/.test(when) ? when : '';
+  const next = hourly ? 'Next within the hour' : every === 'every day' ? `Next at ${at}` : day ? `Next on ${day} at ${at}` : every === 'every weekday' ? `Next weekday at ${at}` : /month/.test(every) ? `Next on the 1st at ${at}` : `Next at ${at}`;
+  return { runs, says: `${runs[0].toUpperCase()}${runs.slice(1)}`, next, time: hourly ? 'Hourly' : day ? day.slice(0, 3) : /month/.test(every) ? '1st' : at,
+    day: hourly || (every === 'every day' && at > nowAt) ? 'today' : every === 'every day' || every === 'every weekday' ? 'tomorrow' : day ? 'week' : 'later' };
+}
 /** The times a schedule picker offers: every half hour of the day. */
 export const TIMES_OF_DAY = Object.freeze(Array.from({ length: 48 }, (_, i) => `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`));
 
 /** The sections of a list by day, newest first (docs/rail/lists.md). */
-export const DAY_SECTIONS = Object.freeze([['upcoming', 'Upcoming'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Previous 7 days'], ['month', 'Previous 30 days'], ['older', 'Older']]);
+export const DAY_SECTIONS = Object.freeze([['upcoming', 'Waiting'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Previous 7 days'], ['month', 'Previous 30 days'], ['older', 'Older']]);
 
 /**
  * A group row: a feature, a chain, a person's group, a chat group. A ListRow with its count, its ⌄, and its members under
@@ -116,6 +128,16 @@ export function roundRows({ line, n, open, toggle, rounds = [], more = null }) {
   const head = `<button type="button" class="lr-round-line"${attrs({ 'aria-expanded': String(open), 'aria-label': `${open ? 'Hide' : 'Show'} the ${word}`, title: line, ...toggle })}><span class="lr-m">${esc(line)}</span><span class="lr-round-end">${esc(word)}${icon(open ? 'chevron' : 'chevR', 12)}</span></button>`;
   if (!open) return `<div class="lr-rounds">${head}</div>`;
   return `<div class="lr-rounds">${head}<div class="list-rows">${rounds.map((r) => listRow({ title: `Round ${r.n} · ${r.words}`, endText: r.time || '', open: r.attrs || null })).join('')}</div>${more ? button({ label: `+${more.n} earlier`, kind: 'quiet', attrs: more.attrs }) : ''}</div>`;
+}
+
+/**
+ * ResetView: the list's Reset view tool. Available, it says where it goes; at the default it is off and says why (list.reset-view).
+ * @param {object} o
+ * @param {boolean} o.changed  the view differs from the default
+ * @param {string} o.to        the default, in the sentence's own words ("all tasks, from all projects, by date")
+ */
+export function resetViewTool({ changed, to }) {
+  return { id: 'reset', text: 'Reset view', off: !changed, help: changed ? `Back to ${to}` : 'This is already the default view' };
 }
 
 /**

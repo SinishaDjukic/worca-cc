@@ -15,7 +15,8 @@
             { name: 'review-cycle-2.md', step: 'Review · cycle 2', size: '2 KB', icon: 'file', body: '<h3>Review, cycle 2</h3><p>The export streams rows and the totals match. Two things to confirm: the retry lives in the caller, and the empty-list branch has no test.</p>' },
             { name: 'export-50k.png', step: 'Review · a screenshot', size: '180 KB', icon: 'image', body: '<p>The browser after exporting 50,000 rows: the download bar shows billing-2026-11.csv, 4.1 MB.</p>' },
             { name: 'timings.csv', step: 'Review · a table', size: '12 KB', icon: 'list', body: '<table><tr><th>Rows</th><th>Time</th><th>Size</th></tr><tr><td>1,000</td><td>0.1 s</td><td>82 KB</td></tr><tr><td>10,000</td><td>0.6 s</td><td>0.8 MB</td></tr><tr><td>50,000</td><td>2.8 s</td><td>4.1 MB</td></tr></table>' }],
-          findings: [{ id: 'f1', sev: 'Major', text: 'Plan deviation: the retry lives in the caller', at: 'export.mjs:41' }, { id: 'f2', sev: 'Minor', text: 'No unit test for the empty-list branch', at: 'columns.mjs:88' }] }, facts: { cost: '$1.84', time: '23 min', agents: 3, files: 5, artifacts: 2 }, case: 'question', stage: 2, git: 'open', watch: 'idle', branch: 'feat/billing-csv-export', detail: 'Review · step 2 of 3', after: [{ id: 't2', title: 'Invoices export', case: 'scheduled', stage: 0, branch: 'feat/invoices-export', detail: 'Starts after Add CSV export', endWord: 'after it' }] },
+          changed: [['export.mjs', '+182 −64'], ['columns.mjs', '+41 −58'], ['export.test.mjs', '+96 −0'], ['billing-page.js', '+27 −9'], ['routes.mjs', '+12 −13']],
+          findings: [{ id: 'f1', sev: 'Major', text: 'Plan deviation: the retry lives in the caller', at: 'export.mjs:41' }, { id: 'f2', sev: 'Minor', text: 'No unit test for the empty-list branch', at: 'columns.mjs:88' }] }, facts: { cost: '$1.84', time: '23 min', agents: 3, files: 5, artifacts: 4 }, case: 'question', stage: 2, git: 'open', watch: 'idle', branch: 'feat/billing-csv-export', detail: 'Review · step 2 of 3', after: [{ id: 't2', title: 'Invoices export', case: 'scheduled', stage: 0, branch: 'feat/invoices-export', detail: 'Starts after Add CSV export', endWord: 'after it' }] },
         { id: 's1', kind: 'schedule', title: 'Nightly export check', time: '02:00', detail: 'Every day at 02:00 · Next in 11h' }] }),
       chat('c0', 'Getting started', 'idle', 'chat', '', 'now', 'today', { pinned: true }),
       chat('c16', 'Migrate the cron parser', 'idle', 'started', 'worca-cc', '13:40', 'today', { cost: 6.1, tasks: [{ id: 't16', run: 'r2', title: 'Migrate cron parser', case: 'gate', stage: 2, git: 'branch', branch: 'refactor/cron-parser', detail: 'Waits for your OK on the review', why: ['Review sent it back 3 times; the limit is 3', '2 small things left: a name in parser.mjs, a leap-year test'] }] }),
@@ -109,7 +110,7 @@
       { t: 'you', id: 'a1', text: 'Is the release branch ready?', when: '11:40' },
       { t: 'think', text: 'Thought for 5s' },
       { t: 'words', html: 'Everything for 1.20 is in and the checks passed.' },
-      { t: 'act', id: 'a2', mark: 'git', text: '<b>Ready to open a PR</b> 12 files +540 −96 into main', actions: [['Create PR', 'primary', 'Opened PR #1104 into main'], ['View changes', 'quiet', 'Opens the changes']] },
+      { t: 'act', id: 'a2', mark: 'git', text: '<b>Ready to open a PR</b> 12 files +540 −96 into main', actions: [['Create PR', 'primary', 'Opened PR #1104 into main'], ['View changes', 'quiet', '', 'Would open the 12 changed files']] },
       { t: 'you', id: 'a3', text: 'Bump the version to 1.20.0', when: '11:42' },
       { t: 'change', id: 'a4', kind: 'Version', title: 'Version bumped', rows: [{ name: 'package.json', before: '1.19.4', after: '1.20.0' }], state: 'applied' },
       { t: 'task', id: 'a4b', task: 't9s' },
@@ -155,7 +156,7 @@
       { t: 'ship', id: 'a6', title: 'Ship CSV export', reqs: [{ text: 'Twelve columns in the table’s order', v: 'Met' }, { text: 'Dates in ISO 8601', v: 'Met' }, { text: 'Behind a flag for a week', v: 'Not met: moved to a later task' }] },
     ];
     if (c.id === 'c14') return [
-      { t: 'you', id: 'a1', text: 'This is what the customer sent. Same bug as last year?', refs: [{ title: 'Add CSV export', case: 'question' }], quote: 'The total on invoice 4411 is off by one cent', files: ['invoice-4411.pdf', 'screenshot.png'], when: 'Oct 2' },
+      { t: 'you', id: 'a1', text: 'This is what the customer sent. Same bug as last year?', refs: [{ title: 'Add CSV export to billing', case: 'question' }], quote: 'The total on invoice 4411 is off by one cent', files: ['invoice-4411.pdf', 'screenshot.png'], when: 'Oct 2' },
       { t: 'think', text: 'Thought for 7s' },
       { t: 'words', html: 'Yes: rounding per line, then summing. I put the two side by side:' },
       { t: 'filesgrid', label: 'What I compared', files: [{ name: 'invoice-4411.png', image: true }, { name: 'rounding-diff.png', image: true }, { name: 'repro.txt', meta: '2 KB' }] },
@@ -176,7 +177,7 @@
       { t: 'you', id: 'a1', text: 'Check what Stripe says about CSV exports', when: 'Oct 3' },
       { t: 'change', id: 'a2', kind: 'Web access', title: 'Read stripe.com/docs', why: 'This chat wants to read one page on the web.', rows: [{ name: 'Site', before: '', after: 'stripe.com' }], actions: [['Allow in chat', 'primary', 'Allowed in this chat'], ['Always allow', 'quiet', 'Always allowed'], ['Not now', 'quiet', 'Not allowed']], state: 'proposed' },
       { t: 'you', id: 'a3', text: 'Move the nightly export check to 03:00', when: 'Oct 3' },
-      { t: 'change', id: 'a4', kind: 'Schedule', title: 'Nightly export check', rows: [{ name: 'Runs', before: 'every day at 02:00', after: 'every day at 03:00' }, { name: 'Next', before: '', after: 'tonight 03:00 · tomorrow 03:00' }], actions: [['Move', 'primary', 'Moved to 03:00'], ['Run now', 'quiet', 'Running now'], ['Not now', 'quiet', 'Not changed']], menuItems: ['Delete schedule'], state: 'proposed' },
+      { t: 'change', id: 'a4', kind: 'Schedule', schedule: 's1', title: 'Nightly export check', rows: [{ name: 'Runs', before: 'every day at 02:00', after: 'every day at 03:00' }, { name: 'Next', before: '', after: 'tonight 03:00 · tomorrow 03:00' }], actions: [['Move', 'primary', 'Moved to 03:00'], ['Run now', 'quiet', 'Running now'], ['Not now', 'quiet', 'Not changed']], menuItems: [{ id: 'Delete schedule', text: 'Delete schedule', danger: true, help: 'Asks first; the tasks it ran stay' }], state: 'proposed' },
       { t: 'you', id: 'a5', text: 'Take docs-site out of the Billing workspace', when: 'Oct 3' },
       { t: 'change', id: 'a6', kind: 'Workspace', title: 'Remove docs-site', rows: [{ name: 'Workspace', before: '', after: 'Billing' }, { name: 'Remove', before: '', after: 'docs-site' }], choice: { label: 'Re-scan after', items: ['No re-scan', 'Partial re-scan', 'Full re-scan'], rec: 'Partial re-scan' }, actions: [['Remove', 'danger', 'Removed docs-site'], ['Not now', 'quiet', 'Not changed']], state: 'proposed' },
     ];

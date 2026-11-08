@@ -793,7 +793,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .set-group:first-child{margin-top:0;}
 .set-row{display:grid;grid-template-columns:168px minmax(0,1fr) auto;column-gap:16px;align-items:baseline;padding:10px 0;line-height:var(--lh-body);}
 .set-name{min-width:0;font-weight:500;color:var(--ink);overflow-wrap:anywhere;}
-.set-text{min-width:0;color:var(--ink-2);}
+.set-text{min-width:0;color:var(--ink-2);overflow-wrap:anywhere;}
 .set-text b,.set-text code{color:var(--ink);font-weight:600;}
 .set-text code{font:400 var(--fs-meta) var(--mono);}
 .set-end{display:flex;align-items:baseline;justify-content:flex-end;gap:12px;white-space:nowrap;}
@@ -1145,7 +1145,11 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 :is(.convo-scroll,[data-scroll-fade],.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main)[data-more-below]{--fade-b:48px;}   /* ds-ok: the fade's own reach */
 :is(.convo-scroll,[data-scroll-fade],.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main)[data-more-above]{--fade-t:36px;}   /* ds-ok: the fade's own reach */
 @media (prefers-reduced-motion: reduce){:is(.convo-scroll,[data-scroll-fade],.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main){transition:none;}}
-.convo-col{max-width:680px;margin:0 auto;display:flex;flex-direction:column;gap:14px;font-size:var(--fs-body);line-height:1.55;color:var(--ink);}
+.rail-locked{max-width:680px;margin:0 auto;}   /* a locked place starts on the text edge of the pages around it */
+.convo-col{max-width:680px;margin:0 auto;display:flex;flex-direction:column;gap:14px;font-size:var(--fs-body);line-height:1.55;color:var(--ink);overflow-wrap:anywhere;}
+.convo-col .convo-head .kind-chip{white-space:normal;}   /* a long label wraps in the column; nothing runs off the window */
+.cw-pair{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;}
+.lr-pin{display:inline-flex;vertical-align:-1px;margin-right:4px;color:var(--ink-3);}
 .convo-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2);}
 .convo-you{align-self:flex-end;max-width:72%;padding:6px 12px;border-radius:var(--r-md);background:var(--field);}
 .convo-words{margin:0 0 0 32px;}
@@ -1389,6 +1393,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .tp-sentence{margin:0;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;color:var(--ink-2);}
 .tp-nudge{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2);}
 .tp-actions{display:flex;gap:8px;align-items:center;}
+.tp-actions > .btn-quiet:first-child{margin-left:calc(-1 * var(--btn-inset,11px));}   /* rail.one-rail: a quiet button starts at the text edge */
 .tp-more > .btn,.tp-nudge > .btn{margin-left:-8px;}   /* quiet buttons keep the text edge */
 .tp-nudge > .btn{margin-left:0;}
 
@@ -1520,7 +1525,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .card-form .fld{flex:1 1 100%;}
 .card-form .tp-sentence{flex:1 1 auto;}
 /* Chat home's More keeps inside the window; a row's words can be its one target (a feature's slice) */
-.home-starters .rc-pop > .menu{max-height:min(60vh,520px);overflow:auto;}   /* which way it opens is watchMenus' */
+.home-starters .rc-pop > .menu{max-height:min(38vh,400px);overflow:auto;}   /* which way it opens is watchMenus' */
 /* A menu with any check mark in it keeps the mark's room on every item, so all its words start on one edge; a switch (the account menu's) sits at the end and needs no room */
 :is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"]):not(.sw-item)) .menu-item[role="menuitem"]{display:grid;grid-template-columns:12px minmax(0,1fr) auto;column-gap:10px;}
 :is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"]):not(.sw-item)) .menu-item[role="menuitem"]::before{content:"";grid-column:1;}
@@ -1591,7 +1596,8 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .pg-w{grid-column:2;font-size:var(--fs-body);line-height:1.45;}
 .pg-f,.pg-why{grid-column:2;font-size:var(--fs-meta);color:var(--ink-2);}
 .pg-why{display:flex;gap:6px;align-items:center;}
-.pg-a{grid-column:2;display:flex;gap:6px;align-items:center;margin-top:8px;}
+.pg-card{grid-template-rows:repeat(5,auto) 1fr;}   /* panel.plugin-card: the actions end a card, so they line up across a row */
+.pg-a{grid-column:2;grid-row:6;align-self:end;display:flex;gap:6px;align-items:center;margin-top:8px;}
 @media (max-width: 760px){.pg-grid{grid-template-columns:minmax(0,1fr);}}
 
 /* list.fold-by-mark: a row's mark folds what is under it; it reads as the mark, with a hover like the row's */
@@ -1600,17 +1606,17 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .lr-mark-fold:focus-visible{outline:2px solid var(--ink-2);outline-offset:1px;}
 
 /* panel.question-forms: a question's small form, on the card's text edge */
-.q-slide{margin:6px 0 0 32px;display:grid;gap:6px;max-width:420px;}
+.q-slide{margin:6px 0 0 32px;display:grid;gap:6px;}
 .q-slide-t{display:flex;justify-content:space-between;font-size:var(--fs-meta);color:var(--ink-2);} .q-slide-t b{color:var(--ink);font-size:var(--fs-body);font-weight:600;}
 .q-slide-track{position:relative;padding:0 0 18px;}
 .q-slide-track input[type=range]{width:100%;accent-color:var(--ink-2);margin:0;}
 .q-slide-tick{position:absolute;top:2px;width:2px;height:12px;margin-left:-1px;background:var(--amber);pointer-events:none;}
 .q-slide-pick{position:absolute;bottom:0;transform:translateX(-50%);font-size:var(--fs-caption);color:var(--ink-2);white-space:nowrap;}
-.q-rank{list-style:none;margin:6px 0 0 32px;padding:0;max-width:540px;}
+.q-rank{list-style:none;margin:6px 0 0 32px;padding:0;}
 .q-rank-r{display:grid;grid-template-columns:18px minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--line);font-size:var(--fs-body);}
 .q-rank-r:last-child{border-bottom:1px solid var(--line);}
 .q-rank-n{color:var(--ink-2);font-size:var(--fs-meta);font-variant-numeric:tabular-nums;} .q-rank-h{color:var(--ink-3);display:flex;} .q-rank-a{display:flex;}
-.q-rows{margin:6px 0 0 32px;max-width:560px;}
+.q-rows{margin:6px 0 0 32px;}
 .q-rows-h,.q-rows-r{display:grid;grid-template-columns:var(--q-cols);gap:8px;align-items:center;}   /* ds-ok: the columns PickRows sets */
 .q-rows-h{font-size:var(--fs-meta);color:var(--ink-2);padding:0 0 4px;}
 .q-rows-r{padding:6px 0;border-top:1px solid var(--line);font-size:var(--fs-body);}
@@ -1692,7 +1698,9 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
 .wf-ed-h{margin:0 0 2px;font:600 var(--fs-section)/1.3 var(--sans);} .wf-ed-m{margin:0 0 10px;font-size:var(--fs-meta);color:var(--ink-2);}
 @media (max-width:900px){.wf-ed-body{grid-template-columns:1fr;} .wf-insp{border-left:0;border-top:1px solid var(--line);}}
 .craft-turn{margin:6px 0 6px 32px;}
-.wf-canvas{display:grid;place-items:center;overflow:auto;} .wf-canvas #wf-canvas-g{align-self:center;}
+.wf-canvas{display:grid;place-items:safe center;overflow:auto;} .wf-canvas #wf-canvas-g{align-self:center;}   /* safe: a graph zoomed wider than the canvas scrolls from its start */
+.wf-ed-top .fld{width:240px;}
+.gv-skin.is-view .node{cursor:default;}
 .gv-skin.is-view .ncap{display:none;}   /* the story says what each step does; the graph shows how they connect */
 
 /* DraftBar (rail.drafts): a draft on the thing it changes */
@@ -1724,6 +1732,7 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
 .wb.is-solo{grid-template-columns:minmax(0,1fr);} .wb-side{display:grid;gap:10px;}
 .wb-age{display:flex;gap:8px;align-items:center;margin:0 0 10px;font-size:var(--fs-meta);color:var(--ink-2);}
 .wm-scroll{overflow-x:auto;} .wm{position:relative;color:var(--ink-3);}
+@media (max-width:520px){.wm{display:grid;gap:8px;width:auto !important;height:auto !important;} .wm svg{display:none;} .wm-n.wm-n{position:static;width:100%;}}   /* ds-ok: no room for the arrows: the projects one under another, whole; how they connect is listed under the map */
 .wm svg{position:absolute;inset:0;} .wm-w{fill:none;stroke:var(--ink-3);} .wm-w.is-unsure{stroke:var(--amber-ink);stroke-dasharray:3 3;}
 .wm-t{font:400 var(--fs-caption) var(--sans);fill:var(--ink-2);} .wm-t.is-unsure{fill:var(--amber-ink);}
 .wm-n{position:absolute;box-sizing:border-box;width:150px;height:48px;display:grid;align-content:center;padding:0 10px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--bg);color:var(--ink);font:inherit;text-align:left;cursor:pointer;}   /* ds-ok: the map lays its nodes out by size */
@@ -1734,6 +1743,8 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
 .ws-about{margin:12px 0 0;line-height:var(--lh-body);} .ws-h{margin:18px 0 4px;font:600 var(--fs-section)/1.3 var(--sans);} .ws-order{margin:0 0 2px;} .ws-order span{color:var(--ink-2);}
 
 .pj-crumb{margin:0 0 2px;font-size:var(--fs-meta);color:var(--ink-2);}
+.set-text .kind-chip{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom;}   /* a long tag folds; its title has it whole */
+.place-title,.place-head .convo-head,.convo-card-w{overflow-wrap:anywhere;min-width:0;}
 
 /* look.chart-play: the forms a chart takes when you ask; ink only, one axis, the reading in the band above the plot */
 .chart,.bar-chart.is-read-able{position:relative;margin:12px 0 4px;padding-top:36px;}
@@ -1758,6 +1769,7 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
 .ch-l{fill:none;stroke:var(--ink);stroke-width:2;}
 .ch-l.is-before{stroke:var(--ink-3);stroke-width:1.5;stroke-dasharray:4 3;}
 .ch-l.is-limit{stroke:var(--ink-3);stroke-width:1;}
+.ch-l.is-p0{stroke:var(--ink);} .ch-l.is-p1{stroke:var(--ink-2);} .ch-l.is-p2{stroke:var(--ink-3);} .ch-l.is-p3{stroke:var(--line-2);}   /* a line for each part, the mix's shades */
 .ch-dot{position:absolute;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:var(--ink);pointer-events:none;}   /* ds-ok: a data point is round */
 .ch-dot.is-read{width:10px;height:10px;margin:-5px 0 0 -5px;box-shadow:0 0 0 2px var(--bg);}
 .ch-v{position:absolute;transform:translate(-50%,calc(-100% - 7px));font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;}
@@ -1785,6 +1797,7 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
 .ch-swatch.is-main{height:2px;background:var(--ink);}
 .ch-swatch.is-before{width:18px;height:0;border-top:2px dashed var(--ink-3);}
 .ch-swatch.is-limit{height:1px;background:var(--ink-3);}
+.ch-swatch.is-line{height:2px;}
 .ch-cap{margin:0 0 4px;font-size:var(--fs-meta);color:var(--ink-2);}
 .chart > .ch-cap,.bar-chart.is-read-able > .ch-cap{position:absolute;top:0;left:0;margin:0;}   /* in the band above the plot: a reading covers it only while you read */
 .ch-hint{margin:6px 0 0;font-size:var(--fs-caption);color:var(--ink-2);}
@@ -1803,10 +1816,13 @@ button.fr-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .fr-row.is-sub .fr-name{font-weight:400;}
 .fr-c{text-align:right;line-height:1.2;white-space:nowrap;}
 @media (max-width:640px){.fr-list{grid-template-columns:minmax(0,1fr) repeat(2,auto);}.fr-c.is-wide{display:none;}}
-.pz-menu.is-two-cols{display:block;column-count:3;column-gap:10px;width:min(620px,calc(100vw - 32px));height:auto;max-height:none;}
-.pz-menu.is-two-cols .menu-h{break-after:avoid;margin:0;}
+/* comp.menu-groups: two columns at most, a head never parted from its options, inside the window */
+.menu-g{display:contents;}
+.pz-menu.is-two-cols{display:block;column-count:2;column-gap:10px;width:min(440px,calc(100vw - 32px));height:auto;max-height:min(420px,calc(100vh - 32px));overflow-y:auto;}
+.pz-menu.is-two-cols .menu-g{display:block;break-inside:avoid;}
+.pz-menu.is-two-cols .menu-h{margin:0;}
 .pz-menu.is-two-cols .menu-item{break-inside:avoid;width:100%;height:auto;min-height:26px;padding-block:3px;}
-@media (max-width:640px){.pz-menu.is-two-cols{column-count:2;}}
+@media (max-width:640px){.pz-menu.is-two-cols{column-count:1;}}
 .in-acts{--btn-inset:11px;display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0;}
 .in-acts > .btn-quiet:first-child{margin-left:calc(-1 * var(--btn-inset));}   /* rail.one-rail: a quiet button starts at the text edge */
 .in-stands{margin:14px 0 8px;line-height:var(--lh-body);}

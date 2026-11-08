@@ -228,14 +228,14 @@
     return sub.den ? `${up ? 'Up' : 'Down'} from ${sub.text(c.p)} ${w}` : `${up ? 'Up' : 'Down'} ${Math.abs(Math.round(((c.v - c.p) / c.p) * 100))}% from ${sub.text(c.p)} ${w}`;
   };
   const SUBS = [
-    { id: 'spend', title: 'Spend', group: 'Cost', icon: 'set-spending', noun: 'AI spend', src: money, num: 'spend', text: usd, forms: SUM, budget: 2000, cols: moneyCols(), share: 'spend',
-      word: (c) => `${usd(c.v)} of $2,000`, why: (c) => (c.st.by === 'client' ? `${usd(noOwner.spend)} has no client` : `Saved about ${usd(c.T.saved)}, 3× what it cost · on pace for $1,545 · ${usd(noOwner.spend)} has no owner`) },
+    { id: 'spend', title: 'Spend', group: 'Cost', icon: 'set-spending', noun: 'AI spend', src: money, num: 'spend', text: usd, forms: SUM, budget: 1000, cols: moneyCols(), share: 'spend',
+      word: (c) => `${usd(c.v)} of $1,000`, why: (c) => (c.st.by === 'client' ? `${usd(noOwner.spend)} has no client` : `Saved about ${usd(c.T.saved)}, 3× what it cost · on pace for $1,545 · ${usd(noOwner.spend)} has no owner`) },
     { id: 'per-task', title: 'Per task', group: 'Cost', icon: 'kind-task', noun: 'cost a task', src: money, num: 'spend', den: 'tasks', text: usd2, forms: RATE, cols: moneyCols(['Per task', (r) => (r.tasks ? usd2(r.spend / r.tasks) : '-')]), share: 'spend',
       word: (c) => `${usd2(c.v)} a task`, why: (c) => `${usd(c.T.spend)} across ${c.T.tasks} tasks · ${usd2(c.p)} in the same days last month` },
     { id: 'why', title: 'Why it cost', group: 'Cost', icon: 'refresh', noun: 'rework and waste', src: waste, by: 'why', num: 'spend', text: usd, forms: SUM, cols: wasteCols, share: 'base',
       wordAlways: (c) => `${usd(c.v)} of ${usd(c.base)} went on rework and waste`, whyAlways: (c) => (c.P ? `${pct(c.v / c.base)}, up from ${pct(c.P.spend / c.pbase)} ${c.whole && c.st.when === 'this month' ? 'last month' : 'in the period before'}` : pct(c.v / c.base)) },
-    { id: 'budget', title: 'Budget', group: 'Cost', icon: 'set-limits', noun: 'AI spend', src: money, num: 'spend', text: usd, forms: SUM, as: 'running', against: 'budget', budget: 2000, cols: moneyCols(), share: 'spend',
-      word: (c) => `${Math.round((c.v / 2000) * 100)}% of $2,000 used`, why: (c) => `${usd(c.v)} so far · on pace for $1,545, $455 under · 8 of 30 days gone` },
+    { id: 'budget', title: 'Budget', group: 'Cost', icon: 'set-limits', noun: 'AI spend', src: money, num: 'spend', text: usd, forms: SUM, as: 'running', against: 'budget', budget: 1000, cols: moneyCols(), share: 'spend',
+      word: (c) => `${Math.round((c.v / 1000) * 100)}% of $1,000 used`, why: (c) => `${usd(c.v)} so far · on pace for $1,545, $545 over · 8 of 30 days gone` },
     { id: 'time-saved', title: 'Time saved', group: 'Value', icon: 'clock', noun: 'money saved', src: money, num: 'saved', text: usd, forms: SUM, cols: moneyCols(), share: 'saved',
       word: (c) => `${usd(c.v)} saved`, why: (c) => `About ${c.T.hours} hours of work · ${usd(c.P.saved)} in the same days last month` },
     { id: 'value', title: 'Value for spend', group: 'Value', icon: 'sparkle', noun: 'saved for each dollar', src: money, num: 'saved', den: 'spend', text: (n) => `${n.toFixed(1)}×`, forms: RATE, cols: moneyCols(), share: 'spend',
@@ -243,7 +243,7 @@
     { id: 'ends', title: 'How tasks end', group: 'Quality', icon: 'check', noun: 'finished tasks', src: ends, num: 'finished', text: (n) => plural(n, 'task'), forms: COUNT, share: 'finished',
       cols: [['Tasks', (r) => String(r.finished + r.failed + r.stopped)], ['Finished', (r) => String(r.finished)], ['Failed', (r) => String(r.failed)], ['Stopped', (r) => String(r.stopped)]],
       word: (c) => `${c.T.finished} of ${c.T.finished + c.T.failed + c.T.stopped} finished`, why: (c) => `${c.T.failed} failed, ${c.T.stopped} stopped · ${pct(c.T.finished / (c.T.finished + c.T.failed + c.T.stopped))} finish` },
-    { id: 'review', title: 'Review', group: 'Quality', icon: 'edit', noun: 'rounds a task', src: review, note: "all projects together. A round is one review and its fixes; a round back is any after a task's first", num: 'rounds', den: 'tasks', text: (n) => `${n.toFixed(1)} rounds`, forms: RATE, share: 'reviews', noShare: true,
+    { id: 'review', title: 'Review', group: 'Quality', icon: 'edit', noun: 'rounds a task', src: review, note: "A round is one review and its fixes; a round back is any after a task's first", num: 'rounds', den: 'tasks', text: (n) => `${n.toFixed(1)} rounds`, forms: RATE, share: 'reviews', noShare: true,
       cols: [['Rounds a task', (r) => (r.tasks ? (r.rounds / r.tasks).toFixed(1) : '-')], ['First-time pass', (r) => (r.tasks ? pct(r.first / r.tasks) : '-')], ['Raised', (r) => String(r.fixed + r.disputed + r.open)], ['Fixed', (r) => String(r.fixed)], ['You rejected', (r) => String(r.disputed)], ['Open', (r) => String(r.open)]],
       word: (c) => `${c.T.rounds} rounds over ${c.T.tasks} reviewed tasks, ${c.v.toFixed(1)} a task`, why: (c) => { const oct = (f) => sum(periodSeries(review, f, 'last month').now), was = (oct('rounds') / oct('tasks')).toFixed(1), now = c.v.toFixed(1), back = c.T.rounds - c.T.tasks; return `${now === was ? 'Same as' : +now < +was ? 'Better than' : 'Worse than'} October · ${back} rounds back, about ${usd(back * roundBack)}`; } },
     { id: 'fails', title: 'Where it fails', group: 'Quality', icon: 'stop', noun: 'tasks that did not finish', src: fails, by: 'stage', num: 'count', text: (n) => plural(n, 'task'), forms: COUNT, share: 'count',

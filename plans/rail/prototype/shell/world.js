@@ -161,6 +161,7 @@
     project: (id) => data.runs.find((r) => r.id === id)?.project ?? table()[id]?.project,
     // a task started this session (in a chat, by a schedule): into the store, heard everywhere
     add: (o) => { const r = { ...run(o.id, o.case || 'starting', o.title, o.project || '', o.detail || '', o.time || 'now', o.day || 'today'), ...o }; data.runs.unshift(r); titles(); tell(r.id); return r; },
+    remove: (id) => { data.runs = data.runs.filter((x) => x.id !== id); titles(); tell(id); },   // a deleted schedule's waiting row
     onMove: (fn) => moved.push(fn),
     facts: (caseId = current) => ({ ...CASES[caseId], actions: CASES[caseId].actions.map(([aid, r, label, gone]) => ({ id: aid, runId: r, run: gone || table()[r].title, label })) }),
     // A step taken on a run from elsewhere (Pulse's Try again, Resume): the run moves, and every list reads it.

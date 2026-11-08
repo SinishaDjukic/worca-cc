@@ -80,7 +80,7 @@ function groupHtml(g) {
     ? `<h3 class="list-h"><button type="button" class="list-h-b"${attrs({ ...g.fold.attrs, 'aria-expanded': String(!shut), title: shut ? `Shows ${g.title}` : `Folds ${g.title}` })}>${icon('chevron', 10)}${esc(g.title)}</button>${n}${g.chip || ''}</h3>`
     : `<h3 class="list-h">${esc(g.title)}${n}${g.chip || ''}</h3>`;
   if (shut) return `<section class="list-group is-shut">${head}</section>`;
-  return `<section class="list-group">${head}${g.meta ? `<p class="list-m">${esc(g.meta)}</p>` : ''}<div class="list-rows">${g.rows.join('')}</div>${g.more ? `<button type="button" class="dc-link list-more"${attrs(g.more.attrs)}>Show ${esc(g.more.n)} more</button>` : ''}</section>`;
+  return `<section class="list-group">${head}${g.meta ? `<p class="list-m">${esc(g.meta)}</p>` : ''}<div class="list-rows">${g.rows.join('')}</div>${g.more ? `<button type="button" class="dc-link list-more"${attrs(g.more.attrs)}>${g.more.less ? 'Show less' : `Show ${esc(g.more.n)} more`}</button>` : ''}</section>`;
 }
 
 export function list({ sentence = '', groups, empty = '', tools = '', foot = '', attrs: a = {} }) {

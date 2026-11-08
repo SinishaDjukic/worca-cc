@@ -53,6 +53,28 @@ test('compactMenu: choices are radios, danger comes after one rule, help is the 
   assert.equal(items[2].dataset.menuPick, 'Copy link', 'the text when no id');
 });
 
+test('compactMenu: a head and its options are one block (comp.menu-groups)', () => {
+  const m = dom(C.compactMenu({ items: [{ header: 'One' }, { text: 'a' }, { text: 'b' }, { header: 'Two' }, { text: 'c' }, { sep: true }, { text: 'd' }] }));
+  const g = [...m.querySelectorAll('.menu-g')];
+  assert.deepEqual(g.map((x) => x.textContent), ['Oneab', 'Twoc']);
+  assert.ok(m.querySelector('.menu-sep').previousElementSibling === g[1], 'a separator ends the group');
+  assert.equal(dom(C.compactMenu({ items: [{ text: 'a' }] })).querySelector('.menu-g'), null);
+});
+
+test('notFound: names what was asked for, escapes it, and gives one way on (nav.not-found)', () => {
+  const n = dom(C.notFound({ what: 'project', name: '<x>', back: 'Projects', attrs: { 'data-nav': 'projects' } }));
+  assert.equal(n.querySelector('.el-t').textContent, 'There is no project called <x>');
+  assert.equal(n.querySelector('button').textContent, 'Go to Projects');
+  assert.equal(n.querySelector('button').dataset.nav, 'projects');
+});
+
+test('resetViewTool: its tooltip is where it goes, or why it is off (list.reset-view)', () => {
+  assert.deepEqual(C.resetViewTool({ changed: true, to: 'all tasks' }), { id: 'reset', text: 'Reset view', off: false, help: 'Back to all tasks' });
+  const off = C.resetViewTool({ changed: false, to: 'all tasks' });
+  assert.equal(off.off, true);
+  assert.equal(off.help, 'This is already the default view');
+});
+
 test('statusLine: rail mark, the state word, the action slot, the detail with its tooltip', () => {
   const z = dom(C.statusLine({ dot: C.statusDot({ tone: 'is-green' }), word: 'Ready to merge', action: '<div class="rc-side"></div>', detail: 'Checks pass <ok>' }));
   assert.equal(z.className, 'rc-zone');
@@ -772,6 +794,7 @@ test('listController: draws what a page names; selecting, the sentence, Show N m
   const click = (sel, o = {}) => root.querySelector(sel).dispatchEvent(new d.defaultView.MouseEvent('click', { bubbles: true, ...o }));
   assert.equal(root.querySelectorAll('.list-row').length, 2); assert.equal(root.querySelector('.list-more').textContent, 'Show 2 more');
   click('[data-more]'); assert.equal(root.querySelectorAll('.list-row').length, 4);
+  assert.equal(root.querySelector('.list-more').textContent, 'Show less'); click('[data-less]'); assert.equal(root.querySelectorAll('.list-row').length, 2); click('[data-more]');
   click('[data-open="a"]'); assert.deepEqual(did.pop(), ['open', 'a']);
   click('[data-open="a"]', { metaKey: true }); assert.deepEqual(ctl.state.pick.ids, ['a']); assert.ok(root.querySelector('.runs-bulk'));
   click('[data-open="c"]', { shiftKey: true }); assert.deepEqual(ctl.state.pick.ids, ['a', 'b', 'c']);
@@ -823,6 +846,8 @@ test('lineChart: solid and dashed, a legend, a limit, a table, each point readab
   assert.deepEqual([...c.querySelectorAll('.ch-v')].map((v) => v.textContent), ['$40', '$5'], 'the highest and the current carry their number');
   assert.equal(c.querySelectorAll('.ch-hit').length, 3); assert.equal(c.querySelector('.ch-hit').dataset.read, 'a|$10|+$1, +5%');
   assert.equal(c.querySelectorAll('.bc-table tbody tr').length, 3); assert.equal(c.querySelector('.ch-hint').textContent, 'Drag across to narrow');
+  const split = dom(C.lineChart({ label: 'x', labels: ['a'], series: [{ label: 'Build', part: 0, points: pts([3]) }, { label: 'Plan', part: 1, points: pts([1]) }] }));
+  assert.equal(split.querySelectorAll('.ch-l.is-p0').length, 1); assert.equal(split.querySelectorAll('.ch-l.is-p1').length, 1); assert.equal(split.querySelectorAll('.ch-swatch.is-line.is-s1').length, 1);
   const one = dom(C.lineChart({ label: 'x', labels: ['a', 'b'], series: [{ label: 'Now', points: [{ value: 1, text: '1' }, null] }] }));
   assert.equal(one.querySelector('.ch-legend'), null, 'one series, no legend'); assert.equal(one.querySelectorAll('.ch-hit').length, 1, 'no data, no point');
 });
@@ -958,6 +983,7 @@ test('artifactView: its name and where from, Previous and Next through the other
   assert.equal(v.querySelector('.av-h b').textContent, 'plan.md'); assert.ok(v.querySelector('[data-p]').disabled, 'the first has no previous'); assert.ok(!v.querySelector('[data-n]').disabled);
   assert.match(v.querySelector('.av-n').textContent, /1 of 3/); assert.ok(v.querySelector('[data-f]') && v.querySelector('[data-d]')); assert.equal(v.querySelector('.av-body p').textContent, 'Hi');
   assert.equal(dom(C.artifactView({ name: 'a', body: '' })).querySelector('.av-n'), null, 'one alone: no stepping');
+  assert.ok(![...dom(C.artifactView({ name: 'a', body: '', hooks: { download: {} } })).querySelectorAll('button')].some((x) => x.textContent.trim() === 'Open full'), 'outside Expert it has no page to open (rail.stay-in-chat)');
 });
 test('GitMark: its status in the tooltip, Watch as a ring', () => {
   assert.match(C.gitMark({ status: 'fail' }), /Checks failing/);
@@ -975,6 +1001,7 @@ test('BarHead, TurnRow, Composer, StageBar', () => {
   assert.doesNotMatch(C.turnRow({ mark: '', text: 'Ran', body: 'x', attrs: { 'data-fold-turn': '0' } }), /tr-body/);
   assert.match(C.composer({ placeholder: 'Ask', sentence: 's', tools: '', send: 'b' }), /data-composer-t/);
   assert.match(C.stageBar({ labels: ['a', 'b'], stage: 0 }), /<b>a<\/b>/);
+  assert.equal(dom(C.stageBar({ labels: ['a', 'b'], stage: 0, bare: true })).querySelector('.sb-labels'), null, 'bare: the line alone (rail.one-place)');
   const line = dom(C.stageBar({ labels: ['Plan', 'Build', 'Review', 'PR', 'Merged'], stage: 2, tone: 'ask', step: [2, 3] }));   // look.stage-line
   assert.equal(line.querySelectorAll('.sl-knot').length, 5); assert.equal(line.querySelectorAll('.sl-knot.is-done').length, 2); assert.ok(line.querySelectorAll('.sl-knot')[2].classList.contains('is-now'));
   assert.equal(line.querySelectorAll('.sl-step').length, 3); assert.equal(line.querySelectorAll('.sl-step.is-done').length, 1); assert.ok(line.querySelectorAll('.sl-step')[1].classList.contains('is-now'));
@@ -1013,6 +1040,12 @@ test('watchMenus: a menu with no room under it opens above; menuUp says when', (
   C.watchMenus(window.document);
   window.document.querySelector('.rc-pop').insertAdjacentHTML('beforeend', '<div class="menu" role="menu"></div>');
   return new Promise((r) => setTimeout(r, 0)).then(() => { assert.ok(window.document.querySelector('.menu').hasAttribute('data-placed'), 'a menu that opens is placed'); window.close(); });
+});
+
+test('pluginCard: its actions end the card, so they line up across a row (panel.plugin-card)', () => {
+  const css = readFileSync('plans/rail/prototype/design-system/rail.css', 'utf8');
+  assert.match(css, /\.pg-card\{grid-template-rows:repeat\(5,auto\) 1fr;\}/);
+  assert.match(css, /\.pg-a\{[^}]*grid-row:6;align-self:end;/);
 });
 
 test('menus keep one edge only for check marks: a switch item (the account menu) keeps its own layout', () => {
@@ -1232,7 +1265,11 @@ test('dateSections: what waits on you first, then each day folding; Older and La
   assert.equal(secs[0].id, 'needs'); assert.equal(secs[0].fold, undefined);
   const today = secs.find((x) => x.id === 'day:today'); assert.deepEqual(today.rows, ['a']); assert.equal(today.fold, true);
   assert.equal(secs.find((x) => x.id === 'day:older').limit, 3);
-  assert.ok(C.REPEATS.includes('every day') && C.REPEATS.includes('once')); assert.equal(C.TIMES_OF_DAY.length, 48); assert.equal(C.TIMES_OF_DAY[5], '02:30');
+  const sw = C.scheduleWords;   // small.schedule-words
+  assert.deepEqual(sw({ every: 'every hour', at: '07:30' }), { runs: 'every hour', says: 'Every hour', next: 'Next within the hour', time: 'Hourly', day: 'today' });
+  assert.equal(sw({ every: 'every month on the 1st', at: '07:30' }).next, 'Next on the 1st at 07:30');
+  assert.equal(sw({ every: 'every Monday', at: '09:00' }).day, 'week'); assert.equal(sw({ every: 'every day', at: '02:00' }).day, 'tomorrow'); assert.equal(sw({ every: 'every day', at: '20:00' }).time, '20:00');
+  assert.ok(C.REPEATS.includes('every day') && C.REPEATS.includes('once') && C.REPEATS.includes('every weekend') && C.REPEATS.includes('every Sunday')); assert.equal(C.TIMES_OF_DAY.length, 48); assert.equal(C.TIMES_OF_DAY[5], '02:30');
   assert.deepEqual(C.dateSections({ rows: [], dayOf: () => '', days: C.NEXT_RUN_SECTIONS }).map((x) => x.title), ['Today', 'Tomorrow', 'This week', 'Later']);
 });
 

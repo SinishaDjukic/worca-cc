@@ -85,7 +85,7 @@ export function settingsRow({ name, sentence = '', end = '', changed = false, he
   const foldBtn = fold ? button({ label: fold.open ? 'Done' : fold.label || 'Customise', kind: 'quiet', attrs: { 'aria-expanded': String(!!fold.open), title: fold.help || null, ...(fold.attrs || {}) } }) : '';
   const all = (detailRows ? `<div class="set-rows">${detailRows}</div>` : '') + detail + (detailAction ? `<div class="set-foot">${detailAction}</div>` : '');
   const shown = fold ? (fold.open ? all : '') : all;
-  return row({ kind: 'setting', text: `<span class="set-name"${attrs({ title: help || null })}>${esc(name)}${changedDot(changed)}</span><span class="set-text">${sentence}</span>`, end: `${end}${foldBtn}`, after: shown ? `<div class="set-detail" data-motion="open">${shown}</div>` : '', attrs: a });
+  return row({ kind: 'setting', text: `<span class="set-name"${attrs({ title: help || null })}>${esc(name)}${changedDot(changed)}</span><span class="set-text">${sentence}</span>`, end: `${foldBtn}${end}`, after: shown ? `<div class="set-detail" data-motion="open">${shown}</div>` : '', attrs: a });
 }
 
 /**

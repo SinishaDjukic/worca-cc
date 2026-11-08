@@ -299,12 +299,13 @@ test('shortcutAction: anywhere and the run page; ? takes Shift or not by layout;
 
 test('keys never fire while typing: only Esc and a menu\'s own way out work in a field', () => {
   const all = { scopes: ['selecting', 'list', 'run', 'anywhere'], selecting: true, can: ['menu', 'fold', 'stop', 'archive', 'rename', 'pin', 'group', 'delete'] };
-  for (const f of [{ key: 'k', metaKey: true }, { key: '?' }, { key: 'j' }, { key: 'l' }, { key: ' ', onRow: true }, { key: 'a', metaKey: true }, { key: 'Enter', onRow: true }, { key: 'e' }, { key: '`', ctrlKey: true }, { key: 'Backspace' }]) {
+  assert.equal(R.shortcutAction({ key: 'k', ctrlKey: true, inField: true }, all), 'search', '⌘K reaches the search from the composer');
+  for (const f of [{ key: '?' }, { key: 'j' }, { key: 'l' }, { key: ' ', onRow: true }, { key: 'a', metaKey: true }, { key: 'Enter', onRow: true }, { key: 'e' }, { key: '`', ctrlKey: true }, { key: 'Backspace' }]) {
     assert.ok(R.shortcutAction(f, all), `${f.key} acts out of a field`);
     assert.equal(R.shortcutAction({ ...f, inField: true }, all), null, `${f.key} acts in a field`);
   }
   const inField = R.SHORTCUTS.flatMap((s) => s.rows).filter((r) => r.inField).map((r) => r.do).sort();
-  assert.deepEqual(inField, ['clear', 'close', 'first', 'focus-list', 'last', 'new-chat', 'next', 'prev', 'toggle-list']);
+  assert.deepEqual(inField, ['clear', 'close', 'first', 'focus-list', 'last', 'new-chat', 'next', 'prev', 'search', 'toggle-list']);
   assert.equal(R.shortcutAction({ key: 'Escape', inField: true }, { scopes: ['anywhere'] }), 'close');
   assert.equal(R.keyFacts({ key: 'j', target: { closest: (sel) => (sel === R.FIELD ? {} : null) } }).inField, true);
   assert.equal(R.keyFacts({ key: 'j', target: { closest: () => null } }, '.row').onRow, false);

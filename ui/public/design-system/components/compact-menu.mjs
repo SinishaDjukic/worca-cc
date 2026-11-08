@@ -42,14 +42,15 @@ export function menuItem(it, { pickAttr = 'data-menu-pick', attrs: a = {} } = {}
  * @param {boolean} [o.motion]   false when the page animates what holds it
  */
 export function compactMenu({ items, role = 'menu', label, cls = '', pickAttr = 'data-menu-pick', motion = true }) {
-  let ruled = false;
+  let ruled = false, inGroup = false;   // comp.menu-groups: a head and its options are one block, so columns never part them
+  const endGroup = () => { const end = inGroup ? '</div>' : ''; inGroup = false; return end; };
   const body = items.map((it, i) => {
-    if (it.sep) return '<div class="menu-sep" role="separator"></div>';
-    if (it.header) return `<p class="menu-h">${it.mark || ''}${esc(it.header)}</p>`;
+    if (it.sep) return `${endGroup()}<div class="menu-sep" role="separator"></div>`;
+    if (it.header) { const end = endGroup(); inGroup = true; return `${end}<div class="menu-g"><p class="menu-h">${it.mark || ''}${esc(it.header)}</p>`; }
     const prev = items[i - 1];
     const rule = it.danger && !ruled && i > 0 && !(prev && prev.sep) ? '<div class="menu-sep" role="separator"></div>' : '';
     if (it.danger) ruled = true;
     return rule + menuItem(it, { pickAttr });
-  }).join('');
+  }).join('') + endGroup();
   return `<div class="menu${cls ? ' ' + cls : ''}"${attrs({ role, 'aria-label': label, 'data-motion': motion ? 'in' : null })}>${body}</div>`;
 }
