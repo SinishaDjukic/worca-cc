@@ -123,6 +123,13 @@ test('derived ticks: project, run, realRun, ask, workflows, teamPolicy (one stor
   ]);
 });
 
+test('the claude block carries where the CLI checked (configDirectory) to /api/onboarding', async () => {
+  const detect = async () => ({ ready: true, bin: '/usr/local/bin/claude', hint: null, auth: 'signed-out', connected: false, configDirectory: '/tmp/scratch/.claude' });
+  const s = await onboardingStatus({ detect });
+  assert.deepEqual(s.claude, { bin: '/usr/local/bin/claude', hint: null, auth: 'signed-out', configDirectory: '/tmp/scratch/.claude' });
+  assert.equal(s.steps.claude, false);
+});
+
 // ---- stored flags ----
 
 test('onboarding prefs: booleans only, unknown keys refused, all-false drops the key', async () => {

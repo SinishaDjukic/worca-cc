@@ -10,6 +10,7 @@ import { upstreamEnv } from '../proxy-credentials.mjs';
 import { loadUndici } from '../env-proxy.mjs';
 import { CLAUDE_SIGNED_OUT_HINT } from '../model-test.mjs';
 import { userLine } from '../settings-errors.mjs';
+import { claudeCheckedWhere } from '../../shared/claude-sign-in.mjs';
 import { readTeamSetupFile } from './team-file.mjs';
 import { homedir } from 'node:os';
 
@@ -69,7 +70,9 @@ export const DETECT_CHECKS = Object.freeze([
   { id: 'claude', label: 'Claude Code', run: (p) => p.claude(), read: (c) =>
     !c.ready ? ['no', c.hint ? userLine(c.hint, 'Claude Code') : 'Claude Code was not found on this machine.']
       : c.auth === 'signed-in' ? ['ok', 'Claude Code is installed and signed in.']
-        : c.auth === 'signed-out' ? ['no', CLAUDE_SIGNED_OUT_HINT]
+        : c.auth === 'signed-out' ? (c.configDirectory
+          ? ['no', `${CLAUDE_SIGNED_OUT_HINT}. ${claudeCheckedWhere(c.configDirectory)}`, { configDirectory: c.configDirectory }]
+          : ['no', CLAUDE_SIGNED_OUT_HINT])
           : ['warn', "Claude Code is installed. Worca couldn't tell whether it is signed in."] },
   { id: 'git', label: 'Git', run: (p) => p.git(), read: (g) =>
     g.available ? ['ok', g.version ? `Git ${g.version} is installed.` : 'Git is installed.']
