@@ -110,7 +110,10 @@
       usage: [CLAUDE_MAX(86, 52), CODEX('14:24', 20, 44), COPILOT, { p: 'gemini', plan: 'CLI', asOf: '13:02', win: [] }], budget: month(92, 100), chats: { needs: ['c2', 'c3', 'c5', 'c9'], unread: ['c2'] } },
   };
   let current = 'afternoon', data = null;
-  const listeners = [];
+  const listeners = [], moved = [];
+  // One store: every task lives here once. A page that acts on a task moves it here, and every surface (a chat's card and
+  // row, Pulse, Tasks, Schedules) hears it and reads it again; nothing keeps its own copy of a task's state.
+  const tell = (id) => moved.forEach((fn) => { try { fn(id); } catch (e) { console.error(e); } });
   // A case starts fresh: what the pages did to its runs goes.
   function build(id) {
     const c = CASES[id], t = table();
@@ -153,11 +156,14 @@
     rows: () => data.runs,
     find: (id) => data.runs.find((r) => r.id === id),
     has: (caseId, id) => id in CASES[caseId].runs || ENDED.includes(id) || (CASES[caseId].groups || []).some((g) => MEMBERS[g].includes(id)),
-    title: (id) => table()[id]?.title,
-    project: (id) => table()[id]?.project,
+    title: (id) => data.runs.find((r) => r.id === id)?.title ?? table()[id]?.title,
+    project: (id) => data.runs.find((r) => r.id === id)?.project ?? table()[id]?.project,
+    // a task started this session (in a chat, by a schedule): into the store, heard everywhere
+    add: (o) => { const r = { ...run(o.id, o.case || 'starting', o.title, o.project || '', o.detail || '', o.time || 'now', o.day || 'today'), ...o }; data.runs.unshift(r); titles(); tell(r.id); return r; },
+    onMove: (fn) => moved.push(fn),
     facts: (caseId = current) => ({ ...CASES[caseId], actions: CASES[caseId].actions.map(([aid, r, label, gone]) => ({ id: aid, runId: r, run: gone || table()[r].title, label })) }),
     // A step taken on a run from elsewhere (Pulse's Try again, Resume): the run moves, and every list reads it.
-    move: (id, kase, detail) => { const r = data.runs.find((x) => x.id === id); if (r) Object.assign(r, { case: kase, detail, time: 'now', day: 'today', when: undefined, resumes: false, unread: false }); titles(); },
+    move: (id, kase, detail, o = {}) => { const r = data.runs.find((x) => x.id === id); if (!r) return; Object.assign(r, { case: kase, detail, time: 'now', day: kase === 'scheduled' ? r.day : 'today', when: kase === 'scheduled' ? r.when : undefined, resumes: false, unread: false }, o); titles(); tell(id); },
     section, raises, groupSection, tops, membersOf,
   };
 })();

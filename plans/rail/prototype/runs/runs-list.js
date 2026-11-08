@@ -231,6 +231,7 @@
   }
   document.getElementById('list-case')?.addEventListener('change', (e) => setCase(e.target.value));
   W.onChange(() => setCase(listCase));   // another Pulse case: another mock of who is running what
+  W.onMove?.(() => { data = W.data(); ctl.paint(); });   // a task moved or started anywhere (a chat, Pulse): the list reads the store again
   R.prefs.onChange(() => ctl.paint());
   window.RailRunsList = {
     show: () => ctl.paint(),

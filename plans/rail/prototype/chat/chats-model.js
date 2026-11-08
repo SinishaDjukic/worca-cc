@@ -30,11 +30,31 @@
   });
   // What waits on you and what is unread follow the Pulse case in view (shell/world.js), so Updates and the column agree.
   const QUIET = { replying: 'idle', command: 'idle', following: 'idle' };
-  // A chat's task that is also in Tasks and Pulse (its `run`) reads its name, state and line from there: one task, one truth.
-  const sync = (c) => { const walk = (t) => { const r = t.run && window.RailWorld.find(t.run); if (r) { const st = window.RunCardModel?.stageOf?.(r.case) || {}; Object.assign(t, { title: r.title, case: r.case, detail: r.detail, ...(st.stage >= 0 ? { stage: st.stage } : {}) }); } /* its stage is its state's, so the bar and the line agree */ (t.after || []).forEach(walk); }; (c.tasks || []).forEach(walk); };
+  // One store (shell/world.js): a chat's task is a task in the store, by its id (`run`); the chat keeps only where it is in
+  // the talk. Its name, state, stage and line are read from the store, after every change anywhere.
+  const GIT = { checks: 'open', 'pr-fixing': 'fail', failing: 'fail', approved: 'pass', ready: 'branch', merged: 'merged', conflicts: 'conflict' };
+  const link = (c, t) => {
+    if (t.kind === 'schedule') return t;
+    const W = window.RailWorld; if (t.run && W.find(t.run)) return t;
+    const r = W.add({ id: t.run || `k-${t.id}`, case: t.case || 'starting', title: t.title, project: c.project || '', detail: t.detail || '', stage: t.stage, chat: c.id, day: t.case === 'scheduled' ? 'upcoming' : 'today', when: t.case === 'scheduled' ? 'after' : undefined });
+    t.run = r.id; return t;
+  };
+  const sync = (c) => {
+    const walk = (t) => {
+      const r = t.run && window.RailWorld.find(t.run);
+      if (r) {
+        const st = window.RunCardModel?.stageOf?.(r.case) || {}, merged = r.case === 'merged';
+        Object.assign(t, { title: r.title, case: r.case, detail: r.detail, stage: merged ? 4 : r.stage ?? (st.stage >= 0 ? st.stage : t.stage) });   // its stage is the store's, else its state's
+        if (t.git && GIT[r.case]) t.git = GIT[r.case];   // its PR mark follows its state: checks running is an open PR, not a red one
+      }
+      (t.after || []).forEach(walk);
+    };
+    (c.tasks || []).forEach(walk);
+  };
   const seed = () => {
     const d = base(), f = window.RailWorld.facts().chats;
     for (const c of d.chats) {
+      const walk = (t) => { link(c, t); (t.after || []).forEach(walk); }; (c.tasks || []).forEach(walk);   // every task in the store, once
       sync(c);
       c.unread = (f.unread || []).includes(c.id);
       c.state = (f.needs || []).includes(c.id) ? 'needs-you' : c.state === 'needs-you' ? 'idle' : f.quiet ? QUIET[c.state] || c.state : c.state;
@@ -149,5 +169,5 @@
     if (['replying', 'command'].includes(c.state)) out.push({ t: 'working', text: window.RailUI.chatState(c.state).line, end: '12s', settle: 'Done: the answer is above, with the files it read.' });
     return out;
   };
-  window.ChatsListModel = { thread, seed, sync, DAYS: window.RailUI.DAY_SECTIONS.filter(([d]) => d !== 'upcoming') };
+  window.ChatsListModel = { thread, seed, sync, link, DAYS: window.RailUI.DAY_SECTIONS.filter(([d]) => d !== 'upcoming') };
 })();

@@ -119,8 +119,8 @@ export function timelineCard({ mark, title, line = '', at = 0 }) {
 }
 
 /**
- * BarHead: the one bar's head on every feature: the product's mark (the way to the places), what this bar is, its one
- * action, and Hide.
+ * BarHead: the one bar's head on every feature: the product's mark (the way to the places), what this bar is (its name, with
+ * a ▾ saying it opens the places too), its one action, and Hide.
  * @param {object} o
  * @param {string} o.title
  * @param {boolean} [o.home]    the bar is showing the places
@@ -130,7 +130,7 @@ export function timelineCard({ mark, title, line = '', at = 0 }) {
  */
 export function barHead({ title, home = false, action = '', logo = '', hide = '' }) {
   const label = home ? 'Close the places' : 'Places';
-  return `<div class="bar-head"><button type="button" class="bar-house${home ? ' is-on' : ''}"${attrs({ 'data-bar-house': '', title: label, 'aria-label': label, 'aria-expanded': String(home) })}>${logo || icon('home', 16)}</button><h2 class="bar-title">${esc(title)}</h2>${action}${hide}</div>`;
+  return `<div class="bar-head"><button type="button" class="bar-house${home ? ' is-on' : ''}"${attrs({ 'data-bar-house': '', title: label, 'aria-label': label, 'aria-expanded': String(home) })}>${logo || icon('home', 16)}</button><h2 class="bar-title"><button type="button" class="bar-title-b"${attrs({ 'data-bar-house': '', 'aria-expanded': String(home), title: home ? 'Close the places' : 'Places: Chat, Tasks, Schedules, Workflows, Projects and more' })}>${esc(title)}${icon('chevron', 12)}</button></h2>${action}${hide}</div>`;
 }
 
 /**

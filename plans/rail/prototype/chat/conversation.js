@@ -11,6 +11,11 @@
   const LABELS = ['hotfix', 'billing', 'infra', 'release']; let labelQ = '';   // a label made in one chat is offered in every chat
   // a long name is cut at a word, with an ellipsis; a branch at a dash: never mid-word
   const clip = (t, n = 64) => (t.length <= n ? t : `${t.slice(0, n).replace(/\s+\S*$/, '')}…`);
+  // every change to a task goes to the store (shell/world.js), which tells every surface; a new task is linked into it first
+  const put = (c, t) => { if (!t || t.kind === 'schedule') return; M.link(c || { project: '' }, t); window.RailWorld.move(t.run, t.case, t.detail, { stage: t.stage, title: t.title }); };
+  // a task that starts sets up its worktree, then plans: Starting gives way to Plan by itself
+  const settleStart = (c, t) => setTimeout(() => { if (t.case === 'starting') { Object.assign(t, { case: 'working', stage: 0, detail: 'Plan · writing the plan' }); put(c, t); } }, 4000);
+  const chatOfT = (t) => data().chats.find((c) => (c.tasks || []).some(function w(y) { return y === t || (y.after || []).some(w); }));
   const slug = (t, n = 32) => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, n + 1).replace(/-[^-]*$/, '') || 'task';
   const data = () => window.RailChats.data();
   const fresh = (mode = 'ask') => ({ files: [], mode, text: '', project: 'billing-api', workflow: 'Default', engine: 'Opus 5.5', from: 'origin · latest', then: 'open a PR', every: 'every day', at: '02:00', preset: '', more: false, startAt: '', busy: false });
@@ -90,7 +95,7 @@
   }
   const intentChip = () => { const x = comp.intent && intentOf(comp.intent); return x ? R.intentChip({ icon: R.icon(x.icon, 12), label: x.label, clear: { 'data-intent-clear': '' } }) : ''; };
   // how full this chat's context is, and what waits to be sent
-  const meter = () => { const c = chat(); if (!c) return ''; const pct = Math.min(96, 8 + turns().length * 3); return `<span class="composer-meter" title="This chat has used ${pct}% of its context (200k tokens); older turns are summarised past 90%">${pct}%</span>`; };
+  const meter = () => { const c = chat(); if (!c) return ''; const pct = Math.min(96, 8 + turns().length * 3); return `<span class="composer-meter" title="This chat has used ${pct}% of its context (200k tokens); older turns are summarised past 90%">${pct}% context</span>`; };   // a number says what it counts
   const queueHtml = () => ((comp.queue || []).length ? `<div class="composer-queue">${comp.queue.map((q, k) => R.turnRow({ mark: R.icon('clock', 14), text: `<b>Queued</b> ${esc(q)}`, end: R.button({ label: 'Edit', kind: 'quiet', attrs: { 'data-q-edit': String(k) } }) + R.button({ label: `Remove ${q}`, kind: 'quiet', iconOnly: true, icon: R.icon('x', 12), attrs: { 'data-q-drop': String(k) } }) })).join('')}</div>` : '');
   // @ mentions: a task named in what you write becomes a chip that leads to its card
   const mentionMenu = () => { if (menu !== 'cp-mention') return ''; const q = (comp.text.match(/@([^@\s]*)$/) || [, ''])[1].toLowerCase(); const all = (window.RailChats?.data().chats || []).flatMap((c) => (c.tasks || []).filter((t) => t.case && t.title.toLowerCase().includes(q))).slice(0, 6); return `<div class="composer-at">${R.compactMenu({ label: 'Mention a task', items: all.length ? all.map((t) => ({ id: `cp-at|${t.case}|${t.title}`, text: t.title, mark: taskMark(t, 14) })) : [{ header: 'No task by that name' }] })}</div>`; };
@@ -149,9 +154,13 @@
   function doAct(t, label, f) {
     if (f.to === 'paused-you' && !t.was) { t.was = t.case; t.wasDetail = t.detail; }   // Resume goes back to where it was
     if (/^Resume/.test(label) && t.was) { t.case = t.was; t.detail = t.wasDetail; t.was = ''; }
-    else if (f.to && RM.cases?.some?.((c) => c.id === f.to)) { t.case = f.to; t.detail = R.runState(RM.stateOf(f.to), CTX).word; }
-    if (t.run) window.RailWorld?.move(t.run, t.case, t.detail);   // Tasks and Pulse read the same task
-    window.RailChats.refresh(); paint(); window.RailPulse?.refresh?.(); say(f.say || label);
+    else if (f.to && RM.cases?.some?.((c) => c.id === f.to)) {
+      t.case = f.to; t.detail = R.runState(RM.stateOf(f.to), CTX).word;
+      const again = /^Restart (\w+)/.exec(label); if (again) { const k = STAGES.findIndex((w) => w.toLowerCase() === again[1].toLowerCase()); if (k >= 0) { t.stage = k; t.detail = `${STAGES[k]} runs again`; } }   // it goes back where it says
+      else { const st = RM.stageOf?.(f.to); if (st?.stage >= 0) t.stage = f.to === 'merged' ? 4 : st.stage; }
+    }
+    put(chatOfT(t), t);   // the store hears it; the card, the bar, Pulse and Tasks read it again
+    say(f.say || label);
   }
   // The proposed task, at dev's run proposal's parity, in Rail's words: the composer's sentence (with when), the workflow
   // said in a line, the brief with its files, Shaper's perspectives, Customise (where it runs, branches, guardrails, labels,
@@ -167,6 +176,7 @@
     const from = qs[0].shaper; if (l.some((y) => y.t === 'plan' && y.from === from)) return;
     const at = l.indexOf(qs[qs.length - 1]) + 1, k = Date.now().toString(36);
     const p = l.find((y) => y.id === from), task = p?.ask || p?.title || 'The task';
+    const own = p?.task && taskOf(p.task); if (own) { Object.assign(own, { case: 'plan', detail: 'The plan waits for your OK' }); put(chat(), own); }
     l.splice(at, 0, { t: 'notice', text: 'Requirements agreed' }, { t: 'plan', id: `pl${k}`, from, title: task, summary: `Built in two slices, then one PR into dev. Decided: ${qs.map((y) => y.answered).join('; ')}.`, decided: qs.map((y) => [y.text, y.answered]),
       steps: [`Build ${task} behind its tests`, 'Check it against what you decided', `Review it from ${(p?.persp || ['Product']).join(', ')}`, 'Open one PR into dev'], tests: ['Unit tests for the new code', 'The existing suite stays green'], v: 1, versions: 1, persp: p?.persp || ['Product'],
       roles: (p?.persp || ['Product']).map((name, j) => ({ name, ok: j !== 1, note: { Product: 'Matches what was asked', Security: 'Wants the export behind a permission check', UX: 'Wants the column names checked', Data: 'Dates and money stay exact', Performance: 'Streams large exports', Operations: 'Logs each export' }[name] || 'Fine as written' })) });
@@ -286,7 +296,7 @@
       return `<div data-anchor="${x.id}">${R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'ask', stage: -1, size: 16 }), text: `<b>${esc(x.text)}</b>` })}<div class="convo-answer">${R.optionList({ label: x.text, options: x.options, selected: x.pick, recommended: 0, optAttrs: (n) => ({ 'data-answer': `${i}|${n}` }), own: `${R.field({ id: `own-${x.id}`, label: 'Your own answer', quietLabel: true, placeholder: 'Or write your own answer', attrs: { 'data-own': String(i) } })}<div class="convo-answer-go">${R.button({ label: 'Answer', attrs: { 'data-answer-go': String(i) } })}${x.many ? R.button({ label: 'Use Worca’s picks', kind: 'quiet', attrs: { 'data-answer-picks': String(i), title: 'Takes Worca’s pick for this and the next question' } }) : ''}</div>` })}</div></div>`;
     }
     // "Asks you below" only when a question waits below it in this chat; else the decision is on the card itself (a gate's Accept as is)
-    const st = stOf(t), tone = R.markTone(st), at = turns().indexOf(x), below = tone === 'ask' && turns().some((y, j) => j > at && y.t === 'question' && !y.answered && !y.shaper);
+    const st = stOf(t), tone = R.markTone(st), at = turns().indexOf(x), below = tone === 'ask' && turns().some((y, j) => j > at && ((y.t === 'question' && !y.answered) || (y.t === 'plan' && !y.approved)));   // a question or a plan waiting under it speaks for it
     const word = below ? 'Asks you below' : st.word;
     if (tone === 'wait' && !x.open) return openCard(x, t);   // one line until opened in place
     // Its one action and ⋯ are its state's own, as on its page; a question is answered under the card.
@@ -390,7 +400,7 @@
     // in a chat that has a task, "change it" is a follow-up on that task (its branch, its PR), never an unrelated new one
     const last = [...(chat()?.tasks || [])].reverse().find((t) => t.kind !== 'schedule');
     if (last && /\b(change it|change that|also|follow[- ]up|ask for changes|add .* to it|on top of)\b/i.test(text)) return [{ t: 'words', html: `A follow-up on <b>${esc(last.title)}</b>, on its branch. Check it, then start it:` },
-      { t: 'proposal', id: `p${n}`, title: clip(`${last.title}: ${text.replace(/^change it:?\s*/i, '')}`), why: `On top of ${last.title}${last.branch ? `, on ${last.branch}` : ''}`, project: chat()?.project || comp.project, workflow: 'Lean', engine: comp.engine, then: last.git && last.git !== 'branch' ? 'update its PR' : 'open a PR', feature: last.branch || '', open: false, nudge: false }];
+      { t: 'proposal', id: `p${n}`, title: clip(`${last.title}: ${text.replace(/^change it:?\s*/i, '')}`), why: `On top of ${last.title}${last.branch ? `, on ${last.branch}` : ''}`, project: chat()?.project || comp.project, workflow: 'Lean', engine: comp.engine, then: ['open', 'pass', 'fail', 'conflict'].includes(last.git) ? 'update its PR' : 'open a PR', feature: last.branch || '', open: false, nudge: false }];
     if (!/\b(add|fix|build|make|implement|create|change|update|remove|rename|migrate)\b/i.test(text)) return [{ t: 'words', html: `Worca answers here from <b>${esc(comp.project || 'the project')}</b>'s code, naming the files it read. Ask for a change and it proposes a task.` }];   // a question gets an answer, never a build offer
     const core = text.replace(/^(can you|could you|please|let's)\s+/i, '').split(/,?\s+(?:or|and should|should it)\b|[?.!]/i)[0].trim();
     const title = core.length <= 48 ? core : core.slice(0, 48).replace(/\s+\S*$/, '');   // a clause, cut at a word
@@ -411,7 +421,7 @@
     } else if (false) {
       const t = { id: `t${n}`, title: clip(text), case: 'starting', stage: 0, git: 'branch', branch: `feat/${slug(text)}`, detail: `Plan · ${comp.workflow} on ${comp.engine}` };
       if (comp.startAt) { t.case = 'scheduled'; t.detail = `Starts at ${comp.startAt}`; t.git = ''; }
-      c.tasks = [...(c.tasks || []), t]; c.state = 'following';
+      c.tasks = [...(c.tasks || []), t]; c.state = 'following'; put(c, t); settleStart(c, t);
       list.push({ t: 'words', html: `I'll start a task on <b>${esc(comp.project)}</b>: ${esc(comp.workflow)} on ${esc(comp.engine)}, then ${esc(comp.then)}.` }, { t: 'task', id: `k${n}`, task: t.id });
       say(comp.startAt ? `Starts at ${comp.startAt}` : 'Task started');
     } else if (comp.mode === 'schedule') {
@@ -510,7 +520,7 @@
       const x = turns()[+hit.dataset.answerGo], t = taskOf(x.task), c = chat();
       const own = root.querySelector(`[data-own="${hit.dataset.answerGo}"]`)?.value.trim(); if (own) { x.options = [...x.options, own]; x.pick = x.options.length - 1; }
       if (!t) { x.answered = x.options[x.pick]; afterClarify(); paint(); say('Answered'); return; }   // a question of the chat itself, not of a task
-      x.answered = x.options[x.pick]; t.case = 'working'; t.detail = 'Review · carries on with your answer'; c.state = 'following'; window.RailChats.refresh(); paint(); say('Answered: the task carries on'); return;
+      x.answered = x.options[x.pick]; t.case = 'working'; t.detail = 'Review · carries on with your answer'; c.state = 'following'; put(c, t); window.RailChats.refresh(); paint(); say('Answered: the task carries on'); return;
     }
     if (on('[data-cp-queue]')) { const t = root.querySelector('[data-composer-t]'); comp.queue = [...(comp.queue || []), (t?.value || comp.text).trim()]; comp.text = ''; paint(); say('Queued: it goes when this reply is done'); return; }
     if ((hit = on('[data-q-edit]'))) { const k = +hit.dataset.qEdit; comp.text = comp.queue[k]; comp.queue.splice(k, 1); paint(); root.querySelector('[data-composer-t]')?.focus(); return; }
@@ -528,7 +538,7 @@
     if ((px = pp('data-plan-roles'))) { px.open = !px.open; paint(); return; }
     if ((px = pp('data-plan-approve'))) { px.approved = true; const l = turns(), i = l.indexOf(px);
       const own = l.find((y) => y.t === 'task' && y.id === px.from), t = own && taskOf(own.task);
-      if (t) { Object.assign(t, { kind: 'feature', case: 'working', stage: 1, detail: 'Build · slice 1 of 2' }); l.splice(l.indexOf(own), 1); window.RailChats.refresh(); }   // its planning card gives way to the feature below
+      if (t) { Object.assign(t, { kind: 'feature', case: 'working', stage: 1, detail: 'Build · slice 1 of 2' }); l.splice(l.indexOf(own), 1); put(chat(), t); }   // its planning card gives way to the feature below
       l.splice(l.indexOf(px) + 1, 0, { t: 'feature', id: `f${Date.now().toString(36)}`, title: px.title, slices: [{ title: `${clip(px.title, 40)}: the change`, case: 'working', stage: 1, detail: 'Build' }, { title: `${clip(px.title, 40)}: its rollout`, case: 'scheduled', stage: -1, detail: 'After the change' }] }); paint(); say('Approved: the plan is being built'); return; }
     if ((px = pp('data-plan-changes'))) { px.asking = true; paint(); root.querySelector(`[data-ask-changes="${px.id}"]`)?.focus(); return; }
     if ((px = pp('data-changes-cancel'))) { px.asking = false; paint(); return; }
@@ -536,7 +546,7 @@
       if (px.t === 'task') {   // a follow-up on a task: on its branch, updating its PR, not a stranger
         const t = taskOf(px.task), k = Date.now().toString(36), at = l.indexOf(px) + 1;
         l.splice(at, 0, { t: 'you', id: `y${k}`, text: v, when: 'now', quote: t.title }, { t: 'words', html: `A follow-up on <b>${esc(t.title)}</b>, on its branch. Check it, then start it:` },
-          { t: 'proposal', id: `p${k}`, title: clip(`${t.title}: ${v}`), why: `On top of ${t.title}${t.branch ? `, on ${t.branch}` : ''}`, project: chat()?.project || comp.project, workflow: 'Lean', engine: comp.engine, then: t.git && t.git !== 'branch' ? 'update its PR' : 'open a PR', feature: t.branch || '', open: false, nudge: false });
+          { t: 'proposal', id: `p${k}`, title: clip(`${t.title}: ${v}`), why: `On top of ${t.title}${t.branch ? `, on ${t.branch}` : ''}`, project: chat()?.project || comp.project, workflow: 'Lean', engine: comp.engine, then: ['open', 'pass', 'fail', 'conflict'].includes(t.git) ? 'update its PR' : 'open a PR', feature: t.branch || '', open: false, nudge: false });
         paint(); say('Follow-up proposed'); return;
       } l.splice(l.indexOf(px) + 1, 0, { t: 'change', id: `cg${Date.now().toString(36)}`, kind: 'Changes', title: px.title, why: `“${v}”`, rows: [{ name: 'Where it lands', before: '', after: 'a new round of the plan' }], actions: [['Start round 2', 'primary', 'Round 2 started'], ['Not now', 'quiet', 'Not now']], state: 'proposed' }); paint(); say('Asked for changes'); return; }
     if ((hit = on('[data-cmd-stop]'))) { const x = turns()[+hit.dataset.cmdStop]; if (x) { x.stopped = true; paint(); say('Stopped the command'); } return; }
@@ -568,14 +578,15 @@
       }
       const t = { id: `t${n}`, title: px.title, case: 'starting', stage: 0, git: 'branch', branch: `feat/${slug(px.title)}`, detail: `Plan · ${px.workflow} on ${px.engine}` };
       if (px.when && px.when !== 'now') { t.case = 'scheduled'; t.stage = -1; t.git = ''; t.detail = `Starts ${px.when}`; }
-      c.tasks = [...(c.tasks || []), t]; c.state = 'following';
+      if (px.workflow === 'Shaper' && t.case !== 'scheduled') Object.assign(t, { case: 'question', detail: 'Plan asks you below' });   // Shaper waits on your answers, not "Starting"
+      c.tasks = [...(c.tasks || []), t]; c.state = 'following'; put(c, t); settleStart(c, t);
       l.splice(i, 1, { t: 'task', id: px.id, task: t.id, persp: px.persp || ['Product'], ask: px.title });   // what was asked and who reviews it carry on to the plan
       if (px.workflow === 'Shaper' && t.case !== 'scheduled') { const k = Date.now().toString(36); l.splice(i + 1, 0, { t: 'words', html: 'A few questions before the plan:' }, { t: 'question', id: `q1${k}`, text: `A · For “${clip(px.title, 48)}”, what matters most?`, options: ['The smallest change that works', 'Configurable from the start'], pick: 0, many: `q2${k}`, shaper: px.id, when: 'now' }, { t: 'question', id: `q2${k}`, text: 'B · How should it reach people?', options: [(px.persp || []).includes('Security') ? 'Behind a flag, after a security review' : 'Behind a flag first', 'To everyone at once'], pick: 0, shaper: px.id, when: 'now' }); }
       window.RailChats.refresh(); paint(); say(t.case === 'scheduled' ? `Scheduled: starts ${px.when}` : px.workflow === 'Shaper' ? 'Planning started' : 'Task started'); return;
     }
     if ((hit = on('[data-open-task]'))) { const x = turns().find((y) => y.task === hit.dataset.openTask && (y.t === 'task' || y.t === 'schedule')); if (x) { const was = x.open; turns().forEach((y) => { y.open = false; y.openSlice = -1; }); x.open = !was; paint(); if (x.open) requestAnimationFrame(() => root.querySelector(`[data-anchor="${x.id}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })); } return; }   // How it ran opens the card in place, one at a time
     if ((hit = on('[data-open-sched]'))) { window.RailShell.go(`schedule/${hit.dataset.openSched}`); return; }   // its runs, by day
-    if ((hit = on('[data-start-now]'))) { const t = taskOf(hit.dataset.startNow); if (t) { t.case = 'working'; t.stage = 0; t.detail = 'Plan · step 1 of 2'; window.RailChats.refresh(); paint(); say('Started now'); } return; }
+    if ((hit = on('[data-start-now]'))) { const t = taskOf(hit.dataset.startNow); if (t) { t.case = 'starting'; t.stage = 0; t.detail = 'Plan is under way'; put(chat(), t); window.RailChats.refresh(); paint(); say('Started now'); } return; }
     if ((hit = on('[data-cancel-task]'))) { const t = taskOf(hit.dataset.cancelTask); if (t) { t.cancelled = true; paint(); say('Cancelled'); } return; }
     if ((hit = on('[data-slice-open]'))) { const [id, k] = hit.dataset.sliceOpen.split('|'), x = turns().find((y) => y.id === id); if (x) { const was = x.openSlice === +k; turns().forEach((y) => { y.open = false; y.openSlice = -1; }); x.openSlice = was ? -1 : +k; paint(); } return; }   // one thing open at a time: the lent page goes to the slice
     if ((hit = on('[data-open-ref]'))) { window.RailShell.openTask(hit.dataset.openRef, '', hit.textContent.trim()); return; }
@@ -594,12 +605,13 @@
   root.addEventListener('contextmenu', (e) => { const p = e.target.closest('[data-pin]'); if (!p) return; e.preventDefault(); pins = pins.filter((w) => w !== p.dataset.pin); paint(); say(`Unpinned ${p.dataset.pin}`); });
   root.addEventListener('keydown', (e) => { const p = e.target.closest?.('[data-pin]'); if (p && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) { e.preventDefault(); pins = pins.filter((w) => w !== p.dataset.pin); paint(); say(`Unpinned ${p.dataset.pin}`); } });
   root.addEventListener('input', (e) => { if (e.target.matches('[data-composer-t]')) { comp.text = e.target.value; size(e.target); const at = /@[^@\s]*$/.test(comp.text); if (at !== (menu === 'cp-mention')) { menu = at ? 'cp-mention' : ''; paint(); } } if (e.target.matches('[data-pp-brief]')) { const x = turns().find((y) => y.id === e.target.dataset.ppBrief); if (x) x.brief = e.target.value; } if (e.target.matches('[data-pp-feature]')) { const x = turns().find((y) => y.id === e.target.dataset.ppFeature); if (x) x.feature = e.target.value; } if (e.target.matches('[data-pp-title]')) { const x = turns().find((y) => y.id === e.target.dataset.ppTitle); if (x) x.title = e.target.value; } });
+  // the store changed (here, in Tasks, in Pulse, from Away): read every chat's tasks again and draw
+  window.RailWorld.onMove(() => { for (const c of data().chats) M.sync(c); window.RailChats?.refresh(); paint(); });
   // a step taken inside a card's open stages moves the task itself: its card's head and bar, the bar's row, Pulse
   document.addEventListener('rail:task-moved', (e) => {
     const { from, to, ask } = e.detail || {}, t = (chat()?.tasks || []).find((y) => y.case === from && (!ask || y.title === ask)); if (!t) return;
     t.case = to; t.detail = R.runState(RM.stateOf(to), CTX).word; const st = RM.stageOf?.(to); if (st?.stage >= 0) t.stage = st.stage;
-    if (t.run) window.RailWorld?.move(t.run, t.case, t.detail);
-    window.RailChats.refresh(); refreshAll(); window.RailPulse?.refresh?.();
+    put(chat(), t);
   });
   // the Label picker's field: typing finds, Enter makes a new label and adds it to this chat
   function keepLabelQ() { const q = root.querySelector('#cl-label-q'); if (q) { q.value = labelQ; q.focus(); q.setSelectionRange(labelQ.length, labelQ.length); } }
@@ -682,7 +694,7 @@
       const qs = l.filter((y) => y.t === 'question' && !y.answered && !y.shaper); if (!qs.length) continue;
       qs.forEach((q) => { q.answered = `${q.options[q.pick ?? 0]} (Worca, while you were away)`; });
       const t = (c.tasks || []).find((y) => y.case && R.markTone(R.runState(RM.stateOf(y.case))) === 'ask');
-      if (t) { t.case = 'working'; t.detail = 'Carries on with Worca’s answer'; if (t.run) window.RailWorld?.move(t.run, t.case, t.detail); out.push(`${t.title}: ${qs[0].options[qs[0].pick ?? 0]}`); }
+      if (t) { t.case = 'working'; t.detail = 'Carries on with Worca’s answer'; put(c, t); out.push(`${t.title}: ${qs[0].options[qs[0].pick ?? 0]}`); }
     }
     window.RailChats.refresh(); refreshAll(); return out;
   }

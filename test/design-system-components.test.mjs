@@ -890,6 +890,11 @@ test('ScrollFade: an edge fades only while there is more past it', () => {
   window.close();
 });
 
+test('barHead: its name opens the places too, with a ▾ that says so', () => {
+  const h = C.barHead({ title: 'Chat' });
+  assert.match(h, /class="bar-title-b"[^>]*data-bar-house/); assert.match(h, /Places: Chat, Tasks, Schedules/);
+});
+
 test('the Rail stylesheets close every rule: one open brace would swallow all that follows', () => {
   for (const f of ['plans/rail/prototype/design-system/rail.css', 'plans/rail/prototype/design-system/rail-look.css', 'plans/rail/prototype/shell/shell.css', 'plans/rail/prototype/pulse/pulse.css']) {
     const css = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');

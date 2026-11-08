@@ -48,7 +48,9 @@ const isUnread = (u) => u.unread && !isFixed(u) && !ui.read.includes(u.id);
 const groupShows = (g) => !g.flag || R.prefs.flag(g.flag);
 const groupsShown = () => M.GROUPS.filter(groupShows);
 const inShownGroup = (u) => groupShows(groupOf(u.g));
-const live = () => [...ui.added, ...C().updates].filter((u) => inShownGroup(u) && !ui.cleared.includes(u.id));
+// an update about a task that needs you stays open only while its task still waits on you (the one store says so)
+const stillWaits = (u) => { if (u.sev !== 'needs' || !u.run) return u; const r = W.find(u.run); return r && W.section(r) !== 'needs' ? { ...u, open: false, resolved: true } : u; };
+const live = () => [...ui.added, ...C().updates].map(stillWaits).filter((u) => inShownGroup(u) && !ui.cleared.includes(u.id));
 const unread = () => live().filter(isUnread);
 const limitsNow = () => M.limits(C(), ui.s.warnAt);
 // Vitals's sections, and what its sentence keeps of them: a run by its project; a limit belongs to a harness, so it ignores
@@ -676,6 +678,7 @@ setInterval(() => { if (!awayEl && R.awayShows({ away: isAway(), keepAwake: ui.k
 // ---- render ----
 let sideWas = null, swapCls = '';   // the sidebar's content fades only when it changes between Worca's and Settings'
 function render() { stale = false; holdFocus(SHELL ? renderInShell : paintAlone); }
+W.onMove?.(() => render());   // a task moved anywhere: the badge, Vitals and Updates read the store again
 function paintAlone() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;

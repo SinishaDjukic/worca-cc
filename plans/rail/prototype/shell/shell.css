@@ -230,3 +230,8 @@ body.bar-hidden .bar-show{display:none;}
 
 /* notices come in under the top bar, by Pulse: never over the composer's controls */
 body .toasts{top:60px;bottom:auto;}   /* ds-ok: just under the 48px top bar */
+
+/* the bar's name opens the places too: its ▾ says so */
+.bar-title-b{display:inline-flex;align-items:center;gap:6px;padding:2px 6px;margin-left:-6px;border:0;border-radius:var(--r-sm);background:none;color:inherit;font:inherit;cursor:pointer;}
+.bar-title-b:hover{background:var(--hover);}
+.bar-title-b svg{color:var(--ink-3);}

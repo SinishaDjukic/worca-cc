@@ -19,7 +19,10 @@
   // a chat whose task waits on you stays under Needs you, whatever the chat itself is doing (a member that needs you raises its group)
   // a task that waits on you (a question, a gate, a failure, a pause, a cap) lifts its chat, as it counts in Pulse
   const NEEDS_TONES = ['ask', 'act', 'fail', 'pause'];
-  const asksInside = (c) => { const walk = (t) => (t.case && t.case !== 'scheduled' && NEEDS_TONES.includes(R.markTone(R.runState(window.RunCardModel.stateOf(t.case))))) || (t.after || []).some(walk); return (c.tasks || []).some(walk); };
+  // the store says what waits on you (Pulse reads the same): a task needs you by its section; a slice that is only ready ships with its feature
+  const W = window.RailWorld;
+  const waits = (t) => { const r = t.run && W.find(t.run); if (r) return !r.archived && (r.group ? W.raises(r) : W.section(r) === 'needs'); return !!t.case && t.case !== 'scheduled' && NEEDS_TONES.includes(R.markTone(R.runState(window.RunCardModel.stateOf(t.case)))); };
+  const asksInside = (c) => { const walk = (t) => waits(t) || (t.after || []).some(walk); return (c.tasks || []).some(walk); };
   const sectionOfChat = (c) => (asksInside(c) ? 'needs' : R.chatState(c.state).section);
   const busyOf = (c) => R.chatState(c.state).busy || '';
   const toneOf = (state) => (state === 'needs-you' ? 'ask' : state === 'idle' ? 'idle' : 'run');
@@ -210,6 +213,7 @@
   }
   document.getElementById('list-case')?.addEventListener('change', (e) => setCase(e.target.value));
   window.RailWorld.onChange(() => setCase(listCase));   // another Pulse case: what waits on you follows it
+  window.RailWorld.onMove(() => { data.chats.forEach(M.sync); ctl?.paint(); });   // a task moved anywhere: its row and its chat's place in Needs you follow
   R.prefs.onChange(() => ctl.paint());
   window.RailChats = {
     show: (id) => { current = id || ''; ctl.paint(); return true; },
