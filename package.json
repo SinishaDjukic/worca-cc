@@ -87,6 +87,7 @@
     "verify:ticket-updates": "node --disable-warning=ExperimentalWarning tools/verify-ticket-updates-cdp.mjs",
     "verify:chat-layout": "node --disable-warning=ExperimentalWarning tools/verify-chat-layout-cdp.mjs",
     "verify:design-preview": "node --disable-warning=ExperimentalWarning tools/verify-design-preview-cdp.mjs",
+    "verify:design-stage": "node --disable-warning=ExperimentalWarning tools/verify-design-stage-cdp.mjs",
     "split:verify": "node --disable-warning=ExperimentalWarning tools/split-verify.mjs",
     "split:go-no-go": "node --disable-warning=ExperimentalWarning tools/split-go-no-go.mjs",
     "split:catch-up": "node --disable-warning=ExperimentalWarning tools/split-catch-up.mjs",

@@ -65,6 +65,13 @@ export const ICONS = Object.freeze({
   skill: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"></path>',
   layers: '<path d="M12 3l9 4.5-9 4.5-9-4.5z"></path><path d="M3 12l9 4.5 9-4.5"></path><path d="M3 16.5l9 4.5 9-4.5"></path>',
   none: '<rect x="5" y="5" width="14" height="14" rx="3" stroke-dasharray="3 3"></rect>',
+  // The Design stage (ui/public/design/): the hide-cursors toggle, the viewport switch, and an agent's Stop.
+  cursor: '<path d="M5 3.5l5.2 16.5 2.7-6.7 6.6-2.7z"></path>',
+  'cursor-off': '<path d="M5 3.5l5.2 16.5 2.7-6.7 6.6-2.7z"></path><path d="M3.5 3.5l17 17"></path>',
+  desktop: '<rect x="3" y="4.5" width="18" height="12" rx="2"></rect><path d="M9 20h6M12 16.5V20"></path>',
+  tablet: '<rect x="5.5" y="3" width="13" height="18" rx="2"></rect><path d="M11 18h2"></path>',
+  phone: '<rect x="7.5" y="3" width="9" height="18" rx="2"></rect><path d="M11 18h2"></path>',
+  'stop-square': '<rect x="6" y="6" width="12" height="12" rx="2"></rect>',
 });
 
 const px = (size) => (Number(size) > 0 ? Number(size) : 16);

@@ -8,14 +8,14 @@ test('applied is in document coordinates, with the tail on the last character', 
     html: '<section data-r="10,20,500,300"><h1 data-r="10,20,400,40" data-tr="300,30,8,20">Ship</h1></section>' });
   const a = b.of('applied')[0];
   assert.deepEqual(a.rect, [110, 1020, 500, 300]);
-  assert.deepEqual(a.tail, { rect: [400, 1030, 8, 20], tag: 'h1' });
+  assert.deepEqual(a.tail, { rect: [400, 1030, 8, 20], tag: 'h1', box: [110, 1020, 400, 40] });
 });
 test('no text: the tail is the deepest last element, and media marks say media', () => {
   const b = scrolled(bootBridge({ html: SLOT_HERO }));
   b.send('section', { id: 'hero', rev: 1, final: false,
     html: '<section data-r="0,0,10,10"><div data-r="1,2,3,4"><img data-r="5,6,7,8"></div></section>' });
   const a = b.of('applied')[0];
-  assert.deepEqual(a.tail, { rect: [105, 1006, 7, 8], tag: 'img' });
+  assert.deepEqual(a.tail, { rect: [105, 1006, 7, 8], tag: 'img', box: [105, 1006, 7, 8] });
   assert.deepEqual(a.marks.map((m) => [m.tag, m.kind]), [['section', 'el'], ['div', 'el'], ['img', 'media']]);
 });
 test('marks hold at most 24, the newest ones, with no style elements', () => {

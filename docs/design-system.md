@@ -104,7 +104,7 @@ curve; everything else is still. Filmed from the run page: `plans/rail/mocks/mot
 
 - **Never:** a transition between pages or tabs (they change at once), a slide, a spring, a bounce, a count-up, a
   spinner, a skeleton shimmer, a parallax, motion on scroll, or anything that runs without a state change.
-  The one named exception is the away screensaver: it starts after 5 idle minutes and is off under reduced motion.
+  The named exceptions are the away screensaver (it starts after 5 idle minutes and is off under reduced motion) and the Design stage (› Design stage exceptions).
 - **Reduced motion** (`prefers-reduced-motion`): every timing is 0; the breathing is a still colour, the shimmer a still
   wash, the flash a still outline that fades with the next click.
 - **In code:** a page that draws itself again after a change draws with `morph(target, html)` from
@@ -879,6 +879,14 @@ catalogue structure that was approved, drawn with this system's tokens:
 - Kind colours (`.mk-t-*` on the hue families, glyphs on the `-ink-strong` shades) appear only in a plugin's monogram tile
   and as the rail's small kind dots. The update chip ("Update 0.3.0", "2 updates") is the page's blue status chip.
   Status chips there use `.badge.mk-chip-*` on the `-ink-strong` shades (4.5:1 or more); the global `.badge` tones do not change.
+
+### Design stage exceptions
+The Design page's stage (`ui/public/design/`) shows real agents at work, so it moves and colours what no other page does. These hold on the stage only.
+- **Motion:** a cursor travels between the real elements its agent writes (up to 950 ms) and leaves when its process ends. Guides sweep. The camera zooms and scrolls by itself, at most 400 ms, only when the crew changes, until the person scrolls or zooms. Reduced motion: no travel, no sweep, no ease, no ghost, and the page never moves slower than a jump.
+- **Crew colours:** agents wear the dark arms of the hue families (`--blue-ink`, `--teal-ink` …), with `--stage-lemon`, `--stage-coral` and `--stage-sky`, never violet. They identify, they do not mean a state, and they appear only on a cursor, its label, its HUD dot, its Agents row and its Plan row dot. Waiting is `--amber`, as everywhere.
+- **Grammar colours:** `--stage-blue`, `--stage-red`, `--stage-orange` mark what is being written, a guide or overflow, and what is being read.
+- **HUD:** always dark, on any page or artifact. Its 2px line is `--blue`. A dot grows on hover.
+- **Mono:** size tags (`p 500×58`) are mono: they name an element and its measure.
 
 ## Do and don't
 | Do | Don't | Why |

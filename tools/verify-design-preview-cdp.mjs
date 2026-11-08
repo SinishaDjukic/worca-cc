@@ -486,7 +486,8 @@ try {
   await st.frame.evaluate((n) => {
     window.__dpAnim = [];
     // Added after the bridge's listener, so it runs right after the bridge's synchronous flush of the same message.
-    addEventListener('message', (e) => { if (e.data && e.data.n === n && e.data.t === 'section') window.__dpAnim.push(document.getAnimations().length); });
+    // The ghost (P4, id 'worca-ghost') is its own animation with a 550 ms settle: only the settle is counted here.
+    addEventListener('message', (e) => { if (e.data && e.data.n === n && e.data.t === 'section') window.__dpAnim.push(document.getAnimations().filter((a) => a.id !== 'worca-ghost').length); });
   }, st.nonce);
   const settleHtml = ['<section class="settle"><h2>Settle</h2><p>one</p></section>', '<section class="settle"><h2>Settle</h2><p>one</p><p>two</p></section>'];
   const settled = [];
@@ -494,7 +495,7 @@ try {
     await send(st, 'section', { id: 'price', rev: i + 1, html, final: true });
     await until(() => appliedOf('st', 'price', i + 1)[0], 5000);
     await sleep(500);
-    settled.push(await st.frame.evaluate(() => ({ html: document.querySelector('[data-section="price"]').outerHTML, live: document.getAnimations().length })));
+    settled.push(await st.frame.evaluate(() => ({ html: document.querySelector('[data-section="price"]').outerHTML, live: document.getAnimations().filter((a) => a.id !== 'worca-ghost').length })));
   }
   const anims = await st.frame.evaluate(() => window.__dpAnim);
   const expected = settleHtml.map((h) => h.replace('<section class="settle">', '<section class="settle" data-section="price">'));

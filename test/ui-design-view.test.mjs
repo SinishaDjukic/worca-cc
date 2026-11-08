@@ -1,0 +1,295 @@
+// test/ui-design-view.test.mjs — the Design page (ui/public/design/view.mjs): the library stub on `#design`, the
+// studio on `#design/<id>` (the chat column beside the stage), a bad id, the frames' route to the nav count, the stage
+// and the chat, and P5's chat seam. The rig is a JSDOM page holding the sidebar's Design row and `#design-host`, its
+// window on the fake clock (as test/helpers/design-stage-rig.mjs), and a fake `fetch` by route.
+import { test, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { fakeClock } from './helpers/design-clock.mjs';
+import { DID, BID, build, plan } from './helpers/design-stage-frames.mjs';
+import { mountDesignView } from '../ui/public/design/view.mjs';
+
+const trackDom = useDomRelease(afterEach);
+const mounted = [];
+afterEach(() => { while (mounted.length) mounted.pop().destroy(); });
+
+const NS = 'worca-design';
+const NEW_ID = 'd_0000000000aa';
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+function reply(status, body) {
+  const text = JSON.stringify(body);
+  return { ok: status >= 200 && status < 300, status, json: async () => JSON.parse(text), text: async () => text };
+}
+
+/**
+ * @param {{detail?: object, detailStatus?: number, createChat?: Function, createAnswer?: [number, object]}} [o]
+ *   `detail` answers `GET /api/design/:id`, `detailStatus` answers it with that error instead; `createAnswer` is what
+ *   `POST /api/design` gets instead of its 201. `hold(url)` keeps the next GET of `url` until the returned release
+ *   runs; that GET answers what was set when it was asked.
+ */
+function rig({ detail, detailStatus, createChat, createAnswer } = {}) {
+  const clock = fakeClock();
+  const dom = trackDom(new JSDOM(`<!doctype html><html><body>
+    <nav class="nav"><button type="button" data-nav="design">Design<span class="nav-count n-grey" id="nav-design-count" hidden></span></button></nav>
+    <main class="main"><section class="view" data-view="design"><div id="design-host"></div></section></main>
+  </body></html>`, { url: 'http://localhost/' }));
+  const win = dom.window;
+  const doc = win.document;
+  win.Element.prototype.scrollIntoView = function scrollIntoView() {};
+  Object.assign(win, {
+    setTimeout: clock.set, clearTimeout: clock.clear, requestAnimationFrame: clock.raf, cancelAnimationFrame: clock.cancelRaf,
+  });
+  Object.defineProperty(win, 'performance', { configurable: true, value: { now: () => clock.now, timeOrigin: 0 } });
+  win.matchMedia = (query) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} });
+
+  let list = [];
+  const posts = [];
+  const gets = [];
+  const holds = new Map();   // url -> the promise the next GET of it waits for
+  const hold = (url) => {
+    let release;
+    holds.set(url, new Promise((resolve) => { release = resolve; }));
+    return () => release();
+  };
+  async function fetch(url, init = {}) {
+    if (String(init.method ?? 'GET').toUpperCase() === 'POST') {
+      const body = JSON.parse(init.body ?? '{}');
+      posts.push({ url, body });
+      if (url === '/api/design') {
+        if (createAnswer) return reply(...createAnswer);
+        return reply(201, { design: { id: NEW_ID, kind: body.kind, title: 'Untitled design', version: 0, threadId: null }, threadId: null });
+      }
+      if (/^\/api\/design\/d_[0-9a-f]{12}\/preview-token$/.test(url)) {
+        return reply(200, { base: '/design-preview/TOK', expiresAt: clock.now + 43200000 });
+      }
+      return reply(404, { error: 'not found' });
+    }
+    gets.push(url);
+    const answer = list;
+    const held = holds.get(url);
+    holds.delete(url);
+    if (held) await held;
+    if (url === '/api/design') return answer === null ? reply(500, { error: 'boom' }) : reply(200, answer);
+    if (/^\/api\/design\/d_[0-9a-f]{12}$/.test(url)) {
+      if (detailStatus) return reply(detailStatus, { error: 'Design not found' });
+      return reply(200, detail);
+    }
+    return reply(404, { error: 'not found' });
+  }
+  const route = [];
+  const ws = [];
+  const prompts = [];
+  const view = mountDesignView({
+    doc, win, host: doc.getElementById('design-host'), fetch,
+    sendWs: (m) => { ws.push(m); },
+    route: (p) => { route.push(p); },
+    prompt: (o) => { prompts.push(o); return Promise.resolve(null); },
+    ...(createChat ? { createChat } : {}),
+  });
+  mounted.push(view);
+
+  const q = (sel) => doc.querySelector(sel);
+  const qa = (sel) => doc.querySelectorAll(sel);
+  // A C-6 message from the stage's current frame (the one that is not `.is-next`). The frame host believes a frame only
+  // after its `ready`, so the first message from a frame says `ready` first, in the mode its `src` names.
+  const readied = new WeakSet();
+  const post = (f, data) => {
+    win.dispatchEvent(Object.assign(new win.Event('message'), { source: f.contentWindow, origin: 'null', data }));
+  };
+  const fireStageMsg = (t, fields = {}) => {
+    const f = [...doc.querySelectorAll('iframe')].find((x) => !x.classList.contains('is-next'));
+    const n = /#n=([^&#]*)$/.exec(f.getAttribute('src'))[1];
+    if (!readied.has(f)) {
+      readied.add(f);
+      f.contentWindow.postMessage = () => {};
+      const mode = /\/(build|run)\/#n=/.exec(f.getAttribute('src'))[1];
+      post(f, { ns: NS, v: 1, n, t: 'ready', mode, vw: 1440, vh: 900, dpr: 1 });
+    }
+    post(f, { ...fields, ns: NS, v: 1, n, t });
+  };
+  const setList = (v) => { list = v; };
+  return {
+    view, win, doc, clock, q, qa, route, posts, gets, ws, prompts, setList, hold, fireStageMsg,
+    paint: () => clock.frame(), tick: flush,
+  };
+}
+
+const DETAIL = { design: { id: DID, kind: 'web', title: 'Apsida landing page', version: 0, threadId: 'ask_1' }, plan: null, build: null, sections: [], versions: [] };
+const ROW = { id: BID, designId: DID, round: 1, kind: 'first', status: 'building', reason: null, agentsTotal: 1, layers: 0, costUsd: 0, costKnown: true, startedAt: '2026-11-05T10:00:00Z', endedAt: null };
+test('#design shows the library: rows, an empty line, a failure with Try again, and New design', async () => {
+  const { view, q, qa, route, posts, tick, setList } = rig();
+  setList([{ id: DID, title: 'Apsida', kind: 'web', status: 'done', updatedAt: 'x', costUsd: 4.2, thumb: null }]);
+  await view.show('');
+  assert.equal(qa('.dz-lib .row-btn').length, 1);
+  assert.equal(q('.dz-lib .row-btn').textContent.includes('Apsida'), true);
+  q('.dz-lib .row-btn').click();
+  assert.deepEqual(route.at(-1), DID);
+  setList([]); await view.show('');
+  assert.equal(q('.dz-lib .empty-line').textContent.startsWith('No designs yet'), true);
+  q('.dz-lib .btn').click(); await tick();
+  assert.deepEqual(posts.at(-1), { url: '/api/design', body: { kind: 'web' } });
+  assert.deepEqual(route.at(-1), 'd_0000000000aa', 'P2 answers {design, threadId}: route to design.id');
+  setList(null); await view.show('');
+  assert.match(q('.dz-lib').textContent, /Could not load designs/);
+  assert.ok([...qa('.dz-lib button')].some((b) => b.textContent === 'Try again'));
+});
+test('#design/<id> shows the studio: chat column with title and kind, the stage beside it', async () => {
+  const { view, q, tick } = rig({ detail: DETAIL });
+  await view.show(DID); await tick();
+  assert.equal(q('.dz-chat .dz-chat-title').textContent, 'Apsida landing page');
+  assert.equal(q('.dz-chat .dz-kind').textContent, 'Web page');
+  assert.ok(q('.dz-studio > .dz-chat + .dz-stage'));
+  assert.equal(q('.chat-head-btn'), null, 'no ⋯ until there is a menu');
+  assert.ok(q('.dz-chat-slot .dz-plan'), 'the Plan list sits in the chat slot until the dock mounts it');
+});
+test('a bad or missing id says so and leads back', async () => {
+  const { view, q, route, tick } = rig({ detailStatus: 404 });
+  await view.show(DID); await tick();
+  assert.match(q('#design-host').textContent, /Design not found/);
+  q('#design-host button').click();
+  assert.equal(route.at(-1), '');
+  await view.show('not-an-id');
+  assert.equal(route.at(-1), '');
+});
+test('frames: all count toward the nav; only the open design reaches the stage; the plan list follows them', async () => {
+  const { view, q, doc, tick, paint } = rig({ detail: DETAIL });
+  await view.show(DID); await tick();
+  view.pushFrame({ ...build('building'), designId: 'd_other' });
+  assert.equal(doc.getElementById('nav-design-count').textContent, '1');
+  assert.equal(view.stage().model().status ?? null, null);
+  view.pushFrame(build('building'));
+  view.pushFrame(plan(['hero', 'price'])); paint();
+  assert.equal(q('.dz-plan .dz-meta').textContent, '2 sections');
+});
+test('the chat seam: makes the chat with P5\'s names; forwards every C-5 frame including design-restored; picked goes to addPin; setPick and onRestored reach the stage', async () => {
+  const made = []; const frames = []; const pins = [];
+  const createChat = (o) => { made.push(o); return { pushDesignFrame: (f) => frames.push(f), addPin: (p) => pins.push(p), destroy() { made.destroyed = true; } }; };
+  const { view, tick, fireStageMsg } = rig({ detail: { ...DETAIL, design: { ...DETAIL.design, version: 1 } }, createChat });   // a built design, so a frame exists to post from
+  await view.show(DID); await tick();
+  for (const k of ['confirm', 'design', 'doc', 'fetch', 'host', 'onRestored', 'planList', 'renderMarkdown', 'sendWs', 'setPick', 'unpin']) assert.ok(k in made[0], k);   // P6 Task 9 adds `initial`
+  assert.ok(made[0].host.classList.contains('dz-chat-slot'));
+  view.pushFrame({ type: 'design-restored', designId: DID, version: 3, restoredFrom: 1, ts: 1 });
+  assert.equal(frames.at(-1).type, 'design-restored');
+  view.pushFrame(build('building', { designId: 'd_other' }));
+  assert.equal(frames.at(-1).type, 'design-restored', 'another design is not forwarded');
+  fireStageMsg('picked', { id: 'hero', path: 'p', tag: 'h1', text: 't', html: 'h', rect: [1, 2, 3, 4] });
+  assert.equal(pins[0].id, 'hero');
+  view.leave();
+  assert.equal(made.destroyed, true);
+});
+test('leave is cheap and idempotent; coming back opens fresh; hello forwards to the open stage', async () => {
+  const { view, tick, ws } = rig({ detail: { ...DETAIL, build: ROW } });
+  view.leave(); view.leave();
+  await view.show(DID); await tick();
+  const n = ws.length;
+  view.onHello([], { rebooted: false });
+  assert.equal(ws.length, n + 1);
+  view.leave();
+  view.onHello([], { rebooted: false });
+  assert.equal(ws.length, n + 1);
+});
+test('the library: nothing for 300 ms, then one loading line; a New design refusal says so inside the library', async () => {
+  const { view, win, q, qa, clock, hold, tick, route, posts, setList } = rig({ createAnswer: [409, { error: 'Design is off' }] });
+  await view.show('');
+  clock.tick(1000);
+  assert.equal(q('.dz-lib .empty-line').textContent, 'No designs yet', 'a list that came in time is not covered by the loading line');
+  const release = hold('/api/design');
+  const shown = view.show('');
+  await tick();
+  assert.equal(q('.dz-lib-body').getAttribute('aria-busy'), 'true');
+  clock.tick(299);
+  assert.equal(q('.dz-lib-body').textContent, 'No designs yet', 'nothing changes for 300 ms');
+  clock.tick(1);
+  assert.equal(q('.dz-lib-body').textContent, 'Loading designs…');
+  release(); await shown;
+  assert.equal(q('.dz-lib-body').hasAttribute('aria-busy'), false);
+  assert.equal(q('.dz-lib .empty-line').textContent, 'No designs yet');
+  const n = route.length;
+  q('.dz-lib .btn-primary').click(); await tick();
+  assert.equal(posts.at(-1).url, '/api/design');
+  assert.equal(route.length, n, 'a refusal routes nowhere');
+  assert.match(q('.dz-lib [role="alert"]').textContent, /^Could not create a design.*Design is off.*Nothing changed\.$/);
+  assert.equal(q('.dz-lib .btn-primary').disabled, false);
+  const before = posts.length;
+  const add = q('.dz-lib .btn-primary');
+  add.dispatchEvent(new win.Event('click')); add.dispatchEvent(new win.Event('click')); await tick();
+  assert.equal(posts.length, before + 1, 'a second press while the first is out does nothing');
+  setList(null);
+  const late = hold('/api/design');
+  const older = view.show('');
+  setList([{ id: DID, title: 'Apsida', kind: 'web', status: 'empty', updatedAt: 'x', costUsd: 0, thumb: null }]);
+  await view.show('');
+  late(); await older;
+  assert.equal(qa('.dz-lib .row-btn').length, 1, 'an older failure does not paint over the newer list');
+  assert.equal(q('.dz-lib .row-btn .dz-meta').textContent, 'Web page', 'nothing spent, no cost');
+});
+test('a slow GET paints nothing after a leave or a newer show; a second route keeps the open stage; the proof hook; a pin carries its tag', async () => {
+  const pins = []; let chat = null;
+  const createChat = (o) => { chat = o; return { addPin: (p) => pins.push(p) }; };
+  const { view, win, q, qa, hold, tick, route, fireStageMsg } = rig({ detail: { ...DETAIL, design: { ...DETAIL.design, version: 1 } }, createChat });
+  assert.equal(win.__design.view, view);
+  assert.equal(win.__design.stage(), null);
+  let release = hold(`/api/design/${DID}`);
+  let slow = view.show(DID);
+  await tick();
+  view.leave();
+  release(); await slow; await tick();
+  assert.equal(q('#design-host').children.length, 0, 'the old show paints nothing after the leave');
+  release = hold(`/api/design/${DID}`);
+  slow = view.show(DID);
+  await tick();
+  await view.show('');
+  release(); await slow; await tick();
+  assert.equal(q('.dz-studio'), null, 'the old show paints nothing over a newer one');
+  assert.ok(q('.dz-lib'));
+  await view.show(DID); await tick();
+  const stage = view.stage();
+  assert.ok(stage);
+  assert.equal(win.__design.stage(), stage);
+  await view.show(DID);
+  assert.equal(view.stage(), stage, 'a second route to the open design keeps its stage');
+  fireStageMsg('picked', { id: 'hero', path: 'p', tag: 'h1', text: 'Ship it', html: 'h', rect: [1, 2, 3, 4] });
+  assert.equal(pins[0].label, 'hero › "Ship it"', 'no plan: the section id stands for the job');
+  chat.setPick(true);
+  assert.equal(stage.model().wantPick, true, 'setPick reaches the stage');
+  chat.unpin('hero', 'p');
+  assert.deepEqual(stage.model().pins, [], 'unpin reaches the stage');
+  const docs = qa('iframe').length;
+  chat.onRestored(); await tick();
+  assert.equal(qa('iframe').length, docs + 1, 'onRestored loads the run doc again');
+  const n = route.length;
+  await view.show('not-an-id');
+  assert.deepEqual(route.slice(n), ['']);
+  assert.equal(view.stage(), null);
+  view.destroy();
+  assert.equal(win.__design, undefined);
+});
+test('the Plan list\'s Retry posts continue once and shows the refusal (review M6: view passes the promise through)', async () => {
+  const { view, win, q, posts, tick, paint } = rig({ detail: { ...DETAIL, build: ROW } });
+  await view.show(DID); await tick();
+  view.pushFrame(plan(['hero'])); view.pushFrame(build('stopped')); view.pushFrame({ type: 'design-section', designId: DID, buildId: BID, seq: 9000, ts: 1, sectionId: 'hero', status: 'stopped', agentId: null, summary: '' });
+  paint();
+  const b = q('.dz-retry-row button');
+  b.click(); b.dispatchEvent(new win.Event('click'));
+  assert.deepEqual(posts.filter((p) => p.url.endsWith('/continue')).map((p) => p.body), [{ sections: ['hero'] }]);
+  await tick(); await tick();
+  assert.equal(q('.dz-retry-row small').textContent, 'Could not retry');
+  assert.equal(q('.dz-retry-row small').title, 'not found', 'the route\'s refusal, word for word');
+  assert.equal(b.disabled, false);
+});
+test('leave destroys the stage: no timer, no animation frame and no window listener is left (review M9)', async () => {
+  const { view, win, clock, tick, fireStageMsg } = rig({ detail: { ...DETAIL, build: ROW } });
+  const live = new Map();
+  const add = win.addEventListener.bind(win); const remove = win.removeEventListener.bind(win);
+  win.addEventListener = (t, fn, o) => { live.set(fn, t); add(t, fn, o); };
+  win.removeEventListener = (t, fn, o) => { live.delete(fn); remove(t, fn, o); };
+  await view.show(DID); await tick();
+  fireStageMsg('rects', { scrollX: 0, scrollY: 0, vw: 1440, vh: 900, docH: 4000, sections: [] });
+  view.pushFrame(plan(['hero']));
+  assert.ok([...live.values()].includes('message'), 'the stage\'s frame host listens');
+  assert.ok(clock.pending() > 0, 'and has timers or a paint due');
+  view.leave();
+  assert.deepEqual([[...live.values()], clock.pending()], [[], 0]);
+});

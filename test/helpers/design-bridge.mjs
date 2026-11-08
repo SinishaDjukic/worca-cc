@@ -10,6 +10,8 @@ import { JSDOM } from 'jsdom';
 
 export const BRIDGE_SRC = readFileSync(new URL('../../src/core/design/preview/bridge.js', import.meta.url), 'utf8');
 const MORPHDOM_SRC = readFileSync(createRequire(import.meta.url).resolve('morphdom/dist/morphdom-umd.min.js'), 'utf8');
+// jsdom's own way to fire an event: trusted, as a browser's window `load` is (a test's `new Event` is not).
+const { fireAnEvent } = createRequire(import.meta.url)('jsdom/lib/jsdom/living/helpers/events.js');
 
 const page = (body) => `<!doctype html><html><head></head><body>${body}</body></html>`;
 const EMPTY = page('');
@@ -35,9 +37,9 @@ function attrNumbers(el, name, n) {
   return Array.from({ length: n }, (_, i) => (i < parts.length ? parts[i] : 0));
 }
 
-// setTimeout/clearTimeout and requestAnimationFrame/cancelAnimationFrame on one fake clock.
-// tick(ms) runs the timers due by now + ms in (due, id) order, never animation frames; frame() runs the
-// animation-frame callbacks queued before the call. maxPending is the most setTimeout timers ever
+// setTimeout/clearTimeout, requestAnimationFrame/cancelAnimationFrame and performance.now on one fake
+// clock. tick(ms) runs the timers due by now + ms in (due, id) order, never animation frames; frame() runs
+// the animation-frame callbacks queued before the call. maxPending is the most setTimeout timers ever
 // pending at once.
 function fakeClock() {
   const timers = new Map();
@@ -79,6 +81,7 @@ function fakeClock() {
     win.clearTimeout = (id) => { timers.delete(id); };
     win.requestAnimationFrame = (fn) => { const id = nextId++; frames.set(id, fn); return id; };
     win.cancelAnimationFrame = (id) => { frames.delete(id); };
+    win.performance.now = () => now;
   };
   return { clock, install };
 }
@@ -87,8 +90,11 @@ function fakeClock() {
  * Boot the bridge in a jsdom frame doc at /design-preview/TOK/<mode>/<hash>.
  * `before(win)` runs once the stubs are in place, just before morphdom and the bridge load: the bridge takes the Node
  * and Element members it calls from the prototypes at boot, so a test stubs one there, never on an element.
+ * `load()` fires the window's trusted `load`, as a browser does at the doc's end: a readyState pinned to anything but
+ * 'complete' keeps jsdom from firing its own.
  * @returns {{win, doc, sent: Array<{m, o}>, send: Function, of: Function, clock: {tick, frame, maxPending},
- *   animated: Array<{el, keyframes, options}>, observed: Set<Element>, writesSeenAtRead: number[], close: Function}}
+ *   animated: Array<{el, keyframes, options}>, observed: Set<Element>, writesSeenAtRead: number[], load: Function,
+ *   close: Function}}
  */
 export function bootBridge({ mode = 'build', nonce = 'n1', hash, html = EMPTY, morphdom, animate = false,
   reducedMotion = false, trackWrites = false, resizeObserver = false, before } = {}) {
@@ -182,9 +188,10 @@ export function bootBridge({ mode = 'build', nonce = 'n1', hash, html = EMPTY, m
     win.dispatchEvent(new win.MessageEvent('message', { data, source: 'source' in opts ? opts.source : parent }));
   };
   const of = (t) => sent.filter(({ m }) => m && m.t === t).map(({ m }) => m);
+  const load = () => { fireAnEvent('load', win, undefined, {}, true); };
   const close = () => { if (mo) mo.disconnect(); win.close(); };
 
-  return { win, doc, sent, send, of, clock, animated, observed, writesSeenAtRead, close };
+  return { win, doc, sent, send, of, clock, animated, observed, writesSeenAtRead, load, close };
 }
 
 // A form's named controls override its own members ([LegacyOverrideBuiltIns]): `<input name="getAttribute">` makes

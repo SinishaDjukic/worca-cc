@@ -54,19 +54,20 @@ test('applies do not depend on animation frames: a hidden tab still lands text',
 });
 test('settle: WAAPI on top-most new elements only, at most 250 ms, no attribute added', () => {
   const b = bootBridge({ html: SLOT_HERO, animate: true });
+  const settles = () => b.animated.filter((c) => c.options.id !== 'worca-ghost');
   b.send('section', { id: 'hero', rev: 1, html: '<section><h1>a</h1><p>b</p></section>', final: false });
-  assert.deepEqual(b.animated.map((c) => c.el.tagName), ['SECTION']);
-  assert.ok(b.animated[0].options.duration <= 250);
+  assert.deepEqual(settles().map((c) => c.el.tagName), ['SECTION']);
+  assert.ok(settles()[0].options.duration <= 250);
   b.clock.tick(125); b.animated.length = 0;
   b.send('section', { id: 'hero', rev: 2, html: '<section><h1>a</h1><p>b</p><div><span>c</span></div></section>', final: false });
-  assert.deepEqual(b.animated.map((c) => c.el.tagName), ['DIV']);
+  assert.deepEqual(settles().map((c) => c.el.tagName), ['DIV']);
   assert.equal(b.doc.querySelector('[data-section="hero"] div').outerHTML, '<div><span>c</span></div>');
 });
 test('settle: at most 24 per apply, skipped under reduced motion, and no throw where animate is missing', () => {
   const many = `<section>${'<p>x</p>'.repeat(60)}</section>`;
   const b = bootBridge({ html: '<!doctype html><html><head></head><body><section data-section="hero"></section></body></html>', animate: true });
   b.send('section', { id: 'hero', rev: 1, html: many, final: false });
-  assert.equal(b.animated.length, 24);
+  assert.equal(b.animated.filter((c) => c.options.id !== 'worca-ghost').length, 24);
   const r = bootBridge({ html: SLOT_HERO, animate: true, reducedMotion: true });
   r.send('section', { id: 'hero', rev: 1, html: '<section>a</section>', final: false });
   assert.equal(r.animated.length, 0);

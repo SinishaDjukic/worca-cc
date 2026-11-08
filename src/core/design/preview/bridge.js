@@ -20,6 +20,7 @@
 
   function isSectionId(v) { return typeof v === 'string' && SECTION_ID_RE.test(v); }
   function isRev(v) { return Number.isSafeInteger(v) && v >= 0; }
+  function isFiniteNumber(v) { return typeof v === 'number' && isFinite(v); }
 
   // The C-6 body check: '' for a good body, else what is wrong with it. Message data is not of this
   // realm, so arrays are tested with Array.isArray, never instanceof.
@@ -47,7 +48,9 @@
         if (typeof d.text !== 'string') return 'css.text must be a string';
         return typeof d.final === 'boolean' ? '' : 'css.final must be a boolean';
       case 'scroll':
-        return isSectionId(d.id) ? '' : 'scroll.id is not a section id';
+        // A section id (P3, for decks) or a numeric top (the camera); `ms` is optional.
+        if (!isSectionId(d.id) && !isFiniteNumber(d.y)) return 'scroll needs a section id or a finite y';
+        return d.ms === undefined || (isFiniteNumber(d.ms) && d.ms >= 0) ? '' : 'scroll.ms must be a finite number of at least 0';
       case 'pick':
         return typeof d.on === 'boolean' ? '' : 'pick.on must be a boolean';
       case 'goto':
@@ -230,6 +233,21 @@
   var SETTLE_MAX = 24;
   var SETTLE_KEYFRAMES = [{ opacity: 0.35 }, { opacity: 1 }];
   var REDUCED_MOTION = '(prefers-reduced-motion: reduce)';
+  // The ghost (P4 L4.28), the mockup's `drawLayer`: the element holding a build doc section's text tail is held
+  // doubled and dimmed while it is written, then settles to crisp when the tail moves on or the text is final.
+  // text-shadow and opacity only, so rects stay true. Its own animation, by id; the settle above is untouched.
+  var GHOST_ID = 'worca-ghost';
+  var GHOST_HOLD_MS = 600000;
+  var GHOST_SETTLE_MS = 550;
+  var GHOST_A = 'calc(.05em + 2.2px)';
+  var GHOST_ON = { textShadow: GHOST_A + ' calc(' + GHOST_A + ' * -.8) 0 rgb(255 159 10 / .5), calc(' + GHOST_A + ' * -1.25) calc(' + GHOST_A + ' * .7) 0 rgb(255 255 255 / .34)', opacity: 0.72 };
+  var GHOST_OFF = { textShadow: '0 0 0 rgb(255 159 10 / 0), 0 0 0 rgb(255 255 255 / 0)', opacity: 1 };
+  // `scroll {y, ms}` (P4 L4.27): the camera's tween, by animation frames, at most this long; a timer this much
+  // after its end lands it where frames do not run.
+  var SCROLL_TWEEN_MAX_MS = 400;
+  var SCROLL_LAND_SLACK_MS = 60;
+  // What the person does in the frame that takes the scroll back from a tween.
+  var PERSON_EVENTS = ['wheel', 'touchstart', 'keydown', 'pointerdown'];
 
   // Geometry (C-6): every rect value is finite and within ±RECT_MAX. An apply reports its newest
   // MARKS_MAX added elements, minus those that draw no box; MEDIA ones are marked `media`.
@@ -441,9 +459,12 @@
 
     // Where a section's content ends: a Range over the last character of its last text with ink (a
     // whole surrogate pair), tagged with that text's element, when the doc has Range rects and this one
-    // is not empty. Else the deepest last element, following lastElementChild past style elements.
+    // is not empty; `box` is that element's rect. Else the deepest last element, following lastElementChild
+    // past style elements, with `box` equal to `rect`. `el` and `isText` stay in the bridge (the ghost): `isText`
+    // whenever such a text exists, even with an empty Range rect, and `el` is then its element.
     function tailOf(root) {
       var text = docCall('createTreeWalker', root, win.NodeFilter.SHOW_ELEMENT | win.NodeFilter.SHOW_TEXT, TAIL_FILTER).lastChild();
+      var holder = text ? nodeCall('parentElement', text) : null;
       if (text && win.Range && typeof win.Range.prototype.getBoundingClientRect === 'function') {
         var s = text.data;
         var end = lastInk(s) + 1;
@@ -457,7 +478,9 @@
         range.setStart(text, start);
         range.setEnd(text, end);
         var r = range.getBoundingClientRect();
-        if (r.width > 0 || r.height > 0) return { rect: docRect(r), tag: nodeCall('localName', text.parentElement) };
+        if (r.width > 0 || r.height > 0) {
+          return { rect: docRect(r), tag: nodeCall('localName', holder), box: docRect(nodeCall('getBoundingClientRect', holder)), el: holder, isText: true };
+        }
       }
       var el = root;
       for (var c = nodeCall('lastElementChild', el); c; c = nodeCall('lastElementChild', el)) {
@@ -465,7 +488,8 @@
         if (!c) break;
         el = c;
       }
-      return { rect: docRect(nodeCall('getBoundingClientRect', el)), tag: nodeCall('localName', el) };
+      var rect = docRect(nodeCall('getBoundingClientRect', el));
+      return { rect: rect, tag: nodeCall('localName', el), box: rect, el: holder || el, isText: !!text };
     }
 
     // The newest MARKS_MAX elements an apply added (it lists them in doc order), in doc order.
@@ -492,10 +516,14 @@
       return rect[0] + rect[2] > canvas.w + 1 || rect[0] < -1 || nodeCall('scrollWidth', root) > canvas.w + 1;
     }
 
-    // One `applied` for `root`, its geometry read now: a flush calls it only after all its writes.
+    // One `applied` for `root`, its geometry read now: a flush calls it only after all its writes. Returns the
+    // tail (tailOf), whose `el` and `isText` it does not post.
     function postApplied(id, rev, added, root, marks) {
       var rect = docRect(nodeCall('getBoundingClientRect', root));
-      post('applied', { id: id, rev: rev, added: added, layers: layers(), rect: rect, tail: tailOf(root), marks: marks, overflow: overflows(root, rect) });
+      var tail = tailOf(root);
+      post('applied', { id: id, rev: rev, added: added, layers: layers(), rect: rect, tail: { rect: tail.rect, tag: tail.tag, box: tail.box },
+        marks: marks, overflow: overflows(root, rect) });
+      return tail;
     }
 
     // The next animation frame; a 16 ms timer where requestAnimationFrame is missing (jsdom without
@@ -880,7 +908,7 @@
     // apply added fades with that parent), the first SETTLE_MAX of them. Skipped under reduced motion,
     // and where the doc has no WAAPI.
     function settle(applied) {
-      if (win.matchMedia?.(REDUCED_MOTION)?.matches || typeof NODE_API.animate !== 'function') return;
+      if (reducedMotion() || typeof NODE_API.animate !== 'function') return;
       applied.forEach(function (a) {
         var mine = new Set(a.added);
         for (var i = 0, n = 0; i < a.added.length && n < SETTLE_MAX; i++) {
@@ -890,6 +918,34 @@
           nodeCall('animate', el, SETTLE_KEYFRAMES, { duration: SETTLE_MS, easing: 'ease-out' });
         }
       });
+    }
+
+    function reducedMotion() { return !!win.matchMedia?.(REDUCED_MOTION)?.matches; }
+
+    // Section id -> its ghost: `{el, anim}`, the element held and that hold's Animation.
+    var ghosts = new Map();
+
+    // A held ghost's end: the hold cancelled and, while its element is in the doc, the settle to crisp.
+    function settleGhost(g) {
+      if (g.anim && typeof g.anim.cancel === 'function') g.anim.cancel();
+      if (nodeCall('isConnected', g.el)) nodeCall('animate', g.el, [GHOST_ON, GHOST_OFF], { id: GHOST_ID, duration: GHOST_SETTLE_MS, easing: 'ease-out' });
+    }
+
+    // The ghost after one build doc apply, once its geometry is read (`tail`: tailOf). A text tail in an element
+    // other than the one held settles that one and holds its own. A final apply then settles what is held, so a
+    // first apply that is also final still settles. Skipped under reduced motion, and where the doc has no WAAPI.
+    function ghost(id, tail, final) {
+      if (reducedMotion() || typeof NODE_API.animate !== 'function') return;
+      var cur = ghosts.get(id);
+      if (tail.isText && (!cur || tail.el !== cur.el)) {
+        if (cur) settleGhost(cur);
+        cur = { el: tail.el, anim: nodeCall('animate', tail.el, [GHOST_ON, GHOST_ON], { id: GHOST_ID, duration: GHOST_HOLD_MS, fill: 'both' }) };
+        ghosts.set(id, cur);
+      }
+      if (final && cur) {
+        settleGhost(cur);
+        ghosts.delete(id);
+      }
     }
 
     // The beat's state. `pending` holds the newest unwritten message per key (`css:<file>`,
@@ -902,8 +958,9 @@
 
     // Writes the pending messages of `keys` (a key already written is skipped): all CSS, then all
     // sections, then the settle; only then reads, one `applied` with its geometry per section written,
-    // so a flush forces one layout. Each write and each read is guarded on its own, so a bad one costs
-    // only its own `apply-failed`. Then asks for rects. Returns whether anything was written.
+    // so a flush forces one layout; then, in the build doc, the ghost of each (no layout change). Each write
+    // and each read is guarded on its own, so a bad one costs only its own `apply-failed`. Then asks for
+    // rects. Returns whether anything was written.
     function flush(keys) {
       var css = [];
       var sections = [];
@@ -923,9 +980,12 @@
         if (added) applied.push({ d: d, added: added });
       });
       if (applied.length) attempt(function () { settle(applied); });
+      var tails = [];
       applied.forEach(function (a) {
-        attempt(function () { postApplied(a.d.id, a.d.rev, a.added.length, roots.get(a.d.id), marksOf(a.added)); });
+        var tail = attempt(function () { return postApplied(a.d.id, a.d.rev, a.added.length, roots.get(a.d.id), marksOf(a.added)); });
+        if (tail) tails.push({ d: a.d, tail: tail });
       });
+      if (mode === 'build') tails.forEach(function (t) { attempt(function () { ghost(t.d.id, t.tail, t.d.final); }); });
       attempt(requestRects);
       return wrote || applied.length > 0;
     }
@@ -1049,9 +1109,90 @@
     var picking = false;
     function onPick(d) { picking = d.on; }
 
-    // Both docs: the section's root, or its slot, aligned with the top of the viewport. scrollIntoView is
-    // Element's own (a form's controls can override it), looked up here as the feature check it is.
+    // The camera's tween (`scroll {y, ms}`): `{frame, timer}` while it runs, else null.
+    var tween = null;
+    // The top of a jump made before the doc was complete, repeated once at load (unsized images above it would
+    // leave the doc short of it), else null. What the person does in the frame, or a newer scroll, drops it.
+    var jumpAgain = null;
+
+    // `win.scrollTo`, read at each call.
+    function jumpTo(y) { win.scrollTo({ top: y, behavior: 'instant' }); }
+
+    function cancelFrame(id) {
+      if (typeof win.requestAnimationFrame === 'function') {
+        if (typeof win.cancelAnimationFrame === 'function') win.cancelAnimationFrame(id);
+      } else {
+        win.clearTimeout(id);
+      }
+    }
+
+    function stopTween() {
+      if (!tween) return;
+      cancelFrame(tween.frame);
+      win.clearTimeout(tween.timer);
+      tween = null;
+    }
+
+    // To `y` over at most SCROLL_TWEEN_MAX_MS, easing out (1-(1-t)^3), one instant scroll per animation frame
+    // by time from performance.now(). A timer lands the end where frames stop (a hidden tab); whichever ends it
+    // first clears the other.
+    function tweenTo(y, ms) {
+      var d = Math.min(ms, SCROLL_TWEEN_MAX_MS);
+      var from = win.scrollY;
+      var start = win.performance.now();
+      var mine = { frame: 0, timer: 0 };
+      function step() {
+        if (tween !== mine) return;
+        attempt(function () {
+          var t = d > 0 ? Math.min(1, (win.performance.now() - start) / d) : 1;
+          if (t >= 1) {
+            stopTween();
+            jumpTo(y);
+            return;
+          }
+          jumpTo(from + (y - from) * (1 - Math.pow(1 - t, 3)));
+          mine.frame = onFrame(step);
+        });
+      }
+      tween = mine;
+      mine.frame = onFrame(step);
+      mine.timer = win.setTimeout(function () {
+        if (tween !== mine) return;
+        stopTween();
+        attempt(function () { jumpTo(y); });
+      }, d + SCROLL_LAND_SLACK_MS);
+    }
+
+    // The person took the scroll: no tween goes on, and no jump is repeated at load.
+    function onPerson() {
+      stopTween();
+      jumpAgain = null;
+    }
+
+    function onLoad() {
+      if (jumpAgain === null) return;
+      var y = jumpAgain;
+      jumpAgain = null;
+      attempt(function () { jumpTo(y); });
+    }
+
+    // Both docs. A finite `y` (the camera): a tween with `ms` and `behavior: 'smooth'` unless the person asked
+    // for reduced motion, else a jump. Otherwise the section's root, or its slot, aligned with the top of the
+    // viewport (P3, for decks). Each one ends any tween, and the newest jump is the one repeated at load.
+    // scrollIntoView is Element's own (a form's controls can override it), looked up here as the feature check
+    // it is.
     function onScroll(d) {
+      stopTween();
+      jumpAgain = null;
+      if (isFiniteNumber(d.y)) {
+        if (d.ms === undefined || d.behavior !== 'smooth' || reducedMotion()) {
+          jumpTo(d.y);
+          if (docCall('readyState') !== 'complete') jumpAgain = d.y;
+        } else {
+          tweenTo(d.y, d.ms);
+        }
+        return;
+      }
       var el = nodeOf(d.id);
       var into = win.Element.prototype.scrollIntoView;
       if (!el || typeof into !== 'function') return;
@@ -1119,6 +1260,13 @@
       if (el) attempt(function () { reportPick(el); });
     }
 
+    // Build doc only: a ctrl or meta wheel zooms the stage, never this page.
+    function onZoomWheel(e) {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      post('zoom', { dy: e.deltaY, y: e.clientY });
+    }
+
     var handlers = { hello: onHello, css: onCss, plan: onPlan, section: onSection, scroll: onScroll, pick: onPick, goto: onGoto };
 
     // Every handler and every paced write runs inside this: a throw becomes `err {code:'apply-failed'}`
@@ -1150,6 +1298,17 @@
       post('ready', { mode: mode, vw: win.innerWidth, vh: win.innerHeight, dpr: win.devicePixelRatio });
     }
 
+    // The doc's own window `load` (R16, P4): the parent counts a frame `load` as this doc's only once this report came,
+    // so a page this doc navigated to, even after its `ready`, is never taken for it. Once per doc, and never for a
+    // script's own `load` event: a second report would pay for the load of a page it went to later (P4 review cycle 3).
+    // The boot call for a doc already complete passes no event.
+    var loadedSent = false;
+    function loaded(e) {
+      if (loadedSent || (e && e.isTrusted === false)) return;
+      loadedSent = true;
+      post('loaded', { mode: mode });
+    }
+
     win.addEventListener('message', onMessage);
     win.addEventListener('click', onClick, true);
     // A middle click fires `auxclick`, never `click`, and a browser can follow the link in the frame itself
@@ -1161,8 +1320,16 @@
     // Captured on the document, so a scroll inside any element counts too.
     docCall('addEventListener', 'scroll', onLayoutChange, true);
     win.addEventListener('resize', onLayoutChange);
+    PERSON_EVENTS.forEach(function (name) { docCall('addEventListener', name, onPerson, { capture: true, passive: true }); });
+    win.addEventListener('load', onLoad);
+    win.addEventListener('load', loaded);
+    // Zoom (P4 L4.21): a wheel over the frame never reaches the stage, so the build doc takes a ctrl or meta one
+    // and reports it. The run doc is the artifact, and keeps its own.
+    if (mode === 'build') docCall('addEventListener', 'wheel', onZoomWheel, { capture: true, passive: false });
     if (docCall('readyState') === 'loading') docCall('addEventListener', 'DOMContentLoaded', ready);
     else ready();
+    // A doc already complete at boot had its `load` before this listened.
+    if (docCall('readyState') === 'complete') loaded();
   }
 
   // Tests run this file with only `module` defined, to reach the pure helpers.
