@@ -1637,7 +1637,7 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
    again; an ongoing state like the breath, on Rail's one curve */
 .craft{display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:var(--r-sm);background:var(--field);min-width:0;}
 .craft-art{flex:none;width:96px;height:58px;overflow:visible;}
-.craft-art path{fill:none;stroke:var(--ink-3);stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1;animation:craft-draw 3.2s var(--ease) infinite;animation-delay:calc(var(--i) * 150ms);}
+.craft-art path{fill:none;stroke:var(--ink-3);stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1;animation:craft-draw 3.2s var(--ease) infinite;animation-delay:calc(var(--i) * 150ms);}   /* ds-ok: each line's place, Crafting sets it */
 .craft-art path:nth-child(3n+1){stroke:var(--ink-2);}
 @keyframes craft-draw{0%{stroke-dashoffset:1;opacity:1;}30%{stroke-dashoffset:0;}78%{stroke-dashoffset:0;opacity:1;}96%,100%{stroke-dashoffset:0;opacity:0;}}
 .craft-t{margin:0;display:grid;gap:2px;font-size:var(--fs-body);min-width:0;} .craft-t b{font-weight:600;} .craft-t span{font-size:var(--fs-meta);color:var(--ink-2);}
