@@ -358,13 +358,13 @@ function render() {
   // The run's controls sit together on the status line: its one action (with ▾), then ⋯ for everything else.
   const split = a ? R.splitButton({ main: { label: ui.busy && !ui.confirm && !ui.dialog ? R.workingWord(ui.busy.label) : a.label, kind: a.primary ? 'primary' : '', icon: svg(a.icon, 14), title: a.offWhy || a.help, attrs: { 'data-key': 'act-main', 'data-label': a.label, disabled: !!a.offWhy || !!ui.busy } },
     moreLabel: a.items.length ? 'More actions' : '', chevron: svg('chevron', 14), open: ui.menu === 'act', menuHtml: menu('act', a.items), moreAttrs: { 'data-menu': 'act', 'data-key': 'menu:act' }, cls: 'rc-action rc-pop is-right' }) : '';
-  const action = `<div class="rc-side">${split}<span class="rc-pop is-right">${R.button({ label: 'More for this run', iconOnly: true, title: false, icon: DOTS, attrs: { 'aria-haspopup': 'menu', 'aria-expanded': String(ui.menu === 'more'), 'data-menu': 'more', 'data-key': 'menu:more' } })}${ui.menu === 'groups' ? groupEditorHtml() : menu('more', moreItems(v))}</span></div>`;
+  const action = `<div class="rc-side">${split}<span class="rc-pop is-right">${R.button({ label: 'More for this run', kind: SHELL ? 'quiet' : '', iconOnly: true, title: false, icon: DOTS, attrs: { 'aria-haspopup': 'menu', 'aria-expanded': String(ui.menu === 'more'), 'data-menu': 'more', 'data-key': 'menu:more' } })}${ui.menu === 'groups' ? groupEditorHtml() : menu('more', moreItems(v))}</span></div>`;
   // Many labels and tags, one group: a run already in a feature or chain, or a group page, joins none; a run you
   // grouped can leave it again from the same menu.
   // Where the code lives, said as a phrase that follows the run: "branch into dev", "#959 merges branch into dev",
   // "branch merged into dev", "main to origin/main", "on source then to origin", "into ~/folder". The branch name copies itself on click and loses
   // its middle, never its end, so sibling runs (-2, -3) stay apart.
-  const pl = v.place;
+  const own = M.branches?.[ui.caseId], pl = own && v.place.branch ? { ...v.place, branch: own, hidden: '' } : v.place;   // this task's own branch, not its case's fixture (act.this-thing)
   const where = R.workPlace(Object.assign({ finished: v.finished, copyAttrs: pl.branch ? { 'data-say': `Copied ${pl.hidden || pl.branch}` } : null, prAttrs: pl.pr ? { 'data-say': `Opens ${pl.pr} on GitHub` } : null }, pl));
   const pr = pl.pr ? `<a class="rc-pr" href="#" data-key="pr" data-say="Opens ${esc(pl.pr)} on GitHub" title="Open ${esc(pl.pr)} on GitHub">${esc(pl.pr)}</a>` : '';
   const repos = pl.repos.length ? `<span>${pl.repos.length} repositories</span>` : '';
@@ -402,9 +402,9 @@ function render() {
     <div class="rc-head"><div class="rc-title-row"><h1 class="rc-heading${ui.titleOpen ? ' is-open' : ''}" title="${esc(v.title)}" data-title>${esc(v.title)}</h1>${SHELL ? R.button({ label: 'Keep in view', kind: 'quiet', iconOnly: true, icon: R.icon('eye', 16), attrs: { 'data-keep-view': ui.caseId, 'aria-pressed': 'false', title: 'Keep in view: its mark stays in the top bar, on every page' } }) : ''}</div>${facts ? `<div class="rc-facts">${facts}</div>` : ''}</div>
     <section class="rc-card" aria-label="Run status">
       ${R.statusLine({ dot: statusDot(v), word: v.word, action, detail: v.detail })}
-      <div class="rc-zone"><div class="rc-span">${R.stepper({ stages: v.stages, deepen: SHELL ? R.markTone(v) : '' })}</div></div>
+      <div class="rc-zone"><div class="rc-span">${SHELL ? stageBarOf(v) : R.stepper({ stages: v.stages, deepen: '' })}</div></div>
       ${SHELL ? stageStream(v, `${head}${panel}${then}`) : `<div class="rc-zone is-ruled" role="tabpanel" id="stage-panel" aria-labelledby="st-${o.key}">${head}${panel}${then}</div>`}
-      <div class="rc-zone is-ruled">${R.figures(v.figs.map((f) => figHtml(f, v)))}</div>
+      <div class="rc-zone is-ruled">${R.figures((SHELL ? v.figs.filter((f) => f.k !== 'Changes') : v.figs).map((f) => figHtml(f, v)))}</div>
     </section>
     ${SHELL ? '' : R.tabs({ label: 'Run detail', controls: 'rtab-panel', cls: 'rc-tabs', items: v.tabs.map((t) => ({ id: t.id, label: t.l, count: t.n, selected: t.sel })) })}
     ${prDialogHtml(v)}${viewDialogHtml(v)}${formDialogHtml()}
@@ -510,6 +510,11 @@ pick.addEventListener('change', () => {
 // The prototype's flow (RunCardModel.flow): an action moves the run to its next case or does its job in place and
 // says so in the toast; a destructive or outward one (Stop, Discard, Merge, Apply) asks first in a confirm strip.
 const AWAY = [{ id: 'away:auto', text: 'As set up', help: 'Follows Settings and whether you marked this run' }, { id: 'away:on', text: 'Answer for me', help: 'Worca answers this run’s questions from now on, at any hour' }, { id: 'away:off', text: 'Never', help: 'Worca never answers on this run, whatever the settings' }];
+// the task page's stages are its card's StageBar: the main stages, the one it is on in its state's colour (panel.task-card)
+function stageBarOf(v) {
+  const reach = v.stages.reduce((n, st, i) => (st.cells.some((c) => !/is-next/.test(c)) ? i : n), 0);
+  return R.stageBar({ labels: v.stages.map((st) => st.label), stage: reach, tone: R.markTone(v) });
+}
 function moreItems(v) {
   const group = !!v.kind; const live = v.bar.stop;
   const noun = group ? v.kind.toLowerCase() : 'run';

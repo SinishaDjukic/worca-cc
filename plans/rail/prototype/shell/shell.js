@@ -442,14 +442,14 @@
     // A card opened in place borrows the task page itself (#card), so every stage, part and control works as on the page.
     embedRun: (slot, cs, ask) => {
       const card = document.getElementById('card'), pick = document.getElementById('case'); if (!card || !slot) return;
-      if (RM) { RM.asks = RM.asks || {}; if (ask) { RM.asks[cs] = ask; RM.titles[cs] = ask; } }   // the lent page is this task's: its name and what it was asked   // the lent page says what this task was asked, not its mock's words
+      if (RM) { RM.asks = RM.asks || {}; RM.branches = RM.branches || {}; if (ask) { RM.asks[cs] = ask; RM.titles[cs] = ask; } const t = ask && findTask(ask); if (t?.branch) RM.branches[cs] = t.branch; }   // the lent page is this task's: its name and what it was asked   // the lent page says what this task was asked, not its mock's words
       if (!runAnchor) { runAnchor = document.createComment('the task page lives here'); card.before(runAnchor); }
       const lent = `${cs}|${ask || ''}`, again = lent !== lastLent; lastLent = lent;
       if (pick && (pick.value !== cs || again)) { /* drawn again for this task even when another task shares its case */ const at = location.hash; pick.value = cs; pick.dispatchEvent(new Event('change', { bubbles: true })); if (location.hash !== at) history.replaceState(null, '', at); }
       slot.append(card); card.classList.add('is-lent');
     },
     unembedRun: (from) => { const card = document.getElementById('card'); if (card && runAnchor && (!from || from.contains(card))) { runAnchor.after(card); card.classList.remove('is-lent'); } },
-    openTaskPage: (cs, chat, title) => { taskChat = chat || ''; if (RM && title) RM.titles[cs] = title; reopen = true; window.RailShell.go(`run/${cs}`); },
+    openTaskPage: (cs, chat, title) => { const t = title && findTask(title); if (RM && t?.branch) { RM.branches = RM.branches || {}; RM.branches[cs] = t.branch; } taskChat = chat || ''; if (RM && title) RM.titles[cs] = title; reopen = true; window.RailShell.go(`run/${cs}`); },
     openSchedule: (sid) => {
       const s = window.RailSchedules?.find?.(sid), cid = s?.chat || '';
       if (!cid) { window.RailShell.go(`schedule/${sid}`); return; }
@@ -461,6 +461,8 @@
     listKeys: () => routed.view === 'runs' || routed.view === 'chat' || routed.view === 'schedule' || routed.view === 'schedules',
   };
   const RM = window.RunCardModel;
+  // a task by its name, in the chats' store copy: its branch for its page (the page shows this task, not its case's fixture)
+  const findTask = (title) => { for (const c of window.RailChats?.data().chats || []) { const w = (l) => { for (const t of l || []) { if (t.title === title) return t; const f = w(t.after); if (f) return f; } return null; }; const t = w(c.tasks); if (t) return t; } return null; };
   let lastLent = '';
   let runAnchor = null;
   let routed = { view: '', locked: false };
