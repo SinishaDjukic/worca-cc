@@ -10,6 +10,7 @@ for (const theme of ['light', 'dark']) {
   p.on('pageerror', (e) => console.error(e.message));
   await p.goto(`${here}${name}.html`); await p.waitForTimeout(400);
   const box = await p.locator('#m').boundingBox();
+  if (box.height > 3000) { await p.setViewportSize({ width: +width, height: Math.ceil(box.height) }); await p.waitForTimeout(200); }
   await p.screenshot({ path: fileURLToPath(new URL(`${name}-${theme}.png`, here)), clip: { x: 0, y: 0, width: Math.ceil(box.width), height: Math.ceil(box.height) } });
   await p.close();
 }

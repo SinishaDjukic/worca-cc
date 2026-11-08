@@ -269,5 +269,7 @@ Direction (Emil, 8 Nov): everything is defined in a chat; the places are views.
   leads to Change it in a chat; Build it by hand is the one manual way in, quiet, never the lead.
 - Tasks and Schedules pages show what a chat defined; nothing is made or edited there. Agreed: what exists stays
   controllable on its page (Pause, Run now, Stop, Approve); defining moves to the chat, a gradual, smooth transition.
-- Mock: plans/rail/mocks/wave-3/workflows-2 (explore as the Marketplace, one opened as a view).
+- Mock: plans/rail/mocks/wave-3/workflows-2: explore as the Marketplace; one opened as a view with its graph and what each
+  step does in plain words; Build it by hand is the classic way, on the graph (Emil: keep the graph, keep the explanation).
+  Proposed for the library: WorkflowGraph's flow variant (left to right, arrows, the loop drawn back), on the page, not only in a dialog.
 - Open: do Projects' and Workspaces' settings follow the same rule (shown on the page, changed in a chat)?

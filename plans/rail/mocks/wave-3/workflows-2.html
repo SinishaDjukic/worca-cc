@@ -23,6 +23,15 @@
   .cap{margin:0 0 4px;font:600 12px/1.4 var(--sans);color:var(--ink-3);}
   .note{margin:22px 0 0;font-size:12px;color:var(--ink-3);}
   .acts{display:flex;gap:6px;margin:14px 0 0;}
+  /* proposed: WorkflowGraph's flow variant, left to right as dev draws it: a stage a column, an arrow between, the loop back */
+  .flow{position:relative;padding:4px 0 34px;}
+  .flow .wg-stages{flex-direction:row;gap:28px;align-items:flex-start;}
+  .flow .wg-stage{flex:none;gap:6px;} .flow .wg-stage + .wg-stage{border-top:0;padding-top:0;position:relative;}
+  .flow .wg-stage + .wg-stage::before{content:'';position:absolute;left:-24px;top:38px;width:20px;border-top:1px solid var(--ink-3);}
+  .flow .wg-stage + .wg-stage::after{content:'';position:absolute;left:-8px;top:35px;border:3.5px solid transparent;border-left:5px solid var(--ink-3);}
+  .flow .wg-end .wg-l{margin-top:30px;color:var(--ink-3);font-weight:400;}
+  .flow .loop{position:absolute;bottom:4px;font-size:var(--fs-meta);color:var(--ink-2);display:flex;align-items:center;gap:4px;}
+  .flow .loop svg{position:absolute;bottom:14px;left:0;overflow:visible;}
 </style></head>
 <body><div id="m"></div>
 <script src="../../prototype/components.js"></script>
@@ -33,7 +42,7 @@
   const bar = (cur) => `<h1>${R.icon('nav-workflows', 18)} Workflows</h1>${R.list({ groups: [
     { title: 'Yours', rows: [row('Workflows', wf(), '6', cur === 'w'), row('Agents', R.kindMark({ kind: 'agent' }), '9'), row('Scripts', R.kindMark({ kind: 'script' }), '4')] },
     { title: 'Browse', rows: [row('For you', R.kindMark({ kind: 'event' }), '2'), row('Your team’s', R.kindMark({ kind: 'group' }), '5'), row('From the Marketplace', R.kindMark({ kind: 'plugin', icon: 'nav-marketplace' }), '24')] },
-    { title: '', rows: [row('Build it by hand', R.kindMark({ kind: 'plugin', icon: 'edit' }), '')] }] })}`;
+    { title: '', rows: [row('Build it by hand', R.kindMark({ kind: 'plugin', icon: 'edit' }), '', cur === 'h')] }] })}`;
   const W = [
     ['Default', 'Plan, build, review, PR: what every task runs unless you pick another.', '4 steps · used by 41 tasks', '$0.62 a task · 18 min · 92% merged', 'Made with Worca'],
     ['Security-first review', 'A security pass before each PR; it sends the build back up to twice.', '4 steps · a loop · used by 6', '$1.02 a task · 24 min · 100% merged', 'From the chat Release checklist'],
@@ -46,11 +55,27 @@
     <div class="sent">Showing ${R.sentencePicker({ id: 's', text: 'most used', items: [], chevron: R.icon('chevron', 10) })} from ${R.sentencePicker({ id: 'f', text: 'every project', items: [], chevron: R.icon('chevron', 10) })}</div>
     <div class="pg-grid">${cards}</div>
     <p class="note">Mock. Use it starts a task in a chat with this workflow in the sentence; Change it in a chat opens a chat that proposes the change as a card (as Security-first review was). Making one: say it in any chat, or Build it by hand (the bar's last line), the one manual way in. Your team's and From the Marketplace open here the same way; installing one is the Marketplace's Install.</p></div>`;
-  const step = (n, name, who, m, e, cost) => R.settingsRow({ name: `${n}. ${name}`, sentence: `${who} on <b>${m}</b>, ${e} · ${cost}` });
+  // the graph: a lane per stage, a node per step, the loop's rounds on its node (WorkflowGraph)
+  const graph = (sel) => `<div class="flow">${R.workflowGraph({ label: 'Security-first review', stages: [
+    { label: 'Plan', nodes: [{ key: 'p', name: 'Planner', state: 'next', selected: sel === 'p' }] },
+    { label: 'Build', nodes: [{ key: 'b', name: 'Implementation', state: 'next', selected: sel === 'b' }] },
+    { label: 'Security', nodes: [{ key: 's', name: 'Security review', state: 'next', loops: 2, gate: true, selected: sel === 's' }] },
+    { label: 'Review', nodes: [{ key: 'r', name: 'Review', state: 'next', selected: sel === 'r' }] },
+    { label: 'PR', nodes: [{ key: 'pr', name: 'Pull request', state: 'next', selected: sel === 'pr' }] }], end: 'End' })}<span class="loop" style="left:122px"><svg width="200" height="20" aria-hidden="true"><path d="M196 2 C196 18 4 18 4 2" fill="none" stroke="var(--amber-ink)" stroke-dasharray="3 3"/><path d="M0 6 L4 0 L8 6" fill="none" stroke="var(--amber-ink)"/></svg>Security sends it back to Build, up to 2 times</span></div>`;
+  // each step: what it does, in plain words, then who does it and what it costs a task
+  const step = (n, name, does, who, m, e, cost) => R.settingsRow({ name: `${n}. ${name}`, sentence: `${does}<br><span style="color:var(--ink-2)">${who} on <b>${m}</b>, ${e} · ${cost} a task</span>` });
   const page = `<div class="col convo-col" style="margin:0"><p class="cap">2 · One opened: a view of it; changing it is a chat</p>${R.placeHead({ title: 'Security-first review', facts: '4 steps · a loop · used by 6 tasks · from the chat Release checklist', mark: wf(), word: 'Ready', why: '$1.02 a task, $0.40 more than Default · 100% merged', action: R.button({ label: 'Change it in a chat', kind: '' }), menu: R.moreMenu({ id: 'x', label: 'More', icon: R.icon('more', 16), open: false, items: [] }) })}
-    ${R.settingsSection({ title: 'Its steps', rows: step(1, 'Plan', 'Planner', 'Opus 5.5', 'high', '$0.40') + step(2, 'Build', 'Implementation', 'Sonnet 5.5', 'high', '$0.31') + step(3, 'Security', 'Security review', 'Opus 5.5', 'high', '$0.19') + step(4, 'Review', 'Review', 'Opus 5.5', 'medium', '$0.12') + R.settingsRow({ name: 'Loop', sentence: 'Security sends it back to Build up to <b>2</b> times · it did 3 times in 6 tasks' }) })}
+    <div style="margin:18px 0 6px">${graph('')}</div>
+    ${R.settingsSection({ title: 'What each step does', rows: step(1, 'Plan', 'Reads the task and the code, and writes the plan every other step follows.', 'Planner', 'Opus 5.5', 'high', '$0.40') + step(2, 'Build', 'Changes the code to the plan and runs the tests until they pass.', 'Implementation', 'Sonnet 5.5', 'high', '$0.31') + step(3, 'Security', 'Looks for injection, secrets and unsafe input; anything it finds goes back to Build.', 'Security review', 'Opus 5.5', 'high', '$0.19') + step(4, 'Review', 'Reads the change as a colleague would, against the plan.', 'Review', 'Opus 5.5', 'medium', '$0.12') + R.settingsRow({ name: 'Loop', sentence: 'Security sends it back to Build up to <b>2</b> times · it did 3 times in 6 tasks' }) })}
     ${R.list({ groups: [{ title: 'Tasks that used it · 6', rows: [R.listRow({ title: 'Add CSV export to billing', meta: 'Review · $1.84 so far', mark: R.kindMark({ kind: 'task', tone: 'ask', stage: 2 }), open: {} }), R.listRow({ title: 'Write the notes', meta: 'Merged · $0.96', mark: R.kindMark({ kind: 'task', tone: 'ok', stage: 4 }), open: {} })] }] })}
     <div class="acts">${R.button({ label: 'Use it', kind: 'quiet' })}${R.button({ label: 'Edit by hand', kind: 'quiet' })}</div>
-    <p class="note">Mock. No pickers on the page: its steps read as sentences with what each costs a task (Insights). Change it in a chat leads; Use it and Edit by hand are quiet. An agent's and a script's page read the same way.</p></div>`;
-  document.getElementById('m').innerHTML = `<div class="fr"><aside class="bar pz-app rail-page">${bar('w')}</aside><main class="main">${browse}</main></div><div class="fr"><aside class="bar pz-app rail-page">${bar('')}</aside><main class="main">${page}</main></div>`;
+    <p class="note">Mock. The graph first, as dev has it (a lane per stage, a node per step, the loop's rounds on its node); under it, what each step does in plain words, who does it and what it costs a task (Insights). No pickers on the page. Change it in a chat leads; Use it and Edit by hand are quiet. An agent's and a script's page read the same way. Rule change to agree: today the graph opens only in a dialog (WorkflowGraph); here it sits on the page.</p></div>`;
+  const pick = (t) => R.sentencePicker({ id: t, text: t, items: [], chevron: R.icon('chevron', 10) });
+  const build = `<div class="col convo-col" style="margin:0"><p class="cap">3 · Build it by hand: the classic way, on the graph</p>${R.placeHead({ title: 'Security-first review', facts: 'Editing by hand · 4 steps · a loop · saved 2 min ago', mark: wf('act'), word: 'Not saved', why: 'About $1.02 a task, $0.40 more than Default', action: R.button({ label: 'Save', kind: '' }), menu: R.moreMenu({ id: 'y', label: 'More', icon: R.icon('more', 16), open: false, items: [] }) })}
+    <div style="margin:18px 0 6px">${graph('s')}</div>
+    <div class="acts" style="margin:6px 0 14px">${R.button({ label: 'Add a step', kind: 'quiet', icon: R.icon('plus', 13) })}${R.button({ label: 'Add a loop', kind: 'quiet', icon: R.icon('refresh', 13) })}${R.button({ label: 'Add a gate', kind: 'quiet' })}</div>
+    ${R.settingsSection({ title: '3. Security, the step you picked', rows: R.settingsRow({ name: 'What it does', sentence: 'Looks for injection, secrets and unsafe input; anything it finds goes back to Build.' }) + R.settingsRow({ name: 'Who', sentence: `${pick('Security review')} on ${pick('Opus 5.5')} ${pick('high')}` }) + R.settingsRow({ name: 'Loop', sentence: `Sends it back to ${pick('Build')} up to ${pick('2')} times, then ${pick('asks you')}` }) + R.settingsRow({ name: 'Gate', sentence: `Waits for ${pick('nobody')} before Review` }) + R.settingsRow({ name: 'Costs', sentence: 'About $0.19 a task; each round back adds $0.24' }) })}
+    <div class="acts">${R.button({ label: 'Try it on a task', kind: 'quiet' })}${R.button({ label: 'Ask Worca about it', kind: 'quiet' })}${R.button({ label: 'Remove this step', kind: 'quiet' })}</div>
+    <p class="note">Mock. The one manual way in (Build it by hand, or Edit by hand on a workflow): dev's graph editor in Rail's line. Pick a node and its settings open under the graph as sentences, its plain words first; Add a step, a loop or a gate; what it costs updates as you change it. Ask Worca about it opens the side column with this workflow. Saving it makes it one of yours, as one made in a chat.</p></div>`;
+  document.getElementById('m').innerHTML = `<div class="fr"><aside class="bar pz-app rail-page">${bar('w')}</aside><main class="main">${browse}</main></div><div class="fr"><aside class="bar pz-app rail-page">${bar('')}</aside><main class="main">${page}</main></div><div class="fr"><aside class="bar pz-app rail-page">${bar('h')}</aside><main class="main">${build}</main></div>`;
 </script></body></html>
