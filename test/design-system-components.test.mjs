@@ -895,6 +895,19 @@ test('barHead: its name opens the places too, with a ▾ that says so', () => {
   assert.match(h, /class="bar-title-b"[^>]*data-bar-house/); assert.match(h, /Places: Chat, Tasks, Schedules/);
 });
 
+test('commands: dev\'s group head, rows with no mark, Copy on the command and its output', () => {
+  assert.equal(C.commandHead({ count: 3, failed: 1, dur: '5.4s' }), '<b>Ran 3 commands</b> · <span class="cmd-failed">1 failed</span> · 5.4s');
+  assert.match(C.commandHead({ count: 3, running: true, current: 'Running the tests', dur: '2.1s' }), /^<b>Running the tests<\/b> · 3 commands · 2.1s$/);
+  assert.match(C.commandLine('a && b | c'), /<span class="cmd-op">&amp;&amp;<\/span>/);
+  const shut = C.commandRow({ summary: 'Ran the tests', cmd: 'npm test', state: 'fail', end: 'exit 1 · 4.2s' });
+  assert.match(shut, /cmd-row is-fail/); assert.match(shut, /title="npm test"/); assert.doesNotMatch(shut, /cmd-detail/); assert.match(shut, /<span class="tr-mark"><\/span>/, 'no mark');
+  const open = C.commandRow({ summary: 'Counted', cmd: 'ls | wc -l', open: true, dir: 'worca-cc', out: '84', hooks: { terminal: { 'data-t': '' } } });
+  assert.match(open, /Copy command/); assert.match(open, /Copy output/); assert.match(open, /Output · 1 line</); assert.match(open, /in worca-cc/); assert.match(open, /Show in terminal/);
+  assert.match(C.commandRow({ summary: 'x', cmd: 'x', state: 'run' }), />Stop</, 'a running command can be stopped');
+  const g = C.commandGroup({ head: C.commandHead({ count: 2, dur: '1s' }), open: true, rows: '<i>r</i>', running: true });
+  assert.match(g, /cmd-rows"><i>r<\/i>/); assert.match(g, />Stop</);
+});
+
 test('the Rail stylesheets close every rule: one open brace would swallow all that follows', () => {
   for (const f of ['plans/rail/prototype/design-system/rail.css', 'plans/rail/prototype/design-system/rail-look.css', 'plans/rail/prototype/shell/shell.css', 'plans/rail/prototype/pulse/pulse.css']) {
     const css = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');

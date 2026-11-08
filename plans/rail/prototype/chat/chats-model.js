@@ -67,7 +67,7 @@
     if (c.id === 'c1') return [
       { t: 'you', id: 'a1', text: 'Add a CSV export to the billing page', when: '14:02' },
       { t: 'think', text: 'Thought for 8s' },
-      { t: 'cmds', text: 'Ran 4 commands', end: '12s', body: 'git status\nrg "exportCsv" src\nnpm run lint\nnpm test -- billing' },
+      { t: 'commands', id: 'g1', dur: '12.0s', rows: [{ summary: 'Checked what changed', cmd: 'git status --short', end: '0.4s', out: ' M src/billing/export.mjs' }, { summary: 'Found where the export is built', cmd: 'rg "exportCsv" src', end: '0.9s', out: 'src/billing/export.mjs:12: export function exportCsv(rows) {' }, { summary: 'Linted the code', cmd: 'npm run lint', end: '3.1s', out: '✓ no problems' }, { summary: 'Ran the billing tests', cmd: 'npm test -- billing', end: '7.6s', out: '✓ 42 tests passed' }], dir: 'billing-api' },
       { t: 'words', html: 'I\'ll start a task on <b>billing-api</b>: plan, build and review, then a pull request into dev.' },
       { t: 'task', id: 'a2', task: 't1' },
       { t: 'question', id: 'a3', task: 't1', text: 'Which date format should the export use?', options: ['ISO 8601 (2026-11-07)', 'The account\'s locale'], pick: 0, when: '14:32' },
@@ -78,8 +78,7 @@
     if (c.id === 'c2') return [
       { t: 'you', id: 'a1', text: 'Why did the build fail?', when: '14:28' },
       { t: 'think', text: 'Thought for 8s' },
-      { t: 'cmds', text: 'Ran 4 commands', end: '12s', body: 'gh run view 8841\ngit log -3\nnpm ci\nnpm test -- export' },
-      { t: 'fail', id: 'a2', cmd: 'npm test -- export', end: '3s', body: '✗ exports 50k rows under 2s\n  expected 1980ms, got 11240ms\n  at test/export.test.mjs:42', when: '14:29' },
+      { t: 'commands', id: 'a2', dur: '12.0s', dir: 'web-app', when: '14:29', rows: [{ summary: 'Read the failed CI run', cmd: 'gh run view 8841', end: '1.2s', out: 'X build · test (ubuntu) failed in 3m' }, { summary: 'Looked at the last commits', cmd: 'git log -3 --oneline', end: '0.2s', out: '3e4f5a6 Stream the export\n19ab20c Add the column picker\n0c1d2e3 Bump node' }, { summary: 'Installed the packages', cmd: 'npm ci', end: '7.6s', out: 'added 412 packages in 7s' }, { summary: 'Ran the export tests', cmd: 'npm test -- export', state: 'fail', end: 'exit 1 · 3.0s', out: '✗ exports 50k rows under 2s\n  expected 1980ms, got 11240ms\n  at test/export.test.mjs:42' }] },
       { t: 'words', html: 'The export loads every row into memory, then sorts it. On accounts over 50k rows that takes most of the 11 seconds. Two changes fix it:' },
       { t: 'words', html: '1. Stream rows from <code>listInvoices</code> instead of loading them.<br>2. Let the database sort, using the index on <code>created_at</code>.' },
       { t: 'code', file: 'export.mjs', text: 'for await (const row of db.stream(query)) {\n  out.write(toCsv(row));\n}' },
@@ -153,9 +152,9 @@
     if (c.id === 'c3') return [
       { t: 'you', id: 'a1', text: 'Tidy the migrations folder', when: '14:12' },
       { t: 'think', text: 'Thought for 4s' },
-      { t: 'cmd', cmd: 'ls migrations | wc -l', sum: '84 files', end: '1s', out: '84', done: true },
+      { t: 'commands', id: 'g3', dir: 'worca-cc', rows: [{ summary: 'Counted the migrations: 84 files', cmd: 'ls migrations | wc -l', end: '0.4s', out: '84' }] },
       { t: 'words', html: '84 migrations; 61 are older than the squash point. Squashing them, first as a dry run:' },
-      { t: 'cmd', cmd: 'npm run db:squash -- --dry-run' },
+      { t: 'cmd', cmd: 'npm run db:squash -- --dry-run', sum: 'Squashing the migrations (a dry run)', dir: 'worca-cc' },
     ];
     if (c.id === 'c13') return [
       { t: 'you', id: 'a1', text: 'Compare two queue libraries for the export jobs', when: 'Mon' },

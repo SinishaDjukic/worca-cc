@@ -1013,6 +1013,28 @@
       ]
     },
     {
+      "name": "CommandRow",
+      "code": "ui/public/design-system/components/commands.mjs#commandRow",
+      "kind": "telling",
+      "needs": [
+        "one command Worca ran: its summary, its time or exit code, no mark (its words say how it went); open, the command and its output, each with Copy"
+      ],
+      "rules": [
+        "panel.conversation-rail"
+      ]
+    },
+    {
+      "name": "CommandGroup",
+      "code": "ui/public/design-system/components/commands.mjs#commandGroup",
+      "kind": "telling",
+      "needs": [
+        "commands run one after another, folded to one head: Ran 3 commands · 1 failed · 5.4s (commandHead); a failure opens it"
+      ],
+      "rules": [
+        "panel.conversation-rail"
+      ]
+    },
+    {
       "name": "ScrollFade",
       "code": "ui/public/design-system/components/scroll-fade.mjs#watchScrollFades",
       "kind": "telling",

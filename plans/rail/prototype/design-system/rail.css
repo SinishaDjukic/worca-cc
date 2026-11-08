@@ -1476,6 +1476,22 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .tp-agents > .tp-label{display:flex;align-items:center;gap:8px;}
 .ask-changes{display:flex;flex-direction:column;gap:8px;margin:8px 0 0 32px;}
 .card-form{margin:8px 0 0 32px;}
+/* commands (CommandRow, CommandGroup): no mark, the words say how it went; one fold opens the command and its output */
+.cmd-line{display:flex;align-items:center;gap:8px;}
+.cmd-line > .tr-line{flex:1 1 auto;min-width:0;}
+.cmd-s{color:var(--ink-2);}
+.cmd-row.is-fail .cmd-s,.cmd-failed{color:var(--red);}
+.cmd-row.is-run .cmd-s{color:var(--ink);}
+.cmd-row.is-stopped .cmd-s{color:var(--ink-3);}
+.cmd-rows{display:flex;flex-direction:column;gap:10px;margin:8px 0 0 32px;}
+.cmd-detail{margin:6px 0 0 32px;display:flex;flex-direction:column;gap:6px;}
+.cmd-code{position:relative;padding:8px 40px 8px 10px;border-radius:var(--r-sm);background:var(--field);font:12px/18px var(--mono);color:var(--ink-2);white-space:pre-wrap;word-break:break-word;}
+.cmd-d,.cmd-op{color:var(--ink-3);}
+.cmd-code > .rail-copy{position:absolute;top:3px;right:3px;}
+.cmd-where{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:var(--fs-meta);color:var(--ink-3);}
+.cmd-out{border-radius:var(--r-sm);background:var(--field);}
+.cmd-out-h{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 3px 0 10px;font-size:var(--fs-meta);color:var(--ink-3);}
+.cmd-out pre{margin:0;padding:4px 10px 8px;font:12px/18px var(--mono);color:var(--ink-2);white-space:pre-wrap;word-break:break-word;}
 .task-card [data-slice-head]{margin:12px 0 4px 32px;padding-top:12px;border-top:1px solid var(--line);}   /* an open slice's stages say whose they are */   /* dev's dialog, asked under its card on the card's rail: its words, its choices, its action */
 .card-form .fld{flex:1 1 100%;}
 .card-form .tp-sentence{flex:1 1 auto;}

@@ -26,6 +26,7 @@
   .group-rows{display:flex;flex-direction:column;gap:10px;margin:8px 0 0 32px;}
   .red-w{color:var(--red);}
   .turn-row .rd-route-dot{width:16px;height:16px;flex-basis:16px;}   /* Rail's step mark at the rail's size */
+  .cmd-s.is-ok{color:var(--ink-2);} .cmd-s.is-fail{color:var(--red);} .cmd-s.is-run{color:var(--ink);}
   .note{font-size:12px;color:var(--ink-3);margin:0;}
   .dark{color-scheme:dark;}
 </style></head>
@@ -42,7 +43,8 @@
   const where = (dir) => `<div class="cmd-where"><span>in ${esc(dir)}</span><span class="sp"></span>${R.button({ label: 'Show in terminal', kind: 'quiet' })}</div>`;
   const out = (lines, n, last) => `<div class="cmd-out"><div class="cmd-out-h"><span>Output · ${last ? 'last ' : ''}${n} line${n === 1 ? '' : 's'}</span><span class="sp"></span>${copy('Copy output')}</div><pre>${lines}</pre></div>`;
   // a command row: its state, its summary in plain words (the command in its tooltip), its time or exit code; one fold
-  const row = (o) => R.turnRow({ mark: mark(o.tone), text: `${esc(o.sum)}`, end: `<span class="think-t">${esc(o.end)}</span>${o.stop ? R.button({ label: 'Stop', kind: 'quiet', cls: 'is-danger' }) : ''}${R.icon(o.open ? 'chevron' : 'chevR', 12)}`,
+  // no mark: the words carry the state (done quiet ink, failed quiet red, running counting); the row keeps the rail's text edge
+  const row = (o) => R.turnRow({ mark: '', text: `<span class="cmd-s is-${o.tone}">${esc(o.sum)}</span>`, end: `<span class="think-t cmd-s is-${o.tone}">${esc(o.end)}</span>${o.stop ? R.button({ label: 'Stop', kind: 'quiet', cls: 'is-danger' }) : ''}${R.icon(o.open ? 'chevron' : 'chevR', 12)}`,
     attrs: {} }) + (o.open ? `<div class="cmd-detail">${code(o.cmd)}${where(o.dir)}${out(o.out, o.n, o.last)}</div>` : '');
   const head = (o) => R.turnRow({ mark: R.icon(o.open ? 'chevron' : 'chevR', 14), text: o.text, end: `${o.stop ? R.button({ label: 'Stop', kind: 'quiet', cls: 'is-danger' }) : ''}` });
   const ROWS = (openFail) => [

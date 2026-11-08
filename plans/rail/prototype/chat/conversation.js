@@ -224,11 +224,19 @@
   function turnHtml(x, i) {
     const fold = () => ({ 'data-fold-turn': String(i), ...(x.id ? { 'data-anchor': x.id } : {}) });
     if (x.t === 'you') return R.youTurn({ text: x.text, quote: x.quote || '', files: x.files || [], refs: (x.refs || []).map((r) => ({ text: r.title, mark: R.kindMark({ kind: 'task', tone: 'idle', size: 14 }), attrs: { 'data-open-ref': r.case } })), attrs: { 'data-anchor': x.id || '' } });
-    if (x.t === 'cmd') {   // a command running now: its seconds live; done, it folds its output like any command
-      const cmdMenu = R.moreMenu({ id: `cmd:${i}`, label: `More for ${x.cmd}`, icon: R.icon('more', 16), open: menu === `cmd:${i}`, items: ['Copy command', 'Copy output', 'Show in terminal', 'Show all'] });
-      if (!x.done && !x.stopped) return R.turnRow({ mark: R.kindMark({ kind: 'event', tone: 'run', size: 16 }), text: `<b>${esc(x.cmd)}</b>`, end: `<span class="think-t">1s</span>${R.button({ label: 'Stop', kind: 'quiet', attrs: { 'data-cmd-stop': String(i) } })}${cmdMenu}`, attrs: { 'data-think-at': String(x.at || (x.at = Date.now())) } });
-      if (x.stopped) return R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'stop', size: 16 }), text: `<b>${esc(x.cmd)}</b> stopped by you`, end: cmdMenu });
-      return R.turnRow({ mark: R.icon(opened.has(i) ? 'chevron' : 'chevR', 14), text: `<b>${esc(x.cmd)}</b> ${esc(x.sum || '')}`, end: `${esc(x.end || '')}${cmdMenu}`, body: esc(x.out || ''), open: opened.has(i), attrs: fold() });
+    // commands are dev's on Rail's rail (CommandRow, CommandGroup): a group folded to its head, a failure opening it and
+    // itself; no marks, the words say how each went; one fold opens the command and its output, each with Copy
+    const TERMINAL = { 'data-say': 'Opens it in the terminal pane' };
+    if (x.t === 'cmd') {   // one command running now: its seconds count, Stop beside it; done, it folds like any command
+      const state = x.stopped ? 'stopped' : x.done ? 'ok' : 'run';
+      return R.commandRow({ summary: x.sum || x.cmd, cmd: x.cmd, state, end: x.stopped ? 'stopped by you' : x.done ? x.end || '' : '1s', open: state !== 'run' && !!x.open, dir: x.dir || '', out: x.out || '', hooks: { toggle: { 'data-cmdx': String(i) }, stop: { 'data-cmd-stop': String(i) }, terminal: TERMINAL }, attrs: state === 'run' ? { 'data-think-at': String(x.at || (x.at = Date.now())) } : {} });
+    }
+    if (x.t === 'commands') {
+      const failed = x.rows.filter((r) => r.state === 'fail').length, first = x.rows.findIndex((r) => r.state === 'fail');
+      if (x.open === undefined) x.open = failed > 0; if (x.rowOpen === undefined) x.rowOpen = first;
+      const rowOf = (r, k, a = {}) => R.commandRow({ ...r, dir: r.dir || x.dir || '', open: x.rowOpen === k, hooks: { toggle: { 'data-cmdr': `${x.id}|${k}` }, terminal: TERMINAL }, attrs: a });
+      if (x.rows.length === 1) return rowOf(x.rows[0], 0, { 'data-anchor': x.id });
+      return R.commandGroup({ head: R.commandHead({ count: x.rows.length, failed, dur: x.dur || '' }), open: x.open, rows: x.rows.map((r, k) => rowOf(r, k)).join(''), hooks: { toggle: { 'data-cmdg': x.id } }, attrs: { 'data-anchor': x.id } });
     }
     if (x.t === 'gate') {   // a step that needs a decision, or failed: its choices on one line
       if (x.done) return R.turnRow({ mark: R.icon('check', 14), text: `<b>${esc(x.title)}</b> ${esc(x.done)}` });
@@ -449,7 +457,6 @@
   // ---- what a click or a key means here ----
   function pickMenu(id, v) {
     if (id.startsWith('chg:')) { menu = ''; const x = turns().find((y) => y.id === id.slice(4)); if (x && v === 'Not now') x.done = 'Not now'; if (x && /^Delete/.test(v)) x.done = 'Deleted'; if (v === 'Ask about it') { const t = root.querySelector('[data-composer-t]'); if (t) { t.value = `About ${x?.title || 'this'}: `; comp.text = t.value; t.focus(); } } paint(); return; }
-    if (id.startsWith('cmd:')) { menu = ''; paint(); say(v === 'Show in terminal' ? 'Opens it in the terminal' : v === 'Show all' ? 'Shows every line' : `${v.replace('Copy ', 'Copied the ')}`); return; }
     if (/^(plan|split|feat|slice):/.test(id)) { menu = ''; const [, tid, n] = id.split(':'), x = turns().find((y) => y.id === tid);
       if (x && id.startsWith('slice:')) { if (v === 'Remove') x.slices.splice(+n, 1); if (v === 'Merge with next' && x.slices[+n + 1]) { x.slices[+n].title += ` + ${x.slices[+n + 1].title}`; x.slices.splice(+n + 1, 1); } }
       if (x && v.includes('before each run')) x.askEach = !x.askEach;
@@ -499,6 +506,10 @@
       const F = FORMS[fm.kind], flow = { ...fm.flow, dialog: '', say: (F.say ? F.say({ ...t, form: fm }, fm.flow) : fm.flow.say || fm.label).replace('{value}', value) };
       doAct(t, fm.label, flow); return; }
     if (on('[data-jump-latest]')) { const b = root.querySelector('.convo-scroll'); b?.scrollTo({ top: b.scrollHeight, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); return; }
+    if ((hit = on('[data-copy]'))) { navigator.clipboard?.writeText(hit.dataset.copy).catch(() => {}); R.copied(hit); return; }   // Copy command, Copy output: a tick, Copied
+    if ((hit = on('[data-cmdg]'))) { const x = turns().find((y) => y.id === hit.dataset.cmdg); if (x) { x.open = !x.open; paint(); } return; }
+    if ((hit = on('[data-cmdr]'))) { const [id, k] = hit.dataset.cmdr.split('|'), x = turns().find((y) => y.id === id); if (x) { x.rowOpen = x.rowOpen === +k ? -1 : +k; paint(); } return; }
+    if ((hit = on('[data-cmdx]'))) { const x = turns()[+hit.dataset.cmdx]; if (x && x.done) { x.open = !x.open; paint(); } return; }
     if ((hit = on('[data-sched-card]'))) { const [id] = hit.dataset.schedCard.split('|'), t = taskOf(id); say(`Started ${t?.title || 'it'}: it runs as a task now, and the schedule keeps its times`); return; }
     if ((hit = on('[data-card-act]'))) { const [id, ...l] = hit.dataset.cardAct.split('|'), t = taskOf(id); if (t) cardAct(t, l.join('|')); return; }   // the button's own label, never its tone: View PR opens the PR
     if ((hit = on('[data-card-yes], [data-card-no]'))) { const t = taskOf(hit.dataset.cardYes || hit.dataset.cardNo); if (t) { const c = t.confirm; t.confirm = null; if (hit.dataset.cardYes && c) doAct(t, c.label, c.flow); else paint(); } return; }
