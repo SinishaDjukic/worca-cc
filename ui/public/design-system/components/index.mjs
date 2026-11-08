@@ -38,6 +38,7 @@ export { accountItem, navFlyout, themeChoice, cardTitleLink } from './account-me
 export { workflowGraph } from './workflow-graph.mjs';
 export { logLines } from './log-lines.mjs';
 export { artifactView } from './artifact-view.mjs';
+export { crafting } from './crafting.mjs';
 export { USAGE_REFRESH_MS, usageWindow, connectedUsage, usageTip, usageRing } from './usage.mjs';
 export { tryStep } from './run-state.mjs';
 export { watchScrollbars, thumbBox, SCROLL_SHOW_MS } from './scrollbars.mjs';

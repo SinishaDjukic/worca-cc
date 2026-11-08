@@ -850,6 +850,13 @@ test('listController: every period but Today starts folded; the one holding your
   assert.deepEqual(shown(), ['a', 'b', 'c'], 'opened, it shows');
   root.remove();
 });
+test('crafting: a sketch of its kind that draws itself, and what is being made (motion.crafting)', () => {
+  const c = dom(C.crafting({ kind: 'workflow', label: 'Making the workflow', detail: 'from this chat' }));
+  assert.equal(c.getAttribute('role'), 'status'); assert.ok(c.querySelectorAll('.craft-art path[pathLength="1"]').length > 3);
+  assert.equal(c.querySelector('.craft-t b').textContent, 'Making the workflow'); assert.equal(c.querySelector('.craft-t span').textContent, 'from this chat');
+  assert.notEqual(C.crafting({ kind: 'image', label: 'x' }), C.crafting({ kind: 'workflow', label: 'x' }), 'each kind its own sketch');
+  assert.ok(dom(C.crafting({ kind: 'nope', label: 'x' })).querySelector('path'), 'an unknown kind draws as a document');
+});
 test('artifactView: its name and where from, Previous and Next through the others, Open full and Download (panel.task-depth)', () => {
   const v = dom(C.artifactView({ name: 'plan.md', meta: 'Plan', body: '<p>Hi</p>', at: 0, of: 3, hooks: { prev: { 'data-p': '' }, next: { 'data-n': '' }, full: { 'data-f': '' }, download: { 'data-d': '' } } }));
   assert.equal(v.querySelector('.av-h b').textContent, 'plan.md'); assert.ok(v.querySelector('[data-p]').disabled, 'the first has no previous'); assert.ok(!v.querySelector('[data-n]').disabled);

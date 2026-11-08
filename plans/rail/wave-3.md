@@ -323,3 +323,5 @@ Decided (Emil, 8 Nov):
 - The storyboard is crafted with a simple animation (Emil, 8 Nov; no Haiku wording in it): each step's ring draws, its name
   and words fade in, its time and cost follow; the loop draws back; the ways a task goes settle one by one. Ease-out, no
   bounce, all at once with reduced motion. Mock: mocks/wave-3/story-craft.html; GIFs generated/story-craft-{light,dark}.gif.
+- Crafting in the library (Emil, 8 Nov: a generic animation while Worca makes something): motion.crafting, Crafting
+  (crafting.mjs; a workflow, an image, a document), its test, catalog entry and gallery; mocks/wave-3/crafting.html.

@@ -1,0 +1,7 @@
+<!doctype html>
+<!-- Crafting (motion.crafting) for each kind, from the library: what Worca shows where a thing it is making will be. -->
+<html lang="en"><head><meta charset="utf-8"><title>Crafting</title>
+<link rel="stylesheet" href="../../prototype/app.css"><link rel="stylesheet" href="../../prototype/design-system/rail-look.css"><link rel="stylesheet" href="../../prototype/design-system/rail.css">
+<style>body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);} #m{width:560px;padding:24px 28px;box-sizing:border-box;display:grid;gap:10px;}</style></head>
+<body><div id="m"></div><script src="../../prototype/components.js"></script>
+<script>const R = window.RailUI; document.getElementById('m').innerHTML = R.crafting({ kind: 'workflow', label: 'Making the workflow', detail: 'from what you said in this chat' }) + R.crafting({ kind: 'image', label: 'Drawing the diagram', detail: 'billing-api’s services and who calls whom' }) + R.crafting({ kind: 'document', label: 'Writing the release notes', detail: '14 changes since 1.19' });</script></body></html>

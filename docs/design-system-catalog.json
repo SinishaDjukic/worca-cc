@@ -529,6 +529,18 @@
       "example": "Activity's Logs"
     },
     {
+      "name": "Crafting",
+      "code": "ui/public/design-system/components/crafting.mjs#crafting",
+      "kind": "showing",
+      "needs": [
+        "something Worca is making (a workflow, an image, a document), shown in its place until it is ready"
+      ],
+      "rules": [
+        "motion.crafting"
+      ],
+      "example": "Making the workflow, in a chat"
+    },
+    {
       "name": "ArtifactView",
       "code": "ui/public/design-system/components/artifact-view.mjs#artifactView",
       "kind": "showing",
