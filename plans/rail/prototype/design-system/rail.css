@@ -1511,3 +1511,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .rd-route-row .tr-end,.sc-subs .rd-route-row b,.rd-route-name{color:var(--ink-2);}
 .rd-route-row.is-now .rd-route-name,.rd-route-row.is-ask .rd-route-name,.rd-route-row.is-failed .rd-route-name{color:var(--ink);}
 .btn.btn-quiet.is-danger{color:var(--red-ink-strong);}
+
+/* Add project's fields: under its sentence, on the card's text edge, one column */
+.pj-fields{display:flex;flex-direction:column;gap:10px;margin-top:10px;max-width:420px;}
+.pj-fields > .btn{align-self:flex-start;margin-left:-8px;}

@@ -1,9 +1,9 @@
 # Panel outcome: choice design and New chat
 
 Panel: Dana (power user, 15 tasks/day), Marta (lead, desktop and phone), Sam (first day), and a UX designer.
-Rounds: r1 independent → r2 cross-read → r3 in Rail's own parts → r4 users' last fixes → r5 nothing lost. **All three users pass r5.**
+Rounds: r1 independent → r2 cross-read → r3 in Rail's own parts → r4 users' last fixes → r5 nothing lost → r6 short menus. **All three users pass r6.**
 
-Final mock: `r5-ux.png`, with `r4-ux.png` for the phone and the Tab order, and `r3-ux.png` for the composer states. Parity table, every function today and where it lives: `r5-ux.md`. Rail mapping: `r3-ux.md`, `r4-ux.md`.
+Final mock: `r6-ux.png` (every menu opens with 7 lines or fewer; lengths table in `r6-ux.md`), with `r5-ux.png` for the full states, with `r4-ux.png` for the phone and the Tab order, and `r3-ux.png` for the composer states. Parity table, every function today and where it lives: `r5-ux.md`. Rail mapping: `r3-ux.md`, `r4-ux.md`.
 
 ## The design
 **Composer**: one line, chosen before you send.
@@ -24,17 +24,16 @@ Final mock: `r5-ux.png`, with `r4-ux.png` for the phone and the Tab order, and `
   - Showing: all, needs you, running, archived.
   - From: the projects.
   - By: date, state, project, topic, AI topics.
-  - Then Sort, Select, Reset view and Keyboard shortcuts (?).
+  - r6: the menu opens with 7 lines (Showing, then From a project › and Group and sort ›). Select is ⌘ click or long-press, Keyboard shortcuts is ?, and Reset view is ✕.
 - Off its defaults (filter, grouping or sort): one line of the parts that differ, then the count, then ✕ (Reset view). It persists across reloads.
 - A waiting row's end is its reason: "Asks you" or "Needs your OK". Amber ?; red only for Failed.
 
 **New to Rail:** the effort words, and ⌘N as an app-only alias.
 
-## Last nits (all pass; none blocking)
-- **Task button "Continue"** (Marta, Sam): unclear for something new. They suggest "Start", "Propose" or "Review"; Dana is fine with it. It's today's word, so this is your call.
-- **Codex models** (Sam): "Codex high / medium" brings the old level words back. Use quick, standard and thorough there too.
-- **Engine menu** (Dana): choosing a model with Enter keeps Thinks and closes the menu. Typing "high" still finds thorough.
-- **Phone** (Marta): the list menu scrolls at 375px, so Showing and From stay at the top.
+## Last nits after r6 (all pass; none blocking)
+- **Select and shortcuts are hard to find** (Marta, Sam). Select is only ⌘ click or long-press, and on a phone long-press clashes with the row's tooltip. Fix: put Select back as the first item of the row's ⋯ (today's prototype has it there with Space), and show "? Keyboard shortcuts" at the foot of the Showing menu.
+- **Task button: "Continue" or "Propose"** (Marta and Sam want Propose; Dana is fine with either). This is the owner's call.
+- **Engine menu** (Dana): the top search also searches Other engines, and the 3 recent models keep a stable order.
 
 ## Rule changes this needs in docs/rail
 - `components.md`: SentencePicker quiet variant, ListSentence folded/one-line, BarHead action with label, row reason end, engine picker with Thinks.

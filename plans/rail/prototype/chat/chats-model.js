@@ -7,6 +7,7 @@
       chat('c1', 'Billing CSV export', 'needs-you', 'started', 'billing-api', '14:32', 'today', { cost: 1.2, unread: true, labels: ['hotfix', 'billing'], tasks: [
         { id: 't1', run: 'r1', title: 'Add CSV export to billing', case: 'question', stage: 2, git: 'open', watch: 'idle', branch: 'feat/billing-csv-export', detail: 'Review · step 2 of 3', after: [{ id: 't2', title: 'Invoices export', case: 'scheduled', stage: 0, branch: 'feat/invoices-export', detail: 'Starts after Add CSV export', endWord: 'after it' }] },
         { id: 's1', kind: 'schedule', title: 'Nightly export check', time: '02:00', detail: 'Every day at 02:00 · Next in 11h' }] }),
+      chat('c0', 'Getting started', 'idle', 'chat', '', 'Mon', 'week', { pinned: true }),
       chat('c16', 'Migrate the cron parser', 'idle', 'started', 'worca-cc', '13:40', 'today', { cost: 6.1, tasks: [{ id: 't16', run: 'r2', title: 'Migrate cron parser', case: 'gate', stage: 2, git: 'branch', branch: 'refactor/cron-parser', detail: 'Waits for your OK on the review' }] }),
       chat('c17', 'Node 24', 'idle', 'started', 'web-app', '12:40', 'today', { cost: 4.2, labels: ['hotfix'], tasks: [{ id: 't17', run: 'r5', title: 'Update Node to 24', case: 'failed', stage: 1, git: 'branch', branch: 'chore/node-24', detail: 'Test step · 3 tests failed' }] }),
       chat('c18', 'Audit log pager', 'idle', 'started', 'worca-cc', '10:20', 'today', { cost: 5.2, tasks: [{ id: 't18', run: 'r9', title: 'Add pager to the audit log', case: 'approved', stage: 3, git: 'pass', watch: 'idle', branch: 'feat/audit-log-pager', detail: 'Approved · checks pass: unit, e2e, lint' }] }),
@@ -64,6 +65,11 @@
   // A conversation's turns: what a person said, what Worca said, what it did. Work points at its task.
   const thread = (c) => {
     if (c.fromTask) return (c.tasks || []).map((x, i) => ({ t: 'task', id: `b${i}`, task: x.id }));   // opened from Tasks or Pulse: its card, nothing made up
+    if (c.id === 'c0') return [   // the first minutes: a chat like any other, so nothing new to learn
+      { t: 'words', html: 'Hi, I’m Worca. I run coding tasks for you: you say what to do, I plan it, build it, review it and open a pull request. Two things first, then your first task.' },
+      { t: 'change', id: 'g1', kind: 'Sign-in', title: 'Sign in Claude Code', why: 'Worca uses your own Claude to do the work', rows: [{ name: 'Engine', before: '', after: 'Claude Code' }], choice: { label: 'Use', items: ['your Claude subscription', 'an Anthropic API key'], rec: 'your Claude subscription' }, apply: 'Sign in', state: 'proposed' },
+      { t: 'change', id: 'g2', kind: 'Project', title: 'Add your first project', why: 'Worca works in a project: a folder, a clone, or a new one', how: 'Folder', state: 'proposed' },
+    ];
     if (c.id === 'c1') return [
       { t: 'you', id: 'a1', text: 'Add a CSV export to the billing page', when: '14:02' },
       { t: 'think', text: 'Thought for 8s' },
