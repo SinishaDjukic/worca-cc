@@ -1,0 +1,68 @@
+<!doctype html>
+<!-- Mock (Wave 3): the storyboard crafted, a simple animation (Emil: no Haiku in it). Each step's ring draws, its name
+     and words fade in, its time and cost follow; then the loop draws back under the two it joins; then the ways a task
+     goes settle one by one. Ease-out only, no bounce; with reduced motion it all appears at once. setT(ms) draws the moment
+     ms (the GIF records it frame by frame). -->
+<html lang="en"><head><meta charset="utf-8"><title>Story crafting</title>
+<link rel="stylesheet" href="../../prototype/app.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail-look.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail.css">
+<style>
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);}
+  #m{width:760px;padding:26px 40px 26px;box-sizing:border-box;}
+  .sb{position:relative;display:grid;grid-template-columns:repeat(4,1fr);gap:22px;margin:6px 0 58px;}
+  .sb-p{position:relative;display:grid;gap:4px;align-content:start;}
+  .sb-line{position:absolute;left:-18px;top:11px;width:14px;border-top:1px solid var(--ink-3);transform-origin:left;}
+  .sb-n{display:flex;align-items:center;gap:8px;font:600 var(--fs-body)/1.3 var(--sans);}
+  .sb-k{position:relative;width:22px;height:22px;display:grid;place-items:center;font:500 11px/1 var(--sans);color:var(--ink-2);flex:none;}
+  .sb-k svg{position:absolute;inset:0;overflow:visible;} .sb-k circle{fill:none;stroke:var(--line-2);stroke-width:1;}
+  .sb-p.is-check .sb-k circle{stroke:var(--amber-ink);} .sb-p.is-check .sb-k{color:var(--amber-ink);}
+  .sb-t{font-size:var(--fs-body);line-height:1.45;min-height:58px;} .sb-m{font-size:var(--fs-meta);color:var(--ink-3);}
+  .sb-loop{position:absolute;left:37.5%;width:25%;bottom:-40px;height:30px;font-size:var(--fs-meta);color:var(--amber-ink);text-align:center;}
+  .sb-loop svg{position:absolute;inset:0 0 auto 0;width:100%;height:16px;overflow:visible;}
+  .sb-loop span{position:absolute;left:-40%;right:-40%;top:16px;white-space:nowrap;}
+  .pen{position:absolute;color:var(--amber-ink);pointer-events:none;width:14px;height:14px;}
+  .ghost{display:block;height:8px;border-radius:2px;background:var(--line);margin:6px 0 0;}
+  .by{margin:10px 0 0;font-size:var(--fs-meta);color:var(--ink-3);display:flex;gap:6px;align-items:center;}
+  #ways .lr-row,#ways .list-row,#ways li{transition:none;}
+</style></head>
+<body><div id="m"><div class="sb" id="sb"></div><div id="ways"></div></div>
+<script src="../../prototype/components.js"></script>
+<script>
+  const R = window.RailUI;
+  const P = [['Plan', 'Thinks before touching anything: reads your task and the code, writes the plan.', 'about 3 min · $0.40'],
+    ['Build', 'Makes the change and runs your tests until they pass.', 'about 9 min · $0.31'],
+    ['Security check', 'Looks for trouble: injection, secrets, unsafe input.', 'about 4 min · $0.19', 'is-check'],
+    ['Review', 'Reads it the way a colleague would, then opens the pull request.', 'about 2 min · $0.12']];
+  const C = 2 * Math.PI * 10.5;
+  document.getElementById('sb').innerHTML = P.map(([n, t, m, c], i) => `<div class="sb-p ${c || ''}">${i ? '<i class="sb-line"></i>' : ''}<div class="sb-n"><span class="sb-k"><svg viewBox="0 0 22 22"><circle cx="11" cy="11" r="10.5" stroke-dasharray="${C}" transform="rotate(-90 11 11)"/></svg><b>${i + 1}</b></span><span class="nm">${n}</span></div><div class="sb-t"></div><div class="sb-m">${m}</div></div>`).join('')
+    + `<div class="sb-loop"><svg viewBox="0 0 100 16" preserveAspectRatio="none" aria-hidden="true"><path d="M100 0 C100 14 0 14 0 0" fill="none" stroke="var(--amber-ink)" stroke-dasharray="2 2" vector-effect="non-scaling-stroke"/></svg><span>found something? back to Build, at most twice</span></div>`;
+  const W = [['Straight through', 'Plan, build, check, review · about 18 min, $1.02 · 3 of 6 tasks', 'ok', 4], ['The check finds something', 'Back to Build once or twice · each round about 6 min, $0.24 · 3 of 6 tasks', 'act', 2], ['Still unsafe after two fixes', 'It stops and asks you what to do · never yet', 'ask', 2]];
+  document.getElementById('ways').innerHTML = R.list({ groups: [{ title: 'How a task goes through it', rows: W.map(([t, m, tone, st]) => R.listRow({ title: t, meta: m, mark: R.kindMark({ kind: 'task', tone, stage: st }) })) }] });
+  const ease = (x) => 1 - Math.pow(1 - Math.min(1, Math.max(0, x)), 3);
+  const seg = (t, a, d) => ease((t - a) / d);
+  const panels = [...document.querySelectorAll('.sb-p')];
+  const rows = [...document.querySelectorAll('#ways .list-row')], head = document.querySelector('#ways .list-h');
+  const STEP = 650, START = 300;   // a panel every 1.1 s, after a breath
+  window.setT = (t) => {
+    panels.forEach((p, i) => {
+      const a = START + i * STEP, [, words] = P[i];
+      const ring = seg(t, a, 360), name = seg(t, a + 120, 300), w = seg(t, a + 220, 420), meta = seg(t, a + 420, 260);
+      p.querySelector('circle').style.strokeDashoffset = String(C * (1 - ring));
+      p.querySelector('.sb-k b').style.opacity = ring;
+      const nm = p.querySelector('.nm'); nm.style.opacity = name; nm.style.transform = `translateY(${(1 - name) * 4}px)`;
+      const tx = p.querySelector('.sb-t'); tx.textContent = words; tx.style.opacity = w; tx.style.transform = `translateY(${(1 - w) * 4}px)`;
+      p.querySelector('.sb-m').style.opacity = meta;
+      const ln = p.querySelector('.sb-line'); if (ln) ln.style.transform = `scaleX(${seg(t, a - 160, 220)})`;
+    });
+    const la = START + 4 * STEP, loop = seg(t, la, 700), lab = seg(t, la + 500, 300);
+    const path = document.querySelector('.sb-loop path'); path.style.opacity = loop > 0 ? 1 : 0; path.style.clipPath = `inset(0 0 0 ${(1 - loop) * 100}%)`;
+    const sp = document.querySelector('.sb-loop span'); sp.style.opacity = lab;
+    const wa = la + 700;
+    if (head) head.style.opacity = seg(t, wa, 300);
+    rows.forEach((r, i) => { const k = seg(t, wa + 200 + i * 260, 360); r.style.opacity = k; r.style.transform = `translateY(${(1 - k) * 6}px)`; });
+    return { end: wa + 200 + rows.length * 260 + 1800 };
+  };
+  window.TOTAL = window.setT(0).end;
+  window.setT(window.TOTAL);
+</script></body></html>

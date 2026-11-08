@@ -320,3 +320,6 @@ Decided (Emil, 8 Nov):
   piece: WorkflowStory.
 - Every workflow reads first in plain words (Emil, 8 Nov): a small helper model (Haiku 5.5) writes a few sentences from
   the workflow, once and again when it changes; shown above the drawing in every mode, said to be by Haiku.
+- The storyboard is crafted with a simple animation (Emil, 8 Nov; no Haiku wording in it): each step's ring draws, its name
+  and words fade in, its time and cost follow; the loop draws back; the ways a task goes settle one by one. Ease-out, no
+  bounce, all at once with reduced motion. Mock: mocks/wave-3/story-craft.html; GIFs generated/story-craft-{light,dark}.gif.
