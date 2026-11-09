@@ -181,7 +181,7 @@ The grant and deny shapes above were run against a real `claude` (2.1.314, model
 | 4 | shape 2 with `tools: Read, mcp__srv` in the agent's frontmatter (`--agent`) and an allow rule for `mcp__srv` and `mcp__srv__b` | `a` | works |
 | 4 | same | `b` | refused despite the allow rule |
 
-Shape 2 holds, so the All-tools-keeps-flowing guarantee stands. Shape 4 used an allow rule passed with `--settings` rather than one written into the real `~/.claude/settings.json`; it is the same permission layer, but not the user-scope file itself. The skill shape (5) is recorded in [skills.md](skills.md#per-agent-skills).
+Shape 1 is the by-name grant used for ticked servers. Shape 2's wildcard is now used only to grant a whole `.mcp.json` or local-scope server. Shape 4 used an allow rule passed with `--settings` rather than one written into the real `~/.claude/settings.json`; it is the same permission layer, but not the user-scope file itself. The skill shape (5) is recorded in [skills.md](skills.md#per-agent-skills).
 
 ## Limits and costs
 
