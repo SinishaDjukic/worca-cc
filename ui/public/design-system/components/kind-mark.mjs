@@ -262,9 +262,30 @@ export function placeHead({ title, facts = '', mark = '', word = '', why = '', a
  * @param {string} o.action   its one Button
  * @param {string} [o.more]   a quiet second (What it asks for)
  * @param {object} [o.attrs]
+ * @param {string} [o.word]      a center's card (panel.center): its state, first and in its colour
+ * @param {string} [o.tone]      that state's markTone
+ * @param {string} [o.whatHtml]  `what` as markup: links to what it names
+ * @param {string} [o.line]      markup in Worca's reason's place (RunOutcomes)
+ * @param {string} [o.factsHtml] `facts` as markup: numbers that open what they count; kept to one line
+ * @param {string} [o.factsTip]  the whole of that line, when it is cut
  */
-export function pluginCard({ mark, kicker, update = '', title, what, why = '', facts = '', action, more = '', attrs: a = {} }) {
-  return `<article class="pg-card"${attrs(a)}>${mark}<span class="pg-k">${esc(kicker)}${update ? ` · <span class="pg-up">update ${esc(update)}</span>` : ''}</span><span class="pg-t">${esc(title)}</span><span class="pg-w">${esc(what)}</span>${why ? `<span class="pg-why">${icon('worca-w', 12)}${esc(why)}</span>` : ''}${facts ? `<span class="pg-f">${esc(facts)}</span>` : ''}<span class="pg-a">${action}${more}</span></article>`;
+export function pluginCard({ mark, kicker = '', update = '', title, what = '', why = '', facts = '', action, more = '', attrs: a = {}, word = '', tone = '', whatHtml = '', line = '', factsHtml = '', factsTip = '' }) {
+  const head = `${word ? `<span class="pg-state${tone ? ' is-' + tone : ''}">${esc(word)}</span>${kicker ? ' ' : ''}` : ''}${esc(kicker)}`;
+  return `<article class="pg-card"${attrs(a)}>${mark}<span class="pg-k">${head}${update ? ` · <span class="pg-up">update ${esc(update)}</span>` : ''}</span><span class="pg-t">${esc(title)}</span><span class="pg-w">${whatHtml || esc(what)}</span>${line ? `<span class="pg-line">${line}</span>` : why ? `<span class="pg-why">${icon('worca-w', 12)}${esc(why)}</span>` : ''}${factsHtml ? `<span class="pg-f is-one"${attrs({ title: factsTip || null })}>${factsHtml}</span>` : facts ? `<span class="pg-f">${esc(facts)}</span>` : ''}<span class="pg-a">${action}${more}</span></article>`;
+}
+
+/**
+ * RunOutcomes (panel.run-outcomes): a schedule's recent runs, a square each, oldest first, and one line beside.
+ * @param {object} o
+ * @param {('ok'|'fail'|'run'|'miss')[]} o.runs
+ * @param {string} [o.says]   the line beside, as markup (a TextLink in it)
+ * @param {string} [o.tip]
+ */
+export function runOutcomes({ runs = [], says = '', tip = 'The last 7 runs' }) {
+  const WORD = { ok: 'succeeded', fail: 'failed', run: 'running', miss: 'missed' };
+  const squares = runs.map((r) => `<i class="ro-sq is-${esc(r)}"></i>`).join('');
+  const label = runs.length ? `${tip}: ${runs.map((r) => WORD[r] || r).join(', ')}` : null;
+  return `<span class="run-outs">${squares ? `<span class="ro-sqs" role="img"${attrs({ title: tip, 'aria-label': label })}>${squares}</span>` : ''}${says ? `<span class="ro-says">${says}</span>` : ''}</span>`;
 }
 
 /**

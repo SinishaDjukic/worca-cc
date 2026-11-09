@@ -7,17 +7,27 @@
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const whenOf = (s) => (s.day === 'today' ? 'today' : s.day === 'week' ? 'week' : 'tomorrow');
   let data = M.seed(); /* the schedules that wait to run are in the one store too, so Pulse's Scheduled lists the same ones */
-  const toStore = () => { for (const s of data.schedules) if (s.state !== 'paused' && window.RailWorld && !window.RailWorld.find(`sch-${s.id}`)) window.RailWorld.add({ id: `sch-${s.id}`, case: 'scheduled', title: s.title, project: s.project || '', detail: R.scheduleWords(s).says, time: s.at, day: 'upcoming', when: whenOf(s) }); };
+  // each started run is a task in the one store, in its project (panel.task-truth); a time not started is a ticket: Pulse lists it, Tasks does not, and a missed one needs you
+  const missedWords = (s) => `Missed ${s.missed} · ${s.missedWhy}`;
+  const ticketOf = (s) => (s.section === 'needs' ? { case: 'ticket-missed', detail: missedWords(s), missed: true } : { case: 'scheduled', detail: R.scheduleWords(s).says, missed: false });
+  const toStore = () => { const W = window.RailWorld; if (!W) return; for (const s of data.schedules) {
+    if (s.state !== 'paused' && !W.find(`sch-${s.id}`)) W.add({ id: `sch-${s.id}`, ...ticketOf(s), ticket: s.id, title: s.title, project: s.project || '', time: s.at, day: 'upcoming', when: whenOf(s) });
+    s.runs.forEach((r, i) => { r.wid ||= `sr-${s.id}-${i}`; if (!W.find(r.wid)) W.add({ id: r.wid, case: r.case, title: r.title, project: s.project || '', detail: r.meta, time: r.time || 'now', day: r.day, schedule: s.id, cost: s.cost, over: !!r.over, workflow: s.workflow || 'Default' }); }); } };
   toStore(); window.RailWorld?.onChange(toStore);
-  let current = '', view = { show: 'all', by: R.BY_DEFAULT }, ctl = null, menu = '', home = null;
+  let current = '', view = { show: 'all', by: R.BY_DEFAULT }, ctl = null, menu = '';
   const say = (t, undo) => window.RailPulse?.say(t, undo);
   const st = (s) => R.runState(s.state), toneOf = (s) => (s.state === 'scheduled' ? 'idle' : R.markTone(st(s)));
-  const SECTIONS = [['needs', R.runState('question').word], ['next', 'Next'], ['paused', R.runState('paused').word]];
-  const rowOf = (s) => ({ key: `sched:${s.id}`, _s: s, title: s.title, meta: '', mark: R.kindMark({ breathe: s.id !== current, kind: 'schedule', tone: toneOf(s), title: `${st(s).word} · ${s.next}` }), end: s.time, current: s.id === current, tip: `${s.title}\n${s.project || 'No project'} · ${s.chat ? 'from a chat' : 'no chat'}\nRuns ${R.scheduleWords(s).runs} · ${s.next}`,
+  const SECTIONS = [['needs', R.runState('question').word], ['running', 'Running'], ['next', 'Next'], ['paused', R.runState('paused').word]];
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], dateWord = (d) => `${MON[d.getMonth()]} ${d.getDate()}`;
+  const nextDates = (s, n = 1) => R.scheduleDates({ every: s.every, at: s.at, from: M.TODAY, n });
+  const nextWord = (s) => (s.every === 'every hour' ? 'Within the hour' : dateWord(nextDates(s)[0]));
+  const sectionNow = (s) => (s.section === 'next' && isRunning(s) ? 'running' : s.section);   // a run under way moves it, and its end leaves it where it was
+  const rowOf = (s) => ({ key: `sched:${s.id}`, _s: s, title: s.title, meta: '', mark: R.kindMark({ breathe: s.id !== current, kind: 'schedule', tone: toneOf(s), title: `${st(s).word} · ${s.next}` }), end: sectionNow(s) === 'running' ? (runningRun(s)?.time || 'now') : sectionNow(s) === 'needs' ? 'Missed' : s.state === 'paused' ? '' : s.time, current: s.id === current, tip: `${s.title}\n${s.project || 'No project'} · ${s.chat ? 'from a chat' : 'no chat'}\nRuns ${R.scheduleWords(s).runs} · ${s.next}`,
     menu: [{ id: 'run', text: 'Run now', off: isRunning(s), help: isRunning(s) ? 'Its task is running; it can start again when that ends' : 'Starts a task now; the schedule keeps its times' }, { id: 'in-view', text: window.RailShell?.inView.has('schedule', s.id) ? 'Out of view' : 'Keep in view', help: 'Its mark in the top bar, on every page' }, { id: 'pause', text: s.state === 'paused' ? 'Resume' : 'Pause', help: s.state === 'paused' ? 'It runs at its next time again' : 'It stops starting tasks until you resume it' }] });
   // Run now is one thing wherever you press it: a real task in the one store, on this schedule's page, and in its chat
   const liveWord = 'Plan · writing the plan';
-  function isRunning(s) { const W = window.RailWorld; return s.runs.some((r) => { const w = r.wid && W?.find(r.wid); return w && W.section(w) === 'running'; }); }
+  function runningRun(s) { const W = window.RailWorld; return s.runs.find((r) => { const w = r.wid && W?.find(r.wid); return w && W.section(w) === 'running'; }); }
+  function isRunning(s) { return !!runningRun(s); }
   function runNow(s) {
     if (isRunning(s)) { say(`${s.title} is already running`); return; }
     const k = Date.now().toString(36), wid = `sr-${s.id}-${k}`;
@@ -25,6 +35,7 @@
     window.RailWorld?.add({ id: wid, case: 'working', title: s.title, project: s.project || '', detail: liveWord, time: 'now', day: 'today' });
     const c = s.chat && window.RailChats?.data().chats.find((x) => x.id === s.chat);
     if (c) { const t = { id: `t${k}`, run: wid, title: s.title, ask: s.title, case: 'working', stage: 0, git: 'branch', detail: liveWord }; c.tasks = [...(c.tasks || []), t]; window.RailConversation?.join(c, { t: 'task', id: `k${k}`, task: t.id }); window.RailChats.refresh(); }
+    if (s.section === 'needs') { s.section = 'next'; s.state = 'scheduled'; s.next = R.scheduleWords(s).next; delete s.missed; window.RailWorld?.move(`sch-${s.id}`, 'scheduled', R.scheduleWords(s).says, { missed: false, day: 'upcoming', time: s.at, when: whenOf(s) }); }   // run now was the catching up
     draw(); say(`Started ${s.title}; the schedule keeps its times`);
   }
   const skipItem = (s) => (s.state === 'paused' ? { text: 'Skip next time', off: true, help: 'It is paused: nothing is coming to skip' } : s.skip ? { text: 'Keep next time', help: 'It runs next time after all' } : { text: 'Skip next time', help: 'Only the next one; the times stay' });
@@ -43,10 +54,11 @@
     active: () => /^#schedule/.test(location.hash) && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #app .nav-fly'), emptyAct: () => window.RailConversation?.start('schedule') } });
   // By date (the default): what waits on you first, then by the next run, each day folding; paused ones last, as they have none.
   function sections() {
-    const list = data.schedules.filter((s) => view.show === 'all' || s.state === 'paused'), at = (id) => list.filter((s) => s.section === id);
+    const list = data.schedules.filter((s) => view.show === 'all' || s.state === 'paused'), at = (id) => list.filter((s) => sectionNow(s) === id);
     if (view.by !== 'day') return SECTIONS.map(([id, title]) => ({ id, title, rows: at(id).map(rowOf) })).filter((x) => x.rows.length);   // list.sections: an empty one is not drawn
-    const head = at('needs').length ? [{ id: 'needs', title: SECTIONS[0][1], rows: at('needs').map(rowOf) }] : [];
-    return [...R.dateSections({ rows: at('next'), dayOf: (s) => s.day, row: rowOf, head, days: R.NEXT_RUN_SECTIONS }), { id: 'paused', title: SECTIONS[2][1], rows: at('paused').map(rowOf) }].filter((x) => x.rows.length);
+    const head = [['needs', 0], ['running', 1]].filter(([id]) => at(id).length).map(([id, i]) => ({ id, title: SECTIONS[i][1], rows: at(id).map(rowOf) }));
+    const next = at('next').sort((a, b) => nextDates(a)[0] - nextDates(b)[0]), days = [...new Set(next.map(nextWord))].map((d) => [d, d]);
+    return [...R.dateSections({ rows: next, dayOf: nextWord, row: rowOf, head, days }), { id: 'paused', title: SECTIONS[3][1], rows: at('paused').map(rowOf) }].filter((x) => x.rows.length);
   }
   const runMark = (r) => R.kindMark({ kind: 'task', tone: R.markTone(R.runState(RM.stateOf(r.case))), stage: r.stage, title: r.meta });
   // each run is the task it started, in the chat's own card: its state, its stages, why it failed on the text edge, one way in
@@ -92,8 +104,8 @@
   function draw() {
     ctl.paint();
     const s = data.schedules.find((x) => x.id === current);
-    if (!s) { home ||= window.RailConversation?.mount(page, { mode: 'schedule', where: '#route-schedule', title: 'Schedule a task', note: 'Every schedule is in the list beside; each time one runs, its task joins its chat.' }); home?.show(''); return; }
-    home = null; page.innerHTML = pageHtml(s);
+    if (!s) { window.RailCenters?.schedules(page); return; }
+    page.innerHTML = pageHtml(s);
     if (s) { const host = document.getElementById('sched-dock'); window.RailConversation?.dock(host, { kind: 'schedule', title: s.title, chat: s.chat }); dockSend(host, s); }
   }
   // the chat's schedule row and card read the same schedule: a time changed here is the bar's time too
@@ -106,6 +118,7 @@
   function more(s, v) {
     if (v === 'pause') act('pause', [{ _s: s }]);
     if (v === 'run') { runNow(s); return; }
+    if (v === 'stop') { const r = runningRun(s); if (!r) return; r.case = 'stopped'; r.meta = 'Stopped by you'; window.RailWorld?.move(r.wid, 'stopped', 'Stopped by you'); draw(); say(`Stopped ${s.title}; the schedule keeps its times`); return; }
     if (v === 'skip') {
       if (s.state === 'paused') return;
       if (s.skip) { s.next = s.skip; s.skip = ''; say(`${s.title} runs next time after all`); } else { s.skip = s.next; s.next = s.section === 'needs' ? `${s.next} · skips next time` : 'Skips next time, then as usual'; say(`${s.title} skips next time`); }
@@ -137,5 +150,7 @@
     if ((hit = on('[data-menu^="sc-"]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
   });
   R.dismissOnOutside(document, { open: () => !!menu, inside: '#route-schedule .spick, #route-schedule .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
-  window.RailSchedules = { find: (id) => data.schedules.find((s) => s.id === id), add: (s) => { const w = R.scheduleWords(s); Object.assign(s, { day: w.day, time: w.time }); data.schedules.unshift(s); ctl.paint(); window.RailWorld?.add({ id: `sch-${s.id}`, case: 'scheduled', title: s.title, project: s.project || '', detail: w.says, time: s.at, day: 'upcoming', when: whenOf(s) }); } /* in the one store: Pulse's Scheduled lists it */, act: (id, v) => { const s = data.schedules.find((x) => x.id === id); if (s && v) more(s, v); }, running: (id) => { const s = data.schedules.find((x) => x.id === id); return !!s && isRunning(s); }, skipItem: (id) => { const s = data.schedules.find((x) => x.id === id); return s ? skipItem(s) : { text: 'Skip next time' }; }, show: (id) => { current = id || ''; draw(); }, summary: () => ({ n: data.schedules.filter((s) => s.state !== 'paused').length, needs: data.schedules.filter((s) => s.section === 'needs').length }) };
+  R.prefs.onChange(() => { if (!page.hidden) draw(); });
+  window.RailWorld?.onMove(() => { if (!bar.hidden) ctl.paint(); });
+  window.RailSchedules = { all: () => data.schedules, TODAY: M.TODAY, nextDates, dateWord, runningRun, openRun, find: (id) => data.schedules.find((s) => s.id === id), add: (s) => { const w = R.scheduleWords(s); Object.assign(s, { day: w.day, time: w.time }); data.schedules.unshift(s); toStore(); ctl.paint(); } /* in the one store: Pulse's Scheduled lists it */, act: (id, v) => { const s = data.schedules.find((x) => x.id === id); if (s && v) more(s, v); }, running: (id) => { const s = data.schedules.find((x) => x.id === id); return !!s && isRunning(s); }, skipItem: (id) => { const s = data.schedules.find((x) => x.id === id); return s ? skipItem(s) : { text: 'Skip next time' }; }, show: (id) => { current = id || ''; draw(); }, summary: () => ({ n: data.schedules.filter((s) => s.state !== 'paused').length, needs: data.schedules.filter((s) => s.section === 'needs').length }) };
 })();

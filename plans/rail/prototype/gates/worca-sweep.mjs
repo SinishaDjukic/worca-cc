@@ -55,7 +55,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await p.goto(`${URL_}#runs`); await p.waitForTimeout(100);
   for (const pc of await p.evaluate(() => [...document.querySelectorAll('#pulse-case option')].map((o) => o.value))) {
     const got = await p.evaluate((v) => { const s = document.getElementById('pulse-case'); s.value = v; s.dispatchEvent(new Event('change', { bubbles: true })); document.querySelector('#runs-root [data-menu="show"]')?.click();
-      const hint = document.querySelector('#runs-root [data-pick="show|needs"]')?.textContent.match(/\d+/)?.[0] || '0'; document.querySelector('#runs-root [data-menu="show"]')?.click(); return { list: +hint, badge: window.PulseModel && window.RailWorld.tops().filter((r) => r.section === 'needs').length, shown: +(document.querySelector('.pz-pulse-b .badge, .pz-pulse-b [class*="badge"]')?.textContent || 0) }; }, pc);
+      const hint = document.querySelector('#runs-root [data-pick="show|needs"]')?.textContent.match(/\d+/)?.[0] || '0'; document.querySelector('#runs-root [data-menu="show"]')?.click(); return { list: +hint, badge: window.PulseModel && window.RailWorld.tops().filter((r) => r.section === 'needs' && !r.ticket).length, shown: +(document.querySelector('.pz-pulse-b .badge, .pz-pulse-b [class*="badge"]')?.textContent || 0) }; }, pc);
     if (got.list !== got.badge) add('the badge and the Runs list disagree', `${pc}: ${JSON.stringify(got)}`);
     checks++;
   }

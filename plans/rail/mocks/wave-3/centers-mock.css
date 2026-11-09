@@ -57,7 +57,10 @@ html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans)
 #m .pg-card .rc-figs{grid-column:2;gap:2px 12px;font-size:var(--fs-meta);}
 #m .pg-card .rc-figs b{font-size:var(--fs-body);margin-left:4px;}
 .runs{grid-column:2;display:flex;align-items:center;gap:3px;font-size:var(--fs-meta);color:var(--ink-2);margin:2px 0;}
-.runs span{margin-left:5px;}
+.runs i ~ span{margin-left:5px;}
 .runs i{width:9px;height:9px;border-radius:2px;box-sizing:border-box;}
 .runs .is-ok{background:var(--green);} .runs .is-fail{background:var(--red);}
 .runs .is-run{border:1.5px solid var(--ink-2);} .runs .is-miss{border:1.5px solid var(--amber);}
+
+#m .pg-card .pg-w a{color:inherit;text-decoration:underline;text-underline-offset:2px;}
+.runs a{color:inherit;text-decoration:underline;text-underline-offset:2px;}

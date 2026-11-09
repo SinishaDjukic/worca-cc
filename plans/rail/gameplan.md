@@ -8,7 +8,7 @@ Emil, 8 Nov. One order, from where we are to Rail in the product. `wave-3.md` ke
 2. **Alerts breathe like questions.** A `!` (failed, a problem) follows the same logic as a `?`: the whole row or card breathes
    in its own colour, not only its round mark.
 3. **Chat is the only place to type to Worca.** No composer on any other page.
-4. **Manual creation elsewhere is the "legacy approach".** Every other page may keep it, under exactly that wording.
+4. **Manual creation elsewhere is the "legacy approach".** Every other page may keep it, under exactly that wording; Tasks and Schedules from Advanced up, and in Simple they create nothing and have no +.
 5. **Stay in the chat.** Unless you are in Expert, or a mode that turns a feature on, you stay in the context of the chat,
    represented by the card: links lead to the card, not to a page.
 6. **Pages outside Chat are centers.** Mostly what you land on: a center for that thing, with the same or similar sidebar
@@ -56,3 +56,8 @@ Filled at step 6. A number is the lowest of the three reviewers. The scores so f
 
 **Ask Worca beside a page** goes: a second place to type breaks point 3. Its use stays: ⌘J (and the top bar's Ask) takes you to
 Chat, with the page you were on attached as a chip you can remove and its questions offered; Back returns you. Done in step 2.
+
+## Added 9 Nov (Emil)
+
+- **One data source for the prototype, before the boss round.** Every page reads the same facts (tasks, schedules, projects, costs), so a number cannot differ between pages. The product's goal is that Worca builds itself from the design system, so the DS and its data shapes must be enough to compose a page.
+- **Icons, colours and themes are checked in every validation round**, with improvements proposed: does each icon mean one thing, do the colours mean state only, do both themes fit, can anything be calmer.

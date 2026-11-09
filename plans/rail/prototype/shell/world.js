@@ -4,7 +4,8 @@
 (function () {
   const R = window.RailUI, RM = window.RunCardModel;
   const FIRST = window.RailFirstRun = typeof location !== 'undefined' && /[?&]first\b/.test(location.search);   // the first run: a newcomer's empty Worca
-  const run = (id, kase, title, project, detail, time, day, o = {}) => ({ id, case: kase, title, project, detail, time, day, labels: [], cost: null, archived: false, unread: false, pr: '', group: '', kind: 'Git', by: 'Emil Angelov', ...o });
+  const WORKFLOW_OF = { r2: 'Security-first review', r9: 'Security-first review', r5: 'Quick Fix', r7: 'Quick Fix', r12: 'Full', m1: 'API rewrite', m2: 'API rewrite', m3: 'API rewrite' };   // the Tasks center's by workflow
+  const run = (id, kase, title, project, detail, time, day, o = {}) => ({ id, case: kase, title, project, detail, time, day, labels: [], cost: null, archived: false, unread: false, pr: '', group: '', kind: 'Git', by: 'Emil Angelov', workflow: WORKFLOW_OF[id] || 'Default', ...o });
   // not started yet: `when` is its group in Vitals › Scheduled
   const wait = (id, kase, when, title, project, detail, time, o) => run(id, kase, title, project, detail, time, 'upcoming', { when, ...o });
   const round = (n, words, time, kase = 'round') => ({ n, words, time, case: kase });
@@ -132,7 +133,8 @@
   const stateOf = (r) => RM.stateOf(r.case);
   const wordOf = (r) => R.runState(stateOf(r)).word;
   // Where a run sorts: by its state, but a run paused at a limit that resumes by itself waits on nobody.
-  const section = (r) => (r.archived ? 'recent' : r.resumes ? 'scheduled' : R.sectionOf(wordOf(r)));
+  // A missed schedule time never started, but it needs you (panel.task-truth); a schedule's failed run that a later run put right waits on nobody.
+  const section = (r) => (r.archived || r.over ? 'recent' : r.missed ? 'needs' : r.resumes ? 'scheduled' : R.sectionOf(wordOf(r)));
   const membersOf = (g) => data.runs.filter((r) => r.group === g.id).sort((a, b) => (a.pos || 0) - (b.pos || 0));
   // A member that waits on a person raises its group; one that is simply ready ships with the group.
   const raises = (m) => section(m) === 'needs' && ![R.runState('ready').word, R.runState('approved').word].includes(wordOf(m));

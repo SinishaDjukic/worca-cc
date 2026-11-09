@@ -749,7 +749,7 @@ export const stateIds = () => Object.keys(STATES);
 
 /** A state's word, dot, symbol and one action, with its names filled in. An unknown id throws: a state is never guessed. */
 /** Why a task is under Needs you, in a word or two: a row's one end (list.bar-model). */
-const NEEDS_REASON = { question: 'Question', gate: 'Your OK', failed: 'Failed', approved: 'Ready to merge' };
+const NEEDS_REASON = { question: 'Question', gate: 'Needs approval', failed: 'Failed', approved: 'Ready to merge' };
 export const needsReason = (id) => NEEDS_REASON[id] || runState(id).word;
 
 export function runState(id, ctx = {}) {
@@ -787,6 +787,21 @@ export const memberKeeps = (label) => !GROUP_OWNS.test(label);
 // then working, then the rest. Paused and Stopped are never Ready.
 const SECTION = { 'Needs you': 'needs', Working: 'running', Starting: 'running', 'In review': 'running', Waiting: 'scheduled', Paused: 'needs', 'Ready to merge': 'needs', Ready: 'needs', Failed: 'needs' };
 export const sectionOf = (word) => SECTION[word] || 'recent';
+
+/**
+ * A center's card action (panel.center): the one step that fits a task's state. `does` is what the page carries out;
+ * `open` leads to its card, where the step needs words or a look.
+ * @param {string} id  a run state's id
+ * @returns {{label:string, does:'retry'|'answer'|'approve'|'merge'|'resume'|'open'}}
+ */
+export function cardAction(id) {
+  if (id === 'failed') return { label: 'Retry', does: 'retry' };
+  if (id === 'question') return { label: 'Answer', does: 'answer' };
+  if (id === 'gate') return { label: 'Approve', does: 'approve' };
+  if (id === 'ready' || id === 'approved') return { label: 'Merge', does: 'merge' };
+  if (/^paused/.test(id)) return { label: 'Resume', does: 'resume' };
+  return { label: 'Open', does: 'open' };
+}
 
 // A chat's states and kinds (docs/rail/lists.md): a chat is not a run, but its dot and word come from here too. `section`:
 // where it sorts in the Chats column. Busy chats pulse; an idle chat shows what it did, its kind's icon in the dot's place.

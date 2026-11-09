@@ -7,7 +7,7 @@
   if (!root) return;
   const KEY = 'worca-rail.runs.view';
   const store = { get: () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { return null; } }, set: (v) => { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch { /* the view lasts the session */ } } };
-  const FRESH = { show: 'all', from: 'all', day: '', range: null, person: '', by: window.RailUI.BY_DEFAULT, labels: [] };
+  const FRESH = { show: 'all', from: 'all', day: '', range: null, person: '', by: window.RailUI.BY_DEFAULT, labels: [], workflow: '', schedule: '' };
   let view = { ...FRESH, ...(store.get() || {}) }, data = M.seed(), listCase = 'full', recent = [], ctl = null;
   const say = (t, undo) => window.RailPulse?.say(t, undo);
   const cap = (w) => w[0].toUpperCase() + w.slice(1);
@@ -29,11 +29,11 @@
   const raises = W.raises, groupSection = W.groupSection;   // where a group sorts is the world's, so Vitals counts it the same
   // what it is in the list: a run, or a group with its runs
   function tops() {
-    const out = data.runs.filter((r) => !r.group).map((r) => ({ run: r, section: sectionOfRun(r), archived: r.archived, labels: r.labels, project: r.project, by: r.by, day: r.day, word: wordOf(r) }));
+    const out = data.runs.filter((r) => !r.group && !r.ticket).map((r) => ({ run: r, section: sectionOfRun(r), archived: r.archived, labels: r.labels, project: r.project, by: r.by, day: r.day, word: wordOf(r), workflow: r.workflow, schedule: r.schedule || '' }));   // a schedule's time that has not started is not a task (panel.task-truth)
     for (const g of data.groups) {
       const ms = membersOf(g); if (!ms.length) continue;
       const archived = ms.every((m) => m.archived);
-      out.push({ group: g, section: archived ? 'recent' : groupSection(g), archived, labels: [...new Set(ms.flatMap((m) => m.labels))], project: g.project, by: ms[0].by, day: g.day, word: R.runState(groupState(g)).word });
+      out.push({ group: g, section: archived ? 'recent' : groupSection(g), archived, labels: [...new Set(ms.flatMap((m) => m.labels))], project: g.project, by: ms[0].by, day: g.day, word: R.runState(groupState(g)).word, workflow: ms[0].workflow, schedule: '' });
     }
     return out;
   }
@@ -52,7 +52,7 @@
   // the date a row belongs to, as month*100+day, in the mock's today (Nov 8): what a stretch of Insights narrows to; 0 for what is still to come
   const WEEKDAY = { Sun: 1, Mon: 2, Tue: 3, Wed: 4, Thu: 5, Fri: 6, Sat: 7 }, MONTH = { Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12 };
   const dateKey = (t) => { if (t.day === 'today') return 1108; if (t.day === 'yesterday') return 1107; if (t.day === 'upcoming') return 0; const w = (t.run || t.group).time || '', m = /^([A-Z][a-z]{2}) (\d+)$/.exec(w); return WEEKDAY[w] ? 1100 + WEEKDAY[w] : m ? MONTH[m[1]] * 100 + +m[2] : 0; };
-  const passes = (t, v) => showOf(v.show).test(t) && (v.from === 'all' || (t.project || 'No project') === v.from) && (!v.day || t.day === v.day) && (!v.range || (dateKey(t) >= v.range.from && dateKey(t) <= v.range.to)) && (!v.person || t.by === v.person)
+  const passes = (t, v) => showOf(v.show).test(t) && (v.from === 'all' || (t.project || 'No project') === v.from) && (!v.day || t.day === v.day) && (!v.range || (dateKey(t) >= v.range.from && dateKey(t) <= v.range.to)) && (!v.person || t.by === v.person) && (!v.workflow || t.workflow === v.workflow) && (!v.schedule || (v.schedule === 'any' ? !!t.schedule : t.schedule === v.schedule))
     && (!labelsOn() || !v.labels.length || t.labels.some((l) => v.labels.includes(l)));
   const labelsOn = () => R.prefs.flag('runLabels');
   const shared = () => listCase === 'shared';
@@ -116,6 +116,8 @@
     const out = [{ word: 'Showing', id: 'show', text: showOf(view.show).text, tip: 'Which tasks the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.help, checked: view.show === x.id, hint: count({ show: x.id }) })) }];
     if (shared()) out.push({ word: 'started by', id: 'person', text: view.person || 'everyone', tip: 'Whose tasks it shows, on a shared sign-in', items: [{ id: '', text: 'everyone', checked: !view.person, hint: count({ person: '' }) }, { sep: true }, ...M.PEOPLE.map((p) => ({ id: p, text: p, checked: view.person === p, hint: count({ person: p }) }))] });
     out.push({ word: 'from', id: 'from', text: view.from === 'all' ? 'all projects' : view.from, tip: 'Which project they come from', items: [{ id: 'all', text: 'all projects', checked: view.from === 'all', hint: count({ from: 'all' }) }, { sep: true }, ...projects.map((p) => ({ id: p, text: p, checked: view.from === p, hint: count({ from: p }) }))] });
+    if (view.workflow) out.push({ word: 'using', id: 'workflow', text: view.workflow, tip: 'Only tasks that ran this workflow', items: [{ id: '', text: 'any workflow', hint: count({ workflow: '' }) }, { sep: true }, { id: view.workflow, text: view.workflow, checked: true, hint: count({}) }] });
+    if (view.schedule) out.push({ word: 'from', id: 'schedule', text: view.schedule === 'any' ? 'schedules' : window.RailSchedules?.find(view.schedule)?.title || 'a schedule', tip: 'Only the runs of a schedule', items: [{ id: '', text: 'anything', hint: count({ schedule: '' }) }, { sep: true }, { id: view.schedule, text: view.schedule === 'any' ? 'schedules' : window.RailSchedules?.find(view.schedule)?.title || 'a schedule', checked: true, hint: count({}) }] });
     if (view.range) out.push({ word: 'on', id: 'range', text: view.range.label, tip: 'Only these days', items: [{ id: '', text: 'any time', hint: count({ range: null }) }, { sep: true }, { id: 'keep', text: view.range.label, checked: true, hint: count({}) }] });
     if (view.day) out.push({ word: 'in', id: 'day', text: M.DAYS.find(([d]) => d === view.day)?.[1] || view.day, tip: 'Only this period', items: [{ id: '', text: 'any time', hint: count({ day: '' }) }, { sep: true }, ...M.DAYS.map(([d, t]) => ({ id: d, text: t, checked: view.day === d, hint: count({ day: d }) }))] });
     // grouping only arranges the same tasks: no count here, so every number in these menus counts tasks
@@ -132,7 +134,8 @@
     const rows = (ts, s) => ts.map((t) => rowOf(t, s));
     if (view.show !== 'all') return [{ id: view.show, title: showOf(view.show).title || cap(showOf(view.show).text), rows: rows(list, view.show === 'needs' || view.show === 'running' ? view.show : '') }];
     const needs = list.filter((t) => t.section === 'needs'), rest = list.filter((t) => t.section !== 'needs');
-    const head = needs.length ? [{ id: 'needs', title: NEEDS(), rows: rows(needs, 'needs') }] : [];
+    const urgent = (t) => { const s = t.run ? stateOf(t.run) : ''; return s === 'failed' ? 0 : s === 'question' ? 1 : s === 'gate' ? 2 : 3; };   // the most pressing first
+    const head = needs.length ? [{ id: 'needs', title: NEEDS(), rows: rows([...needs].sort((a, b) => urgent(a) - urgent(b)), 'needs') }] : [];
     if (view.by === 'project') {
       const names = [...new Set(rest.map((t) => t.project || 'No project'))];
       return [...head, ...names.map((p) => { const ts = rest.filter((t) => (t.project || 'No project') === p), kinds = ts.map((t) => t.run?.kind).filter(Boolean); return { id: `project:${p}`, title: p, chip: kinds.length ? R.chip({ text: kinds[0] }) : '', rows: rows(ts, '') }; })];
@@ -217,8 +220,8 @@
   ctl = R.listController({ root, spec: {
     noun: 'tasks', label: 'Selected tasks',
     tool: (v) => { if (v === 'reset') { view = { ...FRESH }; store.set(view); say('View reset'); } },
-    view: () => ({ state: listCase === 'loading' ? (ctl?.state.waited ? 'loading' : 'waiting') : ['offline', 'failed'].includes(listCase) ? listCase : 'ready', parts: parts(), tools: [{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick tasks to act on several at once' }, R.resetViewTool({ changed: !(view.show === FRESH.show && view.from === FRESH.from && !view.day && !view.range && !view.person && view.by === FRESH.by && !view.labels.length), to: 'all tasks, from all projects, by date' }), { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
-      sections: sections(), empty: listCase === 'empty' ? { text: 'No tasks yet.', action: 'Start a task' } : { text: view.from !== 'all' || view.day || view.range || view.person || view.labels.length ? 'No tasks in this view.' : EMPTY[view.show] || 'No tasks yet.', action: 'Show all tasks' } }),
+    view: () => ({ state: listCase === 'loading' ? (ctl?.state.waited ? 'loading' : 'waiting') : ['offline', 'failed'].includes(listCase) ? listCase : 'ready', parts: parts(), tools: [{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick tasks to act on several at once' }, R.resetViewTool({ changed: !(view.show === FRESH.show && view.from === FRESH.from && !view.day && !view.range && !view.person && view.by === FRESH.by && !view.labels.length && !view.workflow && !view.schedule), to: 'all tasks, from all projects, by date' }), { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
+      sections: sections(), empty: listCase === 'empty' ? { text: 'No tasks yet.', action: 'Start a task' } : { text: view.from !== 'all' || view.day || view.range || view.person || view.labels.length || view.workflow || view.schedule ? 'No tasks in this view.' : EMPTY[view.show] || 'No tasks yet.', action: 'Show all tasks' } }),
     can: () => ['menu', 'fold', 'stop', 'archive', ...(has('advanced') ? ['group', 'delete'] : [])],
     bulk: bulkActions, act, open: openThing,
     openRound: (row, n2) => { const rd = row._x.r.rounds.list.find((x) => x.n === n2); window.RailShell.openRun(`run/${rd.case}`, `${row._x.r.title} · Round ${n2}`); },
@@ -244,12 +247,14 @@
   R.prefs.onChange(() => ctl.paint());
   window.RailRunsList = {
     show: () => ctl.paint(),
+    // what the Tasks center counts: the very rows of this list, so a number and what it opens agree
+    rows: () => tops().filter((t) => !t.archived),
     summary: () => { const t = tops().filter((x) => !x.archived); return { n: t.filter((x) => x.section === 'running' || x.section === 'needs').length, needs: t.filter((x) => x.section === 'needs').length }; },
     focus: () => ctl.focusRow(),
     // from the search: the runs with this label
     label: (l) => { view = { ...view, labels: [l], show: 'all', from: 'all', day: '', person: '' }; store.set(view); ctl.clear(); ctl.paint(); },
     // from another page: opens Tasks narrowed; the sentence says it and you can widen it there. project: a project's name, day: an id of M.DAYS (today, yesterday, week, month, older, upcoming), show: a SHOWS id, range: { from, to, label } as month*100+day
-    filter: ({ project = 'all', day = '', show = 'all', range = null } = {}) => { view = { ...FRESH, by: view.by, from: project, day, range, show: showOf(show) ? show : 'all' }; store.set(view); ctl.clear(); ctl.paint(); window.RailShell?.go('runs'); },
+    filter: ({ project = 'all', day = '', show = 'all', range = null, workflow = '', schedule = '' } = {}) => { view = { ...FRESH, by: view.by, from: project, day, range, workflow, schedule, show: showOf(show) ? show : 'all' }; store.set(view); ctl.clear(); ctl.paint(); window.RailShell?.go('runs'); },
   };
   ctl.paint();
 })();

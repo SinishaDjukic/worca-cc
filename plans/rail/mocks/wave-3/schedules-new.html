@@ -6,11 +6,11 @@
 <script src="../../prototype/components.js"></script><script src="centers-shell.js"></script><script src="centers-mock.js"></script><script src="schedules-center-data.js"></script>
 <script>
 const C = centerMock, { R, pick } = C;
-const body = `<div class="fr-w"><p class="frame">A task on ${pick('billing-api')} using the ${pick('Default')} workflow, run by ${pick('Claude')},<br>from ${pick('main')}, ${pick('the newest code from origin')}, then ${pick('open a PR')}</p><p class="proof">billing-api is the project you used last. Default plans, builds, reviews and opens a PR.</p></div>
+const body = `<div class="fr-w"><p class="frame">A task on ${pick('billing-api', 'The project you used last')} using the ${pick('Default')} workflow, run by ${pick('Claude')},<br>from ${pick('main')}, ${pick('the latest version from origin')}, then ${pick('open a PR')}</p><p class="proof">Default plans, builds, reviews and opens a PR.</p></div>
   ${R.field({ id: 's-n', label: 'Name', placeholder: 'What to call this schedule' })}
   <div class="lbl-line">${R.field({ id: 's-w', label: 'What should it do', multiline: true, placeholder: 'What should each run do?' })}${R.segmented({ label: 'Task source', items: [{ id: 'p', label: 'Write it', pressed: true }, { id: 'm', label: 'From file' }] })}</div>
   <div class="when">Every ${pick('weekday')} at ${pick('09:00')} in ${pick('Europe/Sofia')}<p class="proof">Next: Fri Nov 13, Mon Nov 16, Tue Nov 17.</p></div>
-  ${C.fold('If something gets in the way', 'Never ends; skip if still going; pause after 3 failures')}`;
+  ${C.fold('If something gets in the way', 'No end date; skip if still going; pause after 3 failures')}`;
 C.paint({ shell: 'schedules', cap: 'New schedule · Advanced · Legacy approach, from the + menu', bar: C.plus('New schedule'), main: schedulesCenter(),
   modal: R.dialog({ title: 'New schedule', body, yes: 'Schedule weekdays at 09:00', close: R.icon('close', 15) }) });
 </script></body></html>

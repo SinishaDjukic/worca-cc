@@ -1222,10 +1222,23 @@
       "code": "ui/public/design-system/components/kind-mark.mjs#pluginCard",
       "kind": "showing",
       "needs": [
-        "one plugin in the Marketplace: its brand, what it does, what it adds and asks for, one action"
+        "one plugin in the Marketplace: its brand, what it does, what it adds and asks for, one action",
+        "a center's card: a project, workflow or schedule, its state word in colour, an action that fits (panel.center)"
       ],
       "rules": [
-        "panel.plugin-card"
+        "panel.plugin-card",
+        "panel.center"
+      ]
+    },
+    {
+      "name": "RunOutcomes",
+      "code": "ui/public/design-system/components/kind-mark.mjs#runOutcomes",
+      "kind": "showing",
+      "needs": [
+        "how a schedule's last runs went, a square each"
+      ],
+      "rules": [
+        "panel.run-outcomes"
       ]
     },
     {
@@ -1775,6 +1788,30 @@
       "needs": [
         "any time a schedule can run, every half hour"
       ]
+    },
+    {
+      "name": "A center card's action",
+      "code": "ui/public/design-system/components/run-state.mjs#cardAction",
+      "needs": [
+        "the one step that fits a task's state, on a card"
+      ],
+      "example": "cardAction('failed') // { label: 'Retry', does: 'retry' }"
+    },
+    {
+      "name": "The dates a schedule runs next",
+      "code": "ui/public/design-system/components/list-parts.mjs#scheduleDates",
+      "needs": [
+        "a preview of the next runs, a card's Next up"
+      ],
+      "example": "scheduleDates({ every: 'every weekday', at: '09:00', from })"
+    },
+    {
+      "name": "What a schedule button says",
+      "code": "ui/public/design-system/components/list-parts.mjs#scheduleButton",
+      "needs": [
+        "the named step of New schedule"
+      ],
+      "example": "scheduleButton({ every: 'every weekday', at: '09:00' })"
     }
   ],
   "telling": [

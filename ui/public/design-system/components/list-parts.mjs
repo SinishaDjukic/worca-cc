@@ -92,6 +92,24 @@ export function scheduleWords({ every, at, nowAt = '15:00' }) {
   return { runs, says: `${runs[0].toUpperCase()}${runs.slice(1)}`, next, time: hourly ? 'Hourly' : day ? day.slice(0, 3) : /month/.test(every) ? '1st' : at,
     day: hourly || (every === 'every day' && at > nowAt) ? 'today' : every === 'every day' || every === 'every weekday' ? 'tomorrow' : day ? 'week' : 'later' };
 }
+/**
+ * The dates a schedule runs next (New schedule's preview, a card's Next up), after a given moment.
+ * @param {{every:string, at:string, from:Date, n?:number, nowAt?:string}} o  `from` is today; `nowAt` its time of day
+ * @returns {Date[]}
+ */
+export function scheduleDates({ every, at, from, n = 3, nowAt = '15:00' }) {
+  const day = /^every (Sun|Mon|Tues|Wednes|Thurs|Fri|Satur)day$/.exec(every), DAY = ['Sun', 'Mon', 'Tues', 'Wednes', 'Thurs', 'Fri', 'Satur'].indexOf(day?.[1]);
+  const fits = (d) => (day ? d.getDay() === DAY : every === 'every weekday' ? d.getDay() % 6 !== 0 : every === 'every weekend' ? d.getDay() % 6 === 0 : /month/.test(every) ? d.getDate() === 1 : true);
+  const out = [], d = new Date(from); if (at <= nowAt) d.setDate(d.getDate() + 1);
+  for (let i = 0; i < 800 && out.length < n; i += 1, d.setDate(d.getDate() + 1)) if (fits(d)) out.push(new Date(d));
+  return out;
+}
+/** What a schedule's button says it will do: "Schedule weekdays at 09:00". */
+export function scheduleButton({ every, at }) {
+  const when = every.replace(/^every /, '');
+  return `Schedule ${/month/.test(every) ? 'the 1st of each month' : when === 'day' ? 'every day' : `${when}s`} at ${at}`;
+}
+
 /** The times a schedule picker offers: every half hour of the day. */
 export const TIMES_OF_DAY = Object.freeze(Array.from({ length: 48 }, (_, i) => `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`));
 

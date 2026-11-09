@@ -35,7 +35,7 @@
   function sidebar() {
     const side = el(T.sidebar);
     const nav = side.querySelector('nav.nav');
-    const NEW = { chat: ['New chat', 'ask'] };   // Tasks and Schedules only reference what was dispatched (rail.chat-first)
+    const NEW = { chat: ['New chat', 'ask'] };   // the home's rows; Tasks and Schedules have their + in their own bar (rail.chat-first)
     const place = ([id, label, min, flag]) => { const item = R.navItem({ label, icon: R.icon('nav-' + id, 14), lab: !!flag, attrs: { 'data-nav': id, 'data-min-level': min, 'data-flag': flag || null, 'aria-label': label } }); return NEW[id] ? `<div class="place-row" data-place="${id}">${item}${R.button({ label: NEW[id][0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 13), attrs: { 'data-bar-new': NEW[id][1], title: NEW[id][0] } })}</div>` : item; };
     nav.insertAdjacentHTML('beforebegin', '<div id="bar-back" class="bar-back pz-app rail-page"></div>');
     nav.innerHTML = PLACES.map(([g, list]) => `<p class="nav-sect side-g">${g}</p>${list.map(place).join('')}`).join('');
@@ -173,13 +173,15 @@
   let quickNav = false;   // nav.quick: the ▾ beside a bar's name
   const quickItems = () => [...document.querySelectorAll('#side-rail nav.nav [data-nav]')].filter((b) => !b.hidden && !b.closest('[hidden]') && b.style.display !== 'none').map((b) => ({ id: `bar-go|${b.dataset.nav}`, text: b.querySelector('.nav-label, span')?.textContent.trim() || b.textContent.trim(), checked: b.dataset.nav === routed.view, hint: b.dataset.flag ? 'Labs' : undefined, mark: R.icon(`nav-${b.dataset.nav}`, 14) }));   /* nav.labs: the word follows the row */
   let barMenu = false;   // the + as a menu, where a place makes things more than one way (list.bar-model)
-  let homeOpen = false, taskChat = '', lastThing = null, visited = [], taskHome = null, pinsAll = false;
+  let homeOpen = false, taskChat = '', lastThing = null, visited = [], pinsAll = false;
   const barOf = (view) => (routed.locked ? 'home' : placeMod(view) ? 'place' : view === 'chat' ? 'chat' : view === 'runs' ? 'tasks' : view === 'run' ? (taskChat ? 'chat' : 'tasks') : view === 'schedules' || view === 'schedule' ? 'schedules' : view === 'settings' ? 'settings' : 'home');
+  // who makes things from this bar's +: a place, or Tasks and Schedules from Advanced up (rail.chat-first)
+  const makerOf = (which) => (which === 'place' ? placeMod(routed.view) : which === 'tasks' || which === 'schedules' ? window.RailCenters?.maker(which) : null);
   function drawBar() {
     const side = document.getElementById('side-rail'), own = barOf(routed.view), which = homeOpen ? 'home' : own;
     side.dataset.bar = which;
-    const act = which === 'place' ? (placeMod(routed.view)?.newLabel ? [placeMod(routed.view).newLabel, 'place'] : null) : { chat: ['New chat', 'ask'] }[which];
-    document.getElementById('bar-head').innerHTML = R.barHead({ title: which === 'place' ? TITLES[routed.view] : BAR_TITLE[which], home: quickNav, menu: quickNav ? R.compactMenu({ items: quickItems() }) : '', logo: R.icon('worca-w', 20), action: act ? `<span class="rc-pop">${R.button({ label: act[0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-bar-new': act[1], ...(act[1] === 'place' && placeMod(routed.view)?.newMenu ? { 'aria-haspopup': 'menu', 'aria-expanded': String(barMenu) } : {}) } })}${barMenu && act[1] === 'place' && placeMod(routed.view)?.newMenu ? R.compactMenu({ label: act[0], items: placeMod(routed.view).newMenu() }) : ''}</span>` : '', hide: isStrip() ? R.button({ label: 'Keep the bar open', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 15), attrs: { 'data-bar-pin': '', title: `Keep the bar open (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) : R.button({ label: 'Hide the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-hide', 15), attrs: { 'data-bar-hide': '', title: `Hide the bar: it opens under the pointer (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) });
+    const maker = makerOf(which), act = maker?.newLabel ? [maker.newLabel, 'place'] : { chat: ['New chat', 'ask'] }[which];
+    document.getElementById('bar-head').innerHTML = R.barHead({ title: which === 'place' ? TITLES[routed.view] : BAR_TITLE[which], home: quickNav, menu: quickNav ? R.compactMenu({ items: quickItems() }) : '', logo: R.icon('worca-w', 20), action: act ? `<span class="rc-pop">${R.button({ label: act[0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-bar-new': act[1], ...(act[1] === 'place' && maker?.newMenu ? { 'aria-haspopup': 'menu', 'aria-expanded': String(barMenu) } : {}) } })}${barMenu && act[1] === 'place' && maker?.newMenu ? R.compactMenu({ label: act[0], items: maker.newMenu() }) : ''}</span>` : '', hide: isStrip() ? R.button({ label: 'Keep the bar open', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 15), attrs: { 'data-bar-pin': '', title: `Keep the bar open (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) : R.button({ label: 'Hide the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-hide', 15), attrs: { 'data-bar-hide': '', title: `Hide the bar: it opens under the pointer (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) });
     // the bar switching places cross-fades: the list that comes in fades in (nav.bar-switch)
     for (const [id, b] of [['bar-chat', 'chat'], ['bar-tasks', 'tasks'], ['bar-schedules', 'schedules'], ['bar-place', 'place'], ['bar-back', 'home']]) {
       const list = document.getElementById(id); if (!list) continue;
@@ -328,7 +330,7 @@
       window.RailConversation?.show(arg || '');
       if (arg) { lastThing = { hash: `chat/${arg}`, title: window.RailConversation?.chatTitle(arg) || 'Chat', meta: 'Chat', when: 'now', mark: R.kindMark({ kind: 'chat' }) }; visited = [lastThing, ...visited.filter((v) => v.hash !== lastThing.hash).map((v) => ({ ...v, when: v.when === 'now' ? 'earlier' : v.when }))].slice(0, 6); }
     }
-    if (view === 'runs') { window.RailRunsList?.show(); taskHome ||= window.RailConversation?.mount(pane.runs, { mode: 'task', where: '#route-runs', title: 'Start a task', note: 'Every task you start is in the list beside, with its chat.' }); taskHome?.show(''); }
+    if (view === 'runs') { window.RailRunsList?.show(); window.RailCenters?.tasks(pane.runs); }
     if (view === 'schedules' || view === 'schedule') window.RailSchedules?.show(view === 'schedule' ? arg : '');
     if (placeMod(view) && !lock) { const again = lastPlace === location.hash; placeMod(view).show({ bar: document.getElementById('bar-place'), page: pane.place, arg: decodeURIComponent(arg || '') }); if (again) R.land(pane.place.querySelector('.place-head')); }   /* the row you are on, opened again: its page's head lands */
     lastPlace = placeMod(view) ? location.hash : '';
@@ -362,11 +364,11 @@
   // the library keeps its words until then. Verbs stay ("Run now", "it runs"); code, branches and what you type stay. ----
   const WORDS = [[/\bNew run\b/g, 'New task'], [/\bStart run\b/g, 'Start task'], [/\bRuns\b(?=\s*(?:$|[·:(),.]))/g, 'Tasks'], [/\b(all|All|these|the|The|Your|your|paused|Paused|manual|Manual|other|many|\d+|their|its|two|three|mock|Mock) runs\b/g, '$1 tasks'], [/\b(a|A|an|An|the|The|this|This|one|One|each|Each|every|Every|your|Your|its|Its|paused|Paused|that|That|mock|Mock|1|new|New|next|Next|last|Last|Following a|following a) run\b(?! (?:the|it|on|now|once|a\b))/g, '$1 task'], [/\bRun (needs|asks|is|was|has|\d)/g, 'Task $1'], [/\bbuilds?\b(?= (?:across|in conversations))/g, 'tasks']];
   const reword = (t) => WORDS.reduce((x, [re, to]) => x.replace(re, to), t);
-  const SKIP = 'code, pre, textarea, input, script, style, .mk-tools, .tr-body, .rc-mid-a';
+  const SKIP = 'code, pre, textarea, input, script, style, .mk-tools, .tr-body, .rc-mid-a, .is-center';   // a center says a schedule's runs (panel.run-outcomes)
   function rewordIn(rootEl) {
     const walk = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT);
     for (let n = walk.nextNode(); n; n = walk.nextNode()) { if (!/\b[Rr]uns?\b|builds?/.test(n.nodeValue) || n.parentElement?.closest(SKIP)) continue; const v = reword(n.nodeValue); if (v !== n.nodeValue) n.nodeValue = v; }
-    for (const e of rootEl.querySelectorAll?.('[title], [aria-label]') || []) for (const k of ['title', 'aria-label']) { const v = e.getAttribute(k); if (v && /\b[Rr]uns?\b/.test(v)) { const w = reword(v); if (w !== v) e.setAttribute(k, w); } }
+    for (const e of rootEl.querySelectorAll?.('[title], [aria-label]') || []) for (const k of ['title', 'aria-label']) { const v = e.getAttribute(k); if (v && /\b[Rr]uns?\b/.test(v) && !e.closest('.is-center')) { const w = reword(v); if (w !== v) e.setAttribute(k, w); } }
   }
   // A tick's hover says what is there: a stage's name, its time and its steps.
   function stageCard(id) {
@@ -399,9 +401,9 @@
     if ((hit = on('[data-menu-pick^="bar-go|"]'))) { quickNav = false; location.hash = hit.dataset.menuPick.split('|')[1]; drawBar(); return; }
     if (on('[data-bar-house]')) { quickNav = !quickNav; drawBar(); return; }
     if (quickNav) { quickNav = false; drawBar(); }   /* a page with no list of its own (a locked place): closing the places goes back to Chat */
-    if ((hit = on('[data-menu-pick^="bar-new|"]'))) { barMenu = false; drawBar(); placeMod(routed.view)?.newPick?.(hit.dataset.menuPick.split('|')[1]); return; }
+    if ((hit = on('[data-menu-pick^="bar-new|"]'))) { barMenu = false; drawBar(); makerOf(document.getElementById('side-rail').dataset.bar)?.newPick?.(hit.dataset.menuPick.split('|')[1]); return; }
     if (barMenu && !on('[data-bar-new]')) { barMenu = false; drawBar(); }
-    if ((hit = on('[data-bar-new]'))) { if (hit.dataset.barNew === 'place' && placeMod(routed.view)?.newMenu) { barMenu = !barMenu; drawBar(); return; } if (hit.dataset.barNew === 'place') placeMod(routed.view)?.newAct?.(); else window.RailConversation?.start(hit.dataset.barNew); return; }
+    if ((hit = on('[data-bar-new]'))) { const maker = makerOf(document.getElementById('side-rail').dataset.bar); if (hit.dataset.barNew === 'place' && maker?.newMenu) { barMenu = !barMenu; drawBar(); return; } if (hit.dataset.barNew === 'place') maker?.newAct?.(); else window.RailConversation?.start(hit.dataset.barNew); return; }
     if ((hit = on('[data-back-to]'))) { drawer(false); window.RailShell.go(hit.dataset.backTo); return; }
     if ((hit = on('#task-timeline [data-tick]'))) { document.querySelector(`#card .sc-stage[data-stage="${CSS.escape(hit.dataset.tick)}"]`)?.click(); return; }
     if ((hit = on('#side-rail nav.nav [data-nav]'))) { e.preventDefault(); drawer(false); if (location.hash.slice(1) === hit.dataset.nav) { homeOpen = false; drawBar(); } else location.hash = hit.dataset.nav; return; }
@@ -549,7 +551,7 @@
   let wasStrip = isStrip();
   addEventListener('resize', () => { syncRail(); if (isStrip() !== wasStrip) { wasStrip = isStrip(); drawMini(); drawBar(); } });
   // A change of mode or a Labs flag: the sidebar follows, and the page if that changes whether it is locked.
-  R.prefs.onChange(() => { applyPrefs(); drawMini(); if (routed.view && (TITLES[routed.view] || routed.view === 'schedule') && !!lockHere(routed.view, routed.arg) !== routed.locked) route(); });
+  R.prefs.onChange(() => { applyPrefs(); drawMini(); if (routed.view && (TITLES[routed.view] || routed.view === 'schedule') && !!lockHere(routed.view, routed.arg) !== routed.locked) route(); else if (routed.view) drawBar(); });
   addEventListener('hashchange', route);
   document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') { e.preventDefault(); if (routed.view === 'chat') { document.querySelector('#route-chat [data-composer-t]')?.focus(); return; } askOpen = !askOpen; syncAsk(routed.view); if (askOpen) setTimeout(() => document.querySelector('#ask-side [data-composer-t]')?.focus(), 50); } });   // ⌘J: Ask worca beside this page
   // another Pulse case: the run page in view takes its title from it

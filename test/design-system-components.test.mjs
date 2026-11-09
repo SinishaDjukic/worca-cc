@@ -1129,6 +1129,35 @@ test('pluginCard: its actions end the card, so they line up across a row (panel.
   assert.match(css, /\.pg-a\{[^}]*grid-row:6;align-self:end;/);
 });
 
+test('runOutcomes: a square per run, oldest first, named the last 7 runs (panel.run-outcomes)', () => {
+  const c = dom(C.runOutcomes({ runs: ['ok', 'fail', 'run', 'miss'], says: '3 of 4' }));
+  assert.equal(c.querySelectorAll('.ro-sq').length, 4);
+  assert.ok(c.querySelector('.ro-sq.is-fail') && c.querySelector('.ro-sq.is-miss'));
+  assert.match(c.querySelector('.ro-sqs').getAttribute('title'), /last 7 runs/);
+  assert.match(c.textContent, /3 of 4/);
+  assert.equal(dom('<div>' + C.runOutcomes({ runs: [], says: 'No runs in 7 days' }) + '</div>').querySelector('.ro-sqs'), null);
+});
+
+test('pluginCard in a center: its state first and in its colour, links in what it says, facts on one line (panel.center)', () => {
+  const c = dom(C.pluginCard({ mark: '', word: 'Failed', tone: 'fail', title: 'web-app', whatHtml: C.textLink({ label: 'Update Node' }), line: '<i class="l"></i>', factsHtml: '2 running', factsTip: '2 running', action: '<button>Retry</button>' }));
+  assert.equal(c.querySelector('.pg-state.is-fail').textContent, 'Failed');
+  assert.ok(c.querySelector('.pg-w .dc-link') && c.querySelector('.pg-line .l'));
+  assert.ok(c.querySelector('.pg-f.is-one'));
+});
+
+test('cardAction: the step that fits each state; anything else opens (panel.center)', () => {
+  assert.deepEqual(['failed', 'question', 'gate', 'ready', 'approved', 'paused-limit', 'working'].map((s) => C.cardAction(s).label), ['Retry', 'Answer', 'Approve', 'Merge', 'Merge', 'Resume', 'Open']);
+});
+
+test('scheduleDates and scheduleButton: the next times and the named step', () => {
+  const from = new Date(2026, 10, 12), f = (o) => C.scheduleDates({ from, at: '09:00', ...o }).map((d) => d.getDate());
+  assert.deepEqual(f({ every: 'every weekday' }), [13, 16, 17]);
+  assert.deepEqual(f({ every: 'every Monday', n: 1 }), [16]);
+  assert.deepEqual(f({ every: 'every day', at: '16:00' }), [12, 13, 14]);
+  assert.equal(C.scheduleButton({ every: 'every weekday', at: '09:00' }), 'Schedule weekdays at 09:00');
+  assert.equal(C.scheduleButton({ every: 'every day', at: '02:00' }), 'Schedule every day at 02:00');
+});
+
 test('menus keep one edge only for check marks: a switch item (the account menu) keeps its own layout', () => {
   const css = readFileSync('plans/rail/prototype/design-system/rail.css', 'utf8');
   const lines = css.split('\n').filter((l) => l.includes('.menu:has(.menu-item:is([role="menuitemradio"]'));

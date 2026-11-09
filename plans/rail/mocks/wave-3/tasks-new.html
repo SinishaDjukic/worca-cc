@@ -6,7 +6,7 @@
 <script src="../../prototype/components.js"></script><script src="centers-shell.js"></script><script src="centers-mock.js"></script><script src="tasks-center-data.js"></script>
 <script>
 const C = centerMock, { R, pick } = C;
-const body = `<div class="fr-w"><p class="frame">A task on ${pick('billing-api')} using the ${pick('Default')} workflow, run by ${pick('Claude')},<br>from ${pick('main')}, ${pick('the newest code from origin')}, then ${pick('open a PR')}</p><p class="proof">billing-api is the project you used last. Default plans, builds, reviews and opens a PR.</p></div>
+const body = `<div class="fr-w"><p class="frame">A task on ${pick('billing-api', 'The project you used last')} using the ${pick('Default')} workflow, run by ${pick('Claude')},<br>from ${pick('main')}, ${pick('the latest version from origin')}, then ${pick('open a PR')}</p><p class="proof">Default plans, builds, reviews and opens a PR.</p></div>
   <div class="lbl-line">${R.field({ id: 'n-w', label: 'What should it do', multiline: true, placeholder: 'Describe the software task to build…' })}${R.segmented({ label: 'Task source', items: [{ id: 'p', label: 'Write it', pressed: true }, { id: 'm', label: 'From file' }] })}</div>
   ${C.fold('More options', 'Title, branch, cost tags, agents, guardrails, files')}`;
 C.paint({ shell: 'tasks', cap: 'New task · Advanced · Legacy approach, from the + menu', bar: C.plus('New task'), main: tasksCenter(false),
