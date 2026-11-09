@@ -7,14 +7,13 @@ on a feature branch into `dev`, by PR linked to an issue, with no attribution li
 
 `CLAUDE.md`, `CONTRIBUTING.md`, `docs/rail/README.md` (it leads), `docs/rail/gate.md`, `docs/feature-flags.md`, `plans/rail/gameplan.md`,
 `plans/rail/click-sweep.md`. The working design is `plans/rail/prototype/`; the rules are `docs/rail/`; the components are
-`ui/public/design-system/components/` (`docs/design-system-catalog.json` says which meets which need). Approved mocks:
-`plans/rail/mocks/wave-3/` (`cockpit/ladder.png` is the alert ladder, `projects-center/`, `tasks-*`, `schedules-*`).
+`ui/public/design-system/components/` (`docs/design-system-catalog.json` says which meets which need).
 
-**Order of authority:** the concept below, then `docs/rail/`, then the prototype's HTML, then PNG mocks. The prototype still has things the concept removes (the "Ask about this…" docks, some "by hand" labels): the concept wins.
+**Order of authority:** the concept below, then `docs/rail/`, then the prototype's HTML. The prototype still has things the concept removes (the "Ask about this…" docks, some "by hand" labels): the concept wins.
 
 **The prototype is a mock; the real app is not.** Its seeded data, and every toast saying "Would open…", "Would save…" or "Would run…", stand for real behaviour. Build the real action, on real data, using dev's existing function; never ship a "Would…" or a seeded number.
 
-**The prototype's HTML is the source of truth.** Run it (`plans/rail/prototype/index.html`; build its bundle with `node plans/rail/prototype/gates/components-js.mjs`) and read its code. The PNG mocks only show intent from a moment in time and may be behind it: where they differ, the prototype and `docs/rail/` win.
+**The prototype's HTML is the source of truth.** Run it (`plans/rail/prototype/index.html`; build its bundle with `node plans/rail/prototype/gates/components-js.mjs`) and read its code.
 
 ## The goal behind it
 
@@ -48,7 +47,7 @@ Focus on testing and validation: full end-to-end in a real browser against the r
 ## The concept (do not re-decide)
 
 - **Chat first.** Chat is the only place to type to Worca. No composer on any other page: remove every "Ask about this…" dock; ⌘J and the
-  top bar's Ask go to Chat with the page as a removable chip, and Back returns (`rail.hand-to-chat`, mock `ask-jump`).
+  top bar's Ask go to Chat with the page as a removable chip, and Back returns (`rail.hand-to-chat`).
 - **Centers.** Pages outside Chat are centers: Tasks, Schedules, Workflows, Marketplace, Projects, Insights, Requirements. Each lands on a grid of cards
   that sums up what the sidebar cannot (`rail.center`, `panel.center`, `panel.center-shelf`). Projects is by workspace from Advanced.
 - **Manual creation** stays from Advanced up as the **"Legacy approach"** (exact words, replacing every remaining "by hand") in the same + menu:
@@ -68,7 +67,7 @@ Focus on testing and validation: full end-to-end in a real browser against the r
 2. Shell and navigation, then Chat and its cards to dev parity, then Tasks and the task page, Schedules, Workflows and the graph, Marketplace, Projects and Workspaces, Insights, Requirements, Settings.
 3. The onboarding redesign last: mock it, challenge it with a new user and a UX/UI reviewer to 8.0, then build.
 
-Mock first, as PNG, for anything the prototype doesn't already settle, and show the owner before building it.
+Mock first for anything the prototype doesn't already settle, and show the owner before building it.
 
 ## Still open from the prototype
 
