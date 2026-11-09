@@ -1,6 +1,6 @@
 // Scrollbars (docs/rail/look.md): thin, there as the mouse moves and while something scrolls, gone when still. The library
 // draws them: an operating system's overlay bars show only when it says so and take no styling, so no CSS can do this. The
-// browser's own bar is hidden (rail-look.css); wheel, keys and touch scroll as ever, and a bar can be dragged.
+// browser's own bar is hidden (the Rail shell's CSS, plans/rail/prototype/design-system/rail-shell.css until slice 2); wheel, keys and touch scroll as ever, and a bar can be dragged.
 
 export const SCROLL_SHOW_MS = 800;
 const MIN_THUMB = 24;

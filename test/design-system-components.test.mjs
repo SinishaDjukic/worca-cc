@@ -726,6 +726,15 @@ test('the small parts: confirmForm, figureBreakdown, dialogFrame, documentLink, 
   assert.equal(f.tagName, 'FORM');
   assert.equal(f.dataset.form, 'after');
   assert.equal(f.querySelector('.rc-confirm-t').textContent, 'a<b');
+  const fe = dom(C.confirmForm({ form: 'after', text: 'a', body: '<input>', err: { title: 'Couldn\'t save', detail: 'disk <full>', extra: '<i>x</i>' } }));
+  const ft = fe.querySelector('.rc-confirm-t');
+  assert.equal(ft.getAttribute('role'), 'alert');
+  assert.ok(ft.classList.contains('is-err'));
+  assert.equal(ft.querySelector('.rc-confirm-why').textContent, 'disk <full>');
+  assert.equal(fe.getAttribute('aria-labelledby'), ft.id);
+  assert.ok(fe.querySelector(':scope > i'), 'err.extra stands in place of the body');
+  assert.equal(fe.querySelector('input'), null, 'the body is gone');
+  assert.equal(dom(C.confirmForm({ form: 'after', text: 'a', body: '<input>', err: { title: 't', detail: 'd' } })).children.length, 1, 'extra defaults to nothing');
   const b = dom(C.figureBreakdown({ label: 'Cost', rows: [['Plan', '$1']], total: '$1', help: 'h' }));
   assert.equal(b.querySelector('.is-total .ct').textContent, '$1');
   assert.equal(b.getAttribute('role'), 'dialog');
@@ -1178,7 +1187,7 @@ test('watchMenus: a menu with no room under it opens above; menuUp says when', a
 });
 
 test('pluginCard: its actions end the card, so they line up across a row (panel.plugin-card)', () => {
-  const css = readFileSync('plans/rail/prototype/design-system/rail.css', 'utf8');
+  const css = readFileSync('plans/rail/prototype/design-system/rail-shell.css', 'utf8');
   assert.match(css, /\.pg-card\{grid-template-rows:repeat\(5,auto\) 1fr;\}/);
   assert.match(css, /\.pg-a\{[^}]*grid-row:6;align-self:end;/);
 });
@@ -1232,7 +1241,7 @@ test('scheduleDates and scheduleButton: the next times and the named step', () =
 });
 
 test('menus keep one edge only for check marks: a switch item (the account menu) keeps its own layout', () => {
-  const css = readFileSync('plans/rail/prototype/design-system/rail.css', 'utf8');
+  const css = ['ui/public/design-system/rail-controls.css', 'plans/rail/prototype/design-system/rail-shell.css'].map((f) => readFileSync(f, 'utf8')).join('\n');
   const lines = css.split('\n').filter((l) => l.includes('.menu:has(.menu-item:is([role="menuitemradio"]'));
   assert.ok(lines.length > 0);
   for (const l of lines) assert.match(l, /:not\(\.sw-item\)/, 'a switch never turns its menu into the check-mark grid');
@@ -1288,7 +1297,7 @@ test('commands: dev\'s group head, rows with no mark, Copy on the command and it
 });
 
 test('the Rail stylesheets close every rule: one open brace would swallow all that follows', () => {
-  for (const f of ['plans/rail/prototype/design-system/rail.css', 'plans/rail/prototype/design-system/rail-look.css', 'plans/rail/prototype/shell/shell.css', 'plans/rail/prototype/pulse/pulse.css']) {
+  for (const f of ['ui/public/design-system/rail-look.css', 'ui/public/design-system/rail-controls.css', 'ui/public/design-system/rail-rows.css', 'ui/public/design-system/rail-feedback.css', 'ui/public/runs/rail-run-card.css', 'ui/public/runs/rail-run-tabs.css', 'ui/public/runs/rail-create-pr.css', 'plans/rail/prototype/design-system/rail-shell.css', 'plans/rail/prototype/shell/shell.css', 'plans/rail/prototype/pulse/pulse.css']) {
     const css = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
     assert.equal((css.match(/\{/g) || []).length, (css.match(/\}/g) || []).length, f);
   }
@@ -1551,4 +1560,18 @@ test('finished is a plain check, ready a check in a ring, merged the branch; a p
   assert.ok(R.kindMark({ kind: 'task', tone: 'ok' }).includes('km-ring'));
   assert.equal(R.kindMark({ kind: 'project', tone: 'fail' }), R.kindMark({ kind: 'project', tone: 'fail', icon: 'alert' }));
   assert.match(R.kindMark({ kind: 'chat', tone: 'fail', outline: true }), /is-outline/);
+});
+
+test('outLink: a link that leaves Worca, in a new tab, https only (comp.out-link)', () => {
+  const a = dom(C.outLink({ label: 'Report a <bug>', href: 'https://example.com/issues?a=1&b="2"', attrs: { 'data-key': 'k' } }));
+  assert.equal(a.tagName, 'A');
+  assert.ok(a.classList.contains('dc-out'));
+  assert.equal(a.getAttribute('href'), 'https://example.com/issues?a=1&b="2"');
+  assert.equal(a.getAttribute('target'), '_blank');
+  assert.equal(a.getAttribute('rel'), 'noopener noreferrer');
+  assert.equal(a.textContent, 'Report a <bug>');
+  assert.equal(a.dataset.key, 'k');
+  for (const href of ['http://example.com', 'javascript:alert(1)', '/relative', '']) {
+    assert.throws(() => C.outLink({ label: 'x', href }), /outLink: https only/, href);
+  }
 });

@@ -1,0 +1,724 @@
+/* Rail: the shell and Chat (one bar, the conversation, composer, timeline, Chat home, centers): the prototype only, until
+   slices 2 and 3 move them into the app. Scoped like the app's Rail parts, so the cascade between them stays the same. */
+/* From the Rail look: type smoothing and the library's scrollbars (watchScrollbars) belong to the Rail shell, which runs them; in
+   the app they arrive with slice 2, so today's pages keep their type and their scrollbars with the flag on. */
+:root[data-rail] body{-webkit-font-smoothing:antialiased;}
+/* Scrollbars: the library draws them (watchScrollbars, docs/rail/look.md), since an operating system's overlay bars take no
+   styling and show only when it says so. The browser's own bar is hidden; scrolling itself is untouched. */
+:root[data-rail] *{scrollbar-width:none;}
+:root[data-rail] ::-webkit-scrollbar{display:none;}
+:root[data-rail] .rail-thumb{position:fixed;z-index:30;border-radius:var(--r-xs);background:var(--line-2);opacity:0;transition:opacity var(--motion-quick) var(--ease),background-color 100ms var(--ease);}
+:root[data-rail] .rail-thumb.is-over{z-index:9000;}
+:root[data-rail] .rail-thumb.is-on{opacity:1;}
+:root[data-rail] .rail-thumb:hover,:root[data-rail] .rail-thumb:active{background:var(--ink-3);}
+:root[data-rail] .rail-thumb.is-v{width:6px;}
+:root[data-rail] .rail-thumb.is-h{height:6px;}
+@media (prefers-reduced-motion: reduce){:root[data-rail] .rail-thumb{transition:none;}}
+html[data-rail],:root[data-rail] body{height:auto;overflow:visible;margin:0;}
+/* The Runs list as a page, its rail hanging left of the text edge. */
+:root[data-rail] #route-runs{padding-left:0;}
+:root[data-rail] #runs-root{max-width:880px;margin-inline:auto;padding:24px 32px 24px 32px;}
+/* Chat's capture fills the room beside the column. */
+:root[data-rail] body.view-chat #route-today:not([hidden]){flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
+/* The selection bar's and the side column's own hooks. */
+:root[data-rail] .runs-all{margin:0;}
+:root[data-rail] .runs-bulk-c{font-variant-numeric:tabular-nums;}
+:root[data-rail] .rl-side{min-width:0;}
+:root[data-rail]{--chats-w:360px;}
+/* The Chats column: beside the conversation above 1080px, over it from 761 to 1080px, the window below. */
+:root[data-rail] .ask-side.chats-side{width:var(--chats-w,360px);order:-1;border-left:0;border-right:1px solid var(--line);box-shadow:none;}
+:root[data-rail] .chats-side .ask-side-grip{left:auto;right:0;display:block;}
+:root[data-rail] .chats-side .ask-side-grip:is(:hover,:focus-visible)::after{left:auto;right:0;}
+:root[data-rail] .chats-side .rl-side-tools{display:flex;align-items:center;gap:2px;}
+:root[data-rail] .chats-side .rl-side-body{position:relative;margin-right:6px;}   /* a scrollbar's thumb never lies over the grip */
+:root[data-rail] #chats-root{padding:8px 12px 12px 40px;min-height:100%;}
+@media (min-width: 761px) and (max-width: 1080px){
+  :root[data-rail] .ask-side.chats-side{position:absolute;z-index:6;top:0;bottom:0;left:0;background:var(--bg);box-shadow:var(--shadow-pop);border-left:0;}
+}
+@media (max-width: 760px){
+  :root[data-rail] .ask-side.chats-side{position:absolute;z-index:6;inset:0;width:100%;border-right:0;background:var(--bg);}
+  :root[data-rail] .chats-side .ask-side-grip{display:none;}
+  :root[data-rail] #runs-root{padding:16px 12px 24px 32px;}
+}
+
+/* The shell's pieces: the offline line folds to its dot at 480px; the side column's head and scroller; the away screensaver. */
+@media (max-width: 480px){ :root[data-rail] .rl-offline-t{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);} }
+:root[data-rail] .rl-side-head{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;height:40px;padding:0 8px 0 16px;border-bottom:1px solid var(--line);}
+:root[data-rail] .rl-side-title{margin:0;font:600 var(--fs-body)/1.3 var(--sans);color:var(--ink);}
+:root[data-rail] .rl-side-body{flex:1 1 auto;min-height:0;overflow:auto;}
+:root[data-rail] .rl-away{position:fixed;inset:0;z-index:90;background:var(--bg);cursor:none;animation:rl-in var(--motion-change) var(--ease);}
+:root[data-rail] .rl-away-mark{--x:40px;--y:40px;position:absolute;top:0;left:0;display:flex;flex-direction:column;gap:4px;transform:translate(var(--x), var(--y));}
+:root[data-rail] .rl-away-word{font:700 var(--fs-page)/1.2 var(--sans);letter-spacing:-.02em;color:var(--ink);}
+:root[data-rail] .rl-away-line{font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
+:root[data-rail] .rl-gal-side{position:relative;height:160px;width:360px;max-width:100%;border:1px solid var(--line);}
+:root[data-rail] .rl-gal-away{position:relative;height:120px;overflow:hidden;border:1px solid var(--line);}
+:root[data-rail] .rl-gal-away .rl-away{position:absolute;cursor:auto;animation:none;}
+
+/* The one bar (docs/rail/navigation.md): the house, what it shows, its list, you. */
+:root[data-rail] .bar-head{flex:none;display:flex;align-items:center;gap:6px;height:48px;padding:0 8px 0 10px;}
+:root[data-rail] .bar-house{display:grid;place-items:center;flex:none;width:28px;height:28px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);cursor:pointer;}
+:root[data-rail] .bar-house:hover,:root[data-rail] .bar-house.is-on{background:var(--field);color:var(--ink);}
+:root[data-rail] .bar-house:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+:root[data-rail] .bar-title-w{padding:2px 0;} :root[data-rail] .bar-chev{margin-left:0!important;padding:2px 4px!important;}   /* nav.center-home: the word and the ▾ are two controls */
+:root[data-rail] .rc-crumbs:has(+ .place-head){margin:0 0 6px;font-size:var(--fs-meta);color:var(--ink-2);} :root[data-rail] .rc-crumbs span.rc-crumb{color:var(--ink-2);}
+:root[data-rail] .bar-title{flex:1 1 auto;min-width:0;margin:0;font:600 var(--fs-section)/1.2 var(--sans);letter-spacing:-.01em;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+:root[data-rail] .bar-list .pz-sentence,:root[data-rail] .bar-list .list-head{font-size:var(--fs-meta);}
+:root[data-rail] .side-ic{flex:none;color:inherit;}
+:root[data-rail] .set-sec-h > svg{display:inline-block;vertical-align:-2px;margin-right:8px;color:var(--ink-2);}
+:root[data-rail] .menu-h > svg{display:inline-block;vertical-align:-2px;margin-right:6px;color:var(--ink-2);}
+:root[data-rail] .menu-item > .kind-mark,:root[data-rail] .menu-item > svg{margin-right:8px;}
+
+/* A conversation on one rail (docs/rail/panels.md). */
+:root[data-rail] .convo{position:relative;flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
+:root[data-rail] .convo-scroll{flex:1 1 auto;min-height:0;overflow:auto;padding:20px 56px 24px 24px;}
+/* motion.scroll-fade: the chat softens where it slides under the composer (and the top bar), only while there is more past that edge */
+@property --fade-b{syntax:'<length>';inherits:false;initial-value:0px;}
+@property --fade-t{syntax:'<length>';inherits:false;initial-value:0px;}
+:root[data-rail] :is(.convo-scroll,[data-scroll-fade],.menu.is-two-cols,.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main){--fade-b:0px;--fade-t:0px;transition:--fade-b var(--motion-change) var(--ease),--fade-t var(--motion-change) var(--ease);-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 var(--fade-t),#000 calc(100% - var(--fade-b)),transparent 100%);mask-image:linear-gradient(to bottom,transparent 0,#000 var(--fade-t),#000 calc(100% - var(--fade-b)),transparent 100%);}
+:root[data-rail] :is(.convo-scroll,[data-scroll-fade],.menu.is-two-cols,.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main)[data-more-below]{--fade-b:48px;}   /* ds-ok: the fade's own reach */
+:root[data-rail] :is(.convo-scroll,[data-scroll-fade],.menu.is-two-cols,.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main)[data-more-above]{--fade-t:36px;}   /* ds-ok: the fade's own reach */
+@media (prefers-reduced-motion: reduce){:root[data-rail] :is(.convo-scroll,[data-scroll-fade],.menu.is-two-cols,.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main){transition:none;}}
+:root[data-rail] .rail-locked{max-width:680px;margin:0 auto;}   /* a locked place starts on the text edge of the pages around it */
+:root[data-rail] .convo-col{max-width:680px;margin:0 auto;display:flex;flex-direction:column;gap:14px;font-size:var(--fs-body);line-height:1.55;color:var(--ink);overflow-wrap:anywhere;}
+:root[data-rail] .convo-col .convo-head .kind-chip{white-space:normal;}   /* a long label wraps in the column; nothing runs off the window */
+:root[data-rail] .cw-pair{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;}
+:root[data-rail] .lr-pin{display:inline-flex;vertical-align:-1px;margin-right:4px;color:var(--ink-3);}
+:root[data-rail] .convo-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .convo-you{align-self:flex-end;max-width:72%;padding:6px 12px;border-radius:var(--r-md);background:var(--field);}
+:root[data-rail] .convo-words{margin:0 0 0 32px;}
+:root[data-rail] .convo-words b{font-weight:600;}
+:root[data-rail] .convo-words code,:root[data-rail] .convo-code pre{font-family:var(--mono,'JetBrains Mono',ui-monospace,monospace);font-size:12px;}
+:root[data-rail] .convo-words code{padding:1px 4px;border-radius:var(--r-xs);background:var(--field);}
+:root[data-rail] .convo-code{margin-left:32px;border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;}
+:root[data-rail] .convo-code p{display:flex;justify-content:space-between;align-items:center;margin:0;padding:4px 10px;font-size:var(--fs-meta);color:var(--ink-2);border-bottom:1px solid var(--line);}
+:root[data-rail] .convo-code pre{margin:0;padding:10px;overflow:auto;line-height:18px;color:var(--ink);}
+:root[data-rail] .turn-row .tr-line{display:grid;grid-template-columns:20px minmax(0,1fr) auto;column-gap:12px;align-items:center;width:100%;min-height:20px;padding:0;border:0;background:none;color:inherit;font:inherit;line-height:20px;text-align:left;}
+:root[data-rail] .turn-row button.tr-line{cursor:pointer;}
+:root[data-rail] .turn-row button.tr-line:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+:root[data-rail] .tr-mark{display:grid;place-items:center;color:var(--ink-3);}
+:root[data-rail] .tr-text{min-width:0;color:var(--ink-2);}:root[data-rail] .tr-text b{font-weight:500;color:var(--ink);}
+:root[data-rail] .tr-end{font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}   /* readable: never ink-3 (look.type-roles) */
+:root[data-rail] .tr-body{margin:6px 0 0 32px;padding:8px 10px;border-radius:var(--r-sm);background:var(--field);font:12px/18px var(--mono,'JetBrains Mono',ui-monospace,monospace);white-space:pre-wrap;}
+:root[data-rail] .convo-acts{display:flex;gap:12px;margin-left:32px;font-size:var(--fs-meta);color:var(--ink-3);}
+:root[data-rail] .convo-card{padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-md);}
+:root[data-rail] .convo-card-t{margin:0;font:600 var(--fs-body)/1.3 var(--sans);}
+:root[data-rail] .convo-card-p{margin:2px 0 10px;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .convo-scroll{container-type:inline-size;}
+:root[data-rail] .convo-col .menu{overflow-wrap:break-word;}   /* a conversation may break a long word anywhere; a menu's words break only when one alone is wider than the menu */
+:root[data-rail] .convo-card-line{display:flex;align-items:center;gap:10px;}
+@container (max-width: 520px){   /* narrow.stack: mark, words and ⋯ on the first line; the buttons under them, on the text edge */
+  :root[data-rail] .convo-card-line{flex-wrap:wrap;row-gap:8px;}
+  :root[data-rail] .convo-card-line > .convo-card-w{flex:1 1 calc(100% - 80px);}
+  :root[data-rail] .convo-card-line > .rc-pop:last-child{order:1;}
+  :root[data-rail] .convo-card-line > .btn{order:2;}
+  :root[data-rail] .convo-card-line > .convo-card-w + .btn{margin-left:30px;}   /* the mark's 20px and the 10px gap */
+}
+:root[data-rail] .convo-card-w{flex:1 1 auto;min-width:0;font:600 var(--fs-section)/1.2 var(--sans);letter-spacing:-.01em;}
+:root[data-rail] .convo-card-line.is-act > .convo-card-w,:root[data-rail] .convo-card-line.is-ask > .convo-card-w{color:var(--amber-ink);}   /* a Caution's word: amber */
+:root[data-rail] .convo-card-w span{margin-left:8px;font:400 var(--fs-meta)/1.2 var(--sans);letter-spacing:0;color:var(--ink-2);}
+:root[data-rail] .convo-card.is-compact .convo-card-w{font-size:var(--fs-body);letter-spacing:0;}
+:root[data-rail] .convo-card .rc-stepper,:root[data-rail] .convo-card .stepper{margin-top:10px;}
+:root[data-rail] .convo-link{display:inline-block;margin-top:8px;padding:0;border:0;background:none;font-size:var(--fs-meta);color:var(--ink-2);text-decoration:underline;text-underline-offset:2px;cursor:pointer;}
+:root[data-rail] .convo-steps{display:grid;grid-template-columns:repeat(var(--n,5),1fr);gap:4px;margin-top:10px;}   /* ds-ok: a size or count the component sets on itself */
+:root[data-rail] .convo-steps i{display:block;height:4px;border-radius:2px;background:var(--line);}   /* ds-ok: a hairline's own end */
+:root[data-rail] .convo-steps-l{display:grid;grid-template-columns:repeat(var(--n,5),1fr);gap:4px;margin-top:4px;font-size:var(--fs-caption);color:var(--ink-3);}   /* ds-ok: a size or count the component sets on itself */
+:root[data-rail] .convo-steps-l b{font-weight:500;color:var(--ink);}
+:root[data-rail] .convo-dock{flex:none;padding:0 56px 14px 24px;position:relative;}
+:root[data-rail] .jump-latest{position:absolute;left:50%;top:-44px;translate:-50% 4px;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--motion-change) var(--ease),translate var(--motion-change) var(--ease),visibility var(--motion-change) var(--ease);background:var(--bg);box-shadow:0 0 0 1px var(--line-2);}   /* ds-ok: floats just above the input */
+:root[data-rail] .convo:has(> .convo-scroll[data-far-below]) .jump-latest{opacity:1;visibility:visible;translate:-50% 0;pointer-events:auto;}   /* only while the end is well below: near it, the pill would sit on the last row */
+@media (prefers-reduced-motion: reduce){:root[data-rail] .jump-latest{transition:none;}}
+:root[data-rail] .convo-dock .composer{width:calc(100% - 32px);max-width:648px;margin:0 auto;translate:16px 0;}   /* ds-ok: on the cards' rail (32px in), as wide as the cards */
+:root[data-rail] .convo-dock-note{max-width:680px;margin:4px auto 0;font-size:var(--fs-caption);color:var(--ink-3);}
+
+/* Composer: the one way to start anything. */
+:root[data-rail] .composer{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--bg);}   /* tight, as cards (no heavy rounding) */
+:root[data-rail] .composer-t,:root[data-rail] .composer-t:focus,:root[data-rail] .composer-t:focus-visible{width:100%;min-height:44px;max-height:200px;padding:0;border:0;outline:0;box-shadow:none;resize:none;background:none;color:var(--ink);font:var(--fs-body)/1.5 var(--sans);}
+:root[data-rail] .composer.is-plain{flex-direction:row;align-items:flex-end;gap:10px;}
+:root[data-rail] .composer.is-plain .composer-t{flex:1;align-self:center;min-height:22px;}
+:root[data-rail] .composer.is-plain .composer-f{flex:none;}
+:root[data-rail] .composer-t::placeholder{color:var(--ink-3);}
+:root[data-rail] .composer:focus-within{border-color:var(--ink-3);}
+:root[data-rail] .composer-s{display:flex;flex-wrap:wrap;align-items:center;gap:4px 5px;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .composer-f{display:flex;align-items:center;gap:8px;}
+:root[data-rail] .composer-f > .composer-s{flex:1 1 auto;min-width:0;}
+:root[data-rail] .composer-f > .composer-send{margin-left:auto;}
+:root[data-rail] .composer-tools,:root[data-rail] .composer-send{display:inline-flex;align-items:center;gap:6px;}
+:root[data-rail] .composer-more{padding-top:8px;border-top:1px solid var(--line);font-size:var(--fs-meta);}
+:root[data-rail] .composer-more .cr{display:grid;grid-template-columns:110px minmax(0,1fr);line-height:24px;}
+:root[data-rail] .composer-more .cr span:last-child{color:var(--ink-2);}
+:root[data-rail] .composer-note{display:flex;gap:10px;align-items:flex-start;font-size:var(--fs-meta);line-height:18px;}
+
+/* Timeline. */
+:root[data-rail] .timeline{position:absolute;top:14px;right:4px;bottom:96px;width:10px;z-index:3;transition:width var(--motion-quick) var(--ease);}
+:root[data-rail] .timeline:is(:hover,:focus-within){width:26px;}
+:root[data-rail] .tl-view{position:absolute;right:0;width:2px;border-radius:1px;background:var(--line-2);pointer-events:none;transition:width var(--motion-quick) var(--ease);}   /* ds-ok: a hairline's own end */
+:root[data-rail] .timeline:is(:hover,:focus-within) .tl-view{width:100%;border-radius:var(--r-xs);background:var(--hover);opacity:.7;}
+:root[data-rail] .tl-tick{position:absolute;right:0;left:0;height:10px;margin-top:-5px;padding:0;border:0;background:none;cursor:pointer;}
+:root[data-rail] .tl-tick i{position:absolute;top:4.5px;right:3px;width:5px;height:1px;border-radius:1px;background:var(--ink-2);transition:width var(--motion-quick) var(--ease);}   /* ds-ok: a hairline's own end */
+:root[data-rail] .tl-tick.is-you i{width:3px;background:var(--step-done);}
+:root[data-rail] .timeline:is(:hover,:focus-within) .tl-tick i{width:14px;height:2px;top:4px;}
+:root[data-rail] .timeline:is(:hover,:focus-within) .tl-tick.is-you i{width:7px;}
+:root[data-rail] .tl-tick:hover i,:root[data-rail] .tl-tick:focus-visible i{width:20px!important;}
+:root[data-rail] .tl-tick:focus-visible{outline:0;}
+:root[data-rail] .tl-tick.is-ask i,:root[data-rail] .tl-tick.is-act i{background:var(--amber);}
+:root[data-rail] .tl-tick.is-fail i{background:var(--red);}
+:root[data-rail] .tl-tick.is-run i{background:var(--ink-2);}
+:root[data-rail] .tl-tick.is-ok i{background:var(--advisory);} :root[data-rail] .tl-tick.is-merged i{background:var(--ink-2);}
+:root[data-rail] .tline-card{position:absolute;right:30px;z-index:4;width:max-content;display:flex;gap:8px;align-items:flex-start;max-width:260px;margin-top:-18px;padding:8px 10px;border:1px solid var(--float-line);border-radius:var(--r-md);background:var(--float);box-shadow:var(--shadow-pop);font-size:var(--fs-meta);line-height:1.4;}
+:root[data-rail] .tline-card b{display:block;font-weight:600;}
+:root[data-rail] .tline-card span span{color:var(--ink-2);}
+:root[data-rail] .tl-list-btn{display:none;}
+:root[data-rail] .tl-list-btn > .menu{left:auto;right:0;width:min(360px,calc(100vw - 32px));max-width:none;}   /* whole titles: a chat's moments are sentences */
+:root[data-rail] .tl-list-btn > .menu .mi-hint{flex:0 1 auto;min-width:0;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* Chat home, with its background. */
+:root[data-rail] .chat-home{position:relative;flex:1 1 auto;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:28vh 56px 24px 24px;}   /* form.composer: every home in one place, the conversation's own box; the input at one height under the heading, whatever comes under it */
+:root[data-rail] .chat-home-bg{position:absolute;inset:0;pointer-events:none;}
+:root[data-rail] .chat-home-in{position:relative;width:100%;max-width:680px;padding-left:32px;box-sizing:border-box;}   /* the column, on the cards' rail: the input and its words on the cards' text edge */
+:root[data-rail] .chat-home h1{margin:0 0 14px;font:600 var(--fs-page)/1.2 var(--sans);letter-spacing:-.02em;color:var(--ink);}
+:root[data-rail][data-bg="dots"] .chat-home-bg:not([class*=" is-"]),:root[data-rail] .chat-home-bg.is-dots{background-image:radial-gradient(light-dark(#ABABB6,#35353B) 1px,transparent 1.2px);background-size:18px 18px;-webkit-mask-image:linear-gradient(to bottom,#000,transparent 92%);mask-image:linear-gradient(to bottom,#000,transparent 92%);}   /* ds-ok: a background's own colours, on Chat home only */
+:root[data-rail][data-bg="aurora-dots"] .chat-home-bg:not([class*=" is-"]),:root[data-rail][data-bg="dusk-dots"] .chat-home-bg:not([class*=" is-"]),:root[data-rail] .chat-home-bg.is-aurora-dots,:root[data-rail] .chat-home-bg.is-dusk-dots{-webkit-mask-size:18px 18px;mask-size:18px 18px;-webkit-mask-image:radial-gradient(#000 1.1px,transparent 1.4px);mask-image:radial-gradient(#000 1.1px,transparent 1.4px);}   /* ds-ok: a background's own colours, on Chat home only */
+:root[data-rail][data-bg="aurora-dots"] .chat-home-bg:not([class*=" is-"]),:root[data-rail] .chat-home-bg.is-aurora-dots{background:radial-gradient(85% 85% at 15% 0%,light-dark(#3D6BE0,#5C86E0) 0%,transparent 100%),radial-gradient(75% 85% at 100% 10%,light-dark(#17A57B,#46B592) 0%,transparent 100%),linear-gradient(light-dark(#B4B4BE,#35353B),light-dark(#CBCBD3,#26262B));}   /* ds-ok: a background's own colours, on Chat home only */
+:root[data-rail][data-bg="dusk-dots"] .chat-home-bg:not([class*=" is-"]),:root[data-rail] .chat-home-bg.is-dusk-dots{background:radial-gradient(110% 85% at 50% 105%,light-dark(#DB6A1E,#E08A3F) 0%,transparent 100%),linear-gradient(light-dark(#B4B4BE,#35353B),light-dark(#B4B4BE,#35353B));}   /* ds-ok: a background's own colours, on Chat home only */
+:root[data-rail][data-bg="mist"] .chat-home-bg:not([class*=" is-"]),:root[data-rail] .chat-home-bg.is-mist{background:radial-gradient(light-dark(#C4C4CD,#35353B) 1px,transparent 1.2px) 0 0/18px 18px,radial-gradient(85% 75% at 15% 0%,light-dark(#CFDDFA,#141C30) 0%,transparent 100%),radial-gradient(75% 75% at 100% 100%,light-dark(#F7DFC0,#211A10) 0%,transparent 100%);}   /* ds-ok: a background's own colours, on Chat home only */
+@media (max-width: 760px){
+  :root[data-rail] .convo-scroll{padding:16px;}:root[data-rail] .convo-dock{padding:0 12px 10px;}:root[data-rail] .convo-you{max-width:88%;}
+  :root[data-rail] .timeline{display:none;}:root[data-rail] .tl-list-btn{display:inline-flex;margin-left:auto;}
+}
+:root[data-rail] .stage-bar{margin-top:10px;color:var(--ink-2);}
+:root[data-rail] .stage-bar.is-run{color:var(--ink-2);}
+:root[data-rail] .stage-bar.is-ask,:root[data-rail] .stage-bar.is-act{color:var(--amber);}:root[data-rail] .stage-bar.is-fail{color:var(--red);}:root[data-rail] .stage-bar.is-ok{color:var(--advisory);}:root[data-rail] .stage-bar.is-ok .sl-knot.is-done{background:var(--advisory);}:root[data-rail] .stage-bar.is-done,:root[data-rail] .stage-bar.is-merged{color:var(--ink-2);}:root[data-rail] .stage-bar.is-pause,:root[data-rail] .stage-bar.is-stop,:root[data-rail] .stage-bar.is-closed,:root[data-rail] .stage-bar.is-wait{color:var(--ink-3);}
+:root[data-rail] .sb-labels{display:grid;grid-template-columns:repeat(var(--n,5),1fr);gap:4px;}   /* ds-ok: a size or count the component sets on itself */
+/* Background B: home in full; other pages in the margins beside the reading column. */
+/* The background fades into the chat: full in the margins, half 50px before the rail, a quarter just before it, and its
+   last faint dots end on the rail's marks (the column is 680px, its marks at its edge). It never moves. (look.backgrounds) */
+:root[data-rail] .page-bg{position:absolute;inset:0;pointer-events:none;--bg-clear:calc(var(--col-w,680px) / 2 + 56px);-webkit-mask-image:linear-gradient(to right,#000 0,#000 calc(50% - var(--bg-clear) - 140px),rgba(0,0,0,.5) calc(50% - var(--bg-clear) - 70px),transparent calc(50% - var(--bg-clear)),transparent calc(50% + var(--bg-clear)),rgba(0,0,0,.5) calc(50% + var(--bg-clear) + 70px),#000 calc(50% + var(--bg-clear) + 140px),#000 100%);mask-image:linear-gradient(to right,#000 0,#000 calc(50% - var(--bg-clear) - 140px),rgba(0,0,0,.5) calc(50% - var(--bg-clear) - 70px),transparent calc(50% - var(--bg-clear)),transparent calc(50% + var(--bg-clear)),rgba(0,0,0,.5) calc(50% + var(--bg-clear) + 70px),#000 calc(50% + var(--bg-clear) + 140px),#000 100%);}   /* ds-ok: --col-w is the content column's width, set by a page that differs (680px by default). look.background-clear: the background keeps clear of the content column (its width plus the rail and air, from --col-w), and comes in softly beyond it */
+:root[data-rail] .page-bg .chat-home-bg{position:absolute;inset:0;}
+@media (max-width: 1180px){ :root[data-rail] .page-bg{display:none;} }
+:root[data-rail] .stage-stream{display:flex;flex-direction:column;gap:8px;padding-top:10px;}
+:root[data-rail] .stage-line.is-next .tr-text b{font-weight:400;color:var(--ink-2);}   /* a stage still to come reads quieter, never ink-3 */
+:root[data-rail] .stage-line .rc-zone{margin-top:6px;}
+:root[data-rail] .stage-line > .rc-zone > *{grid-column:1 / -1;}
+
+:root[data-rail] .timeline .tline-card{flex-direction:row;align-items:flex-start;}
+:root[data-rail] .timeline .tline-card > .kind-mark,:root[data-rail] .timeline .tline-card > svg{margin-top:1px;}
+
+/* InView: what you keep in view, in the top bar. Its marks hold still: they say where a thing stands, never pulse. */
+:root[data-rail] .in-view{display:inline-flex;align-items:center;gap:2px;margin-right:6px;padding-right:8px;border-right:1px solid var(--line);}
+:root[data-rail] .in-view .kind-mark,:root[data-rail] .in-view .kind-mark *{animation:none!important;}
+:root[data-rail] .in-view-w{position:relative;display:inline-flex;}
+:root[data-rail] .in-view-i{display:grid;place-items:center;min-width:36px;height:36px;padding:0 4px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:500 var(--fs-caption)/1 var(--sans);cursor:pointer;}
+:root[data-rail] .in-view-i:hover,:root[data-rail] .in-view-i[aria-expanded="true"]{background:var(--hover);}
+/* named, like a tab: the mark, then the name cut short; thin rules between, no pill */
+:root[data-rail] .in-view-i.is-named{display:inline-flex;align-items:center;gap:6px;padding:0 8px 0 4px;}
+:root[data-rail] .in-view-n{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 var(--fs-caption)/1 var(--sans);color:var(--ink-2);}
+:root[data-rail] .in-view-w + .in-view-w{border-left:1px solid var(--line);padding-left:2px;margin-left:2px;}
+/* the tab you are on: a thin ink line along its foot, grown from the centre; a press dips the tab */
+:root[data-rail] .in-view-i{position:relative;transition:transform var(--motion-quick) var(--ease),background-color var(--motion-quick) var(--ease);}
+:root[data-rail] .in-view-i::after{content:"";position:absolute;left:6px;right:6px;bottom:0;height:2px;border-radius:var(--r-xs);background:var(--ink);transform:scaleX(0);transition:transform var(--motion-change) var(--ease);}
+:root[data-rail] .in-view-i.is-current::after{transform:scaleX(1);}
+:root[data-rail] .in-view-i.is-current,:root[data-rail] .in-view-i.is-current .in-view-n{color:var(--ink);}
+:root[data-rail] .in-view-i:active{transform:scale(.96);}
+@media (prefers-reduced-motion: reduce){ :root[data-rail] .in-view-i,:root[data-rail] .in-view-i::after{transition:none;} :root[data-rail] .in-view-i:active{transform:none;} }
+@media (max-width: 1100px){ :root[data-rail] .in-view-n{display:none;} :root[data-rail] .in-view-i.is-named{padding:0 4px;} :root[data-rail] .in-view-w + .in-view-w{border-left:0;} }
+:root[data-rail] .in-view-i:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+:root[data-rail] .in-view-card{position:absolute;top:calc(100% + 6px);right:0;z-index:60;display:none;gap:8px;align-items:flex-start;width:max-content;max-width:280px;padding:8px 8px 8px 10px;border:1px solid var(--float-line);border-radius:var(--r-md);background:var(--float);box-shadow:var(--shadow-pop);font:400 var(--fs-caption)/1.35 var(--sans);color:var(--ink);text-align:left;}
+:root[data-rail] .in-view-card::before{content:"";position:absolute;left:0;right:0;top:-8px;height:8px;}   /* the pointer crosses into the card without closing it */
+:root[data-rail] .in-view-card > span{flex:1 1 auto;min-width:0;}
+:root[data-rail] .in-view-card b{display:block;font-weight:600;}
+:root[data-rail] .in-view-card span span{display:block;color:var(--ink-2);}
+:root[data-rail] .in-view-w:is(:hover,:focus-within) > .in-view-card{display:flex;}
+:root[data-rail] .in-view-x{flex:none;display:grid;place-items:center;width:22px;height:22px;margin:-2px -2px 0 4px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-3);cursor:pointer;}
+:root[data-rail] .in-view-x:hover{background:var(--hover);color:var(--ink);}
+:root[data-rail] .in-view-x:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+:root[data-rail] .in-view-more .menu-item .kind-mark{animation:none!important;}
+@media (max-width: 760px){ :root[data-rail] .in-view{margin-right:2px;padding-right:4px;} :root[data-rail] .in-view-card{display:none!important;} }
+/* A quiet icon button that stays on (Keep in view on a task's head) shows it. */
+:root[data-rail] .btn.btn-quiet.btn-icon[aria-pressed="true"]{color:var(--ink);background:var(--hover);}
+
+/* A top-bar action with news (Pulse, when something new arrives): its icon shakes once, its badge stays. */
+@keyframes tb-shake{0%,100%{transform:rotate(0);}15%{transform:rotate(-14deg);}30%{transform:rotate(12deg);}45%{transform:rotate(-9deg);}60%{transform:rotate(6deg);}75%{transform:rotate(-3deg);}}
+:root[data-rail] .topnav-act.is-news > svg{transform-origin:50% 20%;animation:tb-shake 700ms var(--ease) 1;}
+@media (prefers-reduced-motion: reduce){ :root[data-rail] .topnav-act.is-news > svg{animation:none;} }
+
+/* A home with its composer in the middle (Chat, Tasks, Schedules): the background surrounds it on every side and fades in
+   toward the composer, joining at the centre, rather than stopping at a column's edge. (look.backgrounds) */
+:root[data-rail] .main:has(#route-chat:not([hidden]) .chat-home[data-home]) .page-bg,:root[data-rail] .main:has(#route-runs:not([hidden]) .chat-home) .page-bg,:root[data-rail] .main:has(#route-schedule:not([hidden]) .chat-home) .page-bg,:root[data-rail] .main:has(#route-place:not([hidden]) .chat-home) .page-bg{-webkit-mask-image:radial-gradient(ellipse 560px 300px at 50% 52%,transparent 0,transparent 55%,rgba(0,0,0,.35) 75%,#000 100%);mask-image:radial-gradient(ellipse 560px 300px at 50% 52%,transparent 0,transparent 55%,rgba(0,0,0,.35) 75%,#000 100%);}   /* ds-ok: a mask, not a colour */
+
+/* TaskProposal at parity: the workflow in a line, Shaper's perspectives, the brief, the agents lane, Open in the composer. */
+:root[data-rail] .tp-what{margin:0;flex:1 0 100%;font-size:var(--fs-meta);color:var(--ink-3);}   /* its own line under the sentence */
+:root[data-rail] .tp-label{font-size:var(--fs-meta);color:var(--ink-2);margin-right:4px;}
+:root[data-rail] .tp-persp{display:flex;flex-wrap:wrap;align-items:center;gap:4px;}
+:root[data-rail] .tp-brief{display:flex;flex-direction:column;gap:6px;margin-bottom:8px;}
+:root[data-rail] .tp-agents{display:flex;flex-direction:column;gap:4px;margin-top:6px;}
+:root[data-rail] .tp-links{display:flex;gap:4px;}
+:root[data-rail] .tp-extra{margin-left:auto;}
+:root[data-rail] .tp-persp .btn[aria-pressed="true"]{color:var(--ink);background:var(--hover);box-shadow:inset 0 0 0 1px var(--line-2);}
+:root[data-rail] .tp-persp .btn[aria-disabled="true"]{cursor:default;}
+
+/* Chat home's starters: one quiet row under the composer; each arms the composer with its chip. */
+:root[data-rail] .home-starters{display:flex;flex-wrap:wrap;gap:4px;margin-top:12px;}
+:root[data-rail] .home-starters .btn{color:var(--ink-2);}
+:root[data-rail] .composer-intent{display:inline-flex;align-items:center;gap:4px;padding-right:0;}
+:root[data-rail] .composer-intent .btn{height:18px;width:18px;min-height:0;padding:0;}
+
+/* The composer: its context meter, what waits to be sent, and the tasks you can mention. */
+:root[data-rail] .composer-meter{font-size:var(--fs-caption);color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums;margin-right:4px;}
+:root[data-rail] .composer-queue{display:flex;flex-direction:column;gap:4px;margin-bottom:8px;}
+:root[data-rail] .composer-at{position:relative;}
+:root[data-rail] .composer-at > .menu{position:absolute;bottom:4px;left:12px;z-index:30;}
+
+/* A row's ⋯ and a list's own ⋯ (beside its sentence) are small: 22px, a 14px mark, centred on the title's line; a row
+   gives its words the room, not its menu. Everywhere a ListRow or a list head is used. */
+:root[data-rail] :is(.list-row .lr-end .rc-pop, .list-tools .rc-pop, .list-tools) > .btn.btn-icon{width:22px;height:22px;min-height:0;padding:0;}
+:root[data-rail] :is(.list-row .lr-end .rc-pop, .list-tools .rc-pop, .list-tools) > .btn.btn-icon svg{width:14px;height:14px;}
+
+/* One rail for every chat card (rail.one-rail): its mark on the rail's column, its title, line and body on the text edge,
+   as a turn's are; a one-line card is a plain row. */
+:root[data-rail] .convo-col .task-card > .rc-head{position:relative;padding-left:32px;}
+:root[data-rail] .convo-col .task-card .tp-kicker > :first-child{position:absolute;left:0;width:20px;display:grid;place-items:center;}
+:root[data-rail] .convo-col .task-card > :is(.rc-card, .tc-foot, .tc-stream){margin-left:32px;}
+:root[data-rail] .tr-end{display:inline-flex;align-items:center;gap:4px;}
+/* A destructive action is quiet red words, never a filled red button (act.slots) */
+:root[data-rail] .btn.btn-quiet.is-danger{color:var(--ink-2);}
+:root[data-rail] .btn.btn-quiet.is-danger:hover{background:var(--red-bg);}
+:root[data-rail] .tp-title-w{position:relative;display:flex;align-items:center;gap:6px;}
+:root[data-rail] .tp-edit{color:var(--ink-3);opacity:0;transition:opacity var(--motion-quick) var(--ease);}
+:root[data-rail] .tp-title-w:is(:hover,:focus-within) .tp-edit{opacity:1;}
+/* A field's label kept for screen readers where its row already names it */
+:root[data-rail] .fld-l.is-quiet{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}
+:root[data-rail] .tp-agents .cr > span:last-child{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;}
+:root[data-rail] .tp-agents > .tp-label{display:flex;align-items:center;gap:8px;}
+:root[data-rail] .ask-changes{display:flex;flex-direction:column;align-items:stretch;gap:8px;margin:8px 0 0 32px;}   /* the card's width, on its text edge */
+:root[data-rail] .ask-changes .tp-actions{align-self:flex-start;}
+:root[data-rail] .card-form{margin:8px 0 0 32px;}
+/* commands (CommandRow, CommandGroup): no mark, the words say how it went; one fold opens the command and its output */
+:root[data-rail] .cmd-line{display:flex;align-items:center;gap:8px;}
+:root[data-rail] .cmd-line > .tr-line{flex:1 1 auto;min-width:0;}
+:root[data-rail] .cmd-s{color:var(--ink-2);}
+:root[data-rail] .cmd-s > svg{vertical-align:-2px;margin-right:4px;}
+:root[data-rail] .cmd-row.is-fail .cmd-s,:root[data-rail] .cmd-failed{color:var(--red-ink-strong);}   /* red words hold 4.5:1; the mark red is for marks */
+:root[data-rail] .cmd-row.is-run .cmd-s{color:var(--ink);}
+:root[data-rail] .cmd-row.is-stopped .cmd-s{color:var(--ink-3);}
+:root[data-rail] .cmd-rows{display:flex;flex-direction:column;gap:10px;margin:8px 0 0;}   /* rows' text on the head's text edge (one rail) */
+:root[data-rail] .cmd-detail{margin:6px 0 0 32px;display:flex;flex-direction:column;gap:6px;}
+:root[data-rail] .cmd-code{position:relative;padding:8px 40px 8px 10px;border-radius:var(--r-sm);background:var(--field);font:12px/18px var(--mono);color:var(--ink-2);white-space:pre-wrap;word-break:break-word;}
+:root[data-rail] .cmd-d,:root[data-rail] .cmd-op{color:var(--ink-3);}
+:root[data-rail] .cmd-code > .rail-copy{position:absolute;top:3px;right:3px;}
+:root[data-rail] .cmd-where{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .cmd-out{border-radius:var(--r-sm);background:var(--field);}
+:root[data-rail] .cmd-out-h{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 3px 0 10px;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .cmd-out pre{margin:0;padding:4px 10px 8px;font:12px/18px var(--mono);color:var(--ink-2);white-space:pre-wrap;word-break:break-word;}
+:root[data-rail] .task-card [data-slice-head]{margin:12px 0 4px 32px;padding-top:12px;border-top:1px solid var(--line);}   /* an open slice's stages say whose they are */   /* dev's dialog, asked under its card on the card's rail: its words, its choices, its action */
+:root[data-rail] .card-form .fld{flex:1 1 100%;}
+:root[data-rail] .card-form .tp-sentence{flex:1 1 auto;}
+/* Chat home's More keeps inside the window; a row's words can be its one target (a feature's slice) */
+:root[data-rail] .home-starters .rc-pop > .menu{max-height:min(38vh,400px);overflow:auto;}   /* which way it opens is watchMenus' */
+/* A menu with any check mark in it keeps the mark's room on every item, so all its words start on one edge; a switch (the account menu's) sits at the end and needs no room */
+:root[data-rail] :is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"]):not(.sw-item)) .menu-item[role="menuitem"]{display:grid;grid-template-columns:12px minmax(0,1fr) auto;column-gap:10px;}
+:root[data-rail] :is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"]):not(.sw-item)) .menu-item[role="menuitem"]::before{content:"";grid-column:1;}
+:root[data-rail] :is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"]):not(.sw-item)) .menu-item[role="menuitem"] > .mi-l{grid-column:2;}
+:root[data-rail] :is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"]):not(.sw-item)) .menu-item[role="menuitem"] > .mi-hint{grid-column:3;}
+
+/* look.type-roles: readable words are never ink-3 (marks and separators only); the task page's times and future steps read in ink-2 */
+:root[data-rail] .rd-route-row .tr-end,:root[data-rail] .sc-subs .rd-route-row b,:root[data-rail] .rd-route-name{color:var(--ink-2);}
+:root[data-rail] .rd-route-row.is-now .rd-route-name,:root[data-rail] .rd-route-row.is-ask .rd-route-name,:root[data-rail] .rd-route-row.is-failed .rd-route-name{color:var(--ink);}
+
+/* Add project's fields: under its sentence, on the card's text edge, one column */
+:root[data-rail] .pj-fields{display:flex;flex-direction:column;gap:10px;margin-top:10px;max-width:420px;}
+:root[data-rail] .pj-fields > .btn{align-self:flex-start;margin-left:-8px;}
+
+/* panel.conversation-cards: one shape, never a box inside a box: a card's body sits on its rail under its head, with no frame of its own */
+:root[data-rail] .convo-col .task-card > .rc-card{background:none;border:0;border-radius:0;padding:0;margin-top:10px;}
+/* motion.attention: the breath takes the state's colour (failed red, ready green); amber is for what asks */
+:root[data-rail] .is-attn[data-attn="fail"]{--attn:var(--red);} :root[data-rail] .is-attn[data-attn="ok"],:root[data-rail] .is-attn[data-attn="merged"]{--attn:var(--ink-2);}
+
+/* a task Worca watches says so in its facts, in words (not only in the PR mark's tooltip) */
+
+/* a task's own stages in its card (Show its stages): its stage lines on the rail, then the way to its full page */
+:root[data-rail] .own-stages{display:flex;flex-direction:column;gap:6px;margin:10px 0 0 32px;}
+:root[data-rail] .own-stages .stage-body p{margin:2px 0 0;}
+:root[data-rail] .own-stages > :last-child{align-self:flex-start;margin-top:4px;font-size:var(--fs-meta);}
+/* the task page, as its card: no frame of its own */
+:root[data-rail] #route-run #card .rc-card{border:0;background:none;padding-left:0;padding-right:0;}
+
+/* narrow.stack: on a phone the sentence takes its own line, each word with its picker; + and send sit under it on the same edge */
+@media (max-width: 520px){ :root[data-rail] .composer-f{flex-wrap:wrap;row-gap:8px;} :root[data-rail] .composer-f > .composer-s{order:-1;flex:1 0 100%;} :root[data-rail] .composer-f > .composer-send{margin-left:auto;} }
+
+/* a picker's choice reads whole: its menu grows to its longest choice (up to the window), never cutting it with an ellipsis */
+:root[data-rail] .spick-menu{min-width:min(max-content,calc(100vw - 32px));max-width:min(420px,calc(100vw - 32px));}
+:root[data-rail] .spick-menu .menu-item > .mi-l{overflow:visible;text-overflow:clip;white-space:normal;}
+:root[data-rail] .chat-home-new{margin:14px 0 0;color:var(--ink-2);font-size:var(--fs-meta);}   /* a newcomer's one pointer, quiet: under the starters */
+/* motion.attention in a list: the row that needs you and you have not opened breathes as a whole, softly, in its state's
+   colour (as a card in a chat does); its mark keeps that colour and holds still. Running breathes in ink, on its mark. */
+:root[data-rail] .list-row:has(> .lr-rail > .kind-mark.is-breathe){position:relative;isolation:isolate;}
+:root[data-rail] .list-row:has(> .lr-rail > .kind-mark.is-breathe)::before{content:'';position:absolute;grid-column:1 / -1;grid-row:1;inset:-2px -8px;--attn-fx:16px;--attn-fy:4px;-webkit-mask-image:linear-gradient(to right,transparent,#000 var(--attn-fx),#000 calc(100% - var(--attn-fx)),transparent),linear-gradient(to bottom,transparent,#000 var(--attn-fy),#000 calc(100% - var(--attn-fy)),transparent);-webkit-mask-composite:source-in;mask-image:linear-gradient(to right,transparent,#000 var(--attn-fx),#000 calc(100% - var(--attn-fx)),transparent),linear-gradient(to bottom,transparent,#000 var(--attn-fy),#000 calc(100% - var(--attn-fy)),transparent);mask-composite:intersect;z-index:-1;background:light-dark(color-mix(in srgb,var(--attn,var(--amber)) 11%,transparent),color-mix(in srgb,var(--attn,var(--amber)) 17%,transparent));animation:attn-breath 4.8s cubic-bezier(.45,0,.55,1) infinite;pointer-events:none;}   /* ds-ok: on the row's own first line, its mark to its end: one width on every row, a tree row's branches above it */
+:root[data-rail] .list-row:has(> .lr-rail > .kind-mark.is-breathe.is-fail){--attn:var(--red);}   /* the breath is its mark's colour: amber asks or waits (the default), red failed */
+@media (prefers-reduced-motion: reduce){:root[data-rail] .list-row:has(> .lr-rail > .kind-mark.is-breathe)::before{animation:none;opacity:.7;}}
+
+/* look.chart: BarChart, one series in ink; the period you are in darkest; numbers only where they matter */
+:root[data-rail] .bar-chart{margin:12px 0 4px;padding-bottom:20px;}
+:root[data-rail] .bc-plot{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:2px;align-items:end;height:var(--bc-h);border-bottom:1px solid var(--line);}   /* ds-ok: --bc-h is the height BarChart sets on its figure */
+:root[data-rail] .bc-col{display:grid;align-content:end;justify-items:center;height:100%;outline:none;}
+:root[data-rail] .bc-bar{width:min(14px,70%);background:var(--ink-3);border-radius:4px 4px 0 0;}   /* ds-ok: a data end's own rounding */
+:root[data-rail] .bc-col:hover .bc-bar,:root[data-rail] .bc-col:focus-visible .bc-bar{background:var(--ink-2);}
+:root[data-rail] .bc-col.is-now .bc-bar{background:var(--ink-2);}
+:root[data-rail] .bc-v{font-size:var(--fs-caption);color:var(--ink-2);margin-bottom:4px;font-variant-numeric:tabular-nums;min-height:1em;}
+:root[data-rail] .bc-x{position:relative;top:6px;height:0;font-size:var(--fs-caption);color:var(--ink-2);white-space:nowrap;}
+:root[data-rail] .bc-table{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;}
+@media (max-width: 760px){:root[data-rail] .is-attn::before{inset:-10px -16px;--attn-fx:16px;--attn-fy:10px;}}   /* on a phone the feather stays inside the screen */
+
+/* panel.plugin-card: a plugin on the cards' rail, two to a row under a shelf named for what you want */
+:root[data-rail] .pg-shelf{margin:26px 0 0;}
+:root[data-rail] .pg-shelf-h{display:flex;align-items:baseline;gap:8px;margin:0 0 2px;font:600 var(--fs-section)/1.3 var(--sans);letter-spacing:-.01em;}
+:root[data-rail] .pg-shelf-h .n{font:400 var(--fs-meta)/1 var(--sans);color:var(--ink-2);}
+:root[data-rail] .pg-shelf-m{margin:0 0 6px;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .pg-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:36px;}
+:root[data-rail] .pg-card{display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:12px;row-gap:3px;align-content:start;padding:14px 0;border-top:1px solid var(--line);}
+:root[data-rail] .pg-card > .kind-mark{grid-row:1 / span 2;margin-top:1px;}
+:root[data-rail] .pg-k{font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .pg-up{color:var(--ink);}   /* an update is Advisory: ink */
+:root[data-rail] .pg-t{font:600 var(--fs-body)/1.35 var(--sans);}
+:root[data-rail] .pg-w{grid-column:2;font-size:var(--fs-body);line-height:1.45;}
+:root[data-rail] .pg-f,:root[data-rail] .pg-why{grid-column:2;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .pg-why{display:flex;gap:6px;align-items:center;}
+:root[data-rail] .pg-card{grid-template-rows:repeat(5,auto) 1fr;}   /* panel.plugin-card: the actions end a card, so they line up across a row */
+:root[data-rail] .pg-a{grid-column:2;grid-row:6;align-self:end;display:flex;gap:6px;align-items:center;margin-top:8px;}
+@media (max-width: 760px){:root[data-rail] .pg-grid{grid-template-columns:minmax(0,1fr);}}
+/* panel.center: a card in a center */
+:root[data-rail] .convo-col.is-center{max-width:720px;}
+:root[data-rail] .pg-state{color:var(--ink-2);}
+:root[data-rail] .pg-state.is-fail{color:var(--red-ink-strong,var(--red));} :root[data-rail] .pg-state.is-ask,:root[data-rail] .pg-state.is-act{color:var(--amber-ink);} :root[data-rail] .pg-state.is-ok{color:var(--ink);} :root[data-rail] .pg-state.is-merged{color:var(--ink-2);} :root[data-rail] .pg-state.is-run{color:var(--ink);}
+:root[data-rail] .pg-line{grid-column:2;}
+:root[data-rail] .pg-f.is-one{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+:root[data-rail] .pg-a > .btn-quiet:first-child{padding-left:0;}
+:root[data-rail] .run-outs{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .ro-sqs{display:inline-flex;gap:3px;flex:none;}
+:root[data-rail] .ro-sq{width:9px;height:9px;border-radius:2px;box-sizing:border-box;}   /* ds-ok: a square at this size */
+:root[data-rail] .ro-sq.is-ok{background:var(--ink-2);} :root[data-rail] .ro-sq.is-fail{position:relative;} :root[data-rail] .ro-sq.is-fail::after{content:'!';position:absolute;inset:-3px 0;text-align:center;font:600 12px/15px var(--sans);color:var(--ink);}   /* ds-ok: a run cell's mark */ :root[data-rail] .ro-sq.is-run{border:1.5px solid var(--ink-2);} :root[data-rail] .ro-sq.is-miss{border:1.5px solid var(--amber);}
+:root[data-rail] .center-sent{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .figs-line{margin:-2px 0 6px;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .place-say{margin:3px 0 0;font-size:var(--fs-body);font-weight:500;color:var(--ink);}
+:root[data-rail] .tc-foot{display:flex;gap:6px;}
+:root[data-rail] .center-way{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .center-quiet{margin-top:4px;}
+/* panel.center-shelf */
+:root[data-rail] .center-shelf{margin:30px 0 0;}
+:root[data-rail] .center-shelf .pg-shelf-h{margin:0;}
+:root[data-rail] .center-shelf .pg-shelf-m{margin:4px 0 8px;}
+:root[data-rail] .center-shelf .center-quiet{margin-top:0;}
+:root[data-rail] .center-shelf-l{margin-left:6px;font:400 var(--fs-meta)/1 var(--sans);}
+:root[data-rail] .center-also{display:flex;align-items:center;gap:12px;margin:12px 0 0;padding-top:12px;border-top:1px solid var(--line);font-size:var(--fs-body);color:var(--ink-2);}
+:root[data-rail] .center-also b{font-weight:500;color:var(--ink);}
+:root[data-rail] .center-flat{margin-top:14px;}
+:root[data-rail] .dc-link[data-c-filter]{color:inherit;text-decoration:none;}
+:root[data-rail] .dc-link[data-c-filter]:hover{text-decoration:underline;text-underline-offset:2px;}
+/* The Legacy approach's forms (form.dialog) */
+:root[data-rail] .viewer-modal .card.rl-dialog.cc-dlg{width:min(640px,100%);max-height:calc(100vh - 48px);}
+:root[data-rail] .cc-dlg .dlg-body{display:flex;flex-direction:column;gap:16px;}
+:root[data-rail] .cc-dlg .dlg-body > *{margin:0;}
+:root[data-rail] .cc-frame{display:grid;gap:2px;font-size:var(--fs-body);line-height:1.75;color:var(--ink-2);}
+:root[data-rail] .cc-proof{font-size:var(--fs-meta);line-height:1.5;color:var(--ink-3);}
+:root[data-rail] .cc-lbl{position:relative;}
+:root[data-rail] .cc-lbl > .seg{position:absolute;right:0;top:-6px;}
+:root[data-rail] .cc-lbl > .seg button{height:24px;padding:0 10px;font-size:var(--fs-meta);}
+:root[data-rail] .cc-fold{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding-top:10px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .cc-fold > .btn-quiet{padding-left:0;}
+:root[data-rail] .cc-more{display:grid;gap:12px;font-size:var(--fs-body);color:var(--ink-2);line-height:1.75;}
+:root[data-rail] .dlg-status > .btn-quiet:first-child{padding-left:0;}
+@media (max-width: 760px){:root[data-rail] .cc-frame br{display:none;}}
+
+/* list.fold-by-mark: a row's mark folds what is under it; it reads as the mark, with a hover like the row's */
+:root[data-rail] .lr-mark-fold{display:inline-grid;place-items:center;padding:0;margin:0;border:0;background:none;color:inherit;cursor:pointer;border-radius:50%;}
+:root[data-rail] .lr-mark-fold:hover{background:var(--hover,var(--line));}
+:root[data-rail] .lr-mark-fold:focus-visible{outline:2px solid var(--ink-2);outline-offset:1px;}
+
+/* panel.question-forms: a question's small form, on the card's text edge */
+:root[data-rail] .q-slide{margin:6px 0 0 32px;display:grid;gap:6px;}
+:root[data-rail] .q-slide-t{display:flex;justify-content:space-between;font-size:var(--fs-meta);color:var(--ink-2);} :root[data-rail] .q-slide-t b{color:var(--ink);font-size:var(--fs-body);font-weight:600;}
+:root[data-rail] .q-slide-track{position:relative;padding:0 0 18px;}
+:root[data-rail] .q-slide-track input[type=range]{width:100%;accent-color:var(--ink-2);margin:0;}
+:root[data-rail] .q-slide-tick{position:absolute;top:2px;width:2px;height:12px;margin-left:-1px;background:var(--amber);pointer-events:none;}
+:root[data-rail] .q-slide-pick{position:absolute;bottom:0;transform:translateX(-50%);font-size:var(--fs-caption);color:var(--ink-2);white-space:nowrap;}
+:root[data-rail] .q-rank{list-style:none;margin:6px 0 0 32px;padding:0;}
+:root[data-rail] .q-rank-r{display:grid;grid-template-columns:18px minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--line);font-size:var(--fs-body);}
+:root[data-rail] .q-rank-r:last-child{border-bottom:1px solid var(--line);}
+:root[data-rail] .q-rank-n{color:var(--ink-2);font-size:var(--fs-meta);font-variant-numeric:tabular-nums;} :root[data-rail] .q-rank-h{color:var(--ink-3);display:flex;} :root[data-rail] .q-rank-a{display:flex;}
+:root[data-rail] .q-rows{margin:6px 0 0 32px;}
+:root[data-rail] .q-rows-h,:root[data-rail] .q-rows-r{display:grid;grid-template-columns:var(--q-cols);gap:8px;align-items:center;}   /* ds-ok: the columns PickRows sets */
+:root[data-rail] .q-rows-h{font-size:var(--fs-meta);color:var(--ink-2);padding:0 0 4px;}
+:root[data-rail] .q-rows-r{padding:6px 0;border-top:1px solid var(--line);font-size:var(--fs-body);}
+:root[data-rail] .q-rows-r > span:nth-child(n+3){color:var(--ink-2);font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}
+:root[data-rail] .q-facts{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:var(--fs-meta);color:var(--ink-2);margin:4px 0 0;}
+:root[data-rail] .q-fact{padding:0;border:0;background:none;font:inherit;color:inherit;} :root[data-rail] .q-fact b{font-weight:500;color:var(--ink);}
+:root[data-rail] button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:3px;} :root[data-rail] button.q-fact:hover{color:var(--ink);}
+
+/* look.background-breathes: the chosen background, slowly brighter and quieter; the still one stays the default */
+@keyframes bg-breathe{0%,100%{opacity:.6;}50%{opacity:1;}}
+:root[data-rail][data-bg-breathe="1"] .page-bg .chat-home-bg,:root[data-rail][data-bg-breathe="1"] .chat-home .chat-home-bg{animation:bg-breathe 10s ease-in-out infinite;}   /* ds-ok: a slow breath, ten seconds */
+@media (prefers-reduced-motion: reduce){:root[data-rail][data-bg-breathe="1"] .chat-home-bg{animation:none;}}
+:root[data-rail] .lvl-menu .menu-item .bg-sw{flex:none;width:32px;height:22px;margin-right:2px;border-radius:var(--r-sm);overflow:hidden;position:relative;box-shadow:0 0 0 1px var(--line);}
+:root[data-rail] .lvl-menu.pz-fly{min-width:220px;}
+:root[data-rail] .lvl-menu .bg-line .mi-val{color:var(--ink);}   /* the chosen background's ✓ */
+
+/* Ask worca beside a page: its home says what it knows of the page, offers questions that fit it, and its recent chats */
+:root[data-rail] .side-home{padding:8px 4px 12px;display:grid;gap:4px;align-content:start;}
+:root[data-rail] .side-home-h{margin:0;font:600 var(--fs-section)/1.3 var(--sans);}
+:root[data-rail] .side-home-m{margin:0 0 8px;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .side-home-sug{display:grid;gap:2px;margin:0 0 14px;} :root[data-rail] .side-home-sug .btn{justify-content:flex-start;text-align:left;height:auto;white-space:normal;}
+:root[data-rail] .side-home-dock{margin-top:auto;padding:0 4px 4px;} :root[data-rail] .side-home-chips{display:flex;align-items:center;gap:4px;margin:0 0 6px;}
+
+/* ArtifactView: one artifact open in place under its list (panel.task-depth) */
+:root[data-rail] .av{margin:4px 0 8px;}
+:root[data-rail] .av-h{display:flex;align-items:center;gap:6px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);} :root[data-rail] .av-h b{color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;} :root[data-rail] .av-sp{flex:1;}
+:root[data-rail] .av-n{font-variant-numeric:tabular-nums;}
+:root[data-rail] .av-body{margin:4px 0 0;padding:10px 12px;border-radius:var(--r-sm);background:var(--field);font-size:var(--fs-body);line-height:var(--lh-body);overflow-wrap:anywhere;max-height:320px;overflow-y:auto;}
+:root[data-rail] .av-body h3{margin:0 0 4px;font:600 var(--fs-body)/1.3 var(--sans);} :root[data-rail] .av-body p{margin:0 0 6px;} :root[data-rail] .av-body table{border-collapse:collapse;font-size:var(--fs-meta);font-variant-numeric:tabular-nums;} :root[data-rail] .av-body td,:root[data-rail] .av-body th{padding:3px 12px 3px 0;text-align:left;border-top:1px solid var(--line);}
+/* a task's depth on its card: a stage's log head, findings to confirm */
+:root[data-rail] .td-body{margin:4px 0 8px 32px;display:grid;gap:6px;min-width:0;}
+:root[data-rail] .td-log-h{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;font-size:var(--fs-meta);color:var(--ink-2);} :root[data-rail] .td-log-h .av-sp{flex:1;}
+:root[data-rail] .td-find{margin:4px 0 0 32px;display:grid;gap:6px;}
+:root[data-rail] .td-fx{display:flex;gap:6px;align-items:center;}
+:root[data-rail] .td-find textarea{min-height:0;height:56px;}
+
+/* Crafting (motion.crafting): a sketch of the kind of thing being made draws itself line by line, holds, fades, starts
+   again; an ongoing state like the breath, on Rail's one curve */
+:root[data-rail] .craft{display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:var(--r-sm);background:var(--field);min-width:0;}
+:root[data-rail] .craft-art{flex:none;width:96px;height:58px;overflow:visible;}
+:root[data-rail] .craft-art path{fill:none;stroke:var(--ink-3);stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1;animation:craft-draw 3.2s var(--ease) infinite;animation-delay:calc(var(--i) * 150ms);}   /* ds-ok: each line's place, Crafting sets it */
+:root[data-rail] .craft-art path:nth-child(3n+1){stroke:var(--ink-2);}
+@keyframes craft-draw{0%{stroke-dashoffset:1;opacity:1;}30%{stroke-dashoffset:0;}78%{stroke-dashoffset:0;opacity:1;}96%,100%{stroke-dashoffset:0;opacity:0;}}
+:root[data-rail] .craft-t{margin:0;display:grid;gap:2px;font-size:var(--fs-body);min-width:0;} :root[data-rail] .craft-t b{font-weight:600;} :root[data-rail] .craft-t span{font-size:var(--fs-meta);color:var(--ink-2);}
+@media (prefers-reduced-motion: reduce){:root[data-rail] .craft-art path{animation:none;stroke-dashoffset:0;}}
+
+/* WorkflowStory (panel.workflow-story): a workflow as a storyboard, a panel a step, the loop drawn back in words */
+:root[data-rail] .ws{margin:14px 0 6px;}
+:root[data-rail] .ws-board{position:relative;display:grid;grid-template-columns:repeat(var(--ws-n),minmax(0,1fr));gap:22px;margin:0 0 14px;}   /* ds-ok: --ws-n is the story's own count of steps */
+:root[data-rail] .ws-board.has-loop{margin-bottom:58px;}
+:root[data-rail] .ws-p{position:relative;display:grid;gap:4px;align-content:start;min-width:0;}
+:root[data-rail] .ws-p + .ws-p::before{content:'';position:absolute;left:-18px;top:11px;width:14px;border-top:1px solid var(--ink-3);}
+:root[data-rail] .ws-n{display:flex;align-items:center;gap:8px;font:600 var(--fs-body)/1.3 var(--sans);min-width:0;}
+:root[data-rail] .ws-k{width:22px;height:22px;border-radius:50%;border:1px solid var(--line-2);display:grid;place-items:center;font:500 var(--fs-meta)/1 var(--sans);color:var(--ink-2);flex:none;}
+:root[data-rail] .ws-p.is-check .ws-k{border-color:var(--amber-ink);color:var(--amber-ink);}
+:root[data-rail] .ws-t{font-size:var(--fs-body);line-height:var(--lh-body);overflow-wrap:anywhere;} :root[data-rail] .ws-m{font-size:var(--fs-meta);color:var(--ink-3);font-variant-numeric:tabular-nums;}
+:root[data-rail] .ws-loop{position:absolute;bottom:-40px;height:30px;font-size:var(--fs-meta);color:var(--ink);text-align:center;}
+:root[data-rail] .ws-loop svg{position:absolute;inset:0 0 auto 0;width:100%;height:16px;overflow:visible;} :root[data-rail] .ws-loop path{fill:none;stroke:var(--ink);stroke-dasharray:2 2;}
+:root[data-rail] .ws-loop span{position:absolute;left:-40%;right:-40%;top:16px;white-space:nowrap;}
+:root[data-rail] .ws-by{margin:8px 0 0;font-size:var(--fs-meta);color:var(--ink-3);display:flex;gap:6px;align-items:center;}
+@media (max-width:720px){:root[data-rail] .ws-board{grid-template-columns:1fr;gap:12px;} :root[data-rail] .ws-p + .ws-p::before{display:none;} :root[data-rail] .ws-board.has-loop{margin-bottom:14px;} :root[data-rail] .ws-loop{position:static;height:auto;text-align:left;} :root[data-rail] .ws-loop svg{display:none;} :root[data-rail] .ws-loop span{position:static;white-space:normal;}}
+
+/* Workflows (Wave 3): a way's sentence, the graph's well wider than the reading column, the Expert canvas */
+:root[data-rail] .wf-sent{display:flex;gap:6px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);margin:14px 0 8px;}
+:root[data-rail] .wf-who{color:var(--ink-2);font-size:var(--fs-meta);} :root[data-rail] .wf-acts{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 0;}
+:root[data-rail] .wf-well{position:relative;box-sizing:border-box;width:min(940px,calc(100% - 32px));margin:6px auto 10px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);overflow:hidden;}
+/* dev's graph in Rail's skin: on the view, plain words (no port types, no await rows, no conditions); on the canvas, ports show */
+:root[data-rail] .gv-skin .prow .pt,:root[data-rail] .gv-skin.is-view .prow.gate,:root[data-rail] .gv-skin.is-view .cond{display:none;}
+:root[data-rail] .gv-skin .node.is-picked{outline:2px solid var(--ink-2);outline-offset:3px;border-radius:var(--r-sm);}
+:root[data-rail] .gv-skin.is-edit .node{cursor:pointer;}
+:root[data-rail] .wf-ed{display:grid;grid-template-rows:auto 1fr;min-height:100%;}
+:root[data-rail] .wf-ed-top{display:flex;align-items:center;gap:6px;padding:8px 16px;border-bottom:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);min-width:0;}
+:root[data-rail] .wf-ed-top b{color:var(--ink);font-size:var(--fs-body);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;} :root[data-rail] .wf-ed-sp{flex:1;}
+:root[data-rail] .wf-ed-body{display:grid;grid-template-columns:minmax(0,1fr) 320px;min-height:0;}
+:root[data-rail] .wf-canvas{position:relative;min-height:460px;padding:24px;background-image:radial-gradient(var(--line-2) 1px,transparent 1px);background-size:18px 18px;}   /* ds-ok: the canvas's dot grid, as dev's */
+:root[data-rail] .wf-canvas #wf-canvas-g{position:relative;}
+:root[data-rail] .wf-ed-tools{position:absolute;right:16px;bottom:12px;display:flex;gap:4px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .wf-insp{border-left:1px solid var(--line);padding:18px;overflow:auto;}
+:root[data-rail] .wf-ed-h{margin:0 0 2px;font:600 var(--fs-section)/1.3 var(--sans);} :root[data-rail] .wf-ed-m{margin:0 0 10px;font-size:var(--fs-meta);color:var(--ink-2);}
+@media (max-width:900px){:root[data-rail] .wf-ed-body{grid-template-columns:1fr;} :root[data-rail] .wf-insp{border-left:0;border-top:1px solid var(--line);}}
+:root[data-rail] .craft-turn{margin:6px 0 6px 32px;}
+:root[data-rail] .wf-canvas{display:grid;place-items:safe center;overflow:auto;} :root[data-rail] .wf-canvas #wf-canvas-g{align-self:center;}   /* safe: a graph zoomed wider than the canvas scrolls from its start */
+:root[data-rail] .wf-ed-top .fld{width:240px;}
+:root[data-rail] .gv-skin.is-view .node{cursor:default;}
+:root[data-rail] .gv-skin.is-view .ncap{display:none;}   /* the story says what each step does; the graph shows how they connect */
+
+/* DraftBar (rail.drafts): a draft on the thing it changes */
+:root[data-rail] .draft-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;margin:10px 0;border-radius:var(--r-sm);background:var(--field);color:var(--ink);font-size:var(--fs-meta);}   /* an unsaved draft: Advisory, ink (look.alert-ladder) */
+:root[data-rail] .draft-bar b{color:var(--advisory);font-weight:600;} :root[data-rail] .draft-bar span{color:var(--ink-2);} :root[data-rail] .draft-sp{flex:1;}
+:root[data-rail] .wf-ed-top .draft-bar{margin:0;padding:4px 4px 4px 10px;}
+/* the story's quiet lines readable; dev's graph in Rail's colours: ink wires and dots, the loop in amber */
+:root[data-rail] .ws-m,:root[data-rail] .ws-by{color:var(--ink-2);}
+:root[data-rail] .gv-skin .prow .dot,:root[data-rail] .gv-skin .prow .dot.md,:root[data-rail] .gv-skin .prow.wired .dot{background:var(--ink-2);border-color:var(--ink-2);} :root[data-rail] .gv-skin .ltile{color:var(--ink-2);background:var(--field);}
+:root[data-rail] .gv-skin .wire.w-md{stroke:var(--ink-3);} :root[data-rail] .gv-skin .wire.loop{stroke:var(--ink);}
+:root[data-rail] .gv-skin .chip.am{color:var(--ink);background:var(--field);font-size:var(--fs-meta);}
+/* the skin over dev's graph (.gv-world): Rail's ink for every port and tile, the loop's word in amber on the card */
+:root[data-rail] .gv-skin .gv-world .dot.md,:root[data-rail] .gv-skin .gv-world .prow.wired .dot.md{background:var(--ink-2);border-color:var(--ink-2);}
+:root[data-rail] .gv-skin .gv-world .ltile[class*="h-"]{background:var(--field);color:var(--ink-2);}
+:root[data-rail] .gv-skin .gv-world .prow .chip.am{background:none;color:var(--ink);font-weight:600;}
+
+/* panel.open-line: an open toggle draws a gentle hairline from its words to the column's edge */
+:root[data-rail] .tc-foot:has(> .btn[aria-expanded="true"]),:root[data-rail] .open-line:has(> .btn[aria-expanded="true"]){display:flex;align-items:center;gap:8px;}
+:root[data-rail] .tc-foot:has(> .btn[aria-expanded="true"])::after,:root[data-rail] .open-line:has(> .btn[aria-expanded="true"])::after{content:'';flex:1;height:1px;background:var(--line);}
+
+/* WorkspaceBoxes and WorkspaceMap (panel.workspace-map) */
+:root[data-rail] .wb{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;}
+:root[data-rail] .wb-box{display:grid;gap:3px;align-content:start;text-align:left;min-height:84px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--panel);color:var(--ink);font:inherit;cursor:pointer;min-width:0;}
+:root[data-rail] .wb-box:hover{background:var(--hover);} :root[data-rail] .wb-box:focus-visible,:root[data-rail] .wm-n:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+:root[data-rail] .wb-h{display:flex;justify-content:space-between;gap:8px;font-size:var(--fs-body);} :root[data-rail] .wb-h b{font-weight:600;} :root[data-rail] .wb-h span{font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
+:root[data-rail] .wb-l{font-size:var(--fs-meta);color:var(--ink-2);} :root[data-rail] .wb-l.is-ask{color:var(--amber-ink);} :root[data-rail] .wb-l.is-fail{color:var(--red-ink);}
+:root[data-rail] .wb.is-open{grid-template-columns:minmax(0,1fr) 240px;align-items:start;}
+:root[data-rail] .wb-open{padding:12px 14px;border:1px solid var(--ink-3);border-radius:var(--r-md);background:var(--panel);min-width:0;} :root[data-rail] .wb-open-h{margin:0 0 10px;font:600 var(--fs-body)/1.3 var(--sans);}
+:root[data-rail] .wb.is-solo{grid-template-columns:minmax(0,1fr);} :root[data-rail] .wb-side{display:grid;gap:10px;}
+:root[data-rail] .wb-age{display:flex;gap:8px;align-items:center;margin:0 0 10px;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .wm-scroll{overflow-x:auto;container-type:inline-size;} :root[data-rail] .wm{position:relative;color:var(--ink-3);}
+@container (max-width:480px){:root[data-rail] .wm{display:grid;gap:8px;width:auto !important;height:auto !important;} :root[data-rail] .wm svg{display:none;} :root[data-rail] .wm-n.wm-n{position:static;width:100%;}}   /* ds-ok: no room for the arrows: the projects one under another, whole; how they connect is listed under the map */
+:root[data-rail] .wm svg{position:absolute;inset:0;} :root[data-rail] .wm-w{fill:none;stroke:var(--ink-3);} :root[data-rail] .wm-w.is-unsure{stroke:var(--amber-ink);stroke-dasharray:3 3;}
+:root[data-rail] .wm-t{font:400 var(--fs-caption) var(--sans);fill:var(--ink-2);} :root[data-rail] .wm-t.is-unsure{fill:var(--amber-ink);}
+:root[data-rail] .wm-n{position:absolute;box-sizing:border-box;width:150px;height:48px;display:grid;align-content:center;padding:0 10px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--bg);color:var(--ink);font:inherit;text-align:left;cursor:pointer;}   /* ds-ok: the map lays its nodes out by size */
+:root[data-rail] .wm-n:hover{background:var(--hover);} :root[data-rail] .wm-n b{font-size:var(--fs-body);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;} :root[data-rail] .wm-n span{font-size:var(--fs-caption);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+:root[data-rail] .wm-n.is-ask{border-color:var(--amber-ink);} :root[data-rail] .wm-n.is-ask span{color:var(--amber-ink);} :root[data-rail] .wm-n.is-fail{border-color:var(--red);} :root[data-rail] .wm-n.is-fail span{color:var(--red-ink);}
+:root[data-rail] .pj-wide{box-sizing:border-box;width:min(940px,calc(100% - 32px));margin:14px auto 0;}
+@media (max-width:900px){:root[data-rail] .wb.is-open{grid-template-columns:1fr;}}
+:root[data-rail] .ws-about{margin:12px 0 0;line-height:var(--lh-body);} :root[data-rail] .ws-h{margin:18px 0 4px;font:600 var(--fs-section)/1.3 var(--sans);} :root[data-rail] .ws-order{margin:0 0 2px;} :root[data-rail] .ws-order span{color:var(--ink-2);}
+
+:root[data-rail] .pj-crumb{margin:0 0 2px;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .set-text .kind-chip{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom;}   /* a long tag folds; its title has it whole */
+:root[data-rail] .place-title,:root[data-rail] .place-head .convo-head,:root[data-rail] .convo-card-w{overflow-wrap:anywhere;min-width:0;}
+
+/* look.chart-play: the forms a chart takes when you ask; ink only, one axis, the reading in the band above the plot */
+:root[data-rail] .chart,:root[data-rail] .bar-chart.is-read-able{position:relative;margin:12px 0 4px;padding-top:36px;}
+:root[data-rail] .bar-chart.is-read-able{padding-bottom:0;}
+:root[data-rail] .bar-chart.is-read-able:not(:has(.ch-legend,.ch-hint)){padding-bottom:26px;}   /* ds-ok: nothing under the plot: the x-labels keep their own room above what follows */
+:root[data-rail] .bar-chart.is-read-able .ch-hint{margin-top:26px;}
+:root[data-rail] .bar-chart.is-read-able .bc-plot + .bc-table{position:absolute;}
+:root[data-rail] .bar-chart.is-read-able .bc-plot{position:relative;cursor:crosshair;touch-action:pan-y;}
+:root[data-rail] .bar-chart.is-read-able .bc-col.is-read .bc-bar{background:var(--ink-2);}
+:root[data-rail] .bar-chart.is-read-able .bc-col.is-now.is-read .bc-bar{background:var(--ink);}
+:root[data-rail] .bc-bar.is-stack,:root[data-rail] .bc-col:hover .bc-bar.is-stack,:root[data-rail] .bc-col:focus-visible .bc-bar.is-stack,:root[data-rail] .bc-col.is-now .bc-bar.is-stack,:root[data-rail] .bar-chart.is-read-able .bc-col.is-read .bc-bar.is-stack,:root[data-rail] .bar-chart.is-read-able .bc-col.is-now.is-read .bc-bar.is-stack{display:flex;flex-direction:column-reverse;gap:1px;background:none;overflow:hidden;}
+:root[data-rail] .bar-chart.is-read-able .bc-col.is-read .bc-bar.is-stack{box-shadow:0 0 0 1px var(--ink-3);}
+:root[data-rail] .bc-plot.has-limit{position:relative;}
+:root[data-rail] .bc-limit{position:absolute;left:0;right:0;height:1px;background:var(--ink-3);pointer-events:none;}
+:root[data-rail] .bc-plot.has-limit .bc-v:not(:empty){position:relative;z-index:1;padding-inline:2px;background:var(--bg);}
+:root[data-rail] .bc-col{position:relative;}
+:root[data-rail] .bc-plot.has-limit .bc-v.is-beside:not(:empty){position:absolute;right:calc(50% + 9px);margin:0;white-space:nowrap;}   /* look.chart-play: clear of the limit line */
+:root[data-rail] .bc-plot.has-limit .bc-v.is-beside.is-after:not(:empty){right:auto;left:calc(50% + 9px);}
+:root[data-rail] .bar-chart .ch-legend{margin-top:26px;}
+:root[data-rail] .bar-chart.is-read-able .ch-legend + .ch-hint{margin-top:6px;}
+:root[data-rail] .ch-plot{position:relative;height:var(--ch-h);border-bottom:1px solid var(--line);cursor:crosshair;touch-action:pan-y;}   /* ds-ok: --ch-h is the height a chart sets on its figure */
+:root[data-rail] .ch-svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible;}
+:root[data-rail] .ch-l{fill:none;stroke:var(--ink);stroke-width:2;}
+:root[data-rail] .ch-l.is-before{stroke:var(--ink-3);stroke-width:1.5;stroke-dasharray:4 3;}
+:root[data-rail] .ch-l.is-limit{stroke:var(--ink-3);stroke-width:1;}
+:root[data-rail] .ch-l.is-p0{stroke:var(--ink);} :root[data-rail] .ch-l.is-p1{stroke:var(--ink-2);} :root[data-rail] .ch-l.is-p2{stroke:var(--ink-3);} :root[data-rail] .ch-l.is-p3{stroke:var(--line-2);}   /* a line for each part, the mix's shades */
+:root[data-rail] .ch-dot{position:absolute;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:var(--ink);pointer-events:none;}   /* ds-ok: a data point is round */
+:root[data-rail] .ch-dot.is-read{width:10px;height:10px;margin:-5px 0 0 -5px;box-shadow:0 0 0 2px var(--bg);}
+:root[data-rail] .ch-v{position:absolute;transform:translate(-50%,calc(-100% - 7px));font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;}
+:root[data-rail] .ch-hits{position:absolute;inset:0;display:grid;grid-template-columns:repeat(var(--ch-n),minmax(0,1fr));}   /* ds-ok: --ch-n is the count a chart sets */
+:root[data-rail] .ch-hits.is-cols{gap:2px;}
+:root[data-rail] .ch-hit,:root[data-rail] .ch-col{position:relative;display:flex;align-items:flex-end;justify-content:center;height:100%;outline:none;}
+:root[data-rail] .ch-hit.is-read::after{content:"";position:absolute;top:0;bottom:0;left:50%;width:1px;background:var(--ink-3);}
+:root[data-rail] .ch-hit:focus-visible::after,:root[data-rail] .ch-col:focus-visible{box-shadow:inset 0 0 0 1px var(--ink-3);}
+:root[data-rail] .ch-stack{display:flex;flex-direction:column;gap:1px;width:min(28px,70%);}
+:root[data-rail] .ch-seg{display:block;flex-basis:0;min-height:0;}
+:root[data-rail] .is-s0{background:var(--ink);}
+:root[data-rail] .is-s1{background:var(--ink-2);}
+:root[data-rail] .is-s2{background:var(--ink-3);}
+:root[data-rail] .is-s3{background:var(--line-2);box-shadow:inset 0 0 0 1px var(--ink-3);}   /* the palest shade keeps an edge, so it holds on white */
+:root[data-rail] .ch-col.is-read .ch-stack{box-shadow:0 0 0 1px var(--ink-3);}
+:root[data-rail] .ch-read{position:absolute;top:0;display:flex;gap:8px;max-width:100%;padding:3px 8px;background:var(--panel);border:1px solid var(--line-2);border-radius:var(--r-sm);font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;pointer-events:none;z-index:2;}
+:root[data-rail] .ch-read[hidden]{display:none;}
+:root[data-rail] .ch-read b{color:var(--ink);font-weight:600;}
+:root[data-rail] .ch-xs{display:grid;grid-template-columns:repeat(var(--ch-n),minmax(0,1fr));margin-top:6px;}   /* ds-ok: --ch-n is the count a chart sets */
+:root[data-rail] .ch-x.is-end{justify-self:end;}
+:root[data-rail] .ch-x{text-align:center;font-size:var(--fs-caption);color:var(--ink-2);white-space:nowrap;}
+:root[data-rail] .ch-legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:8px;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .ch-key{display:inline-flex;align-items:center;gap:6px;}
+:root[data-rail] .ch-swatch{display:inline-block;width:10px;height:10px;}
+:root[data-rail] .ch-swatch.is-main{height:2px;background:var(--ink);}
+:root[data-rail] .ch-swatch.is-before{width:18px;height:0;border-top:2px dashed var(--ink-3);}
+:root[data-rail] .ch-swatch.is-limit{height:1px;background:var(--ink-3);}
+:root[data-rail] .ch-swatch.is-line{height:2px;}
+:root[data-rail] .ch-cap{margin:0 0 4px;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .chart > .ch-cap,:root[data-rail] .bar-chart.is-read-able > .ch-cap{position:absolute;top:0;left:0;margin:0;}   /* in the band above the plot: a reading covers it only while you read */
+:root[data-rail] .ch-hint{margin:6px 0 0;font-size:var(--fs-caption);color:var(--ink-2);}
+:root[data-rail] .ch-brush{position:absolute;top:0;bottom:0;background:var(--hover);border-inline:1px solid var(--ink-3);pointer-events:none;}
+:root[data-rail] .btn.ch-clear{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;min-height:0;min-width:0;padding:0;vertical-align:middle;margin-left:2px;}
+:root[data-rail] .btn.ch-clear svg{width:12px;height:12px;}
+/* FigureRows: figures across rows, the whole row one target */
+:root[data-rail] .fr-list{display:grid;grid-template-columns:minmax(0,1fr) repeat(var(--fr-n),auto);column-gap:16px;}   /* ds-ok: --fr-n is the count FigureRows sets; each column is as wide as its head, the name takes the rest */
+:root[data-rail] .fr-row{display:grid;grid-column:1 / -1;grid-template-columns:subgrid;align-items:center;width:100%;margin:0;padding:8px 0;border:0;border-top:1px solid var(--line);background:none;font:inherit;font-size:var(--fs-body);font-variant-numeric:tabular-nums;color:var(--ink);text-align:left;cursor:pointer;}   /* ds-ok: --fr-n is the count FigureRows sets */
+:root[data-rail] button.fr-row:hover{background:var(--hover);}
+:root[data-rail] button.fr-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+:root[data-rail] .fr-row.is-head{border-top:0;padding:0 0 5px;font-size:var(--fs-meta);color:var(--ink-2);cursor:default;align-items:end;}
+:root[data-rail] .fr-row.is-sub{padding-left:18px;color:var(--ink-2);}
+:root[data-rail] .fr-row.is-quiet{color:var(--ink-2);}
+:root[data-rail] .fr-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;}
+:root[data-rail] .fr-row.is-sub .fr-name{font-weight:400;}
+:root[data-rail] .fr-c{text-align:right;line-height:1.2;white-space:nowrap;}
+@media (max-width:640px){:root[data-rail] .fr-list{grid-template-columns:minmax(0,1fr) repeat(2,auto);}:root[data-rail] .fr-c.is-wide{display:none;}}
+
+/* ---- Moved from the app's Rail parts: scoped rules that set more than colour on classes today's pages draw
+   (rail on must change colours only). They return with the slice that draws them. ---- */
+
+/* from ui/public/design-system/rail-look.css */
+:root[data-rail] .is-in{animation:rl-in var(--motion-quick) var(--ease);}
+@media (prefers-reduced-motion: reduce){:root[data-rail] .is-in{animation:none;}}
+
+/* from ui/public/design-system/rail-controls.css */
+:root[data-rail] .spick{position:relative;}
+:root[data-rail] .spick-b{display:inline;margin:0;padding:0;border:0;border-radius:var(--r-xs);background:none;font:inherit;font-weight:600;line-height:inherit;color:var(--ink);white-space:nowrap;cursor:pointer;transition:background-color 100ms var(--ease),box-shadow 100ms var(--ease);}
+:root[data-rail] .spick-b svg{margin-left:2px;vertical-align:-2px;color:var(--ink-2);}
+@container (max-width: 560px){:root[data-rail] .spick-b{white-space:normal;text-align:left;}}
+:root[data-rail] .fld{display:flex;flex-direction:column;gap:4px;min-width:0;}
+:root[data-rail] .fld + .fld{margin-top:12px;}
+:root[data-rail] .side-menu{display:flex;flex-direction:column;gap:2px;padding:11px 10px;overflow:auto;}
+:root[data-rail] #route-chat, :root[data-rail] #route-schedule, :root[data-rail] #route-place{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
+
+/* from ui/public/design-system/rail-rows.css */
+:root[data-rail] .list{min-width:0;}
+:root[data-rail] .list-row{--lr-rail:var(--rail,20px);--lr-gap:var(--gap,12px);display:grid;grid-template-columns:var(--lr-rail) minmax(0,1fr) auto;column-gap:var(--lr-gap);align-items:start;margin-left:calc(-1 * (var(--lr-rail) + var(--lr-gap)));padding:2px 0;}
+:root[data-rail] .rt-name{display:block;}
+:root[data-rail] .wg-nodes{display:flex;flex-wrap:wrap;gap:8px;min-width:0;}
+:root[data-rail] .wg-node{display:inline-flex;align-items:center;gap:8px;min-height:36px;max-width:100%;padding:4px 12px 4px 8px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:none;color:var(--ink);font:400 var(--fs-meta)/var(--lh-title) var(--sans);cursor:pointer;text-align:left;}
+:root[data-rail] .wg-node .rd-route-dot{flex:none;width:16px;height:16px;flex-basis:16px;margin:0;}
+:root[data-rail] .lg{list-style:none;margin:0;padding:8px 12px;max-height:320px;overflow-y:auto;background:var(--field);border-radius:var(--r-sm);font:400 var(--fs-meta)/var(--lh-body) var(--mono);color:var(--ink-2);min-width:0;}
+
+/* from ui/public/design-system/rail-feedback.css */
+:root[data-rail] .menu-item[data-narrow]{display:none;}
+@container (max-width: 520px){:root[data-rail] .menu-item[data-narrow]{display:flex;}}
+:root[data-rail] .menu-sep[data-narrow]{display:none;}
+@container (max-width: 520px){:root[data-rail] .menu-sep[data-narrow]{display:block;}}
+:root[data-rail] .empty-line.is-err{flex-direction:column;align-items:flex-start;gap:2px;}
+:root[data-rail] .el-t{color:var(--ink);font-weight:500;}
+:root[data-rail] .el-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
+:root[data-rail] .rc .toasts{top:64px;bottom:auto;}
+:root[data-rail] .list-row.is-flash{animation:ov-flash var(--motion-flash) ease-out;border-radius:var(--r-sm);}
+@media (prefers-reduced-motion: reduce){:root[data-rail] .list-row.is-flash{animation:none;outline:2px solid var(--line-2);outline-offset:4px;}}
+:root[data-rail] [data-landed]{animation:ov-flash var(--motion-flash) ease-out;border-radius:var(--r-sm);}
+@media (prefers-reduced-motion: reduce){:root[data-rail] [data-landed]{animation:none;outline:2px solid var(--line-2);outline-offset:4px;}}
+:root[data-rail] canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--line-2),transparent);outline-offset:0;}
+
+/* from ui/public/runs/rail-run-card.css */
+:root[data-rail] .rc{--rail:20px;--gap:12px;display:flex;flex-direction:column;gap:16px;min-width:0;}
+:root[data-rail] .plan-full{display:flex;flex-direction:column;gap:10px;padding-bottom:12px;border-bottom:1px solid var(--line);}
+:root[data-rail] .plan-full h4{margin:0;font:600 12px/1.4 var(--sans);color:var(--ink-3);}
+:root[data-rail] .plan-full ol, :root[data-rail] .plan-full ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;color:var(--ink-2);}
+:root[data-rail] .menu-h{padding:6px 9px 2px;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);}
+:root[data-rail] .sk{grid-column:1 / -1;display:flex;flex-direction:column;gap:10px;}
+:root[data-rail] .sk-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:28px;padding-left:32px;}
+:root[data-rail] .sk-head .seg button{font-size:var(--fs-meta);}
+:root[data-rail] .tp-title{display:block;width:100%;margin:2px 0 0;padding:2px 0;border:0;border-bottom:1px solid transparent;background:none;color:var(--ink);font:600 var(--fs-section)/var(--lh-title) var(--sans);letter-spacing:-.01em;}
+:root[data-rail] .tp-body{display:flex;flex-direction:column;gap:10px;}
+:root[data-rail] .plan-roles{display:flex;flex-direction:column;gap:6px;}
+:root[data-rail] .files-card{display:flex;flex-direction:column;gap:8px;}
+:root[data-rail] .fc-tile{margin:0;display:flex;flex-direction:column;gap:4px;min-width:0;}
+:root[data-rail] .fc-tile figcaption{display:flex;align-items:center;gap:4px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .fc-tile figcaption > span{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+:root[data-rail] .is-flash{animation:card-flash var(--motion-flash) var(--ease) 1;border-radius:var(--r-md);}
+@media (prefers-reduced-motion: reduce){:root[data-rail] .is-flash{animation:none;}}
+
+/* from ui/public/runs/rail-run-tabs.css */
+:root[data-rail] .rt{display:flex;flex-direction:column;gap:8px;min-width:0;}
+:root[data-rail] .table .num{text-align:right;font-variant-numeric:tabular-nums;}
+:root[data-rail] .rtab{padding-left:calc(var(--rail) + var(--gap));}
+:root[data-rail] .rc{container-type:inline-size;}
+@container (max-width: 520px){:root[data-rail] .rtab{padding-left:0;}}
+:root[data-rail] .menu{max-width:calc(100vw - 32px);}
+:root[data-rail] .ct{display:inline-flex;gap:8px;font:400 var(--fs-meta)/1 var(--mono);font-variant-numeric:tabular-nums;}
+:root[data-rail] .menu-item[aria-disabled="true"]{color:var(--ink-3);cursor:not-allowed;}
+:root[data-rail] .rc .menu-item[role="menuitemcheckbox"]{display:grid;grid-template-columns:12px minmax(0,1fr) auto;column-gap:10px;}
+:root[data-rail] .rc .menu-item[role="menuitemcheckbox"]::before{content:"";grid-column:1;width:12px;height:12px;background:transparent;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/12px no-repeat;}
+:root[data-rail] .rc .menu-item[role="menuitemcheckbox"] > .mi-hint{grid-column:3;}
+
+/* from ui/public/runs/rail-create-pr.css */
+:root[data-rail] .pd-body{display:flex;flex-direction:column;gap:20px;}

@@ -1,0 +1,180 @@
+/* ---------- Rail: rows ---------- */
+/* Stillhet (Rail) behind its flag: every rule scopes on :root[data-rail] (test/rail-parts-scope.test.mjs); cut from the prototype's rail.css. */
+/* ListRow and List (ui/public/design-system/components/list.mjs): one thing per row, its mark on the rail hanging left
+   of the text edge, so every title starts on the page's text edge; the whole row opens its one target. Rows split by
+   space; a line where each group after the first starts, from the text edge. */
+
+:root[data-rail] .list-sentence{margin:0 0 4px;color:var(--ink-2);line-height:28px;}
+:root[data-rail] .list-group + .list-group{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);}
+:root[data-rail] .list-h{margin:0 0 4px;display:flex;align-items:baseline;gap:8px;font:600 var(--fs-body)/var(--lh-title) var(--sans);color:var(--ink);}
+:root[data-rail] .list-m{margin:-2px 0 4px;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .list-h .n{font-size:var(--fs-caption);font-weight:500;color:var(--ink-2);font-variant-numeric:tabular-nums;}
+/* A section by date folds from its head: the head is a button, its chevron turns; folded, the head and count stay. */
+:root[data-rail] .list-h-b{position:relative;display:inline-flex;align-items:baseline;gap:4px;margin:0 -2px 0 -4px;padding:2px 6px 2px 4px;border:0;border-radius:var(--r-sm);background:none;font:inherit;color:inherit;letter-spacing:inherit;cursor:pointer;}
+:root[data-rail] .list-h-b:hover{background:var(--hover);}
+:root[data-rail] .list-h-b:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+:root[data-rail] .list-h-b svg{position:absolute;left:-10px;top:50%;margin-top:-5px;color:var(--ink-3);opacity:0;transition:transform var(--motion-quick) var(--ease),opacity var(--motion-quick) var(--ease);}
+:root[data-rail] .list-h-b:is(:hover,:focus-visible) svg,:root[data-rail] .is-shut .list-h-b svg{opacity:1;}
+:root[data-rail] .is-shut .list-h-b svg{transform:rotate(-90deg);}   /* the chevron sits in the margin, so the count never moves */
+:root[data-rail] .list-group.is-shut .list-h{margin-bottom:0;}
+:root[data-rail] .list-rows{display:flex;flex-direction:column;}
+
+:root[data-rail] .lr-rail{display:grid;place-items:center;width:var(--lr-rail);height:40px;}
+:root[data-rail] .lr-main{display:flex;flex-direction:column;gap:1px;min-width:0;margin:0 0 0 -6px;padding:5px 6px;border:0;border-radius:var(--r-sm);background:none;color:inherit;font:inherit;text-align:left;}
+:root[data-rail] button.lr-main{cursor:pointer;transition:background-color 100ms var(--ease);}
+:root[data-rail] button.lr-main:hover{background:var(--hover);}
+:root[data-rail] button.lr-main:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+:root[data-rail] .lr-t{min-width:0;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+:root[data-rail] .lr-m{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .lr-end{display:flex;align-items:center;gap:8px;padding-top:4px;}
+:root[data-rail] .lr-fig{font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums;}
+:root[data-rail] .list-more{margin-top:4px;}
+/* The list's head: the sentence, and at its right Select all and the list's ⋯. */
+:root[data-rail] .list-head{display:flex;align-items:flex-start;gap:8px;margin-bottom:4px;}
+:root[data-rail] .list-head .list-sentence{flex:1;min-width:0;margin:0;}
+:root[data-rail] .list-tools{flex:none;display:flex;align-items:center;gap:8px;}
+:root[data-rail] .list-tools .rc-pop > .menu{min-width:220px;}
+/* A row's states. */
+:root[data-rail] .list-row.is-unread > .lr-main .lr-t{font-weight:500;}
+:root[data-rail] .list-row.is-current > .lr-main{background:var(--field);}
+:root[data-rail] .list-row.is-holds > .lr-main{background:var(--hover);}
+:root[data-rail] .list-row:has(.rc-pop > .menu){position:relative;z-index:1;}   /* list.row-more: an open ⋯ stays over the rows after it, a breathing row's own layer too */
+:root[data-rail] .lr-check{display:grid;place-items:center;width:100%;height:100%;cursor:pointer;}
+:root[data-rail] .lr-check input{margin:0;cursor:pointer;accent-color:var(--ink);}
+:root[data-rail] .lr-kind{display:grid;place-items:center;color:var(--ink-2);}
+:root[data-rail] .lr-origin{display:inline-flex;vertical-align:-1px;margin-right:6px;color:var(--ink-2);}
+/* What sits under a row, in its text column: a group's members, a run's stacked rounds. */
+:root[data-rail] .lr-after{grid-column:2 / -1;min-width:0;}
+:root[data-rail] .lr-members > .list-rows{margin-left:0;}
+:root[data-rail] .lr-round-line{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;width:100%;padding:0;border:0;background:none;color:var(--ink-2);font:inherit;text-align:left;cursor:pointer;}
+:root[data-rail] .lr-round-line:hover .lr-round-end{color:var(--ink);} :root[data-rail] .lr-round-line:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+:root[data-rail] .lr-round-end{display:inline-flex;align-items:center;gap:2px;flex:none;font-size:var(--fs-meta);white-space:nowrap;}
+:root[data-rail] .lr-rounds > .list-rows{margin-left:0;grid-template-columns:0 minmax(0,1fr) fit-content(45%);column-gap:0;}
+:root[data-rail] .lr-rounds .lr-t{font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .lr-rounds > .btn{padding-left:0;}
+/* The selection bar at the top of the list, in sight while it scrolls (list.select-bar); the list's editor, under what opened it. */
+:root[data-rail] .list-select{position:sticky;top:0;z-index:4;margin:0 0 8px;background:var(--bg);}
+:root[data-rail] .list-select .runs-bulk{position:static;display:block;padding:6px 0;border-top:0;border-bottom:1px solid var(--line);background:transparent;}
+:root[data-rail] .runs-bulk-top{display:flex;align-items:center;gap:12px;min-height:28px;}
+:root[data-rail] .runs-bulk-top .runs-bulk-n{margin:0 auto 0 0;font-size:var(--fs-meta);}
+:root[data-rail] .runs-bulk-acts{display:flex;flex-wrap:wrap;gap:4px 6px;margin-top:6px;}
+:root[data-rail] .bar-list .list-select{background:var(--side-bg);}
+:root[data-rail] :is(.bar-list,.pz-popover .panel-body):has(.list-select){--fade-t:0px!important;}   /* the fade must not eat the bar */
+:root[data-rail] .list-pop{position:fixed;z-index:46;}
+:root[data-rail] #side-rail .bar-list:has(.list-pop){-webkit-mask-image:none;mask-image:none;}   /* the bar's fades would cut a picker off at the bar and leave it under the page */
+:root[data-rail] .list-pop .menu{max-height:min(420px,70vh);overflow-y:auto;}
+:root[data-rail] .list-pop .rc-list-ed{max-width:calc(100vw - 32px);}
+:root[data-rail] .list-dlg-t{margin:0 0 8px;color:var(--ink-2);}
+/* One rail, one end (docs/rail/components.md): a list's rows share one grid, so every end has one left and one right edge,
+   as wide as the widest end, capped; the title gives way first. */
+:root[data-rail] .list-rows{--lr-rail:var(--rail,20px);--lr-gap:var(--gap,12px);display:grid;grid-template-columns:var(--lr-rail) minmax(0,1fr) repeat(4,auto);column-gap:var(--lr-gap);margin-left:calc(-1 * (var(--lr-rail) + var(--lr-gap)));}
+:root[data-rail] .list-rows > .list-row{grid-column:1 / -1;grid-template-columns:subgrid;margin-left:0;}
+:root[data-rail] .list-rows > .list-row > .lr-end{grid-column:3 / -1;display:grid;grid-template-columns:subgrid;justify-items:end;align-items:center;gap:0 var(--lr-gap);}
+/* Every row's end has the same four columns, so a list's facts, actions, switches and ⋯ each stand on one edge, whichever a row has. */
+:root[data-rail] .list-rows > .list-row > .lr-end > .lr-fig,:root[data-rail] .list-rows > .list-row > .lr-end > .kind-chip{grid-column:1;grid-row:1;}
+:root[data-rail] .list-rows > .list-row > .lr-end > .btn,:root[data-rail] .list-rows > .list-row > .lr-end > .tip-wrap{grid-column:2;grid-row:1;}
+/* Two actions in one row: the first takes the column before. */
+:root[data-rail] .list-rows > .list-row > .lr-end > :is(.btn,.tip-wrap):has(+ :is(.btn,.tip-wrap)){grid-column:1;}
+:root[data-rail] .list-rows > .list-row > .lr-end > .switch{grid-column:3;grid-row:1;}
+:root[data-rail] .list-rows > .list-row > .lr-end > .rc-pop{grid-column:4;grid-row:1;}
+:root[data-rail] .list-rows > .list-row > .lr-end > :is(.btn,.tip-wrap):last-child{grid-column:4;}   /* a row's one action with no ⋯ ends where the others' ⋯ ends: one end edge */
+:root[data-rail] .list-rows > .list-row > .lr-main{grid-column:2;}
+
+/* Table: divided rows, tabular figures, no box per row. */
+:root[data-rail] .rt-wrap{min-width:0;}
+:root[data-rail] .rt-wrap > .rt{display:table;width:100%;border-collapse:collapse;font-size:var(--fs-meta);}
+:root[data-rail] .rt-c{padding:6px 12px 6px 0;text-align:left;border-bottom:1px solid var(--line);color:var(--ink);font-weight:400;}
+:root[data-rail] th.rt-c{color:var(--ink-2);font-weight:500;}
+:root[data-rail] .rt-c.is-num{text-align:right;font-variant-numeric:tabular-nums;}
+:root[data-rail] .rt-c:last-child{padding-right:0;}
+
+:root[data-rail] .rt-detail{display:none;color:var(--ink-2);}
+@container (max-width: 520px){:root[data-rail] .rt-c.is-wide{display:none;}:root[data-rail] .rt-detail{display:block;}}
+:root[data-rail] .pd-wide{flex:1 0 100%;}
+:root[data-rail] .pd-wide .textarea{width:100%;font-size:var(--fs-body);}
+
+/* CopyButton: the tick takes the copy icon's place; the button's width never changes. */
+:root[data-rail] .rail-copy{position:relative;}
+:root[data-rail] .rail-copy-tick{display:none;color:var(--green);}
+:root[data-rail] .rail-copy.is-copied > svg{display:none;}
+:root[data-rail] .rail-copy.is-copied .rail-copy-tick{display:inline-flex;}
+
+/* WorkflowGraph: a lane per stage, a node per step; wraps, never scrolls sideways. */
+:root[data-rail] .wg{min-width:0;}
+:root[data-rail] .wg-stages{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:16px;}
+:root[data-rail] .wg-stage{display:flex;flex-direction:column;gap:8px;min-width:0;}
+:root[data-rail] .wg-stage + .wg-stage{border-top:1px solid var(--line);padding-top:16px;}
+:root[data-rail] .wg-l{font:600 var(--fs-meta)/var(--lh-title) var(--sans);color:var(--ink-2);}
+
+:root[data-rail] .wg-node:hover{background:var(--hover);}
+:root[data-rail] .wg-node:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+:root[data-rail] .wg-node.is-open{background:var(--row-selected);border-color:var(--ink-3);}
+:root[data-rail] .wg-node.is-next{color:var(--ink-2);}
+
+:root[data-rail] .wg-name{min-width:0;overflow-wrap:anywhere;}
+:root[data-rail] .wg-pip{flex:none;width:6px;height:6px;border-radius:var(--r-xs);background:var(--amber);}
+:root[data-rail] .wg-loop{flex:none;display:inline-flex;align-items:center;gap:3px;color:var(--ink-2);font-variant-numeric:tabular-nums;}
+:root[data-rail] .wg-meta{flex:none;color:var(--ink-2);font-variant-numeric:tabular-nums;}
+:root[data-rail] .wg.is-small .wg-node{min-height:28px;font-size:var(--fs-caption);}
+:root[data-rail] .wg.is-large .wg-node{min-height:44px;font-size:var(--fs-body);padding-inline:12px 16px;}
+:root[data-rail] .wg-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+:root[data-rail] .wg-drawer{display:flex;flex-direction:column;gap:8px;min-width:0;border-top:1px solid var(--line);padding-top:12px;}
+:root[data-rail] .wg-drawer-h{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:var(--fs-meta);color:var(--ink);font-weight:600;}
+:root[data-rail] .wg-drawer-h > span:last-child{display:flex;gap:8px;}
+/* LogLines */
+
+:root[data-rail] .lg-row{display:grid;grid-template-columns:max-content minmax(0,120px) minmax(0,1fr);column-gap:12px;}
+:root[data-rail] .lg-t{font-variant-numeric:tabular-nums;}
+:root[data-rail] .lg-from{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+:root[data-rail] .lg-text{color:var(--ink);overflow-wrap:anywhere;min-width:0;}
+:root[data-rail] .lg-row.is-warn .lg-text{color:var(--amber-ink-strong);}
+:root[data-rail] .lg-row.is-error .lg-text{color:var(--red-ink-strong,var(--red));}
+@container (max-width: 520px){:root[data-rail] .lg-row{grid-template-columns:max-content minmax(0,1fr);}:root[data-rail] .lg-text{grid-column:1 / -1;padding-bottom:4px;}}
+/* Wave 2 Shaping: KindMark and GitMark (kind-mark.mjs): one mark for what it is and how it stands; it breathes while work happens. */
+:root[data-rail] .kind-mark{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;width:var(--km,20px);height:var(--km,20px);color:var(--ink-2);}   /* ds-ok: a size or count the component sets on itself */
+:root[data-rail] .kind-mark .km-ring{position:absolute;inset:0;}
+:root[data-rail] .kind-mark.is-wait,:root[data-rail] .kind-mark.is-idle,:root[data-rail] .kind-mark.is-pause,:root[data-rail] .kind-mark.is-stop,:root[data-rail] .kind-mark.is-closed,:root[data-rail] .kind-mark.is-done{color:var(--ink-2);}   /* look.alert-ladder: Normal is off */
+:root[data-rail] .kind-mark.is-ok{color:var(--advisory);}   /* look.alert-ladder: Advisory, one token on every surface */
+:root[data-rail] .rc-rail:has(> .kind-mark.is-fail:not(.is-outline)) ~ .rc-word{color:var(--red);} :root[data-rail] .rc-rail:has(> .kind-mark:is(.is-ask,.is-act)) ~ .rc-word{color:var(--amber);} :root[data-rail] .rc-rail:has(> .kind-mark:is(.is-ok,.is-merged)) ~ .rc-word{color:var(--advisory);} :root[data-rail] .rc-rail:has(> .kind-mark:is(.is-run,.is-wait,.is-pause,.is-stop,.is-done,.is-closed,.is-idle)) ~ .rc-word{color:var(--ink-2);}   /* the state word, per the ladder */
+:root[data-rail] .kind-mark.is-run{color:var(--ink-2);animation:wr-pulse 1.6s ease-in-out infinite;}   /* running: ink; its ring and breath say it works */
+:root[data-rail] .kind-mark.is-still{animation:none;}   /* a live mark that holds still: its ring says it runs; one breath per tree, three per list */
+:root[data-rail] .kind-mark.is-ask,:root[data-rail] .kind-mark.is-act{color:var(--amber);}
+:root[data-rail] .kind-mark.is-fail{color:var(--red);}
+:root[data-rail] .kind-mark.is-fail{background:var(--red);border-radius:50%;} :root[data-rail] .kind-mark.is-fail > svg:not(.km-ring){color:var(--on-signal);} :root[data-rail] .kind-mark.is-fail .km-ring{display:none;}   /* Warning: the only filled mark */
+:root[data-rail] .kind-mark.is-fail.is-outline{background:none;color:var(--red);} :root[data-rail] .kind-mark.is-fail.is-outline > svg:not(.km-ring){color:var(--red);} :root[data-rail] .kind-mark.is-fail.is-outline .km-ring{display:block;}   /* a parent's ring in the Warning's colour; the task under it holds the fill */
+:root[data-rail] .kind-mark.is-adv{color:var(--ink);}   /* Advisory: full ink, no hue */
+:root[data-rail] .list-row:has(> .lr-rail .is-adv) .lr-t{font-weight:500;}
+:root[data-rail] .kind-mark.is-landed{color:var(--green);}   /* just landed, until seen */
+:root[data-rail] .kind-mark.is-merged{color:var(--ink);}   /* merged: full ink, no ring */
+@media (prefers-reduced-motion: reduce){:root[data-rail] .kind-mark.is-run{animation:none;}}
+:root[data-rail] .git-mark{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;color:var(--ink-2);}
+:root[data-rail] .git-mark .is-branch,:root[data-rail] .git-mark .is-draft,:root[data-rail] .git-mark .is-closed{color:var(--ink-3);}
+:root[data-rail] .git-mark .is-pass{color:var(--ink-2);}:root[data-rail] .git-mark .is-fail{color:var(--red);}:root[data-rail] .git-mark .is-conflict{color:var(--amber);}:root[data-rail] .git-mark .is-merged{color:var(--ink);}
+:root[data-rail] .git-mark.is-watch.is-fix{animation:wr-pulse 1.1s ease-in-out infinite;}
+:root[data-rail] .git-mark.is-watch.is-fix{animation:wr-pulse 1.1s ease-in-out infinite;}
+@media (prefers-reduced-motion: reduce){:root[data-rail] .git-mark.is-watch.is-fix{animation:none;}}
+
+/* The rounded dependency tree: what hangs under a row in a list. */
+:root[data-rail] .lr-tree{position:relative;margin-left:calc(-1 * var(--lr-gap,12px) + 2px);}
+:root[data-rail] .lr-tree > .list-rows{margin-left:0!important;}
+:root[data-rail] .lr-tree > .list-rows > .list-row{position:relative;margin-left:0;padding-left:14px;--lr-gap:8px;}
+:root[data-rail] .lr-tree > .list-rows > .list-row > .lr-rail::before{content:"";position:absolute;left:0;top:-5px;width:14px;height:25px;border-left:1.5px solid var(--step-done);border-bottom:1.5px solid var(--step-done);border-bottom-left-radius:9px;}
+:root[data-rail] .lr-tree > .list-rows > .list-row:not(:last-child) > .lr-rail::after{content:"";position:absolute;left:0;top:0;bottom:0;border-left:1.5px solid var(--step-done);}
+
+/* A row whose state just changed: its mark pulses once (list.news). */
+@keyframes km-news{0%{transform:scale(1);}30%{transform:scale(1.35);}100%{transform:scale(1);}}
+:root[data-rail] .kind-mark.is-news,:root[data-rail] .status-dot.is-news{animation:km-news var(--motion-flash) var(--ease) 1;}
+@media (prefers-reduced-motion: reduce){:root[data-rail] .kind-mark.is-news,:root[data-rail] .status-dot.is-news{animation:none;}}
+/* look.alert-ladder: the state word on a card wears its level's colour; a list keeps it on the mark */
+:root[data-rail] .tp-kicker:has(> .kind-mark.is-fail) > span:not(.kind-mark):not(.tp-menu){color:var(--red);}
+:root[data-rail] .tp-kicker:has(> .kind-mark:is(.is-ask,.is-act)) > span:not(.kind-mark):not(.tp-menu){color:var(--amber);}
+:root[data-rail] .topnav-badge[data-tone="need"]{background:var(--amber);color:var(--on-signal);}
+:root[data-rail] .topnav-badge[data-tone="warn"]{background:var(--red);color:var(--on-signal);}
+
+/* a row that needs you: a slim wash, curved ends, a little fade at each side */
+:root[data-rail] .list-row:has(> .lr-rail > .kind-mark.is-breathe)::before{inset:1px -4px;-webkit-mask-image:linear-gradient(to right,transparent,#000 10px,#000 calc(100% - 10px),transparent);mask-image:linear-gradient(to right,transparent,#000 10px,#000 calc(100% - 10px),transparent);border-radius:var(--r-md);}
+
+/* list.needs-wash: every row that needs you has its wash, breathing or not (only three breathe); Caution sits lighter than Warning */
+:root[data-rail] .list-row:has(> .lr-rail > :is(.kind-mark.is-ask,.kind-mark.is-act,.kind-mark.is-fail):not(.is-adv)){position:relative;}
+:root[data-rail] .list-row:has(> .lr-rail > :is(.kind-mark.is-ask,.kind-mark.is-act,.kind-mark.is-fail):not(.is-adv))::before{content:'';position:absolute;grid-column:1 / -1;grid-row:1;inset:1px -4px;-webkit-mask-image:linear-gradient(to right,transparent,#000 10px,#000 calc(100% - 10px),transparent);mask-image:linear-gradient(to right,transparent,#000 10px,#000 calc(100% - 10px),transparent);border-radius:var(--r-md);z-index:-1;pointer-events:none;background:light-dark(color-mix(in srgb,var(--amber) 7%,transparent),color-mix(in srgb,var(--amber) 10%,transparent));}
+:root[data-rail] .list-row:has(> .lr-rail > .kind-mark.is-fail:not(.is-adv))::before{background:light-dark(color-mix(in srgb,var(--red) 11%,transparent),color-mix(in srgb,var(--red) 17%,transparent));}

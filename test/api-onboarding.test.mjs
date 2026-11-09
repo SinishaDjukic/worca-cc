@@ -114,3 +114,36 @@ test('DELETE of the LAST workspace clears workspaceGuideSeen; deleting one of tw
     } },
   ]);
 });
+
+test('stillhetAsked (Stillhet, D2): GET false on a clean HOME; POST stores only onboarding; non-booleans 400; unknown stored keys load', async () => {
+  const { settingsFile } = await import('../src/core/settings.mjs');
+  const { readFileSync, writeFileSync } = await import('node:fs');
+  await checkRows([
+    { name: 'a clean HOME reads stillhetAsked false; {stillhetAsked:"yes"} is a 400', run: async () => {
+      assert.equal((await (await get()).json()).stillhetAsked, false);
+      const r = await post({ stillhetAsked: 'yes' });
+      assert.equal(r.status, 400);
+      assert.match((await r.json()).error, /onboarding\.stillhetAsked/);
+    } },
+    { name: 'POST {stillhetAsked:true} answers 200; every settings.json key but onboarding is byte-equal (R-sec-1)', run: async () => {
+      const before = JSON.parse(readFileSync(settingsFile(), 'utf8'));
+      const r = await post({ stillhetAsked: true });
+      assert.equal(r.status, 200);
+      assert.equal((await r.json()).stillhetAsked, true);
+      const after = JSON.parse(readFileSync(settingsFile(), 'utf8'));
+      const { onboarding: _a, ...restBefore } = before;
+      const { onboarding: _b, ...restAfter } = after;
+      assert.equal(JSON.stringify(restAfter), JSON.stringify(restBefore));
+      assert.equal(after.onboarding.stillhetAsked, true);
+    } },
+    { name: 'unknown onboarding.futureSeen and flags.futureFlag load (an old build reading a new settings.json)', run: async () => {
+      const s = JSON.parse(readFileSync(settingsFile(), 'utf8'));
+      writeFileSync(settingsFile(), JSON.stringify({ ...s, onboarding: { ...s.onboarding, futureSeen: true }, flags: { ...(s.flags || {}), futureFlag: true } }));
+      const r = await get();
+      assert.equal(r.status, 200);
+      const j = await r.json();
+      assert.equal('futureSeen' in j, false);
+      assert.equal(j.stillhetAsked, true);
+    } },
+  ]);
+});

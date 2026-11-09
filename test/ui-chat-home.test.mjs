@@ -442,13 +442,19 @@ test('boot: until the runs are known the chat list alone never picks the tab —
   s.home.destroy();
   const t = setup({ runs: { ...RUNS(), ready: false }, threads: [] });
   t.home.destroy();
-  const home = createChatHome({ doc: t.doc, host: t.host, heroSlot: t.doc.querySelector('[data-chat-hero-slot]'), runsWaitMs: 30, deps: {
+  // The cap runs on the injected clock (as the timers test does), so load cannot fire it before the first assert.
+  const waits = [];
+  const timers = { setInterval: () => 0, clearInterval() {}, setTimeout: (fn, ms) => { waits.push([fn, ms]); return waits.length; }, clearTimeout() {} };
+  const home = createChatHome({ doc: t.doc, host: t.host, heroSlot: t.doc.querySelector('[data-chat-hero-slot]'), runsWaitMs: 30, timers, deps: {
     runs: () => ({ ...RUNS(), ready: false }), threads: async () => [], workflows: async () => ({ list: [], portsFn: null }),
     flags: async () => ({ scripts: true, tasks: false }), threadForRun: async () => null, openThread() {}, openRunPanel() {},
     setIntent() {}, prefill() {}, navigate() {}, level: () => 'expert' } });
   await settle(t.window);
   assert.equal(selected(t.doc), null);
-  await new Promise((r) => t.window.setTimeout(r, 60));
+  const cap = waits.find(([, ms]) => ms === 30);
+  assert.ok(cap, 'the cap is armed on the injected clock');
+  cap[0]();
+  await settle(t.window);
   assert.equal(selected(t.doc), 'workflows', 'no socket: after the cap the chats decide as before');
   home.destroy();
 });

@@ -134,6 +134,7 @@ be skipped by forgetting it.
 | Element | Level |
 |---|---|
 | New pipeline, Getting started, Runs, Projects | S |
+| Stillhet question under the top bar | S |
 | Build: the group label, Workflows (the full-screen editor; agents and scripts live in its Library) | S |
 | Build: Requirements (behind the requirements flag) | S |
 | Runs counts: the amber Needs-you number (no symbol), else the live count as a grey number | S — each hidden at zero |

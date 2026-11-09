@@ -1,23 +1,22 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-rail data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Worca Rail · Prototype</title>
 <!-- Worca's own stylesheet; the two small layers below are the proposal (canvas: Run card redesign). -->
 <link rel="stylesheet" href="app.css">
-<link rel="stylesheet" href="design-system/rail-look.css">
-<link rel="stylesheet" href="design-system/rail.css">
+<link rel="stylesheet" href="design-system/rail-shell.css">
 <style>
   @font-face{font-family:'Poppins';font-weight:400;src:url('../../../ui/public/fonts/poppins-latin-400-normal.woff2') format('woff2');}
   @font-face{font-family:'Poppins';font-weight:500;src:url('../../../ui/public/fonts/poppins-latin-500-normal.woff2') format('woff2');}
   @font-face{font-family:'Poppins';font-weight:600;src:url('../../../ui/public/fonts/poppins-latin-600-normal.woff2') format('woff2');}
   @font-face{font-family:'Poppins';font-weight:700;src:url('../../../ui/public/fonts/poppins-latin-700-normal.woff2') format('woff2');}
   @font-face{font-family:'JetBrains Mono';font-weight:400;src:url('../../../ui/public/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');}
-  .mk-wrap{max-width:672px;margin:0 auto;}
-  .mk-bar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;margin-bottom:24px;}
-  .mk-bar .seg{flex-wrap:wrap;max-width:100%;}
-  @media (max-width:600px){body.rc-board{padding:16px;}}
+  :root[data-rail] .mk-wrap{max-width:672px;margin:0 auto;}
+  :root[data-rail] .mk-bar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;margin-bottom:24px;}
+  :root[data-rail] .mk-bar .seg{flex-wrap:wrap;max-width:100%;}
+  @media (max-width:600px){:root[data-rail] body.rc-board{padding:16px;}}
 </style>
 </head>
 <body class="rc-board">

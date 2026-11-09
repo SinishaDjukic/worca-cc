@@ -16,18 +16,23 @@ test('renderIndexHtml with flags', async () => {
       assert.ok(shell.indexOf(FLAG_GATES_ANCHOR) > shell.indexOf('href="/style.css"'));
     } },
     { name: 'on: data-flags lists it, no gate rule for it', run: () => {
-      const out = renderIndexHtml(mini, 'dark', 'simple', { flagsDemo: true, commandSummaries: true, runLabels: true, smartRunNaming: true, requirements: true, runTelemetry: true, gitAutomations: true, sessionGroups: true, ticketUpdates: true, shapeRequirements: true });
-      assert.match(out, /<html lang="en" data-theme="dark" data-level="simple" data-flags="flagsDemo commandSummaries runLabels smartRunNaming requirements runTelemetry gitAutomations sessionGroups ticketUpdates shapeRequirements">/);
+      const out = renderIndexHtml(mini, 'dark', 'simple', { flagsDemo: true, commandSummaries: true, runLabels: true, smartRunNaming: true, requirements: true, runTelemetry: true, gitAutomations: true, sessionGroups: true, ticketUpdates: true, shapeRequirements: true, rail: true });
+      assert.match(out, /<html lang="en" data-theme="dark" data-level="simple" data-flags="flagsDemo commandSummaries runLabels smartRunNaming requirements runTelemetry gitAutomations sessionGroups ticketUpdates shapeRequirements rail" data-rail>/);
       assert.match(out, /<style id="flag-gates"><\/style>/);
     } },
     { name: 'off: empty data-flags and one rule per off flag', run: () => {
-      const out = renderIndexHtml(mini, 'light', undefined, { flagsDemo: false, commandSummaries: false, runLabels: false, smartRunNaming: false, requirements: false, runTelemetry: false, gitAutomations: false, sessionGroups: false, ticketUpdates: false, shapeRequirements: false });
+      const out = renderIndexHtml(mini, 'light', undefined, { flagsDemo: false, commandSummaries: false, runLabels: false, smartRunNaming: false, requirements: false, runTelemetry: false, gitAutomations: false, sessionGroups: false, ticketUpdates: false, shapeRequirements: false, rail: false });
       assert.match(out, /<html lang="en" data-theme="light" data-flags="">/);
-      assert.match(out, /<style id="flag-gates">\[data-flag~="flagsDemo"\]\{display:none!important\}\n\[data-flag~="commandSummaries"\]\{display:none!important\}\n\[data-flag~="runLabels"\]\{display:none!important\}\n\[data-flag~="smartRunNaming"\]\{display:none!important\}\n\[data-flag~="requirements"\]\{display:none!important\}\n\[data-flag~="runTelemetry"\]\{display:none!important\}\n\[data-flag~="gitAutomations"\]\{display:none!important\}\n\[data-flag~="sessionGroups"\]\{display:none!important\}\n\[data-flag~="ticketUpdates"\]\{display:none!important\}\n\[data-flag~="shapeRequirements"\]\{display:none!important\}<\/style>/);
+      assert.match(out, /<style id="flag-gates">\[data-flag~="flagsDemo"\]\{display:none!important\}\n\[data-flag~="commandSummaries"\]\{display:none!important\}\n\[data-flag~="runLabels"\]\{display:none!important\}\n\[data-flag~="smartRunNaming"\]\{display:none!important\}\n\[data-flag~="requirements"\]\{display:none!important\}\n\[data-flag~="runTelemetry"\]\{display:none!important\}\n\[data-flag~="gitAutomations"\]\{display:none!important\}\n\[data-flag~="sessionGroups"\]\{display:none!important\}\n\[data-flag~="ticketUpdates"\]\{display:none!important\}\n\[data-flag~="shapeRequirements"\]\{display:none!important\}\n\[data-flag~="rail"\]\{display:none!important\}<\/style>/);
     } },
     { name: 'flags omitted ⇒ byte-for-byte what it rendered before', run: () => {
       assert.equal(renderIndexHtml(mini, 'system'), mini);
       assert.equal(renderIndexHtml(mini, 'dark', 'expert'), mini.replace(INDEX_THEME_ANCHOR, '<html lang="en" data-theme="dark" data-level="expert">'));
+    } },
+    { name: 'rail (Stillhet, D4): on adds a bare data-rail after data-flags; off or absent adds none', run: () => {
+      assert.match(renderIndexHtml(mini, 'dark', 'simple', { rail: true }, { git: true }), /<html lang="en" data-theme="dark" data-level="simple" data-flags="rail" data-rail data-git="on">/);
+      assert.doesNotMatch(renderIndexHtml(mini, 'dark', 'simple', { rail: false }), /data-rail/);
+      assert.doesNotMatch(renderIndexHtml(mini, 'dark', 'simple', { flagsDemo: true }), /data-rail/);
     } },
     { name: 'flags given but the gates anchor is gone: throws', run: () => {
       assert.throws(() => renderIndexHtml(`${INDEX_THEME_ANCHOR}<head></head>`, 'dark', 'simple', {}), /flag-gates anchor missing/);

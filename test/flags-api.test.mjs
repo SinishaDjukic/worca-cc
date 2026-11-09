@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { checkRows } from './helpers/rows.mjs';
-import { createFlags, FlagError } from '../src/core/flags.mjs';
+import { createFlags, FlagError, setFlags } from '../src/core/flags.mjs';
 
 const fx = { title: 'T', description: 'D', owner: 'o', since: '1.0.0', added: '2026-10-11', reviewBy: '2026-12-01' };
 const REG = [
@@ -23,6 +23,30 @@ function harness(env = '') {
   f.events.on('changed', (m) => frames.push(m));
   return { f, frames, stored: () => stored };
 }
+
+test('createFlags: a rail write marks the question asked inside the write queue; a failing mark is retried once and logged', async () => {
+  const reg = [...REG, { ...fx, key: 'rail', stage: 'experimental', default: false, requires: [] }];
+  const log = [];
+  let fail = 0;
+  const f = createFlags({ registry: reg, env: () => '', read: () => ({}), warn: () => {},
+    write: async (m) => { log.push(`write ${Object.keys(m).join(',')}`); await new Promise((r) => setTimeout(r, 5)); },
+    markAsked: async () => { log.push('mark'); if (fail) { fail -= 1; throw new Error('disk full'); } } });
+  let asked = 0;
+  f.events.on('asked', () => { asked += 1; });
+  await Promise.all([f.set({ rail: true }), f.set({ baseFlag: true })]);
+  assert.deepEqual(log, ['write rail', 'mark', 'write baseFlag'], 'the next write waits for the mark');
+  assert.equal(asked, 1);
+  const warns = [];
+  const warn = console.warn;
+  console.warn = (...a) => warns.push(a.join(' '));
+  try {
+    fail = 2; log.length = 0;
+    assert.equal((await f.set({ rail: false })).find((x) => x.key === 'rail').on, false, 'the flag write stands');
+    assert.deepEqual(log, ['write ', 'mark', 'mark']);
+    assert.equal(warns.filter((w) => /Stillhet/.test(w)).length, 1);
+    assert.equal(asked, 1, 'no frame for a mark that failed');
+  } finally { console.warn = warn; }
+});
 
 test('createFlags: set validates, cascades requires, stores only non-defaults, emits', async () => {
   await checkRows([
@@ -131,7 +155,7 @@ test('HTTP: GET shape, PATCH true/false/null, 400/409, the flags frame, hello an
     await checkRows([
       { name: 'hello carries flags', run: async () => {
         await waitFor(() => msgs.some((m) => m.type === 'hello'));
-        assert.deepEqual(msgs.find((m) => m.type === 'hello').flags, { flagsDemo: false, commandSummaries: true, runLabels: false, smartRunNaming: false, requirements: false, runTelemetry: false, gitAutomations: false, sessionGroups: false, ticketUpdates: false, shapeRequirements: false });
+        assert.deepEqual(msgs.find((m) => m.type === 'hello').flags, { flagsDemo: false, commandSummaries: true, runLabels: false, smartRunNaming: false, requirements: false, runTelemetry: false, gitAutomations: false, sessionGroups: false, ticketUpdates: false, shapeRequirements: false, rail: false });
       } },
       { name: 'GET /api/flags: the documented shape, plus docsUrl', run: async () => {
         const j = await (await fetch(`${base}/api/flags`)).json();
@@ -145,7 +169,7 @@ test('HTTP: GET shape, PATCH true/false/null, 400/409, the flags frame, hello an
         assert.equal((await r.json()).flags.find((f) => f.key === 'flagsDemo').on, true);
         assert.deepEqual(await stored(), { flagsDemo: true });
         await waitFor(() => msgs.some((m) => m.type === 'flags'));
-        assert.deepEqual(msgs.filter((m) => m.type === 'flags').at(-1), { type: 'flags', flags: { flagsDemo: true, commandSummaries: true, runLabels: false, smartRunNaming: false, requirements: false, runTelemetry: false, gitAutomations: false, sessionGroups: false, ticketUpdates: false, shapeRequirements: false } });
+        assert.deepEqual(msgs.filter((m) => m.type === 'flags').at(-1), { type: 'flags', flags: { flagsDemo: true, commandSummaries: true, runLabels: false, smartRunNaming: false, requirements: false, runTelemetry: false, gitAutomations: false, sessionGroups: false, ticketUpdates: false, shapeRequirements: false, rail: false } });
         assert.match(await (await fetch(`${base}/`)).text(), /data-flags="flagsDemo commandSummaries"/);
         assert.equal((await (await fetch(`${base}/api/settings`)).json()).flags.flagsDemo, true);
       } },
@@ -197,6 +221,62 @@ test('HTTP: GET shape, PATCH true/false/null, 400/409, the flags frame, hello an
         assert.equal(mixed.status, 400);
         assert.equal(JSON.parse(await readFile(settingsFile(), 'utf8')).uiLevel, undefined, 'pre-asserted: uiLevel was not half-applied');
         await patch({ flagsDemo: null });
+      } },
+      { name: 'rail (Stillhet, D3): a clean HOME lists it off by default; every writer marks the question asked', run: async () => {
+        const row = (await (await fetch(`${base}/api/flags`)).json()).flags.find((f) => f.key === 'rail');
+        assert.deepEqual([row.title, row.stage, row.on, row.source, row.locked], ['Stillhet', 'experimental', false, 'default', false]);
+        const asked = async () => (await (await fetch(`${base}/api/onboarding`)).json()).stillhetAsked;
+        const unask = () => fetch(`${base}/api/onboarding`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ stillhetAsked: false }) });
+        const post = (b) => fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) });
+        assert.equal(await asked(), false);
+        for (const [name, write] of [
+          ['a no-op PATCH {rail:false} while off', () => patch({ rail: false })],
+          ['PATCH {rail:true}', () => patch({ rail: true })],
+          ['PATCH {rail:false}', () => patch({ rail: false })],
+          ['PATCH {rail:null}', () => patch({ rail: null })],
+          ['POST /api/settings {flags:{rail:true}}', () => post({ flags: { rail: true } })],
+        ]) {
+          await unask();
+          assert.equal((await write()).status, 200, name);
+          assert.equal(await asked(), true, name);
+        }
+        await unask();
+        await setFlags({ rail: false });   // the CLI's path (src/cli/worca-cc.mjs)
+        assert.equal(await asked(), true, 'in-process setFlags');
+        await patch({ rail: null });
+      } },
+      { name: 'rail: refusals store nothing (settings.json byte-equal)', run: async () => {
+        const post = (b) => fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) });
+        await fetch(`${base}/api/onboarding`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ stillhetAsked: false }) });
+        const raw = () => readFile(settingsFile(), 'utf8');
+        const was = await raw();
+        assert.equal((await patch({ rail: 'yes' })).status, 400);
+        assert.equal((await post({ flags: { rail: 'yes' } })).status, 400);
+        assert.equal((await patch({ rail: true, ghostFlag: true })).status, 400);
+        process.env.WORCA_FLAGS = 'rail';
+        try {
+          const r = await patch({ rail: false });
+          assert.equal(r.status, 409);
+          assert.equal((await r.json()).code, 'locked');
+          // POST /api/settings reports every refusal as a 400 on field flags (asSettingsField), a lock too.
+          const p = await post({ flags: { rail: false } });
+          assert.equal(p.status, 400);
+          assert.equal((await p.json()).field, 'flags');
+        } finally { delete process.env.WORCA_FLAGS; }
+        assert.equal(await raw(), was);
+      } },
+      { name: 'rail: racing writers keep every key; the mark broadcasts onboarding-changed', run: async () => {
+        await fetch(`${base}/api/onboarding`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ stillhetAsked: false }) });
+        const n = msgs.filter((m) => m.type === 'onboarding-changed').length;
+        const r = await Promise.all([setFlags({ rail: true }), setFlags({ flagsDemo: true }),
+          fetch(`${base}/api/onboarding`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hidden: true }) })]);
+        assert.equal(r[2].status, 200);
+        const file = JSON.parse(await readFile(settingsFile(), 'utf8'));
+        assert.deepEqual(file.flags, { rail: true, flagsDemo: true });
+        assert.deepEqual([file.onboarding.stillhetAsked, file.onboarding.hidden], [true, true]);
+        await waitFor(() => msgs.filter((m) => m.type === 'onboarding-changed').length >= n + 2);   // the POST's and the mark's
+        await setFlags({ rail: null, flagsDemo: null });
+        await fetch(`${base}/api/onboarding`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hidden: false }) });
       } },
       { name: 'POST /api/settings {flags: {}} is a no-op: no frame, root kept', run: async () => {
         const n = msgs.filter((m) => m.type === 'flags').length;

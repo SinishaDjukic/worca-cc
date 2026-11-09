@@ -12,7 +12,7 @@ import { writeAppCss } from './app-css.mjs';
 import { writeComponentsJs } from './components-js.mjs';
 import { writeTodayJs } from './today-js.mjs';
 writeAppCss(); writeComponentsJs(); writeTodayJs();
-const URL_ = 'file://' + fileURLToPath(new URL('../index.html', import.meta.url));
+const URL_ = process.argv[2] || 'file://' + fileURLToPath(new URL('../index.html', import.meta.url));   // an optional URL: the app's, from slice 2
 global.window = {}; await import('../settings/settings-model.js');
 const SECTIONS = window.SettingsModel.GROUPS.flatMap((g) => g.items);
 // Every route, read from the pages themselves: a new capture, run case or Settings section is checked without touching this file.
@@ -142,7 +142,9 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   }
   // one store: after each step, Pulse's badge, the bar's Needs you and the store agree (a card, a gate, a restart, a pause)
   const AGREE = () => { const W = window.RailWorld, needy = W.tops().filter((x) => !x.archived && x.section === 'needs'), badge = +(document.querySelector('.pz-pulse-b .topnav-badge')?.textContent || 0);
-    const ids = new Set(W.rows().filter((r) => !r.archived && (r.group ? W.raises(r) : W.section(r) === 'needs')).map((r) => r.id)), runsOf = (c) => { const o = []; const w = (t) => { if (t.run) o.push(t.run); (t.after || []).forEach(w); }; (c.tasks || []).forEach(w); return o; };
+    // its own oracle from the raw store, not W.needsYou: a group member that is only ready ships with its group and waits on nobody
+    const R = window.RailUI, SHIPS = [R.runState('ready').word, R.runState('approved').word], wordOf = (r) => R.runState(window.RunCardModel.stateOf(r.case)).word;
+    const ids = new Set(W.rows().filter((r) => !r.archived && W.section(r) === 'needs' && !(r.group && SHIPS.includes(wordOf(r)))).map((r) => r.id)), runsOf = (c) => { const o = []; const w = (t) => { if (t.run) o.push(t.run); (t.after || []).forEach(w); }; (c.tasks || []).forEach(w); return o; };
     const want = window.RailChats.data().chats.filter((c) => !c.archived && runsOf(c).some((id) => ids.has(id))).map((c) => c.id).sort().join(','), g = [...document.querySelectorAll('#bar-chat .list-group')].find((x) => /Needs you/.test(x.textContent.slice(0, 40)));
     return badge === needy.length + (window.RailProjects?.needItems().length || 0) && want === (g ? [...g.querySelectorAll('[data-row^="chat:"]')].map((r) => r.dataset.row.slice(5)).sort().join(',') : ''); };
   if (w > 760 && scheme === 'light') {
@@ -156,7 +158,8 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   }
   // what a chat started: every task its own row, its icon names the type; a Shaper slice leads to its feature's card
   await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
-  await step('a Shaper slice is its own row with its type in the icon', () => {}, () => ['f5a', 'f5b', 'f5c'].every((id) => !!document.querySelector(`#bar-chat [data-row="task:${id}"] .kind-mark`)) && !!document.querySelector('#bar-chat [data-row="task:f5b"] .kind-mark .km-ring') && document.querySelector('#bar-chat [data-row="task:f5b"] .kind-mark').innerHTML.includes(window.RailUI.icon('kind-feature', 11)));
+  // list.kind-mark (docs/rail/lists.md): a task's glyph shows its state, so a running slice draws the run glyph (13 px at size 20) in its ring
+  await step('a Shaper slice is its own row with its state in the icon', () => {}, () => ['f5a', 'f5b', 'f5c'].every((id) => !!document.querySelector(`#bar-chat [data-row="task:${id}"] .kind-mark`)) && !!document.querySelector('#bar-chat [data-row="task:f5b"] .kind-mark .km-ring') && document.querySelector('#bar-chat [data-row="task:f5b"] .kind-mark').innerHTML.includes(window.RailUI.icon('kind-task', 13)));
   await step('a slice opens its own stages in its feature card', () => { location.hash = 'chat/c5'; }, async () => { await new Promise((r) => setTimeout(r, 300)); document.querySelector('#route-chat [data-slice-open$="|1"]')?.click(); await new Promise((r) => setTimeout(r, 300)); return document.querySelectorAll('#route-chat .own-stages .stage-line').length === 5; });
   await step('the chat you are on never folds behind Show N more', () => {}, async () => { for (const c of window.RailChats.data().chats.filter((x) => !x.archived)) { location.hash = `chat/${c.id}`; await new Promise((r) => setTimeout(r, 120)); if (!document.querySelector('#bar-chat [aria-current="true"]')) return false; } return true; });   // docs/rail/lists.md › list.fold-keeps-current
   await step('a Shaper slice leads to its feature card in its chat', () => document.querySelector('#bar-chat [data-row="task:f5c"] .lr-main')?.click(), async () => { await new Promise((r) => setTimeout(r, 400)); return location.hash === '#chat/c5' && /Unified page navigation/.test(document.querySelector('#route-chat .is-flash')?.textContent || ''); });

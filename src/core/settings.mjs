@@ -141,11 +141,22 @@ async function persistSettings(settings) {
   await rename(tmp, file);
 }
 
+// Writers that may run at the same moment (flags, onboarding, setup apply) take turns here: each one's read and
+// persist run with no other queued writer between them, so neither loses the other's key.
+let settingsQueue = Promise.resolve();
+/** Run `fn(settings)` (it persists) after every earlier queued writer; resolves to its result. */
+function mutateSettings(fn) {
+  const run = settingsQueue.then(() => fn(readSettings()));
+  settingsQueue = run.catch(() => {});
+  return run;
+}
+
 /** Setup apply (D20): set or delete whole top-level keys in ONE read and ONE persistSettings. `undefined` deletes. */
 export async function writeSettingsKeys(values) {
-  const settings = readSettings();
-  for (const [k, v] of Object.entries(values)) { if (v === undefined) delete settings[k]; else settings[k] = v; }
-  await persistSettings(settings);
+  await mutateSettings(async (settings) => {
+    for (const [k, v] of Object.entries(values)) { if (v === undefined) delete settings[k]; else settings[k] = v; }
+    await persistSettings(settings);
+  });
   return Object.keys(values);
 }
 
@@ -2756,20 +2767,22 @@ export async function writeStoredFlags(map) {
     throw new Error('feature-flag write under the node:test runner — sandbox HOME/USERPROFILE '
       + 'and set WORCA_TEST_ALLOW_HOME_FALLBACK=1 (tests must never touch the real ~/.worca-cc)');
   }
-  const settings = readSettings();
-  if (isObj(map) && Object.keys(map).length) settings.flags = { ...map };
-  else delete settings.flags;
-  await persistSettings(settings);
+  await mutateSettings(async (settings) => {
+    if (isObj(map) && Object.keys(map).length) settings.flags = { ...map };
+    else delete settings.flags;
+    await persistSettings(settings);
+  });
 }
 
 // ── Getting started (onboarding) ─────────────────────────────────────────────
-// Three machine-wide flags, nothing more: which steps are DONE is derived from
+// Four machine-wide flags, nothing more: which steps are DONE is derived from
 // product state by src/core/onboarding.mjs and never stored. `hidden` is the
 // checklist's Hide (Settings › General › Getting started shows it again);
 // `welcomeSeen` is the one-time welcome dialog; `workspaceGuideSeen` is the
 // "How workspaces work" walkthrough (FEAT-7) — set on every open, cleared when
-// the last workspace is deleted. All absent = all false.
-const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen']);
+// the last workspace is deleted; `stillhetAsked` is the one-time Stillhet question
+// (an answer, or any write of its flag through src/core/flags.mjs#setFlags). All absent = all false.
+const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen', 'stillhetAsked']);
 
 export function onboardingPrefs() {
   const o = readSettings().onboarding;
@@ -2789,10 +2802,11 @@ export function assertOnboardingPrefsInput(patch) {
 /** Merge `patch` over the stored flags; a store with every flag false drops the key. */
 export async function setOnboardingPrefs(patch = {}) {
   assertOnboardingPrefsInput(patch);
-  const { onboarding: _previous, ...rest } = readSettings();
-  const next = { ...onboardingPrefs(), ...patch };
-  const allFalse = ONBOARDING_FLAGS.every((k) => !next[k]);
-  await persistSettings(allFalse ? rest : { ...rest, onboarding: next });
+  await mutateSettings(async ({ onboarding: _previous, ...rest }) => {
+    const next = { ...onboardingPrefs(), ...patch };
+    const allFalse = ONBOARDING_FLAGS.every((k) => !next[k]);
+    await persistSettings(allFalse ? rest : { ...rest, onboarding: next });
+  });
   return onboardingPrefs();
 }
 

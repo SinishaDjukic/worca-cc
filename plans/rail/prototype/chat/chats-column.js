@@ -21,7 +21,7 @@
   const NEEDS_TONES = ['ask', 'act', 'fail'];
   // the store says what waits on you (Pulse reads the same): a task needs you by its section; a slice that is only ready ships with its feature
   const W = window.RailWorld;
-  const waits = (t) => { const r = t.run && W.find(t.run); if (r) return !r.archived && W.section(r) === 'needs'; return !!t.case && t.case !== 'scheduled' && NEEDS_TONES.includes(R.markTone(R.runState(window.RunCardModel.stateOf(t.case)))); };
+  const waits = (t) => { const r = t.run && W.find(t.run); if (r) return !r.archived && W.needsYou(r); return !!t.case && t.case !== 'scheduled' && NEEDS_TONES.includes(R.markTone(R.runState(window.RunCardModel.stateOf(t.case)))); };
   const asksInside = (c) => { const walk = (t) => waits(t) || (t.after || []).some(walk); return (c.tasks || []).some(walk); };
   const sectionOfChat = (c) => (asksInside(c) ? 'needs' : R.chatState(c.state).section);
   const busyOf = (c) => R.chatState(c.state).busy || '';

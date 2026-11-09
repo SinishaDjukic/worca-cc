@@ -12,6 +12,7 @@
 | `comp.toast-clamp` | A toast is at most 480px wide and two lines; the whole text is in its tooltip (`toastText`) | A long name never runs over the composer | design-system-components |
 | `comp.sentence-block` | A sentence that holds a picker is a block (`div`), never a `<p>`: a menu cannot live in a paragraph, and the parser throws it out of place | The menu opens where the sentence is | rail-gate |
 | `comp.row` | A row in a list is row(): rail, text, end, ⋯; a changed file and a stacked PR are their own rows | One rail and one end on every list | rail-gate |
+| `comp.out-link` | A link that leaves Worca says where it goes and opens in a new tab (OutLink: `https` only, `rel="noopener noreferrer"`) | Worca stays open where the person was | design-system-components |
 | `comp.end-column` | A list's ends share one column, as wide as the widest, capped; the title gives way first | Figures and buttons line up down a list | ds-check |
 
 A Rail page is built by naming needs, not looks. Find the need, use its component as the gallery
@@ -21,10 +22,11 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | **Acting** | | |
 | The one next step of a state | the split button in the StatusLine: Button primary, its ▾ the alternatives | Merge PR ▾, Resume now ▾ |
 | Supporting actions | ⋯ next to it (`moreMenu`), a CompactMenu, danger last after a rule | Terminal, Copy link, Archive |
-| A yes or no, or a one-line answer | ConfirmStrip, in place under the top bar | Merge #959 into dev?, Run after |
+| A yes or no, or a one-line answer | ConfirmStrip, in place under the top bar; its form variant fails like the strip (`confirmForm` `err`: what, why, Try again) | Merge #959 into dev?, Run after |
 | A step that needs fields first | Dialog, the only one for a form | Create PR |
 | Acting on several rows of a list | SelectionBar at the list's foot, while selecting | 2 selected · Clear 2 · Cancel |
 | Going to another page or place | Text link, or a ListRow you open | Changes +358 −144, a file, a step |
+| Going to a page outside Worca | OutLink | Report a bug on GitHub |
 | Copying text | CopyButton: a quiet 28px icon button; a tick for 1.2s and `Copied` in its tooltip and the live region; its width never changes | a branch, a command, an id |
 | A line icon | `icon` from the library's one set, at its one weight (1.8px); no page draws a path or picks a weight, and the sidebar's places are `nav-<view>` | ✓ on a menu item, Runs in the sidebar |
 | A place in the bar's places | NavItem, under Settings-like group heads; a Work place's + starts its own thing | Chat, Tasks, Schedules |

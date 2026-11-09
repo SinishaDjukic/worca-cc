@@ -1,40 +1,39 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-rail>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Worca Rail · Components</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="app.css">
-<link rel="stylesheet" href="design-system/rail-look.css">
-<link rel="stylesheet" href="design-system/rail.css">
+<link rel="stylesheet" href="design-system/rail-shell.css">
 <link rel="stylesheet" href="pulse/pulse.css">
 <style>
   @font-face{font-family:'JetBrains Mono';font-weight:400;src:url('../../../ui/public/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');}
-  @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){color-scheme:dark;}}
-  :root[data-theme="dark"]{color-scheme:dark;}
-  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);}
-  .rc-board.mk-page{min-height:100%;padding-block:32px;padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));}
-  .mk-wrap{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:32px;}
-  .mk-intro{margin:0;font-size:var(--fs-meta);color:var(--ink-2);max-width:65ch;}
-  .gl{display:flex;flex-direction:column;gap:12px;padding-top:24px;border-top:1px solid var(--line);}
-  .gl-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin:0;font:600 var(--fs-section)/var(--lh-title) var(--sans);}
-  .gl-h code{font:400 var(--fs-caption)/1 var(--mono);color:var(--ink-2);}
-  .gl-need,.gl-rules{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
-  .gl-rules{padding-left:18px;}
-  .gl-ex{display:flex;flex-direction:column;gap:6px;}
-  .gl-ex-l{font-size:var(--fs-caption);color:var(--ink-3);}
-  .gl-show{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;}
-  .gl-show > .menu{position:static;}
-  .gl-show .rc-toast{position:static;transform:none;opacity:1;}
-  .gl-show .toasts{position:static;}
-  .gl-show > .rc-card{flex:1 1 100%;}
-  .gl-show > .set-sec,.gl-show > .list,.gl-show > .set-row,.gl-show > .rt-wrap{flex:1 1 100%;}
-  .gl-show > .list{padding-left:32px;}   /* the rail hangs left of the text edge */
-  .gl-show > .viewer-modal{position:static;inset:auto;display:block;padding:0;background:none;flex:1 1 100%;}
-  .gl-show .fld{flex:1 1 100%;max-width:360px;}
-  .gl-sel{flex:1 1 100%;display:flex;flex-direction:column;gap:8px;}
-  .gl-show .list{min-height:220px;}
-  .mk-stamp-line b{font-weight:600;color:var(--ink);}
+  @media (prefers-color-scheme: dark){:root[data-rail]:not([data-theme="light"]){color-scheme:dark;}}
+  :root[data-rail][data-theme="dark"]{color-scheme:dark;}
+  html[data-rail],:root[data-rail] body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);}
+  :root[data-rail] .rc-board.mk-page{min-height:100%;padding-block:32px;padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));}
+  :root[data-rail] .mk-wrap{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:32px;}
+  :root[data-rail] .mk-intro{margin:0;font-size:var(--fs-meta);color:var(--ink-2);max-width:65ch;}
+  :root[data-rail] .gl{display:flex;flex-direction:column;gap:12px;padding-top:24px;border-top:1px solid var(--line);}
+  :root[data-rail] .gl-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin:0;font:600 var(--fs-section)/var(--lh-title) var(--sans);}
+  :root[data-rail] .gl-h code{font:400 var(--fs-caption)/1 var(--mono);color:var(--ink-2);}
+  :root[data-rail] .gl-need,:root[data-rail] .gl-rules{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+  :root[data-rail] .gl-rules{padding-left:18px;}
+  :root[data-rail] .gl-ex{display:flex;flex-direction:column;gap:6px;}
+  :root[data-rail] .gl-ex-l{font-size:var(--fs-caption);color:var(--ink-3);}
+  :root[data-rail] .gl-show{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;}
+  :root[data-rail] .gl-show > .menu{position:static;}
+  :root[data-rail] .gl-show .rc-toast{position:static;transform:none;opacity:1;}
+  :root[data-rail] .gl-show .toasts{position:static;}
+  :root[data-rail] .gl-show > .rc-card{flex:1 1 100%;}
+  :root[data-rail] .gl-show > .set-sec,:root[data-rail] .gl-show > .list,:root[data-rail] .gl-show > .set-row,:root[data-rail] .gl-show > .rt-wrap{flex:1 1 100%;}
+  :root[data-rail] .gl-show > .list{padding-left:32px;}   /* the rail hangs left of the text edge */
+  :root[data-rail] .gl-show > .viewer-modal{position:static;inset:auto;display:block;padding:0;background:none;flex:1 1 100%;}
+  :root[data-rail] .gl-show .fld{flex:1 1 100%;max-width:360px;}
+  :root[data-rail] .gl-sel{flex:1 1 100%;display:flex;flex-direction:column;gap:8px;}
+  :root[data-rail] .gl-show .list{min-height:220px;}
+  :root[data-rail] .mk-stamp-line b{font-weight:600;color:var(--ink);}
 </style>
 <div class="rc-board mk-page">
 <div class="mk-wrap rc" id="gallery">
@@ -118,7 +117,8 @@
     StatusLine: [['Ready, its one step', card(R.statusLine({ dot: R.statusDot({ tone: 'is-green' }), word: 'Ready to merge', detail: 'Checks pass · a reviewer approved', action: `<div class="rc-side">${R.splitButton({ main: { label: 'Merge PR', kind: 'primary' }, moreLabel: 'More actions', chevron: CHEV })}${more}</div>` }))],
       ['Needs you', card(R.statusLine({ dot: R.statusDot({ sym: 'q', glyph: '<path d="M9.2 9.2a2.9 2.9 0 1 1 4.2 2.6c-.9.5-1.4 1.1-1.4 2v.4"></path><path d="M12 17.6h.01"></path>' }), word: 'Needs your answer', detail: 'Review asks which breadcrumb to keep on phones', action: `<div class="rc-side">${R.button({ label: 'Send answer', kind: 'primary' })}${more}</div>` }))]],
     ConfirmStrip: [['Asks', R.confirmStrip({ text: 'Merge #959 into dev?', yes: 'Merge' })], ['Working', R.confirmStrip({ text: 'Merge #959 into dev?', yes: 'Merge', busy: 'Merging…' })],
-      ['Failed: what, why, Try again', R.confirmStrip({ text: '', yes: 'Stop', danger: true, err: { title: 'Could not stop the run', detail: 'The run did not answer; it may have just finished. Nothing changed.' } })]],
+      ['Failed: what, why, Try again', R.confirmStrip({ text: '', yes: 'Stop', danger: true, err: { title: 'Could not stop the run', detail: 'The run did not answer; it may have just finished. Nothing changed.' } })],
+      ['ConfirmStrip, form, failed: what, why, a way out, Try again', R.confirmForm({ form: 'stillhet', text: '', err: { title: "Couldn't turn Stillhet on", detail: 'The server did not answer. Nothing changed.', extra: R.outLink({ label: 'Report a bug on GitHub', href: 'https://github.com/SinishaDjukic/worca-cc/issues' }) + R.confirmActions({ yes: 'Try again', no: 'No thanks' }) } })]],
     ListSentence: [['Its words, one menu open', `<div class="list-sentence">${R.listSentence({ open: 'by', parts: [{ word: 'Showing', id: 'show', text: 'all', items: [] }, { word: 'from', id: 'from', text: 'all projects', items: [] }, { word: 'by', id: 'by', text: 'state', items: [{ id: 'state', text: 'state', checked: true, hint: '24' }, { id: 'day', text: 'day', checked: false, hint: '5' }] }] })}</div>`]],
     GroupRow: [['Open, its members under it', R.list({ groups: [{ rows: [R.groupRow({ title: 'Unified page navigation', meta: 'Feature · Working', mark: R.statusDot({ tone: 'is-peach is-pulse' }), count: '1/3', shown: true, noun: 'runs', toggle: {}, rows: R.listRow({ title: '1 · Trail in the top bar', mark: R.statusDot({ tone: 'is-green' }) }) })] }] })]],
     RoundRows: [['Open: 5, then +n earlier', R.roundRows({ line: 'Round 7 · fix checks · nothing pushed', n: 7, open: true, toggle: {}, rounds: [{ n: 7, words: 'fix checks · nothing pushed', time: '11:20' }, { n: 6, words: 'merge dev in · pushed 3e4f5a6', time: '10:41' }], more: { n: 2, attrs: {} } })]],
@@ -133,6 +133,7 @@
     Segmented: [['One pressed', R.segmented({ label: 'Show', items: [{ id: 'all', label: 'All steps', pressed: true }, { id: 'p', label: 'Problems and questions' }] })]],
     Figures: [['Against its budget; one opens its home', R.figures([R.figure({ k: 'Time', v: '42m' }), R.figure({ k: 'Cost', v: '$84.10', of: 'of $120' }), R.figure({ k: 'Changes', v: '+358 −144', tab: 'changes' })])],
       ['Near the limit', R.figures([R.figure({ k: 'Cost', v: '$112.40', of: 'of $120', warn: true })])]],
+    OutLink: [['Leaves Worca, in a new tab', `<span class="ov-why">Something odd? ${R.outLink({ label: 'Report a bug on GitHub', href: 'https://github.com/SinishaDjukic/worca-cc/issues' })}</span>`]],
     'Text link': [['Inside a sentence', `<span class="ov-why">Two reviewers disagreed · ${R.textLink({ label: 'See the decision' })}</span>`]],
     Toast: [['Done', R.toast({ text: 'Merged #959 into dev' })],
       ['Long text stops at two lines (comp.toast-clamp)', R.toast({ text: 'Archived “Rebuild the search index for every project in the docs site and keep the old one around until the new one has answered for a full day”, with its branch and its worktree' })],

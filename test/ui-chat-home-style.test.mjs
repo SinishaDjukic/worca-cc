@@ -4,9 +4,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
-import { readStyleCss } from '../src/core/read-style-css.mjs';
+import { readTodayCss } from './helpers/today-css.mjs';
 
-const css = readStyleCss();
+const css = readTodayCss();
 const BANNER = '/* ===== Chat P6: home ===== */';
 const block = () => { const i = css.indexOf(BANNER); return i < 0 ? '' : css.slice(i); };
 

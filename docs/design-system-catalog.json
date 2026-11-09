@@ -388,6 +388,20 @@
       "example": "Changes +358 −144"
     },
     {
+      "name": "OutLink",
+      "code": "ui/public/design-system/components/text-link.mjs#outLink",
+      "kind": "acting",
+      "needs": [
+        "going to a page outside Worca"
+      ],
+      "rules": [
+        "says where it goes and opens in a new tab (comp.out-link)",
+        "https only"
+      ],
+      "notFor": "a place inside Worca (Text link)",
+      "example": "Report a bug on GitHub"
+    },
+    {
       "name": "SentencePicker",
       "code": "ui/public/design-system/components/settings-row.mjs#sentencePicker",
       "kind": "choosing",

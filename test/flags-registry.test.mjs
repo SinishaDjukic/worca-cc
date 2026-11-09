@@ -75,3 +75,11 @@ test('shapeRequirements is an experimental Labs flag, off by default, documented
   assert.ok(f, 'shapeRequirements is registered');
   assert.deepEqual([f.stage, f.default, f.added, f.reviewBy, f.docs], ['experimental', false, '2026-11-05', '2027-02-01', 'docs/shape-it-first.md']);
 });
+
+test('rail is the Stillhet opt-in: an experimental Labs flag, off by default, reviewed within 90 days', () => {
+  const f = FLAGS.find((x) => x.key === 'rail');
+  assert.ok(f, 'rail is registered');
+  assert.deepEqual([f.title, f.stage, f.default, f.owner, f.since, f.added, f.reviewBy, f.docs],
+    ['Stillhet', 'experimental', false, 'e-angelov', '1.19.0', '2026-11-09', '2027-02-07', 'docs/feature-flags.md']);
+  assert.deepEqual(registryProblems([f], { today: '2026-11-09' }), []);
+});

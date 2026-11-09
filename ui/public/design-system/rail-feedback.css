@@ -1,0 +1,78 @@
+/* ---------- Rail: feedback ---------- */
+/* Stillhet (Rail) behind its flag: every rule scopes on :root[data-rail] (test/rail-parts-scope.test.mjs); cut from the prototype's rail.css. */
+/* Prototype feedback: a confirm strip for actions that cannot be taken back, a toast for what an action did. */
+.rc-confirm{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--panel);font-size:var(--fs-body);}
+.pz-page > .rc-confirm{position:sticky;top:8px;z-index:6;}   /* a page with no shell: the strip stays on screen too */
+.rc-confirm-t{color:var(--ink);font-weight:500;}
+.rc-confirm-acts{display:flex;gap:8px;}
+:root[data-rail] .rc-toast{position:fixed;left:50%;bottom:24px;z-index:50;transform:translate(-50%,0);display:flex;align-items:baseline;gap:10px;width:max-content;max-width:min(480px,calc(100vw - 32px));padding:8px 14px;border-radius:var(--r-md);
+  background:var(--ink);color:var(--bg);font-size:var(--fs-meta);box-shadow:var(--shadow-pop);opacity:0;pointer-events:none;transition:opacity var(--motion-change) var(--ease);}   /* out over change */
+:root[data-rail] .rc-toast.is-on{opacity:1;transform:translate(-50%,0);transition-duration:var(--motion-quick);}   /* in over quick */
+@starting-style{:root[data-rail] .rc-toast.is-on{opacity:0;}}
+:root[data-rail] .rc-toast:empty{display:none;}
+:root[data-rail] .rc-toast-t{min-width:0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;}   /* comp.toast-clamp */
+@media (prefers-reduced-motion: reduce){:root[data-rail] .rc-toast{transition:none;}}
+
+/* The card's Answer lands here: the block marks itself once, so the eye follows the jump. */
+:root[data-rail] .ov-focus.is-flash{animation:ov-flash var(--motion-flash) ease-out;}
+@keyframes ov-flash{from{box-shadow:0 0 0 6px var(--row-selected);background:var(--row-selected);}to{box-shadow:0 0 0 6px transparent;background:transparent;}}
+@media (prefers-reduced-motion: reduce){:root[data-rail] .ov-focus.is-flash{animation:none;outline:2px solid var(--line-2);outline-offset:6px;}}
+
+/* The bar: Pause, Run after, Stop, ⋯ (the app's order); under 520px Pause and Run after fold into ⋯. */
+@container (max-width: 520px){ :root[data-rail] .rc-bar .rc-after{display:none;} }
+:root[data-rail] .menu-check{display:inline-flex;margin-left:8px;color:var(--ink-2);vertical-align:-1px;}
+:root[data-rail] .menu-kbd{margin-left:8px;font:400 var(--fs-caption)/1 var(--mono);color:var(--ink-2);}
+
+/* The strip as a form: the label, the fields, then the buttons, wrapping on phones. */
+.rc-confirm.is-form{justify-content:flex-start;}
+.rc-confirm.is-form .rc-confirm-t{flex:1 0 100%;}
+.rc-confirm.is-form .input{flex:1 1 220px;min-width:0;}
+.rc-confirm.is-form .select{flex:0 0 auto;width:auto;}
+.rc-confirm.is-form .rc-confirm-acts{margin-left:auto;}
+:root[data-rail] .rc-check{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink);}
+:root[data-rail] .rc-check input{margin:0;accent-color:var(--ink);}
+.rc-confirm-t.is-err{display:flex;flex-direction:column;gap:2px;color:var(--red-ink);}
+.rc-confirm-why{color:var(--ink-2);font-weight:400;font-size:var(--fs-meta);}
+/* When something breaks unexpectedly (docs/rail/failures.md): a part that cannot be drawn says so in its place, the
+   background error is the shared error toast, a lost connection is a quiet line on the top bar. */
+
+:root[data-rail] .empty-line.is-err .el-t{color:var(--red-ink-strong);}   /* red only when a part could not be drawn */
+
+:root[data-rail] .rc-conn{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
+:root[data-rail] .rc-conn + .rc-pager{margin-left:12px;}
+
+/* A search result lands on its row: it lights once and fades over flash (Motion). */
+:root[data-rail] .set-row.is-flash{animation:ov-flash var(--motion-flash) ease-out;border-radius:var(--r-sm);}
+@media (prefers-reduced-motion: reduce){:root[data-rail] .set-row.is-flash{animation:none;outline:2px solid var(--line-2);outline-offset:4px;}}
+
+
+@media (prefers-reduced-motion: no-preference){:root[data-rail] [data-landed]:focus{outline:0;}}   /* the flash says where you landed; the browser's focus box would sit on the words */
+/* small motion (docs/rail/motion.md): each says what changed, none under reduced motion */
+/* a changed mark's ring fills to its stage in turn, then the mark pulses once */
+@keyframes km-seg{from{opacity:0;}to{opacity:1;}}
+:root[data-rail] .kind-mark.is-news .km-ring circle[style]{animation:km-seg var(--motion-quick) linear both;animation-delay:calc(var(--k) * var(--motion-change) / 48);}   /* ds-ok: --k is each ring step's own order, set by kindMark; the ring fills over the change timing */
+/* a row that just arrived drops 4px into its place, its tint fading after */
+@keyframes lr-arrive{from{opacity:0;transform:translateY(-4px);background-color:var(--hover);}60%{opacity:1;transform:none;background-color:var(--hover);}to{background-color:transparent;}}
+:root[data-rail] .list-row.is-arrived{animation:lr-arrive var(--motion-flash) var(--ease) both;border-radius:var(--r-sm);}
+/* a date section folding: its rows rise and fade; opening, they come down */
+@keyframes lr-fold{to{opacity:0;transform:translateY(-6px);}}
+@keyframes lr-unfold{from{opacity:0;transform:translateY(-6px);}}
+:root[data-rail] .list-group.is-folding > .list-rows,:root[data-rail] .list-group.is-folding > .list-more{animation:lr-fold var(--motion-change) var(--ease) both;}
+:root[data-rail] .list-group.is-opening > .list-rows{animation:lr-unfold var(--motion-change) var(--ease) both;}
+@media (prefers-reduced-motion: reduce){ :root[data-rail] .kind-mark.is-news .km-ring circle[style],:root[data-rail] .list-row.is-arrived,:root[data-rail] .list-group.is-folding > *,:root[data-rail] .list-group.is-opening > *{animation:none;} }
+
+/* ThinkingRow: one line, what it does now, a slow light passing through it; its seconds at the end; done, its steps
+   fold under it as plain lines on the rail, not code. */
+@keyframes think-light{from{background-position:120% 0;}to{background-position:-20% 0;}}
+:root[data-rail] .think-w{font-weight:500;color:var(--ink-2);background:linear-gradient(90deg,var(--ink-2) 35%,var(--ink) 50%,var(--ink-2) 65%) 0 0/250% 100% no-repeat;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:think-light 2s linear infinite;}
+:root[data-rail] .think-t{font-variant-numeric:tabular-nums;}
+:root[data-rail] .tr-body.is-steps{background:none;padding:0 0 0 10px;border-left:1px solid var(--line-2);border-radius:0;font:inherit;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .think-steps{display:flex;flex-direction:column;gap:4px;}
+@media (prefers-reduced-motion: reduce){ :root[data-rail] .think-w{animation:none;background:none;-webkit-text-fill-color:var(--ink-2);} }
+
+
+/* A link that leaves Worca (OutLink, comp.out-link): the text link's look, always on: the Stillhet question uses it. */
+.dc-out{color:var(--ink);text-decoration:underline;text-underline-offset:3px;}
+/* The Stillhet question's words, then its buttons; touch-sized at every width, always on (D11). */
+.rc-confirm.is-form > p{flex:1 0 100%;margin:0;color:var(--ink-2);}
+.rc-confirm.is-form .rc-confirm-acts .btn{min-height:44px;}

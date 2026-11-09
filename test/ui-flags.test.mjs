@@ -224,6 +224,42 @@ test('app: the Labs tab shows at every level; a flags frame flips the page; the 
   ]);
 });
 
+test('Stillhet (rail): its Labs row is the Settings switch, a lock shows the note, and the flags frame flips data-rail live', async () => {
+  const row = { key: 'rail', title: 'Stillhet', description: 'D', stage: 'experimental', on: false, source: 'default', locked: false, docs: 'docs/feature-flags.md', docsUrl: null, requires: [] };
+  await checkRows([
+    { name: 'the Labs view lists "Stillhet"; its switch sends PATCH {rail:true}', run: async () => {
+      const { document: doc } = page();
+      const host = doc.getElementById('flags-host');
+      const calls = [];
+      let state = [row];
+      const api = async (method, body) => { calls.push([method, body]); if (method === 'PATCH') state = state.map((f) => ({ ...f, on: body[f.key] === true })); return { ok: true, status: 200, data: { flags: state } }; };
+      const view = createFlagsView({ host, msgEl: doc.getElementById('flags-msg'), resetBtn: doc.getElementById('flags-reset'), api, confirm: async () => true });
+      await view.load();
+      assert.match(host.querySelector('[data-flag-row="rail"]').textContent, /Stillhet/);
+      host.querySelector('[data-flag-switch="rail"]').click();
+      await tick(); await tick();
+      assert.deepEqual(calls.at(-1), ['PATCH', { rail: true }]);
+      state = [{ ...row, on: true, source: 'env', locked: true }];
+      await view.load();
+      assert.match(host.querySelector('[data-flag-row="rail"]').textContent, /Locked by WORCA_FLAGS/);
+    } },
+    { name: 'the app follows the flags frame: data-rail on and off without a reload', run: async () => {
+      const { window, doc, frame } = await bootApp({ level: 'simple', flags: { flagsDemo: false, rail: false } });
+      assert.equal(doc.documentElement.hasAttribute('data-rail'), false);
+      frame({ type: 'flags', flags: { rail: true } });
+      assert.equal(doc.documentElement.hasAttribute('data-rail'), true);
+      frame({ type: 'flags', flags: { rail: false } });
+      assert.equal(doc.documentElement.hasAttribute('data-rail'), false);
+      window.__np.stillhet.off();
+    } },
+    { name: 'first paint: the server writes data-rail when rail is on', run: async () => {
+      const { window, doc } = await bootApp({ level: 'simple', flags: { flagsDemo: false, rail: true } });
+      assert.equal(doc.documentElement.hasAttribute('data-rail'), true);
+      window.__np.stillhet.off();
+    } },
+  ]);
+});
+
 // A repaint queued before a test's DOM was released still asks flagOn (#718's tag chips do on every Runs
 // list and header paint): releaseDom (test/helpers/jsdom-release.mjs) detaches <html> itself, so every
 // flag reads off instead of throwing into the next test.

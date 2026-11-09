@@ -13,7 +13,10 @@ import { scanText } from '../../../../tools/rail-gate.mjs';
 writeAppCss();   // the app's CSS, assembled from its parts
 writeComponentsJs();   // the Rail components, bundled for file://
 const here = (f) => fileURLToPath(new URL('../' + f, import.meta.url));   // the prototype's root
-const SHEETS = ['design-system/rail-look.css', 'design-system/rail.css', 'pulse/pulse.css'];
+// An optional base URL for the page visits (the app's, from slice 2); the CSS and script scans still read the files on disk.
+const BASE = process.argv[2] ? process.argv[2].replace(/\/?$/, '/') : null;
+const pageUrl = (page) => (BASE ? BASE + page : 'file://' + here(page));
+const SHEETS = ['design-system/rail-shell.css', 'pulse/pulse.css'];   // the Rail parts are in the app's CSS (APP_CSS)
 const ALL = [APP_CSS, ...SHEETS.map(here), here('shell/shell.css'), ...readdirSync(here('.')).filter((f) => f.endsWith('.html')).map(here)];
 const FOLDERS = ['runs', 'pulse', 'settings', 'shell', 'chat', 'schedules', 'projects', 'workflows', 'requirements', 'marketplace', 'insights', 'workspaces'];
 const SCRIPTS = FOLDERS.flatMap((d) => readdirSync(here(d)).filter((f) => f.endsWith('.js')).map((f) => here(`${d}/${f}`)));
@@ -130,7 +133,7 @@ for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f
   const p = await b.newPage({ viewport: { width: 900, height: 900 } });
   await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });   // the gates walk every place: Expert
   p.on('pageerror', (e) => add('script error', String(e)));
-  await p.goto('file://' + here(page));
+  await p.goto(pageUrl(page));
   const cases = page === 'index.html' ? [] : await p.evaluate(() => [...document.querySelectorAll('#case option')].map((o) => o.value));   // the one Worca's pages are read by route, below
   for (const c of cases) for (const o of [null, ...OPEN]) {
     await p.selectOption('#case', cases[(cases.indexOf(c) + 1) % cases.length]); await p.selectOption('#case', c);
@@ -145,7 +148,7 @@ for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f
   }
   // the one Worca's own lists, in the states a click opens: read like a case
   if (page === 'index.html') for (const [route, root] of [['runs', '#runs-root'], ['chat', '#chats-root']]) {
-    await p.goto(`file://${here(page)}#${route}`); await p.waitForTimeout(80);
+    await p.goto(`${pageUrl(page)}#${route}`); await p.waitForTimeout(80);
     for (const o of ['', '[data-menu="show"]', '[data-menu="tools"]', '[data-menu^="row:"]', '[data-fold]', '[data-rounds]', '[data-pick="tools|select"]']) {
       if (o) await p.evaluate((s) => document.querySelector(s)?.click(), `${root} ${o}`);
       const found = await p.evaluate(READ, [CONTROL_SEL, [...classes]]);

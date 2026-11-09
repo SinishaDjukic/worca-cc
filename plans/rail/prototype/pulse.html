@@ -1,13 +1,12 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-rail data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Worca Rail · Pulse</title>
 <!-- Worca's own stylesheet, the Rail layer, then Pulse's own layer (spec: plans/rail/pulse.md). -->
 <link rel="stylesheet" href="app.css">
-<link rel="stylesheet" href="design-system/rail-look.css">
-<link rel="stylesheet" href="design-system/rail.css">
+<link rel="stylesheet" href="design-system/rail-shell.css">
 <link rel="stylesheet" href="pulse/pulse.css">
 <style>
   @font-face{font-family:'Poppins';font-weight:400;src:url('../../../ui/public/fonts/poppins-latin-400-normal.woff2') format('woff2');}
@@ -15,12 +14,12 @@
   @font-face{font-family:'Poppins';font-weight:600;src:url('../../../ui/public/fonts/poppins-latin-600-normal.woff2') format('woff2');}
   @font-face{font-family:'Poppins';font-weight:700;src:url('../../../ui/public/fonts/poppins-latin-700-normal.woff2') format('woff2');}
   @font-face{font-family:'JetBrains Mono';font-weight:400;src:url('../../../ui/public/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');}
-  .mk-wrap{max-width:960px;margin:0 auto;}
-  .mk-bar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;margin-bottom:24px;}
-  .mk-bar .seg{flex-wrap:wrap;max-width:100%;}
-  .mk-intro{margin:0 0 16px;font-size:var(--fs-meta);color:var(--ink-2);max-width:65ch;}
-  .mk-rev{margin:-8px 0 16px;font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;}
-  @media (max-width:600px){body.rc-board{padding:16px;}}
+  :root[data-rail] .mk-wrap{max-width:960px;margin:0 auto;}
+  :root[data-rail] .mk-bar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;margin-bottom:24px;}
+  :root[data-rail] .mk-bar .seg{flex-wrap:wrap;max-width:100%;}
+  :root[data-rail] .mk-intro{margin:0 0 16px;font-size:var(--fs-meta);color:var(--ink-2);max-width:65ch;}
+  :root[data-rail] .mk-rev{margin:-8px 0 16px;font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;}
+  @media (max-width:600px){:root[data-rail] body.rc-board{padding:16px;}}
 </style>
 </head>
 <body class="rc-board">

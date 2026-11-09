@@ -77,7 +77,7 @@ function cover(sha, stamp = null) {
 /** The whole page. Needs the prototype's generated files (the gates write them). */
 export function buildPage({ sha = '', stamp = null } = {}) {
   const ch = chapters(); const g = gallery();
-  const css = selfContained([read('plans/rail/prototype/app.css'), read('plans/rail/prototype/design-system/rail-look.css'), read('plans/rail/prototype/design-system/rail.css')].join('\n'));
+  const css = selfContained([read('plans/rail/prototype/app.css'), read('plans/rail/prototype/design-system/rail-shell.css')].join('\n'));
   const lib = read('plans/rail/prototype/components.js').replace(/<\/script>/g, '<\\/script>');
   const nav = [[ch[0].id, ch[0].title], ['gallery-sec', 'Components'], ...ch.slice(1).map((c) => [c.id, c.title]), ['catalog', 'Patterns and logic']];
   return `<!doctype html>

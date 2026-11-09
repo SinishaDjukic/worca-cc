@@ -1252,6 +1252,7 @@ policyEvents.on('changed', (e) => emitChanged('team-policy-changed', e && e.acti
 projectSyncEvents.on('changed', (e) => emitChanged('project-sync-changed', e && e.projectKey ? e.projectKey : null));
 // D6: every open tab rewrites <html data-flags> and #flag-gates, without a reload.
 flagEvents.on('changed', (flags) => broadcast({ type: 'flags', flags }));
+flagEvents.on('asked', () => emitChanged('onboarding-changed'));
 
 // Every comment mutation in THIS process (the REST routes below) pokes the open
 // Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no

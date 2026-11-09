@@ -26,13 +26,18 @@ export function confirmActions({ yes, no = 'Cancel', danger = false, busy = fals
 }
 
 /**
- * A strip that holds a short form: the sentence, then its fields and confirmActions.
+ * A strip that holds a short form: the sentence, then its fields and confirmActions. A failure keeps the
+ * strip: the same alert title as confirmStrip, and `err.extra` (a link, then the caller's actions) in place of the body.
  * @param {object} o
  * @param {string} o.form     what the form is (data-form)
  * @param {string} o.text
- * @param {string} o.body     markup: the fields, then confirmActions
+ * @param {string} [o.body]   markup: the fields, then confirmActions
  * @param {string} [o.id]
+ * @param {{title:string, detail:string, extra?:string}} [o.err]  what failed; `extra` is markup, may be empty
  */
-export function confirmForm({ form, text, body, id = 'rc-strip-t' }) {
-  return `<form class="rc-confirm is-form" role="dialog"${attrs({ 'data-motion': 'open', 'aria-labelledby': id, 'data-form': form })}><span class="rc-confirm-t"${attrs({ id })}>${esc(text)}</span>${body}</form>`;
+export function confirmForm({ form, text, body = '', id = 'rc-strip-t', err = null }) {
+  const t = err
+    ? `<span class="rc-confirm-t is-err"${attrs({ id, role: 'alert' })}>${esc(err.title)}<span class="rc-confirm-why">${esc(err.detail)}</span></span>`
+    : `<span class="rc-confirm-t"${attrs({ id })}>${esc(text)}</span>`;
+  return `<form class="rc-confirm is-form" role="dialog"${attrs({ 'data-motion': 'open', 'aria-labelledby': id, 'data-form': form })}>${t}${err ? err.extra || '' : body}</form>`;
 }

@@ -1,8 +1,13 @@
-/* The Rail look (docs/rail/look.md) and Motion, for every Rail page ahead of the app: one surface,
-   one cool neutral family, running (ink) and needs-you (amber) apart, a quiet step bar, a floating surface a step
-   lighter in dark with a hairline. Inter is not bundled yet: the system face stands in for it, as in the refined mocks. */
-:root{
-  --sans:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+/* ---------- Rail: look ---------- */
+/* The Rail look (docs/rail/look.md) and Motion, behind the Stillhet flag: every rule scopes on :root[data-rail]
+   (test/rail-parts-scope.test.mjs). Poppins stays (--sans is not set here, D6 of plans/rail/agreed/decisions-1.5b.md). */
+/* Motion (docs/rail/motion.md): three timings on one curve */
+:root[data-rail]{
+  --motion-quick:150ms; --motion-change:200ms; --motion-flash:1.2s; --ease:cubic-bezier(.2,0,0,1);
+}
+/* The bridge: today's colour tokens (ui/public/shell/self-hosted.css) in Rail's palette, one surface for page and card,
+   one cool neutral family, running (ink) and needs-you (amber) apart. Colour custom properties only. */
+:root[data-rail]{
   --bg:light-dark(#FFFFFF,#141416); --panel:light-dark(#FFFFFF,#141416);   /* ds-ok: the Rail look's table */
   --canvas-2:light-dark(#FAFAFA,#18181B); --side-bg:light-dark(#FAFAFA,#18181B);   /* ds-ok: the Rail look's table */
   --field:light-dark(#F4F4F5,#1F1F23); --surface:light-dark(#F4F4F5,#1F1F23);   /* ds-ok: the Rail look's table */
@@ -23,26 +28,10 @@
   --amber-bg:light-dark(#FDF1DD,#332715);   /* ds-ok: a tint the muted amber reads on at 4.5:1 */
   --slate:light-dark(#6C7884,#8A96A3);   /* ds-ok: the Rail look's table */
   --step-done:light-dark(#C9C9CF,#4A4A52);   /* ds-ok: the Rail look's table: a finished step, quiet */
-  /* Motion (docs/rail/motion.md): three timings on one curve */
-  --motion-quick:150ms; --motion-change:200ms; --motion-flash:1.2s; --ease:cubic-bezier(.2,0,0,1);
 }
-body{-webkit-font-smoothing:antialiased;}
-:is(.rc-board,.pz-app) .btn{font-weight:500;}
+:root[data-rail] :is(.rc-board,.pz-app) .btn{font-weight:500;}
 /* A floating surface (menus, the Pulse panel, the account menu, a Dialog's card): --float with its hairline. */
-:is(.rc-board,.pz-app) :is(.menu,.pz-popover,.viewer-modal > .card){background:var(--float);border-color:var(--float-line);}
+:root[data-rail] :is(.rc-board,.pz-app) :is(.menu,.pz-popover,.viewer-modal > .card){background:var(--float);border-color:var(--float-line);}
 /* A menu, panel or Dialog fades in over quick when it opens, and closes at once; nothing slides. */
-.is-in{animation:rl-in var(--motion-quick) var(--ease);}
-@keyframes rl-in{from{opacity:0;}}
-@media (prefers-reduced-motion: reduce){.is-in{animation:none;}}
 
-/* Scrollbars: the library draws them (watchScrollbars, docs/rail/look.md), since an operating system's overlay bars take no
-   styling and show only when it says so. The browser's own bar is hidden; scrolling itself is untouched. */
-*{scrollbar-width:none;}
-::-webkit-scrollbar{display:none;}
-.rail-thumb{position:fixed;z-index:30;border-radius:var(--r-xs);background:var(--line-2);opacity:0;transition:opacity var(--motion-quick) var(--ease),background-color 100ms var(--ease);}
-.rail-thumb.is-over{z-index:9000;}
-.rail-thumb.is-on{opacity:1;}
-.rail-thumb:hover,.rail-thumb:active{background:var(--ink-3);}
-.rail-thumb.is-v{width:6px;}
-.rail-thumb.is-h{height:6px;}
-@media (prefers-reduced-motion: reduce){.rail-thumb{transition:none;}}
+@keyframes rl-in{from{opacity:0;}}

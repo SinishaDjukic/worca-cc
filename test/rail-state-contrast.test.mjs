@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const css = readFileSync(new URL('../plans/rail/prototype/design-system/rail-look.css', import.meta.url), 'utf8');
+const css = readFileSync(new URL('../ui/public/design-system/rail-look.css', import.meta.url), 'utf8');
 const pair = (name) => {
   const m = new RegExp(`--${name}:light-dark\\((#[0-9A-Fa-f]{6}),\\s*(#[0-9A-Fa-f]{6})\\)`).exec(css);
   assert.ok(m, `--${name} is a light-dark pair in the Rail look`);
@@ -20,5 +20,12 @@ test('every state holds 3:1 or more on the page and the surface, in both themes'
   for (const s of STATES) for (const g of GROUNDS) for (const theme of ['light', 'dark']) {
     const r = ratio(pair(s)[theme], pair(g)[theme]);
     assert.ok(r >= 3, `--${s} on --${g} in ${theme}: ${r.toFixed(2)}:1, under 3:1`);
+  }
+});
+
+test('the bridge: --ink and --ink-2 read at 4.5:1 or more on every surface token, in both themes', () => {
+  for (const t of ['ink', 'ink-2']) for (const g of ['bg', 'panel', 'canvas-2', 'field']) for (const theme of ['light', 'dark']) {
+    const r = ratio(pair(t)[theme], pair(g)[theme]);
+    assert.ok(r >= 4.5, `--${t} on --${g} in ${theme}: ${r.toFixed(2)}:1, under 4.5:1`);
   }
 });

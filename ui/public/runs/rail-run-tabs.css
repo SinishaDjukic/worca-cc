@@ -1,0 +1,327 @@
+/* ---------- Rail: run tabs ---------- */
+/* Stillhet (Rail) behind its flag: every rule scopes on :root[data-rail] (test/rail-parts-scope.test.mjs); cut from the prototype's rail.css. */
+/* Tabs: Summary, Changes, Activity, Decisions (Runs on a group) */
+:root[data-rail] .sc-step{padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;min-width:0;}
+:root[data-rail] .sc-step:hover{text-decoration:underline;text-underline-offset:3px;}
+:root[data-rail] .sc-step:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+:root[data-rail] .rtab-panel{container-type:inline-size;padding-top:20px;display:flex;flex-direction:column;gap:24px;}
+
+:root[data-rail] .rtab-h{margin:0;font:600 var(--fs-body)/var(--lh-title) var(--sans);color:var(--ink);display:flex;align-items:baseline;gap:8px;}
+:root[data-rail] .rtab-h .n{font-size:var(--fs-caption);font-weight:500;color:var(--ink-2);}
+:root[data-rail] .rtab-p{margin:0;font-size:var(--fs-body);color:var(--ink-2);}
+:root[data-rail] .rtab-dim{font-size:var(--fs-meta);font-weight:400;color:var(--ink-2);}
+:root[data-rail] .rtab-list{list-style:none;margin:0;padding:0;}
+:root[data-rail] .rtab-list li{padding:8px 0;font-size:var(--fs-body);}
+:root[data-rail] .rtab-list.is-plain li{display:flex;align-items:baseline;gap:12px;min-width:0;}
+:root[data-rail] .rtab-list code,:root[data-rail] .rtab-files code{font-family:var(--mono);font-size:var(--fs-meta);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+
+:root[data-rail] .rtab-files{list-style:none;margin:0;padding:0;}
+:root[data-rail] .rtab-file{display:flex;align-items:center;gap:16px;width:100%;min-height:36px;padding:0 8px;margin:0 -8px;border:0;background:none;color:inherit;cursor:pointer;border-radius:var(--r-sm);text-align:left;box-sizing:content-box;}
+:root[data-rail] .rtab-file:hover{background:var(--hover);}
+:root[data-rail] .rtab-file .ct{flex:none;display:flex;gap:8px;font-family:var(--mono);font-size:var(--fs-meta);}
+:root[data-rail] .add{color:var(--hd-count-add);} :root[data-rail] .del{color:var(--hd-count-del);}
+:root[data-rail] .rtab-bar{display:flex;}
+:root[data-rail] .rtab-stage .sc-subs .rtab-log{margin-block:-6px;flex:none;}
+:root[data-rail] .sc-subs .is-focus{background:var(--row-selected);box-shadow:0 0 0 6px var(--row-selected);border-radius:var(--r-xs);}
+:root[data-rail] .rtab-dec{list-style:none;margin:0;padding:0;}
+:root[data-rail] .rtab-dec li{display:grid;grid-template-columns:160px minmax(0,1fr);column-gap:16px;row-gap:2px;padding:10px 0;font-size:var(--fs-body);}
+:root[data-rail] .rtab-dec li > :first-child{grid-row:1 / span 3;}
+:root[data-rail] .rtab-dec li > :not(:first-child){grid-column:2;}
+:root[data-rail] .rtab-q{font-weight:500;color:var(--ink);}
+:root[data-rail] .rtab-dec.is-runs li{grid-template-columns:20px minmax(0,1fr) auto;column-gap:12px;align-items:center;}
+:root[data-rail] .rtab-dec.is-runs li > .status-dot{justify-self:center;grid-row:1 / span 2;}
+:root[data-rail] .rtab-dec.is-runs li > .btn{grid-column:3;grid-row:1 / span 2;}
+@container (max-width: 480px){   /* decisions stack; the Runs list keeps its dot | title | Open columns */
+  :root[data-rail] .rtab-dec:not(.is-runs) li{grid-template-columns:minmax(0,1fr);}
+  :root[data-rail] .rtab-dec:not(.is-runs) li > :first-child{grid-row:auto;}
+  :root[data-rail] .rtab-dec:not(.is-runs) li > :not(:first-child){grid-column:1;}
+}
+
+/* Tabs sit on the card's grid: the tab row and panels start at the card's content edge, every section keeps the
+   20px rail + 12px gap, so a step in Activity lines up under the same step in the card, and headings and text share
+   the card's text edge. */
+:root[data-rail] .rtab-panel{margin-inline:calc(var(--pad-card) + 1px);}
+:root[data-rail] .rc-tabs{margin-left:calc(var(--pad-card) + 1px + var(--rail) + var(--gap) - 2px);margin-right:calc(var(--pad-card) + 1px);}
+:root[data-rail] .rtab-bar, :root[data-rail] .rtab-panel > .rtab-dec:not(.is-runs){padding-left:calc(var(--rail) + var(--gap));}
+:root[data-rail] .rtab-stage .sc-subs{margin-left:calc(-1 * (var(--rail) + var(--gap)));}   /* rows put their circle back on the rail */
+
+/* Review round: bar, figures, evidence, radio, narrow widths */
+
+:root[data-rail] .rc-bar{display:flex;align-items:center;gap:8px;margin-bottom:-4px;min-height:28px;}
+:root[data-rail] .rc-bar-end{margin-left:auto;}
+/* The trail: Runs › place › group. The page is never a crumb; on a narrow page only the parent stays, as ‹ Parent. */
+:root[data-rail] .rc-crumbs{flex:0 1 auto;min-width:0;}
+:root[data-rail] .rc-crumbs ol{display:flex;align-items:center;gap:6px;margin:0;padding:0;list-style:none;min-width:0;}
+:root[data-rail] .rc-crumbs li{display:flex;align-items:center;gap:6px;min-width:0;flex:0 1 auto;}
+:root[data-rail] .rc-crumbs li:not(:last-child){flex:none;}
+:root[data-rail] .rc-crumbs li + li::before{content:'›';color:var(--ink-3);}
+:root[data-rail] .rc-crumb{padding:0;border:0;background:none;font:inherit;font-size:var(--fs-meta);color:var(--ink-2);text-decoration:none;cursor:pointer;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:32ch;}
+:root[data-rail] .rc-crumb:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px;}
+:root[data-rail] .rc-crumb:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+:root[data-rail] .rc-pager{display:inline-flex;align-items:center;gap:2px;flex:none;margin-left:auto;}
+:root[data-rail] .rc-pager-n{font-size:var(--fs-meta);color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;padding-inline:2px;}
+@container (max-width: 728px){   /* Navigation R2: at 760px of window and below, one link, ‹ Parent name */
+  :root[data-rail] .rc-crumbs li:not(.is-parent){display:none;}
+  :root[data-rail] .rc-crumbs li.is-parent::before{content:'‹';color:var(--ink-2);font-size:var(--fs-body);}
+  :root[data-rail] .rc-crumbs{flex:1 1 auto;}
+}
+@container (max-width: 520px){
+  :root[data-rail] .rc-bar .rc-pause{display:none;}   /* Pause moves into ⋯; Stop and ⋯ stay */
+  /* below the card nothing frames an indent, so tabs and panels take the page's edge */
+  :root[data-rail] .rc-tabs{margin-inline:-2px 0;}
+  :root[data-rail] .rtab-panel{margin-inline:0;}
+  :root[data-rail] .rtab-bar, :root[data-rail] .rtab-panel > .rtab-dec:not(.is-runs){padding-left:0;}
+  :root[data-rail] .rtab-stage .sc-subs{margin-left:0;}
+}
+
+:root[data-rail] .rc-bar-end{display:flex;align-items:center;gap:8px;}
+:root[data-rail] .rc-bar .btn svg{flex:none;}
+:root[data-rail] .rc-figs .rc-of{margin-left:4px;color:var(--ink-2);font-size:var(--fs-meta);}
+:root[data-rail] .rc-figs .rc-of.is-warn{color:var(--amber-ink-strong);}
+:root[data-rail] .rc-fig-link{display:inline;padding:0;border:0;background:none;font:inherit;color:inherit;cursor:pointer;text-align:left;}
+:root[data-rail] .rc-fig-link:hover b{text-decoration:underline;text-underline-offset:3px;}
+:root[data-rail] .rc-fig-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+:root[data-rail] .rc-zone .rc-detail{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}   /* up to 2 lines, then the tooltip */
+:root[data-rail] .rtab-ev{margin-top:8px;padding:8px 12px;background:var(--field);border-radius:var(--r-sm);display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0;}
+:root[data-rail] .rtab-ev-t{margin:0;font-size:var(--fs-meta);font-weight:600;color:var(--ink);}
+:root[data-rail] .rtab-ev-l{margin:0;max-width:100%;font:400 var(--fs-meta)/var(--lh-body) var(--mono);color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere;}
+:root[data-rail] .sk-choice .qopt::before{border-radius:50%;}
+:root[data-rail] .sk-choice .qopt.sel::before{-webkit-mask:none;mask:none;background:var(--field);border:5px solid var(--ink);}
+/* Narrow cards and 200% zoom: a step name keeps its length; its details wrap under it instead. */
+:root[data-rail] .sc-subs .rd-route-place{flex-wrap:wrap;row-gap:0;}
+:root[data-rail] .sc-subs .rd-route-name{flex:0 0 auto;max-width:100%;min-width:0;}   /* never squeezed: truncates only at full width */
+:root[data-rail] .sc-subs .sc-meta{flex:0 1 auto;flex-wrap:wrap;row-gap:0;min-width:0;}   /* details wrap rather than push the row wider */
+/* The + picker: a small field with existing values; the chip inside a run opened from its group goes back to it. */
+:root[data-rail] .rc-pop > .rc-picker{padding:10px;display:flex;flex-direction:column;gap:8px;min-width:260px;}
+:root[data-rail] .rc-picker .menu-h{padding:0;}
+:root[data-rail] .rc-picker .menu-help{padding:0;}
+:root[data-rail] .rc-suggest{display:flex;flex-wrap:wrap;gap:6px;}
+:root[data-rail] .rc-suggest:empty{display:none;}
+:root[data-rail] .rc-kind-link{border:0;cursor:pointer;font:inherit;}
+:root[data-rail] .rc-kind-link:hover{background:var(--hover);color:var(--ink);}
+:root[data-rail] .rc-kind-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+/* One grid per list, rows as subgrids, so folders, counts, bars and numbers each line up down the list. */
+:root[data-rail] .ov-areas,:root[data-rail] .ov-arts{display:grid;column-gap:12px;}
+:root[data-rail] .ov-areas{grid-template-columns:minmax(0,max-content) max-content minmax(48px,1fr) max-content;}
+:root[data-rail] .ov-arts{grid-template-columns:minmax(0,max-content) minmax(0,1fr) max-content;}
+:root[data-rail] .ov-areas li,:root[data-rail] .ov-arts li{grid-column:1 / -1;display:grid;grid-template-columns:subgrid;align-items:center;min-height:36px;border-top:1px solid var(--line);font-size:var(--fs-meta);}
+:root[data-rail] .ov-areas li:first-child,:root[data-rail] .ov-arts li:first-child{border-top:0;}
+:root[data-rail] .ov-areas .ct{justify-content:flex-end;}
+:root[data-rail] .ov-areas code,:root[data-rail] .ov-arts code{font-family:var(--mono);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+:root[data-rail] .ov-bar{display:flex;height:4px;border-radius:var(--r-xs);overflow:hidden;background:var(--line);}
+:root[data-rail] .ov-bar i{display:block;height:100%;}
+:root[data-rail] .ov-bar .add,:root[data-rail] .ch-blocks .add{background:var(--ink-2);}   /* the squares echo the counts in ink; the +/− numbers carry the diff's colour once */
+:root[data-rail] .ov-bar .del,:root[data-rail] .ch-blocks .del{background:var(--ink-3);}
+
+:root[data-rail] .ct .add{color:var(--green-ink-strong,var(--green));}
+:root[data-rail] .ct .del{color:var(--red-ink-strong,var(--red));}
+
+/* Changes: by folder; a file opens its first hunk in place. Columns: status · name · comments · counts · blocks. */
+:root[data-rail] .ch-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-width:0;margin-bottom:16px;}
+:root[data-rail] .ch-head > .rtab-dim{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+:root[data-rail] .ch-list{list-style:none;margin:0;padding:0;}
+:root[data-rail] .ch-dir{display:flex;align-items:baseline;gap:8px;padding:12px 0 4px;}
+:root[data-rail] .ch-dir:first-child{padding-top:0;}
+:root[data-rail] .ch-dir code{font:500 var(--fs-meta)/var(--lh-title) var(--mono);color:var(--ink-2);}
+
+:root[data-rail] .ch-row{display:grid;grid-template-columns:20px minmax(0,1fr) 24px max-content max-content;align-items:center;column-gap:12px;width:100%;min-height:36px;
+  padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;}
+:root[data-rail] .ch-row:hover .ch-name{text-decoration:underline;text-underline-offset:3px;}
+:root[data-rail] .ch-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+:root[data-rail] .ch-st{justify-self:center;font:600 var(--fs-caption)/1 var(--mono);color:var(--ink-2);}
+:root[data-rail] .ch-st.is-A{color:var(--ink-2);}   /* a file's letter is a fact, not a state: no colour (look.tokens) */
+:root[data-rail] .ch-name{display:flex;align-items:center;font:400 var(--fs-meta)/var(--lh-title) var(--mono);color:var(--ink);overflow:hidden;white-space:nowrap;}
+:root[data-rail] .ch-name .rc-mid{flex:0 1 auto;min-width:64px;color:inherit;}   /* a long file name loses its middle, never its end; its folder gives way first */
+:root[data-rail] .ch-notes{justify-self:end;font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;}
+:root[data-rail] .ch-notes:not(:empty)::before{content:'';display:inline-block;width:6px;height:6px;margin-right:4px;border-radius:50%;background:var(--blue);vertical-align:1px;}
+:root[data-rail] .ch-row .ct{justify-content:flex-end;min-width:88px;}
+:root[data-rail] .ch-blocks{display:inline-flex;gap:2px;}
+:root[data-rail] .ch-blocks i{width:7px;height:7px;border-radius:1px;/* ds-ok: 7px diff squares, r-xs would round them */background:var(--line-2);}
+:root[data-rail] .ch-diff{margin:0 0 12px 32px;padding:8px 12px;background:var(--field);border-radius:var(--r-sm);display:flex;flex-direction:column;align-items:flex-start;gap:8px;min-width:0;}
+:root[data-rail] .ch-at{margin:0;font:500 var(--fs-caption)/1.4 var(--mono);color:var(--ink-2);}
+:root[data-rail] .ch-diff pre{margin:0;max-width:100%;overflow-x:auto;font:400 var(--fs-meta)/1.6 var(--mono);color:var(--ink-2);}
+:root[data-rail] .ch-diff pre .add{color:var(--green-ink-strong,var(--green));}
+:root[data-rail] .ch-diff pre .del{color:var(--red-ink-strong,var(--red));}
+
+/* Activity: a filter and the graph link on one bar; each stage's share of the cost; rounds open under a step. */
+:root[data-rail] .rtab-bar{align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+:root[data-rail] .ac-share{flex:0 0 64px;height:4px;margin-left:auto;align-self:center;border-radius:var(--r-xs);background:var(--line);overflow:hidden;}
+:root[data-rail] .ac-share i{display:block;height:100%;background:var(--ink-3);}
+:root[data-rail] .sc-loop.is-btn{display:inline-flex;align-items:center;gap:3px;padding:2px 4px;margin:-2px -4px;border:0;border-radius:var(--r-xs);background:none;color:inherit;font:inherit;cursor:pointer;}
+:root[data-rail] .sc-loop.is-btn:hover{background:var(--hover);color:var(--ink);}
+:root[data-rail] .sc-loop.is-btn[aria-expanded="true"]{background:var(--field);color:var(--ink);}
+:root[data-rail] .sc-loop.is-btn:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+:root[data-rail] .sc-row.is-round{padding-bottom:2px;}
+:root[data-rail] .sc-row.is-round::before{display:none;}
+:root[data-rail] .ac-round-n{justify-self:center;font:500 var(--fs-caption)/1 var(--sans);color:var(--ink-2);font-variant-numeric:tabular-nums;}
+:root[data-rail] .ac-why{font-size:var(--fs-meta);font-weight:400;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* Decisions: who decided, on the rail: you, Away mode, or Worca's default; a question still open leads. */
+:root[data-rail] .dc-list .rd-route-row{padding-bottom:12px;}
+:root[data-rail] .dc-list .rd-route-row::before{background:var(--line);}
+:root[data-rail] .dc-who{color:var(--ink-2);background:var(--panel);box-shadow:inset 0 0 0 1px var(--line-2);}
+:root[data-rail] .dc-who.is-away{color:var(--blue-ink-strong);}
+:root[data-rail] .dc-body{display:flex;flex-direction:column;gap:2px;min-width:0;}
+:root[data-rail] .dc-body p{margin:0;}
+:root[data-rail] .dc-a{font-size:var(--fs-body);color:var(--ink);}
+:root[data-rail] .dc-link{padding:0;border:0;background:none;font:inherit;color:var(--ink);text-decoration:underline;text-underline-offset:3px;cursor:pointer;}
+
+/* The cost breakdown under its figure. */
+:root[data-rail] .rc-figs .rc-pop{display:inline-flex;align-items:baseline;}
+:root[data-rail] .rc-cost{min-width:240px;padding:8px 12px;}
+:root[data-rail] .rc-cost ul{list-style:none;margin:4px 0 8px;padding:0;}
+:root[data-rail] .rc-cost li{display:flex;justify-content:space-between;gap:16px;padding:4px 0;font-size:var(--fs-meta);color:var(--ink);border-top:1px solid var(--line);}
+:root[data-rail] .rc-cost li:first-child{border-top:0;}
+:root[data-rail] .rc-cost li.is-total{font-weight:600;}
+/* Changes: the code's actions above its files. */
+:root[data-rail] .ch-head{align-items:flex-start;}
+:root[data-rail] .ch-sum{display:flex;flex-direction:column;gap:2px;min-width:0;}
+:root[data-rail] .ch-sum > .rtab-dim{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+:root[data-rail] .ch-sum > .rtab-dim .rc-place{display:inline-flex;align-items:center;max-width:100%;min-width:0;}
+:root[data-rail] .ch-act{flex:none;}
+:root[data-rail] .ov-after-t{font-size:var(--fs-body);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* The answer, under its step on the text column: options as one choice (a radio dot), Worca's pick marked at the right. */
+:root[data-rail] .sc-subs > .sc-answer{grid-column:2 / -1;list-style:none;display:flex;flex-direction:column;gap:8px;padding:4px 0 12px;min-width:0;}
+:root[data-rail] .sc-ans-q{margin:0;font-size:var(--fs-body);font-weight:500;color:var(--ink);}
+:root[data-rail] .sc-ans-why{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .sc-ans-opts{display:flex;flex-direction:column;gap:2px;}
+:root[data-rail] .sc-ans-opt{display:grid;grid-template-columns:16px minmax(0,1fr) auto;align-items:center;column-gap:10px;min-height:32px;padding:4px 8px;margin-inline:-8px;
+  border:0;border-radius:var(--r-sm);background:none;color:var(--ink);font:inherit;font-size:var(--fs-body);text-align:left;cursor:pointer;}
+:root[data-rail] .sc-ans-opt:hover{background:var(--hover);}
+:root[data-rail] .sc-ans-opt:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+:root[data-rail] .sc-ans-dot{width:14px;height:14px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--ink-3);}
+:root[data-rail] .sc-ans-opt[aria-checked="true"] .sc-ans-dot{box-shadow:inset 0 0 0 4px var(--ink);}
+:root[data-rail] .sc-ans-l{min-width:0;}
+:root[data-rail] .sc-ans-hint{font-size:var(--fs-caption);color:var(--ink-2);white-space:nowrap;}
+:root[data-rail] .sc-answer .input{max-width:420px;}
+
+/* The PR stage: Worca's suggestion first, then what it opens. */
+:root[data-rail] .sk-rec{margin:0 0 4px;}
+
+:root[data-rail] .menu-item[aria-disabled="true"]:hover{background:none;}   /* comp.menu-off */
+
+/* Proposed, not in today's app: a quiet tag, never a colour of its own. */
+/* A shorter tab never pulls the page up: the panel keeps at least a screen of height. */
+:root[data-rail] .rtab-panel{min-height:100vh;}
+:root[data-rail] .rc-chipset{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;}
+:root[data-rail] .rc-chipset .label-chip,:root[data-rail] .rc-chipset .tag-chip{height:18px;font-size:var(--fs-caption);font-weight:500;border-radius:var(--r-xs);max-width:24ch;}
+:root[data-rail] .rc-chipset .label-chip-t,:root[data-rail] .rc-chipset .tag-chip{overflow:hidden;text-overflow:ellipsis;}
+/* Narrow cards: the controls may take two lines (the action first, ⋯ after); never wider than the card. */
+@container (max-width: 420px){ :root[data-rail] .rc-zone > .rc-side{flex-wrap:wrap;max-width:100%;} }
+
+/* The place phrase: names in mono, the joining words in the body face; the branch is its own copy button. */
+:root[data-rail] .rc-place{gap:6px !important;}
+:root[data-rail] .rc-word-sm{color:var(--ink-2);font-family:var(--sans);}
+:root[data-rail] .rc-branch{display:inline-flex;min-width:0;padding:0;border:0;background:none;color:var(--ink-2);font:inherit;cursor:copy;border-radius:var(--r-xs);}
+:root[data-rail] .rc-branch:hover .rc-mid{color:var(--ink);text-decoration:underline dotted;text-underline-offset:3px;}
+:root[data-rail] .rc-branch:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+:root[data-rail] .rc-add.has-text{gap:4px;padding:0 6px;margin-block:-6px;color:var(--ink-2);font-size:var(--fs-meta);}
+:root[data-rail] .rc-add.has-text:hover{color:var(--ink);}
+
+/* Artifacts: the name is the link; the download icon's box sits on the rows' right edge. */
+:root[data-rail] .ov-art-name{justify-self:start;min-width:0;max-width:100%;padding:0;border:0;background:none;color:var(--ink);font:inherit;cursor:pointer;text-align:left;border-radius:var(--r-xs);}
+:root[data-rail] .ov-art-name code{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+:root[data-rail] .ov-art-name:hover code{text-decoration:underline;text-underline-offset:3px;}
+:root[data-rail] .ov-art-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+:root[data-rail] .ov-arts .btn-icon{justify-self:end;}
+
+/* Decisions' "Answer it in the card" lands here: the block marks itself once. */
+:root[data-rail] .sc-answer.is-flash{animation:ov-flash var(--motion-flash) ease-out;border-radius:var(--r-sm);}
+@media (prefers-reduced-motion: reduce){:root[data-rail] .sc-answer.is-flash{animation:none;outline:2px solid var(--line-2);outline-offset:4px;}}
+/* The tag group: a mark, then labels and cost tags in quiet outlines; one line, the rest folds into +N. */
+:root[data-rail] .rc-facts{flex-wrap:nowrap !important;}
+:root[data-rail] .rc-tagpop{flex:none;display:inline-flex;}
+:root[data-rail] .rc-tags{display:inline-flex;align-items:center;gap:6px;padding:2px 4px;margin:-2px -4px;border:0;background:none;border-radius:var(--r-sm);
+  cursor:pointer;font:inherit;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
+:root[data-rail] .rc-tags > svg{flex:none;color:var(--ink-3);}
+:root[data-rail] .rc-tags:hover,:root[data-rail] .rc-tags[aria-expanded="true"]{background:var(--hover);}
+:root[data-rail] .rc-tags:hover > svg{color:var(--ink-2);}
+:root[data-rail] .rc-tags:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+:root[data-rail] .rc-tag{display:inline-flex;align-items:center;height:20px;padding:0 6px;border-radius:var(--r-xs);box-shadow:inset 0 0 0 1px var(--line-2);
+  font-size:var(--fs-caption);font-weight:500;color:var(--ink-2);}
+:root[data-rail] .rc-tags:hover .rc-tag{color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink-3);}
+:root[data-rail] .rc-tag[hidden],:root[data-rail] .rc-tag-more[hidden]{display:none;}
+:root[data-rail] .rc-tag-more{font-size:var(--fs-caption);color:var(--ink-2);}   /* it is read: never the faint grey */
+:root[data-rail] .rc-list-ed{width:290px;padding:8px;display:flex;flex-direction:column;gap:2px;}
+:root[data-rail] .rc-list-ed .input{margin-bottom:4px;}
+
+:root[data-rail] .rc .menu-item[role="menuitemcheckbox"][aria-checked="true"]::before{background:currentColor;}
+:root[data-rail] .rc .menu-item[role="menuitemcheckbox"] > .mi-l{grid-column:2;}
+
+/* Labels vs cost tags without colour: a label is an outline with a small dot, a cost tag a soft fill. */
+:root[data-rail] .rc-tags{cursor:pointer;}
+:root[data-rail] .rc-tags.is-open{background:var(--hover);}
+:root[data-rail] .rc-tags-mark{display:inline-grid;place-items:center;width:18px;height:20px;padding:0;border:0;background:none;color:var(--ink-3);cursor:pointer;border-radius:var(--r-xs);}
+:root[data-rail] .rc-tags:hover .rc-tags-mark,:root[data-rail] .rc-tags-mark:focus-visible{color:var(--ink-2);}
+:root[data-rail] .rc-tags-mark:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+:root[data-rail] .rc-tag{gap:5px;padding:0 3px 0 7px;}
+:root[data-rail] .rc-tag.is-label::before{content:"";flex:none;width:5px;height:5px;margin-left:-1px;border-radius:50%;background:var(--ink-3);}
+:root[data-rail] .rc-tag.is-tag{box-shadow:none;background:color-mix(in srgb,var(--ink) 8%,transparent);}   /* a tint of the ink: darker than the page in light, lighter in dark */
+:root[data-rail] .rc-tags:hover .rc-tag.is-tag{box-shadow:none;}
+/* × on hover or keyboard focus; its room is always there, so nothing moves */
+:root[data-rail] .rc-tag-x{display:inline-grid;place-items:center;width:12px;height:12px;margin-left:-1px;padding:0;border:0;border-radius:var(--r-xs);background:none;color:var(--ink-2);cursor:pointer;opacity:0;}
+:root[data-rail] .rc-tag:hover .rc-tag-x,:root[data-rail] .rc-tag-x:focus-visible{opacity:1;}
+:root[data-rail] .rc-tag-x:hover{background:var(--hover);color:var(--ink);}
+:root[data-rail] .rc-tag-x:focus-visible{outline:2px solid var(--ink);outline-offset:0;}
+@media (hover: none){ :root[data-rail] .rc-tag-x{display:none;} :root[data-rail] .rc-tag{padding-right:7px;} }   /* touch: remove in the editor */
+
+/* Overview by exception (spec › The tabs): a check says why it is here and its one way to act; what went fine is one
+   line each, on the rail, its detail behind a › that turns down when open. */
+:root[data-rail] .ov-why{display:block;margin-top:2px;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .ov-check:has(input:checked) .ov-why{text-decoration:none;}
+:root[data-rail] .ov-lines .rd-route-row::before{display:none;}
+:root[data-rail] .ov-line{align-items:start;padding-bottom:2px;}
+:root[data-rail] .rd-route-row.ov-line:last-child{padding-bottom:0;}   /* today's .rd-route-row:last-child, outranked by the prefix */
+:root[data-rail] .ov-line > .rd-route-dot{margin-top:4px;}
+:root[data-rail] .ov-line-btn{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-width:0;min-height:28px;padding:0;border:0;
+  background:none;color:var(--ink);font:inherit;font-size:var(--fs-body);text-align:left;cursor:pointer;}
+:root[data-rail] .ov-line-btn > span{min-width:0;}
+:root[data-rail] .ov-line-btn > svg{flex:none;color:var(--ink-3);transform:rotate(-90deg);transition:transform var(--motion-quick) var(--ease);}
+:root[data-rail] .ov-line.is-open .ov-line-btn > svg{transform:none;}
+:root[data-rail] .ov-line-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+:root[data-rail] .ov-line-more{grid-column:2;display:flex;flex-direction:column;gap:6px;padding:2px 0 10px;}   /* opens with data-motion="open" */
+:root[data-rail] .ov-quote{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .ov-parts{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;}
+:root[data-rail] .ov-parts li{display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:10px;align-items:start;}
+:root[data-rail] .ov-parts .rd-route-dot{transform:scale(.8);transform-origin:center top;}
+:root[data-rail] .ov-part{display:block;color:var(--ink);}
+:root[data-rail] .ov-line-more code{font-size:var(--fs-meta);}
+@media (prefers-reduced-motion: reduce){:root[data-rail] .ov-line-btn > svg{transition:none;}}
+
+/* Changes, grouped by what it is: a group's head with its count and lines; the folder trails the file's name; the
+   documents its steps wrote follow under Not in the code. */
+:root[data-rail] .ch-group{padding-top:16px;}
+:root[data-rail] .ch-group:not(:first-child){margin-top:12px;border-top:1px solid var(--line);}   /* a line where a group starts; files divide by space */
+:root[data-rail] .ch-group:first-child{padding-top:0;}
+:root[data-rail] .ch-gn{font:600 var(--fs-body)/var(--lh-title) var(--sans);color:var(--ink);}
+:root[data-rail] .ch-group .ct{display:inline-flex;gap:6px;font:400 var(--fs-meta)/1 var(--mono);}
+:root[data-rail] .ch-path{flex:0 9999 auto;min-width:0;margin-left:8px;overflow:hidden;text-overflow:ellipsis;font:400 var(--fs-meta)/var(--lh-title) var(--sans);color:var(--ink-2);}
+:root[data-rail] .ch-gnote{padding:0 0 4px;font-size:var(--fs-meta);color:var(--ink-2);list-style:none;}
+:root[data-rail] .ch-doc{display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:center;column-gap:12px;min-height:36px;}
+:root[data-rail] .ch-doc .ch-name{display:flex;align-items:baseline;min-width:0;}
+:root[data-rail] .ch-file.is-flash{animation:ov-flash var(--motion-flash) ease-out;border-radius:var(--r-sm);}
+@media (prefers-reduced-motion: reduce){:root[data-rail] .ch-file.is-flash{animation:none;outline:2px solid var(--line-2);outline-offset:4px;}}
+
+/* The run page's Activity and Changes sections */
+:root[data-rail] .rl-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;min-width:0;}
+:root[data-rail] .rl-sentence{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .rl-sec{display:flex;flex-direction:column;gap:12px;min-width:0;}
+:root[data-rail] .rl-note{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .rl-note.is-warn{color:var(--amber-ink-strong);}
+:root[data-rail] .ov-issues{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;}
+:root[data-rail] .ov-issues li{display:flex;align-items:baseline;gap:8px;min-width:0;font-size:var(--fs-body);color:var(--ink);}
+:root[data-rail] .ov-issues li > :last-child{min-width:0;}
+:root[data-rail] .ov-reqs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px;}
+:root[data-rail] .ov-req{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:var(--fs-body);color:var(--ink);}
+:root[data-rail] .ov-req .seg{align-self:flex-start;}
+:root[data-rail] .ch-actions{display:flex;flex-direction:column;gap:8px;margin-bottom:16px;}
+:root[data-rail] .ch-thread{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;width:100%;font-size:var(--fs-meta);color:var(--ink);}
+:root[data-rail] .ch-comment{display:flex;flex-direction:column;gap:8px;width:100%;min-width:0;}
+:root[data-rail] .doc-view{font-size:var(--fs-body);color:var(--ink);overflow-wrap:anywhere;}
+:root[data-rail] .doc-view h3{margin:12px 0 4px;font:600 var(--fs-body)/var(--lh-title) var(--sans);}
+:root[data-rail] .doc-view p,:root[data-rail] .doc-view ul{margin:0 0 8px;}
+:root[data-rail] .sk-list .rd-route-row:has(> .rc-pop){grid-template-columns:20px minmax(0,1fr) max-content;align-items:start;}   /* a cut's run: its own ⋯ at the end */
+

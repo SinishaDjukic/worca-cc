@@ -1,0 +1,146 @@
+/* ---------- Rail: create PR ---------- */
+/* Stillhet (Rail) behind its flag: every rule scopes on :root[data-rail] (test/rail-parts-scope.test.mjs); cut from the prototype's rail.css. */
+/* Create PR: the app's dialog (.viewer-modal .dlg) in four zones, each a small label then its controls. */
+:root[data-rail] .pd-card{width:min(560px,100%);height:auto;max-height:min(86vh,760px);}
+:root[data-rail] .pd-card > .dlg-body{padding:20px var(--pad-card);flex:0 1 auto;}
+:root[data-rail] .pd-h{margin:0;font:600 var(--fs-section)/var(--lh-title) var(--sans);}
+
+:root[data-rail] .pd-zone{display:flex;flex-direction:column;gap:8px;min-width:0;}
+:root[data-rail] .pd-label{font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);}
+:root[data-rail] .pd-into{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-meta);white-space:nowrap;}
+@container (max-width: 520px){ :root[data-rail] .pd-push{display:none;} }
+:root[data-rail] .pd-into .rc-mid{flex:0 1 auto;min-width:0;}
+:root[data-rail] .pd-into .select{flex:none;width:auto;}
+:root[data-rail] .pd-into .rtab-dim{flex:none;margin-left:auto;}
+:root[data-rail] .pd-hint{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .pd-hint.is-warn{color:var(--amber-ink-strong);}
+:root[data-rail] .pd-prs{list-style:none;margin:0;padding:0;}
+:root[data-rail] .pd-prs li{display:grid;grid-template-columns:44px minmax(0,1fr) max-content;align-items:center;column-gap:12px;min-height:32px;border-top:1px solid var(--line);font-size:var(--fs-body);}
+:root[data-rail] .pd-prs li:first-child{border-top:0;}
+:root[data-rail] .pd-pr-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+:root[data-rail] .pd-desc-head{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+:root[data-rail] .pd-field{position:relative;min-width:0;}
+:root[data-rail] .pd-field .textarea{width:100%;min-height:168px;resize:vertical;font:400 var(--fs-meta)/1.6 var(--mono);}
+:root[data-rail] .pd-preview{min-height:168px;max-height:320px;overflow:auto;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-sm);font-size:var(--fs-body);}
+:root[data-rail] .pd-preview h3{margin:12px 0 4px;font:600 var(--fs-body)/var(--lh-title) var(--sans);}
+:root[data-rail] .pd-preview h3:first-child{margin-top:0;}
+:root[data-rail] .pd-preview ul{margin:0;padding-left:18px;}
+:root[data-rail] .pd-preview p{margin:8px 0 0;}
+:root[data-rail] .pd-preview code{font:400 var(--fs-meta)/1 var(--mono);}
+/* Drafting: a quiet veil over the field that also takes the clicks while it is read-only. */
+:root[data-rail] .pd-busy{position:absolute;inset:0;display:grid;place-items:center;border-radius:var(--r-sm);background:color-mix(in srgb,var(--panel) 72%,transparent);}
+:root[data-rail] .pd-busy span{font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .pd-field.is-generating .pd-busy::before{content:"";position:absolute;inset:0;border-radius:inherit;background:linear-gradient(100deg,transparent 30%,var(--hover) 50%,transparent 70%);background-size:200% 100%;animation:pd-sweep 1.2s linear infinite;}
+@keyframes pd-sweep{from{background-position:120% 0}to{background-position:-80% 0}}
+@media (prefers-reduced-motion: reduce){:root[data-rail] .pd-field.is-generating .pd-busy::before{animation:none;}}
+:root[data-rail] .pd-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;}
+:root[data-rail] .pd-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:var(--dlg-gap-foot);}
+:root[data-rail] .pd-foot-end{display:flex;gap:8px;}
+
+/* The metadata line wraps only between its groups: the place (branch → base, PR) shrinks first, chips and + wrap together. */
+:root[data-rail] .rc-facts{flex-wrap:wrap;row-gap:6px;}
+:root[data-rail] .rc-placeset{display:inline-flex;align-items:center;gap:8px;min-width:0;flex:0 1 auto;max-width:100%;}
+:root[data-rail] .rc-placeset > *{flex:none;}
+:root[data-rail] .rc-placeset > .rc-place{flex:0 1 auto;min-width:0;}
+
+/* Create PR, simplified: title, description, where it merges, two switches. Suggestions as on the New run form:
+   a sparkle inside the field, a "Suggested" chip, the violet shimmer while Worca writes. */
+:root[data-rail] .pd-f{display:flex;flex-direction:column;gap:6px;min-width:0;}
+:root[data-rail] .pd-lab{display:flex;align-items:center;gap:6px;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);}
+:root[data-rail] .pd-lab label{color:inherit;}
+:root[data-rail] .pd-sug{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--r-xs);background:var(--violet-bg);color:var(--violet-ink);font-size:var(--fs-caption);font-weight:500;}
+:root[data-rail] .pd-eye{margin-left:auto;display:inline-grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:var(--r-xs);background:none;color:var(--ink-2);cursor:pointer;}
+:root[data-rail] .pd-eye.is-on,:root[data-rail] .pd-eye:hover{background:var(--hover);color:var(--ink);}
+:root[data-rail] .pd-adorn{position:relative;min-width:0;}
+:root[data-rail] .pd-adorn .input,:root[data-rail] .pd-adorn .textarea{width:100%;padding-right:40px;}
+:root[data-rail] .pd-adorn .textarea{min-height:150px;font:400 var(--fs-meta)/1.6 var(--mono);resize:vertical;display:block;}
+:root[data-rail] .pd-adorn .pd-preview{padding-right:40px;}
+:root[data-rail] .pd-act{position:absolute;right:6px;top:6px;display:inline-flex;gap:4px;}
+:root[data-rail] .pd-adorn:has(> .input) .pd-act{top:50%;transform:translateY(-50%);}
+:root[data-rail] .pd-ai,:root[data-rail] .pd-stop{display:inline-grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:var(--r-xs);cursor:pointer;}
+:root[data-rail] .pd-ai{background:var(--violet-bg);color:var(--violet-ink);}
+:root[data-rail] .pd-stop{background:var(--line-2);color:var(--ink-2);}
+:root[data-rail] .pd-ai:focus-visible,:root[data-rail] .pd-stop:focus-visible,:root[data-rail] .pd-eye:focus-visible,:root[data-rail] .pd-base:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+:root[data-rail] .pd-adorn.is-writing :is(.input,.textarea){background:linear-gradient(90deg,var(--field),var(--violet-wash),var(--field));background-size:200% 100%;animation:pd-wash 1.4s linear infinite;}
+@keyframes pd-wash{from{background-position:100% 0}to{background-position:-100% 0}}
+@media (prefers-reduced-motion: reduce){:root[data-rail] .pd-adorn.is-writing :is(.input,.textarea){animation:none;background:var(--violet-wash);}}
+:root[data-rail] .pd-into{display:flex;align-items:center;gap:6px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
+:root[data-rail] .pd-br{min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);}
+:root[data-rail] .pd-into > span{flex:none;}
+:root[data-rail] .pd-base{display:inline-flex;align-items:center;gap:2px;padding:1px 4px;margin:-1px -2px;border:0;border-radius:var(--r-xs);background:none;color:var(--ink);font:400 var(--fs-meta)/1 var(--mono);cursor:pointer;}
+:root[data-rail] .pd-base:hover,:root[data-rail] .pd-base[aria-expanded="true"]{background:var(--hover);}
+:root[data-rail] .pd-base svg{color:var(--ink-2);}
+:root[data-rail] .pd-basepop .menu{min-width:140px;}
+:root[data-rail] .pd-hint{font-size:var(--fs-caption);color:var(--ink-2);}
+:root[data-rail] .pd-hint.is-warn{color:var(--amber-ink-strong);}
+:root[data-rail] .pd-opts{display:flex;align-items:center;gap:20px;flex-wrap:wrap;font-size:var(--fs-meta);}
+:root[data-rail] .pd-check{display:inline-flex;align-items:center;gap:8px;color:var(--ink);cursor:pointer;}
+:root[data-rail] .pd-check input{margin:0;accent-color:var(--ink);}
+:root[data-rail] .pd-closes{margin-left:auto;}
+
+/* Type roles (The Rail look): Headline 22 (the state word leads) · Title 18 · Value 15 · Body 13 · Meta 12 · Caption 11.
+   Two greys: --ink-2 for what supports, --ink-3 only for marks and separators. Numbers lead their labels. */
+:root[data-rail] .rc-word{font-size:var(--fs-page);letter-spacing:-.02em;}
+:root[data-rail] .rc-figs{align-items:baseline;row-gap:8px;}
+:root[data-rail] .rc-figs b{font-size:var(--fs-section);}
+:root[data-rail] .sc-subs .rd-route-name{font-size:var(--fs-body);font-weight:400;color:var(--ink);}
+:root[data-rail] .sc-subs .rd-route-row:is(.is-now,.is-ask,.is-problem,.is-failed,.is-paused) .rd-route-name{font-weight:600;}
+:root[data-rail] .sc-subs .rd-route-row.is-next .rd-route-name{color:var(--ink-2);}
+:root[data-rail] .sc-stage .l{font-size:var(--fs-body);font-weight:400;color:var(--ink-2);}
+:root[data-rail] .sc-stage[aria-selected="true"] .l{color:var(--ink);font-weight:600;}
+:root[data-rail] .sc-stage .m{font-size:var(--fs-meta);margin-top:2px;}
+:root[data-rail] .rtab-panel{gap:32px;}
+:root[data-rail] .rtab-h{margin-bottom:4px;}
+:root[data-rail] .sc-head .sc-run{font-size:var(--fs-body);}
+
+/* The description's AI and Stop sit in its label row, beside the eye: never over the textarea's scrollbar. */
+:root[data-rail] .pd-lab .pd-ai,:root[data-rail] .pd-lab .pd-stop{margin-left:auto;}
+:root[data-rail] .pd-lab .pd-ai + .pd-eye,:root[data-rail] .pd-lab .pd-stop + .pd-eye{margin-left:0;}
+:root[data-rail] .pd-adorn .textarea{padding-right:12px;}
+
+/* The prototype's note on proposed actions: a quiet disclosure under the intro. */
+:root[data-rail] .mk-proposed{margin:-8px 0 16px;font-size:var(--fs-meta);color:var(--ink-2);max-width:72ch;}
+:root[data-rail] .mk-proposed summary{cursor:pointer;color:var(--ink-2);}
+:root[data-rail] .mk-proposed summary:hover{color:var(--ink);}
+:root[data-rail] .mk-proposed ul{margin:8px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:4px;}
+:root[data-rail] .mk-proposed b{font-weight:600;color:var(--ink);margin-right:4px;}
+
+/* A stack's PRs: one row each, opening to the same title and description fields as one PR. */
+:root[data-rail] .st-list{list-style:none;margin:0;padding:0;border-top:1px solid var(--line);}
+:root[data-rail] .st-row{border-bottom:1px solid var(--line);}
+:root[data-rail] .st-head{display:grid;grid-template-columns:16px 40px minmax(0,1fr) auto;align-items:start;column-gap:10px;min-height:40px;width:100%;padding:10px 0;border:0;background:none;color:var(--ink);font:inherit;font-size:var(--fs-body);text-align:left;cursor:pointer;}
+:root[data-rail] .st-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;border-radius:var(--r-xs);}
+:root[data-rail] .st-head svg{color:var(--ink-2);}
+:root[data-rail] .st-num{font-weight:600;font-size:var(--fs-meta);}
+:root[data-rail] .st-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+:root[data-rail] .st-into{font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .st-writing{font-size:var(--fs-caption);color:var(--violet-ink);}
+:root[data-rail] .st-body{display:flex;flex-direction:column;gap:14px;padding:4px 0 16px 26px;}
+
+/* A stacked PR's row: title and one line (summary, Writing…, worth a look, opened), then size and base at the right. */
+:root[data-rail] .st-head svg{margin-top:3px;}
+:root[data-rail] .st-head:disabled{cursor:default;}
+:root[data-rail] .st-num{line-height:20px;}
+:root[data-rail] .st-mid{display:flex;flex-direction:column;gap:2px;min-width:0;}
+:root[data-rail] .st-t{line-height:20px;}
+:root[data-rail] .st-sum{font-size:var(--fs-meta);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+:root[data-rail] .st-flag{font-size:var(--fs-meta);color:var(--amber-ink-strong);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+:root[data-rail] .st-writing{font-size:var(--fs-meta);}
+:root[data-rail] .st-meta{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;line-height:20px;}
+/* The sentence: how many PRs (a picker), from the branch, into the base (a picker); it wraps on a phone. */
+:root[data-rail] .pd-into{flex-wrap:wrap;row-gap:4px;}
+:root[data-rail] .pd-br{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;}
+:root[data-rail] .pd-ship{font-family:var(--sans);font-weight:500;}
+/* Worca could not write it: grey, the text stays, Try again. A step that failed: the dialog's alert, the strip's text. */
+:root[data-rail] .pd-fail{font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .pd-retry{padding:0;border:0;background:none;color:var(--ink);font:inherit;text-decoration:underline;text-underline-offset:2px;cursor:pointer;}
+:root[data-rail] .pd-retry:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+:root[data-rail] .pd-alert{display:flex;flex-direction:column;gap:2px;padding:8px 12px;border:1px solid color-mix(in srgb,var(--red-ink) 35%,transparent);border-radius:var(--r-sm);background:var(--red-bg);font-size:var(--fs-meta);color:var(--ink);}
+:root[data-rail] .pd-alert b{color:var(--red-ink-strong);font-weight:600;}
+/* A group's next run, under the run it follows, on the step text edge. */
+:root[data-rail] .sc-then{grid-column:1 / -1;display:flex;align-items:center;gap:6px;min-width:0;padding:10px 0 0 32px;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
+:root[data-rail] .sc-then b{min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--ink);font-weight:500;}
+:root[data-rail] .sc-then .rc-pop{flex:none;}
+:root[data-rail] .sc-then .menu{min-width:180px;}
+:root[data-rail] .pd-into .rc-pop .menu:has([data-menu-pick^="ship:"]){min-width:220px;}
+

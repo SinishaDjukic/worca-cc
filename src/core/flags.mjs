@@ -6,13 +6,15 @@
 // setFlags(patch)         { key: true|false|null }: validate, cascade `requires`, persist, emit ({} = no-op)
 // checkFlags(patch)       the same validation + cascade, synchronous, no side effects (POST /api/settings pre-assert)
 // flagEvents 'changed'    { key: bool } for every registry flag (ui/server.mjs broadcasts it)
+// flagEvents 'asked'      the Stillhet question was marked asked by a write of its flag (ui/server.mjs broadcasts
+//                         onboarding-changed, so a strip open in another tab closes)
 //
 // A flag is never a security boundary: code that must not run while a flag is off checks
 // flagEnabled itself. Keep literal keys out of this file's comments (test/flags-usage.test.mjs).
 import { EventEmitter } from 'node:events';
 import { FLAGS } from '../shared/flags/registry.mjs';
 import { resolveFlags } from '../shared/flags/resolve.mjs';
-import { storedFlags, writeStoredFlags } from './settings.mjs';
+import { setOnboardingPrefs, storedFlags, writeStoredFlags } from './settings.mjs';
 
 export class FlagError extends Error {
   /** @param {'invalid'|'locked'} code  @param {string} message  @param {string|null} [key] */
@@ -28,10 +30,12 @@ function warnUnknownOnce(key, where) {
 
 /**
  * A flag service over an injectable registry, environment and store (tests inject all four).
- * @param {{registry?:ReadonlyArray<object>, env?:()=>string|undefined, read?:()=>object, write?:(m:object)=>Promise<void>, warn?:(key:string, where:string)=>void}} [o]
+ * `markAsked` stores the Stillhet question as asked; a write of its flag calls it inside the write queue.
+ * @param {{registry?:ReadonlyArray<object>, env?:()=>string|undefined, read?:()=>object, write?:(m:object)=>Promise<void>, warn?:(key:string, where:string)=>void, markAsked?:()=>Promise<unknown>}} [o]
  */
 export function createFlags({
   registry = FLAGS, env = () => process.env.WORCA_FLAGS, read = storedFlags, write = writeStoredFlags, warn = warnUnknownOnce,
+  markAsked = () => setOnboardingPrefs({ stillhetAsked: true }),
 } = {}) {
   const events = new EventEmitter();
   const byKey = new Map(registry.map((f) => [f.key, f]));
@@ -87,8 +91,18 @@ export function createFlags({
     const clean = plan(patch);
     if (!Object.keys(patch).length) return list();   // {} (the settings-api probe, a Reset with nothing unlocked): no write, no frame
     await write(clean);
+    // a rail write marks the Stillhet question asked (D3: server-side so the CLI and every tab are covered); inside
+    // the queue, so no other flag write reads settings.json between the two
+    if (Object.hasOwn(patch, 'rail')) await mark();
     events.emit('changed', map());
     return list();
+  }
+
+  async function mark() {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try { await markAsked(); events.emit('asked'); return; }
+      catch (err) { if (attempt) console.warn(`[worca] could not mark the Stillhet question asked: ${err && err.message ? err.message : err}`); }
+    }
   }
 
   // §3.1 requires: turning a flag on turns its whole prerequisite closure on; turning a flag off turns

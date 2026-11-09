@@ -295,6 +295,7 @@ import { createRunPrFields, mountWorkspacePrSetting, paintRunPrAuto } from './pr
 import { createRequirementsView } from './requirements-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, currentFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
+import { mountStillhetAsk, shouldAskStillhet, syncRailRoot } from './stillhet.mjs';
 import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
 import { PROBE_DEBOUNCE_MS, defaultAddMode, detectModel } from './project-add.mjs';
 import { presetMenuGroups, presetHiddenItems, presetNodePick, renderBrokenCard, resetItem, saveDialogError, configWithPreset } from './run-presets-picker.mjs';
@@ -38306,6 +38307,8 @@ async function loadOnboarding({ recheck = false } = {}) {
   gs.status = data;
   paintOnboarding();
   maybeWelcome();
+  if (data.stillhetAsked) stillhetAsk.ctl?.close();   // answered in another tab, or by a write of the flag
+  maybeAskStillhet();
 }
 /** Coalesce the change broadcasts (a finished run fires several) into one refetch. */
 function scheduleOnboardingRefresh() {
@@ -38384,6 +38387,18 @@ function maybeWelcome() {
   // Nothing left to teach: an install that has done everything skips the welcome.
   if (allStepsDone(s)) { gs.welcomeShown = true; setOnboardingPrefs({ welcomeSeen: true }); return; }
   showWelcome();
+}
+// ── Stillhet question (one-time, install-wide; ui/public/stillhet.mjs) ─────
+// Asked once per page load at most, after the boot's flag list and the onboarding status have both landed,
+// and never over the welcome or the setup assistant (they come first).
+const stillhetAsk = { rail: null, tried: false, ctl: null };
+function maybeAskStillhet() {
+  if (stillhetAsk.tried || !gs.status || !stillhetAsk.rail) return;
+  stillhetAsk.tried = true;
+  if (flagOn('rail')) return;   // a live flags frame can land after the boot GET: never ask with rail already on
+  const host = document.getElementById('stillhet-ask');
+  if (!host || !shouldAskStillhet({ onboarding: gs.status, railFlag: stillhetAsk.rail, welcomeThisLoad: gs.welcomeShown, setupOpen: !!setupDialog })) return;
+  stillhetAsk.ctl = mountStillhetAsk({ host, doc: document, fetchImpl: (...a) => fetch(...a), onDone: () => { stillhetAsk.ctl = null; } });
 }
 /** The welcome's three doors. `force`: after a re-run's Apply, even when the welcome was seen before (A7). */
 function showWelcome({ force = false } = {}) {
@@ -39607,8 +39622,15 @@ levelCtl.paint();
 // Feature flags: the shell came with them (data-flags + #flag-gates); a page restored from a stale
 // cache corrects itself from the server (D6), and static [data-flag-chip] markup gets its chip (D9).
 decorateFlagChips(document);
+// Stillhet: the root's data-rail follows the flag live (the server painted it at first paint).
+const offRailRoot = syncRailRoot(document);
+if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { stillhet: { off: () => { offRailRoot(); stillhetAsk.ctl?.close(); } } });
 void mcpApi('GET', '/api/flags').then((r) => {
-  if (r.ok && r.data && Array.isArray(r.data.flags)) applyFlags(Object.fromEntries(r.data.flags.map((f) => [f.key, f.on])));
+  if (r.ok && r.data && Array.isArray(r.data.flags)) {
+    applyFlags(Object.fromEntries(r.data.flags.map((f) => [f.key, f.on])));
+    stillhetAsk.rail = r.data.flags.find((f) => f.key === 'rail') || null;
+    maybeAskStillhet();
+  }
 });
 // Renderers that branch on the mode. Registered here (after levelListeners exists); every callee
 // is a hoisted function declaration.

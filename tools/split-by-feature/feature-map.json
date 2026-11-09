@@ -933,6 +933,7 @@
       "routes": [],
       "css": [
         "^Design system: shared components",
+        "^Rail: (look|controls|rows|feedback)$",
         "^buttons",
         "^Action feedback",
         "^Card lists",
@@ -1021,6 +1022,7 @@
         "/api/budget"
       ],
       "css": [
+        "^Rail: (run card|run tabs|create PR)$",
         "^Live log",
         "^Questions panel",
         "^run\\-detail variant",

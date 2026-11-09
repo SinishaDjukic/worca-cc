@@ -5,9 +5,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
-import { readStyleCss } from '../src/core/read-style-css.mjs';
+import { readTodayCss } from './helpers/today-css.mjs';
 
-const css = readStyleCss();
+const css = readTodayCss();
 const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');            // comments stripped
 
 /** The declarations of the FIRST block opened by `selector` (the house ruleBody idiom). */

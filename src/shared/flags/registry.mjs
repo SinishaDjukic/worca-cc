@@ -135,6 +135,18 @@ export const FLAGS = Object.freeze([
     reviewBy: '2027-02-01',
     docs: 'docs/shape-it-first.md',
   }),
+  entry({
+    key: 'rail',
+    title: 'Stillhet',
+    description: 'The calmer Worca: Stillhet, the next step of the design system, arrives in steps. Today it changes the colours.',
+    stage: 'experimental',
+    default: false,
+    owner: 'e-angelov',
+    since: '1.19.0',
+    added: '2026-11-09',
+    reviewBy: '2027-02-07',
+    docs: 'docs/feature-flags.md',
+  }),
 ]);
 
 const BY_KEY = new Map(FLAGS.map((f) => [f.key, f]));

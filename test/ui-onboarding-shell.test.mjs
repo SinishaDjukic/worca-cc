@@ -40,7 +40,9 @@ const status = (done = [], flags = {}) => ({
   done: done.length, total: 9, claude: { bin: 'claude', hint: null }, hidden: false, welcomeSeen: false, ...flags,
 });
 
-async function boot({ onboarding = status(['claude']), projects = [], level = null, settingsError = null, width = null, holdOnboarding = null } = {}) {
+async function boot({ onboarding = status(['claude']), projects = [], level = null, settingsError = null, width = null, holdOnboarding = null, rail = null } = {}) {
+  // `rail`: the Stillhet flag's GET /api/flags row ({on, locked}); null = no flag list (the strip never asks).
+  globalThis.window?.__np?.stillhet?.off();   // a stale boot's root sync and strip (shared flags.mjs listeners)
   // `level`: the server-rendered interface mode (docs/ui-levels.md); null = no attribute (gates nothing).
   const shellHtml = level ? html.replace('<html lang="en" data-theme="system">', `<html lang="en" data-theme="system" data-level="${level}">`) : html;
   const dom = trackDom(new JSDOM(shellHtml, { url: 'http://localhost:4317/', pretendToBeVisual: true }));
@@ -49,7 +51,8 @@ async function boot({ onboarding = status(['claude']), projects = [], level = nu
   if (width) {
     window.matchMedia = (q) => { const m = /max-width:\s*(\d+)px/.exec(q); return { media: q, matches: !!m && width <= Number(m[1]), addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }; };
   }
-  window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
+  let sock = null;
+  window.WebSocket = class { constructor() { this.readyState = 1; this.l = {}; sock = this; } send() {} close() {} addEventListener(t, fn) { (this.l[t] = this.l[t] || []).push(fn); } };
   const posts = [];
   let current = onboarding;
   window.fetch = (u, init = {}) => {
@@ -63,6 +66,10 @@ async function boot({ onboarding = status(['claude']), projects = [], level = nu
     // settingsError: the error POST /api/settings answers with (a mode switch the server refuses).
     if (settingsError && url.includes('/api/settings') && init.method === 'POST') return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: settingsError }) });
     if (url.includes('/api/projects')) return json({ projects });
+    if (rail && url.includes('/api/flags')) {
+      if (init.method === 'PATCH') posts.push(JSON.parse(init.body));
+      return json({ flags: [{ key: 'rail', title: 'Stillhet', stage: 'experimental', on: init.method === 'PATCH' ? true : rail.on, locked: rail.locked, source: 'default', docs: null, requires: [] }] });
+    }
     // The setup assistant's load (a fresh boot opens it): minimal answers, so it paints its Check step.
     if (url.includes('/api/setup/detect')) return json({ checks: [{ id: 'claude', label: 'Claude Code', state: 'ok', line: 'Signed in.' }] });
     if (url.includes('/api/proxy/status')) return json({ settings: { enabled: false }, login: null, state: 'off' });
@@ -76,7 +83,8 @@ async function boot({ onboarding = status(['claude']), projects = [], level = nu
   window.localStorage.clear();
   await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await settle();
-  return { window, doc: window.document, posts, setStatus: (s) => { current = s; } };
+  const frame = (msg) => { for (const fn of sock?.l.message || []) fn({ data: JSON.stringify(msg) }); };
+  return { window, doc: window.document, posts, frame, setStatus: (s) => { current = s; } };
 }
 
 // ---- app.js wiring ----
@@ -446,4 +454,54 @@ test('first start: a fresh install opens the setup assistant before the welcome;
       assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false);
     } },
   ]);
+});
+
+// ---- Stillhet question (ui/public/stillhet.mjs; D7: never over the welcome or the setup assistant) ----
+
+test('Stillhet: a fresh install meets the onboarding, not the question; a later load with the welcome seen asks once', async () => {
+  const strip = (doc) => doc.querySelectorAll('#stillhet-ask .rc-confirm');
+  const off = { on: false, locked: false };
+  await checkRows([
+    { name: 'fresh: the setup assistant, no strip', run: async () => {
+      const { doc } = await boot({ onboarding: status(['claude'], { fresh: true }), rail: off });
+      assert.ok(doc.getElementById('setup-modal'));
+      assert.equal(strip(doc).length, 0);
+      assert.equal(doc.getElementById('stillhet-ask').classList.contains('hidden'), true);
+    } },
+    { name: 'not fresh, welcome not seen: the welcome shows, no strip in this load', run: async () => {
+      const { doc } = await boot({ rail: off });
+      assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false);
+      assert.equal(strip(doc).length, 0);
+    } },
+    { name: 'welcome seen, not asked: exactly 1 strip under the top bar, with both answers', run: async () => {
+      const { doc } = await boot({ onboarding: status(['claude'], { welcomeSeen: true, stillhetAsked: false, fresh: false }), rail: off });
+      assert.equal(strip(doc).length, 1);
+      assert.equal(doc.getElementById('stillhet-ask').previousElementSibling.id, 'topnav');
+      assert.deepEqual([...doc.querySelectorAll('#stillhet-ask button')].map((b) => b.textContent), ['Try Stillhet', 'No thanks']);
+    } },
+    { name: 'already asked, rail on or rail locked: no strip', run: async () => {
+      for (const [o, r] of [[{ stillhetAsked: true }, off], [{}, { on: true, locked: false }], [{}, { on: false, locked: true }]]) {
+        const { doc } = await boot({ onboarding: status(['claude'], { welcomeSeen: true, ...o }), rail: r });
+        assert.equal(strip(doc).length, 0, JSON.stringify([o, r]));
+      }
+    } },
+    { name: 'Try Stillhet: one PATCH {rail:true}, data-rail on, the strip gone', run: async () => {
+      const { doc, posts } = await boot({ onboarding: status(['claude'], { welcomeSeen: true }), rail: off });
+      click(doc.defaultView, doc.querySelector('#stillhet-ask [data-confirm="yes"]'));
+      await settle();
+      assert.deepEqual(posts, [{ rail: true }]);
+      assert.equal(doc.documentElement.hasAttribute('data-rail'), true);
+      assert.equal(strip(doc).length, 0);
+    } },
+    { name: 'answered in another tab: the onboarding-changed refresh closes it', run: async () => {
+      const { doc, frame, setStatus } = await boot({ onboarding: status(['claude'], { welcomeSeen: true }), rail: off });
+      assert.equal(strip(doc).length, 1);
+      setStatus(status(['claude'], { welcomeSeen: true, stillhetAsked: true }));
+      frame({ type: 'onboarding-changed', action: null });
+      await until(() => strip(doc).length === 0);
+      assert.equal(strip(doc).length, 0);
+      assert.equal(doc.getElementById('stillhet-ask').classList.contains('hidden'), true);
+    } },
+  ]);
+  window.__np?.stillhet?.off();
 });

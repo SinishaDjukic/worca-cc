@@ -73,7 +73,7 @@ test('the plans point at what exists, and the one names stay', () => {
 });
 
 test('the motion timings are the ones the catalog names', () => {
-  const look = read('plans/rail/prototype/design-system/rail-look.css'), t = catalog().motion.timings;
+  const look = read('ui/public/design-system/rail-look.css'), t = catalog().motion.timings;
   assert.match(look, /--motion-quick:150ms/); assert.match(t['--motion-quick'], /^150ms/);
   assert.match(look, /--motion-change:200ms/); assert.match(t['--motion-change'], /^200ms/);
   assert.match(look, /--motion-flash:1\.2s/);
@@ -88,4 +88,24 @@ test('the generated page holds every chapter, rule and catalog entry, from the s
   for (const f of readdirSync(join(ROOT, RAIL))) { const id = f === 'README.md' ? 'rail' : f.replace('.md', ''); assert.ok(ch.some((c) => c.id === id), `${f} is not on the page`); }
   for (const r of rules()) assert.ok(html.includes(r.id), `${r.id} is not on the page`);
   for (const c of [...catalog().components, ...catalog().patterns, ...catalog().logic]) assert.ok(html.includes(c.name.replace(/&/g, '&amp;')), `${c.name} is not on the page`);
+});
+
+test('Stillhet slice 1: OutLink and the form\'s failure are ruled, catalogued and drawn', () => {
+  assert.ok(rules().some((r) => r.id === 'comp.out-link'), 'comp.out-link is a rule');
+  assert.ok(catalog().components.some((c) => c.name === 'OutLink' && c.code.endsWith('text-link.mjs#outLink')), 'the catalog lists OutLink');
+  const gallery = read('plans/rail/prototype/components.html');
+  assert.match(gallery, /OutLink: \[\[/);
+  assert.match(gallery, /ConfirmStrip, form, failed/);
+});
+
+test('plans/rail/dev-vs-prototype.md has a row, with a dev path, for every VIEW_NAMES route and every ui/routes family', () => {
+  const doc = read('plans/rail/dev-vs-prototype.md');
+  const rows = doc.split('\n').filter((l) => /^\| /.test(l) && !/^\|( Function| Check| Lines|---)/.test(l))
+    .map((l) => l.split(' | ')).filter((c) => c.length >= 6);
+  assert.ok(rows.length > 40, 'the scan sees the rows');
+  for (const c of rows) assert.match(c[1], /`(ui|src)\/[^`]+`/, `${c[0]}: no dev path`);
+  const views = JSON.parse(/const VIEW_NAMES = (\[[^\]]*\]);/.exec(read('ui/public/app.js'))[1].replace(/'/g, '"'));
+  assert.ok(views.length > 15);
+  for (const v of views) assert.ok(rows.some((c) => c[0].includes(`\`#${v}\``)), `#${v} has no row`);
+  for (const d of readdirSync(join(ROOT, 'ui/routes'), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)) assert.ok(rows.some((c) => c[1].includes(`ui/routes/${d}/`)), `ui/routes/${d}/ has no row`);
 });

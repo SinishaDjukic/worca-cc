@@ -42,6 +42,7 @@ One Feature, in this order. Each step is one or more slices, one PR per slice, b
    named by `docs/split-by-feature.md`. Scoped so **nothing changes with the flag off**: `rail-look.css` sets tokens on a
    bare `:root` with `--sans:Inter`, and `rail.css` restyles shared classes (`.menu`, `.btn`, `.tabs`) at its top level, so
    both move under `:root[data-rail]` and `--sans` is dropped; new classes (`set-row`, `list-row`, `side-menu`) need no scope.
+   Correction (slice 1, D11): they are scoped too; only classes the library alone draws (the ConfirmStrip's, `.dc-out`) stay unscoped.
    The prototype reads the parts through `app.css` and sets `data-rail` on its own page, so it keeps showing Rail.
 4. **Rail colours on today's pages**, behind the flag: the palette and one surface for page and card.
 5. **The shell and navigation.** `docs/rail/navigation.md`, the prototype's `shell/`.

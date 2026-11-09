@@ -10,11 +10,11 @@ import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { cssRules as rules } from './helpers/css-rules.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
-import { readStyleCss } from '../src/core/read-style-css.mjs';
+import { readTodayCss } from './helpers/today-css.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 // Comments blanked but newlines kept, so a rule's line number is its real line.
-const css = readStyleCss().replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
+const css = readTodayCss().replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
 
 /** Split on top-level commas only: commas inside color-mix(…), var(…) or :is(…) stay. */
 function splitTop(v) {

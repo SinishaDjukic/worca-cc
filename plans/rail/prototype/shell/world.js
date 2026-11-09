@@ -149,6 +149,8 @@
   const membersOf = (g) => data.runs.filter((r) => r.group === g.id).sort((a, b) => (a.pos || 0) - (b.pos || 0));
   // A member that waits on a person raises its group; one that is simply ready ships with the group.
   const raises = (m) => section(m) === 'needs' && ![R.runState('ready').word, R.runState('approved').word].includes(wordOf(m));
+  // What Pulse, Tasks and Chats count as waiting on you: a group member by the group rule above, any other run by its section.
+  const needsYou = (r) => (r.group ? raises(r) : section(r) === 'needs');
   const groupSection = (g) => (membersOf(g).filter((m) => !m.archived).some(raises) ? 'needs' : R.sectionOf(R.runState(RM.stateOf(g.case)).word, RM.stateOf(g.case)));
   // What the list shows at its top level: a run, or a group as one row. Vitals reads the same rows, so the counts agree.
   function tops() {
@@ -180,6 +182,6 @@
     facts: (caseId = current) => ({ ...CASES[caseId], actions: CASES[caseId].actions.map(([aid, r, label, gone]) => ({ id: aid, runId: r, run: gone || table()[r].title, label })) }),
     // A step taken on a run from elsewhere (Pulse's Try again, Resume): the run moves, and every list reads it.
     move: (id, kase, detail, o = {}) => { const r = data.runs.find((x) => x.id === id); if (!r) return; Object.assign(r, { case: kase, detail, time: 'now', day: kase === 'scheduled' ? r.day : 'today', when: kase === 'scheduled' ? r.when : undefined, resumes: false, unread: false }, o); titles(); tell(id); },
-    section, raises, groupSection, tops, membersOf,
+    section, raises, needsYou, groupSection, tops, membersOf,
   };
 })();

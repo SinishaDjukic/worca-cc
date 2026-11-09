@@ -146,7 +146,14 @@
     "runs/smart-naming.css",
     "network-proxy/proxy-settings.css",
     "settings/away-screensaver.css",
-    "chat/card-nesting.css"
+    "chat/card-nesting.css",
+    "design-system/rail-look.css",
+    "design-system/rail-controls.css",
+    "design-system/rail-rows.css",
+    "design-system/rail-feedback.css",
+    "runs/rail-run-card.css",
+    "runs/rail-run-tabs.css",
+    "runs/rail-create-pr.css"
   ],
   "html": [
     "shell/sidebar.html",

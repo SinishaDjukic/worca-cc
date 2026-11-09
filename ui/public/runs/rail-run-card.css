@@ -1,0 +1,363 @@
+/* ---------- Rail: run card ---------- */
+/* Stillhet (Rail) behind its flag: every rule scopes on :root[data-rail] (test/rail-parts-scope.test.mjs); cut from the prototype's rail.css. */
+/* Run card redesign: the layer on top of Worca's own style.css (tokens, .btn, .status-dot, .run-prog, .rd-route-*,
+   .tabs, .kind-chip). One alignment grid for every zone: a 20px rail (status dot, route circles, member dots),
+   a 12px gap, the content, then the action column. The 20px + 12px is the route's own grid (.rd-route-row). */
+
+/* The artboard: the run page's ground (--bg), the card on --panel, as in the app. */
+:root[data-rail] .rc-board{box-sizing:border-box;min-height:100%;padding:32px;background:var(--bg);color:var(--ink);
+  font:400 var(--fs-body)/var(--lh-body) var(--sans);-webkit-font-smoothing:antialiased;}
+:root[data-rail] .rc-board.is-light{color-scheme:light;}
+:root[data-rail] .rc-board.is-dark{color-scheme:dark;}
+:root[data-rail] .rc-board.is-phone{padding:16px;}
+
+/* Title block: the title on one line with an ellipsis (its tooltip, a tap and the Summary task give the full text),
+   the group's kind after it, then the place line: where the code lives and goes, the PR, labels and tags, and +. */
+:root[data-rail] .rc-head{display:flex;flex-direction:column;gap:6px;min-width:0;}
+:root[data-rail] .rc-heading{margin:0;font:600 var(--fs-subpage)/var(--lh-title) var(--sans);letter-spacing:-.02em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+:root[data-rail] .rc-heading.is-open{white-space:normal;}
+:root[data-rail] .rc-title-row{display:flex;align-items:center;gap:12px;min-width:0;}
+:root[data-rail] .rc-title-row > .rc-heading{flex:0 1 auto;min-width:0;cursor:default;}
+:root[data-rail] .rc-title-row > .kind-chip{flex:none;}
+:root[data-rail] .rc-facts{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
+:root[data-rail] .rc-facts > *{flex:none;max-width:100%;}
+:root[data-rail] .rc-facts .rc-place{flex:0 1 auto;min-width:0;display:inline-flex;align-items:center;gap:4px;}
+:root[data-rail] .rc-place .btn{margin-block:-6px;flex:none;}
+:root[data-rail] .rc-mid{display:inline-flex;min-width:0;font-family:var(--mono);color:var(--ink-2);}   /* loses its middle, keeps its end */
+:root[data-rail] .rc-mid-a{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+:root[data-rail] .rc-mid-b{flex:none;}
+:root[data-rail] .rc-to{color:var(--ink-3);}
+:root[data-rail] .rc-base{flex:none;font-family:var(--mono);color:var(--ink-2);}
+:root[data-rail] .rc-pr{color:var(--ink);text-decoration:none;font-weight:500;font-variant-numeric:tabular-nums;}
+:root[data-rail] .rc-pr:hover{text-decoration:underline;text-underline-offset:3px;}
+:root[data-rail] .rc-sep{color:var(--ink-3);}
+
+/* The card: zones on the shared grid, split by one --line. */
+:root[data-rail] .rc-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);padding:var(--pad-card);
+  display:flex;flex-direction:column;gap:16px;min-width:0;}
+:root[data-rail] .rc-zone{display:grid;grid-template-columns:var(--rail) minmax(0,1fr) auto;column-gap:var(--gap);row-gap:2px;align-items:center;min-width:0;}
+:root[data-rail] .rc-zone.is-ruled{padding-top:16px;border-top:1px solid var(--line);}
+:root[data-rail] .rc-card > .rc-zone.is-ruled:not(:last-child){padding-top:4px;border-top-color:transparent;}   /* one divider: above the Figures */
+:root[data-rail] .rc-rail{grid-column:1;display:flex;justify-content:center;align-items:center;}
+:root[data-rail] .rc-main{grid-column:2;min-width:0;}
+:root[data-rail] .rc-side{grid-column:3;grid-row:1 / span 2;justify-self:end;align-self:center;display:flex;gap:8px;}
+:root[data-rail] .rc-span{grid-column:2 / 4;min-width:0;}
+:root[data-rail] .rc-label{grid-column:2 / 4;font-size:var(--fs-meta);color:var(--ink-2);margin-bottom:6px;}
+
+/* Status zone: the state word, one detail line. */
+:root[data-rail] .rc-word{font:600 var(--fs-section)/var(--lh-title) var(--sans);white-space:nowrap;}
+:root[data-rail] .rc-detail{grid-column:2;font-size:var(--fs-meta);color:var(--ink-2);min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+:root[data-rail] .rc-detail b{color:var(--ink);font-weight:500;}
+
+/* The one action: a split button, the main half names the next step, ▾ holds the rest. */
+:root[data-rail] .rc-action{display:inline-flex;}
+:root[data-rail] .rc-action .btn svg{flex:none;}
+
+/* Route: the real .rd-route-* rows; the current row's second line is what is happening there. */
+:root[data-rail] .rc-route{grid-column:1 / -1;}
+:root[data-rail] .rc-route .rd-route-second{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;overflow-wrap:normal;}
+:root[data-rail] .rc-route .rd-route-second .rc-when{color:var(--ink-3);}
+:root[data-rail] .rc-route .rd-route-name.is-sans{font-family:var(--sans);}
+:root[data-rail] .rc-route .rc-row-side{margin-left:auto;flex:none;font-size:var(--fs-meta);color:var(--ink-2);}
+
+/* Figures: label and value pairs on one line, tabular. */
+:root[data-rail] .rc-figs{grid-column:2 / 4;display:flex;flex-wrap:wrap;gap:4px 24px;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .rc-figs b{color:var(--ink);font-weight:600;font-size:var(--fs-body);font-variant-numeric:tabular-nums;margin-left:6px;}
+
+/* A question or a plan waiting on you: text clamped to two lines, the answer is the action. */
+:root[data-rail] .rc-ask{grid-column:2 / 4;font-size:var(--fs-body);color:var(--ink);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+
+/* Members of a group: one-line rows on the same rail. */
+:root[data-rail] .rc-members{grid-column:1 / -1;list-style:none;margin:0;padding:0;}
+:root[data-rail] .rc-member{display:grid;grid-template-columns:var(--rail) minmax(0,1fr) auto auto;column-gap:var(--gap);align-items:center;
+  min-height:32px;}   /* a group's runs divide by space (Lists: a line only where a group starts) */
+:root[data-rail] .rc-member .rc-m-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+:root[data-rail] .rc-member .rc-m-state{font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
+:root[data-rail] .rc-member.is-open{background:var(--row-selected);border-radius:var(--r-sm);border-top-color:transparent;}
+:root[data-rail] .rc-member.is-open + .rc-member{border-top-color:transparent;}
+
+/* Tabs under the card: the real .tabs; a count is a caption, never a chip. */
+:root[data-rail] .rc-tabs .n{font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;}
+:root[data-rail] .rc-panel{font-size:var(--fs-body);color:var(--ink-2);}
+
+/* Canvas-only: the frame label above a board. */
+:root[data-rail] .rc-case{font-size:var(--fs-meta);color:var(--ink-2);margin:0 0 16px;}
+:root[data-rail] .rc-case b{color:var(--ink);font-weight:600;}
+
+/* Step card: one stepper for the whole journey (Plan · Build · Review · PR · Merged). Each stage is a segment
+   made of its sub-steps; the selected stage opens its sub-steps underneath on the route rail (.rd-route-*). */
+
+:root[data-rail] .sc-track{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;}
+:root[data-rail] .sc-seg{display:flex;gap:2px;height:4px;}   /* quiet: only the live cell has colour */
+:root[data-rail] .sc-cell{flex:1 1 0;min-width:0;border-radius:var(--r-xs);background:var(--line);transition:background-color var(--motion-change) var(--ease);}
+:root[data-rail] .sc-cell.is-done{background:var(--step-done);}   /* finished steps step back; the live cell leads */
+:root[data-rail] .sc-cell.is-now{background:var(--ink-2);animation:sc-breathe 1.6s ease-in-out infinite;}   /* running is ink, not a colour: colour is kept for what needs you or went wrong */
+:root[data-rail] .sc-cell.is-ask,:root[data-rail] .sc-cell.is-problem{background:var(--amber);}
+:root[data-rail] .sc-cell.is-failed{background:var(--red);}
+:root[data-rail] .sc-cell.is-merged{background:var(--ink);}
+@keyframes sc-breathe{0%,100%{opacity:1}50%{opacity:.45}}
+@media (prefers-reduced-motion: reduce){:root[data-rail] .sc-cell.is-now{animation:none;}}
+
+/* Stage tabs under the track: same 5 columns, so each label sits under its segment. */
+:root[data-rail] .sc-stages{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;margin-top:6px;}
+:root[data-rail] .sc-stage{display:flex;flex-direction:column;align-items:flex-start;gap:0;min-width:0;padding:4px 0 0;border:0;background:none;
+  color:var(--ink-2);font:inherit;text-align:left;cursor:pointer;border-top:2px solid transparent;transition:color var(--motion-quick) var(--ease),border-color var(--motion-quick) var(--ease);}
+:root[data-rail] .sc-stage:hover{color:var(--ink);}
+:root[data-rail] .sc-stage:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+:root[data-rail] .sc-stage[aria-selected="true"]{color:var(--ink);border-top-color:var(--ink);}
+:root[data-rail] .sc-stage .l{font-size:var(--fs-meta);font-weight:500;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+:root[data-rail] .sc-stage[aria-selected="true"] .l{font-weight:600;}
+:root[data-rail] .sc-stage .m{font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* The open stage's sub-steps: route rows, fading in when a stage opens. */
+:root[data-rail] .sc-subs{grid-column:1 / -1;}
+:root[data-rail] .sc-subs.is-enter,:root[data-rail] .sk.is-enter{animation:rl-in var(--motion-quick) var(--ease);}   /* fade, never slide (Motion) */
+@media (prefers-reduced-motion: reduce){:root[data-rail] .sc-subs.is-enter,:root[data-rail] .sk.is-enter{animation:none;}}
+:root[data-rail] .sc-subs .rd-route-name{font-family:var(--sans);}
+:root[data-rail] .sc-subs .rd-route-row.is-next .rd-route-name{color:var(--ink-2);}
+/* A step's time and loops sit right after its name, so the row reads from one left edge. */
+:root[data-rail] .sc-subs .sc-meta{flex:none;display:inline-flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--ink-2);font-variant-numeric:tabular-nums;}
+:root[data-rail] .sc-subs .sc-meta::before{content:"·";color:var(--ink-3);}
+:root[data-rail] .sc-subs .sc-loop{display:inline-flex;align-items:center;gap:3px;}
+:root[data-rail] .sc-subs .rd-route-second{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;overflow-wrap:normal;}
+:root[data-rail] .sc-subs .rd-route-second .rc-when{color:var(--ink-2);}
+:root[data-rail] .sc-head{grid-column:2 / 4;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;min-height:28px;}
+:root[data-rail] .sc-head .rc-label{margin:0;}
+
+/* The meta line's branch: mono, ellipsized, with its copy button. */
+:root[data-rail] .sc-branch{display:inline-flex;align-items:center;gap:2px;min-width:0;flex:0 1 auto;}
+:root[data-rail] .sc-branch code{font-family:var(--mono);font-size:var(--fs-meta);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+:root[data-rail] .sc-branch .btn{margin-block:-6px;flex:none;}
+
+/* The case switcher above an interactive card (canvas only). */
+:root[data-rail] .sc-cases{margin-bottom:16px;}
+
+/* v2 polish */
+/* Sub-steps are secondary to the stage: 12px names, 16px circles centred on the same 20px rail. */
+:root[data-rail] .sc-subs .rd-route-row{padding-bottom:10px;}
+:root[data-rail] .sc-subs .rd-route-row:last-child{padding-bottom:0;}
+:root[data-rail] .sc-subs .rd-route-dot{width:16px;height:16px;flex-basis:16px;margin:2px;}
+:root[data-rail] .sc-subs .rd-route-row:not(:last-child)::before{top:22px;}
+:root[data-rail] .sc-subs .rd-route-place{font-size:var(--fs-meta);min-height:20px;}
+:root[data-rail] .sc-subs .rd-route-name{font-weight:500;}
+:root[data-rail] .sc-subs .rd-route-second{font-size:var(--fs-meta);}
+:root[data-rail] .sc-cell.is-paused{background:var(--slate);}
+:root[data-rail] .sc-stage .m{font-size:var(--fs-caption);}
+:root[data-rail] .sc-stage .m:empty::before{content:"\00a0";}   /* a stage still to come shows no time, and keeps its line */
+:root[data-rail] .sc-head.is-end{justify-content:flex-end;}
+
+/* The facts line: project · branch · start, then chips that exist, then + to add one. */
+:root[data-rail] .rc-facts .rc-add{margin-block:-6px;flex:none;}
+:root[data-rail] .rc-pop{position:relative;display:inline-flex;}
+:root[data-rail] .rc-pop > .menu{position:absolute;z-index:5;top:calc(100% + 6px);left:0;min-width:180px;}
+:root[data-rail] .rc-pop.is-right > .menu{left:auto;right:0;}
+
+:root[data-rail] :is(.rc-pop, .spick) > .menu.is-up{top:auto;bottom:calc(100% + 6px);}   /* no room under it: it opens above (watchMenus) */
+
+/* A run segment of a group opens as that run: its title and a way into it. */
+:root[data-rail] .sc-head .sc-run{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);color:var(--ink);font-weight:500;}
+
+/* The stack card: PRs in merge order on the rail, each into the one above it. */
+
+:root[data-rail] .sk-head .rc-label{margin:0;}
+
+:root[data-rail] .sk-list .rd-route-row{padding-bottom:12px;}
+:root[data-rail] .sk-list .rd-route-row:last-child{padding-bottom:0;}
+:root[data-rail] .sk-list .rd-route-row:not(:last-child)::before{background:var(--line-2);}
+:root[data-rail] .sk-list .rd-route-place{gap:8px;}
+:root[data-rail] .sk-num{flex:none;font-size:var(--fs-meta);font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;}
+:root[data-rail] .sk-list .rd-route-name{font-family:var(--sans);font-size:var(--fs-body);font-weight:400;}
+:root[data-rail] .sk-word{color:var(--ink-2);}   /* leads the PR's second line */
+:root[data-rail] .sk-word.is-done{color:var(--ink-2);}
+:root[data-rail] .sk-word.is-problem{color:var(--amber-ink);}
+:root[data-rail] .sk-list .rd-route-second{font-size:var(--fs-meta);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;overflow-wrap:normal;}
+:root[data-rail] .sk-list .is-next-up .sk-word{font-weight:600;}
+:root[data-rail] .sk-note{padding-left:32px;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .sc-cell.is-review{background:none;box-shadow:inset 0 0 0 1px var(--ink-3);}   /* waiting on people: hollow, not a colour */
+:root[data-rail] .sk-word.is-review{color:var(--blue-ink-strong);}
+/* Under 420px of card the action leaves the state's line and sits under it, on the text edge (Card head rule). */
+:root[data-rail] .rc-card{container-type:inline-size;}
+@container (max-width: 420px){
+  :root[data-rail] .rc-zone > .rc-side{grid-column:2 / 4;grid-row:3;justify-self:start;margin-top:12px;}
+  :root[data-rail] .rc-zone > .rc-detail{grid-row:2;}
+}
+/* Explanations: each menu item carries one help line; the action's menu opens with what the main button does. */
+:root[data-rail] .rc-pop > .menu{min-width:200px;max-width:280px;}
+:root[data-rail] .menu-item.has-help{flex-direction:column;align-items:flex-start;gap:0;padding:6px 9px;text-align:left;}
+:root[data-rail] .menu-help{font-size:var(--fs-meta);color:var(--ink-2);line-height:var(--lh-body);white-space:normal;}
+:root[data-rail] .menu-lead{margin:0;padding:6px 9px 4px;font-size:var(--fs-meta);color:var(--ink-2);line-height:var(--lh-body);}
+/* Ship as: the question-option rows on the card's rail; the 16px mark centres on the 20px rail, text on the content edge. */
+:root[data-rail] .sk-choice{padding-left:0;margin:0;}
+:root[data-rail] .sk-choice .qopt{align-items:flex-start;gap:14px;padding:8px 12px 8px 2px;}
+:root[data-rail] .sk-choice .qopt::before{margin-top:2px;}
+:root[data-rail] .sk-choice .qopt:disabled{cursor:not-allowed;color:var(--ink-3);}
+:root[data-rail] .sk-choice .qopt:disabled:hover{background:none;}
+:root[data-rail] .sk-opt{display:flex;flex-direction:column;min-width:0;}
+:root[data-rail] .sk-opt-l{display:inline-flex;align-items:center;}
+:root[data-rail] .sk-opt-h{font-size:var(--fs-meta);font-weight:400;color:var(--ink-2);}
+
+/* Step lists are one grid. Card: circle · name · time · loops. Activity (.is-full): circle · name · time · loops ·
+   model · cost · Log. Rows are subgrids, so each column lines up down the list; times and costs are right-aligned,
+   tabular. Under 520px the details drop to one line under the name; name and time keep their columns. ---- */
+:root[data-rail] .sc-subs{display:grid;grid-template-columns:var(--rail) minmax(0,max-content) max-content max-content minmax(0,1fr);column-gap:var(--gap);}
+:root[data-rail] .sc-subs.is-full{grid-template-columns:var(--rail) minmax(0,max-content) max-content max-content max-content max-content minmax(48px,1fr);}
+:root[data-rail] .sc-subs > .sc-row{grid-column:1 / -1;display:grid;grid-template-columns:subgrid;align-items:center;row-gap:2px;}
+:root[data-rail] .sc-row > .rd-route-dot{grid-column:1;grid-row:1;}
+:root[data-rail] .sc-row > .sc-name{grid-column:2;grid-row:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);font-weight:500;}
+:root[data-rail] .sc-row > .sc-time{grid-column:3;grid-row:1;justify-self:end;}
+:root[data-rail] .sc-row > .sc-rest{display:contents;}
+:root[data-rail] .sc-rest > .sc-loops{grid-column:4;grid-row:1;}
+:root[data-rail] .sc-rest > .sc-model{grid-column:5;grid-row:1;}
+:root[data-rail] .sc-rest > .sc-cost{grid-column:6;grid-row:1;justify-self:end;}
+:root[data-rail] .sc-rest > .sc-act{grid-column:7;grid-row:1;}
+:root[data-rail] .sc-row :is(.sc-time,.sc-loops,.sc-model,.sc-cost){font-size:var(--fs-meta);color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;}
+:root[data-rail] .sc-row .rtab-log{margin-block:-6px;}
+:root[data-rail] .sc-row > .sc-line,:root[data-rail] .sc-row > .rtab-ev{grid-column:2 / -1;min-width:0;width:0;min-width:100%;}   /* spans the columns without widening them */
+:root[data-rail] .rc-card,:root[data-rail] .rtab-panel{container-type:inline-size;}
+@container (max-width: 520px){
+  :root[data-rail] .sc-subs,:root[data-rail] .sc-subs.is-full{grid-template-columns:var(--rail) minmax(0,1fr) max-content;}
+  :root[data-rail] .sc-row > .sc-rest{display:flex;flex-wrap:wrap;align-items:center;gap:0 12px;grid-column:2 / -1;grid-row:2;min-width:0;}
+  :root[data-rail] .sc-rest > *{grid-column:auto;grid-row:auto;}
+  :root[data-rail] .sc-rest > :empty{display:none;}
+  :root[data-rail] .sc-row > .sc-rest:not(:has(> :not(:empty))){display:none;}
+}
+/* Activity is one list: a stage heading is a full-width row on the text edge; the connector stops before it. */
+:root[data-rail] .sc-subs > .sc-stage-row{grid-column:2 / -1;list-style:none;padding:20px 0 8px;}
+:root[data-rail] .sc-subs > .sc-stage-row:first-child{padding-top:0;}
+:root[data-rail] .sc-subs > .sc-row:has(+ .sc-stage-row){padding-bottom:0;}
+:root[data-rail] .sc-subs > .sc-row:has(+ .sc-stage-row)::before{display:none;}
+
+/* A step that asks or failed keeps two lines of what it says; live progress stays one line. */
+:root[data-rail] .sc-row:is(.is-ask,.is-failed,.is-problem) > .sc-line{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+/* An open group run: its title, its cost, then Open run. */
+:root[data-rail] .sc-head .sc-run{flex:0 1 auto;}
+:root[data-rail] .sc-head .sc-run-cost{flex:none;margin-right:auto;font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}
+
+/* Buttons: 28px in the card and its tabs (the bar's size), never the 32px page size; the pointer:coarse rule still
+   gives touch its 40px. Air: 8px between buttons, 16px between a button row and the text above it. */
+:root[data-rail] .rc-zone:first-child{min-height:28px;}
+:root[data-rail] .ov-acts{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:8px;}
+
+/* Overview: the lead block is what this state needs from you; then what it did, what you asked, where, artifacts. */
+:root[data-rail] .ov-focus{display:flex;flex-direction:column;gap:12px;}
+:root[data-rail] .ov-focus .rtab-h{margin-bottom:-4px;}
+:root[data-rail] .ov-q{margin:0;font:500 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink);}
+:root[data-rail] .ov-focus .qopts{display:flex;flex-direction:column;gap:4px;}
+:root[data-rail] .ov-focus .input{max-width:420px;}
+:root[data-rail] .ov-plan{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;}
+:root[data-rail] .ov-plan li{display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:12px;padding:6px 0;font-size:var(--fs-body);}
+:root[data-rail] .ov-n{font:500 var(--fs-meta)/inherit var(--sans);color:var(--ink-2);font-variant-numeric:tabular-nums;text-align:right;}
+:root[data-rail] .ov-sub{margin:4px 0 -4px;font:600 var(--fs-meta)/var(--lh-title) var(--sans);color:var(--ink-2);}
+:root[data-rail] .ov-sub.is-warn{color:var(--amber-ink-strong);}
+:root[data-rail] .ov-checks{list-style:none;margin:0;padding:0;}
+:root[data-rail] .ov-check{display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:12px;align-items:start;padding:8px 0;font-size:var(--fs-body);cursor:pointer;}
+:root[data-rail] .ov-check input{margin:3px 0 0;justify-self:center;accent-color:var(--ink);}
+:root[data-rail] .ov-check:has(input:checked) span{color:var(--ink-2);text-decoration:line-through;text-decoration-color:var(--ink-3);}
+:root[data-rail] .ov-progress .rd-route-row{padding-bottom:6px;}
+:root[data-rail] .ov-progress .rd-route-name{font-family:var(--sans);font-size:var(--fs-body);font-weight:400;white-space:normal;}
+:root[data-rail] .ov-progress .is-next .rd-route-name{color:var(--ink-2);}
+:root[data-rail] .ov-did{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:var(--fs-body);color:var(--ink);}
+:root[data-rail] .ov-task{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+:root[data-rail] .ov-more{margin-left:auto;margin-block:-6px;}
+:root[data-rail] .rtab-h .ov-more{font-weight:500;}
+:root[data-rail] .ov-areas,:root[data-rail] .ov-arts{list-style:none;margin:0;padding:0;}
+/* TaskCard (kind-mark.mjs): the run page's anatomy, smaller. */
+:root[data-rail] .task-card.rc{gap:8px;}   /* over the prototype shell's .rc, loaded after the parts */
+:root[data-rail] .task-card .tc-title{font-size:var(--fs-section);letter-spacing:-.01em;}
+:root[data-rail] .task-card .rc-card{--pad-card:12px 14px;}
+:root[data-rail] .task-card .rc-word{font-size:var(--fs-section);}
+:root[data-rail] .task-card.is-compact .rc-word{font-size:var(--fs-body);}
+:root[data-rail] .tc-foot{margin-top:-2px;}
+:root[data-rail] .composer-chips{display:flex;flex-wrap:wrap;gap:4px;}
+
+/* A task's parts (Changes, Decisions, Activity) open under the stage they belong to. */
+:root[data-rail] .stage-head{display:flex;align-items:center;gap:8px;}
+:root[data-rail] .stage-head > .turn-row{flex:1 1 auto;min-width:0;}
+:root[data-rail] .stage-tools{flex:none;display:inline-flex;gap:2px;}
+:root[data-rail] .stage-part{margin:6px 0 0 32px;}
+:root[data-rail] .stage-parts{display:flex;gap:4px;flex-wrap:wrap;margin:6px 0 0 30px;}
+/* StagePart: a part at its stage's end, saying what is inside; its chevron turns when it is open under the stage. */
+:root[data-rail] .stage-part-b{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 8px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:400 var(--fs-caption)/1 var(--sans);cursor:pointer;white-space:nowrap;}
+:root[data-rail] .stage-part-b b{font-weight:500;color:var(--ink);}
+:root[data-rail] .stage-part-b svg{flex:none;transition:transform var(--motion-quick) var(--ease);}
+:root[data-rail] .stage-part-b:hover{background:var(--hover);color:var(--ink-2);}
+:root[data-rail] .stage-part-b:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+:root[data-rail] .stage-part-b.is-open{background:var(--hover);}
+:root[data-rail] .stage-part-b.is-open b{color:var(--ink);}
+:root[data-rail] .stage-part-b.is-open svg{transform:rotate(180deg);}
+@media (max-width: 600px){ :root[data-rail] .stage-part-b span{display:none;} }
+:root[data-rail] .rl-search-res .menu-item > .kind-mark,:root[data-rail] .rl-search-res .menu-item > svg{flex:none;margin-right:8px;color:var(--ink-2);}
+
+/* TaskProposal: a proposed task in the running card's shape; quiet head, the composer's sentence, Start. */
+:root[data-rail] .tp .rc-head{gap:4px;}
+:root[data-rail] .tp-kicker{margin:0;display:flex;align-items:center;gap:8px;min-height:24px;font-size:var(--fs-meta);font-weight:500;color:var(--ink-2);}
+
+:root[data-rail] .tp-title:hover{border-bottom-color:var(--line-2);}
+:root[data-rail] .tp-title:focus-visible{outline:none;border-bottom-color:var(--ink);}
+:root[data-rail] .tp-why{margin:0;font-size:var(--fs-meta);color:var(--ink-2);max-width:66ch;}
+
+:root[data-rail] .tp-sentence{margin:0;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;color:var(--ink-2);}
+:root[data-rail] .tp-nudge{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .tp-actions{display:flex;gap:8px;align-items:center;}
+:root[data-rail] .tp-actions > .btn-quiet:first-child{padding-left:0;}   /* rail.one-rail: a quiet button starts at the text edge */
+:root[data-rail] .tp-more > .btn,:root[data-rail] .tp-nudge > .btn{margin-left:-8px;}   /* quiet buttons keep the text edge */
+:root[data-rail] .tp-nudge > .btn{margin-left:0;}
+
+/* ChangeProposal: before → after, the old value struck quietly, the new one plain. TurnDivider: a rule with words on it. */
+:root[data-rail] .cp-rows{margin:0;display:flex;flex-direction:column;gap:6px;}
+:root[data-rail] .cp-row{display:grid;grid-template-columns:minmax(0,160px) minmax(0,1fr);gap:12px;align-items:baseline;}
+:root[data-rail] .cp-row dt{color:var(--ink-2);font-size:var(--fs-meta);}
+:root[data-rail] .cp-row dd{margin:0;display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;}
+:root[data-rail] .cp-row s{color:var(--ink-2);text-decoration-color:var(--ink-3);}
+:root[data-rail] .cp-row dd > span{color:var(--ink-2);}
+:root[data-rail] .cp-row b{font-weight:500;}
+:root[data-rail] .turn-div{display:flex;align-items:center;gap:12px;color:var(--ink-3);font-size:var(--fs-meta);}
+:root[data-rail] .turn-div::before,:root[data-rail] .turn-div::after{content:"";flex:1 1 auto;height:1px;background:var(--line);}
+
+/* PlanCard: the roles' rows hang under "Reviewed by" on the rail. FilesCard: pictures as tiles, files as rows. YouTurn: a
+   quote above your words, attachments under them. */
+
+:root[data-rail] .fc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;}
+
+:root[data-rail] .fc-pic{display:grid;place-items:center;aspect-ratio:4/3;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface);color:var(--ink-3);cursor:zoom-in;}
+:root[data-rail] .fc-pic:hover{border-color:var(--line-2);}
+:root[data-rail] .fc-pic:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+:root[data-rail] .you-quote{margin:0 0 6px;padding-left:8px;border-left:2px solid var(--line-2);color:var(--ink-2);font-size:var(--fs-meta);}
+:root[data-rail] .you-files{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
+:root[data-rail] .you-files .kind-chip{display:inline-flex;align-items:center;gap:4px;}
+
+/* TaskCard in the cards' shape: How it ran opens the stage stream under the card, on the same rail. */
+:root[data-rail] .tc-stream{margin-top:12px;}
+:root[data-rail] .tp-menu{margin-left:auto;}
+
+/* A card you were led to flashes once where it is (everything leads to its card in its chat). */
+@keyframes card-flash{0%,40%{box-shadow:0 0 0 2px var(--ink-3);}100%{box-shadow:0 0 0 2px transparent;}}
+
+/* motion.attention: what needs you breathes softly in Rail's amber, like an unread mark, until you focus it or act on it; never a shake */
+/* motion.attention, one breath for a card and a row: a layer behind it in its mark's own colour (amber asks or waits, red
+   failed, green is ready) swells and settles slowly, never fading to nothing, so it reads as calm rather than a flicker;
+   the tint is a little stronger in dark, where a tint reads weaker */
+@keyframes attn-breath{0%,100%{opacity:.28;}50%{opacity:1;}}   /* the whole card fades in its colour and out again, softly: a breath, not a panel */
+:root[data-rail] .is-attn{position:relative;isolation:isolate;}
+:root[data-rail] .is-attn::before{content:'';position:absolute;inset:-12px -20px;--attn-fx:20px;--attn-fy:12px;-webkit-mask-image:linear-gradient(to right,transparent,#000 var(--attn-fx),#000 calc(100% - var(--attn-fx)),transparent),linear-gradient(to bottom,transparent,#000 var(--attn-fy),#000 calc(100% - var(--attn-fy)),transparent);-webkit-mask-composite:source-in;mask-image:linear-gradient(to right,transparent,#000 var(--attn-fx),#000 calc(100% - var(--attn-fx)),transparent),linear-gradient(to bottom,transparent,#000 var(--attn-fy),#000 calc(100% - var(--attn-fy)),transparent);mask-composite:intersect;z-index:-1;background:light-dark(color-mix(in srgb,var(--attn,var(--amber)) 11%,transparent),color-mix(in srgb,var(--attn,var(--amber)) 17%,transparent));animation:attn-breath 4.8s cubic-bezier(.45,0,.55,1) infinite;pointer-events:none;}   /* ds-ok: an unread card's slow breath; the 8px spread is the card's own breathing room */
+@media (prefers-reduced-motion: reduce){ :root[data-rail] .is-attn::before{animation:none;opacity:.7;} }
+
+/* A task card opened in place holds its task page's stage stream: the page's own head, trail and status are the card's already. */
+:root[data-rail] .tc-run-slot #card.is-lent :is(.rc-bar, .rc-head, .rc-figs){display:none;}
+:root[data-rail] .tc-run-slot #card.is-lent .rc{padding:0;border:0;background:none;}
+/* the card already says its state and draws its stage bar: the page keeps only its controls (Send answer, ⋯) and its stream */
+:root[data-rail] .tc-run-slot #card.is-lent .rc-card{border:0;padding:0;background:none;box-shadow:none;}
+:root[data-rail] .tc-run-slot #card.is-lent .rc-card > .rc-zone:first-child{display:flex;justify-content:flex-end;}
+:root[data-rail] .tc-run-slot #card.is-lent .rc-card > .rc-zone:first-child > :is(.rc-rail, .rc-word){display:none;}
+:root[data-rail] .tc-run-slot #card.is-lent .rc-card > .rc-zone:nth-child(2){display:none;}
+
+:root[data-rail] .tc-rows{display:flex;flex-direction:column;gap:6px;margin-top:4px;}
+:root[data-rail] .tc-rows .turn-row:has(> .tr-line > .tr-mark:empty) .tr-mark{display:none;} :root[data-rail] .tc-rows .turn-row:has(> .tr-line > .tr-mark:empty) .tr-line{grid-template-columns:minmax(0,1fr) auto;}   /* a card's why-line has no mark: it sits on the text edge (rail.one-rail) */
+:root[data-rail] .you-ref{border:0;cursor:pointer;display:inline-flex;align-items:center;gap:4px;font:inherit;}
+:root[data-rail] .you-ref:hover{background:var(--hover);}
+:root[data-rail] .you-ref:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+

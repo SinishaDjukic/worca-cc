@@ -6,7 +6,7 @@ import { checkRows } from './helpers/rows.mjs';
 import { phaseLines, createAddMarketplaceDialog, ADD_POLL_MS } from '../ui/public/marketplace/add-dialog.mjs';
 import { kindCounts, addsSummary, secretsSummary } from '../ui/public/marketplace/kinds.mjs';
 import { OFFICIAL, EXAMPLE, NOTE0, row } from './helpers/mk-marketplaces-fixtures.mjs';
-import { readStyleCss } from '../src/core/read-style-css.mjs';
+import { readTodayCss } from './helpers/today-css.mjs';
 
 const { window } = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost/' });
 const doc = window.document;
@@ -659,7 +659,7 @@ test('a job ends once, late reloads, the fields and marks each view leaves, and 
 });
 
 test('P7 CSS: progress lines stay readable and whole; long titles wrap; the card name sits on the actions row (cycle 2); the meta line\'s icon stays by its path (cycle 3); a field error\'s long path wraps (cycle 4); the result fits a 290px screen and the spinner keeps its gap in forced colours (cycle 5)', () => {
-  const css = readStyleCss();
+  const css = readTodayCss();
   const block = css.slice(css.indexOf('/* ── marketplace P7 ── */'));
   const rule = (sel) => {
     const at = block.indexOf(`\n${sel}{`);

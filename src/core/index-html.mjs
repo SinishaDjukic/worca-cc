@@ -35,7 +35,9 @@ export function renderIndexHtml(html, theme, level, flags, { git } = {}) {
   const gitAttr = typeof git === 'boolean' ? ` data-git="${git ? 'on' : 'off'}"` : '';
   if (!flags) return html.replace(INDEX_THEME_ANCHOR, `<html lang="en" data-theme="${theme}"${lvl}${gitAttr}>`);
   if (!html.includes(FLAG_GATES_ANCHOR)) throw new Error('index.html flag-gates anchor missing');
+  // Stillhet (docs/feature-flags.md): every Rail rule scopes on :root[data-rail], so the first paint is already right.
+  const rail = flags.rail === true ? ' data-rail' : '';
   return html
-    .replace(INDEX_THEME_ANCHOR, `<html lang="en" data-theme="${theme}"${lvl} data-flags="${flagsAttr(FLAGS, flags)}"${gitAttr}>`)
+    .replace(INDEX_THEME_ANCHOR, `<html lang="en" data-theme="${theme}"${lvl} data-flags="${flagsAttr(FLAGS, flags)}"${rail}${gitAttr}>`)
     .replace(FLAG_GATES_ANCHOR, `<style id="flag-gates">${flagGateCss(FLAGS, flags)}</style>`);
 }

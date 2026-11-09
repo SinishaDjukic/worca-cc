@@ -1,0 +1,210 @@
+/* ---------- Rail: controls ---------- */
+/* Stillhet (Rail) behind its flag: every rule scopes on :root[data-rail] (test/rail-parts-scope.test.mjs); cut from the prototype's rail.css. */
+/* Menus, as the app's View menu (style.css › One menu): one line per item; a choice has a leading check column and a
+   hint sits at the right in tabular figures. */
+:root[data-rail] :is(.rc,.pz-app) .menu-item{white-space:nowrap;}
+:root[data-rail] :is(.rc,.pz-app) .menu-item > .mi-l{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+:root[data-rail] :is(.rc,.pz-app) .mi-hint{flex:none;margin-left:auto;color:var(--ink-2);font:400 11px/1 var(--mono);font-variant-numeric:tabular-nums;}
+:root[data-rail] :is(.rc,.pz-app) .menu-item[role="menuitemradio"]{display:grid;grid-template-columns:12px minmax(0,1fr) auto;column-gap:10px;}
+:root[data-rail] :is(.rc,.pz-app) .menu-item[role="menuitemradio"]::before{content:"";grid-column:1;width:12px;height:12px;background:transparent;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/12px no-repeat;}
+:root[data-rail] :is(.rc,.pz-app) .menu-item[role="menuitemradio"][aria-checked="true"]::before{background:currentColor;}
+:root[data-rail] :is(.rc,.pz-app) .menu-item[role="menuitemradio"] > .mi-l{grid-column:2;}
+:root[data-rail] :is(.rc,.pz-app) .menu-item[role="menuitemradio"] > .mi-hint{grid-column:3;}
+
+/* A settings tab: SettingsSection, SettingsRow, SentencePicker, Switch (ui/public/design-system/components/settings-row.mjs).
+   The alignment is the component's: one left edge for every text and divider, one right edge for every action (a quiet
+   button's text: it has no padding on that side, so its box stops at the column), and the name, the sentence and the end on one baseline. A wrapped
+   sentence keeps the body's line height: a picker adds no height. Under 560px of width a row stacks on the same edge. */
+:root[data-rail] .set-sec{container-type:inline-size;min-width:0;margin-top:32px;}
+:root[data-rail] .set-sec + .set-sec{margin-top:24px;padding-top:24px;border-top:1px solid var(--line);}   /* a line where a section starts; rows divide by space */
+:root[data-rail] .set-sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-height:28px;}
+:root[data-rail] .set-sec-h{margin:0;font:600 var(--fs-section)/var(--lh-title) var(--sans);letter-spacing:-.01em;color:var(--ink);}   /* Type roles › Heading */
+:root[data-rail] .set-sec-head > .set-sec-h{margin-right:auto;}   /* more than one action: they stay together at the right */
+:root[data-rail] .set-sec-head > .btn-quiet,:root[data-rail] .set-sec-head > .tip-wrap > .btn-quiet{padding-right:0;}
+:root[data-rail] .set-sec-meta{margin:2px 0 0;font-size:var(--fs-meta);color:var(--ink-2);}
+:root[data-rail] .set-rows{display:flex;flex-direction:column;margin-top:4px;}
+:root[data-rail] .set-group{margin-top:16px;}
+:root[data-rail] .set-group:first-child{margin-top:0;}
+:root[data-rail] .set-row{display:grid;grid-template-columns:168px minmax(0,1fr) auto;column-gap:16px;align-items:baseline;padding:10px 0;line-height:var(--lh-body);}
+:root[data-rail] .set-name{min-width:0;font-weight:500;color:var(--ink);overflow-wrap:anywhere;}
+:root[data-rail] .set-text{min-width:0;color:var(--ink-2);overflow-wrap:anywhere;}
+:root[data-rail] .set-text b,:root[data-rail] .set-text code{color:var(--ink);font-weight:600;}
+:root[data-rail] .set-text code{font:400 var(--fs-meta) var(--mono);}
+:root[data-rail] .set-end{display:flex;align-items:baseline;justify-content:flex-end;gap:12px;white-space:nowrap;}
+:root[data-rail] .set-end::before{content:"\200b";width:0;margin-right:-12px;}   /* a baseline even when the end holds only a Switch; it takes no gap */
+:root[data-rail] .set-end:empty::before,:root[data-rail] .set-end:not(:has(*)):empty{display:none;}
+:root[data-rail] .set-end > .switch{align-self:center;flex:none;}
+
+:root[data-rail] .set-end > .btn-quiet:last-child,:root[data-rail] .set-end > .tip-wrap:last-child > .btn-quiet{padding-right:0;}
+/* The Changed dot: right after the name, its tooltip's reach wider than the dot. */
+:root[data-rail] .set-dot{position:relative;display:inline-block;width:5px;height:5px;margin-left:6px;border-radius:50%;background:var(--ink-3);vertical-align:middle;}
+:root[data-rail] .set-dot::before{content:"";position:absolute;inset:-6px;}
+:root[data-rail] .set-detail{grid-column:2 / -1;padding-top:8px;min-width:0;}
+/* A folded row belongs to its row: inside the sentence column, its name a small label over its sentence, its end at
+   the right. It never repeats the page's name column. */
+:root[data-rail] .set-detail .set-row{grid-template-columns:minmax(0,1fr) auto;row-gap:2px;padding:8px 0;}
+:root[data-rail] .set-detail .set-name{grid-column:1;grid-row:1;font-size:var(--fs-meta);color:var(--ink);}
+:root[data-rail] .set-detail .set-text{grid-column:1;grid-row:2;}
+:root[data-rail] .set-detail .set-end{grid-column:2;grid-row:1 / span 2;align-self:center;}
+/* A record in Settings shows all of its meta: on touch no tooltip could. A fold's records stay in the sentence column. */
+:root[data-rail] .set-sec .lr-m{overflow:visible;white-space:normal;}
+:root[data-rail] .set-sec .lr-end > .btn-quiet:last-child,:root[data-rail] .set-sec .lr-end > .tip-wrap:last-child > .btn-quiet{padding-right:0;}
+:root[data-rail] .set-detail .list-rows{margin-left:calc(-1 * (var(--rail,20px) + var(--gap,12px)));}
+:root[data-rail] .set-foot{padding-top:4px;}   /* the fold's one action under its rows (Back to the group) */
+:root[data-rail] .set-end > .btn-icon.btn-quiet:last-child{margin-right:-7px;}   /* an icon stands 7px inside its button */
+:root[data-rail] .set-foot > .btn-quiet{padding-left:0;}
+
+:root[data-rail] .spick-b:hover,:root[data-rail] .spick-b[aria-expanded="true"]{background:var(--hover);box-shadow:0 0 0 3px var(--hover);}
+:root[data-rail] .spick-b:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+:root[data-rail] .spick-menu{position:absolute;top:calc(100% + 6px);left:-4px;z-index:46;min-width:200px;line-height:normal;white-space:normal;}
+:root[data-rail] .spick-menu.is-right{left:auto;right:-4px;}
+@container (max-width: 560px){
+  :root[data-rail] .set-row{grid-template-columns:minmax(0,1fr);row-gap:4px;}
+  :root[data-rail] .set-end{justify-content:flex-start;}
+  :root[data-rail] .set-end:not(:has(*)){display:none;}
+  :root[data-rail] .set-end > .btn-quiet:first-child{padding-left:0;}
+  :root[data-rail] .set-end > .btn-quiet:last-child,:root[data-rail] .set-end > .tip-wrap:last-child > .btn-quiet{padding-right:11px;margin-right:0;}
+  :root[data-rail] .set-detail{grid-column:1;}
+  
+  :root[data-rail] .set-sec-head{flex-wrap:wrap;}
+  /* A record stacks as a row does: its name and meta take the width, its end goes under them. Nothing is cut. */
+  :root[data-rail] .set-sec .list-rows{grid-template-columns:var(--lr-rail) minmax(0,1fr);}
+  :root[data-rail] .set-sec .list-rows > .list-row > .lr-end{grid-column:2;display:flex;justify-content:flex-start;}
+  :root[data-rail] .set-sec .lr-end > .btn-quiet:first-child{padding-left:0;}
+  :root[data-rail] .set-sec .lr-t{overflow:visible;white-space:normal;}
+  :root[data-rail] .spick-menu.is-right{left:-4px;right:auto;}   /* a stacked row: every menu opens under its words */   /* a long choice wraps on a narrow screen, its ▾ with its last word */
+}
+
+/* Field: the label above, the hint or the error one line under it. */
+
+:root[data-rail] .fld-l{font-size:var(--fs-meta);font-weight:500;color:var(--ink);}
+:root[data-rail] .fld-hint{font-size:var(--fs-caption);color:var(--ink-2);}
+:root[data-rail] .fld-err{font-size:var(--fs-caption);color:var(--red-ink-strong);}
+:root[data-rail] .fld .input[aria-invalid="true"],:root[data-rail] .fld .textarea[aria-invalid="true"]{border-color:var(--red);}
+/* Tooltip: a disabled control's wrapper carries its words. */
+:root[data-rail] .tip-wrap{display:inline-flex;}
+/* Dialog: the app's anatomy (.viewer-modal > .card.dlg); the title and the foot's two sides. */
+:root[data-rail] .viewer-modal .card.rl-dialog{width:min(560px, 100%);max-height:min(720px, calc(100vh - 48px));}
+:root[data-rail] .keys-modal .card.rl-dialog{width:min(760px, 100%);}
+:root[data-rail] .dlg-steps{flex:none;padding-top:8px;}   /* a stepped setup: the Stepper at the dialog's head */
+:root[data-rail] .rl-dialog .dlg-note{margin:0;}
+:root[data-rail] .dlg-choice{display:flex;flex-direction:column;gap:6px;}   /* a choice inside a Dialog: its label over its OptionList */
+:root[data-rail] .rl-dialog .dlg-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:4px;}
+:root[data-rail] .rl-dialog .dlg-head .dlg-title{margin:0;font:600 var(--fs-section)/var(--lh-title) var(--sans);color:var(--ink);letter-spacing:-.01em;}
+:root[data-rail] .rl-dialog .dlg-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+:root[data-rail] .rl-dialog .dlg-body > .btn{align-self:flex-start;}   /* a Field's helper (Try) starts on the fields' edge */
+:root[data-rail] .rl-dialog .dlg-body{display:flex;flex-direction:column;gap:16px;}   /* its parts, 16px apart */
+:root[data-rail] .dlg-status{font-size:var(--fs-meta);color:var(--ink-2);min-width:0;}
+:root[data-rail] .dlg-acts{display:flex;gap:8px;margin-left:auto;}
+/* SideMenu (ui/public/design-system/components/side-menu.mjs): a place's own menu in the sidebar, ‹ back, then its
+   sections under small group heads; on a narrow screen the same menu as a list, 44px rows, a line where each group
+   after the first starts. */
+
+:root[data-rail] .side-group{display:flex;flex-direction:column;gap:2px;}
+:root[data-rail] .side-i{display:flex;align-items:center;gap:10px;height:32px;padding:0 9px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:500 var(--fs-body)/1 var(--sans);text-align:left;cursor:pointer;transition:background-color 100ms var(--ease),color 100ms var(--ease);}
+:root[data-rail] .side-i:hover{background:var(--hover);color:var(--ink);}
+:root[data-rail] .side-i[aria-current="page"]{background:var(--field);color:var(--ink);}
+:root[data-rail] .side-i:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+:root[data-rail] .side-l{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+:root[data-rail] .side-back{margin-bottom:8px;}
+:root[data-rail] .side-g{margin:20px 0 4px;padding:0 9px;font:600 var(--fs-section)/var(--lh-title) var(--sans);letter-spacing:-.01em;color:var(--ink);}   /* a group head: its items' size, heavier, in ink (Type roles) */
+:root[data-rail] .side-back + .side-group .side-g{margin-top:4px;}
+:root[data-rail] .side-menu.is-list{padding:0;gap:0;}
+:root[data-rail] .side-menu.is-list .side-group + .side-group{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);}
+:root[data-rail] .side-menu.is-list .side-g{margin:0 0 4px;padding:0;}
+:root[data-rail] .side-menu.is-list .side-i{height:auto;min-height:44px;padding:0;justify-content:space-between;border-radius:0;color:var(--ink);font-weight:400;}
+:root[data-rail] .side-menu.is-list .side-i:has(> svg:first-child){justify-content:flex-start;}   /* icon, then the name beside it; the chevron alone goes to the end */
+:root[data-rail] .side-menu.is-list .side-i:has(> svg:first-child) > :last-child:not(:first-child){margin-left:auto;}
+:root[data-rail] .side-menu.is-list .side-i:hover{background:none;}
+:root[data-rail] .side-menu.is-list .side-i svg{color:var(--ink-3);flex:none;}
+
+/* Search: the top bar's field, what it finds under it with where each lives. */
+:root[data-rail] .rl-search.rc-pop{display:block;width:min(320px, 40vw);}   /* .rc-pop's inline-flex comes later, in rail-run-card.css */
+:root[data-rail] .rl-search .input{width:100%;}
+:root[data-rail] .rl-search .menu.rl-search-res{position:absolute;top:calc(100% + 6px);left:0;z-index:46;min-width:100%;width:max-content;max-width:min(480px, 80vw);}
+
+/* BackLink: ‹ the place one step up, above a page's title on a narrow screen. */
+:root[data-rail] .rl-back{display:inline-flex;align-items:center;gap:2px;margin:0 0 8px;padding:0;border:0;background:none;color:var(--ink-2);font:inherit;font-size:var(--fs-meta);cursor:pointer;}
+:root[data-rail] .rl-back:hover{color:var(--ink);}
+:root[data-rail] .rl-back:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+
+/* A usage ring: fills through the warning colours, full and solid red when used up. */
+:root[data-rail] .usage-ring{--s:18px;--t:1.5px;position:relative;display:inline-block;flex:none;width:var(--s);height:var(--s);border-radius:50%;background:var(--line-2);
+  -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - var(--t) - .5px),#000 calc(100% - var(--t)));
+  mask:radial-gradient(farthest-side,transparent calc(100% - var(--t) - .5px),#000 calc(100% - var(--t)));}
+:root[data-rail] .usage-ring::before{content:"";position:absolute;inset:0;border-radius:50%;
+  background:conic-gradient(var(--ink-2) calc(var(--w) * 1%),var(--amber) calc(var(--w) * 1%),var(--red) 100%);   /* ds-ok: --w and --p are each ring's, from usageRing */
+  -webkit-mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);}   /* ds-ok: as above */
+:root[data-rail] .usage-ring.is-over::before{background:var(--red);}
+/* A panel over the page: its head stays, its body scrolls. Where it sits is the page's. */
+:root[data-rail] .panel-frame{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);box-shadow:var(--shadow-pop);}
+:root[data-rail] .panel-head{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 8px 0 16px;box-shadow:inset 0 -1px 0 var(--line);}
+:root[data-rail] .panel-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:4px 16px 8px;}
+
+/* StageBar as the rail line (look.stage-line): one hairline, a knot a stage, the stage it is on holds its steps; the one now breathes */
+:root[data-rail] .sl{position:relative;height:14px;}
+:root[data-rail] .sl-base{position:absolute;left:0;right:0;top:6px;height:2px;border-radius:1px;background:var(--line-2);}   /* ds-ok: a hairline's own end */
+:root[data-rail] .sl-done{position:absolute;left:0;top:6px;height:2px;border-radius:1px;background:var(--ink-2);} :root[data-rail] .sl-done.is-whole{background:currentColor;}   /* ds-ok: as above */
+:root[data-rail] .sl-knot{position:absolute;top:2px;width:10px;height:10px;border-radius:50%;background:var(--bg);border:1.5px solid var(--line-2);box-sizing:border-box;}
+:root[data-rail] .sl-knot.is-done{background:var(--ink-2);border-color:transparent;}
+:root[data-rail] .stage-bar:is(.is-fail,.is-ask,.is-act) .sl-base{background:var(--ink-3);} :root[data-rail] .stage-bar:is(.is-fail,.is-ask,.is-act) .sl-knot:not(.is-done):not(.is-now){border-color:var(--ink-3);}   /* future knots stay visible on a lit card's tint */
+:root[data-rail] .sl-knot.is-now{border-color:currentColor;}
+:root[data-rail] .sl-step{position:absolute;top:5px;height:4px;border-radius:2px;background:var(--line-2);}   /* ds-ok: a notch's own end */
+:root[data-rail] .sl-step.is-done{background:currentColor;} :root[data-rail] .sl-step.is-now{background:currentColor;animation:sl-breath 2.4s ease-in-out infinite;}
+@keyframes sl-breath{0%,100%{opacity:.35;}50%{opacity:1;}}
+@media (prefers-reduced-motion: reduce){:root[data-rail] .sl-step.is-now{animation:none;}}
+:root[data-rail] .sb-labels small{margin-left:4px;font-size:var(--fs-caption);font-weight:400;color:var(--ink-2);}
+:root[data-rail] .sb-labels{margin-top:4px;font-size:var(--fs-caption);color:var(--ink-2);}
+:root[data-rail] .sb-labels b{font-weight:500;color:var(--ink);}
+:root[data-rail] .schedule-page{max-width:680px;margin:0 auto;padding:20px 56px 24px 24px;}
+:root[data-rail] .schedule-page .tt{margin:0;font:600 var(--fs-subpage)/1.3 var(--sans);letter-spacing:-.02em;}
+:root[data-rail] .bar-back{padding:0 2px 8px;}
+:root[data-rail] .bar-back .list-row{margin-left:0;}
+
+/* Tooltip (tooltip.mjs). */
+:root[data-rail] .rail-tip{position:fixed;z-index:200;max-width:280px;padding:6px 8px;border:1px solid var(--float-line);border-radius:var(--r-sm);background:var(--float);box-shadow:var(--shadow-pop);font:var(--fs-meta)/1.4 var(--sans);color:var(--ink);white-space:pre-line;pointer-events:none;}
+
+/* A stepper that deepens by main stage (stepper.mjs). */
+:root[data-rail] .sc-track.is-deep{--sc-tone:var(--ink-2);}
+:root[data-rail] .sc-track.is-deep.is-ask,:root[data-rail] .sc-track.is-deep.is-act{--sc-tone:var(--amber);}:root[data-rail] .sc-track.is-deep.is-fail{--sc-tone:var(--red);}:root[data-rail] .sc-track.is-deep.is-ok{--sc-tone:var(--ink-2);}:root[data-rail] .sc-track.is-deep.is-merged{--sc-tone:var(--ink);}:root[data-rail] .sc-track.is-deep.is-pause,:root[data-rail] .sc-track.is-deep.is-stop,:root[data-rail] .sc-track.is-deep.is-closed{--sc-tone:var(--ink-3);}
+:root[data-rail] .sc-track.is-deep .sc-cell.is-done{background:color-mix(in srgb, var(--sc-tone) var(--sc-mix,100%), var(--line-2));}   /* ds-ok: --sc-mix and --sc-tone are the stepper's own */
+
+/* comp.menu-groups: two columns at most, a head never parted from its options, inside the window */
+:root[data-rail] .menu-g{display:contents;}
+:root[data-rail] .pz-menu.is-two-cols{display:block;width:min(440px,calc(100vw - 32px));height:auto;max-height:min(420px,calc(100vh - 32px));overflow-y:auto;}
+:root[data-rail] .pz-menu.is-two-cols .menu-cols{column-count:2;column-gap:10px;}
+:root[data-rail] .pz-menu.is-two-cols .menu-g{display:block;break-inside:avoid;}
+:root[data-rail] .pz-menu.is-two-cols .menu-h{margin:0;}
+:root[data-rail] .pz-menu.is-two-cols .menu-item{break-inside:avoid;width:100%;height:auto;min-height:26px;padding-block:3px;}
+@media (max-width:640px){:root[data-rail] .pz-menu.is-two-cols .menu-cols{column-count:1;}}
+:root[data-rail] .in-acts{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0;}
+:root[data-rail] .in-acts > .btn-quiet:first-child{padding-left:0;}   /* rail.one-rail: a quiet button starts at the text edge */
+:root[data-rail] .in-stands{margin:14px 0 8px;line-height:var(--lh-body);}
+:root[data-rail] .in-table{margin:12px 0 4px;}
+:root[data-rail] .side-n{margin-left:auto;font-size:var(--fs-meta);color:var(--ink-2);font-variant-numeric:tabular-nums;}
+
+/* a quiet action in a row of actions starts at the text edge (rail.one-rail) */
+:root[data-rail] .wf-acts > .btn-quiet:first-child{padding-left:0;}
+
+:root[data-rail] .convo-col .wb.is-open{margin-top:18px;}
+
+/* nav.labs: a Labs feature says so, quietly, at the end of its row */
+:root[data-rail] .nav-lab{margin-left:auto;font-size:var(--fs-meta);font-weight:400;color:var(--ink-2);}
+
+/* panel.expand: in its column until expanded; expanded, it fills its page and never passes the page's edges */
+:root[data-rail] .xf{position:relative;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);}
+:root[data-rail] .xf>.btn,:root[data-rail] .xf>button{position:absolute;top:6px;right:6px;z-index:2;}
+:root[data-rail] .xf-body{overflow:hidden;}
+:root[data-rail] .xf.is-open{position:absolute;inset:0;z-index:5;border-width:0;border-radius:0;display:flex;flex-direction:column;}
+:root[data-rail] .xf.is-open .xf-body{flex:1 1 auto;min-height:0;overflow:auto;padding:36px 16px 16px;}
+:root[data-rail] .xf .wf-well{width:100%;margin:0;border:0;background:none;}
+
+/* nav.quick: under the bar's name, inside the bar */
+:root[data-rail] .bar-head{position:relative;}
+:root[data-rail] .bar-quick{position:absolute;left:36px;top:100%;z-index:30;}
+:root[data-rail] .bar-quick>.menu{position:static;}
+
+/* a form's field stacks under its label: the row basis must not become its height */
+:root[data-rail] .rc-confirm.is-form .fld{flex-direction:column;align-items:stretch;}
+:root[data-rail] .rc-confirm.is-form .fld>.input{flex:0 0 auto;}

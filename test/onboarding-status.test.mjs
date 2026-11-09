@@ -130,14 +130,18 @@ test('onboarding prefs: booleans only, unknown keys refused, all-false drops the
   assert.throws(() => assertOnboardingPrefsInput({ workspaceGuideSeen: 1 }), /onboarding\.workspaceGuideSeen must be true or false/);
   assert.throws(() => assertOnboardingPrefsInput({ nope: true }), /unknown onboarding key/);
   assert.throws(() => assertOnboardingPrefsInput(null), /object/);
-  assert.deepEqual(await setOnboardingPrefs({ hidden: true }), { hidden: true, welcomeSeen: false, workspaceGuideSeen: false });
-  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: true }), { hidden: true, welcomeSeen: true, workspaceGuideSeen: false });
-  assert.deepEqual(await setOnboardingPrefs({ hidden: false }), { hidden: false, welcomeSeen: true, workspaceGuideSeen: false }, 'Show again keeps the welcome seen');
-  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false });
-  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: true }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: true }, 'the walkthrough flag alone keeps the key');
+  assert.deepEqual(await setOnboardingPrefs({ hidden: true }), { hidden: true, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false });
+  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: true }), { hidden: true, welcomeSeen: true, workspaceGuideSeen: false, stillhetAsked: false });
+  assert.deepEqual(await setOnboardingPrefs({ hidden: false }), { hidden: false, welcomeSeen: true, workspaceGuideSeen: false, stillhetAsked: false }, 'Show again keeps the welcome seen');
+  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false });
+  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: true, stillhetAsked: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: true, stillhetAsked: false }, 'the walkthrough flag alone keeps the key');
   assert.equal((await onboardingStatus()).workspaceGuideSeen, true, 'GET /api/onboarding carries it');
-  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false });
-  assert.deepEqual(onboardingPrefs(), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false });
+  assert.throws(() => assertOnboardingPrefsInput({ stillhetAsked: 'yes' }), /onboarding\.stillhetAsked must be true or false/);
+  assert.equal((await setOnboardingPrefs({ stillhetAsked: true })).stillhetAsked, true);
+  assert.deepEqual(Object.keys(await onboardingStatus()).slice(-4), ['hidden', 'welcomeSeen', 'workspaceGuideSeen', 'stillhetAsked'], 'the status lists stillhetAsked beside welcomeSeen');
+  await setOnboardingPrefs({ stillhetAsked: false });
+  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: false, stillhetAsked: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false });
+  assert.deepEqual(onboardingPrefs(), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false });
   const s = await onboardingStatus();
   assert.equal(s.hidden, false);
 });
@@ -150,7 +154,7 @@ test('resetWorkspaceGuideIfNoWorkspaces: clears the flag only when it is set AND
   const drop = (id) => getDb().prepare('DELETE FROM workspaces WHERE id = ?').run(id);
   await checkRows([
     { name: 'seen + a workspace left: unchanged, false', run: async () => {
-      await setOnboardingPrefs({ workspaceGuideSeen: true });
+      await setOnboardingPrefs({ workspaceGuideSeen: true, stillhetAsked: false });
       seed('wks-guide-0000000a');
       assert.equal(await resetWorkspaceGuideIfNoWorkspaces(), false);
       assert.equal(onboardingPrefs().workspaceGuideSeen, true);

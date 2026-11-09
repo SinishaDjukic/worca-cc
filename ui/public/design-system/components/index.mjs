@@ -10,7 +10,7 @@ export { segmented } from './segmented.mjs';
 export { figure, figures, figureBreakdown, figuresToggle, figuresLine } from './figures.mjs';
 export { toast, toastText, errorToast, toastUndo } from './toast.mjs';
 export { emptyState, notFound } from './empty-state.mjs';
-export { textLink, documentLink } from './text-link.mjs';
+export { textLink, documentLink, outLink } from './text-link.mjs';
 export { morph, land, watchFolds, foldKey, watchStageAdvance } from './motion.mjs';
 export { sentencePicker, wordPicker, switchButton, changedDot, settingsRow, settingsGroup, settingsSection } from './settings-row.mjs';
 export { listRow, list, moreMenu } from './list.mjs';
