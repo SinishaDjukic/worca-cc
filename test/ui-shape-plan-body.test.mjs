@@ -6,7 +6,9 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import { renderPlanBody, SEND_FAILED } from '../ui/public/shape/plan-body.mjs';
+import { buildFeedbackRow } from '../ui/public/shape/feedback-row.mjs';
 import { fixAllFeedback, perspectiveChangeFeedback } from '../ui/public/shape/plan-text.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -219,6 +221,15 @@ test('a second click while a post is in flight is ignored', async () => {
   assert.equal(calls.submit.length, 2);
 });
 
+test('buildFeedbackRow: Send changes is primary only with primary:true; the plan card\'s stays plain', () => {
+  const row = (o) => buildFeedbackRow(doc, { label: 'x', onSend: () => {}, ...o }).row;
+  assert.equal(row().querySelector('.plan-revise').className, 'btn btn-sm plan-revise');
+  assert.equal(row({ primary: true }).querySelector('.plan-revise').className, 'btn btn-sm btn-primary plan-revise');
+  const { $ } = setup();
+  $('.plan-ask-changes').click();
+  assert.equal($('.plan-revise').classList.contains('btn-primary'), false);
+});
+
 test('Ask for changes is closed by default and opens the box; Send changes posts the revise', () => {
   const { $, calls } = setup();
   assert.equal($('.plan-typed').hidden, true);
@@ -425,7 +436,7 @@ test('recorded shaped run: one row per role, Show unfolds that role\'s findings,
   assert.equal($('.plan-role-line .plan-fold-text').textContent, 'Reviewed by 5 roles · 1 open');
   const rows = $$('.plan-roles .plan-check-row');
   assert.deepEqual(rows.map((r) => r.querySelector('.plan-check-label').textContent), ['Product · no findings',
-    'Architect · 1 major fixed', 'QA · 1 critical, 1 suggestion fixed', 'UX · 1 minor fixed', 'Project fit · 1 major open']);
+    'Architect · 1 fixed', 'QA · 2 fixed', 'UX · 1 fixed', 'Project fit · 1 open']);
   // A met row's mark is the check icon (icons.mjs, D14); an open issue's is `!`.
   assert.deepEqual(rows.map((r) => { const m = r.querySelector('.plan-check-mark'); return m.querySelector('svg') ? 'check' : m.textContent; }), ['check', 'check', 'check', 'check', '!']);
   assert.equal($$('.plan-roles .plan-check-show').length, 4);
@@ -468,6 +479,55 @@ test('a plan ask without role reviews has no role line', () => {
   assert.equal(setup().$$('.plan-role-line').length, 0);
 });
 
+// #990 slice 3: a conflict between two roles is one decision card; Approve carries the picks and needs one per card.
+const withConflict = () => {
+  const rr = structuredClone(RECORDED.plan.roleReviews);
+  const last = rr.rounds.at(-1);
+  last.conflicts = [{ id: 'conflict-1', findings: ['qa-1-1', 'fit-2-1'], roles: ['qa', 'fit'], section: 'Code layout',
+    question: 'One shared row module, or keep the plan card\'s own?', options: ['One shared module', 'Keep its own'] }];
+  return recordedAsk(rr);
+};
+
+test('one conflict renders one decision card inside the plan card, before the actions', () => {
+  const { $, $$ } = setup({ pq: withConflict() });
+  assert.equal($$('.plan-decisions .plan-decision').length, 1);
+  assert.equal($('.plan-decision-src').textContent, 'QA and Project fit disagree on Code layout');
+  assert.equal($$('.plan-decision .qpanel-foot, .plan-decision [data-qpanel-submit]').length, 0, 'no submit of its own');
+  assert.equal($$('.btn-primary').length, 1);
+  assert.ok($('.plan-decisions').compareDocumentPosition($('.plan-actions')) & 4, 'the decisions come before Approve');
+});
+
+test('Approve with an unanswered decision shows "Answer each decision first", focuses it and sends nothing', async () => {
+  const { $, calls, panel } = setup({ pq: withConflict() });
+  doc.body.appendChild(panel);
+  $('.plan-approve').click();
+  await flush();
+  assert.deepEqual(calls.submit, []);
+  assert.equal($('.plan-err').hidden, false);
+  assert.equal($('.plan-err').textContent, 'Answer each decision first');
+  assert.equal(doc.activeElement, $('.plan-decision'));
+  panel.remove();
+});
+
+test('with picks, Approve sends conflicts; a revise sends the picks made so far; no conflicts, no key', async () => {
+  const a = setup({ pq: withConflict() });
+  a.$$('.plan-decision .qopt')[1].click();
+  a.$('.plan-approve').click();
+  await flush();
+  assert.deepEqual(a.calls.submit, [{ decision: 'approve', conflicts: [{ id: 'conflict-1', choice: 'Keep its own' }] }]);
+  const r = setup({ pq: withConflict() });
+  r.$$('.plan-decision .qopt')[0].click();
+  r.$('.plan-ask-changes').click();
+  r.$('.plan-feedback').value = 'Tighten the rollout.';
+  r.$('.plan-revise').click();
+  await flush();
+  assert.deepEqual(r.calls.submit, [{ decision: 'revise', feedback: 'Tighten the rollout.', conflicts: [{ id: 'conflict-1', choice: 'One shared module' }] }]);
+  const plain = setup({ pq: recordedAsk() });
+  plain.$('.plan-approve').click();
+  await flush();
+  assert.deepEqual(plain.calls.submit, [{ decision: 'approve' }]);
+});
+
 test('plan-body draws no check row itself and has no local fold (one check-row component)', () => {
   const src = readFileSync(new URL('../ui/public/shape/plan-body.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(src, /plan-check-row/);
@@ -476,7 +536,7 @@ test('plan-body draws no check row itself and has no local fold (one check-row c
 });
 
 test('slice 4 CSS: 2px/4px radii only, light-dark colour tokens only, 1px dividers, the finding line wraps', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const css = readStyleCss().replace(/\/\*[\s\S]*?\*\//g, '');
   const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => /plan-(sev|finding|check-show)/.test(m[1]));
   assert.ok(rules.length >= 7);
   for (const [, sel, body] of rules) {
@@ -507,4 +567,132 @@ test('run 4 D8: Ask for changes swaps for the field, Cancel swaps back', () => {
   assert.equal(ask.hidden, false);
   assert.equal(doc.activeElement, ask);
   panel.remove();
+});
+
+test('#990 s5 the approval card shows the implementer\'s concern once, above the approve button', async () => {
+  const pq = ask();
+  pq.concern = { title: 'Store export jobs in the DB, not in memory', detail: 'A restart loses queued exports.', section: 'Decisions' };
+  const { panel, $, $$ } = setup({ pq });
+  await flush();
+  assert.equal($$('.plan-concern').length, 1);
+  assert.equal(panel.textContent.split(pq.concern.title).length - 1, 1, 'the title is shown once');
+  assert.ok($('.plan-sub').compareDocumentPosition($('.plan-concern')) & 4, 'the note comes after the sub line');
+  assert.ok($('.plan-concern').compareDocumentPosition($('.plan-approve')) & 4, 'the note comes before Approve');
+  assert.equal($('.plan-concern .shape-plan-outline-change-head').textContent, 'The implementer has a concern about this plan:');
+  assert.ok($('.plan-concern').textContent.includes('Section: Decisions'));
+  assert.equal($('.plan-concern-what').textContent,
+    'Approve overrides the concern and builds the plan as written. Ask for changes accepts it and sends the plan back to the planner with this concern.');
+  assert.equal($('.plan-ask-changes').textContent, 'Ask for changes');
+});
+
+test('#990 s5 no concern, no concern note; markup in a concern stays text', async () => {
+  assert.equal(setup({ pq: ask() }).$('.plan-concern'), null);
+  const pq = ask();
+  pq.concern = { title: '<img src=x onerror=alert(1)>' };
+  const { $ } = setup({ pq });
+  await flush();
+  assert.equal($('.plan-concern img'), null);
+  assert.equal($('.plan-concern-title').textContent, '<img src=x onerror=alert(1)>');
+});
+
+// Shaper requirements s3 (3.A): a reviewer's requirement concern rides the same note with its own head and what line.
+test('a requirement concern: its head and what line, and each id once in the card for one concern and for two', async () => {
+  const { requirementConcernOf } = await import('../src/shared/review/plan-concern.mjs');
+  const finding = (id, title, fix) => ({ id: `qa-1-${id}`, severity: 'major', title, fix, requirement: id });
+  const roles = (findings) => [{ round: 1, roles: [{ key: 'qa', label: 'QA', findings }] }];
+  const one = requirementConcernOf(roles([finding('R-po-1', 'R-po-1: Export needs a server we do not have', 'drop the server export')]));
+  const two = requirementConcernOf(roles([finding('R-po-1', 'Export needs a server', 'drop it'), finding('R-sec-2', 'Signing is out of reach', 'sign later')]));
+  for (const [concern, ids, title] of [[one, ['R-po-1'], 'Export needs a server we do not have'], [two, ['R-po-1', 'R-sec-2'], '2 requirement concerns']]) {
+    const pq = ask();
+    pq.concern = concern;
+    const { panel, $, $$ } = setup({ pq });
+    await flush();
+    assert.equal($$('.plan-concern').length, 1);
+    assert.equal($('.plan-concern .shape-plan-outline-change-head').textContent, 'A reviewer says an agreed requirement is wrong or cannot be met:');
+    assert.equal($('.plan-concern-title').textContent, title, 'the title holds no id');
+    assert.equal($('.plan-concern-what').textContent,
+      'Approve keeps the requirement as agreed and builds the plan. Ask for changes sends your answer to the planner.');
+    for (const id of ids) assert.equal(panel.textContent.split(id).length - 1, 1, `${id} is shown once`);
+    const lines = [...$$('.plan-concern .shape-plan-outline-change-text')].map((p) => p.textContent).filter((t) => /^R-/.test(t));
+    assert.equal(lines.length, ids.length, 'one detail line per id');
+    assert.equal($('.plan-approve').textContent.includes('Approve'), true, 'the buttons do not change');
+  }
+});
+
+// Requirements first: the plan ask carries `coverage` (which agreed requirements a step delivers).
+const COVERED = (n) => Array.from({ length: n }, (_, i) => ({ id: `R-po-${i + 1}`, label: `R-po-${i + 1} · covered by Step ${i + 1}`, pass: true }));
+const UNCOVERED = { id: 'R-ops-1', label: 'R-ops-1 · not covered by any step', detail: 'Turning the flag off removes the export', pass: false };
+const COVERAGE = { ok: false, passed: 7, total: 8, items: [...COVERED(7), UNCOVERED] };
+const COVERAGE_OK = { ok: true, passed: 8, total: 8, items: COVERED(8) };
+const SHAPE_OK = { ...CHECK, ok: true, passed: 2, items: [CHECK.items[0], { ...CHECK.items[1], pass: true, detail: undefined }] };
+const lines = ($) => [...$('.plan-body').querySelectorAll('.plan-check-line')];
+const foot = ($) => [...$('.plan-actions').children].map((b) => b.textContent || b.getAttribute('aria-label'));
+
+test('U11: coverage shows a Requirements fold above Shape, open when a row fails, with the criterion text and "not covered by any step"', () => {
+  const { $, $$ } = setup({ pq: ask({ coverage: COVERAGE }) });
+  const lines = $$('.plan-check-line');
+  assert.deepEqual(lines.map((l) => l.querySelector('.plan-fold-text').textContent), ['Requirements 7/8 · 1 to fix', 'Shape 2/3 · 1 to fix']);
+  assert.equal(lines[0].getAttribute('aria-expanded'), 'true');
+  assert.equal(lines[0].nextElementSibling.hidden, false);
+  assert.equal(lines[1].getAttribute('aria-expanded'), 'false');
+  const bad = $$('.plan-check-row').find((r) => r.querySelector('.plan-check-label').textContent.startsWith('R-ops-1'));
+  assert.equal(bad.querySelector('.plan-check-label').textContent, 'R-ops-1 · Turning the flag off removes the export');
+  assert.equal(bad.querySelector('.plan-check-detail').textContent, 'not covered by any step');
+  assert.equal($$('.plan-check-row')[0].querySelector('.plan-check-label').textContent, 'R-po-1 · covered by Step 1');
+  const closed = setup({ pq: ask({ coverage: COVERAGE_OK, check: SHAPE_OK }) });
+  assert.equal(closed.$('.plan-check-line').getAttribute('aria-expanded'), 'false');
+  assert.equal(closed.$('.plan-check-line .plan-fold-text').textContent, 'Requirements 8/8');
+  const bare = setup({ pq: ask({ coverage: { ...COVERAGE, items: [{ ...UNCOVERED, detail: '' }] , passed: 0, total: 1 } }) });
+  assert.equal(bare.$$('.plan-check-label')[0].textContent, 'R-ops-1 · not covered by any step', 'an empty detail keeps the engine label');
+});
+
+test('R-ux-5: with a failing row Fix all is the foot\'s only primary and is not in ⋯; Approve is a plain btn; "Still to fix" stays shape-only', () => {
+  const { $, $$, calls } = setup({ pq: ask({ coverage: COVERAGE }) });
+  assert.deepEqual(foot($), ['Ask for changes', 'Full plan', 'Fix all', 'Approve and build', 'More for this plan']);
+  assert.deepEqual($$('.btn-primary').map((b) => b.textContent), ['Fix all']);
+  assert.equal($('.plan-approve').classList.contains('btn-primary'), false);
+  assert.equal($('.plan-approve').classList.contains('btn'), true);
+  assert.ok(!menu($).labels.includes('Fix all'));
+  assert.doesNotMatch($('.plan-unmet').textContent, /R-ops-1/);
+  $('.plan-approve').click();
+  assert.deepEqual(calls.submit, [{ decision: 'approve' }], 'Approve still approves');
+});
+
+test('U11: Fix all asks for the shape rows, then the raw uncovered rows', () => {
+  const { $, calls } = setup({ pq: ask({ coverage: COVERAGE }) });
+  $('.plan-fix-primary').click();
+  assert.deepEqual(calls.submit, [{ decision: 'revise', feedback: 'The shape check fails "Paths are real": 1 path not found. Fix the plan so this check passes.\n'
+    + 'The agreed requirement R-ops-1: Turning the flag off removes the export is not covered by any step. Fix the plan so a step delivers it.' }]);
+});
+
+test('R-ux-5: a failing shape row alone (coverage all covered) also makes Fix all the primary', () => {
+  const { $ } = setup({ pq: ask({ coverage: COVERAGE_OK }) });
+  assert.deepEqual(primaries($), ['Fix all']);
+  assert.ok(!menu($).labels.includes('Fix all'));
+});
+const primaries = ($) => [...$('.plan-actions').querySelectorAll('.btn-primary')].map((b) => b.textContent);
+
+test('R-ux-5: all rows pass → Approve is the primary and there is no Fix all', () => {
+  const { $ } = setup({ pq: ask({ coverage: COVERAGE_OK, check: SHAPE_OK }) });
+  assert.deepEqual(primaries($), ['Approve and build']);
+  assert.equal($('.plan-fix-primary'), null);
+  assert.ok(!menu($).labels.includes('Fix all'));
+});
+
+test('R-ux-5: not revisable and a failing row → no primary and no Fix all', () => {
+  const { $ } = setup({ pq: ask({ coverage: COVERAGE, revisable: false }) });
+  assert.deepEqual(primaries($), []);
+  assert.equal($('.plan-fix-primary'), null);
+  assert.ok(!menu($).labels.includes('Fix all'));
+});
+
+test('U11 scope: with no coverage and a failing shape row the foot is today\'s (Approve primary, Fix all only in ⋯)', () => {
+  const { $ } = setup();
+  assert.deepEqual(foot($), ['Ask for changes', 'Full plan', 'Approve and build', 'More for this plan']);
+  assert.deepEqual(primaries($), ['Approve and build']);
+  assert.equal(lines($).length, 1);
+  assert.ok(menu($).labels.includes('Fix all'));
+  const empty = setup({ pq: ask({ coverage: { ok: true, passed: 0, total: 0, items: [] } }) });
+  assert.equal(lines(empty.$).length, 1, 'a coverage with no items draws nothing');
+  assert.deepEqual(primaries(empty.$), ['Approve and build']);
 });

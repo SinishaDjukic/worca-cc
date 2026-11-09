@@ -9,6 +9,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { createChatContext } from '../src/core/chat/chat-context.mjs';
 import { createCommandRouter } from '../src/core/chat/command-router.mjs';
+import { ACTION_DONE } from '../src/core/chat/receipts.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 useTempHome(after);
@@ -61,9 +62,9 @@ function fixture(overrideActions = {}) {
   const router = createCommandRouter({ actions, chatContext, logger: () => {} });
   const send = (text, chatId = '42') => router.handleIncoming({
     plugin: 'p', channelId: 'main', platform: 'testchat',
-    channelConfig: CONFIG, msg: { chatId, userId: 'u1', text, meta: {} },
+    channelConfig: CONFIG, msg: { chatId, userId: 'u1', text, meta: { isGroup: false } },
   });
-  return { send, calls, state, chatContext };
+  return { send, calls, state, chatContext, router };
 }
 
 const makeRouter = (overrideActions = {}) => fixture(overrideActions);
@@ -445,7 +446,7 @@ test('chat actions carry the sender as attribution text: "<name> via <Platform>"
   await send('/stop *1111', {}, 'slack', 'U024BE7LH');
   await send('/resume *3333', { name: 'Grace Hopper' }, 'teams');
   f.state.pending['run-aaaa1111'] = { id: 'g1', kind: 'gate' };
-  await send('/approve', { username: 'ada' }, 'discord');
+  await send('/approve', { username: 'ada', isGroup: false }, 'discord');
   assert.deepEqual(got, [
     ['pause', 'run-aaaa1111', 'ada via Telegram'],
     ['stop', 'run-aaaa1111', 'U024BE7LH via Slack'],
@@ -561,4 +562,37 @@ test('/resume [*ref] [engine]: an engine continues the run on it; the refusal sa
   assert.match(refused, /Could not resume `\*3333` on Codex: engine codex: guardrail set "normal"/);
   assert.match(refused, /or resume it in the Worca UI with Allow unguarded to run it without them/, 'the consent is the UI\'s, never a chat word');
   assert.doesNotMatch(refused, /--allow-unguarded-engine/, 'no CLI flag in chat');
+});
+
+test('onAccepted fires only for an allowed sender\'s known command, before its handler; a throwing observer changes nothing', async () => {
+  const order = [];
+  const f = fixture({ listProjects: async () => { order.push('handler'); return [{ name: 'worca', path: '/x/worca' }]; } });
+  const call = (text, chatId = '42', onAccepted = () => order.push(`accepted ${text}`)) => f.router.handleIncoming({
+    plugin: 'p', channelId: 'main', platform: 'testchat', channelConfig: CONFIG, msg: { chatId, userId: 'u1', text, meta: { isGroup: false } }, onAccepted });
+  await call('/status', '999');       // chat not allow-listed
+  await call('/frobnicate');          // unknown command
+  await call('just chatting');        // not a command
+  const senders = await f.router.handleIncoming({ plugin: 'p', channelId: 'main', platform: 'testchat',
+    channelConfig: { ...CONFIG, allowedUserIds: 'u7' }, msg: { chatId: '42', userId: 'u1', text: '/status' }, onAccepted: () => order.push('accepted stranger') });
+  assert.equal(senders, null);
+  const group = await f.router.handleIncoming({ plugin: 'p', channelId: 'main', platform: 'testchat', channelConfig: CONFIG,
+    msg: { chatId: '42', userId: 'u1', text: '/approve', meta: { isGroup: true } }, onAccepted: () => order.push('accepted group') });
+  assert.match(text(group), /is off in group chats/, 'G18 refuses it');
+  assert.deepEqual(order, []);
+  await call('/projects');
+  assert.deepEqual(order, ['accepted /projects', 'handler']);
+  const r = await call('/help', '42', () => { throw new Error('observer down'); });
+  assert.match(text(r), /Worca chat commands/);
+});
+
+test('a completed /pause or /stop is marked done for its receipt (✅); its refusals are not', async () => {
+  const { send, state } = fixture();
+  const done = (r) => r?.[ACTION_DONE] === true;
+  const paused = await send('/pause *1111');
+  assert.equal(paused.severity, 'warning', 'renders as before');
+  assert.ok(done(paused));
+  assert.ok(done(await send('/stop *1111')));
+  assert.ok(done(await send('/stop *3333')), 'a paused run stopped through its saved row');
+  state.rows.push({ id: 'pipe-dddd4444', title: 'Crashed run', status: 'interrupted' });
+  for (const t of ['/stop *4444', '/pause *2222', '/stop *9999', '/status zzzz']) assert.ok(!done(await send(t)), t);
 });

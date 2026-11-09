@@ -20,6 +20,7 @@ import { DEFAULT_TIMEOUT_MS, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS } from '../../shared
 import { probePython } from '../graph/python-probe.mjs';
 import { chatPrefs } from '../settings.mjs';
 import { ASK_LIMITS } from './limits.mjs';
+import { savedRunNeedsCard } from './script-approval.mjs';
 
 /** Every sentence the model can act on. Unprefixed: they ride inside an `errors` array
  *  (the PROPOSAL_ERRORS shape), never as a thrown tool error. */
@@ -247,8 +248,15 @@ export function defaultScriptDeps({ threadId, signal = null, io = REAL_IO } = {}
         };
       },
 
-      /** Create or replace a USER-layer script (W19). Every refusal is a return value. */
-      async save({ key, meta, source, sourceWin32 = null, cases = null, overwrite = false } = {}) {
+      /** G6 (V1): whether test_script by this key, with these params, needs the user's click
+       *  (script-approval.mjs savedRunNeedsCard). */
+      async runNeedsCard(key, params) {
+        return savedRunNeedsCard(await this.read(key), params);
+      },
+
+      /** Create or replace a USER-layer script (W19). Every refusal is a return value. `dryRun` (G6): every check,
+       *  the store's own included, and nothing written — save_script's answer before the user's approval card. */
+      async save({ key, meta, source, sourceWin32 = null, cases = null, overwrite = false, dryRun = false } = {}) {
         const errors = [];
         if (typeof key !== 'string' || !key.trim()) errors.push(SCRIPT_ERRORS.keyRequired);
         if (!meta || typeof meta !== 'object' || Array.isArray(meta)) errors.push(SCRIPT_ERRORS.metaRequired);
@@ -282,9 +290,14 @@ export function defaultScriptDeps({ threadId, signal = null, io = REAL_IO } = {}
         let saved;
         try {
           saved = existing
-            ? await io.updateScript(key, { meta: full, source, sourceWin32, by })
-            : await io.createScript({ meta: full, source, sourceWin32, by });
+            ? await io.updateScript(key, { meta: full, source, sourceWin32, by, ...(dryRun ? { dryRun: true } : {}) })
+            : await io.createScript({ meta: full, source, sourceWin32, by, ...(dryRun ? { dryRun: true } : {}) });
         } catch (err) { return { ok: false, errors: refusal(err) }; }
+        if (dryRun) {
+          const out = { ok: true, key, created: !existing, dryRun: true };
+          if (Array.isArray(saved?.warnings) && saved.warnings.length) out.warnings = saved.warnings.map(String);
+          return out;
+        }
 
         const out = { ok: true, key, created: !existing, path: savedPath(io, key, saved), link: `#scripts/${key}` };
         if (Array.isArray(saved?.warnings) && saved.warnings.length) out.warnings = saved.warnings.map(String);

@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@worca/app)](https://www.npmjs.com/package/@worca/app)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![node](https://img.shields.io/badge/node-%3E%3D22.13-brightgreen)](.nvmrc)
+[![node](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](.nvmrc)
 
 Worca turns a task into reviewed, merge-ready work. You describe the change, and a
 deterministic pipeline of coding agents clarifies, plans, implements and reviews it,
@@ -22,7 +22,7 @@ skill inside Claude Code, or a chat on Telegram, Slack, Discord or Teams.
   recorded.
 - **It asks before it guesses.** A Clarify step turns hidden decisions into a few
   multiple-choice questions, and review loops pause for you when they run out of cycles.
-- **Isolated by default.** Every run gets its own worktree and branch, so parallel runs
+- **Changes kept apart.** Every run gets its own worktree and branch, so parallel runs
   never collide and nothing touches your working tree.
 - **Bounded.** Cycle caps, cost limits, guardrail policy sets and a team policy keep
   runs inside limits you set.
@@ -33,7 +33,7 @@ skill inside Claude Code, or a chat on Telegram, Slack, Discord or Teams.
 
 ## Quick start
 
-You need Node.js 22.13 or newer, git, and the [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+You need Node.js 22.19 or newer, git, and the [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 CLI signed in (only for real runs; mock mode needs none of it).
 
 ```bash
@@ -44,7 +44,7 @@ npm install -g @worca/app
 worca ui
 ```
 
-Open `http://localhost:4317`, add a project under **Projects › Add project**, then click
+Open `http://127.0.0.1:4317`, add a project under **Projects › Add project**, then click
 **New pipeline**, describe the task and press **Start run**. Turn on **Mock mode** to run
 the whole pipeline offline, with no tokens and no cost.
 
@@ -63,13 +63,13 @@ The built-in **Default** workflow runs five agents:
 
 1. **Clarify** asks up to 8 multiple-choice questions, or none when the task is clear.
 2. **Plan** explores the codebase and writes an implementation plan.
-3. **Refine Plan** reviews and rewrites the plan until no critical or major issues remain.
+3. **Refine Plan** checks the plan against the real code in one read-only pass and tightens it.
 4. **Implementation** follows the approved plan with test-driven development.
 5. **Review Implementation** reviews the diff against the plan and sends blocking
    findings back to the implementer.
 
-Each loop has a cycle cap (3 by default). When a loop hits it with blocking findings
-left, the run pauses and asks whether to approve another cycle or continue. Only
+Refine runs once. The review loop has a cycle cap (3 by default). When it hits the cap with
+blocking findings left, the run pauses and asks whether to approve another cycle or continue. Only
 critical and major findings block. A finished run's work is committed to its own
 `worca-cc/…` branch, ready for **Create PR**.
 

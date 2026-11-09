@@ -11,11 +11,11 @@ import { JSDOM } from 'jsdom';
 import { GRAPH_MEMORY_DEFRAG_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
 import { defragWorkflowView, resolveDefragModel } from '../src/core/memory-defrag-model.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECT = '/tmp/proj';
 const MODELS = [
@@ -72,7 +72,7 @@ function makeServer({ stored, pick = null }) {
 }
 
 async function boot(srv) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4319/#new' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4319/#new' }));
   const { window } = dom;
   window.document.documentElement.dataset.level = 'expert';
   window.Element.prototype.scrollIntoView = function () {};

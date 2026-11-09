@@ -112,7 +112,7 @@ keeps only Back, **Workflows ▾** (New canvas, Open…, Import…, Export…), 
 
 ### The Library
 
-The card beside the canvas switches between **Agents**, **Scripts** and **Workflows**. Every agent and script action
+The card beside the canvas switches between **Workflows**, **Agents** and **Scripts**, and opens on Workflows. Every agent and script action
 lives there: view, edit, create, duplicate, delete, and the script test bench. Their editors open in a sheet inside
 the view. The old `#composer`, `#agents`, `#scripts` and `#agent-create` addresses land in the view.
 
@@ -136,13 +136,15 @@ uses the same cards, without a canvas. **Save** a draft, or open it in its edito
 
 ### Saved pipelines
 
-The Library's **Workflows** tab lists saved pipelines with domain chips. Click a row to open one. The built-in
-**Default** and **Memory defragment** open read-only, and Save makes a copy. Saved pipelines appear in New
-pipeline's **Workflow** picker, and so in schedules too.
+The Library's **Workflows** section, its first, lists **Yours** on top, then **Built-in**, then **Archived**, each
+split into domain folders. **Edit** (or a click on the row) opens one of yours, and Save changes it. **Use as
+template** opens a workflow as a new unsaved copy that Save keeps as your own. Built-in and plugin workflows offer
+only that; yours offer it from the row's ⋯ menu. A badge beside the name says what the canvas holds: **Editing** or
+**Unsaved copy**. Saved pipelines appear in New pipeline's **Workflow** picker, and so in schedules too.
 
 ### Sharing a pipeline
 
-**Export…** on a Library row, or in **Workflows ▾**, offers three formats:
+**Export…** in a Library row's ⋯ menu, or in **Workflows ▾**, offers three formats:
 
 - **JSON file**: the graph only. The recipient opens it with **Workflows ▾ › Import…**. A name that's already taken
   gets a ` (2)` suffix, so nothing is ever overwritten, and any script commands are shown for approval first.

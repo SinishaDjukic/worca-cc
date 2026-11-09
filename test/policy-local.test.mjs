@@ -109,3 +109,16 @@ test('localSnapshot: night.* rows carry the developer layers only', async () => 
   assert.equal(Object.keys(s).filter((k) => k.startsWith('night.')).length, 15);
   await setNightMode(null);
 });
+
+test('localSnapshot: pr.open and pr.slices are set only when the project stored one', async () => {
+  const { writeProjectSettings } = await import('../src/core/settings-cascade.mjs');
+  let s = localSnapshot(proj);
+  assert.deepEqual(s['pr.open'], { value: null, set: false });
+  assert.deepEqual(s['pr.slices'], { value: null, set: false });
+  assert.equal(localSnapshot(null)['pr.open'], undefined);
+  writeProjectSettings(proj, { 'pr.open': 'draft' });
+  s = localSnapshot(proj);
+  assert.deepEqual(s['pr.open'], { value: 'draft', set: true });
+  assert.deepEqual(s['pr.slices'], { value: null, set: false });
+  writeProjectSettings(proj, { 'pr.open': null });
+});

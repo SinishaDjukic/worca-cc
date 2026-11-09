@@ -1,0 +1,394 @@
+/* ---------- Running detail: bar, glance and Details modes ---------- */
+/* One screen, two modes (`.rd[data-mode]`): the glance (status line, trail, sheet)
+   and Details (header card, tabs, mini bar). The bar is shared and sticky. Every
+   control on it is one height so the row reads as one strip. */
+.rd-bar,.hd-bar{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:10px;
+  padding:12px 32px;background:var(--bg);border-bottom:1px solid var(--line);
+  container:rd-bar / inline-size;}
+/* A bar too narrow for every control at once (the Runs list pane beside it at ~1280 px) drops the
+   switch's visible label first: the select keeps its aria-label and tooltip, the pill says what
+   happens. */
+@container rd-bar (max-width:900px){ .rd-night-wrap > .txt{display:none;} }
+.rd-bar-mid{flex:1 1 0;display:flex;justify-content:flex-start;align-items:center;gap:8px;min-width:0;}   /* basis 0: the name truncates before the controls wrap; flex-start: it sits at the bar's left, the controls at its right */
+/* The run's name. Details has it as its header's title, so the bar leaves it blank there. */
+/* The glance's page title owns the name; the bar repeats it only once that heading has
+   scrolled out of view (app.js watchPageTitle sets data-title-out), like a large title
+   collapsing into the navigation bar. Details has its own header, so never there. */
+.rd-bar-title{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font:600 var(--fs-body) var(--sans);color:var(--ink);
+  opacity:0;transition:opacity .2s;}
+.rd[data-title-out="1"][data-mode="glance"] .rd-bar-title,.hd[data-title-out="1"][data-mode="glance"] .rd-bar-title{opacity:1;}
+@media (prefers-reduced-motion:reduce){.rd-bar-title{transition:none;}}
+.rd-bar-end{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;min-width:0;}
+/* Every control in the bar keeps its words on one line: a squeezed bar wraps whole controls
+   onto a second row, never the text inside one ("Run after" over two lines). */
+.rd-bar-end > *{flex:none;white-space:nowrap;}
+.rd-to-run,.hd-to-run{display:inline-flex;align-items:center;gap:8px;}
+.rd-to-run.ask{background:var(--panel);border-color:var(--amber);color:var(--amber-ink);}   /* a question waits on the glance */
+.rd-back[hidden],.hd-bar .hd-back[hidden],.hd-to-run[hidden],.rd-to-run[hidden]{display:none;}
+.rd-to-run:focus-visible,.hd-to-run:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* A page that focuses its way back (or a menu handing focus back to its trigger) would otherwise paint that as
+   :focus-visible after a click. The ring shows only to keyboard users (app.js sets data-input from the last keydown /
+   pointerdown). Fields are not listed: a clicked field keeps its ink border. */
+:root[data-input="pointer"] :is(button,a,summary,[role="button"],[role="tab"],[role="switch"],[role="menuitem"],[tabindex]):focus-visible{outline:none;}
+.rd > .rd-error{margin:12px 32px 0;}
+.rd-glance[hidden],.rd-details[hidden]{display:none;}
+
+.rd-glance{max-width:none;margin:0 auto;padding:28px 32px var(--ask-dock-clearance);display:flex;flex-direction:column;gap:22px;}
+/* Run 3 (D16): everything but the graph keeps the old 544px measure; the graph takes the pane's content width, under
+   the run details at every list and pane width. A waiting question reads easier wide: it opens to twice the run panel's
+   width, while the header and the card keep their measure and do not move. */
+.rd-glance > :not(.rd-live){width:100%;max-width:544px;align-self:center;}
+.rd-glance:has(> .rd-questions:not([hidden])) > .rd-questions{max-width:1152px;}
+.rd-glance > .rd-live{align-self:stretch;width:100%;max-width:none;}
+/* Run progress (runs redesign §2.3): four neutral sections; the run's state is told by the status dot, not the fill. */
+.run-prog{position:relative;margin-top:10px;outline:none;}
+.run-prog[hidden]{display:none;}
+/* Four sections, steps of one ink darker by stage; hard stops; neutral. */
+.run-prog-track{position:relative;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px;height:6px;}
+.run-prog[data-mode="nodes"] > .run-prog-track{display:block;border-radius:var(--r-xs);background:var(--line-2);overflow:hidden;}
+.run-prog-sec{position:relative;border-radius:var(--r-xs);background:var(--line-2);overflow:hidden;}
+.run-prog-sec[data-stage="plan"]{--sec-ink:color-mix(in srgb,var(--ink) 40%,var(--line-2));}
+.run-prog-sec[data-stage="build"]{--sec-ink:color-mix(in srgb,var(--ink) 60%,var(--line-2));}
+.run-prog-sec[data-stage="review"]{--sec-ink:color-mix(in srgb,var(--ink) 80%,var(--line-2));}
+.run-prog-sec[data-stage="ready"]{--sec-ink:color-mix(in srgb,var(--ink) 100%,var(--line-2));}
+.run-prog-fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--sec-ink,var(--ink-2));transition:width .6s ease;}
+.run-prog[data-pulse="on"] .run-prog-sec.is-current > .run-prog-fill::after{content:"";position:absolute;top:0;right:0;bottom:0;width:2px;background:var(--surface);animation:wr-pulse 1.6s ease-in-out infinite;}
+.run-prog-marks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px;margin-top:5px;font-size:11px;color:var(--ink-3);}
+.run-prog-mark{min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.run-prog-mark[data-state="done"]{color:var(--ink-2);}
+.run-prog-mark[data-state="current"]{color:var(--ink);font-weight:600;}
+.run-prog-mark[data-state="skipped"]{opacity:.5;}
+.run-prog-detail{display:none;position:absolute;z-index:20;bottom:calc(100% + 6px);left:0;min-width:240px;padding:10px 12px;
+  border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);color:var(--ink-2);font-size:12px;}
+.run-prog:hover > .run-prog-detail,.run-prog:focus-within > .run-prog-detail{display:block;}
+.run-prog:focus-visible .run-prog-track{box-shadow:0 0 0 2px var(--blue-line);}
+.run-prog-stages,.run-prog-agents{list-style:none;margin:0;padding:0;}
+.run-prog-agents{padding-left:12px;color:var(--ink-3);}
+.run-prog-stage.is-current > .run-prog-stage-name,.run-prog-agent.is-current{color:var(--ink);font-weight:600;}
+.run-prog.is-compact{margin-top:10px;}
+.run-prog.is-compact .run-prog-marks{display:none;}
+.ask-rc-prog{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* The group's continuous bar (runs redesign §2.3). */
+.run-chain-label{font-size:11px;color:var(--ink-3);margin-bottom:4px;}
+.run-chain-track{position:relative;height:6px;border-radius:var(--r-xs);background:var(--line-2);overflow:hidden;}
+.run-chain-track > .run-prog-fill{background:var(--ink-2);}
+@media (prefers-reduced-motion: reduce){.run-prog-fill,.runs-row-prog > i{transition:none;}.run-prog[data-pulse="on"] .run-prog-sec.is-current > .run-prog-fill::after{animation:none;}}
+/* The one status dot (runs redesign §2.1; ui/public/status-dot.mjs). The colour is currentColor; the symbol is 12px. */
+.status-dot{display:inline-block;flex:none;vertical-align:middle;width:8px;height:8px;border-radius:50%;background:currentColor;}
+.status-dot.is-peach{color:var(--peach);}
+.status-dot.is-amber{color:var(--amber);}
+.status-dot.is-red{color:var(--red);}
+.status-dot.is-green{color:var(--green);}
+.status-dot.is-violet{color:var(--violet);}
+.status-dot.is-grey{color:var(--slate);}
+.status-dot.is-dark-grey{color:var(--ink-2);}
+.status-dot.is-grey-ring{color:var(--slate);background:none;box-shadow:inset 0 0 0 2px currentColor;}
+.status-dot.has-sym{width:12px;height:12px;background:none;}
+.status-dot.has-sym > svg{display:block;}
+.status-dot.has-ic{width:14px;height:14px;background:none;color:var(--ink-2);}
+.status-dot.has-ic > svg{display:block;}
+.status-dot.has-ic.is-peach{color:var(--peach-ink);}   /* Following a run: the run icon keeps the Following colour */
+.status-sym > g{stroke:var(--on-signal);}
+.status-dot.is-pulse{animation:wr-pulse 1.6s ease-in-out infinite;}
+@media (prefers-reduced-motion: reduce){.status-dot.is-pulse{animation:none;}}
+.rd-now{display:flex;flex-direction:column;gap:18px;}
+/* The run's name is the page's subject: the largest type on it. One line, cut with "…" at the column (D13): the full
+   name is the h1's text and its title (app.js paintPageHead), and the bar repeats it on scroll (watchPageTitle). */
+.rd-page-head{min-width:0;}
+.rd-page-title{margin:0;font:700 var(--fs-page)/var(--lh-title) var(--sans);letter-spacing:-.02em;
+  min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* A row: the text (app.js paintPageHead), the branch chip, the person chip. A chip too long
+   for the rest of the line wraps under the text and truncates there. */
+.rd-page-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;color:var(--ink-2);}
+.rd-page-meta:empty{display:none;}
+/* The card's head: the status line top left, the Live view switch (app.js paintRdLive)
+   top right, level with the state word; after it the head buttons (.rd-head-acts: run-head.mjs, with the pull request
+   control .rd-pr-slot among them). The live row shows only while the run has not ended and the buttons only once it
+   has, so the two never meet; if they did, the buttons take their own column after the row. */
+.rd-sheet-head{container:rd-head / inline-size;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:start;min-width:0;
+  --rd-word-line:calc(var(--fs-section) * var(--lh-title));--rd-btn-h:32px;}
+@media (pointer:coarse){.rd-sheet-head{--rd-btn-h:40px;}}   /* the touch .btn's min-height */
+/* The status block spans every head column so its bar (and the group bar, role rows) take the card's width; a subgrid
+   keeps the state word and its detail in column 1, so they stop where the switch or the buttons begin. The run page
+   (.rd-now-top.run-status) and the group page (a bare .run-status) share it; the chat card lays the block out itself. */
+.rd-sheet-head > .run-status{grid-area:1 / 1 / 2 / -1;grid-template-columns:subgrid;column-gap:0;}
+.rd-sheet-head > .run-status > *{grid-column:1 / -1;}
+.rd-sheet-head > .run-status > .run-status-head{grid-column:1;}
+.rd-sheet-head > .rd-live-row{grid-area:1 / 2;height:var(--rd-word-line);margin-left:16px;}   /* the state word's line box */
+/* Slice 3: centred on the state word's line (the detail may add lines under it): the buttons (32px, 40px on touch screens) overhang
+   that line each way, so the head is the status block's height with or without them, and the PR control's fade-out moves
+   nothing. A narrow card wraps them under the status. */
+.rd-sheet-head > .rd-head-acts{grid-area:1 / 3;display:flex;align-items:center;gap:8px;
+  margin:calc((var(--rd-word-line) - var(--rd-btn-h)) / 2) 0 calc((var(--rd-word-line) - var(--rd-btn-h)) / 2) 16px;}
+.rd-sheet-head > .rd-head-acts[hidden]{display:none;}
+/* The PR slot may shrink in the row (its own max-width caps the label; style below), never past the card. */
+.rd-head-acts > .rd-pr-slot{min-width:0;}
+/* Try it's progress (Checking out… / Setting up… / Starting …): a busy button is aria-disabled, not disabled, so it keeps
+   the focus; it looks disabled and does not react to hover. */
+.rd-head-acts > .rd-head-btn[aria-disabled="true"]{opacity:.6;cursor:progress;}
+.rd-head-acts > .rd-head-btn[aria-disabled="true"]:hover{background-color:var(--panel);}
+/* The Try it step's note (a failed setup, or "Checked out" with nothing to start): words, never only a colour. */
+.rd-head-note{font-size:13px;line-height:1.3;color:var(--ink-2);white-space:nowrap;}
+.rd-head-note.is-bad{color:var(--red-ink);}
+@container rd-head (max-width:420px){.rd-sheet-head > .rd-head-acts{grid-area:2 / 1 / 3 / -1;justify-self:start;flex-wrap:wrap;margin:12px 0 0;max-width:100%;}
+  .rd-head-acts > .rd-pr-slot{max-width:100%;}
+  .rd-head-acts .btn-split-menu{right:auto;left:0;}}
+.rd-sheet-head:has(.btn-split-menu){position:relative;z-index:7;}
+/* Doubled classes: `.wfv-menu{position:fixed}` and `.btn-split-menu .menu-item{flex-direction:column}` come later in
+   this file at one class less, and would pin the menu to the viewport and stack the Watch row. */
+.rd-pr-menu.btn-split-menu{position:absolute;min-width:260px;}
+.rd-pr-menu.btn-split-menu .menu-item{flex-direction:row;align-items:center;gap:10px;}
+.rd-pr-menu.btn-split-menu .sw-item{align-items:flex-start;}
+.rd-pr-menu .wfv-menu-l{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;}
+.rd-pr-menu .sw-item[title] small{color:var(--amber-ink);}
+/* s2: "Where the work is" (run-head.mjs renderRoute) under the card head: the run's places in order. A 20px circle
+   (11px icon: the kind of place; colour: the state), the place (mono names truncate, full name in the title) and one
+   quiet status line. A 1px connector joins the circles, green between two done rows. */
+.rd-route{display:flex;flex-direction:column;gap:8px;padding-top:12px;border-top:1px solid var(--line);min-width:0;}
+.rd-route[hidden]{display:none;}
+.rd-route-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px;}
+.rd-route-label{font-size:var(--fs-meta);color:var(--ink-2);}
+.rd-route-list{display:flex;flex-direction:column;margin:0;padding:0;list-style:none;}
+.rd-route-row{position:relative;display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:12px;padding-bottom:12px;}
+.rd-route-row:last-child{padding-bottom:0;}
+.rd-route-row:not(:last-child)::before{content:"";position:absolute;left:10px;top:24px;bottom:4px;width:1px;background:var(--line-2);}
+.rd-route-row.is-linked::before{background:var(--green);}
+.rd-route-dot{flex:0 0 20px;width:20px;height:20px;box-sizing:border-box;border-radius:50%;display:grid;place-items:center;
+  border:1.5px solid currentColor;color:var(--ink-3);}
+.rd-route-dot.is-working{color:var(--peach);}
+.rd-route-dot.is-done{color:var(--green);}
+.rd-route-dot.is-problem{color:var(--amber);}
+.rd-route-dot.is-review{color:var(--blue);}
+.rd-route-dot.is-failed{color:var(--red);}
+.rd-route-dot.is-merged{color:var(--violet);}
+.rd-route-dot.is-closed{color:var(--slate);}
+.rd-route-dot.is-future{border-color:var(--line-2);color:var(--ink-3);}
+.rd-route-dot.is-pulse{animation:wr-pulse 1.6s ease-in-out infinite;}
+.rd-route-main{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.rd-route-place{display:flex;align-items:center;gap:6px;min-width:0;min-height:20px;font-size:var(--fs-body);color:var(--ink);}
+.rd-route-name{min-width:0;font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rd-route-place .rd-fact-tx.is-strong{font-weight:600;}
+.rd-route-copy{flex:none;margin-block:-4px;}   /* the 28px button keeps the 20px line, so the name centres on its circle */
+.rd-route-second{font-size:var(--fs-meta);color:var(--ink-2);min-width:0;overflow-wrap:anywhere;}   /* --ink-3 is 2.8:1 in light */
+.rd-route-second > .is-line{display:block;}
+.rd-route-fold{display:flex;align-items:center;gap:12px;margin:0;min-width:0;font-size:var(--fs-body);color:var(--ink);}
+.rd-route-fold-tx{min-width:0;overflow-wrap:anywhere;}
+.rd-fact-tx.is-merged{color:var(--violet-ink);}
+/* The route's second-line parts (run-head.mjs renderRoute): links, Watch / Commit it yourself, plain words. */
+.rd-fact-link{color:var(--blue-ink-strong);font-weight:500;text-decoration:none;}
+.rd-fact-link:hover{text-decoration:underline;}
+.rd-fact-act{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-radius:var(--r-xs);}
+.rd-fact-act:not(.rd-fact-watch){color:var(--blue-ink-strong);font-weight:500;}
+.rd-fact-act:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.rd-fact-watch:not(.is-bad):not(.is-run){text-decoration:underline dotted;text-underline-offset:3px;}
+:is(.rd-fact-tx,.rd-fact-act).is-run{color:var(--blue-ink);}
+:is(.rd-fact-tx,.rd-fact-act).is-bad{color:var(--amber-ink);}
+:is(.rd-fact-tx,.rd-fact-act).is-ok{color:var(--green-ink);}
+@media (prefers-reduced-motion: reduce){.rd-route-dot.is-pulse{animation:none;}}
+/* The status line (.rd-now-top) is the shared status block (run-status-card.mjs, .run-status below). */
+
+/* The status glyph (run-glance.mjs renderOrb): colour is the state. */
+.rg-orb-bg{fill:var(--blue-bg);}
+.rg-orb-core{fill:var(--blue);transform-box:fill-box;transform-origin:center;animation:rg-breathe 2.4s ease-in-out infinite;}
+.rg-orb-start .rg-orb-bg{fill:var(--peach-bg);}
+.rg-orb-start .rg-orb-core{fill:var(--peach);}
+.rg-orb-ask .rg-orb-bg{fill:var(--amber-bg);}
+.rg-orb-ask .rg-orb-mark{stroke:var(--amber-ink);stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round;}
+.rg-orb-dot{fill:var(--amber-ink);}
+.rg-orb-paused .rg-orb-bg{fill:var(--amber-bg);}
+.rg-orb-fill{fill:var(--amber-ink);}
+.rg-orb-done .rg-orb-bg{fill:var(--green-bg);}
+.rg-orb-done .rg-orb-mark{stroke:var(--green-ink);stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round;}
+/* A finished run: one glyph per headline. Colour answers "is this mine to deal with?":
+   green good to go, amber wants you, blue with someone else, violet shipped, grey nothing to do. */
+.rg-orb-line{stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;}
+.rg-orb-ship .rg-orb-bg{fill:var(--green-bg);}
+.rg-orb-ship .rg-orb-line{stroke:var(--green-ink);}
+.rg-orb-review .rg-orb-bg{fill:var(--amber-bg);}
+.rg-orb-review .rg-orb-line{stroke:var(--amber-ink);stroke-width:3;}
+.rg-orb-pr-open .rg-orb-bg{fill:var(--blue-bg);}
+.rg-orb-pr-open .rg-orb-line{stroke:var(--blue-ink-strong);}
+.rg-orb-merged .rg-orb-bg{fill:var(--violet-bg);}
+.rg-orb-merged .rg-orb-line{stroke:var(--violet-ink);}
+.rg-orb-pr-closed .rg-orb-bg,.rg-orb-finished .rg-orb-bg{fill:var(--field);}
+.rg-orb-pr-closed .rg-orb-line{stroke:var(--ink-2);}
+.rg-orb-finished .rg-orb-mark{stroke:var(--ink-2);stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round;}
+.rg-orb-fail .rg-orb-bg,.rg-orb-stop .rg-orb-bg{fill:var(--red-bg);}
+.rg-orb-fail .rg-orb-mark{stroke:var(--red-ink);stroke-width:3.4;stroke-linecap:round;}
+.rg-orb-stop .rg-orb-mark{fill:var(--red-ink);stroke:none;}
+@keyframes rg-breathe{0%,100%{transform:scale(.78);}50%{transform:scale(1);}}
+
+/* The trail: one dot per step execution; overlapping executions stack. */
+.rg-trail{display:inline-flex;align-items:center;flex-wrap:wrap;gap:5px;}
+.rg-td{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--green);flex:none;}
+.rg-td-act{background:var(--blue);animation:wr-pulse 1.6s ease-in-out infinite;}
+.rg-td-ask{background:var(--amber);}
+.rg-td-fail{background:var(--red);}
+.rg-td-stop{background:var(--ink-3);}
+.rg-tstack{display:inline-flex;flex-direction:column;align-items:center;gap:3px;}
+.rg-tmore{font:600 var(--fs-caption)/1 var(--mono);color:var(--ink-2);}
+
+/* The sheet under the status line: banners, the waiting question, the result,
+   what runs now, and the way into Details. */
+.rd-sheet{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:none;
+  padding:var(--pad-card);display:flex;flex-direction:column;gap:16px;}
+.rd-sheet .rd-banners:has(> :not([hidden])){margin-top:0;}
+.rd-sheet .rd-banners:not(:has(> :not([hidden]))){display:none;}
+.rd-nowlist{display:flex;flex-direction:column;gap:16px;}
+.rd-nowlist:empty{display:none;}
+.rd-sgroup{display:flex;flex-direction:column;gap:6px;}
+.rd-slabel{font:600 12px var(--sans);color:var(--ink-2);padding:0 4px;}
+.rd-slist{background:var(--field);border-radius:var(--r-ctrl);overflow:hidden;display:flex;flex-direction:column;}
+.rd-srow{all:unset;box-sizing:border-box;width:100%;display:flex;align-items:center;gap:12px;padding:12px 14px;
+  font:400 var(--fs-body) var(--sans);color:var(--ink);border-top:1px solid var(--line);}
+.rd-srow:first-child{border-top:0;}
+button.rd-srow{cursor:pointer;}
+button.rd-srow:hover{background:var(--hover-on-field);}
+.rd-srow:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.rd-srow-tx{flex:1;min-width:0;overflow-wrap:anywhere;}
+.rd-srow-ico{flex:none;color:var(--ink-2);}   /* the tab icon the row leads to */
+.rd-srow-tx small{display:block;color:var(--ink-2);font-size:var(--fs-meta);}
+.rd-srow-v{color:var(--ink-2);font:400 var(--fs-body)/var(--lh-body) var(--sans);font-variant-numeric:tabular-nums;white-space:nowrap;}
+/* the Simple checkout row: text, then its Discard / Unlink buttons, wrapping on a narrow card */
+.rd-srow-checkout{flex-wrap:wrap;}
+.rd-srow-checkout .rd-srow-tx{flex:1 1 14em;}   /* a basis, so the buttons wrap under the text instead of squeezing it */
+.rd-srow-acts{display:flex;flex-wrap:wrap;gap:8px;}
+.rd-srow.chv::after{content:"›";color:var(--ink-2);font-size:var(--fs-subpage);line-height:1;}
+.rd-slist .issues{margin:0;padding:10px 14px;}
+
+.rd-result{display:flex;flex-direction:column;gap:16px;}
+.rd-result[hidden]{display:none;}
+.rd-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px;text-align:center;}
+.rd-facts:empty{display:none;}
+/* QA 8: the stat boxes follow the facts' own width (a phone, or a narrow pane beside a wide Runs list): two per row,
+   a third spanning, so "+2716 −571" stays inside its box. */
+.rd-facts{container:rd-facts / inline-size;}
+@container rd-facts (max-width:420px){.rd-stats{grid-template-columns:repeat(2,minmax(0,1fr));}.rd-stats[data-n="3"] > div:last-child{grid-column:1 / -1;}}
+.rd-stats > div{background:var(--field);border-radius:var(--r-ctrl);padding:var(--pad-tile) 8px;display:flex;flex-direction:column;gap:2px;min-width:0;}
+.rd-stats b{font:700 var(--fs-stat)/1.2 var(--sans);font-variant-numeric:tabular-nums;letter-spacing:-.01em;white-space:nowrap;overflow-wrap:normal;}
+/* D18: the counts inside a tile are the stat face too, never mono. */
+.rd-stats b .hd-diff-counts,.rd-stats b .fc-counts{font-family:var(--sans);font-size:inherit;font-weight:700;}
+/* 18px bold is under the large-text line (18.66px), so the counts need 4.5:1 on --field: the
+   diff pane's darker count tokens, not the 4.45:1 --red-ink. */
+.rd-stats .hd-diff-counts .diff-add{color:var(--hd-count-add);}
+.rd-stats .hd-diff-counts .diff-del{color:var(--hd-count-del);}
+.rd-stats .hd-diff-counts .is-zero{color:var(--ink-2);}   /* --ink-3 is 2.58:1 on the tile */
+.rd-stats .rd-stat-link{color:inherit;text-decoration:none;}
+.rd-stats .rd-stat-link:hover b{text-decoration:underline;}
+.rd-stats > div > span{font-size:var(--fs-meta);color:var(--ink-2);}
+/* The pull request button's slot (app.js paintPrCta): one node for the screen's life, so the
+   lookup's placeholder can become the button. It is as wide as its button, never the card.
+   Pending: a white button with a hairline and a spinner, at the button's own size (.rd-pr-wait
+   holds its glyph and line, invisible). On the answer, the state's colour grows as a circle from
+   the spinner (.rd-pr-fill, the size of the slot's diagonal and more, clipped by the slot's
+   radius), the spinner fades, then the icon and label come in. Compositor-only: transform and
+   opacity, will-change only on the nodes that animate; the slot's height never changes during
+   the morph. With no button after all, the placeholder fades out in place (in a narrow head, where
+   the slot is a row of its own, that row then closes at once: accepted, it is a rare case). */
+/* Capped at half the head (cqi: .rd-sheet-head is the container), so no label ("Pushed to <remote>", a long error)
+   can push the button past the card or squeeze the status column; the label ellipsizes, the icon stays. */
+.rd-pr-slot{position:relative;width:fit-content;max-width:min(260px,50cqi);border-radius:var(--r-ctrl);}
+.rd-pr-slot[hidden]{display:none;}
+.rd-pr-status[hidden]{display:none;}
+.rd-pr-status{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;
+  border-top:1px solid var(--blue-line);font-size:13px;color:var(--ink-2);}
+.rd-prs-sum{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0;}
+.rd-prs-lead,.rd-prs-notes{display:flex;align-items:center;gap:6px;min-width:0;}
+.rd-prs-notes{flex-wrap:wrap;}
+.rd-prs-ico{flex:0 0 auto;}
+.rd-prs-sum .is-ok,.rd-prs-ico.is-ok{color:var(--green-ink);}
+.rd-prs-sum .is-run,.rd-prs-ico.is-run,.rd-prs-ico.is-wait{color:var(--amber-ink);}
+.rd-prs-sum .is-bad,.rd-prs-ico.is-bad{color:var(--red-ink);}
+.rd-prs-ico.is-run{animation:ws-spin 1.2s linear infinite;}
+.rd-prs-text{font-weight:600;color:var(--ink);}
+.rd-prs-sep{color:var(--ink-3);}
+.rd-prs-detail{color:var(--ink-2);}
+/* Overview: the open PR(s) under the review verdict, one row each, hidden until GitHub answers. */
+.hd-ov-prs{display:flex;flex-direction:column;gap:8px;}
+.hd-ov-prs:empty{display:none;}
+.hd-ov-pr{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 16px;border-radius:var(--r-ctrl);
+  background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);}
+.hd-ov-pr:has(> .rd-pr-status[hidden]){display:none;}
+.hd-ov-pr-label{font:600 12px var(--sans);color:var(--ink-3);white-space:nowrap;}
+.hd-ov-pr .rd-pr-status{flex:1 1 auto;min-width:0;padding:0;border:0;}
+.rd-prs-link{color:var(--blue-ink-strong);font-weight:600;text-decoration:none;}
+.rd-prs-link:hover{text-decoration:underline;}
+button.rd-prs-link{background:none;border:0;padding:0;font:inherit;cursor:pointer;}
+button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
+.rd-prs-watch{display:flex;align-items:center;gap:8px;flex:0 0 auto;margin-left:auto;cursor:pointer;font-weight:500;}
+.rd-pr-slot:is(.is-pending,.is-morph,.is-out){overflow:hidden;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);}
+.rd-pr-slot > [data-rd-cta]{position:relative;max-width:100%;}   /* above the colour layer */
+.rd-pr-slot > [data-rd-cta] > span:not(.ic){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.rd-pr-wait{display:flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;height:32px;padding:0 12px;
+  font:500 13px var(--sans);color:var(--ink-2);cursor:default;}
+.rd-pr-wait > *{opacity:0;}
+.rd-pr-spin{position:absolute;left:50%;top:50%;width:20px;height:20px;margin:-10px 0 0 -10px;box-sizing:border-box;
+  border-radius:50%;border:2px solid var(--line-2);border-top-color:var(--ink);animation:ws-spin .9s linear infinite;}
+.rd-pr-fill{position:absolute;left:50%;top:50%;width:calc(100% + 64px);aspect-ratio:1;margin:calc(-50% - 32px) 0 0 calc(-50% - 32px);
+  border-radius:var(--r-sm);background:var(--ink);will-change:transform;animation:rd-pr-grow .32s cubic-bezier(.2,.8,.2,1) both;}
+.rd-pr-fill.pr-view,.rd-pr-fill.pr-merged{background:var(--panel);}   /* View is a secondary .btn: the fill grows its white */
+/* While it morphs the button lends its colour to the layer and sits out its hover (no lift, no
+   ring): only its icon and label move. */
+.rd-pr-slot.is-morph > [data-rd-cta]{background:transparent;transition:none;}
+.rd-pr-slot.is-morph > [data-rd-cta] > *{will-change:transform,opacity;animation:rd-pr-in .18s ease-out .22s both;}
+.rd-pr-slot.is-morph > .rd-pr-spin{animation:ws-spin .9s linear infinite,rd-pr-fade .15s ease-out both;}
+.rd-pr-slot.is-out{will-change:opacity;animation:rd-pr-fade .18s ease-out both;}
+@keyframes rd-pr-grow{from{transform:scale(0);}to{transform:scale(1);}}
+@keyframes rd-pr-fade{to{opacity:0;}}
+@keyframes rd-pr-in{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+@keyframes rd-pr-show{from{opacity:0;}to{opacity:1;}}
+@media (prefers-reduced-motion: reduce){
+  .rd-pr-fill{animation-name:rd-pr-show;}
+  .rd-pr-slot.is-morph > [data-rd-cta] > *{animation-name:rd-pr-show;}
+}
+/* Details: the header card and the tabs. The shared bar above carries the status and the way back. */
+.rd-details{display:flex;flex-direction:column;min-height:100%;}
+.rd-details .rd-body{flex:1 0 auto;}
+
+/* History uses the same two modes. Its graph is painted into the page body before the
+   tabs exist and moves into the Workflow tab on first open; until then it stays out of
+   the way. */
+.hd-body > .hd-graph{display:none;}
+.hd > .hd-error{margin:12px 32px 0;}
+
+/* Details › Diff and Q&A */
+.rd-diff-note{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;color:var(--ink-2);font-size:var(--fs-meta);}
+.rd-diff-refresh[hidden]{display:none;}
+.rd-diff-row{all:unset;box-sizing:border-box;width:100%;display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:var(--r-sm);cursor:pointer;font-size:var(--fs-body);}
+.rd-diff-row:hover{background:var(--hover);}
+.rd-diff-row.active{background:var(--blue-bg);}
+.rd-diff-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.rd-diff-row-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.rd-diff-new{font:600 var(--fs-caption) var(--sans);padding:1px 7px;border-radius:var(--r-sm);background:var(--green-bg);color:var(--green-ink);}
+.rd-empty{color:var(--ink-2);font-size:13px;padding:18px 4px;}
+
+@media (max-width:640px){
+  .rd-bar,.hd-bar{padding:10px 16px;flex-wrap:wrap;gap:8px;}
+  .rd-bar-end{margin-left:auto;gap:6px;}
+  .rd-bar-end:empty{display:none;}
+  .rd-glance{padding:20px 16px var(--ask-dock-clearance);}
+  .rd-details .rd-header{margin:16px 16px 0;}
+  .rd-details .rd-body{padding-inline:16px;}
+}
+@media (prefers-reduced-motion: reduce){
+  .rg-orb-core,.rg-td-act{animation:none;}
+}
+
+/* ---------- Running detail: pipeline graph ---------- */
+/* The dot-grid panel spec §5.3 asks for is already `.run-flow-wrap` —
+   radial-gradient var(--line-2) 1.1px at 22px 22px, --r-card radius, horizontal
+   scroll. This only supplies the margin box; the wrap's own legacy
+   `margin:0 0 18px` is zeroed so it does not double up with .rd-graph's. */
+.rd-graph{margin-top:18px;}
+.rd-graph .run-flow-wrap{margin:0;}
+
+/* ---------- Running detail: banners ---------- */
+/* align-items:flex-start, NOT the default stretch, as .hd-banners: only the
+   BANNERS want the full row. */
+.rd-banners{display:flex;flex-direction:column;align-items:flex-start;gap:12px;}
+/* The reused cost banner carries a legacy margin from its old host
+   (`.cost-banner{margin-top:12px}`), which doubles up with this column's own gap. */
+.rd-banners .cost-banner{align-self:stretch;margin:0;}
+/* NOT `:empty`: key the margin off "has a visible child", as .hd-banners does. */
+.rd-banners:has(> :not([hidden])){margin-top:18px;}
+

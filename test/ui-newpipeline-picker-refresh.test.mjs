@@ -5,16 +5,15 @@
 // with a new topology kept painting the cached one.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const tick = (n = 3) => new Promise((r) => setTimeout(r, n));
@@ -36,7 +35,7 @@ const AGENTS = [
 
 async function boot() {
   const server = { workflows: [], guardrails: [{ id: 'permissive', name: 'Permissive', settings: null }], calls: [] };
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/#new' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/#new' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
@@ -123,4 +122,26 @@ test('re-entry drops the per-id memo so a re-saved workflow repaints with its ne
   await go(window, 'new');
   assert.equal(sel.value, 'wf_a', 'selection kept across the refresh');
   assert.deepEqual(rows(), ['s0_0', 's1_0'], 'accordion painted from the re-fetched topology');
+});
+
+test('Simple lists Auto, Default and the workflows saved from chat (origin auto); Advanced lists every saved workflow (#1126)', async () => {
+  const { window, server } = await boot();
+  server.workflows.push(
+    { ...WF_A, id: 'wf_chat', name: 'From chat', origin: 'auto' },
+    { ...WF_A, id: 'wf_mine', name: 'Mine', origin: null },
+    { ...WF_A, id: 'wf_plug', name: 'Plugged', origin: 'plugin:demo' },
+  );
+  const doc = window.document;
+  const sel = doc.getElementById('workflowSelect');
+  // As ui-level.mjs dispatches it (test/ui-run-presets-form.test.mjs): onLevelChange → refreshNewPipelinePickers.
+  const setLevel = async (level, previous) => {
+    doc.documentElement.dataset.level = level;
+    doc.dispatchEvent(new window.CustomEvent('worca:level', { detail: { level, previous } }));
+    await tick(10);
+  };
+  await setLevel('simple', 'expert');
+  assert.deepEqual(optionIds(sel), ['wf_auto', 'wf_default', 'wf_chat'], 'Simple: Auto, Default and the chat-saved workflow only');
+  assert.equal(sel.value, 'wf_default', 'the selection is kept');
+  await setLevel('advanced', 'simple');
+  assert.deepEqual(optionIds(sel), ['wf_auto', 'wf_default', 'wf_chat', 'wf_mine', 'wf_plug'], 'Advanced: every saved workflow');
 });

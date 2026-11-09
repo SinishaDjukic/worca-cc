@@ -1,9 +1,9 @@
 // src/core/chat/channel-host.mjs
 // Supervisor for persistent channel workers (chat-connectivity-design.md §4.4).
 // One child process per enabled+configured chatChannels entry: spawned with the
-// same scrubbed env as connector ops, fed config/secrets/state via the hello
-// frame on stdin, restarted with backoff on crash, killed on plugin
-// disable/uninstall and on server shutdown. All worker-originated strings are
+// same scrubbed env and user as connector ops (plugin-shim.mjs pluginChildSpawn),
+// fed config/secrets/state via the hello frame on stdin, restarted with backoff
+// on crash, killed on plugin disable/uninstall and on server shutdown. All worker-originated strings are
 // redacted before they reach the logger or the UI.
 //
 // Worker contract: a worker that emits any 'status' frame before 'ready' will
@@ -20,12 +20,12 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
-import { PluginOpError, scrubbedEnv, warnWithheldProxy } from '../plugin-shim.mjs';
+import { PluginOpError, pluginChildSpawn, killPluginChild, warnWithheldProxy } from '../plugin-shim.mjs';
 import { normalizeManifest, negotiatedApi } from '../plugin-manifest.mjs';
 import { WORCA_PLUGIN_API } from '../plugin-api.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../plugins-lock.mjs';
 import { readPluginConfig, readPluginState, writePluginState } from '../plugin-config.mjs';
-import { encodeFrame, decodeFrame, isValidMessage, MAX_FRAME_BYTES } from './channel-protocol.mjs';
+import { encodeFrame, decodeFrame, isValidMessage, isValidSendOptions, isValidHistory, CONTROL_LIMITS, MAX_FRAME_BYTES, INBOUND_LIMITS, FILE_REF_RE, FILE_LIMITS } from './channel-protocol.mjs';
 import { redactSecrets } from './redact.mjs';
 
 const CHILD_PATH = fileURLToPath(new URL('./channel-worker-child.mjs', import.meta.url));
@@ -40,6 +40,13 @@ const DELIVERY_RING_SIZE = 50;
 
 const workerKey = (plugin, channelId) => `${plugin}/${channelId}`;
 
+/** A send the platform itself refused (404, 403, an invalid message): retrying the same message cannot succeed, unlike a
+ *  network error, a 5xx, a 429 or a worker that is down. The conversation bridge reads `permanent` to skip such a part. */
+function refused(err) {
+  err.permanent = true;
+  return err;
+}
+
 /** Same env-flag semantics as plugin-shim.mjs#mockMode. */
 function mockMode() {
   const v = process.env.WORCA_MOCK ?? process.env.ORCH_MOCK;
@@ -48,7 +55,10 @@ function mockMode() {
 
 // ── mock hooks (tests / offline smoke) ───────────────────────────────────────
 
-let _mockBehavior = null;   // key or '*' -> { send?(chatId, message), webhook?(req) }
+/** Key of a host verdict on a worker's file chunks (fetchFile): a symbol, so no frame field can carry it. */
+const CHUNK_VERDICT = Symbol('file-chunk verdict');
+
+let _mockBehavior = null;   // key or '*' -> { send?(chatId, message), webhook?(req), react?(frame), history?(frame), typing?(frame), file?(frame) }
 const _mockSent = [];       // every sendMessage seen in mock mode
 
 /** Tests: override mock worker behavior per "plugin/channelId" key ('*' = all). */
@@ -61,6 +71,20 @@ export function mockSentMessages() { return _mockSent.slice(); }
 
 /** Tests: reset recorded mock deliveries. */
 export function clearMockSentMessages() { _mockSent.length = 0; }
+const _mockReplies = [];    // every replyInteraction seen in mock mode
+/** Tests: interaction replies delivered through mock workers, oldest first. */
+export function mockInteractionReplies() { return _mockReplies.slice(); }
+export function clearMockInteractionReplies() { _mockReplies.length = 0; }
+
+/** A non-interactive channel gets text only: link controls become link segments, executable controls vanish
+ *  (they could never be answered there). */
+export function withoutControls(message) {
+  if (!Array.isArray(message.controls)) return message;
+  const links = message.controls.filter((c) => c.kind === 'link')
+    .flatMap((c) => [{ kind: 'text', value: '\n' }, { kind: 'link', value: c.label, href: c.url }]);
+  const { controls: _drop, ...rest } = message;
+  return { ...rest, body: [...rest.body, ...links] };
+}
 
 // ── discovery ────────────────────────────────────────────────────────────────
 
@@ -97,6 +121,8 @@ export function discoverChannels() {
         platform: ch.platform,
         ingress: ch.ingress,
         capabilities: ch.capabilities,
+        // chat context: the CDN hosts the host may download this channel's message files from (manifest; absent = none)
+        ...(ch.attachmentHosts ? { attachmentHosts: ch.attachmentHosts } : {}),
         configSchema: ch.configSchema,
         modulePath: resolve(dir, ch.module),
         apiVersion: negotiatedApi(manifest.engines?.worcaApi) ?? WORCA_PLUGIN_API,
@@ -116,7 +142,7 @@ export function discoverChannels() {
  *          _spawn?:typeof spawn, _backoffMs?:number[], _healthyAfterMs?:number}} opts
  *   `_spawn`/`_backoffMs`/`_healthyAfterMs` are test seams only.
  */
-export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn, _backoffMs = RESTART_BACKOFF_MS, _healthyAfterMs = HEALTHY_AFTER_MS } = {}) {
+export function createChannelHost({ logger, onInbound, onInteraction, onStatus, _spawn = spawn, _backoffMs = RESTART_BACKOFF_MS, _healthyAfterMs = HEALTHY_AFTER_MS } = {}) {
   const log = typeof logger === 'function' ? logger : (level, msg) => console.error(`chat ${level}: ${msg}`);
   const workers = new Map(); // key -> worker record
   let stopping = false;
@@ -213,6 +239,18 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
         try { onInbound?.({ plugin: w.entry.plugin, channelId: w.entry.channelId, platform: w.entry.platform, msg: frame.msg }); }
         catch (err) { log('error', `chat inbound handler failed: ${w.redact(err?.message || err)}`); }
         break;
+      case 'interaction':
+        if (!w.entry.capabilities.inbound || w.entry.capabilities.interactive !== true) break;
+        try { onInteraction?.({ plugin: w.entry.plugin, channelId: w.entry.channelId, platform: w.entry.platform, evt: frame.evt }); }
+        catch (err) { log('error', `chat interaction handler failed: ${w.redact(err?.message || err)}`); }
+        break;
+      case 'file-chunk': {
+        const p = w.pending.get(frame.id);
+        if (!p?.onChunk) break;            // a request already settled (over the cap, timed out): its later chunks are dropped
+        const settle = p.onChunk(frame);
+        if (settle) { w.pending.delete(frame.id); clearTimeout(p.timer); p.resolve(settle); }
+        break;
+      }
       case 'send-result':
       case 'webhook-result': {
         const p = w.pending.get(frame.id);
@@ -241,10 +279,12 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
     if (stopping) return;
     setStatus(w, 'connecting', null);
     warnWithheldProxy();
-    const proc = _spawn(process.execPath,
-      [...(process.env.WORCA_PLUGIN_INSPECT ? ['--inspect'] : []), CHILD_PATH],
-      { env: scrubbedEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+    // As the container's plugin user when there is one (plugin-shim.mjs pluginChildSpawn).
+    const run = pluginChildSpawn([...(process.env.WORCA_PLUGIN_INSPECT ? ['--inspect'] : []), CHILD_PATH]);
+    const proc = _spawn(run.file, run.args, { ...run.options, stdio: ['pipe', 'pipe', 'pipe'] });
+    const kill = () => killPluginChild(proc, run.user);
     w.proc = proc;
+    w.kill = kill;
     w.missedPongs = 0;
     w.spawnedAt = Date.now();
     w.statusSinceSpawn = false;
@@ -258,7 +298,7 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
     rl.on('line', (line) => {
       if (Buffer.byteLength(line, 'utf8') > MAX_FRAME_BYTES) {
         log('error', `[chat:${w.key}] oversize frame — protocol violation, restarting worker`);
-        proc.kill('SIGKILL');
+        kill();
         return;
       }
       const frame = decodeFrame(line);
@@ -271,7 +311,7 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
       w.missedPongs += 1;
       if (w.missedPongs > 2) {
         log('warn', `[chat:${w.key}] unresponsive (missed pongs) — restarting worker`);
-        w.proc.kill('SIGKILL');
+        kill();
         return;
       }
       try { writeFrame(w, { type: 'ping', id: `ping-${Date.now()}` }); } catch { /* exit handler owns it */ }
@@ -312,7 +352,7 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
     proc.on('error', (err) => {
       const msg = w.redact(err?.message || String(err));
       log('error', `[chat:${w.key}] worker process error: ${msg}`);
-      if (proc.pid) { try { proc.kill('SIGKILL'); } catch { /* gone */ } }
+      if (proc.pid) kill();
       else { w.spawnErrorDetail = msg; onExit(-1, null); }
     });
 
@@ -382,18 +422,19 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
     clearTimeout(w.restartTimer);
     clearInterval(w.pingTimer);
     const proc = w.proc;
+    const kill = w.kill;
     if (!proc || proc.killed) { setStatus(w, 'disconnected', null); return; }
     w.shuttingDown = true;
     try { writeFrame(w, { type: 'shutdown' }); } catch { /* dying already */ }
     await new Promise((resolveWait) => {
-      const t = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* gone */ } }, SHUTDOWN_GRACE_MS);
+      const t = setTimeout(kill, SHUTDOWN_GRACE_MS);
       t.unref?.();
       proc.once('exit', () => { clearTimeout(t); resolveWait(); });
       if (proc.exitCode !== null) { clearTimeout(t); resolveWait(); }
     });
   };
 
-  const rpc = (w, frame, timeoutMs, kindOnTimeout = 'timeout') => new Promise((resolveRpc, rejectRpc) => {
+  const rpc = (w, frame, timeoutMs, kindOnTimeout = 'timeout', onChunk = null) => new Promise((resolveRpc, rejectRpc) => {
     const timer = setTimeout(() => {
       w.pending.delete(frame.id);
       // Still queued behind backpressure? Drop it: a later drain must not
@@ -403,7 +444,7 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
       rejectRpc(new PluginOpError(kindOnTimeout, `worker did not answer within ${timeoutMs}ms`));
     }, timeoutMs);
     timer.unref?.();
-    w.pending.set(frame.id, { resolve: resolveRpc, reject: rejectRpc, timer });
+    w.pending.set(frame.id, { resolve: resolveRpc, reject: rejectRpc, timer, onChunk });
     try { writeFrame(w, frame); } catch (err) {
       w.pending.delete(frame.id);
       clearTimeout(timer);
@@ -468,15 +509,19 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
      * Deliver one NormalizedMessage to one chat. Resolves {ok:true} or throws
      * PluginOpError with the worker-reported kind. Mock mode records instead.
      */
-    async sendMessage({ plugin, channelId, chatId, message, timeoutMs = 15000 }) {
-      if (!isValidMessage(message)) throw new PluginOpError('plugin', 'invalid NormalizedMessage');
+    async sendMessage({ plugin, channelId, chatId, message, options = null, timeoutMs = 15000 }) {
+      if (!isValidMessage(message)) throw refused(new PluginOpError('plugin', 'invalid NormalizedMessage'));
       const w = workers.get(workerKey(plugin, channelId));
       if (!w) throw new PluginOpError('plugin', `no such channel worker "${plugin}/${channelId}"`);
+      const interactive = w.entry.capabilities.interactive === true;
+      if (options && !interactive) throw new PluginOpError('plugin', 'channel is not interactive (edits and threads need the interactive capability)');
+      if (options && !isValidSendOptions(options)) throw new PluginOpError('plugin', 'invalid send options');
+      const msg = interactive ? message : withoutControls(message);
       if (w.mock) {
         const behavior = _mockBehavior?.[w.key] ?? _mockBehavior?.['*'];
-        _mockSent.push({ plugin, channelId, chatId, message });
+        _mockSent.push({ plugin, channelId, chatId, message: msg, ...(options ? { options } : {}) });
         if (behavior?.send) {
-          const r = await behavior.send(chatId, message); // may throw {kind,...}
+          const r = await behavior.send(chatId, msg, options); // may throw {kind, permanent?,...}
           pushDelivery(w, { chatId, ok: true });
           return r ?? { ok: true };
         }
@@ -487,12 +532,156 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
         throw new PluginOpError('plugin', `channel worker is ${w.state}`);
       }
       const id = `s-${++rpcSeq}`;
-      const res = await rpc(w, { type: 'send', id, chatId, message }, timeoutMs);
-      if (res.ok) { pushDelivery(w, { chatId, ok: true }); return { ok: true }; }
+      const res = await rpc(w, { type: 'send', id, chatId, message: msg, ...(options ? { options } : {}) }, timeoutMs);
+      if (res.ok) {
+        pushDelivery(w, { chatId, ok: true });
+        return { ok: true, ...(res.detail && typeof res.detail === 'object' && !Array.isArray(res.detail) ? { detail: res.detail } : {}) };
+      }
       pushDelivery(w, { chatId, ok: false, errorKind: res.error?.kind || 'plugin' });
       const err = new PluginOpError(res.error?.kind || 'plugin', w.redact(res.error?.message || 'send failed'));
       if (Number.isFinite(res.error?.retryAfterMs)) err.retryAfterMs = res.error.retryAfterMs;
-      throw err;
+      throw res.error?.permanent === true ? refused(err) : err;
+    },
+
+    /** v2: an ephemeral answer to one acknowledged interaction (interactive channels). The worker holds the token. */
+    async replyInteraction({ plugin, channelId, interactionId, text, timeoutMs = 15000 }) {
+      const w = workers.get(workerKey(plugin, channelId));
+      if (!w) throw new PluginOpError('plugin', `no such channel worker "${plugin}/${channelId}"`);
+      if (w.entry.capabilities.interactive !== true) throw new PluginOpError('plugin', 'channel is not interactive');
+      const body = String(text || '').slice(0, CONTROL_LIMITS.replyText) || '…';
+      if (w.mock) { _mockReplies.push({ plugin, channelId, interactionId, text: body }); return { ok: true }; }
+      if (w.state === 'unconfigured' || w.state === 'failed' || !w.proc) throw new PluginOpError('plugin', `channel worker is ${w.state}`);
+      const res = await rpc(w, { type: 'interaction-reply', id: `r-${++rpcSeq}`, interactionId, text: body }, timeoutMs);
+      if (res.ok) return { ok: true };
+      throw new PluginOpError(res.error?.kind || 'plugin', w.redact(res.error?.message || 'reply failed'));
+    },
+
+    /** v2: add (`on`) or remove the bot's OWN reaction on one message (interactive channels). Resolves {ok:true} or
+     *  throws PluginOpError; a refusal that would fail again (no permission, deleted message, a worker without
+     *  react) is `permanent`. The default timeout outlasts the worker's own 429 ladder so a late reaction call cannot
+     *  land after the next one. Mock mode calls behavior.react(frame) when the test set one. */
+    async react({ plugin, channelId, chatId, messageId, emoji, on, timeoutMs = 60000 }) {
+      const w = workers.get(workerKey(plugin, channelId));
+      if (!w) throw new PluginOpError('plugin', `no such channel worker "${plugin}/${channelId}"`);
+      if (w.entry.capabilities.interactive !== true) throw refused(new PluginOpError('plugin', 'channel is not interactive'));
+      const frame = { chatId: String(chatId), messageId: String(messageId), emoji: String(emoji), on: on === true };
+      if (w.mock) {
+        const behavior = _mockBehavior?.[w.key] ?? _mockBehavior?.['*'];
+        if (behavior?.react) await behavior.react(frame);   // may throw {kind, permanent?}
+        return { ok: true };
+      }
+      if (w.state === 'unconfigured' || w.state === 'failed' || !w.proc) throw new PluginOpError('plugin', `channel worker is ${w.state}`);
+      const res = await rpc(w, { type: 'react', id: `x-${++rpcSeq}`, ...frame }, timeoutMs);
+      if (res.ok) return { ok: true };
+      const err = new PluginOpError(res.error?.kind || 'plugin', w.redact(res.error?.message || 'reaction failed'));
+      if (Number.isFinite(res.error?.retryAfterMs)) err.retryAfterMs = res.error.retryAfterMs;
+      throw res.error?.permanent === true ? refused(err) : err;
+    },
+
+    /** v2 (live status): start (`on`) or stop the typing indicator in one chat (interactive channels). The worker keeps
+     *  it alive until it is stopped. Resolves {ok:true} or throws PluginOpError; a refusal that would fail again (no
+     *  access, a worker without typing) is `permanent`. Mock mode calls behavior.typing(frame) when the test set one. */
+    async typing({ plugin, channelId, chatId, on, timeoutMs = 15000 }) {
+      const w = workers.get(workerKey(plugin, channelId));
+      if (!w) throw new PluginOpError('plugin', `no such channel worker "${plugin}/${channelId}"`);
+      if (w.entry.capabilities.interactive !== true) throw refused(new PluginOpError('plugin', 'channel is not interactive'));
+      const frame = { chatId: String(chatId), on: on === true };
+      if (w.mock) {
+        const behavior = _mockBehavior?.[w.key] ?? _mockBehavior?.['*'];
+        if (behavior?.typing) await behavior.typing(frame);   // may throw {kind, permanent?}
+        return { ok: true };
+      }
+      if (w.state === 'unconfigured' || w.state === 'failed' || !w.proc) throw new PluginOpError('plugin', `channel worker is ${w.state}`);
+      const res = await rpc(w, { type: 'typing', id: `t-${++rpcSeq}`, ...frame }, timeoutMs);
+      if (res.ok) return { ok: true };
+      const err = new PluginOpError(res.error?.kind || 'plugin', w.redact(res.error?.message || 'typing failed'));
+      if (Number.isFinite(res.error?.retryAfterMs)) err.retryAfterMs = res.error.retryAfterMs;
+      throw res.error?.permanent === true ? refused(err) : err;
+    },
+
+    /** v2 (chat context): up to `limit` messages of one chat before one message, oldest first, as quoted messages
+     *  (channel-protocol.mjs isValidQuotedMessage). Interactive channels only; the worker decides what it may read.
+     *  Throws PluginOpError; a refusal that would fail again (no access, a worker without history) is `permanent`.
+     *  The default timeout outlasts the worker's own short 429 waits. Mock mode asks behavior.history(frame). */
+    async history({ plugin, channelId, chatId, before, limit, timeoutMs = 30000 }) {
+      const w = workers.get(workerKey(plugin, channelId));
+      if (!w) throw new PluginOpError('plugin', `no such channel worker "${plugin}/${channelId}"`);
+      if (w.entry.capabilities.interactive !== true) throw refused(new PluginOpError('plugin', 'channel is not interactive'));
+      const frame = { chatId: String(chatId), before: String(before),
+        limit: Math.max(1, Math.min(INBOUND_LIMITS.history, Math.trunc(Number(limit)) || 1)) };
+      let messages;
+      if (w.mock) {
+        const behavior = _mockBehavior?.[w.key] ?? _mockBehavior?.['*'];
+        messages = behavior?.history ? await behavior.history(frame) : [];   // may throw {kind, permanent?}
+      } else {
+        if (w.state === 'unconfigured' || w.state === 'failed' || !w.proc) throw new PluginOpError('plugin', `channel worker is ${w.state}`);
+        const res = await rpc(w, { type: 'history', id: `h-${++rpcSeq}`, ...frame }, timeoutMs);
+        if (!res.ok) {
+          const err = new PluginOpError(res.error?.kind || 'plugin', w.redact(res.error?.message || 'history read failed'));
+          if (Number.isFinite(res.error?.retryAfterMs)) err.retryAfterMs = res.error.retryAfterMs;
+          throw res.error?.permanent === true ? refused(err) : err;
+        }
+        messages = res.detail?.messages;
+      }
+      if (!isValidHistory(messages)) throw new PluginOpError('protocol', 'the channel worker answered an invalid history');
+      return messages.slice(-frame.limit);
+    },
+
+    /** v2 (worker file fetch): the bytes of one attachment the worker announced with an opaque `ref`. The worker
+     *  downloads it with its own credential and streams `file-chunk` frames; the HOST enforces `maxBytes` on what
+     *  arrives (a worker that sends more is cut off at the cap). Resolves {buf, contentType} or {tooBig: true}; throws
+     *  PluginOpError (a refusal that would fail again is `permanent`). Mock mode asks behavior.file(frame) → {data,
+     *  contentType?}. */
+    async fetchFile({ plugin, channelId, ref, maxBytes, timeoutMs = 20000 }) {
+      const w = workers.get(workerKey(plugin, channelId));
+      if (!w) throw new PluginOpError('plugin', `no such channel worker "${plugin}/${channelId}"`);
+      if (!w.entry.capabilities.inbound) throw refused(new PluginOpError('plugin', 'channel has no inbound messages'));
+      const frame = {
+        ref: String(ref ?? ''), maxBytes: Math.trunc(Number(maxBytes)),
+        timeoutMs: Math.max(FILE_LIMITS.minTimeoutMs, Math.min(FILE_LIMITS.maxTimeoutMs, Math.trunc(Number(timeoutMs)) || FILE_LIMITS.minTimeoutMs)),
+      };
+      if (!FILE_REF_RE.test(frame.ref) || !Number.isSafeInteger(frame.maxBytes) || frame.maxBytes < 1 || frame.maxBytes > FILE_LIMITS.maxBytes) {
+        throw refused(new PluginOpError('plugin', 'invalid file request'));
+      }
+      if (w.mock) {
+        const behavior = _mockBehavior?.[w.key] ?? _mockBehavior?.['*'];
+        if (!behavior?.file) throw refused(new PluginOpError('plugin', 'worker cannot download files'));
+        let r;
+        try { r = await behavior.file(frame); } catch (err) { if (err?.tooBig === true) return { tooBig: true }; throw err; }
+        const buf = Buffer.from(r?.data ?? []);
+        return buf.length > frame.maxBytes ? { tooBig: true } : { buf, contentType: typeof r?.contentType === 'string' ? r.contentType : null };
+      }
+      if (w.state === 'unconfigured' || w.state === 'failed' || !w.proc) throw new PluginOpError('plugin', `channel worker is ${w.state}`);
+      const chunks = [];
+      let total = 0;
+      let next = 0;
+      const res = await rpc(w, { type: 'file', id: `f-${++rpcSeq}`, ...frame }, frame.timeoutMs + 1000, 'timeout', (c) => {
+        if (c.seq !== next) return { [CHUNK_VERDICT]: `file chunk ${c.seq} out of order` };
+        next += 1;
+        const b = Buffer.from(c.dataB64, 'base64');
+        total += b.length;
+        if (total > frame.maxBytes) return { [CHUNK_VERDICT]: 'tooBig' };
+        chunks.push(b);
+        return null;
+      });
+      // A host verdict on the chunks (never a field of the worker's own send-result, which could carry any text).
+      if (res[CHUNK_VERDICT] === 'tooBig') return { tooBig: true };
+      if (res[CHUNK_VERDICT]) throw new PluginOpError('protocol', res[CHUNK_VERDICT]);
+      if (!res.ok) {
+        if (res.error?.tooBig === true) return { tooBig: true };
+        const err = new PluginOpError(res.error?.kind || 'plugin', w.redact(res.error?.message || 'file download failed'));
+        if (Number.isFinite(res.error?.retryAfterMs)) err.retryAfterMs = res.error.retryAfterMs;
+        throw res.error?.permanent === true ? refused(err) : err;
+      }
+      if (res.detail?.bytes !== total || res.detail?.chunks !== next) throw new PluginOpError('protocol', 'the channel worker answered an incomplete file');
+      return { buf: Buffer.concat(chunks, total), contentType: typeof res.detail.contentType === 'string' ? res.detail.contentType : null };
+    },
+
+    /** Tests: the interaction twin of injectInboundMessage. */
+    injectInteraction(plugin, channelId, evt) {
+      const w = workers.get(workerKey(plugin, channelId));
+      if (!w) throw new Error(`no such channel worker "${plugin}/${channelId}"`);
+      handleFrame(w, { type: 'interaction', evt });
     },
 
     /** Teams ingress: forward one raw HTTP request to the worker, get back
@@ -526,10 +715,11 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
       if (mockMode()) return { ok: true, mock: true };
       warnWithheldProxy();
       return new Promise((resolveCheck, rejectCheck) => {
-        const proc = _spawn(process.execPath, [CHILD_PATH, '--check'], { env: scrubbedEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+        const run = pluginChildSpawn([CHILD_PATH, '--check']);
+        const proc = _spawn(run.file, run.args, { ...run.options, stdio: ['pipe', 'pipe', 'pipe'] });
         let stdout = '';
         let settled = false;
-        const timer = setTimeout(() => { settled = true; proc.kill('SIGKILL'); rejectCheck(new PluginOpError('timeout', `validateConfig timed out after ${timeoutMs}ms`)); }, timeoutMs);
+        const timer = setTimeout(() => { settled = true; killPluginChild(proc, run.user); rejectCheck(new PluginOpError('timeout', `validateConfig timed out after ${timeoutMs}ms`)); }, timeoutMs);
         timer.unref?.();
         proc.stdout.setEncoding('utf8');
         proc.stdout.on('data', (d) => { stdout += d; });

@@ -102,6 +102,16 @@ Say "remember …" or state a lasting preference, and Ask saves it to Worca's me
 work. Project memory is for facts about one repository. Pipeline agents load the same memory. You can view, edit,
 delete or restore it on Settings › **Memory** and on a project's **Memory** tab.
 
+- A run loads memory as it was when the run started, and a resume loads that same set. Each step records which set
+  it loaded (a sha256 in the step record; the files are in the run's `memory.json`).
+- Pipeline agents never change memory themselves. A note they write waits under **Proposed by runs** on the Memory
+  page (or `worca memory proposals`) until you approve or reject it.
+- A note with `roles: reviewer` (agent keys, comma-separated; `ask` is the chat) loads only into those agents.
+- **Run without memory** on the New run page (`--no-memory`, or `noMemory: true` in `POST /api/run`) starts a run
+  that loads none, to compare runs with and without it.
+- Pipeline agents on Claude load only the project's own Claude Code settings, not your `~/.claude` hooks, plugins or
+  skills. The project setting **Runs load my Claude Code setup** brings them back.
+
 ## Voice
 
 The composer's mic has three modes. It dictates once, lets you talk and read the replies, or holds a hands-free

@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { requireFlag, flagEnabled } from '../flags.mjs';
 import { validateAttachmentUploads } from '../attachment-upload.mjs';
 import { attachmentDisposition } from '../download-filename.mjs';
+import { isGenericBinary } from '../../shared/artifact-kinds.mjs';
 import { costLimitResetPeriod } from '../settings.mjs';
 import { gitAvailable, GIT_MISSING } from '../git-available.mjs';
 import { actorOf } from '../identity.mjs';
@@ -12,13 +13,13 @@ import { listProjects } from '../projects.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, parseFeatureSeq, SCOPE_TYPES } from './spec.mjs';
 import {
-  createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature, listStarts, latestStart, recentLookCosts,
+  createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature, setEarlyStartReason, listStarts, latestStart, recentLookCosts,
   getBrief, usableBrief, listBriefs, setBriefSections, deleteBrief, briefUsers, listAttachments, countHelperMessages,
 } from './store.mjs';
 import {
   sendMessage, retryMessage, stopHelper, acceptProposal, rejectProposal, askAgain, clearChat, isAnswering, helperView,
 } from './helper.mjs';
-import { REQ_ATTACH_LIMITS, REQ_ATT_ID_RE, reqUploadOptions, checkNewFiles } from './attachments.mjs';
+import { REQ_ATTACH_LIMITS, REQ_ATT_ID_RE, reqUploadOptions, checkNewFiles, fileOrigins } from './attachments.mjs';
 import {
   addAttachments, removeAttachment, editSummary, setSend, readAgain, askAttachment, replaceAttachment, ownAttachment, fileView, readEstimates,
   attachmentFile, removeOwnerBodies, stopJobs, runFiles,
@@ -32,14 +33,17 @@ import {
   revertToStart, addToBrief, editable,
 } from './edits.mjs';
 import { readiness, displayState, changedSince, unaskedRejections, unaskedFiles } from './ready.mjs';
-import { startFeature, startView } from './start.mjs';
+import { startFeature, startView, REASON_MAX } from './start.mjs';
+import { exportSetupView, exportOptions, saveSetup, previewExport, runExport, forgetLink, exportView } from './export.mjs';
+import { importView, importOptions, searchTickets, previewImport, prepareImport, createImported } from './import.mjs';
+import { warmTrackerProbe } from './trackers.mjs';
 import { budgetStatus, requirementsWindowedSpendUsd } from '../cost-budget.mjs';
 import { renderSpecMarkdown } from './markdown.mjs';
 import { saveSpecToCheckout, specFileName } from './save.mjs';
 import { assertBriefSection, parseSectionValue, renderBriefMarkdown, briefFileName, briefMatches } from './brief.mjs';
 import { makeBrief, isBriefBusy, briefTarget, briefEstimate, briefStaleness } from './brief-job.mjs';
 
-const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, CONFLICT: 409, BUDGET: 409, NOT_READY: 409, TOO_LARGE: 413 });
+const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, CONFLICT: 409, BUDGET: 409, NOT_READY: 409, TOO_LARGE: 413, TRACKER: 502 });
 const P = '/api/requirements';
 
 /** Every requirements route, in registration order: the one list registerRequirementsRoutes registers from
@@ -55,6 +59,12 @@ export const REQUIREMENTS_ROUTES = Object.freeze([
   ['GET', `${P}/brief/:scopeType/:scopeKey/documents/:attId`], ['PATCH', `${P}/brief/:scopeType/:scopeKey/documents/:attId`],
   ['DELETE', `${P}/brief/:scopeType/:scopeKey/documents/:attId`], ['POST', `${P}/brief/:scopeType/:scopeKey/documents/:attId/replace`],
   ['POST', `${P}/brief/:scopeType/:scopeKey/documents/:attId/ask`], ['POST', `${P}/brief/:scopeType/:scopeKey/documents/:attId/read-again`],
+  // A6 §6: the export setup of a project or workspace, before the /:seq routes
+  ['GET', `${P}/export-setup/:scopeType/:scopeKey`], ['PUT', `${P}/export-setup/:scopeType/:scopeKey`],
+  ['POST', `${P}/export-setup/:scopeType/:scopeKey/options`],
+  // A6.1 §6: start from a ticket, before the /:seq routes
+  ['GET', `${P}/import/:scopeType/:scopeKey`], ['POST', `${P}/import/:scopeType/:scopeKey/options`],
+  ['POST', `${P}/import/:scopeType/:scopeKey/search`], ['POST', `${P}/import/:scopeType/:scopeKey/preview`],
   ['GET', P], ['POST', P],
   ['GET', `${P}/:seq`], ['PATCH', `${P}/:seq`],
   ['POST', `${P}/:seq/answers`], ['POST', `${P}/:seq/finish`], ['POST', `${P}/:seq/retry`], ['POST', `${P}/:seq/look`],
@@ -65,7 +75,8 @@ export const REQUIREMENTS_ROUTES = Object.freeze([
   ['POST', `${P}/:seq/attachments/:attId/replace`], ['POST', `${P}/:seq/attachments/:attId/ask`], ['POST', `${P}/:seq/attachments/:attId/read-again`],
   ['POST', `${P}/:seq/archive`],
   ['GET', `${P}/:seq/markdown`], ['POST', `${P}/:seq/save`],
-  ['POST', `${P}/:seq/start`], ['POST', `${P}/:seq/revert`],
+  ['POST', `${P}/:seq/start`], ['PUT', `${P}/:seq/early-start-reason`], ['POST', `${P}/:seq/revert`],
+  ['POST', `${P}/:seq/export/preview`], ['POST', `${P}/:seq/export`], ['DELETE', `${P}/:seq/export/link`],
   // A3 §5: Feature chat, one chat per feature
   ['GET', `${P}/:seq/helper`], ['DELETE', `${P}/:seq/helper`], ['POST', `${P}/:seq/helper/messages`], ['POST', `${P}/:seq/helper/stop`],
   ['POST', `${P}/:seq/helper/retry`], ['POST', `${P}/:seq/helper/messages/:msgId/proposals/:n/accept`],
@@ -160,9 +171,10 @@ function sendBody(req, res, row) {
   const etag = `"${row.sha256}"`;
   const fresh = req.headers['if-none-match'] === etag;
   const body = fresh ? null : readFileSync(file);   // before any header: a failed read answers JSON, not a typed body
+  const generic = isGenericBinary(row);   // untrusted bytes of unknown type: a download, never inline
   res.set({ 'Content-Type': row.kind === 'text' ? 'text/plain; charset=utf-8' : row.mime, 'X-Content-Type-Options': 'nosniff',
     // download-filename.mjs: a lone surrogate never throws, bidi controls cannot spoof the name, an ASCII fallback for old clients
-    'Content-Disposition': attachmentDisposition(row.name).replace(/^attachment;/, 'inline;'), 'Cache-Control': 'private, no-cache', ETag: etag });
+    'Content-Disposition': generic ? attachmentDisposition(row.name) : attachmentDisposition(row.name).replace(/^attachment;/, 'inline;'), 'Cache-Control': 'private, no-cache', ETag: etag });
   return fresh ? res.status(304).end() : res.send(body);
 }
 
@@ -206,10 +218,11 @@ const sentFiles = (start, f) => {
 export async function featureView(seq, d = {}) {
   const f = requireFeature(seq);
   const turns = listTurns(seq);
-  const last = turns.filter((t) => t.kind !== 'file').at(-1);   // A8: a file's turns never hide the error line
+  const last = turns.filter((t) => t.kind !== 'file' && t.kind !== 'export' && t.kind !== 'import').at(-1);   // A8 / A6 / A6.1: never hide the error line
   const busy = isBusy(seq);
   const pending = f.status === 'your_turn' ? pendingRound(turns) : null;
   const files = listAttachments('feature', seq);
+  const origins = fileOrigins(turns);   // A6.1 D14: "from SHOP-124"
   const brief = usableBrief(f.scopeType, f.scopeKey);
   const docs = brief ? listAttachments('brief', brief.id) : [];
   const ready = readiness({ ...f, pending }, { turns, target: await targetFor(f), files });
@@ -227,11 +240,12 @@ export async function featureView(seq, d = {}) {
       readiness: ready, state: displayState({ ...f, busy }, { ready, starts: rows }), unaskedRejections: unaskedRejections(f.spec, turns),
       starts, changedSinceStart: rows.length ? changedSince(rows[0].spec, f.spec, sentFiles(rows[0], f)) : [],
       brief: featureBrief(f), lookCostUsd: lookCostUsd(model),
-      attachments: files.map((r) => fileView(r, { spec: f.spec, href: `${P}/${seq}/attachments/${r.id}`, estimates })),
+      attachments: files.map((r) => fileView(r, { spec: f.spec, href: `${P}/${seq}/attachments/${r.id}`, estimates, from: origins.get(r.id) || null })),
       briefDocuments: docs.map((r) => fileView(r, { spec: f.spec, href: `${briefPathOf(f.scopeType, f.scopeKey)}/documents/${r.id}`, doc: true, estimates })),
       unaskedFiles: unaskedFiles(files, turns),
       interview: await interviewInfo(async () => im, d.listModels || listModels),
       resetPeriod: resetPeriod(),
+      export: await exportView(f, turns, d),   // A6 §6: the menu, the chip, the History card, Report back (never throws)
       helper: { answering: isAnswering(seq), messages: countHelperMessages(seq) } },
     turns,
   };
@@ -353,12 +367,22 @@ async function targetFor(f) {
   }
 }
 
+/** A workspace's member projects (D2: their source bindings decide the default connection when they agree); [] otherwise. */
+async function memberKeysOf(scopeType, scopeKey) {
+  if (scopeType !== 'workspace') return [];
+  try { return (((await workspaceTarget(scopeKey)) || {}).members || []).map((m) => m.projectKey).filter(Boolean); } catch { return []; }
+}
+
 /**
  * @param {import('express').Express} app
- * @param {{ broadcast:(frame:object)=>void, deps?:object }} o  deps reach the interview runner (tests)
+ * @param {{ broadcast:(frame:object)=>void, server?:import('node:events').EventEmitter, deps?:object }} o  deps reach the interview
+ *   runner (tests); `server`, the UI's http server, starts the tracker probe when it listens
  */
-export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
+export function registerRequirementsRoutes(app, { broadcast, server, deps = {} } = {}) {
   const gate = requireFlag('requirements');
+  // The first tracker capabilities probe (a plugin spawn) runs when the server starts listening, not when the first page
+  // asks, and only with the flag on. Not awaited; warmTrackerProbe never throws or rejects.
+  if (server && typeof server.once === 'function') server.once('listening', () => warmTrackerProbe({ enabled: flagEnabled('requirements') }));
   const onChange = requirementsChangeNotifier(broadcast);
   const onBriefChange = requirementsBriefNotifier(broadcast);
   // The file jobs notify both: a document a round re-queues (queueUnread) repaints the brief page too.
@@ -511,6 +535,39 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       readAgain(briefOwner(...scope(req)), attIdOf(req), { by: by(req) }, d);
       await answerBrief(req, res, t, 202);
     }),
+    // ---- A6: export to a tracker (plans/requirements-a6-design.md §6) ----
+    [`GET ${P}/export-setup/:scopeType/:scopeKey`]: async (req, res) => {
+      await checkTarget(...scope(req));
+      res.json(await exportSetupView({ scopeType: req.params.scopeType, scopeKey: req.params.scopeKey }, { memberKeys: await memberKeysOf(...scope(req)) }, d));
+    },
+    [`PUT ${P}/export-setup/:scopeType/:scopeKey`]: async (req, res) => {
+      await checkTarget(...scope(req));
+      const s = { scopeType: req.params.scopeType, scopeKey: req.params.scopeKey };
+      const setup = await saveSetup(s, req.body || {}, { by: by(req) }, d);
+      for (const x of listFeatures(s)) onChange(x.seq);   // the scope's open pages learn hasSetup and the tracker's name
+      res.json({ setup });
+    },
+    [`POST ${P}/export-setup/:scopeType/:scopeKey/options`]: async (req, res) => {
+      await checkTarget(...scope(req));
+      res.json(await exportOptions({ scopeType: req.params.scopeType, scopeKey: req.params.scopeKey }, req.body || {}, d));
+    },
+    // ---- A6.1: start from a ticket (plans/requirements-a61-design.md §6); every tracker call is server-side ----
+    [`GET ${P}/import/:scopeType/:scopeKey`]: async (req, res) => {
+      await checkTarget(...scope(req));
+      res.json(await importView({ scopeType: req.params.scopeType, scopeKey: req.params.scopeKey }, { memberKeys: await memberKeysOf(...scope(req)) }, d));
+    },
+    [`POST ${P}/import/:scopeType/:scopeKey/options`]: async (req, res) => {
+      await checkTarget(...scope(req));
+      res.json(await importOptions({ scopeType: req.params.scopeType, scopeKey: req.params.scopeKey }, req.body || {}, d));
+    },
+    [`POST ${P}/import/:scopeType/:scopeKey/search`]: async (req, res) => {
+      await checkTarget(...scope(req));
+      res.json(await searchTickets({ scopeType: req.params.scopeType, scopeKey: req.params.scopeKey }, req.body || {}, d));
+    },
+    [`POST ${P}/import/:scopeType/:scopeKey/preview`]: async (req, res) => {
+      await checkTarget(...scope(req));
+      res.json(await previewImport({ scopeType: req.params.scopeType, scopeKey: req.params.scopeKey }, req.body || {}, d));
+    },
     [`GET ${P}`]: async (req, res) => {
       const q = req.query || {};
       const targets = new Map();
@@ -534,8 +591,20 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
     [`POST ${P}`]: fileRoute(async (req, res) => {
       const b = req.body || {};
       await checkTarget(b.scopeType, b.scopeKey);
+      const uploads = b.attachments === undefined ? [] : uploadsOf(b.attachments, { owner: 'feature', create: true });
+      if (b.fromTicket !== undefined) {
+        // A6.1 D10: capacity first; the ticket read again; then the feature at once, without waiting for any download
+        assertCapacity();
+        const s = { scopeType: b.scopeType, scopeKey: b.scopeKey };
+        const plan = await prepareImport(s, b.fromTicket, { diskFiles: uploads }, d);
+        assertCapacity();   // again: the read awaited the tracker; from here to the orientation nothing awaits
+        const made = createImported(s, { title: b.title, description: b.description }, plan, { by: by(req) }, d);
+        startOrientation(made.seq, { by: by(req) }, d);
+        onChange(made.seq);
+        return res.status(201).json({ ...(await featureView(made.seq, d)), filesNotStored: made.filesNotStored, notOnTicket: made.notOnTicket });
+      }
       // A8 D2: the files are checked before anything is created, then stored and queued before the orientation
-      const files = b.attachments === undefined ? [] : checkNewFiles('feature', [], uploadsOf(b.attachments, { owner: 'feature', create: true }));
+      const files = checkNewFiles('feature', [], uploads);
       assertCapacity();   // before creating: a refused start must not leave a feature stuck at "looking"
       const f = createFeature({ scopeType: b.scopeType, scopeKey: b.scopeKey, title: b.title, description: b.description }, { by: by(req) });
       // The feature exists now: a file that cannot be stored (a disk or database error; the refusals all came before the
@@ -700,16 +769,50 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       const f = requireFeature(seq);
       if (typeof d.startRun !== 'function') throw new Error('starting runs is not available');
       const b = req.body || {};
-      const r = await startFeature(seq, { reason: b.reason, workflowId: b.workflowId, sourceBranch: b.sourceBranch },
+      const r = await startFeature(seq, { reason: b.reason, workflowId: b.workflowId, sourceBranch: b.sourceBranch, reportBack: b.reportBack, overlay: b.overlay },
         { by: by(req) }, { startRun: d.startRun, target: await targetFor(f) });
       onChange(seq);
       res.status(201).json({ runId: r.runId, version: r.version, ...await featureView(seq, d) });
+    },
+    [`PUT ${P}/:seq/early-start-reason`]: async (req, res) => {
+      const seq = seqOf(req);
+      const f = requireFeature(seq);
+      const given = (req.body || {}).reason;
+      if (given !== null && typeof given !== 'string') throw new RequirementsError('BAD_REQUEST', 'reason must be text or null');
+      const reason = given === null ? '' : given.trim();
+      if (reason.length > REASON_MAX) throw new RequirementsError('BAD_REQUEST', `the reason must be at most ${REASON_MAX} characters`);
+      if (f.status === 'archived') throw new RequirementsError('CONFLICT', 'this feature is archived; restore it first');
+      setEarlyStartReason(seq, reason || null);   // a draft note: not refused while busy or starting
+      onChange(seq);
+      res.json({ earlyStartReason: reason || null });
     },
     [`POST ${P}/:seq/revert`]: async (req, res) => {
       const seq = seqOf(req);
       const v = (req.body || {}).version;
       if (!Number.isInteger(v) || v < 1) throw new RequirementsError('BAD_REQUEST', 'version must be a whole number of at least 1');
       revertToStart(seq, v, { by: by(req) });
+      await changed(res, seq);
+    },
+    [`POST ${P}/:seq/export/preview`]: async (req, res) => {
+      const seq = seqOf(req);
+      res.json(await previewExport(seq, req.body || {}, { target: await targetFor(requireFeature(seq)) }, d));
+    },
+    [`POST ${P}/:seq/export`]: async (req, res) => {
+      const seq = seqOf(req);
+      const target = await targetFor(requireFeature(seq));
+      let r;
+      try {
+        r = await runExport(seq, req.body || {}, { by: by(req), target }, d);   // the export lock is taken inside, before its first await
+      } catch (err) {
+        if (err?.data?.linked) onChange(seq);   // a lost create found and linked, nothing sent: the link and its turn are written
+        throw err;
+      }
+      onChange(seq);
+      res.json({ ...r, ...(await featureView(seq, d)) });
+    },
+    [`DELETE ${P}/:seq/export/link`]: async (req, res) => {
+      const seq = seqOf(req);
+      forgetLink(seq, { by: by(req) });
       await changed(res, seq);
     },
     [`GET ${P}/:seq/helper`]: async (req, res) => helperBody(res, seqOf(req)),   // a read: no lock, also archived

@@ -128,12 +128,12 @@ test('validateConfig and listProjects', async () => {
         ? res(200, { values: [{ key: 'SHOP', name: 'Shop' }], isLast: false })
         : res(200, { values: [{ key: 'OPS', name: 'Ops' }], isLast: true })) }]);
       assert.deepEqual(await createTaskSource(makeCtx(), { fetch }).listProjects(),
-        [{ value: 'SHOP', label: 'Shop (SHOP)' }, { value: 'OPS', label: 'Ops (OPS)' }]);
+        [{ value: 'SHOP', label: 'Shop (SHOP)', name: 'Shop' }, { value: 'OPS', label: 'Ops (OPS)', name: 'Ops' }]);
       assert.equal(fetch.calls.length, 2);
     } },
     { name: 'listProjects Data Center: /project array', run: async () => {
       const fetch = fakeFetch([{ match: /\/rest\/api\/2\/project$/, reply: res(200, [{ key: 'SHOP', name: 'Shop' }]) }]);
-      assert.deepEqual(await createTaskSource(makeCtx(DC), { fetch }).listProjects(), [{ value: 'SHOP', label: 'Shop (SHOP)' }]);
+      assert.deepEqual(await createTaskSource(makeCtx(DC), { fetch }).listProjects(), [{ value: 'SHOP', label: 'Shop (SHOP)', name: 'Shop' }]);
     } },
     { name: '429 → kind rate-limit with retry-after; 5xx → kind plugin naming Jira errors', run: async () => {
       await assert.rejects(createTaskSource(makeCtx(), { fetch: fakeFetch([{ match: /./, reply: res(429, null, { 'retry-after': 7 }) }]) }).listProjects(),

@@ -366,6 +366,18 @@ test('chatChannels: rejections (id/platform/module/ingress, both capabilities of
       const inOnly = normalizeManifest({ name: 'p', chatChannels: [CH({ capabilities: { outbound: false } })] });
       assert.equal(inOnly.ok, true);
       assert.deepEqual(inOnly.manifest.chatChannels[0].capabilities, { inbound: true, outbound: false });
+      const inter = normalizeManifest({ name: 'p', chatChannels: [CH({ capabilities: { interactive: true } })] });
+      assert.deepEqual(inter.manifest.chatChannels[0].capabilities, { inbound: true, outbound: true, interactive: true });
+      const notInter = normalizeManifest({ name: 'p', chatChannels: [CH({ capabilities: { interactive: 'yes' } })] });
+      assert.deepEqual(notInter.manifest.chatChannels[0].capabilities, { inbound: true, outbound: true }, 'only a literal true');
+      // Live status messages (discord-chat 0.5.0): only a literal true, and only on an interactive channel (edits need it).
+      const live = normalizeManifest({ name: 'p', chatChannels: [CH({ capabilities: { interactive: true, liveStatus: true } })] });
+      assert.deepEqual(live.manifest.chatChannels[0].capabilities, { inbound: true, outbound: true, interactive: true, liveStatus: true });
+      const liveNotInter = normalizeManifest({ name: 'p', chatChannels: [CH({ capabilities: { liveStatus: true } })] });
+      assert.deepEqual(liveNotInter.manifest.chatChannels[0].capabilities, { inbound: true, outbound: true }, 'live status needs interactive');
+      assert.match(liveNotInter.warnings.join('\n'), /liveStatus needs interactive/);
+      const liveYes = normalizeManifest({ name: 'p', chatChannels: [CH({ capabilities: { interactive: true, liveStatus: 'yes' } })] });
+      assert.deepEqual(liveYes.manifest.chatChannels[0].capabilities, { inbound: true, outbound: true, interactive: true });
     } },
     { name: 'chatChannels: duplicate ids rejected; unknown fields warn (strict errors)', run: () => {
       const dup = normalizeManifest({ name: 'p', chatChannels: [CH(), CH()] });
@@ -402,7 +414,7 @@ test('validatePluginDir: chatChannels module must exist on disk', () => {
 // ── models + modelSecrets (design §9.1) ──────────────────────────────────────
 
 const MODEL = (over = {}) => ({
-  id: 'discretestack-stable', label: 'DS Stable', efforts: ['medium', 'high'],
+  id: 'example-stable', label: 'DS Stable', efforts: ['medium', 'high'],
   env: { ANTHROPIC_BASE_URL: 'https://api.ds.example', ANTHROPIC_AUTH_TOKEN: { secret: 'ds-token' } },
   ...over,
 });
@@ -428,7 +440,7 @@ test('models: normalization (defaults, effort order, secret refs) + reserved env
     { name: 'models: reserved env keys are dropped with a warning, not a rejection (back-compat)', run: () => {
       const r = normalizeManifest({
         name: 'p', modelSecrets: SECRETS,
-        models: [MODEL({ env: { ...MODEL().env, CLAUDE_CODE_SUBAGENT_MODEL: 'discretestack-stable', WORCA_MOCK: '1' } })],
+        models: [MODEL({ env: { ...MODEL().env, CLAUDE_CODE_SUBAGENT_MODEL: 'example-stable', WORCA_MOCK: '1' } })],
       });
       assert.equal(r.ok, true, r.ok ? '' : r.errors.join('\n'));
       const [m] = r.manifest.models;
@@ -437,7 +449,7 @@ test('models: normalization (defaults, effort order, secret refs) + reserved env
       assert.equal(m.env.ANTHROPIC_BASE_URL, 'https://api.ds.example', 'legal keys kept');
       assert.deepEqual(m.env.ANTHROPIC_AUTH_TOKEN, { secret: 'ds-token' }, 'secret refs kept');
       const w = r.warnings.join('\n');
-      assert.match(w, /models\[0\] \("discretestack-stable"\): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored/);
+      assert.match(w, /models\[0\] \("example-stable"\): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored/);
       assert.match(w, /env key "WORCA_MOCK" is reserved — ignored/);
     } },
     { name: 'models: MCP registry env names (MCPSECRET_*, MCPCHILD_*, any case) are dropped with a warning', run: () => {
@@ -458,7 +470,7 @@ test('models/modelSecrets: rejections and unknown-field warnings', async () => {
   };
   await checkRows([
     { name: 'models: rejections — dup id, unknown effort, dangling secret, bad value', run: () => {
-      fail([MODEL({}), MODEL({ label: 'Twin', id: 'Discretestack-Stable' })], SECRETS, /duplicate models id/);
+      fail([MODEL({}), MODEL({ label: 'Twin', id: 'Example-Stable' })], SECRETS, /duplicate models id/);
       fail([MODEL({ efforts: ['low'] })], SECRETS, /unknown effort "low"/);
       fail([MODEL()], undefined, /undeclared modelSecrets key "ds-token"/);
       fail([MODEL({ env: { X: '' } })], SECRETS, /must be a non-empty string or \{"secret"/);
@@ -869,4 +881,18 @@ test('configSchema `advanced` folds an optional field: a boolean, no warning; th
   }
   assert.deepEqual(advanced, { 'slack-chat': ['channelAllowlist'], 'discord-chat': ['channelAllowlist'], 'teams-chat': ['tenantType', 'tenantId'],
     'telegram-chat': [], 'github-source': [], 'azure-boards-source': [], 'jira-source': [] });
+});
+
+test('chatChannels attachmentHosts: lowercase host names, at most 8, deduped, kept only when declared', () => {
+  const ok = normalizeManifest({ name: 'p', chatChannels: [CH({ attachmentHosts: ['cdn.discordapp.com', 'media.discordapp.net', 'cdn.discordapp.com'] })] });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.warnings, []);
+  assert.deepEqual(ok.manifest.chatChannels[0].attachmentHosts, ['cdn.discordapp.com', 'media.discordapp.net']);
+  assert.equal('attachmentHosts' in normalizeManifest({ name: 'p', chatChannels: [CH()] }).manifest.chatChannels[0], false, 'absent when undeclared');
+  for (const bad of [['CDN.discordapp.com'], ['https://cdn.discordapp.com'], ['cdn.discordapp.com:443'], ['localhost'],
+    ['127.0.0.1'], ['*.discordapp.com'], 'cdn.discordapp.com', Array.from({ length: 9 }, (_, i) => `h${i}.example.com`), [7]]) {
+    const r = normalizeManifest({ name: 'p', chatChannels: [CH({ attachmentHosts: bad })] });
+    assert.equal(r.ok, false, JSON.stringify(bad));
+    assert.match(r.errors.join('\n'), /attachmentHosts/);
+  }
 });

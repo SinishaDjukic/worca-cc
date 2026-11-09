@@ -222,6 +222,24 @@ test('V10 a cycle needs a blocking-source edge', () => {
     /^cycle without a blocking-source edge: n_impl, n_rev \(wires w4, w5\)$/);
 });
 
+test('V10 every cycle must cross a loop wire, not just its component (2.4)', () => {
+  // review.review -> OR -> impl.fix is budgeted; review.pass -> note -> OR is not: the clean path
+  // impl -> review -> note -> OR -> impl is a second cycle with no budget at all.
+  const t = ok();
+  t.nodes.push(A('n_note', 'planner'), F('n_or', 'or', { arity: 2 }));
+  t.wires = t.wires.filter((w) => w.id !== 'w5' && w.id !== 'w6').concat([
+    W('w5', 'n_rev', 'review', 'n_or', 'in1', { maxCycles: 3 }),
+    W('w7', 'n_rev', 'pass', 'n_note', 'task'),
+    W('w8', 'n_note', 'plan', 'n_or', 'in2'),
+    W('w9', 'n_or', 'out', 'n_impl', 'fix'),
+    W('w10', 'n_note', 'plan', 'n_end', 'result'),
+  ]);
+  const v10 = V(t).errors.filter((e) => e.code === 'V10');
+  assert.equal(v10.length, 1, JSON.stringify(V(t).errors));
+  assert.match(v10[0].message, /cycle without a blocking-source edge: .*n_note/);
+  assert.deepEqual(V(ok()).errors.filter((e) => e.code === 'V10'), [], 'one budgeted loop is fine');
+});
+
 test('V11 deadlock freedom', () => {
   // planner.task and reviewer.plan each fed from INSIDE the cycle => nothing can start.
   const t = ok();
@@ -585,6 +603,19 @@ test('V23 Shape-it-first agent config: approve, maxQuestions, promptHints', () =
   assert.deepEqual(V(fine).warnings.filter((w) => w.code === 'V17'), [], 'maxQuestions / promptHints are known keys');
 });
 
+test('V23 engine safety config: timeLimitMinutes / idleLimitMinutes (E4) and verdictOptional (E1)', () => {
+  const withPlan = (config) => { const t = ok(); t.nodes = t.nodes.map((n) => (n.id === 'n_plan' ? A('n_plan', 'planner', config) : n)); return t; };
+  const v23 = (t) => V(t).errors.filter((e) => e.code === 'V23');
+  for (const k of ['timeLimitMinutes', 'idleLimitMinutes']) {
+    for (const bad of [0, -1, '30', 1441, Number.NaN]) assert.equal(v23(withPlan({ [k]: bad })).length, 1, `${k} ${bad}`);
+    for (const good of [0.5, 30, 1440]) assert.deepEqual(v23(withPlan({ [k]: good })), []);
+  }
+  assert.equal(v23(withPlan({ verdictOptional: 'yes' })).length, 1);
+  const fine = withPlan({ timeLimitMinutes: 120, idleLimitMinutes: 30, verdictOptional: true });
+  assert.deepEqual(v23(fine), []);
+  assert.deepEqual(V(fine).warnings.filter((w) => w.code === 'V17'), [], 'known keys');
+});
+
 test('V24 role reviews: roleReview is a known agent key; onExhausted is clean|gate on a loop wire only', () => {
   const withWire = (cfg, id = 'w5') => { const t = ok(); t.wires = t.wires.map((w) => (w.id === id ? { ...w, config: { ...(w.config || {}), ...cfg } } : w)); return t; };
   const v24 = (t) => V(t).errors.filter((e) => e.code === 'V24');
@@ -597,4 +628,17 @@ test('V24 role reviews: roleReview is a known agent key; onExhausted is clean|ga
   }
   assert.match(v24(withWire({ onExhausted: 'nope' }))[0].message, /onExhausted must be 'clean' or 'gate'/);
   assert.match(v24(withWire({ onExhausted: 'clean' }, 'w2'))[0].message, /onExhausted but is not a loop wire/);
+});
+
+test('V31 role-review spec: a malformed roleReview object fails; true and a valid object pass', () => {
+  const withRole = (rr) => { const t = ok(); t.nodes = t.nodes.map((n) => (n.id === 'n_rev' ? A('n_rev', 'reviewer', { roleReview: rr }) : n)); return t; };
+  const v31 = (rr) => V(withRole(rr)).errors.filter((e) => e.code === 'V31').map((e) => e.message);
+  const SPEC = { roles: [{ key: 'correctness', label: 'Correctness' }, { key: 'security', label: 'Security' }], source: 'declared', target: 'plan', sink: 'refiner' };
+  assert.deepEqual(v31(true), []);
+  assert.deepEqual(v31(SPEC), []);
+  assert.deepEqual(v31({ ...SPEC, target: 'diff', sink: 'implementer' }), [], 'a diff target (#990 slice 4)');
+  assert.deepEqual(v31({ ...SPEC, target: 'code' }), ['node \'n_rev\': roleReview.target "code" is not supported yet (plan or diff or requirements)']);
+  assert.deepEqual(v31({ ...SPEC, roles: [{ key: 'Sec-1', label: 'Security' }] }), ['node \'n_rev\': roleReview.roles[0].key "Sec-1" must be 1–24 lowercase letters']);
+  assert.deepEqual(v31({ ...SPEC, checklist: 'x' }), ['node \'n_rev\': roleReview.checklist "x" is unknown (known: perspectives, requirements, coverage)']);
+  assert.equal(V(withRole({ ...SPEC, target: 'code' })).ok, false);
 });

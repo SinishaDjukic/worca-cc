@@ -1,0 +1,151 @@
+/* ---------- Scheduled runs: the Schedules view, the schedule sheet, the split Start button ----------
+   Tokens only (no hex): a waiting run is NEUTRAL — grey with a clock — so it never competes
+   with the amber items that need a decision. Missed is amber; a schedule that paused itself too. */
+.rc-sic.st-grey{background:var(--field);color:var(--ink-2);}
+.rc-status-word.st-grey{color:var(--ink-2);}
+.badge.blue{background:var(--blue-bg);color:var(--blue-ink);}
+
+/* The split button (D11): one action, two joined halves of the same .btn. The caret may be
+   [hidden] (Resume splits) or hidden by the UI level (Start run in Simple), so the main half joins only when a
+   visible .btn follows it. */
+.btn-split{display:inline-flex;align-items:stretch;position:relative;}
+.btn-split > .btn:first-child:has(+ .btn:not([hidden])){border-radius:var(--r-sm) 0 0 var(--r-sm);}
+.btn-split > .btn + .btn{border-radius:0 var(--r-sm) var(--r-sm) 0;margin-left:1px;}
+:root[data-level="simple"] .btn-split > .btn:first-child:not(:has(~ [data-level-keep])){border-radius:var(--r-sm);}
+/* Never wider than 340px (or the viewport): a long engine note wraps instead of pushing the menu off screen. */
+.btn-split-menu{position:absolute;right:0;bottom:calc(100% + 8px);z-index:20;min-width:230px;max-width:min(340px,calc(100vw - 32px));}
+.btn-split-menu[hidden]{display:none;}
+.btn-split-menu .menu-item{flex-direction:column;align-items:flex-start;gap:2px;padding-block:6px;}
+.btn-split-menu b{font-weight:600;font-size:var(--fs-body);}
+.btn-split-menu small{font-size:var(--fs-meta);color:var(--ink-2);white-space:normal;line-height:1.4;}
+.btn-split.mini .btn-split-menu{bottom:auto;top:calc(100% + 8px);}
+/* Resume split (run card, run page, History detail): ONE control like #start-split, medium secondary halves.
+   Each caret is Advanced-only, so Simple closes the Resume back up. The [hidden] guards outrank the author
+   display rules (same footgun as .btn-resume). */
+.rc-resume-split[hidden],.rc-resume-split > .rc-resume-more[hidden]{display:none;}
+.rd-resume-split:has(> .rd-pause[hidden]){display:none;}
+.btn-split.rd-resume-split > .rd-resume-more[hidden]{display:none;}
+.hd-resume-split[hidden],.hd-resume-split > .hd-resume-more[hidden]{display:none;}
+
+
+/* the schedule sheet */
+.sched-modal .card.sched-card{width:min(600px,100%);animation:wr-rise .28s cubic-bezier(.2,.7,.3,1) both;}
+.sched-run-title{margin:-10px 0 16px;color:var(--ink-2);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sched-presets{display:flex;flex-wrap:wrap;margin-bottom:16px;}
+.sched-presets button{flex:1 1 auto;white-space:nowrap;}
+.sched-quick{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;}
+.sched-quick[hidden]{display:none;}
+.sched-kind{display:flex;margin-bottom:14px;}
+.sched-kind button{flex:1 1 0;}
+.sched-after{display:grid;gap:10px;}
+/* paint() hides the presets seg and the After block by the `hidden` PROPERTY. `.sched-presets`
+   (display:flex) and `.sched-after` (display:grid) are AUTHOR display rules and outrank the UA
+   [hidden]{display:none} — the .sched-quick[hidden] footgun above. Restate both. */
+.sched-presets[hidden],.sched-after[hidden]{display:none;}
+.sched-chip{border:1.5px solid transparent;cursor:pointer;font-family:inherit;transition:background .14s,border-color .14s;}
+.sched-chip:hover{border-color:var(--hover-outline);}
+.sched-chip.on{background:var(--surface);border-color:var(--ink);color:var(--ink);}
+.sched-chip:focus-visible,.sched-day:focus-visible,.sched-tz-change:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.sched-days{display:flex;flex-wrap:wrap;gap:6px;}
+.sched-day{width:42px;height:38px;border-radius:var(--r-sm);border:1.5px solid transparent;background:var(--field);color:var(--ink-2);
+  font:600 12px var(--sans);cursor:pointer;transition:background .14s,color .14s;}
+.sched-day:hover{border-color:var(--hover-outline);}
+.sched-day.on{background:var(--ink);color:var(--on-ink);}
+.sched-inline{display:flex;gap:9px;align-items:center;}
+.sched-inline > *{flex:1 1 0;min-width:0;}
+.sched-inline > input[type="number"]{flex:0 0 92px;}
+.sched-inline > [hidden]{display:none;}
+/* The range sits in one half of .field-grid-2: the label takes its own line so From/To share the width. */
+.sched-range{margin-top:8px;flex-wrap:wrap;row-gap:6px;}
+.sched-range > input[type="time"]{flex:1 1 0;min-width:7.5em;}
+.sched-range > .sched-between{flex:1 0 100%;display:flex;gap:6px;align-items:center;font-size:13px;color:var(--ink-2);}
+.sched-range > .sched-range-dash{flex:0 0 auto;}
+.sched-card .field-grid-2[hidden],.sched-card .field[hidden]{display:none;}
+.sched-sentence{margin:4px 0 8px;padding:13px 15px;border-radius:var(--r-ctrl);background:var(--blue-wash);
+  border:1px solid var(--blue-bg);font-size:13px;line-height:1.45;}
+.sched-sentence b{font-weight:600;}
+.sched-sentence.bad{background:var(--field);border-color:var(--line);}
+.sched-next{margin-top:3px;color:var(--ink-2);font-size:12px;font-variant-numeric:tabular-nums;min-height:18px;}
+.sched-tz{margin:0 0 16px;color:var(--ink-3);font-size:12px;}
+.sched-tz-change{background:none;border:none;padding:0;font:600 12px var(--sans);color:var(--blue-ink-strong);cursor:pointer;text-decoration:underline;}
+#sched-tz{margin:-8px 0 16px;}
+#sched-tz[hidden]{display:none;}
+.sched-note{margin-top:2px;}
+.sched-warn{margin-top:10px;padding:10px 13px;border-radius:var(--r-sm);background:var(--amber-wash);border:1px solid var(--amber-line);}
+.sched-err{margin-top:10px;}
+.sched-err[hidden]{display:none;}
+
+/* the Schedules view: a tab strip (the Statistics .seg) over one pane at a time */
+.sched-tabs{display:flex;margin-bottom:18px;}
+.sched-pane[hidden]{display:none;}
+.sched-item.attention{background:var(--amber-wash);}
+.sched-head{display:flex;align-items:flex-start;gap:13px;}
+.sched-head .rc-sic{align-self:flex-start;}
+.sched-head .rc-title{white-space:normal;}
+.sched-head > .switch{flex:0 0 auto;margin-top:5px;}
+.sched-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;
+  margin-top:14px;padding-top:12px;border-top:1px solid var(--line);}
+.sched-acts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px;margin-left:auto;}
+.sched-acts [hidden]{display:none;}
+.sched-sub{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin-top:9px;font-size:var(--fs-meta);color:var(--ink-2);}
+.sched-when{font-variant-numeric:tabular-nums;}
+.sched-sub .sched-when{font-weight:600;color:var(--ink);}
+.sched-target{margin-top:4px;font-size:var(--fs-meta);color:var(--ink-2);overflow-wrap:anywhere;}
+/* Rows sit on the page, not a white card: the meta line takes --ink-2 to keep 4.5:1. */
+.sched-item .rc-meta{color:var(--ink-2);}
+.sched-resume-target{margin-top:4px;font-size:12px;color:var(--ink-2);overflow-wrap:anywhere;}
+.sched-rule{color:var(--ink-2);font-weight:500;}
+.sched-reason{margin-top:7px;font-size:12px;color:var(--amber-ink);}
+.sched-more{gap:7px;}
+.sched-more:hover{color:var(--ink);}
+.sched-more::before{content:"";width:6px;height:6px;border-right:1.8px solid currentColor;border-bottom:1.8px solid currentColor;
+  transform:rotate(-45deg);transition:transform .15s;}
+.sched-more[aria-expanded="true"]::before{transform:rotate(45deg);}
+.sched-more:focus-visible{outline:2px solid var(--ink);outline-offset:3px;border-radius:var(--r-sm);}
+.sched-details-body{display:grid;gap:7px;margin-top:12px;}
+.sched-details-body[hidden]{display:none;}
+.sched-kv{display:grid;grid-template-columns:210px minmax(0,1fr);gap:12px;font-size:12px;}
+.sched-k{color:var(--ink-3);}
+.sched-v{color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;}
+@media (max-width:720px){.sched-kv{grid-template-columns:minmax(0,1fr);gap:1px;}.sched-acts{justify-content:flex-start;margin-left:0;}}
+
+.sched-feed{padding:var(--pad-card);}
+.sched-feed-head{flex-wrap:wrap;gap:12px;margin-bottom:8px;}
+.sched-feed-tools{display:flex;flex-wrap:wrap;align-items:center;gap:10px;}
+.sched-feed-item.unread td{background:var(--amber-wash);}
+.sched-feed-kind{width:92px;vertical-align:top;}
+.sched-feed-text{font-size:13px;line-height:1.5;color:var(--ink-2);overflow-wrap:anywhere;}
+.sched-feed-text b{font-weight:600;color:var(--ink);}
+.sched-feed-time{margin-top:2px;font-size:var(--fs-meta);color:var(--ink-3);}
+.sched-feed-resolved{margin-top:2px;font-size:var(--fs-meta);color:var(--ink-2);}
+.sched-feed-acts{text-align:right;}
+.sched-feed-acts > .btn{margin:2px 0 2px 7px;}
+
+/* Ask run card: the scheduled state line */
+.ask-card-sched{display:flex;flex-wrap:wrap;align-items:center;gap:9px;font-size:12px;color:var(--ink-2);}
+.ask-card-sched .badge{}
+.ask-card-sched-text{color:var(--ink);font-weight:500;}
+.ask-card-sched-link{font:600 12px var(--sans);color:var(--blue-ink-strong);}
+.ask-card-sched .ask-card-err{flex-basis:100%;}
+/* New pipeline: the time picked before the task, left of the Start / Schedule button */
+.new-sched{margin-right:auto;padding:9px 12px;border-radius:var(--r-sm);background:var(--canvas-2);border:1px solid var(--line);}
+.new-sched[hidden]{display:none;}
+.new-sched .link-btn{font-size:12px;}
+.reuse-task{margin:8px 0 0;}
+.reuse-task .link-btn{font-size:12px;}
+#start-btn-clock[hidden],#start-btn-play[hidden]{display:none;}
+/* a proposal Ask Worca scheduled (propose_run when / every): the line above the footer */
+.ask-card-sched-proposed{margin:0 18px 12px;padding:10px 12px;border-radius:var(--r-sm);background:var(--canvas-2);border:1px solid var(--line);}
+.ask-card-sched-proposed .link-btn{font-size:12px;}
+/* a run card whose task is a tracker task (propose_run source): the reference instead of the brief */
+.ask-card-task{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:11px 13px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--canvas-2);font-size:13px;}
+.ask-card-task .badge{letter-spacing:0;text-transform:none;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-2);}
+.ask-card-task-title{flex:1 1 200px;min-width:0;color:var(--ink);font-weight:600;overflow-wrap:anywhere;}
+a.ask-card-task-title{text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:3px;}
+a.ask-card-task-title:hover{text-decoration-color:currentColor;}
+.ask-card-task-meta{font-size:12px;color:var(--ink-3);}
+.ask-card-task-warn{margin-top:8px;padding:9px 12px;border-radius:var(--r-sm);background:var(--amber-wash);border:1px solid var(--amber-line);font-size:12px;color:var(--ink-2);}
+
+/* History detail: the scheduled-run provenance link in the header meta */
+.hd-sched{color:var(--ink-2);text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:3px;}
+.hd-sched:hover{color:var(--ink);}

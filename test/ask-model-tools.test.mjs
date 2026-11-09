@@ -189,9 +189,12 @@ test('provider: base URL / key reference / concurrency validate; sign-in fields 
   r = await validate({ kind: 'provider', provider: 'openai', set: { apiKey: 'sk-live' } });
   assert.match(r.errors[0], /openai apiKey must be a \$\{VAR\} reference/);
   r = await validate({ kind: 'provider', provider: 'copilot', set: { githubToken: 'gho_x' } });
-  assert.match(r.errors[0], /githubToken is not settable here — the Copilot sign-in/);
+  assert.match(r.errors[0], /githubToken is not settable here — the Copilot sign-in happens on the Providers page/);
+  // No longer special-cased: the real updateProvider refuses it as an unknown provider field; this file's stub
+  // updateProvider (line ~39) accepts any key, so the card shows no visible row and the answer is "nothing changes".
   r = await validate({ kind: 'provider', provider: 'copilot', set: { acknowledgedTerms: new Date().toISOString() } });
-  assert.match(r.errors[0], /acknowledgedTerms is not settable here/);
+  assert.equal(r.ok, false);
+  assert.match(r.errors[0], /nothing changes/);
   r = await validate({ kind: 'provider', provider: 'openai', set: { baseUrl: 'https://api.openai.com/v1' } });
   assert.match(r.errors[0], /nothing changes/);
   r = await validate({ kind: 'provider', provider: 'openai' });

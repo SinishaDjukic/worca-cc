@@ -1,11 +1,11 @@
 // test/ui-status-dot.test.mjs — the one status-dot renderer (spec §2.1): Needs you and Failed are 12px symbols, never dots.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { renderStatusDot, paintStatusDot } from '../ui/public/status-dot.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const model = (state) => ({ state, ...RUN_STATES[state] });
@@ -47,7 +47,7 @@ test('repainting the same element from a symbol to a dot drops the symbol and it
 });
 
 test('status-dot CSS: 8px dot, 12px symbol, pulse off under reduced motion', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.status-dot\{[^}]*width:8px;height:8px;[^}]*border-radius:50%/);
   assert.match(css, /\.status-dot\.has-sym\{[^}]*width:12px;height:12px/);
   assert.match(css, /prefers-reduced-motion: reduce\)\{[^@]*\.status-dot\.is-pulse\{animation:none;\}/);
@@ -72,4 +72,34 @@ test('#948 s2: an idle chat paints the bubble line icon in the dot\'s place; a p
   paintStatusDot(el, model('working'));
   assert.equal(el.querySelector('svg'), null);
   assert.ok(!el.classList.contains('has-ic'));
+});
+
+test('a chat kind names its icon: role img, the name as aria-label and tooltip; a repaint without one drops both', async () => {
+  await checkRows([
+    ['an idle chat that started a run', { state: 'idle', dot: 'grey', icon: 'run', word: 'Idle', dotLabel: 'Started a run' }, 'ic:run', 'has-ic'],
+    ['a plain chat', { state: 'idle', dot: 'grey', icon: 'chat', word: 'Idle', dotLabel: 'Chat' }, 'ic:chat', 'has-ic'],
+    ['a chat whose run needs you', { state: 'needs-you', dot: 'amber', symbol: 'question', word: 'Needs you', dotLabel: 'Run needs you' }, 'question', 'has-sym'],
+  ].map(([name, m, sym, cls]) => ({ name, run: () => {
+    const el = renderStatusDot(doc, m);
+    assert.ok(el.classList.contains(cls));
+    assert.equal(el.dataset.symbol, sym);
+    assert.equal(el.getAttribute('role'), 'img');
+    assert.equal(el.getAttribute('aria-label'), m.dotLabel);
+    assert.equal(el.getAttribute('title'), m.dotLabel);
+    assert.equal(el.getAttribute('aria-hidden'), null);
+    paintStatusDot(el, { state: 'replying', dot: 'green', pulse: true, word: 'Replying' });
+    assert.equal(el.getAttribute('title'), null, 'the busy pulse has no name of its own: its word is on the sub line');
+    assert.equal(el.getAttribute('role'), null);
+    assert.equal(el.getAttribute('aria-label'), null);
+    assert.equal(el.getAttribute('aria-hidden'), 'true');
+  } })));
+});
+
+test('Following a run draws the run line icon in the Following colour, pulsing; the CSS keeps its colour on the icon', () => {
+  const el = renderStatusDot(doc, { state: 'following', dot: 'peach', pulse: true, icon: 'track', word: 'Following a run', dotLabel: 'Follows a run' });
+  assert.deepEqual([...el.classList].sort(), ['has-ic', 'is-peach', 'is-pulse', 'status-dot']);
+  assert.equal(el.querySelectorAll('svg.status-ic').length, 1);
+  assert.equal(el.getAttribute('aria-label'), 'Follows a run');
+  const css = readStyleCss();
+  assert.match(css, /\.status-dot\.has-ic\.is-peach\{color:var\(--peach-ink\);\}/, 'the icon reads in the Following colour, not ink-2');
 });

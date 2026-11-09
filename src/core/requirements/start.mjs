@@ -8,10 +8,11 @@ import { tx } from '../db.mjs';
 import { RequirementsError } from './spec.mjs';
 import {
   requireFeature, listTurns, latestStart, createStart, appendTurn, linkPipeline, startByRunId, startByPipelineId, listAttachments,
+  getExportLink, setEarlyStartReason,
 } from './store.mjs';
 import { isBusy } from './interview.mjs';
 import { runFiles, unsendableRunFile, cannotGoWithRun } from './attachment-job.mjs';
-import { markStarting, unmarkStarting, isStarting } from './starting.mjs';
+import { markStarting, unmarkStarting, isStarting, isExporting, EXPORTING_MESSAGE } from './starting.mjs';
 import { readiness } from './ready.mjs';
 import { renderTaskMarkdown } from './markdown.mjs';
 
@@ -35,27 +36,46 @@ function refusal(res) {
   return new Error(message);
 }
 
+const OVERLAY_KEYS = ['nodes', 'wires'];
+
+/** The per-run overlay of a start (FEAT-9): absent (undefined, null or empty), or a plain object with only `nodes` / `wires`.
+ *  Its contents are checked by the run handler (/api/run), whose 400 comes back through refusal(). Auto has no agents to set. */
+function overlayOf(overlay, workflowId) {
+  if (overlay === undefined || overlay === null) return null;
+  if (typeof overlay !== 'object' || Array.isArray(overlay) || Object.keys(overlay).some((k) => !OVERLAY_KEYS.includes(k))) {
+    throw new RequirementsError('BAD_REQUEST', `overlay must be an object with only ${OVERLAY_KEYS.join(' and ')}`);
+  }
+  if (workflowId === DEFAULT_WORKFLOW_ID) throw new RequirementsError('BAD_REQUEST', 'pick a workflow to set agents for this run');
+  return Object.keys(overlay).length ? overlay : null;
+}
+
 /**
  * Start a run from a feature (D5, D6). Refused while busy, archived or without a target, always; when any
  * other check fails, only with a reason (1–500 characters), else NOT_READY with the failing keys. A8 D14: the
  * switched-on files and documents go as `extrasFiles` (the key only when there are some), each with the sha256 the
  * staging checks its copy against; one Worca cannot open refuses the start (CONFLICT, naming it), so a run never
  * goes without a file the product owner chose. The start row records `files`.
+ * A6 D15: with a linked ticket and reportBack not false, the run is linked to it (reportTo, in-process only): the result,
+ * the pull request link and a status move go back through the existing write-back. Refused while the feature is exported (D13).
  * @param {number} seq
- * @param {{ reason?:string, workflowId?:string, sourceBranch?:string }} input
+ * FEAT-9: an `overlay` ({ nodes?, wires? }, a non-Auto workflow only) rides the run body as the run's per-run overlay; every
+ * successful start clears the feature's kept early-start reason, inside the same transaction as the start row.
+ * @param {{ reason?:string, workflowId?:string, sourceBranch?:string, reportBack?:boolean, overlay?:object|null }} input
  * @param {{ by?:string|null }} who
  * @param {{ startRun:(body:object, opts:{runId:string, startedBy:string|null,
- *     extrasFiles?:Array<{id:string, name:string, path:string, sha256:string}>})=>Promise<{status:number, body:any}>,
+ *     extrasFiles?:Array<{id:string, name:string, path:string, sha256:string}>, reportTo?:object})=>Promise<{status:number, body:any}>,
  *   target:{ ok:boolean, label?:string, hint?:string, name?:string, path?:string }, newRunId?:()=>string }} deps
  * @returns {Promise<{ runId:string, version:number }>}
  */
-export async function startFeature(seq, { reason, workflowId, sourceBranch } = {}, { by = null } = {}, deps = {}) {
+export async function startFeature(seq, { reason, workflowId, sourceBranch, reportBack, overlay } = {}, { by = null } = {}, deps = {}) {
   const { startRun, target = { ok: false }, newRunId = randomUUID } = deps;
   if (typeof startRun !== 'function') throw new Error('starting runs is not available');
   const f = requireFeature(seq);
   if (f.status === 'archived') throw new RequirementsError('CONFLICT', 'this feature is archived; restore it first');
   if (isBusy(f.seq)) throw new RequirementsError('BUSY', 'Worca is still working on this feature. Try again in a moment.');
   if (isStarting(f.seq)) throw new RequirementsError('BUSY', 'this feature is already starting a run. Try again in a moment.');
+  if (isExporting(f.seq)) throw new RequirementsError('BUSY', EXPORTING_MESSAGE);
+  if (reportBack !== undefined && typeof reportBack !== 'boolean') throw new RequirementsError('BAD_REQUEST', 'reportBack must be true or false');
   markStarting(f.seq);   // before the first await: two starts at once cannot both pass
   try {
     // A8 D8: a file no round asked about fails "Interview finished" here too (an override, with a reason)
@@ -72,24 +92,32 @@ export async function startFeature(seq, { reason, workflowId, sourceBranch } = {
       if (typeof workflowId !== 'string' || !WORKFLOW_ID.test(workflowId)) throw new RequirementsError('BAD_REQUEST', 'workflowId is not a workflow id');
       wf = workflowId;
     }
+    const runOverlay = overlayOf(overlay, wf);
     const branch = typeof sourceBranch === 'string' && sourceBranch.trim() ? sourceBranch.trim() : null;
 
     const version = ((latestStart(f.seq) || {}).version || 0) + 1;
     const spec = structuredClone(f.spec);
     const body = {
       promptMarkdown: renderTaskMarkdown(f, { spec, targetName: target.name || null, version }),
-      title: `${f.id}: ${f.title}`,
+      title: f.title,   // the branch, commit and pull request come from it: FEAT-n stays inside Worca (the start row links the run)
       ...(f.scopeType === 'workspace' ? { workspaceId: f.scopeKey } : { projectDir: target.path }),
       workflowId: wf,
       guardrailsId: 'normal',
+      ...(runOverlay ? { overlay: runOverlay } : {}),
       ...(branch ? { sourceBranch: branch } : {}),
     };
     const sent = runFiles(f);   // A8 D14
     const bad = unsendableRunFile(sent);
     if (bad) throw new RequirementsError('CONFLICT', cannotGoWithRun(bad.name));
     const runId = newRunId();
+    // A6 D15: read once, here: a link forgotten later leaves this run reporting to the ticket its pipeline row names
+    const link = getExportLink(f.seq);
+    const reportTo = link && link.key && reportBack !== false ? { plugin: link.plugin, sourceId: link.sourceId, profile: link.profile || null,
+      taskId: link.key, url: link.url || null, title: f.title, inputs: { writeBack: 'yes' },   // writeBack: jira-source's reserved "on"
+      ...(link.trackerProject ? { project: link.trackerProject } : {}) } : null;   // Ticket updates (D6): the ticket's project
     const res = await startRun(body, { runId, startedBy: by,
-      ...(sent.length ? { extrasFiles: sent.map(({ id, name, path, sha256 }) => ({ id, name, path, sha256 })) } : {}) });
+      ...(sent.length ? { extrasFiles: sent.map(({ id, name, path, sha256 }) => ({ id, name, path, sha256 })) } : {}),
+      ...(reportTo ? { reportTo } : {}) });
     const status = Number(res && res.status);
     if (!(status >= 200 && status <= 299)) throw refusal(res);
     const stored = (res.body && typeof res.body.runId === 'string' && res.body.runId) || runId;
@@ -99,6 +127,7 @@ export async function startFeature(seq, { reason, workflowId, sourceBranch } = {
           reason: failing.length ? why : null, workflowId: body.workflowId, sourceBranch: body.sourceBranch || null,
           files: sent.map(({ id, name, sha256, from }) => ({ id, name, sha256, from })) }, { by });
         appendTurn(f.seq, { kind: 'start', payload: { version, runId: stored, override: failing.length > 0 } }, { by });
+        setEarlyStartReason(f.seq, null);
       });
     } catch (err) {
       // The run is already started: without its row the feature never learns of it (an orphan run).

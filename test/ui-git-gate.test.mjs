@@ -2,8 +2,6 @@
 // the U4 re-checks when Projects, Add project and New run open.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -11,11 +9,20 @@ import { renderIndexHtml } from '../src/core/index-html.mjs';
 import { gitOn, applyGit, onGitChange, refreshGit, GIT_MISSING_TEXT } from '../ui/public/git-gate.mjs';
 import { GIT_MISSING } from '../src/core/git-available.mjs';
 import { bootGitApp } from './helpers/git-app-boot.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
-const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+const html = readIndexHtml();
+const css = readStyleCss();
 const tick = () => new Promise((r) => setTimeout(r, 0));
+/** `fn()`'s first truthy answer, polled every 10 ms; its last answer after `ms`. */
+async function until(fn, ms = 5000) {
+  const end = Date.now() + ms;
+  let v = fn();
+  while (!v && Date.now() < end) { await new Promise((r) => setTimeout(r, 10)); v = fn(); }
+  return v;
+}
 const json = (status, body) => Promise.resolve({ ok: status < 300, status, json: async () => body });
 const bootApp = (o = {}) => bootGitApp({ trackDom, ...o });
 
@@ -67,10 +74,11 @@ test('git gate', async () => {
       const base = globalThis.fetch;   // alpha answers "no git remote" (the Local only chip), beta has no answer yet
       const fake = (url, o) => (String(url).startsWith('/api/sync/projects') ? json(200, { projects: { 'alpha-00000001': { remote: null } } }) : base(url, o));
       window.fetch = fake; globalThis.fetch = fake;
-      window.location.hash = 'projects'; await new Promise((r) => setTimeout(r, 400));
-      doc.querySelector('.filter-chip[data-filter="local"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+      window.location.hash = 'projects';
+      const chip = await until(() => doc.querySelector('.filter-chip[data-filter="local"]'));   // a slow runner paints late
+      chip.dispatchEvent(new window.Event('click', { bubbles: true }));
       const beta = () => doc.querySelector('.pl-item[data-key="beta-00000002"]');
-      assert.equal(beta().hidden, true, 'precondition: Local only hides beta');
+      assert.equal(await until(() => beta()?.hidden), true, 'precondition: Local only hides beta');
       ws._msg({ type: 'git', git: { available: false, version: null } }); await tick();
       assert.equal(beta().hidden, false);
     } },

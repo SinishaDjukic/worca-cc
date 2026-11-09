@@ -1,0 +1,90 @@
+/* ---------- buttons (runs-redesign spec §1.2): one component, 3 sizes x 4 variants ----------
+   .btn is medium (32px) and secondary. Sizes: .btn-sm 28px, .btn-lg 40px (one per view: Start run).
+   Variants: .btn-primary, .btn-quiet, .btn-danger. Shape: .btn-icon (square), .btn-block (full width).
+   No pills, gradients, lift or resting shadow. Feature classes beside .btn may set layout only. */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;margin:0;
+  border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);
+  font-family:inherit;font-size:13px;font-weight:500;line-height:1;white-space:nowrap;text-decoration:none;cursor:pointer;
+  box-shadow:none;transition:background-color .12s,border-color .12s;}
+.btn:hover:not(:disabled){background-color:var(--btn-hover);}
+.btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.btn:disabled{opacity:.45;cursor:not-allowed;}
+/* A step that stays in the tab order and explains itself: only the Shaper requirements surfaces (Shape requirements,
+   Agree and plan). Other .btn[aria-disabled] elsewhere in the app keep their own look. */
+.btn[aria-disabled="true"][data-ask-card-shape],.shape-reqs .btn[aria-disabled="true"]{opacity:.45;cursor:not-allowed;}
+.btn-primary[aria-disabled="true"][data-ask-card-shape]:hover,.shape-reqs .btn-primary[aria-disabled="true"]:hover{background-color:var(--ink);}
+.btn svg{flex:none;}
+.btn-sm{height:28px;padding:0 10px;gap:5px;font-size:var(--fs-meta);}
+.btn-lg{height:40px;padding:0 18px;gap:8px;font-size:var(--fs-body);}
+.btn-icon{width:32px;padding:0;}
+.btn-sm.btn-icon{width:28px;}
+.btn-lg.btn-icon{width:40px;}
+.btn-block{width:100%;}
+.btn-primary{background:var(--ink);border-color:var(--ink);color:var(--on-ink);font-weight:600;}
+.btn-primary:hover:not(:disabled){background-color:color-mix(in srgb,var(--on-ink) 8%,var(--ink));}
+.btn-quiet{background:transparent;border-color:transparent;color:var(--ink-2);}
+.btn-quiet:hover:not(:disabled){background-color:var(--quiet-hover);color:var(--ink);}
+/* --red-ink-strong, not --red-ink: --red-ink on --red-bg is 3.9:1; the hover also deepens the text to stay over 4.5:1. */
+.btn-danger{background:var(--red-bg);border-color:transparent;color:var(--red-ink-strong);}
+.btn-danger:hover:not(:disabled){background-color:var(--danger-hover);color:color-mix(in srgb,var(--red-ink-strong) 80%,var(--ink));}
+/* Solid red only in a confirm dialog (spec §1.2). The hover rule is needed: .btn-danger:hover:not(:disabled) is (0,3,0)
+   and would otherwise beat .confirm-modal .btn-danger (0,2,0) and flip the button back to the light fill. */
+.confirm-modal .btn-danger{background:var(--red-ink-strong);color:var(--panel);}
+.confirm-modal .btn-danger:hover:not(:disabled){background-color:var(--danger-solid-hover);color:var(--panel);}
+@media (pointer:coarse){.btn{min-height:40px;}.btn-icon{min-width:40px;}}
+/* The one copy button (copy-button.mjs, design-system.md › Copy button): for 1200 ms the copy glyph turns into a green
+   tick and a green "Copied" (.copied), or an × and the reason in red (.copy-miss: a failed write, nothing to copy).
+   An icon square widens to hold its caption. Feature classes set layout only. */
+.copy-btn .ico-check,.copy-btn .ico-x{display:none;}
+.copy-btn:is(.copied,.copy-miss) .ico-copy{display:none;}
+.copy-btn.copied .ico-check{display:inline-flex;color:var(--green-ink);}
+.copy-btn.copy-miss .ico-x{display:inline-flex;color:var(--red-ink-strong);}
+.copy-btn[hidden]{display:none;}
+.copy-btn.mono{font-family:var(--mono);}   /* the copied text as label: mono (.btn sets font-family:inherit; .mono has no rule of its own) */
+.copy-btn-text{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.copy-btn-msg{display:none;flex:none;font:500 var(--fs-meta) var(--sans);}
+.copy-btn.copied .copy-btn-msg{display:inline;color:var(--green-ink);}
+.copy-btn.copy-miss .copy-btn-msg{display:inline;color:var(--red-ink-strong);}
+.copy-btn.btn-icon:is(.copied,.copy-miss){width:auto;padding:0 8px;}
+.copy-btn-action:is(.copied,.copy-miss) .copy-btn-words{display:none;}   /* a labelled action: "Copied" takes its words' place */
+/* An icon from ui/public/icons.mjs (icon()): the span is sized inline, its svg fills it. */
+.ic{display:inline-flex;flex:none;align-items:center;justify-content:center;}
+.ic svg{display:block;}
+
+/* form message */
+.form-msg{margin:12px 0 0;font-size:var(--fs-body);min-height:16px;}
+.form-msg.ok{color:var(--green-ink);}
+.form-msg.err{color:var(--red-ink);}
+/* saved, but with a caveat the user must act on (agent-port edit stranding a
+   saved pipeline — app.js saveAgentEdit reads PUT /api/agents/:key `warnings`). */
+.form-msg.warn{color:var(--amber-ink);}
+/* #555 D8: a failed Settings GET, above the tabs at every UI level. */
+.settings-load-msg{margin:0 0 14px;max-width:760px;}
+
+/* One menu (docs/design-system.md › Menu): openMenu's .wfv-menu, the sidebar flyouts (.nav-fly), the composer pickers
+   (.ask-pop) and the split-button menus (.btn-split-menu) all wear .menu for the box and
+   .menu-item for a row. Each family keeps its own position, width and z-index only. */
+.menu{padding:4px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-menu);font-size:var(--fs-body);}
+.menu-item{display:flex;align-items:center;gap:10px;width:100%;min-height:30px;padding:4px 9px;border:0;border-radius:var(--r-sm);
+  background:none;color:var(--ink);text-align:left;font:inherit;cursor:pointer;}
+.menu-item:hover,.menu-item:focus-visible{background:var(--hover);outline:none;}
+.menu-item:is(:disabled,[aria-disabled="true"]){color:var(--ink-3);cursor:not-allowed;}
+.menu-item:is(:disabled,[aria-disabled="true"]):hover{background:none;}
+.menu-item.is-danger{color:var(--red-ink);}
+.menu-item.is-danger:hover:not(:disabled){background:var(--red-bg);}
+.menu-sep{height:1px;margin:4px 6px;background:var(--line);}
+.menu-h{padding:8px 9px 4px;color:var(--ink-2);font-size:var(--fs-meta);font-weight:600;}
+/* SentencePicker (docs/design-system.md › Worca Rail): the chosen words inside the sentence they change. The menu it
+   opens is openMenu's .menu (toggleMenu), so only the trigger is drawn here. */
+.spick{position:relative;}
+.spick-b{display:inline;margin:0;padding:0;border:0;border-radius:var(--r-xs);background:none;font:inherit;font-weight:600;line-height:inherit;color:var(--ink);white-space:nowrap;cursor:pointer;transition:background-color 100ms,box-shadow 100ms;}
+.spick-b svg{margin-left:2px;vertical-align:-2px;color:var(--ink-2);}
+.spick-b:hover,.spick-b[aria-expanded="true"]{background:var(--hover);box-shadow:0 0 0 3px var(--hover);}
+.spick-b:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+/* A row a person opens (docs/design-system.md › Row button): full width inside its divided list, the --hover fill and
+   the 6px corner on hover, an inset ring for the keyboard. Each list keeps its own grid, gaps and padding. */
+.row-btn{width:100%;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;border-radius:var(--r-sm);}
+.row-btn:hover{background:var(--hover);}
+.row-btn:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+

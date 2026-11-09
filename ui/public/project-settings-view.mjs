@@ -2,11 +2,20 @@ import { renderInheritField, readDirtyFields, inheritedOf } from './inherit-fiel
 import { renderEngineSection, utilityId } from './engine-settings-view.mjs';
 import { notify, cardAlert } from './feedback.mjs';
 import { ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { PR_OPEN_LABELS, PR_SLICES_LABELS } from '../../src/shared/pr-auto.mjs';
 
 // A USD field's inherited value as the placeholder shows it: "$5.00", or "no cap" when unset.
 const usd = (value) => (value == null ? 'no cap' : `$${Number(value).toFixed(2)}`);
 // "fix, feat chore" → ['fix', 'feat', 'chore'] (the server validates each word).
 const typesOf = (text) => String(text).toLowerCase().split(/[\s,]+/).filter(Boolean);
+const labelled = (labels) => Object.entries(labels).map(([value, label]) => ({ value, label }));
+// Create a PR when a run finishes: stored as the value itself; inherited from the team policy, else Worca's default.
+const PR_FIELDS = [
+  { id: 'pr.open', label: 'When a run finishes', kind: 'select', options: labelled(PR_OPEN_LABELS), format: (v) => PR_OPEN_LABELS[v] ?? null,
+    hint: 'New runs of this project create this PR when they finish with work committed. A run can choose otherwise on the New run form.' },
+  { id: 'pr.slices', label: 'Shaper features', kind: 'select', options: labelled(PR_SLICES_LABELS), format: (v) => PR_SLICES_LABELS[v] ?? null,
+    hint: 'When Shaper plans a run in slices: a stacked PR per slice, or one PR when the feature is done.' },
+];
 export const PROJECT_CARDS = Object.freeze([
   { key: 'cost', title: 'Cost', fields: [{ id: 'pipelineCostLimitUsd', label: 'Per-pipeline cap (USD)', kind: 'number', min: .01, step: .01, format: usd }, { id: 'humanRateUsdPerHour', label: 'Developer rate (USD/h)', kind: 'number', min: .01, step: .01, format: usd }] },
   { key: 'ask', title: 'Chat', fields: [{ id: 'askMaxTurns', label: 'Turn limit', kind: 'number', min: 1, step: 1 }, { id: 'askMaxBudgetUsd', label: 'Per-turn cost cap (USD)', kind: 'number', min: .1, step: .1, format: usd }] },
@@ -15,8 +24,11 @@ export const PROJECT_CARDS = Object.freeze([
       // Project layer only (no user layer): inherit = Local (off). Off is stored as null, like the CLI and the Team view do.
       fromValue: (v) => (v === true ? 'both' : v === 'only' ? 'team' : ''), toValue: (v) => (v === 'team' ? 'only' : v === 'both' ? true : null),
       format: (v) => (v === true ? 'Both' : v === 'only' ? 'Team' : 'Local'),
-      hint: 'Which memory runs and chats load. Local (off): this machine\'s notes. Team and Both share this project\'s notes with the team on its worca-memory branch, after a secret check (needs an origin remote); Team loads only the team\'s notes, Both yours too. Notes that exist stay on this machine until you share them from the Memory tab\'s Team view. Switching back to Local drops changes still waiting to be pushed from this machine.' }] },
-  { key: 'pr', title: 'Pull requests', fields: [{ id: 'watchNewPrs', label: 'Watch new pull requests', kind: 'select',
+      hint: 'Which memory runs and chats load. Local (off): this machine\'s notes. Team and Both share this project\'s notes with the team on its worca-memory branch, after a secret check (needs an origin remote); Team loads only the team\'s notes, Both yours too. Notes that exist stay on this machine until you share them from the Memory tab\'s Team view. Switching back to Local drops changes still waiting to be pushed from this machine.' },
+    { id: 'runUserClaudeSettings', label: 'Runs load my Claude Code setup', kind: 'select', options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }],
+      toValue: (value) => value === 'on', fromValue: (value) => (value ? 'on' : 'off'), format: (value) => (value ? 'On' : 'Off'),
+      hint: 'Off: pipeline agents load only this project\'s own Claude Code settings, rules and CLAUDE.md, never your ~/.claude settings, hooks, plugins or skills, so every run gets the same setup. On: they load yours too. Sign-in or proxy settings in ~/.claude/settings.json keep it on.' }] },
+  { key: 'pr', title: 'Pull requests', fields: [...PR_FIELDS, { id: 'watchNewPrs', label: 'Watch new pull requests', kind: 'select',
     options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }],
     toValue: (value) => value === 'on', fromValue: (value) => (value ? 'on' : 'off'), format: (value) => (value ? 'On' : 'Off'),
     hint: 'Create PR opens with Watch PR on for this project. A workspace run needs it on in every repository.' }] },

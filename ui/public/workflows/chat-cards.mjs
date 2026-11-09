@@ -6,7 +6,7 @@
 // proposal card draws no mini graph: the canvas is the preview.
 // The card DOM is workflows/card-views.mjs, shared with Ask Worca.
 import { icon } from '../icons.mjs';
-import { cardKit, plural, draftCardView, buildCardView, okChip } from './card-views.mjs';
+import { cardKit, plural, draftCardView, buildCardView, okChip, scriptApprovalCardView } from './card-views.mjs';
 
 export function createCardController({ doc, composer, sessionId, client, actions = {}, blocks = () => [],
   reducedMotion = () => false, onChange = () => {}, occluder = () => null }) {
@@ -177,7 +177,7 @@ export function createCardController({ doc, composer, sessionId, client, actions
       if (d.state === 'proposed') { const s = await saveDraft(d); if (!s.ok) return; }
     }
     if ((c.drafts || []).length) await act('reloadRegistry');
-    const prev = { tpl: JSON.parse(JSON.stringify(composer.template())), dirty: composer.isDirty(), origin: composer.origin() };
+    const prev = { tpl: JSON.parse(JSON.stringify(composer.template())), dirty: composer.isDirty(), origin: composer.origin(), copyOf: composer.copyOf() };
     composer.loadDraft({ name: c.name, domain: c.domain, nodes: c.workflow.nodes, wires: c.workflow.wires });
     enterAnimation();
     fitAboveDock();
@@ -194,7 +194,7 @@ export function createCardController({ doc, composer, sessionId, client, actions
         const undo = button('Undo', 'wfc-link', async () => {
           if (!lastBuild || !undoLive(lastBuild, b.id)) return;
           const p = lastBuild.prev;
-          composer.loadTemplate({ ...p.tpl, origin: p.origin });
+          composer.loadTemplate({ ...p.tpl, origin: p.origin }, { copyOf: p.copyOf });          // an unsaved copy comes back as a copy (#1127)
           if (p.dirty) composer.setName(p.tpl.name || '');          // still unsaved, as it was
           fitAboveDock();
           lastBuild = null;
@@ -243,7 +243,13 @@ export function createCardController({ doc, composer, sessionId, client, actions
       Boolean(lastBuild && lastBuild.cardId === b.id && composer.docToken() === lastBuild.docToken), undoLive(lastBuild, b.id)]),
     render(b) {
       const t = b && b.card && b.card.type;
-      const el = t === 'canvas-edit' ? renderEdit(b) : t === 'workflow-build' ? renderBuild(b) : renderDraft(b);
+      const el = t === 'canvas-edit' ? renderEdit(b) : t === 'workflow-build' ? renderBuild(b)
+        // G6: test_script with a draft waits on this card; its Run runs it on the server and starts the event turn.
+        : t === 'script-approval' ? scriptApprovalCardView(b, { h, button, onAnswer: async (body) => {
+          const r = await flip(b.id, body);
+          return r && r.ok ? '' : (r && r.body && r.body.error) || 'failed';
+        } })
+          : renderDraft(b);
       el.dataset.cardId = b.id;
       return el;
     },

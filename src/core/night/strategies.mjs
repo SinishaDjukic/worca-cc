@@ -77,6 +77,13 @@ export async function decideQuestion(q, cfg, { analyze } = {}) {
       : `the review picked "${String(a.choice).slice(0, 80)}", which is not an option; took the best-scored option. ${String(a.rationale || '')}`.trim();
     return { ...base, choice: pick, strategy: 'analysis', confidence: conf, scores, rationale, reversible: a.reversible === true, flagged: !valid };
   }
+  // Both sources agree (the analysis picked the option the clarifier recommended): take it, flagged, even under the
+  // confidence bar. A low confidence alone is no reason to swap an agreed answer for a different one.
+  if (valid && pick === q.recommended) {
+    return { ...base, choice: pick, strategy: 'analysis', confidence: conf, scores,
+      rationale: `the agent was not sure enough, but it picked the option the clarifier recommended. ${String(a.rationale || '')}`.trim(),
+      reversible: a.reversible === true, flagged: true };
+  }
   // User decision "never park": continue with the most reversible option, flagged.
   const rev = mostReversible(opts, scores, totals);
   return { ...base, choice: rev, strategy: 'analysis', confidence: conf, scores,
@@ -92,6 +99,7 @@ export function gateRule({ issues = [], extraUsed = 0 }, cfg) {
   const counts = SEVERITIES.filter((s) => BLOCKING.has(s)).map((s) => [sev.filter((x) => x === s).length, s]).filter(([c]) => c);
   const left = `${counts.map(([c, s]) => `${c} ${s}`).join(' and ')} issue${n === 1 ? '' : 's'} left`;
   if (extraUsed < cfg.maxExtraCycles) return { decision: 'another', flagged: false, reason: `${left}, one more fix round` };
+  if (!cfg.maxExtraCycles) return { decision: 'continue', flagged: true, reason: `${left}; Away mode adds no extra fix rounds, continuing` };
   return { decision: 'continue', flagged: true, reason: `${left} but the extra fix rounds are used up; continuing` };
 }
 
@@ -99,6 +107,34 @@ export function workflowRule({ proposal, budget }) {
   const payload = { decision: 'accept', name: proposal?.name, nodes: {} };
   const tight = budget && budget.cap > 0 && budget.spent >= 0.8 * budget.cap;
   return { payload, flagged: !!tight, reason: tight ? `workflow accepted; ${Math.round((budget.spent / budget.cap) * 100)}% of the away spend cap used` : 'workflow accepted as proposed' };
+}
+
+/**
+ * A plan ask: a person answers what to build, Away handles how. An allowlist over the ask's fields (they all share
+ * kind 'plan'): whatever it does not recognise as clean waits. The order is the decision.
+ * @returns {{payload:object, flagged:boolean, reason:string, ask:'plan'|'outline'|'concern'}|null} null = waits for a person
+ */
+export function planRule(q) {
+  const p = q?.plan;
+  if (!p || p.error || p.criteria) return null;     // the Requirements hold, or an ask that needs a retry
+  if (p.outline) {
+    if (p.check?.ok !== true) return null;
+    // The check accepts a left-out id that has a reason, and nothing later catches it: a person must hear about it.
+    const left = (p.outline.leftOut || []).map((e) => e.id);
+    return { payload: { decision: 'approve', approveEach: p.approveEach === true }, flagged: left.length > 0,
+      reason: `the slice outline's check passed${left.length ? `; left out of every slice: ${left.join(', ')}` : ''}`, ask: 'outline' };
+  }
+  const approve = { decision: 'approve' };
+  if (q.concern && q.concern.kind !== 'requirement') {
+    return { payload: approve, flagged: true, reason: `the implementer raised a concern on the plan: ${q.concern.title}; the plan is built as written`, ask: 'concern' };
+  }
+  if (p.check?.ok !== true || p.outlineChange || p.notes?.length) return null;
+  if (Object.hasOwn(p, 'coverage') && p.coverage?.ok !== true) return null;
+  const open = p.openConflicts > 0 ? p.openConflicts : 0;
+  const reason = q.concern ? `a reviewer raised a concern on an agreed requirement: ${q.concern.title}; the requirement stays as agreed` : "the plan's shape check passed";
+  return { payload: approve, flagged: Boolean(q.concern) || open > 0,
+    reason: open ? `${reason}; ${open} reviewer conflict${open === 1 ? '' : 's'} left undecided` : reason,
+    ask: q.concern ? 'concern' : 'plan' };
 }
 
 export function recoveryRule({ attempts, max }) {

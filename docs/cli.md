@@ -22,6 +22,9 @@ worca --project /path/to/your/project --prompt "Add a /search endpoint" --workfl
 # run the agents on another engine (beta: codex, copilot, cursor, gemini, goose, opencode, qwen)
 worca --project /path/to/your/project --prompt "Add a /search endpoint" --engine codex
 
+# pick the run's guardrail set (default: Normal on a new install; every engine but Claude needs permissive or --allow-unguarded-engine)
+worca --project /path/to/your/project --prompt "Add a /search endpoint" --engine codex --guardrails permissive
+
 # register a project: the current folder, or a clone into the projects folder
 worca add
 worca add --clone https://github.com/you/your-repo.git

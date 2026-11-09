@@ -9,6 +9,9 @@ Away mode is on during your away hours, or once you turn on **Away** in the acco
 the sidebar). While it's on, Worca answers what a run would otherwise wait on: clarifying questions, mid-step
 questions, input forms, review-loop gates, proposed workflows and retries of failed steps.
 
+On a Shaper run you still answer what to build: Clarify, Requirements, and any plan whose check did not pass.
+Worca approves the outline and the plans whose checks passed, and flags concerns *please check*.
+
 When the agent is sure enough of its own recommendation, Worca trusts it. Otherwise a read-only review, on the
 run's engine, scores each option. It can only read files. It weighs each option against your Worca memory, how
 easily the choice can be undone, scope, the codebase's conventions and cost. If Worca is unsure of an answer, it
@@ -36,8 +39,8 @@ On the run page, *Away mode on this run* overrides the setting for one run: *As 
 
 Away mode is bounded on purpose:
 
-- While critical or major issues remain, a review loop gets at most one extra fix round (you can change this). Then
-  the run continues with a flag.
+- While critical or major issues remain at a review loop that has spent its cycles, the run continues with a flag.
+  Away mode buys no extra fix round unless you configure one.
 - A failed step is retried up to 3 times. Then the run pauses.
 - A run pauses after 20 answers by default.
 - An optional spend cap pauses runs that reach it. It counts across all projects from the start of the away

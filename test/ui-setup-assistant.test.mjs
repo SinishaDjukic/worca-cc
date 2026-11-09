@@ -7,22 +7,25 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import {
-  SETUP_STEPS, TEST_PASS_MS, LOGIN_RETRY_STEPS, proxyKey, initialAnswers, rolePatch, diffRows, buildApplyBody, nextGate,
-  stepOfField, setupStepForSignIn, safeHttpUrl, openSetupAssistant, teamNotice,
+  SETUP_STEPS, TEST_PASS_MS, LOGIN_RETRY_STEPS, proxyKey, initialAnswers, rolePatch, diffRows, buildApplyBody, nextGate, networkAnswered, CLAUDE_MISSING_LINE,
+  stepOfField, setupStepForSignIn, safeHttpUrl, openSetupAssistant, teamNotice, askEngineOf, NO_CHANGES_LINE,
 } from '../ui/public/setup-assistant.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { backdropClick, pressEscape, discardPrompt, keepEditing } from './helpers/popups.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const UNREACHABLE = 'Worca could not be reached. Check that it is still running.';
 
 // ── fixtures ──
 const SETTINGS = { uiLevel: 'simple', pipelineCostLimitUsd: 5, totalCostLimitUsd: null, costLimitResetPeriod: 'monthly',
-  autoGeneratePrDescription: true, smartNaming: { suggestTitle: true, suggestBranch: true }, runEngine: null, modelRoles: {} };
+  autoGeneratePrDescription: true, smartNaming: { suggestTitle: true, suggestBranch: true }, runEngine: null, modelRoles: {}, askEngine: null, askModels: {} };
 const PROXY_OFF = { settings: { enabled: false }, login: null, state: 'off' };
 const PROXY_ON = { settings: { enabled: true, upstream: 'http://proxy.acme.example:8080', auth: 'auto', noProxy: [] }, login: { domain: 'ACME', user: 'jdoe' }, state: 'ready' };
-const PROVIDERS = { copilot: { connected: false, termsCurrent: false, accountType: 'individual', login: null },
+const PROVIDERS = { copilot: { connected: false, accountType: 'individual', login: null },
   openai: { configured: false, baseUrl: '' }, anthropic: { configured: false, baseUrl: '' }, broker: { enabled: false } };
+/** The providers answer with the credential broker on and its Copilot slot in `state` ('set' = signed in on the key page). */
+const BROKER = (state, keyPage = 'https://keys.acme.example/') => ({ ...PROVIDERS, broker: { enabled: true, keyPage, providers: { copilot: { slot: 'cp', state } } } });
 const CATALOG = [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }, { id: 'claude-haiku-5-5', label: 'Haiku 5.5' }];
 const check = (id, state, extra = {}) => ({ id, label: id, state, line: `${id} line`, ...extra });
 const DETECT = { checks: [check('claude', 'ok'), check('git', 'ok'), check('direct', 'ok')] };
@@ -67,12 +70,12 @@ async function open({ entry = 'first', step = 'check', settings = SETTINGS, prox
     clearTimeout: (id) => { const i = queue.findIndex((t) => t.id === id); if (i >= 0) queue.splice(i, 1); },
   };
   const clock = { t: 1_000_000 };
-  const closes = [];
-  const handle = openSetupAssistant({ doc, fetchJson, entry, step, team: teamHome, timers, now: () => clock.t, onClose: (how) => closes.push(how) });
+  const closes = []; const closeInfos = [];
+  const handle = openSetupAssistant({ doc, fetchJson, entry, step, team: teamHome, timers, now: () => clock.t, onClose: (how, info) => { closes.push(how); closeInfos.push(info); } });
   await settle();
   const $ = (sel) => doc.querySelector(`#setup-modal ${sel}`);
   const h = {
-    window, doc, handle, log, closes, clock, queue, $,
+    window, doc, handle, log, closes, closeInfos, clock, queue, $,
     $$: (sel) => [...doc.querySelectorAll(`#setup-modal ${sel}`)],
     field: (name) => [...doc.querySelectorAll('#setup-modal [data-sa-field]')].find((n) => n.dataset.saField === name),
     title: () => $('#setup-title').textContent,
@@ -101,6 +104,10 @@ async function open({ entry = 'first', step = 'check', settings = SETTINGS, prox
   };
   return h;
 }
+
+/** The window regains focus, as when the person comes back from the key page's tab. */
+const focus = async (h) => { h.window.dispatchEvent(new h.window.Event('focus')); await h.settle(); };
+const providerReads = (h) => h.log.filter((r) => r.url === '/api/providers').length;
 
 /** From an open re-run: per-run limit 5 → 7, Review, Apply. */
 async function applyLimit(h, value = '7') {
@@ -144,18 +151,16 @@ function netServer({ proxy = PROXY_OFF } = {}) {
   return { st, routes, done };
 }
 
-/** Model access: Copilot on, notice accepted, device flow through to "connected". `pollAnswers`: one per poll. */
+/** Model access: Copilot on, device flow through to "connected" (no notice: sign-in is enabled at once). `pollAnswers`: one per poll. */
 async function signInCopilot(h, { pollAnswers = [reply({ ok: true, login: 'jdoe' })] } = {}) {
   if (!h.$('.sa-src-copilot').checked) await h.toggle('.sa-src-copilot');
-  assert.equal(h.$('.sa-cp-signin').disabled, true, 'Sign in waits for the notice');
-  await h.toggle('.sa-cp-ack');
-  assert.equal(h.$('.sa-cp-signin').disabled, false);
+  assert.equal(h.$('.sa-cp-ack'), null, 'no notice switch');
+  assert.equal(h.$('.sa-cp-signin').disabled, false, 'Sign in is ready straight away');
   await h.click('.sa-cp-signin');
   assert.equal(h.$('.mv-cp-code').textContent, 'ABCD-1234');
   for (let i = 0; i < pollAnswers.length; i++) await h.flush();
 }
 const COPILOT_ROUTES = (pollAnswers = [reply({ ok: true, login: 'jdoe' })]) => ({
-  '/api/providers/copilot/acknowledge': reply({}),
   '/api/providers/copilot/login': reply({ deviceCode: 'd1', userCode: 'ABCD-1234', interval: 0 }),
   '/api/providers/copilot/login/': (_o, n) => { const a = pollAnswers[Math.min(n, pollAnswers.length) - 1]; if (a === 'throw') throw new Error('down'); return a; },
   '/api/providers/copilot/models': reply({ models: [{ id: 'claude-opus-5-5', name: 'Claude Opus 5.5', catalogId: 'copilot-claude-opus-5-5', inCatalog: false }] }),
@@ -210,21 +215,46 @@ test('pure helpers: proxyKey, initialAnswers, buildApplyBody, rolePatch, diffRow
         assert.equal(gate({ ...a, network: { ...a.network, ...change } }, tested).ok, false, JSON.stringify(change));
       }
     } },
-    { name: 'nextGate(review): nothing changed is "Nothing changed." on a re-run and Finish on a first start', run: () => {
+    { name: 'nextGate(review): nothing changed is Finish with the empty line on a re-run, a fix and a first start; an unknown entry still says "Nothing changed."', run: () => {
       const s = saved(); const a = initialAnswers({ saved: s, entry: 'rerun' });
-      assert.deepEqual(nextGate('review', a, { saved: s, entry: 'rerun' }), { ok: false, reason: 'Nothing changed.' });
+      for (const entry of ['rerun', 'fix']) assert.deepEqual(nextGate('review', a, { saved: s, entry }), { ok: true, finish: true, reason: NO_CHANGES_LINE }, entry);
+      assert.deepEqual(nextGate('review', a, { saved: s, entry: 'other' }), { ok: false, reason: 'Nothing changed.' });
       const f = nextGate('review', a, { saved: s, entry: 'first' });
       assert.equal(f.ok, true); assert.equal(f.finish, true);
     } },
-    { name: 'nextGate(access): consent first even when connected; acknowledgeTerms rides only as true from the switch', run: () => {
+    { name: 'buildApplyBody with the broker on: importModels alone, never signIn', run: () => {
+      const s = saved({ providers: BROKER('set') }); const a = initialAnswers({ saved: s, entry: 'rerun' });
+      assert.equal(a.access.copilot, true);
+      assert.equal(buildApplyBody(s, a).access, undefined, 'nothing to import: no copilot block');
+      a.access.importModels = ['gpt-6-sol'];
+      assert.deepEqual(buildApplyBody(s, a).access, { copilot: { importModels: ['gpt-6-sol'] } });
+      assert.equal(diffRows(s, a).find((r) => r.group === 'access').changed, true);
+      a.access.copilotAccount = 'business';
+      assert.deepEqual(buildApplyBody(s, a).access.copilot, { importModels: ['gpt-6-sol'] }, 'the Plan control is hidden: accountType never rides');
+      const stale = saved({ providers: BROKER('missing') }); const b = initialAnswers({ saved: stale, entry: 'rerun' });
+      b.access.copilot = true; b.access.copilotConnected = true;
+      assert.equal(buildApplyBody(stale, b).access, undefined, 'a stale connected answer against a saved missing sign-in sends no signIn');
+    } },
+    { name: 'nextGate(access): a connected Copilot passes with no consent step; the apply body never carries acknowledgeTerms', run: () => {
       const s = saved({ providers: { ...PROVIDERS, copilot: { ...PROVIDERS.copilot, connected: true } } });
       const a = initialAnswers({ saved: s, entry: 'rerun' });
-      assert.equal(a.access.copilot, true); assert.equal(a.access.copilotAck, false);
-      assert.deepEqual(nextGate('access', a, { saved: s }), { ok: false, reason: 'Accept the GitHub Copilot notice to continue' });
+      assert.equal(a.access.copilot, true); assert.equal('copilotAck' in a.access, false);
+      assert.deepEqual(nextGate('access', a, { saved: s }), { ok: true, reason: '' });
       a.access.copilotAccount = 'business';
       assert.equal('acknowledgeTerms' in buildApplyBody(s, a).access.copilot, false);
-      a.access.copilotAck = true;
-      assert.equal(buildApplyBody(s, a).access.copilot.acknowledgeTerms, true);
+    } },
+    { name: 'Chat model: answers start from askModels[askEngine]; unchanged → no models group; a pick or a clear rides as models.askModels', run: () => {
+      assert.equal(askEngineOf({}), 'claude'); assert.equal(askEngineOf({ askEngine: 'codex' }), 'codex'); assert.equal(askEngineOf({ askEngine: 'nope' }), 'claude');
+      const s = saved({ settings: { ...SETTINGS, askEngine: 'codex', askModels: { codex: { model: 'gpt-5.5', effort: 'high' } } } });
+      const a = initialAnswers({ saved: s, entry: 'rerun' });
+      assert.deepEqual(a.models.askModel, { model: 'gpt-5.5', effort: 'high' });
+      assert.equal(buildApplyBody(s, a).models, undefined);
+      a.models.askModel = null;
+      assert.deepEqual(buildApplyBody(s, a).models, { askModels: { codex: null } });
+      a.models.askModel = { model: 'gpt-5.5-mini' };
+      assert.deepEqual(buildApplyBody(s, a).models, { askModels: { codex: { model: 'gpt-5.5-mini' } } });
+      const none = saved();
+      assert.equal(initialAnswers({ saved: none, entry: 'rerun' }).models.askModel, null);
     } },
     { name: 'safeHttpUrl: http(s) only', run: () => {
       assert.equal(safeHttpUrl('https://keys.acme.example/'), 'https://keys.acme.example/');
@@ -245,7 +275,7 @@ test('pure helpers: proxyKey, initialAnswers, buildApplyBody, rolePatch, diffRow
 
 // ── 2. the dialog ──
 
-test('corporate Copilot path: proxy test → Next applies the network → notice → device sign-in → roles → Apply, in one dialog (AC-4.2, AC-4.3)', async () => {
+test('corporate Copilot path: proxy test → Next applies the network → device sign-in → roles → Apply, in one dialog (AC-4.2, AC-4.3)', async () => {
   const net = netServer();
   const h = await open({ detect: DETECT_PROXY, routes: { ...COPILOT_ROUTES(), ...net.routes } });
   try {
@@ -294,13 +324,13 @@ test('corporate Copilot path: proxy test → Next applies the network → notice
     assert.equal(h.next().textContent, 'Apply');
     await h.click('.sa-next');
     const urls = h.log.map((r) => r.url);
-    assert.ok(urls.indexOf('/api/providers/copilot/acknowledge') < urls.indexOf('/api/providers/copilot/login'), 'acknowledge first');
-    assert.ok(h.log.indexOf(h.applies()[0]) < urls.indexOf('/api/providers/copilot/acknowledge'), 'the network applied before the Copilot calls');
+    assert.equal(urls.includes('/api/providers/copilot/acknowledge'), false, 'no acknowledge call');
+    assert.ok(h.log.indexOf(h.applies()[0]) < urls.indexOf('/api/providers/copilot/login'), 'the network applied before the Copilot calls');
     assert.equal(h.log.some((r) => r.url === '/api/settings' && r.method === 'POST'), false, 'no POST /api/settings');
     assert.equal(h.doc.documentElement.dataset.level, 'simple');
     const body = h.applies()[1].body;
     assert.equal(body.access.copilot.signIn, true);
-    assert.equal(body.access.copilot.acknowledgeTerms, true);
+    assert.equal('acknowledgeTerms' in body.access.copilot, false);
     assert.ok(body.access.copilot.importModels.includes('claude-opus-5-5'));
     assert.equal(body.work?.uiLevel, undefined);
     assert.equal(body.network, undefined, 'the final Apply sends no network group');
@@ -532,6 +562,8 @@ test('Network applies on Next: unchanged values post nothing (D19); Direct after
         assert.match(li.textContent, /Saved/);
         assert.equal(h.next().textContent, 'Finish');
         assert.equal(h.status().textContent, 'Direct connection saved. Nothing else to change.');
+        await h.click('.sa-next');
+        assert.deepEqual(h.closes, ['done']); assert.deepEqual(h.closeInfos.at(-1), { applied: true });
       } finally { h.close(); }
     } },
     { name: 'editing the domain, user or password after a pass needs a new Test', run: async () => {
@@ -585,7 +617,7 @@ test('Apply rows: one per step, a spinner on the first unfinished one, frames fi
         h.handle.onFrame({ type: 'setup-apply', id: 'stp_1', done: true, ok: true });
         assert.equal(h.title(), 'Worca is ready');
         await h.click('.sa-continue');
-        assert.deepEqual(h.closes, ['done']);
+        assert.deepEqual(h.closes, ['done']); assert.deepEqual(h.closeInfos.at(-1), { applied: true });
         assert.equal(h.doc.getElementById('setup-modal'), null);
       } finally { h.close(); }
     } },
@@ -809,14 +841,15 @@ test('rejected requests: a failed load offers Try again; a rejected apply clears
   ]);
 });
 
-test('re-run: saved values in the fields, only changed rows on Review, nothing changed disables Apply (AC-4.4)', async () => {
+test('re-run: saved values in the fields, only changed rows on Review, nothing changed offers Finish (AC-4.4)', async () => {
   const h = await open({ entry: 'rerun' });
   try {
     await h.goTo('review');
     assert.equal(h.$$('.sa-review tbody tr').length, 0);
-    assert.equal(h.next().disabled, true);
-    assert.equal(h.status().textContent, 'Nothing changed.');
-    assert.equal(h.next().textContent, 'Apply');
+    assert.equal(h.$('.sa-review-empty').textContent, NO_CHANGES_LINE);
+    assert.equal(h.next().disabled, false);
+    assert.equal(h.status().textContent, NO_CHANGES_LINE);
+    assert.equal(h.next().textContent, 'Finish');
     await h.goTo('work');
     assert.equal(h.field('work.pipelineCostLimitUsd').value, '5');
     await h.type('work.pipelineCostLimitUsd', '7');
@@ -826,6 +859,19 @@ test('re-run: saved values in the fields, only changed rows on Review, nothing c
     assert.equal(rows[0].querySelector('.badge.amber').textContent, 'Changed');
     await h.click(rows[0].querySelector('.sa-change'));
     assert.equal(h.title(), 'How do you want to work?');
+  } finally { h.close(); }
+});
+
+test('fix: nothing changed on Review offers Finish, which posts nothing and closes without an apply', async () => {
+  const h = await open({ entry: 'fix', step: 'network' });
+  try {
+    await h.goTo('review');
+    assert.equal(h.$('.sa-review-empty').textContent, NO_CHANGES_LINE);
+    assert.equal(h.next().textContent, 'Finish'); assert.equal(h.next().disabled, false);
+    assert.equal(h.status().textContent, NO_CHANGES_LINE);
+    await h.click('.sa-next');
+    assert.deepEqual(h.closes, ['done']); assert.deepEqual(h.closeInfos, [{ applied: false }]);
+    assert.deepEqual(h.writes(), []);
   } finally { h.close(); }
 });
 
@@ -844,7 +890,7 @@ test('a first start with nothing to apply ends on Finish, without a POST (A23)',
 test('the head: Step N of 7, the title and the subtitle on every step (ux-1-3)', async () => {
   const titles = ['Let’s set up Worca', 'How does this machine reach the internet?', 'Where should Worca get its models?', 'Which models should do the work?', 'How do you want to work?', 'Check and apply'];
   const subs = { first: ['Worca checks this machine, then asks only what it could not find.', 'Worca’s agents use this route for every model call.',
-    'Turn on every source you can use. You need at least one.', 'Each role sets the model for every job that has none of its own.', 'You can change all of these later in Settings.',
+    'Turn on every source you can use. You need at least one.', 'Each role sets the model for every job that has none of its own. Chat can have a model of its own.', 'You can change all of these later in Settings.',
     'Worca will save these settings, sign in, import the models and test each one.'] };
   subs.rerun = [...subs.first]; subs.rerun[0] = 'Status of your local setup.'; subs.rerun[5] = 'Only the rows marked Changed will be written.';
   for (const entry of ['first', 'rerun']) {
@@ -900,7 +946,7 @@ test('the role-test switch sits on Review, only with changed roles, and its valu
 });
 
 test('Models step: Copilot models still to import group under GitHub Copilot; old snapshots are left out; a repeated name shows its id', async () => {
-  const copilot = { connected: true, termsCurrent: true, accountType: 'individual', login: 'jdoe' };
+  const copilot = { connected: true, accountType: 'individual', login: 'jdoe' };
   const models = [
     { id: 'gpt-6-sol', name: 'GPT-6 Sol', api: 'responses', catalogId: 'copilot-gpt-6-sol', inCatalog: false, pickerEnabled: true },
     { id: 'gpt-4o-2024-05-13', name: 'GPT-4o', api: 'chat', catalogId: 'copilot-gpt-4o-2024-05-13', inCatalog: false, pickerEnabled: false },
@@ -944,8 +990,50 @@ test('Model access › Claude: Sign in again shows the terminal steps; Check aga
   } finally { h.close(); }
 });
 
+test('Models step: Default model for Chat shows what Chat uses now (Everyday), posts model + effort for Chat\'s engine, no role-test switch', async () => {
+  const settings = { ...SETTINGS, modelRoles: { claude: { everyday: { model: 'claude-haiku-5-5' } } } };
+  const h = await open({ entry: 'rerun', settings, routes: { '/api/setup/apply': reply({ id: 'stp_1', steps: STEPS3 }, 202) } });
+  try {
+    await h.goTo('models');
+    const sel = () => h.$('.inherit-field[data-setting="models.claude.ask"] .inherit-model');
+    assert.ok(sel(), 'the Chat field renders for the saved Chat engine');
+    assert.equal(sel().value, '', 'nothing stored: it follows the role');
+    assert.equal(sel().options[0].textContent, 'Same as Everyday coding · Haiku 5.5');
+    assert.equal(sel().dataset.saField, 'models.askModels.claude');
+    await h.pick(sel(), 'claude-opus-5-5');
+    await h.pick(h.$('.inherit-field[data-setting="models.claude.ask"] .inherit-effort'), 'high');
+    await h.goTo('review');
+    assert.equal(h.$('.sa-test-roles'), null, 'a Chat-only change runs no role tests');
+    const lines = [...h.$$('.sa-review tr[data-group="models"] .sa-review-lines li')].map((li) => li.textContent);
+    assert.ok(lines.some((l) => /^Chat.*Opus 5\.5$/.test(l)), lines.join(' | '));
+    await h.click('.sa-next');
+    assert.deepEqual(h.applies()[0].body.models, { askModels: { claude: { model: 'claude-opus-5-5', effort: 'high' } } });
+  } finally { h.close(); }
+});
+
+test('Models step: the Chat empty choice tracks the Everyday pick live; a Copilot model to import picked for Chat is imported', async () => {
+  const copilot = { connected: true, accountType: 'individual', login: 'jdoe' };
+  const h = await open({ entry: 'rerun', providers: { ...PROVIDERS, copilot },
+    routes: { ...COPILOT_ROUTES(), '/api/setup/apply': reply({ id: 'stp_1', steps: STEPS3 }, 202) } });
+  try {
+    await h.goTo('access');
+    await h.goTo('models');
+    await h.flush();
+    const chat = () => h.$('.inherit-field[data-setting="models.claude.ask"] .inherit-model');
+    assert.equal(chat().options[0].textContent, 'Same as Everyday coding');
+    await h.pick(h.$('.inherit-field[data-setting="models.claude.roles.everyday"] .inherit-model'), 'claude-haiku-5-5');
+    assert.equal(chat().options[0].textContent, 'Same as Everyday coding · Haiku 5.5');
+    await h.pick(chat(), 'copilot-claude-opus-5-5');
+    await h.goTo('review');
+    await h.click('.sa-next');
+    const body = h.applies().at(-1).body;
+    assert.ok(body.access.copilot.importModels.includes('claude-opus-5-5'));
+    assert.equal(body.models.askModels.claude.model, 'copilot-claude-opus-5-5');
+  } finally { h.close(); }
+});
+
 test('Model access › Copilot: Use another account asks first, signs out, then runs the device sign-in here', async () => {
-  const providers = { ...PROVIDERS, copilot: { connected: true, termsCurrent: true, accountType: 'individual', login: 'jdoe' } };
+  const providers = { ...PROVIDERS, copilot: { connected: true, accountType: 'individual', login: 'jdoe' } };
   const h = await open({ entry: 'rerun', providers, routes: { ...COPILOT_ROUTES([reply({ ok: true, login: 'acme-dev' })]), '/api/providers/copilot/logout': reply({ ok: true }) } });
   try {
     await h.goTo('access');
@@ -1050,10 +1138,142 @@ test('credential broker: no key input, no Copilot sign-in, the key page link onl
   }
 });
 
+// ── the Copilot sign-in kept by the credential broker ──
+
+const bySeq = (...answers) => (_o, n) => answers[Math.min(n, answers.length) - 1];
+const copilotRow = (h) => h.$('.sa-cp');
+const SIGNED_IN = /signed in on the key page/;
+const MODEL_GROUPS = (h) => [...h.$$('.inherit-field[data-setting="models.claude.roles.deep"] .inherit-model optgroup')].map((g) => g.label);
+
+test('broker: a key-page sign-in is picked up when the window regains focus (saved and answers)', async () => {
+  const route = () => ({ '/api/providers': bySeq(reply(BROKER('missing')), reply(BROKER('set'))) });
+  const h = await open({ entry: 'fix', step: 'access', routes: route() });
+  try {
+    assert.equal(h.status().textContent, 'Sign in to GitHub Copilot to continue'); assert.equal(h.next().disabled, true);
+    assert.match(copilotRow(h).textContent, /Sign in on the key page, then come back here\./);
+    assert.equal(providerReads(h), 1);
+    await focus(h);
+    assert.equal(providerReads(h), 2);
+    assert.match(copilotRow(h).textContent, SIGNED_IN); assert.ok(copilotRow(h).querySelector('.badge.green'));
+    assert.equal(h.status().textContent, ''); assert.equal(h.next().disabled, false);
+    pressEscape(h.window);
+    assert.equal(discardPrompt(h.doc), null, 'a refresh alone never makes the dialog dirty');
+    assert.deepEqual(h.closes, ['later']);
+  } finally { h.close(); }
+  // The saved providers follow too: Skip resets the step from them.
+  const g = await open({ entry: 'fix', step: 'access', routes: route() });
+  try {
+    await focus(g);
+    await g.toggle('.sa-src-openai');
+    assert.equal(g.next().disabled, true);
+    await g.click('.sa-skip');
+    await g.goTo('access');
+    assert.match(copilotRow(g).textContent, SIGNED_IN);
+    assert.equal(g.next().disabled, false);
+  } finally { g.close(); }
+});
+
+test('broker: Check again re-reads the sign-in; one read at a time', async () => {
+  const held = deferred();
+  const h = await open({ entry: 'fix', step: 'access', routes: { '/api/providers': bySeq(reply(BROKER('missing')), held.promise, reply(BROKER('set'))) } });
+  try {
+    assert.equal(h.$('.sa-cp-recheck').disabled, false);
+    await h.click('.sa-cp-recheck');
+    assert.equal(h.$('.sa-cp-recheck').disabled, true);
+    await focus(h);
+    assert.equal(providerReads(h), 2, 'a focus during a read sends no second one');
+    held.resolve(reply(BROKER('missing'))); await h.settle();
+    assert.equal(h.$('.sa-cp-recheck').disabled, false);
+    assert.match(copilotRow(h).textContent, /Checked again just now\./);
+    assert.equal(h.next().disabled, true);
+    await h.click('.sa-cp-recheck');
+    assert.match(copilotRow(h).textContent, SIGNED_IN);
+    assert.equal(h.next().disabled, false);
+  } finally { h.close(); }
+  const f = await open({ entry: 'fix', step: 'access', routes: { '/api/providers': bySeq(reply(BROKER('missing')), reply({ error: 'The broker is down.' }, 500)) } });
+  try {
+    await f.click('.sa-cp-recheck');
+    assert.equal(f.status().textContent, 'The broker is down.');
+    assert.doesNotMatch(copilotRow(f).textContent, /Checked again just now\./);
+    assert.equal(f.$('.sa-cp-recheck').disabled, false, 'the button is usable again');
+    assert.equal(f.next().disabled, true);
+  } finally { f.close(); }
+});
+
+test('broker: no refresh during an apply, none after close', async () => {
+  const held = deferred();
+  const h = await open({ entry: 'rerun', providers: BROKER('set'), routes: { '/api/setup/apply': () => held.promise } });
+  try {
+    await applyLimit(h);
+    assert.equal(h.applies().length, 1);
+    const before = providerReads(h);
+    await focus(h);
+    assert.equal(providerReads(h), before, 'none while the apply POST is held');
+    held.resolve(reply({ id: 'stp_1', steps: STEPS3 }, 202)); await h.settle();
+    assert.equal(h.$('.sa-step-of').textContent, 'Step 7 of 7');
+    await focus(h);
+    assert.equal(providerReads(h), before, 'none on the Apply step');
+    const removed = []; const off = h.window.removeEventListener.bind(h.window);
+    h.window.removeEventListener = (type, ...rest) => { removed.push(type); return off(type, ...rest); };
+    h.handle.close();
+    assert.ok(removed.includes('focus'), 'the focus listener is removed on close');
+    await focus(h);
+    assert.equal(providerReads(h), before, 'none after close');
+  } finally { h.window.close(); }
+});
+
+test('no broker: focus does not re-read the providers', async () => {
+  const h = await open({ entry: 'rerun' });
+  try {
+    await h.goTo('access');
+    assert.equal(providerReads(h), 1);
+    await focus(h);
+    assert.equal(providerReads(h), 1);
+  } finally { h.close(); }
+});
+
+test('broker: Copilot models load on Models and Apply imports them without a sign-in', async () => {
+  const h = await open({ entry: 'rerun', providers: BROKER('set'), routes: { ...COPILOT_ROUTES(), '/api/setup/apply': reply({ id: 'stp_1', steps: STEPS3 }, 202) } });
+  try {
+    await h.goTo('models'); await h.flush();
+    assert.ok(h.log.some((r) => r.url === '/api/providers/copilot/models'), 'the models were requested');
+    assert.ok(MODEL_GROUPS(h).includes('GitHub Copilot'));
+    await h.pick(h.$('.inherit-field[data-setting="models.claude.roles.deep"] .inherit-model'), 'copilot-claude-opus-5-5');
+    await h.goTo('review');
+    await h.click('.sa-next');
+    assert.deepEqual(h.applies()[0].body.access.copilot, { importModels: ['claude-opus-5-5'] });
+  } finally { h.close(); }
+});
+
+test('broker: a sign-in found on focus while on Models fetches the Copilot models', async () => {
+  const h = await open({ entry: 'fix', step: 'access', routes: { ...COPILOT_ROUTES(), '/api/providers': bySeq(reply(BROKER('missing')), reply(BROKER('set'))) } });
+  try {
+    await h.goTo('models'); await h.flush();
+    assert.equal(h.log.some((r) => r.url === '/api/providers/copilot/models'), false, 'not connected: no request');
+    await focus(h); await h.flush();
+    assert.ok(h.log.some((r) => r.url === '/api/providers/copilot/models'));
+    assert.ok(MODEL_GROUPS(h).includes('GitHub Copilot'));
+  } finally { h.close(); }
+});
+
+test('broker: a keep-answers reload (409 SETTINGS_CHANGED) syncs the Copilot answers', async () => {
+  const h = await open({ entry: 'rerun', routes: { '/api/providers': bySeq(reply(BROKER('missing')), reply(BROKER('set'))),
+    '/api/setup/apply': reply({ code: 'SETTINGS_CHANGED', error: 'Your settings changed elsewhere.' }, 409) } });
+  try {
+    await h.goTo('access');
+    assert.equal(h.next().disabled, true);
+    await applyLimit(h);
+    assert.equal(h.title(), 'Check and apply');
+    await h.goTo('access');
+    assert.match(copilotRow(h).textContent, SIGNED_IN);
+    assert.equal(h.next().disabled, false);
+  } finally { h.close(); }
+});
+
 // ── source checks ──
 
 test('CSS: 290px layout, --ink-2 scoping and no ink-3 under .setup- (AC-4.7, fit-1-1)', () => {
-  const css = read('ui/public/style.css');
+  const css = readStyleCss();
   assert.match(css, /\.setup-card \.sa-row\{[^}]*flex-wrap:wrap[^}]*min-width:0[^}]*\}/);
   assert.ok(css.includes('.setup-card .sa-pair{display:flex;flex-wrap:wrap;gap:8px;}'));
   assert.ok(css.includes('.setup-card .sa-pair > *{flex:1 1 100px;min-width:0;}'));
@@ -1086,6 +1306,8 @@ test('module source: no HTML sinks, no CSS.escape; built on layoutDialog and gua
   assert.ok(src.includes('guardModal('));
   assert.ok(src.includes("kind: 'form'"));
   assert.ok(read('docs/setup-assistant.md').includes('## The dialog'));
+  // A finished re-run goes to the welcome only when it applied something. Source check: booting app.js in jsdom is the heavy suite.
+  assert.ok(read('ui/public/app.js').includes("entry === 'rerun' && how === 'done' && applied"));
   const gs = read('docs/getting-started.md');
   assert.ok(gs.includes('Set up later')); assert.ok(gs.includes('Setup assistant › **Run setup**'));
 });
@@ -1225,11 +1447,11 @@ test('AC-5.7: entry team with nothing differing says it already matches and offe
   } finally { h.close(); }
 });
 
-test('nextGate: team entry finishes when nothing differs; rerun still says Nothing changed', () => {
+test('nextGate: team entry finishes when nothing differs, with its own line; rerun and fix finish with theirs', () => {
   const s = saved();
   const a = initialAnswers({ saved: s, entry: 'team' });
   assert.deepEqual(nextGate('review', a, { saved: s, entry: 'team' }), { ok: true, finish: true, reason: "Your setup already matches your team's recommendation." });
-  assert.deepEqual(nextGate('review', a, { saved: s, entry: 'rerun' }), { ok: false, reason: 'Nothing changed.' });
+  for (const entry of ['rerun', 'fix']) assert.deepEqual(nextGate('review', a, { saved: s, entry }), { ok: true, finish: true, reason: NO_CHANGES_LINE }, entry);
 });
 
 test('an unmapped team role says none of your sources offer it on Models and on Review', async () => {
@@ -1315,4 +1537,41 @@ test('Share: a failed draft shows the server error in the err class', async () =
     assert.equal(h.status().textContent, 'Worca could not prepare the team setup. Try again.');
     assert.ok(h.status().classList.contains('err'));
   } finally { h.close(); }
+});
+
+test('Models step: roles for Claude and every engine the check found ready, with the engine switch at every level', async () => {
+  const engines = check('harnesses', 'warn', { label: 'Engines', line: '2 of 3 engines are ready.', facts: { engines: [
+    { name: 'claude', label: 'Claude', ready: true, line: 'Ready.' },
+    { name: 'copilot', label: 'Copilot', ready: true, line: 'Ready.' },
+    { name: 'goose', label: 'Goose', ready: false, line: 'Install the Goose CLI.' }] } });
+  const h = await open({ entry: 'rerun', detect: { checks: [check('claude', 'ok'), engines, check('git', 'ok')] } });
+  try {
+    await h.goTo('models');
+    const sw = h.$('.sa-roles .engine-switch');
+    assert.ok(sw, 'two engines: a switch');
+    assert.equal(sw.dataset.minLevel, undefined, 'shown at every interface level, not Expert only');
+    assert.deepEqual(h.$$('.sa-roles .engine-switch button').map((b) => b.dataset.engine), ['claude', 'copilot'], 'Goose is not ready: no roles step for it');
+    assert.ok(h.$('.inherit-field[data-setting="models.copilot.roles.deep"]'), 'the Copilot roles are there to set');
+    assert.equal(h.$('.inherit-field[data-setting="models.goose.roles.deep"]'), null);
+  } finally { h.close(); }
+});
+
+test('a signed-out Claude: the first start never says the setup works, and Review names it', () => {
+  const s0 = saved(); const a = initialAnswers({ saved: s0, entry: 'first' });
+  a.access.claude = true;
+  const line = (detect) => nextGate('review', a, { saved: s0, entry: 'first', detect }).reason;
+  assert.equal(line({ checks: [{ id: 'claude', state: 'no' }] }), CLAUDE_MISSING_LINE);
+  assert.equal(line({ checks: [{ id: 'claude', state: 'ok' }] }), 'Nothing to change: your current setup already works.');
+  const row = diffRows(s0, a, { detect: { checks: [{ id: 'claude', state: 'no' }] } }).find((r) => r.group === 'access');
+  assert.match(row.value, /Claude Code \(not signed in\)/);
+});
+
+test('networkAnswered: only a working direct connection, no proxy in the environment, none chosen', () => {
+  const a = { network: { mode: 'direct' } };
+  const d = (direct, proxyEnv) => ({ checks: [{ id: 'direct', state: direct }, { id: 'proxyEnv', state: proxyEnv }] });
+  assert.equal(networkAnswered(a, d('ok', 'no')), true);
+  assert.equal(networkAnswered(a, d('no', 'no')), false, 'direct failed: the proxy question is the point');
+  assert.equal(networkAnswered(a, d('ok', 'ok')), false, 'a proxy is set here');
+  assert.equal(networkAnswered({ network: { mode: 'proxy' } }, d('ok', 'no')), false);
+  assert.equal(networkAnswered(a, null), false, 'no check, no answer');
 });

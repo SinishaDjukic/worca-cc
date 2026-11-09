@@ -20,6 +20,7 @@ import { basename, join, resolve, sep } from 'node:path';
 
 import { slugify } from './artifacts.mjs';
 import { clearStaleGitLocks } from './git-lock.mjs';
+import { readStagedChanges } from './commit-message.mjs';
 // settings.mjs is a leaf (node builtins only), so importing the §10 flag reader here
 // adds no dependency on the DB layer — worktree.mjs stays DB-free.
 import { runRootMode } from './settings.mjs';
@@ -28,6 +29,8 @@ import {
   removeInjectedPaths,
 } from './run-manifest.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
+import { guardedGitEnv, guardedWorktreeAdd } from './git-guard.mjs';
+import { stripHostCredentials } from './host-credentials.mjs';
 import { ownWorkDir } from './no-project-work.mjs';
 
 const WORKTREES_DIRNAME = join('.worca-cc', 'worktrees');
@@ -53,18 +56,28 @@ const BRANCH_STOPWORDS = new Set([
 // 30 s on large repos — give them a longer leash before the SIGKILL deadline.
 const SLOW_GIT_TIMEOUT_MS = 120_000;
 
+/** `git worktree add` through git-guard's guardedWorktreeAdd (G2), with git()'s result shape. */
+export function worktreeAdd(projectDir, dir, commitish, { branch, detach = false, signal } = {}) {
+  if (!gitAvailable()) return Promise.resolve(gitMissingResult());
+  return guardedWorktreeAdd(projectDir, dir, commitish, { branch, detach, signal, timeout: SLOW_GIT_TIMEOUT_MS });
+}
+
 /** Run git and resolve to { ok, stdout, stderr, code }. Never throws.
  *  `env` is MERGED OVER process.env (never a replacement): the git binary and the
- *  credential helper need PATH/HOME. Only the Ask Worca callers pass it. */
-function git(cwd, args, { signal, timeout = 30_000, env, maxBytes = 0 } = {}) {
-  if (!gitAvailable()) return Promise.resolve(gitMissingResult());
+ *  credential helper need PATH/HOME. Only the Ask Worca callers pass it.
+ *  Repository-local hooks and config commands never run (git-guard.mjs, security G2); `hooks: true`
+ *  (Apply to branch's commit) keeps the project's hooks, with every host credential stripped. */
+async function git(cwd, args, { signal, timeout = 30_000, env, maxBytes = 0, hooks = false } = {}) {
+  if (!gitAvailable()) return gitMissingResult();
+  let fullEnv;
+  // `timeout` bounds the guard's config listing too, so a slow git gives up within the caller's budget.
+  try {
+    fullEnv = await guardedGitEnv(cwd, { hooks, timeout, env: { ...(hooks ? stripHostCredentials(process.env) : process.env), ...env } });
+  } catch (err) { return { ok: false, stdout: '', stderr: err.message, code: -1 }; }
   return new Promise((res) => {
     let child;
     try {
-      child = spawn('git', args, {
-        cwd, stdio: ['ignore', 'pipe', 'pipe'], signal,
-        ...(env ? { env: { ...process.env, ...env } } : {}),
-      });
+      child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], signal, env: fullEnv });
     } catch (err) {
       res({ ok: false, stdout: '', stderr: err.message, code: -1 });
       return;
@@ -359,7 +372,7 @@ export async function createWorktree({
   const branches = await listLocalBranches(projectDir);
   const reusedExisting = branches.includes(branch);
 
-  let args;
+  let add;
   if (reusedExisting) {
     // M2: git forbids checking out one branch in two worktrees at once. Reap
     // stale registrations first; if a *live* worktree still holds it, fail with
@@ -369,7 +382,7 @@ export async function createWorktree({
     if (inUse && resolve(inUse) !== resolve(worktreeDir)) {
       throw new Error(`branch "${branch}" is already checked out in worktree ${inUse}`);
     }
-    args = ['worktree', 'add', '--', worktreeDir, branch];
+    add = { commitish: branch };
   } else {
     // M1: validate the source resolves to a real commit (rejects leading-dash
     // option injection and unknown refs); '--' stops git parsing the trailing
@@ -377,9 +390,9 @@ export async function createWorktree({
     if (!(await isValidSourceRef(projectDir, sourceBranch))) {
       throw new Error(`sourceBranch is not a valid ref: ${JSON.stringify(sourceBranch)}`);
     }
-    args = ['worktree', 'add', '-b', branch, '--', worktreeDir, sourceBranch];
+    add = { commitish: sourceBranch, branch };
   }
-  const r = await git(projectDir, args, { signal, timeout: SLOW_GIT_TIMEOUT_MS });
+  const r = await worktreeAdd(projectDir, worktreeDir, add.commitish, { branch: add.branch, signal });
   if (!r.ok) {
     const err = new Error(`git worktree add failed: ${r.stderr.trim() || `exit ${r.code}`}`);
     // The ONE abort path that surfaced as a PLAIN error: on signal abort Node
@@ -487,8 +500,7 @@ export async function createDetachedWorktree({ projectDir, worktreeDir, ref, sig
   // and a fast git can register the worktree first — a checkout no caller knows to remove.
   if (signal?.aborted) throw abortError('git worktree add --detach aborted before it started');
   const existed = existsSync(worktreeDir);
-  const r = await git(projectDir, ['worktree', 'add', '--detach', '--', worktreeDir, ref],
-    { signal, timeout: SLOW_GIT_TIMEOUT_MS });
+  const r = await worktreeAdd(projectDir, worktreeDir, ref, { detach: true, signal });
   if (!r.ok) {
     if (signal?.aborted) {
       // Killed mid-way: git may already have registered (or even finished) the checkout.
@@ -586,6 +598,23 @@ export function runGitCapture(cwd, args, { signal, timeoutMs = SLOW_GIT_TIMEOUT_
 }
 
 /**
+ * `paths` minus the ones an ignore rule already covers. `git add` exits 1 on an exclude pathspec under an ignored
+ * directory ("paths are ignored … use -f"): a project's own `.claude/` line over the memory mount fails every commit.
+ * `add -A` never stages an ignored path anyway, so dropping its exclude changes nothing else. `runGit(args)` resolves
+ * to `{ code, stdout }`; when check-ignore itself fails, every path is kept.
+ * @param {string[]} paths
+ * @param {(args:string[]) => Promise<{code:number, stdout:string}>} runGit
+ * @returns {Promise<string[]>}
+ */
+export async function withoutIgnored(paths, runGit) {
+  if (!paths.length) return paths;
+  const r = await runGit(['-c', 'core.quotePath=false', 'check-ignore', '--', ...paths]);
+  if (r.code !== 0) return paths;   // 1: none ignored; anything else: keep them all
+  const ignored = new Set(r.stdout.split('\n').map((l) => l.trim()).filter(Boolean));
+  return paths.filter((p) => !ignored.has(p));
+}
+
+/**
  * Commit a retained worktree's work onto its checked-out branch: the end-of-run commit that failed
  * (run-harness `_commitWork`), asked for again by Apply to branch. Same staging — each `exclude` path is
  * dropped from the index first (`git add -A` with an exclude never unstages) and excluded from `add -A`
@@ -595,15 +624,17 @@ export function runGitCapture(cwd, args, { signal, timeoutMs = SLOW_GIT_TIMEOUT_
  * (step 'branch') unless HEAD is that branch: a person may have detached or switched the retained worktree
  * while recovering by hand, and Apply deletes the worktree after a good commit. For the same reason it refuses
  * (step 'add') a worktree with unresolved conflicts, which `add -A` would mark resolved.
+ * `message` is the commit message, or a function `(changes) => string|Promise<string>` called once something is
+ * staged, with the staged changes (commit-message.mjs `readStagedChanges`, null when git cannot tell).
  * @returns {Promise<{ok:true, committed:boolean, sha:string|null, hooksBypassed:boolean}
  *                  |{ok:false, step:'status'|'branch'|'add'|'commit', message:string}>}
  */
 export async function commitStagedWork(worktreeDir, { message, exclude = [], bypassHooks = false, branch = null } = {}) {
-  const run = (args) => git(worktreeDir, args, { timeout: SLOW_GIT_TIMEOUT_MS });
+  const run = (args, o = {}) => git(worktreeDir, args, { timeout: SLOW_GIT_TIMEOUT_MS, ...o });
   const msgOf = (r) => r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`;
-  const indexWrite = async (args) => {
-    let r = await run(args);
-    if (!r.ok && (await clearStaleGitLocks(worktreeDir)).length) r = await run(args);
+  const indexWrite = async (args, o) => {
+    let r = await run(args, o);
+    if (!r.ok && (await clearStaleGitLocks(worktreeDir)).length) r = await run(args, o);
     return r;
   };
   const status = await run(['status', '--porcelain']);
@@ -625,17 +656,20 @@ export async function commitStagedWork(worktreeDir, { message, exclude = [], byp
     return { ok: false, step: 'add', message: `the worktree has unresolved conflicts (${files.slice(0, 5).join(', ')}${files.length > 5 ? ', and more' : ''}): resolve them or abort the merge, then apply again` };
   }
   for (const p of exclude) await indexWrite(['rm', '-r', '--cached', '-q', '--ignore-unmatch', '--', p]);
-  const present = exclude.filter((p) => existsSync(join(worktreeDir, p)));
+  const present = await withoutIgnored(exclude.filter((p) => existsSync(join(worktreeDir, p))), run);
   const add = await indexWrite(['add', '-A', '--', '.', ...present.map((p) => `:(exclude)${p}`)]);
   if (!add.ok) return { ok: false, step: 'add', message: msgOf(add) };
   const staged = await run(['diff', '--cached', '--quiet']);
   if (staged.ok) return { ok: true, committed: false, sha: null, hooksBypassed: false };   // exit 0 = nothing staged
+  // A function message is built from what is staged now (Apply's run commit message, commit-message.mjs).
+  const text = typeof message === 'function' ? await message(await readStagedChanges((args) => run(args))) : message;
   const local = ['-c', 'user.email=orchestrator@local', '-c', 'user.name=orchestrator'];
-  let commit = await indexWrite(['commit', '-m', message]);
-  if (!commit.ok) commit = await run([...local, 'commit', '-m', message]);
+  // As at teardown, the project's own commit hooks run (git-guard.mjs: never under agent isolation).
+  let commit = await indexWrite(['commit', '-m', text], { hooks: true });
+  if (!commit.ok) commit = await run([...local, 'commit', '-m', text], { hooks: true });
   let hooksBypassed = false;
   if (!commit.ok && bypassHooks) {
-    commit = await run(['-c', 'core.hooksPath=', ...local, 'commit', '-m', message]);
+    commit = await run(['-c', 'core.hooksPath=', ...local, 'commit', '-m', text]);
     hooksBypassed = commit.ok;
   }
   if (!commit.ok) return { ok: false, step: 'commit', message: msgOf(commit) };
@@ -683,7 +717,7 @@ export async function snapshotWorktreePatch(worktreeDir, outFile) {
     return done({ ok: false, step: 'add', message: add.stderr.trim() || `exit ${add.code}`, fromStderr: !!add.stderr.trim() });
   }
   const part = `${outFile}.part`;
-  const diff = await git(worktreeDir, ['diff', '--binary', `--output=${part}`, 'HEAD', '--'],
+  const diff = await git(worktreeDir, ['diff', '--binary', '--no-ext-diff', `--output=${part}`, 'HEAD', '--'],
     { timeout: SLOW_GIT_TIMEOUT_MS });
   if (!diff.ok) {
     await rm(part, { force: true }).catch(() => {});
@@ -835,6 +869,25 @@ export async function sweepRunRoots({
       out.quarantined.push(dir);
       say('warn', `quarantine ${dir}: unknown status ${status}`);
       continue;
+    }
+
+    // 3.7: `done` is persisted before the teardown commit, so a crash in between leaves a terminal row whose
+    // checkout holds the run's only copy of its work. A terminal root that is still here was never torn down:
+    // keep it while any member checkout has uncommitted changes (the next sweep reclaims it once clean).
+    if (status) {
+      const dirty = [];
+      for (const m of manifest?.members || []) {
+        if (!m?.worktreeDir || m.workMode === 'folder' || !existsSync(m.worktreeDir)) continue;
+        const st = await git(m.worktreeDir, ['status', '--porcelain'], { timeout: 15_000 });
+        if (!st.ok || String(st.stdout || '').trim()) dirty.push(m.worktreeDir);
+      }
+      if (dirty.length) {
+        const reason = `keep ${dir} (${status}): uncommitted work in ${dirty.join(', ')} — the run ended before its work was committed`;
+        out.keep.push(dir);
+        out.warnings.push(reason);
+        say('warn', reason);
+        continue;
+      }
     }
 
     // status ∈ REMOVE, or the row is gone (deleted pipeline): reclaim.

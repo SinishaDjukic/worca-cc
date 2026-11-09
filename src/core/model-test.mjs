@@ -54,7 +54,6 @@ export const CODEX_ENDPOINT_NETWORK_HINT = "endpoint unreachable — check this 
 export function bridgeHintFor(reason, provider = 'the provider') {
   switch (reason) {
     case 'not_signed_in': return `sign in to ${provider} on the Providers page (or \`worca models login ${provider}\`)`;
-    case 'terms': return 'acknowledge the GitHub Copilot notice on the Providers page first';
     case 'no_key': return `set an API key for ${provider} on the Providers page, or on this model's Connection`;
     default: return '';
   }
@@ -103,7 +102,9 @@ export async function testModel(id, { signal, bin, run = runClaude, signedOut = 
       modelEnv: onClaude ? resolveModelEnv(id) : undefined,
       // Codex and Copilot run it read-only. The sign-in engines have no read-only mode; the prompt is worca's own text.
       ...(onClaude ? {} : { engine, ...(engine === 'codex' || engine === 'copilot' ? { sandbox: 'read-only' } : {}) }),
-      effort: AUX_EFFORT,
+      // Copilot refuses --reasoning-effort on a model without reasoning (Claude Haiku 4.5: "does not support reasoning
+      // effort configuration"), and its built-in rows cannot tell which: the test names no effort there.
+      ...(engine === 'copilot' ? {} : { effort: AUX_EFFORT }),
       permissionMode: 'acceptEdits',
       allowedTools: [],          // empty → no --allowedTools flag; pure text gen
       ...(onClaude ? { tools: [], strictMcpConfig: true } : {}),   // and no tools at all: cwd is the server's own checkout

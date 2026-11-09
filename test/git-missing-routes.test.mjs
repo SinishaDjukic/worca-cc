@@ -47,7 +47,7 @@ test('routes while git is missing', async (t) => {
   withNoGit(t);
   await checkRows([
     { name: 'every table entry shadows a real handler (no typo can hide a route)', run: () => {
-      const layers = app._router.stack.filter((l) => l.route);
+      const layers = app.router.stack.filter((l) => l.route);
       for (const [m, p] of T.GIT_ONLY_ROUTES) assert.ok(layers.filter((l) => l.route.path === p && l.route.methods[m]).length >= 2, `${m} ${p}`);
     } },
     { name: 'every non-U2a table entry: 409 GIT_MISSING', run: async () => {
@@ -65,7 +65,7 @@ test('routes while git is missing', async (t) => {
       const key = (await addProject({ name: 'p0gl', path: team })).find((x) => x.name === 'p0gl').key;
       for (const [m, p, body] of [
         ['post', '/api/marketplaces', { url: off }],
-        ['post', '/api/plugins/install', { repoUrl: off, name: 'p0other', sha: 'a'.repeat(40) }], ['post', '/api/plugins/p0plugin/update', { confirm: true }],
+        ['post', '/api/plugins/install', { repoUrl: off, name: 'p0other', sha: 'a'.repeat(40) }], ['post', '/api/plugins/p0plugin/update', { confirm: true, candidateSha: 'b'.repeat(40) }],
         ['post', '/api/skills/import/preview', { source: { kind: 'git', url: 'https://gitlab.com/acme/skills' } }],
         ['post', `/api/projects/${key}/team-metrics/enable`, {}], ['post', `/api/projects/${key}/policy/enable`, {}],
       ]) {

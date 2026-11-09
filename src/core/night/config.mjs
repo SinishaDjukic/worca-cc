@@ -21,7 +21,9 @@ export const NIGHT_DEFAULTS = Object.freeze({
   enabled: false, window: null, timeZone: null, graceMinutes: 30, strategy: 'mixed',
   minConfidence: 60, minMargin: 25,
   criteria: Object.freeze({ matchesMemory: 3, reversible: 3, smallestScope: 2, codebaseConventions: 2, cost: 1 }),
-  neverDecide: Object.freeze([]), spendCapUsd: null, maxDecisions: 20, maxExtraCycles: 1,
+  neverDecide: Object.freeze([]), spendCapUsd: null, maxDecisions: 20,
+  // 0: at a spent loop Away continues (flagged) like a --yes run instead of buying another round.
+  maxExtraCycles: 0,
   allowCostCapOverride: false,
   // The nightDecider's model (a catalog id; null = the run's model) and effort (null = medium).
   // Shape only here: catalog membership is checked when the decider runs (night/decider-model.mjs).

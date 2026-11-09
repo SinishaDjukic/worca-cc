@@ -8,20 +8,26 @@
 // Config+secrets+state travel via STDIN — never argv (visible in `ps`), never env
 // (inherited by grandchildren). The child env is scrubbed to {PATH, HOME}, the
 // proxy variables (never a proxy URL with credentials) and the CA bundle paths, so
-// plugin X can never read plugin Y's secrets or the host environment. stateDelta
+// plugin Y's secrets and the host environment are not handed to plugin X. That is
+// all the env does: on a single-user install the child runs as worca, and its code
+// can still open every plugins/*/data/secrets.json from disk. Only a container
+// with a plugin user (pluginChildSpawn) puts a uid boundary there. stateDelta
 // is applied HOST-side via writePluginState (the child has no WORCA_HOME and
 // never touches the store). WORCA_MOCK=1 short-circuits the spawn with canned
 // per-op responses so smoke/tests run offline with zero plugins installed.
 
+import { redactAskText } from './ask/redact.mjs';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { envFlag } from './model-env.mjs';
+import { PROXY_URL_NAMES, proxyUrlHasLogin } from './env-proxy.mjs';
 import { WORCA_PLUGIN_API } from './plugin-api.mjs';
 import { normalizeManifest, negotiatedApi } from './plugin-manifest.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs';
 import { readPluginConfig, readPluginState, writePluginState, listProfileIds, DEFAULT_PROFILE } from './plugin-config.mjs';
+import { agentSpawn, killAgentGroup, pluginIdentity } from './agent-user.mjs';
 
 const CHILD_PATH = fileURLToPath(new URL('./plugin-shim-child.mjs', import.meta.url));
 
@@ -46,27 +52,17 @@ export class PluginOpError extends Error {
 // ── WORCA_MOCK=1: canned responses, never spawns ─────────────────────────────
 
 let _mockResponses = null; // op -> value | (args) => value; null = defaults only
+// The canned answers (plugin-shim-mock.mjs), imported on the first mock call only: a real run never loads the fixtures.
+let _mockModule = null;
+const mockFixtures = () => (_mockModule ??= import('./plugin-shim-mock.mjs'));
 
-/** Tests: override/extend the canned per-op responses. Pass null to reset. */
+/** Tests: override/extend the canned per-op responses. Pass null to reset (A6: the mock ticket numbers restart at 123). */
 export function setMockSourceResponses(map) {
   _mockResponses = map && typeof map === 'object' ? map : null;
+  // fixtures not loaded yet have nothing to reset; once loaded the reset runs before any later mock call reads them
+  if (!_mockResponses && _mockModule) _mockModule.then((m) => m.resetMockTickets());
 }
 
-const MOCK_TASKS = [
-  { id: 'MOCK-1', title: 'Fix the login redirect', url: 'https://mock.test/MOCK-1', state: 'open', labels: ['bug'], updatedAt: '2026-07-12T00:00:00.000Z' },
-  { id: 'MOCK-2', title: 'Add CSV export to reports', url: 'https://mock.test/MOCK-2', state: 'open', labels: ['feature'], updatedAt: '2026-07-12T00:00:00.000Z' },
-];
-const MOCK_DEFAULTS = {
-  listTasks: () => ({ tasks: MOCK_TASKS.map((t) => ({ ...t })) }),
-  getTask: (args) => ({
-    ...MOCK_TASKS[0],
-    id: args?.id || MOCK_TASKS[0].id,
-    body: 'Mock task body.\n\n1. reproduce\n2. fix\n3. verify',
-    meta: { mock: true },
-  }),
-  reportResult: () => ({ ok: true }),
-  validateConfig: () => ({ ok: true }),
-};
 
 /** Same env-flag semantics as claude-runner.mjs#mockEnabled — one shared rule. */
 function mockMode() {
@@ -74,7 +70,7 @@ function mockMode() {
 }
 
 async function mockCall(op, args) {
-  const entry = _mockResponses && op in _mockResponses ? _mockResponses[op] : MOCK_DEFAULTS[op];
+  const entry = _mockResponses && op in _mockResponses ? _mockResponses[op] : (await mockFixtures()).MOCK_DEFAULTS[op];
   if (entry === undefined) {
     // Mirror the real child's answer for an unimplemented op — Task 13's
     // capabilities tolerant-default keys on exactly this kind.
@@ -128,7 +124,7 @@ export function scrubbedEnv(platform = process.platform, env = process.env) {
   // secret, though, so then NO proxy URL passes (one alone would half-route the
   // child): it goes direct, and worca says why (withheldProxyNotice). NO_PROXY
   // and the CA paths never carry one.
-  const names = proxyHasCredentials(env) ? NO_PROXY_NAMES : [...PROXY_URL_NAMES, ...NO_PROXY_NAMES];
+  const names = proxyUrlHasLogin(env) ? NO_PROXY_NAMES : [...PROXY_URL_NAMES, ...NO_PROXY_NAMES];
   for (const k of [...names, ...CA_NAMES]) if (env[k]) child[k] = env[k];
   // Windows has no HOME and a child cannot even start without SYSTEMROOT (Node
   // docs); the rest are the non-secret system vars node/npm need to resolve
@@ -140,18 +136,10 @@ export function scrubbedEnv(platform = process.platform, env = process.env) {
   return child;
 }
 
-const PROXY_URL_NAMES = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'];
 const NO_PROXY_NAMES = ['NO_PROXY', 'no_proxy'];
 /** The CA names engines/spawn.mjs SPAWN_ENV_BASE passes too: node reads the first,
- *  the tools a connector may run (gh, curl, git) the other two. */
-const CA_NAMES = ['NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR'];
-
-/** URL credentials always need an '@' (user:password@, token@, the scheme-less
- *  user:password@host form) and a host never has one, so any '@' counts, even
- *  in a value that is not a valid URL. */
-function proxyHasCredentials(env = process.env) {
-  return PROXY_URL_NAMES.some((k) => String(env[k] || '').includes('@'));
-}
+ *  the tools a connector may run (gh, curl, git, Python) the rest. */
+const CA_NAMES = ['NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'GIT_SSL_CAINFO', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE'];
 
 let withheldProxyNoticed = false;
 
@@ -160,9 +148,9 @@ let withheldProxyNoticed = false;
  *  the variables only, never a value. The UI server prints it at boot, before
  *  any plugin spawn; every other process at its first one (warnWithheldProxy). */
 export function withheldProxyNotice() {
-  if (withheldProxyNoticed || !proxyHasCredentials()) return null;
+  if (withheldProxyNoticed || !proxyUrlHasLogin()) return null;
   withheldProxyNoticed = true;
-  return 'proxy: HTTP(S)_PROXY carries credentials, which plugin code never receives; plugin connectors and chat channels go direct';
+  return 'proxy: HTTP(S)_PROXY carries credentials, which plugin code never receives, and the corporate proxy is not running; plugin connectors and chat channels go direct';
 }
 
 /** Every plugin spawn calls this: withheldProxyNotice() on stderr, the process's
@@ -183,16 +171,40 @@ export const WIN32_ENV_BASELINE = Object.freeze([
   'USERPROFILE', 'SYSTEMROOT', 'SYSTEMDRIVE', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'APPDATA', 'LOCALAPPDATA',
 ]);
 
+/** The spawn for one plugin child (connector op, chat worker, channel check): node with
+ *  `nodeArgs` under the scrubbed env. On a container with a plugin user (agent-user.mjs
+ *  pluginIdentity) it runs as that user with its own HOME, in its own process group so
+ *  killPluginChild reaches it behind sudo: there it cannot open plugins/<name>/data or worca's
+ *  home. Without one it runs as worca, which can read both.
+ *  @returns {{file:string, args:string[], options:{env:object, detached?:boolean}, user:object|null}} */
+export function pluginChildSpawn(nodeArgs, { env = process.env, platform = process.platform } = {}) {
+  const childEnv = scrubbedEnv(platform, env);
+  const user = platform !== 'win32' ? pluginIdentity(env) : null;
+  if (!user) return { file: process.execPath, args: nodeArgs, options: { env: childEnv }, user: null };
+  const s = agentSpawn(process.execPath, nodeArgs, childEnv, user);
+  return { file: s.file, args: s.args, options: { env: s.env, detached: true }, user };
+}
+
+/** SIGKILL a child from pluginChildSpawn. Under the plugin user the server can signal sudo
+ *  but not the node behind it, so the group goes down through sudo too. */
+export function killPluginChild(child, user, killGroup = killAgentGroup) {
+  const alive = child.exitCode == null && child.signalCode == null;
+  try { child.kill('SIGKILL'); } catch { /* gone */ }
+  if (user && alive) killGroup(child.pid, user);
+}
+
 /** The profile invariant, enforced in the shim itself so EVERY caller — the
  *  CLI's `worca plugin exec`, future workers — is safe by construction, not
  *  just the HTTP routes. Presence alone is not enough: a typo'd or deleted
  *  profile passes a presence check, silently runs against an EMPTY bucket
  *  (false "not configured" verdicts) and then persists state into a phantom
  *  bucket the DELETE route can never purge — so membership in the roster is
- *  checked here too. `allowLegacyDefault` is the ONE host-internal exception:
+ *  checked here too. `allowLegacyDefault` is the host-internal exception, used twice:
  *  write-back for a pipeline row that predates profiles targets the
  *  DEFAULT_PROFILE bucket, because that is where the pre-upgrade flat config
- *  migrated — i.e. the instance the task actually came from (sources.mjs). */
+ *  migrated — i.e. the instance the task actually came from (sources.mjs). The
+ *  Ticket updates GET also uses it to ask `capabilities` before the first profile
+ *  exists (ticket-updates-routes.mjs). */
 function assertProfileInvariant({ plugin, sourceId, source, profile, allowLegacyDefault }) {
   if (source.multiProfile === true) {
     if (!profile) {
@@ -214,12 +226,28 @@ function assertProfileInvariant({ plugin, sourceId, source, profile, allowLegacy
 }
 
 /**
+ * stdout parsed as one whole protocol frame, or null. A frame is what the child
+ * writes: an object with a boolean `ok` AND a `logs` array. `ok` alone is not
+ * enough: a connector that printed e.g. a Slack body `{"ok":true}` and crashed
+ * must stay a protocol error.
+ */
+function completeFrame(stdout) {
+  try {
+    const frame = JSON.parse(stdout);
+    return frame && typeof frame === 'object' && !Array.isArray(frame) && typeof frame.ok === 'boolean' && Array.isArray(frame.logs) ? frame : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Run ONE connector op in an ephemeral child. Resolves with the op result;
  * rejects with PluginOpError. `logger(level, msg)` is optional — connector
  * ctx.log lines route there (default: console.error, since stdout is the UI's).
- * `allowLegacyDefault` (host-internal, never surfaced to CLI/routes) lets the
- * legacy write-back path name DEFAULT_PROFILE on a multiProfile source — see
- * assertProfileInvariant.
+ * `allowLegacyDefault` (host-internal, never surfaced to CLI or a request) lets the
+ * legacy write-back path name DEFAULT_PROFILE on a multiProfile source, and lets the
+ * Ticket updates GET probe `capabilities` for a source whose roster is still empty
+ * (plans/ticket-updates-plan.md Deviation 2) — see assertProfileInvariant.
  * @returns {Promise<any>}
  */
 export async function callSource({ plugin, sourceId, op, args = {}, profile, timeoutMs = 30000, logger, allowLegacyDefault = false } = {}) {
@@ -266,34 +294,50 @@ export async function callSource({ plugin, sourceId, op, args = {}, profile, tim
   const frame = await new Promise((resolveFrame, rejectFrame) => {
     // WORCA_PLUGIN_INSPECT=1 attaches the debugger to the connector child
     // (`worca plugin exec --inspect` sets it; spec §7.2 debuggability).
-    const child = spawn(process.execPath,
-      [...(process.env.WORCA_PLUGIN_INSPECT ? ['--inspect-brk'] : []), CHILD_PATH], {
-      env: scrubbedEnv(),
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    const run = pluginChildSpawn([...(process.env.WORCA_PLUGIN_INSPECT ? ['--inspect-brk'] : []), CHILD_PATH]);
+    const child = spawn(run.file, run.args, { ...run.options, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     let timedOut = false;
     let settled = false;
-    const killTimer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
+    const killTimer = setTimeout(() => { timedOut = true; killPluginChild(child, run.user); }, timeoutMs);
     const settle = (fn, v) => { if (!settled) { settled = true; clearTimeout(killTimer); fn(v); } };
     child.stdout.setEncoding('utf8').on('data', (c) => { stdout += c; });
     child.stderr.setEncoding('utf8').on('data', (c) => { stderr += c; });
     child.on('error', (err) => settle(rejectFrame, new PluginOpError('protocol', `plugin "${plugin}": spawn failed — ${err.message}`)));
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
+      const answered = completeFrame(stdout);
       if (timedOut) {
+        // A frame written just before the deadline can still be followed by a
+        // slow exit (leftover handle, grace period): the answer wins. An op
+        // that never answers has no frame and still ends as a timeout.
+        if (answered) {
+          log('warn', `plugin "${plugin}" op "${op}": the child was killed after answering `
+            + `(timeout ${timeoutMs}ms); its answer is kept`);
+          return settle(resolveFrame, answered);
+        }
         return settle(rejectFrame, new PluginOpError('timeout', `plugin "${plugin}" op "${op}" exceeded ${timeoutMs}ms (child killed)`));
       }
       if (code !== 0) {
+        // The child can die AFTER its frame is fully written: Node 24 on Windows
+        // asserts in libuv during process.exit(0) once a connector made one HTTPS
+        // fetch (exit 0xC0000409). A complete frame on stdout is the answer; keep
+        // it and say so. Anything less is still "crashed before the frame".
+        if (answered) {
+          // The crash line is usually the last one, not the first. Connector
+          // stderr can carry credentials: only a redacted, capped line is logged.
+          const lines = stderr.split(/\r?\n/).filter((l) => l.trim());
+          const line = lines.length ? lines[lines.length - 1] : '';
+          log('warn', `plugin "${plugin}" op "${op}": the child crashed on exit after answering `
+            + `(exit ${code ?? signal})${line ? ` — ${redactAskText(line.trim().slice(0, 400)).slice(0, 160)}` : ''}; its answer is kept`);
+          return settle(resolveFrame, answered);
+        }
         return settle(rejectFrame, new PluginOpError('protocol',
-          `plugin "${plugin}" op "${op}": child exited ${code}${stderr ? ` — ${stderr.slice(0, 400)}` : ''}`));
+          `plugin "${plugin}" op "${op}": child exited ${code ?? signal}${stderr ? ` — ${stderr.slice(0, 400)}` : ''}`));
       }
-      try {
-        settle(resolveFrame, JSON.parse(stdout));
-      } catch {
-        settle(rejectFrame, new PluginOpError('protocol',
-          `plugin "${plugin}" op "${op}": non-JSON on stdout (stdout is protocol-reserved; use ctx.log) — got: ${stdout.slice(0, 200)}`));
-      }
+      if (answered) return settle(resolveFrame, answered);
+      settle(rejectFrame, new PluginOpError('protocol',
+        `plugin "${plugin}" op "${op}": non-JSON on stdout (stdout is protocol-reserved; use ctx.log) — got: ${stdout.slice(0, 200)}`));
     });
     child.stdin.end(payload); // config/secrets/state via stdin only
   });

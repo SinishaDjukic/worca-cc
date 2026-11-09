@@ -37,7 +37,7 @@ Pipelines never load it, mock or real.
 
 ## Requirements
 
-### Node.js 22.13.0 or newer
+### Node.js 22.19.0 or newer
 
 Worca's store is the built-in `node:sqlite`. On an older Node, the CLI says so and exits.
 

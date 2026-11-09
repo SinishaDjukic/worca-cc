@@ -10,18 +10,19 @@ import * as workflows from '../src/core/workflows.mjs';
 import {
   SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_WORKFLOW_NAME, SHAPE_CLARIFY_HINTS,
   GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, GRAPH_DEFAULT_WORKFLOW, RESERVED_WORKFLOW_IDS, isReservedWorkflowId,
+  SHAPE_CODE_ROLES_CONFIG,
 } from '../src/core/graph/builtin-workflows.mjs';
 import {
   resolveShapeRequest, validatePlanAnswer, renderPlanFeedback, isShapeWorkflowId, PLAN_ASK_KIND, PLAN_FEEDBACK_MAX,
   initialShaping, planFileOf,
 } from '../src/core/shape/run.mjs';
-import { DEFAULT_PERSPECTIVES } from '../src/shared/shape/perspectives.mjs';
+import { DEFAULT_PERSPECTIVES, PERSPECTIVES } from '../src/shared/shape/perspectives.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { loadScriptRegistry } from '../src/core/script-registry.mjs';
 import { validateGraph } from '../src/shared/graph/validate.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -29,6 +30,7 @@ import { gitDir } from './helpers/git-dir.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { _testing } from '../src/core/graph/executor.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
+import { getDb } from '../src/core/db.mjs';
 import { RESERVED_WORKFLOW_IDS as COMPOSER_RESERVED } from '../ui/public/graph/composer.mjs';
 
 useTempHome(after);
@@ -75,14 +77,19 @@ test('both are reserved ids, in the server list and the composer twin', () => {
     assert.equal(isReservedWorkflowId(id), true, id);
     assert.ok(COMPOSER_RESERVED.has(id), `composer ${id}`);
   }
-  assert.deepEqual([...COMPOSER_RESERVED].sort(), [...['wf_default', 'wf_memory_defrag', 'wf_shape', 'wf_shape_ux']].sort());
+  assert.deepEqual([...COMPOSER_RESERVED].sort(), [...['wf_default', 'wf_lean_build', 'wf_memory_defrag', 'wf_shape', 'wf_shape_ux']].sort());
 });
 
 test('role reviews (spec §3): both shape graphs fan the plan out to n_roles and loop only roles → refine, at most 2 rounds', () => {
   for (const wf of [GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW]) {
     const roles = wf.nodes.find((n) => n.id === 'n_roles');
     assert.equal(roles.key, 'planReviewer', wf.id);
-    assert.deepEqual(roles.config, { roleReview: true, model: 'claude-sonnet-5-5', effort: 'medium' }, wf.id);
+    assert.deepEqual(roles.config, {
+      roleReview: {
+        roles: PERSPECTIVES.map(({ key, label }) => ({ key, label })),
+        source: 'picked', target: 'plan', checklist: 'perspectives', sink: 'refiner', secondOpinion: 'product',
+      },
+    }, wf.id, 'no model pins: the models are Models page homes (factory-models.mjs)');
     assert.equal(wf.nodes.find((n) => n.id === 'n_refine').config.awaitAll, true, wf.id);
     assert.ok(!wf.wires.some((w) => edge(w) === 'n_refine.revise->n_refine.revise'), `${wf.id}: no refiner self-loop`);
     const w5 = wf.wires.find((w) => w.id === 'w5');
@@ -94,6 +101,23 @@ test('role reviews (spec §3): both shape graphs fan the plan out to n_roles and
   }
   assert.ok(GRAPH_DEFAULT_WORKFLOW.wires.some((w) => w.id === 'w5' && edge(w) === 'n_refine.revise->n_refine.revise'), 'wf_default keeps its self-loop');
   assert.ok(!GRAPH_DEFAULT_WORKFLOW.nodes.some((n) => n.key === 'planReviewer'));
+});
+
+test('code role reviews (#990 slice 4): both shape graphs\' Review declares correctness, security and fit on the diff, wires unchanged', () => {
+  const spec = { roleReview: { roles: [{ key: 'correctness', label: 'Correctness' }, { key: 'security', label: 'Security' }, { key: 'fit', label: 'Project fit' }],
+    source: 'declared', target: 'diff', sink: 'implementer' } };
+  assert.deepEqual(SHAPE_CODE_ROLES_CONFIG, spec);
+  for (const wf of [GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW]) {
+    const review = wf.nodes.find((n) => n.id === 'n_review');
+    assert.equal(review.key, 'reviewer', wf.id);
+    assert.deepEqual(review.config, spec, `${wf.id}: no node model, no diversity pick`);
+  }
+  const into = (wf) => wf.wires.filter((w) => w.from.node === 'n_review' || w.to.node === 'n_review').map((w) => `${w.id} ${edge(w)}`);
+  assert.deepEqual(into(GRAPH_SHAPE_WORKFLOW), ['w7 n_refine.plan->n_review.plan', 'w8 n_impl.done->n_review.done',
+    'w9 n_review.review->n_impl.fix', 'w10 n_review.pass->n_end.result']);
+  assert.deepEqual(into(GRAPH_SHAPE_UX_WORKFLOW), ['w7 n_refine.plan->n_review.plan', 'w8 n_impl.done->n_review.done',
+    'w9 n_review.review->n_or.in1', 'w12 n_review.pass->n_check.await']);
+  assert.deepEqual(GRAPH_DEFAULT_WORKFLOW.nodes.find((n) => n.id === 'n_review').config, {}, 'Default keeps its single reviewer');
 });
 
 test('both validate with zero errors and zero warnings', () => {
@@ -162,6 +186,15 @@ test('validatePlanAnswer: approve and stop are always ok', () => {
   assert.equal(PLAN_ASK_KIND, 'plan');
   assert.deepEqual(validatePlanAnswer({ decision: 'approve' }), { ok: true, payload: { decision: 'approve' } });
   assert.deepEqual(validatePlanAnswer({ decision: 'stop', feedback: 'ignored' }), { ok: true, payload: { decision: 'stop' } });
+});
+
+test('validatePlanAnswer: a failing criteria check refuses approve and admits revise and stop', () => {
+  const criteria = { ok: false, passed: 6, total: 8 };
+  assert.deepEqual(validatePlanAnswer({ decision: 'approve' }, { criteria, decisions: [] }),
+    { ok: false, errors: [{ path: 'decision', code: 'invalid', message: 'the requirements check has 2 to fix: ask for changes' }] });
+  assert.equal(validatePlanAnswer({ decision: 'stop' }, { criteria, decisions: [] }).ok, true);
+  assert.equal(validatePlanAnswer({ decision: 'revise', feedback: 'x' }, { revisable: true, criteria, decisions: [] }).ok, true);
+  assert.equal(validatePlanAnswer({ decision: 'approve' }, { criteria: { ok: true, passed: 8, total: 8 }, decisions: [] }).ok, true);
 });
 
 test('validatePlanAnswer: revise needs feedback and a revisable plan', () => {
@@ -241,6 +274,73 @@ test('validatePlanAnswer: revise takes an optional source; only check is carried
   assert.deepEqual(ok({ decision: 'revise', feedback: 'x', source: 'person' }).payload, { decision: 'revise', feedback: 'x' });
   assert.deepEqual(ok({ decision: 'revise', feedback: 'x', source: 'check' }).payload, { decision: 'revise', feedback: 'x', source: 'check' });
   assert.deepEqual(ok({ decision: 'revise', feedback: 'x', source: 'bot' }).errors, [{ path: 'source', code: 'invalid', message: 'source must be person or check' }]);
+});
+
+// ── conflict picks (#990 slice 3): optional on every decision, checked against the asked round's conflicts ──
+
+const CONFLICTS = [{ id: 'conflict-1', findings: ['ux-1-1', 'qa-1-1'], roles: ['ux', 'qa'], section: 'Testing', question: 'Modal or inline?', options: ['Modal', 'Inline'] }];
+
+test('validatePlanAnswer: valid picks pass on approve, revise and stop', () => {
+  const picks = [{ id: 'conflict-1', choice: 'Inline' }];
+  assert.deepEqual(validatePlanAnswer({ decision: 'approve', conflicts: picks }, { conflicts: CONFLICTS }),
+    { ok: true, payload: { decision: 'approve', conflicts: picks } });
+  assert.deepEqual(validatePlanAnswer({ decision: 'stop', conflicts: picks }, { conflicts: CONFLICTS }).payload, { decision: 'stop', conflicts: picks });
+  assert.deepEqual(validatePlanAnswer({ decision: 'revise', feedback: 'x', conflicts: picks }, { revisable: true, conflicts: CONFLICTS }).payload,
+    { decision: 'revise', feedback: 'x', conflicts: picks });
+});
+
+test('validatePlanAnswer: an unknown pick id is dropped; approve without picks is ok', () => {
+  assert.deepEqual(validatePlanAnswer({ decision: 'approve', conflicts: [{ id: 'conflict-9', choice: 'x' }] }, { conflicts: CONFLICTS }),
+    { ok: true, payload: { decision: 'approve', conflicts: [] } });
+  assert.deepEqual(validatePlanAnswer({ decision: 'approve' }, { conflicts: CONFLICTS }), { ok: true, payload: { decision: 'approve' } });
+});
+
+test('validatePlanAnswer: bad picks refuse with 422 errors', () => {
+  const r = validatePlanAnswer({ decision: 'approve', conflicts: [{ id: 'conflict-1', choice: 'x'.repeat(501) }] }, { conflicts: CONFLICTS });
+  assert.deepEqual(r, { ok: false, errors: [{ path: 'conflicts', code: 'invalid', message: 'a decision is over 500 characters' }] });
+});
+
+/** A mock wf_shape run whose UX and QA findings conflict on one section; `onPlan(q, orch)` answers the plan ask. */
+async function conflictRun(onPlan) {
+  const prev = process.env.WORCA_MOCK_CONFLICTS;
+  process.env.WORCA_MOCK_CONFLICTS = JSON.stringify([{ findings: ['ux-1-1', 'qa-1-1'], question: 'Modal or inline?', options: ['Modal', 'Inline'] }]);
+  try {
+    const orch = createOrchestrator({ projectDir: gitDir('conflicts'), workflowId: 'wf_shape', prompt: 'demo', claude: { mock: true }, shape: { perspectives: ['ux', 'qa'] } });
+    let plan = null;
+    orch.on('question', (q) => {
+      if (q.kind === 'plan') { plan = q; setImmediate(() => onPlan(q, orch)); } else if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
+    });
+    const res = await orch.run();
+    assert.equal(res.status, 'done', res.error);
+    const audit = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(orch.getState().id).map((r) => r.text);
+    return { orch, plan, audit, text: readFileSync(plan.plan.file, 'utf8') };
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_MOCK_CONFLICTS; else process.env.WORCA_MOCK_CONFLICTS = prev;
+  }
+}
+const PICK_LINE = '- **conflict-1** — Modal or inline? → **Inline (decided at plan approval)**';
+
+test('approve with a pick: a refused answer first changes nothing; the pick lands in Clarifications once, with an audit line', async () => {
+  let before = null; let auditBefore = 0;
+  const { text, audit } = await conflictRun((q, orch) => {
+    before = readFileSync(q.plan.file, 'utf8');
+    auditBefore = getDb().prepare('SELECT count(*) AS n FROM pipeline_events WHERE pipeline_id = ?').get(orch.getState().id).n;
+    assert.throws(() => orch.answer(q.id, { decision: 'approve', conflicts: [{ id: 'conflict-1', choice: 'x'.repeat(501) }] }), (e) => e.code === 'INVALID_ANSWER'
+      && e.errors[0].path === 'conflicts');
+    assert.equal(readFileSync(q.plan.file, 'utf8'), before, 'no plan write');
+    assert.equal(getDb().prepare('SELECT count(*) AS n FROM pipeline_events WHERE pipeline_id = ?').get(orch.getState().id).n, auditBefore, 'no audit line');
+    orch.answer(q.id, { decision: 'approve', conflicts: [{ id: 'conflict-1', choice: 'Inline' }] });
+  });
+  assert.equal(text.split(PICK_LINE).length - 1, 1);
+  assert.match(text.slice(text.indexOf('## Clarifications (Q&A)')), new RegExp(PICK_LINE.replace(/[*?()]/g, '\\$&')));
+  assert.ok(audit.includes('Plan approval: conflict-1 decided: Inline.'), audit.join('\n'));
+});
+
+test('approve without a pick never blocks: the conflict is audited as left undecided and the plan is unchanged', async () => {
+  let before = null;
+  const { text, audit } = await conflictRun((q, orch) => { before = readFileSync(q.plan.file, 'utf8'); orch.answer(q.id, { decision: 'approve' }); });
+  assert.equal(text, before);
+  assert.ok(audit.includes('conflict-1 left undecided at approval'), audit.join('\n'));
 });
 
 // ── Project fit (slice 3): the house brief reaches the fit reviewer only ──

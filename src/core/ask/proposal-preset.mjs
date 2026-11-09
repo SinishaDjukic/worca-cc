@@ -1,7 +1,8 @@
 // src/core/ask/proposal-preset.mjs — propose_run's presetId (docs/run-presets.md "Chat", #712 slice 3).
 // The preset's picks fill what the model did not pass; the validator then checks the merged input like any proposal,
 // so a gone guardrail set, workflow or model is named by the usual errors. "As is" (D9): a preset that runs on
-// Permissive — or names no guardrails, which a preset start reads as Permissive (run-presets-check.mjs) — never
+// Permissive — or names no guardrails, which a start reads as the install default (Permissive on an install from
+// before v71, defaultGuardrailSetId), so it is refused too — never
 // becomes a card unless the model names guardrailsId itself.
 
 export const PRESET_PROPOSAL_ERRORS = Object.freeze({
@@ -12,7 +13,7 @@ export const PRESET_PROPOSAL_ERRORS = Object.freeze({
   pinned: (name, scope) => `Preset "${name}" is pinned to ${scope.kind} ${scope.ref} — propose it for that ${scope.kind}`,
 });
 
-const FILL_KEYS = ['workflowId', 'engine', 'guardrailsId', 'tags', 'sameAsSource', 'sourceBranch', 'sourceBranchByKey'];
+const FILL_KEYS = ['workflowId', 'engine', 'guardrailsId', 'tags', 'sameAsSource', 'sourceBranch', 'sourceBranchByKey', 'pr'];
 const CARD_SETUP_KEYS = ['humanInLoop', 'nightMode', 'mcpOptOut', 'syncBeforeStart', 'mock'];
 const given = (v) => v !== undefined && v !== null && v !== '';
 

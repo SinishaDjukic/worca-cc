@@ -13,6 +13,8 @@ import { dirname, join } from 'node:path';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { backdropClick, dragOut } from './helpers/popups.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs). That
 // also clears the poll of a guide a failed assertion left mid-tour, so it cannot cascade.
@@ -20,7 +22,7 @@ const trackDom = useDomRelease(afterEach);
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const root = join(__dir, '..', 'ui', 'public');
-const html = readFileSync(join(root, 'index.html'), 'utf8');
+const html = readIndexHtml();
 const appPath = join(root, 'app.js');
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async (n = 6) => { for (let i = 0; i < n; i++) await tick(); };
@@ -151,7 +153,7 @@ test('welcome at 375px: the nav drawer is closed behind it (F-21)', async () => 
   assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false);
   assert.equal(doc.body.classList.contains('nav-open'), false);
   assert.equal(doc.querySelector('.main').hasAttribute('inert'), false);
-  const css = readFileSync(join(root, 'style.css'), 'utf8');
+  const css = readStyleCss();
   // The .dlg card selector beats `.viewer-modal .card`'s 86vh, so the phone allowance takes effect.
   assert.match(css, /@media \(max-width:760px\)\{\s*\.viewer-modal \.card\.dlg\.ob-welcome\{max-height:calc\(100dvh - 24px\)/);
 });

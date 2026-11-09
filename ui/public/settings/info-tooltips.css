@@ -1,0 +1,184 @@
+/* ---------- Info tooltips (settings) ---------- */
+/* Label + ⓘ ride together; the row replaces the label's own bottom margin. */
+.label-row{display:flex;align-items:center;gap:7px;margin-bottom:8px;}
+.label-row > label{display:inline-block;font-weight:600;font-size:13px;margin-bottom:0;}
+/* `.card h2` (later in the file) wins its tie with `.card-head h2` and re-adds an
+   18px bottom margin; centered flex would sink the ⓘ below the heading text. */
+.label-row > h2{margin:0;}
+.card-head .label-row{margin-bottom:0;}
+.info-tip{position:relative;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:0 0 28px;
+  padding:0;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:700 var(--fs-caption)/1 var(--sans);cursor:help;transition:color .15s,background-color .15s;}
+/* Info tip (review A5): 28px hit target (the .btn-sm.btn-icon square), 16px drawn ring. */
+.info-tip::before{content:"";position:absolute;inset:6px;border:1.5px solid var(--ink-2);border-radius:var(--r-sm);transition:border-color .15s;}
+.info-tip:hover{color:var(--ink);background:var(--hover);}
+.info-tip:hover::before{border-color:var(--hover-outline);}
+.info-tip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* The shared floating bubble (created once by app.js, filled per icon). */
+.info-bubble{position:fixed;z-index:70;background:var(--ink);color:var(--on-ink);border-radius:var(--r-card);
+  padding:10px 13px;font-size:12px;line-height:1.5;max-width:340px;box-shadow:var(--shadow-pop);
+  pointer-events:none;}
+.info-bubble code{font-family:var(--mono);font-size:11px;background:var(--on-ink-code);
+  border-radius:var(--r-sm);padding:1px 4px;}
+.info-bubble .tip-desc{display:block;}
+.info-bubble .tip-line{display:block;margin-top:6px;font-family:var(--mono);font-size:11px;letter-spacing:.02em;opacity:.75;}
+
+.row-2,.grid-2{display:flex;gap:11px;}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;}
+.row-2 .with-x{flex:1;}
+
+/* project selector row */
+.project-row{display:flex;gap:11px;align-items:center;}
+.project-row select{flex:1 1 auto;min-width:0;}
+
+/* inline add-project form */
+.add-project{margin-top:10px;display:flex;flex-direction:column;gap:9px;padding:14px;
+  border:1.5px solid var(--line-2);border-radius:var(--r-ctrl);background:var(--field);}
+.add-project-actions{display:flex;gap:9px;justify-content:flex-end;}
+/* A card's one Save, with the line that counts unsaved changes (or says Saved.) just left of it. */
+.engine-save-row{align-items:center;}
+.engine-save-row > .hint{margin:0;}
+/* Models › Roles sits above Engines: the house 18px gap between stacked panels. */
+#model-roles-card{margin-bottom:18px;}
+/* Settings → Chat history: a text-style destructive action so its label sits on
+   the same left edge as the "Chat history" heading and the counts line under it
+   (a pill's inner padding indented the text). Same shape as .hd-cmt-btn. */
+/* path row (input + trailing button) — shared by add-project, project modal, plugin add */
+.path-row{display:flex;gap:9px;align-items:center;}
+.path-row input{flex:1 1 auto;min-width:0;}
+.path-row .btn{flex:0 0 auto;white-space:nowrap;}
+
+/* One tab (review B4): underline, 32px row, 13px, 2px ink underline on the selected one. */
+.tabs{display:flex;align-items:flex-end;gap:16px;box-shadow:inset 0 -1px 0 var(--line);overflow-x:auto;scrollbar-width:none;}
+.tab{position:relative;display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 2px;border:0;background:none;
+  color:var(--ink-2);font:500 13px/1 var(--sans);white-space:nowrap;cursor:pointer;}
+.tab:hover{color:var(--ink);}
+.tab:is(.on,.active,[aria-selected="true"]){color:var(--ink);}
+.tab:is(.on,.active,[aria-selected="true"])::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--ink);}
+.tab:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;border-radius:var(--r-sm);}
+
+/* One segmented control (review B5): one container, the selected segment filled, no inner border. */
+.seg{display:inline-flex;background:var(--field);border-radius:var(--r-sm);padding:2px;gap:2px;}
+.seg button{height:28px;padding:0 12px;border:0;border-radius:var(--r-xs);background:transparent;
+  color:var(--ink-2);font:500 13px/1 var(--sans);cursor:pointer;transition:.15s;}
+.seg button.on,.seg button[aria-pressed="true"],.seg button[aria-checked="true"]{background:var(--surface);color:var(--ink);}
+.seg button:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+/* Settings tab strip: spaced from the first pane's .topbar, which brings its own 22px bottom margin. */
+.settings-tabs{max-width:760px;margin:0 auto 18px;}
+/* A pane is a plain block — it is deliberately NOT .view (see index.html). */
+.settings-pane{display:block;}
+
+/* task-source fieldset (old markup) */
+fieldset.source{border:1.5px solid var(--line);border-radius:var(--r-ctrl);padding:16px;margin:0 0 18px;}
+fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--ink);}
+.radio-row{display:flex;gap:18px;margin-bottom:12px;}
+.radio,.check{display:inline-flex;align-items:center;gap:8px;font-size:var(--fs-body);font-weight:500;cursor:pointer;user-select:none;}
+.check{margin-bottom:12px;}
+
+/* file picker */
+.file{display:flex;align-items:center;gap:13px;background:var(--field);border:1.5px dashed var(--line-2);
+  border-radius:var(--r-ctrl);padding:13px 15px;}
+.file .pick{white-space:nowrap;}
+.file .state{color:var(--ink-3);font-size:var(--fs-meta);}
+.file-load{display:inline-block;margin-top:8px;}
+
+/* extra-file pills: one removable pill per selected file, under the picker */
+.extras-pills{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px;}
+.extra-pill{display:inline-flex;align-items:center;gap:5px;background:var(--field);border:1px solid var(--line-2);
+  color:var(--ink-2);font-weight:600;font-size:12px;padding:4px 6px 4px 12px;border-radius:var(--r-xs);max-width:260px;}
+.extra-pill-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.extra-pill-x{border:0;background:transparent;color:var(--ink-3);cursor:pointer;font-family:inherit;
+  font-size:var(--fs-body);line-height:1;padding:3px 6px;border-radius:var(--r-xs);transition:.15s;}
+.extra-pill-x:hover{color:var(--red-ink);background:var(--red-bg);}
+
+/* @-mention popup: attached-file completions anchored under the prompt caret */
+.mention-popup{position:fixed;z-index:70;min-width:180px;max-width:320px;max-height:210px;overflow-y:auto;
+  background:var(--panel);border:1px solid var(--line-2);border-radius:var(--r-card);box-shadow:var(--shadow-pop);padding:5px;}
+.mention-item{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--ink-2);
+  font-family:inherit;font-weight:500;font-size:var(--fs-meta);padding:7px 10px;border-radius:var(--r-sm);cursor:pointer;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mention-item:hover{background:var(--hover);}
+.mention-item.sel{background:var(--field);color:var(--ink);}
+
+/* @-mention highlighting: a textarea cannot colour part of its own text, so a
+   backdrop mirrors the text underneath it and paints the valid mentions. The
+   textarea keeps its glyphs (and its caret, selection, spellcheck and undo
+   stack) but renders them transparent; the backdrop carries the field fill it
+   gave up. .mention-ok sets COLOUR ONLY — any metric-affecting property would
+   advance the backdrop's glyphs differently and drift the two layers apart.
+
+   Two box-model choices, both load-bearing, neither optional:
+
+   1. The wrapper is inline-block, NOT block. A textarea is inline-block by UA
+      default, so the inline margin-top:11px on #prompt/#promptMarkdown does not
+      collapse today; a block wrapper would turn it into a collapsible block
+      margin that escapes through .source-pane and .field (neither has a border
+      or padding to stop it) and merges with the preceding margin-bottom:18px,
+      deleting the gap.
+   2. It deliberately does NOT set vertical-align. An inline-block with no
+      in-flow line boxes takes its baseline from its bottom margin edge
+      (CSS 2.1 s10.8.1), and the only in-flow child here is a display:block
+      textarea — whose internal content is a separate rendering context and
+      contributes no line box to the wrapper. So the wrapper resolves exactly
+      where the bare textarea did (whose UA overflow:auto gave it the same
+      rule). vertical-align:top would instead align it to the line-box top,
+      deleting the strut descent below it and shrinking #prompt-pane and
+      #markdown-pane by ~6px. Making the textarea display:block removes the
+      line box INSIDE the wrapper, which is what keeps the backdrop's height
+      equal to the textarea's. */
+.ta-hl{position:relative;display:inline-block;width:100%;}
+.ta-hl > textarea.textarea,
+.ta-hl > textarea.textarea:focus{display:block;position:relative;z-index:1;
+  background:transparent;color:transparent;caret-color:var(--ink);}
+.ta-hl > textarea.textarea::selection{background:var(--selection);}
+/* font-weight/style/variant/stretch are the ONLY text-layout properties the two
+   layers do not already share: Chrome's UA `font: -webkit-small-control`
+   shorthand on <textarea> resets them, while this div would inherit them from
+   body (Poppins ships 400/500/600/700, so this is not hypothetical). Pin them to
+   the textarea's reset values. Do NOT pin letter-spacing/word-spacing/
+   text-indent/text-align/text-transform/tab-size — those are outside the font
+   shorthand, so both layers inherit them, and pinning would CREATE the
+   divergence it means to prevent. */
+.ta-hl-back{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+  line-height:1.5;white-space:pre-wrap;overflow-wrap:break-word;border-color:transparent;
+  font-weight:400;font-style:normal;font-variant:normal;font-stretch:normal;}
+.ta-hl:focus-within .ta-hl-back{background:var(--field-focus);}
+.mention-ok{color:var(--blue-ink);}
+
+/* High Contrast forces the textarea's transparent text back to CanvasText while
+   its background stays transparent, so both layers' glyphs would paint at once,
+   and it flattens --blue-ink to black anyway. Opt the whole trick out. */
+@media (forced-colors: active){
+  .ta-hl-back{display:none;}
+  .ta-hl > textarea.textarea,
+  .ta-hl > textarea.textarea:focus{color:CanvasText;background:Canvas;}
+}
+
+/* One switch (docs/design-system.md › Switch): a 32x18 pill track and a 14px round knob that is always visible.
+   Two drivers paint the same pixels: a real checkbox (input.sw-input + span.switch, ui/public/switch.mjs) and a
+   role="switch" element that carries .on / aria-checked. On is ink; disabled or locked is a muted track with a
+   visible knob, never an opacity fade, and the row says why (.switch-why). */
+.switch-row{display:flex;align-items:center;gap:8px;}
+.switch{width:32px;height:18px;border-radius:var(--r-pill);background:var(--switch-off);position:relative;
+  cursor:pointer;flex:0 0 auto;border:0;padding:0;transition:background .18s;}
+.switch::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
+  background:var(--knob);box-shadow:var(--knob-shadow);transition:left .18s,background .18s;}
+:is(.switch.on,.switch[aria-checked="true"],.sw-input:checked + .switch,.sw-item[aria-checked="true"] .switch){background:var(--switch-on);}
+:is(.switch.on,.switch[aria-checked="true"],.sw-input:checked + .switch,.sw-item[aria-checked="true"] .switch)::after{left:16px;background:var(--switch-knob-on);}
+:is(.switch.disabled,.switch:disabled,.switch[aria-disabled="true"],.sw-input:disabled + .switch,.sw-item[aria-disabled="true"] .switch){
+  background:var(--switch-off-locked);box-shadow:inset 0 0 0 1px var(--line-2);cursor:not-allowed;}
+:is(.switch.disabled,.switch:disabled,.switch[aria-disabled="true"],.sw-input:disabled + .switch,.sw-item[aria-disabled="true"] .switch)::after{background:var(--switch-knob-locked);box-shadow:none;}
+:is(.switch.on.disabled,.switch.on:disabled,.switch.on[aria-disabled="true"],.sw-input:checked:disabled + .switch,.sw-item[aria-checked="true"][aria-disabled="true"] .switch){background:var(--switch-on-locked);box-shadow:none;}
+:is(.switch.on.disabled,.switch.on:disabled,.switch.on[aria-disabled="true"],.sw-input:checked:disabled + .switch,.sw-item[aria-checked="true"][aria-disabled="true"] .switch)::after{background:var(--panel);}
+.switch:focus-visible,.sw-input:focus-visible + .switch{outline:2px solid var(--ink);outline-offset:2px;}
+/* The checkbox is position:absolute; without a positioned wrapper its containing block is the viewport, so clicking
+   the switch focuses it and the browser scrolls it into view. Anchor it to its own row. */
+.sw-input{position:absolute;width:1px;height:1px;opacity:0;margin:0;pointer-events:none;}
+:where(label, div, span):has(> .sw-input){position:relative;}
+.switch-label,.switch-row > .txt{font:500 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink);}
+.switch-why{font-size:var(--fs-meta);color:var(--ink-2);}
+.switch-why[hidden]{display:none;}
+
+/* Settings › Runs filter: a card with no match is out of the way until the filter changes. */
+.settings-filter{display:block;margin-top:8px;max-width:320px;}
+.settings-card.settings-filtered-out{display:none;}

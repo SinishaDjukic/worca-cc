@@ -7,8 +7,27 @@
 // an endpoint or the bridge) asks preflight's probeClaudeAuth, which is cheap
 // (remembered 60 s) and says 'signed-out' only when `claude auth status` does.
 import { isClaudeSignedOutError, probeClaudeAuth } from './preflight.mjs';
-import { modelHasBaseUrlRouting } from './config.mjs';
+import { listModels, modelHasBaseUrlRouting } from './config.mjs';
+import { agentIdentity } from './agent-user.mjs';
 import { configuredClaudeBin } from './onboarding.mjs';
+
+/**
+ * Whether a chat moving to Claude must be refused because the CLI is signed out (#943, POST
+ * /api/ask/threads/:id/engine): only a definite 'signed-out' does. A relayed chat runs as the person's agent user, with
+ * that user's own sign-in (turn.mjs _engineGate skips the check for it), and a model routed to an endpoint or the
+ * bridge authenticates there (as failedBecauseSignedOut below), so neither asks the CLI's sign-in.
+ * @param {{model?:string, relay?:boolean, mock?:boolean, bin?:string, probe?:typeof probeClaudeAuth, routed?:(model:string)=>boolean}} o
+ *   `probe` / `routed` are injectable for tests.
+ * @returns {Promise<boolean>}
+ */
+export async function claudeChatSignedOut({
+  model, relay = false, mock, bin = configuredClaudeBin(), probe = probeClaudeAuth, routed = modelHasBaseUrlRouting,
+} = {}) {
+  try {
+    if (relay || (model && routed(model))) return false;
+    return (await probe({ bin, mock })).state === 'signed-out';
+  } catch { return false; }
+}
 
 /**
  * Never throws.
@@ -25,5 +44,18 @@ export async function failedBecauseSignedOut({
     // Fresh, not the remembered answer: a failure is rare, and a stale one would
     // misname it for up to a minute after signing in or out.
     return (await probe({ bin, force: true })).state === 'signed-out';
+  } catch { return false; }
+}
+
+/** Would a Claude run in `dir` have nothing to call? Only a definite signed-out with no endpoint or provider model
+ *  says yes (a run with an agent user signs in as that user). A remembered signed-out is re-read, so a run started
+ *  right after /login is not refused. Never throws. */
+export async function claudeRunSignedOut(dir) {
+  try {
+    if (agentIdentity()) return false;
+    const bin = configuredClaudeBin();
+    if ((await probeClaudeAuth({ bin })).state !== 'signed-out') return false;
+    if ((await probeClaudeAuth({ bin, force: true })).state !== 'signed-out') return false;
+    return !(await listModels(dir)).some((m) => m && !m.needsSignIn && modelHasBaseUrlRouting(m.id));
   } catch { return false; }
 }

@@ -14,10 +14,13 @@
 //            groupKey, groupName, by }
 //   group: { id, groupKind: 'chain'|'feature'|'user', title, pr?, memo?, groupKey?, groupName?, cost?, liveCost?,
 //            costMemo?, members: [{ position, title, adhoc, href, pipelineId, ticketId, runId,
-//            kind: 'live'|'hist'|'sched', run, memo, cost, startedAt }] }
+//            kind: 'live'|'hist'|'sched', run, memo, cost, startedAt, roundOf? }] }
+// A live or hist item (and a member) may carry `roundOf` ({ pipelineId: round 1's id, round ≥ 2, request, by?, kinds?,
+// outcome? }): a round of another run. buildRunsModel folds it under that run (plans/pr-fix-rounds-stacking-plan.md).
 // The state words of liveRowState / histRowState / schedRowState stay for ⌘K and the Activity menu; the list reads
 // none of them (D1).
 import { icon } from './icons.mjs';
+import { originMark } from './chat-origin.mjs';
 import { glanceCopy } from './run-glance.mjs';
 import { splitShown, matchesLabels } from '../../src/shared/run-labels.mjs';
 import { labelChip } from './label-picker.mjs';
@@ -25,7 +28,7 @@ import { paintProgressBar, renderRowLine } from './run-progress-bar.mjs';
 import { renderStatusDot } from './status-dot.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
-import { runModel, groupModel, finishedNeedsYou } from '../../src/shared/run-model.mjs';
+import { runModel, groupModel, finishedNeedsYou, WATCH_WHY } from '../../src/shared/run-model.mjs';
 import { kindChip } from './run-kind.mjs';
 
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -182,7 +185,45 @@ export function memberPrsOf(x) {
  *  (run-model.mjs finishedNeedsYou, D31 / D23); a workspace run's member PRs count too (#784). A glance string
  *  ('MERGED') carries no verdict. */
 const prNeedsOf = (x) => !!(x && typeof x === 'object')
-  && finishedNeedsYou({ pr: x.pr && typeof x.pr === 'object' ? x.pr : null, watch: x.watch || null, memberPrs: memberPrsOf(x) });
+  && finishedNeedsYou({ pr: x.pr && typeof x.pr === 'object' ? x.pr : null, watch: x.watch || null, memberPrs: memberPrsOf(x),
+    prDeduped: !!x.prDeduped,
+    // D8: a round never needs you through its PR (a raw History row names its marker `roundOf`, a model run `round`).
+    round: x.round || x.roundOf || (x.branch && typeof x.branch === 'object' ? x.branch.roundOf : null) || null });
+
+/** A round's marker (D1) on an item, a row or a raw History row: { pipelineId, round ≥ 2, … }, else null. */
+export function roundMarkerOf(x) {
+  const m = x && x.roundOf;
+  return m && typeof m === 'object' && m.pipelineId && Number.isInteger(m.round) && m.round >= 2 ? m : null;
+}
+// D5: a round in one of these statuses is live; its run stands for the stack.
+const LIVE_ROUND = new Set(['created', 'starting', 'running', 'paused', 'pausing']);
+const FIXING_ROUND = new Set(['created', 'starting', 'running']);
+
+const normPrUrl = (u) => String(u || '').trim().toLowerCase().replace(/[?#].*$/, '').replace(/\/+$/, '');
+/** A run's PR urls, normalized: its own PR's, else each workspace member PR's (D8). */
+export function prUrlsOf(x) {
+  if (!x || typeof x !== 'object') return [];
+  const own = x.pr && typeof x.pr === 'object' && x.pr.url ? [x.pr.url] : [];
+  return [...new Set((own.length ? own : memberPrsOf(x).map((p) => p && p.url)).filter(Boolean).map(normPrUrl))];
+}
+// An epoch for "newest" with no clock: epoch ms, or an ISO stamp.
+const stampMs = (v) => (typeof v === 'number' ? (Number.isFinite(v) && v > 0 ? v : NaN) : Date.parse(String(v || '')));
+
+/** D8: one open PR raises one Needs-you item. Among `rows` that need you ONLY through their PR (`prOnly`), the newest
+ *  (`at`) per normalized PR url (`urls`) counts; a row stays while any of its urls is still unclaimed. → { kept,
+ *  dropped: Set }, `kept` in the input order. */
+export function dedupeByPr(rows, { prOnly = () => true, urls = prUrlsOf, at = () => 0 } = {}) {
+  const ms = (r) => { const t = at(r); return Number.isFinite(t) ? t : 0; };
+  const cands = rows.filter((r) => prOnly(r) && urls(r).length).sort((a, b) => ms(b) - ms(a));
+  const claimed = new Set();
+  const dropped = new Set();
+  for (const r of cands) {
+    const us = urls(r);
+    if (us.every((u) => claimed.has(u))) dropped.add(r);
+    else for (const u of us) claimed.add(u);
+  }
+  return { kept: rows.filter((r) => !dropped.has(r)), dropped };
+}
 
 /** Needs you: a question or gate, a pause (cost caps included), a failed run nobody opened yet, and a finished run
  *  whose PR has failing checks or conflicts with no fix run on it (`prNeeds`, D31). */
@@ -200,9 +241,19 @@ export function needsYou({ kind = 'live', status = '', ask = false, unread = fal
  *  listed live. countNeedsYou counts exactly these; the top bar's Activity lists them. */
 export function needsYouItems({ live = [], history = [] } = {}) {
   const pids = new Set(live.map((r) => r && r.pipelineId).filter(Boolean));
+  // D5: while a round of a run is working, that run is Working, never Needs you through its PR. A paused round is not
+  // fixing anything: it counts for its pause, and its run for its PR (plan Task 3: 1 + 1).
+  const fixing = new Set([...live, ...history].map((x) => {
+    const m = roundMarkerOf(x);
+    return m && FIXING_ROUND.has(String(x.status || '').toLowerCase()) ? String(m.pipelineId) : '';
+  }).filter(Boolean));
+  const hist = history.filter((p) => p && !pids.has(p.id)
+    && needsYou({ kind: 'hist', status: p.status, prNeeds: prNeedsOf(p) && !fixing.has(String(p.id)) }));
   return {
     live: live.filter((r) => r && needsYou({ kind: 'live', status: r.status, ask: !!r.ask, unread: !!r.unread })),
-    history: history.filter((p) => p && !pids.has(p.id) && needsYou({ kind: 'hist', status: p.status, prNeeds: prNeedsOf(p) })),
+    // D8: a History row needs you through its PR only when done (a paused one for its pause); one item per open PR.
+    history: dedupeByPr(hist, { prOnly: (p) => String(p.status || '').toLowerCase() === 'done',
+      at: (p) => (Number.isFinite(stampMs(p.mtime)) ? stampMs(p.mtime) : stampMs(p.startedAt)) }).kept,
   };
 }
 
@@ -233,6 +284,7 @@ export function liveRow(it, now = Date.now()) {
     unread: !!it.unread, needs: needsYou({ kind: 'live', status, ask: !!it.ask, unread: !!it.unread }),
     progress: it.progress || null,
     cost: it.cost ?? null,                           // D32: the row's hover "Cost $1.23"; null = unknown
+    roundOf: roundMarkerOf(it),                      // a round of another run: buildRunsModel folds it (D2)
   }, { at: it.startedAt }, now);
 }
 
@@ -256,11 +308,13 @@ export function histRow(p, now = Date.now()) {
     tags: Array.isArray(p.tags) ? p.tags.map(String) : [],
     labels: Array.isArray(p.labels) ? p.labels.map(String) : [],
     archived: !!(p && p.archived),
+    mock: p.mock === true,
     ...(p.resumable === false ? { resumable: false } : {}),   // an interrupted run that can never resume (Archive takes it)
     base: String(p.base || ''),                      // #620: "conflicts with dev" / "dev moved", else ''
     unread: false, needs: needsYou({ kind: 'hist', status, prNeeds: prNeedsOf(p.run || p) }),
     cost: p.cost ?? null,
     activityMs: Number.isFinite(timeMs(p.mtime, now)) ? timeMs(p.mtime, now) : timeMs(p.startedAt, now),
+    roundOf: roundMarkerOf(p),                       // a round of another run: buildRunsModel folds it (D2)
   }, { at: p.startedAt || p.mtime }, now);
 }
 
@@ -279,18 +333,14 @@ export function schedRow(t, now = Date.now()) {
   }, t.after ? { at: now, time: '' } : { at: t.runAt }, now);   // an after-ticket's runAt is a far-future sentinel
 }
 
-/** "Group by" Date sections, top to bottom. Live rows are happening now (Today); a scheduled run is
- *  Upcoming; a History row files under its last activity (finish time, else start). The
- *  boundaries are local midnights, stepped with setDate so a DST day is still one day. */
-export const DATE_BUCKETS = Object.freeze([
-  ['upcoming', 'Upcoming'], ['today', 'Today'], ['yesterday', 'Yesterday'],
-  ['week', 'Previous 7 days'], ['older', 'Older'],
+/** The day sections both lists share (Runs and Chats Group by Date), top to bottom: Today, Yesterday, 2–7 days ago,
+ *  8–30 days ago, then the rest. The boundaries are local midnights, stepped with setDate so a DST day is still one day. */
+export const DAY_BUCKETS = Object.freeze([
+  ['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Previous 7 days'], ['month', 'Previous 30 days'], ['older', 'Older'],
 ]);
-export function dateBucket(row, now = Date.now()) {
-  if (row.kind === 'sched') return 'upcoming';
-  // Groups include finished features and user groups (D10): an ended group files under its latest member's time.
-  const endedGroup = row.kind === 'chain' && row.model && ENDED_STATES.has(row.model.state) && Number.isFinite(row.activityMs);
-  const t = row.kind === 'live' || (row.kind === 'chain' && !endedGroup) ? now : row.activityMs;
+/** The View menu's Date segment title, for both lists. */
+export const DATE_GROUP_TITLE = DAY_BUCKETS.map(([, name]) => name).join(' · ');
+export function dayBucket(t, now = Date.now()) {
   if (!Number.isFinite(t)) return 'older';
   const day = new Date(now);
   day.setHours(0, 0, 0, 0);
@@ -298,7 +348,26 @@ export function dateBucket(row, now = Date.now()) {
   day.setDate(day.getDate() - 1);
   if (t >= day.getTime()) return 'yesterday';
   day.setDate(day.getDate() - 6);
-  return t >= day.getTime() ? 'week' : 'older';
+  if (t >= day.getTime()) return 'week';
+  day.setDate(day.getDate() - 23);
+  return t >= day.getTime() ? 'month' : 'older';
+}
+/** Older starts folded in both lists. `collapsed` (the person's record) holds the sections whose fold differs from
+ *  their default, so a fold read or set goes through these two. */
+const FOLDED_FIRST = new Set(['date:older']);
+export const isFolded = (collapsed, id) => FOLDED_FIRST.has(id) !== collapsed.has(id);
+export function setFolded(collapsed, id, fold) {
+  if (fold !== FOLDED_FIRST.has(id)) collapsed.add(id); else collapsed.delete(id);
+}
+
+/** Runs "Group by" Date sections: Upcoming, then the shared day sections. Live rows are happening now (Today); a
+ *  scheduled run is Upcoming; a History row files under its last activity (finish time, else start). */
+export const DATE_BUCKETS = Object.freeze([['upcoming', 'Upcoming'], ...DAY_BUCKETS]);
+export function dateBucket(row, now = Date.now()) {
+  if (row.kind === 'sched') return 'upcoming';
+  // Groups include finished features and user groups (D10): an ended group files under its latest member's time.
+  const endedGroup = row.kind === 'chain' && row.model && ENDED_STATES.has(row.model.state) && Number.isFinite(row.activityMs);
+  return dayBucket(row.kind === 'live' || (row.kind === 'chain' && !endedGroup) ? now : row.activityMs, now);
 }
 const NEEDS_RANK = Object.freeze({ ask: 0, paused: 1, fail: 2 });
 // D12: dispatch time, newest first, is the default order. A row's `dispatchMs` when it has one (a one-off ticket's
@@ -357,7 +426,9 @@ function needsWhy(row) {
   const m = mb.model;
   if (m === row.model.current && !m.prNeeds) return '';
   const who = `Run ${mb.position || members.indexOf(mb) + 1}`;   // the member's own position: a planning run does not shift it
-  if (m.prNeeds) return and(`${who} needs you`, m.pr && m.pr.needsYou ? m.pr.word : 'Watch stopped');
+  // The round count says the base keeps moving (mock: "Run 3 needs you · Conflicts · 7 rounds").
+  const rounds = mb.rounds && mb.rounds.length ? `${mb.rounds.length} ${mb.rounds.length === 1 ? 'round' : 'rounds'}` : '';
+  if (m.prNeeds) return and(`${who} needs you`, m.pr && m.pr.needsYou ? m.pr.word : 'Watch stopped', rounds);
   if (m.state === 'needs-you') return `${who} needs you`;
   if (m.state === 'paused') return and(`${who} paused`, PAUSE_WORDS[mb.run && mb.run.pauseReason] || '');
   return m.state === 'failed' ? `${who} failed` : '';
@@ -370,7 +441,9 @@ export function listLine(row, { section = '', time = '' } = {}) {
   if (row.archived) return and('Archived', time);
   if (row.kind === 'chain') {
     const p = posOf(m);
-    const stage = m.current ? STAGED(m.current) : '';
+    // D5: a member's live fix round names itself: "Run 3 · Round 9 · merge dev in".
+    const rd = m.current && m.current.state === 'working' ? m.current.round : null;
+    const stage = rd ? and(`Round ${rd.n}`, rd.by === 'watch' ? rd.request : '') : m.current ? STAGED(m.current) : '';
     if (row.needs) { const why = needsWhy(row); if (why) return why; }
     // The short form only where the section already says the state; a paused or waiting group keeps its word.
     if ((section === 'needs' && (m.state === 'needs-you' || m.state === 'failed'))
@@ -392,7 +465,8 @@ export function listLine(row, { section = '', time = '' } = {}) {
   if (section === 'running' && (m.state === 'working' || m.state === 'starting')) return w || m.word;
   switch (m.state) {
     case 'failed': return and(w ? `Failed at ${w}` : 'Failed', time);
-    case 'stopped': case 'ready': return and(m.line, time);
+    case 'ready': return and(row.mock ? 'Mock run' : m.line, time);
+    case 'stopped': return and(m.line, time);
     case 'in-review': case 'merged': return m.pr && !m.pr.pending ? time : and(m.word, time);
     // A usage-limit pause keeps its reset / auto-resume note ("resets 18:00", liveRowState / histRowState detail).
     case 'paused': return and(m.line, row.detail);
@@ -462,30 +536,233 @@ export function groupRow(g, { now = Date.now() } = {}) {
   };
 }
 
+const ROUND_STATUS_WORD = Object.freeze({ done: 'done', complete: 'done', completed: 'done', error: 'failed', failed: 'failed',
+  stopped: 'stopped', aborted: 'stopped', interrupted: 'interrupted', paused: 'paused', pausing: 'paused' });
+/** D7: what a round did. Its stored outcome first (pr-watch.mjs fixOutcome): "pushed 3e4f5a6", "nothing pushed: conflicts
+ *  remain", "PR merged"; else its status: done, failed, stopped, paused, running. */
+export function roundOutcomeWords(round) {
+  const o = round && round.outcome && typeof round.outcome === 'object' ? round.outcome : null;
+  if (o && o.kind === 'pushed') return o.sha ? `pushed ${o.sha}` : 'pushed';
+  if (o && o.kind === 'failed') {
+    const why = o.reason ? WATCH_WHY[o.reason] || o.reason : '';
+    return why ? `nothing pushed: ${why}` : 'nothing pushed';
+  }
+  if (o && o.kind === 'ended') return `PR ${o.reason || 'ended'}`;
+  return ROUND_STATUS_WORD[String((round && round.status) || '').toLowerCase()] || 'running';
+}
+/** D7: a round's request and outcome, "merge dev in · pushed 3e4f5a6" (the stack's sub-list names its round apart). */
+export const roundWords = (round) => and(String((round && round.request) || ''), roundOutcomeWords(round));
+/** D6 / D7: a round's line, "Round 8 · merge dev in · pushed 3e4f5a6 · Thu"; a live round names no time. */
+export function roundLine(round, now) {
+  const live = LIVE_ROUND.has(String((round && round.status) || '').toLowerCase()) && !(round && round.outcome);
+  return and(`Round ${round.n}`, roundWords(round), live || !Number.isFinite(round.activityMs) ? '' : rowTime(round.activityMs, now));
+}
+/** D9: how many rounds an open stack shows before "+n earlier". */
+export const ROUNDS_SHOWN = 5;
+// The keys a stack's rounds answer to: the selection (isRowSelected / isMemberOpen) and a group's memberKeys.
+const roundKeysOf = (rounds) => rounds.flatMap((rd) => [rd.pipelineId && `p:${rd.pipelineId}`, rd.runId && `r:${rd.runId}`]).filter(Boolean);
+// D5: a live round's run with its origin's PR, marked fixing (prOf ranks Fixing above Conflicts / Checks failing).
+const stackRun = (roundRun, originRun) => ({ ...(roundRun || {}), pr: (originRun && originRun.pr) || null,
+  ...(originRun && Array.isArray(originRun.memberPrs) ? { memberPrs: originRun.memberPrs } : {}), watch: { status: 'fixing' } });
+
+/**
+ * D2–D5: fold every round row into its origin (round 1). `all` is every row, `rows0` the plain rows that passed the
+ * filters; rows0 is edited IN PLACE (an origin row becomes its stack's head, an orphan stack's head joins it). Returns
+ * the groups with each origin member carrying its rounds, and `stacked`: pid -> the head's own activity (the PR dedupe
+ * ranks runs by it, as needsYouItems does).
+ */
+function foldRounds({ all, rows0, groups, pass, raw, view, archivedIds, now }) {
+  const stacked = new Map();
+  const rounds = all.filter((r) => r.roundOf);
+  let orphans = 0;
+  if (!rounds.length) return { groups, stacked, orphans };
+  const present = new Map(all.filter((r) => r.pipelineId && !r.roundOf).map((r) => [r.pipelineId, r]));
+  const rowAt = new Map(rows0.map((r, i) => [r.pipelineId, i]).filter(([pid]) => pid));
+  // Group members by pipeline id, in groupOf's order (the first group that names a run claims it).
+  const memberAt = new Map();
+  groups.forEach((g, gi) => (g.members || []).forEach((mb, mi) => {
+    const pid = mb && mb.pipelineId ? String(mb.pipelineId) : '';
+    if (pid && !memberAt.has(pid)) memberAt.set(pid, { gi, mi });
+  }));
+  const rawKeys = (g) => new Set([...(g.members || []), ...(g.planning ? [g.planning] : [])]
+    .flatMap((mb) => [mb.pipelineId && `p:${mb.pipelineId}`, mb.ticketId && `t:${mb.ticketId}`, mb.runId && `r:${mb.runId}`]).filter(Boolean));
+  const listedGroup = new Map();
+  const isListed = (gi) => {
+    if (!listedGroup.has(gi)) { const ks = rawKeys(groups[gi]); listedGroup.set(gi, rows0.some((r) => rowChainKeys(r).some((k) => ks.has(k)))); }
+    return listedGroup.get(gi);
+  };
+  const rowOf = new Map();   // round entry -> its row (an orphan's head is that row)
+  const byOrigin = new Map();
+  const archivedOrigin = new Set();
+  for (const r of rounds) {
+    const o = String(r.roundOf.pipelineId);
+    const origin = present.get(o);
+    // D4: an archived origin takes its finished rounds out of the active list; nothing is written. Under Show =
+    // Archived they fold under it as usual. A live round, or one that needs you, is never dropped (D3 / D5): it lists
+    // as an orphan stack ("… · Round n"), so the list shows what the badge counts.
+    if (view.show !== 'archived' && ((origin && origin.archived) || (!origin && archivedIds.has(o)))) {
+      if (!LIVE_ROUND.has(r.status) && !r.needs) continue;
+      archivedOrigin.add(o);
+    }
+    const rd = { n: r.roundOf.round, pipelineId: r.pipelineId, runId: r.runId, href: r.href, status: r.status, state: r.model.state,
+      request: String(r.roundOf.request || ''), outcome: r.roundOf.outcome || null,
+      activityMs: Number.isFinite(r.activityMs) ? r.activityMs : r.sortMs, needs: !!r.needs, needsIcon: r.needsIcon || (r.needs ? r.icon : '') || '',
+      live: LIVE_ROUND.has(r.status) };
+    rd.line = roundLine(rd, now);
+    rd.words = roundWords(rd);
+    rd.time = rd.live && !rd.outcome ? '' : rowTime(rd.activityMs, now);
+    rowOf.set(rd, r);
+    if (!byOrigin.has(o)) byOrigin.set(o, []);
+    byOrigin.get(o).push(rd);
+  }
+  const out = groups.slice();
+  const editMember = (gi, mi, fn) => {
+    if (out[gi] === groups[gi]) out[gi] = { ...groups[gi], members: groups[gi].members.slice() };
+    out[gi].members[mi] = fn(out[gi].members[mi]);
+  };
+  const latest = (list, ms) => Math.max(...[ms, ...list.map((rd) => rd.activityMs)].filter(Number.isFinite));
+  for (const [o, list] of byOrigin) {
+    list.sort((a, b) => b.n - a.n);   // newest first
+    const live = list.find((rd) => rd.live) || null;
+    const liveRaw = live ? raw.get(rowOf.get(live)) : null;
+    const stack = { rounds: list, roundsId: o, roundKeys: new Set(roundKeysOf(list)), roundsLive: !!live };
+    // An archived origin's row and membership stay out of the active list: its kept rounds head an orphan stack.
+    const at = archivedOrigin.has(o) ? undefined : memberAt.get(o);
+    const i = archivedOrigin.has(o) ? undefined : rowAt.get(o);
+    if (i !== undefined) {
+      // The origin's own row: its time moves up with its rounds (Recent order, the Date bucket, its group's time).
+      const row = rows0[i];
+      stacked.set(o, Number.isFinite(row.activityMs) ? row.activityMs : row.sortMs);
+      const next = { ...row, ...stack, activityMs: latest(list, row.activityMs) };
+      raw.set(next, raw.get(row));
+      if (live) {
+        // D5: the stack is the live round (its state, its line, its needs) under the origin's title, position and href.
+        next.model = runModel(stackRun(liveRaw.run, (raw.get(row) || {}).run), { memo: liveRaw.memo, now });
+        next.needs = list.some((rd) => rd.needs);
+        next.needsIcon = (list.find((rd) => rd.needs) || {}).needsIcon || '';
+        next.roundsLine = next.model.line;
+      } else {
+        next.roundsLine = list[0].line;
+        next.roundsOwnLine = !!row.needs && !row.model.prNeeds;   // D6
+        const why = list.find((rd) => rd.needs);
+        if (why) { next.needs = true; next.needsIcon ||= why.needsIcon; }
+      }
+      rows0[i] = next;
+    }
+    if (at && isListed(at.gi)) {
+      // D2: inside a listed group the member carries the stack; groupRow builds its model from the live round (D5).
+      editMember(at.gi, at.mi, (mb) => ({ ...mb, ...stack, roundsLine: list[0].line,
+        ...(live ? { run: stackRun(liveRaw.run, mb.run), memo: liveRaw.memo || mb.memo, kind: rowOf.get(live).kind } : {}) }));
+      continue;
+    }
+    if (i !== undefined) continue;
+    // D3: no origin listed (deleted, filtered out): the newest round heads its stack, titled after its run.
+    const [first, ...older] = list;
+    const headRow = rowOf.get(first);
+    const named = at ? (groups[at.gi].members[at.mi] || {}).title : '';
+    const head = { ...headRow, title: `${named || headRow.title} · Round ${first.n}`, orphan: true,
+      ...(older.length ? { rounds: older, roundsId: o, roundKeys: new Set(roundKeysOf(older)), roundsLive: false,
+        roundsLine: headRow.model.state === 'working' || headRow.model.state === 'starting' ? headRow.model.line : first.line,
+        roundsOwnLine: !!headRow.needs && !headRow.model.prNeeds, activityMs: latest(older, headRow.activityMs) } : {}) };
+    raw.set(head, raw.get(headRow));
+    const why = older.find((rd) => rd.needs);
+    if (why) { head.needs = true; head.needsIcon ||= why.needsIcon; }
+    if (pass(head)) rows0.push(head);
+    orphans += 1;
+  }
+  return { groups: out, stacked, orphans };
+}
+
+/** D8 in the list: among the rows (and group members) that need you only through their PR, the newest per PR url keeps
+ *  Needs you, as needsYouItems counts it. Returns the pipeline ids of the others: the caller rebuilds them with
+ *  `prDeduped` (run-model.mjs), so they read In review and list under Recent. A run a round of it raises (a round
+ *  that failed or paused) is no candidate: losing the PR need must not hide the round's. */
+function dedupeRows(rows0, groupRows, raw, stacked) {
+  const cands = new Map();
+  const ownMs = (r) => (stacked.has(r.pipelineId) ? stacked.get(r.pipelineId) : Number.isFinite(r.activityMs) ? r.activityMs : r.sortMs);
+  const roundNeeds = (x) => (x.rounds || []).some((rd) => rd.needs);
+  for (const r of rows0) {
+    if (!r.needs || !r.model.prNeeds || !r.pipelineId || roundNeeds(r)) continue;
+    cands.set(r.pipelineId, { pid: r.pipelineId, urls: prUrlsOf((raw.get(r) || {}).run), at: ownMs(r) });
+  }
+  for (const g of groupRows) for (const mb of g.members) {
+    if (!mb.needs || !mb.model || !mb.model.prNeeds || !mb.pipelineId || roundNeeds(mb) || cands.has(mb.pipelineId)) continue;
+    cands.set(mb.pipelineId, { pid: mb.pipelineId, urls: prUrlsOf(mb.run), at: stampMs(mb.startedAt) });
+  }
+  if (cands.size < 2) return new Set();
+  const { dropped } = dedupeByPr([...cands.values()], { urls: (c) => c.urls, at: (c) => c.at });
+  return new Set([...dropped].map((c) => c.pid));
+}
+
 /**
  * The list model: { sections: [{id, title, rows, count, more?, bucket?, collapsed?}], counts, view, total, shown,
- * spansProjects, now }. Section ids: 'needs' | 'running' | 'recent' | 'project:KEY' | 'date:BUCKET'.
+ * spansProjects, now, orphans }. `archivedIds`: the archived feed's run ids, so an archived run's rounds stay out (D4). Section ids: 'needs' | 'running' | 'recent' | 'project:KEY' | 'date:BUCKET'.
  * A History row whose run is listed live is dropped (the live row stands for it), and so is a schedule ticket whose
  * run is (a firing ticket's id IS its runId). A row a group claims folds into that group's row.
  */
 export function buildRunsModel({
   live = [], history = [], scheduled = [], groups = [], person = '', labels = [], show = 'all', groupBy = 'none',
-  collapsed = new Set(), toggled = new Map(), recentShown = RECENT_PAGE, archivedCount = null, now = Date.now(),
+  collapsed = new Set(), toggled = new Map(), recentShown = RECENT_PAGE, archivedCount = null, archivedIds = new Set(),
+  now = Date.now(),
 } = {}) {
   const view = { show: RUNS_SHOW.includes(show) ? show : 'all', groupBy: RUNS_GROUP_BY.includes(groupBy) ? groupBy : 'none' };
-  const withModel = (r, run, memo) => ({ ...r, model: runModel(run, { memo: memo || null, now }) });
+  const raw = new WeakMap();   // row -> { run, memo }: what its model was built from (D5 rebuilds a stack head's model)
+  const withModel = (r, run, memo) => {
+    const row = { ...r, model: runModel(run, { memo: memo || null, now }) };
+    raw.set(row, { run, memo: memo || null });
+    return row;
+  };
   const liveRows = live.map((it) => withModel(liveRow(it, now), it.run || { status: it.status }, it.memo));
   const listed = new Set(liveRows.map((r) => r.pipelineId).filter(Boolean));
   const liveIds = new Set(liveRows.map((r) => r.runId));
-  const rows0 = [
+  const all = [
     ...liveRows,
     // An after-ticket's runAt is a far-future sentinel: no start time for it.
     ...scheduled.filter((t) => t && !liveIds.has(String(t.id)))
       .map((t) => withModel(schedRow(t, now), { ticket: { status: t.status, runAt: t.after ? null : t.runAt,
         after: t.after ? { index: t.after.index || null, group: t.after.group || '', title: t.after.title || '' } : null } })),
     ...history.filter((p) => p && p.id && !listed.has(String(p.id))).map((p) => withModel(histRow(p, now), p.run || { status: p.status })),
-  ].filter((r) => (!person || r.by === person) && matchesLabels(r.labels, labels));
-  const groupRows = groups.map((g) => groupRow(g, { now }));
+  ];
+  // The person and label filters apply to a stack's head only: a round is filtered with the run it folds into.
+  const pass = (r) => (!person || r.by === person) && matchesLabels(r.labels, labels);
+  const rows0 = all.filter((r) => !r.roundOf && pass(r));
+  const { groups: groupsIn, stacked, orphans } = foldRounds({ all, rows0, groups, pass, raw, view, archivedIds, now });
+  const buildGroup = (g, gi) => {
+    const row = groupRow(g, { now });
+    // A live round runs its member (D5), but rounds are not members: the count ("3/3") is the members' own runs'.
+    if (g !== groups[gi] && g.members.some((mb) => mb.roundsLive)) {
+      row.count = groupModel({ kind: g.groupKind === 'feature' ? 'feature' : 'chain', members: groups[gi].members.map((mb) => mb.run || {}) }, { now }).count.text;
+    }
+    for (const mb of row.members) {
+      if (!mb.rounds || !mb.rounds.length) continue;
+      // D6: a member that needs a person for its own reason keeps its line; the round line comes second.
+      mb.roundsOwnLine = !mb.roundsLive && !!mb.needs && !mb.model.prNeeds;
+      if (mb.roundsLive) mb.roundsLine = mb.model.line;   // D5: "Running · Round 9 · merge dev in"
+      const why = mb.rounds.find((rd) => rd.needs);
+      if (why) mb.needs = true;
+      if (mb.needs) { row.needs = true; row.needsIcon ||= NEEDS_ICON_OF[mb.model.state] || (why && why.needsIcon) || ''; }
+      for (const k of roundKeysOf(mb.rounds)) row.memberKeys.add(k);
+    }
+    return row;
+  };
+  const groupRows = groupsIn.map(buildGroup);
+  // D8: a run whose open PR another run raises reads In review (prDeduped) and lists under Recent, row and member alike.
+  const deduped = dedupeRows(rows0, groupRows, raw, stacked);
+  if (deduped.size) {
+    const quiet = (run) => ({ ...(run || {}), prDeduped: true });
+    rows0.forEach((r, i) => {
+      if (!deduped.has(r.pipelineId)) return;
+      const src = raw.get(r) || { run: { status: r.status }, memo: null };
+      const next = { ...r, model: runModel(quiet(src.run), { memo: src.memo, now }), needs: false, needsIcon: '' };
+      raw.set(next, { run: quiet(src.run), memo: src.memo });
+      rows0[i] = next;
+    });
+    groupsIn.forEach((g, gi) => {
+      if (!(g.members || []).some((mb) => mb && deduped.has(String(mb.pipelineId || '')))) return;
+      groupRows[gi] = buildGroup({ ...g, members: g.members.map((mb) => (mb && deduped.has(String(mb.pipelineId || ''))
+        ? { ...mb, run: quiet(mb.run) } : mb)) }, gi);
+    });
+  }
   const groupOf = (r) => groupRows.find((x) => rowChainKeys(r).some((k) => x.memberKeys.has(k))) || null;
   // Needs before the fold (runs-list-needs-before-collapse): a member that needs you raises its group.
   // The raised group also takes the member's needs icon, so cmpNeeds ranks it (a live failed-unread member counts too).
@@ -522,9 +799,11 @@ export function buildRunsModel({
     const rest = shown.filter((r) => !r.needs);
     push('needs', 'Needs you', shown.filter((r) => r.needs).sort(cmpNeeds));
     if (view.groupBy === 'none') {
-      push('running', 'Running', rest.filter((r) => RUNNING_STATES.has(r.model.state)).sort(byDispatch));
+      // A finished run whose PR another run already raises (D8 dedupe) is finished: it lists under Recent.
+      const running = (r) => RUNNING_STATES.has(r.model.state) && !r.model.prNeeds;
+      push('running', 'Running', rest.filter(running).sort(byDispatch));
       push('waiting', 'Waiting', rest.filter(isWaiting).sort(byDispatch));
-      const recent = rest.filter((r) => !RUNNING_STATES.has(r.model.state) && !isWaiting(r)).sort(byDispatch);
+      const recent = rest.filter((r) => !running(r) && !isWaiting(r)).sort(byDispatch);
       push('recent', 'Recent', recent.slice(0, recentShown), { more: Math.max(0, recent.length - recentShown) });
     } else if (view.groupBy === 'project') {
       const by = new Map();
@@ -543,7 +822,7 @@ export function buildRunsModel({
     } else {
       for (const [b, name] of DATE_BUCKETS) {
         const id = `date:${b}`;
-        push(id, name, rest.filter((r) => dateBucket(r, now) === b).sort(byDispatch), { bucket: b, collapsed: collapsed.has(id) });
+        push(id, name, rest.filter((r) => dateBucket(r, now) === b).sort(byDispatch), { bucket: b, collapsed: isFolded(collapsed, id) });
       }
     }
   }
@@ -552,7 +831,8 @@ export function buildRunsModel({
   for (const s of sections) for (const r of s.rows) {
     if (r.kind === 'chain') r.open = toggled.has(r.key) ? !!toggled.get(r.key) : !ENDED_STATES.has(r.model.state);
   }
-  return { sections, counts, view, total: view.show === 'archived' ? shown.length : counts.all, shown: shown.length, spansProjects, now };
+  // `orphans`: stacks whose run is not listed (D3); the caller loads the archived feed once to tell an archived run (D4).
+  return { sections, counts, view, total: view.show === 'archived' ? shown.length : counts.all, shown: shown.length, spansProjects, now, orphans };
 }
 
 /** Is `row` the page the pane shows? `sel` = { runId, pipelineId, histKey: "<projectKey>/<id>", groupId }. A group row
@@ -563,6 +843,8 @@ export function isRowSelected(row, sel) {
   if (sel.groupId) return false;
   if (sel.runId && row.runId === sel.runId) return true;
   if (sel.histKey && row.kind === 'hist' && `${row.projectKey}/${row.pipelineId}` === sel.histKey) return true;
+  // A stack's head stands for its rounds: a round's page marks it (D2).
+  if (row.roundKeys && ((sel.pipelineId && row.roundKeys.has(`p:${sel.pipelineId}`)) || (sel.runId && row.roundKeys.has(`r:${sel.runId}`)))) return true;
   return !!sel.pipelineId && row.pipelineId === sel.pipelineId;
 }
 export function isMemberOpen(row, sel) {
@@ -616,7 +898,48 @@ export function rowLabels(doc, labels) {
   return box;
 }
 
-function renderItem(doc, r, { section = '', level = 'top', checked, selecting, spansProjects = false, lineFrom = null, position = '', parentWhere = '', now = Date.now() } = {}) {
+/** D6 / D9: a stack's line (the newest round's, or the live round's) with its `k rounds` toggle (a chevron icon), then, while open,
+ *  its rounds newest first (5, then "+n earlier"). Round lines are links to each round's page. */
+function renderRounds(doc, r, { roundsOpen = new Set(), roundsAll = new Set(), now }) {
+  const key = `rounds:${r.roundsId}`;
+  const open = roundsOpen.has(key);
+  const n = r.rounds.length;
+  const bar = doc.createElement('div');
+  bar.className = 'runs-rounds-line';
+  // The chevron is an icon, never a text glyph (spec §1.3): right while closed, down while open.
+  const t = textEl(doc, 'button', 'runs-rounds-toggle', `${n} ${n === 1 ? 'round' : 'rounds'}`);
+  t.prepend(icon(doc, open ? 'chevron-down' : 'chevron', 12));
+  t.type = 'button';
+  t.dataset.roundsKey = key;
+  t.setAttribute('aria-expanded', open ? 'true' : 'false');
+  t.setAttribute('aria-label', `${open ? 'Hide' : 'Show'} the ${n} ${n === 1 ? 'round' : 'rounds'} of ${r.title}`);
+  bar.append(textEl(doc, 'span', 'runs-rounds-text', r.roundsLine || ''), t);
+  if (!open) return [bar];
+  const list = doc.createElement('div');
+  list.className = 'runs-rounds';
+  list.setAttribute('role', 'list');
+  const all = roundsAll.has(key) || n <= ROUNDS_SHOWN;
+  for (const rd of all ? r.rounds : r.rounds.slice(0, ROUNDS_SHOWN)) {
+    const a = doc.createElement('a');
+    a.className = `runs-round${rd.live && !rd.outcome ? ' is-live' : ''}`;
+    a.setAttribute('role', 'listitem');
+    a.setAttribute('href', rd.href);
+    a.dataset.pipelineId = rd.pipelineId || '';
+    a.append(textEl(doc, 'span', 'runs-round-n', `R${rd.n}`), textEl(doc, 'span', 'runs-round-words', rd.words),
+      textEl(doc, 'span', 'runs-round-time', rd.time || ''));
+    list.append(a);
+  }
+  if (!all) {
+    const more = textEl(doc, 'button', 'runs-rounds-more', `+${n - ROUNDS_SHOWN} earlier`);
+    more.type = 'button';
+    more.dataset.roundsKey = key;
+    list.append(more);
+  }
+  return [bar, list];
+}
+
+function renderItem(doc, r, { section = '', level = 'top', checked, selecting, spansProjects = false, lineFrom = null, position = '', parentWhere = '', now = Date.now(),
+  roundsOpen = new Set(), roundsAll = new Set() } = {}) {
   const item = doc.createElement('div');
   item.className = `runs-item${checked.has(r.key) ? ' is-checked' : ''}${r.needs && level === 'top' ? ' is-needs' : ''}`;
   item.dataset.rowKey = r.key;
@@ -639,6 +962,7 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   if (r.runId) a.dataset.runId = r.runId;   // this exact line: test/ui-guide-hops.test.mjs reads it as the guide hop's painter
   a.dataset.line = r.model.line;      // slice 4 (D3): the canonical status line, compared across list, card and page
   if (r.memberKeys) a.dataset.memberKeys = [...r.memberKeys].join(' ');   // paintRunsSelection rebuilds the set from it
+  if (r.roundKeys && r.roundKeys.size) a.dataset.roundKeys = [...r.roundKeys].join(' ');   // and this one (a stack's rounds)
   // #948 s3: a Chats column topic group draws as a Runs group row (count, ⌄, indented members), with no stage line.
   const grouped = r.kind === 'chain' || r.kind === 'chat-group';
   const right = doc.createElement('span');
@@ -660,9 +984,14 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   const staged = level === 'member' && !unstarted && r.kind !== 'chain' && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed'
     && !r.model.prNeeds && r.model.progress && r.model.progress.mode === 'stages';
   if (staged) line = DOT_SAYS.has(r.model.state) ? '' : dropLead(line, r.model.progress.label);
+  // D6: a stack's sub-line is its newest round's (the stack line below the row); the row keeps its own line only while
+  // it needs a person for its own reason, and the round line comes second.
+  const stack = !!(r.rounds && r.rounds.length);
   const title = textEl(doc, 'span', 'runs-row-title', position ? `${position} · ${r.title}` : r.title);
+  const mark = r.kind === 'chat' ? originMark(doc, r.origin) : null;   // a chat a chat integration opened: its platform's logo
+  if (mark) title.prepend(mark);
   const lab = level === 'top' ? rowLabels(doc, r.labels) : null;
-  a.append(...[title, lab, right, textEl(doc, 'span', 'runs-row-sub', line)].filter(Boolean));
+  a.append(...[title, lab, right, stack && !r.roundsOwnLine ? null : textEl(doc, 'span', 'runs-row-sub', line)].filter(Boolean));
   if (r.kind === 'chain' && !ENDED_STATES.has(r.model.state) && r.model.progress) {
     a.append(renderRowLine(doc, { fraction: r.model.progress.fraction }, (lineFrom && lineFrom.get(r.key)) || ''));
   } else if (r.kind !== 'chain' && !unstarted && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed' && !r.model.prNeeds && r.model.progress) {
@@ -692,13 +1021,14 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   more.setAttribute('aria-haspopup', 'menu');
   tail.append(more);
   item.append(pick, a, tail);
+  if (stack) item.append(...renderRounds(doc, r, { roundsOpen, roundsAll, now }));
   if (grouped && r.open) {
     const list = doc.createElement('div');   // member rows are div.runs-item, so a list of them is a div with role=list
     list.className = 'runs-members';
     list.setAttribute('role', 'list');
     for (const mb of r.members) {
       list.append(renderItem(doc, { ...mb, href: mb.href || '#runs', title: mb.title || '(untitled)' },
-        { level: 'member', checked, selecting, lineFrom, now, parentWhere: r.kind === 'chat-group' ? r.groupName || '' : '',
+        { level: 'member', checked, selecting, lineFrom, now, roundsOpen, roundsAll, parentWhere: r.kind === 'chat-group' ? r.groupName || '' : '',
           position: r.kind !== 'chain' || r.groupKind === 'user' || mb.adhoc ? '' : String(mb.position) }));
     }
     item.append(list);
@@ -713,9 +1043,27 @@ const SHOW_EMPTY = Object.freeze({ needs: 'Nothing needs you.', running: 'No run
 export const RUNS_LOADING = 'Loading runs…';
 export const RUNS_OFFLINE = "The runs show here once Worca's server is reachable again.";
 
+/** Repaint every staged row's four-section block IN PLACE from `model` (its fill, marks and breakdown). The list rebuilds
+ *  a row only when its signature changes (app.js runsRowSig: stage and label), and the fill is not in it: a row first
+ *  painted from hello (a stepper, no steps yet) otherwise kept 0% after the replayed state began its stage (#1067). */
+export function paintStageBlocks(host, model) {
+  const byKey = new Map();
+  for (const s of model.sections) {
+    if (s.collapsed) continue;
+    for (const r of s.rows) {
+      byKey.set(r.key, r);
+      if (r.kind === 'chain') for (const m of r.members || []) byKey.set(m.key, m);
+    }
+  }
+  for (const block of host.querySelectorAll('.runs-item > a.runs-row > .runs-stage')) {
+    const r = byKey.get(block.closest('.runs-item').dataset.rowKey);
+    if (r && r.model && r.model.progress && r.model.progress.mode === 'stages') paintProgressBar(block, r.model.progress, { pulse: r.model.pulse });
+  }
+}
+
 export function renderRunsList(doc, model, { checked = new Set(), selecting = false, lineFrom = null, emptyText = 'No runs yet.', note = '',
   loading = false, offline = false, retry = false, emptyByShow = SHOW_EMPTY, loadingText = RUNS_LOADING,
-  offlineText = RUNS_OFFLINE } = {}) {
+  offlineText = RUNS_OFFLINE, roundsOpen = new Set(), roundsAll = new Set() } = {}) {
   const out = [];
   for (const s of model.sections) {
     const sec = doc.createElement('section');
@@ -734,7 +1082,7 @@ export function renderRunsList(doc, model, { checked = new Set(), selecting = fa
     rows.className = 'runs-sec-rows';
     rows.hidden = !!s.collapsed;
     const sectionWord = s.id === 'needs' || s.id === 'running' ? s.id : '';
-    if (!s.collapsed) for (const r of s.rows) rows.append(renderItem(doc, r, { section: sectionWord, checked, selecting, spansProjects: model.spansProjects, lineFrom, now: model.now }));
+    if (!s.collapsed) for (const r of s.rows) rows.append(renderItem(doc, r, { section: sectionWord, checked, selecting, spansProjects: model.spansProjects, lineFrom, now: model.now, roundsOpen, roundsAll }));
     sec.append(...(head ? [head] : []), rows);
     if (s.more) {
       // #948 s2: "Show more" under the Chats column's project and flat lists; Runs keeps "Show older".

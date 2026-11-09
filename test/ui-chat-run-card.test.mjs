@@ -19,6 +19,7 @@ import { noteAnswer, namedAnswer, forgetAnswer } from '../ui/public/shape/step-r
 import { applyFlags } from '../ui/public/flags.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 import { statusText } from '../ui/public/run-status-card.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 /** The icons.mjs glyph a control leads with (its first child, an .ic span); '' when none. */
 const glyphOf = (el) => { const svg = el && el.firstElementChild && el.firstElementChild.matches('.ic') ? el.firstElementChild.querySelector('svg') : null; return svg ? Object.keys(ICONS).find((k) => ICONS[k] === svg.innerHTML) || '' : ''; };
 
@@ -561,6 +562,64 @@ test('chat run card result region: words, churn, top files → Diff, artifact ch
       assert.equal($('.chat-rc-create-pr').disabled, false);
       assert.equal(refreshed.length, 1);
     } },
+    { name: 'a run on its source branch: merged back → Push (no Create PR); pushed → disabled "Pushed to origin"; not merged back → How to merge only; a feature-branch run keeps Create PR', run: async () => {
+      const pushes = [];
+      const controls = { prHost: () => true, openShipIt: async () => null, pushSource: (ref) => { pushes.push(ref); return Promise.resolve({ ok: true, remote: 'origin' }); } };
+      const onSource = { sameAsSource: true, sourceBranch: 'dev', mergeBack: { merged: true }, push: { remote: 'origin', state: 'ahead' } };
+      const { card, $, refreshed, calls } = mk({ controls });
+      card.update(done({ ...EXTRAS, source: onSource }));
+      assert.equal($('.chat-rc-create-pr'), null, 'no Create PR for a source-branch run');
+      const push = $('.chat-rc-push');
+      assert.equal(push.textContent, 'Push');
+      assert.equal(push.disabled, false);
+      assert.equal(push.title, 'Push to dev');
+      push.click();
+      await settle();
+      assert.equal(pushes.length, 1);
+      assert.equal(pushes[0].pipelineId, 'abcd1234');
+      assert.equal(refreshed.length, 1, 're-read the card once the push settles');
+      assert.equal($('.chat-rc-push').textContent, 'Pushed to origin');
+      assert.equal($('.chat-rc-push').disabled, true);
+      // Already on the remote: disabled, "Pushed to origin".
+      const again = mk({ controls });
+      again.card.update(done({ ...EXTRAS, source: { ...onSource, push: { remote: 'origin', state: 'pushed' } } }));
+      assert.equal(again.$('.chat-rc-push').textContent, 'Pushed to origin');
+      assert.equal(again.$('.chat-rc-push').disabled, true);
+      // Diverged: disabled with the pull-or-rebase tip.
+      const div = mk({ controls });
+      div.card.update(done({ ...EXTRAS, source: { ...onSource, push: { remote: 'origin', state: 'diverged' } } }));
+      assert.equal(div.$('.chat-rc-push').disabled, true);
+      assert.match(div.$('.chat-rc-push').title, /have diverged/);
+      // Not merged back: no Create PR, no Push, a pointer to the run page.
+      const nm = mk({ controls });
+      nm.card.update(done({ ...EXTRAS, source: { sameAsSource: true, sourceBranch: 'dev', mergeBack: { merged: false } } }));
+      assert.equal(nm.$('.chat-rc-create-pr'), null);
+      assert.equal(nm.$('.chat-rc-push'), null);
+      const shipBtns = (c) => [...c.card.el.querySelectorAll('[data-model-action="ship"]')].filter((b) => !b.hidden).map((b) => b.textContent);
+      assert.deepEqual(shipBtns(nm), [], 'the footer makes no Create PR for a not-merged-back source run');
+      nm.$('.chat-rc-how-to-merge').click();
+      assert.deepEqual(nm.calls.at(-1).slice(0, 1).concat([nm.calls.at(-1)[2]]), ['panel', { tab: 'overview' }]);
+      // Below Advanced the result's row is hidden: the footer makes no Create PR for a source-branch run either.
+      const sim = mk({ controls });
+      sim.card.el.ownerDocument.documentElement.dataset.level = 'simple';
+      sim.card.update(done({ ...EXTRAS, source: onSource }));
+      assert.deepEqual(shipBtns(sim), []);
+      // A normal feature-branch run is unchanged.
+      const fb = mk({ controls });
+      fb.card.update(done(EXTRAS));
+      assert.ok(fb.$('.chat-rc-create-pr'));
+      assert.equal(fb.$('.chat-rc-push'), null);
+      assert.equal(calls.length, 0);
+    } },
+    { name: 'a failed Push says why in the card and stays retryable', run: async () => {
+      const { card, $ } = mk({ controls: { prHost: () => true, pushSource: async () => ({ ok: false, error: 'git push failed: rejected' }) } });
+      card.update(done({ ...EXTRAS, source: { sameAsSource: true, sourceBranch: 'dev', mergeBack: { merged: true } } }));
+      $('.chat-rc-push').click();
+      await settle();
+      assert.equal($('.chat-rc-res-err').hidden, false);
+      assert.match($('.chat-rc-res-err').textContent, /rejected/);
+      assert.equal($('.chat-rc-push').disabled, false);
+    } },
     { name: 'no PR host → no Create; checks → "N things to check"; nothing changed → Done', run: async () => {
       const { card, $ } = mk({ controls: { prHost: () => false } });
       card.update(done({ ...EXTRAS, results: { ...EXTRAS.results, checks: 2 } }));
@@ -608,7 +667,7 @@ test('chat run card result region: words, churn, top files → Diff, artifact ch
 });
 
 test('card wells: the footer accordion, rows and result link take no pointer (nothing is bound in a card)', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.ok(css.includes('.gv-wrap-card .run-flow.gv-host .gv-world .xtoggle,.gv-wrap-card .run-flow.gv-host .gv-world .xrow,'
     + '.gv-wrap-card .run-flow.gv-host .gv-world .xresult a{pointer-events:none;cursor:inherit;}'));
 });
@@ -647,6 +706,7 @@ test('chat run card helpers: progressIdent, runRefOf, autoChip, resultWord, answ
       assert.equal(answerReceipt({ id: 'q', payload: { decision: 'approve' } }, { id: 'q', planAsk: true, roleReviews: RECORDED, step: 'Plan' }),
         'Plan approved · 5 roles reviewed · 1 open issue accepted');
       assert.equal(answerReceipt({ id: 'q', payload: { decision: 'approve' } }, { id: 'q', planAsk: false, step: 'Plan' }), 'Answer sent · Plan');
+      assert.equal(answerReceipt({ id: 'q', payload: { decision: 'approve' } }, { id: 'q', planAsk: true, reqAsk: true, step: 'Requirements' }), 'Requirements agreed');
       assert.equal(midTrunc('abcdefghij', 5), 'ab…ij');
       assert.equal(midTrunc('short.md'), 'short.md');
     } },
@@ -781,7 +841,7 @@ test('chat run card controls: the second click of a double-click never undoes th
 });
 
 test('chat run card CSS: the Runs page ask card in one column (the run side panel\'s overrides), its amber line in one rule; a narrow card wraps the result head and the answer buttons', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const p3 = css.slice(css.indexOf('/* ===== Chat P3: run card ===== */'));
   for (const rule of [
     '.chat-rc-q-head{margin-bottom:10px;font-size:15px;}',
@@ -818,7 +878,7 @@ test('chat run card CSS: the Runs page ask card in one column (the run side pane
 // ---- The question's styles, replayed over style.css. jsdom computes no cascade, so (as test/ui-functional-css.test.mjs
 // does for `display`) the winning declaration is picked by hand: importance, then specificity, then source order. Top-level
 // rules only: the Runs page's narrow @media block is not the card's.
-const CSS_TEXT = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+const CSS_TEXT = readStyleCss();
 let cssRulesMemo = null;
 const cssRules = () => (cssRulesMemo ??= [...new JSDOM(`<style>${CSS_TEXT}</style>`).window.document.styleSheets[0].cssRules]
   .filter((r) => typeof r.selectorText === 'string'));
@@ -1078,7 +1138,7 @@ test('chat run card: one flagged thing reads "Ready to review · 1 thing to chec
 });
 
 test('chat run card CSS: an answer label wider than the whole row wraps inside its button, never out of the card', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const p3 = css.slice(css.indexOf('/* ===== Chat P3: run card ===== */'));
   // Chrome, 360 px: under `white-space:nowrap` the gate's "Don't approve another cycle and continue" (330 px wide)
   // sat at x -26..304 in a 20..340 card and read "n't approve …". flex-wrap already moves WHOLE buttons to the next row.
@@ -1087,7 +1147,7 @@ test('chat run card CSS: an answer label wider than the whole row wraps inside i
 });
 
 test('step card CSS: inside a question panel the head title wraps (375 px) and never overflows the card', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const rule = (sel) => { const m = css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`)); return m ? m[1] : ''; };
   assert.match(rule('.qpanel .step-head .ask-mcard-title'), /white-space:normal/);
   assert.match(rule('.qpanel .step-head .ask-mcard-title'), /min-width:0/);
@@ -1097,7 +1157,7 @@ test('step card CSS: inside a question panel the head title wraps (375 px) and n
 });
 
 test('member rows CSS: the narrow grid areas are the page table\'s only, so the chat card\'s plain rows keep their columns (375 px)', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   // Chrome, 375 px: an unscoped `.run-member-title{grid-area:title}` put the chat card's title and line in one implicit
   // cell, drawn over each other at the right edge (the plain list has no grid-template-areas).
   const rules = [...css.matchAll(/([^{}]+)\{grid-area:[a-z]+\}/g)].map((m) => m[1].trim()).filter((s) => /\.run-member/.test(s));
@@ -1106,7 +1166,7 @@ test('member rows CSS: the narrow grid areas are the page table\'s only, so the 
 });
 
 test('chat run card CSS: the result counts and error, a hovered file row or Stop, the "K of N answered" lead, the agent model label and the Auto well\'s words reach 4.5:1 in both themes', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const p3 = css.slice(css.indexOf('/* ===== Chat P3: run card ===== */'));
   const root = css.slice(css.indexOf(':root{'), css.indexOf('}', css.indexOf(':root{')));
   const pair = (name) => {
@@ -1161,7 +1221,7 @@ test('chat run card CSS: the result counts and error, a hovered file row or Stop
 });
 
 test('chat run card CSS: an agent chip never runs out of a narrow card (a long model id ellipsizes first, the cycle label never shrinks)', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const p3 = css.slice(css.indexOf('/* ===== Chat P3: run card ===== */'));
   // Chrome, 390 px, Expert: "Review Implementation claude-sonnet-4-5-20250929 cycle 3" (a REST card's raw model id) spanned
   // x 39..439 in a 20..370 card under P1's `.ask-rc-agent{white-space:nowrap}`.
@@ -1296,6 +1356,18 @@ test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · 
   ]);
 });
 
+test('chat run card, requirements first: a round with coverage replaces "Clarify ✓" with the Requirements count; the last such round wins', () => {
+  const SH = (rounds) => ({ perspectives: ['ux'], rounds, approved: { round: 2, file: 'docs/plans/2026-10-14-login.md' }, savedTo: null });
+  const { card, $ } = mk();
+  card.update(live({ shaping: SH([{ round: 1, coverage: { ok: false, passed: 6, total: 8 } }, { round: 2, coverage: { ok: false, passed: 7, total: 8 } }]) }));
+  assert.equal($('.chat-rc-shaped-stages').textContent, 'Requirements 7/8 · 1 to fix · Plan ✓ · Refine ✓ while planning');
+  card.update(live({ shaping: SH([{ round: 1, coverage: { ok: true, passed: 8, total: 8 } }, { round: 2 }]) }));
+  assert.equal($('.chat-rc-shaped-stages').textContent, 'Requirements 8/8 · Plan ✓ · Refine ✓ while planning', 'a later round without counts does not hide the last known ones');
+  card.update(live({ shaping: SH([{ round: 1 }, { round: 2 }]) }));
+  assert.equal($('.chat-rc-shaped-stages').textContent, 'Clarify ✓ · Plan ✓ · Refine ✓ while planning', 'no coverage: today\'s line');
+  assert.equal(card.el.querySelectorAll('.chat-rc-shaped-stages').length, 1);
+});
+
 const PQ_PLAN = { id: 'plan-n_refine-1', kind: 'plan', plan: { round: 1 } };
 const SL = (i, state, over = {}) => ({ index: i, title: `Part ${i}`, state, runId: null, pipelineId: null, ticketId: `t${i}`, pr: null, ...over });
 const VIEW3 = (slices, over = {}) => ({ id: 'feat-1', title: 'Charts', status: 'active', total: 3, done: slices.filter((s) => s.state === 'done').length,
@@ -1359,6 +1431,30 @@ test('feature card: Shaping, then the group row\'s chip, one status line and its
     assert.deepEqual([...li.querySelector('.run-member-main').children].map((c) => c.className), ['run-member-title', 'run-member-line']);
   }
   assert.equal($$('.chat-rc-fstatus, .chat-rc-chain, ol.chat-rc-members, .ask-rc-pill').length, 0, 'no Shaper duplicate');
+});
+
+test('feature card: a reviewed slice\'s member row draws its Requirements fold, and an opened fold stays open across repaints', () => {
+  const row = featureRow([DONE_RUN, WAITING, WAITING]);
+  row.members[0].pipelineId = 'p1';
+  const check = { passed: 2, total: 3, items: [
+    { id: 'R-po-1', label: 'R-po-1 · covered by the diff', pass: true, detail: 'People see the chart' },
+    { id: 'R-ux-1', label: 'R-ux-1 · covered by the diff', pass: true, detail: 'It reads well' },
+    { id: 'R-ops-1', label: 'R-ops-1 · not covered by the diff', pass: false, detail: 'It rolls back' }] };
+  const { card, $$ } = mk({ controls: { memoFor: () => ({}), groupOf: () => row } });
+  const paint = () => card.update(shaped({ pipelineId: 'abcd1234', log: [],
+    feature: VIEW3([SL(1, 'done', { pipelineId: 'p1', requirements: { check } }), SL(2, 'planned'), SL(3, 'planned')]) }));
+  paint();
+  const lineOf = () => $$('.chat-rc-members .run-member').find((li) => li.dataset.key === 'p1').querySelector('.plan-check-line');
+  assert.equal($$('.chat-rc-members .plan-check-line').length, 1, 'only the reviewed slice\'s row');
+  assert.equal(lineOf().textContent.replace('›', '').trim(), 'Requirements 2/3 · 1 to fix');
+  assert.equal(lineOf().getAttribute('aria-expanded'), 'false');
+  lineOf().click();
+  assert.equal(lineOf().getAttribute('aria-expanded'), 'true');
+  paint();
+  assert.equal(lineOf().getAttribute('aria-expanded'), 'true', 'still open after a repaint');
+  assert.equal(lineOf().nextElementSibling.hidden, false);
+  paint();
+  assert.equal(lineOf().getAttribute('aria-expanded'), 'true', 'a second repaint does not toggle it shut');
 });
 
 test('feature card: the step log shows Clarify · 2 answers, Plan approved, Split into 3 runs; Show unfolds in place', () => {
@@ -1670,7 +1766,7 @@ test('chat run card, a folder run: no Apply to folder when nothing changed or th
   card.update(done(EX, { workMode: 'folder', archived: true, changes: { state: 'pending', counts: { added: 2 } } }));
   assert.equal($('.chat-rc-apply'), null, 'an archived run has no copy');
   // Apply keeps its own look; Create PR and View PR are the shared .btn (no rule of their own).
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /(^|\})\.chat-rc-apply\{/m);
   assert.doesNotMatch(css, /\.chat-rc-(?:create|view)-pr[^{}]*\{/);
 });
@@ -1713,7 +1809,7 @@ test('chat run card: a run without a project lists each file as a name, its size
   // The NoProjectRun board: one bordered list of rows, a file icon first on each.
   assert.equal(list.querySelectorAll('.chat-rc-art-rows > .chat-rc-art-row').length, 2);
   for (const row of list.querySelectorAll('.chat-rc-art-row')) assert.equal(row.firstElementChild.tagName.toLowerCase(), 'svg');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   // Runs redesign design language: a sentence-case caption (no uppercase tracked micro-label) and token radii.
   for (const rule of ['.chat-rc-arts-list .cap{font-size:12px;font-weight:600;color:var(--ink-2);}',
     '.chat-rc-art-rows{border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;background:var(--panel);}',
@@ -2179,4 +2275,30 @@ test('run labels (slice 1): read-only chips after the status line; none for an e
   const off = mk();
   off.card.update(live({ labels: ['hotfix'] }));
   assert.equal(off.$$('.label-chip').length, 0);
+});
+
+// Shaper requirements s3 (R-qa-5): a Changes run of a shipped feature asks the requirements hold first. The card draws
+// that hold (step n_reqrefine, plan.port 'requirements') and no plan approval card until it is answered.
+test('a Changes run of a shipped feature: the requirements hold\'s card first, the plan approval card only after it', async () => {
+  const hold = { id: 'plan-n_reqrefine-1', kind: 'plan', nodeId: 'n_reqrefine', plan: { nodeId: 'n_reqrefine', port: 'requirements', round: 1,
+    revisable: true, file: 'requirements.md', check: null, perspectives: ['product'], decisions: [],
+    criteria: { ok: true, passed: 1, total: 1, items: [{ id: 'R-po-1', label: 'R-po-1 · Export the report', pass: true }] } } };
+  const planAsk = { id: 'plan-n_refine-1', kind: 'plan', nodeId: 'n_refine', plan: { nodeId: 'n_refine', port: 'plan', round: 1, revisable: true,
+    file: 'plans/p.md', check: null, perspectives: ['product'] } };
+  const q = stepStub(hold, renderPlanBody);
+  const { card, $ } = mk({ controls: { ...q, answer: async () => true } });
+  card.update(live({ pendingQuestion: hold }));
+  assert.equal($('.chat-rc-q').hidden, false);
+  assert.equal($('.chat-rc-q .qpanel').dataset.qid, 'plan-n_reqrefine-1', 'the hold is the card\'s ask');
+  assert.equal(card.el.querySelectorAll('.chat-rc-q .qpanel').length, 1, 'one ask on the card');
+  assert.equal(card.el.querySelector('[data-qid="plan-n_refine-1"]'), null, 'no plan approval card yet');
+  $('.chat-rc-q .plan-approve').click();
+  await settle();
+  assert.equal(q.log.posts.length, 1);
+  assert.equal(q.log.posts[0].decision, 'approve');
+  const next = stepStub(planAsk, renderPlanBody);
+  const after = mk({ controls: { ...next, answer: async () => true } });
+  after.card.update(live({ pendingQuestion: planAsk }));
+  assert.equal(after.$('.chat-rc-q .qpanel').dataset.qid, 'plan-n_refine-1', 'the plan approval comes after the hold');
+  forgetAnswer('run-uuid-1', hold.id);
 });

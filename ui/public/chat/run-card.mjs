@@ -15,6 +15,7 @@ import { fmtDur, fmtUsd, isGraphManifest, manifestNodes } from '../graph/run-dec
 import { askKindOf } from '../ask/registry.mjs';
 import { CREATE_PR_LABEL, VIEW_PR_LABEL } from '../ship-words.mjs';
 import { icon as uiIcon } from '../icons.mjs';
+import { pushLabel, pushTip } from '../run-head.mjs';
 import { checklistScore } from '../../../src/shared/shape/review-checklist.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME } from '../../../src/shared/no-project.mjs';
 import { changesCounts, folderDoneWords } from '../folder-changes.mjs';
@@ -28,8 +29,10 @@ import { delegateQuestion } from '../question-delegate.mjs';
 import { paintStatusDot } from '../status-dot.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { featureCardModel, paintFeatureLog } from '../shape/feature-card.mjs';
-import { namedAnswer, forgetAnswer } from '../shape/step-receipt.mjs';
+import { namedAnswer, forgetAnswer, REQUIREMENTS_AGREED } from '../shape/step-receipt.mjs';
+import { isRequirementsAsk, answerFieldOpen } from '../shape/step-card.mjs';
 import { renderChecklistGroups } from '../shape/checklist-view.mjs';
+import { checkLine, roundCheck } from '../shape/plan-text.mjs';
 import { paintFeatureActions } from '../shape/feature-actions.mjs';
 import { renderAskChanges } from './ask-changes.mjs';
 import { roundsModel, liveRound } from './rounds.mjs';
@@ -162,6 +165,7 @@ export function answerReceipt(sent, painted) {
   if (named) return named;
   const step = (painted && (painted.step || painted.heading)) || '';
   const tail = (t) => (step ? `${t} · ${step}` : t);
+  if (sent && painted && painted.reqAsk && sent.payload && sent.payload.decision === 'approve') return REQUIREMENTS_AGREED;
   if (sent && painted && painted.planAsk && sent.payload && sent.payload.decision === 'approve') return planApprovedLine(painted.roleReviews);
   if (sent && sent.payload && Array.isArray(sent.payload.answers)) {
     const n = sent.payload.answers.length;
@@ -426,6 +430,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (row) call(controls.act, ref(), 'stop', stopBtn, lastM, row);
     else call(controls.stop, ref(), () => call(refresh));
   });
+  // A Shaper card changed its primary (the Requirements card's Ask for changes opened or closed): Answer follows it.
+  qBody.addEventListener('step-primary', () => { if (!dead && lastM) paintActions(lastM, last); });
   qBody.addEventListener('plan-answer', (e) => {
     if (!painted) return;
     planSent = e.detail && e.detail.decision === 'approve' ? { id: painted.id, kind: painted.kind, payload: e.detail } : null;
@@ -562,7 +568,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       if (!painted || painted.id !== (q.id || null)) { qErr.hidden = true; sent = null; shownFor = null; planSent = null; }
       const planAsk = askKindOf(pq) === 'plan' && !!pq.plan && !pq.plan.outline;
       painted = { id: q.id || null, runId: stepRef().runId, kind: q.kind || askKindOf(pq), heading: q.heading || '', step: q.step || '',
-        stepCard: !!q.stepCard, planAsk, roleReviews: planAsk ? pq.plan.roleReviews || null : null };
+        stepCard: !!q.stepCard, planAsk, reqAsk: isRequirementsAsk(pq), roleReviews: planAsk ? pq.plan.roleReviews || null : null };
       qHead.textContent = painted.heading;
       qHead.hidden = !painted.heading || painted.stepCard;   // a step card's own head says it once (shaper-cards D16)
       qBody.hidden = false;
@@ -614,13 +620,22 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const r = s.results || null;
     const arts = Array.isArray(s.artifacts) ? s.artifacts : [];
     const prUrl = s.pr && isWebUrl(s.pr.url) ? s.pr.url : '';
-    const canCreate = word.key === 'ship' && isGitRun(s) && !s.archived && !(s.pr && s.pr.url) && call(controls.prHost) !== false;
+    // A run on its source branch has no PR of its own (the server refuses one): merged back, the run page's rule (app.js
+    // head-model fields) offers Push; not merged back, the work sits on its own branch and the run page says how to land it.
+    const onSource = s.sameAsSource === true;
+    const mergedBack = onSource && s.kind !== 'workspace-run' && !s.workspaceId && !!s.sourceBranch && !!s.mergeBack && s.mergeBack.merged === true;
+    const notMerged = onSource && !!s.mergeBack && s.mergeBack.merged === false;
+    const shipOk = word.key === 'ship' && isGitRun(s) && !s.archived && !(s.pr && s.pr.url);
+    const canPush = shipOk && mergedBack && typeof controls.pushSource === 'function';
+    const showMerge = shipOk && notMerged;
+    const pushState = canPush ? (s.push || null) : null;
+    const canCreate = shipOk && !onSource && call(controls.prHost) !== false;
     // P5: a workspace run applies each Folder member on its own (the run page's Changes); the card's Apply has no memberKey.
     const ws = s.kind === 'workspace-run' || !!s.workspaceId;
     const total = (changesCounts(s.changes) || {}).total || 0; const canApply = word.key === 'folder' && !ws && !s.archived && !!s.changes && s.changes.state === 'pending' && total > 0 && typeof controls.openApply === 'function';
     const np = isNoProjectRun(s);
     const lines = resultLines(word, statusText(m || lastM || {}));
-    const sig = JSON.stringify([word, lines, r, arts.map((a) => [a.relPath, a.bytes]), !!s.moreArtifacts, s.artifactsTotal, np, prUrl, canCreate, canApply]);
+    const sig = JSON.stringify([word, lines, r, arts.map((a) => [a.relPath, a.bytes]), !!s.moreArtifacts, s.artifactsTotal, np, prUrl, canCreate, canApply, canPush, showMerge, pushState, s.sourceBranch || '']);
     if (sig === resultSig) return;
     resultSig = sig;
     createPrBtn = null;
@@ -728,7 +743,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       }
       resultSec.appendChild(box);
     }
-    if (prUrl || canCreate) {
+    if (prUrl || canCreate || canPush || showMerge) {
       const rfoot = h('div', 'chat-rc-res-foot');
       rfoot.dataset.minLevel = 'advanced';              // Create PR / View PR: the run page's level (docs/ui-levels.md)
       if (prUrl) {
@@ -740,6 +755,36 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
         a.target = '_blank';
         a.rel = 'noopener';
         rfoot.appendChild(a);
+      } else if (showMerge) {
+        const b = button('btn btn-sm chat-rc-how-to-merge', 'How to merge');
+        b.title = 'The work is not on the source branch yet: the run page says how to land it';
+        b.addEventListener('click', () => call(ctx.openRunPanel, ref(), { tab: 'overview' }));
+        rfoot.appendChild(b);
+      } else if (canPush) {
+        const b = button('btn btn-sm btn-primary chat-rc-push');
+        b.append(uiIcon(doc, 'arrow-up', 14), pushLabel(pushState));
+        b.title = pushTip(s.sourceBranch, pushState);
+        b.disabled = !!pushState && (pushState.state === 'pushed' || pushState.state === 'diverged');
+        let pushedNow = false;
+        createPrBtn = b;                                  // the model's `ship` action owns it, as it owns Create PR
+        const why = h('span', 'chat-rc-res-err');
+        why.hidden = true;
+        why.setAttribute('role', 'status');
+        b.addEventListener('click', () => {
+          if (b.disabled) return;
+          b.disabled = true;
+          why.hidden = true;
+          Promise.resolve(call(controls.pushSource, ref()))
+            .then((res) => {
+              if (dead || !res) return;
+              if (res.ok === false) { why.textContent = String(res.error || 'Push failed: try again'); why.hidden = false; return; }
+              b.replaceChildren(uiIcon(doc, 'arrow-up', 14), pushLabel({ state: 'pushed', remote: res.remote }));
+              pushedNow = true;
+            })
+            .catch(() => {})
+            .finally(() => { b.disabled = pushedNow; call(refresh); });
+        });
+        rfoot.append(why, b);
       } else {
         const b = button('btn btn-sm btn-primary chat-rc-create-pr');
         b.append(uiIcon(doc, 'pr-create', 14), CREATE_PR_LABEL);
@@ -862,8 +907,12 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     else if (viewPrLink) delete viewPrLink.dataset.modelAction;
     const changesWhy = changesView && !changesSlot.hidden ? '' : 'Ask for changes from the chat that started this run';
     // A group row goes along, so app.js hands the action to groupAction (D6, D11).
+    // A run on its source branch is never given a PR (the server refuses it): when Push does not own `ship` (not merged
+    // back yet, or below Advanced where the result's row is hidden) the footer makes no Create PR either.
     syncActions(footActions, m, {
       own,
+      skip: s && s.sameAsSource && !own.ship ? ['ship'] : [],
+      plain: answerFieldOpen(qBody) ? ['answer'] : [],
       disable: { ...(st === 'pausing' ? { resume: 'Pausing…' } : {}), ...(changesWhy ? { 'ask-changes': changesWhy } : {}) },
       onAction: (aid, b) => (aid === 'ask-changes' ? askForChanges() : call(controls.act, target(), aid, b, m, curRow)),
     });
@@ -910,7 +959,13 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     kind.textContent = kindWord;
     kind.hidden = !kindWord;
     open.setAttribute('href', curRow ? (curRow.groupKind === 'feature' ? `#feature/${encodeURIComponent(curRow.groupId)}` : `#group/${encodeURIComponent(curRow.groupId)}`) : progressRoute(id, s));
-    if (curRow) { membersEl.replaceChildren(renderMemberRows(doc, curRow)); membersEl.hidden = false; } else { membersEl.replaceChildren(); membersEl.hidden = true; }
+    if (curRow) {
+      // A Requirements fold the person opened stays open across the repaint (the rows are rebuilt each paint).
+      const opened = [...membersEl.querySelectorAll('.run-member')].filter((li) => li.querySelector('.plan-check-line[aria-expanded="true"]')).map((li) => li.dataset.key);
+      membersEl.replaceChildren(renderMemberRows(doc, curRow, { checks: fm && fm.requirementChecks }));
+      for (const li of membersEl.querySelectorAll('.run-member')) if (opened.includes(li.dataset.key)) li.querySelector('.plan-check-line')?.click();
+      membersEl.hidden = false;
+    } else { membersEl.replaceChildren(); membersEl.hidden = true; }
     // Run 4 (D20): no id in visible text — the run id is the sub line's tooltip.
     if (isNoProjectRun(s)) where.replaceChildren(kindChip(doc, 'none'));
     else where.textContent = projectLabel(id, s);
@@ -923,7 +978,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const sh = s && s.shaping;
     if (!fm && sh && sh.approved) {           // D15: a feature card's step log says it
       const name = String(sh.approved.file || '').split(/[\\/]/).pop();
-      shapedEl.replaceChildren(h('span', 'chat-rc-shaped-stages', 'Clarify ✓ · Plan ✓ · Refine ✓ while planning'),
+      const covered = (Array.isArray(sh.rounds) ? sh.rounds : []).filter((r) => roundCheck(r && r.coverage)).pop();   // the last round with counts
+      // a run that agreed its requirements first never had a Clarify
+      shapedEl.replaceChildren(h('span', 'chat-rc-shaped-stages', covered ? `${checkLine(roundCheck(covered.coverage), 'Requirements')} · Plan ✓ · Refine ✓ while planning`
+        : 'Clarify ✓ · Plan ✓ · Refine ✓ while planning'),
         h('span', 'chat-rc-shaped-plan', `Plan: ${name}`));
       if (sh.savedTo) {
         const open = button('chat-rc-shaped-open');

@@ -163,6 +163,17 @@ test('testModel on a Claude model: no engine, no sandbox (unchanged spawn)', asy
 test('the hints name the page that fixes the problem: the Models page, the Providers page (with the CLI alternative)', () => {
   assert.equal(hintFor('model'), 'this model id is not served by the endpoint — pick a model the endpoint serves, or add yours on the Models page');
   assert.equal(bridgeHintFor('not_signed_in', 'copilot'), 'sign in to copilot on the Providers page (or `worca models login copilot`)');
-  assert.equal(bridgeHintFor('terms'), 'acknowledge the GitHub Copilot notice on the Providers page first');
+  assert.equal(bridgeHintFor('terms'), '');   // no such reason any more
   assert.equal(bridgeHintFor('no_key', 'openai'), "set an API key for openai on the Providers page, or on this model's Connection");
+});
+
+test('testModel on Copilot names no effort: Copilot refuses one on a model without reasoning (Claude Haiku 4.5)', async () => {
+  let seen = null;
+  const run = async (o) => { seen = o; return { text: 'OK', exitCode: 0 }; };
+  const res = await testModel('copilot/claude-haiku-4.5', { engine: 'copilot', signedOut: notSignedOut, run });
+  assert.equal(res.ok, true);
+  assert.equal(seen.engine, 'copilot');
+  assert.equal('effort' in seen, false, 'no --reasoning-effort on the Copilot test');
+  await testModel('glm-4.7', { signedOut: notSignedOut, run });
+  assert.equal(seen.effort, 'low', 'every other engine keeps the cheap effort');
 });

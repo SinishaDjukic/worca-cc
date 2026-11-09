@@ -7,16 +7,16 @@
 // running client.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECT = '/tmp/proj';
 
@@ -39,7 +39,7 @@ const STATS_FIXTURE = {
 };
 
 async function boot({ fetchHandler, storage = {}, url = 'http://localhost:4317/' } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   const wsBox = { ws: null };
@@ -208,7 +208,7 @@ test('Last month, By person and Custom drive the /api/stats query', async () => 
 });
 
 test('narrow widths: the range control wraps (no sideways scroll) and tables sit in the shared table-wrap', () => {
-  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /#stats-range\{[^}]*flex-wrap:wrap;/, 'six range buttons wrap at 290px');
   assert.doesNotMatch(css, /#stats-range\{[^}]*overflow-x:auto/);
   // A grid item keeps min-width:auto, so a 1fr track grows to a table's min-content width; min-width:0 caps it.
@@ -331,7 +331,7 @@ test('remembered chip: a stored "tag" opens Cost; By person sends groupBy=person
 });
 
 test('Team metrics › Cost CSS: tokens only (light and dark); hidden parts hide through the global [hidden] rule', () => {
-  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  const css = readStyleCss();
   const rules = css.match(/[^}]*(\.tm-heat|\.tm-todo|\.cr-tail|\.tm-view)[^{]*\{[^}]*\}/g) || [];
   assert.ok(rules.length >= 8, `${rules.length} rules`);
   for (const r of rules) assert.doesNotMatch(r.slice(r.indexOf('{')), /#[0-9a-f]{3,8}\b|rgb\(/i, r);

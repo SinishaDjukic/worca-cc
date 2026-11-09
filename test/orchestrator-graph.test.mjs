@@ -103,9 +103,9 @@ test('the graph default runs end to end: End bound, ledger keyed by executionId,
         assert.equal(s.stepIndex, null);
         assert.ok(['done', 'error', 'paused', 'stopped'].includes(s.status), `${s.key} ended ${s.status}`);
       }
-      // The agent nodes all ran (clarify, planner, refiner x2, implementer x2, reviewer x2).
+      // The agent nodes all ran (clarify, planner, refiner, implementer x2, reviewer x2).
       const started = execs.filter((e) => e.status === 'start' && e.agentKey);
-      assert.ok(started.length >= 8, `expected >= 8 agent executions, got ${started.length}`);
+      assert.ok(started.length >= 7, `expected >= 7 agent executions, got ${started.length}`);
       assert.equal(orch.getState().status, 'done');
     } },
     { name: 'bookends are exec rows carrying an executionId, and no phase event is emitted', run: async () => {

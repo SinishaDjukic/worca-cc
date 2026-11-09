@@ -222,3 +222,11 @@ test('readiness: while a file to ask about is still being read, the interview ch
   assert.equal(check([file('a', 'reading'), file('b')]).hint, 'Reading 1 file…', 'the follow-up waits for the read');
   assert.equal(check([file('a', 'reading')], { pending: { questions: [{}] } }).hint, '1 question waiting');
 });
+
+test('A6.1 D10 (plan review M4): a ticket file still downloading counts as one still being read: to ask about, and the reading hint', () => {
+  const f = { spec: { goal: { text: 'g', measure: 'm' }, criteria: [{ id: 'R-po-1', text: 'c' }], assumptions: [], openQuestions: [] } };
+  const turns = [fileTurn(1, 'added', 'a'), roundTurn(2)];   // round 1 ran after its wait, without the file in payload.files
+  assert.deepEqual(unaskedFiles([file('a', 'downloading')], turns), ['a']);
+  const c = readiness(f, { turns, files: [file('a', 'downloading')] }).checks.find((x) => x.key === 'interview');
+  assert.deepEqual([c.ok, c.hint], [false, 'Reading 1 file…']);
+});

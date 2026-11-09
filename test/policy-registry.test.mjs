@@ -323,3 +323,30 @@ test('fmtValue shows roles and records in words', () => {
   assert.equal(fmtValue(fieldMeta('models.roles'), { claude: { deep: { model: 'claude-opus-5-5', effort: 'high' } } }), 'Claude Deep thinking claude-opus-5-5 / high');
   assert.equal(fmtValue(fieldMeta('setup.networkWait'), { enabled: true, maxWaitMin: 60 }), 'enabled on · maxWaitMin 60');
 });
+
+test('pr.open and pr.slices: default-kind enums in the Runs group', () => {
+  assert.deepEqual(fieldMeta('pr.open').values, ['none', 'draft', 'ready']);
+  assert.deepEqual(fieldMeta('pr.slices').values, ['each', 'one']);
+  for (const k of ['pr.open', 'pr.slices']) {
+    assert.equal(fieldMeta(k).group, 'runs', k);
+    assert.equal(fieldMeta(k).type, 'enum', k);
+    assert.deepEqual(fieldMeta(k).kinds, ['default'], k);
+  }
+  const keys = FIELDS.filter((f) => f.group === 'runs').map((f) => f.key);
+  assert.equal(keys.indexOf('pr.open'), keys.indexOf('run.humanInLoop') + 1);
+});
+
+test('a bad pr.open value is dropped with one warning', () => {
+  const { doc, warnings } = normalizePolicyDoc({ schema: 1, fields: { 'pr.open': { kind: 'default', value: 'always' } } });
+  assert.equal(doc.fields['pr.open'], undefined);
+  assert.deepEqual(warnings.filter((w) => w.startsWith('pr.open')), ['pr.open: must be one of none | draft | ready']);
+});
+
+test('workspaceRuns: pr.slices is dropped with a warning, pr.open is kept', () => {
+  const { doc, warnings } = normalizePolicyDoc({ schema: 1, workspaceRuns: {
+    'pr.open': { kind: 'default', value: 'draft' }, 'pr.slices': { kind: 'default', value: 'one' },
+  } });
+  assert.deepEqual(doc.workspaceRuns['pr.open'], { kind: 'default', value: 'draft' });
+  assert.equal(doc.workspaceRuns['pr.slices'], undefined);
+  assert.ok(warnings.includes('workspaceRuns.pr.slices: not allowed for workspace runs — dropped'), warnings.join(' | '));
+});

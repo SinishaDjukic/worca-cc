@@ -48,7 +48,7 @@ export function openStore(path = ':memory:') {
   //   credentials.kind   'api-key' | 'subscription' | 'github' (shown without decrypting)
   //   tokens.isolated    the spawn runs under its person's own agent user (a subscription
   //                      is only ever used by such a spawn in multi mode)
-  //   usage.plan         'subscription' for calls on a Claude plan (no per-call price)
+  //   usage.plan         'subscription' for calls on a Claude plan, 'copilot' for Copilot (no per-call price)
   //   credentials.upstream the origin the key was saved for: a slot that later points
   //                      elsewhere (a plugin upgrade) never sends it there
   const cols = (t) => new Set(db.prepare(`PRAGMA table_info(${t})`).all().map((r) => r.name));

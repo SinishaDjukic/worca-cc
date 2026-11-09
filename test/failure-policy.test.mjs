@@ -30,6 +30,10 @@ const ROWS = [
   ['node', 'quota', false, 1, undefined, { outcome: 'prompt' }],
   ['node', 'auth',  false, 1, 'retry',   { outcome: 'retry' }],
   ['node', 'auth',  false, 1, 'giveup',  PAUSE_ERR],
+  // node / time_limit (E4): a node past its wall-clock or idle limit parks with its own reason, both modes —
+  // never retried (a hung node would hang again), resumable once the cause is looked at
+  ['node', 'time_limit', true,  1, undefined, { outcome: 'pause', reason: 'time_limit' }],
+  ['node', 'time_limit', false, 1, undefined, { outcome: 'pause', reason: 'time_limit' }],
   // node / model: the model id itself was refused — never retried (a backoff
   // cannot fix an id); parks as an error, resumable once the model is fixed
   ['node', 'model', true,  1, undefined, PAUSE_ERR],
@@ -88,7 +92,7 @@ for (const [site, cls, auto, attempt, answer, want] of ROWS) {
 // ── structural guarantees ──────────────────────────────────────────────────────
 
 test('every site has a row for every class the classifier can produce (or a * row)', () => {
-  const classes = ['auth', 'usage_limit', 'rate_limit', 'quota', 'network', null];
+  const classes = ['auth', 'usage_limit', 'rate_limit', 'quota', 'network', 'time_limit', null];
   for (const site of SITES) {
     assert.ok(FAILURE_POLICY[site], `site ${site} is in the matrix`);
     for (const cls of classes) {

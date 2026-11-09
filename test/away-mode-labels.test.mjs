@@ -22,6 +22,16 @@ test('every kind, method, criterion and field has a label and a short caption (u
   ]);
 });
 
+test('a plan record reads Approved under Plan approval', () => {
+  assert.equal(NIGHT_KINDS.includes('plan'), false, 'a record kind only, like cost-cap');
+  assert.equal(kindLabel('plan'), 'Approving a plan');
+  assert.equal(kindShort('plan'), 'Plan approval');
+  const d = { kind: 'plan', choice: 'approve', strategy: 'rule', flagged: true, rationale: 'a reviewer raised a concern on an agreed requirement: X; the requirement stays as agreed' };
+  assert.deepEqual(awayAnswerRows(d), [{ q: null, a: 'Approved', why: 'A reviewer raised a concern on an agreed requirement: X; the requirement stays as agreed.', check: true }]);
+  assert.deepEqual(awayAskCaption(d, { fmtUsd: (n) => `$${n.toFixed(2)}` }), ['rule', '$0.00']);
+  assert.deepEqual(awayAnswerCounts([d]), { answers: 1, checks: 1 });
+});
+
 test('awayAskCaption: a review names its model and cost, a stopped one its lower bound; no review → how, $0.00; a pause or an old review → nothing', () => {
   const f = (n) => `$${Number(n).toFixed(2)}`;
   const m = (id) => (id === 'claude-opus-5-5' ? 'Opus 5.5' : null);

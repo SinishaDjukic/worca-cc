@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { getDb, prepare, tx } from '../db.mjs';
 import { REQ_ATT_ID_RE } from './attachments.mjs';
 import {
-  RequirementsError, SCOPE_TYPES, STATUSES, TURN_KINDS, LIMITS, emptySpec, featureId,
+  RequirementsError, SCOPE_TYPES, STATUSES, TURN_KINDS, LIMITS, emptySpec, featureId, clip,
 } from './spec.mjs';
 
 const iso = () => new Date().toISOString();
@@ -33,19 +33,31 @@ function toFeature(r) {
     status: r.status, spec: { ...emptySpec(), ...json(r.spec_json, {}) }, orientation: json(r.orientation_json, null),
     criteriaSeq: Number(r.criteria_seq), assumptionSeq: Number(r.assumption_seq), rounds: Number(r.rounds),
     costUsd: Math.round((Number(r.cost_usd) || 0) * 1e4) / 1e4, savedPath: r.saved_path || null,
+    earlyStartReason: r.early_start_reason || null,
     createdBy: r.created_by || null, createdAt: r.created_at, updatedBy: r.updated_by || null, updatedAt: r.updated_at,
   };
 }
 
-export function createFeature({ scopeType, scopeKey, title, description } = {}, { by = null } = {}) {
+/** A1 §3; A6.1 D7: `criteria` ([{ text, source }]) start the spec as the product owner's own R-po-1… (edited, with their source). */
+export function createFeature({ scopeType, scopeKey, title, description, criteria = [] } = {}, { by = null } = {}) {
   checkScope(scopeType, scopeKey);
   const t = requiredText(title, 'title', LIMITS.title, { oneLine: true });   // one line: the Markdown heading cannot break
   const d = requiredText(description, 'description', LIMITS.description);
+  const spec = emptySpec();
+  const seen = new Set();
+  for (const c of Array.isArray(criteria) ? criteria : []) {
+    if (spec.criteria.length >= LIMITS.items) break;
+    const text = clip(c && c.text, LIMITS.item);
+    if (!text || seen.has(text.toLowerCase())) continue;
+    seen.add(text.toLowerCase());
+    const source = clip(c && c.source, 100);
+    spec.criteria.push({ id: `R-po-${spec.criteria.length + 1}`, text, edited: true, ...(source ? { source } : {}) });
+  }
   getDb();
   const ts = iso();
-  const r = prepare(`INSERT INTO req_features (scope_type, scope_key, title, description, status, spec_json,
-      created_by, created_at, updated_by, updated_at) VALUES (?, ?, ?, ?, 'looking', ?, ?, ?, ?, ?)`)
-    .run(scopeType, scopeKey.trim(), t, d, JSON.stringify(emptySpec()), by, ts, by, ts);
+  const r = prepare(`INSERT INTO req_features (scope_type, scope_key, title, description, status, spec_json, criteria_seq,
+      created_by, created_at, updated_by, updated_at) VALUES (?, ?, ?, ?, 'looking', ?, ?, ?, ?, ?, ?)`)
+    .run(scopeType, scopeKey.trim(), t, d, JSON.stringify(spec), spec.criteria.length, by, ts, by, ts);
   return getFeature(Number(r.lastInsertRowid));
 }
 
@@ -96,6 +108,13 @@ export function addFeatureCost(seq, usd) {
   if (!Number.isFinite(usd) || usd <= 0) return;
   getDb();
   prepare('UPDATE req_features SET cost_usd = cost_usd + ? WHERE seq = ?').run(usd, Number(seq));
+}
+
+/** Keep (or clear, with null) the reason given for starting a feature before it is Ready. A draft note, not a spec
+ *  change, so updated_at/updated_by stay (as addFeatureCost leaves them). */
+export function setEarlyStartReason(seq, reason) {
+  getDb();
+  prepare('UPDATE req_features SET early_start_reason = ? WHERE seq = ?').run(reason == null ? null : String(reason), Number(seq));
 }
 
 export function appendTurn(seq, { kind, payload = {}, model = null, costUsd = null } = {}, { by = null } = {}) {
@@ -318,7 +337,7 @@ export function recentBriefCosts(limit = 10) {
 // ---- attachments (plans/requirements-a8-design.md §3, D9): a feature's files and a made brief's documents ----
 
 const OWNER_TYPES = Object.freeze(['feature', 'brief']);
-const ATT_STATUSES = Object.freeze(['reading', 'done', 'failed', 'unread-budget']);
+const ATT_STATUSES = Object.freeze(['downloading', 'reading', 'done', 'failed', 'unread-budget']);
 
 /** The id a body and its row are named by: the only part of a body's path that is not the store's own. */
 export const mintAttachmentId = () => `ratt_${randomBytes(6).toString('hex')}`;
@@ -327,7 +346,7 @@ function toAttachment(r) {
   if (!r) return null;
   return {
     id: r.id, ownerType: r.owner_type, ownerId: Number(r.owner_id), name: r.name, kind: r.kind, mime: r.mime, bytes: Number(r.bytes),
-    sha256: r.sha256, status: r.status, error: json(r.error_json, null), summary: r.summary || '', summaryEdited: !!r.summary_edited,
+    sha256: r.sha256, fetch: json(r.fetch_json, null), status: r.status, error: json(r.error_json, null), summary: r.summary || '', summaryEdited: !!r.summary_edited,
     asks: json(r.asks_json, []), history: json(r.history_json, []), sendWithRun: !!r.send_with_run,
     costUsd: Math.round((Number(r.cost_usd) || 0) * 1e4) / 1e4, readCostUsd: r.read_cost_usd == null ? null : Number(r.read_cost_usd),
     readModel: r.read_model || null, readAt: r.read_at || null,
@@ -335,15 +354,15 @@ function toAttachment(r) {
   };
 }
 
-export function insertAttachment({ id, ownerType, ownerId, name, kind, mime, bytes, sha256, status = 'reading' } = {}, { by = null } = {}) {
+export function insertAttachment({ id, ownerType, ownerId, name, kind, mime, bytes, sha256, status = 'reading', fetch = null } = {}, { by = null } = {}) {
   if (typeof id !== 'string' || !REQ_ATT_ID_RE.test(id)) throw new Error('insertAttachment: refusing an id the store never minted');
   if (!OWNER_TYPES.includes(ownerType)) throw new Error(`insertAttachment: unknown owner type "${ownerType}"`);
   if (!ATT_STATUSES.includes(status)) throw new Error(`insertAttachment: unknown status "${status}"`);
   getDb();
   const ts = iso();
-  prepare(`INSERT INTO req_attachments (id, owner_type, owner_id, name, kind, mime, bytes, sha256, status, created_by, created_at,
-      updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, ownerType, Number(ownerId), name, kind, mime, Number(bytes), sha256, status, by, ts, by, ts);
+  prepare(`INSERT INTO req_attachments (id, owner_type, owner_id, name, kind, mime, bytes, sha256, status, fetch_json, created_by, created_at,
+      updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, ownerType, Number(ownerId), name, kind, mime, Number(bytes), sha256, status, fetch ? JSON.stringify(fetch) : null, by, ts, by, ts);
   return getAttachment(id);
 }
 
@@ -404,6 +423,12 @@ export function deleteOwnerAttachments(ownerType, ownerId) {
 export function listReadingAttachments() {
   getDb();
   return prepare("SELECT * FROM req_attachments WHERE status = 'reading' ORDER BY rowid").all().map(toAttachment);
+}
+
+/** A6.1 D10: the rows still waiting for their tracker download (a restart turns them failed, recoverDownloads). */
+export function listDownloadingAttachments() {
+  getDb();
+  return prepare("SELECT * FROM req_attachments WHERE status = 'downloading' ORDER BY rowid").all().map(toAttachment);
 }
 
 /** The last reads' costs of one kind, newest finished first (the estimates, D5 / §5). */
@@ -492,4 +517,120 @@ export function recentHelperCosts(limit = 10) {
   getDb();
   return prepare('SELECT amount_usd FROM req_cost_ledger WHERE helper_message_id IS NOT NULL ORDER BY id DESC LIMIT ?')
     .all(Number(limit)).map((r) => Number(r.amount_usd));
+}
+
+// ---- export to a tracker (plans/requirements-a6-design.md §3, D2, D7–D10, D12): the setup per project or workspace (a
+// connection and the ticket's defaults, never a config value) and the current ticket per feature ----
+
+function toSetup(r) {
+  if (!r) return null;
+  return {
+    scopeType: r.scope_type, scopeKey: r.scope_key, plugin: r.plugin, sourceId: r.source_id, profile: r.profile || null,
+    trackerProject: r.tracker_project, trackerProjectName: r.tracker_project_name, issueType: r.issue_type, issueTypeName: r.issue_type_name,
+    labels: json(r.labels_json, ['worca']), priority: r.priority || null, priorityName: r.priority_name || null,
+    criteria: json(r.criteria_json, { target: 'description' }), doneStatus: r.done_status || null,
+    createdBy: r.created_by || null, createdAt: r.created_at, updatedBy: r.updated_by || null, updatedAt: r.updated_at,
+  };
+}
+
+export function getExportSetup(scopeType, scopeKey) {
+  checkScope(scopeType, scopeKey);
+  getDb();
+  return toSetup(prepare('SELECT * FROM req_export_setups WHERE scope_type = ? AND scope_key = ?').get(scopeType, scopeKey));
+}
+
+export function upsertExportSetup({ scopeType, scopeKey, plugin, sourceId, profile = null, trackerProject, trackerProjectName, issueType, issueTypeName,
+  labels = ['worca'], priority = null, priorityName = null, criteria = { target: 'description' }, doneStatus = null } = {}, { by = null } = {}) {
+  checkScope(scopeType, scopeKey);
+  getDb();
+  const ts = iso();
+  prepare(`INSERT INTO req_export_setups (scope_type, scope_key, plugin, source_id, profile, tracker_project, tracker_project_name, issue_type,
+      issue_type_name, labels_json, priority, priority_name, criteria_json, done_status, created_by, created_at, updated_by, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (scope_type, scope_key) DO UPDATE SET plugin = excluded.plugin, source_id = excluded.source_id, profile = excluded.profile,
+        tracker_project = excluded.tracker_project, tracker_project_name = excluded.tracker_project_name, issue_type = excluded.issue_type,
+        issue_type_name = excluded.issue_type_name, labels_json = excluded.labels_json, priority = excluded.priority,
+        priority_name = excluded.priority_name, criteria_json = excluded.criteria_json, done_status = excluded.done_status,
+        updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
+    .run(scopeType, scopeKey, plugin, sourceId, profile || null, trackerProject, trackerProjectName || trackerProject, issueType,
+      issueTypeName || issueType, JSON.stringify(labels || []), priority || null, priority ? (priorityName || priority) : null,
+      JSON.stringify(criteria || { target: 'description' }), doneStatus || null, by, ts, by, ts);
+  return getExportSetup(scopeType, scopeKey);
+}
+
+/** exportOptions' doneStatus, refreshed on every options call for the setup's own connection (D15). */
+export function setExportSetupDoneStatus(scopeType, scopeKey, doneStatus) {
+  checkScope(scopeType, scopeKey);
+  getDb();
+  prepare('UPDATE req_export_setups SET done_status = ? WHERE scope_type = ? AND scope_key = ?').run(doneStatus || null, scopeType, scopeKey);
+}
+
+function toLink(r) {
+  if (!r) return null;
+  return {
+    featureSeq: Number(r.feature_seq), plugin: r.plugin, sourceId: r.source_id, profile: r.profile || null, trackerProject: r.tracker_project,
+    key: r.ticket_key || null, url: r.ticket_url || null, createdAt: r.created_at || null, exportedAt: r.exported_at || null,
+    spec: json(r.spec_json, null), fields: json(r.fields_json, null), fingerprint: r.fingerprint || null,
+    pendingMarker: r.pending_marker || null, pendingAt: r.pending_at || null, origin: r.origin === 'import' ? 'import' : 'export', updatedBy: r.updated_by || null, updatedAt: r.updated_at,
+  };
+}
+
+export function getExportLink(seq) {
+  getDb();
+  return toLink(prepare('SELECT * FROM req_export_links WHERE feature_seq = ?').get(Number(seq)));
+}
+
+/** D10: recorded before a create or new-ticket call. A first export makes a row without a key (its connection and project);
+ *  a feature with a ticket keeps its link and only gets the marker. */
+export function setPendingExport(seq, { plugin, sourceId, profile = null, trackerProject, marker } = {}, { by = null } = {}) {
+  getDb();
+  const ts = iso();
+  prepare(`INSERT INTO req_export_links (feature_seq, plugin, source_id, profile, tracker_project, pending_marker, pending_at, updated_by, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (feature_seq) DO UPDATE SET pending_marker = excluded.pending_marker, pending_at = excluded.pending_at,
+        updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
+    .run(Number(seq), plugin, sourceId, profile || null, trackerProject, marker, ts, by, ts);
+  return getExportLink(seq);
+}
+
+/** The feature's current ticket, whole (D7, D8, D9): written after a create, an update, a comment, a new ticket or a
+ *  ticket found again; the pending marker goes. `origin` (A6.1 D11): 'import' for a link an import made; a save that passes
+ *  the link on ({ ...link }) keeps it; anything else is 'export'. Keys this table has no column for are ignored. */
+export function saveExportLink(seq, { plugin, sourceId, profile = null, trackerProject, key, url = null, createdAt = null, exportedAt = null, spec = null,
+  fields = null, fingerprint = null, origin = 'export' } = {}, { by = null } = {}) {
+  getDb();
+  const ts = iso();
+  prepare(`INSERT INTO req_export_links (feature_seq, plugin, source_id, profile, tracker_project, ticket_key, ticket_url, created_at, exported_at,
+      spec_json, fields_json, fingerprint, origin, pending_marker, pending_at, updated_by, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+      ON CONFLICT (feature_seq) DO UPDATE SET plugin = excluded.plugin, source_id = excluded.source_id, profile = excluded.profile,
+        tracker_project = excluded.tracker_project, ticket_key = excluded.ticket_key, ticket_url = excluded.ticket_url,
+        created_at = excluded.created_at, exported_at = excluded.exported_at, spec_json = excluded.spec_json, fields_json = excluded.fields_json,
+        fingerprint = excluded.fingerprint, origin = excluded.origin, pending_marker = NULL, pending_at = NULL, updated_by = excluded.updated_by,
+        updated_at = excluded.updated_at`)
+    .run(Number(seq), plugin, sourceId, profile || null, trackerProject, key, url || null, createdAt || null, exportedAt || null,
+      spec ? JSON.stringify(spec) : null, fields ? JSON.stringify(fields) : null, fingerprint || null, origin === 'import' ? 'import' : 'export', by, ts);
+  return getExportLink(seq);
+}
+
+/** D10: a definite answer (a refusal, or no match found): a first export's row goes, a ticket's link loses only the marker. */
+export function clearPendingExport(seq) {
+  getDb();
+  prepare('DELETE FROM req_export_links WHERE feature_seq = ? AND ticket_key IS NULL').run(Number(seq));
+  prepare('UPDATE req_export_links SET pending_marker = NULL, pending_at = NULL WHERE feature_seq = ?').run(Number(seq));
+}
+
+/** Forget the link (D12): key, URL, the spec copy, the fingerprint and any pending marker. */
+export function deleteExportLink(seq) {
+  getDb();
+  return Number(prepare('DELETE FROM req_export_links WHERE feature_seq = ?').run(Number(seq)).changes);
+}
+
+/** A6.1 D12: the feature (archived ones too) already linked to this ticket on this connection, else null. */
+export function linkByTicket({ plugin, sourceId, profile = null, key } = {}) {
+  getDb();
+  const r = prepare(`SELECT l.feature_seq, f.title FROM req_export_links l JOIN req_features f ON f.seq = l.feature_seq
+      WHERE l.plugin = ? AND l.source_id = ? AND COALESCE(l.profile, '') = ? AND UPPER(l.ticket_key) = UPPER(?) ORDER BY l.feature_seq LIMIT 1`)
+    .get(String(plugin || ''), String(sourceId || ''), profile || '', String(key || ''));
+  return r ? { seq: Number(r.feature_seq), id: featureId(r.feature_seq), title: r.title } : null;
 }

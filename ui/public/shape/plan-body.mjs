@@ -5,24 +5,33 @@
 // plan → the artifact popup), perspectives edit, Save and Open in New run.
 import { buildPerspectiveChips } from './chips.mjs';
 import { planStats, perspectiveChangeFeedback, fixAllFeedback, sectionOwners, planSummary, unmetLine,
-  planApproveLabel } from './plan-text.mjs';
-import { roleSummaries, reviewedLine, openBlocking } from '../../../src/shared/shape/role-review.mjs';
+  planApproveLabel, displayCoverage } from './plan-text.mjs';
+import { openBlocking } from '../../../src/shared/shape/role-review.mjs';
 import { perspectiveByKey, PERSPECTIVES, chipsHiddenFor } from '../../../src/shared/shape/perspectives.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { toggleMenu } from '../workflows/menu.mjs';
 import { icon } from '../icons.mjs';
 import { fold, swapOpen, buildCheckFold } from './check-row.mjs';
-import { SEND_FAILED, stepHead, stepSender } from './step-card.mjs';
+import { SEND_FAILED, stepHead, stepSender, isRequirementsAsk } from './step-card.mjs';
+import { buildRoleFold, buildConflictCards } from './role-rows.mjs';
+import { renderRequirementsBody } from './requirements-body.mjs';
+import { buildFeedbackRow } from './feedback-row.mjs';
 
 export { SEND_FAILED };
 
 const labelOf = (k) => (perspectiveByKey(k) || {}).label || k;
 
 export function renderPlanBody(panel, pq, deps) {
+  if (isRequirementsAsk(pq)) return renderRequirementsBody(panel, pq, deps);
   const { doc } = deps;
   const plan = pq.plan || {};
   const check = plan.check || null;
   const items = check && Array.isArray(check.items) ? check.items : [];
+  // Requirements first: `coverage` (which agreed requirements a step delivers) draws only when it has items; without it
+  // the fold, the foot and ⋯ are what they were.
+  const coverage = plan.coverage && Array.isArray(plan.coverage.items) && plan.coverage.items.length ? plan.coverage : null;
+  const uncovered = coverage ? coverage.items.filter((it) => !it.pass) : [];
+  const failingRows = !!coverage && (uncovered.length > 0 || items.some((it) => !it.pass));
   const perspectives = Array.isArray(plan.perspectives) ? plan.perspectives : [];
   const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const btn = (cls, text) => { const b = h('button', `btn btn-sm ${cls}`, text); b.type = 'button'; return b; };
@@ -40,57 +49,38 @@ export function renderPlanBody(panel, pq, deps) {
   let planText = '';
   let meta = null;
   let summary = null;
-
-  const typedRow = () => {
-    const typed = h('textarea', 'plan-feedback');
-    typed.rows = 2;
-    typed.placeholder = 'Ask for changes in your own words…';
-    typed.setAttribute('aria-label', 'Changes to the plan');
-    const cancel = btn('btn-quiet plan-typed-cancel', 'Cancel');
-    const sendBtn = btn('plan-revise', 'Send changes');
-    sendBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const text = typed.value.trim();
-      if (!text) { setErrors([{ path: 'feedback', message: 'Write what should change first' }]); return; }
-      send({ decision: 'revise', feedback: text });
-    });
-    const acts = h('div', 'plan-typed-acts'); acts.append(cancel, sendBtn);
-    const row = h('div', 'plan-typed'); row.append(typed, acts);
-    return { row, typed, cancel };
-  };
-  // A role's findings: a 2px severity chip, the plan section, the one-line fix, and fixed in vN or open (D10).
-  const findingList = (findings) => {
-    const list = h('ul', 'plan-findings'); list.hidden = true;
-    for (const f of findings) {
-      const fixed = f.status === 'fixed';
-      const li = h('li', 'plan-finding');
-      li.append(h('span', `plan-sev plan-sev-${f.severity}`, f.severity),
-        h('span', 'plan-finding-section', f.section || 'Plan'),
-        h('span', 'plan-finding-fix', f.fix || f.title),
-        h('span', `plan-finding-status${fixed ? ' fixed' : ''}`, fixed ? (Number.isFinite(f.fixedIn) ? `fixed in v${f.fixedIn}` : 'fixed') : 'open'));
-      list.appendChild(li);
-    }
-    return list;
-  };
-  // D5: a role row is a check-row row; it gets `!` when an issue is open, and a Show folded over its findings.
-  const roleRow = (row, r) => {
-    if (r.open) {
-      const mark = row.querySelector('.plan-check-mark');
-      mark.textContent = '!'; mark.setAttribute('aria-label', 'open issues');
-    }
-    if (!r.findings.length) return;
-    const list = findingList(r.findings);
-    const show = fold(btn('plan-check-show', 'Show'), list);
-    show.addEventListener('click', (e) => { e.stopPropagation(); show.textContent = list.hidden ? 'Show' : 'Hide'; });
-    row.appendChild(show);
-    row.after(list);
+  let decisions = null;                           // #990 slice 3: the conflict cards; every answer carries their picks
+  const withPicks = (payload) => {
+    const picks = decisions ? decisions.picks() : [];
+    return picks.length ? { ...payload, conflicts: picks } : payload;
   };
 
+  const typedRow = () => buildFeedbackRow(doc, { label: 'Changes to the plan', onSend: (text) => {
+    if (!text) { setErrors([{ path: 'feedback', message: 'Write what should change first' }]); return; }
+    send(withPicks({ decision: 'revise', feedback: text }));
+  } });
   panel.appendChild(stepHead(doc, deps.title, deps.chip));
   const title = deps.run && deps.run.title && deps.run.title !== '(untitled)' ? String(deps.run.title) : '';
   body.appendChild(h('div', 'plan-sub', `${title ? `${title} · ` : ''}v${plan.round || 1}`));
   // the summary comes from the plan text, which only the gated route serves
   if (deps.extras) { summary = h('p', 'plan-summary'); summary.hidden = true; body.appendChild(summary); }
+
+  // #990 s5: the implementer's plan concern — why an approved plan is asked again. Shown once; the buttons stay.
+  // Shaper requirements s3 (3.A): a reviewer's requirement concern rides the same note, one detail line per id.
+  if (pq.concern && pq.concern.title) {
+    const c = pq.concern;
+    const req = c.kind === 'requirement';
+    const note = h('div', 'shape-plan-outline-change plan-concern');
+    note.append(h('div', 'shape-plan-outline-change-head', req ? 'A reviewer says an agreed requirement is wrong or cannot be met:'
+      : 'The implementer has a concern about this plan:'),
+      h('p', 'shape-plan-outline-change-text plan-concern-title', String(c.title)));
+    if (c.detail) for (const line of req ? String(c.detail).split('\n') : [String(c.detail)]) note.appendChild(h('p', 'shape-plan-outline-change-text', line));
+    if (c.section) note.appendChild(h('p', 'shape-plan-outline-change-text', `Section: ${c.section}`));
+    note.appendChild(h('p', 'shape-plan-outline-change-text plan-concern-what', req
+      ? 'Approve keeps the requirement as agreed and builds the plan. Ask for changes sends your answer to the planner.'
+      : 'Approve overrides the concern and builds the plan as written. Ask for changes accepts it and sends the plan back to the planner with this concern.'));
+    body.appendChild(note);
+  }
 
   // D19: a later run's planner said the run can't be built as outlined: that is why this plan stopped
   if (plan.outlineChange) {
@@ -110,19 +100,21 @@ export function renderPlanBody(panel, pq, deps) {
     body.appendChild(box);
   }
 
+  // Requirements first: the coverage fold sits above Shape and opens when a row fails
+  if (coverage) {
+    const f = buildCheckFold(doc, displayCoverage(coverage), 'Requirements');
+    if (uncovered.length) f.line.click();
+    body.append(f.line, f.rows);
+  }
   // one check line, folded; neutral rows with ✓ / ✕ (D7); Fix all lives in ⋯ (D8)
   if (items.length) { const f = buildCheckFold(doc, check, 'Shape'); body.append(f.line, f.rows); }
 
-  // slice 4: one row per role, as check items in the same shape; Show unfolds that role's findings
-  const roles = roleSummaries(plan.roleReviews);
-  if (roles.length) {
-    const f = buildCheckFold(doc, { items: roles.map((r) => ({ id: r.key, label: r.text, pass: r.open === 0 })) });
-    f.line.classList.add('plan-role-line');
-    f.rows.classList.add('plan-roles');
-    f.line.querySelector('.plan-fold-text').textContent = reviewedLine(plan.roleReviews);
-    [...f.rows.children].forEach((row, i) => roleRow(row, roles[i]));
-    body.append(f.line, f.rows);
-  }
+  // slice 4: one row per role, as check items in the same shape; Show unfolds that role's findings (role-rows.mjs)
+  const roleFold = buildRoleFold(doc, plan.roleReviews);
+  if (roleFold) body.append(roleFold.line, roleFold.rows);
+  // #990 slice 3: one decision card per pair of contradicting findings; Approve carries the picks
+  decisions = buildConflictCards(doc, plan.roleReviews, { labelOf });
+  if (decisions) body.appendChild(decisions.el);
 
   // perspectives as a line; "edit" opens today's chips + Update plan in place (D31) — the gate on only
   const was = PERSPECTIVES.map((p) => p.key).filter((k) => k === 'product' || perspectives.includes(k));
@@ -138,7 +130,7 @@ export function renderPlanBody(panel, pq, deps) {
     update.addEventListener('click', (e) => {
       e.stopPropagation();
       const after = chips.value();
-      send({ decision: 'revise', feedback: perspectiveChangeFeedback(perspectives, after), perspectives: after });
+      send(withPicks({ decision: 'revise', feedback: perspectiveChangeFeedback(perspectives, after), perspectives: after }));
     });
     const row = h('div', 'plan-perspectives'); row.hidden = true; row.append(chips.el, update);
     pline.append(' · ', fold(btn('plan-persp-edit', 'edit'), row));
@@ -178,8 +170,19 @@ export function renderPlanBody(panel, pq, deps) {
   const foot = h('div', 'qpanel-foot plan-actions');
   if (typed) foot.appendChild(swapOpen(btn('plan-ask-changes', 'Ask for changes'), typed.row, typed.cancel, () => typed.typed.focus()));
   foot.appendChild(fullButton());
-  const approve = btn('btn-primary plan-approve', planApproveLabel(plan, openBlocking(plan.roleReviews)));
-  approve.addEventListener('click', (e) => { e.stopPropagation(); send({ decision: 'approve' }); });
+  // With a failing row Fix all is the primary (revisable) and Approve steps back to a plain button; not revisable: no primary
+  if (failingRows && plan.revisable) {
+    const fix = btn('btn-primary plan-fix-primary', 'Fix all');
+    fix.addEventListener('click', (e) => { e.stopPropagation(); send(withPicks({ decision: 'revise', feedback: fixAllFeedback(items, uncovered) })); });
+    foot.appendChild(fix);
+  }
+  const approve = btn(`${failingRows ? '' : 'btn-primary '}plan-approve`, planApproveLabel(plan, openBlocking(plan.roleReviews)));
+  approve.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const waiting = decisions && decisions.firstUnanswered();
+    if (waiting) { setErrors([{ path: 'conflicts', message: 'Answer each decision first' }]); waiting.focus(); return; }
+    send(withPicks({ decision: 'approve' }));
+  });
   foot.appendChild(approve);
   foot.appendChild(moreButton());
   body.append(err, foot);
@@ -206,7 +209,7 @@ export function renderPlanBody(panel, pq, deps) {
     more.setAttribute('aria-haspopup', 'menu');
     const ws = !!(deps.run && deps.run.workspaceId);
     more.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu({ doc, anchor: more, align: 'end', label: 'More for this plan', items: [
-      ...(plan.revisable && items.some((it) => !it.pass) ? [{ label: 'Fix all', onSelect: () => send({ decision: 'revise', feedback: fixAllFeedback(items) }) }] : []),
+      ...(plan.revisable && !failingRows && items.some((it) => !it.pass) ? [{ label: 'Fix all', onSelect: () => send(withPicks({ decision: 'revise', feedback: fixAllFeedback(items) })) }] : []),
       ...(deps.extras && !ws ? [{ label: 'Save to plans/', onSelect: () => savePlan(false) }] : []),
       ...(deps.extras && !ws && levelAtLeast('advanced', doc) ? [{ label: 'Open in New run', onSelect: openInNewRun }] : []),
       { label: 'Stop', onSelect: stopRun },

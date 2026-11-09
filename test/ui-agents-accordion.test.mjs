@@ -4,21 +4,20 @@
 // disclosure that must never hide active state.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECT = '/tmp/proj';
 
 async function boot({ fetchHandler } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4319/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4319/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class {
@@ -303,7 +302,12 @@ test('the built-in Default workflow cannot promote defaults (it has no row to st
 // and the re-render undoes the edit — which reads as "this control is broken".
 
 test('with no project every control is disabled and the header says why; selecting a project re-enables them', async () => {
-  const { window } = await boot({ fetchHandler: apiFetch() });
+  // Two projects: a lone project is picked for you, so nothing would be "no project" here.
+  const base = apiFetch();
+  const twoProjects = (url, ...rest) => (String(url).includes('/api/projects')
+    ? Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: PROJECT, exists: true }, { name: 'other', path: `${PROJECT}-other`, exists: true }] }) })
+    : base(url, ...rest));
+  const { window } = await boot({ fetchHandler: twoProjects });
   await tick(); await tick(); // no selectProjectAnd: this IS the empty state
   const doc = window.document;
   await checkRows([
@@ -449,7 +453,7 @@ test("sub-agent model writes: a value is PATCHed and marked, inherit is stored a
 
       const write = sink.find((w) => w.method === 'PATCH' && w.body && w.body.nodes && w.body.nodes.n0);
       assert.equal(write.body.nodes.n0.subagentModel, 'opus', 'the value reaches the node writer');
-      assert.match(doc.querySelector('.agent-sum[data-node-id="n0"]').textContent, /subs: opus/);
+      assert.match(doc.querySelector('.agent-sum[data-node-id="n0"]').textContent, /subs: Opus \(deep thinking\)/);
       assert.ok(doc.querySelector('.agent-row[data-node-id="n0"] .agent-mod'), 'it deviates from the default');
     } },
     { name: 'an explicit inherit is stored as a value, marked modified, and captioned', run: async () => {
@@ -497,4 +501,25 @@ test('resolveNodeTunables is the ONE resolution rule shared by the v1 and v2 row
   assert.equal(bare.subagentModel, '', 'unset stays raw — the RUNTIME resolves auto');
   assert.equal(bare.fanOut, true, 'meta fanOut is the last layer');
   assert.equal(bare.askQuestions, true, 'meta questionsDefault is the last layer');
+});
+
+test('buildRoleRows: one row per declared role of a role-review node, labelled by node and role; none on Default', async () => {
+  const { buildNodeConfigRows, buildRoleRows } = await import('../ui/public/node-tunables.mjs');
+  const { GRAPH_SHAPE_WORKFLOW, GRAPH_DEFAULT_WORKFLOW } = await import('../src/core/graph/builtin-workflows.mjs');
+  const { loadAgentRegistry } = await import('../src/core/agent-registry.mjs');
+  const { PERSPECTIVES } = await import('../src/shared/shape/perspectives.mjs');
+  const reg = loadAgentRegistry(undefined, { userAgentsDir: null });
+  const runConfig = { nodes: { n_roles: { roles: { security: { model: 'claude-haiku-4-5', effort: 'high' }, qa: { effort: 'max' } } } } };
+  const rows = buildRoleRows(GRAPH_SHAPE_WORKFLOW, buildNodeConfigRows(GRAPH_SHAPE_WORKFLOW, reg, runConfig), runConfig);
+  assert.equal(rows.length, PERSPECTIVES.length + 3, 'every declared role, ticked or not, plus the three code roles (#990 slice 4)');
+  assert.deepEqual(rows.map((r) => r.label), [...PERSPECTIVES.map((p) => `Plan Review · ${p.label}`),
+    'Review Implementation · Correctness', 'Review Implementation · Security', 'Review Implementation · Project fit']);
+  assert.deepEqual(rows.map((r) => r.nodeId), [...PERSPECTIVES.map(() => 'n_roles'), 'n_review', 'n_review', 'n_review']);
+  const by = Object.fromEntries(rows.filter((r) => r.nodeId === 'n_roles').map((r) => [r.roleKey, r]));
+  assert.deepEqual(by.architect, { nodeId: 'n_roles', roleKey: 'architect', label: 'Plan Review · Architect', model: '', effort: '', def: { model: '', effort: '' } }, "'' = the node's setting");
+  assert.deepEqual(by.product.def, { model: '', effort: '' }, 'the built-in pins no role model: its second opinion is a factory default');
+  assert.deepEqual(by.security.def, { model: 'claude-haiku-4-5', effort: 'high' }, 'the project layer wins');
+  assert.deepEqual(by.qa.def, { model: '', effort: 'max' }, 'an effort-only project pick');
+  const def = buildRoleRows(GRAPH_DEFAULT_WORKFLOW, buildNodeConfigRows(GRAPH_DEFAULT_WORKFLOW, reg, { nodes: {} }), { nodes: {} });
+  assert.deepEqual(def, []);
 });

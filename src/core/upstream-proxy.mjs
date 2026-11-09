@@ -124,8 +124,11 @@ const clampMs = (v, d) => (Number.isFinite(v) ? Math.min(Math.max(Math.round(v),
  *   `login` is a readProxyLogin() record (or null): a saved login wins over the URL's user name
  *   (D6), and `urlCredentials` keeps the URL login as the fallback a logout returns to.
  *   `requestedAuth` is the auth mode the user set, or null (D23).
+ *   `anyScheme`: the proxy was started only because HTTPS_PROXY carries a login (egress-policy.mjs
+ *   autoStart), so with auth unset that URL login may also go as Digest or Basic when the proxy offers
+ *   no NTLM, as the clients reading HTTPS_PROXY sent it before (`passwordFallback`).
  */
-export function resolveUpstream({ env = process.env, settings, login = null } = {}) {
+export function resolveUpstream({ env = process.env, settings, login = null, anyScheme = false } = {}) {
   const s = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {};
   const configured = typeof s.upstream === 'string' ? s.upstream.trim() : '';
   const raw = configured || env.https_proxy || env.HTTPS_PROXY || env.http_proxy || env.HTTP_PROXY || '';
@@ -165,6 +168,8 @@ export function resolveUpstream({ env = process.env, settings, login = null } = 
   const noProxy = parseNoProxy(s.noProxy !== undefined ? s.noProxy : (env.no_proxy || env.NO_PROXY || ''));
   return { source, host: p.host, port: p.port, auth, requestedAuth, credentials: creds ? new ProxyCredentials(creds, auth) : null,
     urlCredentials: urlCreds && !PASSWORD_MODES.includes(auth) ? new ProxyCredentials(urlCreds, 'auto') : null,
+    passwordFallback: anyScheme && urlCreds && !requestedAuth
+      ? { digest: new ProxyCredentials(urlCreds, 'digest'), basic: new ProxyCredentials(urlCreds, 'basic') } : null,
     login: usedLogin, noProxy, timeouts, warnings };
 }
 
@@ -387,7 +392,9 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
   const T = upstream.timeouts;
   const urlCreds = upstream.urlCredentials || null;
   /** The login in use. A new object per swap; `gen` grows by one each time (D7). */
-  let cur = { gen: 0, creds: upstream.credentials, auth: upstream.auth, loginId };
+  // `fallback`: the URL login as Digest/Basic (resolveUpstream passwordFallback), only while that login is the one in use.
+  const urlFallback = upstream.passwordFallback || null;
+  let cur = { gen: 0, creds: upstream.credentials, auth: upstream.auth, loginId, fallback: upstream.login ? null : urlFallback };
   const label = hostPort(upstream.host, upstream.port);
   const directAgent = new http.Agent({ keepAlive: false });
   const say = (l) => { try { log(l); } catch { /* a logger must not take the proxy down */ } };
@@ -503,6 +510,8 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
       tok = offered.find((c) => c.scheme === scheme.toLowerCase() && c.token);
     }
     if (!tok) {
+      const mode = !ctx.fallback ? null : pickDigest(offered) ? 'digest' : offered.some((c) => c.scheme === 'basic') ? 'basic' : null;
+      if (mode) return passwordFallback(ctx, mode, socket, h1, buildHead, deadline, { finalByCaller, headProbe, final });
       if (offered.some((c) => c.scheme === 'basic')) {
         throw new ProxyError(502, `the corporate proxy ${label} offers only Basic. Worca sends Basic only when networkProxy.auth is "basic", because the password then crosses the network in cleartext`);
       }
@@ -526,6 +535,27 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
     const authz = `${scheme} ${t3.toString('base64')}`;
     if (finalByCaller) return { socket, proxyAuthorization: authz, scheme };
     return { socket, head: await sendCredentials(ctx, socket, buildHead(authz), deadline, scheme) };
+  }
+
+  /**
+   * The proxy offers no NTLM, and the login is the URL's from an HTTPS_PROXY Worca started the proxy for
+   * (`ctx.fallback`): this login goes as Digest, else Basic, from now on, on a fresh round trip.
+   */
+  async function passwordFallback(ctx, mode, socket, h1, buildHead, deadline, opts) {
+    if (!live(ctx)) throw loginChanged();
+    ctx.auth = mode;
+    ctx.creds = ctx.fallback[mode];
+    ctx.fallback = null;
+    say(`${label} offers no NTLM, so the login from HTTPS_PROXY is sent as ${mode === 'digest' ? 'Digest' : 'Basic, in cleartext'}, as the clients that read HTTPS_PROXY sent it.`);
+    let s = socket;
+    if (h1.persistent) {
+      const left = await drainBody(s, h1, deadline - now(), { noBody: opts.headProbe });
+      if (left.length) s.unshift(left);
+    } else {
+      s.destroy();
+      s = await connectTcp(upstream.host, upstream.port, T.connectMs);
+    }
+    return mode === 'digest' ? digestStep(ctx, s, buildHead, deadline, opts) : basicStep(ctx, s, buildHead, deadline, opts.finalByCaller);
   }
 
   /** Digest (D8/D9): challenge on the probe, answer computed for the request the credentials go with. */
@@ -604,7 +634,8 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
       const target = new URL(probeUrl);
       const buildHead = (authz) => [`HEAD ${target.href} HTTP/1.1`, `Host: ${target.host}`, 'Proxy-Connection: Keep-Alive',
         ...(authz ? [`Proxy-Authorization: ${authz}`] : [])];
-      const r = await authenticate(ctx, socket, buildHead, now() + T.authMs, { finalByCaller: false, headProbe: true });
+      const r = await authenticate(ctx, socket, buildHead, now() + T.authMs, { finalByCaller: false, headProbe: true,
+        final: { method: 'HEAD', uri: target.href } });   // what a Digest fallback (passwordFallback) hashes
       socket = r.socket;
       const h = r.head;
       if (h.status === 407) throw new ProxyError(407, `proxy needs login: the corporate proxy ${label} asks for a login and none is configured.`, { needsLogin: true });
@@ -725,6 +756,8 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
         // D4: the upstream forgot this connection's login. Nothing was refused, so no strike.
         if (ctx.pool === pool) retirePool(ctx);
         if (!live(ctx)) { replyError(res, loginChanged()); return true; }   // D3: never retry as the old login
+        // The handshake fell back to Digest/Basic (passwordFallback), which log in a request, not a connection.
+        if (PASSWORD_MODES.includes(ctx.auth)) { if (!retry) return false; forwardOnce(req, res, { url, headers }); return true; }
         // D4 cap: the retry's socket was logged in a moment ago and was forgotten at once.
         if (retried) { stopPooling('asks for a login again on every kept-alive connection'); return false; }
         if (!retry) return false;
@@ -811,7 +844,7 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
       // derived 'none' (that only meant "no login yet").
       const auth = creds ? (upstream.requestedAuth || 'auto') : 'none';
       retirePool(cur);   // D3: no request rides a socket logged in as the previous login
-      cur = { gen: cur.gen + 1, creds, auth, loginId: next ? id : null };
+      cur = { gen: cur.gen + 1, creds, auth, loginId: next ? id : null, fallback: next ? null : urlFallback };
       gate.reset();
       if (creds && rejected) gate.rejected(needsLogin);
       return true;

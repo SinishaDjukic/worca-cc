@@ -2,18 +2,19 @@
 // `upstream` on a global catalog entry and the `providers` settings key
 // (model-bridge-design.md §6): every §6.1 rejection, the minimal stored shape,
 // PATCH semantics, the lenient reader, provider defaults/masking/patching, the
-// terms acknowledgement, and the plugin-manifest / team-policy mirrors.
+// Copilot sign-in, and the plugin-manifest / team-policy mirrors.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import {
   settingsFile, listGlobalModels, addGlobalModel, updateGlobalModel,
   providerConfig, allProviders, updateProvider, providerSecretSet, resolveProviderSecret,
-  copilotTermsAcknowledged, acknowledgeCopilotTerms, clearCopilotSignIn, readSettings,
+  clearCopilotSignIn, readSettings,
 } from '../src/core/settings.mjs';
-import { assertModelUpstream, assertModelCapabilities, upstreamEnvConflict, bridgeExcludedTools, isTranslatedApi, UPSTREAM_APIS, COPILOT_TERMS_VERSION } from '../src/core/model-env.mjs';
+import { assertModelUpstream, assertModelCapabilities, upstreamEnvConflict, bridgeExcludedTools, isTranslatedApi, UPSTREAM_APIS } from '../src/core/model-env.mjs';
+import { providerReadiness } from '../src/core/bridge/registry.mjs';
 import { normalizeManifest } from '../src/core/plugin-manifest.mjs';
 import { normalizePolicyDoc } from '../src/core/policy/registry.mjs';
 
@@ -110,7 +111,7 @@ test('reader: a malformed upstream is dropped loudly, a clashing env key is drop
   });
 });
 
-test('providers: defaults, patch, delete, masking inputs, secrets and the terms acknowledgement', async () => {
+test('providers: defaults, patch, delete, masking inputs, secrets and clearing the Copilot sign-in', async () => {
   await withSandbox(async () => {
     assert.deepEqual(providerConfig('copilot'), { maxConcurrent: 4, accountType: 'individual' });
     assert.deepEqual(providerConfig('openai'), { maxConcurrent: 8, baseUrl: 'https://api.openai.com/v1' });
@@ -118,7 +119,6 @@ test('providers: defaults, patch, delete, masking inputs, secrets and the terms 
     assert.deepEqual(Object.keys(allProviders()), ['copilot', 'openai', 'anthropic']);
     assert.throws(() => providerConfig('nope'), /unknown provider/);
     assert.equal(providerSecretSet('copilot'), false);
-    assert.equal(copilotTermsAcknowledged(), false);
 
     const c = await updateProvider('copilot', { githubToken: ' gho_abc ', accountType: 'business', maxConcurrent: 2, login: 'octo' });
     assert.deepEqual(c, { maxConcurrent: 2, accountType: 'business', githubToken: 'gho_abc', login: 'octo' });
@@ -131,14 +131,11 @@ test('providers: defaults, patch, delete, masking inputs, secrets and the terms 
     await assert.rejects(updateProvider('openai', { baseUrl: 'nope' }), /baseUrl must be an http/);
     await assert.rejects(updateProvider('nope', {}), /unknown provider/);
 
-    await acknowledgeCopilotTerms(new Date('2026-09-20T10:00:00Z'));
-    assert.equal(copilotTermsAcknowledged(), true);
-    assert.equal(providerConfig('copilot').termsVersion, COPILOT_TERMS_VERSION);
     await clearCopilotSignIn();
     const after = providerConfig('copilot');
     assert.equal(after.githubToken, undefined);
     assert.equal(after.login, undefined);
-    assert.equal(after.acknowledgedTerms, '2026-09-20T10:00:00.000Z');   // the acknowledgement stays
+    await assert.rejects(updateProvider('copilot', { acknowledgedTerms: '2026-09-20T10:00:00Z' }), /unknown provider field "acknowledgedTerms"/);
 
     const o = await updateProvider('openai', { apiKey: '${OPENAI_KEY}', baseUrl: 'https://gw.example/v1/' });
     assert.equal(o.baseUrl, 'https://gw.example/v1');
@@ -147,6 +144,34 @@ test('providers: defaults, patch, delete, masking inputs, secrets and the terms 
     assert.equal(resolveProviderSecret('literal', {}), 'literal');
     await updateProvider('openai', { apiKey: null, baseUrl: '' });
     assert.equal(readSettings().providers.openai, undefined);
+  });
+});
+
+
+test('Copilot: signed in = ready; an old acknowledgement in settings.json loads silently and changes nothing', async () => {
+  await withSandbox(async () => {
+    const prevBroker = process.env.WORCA_BROKER_URL; delete process.env.WORCA_BROKER_URL;
+    const warns = []; const orig = console.warn; console.warn = (...a) => warns.push(a.join(' '));
+    try {
+      // Not signed in: the only Copilot readiness reason left.
+      assert.deepEqual(providerReadiness({ provider: 'copilot' }).reason, 'not_signed_in');
+      // Signed in, never acknowledged anything: ready.
+      await updateProvider('copilot', { githubToken: 'gho_abc' });
+      assert.deepEqual(providerReadiness({ provider: 'copilot' }), { ok: true });
+      assert.equal('acknowledgedTerms' in (await readRaw()).providers.copilot, false);
+      // A settings.json written by an older Worca still loads: the stale keys are ignored, never warned about.
+      await mkdir(dirname(settingsFile()), { recursive: true });
+      await writeFile(settingsFile(), JSON.stringify({ providers: { copilot: { githubToken: 'gho_old', acknowledgedTerms: '2026-01-01T00:00:00.000Z', termsVersion: 1 } } }));
+      assert.deepEqual(providerConfig('copilot'), { maxConcurrent: 4, accountType: 'individual', githubToken: 'gho_old' });
+      assert.deepEqual(providerReadiness({ provider: 'copilot' }), { ok: true });
+      // A later provider write keeps the file's other keys as they were (no migration, no rewrite of the old ones).
+      await updateProvider('copilot', { maxConcurrent: 2 });
+      assert.equal((await readRaw()).providers.copilot.termsVersion, 1);
+      assert.deepEqual(warns.filter((w) => /acknowledgedTerms|termsVersion/.test(w)), []);
+    } finally {
+      console.warn = orig;
+      if (prevBroker === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prevBroker;
+    }
   });
 });
 

@@ -6,9 +6,17 @@
 //
 // Facts this module encodes (checked against @github/copilot 1.0.92, its shipped
 // schemas/session-events.schema.json, and a stand-in OpenAI Responses endpoint in BYOK mode):
-// - With no -p, the prompt is read from stdin (no argv limit). `--allow-all-tools` is required
-//   for a non-interactive run; a tool call that would still prompt (a path outside the cwd and
-//   the --add-dir folders) is denied, never asked.
+// - With no -p, the prompt is read from stdin (no argv limit). A tool call that would prompt is denied, never asked.
+// - Tool approval is an allow list (G14, checked on 1.0.100 in BYOK mode against a scripted stand-in endpoint):
+//   `--allow-tool=shell` and `--allow-tool=write` approve the shell and the file tools, `--allow-tool=<server>` each MCP
+//   server worca attached, `--allow-all-urls` a URL in a shell command (without it `curl <url>` is denied). Inside the
+//   cwd and `--add-dir` folders, a read-only tool (view, rg, glob, a read-only shell command such as `cat` or `cd`),
+//   `task`, `sql` and `skill` need no approval, and a sub-agent's shell runs under the parent's list; outside the cwd
+//   and `--add-dir`, Copilot asks for interactive directory approval even for reads and `cd`, which `--no-ask-user`
+//   denies. Anything else, such as an MCP server worca did not attach, is denied.
+//   `--allow-all-tools` (which --help still calls required) is not needed in -p mode. COPILOT_ALLOW_ALL in copilot's env
+//   would approve everything again (exactly "true" also trusts the folder, loading its hooks and MCP servers), and
+//   COPILOT_ASSISTED_APPROVAL hands unlisted tools to a judge, so the spawn drops both.
 // - There is no system-prompt flag. A custom agent (`--agent <name>`) carries one: its markdown
 //   body reaches the model as `<agent_instructions>`. Agents load from `<dir>/.github/agents`
 //   of every `--add-dir`, so worca writes a scratch folder per spawn and adds it.
@@ -16,7 +24,7 @@
 //   unknown id fails with "No session, task, or name matched".
 // - `--usage-output-file` gets the session's CUMULATIVE token totals (a resumed session's file
 //   counts its earlier turns too); the stream carries no per-call usage in -p mode.
-// - Deny rules (`--deny-tool`) beat --allow-all-tools. `shell(cmd)` / `shell(cmd sub)` match the
+// - Deny rules (`--deny-tool`) beat every allow rule (checked again on 1.0.100). `shell(cmd)` / `shell(cmd sub)` match the
 //   command (and git/gh sub-command) wherever it sits in a line — in a chain, behind a redirect,
 //   a substitution or `VAR=x` — but not inside `bash -c "…"`, and a flag is not part of the
 //   match (`shell(rm -rf)` lets `rm -rf x` run). `write` covers the file tools, not the shell.
@@ -35,7 +43,8 @@
 import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { execFile } from 'node:child_process';
+import { execCli, cliRefusal } from './exec-cli.mjs';
+import { COPILOT_CLI } from './cli-specs.mjs';
 import { join, dirname, resolve } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
@@ -44,6 +53,7 @@ import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsIn
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { mcpResultText } from './codex.mjs';
+import { storeProjectDirs } from './gemini-family.mjs';
 import { makeChatDescriptor } from './chat-descriptor.mjs';
 import { copilotWireModel, COPILOT_EFFORTS as MODEL_ENV_COPILOT_EFFORTS } from '../model-env.mjs';
 
@@ -292,16 +302,19 @@ export function copilotInvestigatorAgent({ agents, subagentSystemPrompt } = {}) 
 
 /**
  * `copilot` argv. The prompt always travels on stdin.
- *   copilot --output-format json --allow-all-tools --no-ask-user --no-auto-update --no-color --disable-builtin-mcps
- *     [--disallow-temp-dir] (--session-id U | --resume=U) [--model M] [--reasoning-effort E] [--agent A]
+ *   copilot --output-format json [--allow-tool=shell --allow-tool=write] [--allow-tool=S]… [--allow-all-urls]
+ *     --no-ask-user --no-auto-update --no-color --disable-builtin-mcps [--disallow-temp-dir] (--session-id U | --resume=U) [--model M] [--reasoning-effort E] [--agent A]
  *     [--add-dir D]… [--additional-mcp-config @F] [--disable-mcp-server N]… [--available-tools=…]
  *     [--excluded-tools=…] [--deny-tool=R]… [--usage-output-file F]
  * @param {{sessionId:string, resume?:boolean, model?:string, effort?:string, agent?:string, addDirs?:string[],
  *   mcpConfigFile?:string, disableMcp?:string[], availableTools?:string[], excludedTools?:string[], deny?:string[],
- *   usageFile?:string, readOnly?:boolean, ask?:boolean}} o
+ *   usageFile?:string, readOnly?:boolean, ask?:boolean, allowMcp?:string[]}} o
+ *   allowMcp: the MCP servers worca attached, approved by name. A read-only spawn has no shell or file tool to approve.
  */
-export function buildCopilotArgs({ sessionId, resume = false, model, effort, agent, addDirs, mcpConfigFile, disableMcp, availableTools, excludedTools, deny, usageFile, readOnly = false, ask = false } = {}) {
-  const args = ['--output-format', 'json', '--allow-all-tools', '--no-ask-user', '--no-auto-update', '--no-color', '--disable-builtin-mcps'];
+export function buildCopilotArgs({ sessionId, resume = false, model, effort, agent, addDirs, mcpConfigFile, disableMcp, availableTools, excludedTools, deny, usageFile, readOnly = false, ask = false, allowMcp } = {}) {
+  const allow = [...new Set([...(readOnly ? [] : ['shell', 'write']), ...(Array.isArray(allowMcp) ? allowMcp : [])])];
+  const args = ['--output-format', 'json', ...allow.map((t) => `--allow-tool=${t}`), ...(readOnly ? [] : ['--allow-all-urls']),
+    '--no-ask-user', '--no-auto-update', '--no-color', '--disable-builtin-mcps'];
   if (readOnly) args.push('--disallow-temp-dir');
   if (ask) args.push('--no-custom-instructions');
   if (sessionId) args.push(resume ? `--resume=${sessionId}` : `--session-id=${sessionId}`);
@@ -510,10 +523,10 @@ export function copilotResumeNotFound(err) { return COPILOT_RESUME_NOT_FOUND_RE.
  */
 export function copilotPreflight({ bin = COPILOT_DEFAULT_BIN, timeoutMs = 15000 } = {}) {
   return new Promise((resolve) => {
-    execFile(bin, ['--version', '--no-auto-update'], { timeout: timeoutMs, env: { ...process.env, COPILOT_AUTO_UPDATE: 'false' } }, (err, stdout) => {
+    execCli(COPILOT_CLI, bin, ['--version', '--no-auto-update'], { timeout: timeoutMs, env: { ...process.env, COPILOT_AUTO_UPDATE: 'false' } }, (err, stdout) => {
       if (err && typeof err.code !== 'number') {
         resolve(/^(ENOENT|EACCES|EINVAL)$/.test(String(err.code))
-          ? { refusal: `cannot run ${bin} (${err.code}) — install the GitHub Copilot CLI (npm i -g @github/copilot), or point WORCA_COPILOT_BIN at it` }
+          ? { refusal: cliRefusal({ bin, err, install: 'install the GitHub Copilot CLI (npm i -g @github/copilot), or point WORCA_COPILOT_BIN at it' }) }
           : { warning: `could not check ${bin} (${err.message})` });
         return;
       }
@@ -549,10 +562,10 @@ export const COPILOT_ASK_LOCKDOWN = true;
  */
 export function copilotAskSupport({ bin = COPILOT_DEFAULT_BIN, timeoutMs = 15000 } = {}) {
   return new Promise((resolve) => {
-    execFile(bin, ['--help'], { timeout: timeoutMs, env: { ...process.env, COPILOT_AUTO_UPDATE: 'false' }, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+    execCli(COPILOT_CLI, bin, ['--help'], { timeout: timeoutMs, env: { ...process.env, COPILOT_AUTO_UPDATE: 'false' }, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
       if (err && typeof err.code !== 'number') {
         resolve({ refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(err.code))
-          ? `cannot run ${bin} (${err.code}) — install the GitHub Copilot CLI (npm i -g @github/copilot), or point WORCA_COPILOT_BIN at it`
+          ? cliRefusal({ bin, err, install: 'install the GitHub Copilot CLI (npm i -g @github/copilot), or point WORCA_COPILOT_BIN at it' })
           : `could not ask ${bin} which flags it has (${err.message})` });
         return;
       }
@@ -632,6 +645,9 @@ export async function runCopilotProcess({
   // of a run without a project is no secret and must reach the agent's own git.
   if (typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string') env.GIT_CEILING_DIRECTORIES = runSpawnEnv.GIT_CEILING_DIRECTORIES;
   env.COPILOT_AUTO_UPDATE = 'false';
+  // Either would widen the allow list buildCopilotArgs sets (see the notes at the top).
+  delete env.COPILOT_ALLOW_ALL;
+  delete env.COPILOT_ASSISTED_APPROVAL;
 
   // Scratch folder: the node agent (system prompt), the investigator, the MCP config and the usage file.
   const scratch = join(scratchBase, `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
@@ -657,9 +673,11 @@ export async function runCopilotProcess({
   // Guardrails and the tool set: deny rules worca can express, the per-role tool list, read-only.
   const rules = copilotRulePlan(permissionRules);
   const tools = readOnly ? { deny: [], excluded: [] } : copilotToolPlan(allowedTools);
+  const includeDirs = readOnly ? [] : [...new Set([...(addDirs || []), ...(writableDirs || [])].filter((d) => typeof d === 'string' && d))];
+  for (const p of storeProjectDirs(includeDirs)) if (!includeDirs.includes(p)) includeDirs.push(p);
   const args = buildCopilotArgs({
     sessionId: session, resume, model, effort, agent: COPILOT_NODE_AGENT,
-    addDirs: [scratch, ...(readOnly ? [] : [...(addDirs || []), ...(writableDirs || [])])],
+    addDirs: [scratch, ...includeDirs],
     // Off: the user's own Copilot servers, and the project's `.mcp.json` servers Copilot would load itself in a trusted
     // folder, but never a server worca hands it (an approved one of the same name stays on).
     mcpConfigFile, disableMcp: [...new Set([...userCopilotMcpNames(env), ...projectCopilotMcpNames(cwd).filter((n) => !Object.hasOwn(mcpServers || {}, n))])],
@@ -667,6 +685,7 @@ export async function runCopilotProcess({
     // only the MCP servers it was handed (worca's own read_file/grep/glob behind the secret-path denies).
     availableTools: readOnly ? Object.keys(mcpServers || {}) : undefined,
     excludedTools: [...rules.excluded, ...tools.excluded], deny: [...rules.deny, ...tools.deny], usageFile, readOnly, ask,
+    allowMcp: Object.keys(mcpServers || {}),
   });
   const normalizer = createCopilotNormalizer({ model: model || null, sessionId });
   const priorUsage = resume ? loadUsage(usageDir, session) : null;
@@ -687,6 +706,7 @@ export async function runCopilotProcess({
     return total ? diffUsage(total, priorUsage) : null;
   };
   const res = await superviseSpawn({
+    cli: COPILOT_CLI,
     file: bin, args, displayBin: bin, cwd, env, stdin: String(prompt ?? ''), signal: spawnSignal, asAgent,
     // Copilot writes its usage file into the scratch folder, so an agent user gets it writable.
     stagedDir: asAgent ? { dir: scratch, writable: true } : null, onEvent,

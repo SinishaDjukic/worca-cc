@@ -72,11 +72,12 @@ test('#948 s2 + compact menu: Group by and Sort by are segmented items; titles c
   assert.equal(sort.value, 'activity');
   assert.deepEqual(sort.options, [{ id: 'activity', label: 'Recent', title: 'Last activity' }, { id: 'created', label: 'Created' },
     { id: 'title', label: 'A–Z', title: 'Title A–Z' }, { id: 'cost', label: 'Cost' }]);
-  assert.deepEqual(group.options.map((o) => [o.label, o.title || '']), [['Date', 'Today · Recent · Older'], ['Project', ''], ['Topic', ''], ['None', '']]);
+  assert.deepEqual(group.options.map((o) => [o.label, o.title || '']), [['Date', 'Today · Yesterday · Previous 7 days · Previous 30 days · Older'], ['Project', ''], ['Topic', ''], ['None', '']]);
   sort.onSelect('cost'); assert.deepEqual(picked, { sort: 'cost' });
   group.onSelect('topic'); assert.deepEqual(picked, { groupBy: 'topic' });
   assert.equal(items.find((i) => i.label === 'Select').hint, '⌘ click');
   assert.equal(viewMenuItems(DEFAULT_VIEW, {}, { onPick() {} }).find((i) => i.label === 'Select').hint, 'Ctrl click');
   const runs = viewMenuItems(DEFAULT_VIEW, {}, { onPick() {} });
-  assert.deepEqual(runs.find((i) => i.segmented).options.map((o) => o.id), ['none', 'project', 'date']);
+  assert.deepEqual(runs.find((i) => i.segmented).options.map((o) => [o.id, o.title || '']),
+    [['date', group.options[0].title], ['project', ''], ['none', '']], 'Runs: the Chats order and Date title, less Topic');
 });

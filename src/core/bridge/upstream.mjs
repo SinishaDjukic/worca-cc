@@ -141,7 +141,7 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
   const upstream = entry.upstream;
   const ready = providerReadiness(upstream);
   if (!ready.ok) {
-    const e = ready.reason === 'terms' ? bridgeErrors.termsNotAcknowledged(upstream.provider) : bridgeErrors.notSignedIn(upstream.provider, ready.message.split('— ')[1] || ready.message);
+    const e = bridgeErrors.notSignedIn(upstream.provider, ready.message.split('— ')[1] || ready.message);
     recordBridgeError({ tag, catalogId: entry.id, provider: upstream.provider, status: e.status, message: e.body.error.message });
     return reply.json(e.status, e.body);
   }

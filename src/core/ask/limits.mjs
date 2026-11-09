@@ -17,7 +17,7 @@ export const ASK_LIMITS = Object.freeze({
   attachment: Object.freeze({
     maxFiles: 8,                           // per message
     maxBytesPerFile: 100 * 1024 * 1024,    // text kinds — paged into prompts by read_attachment, only small ones inlined
-    maxBytesPerBinaryFile: 100 * 1024 * 1024, // image/pdf kinds — read from disk, never inlined (#398); past 32 MB (the API's PDF request cap) the model may need to read a PDF a few pages at a time
+    maxBytesPerBinaryFile: 100 * 1024 * 1024, // image/pdf and every unlisted file — read from disk, never inlined (#398); past 32 MB (the API's PDF request cap) the model may need to read a PDF a few pages at a time
     maxBytesPerMessage: 100 * 1024 * 1024, // ACROSS kinds, one POST — base64 (×4/3) keeps it inside the route's JSON window
     extensions: TEXT_EXTENSIONS,           // attachment-kind.mjs owns both tables
     binaryExtensions: BINARY_EXTENSIONS,
@@ -31,6 +31,8 @@ export const ASK_LIMITS = Object.freeze({
   contextHeaderMaxChars: 1024,             // [worca context] block
   inlineAttachmentsMaxBytes: 24 * 1024,    // inlined into the turn prompt
   restoredMaxChars: 30_000,                // DB-replay fallback prompt
+  handoffMaxChars: 400_000,                // #943: the transcript a fresh session on another engine gets, at most
+  handoffContextShare: 0.5,                // …and at most this share of the destination model's context
   blockIoMaxChars: 2048,                   // persisted tool input / error per block
   agentLogMaxLines: 50,
   listRunsDefaultLimit: 20,

@@ -2,7 +2,6 @@
 // as the Workflows canvas draws it, in a pannable chat-card well. jsdom has no layout: `viewport` injects the well's box.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { checkRows } from './helpers/rows.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
@@ -12,6 +11,7 @@ import { manifestAgents } from '../ui/public/graph/run-decor.mjs';
 import { manifestPortsFn, manifestTemplate } from '../src/shared/graph/manifest.mjs';
 import { autoLayout } from '../src/shared/graph/layout.mjs';
 import { NODE_W, LABEL_H, ZOOM_STEP } from '../src/shared/graph/geometry.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
@@ -304,7 +304,7 @@ test('descriptions: descriptionOf fills the footers at mount; setDescriptions re
 });
 
 test('style.css: the well pans with a grab cursor and selects no text, its cluster sits in its own corner, and a chat graph well stays inside its card (#959)', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   for (const rule of [
     '.gv-well{user-select:none;-webkit-user-select:none;}',
     '.gv-well .gv-stage,.gv-well .gv-world .node{cursor:grab;}',

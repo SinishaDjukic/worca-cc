@@ -1,9 +1,9 @@
 // test/ui-switch.test.mjs — ui/public/switch.mjs: the checkbox driver of the one switch (docs/design-system.md › Switch).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { makeSwitch } from '../ui/public/switch.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
@@ -45,7 +45,7 @@ test('makeSwitch: no visible label names the input through aria-label', () => {
 
 
 test('index.html: every static switch track sits inside a label whose control is its own input, so a click on the track toggles it', () => {
-  const page = new JSDOM(readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8')).window.document;
+  const page = new JSDOM(readIndexHtml()).window.document;
   const inputs = [...page.querySelectorAll('input.sw-input')];
   assert.ok(inputs.length > 10, 'the page has its switches');
   const unreachable = inputs.filter((i) => {

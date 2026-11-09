@@ -25,6 +25,7 @@ import { parseRemoteUrl, prBaseBranch } from './git-info.mjs';
 import { forgeOf } from './forge.mjs';
 import { mapWithCap } from './fanout.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
+import { guardedGitEnv } from './git-guard.mjs';
 
 export const INTERACTIVE_TTL_MS = 45_000;
 export const INTERACTIVE_TIMEOUT_MS = 8_000;
@@ -51,13 +52,12 @@ const QUIET_ENV = Object.freeze({ LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0', GIT_ASK
  *  Windows (v8): no setsid. Git for Windows' ssh can still prompt on an inherited console; on a
  *  timeout the whole tree is ended with `taskkill /T /F`, as script-runner.mjs:264-272 does. */
 const NETWORK_CMDS = new Set(['fetch', 'merge', 'merge-tree']);
-/** Every git-sync call runs with an empty hooks directory (metrics/sync.mjs hookFreeArgs, decision 33):
- *  `reference-transaction` fires on fetch / update-ref / branch and `post-merge` on merge --ff-only,
- *  with the spawn env — worca's GitHub credential included. Run worktrees share the project's
- *  .git/hooks, so an agent could plant one there. On POSIX the hooks path is the null device, which
- *  can hold no hooks (a directory could be created and filled later); on Windows, a worca-home
- *  folder that does not exist simply has no hooks. The shared .git/config is just as writable, so
- *  a planted core.fsmonitor command (run by `git status`) and http.sslVerify=false are overridden too. */
+/** Every git-sync call runs with git-guard.mjs's env (security G2): `reference-transaction` fires on
+ *  fetch / update-ref / branch and `post-merge` on merge --ff-only, with the spawn env — worca's GitHub
+ *  credential included — and run worktrees share the project's .git/hooks and .git/config, so an agent
+ *  could plant a hook, a core.fsmonitor command or a smudge filter there. hookFreeArgs is the same
+ *  hooks-off set for a repository worca made itself (marketplace-publish's scratch clone): on POSIX
+ *  the null device, which can hold no hooks; on Windows, a worca-home folder that does not exist. */
 export function hookFreeArgs() {
   let dir = devNull;
   if (process.platform === 'win32') { try { dir = join(worcaHome(), 'no-hooks'); } catch { /* devNull */ } }
@@ -73,15 +73,17 @@ function trackGroup(pid) {
   exitHooked = true;
   process.on('exit', () => { for (const p of liveGroups) { try { process.kill(-p, 'SIGKILL'); } catch { /* gone */ } } });
 }
-function defaultRun(args, { cwd, timeoutMs = LOCAL_TIMEOUT_MS, env = null } = {}) {
+async function defaultRun(args, { cwd, timeoutMs = LOCAL_TIMEOUT_MS, env = null } = {}) {
+  let guarded;
+  try { guarded = await guardedGitEnv(cwd, { env: { ...(env || stripHostCredentials(process.env)), ...QUIET_ENV } }); }
+  catch (err) { return { ok: false, stdout: '', stderr: err.message, code: -1, timedOut: false }; }
   return new Promise((done) => {
     const network = NETWORK_CMDS.has(args[0]);
     const win = process.platform === 'win32';
     const group = network && !win;
     let child;
     try {
-      child = spawn('git', [...hookFreeArgs(), ...args], { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: group,
-        env: { ...(env || stripHostCredentials(process.env)), ...QUIET_ENV } });
+      child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: group, env: guarded });
     } catch (err) { done({ ok: false, stdout: '', stderr: err.message, code: -1, timedOut: false }); return; }
     if (group && child.pid) trackGroup(child.pid);
     let stdout = '', stderr = '', settled = false, timer = null;
@@ -205,13 +207,14 @@ async function remoteFetchedMs(dir, key, urls) {
 async function shownFetchedMs(dir, key, urls) {
   return (await remoteFetchedMs(dir, key, urls)) ?? lastGood.get(key) ?? null;
 }
-async function lastFetchedMs(dir, remote) {
-  const info = await remoteInfo(dir, remote);
+async function lastFetchedMs(dir, remote, info = null) {
+  if (!info?.ok || info.name !== remote) info = await remoteInfo(dir, remote);
   return info.ok ? shownFetchedMs(dir, await repoKey(dir, remote), info.fetchUrls) : null;
 }
-/** ISO time `remote` was last fetched into `dir` (any process, or a person), or null. No network. */
-export async function lastFetchedAt(dir, { remote = 'origin' } = {}) {
-  return dir && isSafeRemoteName(remote) ? iso(await lastFetchedMs(dir, remote)) : null;
+/** ISO time `remote` was last fetched into `dir` (any process, or a person), or null. No network.
+ *  `info` is remoteInfo's answer for that remote when the caller already has it (one git call fewer). */
+export async function lastFetchedAt(dir, { remote = 'origin', info = null } = {}) {
+  return dir && isSafeRemoteName(remote) ? iso(await lastFetchedMs(dir, remote, info)) : null;
 }
 /** { sha, at } of a ref's tip commit, or null. */
 export async function commitInfo(dir, ref) {
@@ -283,7 +286,7 @@ export async function remoteInfo(dir, remote = 'origin') {
 /** worca's server-side READ credential for the remote's host (App mode mints per call); other hosts: this machine's git. */
 async function readCred(info) {
   if (info.githubRepo) {
-    const r = await githubEnv('read', { repo: info.githubRepo });
+    const r = await githubEnv('read', { repo: info.githubRepo, readAsPerson: true });
     return { ...r, env: stripBitbucketCredentials(r.env) };
   }
   if (info.azure) return { env: stripBitbucketCredentials(azureEnv('read')), error: null };
@@ -356,6 +359,30 @@ export async function fetchRemote(dir, { remote = 'origin', timeoutMs = INTERACT
     return inflight.get(key) || startFetch(key, dir, info, timeoutMs);
   }
   return shared;
+}
+
+/**
+ * Fetch a pull request's head into the remote-tracking ref `refs/remotes/<remote>/worca-pr-<n>`, so a run can start
+ * from `<remote>/worca-pr-<n>` (#711's PR review). GitHub serves every PR (a fork's too) at `refs/pull/<n>/head`;
+ * Azure DevOps has no such ref, so its caller names the PR's source `branch` instead.
+ * → { ok:true, ref, sha } | { ok:false, kind, error }
+ */
+export async function fetchPullHead(dir, { remote = 'origin', number, branch = null, timeoutMs = RUN_TIMEOUT_MS } = {}) {
+  const n = Number(number);
+  if (!dir || !Number.isSafeInteger(n) || n <= 0) return { ok: false, kind: 'failed', error: 'a project and a pull request number are required' };
+  if (!isSafeRemoteName(remote)) return { ok: false, kind: 'failed', error: `invalid remote ${remote}` };
+  if (branch !== null && !isSafeBranchName(branch)) return { ok: false, kind: 'failed', error: `invalid branch ${branch}` };
+  const info = await remoteInfo(dir, remote);
+  if (!info.ok) return info;
+  const cred = await readCred(info);
+  const local = `refs/remotes/${remote}/worca-pr-${n}`;
+  const r = await _run(['fetch', '--no-tags', info.name, `+${branch ? `refs/heads/${branch}` : `refs/pull/${n}/head`}:${local}`], { cwd: dir, env: cred.env, timeoutMs });
+  if (!r.ok) {
+    return { ok: false, kind: r.timedOut ? 'timeout' : classifyFetchError(r.stderr),
+      error: scrubGitText(r.stderr) || (r.timedOut ? `git fetch timed out after ${timeoutMs} ms` : `git fetch exited ${r.code}`) };
+  }
+  const sha = await _run(['rev-parse', '--verify', `${local}^{commit}`], { cwd: dir });
+  return { ok: true, ref: `${remote}/worca-pr-${n}`, sha: sha.ok ? String(sha.stdout || '').trim() : null };
 }
 
 /** No network. The last failed fetch of `remote` when it is newer than its last good one (the

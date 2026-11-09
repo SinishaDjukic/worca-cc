@@ -2,6 +2,7 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const imp = (p) => import(new URL(`../ui/public/workflows/${p}`, import.meta.url).href);
 const memStore = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) }; };
@@ -180,12 +181,13 @@ function fakeComposer() {
   return {
     log,
     docToken: () => token, undoDepth: () => depth, gesture: () => null, isDirty: () => false, origin: () => '',
+    copyOf: () => null,
     template: () => ({ id: 'wf_x', name: 'Mine', nodes: [], wires: [] }),
     applyOps: (ops, label) => { log.push(['applyOps', ops.length, label]); depth += 1; return { ok: true, depth }; },
     undo: () => { log.push(['undo']); depth -= 1; },
     guardDiscard: async () => true,
     loadDraft: (d) => { log.push(['loadDraft', d.name]); token = 'd_newdoc01'; depth = 0; },
-    loadTemplate: (t) => { log.push(['loadTemplate', t.id]); token = 'd_back0001'; },
+    loadTemplate: (t, o) => { log.push(['loadTemplate', t.id, o]); token = 'd_back0001'; },
     setName: () => {}, fit: () => {}, openSaveDialog: () => log.push(['save']),
     serialize: () => ({ id: 'wf_x', nodes: [], wires: [] }),
     view: { world: null }, setTok: (t) => { token = t; },
@@ -667,7 +669,7 @@ test('collapsed pill: the still orb, one-line input with a rotating example, att
   const file = root.querySelector('input[type="file"]');
   assert.equal(file.multiple, true);
   assert.equal(file.hidden, true);
-  assert.equal(file.accept, '.md,.markdown,.txt,.json,.csv,.log,.html,.htm,.xml,.png,.jpg,.jpeg,.gif,.webp,.pdf,text/*');
+  assert.equal(file.hasAttribute('accept'), false, 'every file type is offered');
   assert.equal(root.querySelector('.wfc-files').hidden, true, 'no chips until a file is picked');
   assert.equal(root.querySelector('#wfc-send').getAttribute('aria-disabled'), 'true');
 });
@@ -1010,7 +1012,7 @@ test('the input grows with its text only while open: empty or collapsed it keeps
 
 test('the dock\'s textarea opts out of the house textarea box (min-height 120px, focus fill and ring)', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.wfc-input\{[^}]*min-height:30px;[^}]*max-height:104px;/);
   assert.match(css, /\.wfc-input:focus,\.wfc-input:focus-visible\{outline:none;background:transparent;\}/);
   assert.match(css, /\.wfc-shell:not\(\[data-open="true"\]\) \.wfc-input\{height:30px;overflow:hidden;white-space:nowrap;cursor:text;\}/);
@@ -1019,7 +1021,7 @@ test('the dock\'s textarea opts out of the house textarea box (min-height 120px,
 
 test('a chat card button in flight (aria-disabled, never `disabled`) looks inactive', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.wfc :is\(\.btn,\.wfc-link\)\[aria-disabled="true"\]\{opacity:\.55;cursor:default;\}/);
 });
 
@@ -1381,22 +1383,21 @@ test('Enter sends the chips as base64 with the text; a refused send keeps them, 
     [['wfc-upill', 'spec.md'], ['wfc-upill', 'flow.png']], 'this stub 202 returns no rows: the echo has no ids, so the image is a name pill');
 });
 
-test('Ask\'s early checks and messages in the dock: type, 100 MB text, 8 files; a Codex chat refuses PDFs', async () => {
+test('Ask\'s early checks and messages in the dock: 100 MB text, 8 files; a Codex chat refuses PDFs', async () => {
   const s = await bootDock();
   const root = s.g('wfc');
   const note = () => root.querySelector('.wfc-note');
   root.querySelector('#wfc-input').dispatchEvent(new s.win.Event('focus'));
   pickFiles(s, [mkFile(s, 'evil.exe', 'x')]);
   await settle();
-  assert.equal(note().textContent, 'attachment type not allowed: evil.exe');
-  assert.equal(note().hidden, false);
-  assert.match(root.querySelector('.wfc-sr').textContent, /attachment type not allowed: evil\.exe/, 'said once to a screen reader');
+  assert.equal(note().hidden, true, 'evil.exe is accepted');
+  assert.equal(root.querySelectorAll('.wfc-files > *').length > 0, true);
   pickFiles(s, [mkFile(s, 'big.md', 'x'.repeat(100 * 1024 * 1024 + 1))]);
   await settle();
   assert.equal(note().textContent, 'attachment over 104857600 bytes: big.md');
   pickFiles(s, [mkFile(s, 'spec.pdf', '%PDF-1.7', 'application/pdf')]);
   await settle();
-  assert.deepEqual(chipNames(root), ['spec.pdf'], 'a Claude chat takes a PDF');
+  assert.deepEqual(chipNames(root), ['evil.exe', 'spec.pdf'], 'a Claude chat takes a PDF');
   assert.equal(note().hidden, true, 'a new batch clears the last refusal');
   pickFiles(s, Array.from({ length: 9 }, (_, i) => mkFile(s, `f${i}.md`, 'x')));
   await settle();
@@ -1544,7 +1545,7 @@ test('the chips make the open chat taller: the bars above it re-lift at once', a
 
 test('the attachment UI restates what the house rules would change (focus rings, the drop overlay, collapsed chips)', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.wfc-drop\{[^}]*position:absolute;[^}]*pointer-events:none;/);
   assert.match(css, /\.wfc-shell:not\(\[data-open="true"\]\) :is\(\.wfc-files,\.wfc-note\)\{display:none;\}/);
   assert.match(css, /\n\.wfc-file-x\{flex:none;\}/, 'the × is the shared .btn-icon (its ring is .btn\'s); only its flex stays');
@@ -1592,7 +1593,7 @@ test('Send clears the last refusal note', async () => {
   const s = await bootDock();
   const root = s.g('wfc');
   root.querySelector('#wfc-input').dispatchEvent(new s.win.Event('focus'));
-  pickFiles(s, [mkFile(s, 'evil.exe', 'x')]);
+  pickFiles(s, [mkFile(s, 'big.md', 'x'.repeat(100 * 1024 * 1024 + 1))]);
   await settle();
   assert.equal(root.querySelector('.wfc-note').hidden, false);
   typeEnter(s, 'Hello');
@@ -1798,4 +1799,20 @@ test('card-views: one DOM for both chats — a draft card shows the state its ho
     { h, graph, actions: (row) => row.appendChild(h('span', 'x', 'act')) });
   assert.ok(build.querySelector('.my-graph'));
   assert.equal(build.querySelector('.wfc-actions').textContent, 'act');
+});
+
+test('#1127: the build\'s Undo brings back an unsaved Use as template copy as a copy', async () => {
+  const { createCardController } = await imp('chat-cards.mjs');
+  const dom = new JSDOM('<!doctype html><body></body>');
+  const composer = fakeComposer();
+  composer.copyOf = () => ({ id: 'wf_default', name: 'Default' });
+  const build = card('card_0000eeee', 'proposed', { type: 'workflow-build', name: 'Bug fix', counts: {}, workflow: { nodes: [{ id: 'n_a', kind: 'task' }], wires: [] }, drafts: [], loops: [] });
+  const cc = createCardController({ doc: dom.window.document, composer, sessionId: 'cs_ab12cd34', blocks: () => [build], client: { postCard: async () => ({ ok: true }) } });
+  [...cc.render(build).querySelectorAll('button')].find((b) => b.textContent === 'Apply to canvas').click();
+  await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0));
+  [...cc.render({ ...build, state: 'applied' }).querySelectorAll('button')].find((b) => b.textContent === 'Undo').click();
+  await new Promise((r) => setTimeout(r, 0));
+  const back = composer.log.find((l) => l[0] === 'loadTemplate');
+  assert.ok(back, 'precondition: Undo reloaded the previous document');
+  assert.deepEqual(back[2], { copyOf: { id: 'wf_default', name: 'Default' } });
 });

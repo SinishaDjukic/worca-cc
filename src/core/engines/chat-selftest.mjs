@@ -14,7 +14,9 @@
 // chat-selftest.json); a failure is never kept, so the next turn runs the test again. The turn's watchdog (turn.mjs
 // _watch) stays the backstop for what a test run cannot show.
 import { createServer } from 'node:http';
-import { execFile } from 'node:child_process';
+import { execCli } from './exec-cli.mjs';
+import { ENGINE_CLIS } from './cli-specs.mjs';
+import { GENERIC_CLI } from '../cli-resolve.mjs';
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,9 +48,9 @@ function writeCache(file, key, at) {
 }
 
 /** `bin --version`'s first line, or throws. */
-export function binaryVersion(bin, { timeoutMs = 15000 } = {}) {
+export function binaryVersion(bin, { timeoutMs = 15000, cli = GENERIC_CLI } = {}) {
   return new Promise((resolve, reject) => {
-    execFile(bin, ['--version'], { timeout: timeoutMs }, (err, stdout) => {
+    execCli(cli, bin, ['--version'], { timeout: timeoutMs }, (err, stdout) => {
       if (err) reject(err); else resolve(String(stdout || '').trim().split('\n')[0] || 'unknown');
     });
   });
@@ -150,10 +152,10 @@ export function judgeSelfTest({ requests, allowed, expected, canaryRan, probeCal
  */
 export async function chatSelfTest({
   engine, label, bin, run, protocol, probeEnv, wireName, shellTool = 'run_shell_command', configFiles = [], metaTools = [],
-  model = SELF_TEST_MODEL, timeoutMs = 120_000, cacheFile = defaultCacheFile(), version = binaryVersion, home = worcaHome(),
+  model = SELF_TEST_MODEL, timeoutMs = 120_000, cacheFile = defaultCacheFile(), version = (b) => binaryVersion(b, { cli: ENGINE_CLIS[engine] ?? GENERIC_CLI }), home = worcaHome(),
 }) {
   let ver;
-  try { ver = await version(bin); } catch (err) { return { refusal: /ENOENT|EACCES/.test(String(err?.code || err?.message)) ? `cannot run ${bin} (${err.code || err.message})` : `could not ask ${bin} its version (${err?.message || err})` }; }
+  try { ver = await version(bin); } catch (err) { return { refusal: /ENOENT|EACCES|EINVAL/.test(String(err?.code || err?.message)) ? `cannot run ${bin} (${err.code || err.message})${err?.cliHint ? ` — ${err.cliHint}` : ''}` : `could not ask ${bin} its version (${err?.message || err})` }; }
   let real = bin;
   try { real = realpathSync(bin); } catch { /* a bare name on PATH: the version tells binaries apart */ }
   const key = `${engine}|${real}|${ver}|${configFingerprint(configFiles)}|r${SELF_TEST_REV}`;

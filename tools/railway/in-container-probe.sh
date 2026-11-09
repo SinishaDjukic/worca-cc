@@ -13,17 +13,29 @@ pass() { printf 'PASS  %s\n' "$*"; }
 fail() { printf 'FAIL  %s\n' "$*"; fails=$((fails + 1)); }
 want() { if [ "$2" = "$3" ]; then pass "$1 ($2)"; else fail "$1: got $2, want $3"; fi; }
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
-P=$(pgrep -u worca -o node)
+P=$(pgrep -u worca -o -x 'node|MainThread')   # Node 24+ names its main thread MainThread (the Linux process name)
 [ -n "$P" ] || { fail "no worca node process"; exit 1; }
 
 # 1. Bypassing Access
 want "public Host, no token -> 401" "$(code -H "Host: $host" http://127.0.0.1:4317/api/projects)" 401
 want "public Host, forged token -> 401" "$(code -H "Host: $host" -H 'Cf-Access-Jwt-Assertion: eyJhbGciOiJSUzI1NiIsImtpZCI6ImsifQ.eyJhIjoxfQ.c2ln' http://127.0.0.1:4317/api/projects)" 401
 want "foreign Host -> 403" "$(code -H 'Host: evil.example' http://127.0.0.1:4317/api/projects)" 403
-want "in-container localhost -> 200" "$(code http://127.0.0.1:4317/api/projects)" 200
+# G1: under agent isolation a caller on this box is the operator only with the per-boot instance token
+# (ui.json, 0600, worca's home; the in-box worca CLI sends it). Without agent isolation it is plain local.
+if id worca-agent >/dev/null 2>&1; then
+  want "in-container localhost, no instance token -> 403 (G1)" "$(code http://127.0.0.1:4317/api/projects)" 403
+  tok=$(sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([0-9a-f]*\)".*/\1/p' /data/worca/.worca-cc/ui.json 2>/dev/null)
+  if [ -n "$tok" ]; then
+    want "in-container localhost + instance token -> 200" "$(code -H "x-worca-ui-token: $tok" http://127.0.0.1:4317/api/projects)" 200
+  else
+    fail "no instance token in /data/worca/.worca-cc/ui.json"
+  fi
+else
+  want "in-container localhost -> 200 (no agent isolation)" "$(code http://127.0.0.1:4317/api/projects)" 200
+fi
 
 # 2. Users and the agent boundary
-want "node processes run as" "$(ps -C node -o user= | sort -u | tr '\n' ' ' | sed 's/ $//')" worca
+want "node processes run as" "$(ps -C node,MainThread -o user= | sort -u | tr '\n' ' ' | sed 's/ $//')" worca
 if id worca-agent >/dev/null 2>&1; then
   want "sudo worca -> worca-agent" "$(su -s /bin/sh worca -c 'sudo -n -u worca-agent -- id -un' 2>&1)" worca-agent
   if su -s /bin/sh worca -c 'sudo -n -u root -- true' >/dev/null 2>&1; then fail "sudo worca -> root is allowed"; else pass "sudo worca -> root refused"; fi
@@ -32,7 +44,7 @@ printf 'info  perms %s\n' "$(stat -c '%a:%G:%n' /data/projects /data/worca/.worc
 
 cat > /tmp/worca-probe-claude <<'F'
 #!/bin/sh
-p=$(pgrep -u worca -o node)
+p=$(pgrep -u worca -o -x 'node|MainThread')
 r() { if cat "$1" >/dev/null 2>&1; then echo read; else echo denied; fi; }
 printf '{"type":"result","subtype":"success","is_error":false,"result":"user=%s environ=%s db=%s home=%s gh=%s app=%s broker=%s ado=%s"}\n' "$(id -un)" "$(r /proc/$p/environ)" "$(r /data/worca/.worca-cc/worca-cc.db)" "$(ls /data/home >/dev/null 2>&1 && echo read || echo denied)" "${GH_TOKEN:+set}" "${WORCA_GH_APP_KEY_B64:+set}" "${WORCA_BROKER_SECRET:+set}" "${WORCA_ADO_TOKEN:+set}${WORCA_ADO_READ_TOKEN:+set}${WORCA_ADO_WRITE_TOKEN:+set}${AZURE_DEVOPS_EXT_PAT:+set}"
 F

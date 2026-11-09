@@ -17,6 +17,7 @@ import { formatInstant, formatCountdown } from '../../src/shared/schedule/recurr
 import { openScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
 import { splitMessage } from './feedback.mjs';
 import { actionError, httpError } from './action-errors.mjs';
+import { prRowText } from './pr-auto-view.mjs';
 
 const ICON = {
   clock: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path></svg>',
@@ -28,15 +29,25 @@ const ICON = {
 const KIND = {
   missed: ['Missed', 'amber'], failed: ['Failed', 'red'], run_error: ['Error', 'red'], paused: ['Paused', 'amber'],
   run_paused: ['Paused', 'amber'], skipped: ['Skipped', 'grey'], late: ['Late', 'blue'], retrying: ['Retrying', 'grey'],
-  completed: ['Completed', 'green'], ended: ['Ended', 'grey'],
+  completed: ['Completed', 'green'], ended: ['Ended', 'grey'], started: ['Started', 'blue'],
+  // Git event automations (#711): what a rule did with an issue or PR.
+  automation_started: ['Started', 'blue'], automation_skipped: ['Skipped', 'grey'], automation_queued: ['Queued', 'grey'],
+  'automation_awaiting-approval': ['Approve?', 'amber'], automation_done: ['Done', 'green'], automation_failed: ['Failed', 'red'],
+  pr_auto: ['Pull request', 'amber'],   // "Create a PR when a run finishes": a PR it could not open
 };
 const RESULT_WORD = { completed: 'completed', error: 'ended with an error', failed: 'could not start', missed: 'missed', skipped: 'skipped', paused: 'paused', stopped: 'stopped' };
 const RESULT_FAMILY = { completed: 'green', error: 'red', failed: 'red', missed: 'amber', skipped: 'grey', paused: 'amber', stopped: 'grey' };
 /** How the run an after-ticket waits for stands (its pipeline or ticket status). */
 const AFTER_WORD = { running: 'running', starting: 'starting', created: 'starting', pausing: 'pausing', paused: 'paused', scheduled: 'scheduled', firing: 'starting', fired: 'starting',
   done: 'finished', error: 'ended with an error', stopped: 'stopped', interrupted: 'interrupted', missed: 'missed', canceled: 'canceled', failed: 'could not start', skipped: 'skipped' };
-const afterWord = (a) => (a && a.status ? (AFTER_WORD[a.status] || a.status) : 'waiting');
+// A ticket still waiting on an interrupted run waits for its Resume (scheduler pipelineGate); a missed one keeps the plain word.
+const afterWord = (a, { waiting = false } = {}) => (a && a.status
+  ? (waiting && a.status === 'interrupted' ? 'interrupted, waits for a Resume' : (AFTER_WORD[a.status] || a.status))
+  : 'waiting');
 const afterName = (a) => `‘${(a && a.title) || 'the run before it'}’`;
+/** A problem the user (or a later start) already dealt with: shown neutral, never unread, never under Problems. */
+const isResolved = (n) => !!n.resolvedAt;
+const isUnread = (n) => !!n.unread && !isResolved(n);
 
 /** A constant SVG string from ICON as a node, parsed as XML. */
 function svgIcon(markup) {
@@ -168,7 +179,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       row('Task', src ? `${src.plugin} · ${src.taskId} (fetched when the run starts)` : (item.summary.prompt || '—')),
       row('Created by', shown(item.createdBy)),
       shown(item.updatedBy) && shown(item.updatedBy) !== shown(item.createdBy) ? row('Changed by', shown(item.updatedBy)) : null,
-      item.after ? row('After', `${(item.after.title || item.after.id.slice(0, 8))} · ${afterWord(item.after)}`) : null,
+      item.after ? row('After', `${(item.after.title || item.after.id.slice(0, 8))} · ${afterWord(item.after, { waiting: item.status === 'scheduled' })}`) : null,
       item.after ? row('If it fails', item.after.policy === 'any' ? 'Start anyway' : 'Do not start') : null,
       git && item.sourceFromPrevious ? row('Source branch', 'the run before it') : null,
       git ? row('Feature branch', item.summary.sameAsSource ? 'none (commits onto the source branch)'
@@ -176,6 +187,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       row('Guardrails', item.summary.guardrailsId && item.summary.guardrailsId !== 'permissive' ? item.summary.guardrailsId : ''),
       row('Preset', item.presetId ? (item.presetName ? `${item.presetName} (read when the run starts)`
         : `${item.presetGoneName || 'A preset'} (deleted: the next run will fail)`) : ''),
+      row('Pull request', prRowText(item.summary.pr)),
       row('Extra files', item.summary.extras ? String(item.summary.extras) : ''),
       item.after ? null : row('If Worca is not running', item.ifMissed === 'skip' ? 'Skip it' : `Start it late, at most ${item.graceMin >= 60 && item.graceMin % 60 === 0 ? `${item.graceMin / 60} h` : `${item.graceMin} min`}`),
       item.kind === 'recurring' ? row('If the previous run is still going', { skip: 'Skip this one', queue: 'Wait, then start', start: 'Start anyway' }[item.overlap]) : null,
@@ -208,7 +220,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     // The word after the dot always describes the PREDECESSOR (running / finished / ended with an
     // error); a missed after-ticket says Missed in the status word and its fail_reason below.
     const timeText = chained
-      ? `After ${afterName(t.after)} · ${afterWord(t.after)}`
+      ? `After ${afterName(t.after)} · ${afterWord(t.after, { waiting: !missed })}`
       : (missed ? `was due ${when(t.runAt)}` : `${when(t.runAt)}${countdown(t.runAt) ? ` · in ${countdown(t.runAt)}` : ''}`);
     const acts = h('div', { class: 'sched-acts' });
     if (!firing) {
@@ -343,7 +355,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     if (!tabsHost) return;
     const once = model.tickets.filter((t) => !t.scheduleId).length;
     const series = model.schedules.filter((s) => s.status !== 'ended').length;
-    const unread = model.feed.filter((n) => n.unread).length;
+    const unread = model.feed.filter(isUnread).length;
     const label = { activity: unread ? `Activity · ${unread}` : 'Activity', once: once ? `Once · ${once}` : 'Once', repeating: series ? `Repeating · ${series}` : 'Repeating' };
     for (const b of tabsHost.querySelectorAll('button[data-tab]')) {
       b.textContent = label[b.dataset.tab] || b.dataset.tab;
@@ -377,8 +389,18 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
   }
 
   // ── feed ───────────────────────────────────────────────────────────────────
+  /** What happened after a resolved problem: the ticket's `started` entry, else "it started" when its run is known. */
+  function resolvedNote(n) {
+    const next = n.ticketId ? model.feed.find((x) => x.kind === 'started' && x.ticketId === n.ticketId) : null;
+    if (next) return `Resolved · ${humanMessage(next)}`;
+    return n.pipelineId ? 'Resolved · the run started after all.' : 'Resolved.';
+  }
+
   function feedItem(n) {
-    const [word, family] = KIND[n.kind] || [n.kind, 'grey'];
+    const resolved = isResolved(n);
+    const unread = isUnread(n);
+    const [word, kindFamily] = KIND[n.kind] || [n.kind, 'grey'];
+    const family = resolved ? 'grey' : kindFamily;
     const msg = plainFeedMessage(humanMessage(n));
     const ticket = n.ticketId ? model.tickets.find((t) => t.id === n.ticketId) : null;
     const series = n.scheduleId ? model.schedules.find((s) => s.id === n.scheduleId) : null;
@@ -398,16 +420,17 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       b.addEventListener('click', () => deps.openRun({ pipelineId: n.pipelineId, projectDir: n.projectDir }));
       acts.push(b);
     }
-    if (n.unread) {
+    if (unread) {
       const b = h('button', { type: 'button', class: 'btn btn-sm btn-quiet sched-feed-read', text: 'Mark read', title: 'Mark as read' });
       b.addEventListener('click', async () => { try { await api('POST', `/api/notifications/${n.id}/read`); } catch (err) { say(err.message, 'err'); } await loadFeed(); });
       acts.push(b);
     }
     // One table row: Kind · What happened · Actions.
-    return h('tr', { class: `sched-feed-item${n.unread ? ' unread' : ''}`, 'data-id': n.id },
+    return h('tr', { class: `sched-feed-item${unread ? ' unread' : ''}${resolved ? ' resolved' : ''}`, 'data-id': n.id },
       h('td', { class: 'sched-feed-kind', 'data-label': 'Kind' }, h('span', { class: `badge ${family}`, text: word })),
       h('td', { class: 'sched-feed-body table-main' },
         h('div', { class: 'sched-feed-text', ...(msg.detail ? { title: msg.detail } : {}) }, h('b', { text: n.title || 'Scheduled run' }), ` ${msg.text}`),
+        resolved ? h('div', { class: 'sched-feed-resolved', text: resolvedNote(n) }) : null,
         h('div', { class: 'sched-feed-time', text: relativeAgo(n.createdAt), title: new Date(n.createdAt).toLocaleString() })),
       h('td', { class: 'sched-feed-acts', 'data-label': 'Actions' }, ...acts));
   }
@@ -418,8 +441,8 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
   }
 
   function paintFeed() {
-    const unread = model.feed.filter((n) => n.unread).length;
-    const rows = model.feed.filter((n) => (model.filter === 'unread' ? n.unread : model.filter === 'problems' ? n.severity === 'problem' : true));
+    const unread = model.feed.filter(isUnread).length;
+    const rows = model.feed.filter((n) => (model.filter === 'unread' ? isUnread(n) : model.filter === 'problems' ? n.severity === 'problem' && !isResolved(n) : true));
     const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Filter activity' });
     for (const [key, label] of [['all', 'All'], ['unread', unread ? `Unread · ${unread}` : 'Unread'], ['problems', 'Problems']]) {
       const b = h('button', { type: 'button', class: model.filter === key ? 'on' : '', 'aria-pressed': model.filter === key ? 'true' : 'false', text: label });

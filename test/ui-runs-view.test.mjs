@@ -5,18 +5,18 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { auditRunsLayout } from '../tools/runs-layout-audit.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
 const __dir = dirname(fileURLToPath(import.meta.url));
-const htmlPath = join(__dir, '..', 'ui', 'public', 'index.html');
 const appPath = join(__dir, '..', 'ui', 'public', 'app.js');
 const PROJECT = '/tmp/proj';
 const KEY = 'proj-0000abcd';
@@ -68,7 +68,7 @@ async function pickView(window, doc, label) {
 // /api/run-groups* (logged in `groupPosts`); `bulk(body)` answers POST /api/runs/bulk (bodies logged in `posts`).
 async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [{ name: 'proj', path: PROJECT, exists: true }], history = HIST, archived = [ARCH], chains = [],
   runGroups = [], onGroupCall = () => {}, bulk = () => ({ ok: true, done: [], cancelled: [], skipped: [] }), setup, tickets = [], labels = [] } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
   const { window } = dom;
   windows.push(window);
   window.Element.prototype.scrollIntoView = function () {};
@@ -547,6 +547,31 @@ test('a plain Run-after chain lists all 3 members, open (D29)', async () => {
   window.close();
 });
 
+test('#1096: a chain rooted at a timing-only Run after is named by its own runs; the run it waits for stays its own row and the root names it', async () => {
+  // runChains shape after #1096: the unrelated run (pu000001) is no member; the root carries waitsFor.
+  const chains = [{ id: 't:ts1', title: 'Slice 1', members: [
+    { pipelineId: null, ticketId: 'ts1', title: 'Slice 1', state: 'waiting', after: null, waitsFor: { title: 'Freeform chat' } },
+    { pipelineId: null, ticketId: 'ts2', title: 'Slice 2', state: 'waiting', after: 1, stacks: true }] }];
+  const tk = (id, title, after) => ({ id, title, status: 'scheduled', runAt: '9999-12-31T00:00:00.000Z', createdAt: '2026-11-04T10:00:00Z',
+    projectDir: PROJECT, after });
+  const tickets = [tk('ts1', 'Slice 1', { kind: 'pipeline', id: 'pu000001', title: 'Freeform chat', pipelineId: 'pu000001' }),
+    tk('ts2', 'Slice 2', { kind: 'ticket', id: 'ts1', title: 'Slice 1' })];
+  const { window, doc, recv } = await boot({ chains, tickets });
+  recv({ type: 'hello', runs: [live('ru1', { pipelineId: 'pu000001', title: 'Freeform chat' })] });
+  go(window, 'runs'); await settle(window);
+  const g = doc.querySelector('#runs-list .runs-item[data-row-key="chain:t:ts1"]');
+  assert.ok(g, 'one group row');
+  assert.equal(g.querySelector(':scope > a.runs-row .runs-row-title').textContent, 'Slice 1', 'named by the runs that build on each other');
+  const members = g.querySelectorAll(':scope > .runs-members > .runs-item');
+  assert.deepEqual([...members].map((m) => m.querySelector('.runs-row-title').textContent), ['1 · Slice 1', '2 · Slice 2']);
+  assert.equal(members[0].querySelector('.runs-row-sub').textContent, 'Waiting · starts after Freeform chat');
+  assert.equal(members[1].querySelector('.runs-row-sub').textContent, 'Waiting · starts after run 1');
+  const own = [...doc.querySelectorAll('#runs-list .runs-item')].filter((r) => !r.closest('.runs-members')
+    && /Freeform chat/.test((r.querySelector(':scope > a.runs-row .runs-row-title') || {}).textContent || ''));
+  assert.equal(own.length, 1, 'the waited-for run is its own top-level row, outside the group');
+  window.close();
+});
+
 test('a deep-linked feature page repaints when History answers late: its member reads its project and PR (QA)', async () => {
   const group = { id: 'feat_000000000002', kind: 'feature', title: 'Done feature', projectKey: null, cost: { usd: 1, byPipeline: {} },
     members: [{ position: 1, title: 'Merged thing', pipelineId: 'aaaa0001', ticketId: null, status: 'done', pr: null, ticket: null, adhoc: false, after: null }] };
@@ -662,7 +687,7 @@ test('keyboard (§5a.4): Space toggles the focused row, ⌘A selects every visib
 });
 
 test('A11: no checkbox on hover; ⌘-click selects without navigating, Shift-click adds the range, Esc ends it', async () => {
-  const css = readFileSync(join(__dir, '..', 'ui', 'public', 'style.css'), 'utf8');
+  const css = readStyleCss();
   assert.doesNotMatch(css, /:has\(> \.runs-pick:hover/, 'checkboxes show only while selecting');
   const { window, doc, recv } = await boot();
   recv({ type: 'hello', runs: [live('r1'), live('r2'), live('r3'), live('r4')] });
@@ -1395,7 +1420,7 @@ test('slice 2: side by side (split) the group Back shows the list, with the grou
 // Dividers (running rows lost their line?): jsdom drops `border-bottom:1px solid var(--line)` from getComputedStyle,
 // so the cascade's inputs are checked instead. Every style.css rule that declares a border (top-level or inside any
 // @media, so the 375px rules count too) is matched against the rendered row with el.matches().
-const STYLE_CSS = readFileSync(join(__dir, '..', 'ui', 'public', 'style.css'), 'utf8');
+const STYLE_CSS = readStyleCss();
 const BORDER_DECL = /(^|[;{\s])border(-bottom|-top)?(-(color|width|style))?\s*:/;
 function borderRules(doc) {
   const st = doc.createElement('style');
@@ -1646,7 +1671,9 @@ test('list keys: with a selection, E on the View button or the bar\'s Archive po
 test('list keys: E on the second of 3 finished rows leaves the focus on the row that was third', async () => {
   let hist = [...HIST, MORE];
   let late = false;   // after the archive, History answers a beat later, as it does over the network
-  const { window, doc, posts } = await boot({ history: () => (late ? new Promise((r) => setTimeout(() => r(hist), 30)) : hist), bulk: (body) => {
+  let release;        // held until the test lets it go, so a slow runner cannot answer before the focus check
+  const held = new Promise((r) => { release = r; });
+  const { window, doc, posts } = await boot({ history: () => (late ? held.then(() => hist) : hist), bulk: (body) => {
     const id = body.targets[0].pipelineId;
     hist = hist.filter((p) => p.id !== id);
     late = true;
@@ -1658,6 +1685,7 @@ test('list keys: E on the second of 3 finished rows leaves the focus on the row 
   second.focus();
   press(window, second, 'e'); await settle(window, 8);
   assert.equal(doc.activeElement, second, 'the row keeps the focus until History drops it');
+  release();
   await new Promise((r) => setTimeout(r, 60)); await settle(window);
   assert.equal(posts.length, 1);
   assert.equal(doc.querySelector(`#runs-list a.runs-row[data-row-key="${second.dataset.rowKey}"]`), null, 'the repaint dropped it');

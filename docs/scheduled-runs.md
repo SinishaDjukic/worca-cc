@@ -89,10 +89,11 @@ one left.
   or the same workspace.
 - **Gate.** By default the dependent starts only when the predecessor finishes `done`.
   *Start even if it fails or is stopped* (`afterPolicy: any`) also accepts `error`, `stopped`
-  and `interrupted`. A predecessor that ends any other way — or is canceled, missed, skipped
-  or archived — leaves the dependent **missed** with the reason, and *Run now* still starts it.
-  A paused predecessor keeps the dependent waiting; there is no grace and no missed-slot
-  policy on an after-run.
+  and an `interrupted` run that can no longer be resumed. A predecessor that ends any other way —
+  or is canceled, missed, skipped or archived — leaves the dependent **missed** with the reason,
+  and *Run now* still starts it. A paused predecessor, and an interrupted one that can still be
+  resumed, keep the dependent waiting under either policy until they really end; there is no grace
+  and no missed-slot policy on an after-run.
 - **Source branch from the run before it.** Pick *Branch of the run before it* in New
   pipeline (or `sourceFromPrevious: true`): when the ticket fires, the predecessor's feature
   branch — per member project for a workspace — becomes this run's source branch. Feature

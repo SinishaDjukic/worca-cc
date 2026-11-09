@@ -8,11 +8,11 @@
 // timeline and machine state live in the DB (pipeline_events + the pipelines row),
 // which is the authoritative store (no more pipeline.md / state.json on disk).
 
-import { mkdir, writeFile, readFile, copyFile, readdir, access, stat, lstat, realpath } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, copyFile, readdir, access, open as openFile } from 'node:fs/promises';
 import { NON_BROWSABLE_KIND_LIST } from '../shared/artifact-kinds.mjs';
-import { join, basename, resolve, isAbsolute, relative, sep } from 'node:path';
+import { join, basename, resolve, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { realpathSync, existsSync, statSync, constants as fsConstants } from 'node:fs';
+import { realpathSync, existsSync, statSync, lstatSync, constants as fsConstants } from 'node:fs';
 import { hostname } from 'node:os';
 import { projectKey, projectKey as projectKeyOf, projectStorePath, canonicalProjectRoot, workspaceStorePath, isNoProjectKey, noProjectWorkDir, NO_PROJECT_KEY } from './store.mjs';
 import { NO_PROJECT_NAME } from '../shared/no-project.mjs';
@@ -21,12 +21,15 @@ import { rollupChanges } from './folder-members.mjs';
 import { harvestWork, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
 import { updateRunManifest } from './run-manifest.mjs';
 import { listProjects, worcaHome, runOnboarded } from './projects.mjs';
-import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead } from './git-info.mjs';
+import { claimRunDir, claimRunExtras, shareFailureReason } from './agent-pool.mjs';
+import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead, withRefSnapshot } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
+import { cleanOutcome } from './shape/rounds.mjs';
 import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
 import { RUN_LOG_FILE } from './run-log.mjs';
 import { readRunLedger } from './metrics/ledger.mjs';
 import { readPolicyState } from './policy/state.mjs';
+import { runReviewStats } from '../shared/review/quality.mjs';
 import { memoryTotals } from './memory-sync.mjs';
 import { actorLabel } from './identity.mjs';
 import { attachWatchPipeline, getWatch, watchActive } from './pr-watch.mjs';
@@ -58,6 +61,11 @@ const DIR_ID_RE = /-([0-9a-f]{8})$/i;
  * @param {string} key
  * @returns {object|null}
  */
+/** Was this run started as a mock (pipelines.run_setup)? A row without the column, or unreadable JSON: no. */
+function isMockSetup(raw) {
+  try { return JSON.parse(raw || 'null')?.mock === true; } catch { return false; }
+}
+
 export function readStoreMeta(key) {
   const row = getDb().prepare('SELECT data FROM store_meta WHERE key = ?').get(key);
   return row ? j(row.data, null) : null;
@@ -362,16 +370,15 @@ export async function listRunArtifacts(pipelineId, filter = {}) {
   const isWs = row.target === 'workspace' || !!row.workspace_key;
   const storeRoot = isWs ? workspaceStorePath(row.workspace_key) : projectStorePath(row.project_key);
   const runDir = await runDirForRow(row);
-  // isFile(), for the same reason resolveIndexedArtifactFileForRow requires it: a
-  // DIRECTORY at <runDir>/<rel> stats fine and would fix the base here, so the
-  // row would report a directory's inode size while the viewer reads the
-  // store-root file. The two must agree on which copy they mean.
+  // The same base rule as resolveIndexedArtifactFileForRow (artifactFileUnder): a
+  // DIRECTORY at <runDir>/<rel> would otherwise fix the base here, so the row
+  // would report a directory's inode size while the viewer reads the store-root
+  // file, and a planted link would report the size of a file the viewer refuses.
+  // The two must agree on which copy they mean.
   const sizeOf = (rel) => {
     for (const base of [runDir, storeRoot]) {
-      try {
-        const st = statSync(join(base, rel));
-        if (st.isFile()) return st.size;
-      } catch { /* try next base */ }
+      const st = artifactFileUnder(base, rel);
+      if (st) return st.size;
     }
     return 0;
   };
@@ -384,6 +391,24 @@ export async function listRunArtifacts(pipelineId, filter = {}) {
     bytes: sizeOf(r.rel_path),
     createdAt: r.created_at ?? null,
   }));
+}
+
+/**
+ * The newest plan a run indexed (kind 'plan', store-root-relative) that still exists as a regular file (a symlink
+ * does not count: readers refuse it, so the next plan is tried), as an absolute path under `storeRoot`; null when none. Newest by time, then by the -vN suffix: two writes in one
+ * millisecond share a time, and the index's tie-break, the file name, sorts "x-v2.md" before "x.md".
+ * Shared by the Away review (run-harness `_nightPlanPaths`) and the run commit summary (commit-message.mjs).
+ */
+export async function newestPlanPath(pipelineId, storeRoot) {
+  if (!pipelineId || !storeRoot) return null;
+  const ver = (rel) => Number(/-v(\d+)\.md$/.exec(rel)?.[1] || 1);
+  const plans = (await listRunArtifacts(pipelineId, { kind: 'plan' }))
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || ver(b.relPath) - ver(a.relPath));
+  for (const a of plans) {
+    const f = join(storeRoot, a.relPath);
+    try { if (lstatSync(f).isFile()) return f; } catch { /* gone: try the next one */ }
+  }
+  return null;
 }
 
 /**
@@ -602,7 +627,7 @@ export function readReviewRow(pipelineId, kind, cycle) {
  * (readStepQuestions, chronological insert order). Always returns arrays (never
  * null) so callers render unconditionally.
  * @param {string} pipelineId
- * @returns {{clarify:{questions:Array, answers:Array}, reviews:Array<{kind:string,cycle:number,issues:Array,summary:string,checklist?:Array}>, stepQuestions:Array<{stepKey:string,round:number,nodeId:string,agentKey:string,questions:Array,answers:Array}>}}
+ * @returns {{clarify:{questions:Array, answers:Array}, reviews:Array<{kind:string,cycle:number,issues:Array,summary:string,fixed?:Array,checklist?:Array}>, stepQuestions:Array<{stepKey:string,round:number,nodeId:string,agentKey:string,questions:Array,answers:Array}>}}
  */
 export function readPipelineExtras(pipelineId) {
   const c = getDb().prepare('SELECT questions, answers FROM clarify WHERE pipeline_id = ?').get(pipelineId);
@@ -624,6 +649,7 @@ export function readPipelineExtras(pipelineId) {
       cycle: r.cycle,
       issues: Array.isArray(v.issues) ? v.issues : [],
       summary: typeof v.summary === 'string' ? v.summary : '',
+      ...(Array.isArray(v.fixed) && v.fixed.length ? { fixed: v.fixed } : {}),
       ...(Array.isArray(v.checklist) ? { checklist: v.checklist } : {}),
     };
   });
@@ -1165,6 +1191,7 @@ export async function readPromptFile(projectDir, promptFile) {
  * @param {object} [opts.sourceMeta]  { plugin, sourceId, taskId, url, title } | null
  * @param {string} [opts.guardrailsId] the run's selected guardrail set id (per-run)
  * @param {string|null} [opts.runSetup] JSON of the run's setup (pipelines.run_setup, v62); never on the state object
+ * @param {object|null} [opts.prAuto] the run's PR-when-done decision (pipelines.pr_auto, v86); same rule as runSetup
  * @param {string[]} [opts.extras]    paths to extra files copied into dir/extras
  * @param {string} [opts.title]       human title (defaults to derived text)
  * @param {string} [opts.workspaceKey]   opt-in: route to the workspace store
@@ -1178,7 +1205,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const {
     prompt, promptFile, extras = [], title,
     promptText: precomputedPromptText = null, sourceType = null, sourceMeta = null,
-    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], labels = [], runSetup = null,
+    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], labels = [], runSetup = null, prAuto = null,
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
@@ -1223,6 +1250,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const dirName = `${today()}-${slug}-${id}`;
   const dir = join(paths.pipelines, dirName);
   await mkdir(dir, { recursive: true });
+  claimRunDir(dir);   // G19: verdicts and outputs writable by this run's owner's agent only
 
   // Seed the prompt. If a markdown file was provided, copy it verbatim;
   // otherwise persist the inline text. Either way prompt.md is the source.
@@ -1247,6 +1275,16 @@ export async function createPipeline(projectDir, opts = {}) {
   if (Array.isArray(extras) && extras.length) {
     const extrasDir = join(dir, 'extras');
     await mkdir(extrasDir, { recursive: true });
+    // Under agent isolation the agent must read what is attached: copyFile keeps the source's group and mode (a staged
+    // 0660 copy in worca's group), so the folder and each file are handed over explicitly, never left to setgid
+    // inheritance. The folder first, so the agent cannot write into it while worca fills it; the files once, through
+    // the folder fd (an agent can swap `extras/` for a link between a per-file path claim and its target).
+    const share = () => {
+      try {
+        for (const f of claimRunExtras(extrasDir)) console.warn(`[artifacts] extras/${f.name} not shared with the agent: ${shareFailureReason(f.error)}`);
+      } catch (err) { console.warn(`[artifacts] extras folder not shared with the agent: ${shareFailureReason(err)}`); }
+    };
+    share();
     for (const ex of extras) {
       if (!ex) continue;
       const src = resolveAgainst(projectDir, ex);
@@ -1257,6 +1295,7 @@ export async function createPipeline(projectDir, opts = {}) {
         // Skip unreadable extras; never fail pipeline creation on a bad path.
       }
     }
+    if (copiedExtras.length) share();
   }
 
   const startedAt = new Date().toISOString();
@@ -1318,7 +1357,7 @@ export async function createPipeline(projectDir, opts = {}) {
   // no more state.json on disk. writeState also seeds the dir->id cache
   // (rememberDir) so appendAudit resolves this run without any call-site change
   // (A4). recordArtifact runs AFTER the row exists (FK -> pipelines).
-  await writeState(dir, state, { prWatchRunId, runSetup });
+  await writeState(dir, state, { prWatchRunId, runSetup, prAuto });
   // Run tags (#718): written once, after the row exists (FK) and after writeState's tx has
   // committed (tx cannot nest). writeState updates never touch them.
   insertRunTags(id, tags);
@@ -1426,7 +1465,7 @@ function rememberDir(dir, id) { if (dir && id) _dirIdCache.set(resolve(dir), id)
  * @param {object} stateObj
  * @returns {Promise<object>}
  */
-export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, runSetup = null } = {}) {
+export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, runSetup = null, prAuto = null } = {}) {
   const obj = { ...stateObj, updatedAt: new Date().toISOString() };
   const id = obj.id;
   if (!id) return obj; // pre-id state (constructor default): nothing to persist yet
@@ -1436,11 +1475,11 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup)
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats, pr_auto)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup)
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats,@pr_auto)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1451,10 +1490,11 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
         resume_point=excluded.resume_point,
         outcome=excluded.outcome,
         shape_stats=COALESCE(excluded.shape_stats, shape_stats),
+        review_stats=COALESCE(excluded.review_stats, review_stats),
         run_size=COALESCE(excluded.run_size, run_size),
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
-    `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null });
+    `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null, pr_auto: prAuto ? JSON.stringify(prAuto) : null });
 
     // A Watch PR fix run (#619): ownership lands in the same transaction that creates the row.
     if (prWatchRunId) attachWatchPipeline(prWatchRunId, id, obj.updatedAt);
@@ -1472,7 +1512,8 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       // v2 rows: execution_id === key. v1 rows leave every exec_* column NULL, so
       // the readers below reproduce today's exact shape for a v1 pipeline.
       const hasMeta = st.taskId != null || st.parentExecutionId != null || st.title != null || st.phaseOrdinal != null
-        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null || st.auxCosts != null || st.stoppedTurns != null || st.sessionCosts != null;
+        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null || st.auxCosts != null || st.stoppedTurns != null || st.sessionCosts != null || st.memory != null
+        || st.session != null;
       const meta = hasMeta
         ? s({ taskId: st.taskId ?? null, parentExecutionId: st.parentExecutionId ?? null,
               title: st.title ?? null, phaseOrdinal: st.phaseOrdinal ?? null,
@@ -1487,7 +1528,11 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
               // Agent turns cut before their `result`: a count and a lower bound, never in the cost.
               ...(st.stoppedTurns ? { stoppedTurns: st.stoppedTurns } : {}),
               // The CLI's last session total per session id: a resumed spawn books only what it adds.
-              ...(st.sessionCosts ? { sessionCosts: st.sessionCosts } : {}) })
+              ...(st.sessionCosts ? { sessionCosts: st.sessionCosts } : {}),
+              // The memory the step loaded (#943): { mode: 'frozen', set, files, roleNotes? } | { mode: 'off' }.
+              ...(st.memory ? { memory: st.memory } : {}),
+              // Session groups (C7): the turn, dispatch and host session a member step ran in — only on member rows.
+              ...(st.session ? { session: st.session } : {}) })
         : null;
       ins.run(
         id, st.key, st.nodeId ?? null, st.phase ?? null,
@@ -1636,6 +1681,22 @@ export function readMemberPrStates(pipelineId) {
     ).all(pipelineId);
     return Object.fromEntries(rows.map((r) => [r.member_key, { url: r.pr_url, number: r.pr_number ?? null, state: r.pr_state || 'OPEN' }]));
   } catch { return {}; }
+}
+
+/** Every active run's recorded PR facts in two SELECTs: Map<pipelineId, { pr, members }> (empty Map on any error). */
+export function listRunPrIndex() {
+  const index = new Map();
+  try {
+    const db = getDb();
+    const entry = (id) => { if (!index.has(id)) index.set(id, { pr: null, members: {} }); return index.get(id); };
+    for (const r of db.prepare('SELECT id, pr_url, pr_number, pr_state FROM pipelines WHERE pr_url IS NOT NULL AND deleted_at IS NULL').all()) {
+      entry(r.id).pr = { url: r.pr_url, number: r.pr_number ?? null, state: r.pr_state ?? 'OPEN' };
+    }
+    for (const r of db.prepare('SELECT pipeline_id, member_key, pr_url, pr_number, pr_state FROM pipeline_member_prs ORDER BY pipeline_id, member_key').all()) {
+      entry(r.pipeline_id).members[r.member_key] = { url: r.pr_url, number: r.pr_number ?? null, state: r.pr_state || 'OPEN' };
+    }
+    return index;
+  } catch { return new Map(); }
 }
 
 /**
@@ -1984,6 +2045,8 @@ function toPipelineRow(o) {
     // Shaper D28: a writer without them (an unshaped run, a pre-results persist) keeps the column (COALESCE)
     shape_stats: o.shapeStats ? s(o.shapeStats) : null,
     run_size: o.runSize ?? null,
+    // #990 s6: the run's per-role review counts, never finding prose; a persist without rounds keeps the column (COALESCE)
+    review_stats: (() => { const r = runReviewStats(o.roleReviews); return r ? s(r) : null; })(),
     // §5.9 outcome: the derived run-level v2 facts, so a rehydrated state matches
     // a live one. NULL for a v1 run (nothing to say), so v1 rows are unchanged.
     outcome: (o.engine === 2 || o.endReached !== undefined || (typeof o.runEngine === 'string' && o.runEngine !== 'claude'))
@@ -1991,9 +2054,13 @@ function toPipelineRow(o) {
           endReached: !!o.endReached,
           result: o.result ?? null,
           warnings: Array.isArray(o.warnings) ? o.warnings : [],
+          // E2: loops forced past their budget with blocking issues still open.
+          ...(Array.isArray(o.openIssues) && o.openIssues.length ? { openIssues: o.openIssues } : {}),
           wireDeliveries: o.wireDeliveries ?? {},
           tokens: o.tokens ?? {},
           ...(typeof o.runEngine === 'string' && o.runEngine && o.runEngine !== 'claude' ? { runEngine: o.runEngine } : {}),
+          // Session groups (C6): each session's summary — only on a run that has one, so other rows are unchanged.
+          ...(o.sessionHosts && typeof o.sessionHosts === 'object' && Object.keys(o.sessionHosts).length ? { sessionHosts: o.sessionHosts } : {}),
         })
       : null,
   };
@@ -2063,6 +2130,26 @@ async function settleLandedMergeBack(mb, repoDir, feature, source) {
     return landed ? { ...m, merged: true, kind: null, reason: null, landed: true } : m;
   }));
   return { merged: members.every((m) => m.merged === true), members };
+}
+
+/** The chat run card's ship facts for a single-project run on its source branch (branch.sameAsSource), the same
+ *  facts the History entry carries for the run page's Push: { sameAsSource: true, sourceBranch, mergeBack: { merged },
+ *  push? } (push = sourcePushStatus, refs only, only once merged back). null for every other run, a workspace run, or
+ *  a row without a repo. */
+export async function sourceShipFacts(row, repoDir) {
+  if (!row || row.target === 'workspace') return null;
+  const branchObj = j(row.branch, null);
+  const feature = branchObj?.feature ?? null;
+  const source = branchObj?.source ?? null;
+  const mergeBack = await settleLandedMergeBack(mergeBackFor(row), repoDir, feature, source);
+  if (!mergeBack) return null;
+  const out = { sameAsSource: true, sourceBranch: source, mergeBack: { merged: mergeBack.merged } };
+  if (mergeBack.merged === true && repoDir && source) {
+    const { sourcePushStatus } = await import('./project-sync.mjs');   // lazy: project-sync -> worktree -> artifacts
+    const push = await sourcePushStatus(repoDir, branchObj, row.project_key ?? null);
+    if (push) out.push = push;
+  }
+  return out;
 }
 
 /**
@@ -2182,11 +2269,77 @@ async function readResultsJson(dir) {
   }
 }
 
-/** A finished run's results.json by pipeline id (null when the row, its dir or the file is missing). */
-export async function readRunResultsById(pipelineId) {
-  const row = getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(String(pipelineId));
+/** A finished run's results.json for a pipelines row in hand (null when its dir or the file is missing, or junk). */
+export async function readRunResultsForRow(row) {
   if (!row) return null;
   try { return await readResultsJson(await runDirForRow(row)); } catch { return null; }
+}
+
+/** A finished run's results.json by pipeline id (null when the row, its dir or the file is missing). */
+export async function readRunResultsById(pipelineId) {
+  return readRunResultsForRow(getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(String(pipelineId)));
+}
+
+/**
+ * One member's change evidence, as a TRI-STATE. Shared by workspaceMemberFacts (History rows) and
+ * memberChangeFacts (the Actions route) so the two can never drift apart.
+ *  - affected: true / false / null. `null` means nothing could decide it — no frozen summary, no
+ *    folder record, and no live git answer. A caller that must choose treats null as "changed", so a
+ *    legacy run keeps offering its members instead of silently hiding them.
+ *  - files / added / removed: null when that evidence carries no such count. In particular the live
+ *    path has NO file count: `git diff --shortstat` reports lines, and parseShortstat's shape is
+ *    pinned by test/git-info.test.mjs — widening it for a fallback is not worth it.
+ * `opts.live:false` skips the git fallback entirely (a run still going: its counts move anyway).
+ * @param {{projectDir:string|null, feature:string|null, source:string|null}} m
+ * @returns {Promise<{affected:boolean|null, files:number|null, added:number|null, removed:number|null, frozen:boolean}>}
+ */
+export async function memberChangeEvidence(m, { summary = null, counts = null, live = true } = {}) {
+  const unknown = { affected: null, files: null, added: null, removed: null, frozen: false };
+  if (summary) {
+    const files = changedFileCount(summary);
+    return { affected: files > 0, files, added: summary.linesAdded | 0, removed: summary.linesRemoved | 0, frozen: true };
+  }
+  if (counts) {
+    // A Folder member's record counts FILES (folder-copy.mjs scanChanges), never lines.
+    const files = (counts.added | 0) + (counts.modified | 0) + (counts.deleted | 0);
+    return { affected: files > 0, files, added: null, removed: null, frozen: false };
+  }
+  if (!live || !m.projectDir || !m.feature || !m.source) return unknown;
+  const n = await commitsAhead(m.projectDir, m.source, m.feature);
+  if (n == null) return unknown;                                        // git could not say
+  if (n === 0) return { affected: false, files: 0, added: 0, removed: 0, frozen: false };
+  const d = await diffShortstat(m.projectDir, m.source, m.feature);
+  return { affected: true, files: null, added: d.added, removed: d.removed, frozen: false };
+}
+
+/**
+ * Per-member change facts for the Actions route, keyed by `projectKey` (membersOfRow's name for what
+ * workspaceMembers calls `memberKey`: the same value, the results.json perProject key). Feed it
+ * `membersOfRow(row)`, or a subset of it, so single-project and workspace rows take the same path.
+ * @param {object} row  the pipelines row (read for workspace_meta.projects[].workMode only)
+ * @param {Array<{projectKey:string, projectDir:string|null, br:object|null}>} members
+ * @param {object|null} results  the parsed results.json, or null
+ * @returns {Promise<Map<string, {affected:boolean|null, files:number|null, added:number|null, removed:number|null, workMode:'git'|'folder'}>>}
+ */
+export async function memberChangeFacts(row, members, results, { live = true } = {}) {
+  const workspace = row.target === 'workspace';
+  const wm = workspace ? j(row.workspace_meta, null) || {} : {};
+  // Same detection the Ask card already uses (ui/server.mjs:11800).
+  const folderKeys = new Set((wm.projects || []).filter((p) => p && p.workMode === 'folder').map((p) => p.projectKey));
+  const perProject = results && results.perProject && typeof results.perProject === 'object' ? results.perProject : null;
+  const runSummary = results && results.summary && typeof results.summary === 'object' ? results.summary : null;
+  const out = new Map();
+  await Promise.all(members.map(async (m) => {
+    // A workspace row freezes one summary PER MEMBER; a single-project row freezes one for the run.
+    const summary = workspace ? perProject?.[m.projectKey]?.summary || null : runSummary;
+    const counts = m.br?.changes?.counts || null;
+    const ev = await memberChangeEvidence(
+      { projectDir: m.projectDir, feature: m.br?.feature || null, source: m.br?.source || null },
+      { summary, counts, live });
+    out.set(m.projectKey, { affected: ev.affected, files: ev.files, added: ev.added, removed: ev.removed,
+      workMode: folderKeys.has(m.projectKey) ? 'folder' : 'git' });
+  }));
+  return out;
 }
 
 /**
@@ -2218,21 +2371,13 @@ async function workspaceMemberFacts(row, results, opts = {}) {
     };
     if (m.projectDir && m.feature) out.survived = await branchExists(m.projectDir, m.feature);
     const sum = perProject && perProject[m.memberKey] ? perProject[m.memberKey].summary : null;
-    if (sum) {
-      out.diffFrozen = true;
-      out.affected = changedFileCount(sum) > 0;
-      out.added = sum.linesAdded | 0;
-      out.removed = sum.linesRemoved | 0;
-    } else if (ch) {
-      // a Folder member with no frozen summary: its record's counts (never git — it has no branch)
-      out.affected = ((ch.counts?.added | 0) + (ch.counts?.modified | 0) + (ch.counts?.deleted | 0)) > 0;
-    } else if (out.survived && m.source) {
-      out.affected = ((await commitsAhead(m.projectDir, m.source, m.feature)) || 0) > 0;
-      if (out.affected) {
-        const d = await diffShortstat(m.projectDir, m.source, m.feature);
-        out.added = d.added; out.removed = d.removed;
-      }
-    }
+    // `live` only when the branch is still there — today's code skipped git entirely otherwise, and
+    // spawning a doomed rev-list per dead branch would be a regression on big History pages.
+    const ev = await memberChangeEvidence(m, { summary: sum, counts: ch ? ch.counts : null, live: out.survived && !!m.source });
+    out.diffFrozen = ev.frozen;
+    out.affected = ev.affected === true;   // History's contract stays a plain boolean (app.js:36334 reads `!== false`)
+    out.added = ev.added | 0;
+    out.removed = ev.removed | 0;
     if (opts.withPr) {
       out.pr = gh && m.projectDir && m.feature
         ? withFixing(await findPrForBranch({ projectDir: m.projectDir, head: m.feature, prUrl: known[m.memberKey]?.url || null }))
@@ -2308,6 +2453,16 @@ export function resultsFilesCount(res) {
  * @param {string|null} repoDir git repo root for live branch facts
  * @param {object} opts { withPr?, lite? }
  */
+/** A round's marker on the History wire (shape/rounds.mjs, plan Task 1): { pipelineId, round, request, by?, kinds?,
+ *  outcome? } from branch.roundOf, or null for round 1, a plain run and a malformed marker. */
+function wireRoundOf(m) {
+  if (!m || typeof m !== 'object' || !m.pipelineId || !Number.isInteger(m.round) || m.round < 2) return null;
+  const outcome = cleanOutcome(m.outcome);
+  return { pipelineId: String(m.pipelineId), round: m.round, request: String(m.request || ''),
+    ...(m.by ? { by: String(m.by) } : {}), ...(Array.isArray(m.kinds) ? { kinds: m.kinds.map(String) } : {}),
+    ...(outcome ? { outcome } : {}) };
+}
+
 async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
   const branchObj = j(row.branch, null);
   const feature = branchObj?.feature ?? (typeof branchObj === 'string' ? branchObj : null);
@@ -2338,12 +2493,16 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     branch: feature,
     sourceBranch: source,
     guardrailsId: row.guardrails_id ?? null,
+    mock: isMockSetup(row.run_setup),
     startedBy: row.started_by ?? null,
     pauseReason: row.pause_reason ?? null,
     pauseDetail: row.pause_detail ?? null,
     limitEngine: row.limit_engine ?? null,
     limitResetAt: row.limit_reset_at ?? null,
     runEngine: row.run_engine || 'claude',
+    // E2/2.3: the done-run caveat (open issues left by a forced loop, End not reached). Only on a v2 row.
+    ...(row.open_issue_count ? { openIssueCount: Number(row.open_issue_count) } : {}),
+    ...(row.end_reached === 0 ? { endReached: false } : row.end_reached === 1 ? { endReached: true } : {}),
     retainedWork: retainedWorkFor(row),
     checkout: checkoutRecordsFor(row),
     baseCheck: baseCheckSummaryFor(row),
@@ -2365,6 +2524,9 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     totalActiveMs: active,
     mtime: row.updated_at ? (Date.parse(row.updated_at) || 0) : 0,
   };
+  // A round of another run (Runs list fold, plan D1): the key only when the marker is valid.
+  const roundOf = wireRoundOf(branchObj?.roundOf);
+  if (roundOf) entry.roundOf = roundOf;
   // Workspace rows: eligibility is decided across EVERY member, never the primary alone.
   // Computed BEFORE the PR lookup so a row WITH members skips the primary-only search.
   if (row.target === 'workspace' && !opts.lite) {
@@ -2440,18 +2602,22 @@ async function runDirIndex(pipelinesDir) {
  * @param {string} [workspaceKey] route to the workspace store + filter on it
  * @returns {Promise<Array>}
  */
-export async function listPipelines(projectDir, opts = {}, workspaceKey) {
+export function listPipelines(projectDir, opts = {}, workspaceKey) {
+  return withRefSnapshot(() => listPipelinesNow(projectDir, opts, workspaceKey));
+}
+async function listPipelinesNow(projectDir, opts, workspaceKey) {
   const pipelinesDir = artifactPaths(projectDir, workspaceKey).pipelines;
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at, total_cost_usd, total_active_ms,
-           branch, workspace_meta, guardrails_id, started_by, pr_url,
+           branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            resume_point IS NOT NULL AS has_resume_point,
-           ${RUN_ENGINE_SQL} AS run_engine
+           ${RUN_ENGINE_SQL} AS run_engine,
+           ${OUTCOME_NOTE_SQL}
     FROM pipelines
     WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'} AND archived_at IS NULL
     ORDER BY started_at DESC
@@ -2486,16 +2652,20 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
  *  active rows only, so existing callers see exactly what they saw before. Workspace
  *  rows also carry `members[]` (per-member facts, tri-state `pr`; omitted in `lite`)
  *  — see rowToHistoryEntry. */
-export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
+export function listAllPipelines(opts = {}, cfg = {}) {
+  return withRefSnapshot(() => listAllPipelinesNow(opts, cfg));
+}
+async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
-           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, started_by, pr_url, archived_at,
+           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url, archived_at,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            resume_point IS NOT NULL AS has_resume_point,
-           ${RUN_ENGINE_SQL} AS run_engine
+           ${RUN_ENGINE_SQL} AS run_engine,
+           ${OUTCOME_NOTE_SQL}
     FROM pipelines
     WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'} AND deleted_at IS NULL
     ORDER BY COALESCE(updated_at, started_at) DESC, project_key, id
@@ -2695,6 +2865,8 @@ function stepRowToStep(r) {
     if (em.auxCosts && typeof em.auxCosts === 'object') step.auxCosts = em.auxCosts;
     if (em.stoppedTurns && typeof em.stoppedTurns === 'object') step.stoppedTurns = em.stoppedTurns;
     if (em.sessionCosts && typeof em.sessionCosts === 'object') step.sessionCosts = em.sessionCosts;
+    if (em.memory && typeof em.memory === 'object') step.memory = em.memory;
+    if (em.session && typeof em.session === 'object') step.session = em.session;
   }
   return step;
 }
@@ -2729,6 +2901,7 @@ function rowToState(row) {
     stepper: j(row.stepper, null),
     tools: j(row.tools, null),
     guardrailsId: row.guardrails_id ?? null,
+    mock: isMockSetup(row.run_setup),
     startedBy: row.started_by ?? null,
     // v31 provenance: set when a schedule started this run (NULL = started by hand).
     scheduledFor: row.scheduled_for ?? null,
@@ -2768,8 +2941,10 @@ function rowToState(row) {
     state.endReached = !!outcome.endReached;
     state.result = outcome.result ?? null;
     state.warnings = Array.isArray(outcome.warnings) ? outcome.warnings : [];
+    state.openIssues = Array.isArray(outcome.openIssues) ? outcome.openIssues : [];
     state.wireDeliveries = outcome.wireDeliveries ?? {};
     state.tokens = outcome.tokens ?? {};
+    if (outcome.sessionHosts && typeof outcome.sessionHosts === 'object') state.sessionHosts = outcome.sessionHosts;
     state.active = [];        // nothing is in flight in a rehydrated snapshot
     state.gate = null;
   }
@@ -2830,6 +3005,10 @@ function buildAuditMarkdown(row) {
 const RUN_ENGINE_SQL = `COALESCE(
              json_extract(CASE WHEN json_valid(outcome) THEN outcome END, '$.runEngine'),
              json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.claude.engine'))`;
+/** The done-run caveat columns for the History list: total open issues and whether End fired. */
+const OUTCOME_NOTE_SQL = `(SELECT SUM(json_extract(o.value, '$.count'))
+              FROM json_each(json_extract(CASE WHEN json_valid(outcome) THEN outcome END, '$.openIssues')) AS o) AS open_issue_count,
+           json_extract(CASE WHEN json_valid(outcome) THEN outcome END, '$.endReached') AS end_reached`;
 export function runEngineOfRow(row) {
   if (!row) return 'claude';
   const outcome = j(row.outcome, null);
@@ -3083,7 +3262,7 @@ export async function readPipelineByKey(key, id) {
 export async function readMemoryLedger(dir) {
   const ledger = await readJsonFile(join(dir, 'memory.json'));
   if (!ledger || !Array.isArray(ledger.changes)) return null;
-  return { mount: ledger.mount || null, changes: ledger.changes, totals: memoryTotals(ledger.changes) };
+  return { mount: ledger.mount || null, changes: ledger.changes, totals: memoryTotals(ledger.changes), loaded: ledger.loaded || null };
 }
 
 /** Local helper: read + JSON-parse a file, null on any failure. */
@@ -3170,10 +3349,14 @@ export async function resolveIndexedArtifactForRow(row, rel) {
   // the file can vanish between the stat and this read. Before the selection was
   // split out, a failed read simply fell through and the route answered 404;
   // letting it throw here turns that race into a 500.
+  const fh = await openArtifactUnder(f.base, f.rel);
+  if (!fh) return null;
   try {
-    return { rel: f.rel, text: await readFile(f.file, 'utf8') };
+    return { rel: f.rel, text: await fh.readFile('utf8') };
   } catch {
     return null;
+  } finally {
+    await fh.close().catch(() => {});
   }
 }
 
@@ -3206,8 +3389,7 @@ export async function resolveIndexedArtifactFileForRow(row, rel) {
     // EISDIR — a 500 — instead of falling through to the store-root copy that
     // actually holds the artifact.
     try {
-      if (!(await stat(file)).isFile()) continue;
-      if (hit.kind === WORK_ARTIFACT_KIND && !(await workFileInside(base, file))) continue;
+      if (!artifactFileUnder(base, hit.relPath)) continue;
       await access(file, fsConstants.R_OK);
       return { rel: hit.relPath, file, base };
     } catch { /* try the next base */ }
@@ -3216,16 +3398,40 @@ export async function resolveIndexedArtifactFileForRow(row, rel) {
 }
 
 /**
- * P3-D13 at serve time: a no-project run's work/ was an agent's cwd and can still be one after the move (a process
- * that outlived the run moved with it), so a `work` row is served only as a real file whose real path stays inside
- * <base>/work — never a link (or a linked parent folder) planted after the index.
+ * The one rule every artifact kind is served (and sized) by: `<base>/<rel>` must be a real FILE with no link anywhere
+ * between base and itself — its real path is exactly the base's real path joined with rel. The run dir and the store
+ * root are agent-writable (a no-project run's work/ was an agent's cwd and can still be one after the move, P3-D13), so
+ * a file or folder swapped for a link after the index would otherwise make the artifact routes serve any file the worca
+ * user can read (G11). Indexing never records a link (harvestWork skips them), so a legitimate artifact always passes.
+ * The base itself may sit behind a link (a linked HOME); only what lies below it is checked. Stats | null.
  */
-async function workFileInside(base, file) {
+function artifactFileUnder(base, rel) {
   try {
-    if (!(await lstat(file)).isFile()) return false;
-    const rel = relative(await realpath(join(base, 'work')), await realpath(file));
-    return !!rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-  } catch { return false; }
+    const file = join(base, rel);
+    const st = lstatSync(file);
+    if (!st.isFile()) return null;
+    return realpathSync(file) === join(realpathSync(base), rel) ? st : null;
+  } catch { return null; }
+}
+
+/**
+ * `<base>/<rel>` opened for reading, only when it passes artifactFileUnder AND the opened file is the one checked
+ * (same dev/ino): the check and a later read by path leave a window in which an agent swaps a folder or the file
+ * for a link (V9). Opened first, O_NOFOLLOW (a link as the last part never opens) and O_NONBLOCK (a FIFO never
+ * holds the request); checked after, so a swap back in between still fails the inode match. FileHandle | null;
+ * the caller closes it.
+ */
+export async function openArtifactUnder(base, rel) {
+  let fh;
+  try { fh = await openFile(join(base, rel), fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0) | (fsConstants.O_NOFOLLOW ?? 0)); }
+  catch { return null; }
+  try {
+    const checked = artifactFileUnder(base, rel);
+    const st = await fh.stat();
+    if (checked && st.isFile() && st.dev === checked.dev && st.ino === checked.ino) return fh;
+  } catch { /* refused below */ }
+  await fh.close().catch(() => {});
+  return null;
 }
 
 /** The keyed form (`/api/history/:key/:id`, workspace twin) over lookupPipelineRow. */

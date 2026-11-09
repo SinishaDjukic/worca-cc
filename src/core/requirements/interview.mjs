@@ -3,8 +3,7 @@
 // through the classifier's repo look (D7), then rounds that are single tool-less model calls. One job
 // per feature at a time; a job never throws out — a failure becomes an `error` turn and the feature goes
 // back to the product owner. Spend is checked before every call and booked after it (D9).
-import { mkdirSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { mkdirSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
 import { normalizingOnEvent } from '../engines/claude-events.mjs';
@@ -29,7 +28,7 @@ import {
   ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT, buildRoundPrompt, buildOrientationPrompt, applyRound,
   normalizeOrientation, mockRoundReply, RoundError, removedCriteria, pendingRound,
 } from './round.mjs';
-import { readsSettled, queueUnread, promptFiles, isReading, filesPending } from './attachment-job.mjs';
+import { readsSettled, queueUnread, promptFiles, isReading, isDownloading, filesPending } from './attachment-job.mjs';
 import { isStarting, STARTING_MESSAGE } from './starting.mjs';
 
 export const ROUND_TIMEOUT_MS = 180_000;
@@ -42,43 +41,8 @@ const DEFAULTS = Object.freeze({
 });
 
 // Keys of the user settings' `env` block that sign Claude Code in or route its traffic (A1.1 D6).
-const SIGN_IN_ENV_KEYS = new Set([
-  'CLAUDE_CODE_OAUTH_TOKEN', 'NODE_EXTRA_CA_CERTS', 'CLOUD_ML_REGION', 'GOOGLE_APPLICATION_CREDENTIALS',
-  'CLAUDE_CODE_CLIENT_CERT', 'CLAUDE_CODE_CLIENT_KEY',
-]);
-const isSignInEnvKey = (k) => SIGN_IN_ENV_KEYS.has(k) || /^https?_proxy$/i.test(k) || k.startsWith('ANTHROPIC_')
-  || k.startsWith('CLAUDE_CODE_USE_') || k.startsWith('AWS_');
-
-/**
- * Whether the user-level Claude Code settings carry sign-in or network configuration (A1.1 D6): a
- * non-empty `apiKeyHelper`, `awsAuthRefresh` or `awsCredentialExport`, or an `env` block with CLAUDE_CODE_OAUTH_TOKEN,
- * CLAUDE_CODE_USE_* (Vertex, Bedrock, Foundry...), AWS_*, CLOUD_ML_REGION, GOOGLE_APPLICATION_CREDENTIALS,
- * CLAUDE_CODE_CLIENT_CERT / _KEY, ANTHROPIC_*, HTTP(S)_PROXY (either case) or NODE_EXTRA_CA_CERTS. Then an interview keeps all setting sources, since
- * `--setting-sources project` would drop that file and the call would not be signed in. The file is the
- * one the CLI reads: `settings.json` in CLAUDE_CONFIG_DIR, else in `<home>/.claude` (as
- * skills-registry/host.mjs). A MISSING file (ENOENT / ENOTDIR), a blank one, or valid JSON that is not an object means false
- * (hermetic); a file that exists but cannot be read or parsed means true (keep user settings, A2's behaviour). Never throws.
- * Not seen: a model profile's modelEnv can set CLAUDE_CONFIG_DIR / HOME for the child, which moves the file the CLI
- * reads; this guard looks at the server's own environment only.
- */
-export function userClaudeSignIn({ env = process.env, home, read = (p) => readFileSync(p, 'utf8') } = {}) {
-  try {
-    const dir = typeof env?.CLAUDE_CONFIG_DIR === 'string' && env.CLAUDE_CONFIG_DIR.trim()
-      ? env.CLAUDE_CONFIG_DIR.trim() : join(home ?? homedir(), '.claude');   // homedir() can throw: inside the try
-    let raw;
-    try { raw = String(read(join(dir, 'settings.json'))); } catch (err) {
-      return !(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'));   // missing: hermetic; unreadable: keep
-    }
-    const text = raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw;   // a leading BOM is tolerated
-    if (!text.trim()) return false;   // a blank file holds no sign-in: hermetic
-    let s;
-    try { s = JSON.parse(text); } catch { return true; }
-    if (!s || typeof s !== 'object' || Array.isArray(s)) return false;
-    for (const key of ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport']) if (typeof s[key] === 'string' && s[key] !== '') return true;
-    const e = s.env;
-    return !!e && typeof e === 'object' && !Array.isArray(e) && Object.keys(e).some(isSignInEnvKey);
-  } catch { return false; }
-}
+import { userClaudeSignIn } from '../claude-user-settings.mjs';
+export { userClaudeSignIn };
 
 let signInLogged = false;
 /** The default `userSignIn`: the check, and the first time it keeps the user settings, one log line. */
@@ -513,7 +477,8 @@ export function startOrientation(seq, { by = null, thenRound = true } = {}, deps
   // busy meanwhile, as during any job: its status stays `looking` and the page says "Reading N files…"). The look before
   // it and round 1 after it each take a job slot only when one is free, so MAX_JOBS still bounds the model calls. Such a
   // job is outside MAX_JOBS from its start, so several creates in a row are all taken while their reads run.
-  const waits = thenRound && listAttachments('feature', f.seq).some((r) => isReading(r.id));
+  // A6.1 D10: a file still being downloaded counts as one being read.
+  const waits = thenRound && listAttachments('feature', f.seq).some((r) => isReading(r.id) || isDownloading(r.id));
   return startJob(seq, d, async (job) => {
     if (waits) await takeSlot(f.seq);
     await runOrientation(seq, d, by, { useBrief: thenRound });
@@ -611,7 +576,8 @@ export function finishInterview(seq, { by = null } = {}, deps = {}) {
 export function retry(seq, { by = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const f = guard(seq);
-  const turns = listTurns(seq).filter((t) => t.kind !== 'file');   // A8: a file's turns never hide the error Try again answers
+  // A8 / A6 / A6.1: a file's, an export's or the import's turns never hide the error Try again answers
+  const turns = listTurns(seq).filter((t) => t.kind !== 'file' && t.kind !== 'export' && t.kind !== 'import');
   if (turns.at(-1)?.kind !== 'error') throw new RequirementsError('CONFLICT', 'nothing to retry');
   const lastReal = turns.filter((t) => t.kind !== 'error').at(-1);
   if (!f.orientation) return startOrientation(seq, { by }, deps);

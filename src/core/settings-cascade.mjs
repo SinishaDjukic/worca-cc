@@ -3,7 +3,7 @@ import { projectKey as keyOfDir } from './store.mjs';
 import {
   readSettings, setProjectLayerReader, nightModeSettings, memoryDefragModel,
   runEngineSetting, stepModelsSetting, utilityModelsSetting, normalizeModelPair, SETTING_CHECKS,
-  askEngineSetting, askModelsSetting, requirementsInterviewSetting,
+  askEngineSetting, askModelsSetting, requirementsInterviewSetting, secondOpinionModelSetting,
   assertAskWebInput, askWebStoreShape, assertSmartNamingInput, SMART_NAMING_DEFAULTS, UTILITY_JOBS,
   DEFAULT_CONTEXT_MAX_BYTES_PER_FILE, DEFAULT_CONTEXT_MAX_BYTES_TOTAL, DEFAULT_SKILL_MOUNT,
   DEFAULT_MEMORY_SOFT_BYTES_PER_FILE, DEFAULT_MEMORY_HARD_BYTES_PER_FILE, DEFAULT_MEMORY_MAX_FILES_PER_SCOPE,
@@ -15,6 +15,7 @@ import { cachedPolicyForKey } from './policy/cache.mjs';
 import { fieldsForRun } from './policy/effective.mjs';
 import { MODEL_ENGINES, HELPER_ENGINES, ASK_ENGINES } from './model-env.mjs';
 import { NIGHT_FIELDS, NIGHT_DEFAULTS, fieldError as nightFieldError } from './night/config.mjs';
+import { PR_OPEN, PR_SLICES } from '../shared/pr-auto.mjs';
 
 export const LAYERS = Object.freeze(['project', 'user', 'team']);
 const isObj = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -57,10 +58,14 @@ const SCALARS = [
   scalar({ id: 'contextMaxBytesTotal', check: SETTING_CHECKS.byteCap, def: DEFAULT_CONTEXT_MAX_BYTES_TOTAL }),
   scalar({ id: 'skillMount', check: SETTING_CHECKS.skillMount, def: DEFAULT_SKILL_MOUNT }),
   scalar({ id: 'watchNewPrs', check: (value) => typeof value === 'boolean', def: false, hint: 'must be true or false' }),
+  scalar({ id: 'runUserClaudeSettings', check: (value) => typeof value === 'boolean', def: false, hint: 'must be true or false' }),
   scalar({ id: 'memory.softBytesPerFile', path: ['memory', 'softBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_SOFT_BYTES_PER_FILE }),
   scalar({ id: 'memory.maxBytesPerFile', path: ['memory', 'maxBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_HARD_BYTES_PER_FILE }),
   // Team memory (phase 1a): project-only opt-in — no user layer (readUser off), no team key.
   scalar({ id: 'memory.team', path: ['memory', 'team'], check: SETTING_CHECKS.teamMemory, def: false, hint: 'must be true, false or "only"', readUser: () => undefined }),
+  // Create a PR when a run finishes: project-only (no user layer); the team layer is the policy's pr.* default.
+  scalar({ id: 'pr.open', path: ['pr', 'open'], check: (value) => PR_OPEN.includes(value), def: 'none', teamKey: 'pr.open', hint: 'must be one of none | draft | ready', readUser: () => undefined }),
+  scalar({ id: 'pr.slices', path: ['pr', 'slices'], check: (value) => PR_SLICES.includes(value), def: 'each', teamKey: 'pr.slices', hint: 'must be one of each | one', readUser: () => undefined }),
   scalar({ id: 'memory.teamMaxFiles', path: ['memory', 'teamMaxFiles'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_TEAM_MAX_FILES, hint: 'must be a positive whole number' }),
   scalar({ id: 'memory.maxFilesPerScope', path: ['memory', 'maxFilesPerScope'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_MAX_FILES_PER_SCOPE }),
   scalar({ id: 'memory.hookMaxChars', path: ['memory', 'hookMaxChars'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_HOOK_MAX_CHARS }),
@@ -77,7 +82,7 @@ const NIGHT = NIGHT_FIELDS.map((field) => ({
 const STATIC = new Map([...SCALARS, ...NIGHT].map((entry) => [entry.id, entry]));
 // From the engine lists: step slots on every model engine, helper slots on the helper engines, Ask slots on the Ask engines.
 const STEP_RE = new RegExp(`^models\\.(${MODEL_ENGINES.join('|')})\\.steps\\.([A-Za-z0-9_-]{1,64})$`);
-const UTIL_RE = new RegExp(`^models\\.(${HELPER_ENGINES.join('|')})\\.(?:utility\\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan))$`);
+const UTIL_RE = new RegExp(`^models\\.(${HELPER_ENGINES.join('|')})\\.(?:utility\\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan|secondOpinion))$`);
 const RUN_JOBS = new Set(['title', 'classifier', 'overview', 'prDescription']);
 const utilityId = (engine, job) => (RUN_JOBS.has(job) ? `models.${engine}.utility.${job}` : `models.${engine}.${job}`);
 
@@ -93,12 +98,13 @@ const CLAUDE_USER = {
   title: (ctx) => storedModel(ctx, 'titleModel'), classifier: (ctx) => storedModel(ctx, 'autoWorkflowModel'),
   overview: () => undefined, prDescription: (ctx) => storedModel(ctx, 'prDescriptionModel'),
   memoryDefrag: () => { const pair = memoryDefragModel(); return pair.model ? { model: pair.model, ...(pair.effort ? { effort: pair.effort } : {}) } : undefined; },
+  secondOpinion: () => pickPair(secondOpinionModelSetting()),
 };
 function utilEntry(engine, job) {
   if (!HELPER_ENGINES.includes(engine)) return null;          // the own-sign-in engines: no utility ids (helper jobs run on Claude)
   if (engine === 'claude' && job === 'workspaceScan') return null;
   return { id: utilityId(engine, job), family: 'utility', engine, job, path: ['utilityModels', engine, job], store: 'settings',
-    default: undefined, userOnly: job === 'workspaceScan', validate: pairCheck(engine),
+    default: undefined, userOnly: job === 'workspaceScan' || job === 'secondOpinion', validate: pairCheck(engine),
     readUser: engine === 'claude' ? CLAUDE_USER[job] : () => pickPair(dig(utilityModelsSetting(), [engine, job])),
     readProject: (ctx) => pickPair(dig(ctx.projectSettings(), ['utilityModels', engine, job])), team: null };
 }

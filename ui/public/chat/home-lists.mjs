@@ -6,6 +6,7 @@ import { fmtUsd } from '../graph/run-decor.mjs';
 import { fmtStarted } from '../ask-panel.mjs';
 import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
 import { homeIcon } from './home-icons.mjs';
+import { originMark } from '../chat-origin.mjs';
 import { featureHeadline } from '../shape/feature-view.mjs';
 
 export const HOME_TABS = Object.freeze(['needs', 'running', 'chats', 'plans', 'workflows']);
@@ -16,7 +17,7 @@ export const HOME_TAB_KEY = 'worca-cc.chat.homeTab';
 export const RECENT_CHATS_MAX = 6;
 export const WORKFLOWS_MAX = 12;
 /** The server's built-ins (ui/server.mjs GET /api/workflows; library.mjs RESERVED). */
-export const BUILTIN_WORKFLOW_IDS = Object.freeze(['wf_default', 'wf_memory_defrag']);
+export const BUILTIN_WORKFLOW_IDS = Object.freeze(['wf_default', 'wf_lean_build', 'wf_memory_defrag']);
 const PANEL_ID = 'chat-home-panel';
 /** The screen-reader words for the three dots (worca Chat P1): Replying, Needs you, Following a run. */
 const DOT_TEXT = Object.freeze({ think: 'Replying', wait: 'Needs you', live: 'Following a run' });
@@ -148,7 +149,10 @@ export function buildChatsList(doc, threads, { onOpen, now = Date.now() }) {
     dot.setAttribute('aria-hidden', 'true');
     if (state) dot.title = DOT_TEXT[state];
     const col = make(doc, 'span', 'chat-home-chat-col');
-    col.append(make(doc, 'span', 'chat-home-chat-t', t.title || 'New chat'), make(doc, 'span', 'chat-home-chat-m', chatMeta(t, now)));
+    const title = make(doc, 'span', 'chat-home-chat-t', t.title || 'New chat');
+    const mark = originMark(doc, t.origin);
+    if (mark) title.prepend(mark);
+    col.append(title, make(doc, 'span', 'chat-home-chat-m', chatMeta(t, now)));
     const chev = make(doc, 'span', 'chat-home-chev');
     chev.appendChild(homeIcon(doc, 'chevron', 14));
     b.append(dot, col);

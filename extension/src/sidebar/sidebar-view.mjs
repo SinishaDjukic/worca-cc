@@ -3,7 +3,6 @@
 // the CSS cut from style.css styles it unchanged. test/extension-sidebar-markup.test.mjs pins it against makePanel.
 // The composer is Ask's (ask-panel.mjs buildComposer) minus voice and Sets, plus the area-capture button.
 import { parseQuotedMessage } from '../../../ui/public/pinpoint-model.mjs';
-import { ATTACH_ACCEPT } from '../../../ui/public/attach-files.mjs';
 import { ctxPercent, ctxLevel, fmtCtx, fmtUsd, fmtWindow, ctxBreakdown, fmtShare, kTok, CTX_COST_HINT } from '../../../ui/public/ask-meter.mjs';
 import { pickerGroups } from '../../../ui/public/ask-engine.mjs';
 import { modelGroups } from '../../../src/shared/connections.mjs';
@@ -344,9 +343,11 @@ export function fillModelPopover(doc, panel, { catalog, pick, lock, pane = 'main
     for (const e of efforts) panel.appendChild(menuItem(doc, 'ask-effort-item', e, () => onEffort(e), { checked: !!pick && pick.effort === e }));
     return;
   }
-  const sections = pickerGroups(models, { lock });
+  // #943: inside a chat only its engine, under its name; moving the chat to another engine happens in Chat (the
+  // switch route refuses extension callers).
+  const sections = pickerGroups(models, { lock, active: lock });
   for (const g of sections) {
-    if (sections.length > 1) panel.appendChild(make(doc, 'div', 'ask-pop-group', g.label));
+    if (sections.length > 1 || lock) panel.appendChild(make(doc, 'div', 'ask-pop-group', g.label));
     const conns = modelGroups(g.models, { engine: g.engine });
     for (const c of conns) {
       if (conns.length > 1) panel.appendChild(make(doc, 'div', 'ask-pop-subgroup', c.label));
@@ -362,6 +363,7 @@ export function fillModelPopover(doc, panel, { catalog, pick, lock, pane = 'main
       }
     }
   }
+  if (lock) panel.appendChild(make(doc, 'div', 'ask-pop-empty', 'To move this chat to another engine, use the model picker in Chat in the Worca app.'));
   panel.appendChild(make(doc, 'div', 'ask-pop-divider'));
   const noEffort = !!(entry && entry.noEffort);
   const row = menuItem(doc, 'ask-effort-row', 'Effort', noEffort ? null : () => onPane('effort'), { disabled: noEffort, labelClass: null });
@@ -475,7 +477,6 @@ export function buildComposer(doc, o) {
   const file = doc.createElement('input');
   file.type = 'file';
   file.multiple = true;
-  file.accept = ATTACH_ACCEPT;
   file.hidden = true;
   file.addEventListener('change', () => { const fs = [...(file.files || [])]; file.value = ''; if (fs.length) call(o.onFiles, fs); });
   const attach = buildIconButton(doc, 'btn btn-quiet btn-icon', 'Attach files', ICON.plus, () => file.click());
@@ -508,9 +509,11 @@ export function buildComposer(doc, o) {
   model.type = 'button';
   model.setAttribute('data-ask-model-btn', '');
   model.setAttribute('aria-haspopup', 'menu');
+  const modelEngine = make(doc, 'span', 'ask-model-btn-engine', '');   // #943: as Chat's button, when the catalog has more than one engine
+  modelEngine.hidden = true;
   const modelLabel = make(doc, 'span', 'ask-model-btn-label', '');
   const modelEffort = make(doc, 'span', 'ask-model-btn-effort', '');
-  model.append(modelLabel, modelEffort, svgIcon(doc, ICON.chevronDown, 12, 2));
+  model.append(modelEngine, modelLabel, modelEffort, svgIcon(doc, ICON.chevronDown, 12, 2));
   model.addEventListener('click', () => call(o.onModel, model));
   const send = make(doc, 'button', 'btn btn-primary btn-icon ask-send');
   send.type = 'button';
@@ -535,7 +538,7 @@ export function buildComposer(doc, o) {
   row.append(file, attach, capture, scope, spacer, meter, model, send, stop);
   box.append(lead, chips, input, msg, row);
   wrap.appendChild(box);
-  return { el: wrap, lead, chips, input, msg, file, attach, capture, scope, scopeLabel, meter, meterCost, ctxBtn, ctxArc: ring.arc, model, modelLabel, modelEffort, send, stop };
+  return { el: wrap, lead, chips, input, msg, file, attach, capture, scope, scopeLabel, meter, meterCost, ctxBtn, ctxArc: ring.arc, model, modelEngine, modelLabel, modelEffort, send, stop };
 }
 
 /** ask-panel.mjs buildDropTarget's overlay (the caller wires the drag events on .chat-convo). */
@@ -618,7 +621,8 @@ export function buildRow(doc, row, { text, live, renderer, sentQuote = null, ope
     return { el: wrap, answer: null };
   }
   if (row.role === 'system') {
-    const notices = (row.blocks || []).filter((b) => b && b.kind === 'notice');
+    // #943: an engine switch's row is a divider ("Switched from Codex to Claude") and a notice; both read as notices here.
+    const notices = (row.blocks || []).filter((b) => b && (b.kind === 'notice' || (b.kind === 'divider' && b.engineSwitch)));
     for (const b of notices.length ? notices : [{ text: row.text }]) { const n = make(doc, 'div', 'ask-notice'); n.appendChild(make(doc, 'span', null, b.text || '')); wrap.appendChild(n); }
     return { el: wrap, answer: null };
   }

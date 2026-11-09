@@ -669,6 +669,36 @@ test('20 gate "continue": A4 force-fires the source clean side with the held pay
   assert.equal(end.bindings.result.forced, true);
 });
 
+test('20b E2: a forced continue is recorded as open issues on the run, and survives the snapshot', { timeout: 5000 }, async () => {
+  const h = harness({
+    template: SELF_LOOP,
+    script: { n_pol: (a) => ({ verdict: { issues: [{ severity: 'critical', title: 'a' }, { severity: 'major', title: 'b' }, { severity: 'minor', title: 'c' }] },
+      outputs: { revise: { path: `/p/rev${a.ordinal}.md` } } }) },
+  });
+  assert.equal(await h.scheduler.run(), 'done');
+  const open = h.scheduler.getState().openIssues;
+  assert.deepEqual(open, [{ nodeId: 'n_pol', wireId: 'w2', executionId: 'x:n_pol:2', count: 2, critical: 1, major: 1, titles: ['a', 'b'] }]);
+  assert.deepEqual(h.last().openIssues, open, 'the final snapshot carries them for a resumed or rehydrated run');
+  // A restored scheduler reports them too.
+  const again = harness({ template: SELF_LOOP, script: {} });
+  again.scheduler.reattach(h.last());
+  assert.deepEqual(again.scheduler.getState().openIssues, open);
+});
+
+test('20c E2: a clean loop leaves no open issues', { timeout: 5000 }, async () => {
+  const h = harness({ template: SELF_LOOP, script: { n_pol: byOrdinal(blockingRevise('/p/r1.md'), { verdict: CLEAN, outputs: { plan: { path: '/p/ok.md' } } }) } });
+  assert.equal(await h.scheduler.run(), 'done');
+  assert.deepEqual(h.scheduler.getState().openIssues, []);
+});
+
+test('20d 2.1: a rejected gate ask or an unrecognised answer FAILS the run — never a silent continue', { timeout: 5000 }, async () => {
+  for (const onAsk of [async () => { throw new Error('ask failed'); }, async () => 'yes', async () => undefined, async () => 'Another']) {
+    const h = harness({ template: SELF_LOOP, script: { n_pol: (a) => blockingRevise(`/p/rev${a.ordinal}.md`) }, onAsk });
+    assert.equal(await h.scheduler.run(), 'error', String(onAsk));
+    assert.equal(h.scheduler.getState().endReached, false, 'End was never reached');
+  }
+});
+
 test('21 gate audit: held → continue events, state.gate lifecycle, non-interactive default', { timeout: 5000 }, async () => {
   const h = harness({ template: SELF_LOOP, script: { n_pol: (a) => blockingRevise(`/p/rev${a.ordinal}.md`) } });
   await h.scheduler.run();
@@ -1456,4 +1486,83 @@ test('R4 reattach re-runs a paused role-review shell as a composite fan-out, hol
   assert.equal(again[0].composite, 'expand', 'the resumed shell re-expands');
   assert.equal(again[0].executionId, 'x:n_roles:1');
   assert.deepEqual(shape(again), ['1:expand', '1:phase:running', '1:slice:role-ux', '1:slice:role-qa', '1:phase:done', '1:finish']);
+});
+
+test('4.1: a failure waits for still-running siblings to settle (bounded) before the run resolves', { timeout: 5000 }, async () => {
+  // task -> {a, b} in parallel. a fails at once; b is still writing and stops only after its abort.
+  const PAR = TPL(
+    [N('n_task', 'task'), N('n_a', 'agent', 'maker'), N('n_b', 'agent', 'maker'), N('n_end', 'end')],
+    [W('w1', 'n_task.task', 'n_a.task'), W('w2', 'n_task.task', 'n_b.task'), W('w3', 'n_a.out', 'n_end.result')],
+  );
+  let bSettled = false;
+  const h = harness({
+    template: PAR,
+    script: {
+      n_a: () => new Promise((_r, rej) => setTimeout(() => rej(new Error('a failed')), 5)),
+      n_b: (args) => new Promise((_r, rej) => args.signal.addEventListener('abort', () => setTimeout(() => {
+        bSettled = true; rej(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      }, 60), { once: true })),
+    },
+  });
+  assert.equal(await h.scheduler.run(), 'error');
+  assert.equal(bSettled, true, 'the sibling finished its shutdown before the run resolved (teardown cannot race it)');
+});
+
+test('4.1: a sibling that never settles does not hold the run past the grace', { timeout: 5000 }, async () => {
+  const PAR = TPL(
+    [N('n_task', 'task'), N('n_a', 'agent', 'maker'), N('n_b', 'agent', 'maker'), N('n_end', 'end')],
+    [W('w1', 'n_task.task', 'n_a.task'), W('w2', 'n_task.task', 'n_b.task'), W('w3', 'n_a.out', 'n_end.result')],
+  );
+  const events = [];
+  const sched = createScheduler({
+    template: PAR, portsFn, settleGraceMs: 80,
+    execute: (args) => (args.node.id === 'n_a' ? Promise.reject(new Error('a failed'))
+      : args.node.id === 'n_b' ? new Promise(() => {}) : Promise.resolve({ outputs: { task: { path: '/p/task.md' } } })),
+    onEvent: (n, p) => events.push({ n, ...p }),
+  });
+  const t = Date.now();
+  assert.equal(await sched.run(), 'error');
+  assert.ok(Date.now() - t < 2000, 'bounded by the grace');
+});
+
+// Shaper's requirements stage (wf_shape_req): the two holds' Ask for changes, over the real sidecars' ports.
+test('wf_shape_req: Ask for changes on n_reqrefine re-runs the drafter n_req; on n_refine it still re-runs n_plan', { timeout: 10000 }, async () => {
+  const { realPortsFn } = await import('./helpers/graph-ports.mjs');
+  const { GRAPH_SHAPE_REQ_WORKFLOW } = await import('../src/core/graph/builtin-workflows.mjs');
+  const calls = [];
+  const asks = [];
+  const roleFinish = (port) => (a) => (a.composite === 'expand' ? { phases: [] }
+    : { outputs: { findings: { path: `/p/${a.node.id}-f${a.ordinal}.md` }, [port]: { path: (a.bindings.revise || a.bindings[port])?.path || null } } });
+  const script = {
+    n_req: (a) => ({ outputs: { requirements: { path: `/p/req${a.ordinal}.md` } } }),
+    n_reqroles: roleFinish('requirements'),
+    n_reqrefine: (a) => ({ verdict: { issues: [] }, outputs: { requirements: { path: `/p/agreed${a.ordinal}.md` }, decisions: { path: '/p/d.json' } } }),
+    n_plan: (a) => ({ outputs: { plan: { path: `/p/plan${a.ordinal}.md` } } }),
+    n_roles: roleFinish('plan'),
+    n_refine: (a) => ({ verdict: { issues: [] }, outputs: { plan: { path: `/p/refined${a.ordinal}.md` } } }),
+    n_impl: () => ({ outputs: {} }),
+    n_review: (a) => (a.composite === 'expand' ? { phases: [] } : { verdict: { issues: [] }, outputs: {} }),
+  };
+  const scheduler = createScheduler({
+    template: GRAPH_SHAPE_REQ_WORKFLOW, portsFn: realPortsFn(), approvalStops: true,
+    execute: (args) => { calls.push({ nodeId: args.node.id, bindings: args.bindings, composite: args.composite }); return Promise.resolve(script[args.node.id]?.(args) || {}); },
+    onAsk: async (a) => {
+      if (a.kind !== 'plan') return 'continue';
+      asks.push([a.nodeId, a.plan.round, a.plan.revisable]);
+      if (a.plan.round === 1) return { decision: 'revise', path: `/fb-${a.nodeId}.md` };
+      return 'approve';
+    },
+  });
+  await scheduler.run();
+  assert.deepEqual(asks, [['n_reqrefine', 1, true], ['n_reqrefine', 2, true], ['n_refine', 1, true], ['n_refine', 2, true]]);
+  const req = calls.filter((c) => c.nodeId === 'n_req');
+  assert.equal(req.length, 2);
+  assert.equal(req[1].bindings.revise?.path, '/fb-n_reqrefine.md', 'the requirements feedback lands on the drafter');
+  assert.equal(calls.filter((c) => c.nodeId === 'n_reqrefine').some((c) => c.bindings.revise?.path?.startsWith('/fb-')), false);
+  const plan = calls.filter((c) => c.nodeId === 'n_plan');
+  assert.equal(plan.length, 2);
+  assert.equal(plan[1].bindings.revise?.path, '/fb-n_refine.md', 'the plan feedback lands on the Planner, not the extra input\'s source');
+  assert.equal(plan[1].bindings.requirements?.path, '/p/agreed2.md', 'the agreed requirements are bound on the extra input');
+  assert.equal(calls.filter((c) => c.nodeId === 'n_reqrefine').length, 2, 'the refiner fires once per round, its task fired once');
+  assert.equal(calls.filter((c) => c.nodeId === 'n_refine').length, 2, 'Refine re-fires though its extra input is not fresh');
 });

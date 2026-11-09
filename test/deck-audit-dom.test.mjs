@@ -73,11 +73,13 @@ test('geometry: overlaps (positive and negative controls), escapes and clipped',
           // R1's only critical: "the subtitle renders on top of the meta line — an
           // absolutely positioned footer under a centred overflowing stack". The audit
           // of that cycle reported 0 escapes and 0 clipped, because neither check looks
-          // at two elements occupying the same place.
+          // at two elements occupying the same place. The font size is explicit: jsdom 30
+          // computes the default 16px, and a 16px ink band inside a 60px line box clears
+          // the other line, so slide-sized type is what makes these two lines collide.
           const win = stage(
             `<section ${SLIDE_BOX} data-label="01">`
-            + `<p class="subtitle" data-r="160,820,1600,140" data-tr="160,880,900,60">A subtitle that grew</p>`
-            + `<p class="meta" data-r="160,900,1600,60" data-tr="160,900,700,60">March 2026 · internal</p>`
+            + `<p class="subtitle" data-r="160,820,1600,140" data-tr="160,880,900,60" style="font-size:48px">A subtitle that grew</p>`
+            + `<p class="meta" data-r="160,900,1600,60" data-tr="160,900,700,60" style="font-size:48px">March 2026 · internal</p>`
             + `</section>`,
           );
           const [slide] = DeckAudit.run(win.document, win).slides;

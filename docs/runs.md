@@ -32,15 +32,20 @@ The built-in **Default** workflow hands your task to five agents:
 1. **Clarify** asks before it assumes. It turns hidden decisions into up to 8 multiple-choice questions, each with
    2–4 options, free text and sometimes a recommended pick. When the task is clear, it asks nothing. The planner
    records your answers in the plan's `## Clarifications (Q&A)` section, so every later step sees them.
-2. **Plan** explores the codebase and writes an implementation plan with concrete code snippets.
-3. **Refine Plan** reviews and rewrites the plan (`-v2`, `-v3`, …) until no critical or major issues remain.
-4. **Implementation** follows the approved plan using TDD (red-green-refactor). It doesn't deviate from the plan,
-   and records any deviation it is forced into.
-5. **Review Implementation** reviews the git diff against the plan. Blocking findings go back to the implementer,
-   and the two loop until the review is clean.
+2. **Plan** explores the codebase and writes a design-level implementation plan: contracts (files, signatures, data
+   and error shapes), invariants, the acceptance mapping and the test list, without full code bodies.
+3. **Refine Plan** checks the plan against the real code in one read-only pass (no replay, no test runs) and writes
+   `-v2`, at most 1.3× the size of the input.
+4. **Implementation** follows the plan's contracts using TDD (red-green-refactor) and writes the code itself. It
+   doesn't deviate from the plan, and records any deviation it is forced into.
+5. **Review Implementation** reviews the git diff against the plan's contracts and invariants, and runs an
+   adversarial pass (races, refusal paths, partial writes, trust boundaries) with severity floors. Blocking findings
+   go back to the implementer, and the two loop until the review is clean.
 
-Each loop has a cycle cap: 3 by default, and you can change it per loop. When a loop reaches its cap with blocking
-findings left, the run pauses and lists the open issues. You choose **I approve another cycle**, or **Don't approve
+The built-in **Lean** workflow skips Refine: Clarify → Plan → Implementation → Review, with one fix pass.
+
+Refine runs once and continues with whatever it leaves open. The review loop has a cycle cap: 3 by default, and you
+can change it per loop. When it reaches its cap with blocking findings left, the run pauses and lists the open issues. You choose **I approve another cycle**, or **Don't approve
 another cycle and continue** with what you have.
 
 Only `critical` and `major` findings block. `minor` findings and suggestions never do. When the run finishes, its
@@ -94,7 +99,8 @@ parked by an outage resumes once the network is back.
 
 Each run works in its own git worktree on its own `worca-cc/…` branch. Agents never edit your checkout, and runs
 side by side don't collide. When a run ends, its work is committed to that branch and the worktree is removed. The
-branch stays.
+branch stays. A worktree isolates changes, not the host: natively, agents run as your user and can reach whatever
+you can (see [Guardrails](guardrails.md)).
 
 ### Run on the source branch
 

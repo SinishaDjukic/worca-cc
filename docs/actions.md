@@ -17,6 +17,7 @@ a ready check and a live log come with them.
 | Place | What it holds |
 | --- | --- |
 | Run page and History detail › **Actions** tab | Check out / Discard, setup state, each action's Start / Stop, ports, Open link and log; Open in editor, terminal, file manager; Copy command; Download patch |
+| Run page and History detail › card head **Try it** | Before Check out, **Try it** checks the run's branch out on this machine (setup then runs by itself); while that runs the button says **Checking out…**, then **Setting up…**. Once set up it offers the next step: **Start** with the project's first service's name, then **Open :port** and **Stop** while it runs. A failed setup shows its error (`Setup failed (exit 1)`). At Advanced an **Actions** link opens the run's Actions tab (its setup log and Run setup again), and it is also the next step when the project has no service. At Simple there is no tab, so the head says `Checked out` instead. Every level |
 | Run Overview › actions strip, Create PR › **Try it first** (the Try it first button at the left of the Create PR dialog's footer; once checked out, the strip above it) | The same actions, one click from the result |
 | Run page and History detail › summary card **Results › Actions row** | `Local copy open · since 18:12` (or `Linked to your folder · since 18:12`, `2 local copies open · since 18:12`) once checked out, `Try it on this machine` before; opens the Actions tab. Advanced, like the tab. At Simple a plain row with the same words carries Discard / Unlink while a checkout exists |
 | Run page and History detail › summary card **worktree notice** | Work kept after a failed end-of-run commit (Apply to branch, recovery patch, Discard worktree). Every level |
@@ -27,7 +28,7 @@ a ready check and a live log come with them.
 
 The tabs, strips and the Settings card are Advanced (see [ui-levels.md](ui-levels.md)). The worktree
 notice is not: it shows at every level, because it explains refusals anyone can hit. Neither is the Simple
-checkout row: Archive is refused while a checkout exists, so its Discard / Unlink must stay in reach.
+checkout row: Archive is refused while a checkout exists, so its Discard / Unlink must stay in reach. The card head's Try it step is not Advanced either: anyone can check a run out there and start its first service.
 
 A run can be checked out when it ended `done`, `stopped` or `error`, is not archived, has a feature
 branch, and kept no uncommitted work of its own. Paused and interrupted runs are refused: resume or
@@ -75,6 +76,9 @@ headline does not change, so read the notice. It offers:
   source branch, Apply also fast-forwards the source branch onto the work and deletes the run's hidden
   branch. If the source moved on in the meantime, the merge-back notice explains how to merge by hand. If
   the commit fails again, nothing changes and git's message is shown.
+  The commit message is the one the run would have written: `worca: <title>`, a short summary (the
+  run's newest plan goal, else its overview, else its last implementation review; never the task text),
+  the files the commit changes with their line counts, and a `Worca-Run: <run id>` trailer.
 - **Download the recovery patch**: the snapshot saved when the work was kept.
 - **Discard worktree**: saves a recovery patch of anything uncommitted, then removes the worktree. The
   branch and the run's history stay.
@@ -336,7 +340,7 @@ Chat reads Actions and drafts their config, but it never runs anything.
   tail. Usually the app listens on another port than the `PORT` Worca gave it.
 - **No start, stop, check out or discard.** There is no tool for them: Chat names the button
   instead. Under agent isolation the card's Save is refused like the config routes
-  (`ACTIONS_AGENT_BLOCKED`).
+  (`AGENT_CALLER_BLOCKED`).
 - **Redaction.** Commands and log lines are redacted like every other text Chat reads. An action
   that comes back with a redacted value is kept as stored when it is sent back unchanged. A changed
   one is refused, so a redaction marker is never saved.
@@ -365,9 +369,10 @@ ones, and up to 40 log lines per instance.
   runs until then.
 - **Agent isolation.** While isolation is on (the Docker image's default, see
   [docker.md](docker.md)), a caller on the box itself, over loopback or through one of the
-  machine's own addresses, could be an agent. It is refused with `403 ACTIONS_AGENT_BLOCKED` on
-  every route that runs a command, on both config writes, and on an `actions` key in
-  `POST /api/settings` (the editor and terminal settings are commands too). Stop stays open.
+  machine's own addresses, could be an agent. Without the server's per-boot token it gets no API at
+  all, Stop included (`403 AGENT_CALLER_BLOCKED`, see [docker.md](docker.md)): it cannot run a
+  command, change one in the config or set an `actions` key in `POST /api/settings`. A caller with
+  the token (the `worca` CLI) is the operator.
   One gap remains: in **local** mode there is no identity, so a request an agent loops back through
   a published port arrives from the gateway and cannot be told apart from a person. Run an isolated
   box in remote mode.

@@ -1,17 +1,16 @@
 // test/ui-ask-workflow-card.test.mjs — the ask WORKFLOW card (building/proposed/saved/declined/failed), the chip picker and the synthetic notice row, in the app shell.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { proposalFor } from './helpers/auto-proposal-fixture.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const TID = 'ask_00000001';
@@ -40,8 +39,8 @@ function askArms(url, opts) {
   return null;
 }
 
-async function boot({ url = 'http://localhost:4317/', runResponse = null } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
+async function boot({ url = 'http://localhost:4317/', runResponse = null, workflows = null } = {}) {
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
 
@@ -82,7 +81,9 @@ async function boot({ url = 'http://localhost:4317/', runResponse = null } = {})
     // EXACT path match, not includes(): /api/workflows/:id is the per-workflow
     // config fetch — a substring test hands it the LIST envelope instead.
     if (path.endsWith('/api/workflows')) {
-      return Promise.resolve({ ok: true, status: 200, json: async () => ({ workflows: [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) });
+      // The Library's archived list (gvApi.listArchived): none here — the list arm would file every row as Archived.
+      if (/[?&]archived=1/.test(url2)) return Promise.resolve({ ok: true, status: 200, json: async () => ({ workflows: [] }) });
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ workflows: workflows || [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) });
     }
     if (path.endsWith('/api/guardrails')) {
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ guardrails: [{ id: 'permissive', name: 'Permissive' }, { id: 'normal', name: 'Normal' }] }) });
@@ -262,6 +263,107 @@ test('saved workflow card: graph stays with inert chips, footer is Open in Workf
       assert.equal(ctx.window.document.querySelector('[data-ask-wf-run]'), null, 'nothing comes back once the turn ends');
       assert.deepEqual(footer(), ['BUTTON:Open in Workflows']);
       assert.equal(ctx.cardPosts.length, 0, 'no card verb was posted');
+    } },
+  ]);
+});
+
+// #1126: the saved row lives in Workflows › coding (an Auto card's domain); Default and Review only have no domain
+// (= general), so the Library has two folders and starts with both closed — the row is drawn only once its folder opens.
+const SAVED_LIST = [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' },
+  { id: 'wf_rename-fix', name: 'Rename fix', version: 2, domain: 'coding', origin: 'auto', nodes: [], wires: [] }];
+const savedRow = (w) => w.document.querySelector('.wfl-wf[data-item="workflow:wf_rename-fix"]');
+async function waitForRow(w) { for (let i = 0; i < 60 && !savedRow(w); i += 1) await settle(w, 1); return savedRow(w); }
+async function savedCard(ctx, card) {
+  await openBuilding(ctx);
+  flip(ctx, 3, { state: 'proposed', card: wfCard() });
+  await settle(ctx.window, 6);
+  flip(ctx, 4, { state: 'saved', workflowId: 'wf_rename-fix', card });
+  await settle(ctx.window, 6);
+  return ctx.window.document.querySelector('[data-ask-wfcard="saved"]');
+}
+
+test('saved workflow card (#1126): "Saved to Workflows: <name>" links the row; the link and Open in Workflows open the Library on its folder and flash it; a plain address does not; an adopted card has no such line', async () => {
+  const NEW = { name: 'Rename fix', adopted: false, match: { id: 'wf_rename-fix', name: 'Rename fix' } };
+  await checkRows([
+    { name: 'the line names the workflow and links its address, above a footer that stays Open in Workflows alone', run: async () => {
+      const ctx = await boot({ workflows: SAVED_LIST });
+      const el = await savedCard(ctx, wfCard(NEW));
+      const line = el.querySelector('.ask-wfcard-savedto');
+      assert.equal(line.textContent, 'Saved to Workflows: Rename fix');
+      const link = line.querySelector('a[data-ask-wf-link]');
+      assert.equal(link.getAttribute('href'), '#workflows/wf_rename-fix');
+      assert.equal(el.querySelector('.ask-wfcard-actions').contains(link), false);
+      assert.deepEqual([...el.querySelector('.ask-wfcard-actions').children].map((c) => `${c.tagName}:${c.textContent}`), ['BUTTON:Open in Workflows']);
+    } },
+    { name: 'following the link opens the canvas, the Library on Workflows with the coding folder open, and flashes the row', run: async () => {
+      const ctx = await boot({ workflows: SAVED_LIST });
+      const el = await savedCard(ctx, wfCard(NEW));
+      el.querySelector('.ask-wfcard-savedto a').click();
+      const row = await waitForRow(ctx.window);
+      assert.ok(row, 'the folder holding the saved row is open');
+      assert.ok(row.classList.contains('is-flash'), 'the row flashes');
+      assert.equal(ctx.window.__wfv.library().tab(), 'workflows');
+      assert.equal(ctx.window.__wfv.library().isOpen(), true);
+      assert.equal(ctx.window.location.hash, '#workflows');
+      assert.ok(ctx.calls.some((c) => /\/api\/workflows\/wf_rename-fix$/.test(c.url.split('?')[0])), 'the row opened on the canvas');
+    } },
+    { name: 'Open in Workflows reveals the row the same way', run: async () => {
+      const ctx = await boot({ workflows: SAVED_LIST });
+      const el = await savedCard(ctx, wfCard(NEW));
+      el.querySelector('[data-ask-wf-open]').click();
+      const row = await waitForRow(ctx.window);
+      assert.ok(row && row.classList.contains('is-flash'));
+    } },
+    { name: 'a Library the user closed (or a narrow screen) opens for the reveal: the link opens it on the row', run: async () => {
+      const ctx = await boot({ workflows: SAVED_LIST });
+      const el = await savedCard(ctx, wfCard(NEW));
+      ctx.window.location.hash = '#workflows';
+      await settle(ctx.window, 30);
+      ctx.window.document.getElementById('wfv-lib-toggle').click();       // the user closes the Library
+      await settle(ctx.window, 2);
+      assert.equal(ctx.window.__wfv.library().isOpen(), false);
+      el.querySelector('.ask-wfcard-savedto a').click();
+      const row = await waitForRow(ctx.window);
+      assert.equal(ctx.window.__wfv.library().isOpen(), true, 'the reveal opened the Library');
+      assert.ok(row && row.classList.contains('is-flash'), 'the row flashes');
+    } },
+    { name: 'a reveal is used once: after it, a plain #workflows/<id> to the same row opens no folder', run: async () => {
+      const ctx = await boot({ workflows: SAVED_LIST });
+      const el = await savedCard(ctx, wfCard(NEW));
+      el.querySelector('.ask-wfcard-savedto a').click();
+      assert.ok(await waitForRow(ctx.window), 'the reveal opened the folder');
+      ctx.window.document.querySelector('.wfl-folder[aria-expanded="true"]').click();   // the user closes the folder again
+      await settle(ctx.window, 2);
+      assert.equal(savedRow(ctx.window), null);
+      ctx.window.location.hash = '#workflows/wf_rename-fix';
+      await settle(ctx.window, 30);
+      assert.equal(savedRow(ctx.window), null, 'the coding folder stays closed');
+    } },
+    { name: 'a plain #workflows/<id> address (a bookmark, the top-bar search) opens the canvas only: no folder opens', run: async () => {
+      const ctx = await boot({ workflows: SAVED_LIST });
+      ctx.window.location.hash = '#workflows/wf_rename-fix';
+      await settle(ctx.window, 30);
+      assert.ok(ctx.calls.some((c) => /\/api\/workflows\/wf_rename-fix$/.test(c.url.split('?')[0])), 'the route ran');
+      assert.equal(savedRow(ctx.window), null, 'the coding folder stays closed');
+    } },
+    { name: 'an adopted card keeps "Uses a workflow you already had" and shows no Saved to Workflows line', run: async () => {
+      const ctx = await boot({ workflows: SAVED_LIST });
+      const el = await savedCard(ctx, wfCard({ name: 'Default', adopted: true, match: { id: 'wf_default', name: 'Default' } }));
+      assert.equal(el.querySelector('.ask-wfcard-savedline').textContent, 'Uses a workflow you already had');
+      assert.equal(el.querySelector('.ask-wfcard-savedto'), null);
+    } },
+    { name: 'already on Workflows when the row was saved: the link re-reads the list, then opens its folder', run: async () => {
+      const ctx = await boot({ workflows: SAVED_LIST.slice(0, 2) });     // the boot list predates the save
+      const el = await savedCard(ctx, wfCard(NEW));
+      ctx.window.location.hash = '#workflows';
+      await settle(ctx.window, 30);                                       // the Library mounted on the OLD list
+      // The save lands now: from here on the list holds the chat-saved row.
+      ctx.window.fetch = ((orig) => (u, o) => (String(u).split('?')[0].endsWith('/api/workflows') && !/archived=1/.test(String(u))
+        ? Promise.resolve({ ok: true, status: 200, json: async () => ({ workflows: SAVED_LIST }) }) : orig(u, o)))(ctx.window.fetch);
+      globalThis.fetch = ctx.window.fetch;
+      el.querySelector('.ask-wfcard-savedto a').click();
+      const row = await waitForRow(ctx.window);
+      assert.ok(row && row.classList.contains('is-flash'), 'the reveal read the list the save changed');
     } },
   ]);
 });

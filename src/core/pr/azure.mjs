@@ -206,11 +206,13 @@ export async function listPullRequests(coords, { minTime = null, maxPages = 10, 
   return { prs: out, complete: false };
 }
 
-/** Work item to link on create: a run from the Azure Boards source ("org/project#123") in the base repo's org. */
+/** Work item to link on create: a run from the Azure Boards source, or from an automation's work item (#711)
+ *  ("org/project#123"), in the base repo's org. */
 export function workItemIdFromSourceRef(sourceRef, baseRepo) {
   let ref = null;
   try { ref = typeof sourceRef === 'string' ? JSON.parse(sourceRef) : sourceRef; } catch { return null; }
-  if (ref?.plugin !== 'azure-boards-source' || !baseRepo?.org) return null;
+  const automation = ref?.forge === 'azure' && ref?.kind === 'issue';
+  if ((ref?.plugin !== 'azure-boards-source' && !automation) || !baseRepo?.org) return null;
   const m = /^([^/#]+)\/[^#]+#(\d+)$/.exec(String(ref.taskId || ''));
   return m && m[1].toLowerCase() === baseRepo.org.toLowerCase() ? Number(m[2]) : null;
 }

@@ -1,0 +1,441 @@
+        <!-- ===== VIEW: NEW PIPELINE ===== -->
+        <section class="view hidden" data-view="new">
+          <div class="topbar">
+            <div>
+              <div class="sub">Pick where it runs, describe the task, and run &middot; agents come tuned: open one only to change it</div>
+            </div>
+          </div>
+
+          <div class="grid single">
+            <section class="card">
+              <form id="run-form" autocomplete="off">
+                <!-- Run presets (#712, docs/run-presets.md): a named setup, applied for THIS run only. -->
+                <!-- One compact "Preset ▾" button (plans/mocks/new-run-preset-button.png): its menu lists the presets and
+                     holds Save as preset, Rename, Delete and Manage. The select stays as the hidden value holder. -->
+                <div id="preset-row" class="preset-row">
+                  <span id="preset-summary" class="preset-summary" hidden></span>
+                  <span id="preset-chip" class="chip" hidden></span>
+                  <button type="button" id="preset-update" class="btn btn-sm" hidden>Update preset</button>
+                  <span class="preset-pick">
+                    <button type="button" id="preset-btn" class="btn btn-sm btn-quiet preset-btn" aria-haspopup="menu" aria-expanded="false">Preset</button>
+                    <button type="button" id="preset-clear" class="btn btn-sm btn-quiet btn-icon preset-clear" aria-label="Clear preset" title="Clear preset" hidden></button>
+                  </span>
+                  <select id="presetSelect" hidden aria-hidden="true" tabindex="-1"><option value="">No preset</option></select>
+                  <div id="preset-broken"></div>
+                </div>
+                <!-- Target switch and the thing it selects share one row: they are one
+                     decision, and the switch is only meaningful next to its picker. -->
+                <div class="split-row">
+                  <div class="field field-compact" id="target-field">
+                    <label>Target</label>
+                    <div class="seg" id="target-seg">
+                      <button type="button" data-target="none" aria-pressed="false">No project</button>
+                      <button type="button" data-target="project" class="on" aria-pressed="true">Project</button>
+                      <button type="button" data-target="workspace" data-min-level="advanced" aria-pressed="false">Workspace</button>
+                    </div>
+                    <!-- hidden radios kept as the source of truth read at submit -->
+                    <input type="radio" name="target" value="none" hidden />
+                    <input type="radio" name="target" value="project" checked hidden />
+                    <input type="radio" name="target" value="workspace" hidden />
+                  </div>
+
+                  <!-- One cell, two panes: whichever the switch selects. -->
+                  <div class="target-panes">
+
+                <!-- Project (target = project) -->
+                <div class="field field-compact target-pane" id="target-project-pane">
+                  <label for="projectSelect">Project</label>
+                  <div class="select-wrap">
+                    <select id="projectSelect" name="projectSelect">
+                      <option value="" disabled selected>No projects yet</option>
+                      <option value="__add__">+ Add project&hellip;</option>
+                    </select>
+                  </div>
+                  <!-- Removing a project is a rare, destructive action: it lives in the
+                       Projects view (with the app's own confirm), exactly as removing a
+                       workspace lives in the Workspaces view. -->
+                  <small class="hint" id="projectHint">Runs happen inside this folder. <a href="#projects" data-nav="projects">Manage projects</a></small>
+
+                  <div id="add-project" class="add-project hidden">
+                    <input id="newProjectName" type="text" placeholder="Project name" spellcheck="false" />
+                    <div class="path-row">
+                      <input id="newProjectPath" type="text" placeholder="/absolute/path/to/project" spellcheck="false" />
+                      <button type="button" id="newProjectBrowse" class="btn btn-sm" title="Pick the project folder">Browse&hellip;</button>
+                      <button type="button" id="newProjectBrowseMany" class="btn btn-sm" title="Tick several folders in Worca's folder browser and add them together">Several folders&hellip;</button>
+                    </div>
+                    <div class="add-project-actions">
+                      <button type="button" id="addProjectCancel" class="btn btn-sm">Cancel</button>
+                      <button type="button" id="addProjectSave" class="btn btn-primary btn-sm">Save</button>
+                    </div>
+                    <small class="hint" id="addProjectMsg"></small>
+                  </div>
+                </div>
+
+                <!-- Workspace (target = workspace) -->
+                <div class="field field-compact target-pane hidden" id="target-workspace-pane">
+                  <label for="workspaceSelect">Workspace</label>
+                  <div class="select-wrap">
+                    <select id="workspaceSelect" name="workspaceSelect">
+                      <option value="" disabled selected>No workspaces yet</option>
+                    </select>
+                  </div>
+                  <div class="ws-members" id="ws-members"></div>
+                  <!-- ONE hint line, matching the project pane: a second line made
+                       the row taller than its project counterpart, so flipping the
+                       target relaid out everything below it. -->
+                  <small class="hint">A run fans out across the member projects. <a href="#workspaces" data-nav="workspaces">Manage workspaces</a></small>
+                </div>
+
+                <div class="field field-compact target-pane hidden" id="target-none-pane"><label for="noProjectWorkDir">Works in</label><input id="noProjectWorkDir" class="input" type="text" readonly></div>
+
+                  </div><!-- /.target-panes -->
+                </div><!-- /.split-row -->
+
+                <!-- Title: names the run, so it sits with the task, not behind Advanced. -->
+                <div class="field field-compact">
+                  <label for="title">Title <span class="opt">(optional)</span><span class="sn-chip-slot" id="titleSnChip"></span></label>
+                  <div class="sn-adorn">
+                    <input id="title" name="title" class="input" type="text" placeholder="Short name for this run" spellcheck="false" />
+                    <span class="sn-actions" data-flag="smartRunNaming">
+                      <button type="button" class="sn-btn" id="titleSnRetry" aria-label="Suggest again" title="Suggest again"></button>
+                      <button type="button" class="sn-btn" id="titleSnClear" aria-label="Clear suggestion" title="Clear suggestion"></button>
+                    </span>
+                  </div>
+                  <small class="hint" id="titleHint">Leave empty and Worca will propose one.</small>
+                </div>
+                <!-- Run tags (#718): who the work is for, so its cost can be allocated. Chips from tag-input.mjs. -->
+                <div class="field field-compact run-tags-field">
+                  <label>Cost tags <span class="opt">(optional)</span></label>
+                  <div id="runTagDimsField" hidden></div>
+                  <small class="hint tag-dims-warn" id="runTagDimsWarn" aria-live="polite" hidden></small>
+                  <div id="runTagsField"></div>
+                  <small class="hint">Used to allocate cost. <button type="button" class="link-btn" id="runTagsSaveDefault">Save as default</button></small>
+                </div>
+
+                <!-- Workflow picker (Default + saved) and the engine that runs it, on one row: the
+                     workflow takes 60%, the engine 40%. app.js populates the workflows from GET
+                     /api/workflows. Choosing a workflow is a run decision, so it stays here; tuning its
+                     agents is not, and lives in Advanced. Own line ABOVE the task source: the workflow
+                     frames what the run does, the source only says how the task arrives. -->
+                <div class="wf-engine-row">
+                  <div class="field field-compact">
+                    <label for="workflowSelect">Workflow</label>
+                    <div class="select-wrap">
+                      <select id="workflowSelect" class="select" aria-label="Workflow">
+                        <option value="wf_default">Default</option>
+                      </select>
+                    </div>
+                    <small class="hint" id="needsRepoNote" hidden>Some steps expect a code repository.</small>
+                  </div>
+
+                  <!-- Engine (harness bridge §10.4): who runs the pipeline's agent nodes. Claude is
+                       the default and adds nothing to the run body; on Codex the run's titles, classifier,
+                       overview and PR description run on Codex too. Per run, never remembered. Advanced and up;
+                       Simple still shows it while the run is on another engine (a default, an Ask handoff). -->
+                  <div class="field field-compact" id="engine-row" data-min-level="advanced">
+                    <label for="engineSelect">Engine</label>
+                    <div class="select-wrap">
+                      <select id="engineSelect" class="select" aria-label="Engine">
+                        <option value="claude" selected>Claude</option>
+                        <option value="codex">Codex</option>
+                        <option value="copilot">Copilot</option>
+                        <option value="cursor">Cursor</option>
+                        <option value="gemini">Gemini CLI</option>
+                        <option value="goose">Goose</option>
+                        <option value="opencode">OpenCode</option>
+                        <option value="qwen">Qwen Code</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <!-- The engine's hints span the row: a 40% cell would wrap them into a tall column. -->
+                  <div class="wf-engine-hints">
+                    <small class="hint" id="engine-hint" hidden>Codex runs this pipeline, including titles and summaries. Its models: Models › Codex</small>
+                    <small class="hint" id="engine-default-hint" hidden></small>
+                    <small class="hint warn" id="engine-mcpjson-hint" hidden></small>
+                  </div>
+                  <!-- Session groups (Task 62): how each session of the chosen workflow runs on this engine, one line per
+                       session (app.js#paintSessionNotes). Advanced and up, beside the Engine dropdown it depends on. -->
+                  <div class="rs-session-notes" id="engine-session-notes" data-min-level="advanced" hidden></div>
+                </div>
+
+                <!-- Memory defragment only (agent memory §7.3 / B11): the scope the run restructures. -->
+                <div class="field field-compact" id="memory-scope-row" data-min-level="expert" hidden>
+                  <label>Memory scope</label>
+                  <div class="seg" id="memory-scope-seg" role="group" aria-label="Memory scope">
+                    <button type="button" data-scope="global" class="on" aria-pressed="true">Global</button>
+                    <button type="button" data-scope="project" aria-pressed="false">Project</button>
+                  </div>
+                  <small class="hint">Global: the rules every project shares. Project: this project's memory. The run restructures that scope and nothing else. The task text is optional, and it runs with the Normal guardrails unless you pick another set.</small>
+                </div>
+
+                <!-- Task source switch; the panes below span the full width. -->
+                <div class="field field-compact" id="source-field" data-min-level="advanced">
+                  <label>Task source</label>
+                  <div class="seg" id="source-seg">
+                    <button type="button" data-src="prompt" class="on" aria-pressed="true">Prompt</button>
+                    <button type="button" data-src="markdown" aria-pressed="false">Markdown</button>
+                  </div>
+                  <!-- hidden radios kept as the source of truth read at submit -->
+                  <input type="radio" name="source" value="prompt" checked hidden />
+                  <input type="radio" name="source" value="markdown" hidden />
+                </div>
+
+                <div class="field">
+                  <div id="prompt-pane" class="source-pane">
+                    <textarea id="prompt" name="prompt" class="textarea" rows="6" style="margin-top:11px" placeholder="Describe the software task to build&hellip;"></textarea>
+                  </div>
+
+                  <div id="markdown-pane" class="source-pane hidden">
+                    <textarea id="promptMarkdown" name="promptMarkdown" class="textarea" rows="6" style="margin-top:11px" placeholder="Paste a markdown spec, or load a .md file below&hellip;"></textarea>
+                    <div class="file" style="margin-top:11px">
+                      <button type="button" class="btn btn-sm pick" data-pick="md">Load .md file</button>
+                      <span id="mdFileName" class="state hint"></span>
+                      <input id="mdFile" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden />
+                    </div>
+                    <p class="shape-chat-link" id="shapeChatLink" data-min-level="advanced">Not sure what to build yet? <button type="button" class="link-btn" id="shapeChatLinkBtn">Try Shaper</button></p>
+                  </div>
+                  <div id="plugin-source-pane" class="source-pane hidden"></div>
+                  <!-- #687: a started run takes its task with it; this puts it back (app.js#clearTask). -->
+                  <p id="reuse-task" class="reuse-task" hidden><button type="button" class="link-btn" id="reuse-task-btn">Reuse last task</button></p>
+                </div>
+
+                <!-- Config-load failure hint; app.js#setConfigError paints/clears it.
+                     Lives in the main column: it reports that the model catalog and
+                     saved agent config could not be read, and Advanced never opens
+                     itself, so inside it the message would go unseen. -->
+                <div id="config-error" class="hint" style="margin:-6px 0 14px;color:var(--red-ink)" hidden></div>
+
+                <!-- Extra files belong WITH the task: they are more of the same
+                     input, just as files. Selected files render as removable
+                     pills below the picker (app.js#renderExtrasPills). -->
+                <div class="field field-compact">
+                  <label>Extra files <span class="opt">(optional)</span></label>
+                  <div class="file">
+                    <button type="button" class="btn btn-sm pick" data-pick="extras">Choose files</button>
+                    <span class="state" id="extrasNote">Leave empty and the run gets no extra files.</span>
+                    <input id="extras" type="file" multiple hidden />
+                  </div>
+                  <div id="extrasPills" class="extras-pills" hidden></div>
+                </div>
+
+                <!-- Branches (design v3): one table for a project or a workspace — a project
+                     run is the same table with one row. One choice (where the code comes from),
+                     then each row says in words what the run will get. -->
+                <div class="field field-compact branches" id="branch-fields" data-min-level="advanced" data-needs-git>
+                  <div class="branches-head">
+                    <span class="branches-title" id="branches-title">Branches</span>
+                    <span class="branches-ctx" id="branches-ctx"></span>
+                    <span class="branches-mode" id="branches-mode-wrap" hidden>
+                      <span class="branches-mode-label" id="branches-mode-label">Use branches from</span>
+                      <span class="seg seg-sm" id="branches-mode" role="group" aria-labelledby="branches-mode-label">
+                        <button type="button" data-mode="origin" aria-pressed="true" class="on" id="branches-mode-origin">Origin · latest</button>
+                        <button type="button" data-mode="local" aria-pressed="false" id="branches-mode-local">Local copy</button>
+                      </span>
+                    </span>
+                  </div>
+                  <div class="branch-table" id="branch-table" role="table" aria-labelledby="branches-title">
+                    <div class="bt-head" role="row">
+                      <span role="columnheader">Project</span><span role="columnheader">Start from</span><span role="columnheader">What the run gets</span>
+                    </div>
+                    <!-- Project mode: the one row. Workspace mode hides it and fills #ws-source-branches. -->
+                    <div class="bt-row" id="bt-project-row" role="row">
+                      <span class="bt-name" id="bt-project-name" role="cell"></span>
+                      <div class="select-wrap" id="sourceBranchWrap" role="cell">
+                        <select id="sourceBranch" class="select" aria-labelledby="bt-project-name"></select>
+                      </div>
+                      <div class="bt-outcome" id="bt-project-outcome" role="cell"></div>
+                    </div>
+                    <div class="ws-source-branches hidden" id="ws-source-branches" role="rowgroup"></div>
+                  </div>
+                  <div class="switch-row ws-src-prev hidden" id="ws-source-previous-row">
+                    <div class="switch" id="ws-source-previous" role="switch" tabindex="0" aria-checked="false" aria-label="Branch off the run before it"></div>
+                    <span class="txt">Branch off the run before it</span>
+                  </div>
+                  <div class="branches-new">
+                    <label for="featureBranch">New branch <span class="opt">(optional)</span><span class="sn-chip-slot" id="branchSnChip"></span></label>
+                    <div class="sn-branch-row">
+                      <span class="select-wrap sn-type" id="branchTypeWrap" data-flag="smartRunNaming" hidden>
+                        <select id="branchType" class="select" aria-label="Branch type"></select>
+                      </span>
+                      <div class="sn-adorn">
+                        <input id="featureBranch" class="input" type="text" placeholder="e.g. feat/rate-limiter" spellcheck="false" />
+                        <span class="sn-actions" data-flag="smartRunNaming">
+                          <button type="button" class="sn-btn" id="branchSnRetry" aria-label="Suggest again" title="Suggest again"></button>
+                          <button type="button" class="sn-btn" id="branchSnClear" aria-label="Clear suggestion" title="Clear suggestion"></button>
+                        </span>
+                      </div>
+                    </div>
+                    <small class="hint" id="featureBranchHint">Leave empty and Worca will propose one.</small>
+                    <label class="switch-row same-src-row">
+                      <input id="sameAsSource" class="sw-input" type="checkbox" role="switch" aria-describedby="sameAsSourceHint">
+                      <span class="switch"></span><span class="txt">Run on the source branch</span>
+                    </label>
+                    <small class="hint" id="sameAsSourceHint" hidden>The run's commits land on the source branch when it finishes (fast-forward only). No new branch is kept.</small>
+                  </div>
+                  <small class="hint err" id="branches-blocked" hidden></small>
+                </div>
+
+                <!-- Advanced: how the run is executed, as opposed to what it runs.
+                     A workflow ships tuned, so its per-agent knobs belong here with
+                     guardrails and mock mode; the workflow PICKER stays above.
+                     Collapsed unless something inside is already non-default. -->
+                <details class="advanced" id="advanced-config" data-min-level="advanced">
+                  <summary>
+                    <span class="adv-chev" aria-hidden="true"></span>
+                    <span>Advanced</span>
+                  </summary>
+                  <div class="advanced-body">
+
+                <div id="pipeline-config">
+
+                  <!-- Agents accordion: one collapsed row per node, showing its
+                       EFFECTIVE model/effort. app.js#renderAgentRows fills it. The
+                       header names the workflow these agents come from — the picker
+                       is no longer beside them. -->
+                  <div class="agents-cfg" id="agents-config">
+                    <div class="agents-head">
+                      <span class="agents-title">Agents</span>
+                      <span class="agents-wf" id="agentsWorkflow"></span>
+                      <span class="agents-summary" id="agentsSummary">all defaults</span>
+                      <span class="agents-actions">
+                        <button type="button" id="agentsPromote" class="btn btn-sm" data-min-level="expert" hidden>Save as defaults</button>
+                        <button type="button" id="agentsReset" class="btn btn-sm" hidden>Reset</button>
+                      </span>
+                    </div>
+                    <div id="agents-rows"></div>
+                    <div id="wf-feedback-config" class="agent-row-body-inner" data-min-level="expert" hidden></div>
+                  </div>
+                </div>
+
+                    <!-- Auto only (spec §7.2 / D20): the ONE agent-level option. The .sw-input bridge
+                         (style.css:3370) paints the same switch as #mock-switch from a REAL checkbox — no JS mirror. -->
+                    <label class="switch-row" id="hitl-row" hidden>
+                      <input id="humanInLoop" class="sw-input" type="checkbox" role="switch" checked aria-describedby="hitlHint">
+                      <span class="switch"></span>
+                      <span class="txt">Human in the loop: Auto shows its proposal, clarifies, and agents may ask</span>
+                      <span class="switch-why" id="hitl-why" hidden>Needs a project</span>
+                    </label>
+                    <small class="hint" id="hitlHint">Off: the proposal is accepted as proposed, no clarify card, no agent questions. A loop that runs out of cycles, a recovery prompt, a cost cap or an error still pause the run.</small>
+                    <!-- Open a PR when the run finishes (src/shared/pr-auto.mjs): prefilled from the project or workspace setting;
+                         only a value the person changes is sent (ui/public/pr-auto-view.mjs fills the options). -->
+                    <div class="field field-compact" id="pr-open-row" hidden>
+                      <label for="prOpen">Pull request when done</label>
+                      <div class="select-wrap"><select id="prOpen" class="select" aria-label="Pull request when done"></select></div>
+                      <small class="hint" id="prOpenSource"></small>
+                    </div>
+                    <div class="field field-compact" id="pr-slices-row" hidden>
+                      <label for="prSlices">Shaper features: pull requests</label>
+                      <div class="select-wrap"><select id="prSlices" class="select" aria-label="Shaper features: pull requests"></select></div>
+                      <small class="hint" id="prSlicesSource"></small>
+                      <small class="hint">Used when Shaper plans this run in slices.</small>
+                    </div>
+                    <!-- Away mode per-run mark (src/core/night/*): worca may answer this run's
+                         questions while you are away (Settings › Away mode sets when and how). -->
+                    <label class="switch-row" id="night-row">
+                      <input id="nightMode" class="sw-input" type="checkbox" role="switch">
+                      <span class="switch"></span>
+                      <span class="txt">Mark this run: worca may answer for me</span>
+                    </label>
+                    <small class="hint" id="nightModeHint"></small>
+                    <!-- #943: a run without worca memory (no notes load, none are proposed). -->
+                    <label class="switch-row" id="no-memory-row">
+                      <input id="noMemory" class="sw-input" type="checkbox" role="switch">
+                      <span class="switch"></span>
+                      <span class="txt">Run without memory</span>
+                    </label>
+                    <small class="hint" id="noMemoryHint">No memory notes load and the agents propose none. Use it to compare a run with and without memory.</small>
+
+                    <!-- Guardrails picker (built-ins + named sets; the selection IS the
+                         run's policy, applied uniformly to every member). app.js populates
+                         from GET /api/guardrails. Applies to Project and Workspace targets
+                         alike. Default Permissive = no restrictions (legacy behavior). -->
+                    <div class="field">
+                      <label for="guardrailsSelect">Guardrails</label>
+                      <div class="select-wrap">
+                        <select id="guardrailsSelect" class="select" aria-label="Guardrails">
+                          <option value="permissive">Permissive (default)</option>
+                        </select>
+                      </div>
+                      <small class="hint" id="guardrailsHint">Applies to every agent this run spawns. Permissive = no restrictions.</small>
+                    </div>
+
+                    <!-- Sets (MCP registry §6.2, D16; skills registry §6 board 7): the registry copies and the
+                         set skills this run gets, opted out per membership. app.js#paintMcpRuns fills it from
+                         POST /api/mcp/preview; hidden while the target resolves to no membership. -->
+                    <div class="field" id="mcpRunsField" hidden>
+                      <span class="label" id="mcpRunsHead">Sets</span>
+                      <details class="mcp-runs" id="mcpRuns">
+                        <summary class="select" id="mcpRunsLabel" aria-labelledby="mcpRunsHead mcpRunsLabel"></summary>
+                        <div id="mcpRunsPop"></div>
+                      </details>
+                      <small class="hint">Server names are before any <code>_w</code> rename, which is decided at run start; skills load as <code>&lt;set&gt;:&lt;skill&gt;</code>.</small>
+                    </div>
+
+                  </div>
+                </details>
+
+                <!-- Mock mode sits OUTSIDE Advanced (docs/ui-levels.md): onboarding sends first-time
+                     users to it, and it is the one switch that makes a run free and harmless. -->
+                <div class="switch-row mock-row" id="mock-row" data-min-level="simple">
+                  <div class="switch" id="mock-switch" role="switch" aria-checked="false" tabindex="0"></div>
+                  <span class="txt">Mock mode: try it offline with no Claude calls and no cost</span>
+                </div>
+                <input id="mock" type="checkbox" hidden />
+
+                <!-- Settings the current mode hides but this run still uses (app.js#paintHiddenSettings). -->
+                <div class="level-hidden-note" id="level-hidden-note" hidden>
+                  <span id="level-hidden-text"></span>
+                  <button type="button" class="link-btn" id="level-hidden-show" data-mode-set=""></button>
+                </div>
+
+                <!-- Team policy notes (design board 8): in the main column, never inside Advanced,
+                     and never gated — a team cap applies in every interface mode. -->
+                <div id="policyLine" hidden></div>
+
+                <!-- Actions -->
+                <!-- The engine gate's refusal (409 engine-refused). The checkbox shows only when the
+                     consent lifts it; it is for this attempt only. -->
+                <div id="engineRefusal" hidden>
+                  <div class="hint err" id="engineRefusalText"></div>
+                  <label class="check-row" id="engineAllowRow" hidden>
+                    <input type="checkbox" id="engineAllowUnguarded" />
+                    Allow unguarded: run without the rules this engine cannot enforce
+                  </label>
+                </div>
+                <div class="hint err" id="newBlockedNote" hidden></div>
+                <!-- OpenRouter free requests left today vs what a run here takes (openrouter-free-view.mjs). -->
+                <div class="hint warn" id="newFreeNote" hidden></div>
+                <div class="actions" style="justify-content:flex-end" data-card-actions>
+                  <!-- A time picked BEFORE the task (Schedules › Schedule a run, or Change… here):
+                       it waits on the form and Start run becomes Schedule. -->
+                  <div class="ask-card-sched new-sched" id="new-sched" hidden>
+                    <span class="badge grey" id="new-sched-badge">Scheduled</span>
+                    <span class="ask-card-sched-text" id="new-sched-text"></span>
+                    <button type="button" class="link-btn" id="new-sched-change">Change…</button>
+                    <button type="button" class="link-btn" id="new-sched-clear" title="Drop the time and start the run right away">Start now instead</button>
+                  </div>
+                  <!-- Split button: Start run stays the primary action; the caret opens the
+                       other way to start — Schedule… (once, later, or on a repeat). -->
+                  <div class="btn-split" id="start-split">
+                    <button type="submit" id="start-btn" class="btn btn-lg btn-primary">
+                      <svg id="start-btn-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4Z"></path></svg>
+                      <svg id="start-btn-clock" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7.5V12l3 2"></path></svg>
+                      <span id="start-btn-label">Start run</span>
+                    </button>
+                    <button type="button" id="start-more" class="btn btn-lg btn-primary btn-icon btn-split-more" data-min-level="advanced" aria-haspopup="menu" aria-expanded="false" aria-controls="start-menu" title="More ways to start" aria-label="More ways to start">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+                    </button>
+                    <div class="menu btn-split-menu" id="start-menu" role="menu" hidden>
+                      <button type="button" class="menu-item" role="menuitem" id="start-menu-now"><b>Start run now</b><small>Begins immediately</small></button>
+                      <button type="button" class="menu-item" role="menuitem" id="start-menu-schedule"><b>Schedule…</b><small>Run once later, or on a repeat</small></button>
+                    </div>
+                  </div>
+                </div>
+                <p id="form-msg" class="form-msg" aria-live="polite"></p>
+              </form>
+            </section>
+          </div>
+        </section>
+        <!-- /view new -->
+

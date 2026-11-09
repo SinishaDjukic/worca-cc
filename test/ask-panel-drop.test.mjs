@@ -48,8 +48,7 @@ test('ask-panel-drop: a file drop on the sheet attaches chips through the "+" va
       fire(ctx, sheetOf(ctx), 'dragenter', data);
       fire(ctx, sheetOf(ctx), 'drop', data);
       await ctx.tick(); await ctx.tick();
-      assert.equal(ctx.doc.querySelector('.ask-chip'), null);
-      assert.match(ctx.doc.querySelector('.ask-composer-msg').textContent, /attachment type not allowed: evil\.exe/);
+      assert.equal(ctx.doc.querySelectorAll('.ask-chip').length, 1, 'any file type is accepted');
     } },
   ]);
 });
@@ -80,15 +79,14 @@ test('ask-panel-drop: pasted files attach (default cancelled); generic image.png
       assert.notEqual(names[0], names[1]);
       for (const n of names) assert.match(n, /^pasted-.+\.png$/);
     } },
-    { name: 'ask-panel-drop: a nameless pasted file of an unknown binary type is rejected, not attached as text', run: async () => {
+    { name: 'ask-panel-drop: a nameless pasted file of an unknown binary type is accepted as a generic file', run: async () => {
       const ctx = makePanel();
       ctx.panel.open();
       const input = ctx.doc.querySelector('textarea.ask-input');
       const tiff = mkFile(ctx, '', new Uint8Array([0x49, 0x49, 0x2a, 0x00]), 'image/tiff');
       paste(ctx, input, { types: ['Files'], files: [tiff], getData: () => '' });
       await ctx.tick(); await ctx.tick();
-      assert.equal(ctx.doc.querySelector('.ask-chip'), null);
-      assert.match(ctx.doc.querySelector('.ask-composer-msg').textContent, /attachment type not allowed: pasted-\d+$/);
+      assert.match(ctx.doc.querySelector('.ask-chip-name').textContent, /^pasted-\d+$/);
     } },
     { name: 'ask-panel-drop: a nameless pasted text/* file still attaches as .txt', run: async () => {
       const ctx = makePanel();

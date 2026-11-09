@@ -8,6 +8,7 @@ const BODY = {
   allowUnguardedEngine: true, pastTeamCap: true, scheduledFor: '2030-01-01T00:00:00Z',
   workflowId: 'wf_default', engine: 'codex', guardrailsId: 'normal', mcpOptOut: ['s|srv'], mock: true, nightMode: true,
   humanInLoop: false, sourceBranch: 'main', sameAsSource: true, syncBeforeStart: true, overlay: { nodes: { n_plan: { model: 'm' } } },
+  pr: { open: 'draft', slices: 'one' },
 };
 
 test('setupFromBody keeps only the whitelist and never the task', () => {
@@ -16,6 +17,15 @@ test('setupFromBody keeps only the whitelist and never the task', () => {
     assert.equal(Object.hasOwn(s, k), false, k);
   }
   assert.deepEqual(Object.keys(s).sort(), PRESET_SETUP_KEYS.filter((k) => k in BODY).sort());
+});
+
+test('pr is a setup key and round-trips through a preset start; a schedule keeps it when the start set it', () => {
+  assert.ok(PRESET_SETUP_KEYS.includes('pr'));
+  const setup = setupFromBody(BODY, { scope: 'project' });
+  assert.deepEqual(setup.pr, { open: 'draft', slices: 'one' });
+  assert.notEqual(setup.pr, BODY.pr, 'a copy');
+  assert.deepEqual(presetRunBody({ id: 'p1', setup }, { prompt: 'x' }).pr, { open: 'draft', slices: 'one' });
+  assert.deepEqual(bodyFollowingPreset({ prompt: 'x', pr: { open: 'ready' } }, { id: 'p1', setup, scope: { kind: 'project' } }, { keep: ['pr'] }).pr, { open: 'ready' });
 });
 
 test('a global setup drops branch names but keeps the source-branch switch', () => {

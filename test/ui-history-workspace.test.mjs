@@ -5,16 +5,15 @@
 // badge they carried, are gone: D4.)
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 // Mix of a normal project row and two workspace rows (same workspace key).
@@ -31,7 +30,7 @@ const WKS_KEY = 'workspaces/wks-iot-9f3a1c20';
 const PIPELINE_DETAIL = { state: { id: 'w2', status: 'done', stepper: null, steps: [], totalCostUsd: 0, totalActiveMs: 0, phase: 'done' }, auditMarkdown: '# audit' };
 
 async function boot({ local, fetchHandler } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   const reqs = []; // every requested URL (+ method), for action-routing assertions
   window.Element.prototype.scrollIntoView = function () {};

@@ -156,13 +156,14 @@ test('approve/deny/revoke/list are refused for an extension caller, a cross-orig
   const r = await call('POST', '/api/extension/pair', { origin: CHROME, body: { browser: 'chrome' } });
   assert.equal((await call('POST', `/api/extension/pair/${r.body.requestId}/approve`, { origin: CHROME })).status, 403);
   assert.equal((await call('POST', `/api/extension/pair/${r.body.requestId}/approve`, { origin: 'http://localhost:9999' })).status, 403);
+  assert.equal((await call('POST', `/api/extension/pair/${r.body.requestId}/maybe`)).status, 404);   // only approve and deny are routes
   assert.equal((await call('GET', '/api/extension/pairings', { origin: CHROME })).status, 403);
   process.env.WORCA_AGENT_USER = 'worca-agent';
   process.env.WORCA_AGENT_HOME = join(process.env.WORCA_HOME, 'agent-home');
   try {
     const a = await call('POST', `/api/extension/pair/${r.body.requestId}/approve`);
     assert.equal(a.status, 403);
-    assert.equal(a.body.code, 'extension-agent-blocked');
+    assert.equal(a.body.code, 'AGENT_CALLER_BLOCKED');
   } finally { delete process.env.WORCA_AGENT_USER; delete process.env.WORCA_AGENT_HOME; }
 });
 

@@ -119,21 +119,52 @@ test(`[${engine.id}] honorByKey is UNIFORM from the run set: honorProjectSetting
     'every member maps to the set value — there is no per-member saved preference');
 });
 
-test(`[${engine.id}] OMITTED guardrailsId and explicit "permissive" both spawn with NO guardrail fields (legacy parity)`, async () => {
-  for (const extra of [{}, { guardrailsId: 'permissive' }]) {
+test(`[${engine.id}] explicit "permissive" spawns with NO guardrail fields (legacy parity)`, async () => {
+  const dir = gitDir();
+  const orch = engine.create({
+    projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
+    guardrailsId: 'permissive',
+  });
+  const seen = spyClaudeOpts(orch, engine);
+  assert.equal((await orch.run()).status, 'done');
+  assert.ok(seen.length >= 3, 'several nodes ran');
+  for (const { key, claudeOpts: c } of seen) {
+    assert.equal(c.permissionRules, undefined, `${key}: no rules`);
+    assert.equal(c.envScrub, undefined, `${key}: no scrub`);
+    assert.equal(c.envAllowlist, undefined, `${key}: no allowlist`);
+  }
+});
+
+test(`[${engine.id}] OMITTED guardrailsId on a fresh install runs Normal (G13): every role still finishes`, async () => {
+  const dir = gitDir();
+  const orch = engine.create({
+    projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
+  });
+  const seen = spyClaudeOpts(orch, engine);
+  assert.equal((await orch.run()).status, 'done', 'the pipeline roles work under Normal');
+  assert.equal(orch.guardrailsId, 'normal');
+  assert.ok(seen.length >= 3, 'several nodes ran');
+  for (const { key, claudeOpts: c } of seen) {
+    assert.ok(c.permissionRules?.deny?.includes('Bash(git push:*)'), `${key}: Normal deny applied`);
+    assert.ok(c.permissionRules?.deny?.includes('Read(.env*)'), `${key}: Normal protected path applied`);
+    assert.equal(c.envScrub, undefined, `${key}: Normal does not scrub`);
+  }
+});
+
+test(`[${engine.id}] OMITTED guardrailsId on an upgraded install keeps Permissive (the recorded default)`, async () => {
+  const { prepare, tx } = await import('../src/core/db.mjs');
+  tx(() => { prepare('INSERT OR REPLACE INTO store_meta (key, kind, data) VALUES (?, ?, ?)').run('guardrails:default', 'setting', '"permissive"'); });
+  try {
     const dir = gitDir();
     const orch = engine.create({
       projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
-      ...extra,
     });
     const seen = spyClaudeOpts(orch, engine);
     assert.equal((await orch.run()).status, 'done');
-    assert.ok(seen.length >= 3, 'several nodes ran');
-    for (const { key, claudeOpts: c } of seen) {
-      assert.equal(c.permissionRules, undefined, `${key}: no rules (${JSON.stringify(extra)})`);
-      assert.equal(c.envScrub, undefined, `${key}: no scrub`);
-      assert.equal(c.envAllowlist, undefined, `${key}: no allowlist`);
-    }
+    assert.equal(orch.guardrailsId, 'permissive');
+    for (const { key, claudeOpts: c } of seen) assert.equal(c.permissionRules, undefined, `${key}: no rules`);
+  } finally {
+    tx(() => { prepare('DELETE FROM store_meta WHERE key = ?').run('guardrails:default'); });
   }
 });
 
@@ -158,7 +189,7 @@ test(`[${engine.id}] a LEGACY per-project guardrails blob in project_config is I
   const { projectKey } = await import('../src/core/store.mjs');
   const dir = gitDir();
   // Seed the old per-project blob directly (Secure level in the removed model).
-  // The per-run model never reads it — a default run stays Permissive.
+  // The per-run model never reads it — a Permissive run stays Permissive.
   getDb().prepare(`
     INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
     VALUES (?, '{}', '[]', NULL, ?)
@@ -166,12 +197,13 @@ test(`[${engine.id}] a LEGACY per-project guardrails blob in project_config is I
   `).run(projectKey(dir), JSON.stringify({ guardrails: { level: 'secure' } }));
   const orch = engine.create({
     projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
+    guardrailsId: 'permissive',
   });
   const seen = spyClaudeOpts(orch, engine);
   assert.equal((await orch.run()).status, 'done');
   assert.ok(seen.length >= 3, 'several nodes ran');
   for (const { key, claudeOpts: c } of seen) {
-    assert.equal(c.permissionRules, undefined, `${key}: legacy project blob ignored — the default run is Permissive`);
+    assert.equal(c.permissionRules, undefined, `${key}: legacy project blob ignored — the run is Permissive`);
     assert.equal(c.envScrub, undefined, `${key}: no scrub from the legacy blob`);
   }
 });
@@ -314,7 +346,48 @@ test(`[${engine.id}] a set deleted while paused: RESUME warns and proceeds Permi
   }
 });
 
-test(`[${engine.id}] guardrailsId surfaces on every persistence read: column, History list entry, detail state; default runs record "permissive"`, async () => {
+test(`[${engine.id}] a LEGACY resume point with no guardrailsId resumes Permissive, never the new default`, async () => {
+  const dir = gitDir();
+  let hangOnce = true;
+  let orchRef = null;
+  const mkRunners = (captured) => ({
+    producer: async (ctx) => {
+      captured.push({ nodeId: ctx.nodeId, claudeOpts: ctx.claudeOpts || {} });
+      if (hangOnce) {
+        hangOnce = false;
+        queueMicrotask(() => orchRef.pause());
+        return new Promise((_r, rej) => {
+          const onAbort = () => { const e = new Error('aborted'); e.name = 'AbortError'; rej(e); };
+          if (ctx.signal.aborted) onAbort(); else ctx.signal.addEventListener('abort', onAbort, { once: true });
+        });
+      }
+      return { status: 'ok', summary: 'ok' };
+    },
+    verifier: async (ctx) => {
+      captured.push({ nodeId: ctx.nodeId, claudeOpts: ctx.claudeOpts || {} });
+      return { status: 'ok', issues: [], review: { issues: [] }, summary: '' };
+    },
+  });
+  const orch1 = engine.create({
+    projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true }, runners: mkRunners([]),
+    guardrailsId: 'permissive',
+  });
+  orchRef = orch1;
+  assert.equal((await orch1.run()).status, 'paused');
+  const saved = readPipelineForResume(orch1.state.id);
+  delete saved.resumePoint.guardrailsId;          // written before the per-run picker existed
+  const run2 = [];
+  const orch2 = engine.create({
+    projectDir: dir, auto: true, claude: { mock: true }, runners: mkRunners(run2), resume: saved,
+  });
+  orchRef = orch2;
+  assert.equal((await orch2.resume()).status, 'done');
+  assert.equal(orch2.guardrailsId, 'permissive');
+  assert.ok(run2.length >= 1, 'nodes ran after resume');
+  for (const { claudeOpts: c } of run2) assert.equal(c.permissionRules, undefined, 'the run keeps the policy it started on');
+});
+
+test(`[${engine.id}] guardrailsId surfaces on every persistence read: column, History list entry, detail state; default runs record the concrete default`, async () => {
   const { listAllPipelines, readPipelineByKey } = await import('../src/core/artifacts.mjs');
   const { projectKey } = await import('../src/core/store.mjs');
   const dir = gitDir();
@@ -334,12 +407,12 @@ test(`[${engine.id}] guardrailsId surfaces on every persistence read: column, Hi
   const detail = await readPipelineByKey(projectKey(dir), orch.state.id);
   assert.equal(detail.state.guardrailsId, set.id, 'detail state (rowToState) exposes it');
 
-  // A run with NO selection records the concrete default — an honest
-  // "this run ran unguarded (Permissive)" record, not NULL.
+  // A run with NO selection records the concrete default (Normal on a fresh
+  // install) — an honest record of what the run enforced, not NULL.
   const orch2 = engine.create({
     projectDir: dir, prompt: 'y', auto: true, claude: { mock: true }, branch: { source: 'main' },
   });
   assert.equal((await orch2.run()).status, 'done');
-  assert.equal(readPipelineForResume(orch2.state.id).row.guardrails_id, 'permissive');
+  assert.equal(readPipelineForResume(orch2.state.id).row.guardrails_id, 'normal');
 });
 }

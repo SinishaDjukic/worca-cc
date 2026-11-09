@@ -47,6 +47,18 @@ test('chatStatus never carries the NT hash, in any encoding', () => {
   assert.equal('restart' in v, false, 'changes apply live: no restart field');
 });
 
+test('status: a proxy started for the login in HTTPS_PROXY reports its state, not off', () => {
+  const auto = { ...running('proxy.acme.test:8080'), autoStarted: true };
+  // The status names the HTTPS_PROXY upstream the auto-started proxy uses, never one left in settings.json.
+  const st = createProxyHost({ egress: () => ({ ...running('proxy.env.test:8080'), autoStarted: true }),
+    io: { env: () => ({ HTTPS_PROXY: 'http://jdoe:pw@proxy.env.test:8080' }), settings: () => ({ upstream: 'http://stale.acme.test:3128' }),
+      enabled: () => false, readLogin: () => null } }).status();
+  assert.equal(st.state, 'ready');
+  assert.equal(st.upstream, 'proxy.env.test:8080');
+  assert.equal(host({ egress: { ...auto, connector: null } }).h.status().state, 'off', 'turned off later: off again');
+  assert.equal(host({ egress: running('proxy.acme.test:8080') }).h.status().state, 'off', 'enabled unset and not auto-started: off');
+});
+
 test('chatStatus: enabled follows networkProxy.enabled', async () => {
   const { h } = host();
   assert.equal(h.chatStatus().enabled, false);

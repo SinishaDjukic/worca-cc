@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { buildQuoteChip, buildRow, buildComposer, buildNewChatButton, buildFileChip, buildDropOverlay, SEND_ICON_PATH, NEW_CHAT_ICON_PATH, ICON } from '../extension/src/sidebar/sidebar-view.mjs';
-import { ATTACH_ACCEPT } from '../ui/public/attach-files.mjs';
 import { formatQuotedMessage } from '../ui/public/pinpoint-model.mjs';
 
 const TID = 'askt_00000001';
@@ -103,8 +102,8 @@ test('the composer row keeps Ask\'s order and controls, minus voice and Sets, pl
   const row = mine.el.querySelector('.ask-composer-row');
   assert.deepEqual([...row.children].filter((c) => !c.matches('[data-wx-capture-btn]')).map(key), ref);
   assert.equal(row.querySelector('[data-wx-capture-btn]').previousElementSibling, row.querySelector('[data-ask-attach-btn]'), 'capture sits right after +');
-  assert.equal(mine.file.accept, ATTACH_ACCEPT);
-  assert.equal(mine.file.accept, h.doc.querySelector('.ask-composer-row input[type=file]').accept);
+  assert.equal(mine.file.hasAttribute('accept'), false);
+  assert.equal(h.doc.querySelector('.ask-composer-row input[type=file]').hasAttribute('accept'), false);
   // The ring, the model button and the stop glyph match Ask's markup.
   const attrs = (n) => [...n.attributes].map((a) => `${a.name}=${a.value}`).sort();
   for (const sel of ['.ask-ctx-ring svg', '.ask-ctx-ring-track', '.ask-ctx-ring-arc', '.ask-stop svg', '.ask-stop rect', '.ask-send svg', '.ask-model-btn svg']) {
@@ -127,4 +126,13 @@ test('the file chip and the drop overlay have Ask\'s skeleton', async () => {
   assert.ok(refDrop, 'the Ask panel rendered its drop overlay');
   assert.deepEqual(skeleton(buildDropOverlay(h.doc)), skeleton(refDrop));
   assert.equal(buildDropOverlay(h.doc).textContent, refDrop.textContent);
+});
+
+test('#943: an engine switch\'s row shows its "Switched from … to …" line, then the note', async () => {
+  const h = await loaded();
+  const row = { id: 'askm_s0000001', threadId: TID, seq: 4, role: 'system', text: 'Switched from Codex to Claude', blocks: [
+    { kind: 'divider', text: 'Switched from Codex to Claude', engineSwitch: { from: 'codex', to: 'claude', model: 'claude-opus-5-5', effort: 'high', droppedTurns: 0 } },
+    { kind: 'notice', text: 'Claude starts a fresh session with this chat\'s transcript as its context.' }], createdAt: 't' };
+  const lines = [...buildRow(h.doc, row, opts(row)).el.querySelectorAll('.ask-notice')].map((n) => n.textContent);
+  assert.deepEqual(lines, ['Switched from Codex to Claude', 'Claude starts a fresh session with this chat\'s transcript as its context.']);
 });

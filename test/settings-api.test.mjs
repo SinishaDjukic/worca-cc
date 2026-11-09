@@ -301,12 +301,14 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       requirementsInterview: null,
       agentGenModel: null,
       namingModel: null,
+      secondOpinionModel: null,
       commandSummaryModel: null,
       workspaceScan: null,
       schedule: {},
       nightMode: {}, nightModeToggle: 'auto',
       sync: null,
       networkWait: null,
+      runLimits: null,
       actions: {},
       runEngine: null, stepModels: {}, utilityModels: {},   // cascading settings (Plan 2a): null / {} change nothing
       modelRoles: {},                                        // Models › Roles: {} changes nothing

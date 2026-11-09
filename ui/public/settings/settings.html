@@ -1,0 +1,968 @@
+        <!-- ===== VIEW: SETTINGS (tabbed) =====
+             Guardrails used to be a top-level view; it is a pane here now (the
+             Add-ons pages below went the other way). A pane deliberately carries NEITHER class="view" nor
+             the routing attribute: showView()'s views.forEach() would force
+             .hidden back on it at every navigation. The tab rides in the hash
+             param (#settings/<tab>, #settings/guardrails/<id>) — parseHash splits
+             on the FIRST '/' only, so the view stays 'settings'.
+             NOTE: the routed-view census (test/ui-boot.test.mjs) counts DOM
+             elements, not the literal routing attribute name in this source. -->
+        <section class="view hidden" data-view="settings">
+          <div class="tabs settings-tabs" id="settings-tabs" role="group" aria-label="Settings section">
+            <!-- Ordered by mode (Simple, Advanced, Expert) so each mode sees a gap-free prefix of the
+                 strip. Plugins, Sets, Models and Providers left for the Add-ons pages. -->
+            <button type="button" class="tab on" data-tab="general" data-min-level="simple" aria-pressed="true">General</button>
+            <button type="button" class="tab" data-tab="tags" data-min-level="simple" aria-pressed="false">Labels &amp; cost tags</button>
+            <button type="button" class="tab" data-tab="presets" data-min-level="advanced" aria-pressed="false">Presets</button>
+            <button type="button" class="tab" data-tab="runs" data-min-level="simple" aria-pressed="false">Runs</button>
+            <button type="button" class="tab" data-tab="automations" data-min-level="advanced" data-flag="gitAutomations" data-flag-chip aria-pressed="false">Automations</button>
+            <!-- Labs (docs/feature-flags.md) shows at every level: flags are not levels. -->
+            <button type="button" class="tab" data-tab="experimental" data-min-level="simple" aria-pressed="false">Labs</button>
+            <button type="button" class="tab" data-tab="ask" data-min-level="advanced" aria-pressed="false">Chat</button>
+            <button type="button" class="tab" data-tab="guardrails" data-min-level="advanced" aria-pressed="false">Guardrails</button>
+            <button type="button" class="tab" data-tab="memory" data-min-level="advanced" aria-pressed="false">Memory</button>
+          </div>
+          <p id="settingsLoadMsg" class="form-msg err settings-load-msg" role="alert" hidden></p>
+
+          <section class="settings-pane" data-tab="general">
+            <div class="topbar">
+              <div>
+                <div class="sub">Machine-wide Worca CC preferences</div>
+              </div>
+            </div>
+
+            <!-- Setup assistant: Run setup reopens the seven-step dialog with the saved values
+                 (ui/public/setup-assistant.mjs). No info-tip and no static .hint (the row explains itself). -->
+            <section class="card settings-card" id="setup-assistant-card" data-min-level="simple">
+              <div class="label-row"><h2>Setup assistant</h2></div>
+              <div class="gs-settings-row">
+                <p class="gs-settings-text">Configure your Worca installation.</p>
+                <button type="button" id="setupRunAgain" class="btn btn-sm">Run setup</button>
+              </div>
+            </section>
+
+            <section class="card settings-card" id="appearance-card" data-min-level="simple">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Appearance</h2>
+                  <button type="button" class="info-tip" aria-label="About appearance">i<span class="tip-content hidden">
+                    System follows your operating system. The choice applies to every browser that opens this Worca.
+                  </span></button>
+                </div>
+              </div>
+              <div class="drows">
+                <div class="drow">
+                  <span class="drow-label" id="themeLabel">Theme</span>
+                  <div class="drow-control">
+                    <div class="seg" id="theme-seg" role="group" aria-labelledby="themeLabel">
+                      <button type="button" data-theme-mode="system" class="on" aria-pressed="true">System</button>
+                      <button type="button" data-theme-mode="light" aria-pressed="false">Light</button>
+                      <button type="button" data-theme-mode="dark" aria-pressed="false">Dark</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Alerts (ui/public/alerts.mjs): per browser, kept in this browser's localStorage. -->
+            <section class="card settings-card" id="alerts-card" data-min-level="simple">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Alerts</h2>
+                  <button type="button" class="info-tip" aria-label="About alerts">i<span class="tip-content hidden">
+                    Notifications only arrive while a Worca tab is open; in the background is fine.
+                    Your operating system must allow notifications for this browser (macOS: System Settings › Notifications).
+                    A web page can't make the Dock or taskbar bounce. These choices apply to this browser only.
+                  </span></button>
+                </div>
+              </div>
+              <div class="drows">
+                <label class="drow switch-drow">
+                  <span class="drow-label">Desktop notifications</span>
+                  <small class="hint drow-help" id="alertsNotifyHint" hidden></small>
+                  <span class="drow-control"><input id="alertsNotify" class="sw-input" type="checkbox" role="switch" aria-describedby="alertsNotifyHint"><span class="switch"></span></span>
+                </label>
+                <label class="drow switch-drow alerts-badge-row">
+                  <span class="drow-label">Badge when something is waiting</span>
+                  <span class="drow-control"><input id="alertsBadge" class="sw-input" type="checkbox" role="switch"><span class="switch"></span></span>
+                </label>
+              </div>
+              <button type="button" id="alertsTest" class="btn btn-sm alerts-test" disabled>Send test notification</button>
+            </section>
+
+            <!-- Credential broker (docs/credential-broker.md): shown only when worca runs with one. -->
+            <section class="card settings-card" id="credentials-card" data-min-level="simple" hidden>
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>My credentials</h2>
+                  <button type="button" class="info-tip" aria-label="About your credentials">i<span class="tip-content hidden">
+                    Model keys and your GitHub account are held by the credential broker, not by Worca. Agents never see them.
+                    Each person uses their own keys, and what a run costs is charged to whoever started it.
+                  </span></button>
+                </div>
+              </div>
+              <div id="credentialsHost"></div>
+            </section>
+
+            <!-- Browser extension (docs/browser-extension.md): install info painted by paintExtensionInstall, pairings by paintExtensionPairings. -->
+            <section class="card settings-card" id="extension-settings-card" data-min-level="simple">
+              <div class="card-head"><div class="label-row"><h2>Browser extension</h2> <button class="info-tip" type="button" aria-label="About the browser extension">i<span class="tip-content hidden">The Worca extension for Chrome, Edge and Firefox chats with this Worca from a browser sidebar and brings the page you are reading into context. It ships with Worca: install it from the folder below or from the release zips. Each paired extension has its own token, and you can revoke it here. It works with a local Worca only.</span></button></div></div>
+              <div id="extensionInstallHost"></div>
+              <div id="extensionPairingsHost"></div>
+            </section>
+
+            <!-- Interface mode (docs/ui-levels.md): the same setting as the account menu's Interface mode row. -->
+            <section class="card settings-card" id="mode-settings-card" data-min-level="simple">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Interface mode</h2>
+                  <button type="button" class="info-tip" aria-label="About interface mode">i<span class="tip-content hidden">
+                    How much of Worca is on screen. Nothing is switched off: a hidden page still opens from a link,
+                    and settings made in a higher mode keep applying. The choice applies to every browser that opens this Worca.
+                  </span></button>
+                </div>
+              </div>
+              <div class="mode-current">
+                <span class="mode-current-icon" id="modeSettingsIcon"></span>
+                <div class="mode-current-text">
+                  <strong id="modeSettingsName">Expert</strong>
+                  <span id="modeSettingsDesc"></span>
+                </div>
+                <button type="button" class="btn btn-sm" id="modeSettingsChange" data-mode-open="button" aria-haspopup="dialog">Change&hellip;</button>
+              </div>
+            </section>
+
+            <section class="card settings-card" id="root-settings-card" data-min-level="advanced">
+              <div class="drows">
+              <div class="field drow">
+                <div class="label-row drow-label">
+                  <label for="settingsRoot">Worca root folder</label>
+                  <button type="button" class="info-tip" aria-label="About Worca root folder">i<span class="tip-content hidden">
+                    The folder under which Worca keeps its data: a <code>.worca-cc/</code> directory holding the
+                    history store, the project list, and saved workflows. Leave empty to use the default.
+                    Changes apply to new runs immediately. Changing the root does <b>not</b> move existing
+                    data: Worca starts a fresh <code>.worca-cc/</code> under the new folder; history under
+                    the old root is left in place.
+                  </span></button>
+                </div>
+                <div class="drow-control"><input id="settingsRoot" data-setting="root" class="input" type="text" placeholder="" spellcheck="false" autocomplete="off" /></div>
+              </div>
+              <div class="field drow drow-wide">
+                <div class="label-row drow-label">
+                  <label for="settingsProjectsRoot">Projects root folder</label>
+                  <button type="button" class="info-tip" aria-label="About Projects root folder">i<span class="tip-content hidden">
+                    The top-level folder under which your projects live. New and Clone from URL create projects
+                    here. Its CLAUDE.md, .claude/skills, and .mcp.json are made available to every pipeline agent.
+                    Leave empty to use worca's projects folder.
+                  </span></button>
+                </div>
+                <div class="drow-control">
+                  <div class="path-row">
+                    <input id="settingsProjectsRoot" data-setting="projectsRoot" class="input" type="text" placeholder="" spellcheck="false" autocomplete="off" />
+                    <button type="button" id="settingsProjectsRootBrowse" class="btn btn-sm" title="Pick the projects root folder">Browse&hellip;</button>
+                  </div>
+                </div>
+              </div>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="settingsReset" class="btn btn-sm">Reset to default</button>
+                <button type="button" id="settingsSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+              <small class="hint" id="settingsMsg"></small>
+            </section>
+
+            <!-- Spawn-debug diagnostics: the stored side of WORCA_DEBUG_SPAWN.
+                 claude-runner.mjs reads the setting per spawn (UI server AND CLI);
+                 a non-empty env var overrides it. This card only flips the gate —
+                 the runner decides what is printable (routing keys readable,
+                 credentials as "<set, N chars>"). -->
+            <section class="card settings-card" id="debug-spawn-settings-card" data-min-level="expert">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Spawn diagnostics</h2>
+                  <button type="button" class="info-tip" aria-label="About spawn diagnostics">i<span class="tip-content hidden">
+                    Logs the exact claude binary, argv and routing env handed to every spawn, in the run
+                    log. Credentials never appear: routing keys (endpoint, wire model) print readable,
+                    every other value as <code>&lt;set, N chars&gt;</code>. Applies to runs started here
+                    and from the CLI, with no restart. A non-empty <code>WORCA_DEBUG_SPAWN</code> in the
+                    environment overrides this setting.
+                  </span></button>
+                </div>
+              </div>
+              <div class="drows">
+                <div class="field drow drow-wide">
+                  <label class="drow-control switch-row" for="debugSpawnEnabled"><input id="debugSpawnEnabled" data-setting="debugSpawnEnabled" class="sw-input" type="checkbox" role="switch" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Log claude spawn details (binary, argv, routing env)</span></label>
+                  <small class="hint drow-help" id="debugSpawnEnvNote"></small>
+                </div>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="debugSpawnReset" class="btn btn-sm">Reset to default</button>
+                <button type="button" id="debugSpawnSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+            </section>
+
+            <!-- Getting started: the checklist's Hide is undone here. Only the checklist —
+                 the welcome dialog stays seen. No info-tip (the row explains itself);
+                 the .hint is painted by app.js like every other settings status line. -->
+            <section class="card settings-card" id="getting-started-card" data-min-level="simple">
+              <div class="label-row">
+                <h2>Getting started</h2>
+              </div>
+              <div class="gs-settings-row">
+                <p class="gs-settings-text">The Getting started checklist walks through the first nine things to do with Worca. Hid it, or want the guided tour back?</p>
+                <button type="button" id="gsShowAgain" class="btn btn-sm">Show again</button>
+              </div>
+              <small class="hint" id="gsSettingsMsg"></small>
+            </section>
+
+            <!-- About: no info-tip and no .hint. Links are anchors (target=_blank rel=noopener noreferrer). Controls: the update-check
+                 switch and Check now, plus the manual update row (Update to / Choose version… / Copy / Dismiss, issue #841).
+                 ui-settings-about.test.mjs pins this list. -->
+            <section class="card settings-card" id="about-card" data-min-level="simple">
+              <div class="label-row">
+                <h2>About</h2>
+              </div>
+              <div class="about-row">
+                <span class="about-key">Version</span>
+                <!-- href is painted from app.releaseUrl (the worca-app-v<version> tag);
+                     without one the anchor is plain text, so the placeholder never links. -->
+                <a class="about-val about-version" id="aboutVersion"
+                   target="_blank" rel="noopener noreferrer">&mdash;</a>
+                <!-- GET /api/app/version (#841): "Latest" | "Update available: X.Y.Z" | "Source build" (a git checkout);
+                     hidden when unknown or ahead. -->
+                <span class="about-update" id="aboutUpdateState" hidden></span>
+              </div>
+              <!-- Manual update (#841): painted by update-view.mjs from GET /api/app/update. -->
+              <div class="about-row" id="aboutUpdateRow" hidden>
+                <span class="about-key">Update</span>
+                <div class="about-val about-update-body">
+                  <div class="about-update-actions">
+                    <button type="button" class="btn btn-sm btn-primary" id="aboutUpdateGo" hidden>Update</button>
+                    <button type="button" class="btn btn-sm btn-quiet" id="aboutUpdateChoose">Choose version…</button>
+                  </div>
+                  <p class="about-note" id="aboutUpdateNote" hidden></p>
+                  <div class="about-cmd" id="aboutUpdateCmdRow" hidden>
+                    <code class="about-cmd-text" id="aboutUpdateCmd"></code>
+                    <button type="button" class="btn btn-sm btn-quiet btn-icon copy-btn" id="aboutUpdateCopy" title="Copy command" aria-label="Copy command"><span class="ic ico-copy" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h8"></path></svg></span><span class="ic ico-check" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><span class="ic ico-x" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7 7 17"></path></svg></span></button>
+                  </div>
+                  <div class="about-result about-result-failed" id="aboutUpdateFailed" role="status" hidden>
+                    <strong id="aboutUpdateFailedTitle"></strong>
+                    <span id="aboutUpdateFailedReason"></span>
+                    <p class="about-note">Update from a terminal instead:</p>
+                    <div class="about-cmd"><code class="about-cmd-text" id="aboutUpdateFailedCmd"></code>
+                      <button type="button" class="btn btn-sm btn-quiet btn-icon copy-btn" id="aboutUpdateFailedCopy" title="Copy command" aria-label="Copy command"><span class="ic ico-copy" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h8"></path></svg></span><span class="ic ico-check" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><span class="ic ico-x" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7 7 17"></path></svg></span></button></div>
+                    <details id="aboutUpdateOutputWrap"><summary>npm output</summary><pre class="about-output" id="aboutUpdateOutput"></pre></details>
+                    <button type="button" class="btn btn-sm btn-quiet" id="aboutUpdateDismiss">Dismiss</button>
+                  </div>
+                  <div class="about-result about-result-back" id="aboutUpdateBack" role="status" hidden>
+                    <span id="aboutUpdateBackText"></span>
+                  </div>
+                </div>
+              </div>
+              <!-- Only while outdated: the new release's changelog page and the GitHub compare view. -->
+              <div class="about-row" id="aboutUpdateLinks" hidden>
+                <span class="about-key"></span>
+                <a class="about-val about-link" id="aboutWhatsNew" hidden
+                   target="_blank" rel="noopener noreferrer">What's new</a>
+                <a class="about-val about-link" id="aboutCompare" hidden
+                   target="_blank" rel="noopener noreferrer">Changes since this version</a>
+              </div>
+              <div class="about-row">
+                <span class="about-key">Release notes</span>
+                <a class="about-val about-link" id="aboutReleaseNotes"
+                   href="https://docs.worca.dev/changelog/"
+                   target="_blank" rel="noopener noreferrer">docs.worca.dev/changelog</a>
+              </div>
+              <div class="about-row about-row-center">
+                <span class="about-key">Updates</span>
+                <label class="about-val switch-row about-switch" for="aboutUpdateCheck"><input id="aboutUpdateCheck" data-setting="updateCheck" class="sw-input" type="checkbox" role="switch" checked><span class="switch" aria-hidden="true"></span><span class="switch-label">Check for new Worca versions</span></label>
+                <button type="button" class="btn btn-sm about-check" id="aboutCheckNow">Check now</button>
+              </div>
+              <div class="about-row">
+                <span class="about-key">Repository</span>
+                <a class="about-val about-link" id="aboutRepoLink"
+                   href="https://github.com/SinishaDjukic/worca-cc"
+                   target="_blank" rel="noopener noreferrer">github.com/SinishaDjukic/worca-cc</a>
+              </div>
+              <div class="about-row">
+                <span class="about-key">Feedback</span>
+                <!-- hrefs are repainted from app.bugsUrl (package.json bugs.url); the
+                     static fallback keeps the links usable before /api/settings lands.
+                     Anchors only, and neither the label nor the href carries a version string. -->
+                <a class="about-val about-link" id="aboutBugLink"
+                   href="https://github.com/SinishaDjukic/worca-cc/issues/new?labels=bug"
+                   target="_blank" rel="noopener noreferrer">Report a bug</a>
+              </div>
+              <div class="about-row">
+                <span class="about-key"></span>
+                <a class="about-val about-link" id="aboutIdeaLink"
+                   href="https://github.com/SinishaDjukic/worca-cc/issues/new?labels=enhancement"
+                   target="_blank" rel="noopener noreferrer">Suggest an improvement</a>
+              </div>
+            </section>
+          </section>
+          <!-- /pane general -->
+
+          <!-- ===== TAB: TAGS — run tag rules (Settings › Tags): tag rows and "Require mandatory tags".
+               Every level. ===== -->
+          <section class="settings-pane hidden" data-tab="tags">
+            <section class="card settings-card" id="tag-dims-settings-card" data-min-level="simple">
+              <div class="card-head"><div class="label-row"><h2>Cost tags</h2></div></div>
+              <p class="hint" id="tagsTeamNote" hidden></p>
+              <div class="drows">
+                <div class="drow switch-drow">
+                  <label class="drow-label" for="tagsEnforce">Require mandatory cost tags to start a run</label>
+                  <p class="hint drow-help" id="tagsEnforceNone" hidden>No cost tag is marked Mandatory yet, so runs are not blocked.</p>
+                  <p class="hint drow-help">On: a run cannot start without its mandatory cost tags (pre-filled where they can be). Off: cost tags are optional. A cost tag with values accepts only those values.</p>
+                  <label class="drow-control" for="tagsEnforce"><input type="checkbox" id="tagsEnforce" data-setting="enforceTags" class="sw-input" role="switch"><span class="switch" aria-hidden="true"></span></label>
+                </div>
+                <div class="drow drow-wide">
+                  <div class="drow-control"><div id="tagDimsEditor" data-setting="tagDimensions"></div></div>
+                </div>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" class="btn btn-primary btn-sm" id="tagDimsSave">Save</button>
+              </div>
+            </section><!-- closes #tag-dims-settings-card -->
+            <section class="card settings-card" id="labels-settings-card" data-min-level="simple" data-flag="runLabels">
+              <div class="card-head"><div class="label-row"><h2>Labels</h2></div></div>
+              <p class="hint">Labels organise runs. Rename or delete a label here and every run follows.</p>
+              <p class="hint lbl-set-error" id="labelsSettingsError" role="alert" hidden></p>
+              <div id="labelsSettingsList"></div>
+            </section>
+          </section><!-- /pane tags -->
+
+          <section class="settings-pane hidden" data-tab="presets">
+            <section class="card settings-card" id="presets-settings-card" data-min-level="advanced">
+              <div class="card-head"><div class="label-row"><h2>Presets</h2></div></div>
+              <p class="hint">Named New run setups. Pick one in New run, type a prompt and start: its choices apply to that run only.</p>
+              <div id="presets-list"></div>
+            </section>
+          </section><!-- /pane presets -->
+
+          <!-- Git event automations (#711, docs/git-automations.md): per project and workspace, Auto-handle + rules + what they did. -->
+          <section class="settings-pane hidden" data-tab="automations">
+            <section class="card settings-card" id="automations-settings-card" data-min-level="advanced" data-flag="gitAutomations">
+              <div class="card-head"><div class="label-row"><h2>Automations</h2></div></div>
+              <p class="hint">Start a workflow when an issue or PR is created. Each project and workspace sets its own in its Automations tab.</p>
+              <div id="automations-body"></div>
+            </section>
+          </section><!-- /pane automations -->
+
+          <!-- ===== TAB: RUNS — how pipeline runs are capped, scheduled and reported.
+               Simple, for Budget; the two Advanced cards keep their own level. ===== -->
+          <section class="settings-pane hidden" data-tab="runs">
+            <div class="topbar">
+              <div>
+                <div class="sub">Cost limits and defaults for your pipeline runs</div>
+                <div class="drows"><div class="drow drow-wide"><div class="drow-control"><input id="settings-runs-filter" class="input settings-filter" type="search" placeholder="Filter these settings" aria-label="Filter the Runs settings" autocomplete="off" /></div></div></div>
+              </div>
+            </div>
+
+            <section class="card settings-card" id="budget-settings-card" data-min-level="simple">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Budget &amp; cost limits</h2>
+                  <button type="button" class="info-tip" aria-label="About budget costs">i<span class="tip-content hidden">
+                    Costs are Claude Code's client-side estimate (total_cost_usd), not authoritative billing.
+                  </span></button>
+                </div>
+              </div>
+              <div id="budgetReadout"></div>
+              <!-- Team policy (design board 7): each policy home's caps, read-only context. -->
+              <div id="teamCapsReadout"></div>
+              <div class="drows">
+              <div class="field drow">
+                <div class="label-row drow-label">
+                  <label for="budgetPerPipeline">Per-pipeline cost limit (USD)</label>
+                  <button type="button" class="info-tip" aria-label="About Per-pipeline cost limit">i<span class="tip-content hidden">
+                    Pause a pipeline when its estimated cost reaches this amount. Leave empty for no limit.
+                  </span></button>
+                </div>
+                <div class="drow-control"><input id="budgetPerPipeline" data-setting="pipelineCostLimitUsd" class="input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="No limit" autocomplete="off" /></div>
+              </div>
+              <div class="field drow">
+                <div class="label-row drow-label">
+                  <label for="budgetTotal">Total cost limit (USD)</label>
+                  <button type="button" class="info-tip" aria-label="About Total cost limit">i<span class="tip-content hidden">
+                    Pause all pipelines and block new ones when total spend in the period reaches this amount.
+                    Leave empty for no limit.
+                  </span></button>
+                </div>
+                <div class="drow-control"><input id="budgetTotal" data-setting="totalCostLimitUsd" class="input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="No limit" autocomplete="off" /></div>
+              </div>
+              <div class="field drow">
+                <div class="label-row drow-label">
+                  <label for="budgetResetPeriod">Reset period</label>
+                  <button type="button" class="info-tip" aria-label="About Reset period">i<span class="tip-content hidden">
+                    Spend counts within the current period and returns to $0.00 at the reset. Times are local.
+                  </span></button>
+                </div>
+                <div class="drow-control"><div class="select-wrap">
+                  <select id="budgetResetPeriod" data-setting="costLimitResetPeriod" class="select">
+                    <option value="weekly">Weekly (resets Monday 00:00)</option>
+                    <option value="monthly">Monthly (resets on the 1st, 00:00)</option>
+                  </select>
+                </div></div>
+              </div>
+              <div class="field drow">
+                <div class="label-row drow-label">
+                  <label for="budgetHumanRate">Developer rate (USD/h)</label>
+                </div>
+                <div class="drow-control"><input id="budgetHumanRate" data-setting="humanRateUsdPerHour" class="input" type="number" min="0" step="1" inputmode="decimal" placeholder="35" autocomplete="off" /></div>
+              </div>
+              <label class="field drow switch-drow" for="budgetLimitResume">
+                <span class="drow-label">Resume runs automatically when a usage limit resets
+                  <button type="button" class="info-tip" aria-label="About resuming after a usage limit">i<span class="tip-content hidden">When a run pauses on a plan's session or weekly limit, Worca schedules its resume for 5 minutes after the reset, on the same engine, at most 3 times in a row. Cost caps still pause for you.</span></button>
+                </span>
+                <span class="drow-control"><input id="budgetLimitResume" data-setting="resumeAfterUsageLimit" class="sw-input" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></span>
+              </label>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="budgetReset" class="btn btn-sm">Clear limits</button>
+                <button type="button" id="budgetSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+              <small class="hint" id="budgetMsg"></small>
+            </section>
+
+            <!-- Away mode (src/core/night/*): the user layer of the Away mode config, rendered by
+                 night-mode-form.mjs with its live summary, plus the status buttons (nightModeToggle). -->
+            <section class="card settings-card" id="night-settings-card" data-min-level="advanced">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Away mode</h2>
+                  <button type="button" class="info-tip" aria-label="About Away mode">i<span class="tip-content hidden">
+                    While you're away, worca answers the questions your runs are waiting on. You can see every answer and why it was chosen. When worca isn't sure, it marks the answer "please check" and keeps going. When the run ends, it tells you how many answers to check.
+                  </span></button>
+                </div>
+              </div>
+              <div class="away-status" id="awayStatus" role="group" aria-label="Away mode status"></div>
+              <div class="drows" id="night-mode-host"></div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="nightModeReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="nightModeSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+            </section>
+
+            <!-- Smart run naming (Labs): the smartRunNaming flag, the same value as its Settings › Labs row. -->
+            <section class="card settings-card" id="smart-naming-settings-card" data-min-level="simple">
+              <div class="card-head">
+                <div class="label-row"><h2>Smart run naming</h2></div>
+              </div>
+              <div class="drows" id="smartNamingRows">
+                <div class="drow switch-drow" id="smartNamingMasterRow">
+                  <span class="drow-label" id="smartNamingTxt" data-flag-chip="smartRunNaming">Suggest a title and a branch name for new runs</span>
+                  <small class="hint drow-help">A very low effort model reads the task. You can edit both before Start.</small>
+                  <div class="drow-control"><div class="switch" role="switch" tabindex="0" id="smartNamingSwitch" aria-checked="false" aria-labelledby="smartNamingTxt"></div></div>
+                </div>
+                <label class="drow switch-drow" id="smartNamingTitleRow">
+                  <span class="drow-label">Suggest the run title</span>
+                  <span class="drow-control"><input id="smartNamingTitle" data-setting="smartNaming.suggestTitle" class="sw-input" type="checkbox" role="switch" checked><span class="switch"></span></span>
+                </label>
+                <label class="drow switch-drow" id="smartNamingBranchRow">
+                  <span class="drow-label">Suggest the branch name</span>
+                  <span class="drow-control"><input id="smartNamingBranch" data-setting="smartNaming.suggestBranch" class="sw-input" type="checkbox" role="switch" checked><span class="switch"></span></span>
+                </label>
+                <div class="field drow" id="smartNamingModelRow">
+                  <span class="drow-label">Model</span>
+                  <small class="hint drow-help" id="smartNamingModelHint"><span data-min-level="expert"><a href="#models">Models › Helper jobs › Run naming</a>. </span><span id="smartNamingCost"></span></small>
+                </div>
+                <div class="field drow" id="smartNamingPatternRow">
+                  <label class="drow-label" for="smartNamingPattern">Branch pattern</label>
+                  <div class="drow-control"><input id="smartNamingPattern" class="input mono" type="text" spellcheck="false" data-setting="smartNaming.pattern" /></div>
+                  <small class="hint drow-help" id="smartNamingPreview"></small>
+                </div>
+                <div class="field drow" id="smartNamingTypesRow">
+                  <span class="drow-label" id="smartNamingTypesTxt">Types the model may pick</span>
+                  <div class="drow-control sn-types" id="smartNamingTypes" role="group" aria-labelledby="smartNamingTypesTxt"></div>
+                  <input id="smartNamingTypesValue" type="hidden" data-setting="smartNaming.types" />
+                </div>
+                <div class="field drow" id="smartNamingTriggerRow">
+                  <label class="drow-label" for="smartNamingTrigger">When to suggest</label>
+                  <div class="drow-control select-wrap">
+                    <select id="smartNamingTrigger" class="select" data-setting="smartNaming.trigger">
+                      <option value="debounce">While I type the task</option>
+                      <option value="manual">Only when I press Suggest again</option>
+                    </select>
+                  </div>
+                </div>
+                <label class="drow switch-drow" id="smartNamingRunIdRow">
+                  <span class="drow-label">Add the run id to the branch</span>
+                  <small class="hint drow-help">Appends a dash and the short run id when the pattern has no id placeholder.</small>
+                  <span class="drow-control"><input id="smartNamingRunId" data-setting="smartNaming.addRunId" class="sw-input" type="checkbox" role="switch"><span class="switch"></span></span>
+                </label>
+              </div>
+              <p class="hint" id="smartNamingProjectNote">A project can override the pattern and the types in its own Settings.</p>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="smartNamingReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="smartNamingSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+              <p class="form-msg" id="smartNamingMsg" role="status"></p>
+            </section>
+
+            <!-- Scheduled runs: the defaults a NEW schedule inherits. Each schedule keeps
+                 its own copy, so a change here never rewrites an existing one. -->
+            <!-- Sync before run (#527): the instance defaults each project inherits. -->
+            <section class="card settings-card" id="sync-settings-card" data-min-level="advanced" data-needs-git>
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Sync before run</h2>
+                  <button type="button" class="info-tip" aria-label="About sync before run">i<span class="tip-content hidden">
+                    Defaults for every project. Before a run, Worca fetches the remote and fast-forwards the source branch when it is safe. It never merges or resets a branch with local commits. A project nobody has opened or run for a day is checked in the background once an hour at most, until it is opened again.
+                  </span></button>
+                </div>
+              </div>
+              <div class="drows">
+              <label class="drow switch-drow" id="syncDefBeforeRunRow">
+                <span class="drow-label">Sync the source branch before each run</span>
+                <span class="drow-control"><input id="syncDefBeforeRun" data-setting="sync.beforeRun" class="sw-input" type="checkbox" role="switch" checked><span class="switch"></span></span>
+              </label>
+                <div class="field drow">
+                  <div class="label-row drow-label">
+                    <label for="syncDefOnDiverged">If the source branch has diverged</label>
+                    <button type="button" class="info-tip" aria-label="About diverged branches">i<span class="tip-content hidden">
+                      Diverged: the branch has local commits that are not on the remote, and the remote has commits that are not local. Start from origin leaves the local branch untouched and starts the run from the remote. A scheduled run cannot ask, so Ask me starts it from origin.
+                    </span></button>
+                  </div>
+                  <div class="drow-control"><div class="select-wrap">
+                    <select id="syncDefOnDiverged" data-setting="sync.onDiverged" class="select">
+                      <option value="ask">Ask me</option>
+                      <option value="origin">Start from origin</option>
+                      <option value="fail">Don't run</option>
+                    </select>
+                  </div></div>
+                </div>
+                <div class="field drow">
+                  <label class="drow-label" for="syncDefRemote">Remote</label>
+                  <div class="drow-control"><input id="syncDefRemote" data-setting="sync.remote" class="input" type="text" placeholder="origin" spellcheck="false" autocomplete="off" /></div>
+                </div>
+              <div class="field drow">
+                <label class="drow-label" for="syncDefRefresh">Check remotes in the background</label>
+                <div class="drow-control"><div class="select-wrap">
+                  <select id="syncDefRefresh" data-setting="sync.refreshMinutes" class="select">
+                    <option value="0">Off</option>
+                    <option value="5">Every 5 minutes</option>
+                    <option value="10">Every 10 minutes</option>
+                    <option value="30">Every 30 minutes</option>
+                    <option value="60">Every hour</option>
+                  </select>
+                </div></div>
+              </div>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="syncDefaultsReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="syncDefaultsSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+            </section>
+
+            <section class="card settings-card" id="schedule-settings-card" data-min-level="advanced">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Scheduled runs</h2>
+                  <button type="button" class="info-tip" aria-label="About scheduled run defaults">i<span class="tip-content hidden">
+                    Defaults for new schedules. A scheduled run starts only while Worca is running and this computer is awake; these settings decide what happens when it was not.
+                  </span></button>
+                </div>
+              </div>
+              <div class="drows">
+                <div class="field drow">
+                  <label class="drow-label" for="schedIfMissed">If Worca is not running at that time</label>
+                  <div class="drow-control"><div class="select-wrap">
+                    <select id="schedIfMissed" data-setting="schedule.ifMissed" class="select">
+                      <option value="run">Start it late</option>
+                      <option value="skip">Skip it</option>
+                    </select>
+                  </div></div>
+                </div>
+                <div class="field drow">
+                  <label class="drow-label" for="schedGraceMin">At most this late</label>
+                  <div class="drow-control"><div class="select-wrap">
+                    <select id="schedGraceMin" data-setting="schedule.graceMin" class="select">
+                      <option value="30">30 minutes</option>
+                      <option value="60">1 hour</option>
+                      <option value="120">2 hours</option>
+                      <option value="360">6 hours</option>
+                      <option value="720">12 hours</option>
+                      <option value="1440">24 hours</option>
+                    </select>
+                  </div></div>
+                </div>
+              <div class="field drow">
+                <div class="label-row drow-label">
+                  <label for="schedMaxFailures">Pause a repeating schedule after failures in a row</label>
+                  <button type="button" class="info-tip" aria-label="About pausing after failures">i<span class="tip-content hidden">
+                    A run that could not start, a missed slot, or a run that ended in an error each count. A successful run resets the count. 0 never pauses a schedule. Every failure is reported in Schedules either way.
+                  </span></button>
+                </div>
+                <div class="drow-control"><input id="schedMaxFailures" data-setting="schedule.maxFailures" class="input" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="3" autocomplete="off" /></div>
+              </div>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="schedDefaultsReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="schedDefaultsSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+            </section>
+
+            <!-- Wait for the network (network-wait.mjs): a step that loses the network waits for its
+                 endpoint and retries by itself, up to the longest wait from the first failure. -->
+            <section class="card settings-card" id="network-wait-settings-card" data-min-level="advanced">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Wait for the network</h2>
+                  <button type="button" class="info-tip" aria-label="About waiting for the network">i<span class="tip-content hidden">
+                    When a step loses the network (internet down, provider unreachable), worca checks the endpoint that step uses and retries by itself once it answers. A run paused that way, or stopped by a restart while it waited, is resumed when the network is back, but only within the longest wait, counted from the first failure. Cost caps, usage limits, sign-in problems and your own pauses are never resumed.
+                  </span></button>
+                </div>
+              </div>
+              <div class="drows">
+              <label class="drow switch-drow" id="networkWaitEnabledRow">
+                <span class="drow-label">Wait for the network to come back</span>
+                <span class="drow-control"><input id="networkWaitEnabled" data-setting="networkWait.enabled" class="sw-input" type="checkbox" role="switch" checked><span class="switch"></span></span>
+              </label>
+              <div class="field drow">
+                <label class="drow-label" for="networkWaitMaxMin">Longest wait</label>
+                <div class="drow-control"><div class="select-wrap">
+                  <select id="networkWaitMaxMin" data-setting="networkWait.maxWaitMin" class="select">
+                    <option value="30">30 minutes</option>
+                    <option value="60">1 hour</option>
+                    <option value="120">2 hours</option>
+                    <option value="240">4 hours</option>
+                    <option value="480">8 hours</option>
+                    <option value="720">12 hours</option>
+                    <option value="1440">24 hours</option>
+                  </select>
+                </div></div>
+              </div>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="networkWaitReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="networkWaitSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+            </section>
+
+            <!-- Machine load (runLimits; run-slots.mjs, run-retention.mjs): how many runs work at once, the
+                 test-worker cap every agent gets, and when finished runs are archived. -->
+            <section class="card settings-card" id="run-limits-settings-card" data-min-level="advanced">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Machine load</h2>
+                  <button type="button" class="info-tip" aria-label="About machine load">i<span class="tip-content hidden">
+                    Runs past the limit wait for a free slot, then start by themselves. Every agent gets the test-worker cap as WORCA_TEST_CONCURRENCY, which test runners that read it (Worca's own) use instead of all cores. Archiving a finished run removes its files, checkout and local branch and keeps its record and cost; a run whose branch has commits on no other branch, or with work still kept, is never archived.
+                  </span></button>
+                </div>
+              </div>
+              <div class="drows">
+              <div class="field drow">
+                <label class="drow-label" for="runLimitsMaxRuns">Runs at once</label>
+                <div class="drow-control"><div class="select-wrap">
+                  <select id="runLimitsMaxRuns" data-setting="runLimits.maxConcurrentRuns" class="select">
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="6">6</option>
+                    <option value="8">8</option>
+                    <option value="12">12</option>
+                    <option value="20">20</option>
+                  </select>
+                </div></div>
+              </div>
+              <div class="field drow">
+                <label class="drow-label" for="runLimitsTestWorkers">Test workers per run</label>
+                <div class="drow-control"><div class="select-wrap">
+                  <select id="runLimitsTestWorkers" data-setting="runLimits.testWorkers" class="select">
+                    <option value="">Half the cores</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="4">4</option>
+                    <option value="6">6</option>
+                    <option value="8">8</option>
+                    <option value="12">12</option>
+                    <option value="16">16</option>
+                  </select>
+                </div></div>
+              </div>
+              <div class="field drow">
+                <label class="drow-label" for="runLimitsKeepDays">Archive finished runs after</label>
+                <div class="drow-control"><div class="select-wrap">
+                  <select id="runLimitsKeepDays" data-setting="runLimits.keepRunsDays" class="select">
+                    <option value="">Never</option>
+                    <option value="7">7 days</option>
+                    <option value="14">14 days</option>
+                    <option value="30">30 days</option>
+                    <option value="60">60 days</option>
+                    <option value="90">90 days</option>
+                    <option value="180">180 days</option>
+                    <option value="365">1 year</option>
+                  </select>
+                </div></div>
+              </div>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="runLimitsReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="runLimitsSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+            </section>
+
+            <!-- Network proxy (docs/network-proxy.md, networkProxy.enabled): the corporate proxy Worca's local
+                 proxy logs in to, and the saved login (domain, user, NT hash). The body is built by
+                 settings-network-proxy.mjs; timeouts and the local port fold under "More". -->
+            <section class="card settings-card" id="network-proxy-settings-card" data-min-level="simple">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Network proxy</h2>
+                  <button type="button" class="info-tip" aria-label="About the network proxy">i<span class="tip-content hidden">
+                    Worca logs in to your corporate proxy (NTLMv2) for every agent, tool and plugin. It saves your domain, user name and the NT hash of your password, never the password itself, in a file only you can read. A wrong password stops all logins at once, so your account is not locked.
+                  </span></button>
+                </div>
+              </div>
+              <div id="networkProxyBody"></div>
+            </section>
+
+            <!-- Actions (issue #529): keep policy for finished-run checkouts, the port range for
+                 automatic port variables, editor/terminal overrides and the checkout cap. -->
+            <section class="card settings-card" id="actions-settings-card" data-min-level="advanced" data-needs-git>
+              <div class="card-head"><div class="label-row"><h2>Actions</h2>
+                <button type="button" class="info-tip" aria-label="About actions">i<span class="tip-content hidden">
+                  Check out a finished run and run its project's actions from Worca. Actions are off on hosted
+                  deployments unless an administrator enables them.
+                </span></button></div></div>
+              <div class="drows">
+              <div class="field drow"><label class="drow-label" for="act-keep">Keep checkouts</label><div class="drow-control"><div class="select-wrap"><select id="act-keep" data-setting="actions.keep" class="select">
+                <option value="never">Re-create on demand</option><option value="on-success">Keep after a successful run</option>
+                <option value="until-pr">Keep until the PR is merged or closed</option></select></div></div></div>
+              <div class="field drow act-port-range"><label class="drow-label" for="act-port-low">Ports for automatic port variables</label>
+                <div class="drow-control"><input id="act-port-low" data-setting="actions.portLow actions.portRange" class="input" type="number" min="1024" max="65535" placeholder="4400" aria-label="Low port"> –
+                <input id="act-port-high" data-setting="actions.portHigh actions.portRange" class="input" type="number" min="1024" max="65535" placeholder="4499" aria-label="High port"></div></div>
+              <div class="field drow drow-wide act-launcher" data-launcher="editor">
+                <div class="label-row drow-label"><label for="act-editor">Editor</label>
+                  <button type="button" class="info-tip" aria-label="About the editor command">i<span class="tip-content hidden" id="act-editor-tip">
+                    The command that opens a folder in your IDE or code editor, as you would type it in a terminal. Leave it blank to use the one Worca detects. {folder} marks where the checkout folder goes; without it, the folder is added at the end.
+                  </span></button></div>
+                <div class="drow-control act-launcher-row">
+                  <input id="act-editor" data-setting="actions.editor" class="input mono" placeholder="Detected automatically" aria-describedby="act-editor-note" autocomplete="off" spellcheck="false">
+                  <div class="select-wrap act-choose-wrap" data-dirty-ignore><select id="act-editor-choose" class="select" aria-label="Pick an installed editor, or browse for one"><option value="">Pick an app</option></select></div>
+                  <button type="button" class="btn btn-sm act-try" id="act-editor-try">Try</button>
+                </div>
+                <small class="hint drow-help act-hint" id="act-editor-note"></small></div>
+              <div class="field drow drow-wide act-launcher" data-launcher="terminal">
+                <div class="label-row drow-label"><label for="act-terminal">Terminal</label>
+                  <button type="button" class="info-tip" aria-label="About the terminal command">i<span class="tip-content hidden" id="act-terminal-tip">
+                    The command that opens a terminal in a folder, as you would type it in a terminal. Leave it blank to use the one Worca detects. {folder} marks where the checkout folder goes; without it, the folder is added at the end.
+                  </span></button></div>
+                <div class="drow-control act-launcher-row">
+                  <input id="act-terminal" data-setting="actions.terminal" class="input mono" placeholder="Detected automatically" aria-describedby="act-terminal-note" autocomplete="off" spellcheck="false">
+                  <div class="select-wrap act-choose-wrap" data-dirty-ignore><select id="act-terminal-choose" class="select" aria-label="Pick an installed terminal, or browse for one"><option value="">Pick an app</option></select></div>
+                  <button type="button" class="btn btn-sm act-try" id="act-terminal-try">Try</button>
+                </div>
+                <small class="hint drow-help act-hint" id="act-terminal-note"></small></div>
+              <div class="field drow"><label class="drow-label" for="act-max">Keep at most</label><small class="hint drow-help">checkouts (oldest removed first)</small><div class="drow-control"><input id="act-max" data-setting="actions.maxCheckouts" class="input" type="number" min="1" max="100" placeholder="No limit"></div></div>
+              </div>
+              <div class="add-project-actions"><button type="button" class="btn btn-sm" id="act-reset">Reset</button>
+                <button type="button" class="btn btn-primary btn-sm" id="act-save">Save</button></div>
+            </section>
+
+            <section class="card settings-card" id="pr-settings-card" data-min-level="simple" data-needs-git>
+              <div class="card-head"><div class="label-row"><h2>Pull requests</h2></div></div>
+              <div class="drows">
+              <label class="field drow switch-drow" for="prAutoDescribe">
+                <span class="drow-label">Draft the PR description with AI automatically
+                  <button type="button" class="info-tip" aria-label="About drafting the PR description automatically">i<span class="tip-content hidden">Each time the Create PR dialog opens, Worca runs the PR description model to draft the description, as if you had pressed Generate. You can stop it, edit the draft or generate again.</span></button>
+                </span>
+                <span class="drow-control"><input id="prAutoDescribe" data-setting="autoGeneratePrDescription" class="sw-input" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></span>
+              </label>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="prSettingsSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+            </section>
+
+            <section class="card settings-card" id="ws-scan-models-card" data-min-level="advanced">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Workspaces</h2>
+                  <button type="button" class="info-tip" aria-label="About workspace scan models">i<span class="tip-content hidden">
+                    The models a workspace scan starts with. The <b>scan agent</b> maps how the projects connect;
+                    the <b>project agents</b> investigate one project each. Create workspace can change them for one
+                    scan; Re-scan uses these.
+                  </span></button>
+                </div>
+              </div>
+              <div class="drows">
+                <div class="field drow">
+                  <div class="label-row drow-label"><label for="wsScanModel">Scan agent</label></div>
+                  <div class="drow-control"><select id="wsScanModel" class="select" data-setting="workspaceScan.scanModel" aria-label="Scan agent model"></select></div>
+                </div>
+                <div class="field drow">
+                  <div class="label-row drow-label"><label for="wsScanEffort">Effort</label></div>
+                  <div class="drow-control"><select id="wsScanEffort" class="select" data-setting="workspaceScan.scanEffort" aria-label="Scan agent effort"></select></div>
+                </div>
+                <div class="field drow">
+                  <div class="label-row drow-label"><label for="wsAgentModel">Project agents</label></div>
+                  <div class="drow-control"><select id="wsAgentModel" class="select" data-setting="workspaceScan.agentModel" aria-label="Project agents model"></select></div>
+                </div>
+                <div class="field drow">
+                  <div class="label-row drow-label"><label for="wsAgentEffort">Effort</label></div>
+                  <div class="drow-control"><select id="wsAgentEffort" class="select" data-setting="workspaceScan.agentEffort" aria-label="Project agents effort"></select></div>
+                </div>
+              </div>
+              <small class="hint" id="wsScanModelsNote"></small>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="wsScanModelsReset" class="btn btn-sm">Use default</button>
+                <button type="button" id="wsScanModelsSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+            </section>
+
+            <!-- Chat notifications (chat-connectivity-design.md §4.8): which run
+                 events ping which chat channels. Body rendered by
+                 chat-settings-view.mjs; app.js owns fetch/save/Test wiring. -->
+            <section class="card settings-card" id="chat-settings-card" data-min-level="advanced">
+              <div class="label-row">
+                <h2>Chat notifications</h2>
+              </div>
+              <div id="chat-settings-host"></div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button id="chatSettingsSave" class="btn btn-primary btn-sm" type="button">Save</button>
+              </div>
+            </section>
+          </section>
+          <!-- /pane runs -->
+
+          <!-- ===== TAB: EXPERIMENTAL (docs/feature-flags.md, D8) — every level ===== -->
+          <section class="settings-pane hidden" data-tab="experimental">
+            <div class="topbar">
+              <div>
+                <div class="sub">Try features before they are finished; a switch applies at once, in every open tab, for everyone using this Worca.</div>
+              </div>
+              <button type="button" class="btn btn-sm" id="flags-reset">Reset all</button>
+            </div>
+            <section class="card settings-card" id="flags-settings-card" data-min-level="simple">
+              <p class="flags-warn" role="note">Labs features may change, break or disappear in any release.</p>
+              <p id="flags-msg" class="form-msg" aria-live="polite"></p>
+              <div id="flags-host" class="flags-host"></div>
+              <!-- The one use of the demo flag (it keeps the usage scan honest); removed with the flag. -->
+              <p class="hint flags-demo-note" id="flags-demo-note" data-flag="flagsDemo" data-flag-chip>The flags demo is on: this note shows only while its switch is on.</p>
+            </section>
+          </section>
+          <!-- /pane experimental -->
+
+          <!-- ===== TAB: ASK WORCA — the assistant chat's limits, tools, web access and history ===== -->
+          <section class="settings-pane hidden" data-tab="ask">
+            <div class="topbar">
+              <div>
+                <div class="sub">The assistant chat: how far one turn may go, which tools and websites it may use, and its saved history</div>
+              </div>
+            </div>
+
+            <!-- Ask Worca's engine (cascading-settings-design.md D17): user-only — the engine new chats start on and
+                 each engine's chat model. Rendered by engine-settings-view.mjs renderAskEngineSection. -->
+            <section class="card settings-card" id="ask-engine-card" data-min-level="simple">
+              <div class="card-head"><div class="label-row"><h2>Engine &amp; models</h2></div></div>
+              <div id="ask-engine-root" class="drows"></div>
+              <!-- One Save per card, bottom right; the line beside it counts the unsaved changes (or says Saved.). -->
+              <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="askEngineMsg"></small><button type="button" id="askEngineSave" class="btn btn-primary btn-sm">Save</button></div>
+            </section>
+            <!-- Ask Worca (ask-worca-design §6.9): per-turn guards for the
+                 assistant chat. Read fresh on every turn (D12); a stored null
+                 budget means "no cap". Posted ALONE — never with root/budget keys. -->
+            <!-- Simple on purpose: the Ask Worca tab (Advanced) already gates it, and a deep link at a lower mode
+                 must still show the card under the level banner (docs/ui-levels.md rule 3). -->
+            <section class="card settings-card" id="ask-settings-card" data-min-level="simple">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Limits &amp; access</h2>
+                  <button type="button" class="info-tip" aria-label="About Chat limits">i<span class="tip-content hidden">
+                    Per-turn guards for the Chat assistant. A chat turn stops when it reaches the turn limit or the per-turn cost cap; both are read fresh on every turn.
+                  </span></button>
+                </div>
+              </div>
+              <div class="drows">
+              <div class="field drow">
+                <div class="label-row drow-label">
+                  <label for="askMaxTurns">Turn limit</label>
+                  <button type="button" class="info-tip" aria-label="About Turn limit">i<span class="tip-content hidden">
+                    Maximum assistant/tool turns one chat message may use (1&ndash;500). Leave empty to restore the default of 400.
+                  </span></button>
+                </div>
+                <div class="drow-control"><input id="askMaxTurns" data-setting="askMaxTurns" class="input" type="number" min="1" max="500" step="1" inputmode="numeric" placeholder="400" autocomplete="off" /></div>
+              </div>
+              <div class="field drow">
+                <div class="label-row drow-label">
+                  <label for="askMaxBudgetUsd">Per-turn cost cap (USD)</label>
+                  <button type="button" class="info-tip" aria-label="About Per-turn cost cap">i<span class="tip-content hidden">
+                    There is no cap by default. Untick No cap and enter an amount (0.1&ndash;100) to turn the guard on: a chat turn then stops when its estimated cost reaches it. Leaving the amount empty, or pressing Use defaults, means no cap.
+                  </span></button>
+                </div>
+                <div class="drow-control"><input id="askMaxBudgetUsd" data-setting="askMaxBudgetUsd" class="input" type="number" min="0.1" max="100" step="0.1" inputmode="decimal" placeholder="No cap" autocomplete="off" />
+                <label class="check-row" for="askNoCap"><input id="askNoCap" data-setting="askMaxBudgetUsd" type="checkbox" /> No cap</label></div>
+              </div>
+              <!-- Scripts workbench W20: the chat's save_script / test_script switch. Body
+                   rendered by chat-settings-view.mjs; saved with this card's Save button. -->
+              <div class="field drow drow-stack" id="ask-script-tools-host"></div>
+              <!-- Summarise commands (#911, flag commandSummaries): rendered by chat-settings-view.mjs; saved with this card's Save. -->
+              <div class="field drow drow-stack" id="ask-summaries-host" data-flag="commandSummaries"></div>
+              <!-- Ask next-prompt suggestions (ghost text after each reply): rendered by chat-settings-view.mjs; saved with
+                   this card's Save button. -->
+              <div class="field drow drow-stack" id="ask-suggestions-host"></div>
+              <!-- Ask web access (off by default): rendered by chat-settings-view.mjs; saved with this
+                   card's Save button, and only when one of its fields was touched. -->
+              <div class="field drow drow-stack" id="ask-web-host"></div>
+              <!-- Sets (docs/mcp-servers.md, docs/skills.md): the General set's servers and skills in one line, painted by
+                   mcp-view.mjs; the Edit General set link opens the Connectors page under the level banner. -->
+              <div class="field drow drow-stack" id="ask-mcp-host"></div>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="askLimitsReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="askLimitsSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+              <!-- Chat history: the counts paint with the view; the button opens a
+                   danger confirm quoting FRESH counts, then DELETE /api/ask/threads. -->
+              <div class="drows" style="margin-top:14px">
+              <div class="field drow">
+                <div class="label-row drow-label">
+                  <label for="askHistoryDelete">Chat history</label>
+                  <button type="button" class="info-tip" aria-label="About Chat history">i<span class="tip-content hidden">
+                    Every saved chat: transcripts, attachments and the git worktrees checked out for them. Runs started from a chat are not affected.
+                  </span></button>
+                </div>
+                <small class="hint drow-help" id="askHistoryCounts"></small>
+                <small class="hint drow-help" id="askHistoryMsg"></small>
+                <div class="drow-control"><button type="button" id="askHistoryDelete" class="btn btn-danger ask-history-delete" disabled>Delete all chats</button></div>
+              </div>
+              </div>
+            </section>
+          </section>
+          <!-- /pane ask -->
+
+          <!-- ===== TAB: GUARDRAILS (was the top-level Guardrails view) ===== -->
+          <section class="settings-pane hidden" data-tab="guardrails">
+            <div class="topbar">
+              <div>
+                <div class="sub">Named guardrail policies: built-ins plus your own sets, selected per pipeline run</div>
+              </div>
+              <button type="button" id="guardrail-create-btn" class="btn btn-primary" data-min-level="expert">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                Create guardrails
+              </button>
+            </div>
+            <p id="guardrails-msg" class="form-msg" aria-live="polite"></p>
+            <div class="run-list" id="guardrails-list"></div>
+          </section>
+          <!-- /pane guardrails -->
+
+          <!-- ===== TAB: MEMORY (agent-memory-design.md §10) ===== -->
+          <section class="settings-pane hidden" data-tab="memory">
+            <div class="topbar">
+              <div>
+                <div class="sub">What worca remembers across runs and chats: the global rules and preferences every agent sees (a project's own memory is on its project page).</div>
+              </div>
+            </div>
+            <!-- The Memory defragment model is Claude's "Memory defragment" helper job (the Models page › Engines). -->
+            <p class="hint mem-model-link" data-min-level="expert">The model every Memory defragment run uses is a helper job: <a href="#models">Models › Engines › Helper jobs</a>.</p>
+            <p id="memory-msg" class="form-msg" aria-live="polite"></p>
+            <div id="memory-host" class="mem-host"></div>
+          </section>
+          <!-- /pane memory -->
+        </section>
+        <!-- /view settings -->
+

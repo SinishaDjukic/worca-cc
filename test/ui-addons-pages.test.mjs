@@ -9,11 +9,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { SERVER_MJS, readServerSource } from '../src/core/read-server-source.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
+const html = readIndexHtml();
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const GSETS = [
@@ -237,7 +239,7 @@ test('Models is a page of its own: the catalog, the Engines card from GET /api/s
     { name: 'signing out of Copilot on the Providers page repaints its card there', run: async () => {
       let connected = true;
       const res = (body) => ({ ok: true, status: 200, json: async () => body });
-      const pv = () => ({ copilot: { connected, termsCurrent: true, login: 'ada', accountType: 'individual', maxConcurrent: 4 } });
+      const pv = () => ({ copilot: { connected, login: 'ada', accountType: 'individual', maxConcurrent: 4 } });
       const { window, doc } = await boot({ routes: {
         '/api/providers/copilot/logout': () => { connected = false; return res(pv()); },
         '/api/providers': () => res(pv()),
@@ -289,7 +291,7 @@ test('Marketplace is a page of its own: its loader and background refresh, its t
       assert.equal(doc.getElementById('topnav-title').textContent, 'Marketplace');
       assert.equal(doc.querySelector('#settings-tabs button[data-tab="plugins"]'), null);
       assert.equal(doc.querySelector('[data-view="settings"] #plugins-list'), null);
-      assert.deepEqual([...doc.querySelectorAll('#settings-tabs button[data-tab]')].map((b) => b.dataset.tab), ['general', 'tags', 'presets', 'runs', 'experimental', 'ask', 'guardrails', 'memory']);
+      assert.deepEqual([...doc.querySelectorAll('#settings-tabs button[data-tab]')].map((b) => b.dataset.tab), ['general', 'tags', 'presets', 'runs', 'automations', 'experimental', 'ask', 'guardrails', 'memory']);
     } },
     { name: 'at Simple, #marketplace still opens under a banner naming Advanced', run: async () => {
       const { window, doc } = await boot({ level: 'simple' });
@@ -307,7 +309,7 @@ test('Marketplace is a page of its own: its loader and background refresh, its t
 test('no in-app link, route call or tab check names an old address', () => {
   const pub = fileURLToPath(new URL('../ui/public/', import.meta.url));
   const files = readdirSync(pub, { recursive: true }).map(String).filter((f) => /\.(m?js|html)$/.test(f));
-  assert.ok(files.includes('app.js') && files.includes('index.html'));
+  assert.ok(files.includes('app.js'));
   assert.ok(files.some((f) => /^graph[\\/]/.test(f)) && files.some((f) => /^ask[\\/]/.test(f)), 'the sweep reads ui/public/graph and ui/public/ask too');
   const offenders = [];
   for (const f of files) {
@@ -333,9 +335,10 @@ function copyFiles() {
   const docs = ['README.md', 'THIRD_PARTY_NOTICES.md', '.claude/skills/creating-worca-cc-plugins/SKILL.md',
     ...readdirSync(root + 'docs').filter((f) => f.endsWith('.md')).map((f) => `docs/${f}`),
     ...readdirSync(root + 'plugins').map((d) => `plugins/${d}/README.md`).filter((f) => { try { readFileSync(root + f); return true; } catch { return false; } })];
-  const files = [...walk('ui/public'), ...walk('src'), 'ui/server.mjs'].filter((f) => /\.(m?js|html|css)$/.test(f)).concat(docs);
+  const files = [...walk('ui/public'), ...walk('src'), SERVER_MJS].filter((f) => /\.(m?js|html|css)$/.test(f)).concat(docs);
   return { root, files, docs };
 }
+const readCopy = (root, f) => (f === SERVER_MJS ? readServerSource() : readFileSync(root + f, 'utf8'));
 
 // U7: the four pages are named as pages ("the Providers page", "Connectors › Skills"); no string, prompt,
 // comment or user doc still sends anyone to a Settings tab that is gone. (docs/superpowers, docs/plans and
@@ -345,7 +348,7 @@ test('no copy in the app, the server or the docs points at Settings › Plugins 
   assert.ok(files.length > 50 && docs.length > 10, 'the sweep reads the tree');
   const offenders = [];
   for (const f of files) {
-    const src = readFileSync(root + f, 'utf8');
+    const src = readCopy(root, f);
     for (const m of src.matchAll(/Settings\s*[›>→▸]\s*(Plugins|Sets|Models|Providers)\b/g)) offenders.push(`${f}: ${m[0]}`);
     // A path through the old Plugins place ("worca → Plugins → <plugin> → Settings"); "Plugins → Marketplace" names the rename.
     for (const m of src.matchAll(/\bPlugins\s*[›>→▸]\s*(?!Marketplace\b)\S+/g)) offenders.push(`${f}: ${m[0]}`);
@@ -359,7 +362,7 @@ test('no copy points at the Marketplace page\'s old Available list, plugin cards
   const { root, files } = copyFiles();
   const offenders = [];
   for (const f of files) {
-    const src = readFileSync(root + f, 'utf8');
+    const src = readCopy(root, f);
     for (const re of [/Marketplace\s*[›>→▸]\s*Available\b/g, /\bAvailable list\b/g, /\*\*Available\*\*/g, /\bMarketplace card\b/g,
       /Marketplace\s*[›>→▸]\s*(?!Installed\b|Browse\b|Marketplaces\b|Add marketplace\b)\S+\s*[›>→▸]\s*Settings\b/g,
       /Marketplace page:\s*(?!Installed\b)\S+\s*›\s*Settings\b/g]) {

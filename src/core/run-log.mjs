@@ -66,3 +66,8 @@ export function createRunLogWriter({ flushMs = 1000, maxBuffer = 256, fileName =
     _pending() { return buf.length; },
   };
 }
+
+/** Append one event to <dir>/live-log.ndjson once the run's own writer is closed (the PR step runs after the run settled). Never rejects. */
+export async function appendRunLog(dir, evt) {
+  try { await appendFile(join(dir, RUN_LOG_FILE), `${JSON.stringify(evt)}\n`, 'utf8'); } catch { /* best effort */ }
+}

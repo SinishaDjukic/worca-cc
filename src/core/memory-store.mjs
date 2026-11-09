@@ -74,6 +74,12 @@ export function flattenLine(s) {
 const clipHook = (s, n = HOOK_MAX_CHARS) => { const t = flattenLine(s).trim(); return t.length > n ? t.slice(0, n) : t; };
 const splitPaths = (s) => String(s ?? '').split(',').map((p) => p.trim()).filter(Boolean);
 const KNOWN_KEYS = ['name', 'description', 'paths', 'source', 'updated'];
+/** The roles a note is for (`roles: refiner, reviewer` in its frontmatter, kept in `meta.extra` like any other extra key),
+ *  lower-cased; [] = every agent. A pipeline role is the node's agent key (planner, refiner, implementer, …); `ask` is the
+ *  chat. A note with roles never loads as a Claude Code rule: worca appends it to the system prompt of those roles only. */
+export function rolesOf(meta) {
+  return String(meta?.extra?.roles ?? '').split(',').map((r) => r.trim().toLowerCase()).filter(Boolean);
+}
 const EXTRA_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;   // frontmatter.mjs' KEY_LINE_RE class: anything else cannot be re-parsed
 
 /** @returns {{meta:{name:string,description:string,paths:string[],source:string,updated:string,extra:Record<string,string>}, body:string, hasFrontmatter:boolean}} */
@@ -199,7 +205,7 @@ export async function listMemoryDir(dir, { onError, hashOf = hashText } = {}) {
     const { meta, body, hasFrontmatter } = parseMemoryFile(text);
     out.push({
       // §2: a broken/missing fence is still SERVED — the hook falls back to the first non-empty body line.
-      name, description: meta.description || deriveHook(body), paths: meta.paths, source: meta.source, updated: meta.updated,
+      name, description: meta.description || deriveHook(body), paths: meta.paths, roles: rolesOf(meta), source: meta.source, updated: meta.updated,
       bytes: bytesOf(text), hasFrontmatter, hash: hashOf(text),
     });
   }
@@ -377,20 +383,25 @@ export const MEMORY_BLOCK_INTRO =
   'Durable rules, preferences and traps kept across runs and chats. Claude Code has already loaded them into your context as rules ' +
   '(a file with `paths` loads when you read a matching file), so never search for them (the built-in Explore and Plan sub-agents ' +
   'do not load them — read the files in the directories below if you are one). The directories below hold the WRITABLE copy of ' +
-  'those files — worca syncs them back to its store after your turn; the read-only copy under the cwd\'s `.claude/rules/worca` is ' +
+  'those files — what you write there is a proposal a person approves (this run keeps its starting notes); the read-only copy under the cwd\'s `.claude/rules/worca` is ' +
   'Claude Code\'s own and a write there is refused as a sensitive path, so never write there. ' +
   'WRITE TRIGGER: write a file into the directories below only when what you learned (a) cost you a cycle, or would have cost the next agent one, ' +
   'or (b) contradicted what you assumed when you started — AND will still be true next month. Worth a file: ' +
   'a trap (behaves differently from how it reads); a verification recipe (the exact command / env var / ' +
   'fixture-regeneration step that proves work here is correct); an invariant or contract the code depends ' +
   'on but never states; a settled user decision with its reason, including approaches ruled out and why; a ' +
-  'defect class a review had to flag that will recur here. Never: run summaries or progress notes, restatements ' +
+  'defect class a review had to flag that will recur here. Never: procedures or extra checks for agents to run (those go in a ' +
+  'role prompt), run summaries or progress notes, restatements ' +
   'of code or structure you can read, one-off task facts, anything already in CLAUDE.md / ' +
   'CONTRIBUTING / README, machine paths or secrets, unverified guesses. Budget: at most 1–2 files per run; ' +
-  'prefer EDITING an existing file over adding one; give `paths` whenever the rule is file-specific; keep a file ' +
+  'prefer EDITING an existing file over adding one; give `paths` whenever the rule is file-specific and `roles` (agent ' +
+  'keys, e.g. `reviewer`) when only some agents need it; keep a file ' +
   'under ~8 KB. One topic per file (`<topic>.md`); ' +
   'keep the frontmatter: `name` (the filename stem), `description` (one line: when it is worth reading), ' +
-  'optional `paths` (comma-separated globs); worca stamps `source` and `updated`. To remove a file, empty it.';
+  'optional `paths` and `roles` (comma-separated); worca stamps `source` and `updated`. To remove a file, empty it.';
+/** The one clause a Memory defragment run reads instead (its writes ARE the store's new content: no proposal). */
+const PROPOSAL_CLAUSE = 'what you write there is a proposal a person approves (this run keeps its starting notes)';
+const DIRECT_CLAUSE = 'worca syncs them back to its store after your turn';
 
 /**
  * @param {Array<{label:string, dir:string}>} sections  one per mounted scope, in mount order
@@ -443,8 +454,9 @@ export function memoryBlockTeamSentence(teamDir, { engine = 'claude' } = {}) {
     'the same name into the matching Project directory below — it then replaces the team version for everyone.';
 }
 
-export function renderMemoryBlock(sections, { engine = 'claude', teamDir = null } = {}) {
-  const intro = engine && engine !== 'claude' ? MEMORY_BLOCK_INTRO_READ : MEMORY_BLOCK_INTRO;
+export function renderMemoryBlock(sections, { engine = 'claude', teamDir = null, direct = false } = {}) {
+  const base = engine && engine !== 'claude' ? MEMORY_BLOCK_INTRO_READ : MEMORY_BLOCK_INTRO;
+  const intro = direct ? base.replace(PROPOSAL_CLAUSE, DIRECT_CLAUSE) : base;
   const lines = [MEMORY_BLOCK_HEADING, teamDir ? `${intro}${memoryBlockTeamSentence(flattenLine(teamDir), { engine })}` : intro];
   for (const s of sections || []) lines.push(`${flattenLine(s.label)} — ${s.dir}:`);
   return `${lines.join('\n')}\n`;
@@ -483,7 +495,8 @@ export function memoryHealth(entries, state, caps) {
   const oversized = list.filter((e) => size(e) > soft);
   const overHard = list.filter((e) => size(e) > hard);
   const invalid = list.filter((e) => e.hasFrontmatter === false);
-  const alwaysOn = list.filter((e) => !(Array.isArray(e.paths) && e.paths.length));
+  // A note with `roles` loads into those roles' prompts only, never into every agent: not always-on either.
+  const alwaysOn = list.filter((e) => !(Array.isArray(e.paths) && e.paths.length) && !(Array.isArray(e.roles) && e.roles.length));
   const alwaysOnBytes = alwaysOn.reduce((n, e) => n + size(e), 0);
   const budget = maxFiles * soft;
   // Spec §8's threshold is `bytes ≥ bytesPct % of budget`: compare integers, never a rounded

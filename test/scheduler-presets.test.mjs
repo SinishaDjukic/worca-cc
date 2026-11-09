@@ -29,6 +29,7 @@ before(async () => {
   process.env.WORCA_PROJECTS_ROOT = projectsRoot;
   process.env.WORCA_MOCK = '1';
   process.env.WORCA_IDENTITY_HEADER = H;   // a request without the header is the local install (sees every preset)
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
   const mod = await import('../ui/server.mjs');
   srv = mod.server;
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -163,14 +164,24 @@ test('a field changed in the form before scheduling stays as set when the preset
 });
 
 test('a ticket from an Ask card never fires on Permissive, whatever the preset resolves to', async () => {
-  const preset = await savePreset('Loose', {});   // no guardrailsId: a start reads it as Permissive
+  // No guardrailsId: a start reads it as the install default (V21), Permissive on an install from before v71.
+  const preset = await savePreset('Loose', {});
   const { createTicket } = await import('../src/core/scheduler.mjs');
-  // A ticket stored without presetOverrides (as one made before the fix): the card's Normal is not kept.
-  const t = createTicket({ title: 'nightly', projectDir: project.path, runAtMs: Date.now() + 86400000,
+  const { prepare, GUARDRAILS_DEFAULT_META_KEY } = await import('../src/core/db.mjs');
+  const ticket = () => createTicket({ title: 'nightly', projectDir: project.path, runAtMs: Date.now() + 86400000,
+    // A ticket stored without presetOverrides (as one made before the fix): the card's Normal is not kept.
     request: { projectDir: project.path, prompt: 'nightly', guardrailsId: 'normal', internal: { presetName: 'Loose' } },
     askThreadId: 'th_test', askCardId: 'card_test', presetId: preset.id });
-  const now = await runNow(t.id);
-  assert.equal(now.status, 'failed');
-  assert.match(now.failReason, /scheduled from Chat and the run preset "Loose" now resolves to Permissive guardrails/);
-  assert.equal(now.pipelineId ?? null, null, 'no run was started');
+  prepare("INSERT OR REPLACE INTO store_meta (key, kind, data) VALUES (?, 'setting', ?)").run(GUARDRAILS_DEFAULT_META_KEY, JSON.stringify('permissive'));
+  try {
+    const now = await runNow(ticket().id);
+    assert.equal(now.status, 'failed');
+    assert.match(now.failReason, /scheduled from Chat and the run preset "Loose" now resolves to Permissive guardrails/);
+    assert.equal(now.pipelineId ?? null, null, 'no run was started');
+  } finally {
+    prepare('DELETE FROM store_meta WHERE key = ?').run(GUARDRAILS_DEFAULT_META_KEY);
+  }
+  // A fresh install's default is Normal, so the same preset is no Permissive start.
+  const fresh = await runNow(ticket().id);
+  assert.doesNotMatch(String(fresh.failReason || ''), /resolves to Permissive/);
 });
