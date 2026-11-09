@@ -50,6 +50,7 @@ Focus on testing and validation: full end-to-end in a real browser against the r
 
 - **Chat first.** Chat is the only place to type to Worca. No composer on any other page: remove every "Ask about this…" dock; ⌘J and the
   top bar's Ask go to Chat with the page as a removable chip, and Back returns (`rail.hand-to-chat`).
+- **Side chat goes.** Under Stillhet, "Side chat beside a page" is removed (`plans/rail/dev-vs-prototype.md`: drop it): ⌘J and Ask hand over to Chat instead. With the flag off it stays as it is today. The rest of that list was reviewed and stands.
 - **Centers.** Pages outside Chat are centers: Tasks, Schedules, Workflows, Marketplace, Projects, Insights, Requirements. Each lands on a grid of cards
   that sums up what the sidebar cannot (`rail.center`, `panel.center`, `panel.center-shelf`). Projects is by workspace from Advanced.
 - **Manual creation** stays from Advanced up as the **"Legacy approach"** (exact words, replacing every remaining "by hand") in the same + menu:
