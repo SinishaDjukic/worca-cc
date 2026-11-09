@@ -123,6 +123,25 @@ test('a stop during the before run aborts it; no try starts; the progress page s
   assert.equal(runner.beforeNowOf(run.id), null);
 });
 
+test('each change of the before phase sends a change frame (the progress page repaints only on frames); an unchanged one does not', async () => {
+  const ex = example();
+  let runner = null;
+  const seen = [];
+  const h = harness({ beforeRun: async (_spec, { onPhase }) => {
+    onPhase('setup'); onPhase('setup'); onPhase('command');
+    return { ran: true, ok: true, exitCode: 0, timedOut: false, tests: TESTS, at: '2026-10-28T09:00:00.000Z', cached: false, ms: 2000 };
+  } });
+  h.deps.notify = (frame) => {
+    assert.equal(frame.type, 'workflow-tests-changed');
+    const now = runner && frame.testRunId != null ? runner.beforeNowOf(frame.testRunId) : null;
+    if (now) seen.push(now.phase);
+  };
+  runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await runner.idle(run.id);
+  assert.deepEqual(seen, ['copy', 'setup', 'command']);
+});
+
 test('a project that cannot be used stops the test in the before phase, as a try would', async () => {
   const ex = example();
   const h = harness();

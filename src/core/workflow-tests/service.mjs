@@ -703,11 +703,17 @@ export function progressOf(workflowId, runId, { costOf = null, phaseOf = null, b
       // P38: filled by progressEdited (async, in the route): what continueRun checks.
       edited: false };
   }
+  const before = beforeNowOf ? beforeNowOf(run.id) : null;
+  const startOf = (ex) => ({ ref: ex.project.startRef, short: ex.project.startSha.slice(0, 7), at: ex.project.startAt });
   const phases = (() => {
     const ex = firstNow ? store.readExample(workflowId, firstNow.exampleId) : null;
-    if (!ex || !ex.project) return null;
-    return { exampleName: firstNow.name, label: firstNow.label || useLabel(run.b, ctx), tryNo: firstNow.now.tryNo, phase: firstNow.now.phase,
-      start: { ref: ex.project.startRef, short: ex.project.startSha.slice(0, 7), at: ex.project.startAt }, setupCmd: ex.project.setupCmd };
+    if (ex && ex.project) {
+      return { exampleName: firstNow.name, label: firstNow.label || useLabel(run.b, ctx), tryNo: firstNow.now.tryNo, phase: firstNow.now.phase,
+        start: startOf(ex), setupCmd: ex.project.setupCmd };
+    }
+    // Board 42: no try yet, the before phase runs: the steps of a try, none current, from the first project example.
+    if (firstNow || !before || run.status !== 'running' || !projectRows.length) return null;
+    return { before: true, phase: null, start: startOf(projectRows[0]), setupCmd: projectRows[0].project.setupCmd };
   })();
   const project = projectRows.length ? { phases, disk: null, setupStop } : null;   // disk: progressDisk (async), in the route
   const costBy = new Map();
@@ -722,7 +728,7 @@ export function progressOf(workflowId, runId, { costOf = null, phaseOf = null, b
     minutesLeft: ms !== null && remaining ? Math.max(1, Math.ceil((Math.ceil(remaining / TRIES_AT_ONCE) * ms) / 60000)) : null,
     takenMs: takenMs(run, own),
     quick: run.quick,
-    before: beforeNowOf ? beforeNowOf(run.id) : null,
+    before,
     project,
     madeAgain: store.madeAgainOf(run.id),   // U-T2: tries made again after a problem in Worca (never counted)
   };

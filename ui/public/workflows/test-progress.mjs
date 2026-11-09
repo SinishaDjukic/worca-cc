@@ -7,7 +7,7 @@ import { aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
 import { icon } from '../icons.mjs';
 import { DISK_IN_USE, diskInUseSub, fmtGb, PHASES, PHASE_SUB, PHASES_TITLE, phasesShownFor, nowText, forMinutes, RUNNING_LEAD, FROM_LEAD,
   SETUP_STOP_REST, SETUP_STOP_HINT, SEE_SETUP_OUTPUT, setupWhere, SETUP_FIX_HINT, SETUP_EDITED_HINT, START_NEW_TEST, SETUP_NO_OUTPUT, EDIT_EXAMPLE, TRY_AGAIN,
-  worcaStoppedText, madeAgainText, BEFORE_NOW_TITLE, BEFORE_NOW_LEAD, beforeNowRest, BEFORE_PHASE, BEFORE_NOW_WHY } from '../../../src/shared/workflow-tests/project-text.mjs';
+  worcaStoppedText, madeAgainText, BEFORE_NOW_TITLE, BEFORE_NOW_LEAD, beforeNowRest, BEFORE_PHASE, BEFORE_NOW_WHY, PHASES_BEFORE_HINT } from '../../../src/shared/workflow-tests/project-text.mjs';
 
 const DOT = { passed: 'ok', failed: 'no', running: 'run' };
 /** A stored detail is one line with no full stop (runner.mjs pauseVerdict, quickCheck); a server refusal may have one. */
@@ -99,7 +99,8 @@ function setupStopCard(doc, root, runId, ss, costUsd) {
   return card;
 }
 
-/** Board 35: what one try goes through, for the first try that runs (D55, D61). Setup only when the example has one. */
+/** Board 35: what one try goes through, for the first try that runs (D55, D61). Setup only when the example has one. Board 42:
+ *  before any try (`ph.before`, the before phase runs), the same steps with none current, and the board's hint. */
 function phasesCard(doc, ph, dateText) {
   const c = el(doc, 'section', 'card wft-phases');
   const h = el(doc, 'h2', '', PHASES_TITLE);
@@ -107,7 +108,7 @@ function phasesCard(doc, ph, dateText) {
   c.setAttribute('aria-labelledby', h.id);
   const list = el(doc, 'ol', 'wft-ph-list');
   const steps = PHASES.filter(([k]) => k !== 'setup' || ph.setupCmd);
-  const at = Math.max(0, steps.findIndex(([k]) => k === ph.phase));
+  const at = ph.before ? -1 : Math.max(0, steps.findIndex(([k]) => k === ph.phase));
   steps.forEach(([k, label], i) => {
     const li = el(doc, 'li', `wft-ph${i < at ? ' is-done' : i === at ? ' is-now' : ''}`);
     if (i === at) li.setAttribute('aria-current', 'step');
@@ -126,7 +127,7 @@ function phasesCard(doc, ph, dateText) {
     li.append(n, words);
     list.append(li);
   });
-  c.append(h, list, el(doc, 'p', 'hint', phasesShownFor(ph.exampleName, ph.label, ph.tryNo)));
+  c.append(h, list, el(doc, 'p', 'hint', ph.before ? PHASES_BEFORE_HINT : phasesShownFor(ph.exampleName, ph.label, ph.tryNo)));
   return c;
 }
 

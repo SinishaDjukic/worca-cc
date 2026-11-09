@@ -332,7 +332,9 @@ export function createTestRunner(deps) {
         try {
           if (st.stopping) return;
           const spec = beforeSpecOf(ex, check, (project && project.startCommit) || ex.project.startCommit);
-          rec = await deps.beforeRun(spec, { signal: st.beforeAbort.signal, onPhase: (p) => { if (st.beforeNow) st.beforeNow.phase = p; } });
+          // The progress page repaints only on a frame: each change of phase sends one (Task 13 review).
+          const onPhase = (p) => { if (st.beforeNow && st.beforeNow.phase !== p) { st.beforeNow.phase = p; notify(run); } };
+          rec = await deps.beforeRun(spec, { signal: st.beforeAbort.signal, onPhase });
         } catch (e) {
           rec = { ran: false, reason: 'error', text: msgOf(e) };
         } finally {

@@ -14,7 +14,7 @@ import { changesTitle, changeCountText, FILE_BADGE, READ_ALL_CHANGES, BOTH_START
   changesLine, notMetFor, COMMAND_ENDED, COMMAND_TIMED_OUT, SEE_COMMAND_OUTPUT, NOTHING_PUSHED_TEXT, REAL_BLOCKED_TEXT, EACH_ANSWERED_TEXT,
   EACH_STOPPED_ANSWERED_TEXT, READING_CHANGES, inSentence,
   FAILED_LEAD, splitTestName, moreNamesText, NO_FILE_DIFF_TEXT, BINARY_FILE_TEXT, CHANGES_UNREAD_TEXT, DIFF_SHORTENED_TEXT, moreFilesText, NO_DIFF_TEXT, madeAgainText,
-  BEFORE_HEADING, beforeExitText, beforeNotRunText, BEFORE_GROUPS, FAILURES_ONLY_NOTE, EXIT_ONLY_NOTE, passedCountsText, addedRest, DEV_BEFORE_LEAD, devBeforeRest }
+  BEFORE_HEADING, beforeExitText, beforeNotRunText, BEFORE_GROUPS, FAILURES_ONLY_NOTE, EXIT_ONLY_NOTE, passedCountsText, skippedCountsText, TESTS_CUT_NOTE, addedRest, DEV_BEFORE_LEAD, devBeforeRest }
   from '../../../src/shared/workflow-tests/project-text.mjs';
 
 const RESULT = { better: ['badge green', 'Better'], worse: ['badge red', 'Worse'], same: ['badge', 'Same'] };
@@ -603,9 +603,13 @@ function failedLine(doc, it) {
  *  first 5 names, then "and N more"; each count in bold; a line that says something broke is red, and so is the block. */
 function beforeBlock(doc, label, b) {
   const fewer = (c) => !!(c && c.before && c.after && typeof c.before.passed === 'number' && typeof c.after.passed === 'number' && c.after.passed < c.before.passed);
-  const lost = !!(b.lostPass && b.lostPass.n > 0);
+  const skips = (c) => (c && c.before && c.after ? [c.before.skipped || 0, c.after.skipped || 0] : null);
+  const moreSkipped = (c) => { const s = skips(c); return !!s && s[1] > s[0]; };   // commandMet's 'more-skipped'
+  // A cut list proves nothing went missing (commandMet): its "no longer run" is neither red nor said.
+  const lost = !b.truncated && !!(b.lostPass && b.lostPass.n > 0);
   const exitBroke = b.beforeOk && !b.beforeTimedOut && !b.afterOk;
-  const bad = !!b.ran && ((b.level === 'tests' && (b.broke.n > 0 || lost)) || (b.level === 'failures' && (b.failingNow.n > 0 || fewer(b.counts)))
+  const bad = !!b.ran && ((b.level === 'tests' && (b.broke.n > 0 || lost))
+    || (b.level === 'failures' && (b.failingNow.n > 0 || fewer(b.counts) || moreSkipped(b.counts)))
     || (b.level === 'exit' && exitBroke));
   const box = el(doc, 'div', `wft-before${bad ? ' is-bad' : ''}`);
   box.setAttribute('role', 'group');
@@ -628,13 +632,16 @@ function beforeBlock(doc, label, b) {
     box.append(row('broke', b.broke, { red: b.broke.n > 0 }), row('madePass', b.madePass), row('stillPass', b.stillPass));
     if (b.stillFailing.n) box.append(row('stillFailing', b.stillFailing));
     if (b.added.n) box.append(row('added', { n: b.added.n }, { rest: addedRest(b.added.failing) }));
-    if (b.gone.n) box.append(row('gone', b.gone, { red: lost }));
+    if (b.truncated) box.append(el(doc, 'span', 'hint', TESTS_CUT_NOTE));
+    else if (b.gone.n) box.append(row('gone', b.gone, { red: lost }));
   } else if (b.level === 'failures') {
     box.append(row('failingNow', b.failingNow, { red: b.failingNow.n > 0 }), row('noLongerFail', b.noLongerFail));
     if (b.stillFailing.n) box.append(row('stillFailing', b.stillFailing));
     const c = b.counts;
     if (c && c.before && c.after) {
       box.append(el(doc, 'span', `wft-before-row${fewer(c) ? ' wft-before-broke' : ''}`, passedCountsText(c.before.passed, c.after.passed)));
+      const [sb, sa] = skips(c);
+      if (sb || sa) box.append(el(doc, 'span', `wft-before-row${sa > sb ? ' wft-before-broke' : ''}`, skippedCountsText(sb, sa)));
     }
     box.append(el(doc, 'span', 'hint', FAILURES_ONLY_NOTE));
   } else {

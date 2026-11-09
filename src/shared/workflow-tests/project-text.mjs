@@ -258,13 +258,15 @@ export const BEFORE_GROUPS = Object.freeze({
 export const FAILURES_ONLY_NOTE = 'This test tool names only the tests that fail, so the tests that pass are counted, not named.';
 export const EXIT_ONLY_NOTE = "Worca could not read test names in this command's output, so it compares only whether the command passed.";
 export const passedCountsText = (b, a) => `Passed: ${b} before, ${a} now`;
+export const skippedCountsText = (b, a) => `Skipped: ${b} before, ${a} now`;   // red when more are skipped now ('more-skipped')
+export const TESTS_CUT_NOTE = 'Worca read only the first 20,000 tests, so tests that no longer run are not counted.';   // MAX_TESTS, test-output.mjs
 export const addedRest = (failing) => (failing ? `, ${failing} failing` : '');   // U1: after the bold count
 export const addedText = (n, failing) => `${n}${addedRest(failing)}`;
 export const moreNamesText = (n) => `and ${n} more`;
 export const BEFORE_KEPT_TEXT = ' · kept from an earlier test';
 // U1's "For developers" fact (board 40): "Before the change: <npm test> · it failed · 28 Oct · kept from an earlier test".
 export const DEV_BEFORE_LEAD = 'Before the change: ';
-export const devBeforeRest = (b, date) => ` · ${b.beforeOk ? 'it passed' : 'it failed'}${date ? ` · ${date}` : ''}${b.cached ? BEFORE_KEPT_TEXT : ''}`;
+export const devBeforeRest = (b, date) => ` · ${b.beforeTimedOut ? 'it ran longer than its time limit' : b.beforeOk ? 'it passed' : 'it failed'}${date ? ` · ${date}` : ''}${b.cached ? BEFORE_KEPT_TEXT : ''}`;
 // U2 (board 41, polish 5): the run before the change, on its own line under the Time row.
 export const BEFORE_RUNS_LEAD = 'First, ';
 export const BEFORE_RUNS_SEVERAL = 'the command checks';
@@ -274,6 +276,7 @@ export const BEFORE_NOW_TITLE = 'Before the tries';
 export const BEFORE_NOW_LEAD = 'Running ';
 export const beforeNowRest = (b) => ` on the start point of ${b.exampleName} · ${b.n} of ${b.of}`;
 export const BEFORE_PHASE = Object.freeze({ copy: 'Preparing a copy of the project', setup: 'Running setup', command: 'Running the command' });
+export const PHASES_BEFORE_HINT = 'Three tries run at once, each in its own copy of the project.';   // board 42: the steps, before any try
 export const BEFORE_NOW_WHY = 'Worca runs the tests once on the project as it was, so it can tell later which tests a version fixed or broke. This uses no AI.';
 // P45: board 36's "Failed: <file> · "<test>"" line.
 export const FAILED_LEAD = 'Failed: ';

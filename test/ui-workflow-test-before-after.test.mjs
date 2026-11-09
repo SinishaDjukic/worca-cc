@@ -217,6 +217,62 @@ test('U3 (board 42): while the test runs, the "Before the tries" card', () => {
   assert.equal(paintProgress(stopped).querySelector('.wft-before-now'), null, 'only while the test runs');
 });
 
+// Fix round 1 (review Important 1): board 42 also shows what each try will do, under "Before the tries", no step current.
+const BEFORE_PHASES = { before: true, phase: null, start: { ref: 'main', short: 'abc1234', at: AT }, setupCmd: 'npm ci' };
+test('U3 (board 42): before any try, "What happens in each try" sits under "Before the tries", no step current, the board\'s hint', () => {
+  const p = progressModel({ exampleId: 1, exampleName: 'Ticket 482', cmd: 'npm test', phase: 'setup', n: 1, of: 2, startedMs: Date.now() },
+    { project: { phases: BEFORE_PHASES, disk: null, setupStop: null } });
+  const root = paintProgress(p);
+  const card = root.querySelector('.wft-phases');
+  assert.ok(card, 'the card is there');
+  assert.equal(card.previousElementSibling.classList.contains('wft-before-now'), true, 'under "Before the tries"');
+  assert.equal(card.querySelector('h2').textContent, 'What happens in each try');
+  assert.deepEqual(texts(card, '.wft-ph b'), ['Preparing a copy of the project', 'Running setup', 'Working', 'Checking']);
+  assert.deepEqual(texts(card, '.wft-ph .s'), ['From main at abc1234 · 28 Oct', 'npm ci', 'The workflow does its work', 'The checks run, then the copy is deleted']);
+  assert.deepEqual([...card.querySelectorAll('.wft-ph')].map((li) => li.className), ['wft-ph', 'wft-ph', 'wft-ph', 'wft-ph'], 'no step done or current');
+  assert.equal(card.querySelector('[aria-current]'), null);
+  assert.equal(card.querySelectorAll('.sr-only').length, 0, 'nothing said done');
+  assert.equal(card.querySelector(':scope > .hint').textContent, 'Three tries run at once, each in its own copy of the project.');
+  // No setup command: no setup step, as in a try.
+  const noSetup = paintProgress({ ...p, project: { phases: { ...BEFORE_PHASES, setupCmd: null }, disk: null, setupStop: null } });
+  assert.deepEqual(texts(noSetup, '.wft-ph b'), ['Preparing a copy of the project', 'Working', 'Checking']);
+});
+
+test('U1: at the failures level, more tests skipped now is said and red, like fewer passing', () => {
+  const base = { ran: true, level: 'failures', beforeOk: false, beforeTimedOut: false, afterOk: true, cached: false, at: AT,
+    failingNow: { n: 0, names: [] }, noLongerFail: { n: 0, names: [] }, stillFailing: { n: 0, names: [] } };
+  const more = sbs(null, { ...base, counts: { before: { passed: 212, failed: 0, skipped: 1 }, after: { passed: 213, failed: 0, skipped: 3 } } }).querySelector('.wft-before');
+  assert.deepEqual(texts(more, '.wft-before-row'), ['Tests failing now that did not fail before: 0', 'Tests that failed before and no longer fail: 0',
+    'Passed: 212 before, 213 now', 'Skipped: 1 before, 3 now']);
+  assert.deepEqual(texts(more, '.wft-before-broke'), ['Skipped: 1 before, 3 now']);
+  assert.ok(more.classList.contains('is-bad'));
+  const fewerSkipped = sbs(null, { ...base, counts: { before: { passed: 212, failed: 0, skipped: 3 }, after: { passed: 214, failed: 0, skipped: 1 } } }).querySelector('.wft-before');
+  assert.equal(texts(fewerSkipped, '.wft-before-row').at(-1), 'Skipped: 3 before, 1 now');
+  assert.equal(fewerSkipped.classList.contains('is-bad'), false);
+  assert.equal(fewerSkipped.querySelectorAll('.wft-before-broke').length, 0);
+  const none = sbs(null, { ...base, counts: { before: { passed: 212, failed: 0, skipped: 0 }, after: { passed: 212, failed: 0, skipped: 0 } } }).querySelector('.wft-before');
+  assert.equal(texts(none, '.wft-before-row').some((t) => t.startsWith('Skipped:')), false, 'none skipped: not said');
+});
+
+test('U1: a cut test list never makes "no longer run" red, and says it was cut', () => {
+  const ok = { ...TESTS_LEVEL, broke: { n: 0, names: [] }, added: { n: 0, failing: 0 } };
+  const cut = sbs(null, { ...ok, gone: { n: 2, names: ['x', 'y'] }, lostPass: { n: 2 }, truncated: true }).querySelector('.wft-before');
+  assert.equal(cut.classList.contains('is-bad'), false);
+  assert.equal(cut.querySelectorAll('.wft-before-broke').length, 0);
+  assert.equal(texts(cut, '.wft-before-row').some((t) => t.startsWith('Tests that no longer run')), false, 'not counted: not said');
+  assert.equal(cut.querySelector(':scope > .hint').textContent, 'Worca read only the first 20,000 tests, so tests that no longer run are not counted.');
+  const whole = sbs(null, { ...ok, gone: { n: 2, names: ['x', 'y'] }, lostPass: { n: 2 } }).querySelector('.wft-before');
+  assert.ok(whole.classList.contains('is-bad'));
+  assert.equal(whole.querySelector(':scope > .hint'), null);
+  // A test it broke is still red on a cut list.
+  assert.ok(sbs(null, { ...TESTS_LEVEL, truncated: true }).querySelector('.wft-before').classList.contains('is-bad'));
+});
+
+test('U1: For developers says the before run ran longer than its time limit, not "it failed"', () => {
+  const exit = { ran: true, level: 'exit', beforeOk: false, beforeTimedOut: true, afterOk: true, cached: false, at: AT };
+  assert.ok(texts(sbs(null, exit), '.wft-dev-facts > span').includes('Before the change: npm test · it ran longer than its time limit · 28 Oct'));
+});
+
 test('U1/U3 styles: the block, its red state and the card are in workflow-tests.css; on a phone the checks table does not scroll sideways', () => {
   const css = readStyleCss();
   for (const sel of ['.wft-before{', '.wft-before.is-bad{', '.wft-before-broke{', '.wft-before-n{', '.wft-est-sub{', '.wft-before-now{']) {
@@ -322,6 +378,11 @@ test('end to end U3: progressOf\'s `before` (the runner\'s beforeNowOf) reaches 
   const card = paintProgress(p).querySelector('.wft-before-now');
   assert.equal(card.querySelector('.wft-before-now-line').textContent, 'Running npm test on the start point of Ticket 482 · 1 of 1');
   assert.equal(card.querySelector('.wft-before-now-phase').textContent, 'Running setup');
+  // Fix round 1 (board 42): no try yet, so the steps come from the plan: the first project example's start point and setup.
+  assert.deepEqual(p.project.phases, { before: true, phase: null, start: { ref: 'main', short: SHA.slice(0, 7), at: AT }, setupCmd: 'npm ci' });
+  const ph = paintProgress(p).querySelector('.wft-phases');
+  assert.deepEqual(texts(ph, '.wft-ph .s').slice(0, 2), [`From main at ${SHA.slice(0, 7)} · 28 Oct`, 'npm ci']);
+  assert.equal(ph.querySelector('.is-now'), null);
   await runner.stop(run.id);
   release();
   await runner.idle(run.id);
