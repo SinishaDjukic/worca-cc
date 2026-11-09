@@ -10,7 +10,7 @@ const css = readStyleCss();
 const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '');
 const bare = strip(css);
 const part = (path) => strip(readFileSync(new URL(`../ui/public/${path}`, import.meta.url), 'utf8'));
-const listPart = part('projects/projects-management.css');
+const listPart = part('projects/readiness.css');
 const settingsPart = part('projects/project-settings.css');
 // The readiness block of each part: from its first rule to the end of the file (both blocks close their part).
 const readinessBlocks = [listPart.slice(listPart.indexOf('.pl-rd{')), settingsPart.slice(settingsPart.indexOf('.rs-head{'))];

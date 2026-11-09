@@ -211,7 +211,8 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/projects/list-head.css` | 7 |
 | `ui/public/projects/project-add.html` | 120 |
 | `ui/public/projects/project-settings.css` | 47 |
-| `ui/public/projects/projects-management.css` | 218 |
+| `ui/public/projects/projects-management.css` | 150 |
+| `ui/public/projects/readiness.css` | 68 |
 | `ui/public/projects/projects.html` | 76 |
 | `ui/routes/projects/project-settings.mjs` | 171 |
 | `ui/routes/projects/projects.mjs` | 287 |

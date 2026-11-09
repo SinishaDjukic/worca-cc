@@ -658,10 +658,25 @@
         "selectors": [
           ".pd-settings",
           ".card.house-brief",
-          ".house-brief"
+          ".house-brief",
+          ".readiness-settings-card",
+          ".rs-"
         ],
         "feature": "projects",
         "name": "project-settings"
+      },
+      {
+        "section": "^Projects two-screen shell",
+        "selectors": [
+          ".pl-rd",
+          ".rd-",
+          ".readiness-pop",
+          ".rp-",
+          ".pd-rd-slot",
+          ".pd-row1"
+        ],
+        "feature": "projects",
+        "name": "readiness"
       },
       {
         "section": "^Actions",
