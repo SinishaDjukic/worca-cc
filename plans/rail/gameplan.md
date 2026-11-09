@@ -71,3 +71,5 @@ Chat, with the page you were on attached as a chip you can remove and its questi
 5. Dark cockpit (A320) combined with the icon and colour proposals: PNGs before and after, confirmed by Emil before anything changes. Nordic calm is the yardstick. The ECAM-style action list stays out unless Emil adds it.
 6. Then the gameplan from step 1. Tasks and Schedules' 8.0 list goes into step 6.
 7. The final goal: Worca builds itself on Rail. A page must be composable from the DS and its data shapes alone, so every rule, component and data shape added here serves that.
+
+8. Very last, after all tests: a dev agent compares the dev branch with the prototype and lists every function dev has that the prototype lacks. Features only the prototype has are fine; Worca builds those later.

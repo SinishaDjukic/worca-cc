@@ -1631,7 +1631,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .pg-a > .btn-quiet:first-child{padding-left:0;}
 .run-outs{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);}
 .ro-sqs{display:inline-flex;gap:3px;flex:none;}
-.ro-sq{width:9px;height:9px;border-radius:2px;box-sizing:border-box;}
+.ro-sq{width:9px;height:9px;border-radius:var(--r-sm);box-sizing:border-box;}
 .ro-sq.is-ok{background:var(--green);} .ro-sq.is-fail{background:var(--red);} .ro-sq.is-run{border:1.5px solid var(--ink-2);} .ro-sq.is-miss{border:1.5px solid var(--amber);}
 .center-sent{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);}
 .center-way{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}

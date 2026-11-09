@@ -334,7 +334,7 @@
     if (counted && st.when === 'this month' && !st.narrow && !st.filter.length && window.RailRunsList) {   // the plain month: the headline is the list too
       c.T.tasks = sum(src.rows.project.map((r) => listCount('project', r.name, null))); c.F.tasks = allocate(periodSeries(src, 'tasks', st.when).now, c.T.tasks);
     }
-    const splits = !whole0 && !sub.den && !ORDERED.has(st.by) && !!src.rows[st.by];
+    const splits = !whole0 && !sub.den && !TIME.has(st.by) && !!src.rows[st.by];
     if (splits) {
       const cutAll = dayCutOf(sub, st), perDay = cutAll.perDay.slice(a, b + 1);
       c.dayCut = { names: cutAll.names, perDay };

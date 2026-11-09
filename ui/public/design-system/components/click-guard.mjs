@@ -1,6 +1,6 @@
 // ClickGuard (docs/rail/components.md › comp.click-guard): a double click on a button that swaps or moves must not fire what
 // lands under the pointer. A page draws its buttons as it always did; one watcher guards them all.
-const CONTROL = 'button, a[href], summary, [role="button"], [role="menuitem"], [role="tab"]';
+const CONTROL = 'button, a[href], summary, [role="button"], [role="menuitem"], [role=tab]';
 export const CLICK_GUARD_MS = 400;
 const NEAR = 6;
 const seen = new WeakSet();
