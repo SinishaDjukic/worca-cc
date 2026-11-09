@@ -6,8 +6,8 @@ import { loadMap } from '../tools/split-by-feature/plan.mjs';
 import { packFiles, registrationOrder, routeIndex } from '../tools/split-by-feature.mjs';
 
 const ROOT = new URL('../', import.meta.url).pathname;
-const MAP = loadMap(ROOT, JSON.stringify({ version: 1, docless: { runs: 't', 'run-groups': 't' }, features: [
-  { name: 'runs', doc: null, routes: ['/api/runs'], css: [], html: [] },
+const MAP = loadMap(ROOT, JSON.stringify({ version: 1, docless: { 'run-groups': 't' }, features: [
+  { name: 'runs', doc: 'docs/runs.md', routes: ['/api/runs'], css: [], html: [] },
   { name: 'run-groups', doc: null, routes: ['/api/runs/groups'], css: [], html: [] },
   { name: 'mcp-servers', doc: 'docs/mcp-servers.md', routes: ['/api/mcp/'], css: [], html: [] }] }));
 const wrap = (mid) => "import express from 'express';\nimport { getDb } from '../src/core/db.mjs';\nconst app = express();\nlet DRAIN = false;\n"
