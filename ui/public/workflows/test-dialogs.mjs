@@ -7,7 +7,7 @@ import { estimateOf, fmtUsdRange, aboutUsd } from '../../../src/shared/workflow-
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
 import { allOnProject, leftOutText, leftOutBlockedText, NONE_READY_TEXT, LOCK_LEAD, LOCK_REST, REAL_BLOCKED_HINT, DISK_KEY, TIME_KEY, diskRow, aboutDuration, SETUP_TAKES_LEAD, setupTakesRest,
   pickerNoneText, fromRunIntro, WHERE_TITLE, STARTS_FROM_RUN, pastRunProjectNote, DEV_CAPTION, SETUP_LABEL, SETUP_HINT_PAST,
-  PLUGINS_OFF_PERSONAL, PLUGINS_OFF_PROJECT, pluginsEngineNoteLine }
+  PLUGINS_OFF_PERSONAL, PLUGINS_OFF_PROJECT, pluginsEngineNoteLine, BEFORE_RUNS_LEAD, BEFORE_RUNS_SEVERAL, beforeRunsRest }
   from '../../../src/shared/workflow-tests/project-text.mjs';
 
 /** Auto's id (src/core/graph/builtin-workflows.mjs AUTO_WORKFLOW_ID; the browser cannot load /src/core, and the dialogs
@@ -348,10 +348,19 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
       timeShown = !!(pj && e.minutes);
       if (timeShown) {
         const r = el(doc, 'div', 'wft-est-row is-time');
-        const v = el(doc, 'span', '', aboutDuration(e.minutes * 60000));
+        // U2 (board 41): the total holds the command's runs on the start points, said on a grey line of their own (D75).
+        const bf = pj.before && pj.before.runs ? pj.before : null;
+        const v = el(doc, 'span', '', aboutDuration(e.minutes * 60000 + (bf && typeof bf.ms === 'number' ? bf.ms : 0)));
         if (pj.setupCmd && pj.setupMs) v.append(doc.createTextNode(SETUP_TAKES_LEAD), el(doc, 'span', 'code', pj.setupCmd), doc.createTextNode(setupTakesRest(pj.setupMs)));
         r.append(el(doc, 'span', 'wft-est-k', TIME_KEY), v);
         est.append(r);
+        if (bf) {
+          const sub = el(doc, 'div', 'wft-est-row wft-est-sub');
+          const w = el(doc, 'span');
+          w.append(doc.createTextNode(BEFORE_RUNS_LEAD), bf.cmd ? el(doc, 'span', 'code', bf.cmd) : doc.createTextNode(BEFORE_RUNS_SEVERAL), doc.createTextNode(beforeRunsRest(bf)));
+          sub.append(w);
+          est.append(sub);
+        }
       }
       const line = (left, right, cls = '') => {
         const r = el(doc, 'div', `wft-est-row${cls ? ` ${cls}` : ''}`);

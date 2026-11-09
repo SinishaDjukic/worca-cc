@@ -7,7 +7,7 @@ import { aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
 import { icon } from '../icons.mjs';
 import { DISK_IN_USE, diskInUseSub, fmtGb, PHASES, PHASE_SUB, PHASES_TITLE, phasesShownFor, nowText, forMinutes, RUNNING_LEAD, FROM_LEAD,
   SETUP_STOP_REST, SETUP_STOP_HINT, SEE_SETUP_OUTPUT, setupWhere, SETUP_FIX_HINT, SETUP_EDITED_HINT, START_NEW_TEST, SETUP_NO_OUTPUT, EDIT_EXAMPLE, TRY_AGAIN,
-  worcaStoppedText, madeAgainText } from '../../../src/shared/workflow-tests/project-text.mjs';
+  worcaStoppedText, madeAgainText, BEFORE_NOW_TITLE, BEFORE_NOW_LEAD, beforeNowRest, BEFORE_PHASE, BEFORE_NOW_WHY } from '../../../src/shared/workflow-tests/project-text.mjs';
 
 const DOT = { passed: 'ok', failed: 'no', running: 'run' };
 /** A stored detail is one line with no full stop (runner.mjs pauseVerdict, quickCheck); a server refusal may have one. */
@@ -127,6 +127,25 @@ function phasesCard(doc, ph, dateText) {
     list.append(li);
   });
   c.append(h, list, el(doc, 'p', 'hint', phasesShownFor(ph.exampleName, ph.label, ph.tryNo)));
+  return c;
+}
+
+/** U3 (board 42, D75): the before phase: which command runs on which start point, what it is doing now, and why. */
+function beforeNowCard(doc, b) {
+  const c = el(doc, 'section', 'card wft-before-now');
+  c.setAttribute('aria-live', 'polite');
+  const h = el(doc, 'h2', '', BEFORE_NOW_TITLE);
+  h.id = 'wft-pg-before';
+  c.setAttribute('aria-labelledby', h.id);
+  const now = el(doc, 'div', 'wft-bnow');
+  const dot = el(doc, 'span', 'wft-bnow-dot');
+  dot.setAttribute('aria-hidden', 'true');
+  const words = el(doc, 'span', 'wft-bnow-words');
+  const line = el(doc, 'span', 'wft-before-now-line');
+  line.append(doc.createTextNode(BEFORE_NOW_LEAD), el(doc, 'span', 'code', b.cmd), doc.createTextNode(beforeNowRest(b)));
+  words.append(line, el(doc, 'span', 'hint wft-before-now-phase', BEFORE_PHASE[b.phase] || BEFORE_PHASE.command));
+  now.append(dot, words);
+  c.append(h, now, el(doc, 'p', 'hint wft-before-now-why', BEFORE_NOW_WHY));
   return c;
 }
 
@@ -266,6 +285,7 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s 
   }
   if (setupCard) page.append(setupCard);
   page.append(prog);
+  if (st === 'running' && p.before) page.append(beforeNowCard(doc, p.before));   // U3: the run before the change, before any try
   if (st === 'running' && p.project && p.project.phases) page.append(phasesCard(doc, p.project.phases, dateText));   // P15
 
   const table = el(doc, 'section', 'card wft-table');

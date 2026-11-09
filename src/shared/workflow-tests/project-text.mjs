@@ -239,7 +239,7 @@ export const madeAgainText = (n) => (n === 1
   ? '1 try was made again after a problem in Worca. It is not counted.'
   : `${n} tries were made again after a problem in Worca. They are not counted.`);
 
-// ── 3b: the command before and after the change (U1; this plan's proposals until the mock is approved) ─────────────────────
+// ── 3b: the command before and after the change (U1, board 40 and its polish) ──────────────────────────────────────────────
 export const BEFORE_HEADING = 'Before the change';
 /** The exit-code sentence (D76): passed or failed before, passes or fails now. */
 export const beforeExitText = (r) => (r.beforeTimedOut ? 'Before the change, it ran longer than its time limit.'
@@ -258,9 +258,23 @@ export const BEFORE_GROUPS = Object.freeze({
 export const FAILURES_ONLY_NOTE = 'This test tool names only the tests that fail, so the tests that pass are counted, not named.';
 export const EXIT_ONLY_NOTE = "Worca could not read test names in this command's output, so it compares only whether the command passed.";
 export const passedCountsText = (b, a) => `Passed: ${b} before, ${a} now`;
-export const addedText = (n, failing) => `${n}${failing ? `, ${failing} failing` : ''}`;
+export const addedRest = (failing) => (failing ? `, ${failing} failing` : '');   // U1: after the bold count
+export const addedText = (n, failing) => `${n}${addedRest(failing)}`;
 export const moreNamesText = (n) => `and ${n} more`;
 export const BEFORE_KEPT_TEXT = ' · kept from an earlier test';
+// U1's "For developers" fact (board 40): "Before the change: <npm test> · it failed · 28 Oct · kept from an earlier test".
+export const DEV_BEFORE_LEAD = 'Before the change: ';
+export const devBeforeRest = (b, date) => ` · ${b.beforeOk ? 'it passed' : 'it failed'}${date ? ` · ${date}` : ''}${b.cached ? BEFORE_KEPT_TEXT : ''}`;
+// U2 (board 41, polish 5): the run before the change, on its own line under the Time row.
+export const BEFORE_RUNS_LEAD = 'First, ';
+export const BEFORE_RUNS_SEVERAL = 'the command checks';
+export const beforeRunsRest = (b) => ` ${b.cmd ? 'runs' : 'run'} once on ${b.runs} ${b.runs === 1 ? 'start point' : 'start points'}${typeof b.ms === 'number' ? `: ${aboutDuration(b.ms)}` : ''}`;
+// U3 (board 42, polish 6): the before phase while the test runs.
+export const BEFORE_NOW_TITLE = 'Before the tries';
+export const BEFORE_NOW_LEAD = 'Running ';
+export const beforeNowRest = (b) => ` on the start point of ${b.exampleName} · ${b.n} of ${b.of}`;
+export const BEFORE_PHASE = Object.freeze({ copy: 'Preparing a copy of the project', setup: 'Running setup', command: 'Running the command' });
+export const BEFORE_NOW_WHY = 'Worca runs the tests once on the project as it was, so it can tell later which tests a version fixed or broke. This uses no AI.';
 // P45: board 36's "Failed: <file> · "<test>"" line.
 export const FAILED_LEAD = 'Failed: ';
 const TEST_FILE_HEAD_RE = /(?:\.(?:test|spec)\.[cm]?[jt]sx?|\.py)$/;

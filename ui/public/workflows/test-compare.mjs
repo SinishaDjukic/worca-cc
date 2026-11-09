@@ -13,7 +13,9 @@ import { splitPatchSections, parseFileSection } from '../diff-view.mjs';
 import { changesTitle, changeCountText, FILE_BADGE, READ_ALL_CHANGES, BOTH_STARTED_FROM, DEV_CAPTION, DEV_SBS_HINT, DEV_START_LEAD, DEV_SETUP_LEAD,
   changesLine, notMetFor, COMMAND_ENDED, COMMAND_TIMED_OUT, SEE_COMMAND_OUTPUT, NOTHING_PUSHED_TEXT, REAL_BLOCKED_TEXT, EACH_ANSWERED_TEXT,
   EACH_STOPPED_ANSWERED_TEXT, READING_CHANGES, inSentence,
-  FAILED_LEAD, splitTestName, moreNamesText, NO_FILE_DIFF_TEXT, BINARY_FILE_TEXT, CHANGES_UNREAD_TEXT, DIFF_SHORTENED_TEXT, moreFilesText, NO_DIFF_TEXT, madeAgainText } from '../../../src/shared/workflow-tests/project-text.mjs';
+  FAILED_LEAD, splitTestName, moreNamesText, NO_FILE_DIFF_TEXT, BINARY_FILE_TEXT, CHANGES_UNREAD_TEXT, DIFF_SHORTENED_TEXT, moreFilesText, NO_DIFF_TEXT, madeAgainText,
+  BEFORE_HEADING, beforeExitText, beforeNotRunText, BEFORE_GROUPS, FAILURES_ONLY_NOTE, EXIT_ONLY_NOTE, passedCountsText, addedRest, DEV_BEFORE_LEAD, devBeforeRest }
+  from '../../../src/shared/workflow-tests/project-text.mjs';
 
 const RESULT = { better: ['badge green', 'Better'], worse: ['badge red', 'Worse'], same: ['badge', 'Same'] };
 const usdOr = (n) => (typeof n === 'number' && Number.isFinite(n) ? fmtUsd(n) : '—');
@@ -305,6 +307,15 @@ function devCard(doc, s, cur, once, dateText) {
     if (s.start.setupMs) su.append(doc.createTextNode(` · ${fmtDuration(s.start.setupMs)}`));
     facts.append(su);
   }
+  // U1 (board 40): the command's run on the start point (the first command check that ran one); none when it did not run.
+  const withBefore = [cur.b, once ? null : cur.a].flatMap((v) => (v && v.verdict && v.verdict.checks) || [])
+    .find((x) => x && x.kind === 'command' && typeof x.cmd === 'string' && x.before && x.before.ran);
+  if (withBefore) {
+    const f = el(doc, 'span');
+    const b = withBefore.before;
+    f.append(doc.createTextNode(DEV_BEFORE_LEAD), el(doc, 'span', 'code', withBefore.cmd), doc.createTextNode(devBeforeRest(b, b.at ? dateText(b.at) : null)));
+    facts.append(f);
+  }
   for (const [label, v] of once ? [[s.labels.b, cur.b]] : [[s.labels.a, cur.a], [s.labels.b, cur.b]]) {
     if (v && v.project && v.project.changes) facts.append(el(doc, 'span', '', changesLine(label, v.project.changes)));
   }
@@ -549,6 +560,11 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
           }
           row.append(why);
         }
+        // U1 (board 40): the command before and after the change, per version, after the red "Not met" boxes.
+        for (const [vl, v] of [[s.labels.a, once ? null : cur.a], [s.labels.b, cur.b]]) {
+          const it = v && v.verdict ? (v.verdict.checks || []).find((x) => x.label === label) : null;
+          if (it && it.kind === 'command' && it.before) row.append(beforeBlock(doc, vl, it.before));
+        }
       }
       inner.append(row);
     }
@@ -581,6 +597,50 @@ function failedLine(doc, it) {
   const more = Number(it.failedCount || it.failed.length) - shown.length;
   if (more > 0) line.append(doc.createTextNode(` ${moreNamesText(more)}`));
   return line;
+}
+
+/** U1 (board 40 and its polish): the command before and after the change, for one version's try (before-after.mjs). The
+ *  first 5 names, then "and N more"; each count in bold; a line that says something broke is red, and so is the block. */
+function beforeBlock(doc, label, b) {
+  const fewer = (c) => !!(c && c.before && c.after && typeof c.before.passed === 'number' && typeof c.after.passed === 'number' && c.after.passed < c.before.passed);
+  const lost = !!(b.lostPass && b.lostPass.n > 0);
+  const exitBroke = b.beforeOk && !b.beforeTimedOut && !b.afterOk;
+  const bad = !!b.ran && ((b.level === 'tests' && (b.broke.n > 0 || lost)) || (b.level === 'failures' && (b.failingNow.n > 0 || fewer(b.counts)))
+    || (b.level === 'exit' && exitBroke));
+  const box = el(doc, 'div', `wft-before${bad ? ' is-bad' : ''}`);
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-label', `${BEFORE_HEADING} · ${label}`);
+  box.append(el(doc, 'span', 'wft-before-h', `${BEFORE_HEADING} · ${label}`));
+  if (!b.ran) { box.append(el(doc, 'span', '', beforeNotRunText(b))); return box; }
+  const row = (key, group, { red = false, rest = '' } = {}) => {
+    const r = el(doc, 'span', `wft-before-row${red ? ' wft-before-broke' : ''}`);
+    r.append(doc.createTextNode(`${BEFORE_GROUPS[key]}: `), el(doc, 'b', 'wft-before-n', String(group.n)));
+    if (rest) r.append(doc.createTextNode(rest));
+    const names = Array.isArray(group.names) ? group.names.slice(0, 5) : [];
+    if (names.length) {
+      r.append(doc.createTextNode(` · ${names.map((nm) => `"${nm}"`).join(', ')}`));
+      const more = group.n - names.length;
+      if (more > 0) r.append(doc.createTextNode(` ${moreNamesText(more)}`));
+    }
+    return r;
+  };
+  if (b.level === 'tests') {   // polish 1: broke first
+    box.append(row('broke', b.broke, { red: b.broke.n > 0 }), row('madePass', b.madePass), row('stillPass', b.stillPass));
+    if (b.stillFailing.n) box.append(row('stillFailing', b.stillFailing));
+    if (b.added.n) box.append(row('added', { n: b.added.n }, { rest: addedRest(b.added.failing) }));
+    if (b.gone.n) box.append(row('gone', b.gone, { red: lost }));
+  } else if (b.level === 'failures') {
+    box.append(row('failingNow', b.failingNow, { red: b.failingNow.n > 0 }), row('noLongerFail', b.noLongerFail));
+    if (b.stillFailing.n) box.append(row('stillFailing', b.stillFailing));
+    const c = b.counts;
+    if (c && c.before && c.after) {
+      box.append(el(doc, 'span', `wft-before-row${fewer(c) ? ' wft-before-broke' : ''}`, passedCountsText(c.before.passed, c.after.passed)));
+    }
+    box.append(el(doc, 'span', 'hint', FAILURES_ONLY_NOTE));
+  } else {
+    box.append(el(doc, 'span', exitBroke ? 'wft-before-broke' : '', beforeExitText(b)), el(doc, 'span', 'hint', EXIT_ONLY_NOTE));   // polish 3
+  }
+  return box;
 }
 
 /** "Read the whole result" (C10): the main result in full, in a large dialog. */
