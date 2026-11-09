@@ -380,6 +380,11 @@ input.wft-mono[type="text"],textarea.wft-mono{font-family:var(--mono);}
 .wft-why-cmd{grid-column:1 / -1;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 14px;padding:10px 12px;border-radius:var(--r-sm);background:var(--red-bg);color:var(--ink);font-size:var(--fs-body);line-height:1.45;}
 .wft-why-cmd b{font-weight:600;}
 .wft-why-cmd > span{flex:1 1 240px;min-width:0;}
+/* Workflow tests 3b: board 33's "Most files" box; board 36's Failed line under a command not met. */
+.wft-ck-num{max-width:100px;}
+.wft-why-col{flex:1 1 360px;min-width:0;display:flex;flex-direction:column;gap:6px;}
+.wft-failed-line{overflow-wrap:anywhere;}
+.wft-failed-line .code{font-family:var(--mono);}
 .wft-pg-head .code,.wft-dev-facts .code{font-family:var(--mono);overflow-wrap:anywhere;}
 .wft-dev-card{padding:18px 22px;border-style:dashed;}
 .wft-dev-card h2{margin:0 0 4px;font-size:var(--fs-section);}

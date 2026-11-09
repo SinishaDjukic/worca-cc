@@ -6,7 +6,7 @@ import { el, btn, iconBtn, seg, field, card, testDialog, sentence, BUSY_HINT, st
 import { makeSwitch } from '../switch.mjs';
 import { icon } from '../icons.mjs';
 import {
-  CHECK_KINDS, SCOPE_KINDS, CHECK_KIND_LABELS, DEFAULT_BASICS, PROJECT_FILE_KIND_LABEL, COMMAND_TIMEOUTS, checkLabel, normaliseCheck, normaliseBasics, fmtUsd, parseUsd,
+  CHECK_KINDS, PROJECT_KINDS, CHECK_KIND_LABELS, DEFAULT_BASICS, PROJECT_FILE_KIND_LABEL, COMMAND_TIMEOUTS, checkLabel, normaliseCheck, normaliseBasics, fmtUsd, parseUsd,
 } from '../../../src/shared/workflow-tests/checks.mjs';
 import {
   WHERE_TITLE, WHERE_HINT, START_HINT, START_LABEL, PROJECT_LABEL, CHANGE_BUTTON, behindText, LATEST_BUTTON, LATEST_HINT, CHANGES_LABEL,
@@ -16,7 +16,8 @@ import {
   COMMAND_LABEL, COMMAND_HINT, TIMEOUT_LABEL, TIMEOUT_HINT, timeoutText, READ_FROM_LEGEND, READ_FROM_RESULT, READ_FROM_RESULT_SUB,
   READ_FROM_FILE, ADD_CHECK, lfsText, submodulesText, MISSING_FOLDER_ADD_AGAIN, notRegisteredText, PROJECTS_UNREAD_TEXT,
   NOT_ON_BRANCH_TEXT, changesMovesText, FILE_NAME_NEEDED, NO_BRANCHES_TEXT, startNowText, startWillBeText, PICK_BRANCH_FIRST, BRANCHES_UNREAD_TEXT,
-  START_NOT_MOVED_TEXT, FILE_IN_PROJECT_LABEL, DISK_TITLE, DISK_KEY, diskRow,
+  START_NOT_MOVED_TEXT, FILE_IN_PROJECT_LABEL, DISK_TITLE, DISK_KEY, diskRow, FOLDERS_LABEL, FOLDERS_HINT, FILES_LABEL, FILES_HINT_LEAD,
+  FILES_HINT_CODE, FILES_HINT_REST, MOST_FILES_LABEL, MOST_FILES_HINT,
 } from '../../../src/shared/workflow-tests/project-text.mjs';
 
 export const BLANK_EXAMPLE = Object.freeze({
@@ -95,17 +96,18 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], project 
   kind.id = 'wft-ck-kind';
   const opt = (k, label = CHECK_KIND_LABELS[k]) => { const o = el(doc, 'option', '', label); o.value = k; return o; };
   // An edited script check keeps its kind, also when the Library lists none.
-  const resultKinds = CHECK_KINDS.filter((k) => k !== 'command' && !SCOPE_KINDS.includes(k) &&   // 3b Task 6: the scope checks get their dialog fields in Task 11
+  // The project checks (3a D57, 3b D73) are their own group.
+  const resultKinds = CHECK_KINDS.filter((k) => !PROJECT_KINDS.includes(k) &&
      !(k === 'script' && !scripts.length && !(check && check.kind === 'script')));
   if (project) {
     const g1 = el(doc, 'optgroup'); g1.label = GROUP_RESULT;
     for (const k of resultKinds) g1.append(opt(k, k === 'file' ? PROJECT_FILE_KIND_LABEL : undefined));   // D59, board 33
     const g2 = el(doc, 'optgroup'); g2.label = GROUP_PROJECT;
-    g2.append(opt('command'));
+    for (const k of PROJECT_KINDS) g2.append(opt(k));   // board 33's order: the command, then the three file-scope checks
     kind.append(g1, g2);
   } else {
     for (const k of resultKinds) kind.append(opt(k));
-    if (check && check.kind === 'command') kind.append(opt('command'));   // an edited command check keeps its kind
+    if (check && PROJECT_KINDS.includes(check.kind)) kind.append(opt(check.kind));   // an edited project check keeps its kind
   }
   kind.value = check ? check.kind : 'words';
   const fields = el(doc, 'div', 'wft-ck-fields');
@@ -156,6 +158,20 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], project 
       time.addEventListener('change', paintPreview);
       fields.append(field(doc, COMMAND_LABEL, cmd, { id: cmd.id, hint: COMMAND_HINT }), field(doc, TIMEOUT_LABEL, skinned(doc, time, 'wft-ck-time'), { id: time.id, hint: TIMEOUT_HINT }));
       read = () => ({ kind: 'command', cmd: cmd.value, timeoutMin: Number(time.value) });
+    } else if (kind.value === 'under') {
+      const dirs = input('wft-ck-dirs', 'text', Array.isArray(c.dirs) ? c.dirs.join(', ') : '', { maxLength: 2000, className: 'wft-mono' });
+      fields.append(field(doc, FOLDERS_LABEL, dirs, { id: dirs.id, hint: FOLDERS_HINT }));
+      read = () => ({ kind: 'under', dirs: dirs.value });
+    } else if (kind.value === 'unchanged') {
+      const pats = input('wft-ck-keep', 'text', Array.isArray(c.patterns) ? c.patterns.join(', ') : '', { maxLength: 2000, className: 'wft-mono' });
+      const f = field(doc, FILES_LABEL, pats, { id: pats.id, hint: FILES_HINT_LEAD });
+      f.querySelector('.hint').replaceChildren(doc.createTextNode(FILES_HINT_LEAD), el(doc, 'span', 'code', FILES_HINT_CODE), doc.createTextNode(FILES_HINT_REST));
+      fields.append(f);
+      read = () => ({ kind: 'unchanged', patterns: pats.value });
+    } else if (kind.value === 'max-files') {
+      const most = input('wft-ck-max', 'text', c.max ?? '', { maxLength: 5, inputMode: 'numeric', className: 'wft-ck-num' });
+      fields.append(field(doc, MOST_FILES_LABEL, most, { id: most.id, hint: MOST_FILES_HINT }));
+      read = () => ({ kind: 'max-files', max: most.value.trim() });
     } else {
       const sel = el(doc, 'select');
       sel.id = 'wft-ck-script';

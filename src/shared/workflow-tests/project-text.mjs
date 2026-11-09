@@ -273,3 +273,12 @@ export function splitTestName(name) {
   }
   return { file: null, test: s };
 }
+// 3b, board 33: the file-scope checks' fields.
+export const FOLDERS_LABEL = 'Folders';
+export const FOLDERS_HINT = 'Separate them with commas. Not met when the try changes a file anywhere else.';
+export const FILES_LABEL = 'Files';
+export const FILES_HINT_LEAD = 'A name, or a pattern such as ';
+export const FILES_HINT_CODE = 'test/**';
+export const FILES_HINT_REST = ' for everything in a folder.';
+export const MOST_FILES_LABEL = 'Most files';
+export const MOST_FILES_HINT = 'Added, changed and removed files all count.';

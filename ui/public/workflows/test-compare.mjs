@@ -13,7 +13,7 @@ import { splitPatchSections, parseFileSection } from '../diff-view.mjs';
 import { changesTitle, changeCountText, FILE_BADGE, READ_ALL_CHANGES, BOTH_STARTED_FROM, DEV_CAPTION, DEV_SBS_HINT, DEV_START_LEAD, DEV_SETUP_LEAD,
   changesLine, notMetFor, COMMAND_ENDED, COMMAND_TIMED_OUT, SEE_COMMAND_OUTPUT, NOTHING_PUSHED_TEXT, REAL_BLOCKED_TEXT, EACH_ANSWERED_TEXT,
   EACH_STOPPED_ANSWERED_TEXT, READING_CHANGES, inSentence,
-  NO_FILE_DIFF_TEXT, BINARY_FILE_TEXT, CHANGES_UNREAD_TEXT, DIFF_SHORTENED_TEXT, moreFilesText, NO_DIFF_TEXT, madeAgainText } from '../../../src/shared/workflow-tests/project-text.mjs';
+  FAILED_LEAD, splitTestName, moreNamesText, NO_FILE_DIFF_TEXT, BINARY_FILE_TEXT, CHANGES_UNREAD_TEXT, DIFF_SHORTENED_TEXT, moreFilesText, NO_DIFF_TEXT, madeAgainText } from '../../../src/shared/workflow-tests/project-text.mjs';
 
 const RESULT = { better: ['badge green', 'Better'], worse: ['badge red', 'Worse'], same: ['badge', 'Same'] };
 const usdOr = (n) => (typeof n === 'number' && Number.isFinite(n) ? fmtUsd(n) : '—');
@@ -523,10 +523,11 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
     inner.append(el(doc, 'div', 'wft-crow-grp', title));
     for (const label of labels) {
       const row = el(doc, 'div', cls);
-      // Final review M5: a command check is set in code, as the editor writes it (checkWords), from the kind and command its
-      // result carries (result.mjs checkTry); a result without them (an older try) shows its label as it is.
-      const check = key === 'checks' ? [cur.a, cur.b].flatMap((v) => (v && v.verdict && v.verdict.checks) || [])
-        .find((x) => x && x.label === label && x.kind === 'command' && typeof x.cmd === 'string') || null : null;
+      // Final review M5: a check is set in code, as the editor writes it (checkWords), from the kind and the values its result
+      // carries (result.mjs checkTry); 3b adds the folders and patterns of the file-scope checks. An older try shows its label.
+      const worded = (x) => x && x.label === label && ((x.kind === 'command' && typeof x.cmd === 'string')
+        || (x.kind === 'under' && Array.isArray(x.dirs)) || (x.kind === 'unchanged' && Array.isArray(x.patterns)));
+      const check = key === 'checks' ? [cur.a, cur.b].flatMap((v) => (v && v.verdict && v.verdict.checks) || []).find(worded) || null : null;
       row.append(check ? checkWords(doc, check, label) : el(doc, 'span', '', label));
       if (!once) row.append(cell(cur.a, key, label, `${s.labels.a} · try ${cur.n}`));
       row.append(cell(cur.b, key, label, `${s.labels.b} · try ${cur.n}`));
@@ -538,7 +539,10 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
           const why = el(doc, 'div', 'wft-why-cmd');
           const words = el(doc, 'span');
           words.append(el(doc, 'b', '', notMetFor(inSentence(vl))), doc.createTextNode(it.timedOut ? COMMAND_TIMED_OUT : COMMAND_ENDED));
-          why.append(words);
+          const col = el(doc, 'span', 'wft-why-col');
+          col.append(words);
+          if (Array.isArray(it.failed) && it.failed.length) col.append(failedLine(doc, it));   // P45
+          why.append(col);
           if (typeof it.output === 'string' && it.output.trim()) {
             why.append(act(doc, root, runId, SEE_COMMAND_OUTPUT, () => actions.commandOutput(`${it.label} · ${vl}`, it.output), 'btn btn-sm',
               `wft-cmd-out-${side}-${it.id || label}`));
@@ -561,6 +565,22 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
   const said = s.tries.length > 1 ? `Try ${cur.n} of ${s.tries.length}` : '';
   if (live.textContent !== said) live.textContent = said;   // only a change is news
   giveFocusBack(root, doc, held);
+}
+
+/** P45: board 36's "Failed: <file> · "<test>"" line: up to three names the command's output gave, then "and N more". */
+function failedLine(doc, it) {
+  const line = el(doc, 'span', 'wft-failed-line');
+  line.append(doc.createTextNode(FAILED_LEAD));
+  const shown = it.failed.slice(0, 3);
+  shown.forEach((name, i) => {
+    if (i) line.append(doc.createTextNode('; '));
+    const { file, test } = splitTestName(name);
+    if (file) line.append(el(doc, 'span', 'code', file), doc.createTextNode(` · "${test}"`));
+    else line.append(doc.createTextNode(`"${test}"`));
+  });
+  const more = Number(it.failedCount || it.failed.length) - shown.length;
+  if (more > 0) line.append(doc.createTextNode(` ${moreNamesText(more)}`));
+  return line;
 }
 
 /** "Read the whole result" (C10): the main result in full, in a large dialog. */
