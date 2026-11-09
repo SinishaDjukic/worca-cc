@@ -659,11 +659,12 @@ test('workflow row ⋯: Versions… when versionsEnabled says so (it opens that 
   s.lib.openFolder(['workflows', 'general']);
   click(s.host.querySelector('.wfl-wf[data-id="wf_mine"] .wfl-more'));
   const items = [...s.doc.querySelectorAll('.wfv-menu-item')];
-  assert.deepEqual(items.map((b) => b.textContent), ['Pin to Chat home', 'Versions…']);
-  click(items[1]);
+  // dev's #1127 menu (Use as template, Export…, Pin, Delete…) with Versions… after Pin.
+  assert.deepEqual(items.map((b) => b.textContent), ['Use as template', 'Export…', 'Pin to Chat home', 'Versions…', 'Delete…']);
+  click(items.find((b) => b.textContent === 'Versions…'));
   assert.deepEqual(s.calls.at(-1), ['openVersions', 'wf_mine']);
   const off = await boot({}, { isPinned: () => false, versionsEnabled: () => false });
   off.lib.openFolder(['workflows', 'general']);
   click(off.host.querySelector('.wfl-wf[data-id="wf_mine"] .wfl-more'));
-  assert.deepEqual([...off.doc.querySelectorAll('.wfv-menu-item')].map((b) => b.textContent), ['Pin to Chat home']);
+  assert.deepEqual([...off.doc.querySelectorAll('.wfv-menu-item')].map((b) => b.textContent), ['Use as template', 'Export…', 'Pin to Chat home', 'Delete…']);
 });

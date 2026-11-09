@@ -2042,7 +2042,8 @@ test('Save version on a plugin-owned or built-in canvas saves a copy first, neve
     await tick(4);
     const dlg = w.document.querySelector('#wfv-dialog-host dialog[open]');
     assert.ok(dlg, `${id}: the Save dialog`);
-    assert.equal(dlg.dataset.saveAs, '1', `${id}: as a copy`);
+    // Since #1127 the address opens the row as an unsaved copy already, so the dialog saves that copy as a new row.
+    assert.deepEqual([w.__gv().c.template().id, dlg.dataset.saveAs], ['', ''], `${id}: a copy, never the row itself`);
     assert.equal(w.document.getElementById('mk-dialog'), null, id);
     assert.equal(calls.filter((c) => c.method === 'POST').length, 0, id);
   }
@@ -2368,7 +2369,7 @@ async function openExportUse({ flag = true, versions = () => okJson(EXPORT_OVERV
   await go(win, 'workflows');
   win.__wfv.library().open('workflows');
   const doc = win.document;
-  const open = async () => { doc.querySelector('.wfl-wf[data-id="wf_g"] .wfl-export').click(); await tick(4); };
+  const open = async () => { rowMenu(doc, 'wf_g', 'Export…'); await tick(4); };   // #1127: Export… lives in the row's ⋯
   await open();
   const g = (id) => doc.getElementById(id);
   return { win, doc, g, open, posts, downloads, versionReads,
