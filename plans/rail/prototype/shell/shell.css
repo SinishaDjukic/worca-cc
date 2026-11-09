@@ -22,8 +22,7 @@
 .has-rail #side-rail.is-settings nav.nav{display:flex;}
 .has-rail .rail-side-settings{display:none;}
 .has-rail .cfg-index{display:block;}
-.has-rail .cfg-index .side-menu{margin-left:var(--edge);}
-.has-rail .cfg-section > .rl-back{display:inline-flex;margin-left:var(--edge);}
+.has-rail .cfg-index .side-menu{margin-left:var(--edge);}.has-rail .cfg-section > .rl-back{display:inline-flex;margin-left:var(--edge);}
 .has-rail .cfg-page:not(.is-index) .cfg-index,.has-rail .cfg-page.is-index .cfg-section{display:none;}
 
 /* The drawer at 760px and below: Rail's fade, never a slide; it closes at once. */
@@ -231,6 +230,8 @@ body.bar-hidden .bar-show{display:inline-flex;}   /* nav.one-bar: hidden, the wa
 
 /* notices come in under the top bar, by Pulse: never over the composer's controls */
 body .toasts{top:60px;bottom:auto;}   /* ds-ok: just under the 48px top bar */
+body > .rc-toast{top:60px;bottom:auto;}   /* ds-ok: the same place: never over a page's last rows or a canvas's zoom */
+body:has(.wf-canvas) > .rc-toast{top:112px;}   /* ds-ok: under the canvas's own head */
 
 /* the bar's name opens the places too: its ▾ says so */
 .bar-title-b{display:inline-flex;align-items:center;gap:6px;padding:2px 6px;margin-left:-6px;border:0;border-radius:var(--r-sm);background:none;color:inherit;font:inherit;cursor:pointer;}

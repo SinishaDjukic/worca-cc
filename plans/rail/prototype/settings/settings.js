@@ -125,7 +125,7 @@
   // The record actions every list shares; anything else is the record's own `on`, or a model error (a dead control).
   const SHARED = {
     Rename: (r, x) => x.dialog({ title: `Rename ${r.title}`, yes: 'Rename', fields: [{ key: 'name', label: 'Name', value: r.title }], check: (v) => { const t = v.name.trim(); return !t ? 'It needs a name' : x.list.some((o) => o !== r && o.title.toLowerCase() === t.toLowerCase()) ? `${t} already exists` : ''; }, then: (v) => { const t = v.name.trim(); if (t === r.title) return ''; r.title = t; return `Renamed to ${t}`; } }),
-    Duplicate: (r, x) => { x.add({ ...r, title: r.title + ' copy', ...(r.copy || {}) }); return `Duplicated: ${r.title} copy`; },
+    Duplicate: (r, x) => { const base = r.title + ' copy'; let title = base; for (let n = 2; x.list.some((o) => o.title === title); n += 1) title = `${base} ${n}`; x.add({ ...r, title, ...(r.copy || {}) }); return `Duplicated: ${title}`; },
     Edit: (r, x) => x.dialog({ title: `Edit ${r.title}`, fields: [{ key: 'name', label: 'Name', value: r.title }, { key: 'meta', label: 'Details', value: r.meta || '' }], then: (v) => { r.title = v.name.trim() || r.title; r.meta = v.meta; return `${r.title} saved`; } }),
     Reject: (r, x) => { x.remove(); return `Rejected: ${r.title}`; },
     ...Object.fromEntries(['Delete', 'Remove', 'Revoke', 'Uninstall'].map((w) => [w, (r, x) => x.confirm({ text: `${w} ${r.title}?${r.follows ? ` ${typeof r.follows === 'function' ? r.follows(r) : r.follows}` : ''}`, yes: w, danger: true, then: () => { x.remove(); return `${w === 'Revoke' ? 'Revoked' : w === 'Uninstall' ? 'Uninstalled' : w === 'Delete' ? 'Deleted' : 'Removed'}: ${r.title}`; } })])),
@@ -173,6 +173,7 @@
   function openDialog(sv, spec) {
     const d = { ...spec, vals: {}, at: 0, status: spec.status || '' };
     for (const f of (d.steps || [d]).flatMap((s) => s.fields || [])) if (f.key) d.vals[f.key] = f.value ?? sv[f.key] ?? '';
+    d.start = { ...d.vals };
     dialogRows({ __dialog: d }).forEach((r) => seed(r, sv));
     sv.__dialog = d;
   }
@@ -205,11 +206,10 @@
     const id = e.target && e.target.id, d = cur && cur.__dialog;
     if (!d || !id || !id.startsWith('sv-f-')) return;
     d.vals[id.slice(5)] = e.target.value;
-    // a Dialog that checks its Fields says what is wrong as you type, and its Save waits (the Dialog's Yes is off, with why)
-    const s = d.steps ? d.steps[d.at] : d, wrong = (s.check && s.check(d.vals, cur)) || '', root = e.target.closest('.dlg');
-    if (!s.check || !root) return;
-    d.status = wrong; root.querySelector('.dlg-status').textContent = wrong;
-    const yes = root.querySelector('[data-dialog="yes"]'); yes.disabled = !!wrong; yes.title = wrong;
+    // form.check-at-save: Fields are checked when you press its Yes; typing only clears the problem once it is mended
+    const s = d.steps ? d.steps[d.at] : d, root = e.target.closest('.dlg');
+    if (!d.status || !s.check || !root || s.check(d.vals, cur)) return;
+    d.status = ''; root.querySelector('.dlg-status').textContent = '';
   });
   // The whole section: a flag that is off leaves its section empty, with the way to turn it on.
   function section(id, sv, c0) {
@@ -242,11 +242,11 @@
       const a = REG.get(id.slice(4) + '/' + v); if (!a) return '';
       return runRec(sv, a);
     }
-    const key = id.slice(3), [r, p] = findPick(sv, key);
+    const key = id.slice(3), [, p] = findPick(sv, key);
     if (!p || sv[key] === v || optsOf(p, sv).find((o) => o[0] === v)?.[3]) return '';   // no change, no toast; an off choice does nothing
     sv[key] = v;
     const also = p.then ? p.then(sv) : '';
-    return `${r.name}: ${sentenceText(r, sv)}${also ? `. ${also}` : ''}`;
+    return also || '';   // the sentence has changed before your eyes; a toast says only what else happened
   }
   function toggle(sv, key) {
     if (key.startsWith('flag:')) {
@@ -292,6 +292,7 @@
     if (d.steps && d.at < d.steps.length - 1) { d.at += 1; d.status = ''; return ''; }
     sv.__dialog = null;
     if (d.view && !d.then) return '';
+    if ((d.yes || 'Save') === 'Save' && Object.keys(d.vals).length && Object.keys(d.vals).every((k) => same(d.vals[k], d.start[k]))) return '';   // Save with nothing changed: no toast
     const said = d.then ? d.then(d.vals, sv) : (Object.assign(sv, d.vals), undefined);
     return said === '' ? '' : said || d.done || `${d.title}: saved`;   // a then that returns '' changed nothing
   }

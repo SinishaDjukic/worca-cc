@@ -87,9 +87,12 @@
   // 761 to 1080px, a drawer at 760px and below ----
   const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode: a remembered choice is a nicety */ } } };
   const KEY_RAIL = 'worca-rail.sidebar.collapsed', KEY_ASK = 'worca-rail.ask.width';
-  let collapsed = store.get(KEY_RAIL) === '1';
+  let collapsed = store.get(KEY_RAIL) === '1', tabletOpen = false;   // narrow.nav: 761 to 1080px starts as the strip; opened there, it stays open until reload, and a wide screen's choice is kept apart
+  const inTablet = () => innerWidth > 760 && innerWidth <= 1080;
+  const isStrip = () => (innerWidth <= 760 ? false : inTablet() ? !tabletOpen : collapsed);
+  const setStrip = (on) => { if (inTablet()) tabletOpen = !on; else { collapsed = on; store.set(KEY_RAIL, on ? '1' : '0'); } };
   function syncRail() {
-    const w = innerWidth, side = document.getElementById('side-rail'), rail = w <= 760 ? false : collapsed;
+    const w = innerWidth, side = document.getElementById('side-rail'), rail = isStrip();
     side.classList.toggle('is-strip', rail);   // not the app's own `collapsed`: its 60px rail rules would fight the strip
     document.body.classList.toggle('bar-hidden', rail);
     const t = document.getElementById('side-toggle');
@@ -112,7 +115,7 @@
     document.querySelector('#ask-side .ask-side-grip')?.setAttribute('aria-valuenow', askW);
   };
   function pageContext() {
-    const v = routed.view, name = [...document.querySelectorAll('#main-row main .place-title, #main-row main [data-title], #card .rc-title')].find((x) => x.getClientRects().length)?.textContent?.trim() || TITLES[v] || 'this page';   /* what shows: the task page waits hidden behind every other page */
+    const v = routed.view, name = [...document.querySelectorAll('#main-row main .place-title, #main-row main [data-title], #card .rc-title')].find((x) => x.getClientRects().length)?.textContent?.trim() || TITLES[v === 'schedule' ? 'schedules' : v] || 'this page';   /* what shows: the task page waits hidden behind every other page */
     const SUG = {
       run: ['Why did it stop?', 'What does it need from me?', 'What did it change?'],
       projects: [`Why is ${name} behind, and is it safe to sync?`, 'What ran here this week, and what did it cost?', 'What needs me here?'],
@@ -176,7 +179,7 @@
     const side = document.getElementById('side-rail'), own = barOf(routed.view), which = homeOpen ? 'home' : own;
     side.dataset.bar = which;
     const act = which === 'place' ? (placeMod(routed.view)?.newLabel ? [placeMod(routed.view).newLabel, 'place'] : null) : { chat: ['New chat', 'ask'] }[which];
-    document.getElementById('bar-head').innerHTML = R.barHead({ title: which === 'place' ? TITLES[routed.view] : BAR_TITLE[which], home: quickNav, menu: quickNav ? R.compactMenu({ items: quickItems() }) : '', logo: R.icon('worca-w', 20), action: act ? `<span class="rc-pop">${R.button({ label: act[0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-bar-new': act[1], ...(act[1] === 'place' && placeMod(routed.view)?.newMenu ? { 'aria-haspopup': 'menu', 'aria-expanded': String(barMenu) } : {}) } })}${barMenu && act[1] === 'place' && placeMod(routed.view)?.newMenu ? R.compactMenu({ label: act[0], items: placeMod(routed.view).newMenu() }) : ''}</span>` : '', hide: collapsed && innerWidth > 760 ? R.button({ label: 'Keep the bar open', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 15), attrs: { 'data-bar-pin': '', title: `Keep the bar open (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) : R.button({ label: 'Hide the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-hide', 15), attrs: { 'data-bar-hide': '', title: `Hide the bar: it opens under the pointer (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) });
+    document.getElementById('bar-head').innerHTML = R.barHead({ title: which === 'place' ? TITLES[routed.view] : BAR_TITLE[which], home: quickNav, menu: quickNav ? R.compactMenu({ items: quickItems() }) : '', logo: R.icon('worca-w', 20), action: act ? `<span class="rc-pop">${R.button({ label: act[0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-bar-new': act[1], ...(act[1] === 'place' && placeMod(routed.view)?.newMenu ? { 'aria-haspopup': 'menu', 'aria-expanded': String(barMenu) } : {}) } })}${barMenu && act[1] === 'place' && placeMod(routed.view)?.newMenu ? R.compactMenu({ label: act[0], items: placeMod(routed.view).newMenu() }) : ''}</span>` : '', hide: isStrip() ? R.button({ label: 'Keep the bar open', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 15), attrs: { 'data-bar-pin': '', title: `Keep the bar open (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) : R.button({ label: 'Hide the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-hide', 15), attrs: { 'data-bar-hide': '', title: `Hide the bar: it opens under the pointer (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) });
     // the bar switching places cross-fades: the list that comes in fades in (nav.bar-switch)
     for (const [id, b] of [['bar-chat', 'chat'], ['bar-tasks', 'tasks'], ['bar-schedules', 'schedules'], ['bar-place', 'place'], ['bar-back', 'home']]) {
       const list = document.getElementById(id); if (!list) continue;
@@ -390,8 +393,8 @@
     if ((hit = on('[data-mini]'))) { window.RailShell.go(hit.dataset.mini); return; }
     if (on('[data-pins-all]')) { pinsAll = true; drawBar(); return; }
     if (on('[data-bar-hide]')) { hideBar(); return; }
-    if (on('[data-bar-pin]')) { collapsed = false; store.set(KEY_RAIL, '0'); syncRail(); drawBar(); return; }
-    if (on('#bar-show')) { collapsed = false; store.set(KEY_RAIL, '0'); syncRail(); drawBar(); return; }
+    if (on('[data-bar-pin]')) { setStrip(false); syncRail(); drawBar(); return; }
+    if (on('#bar-show')) { setStrip(false); syncRail(); drawBar(); return; }
     if (on('[data-bar-home]')) { quickNav = false; homeOpen = false; window.RailShell.go('chat'); drawBar(); return; }   /* nav.one-bar: the W is home */
     if ((hit = on('[data-menu-pick^="bar-go|"]'))) { quickNav = false; location.hash = hit.dataset.menuPick.split('|')[1]; drawBar(); return; }
     if (on('[data-bar-house]')) { quickNav = !quickNav; drawBar(); return; }
@@ -403,7 +406,7 @@
     if ((hit = on('#task-timeline [data-tick]'))) { document.querySelector(`#card .sc-stage[data-stage="${CSS.escape(hit.dataset.tick)}"]`)?.click(); return; }
     if ((hit = on('#side-rail nav.nav [data-nav]'))) { e.preventDefault(); drawer(false); if (location.hash.slice(1) === hit.dataset.nav) { homeOpen = false; drawBar(); } else location.hash = hit.dataset.nav; return; }
     if ((hit = on('[data-unlock]')) && on('#route-today')) { window.RailPulse?.unlock(hit.dataset.unlock, hit.dataset.to); return; }
-    if (on('#side-toggle')) { collapsed = !collapsed; store.set(KEY_RAIL, collapsed ? '1' : '0'); syncRail(); return; }
+    if (on('#side-toggle')) { setStrip(!isStrip()); syncRail(); return; }
     if (on('#mbar-menu')) { drawer(!document.body.classList.contains('nav-open')); return; }
     if (on('#side-close')) { drawer(false); return; }
     if (on('#tsearch-open')) { searchFold(true); return; }
@@ -424,7 +427,7 @@
   const BAR_W = 280, BAR_MIN = 264, BAR_SNAP = 200, KEY_BAR = 'worca-rail.bar.width', clampBar = (px) => Math.min(420, Math.max(BAR_MIN, Math.round(+px) || BAR_W));
   function hideBar() {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    collapsed = true; store.set(KEY_RAIL, '1'); syncRail(); document.activeElement?.blur(); drawMini(); drawBar();
+    setStrip(true); syncRail(); document.activeElement?.blur(); drawMini(); drawBar();
     // just hidden, it stays a strip until the pointer has left it once, so the click that hid it is seen to work
     const side = document.getElementById('side-rail'); side.classList.add('is-resting');
     const away = (e) => { if (side.contains(e.target)) return; side.classList.remove('is-resting'); document.removeEventListener('pointermove', away); };
@@ -443,7 +446,7 @@
   document.addEventListener('pointermove', (e) => { if (drag) setAskW(innerWidth - e.clientX); });
   document.addEventListener('pointerup', () => { if (drag) { drag = false; document.getElementById('ask-side').classList.remove('is-resizing'); } });
   document.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === '\\' && innerWidth > 760) { e.preventDefault(); if (collapsed) { collapsed = false; store.set(KEY_RAIL, '0'); syncRail(); drawBar(); } else hideBar(); return; }
+    if ((e.metaKey || e.ctrlKey) && e.key === '\\' && innerWidth > 760) { e.preventDefault(); if (isStrip()) { setStrip(false); syncRail(); drawBar(); } else hideBar(); return; }
     if (e.target.closest?.('#ask-side .ask-side-grip') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); setAskW(askW + (e.key === 'ArrowLeft' ? 20 : -20)); return; }
   });
   // a disabled menu item says why (comp.menu-off); on a strip's icon the strip stays, so the icon can be clicked: anywhere else on it, it opens
@@ -543,7 +546,8 @@
   try { const m = localStorage.getItem('worca-rail.mode'); R.prefs.setMode(R.MODES.includes(m) ? m : 'simple'); } catch { R.prefs.setMode('simple'); }
   applyPrefs(); drawMini();   /* the sidebar drew before the mode was read: it shows only the places this mode has */
   R.prefs.onChange(() => { try { localStorage.setItem('worca-rail.mode', R.prefs.mode()); } catch { /* remembering is a nicety */ } });
-  addEventListener('resize', () => { syncRail(); });
+  let wasStrip = isStrip();
+  addEventListener('resize', () => { syncRail(); if (isStrip() !== wasStrip) { wasStrip = isStrip(); drawMini(); drawBar(); } });
   // A change of mode or a Labs flag: the sidebar follows, and the page if that changes whether it is locked.
   R.prefs.onChange(() => { applyPrefs(); drawMini(); if (routed.view && (TITLES[routed.view] || routed.view === 'schedule') && !!lockHere(routed.view, routed.arg) !== routed.locked) route(); });
   addEventListener('hashchange', route);

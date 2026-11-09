@@ -242,7 +242,7 @@
     { id: 'in-base', group: 'Done', label: 'Already in the base', detail: 'Already in dev through another branch · no PR of its own', noSetup: true, figs: DONE_FIGS, stages: run({ tail: [{ key: 'merged', label: 'Merged', subs: [s('Into dev', 'merged', '', { live: 'In dev · no PR of its own' })] }] }) },
     { id: 'pushed', group: 'Done', label: 'On its source, pushed', detail: SRC + ' is on origin', branch: SRC, onSource: true, figs: DONE_FIGS, stages: run({ tail: [{ key: 'push', label: 'Push', subs: [ok('Merge back', '', { live: 'Into ' + SRC }), s('To origin/' + SRC, 'merged', '', { live: 'Pushed' })] }] }) },
     { id: 'diverged', group: 'Done', label: 'On its source, diverged', detail: SRC + ' and origin have diverged: pull or rebase, then push', branch: SRC, onSource: true, figs: DONE_FIGS, stages: run({ tail: [{ key: 'push', label: 'Push', subs: [ok('Merge back', '', { live: 'Into ' + SRC }), s('To origin/' + SRC, 'problem', '', { live: 'Diverged' })] }] }) },
-    { id: 'deleted', group: 'Done', label: 'Deleted', detail: 'Gone from Runs', figs: DONE_FIGS, noSetup: true, archived: true, stages: run({ tail: [{ key: 'done', label: 'Done', subs: [s('Deleted', 'paused', '', { live: 'By you' })] }] }) },
+    { id: 'deleted', group: 'Done', label: 'Deleted', detail: 'Gone from Tasks', figs: DONE_FIGS, noSetup: true, archived: true, stages: run({ tail: [{ key: 'done', label: 'Done', subs: [s('Deleted', 'paused', '', { live: 'By you' })] }] }) },
 
     // A scheduled run before it is a run
     ticket('ticket-missed', 'ticket-missed', 'Missed its start', 'Missed its 09:00 start · Worca was off'),
@@ -814,7 +814,7 @@
     const logsGone = gone === 'archived' || gone === 'deleted';
     const files = c.files || DETAIL.files;
     // Where you are: Runs › the place (project, folder or workspace) › the group. The page itself is never a crumb.
-    const place = c.folder ? c.folder.split('/').pop() : c.project === '' ? '' : c.project || 'worka-cc';
+    const place = c.folder ? c.folder.split('/').pop() : c.project === '' ? '' : c.project || 'worca-cc';
     const crumbs = [{ t: 'Tasks' }].concat(place ? [{ t: place }] : [])
       .concat(g ? [{ t: g.title, go: { caseId: g.id, open: 'run' + (par.index + 1) } }] : [])
       .concat((ui.chips || []).filter((x) => x.kind === 'group').map((x) => ({ t: x.text, group: true })));   // a group added with +
@@ -898,14 +898,14 @@
 
   // An action either moves the task to another state (`to`) or does its job where it is and says so (`say`); `confirm`
   // asks first; events from outside (checks finish, a reviewer approves) are `next`. The table is the library's.
-  const INSTANCE_FLOW = { workspace: { 'worca-api #212': { say: 'Opens worca-api #212' }, 'worca-web #88': { say: 'Opens worca-web #88' }, 'worca-docs #31': { say: 'Opens worca-docs #31' } } };
+  const INSTANCE_FLOW = { workspace: { 'worca-api #212': { say: 'Would open worca-api #212 on GitHub' }, 'worca-web #88': { say: 'Would open worca-web #88 on GitHub' }, 'worca-docs #31': { say: 'Would open worca-docs #31 on GitHub' } } };
   function flowOf(c, stateId, ctx) { return Object.assign(R.actionFlow(stateId, ctx), INSTANCE_FLOW[c.id] || {}, c.flow || {}); }
   function EVENT_OF(c, stateId, ctx) { return flowOf(c, stateId, ctx).event || ''; }
   const FLOW = Object.fromEntries(CASES.map((c) => [c.id, flowOf(c, c.state || c.id, ctxOf(c))]));
   const RUN_FLOW = R.runFlow();
 
   // The + menu: what each kind is for, a placeholder for typing one, and the existing values to pick from.
-  const ADD = [{ kind: 'label', menu: 'Label', help: 'Find and filter runs by it in the Runs list', placeholder: 'Type or pick a label', suggest: ['ui', 'hotfix', 'needs demo'] },
+  const ADD = [{ kind: 'label', menu: 'Label', help: 'Find and filter runs by it in the Tasks list', placeholder: 'Type or pick a label', suggest: ['ui', 'hotfix', 'needs demo'] },
     { kind: 'tag', menu: 'Cost tag', help: 'Splits this task’s cost in Statistics', placeholder: 'key: value', suggest: ['team: web', 'team: api', 'client: acme'] },
     { kind: 'group', menu: 'Add to group', help: 'Tracks it with related tasks on one page', placeholder: 'New group name', suggest: ['Navigation', 'Billing export', 'Onboarding'] }];
   const TITLES = {}, NAMELESS = 'Unified page navigation: one head, breadcrumb in the top';

@@ -147,7 +147,7 @@
     const back = !bulk && x ? `[data-open="${CSS.escape(x.key)}"]` : '';
     if (id === 'rename') {
       const name = x.g ? x.g.name : x.c.title;
-      ctl.dialog({ title: x.g ? 'Rename group' : 'Rename chat', label: 'Name', value: name, yes: 'Rename', back, run: (v) => { if (x.g) x.g.name = v; else x.c.title = v; ctl.paint({ focus: back }); say(`Renamed to ${v}`); } }); return;
+      ctl.dialog({ title: x.g ? 'Rename group' : 'Rename chat', label: 'Name', value: name, max: 80, yes: 'Rename', back, run: (v) => { if (v === name) { ctl.paint({ focus: back }); return; } if (x.g) x.g.name = v; else x.c.title = v; ctl.paint({ focus: back }); say(`Renamed to ${v}`); } }); return;
     }
     if (id === 'pin') { x.c.pinned = !x.c.pinned; ctl.paint({ focus: back }); say(x.c.pinned ? 'Pinned' : 'Unpinned', undoTo(snap, pick, 'As it was')); return; }
     if (id === 'archive') {

@@ -125,7 +125,8 @@
     if ((hit = on('[data-sched-resume]'))) { const s = data.schedules.find((x) => x.id === current); if (s) act('pause', [{ _s: s }]); return; }
     if (on('[data-sched-new]')) { window.RailConversation?.start('schedule'); return; }
     if ((hit = on('[data-menu-pick]'))) {
-      const [id, v] = hit.dataset.menuPick.split('|'); const s = data.schedules.find((x) => x.id === current); menu = '';
+      const [id, v] = hit.dataset.menuPick.split('|'); if (!id.startsWith('sc-')) return;   // the composer's picks are the composer's
+      const s = data.schedules.find((x) => x.id === current); menu = '';
       if (id === 'sc-more') { more(s, v); return; }
       if ((id === 'sc-every' ? s.every : s.at) === v) { draw(); return; }   // the same value again: nothing changed, nothing to say
       if (id === 'sc-every') s.every = v; if (id === 'sc-at') s.at = v;
@@ -133,8 +134,8 @@
       if (s.section === 'next') { if (s.skip) s.skip = w.next; else s.next = w.next; }   // a paused one and a missed one keep what they say
       follow(s); draw(); say(s.state === 'paused' ? `It stays paused; once resumed it runs ${w.runs}` : `Runs ${w.runs}`); return;
     }
-    if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
+    if ((hit = on('[data-menu^="sc-"]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
   });
   R.dismissOnOutside(document, { open: () => !!menu, inside: '#route-schedule .spick, #route-schedule .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
-  window.RailSchedules = { find: (id) => data.schedules.find((s) => s.id === id), add: (s) => { data.schedules.unshift(s); ctl.paint(); window.RailWorld?.add({ id: `sch-${s.id}`, case: 'scheduled', title: s.title, project: s.project || '', detail: R.scheduleWords(s).says, time: s.at, day: 'upcoming', when: 'tomorrow' }); } /* in the one store: Pulse's Scheduled lists it */, act: (id, v) => { const s = data.schedules.find((x) => x.id === id); if (s && v) more(s, v); }, running: (id) => { const s = data.schedules.find((x) => x.id === id); return !!s && isRunning(s); }, skipItem: (id) => { const s = data.schedules.find((x) => x.id === id); return s ? skipItem(s) : { text: 'Skip next time' }; }, show: (id) => { current = id || ''; draw(); }, summary: () => ({ n: data.schedules.filter((s) => s.state !== 'paused').length, needs: data.schedules.filter((s) => s.section === 'needs').length }) };
+  window.RailSchedules = { find: (id) => data.schedules.find((s) => s.id === id), add: (s) => { const w = R.scheduleWords(s); Object.assign(s, { day: w.day, time: w.time }); data.schedules.unshift(s); ctl.paint(); window.RailWorld?.add({ id: `sch-${s.id}`, case: 'scheduled', title: s.title, project: s.project || '', detail: w.says, time: s.at, day: 'upcoming', when: whenOf(s) }); } /* in the one store: Pulse's Scheduled lists it */, act: (id, v) => { const s = data.schedules.find((x) => x.id === id); if (s && v) more(s, v); }, running: (id) => { const s = data.schedules.find((x) => x.id === id); return !!s && isRunning(s); }, skipItem: (id) => { const s = data.schedules.find((x) => x.id === id); return s ? skipItem(s) : { text: 'Skip next time' }; }, show: (id) => { current = id || ''; draw(); }, summary: () => ({ n: data.schedules.filter((s) => s.state !== 'paused').length, needs: data.schedules.filter((s) => s.section === 'needs').length }) };
 })();

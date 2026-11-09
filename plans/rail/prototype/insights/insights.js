@@ -154,7 +154,7 @@
     const plain = st.when === 'this month' && !st.narrow && !st.filter.length;
     const scope = st.narrow ? (c.days === 1 ? 'on this day' : `in these ${c.days} days`) : st.when === 'all time' ? 'in all' : st.when;
     const word = sub.wordAlways ? sub.wordAlways(c) : plain ? sub.word(c) : `${sub.text(c.v)} ${scope}`;
-    const why = sub.whyAlways ? sub.whyAlways(c) : plain ? sub.why(c) : st.against === 'before' ? M.cmp(c, sub) : '';   // no comparison asked for: none in the headline
+    const why = sub.whyAlways ? sub.whyAlways(c) : st.against === 'before' ? M.cmp(c, sub) : plain ? sub.why(c) : '';   // no comparison asked for: none in the headline; sub.why never compares
     const head = R.placeHead({ title: sub.title, mark: R.kindMark({ kind: 'plugin', icon: sub.icon }), word, why, menu: R.moreMenu({ id: 'in-more', label: `More for ${sub.title}`, icon: R.icon('more', 16), open: menu === 'in-more', items: [{ id: 'link', text: 'Copy a link', help: 'To this page, as you narrowed it' }] }) });
     const stands = sub.id === 'why' ? `<p class="in-stands">A small change to try: <b>web-app</b> ${esc(M.STANDS.why.outcome)}</p><p class="in-stands">${esc(M.STANDS.why.because)}</p><div class="in-acts">${R.button({ label: 'Try Opus 5.5 on web-app', attrs: { 'data-in-try': '' } })}</div><p class="wf-ed-m">Try starts a new chat for you to send; nothing changes until you do. You can switch back to Sonnet 5.5 at any time.</p>` : sub.id === 'review' ? `<p class="in-stands">What stands out: <b>web-app</b> ${esc(M.STANDS.review)}</p><div class="in-acts">${R.button({ label: 'Ask why web-app goes back', attrs: { 'data-in-ask': '' } })}</div>` : '';
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${sentence(sub, st, c)}${chartHtml(sub, st, c)}${rowsHtml(sub, c)}${stands}${actions(sub, st, c)}</div></div><div class="convo-dock" id="in-dock"></div></div>`;
@@ -239,7 +239,7 @@
       if (on('[data-in-default]')) { window.RailShell.go('projects'); say('Set it in a project: Every new task here gets'); return; }
       if ((hit = on('[data-in-row]'))) { window.RailRunsList.filter(JSON.parse(hit.dataset.inRow)); return; }
       if ((hit = on('[data-pick]'))) { const t = hit.dataset.pick, at = t.indexOf('|'); choose(t.slice(0, at), t.slice(at + 1)); return; }
-      if ((hit = on('[data-menu-pick]'))) { menu = ''; if (hit.dataset.menuPick.startsWith('in-more|')) say('Copied a link to this page'); draw(); return; }
+      if ((hit = on('[data-menu-pick]'))) { menu = ''; if (hit.dataset.menuPick.startsWith('in-more|')) say('Would copy a link to this page'); draw(); return; }
       if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
     });
     R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .spick, #route-place .rc-pop, #route-place .pz-pick', back: () => null, close: () => { menu = ''; }, paint: draw });

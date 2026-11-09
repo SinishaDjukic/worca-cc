@@ -87,7 +87,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   // the hidden bar: a 56px strip with the work's summary, nothing sticking out; hover opens it over the page; a menu keeps it open
   if (w > 760) {
     await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
-    await p.evaluate(() => document.querySelector('[data-bar-hide]').click()); await p.mouse.move(w - 40, 400); await p.waitForTimeout(260);
+    await p.evaluate(() => document.querySelector('[data-bar-hide]')?.click()); await p.mouse.move(w - 40, 400); await p.waitForTimeout(260);
     const strip = await p.evaluate(() => { const b0 = document.getElementById('side-rail').getBoundingClientRect(), r = { left: b0.left, width: (() => { const s = document.getElementById('side-rail'), m = /inset\(0px (-?[\d.]+)px/.exec(getComputedStyle(s).clipPath); return s.getBoundingClientRect().width - (m ? Math.max(0, +m[1]) : 0); })(), get right() { return this.left + this.width; } }, out = [...document.querySelectorAll('#side-rail *')].filter((e) => e.checkVisibility?.({ opacityProperty: true, visibilityProperty: true }) && e.getClientRects().length && (e.nodeName === 'svg' || [...e.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim()))).filter((e) => { const b = e.getBoundingClientRect(); return b.width && (b.right > r.right + 1 || b.left < r.left - 1); }).map((e) => e.className || e.tagName); return { w: Math.round(r.width), mini: document.querySelectorAll('#bar-mini .bar-strip-i').length, out: [...new Set(out)].slice(0, 4) }; });
     if (strip.w !== 56 || !strip.mini || strip.out.length) add('the hidden bar is not a clean strip', `${scheme}/${w}: ${JSON.stringify(strip)}`);
     const ava = await p.evaluate(() => { const b = document.querySelector('#side-rail .pz-ava-wrap')?.getBoundingClientRect(); return b ? [Math.round(b.left), Math.round(b.right)] : null; });
@@ -106,7 +106,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     const g = await p.evaluate(() => { const r = document.querySelector('.bar-grip').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 200 }; });
     await p.mouse.move(g.x, g.y); await p.mouse.down(); await p.mouse.move(230, g.y, { steps: 4 }); await p.mouse.up();
     const floor = await p.evaluate(() => Math.round(document.getElementById('side-rail').getBoundingClientRect().width));
-    if (floor !== 264) add('the bar resizes under its floor', `${scheme}/${w}: ${floor}`);
+    if (w > 1080 && floor !== 264) add('the bar resizes under its floor', `${scheme}/${w}: ${floor}`);
     await p.mouse.move(g.x - 16, g.y); await p.mouse.down(); await p.mouse.move(120, g.y, { steps: 4 }); await p.mouse.up(); await p.mouse.move(w - 40, 400); await p.waitForTimeout(260);
     if (await p.evaluate(() => !document.getElementById('side-rail').classList.contains('is-strip'))) add('dragging past the floor does not hide the bar', `${scheme}/${w}`);
     await p.evaluate(() => { localStorage.removeItem('worca-rail.sidebar.collapsed'); localStorage.removeItem('worca-rail.bar.width'); }); await p.reload(); await p.waitForTimeout(120);

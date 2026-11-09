@@ -51,19 +51,19 @@
 
   const money = source({
     fields: ['spend', 'hours', 'saved', 'tasks'],
-    series: { spend: [38, 61, 22, 74, 55, 9, 93, 60], hours: [4, 7, 3, 8, 6, 1, 10, 8], saved: [105, 184, 79, 210, 157, 26, 262, 210], tasks: [4, 7, 2, 8, 6, 1, 10, 6] },
+    series: { spend: [38, 61, 22, 74, 55, 9, 93, 60], hours: [4, 7, 3, 8, 6, 1, 10, 8], saved: [105, 184, 79, 210, 157, 26, 262, 210], tasks: [5, 8, 2, 9, 7, 1, 11, 6] },
     before: { spend: [29, 44, 30, 51, 40, 14, 66, 49], hours: [3, 5, 3, 6, 5, 2, 7, 5], saved: [79, 131, 79, 157, 131, 52, 184, 131], tasks: [3, 5, 3, 6, 5, 2, 7, 5] },
     dims: {
-      project: [['billing-api', 186, 21, 549, 18], ['web-app', 131, 14, 359, 14], ['worca-cc', 72, 9, 243, 9], ['docs-site', 23, 3, 82, 3]],
-      workspace: [['web-shop', 317, 35, 908, 32], ['internal', 95, 12, 325, 12]],
+      project: [['billing-api', 186, 21, 549, 12], ['web-app', 131, 14, 359, 14], ['worca-cc', 72, 9, 243, 22], ['docs-site', 23, 3, 82, 1]],   // tasks: what the Tasks list holds per project
+      workspace: [['web-shop', 317, 35, 908, 26], ['internal', 95, 12, 325, 23]],
       branch: [['feat/invoice-export', 64], ['feat/checkout-retry', 58], ['feat/usage-page', 52], ['fix/webhook-race', 47], ['feat/csv-import', 41], ['fix/tax-rounding', 38], ['fix/rate-limit', 33], ['chore/deps-bump', 26], ['docs/api-guide', 23], ['fix/login-redirect', 18], ['chore/ci-cache', 12]],
       ticket: [['BILL-212', 72], ['WEB-88', 61], ['BILL-240', 55], ['WEB-91', 44], ['CC-17', 38], ['No ticket', 142]],
       pr: [['#482', 64], ['#477', 58], ['#490', 47], ['#471', 41], ['#466', 33], ['No PR yet', 169]],
-      workflow: [['Default', 241, 28, 722, 26], ['Full', 102, 11, 305, 10], ['Quick Fix', 69, 8, 206, 8]],
+      workflow: [['Default', 241, 28, 722, 29], ['Full', 102, 11, 305, 11], ['Quick Fix', 69, 8, 206, 9]],
       stage: [['Plan', 58], ['Build', 187], ['Review', 96], ['PR', 71]],
       agent: [['Implementer', 168], ['Reviewer', 88], ['Planner', 58], ['Tester', 57], ['Docs', 41]],
       subagents: [['Main agent', 331], ['Explore', 47], ['Code review', 34]],
-      model: [['Opus 5.5', 238, 27, 712, 20], ['Sonnet 5.5', 142, 16, 425, 18], ['Haiku 5', 32, 4, 96, 6]],
+      model: [['Opus 5.5', 238, 27, 712, 22], ['Sonnet 5.5', 142, 16, 425, 20], ['Haiku 5', 32, 4, 96, 7]],
       engine: [['Claude Code', 372], ['Codex', 40]],
       effort: [['high', 196], ['medium', 171], ['low', 45]],
       cache: [['Fresh input and output', 174], ['Cache read', 142], ['Cache write', 96]],
@@ -72,12 +72,12 @@
       retries: [['Retries', 18], ['Everything else', 394]],
       fixes: [['PR fix rounds', 11], ['Everything else', 401]],
       failed: [['Failed or stopped', 33], ['Finished', 379]],
-      origin: [['Tasks', 248, 28, 742, 27], ['Chat', 72, 8, 216, 9], ['Schedules', 53, 6, 158, 5], ['Requirements', 39, 5, 117, 3]],
+      origin: [['Tasks', 248, 28, 742, 30], ['Chat', 72, 8, 216, 10], ['Schedules', 53, 6, 158, 6], ['Requirements', 39, 5, 117, 3]],
       requirements: [['Not from a requirement', 373], ['Invoice export', 24], ['Checkout retries', 15]],
       away: [['At the desk', 269], ['Away', 143]],
-      status: [['Finished', 379, 47, 1233, 38], ['Failed', 24, 0, 0, 4], ['Stopped', 9, 0, 0, 2]],
+      status: [['Finished', 379, 47, 1233, 43], ['Failed', 24, 0, 0, 4], ['Stopped', 9, 0, 0, 2]],
       billing: [['API', 286], ['Subscription', 126]],
-      client: [['acme', 173, 19, 485, 16], ['globex', 91, 11, 294, 10], ['No client', 148, 17, 454, 18]],
+      client: [['acme', 173, 19, 485, 19], ['globex', 91, 11, 294, 12], ['No client', 148, 17, 454, 18]],
       teamtag: [['payments', 186], ['growth', 131], ['No team', 95]],
       costcenter: [['CC-4100', 186], ['CC-4200', 131], ['No cost center', 95]],
       label: [['billing', 188], ['no label', 128], ['hotfix', 96]],
@@ -98,12 +98,12 @@
   });
   const ends = source({
     fields: ['finished', 'failed', 'stopped'],
-    series: { finished: [4, 6, 2, 7, 5, 1, 8, 5], failed: [0, 1, 0, 1, 0, 0, 2, 0], stopped: [0, 0, 0, 0, 1, 0, 0, 1] }, before: { finished: [3, 4, 3, 5, 4, 2, 6, 4], failed: [0, 1, 0, 1, 0, 0, 1, 1], stopped: [0, 0, 0, 0, 1, 0, 0, 0] },
+    series: { finished: [5, 7, 2, 8, 6, 1, 9, 5], failed: [0, 1, 0, 1, 0, 0, 2, 0], stopped: [0, 0, 0, 0, 1, 0, 0, 1] }, before: { finished: [3, 4, 3, 5, 4, 2, 6, 4], failed: [0, 1, 0, 1, 0, 0, 1, 1], stopped: [0, 0, 0, 0, 1, 0, 0, 0] },
     dims: {
-      project: [['billing-api', 16, 1, 1], ['web-app', 12, 2, 0], ['worca-cc', 7, 1, 1], ['docs-site', 3, 0, 0]],
-      workflow: [['Default', 23, 2, 1], ['Full', 8, 2, 0], ['Quick Fix', 7, 0, 1]],
-      model: [['Opus 5.5', 18, 1, 1], ['Sonnet 5.5', 15, 2, 1], ['Haiku 5', 5, 1, 0]],
-      client: [['acme', 15, 1, 0], ['globex', 8, 1, 1], ['No client', 15, 2, 1]],
+      project: [['billing-api', 10, 1, 1], ['web-app', 12, 2, 0], ['worca-cc', 20, 1, 1], ['docs-site', 1, 0, 0]],
+      workflow: [['Default', 26, 2, 1], ['Full', 9, 2, 0], ['Quick Fix', 8, 0, 1]],
+      model: [['Opus 5.5', 20, 1, 1], ['Sonnet 5.5', 17, 2, 1], ['Haiku 5', 6, 1, 0]],
+      client: [['acme', 18, 1, 0], ['globex', 10, 1, 1], ['No client', 15, 2, 1]],
     },
   });
   const review = source({
@@ -111,7 +111,7 @@
     series: { rounds: [6, 8, 3, 11, 7, 1, 10, 7], tasks: [4, 6, 2, 7, 5, 1, 8, 5] }, before: { rounds: [4, 6, 4, 7, 6, 3, 8, 5], tasks: [3, 4, 3, 5, 4, 2, 6, 4] },
     lastK: { rounds: 3.45 },   // October ran 1.5 rounds a task
     dims: {
-      project: [['billing-api', 21, 15, 31, 33, 4, 1, 11], ['web-app', 21, 14, 24, 29, 3, 2, 8], ['worca-cc', 8, 6, 12, 13, 1, 0, 5], ['docs-site', 3, 3, 4, 3, 1, 0, 3]],
+      project: [['billing-api', 15, 11, 20, 22, 2, 1, 8], ['web-app', 21, 14, 24, 29, 3, 2, 8], ['worca-cc', 16, 12, 26, 26, 4, 0, 10], ['docs-site', 1, 1, 1, 1, 0, 0, 1]],
     },
   });
   const fails = source({
@@ -126,11 +126,11 @@
   });
   const alone = source({
     fields: ['alone', 'tasks'],
-    series: { alone: [3, 5, 1, 5, 4, 1, 6, 4], tasks: [4, 7, 2, 8, 6, 1, 10, 6] }, before: { alone: [2, 3, 2, 4, 3, 1, 5, 3], tasks: [3, 5, 3, 6, 5, 2, 7, 5] },
+    series: { alone: [4, 6, 1, 6, 4, 1, 6, 4], tasks: [5, 8, 2, 9, 7, 1, 11, 6] }, before: { alone: [2, 3, 2, 4, 3, 1, 5, 3], tasks: [3, 5, 3, 6, 5, 2, 7, 5] },
     dims: {
-      project: [['billing-api', 13, 18], ['web-app', 8, 14], ['worca-cc', 6, 9], ['docs-site', 2, 3]],
-      workflow: [['Default', 17, 26], ['Full', 5, 10], ['Quick Fix', 7, 8]],
-      away: [['At the desk', 16, 29], ['Away', 13, 15]],
+      project: [['billing-api', 10, 12], ['web-app', 8, 14], ['worca-cc', 13, 22], ['docs-site', 1, 1]],
+      workflow: [['Default', 19, 29], ['Full', 6, 11], ['Quick Fix', 7, 9]],
+      away: [['At the desk', 18, 33], ['Away', 14, 16]],
     },
   });
   const cache = source({
@@ -152,8 +152,8 @@
   });
   const done = source({
     fields: ['finished'],
-    series: { finished: [4, 6, 2, 7, 5, 1, 8, 5] }, before: { finished: [3, 4, 3, 5, 4, 2, 6, 4] },
-    dims: { project: [['billing-api', 16], ['web-app', 12], ['worca-cc', 7], ['docs-site', 3]], workflow: [['Default', 23], ['Full', 8], ['Quick Fix', 7]] },
+    series: { finished: [5, 7, 2, 8, 6, 1, 9, 5] }, before: { finished: [3, 4, 3, 5, 4, 2, 6, 4] },
+    dims: { project: [['billing-api', 10], ['web-app', 12], ['worca-cc', 20], ['docs-site', 1]], workflow: [['Default', 26], ['Full', 9], ['Quick Fix', 8]] },
   });
   const waits = source({
     fields: ['waits', 'mins'],
@@ -168,7 +168,7 @@
     fields: ['spend', 'hours', 'saved', 'tasks'],
     series: { spend: [240, 410, 180, 520, 390, 60, 610, 450] }, before: { spend: [200, 340, 160, 440, 340, 60, 500, 360] },
     dims: {
-      person: [['Maya', 920, 108, 2808, 102], ['Jonas', 780, 88, 2288, 86], ['Priya', 510, 59, 1534, 56], ['Emil', 412, 47, 1233, 44], ['Lee', 238, 28, 717, 17]],
+      person: [['Maya', 920, 108, 2808, 102], ['Jonas', 780, 88, 2288, 81], ['Priya', 510, 59, 1534, 56], ['Emil', 412, 47, 1233, 49], ['Lee', 238, 28, 717, 17]],
       project: [['billing-api', 1240, 143, 3720, 132], ['web-app', 980, 113, 2940, 105], ['worca-cc', 640, 74, 1920, 68]],
       client: [['acme', 1460, 168, 4380, 156], ['No client', 790, 91, 2370, 84], ['globex', 610, 71, 1830, 65]],
     },
@@ -231,13 +231,13 @@
     { id: 'spend', title: 'Spend', group: 'Cost', icon: 'set-spending', noun: 'AI spend', src: money, num: 'spend', text: usd, forms: SUM, budget: 1000, cols: moneyCols(), share: 'spend',
       word: (c) => `${usd(c.v)} of $1,000`, why: (c) => (c.st.by === 'client' ? `${usd(noOwner.spend)} has no client` : `Saved about ${usd(c.T.saved)}, 3× what it cost · on pace for $1,545 · ${usd(noOwner.spend)} has no owner`) },
     { id: 'per-task', title: 'Per task', group: 'Cost', icon: 'kind-task', noun: 'cost a task', src: money, num: 'spend', den: 'tasks', text: usd2, forms: RATE, cols: moneyCols(['Per task', (r) => (r.tasks ? usd2(r.spend / r.tasks) : '-')]), share: 'spend',
-      word: (c) => `${usd2(c.v)} a task`, why: (c) => `${usd(c.T.spend)} across ${c.T.tasks} tasks · ${usd2(c.p)} in the same days last month` },
+      word: (c) => `${usd2(c.v)} a task`, why: (c) => `${usd(c.T.spend)} across ${c.T.tasks} tasks` },
     { id: 'why', title: 'Why it cost', group: 'Cost', icon: 'refresh', noun: 'rework and waste', src: waste, by: 'why', num: 'spend', text: usd, forms: SUM, cols: wasteCols, share: 'base',
       wordAlways: (c) => `${usd(c.v)} of ${usd(c.base)} went on rework and waste`, whyAlways: (c) => (c.P && c.st.against === 'before' ? `${pct(c.v / c.base)}, up from ${pct(c.P.spend / c.pbase)} ${c.whole && c.st.when === 'this month' ? 'last month' : 'in the period before'}` : pct(c.v / c.base)) },
-    { id: 'budget', title: 'Budget', group: 'Cost', icon: 'set-limits', noun: 'AI spend', src: money, num: 'spend', text: usd, forms: SUM, as: 'running', against: 'budget', budget: 1000, cols: moneyCols(), share: 'spend',
+    { id: 'budget', title: 'Budget', group: 'Cost', icon: 'set-limits', noun: 'budget used', src: money, num: 'spend', text: usd, forms: SUM, as: 'running', against: 'budget', budget: 1000, cols: moneyCols(), share: 'spend',
       word: (c) => `${Math.round((c.v / 1000) * 100)}% of $1,000 used`, why: (c) => `${usd(c.v)} so far · on pace for $1,545, $545 over · 8 of 30 days gone` },
     { id: 'time-saved', title: 'Time saved', group: 'Value', icon: 'clock', noun: 'money saved', src: money, num: 'saved', text: usd, forms: SUM, cols: moneyCols(), share: 'saved',
-      word: (c) => `${usd(c.v)} saved`, why: (c) => `About ${c.T.hours} hours of work · ${usd(c.P.saved)} in the same days last month` },
+      word: (c) => `${usd(c.v)} saved`, why: (c) => `About ${c.T.hours} hours of work` },
     { id: 'value', title: 'Value for spend', group: 'Value', icon: 'sparkle', noun: 'saved for each dollar', src: money, num: 'saved', den: 'spend', text: (n) => `${n.toFixed(1)}×`, forms: RATE, cols: moneyCols(), share: 'spend',
       word: (c) => `${c.v.toFixed(1)}× what it cost`, why: (c) => `${usd(c.T.saved)} saved on ${usd(c.T.spend)} · ${usd2(c.T.spend / c.T.hours)} for each hour saved` },
     { id: 'ends', title: 'How tasks end', group: 'Quality', icon: 'check', noun: 'finished tasks', src: ends, num: 'finished', text: (n) => plural(n, 'task'), forms: COUNT, share: 'finished',
@@ -245,33 +245,33 @@
       word: (c) => `${c.T.finished} of ${c.T.finished + c.T.failed + c.T.stopped} finished`, why: (c) => `${c.T.failed} failed, ${c.T.stopped} stopped · ${pct(c.T.finished / (c.T.finished + c.T.failed + c.T.stopped))} finish` },
     { id: 'review', title: 'Review', group: 'Quality', icon: 'edit', noun: 'rounds a task', src: review, note: "A round is one review and its fixes; a round back is any after a task's first", num: 'rounds', den: 'tasks', text: (n) => `${n.toFixed(1)} rounds`, forms: RATE, share: 'reviews', noShare: true,
       cols: [['Rounds a task', (r) => (r.tasks ? (r.rounds / r.tasks).toFixed(1) : '-')], ['First-time pass', (r) => (r.tasks ? pct(r.first / r.tasks) : '-')], ['Raised', (r) => String(r.fixed + r.disputed + r.open)], ['Fixed', (r) => String(r.fixed)], ['You rejected', (r) => String(r.disputed)], ['Open', (r) => String(r.open)]],
-      word: (c) => `${c.T.rounds} rounds over ${c.T.tasks} reviewed tasks, ${c.v.toFixed(1)} a task`, why: (c) => { const oct = (f) => sum(periodSeries(review, f, 'last month').now), was = (oct('rounds') / oct('tasks')).toFixed(1), now = c.v.toFixed(1), back = c.T.rounds - c.T.tasks; return `${now === was ? 'Same as' : +now < +was ? 'Better than' : 'Worse than'} October · ${back} rounds back, about ${usd(back * roundBack)}`; } },
+      word: (c) => `${c.T.rounds} rounds over ${c.T.tasks} reviewed tasks, ${c.v.toFixed(1)} a task`, why: (c) => { const back = c.T.rounds - c.T.tasks; return `${back} rounds back, about ${usd(back * roundBack)}`; } },
     { id: 'fails', title: 'Where it fails', group: 'Quality', icon: 'stop', noun: 'tasks that did not finish', src: fails, by: 'stage', num: 'count', text: (n) => plural(n, 'task'), forms: COUNT, share: 'count',
       cols: [['Did not finish', (r) => String(r.count)], ['AI spend', (r) => usd(r.spend)]],
-      word: (c) => `${c.T.count} tasks did not finish, ${usd(c.T.spend)}`, why: (c) => `Most at Build: 3 of ${c.T.count} · ${c.P.count} in the same days last month` },
+      word: (c) => `${c.T.count} tasks did not finish, ${usd(c.T.spend)}`, why: (c) => `Most at Build: 3 of ${c.T.count}` },
     { id: 'autonomy', title: 'Autonomy', group: 'Quality', icon: 'away', noun: 'tasks that ran without you', src: alone, num: 'alone', den: 'tasks', text: pct, forms: RATE, share: 'alone',
       cols: [['Tasks', (r) => String(r.tasks)], ['Without you', (r) => String(r.alone)], ['Asked you', (r) => String(r.tasks - r.alone)], ['Rate', (r) => (r.tasks ? pct(r.alone / r.tasks) : '-')]],
-      word: (c) => `${c.T.alone} of ${c.T.tasks} ran without you`, why: (c) => `${pct(c.v)}, up from ${pct(c.p)} in the same days last month` },
+      word: (c) => `${c.T.alone} of ${c.T.tasks} ran without you`, why: (c) => `${pct(c.v)} of tasks` },
     { id: 'cache', title: 'Cache', group: 'Quality', icon: 'set-memory', noun: 'input from the cache', src: cache, by: 'model', num: 'read', den: 'input', text: pct, forms: RATE, share: 'read',
       cols: [['From the cache', (r) => `${(r.read / 10).toFixed(1)}M`], ['All input', (r) => `${(r.input / 10).toFixed(1)}M`], ['Rate', (r) => (r.input ? pct(r.read / r.input) : '-')]],
-      word: (c) => `${pct(c.v)} of input from the cache`, why: (c) => `${(c.T.read / 10).toFixed(1)}M of ${(c.T.input / 10).toFixed(1)}M tokens · ${pct(c.p)} in the same days last month` },
+      word: (c) => `${pct(c.v)} of input from the cache`, why: (c) => `${(c.T.read / 10).toFixed(1)}M of ${(c.T.input / 10).toFixed(1)}M tokens` },
     { id: 'shipped', title: 'Shipped', group: 'Flow', icon: 'merge', noun: 'PRs merged', src: prs, num: 'prs', text: (n) => plural(n, 'PR'), forms: COUNT, share: 'prs',
       cols: [['PRs merged', (r) => String(r.prs)], ['Days each', (r) => (r.prs ? (r.days / r.prs / 10).toFixed(1) : '-')]],
-      word: (c) => `${c.T.prs} PRs merged`, why: (c) => `6 in review, 3 need attention · ${c.P.prs} in the same days last month` },
+      word: (c) => `${c.T.prs} PRs merged`, why: (c) => '6 in review, 3 need attention' },
     { id: 'merge', title: 'Start to merge', group: 'Flow', icon: 'after', noun: 'days to merge', src: prs, num: 'days', den: 'prs', text: (n) => `${(n / 10).toFixed(1)} days`, forms: RATE, share: 'prs',
       cols: [['PRs merged', (r) => String(r.prs)], ['Days each', (r) => (r.prs ? (r.days / r.prs / 10).toFixed(1) : '-')]],
-      word: (c) => `${(c.v / 10).toFixed(1)} days from start to merge`, why: (c) => `Down from ${(c.p / 10).toFixed(1)} days in the same days last month` },
+      word: (c) => `${(c.v / 10).toFixed(1)} days from start to merge`, why: (c) => `Over ${c.T.prs} PRs merged` },
     { id: 'throughput', title: 'Throughput', group: 'Flow', icon: 'track', noun: 'tasks finished', src: done, num: 'finished', text: (n) => plural(n, 'task'), forms: COUNT, share: 'finished',
       cols: [['Finished', (r) => String(r.finished)], ['A day', (r, c) => (r.finished / c.days).toFixed(1)]],
-      word: (c) => `${(c.v / c.days).toFixed(1)} tasks finished a day`, why: (c) => `${c.v} in ${c.days} days · ${(c.p / c.days).toFixed(1)} a day in the same days last month` },
+      word: (c) => `${(c.v / c.days).toFixed(1)} tasks finished a day`, why: (c) => `${c.v} in ${c.days} days` },
     { id: 'waiting', title: 'Waiting on you', group: 'Flow', icon: 'pause', noun: 'minutes a question', src: waits, by: 'stage', num: 'mins', den: 'waits', text: (n) => `${Math.round(n)} min`, forms: RATE, share: 'mins',
       cols: [['Times', (r) => String(r.waits)], ['Waited', (r) => `${Math.floor(r.mins / 60)} h ${r.mins % 60} min`], ['Each', (r) => (r.waits ? `${Math.round(r.mins / r.waits)} min` : '-')]],
-      word: (c) => `${Math.round(c.v)} min a question`, why: (c) => `${c.T.waits} times, ${Math.floor(c.T.mins / 60)} h ${c.T.mins % 60} min in all · ${Math.round(c.p)} min in the same days last month` },
+      word: (c) => `${Math.round(c.v)} min a question`, why: (c) => `${c.T.waits} times, ${Math.floor(c.T.mins / 60)} h ${c.T.mins % 60} min in all` },
     { id: 'team', title: 'By person', group: 'Team', team: true, icon: 'nav-team-metrics', noun: 'team spend', src: team, by: 'person', num: 'spend', text: usd, forms: SUM, budget: 12000, cols: moneyCols(), share: 'spend',
       word: (c) => `${usd(c.v)} of $12,000`, why: () => 'Five people · on pace for $10,725 · pooled budget at 24%' },
     { id: 'untagged', title: 'Missing cost tags', group: 'Team', team: true, count: 18, icon: 'tag', noun: 'tasks without a client', src: untagged, num: 'tasks', text: (n) => plural(n, 'task'), forms: COUNT, share: 'tasks',
       cols: [['Tasks', (r) => String(r.tasks)], ['AI spend', (r) => usd(r.spend)]],
-      word: (c) => `${c.T.tasks} tasks without a client`, why: (c) => `${usd(c.T.spend)} not counted to anyone · ${c.P.tasks} in the same days last month` },
+      word: (c) => `${c.T.tasks} tasks without a client`, why: (c) => `${usd(c.T.spend)} not counted to anyone` },
   ];
   const SUB = Object.fromEntries(SUBS.map((s) => [s.id, s]));
 

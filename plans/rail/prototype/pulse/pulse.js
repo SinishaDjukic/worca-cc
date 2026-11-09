@@ -17,7 +17,7 @@ function freshSettings(c) {
   return { desktop: c.desktop, badge: 'needs', sound: 'needs', attnFor: '3', warnAt: 80, mine: 'suggest', auto: 'move', groups: Object.fromEntries(M.GROUPS.map((g) => [g.id, { level: g.level, where: g.where, ex: {} }])) };
 }
 // a case starts fresh: nothing from the case before it carries over
-// Settings › Runs › Budget reads the case's figures too.
+// Settings › Tasks › Budget reads the case's figures too.
 const budgetSv = (b) => (b ? { spentNow: b.spent, total: String(b.limit), period: 'month' } : { spentNow: 0 });
 const fresh = (caseId) => ({ caseId, page: 'runs', pop: false, popTab: 'vitals', acct: false, sub: '', nr: null, menu: '', show: 'unread', from: 'all', vitalsShow: 'all', vitalsFrom: 'all',
   pick: R.selectClear(), rowKey: '', read: [], cleared: [], fixed: [], custom: '', confirm: '', toast: '', flash: '', awayStatus: caseOf(caseId).away.status, keep: true, s: freshSettings(caseOf(caseId)), sset: '', sv: { ...SV.fresh(), ...budgetSv(caseOf(caseId).budget), gemQuota: caseOf(caseId).gemQuota || '', ...(caseOf(caseId).newVersion ? { latest: caseOf(caseId).newVersion, upd: 'available' } : {}) },
@@ -108,7 +108,7 @@ const mini = (pct, t) => gring(pct, 'pz-mini', t);
 const pname = (p) => M.PROVIDER[p].name;
 
 // ---- shell ----
-const NAV = [['runs', 'Runs'], ['chat', 'Chats'], ['clock', 'Schedules'], ['folder', 'Projects']];
+const NAV = [['runs', 'Tasks'], ['chat', 'Chats'], ['clock', 'Schedules'], ['folder', 'Projects']];
 const navGo = (id, ic, t, tip) => R.navItem({ label: t, icon: svg(ic, 16), current: ui.page === id, title: tip, attrs: { 'data-go': id } });
 function sidebar() {
   return `<aside class="pz-side">
@@ -143,7 +143,7 @@ const metaOf = (r, detail = r.detail) => [r.project, detail].filter(Boolean).joi
 const runRow = (r, tip) => row({ mark: runMark(r.state, r.stage ?? -1), title: r.title, meta: metaOf(r), time: r.time, key: 'r:' + r.id, tip });
 function updateRow(u, withCheck) {
   return row({ mark: R.kindMark({ kind: 'event', tone: dotOf(u) ? 'ask' : 'idle', size: 16 }), title: u.title, meta: `${groupOf(u.g).name} · ${u.meta}`, time: u.time, key: u.id, check: withCheck ? ui.pick.ids.includes(u.id) : undefined,
-    unreadDot: isUnread(u), resolved: u.resolved || isFixed(u), fix: !isFixed(u) && !ui.pick.on ? u.fix : '', fixLand: u.fixLand, fixTip: u.fixLand ? `${u.fix}: opens Settings › Runs, on Budget` : `${u.fix} from here; the row then reads Resolved`, flash: ui.flash === u.id, tip: `Opens ${u.to}${isUnread(u) ? ' and marks it read' : ''}` });
+    unreadDot: isUnread(u), resolved: u.resolved || isFixed(u), fix: !isFixed(u) && !ui.pick.on ? u.fix : '', fixLand: u.fixLand, fixTip: u.fixLand ? `${u.fix}: opens Settings › Tasks, on Budget` : `${u.fix} from here; the row then reads Resolved`, flash: ui.flash === u.id, tip: `Opens ${u.to}${isUnread(u) ? ' and marks it read' : ''}` });
 }
 function vitalsSections() {
   const c = vitalsShown(), lim = c.limits;
@@ -216,7 +216,7 @@ function acctMenu() {
   // Who is looking, only on a shared sign-in; your team's new setup, until you look at it; the way past a blocked budget.
   const id = c.identity ? `<div class="mcard id-card" role="group" aria-label="Signed in as"><span class="mc-k">Signed in as</span><b>${esc(personName())}</b><small>${esc(c.identity.via)}</small></div>` : '';
   const team = c.teamSetup && !ui.teamSeen ? R.accountItem({ label: 'Your team updated the recommended setup', cls: 'pz-team', mark: R.statusDot({ tone: 'is-amber' }), value: 'Review', attrs: { 'data-team': true, title: 'Opens Settings › Team policy; the note goes once you have looked' } }) : '';
-  const raise = gone ? R.accountItem({ label: 'Raise budget', mark: svg('up', 16, 'mi-ic'), value: M.usd(c.budget.limit), attrs: { 'data-land': 'runs|Budget', title: 'Runs pause until the budget resets. Opens Settings › Runs, on Budget' } }) : '';
+  const raise = gone ? R.accountItem({ label: 'Raise budget', mark: svg('up', 16, 'mi-ic'), value: M.usd(c.budget.limit), attrs: { 'data-land': 'runs|Budget', title: 'Runs pause until the budget resets. Opens Settings › Tasks, on Budget' } }) : '';
   const sub = (id) => ({ 'data-sub': id, 'aria-haspopup': 'menu', 'aria-expanded': String(ui.sub === id) });
   // Top to bottom, rarest to most used, since the menu opens up from the avatar: how Worca looks and the door to
   // Settings; you today (Away, Keep awake); what the rings say, right above the avatar that wears them.
@@ -253,7 +253,7 @@ function usageFly() {
   return R.navFlyout({ label: 'Usage and costs', cls: `pz-fly${inCls('sub')}`, body: `${back}
     <span class="nav-fly-k" title="What can stop a run, per harness: the rings around your avatar show the closest of each">Limits</span>
     <div class="pz-ublocks">${c.usage.length ? c.usage.map(block).join('') : `<p class="pz-unote">No provider connected. ${R.textLink({ label: 'Open Sign-ins', attrs: { 'data-land': 'models|GitHub Copilot|list', title: 'Opens Settings › Models › Sign-ins' } })}</p>`}</div>${spendCard(c)}
-    <div class="msect" role="group">${R.accountItem({ label: 'Limit settings', mark: svg('gear', 16, 'mi-ic'), attrs: { 'data-land': 'runs|Warning line', title: 'The warning line, and what Worca does when a limit is near: Settings › Runs › Limits' } })}</div>
+    <div class="msect" role="group">${R.accountItem({ label: 'Limit settings', mark: svg('gear', 16, 'mi-ic'), attrs: { 'data-land': 'runs|Warning line', title: 'The warning line, and what Worca does when a limit is near: Settings › Tasks › Limits' } })}</div>
   ` });
 }
 // The spend card as account-menu.mjs paints it today (renderSpendCard): figures, never a ring.
@@ -320,7 +320,7 @@ function newRun() {
   let advice = '';
   const signedOut = !C().usage.some((u) => M.PROVIDER[u.p].runs), gone = budgetGone(), offline = connOffline();
   if (signedOut) advice = note('is-amber', `Nothing that can run is signed in. Only mock runs work until you sign in.`, quiet('Open Sign-ins', { 'data-land': 'models|GitHub Copilot|list', title: 'Opens Settings › Models › Sign-ins' }));
-  else if (gone) advice = note('is-red', `The budget of ${M.usd(C().budget.limit)} is used up until ${M.BUDGET_RESETS}. A run can start once it resets or you raise it.`, R.button({ label: 'Raise budget', title: 'Opens Settings › Runs, on Budget', attrs: { 'data-land': 'runs|Budget' } }));
+  else if (gone) advice = note('is-red', `The budget of ${M.usd(C().budget.limit)} is used up until ${M.BUDGET_RESETS}. A run can start once it resets or you raise it.`, R.button({ label: 'Raise budget', title: 'Opens Settings › Tasks, on Budget', attrs: { 'data-land': 'runs|Budget' } }));
   else if (ui.nr.moved) advice = note('', `${ui.nr.moved}.`);
   else if (lim) {
     const say = reached ? `${lim.name}'s ${lim.what} is used up until ${lim.resets}.`
@@ -425,7 +425,7 @@ function notifications() {
     }).join('') : '';
     const detailAction = open && nEx ? quiet('Back to the group', { 'data-backgroup': g.id, title: 'Every event follows the group again' }) : '';
     // Usage's limits are Runs': one row, in the section that owns it (docs/rail/settings.md)
-    const end = g.id === 'usage' ? quiet('Limits', { 'data-land': 'runs|Warning line', title: 'What a run does near a limit: Settings › Runs › Limits' }) : '';
+    const end = g.id === 'usage' ? quiet('Limits', { 'data-land': 'runs|Warning line', title: 'What a run does near a limit: Settings › Tasks › Limits' }) : '';
     return R.settingsRow({ name: g.name, end, detailRows, detailAction, changed: [...(gs.level !== g0.level ? [{ name: 'How much', was: levelText(g0.level) }] : []), ...(gs.where !== g0.where ? [{ name: 'Where', was: whereText(g0.where) }] : []), ...g.events.flatMap(evChange)],
       // Pulse keeps everything, so with Pulse only there is no level to choose.
       sentence: gs.where === 'pulse' ? sp('whr:' + g.id, whereText(gs.where), M.WHERE.map((x) => ({ ...x, checked: x.id === gs.where })), `Where ${g.name} goes beyond Pulse`)
@@ -437,7 +437,7 @@ function notifications() {
   return R.settingsSection({ title: 'Channels', rows: channels })
     + R.settingsSection({ title: 'Updates', meta: `What each kind of update sends beyond Pulse. Pulse keeps everything for 90 days; a problem clears when you act on it.${s.desktop === 'on' ? '' : ' Desktop notifications are off, so nothing shows there.'}`, rows: groups, action: atDefaults ? R.tooltip({ text: 'Nothing to reset: every group is at its default', off: true, html: R.button({ label: 'Reset to defaults', kind: 'quiet', attrs: { disabled: true } }) }) : reset });
 }
-// What a run does near a limit is a run's business, so it sits in Settings › Runs; Notifications only says how you hear of it.
+// What a run does near a limit is a run's business, so it sits in Settings › Tasks; Notifications only says how you hear of it.
 function limitsRows() {
   const s = ui.s;
   const warnRow = R.settingsRow({ name: 'Warning line', changed: changedFrom('warnAt', 'Warning line', (v) => v + '%'), sentence: `Warn at ${sp('warn', s.warnAt + '%', [70, 80, 90].map((v) => ({ id: String(v), text: v + '%', checked: s.warnAt === v, help: `Rings turn amber, Vitals shows the limit and an update is sent at ${v}%` })), 'The warning line for usage and spend')} of a limit` });

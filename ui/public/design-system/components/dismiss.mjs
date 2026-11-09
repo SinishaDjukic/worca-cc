@@ -64,7 +64,7 @@ function storeOf(doc) {
 export function watchStrips(doc) {
   doc.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || e.defaultPrevented || doc.querySelector('.keys-modal')) return;
-    const strip = [...doc.querySelectorAll('.rc-confirm')].filter((x) => x.getClientRects().length).pop(), no = strip?.querySelector('[data-confirm="no"]');
+    const strip = [...doc.querySelectorAll('.rc-confirm, [data-strip]')].filter((x) => x.getClientRects().length).pop(), no = strip?.querySelector('[data-confirm="no"], [data-strip-no]');   // data-strip: a question laid out as a row, its Cancel marked data-strip-no
     if (!no || [...strip.querySelectorAll('input:not([type="checkbox"]):not([type="radio"]), textarea')].some((f) => f.value !== f.defaultValue)) return;
     e.preventDefault(); e.stopImmediatePropagation(); no.click();
   });

@@ -87,6 +87,13 @@ test('watchStrips: Esc presses the strip\'s Cancel; what is typed stays (keys.es
   d.document.querySelector('input').value = 'a'; esc(); assert.equal(no, 1);
 });
 
+test('listController: a section can count in its own unit', () => {
+  const dom2 = new JSDOM('<div id="b"></div>').window, root = dom2.document.getElementById('b');
+  const ctl = C.listController({ root, spec: { noun: `unit-${Math.random()}`, label: 'x', can: () => [], bulk: () => [], act: () => {}, word: () => false, say: () => {}, active: () => true, open: () => {}, view: () => ({ state: 'ready', parts: [], sections: [{ id: 's', title: 'S', count: 5, rows: [{ key: 'k', title: 'T' }] }] }) } });
+  ctl.paint();
+  assert.match(root.textContent, /S\s*5/);
+});
+
 test('listController: two lists on one bar, the rows showing answer (one owner per root)', () => {
   const dom2 = new JSDOM('<div id="b"></div>').window, root = dom2.document.getElementById('b');
   const opened = [], mk = (n) => C.listController({ root, spec: { noun: `own-${n}-${Math.random()}`, label: 'x', can: () => [], bulk: () => [], act: () => {}, word: () => false, say: () => {}, active: () => true, open: () => opened.push(n), view: () => ({ state: 'ready', parts: [], sections: [{ id: 's', title: 'S', noCount: true, rows: [{ key: 'k', title: 'T' }] }] }) } });
@@ -94,6 +101,14 @@ test('listController: two lists on one bar, the rows showing answer (one owner p
   a.paint(); b.paint();
   root.querySelector('[data-open]').click();
   assert.deepEqual(opened, ['b']);
+});
+
+test('listController: a dialog\'s name field stops at its limit and says so (small.name-short)', () => {
+  const root = new JSDOM('<div id="b"></div>').window.document.getElementById('b');
+  const ctl = C.listController({ root, spec: { noun: `max-${Math.random()}`, label: 'x', can: () => [], bulk: () => [], act: () => {}, word: () => false, say: () => {}, active: () => true, view: () => ({ state: 'ready', parts: [], sections: [] }) } });
+  ctl.dialog({ title: 'Rename chat', label: 'Name', value: 'a', max: 80, yes: 'Rename', run: () => {} });
+  assert.equal(root.querySelector('[data-dlg-name]').getAttribute('maxlength'), '80');
+  assert.match(root.querySelector('.fld-hint').textContent, /Up to 80 characters/);
 });
 
 test('compactMenu: a head and its options are one block (comp.menu-groups)', () => {
@@ -1073,12 +1088,15 @@ test('Tooltip: watchTooltips draws a title; tipPlace keeps it inside the window'
   window.close();
 });
 
-test('watchMenus: a menu with no room under it opens above; menuUp says when', () => {
+test('watchMenus: a menu with no room under it opens above; menuUp says when', async () => {
   assert.equal(C.menuUp({ top: 700, bottom: 720 }, 200, 760), true, 'no room under, more above: up');
   assert.equal(C.menuUp({ top: 100, bottom: 120 }, 200, 760), false, 'room under: down');
   assert.equal(C.menuUp({ top: 80, bottom: 100 }, 900, 760), false, 'no room either way: down, where there is more');
   assert.equal(C.menuShift({ left: 200, right: 420 }, { left: 0, right: 280 }), -148, 'past a sidebar\'s edge: it slides back inside');
   assert.equal(C.menuShift({ left: 20, right: 200 }, { left: 0, right: 280 }), 0, 'inside: it stays');
+  const { foldCut } = await import('../ui/public/design-system/components/menu-place.mjs');
+  assert.equal(foldCut([{ head: 100, option: 150 }, { head: 562, option: 632 }], 599), 562, 'comp.menu-groups: a head whose option is past the fold ends the menu above it');
+  assert.equal(foldCut([{ head: 100, option: 150 }, { head: 700, option: 760 }], 599), null, 'a head wholly past the fold, or with its option showing, changes nothing');
   const { window } = new JSDOM('<body><span class="rc-pop"><button>+</button></span></body>', { pretendToBeVisual: true });
   C.watchMenus(window.document);
   window.document.querySelector('.rc-pop').insertAdjacentHTML('beforeend', '<div class="menu" role="menu"></div>');

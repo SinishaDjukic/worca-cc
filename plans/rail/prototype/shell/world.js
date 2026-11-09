@@ -87,7 +87,7 @@
   const COPILOT = { p: 'copilot', plan: 'Business', asOf: '14:05', win: [{ k: 'month', pct: 71, used: 212, of: 300, resets: 'Dec 1' }] };
   const month = (spent, limit, saved) => ({ period: 'this month', spent, limit, saved });
   // Each case: its runs (by id, with what differs here), its groups, and what it holds beside them. A budget is always
-  // this month's; Settings › Runs › Budget reads the same figures.
+  // this month's; Settings › Tasks › Budget reads the same figures.
   const CASES = {
     afternoon: { runs: { r1: 0, r2: 0, r5: 0, r10: 0, r11: 0, r7: { case: 'checks', detail: 'Checks running after the fix', time: '2 min', rounds: undefined }, r34: 0, r17: NIGHTLY, r37: 0 }, groups: ['g-nav'],
       actions: [['a1', 'r10', 'Dev server :4417'], ['a2', 'r11', 'Storybook :6006']],

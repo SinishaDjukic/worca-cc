@@ -6,6 +6,17 @@ const GAP = 6, EDGE = 8;
 const seen = new WeakSet();
 
 /**
+ * comp.menu-groups: where a scrolling menu must end so no group head is left alone at its fold.
+ * @param {{head:number, option:number|undefined}[]} groups  each head's top and its first option's bottom
+ * @param {number} bottom  the menu's bottom
+ * @returns {number|null}  the top of the highest head cut off from its option; null when none is
+ */
+export function foldCut(groups, bottom) {
+  const alone = groups.filter((g) => g.option !== undefined && g.head < bottom && g.option > bottom).map((g) => g.head);
+  return alone.length ? Math.min(...alone) : null;
+}
+
+/**
  * Whether a menu opens above what opened it: only when it would leave its room below and has more room above.
  * @param {{top:number, bottom:number}} anchor
  * @param {number} height  the menu's height
@@ -61,6 +72,11 @@ export function watchMenus(doc) {
       if (h > space && space > 0) { m.style.maxHeight = `${space}px`; m.style.overflowY = 'auto'; }   // no room either way: it scrolls inside
       const dx = menuShift(m.getBoundingClientRect(), room);
       if (dx) m.style.translate = `${Math.round(dx)}px 0`;
+      for (let i = 0; i < 3 && m.scrollHeight > m.clientHeight; i++) {
+        const r = m.getBoundingClientRect(), cut = foldCut([...m.querySelectorAll('.menu-h')].map((x) => ({ head: x.getBoundingClientRect().top, option: x.nextElementSibling?.getBoundingClientRect().bottom })), r.bottom);
+        if (cut === null || cut <= r.top) break;
+        m.style.maxHeight = `${Math.floor(cut - r.top)}px`;
+      }
     }
   };
   place();

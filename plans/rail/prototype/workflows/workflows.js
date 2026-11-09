@@ -38,6 +38,7 @@
     ],
   };
   const teamOf = () => data.workflow.filter((w) => w.team);
+  const forYou = () => data.workflow.filter((w) => !w.own && !w.plugin && w.tasks < 5);   // a suggestion; what you just installed is not one
   const marketCount = () => window.RailPlaces?.marketplace?.shelfCount?.(3) ?? 0;   // what the row opens: the Marketplace's shelf of agents and workflows
   const kindOfWay = { workflows: 'workflow', agents: 'agent', scripts: 'script' };
   const WAYS = ['workflows', 'agents', 'scripts', 'drafts', 'for-you', 'team'];   // an address may name only these
@@ -83,7 +84,7 @@
   function cardOf(kind, x) {
     const open = { 'data-wf-open': `${kind}:${x.id}` };
     if (kind === 'workflow' && x.fresh) return R.pluginCard({ mark: R.kindMark({ kind: 'workflow', tone: 'act' }), kicker: `Draft · never saved · ${x.draft.steps.length} steps`, title: x.title, what: x.what, facts: 'Nothing can run it until you save it', action: R.button({ label: atLeast('expert') ? 'Go on editing' : 'Finish it in a chat', attrs: atLeast('expert') ? { 'data-wf-edit': x.id } : { 'data-wf-chat': `workflow:${x.id}` } }), attrs: open });
-    if (kind === 'workflow') return R.pluginCard({ mark: R.kindMark({ kind: 'workflow', tone: x.running ? 'run' : x.draft ? 'act' : 'idle' }), kicker: x.draft ? `${shape(x)} · a draft waits, ${x.draft.changes} ${x.draft.changes === 1 ? 'change' : 'changes'}` : shape(x), title: x.title, what: x.what, why: x.id === 'default' ? 'Every task runs this unless you pick another' : '', facts: factsOf(x), action: R.button({ label: 'Use it', attrs: { 'data-wf-use': x.id, title: 'Starts a task in a chat with this workflow in its sentence' } }), more: R.button({ label: 'Change it in a chat', kind: 'quiet', attrs: { 'data-wf-chat': `${kind}:${x.id}` } }), attrs: open });
+    if (kind === 'workflow') return R.pluginCard({ mark: R.kindMark({ kind: 'workflow', tone: x.running ? 'run' : x.draft ? 'act' : 'idle' }), kicker: x.draft ? `${shape(x)} · a draft waits, ${x.draft.changes} ${x.draft.changes === 1 ? 'change' : 'changes'}` : shape(x), title: x.title, what: x.what, facts: factsOf(x), action: R.button({ label: 'Use it', attrs: { 'data-wf-use': x.id, title: 'Starts a task in a chat with this workflow in its sentence' } }), more: R.button({ label: 'Change it in a chat', kind: 'quiet', attrs: { 'data-wf-chat': `${kind}:${x.id}` } }), attrs: open });
     const kicker = kind === 'agent' ? `${{ producer: 'Makes something', verifier: 'Checks', clarifier: 'Asks you' }[x.type]} · ${x.model}` : `A script · ${x.runtime}`;
     const what = kind === 'agent' ? `Takes ${x.ins}; gives ${x.outs}.` : `${x.what}.`;
     return R.pluginCard({ mark: markOf(kind), kicker, title: x.title, what, facts: usedIn(x.id).length ? `In ${usedIn(x.id).join(', ')}` : 'In no workflow yet', action: R.button({ label: 'Open', attrs: open }), more: R.button({ label: 'Change it in a chat', kind: 'quiet', attrs: { 'data-wf-chat': `${kind}:${x.id}` } }), attrs: open });
@@ -92,8 +93,8 @@
     const kind = kindOfWay[way] || 'workflow';
     const SORT = { 'most used': (a, b) => (b.tasks || 0) - (a.tasks || 0), cheapest: (a, b) => costOf(a) - costOf(b), 'A–Z': (a, b) => a.title.localeCompare(b.title) };
     let list = data[kind].slice();
-    if (way === 'drafts') { const d = allDrafts(); return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ title: 'Drafts', facts: esc(`${d.length} ${d.length === 1 ? 'draft' : 'drafts'} · changed by hand, not saved · tasks run the saved ones`) })}<div class="pg-grid">${d.map(([k, x]) => cardOf(k, x)).join('')}</div></div></div></div>`; }
-    if (way === 'for-you') list = data.workflow.filter((w) => !w.own && w.tasks < 5);
+    if (way === 'drafts') { const d = allDrafts(); return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ title: 'Drafts', facts: esc(`${d.length} ${d.length === 1 ? 'draft' : 'drafts'} · changed by hand, not saved · tasks run the saved ones`) })}${d.length ? `<div class="pg-grid">${d.map(([k, x]) => cardOf(k, x)).join('')}</div>` : R.emptyState({ title: 'No drafts.', text: 'A change you make by hand waits here until you save it.', actions: R.button({ label: 'Go to All workflows', kind: 'quiet', attrs: { 'data-wf-goto': 'workflows' } }) })}</div></div></div>`; }
+    if (way === 'for-you') list = forYou();
     if (way === 'team') list = teamOf();
     if (kind === 'workflow') list.sort(SORT[sort] || SORT['most used']);
     const T = { workflows: ['Your workflows', `${data.workflow.length} workflows · each made in a chat`], agents: ['Your agents', `${data.agent.length} agents · the steps workflows are made of`], scripts: ['Your scripts', `${data.script.length} scripts · checks a workflow runs`], 'for-you': ['For you', 'Workflows Worca thinks fit how you work'], team: ['Your team’s', `${teamOf().length} shared by your team · use one and it is yours too`] }[way] || ['Your workflows', ''];
@@ -108,8 +109,8 @@
     const ro = !x.own;   // a built-in reads; its copy is yours to change
     const menuItems = [...(kind === 'workflow' ? [{ id: 'pin', text: x.pinned ? 'Unpin from Chat' : 'Pin to Chat', help: 'Its starter on Chat\'s home' }, { id: 'export', text: 'Export…', help: 'As a file, a Claude Code skill or a Worca plugin' }] : []), ...(ro ? [{ id: 'copy', text: 'Use as a template', help: 'A copy of yours, to change' }] : []), ...(x.own ? [{ sep: true }, { id: 'delete', text: 'Delete…', danger: true, help: 'Asks first' }] : [])];
     const more = R.moreMenu({ id: 'wf-more', label: `More for ${x.title}`, icon: R.icon('more', 16), open: menu === 'wf-more', items: menuItems });
-    const strip = confirm?.x === x0 ? R.confirmStrip({ text: `Delete ${x.title}? ${kind === 'workflow' ? 'Tasks it ran keep their history; schedules that use it stop.' : `Workflows that use it: ${usedIn(x.id).join(', ') || 'none'}.`}`, yes: 'Delete', danger: true }) : '';
-    const exp = exporting ? `<div class="card-form">${R.confirmForm({ form: 'export', id: 'wf-export-t', text: `Export ${x.title}`, body: `<span class="tp-sentence">As ${pick('wf-as', x.as || 'a JSON file', ['a JSON file', 'a Claude Code skill', 'a Worca plugin'], 'What it becomes')}, with the agents it uses</span>` + R.confirmActions({ yes: 'Export' }) })}</div>` : '';
+    const strip = confirm?.x === x0 ? R.confirmStrip({ text: `Delete ${x.title}? ${kind === 'workflow' ? `${x.running ? 'Its first task is still running and will finish. ' : ''}Tasks it ran keep their history; schedules that use it stop.` : `Workflows that use it: ${usedIn(x.id).join(', ') || 'none'}.`}`, yes: 'Delete', danger: true }) : '';
+    const exp = exporting ? `<div class="card-form">${R.confirmForm({ form: 'export', id: 'wf-export-t', text: `Export ${x.title}`, body: `<span class="tp-sentence">As ${pick('wf-as', x.as || 'a JSON file', ['a JSON file', 'a Claude Code skill', 'a Worca plugin'], 'What it becomes')} with the agents it uses</span>` + R.confirmActions({ yes: 'Export' }) })}</div>` : '';
     const chat = R.button({ label: 'Change it in a chat', attrs: { 'data-wf-chat': `${kind}:${x.id}`, title: 'Worca proposes the change as a card; you apply it' } });
     if (kind === 'workflow') {
       const delta = costOf(x) - costOf(data.workflow[0]);
@@ -127,12 +128,12 @@
     const head = R.placeHead({ title: x.title, facts: esc(`${x.domain} · ${kind === 'agent' ? x.type : x.runtime}`), mark: markOf(kind), word: x.own ? 'Yours' : 'Built-in', why: usedIn(x.id).length ? `In ${usedIn(x.id).join(', ')}` : 'In no workflow yet', action: chat, menu: more }) + draft;
     let body;
     if (kind === 'agent') {
-      body = R.settingsSection({ title: 'What it does', rows: [R.settingsRow({ name: 'Does', sentence: esc(SAYS[x.id] || '') }), R.settingsRow({ name: 'Takes', sentence: esc(x.ins) }), R.settingsRow({ name: 'Gives', sentence: esc(x.outs) })].join('') })
+      body = R.settingsSection({ title: 'Its work', rows: [R.settingsRow({ name: 'Does', sentence: esc(SAYS[x.id] || '') }), R.settingsRow({ name: 'Takes', sentence: esc(x.ins) }), R.settingsRow({ name: 'Gives', sentence: esc(x.outs) })].join('') })
         + R.settingsSection({ title: 'How it runs', rows: [R.settingsRow({ name: 'Model', sentence: `Runs on ${ro || !atLeast('advanced') ? `<b>${esc(x.model)}</b> ${esc(x.effort)}` : `${pick('ag-model', x.model, MODELS, 'Its model')} ${pick('ag-effort', x.effort, EFFORTS, 'How hard it thinks')}`}` }),
           R.settingsRow({ name: 'Questions', sentence: x.asks ? 'Asks you when something is unclear' : 'Never asks; it decides', end: ro ? '' : R.switchButton({ on: x.asks, label: 'Asks questions', attrs: { 'data-wf-sw': 'asks' } }) }),
           R.settingsRow({ name: 'Research', sentence: x.fan ? 'Sends helpers to read the code first' : 'Reads the code itself', end: ro ? '' : R.switchButton({ on: x.fan, label: 'Research fan-out', attrs: { 'data-wf-sw': 'fan' } }) })].join('') });
     } else {
-      body = R.settingsSection({ title: 'What it does', rows: [R.settingsRow({ name: 'Does', sentence: esc(x.what) }), R.settingsRow({ name: 'Written in', sentence: `${esc(x.runtime)}, stopped after ${esc(x.timeout)}` }), R.settingsRow({ name: esc(x.param[0]), sentence: `<b>${esc(x.param[1])}</b> unless a workflow says otherwise` })].join('') })
+      body = R.settingsSection({ title: 'Its work', rows: [R.settingsRow({ name: 'Does', sentence: esc(x.what) }), R.settingsRow({ name: 'Written in', sentence: `${esc(x.runtime)}, stopped after ${esc(x.timeout)}` }), R.settingsRow({ name: esc(x.param[0]), sentence: `<b>${esc(x.param[1])}</b> unless a workflow says otherwise` })].join('') })
         + R.settingsSection({ title: 'Its tests', rows: R.settingsRow({ name: 'Cases', sentence: `${x.cases} saved ${x.cases === 1 ? 'case' : 'cases'}`, end: R.button({ label: 'Run all', kind: 'quiet', attrs: { 'data-wf-run': x.id } }) }) });
     }
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${strip}${exp}${body}</div></div><div class="convo-dock" id="wf-dock"></div></div>`;
@@ -144,7 +145,7 @@
     const w = ed.wf, i = ed.picked.startsWith('n') && ed.picked !== 'n_task' && ed.picked !== 'n_end' ? +ed.picked.slice(1) : -1, st = w.steps[i];
     const pick = (id, text, items, tip) => R.sentencePicker({ id, text, tip, items: items.map((v) => ({ id: v, text: v, checked: v === text })), open: menu === id, chevron: R.icon('chevron', 10), right: true });
     const loop = st && w.loops.find((l) => l[0] === st[0]);
-    const insp = st ? `<h2 class="wf-ed-h">${esc(st[0])}</h2><p class="wf-ed-m">Step ${i + 1} of ${w.steps.length} · ${st[2] ? 'an agent' : 'a script'}</p>${R.settingsSection({ rows: [R.settingsRow({ name: 'Name', sentence: R.field({ id: 'ed-step-name', label: 'Step name', quietLabel: true, value: st[0], attrs: { 'data-ed-step': String(i) } }) }), R.settingsRow({ name: 'Does', sentence: esc(SAYS[st[1]] || titleOf(st[1])) }),
+    const insp = st ? `<h2 class="wf-ed-h">${esc(st[0])}</h2><p class="wf-ed-m">Step ${i + 1} of ${w.steps.length} · ${st[2] ? 'an agent' : 'a script'}</p>${R.settingsSection({ rows: [R.settingsRow({ name: 'Name', sentence: R.field({ id: 'ed-step-name', label: 'Step name', quietLabel: true, value: st[0], hint: '40 characters at most', attrs: { 'data-ed-step': String(i), maxlength: 40 } }) }), R.settingsRow({ name: 'Does', sentence: esc(SAYS[st[1]] || titleOf(st[1])) }),
       ...(st[2] ? [R.settingsRow({ name: 'Runs on', sentence: `${pick(`ed-m-${i}`, st[2], MODELS, 'Its model')} ${pick(`ed-e-${i}`, st[3], EFFORTS, 'How hard it thinks')}` })] : []),
       ...(loop ? [R.settingsRow({ name: 'Loop', sentence: `Sends fixes back to <b>${esc(loop[1])}</b> up to ${pick(`ed-l-${i}`, String(loop[2]), ['1', '2', '3', '5'], 'How many rounds')} times, then asks you` })] : []),
       R.settingsRow({ name: 'Stops after', sentence: pick(`ed-t-${i}`, st[6] || '30 min', ['10 min', '30 min', '1 hour'], 'When it gives up') }),
@@ -160,9 +161,8 @@
     const host = document.getElementById('wf-canvas-g'); if (!host) return;
     const { g, fit } = window.RailGraph.mount(host, ed.wf, { width: host.parentElement.clientWidth - 48, zoom: ed.z || 0, mode: 'edit', aligned: false, select: ed.picked, g: ed.g, says: (r) => SAYS[r] || '' });
     ed.g = g;
-    // the zoom is the graph's real size; it opens readable (at most 80%, scrolling), or fitted when that is bigger. 0 is Fit.
-    const first = ed.z === null; if (first) ed.z = fit < 0.8 ? 0.8 : 0;
-    if (first || Math.abs(fit - ed.fit) > 0.02) { ed.fit = fit; page.innerHTML = edHtml(); edMount(); }
+    // the zoom is the graph's real size; it opens fitted (0 is Fit), and a zoom past that scrolls inside the canvas
+    if (Math.abs(fit - ed.fit) > 0.02) { ed.fit = fit; page.innerHTML = edHtml(); edMount(); }
   }
   const edDraft = () => { const x = data.workflow.find((w) => w.id === ed.id); if (!x) return; if (!ed.past.length && !x.fresh) { delete x.draft; return; } x.draft = { title: ed.wf.title, steps: structuredClone(ed.wf.steps), loops: structuredClone(ed.wf.loops), changes: Math.max(ed.past.length, 1) }; };   // the canvas writes the thing's draft
   const edChange = (fn, words) => { ed.past.push(snap()); ed.next = []; fn(); edDraft(); draw(); if (words) say(words); };
@@ -173,10 +173,11 @@
     ctl?.paint();
     if (current.startsWith('edit:')) {
       const { x } = find(current); if (!x || !atLeast('expert') || !x.own) { window.RailShell.go(x ? `workflows/workflow:${x.id}` : 'workflows'); return; }   // a built-in reads as it is
-      if (!ed || ed.id !== x.id) ed = { id: x.id, wf: structuredClone(shown(x)), g: null, picked: `n${x.loops.length ? x.steps.findIndex((s) => s[0] === x.loops[0][0]) : 0}`, saved: true, past: [], next: [], z: null, fit: 0 };
+      if (!ed || ed.id !== x.id) ed = { id: x.id, wf: structuredClone(shown(x)), g: null, picked: `n${x.loops.length ? x.steps.findIndex((s) => s[0] === x.loops[0][0]) : 0}`, saved: true, past: [], next: [], z: 0, fit: 0 };
       page.innerHTML = edHtml(); edMount(); return;
     }
     const { kind, x } = current && !current.startsWith('~') ? find(current) : {};
+    if (!x && /^(agent|script):/.test(current)) { const way = `${kind}s`; page.innerHTML = `<div class="rail-locked">${R.notFound({ what: kind, name: current.split(':')[1], back: way.charAt(0).toUpperCase() + way.slice(1), attrs: { 'data-wf-goto': `workflows/~${way}` } })}</div>`; return; }   // nav.not-found, with this thing's own noun
     if (!x) { page.innerHTML = wayHtml(current.startsWith('~') ? current.slice(1) : 'workflows'); return; }
     page.innerHTML = pageHtml(kind, x);
     const gEl = document.getElementById('wf-graph'); if (gEl) window.RailGraph?.mount(gEl, shown(x), { width: gEl.clientWidth || 900 });   // thing.one-telling: the story says what a step does
@@ -202,7 +203,7 @@
     ctl = R.listController({ root: bar, spec: { noun: 'workflows', label: 'Selected', view: () => ({ state: 'ready', parts: [],
       sections: current.startsWith('edit:') ? [{ id: 'lib-a', title: 'Agents · add to the canvas', rows: data.agent.map((x) => lib('agent', x)) }, { id: 'lib-s', title: 'Scripts', rows: data.script.map((x) => lib('script', x)) }, { id: 'lib-f', title: 'Flow · in a chat', rows: flow }]
         : [{ id: 'yours', title: 'Yours', noCount: true, rows: [way('workflows', 'All workflows', markOf('workflow'), data.workflow.length), way('agents', 'Agents', markOf('agent'), data.agent.length), way('scripts', 'Scripts', markOf('script'), data.script.length), ...(allDrafts().length ? [way('drafts', 'Drafts', R.kindMark({ kind: 'plugin', icon: 'edit', tone: 'act' }), allDrafts().length)] : [])] },
-          { id: 'browse', title: 'Browse', noCount: true, rows: [way('for-you', 'For you', R.kindMark({ kind: 'plugin', icon: 'sparkle' }), data.workflow.filter((w) => !w.own && w.tasks < 5).length), way('team', 'Your team’s', R.kindMark({ kind: 'group' }), teamOf().length), way('market', 'Marketplace workflows', R.kindMark({ kind: 'plugin', icon: 'nav-marketplace' }), marketCount())] },
+          { id: 'browse', title: 'Browse', noCount: true, rows: [way('for-you', 'For you', R.kindMark({ kind: 'plugin', icon: 'sparkle' }), forYou().length), way('team', 'Your team’s', R.kindMark({ kind: 'group' }), teamOf().length), ...(window.RailShell?.locked('marketplace') ? [] : [way('market', 'Marketplace workflows', R.kindMark({ kind: 'plugin', icon: 'nav-marketplace' }), marketCount())])] },
           ] }),
       can: () => [], bulk: () => [], act: () => {}, word: () => false, say, active: () => /^#workflows/.test(location.hash),
       open: (r) => {
@@ -216,6 +217,7 @@
     page.addEventListener('click', (e) => {
       if (!here()) return;   /* another place's page is showing */
       const on = (q) => e.target.closest(q); let hit;
+      if ((hit = on('[data-wf-goto]'))) { window.RailShell.go(hit.dataset.wfGoto); return; }
       if (on('[data-wf-wide]')) { wide = !wide; draw(); return; }
       if ((hit = on('[data-wf-use]'))) { const x = data.workflow.find((w) => w.id === hit.dataset.wfUse); if (x) act('use', 'workflow', x); return; }
       if ((hit = on('[data-wf-chat]'))) { const { kind: k, x } = find(hit.dataset.wfChat); if (x) window.RailConversation?.handOver({ about: { kind: k.charAt(0).toUpperCase() + k.slice(1), name: x.title }, ph: `What should change in ${x.title}?` }); return; }
@@ -263,7 +265,7 @@
       if ((hit = on('[data-wf-sw]'))) { const k = hit.dataset.wfSw; touch(kind, x, (d) => { d[k] = !d[k]; }); draw(); say(`${x.title}: kept as a draft`); return; }
       if (on('[data-draft-save]')) { saveDraft(x); draw(); say(`Saved ${x.title}: tasks run it from now`); return; }
       if (on('[data-draft-discard]')) { const before = x.draft; if (x.fresh) { const l = data[kind], i = l.indexOf(x); l.splice(i, 1); say(`Discarded ${x.title}`, () => { l.splice(i, 0, x); draw(); }); window.RailShell.go('workflows'); return; } delete x.draft; draw(); say(`Discarded the draft of ${x.title}`, () => { x.draft = before; draw(); }); return; }
-      if ((hit = on('[data-wf-run]'))) { say(`${x.title}: ${x.cases} of ${x.cases} cases pass`); return; }
+      if ((hit = on('[data-wf-run]'))) { say(`Would run ${x.title}'s ${x.cases} saved ${x.cases === 1 ? 'case' : 'cases'}`); return; }
       if ((hit = on('[data-confirm]'))) {
         if (exporting) { exporting = false; draw(); if (hit.dataset.confirm === 'yes') say(`Would export ${x.title} as ${x.as || 'a JSON file'}`); return; }
         if (hit.dataset.confirm === 'yes') { const l = data[kind], i = l.indexOf(x); l.splice(i, 1); confirm = null; say(`Deleted ${x.title}`, () => { l.splice(i, 0, x); draw(); }); window.RailShell.go('workflows'); } else { confirm = null; draw(); }
@@ -285,7 +287,7 @@
     R.prefs?.onChange?.(() => { if (here()) draw(); });   // the mode decides the graph, the pickers and the canvas
   }
   window.RailPlaces = window.RailPlaces || {};
-  window.RailPlaces.workflows = { has: (a) => (a.startsWith('~') ? WAYS.includes(a.slice(1)) : !!find(a).x),
+  window.RailPlaces.workflows = { has: (a) => (a.startsWith('~') ? WAYS.includes(a.slice(1)) : !!find(a).x || /^(agent|script):/.test(a)),   // an unknown agent or script says so on the page, in its own noun
     // what an installed plugin brings: read as built-ins, gone when it is removed (the Marketplace calls this)
     plugin: (id, name, gives, on) => { for (const kind of ['agent', 'workflow']) { data[kind] = data[kind].filter((x) => x.plugin !== id); if (on) (gives?.[kind] || []).forEach((x) => { if (x.says) SAYS[x.id] = x.says; data[kind].push({ domain: 'coding', tasks: 0, merged: 0, loops: [], from: `From the plugin ${name}`, ...structuredClone(x), own: false, plugin: id }); }); } },
     search: (q) => Object.entries(data).flatMap(([k, l]) => l.filter((x) => x.title.toLowerCase().includes(q)).map((x) => ({ label: x.title, where: `${k === 'workflow' ? 'Workflow' : k === 'agent' ? 'Agent' : 'Script'} · ${x.own ? 'yours' : 'built-in'}`, hash: `workflows/${k}:${x.id}` }))), sample: 'workflow:default', newLabel: 'Build workflow', newAct: () => window.RailConversation?.starter('workflow'), newMenu: () => (atLeast('expert') ? [{ header: 'Ask in chat' }, { id: 'bar-new|chat', text: 'Build a workflow' }, { sep: true }, { header: 'By hand' }, { id: 'bar-new|hand', text: 'Build it by hand…' }] : [{ id: 'bar-new|chat', text: 'Build a workflow' }]), newPick: (id) => { if (id === 'hand') handNew(); else window.RailConversation?.starter('workflow'); },

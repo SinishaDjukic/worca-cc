@@ -34,7 +34,10 @@
 const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const plural = (n, w) => `${n} ${w}${+n === 1 ? '' : 's'}`;
   const andList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
-  const isAmount = (s) => /^\d+(\.\d+)?$/.test(String(s).trim());
+  const isAmount = (s) => /^\d+(\.\d{1,2})?$/.test(String(s).trim());
+  const isFolder = (s) => /^~?\/[^/]/.test(s.trim());   // a real folder: / or ~/ alone is not one
+  const isUrl = (s) => /^https?:\/\/\S+$/.test(String(s).trim());
+  const limitsWrong = (run, all) => { const r = String(run).trim(), a = String(all).trim(), ok = (s) => !s || (isAmount(s) && +s > 0); return !ok(r) || !ok(a) ? 'A limit is an amount in dollars above 0, or empty' : r && a && +r > +a ? 'One run cannot be allowed more than the total' : ''; };
   const atLevel = (min) => window.RailUI.shows(min, window.RailUI.prefs.mode());
   const pickText = (options, v) => (options.find((o) => o[0] === v) || [v, v])[1];
   const ARCHIVE = O(['never', 'stay until you archive them'], ['7', 'are archived after 7 days'], ['30', 'are archived after 30 days'], ['90', 'are archived after 90 days'], ['365', 'are archived after a year']);
@@ -74,6 +77,11 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const SET_MEMBERS = { General: { servers: ['github', 'postgres'], skills: ['pdf-tools'] }, Frontend: { servers: ['github', 'postgres'], skills: ['pdf-tools'] } };
   const setCount = (sv, name) => { const of = (where, names) => { const live = (sv.__recs[where] || recsSeed(...where.split('/'))).map((r) => r.title); return names.filter((n) => live.includes(n)).length; };
     return `${plural(of('connectors/Servers', SET_MEMBERS[name].servers), 'server')} · ${plural(of('connectors/Skills', SET_MEMBERS[name].skills), 'skill')}`; };
+  // what a set's members and projects say follows the sets that are there: a deleted set leaves no trace, a copy counts
+  const setsNow = (sv) => sv.__recs['connectors/Sets'] || recsSeed('connectors', 'Sets');
+  const frontendSet = (sv) => setsNow(sv).find((s) => s.members === 'Frontend' && s.projects);
+  const inSets = (sv, kind, name) => { const n = setsNow(sv).filter((s) => s.members && SET_MEMBERS[s.members][kind].includes(name)).length; return n ? `in ${plural(n, 'set')}` : 'in no set'; };
+  const liveSets = (kind, name, front) => (sv, r) => (r.meta === `${front} · in 2 sets` ? `${front} · ${inSets(sv, kind, name)}` : r.meta);   // until you edit its details
 
 
   // ---- Labs: the registry's flags (src/shared/flags/registry.mjs), but its Flags demo ----
@@ -133,7 +141,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         { key: 'saRoles', label: 'Model roles', value: 'rec', options: O(['rec', 'Recommended: Opus plans, Sonnet codes, Haiku helps'], ['cheap', 'Cheaper: Sonnet plans, Haiku helps too'], ['keep', 'Keep what is set']) },
       ] },
       { label: 'Limits', note: 'What runs may spend. Empty means no limit.',
-        check: (v) => (/^\d*$/.test(v.saRun) && /^\d*$/.test(v.saTotal) ? '' : 'A limit is a whole number of dollars'),
+        check: (v) => limitsWrong(v.saRun, v.saTotal),
         fields: [{ key: 'saRun', label: 'Per run (USD)', value: '', placeholder: 'No limit' }, { key: 'saTotal', label: 'Total a month (USD)', value: '1000', placeholder: 'No limit' }] },
       { label: 'Review', note: 'Nothing changes until you press Apply.', facts: (v) => [
         { title: 'Network', meta: v.saNet === 'proxy' ? `Through ${v.saHost}:${v.saPort}` : 'Direct' },
@@ -187,11 +195,11 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     const key = kind + i, start = j.factory ? `model:${j.factory}` : 'follows';
     return { name: j.title, help: j.detail, say: '{' + key + '}',
       picks: { [key]: P(start, jobOptions(j, kind), j.detail) },
-      acts: [{ label: 'Test', help: 'Sends one tiny prompt to this model', when: (sv) => sv[key] !== 'follows', do: (sv) => (j.factory && sv[key] === start && !sv.claudeIn ? `${j.title}: sign in to Claude Code or pick a model` : `${j.title}: ${String(sv[key]).replace('model:', '')} answered in 1.2s`) }] };
+      acts: [{ label: 'Test', help: 'Sends one tiny prompt to this model', when: (sv) => sv[key] !== 'follows', do: (sv) => (j.factory && sv[key] === start && !sv.claudeIn ? `${j.title}: sign in to Claude Code or pick a model` : `Would send ${String(sv[key]).replace('model:', '')} one tiny prompt`) }] };
   });
   const jobsSet = (list, kind, sv) => list.filter((_, i) => sv[kind + i] !== 'follows').length;
   // Another engine: a job's own model that it does not offer goes back to its role, and the toast says how many.
-  const engineChanged = (sv) => { let n = 0; for (const [list, kind] of [[STEPS, 'jobStep'], [HELPERS, 'jobHelp']]) list.forEach((j, i) => { const k = kind + i; if (!jobOptions(j, kind)(sv).some((o) => o[0] === sv[k])) { sv[k] = 'follows'; n += 1; } }); return n ? `${plural(n, 'job')} back to its role` : ''; };
+  const engineChanged = (sv) => { let n = 0; for (const [list, kind] of [[STEPS, 'jobStep'], [HELPERS, 'jobHelp']]) list.forEach((j, i) => { const k = kind + i; if (!jobOptions(j, kind)(sv).some((o) => o[0] === sv[k])) { sv[k] = 'follows'; n += 1; } }); return n ? (n === 1 ? '1 job back to its role' : `${n} jobs back to their roles`) : ''; };
   const HELPERS = [
     slot('Titles', 'Quick jobs', { detail: 'Writes the short title every task and chat gets.' }),
     slot('Auto workflow classifier', 'Everyday coding', { detail: 'Reads an Auto run\'s task and picks the workflow it runs.' }),
@@ -230,7 +238,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
 
   const plugin = (title, meta, key, on, o = {}) => ({ title, meta, sw: { key, on }, mark: o.mark, menu: o.menu ? (r) => (store()?.hasUpdate?.(title) === false ? ['Settings', 'Uninstall'] : o.menu) : ['Settings', 'Uninstall'], when: (sv) => installed(sv, title), live: () => (store()?.hasUpdate?.(title) === false ? meta.replace(' · 1 update', '') : meta),
     on: {
-      Settings: (r, x) => x.dialog({ title: `${title} settings`, fields: o.fields || [{ key: 'url', label: 'Address', value: o.url || '' }], done: `${title} saved` }),
+      Settings: (r, x) => x.dialog({ title: `${title} settings`, fields: o.fields || [{ key: 'url', label: 'Address', value: o.url || '' }], check: o.fields ? undefined : (v) => (isUrl(v.url) ? '' : 'An address reads like https://example.com'), done: `${title} saved` }),
       Update: (r) => { store()?.update?.(title); r.meta = meta.replace(' · 1 update', ''); r.mark = ''; r.menu = ['Settings', 'Uninstall']; return `${title} updated`; },
       Uninstall: uninstall(title),
     }, open: (r, x) => r.on.Settings(r, x) });
@@ -247,7 +255,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
 
   // A tracker plugin keeps its own projects and rules; they fold under it, with Labs › Ticket updates on.
   const tracker = (title, id, meta, key, on, o, rules) => ({ ...plugin(title, meta, key, on, o), foldFlag: 'ticketUpdates', foldHelp: 'Ticket updates', moreList: rules.map((r) => ({ ...r, tracker: id })), empty: 'No project rules', more: [
-    { name: 'Ticket updates', help: 'A project\'s own rule wins over All projects', say: 'What a finished run does to its ticket', acts: [{ label: 'Add rule', edit: (sv) => ({ title: 'Add a project rule', yes: 'Add', fields: [{ key: 'proj', label: 'Project', value: '', hint: id === 'github' ? 'A repository: owner/repo' : 'A project you work on' }, { key: 'to', label: 'Move its ticket', value: 'done', options: [['none', 'Don\'t move'], ['done', 'Any Done status'], ...MOVES[id].map((m) => [m, m])] }], check: (v) => (v.proj.trim() ? '' : 'A rule needs a project'), then: (v) => { const k = `plugins/Installed/Trackers/${title}`; (sv.__recs[k] ||= rules.map((r, i) => ({ ...r, tracker: id, id: 'r' + i }))).push({ ...rule(v.proj, v.to), tracker: id, id: 'n' + Date.now() }); return `Rule added for ${v.proj}`; } }) }] },
+    { name: 'Ticket updates', help: 'A project\'s own rule wins over All projects', say: 'What a finished run does to its ticket', acts: [{ label: 'Add rule', edit: (sv) => ({ title: 'Add a project rule', yes: 'Add', fields: [{ key: 'proj', label: 'Project', value: '', hint: id === 'github' ? 'A repository: owner/repo' : 'A project you work on' }, { key: 'to', label: 'Move its ticket', value: 'done', options: [['none', 'Don\'t move'], ['done', 'Any Done status'], ...MOVES[id].map((m) => [m, m])] }], check: (v) => (!v.proj.trim() ? 'A rule needs a project' : id === 'github' && !/^[\w.-]+\/[\w.-]+$/.test(v.proj.trim()) ? 'A repository reads owner/repo' : ''), then: (v) => { const k = `plugins/Installed/Trackers/${title}`; (sv.__recs[k] ||= rules.map((r, i) => ({ ...r, tracker: id, id: 'r' + i }))).push({ ...rule(v.proj, v.to), tracker: id, id: 'n' + Date.now() }); return `Rule added for ${v.proj}`; } }) }] },
     { name: 'Projects', help: 'None picked means all projects', say: 'New run and Requirements list only **{tuProjects_' + id + '}**', vals: { ['tuProjects_' + id]: id === 'github' ? 'acme/worca' : id === 'azure' ? 'Billing' : 'WEB, API, INFRA' }, acts: [edit('Change your projects', [{ key: 'tuProjects_' + id, label: 'Projects you work on', hint: 'Comma-separated; none means all. Removing one keeps its rule' }], { done: 'Projects saved' })] },
     { name: 'All projects', say: 'When a task finishes successfully, {tuAll_' + id + '}', picks: { ['tuAll_' + id]: P('done', O(['none', 'don\'t move its ticket'], ['done', 'move it to any Done status', 'One the ticket can reach, never Won\'t Do, Rejected or Duplicate']), 'Unless a project below says otherwise') } },
   ] });
@@ -293,7 +301,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       ] },
       { title: 'Storage', min: 'advanced', rows: [
         { name: 'Folders', say: 'Data lives in `{root}`; new projects go in `{projects}`', vals: { root: '~/.worca-cc', projects: '~/src' },
-          acts: [edit('Change the folders', [{ key: 'root', label: 'Worca folder', hint: 'Does not move data: Worca starts fresh here, and the old folder stays as it was' }, { key: 'projects', label: 'Projects folder', hint: 'Its CLAUDE.md, skills and .mcp.json reach every agent' }, { key: 'useDefaults', button: 'Use the defaults', hint: 'Fills in ~/.worca-cc and ~/src; Save applies them', when: (v) => v.root !== '~/.worca-cc' || v.projects !== '~/src', do: (v) => { v.root = '~/.worca-cc'; v.projects = '~/src'; return 'Save to start fresh in ~/.worca-cc'; } }], { done: 'Folders saved; new tasks use them', check: (v) => (/^[~/]/.test(v.root.trim()) && /^[~/]/.test(v.projects.trim()) ? '' : 'A folder is a path starting with ~ or /') })] },
+          acts: [edit('Change the folders', [{ key: 'root', label: 'Worca folder', hint: 'Does not move data: Worca starts fresh here, and the old folder stays as it was' }, { key: 'projects', label: 'Projects folder', hint: 'Its CLAUDE.md, skills and .mcp.json reach every agent' }, { key: 'useDefaults', button: 'Use the defaults', hint: 'Fills in ~/.worca-cc and ~/src; Save applies them', when: (v) => v.root !== '~/.worca-cc' || v.projects !== '~/src', do: (v) => { v.root = '~/.worca-cc'; v.projects = '~/src'; return 'Save to start fresh in ~/.worca-cc'; } }], { done: 'Folders saved; new tasks use them', check: (v) => (isFolder(v.root) && isFolder(v.projects) ? '' : 'A folder is a path such as ~/src or /opt/work') })] },
         { name: 'Diagnostics', min: 'expert', say: 'Log each agent start in the run log: its binary, arguments and routing, never a credential. A set `WORCA_DEBUG_SPAWN` overrides this', sw: { key: 'spawnLog', on: false, why: 'Applies to runs started here and from the CLI, with no restart' } },
       ] },
       { title: 'Credentials', rows: [
@@ -338,8 +346,8 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       { title: 'Defaults', meta: 'A project, New run and the run page can change these.', rows: [
         { name: 'Pull requests', help: 'Create a PR when a task finishes. If it cannot, a notification says why', chip: pendingChip('prOpen', 'prSlices'), say: (sv) => (sv.prOpen === 'none' ? 'When a task finishes, {prOpen}' : 'When a task finishes, {prOpen}; a feature gets {prSlices}'),
           picks: { prOpen: P('none', O(['none', 'don\'t create a PR'], ['draft', 'create a draft PR'], ['ready', 'create a PR ready for review']), 'Team default for every project'), prSlices: P('each', O(['each', 'a PR per slice, stacked'], ['one', 'one PR for the whole feature']), 'How a feature\'s slices become pull requests', true) } },
-        { name: 'Spending', chip: pendingChip('capRun', 'capAll'), say: (sv) => `Each task pauses at **${usd(sv.capRun)}**, all tasks at **${usd(sv.capAll)} a month**; you can continue past, and that is recorded`, acts: [polEdit('Change the spending caps', [{ key: 'capRun', label: 'Per run (USD)' }, { key: 'capAll', label: 'Total a month (USD)' }], (v) => (isAmount(v.capRun) && isAmount(v.capAll) ? '' : 'A cap is an amount in dollars'))] },
-        { name: 'Workspace runs', chip: pendingChip('wsCap'), say: (sv) => `A run across a workspace pauses at **${usd(sv.wsCap)}** instead`, acts: [polEdit('Change for workspace runs', [{ key: 'wsCap', label: 'Per run (USD)' }], (v) => (isAmount(v.wsCap) ? '' : 'A cap is an amount in dollars'))] },
+        { name: 'Spending', chip: pendingChip('capRun', 'capAll'), say: (sv) => `Each task pauses at **${usd(sv.capRun)}**, all tasks at **${usd(sv.capAll)} a month**; you can continue past, and that is recorded`, acts: [polEdit('Change the spending caps', [{ key: 'capRun', label: 'Per run (USD)' }, { key: 'capAll', label: 'Total a month (USD)' }], (v) => (isAmount(v.capRun) && isAmount(v.capAll) && +v.capRun > 0 && +v.capAll > 0 ? (+v.capRun > +v.capAll ? 'One run cannot be allowed more than the total' : '') : 'A cap is an amount in dollars above 0'))] },
+        { name: 'Workspace runs', chip: pendingChip('wsCap'), say: (sv) => `A run across a workspace pauses at **${usd(sv.wsCap)}** instead`, acts: [polEdit('Change for workspace runs', [{ key: 'wsCap', label: 'Per run (USD)' }], (v) => (isAmount(v.wsCap) && +v.wsCap > 0 ? '' : 'A cap is an amount in dollars above 0'))] },
       ] },
       { title: 'Rules', actions: [
         { label: (sv) => { const m = REQUIRED.filter((t) => !installed(sv, t)); return m.length === 1 ? `Install ${m[0]}…` : 'Install all…'; }, id: 'install', help: 'The required plugins', read: true, off: (sv) => (REQUIRED.every((t) => installed(sv, t)) ? 'Everything required is installed' : ''),
@@ -379,17 +387,17 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       ], groups: ['Beta', 'Experimental'].map((stage) => ({ title: stage, rows: FLAGS.filter((f) => f.stage === stage).map((f) => ({ name: f.name, say: f.say, sw: { flag: f.key, on: f.on, why: f.why, locked: f.locked } })) })) },
     ] },
 
-    runs: { title: 'Runs', meta: 'How tasks spend, start and wait.', sections: [
+    runs: { title: 'Tasks', meta: 'How tasks spend, start and wait.', sections: [
       { title: 'Spending', meta: spentWords, rows: [
         { name: 'Budget', say: (sv) => `All tasks pause at ${totalCap(sv)}; one run at ${runCap(sv)}`,
-          acts: [{ label: 'Change…', edit: { title: 'Change the budget', yes: 'Save', note: 'Empty means only your team\'s cap applies. The tighter of the two wins.', check: (v) => { const run = String(v.perRun).trim(), all = String(v.total).trim(), ok = (s) => !s || (isAmount(s) && +s > 0); return !ok(run) || !ok(all) ? 'A limit is an amount in dollars above 0, or empty' : run && all && +run > +all ? 'One run cannot be allowed more than the total' : ''; }, fields: [
+          acts: [{ label: 'Change…', edit: { title: 'Change the budget', yes: 'Save', note: 'Empty means only your team\'s cap applies. The tighter of the two wins.', check: (v) => limitsWrong(v.perRun, v.total), fields: [
             { key: 'perRun', label: 'Per run (USD)', placeholder: 'No limit' }, { key: 'total', label: 'Total (USD)', placeholder: 'No limit' }, { key: 'period', label: 'The total starts again', options: O(['day', 'Each day, at midnight'], ['week', 'Each week, from Monday'], ['month', 'Each month, from the 1st']) },
           ], done: 'Budget saved' } }],
           more: [
             { name: 'Team caps', say: 'Your team sets its own caps; you can continue past one when a task pauses, and that is recorded', min: 'advanced', acts: [{ label: 'Open', id: 'team', go: 'team', help: 'Settings › Team policy' }] },
             { name: 'Usage', min: 'advanced', say: 'What was spent, per harness', acts: [{ label: 'Open', id: 'usage', click: ['[data-acct]', '[data-sub="usage"]'], help: 'The profile menu\'s Usage and costs' }] },
           ] },
-        { name: 'Hourly rate', say: 'Time saved is counted at **${rate}** an hour', vals: { rate: '35' }, acts: [edit('Change the hourly rate', [{ key: 'rate', label: 'USD an hour', hint: 'What an hour of a developer costs, for Statistics' }], { done: 'Hourly rate saved', check: (v) => (isAmount(v.rate) && +v.rate > 0 && +v.rate <= 1000 ? '' : 'A rate is an amount in dollars, above 0 and up to 1,000') })] },
+        { name: 'Hourly rate', say: (sv) => `Time saved is counted at **${usd(sv.rate)}** an hour`, vals: { rate: '35' }, acts: [edit('Change the hourly rate', [{ key: 'rate', label: 'USD an hour', hint: 'What an hour of a developer costs, for Statistics' }], { done: 'Hourly rate saved', check: (v) => (isAmount(v.rate) && +v.rate > 0 && +v.rate <= 1000 ? '' : 'A rate is an amount in dollars, above 0 and up to 1,000') })] },
         { name: 'Cost tags', say: (sv) => { const tags = sv.__recs['runs/Spending/Cost tags'] || COST_TAGS, req = tags.filter((t) => t.required).map((t) => `**${t.title}**`); if (!tags.length) return 'No cost tags: spend is counted per run only'; return `Spend is counted by ${andList(tags.map((t) => `**${t.title}**`))}; ${sv.tagsReq && req.length ? `a task needs its ${andList(req)}` : 'a task starts without any'}`; }, acts: [{ label: 'Add tag', edit: (sv) => ({ title: 'Add a cost tag', yes: 'Add', fields: costTagFields('', '', false), check: (v) => (v.name.trim() ? '' : 'A tag needs a name'), then: (v) => { const k = 'runs/Spending/Cost tags'; sv.__recs[k] ||= COST_TAGS.map((it, i) => ({ ...it, id: 'r' + i })); sv.__recs[k].push({ ...costTag(v.name, v.vals, v.req), id: 'n' + Date.now() }); sv.__open = 'more:' + k; return `Cost tag added: ${v.name}`; } }) }], more: [
           { name: 'Required', say: 'A run starts only with every required cost tag set', sw: { key: 'tagsReq', on: true } },
         ], moreList: COST_TAGS },
@@ -525,7 +533,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
             Remove: (r) => { r.url = ''; r.preset = ''; r.mark = ''; return 'OpenAI-compatible removed'; },
           } },
         { title: 'Anthropic-compatible', meta: 'llm.corp.example · key set · 8 requests at once', mark: 'is-green', menu: ['Edit', 'Remove'],
-          on: { Edit: (r, x) => x.dialog({ title: 'Anthropic-compatible', yes: 'Save', fields: [{ key: 'url', label: 'Base URL', value: 'https://llm.corp.example' }, { key: 'conc', label: 'Requests at once', value: '8', type: 'number' }], then: (v) => { r.meta = `${v.url.replace(/^https?:\/\//, '')} · key set · ${v.conc} requests at once`; return 'Anthropic-compatible saved'; } }) } },
+          on: { Edit: (r, x) => x.dialog({ title: 'Anthropic-compatible', yes: 'Save', fields: [{ key: 'url', label: 'Base URL', value: 'https://llm.corp.example' }, { key: 'conc', label: 'Requests at once', value: '8', type: 'number' }], check: (v) => (!isUrl(v.url) ? 'A base URL reads like https://example.com' : /^[1-9]\d*$/.test(v.conc) ? '' : 'Requests at once is a whole number above 0'), then: (v) => { r.meta = `${v.url.replace(/^https?:\/\//, '')} · key set · ${v.conc} requests at once`; return 'Anthropic-compatible saved'; } }) } },
         { title: 'Gemini CLI', meta: 'Your Gemini sign-in; the CLI is the engine', mark: 'is-green',
           detail: 'Google does not report a quota to Worca. Set the number your plan allows and Worca counts requests against it.',
           live: (sv, r) => (r.signedOut ? 'Not signed in' : sv.gemQuota ? `Your Gemini sign-in · ${sv.gemUsed} of ${sv.gemQuota} requests today, counted by Worca against your quota` : 'Your Gemini sign-in · no quota set, so nothing is counted'),
@@ -578,10 +586,10 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       ], empty: 'No chat channels installed' },
       { title: 'Speech', min: 'expert', meta: 'Used by Chat\'s voice. The built-in engines run in your browser; audio never leaves this computer.', rows: [
         { name: 'Listening', say: 'Chat listens with {stt}', picks: { stt: P('whisper', O(['whisper', 'Whisper, in the browser'], ['server', 'your speech server']), 'The speech-to-text engine') }, more: [
-          { name: 'Listening URL', when: (sv) => sv.stt === 'server', say: '`{sttUrl}`', vals: { sttUrl: 'https://speech.corp.example/v1/audio/transcriptions' }, acts: [edit('Change the listening URL', [{ key: 'sttUrl', label: 'URL', type: 'url' }], { done: 'Listening URL saved' })] },
+          { name: 'Listening URL', when: (sv) => sv.stt === 'server', say: '`{sttUrl}`', vals: { sttUrl: 'https://speech.corp.example/v1/audio/transcriptions' }, acts: [edit('Change the listening URL', [{ key: 'sttUrl', label: 'URL', type: 'url' }], { done: 'Listening URL saved', check: (v) => (isUrl(v.sttUrl) ? '' : 'A URL reads like https://example.com') })] },
         ] },
         { name: 'Speaking', say: 'Replies {tts}', picks: { tts: P('kokoro', O(['kokoro', 'are read aloud with Kokoro, in the browser'], ['server', 'are read aloud with your speech server'], ['off', 'stay text']), 'The text-to-speech engine') }, more: [
-          { name: 'Speaking URL', when: (sv) => sv.tts === 'server', say: '`{ttsUrl}`', vals: { ttsUrl: 'https://speech.corp.example/v1/audio/speech' }, acts: [edit('Change the speaking URL', [{ key: 'ttsUrl', label: 'URL', type: 'url' }], { done: 'Speaking URL saved' })] },
+          { name: 'Speaking URL', when: (sv) => sv.tts === 'server', say: '`{ttsUrl}`', vals: { ttsUrl: 'https://speech.corp.example/v1/audio/speech' }, acts: [edit('Change the speaking URL', [{ key: 'ttsUrl', label: 'URL', type: 'url' }], { done: 'Speaking URL saved', check: (v) => (isUrl(v.ttsUrl) ? '' : 'A URL reads like https://example.com') })] },
         ] },
         { name: 'Speech models', say: '{speechWords}', vals: { speechWords: (sv) =>  (sv.speechModels ? 'Downloaded: 480 MB; the next mic use fetches them again' : 'Not downloaded; the first mic use fetches them, up to 500 MB') }, acts: [{ label: 'Remove', off: (sv) => (sv.speechModels ? '' : 'Nothing is downloaded'), do: (sv) => { sv.speechModels = false; return 'Speech models removed'; } }] },
       ] },
@@ -601,7 +609,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     ] },
 
     memory: { min: 'advanced', title: 'Memory', meta: 'What agents remember between runs, as notes Worca keeps in order.', sections: [
-      { title: 'Notes', meta: (sv) => `Healthy · ${plural((sv.__recs['memory/Notes'] || NOTES).length, 'note')} · defragmented ${sv.defragged}`, actions: [{ label: 'New note', edit: (sv) => ({ title: 'New note', yes: 'Create', fields: [{ key: 'name', label: 'Name', value: '', hint: 'A file name, such as testing.md' }, { key: 'body', label: 'Note', value: '', multiline: true }], check: (v) => (v.name.trim() ? '' : 'A note needs a name'), then: (v) => { (sv.__recs['memory/Notes'] ||= recsSeed('memory', 'Notes')).unshift({ ...note(v.name, 'Today · from you'), id: 'n' + Date.now() }); (sv.__recs['memory/Team memory'] ||= recsSeed('memory', 'Team memory')).unshift({ ...teamNote(v.name, sv.seeded ? 'Shared' : 'Local only', 'Yours', true), id: 'n' + Date.now() }); return `Note created: ${v.name}`; } }) },
+      { title: 'Notes', meta: (sv) => `Healthy · ${plural((sv.__recs['memory/Notes'] || NOTES).length, 'note')} · defragmented ${sv.defragged}`, actions: [{ label: 'New note', edit: (sv) => ({ title: 'New note', yes: 'Create', fields: [{ key: 'name', label: 'Name', value: '', hint: 'A file name, such as testing.md' }, { key: 'body', label: 'Note', value: '', multiline: true }], check: (v) => (!v.name.trim() ? 'A note needs a name' : /^[\w.-]+\.\w+$/.test(v.name.trim()) ? '' : 'A note is a file name, such as testing.md'), then: (v) => { (sv.__recs['memory/Notes'] ||= recsSeed('memory', 'Notes')).unshift({ ...note(v.name, 'Today · from you'), id: 'n' + Date.now() }); (sv.__recs['memory/Team memory'] ||= recsSeed('memory', 'Team memory')).unshift({ ...teamNote(v.name, sv.seeded ? 'Shared' : 'Local only', 'Yours', true), id: 'n' + Date.now() }); return `Note created: ${v.name}`; } }) },
         { label: 'Defragment now', min: 'expert', help: 'Merges duplicates and drops what is stale; what the notes were stays as a restore point', do: (sv) => { const notes = sv.__recs['memory/Notes'] || recsSeed('memory', 'Notes'); (sv.__recs['memory/Restore points'] ||= recsSeed('memory', 'Restore points')).unshift({ ...restorePoint('just now', notes.map((n) => [n.title, n.meta])), id: 'p' + Date.now() }); sv.defragged = 'just now'; return 'Notes defragmented; a restore point is kept'; } }],
         empty: 'No notes yet', list: NOTES },
       { title: 'Restore points', meta: 'What the notes were before each defragment.', empty: 'Nothing to restore', list: [
@@ -650,15 +658,15 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
 
     connectors: { min: 'advanced', title: 'Connectors', meta: 'MCP servers and skills, grouped in sets that projects follow.', sections: [
       { title: 'Servers', actions: [{ label: 'Add server', edit: addTo('connectors/Servers', 'Add a server', 'Name', 'stdio · in no set', ['Edit', 'Remove']) }], empty: 'No servers', list: [
-        { title: 'github', meta: 'stdio · in 2 sets', menu: ['Edit', 'Remove'] },
-        { title: 'postgres', meta: 'stdio · needs a secret in Frontend', mark: 'is-amber', menu: ['Edit', 'Remove'] },
+        { title: 'github', meta: 'stdio · in 2 sets', live: liveSets('servers', 'github', 'stdio'), menu: ['Edit', 'Remove'] },
+        { title: 'postgres', meta: 'stdio · needs a secret in Frontend', live: (sv, r) => { if (r.meta !== 'stdio · needs a secret in Frontend') return r.meta; const f = frontendSet(sv); return f ? `stdio · needs a secret in ${f.title}` : `stdio · ${inSets(sv, 'servers', 'postgres')}`; }, mark: 'is-amber', menu: ['Edit', 'Remove'] },
       ] },
       { title: 'Sets', actions: [{ label: 'New set', edit: addTo('connectors/Sets', 'New set', 'Name', '0 servers · 0 skills · no project', ['Rename', 'Duplicate', 'Delete']) }], list: [
-        { title: 'General', meta: 'Built in', live: (sv) => `Built in · ${setCount(sv, 'General')} · Chat and 5 projects`, menu: ['Duplicate'], copy: { menu: ['Rename', 'Duplicate', 'Delete'], follows: 'No project uses it.', live: (sv) => `${setCount(sv, 'General')} · no project` } },
-        { title: 'Frontend', meta: 'A set', live: (sv) => `${setCount(sv, 'Frontend')} · 2 projects`, menu: ['Rename', 'Duplicate', 'Delete'], follows: 'Its 2 projects go back to General.', copy: { follows: 'No project uses it.' } },
+        { title: 'General', members: 'General', meta: 'Built in', live: (sv) => `Built in · ${setCount(sv, 'General')} · Chat and ${frontendSet(sv) ? 5 : 7} projects`, menu: ['Duplicate'], copy: { menu: ['Rename', 'Duplicate', 'Delete'], follows: 'No project uses it.', live: (sv) => `${setCount(sv, 'General')} · no project` } },
+        { title: 'Frontend', members: 'Frontend', projects: 2, meta: 'A set', live: (sv) => `${setCount(sv, 'Frontend')} · 2 projects`, menu: ['Rename', 'Duplicate', 'Delete'], follows: 'Its 2 projects go back to General.', copy: { projects: 0, follows: 'No project uses it.', live: (sv) => `${setCount(sv, 'Frontend')} · no project` } },
       ] },
       { title: 'Skills', actions: [{ label: 'Import skill', edit: addTo('connectors/Skills', 'Import a skill', 'Skill', 'From your Claude Code skills · in no set', ['Edit', 'Remove']) }], empty: 'No skills', list: [
-        { title: 'pdf-tools', meta: 'From your Claude Code skills · in 2 sets', menu: ['Edit', 'Remove'] },
+        { title: 'pdf-tools', meta: 'From your Claude Code skills · in 2 sets', live: liveSets('skills', 'pdf-tools', 'From your Claude Code skills'), menu: ['Edit', 'Remove'] },
       ] },
     ] },
   };
@@ -690,7 +698,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     const key = 'chatModel_' + e, needs = e === 'gemini' || e === 'qwen';
     return { name: title, say: (sv) => (sv[key] || !needs ? `Chats on ${title} use {${key}}` : `Chats on ${title} {${key}}`),
       picks: { [key]: P(e === 'claude' ? 'Sonnet 5.5' : '', [['', needs ? 'need a model' : 'Worca\'s default'], ...ENGINE_MODELS[e][0].map(([, t]) => [t, t])], `The model a chat on ${title} starts on`) },
-      acts: [{ label: 'Test', help: 'Sends one tiny prompt to this model', when: (sv) => !!sv[key], do: (sv) => `One tiny prompt to ${sv[key]}: answered in 1.1s` }] };
+      acts: [{ label: 'Test', help: 'Sends one tiny prompt to this model', when: (sv) => !!sv[key], do: (sv) => `Would send ${sv[key]} one tiny prompt` }] };
   }
   function importable(sv) {
     const have = (sv.__recs['models/Catalogue'] || recsSeed('models', 'Catalogue')).map((r) => r.title);
@@ -709,7 +717,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     return { title: 'OpenAI-compatible', yes: 'Save', fields: [
       { key: 'preset', label: 'Preset', value: r.preset || 'none', options: O(['none', 'None: your own endpoint'], ['openrouter', 'OpenRouter']), then: (v) => { if (v.preset === 'openrouter') { v.url = OPENROUTER.base; v.key = OPENROUTER.key; } } },
       { key: 'url', label: 'Base URL', value: r.url || '', type: 'url' }, { key: 'key', label: 'Key', value: r.url ? '${OPENAI_KEY}' : '', hint: 'A stored key is never replaced by a preset' },
-    ], check: (v) => (v.url.trim() ? '' : 'It needs a base URL'), then: (v, sv) => { r.url = v.url; r.preset = v.preset; r.mark = 'is-green'; sv.orLeft = sv.orLeft ?? 820; return v.preset === 'openrouter' ? 'OpenRouter set up' : 'OpenAI-compatible saved'; } };
+    ], check: (v) => (isUrl(v.url) ? '' : 'A base URL reads like https://example.com'), then: (v, sv) => { r.url = v.url; r.preset = v.preset; r.mark = 'is-green'; sv.orLeft = sv.orLeft ?? 820; return v.preset === 'openrouter' ? 'OpenRouter set up' : 'OpenAI-compatible saved'; } };
   }
   function readOnlySet(title, from, tail, about) {
     const r0 = { ...GUARD_SETS[title], about };
@@ -756,7 +764,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const VALUE_NAMES = { prOpen: 'Create a PR', prSlices: 'A feature\'s PRs', what: 'Suggests', when: 'When', remote: 'Remote', div: 'If diverged', late: 'Missed starts', lateMax: 'How late', fails: 'Failures',
     which: 'Tasks answered', byDay: 'By day', method: 'How it picks', sure: 'Sure at', lead: 'Lead', dmodel: 'Model', deffort: 'Effort', answers: 'Answers', spent: 'While away', extra: 'Fix rounds', exceed: 'At the team\'s cap',
     keep: 'Checkout', coMax: 'Most kept', ct: 'Connect', lt: 'Sign in', it: 'Idle', auth: 'Signing in', wait: 'Wait', netWait: 'Wait for the network', web: 'Sites', webOn: 'Web access', proxy: 'Proxy', proxyHost: 'Host', proxyPort: 'Port', proxyLocal: 'Local proxy', period: 'Total starts again' };
-  const VALUE_WORDS = { perRun: usd, total: (v, d) => `${usd(v)} a ${d.period}`, period: (v) => ({ day: 'each day', week: 'each week', month: 'each month' })[v] || v, rate: (v) => `$${v} an hour`, capRun: usd, capAll: (v) => `${usd(v)} a month`, wsCap: usd };
+  const VALUE_WORDS = { perRun: usd, total: (v, d) => `${usd(v)} a ${d.period}`, period: (v) => ({ day: 'each day', week: 'each week', month: 'each month' })[v] || v, rate: (v) => `${usd(v)} an hour`, capRun: usd, capAll: (v) => `${usd(v)} a month`, wsCap: usd };
   window.SettingsModel = { ICONS: { runs: 'nav-runs', presets: 'set-presets', labels: 'set-labels', automations: 'set-automations', models: 'set-models', ask: 'nav-chat', memory: 'set-memory', team: 'set-policy', guardrails: 'set-guardrails', plugins: 'set-plugins', connectors: 'set-connectors', general: 'set-general', notifications: 'set-notifications', experimental: 'set-labs' }, SECTION_ICONS: { Spending: 'set-spending', Starting: 'nav-runs', Limits: 'set-limits', 'Away mode': 'set-away', Machine: 'set-machine' },
     GROUPS, SECTIONS, FLAGS, STATE, FIRST: 'runs', workingChannels, VALUE_NAMES, VALUE_WORDS,
     title: (id) => (id === 'notifications' ? NOTIFICATIONS : SECTIONS[id] || { title: id }).title,

@@ -6,6 +6,7 @@
 | `list.sentence` | What a list shows is a sentence above it, never a filter button | Narrowed the same way everywhere | by hand |
 | `list.reset-view` | Reset view comes from resetViewTool: changed, it says the default in the sentence's own words; at the default it is off and says why | A disabled control's tooltip is its reason, never its action | design-system-components |
 | `list.sections` | Sections in a fixed order; empty ones not drawn; a long one shows less, never folds | Nothing hides | design-system-components |
+| `list.one-unit` | A section's count, its heading and the sentence's hint count one unit; where a section mixes kinds (a workspace and a project) it counts the unit the place lists, through the section's `count` | "5 need you" means the same 5 everywhere | design-system-components |
 | `list.fold-keeps-current` | The row you are on never folds behind Show N more; a group that holds it starts open | You never lose your place | worca-sweep |
 | `list.fold-by-mark` | A row with rows under it (a chat's tasks, a group's chats) folds and opens from its mark; its name still opens it | One trigger for folding in every bar, where the eye already is | design-system-components |
 | `list.sections-start-folded` | In a bar's list every period but Today starts folded; Needs you never folds, and a period holding the row you are on starts open; a period you open or fold stays so for that list | The bar shows today's work first; the rest is one click away | design-system-components |

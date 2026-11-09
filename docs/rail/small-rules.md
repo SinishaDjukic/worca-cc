@@ -5,6 +5,7 @@
 | `small.names` | A name is the thing, 1–3 words, a plain noun; one thing, one name. What Worca runs is a task on every screen, before and after an action; "run" stays only as a verb | The same word everywhere | ds-check |
 | `small.disabled-why` | A disabled control says why in its tooltip | It teaches what is coming and where | click-check |
 | `small.label-short` | A label holds 40 characters at most; its field stops there and says so | A label is a word or two: it has to fit its picker, its chip and a notice | by hand |
+| `small.name-short` | A chat's or a group's name holds 80 characters at most; its rename field stops there and says so | A name has to fit its row, its head and a notice | by hand |
 | `small.schedule-words` | A schedule's repeat and time read from one function (`scheduleWords`); every hour has no time of day | The sentence, the status, the row and its section cannot drift | design-system-components |
 | `small.sentence-pair` | In a sentence of pickers, a linking word (on, with, from, then, at) stays on one line with its picker | A word left at a line's end reads as a broken sentence | by hand |
 | `small.no-emoji` | No emoji and no exclamation marks | Calm | by hand |
@@ -35,7 +36,7 @@
   one text edge.
 - Usage is rings around the avatar, outside in: session and the long window (week, day or month). They show live usage
   and nothing else: only providers connected right now (signing one out removes it at once), refreshed every minute; offline,
-  the last figures stay with their time. Money is never a ring: a budget is set in Settings › Runs › Budget (a day, a week or
+  the last figures stay with their time. Money is never a ring: a budget is set in Settings › Tasks › Budget (a day, a week or
   a month) and read in Usage and costs. A ring's tooltip says what it shows, on two lines: `Weekly · Claude Code: 55%`, then
   `Resets Wed 5:00 PM`. With nothing connected no ring is drawn and Usage and costs says so, with its link. Each ring shows
   its tightest harness and shades along its arc: `--ink-2` at the start, `--amber` at

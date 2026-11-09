@@ -223,7 +223,7 @@ function changesPanel(v) {
   }).join('')).join('');
   // Documents its steps wrote: they stay with the task and are not in the PR. A name opens it; one download at the end.
   const arts = v.over.artifacts;
-  const docs = arts.length ? head('Not in the code', String(arts.length)) + `<li class="ch-gnote">Written by the task’s steps; they stay with the task and are not in the PR</li>` + arts.map(([doc, step], i) => `<li class="ch-file ch-doc${ui.land === 'doc:' + i ? ' is-flash' : ''}"><span class="ch-st" aria-hidden="true"></span><span class="ch-name">${R.documentLink({ name: doc, attrs: { 'data-key': 'art:' + i, 'data-doc': i, title: 'Open ' + doc } })}<span class="ch-path">from ${esc(step)}</span></span>${R.button({ label: 'Download ' + doc, kind: 'quiet', iconOnly: true, icon: svg('download', 14), attrs: { 'data-key': 'dl:' + i, 'data-say': 'Downloading ' + doc } })}</li>`).join('') : '';
+  const docs = arts.length ? head('Not in the code', String(arts.length)) + `<li class="ch-gnote">Written by the task’s steps; they stay with the task and are not in the PR</li>` + arts.map(([doc, step], i) => `<li class="ch-file ch-doc${ui.land === 'doc:' + i ? ' is-flash' : ''}"><span class="ch-st" aria-hidden="true"></span><span class="ch-name">${R.documentLink({ name: doc, attrs: { 'data-key': 'art:' + i, 'data-doc': i, title: 'Open ' + doc } })}<span class="ch-path">from ${esc(step)}</span></span>${R.button({ label: 'Download ' + doc, kind: 'quiet', iconOnly: true, icon: svg('download', 14), attrs: { 'data-key': 'dl:' + i, 'data-say': 'Would download ' + doc } })}</li>`).join('') : '';
   const where = v.place.folder ? `In a copy of ${v.place.folder}; Apply writes them into the folder.` : v.place.branch ? `${v.place.branch} into ${v.place.base || 'dev'}` : '';
   // The code's own actions sit in the Changes head, as the card's action does: Check out, the rest in its ▾.
   const chItems = (v.bar.stop ? [{ id: 'ch:refresh', text: 'Refresh', help: 'Reload the diff from the worktree' }] : [])
@@ -368,7 +368,7 @@ function render() {
   // its middle, never its end, so sibling runs (-2, -3) stay apart.
   const own = M.branches?.[ui.caseId], pl = own && v.place.branch ? { ...v.place, branch: own, hidden: '' } : v.place;   // this task's own branch, not its case's fixture (act.this-thing)
   const where = R.workPlace(Object.assign({ finished: v.finished, copyAttrs: pl.branch ? { 'data-say': `Would copy ${pl.hidden || pl.branch}` } : null, prAttrs: pl.pr ? { 'data-say': `Would open ${pl.pr} on GitHub` } : null }, pl));
-  const pr = pl.pr ? `<a class="rc-pr" href="#" data-key="pr" data-say="Opens ${esc(pl.pr)} on GitHub" title="Open ${esc(pl.pr)} on GitHub">${esc(pl.pr)}</a>` : '';
+  const pr = pl.pr ? `<a class="rc-pr" href="#" data-key="pr" data-say="Would open ${esc(pl.pr)} on GitHub" title="Open ${esc(pl.pr)} on GitHub">${esc(pl.pr)}</a>` : '';
   const repos = pl.repos.length ? `<span>${pl.repos.length} repositories</span>` : '';
   // + stays at the end of the place line; labels and tags, once added, get their own wrapping row under it.
   const kind = v.kind ? R.chip({ text: v.kind }) : '';
@@ -520,12 +520,12 @@ function stageBarOf(v) {
 }
 function moreItems(v) {
   const group = !!v.kind; const live = v.bar.stop;
-  const noun = group ? v.kind.toLowerCase() : 'run';
+  const noun = group ? v.kind.toLowerCase() : 'task';
   const items = [];
   // Discarded and archived things have no tools left; deleted things have nothing at all.
   if (v.gone) {
     if (v.gone === 'discarded') items.push({ id: 'more:archive', text: 'Archive', help: 'Takes it out of Tasks; the history stays' });
-    if (v.gone === 'archived') items.push({ id: 'more:restore', text: 'Restore', help: 'Brings the record back to Runs; its branch, worktree and logs stay gone' });
+    if (v.gone === 'archived') items.push({ id: 'more:restore', text: 'Restore', help: 'Brings the record back to Tasks; its branch, worktree and logs stay gone' });
     items.push({ id: 'more:link', text: 'Copy link', help: 'Paste it in Chat or an issue' });
     return items;
   }
@@ -547,11 +547,11 @@ function moreItems(v) {
   items.push({ id: 'more:link', text: 'Copy link', help: 'Paste it in Chat or an issue' });
   if (v.finished && v.has.report) items.push({ id: 'more:report', text: 'Report this ' + noun, help: 'Asks for a note, then sends it with the logs to the Worca team' });
   if (v.finished && !v.archived && v.has.started) items.push({ id: 'more:archive', text: 'Archive', help: v.dependents ? v.dependents + ' runs wait on this one and will start without it. Removes the branch, worktree and logs' : 'Removes the branch, worktree and logs; the remote branch and PR stay' });
-  if (group && !v.archived && !live && R.shows('advanced')) items.push({ id: 'more:delete', text: 'Delete', help: 'Removes it and its runs from Runs; their PRs stay' });
+  if (group && !v.archived && !live && R.shows('advanced')) items.push({ id: 'more:delete', text: 'Delete', help: 'Removes it and its tasks from Tasks; their PRs stay' });
   return items;
 }
 const CH_SAY = { 'ch:refresh': () => 'Would refresh the diff from the worktree', 'ch:patch': () => 'Would download the patch', 'ch:copy': (v) => 'Would copy: git fetch && git switch ' + v.place.branch };
-const MORE_SAY = { 'more:terminal': 'Would open a terminal in the worktree', 'more:sync': 'Synced 3 commits from origin/dev at 14:02, before it started · nothing diverged' };
+const MORE_SAY = { 'more:terminal': 'Would open a terminal in the worktree', 'more:sync': 'Would open the Sync log' };
 let toastTimer = 0;
 // The toast fades out (Motion), then empties: its text stays while it fades.
 function toast(text) { ui.toast = text; clearTimeout(toastTimer); toastTimer = setTimeout(() => { ui.toast = ''; const el = document.querySelector('.rc-toast'); if (el) { el.classList.remove('is-on'); toastTimer = setTimeout(() => { if (!ui.toast) el.textContent = ''; }, 200); } }, 4000); }
@@ -821,11 +821,13 @@ document.addEventListener('click', (e) => {
   if (SHELL && !SHELL.owns('run', e.target)) return;
   // in the one Worca the trail's first step is the Runs list itself
   if (SHELL && e.target.closest('#card [data-key="crumb:0"]')) { e.preventDefault(); SHELL.back(); return; }
+  const placeCrumb = SHELL && e.target.closest('#card [data-key="crumb:1"][data-say]');   // the place: Tasks, narrowed to it
+  if (placeCrumb && !M.view(ui.caseId, ui).crumbs[1].group) { e.preventDefault(); const name = placeCrumb.textContent.trim(); window.RailRunsList.filter(window.RailWorld.tops().some((x) => x.project === name) ? { project: name } : {}); return; }   // a folder or workspace is no project in the list: all of Tasks
   const t = e.target.closest('button');
   if (t && t.id === 'next-event') { nextEvent(); return; }
   if (t && t.dataset.fixpart !== undefined) { ui.broken = false; pendingFocus = 'tab:' + ((M.view(ui.caseId, ui).tabs.find((x) => x.sel) || {}).id || ''); toast('Reloaded the part'); render(); return; }
   if (t && t.dataset.crash) { const k = t.dataset.crash; ui.crash = null; if (k === 'reload') toast('Reloaded'); pendingFocus = 'act-main'; render(); return; }
-  if (t && t.id === 'restart') { ui = fresh('starting'); pick.value = 'starting'; pendingFocus = 'act-main'; toast('Restarted: a new run'); render(); return; }
+  if (t && t.id === 'restart') { ui = fresh('starting'); pick.value = 'starting'; pendingFocus = 'act-main'; toast('Restarted: a new task'); render(); return; }
   if (t && t.dataset.themePick) {
     document.documentElement.dataset.theme = t.dataset.themePick;
     document.querySelectorAll('[data-theme-pick]').forEach((b) => b.setAttribute('aria-pressed', String(b === t)));
@@ -870,7 +872,7 @@ document.addEventListener('click', (e) => {
   if (d.showearlier !== undefined) { ui.showEarlier = !ui.showEarlier; pendingFocus = 'show-earlier'; render(); return; }
   if (d.mark) { const [id, m] = d.mark.split('|'); ui.marks = Object.assign({}, ui.marks, { [id]: m }); pendingFocus = m === 'met' ? 'mark:' + d.mark : 'mark-' + id; render(); return; }
   if (d.logview) { ui.log = Object.assign({}, ui.log, { raw: d.logview === 'raw' }); pendingFocus = 'logview:' + d.logview; render(); return; }
-  if (d.service) { const id = d.service; const on = !ui.services[id]; ui.svcBusy = id; pendingFocus = 'svc:' + id; render(); setTimeout(() => { ui.svcBusy = ''; ui.services = Object.assign({}, ui.services, { [id]: on }); toast(on ? 'Started' : 'Stopped'); pendingFocus = 'svc:' + id; render(); }, 500); return; }
+  if (d.service) { const id = d.service; const on = !ui.services[id]; ui.svcBusy = id; pendingFocus = 'svc:' + id; render(); setTimeout(() => { ui.svcBusy = ''; ui.services = Object.assign({}, ui.services, { [id]: on }); const x = v0().tabData.services.find((y) => y.id === id); toast((on ? 'Would start ' : 'Would stop ') + x.name + ' on localhost:' + x.port); pendingFocus = 'svc:' + id; render(); }, 500); return; }
   if (d.checkout !== undefined) { ui.copy = !ui.copy; toast(ui.copy ? 'Would check out ' + (v0().place.branch || 'the branch') + ' on this machine' : 'Unlinked the local copy; the branch stays'); pendingFocus = 'ch:checkout'; render(); return; }
   if (d.cmt) {
     if (d.cmt === 'open') { const lines = v0().tabData.hunk.lines.filter(([k]) => k !== ' ').map(([, x]) => x.trim()); ui.commentOn = { path: d.path, line: lines[lines.length - 1], text: '', err: '' }; pendingFocus = 'cmt-text'; }
@@ -919,14 +921,14 @@ document.addEventListener('click', (e) => {
     }
     else if (d.menuPick.startsWith('pushr:')) { ui.pr.push = d.menuPick.slice(6); ui.menu = ''; pendingFocus = 'menu:pdpush'; }
     else if (d.menuPick.startsWith('baser:')) { ui.pr.remote = d.menuPick.slice(6); ui.menu = ''; pendingFocus = 'menu:pdremote'; }
-    else if (d.menuPick === 'more:try') { ui.tryBusy = 'checkout'; ui.menu = 'more'; pendingFocus = 'menu:more'; setTimeout(() => { ui.tryBusy = 'setup'; render(); setTimeout(() => { ui.tryBusy = ''; ui.copy = true; toast('Would check out on this machine and open a local copy'); render(); }, 500); }, 500); }
-    else if (/^try:(start|stop)$/.test(d.menuPick)) { const id = v0().tabData.services[0].id; const on = d.menuPick === 'try:start'; ui.services = Object.assign({}, ui.services, { [id]: on }); ui.menu = 'more'; pendingFocus = 'menu:more'; toast(on ? 'Started' : 'Stopped'); }
+    else if (d.menuPick === 'more:try') { const u = ui; u.tryBusy = 'checkout'; u.menu = ''; pendingFocus = 'menu:more'; setTimeout(() => { u.tryBusy = 'setup'; if (ui === u) render(); setTimeout(() => { u.tryBusy = ''; u.copy = true; if (ui === u) { toast('Would check out on this machine and open a local copy'); render(); } }, 500); }, 500); }
+    else if (/^try:(start|stop)$/.test(d.menuPick)) { const x = v0().tabData.services[0]; const on = d.menuPick === 'try:start'; ui.services = Object.assign({}, ui.services, { [x.id]: on }); ui.menu = ''; pendingFocus = 'menu:more'; toast((on ? 'Would start ' : 'Would stop ') + x.name + ' on localhost:' + x.port); }
     else if (d.menuPick === 'try:open') { ui.menu = ''; pendingFocus = 'menu:more'; toast('Would open localhost:' + v0().tabData.services[0].port); }
     else if (d.menuPick === 'try:actions') { ui.tab = 'changes'; ui.menu = ''; pendingFocus = 'menu:more'; }
     else if (d.menuPick === 'more:unlink' || d.menuPick === 'ch:discard-copy' || d.menuPick === 'more:discard-copy') { const unlink = d.menuPick === 'more:unlink'; ui.copy = false; ui.menu = ''; pendingFocus = 'menu:more'; toast(unlink ? 'Unlinked the local copy; the branch stays' : 'Discarded the local copy; the branch stays'); }
     else if (d.menuPick === 'more:preset') { ui.menu = ''; ui.dialogF = { dialog: 'preset', say: 'Saved as preset “{value}”' }; ui.dialogLabel = 'Save as preset'; follow(ui.dialogF, 'Save as preset'); }
     else if (d.menuPick === 'more:delete') { const noun = v0().kind.toLowerCase(); follow({ leave: true, say: 'Deleted the ' + noun + ' and its runs; their PRs stay', confirm: 'Delete this ' + noun + ' and its runs? This cannot be undone; their PRs stay.' }, 'Delete'); }
-    else if (d.menuPick === 'more:report') { ui.menu = ''; follow(v0().runFlow.report, 'Report this ' + (v0().kind ? v0().kind.toLowerCase() : 'run')); }
+    else if (d.menuPick === 'more:report') { ui.menu = ''; follow(v0().runFlow.report, 'Report this ' + (v0().kind ? v0().kind.toLowerCase() : 'task')); }
     else if (d.menuPick === 'more:link') { toast('Would copy the link to this ' + (v0().kind ? v0().kind.toLowerCase() : 'task')); pendingFocus = 'menu:more'; ui.menu = ''; }
     else if (d.menuPick === 'group:toggle') { ui.askEach = !ui.askEach; ui.menu = ''; pendingFocus = 'menu:more'; toast(ui.askEach ? 'Worca asks before each task starts' : 'Each task starts by itself'); }
     else if (d.menuPick.startsWith('base:')) { ui.pr.base = d.menuPick.slice(5); ui.menu = ''; pendingFocus = 'menu:pdbase'; }
@@ -940,7 +942,7 @@ document.addEventListener('click', (e) => {
     else if (d.menuPick.startsWith('away:')) { ui.away = d.menuPick; ui.menu = ''; pendingFocus = 'menu:more'; toast('Away mode on this task: ' + AWAY.find((x) => x.id === d.menuPick).text); }
     else if (d.menuPick === 'more:after') { ui.dialog = 'after'; ui.menu = ''; pendingFocus = 'after-task'; }
     else if (d.menuPick === 'more:archive') { const vm = v0(); const a = vm.runFlow.archive; follow(Object.assign({}, a, { confirm: (vm.dependents ? vm.dependents + ' runs wait on this one and will start without it. ' : '') + a.confirm.replace('this task', 'this ' + (vm.kind ? vm.kind.toLowerCase() : 'run')) }), 'Archive'); }
-    else if (d.menuPick === 'more:restore') { landOn(M.restored(ui)); toast('The record is back in Runs; its branch, worktree and logs are not'); }
+    else if (d.menuPick === 'more:restore') { landOn(M.restored(ui)); toast('The record is back in Tasks; its branch, worktree and logs are not'); }
     else if (d.menuPick === 'group:ask' || d.menuPick === 'group:go') { const ask = d.menuPick === 'group:ask'; ui.menu = ''; pendingFocus = 'menu:then';
       toast(ask === ui.askEach ? (ask ? 'Already asks first' : 'Already starts by itself') : ask ? 'Worca asks before each task starts' : 'Each task starts by itself'); ui.askEach = ask; }
     else if (CH_SAY[d.menuPick]) { toast(CH_SAY[d.menuPick](M.view(ui.caseId, ui))); pendingFocus = 'menu:ch'; ui.menu = ''; }

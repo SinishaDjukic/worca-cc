@@ -37,14 +37,14 @@
     }
     return out;
   }
-  const finished = (t) => t.section === 'recent' || !!t.run?.pr || t.word === 'Ready' || t.word === 'Failed';
+  const finished = (t) => t.section === 'recent';   // what still needs you counts there, once: the Showing counts add up to all
   const readyToShip = (t) => t.word === 'Ready' && (t.run?.kind || 'Git') === 'Git' && !t.run?.pr;
   const SHOWS = [
     { id: 'all', text: 'all', help: 'Every task that is not archived', test: (t) => !t.archived },
     { id: 'needs', text: NEEDS().toLowerCase(), help: 'Waiting on a person: a question, a gate, a pause, a failure, ready to ship', title: NEEDS(), test: (t) => !t.archived && t.section === 'needs' },
     { id: 'running', text: 'running', help: 'Working now', test: (t) => !t.archived && t.section === 'running' },
     { id: 'waiting', text: 'waiting', help: 'Not started yet: after another task, or at a time', test: (t) => !t.archived && t.section === 'scheduled' },
-    { id: 'finished', text: 'finished', help: 'Every task that has ended', test: (t) => !t.archived && finished(t) },
+    { id: 'finished', text: 'finished', help: 'Ended, with nothing left for you to do', test: (t) => !t.archived && finished(t) },
     { id: 'ready', text: 'ready to ship', help: 'Finished with no PR open: nothing else needs doing but shipping it', test: (t) => !t.archived && readyToShip(t) },
     { id: 'archived', text: 'archived', help: 'Tasks you archived', test: (t) => t.archived },
   ];
@@ -72,9 +72,9 @@
     const isArchived = g ? membersOf(g).every((m) => m.archived) : r.archived;
     const items = [{ id: 'toggle', text: 'Select', hint: hint('Space') }, ...(r ? [{ id: 'in-view', text: window.RailShell?.inView.has('task', `run:${r.id}`) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }] : []),
       { id: 'stop', text: 'Stop', hint: hint('S'), off: !n(stop), help: n(stop) ? 'Stops it; the branch and changes stay' : R.skipText(stop) },
-      isArchived ? { id: 'archive', text: 'Restore', hint: hint('E'), help: 'Brings the record back to Runs; its branch, worktree and logs stay gone' } : { id: 'archive', text: 'Archive', hint: hint('E'), off: !n(arch), help: n(arch) ? 'Removes its local branch, worktree and logs; Undo brings back the record' : R.skipText(arch) }];
+      isArchived ? { id: 'archive', text: 'Restore', hint: hint('E'), help: 'Brings the record back to Tasks; its branch, worktree and logs stay gone' } : { id: 'archive', text: 'Archive', hint: hint('E'), off: !n(arch), help: n(arch) ? 'Removes its local branch, worktree and logs; Undo brings back the record' : R.skipText(arch) }];
     if (has('advanced') && r && !(r.group && !r.adhoc)) items.push({ sep: true }, { id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' });
-    if (has('advanced') && r?.adhoc && r.group) items.push({ id: 'leave-group', text: 'Remove from group', hint: hint('shift', 'G'), help: 'It stays in Runs, in no group' });
+    if (has('advanced') && r?.adhoc && r.group) items.push({ id: 'leave-group', text: 'Remove from group', hint: hint('shift', 'G'), help: 'It stays in Tasks, in no group' });
     const pr = r?.pr || (g ? membersOf(g).find((m) => m.pr)?.pr : '');
     if (pr) items.push({ id: 'view-pr', text: `View PR ${pr} ↗`, help: 'Opens the PR on GitHub' });
     if (g?.kind === 'feature') items.push({ id: 'open', text: 'Open feature', help: 'Its plan, its runs, how it ships' });
@@ -151,7 +151,7 @@
     const stop = plan('stop', rows), arch = plan('archive', rows), del = plan('delete', rows), all = runRows(rows);
     const off = (p) => R.skipText(p) || 'None of these';
     const acts = [{ id: 'stop', label: 'Stop', n: n(stop), tip: R.skipText(stop) || 'Asks first; the branches and changes stay', why: off(stop) },
-      archivedView ? { id: 'archive', label: 'Restore', n: all.length, tip: 'Brings the records back to Runs; their branches, worktrees and logs stay gone' } : { id: 'archive', label: 'Archive', n: n(arch), tip: R.skipText(arch) || 'Removes local branches, worktrees and logs; Undo brings back the records', why: off(arch) }];
+      archivedView ? { id: 'archive', label: 'Restore', n: all.length, tip: 'Brings the records back to Tasks; their branches, worktrees and logs stay gone' } : { id: 'archive', label: 'Archive', n: n(arch), tip: R.skipText(arch) || 'Removes local branches, worktrees and logs; Undo brings back the records', why: off(arch) }];
     if (has('advanced')) acts.push({ id: 'delete', label: 'Delete', n: n(del), tip: R.skipText(del) || 'Asks first; it cannot be taken back', why: off(del) });
     if (labelsOn()) acts.push({ id: 'label', label: 'Label', n: all.length, tip: 'Adds or removes a label on each' });
     if (has('advanced')) { const can = rows.filter((x) => x.r && !(x.r.group && !x.r.adhoc)); acts.push({ id: 'add-to-group', label: 'Add to group', n: can.length, tip: can.length < rows.length ? `Skips ${rows.length - can.length}: a feature's runs and groups stay as they are` : 'Find a group, or make a new one', why: 'A feature\'s runs and groups stay as they are' }); }

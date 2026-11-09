@@ -119,7 +119,7 @@ export function listController({ root, spec }) {
       // the row you are on never folds behind Show N more: it stays under the first ones (docs/rail/lists.md › list.fold-keeps-current)
       const rows = shut ? [] : all ? x.rows : [...x.rows.slice(0, limit), ...x.rows.slice(limit).filter((r) => r.current || r.holds)];
       const walk = (r) => { s.order.push(r.key); (r.tree || []).forEach(walk); if (r.members && groupOpen(r)) r.members.forEach(walk); }; rows.forEach(walk);
-      return { title: x.title, count: x.noCount ? '' : x.rows.length, chip: x.chip, rows: shut ? [''] : rows.map(rowHtml), fold: x.fold ? { open: !shut, attrs: { 'data-fold-section': x.id } } : null, more: shut || x.rows.length <= limit ? null : s.more.has(x.id) ? { less: true, attrs: { 'data-less': x.id } } : rows.length >= x.rows.length ? null : { n: x.rows.length - rows.length, attrs: { 'data-more': x.id } } };
+      return { title: x.title, count: x.noCount ? '' : x.count ?? x.rows.length, chip: x.chip, rows: shut ? [''] : rows.map(rowHtml), fold: x.fold ? { open: !shut, attrs: { 'data-fold-section': x.id } } : null, more: shut || x.rows.length <= limit ? null : s.more.has(x.id) ? { less: true, attrs: { 'data-less': x.id } } : rows.length >= x.rows.length ? null : { n: x.rows.length - rows.length, attrs: { 'data-more': x.id } } };
     }) : [];
     s.pick = selectPrune(s.pick, [...s.rows.keys()]);
     const shown = s.order;
@@ -139,7 +139,7 @@ export function listController({ root, spec }) {
   }
   function dialogHtml() {
     const d = s.dialog; if (!d) return '';
-    const body = (d.text ? `<p class="list-dlg-t">${esc(d.text)}</p>` : '') + field({ id: 'list-dlg-name', label: d.label, value: d.value, hint: d.hint || '', error: d.error || '', attrs: { 'data-dlg-name': '' } });
+    const body = (d.text ? `<p class="list-dlg-t">${esc(d.text)}</p>` : '') + field({ id: 'list-dlg-name', label: d.label, value: d.value, hint: d.hint || (d.max ? `Up to ${d.max} characters` : ''), error: d.error || '', attrs: { 'data-dlg-name': '', maxlength: d.max || null } });   // small.name-short
     return dialog({ title: d.title, body, yes: d.yes, close: icon('x', 14), id: `${spec.noun}-dlg-t` });
   }
 

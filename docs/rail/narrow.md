@@ -10,7 +10,7 @@
 
 A narrow page holds everything the wide one does: things move, they are never dropped. Two widths decide it, and the
 prototype does both at 375px.
-- **1080px of window and below:** the sidebar becomes its rail of icons (60px), so every place stays one tap away.
+- **1080px of window and below:** the sidebar starts as its strip of icons (56px), so every place stays one tap away; opened there, it stays open until a reload.
 - **760px of window and below:** the trail becomes one link, `‹ Parent`; the sidebar becomes a drawer, because a rail
   would take a sixth of a phone's width; a panel or Dialog takes the window's width; a menu stays 16px inside it.
 - **520px of content and below** (the card or panel's own width; a settings row and a settings record at 560px): side by side becomes one above the other, on the

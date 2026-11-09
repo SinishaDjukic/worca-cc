@@ -221,6 +221,7 @@
   .pz-side .side-menu{display:none;}
   .pz-nav.is-app{display:flex;}
   .cfg-index{display:block;}
+  .cfg-page.is-index{--edge:0px;}   /* the landing is a plain list on the page's own gutter (narrow.stack) */
   .cfg-index .side-menu{margin-left:var(--edge);}
   .cfg-section > .rl-back{display:inline-flex;margin-left:var(--edge);}
   .cfg-page:not(.is-index) .cfg-index,.cfg-page.is-index .cfg-section{display:none;}

@@ -74,7 +74,7 @@
   // Where each kind of update opens: one destination per kind, and `to` says it. A run's own kinds open that run, as the
   // world has it now. Limits and the budget open Usage and costs; a step on the row may go further (Raise budget).
   const DEST = { schedule: { go: 'schedules', to: 'Schedules' }, automation: { go: 'settings/automations', to: 'Settings › Automations', land: 'automations|Automations' }, project: { go: 'projects', to: 'Projects' },
-    away: { go: 'settings/runs', to: 'Settings › Runs' }, budget: { go: 'usage', to: 'Usage and costs' }, 'usage.near': { go: 'usage', to: 'Usage and costs' }, 'usage.reached': { go: 'usage', to: 'Usage and costs' },
+    away: { go: 'settings/runs', to: 'Settings › Tasks' }, budget: { go: 'usage', to: 'Usage and costs' }, 'usage.near': { go: 'usage', to: 'Usage and costs' }, 'usage.reached': { go: 'usage', to: 'Usage and costs' },
     app: { go: 'settings/general', to: 'Settings › General, on the version', land: 'general|Version' } };
   // An update. Its title is the event's own, then what it is about, unless it says more. Info rows arrive read. `run`: the
   // world's run it is about (it must be in the case). `chat`: the chat it opens. `fix`: the step that deals with a problem;
@@ -259,7 +259,7 @@
 
   // The avatar's rings, outside in: Session, then the long window (a week; a day or a month where that is the only
   // one), each its tightest connected provider's live usage; a ring nobody reports is not drawn. Money is not a ring: a budget
-  // lives in Settings › Runs and its figures in Usage and costs.
+  // lives in Settings › Tasks and its figures in Usage and costs.
   function rings(c, warnAt) {
     const out = [];
     for (const [slot, kinds] of [['session', ['session']], ['long', LONG]]) {
