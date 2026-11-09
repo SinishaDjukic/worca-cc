@@ -48,21 +48,24 @@ test('chosen server + required server; others denied; required gets ALL tools (R
   });
   assert.ok(p.grants.includes(toolId('github', 'search')));
   assert.ok(!p.grants.includes('mcp__github'));
-  assert.ok(p.grants.includes('mcp__audit'));                       // team-required => wildcard
+  assert.ok(!p.grants.includes('mcp__audit'));                      // team-required => every listed tool, by name, no wildcard
+  assert.ok(p.grants.includes(toolId('audit', 'scan')) && p.grants.includes(toolId('audit', 'report')));
   assert.ok(p.disallowed.includes('mcp__docs'));                    // not chosen, not required
   assert.ok(p.disallowed.includes(toolId('github', 'merge')));      // known, not chosen: explicit deny
   assert.equal(p.record.servers.find((s) => s.server === POL).tools, 'all');
   assert.deepEqual(p.record.servers.find((s) => s.server === POL).toolNames, ['scan', 'report']);
 });
 
-test('All tools + excluded: wildcard grant, explicit deny per excluded tool, new tool flows in (R-po-15, 16; A-1)', () => {
+test('All tools + excluded: listed tools granted by name, explicit deny per excluded tool, a newly listed tool is granted (R-po-15, 16; A-1)', () => {
   const m = mcp();
   m.copies[0].tools.push('brand_new');
   const p = planAgentCapabilities({
     access: { mcpAccess: [{ server: GH, tools: 'all', reviewedTools: ['search', 'create_pr', 'merge'], excludedTools: ['merge'] }] },
     mcp: m, skills: skills(),
   });
-  assert.ok(p.grants.includes('mcp__github'));
+  assert.ok(!p.grants.includes('mcp__github'));
+  assert.ok(p.grants.includes(toolId('github', 'search')) && p.grants.includes(toolId('github', 'brand_new')));
+  assert.ok(!p.grants.includes(toolId('github', 'merge')));
   assert.ok(p.disallowed.includes(toolId('github', 'merge')));
   const rec = p.record.servers.find((s) => s.server === GH);
   assert.deepEqual(rec.toolNames, ['search', 'create_pr', 'brand_new']);   // new tool received while still unreviewed
@@ -71,8 +74,16 @@ test('All tools + excluded: wildcard grant, explicit deny per excluded tool, new
 
 test('a required server ignores excludedTools (A-6)', () => {
   const p = planAgentCapabilities({ access: { mcpAccess: [{ server: POL, tools: 'all', excludedTools: ['scan'] }] }, mcp: mcp(), skills: skills() });
-  assert.ok(p.grants.includes('mcp__audit'));
+  assert.ok(p.grants.includes(toolId('audit', 'scan')));
   assert.ok(!p.disallowed.includes(toolId('audit', 'scan')));
+});
+
+test('All tools on a server with no listed tools: nothing granted, no wildcard, and the run warns', () => {
+  const m = mcp();
+  m.copies[0].tools = undefined;
+  const p = planAgentCapabilities({ access: { mcpAccess: [{ server: GH, tools: 'all' }] }, mcp: m, skills: skills() });
+  assert.ok(!p.grants.some((g) => g.startsWith('mcp__github')));
+  assert.ok(warningLines(p, 'dev').some((l) => l.includes('no listed tools')));
 });
 
 test('native servers: chosen is granted, unchosen eligible is denied, ineligible passes through (M4)', () => {
@@ -107,7 +118,7 @@ test('a chosen native server the run does not provide is missing, with the calle
 
 test('a team-required server the agent did not choose is still received (R-po-12)', () => {
   const p = planAgentCapabilities({ access: { mcpAccess: [{ server: DOCS, tools: 'all' }] }, mcp: mcp(), skills: skills() });
-  assert.ok(p.grants.includes('mcp__audit'));
+  assert.ok(p.grants.includes(toolId('audit', 'scan')) && p.grants.includes(toolId('audit', 'report')));
 });
 
 test('skills: chosen + team-required only (R-po-6, 12)', () => {
