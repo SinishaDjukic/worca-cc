@@ -273,7 +273,9 @@ test('board 30: a file server, a server in your own settings, other engines, and
     "Wiki files is switched off: Worca can't pretend for servers from a project file.",
     "My github is switched off: Worca can't pretend for servers in your own Claude Code settings.",
     "Steps on Codex can still use connectors from Codex's own settings. Pretend can't stop those.",
+    "Steps on Codex still use Codex's own plugins and settings. Pretend switches off only Claude Code's.",
     "Steps on Gemini can still use connectors from Gemini's own settings. Pretend can't stop those.",
+    "Steps on Gemini still use Gemini's own plugins and settings. Pretend switches off only Claude Code's.",
   ]);
   assert.equal(doc.querySelector('.wft-caution').hidden, true, 'no script step, no caution');
   const one = openTv({ examples: [{ id: 1, name: 'A', tries: 1 }] }, { a: null });

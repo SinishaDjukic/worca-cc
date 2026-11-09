@@ -67,6 +67,7 @@ export const ICONS = Object.freeze({
   skill: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"></path>',
   layers: '<path d="M12 3l9 4.5-9 4.5-9-4.5z"></path><path d="M3 12l9 4.5 9-4.5"></path><path d="M3 16.5l9 4.5 9-4.5"></path>',
   none: '<rect x="5" y="5" width="14" height="14" rx="3" stroke-dasharray="3 3"></rect>',
+  off: '<circle cx="12" cy="12" r="8.5"></circle><path d="M6 18L18 6"></path>',   // switched off (board 34)
 });
 
 const px = (size) => (Number(size) > 0 ? Number(size) : 16);

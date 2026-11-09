@@ -6,7 +6,8 @@ import { fmtUsd, andList, parseUsd } from '../../../src/shared/workflow-tests/ch
 import { estimateOf, fmtUsdRange, aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
 import { allOnProject, leftOutText, leftOutBlockedText, NONE_READY_TEXT, LOCK_LEAD, LOCK_REST, REAL_BLOCKED_HINT, DISK_KEY, TIME_KEY, diskRow, aboutDuration, SETUP_TAKES_LEAD, setupTakesRest,
-  pickerNoneText, fromRunIntro, WHERE_TITLE, STARTS_FROM_RUN, pastRunProjectNote, DEV_CAPTION, SETUP_LABEL, SETUP_HINT_PAST }
+  pickerNoneText, fromRunIntro, WHERE_TITLE, STARTS_FROM_RUN, pastRunProjectNote, DEV_CAPTION, SETUP_LABEL, SETUP_HINT_PAST,
+  PLUGINS_OFF_PERSONAL, PLUGINS_OFF_PROJECT, pluginsEngineNoteLine }
   from '../../../src/shared/workflow-tests/project-text.mjs';
 
 /** Auto's id (src/core/graph/builtin-workflows.mjs AUTO_WORKFLOW_ID; the browser cannot load /src/core, and the dialogs
@@ -434,7 +435,12 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
           line('x', [`${o.name} is switched off: `, link, ' so Worca knows its tools.']);
         } else line('x', [`${o.name} is switched off for this test.`]);   // a reason a newer server added (controller-approved copy)
       }
-      for (const label of c.engines || []) line('alert', [engineNoteLine(label)]);
+      // 3b (D70, P44): what Pretend switches off in Claude Code, then each other engine's own setup (P43).
+      if (c.personalOff) {
+        line('off', [PLUGINS_OFF_PERSONAL]);
+        if (projectChosen()) line('off', [PLUGINS_OFF_PROJECT]);
+      }
+      for (const label of c.engines || []) { line('alert', [engineNoteLine(label)]); line('alert', [pluginsEngineNoteLine(label)]); }
     }
     notes.hidden = !notes.children.length;
     const sc = scriptCaution(c ? c.scripts : [], c && quick.checked ? c.quickScripts : []);

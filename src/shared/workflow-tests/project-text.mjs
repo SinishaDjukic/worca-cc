@@ -282,3 +282,8 @@ export const FILES_HINT_CODE = 'test/**';
 export const FILES_HINT_REST = ' for everything in a folder.';
 export const MOST_FILES_LABEL = 'Most files';
 export const MOST_FILES_HINT = 'Added, changed and removed files all count.';
+
+// 3b, board 34 (P43, P44): what Pretend switches off.
+export const PLUGINS_OFF_PERSONAL = 'Your personal Claude Code plugins, skills and hooks are switched off.';
+export const PLUGINS_OFF_PROJECT = "The project's own instructions stay on. Its hooks and plugins are switched off.";
+export const pluginsEngineNoteLine = (label) => `Steps on ${label} still use ${label}'s own plugins and settings. Pretend switches off only Claude Code's.`;

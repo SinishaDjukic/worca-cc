@@ -39,6 +39,7 @@ export const fileServerOffLine = (name) => `${name} is switched off: ${FILE_SERV
 /** Board 30's line for steps on another engine (user decision 2026-10-27: pretend stays allowed, the dialog warns):
  *  `--strict-mcp-config` and the claude.ai belt are Claude Code's, so that engine's own MCP settings still load. */
 export const engineNoteLine = (label) => `Steps on ${label} can still use connectors from ${label}'s own settings. Pretend can't stop those.`;
+export { pluginsEngineNoteLine } from '../../shared/workflow-tests/project-text.mjs';
 
 export function standInDef(name, toolsFile, logFile) {
   return { type: 'stdio', command: process.execPath, args: [MOCK_CONNECTOR_PATH, '--server', name, '--tools', toolsFile, '--log', logFile] };
