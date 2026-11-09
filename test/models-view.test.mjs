@@ -408,7 +408,7 @@ test('editor: a new model picks its connection first; through a provider it is C
   conn.querySelector('.mv-conn-model').value = 'gpt-5.5';
   applyConnectionModeIn(el);
   assert.equal(conn.querySelector('.mv-conn-api').value, 'openai-responses');
-  assert.equal(conn.querySelector('.mv-conn-runs').textContent, "Runs on Claude Code (through worca's bridge) and Codex (directly).");
+  assert.equal(conn.querySelector('.mv-conn-runs').textContent, "Runs on Claude Code (through worca's bridge) and OpenAI Codex (directly).");
   // The id follows the provider and the upstream model until typed: gpt-5.5 itself is Codex's own sign-in.
   assert.equal(el.querySelector('.mv-id').value, 'openai-gpt-5.5');
   const { body } = collectModelEditor(el);
@@ -438,7 +438,7 @@ test('editor (edit): a stored Codex endpoint model keeps codex\'s rules — its 
   assert.deepEqual([...conn.querySelectorAll('.mv-conn-api option')].map((o) => o.value), ['openai-responses'], 'codex no longer speaks chat completions');
   assert.equal(conn.querySelector('.mv-conn-caps').hidden, true, 'the bridge\'s capability pins do not apply');
   assert.match(conn.querySelector('.mv-conn-note').textContent, /Codex calls the endpoint’s Responses API itself/);
-  assert.equal(conn.querySelector('.mv-conn-runs').textContent, "Runs on Claude Code (through worca's bridge) and Codex (directly).");
+  assert.equal(conn.querySelector('.mv-conn-runs').textContent, "Runs on Claude Code (through worca's bridge) and OpenAI Codex (directly).");
   const { body } = collectModelEditor(edit);
   assert.deepEqual(body.env, {});
   assert.deepEqual(body.upstream, upstream);

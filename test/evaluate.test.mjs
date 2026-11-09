@@ -113,12 +113,12 @@ describe('evaluateReadiness', () => {
     } finally { rmRf(dir); }
   });
 
-  it('never throws and reports unknown levels for a missing folder', async () => {
+  it('never throws and reads a missing folder as not a git work tree', async () => {
     const report = await evaluateReadiness({ dir: '/nonexistent/path' });
     assert.ok(report);
     assert.strictEqual(report.catalogVersion, 2);
-    for (const eng of Object.values(report.engines)) assert.strictEqual(eng.level, 'unknown');
-    assert.strictEqual(report.repository.level, 'unknown');
+    for (const eng of Object.values(report.engines)) assert.strictEqual(eng.level, 'not-ready');
+    assert.deepStrictEqual(report.repository.failing, ['git.repo']);
   });
 
   it('never throws when called with no arguments', async () => {

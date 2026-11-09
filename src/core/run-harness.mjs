@@ -2895,7 +2895,8 @@ export class RunHarness extends EventEmitter {
     });
     // Agent-readiness snapshot of the primary project's REAL dir, for the run's own engine.
     // Merged right after the Phase-1 write so every later updateRunManifest keeps the key.
-    // Best-effort and cache-free: a failure records nothing, and the Projects chip is untouched.
+    // Best-effort and cache-free: a failure records nothing, and the Projects chip is untouched. Capped (SNAPSHOT_TIMEOUT_MS),
+    // so a slow git never holds the run start.
     if (detached) await writeReadinessSnapshot({
       runRoot: this.runRoot, projectDir: primary.projectDir,
       projectKey: primary.projectKey, engine: this.claude.engine,

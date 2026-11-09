@@ -35,7 +35,10 @@ test('renderAskEngineSection: with no Codex model offered, Codex is marked unava
   renderAskEngineSection(host, { catalog: CATALOG.filter((m) => m.engine === 'claude'), askEngine: 'codex', defaults: { claude: { model: 'claude-opus-5-5', effort: 'high' } } });
   assert.deepEqual([...host.querySelectorAll('.inherit-field')].map((f) => f.dataset.setting), ['askEngine', 'models.claude.ask']);
   assert.equal(host.querySelector('[data-setting="askEngine"] select option[value="codex"]').textContent, 'OpenAI Codex (unavailable)');
-  assert.match(host.querySelector('[data-setting="askEngine"]').textContent, /New chats start on Claude\./);
+  assert.match(host.querySelector('[data-setting="askEngine"]').textContent, /New chats start on Claude Code\./);
+  const own = trackDom(new JSDOM('<div id="h"></div>')).window.document.getElementById('h');
+  renderAskEngineSection(own, { catalog: CATALOG.filter((m) => m.engine === 'claude'), askEngine: 'claude', defaults: { claude: { model: 'claude-opus-5-5', effort: 'high' } } });
+  assert.equal(own.querySelector('[data-setting="askEngine"] select option[value="claude"]').textContent, 'Claude Code', 'the picker names Claude Code like its other options');
 });
 
 function askHint(locked, catalog = CATALOG.filter((m) => m.engine === 'claude')) {
@@ -51,7 +54,7 @@ test('renderAskEngineSection: broker-locked engines share one sentence; "start o
   assert.match(text, /Chat on OpenAI Codex, GitHub Copilot, Gemini CLI, Goose, OpenCode and Qwen Code is off while the credential broker is on\./);
   assert.equal((text.match(/Chat on /g) || []).length, 1);
   assert.equal((text.match(/start on Claude/g) || []).length, 1);
-  assert.ok(text.endsWith('New chats start on Claude.'));
+  assert.ok(text.endsWith('New chats start on Claude Code.'));
 });
 
 test('renderAskEngineSection: a mix of reasons gives one sentence per reason; one engine reads naturally', () => {
@@ -61,16 +64,16 @@ test('renderAskEngineSection: a mix of reasons gives one sentence per reason; on
   assert.equal((mixed.match(/start on Claude/g) || []).length, 1);
   const all = CATALOG.filter((m) => m.engine === 'claude').concat(['copilot', 'gemini', 'goose', 'opencode', 'qwen'].map((engine) => ({ id: `${engine}-m`, label: engine, engine })));
   const one = askHint(['codex'], all);
-  assert.match(one, /Chat on OpenAI Codex is off while the credential broker is on\. New chats start on Claude\.$/);
+  assert.match(one, /Chat on OpenAI Codex is off while the credential broker is on\. New chats start on Claude Code\.$/);
 });
 
 test('renderAskEngineSection: engines unavailable on this version share one sentence', () => {
   const rest = ['gemini', 'goose', 'opencode', 'qwen'].map((engine) => ({ id: `${engine}-m`, label: engine, engine }));
   const catalog = CATALOG.filter((m) => m.engine === 'claude').concat(rest);
   const two = askHint([], catalog);
-  assert.match(two, /Chat on OpenAI Codex and GitHub Copilot is unavailable on these engine versions\. New chats start on Claude\.$/);
+  assert.match(two, /Chat on OpenAI Codex and GitHub Copilot is unavailable on these engine versions\. New chats start on Claude Code\.$/);
   const one = askHint([], catalog.concat([{ id: 'copilot-m', label: 'copilot', engine: 'copilot' }]));
-  assert.match(one, /Chat on OpenAI Codex is unavailable on this codex version\. New chats start on Claude\.$/);
+  assert.match(one, /Chat on OpenAI Codex is unavailable on this codex version\. New chats start on Claude Code\.$/);
 });
 
 test('askPatchToSettingsBody maps the field ids onto the settings keys', () => {

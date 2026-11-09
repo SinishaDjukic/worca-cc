@@ -79,6 +79,24 @@ describe('renderReadinessChip edge cases', () => {
     assert.strictEqual(renderReadinessChip(null), null);
     assert.strictEqual(renderReadinessChip({ level: 'unknown', failingCount: 0, passed: 0, applicable: 0 }, { doc: doc() }), null);
   });
+  it('a non-git directory reads not-ready and gets a chip', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { evaluateReadiness } = await import('../src/core/repo-readiness/evaluate.mjs');
+    const { buildReport, summaryOf } = await import('../src/core/repo-readiness/report.mjs');
+    const { usedEngines } = await import('../src/core/repo-readiness/used.mjs');
+    const dir = mkdtempSync(join(tmpdir(), 'rd-norepo-'));
+    try {
+      const base = await evaluateReadiness({ dir });
+      const usage = usedEngines({ engines: Object.keys(base.engines), runEngine: 'claude', files: base.files });
+      const s = summaryOf(buildReport(base, usage));
+      assert.equal(s.level, 'not-ready');
+      assert.equal(s.failingCount, 1);
+      const chip = renderReadinessChip(s, { doc: doc() });
+      assert.ok(chip.textContent.startsWith('Not agent-ready'));
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
   it('a level label is plain words on a tinted pill', () => {
     const l = renderLevelLabel('unused', { doc: doc() });
     assert.equal(l.className, 'rd-lbl rd-unused');

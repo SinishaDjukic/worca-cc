@@ -77,7 +77,8 @@ test('the editor words: a suggested id and what a connection runs on', () => {
   assert.equal(suggestModelHandle('Org/Model X'), 'gw-org-model-x');
   assert.match(runsOnText({ kind: 'signin', engine: 'codex' }), /^Runs on OpenAI Codex only/);
   assert.match(runsOnText({ kind: 'env' }), /^Runs on Claude Code only/);
-  assert.equal(runsOnText({ kind: 'provider', provider: 'openai', api: 'openai-responses', codex: true }), "Runs on Claude Code (through worca's bridge) and Codex (directly).");
+  assert.equal(runsOnText({ kind: 'provider', provider: 'openai', api: 'openai-responses', codex: true }), "Runs on Claude Code (through worca's bridge) and OpenAI Codex (directly).");
+  assert.equal(runsOnText({ kind: 'provider', provider: 'openai', api: 'openai-chat' }), "Runs on Claude Code, through worca's bridge. OpenAI Codex reaches only an OpenAI-compatible Responses endpoint without OpenRouter routing.");
 });
 
 test('catalog: an OpenAI Responses endpoint added once runs on Claude Code and Codex; a run on either keeps it', async () => {

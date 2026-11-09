@@ -4,7 +4,8 @@
 // Every git call is async (it runs in the UI server) and takes its env from guardedGitEnv (security G2): `git status`
 // refreshes the index, which runs core.fsmonitor, and the check runs right after a run that could write .git/config.
 import { execFile } from 'node:child_process';
-import { statSync, existsSync, readFileSync } from 'node:fs';
+import { statSync, existsSync } from 'node:fs';
+import { open, readdir, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { INTERACTIVE_TIMEOUT_MS } from '../git-sync.mjs';
@@ -33,9 +34,16 @@ export const MANIFESTS = Object.freeze([
 ]);
 
 // Instruction files whose TEXT a check needs (single-source cross-reference, instructionMentions).
-// Read under the byte cap so a huge file cannot blow the buffer.
+// Only the first TEXT_READ_CAP bytes are read, so a huge file is never loaded whole.
 const TEXT_CANDIDATES = Object.freeze(['CLAUDE.md', 'AGENTS.md', '.github/copilot-instructions.md']);
-const TEXT_READ_CAP = 256 * 1024;
+export const TEXT_READ_CAP = 256 * 1024;
+// Manifests are read up to this many bytes; a longer one is cut and its JSON.parse fails (checks.mjs reads it as unreadable).
+export const MANIFEST_READ_CAP = 1024 * 1024;
+
+// Rule directories whose files a Folder project lists from disk (the engines' instruction globs need a file list).
+const RULE_DIRS = Object.freeze(['.claude/rules', '.github/instructions', '.cursor/rules']);
+const RULE_WALK_CAP = 2000;
+const RULE_DEPTH = 8;
 
 /**
  * One git call under the evaluation's deadline. Resolves {ok, out, timedOut, refused}; never rejects. `refused` is the
@@ -61,24 +69,39 @@ async function gitOut(dir, args, deadline, { input, maxBuffer = 64 * 1024 * 1024
   });
 }
 
+/**
+ * The work tree and HEAD, as two calls so a repository with no commits is still a repo (headSha null).
+ * `ok` is false only when the work tree call fails; `refused` comes from it.
+ */
+async function headOf(dir, deadline, gitOpts) {
+  const top = await gitOut(dir, ['rev-parse', '--show-toplevel'], deadline, gitOpts);
+  if (!top.ok) return { ok: false, headSha: null, timedOut: top.timedOut, refused: top.refused ?? null };
+  const head = await gitOut(dir, ['rev-parse', '--verify', '-q', 'HEAD'], deadline, gitOpts);
+  return { ok: true, headSha: head.ok ? head.out.trim() || null : null, timedOut: head.timedOut, refused: null };
+}
+
 /** Never throws. Resolves a Facts object; partial on timeout. */
 export async function collectFacts(dir, { now = Date.now(), timeoutMs = INTERACTIVE_TIMEOUT_MS, folder = false } = {}) {
   const deadline = now + timeoutMs;
   const f = {
     dir, isRepo: false, headSha: null, tracked: null, trackedSet: null,
     truncated: false, instructionStatus: {}, sizes: {}, manifests: {}, texts: {},
-    heavyIgnored: {}, heavyPresent: [], timedOut: false, error: null, folder,
+    heavyIgnored: {}, heavyPresent: [], timedOut: false, error: null, folder, listed: null,
   };
   // A Folder project runs on a copy of the folder, and worca never runs git in it: read the files from disk only.
-  if (folder) { readFiles(dir, f); return f; }
+  if (folder) {
+    await readFiles(dir, f);
+    f.listed = [...INSTRUCTION_CANDIDATES.filter((c) => f.sizes[c] !== undefined), ...await walkRuleDirs(dir)];
+    return f;
+  }
   try {
     // 1) repo + HEAD
-    const top = await gitOut(dir, ['rev-parse', '--show-toplevel', 'HEAD'], deadline);
-    if (top.refused) { f.error = top.refused; return f; }   // a refused config: the report is unknown, never "not a repo"
-    if (!top.ok) { f.timedOut = top.timedOut; return f; }   // not a repo → git.repo fails, rest skip
-    const lines = top.out.trim().split('\n');
+    const head = await headOf(dir, deadline);
+    if (head.refused) { f.error = head.refused; return f; }   // a refused config: the report is unknown, never "not a repo"
+    if (!head.ok) { f.timedOut = head.timedOut; return f; }   // not a repo → git.repo fails, rest skip
     f.isRepo = true;
-    f.headSha = lines[1] || null;
+    f.headSha = head.headSha;   // null in a repository with no commits
+    f.timedOut = head.timedOut;
 
     // 2) tracked set (NUL-delimited), capped
     const ls = await gitOut(dir, ['ls-files', '-z'], deadline);
@@ -99,21 +122,8 @@ export async function collectFacts(dir, { now = Date.now(), timeoutMs = INTERACT
       f.instructionStatus[rec.slice(3)] = rec.slice(0, 2);   // '??' untracked, ' M' modified, 'A ' staged
     }
 
-    // 4) sizes of candidates present on disk
-    for (const c of INSTRUCTION_CANDIDATES) {
-      const p = join(dir, c);
-      try { if (existsSync(p)) f.sizes[c] = statSync(p).size; } catch { /* ignore */ }
-    }
-
-    // 5) tracked manifests + bounded instruction texts
-    for (const m of MANIFESTS) {
-      if (f.trackedSet && !f.trackedSet.has(m)) continue;
-      try { f.manifests[m] = readFileSync(join(dir, m), 'utf8'); } catch { /* ignore */ }
-    }
-    for (const t of TEXT_CANDIDATES) {
-      if (f.trackedSet && !f.trackedSet.has(t)) continue;   // only tracked text matters
-      try { f.texts[t] = readFileSync(join(dir, t), 'utf8').slice(0, TEXT_READ_CAP); } catch { /* ignore */ }
-    }
+    // 4) sizes of candidates present on disk; 5) tracked manifests + bounded instruction texts
+    await readFiles(dir, f, f.trackedSet);
 
     // 6) heavy dirs present on disk + git check-ignore
     for (const d of HEAVY_DIRS) if (existsSync(join(dir, d))) f.heavyPresent.push(d);
@@ -151,16 +161,17 @@ export function fingerprintOf(facts) {
  * full collection: the cache's per-read check (cache.mjs). Never throws; a non-repo reads as collectFacts' does.
  */
 export async function quickFingerprint(dir, { timeoutMs = INTERACTIVE_TIMEOUT_MS, folder = false } = {}) {
-  if (folder) {   // no git: the candidates' and manifests' sizes and mtimes
-    const parts = [...INSTRUCTION_CANDIDATES, ...MANIFESTS].map((c) => { try { const st = statSync(join(dir, c)); return `${c}:${st.size}:${st.mtimeMs}`; } catch { return ''; } });
+  if (folder) {   // no git: the candidates', manifests' and rule files' sizes and mtimes
+    const files = [...INSTRUCTION_CANDIDATES, ...MANIFESTS, ...await walkRuleDirs(dir)];
+    const parts = files.map((c) => { try { const st = statSync(join(dir, c)); return `${c}:${st.size}:${st.mtimeMs}`; } catch { return ''; } });
     return createHash('sha1').update(`folder\n${parts.join('\n')}`).digest('hex');
   }
   const facts = { headSha: null, instructionStatus: {} };
   const deadline = Date.now() + timeoutMs;
   const small = { maxBuffer: 4 * 1024 * 1024 };
-  const top = await gitOut(dir, ['rev-parse', '--show-toplevel', 'HEAD'], deadline, small);
-  if (top.ok) {
-    facts.headSha = top.out.trim().split('\n')[1] || null;
+  const head = await headOf(dir, deadline, small);
+  if (head.ok) {
+    facts.headSha = head.headSha;
     const st = await gitOut(dir, ['status', '--porcelain', '-z', '--', ...INSTRUCTION_CANDIDATES], deadline, small);
     for (const rec of (st.ok ? st.out : '').split('\0')) {
       if (rec.length < 4) continue;
@@ -170,11 +181,77 @@ export async function quickFingerprint(dir, { timeoutMs = INTERACTIVE_TIMEOUT_MS
   return fingerprintOf(facts);
 }
 
-/** Sizes of the candidate instruction files, manifests and bounded instruction texts, read from disk (no git). */
-function readFiles(dir, f) {
+/**
+ * The files the instruction globs can match: the tracked set in a git project, the listed files in a Folder project
+ * (null when neither is known). `trackedSet` alone keeps meaning "tracked by git".
+ */
+export function presentFiles(facts) {
+  if (facts?.trackedSet) return facts.trackedSet;
+  return facts?.listed ? new Set(facts.listed) : null;
+}
+
+/**
+ * Sizes of the candidate instruction files, manifests and bounded instruction texts, read from disk (no git).
+ * With `tracked`, only tracked manifests and texts are read.
+ */
+async function readFiles(dir, f, tracked = null) {
+  const keep = (p) => !tracked || tracked.has(p);
   for (const c of INSTRUCTION_CANDIDATES) {
     try { const p = join(dir, c); if (existsSync(p)) f.sizes[c] = statSync(p).size; } catch { /* ignore */ }
   }
-  for (const m of MANIFESTS) { try { f.manifests[m] = readFileSync(join(dir, m), 'utf8'); } catch { /* absent */ } }
-  for (const t of TEXT_CANDIDATES) { try { f.texts[t] = readFileSync(join(dir, t), 'utf8').slice(0, TEXT_READ_CAP); } catch { /* absent */ } }
+  for (const m of MANIFESTS) {
+    if (!keep(m)) continue;
+    const text = await readCapped(join(dir, m), MANIFEST_READ_CAP);
+    if (text !== null) f.manifests[m] = text;
+  }
+  for (const t of TEXT_CANDIDATES) {
+    if (!keep(t)) continue;   // only tracked text matters
+    const text = await readCapped(join(dir, t), TEXT_READ_CAP);
+    if (text !== null) f.texts[t] = text;
+  }
+}
+
+/** The first `cap` bytes of a file as UTF-8; null on any error (absent, a directory, unreadable). */
+async function readCapped(path, cap) {
+  let fh;
+  try {
+    fh = await open(path, 'r');
+    const { size } = await fh.stat();
+    const buf = Buffer.alloc(Math.min(size, cap));
+    const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+    return buf.subarray(0, bytesRead).toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    await fh?.close().catch(() => {});
+  }
+}
+
+/**
+ * Files under the rule directories, as sorted posix paths relative to `dir`. Symlinks are never followed; the walk
+ * stops silently after RULE_WALK_CAP entries or RULE_DEPTH levels. A missing directory gives nothing.
+ */
+async function walkRuleDirs(dir) {
+  const out = [];
+  let seen = 0;
+  const walk = async (rel, depth) => {
+    if (depth > RULE_DEPTH || seen >= RULE_WALK_CAP) return;
+    let entries;
+    try { entries = await readdir(join(dir, rel), { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (++seen > RULE_WALK_CAP) return;
+      if (e.isSymbolicLink()) continue;
+      const p = `${rel}/${e.name}`;
+      if (e.isDirectory()) await walk(p, depth + 1);
+      else if (e.isFile()) out.push(p);
+    }
+  };
+  for (const d of RULE_DIRS) {
+    // Both the parent (.cursor) and the rule dir itself: a symlink in either would list files outside the folder.
+    try {
+      if ((await lstat(join(dir, d.split('/')[0]))).isSymbolicLink() || (await lstat(join(dir, d))).isSymbolicLink()) continue;
+    } catch { continue; }
+    await walk(d, 1);
+  }
+  return out.sort();
 }

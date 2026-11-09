@@ -7,7 +7,7 @@ import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { readRunManifest } from '../src/core/run-manifest.mjs';
-import { writeReadinessSnapshot } from '../src/core/repo-readiness/snapshot.mjs';
+import { writeReadinessSnapshot, SNAPSHOT_TIMEOUT_MS } from '../src/core/repo-readiness/snapshot.mjs';
 import { getCachedOrEvaluate, readinessSummary } from '../src/core/repo-readiness/cache.mjs';
 import { writeProjectSettings } from '../src/core/settings-cascade.mjs';
 
@@ -165,6 +165,35 @@ describe('writeReadinessSnapshot', () => {
     const call = body.indexOf('if (detached) await writeReadinessSnapshot(');
     assert.ok(guard !== -1 && call > guard, 'snapshot follows the Phase-1 manifest write');
     assert.match(body.slice(call), /engine: this\.claude\.engine/);
+    const args = body.slice(call, body.indexOf('});', call));
+    assert.doesNotMatch(args, /timeoutMs/, 'the harness takes the snapshot\'s own cap');
     assert.ok(!/getCachedOrEvaluate/.test(src), 'the harness never writes the shared readiness cache');
+    const snap = readFileSync(join(HARNESS, '..', 'repo-readiness', 'snapshot.mjs'), 'utf8');
+    assert.match(snap, /evaluateReadiness\(\{[^}]*timeoutMs[,\s}]/, 'evaluateReadiness gets the capped timeoutMs');
+    assert.doesNotMatch(snap, /INTERACTIVE_TIMEOUT_MS/);
+  });
+
+  it('SNAPSHOT_TIMEOUT_MS is at most 1500', () => {
+    assert.ok(SNAPSHOT_TIMEOUT_MS <= 1500);
+  });
+
+  it('the snapshot never holds a run start past its cap', { skip: process.platform === 'win32' ? 'the git shim is a POSIX shell script' : false }, async () => {
+    const shim = mkdtempSync(join(tmpdir(), 'snap-gitshim-'));
+    writeFileSync(join(shim, 'git'), '#!/bin/sh\nexec sleep 10\n', { mode: 0o755 });
+    const projectDir = mkdtempSync(join(tmpdir(), 'proj-'));
+    const runRoot = runRootWith({ pipelineId: 'p-cap' });
+    const prev = process.env.PATH;
+    process.env.PATH = `${shim}:${prev}`;
+    try {
+      const t0 = Date.now();
+      await writeReadinessSnapshot({ runRoot, projectDir, projectKey: 'snap-cap', engine: 'claude' });
+      assert.ok(Date.now() - t0 < 5000, `took ${Date.now() - t0} ms`);
+      const manifest = await readRunManifest(runRoot);
+      assert.equal(manifest.pipelineId, 'p-cap');
+      assert.notEqual(manifest.readiness?.level, 'not-ready', 'a git timeout is never recorded as not-ready');
+    } finally {
+      process.env.PATH = prev;
+      for (const d of [shim, projectDir, runRoot]) rmSync(d, { recursive: true, force: true });
+    }
   });
 });

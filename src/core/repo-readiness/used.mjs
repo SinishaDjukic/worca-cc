@@ -1,12 +1,14 @@
 // src/core/repo-readiness/used.mjs
 // Which engines a project uses, and why (spec 4.6). Pure: the caller passes settings, the run
 // engine, run-history counts and the facts' tool files. AGENTS.md alone marks no engine.
+import { presentFiles } from './facts.mjs';
+
 export const HISTORY_DAYS = 90;
 const SETTINGS = new Set(['used', 'unused']);
 
-/** Tool-specific instruction files in the tracked set → { engine: text shown after "in repo" }. */
+/** Tool-specific instruction files in the tracked set (a Folder project's listed files) → { engine: text shown after "in repo" }. */
 export function toolFiles(facts) {
-  const t = facts?.trackedSet;
+  const t = presentFiles(facts);
   if (!t) return {};
   const any = (prefix) => [...t].some((p) => p.startsWith(prefix));
   const out = {};

@@ -1275,10 +1275,15 @@ async function cmdReadiness(argv) {
   let name = null;
   let key = null;
   let vcs = null;
-  if (opts.project) {
-    const found = (await listProjects()).find((p) => p.key === opts.project || p.name.toLowerCase() === opts.project.toLowerCase());
-    if (found) ({ path: dir, name, key, vcs } = found);
-    else dir = resolve(opts.project);
+  const found = opts.project
+    ? (await listProjects()).find((p) => p.key === opts.project || p.name.toLowerCase() === opts.project.toLowerCase())
+    : null;
+  if (found) ({ path: dir, name, key, vcs } = found);
+  else {
+    // A path (or the cwd) of a registered project is that project, so a Folder project keeps folder mode.
+    dir = resolve(opts.project || process.cwd());
+    const byPath = getProjectByPath(dir);
+    if (byPath) ({ path: dir, name, key, vcs } = byPath);
   }
   if (!existsSync(dir) || !statSync(dir).isDirectory()) return err(`project not found: ${opts.project || dir} (not a registered project or an existing directory)`);
   name = name || basename(dir);

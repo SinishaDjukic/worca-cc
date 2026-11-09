@@ -116,14 +116,14 @@ export function suggestModelHandle(upstreamId, provider = 'gw') {
   return `${provider || 'gw'}-${base}`;
 }
 
-/** "Runs on Claude Code and Codex — …" for the model editor: what a connection reaches, in words. */
+/** "Runs on Claude Code and OpenAI Codex — …" for the model editor: what a connection reaches, in words. */
 export function runsOnText(connection) {
   const hs = harnessesOf({ connection });
   if (connection.kind === 'signin') return `Runs on ${engineLabel(connection.engine)} only — a subscription works in its own harness.`;
   if (connection.kind === 'env') return 'Runs on Claude Code only — the routing env is Claude Code\'s.';
   return hs.includes('codex')
-    ? 'Runs on Claude Code (through worca\'s bridge) and Codex (directly).'
-    : 'Runs on Claude Code, through worca\'s bridge. Codex reaches only an OpenAI-compatible Responses endpoint without OpenRouter routing.';
+    ? `Runs on Claude Code (through worca's bridge) and ${engineLabel('codex')} (directly).`
+    : `Runs on Claude Code, through worca's bridge. ${engineLabel('codex')} reaches only an OpenAI-compatible Responses endpoint without OpenRouter routing.`;
 }
 
 /** Engines that own catalog models, for pickers that group by harness. */

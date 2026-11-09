@@ -13117,13 +13117,13 @@ if (el.projectsSyncAll) {
 // ---- Agent readiness: a chip per project row, its popover, the ignore list and the per-tool setting ----------
 // The row chip paints from the cache-only `readiness` summary on GET /api/projects. A project with no
 // summary yet is evaluated once per page load (warmReadiness) and the summaries are re-read after.
-// The popover shows the final report (GET /api/projects/:key/readiness): only the tools the project uses are
+// The row chip is status only (the whole row opens the project page); the project page header's chip opens the
+// popover with the final report (GET /api/projects/:key/readiness): only the tools the project uses are
 // judged. `readiness-changed` frames refetch it. Every string in a report is server data: textContent only.
 const readinessReports = {};        // projectKey → last full report
-const readinessChips = new Map();   // projectKey → { chip, menu, fly }: one popover per project, reused across repaints
-const readinessHeadChips = new Map();   // projectKey → the same record for the project page header's chip
-/** Every chip record of one project (the list row's and the project page header's), or of all projects. */
-const readinessRecs = (key) => [readinessChips, readinessHeadChips].flatMap((m) => (key ? [m.get(key)] : [...m.values()])).filter(Boolean);
+const readinessHeadChips = new Map();   // projectKey → { chip, menu, fly }: the header chip's popover, reused across repaints
+/** The header chip record of one project, or of all projects. */
+const readinessRecs = (key) => (key ? [readinessHeadChips.get(key)] : [...readinessHeadChips.values()]).filter(Boolean);
 const readinessTried = new Set();   // keys the cold-start warm-up already asked for
 let readinessOff = false;           // GET answered {disabled: true}: no chips, no more asking
 
@@ -13183,32 +13183,27 @@ async function refreshReadiness(key, { refresh = false, cards = true } = {}) {
   if (cards) for (const card of document.querySelectorAll('.readiness-settings-card')) if (card.dataset.key === key) void fillReadinessCard(card, key);
 }
 
-// Show the Projects page with one project's breakdown open (the add-project toast's action).
+// Show one project's page with its report open (the add-project toast's action): the header chip opens it once painted.
 let readinessOpenOnPaint = null;
 function openReadinessBreakdown(key) {
   readinessOpenOnPaint = key;
-  if (currentShownView === 'projects') paintReadinessChips();
-  else location.hash = 'projects';
+  if (location.hash === `#projects/${key}` && projDetail && projDetail.key === key) paintReadinessHeadChip(projDetail.screen, key);
+  else location.hash = `projects/${key}`;
 }
 
+// The row chip is status only, like the row's other chips: the row stays a row and the whole of it opens the page. The
+// row names the chip in aria-describedby, so its state is read with the row.
 function paintReadinessChips() {
   for (const item of document.querySelectorAll('#projects-list .pl-item[data-key]')) {
     const key = item.dataset.key;
     const p = projectByKey(key);
     const slot = item.querySelector('.pl-rd-slot');
-    const fresh = readinessOff || !slot ? null : renderReadinessChip(p && p.readiness, { doc: document });
-    let rec = readinessChips.get(key);
-    if (!fresh) { if (rec) rec.chip.remove(); continue; }
-    if (rec) {
-      rec.chip.className = fresh.className;
-      rec.chip.title = fresh.title;
-      rec.chip.replaceChildren(...fresh.childNodes);
-    } else {
-      rec = newReadinessChip(key, fresh);
-      readinessChips.set(key, rec);
-    }
-    slot.appendChild(rec.chip);
-    if (readinessOpenOnPaint === key) { readinessOpenOnPaint = null; rec.chip.click(); }
+    if (!slot) continue;
+    const chip = readinessOff ? null : renderReadinessChip(p && p.readiness, { doc: document });
+    if (!chip) { slot.replaceChildren(); continue; }
+    chip.id = `pl-rd-${key.replace(/[^\w-]/g, '_')}`;
+    slot.replaceChildren(chip);
+    item.querySelector('.pl-row')?.setAttribute('aria-describedby', chip.id);
   }
 }
 
@@ -13259,6 +13254,11 @@ function paintReadinessHeadChip(screen, key) {
     readinessHeadChips.set(key, rec);
   }
   if (rec.chip.parentNode !== slot) slot.replaceChildren(rec.chip);
+  // The toast's "See what to add": open once this navigation is over (a hashchange closes every popover).
+  if (readinessOpenOnPaint === key) {
+    readinessOpenOnPaint = null;
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (rec.chip.isConnected) rec.fly.open({ focus: true }); }));
+  }
 }
 
 // The Settings card's "View report": the header chip's popover, opened once this click is over (the flyout closes on
@@ -13307,9 +13307,6 @@ function buildReadinessMenu(key, report) {
   const title = el('div', 'rp-title', 'Agent readiness');
   const p = projectByKey(key);
   title.append(el('span', 'rp-sub', p ? p.name : key));
-  const count = el('button', 'rp-count', m.countLine);
-  count.type = 'button';
-  title.append(count);
   head.append(title);
   const end = el('div', 'rp-head-end');
   if (LEVEL_WORDS[m.level]) end.append(renderLevelLabel(m.level, { doc: document }));
@@ -13339,12 +13336,10 @@ function buildReadinessMenu(key, report) {
     if (LEVEL_WORDS[t.level]) row.append(renderLevelLabel(t.level, { doc: document }));
     if (t.detail) row.append(el('span', 'rp-tool-d', t.detail));
     if (t.fix) row.append(el('span', 'rp-tool-f', t.fix));
-    if (t.runs) {
-      row.append(el('span', 'rp-hint', 'Runs use this tool. To stop judging it, change the engine in Settings.'));
-    } else {
-      const btn = el('button', 'rp-act', 'Not used here');
+    // The run engine is always judged: its "(runs use it)" reason says so, and it gets no button.
+    if (!t.runs) {
+      const btn = el('button', 'btn btn-sm btn-quiet rp-act', 'Not used here');
       btn.type = 'button';
-      btn.setAttribute('role', 'menuitem');
       btn.addEventListener('click', async () => {
         btn.disabled = true;
         const prev = await setReadinessTool(key, t.name, 'unused');
@@ -13357,14 +13352,8 @@ function buildReadinessMenu(key, report) {
     }
     body.append(row);
   }
-  if (m.notJudged.length) {
-    const line = el('div', 'rp-notjudged', `Not judged: ${m.notJudged.join(', ')}. `);
-    const link = el('a', '', 'Change in Settings');
-    link.href = `#projects/${key}/settings`;
-    link.addEventListener('click', (e) => { e.preventDefault(); openReadinessSettings(key); });
-    line.append(link);
-    body.append(line);
-  }
+  // Plain text: the foot's Settings link is the one way to change it.
+  if (m.notJudged.length) body.append(el('div', 'rp-notjudged', `Not judged: ${m.notJudged.join(', ')}.`));
 
   body.append(sec('Repository', 'Applies to every tool'));
   const GROUP = { blocker: 'Must fix', warn: 'Should fix', info: 'Advice' };
@@ -13373,7 +13362,7 @@ function buildReadinessMenu(key, report) {
       const row = el('div', 'rp-chk');
       const dot = el('span', `rp-sevdot ${sev}`);
       dot.setAttribute('aria-label', GROUP[sev]);
-      const ign = el('button', 'rp-ign', 'Ignore');
+      const ign = el('button', 'btn btn-sm btn-quiet rp-ign', 'Ignore');
       ign.type = 'button';
       ign.addEventListener('click', async () => { if (await setReadinessIgnore(key, c.id, true)) await refreshReadiness(key, { refresh: true }); });
       row.append(dot, el('span', 'rp-chk-t', c.title), ign);
@@ -13395,14 +13384,13 @@ function buildReadinessMenu(key, report) {
   for (const it of m.passed) { const li = el('li'); li.append(el('b', '', it.title), el('span', '', it.detail)); list.append(li); }
   passedBox.append(list);
   body.append(passedBox);
-  count.addEventListener('click', () => { passedBox.open = true; passedBox.scrollIntoView({ block: 'nearest' }); passedBox.querySelector('summary').focus(); });
 
   if (m.ignored.length) {
     const ignBox = box('rp-gdot', `${m.ignored.length} ignored for this project`);
     const ul = el('ul');
     for (const it of m.ignored) {
       const li = el('li');
-      const back = el('button', 'rp-ign', 'Stop ignoring');
+      const back = el('button', 'btn btn-sm btn-quiet rp-ign', 'Stop ignoring');
       back.type = 'button';
       back.addEventListener('click', async () => { if (await setReadinessIgnore(key, it.id, false)) await refreshReadiness(key, { refresh: true }); });
       li.append(el('b', '', it.title), back);
@@ -13426,39 +13414,56 @@ function buildReadinessMenu(key, report) {
   return frag;
 }
 
+// The settings PATCH replaces a whole value, so each write reads the list (or map) and writes it back. One chain per
+// project keeps those read-then-write pairs in click order: a second quick click reads what the first one wrote.
+const readinessWrites = new Map();   // projectKey → the tail of its write chain
+function queueReadinessWrite(key, fn) {
+  const next = (readinessWrites.get(key) || Promise.resolve()).then(fn, fn);
+  readinessWrites.set(key, next.catch(() => {}));
+  return next;
+}
+
 // Add (`ignored`) or drop one check id on the project's own `readiness.ignore` list. Resolves true once
-// the PATCH landed; the other ids on the list, known or not, are kept.
-async function setReadinessIgnore(key, checkId, ignored) {
+// the PATCH landed; the other ids on the list, known or not, are kept. A failed read writes nothing.
+function setReadinessIgnore(key, checkId, ignored) {
   const url = `/api/projects/${encodeURIComponent(key)}/settings`;
-  try {
-    const data = await safeJson(await fetch(url));
-    const own = data && data.own && data.own['readiness.ignore'];
-    const cur = Array.isArray(own) ? own : [];
-    const next = ignored ? [...new Set([...cur, checkId])] : cur.filter((id) => id !== checkId);
-    const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ 'readiness.ignore': next.length ? next : null }) });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  return queueReadinessWrite(key, async () => {
+    try {
+      const got = await fetch(url);
+      if (!got.ok) return false;
+      const data = await safeJson(got);
+      const own = data && data.own && data.own['readiness.ignore'];
+      const cur = Array.isArray(own) ? own : [];
+      const next = ignored ? [...new Set([...cur, checkId])] : cur.filter((id) => id !== checkId);
+      const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ 'readiness.ignore': next.length ? next : null }) });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  });
 }
 
 // Set one tool's readiness choice ('used' | 'unused' | 'detect') on the project's own readiness.tools map.
-// Resolves to the previous choice (for Undo), or null when the PATCH failed.
-async function setReadinessTool(key, engine, value) {
+// Resolves to the previous choice (for Undo), or null when the read or the PATCH failed.
+function setReadinessTool(key, engine, value) {
   const url = `/api/projects/${encodeURIComponent(key)}/settings`;
-  try {
-    const data = await safeJson(await fetch(url));
-    const own = data && data.own && data.own['readiness.tools'];
-    const cur = own && typeof own === 'object' && !Array.isArray(own) ? { ...own } : {};
-    const prev = cur[engine] || 'detect';
-    if (value === 'detect') delete cur[engine]; else cur[engine] = value;
-    const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 'readiness.tools': Object.keys(cur).length ? cur : null }) });
-    if (!res.ok) return null;
-    return prev;
-  } catch {
-    return null;
-  }
+  return queueReadinessWrite(key, async () => {
+    try {
+      const got = await fetch(url);
+      if (!got.ok) return null;
+      const data = await safeJson(got);
+      const own = data && data.own && data.own['readiness.tools'];
+      const cur = own && typeof own === 'object' && !Array.isArray(own) ? { ...own } : {};
+      const prev = cur[engine] || 'detect';
+      if (value === 'detect') delete cur[engine]; else cur[engine] = value;
+      const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 'readiness.tools': Object.keys(cur).length ? cur : null }) });
+      if (!res.ok) return null;
+      return prev;
+    } catch {
+      return null;
+    }
+  });
 }
 
 // The popovers live on <body>, outside every view: any hash navigation (Back, a link) closes them.
@@ -13494,7 +13499,7 @@ async function fillReadinessCard(card, key) {
   const mine = (card.rdSeq = (card.rdSeq || 0) + 1);
   const head = document.createElement('div');
   head.className = 'rs-head';
-  const view = Object.assign(document.createElement('button'), { type: 'button', className: 'rs-view', textContent: 'View report' });
+  const view = Object.assign(document.createElement('button'), { type: 'button', className: 'btn btn-sm btn-quiet rs-view', textContent: 'View report' });
   view.addEventListener('click', () => openReadinessFromCard(key));
   head.append(Object.assign(document.createElement('h3'), { textContent: 'Agent readiness' }), view);
   const hint = Object.assign(document.createElement('small'), { className: 'hint', textContent: 'Which tools this project uses. Detect lets Worca decide from runs and files.' });
@@ -13524,9 +13529,17 @@ async function fillReadinessCard(card, key) {
       b.addEventListener('click', async () => {
         if (b.disabled || e.setting === v) return;
         msg.textContent = '';
+        const hadFocus = document.activeElement === b;   // before the disable: a browser blurs a disabled button
+        const was = [...seg.children].map((x) => x.disabled);
         for (const x of seg.children) x.disabled = true;
         const prev = await setReadinessTool(key, name, v);
-        if (prev === null) msg.textContent = 'Could not save.';
+        if (prev === null) {
+          // Nothing changed: keep the card (a refresh would rebuild it and wipe the message) and hand the buttons back.
+          msg.textContent = 'Could not save.';
+          [...seg.children].forEach((x, i) => { x.disabled = was[i]; });
+          if (hadFocus) b.focus();
+          return;
+        }
         void refreshReadiness(key, { cards: true });
       });
       seg.append(b);
@@ -13534,7 +13547,8 @@ async function fillReadinessCard(card, key) {
     row.append(seg);
     const finds = e.detectedReason ? `Detect finds: ${e.detectedReason}` : 'Detect finds nothing';
     const judged = e.used ? `Judged: ${LEVEL_WORDS[e.level] || e.level}.` : 'Not judged.';
-    row.append(Object.assign(document.createElement('span'), { className: 'rs-find', textContent: `${finds}. ${judged}` }));
+    // The run engine's note below already says runs use it: its line says only how it is judged.
+    row.append(Object.assign(document.createElement('span'), { className: 'rs-find', textContent: runs ? judged : `${finds}. ${judged}` }));
     if (runs) row.append(Object.assign(document.createElement('span'), { className: 'rs-note', textContent: 'Runs use this tool, so it is always judged. To stop, change the Run engine setting.' }));
     card.append(row);
   }
@@ -15254,7 +15268,6 @@ if (el.projectsList) {
     location.hash = `projects/${item.dataset.key}`;
   };
   el.projectsList.addEventListener('click', (e) => {
-    if (e.target.closest && e.target.closest('.pl-rd')) return;   // the readiness chip opens its own flyout, not the page
     const row = e.target.closest && e.target.closest('.pl-row[role="button"]');
     if (row) openRow(row);                              // a chevron click bubbles here too — one open
   });

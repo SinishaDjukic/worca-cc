@@ -1,11 +1,19 @@
 // test/readiness-styles.test.mjs — the project-list readiness chip (.pl-rd), its flyout and the settings card in
 // ui/public/style.css: base chip, count disc, tone variants on the design tokens (no raw hex), popover, settings card.
+// The readiness rules live in the projects stylesheets; their blocks are read from those part files themselves.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const css = readStyleCss();
-const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '');
+const bare = strip(css);
+const part = (path) => strip(readFileSync(new URL(`../ui/public/${path}`, import.meta.url), 'utf8'));
+const listPart = part('projects/projects-management.css');
+const settingsPart = part('projects/project-settings.css');
+// The readiness block of each part: from its first rule to the end of the file (both blocks close their part).
+const readinessBlocks = [listPart.slice(listPart.indexOf('.pl-rd{')), settingsPart.slice(settingsPart.indexOf('.rs-head{'))];
 
 function ruleBody(selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -26,7 +34,8 @@ describe('readiness CSS', () => {
     assert.match(body, /display:inline-flex/);
     assert.match(body, /align-items:center/);
     assert.match(body, /border-radius:/);
-    assert.match(body, /cursor:pointer/);
+    assert.doesNotMatch(body, /cursor:pointer/, 'the row chip is status only');
+    assert.match(ruleBody('.pd-rd-slot .pl-rd') ?? '', /cursor:pointer/, 'the header chip opens the report');
   });
 
   it('the title line keeps the chip beside the name and wraps it under a long name', () => {
@@ -48,7 +57,8 @@ describe('readiness CSS', () => {
     assert.match(ruleBody('.rd-partial') ?? '', /var\(--amber-bg\)/);
     assert.match(ruleBody('.rd-partial') ?? '', /var\(--amber-ink-strong\)/);
     assert.match(ruleBody('.rd-not-ready') ?? '', /var\(--red-bg\)/);
-    assert.match(ruleBody('.rd-not-ready') ?? '', /var\(--red-ink\)/);
+    assert.match(ruleBody('.rd-not-ready') ?? '', /var\(--red-ink-strong\)/, 'the AA red text shade on --red-bg');
+    assert.match(ruleBody('.rd-not-ready .rd-n') ?? '', /var\(--red-ink-strong\)/);
     assert.match(ruleBody('.rd-unused') ?? '', /var\(--field\)/);
   });
 
@@ -57,7 +67,7 @@ describe('readiness CSS', () => {
       const body = ruleBody(sel) || '';
       assert.doesNotMatch(body, /box-shadow|border:/, `${sel} has no ring or border`);
     }
-    assert.ok(!bare.slice(bare.indexOf('.pl-rd{')).includes('.rd-dot'), 'no dot rule in the readiness block (the run page has its own .rd-dot)');
+    assert.ok(readinessBlocks.every((b) => !b.includes('.rd-dot')), 'no dot rule in the readiness block (the run page has its own .rd-dot)');
   });
 
   it('the count disc is regular weight and uses --panel', () => {
@@ -83,10 +93,44 @@ describe('readiness CSS', () => {
   });
 
   it('the readiness rules use tokens only (no raw colours)', () => {
-    const start = bare.indexOf('.pl-rd{');
-    assert.ok(start > -1);
-    const section = bare.slice(start);
-    assert.doesNotMatch(section, /#[0-9a-fA-F]{3,8}\b/);
-    assert.doesNotMatch(section, /rgba?\(/);
+    for (const section of readinessBlocks) {
+      assert.ok(section.length > 0);
+      assert.doesNotMatch(section, /#[0-9a-fA-F]{3,8}\b/);
+      assert.doesNotMatch(section, /rgba?\(/);
+    }
+  });
+
+  it('the readiness rules live in the projects stylesheets', () => {
+    const chatHome = part('chat/chat-home.css');
+    assert.doesNotMatch(chatHome, /\.pl-rd|\.rp-|\.rs-|\.readiness-/);
+    assert.ok(listPart.includes('.pl-rd{') && listPart.includes('.readiness-pop{'));
+    assert.ok(settingsPart.includes('.readiness-settings-card{'));
+  });
+
+  it('no --ink-3 on readiness text: only the marks use it', () => {
+    for (const block of readinessBlocks) {
+      for (const [, sel, body] of block.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+        if (!body.includes('--ink-3')) continue;
+        assert.ok(['.rp-sevdot.info', '.rp-gdot'].includes(sel.trim()), `${sel.trim()} uses --ink-3`);
+      }
+    }
+  });
+
+  it('no raw font sizes: the type tokens only', () => {
+    for (const block of readinessBlocks) {
+      assert.doesNotMatch(block, /font-size:\s*\d+px/);
+      assert.doesNotMatch(block, /font:[^;}]*\b\d+px/);
+    }
+  });
+
+  it('focus ring is the system\'s: --ink, never --blue', () => {
+    assert.match(ruleBody('.pl-rd:focus-visible') ?? '', /outline:2px solid var\(--ink\)/);
+    for (const block of readinessBlocks) assert.doesNotMatch(block, /:focus-visible\{[^}]*--blue/);
+  });
+
+  it('a disabled tool choice is dimmed like every disabled .seg button, with no colour of its own', () => {
+    const body = ruleBody('.rs-row .seg button:disabled') ?? '';
+    assert.match(body, /opacity:\.45/);
+    assert.doesNotMatch(body, /color:/);
   });
 });

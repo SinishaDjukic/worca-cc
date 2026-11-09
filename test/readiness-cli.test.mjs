@@ -1,7 +1,7 @@
 // test/readiness-cli.test.mjs — `worca readiness` end to end through the real CLI process.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { execSync, spawn } from 'node:child_process';
@@ -112,6 +112,33 @@ describe('worca readiness', () => {
     const report = JSON.parse(r.stdout);
     assert.equal(report.checks.find((c) => c.id === 'git.repo').status, 'skip');
     assert.equal(report.engines.claude.level, 'ready');
+  });
+
+  it('a registered Folder project found by its path or the cwd runs in folder mode', async () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'CLAUDE.md'), '# c\n');
+    const add = await runCli(['add'], { cwd: dir });
+    assert.equal(add.code, 0, add.stderr);
+    const gitRepoOf = (r) => JSON.parse(r.stdout).checks.find((c) => c.id === 'git.repo').status;
+    const inCwd = await runCli(['readiness', '--json'], { cwd: dir });
+    assert.equal(inCwd.code, 0, inCwd.stderr);
+    assert.equal(gitRepoOf(inCwd), 'skip', 'the cwd');
+    const byPath = await runCli(['readiness', '--project', dir, '--json'], { cwd: tmpdir() });
+    assert.equal(byPath.code, 0, byPath.stderr);
+    assert.equal(gitRepoOf(byPath), 'skip', 'the absolute path');
+  });
+
+  it('a Folder project inside a parent git repo never judges the parent', async () => {
+    const parent = tmp();
+    const sub = join(parent, 'sub');
+    mkdirSync(sub);
+    writeFileSync(join(sub, 'CLAUDE.md'), '# c\n');
+    const add = await runCli(['add'], { cwd: sub });
+    assert.equal(add.code, 0, add.stderr);
+    execSync('git init -q && git config user.email "t@t" && git config user.name "T" && git add -A && git commit --allow-empty -m init -q', { cwd: parent, stdio: 'ignore' });
+    const gitRepoOf = (r) => JSON.parse(r.stdout).checks.find((c) => c.id === 'git.repo').status;
+    assert.equal(gitRepoOf(await runCli(['readiness', '--json'], { cwd: sub })), 'skip', 'the cwd');
+    assert.equal(gitRepoOf(await runCli(['readiness', '--project', sub, '--json'], { cwd: tmpdir() })), 'skip', 'the path');
   });
 
   it('--engine judges only the named engine', async () => {

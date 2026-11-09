@@ -13,6 +13,7 @@ import { GOOSE_INSTRUCTION_FILES } from '../engines/goose.mjs';
 import { OPENCODE_INSTRUCTION_FILES } from '../engines/opencode.mjs';
 import { DEFAULT_CONTEXT_MAX_BYTES_PER_FILE, DEFAULT_CONTEXT_MAX_BYTES_TOTAL } from '../settings.mjs';
 import { CHECKS } from './checks.mjs';
+import { presentFiles as filesOf } from './facts.mjs';
 
 // Untracked by convention, so never part of `instructions.committed`.
 const LOCAL_ONLY_FILES = Object.freeze(['CLAUDE.local.md']);
@@ -60,9 +61,10 @@ const sourcesOf = (name) => SOURCES[name] ?? NO_SOURCES;
 const hasSources = (src) => src.files.length + src.globs.length > 0;
 
 function globMatches(src, facts) {
-  if (!facts.trackedSet) return [];
+  const files = filesOf(facts);
+  if (!files) return [];
   const res = src.globs.map(globRe);
-  return [...facts.trackedSet].filter((p) => res.some((re) => re.test(p)));
+  return [...files].filter((p) => res.some((re) => re.test(p)));
 }
 
 const exists = (p, facts) => facts.trackedSet?.has(p) || facts.sizes?.[p] !== undefined;
@@ -144,22 +146,35 @@ export function evaluateEngines(facts, { ignore = [], env = process.env } = {}) 
     fix: (check.id === 'instructions.present' && sourcesOf(engine).missingFix) || check.fix,
   });
 
-  // Facts that could not be collected (git refused to run on this repository's config) answer no check: each row says why.
-  const failed = facts.error ? { status: 'error', detail: facts.error } : null;
+  // Facts that could not be collected (git refused to run on this repository's config, or its first call timed out, so
+  // whether this is a repository is not known) answer no check: each row says why.
+  const failed = facts.error ? { status: 'error', detail: facts.error }
+    : !facts.isRepo && facts.timedOut && !facts.folder ? { status: 'error', detail: 'git timed out' } : null;
   const repoRows = CHECKS.filter((c) => c.scope === 'repository').map((c) => row(c, failed || safeRun(c, facts)));
+  // Only uncollected facts make the report unknown. Not a git repo is the repository's own failure (counted once, there):
+  // the tool checks skip, and every judged tool is not-ready with no failure of its own. If the person ignores git.repo,
+  // the tools have no facts to be judged on and stay unknown.
+  const broken = !!failed;
+  // The check's own result: an ignored row reads 'ignored', and the tools still have no repository to be judged in.
+  const repoFailed = !broken && safeRun(CHECKS.find((c) => c.id === 'git.repo'), facts).status === 'fail';
+  const noRepo = repoFailed && !ignoreSet.has('git.repo');
+  const toolSkip = repoFailed ? { status: 'skip', detail: 'not a git work tree' } : null;
   const toolRows = {};
   for (const name of engines) {
     toolRows[name] = CHECKS.filter((c) => c.scope === 'tool').map((c) => {
       const impl = TOOL[c.id];
-      return row(c, failed || (impl ? safeRun({ run: (f) => impl(sourcesOf(name), f) }, facts) : { status: 'skip' }), name);
+      return row(c, failed || toolSkip || (impl ? safeRun({ run: (f) => impl(sourcesOf(name), f) }, facts) : { status: 'skip' }), name);
     });
   }
 
-  const broken = !!facts.error || repoRows.find((r) => r.id === 'git.repo')?.status === 'fail';
   const unknown = { level: 'unknown', failing: [] };
   const out = {};
   for (const name of engines) {
-    out[name] = lockedBy.has(name) ? { ...unknown, locked: lockedBy.get(name) } : broken ? unknown : levelOf(toolRows[name], ignoreSet);
+    out[name] = lockedBy.has(name) ? { ...unknown, locked: lockedBy.get(name) }
+      : broken ? unknown
+      : noRepo ? { level: 'not-ready', failing: [] }
+      : repoFailed ? unknown
+      : levelOf(toolRows[name], ignoreSet);
   }
   return {
     checks: [...repoRows, ...engines.flatMap((n) => toolRows[n])],

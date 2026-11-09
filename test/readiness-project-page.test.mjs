@@ -37,10 +37,24 @@ async function boot(state) {
   window.WebSocket = WSStub;
   window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
   const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
-  window.fetch = (url) => {
+  const fail = () => Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) });
+  // The project settings layer: GET reads `state.own`, PATCH replaces the keys it names (null removes one), as the server does.
+  state.own = state.own || {};
+  state.patches = [];
+  window.fetch = async (url, opts = {}) => {
     const u = String(url);
     if (u.includes(`/api/projects/${KEY}/readiness`)) return ok({ readiness: state.report });
-    if (u.includes(`/api/projects/${KEY}/settings`)) return ok({ own: {}, effective: {} });
+    if (u.includes(`/api/projects/${KEY}/settings`)) {
+      if (opts.method === 'PATCH') {
+        state.patches.push(JSON.parse(opts.body));
+        if (state.patchFails) return fail();
+        for (const [k, v] of Object.entries(JSON.parse(opts.body))) { if (v === null) delete state.own[k]; else state.own[k] = v; }
+        return ok({ ok: true });
+      }
+      const own = JSON.parse(JSON.stringify(state.own));   // read now, answered after the delay (a slow server)
+      if (state.getDelayMs) await new Promise((r) => setTimeout(r, state.getDelayMs));
+      return state.getFails ? fail() : ok({ own, effective: {} });
+    }
     if (u.includes('/api/projects')) {
       return ok({ projects: [{ name: 'alpha', path: '/Users/me/dev/alpha', exists: true, key: KEY, readiness: summary(state.report) }] });
     }
@@ -168,14 +182,121 @@ test('the × in the popover head closes it; from the keyboard, focus goes back t
   assert.equal(doc.activeElement, chip, 'focus is back on the chip');
 });
 
-test('the × closes the list chip popover too', async () => {
+test('the × closes the header chip popover and stays on the project page', async () => {
   const { window } = await boot({ report: NOT_READY });
   const doc = window.document;
   await goHash(window, 'projects');
-  click(window, doc.querySelector(`#projects-list .pl-item[data-key="${KEY}"] .pl-rd`));
+  await goHash(window, `projects/${KEY}`);
+  click(window, headChip(doc));
   await settle();
   click(window, openPops(doc)[0].querySelector('.rp-close'));
   await settle();
   assert.equal(openPops(doc).length, 0);
-  assert.equal(window.location.hash, '#projects', 'still on the list');
+  assert.equal(window.location.hash, `#projects/${KEY}`, 'still on the project page');
+});
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const cardOf = (doc) => doc.querySelector(`.readiness-settings-card[data-key="${KEY}"]`);
+const segOf = (doc, label) => [...cardOf(doc).querySelectorAll('.rs-row')].find((r) => r.querySelector('.rs-name').textContent === label);
+
+// A focused button that the browser blurs when it is disabled (jsdom does not): blur FIRST, then set.
+function blurOnDisable(window) {
+  const proto = window.HTMLButtonElement.prototype;
+  const desc = Object.getOwnPropertyDescriptor(proto, 'disabled');
+  Object.defineProperty(proto, 'disabled', {
+    configurable: true,
+    get() { return desc.get.call(this); },
+    set(v) { if (v) this.blur(); desc.set.call(this, v); },
+  });
+}
+
+test('two quick toggles both land', async () => {
+  const state = { report: NOT_READY };
+  const { window } = await boot(state);
+  const doc = window.document;
+  await goHash(window, 'projects');
+  await goHash(window, `projects/${KEY}/settings`);
+  await wait(10);
+  state.getDelayMs = 20;
+  const inputs = [...cardOf(doc).querySelectorAll('.sw-input')];
+  assert.ok(inputs.length >= 2, 'two check switches');
+  for (const input of inputs.slice(0, 2)) { input.checked = true; input.dispatchEvent(new window.Event('change', { bubbles: true })); }
+  await wait(150);
+  assert.equal(state.own['readiness.ignore'].length, 2, JSON.stringify(state.own));
+});
+
+test('a failed settings read writes nothing', async () => {
+  const state = { report: NOT_READY, own: { 'readiness.ignore': ['deps.lockfile'], 'readiness.tools': { cursor: 'used' } } };
+  const { window } = await boot(state);
+  const doc = window.document;
+  await goHash(window, 'projects');
+  await goHash(window, `projects/${KEY}/settings`);
+  await wait(10);
+  state.getFails = true;
+  const input = cardOf(doc).querySelector('.sw-input:not(:checked)');
+  input.checked = true;
+  input.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await wait(50);
+  assert.equal(input.checked, false, 'the switch goes back');
+  click(window, [...segOf(doc, 'OpenAI Codex').querySelectorAll('button')].find((b) => b.textContent === 'Used'));
+  await wait(50);
+  assert.deepEqual(state.patches, [], 'no PATCH');
+  assert.deepEqual(state.own, { 'readiness.ignore': ['deps.lockfile'], 'readiness.tools': { cursor: 'used' } });
+});
+
+test("a failed tool choice keeps 'Could not save.'", async () => {
+  const state = { report: NOT_READY };
+  const { window } = await boot(state);
+  const doc = window.document;
+  await goHash(window, 'projects');
+  await goHash(window, `projects/${KEY}/settings`);
+  await wait(10);
+  state.patchFails = true;
+  blurOnDisable(window);
+  const row = segOf(doc, 'OpenAI Codex');
+  const before = [...row.querySelectorAll('button')].map((b) => b.getAttribute('aria-pressed'));
+  const used = [...row.querySelectorAll('button')].find((b) => b.textContent === 'Used');
+  used.focus();
+  click(window, used);
+  await wait(50);
+  assert.match(cardOf(doc).textContent, /Could not save\./);
+  const now = segOf(doc, 'OpenAI Codex');
+  assert.equal(now, row, 'the card was not rebuilt');
+  assert.ok([...now.querySelectorAll('button')].every((b) => !b.disabled), 'the buttons are usable again');
+  assert.deepEqual([...now.querySelectorAll('button')].map((b) => b.getAttribute('aria-pressed')), before);
+  assert.equal(doc.activeElement, used, 'focus stays on the button');
+  const runs = [...segOf(doc, 'Claude Code').querySelectorAll('button')].find((b) => b.textContent === 'Not used');
+  assert.equal(runs.disabled, true, "the run engine's Not used stays disabled");
+});
+
+test("the list row's chip is status only", async () => {
+  const { window } = await boot({ report: NOT_READY });
+  const doc = window.document;
+  await goHash(window, 'projects');
+  const chip = doc.querySelector(`#projects-list .pl-item[data-key="${KEY}"] .pl-rd`);
+  assert.ok(chip, 'a chip on the row');
+  assert.equal(chip.getAttribute('role'), null);
+  assert.equal(chip.getAttribute('tabindex'), null);
+  assert.ok(chip.id, 'the chip has an id');
+  assert.equal(chip.closest('.pl-row').getAttribute('aria-describedby'), chip.id);
+  click(window, chip);
+  await settle();
+  assert.equal(window.location.hash, `#projects/${KEY}`, 'a click opens the project page');
+  assert.equal(openPops(doc).length, 0, 'no popover from the list');
+});
+
+test("'See what to add' opens the project page's report", async () => {
+  const { window } = await boot({ report: NOT_READY });
+  const doc = window.document;
+  await goHash(window, 'projects');
+  WSStub.last._frame({ type: 'readiness-added', projectKey: KEY, name: 'alpha', engine: 'Claude Code' });
+  await settle();
+  const act = [...doc.querySelectorAll('button')].find((b) => b.textContent === 'See what to add');
+  assert.ok(act, 'the toast offers the action');
+  click(window, act);
+  await settle();
+  await wait(10);
+  assert.equal(window.location.hash, `#projects/${KEY}`);
+  assert.equal(openPops(doc).length, 1, 'the header popover is open');
+  assert.equal(headChip(doc).getAttribute('aria-expanded'), 'true');
 });

@@ -45,12 +45,13 @@ describe('readiness UI: chips in the projects list', () => {
     assert.match(src, /main\.append\(title, path\)/);
   });
 
-  it('each chip is the trigger of one createFlyout popup', () => {
+  it('the header chip is the trigger of one createFlyout popup', () => {
     assert.match(fnSource('newReadinessChip'), /createFlyout\(/);
   });
 
-  it('a chip click never opens the project page', () => {
-    assert.match(app, /closest\('\.pl-rd'\)/, 'the row click handler skips clicks that start on a chip');
+  it('the row chip is status only: a click on it opens the project page like the rest of the row', () => {
+    assert.doesNotMatch(app, /closest\('\.pl-rd'\)/, 'the row click handler no longer skips the chip');
+    assert.doesNotMatch(fnSource('paintReadinessChips'), /newReadinessChip\(/);
   });
 });
 
@@ -87,19 +88,27 @@ describe('readiness UI: popover v2', () => {
     assert.match(src, /label: 'Undo'/);
     assert.match(src, /setReadinessTool\(key, t\.name, prev\)/);
   });
-  it('the run engine gets the hint instead of the button', () => {
-    assert.match(fnSource('buildReadinessMenu'), /Runs use this tool\. To stop judging it, change the engine in Settings\./);
+  it('the run engine gets no button and no extra hint: its "(runs use it)" reason says it', () => {
+    const src = fnSource('buildReadinessMenu');
+    assert.doesNotMatch(src, /rp-hint/);
+    assert.match(src, /if \(!t\.runs\)/);
   });
-  it('the not-judged line links to project settings', () => {
+  it('the not-judged line is plain text; the foot keeps the one Settings link', () => {
     const src = fnSource('buildReadinessMenu');
     assert.match(src, /Not judged: /);
-    assert.match(src, /Change in Settings/);
+    assert.doesNotMatch(src, /Change in Settings/);
+    assert.match(src, /el\('a', '', 'Settings'\)/);
     assert.match(src, /openReadinessSettings\(key\)/);
   });
-  it('the header count opens the passed box', () => {
+  it('the head has no pass count: the passed box says it once', () => {
+    assert.doesNotMatch(fnSource('buildReadinessMenu'), /rp-count/);
+  });
+  it('the popover buttons are design-system buttons, and none is a menuitem', () => {
     const src = fnSource('buildReadinessMenu');
-    assert.match(src, /const count = el\('button', 'rp-count'/);
-    assert.match(src, /count\.addEventListener\('click', \(\) => \{ passedBox\.open = true/);
+    assert.match(src, /'btn btn-sm btn-quiet rp-act'/);
+    assert.match(src, /'btn btn-sm btn-quiet rp-ign', 'Ignore'/);
+    assert.match(src, /'btn btn-sm btn-quiet rp-ign', 'Stop ignoring'/);
+    assert.doesNotMatch(src, /menuitem/);
   });
   it('ignored checks can be restored from the popover', () => {
     assert.match(fnSource('buildReadinessMenu'), /Stop ignoring/);
@@ -153,16 +162,20 @@ describe('readiness UI: settings card v2', () => {
     for (const w of ["'Detect'", "'Used'", "'Not used'"]) assert.ok(src.includes(w), w);
     assert.match(src, /aria-pressed/);
   });
-  it('says what Detect finds and whether the tool is judged', () => {
+  it('says what Detect finds and whether the tool is judged; the run engine\'s line says only how it is judged', () => {
     const src = fnSource('fillReadinessCard');
     assert.match(src, /Detect finds: /);
     assert.match(src, /Detect finds nothing/);
     assert.match(src, /Not judged\./);
+    assert.match(src, /textContent: runs \? judged : `\$\{finds\}\. \$\{judged\}`/);
   });
-  it('the run engine cannot be set to Not used', () => {
+  it('the run engine cannot be set to Not used, and the disabled button says why in its tooltip', () => {
     const src = fnSource('fillReadinessCard');
     assert.match(src, /Runs use this tool, so it is always judged\. To stop, change the Run engine setting\./);
-    assert.match(src, /disabled = true/);
+    assert.match(src, /b\.disabled = true; b\.title = 'Runs use this tool';/);
+  });
+  it('View report is a design-system button', () => {
+    assert.match(fnSource('fillReadinessCard'), /className: 'btn btn-sm btn-quiet rs-view'/);
   });
   it('a choice writes through setReadinessTool', () => {
     assert.match(fnSource('fillReadinessCard'), /setReadinessTool\(key, name, v\)/);
@@ -203,5 +216,48 @@ describe('readiness UI: repaint keeps the reader\'s place', () => {
     assert.match(src, /\.rp-more/);
     assert.match(src, /scrollTop/);
     assert.match(src, /\.open = true/);
+  });
+});
+
+describe('readiness UI: one fact once (jsdom)', () => {
+  it('no fact twice in the popover', async () => {
+    const { JSDOM } = await import('jsdom');
+    const { pathToFileURL, fileURLToPath } = await import('node:url');
+    const { readIndexHtml } = await import('../src/core/read-index-html.mjs');
+    const report = JSON.parse(readFileSync(new URL('./fixtures/readiness-report-not-ready.json', import.meta.url), 'utf8'));
+    assert.ok(report.engines.claude.reasons.some((r) => r.kind === 'run-engine'), 'the run engine is used');
+    const KEY = 'alpha-00000001';
+    const dom = new JSDOM(readIndexHtml(), { url: 'http://localhost:4321/' });
+    const { window } = dom;
+    try {
+      window.Element.prototype.scrollIntoView = function () {};
+      window.WebSocket = class { addEventListener() {} send() {} close() {} };
+      window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+      const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
+      const summary = { level: report.level, failingCount: report.counts.mustFix + report.counts.shouldFix, ...report.counts };
+      window.fetch = (url) => {
+        const u = String(url);
+        if (u.includes(`/api/projects/${KEY}/readiness`)) return ok({ readiness: report });
+        if (u.includes(`/api/projects/${KEY}/settings`)) return ok({ own: {}, effective: {} });
+        if (u.includes('/api/projects')) return ok({ projects: [{ name: 'alpha', path: '/p/alpha', exists: true, key: KEY, readiness: summary }] });
+        if (u.includes('/api/history')) return ok({ pipelines: [], ghAvailable: false });
+        return ok({ config: { steps: {}, customModels: [] }, models: [], efforts: [], branches: [], workspaces: [], agents: [], channels: [] });
+      };
+      for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator', 'requestAnimationFrame']) {
+        try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
+      }
+      const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
+      await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
+      const settle = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0)); };
+      window.location.hash = `projects/${KEY}`;
+      await settle();
+      window.document.querySelector('#proj-detail .pd-rd-slot .pl-rd').dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 1 }));
+      await settle();
+      const pop = [...window.document.querySelectorAll('.readiness-pop')].find((m) => !m.hidden);
+      assert.ok(pop, 'the popover is open');
+      assert.equal(pop.querySelector('.rp-hint'), null);
+      assert.equal(pop.querySelector('.rp-count'), null);
+      assert.equal(pop.querySelectorAll('a[href$="/settings"]').length, 1);
+    } finally { window.close(); }
   });
 });

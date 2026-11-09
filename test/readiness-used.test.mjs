@@ -6,6 +6,12 @@ const ENGINES = ['claude', 'codex', 'copilot', 'cursor'];
 const used = (o) => usedEngines({ engines: ENGINES, runEngine: 'claude', ...o });
 const usedNames = (r) => Object.entries(r).filter(([, v]) => v.used).map(([k]) => k);
 
+describe('toolFiles', () => {
+  it("toolFiles reads a Folder project's listed files", () => {
+    assert.deepEqual(toolFiles({ listed: ['.cursor/rules/x.mdc', 'CLAUDE.md'], trackedSet: null }), { cursor: '.cursor/rules', claude: 'CLAUDE.md' });
+  });
+});
+
 describe('usedEngines', () => {
   it('a fresh project judges only the run engine', () => {
     const r = used({});

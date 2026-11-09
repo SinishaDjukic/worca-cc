@@ -159,12 +159,12 @@ describe('engines module', () => {
       });
     });
 
-    it('is unknown for every engine when the folder is not a git repo', async () => {
+    it('is not-ready for every engine when the folder is not a git repo', async () => {
       await withRepo(null, async (dir) => {
         const facts = await collectFacts(dir);
         facts.isRepo = false;
         const { engines } = evaluateEngines(facts, { env: NO_LOCKS });
-        for (const name of DECLARED_ENGINES) assert.equal(engines[name].level, 'unknown');
+        for (const name of DECLARED_ENGINES) assert.deepEqual(engines[name], { level: 'not-ready', failing: [] });
       });
     });
 
@@ -566,12 +566,55 @@ describe('evaluateEngines v2', () => {
     });
   });
 
-  it('git.repo failing makes every level unknown', async () => {
+  it('git.repo failing makes the repository and every judged tool not-ready', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'norepo-'));
     try {
       const r = evaluateEngines(await collectFacts(dir), { env: {} });
-      assert.equal(r.repository.level, 'unknown');
+      assert.equal(r.repository.level, 'not-ready');
+      assert.deepEqual(r.repository.failing, ['git.repo']);
+      for (const e of Object.values(r.engines)) assert.deepEqual(e, { level: 'not-ready', failing: [] });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('a refused config (facts.error) still reads unknown', () => {
+    const r = evaluateEngines({ isRepo: false, error: 'git refused this config', sizes: {}, instructionStatus: {} }, { env: {} });
+    assert.equal(r.repository.level, 'unknown');
+    for (const e of Object.values(r.engines)) assert.equal(e.level, 'unknown');
+  });
+
+  it('a timed-out first git call reads unknown, never "not a git work tree"', () => {
+    const r = evaluateEngines({ isRepo: false, timedOut: true, error: null, sizes: {}, instructionStatus: {} }, { env: {} });
+    assert.equal(r.repository.level, 'unknown');
+    for (const e of Object.values(r.engines)) assert.equal(e.level, 'unknown');
+    for (const c of r.checks) assert.notEqual(c.detail, 'not a git work tree', c.id);
+    assert.equal(r.checks.find((c) => c.id === 'git.repo').status, 'error');
+  });
+
+  it('git.repo ignored: the engines read unknown', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'norepo-'));
+    try {
+      const r = evaluateEngines(await collectFacts(dir), { env: {}, ignore: ['git.repo'] });
+      assert.notEqual(r.repository.level, 'unknown');
       for (const e of Object.values(r.engines)) assert.equal(e.level, 'unknown');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('an empty repository passes git.repo', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'emptyrepo-'));
+    try {
+      execSync('git init -q', { cwd: dir, stdio: 'ignore' });
+      const r = evaluateEngines(await collectFacts(dir), { env: {} });
+      assert.equal(row(r.checks, 'git.repo').status, 'pass');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("Folder project: Cursor's instructions check passes on an on-disk .mdc", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'folder-'));
+    try {
+      mkdirSync(join(dir, '.cursor/rules'), { recursive: true });
+      writeFileSync(join(dir, '.cursor/rules/x.mdc'), '# x');
+      const r = evaluateEngines(await collectFacts(dir, { folder: true }), { env: {} });
+      assert.equal(row(r.checks, 'instructions.present', 'cursor').status, 'pass');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

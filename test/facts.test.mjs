@@ -1,10 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, chmodSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, chmodSync, existsSync, readFileSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
-import { collectFacts, fingerprintOf, quickFingerprint, INSTRUCTION_CANDIDATES, HEAVY_DIRS } from '../src/core/repo-readiness/facts.mjs';
+import { collectFacts, fingerprintOf, quickFingerprint, presentFiles, INSTRUCTION_CANDIDATES, HEAVY_DIRS, MANIFEST_READ_CAP, TEXT_READ_CAP } from '../src/core/repo-readiness/facts.mjs';
 
 function gitDir() {
   const dir = mkdtempSync(join(tmpdir(), 'readiness-'));
@@ -74,8 +74,37 @@ describe('facts.collectFacts', () => {
       execSync('git add AGENTS.md && git commit -m "add" -q', { cwd: dir, stdio: 'ignore' });
 
       const f = await collectFacts(dir);
-      assert.strictEqual(f.texts['AGENTS.md'].length, 256 * 1024);
+      assert.strictEqual(f.texts['AGENTS.md'].length, TEXT_READ_CAP);
     } finally { rmRf(dir); }
+  });
+
+  it('a fresh git init with no commits is a repo with no HEAD', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'readiness-empty-'));
+    try {
+      execSync('git init', { cwd: dir, stdio: 'ignore' });
+      const f = await collectFacts(dir);
+      assert.strictEqual(f.isRepo, true);
+      assert.strictEqual(f.headSha, null);
+      assert.strictEqual(f.error, null);
+      assert.equal(await quickFingerprint(dir), fingerprintOf(await collectFacts(dir)));
+    } finally { rmRf(dir); }
+  });
+
+  it('a manifest over MANIFEST_READ_CAP is read only up to the cap', async () => {
+    const dir = gitDir();
+    try {
+      writeFileSync(join(dir, 'Makefile'), 'm'.repeat(MANIFEST_READ_CAP + 10));
+      execSync('git add Makefile && git commit -m "add" -q', { cwd: dir, stdio: 'ignore' });
+      const f = await collectFacts(dir);
+      assert.ok(f.manifests.Makefile.length <= MANIFEST_READ_CAP, 'git mode');
+      const folder = await collectFacts(dir, { folder: true });
+      assert.ok(folder.manifests.Makefile.length <= MANIFEST_READ_CAP, 'folder mode');
+    } finally { rmRf(dir); }
+  });
+
+  it('facts.mjs reads no file with readFileSync', () => {
+    const src = readFileSync(new URL('../src/core/repo-readiness/facts.mjs', import.meta.url), 'utf8');
+    assert.equal(/readFileSync/.test(src), false);
   });
 
   it('reads tracked manifests into facts.manifests', async () => {
@@ -285,5 +314,38 @@ describe('facts: a Folder project runs no git', () => {
         assert.notEqual(fp1, fp2, 'an instruction file edit moves the folder fingerprint');
       });
     } finally { rmRf(dir); }
+  });
+
+  it('folder mode lists .cursor/rules/**/*.mdc and .github/instructions/**/*.instructions.md from disk without git', POSIX, async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'readiness-folder-'));
+    try {
+      mkdirSync(join(dir, '.cursor/rules/a'), { recursive: true });
+      mkdirSync(join(dir, '.github/instructions'), { recursive: true });
+      writeFileSync(join(dir, '.cursor/rules/a/x.mdc'), '# x');
+      await withGitShim(async (calls) => {
+        const fp1 = await quickFingerprint(dir, { folder: true });
+        writeFileSync(join(dir, '.github/instructions/py.instructions.md'), '# py');
+        const fp2 = await quickFingerprint(dir, { folder: true });
+        const f = await collectFacts(dir, { folder: true });
+        const present = presentFiles(f);
+        assert.ok(present.has('.cursor/rules/a/x.mdc'));
+        assert.ok(present.has('.github/instructions/py.instructions.md'));
+        assert.strictEqual(f.trackedSet, null, 'trackedSet still means git-tracked');
+        assert.notEqual(fp1, fp2, 'a new rule file moves the folder fingerprint');
+        assert.deepEqual(calls(), [], 'no git spawned');
+      });
+    } finally { rmRf(dir); }
+  });
+
+  it('folder mode does not follow a symlinked parent of a rule dir out of the folder', POSIX, async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'readiness-folder-'));
+    const outside = mkdtempSync(join(tmpdir(), 'readiness-outside-'));
+    try {
+      mkdirSync(join(outside, 'rules'), { recursive: true });
+      writeFileSync(join(outside, 'rules/x.mdc'), '# x');
+      symlinkSync(outside, join(dir, '.cursor'));
+      const f = await collectFacts(dir, { folder: true });
+      assert.ok(!presentFiles(f).has('.cursor/rules/x.mdc'));
+    } finally { rmRf(dir); rmRf(outside); }
   });
 });
