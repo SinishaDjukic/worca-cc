@@ -238,6 +238,7 @@
     toggle,
     newChat,
     data: () => data,
+    summary: () => { const chats = data.chats.filter((c) => !c.archived), needs = chats.filter((c) => sectionOfChat(c) === 'needs').length; return { n: chats.filter((c) => c.state !== 'idle' || sectionOfChat(c) === 'needs').length, needs }; },   // the list's own Needs you
     refresh: () => { ctl.paint(); window.RailShell?.inView.draw(); },
   };
   ctl.paint();

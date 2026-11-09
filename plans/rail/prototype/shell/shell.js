@@ -227,13 +227,15 @@
     const st = R.runState(RM.stateOf(cs));
     return { label: `${x.title}\n${st.word}${t?.detail ? ` · ${t.detail}` : ''}`, mark: R.kindMark({ kind: 'task', tone: R.markTone(st), stage: t?.stage ?? RM.stageOf(cs).stage ?? -1, size: 20 }), hash: `run/${cs}`, task: { cs, chat: x.chat || '', title: x.title } };
   }
+  // many tasks share a case: its tab is current on that very task's page (case and name), or in the chat its tab opens
+  const isOnTask = ({ cs, chat, title }) => location.hash === `#run/${cs}` ? RM?.titles?.[cs] === title : location.hash === `#chat/${chat || window.RailConversation?.chatOfTask({ title })}`;
   function drawInView() {
     const live = inViewList.map((x) => ({ x, now: inViewNow(x) })).filter((y) => y.now);
     const max = inViewMax(), shown = live.slice(0, max), hidden = live.slice(max), key = (x) => `${x.type}:${x.id}`;
     if (!hidden.length) inViewMenu = false;
     const slot = document.getElementById('in-view-slot');
     if (slot) slot.innerHTML = R.inView({
-      items: shown.map(({ x, now }) => { const [title, line] = now.label.split('\n'); return { title, line, icon: now.mark, current: location.hash === `#${now.hash}` || (!!now.task && location.hash === `#chat/${window.RailConversation?.chatOfCase(now.task.cs) || now.task.chat}`), attrs: { 'data-in-view': key(x) }, drop: { 'data-in-view-drop': key(x) } }; }),
+      items: shown.map(({ x, now }) => { const [title, line] = now.label.split('\n'); return { title, line, icon: now.mark, current: now.task ? isOnTask(now.task) : location.hash === `#${now.hash}`, attrs: { 'data-in-view': key(x) }, drop: { 'data-in-view-drop': key(x) } }; }),
       more: hidden.length ? { n: hidden.length, open: inViewMenu, attrs: { 'data-in-view-more': '' }, items: hidden.map(({ x, now }) => ({ id: key(x), text: now.label.split('\n')[0], mark: now.mark.replace('--km:20px', '--km:18px') })) } : null });
     // a tab that just became the one you are on grows its line from the centre: drawn without it, then given it
     const cur = slot?.querySelector('.in-view-i.is-current'), curKey = cur?.dataset.inView || '';
@@ -265,8 +267,7 @@
 
   // Hidden, the bar is a strip: the W, then one icon per kind of work with how many are open; each opens its place.
   function drawMini() {
-    const chats = (window.RailChats?.data().chats || []).filter((c) => !c.archived), live = chats.filter((c) => c.state !== 'idle');
-    const kinds = [['chat', 'chat', 'Chats', { n: live.length, needs: chats.filter((c) => c.state === 'needs-you').length }], ['runs', 'task', 'Tasks', window.RailRunsList?.summary()], ['schedules', 'schedule', 'Schedules', window.RailSchedules?.summary()]];
+    const kinds = [['chat', 'chat', 'Chats', window.RailChats?.summary()], ['runs', 'task', 'Tasks', window.RailRunsList?.summary()], ['schedules', 'schedule', 'Schedules', window.RailSchedules?.summary()]];
     document.getElementById('bar-mini').innerHTML = R.barStrip({ items: kinds.filter(([place]) => !lockOf(place)).map(([place, kind, word, c]) => {
       const n = c?.n || 0, needs = c?.needs || 0;
       return { label: [`${word}: ${n} open`, needs ? `${needs} need you` : ''].filter(Boolean).join(' · '), icon: R.kindMark({ kind, stage: -1, keepType: true, size: 20 }), n, tone: needs ? 'need' : '', attrs: { 'data-mini': place } };
@@ -274,7 +275,7 @@
   }
 
   // ---- the router ----
-  let reopen = false, lastPlace = '';   // a run opened from a row draws again, even on the same case: two rows can share one
+  let reopen = false, lastPlace = '', openedAgain = false;   // a run opened from a row draws again, even on the same case: two rows can share one
   const pageTitle = (view, arg) => {
     if (view === 'chat') return (arg && window.RailConversation?.chatTitle(arg)) || 'Chat';
     if (view === 'run') return taskChat ? window.RailConversation?.chatTitle(taskChat) || 'Chat' : 'Tasks';
@@ -339,8 +340,8 @@
     }
     if (view === 'runs') { window.RailRunsList?.show(); window.RailCenters?.tasks(pane.runs); }
     if (view === 'schedules' || view === 'schedule') window.RailSchedules?.show(view === 'schedule' ? arg : '');
-    if (placeMod(view) && !lock) { const again = lastPlace === location.hash; placeMod(view).show({ bar: document.getElementById('bar-place'), page: pane.place, arg: decodeURIComponent(arg || '') }); if (again) R.land(pane.place.querySelector('.place-head')); }   /* the row you are on, opened again: its page's head lands */
-    lastPlace = placeMod(view) ? location.hash : '';
+    if (placeMod(view) && !lock) { const again = openedAgain && lastPlace === location.hash; placeMod(view).show({ bar: document.getElementById('bar-place'), page: pane.place, arg: decodeURIComponent(arg || '') }); if (again) R.land(pane.place.querySelector('.place-head')); }   /* the row you are on, opened again by you: its page's head lands; a flag or a redraw on the same address never flashes */
+    lastPlace = placeMod(view) && !lock ? location.hash : ''; openedAgain = false;
     if (view === 'run') {
       window.RailShell.unembedRun();
       const pick = document.getElementById('case');
@@ -491,7 +492,7 @@
     pageContext: () => pageContext(),
     needs: (view) => needsOf(view),
     locked: (view) => !!lockOf(view),
-    go: (hash) => { if (location.hash.slice(1) === hash) route(); else location.hash = hash; },
+    go: (hash) => { if (location.hash.slice(1) === hash) { openedAgain = true; route(); } else location.hash = hash; },
     // a run opened from Pulse or the search carries its own title
     openRun: (hash, title, run) => window.RailShell.openTask(hash.split('/')[1], '', title, run),   // Pulse and search: its card in its chat
     closeSearch: () => searchFold(false),

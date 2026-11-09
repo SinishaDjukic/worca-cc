@@ -781,14 +781,14 @@ html,body{height:auto;overflow:visible;margin:0;}
 
 /* A settings tab: SettingsSection, SettingsRow, SentencePicker, Switch (ui/public/design-system/components/settings-row.mjs).
    The alignment is the component's: one left edge for every text and divider, one right edge for every action (a quiet
-   button's text, not its padding: --btn-inset), and the name, the sentence and the end on one baseline. A wrapped
+   button's text: it has no padding on that side, so its box stops at the column), and the name, the sentence and the end on one baseline. A wrapped
    sentence keeps the body's line height: a picker adds no height. Under 560px of width a row stacks on the same edge. */
-.set-sec{--btn-inset:11px;container-type:inline-size;min-width:0;margin-top:32px;}
+.set-sec{container-type:inline-size;min-width:0;margin-top:32px;}
 .set-sec + .set-sec{margin-top:24px;padding-top:24px;border-top:1px solid var(--line);}   /* a line where a section starts; rows divide by space */
 .set-sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-height:28px;}
 .set-sec-h{margin:0;font:600 var(--fs-section)/var(--lh-title) var(--sans);letter-spacing:-.01em;color:var(--ink);}   /* Type roles › Heading */
 .set-sec-head > .set-sec-h{margin-right:auto;}   /* more than one action: they stay together at the right */
-.set-sec-head > .btn-quiet,.set-sec-head > .tip-wrap > .btn-quiet{margin-right:calc(-1 * var(--btn-inset));}
+.set-sec-head > .btn-quiet,.set-sec-head > .tip-wrap > .btn-quiet{padding-right:0;}
 .set-sec-meta{margin:2px 0 0;font-size:var(--fs-meta);color:var(--ink-2);}
 .set-rows{display:flex;flex-direction:column;margin-top:4px;}
 .set-group{margin-top:16px;}
@@ -803,7 +803,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .set-end:empty::before,.set-end:not(:has(*)):empty{display:none;}
 .set-end > .switch{align-self:center;flex:none;}
 
-.set-end > .btn-quiet:last-child,.set-end > .tip-wrap:last-child > .btn-quiet{margin-right:calc(-1 * var(--btn-inset));}
+.set-end > .btn-quiet:last-child,.set-end > .tip-wrap:last-child > .btn-quiet{padding-right:0;}
 /* The Changed dot: right after the name, its tooltip's reach wider than the dot. */
 .set-dot{position:relative;display:inline-block;width:5px;height:5px;margin-left:6px;border-radius:50%;background:var(--ink-3);vertical-align:middle;}
 .set-dot::before{content:"";position:absolute;inset:-6px;}
@@ -816,11 +816,11 @@ html,body{height:auto;overflow:visible;margin:0;}
 .set-detail .set-end{grid-column:2;grid-row:1 / span 2;align-self:center;}
 /* A record in Settings shows all of its meta: on touch no tooltip could. A fold's records stay in the sentence column. */
 .set-sec .lr-m{overflow:visible;white-space:normal;}
-.set-sec .lr-end > .btn-quiet:last-child,.set-sec .lr-end > .tip-wrap:last-child > .btn-quiet{margin-right:calc(-1 * var(--btn-inset));}
+.set-sec .lr-end > .btn-quiet:last-child,.set-sec .lr-end > .tip-wrap:last-child > .btn-quiet{padding-right:0;}
 .set-detail .list-rows{margin-left:calc(-1 * (var(--rail,20px) + var(--gap,12px)));}
 .set-foot{padding-top:4px;}   /* the fold's one action under its rows (Back to the group) */
-.set-end > .btn-icon.btn-quiet{--btn-inset:7px;}   /* an icon stands 7px inside its button */
-.set-foot > .btn-quiet{margin-left:calc(-1 * var(--btn-inset));}
+.set-end > .btn-icon.btn-quiet:last-child{margin-right:-7px;}   /* an icon stands 7px inside its button */
+.set-foot > .btn-quiet{padding-left:0;}
 .spick{position:relative;}
 .spick-b{display:inline;margin:0;padding:0;border:0;border-radius:var(--r-xs);background:none;font:inherit;font-weight:600;line-height:inherit;color:var(--ink);white-space:nowrap;cursor:pointer;transition:background-color 100ms var(--ease),box-shadow 100ms var(--ease);}
 .spick-b svg{margin-left:2px;vertical-align:-2px;color:var(--ink-2);}
@@ -832,15 +832,15 @@ html,body{height:auto;overflow:visible;margin:0;}
   .set-row{grid-template-columns:minmax(0,1fr);row-gap:4px;}
   .set-end{justify-content:flex-start;}
   .set-end:not(:has(*)){display:none;}
-  .set-end > .btn-quiet:first-child{margin-left:calc(-1 * var(--btn-inset));}
-  .set-end > .btn-quiet:last-child,.set-end > .tip-wrap:last-child > .btn-quiet{margin-right:0;}
+  .set-end > .btn-quiet:first-child{padding-left:0;}
+  .set-end > .btn-quiet:last-child,.set-end > .tip-wrap:last-child > .btn-quiet{padding-right:11px;margin-right:0;}
   .set-detail{grid-column:1;}
   .spick-b{white-space:normal;text-align:left;}
   .set-sec-head{flex-wrap:wrap;}
   /* A record stacks as a row does: its name and meta take the width, its end goes under them. Nothing is cut. */
   .set-sec .list-rows{grid-template-columns:var(--lr-rail) minmax(0,1fr);}
   .set-sec .list-rows > .list-row > .lr-end{grid-column:2;display:flex;justify-content:flex-start;}
-  .set-sec .lr-end > .btn-quiet:first-child{margin-left:calc(-1 * var(--btn-inset));}
+  .set-sec .lr-end > .btn-quiet:first-child{padding-left:0;}
   .set-sec .lr-t{overflow:visible;white-space:normal;}
   .spick-menu.is-right{left:-4px;right:auto;}   /* a stacked row: every menu opens under its words */   /* a long choice wraps on a narrow screen, its ▾ with its last word */
 }
@@ -896,7 +896,7 @@ button.lr-main:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .lr-round-end{display:inline-flex;align-items:center;gap:2px;flex:none;font-size:var(--fs-meta);white-space:nowrap;}
 .lr-rounds > .list-rows{margin-left:0;grid-template-columns:0 minmax(0,1fr) fit-content(45%);column-gap:0;}
 .lr-rounds .lr-t{font-size:var(--fs-meta);color:var(--ink-2);}
-.lr-rounds > .btn{margin-left:calc(-1 * var(--btn-inset,8px));}
+.lr-rounds > .btn{padding-left:0;}
 /* The selection bar at the top of the list, in sight while it scrolls (list.select-bar); the list's editor, under what opened it. */
 .list-select{position:sticky;top:0;z-index:4;margin:0 0 8px;background:var(--bg);}
 .list-select .runs-bulk{position:static;display:block;padding:6px 0;border-top:0;border-bottom:1px solid var(--line);background:transparent;}
@@ -906,6 +906,7 @@ button.lr-main:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .bar-list .list-select{background:var(--side-bg);}
 :is(.bar-list,.pz-popover .panel-body):has(.list-select){--fade-t:0px!important;}   /* the fade must not eat the bar */
 .list-pop{position:fixed;z-index:46;}
+#side-rail .bar-list:has(.list-pop){-webkit-mask-image:none;mask-image:none;}   /* the bar's fades would cut a picker off at the bar and leave it under the page */
 .list-pop .menu{max-height:min(420px,70vh);overflow-y:auto;}
 .list-pop .rc-list-ed{max-width:calc(100vw - 32px);}
 .list-dlg-t{margin:0 0 8px;color:var(--ink-2);}
@@ -1131,8 +1132,8 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .lr-tree{position:relative;margin-left:calc(-1 * var(--lr-gap,12px) + 2px);}
 .lr-tree > .list-rows{margin-left:0!important;}
 .lr-tree > .list-rows > .list-row{position:relative;margin-left:0;padding-left:14px;--lr-gap:8px;}
-.lr-tree > .list-rows > .list-row::before{content:"";position:absolute;left:0;top:-5px;width:14px;height:25px;border-left:1.5px solid var(--step-done);border-bottom:1.5px solid var(--step-done);border-bottom-left-radius:9px;}
-.lr-tree > .list-rows > .list-row:not(:last-child)::after{content:"";position:absolute;left:0;top:0;bottom:0;border-left:1.5px solid var(--step-done);}
+.lr-tree > .list-rows > .list-row > .lr-rail::before{content:"";position:absolute;left:0;top:-5px;width:14px;height:25px;border-left:1.5px solid var(--step-done);border-bottom:1.5px solid var(--step-done);border-bottom-left-radius:9px;}
+.lr-tree > .list-rows > .list-row:not(:last-child) > .lr-rail::after{content:"";position:absolute;left:0;top:0;bottom:0;border-left:1.5px solid var(--step-done);}
 
 /* The one bar (docs/rail/navigation.md): the house, what it shows, its list, you. */
 .bar-head{flex:none;display:flex;align-items:center;gap:6px;height:48px;padding:0 8px 0 10px;}
@@ -1415,7 +1416,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .tp-sentence{margin:0;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;color:var(--ink-2);}
 .tp-nudge{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2);}
 .tp-actions{display:flex;gap:8px;align-items:center;}
-.tp-actions > .btn-quiet:first-child{margin-left:calc(-1 * var(--btn-inset,11px));}   /* rail.one-rail: a quiet button starts at the text edge */
+.tp-actions > .btn-quiet:first-child{padding-left:0;}   /* rail.one-rail: a quiet button starts at the text edge */
 .tp-more > .btn,.tp-nudge > .btn{margin-left:-8px;}   /* quiet buttons keep the text edge */
 .tp-nudge > .btn{margin-left:0;}
 
@@ -1587,10 +1588,10 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .chat-home-new{margin:14px 0 0;color:var(--ink-2);font-size:var(--fs-meta);}   /* a newcomer's one pointer, quiet: under the starters */
 /* motion.attention in a list: the row that needs you and you have not opened breathes as a whole, softly, in its state's
    colour (as a card in a chat does); its mark keeps that colour and holds still. Running breathes in ink, on its mark. */
-.list-row:has(> .lr-rail > .kind-mark.is-breathe) > .lr-main{position:relative;isolation:isolate;}
-.list-row:has(> .lr-rail > .kind-mark.is-breathe) > .lr-main::before{content:'';position:absolute;inset:-2px -14px -2px -44px;--attn-fx:16px;--attn-fy:4px;-webkit-mask-image:linear-gradient(to right,transparent,#000 var(--attn-fx),#000 calc(100% - var(--attn-fx)),transparent),linear-gradient(to bottom,transparent,#000 var(--attn-fy),#000 calc(100% - var(--attn-fy)),transparent);-webkit-mask-composite:source-in;mask-image:linear-gradient(to right,transparent,#000 var(--attn-fx),#000 calc(100% - var(--attn-fx)),transparent),linear-gradient(to bottom,transparent,#000 var(--attn-fy),#000 calc(100% - var(--attn-fy)),transparent);mask-composite:intersect;z-index:-1;background:light-dark(color-mix(in srgb,var(--attn,var(--amber)) 11%,transparent),color-mix(in srgb,var(--attn,var(--amber)) 17%,transparent));animation:attn-breath 4.8s cubic-bezier(.45,0,.55,1) infinite;pointer-events:none;}   /* ds-ok: the breath takes in its mark: one thing, its mark and its name (the rail is 26px, 4px air) */
+.list-row:has(> .lr-rail > .kind-mark.is-breathe){position:relative;isolation:isolate;}
+.list-row:has(> .lr-rail > .kind-mark.is-breathe)::before{content:'';position:absolute;grid-column:1 / -1;grid-row:1;inset:-2px -8px;--attn-fx:16px;--attn-fy:4px;-webkit-mask-image:linear-gradient(to right,transparent,#000 var(--attn-fx),#000 calc(100% - var(--attn-fx)),transparent),linear-gradient(to bottom,transparent,#000 var(--attn-fy),#000 calc(100% - var(--attn-fy)),transparent);-webkit-mask-composite:source-in;mask-image:linear-gradient(to right,transparent,#000 var(--attn-fx),#000 calc(100% - var(--attn-fx)),transparent),linear-gradient(to bottom,transparent,#000 var(--attn-fy),#000 calc(100% - var(--attn-fy)),transparent);mask-composite:intersect;z-index:-1;background:light-dark(color-mix(in srgb,var(--attn,var(--amber)) 11%,transparent),color-mix(in srgb,var(--attn,var(--amber)) 17%,transparent));animation:attn-breath 4.8s cubic-bezier(.45,0,.55,1) infinite;pointer-events:none;}   /* ds-ok: on the row's own first line, its mark to its end: one width on every row, a tree row's branches above it */
 .list-row:has(> .lr-rail > .kind-mark.is-breathe.is-fail){--attn:var(--red);}   /* the breath is its mark's colour: amber asks or waits (the default), red failed */
-@media (prefers-reduced-motion: reduce){.list-row:has(> .lr-rail > .kind-mark.is-breathe) > .lr-main::before{animation:none;opacity:.7;}}
+@media (prefers-reduced-motion: reduce){.list-row:has(> .lr-rail > .kind-mark.is-breathe)::before{animation:none;opacity:.7;}}
 
 /* look.chart: BarChart, one series in ink; the period you are in darkest; numbers only where they matter */
 .bar-chart{margin:12px 0 4px;padding-bottom:20px;}
@@ -1623,12 +1624,11 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 @media (max-width: 760px){.pg-grid{grid-template-columns:minmax(0,1fr);}}
 /* panel.center: a card in a center */
 .convo-col.is-center{max-width:720px;}
-.pg-a,.cc-fold,.dlg-status{--btn-inset:11px;}   /* a quiet button stands this far inside its text */
 .pg-state{color:var(--ink-2);}
 .pg-state.is-fail{color:var(--red-ink-strong,var(--red));} .pg-state.is-ask,.pg-state.is-act{color:var(--amber-ink);} .pg-state.is-ok{color:var(--green-ink);} .pg-state.is-merged{color:var(--violet-ink);} .pg-state.is-run{color:var(--ink);}
 .pg-line{grid-column:2;}
 .pg-f.is-one{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pg-a > .btn-quiet:first-child{margin-left:calc(-1 * var(--btn-inset));}
+.pg-a > .btn-quiet:first-child{padding-left:0;}
 .run-outs{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);}
 .ro-sqs{display:inline-flex;gap:3px;flex:none;}
 .ro-sq{width:9px;height:9px;border-radius:2px;box-sizing:border-box;}
@@ -1648,10 +1648,9 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .cc-lbl > .seg{position:absolute;right:0;top:-6px;}
 .cc-lbl > .seg button{height:24px;padding:0 10px;font-size:var(--fs-meta);}
 .cc-fold{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding-top:10px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);}
-.cc-fold > .btn-quiet{margin-left:calc(-1 * var(--btn-inset));}
+.cc-fold > .btn-quiet{padding-left:0;}
 .cc-more{display:grid;gap:12px;font-size:var(--fs-body);color:var(--ink-2);line-height:1.75;}
-.cc-err{color:var(--red-ink-strong,var(--red));margin-left:8px;}
-.dlg-status > .btn-quiet:first-child{margin-left:calc(-1 * var(--btn-inset));}
+.dlg-status > .btn-quiet:first-child{padding-left:0;}
 @media (max-width: 760px){.cc-frame br{display:none;}}
 
 /* list.fold-by-mark: a row's mark folds what is under it; it reads as the mark, with a hover like the row's */
@@ -1879,14 +1878,14 @@ button.fr-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .pz-menu.is-two-cols .menu-h{margin:0;}
 .pz-menu.is-two-cols .menu-item{break-inside:avoid;width:100%;height:auto;min-height:26px;padding-block:3px;}
 @media (max-width:640px){.pz-menu.is-two-cols .menu-cols{column-count:1;}}
-.in-acts{--btn-inset:11px;display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0;}
-.in-acts > .btn-quiet:first-child{margin-left:calc(-1 * var(--btn-inset));}   /* rail.one-rail: a quiet button starts at the text edge */
+.in-acts{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0;}
+.in-acts > .btn-quiet:first-child{padding-left:0;}   /* rail.one-rail: a quiet button starts at the text edge */
 .in-stands{margin:14px 0 8px;line-height:var(--lh-body);}
 .in-table{margin:12px 0 4px;}
 .side-n{margin-left:auto;font-size:var(--fs-meta);color:var(--ink-2);font-variant-numeric:tabular-nums;}
 
 /* a quiet action in a row of actions starts at the text edge (rail.one-rail) */
-.wf-acts > .btn-quiet:first-child{margin-left:-12px;}
+.wf-acts > .btn-quiet:first-child{padding-left:0;}
 
 .convo-col .wb.is-open{margin-top:18px;}
 

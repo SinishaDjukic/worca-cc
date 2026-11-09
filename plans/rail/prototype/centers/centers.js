@@ -187,20 +187,21 @@
   const blank = (kind, keep = {}) => ({ kind, project: projects().includes('billing-api') ? 'billing-api' : projects()[0], workflow: 'Default', agent: 'Claude', base: 'main', source: 'the latest version from origin', then: 'open a PR', text: '', path: '', src: 'write', name: '', more: false, title: '', branch: '', tags: '', agents: 'the workflow\'s own', cap: 'the workflow\'s own', every: 'weekday', at: '09:00', tz: 'Europe/Sofia', ends: 'no end date', overlap: 'skip if still going', fails: 'pause after 3 failures', err: '', ...keep });
   const fPick = (k, tip) => R.sentencePicker({ id: `f-${k}`, text: form[k], tip, items: LISTS()[k].map((v) => ({ id: v, text: v, checked: v === form[k] })), open: menu === `f-${k}`, chevron: chev });
   const proof = () => { const w = flows().find((x) => x.title === form.workflow), s = (w?.steps || []).map((x) => VERB[x] || x.toLowerCase()), last = s.pop(); return `${form.workflow} ${[s.join(', '), last].filter(Boolean).join(' and ')}, then ${THEN[form.then]}.`.replace(' and , ', ' '); };
+  const errOf = (at) => (form.errAt === at ? form.err : '');   // the line sits under the field it is about
   function formHtml() {
     const sched = form.kind === 'schedule';
     const frame = `<div class="cc-frame"><span>A task on ${fPick('project', 'The project you used last')} using the ${fPick('workflow')} workflow, run by ${fPick('agent')},<br> from ${fPick('base')}, ${fPick('source')}, then ${fPick('then')}</span><span class="cc-proof">${esc(proof())}</span></div>`;
     const src = R.segmented({ label: 'Task source', hook: 'c-src', items: [{ id: 'write', label: 'Write it', pressed: form.src === 'write' }, { id: 'file', label: 'From file', pressed: form.src === 'file' }] });
-    const what = `<div class="cc-lbl">${form.src === 'write' ? R.field({ id: 'cc-text', label: 'What should it do', multiline: true, value: form.text, placeholder: sched ? 'What should each run do?' : 'Describe the software task to build…', attrs: { 'data-f': 'text', rows: 5 } }) : R.field({ id: 'cc-path', label: 'What should it do', value: form.path, placeholder: 'A file in the project: docs/task.md', attrs: { 'data-f': 'path' } })}${src}</div>`;
+    const what = `<div class="cc-lbl">${form.src === 'write' ? R.field({ id: 'cc-text', label: 'What should it do', multiline: true, error: errOf('#cc-text'), value: form.text, placeholder: sched ? 'What should each run do?' : 'Describe the software task to build…', attrs: { 'data-f': 'text', rows: 5 } }) : R.field({ id: 'cc-path', label: 'What should it do', error: errOf('#cc-path'), value: form.path, placeholder: 'A file in the project: docs/task.md', attrs: { 'data-f': 'path' } })}${src}</div>`;
     const fold = (label, says) => `<div class="cc-fold">${R.button({ label, kind: 'quiet', icon: R.icon(form.more ? 'chevron' : 'chevR', 12), attrs: { 'data-c-more': '', 'aria-expanded': String(form.more) } })}<span>${esc(says)}</span></div>`;
     if (sched) {
-      const body = `${frame}${R.field({ id: 'cc-name', label: 'Name', value: form.name, placeholder: 'What to call this schedule', attrs: { 'data-f': 'name', maxlength: 80 } })}${what}
+      const body = `${frame}${R.field({ id: 'cc-name', label: 'Name', error: errOf('#cc-name'), value: form.name, placeholder: 'What to call this schedule', attrs: { 'data-f': 'name', maxlength: 80 } })}${what}
         <div class="cc-frame"><span>Every ${fPick('every')} at ${fPick('at')} in ${fPick('tz')}</span><span class="cc-proof">Next: ${esc(R.scheduleDates({ every: `every ${form.every}`, at: form.at, from: Sch().TODAY }).map((d) => d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).replace(',', '')).join(', '))}.</span></div>
         ${fold('If something gets in the way', `${cap(form.ends)}; ${form.overlap}; ${form.fails}`)}${form.more ? `<div class="cc-more"><span>It ends with ${fPick('ends')}</span><span>A run still going means ${fPick('overlap')}</span><span>When runs fail, ${fPick('fails')}</span></div>` : ''}`;
-      return R.dialog({ title: 'New schedule', body, yes: R.scheduleButton({ every: `every ${form.every}`, at: form.at }), status: form.err ? `<span class="cc-err">${esc(form.err)}</span>` : '', close: R.icon('x', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
+      return R.dialog({ title: 'New schedule', body, yes: R.scheduleButton({ every: `every ${form.every}`, at: form.at }), close: R.icon('x', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
     }
     const body = `${frame}${what}${fold('More options', 'Title, branch, cost tags, agents, guardrails, files')}${form.more ? `<div class="cc-more">${R.field({ id: 'cc-title', label: 'Title', value: form.title, placeholder: 'Worca names it from what it should do', attrs: { 'data-f': 'title', maxlength: NAME_MAX } })}${R.field({ id: 'cc-branch', label: 'Branch', value: form.branch, placeholder: 'Worca makes one', attrs: { 'data-f': 'branch' } })}${R.field({ id: 'cc-tags', label: 'Cost tags', value: form.tags, placeholder: 'Comma separated', attrs: { 'data-f': 'tags' } })}<span>Agents: ${fPick('agents')}</span><span>Cost cap: ${fPick('cap')}</span><span>${R.button({ label: 'Add files…', kind: 'quiet', attrs: { 'data-c-files': '', title: 'Attaches files to the task' } })}</span></div>` : ''}`;
-    return R.dialog({ title: 'New task', body, yes: 'Start task', status: `${R.button({ label: 'Schedule…', kind: 'quiet', attrs: { 'data-c-tosched': '', title: 'The same task, at a time' } })}${form.err ? `<span class="cc-err">${esc(form.err)}</span>` : ''}`, close: R.icon('x', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
+    return R.dialog({ title: 'New task', body, yes: 'Start task', status: `${R.button({ label: 'Schedule…', kind: 'quiet', attrs: { 'data-c-tosched': '', title: 'The same task, at a time' } })}`, close: R.icon('x', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
   }
   const hooksOf = () => ({ close: {}, cancel: {}, yes: {} });
   const cap = (t) => t[0].toUpperCase() + t.slice(1);
@@ -222,7 +223,7 @@
     return null;
   }
   function save() {
-    const bad = check(); if (bad) { form.err = bad[0]; paintForm(bad[1]); return; }
+    const bad = check(); if (bad) { form.err = bad[0]; form.errAt = bad[1]; paintForm(bad[1]); return; }
     const words = (form.src === 'write' ? form.text : `Follow ${form.path}`).trim(), project = form.project === 'No project' ? '' : form.project, k = Date.now().toString(36);
     if (form.kind === 'task') {
       const title = form.title.trim() || (words.length > 56 ? `${words.slice(0, 54).trim()}…` : words);
@@ -246,7 +247,7 @@
   }
   function dlgInput(e) {
     const k = e.target.dataset?.f; if (!k) return; form[k] = e.target.value;
-    if (form.err && !check()) { form.err = ''; const x = document.querySelector('#center-dlg .cc-err'); x?.remove(); }   // once it is mended, the line goes
+    if (form.err && check()?.[1] !== form.errAt) { const f = document.querySelector(`#center-dlg ${form.errAt}`); form.err = ''; form.errAt = ''; document.querySelector(`#${f?.id}-note`)?.remove(); f?.removeAttribute('aria-invalid'); f?.removeAttribute('aria-describedby'); }   // once it is mended, the line goes
   }
   function dlgKey(e) {
     if (e.key === 'Escape') { e.stopPropagation(); if (menu) { const m = menu; menu = ''; paintForm(`[data-menu="${m}"]`); } else closeForm(); return; }
