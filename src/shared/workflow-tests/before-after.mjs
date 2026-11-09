@@ -28,7 +28,8 @@ export function beforeAfter(before, after, { max = NAMES_MAX } = {}) {
     return { ...base, level: 'tests',
       madePass: cap(sorted(B.fail).filter((x) => A.pass.has(x)), max),
       stillPass: { n: sorted(B.pass).filter((x) => A.pass.has(x)).length },
-      broke: cap(sorted(B.pass).filter((x) => A.fail.has(x)), max),
+      // 2026-11-09: a test that passed before and is skipped now is broken too (it still runs, so it is not lostPass).
+      broke: cap(sorted(B.pass).filter((x) => A.fail.has(x) || A.skip.has(x)), max),
       stillFailing: cap(sorted(B.fail).filter((x) => A.fail.has(x)), max),
       added: { n: newOnes.length, failing: newOnes.filter((x) => A.fail.has(x)).length },
       gone: cap(sorted(new Set([...B.pass, ...B.fail])).filter((x) => !inA(x)), max),
@@ -46,13 +47,15 @@ export function beforeAfter(before, after, { max = NAMES_MAX } = {}) {
 /**
  * D82: is "The command passes" met? `metWhen` 'passes' (the default, D57): the command ends without an error within its time
  * limit. 'breaks-nothing': also met when it fails, if the before run (`ba`, beforeAfter's answer) shows that nothing that
- * passed before fails now or went missing, judged only on the evidence its level has: tests by name (broke and lostPass both
- * zero); failures by name (no new failing name, and both pass counts read with no fewer passing now); an exit code alone is
- * never evidence. Pure.
+ * passed before fails now, is skipped now (2026-11-09) or went missing, judged only on the evidence its level has: tests by
+ * name (broke, which holds the skipped ones too, and lostPass both zero); failures by name (no new failing name, both counts
+ * read, no fewer passing and no more skipped now); an exit code alone is never evidence. A command that ends without an error
+ * is met, unless 'breaks-nothing' has evidence that a test which passed before is broken or skipped now: switching a passing
+ * test off never makes "breaks nothing" met. Pure.
  * @returns {{met: boolean, why: string|null, n?: number, before?: number, after?: number}}
  */
 export function commandMet({ metWhen = 'passes', afterOk = false, afterTimedOut = false, ba = null } = {}) {
-  if (afterOk) return { met: true, why: null };
+  if (afterOk) return (metWhen === 'breaks-nothing' && switchedOff(ba)) || { met: true, why: null };
   if (afterTimedOut) return { met: false, why: 'timed-out' };
   if (metWhen !== 'breaks-nothing') return { met: false, why: 'failed' };
   if (!ba || !ba.ran) return { met: false, why: 'no-before' };
@@ -68,7 +71,21 @@ export function commandMet({ metWhen = 'passes', afterOk = false, afterTimedOut 
     const a = ba.counts && ba.counts.after;
     if (!b || !a) return { met: false, why: 'cannot-tell' };
     if (a.passed < b.passed) return { met: false, why: 'fewer-pass', before: b.passed, after: a.passed };
-    return { met: true, why: 'nothing-broke' };
+    return moreSkipped(ba) || { met: true, why: 'nothing-broke' };
   }
   return { met: false, why: ba.beforeOk && !ba.beforeTimedOut ? 'broke-exit' : 'cannot-tell' };
+}
+
+// Only failures are named: more tests skipped now than before may hide one that passed (Worca cannot tell): not met.
+function moreSkipped(ba) {
+  const b = ba.counts && ba.counts.before;
+  const a = ba.counts && ba.counts.after;
+  return b && a && (a.skipped || 0) > (b.skipped || 0) ? { met: false, why: 'more-skipped', before: b.skipped || 0, after: a.skipped || 0 } : null;
+}
+// The command passed: its evidence still says no when a test that passed before is broken or skipped now (tests by name),
+// or more are skipped (failures by name).
+function switchedOff(ba) {
+  if (!ba || !ba.ran) return null;
+  if (ba.level === 'tests') return ba.broke && ba.broke.n ? { met: false, why: 'broke', n: ba.broke.n } : null;
+  return ba.level === 'failures' ? moreSkipped(ba) : null;
 }

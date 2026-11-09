@@ -121,3 +121,28 @@ test('a test name split for board 36\'s Failed line: the test file, then the tes
   assert.deepEqual(splitTestName('invoice totals > rounds'), { file: null, test: 'invoice totals > rounds' });
   assert.deepEqual(splitTestName('plain'), { file: null, test: 'plain' });
 });
+
+test('2026-11-09: a test that passed before and is skipped now counts as broken; "breaks nothing" is never met by skipping it', () => {
+  const BN = (afterOk, ba) => commandMet({ metWhen: 'breaks-nothing', afterOk, ba });
+  // Tests by name: listed with the broken ones (one list, sorted), not as missing (it still runs, skipped).
+  const r = beforeAfter(B(true, T('tap', ['a', 'b', 'c', 'd'], [])), A(false, T('tap', ['a', 'd'], ['c'], { skip: ['b'] })));
+  assert.deepEqual([r.broke, r.lostPass, r.stillPass, r.gone], [{ n: 2, names: ['b', 'c'] }, { n: 0 }, { n: 2 }, { n: 0, names: [] }]);
+  assert.deepEqual(BN(false, r), { met: false, why: 'broke', n: 2 });
+  const onlySkipped = beforeAfter(B(true, T('tap', ['a', 'b'], [])), A(true, T('tap', ['a'], [], { skip: ['b'] })));
+  assert.deepEqual(onlySkipped.broke, { n: 1, names: ['b'] });
+  assert.deepEqual(BN(true, onlySkipped), { met: false, why: 'broke', n: 1 }, 'the command passes because the test was switched off');
+  assert.deepEqual(commandMet({ metWhen: 'passes', afterOk: true, ba: onlySkipped }), { met: true, why: null }, 'the default stays the exit code');
+  // A test that failed before and is skipped now did not pass before: not broken.
+  const failToSkip = beforeAfter(B(false, T('tap', ['a'], ['x'])), A(false, T('tap', ['a'], ['y'], { skip: ['x'] })));
+  assert.deepEqual([failToSkip.broke, BN(false, failToSkip)], [{ n: 0, names: [] }, { met: true, why: 'nothing-broke' }]);
+  // Only failures by name: nothing is named, so the counts decide; more skipped now than before is not met (fail closed).
+  const counts = (b, a) => ({ before: { passed: b[0], failed: 1, skipped: b[1] }, after: { passed: a[0], failed: 1, skipped: a[1] } });
+  const fails = (c) => ({ ran: true, level: 'failures', beforeOk: false, beforeTimedOut: false, afterOk: false, failingNow: { n: 0, names: [] }, counts: c });
+  assert.deepEqual(BN(false, fails(counts([212, 0], [212, 1]))), { met: false, why: 'more-skipped', before: 0, after: 1 }, 'one skipped, one new passing test');
+  assert.deepEqual(BN(false, fails(counts([212, 0], [211, 1]))), { met: false, why: 'fewer-pass', before: 212, after: 211 });
+  assert.deepEqual(BN(true, fails(counts([212, 0], [212, 1]))), { met: false, why: 'more-skipped', before: 0, after: 1 });
+  assert.deepEqual(BN(false, fails(counts([212, 2], [212, 2]))), { met: true, why: 'nothing-broke' });
+  assert.deepEqual(BN(true, fails(counts([212, 2], [213, 1]))), { met: true, why: null });
+  // With no evidence a passing command stays met: nothing shows a test switched off.
+  assert.deepEqual(BN(true, { ran: true, level: 'exit', beforeOk: true, beforeTimedOut: false, afterOk: true }), { met: true, why: null });
+});
