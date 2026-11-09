@@ -21,6 +21,24 @@ Before building, compare `dev` with the prototype and write `plans/rail/dev-vs-p
 by area, with where it lives in dev. Things only the prototype has are fine; they are built here. Bring the list to the owner; missing
 functions must be kept unless the owner drops them.
 
+## Iterate and validate against dev, all the way through
+
+The comparison in step 1 was never run on the prototype; it is the first job here, and it is not one-off. For every slice, compare what you built with dev's behaviour and with the prototype, and record the result in `plans/rail/dev-vs-prototype.md`.
+- Anything needed to align with the prototype and not yet developed is built.
+- Features dev has that the prototype does not cover are adopted the same way: Rail's language, philosophy, library and standards decide how they look and behave. The prototype is the model, not the limit.
+- Nothing dev does today may be lost or broken.
+
+## Opt-in: Stillhet
+
+The new design system's public name is **Stillhet** (codename Rail). It ships behind a feature flag, opt-in and opt-out (`docs/feature-flags.md`).
+- When a user reloads Worca from dev, ask them once, in plain words: this is an evolution of Worca's design system called Stillhet; say what it is for (calm: only what needs you is lit; Chat first); invite them to adopt it for testing and to report any bugs on our GitHub (link to the issues page).
+- Accepting turns the flag on. Declining leaves everything as it is and does not ask again on each reload. They can turn it off or on later in Settings, and turning it off returns them to today's app.
+- With the flag off, or while opting in or out, existing code and functions must not break: same behaviour, same data, no migration that can't be undone. Test both states.
+
+## Test as you build
+
+Focus on testing and validation: full end-to-end in a real browser against the real app, not only the prototype's mocks, in both flag states, all three modes, both themes and narrow widths. Stay as close as possible to the philosophy, the library and Rail itself at every step.
+
 ## The concept (do not re-decide)
 
 - **Chat first.** Chat is the only place to type to Worca. No composer on any other page: remove every "Ask about this…" dock; ⌘J and the
