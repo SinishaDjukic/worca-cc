@@ -1170,3 +1170,21 @@ test('a resume that switched a Gemini CLI run to Claude still registers the earl
   assert.deepEqual(switched._injectedFor('pk', wt), [], 'the agent\'s file survives teardown');
   assert.deepEqual(await switched._engineConfigState(wt), { owned: [], forced: ['.gemini/settings.json'] });
 });
+
+test('a project that ignores .claude/ still commits and stages: the memory exclude under it is dropped, not refused by git add', async () => {
+  const { wt, base } = linkedWorktree({ ignore: '.claude/\n' });
+  const o = harnessOn(wt, { engine: 'claude', base });
+  o.injectedPaths = { pk: [{ path: '.claude/rules/worca', kind: 'memory', source: null }] };
+  mkdirSync(join(wt, '.claude', 'rules', 'worca'), { recursive: true });
+  writeFileSync(join(wt, '.claude', 'rules', 'worca', 'rule.md'), 'memory\n');
+  writeFileSync(join(wt, 'a.txt'), 'agent work\n');
+  const warns = [];
+  o.on('log', (l) => { if (l.level === 'warn') warns.push(String(l.text)); });
+  await o._stageWorkingTree({ ignoreAbort: true });
+  assert.equal(git(wt, ['diff', '--name-status', base]).trim(), 'A\ta.txt', 'the reviewer sees the new file');
+  assert.deepEqual(warns, []);
+  const commit = await o._commitWork({ worktreeDir: wt, branch: 'feat/cursor' }, null, { excludePathspecs: o._excludePathspecs('pk') });
+  assert.equal(commit.ok, true, JSON.stringify(commit));
+  assert.equal(commit.committed, true);
+  assert.deepEqual(tree(wt, 'HEAD'), ['.gitignore', 'a.txt', 'seed.txt']);
+});

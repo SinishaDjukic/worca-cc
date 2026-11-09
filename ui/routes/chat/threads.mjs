@@ -8,11 +8,14 @@ import { chatScopeOf, sameScope } from '../../../src/core/ask/scope.mjs';
 import { revealTargetFor as askRevealTargetFor } from '../../../src/core/ask/show-files-deps.mjs';
 import { THREAD_SORTS, attachmentPath as askAttachmentPath, countThreads as askCountThreads, createThread as askCreateThread, getAttachment as askGetAttachment, getThread as askGetThread, listAttachments as askListAttachments, listMessages as askListMessages, listRunLinks as askListRunLinks, listThreadIds as askListThreadIds, listThreads as askListThreads, listThreadsPage as askListThreadsPage, readAttachmentText as askReadAttachmentText, setArchived as askSetArchived, setPinned as askSetPinned, updateThread as askUpdateThread } from '../../../src/core/ask/store.mjs';
 import { removeAskWorktree as askRemoveWorktree } from '../../../src/core/ask/worktrees.mjs';
+import { chatOrigins } from '../../../src/core/chat/conversations.mjs';
 import { actorOf } from '../../../src/core/identity.mjs';
+import { attachmentDisposition } from '../../../src/core/download-filename.mjs';
+import { isInlineServableMime } from '../../../src/shared/artifact-kinds.mjs';
 import { CHAT_BUSY } from '../../../src/shared/chat-busy.mjs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, REMOTE_MODE, SETTLED_RUN, agentMayBeCaller, askBusyReason, askChatEngine, askCommands, askFollowers, askIdParam, askInFlight, askTrackingCount, askValidateScope, askViewer, askWorktreesEnvelope, badRequest, broadcast, builtins, deleteAskThreadFully, emitAskWorktrees, emitChanged, liveRunEntry, requireTerminal, switchThreadScope } from '../../server.mjs';
+import { ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, REMOTE_MODE, SETTLED_RUN, agentMayBeCaller, askBusyReason, askChatEngine, askCommands, askFollowers, askIdParam, askInFlight, askTrackingCount, askValidateScope, askViewer, askWorktreesEnvelope, badRequest, broadcast, builtins, channelHost, deleteAskThreadFully, emitAskWorktrees, emitChanged, liveRunEntry, requireTerminal, switchThreadScope } from '../../server.mjs';
 
 export function register(app) {
 
@@ -50,10 +53,20 @@ app.get('/api/ask/threads', (req, res) => {
     const mode = !req.worcaExtension && req.query.mode === 'composer' ? 'composer' : null;
     // q = the History column's search (title or any message's text); the owner and surface filters above still apply.
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-    const decorate = (t) => {
+    // origin = the chat integration that opened the thread (null = started in the app), one lookup per page.
+    const withOrigins = (rows) => {
+      const found = chatOrigins(rows.map((t) => t.id));
+      const named = found.size ? channelHost.list() : [];
+      const label = (o) => named.find((e) => e.plugin === o.plugin && e.channelId === o.channelId)?.displayName || null;
+      return rows.map((t) => {
+        const o = found.get(t.id);
+        return decorate(t, o ? { ...o, label: label(o) } : null);
+      });
+    };
+    const decorate = (t, origin) => {
       const trackingRuns = askTrackingCount(t.id);
       return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns, waiting: askWaitingCount(t.id) > 0,
-        commands: askCommands.running(t.id), archived: !!t.archivedAt, scope: chatScopeOf(t.context) };
+        commands: askCommands.running(t.id), archived: !!t.archivedAt, scope: chatScopeOf(t.context), origin };
     };
     // #948 s2: the Chats column pages (show / sort / cursor). Without them the answer keeps today's top-level keys.
     const cursor = typeof req.query.cursor === 'string' && req.query.cursor ? req.query.cursor : null;
@@ -69,9 +82,9 @@ app.get('/api/ask/threads', (req, res) => {
         needs: askCountThreads({ ...base, show: 'all', ids: needIds }),
         archived: askCountThreads({ ...base, show: 'archived' }),
       };
-      return res.json({ threads: page.threads.map(decorate), cursor: page.cursor, total: counts[show], counts });
+      return res.json({ threads: withOrigins(page.threads), cursor: page.cursor, total: counts[show], counts });
     }
-    const threads = askListThreads({ limit, visibleTo, mode, query }).map(decorate);
+    const threads = withOrigins(askListThreads({ limit, visibleTo, mode, query }));
     // total = EVERY saved chat (the History popover's meter), not the capped page above; while searching, the chats
     // the search matches, with all = every saved chat ("3 of 54 chats").
     const total = askCountThreads({ visibleTo, mode, query });
@@ -281,14 +294,17 @@ app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
     if (!file) return res.status(404).json({ error: 'attachment not found' });
     // Text bodies serve as utf-8 text/plain (pre-#398, byte-for-byte: the body
     // was UTF-8-validated at upload and stored verbatim) whatever their mime —
-    // this is what makes an HTML attachment (a text kind labelled text/html)
-    // safe: with nosniff it is shown as source, never rendered or run on the
-    // worca origin, so text/html must never be served here. Binary bodies are
-    // sniff-verified allowlisted mimes only, so serving their real mime inline
-    // is safe — and it is what lets the transcript render <img> thumbnails
-    // (#398). The one scriptable binary is a show_files SVG copy, which gets the
-    // sandbox CSP below.
-    const type = att.kind === 'text' ? 'text/plain; charset=utf-8' : (att.mime || 'application/octet-stream');
+    // this is what makes an HTML or SVG attachment (a text kind) safe: with
+    // nosniff it is shown as source, never rendered or run on the worca origin,
+    // so text/html must never be served here. A non-text body is served inline
+    // under its own mime only when that is a known upload/snapshot binary mime
+    // (sniff-verified image/PDF, show_files media): that is what lets the
+    // transcript render <img> thumbnails (#398). The one scriptable such body is
+    // a show_files SVG copy, which gets the sandbox CSP below. Every other
+    // non-text body (a generic upload, application/octet-stream) is untrusted
+    // bytes of unknown type: it goes out as an octet-stream download, never inline.
+    const download = att.kind !== 'text' && !isInlineServableMime(att.mime);
+    const type = att.kind === 'text' ? 'text/plain; charset=utf-8' : (download ? 'application/octet-stream' : att.mime);
     // The chat files card's viewer reads a text body as JSON {text}, like the artifact text route (docs/show-files.md).
     if (req.query.as === 'text') {
       if (att.kind !== 'text') return res.status(415).json({ error: 'not a text attachment' });
@@ -302,7 +318,7 @@ app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
     // store-minted id, so a stat-based ETag/Last-Modified plus a year-long
     // private immutable cache replaces a 5 MB sync read and sha1 per request —
     // the transcript re-creates every <img> on each structural render.
-    const headers = { 'Content-Type': type, 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline',
+    const headers = { 'Content-Type': type, 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': download ? attachmentDisposition(att.name) : 'inline',
       'Cache-Control': 'private, max-age=31536000, immutable' };
     // A show_files SVG is drawn through <img> only; opened in its own tab, the sandbox CSP keeps its scripts dead
     // (the ask-files route's rule).

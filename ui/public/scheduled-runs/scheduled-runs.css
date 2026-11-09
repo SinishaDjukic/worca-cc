@@ -117,6 +117,7 @@
 .sched-feed-text{font-size:13px;line-height:1.5;color:var(--ink-2);overflow-wrap:anywhere;}
 .sched-feed-text b{font-weight:600;color:var(--ink);}
 .sched-feed-time{margin-top:2px;font-size:var(--fs-meta);color:var(--ink-3);}
+.sched-feed-resolved{margin-top:2px;font-size:var(--fs-meta);color:var(--ink-2);}
 .sched-feed-acts{text-align:right;}
 .sched-feed-acts > .btn{margin:2px 0 2px 7px;}
 

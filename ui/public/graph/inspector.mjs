@@ -11,6 +11,7 @@ import { ENGINES, engineLabel, sessionSupport, SESSION_SUBAGENTS_VERIFIED } from
 import { sessionCandidates, sessionNotes, SESSION_DEFAULT_LABEL, SESSION_SHARED_SELECTABLE } from '../../../src/shared/graph/sessions.mjs';
 import { SESSION_LABEL_MAX } from '../../../src/shared/graph/constants.mjs';
 import { icon } from '../icons.mjs';
+import { subagentAliasLabel, subagentAliasTitle } from '../../../src/shared/model-roles.mjs';
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, wirableParams, hasParamsPort } from '../../../src/shared/graph/script-meta.mjs';
 // The DOM primitives and the two script forms live in ../script-forms.mjs so the
 // composer, the Scripts page's Overview tab and the Test tab share ONE copy (C3).
@@ -105,7 +106,7 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
           { disabled: true, title: 'This model routes to a custom endpoint; its sub-agents run the same model. Pick a non-routed model to edit.' })
         : select(doc, 'ins-subagent', 'subagentModel', 'Sub-agent model',
           [{ value: '', text: 'default (agent picks)' },
-            ...subagentModels.map((m) => ({ value: m, text: m === 'auto' ? 'agent picks' : m }))],
+            ...subagentModels.map((m) => ({ value: m, text: subagentAliasLabel(m), title: subagentAliasTitle(m) }))],
           node.config.subagentModel), 'expert', !!node.config.subagentModel));
     }
     if (meta && meta.asksQuestions) {

@@ -14,6 +14,9 @@ export function stepKind(pq) {
   return k === 'plan' && pq.plan && pq.plan.outline ? 'outline' : k;
 }
 
+/** The Requirements step's ask: a `plan` kind carrying the criteria check or its load error (the plan ask carries neither). */
+export const isRequirementsAsk = (pq) => !!pq && askKindOf(pq) === 'plan' && !!pq.plan && !!(pq.plan.criteria || pq.plan.error);
+
 /** Which asks draw as step cards: plan, gate and recovery always; Clarify only for a shaping run with the gate on. */
 export function isStepCard(pq, run, gateOn) {
   const k = askKindOf(pq);
@@ -23,6 +26,7 @@ export function isStepCard(pq, run, gateOn) {
 
 /** D15: `Plan · run k` once the run belongs to a split feature (index is 1-based), else the kind's chip. */
 export function stepChip(pq, run) {
+  if (isRequirementsAsk(pq)) return 'Requirements';
   const k = stepKind(pq);
   const f = run && run.shaping && run.shaping.feature;
   if (k === 'plan' && f && Number.isInteger(f.index) && f.index >= 1) return `Plan · run ${f.index}`;
@@ -31,6 +35,7 @@ export function stepChip(pq, run) {
 
 /** The visible title; `who` is the step label (nodeLabel), '' when unknown. */
 export function stepTitle(pq, who = '') {
+  if (isRequirementsAsk(pq)) return 'Your turn: agree the requirements';
   switch (stepKind(pq)) {
     case 'clarify': return 'A few questions before the plan';
     case 'plan': return 'Your turn: approve the plan';
@@ -41,11 +46,17 @@ export function stepTitle(pq, who = '') {
   }
 }
 
+/** The waiting card has hidden its foot for its open Ask for changes field (the Requirements card): the field's Send
+ *  changes is the only primary, so the host's bar must not draw Answer as one. */
+export const answerFieldOpen = (root) => !!root && !!root.querySelector('.qpanel:not(.hidden) .plan-actions[hidden]');
+
 /** Run 4 (D4): the control a waiting question takes the focus on — the card's own primary (Approve 2 runs, Approve and
- *  build) when it has an enabled one, else its first control that is not a menu trigger (a run row's ⋯). */
+ *  build) when it has an enabled one in a foot that shows, else its open Ask for changes field, else its first control
+ *  that is not a menu trigger (a run row's ⋯). */
 export function questionFocusTarget(root) {
   if (!root) return null;
-  return root.querySelector('.qpanel:not(.hidden) .plan-actions .btn-primary:not([disabled])')
+  return root.querySelector('.qpanel:not(.hidden) .plan-actions:not([hidden]) .btn-primary:not([disabled])')
+    || root.querySelector('.qpanel:not(.hidden) .plan-typed:not([hidden]) textarea')
     || root.querySelector('.qpanel:not(.hidden) :is(button, input, textarea, [tabindex]):not([disabled]):not([aria-haspopup])');
 }
 

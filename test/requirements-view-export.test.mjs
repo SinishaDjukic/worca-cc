@@ -1065,7 +1065,8 @@ test('D15, board 29 (6): Report back to SHOP-123 on the Ready to build card, on 
 
 test('D15: the start-before-Ready dialog and the runs card carry the same switch; the start sends reportBack', async () => {
   const f = feature({ readiness: readiness(['openQuestions']), state: 'decide', export: XV({ link: LINK }) });
-  const { host, calls } = await openFeature(f, { [`POST ${F}/start`]: () => ({ runId: 'r1', version: 1, feature: f, turns: [] }) });
+  const { host, calls } = await openFeature(f, { [`POST ${F}/start`]: () => ({ runId: 'r1', version: 1, feature: f, turns: [] }),
+    [`PUT ${F}/early-start-reason`]: () => ({ earlyStartReason: 'Now.' }) });
   q('start-anyway', host).click();
   await settle();
   const sw = q('report-dialog');
@@ -1386,6 +1387,28 @@ test('NOT_READY on send: while the feature is fetched again the buttons keep wai
   slow.release();
   await settle();
   assert.equal(text(dlg().querySelector('h2')), 'Export FEAT-7 before it’s Ready?');
+});
+
+test('saving an export setup drops the kept import answer, so the import dialog starts from the new default connection', async () => {
+  const IMP = '/api/requirements/import/project/shop-1';
+  const SOURCES = { sources: [{ plugin: 'jira-source', sourceId: 'jira', name: 'Jira', profiles: [{ id: 'acme', label: 'acme' }] }], defaultConnection: CONN, defaultProject: null };
+  const m = await openFeature(feature(), { ...SETUP_ROUTES(SAVED), [`GET ${IMP}`]: SOURCES,
+    'GET /api/requirements': { features: [], interview: null, lookCostUsd: null, briefs: [], readEstimates: {} } });
+  const imports = () => m.calls.filter((c) => c.method === 'GET' && c.url === IMP).length;
+  await m.view.show('new');
+  await settle();
+  assert.equal(imports(), 1);
+  await m.view.show('feature/7');
+  await settle();
+  q('menu-export', m.host).click();
+  q('mi-export-setup', m.host).click();
+  await settle();
+  q('setup-save').click();
+  await settle();
+  await m.view.show('new');
+  await settle();
+  assert.equal(imports(), 2, 'the saved setup moves the import default: asked again');
+  m.view.destroy();
 });
 
 test("Ticket updates (D14): Report back's hint says the rule's move; without one, the two lines stay", async () => {

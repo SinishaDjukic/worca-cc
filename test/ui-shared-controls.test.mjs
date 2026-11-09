@@ -138,7 +138,7 @@ test('on/off rule: every checkbox in index.html is a switch or an allowed picker
 // JS emitters: a statement that makes a checkbox must be a switch (sw-input / makeSwitch within 2 lines) or carry the
 // literal class/id token of a listed picker. [file, token, reason]; the token is the string on the emitting statement.
 // The tokens were resolved against the emitters (label-picker `lp-check`, mcp-run-picker's `box` factory,
-// report-run `confirm-checkbox`, actions-view `act-member`, widgets-input's multi-choice list). `ask-markdown.mjs`
+// report-run `confirm-checkbox`, actions-view `act-cb`, widgets-input's multi-choice list). `ask-markdown.mjs`
 // only sanitises rendered task lists and emits no checkbox, so it has no entry.
 const JS_CHECKBOX_OK = [
   ['runs-list.mjs', 'runs-check', 'picks runs'], ['label-picker.mjs', 'lp-check', 'picks labels'], ['mcp-run-picker.mjs', 'const box = (checked, keys, kind)', 'picks MCP sets'],
@@ -147,13 +147,15 @@ const JS_CHECKBOX_OK = [
   ['night-mode-form.mjs', 'offBox', 'No away hours opt-out'], ['night-mode-form.mjs', 'night-never', 'Never opt-out'],
   ['team-policy-view.mjs', 'tp-null', 'No cap opt-out'], ['team-policy-view.mjs', 'tp-cat-effort', 'picks efforts'],
   ['schedule-sheet.mjs', 'sched-between', 'Only between opt-in'], ['report-run.mjs', 'input.dataset.optin', 'consent rows: what the report may include'],
-  ['actions-view.mjs', 'act-member', 'picks projects'], ['actions-config-view.mjs', 'ac-builtin', 'picks built-ins'],
+  ['actions-view.mjs', 'act-cb', 'picks projects in the checkout table'], ['actions-config-view.mjs', 'ac-builtin', 'picks built-ins'],
   ['script-bench-view.mjs', 'expect:fired', 'picks expectations'], ['ask/widgets-input.mjs', "multi ? 'checkbox'", 'a question\'s multi-choice list'], ['app.js', 'folder-pick', 'picks folders'],
   ['app.js', 'wiz-proj-cb', 'picks projects'], ['app.js', 'wiz-import-cb', 'picks imports'], ['app.js', 'wd-add-row', 'picks rows'],
   ['app.js', 'pb-include', 'picks items'], ['app.js', 'shipit-repo-pick', 'picks repos'], ['app.js', 'publish-pick', 'picks items'],
   ['app.js', 'cb.value = opt', 'picks chips'],
   ['memory-view.mjs', 'mem-seed-all', 'picks: select every note to share'], ['memory-view.mjs', 'mem-seed-check', 'picks notes to share'],
   ['marketplace/browse.mjs', 'mk-hide-installed', 'Hide installed: an opt-in filter next to the list'],
+  ['requirements-view.mjs', 'ipv-crit-', 'picks the ticket criteria to start from'], ['requirements-view.mjs', 'ipv-com-', 'picks the ticket comments to take'],
+  ['requirements-view.mjs', 'ipv-att-', 'picks the ticket attachments to add as files'],
   ['marketplace/remove-view.mjs', 'mk-purge-box', 'opt-in consent in the Remove dialog'],
   ['agent-capabilities-view.mjs', 'cap-check', 'picks MCP servers, tools and skills for an agent'],
   ['marketplace/update-view.mjs', 'mk-reviewed', 'acknowledges the reviewed changes'], ['marketplace/update-view.mjs', 'mk-include', 'picks updates'],

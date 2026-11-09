@@ -135,6 +135,7 @@ Worca; it does not reach Claude Code's logs. Where the files are kept: [storage.
 
 **Testing.** In mock mode (`WORCA_MOCK=1`) nothing is sent: a read writes a `[mock]` summary at once, or after
 `WORCA_MOCK_READ_MS` milliseconds when that is set (the browser proof uses it to see "Reading N files…").
+A mock download from a ticket waits `WORCA_MOCK_DOWNLOAD_MS` milliseconds when that is set (the proof sees "Downloading…").
 
 **When a file changes the interview.** During the interview the next round uses a new or replaced file. After the
 interview finished, Worca asks about it in one short follow-up round; until that round has run, the feature shows
@@ -243,6 +244,9 @@ Worca keeps the reason, your name and the checks that failed on the feature, and
 started before Ready. Open assumptions are then treated as confirmed. Worca refuses it without a reason, and
 always refuses a feature that is busy, archived or whose project or workspace is gone.
 
+The reason is saved on the feature as soon as you give it, so it survives a cancel or a start that fails,
+and the next time you start the feature the box opens with it. A run that starts clears it.
+
 ## Start in Worca
 
 **Start in Worca** starts a normal run from the feature:
@@ -250,8 +254,16 @@ always refuses a feature that is busy, archived or whose project or workspace is
 - The run's task is the spec, with the acceptance criteria (`R-po-1`, ...) as its definition of done. The
   run title is `FEAT-<n>: <title>`.
 - It uses the **Auto** workflow and the project's default branch, unless you change them under **Change** on the
-  Ready to build card. Auto picks a workflow for the task and, when the project asks for confirmation, shows
-  its pick on the run page for you to accept.
+  Ready to build card (at every interface level). Auto picks a workflow for the task and, when the project asks
+  for confirmation, shows its pick on the run page for you to accept. If the workflow list cannot be loaded, the
+  card says so and Auto is used.
+- With any other workflow, **Start in Worca** first opens **Set up this run**: the workflow (fixed here; cancel
+  and change it on the card to use another), a **Preset** menu with the run presets saved for that workflow, and
+  each agent's model and effort and each loop's cycle budget. Applying a preset fills in its agent and loop
+  settings only. What you change applies to this run alone: the project's settings and your presets are never
+  written. **Start run** starts it and opens the run page; **Cancel** (or Escape) starts nothing. The overlay
+  opens after the reason when you start before Ready. If the server refuses the picks, the reason is shown in
+  the overlay and you can fix it and try again.
 - The files and brief documents whose Send switch is on go with it as attached files ([Files](#files)).
 - Only runs started from Requirements are checked this way. **New run**, **Ask**, schedules and the CLI
   work as before and do not look at Requirements.
@@ -280,6 +292,34 @@ anything.
   changed.
 - Once a run has started, the feature's project or workspace can no longer be changed.
 - Rejecting an assumption and **Done, ask about A-n** still work on a started feature, as before the start.
+
+## Start from a ticket
+
+**New feature › From a ticket…** starts a feature from a ticket your team already wrote in its tracker (Jira today; other
+trackers add the same steps in their own plugins). The button shows once a tracker connection can import; trackers are
+connected on the Marketplace page (**Installed › Jira**, Advanced mode). Importing never changes the ticket: nothing is
+sent to Jira. The import itself costs nothing. Reading the picked comments file and attachments costs what any file read
+costs, through the interview model.
+
+- **Find the ticket.** Pick the connection (only with several) and the Jira project, then search by words, or paste the
+  ticket's key or link to find it in any project. An empty search lists the project's most recently updated tickets. On
+  Jira Cloud an empty search in All projects lists tickets updated in the last year. A ticket another feature already
+  follows says "Linked to FEAT-7".
+- **See what comes along.** The preview shows the title, the description, the acceptance criteria Worca found (in a Jira
+  field, or under an "Acceptance criteria" heading in the description), the comments and the attachments, each with a
+  checkbox. Keys and passwords in the ticket's text are hidden. Comments by people are ticked, those by apps and automation
+  are not; comments visible only to a group or role are left out. Attachments Worca cannot read (Office files, other types,
+  over 25 MB) are not offered, and a new feature takes up to 10 files and 100 MB in all.
+- **Use this ticket** fills New feature: the title, the description (yours to change), the criteria and the ticket's
+  files. **Change ticket…** picks another one; × stops using it and keeps what you typed.
+- **Start the interview** reads the ticket again and opens the feature at once. The ticked criteria start the spec as your
+  own criteria R-po-1…, tagged "SHOP-124"; the picked comments become one file, "SHOP-124 comments.md", that Worca reads
+  like your other files; the picked attachments show **Downloading…** while Worca gets them from Jira, then **Reading…**.
+  Round 1 waits for them (at most 6 minutes). A file Worca could not get says why, with **Try again**.
+- **Linked from the start.** The header shows the ticket (**SHOP-124**), and History records the import. **Export ▾ ›
+  Export to Jira…** updates or comments on the same ticket (an update keeps the ticket's issue type and priority), and
+  **Start in Worca** offers **Report back to SHOP-124**. A ticket another feature already follows starts the new feature
+  unlinked: one ticket follows one feature.
 
 ## Export to a tracker
 

@@ -23,7 +23,7 @@ import { FLOW_KINDS, KEYED_KINDS, DEFAULT_MAX_CYCLES, AWAIT_PORT } from '../../s
 import { classifyLoops } from '../../shared/graph/loops.mjs';
 import { firedOutputs, resolveOrOutType } from '../../shared/graph/ports.mjs';
 import { blockingIssues, hasBlocking, normalizeSeverity } from '../../shared/graph/verdict.mjs';
-import { roleReviewOf } from '../../shared/graph/role-review-step.mjs';
+import { roleReviewOf, roleTargetOf } from '../../shared/graph/role-review-step.mjs';
 
 /** Execution statuses that need no re-invocation on restore. */
 const TERMINAL = new Set(['done', 'error', 'skipped']);
@@ -730,7 +730,7 @@ export function createScheduler(opts) {
 
   function route(node, port, token, verdict, executionId, { approved = false } = {}) {
     if (ended) return;
-    // The node approval stop: the approved port's token goes NOWHERE until a person answers — before any
+    // The node approval stop: the approved port's token goes NOWHERE until the ask is answered — before any
     // wire (and before loop accounting), so no downstream node can start (spec D2).
     if (!approved && approveOf(node)?.port === port.id) { holdForApproval(node, port, token, executionId); return; }
     const outs = outWires.get(`${node.id}.${port.id}`) || [];
@@ -912,7 +912,7 @@ export function createScheduler(opts) {
       let src = w ? nodeById.get(w.from.node) : null;
       // Spec §3: role reviews sit between the Planner and Refine; "Ask for changes" still goes to the Planner.
       if (src && isRoleReview(src)) {
-        const up = wireById.get(wiredIn.get(src.id)?.get('plan'));
+        const up = wireById.get(wiredIn.get(src.id)?.get(roleTargetOf(roleReviewOf(src.config)).reviewedPort));
         src = up ? nodeById.get(up.from.node) : null;
       }
       if (!src || src.kind !== 'agent') continue;
@@ -1249,11 +1249,12 @@ export function createScheduler(opts) {
     }
     if (!awaitAll) return inputs.some((inp) => isFresh(inp.id));
 
-    // awaitAll: a fresh loop token alone always re-fires (the loop path is the point).
+    // awaitAll: a fresh loop token alone always re-fires (the loop path is the point). An extra input is context
+    // (ports.mjs extraInputsOf): it never holds a re-fire.
     if (inputs.some((inp) => isLoopPort(node.id, inp) && isFresh(inp.id))) return true;
     let barrier = false;
     for (const inp of inputs) {
-      if (!wired.has(inp.id) || isLoopPort(node.id, inp)) continue;
+      if (!wired.has(inp.id) || isLoopPort(node.id, inp) || inp.extra === true) continue;
       barrier = true;
       if (!isFresh(inp.id)) return false;
     }

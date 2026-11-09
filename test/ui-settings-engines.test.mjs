@@ -108,7 +108,7 @@ test('renderAskEngineSection offers no Cursor engine', () => {
   const host = doc.getElementById('h');
   renderAskEngineSection(host, { catalog: CATALOG });
   assert.deepEqual([...host.querySelectorAll('[data-setting="askEngine"] option')].map((o) => o.value).filter(Boolean), ['codex', 'copilot', 'gemini', 'goose', 'opencode', 'qwen'], 'Claude is the default option, listed once');
-  assert.match(host.textContent, /Chat on Qwen Code needs a Qwen Code model: add one on the Models page\./, 'an engine that ships no model says how to get one');
+  assert.match(host.textContent, /Chat on [^.]*Qwen Code needs a model of their own: add one for each on the Models page\./, "engines that ship no model say how to get one");
 });
 
 async function boot(settings = {}, { hash = 'settings', engines = null, flags = '', steps = STEPS, catalog = CATALOG, configStatus = 200, postReply = null } = {}) {
@@ -534,4 +534,78 @@ test('renderRolesSection: painting one host twice binds its listeners once', () 
   const sel = host.querySelector('[data-setting="models.claude.roles.deep"] .inherit-model');
   sel.value = 'claude-opus-5-5'; sel.dispatchEvent(new window.Event('change', { bubbles: true }));
   assert.equal(calls, 1);
+});
+
+const FACTORY = { claude: {
+  steps: { planReviewer: { model: 'claude-sonnet-5-5', effort: 'medium' }, requirementsReviewer: { model: 'claude-sonnet-5-5', effort: 'medium' } },
+  helpers: { secondOpinion: { model: 'claude-opus-5-5', effort: 'medium' }, memoryDefrag: { model: 'claude-sonnet-5' } },
+} };
+const FACTORY_CATALOG = [...CATALOG,
+  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', engine: 'claude', efforts: ['medium', 'high'], custom: false },
+  { id: 'claude-sonnet-5', label: 'Sonnet 5', engine: 'claude', efforts: ['medium', 'high'], custom: false }];
+
+test('enginePatchToSettingsBody: the Second-opinion reviewer saves onto secondOpinionModel (Claude) and utilityModels (Codex)', () => {
+  assert.equal(utilityId('claude', 'secondOpinion'), 'models.claude.secondOpinion');
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.secondOpinion': { model: 'claude-opus-5-5', effort: 'high' } }),
+    { secondOpinionModel: { model: 'claude-opus-5-5', effort: 'high' } });
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.secondOpinion': null }), { secondOpinionModel: null });
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.codex.secondOpinion': { model: 'gpt-5.5', effort: 'low' } }),
+    { utilityModels: { codex: { secondOpinion: { model: 'gpt-5.5', effort: 'low' } } } });
+});
+
+test('the Models page: Second-opinion reviewer and Memory defragment read Worca\'s factory defaults on the Claude tab', async () => {
+  const { doc, window, posts, tick } = await boot({ memoryDefrag: { model: null, effort: null }, secondOpinionModel: null, factoryModels: FACTORY },
+    { hash: 'models', steps: [{ key: 'planReviewer', label: 'Plan Review' }, { key: 'reviewer', label: 'Review' }], catalog: FACTORY_CATALOG });
+  const claude = doc.querySelector('.engine-card[data-engine="claude"]');
+  assert.ok([...claude.querySelectorAll('.engine-helpers .engine-slot-add option')].some((o) => o.textContent === 'Second-opinion reviewer'), 'listed under Override a helper job');
+  const row = claude.querySelector('.engine-helpers [data-setting="models.claude.secondOpinion"]');
+  assert.ok(row);
+  assert.match(row.textContent, /Second-opinion reviewer/);
+  const empty = (r, part) => r.querySelector(`${part} option[value=""]`).textContent;
+  assert.equal(empty(row, '.inherit-model'), 'Opus 5.5 (default)');
+  assert.equal(empty(row, '.inherit-effort'), 'medium (default)');
+  assert.equal(empty(claude.querySelector('[data-setting="models.claude.memoryDefrag"]'), '.inherit-model'), 'Sonnet 5 (default)');
+  const model = row.querySelector('.inherit-model');
+  model.value = 'claude-opus-5-5'; model.dispatchEvent(new window.Event('change', { bubbles: true }));
+  const effort = row.querySelector('.inherit-effort');
+  effort.value = 'high'; effort.dispatchEvent(new window.Event('change', { bubbles: true }));
+  doc.getElementById('engineSettingsSave').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.deepEqual(posts.at(-1), { secondOpinionModel: { model: 'claude-opus-5-5', effort: 'high' } });
+});
+
+test('the Models page: the Plan Review row keeps the Deep role\'s text, and its hint names the role-review default', async () => {
+  const stepRow = (doc) => doc.querySelector('.engine-card[data-engine="claude"] [data-setting="models.claude.steps.planReviewer"]');
+  const steps = [{ key: 'planReviewer', label: 'Plan Review' }, { key: 'reviewer', label: 'Review' }];
+  const { doc } = await boot({ factoryModels: FACTORY, modelRoles: { claude: { deep: { model: 'claude-opus-5-5', effort: 'high' } } } }, { hash: 'models', steps, catalog: FACTORY_CATALOG });
+  const row = stepRow(doc);
+  assert.match(row.querySelector('.inherit-model option[value=""]').textContent, /^From Deep thinking/);
+  assert.equal(row.dataset.role, 'deep', 'a Roles-card edit still repaints it');
+  assert.equal(row.querySelector('.label-row label').title, 'Role reviews (Shaper) use your role; with none set, Sonnet 5.5 · medium');
+  assert.equal(doc.querySelector('.engine-card[data-engine="claude"] [data-setting="models.claude.steps.reviewer"] .label-row label').title, '', 'other steps name no factory default');
+  assert.equal(doc.querySelector('.engine-card[data-engine="codex"] [data-setting="models.codex.steps.planReviewer"] .label-row label').title, '', 'the factory default is Claude\'s');
+  const noRole = (await boot({ factoryModels: FACTORY }, { hash: 'models', steps, catalog: FACTORY_CATALOG })).doc;
+  assert.notEqual(stepRow(noRole).querySelector('.inherit-model option[value=""]').textContent, 'Sonnet 5.5 (default)', 'a plain plan review does not run the factory default');
+});
+
+test('the Models page: a stored Second-opinion reviewer paints, and clearing it posts null', async () => {
+  const { doc, posts, tick } = await boot({ secondOpinionModel: { model: 'claude-opus-5-5', effort: 'high' }, factoryModels: FACTORY }, { hash: 'models' });
+  const row = doc.querySelector('.engine-card[data-engine="claude"] [data-setting="models.claude.secondOpinion"]');
+  assert.equal(row.querySelector('.inherit-model').value, 'claude-opus-5-5');
+  row.querySelector('.inherit-clear').click();
+  doc.getElementById('engineSettingsSave').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.deepEqual(posts.at(-1), { secondOpinionModel: null });
+});
+
+test('the Models page: the Codex tab offers the Second-opinion reviewer with Codex\'s default label and posts its utilityModels job', async () => {
+  const { doc, window, posts, tick } = await boot({ utilityModels: {}, factoryModels: FACTORY }, { hash: 'models' });
+  const row = doc.querySelector('.engine-card[data-engine="codex"] .engine-helpers [data-setting="models.codex.secondOpinion"]');
+  assert.ok(row);
+  assert.match(row.querySelector('.inherit-model option[value=""]').textContent, /^Codex's default model/);
+  const model = row.querySelector('.inherit-model');
+  model.value = 'gpt-5.5'; model.dispatchEvent(new window.Event('change', { bubbles: true }));
+  doc.getElementById('engineSettingsSave').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.deepEqual(posts.at(-1), { utilityModels: { codex: { secondOpinion: { model: 'gpt-5.5' } } } });
 });

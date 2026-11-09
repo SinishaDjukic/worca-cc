@@ -67,4 +67,6 @@
 .qcancel:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .qopen[hidden]{display:none;}
 :is(.rd-questions,.chat-rc-q) .qanswered{font:600 var(--fs-body) var(--sans);color:var(--ink);}   /* the pill bar's lead, not a mono aside */
+.chat-q-text textarea.chat-q-input{width:100%;box-sizing:border-box;}
+.chat-q-err:empty{display:none;}
 

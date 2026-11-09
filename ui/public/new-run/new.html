@@ -317,6 +317,19 @@
                       <span class="switch-why" id="hitl-why" hidden>Needs a project</span>
                     </label>
                     <small class="hint" id="hitlHint">Off: the proposal is accepted as proposed, no clarify card, no agent questions. A loop that runs out of cycles, a recovery prompt, a cost cap or an error still pause the run.</small>
+                    <!-- Open a PR when the run finishes (src/shared/pr-auto.mjs): prefilled from the project or workspace setting;
+                         only a value the person changes is sent (ui/public/pr-auto-view.mjs fills the options). -->
+                    <div class="field field-compact" id="pr-open-row" hidden>
+                      <label for="prOpen">Pull request when done</label>
+                      <div class="select-wrap"><select id="prOpen" class="select" aria-label="Pull request when done"></select></div>
+                      <small class="hint" id="prOpenSource"></small>
+                    </div>
+                    <div class="field field-compact" id="pr-slices-row" hidden>
+                      <label for="prSlices">Shaper features: pull requests</label>
+                      <div class="select-wrap"><select id="prSlices" class="select" aria-label="Shaper features: pull requests"></select></div>
+                      <small class="hint" id="prSlicesSource"></small>
+                      <small class="hint">Used when Shaper plans this run in slices.</small>
+                    </div>
                     <!-- Away mode per-run mark (src/core/night/*): worca may answer this run's
                          questions while you are away (Settings › Away mode sets when and how). -->
                     <label class="switch-row" id="night-row">

@@ -17,7 +17,10 @@ if (!bin) {
   process.exit(process.env.CI ? 1 : 0);
 }
 // A stalled Firefox, or web-ext handles left open after exit(), must not hang CI.
-const kill = setTimeout(() => { console.error('firefox-smoke: timed out after 90 s'); process.exit(1); }, 90_000);
+const kill = setTimeout(() => { console.error('firefox-smoke: timed out after 120 s'); process.exit(1); }, 120_000);
+// web-ext waits 30 s for Firefox's debugger port with no option to change it, and a cold start on a busy CI runner can
+// take longer: its own connector with 90 s (750 x 120 ms), passed through the run command's firefoxClient option.
+const { connectWithMaxRetries } = await import(new URL('./lib/firefox/remote.js', import.meta.resolve('web-ext')));
 const runner = await webExt.cmd.run({
   sourceDir: join(ROOT, 'extension/dist/firefox'),
   target: ['firefox-desktop'],
@@ -25,7 +28,7 @@ const runner = await webExt.cmd.run({
   args: ['-headless'],
   noInput: true,
   noReload: true,
-}, { shouldExitProgram: false });
+}, { shouldExitProgram: false, firefoxClient: ({ port }) => connectWithMaxRetries({ port, maxRetries: 750 }) });
 console.log('firefox-smoke: the extension installed as a temporary add-on');
 await runner.exit();
 clearTimeout(kill);

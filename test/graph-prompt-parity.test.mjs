@@ -193,6 +193,8 @@ const MOCK_ROLES = {
   // producers on the generic writer, the review on the generic verifier (no bespoke roles).
   promoSetup: 'clarify', promoVoice: 'clarify', promoExplorer: 'generic-producer', promoWriter: 'generic-producer',
   promoCapture: 'generic-producer', promoMascot: 'generic-producer', promoScenes: 'generic-producer', promoReview: 'generic-verifier',
+  // Shaper's requirements stage is post-v1: its own three writers.
+  requirementsDrafter: 'requirements-draft', requirementsReviewer: 'requirements-review', requirementsRefiner: 'requirements-refine',
 };
 
 test('every builtin pins its v1 MOCK_ROLE and names its allocated outputs absolutely', () => {
@@ -244,7 +246,8 @@ test('planner keeps its instruction, the REVISE arm and the inline answers block
 });
 
 test('refiner, reviewer, planReviewer and workspaceReviewer keep their v1 instructions', () => {
-  assert.deepEqual(BUILTIN_KEYS.filter((k) => REGISTRY[k].verdict).sort(), ['manualWebUiTesting', 'planReviewer', 'promoReview', 'refiner', 'reviewer', 'workspaceReviewer']);
+  assert.deepEqual(BUILTIN_KEYS.filter((k) => REGISTRY[k].verdict).sort(),
+    ['manualWebUiTesting', 'planReviewer', 'promoReview', 'refiner', 'requirementsRefiner', 'requirementsReviewer', 'reviewer', 'workspaceReviewer']);
   assert.ok(promptFor('refiner').includes(V1_REFINER_INSTRUCTION));
   const rev = promptFor('reviewer', { only: ['plan', 'done'] });   // `done` is optional: bind it to reach the worktree arm
   assert.ok(rev.includes(V1_REVIEWER_INSTRUCTION));

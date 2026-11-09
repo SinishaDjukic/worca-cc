@@ -7,12 +7,15 @@
 //
 // Kinds: 'text' (UTF-8, inlineable into the turn prompt, redactable),
 // 'image' (fed to the model via its Read tool on the stored file) and
-// 'binary' (today only PDF — same Read-tool path, never inlined).
+// 'binary' (PDF — same Read-tool path, never inlined — or, with mime
+// application/octet-stream, any other file the model gets only as a name and a path).
 //
-// The extension names the CLAIMED type; for binary kinds the claim is verified
-// against the leading bytes (magic number) so a mislabeled body is refused at
-// upload rather than stored wrong. SVG is deliberately absent: it is scriptable
-// markup, and the download route serves BINARY bodies with their real mime.
+// The extension names the CLAIMED type; for listed binary kinds the claim is verified
+// against the leading bytes (magic number). Nothing is refused for its type: a file
+// that is not on the lists (or whose bytes contradict its listed extension) is stored
+// as text/plain when it is UTF-8, else as generic binary (see attachment-upload.mjs).
+// SVG is therefore stored as text (served text/plain, never rendered), and the
+// download route serves any non-inline-servable body as an octet-stream attachment.
 //
 // HTML is safe because it is a TEXT kind: the body is stored as `<id>.txt` and
 // the download route serves every text kind as `text/plain; charset=utf-8` with
@@ -26,8 +29,12 @@
 // which needs Buffer and so cannot live under src/shared.
 import {
   TEXT_EXTENSIONS, BINARY_EXTENSIONS, classifyExtension, extensionForAttachment,
+  GENERIC_BINARY_MIME, safeAttachmentExt, isGenericBinary, isInlineServableMime,
 } from '../../shared/artifact-kinds.mjs';
-export { TEXT_EXTENSIONS, BINARY_EXTENSIONS, classifyExtension, extensionForAttachment };
+export {
+  TEXT_EXTENSIONS, BINARY_EXTENSIONS, classifyExtension, extensionForAttachment,
+  GENERIC_BINARY_MIME, safeAttachmentExt, isGenericBinary, isInlineServableMime,
+};
 
 /** ISO 32000-1 §7.5.2 (implementation note 13): the `%PDF-` header may be
  *  preceded by up to 1024 bytes of junk (a UTF-8 BOM, print-driver or mail-

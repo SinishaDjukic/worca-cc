@@ -116,3 +116,35 @@ test('POST /api/workspaces/:id/scan (re-scan): signed out, routed scan agent →
   assert.ok(body.runId, 'a run started');
   await settled(body.runId);
 });
+
+test('POST /api/workspaces/scan: signed out on the factory default → refused, "no other scan model is set"', { skip }, async () => {
+  const r = await post('/api/workspaces/scan', { projectPaths: [await repo('g'), await repo('h')], name: 'Factory WS' });
+  assert.equal(r.status, 409);
+  const body = await r.json();
+  assert.equal(body.code, 'claude-signed-out');
+  assert.equal(body.error, 'Workspace scan: claude-sonnet-5 needs Claude Code sign-in and no other scan model is set — pick one in Settings › Runs › Workspaces, or sign in (run `claude`, then /login)');
+});
+
+test('POST /api/workspaces/scan: signed out with a stored first-party scan pick → refused naming the setting and the model', { skip }, async () => {
+  const s = await post('/api/settings', { workspaceScan: { scanModel: 'claude-sonnet-5', scanEffort: 'high', agentModel: 'sonnet', agentEffort: 'medium' } });
+  assert.equal(s.status, 200, JSON.stringify(await s.json()));
+  try {
+    const r = await post('/api/workspaces/scan', { projectPaths: [await repo('i'), await repo('j')], name: 'Stored WS' });
+    assert.equal(r.status, 409);
+    const body = await r.json();
+    assert.equal(body.code, 'claude-signed-out');
+    assert.equal(body.error, "Claude Code isn't signed in, and Settings › Runs › Workspaces names claude-sonnet-5, which needs it — pick a routed model in Settings › Runs › Workspaces, or sign in (run `claude`, then /login)");
+  } finally { await post('/api/settings', { workspaceScan: null }); }
+});
+
+test('POST /api/workspaces/scan: signed out, no scan pick, a routed Everyday coding role → the scan starts', { skip }, async () => {
+  // The scan agent takes the Everyday coding role (it was Quick jobs).
+  await post('/api/settings', { modelRoles: { claude: { everyday: { model: 'gw-model' } } } });
+  try {
+    const r = await post('/api/workspaces/scan', { projectPaths: [await repo('k'), await repo('l')], name: 'Everyday role WS' });
+    const body = await r.json();
+    assert.notEqual(body.code, 'claude-signed-out', JSON.stringify(body));
+    assert.equal(r.status, 200, JSON.stringify(body));
+    await settled(body.runId);
+  } finally { await post('/api/settings', { modelRoles: { claude: { everyday: null } } }); }
+});

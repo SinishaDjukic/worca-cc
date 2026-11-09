@@ -1,0 +1,27 @@
+{
+  "mount": "__PIPELINE__/memory",
+  "rules": "__HOME__/.worca-cc/runs/af176941/repos/__PROJECT_KEY__/.claude/rules/worca",
+  "dirs": [
+    {
+      "scope": {
+        "kind": "global"
+      },
+      "rel": "global",
+      "label": "Global"
+    },
+    {
+      "scope": {
+        "kind": "project",
+        "projectKey": "__PROJECT_KEY__"
+      },
+      "rel": "project",
+      "label": "Project worca-cc-srq-O7HnV5"
+    }
+  ],
+  "baseline": {},
+  "changes": [],
+  "loaded": {
+    "set": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "files": []
+  }
+}

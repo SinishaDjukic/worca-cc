@@ -10,7 +10,7 @@
 // was read globally (an info row, or a resolved problem) or they marked it. `info` rows arrive
 // already read: only `problem` rows count towards the unread badge. A problem
 // RESOLVES itself when the user acts on it (Run now, reschedule, resume), so stale
-// alarms never pile up.
+// alarms never pile up: a resolved row is never unread and never a "problem" in a filter.
 //
 // Sync (node:sqlite) like every other store module. Listeners registered with
 // onNotification() fire in THIS process only; a row written by another process
@@ -45,7 +45,7 @@ function rowToNotification(r) {
     createdAt: r.created_at,
     readAt: r.read_at || r.reader_read_at || null,
     resolvedAt: r.resolved_at || null,
-    unread: !r.read_at && !r.reader_read_at && r.severity === 'problem',
+    unread: !r.read_at && !r.reader_read_at && r.severity === 'problem' && !r.resolved_at,
   };
 }
 
@@ -78,8 +78,8 @@ export function addNotification({
 export function listNotifications({ scope = 'schedule', unread = false, problems = false, scheduleId = null, limit = 200, reader = null } = {}) {
   const where = ['n.scope = ?'];
   const args = [scope];
-  if (unread) where.push(`n.read_at IS NULL AND n.severity = 'problem'${reader ? ' AND r.read_at IS NULL' : ''}`);
-  if (problems) where.push("n.severity = 'problem'");
+  if (unread) where.push(`n.read_at IS NULL AND n.severity = 'problem' AND n.resolved_at IS NULL${reader ? ' AND r.read_at IS NULL' : ''}`);
+  if (problems) where.push("n.severity = 'problem' AND n.resolved_at IS NULL");
   if (scheduleId) { where.push('n.schedule_id = ?'); args.push(scheduleId); }
   const lim = Math.max(1, Math.min(1000, Number(limit) || 200));
   const join = reader ? 'LEFT JOIN notification_reads r ON r.notification_id = n.id AND r.reader = ?' : '';
@@ -93,9 +93,9 @@ export function unreadCount(scope = 'schedule', { reader = null } = {}) {
   if (reader) {
     return getDb().prepare(`SELECT COUNT(*) AS n FROM notifications n
       LEFT JOIN notification_reads r ON r.notification_id = n.id AND r.reader = ?
-      WHERE n.scope = ? AND n.read_at IS NULL AND n.severity = 'problem' AND r.read_at IS NULL`).get(reader, scope).n;
+      WHERE n.scope = ? AND n.read_at IS NULL AND n.severity = 'problem' AND n.resolved_at IS NULL AND r.read_at IS NULL`).get(reader, scope).n;
   }
-  return getDb().prepare("SELECT COUNT(*) AS n FROM notifications WHERE scope = ? AND read_at IS NULL AND severity = 'problem'").get(scope).n;
+  return getDb().prepare("SELECT COUNT(*) AS n FROM notifications WHERE scope = ? AND read_at IS NULL AND severity = 'problem' AND resolved_at IS NULL").get(scope).n;
 }
 
 /** Highest id in the table (0 when empty) — a cheap cross-process change probe. */

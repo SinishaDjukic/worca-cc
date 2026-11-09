@@ -8,8 +8,9 @@ tracker's terms.
 
 ## Where
 
-**Marketplace › Installed › Jira › Settings**, below **Test connection**, once the connection is saved. Advanced mode, with
-the Marketplace page.
+**Marketplace › Installed › Jira, Azure Boards or GitHub Issues › Settings**, below **Test connection**, once the connection
+is saved. Advanced mode, with the Marketplace page. For GitHub Issues a project is a repository (`owner/repo`), and New run's
+**Repository** list is the one that is shortened.
 
 - **Projects you work on.** Pick the tracker's projects you work on (**Add projects…**; the list opens right-aligned under
   its button). New run and Requirements export list only these. None picked = all projects. A project the tracker
@@ -24,7 +25,7 @@ the Marketplace page.
 
 The run's ticket moves by the rule of its project, else All projects, and Worca's one comment on the ticket ends with what
 happened: `Moved to Resolved.`, `Already in Closed.`, `Moved to Done, Resolution: Done.`, or a `Not moved: …` line saying
-why (Jira's own reason when Jira refused the move, or "Jira gave no reason."). The outcome is in the ticket's comment and in
+why (the tracker's own reason when it refused the move, or "<Tracker> gave no reason."). The outcome is in the ticket's comment and in
 the run's history line (`Result reported back to the task source: “Moved to Resolved.”`); the results view does not repeat
 it. A run that did not finish successfully does not move its ticket.
 
@@ -33,9 +34,11 @@ zero-width characters removed, angle brackets shown as ‹ › and backticks as 
 
 Which failures are a line and which fail the write-back:
 
-- A 4xx refusal of the move (not 401 or 429) becomes a "Not moved: …" line, and the comment is still posted.
-- A refused API token (401), a rate limit (429), a Jira server error (5xx), a network error or a timeout fails the
-  write-back instead, so it can be tried again.
+- A 4xx refusal of the move (not 401, not 429, and for GitHub not a rate limit) becomes a "Not moved: …" line, and the
+  comment is still posted.
+- A refused API token (401), a rate limit (429, or GitHub's 403 rate limits: the primary limit with no requests left, or a
+  403 whose message says "rate limit"), a server error (5xx), a network error or a timeout fails the write-back instead, so
+  it can be tried again. Any other GitHub 403 is a refusal and becomes a line.
 
 After a failed comment, a retry finds the ticket already moved and says "Already in …" for **Any Done status** and for a
 rule that names one of the project's statuses. A typed transition name carried over from the old setting says it only when
@@ -46,24 +49,41 @@ Every run records its ticket's project when it starts, even with the flag off, s
 that started before.
 
 The rules live in the plugin's `data/ticket-updates.json`. If that file is edited by hand into something that cannot be read, Worca
-treats the connection as having no saved rules: the old **Transition on completion** setting applies again, and the next
+treats the connection as having no saved rules: the plugin's old setting applies again, and the next
 save writes a fresh file without the rules that could not be read.
 
-**Any Done status** is one the ticket can reach, never a cancelled one (Won't Do, Won't Fix, Rejected, Duplicate, Cancelled,
-Declined, Invalid, Obsolete, Abandoned, Not planned), and never through a transition whose name contains such a word ("Won't Do" or "Close as Duplicate" into Closed
-is skipped; of several transitions to one status, the one named Done, Close or Resolve goes first). When a move asks for a
-Resolution, Worca fills in Done, Fixed or Complete.
+**Any Done status (Jira).** In Jira it is a status the ticket can reach, never a cancelled one (Won't Do, Won't Fix,
+Rejected, Duplicate, Cancelled, Declined, Invalid, Obsolete, Abandoned, Not planned), and never through a transition whose
+name contains such a word ("Won't Do" or "Close as Duplicate" into Closed is skipped; of several transitions to one status,
+the one named Done, Close or Resolve goes first). When a move asks for a Resolution, Worca fills in Done, Fixed or
+Complete. Azure Boards and GitHub Issues choose it as described below.
+
+## Azure Boards and GitHub Issues
+
+**Azure Boards.** Any Done status is the first state of the work item's type in the Completed category (Agile's Closed,
+Scrum's and Basic's Done); a Resolved item is not done yet, and Any Done status never picks Removed (a rule may name it).
+A rule that names a state moves the item to that state of its own type; a type without that state leaves the item where it
+is and says so (`Not moved: Shop's Task type has no status named Resolved.`). An item already Completed or Removed stays.
+A move Azure refuses reads `Not moved: Azure Boards refused the move to Closed: <Azure's message>.`
+
+**GitHub Issues.** Three statuses: Open, Closed (as completed) and Closed as not planned. Any Done status closes an open
+issue as completed; a closed issue stays as it is, so one closed as not planned is never turned into a completed one. A rule
+may also close as not planned, or reopen (Open). GitHub Projects' own Status fields are not used. A move GitHub refuses reads
+`Not moved: GitHub refused the move to Closed: <GitHub's message>.`
 
 ## Categories
 
 Every tracker's statuses map onto four: to do, in progress, done and cancelled. Jira: its "To Do" category is to do, "In
-Progress" in progress, "Done" done, except the cancelled names above. Azure Boards and GitHub follow in a later release.
+Progress" in progress, "Done" done, except the cancelled names above. Azure Boards: Proposed is to do, In Progress and
+Resolved in progress, Completed done, Removed cancelled. GitHub Issues: open is to do, closed as completed done, closed as
+not planned (or as a duplicate) cancelled; nothing is in progress.
 
 ## The old setting
 
 Until you save Ticket updates for a connection, the plugin's old setting works exactly as before (Jira: **Transition on
-completion**). The first time you open the section, All projects is filled in from it, with a note; nothing changes until you
-save. After that, the old setting reads "Moved to Ticket updates." and is no longer used.
+completion**; Azure Boards: **Close work item on completion**; GitHub Issues: **Close issue on completion**, where Yes is
+carried over as Any Done status). The first time you open the section, All projects is filled in from it, with a note;
+nothing changes until you save. After that, the old setting reads "Moved to Ticket updates." and is no longer used.
 
 ## Where it is stored
 
@@ -74,4 +94,6 @@ again restores the rules.
 ## For plugin authors
 
 The plugin contract (`listStatuses`, `legacyMove`, `reportResult`'s `move`) is in the creating-plugins skill and in
-`plugin-api.mjs`. The plugin API stays 5: a plugin without these keeps its old behaviour.
+`plugin-api.mjs`. The plugin API stays 5: a plugin without these keeps its old behaviour. A project key may hold one `/`
+(GitHub's `owner/repo`), each part 1 to 100 characters and never `.` or `..`; control characters, `\`, `?`, `#` and `%` are
+refused.

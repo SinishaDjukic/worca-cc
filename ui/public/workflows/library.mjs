@@ -1,8 +1,11 @@
 // ui/public/workflows/library.mjs
-// The Workflows view's Library card (composer-mockup.html library.js). A segmented selector switches Agents · Scripts ·
-// Workflows (with their registry counts). Agents and Scripts split into their domainGroups() folders (one group lists
-// its rows straight away; `shared` rows sit in every domain) and Agents ends with the pinned Flow folder; Workflows
-// splits by domain and ends with Archived. A folder row opens in place (several can be open). All / Built-in / Yours
+// The Workflows view's Library card (composer-mockup.html library.js). A segmented selector switches Workflows · Agents ·
+// Scripts (with their registry counts) and opens on Workflows, where people look for their own (#1127). Workflows holds
+// three top folders — Yours, Built-in, Archived — with domain folders nested in the first two; each workflow row has one
+// labelled main action (Edit on yours, Use as template on a built-in or plugin one) and a ⋯ menu for the rest. Agents
+// and Scripts split into their domainGroups() folders (one group lists its rows straight away; `shared` rows sit in
+// every domain) and Agents ends with the pinned Flow folder.
+// A folder row opens in place (several can be open). All / Built-in / Yours
 // narrow Agents and Scripts; the header's search button grows a field over the title, and a query lists every match in
 // the selected section as one flat list. Rows drag onto the canvas (HTML5 DnD, application/x-worca — BRIEF.md) and open
 // an inline detail with every action the old Agents and Scripts pages had. Pure DOM over the data app.js hands in
@@ -13,13 +16,18 @@ import { DND_TYPE, FLOW_CARDS } from './shell.mjs';
 import { toggleMenu } from './menu.mjs';
 import { iconSvg } from '../icons.mjs';
 import { accessSummary } from '../../../src/shared/agent-access.mjs';
+import { isBuiltinWorkflow, isReservedWorkflowId } from '../graph/composer.mjs';
 
-/** The sections, in the selector's order. */
-export const TOPS = Object.freeze(['agents', 'scripts', 'workflows']);
+/** The sections, in the selector's order: Workflows first, where people look for their own workflows (#1127). */
+export const TOPS = Object.freeze(['workflows', 'agents', 'scripts']);
 /** The pinned subfolders: Agents › Flow, Workflows › Archived. A domain matches `^[a-z][a-z0-9-]{0,31}$` (agent-meta,
  *  script-meta and workflows.mjs DOMAIN_RE), so a leading `_` never names one. */
 export const FLOW = '_flow';
 export const ARCHIVED = '_archived';
+/** Workflows' owner folders (#1127): Yours (saved rows: user-made, Auto-made, the seeded ones — Edit) above Built-in
+ *  (reserved built-ins and plugin rows — Use as template only); domain folders nest inside each. */
+export const YOURS = '_yours';
+export const BUILTIN = '_builtin';
 const TOP_LABEL = { agents: 'Agents', scripts: 'Scripts', workflows: 'Workflows' };
 const NOUN = { agents: 'agents', scripts: 'scripts', workflows: 'workflows' };
 const KIND_TOP = { agent: 'agents', script: 'scripts', workflow: 'workflows' };
@@ -35,7 +43,6 @@ const FLOW_DESC = {
   combine: 'Joins its md inputs into one document, in port order.',
 };
 const FLOW_PORT_LINE = { task: 'source · out task', end: 'in result · terminal', and: 'in in1..inN · out out', or: 'in in1..inN · out out', combine: 'in in1, in2 · out out' };
-const RESERVED = new Set(['wf_default', 'wf_lean_build', 'wf_memory_defrag']);
 const FLOW_ICON = {
   task: '<path d="M5.2 3.4h9.6v13.2H5.2z"/><path d="M7.6 7.2h4.8M7.6 10h4.8M7.6 12.8h3"/>',
   end: '<path d="M5.6 3.4v13.2"/><path d="M5.6 4.2h8.6l-2.4 3.4 2.4 3.4H5.6z"/>',
@@ -43,6 +50,21 @@ const FLOW_ICON = {
   or: '<path d="M3.4 5.5h3.6l4.4 4.5h5.4M3.4 14.5h3.6l4.4-4.5"/><path d="M14.6 7.8l2.2 2.2-2.2 2.2"/>',
   combine: '<path d="M3.4 5.5h4.2l4.4 4.5h4.6M3.4 14.5h4.2l4.4-4.5"/><path d="M14.4 7.8l2.2 2.2-2.2 2.2"/>',
 };
+const SUB_LABEL = { [FLOW]: 'Flow', [ARCHIVED]: 'Archived', [YOURS]: 'Yours', [BUILTIN]: 'Built-in' };
+const EMPTY_YOURS = 'None yet. Use a built-in as a template, or build on the blank canvas, then Save.';
+
+/** A folder's name: the section's for [top], else its last segment's ("coding", "Built-in", "Archived"). */
+export function folderLabel(path) {
+  const p = Array.isArray(path) ? path : [];
+  if (p.length <= 1) return TOP_LABEL[p[0]] || '';
+  return SUB_LABEL[p[p.length - 1]] || p[p.length - 1];
+}
+/** Every folder key on a path, outermost first: ['workflows', '_builtin', 'coding'] -> ['workflows/_builtin',
+ *  'workflows/_builtin/coding']; [top] -> []. */
+export function folderKeys(path) {
+  const p = Array.isArray(path) ? path : [];
+  return p.slice(1).map((_, i) => p.slice(0, i + 2).join('/'));
+}
 
 /** The port line (row line 2): META port ids only — the synthesized await gate is never listed. */
 export function portLineOf(entry) {
@@ -76,8 +98,8 @@ export function workflowDomains(list) {
  * @param {object} o
  * @param {Document} o.doc
  * @param {HTMLElement} o.host  aside#wfv-library
- * @param {object} o.actions  {addToCanvas(entry), openWorkflow(id), deleteWorkflow(wf), deleteArchived(wf),
- *   exportWorkflow(wf), newAgent(), newScript(), viewAgent(key), editAgent(key), deleteAgent(agent),
+ * @param {object} o.actions  {addToCanvas(entry), editWorkflow(id), useAsTemplate(id), deleteWorkflow(wf), deleteArchived(wf),
+ *   exportWorkflow(wf) (deleteWorkflow and exportWorkflow from a workflow row's ⋯ menu, #1127), newAgent(), newScript(), viewAgent(key), editAgent(key), deleteAgent(agent),
  *   duplicateAgent(agent), openScript(key), deleteScript(script), duplicateScript(script), portsFn(node), closeLibrary(),
  *   isPinned(id), togglePin(wf)}  — the last two: the Chat home pins (src/shared/home-pins.mjs) from the row ⋯ menu
  */
@@ -95,10 +117,11 @@ export function createLibrary({ doc, host, actions }) {
   };
   // svg(body) wraps a glyph body; the shared icons come whole, so they are parsed once.
   const sharedIcon = (name) => { const t = doc.createElement('template'); t.innerHTML = iconSvg(name, 16); return t.content.firstElementChild; };
-  // `top`: the selected section. `folders`: the open folders ("agents/coding"), kept across section switches.
+  // `top`: the selected section. `folders`: the open folders ("agents/coding"), kept across section switches; Workflows'
+  // owner folders (Yours, Built-in) start open (#1127).
   const st = {
-    top: 'agents', query: '', searchOpen: false, chip: 'all', open: false,
-    folders: new Set(), expanded: new Set(), flash: '',
+    top: 'workflows', query: '', searchOpen: false, chip: 'all', open: false,
+    folders: new Set([`workflows/${YOURS}`, `workflows/${BUILTIN}`]), expanded: new Set(), flash: '',
     data: { agents: [], scripts: [], workflows: [], archived: [], placedKinds: [], openId: '', newIds: new Set(), runtimes: null, loadError: '', retry: null },
   };
 
@@ -126,21 +149,27 @@ export function createLibrary({ doc, host, actions }) {
   /** A top folder's domain subfolders, read from the whole registry (a chip never reshapes the tree); [] when it holds
    *  one group or none — its rows then sit in the top folder itself. */
   function domainsOf(top) {
-    const ds = top === 'workflows' ? workflowDomains(dataOf('workflows')) : domainGroups(dataOf(top)).map((g) => g.id);
+    const ds = domainGroups(dataOf(top)).map((g) => g.id);
     return ds.length > 1 ? ds : [];
   }
-  /** A top folder's groups in folder order; `at` is the folder listing `items` (the top folder itself, or one of its
-   *  subfolders). `chipped: false` ignores All / Built-in / Yours — where a row LIVES (highlight, folderOf). */
+  /** A top folder's groups in folder order; `at` is the leaf folder listing `items`: [top], [top, sub] or
+   *  [top, owner, domain] (Workflows › Yours › coding, #1127). `chipped: false` ignores All / Built-in / Yours — where a row LIVES (highlight, folderOf). */
   function groupsOf(top, chipped = true) {
-    const ds = domainsOf(top);
     if (top === 'workflows') {
       const wfs = dataOf('workflows');
-      const out = ds.length ? ds.map((d) => ({ at: [top, d], kind: 'workflow', items: wfs.filter((w) => (w.domain || 'general') === d) }))
-        : [{ at: [top], kind: 'workflow', items: wfs }];
+      const out = [];
+      for (const [sub, shipped] of [[YOURS, false], [BUILTIN, true]]) {
+        const items = wfs.filter((w) => isBuiltinWorkflow(w) === shipped);
+        const ds = workflowDomains(items);
+        if (ds.length > 1) for (const d of ds) out.push({ at: [top, sub, d], kind: 'workflow', items: items.filter((w) => (w.domain || 'general') === d) });
+        // Yours shows even empty (`keep`): where a saved copy lands, and how to get one.
+        else out.push({ at: [top, sub], kind: 'workflow', items, keep: sub === YOURS });
+      }
       const arch = dataOf('archived');
       if (arch.length) out.push({ at: [top, ARCHIVED], kind: 'archived', items: arch });
       return out;
     }
+    const ds = domainsOf(top);
     const kind = top === 'agents' ? 'agent' : 'script';
     const groups = domainGroups(dataOf(top).filter((x) => !chipped || chipOk(x)));
     const out = ds.length ? ds.map((d) => ({ at: [top, d], kind, items: (groups.find((g) => g.id === d) || { items: [] }).items }))
@@ -169,9 +198,8 @@ export function createLibrary({ doc, host, actions }) {
     const hit = rowsUnder(top, false).find((r) => r.kind === kind && (kind === 'workflow' ? r.x.id : r.x.key) === key);
     return hit ? [...hit.at] : [top];
   }
-  const folderLabel = (path) => (path.length === 1 ? TOP_LABEL[path[0]] : path[1] === FLOW ? 'Flow' : path[1] === ARCHIVED ? 'Archived' : path[1]);
-  /** A search result's tag: the subfolder holding it ("coding", "Flow"); none for a row sitting in the section itself. */
-  const whereTag = (txt, at) => { if (at && at.length > 1) txt.appendChild(h('span', 'wfl-where', folderLabel(at))); };
+  /** A search result's tag: the folders holding it ("coding", "Yours › coding", "Flow"); none for a row in the section itself. */
+  const whereTag = (txt, at) => { if (at && at.length > 1) txt.appendChild(h('span', 'wfl-where', folderKeys(at).map((k) => folderLabel(k.split('/'))).join(' › '))); };
 
   // ── navigation ─────────────────────────────────────────────────────────────
   let navAt = -Infinity;
@@ -506,19 +534,27 @@ export function createLibrary({ doc, host, actions }) {
   }
   function workflowItem(w, at = null) {
     const v2 = w.version === 2;
+    const builtin = isBuiltinWorkflow(w);
+    const label = w.name || w.id;
     const item = h('div', `wfl-item wfl-wf${st.flash === `workflow:${w.id}` ? ' is-flash' : ''}${v2 ? '' : ' is-legacy'}`);
     item.dataset.id = w.id;
     item.dataset.item = `workflow:${w.id}`;
+    item.dataset.owner = builtin ? 'builtin' : 'yours';
+    // #1127: the row's one main action, labelled — your own workflow opens to Edit (Save changes it); a built-in or a
+    // plugin's opens as a new unsaved copy (Use as template). A row click does the same; a legacy v1 row opens nowhere.
+    const [verb, action] = builtin ? ['Use as template', 'useAsTemplate'] : ['Edit', 'editWorkflow'];
+    const what = builtin ? `Use "${label}" as a template` : `Edit "${label}"`;
+    const run = () => act(action, w.id);
     const main = h('div', 'wfl-main');
     main.dataset.focusKey = `workflow:${w.id}`;
-    if (v2) { main.setAttribute('role', 'button'); main.tabIndex = 0; main.title = `Open "${w.name || w.id}"`; }
+    if (v2) { main.setAttribute('role', 'button'); main.tabIndex = 0; main.title = builtin ? `${what}: opens a new copy` : what; }
     const thumb = h('span', 'wfl-tb');
     // thumbnailFor is numbers-only markup (no names, no ids) — safe for innerHTML.
-    if (v2) thumb.innerHTML = thumbnailFor(w, (n) => act('portsFn', n), { width: 120, height: 44 });
+    if (v2) thumb.innerHTML = thumbnailFor(w, (n) => act('portsFn', n), { width: 88, height: 40 });
     else thumb.textContent = 'v1';
     const txt = h('span', 'wfl-txt');
     const l1 = h('span', 'wfl-l1');
-    l1.appendChild(h('span', 'wfl-name', w.name || w.id));
+    l1.appendChild(h('span', 'wfl-name', label));
     const steps = (Array.isArray(w.nodes) ? w.nodes : []).filter((n) => n && (n.kind === 'agent' || n.kind === 'script')).length;
     let loops = 0;
     try { loops = v2 ? classifyLoops(w, (n) => act('portsFn', n)).loopWireIds.size : 0; } catch { loops = 0; }
@@ -532,42 +568,37 @@ export function createLibrary({ doc, host, actions }) {
     whereTag(txt, at);
     main.append(thumb, txt);
     if (v2) {
-      main.addEventListener('click', () => act('openWorkflow', w.id));
-      main.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); act('openWorkflow', w.id); } });
+      main.addEventListener('click', run);
+      main.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); run(); } });
     }
     item.appendChild(main);
     const tail = h('span', 'wfl-wf-actions');
     if (v2) {
-      const ex = h('button', 'btn btn-sm btn-quiet btn-icon wfl-export');
-      ex.type = 'button';
-      ex.title = 'Export as a JSON file, a Claude Code skill or a Worca plugin';
-      ex.setAttribute('aria-label', `Export "${w.name || w.id}"`);
-      ex.appendChild(svg('<path d="M12 4v11M7 9l5-5 5 5M5 20h14"/>'));
-      ex.addEventListener('click', () => act('exportWorkflow', w));
-      tail.appendChild(ex);
-    }
-    if (!RESERVED.has(w.id)) {
-      const del = h('button', 'btn btn-sm btn-quiet btn-icon wfl-del');
-      del.type = 'button';
-      del.title = 'Delete pipeline';
-      del.setAttribute('aria-label', `Delete "${w.name || w.id}"`);
-      del.appendChild(svg(TRASH_GLYPH));
-      del.addEventListener('click', () => act('deleteWorkflow', w));
-      tail.appendChild(del);
+      const go = h('button', 'btn btn-sm wfl-act', verb);
+      go.type = 'button';
+      go.title = builtin ? 'Opens a new copy to change and save as your own. This one stays as it is.' : 'Opens it on the canvas. Save changes it.';
+      go.setAttribute('aria-label', what);
+      go.dataset.focusKey = `workflow:${w.id}:act`;
+      go.addEventListener('click', run);
+      tail.appendChild(go);
     }
     if (!w.archivedAt) {
       const more = h('button', 'btn btn-sm btn-quiet btn-icon wfl-more');
       more.type = 'button';
       more.title = 'More';
-      more.setAttribute('aria-label', `More for "${w.name || w.id}"`);
+      more.setAttribute('aria-label', `More for "${label}"`);
       more.setAttribute('aria-haspopup', 'menu');
       more.dataset.focusKey = `workflow:${w.id}:more`;
       more.appendChild(sharedIcon('more'));
       more.addEventListener('click', () => {
         const pinned = act('isPinned', w.id) === true;
-        toggleMenu({ doc, anchor: more, align: 'end', label: `More for ${w.name || w.id}`, items: [
-          { label: pinned ? 'Unpin from Chat home' : 'Pin to Chat home', onSelect: () => act('togglePin', w) },
-        ] });
+        const items = [];
+        if (v2 && !builtin) items.push({ label: 'Use as template', onSelect: () => act('useAsTemplate', w.id) });
+        if (v2) items.push({ label: 'Export…', onSelect: () => act('exportWorkflow', w) });
+        items.push({ label: pinned ? 'Unpin from Chat home' : 'Pin to Chat home', onSelect: () => act('togglePin', w) });
+        // The server refuses DELETE on every reserved id; a plugin's row may go (its plugin's update brings it back).
+        if (!isReservedWorkflowId(w.id)) items.push({ sep: true }, { label: 'Delete…', danger: true, onSelect: () => act('deleteWorkflow', w) });
+        toggleMenu({ doc, anchor: more, align: 'end', label: `More for ${label}`, items });
       });
       tail.appendChild(more);
     }
@@ -628,18 +659,37 @@ export function createLibrary({ doc, host, actions }) {
       if (!hits.length) list.appendChild(h('p', 'wfl-empty', `No ${NOUN[top]} match “${st.query.trim()}”`));
       return { list, count: hits.length };
     }
-    for (const g of groupsOf(top)) {
+    const groups = groupsOf(top);
+    /** A folder's count: the rows of every leaf at or under it. */
+    const countUnder = (key) => groups.filter((g) => { const k = g.at.join('/'); return k === key || k.startsWith(`${key}/`); })
+      .reduce((n, g) => n + g.items.length, 0);
+    const folds = new Map();                             // folder key -> its open .wfl-fold, or null while it is folded
+    for (const g of groups) {
       if (g.at.length === 1) { for (const x of g.items) list.appendChild(rowEl(g.kind, x)); continue; }
-      if (!g.items.length) continue;                     // a chip left it nothing to show
-      const key = g.at.join('/');
-      list.appendChild(folderRow(g.at, g.items.length));
-      if (!st.folders.has(key)) continue;
-      const fold = h('div', 'wfl-fold');
-      fold.dataset.fold = key;
-      fold.setAttribute('role', 'group');
-      fold.setAttribute('aria-label', folderLabel(g.at));
-      for (const x of g.items) fold.appendChild(rowEl(g.kind, x));
-      list.appendChild(fold);
+      if (!g.items.length && !g.keep) continue;          // a chip left it nothing to show
+      // Every folder on the leaf's path, outermost first: a row the first time, its fold right after it when open, and a
+      // child folder inside its parent's fold (Workflows › Yours › coding).
+      let parent = list;
+      for (const key of folderKeys(g.at)) {
+        if (!folds.has(key)) {
+          const path = key.split('/');
+          parent.appendChild(folderRow(path, countUnder(key)));
+          let fold = null;
+          if (st.folders.has(key)) {
+            fold = h('div', 'wfl-fold');
+            fold.dataset.fold = key;
+            fold.setAttribute('role', 'group');
+            fold.setAttribute('aria-label', folderLabel(path));
+            parent.appendChild(fold);
+          }
+          folds.set(key, fold);
+        }
+        parent = folds.get(key);
+        if (!parent) break;
+      }
+      if (!parent) continue;
+      if (!g.items.length) parent.appendChild(h('p', 'wfl-empty', EMPTY_YOURS));
+      for (const x of g.items) parent.appendChild(rowEl(g.kind, x));
     }
     if (!list.querySelector('.wfl-item, .wfl-folder')) list.appendChild(h('p', 'wfl-empty', `No ${NOUN[top]}`));
     // The section's own rows: never the pinned flow cards or the archived workflows.
@@ -698,12 +748,13 @@ export function createLibrary({ doc, host, actions }) {
   return {
     render,
     open,
-    /** [top] or [top, domain | FLOW | ARCHIVED]: selects the section and opens the folder; the query clears so it shows. */
+    /** [top] or a folder path ([top, sub], [workflows, _yours | _builtin, domain]): selects the section and opens every
+     *  folder on it; the query clears so it shows. */
     openFolder(path, focusKey = null) {
-      const [top, sub] = (Array.isArray(path) ? path : []).filter((s) => typeof s === 'string');
-      if (!TOPS.includes(top)) return;
-      if (top !== st.top) { st.top = top; st.chip = 'all'; }
-      if (sub) st.folders.add(`${top}/${sub}`);
+      const p = (Array.isArray(path) ? path : []).filter((s) => typeof s === 'string');
+      if (!TOPS.includes(p[0])) return;
+      if (p[0] !== st.top) { st.top = p[0]; st.chip = 'all'; }
+      for (const k of folderKeys(p)) st.folders.add(k);
       st.query = '';
       render(focusKey);
     },
@@ -719,7 +770,7 @@ export function createLibrary({ doc, host, actions }) {
       st.chip = 'all'; st.query = ''; st.searchOpen = false;
       const at = folderOf(kind, key);
       if (at.length) st.top = at[0];
-      if (at.length > 1) st.folders.add(at.join('/'));
+      for (const k of folderKeys(at)) st.folders.add(k);
       const id = `${kind}:${key}`;
       if (kind !== 'workflow') st.expanded.add(id);
       st.flash = id;

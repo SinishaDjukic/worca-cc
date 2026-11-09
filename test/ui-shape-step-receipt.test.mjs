@@ -11,6 +11,8 @@ const OUTLINE = { why: 'too big', slices: [
   { id: 's3', title: 'Three', goal: 'g3', estimate: 'S', acceptance: [], dependsOn: [], inScope: [], outOfScope: [] },
 ] };
 const SPLIT = { id: 'o1', kind: 'plan', plan: { round: 1, revisable: true, outline: OUTLINE } };
+const REQUIREMENTS = { id: 'q1', kind: 'plan', plan: { round: 1, revisable: true, criteria: { ok: true, passed: 8, total: 8, items: [], criteria: [] }, decisions: [] } };
+const REQ_ERROR = { id: 'q2', kind: 'plan', plan: { round: 1, revisable: true, error: { message: 'boom' } } };
 const GATE = { id: 'g1', kind: 'gate', issues: [] };
 const RECOVERY = { id: 'r1', kind: 'recovery', recovery: { cls: 'auth', options: [{ id: 'retry' }, { id: 'pause' }] } };
 const CLARIFY = { id: 'c1', kind: 'questions', questions: [{ id: 'a', question: 'Where?' }, { id: 'b', question: 'Who?' }] };
@@ -22,6 +24,10 @@ const ROWS = [
   ['plan, revise with feedback', PLAN(), { decision: 'revise', feedback: 'more tests' }, {}, 'Changes asked · Plan'],
   ['plan, revise perspectives', PLAN(), { decision: 'revise', feedback: 'x', perspectives: ['product', 'ux'] }, {}, 'Changes asked · perspectives'],
   ['plan, stop', PLAN(), { decision: 'stop' }, {}, 'Stopped at the plan'],
+  ['requirements, approve', REQUIREMENTS, { decision: 'approve', decisions: {} }, {}, 'Requirements agreed'],
+  ['requirements, revise', REQUIREMENTS, { decision: 'revise', feedback: 'x' }, {}, 'Changes asked · Requirements'],
+  ['requirements, stop', REQUIREMENTS, { decision: 'stop' }, {}, 'Stopped at the requirements'],
+  ['requirements error, retry', REQ_ERROR, { decision: 'retry' }, {}, 'Tried again'],
   ['outline of 3, approve', SPLIT, { decision: 'approve', approveEach: false }, {}, 'Split into 3 runs'],
   ['outline of 3, approve after a merge', SPLIT, { decision: 'approve', edits: [{ op: 'merge', id: 's1' }] }, {}, 'Split into 2 runs'],
   ['outline, flat', SPLIT, { decision: 'flat' }, {}, 'Not split · planned as one run'],

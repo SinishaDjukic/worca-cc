@@ -133,6 +133,17 @@ test('detached: a completed run removes <worcaHome>/runs/<id>, copies run.json t
         assert.ok(branchList(repo).includes(feature), 'the feature branch is KEPT');
         assert.ok(treeOf(repo, feature).includes('src/feature.mjs'), 'the agent work was committed');
       } },
+      { name: 'detached: the end-of-run commit has a body with file stats and a Worca-Run trailer, no Pipeline line', run: () => {
+        assert.equal(res.status, 'done', JSON.stringify(res));
+        const feature = orch.getState().branch.feature;
+        const log = (fmt) => spawnSync('git', ['-C', repo, 'log', '-1', `--format=${fmt}`, feature], { encoding: 'utf8' }).stdout;
+        const body = log('%B');
+        assert.match(body, /^worca: /);
+        assert.match(body, /^worca: [^\n]*\n\nDeterministic mock plan for /, 'the summary paragraph is the plan goal');
+        assert.match(body, /\n\n\d+ files? changed/);
+        assert.doesNotMatch(body, /\n\nPipeline /);
+        assert.equal(log('%(trailers:key=Worca-Run,valueonly)').trim(), orch.getState().id);
+      } },
       { name: 'detached: an unexpected file at the run root is copied to <pipelineDir>/stray/ with a warning', run: async () => {
         assert.equal(res.status, 'done', JSON.stringify(res));
         assert.ok(planted, 'precondition: a stray was planted at the run root');

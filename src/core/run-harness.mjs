@@ -26,7 +26,7 @@ import { generateTitle } from './title.mjs';
 import {
   createPipeline, updatePipelineTitle, appendAudit, writeState, artifactPaths, slugify, today,
   recordArtifact, writeClarify, readPipelineExtras, claimPipelineOwnership, touchHeartbeat,
-  clearPipelineOwnership, HEARTBEAT_INTERVAL_MS, upsertSubAgent, listRunArtifacts, pipelineRowStamp,
+  clearPipelineOwnership, HEARTBEAT_INTERVAL_MS, upsertSubAgent, newestPlanPath, pipelineRowStamp,
   claimPausedForStop, claimForResume, findPipelineRowById, readPipelineForResume,
 } from './artifacts.mjs';
 import { diffNameStatus, diffNumstat, diffPatch, untrackedFiles, untrackedPatch } from './git-info.mjs';
@@ -88,7 +88,7 @@ import { loadAgentRegistry, DEFAULT_AGENTS_DIR } from './agent-registry.mjs';
 import {
   createWorktree, removeWorktree, suggestBranchName, sanitizeBranchName, resolveDefaultBranch,
   isValidSourceRef, snapshotWorktreePatch, listLocalBranches, worktreeHead, deleteBranchIfAt,
-  reusedBranchBase, isAncestor,
+  reusedBranchBase, isAncestor, withoutIgnored,
 } from './worktree.mjs';
 import { deriveBranchName, uniqueBranch } from './naming.mjs';
 import { flagEnabled } from './flags.mjs';
@@ -132,6 +132,7 @@ import { readRunTags } from './run-tags-store.mjs';
 import { missingRequired } from '../shared/tag-dimensions.mjs';
 import { byActor } from './identity.mjs';
 import { isWorkspaceScanWorkflow, WORKSPACE_RESYNTH_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
+import { signInRefusalText } from './factory-models.mjs';
 import { agentIdentity } from './agent-user.mjs';
 import { resolveRegistry, requiredOf, toolNameLimitFor, skipReasonText, cachedTeamFor } from './mcp/registry.mjs';
 import { loadCatalog } from './mcp/catalog.mjs';
@@ -150,6 +151,7 @@ import { skillMdFields } from './skills-registry/inspect.mjs';
 // without it (no Team-skill deviations until P5 lands).
 import * as policyEffective from './policy/effective.mjs';
 import { createRedactor } from './redact.mjs';
+import { buildRunCommitMessage, readCommitSummary, readStagedChanges } from './commit-message.mjs';
 import { finalizeWorkspaceScan, WORKSPACE_GRAPH_FILE } from './workspace-scan-run.mjs';
 import { readWorkspaceMap, resynthBlocker } from './workspaces.mjs';
 import { STORED_MAP_FILE } from './workspace-map/join.mjs';
@@ -158,6 +160,7 @@ import { redactSecrets } from '../shared/workspace-map/redact.mjs';
 import { effectiveNightConfig } from './night/effective.mjs';
 import { nightState, decideDelayMs, nightAnchorMs, runAllowed } from './night/activation.mjs';
 import { decideAsk } from './night/decider.mjs';
+import { planRule } from './night/strategies.mjs';
 import { PLAN_ASK_KIND, initialShaping } from './shape/run.mjs';
 import { runNightAnalysis, readMemoryText } from './night/analysis.mjs';
 import { resolveDeciderPair } from './night/decider-model.mjs';
@@ -1608,6 +1611,7 @@ export class RunHarness extends EventEmitter {
         tags: this.opts.tags || [],
         labels: this.opts.labels || [],
         runSetup: typeof this.opts.runSetup === 'string' ? this.opts.runSetup : null,
+        prAuto: this.opts.prAuto ?? null,
         ...(this.workMode === 'none' ? { id: this.opts.pipelineId } : {}),
         ...(this.isWorkspace ? {} : { projectKey: this.members[0].projectKey, ...(this.workMode !== 'git' ? { workMode: this.workMode } : {}) }),
         ...(this.isWorkspace ? {
@@ -3286,6 +3290,9 @@ export class RunHarness extends EventEmitter {
       // dropping it would run every node on the CLI default model, often the most expensive one.
       const why = foreignRunModel(this.claude.model, name, this.projectDir);
       if (why) throw engineRefusal(name, why);
+      // A model a person set that needs the Claude Code sign-in while it is signed out (resolveGraph signInBlocked):
+      // refused naming the setting and the model, before any spawn. Unset on resume, which never resolves.
+      if (this._signInBlocked?.length) throw engineRefusal(name, signInRefusalText(this._signInBlocked, this._signInLabels));
       return [];
     }
     const projectRules = this._engineProjectRules ?? null;
@@ -5939,8 +5946,9 @@ export class RunHarness extends EventEmitter {
       await this._gitIndexWrite(['rm', '-r', '--cached', '-q', '--ignore-unmatch', '--',
         ...excludePathspecs.map((s) => s.replace(/^:\(exclude\)/, ''))], gitOpts);
     }
-    const add = excludePathspecs.length
-      ? await this._gitIndexWrite(['add', '-A', '--', '.', ...excludePathspecs], gitOpts)
+    const addEx = await this._addableExcludes(excludePathspecs, gitOpts);
+    const add = addEx.length
+      ? await this._gitIndexWrite(['add', '-A', '--', '.', ...addEx], gitOpts)
       : await this._gitIndexWrite(['add', '-A'], gitOpts);
     if (!add.ok) {
       const message = add.stderr.trim() || `exit ${add.code}`;
@@ -5966,8 +5974,12 @@ export class RunHarness extends EventEmitter {
         return { ok: true, committed: false, sha: null };
       }
     }
+    // The run's commit message (commit-message.mjs, #1143): no model call; a summary shared by every member,
+    // this commit's own staged stats, and a Worca-Run trailer. Apply to branch rebuilds the same message.
     const title = this.state.title || this.baseName || 'changes';
-    const msg = `worca: ${title}${this.pipeline ? `\n\nPipeline ${this.pipeline.id}` : ''}`;
+    const changes = await readStagedChanges((args) => this._git(args, gitOpts));
+    const summary = this.pipeline ? await this._commitSummary() : '';
+    const msg = buildRunCommitMessage({ title, runId: this.pipeline?.id || null, summary, changes });
     // Plain commit first (uses the repo's configured identity); fall back to a
     // local identity so a repo with no user.name/email still commits — mirrors
     // _ensureGitCheckpoint's belt-and-braces.
@@ -6561,7 +6573,7 @@ export class RunHarness extends EventEmitter {
     try {
       // A night-eligible --yes run hands the ask to night mode: it is answered through the
       // same pendingQuestion + answer() path below (delay 0), so it is attributed and audited.
-      // A plan approval needs a person (spec D2): --yes never answers it and Away mode never decides it.
+      // --yes never answers a plan ask, and hands none to Away mode: only a run without --yes arms one (planRule says which).
       if (this.auto && kind !== PLAN_ASK_KIND && !this._nightOwnsAuto({ kind, origin })) {
         if (kind === 'recovery') {
           // Auto mode handles recovery in _recover before ever calling _ask;
@@ -6596,7 +6608,7 @@ export class RunHarness extends EventEmitter {
         // A throw inside a Promise executor REJECTS the ask (and fails the node): night mode
         // must never break a question the user could still answer.
         const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, concern, form, version, answerSchema, autoValues, nodeId, agent, origin };
-        if (kind !== PLAN_ASK_KIND) {
+        if (kind !== PLAN_ASK_KIND || !this.auto) {
           try { this._nightArm(nq); } catch (err) { this._nightFailed(nq, `Away mode could not get ready for ${kind} ${id}: ${err?.message || err}`); }
         }
       });
@@ -6651,6 +6663,15 @@ export class RunHarness extends EventEmitter {
     } catch { return false; }
   }
 
+  /** A person answers what to build, Away handles how: the plan asks planRule declines, and Clarify on a shaped run.
+   *  Decided at arm time, so such an ask never counts down, never starts the away stretch and cannot hit a limit's pause.
+   *  Never under --yes: that run's asks go the way they always did. */
+  _nightLeavesToPerson(q) {
+    if (this.auto) return false;
+    if (q.kind === PLAN_ASK_KIND) return planRule(q) === null;
+    return Boolean(this.runShape) && (q.kind === 'clarify' || (q.kind === 'form' && q.origin === 'clarify'));
+  }
+
   /** Schedule (or re-schedule) the decision for the open question. `q` = a newly opened ask. */
   _nightArm(q) {
     if (!this._night) return;            // a harness built without the constructor (unit seams)
@@ -6660,7 +6681,7 @@ export class RunHarness extends EventEmitter {
     if (!q || this.pendingQuestion?.id !== q.id) return;
     try {
       const { config } = effectiveNightConfig(this.projectDir);
-      this._night.decidable = !nightNeverDecides(config, q);
+      this._night.decidable = !nightNeverDecides(config, q) && !this._nightLeavesToPerson(q);
       if (!this._night.decidable) {
         // The kind joined neverDecide after a --yes run handed the ask to night mode: nobody else
         // will answer, so give today's --yes answer rather than hang.
@@ -6949,7 +6970,6 @@ export class RunHarness extends EventEmitter {
     this._nightArm();
   }
 
-  /** Plan/task artifacts of this run for the nightDecider to read. Never throws. */
   /** What the Away mode review reads: the run's task.md and its NEWEST plan. Plans live in the
    *  store's plans/ folder (indexed as kind 'plan', store-root-relative), not the run folder, and
    *  superseded versions would only contradict the current one. Never throws. */
@@ -6960,18 +6980,28 @@ export class RunHarness extends EventEmitter {
     const task = join(this.pipeline.dir, 'task.md');
     if (await isFile(task)) out.push(task);
     try {
-      const root = this.isWorkspace ? workspaceStorePath(this.workspaceKey) : projectStorePath(this.workMode !== 'git' ? this.members[0].projectKey : projectKey(this.projectDir));
-      // Newest first: by time, then by the -vN suffix (two writes in one millisecond share a time,
-      // and the index's tie-break, the file name, sorts "x-v2.md" before "x.md").
-      const ver = (rel) => Number(/-v(\d+)\.md$/.exec(rel)?.[1] || 1);
-      const plans = (await listRunArtifacts(this.pipeline.id, { kind: 'plan' }))
-        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || ver(b.relPath) - ver(a.relPath));
-      for (const a of plans) {
-        const f = join(root, a.relPath);
-        if (await isFile(f)) { out.push(f); break; }
-      }
+      const plan = await newestPlanPath(this.pipeline.id, this._storeRoot());
+      if (plan) out.push(plan);
     } catch { /* no index yet: the task alone */ }
     return out;
+  }
+
+  /** The store this run's artifact index is relative to (plans/, …). Throws when it cannot be resolved. */
+  _storeRoot() {
+    return this.isWorkspace
+      ? workspaceStorePath(this.workspaceKey)
+      : projectStorePath(this.workMode !== 'git' ? this.members[0].projectKey : projectKey(this.projectDir));
+  }
+
+  /** The run commit's summary (commit-message.mjs readCommitSummary), read once per harness: every member's
+   *  teardown commit shares it. Never rejects. */
+  _commitSummary() {
+    if (!this._commitSummaryP) {
+      let storeRoot = null;
+      try { storeRoot = this._storeRoot(); } catch { /* no store: the plan is skipped */ }
+      this._commitSummaryP = readCommitSummary({ pipelineId: this.pipeline?.id || null, pipelineDir: this.pipeline?.dir || null, storeRoot });
+    }
+    return this._commitSummaryP;
   }
 
   /** One nightDecider call for an ask; books cost like the Auto classifier (_recordAutoCost).
@@ -7530,7 +7560,7 @@ export class RunHarness extends EventEmitter {
       if (mode !== 'git') continue;                       // P3 'none': nothing to stage
       // §8.8: the exclusion set is the memory mount in both modes (and the skill mount under
       // detached); an empty set (a refused mount) reproduces the bare argv.
-      const ex = this._excludePathspecs(key);
+      const ex = await this._addableExcludes(this._excludePathspecs(key), { cwd: dir, ignoreAbort });
       const args = ex.length ? ['add', '-A', '-N', '--', '.', ...ex] : ['add', '-A', '-N'];
       const res = await this._gitIndexWrite(args, { cwd: dir, ignoreAbort });
       if (!res.ok && res.stderr && res.stderr.trim()) {
@@ -7566,6 +7596,13 @@ export class RunHarness extends EventEmitter {
     return entries
       .filter((e) => e && e.path && e.kind !== 'claudeMdSection' && e.kind !== 'engineConfig')
       .map((e) => `:(exclude)${e.path}`);
+  }
+
+  /** `ex` (`:(exclude)path` pathspecs) minus the paths an ignore rule already covers, which `git add` refuses (withoutIgnored). */
+  async _addableExcludes(ex, gitOpts) {
+    const paths = ex.map((s) => s.replace(/^:\(exclude\)/, ''));
+    const keep = new Set(await withoutIgnored(paths, (args) => this._git(args, gitOpts)));
+    return ex.filter((_, i) => keep.has(paths[i]));
   }
 
   /**

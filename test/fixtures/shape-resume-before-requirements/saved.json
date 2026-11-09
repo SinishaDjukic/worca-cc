@@ -1,0 +1,2835 @@
+{
+  "row": {
+    "id": "af176941",
+    "project_key": "__PROJECT_KEY__",
+    "workspace_key": null,
+    "target": "project",
+    "title": "demo",
+    "base_name": "demo",
+    "date_prefix": "05-11-26",
+    "status": "paused",
+    "phase": "plan-review",
+    "cycle": 1,
+    "started_at": "2026-11-05T07:47:46.952Z",
+    "updated_at": "2026-11-05T07:47:47.424Z",
+    "total_cost_usd": 0,
+    "total_active_ms": 1060,
+    "prompt": "demo",
+    "branch": "{\"source\":\"main\",\"feature\":\"worca-cc/demo-af176941\",\"worktreeDir\":\"__HOME__/.worca-cc/runs/af176941/repos/__PROJECT_KEY__\",\"reusedExisting\":false,\"baseSha\":\"__BASE_SHA__\",\"runRootMode\":\"detached\"}",
+    "workspace_meta": null,
+    "stepper": "{\"version\":2,\"template\":{\"id\":\"wf_shape\",\"name\":\"Shaper\"},\"graph\":{\"nodes\":[{\"id\":\"n_task\",\"kind\":\"task\",\"key\":null,\"x\":40,\"y\":200,\"label\":\"Task\",\"uiPhase\":\"task\",\"config\":{},\"ports\":{\"inputs\":[],\"outputs\":[{\"id\":\"task\",\"type\":\"md\",\"when\":\"always\"}],\"await\":false}},{\"id\":\"n_clarify\",\"kind\":\"agent\",\"key\":\"clarify\",\"x\":320,\"y\":200,\"label\":\"Clarify\",\"uiPhase\":\"clarify\",\"config\":{\"maxQuestions\":3,\"promptHints\":\"Shaping: ask at most 3 questions — only decisions that change what gets built and that the repo can't answer. Give each question a recommended option.\"},\"ports\":{\"inputs\":[{\"id\":\"task\",\"type\":\"md\",\"required\":true,\"loop\":false,\"expands\":false}],\"outputs\":[{\"id\":\"answers\",\"type\":\"json\",\"when\":\"always\"}],\"await\":true},\"color\":\"red\",\"icon\":\"<circle cx=\\\"12\\\" cy=\\\"12\\\" r=\\\"9\\\"/><path d=\\\"M9.4 9.3a2.7 2.7 0 0 1 5.2 1c0 1.8-2.6 2.1-2.6 3.6\\\" stroke-linecap=\\\"round\\\" fill=\\\"none\\\"/><circle cx=\\\"12\\\" cy=\\\"17\\\" r=\\\"0.7\\\" fill=\\\"currentColor\\\" stroke=\\\"none\\\"/>\",\"model\":\"\",\"effort\":\"\",\"askQuestions\":true,\"awaitAll\":false,\"fanOut\":true,\"subagentModel\":\"\",\"subagentEffort\":\"\",\"progressStage\":\"plan\"},{\"id\":\"n_plan\",\"kind\":\"agent\",\"key\":\"planner\",\"x\":600,\"y\":200,\"label\":\"Plan\",\"uiPhase\":\"plan\",\"config\":{},\"ports\":{\"inputs\":[{\"id\":\"task\",\"type\":\"md\",\"required\":true,\"loop\":false,\"expands\":false},{\"id\":\"answers\",\"type\":\"json\",\"required\":false,\"loop\":false,\"expands\":false},{\"id\":\"revise\",\"type\":\"md\",\"required\":false,\"loop\":true,\"expands\":false}],\"outputs\":[{\"id\":\"plan\",\"type\":\"md\",\"when\":\"always\"}],\"await\":true},\"color\":\"violet\",\"icon\":\"<path d=\\\"M8 6h11M8 12h11M8 18h8\\\" stroke-linecap=\\\"round\\\"/><circle cx=\\\"4\\\" cy=\\\"6\\\" r=\\\"1.1\\\"/><circle cx=\\\"4\\\" cy=\\\"12\\\" r=\\\"1.1\\\"/><circle cx=\\\"4\\\" cy=\\\"18\\\" r=\\\"1.1\\\"/>\",\"model\":\"\",\"effort\":\"\",\"askQuestions\":false,\"awaitAll\":false,\"fanOut\":true,\"subagentModel\":\"\",\"subagentEffort\":\"\",\"progressStage\":\"plan\"},{\"id\":\"n_refine\",\"kind\":\"agent\",\"key\":\"refiner\",\"x\":880,\"y\":200,\"label\":\"Refine Plan\",\"uiPhase\":\"refine\",\"config\":{\"approve\":{\"kind\":\"plan\",\"port\":\"plan\"},\"awaitAll\":true},\"ports\":{\"inputs\":[{\"id\":\"plan\",\"type\":\"md\",\"required\":true,\"loop\":false,\"expands\":false},{\"id\":\"revise\",\"type\":\"md\",\"required\":false,\"loop\":true,\"expands\":false},{\"id\":\"findings\",\"type\":\"md\",\"required\":false,\"loop\":false,\"expands\":false}],\"outputs\":[{\"id\":\"plan\",\"type\":\"md\",\"when\":\"clean\"},{\"id\":\"revise\",\"type\":\"md\",\"when\":\"blocking\"}],\"await\":true},\"color\":\"green\",\"icon\":\"<path d=\\\"M12 3v3M12 18v3M4.5 7.5l2 1M17.5 15.5l2 1M4.5 16.5l2-1M17.5 8.5l2-1\\\" stroke-linecap=\\\"round\\\"/><path d=\\\"M12 8.2l1.2 2.6L16 12l-2.8 1.2L12 15.8l-1.2-2.6L8 12l2.8-1.2L12 8.2Z\\\" stroke-linejoin=\\\"round\\\"/>\",\"model\":\"\",\"effort\":\"\",\"askQuestions\":false,\"awaitAll\":true,\"fanOut\":true,\"subagentModel\":\"\",\"subagentEffort\":\"\",\"progressStage\":\"plan\"},{\"id\":\"n_impl\",\"kind\":\"agent\",\"key\":\"implementer\",\"x\":1160,\"y\":200,\"label\":\"Implementation\",\"uiPhase\":\"implement\",\"config\":{},\"ports\":{\"inputs\":[{\"id\":\"fix\",\"type\":\"md\",\"required\":false,\"loop\":true,\"expands\":false},{\"id\":\"task\",\"type\":\"json\",\"required\":false,\"loop\":false,\"expands\":true},{\"id\":\"plan\",\"type\":\"md\",\"required\":true,\"loop\":false,\"expands\":false}],\"outputs\":[{\"id\":\"done\",\"type\":\"void\",\"when\":\"always\"}],\"await\":true},\"color\":\"peach\",\"icon\":\"<path d=\\\"M9 8l-4 4 4 4M15 8l4 4-4 4\\\" stroke-linecap=\\\"round\\\" stroke-linejoin=\\\"round\\\"/>\",\"model\":\"\",\"effort\":\"\",\"askQuestions\":false,\"awaitAll\":false,\"fanOut\":true,\"subagentModel\":\"\",\"subagentEffort\":\"\",\"progressStage\":\"build\"},{\"id\":\"n_review\",\"kind\":\"agent\",\"key\":\"reviewer\",\"x\":1440,\"y\":200,\"label\":\"Review Implementation\",\"uiPhase\":\"review\",\"config\":{\"roleReview\":{\"roles\":[{\"key\":\"correctness\",\"label\":\"Correctness\"},{\"key\":\"security\",\"label\":\"Security\"},{\"key\":\"fit\",\"label\":\"Project fit\"}],\"source\":\"declared\",\"target\":\"diff\",\"sink\":\"implementer\"}},\"ports\":{\"inputs\":[{\"id\":\"plan\",\"type\":\"md\",\"required\":true,\"loop\":false,\"expands\":false},{\"id\":\"done\",\"type\":\"void\",\"required\":false,\"loop\":false,\"expands\":false}],\"outputs\":[{\"id\":\"review\",\"type\":\"md\",\"when\":\"blocking\"},{\"id\":\"pass\",\"type\":\"void\",\"when\":\"clean\"}],\"await\":true},\"color\":\"blue\",\"icon\":\"<path d=\\\"M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z\\\" stroke-linejoin=\\\"round\\\"/><path d=\\\"M9 12l2 2 4-4\\\" stroke-linecap=\\\"round\\\" stroke-linejoin=\\\"round\\\"/>\",\"model\":\"\",\"effort\":\"\",\"askQuestions\":false,\"awaitAll\":false,\"fanOut\":true,\"subagentModel\":\"\",\"subagentEffort\":\"\",\"progressStage\":\"review\"},{\"id\":\"n_end\",\"kind\":\"end\",\"key\":null,\"x\":1720,\"y\":200,\"label\":\"End\",\"uiPhase\":\"end\",\"config\":{},\"ports\":{\"inputs\":[{\"id\":\"result\",\"type\":\"any\",\"required\":true,\"loop\":false,\"expands\":false}],\"outputs\":[],\"await\":false}},{\"id\":\"n_roles\",\"kind\":\"agent\",\"key\":\"planReviewer\",\"x\":740,\"y\":380,\"label\":\"Plan Review\",\"uiPhase\":\"plan-review\",\"config\":{\"roleReview\":{\"roles\":[{\"key\":\"product\",\"label\":\"Product\",\"model\":\"claude-opus-5-5\",\"effort\":\"medium\"},{\"key\":\"architect\",\"label\":\"Architect\"},{\"key\":\"qa\",\"label\":\"QA\"},{\"key\":\"ux\",\"label\":\"UX\"},{\"key\":\"security\",\"label\":\"Security\"},{\"key\":\"devops\",\"label\":\"DevOps and infrastructure\"},{\"key\":\"release\",\"label\":\"Release\"},{\"key\":\"fit\",\"label\":\"Project fit\"},{\"key\":\"devil\",\"label\":\"Devil's advocate\"}],\"source\":\"picked\",\"target\":\"plan\",\"checklist\":\"perspectives\",\"sink\":\"refiner\"},\"model\":\"claude-sonnet-5-5\",\"effort\":\"medium\"},\"ports\":{\"inputs\":[{\"id\":\"plan\",\"type\":\"md\",\"required\":true,\"loop\":false,\"expands\":false},{\"id\":\"revise\",\"type\":\"md\",\"required\":false,\"loop\":true,\"expands\":false}],\"outputs\":[{\"id\":\"findings\",\"type\":\"md\",\"when\":\"always\"},{\"id\":\"plan\",\"type\":\"md\",\"when\":\"always\"}],\"await\":true},\"color\":\"amber\",\"icon\":\"<path d=\\\"M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Z\\\"/><path d=\\\"M15.5 15.5L21 21\\\" stroke-linecap=\\\"round\\\"/><path d=\\\"M7.6 10.3l2 2 3.3-3.6\\\" stroke-linecap=\\\"round\\\" stroke-linejoin=\\\"round\\\"/>\",\"model\":\"claude-sonnet-5-5\",\"effort\":\"medium\",\"askQuestions\":false,\"awaitAll\":false,\"fanOut\":true,\"subagentModel\":\"\",\"subagentEffort\":\"\",\"roles\":{\"product\":{\"model\":\"claude-opus-5-5\",\"effort\":\"medium\",\"source\":\"template\"}},\"progressStage\":\"plan\"}],\"wires\":[{\"id\":\"w1\",\"from\":{\"node\":\"n_task\",\"port\":\"task\"},\"to\":{\"node\":\"n_clarify\",\"port\":\"task\"},\"loop\":false},{\"id\":\"w2\",\"from\":{\"node\":\"n_task\",\"port\":\"task\"},\"to\":{\"node\":\"n_plan\",\"port\":\"task\"},\"loop\":false},{\"id\":\"w3\",\"from\":{\"node\":\"n_clarify\",\"port\":\"answers\"},\"to\":{\"node\":\"n_plan\",\"port\":\"answers\"},\"loop\":false},{\"id\":\"w4\",\"from\":{\"node\":\"n_plan\",\"port\":\"plan\"},\"to\":{\"node\":\"n_roles\",\"port\":\"plan\"},\"loop\":false},{\"id\":\"w17\",\"from\":{\"node\":\"n_roles\",\"port\":\"plan\"},\"to\":{\"node\":\"n_refine\",\"port\":\"plan\"},\"loop\":false},{\"id\":\"w18\",\"from\":{\"node\":\"n_roles\",\"port\":\"findings\"},\"to\":{\"node\":\"n_refine\",\"port\":\"findings\"},\"loop\":false},{\"id\":\"w5\",\"from\":{\"node\":\"n_refine\",\"port\":\"revise\"},\"to\":{\"node\":\"n_roles\",\"port\":\"revise\"},\"loop\":true,\"maxCycles\":2,\"onExhausted\":\"clean\"},{\"id\":\"w6\",\"from\":{\"node\":\"n_refine\",\"port\":\"plan\"},\"to\":{\"node\":\"n_impl\",\"port\":\"plan\"},\"loop\":false},{\"id\":\"w7\",\"from\":{\"node\":\"n_refine\",\"port\":\"plan\"},\"to\":{\"node\":\"n_review\",\"port\":\"plan\"},\"loop\":false},{\"id\":\"w8\",\"from\":{\"node\":\"n_impl\",\"port\":\"done\"},\"to\":{\"node\":\"n_review\",\"port\":\"done\"},\"loop\":false},{\"id\":\"w9\",\"from\":{\"node\":\"n_review\",\"port\":\"review\"},\"to\":{\"node\":\"n_impl\",\"port\":\"fix\"},\"loop\":true,\"maxCycles\":3},{\"id\":\"w10\",\"from\":{\"node\":\"n_review\",\"port\":\"pass\"},\"to\":{\"node\":\"n_end\",\"port\":\"result\"},\"loop\":false}]},\"bookends\":{\"preflight\":true,\"done\":true},\"steps\":[{\"kind\":\"preflight\",\"nodes\":[{\"id\":\"preflight\",\"label\":\"Preflight\",\"sub\":\"checks\"}]},{\"kind\":\"agents\",\"nodes\":[{\"id\":\"n_task\",\"key\":null,\"uiPhase\":\"task\",\"label\":\"Task\",\"color\":\"\",\"sub\":\"\",\"cycles\":false,\"model\":\"\",\"effort\":\"\"}]},{\"kind\":\"agents\",\"nodes\":[{\"id\":\"n_clarify\",\"key\":\"clarify\",\"uiPhase\":\"clarify\",\"label\":\"Clarify\",\"color\":\"red\",\"sub\":\"Turns hidden decisions into questions before planning. Multiple-choice, so later steps never guess.\",\"cycles\":false,\"model\":\"\",\"effort\":\"\"}]},{\"kind\":\"agents\",\"nodes\":[{\"id\":\"n_plan\",\"key\":\"planner\",\"uiPhase\":\"plan\",\"label\":\"Plan\",\"color\":\"violet\",\"sub\":\"Explores the codebase and writes the implementation plan. Contracts, invariants, task breakdown and test list; can ask clarifying questions first.\",\"cycles\":false,\"model\":\"\",\"effort\":\"\"}]},{\"kind\":\"agents\",\"nodes\":[{\"id\":\"n_roles\",\"key\":\"planReviewer\",\"uiPhase\":\"plan-review\",\"label\":\"Plan Review\",\"color\":\"amber\",\"sub\":\"Reviews the plan against the request and the codebase. Blocking issues bounce it back for a cold re-plan.\",\"cycles\":true,\"model\":\"claude-sonnet-5-5\",\"effort\":\"medium\"}]},{\"kind\":\"agents\",\"nodes\":[{\"id\":\"n_refine\",\"key\":\"refiner\",\"uiPhase\":\"refine\",\"label\":\"Refine Plan\",\"color\":\"green\",\"sub\":\"Rewrites the latest plan into a tighter version. Fixes structure, correctness, contracts and invariants in one read-only pass.\",\"cycles\":false,\"model\":\"\",\"effort\":\"\"}]},{\"kind\":\"agents\",\"nodes\":[{\"id\":\"n_impl\",\"key\":\"implementer\",\"uiPhase\":\"implement\",\"label\":\"Implementation\",\"color\":\"peach\",\"sub\":\"Writes the code from the approved plan, strict TDD. In fix mode, addresses only the issues a review flagged.\",\"cycles\":true,\"model\":\"\",\"effort\":\"\"}]},{\"kind\":\"agents\",\"nodes\":[{\"id\":\"n_review\",\"key\":\"reviewer\",\"uiPhase\":\"review\",\"label\":\"Review Implementation\",\"color\":\"blue\",\"sub\":\"Reviews the implementation diff against the plan. Honest verdict; blocking findings loop back to the implementer.\",\"cycles\":false,\"model\":\"\",\"effort\":\"\"}]},{\"kind\":\"agents\",\"nodes\":[{\"id\":\"n_end\",\"key\":null,\"uiPhase\":\"end\",\"label\":\"End\",\"color\":\"\",\"sub\":\"\",\"cycles\":false,\"model\":\"\",\"effort\":\"\"}]},{\"kind\":\"done\",\"nodes\":[{\"id\":\"done\",\"label\":\"Done\",\"sub\":\"complete\"}]}],\"feedbacks\":[{\"id\":\"w5\",\"from\":\"n_refine\",\"to\":\"n_roles\",\"maxCycles\":2},{\"id\":\"w9\",\"from\":\"n_review\",\"to\":\"n_impl\",\"maxCycles\":3}]}",
+    "tools": "{\"graphify\":false,\"codeReviewGraph\":false,\"tool\":null,\"kind\":null,\"instruction\":\"\"}",
+    "resume_point": "{\"version\":2,\"snapshot\":{\"version\":2,\"seq\":3,\"graph\":{\"id\":\"wf_shape\",\"name\":\"Shaper\",\"version\":2,\"domain\":\"coding\",\"createdAt\":\"1970-01-01T00:00:00.000Z\",\"updatedAt\":\"1970-01-01T00:00:00.000Z\",\"nodes\":[{\"id\":\"n_task\",\"kind\":\"task\",\"x\":40,\"y\":200,\"config\":{}},{\"id\":\"n_clarify\",\"kind\":\"agent\",\"key\":\"clarify\",\"x\":320,\"y\":200,\"config\":{\"maxQuestions\":3,\"promptHints\":\"Shaping: ask at most 3 questions — only decisions that change what gets built and that the repo can't answer. Give each question a recommended option.\"}},{\"id\":\"n_plan\",\"kind\":\"agent\",\"key\":\"planner\",\"x\":600,\"y\":200,\"config\":{}},{\"id\":\"n_refine\",\"kind\":\"agent\",\"key\":\"refiner\",\"x\":880,\"y\":200,\"config\":{\"approve\":{\"kind\":\"plan\",\"port\":\"plan\"},\"awaitAll\":true}},{\"id\":\"n_impl\",\"kind\":\"agent\",\"key\":\"implementer\",\"x\":1160,\"y\":200,\"config\":{}},{\"id\":\"n_review\",\"kind\":\"agent\",\"key\":\"reviewer\",\"x\":1440,\"y\":200,\"config\":{\"roleReview\":{\"roles\":[{\"key\":\"correctness\",\"label\":\"Correctness\"},{\"key\":\"security\",\"label\":\"Security\"},{\"key\":\"fit\",\"label\":\"Project fit\"}],\"source\":\"declared\",\"target\":\"diff\",\"sink\":\"implementer\"}}},{\"id\":\"n_end\",\"kind\":\"end\",\"x\":1720,\"y\":200,\"config\":{}},{\"id\":\"n_roles\",\"kind\":\"agent\",\"key\":\"planReviewer\",\"x\":740,\"y\":380,\"config\":{\"roleReview\":{\"roles\":[{\"key\":\"product\",\"label\":\"Product\",\"model\":\"claude-opus-5-5\",\"effort\":\"medium\"},{\"key\":\"architect\",\"label\":\"Architect\"},{\"key\":\"qa\",\"label\":\"QA\"},{\"key\":\"ux\",\"label\":\"UX\"},{\"key\":\"security\",\"label\":\"Security\"},{\"key\":\"devops\",\"label\":\"DevOps and infrastructure\"},{\"key\":\"release\",\"label\":\"Release\"},{\"key\":\"fit\",\"label\":\"Project fit\"},{\"key\":\"devil\",\"label\":\"Devil's advocate\"}],\"source\":\"picked\",\"target\":\"plan\",\"checklist\":\"perspectives\",\"sink\":\"refiner\"},\"model\":\"claude-sonnet-5-5\",\"effort\":\"medium\"}}],\"wires\":[{\"id\":\"w1\",\"from\":{\"node\":\"n_task\",\"port\":\"task\"},\"to\":{\"node\":\"n_clarify\",\"port\":\"task\"}},{\"id\":\"w2\",\"from\":{\"node\":\"n_task\",\"port\":\"task\"},\"to\":{\"node\":\"n_plan\",\"port\":\"task\"}},{\"id\":\"w3\",\"from\":{\"node\":\"n_clarify\",\"port\":\"answers\"},\"to\":{\"node\":\"n_plan\",\"port\":\"answers\"}},{\"id\":\"w4\",\"from\":{\"node\":\"n_plan\",\"port\":\"plan\"},\"to\":{\"node\":\"n_roles\",\"port\":\"plan\"}},{\"id\":\"w17\",\"from\":{\"node\":\"n_roles\",\"port\":\"plan\"},\"to\":{\"node\":\"n_refine\",\"port\":\"plan\"}},{\"id\":\"w18\",\"from\":{\"node\":\"n_roles\",\"port\":\"findings\"},\"to\":{\"node\":\"n_refine\",\"port\":\"findings\"}},{\"id\":\"w5\",\"from\":{\"node\":\"n_refine\",\"port\":\"revise\"},\"to\":{\"node\":\"n_roles\",\"port\":\"revise\"},\"config\":{\"maxCycles\":2,\"onExhausted\":\"clean\"}},{\"id\":\"w6\",\"from\":{\"node\":\"n_refine\",\"port\":\"plan\"},\"to\":{\"node\":\"n_impl\",\"port\":\"plan\"}},{\"id\":\"w7\",\"from\":{\"node\":\"n_refine\",\"port\":\"plan\"},\"to\":{\"node\":\"n_review\",\"port\":\"plan\"}},{\"id\":\"w8\",\"from\":{\"node\":\"n_impl\",\"port\":\"done\"},\"to\":{\"node\":\"n_review\",\"port\":\"done\"}},{\"id\":\"w9\",\"from\":{\"node\":\"n_review\",\"port\":\"review\"},\"to\":{\"node\":\"n_impl\",\"port\":\"fix\"},\"config\":{\"maxCycles\":3}},{\"id\":\"w10\",\"from\":{\"node\":\"n_review\",\"port\":\"pass\"},\"to\":{\"node\":\"n_end\",\"port\":\"result\"}}]},\"tokens\":{\"n_clarify.task\":{\"seq\":1,\"type\":\"md\",\"path\":\"__PIPELINE__/task.md\",\"value\":null,\"meta\":null,\"firedAt\":1793864867256,\"sourceExecutionId\":\"x:n_task:1\",\"forced\":false},\"n_plan.task\":{\"seq\":1,\"type\":\"md\",\"path\":\"__PIPELINE__/task.md\",\"value\":null,\"meta\":null,\"firedAt\":1793864867256,\"sourceExecutionId\":\"x:n_task:1\",\"forced\":false},\"n_plan.answers\":{\"seq\":2,\"type\":\"json\",\"path\":\"__PIPELINE__/clarify.json\",\"value\":null,\"meta\":null,\"firedAt\":1793864867353,\"sourceExecutionId\":\"x:n_clarify:1\",\"forced\":false},\"n_roles.plan\":{\"seq\":3,\"type\":\"md\",\"path\":\"__HOME__/.worca-cc/store/__PROJECT_KEY__/plans/05-11-26-demo.md\",\"value\":null,\"meta\":null,\"firedAt\":1793864867409,\"sourceExecutionId\":\"x:n_plan:1\",\"forced\":false}},\"outputs\":{\"n_task.task\":{\"seq\":1,\"type\":\"md\",\"path\":\"__PIPELINE__/task.md\",\"value\":null,\"meta\":null,\"firedAt\":1793864867256,\"sourceExecutionId\":\"x:n_task:1\",\"forced\":false},\"n_clarify.answers\":{\"seq\":2,\"type\":\"json\",\"path\":\"__PIPELINE__/clarify.json\",\"value\":null,\"meta\":null,\"firedAt\":1793864867353,\"sourceExecutionId\":\"x:n_clarify:1\",\"forced\":false},\"n_plan.plan\":{\"seq\":3,\"type\":\"md\",\"path\":\"__HOME__/.worca-cc/store/__PROJECT_KEY__/plans/05-11-26-demo.md\",\"value\":null,\"meta\":null,\"firedAt\":1793864867409,\"sourceExecutionId\":\"x:n_plan:1\",\"forced\":false}},\"consumed\":{\"n_task\":{},\"n_clarify\":{\"task\":1},\"n_plan\":{\"task\":1,\"answers\":2}},\"ordinals\":{\"n_task\":1,\"n_clarify\":1,\"n_plan\":1},\"wires\":{\"w5\":{\"deliveries\":0,\"allowance\":1},\"w9\":{\"deliveries\":0,\"allowance\":2}},\"deadEnds\":[],\"ended\":null,\"execs\":[{\"executionId\":\"x:n_task:1\",\"nodeId\":\"n_task\",\"kind\":\"cycle\",\"ordinal\":1,\"status\":\"done\",\"sessionId\":null,\"bindings\":{},\"trigger\":{\"wireIds\":[],\"freshPorts\":[]}},{\"executionId\":\"x:n_clarify:1\",\"nodeId\":\"n_clarify\",\"kind\":\"cycle\",\"ordinal\":1,\"status\":\"done\",\"sessionId\":\"mock-session-clarify-c1\",\"bindings\":{\"task\":{\"seq\":1,\"type\":\"md\",\"path\":\"__PIPELINE__/task.md\"}},\"trigger\":{\"wireIds\":[\"w1\"],\"freshPorts\":[\"task\"]}},{\"executionId\":\"x:n_plan:1\",\"nodeId\":\"n_plan\",\"kind\":\"cycle\",\"ordinal\":1,\"status\":\"done\",\"sessionId\":\"mock-session-planner-plan-c1\",\"bindings\":{\"task\":{\"seq\":1,\"type\":\"md\",\"path\":\"__PIPELINE__/task.md\"},\"answers\":{\"seq\":2,\"type\":\"json\",\"path\":\"__PIPELINE__/clarify.json\"}},\"trigger\":{\"wireIds\":[\"w2\",\"w3\"],\"freshPorts\":[\"task\",\"answers\"]}}],\"gates\":[],\"asks\":[],\"gate\":null,\"ask\":null},\"manifest\":{\"version\":2,\"template\":{\"id\":\"wf_shape\",\"name\":\"Shaper\"},\"graph\":{\"nodes\":[{\"id\":\"n_task\",\"kind\":\"task\",\"key\":null,\"x\":40,\"y\":200,\"label\":\"Task\",\"uiPhase\":\"task\",\"config\":{},\"ports\":{\"inputs\":[],\"outputs\":[{\"id\":\"task\",\"type\":\"md\",\"when\":\"always\"}],\"await\":false}},{\"id\":\"n_clarify\",\"kind\":\"agent\",\"key\":\"clarify\",\"x\":320,\"y\":200,\"label\":\"Clarify\",\"uiPhase\":\"clarify\",\"config\":{\"maxQuestions\":3,\"promptHints\":\"Shaping: ask at most 3 questions — only decisions that change what gets built and that the repo can't answer. Give each question a recommended option.\"},\"ports\":{\"inputs\":[{\"id\":\"task\",\"type\":\"md\",\"required\":true,\"loop\":false,\"expands\":false}],\"outputs\":[{\"id\":\"answers\",\"type\":\"json\",\"when\":\"always\"}],\"await\":true},\"color\":\"red\",\"icon\":\"<circle cx=\\\"12\\\" cy=\\\"12\\\" r=\\\"9\\\"/><path d=\\\"M9.4 9.3a2.7 2.7 0 0 1 5.2 1c0 1.8-2.6 2.1-2.6 3.6\\\" stroke-linecap=\\\"round\\\" fill=\\\"none\\\"/><circle cx=\\\"12\\\" cy=\\\"17\\\" r=\\\"0.7\\\" fill=\\\"currentColor\\\" stroke=\\\"none\\\"/>\",\"model\":\"\",\"effort\":\"\",\"askQuestions\":true,\"awaitAll\":false,\"fanOut\":true,\"subagentModel\":\"\",\"subagentEffort\":\"\",\"progressStage\":\"plan\"},{\"id\":\"n_plan\",\"kind\":\"agent\",\"key\":\"planner\",\"x\":600,\"y\":200,\"label\":\"Plan\",\"uiPhase\":\"plan\",\"config\":{},\"ports\":{\"inputs\":[{\"id\":\"task\",\"type\":\"md\",\"required\":true,\"loop\":false,\"expands\":false},{\"id\":\"answers\",\"type\":\"json\",\"required\":false,\"loop\":false,\"expands\":false},{\"id\":\"revise\",\"type\":\"md\",\"required\":false,\"loop\":true,\"expands\":false}],\"outputs\":[{\"id\":\"plan\",\"type\":\"md\",\"when\":\"always\"}],\"await\":true},\"color\":\"violet\",\"icon\":\"<path d=\\\"M8 6h11M8 12h11M8 18h8\\\" stroke-linecap=\\\"round\\\"/><circle cx=\\\"4\\\" cy=\\\"6\\\" r=\\\"1.1\\\"/><circle cx=\\\"4\\\" cy=\\\"12\\\" r=\\\"1.1\\\"/><circle cx=\\\"4\\\" cy=\\\"18\\\" r=\\\"1.1\\\"/>\",\"model\":\"\",\"effort\":\"\",\"askQuestions\":false,\"awaitAll\":false,\"fanOut\":true,\"subagentModel\":\"\",\"subagentEffort\":\"\",\"progressStage\":\"plan\"},{\"id\":\"n_refine\",\"kind\":\"agent\",\"key\":\"refiner\",\"x\":880,\"y\":200,\"label\":\"Refine Plan\",\"uiPhase\":\"refine\",\"config\":{\"approve\":{\"kind\":\"plan\",\"port\":\"plan\"},\"awaitAll\":true},\"ports\":{\"inputs\":[{\"id\":\"plan\",\"type\":\"md\",\"required\":true,\"loop\":false,\"expands\":false},{\"id\":\"revise\",\"type\":\"md\",\"required\":false,\"loop\":true,\"expands\":false},{\"id\":\"findings\",\"type\":\"md\",\"required\":false,\"loop\":false,\"expands\":false}],\"outputs\":[{\"id\":\"plan\",\"type\":\"md\",\"when\":\"clean\"},{\"id\":\"revise\",\"type\":\"md\",\"when\":\"blocking\"}],\"await\":true},\"color\":\"green\",\"icon\":\"<path d=\\\"M12 3v3M12 18v3M4.5 7.5l2 1M17.5 15.5l2 1M4.5 16.5l2-1M17.5 8.5l2-1\\\" stroke-linecap=\\\"round\\\"/><path d=\\\"M12 8.2l1.2 2.6L16 12l-2.8 1.2L12 15.8l-1.2-2.6L8 12l2.8-1.2L12 8.2Z\\\" stroke-linejoin=\\\"round\\\"/>\",\"model\":\"\",\"effort\":\"\",\"askQuestions\":false,\"awaitAll\":true,\"fanOut\":true,\"subagentModel\":\"\",\"subagentEffort\":\"\",\"progressStage\":\"plan\"},{\"id\":\"n_impl\",\"kind\":\"agent\",\"key\":\"implementer\",\"x\":1160,\"y\":200,\"label\":\"Implementation\",\"uiPhase\":\"implement\",\"config\":{},\"ports\":{\"inputs\":[{\"id\":\"fix\",\"type\":\"md\",\"required\":false,\"loop\":true,\"expands\":false},{\"id\":\"task\",\"type\":\"json\",\"required\":false,\"loop\":false,\"expands\":true},{\"id\":\"plan\",\"type\":\"md\",\"required\":true,\"loop\":false,\"expands\":false}],\"outputs\":[{\"id\":\"done\",\"type\":\"void\",\"when\":\"always\"}],\"await\":true},\"color\":\"peach\",\"icon\":\"<path d=\\\"M9 8l-4 4 4 4M15 8l4 4-4 4\\\" stroke-linecap=\\\"round\\\" stroke-linejoin=\\\"round\\\"/>\",\"model\":\"\",\"effort\":\"\",\"askQuestions\":false,\"awaitAll\":false,\"fanOut\":true,\"subagentModel\":\"\",\"subagentEffort\":\"\",\"progressStage\":\"build\"},{\"id\":\"n_review\",\"kind\":\"agent\",\"key\":\"reviewer\",\"x\":1440,\"y\":200,\"label\":\"Review Implementation\",\"uiPhase\":\"review\",\"config\":{\"roleReview\":{\"roles\":[{\"key\":\"correctness\",\"label\":\"Correctness\"},{\"key\":\"security\",\"label\":\"Security\"},{\"key\":\"fit\",\"label\":\"Project fit\"}],\"source\":\"declared\",\"target\":\"diff\",\"sink\":\"implementer\"}},\"ports\":{\"inputs\":[{\"id\":\"plan\",\"type\":\"md\",\"required\":true,\"loop\":false,\"expands\":false},{\"id\":\"done\",\"type\":\"void\",\"required\":false,\"loop\":false,\"expands\":false}],\"outputs\":[{\"id\":\"review\",\"type\":\"md\",\"when\":\"blocking\"},{\"id\":\"pass\",\"type\":\"void\",\"when\":\"clean\"}],\"await\":true},\"color\":\"blue\",\"icon\":\"<path d=\\\"M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z\\\" stroke-linejoin=\\\"round\\\"/><path d=\\\"M9 12l2 2 4-4\\\" stroke-linecap=\\\"round\\\" stroke-linejoin=\\\"round\\\"/>\",\"model\":\"\",\"effort\":\"\",\"askQuestions\":false,\"awaitAll\":false,\"fanOut\":true,\"subagentModel\":\"\",\"subagentEffort\":\"\",\"progressStage\":\"review\"},{\"id\":\"n_end\",\"kind\":\"end\",\"key\":null,\"x\":1720,\"y\":200,\"label\":\"End\",\"uiPhase\":\"end\",\"config\":{},\"ports\":{\"inputs\":[{\"id\":\"result\",\"type\":\"any\",\"required\":true,\"loop\":false,\"expands\":false}],\"outputs\":[],\"await\":false}},{\"id\":\"n_roles\",\"kind\":\"agent\",\"key\":\"planReviewer\",\"x\":740,\"y\":380,\"label\":\"Plan Review\",\"uiPhase\":\"plan-review\",\"config\":{\"roleReview\":{\"roles\":[{\"key\":\"product\",\"label\":\"Product\",\"model\":\"claude-opus-5-5\",\"effort\":\"medium\"},{\"key\":\"architect\",\"label\":\"Architect\"},{\"key\":\"qa\",\"label\":\"QA\"},{\"key\":\"ux\",\"label\":\"UX\"},{\"key\":\"security\",\"label\":\"Security\"},{\"key\":\"devops\",\"label\":\"DevOps and infrastructure\"},{\"key\":\"release\",\"label\":\"Release\"},{\"key\":\"fit\",\"label\":\"Project fit\"},{\"key\":\"devil\",\"label\":\"Devil's advocate\"}],\"source\":\"picked\",\"target\":\"plan\",\"checklist\":\"perspectives\",\"sink\":\"refiner\"},\"model\":\"claude-sonnet-5-5\",\"effort\":\"medium\"},\"ports\":{\"inputs\":[{\"id\":\"plan\",\"type\":\"md\",\"required\":true,\"loop\":false,\"expands\":false},{\"id\":\"revise\",\"type\":\"md\",\"required\":false,\"loop\":true,\"expands\":false}],\"outputs\":[{\"id\":\"findings\",\"type\":\"md\",\"when\":\"always\"},{\"id\":\"plan\",\"type\":\"md\",\"when\":\"always\"}],\"await\":true},\"color\":\"amber\",\"icon\":\"<path d=\\\"M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Z\\\"/><path d=\\\"M15.5 15.5L21 21\\\" stroke-linecap=\\\"round\\\"/><path d=\\\"M7.6 10.3l2 2 3.3-3.6\\\" stroke-linecap=\\\"round\\\" stroke-linejoin=\\\"round\\\"/>\",\"model\":\"claude-sonnet-5-5\",\"effort\":\"medium\",\"askQuestions\":false,\"awaitAll\":false,\"fanOut\":true,\"subagentModel\":\"\",\"subagentEffort\":\"\",\"roles\":{\"product\":{\"model\":\"claude-opus-5-5\",\"effort\":\"medium\",\"source\":\"template\"}},\"progressStage\":\"plan\"}],\"wires\":[{\"id\":\"w1\",\"from\":{\"node\":\"n_task\",\"port\":\"task\"},\"to\":{\"node\":\"n_clarify\",\"port\":\"task\"},\"loop\":false},{\"id\":\"w2\",\"from\":{\"node\":\"n_task\",\"port\":\"task\"},\"to\":{\"node\":\"n_plan\",\"port\":\"task\"},\"loop\":false},{\"id\":\"w3\",\"from\":{\"node\":\"n_clarify\",\"port\":\"answers\"},\"to\":{\"node\":\"n_plan\",\"port\":\"answers\"},\"loop\":false},{\"id\":\"w4\",\"from\":{\"node\":\"n_plan\",\"port\":\"plan\"},\"to\":{\"node\":\"n_roles\",\"port\":\"plan\"},\"loop\":false},{\"id\":\"w17\",\"from\":{\"node\":\"n_roles\",\"port\":\"plan\"},\"to\":{\"node\":\"n_refine\",\"port\":\"plan\"},\"loop\":false},{\"id\":\"w18\",\"from\":{\"node\":\"n_roles\",\"port\":\"findings\"},\"to\":{\"node\":\"n_refine\",\"port\":\"findings\"},\"loop\":false},{\"id\":\"w5\",\"from\":{\"node\":\"n_refine\",\"port\":\"revise\"},\"to\":{\"node\":\"n_roles\",\"port\":\"revise\"},\"loop\":true,\"maxCycles\":2,\"onExhausted\":\"clean\"},{\"id\":\"w6\",\"from\":{\"node\":\"n_refine\",\"port\":\"plan\"},\"to\":{\"node\":\"n_impl\",\"port\":\"plan\"},\"loop\":false},{\"id\":\"w7\",\"from\":{\"node\":\"n_refine\",\"port\":\"plan\"},\"to\":{\"node\":\"n_review\",\"port\":\"plan\"},\"loop\":false},{\"id\":\"w8\",\"from\":{\"node\":\"n_impl\",\"port\":\"done\"},\"to\":{\"node\":\"n_review\",\"port\":\"done\"},\"loop\":false},{\"id\":\"w9\",\"from\":{\"node\":\"n_review\",\"port\":\"review\"},\"to\":{\"node\":\"n_impl\",\"port\":\"fix\"},\"loop\":true,\"maxCycles\":3},{\"id\":\"w10\",\"from\":{\"node\":\"n_review\",\"port\":\"pass\"},\"to\":{\"node\":\"n_end\",\"port\":\"result\"},\"loop\":false}]},\"bookends\":{\"preflight\":true,\"done\":true},\"steps\":[{\"kind\":\"preflight\",\"nodes\":[{\"id\":\"preflight\",\"label\":\"Preflight\",\"sub\":\"checks\"}]},{\"kind\":\"agents\",\"nodes\":[{\"id\":\"n_task\",\"key\":null,\"uiPhase\":\"task\",\"label\":\"Task\",\"color\":\"\",\"sub\":\"\",\"cycles\":false,\"model\":\"\",\"effort\":\"\"}]},{\"kind\":\"agents\",\"nodes\":[{\"id\":\"n_clarify\",\"key\":\"clarify\",\"uiPhase\":\"clarify\",\"label\":\"Clarify\",\"color\":\"red\",\"sub\":\"Turns hidden decisions into questions before planning. Multiple-choice, so later steps never guess.\",\"cycles\":false,\"model\":\"\",\"effort\":\"\"}]},{\"kind\":\"agents\",\"nodes\":[{\"id\":\"n_plan\",\"key\":\"planner\",\"uiPhase\":\"plan\",\"label\":\"Plan\",\"color\":\"violet\",\"sub\":\"Explores the codebase and writes the implementation plan. Contracts, invariants, task breakdown and test list; can ask clarifying questions first.\",\"cycles\":false,\"model\":\"\",\"effort\":\"\"}]},{\"kind\":\"agents\",\"nodes\":[{\"id\":\"n_roles\",\"key\":\"planReviewer\",\"uiPhase\":\"plan-review\",\"label\":\"Plan Review\",\"color\":\"amber\",\"sub\":\"Reviews the plan against the request and the codebase. Blocking issues bounce it back for a cold re-plan.\",\"cycles\":true,\"model\":\"claude-sonnet-5-5\",\"effort\":\"medium\"}]},{\"kind\":\"agents\",\"nodes\":[{\"id\":\"n_refine\",\"key\":\"refiner\",\"uiPhase\":\"refine\",\"label\":\"Refine Plan\",\"color\":\"green\",\"sub\":\"Rewrites the latest plan into a tighter version. Fixes structure, correctness, contracts and invariants in one read-only pass.\",\"cycles\":false,\"model\":\"\",\"effort\":\"\"}]},{\"kind\":\"agents\",\"nodes\":[{\"id\":\"n_impl\",\"key\":\"implementer\",\"uiPhase\":\"implement\",\"label\":\"Implementation\",\"color\":\"peach\",\"sub\":\"Writes the code from the approved plan, strict TDD. In fix mode, addresses only the issues a review flagged.\",\"cycles\":true,\"model\":\"\",\"effort\":\"\"}]},{\"kind\":\"agents\",\"nodes\":[{\"id\":\"n_review\",\"key\":\"reviewer\",\"uiPhase\":\"review\",\"label\":\"Review Implementation\",\"color\":\"blue\",\"sub\":\"Reviews the implementation diff against the plan. Honest verdict; blocking findings loop back to the implementer.\",\"cycles\":false,\"model\":\"\",\"effort\":\"\"}]},{\"kind\":\"agents\",\"nodes\":[{\"id\":\"n_end\",\"key\":null,\"uiPhase\":\"end\",\"label\":\"End\",\"color\":\"\",\"sub\":\"\",\"cycles\":false,\"model\":\"\",\"effort\":\"\"}]},{\"kind\":\"done\",\"nodes\":[{\"id\":\"done\",\"label\":\"Done\",\"sub\":\"complete\"}]}],\"feedbacks\":[{\"id\":\"w5\",\"from\":\"n_refine\",\"to\":\"n_roles\",\"maxCycles\":2},{\"id\":\"w9\",\"from\":\"n_review\",\"to\":\"n_impl\",\"maxCycles\":3}]},\"nodes\":[{\"nodeId\":\"preflight\",\"executionId\":\"x:preflight:1\",\"sessionId\":null,\"completed\":true},{\"nodeId\":\"n_task\",\"executionId\":\"x:n_task:1\",\"sessionId\":null,\"completed\":true},{\"nodeId\":\"n_clarify\",\"executionId\":\"x:n_clarify:1\",\"sessionId\":\"mock-session-clarify-c1\",\"completed\":true},{\"nodeId\":\"n_plan\",\"executionId\":\"x:n_plan:1\",\"sessionId\":\"mock-session-planner-plan-c1\",\"completed\":true},{\"nodeId\":\"n_roles\",\"executionId\":\"x:n_roles:1:role-product\",\"sessionId\":null,\"completed\":false},{\"nodeId\":\"n_roles\",\"executionId\":\"x:n_roles:1:role-architect\",\"sessionId\":null,\"completed\":false},{\"nodeId\":\"n_roles\",\"executionId\":\"x:n_roles:1:role-qa\",\"sessionId\":null,\"completed\":false}],\"planVersion\":1,\"roleReviews\":{\"rounds\":[]},\"slicingDone\":true,\"humanCursor\":{\"files\":0,\"insertions\":0,\"deletions\":0},\"stepModels\":{\"clarify\":{},\"planner\":{},\"refiner\":{},\"decomposer\":{},\"implementer\":{},\"reviewer\":{},\"manualTestsChecklist\":{},\"manualWebUiTesting\":{},\"planReviewer\":{},\"memoryDefragmenter\":{},\"deckClarify\":{},\"deckNarrative\":{},\"deckSystem\":{},\"deckBuilder\":{},\"deckAudit\":{},\"deckReviewer\":{},\"deckExport\":{},\"deckOutputs\":{},\"architectSetup\":{},\"architect\":{},\"promoSetup\":{},\"promoVoice\":{},\"promoExplorer\":{},\"promoWriter\":{},\"promoCapture\":{},\"promoMascot\":{},\"promoScenes\":{},\"promoReview\":{}},\"mock\":true,\"workflowId\":\"wf_shape\",\"auto\":null,\"night\":{\"optIn\":false,\"override\":\"auto\"},\"guardrailsId\":\"normal\",\"memoryScope\":null,\"shape\":{\"perspectives\":[\"product\",\"architect\",\"qa\"],\"size\":\"large\"},\"shaping\":{\"perspectives\":[\"product\",\"architect\",\"qa\"],\"rounds\":[],\"approved\":null,\"savedTo\":null},\"checkpointRef\":\"__BASE_SHA__\",\"checkpointRefs\":{\"__PROJECT_KEY__\":\"__BASE_SHA__\"},\"workspace\":null,\"pauseReason\":null,\"pauseDetail\":null,\"toolInstruction\":\"\",\"pipelineDir\":\"__PIPELINE__\",\"pausedAt\":\"2026-11-05T07:47:47.423Z\",\"interventions\":{\"questions\":1,\"pauses\":1,\"resumes\":0,\"pausedMs\":0,\"pausedAt\":\"2026-11-05T07:47:47.423Z\",\"lastPauseReason\":null,\"lastPauseDetail\":null},\"pausedBy\":\"d9108efc-cf72-4fbe-996d-3b8a70815eca\"}",
+    "owner_pid": null,
+    "owner_host": null,
+    "heartbeat_at": null,
+    "source_type": "prompt",
+    "source_ref": null,
+    "guardrails_id": "normal",
+    "archived_at": null,
+    "cost_cap_override": 0,
+    "pr_url": null,
+    "pr_number": null,
+    "pr_state": null,
+    "pr_checked_at": null,
+    "outcome": "{\"endReached\":false,\"result\":null,\"warnings\":[],\"wireDeliveries\":{\"w5\":0,\"w9\":0},\"tokens\":{\"n_task.task\":{\"seq\":1,\"type\":\"md\",\"path\":\"__PIPELINE__/task.md\",\"firedAt\":1793864867256},\"n_clarify.answers\":{\"seq\":2,\"type\":\"json\",\"path\":\"__PIPELINE__/clarify.json\",\"firedAt\":1793864867353},\"n_plan.plan\":{\"seq\":3,\"type\":\"md\",\"path\":\"__HOME__/.worca-cc/store/__PROJECT_KEY__/plans/05-11-26-demo.md\",\"firedAt\":1793864867409}}}",
+    "scheduled_for": null,
+    "schedule_id": null,
+    "policy_state": null,
+    "human_hours": 0.71,
+    "started_by": null,
+    "shape_stats": "{\"questions\":{\"asked\":2,\"skipped\":2},\"revises\":[],\"shapeScore\":null,\"reviewCycles\":0,\"checklist\":null,\"cost\":{\"shaping\":0,\"building\":0}}",
+    "run_size": null,
+    "review_stats": null,
+    "run_setup": null,
+    "deleted_at": null,
+    "pr_verdict": null,
+    "release_version": null,
+    "release_target": null,
+    "release_at": null,
+    "release_url": null,
+    "release_error": null
+  },
+  "resumePoint": {
+    "version": 2,
+    "snapshot": {
+      "version": 2,
+      "seq": 3,
+      "graph": {
+        "id": "wf_shape",
+        "name": "Shaper",
+        "version": 2,
+        "domain": "coding",
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "nodes": [
+          {
+            "id": "n_task",
+            "kind": "task",
+            "x": 40,
+            "y": 200,
+            "config": {}
+          },
+          {
+            "id": "n_clarify",
+            "kind": "agent",
+            "key": "clarify",
+            "x": 320,
+            "y": 200,
+            "config": {
+              "maxQuestions": 3,
+              "promptHints": "Shaping: ask at most 3 questions — only decisions that change what gets built and that the repo can't answer. Give each question a recommended option."
+            }
+          },
+          {
+            "id": "n_plan",
+            "kind": "agent",
+            "key": "planner",
+            "x": 600,
+            "y": 200,
+            "config": {}
+          },
+          {
+            "id": "n_refine",
+            "kind": "agent",
+            "key": "refiner",
+            "x": 880,
+            "y": 200,
+            "config": {
+              "approve": {
+                "kind": "plan",
+                "port": "plan"
+              },
+              "awaitAll": true
+            }
+          },
+          {
+            "id": "n_impl",
+            "kind": "agent",
+            "key": "implementer",
+            "x": 1160,
+            "y": 200,
+            "config": {}
+          },
+          {
+            "id": "n_review",
+            "kind": "agent",
+            "key": "reviewer",
+            "x": 1440,
+            "y": 200,
+            "config": {
+              "roleReview": {
+                "roles": [
+                  {
+                    "key": "correctness",
+                    "label": "Correctness"
+                  },
+                  {
+                    "key": "security",
+                    "label": "Security"
+                  },
+                  {
+                    "key": "fit",
+                    "label": "Project fit"
+                  }
+                ],
+                "source": "declared",
+                "target": "diff",
+                "sink": "implementer"
+              }
+            }
+          },
+          {
+            "id": "n_end",
+            "kind": "end",
+            "x": 1720,
+            "y": 200,
+            "config": {}
+          },
+          {
+            "id": "n_roles",
+            "kind": "agent",
+            "key": "planReviewer",
+            "x": 740,
+            "y": 380,
+            "config": {
+              "roleReview": {
+                "roles": [
+                  {
+                    "key": "product",
+                    "label": "Product",
+                    "model": "claude-opus-5-5",
+                    "effort": "medium"
+                  },
+                  {
+                    "key": "architect",
+                    "label": "Architect"
+                  },
+                  {
+                    "key": "qa",
+                    "label": "QA"
+                  },
+                  {
+                    "key": "ux",
+                    "label": "UX"
+                  },
+                  {
+                    "key": "security",
+                    "label": "Security"
+                  },
+                  {
+                    "key": "devops",
+                    "label": "DevOps and infrastructure"
+                  },
+                  {
+                    "key": "release",
+                    "label": "Release"
+                  },
+                  {
+                    "key": "fit",
+                    "label": "Project fit"
+                  },
+                  {
+                    "key": "devil",
+                    "label": "Devil's advocate"
+                  }
+                ],
+                "source": "picked",
+                "target": "plan",
+                "checklist": "perspectives",
+                "sink": "refiner"
+              },
+              "model": "claude-sonnet-5-5",
+              "effort": "medium"
+            }
+          }
+        ],
+        "wires": [
+          {
+            "id": "w1",
+            "from": {
+              "node": "n_task",
+              "port": "task"
+            },
+            "to": {
+              "node": "n_clarify",
+              "port": "task"
+            }
+          },
+          {
+            "id": "w2",
+            "from": {
+              "node": "n_task",
+              "port": "task"
+            },
+            "to": {
+              "node": "n_plan",
+              "port": "task"
+            }
+          },
+          {
+            "id": "w3",
+            "from": {
+              "node": "n_clarify",
+              "port": "answers"
+            },
+            "to": {
+              "node": "n_plan",
+              "port": "answers"
+            }
+          },
+          {
+            "id": "w4",
+            "from": {
+              "node": "n_plan",
+              "port": "plan"
+            },
+            "to": {
+              "node": "n_roles",
+              "port": "plan"
+            }
+          },
+          {
+            "id": "w17",
+            "from": {
+              "node": "n_roles",
+              "port": "plan"
+            },
+            "to": {
+              "node": "n_refine",
+              "port": "plan"
+            }
+          },
+          {
+            "id": "w18",
+            "from": {
+              "node": "n_roles",
+              "port": "findings"
+            },
+            "to": {
+              "node": "n_refine",
+              "port": "findings"
+            }
+          },
+          {
+            "id": "w5",
+            "from": {
+              "node": "n_refine",
+              "port": "revise"
+            },
+            "to": {
+              "node": "n_roles",
+              "port": "revise"
+            },
+            "config": {
+              "maxCycles": 2,
+              "onExhausted": "clean"
+            }
+          },
+          {
+            "id": "w6",
+            "from": {
+              "node": "n_refine",
+              "port": "plan"
+            },
+            "to": {
+              "node": "n_impl",
+              "port": "plan"
+            }
+          },
+          {
+            "id": "w7",
+            "from": {
+              "node": "n_refine",
+              "port": "plan"
+            },
+            "to": {
+              "node": "n_review",
+              "port": "plan"
+            }
+          },
+          {
+            "id": "w8",
+            "from": {
+              "node": "n_impl",
+              "port": "done"
+            },
+            "to": {
+              "node": "n_review",
+              "port": "done"
+            }
+          },
+          {
+            "id": "w9",
+            "from": {
+              "node": "n_review",
+              "port": "review"
+            },
+            "to": {
+              "node": "n_impl",
+              "port": "fix"
+            },
+            "config": {
+              "maxCycles": 3
+            }
+          },
+          {
+            "id": "w10",
+            "from": {
+              "node": "n_review",
+              "port": "pass"
+            },
+            "to": {
+              "node": "n_end",
+              "port": "result"
+            }
+          }
+        ]
+      },
+      "tokens": {
+        "n_clarify.task": {
+          "seq": 1,
+          "type": "md",
+          "path": "__PIPELINE__/task.md",
+          "value": null,
+          "meta": null,
+          "firedAt": 1793864867256,
+          "sourceExecutionId": "x:n_task:1",
+          "forced": false
+        },
+        "n_plan.task": {
+          "seq": 1,
+          "type": "md",
+          "path": "__PIPELINE__/task.md",
+          "value": null,
+          "meta": null,
+          "firedAt": 1793864867256,
+          "sourceExecutionId": "x:n_task:1",
+          "forced": false
+        },
+        "n_plan.answers": {
+          "seq": 2,
+          "type": "json",
+          "path": "__PIPELINE__/clarify.json",
+          "value": null,
+          "meta": null,
+          "firedAt": 1793864867353,
+          "sourceExecutionId": "x:n_clarify:1",
+          "forced": false
+        },
+        "n_roles.plan": {
+          "seq": 3,
+          "type": "md",
+          "path": "__HOME__/.worca-cc/store/__PROJECT_KEY__/plans/05-11-26-demo.md",
+          "value": null,
+          "meta": null,
+          "firedAt": 1793864867409,
+          "sourceExecutionId": "x:n_plan:1",
+          "forced": false
+        }
+      },
+      "outputs": {
+        "n_task.task": {
+          "seq": 1,
+          "type": "md",
+          "path": "__PIPELINE__/task.md",
+          "value": null,
+          "meta": null,
+          "firedAt": 1793864867256,
+          "sourceExecutionId": "x:n_task:1",
+          "forced": false
+        },
+        "n_clarify.answers": {
+          "seq": 2,
+          "type": "json",
+          "path": "__PIPELINE__/clarify.json",
+          "value": null,
+          "meta": null,
+          "firedAt": 1793864867353,
+          "sourceExecutionId": "x:n_clarify:1",
+          "forced": false
+        },
+        "n_plan.plan": {
+          "seq": 3,
+          "type": "md",
+          "path": "__HOME__/.worca-cc/store/__PROJECT_KEY__/plans/05-11-26-demo.md",
+          "value": null,
+          "meta": null,
+          "firedAt": 1793864867409,
+          "sourceExecutionId": "x:n_plan:1",
+          "forced": false
+        }
+      },
+      "consumed": {
+        "n_task": {},
+        "n_clarify": {
+          "task": 1
+        },
+        "n_plan": {
+          "task": 1,
+          "answers": 2
+        }
+      },
+      "ordinals": {
+        "n_task": 1,
+        "n_clarify": 1,
+        "n_plan": 1
+      },
+      "wires": {
+        "w5": {
+          "deliveries": 0,
+          "allowance": 1
+        },
+        "w9": {
+          "deliveries": 0,
+          "allowance": 2
+        }
+      },
+      "deadEnds": [],
+      "ended": null,
+      "execs": [
+        {
+          "executionId": "x:n_task:1",
+          "nodeId": "n_task",
+          "kind": "cycle",
+          "ordinal": 1,
+          "status": "done",
+          "sessionId": null,
+          "bindings": {},
+          "trigger": {
+            "wireIds": [],
+            "freshPorts": []
+          }
+        },
+        {
+          "executionId": "x:n_clarify:1",
+          "nodeId": "n_clarify",
+          "kind": "cycle",
+          "ordinal": 1,
+          "status": "done",
+          "sessionId": "mock-session-clarify-c1",
+          "bindings": {
+            "task": {
+              "seq": 1,
+              "type": "md",
+              "path": "__PIPELINE__/task.md"
+            }
+          },
+          "trigger": {
+            "wireIds": [
+              "w1"
+            ],
+            "freshPorts": [
+              "task"
+            ]
+          }
+        },
+        {
+          "executionId": "x:n_plan:1",
+          "nodeId": "n_plan",
+          "kind": "cycle",
+          "ordinal": 1,
+          "status": "done",
+          "sessionId": "mock-session-planner-plan-c1",
+          "bindings": {
+            "task": {
+              "seq": 1,
+              "type": "md",
+              "path": "__PIPELINE__/task.md"
+            },
+            "answers": {
+              "seq": 2,
+              "type": "json",
+              "path": "__PIPELINE__/clarify.json"
+            }
+          },
+          "trigger": {
+            "wireIds": [
+              "w2",
+              "w3"
+            ],
+            "freshPorts": [
+              "task",
+              "answers"
+            ]
+          }
+        }
+      ],
+      "gates": [],
+      "asks": [],
+      "gate": null,
+      "ask": null
+    },
+    "manifest": {
+      "version": 2,
+      "template": {
+        "id": "wf_shape",
+        "name": "Shaper"
+      },
+      "graph": {
+        "nodes": [
+          {
+            "id": "n_task",
+            "kind": "task",
+            "key": null,
+            "x": 40,
+            "y": 200,
+            "label": "Task",
+            "uiPhase": "task",
+            "config": {},
+            "ports": {
+              "inputs": [],
+              "outputs": [
+                {
+                  "id": "task",
+                  "type": "md",
+                  "when": "always"
+                }
+              ],
+              "await": false
+            }
+          },
+          {
+            "id": "n_clarify",
+            "kind": "agent",
+            "key": "clarify",
+            "x": 320,
+            "y": 200,
+            "label": "Clarify",
+            "uiPhase": "clarify",
+            "config": {
+              "maxQuestions": 3,
+              "promptHints": "Shaping: ask at most 3 questions — only decisions that change what gets built and that the repo can't answer. Give each question a recommended option."
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "id": "task",
+                  "type": "md",
+                  "required": true,
+                  "loop": false,
+                  "expands": false
+                }
+              ],
+              "outputs": [
+                {
+                  "id": "answers",
+                  "type": "json",
+                  "when": "always"
+                }
+              ],
+              "await": true
+            },
+            "color": "red",
+            "icon": "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M9.4 9.3a2.7 2.7 0 0 1 5.2 1c0 1.8-2.6 2.1-2.6 3.6\" stroke-linecap=\"round\" fill=\"none\"/><circle cx=\"12\" cy=\"17\" r=\"0.7\" fill=\"currentColor\" stroke=\"none\"/>",
+            "model": "",
+            "effort": "",
+            "askQuestions": true,
+            "awaitAll": false,
+            "fanOut": true,
+            "subagentModel": "",
+            "subagentEffort": "",
+            "progressStage": "plan"
+          },
+          {
+            "id": "n_plan",
+            "kind": "agent",
+            "key": "planner",
+            "x": 600,
+            "y": 200,
+            "label": "Plan",
+            "uiPhase": "plan",
+            "config": {},
+            "ports": {
+              "inputs": [
+                {
+                  "id": "task",
+                  "type": "md",
+                  "required": true,
+                  "loop": false,
+                  "expands": false
+                },
+                {
+                  "id": "answers",
+                  "type": "json",
+                  "required": false,
+                  "loop": false,
+                  "expands": false
+                },
+                {
+                  "id": "revise",
+                  "type": "md",
+                  "required": false,
+                  "loop": true,
+                  "expands": false
+                }
+              ],
+              "outputs": [
+                {
+                  "id": "plan",
+                  "type": "md",
+                  "when": "always"
+                }
+              ],
+              "await": true
+            },
+            "color": "violet",
+            "icon": "<path d=\"M8 6h11M8 12h11M8 18h8\" stroke-linecap=\"round\"/><circle cx=\"4\" cy=\"6\" r=\"1.1\"/><circle cx=\"4\" cy=\"12\" r=\"1.1\"/><circle cx=\"4\" cy=\"18\" r=\"1.1\"/>",
+            "model": "",
+            "effort": "",
+            "askQuestions": false,
+            "awaitAll": false,
+            "fanOut": true,
+            "subagentModel": "",
+            "subagentEffort": "",
+            "progressStage": "plan"
+          },
+          {
+            "id": "n_refine",
+            "kind": "agent",
+            "key": "refiner",
+            "x": 880,
+            "y": 200,
+            "label": "Refine Plan",
+            "uiPhase": "refine",
+            "config": {
+              "approve": {
+                "kind": "plan",
+                "port": "plan"
+              },
+              "awaitAll": true
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "id": "plan",
+                  "type": "md",
+                  "required": true,
+                  "loop": false,
+                  "expands": false
+                },
+                {
+                  "id": "revise",
+                  "type": "md",
+                  "required": false,
+                  "loop": true,
+                  "expands": false
+                },
+                {
+                  "id": "findings",
+                  "type": "md",
+                  "required": false,
+                  "loop": false,
+                  "expands": false
+                }
+              ],
+              "outputs": [
+                {
+                  "id": "plan",
+                  "type": "md",
+                  "when": "clean"
+                },
+                {
+                  "id": "revise",
+                  "type": "md",
+                  "when": "blocking"
+                }
+              ],
+              "await": true
+            },
+            "color": "green",
+            "icon": "<path d=\"M12 3v3M12 18v3M4.5 7.5l2 1M17.5 15.5l2 1M4.5 16.5l2-1M17.5 8.5l2-1\" stroke-linecap=\"round\"/><path d=\"M12 8.2l1.2 2.6L16 12l-2.8 1.2L12 15.8l-1.2-2.6L8 12l2.8-1.2L12 8.2Z\" stroke-linejoin=\"round\"/>",
+            "model": "",
+            "effort": "",
+            "askQuestions": false,
+            "awaitAll": true,
+            "fanOut": true,
+            "subagentModel": "",
+            "subagentEffort": "",
+            "progressStage": "plan"
+          },
+          {
+            "id": "n_impl",
+            "kind": "agent",
+            "key": "implementer",
+            "x": 1160,
+            "y": 200,
+            "label": "Implementation",
+            "uiPhase": "implement",
+            "config": {},
+            "ports": {
+              "inputs": [
+                {
+                  "id": "fix",
+                  "type": "md",
+                  "required": false,
+                  "loop": true,
+                  "expands": false
+                },
+                {
+                  "id": "task",
+                  "type": "json",
+                  "required": false,
+                  "loop": false,
+                  "expands": true
+                },
+                {
+                  "id": "plan",
+                  "type": "md",
+                  "required": true,
+                  "loop": false,
+                  "expands": false
+                }
+              ],
+              "outputs": [
+                {
+                  "id": "done",
+                  "type": "void",
+                  "when": "always"
+                }
+              ],
+              "await": true
+            },
+            "color": "peach",
+            "icon": "<path d=\"M9 8l-4 4 4 4M15 8l4 4-4 4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+            "model": "",
+            "effort": "",
+            "askQuestions": false,
+            "awaitAll": false,
+            "fanOut": true,
+            "subagentModel": "",
+            "subagentEffort": "",
+            "progressStage": "build"
+          },
+          {
+            "id": "n_review",
+            "kind": "agent",
+            "key": "reviewer",
+            "x": 1440,
+            "y": 200,
+            "label": "Review Implementation",
+            "uiPhase": "review",
+            "config": {
+              "roleReview": {
+                "roles": [
+                  {
+                    "key": "correctness",
+                    "label": "Correctness"
+                  },
+                  {
+                    "key": "security",
+                    "label": "Security"
+                  },
+                  {
+                    "key": "fit",
+                    "label": "Project fit"
+                  }
+                ],
+                "source": "declared",
+                "target": "diff",
+                "sink": "implementer"
+              }
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "id": "plan",
+                  "type": "md",
+                  "required": true,
+                  "loop": false,
+                  "expands": false
+                },
+                {
+                  "id": "done",
+                  "type": "void",
+                  "required": false,
+                  "loop": false,
+                  "expands": false
+                }
+              ],
+              "outputs": [
+                {
+                  "id": "review",
+                  "type": "md",
+                  "when": "blocking"
+                },
+                {
+                  "id": "pass",
+                  "type": "void",
+                  "when": "clean"
+                }
+              ],
+              "await": true
+            },
+            "color": "blue",
+            "icon": "<path d=\"M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z\" stroke-linejoin=\"round\"/><path d=\"M9 12l2 2 4-4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+            "model": "",
+            "effort": "",
+            "askQuestions": false,
+            "awaitAll": false,
+            "fanOut": true,
+            "subagentModel": "",
+            "subagentEffort": "",
+            "progressStage": "review"
+          },
+          {
+            "id": "n_end",
+            "kind": "end",
+            "key": null,
+            "x": 1720,
+            "y": 200,
+            "label": "End",
+            "uiPhase": "end",
+            "config": {},
+            "ports": {
+              "inputs": [
+                {
+                  "id": "result",
+                  "type": "any",
+                  "required": true,
+                  "loop": false,
+                  "expands": false
+                }
+              ],
+              "outputs": [],
+              "await": false
+            }
+          },
+          {
+            "id": "n_roles",
+            "kind": "agent",
+            "key": "planReviewer",
+            "x": 740,
+            "y": 380,
+            "label": "Plan Review",
+            "uiPhase": "plan-review",
+            "config": {
+              "roleReview": {
+                "roles": [
+                  {
+                    "key": "product",
+                    "label": "Product",
+                    "model": "claude-opus-5-5",
+                    "effort": "medium"
+                  },
+                  {
+                    "key": "architect",
+                    "label": "Architect"
+                  },
+                  {
+                    "key": "qa",
+                    "label": "QA"
+                  },
+                  {
+                    "key": "ux",
+                    "label": "UX"
+                  },
+                  {
+                    "key": "security",
+                    "label": "Security"
+                  },
+                  {
+                    "key": "devops",
+                    "label": "DevOps and infrastructure"
+                  },
+                  {
+                    "key": "release",
+                    "label": "Release"
+                  },
+                  {
+                    "key": "fit",
+                    "label": "Project fit"
+                  },
+                  {
+                    "key": "devil",
+                    "label": "Devil's advocate"
+                  }
+                ],
+                "source": "picked",
+                "target": "plan",
+                "checklist": "perspectives",
+                "sink": "refiner"
+              },
+              "model": "claude-sonnet-5-5",
+              "effort": "medium"
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "id": "plan",
+                  "type": "md",
+                  "required": true,
+                  "loop": false,
+                  "expands": false
+                },
+                {
+                  "id": "revise",
+                  "type": "md",
+                  "required": false,
+                  "loop": true,
+                  "expands": false
+                }
+              ],
+              "outputs": [
+                {
+                  "id": "findings",
+                  "type": "md",
+                  "when": "always"
+                },
+                {
+                  "id": "plan",
+                  "type": "md",
+                  "when": "always"
+                }
+              ],
+              "await": true
+            },
+            "color": "amber",
+            "icon": "<path d=\"M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Z\"/><path d=\"M15.5 15.5L21 21\" stroke-linecap=\"round\"/><path d=\"M7.6 10.3l2 2 3.3-3.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+            "model": "claude-sonnet-5-5",
+            "effort": "medium",
+            "askQuestions": false,
+            "awaitAll": false,
+            "fanOut": true,
+            "subagentModel": "",
+            "subagentEffort": "",
+            "roles": {
+              "product": {
+                "model": "claude-opus-5-5",
+                "effort": "medium",
+                "source": "template"
+              }
+            },
+            "progressStage": "plan"
+          }
+        ],
+        "wires": [
+          {
+            "id": "w1",
+            "from": {
+              "node": "n_task",
+              "port": "task"
+            },
+            "to": {
+              "node": "n_clarify",
+              "port": "task"
+            },
+            "loop": false
+          },
+          {
+            "id": "w2",
+            "from": {
+              "node": "n_task",
+              "port": "task"
+            },
+            "to": {
+              "node": "n_plan",
+              "port": "task"
+            },
+            "loop": false
+          },
+          {
+            "id": "w3",
+            "from": {
+              "node": "n_clarify",
+              "port": "answers"
+            },
+            "to": {
+              "node": "n_plan",
+              "port": "answers"
+            },
+            "loop": false
+          },
+          {
+            "id": "w4",
+            "from": {
+              "node": "n_plan",
+              "port": "plan"
+            },
+            "to": {
+              "node": "n_roles",
+              "port": "plan"
+            },
+            "loop": false
+          },
+          {
+            "id": "w17",
+            "from": {
+              "node": "n_roles",
+              "port": "plan"
+            },
+            "to": {
+              "node": "n_refine",
+              "port": "plan"
+            },
+            "loop": false
+          },
+          {
+            "id": "w18",
+            "from": {
+              "node": "n_roles",
+              "port": "findings"
+            },
+            "to": {
+              "node": "n_refine",
+              "port": "findings"
+            },
+            "loop": false
+          },
+          {
+            "id": "w5",
+            "from": {
+              "node": "n_refine",
+              "port": "revise"
+            },
+            "to": {
+              "node": "n_roles",
+              "port": "revise"
+            },
+            "loop": true,
+            "maxCycles": 2,
+            "onExhausted": "clean"
+          },
+          {
+            "id": "w6",
+            "from": {
+              "node": "n_refine",
+              "port": "plan"
+            },
+            "to": {
+              "node": "n_impl",
+              "port": "plan"
+            },
+            "loop": false
+          },
+          {
+            "id": "w7",
+            "from": {
+              "node": "n_refine",
+              "port": "plan"
+            },
+            "to": {
+              "node": "n_review",
+              "port": "plan"
+            },
+            "loop": false
+          },
+          {
+            "id": "w8",
+            "from": {
+              "node": "n_impl",
+              "port": "done"
+            },
+            "to": {
+              "node": "n_review",
+              "port": "done"
+            },
+            "loop": false
+          },
+          {
+            "id": "w9",
+            "from": {
+              "node": "n_review",
+              "port": "review"
+            },
+            "to": {
+              "node": "n_impl",
+              "port": "fix"
+            },
+            "loop": true,
+            "maxCycles": 3
+          },
+          {
+            "id": "w10",
+            "from": {
+              "node": "n_review",
+              "port": "pass"
+            },
+            "to": {
+              "node": "n_end",
+              "port": "result"
+            },
+            "loop": false
+          }
+        ]
+      },
+      "bookends": {
+        "preflight": true,
+        "done": true
+      },
+      "steps": [
+        {
+          "kind": "preflight",
+          "nodes": [
+            {
+              "id": "preflight",
+              "label": "Preflight",
+              "sub": "checks"
+            }
+          ]
+        },
+        {
+          "kind": "agents",
+          "nodes": [
+            {
+              "id": "n_task",
+              "key": null,
+              "uiPhase": "task",
+              "label": "Task",
+              "color": "",
+              "sub": "",
+              "cycles": false,
+              "model": "",
+              "effort": ""
+            }
+          ]
+        },
+        {
+          "kind": "agents",
+          "nodes": [
+            {
+              "id": "n_clarify",
+              "key": "clarify",
+              "uiPhase": "clarify",
+              "label": "Clarify",
+              "color": "red",
+              "sub": "Turns hidden decisions into questions before planning. Multiple-choice, so later steps never guess.",
+              "cycles": false,
+              "model": "",
+              "effort": ""
+            }
+          ]
+        },
+        {
+          "kind": "agents",
+          "nodes": [
+            {
+              "id": "n_plan",
+              "key": "planner",
+              "uiPhase": "plan",
+              "label": "Plan",
+              "color": "violet",
+              "sub": "Explores the codebase and writes the implementation plan. Contracts, invariants, task breakdown and test list; can ask clarifying questions first.",
+              "cycles": false,
+              "model": "",
+              "effort": ""
+            }
+          ]
+        },
+        {
+          "kind": "agents",
+          "nodes": [
+            {
+              "id": "n_roles",
+              "key": "planReviewer",
+              "uiPhase": "plan-review",
+              "label": "Plan Review",
+              "color": "amber",
+              "sub": "Reviews the plan against the request and the codebase. Blocking issues bounce it back for a cold re-plan.",
+              "cycles": true,
+              "model": "claude-sonnet-5-5",
+              "effort": "medium"
+            }
+          ]
+        },
+        {
+          "kind": "agents",
+          "nodes": [
+            {
+              "id": "n_refine",
+              "key": "refiner",
+              "uiPhase": "refine",
+              "label": "Refine Plan",
+              "color": "green",
+              "sub": "Rewrites the latest plan into a tighter version. Fixes structure, correctness, contracts and invariants in one read-only pass.",
+              "cycles": false,
+              "model": "",
+              "effort": ""
+            }
+          ]
+        },
+        {
+          "kind": "agents",
+          "nodes": [
+            {
+              "id": "n_impl",
+              "key": "implementer",
+              "uiPhase": "implement",
+              "label": "Implementation",
+              "color": "peach",
+              "sub": "Writes the code from the approved plan, strict TDD. In fix mode, addresses only the issues a review flagged.",
+              "cycles": true,
+              "model": "",
+              "effort": ""
+            }
+          ]
+        },
+        {
+          "kind": "agents",
+          "nodes": [
+            {
+              "id": "n_review",
+              "key": "reviewer",
+              "uiPhase": "review",
+              "label": "Review Implementation",
+              "color": "blue",
+              "sub": "Reviews the implementation diff against the plan. Honest verdict; blocking findings loop back to the implementer.",
+              "cycles": false,
+              "model": "",
+              "effort": ""
+            }
+          ]
+        },
+        {
+          "kind": "agents",
+          "nodes": [
+            {
+              "id": "n_end",
+              "key": null,
+              "uiPhase": "end",
+              "label": "End",
+              "color": "",
+              "sub": "",
+              "cycles": false,
+              "model": "",
+              "effort": ""
+            }
+          ]
+        },
+        {
+          "kind": "done",
+          "nodes": [
+            {
+              "id": "done",
+              "label": "Done",
+              "sub": "complete"
+            }
+          ]
+        }
+      ],
+      "feedbacks": [
+        {
+          "id": "w5",
+          "from": "n_refine",
+          "to": "n_roles",
+          "maxCycles": 2
+        },
+        {
+          "id": "w9",
+          "from": "n_review",
+          "to": "n_impl",
+          "maxCycles": 3
+        }
+      ]
+    },
+    "nodes": [
+      {
+        "nodeId": "preflight",
+        "executionId": "x:preflight:1",
+        "sessionId": null,
+        "completed": true
+      },
+      {
+        "nodeId": "n_task",
+        "executionId": "x:n_task:1",
+        "sessionId": null,
+        "completed": true
+      },
+      {
+        "nodeId": "n_clarify",
+        "executionId": "x:n_clarify:1",
+        "sessionId": "mock-session-clarify-c1",
+        "completed": true
+      },
+      {
+        "nodeId": "n_plan",
+        "executionId": "x:n_plan:1",
+        "sessionId": "mock-session-planner-plan-c1",
+        "completed": true
+      },
+      {
+        "nodeId": "n_roles",
+        "executionId": "x:n_roles:1:role-product",
+        "sessionId": null,
+        "completed": false
+      },
+      {
+        "nodeId": "n_roles",
+        "executionId": "x:n_roles:1:role-architect",
+        "sessionId": null,
+        "completed": false
+      },
+      {
+        "nodeId": "n_roles",
+        "executionId": "x:n_roles:1:role-qa",
+        "sessionId": null,
+        "completed": false
+      }
+    ],
+    "planVersion": 1,
+    "roleReviews": {
+      "rounds": []
+    },
+    "slicingDone": true,
+    "humanCursor": {
+      "files": 0,
+      "insertions": 0,
+      "deletions": 0
+    },
+    "stepModels": {
+      "clarify": {},
+      "planner": {},
+      "refiner": {},
+      "decomposer": {},
+      "implementer": {},
+      "reviewer": {},
+      "manualTestsChecklist": {},
+      "manualWebUiTesting": {},
+      "planReviewer": {},
+      "memoryDefragmenter": {},
+      "deckClarify": {},
+      "deckNarrative": {},
+      "deckSystem": {},
+      "deckBuilder": {},
+      "deckAudit": {},
+      "deckReviewer": {},
+      "deckExport": {},
+      "deckOutputs": {},
+      "architectSetup": {},
+      "architect": {},
+      "promoSetup": {},
+      "promoVoice": {},
+      "promoExplorer": {},
+      "promoWriter": {},
+      "promoCapture": {},
+      "promoMascot": {},
+      "promoScenes": {},
+      "promoReview": {}
+    },
+    "mock": true,
+    "workflowId": "wf_shape",
+    "auto": null,
+    "night": {
+      "optIn": false,
+      "override": "auto"
+    },
+    "guardrailsId": "normal",
+    "memoryScope": null,
+    "shape": {
+      "perspectives": [
+        "product",
+        "architect",
+        "qa"
+      ],
+      "size": "large"
+    },
+    "shaping": {
+      "perspectives": [
+        "product",
+        "architect",
+        "qa"
+      ],
+      "rounds": [],
+      "approved": null,
+      "savedTo": null
+    },
+    "checkpointRef": "__BASE_SHA__",
+    "checkpointRefs": {
+      "__PROJECT_KEY__": "__BASE_SHA__"
+    },
+    "workspace": null,
+    "pauseReason": null,
+    "pauseDetail": null,
+    "toolInstruction": "",
+    "pipelineDir": "__PIPELINE__",
+    "pausedAt": "2026-11-05T07:47:47.423Z",
+    "interventions": {
+      "questions": 1,
+      "pauses": 1,
+      "resumes": 0,
+      "pausedMs": 0,
+      "pausedAt": "2026-11-05T07:47:47.423Z",
+      "lastPauseReason": null,
+      "lastPauseDetail": null
+    },
+    "pausedBy": "d9108efc-cf72-4fbe-996d-3b8a70815eca"
+  },
+  "steps": [
+    {
+      "key": "x:preflight:1",
+      "cycle": 1,
+      "status": "done",
+      "startedAt": "2026-11-05T07:47:46.302Z",
+      "updatedAt": "2026-11-05T07:47:47.253Z",
+      "activeMs": 951,
+      "runningSince": null,
+      "costUsd": 0,
+      "skills": [],
+      "nodeId": "preflight",
+      "executionId": "x:preflight:1",
+      "kind": "cycle",
+      "ordinal": 1,
+      "trigger": {
+        "wireIds": [],
+        "freshPorts": []
+      },
+      "auxCosts": {
+        "title": {
+          "usd": 0,
+          "calls": 1
+        }
+      }
+    },
+    {
+      "key": "x:n_task:1",
+      "phase": "task",
+      "cycle": 1,
+      "status": "done",
+      "startedAt": "2026-11-05T07:47:47.255Z",
+      "updatedAt": "2026-11-05T07:47:47.256Z",
+      "activeMs": 1,
+      "runningSince": null,
+      "costUsd": 0,
+      "skills": [],
+      "nodeId": "n_task",
+      "executionId": "x:n_task:1",
+      "kind": "cycle",
+      "endedAt": "2026-11-05T07:47:47.256Z",
+      "ordinal": 1,
+      "trigger": {
+        "wireIds": [],
+        "freshPorts": []
+      }
+    },
+    {
+      "key": "x:n_clarify:1",
+      "phase": "clarify",
+      "cycle": 1,
+      "status": "done",
+      "startedAt": "2026-11-05T07:47:47.297Z",
+      "updatedAt": "2026-11-05T07:47:47.352Z",
+      "activeMs": 53,
+      "runningSince": null,
+      "costUsd": 0,
+      "sessionId": "mock-session-clarify-c1",
+      "skills": [],
+      "nodeId": "n_clarify",
+      "executionId": "x:n_clarify:1",
+      "kind": "cycle",
+      "agentKey": "clarify",
+      "endedAt": "2026-11-05T07:47:47.352Z",
+      "ordinal": 1,
+      "trigger": {
+        "wireIds": [
+          "w1"
+        ],
+        "freshPorts": [
+          "task"
+        ]
+      },
+      "humanHours": 0.25,
+      "humanSignals": {
+        "code": 0,
+        "write": 0,
+        "revise": 0,
+        "json": 0,
+        "read": 0,
+        "method": "override"
+      },
+      "nodeKey": "clarify",
+      "memory": {
+        "mode": "frozen",
+        "set": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "files": 0
+      }
+    },
+    {
+      "key": "x:n_plan:1",
+      "phase": "planner",
+      "cycle": 1,
+      "status": "done",
+      "startedAt": "2026-11-05T07:47:47.354Z",
+      "updatedAt": "2026-11-05T07:47:47.408Z",
+      "activeMs": 54,
+      "runningSince": null,
+      "costUsd": 0,
+      "sessionId": "mock-session-planner-plan-c1",
+      "skills": [
+        "skill:graphify",
+        "mcp:playwright:browser_snapshot"
+      ],
+      "nodeId": "n_plan",
+      "executionId": "x:n_plan:1",
+      "kind": "cycle",
+      "agentKey": "planner",
+      "endedAt": "2026-11-05T07:47:47.408Z",
+      "ordinal": 1,
+      "trigger": {
+        "wireIds": [
+          "w2",
+          "w3"
+        ],
+        "freshPorts": [
+          "task",
+          "answers"
+        ]
+      },
+      "humanHours": 0.46,
+      "humanSignals": {
+        "code": 0,
+        "write": 0.46,
+        "revise": 0,
+        "json": 0,
+        "read": 0,
+        "method": "heuristic"
+      },
+      "nodeKey": "planner",
+      "memory": {
+        "mode": "frozen",
+        "set": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "files": 0
+      }
+    },
+    {
+      "key": "x:n_roles:1:role-product",
+      "phase": "planReviewer",
+      "cycle": 1,
+      "status": "paused",
+      "startedAt": "2026-11-05T07:47:47.419Z",
+      "updatedAt": "2026-11-05T07:47:47.420Z",
+      "activeMs": 1,
+      "runningSince": null,
+      "costUsd": 0,
+      "skills": [],
+      "nodeId": "n_roles",
+      "executionId": "x:n_roles:1:role-product",
+      "kind": "task",
+      "agentKey": "planReviewer",
+      "endedAt": "2026-11-05T07:47:47.420Z",
+      "ordinal": 1,
+      "trigger": {
+        "wireIds": [
+          "w4"
+        ],
+        "freshPorts": [
+          "plan"
+        ]
+      },
+      "taskId": "role-product",
+      "parentExecutionId": "x:n_roles:1",
+      "title": "Product",
+      "phaseOrdinal": 1,
+      "taskIndex": 1,
+      "taskTotal": 3,
+      "nodeKey": "planReviewer",
+      "memory": {
+        "mode": "frozen",
+        "set": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "files": 0
+      }
+    },
+    {
+      "key": "x:n_roles:1:role-architect",
+      "phase": "planReviewer",
+      "cycle": 1,
+      "status": "paused",
+      "startedAt": "2026-11-05T07:47:47.421Z",
+      "updatedAt": "2026-11-05T07:47:47.421Z",
+      "activeMs": 0,
+      "runningSince": null,
+      "costUsd": 0,
+      "skills": [],
+      "nodeId": "n_roles",
+      "executionId": "x:n_roles:1:role-architect",
+      "kind": "task",
+      "agentKey": "planReviewer",
+      "endedAt": "2026-11-05T07:47:47.421Z",
+      "ordinal": 1,
+      "trigger": {
+        "wireIds": [
+          "w4"
+        ],
+        "freshPorts": [
+          "plan"
+        ]
+      },
+      "taskId": "role-architect",
+      "parentExecutionId": "x:n_roles:1",
+      "title": "Architect",
+      "phaseOrdinal": 1,
+      "taskIndex": 2,
+      "taskTotal": 3,
+      "nodeKey": "planReviewer",
+      "memory": {
+        "mode": "frozen",
+        "set": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "files": 0
+      }
+    },
+    {
+      "key": "x:n_roles:1:role-qa",
+      "phase": "planReviewer",
+      "cycle": 1,
+      "status": "paused",
+      "startedAt": "2026-11-05T07:47:47.422Z",
+      "updatedAt": "2026-11-05T07:47:47.422Z",
+      "activeMs": 0,
+      "runningSince": null,
+      "costUsd": 0,
+      "skills": [],
+      "nodeId": "n_roles",
+      "executionId": "x:n_roles:1:role-qa",
+      "kind": "task",
+      "agentKey": "planReviewer",
+      "endedAt": "2026-11-05T07:47:47.422Z",
+      "ordinal": 1,
+      "trigger": {
+        "wireIds": [
+          "w4"
+        ],
+        "freshPorts": [
+          "plan"
+        ]
+      },
+      "taskId": "role-qa",
+      "parentExecutionId": "x:n_roles:1",
+      "title": "QA",
+      "phaseOrdinal": 1,
+      "taskIndex": 3,
+      "taskTotal": 3,
+      "nodeKey": "planReviewer",
+      "memory": {
+        "mode": "frozen",
+        "set": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "files": 0
+      }
+    }
+  ],
+  "state": {
+    "id": "af176941",
+    "title": "demo",
+    "projectKey": "__PROJECT_KEY__",
+    "status": "paused",
+    "phase": "plan-review",
+    "cycle": 1,
+    "startedAt": "2026-11-05T07:47:46.952Z",
+    "updatedAt": "2026-11-05T07:47:47.424Z",
+    "totalCostUsd": 0,
+    "totalActiveMs": 1060,
+    "humanHours": 0.71,
+    "prompt": "demo",
+    "baseName": "demo",
+    "datePrefix": "05-11-26",
+    "branch": {
+      "source": "main",
+      "feature": "worca-cc/demo-af176941",
+      "worktreeDir": "__HOME__/.worca-cc/runs/af176941/repos/__PROJECT_KEY__",
+      "reusedExisting": false,
+      "baseSha": "__BASE_SHA__",
+      "runRootMode": "detached"
+    },
+    "stepper": {
+      "version": 2,
+      "template": {
+        "id": "wf_shape",
+        "name": "Shaper"
+      },
+      "graph": {
+        "nodes": [
+          {
+            "id": "n_task",
+            "kind": "task",
+            "key": null,
+            "x": 40,
+            "y": 200,
+            "label": "Task",
+            "uiPhase": "task",
+            "config": {},
+            "ports": {
+              "inputs": [],
+              "outputs": [
+                {
+                  "id": "task",
+                  "type": "md",
+                  "when": "always"
+                }
+              ],
+              "await": false
+            }
+          },
+          {
+            "id": "n_clarify",
+            "kind": "agent",
+            "key": "clarify",
+            "x": 320,
+            "y": 200,
+            "label": "Clarify",
+            "uiPhase": "clarify",
+            "config": {
+              "maxQuestions": 3,
+              "promptHints": "Shaping: ask at most 3 questions — only decisions that change what gets built and that the repo can't answer. Give each question a recommended option."
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "id": "task",
+                  "type": "md",
+                  "required": true,
+                  "loop": false,
+                  "expands": false
+                }
+              ],
+              "outputs": [
+                {
+                  "id": "answers",
+                  "type": "json",
+                  "when": "always"
+                }
+              ],
+              "await": true
+            },
+            "color": "red",
+            "icon": "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M9.4 9.3a2.7 2.7 0 0 1 5.2 1c0 1.8-2.6 2.1-2.6 3.6\" stroke-linecap=\"round\" fill=\"none\"/><circle cx=\"12\" cy=\"17\" r=\"0.7\" fill=\"currentColor\" stroke=\"none\"/>",
+            "model": "",
+            "effort": "",
+            "askQuestions": true,
+            "awaitAll": false,
+            "fanOut": true,
+            "subagentModel": "",
+            "subagentEffort": "",
+            "progressStage": "plan"
+          },
+          {
+            "id": "n_plan",
+            "kind": "agent",
+            "key": "planner",
+            "x": 600,
+            "y": 200,
+            "label": "Plan",
+            "uiPhase": "plan",
+            "config": {},
+            "ports": {
+              "inputs": [
+                {
+                  "id": "task",
+                  "type": "md",
+                  "required": true,
+                  "loop": false,
+                  "expands": false
+                },
+                {
+                  "id": "answers",
+                  "type": "json",
+                  "required": false,
+                  "loop": false,
+                  "expands": false
+                },
+                {
+                  "id": "revise",
+                  "type": "md",
+                  "required": false,
+                  "loop": true,
+                  "expands": false
+                }
+              ],
+              "outputs": [
+                {
+                  "id": "plan",
+                  "type": "md",
+                  "when": "always"
+                }
+              ],
+              "await": true
+            },
+            "color": "violet",
+            "icon": "<path d=\"M8 6h11M8 12h11M8 18h8\" stroke-linecap=\"round\"/><circle cx=\"4\" cy=\"6\" r=\"1.1\"/><circle cx=\"4\" cy=\"12\" r=\"1.1\"/><circle cx=\"4\" cy=\"18\" r=\"1.1\"/>",
+            "model": "",
+            "effort": "",
+            "askQuestions": false,
+            "awaitAll": false,
+            "fanOut": true,
+            "subagentModel": "",
+            "subagentEffort": "",
+            "progressStage": "plan"
+          },
+          {
+            "id": "n_refine",
+            "kind": "agent",
+            "key": "refiner",
+            "x": 880,
+            "y": 200,
+            "label": "Refine Plan",
+            "uiPhase": "refine",
+            "config": {
+              "approve": {
+                "kind": "plan",
+                "port": "plan"
+              },
+              "awaitAll": true
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "id": "plan",
+                  "type": "md",
+                  "required": true,
+                  "loop": false,
+                  "expands": false
+                },
+                {
+                  "id": "revise",
+                  "type": "md",
+                  "required": false,
+                  "loop": true,
+                  "expands": false
+                },
+                {
+                  "id": "findings",
+                  "type": "md",
+                  "required": false,
+                  "loop": false,
+                  "expands": false
+                }
+              ],
+              "outputs": [
+                {
+                  "id": "plan",
+                  "type": "md",
+                  "when": "clean"
+                },
+                {
+                  "id": "revise",
+                  "type": "md",
+                  "when": "blocking"
+                }
+              ],
+              "await": true
+            },
+            "color": "green",
+            "icon": "<path d=\"M12 3v3M12 18v3M4.5 7.5l2 1M17.5 15.5l2 1M4.5 16.5l2-1M17.5 8.5l2-1\" stroke-linecap=\"round\"/><path d=\"M12 8.2l1.2 2.6L16 12l-2.8 1.2L12 15.8l-1.2-2.6L8 12l2.8-1.2L12 8.2Z\" stroke-linejoin=\"round\"/>",
+            "model": "",
+            "effort": "",
+            "askQuestions": false,
+            "awaitAll": true,
+            "fanOut": true,
+            "subagentModel": "",
+            "subagentEffort": "",
+            "progressStage": "plan"
+          },
+          {
+            "id": "n_impl",
+            "kind": "agent",
+            "key": "implementer",
+            "x": 1160,
+            "y": 200,
+            "label": "Implementation",
+            "uiPhase": "implement",
+            "config": {},
+            "ports": {
+              "inputs": [
+                {
+                  "id": "fix",
+                  "type": "md",
+                  "required": false,
+                  "loop": true,
+                  "expands": false
+                },
+                {
+                  "id": "task",
+                  "type": "json",
+                  "required": false,
+                  "loop": false,
+                  "expands": true
+                },
+                {
+                  "id": "plan",
+                  "type": "md",
+                  "required": true,
+                  "loop": false,
+                  "expands": false
+                }
+              ],
+              "outputs": [
+                {
+                  "id": "done",
+                  "type": "void",
+                  "when": "always"
+                }
+              ],
+              "await": true
+            },
+            "color": "peach",
+            "icon": "<path d=\"M9 8l-4 4 4 4M15 8l4 4-4 4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+            "model": "",
+            "effort": "",
+            "askQuestions": false,
+            "awaitAll": false,
+            "fanOut": true,
+            "subagentModel": "",
+            "subagentEffort": "",
+            "progressStage": "build"
+          },
+          {
+            "id": "n_review",
+            "kind": "agent",
+            "key": "reviewer",
+            "x": 1440,
+            "y": 200,
+            "label": "Review Implementation",
+            "uiPhase": "review",
+            "config": {
+              "roleReview": {
+                "roles": [
+                  {
+                    "key": "correctness",
+                    "label": "Correctness"
+                  },
+                  {
+                    "key": "security",
+                    "label": "Security"
+                  },
+                  {
+                    "key": "fit",
+                    "label": "Project fit"
+                  }
+                ],
+                "source": "declared",
+                "target": "diff",
+                "sink": "implementer"
+              }
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "id": "plan",
+                  "type": "md",
+                  "required": true,
+                  "loop": false,
+                  "expands": false
+                },
+                {
+                  "id": "done",
+                  "type": "void",
+                  "required": false,
+                  "loop": false,
+                  "expands": false
+                }
+              ],
+              "outputs": [
+                {
+                  "id": "review",
+                  "type": "md",
+                  "when": "blocking"
+                },
+                {
+                  "id": "pass",
+                  "type": "void",
+                  "when": "clean"
+                }
+              ],
+              "await": true
+            },
+            "color": "blue",
+            "icon": "<path d=\"M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z\" stroke-linejoin=\"round\"/><path d=\"M9 12l2 2 4-4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+            "model": "",
+            "effort": "",
+            "askQuestions": false,
+            "awaitAll": false,
+            "fanOut": true,
+            "subagentModel": "",
+            "subagentEffort": "",
+            "progressStage": "review"
+          },
+          {
+            "id": "n_end",
+            "kind": "end",
+            "key": null,
+            "x": 1720,
+            "y": 200,
+            "label": "End",
+            "uiPhase": "end",
+            "config": {},
+            "ports": {
+              "inputs": [
+                {
+                  "id": "result",
+                  "type": "any",
+                  "required": true,
+                  "loop": false,
+                  "expands": false
+                }
+              ],
+              "outputs": [],
+              "await": false
+            }
+          },
+          {
+            "id": "n_roles",
+            "kind": "agent",
+            "key": "planReviewer",
+            "x": 740,
+            "y": 380,
+            "label": "Plan Review",
+            "uiPhase": "plan-review",
+            "config": {
+              "roleReview": {
+                "roles": [
+                  {
+                    "key": "product",
+                    "label": "Product",
+                    "model": "claude-opus-5-5",
+                    "effort": "medium"
+                  },
+                  {
+                    "key": "architect",
+                    "label": "Architect"
+                  },
+                  {
+                    "key": "qa",
+                    "label": "QA"
+                  },
+                  {
+                    "key": "ux",
+                    "label": "UX"
+                  },
+                  {
+                    "key": "security",
+                    "label": "Security"
+                  },
+                  {
+                    "key": "devops",
+                    "label": "DevOps and infrastructure"
+                  },
+                  {
+                    "key": "release",
+                    "label": "Release"
+                  },
+                  {
+                    "key": "fit",
+                    "label": "Project fit"
+                  },
+                  {
+                    "key": "devil",
+                    "label": "Devil's advocate"
+                  }
+                ],
+                "source": "picked",
+                "target": "plan",
+                "checklist": "perspectives",
+                "sink": "refiner"
+              },
+              "model": "claude-sonnet-5-5",
+              "effort": "medium"
+            },
+            "ports": {
+              "inputs": [
+                {
+                  "id": "plan",
+                  "type": "md",
+                  "required": true,
+                  "loop": false,
+                  "expands": false
+                },
+                {
+                  "id": "revise",
+                  "type": "md",
+                  "required": false,
+                  "loop": true,
+                  "expands": false
+                }
+              ],
+              "outputs": [
+                {
+                  "id": "findings",
+                  "type": "md",
+                  "when": "always"
+                },
+                {
+                  "id": "plan",
+                  "type": "md",
+                  "when": "always"
+                }
+              ],
+              "await": true
+            },
+            "color": "amber",
+            "icon": "<path d=\"M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Z\"/><path d=\"M15.5 15.5L21 21\" stroke-linecap=\"round\"/><path d=\"M7.6 10.3l2 2 3.3-3.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+            "model": "claude-sonnet-5-5",
+            "effort": "medium",
+            "askQuestions": false,
+            "awaitAll": false,
+            "fanOut": true,
+            "subagentModel": "",
+            "subagentEffort": "",
+            "roles": {
+              "product": {
+                "model": "claude-opus-5-5",
+                "effort": "medium",
+                "source": "template"
+              }
+            },
+            "progressStage": "plan"
+          }
+        ],
+        "wires": [
+          {
+            "id": "w1",
+            "from": {
+              "node": "n_task",
+              "port": "task"
+            },
+            "to": {
+              "node": "n_clarify",
+              "port": "task"
+            },
+            "loop": false
+          },
+          {
+            "id": "w2",
+            "from": {
+              "node": "n_task",
+              "port": "task"
+            },
+            "to": {
+              "node": "n_plan",
+              "port": "task"
+            },
+            "loop": false
+          },
+          {
+            "id": "w3",
+            "from": {
+              "node": "n_clarify",
+              "port": "answers"
+            },
+            "to": {
+              "node": "n_plan",
+              "port": "answers"
+            },
+            "loop": false
+          },
+          {
+            "id": "w4",
+            "from": {
+              "node": "n_plan",
+              "port": "plan"
+            },
+            "to": {
+              "node": "n_roles",
+              "port": "plan"
+            },
+            "loop": false
+          },
+          {
+            "id": "w17",
+            "from": {
+              "node": "n_roles",
+              "port": "plan"
+            },
+            "to": {
+              "node": "n_refine",
+              "port": "plan"
+            },
+            "loop": false
+          },
+          {
+            "id": "w18",
+            "from": {
+              "node": "n_roles",
+              "port": "findings"
+            },
+            "to": {
+              "node": "n_refine",
+              "port": "findings"
+            },
+            "loop": false
+          },
+          {
+            "id": "w5",
+            "from": {
+              "node": "n_refine",
+              "port": "revise"
+            },
+            "to": {
+              "node": "n_roles",
+              "port": "revise"
+            },
+            "loop": true,
+            "maxCycles": 2,
+            "onExhausted": "clean"
+          },
+          {
+            "id": "w6",
+            "from": {
+              "node": "n_refine",
+              "port": "plan"
+            },
+            "to": {
+              "node": "n_impl",
+              "port": "plan"
+            },
+            "loop": false
+          },
+          {
+            "id": "w7",
+            "from": {
+              "node": "n_refine",
+              "port": "plan"
+            },
+            "to": {
+              "node": "n_review",
+              "port": "plan"
+            },
+            "loop": false
+          },
+          {
+            "id": "w8",
+            "from": {
+              "node": "n_impl",
+              "port": "done"
+            },
+            "to": {
+              "node": "n_review",
+              "port": "done"
+            },
+            "loop": false
+          },
+          {
+            "id": "w9",
+            "from": {
+              "node": "n_review",
+              "port": "review"
+            },
+            "to": {
+              "node": "n_impl",
+              "port": "fix"
+            },
+            "loop": true,
+            "maxCycles": 3
+          },
+          {
+            "id": "w10",
+            "from": {
+              "node": "n_review",
+              "port": "pass"
+            },
+            "to": {
+              "node": "n_end",
+              "port": "result"
+            },
+            "loop": false
+          }
+        ]
+      },
+      "bookends": {
+        "preflight": true,
+        "done": true
+      },
+      "steps": [
+        {
+          "kind": "preflight",
+          "nodes": [
+            {
+              "id": "preflight",
+              "label": "Preflight",
+              "sub": "checks"
+            }
+          ]
+        },
+        {
+          "kind": "agents",
+          "nodes": [
+            {
+              "id": "n_task",
+              "key": null,
+              "uiPhase": "task",
+              "label": "Task",
+              "color": "",
+              "sub": "",
+              "cycles": false,
+              "model": "",
+              "effort": ""
+            }
+          ]
+        },
+        {
+          "kind": "agents",
+          "nodes": [
+            {
+              "id": "n_clarify",
+              "key": "clarify",
+              "uiPhase": "clarify",
+              "label": "Clarify",
+              "color": "red",
+              "sub": "Turns hidden decisions into questions before planning. Multiple-choice, so later steps never guess.",
+              "cycles": false,
+              "model": "",
+              "effort": ""
+            }
+          ]
+        },
+        {
+          "kind": "agents",
+          "nodes": [
+            {
+              "id": "n_plan",
+              "key": "planner",
+              "uiPhase": "plan",
+              "label": "Plan",
+              "color": "violet",
+              "sub": "Explores the codebase and writes the implementation plan. Contracts, invariants, task breakdown and test list; can ask clarifying questions first.",
+              "cycles": false,
+              "model": "",
+              "effort": ""
+            }
+          ]
+        },
+        {
+          "kind": "agents",
+          "nodes": [
+            {
+              "id": "n_roles",
+              "key": "planReviewer",
+              "uiPhase": "plan-review",
+              "label": "Plan Review",
+              "color": "amber",
+              "sub": "Reviews the plan against the request and the codebase. Blocking issues bounce it back for a cold re-plan.",
+              "cycles": true,
+              "model": "claude-sonnet-5-5",
+              "effort": "medium"
+            }
+          ]
+        },
+        {
+          "kind": "agents",
+          "nodes": [
+            {
+              "id": "n_refine",
+              "key": "refiner",
+              "uiPhase": "refine",
+              "label": "Refine Plan",
+              "color": "green",
+              "sub": "Rewrites the latest plan into a tighter version. Fixes structure, correctness, contracts and invariants in one read-only pass.",
+              "cycles": false,
+              "model": "",
+              "effort": ""
+            }
+          ]
+        },
+        {
+          "kind": "agents",
+          "nodes": [
+            {
+              "id": "n_impl",
+              "key": "implementer",
+              "uiPhase": "implement",
+              "label": "Implementation",
+              "color": "peach",
+              "sub": "Writes the code from the approved plan, strict TDD. In fix mode, addresses only the issues a review flagged.",
+              "cycles": true,
+              "model": "",
+              "effort": ""
+            }
+          ]
+        },
+        {
+          "kind": "agents",
+          "nodes": [
+            {
+              "id": "n_review",
+              "key": "reviewer",
+              "uiPhase": "review",
+              "label": "Review Implementation",
+              "color": "blue",
+              "sub": "Reviews the implementation diff against the plan. Honest verdict; blocking findings loop back to the implementer.",
+              "cycles": false,
+              "model": "",
+              "effort": ""
+            }
+          ]
+        },
+        {
+          "kind": "agents",
+          "nodes": [
+            {
+              "id": "n_end",
+              "key": null,
+              "uiPhase": "end",
+              "label": "End",
+              "color": "",
+              "sub": "",
+              "cycles": false,
+              "model": "",
+              "effort": ""
+            }
+          ]
+        },
+        {
+          "kind": "done",
+          "nodes": [
+            {
+              "id": "done",
+              "label": "Done",
+              "sub": "complete"
+            }
+          ]
+        }
+      ],
+      "feedbacks": [
+        {
+          "id": "w5",
+          "from": "n_refine",
+          "to": "n_roles",
+          "maxCycles": 2
+        },
+        {
+          "id": "w9",
+          "from": "n_review",
+          "to": "n_impl",
+          "maxCycles": 3
+        }
+      ]
+    },
+    "tools": {
+      "graphify": false,
+      "codeReviewGraph": false,
+      "tool": null,
+      "kind": null,
+      "instruction": ""
+    },
+    "guardrailsId": "normal",
+    "startedBy": null,
+    "scheduledFor": null,
+    "scheduleId": null,
+    "archivedAt": null,
+    "resumable": true,
+    "steps": [
+      {
+        "key": "x:preflight:1",
+        "cycle": 1,
+        "status": "done",
+        "startedAt": "2026-11-05T07:47:46.302Z",
+        "updatedAt": "2026-11-05T07:47:47.253Z",
+        "activeMs": 951,
+        "runningSince": null,
+        "costUsd": 0,
+        "skills": [],
+        "nodeId": "preflight",
+        "executionId": "x:preflight:1",
+        "kind": "cycle",
+        "ordinal": 1,
+        "trigger": {
+          "wireIds": [],
+          "freshPorts": []
+        },
+        "auxCosts": {
+          "title": {
+            "usd": 0,
+            "calls": 1
+          }
+        }
+      },
+      {
+        "key": "x:n_task:1",
+        "phase": "task",
+        "cycle": 1,
+        "status": "done",
+        "startedAt": "2026-11-05T07:47:47.255Z",
+        "updatedAt": "2026-11-05T07:47:47.256Z",
+        "activeMs": 1,
+        "runningSince": null,
+        "costUsd": 0,
+        "skills": [],
+        "nodeId": "n_task",
+        "executionId": "x:n_task:1",
+        "kind": "cycle",
+        "endedAt": "2026-11-05T07:47:47.256Z",
+        "ordinal": 1,
+        "trigger": {
+          "wireIds": [],
+          "freshPorts": []
+        }
+      },
+      {
+        "key": "x:n_clarify:1",
+        "phase": "clarify",
+        "cycle": 1,
+        "status": "done",
+        "startedAt": "2026-11-05T07:47:47.297Z",
+        "updatedAt": "2026-11-05T07:47:47.352Z",
+        "activeMs": 53,
+        "runningSince": null,
+        "costUsd": 0,
+        "sessionId": "mock-session-clarify-c1",
+        "skills": [],
+        "nodeId": "n_clarify",
+        "executionId": "x:n_clarify:1",
+        "kind": "cycle",
+        "agentKey": "clarify",
+        "endedAt": "2026-11-05T07:47:47.352Z",
+        "ordinal": 1,
+        "trigger": {
+          "wireIds": [
+            "w1"
+          ],
+          "freshPorts": [
+            "task"
+          ]
+        },
+        "humanHours": 0.25,
+        "humanSignals": {
+          "code": 0,
+          "write": 0,
+          "revise": 0,
+          "json": 0,
+          "read": 0,
+          "method": "override"
+        },
+        "nodeKey": "clarify",
+        "memory": {
+          "mode": "frozen",
+          "set": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "files": 0
+        }
+      },
+      {
+        "key": "x:n_plan:1",
+        "phase": "planner",
+        "cycle": 1,
+        "status": "done",
+        "startedAt": "2026-11-05T07:47:47.354Z",
+        "updatedAt": "2026-11-05T07:47:47.408Z",
+        "activeMs": 54,
+        "runningSince": null,
+        "costUsd": 0,
+        "sessionId": "mock-session-planner-plan-c1",
+        "skills": [
+          "skill:graphify",
+          "mcp:playwright:browser_snapshot"
+        ],
+        "nodeId": "n_plan",
+        "executionId": "x:n_plan:1",
+        "kind": "cycle",
+        "agentKey": "planner",
+        "endedAt": "2026-11-05T07:47:47.408Z",
+        "ordinal": 1,
+        "trigger": {
+          "wireIds": [
+            "w2",
+            "w3"
+          ],
+          "freshPorts": [
+            "task",
+            "answers"
+          ]
+        },
+        "humanHours": 0.46,
+        "humanSignals": {
+          "code": 0,
+          "write": 0.46,
+          "revise": 0,
+          "json": 0,
+          "read": 0,
+          "method": "heuristic"
+        },
+        "nodeKey": "planner",
+        "memory": {
+          "mode": "frozen",
+          "set": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "files": 0
+        }
+      },
+      {
+        "key": "x:n_roles:1:role-product",
+        "phase": "planReviewer",
+        "cycle": 1,
+        "status": "paused",
+        "startedAt": "2026-11-05T07:47:47.419Z",
+        "updatedAt": "2026-11-05T07:47:47.420Z",
+        "activeMs": 1,
+        "runningSince": null,
+        "costUsd": 0,
+        "skills": [],
+        "nodeId": "n_roles",
+        "executionId": "x:n_roles:1:role-product",
+        "kind": "task",
+        "agentKey": "planReviewer",
+        "endedAt": "2026-11-05T07:47:47.420Z",
+        "ordinal": 1,
+        "trigger": {
+          "wireIds": [
+            "w4"
+          ],
+          "freshPorts": [
+            "plan"
+          ]
+        },
+        "taskId": "role-product",
+        "parentExecutionId": "x:n_roles:1",
+        "title": "Product",
+        "phaseOrdinal": 1,
+        "taskIndex": 1,
+        "taskTotal": 3,
+        "nodeKey": "planReviewer",
+        "memory": {
+          "mode": "frozen",
+          "set": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "files": 0
+        }
+      },
+      {
+        "key": "x:n_roles:1:role-architect",
+        "phase": "planReviewer",
+        "cycle": 1,
+        "status": "paused",
+        "startedAt": "2026-11-05T07:47:47.421Z",
+        "updatedAt": "2026-11-05T07:47:47.421Z",
+        "activeMs": 0,
+        "runningSince": null,
+        "costUsd": 0,
+        "skills": [],
+        "nodeId": "n_roles",
+        "executionId": "x:n_roles:1:role-architect",
+        "kind": "task",
+        "agentKey": "planReviewer",
+        "endedAt": "2026-11-05T07:47:47.421Z",
+        "ordinal": 1,
+        "trigger": {
+          "wireIds": [
+            "w4"
+          ],
+          "freshPorts": [
+            "plan"
+          ]
+        },
+        "taskId": "role-architect",
+        "parentExecutionId": "x:n_roles:1",
+        "title": "Architect",
+        "phaseOrdinal": 1,
+        "taskIndex": 2,
+        "taskTotal": 3,
+        "nodeKey": "planReviewer",
+        "memory": {
+          "mode": "frozen",
+          "set": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "files": 0
+        }
+      },
+      {
+        "key": "x:n_roles:1:role-qa",
+        "phase": "planReviewer",
+        "cycle": 1,
+        "status": "paused",
+        "startedAt": "2026-11-05T07:47:47.422Z",
+        "updatedAt": "2026-11-05T07:47:47.422Z",
+        "activeMs": 0,
+        "runningSince": null,
+        "costUsd": 0,
+        "skills": [],
+        "nodeId": "n_roles",
+        "executionId": "x:n_roles:1:role-qa",
+        "kind": "task",
+        "agentKey": "planReviewer",
+        "endedAt": "2026-11-05T07:47:47.422Z",
+        "ordinal": 1,
+        "trigger": {
+          "wireIds": [
+            "w4"
+          ],
+          "freshPorts": [
+            "plan"
+          ]
+        },
+        "taskId": "role-qa",
+        "parentExecutionId": "x:n_roles:1",
+        "title": "QA",
+        "phaseOrdinal": 1,
+        "taskIndex": 3,
+        "taskTotal": 3,
+        "nodeKey": "planReviewer",
+        "memory": {
+          "mode": "frozen",
+          "set": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "files": 0
+        }
+      }
+    ],
+    "subAgents": [
+      {
+        "id": "run-title-fe1663d5",
+        "label": "Run title",
+        "nodeId": "preflight",
+        "stepIndex": null,
+        "cycle": null,
+        "stepKey": "x:preflight:1",
+        "status": "finished",
+        "startedAt": "2026-11-05T07:47:47.203Z",
+        "finishedAt": "2026-11-05T07:47:47.203Z",
+        "durationMs": null,
+        "tokens": 0,
+        "costUsd": 0,
+        "uiPhase": "preflight",
+        "skills": [],
+        "subagentType": "run-title",
+        "graphifyCount": null,
+        "runModel": "claude-haiku-4-5"
+      },
+      {
+        "id": "mock_planner-plan_1",
+        "label": "investigate area A",
+        "nodeId": "n_plan",
+        "stepIndex": null,
+        "cycle": 1,
+        "stepKey": "x:n_plan:1",
+        "status": "finished",
+        "startedAt": "2026-11-05T07:47:47.359Z",
+        "finishedAt": "2026-11-05T07:47:47.362Z",
+        "durationMs": null,
+        "tokens": null,
+        "costUsd": null,
+        "uiPhase": "plan",
+        "skills": [
+          "skill:brainstorming",
+          "mcp:playwright:browser_navigate",
+          "mcp:playwright:browser_click"
+        ],
+        "subagentType": "general-purpose",
+        "graphifyCount": null,
+        "runModel": null
+      },
+      {
+        "id": "mock_planner-plan_2",
+        "label": "investigate area B",
+        "nodeId": "n_plan",
+        "stepIndex": null,
+        "cycle": 1,
+        "stepKey": "x:n_plan:1",
+        "status": "finished",
+        "startedAt": "2026-11-05T07:47:47.359Z",
+        "finishedAt": "2026-11-05T07:47:47.363Z",
+        "durationMs": null,
+        "tokens": null,
+        "costUsd": null,
+        "uiPhase": "plan",
+        "skills": [],
+        "subagentType": "Explore",
+        "graphifyCount": null,
+        "runModel": null
+      }
+    ],
+    "tags": [],
+    "labels": [],
+    "pauseReason": null,
+    "lastAction": null,
+    "pauseDetail": null,
+    "limitEngine": null,
+    "limitResetAt": null,
+    "runEngine": "claude",
+    "shapeStats": {
+      "questions": {
+        "asked": 2,
+        "skipped": 2
+      },
+      "revises": [],
+      "shapeScore": null,
+      "reviewCycles": 0,
+      "checklist": null,
+      "cost": {
+        "shaping": 0,
+        "building": 0
+      }
+    },
+    "engine": 2,
+    "endReached": false,
+    "result": null,
+    "warnings": [],
+    "openIssues": [],
+    "wireDeliveries": {
+      "w5": 0,
+      "w9": 0
+    },
+    "tokens": {
+      "n_task.task": {
+        "seq": 1,
+        "type": "md",
+        "path": "__PIPELINE__/task.md",
+        "firedAt": 1793864867256
+      },
+      "n_clarify.answers": {
+        "seq": 2,
+        "type": "json",
+        "path": "__PIPELINE__/clarify.json",
+        "firedAt": 1793864867353
+      },
+      "n_plan.plan": {
+        "seq": 3,
+        "type": "md",
+        "path": "__HOME__/.worca-cc/store/__PROJECT_KEY__/plans/05-11-26-demo.md",
+        "firedAt": 1793864867409
+      }
+    },
+    "active": [],
+    "gate": null,
+    "projectDir": "__PROJECT__"
+  }
+}
