@@ -1,5 +1,5 @@
 /* The Rail look (docs/rail/look.md) and Motion, for every Rail page ahead of the app: one surface,
-   one cool neutral family, running (lemon) and needs-you (orange) apart, a quiet step bar, a floating surface a step
+   one cool neutral family, running (ink) and needs-you (amber) apart, a quiet step bar, a floating surface a step
    lighter in dark with a hairline. Inter is not bundled yet: the system face stands in for it, as in the refined mocks. */
 :root{
   --sans:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
@@ -12,10 +12,16 @@
   --float:light-dark(#FFFFFF,#1D1D21); --float-line:light-dark(#EEEEF0,#323238);   /* ds-ok: the Rail look's table */
   /* running is ink, never a colour (look.running-needs-apart): the old working gold and the app's blue map to ink, so no page brings them back */
   --peach-bg:var(--field); --peach-ink:var(--ink-2); --h-peach-ink:var(--ink);
-  --peach:var(--ink-2); --amber:light-dark(#C96512,#EE8A2C);   /* ds-ok: the Rail look's table */
+  --peach:var(--ink-2);
   --blue:var(--ink-2); --blue-bg:var(--field); --blue-ink:var(--ink-2); --blue-ink-strong:var(--ink);   /* Rail has no blue */
-  /* the states a mark or a step shows, deeper in light so each holds 3:1 or more on the page in both themes (look.state-contrast) */
-  --green:light-dark(#3C8C40,#5BAE5B); --red:light-dark(#D2473A,#E76A5A); --violet:light-dark(#7464CC,#8C7FD6); --slate:light-dark(#6C7884,#8A96A3);   /* ds-ok: the Rail look's table */
+  /* the alert ladder's colours (look.alert-ladder): muted, one value per theme for a ring, a word and a fill, each 4.5:1 as text (look.state-contrast) */
+  --amber:light-dark(#94640F,#CFA265); --amber-ink:var(--amber); --amber-ink-strong:var(--amber);   /* ds-ok: the Rail look's table */
+  --red:light-dark(#A9463C,#DB8378); --red-ink:var(--red); --red-ink-strong:var(--red); --red-ink-soft:var(--red);   /* ds-ok: the Rail look's table */
+  --green:light-dark(#3F7349,#86B38C); --green-ink:var(--green); --green-ink-strong:var(--green);   /* ds-ok: the Rail look's table */
+  --violet:light-dark(#6F60BE,#A99FE0); --violet-ink:var(--violet); --violet-ink-strong:var(--violet);   /* ds-ok: the Rail look's table */
+  --on-signal:light-dark(#FFFFFF,#141416);   /* ds-ok: a mark's glyph on a filled colour */
+  --amber-bg:light-dark(#FDF1DD,#332715);   /* ds-ok: a tint the muted amber reads on at 4.5:1 */
+  --slate:light-dark(#6C7884,#8A96A3);   /* ds-ok: the Rail look's table */
   --step-done:light-dark(#C9C9CF,#4A4A52);   /* ds-ok: the Rail look's table: a finished step, quiet */
   /* Motion (docs/rail/motion.md): three timings on one curve */
   --motion-quick:150ms; --motion-change:200ms; --motion-flash:1.2s; --ease:cubic-bezier(.2,0,0,1);

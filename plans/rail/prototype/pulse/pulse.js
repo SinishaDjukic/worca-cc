@@ -120,7 +120,7 @@ function sidebar() {
 }
 function topbar() {
   const needs = vitalsRuns().needs.length, un = unread().length, run = vitalsRuns().running.length;
-  const badge = needs ? { n: needs, tone: 'need' } : un ? { n: un, tone: 'run' } : null;
+  const badge = needs ? { n: needs, tone: masterTone() } : un ? { n: un, tone: 'run' } : null;
   const words = [needs && plural(needs, 'needs you', 'need you'), un && `${un} unread`, run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
   return `<header class="pz-top"><div class="pz-top-l">${R.search({ value: ui.q || '', label: 'Search or ask', results: searchResults() })}</div><div class="pz-top-r">
     ${R.topBarAction({ label: 'Pulse', icon: svg('signal', 16), labelCls: 'pz-pulse-l', kind: 'quiet', cls: 'topnav-act pz-pulse-b', badge, title: 'Pulse: ' + words, attrs: { 'data-pop': true, 'aria-haspopup': 'dialog', 'aria-expanded': String(!!ui.pop) } })}
@@ -617,9 +617,11 @@ function fitSearch() { const m = document.querySelector('.rl-search-res'); if (!
 // Pulse's icon shakes once when something new arrives: the count it holds grew since it was last drawn.
 let pulseSeen = null, pulseShakeTill = 0;   // a redraw during the shake keeps it going, never starts it again
 const pulseNews = (n) => { if (pulseSeen !== null && n > pulseSeen) pulseShakeTill = Date.now() + 700; pulseSeen = n; return Date.now() < pulseShakeTill; };
+// the master light wears the highest level that waits (look.alert-ladder)
+const masterTone = () => (vitalsRuns().needs.some((r) => R.alertLevel(R.markTone(R.runState(window.RunCardModel.stateOf(r.case)))) === 3) ? 'warn' : 'need');
 function pulseButton() {
   const needs = vitalsRuns().needs.length, un = unread().length, run = vitalsRuns().running.length, news = pulseNews(needs + un);
-  const badge = needs ? { n: needs, tone: 'need' } : un ? { n: un, tone: 'run' } : null;
+  const badge = needs ? { n: needs, tone: masterTone() } : un ? { n: un, tone: 'run' } : null;
   const words = [needs && plural(needs, 'needs you', 'need you'), un && `${un} unread`, run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
   return R.topBarAction({ label: 'Pulse', icon: svg('signal', 16), labelCls: 'pz-pulse-l', kind: 'quiet', full: true, cls: 'topnav-act pz-pulse-b', badge, news, title: 'Pulse: ' + words, attrs: { 'data-pop': true, 'aria-haspopup': 'dialog', 'aria-expanded': String(!!ui.pop) } });
 }

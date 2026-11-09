@@ -908,15 +908,13 @@ test('KindMark: the type until the state matters more; the ring fills by stage; 
   assert.match(C.kindMark({ kind: 'feature', tone: 'run', stage: 1 }), /km-ring/, 'its ring still says how far');
   assert.doesNotMatch(C.kindMark({ kind: 'feature', tone: 'run', stage: 1 }), /sym-x|question/);
   assert.equal(C.kindMark({ kind: 'feature', tone: 'run', stage: 1 }), C.kindMark({ kind: 'feature', tone: 'run', stage: 1, keepType: true }), 'the type keeps the centre');
-  // attention is colour and a breath, never a ? or ! in the centre (list.kind-mark): the type stays, the ring takes the state's colour
-  assert.doesNotMatch(C.kindMark({ kind: 'task', tone: 'ask', stage: 1 }), /question|alert|sym-x/, 'a question keeps the type');
-  assert.equal(C.kindMark({ kind: 'workflow', tone: 'fail', stage: 1 }), C.kindMark({ kind: 'workflow', tone: 'fail', stage: 1, keepType: true }), 'a failure keeps the type');
+  assert.notEqual(C.kindMark({ kind: 'workflow', tone: 'fail', stage: 1 }), C.kindMark({ kind: 'workflow', tone: 'fail', stage: 1, keepType: true }), 'what needs you takes the centre');
   assert.match(C.kindMark({ kind: 'chat', tone: 'ask', breathe: true }), /is-breathe/, 'unopened, what needs you breathes');
   assert.doesNotMatch(C.kindMark({ kind: 'task', tone: 'run', breathe: true }), /is-breathe/, 'only what needs you breathes so');
   assert.match(C.kindMark({ kind: 'task', tone: 'pause' }), /pause/, 'a pause keeps its sign');
   assert.equal(C.partsWord(['ok', 'merged', 'run']), '2 of 3');
   assert.doesNotMatch(C.kindMark({ kind: 'event', tone: 'fail' }), /km-ring/, 'an event is a moment, with no progress');
-  assert.equal(C.markTone({ word: 'Needs you', sym: 'q' }), 'ask'); assert.equal(C.markTone({ word: 'Needs you', dot: 'is-amber' }), 'act');
+  assert.equal(C.markTone({ word: 'Needs you', sym: 'q' }), 'ask'); assert.equal(C.markTone({ word: 'Needs you', dot: 'is-amber' }), 'ask');
   assert.equal(C.markTone({ word: 'Failed', sym: 'x' }), 'fail'); assert.equal(C.markTone({ word: 'Paused' }), 'pause'); assert.equal(C.markTone({ word: 'Merged' }), 'merged'); assert.equal(C.markTone({ word: 'Working', dot: 'is-peach is-pulse' }), 'run');
 });
 test('placeHead: a thing\'s page starts with its title, its facts, then its state with one action and ⋯', () => {
@@ -1453,4 +1451,34 @@ test('roundRows: one line, one end', () => {
 test('watchChart: a chart that narrows keeps the drag in its tooltip', () => {
   const fig = dom(C.barChart({ label: 'x', play: true, bars: [1, 2, 3].map((v) => ({ label: `d${v}`, value: v, text: `$${v}` })) }));
   C.watchChart(fig, { narrow: () => {} }); assert.equal(fig.querySelector('.bc-plot').title, 'Drag across to narrow');
+});
+
+test('figuresToggle, figuresLine: counts and costs on demand (look.figures-on-demand)', () => {
+  const t = dom(C.figuresToggle({ attrs: { 'data-x': '1' } }));
+  assert.equal(t.querySelector('.spick-b').getAttribute('aria-expanded'), 'false'); assert.match(t.textContent, /Figures/);
+  assert.equal(dom(C.figuresToggle({ card: true, open: true })).getAttribute('aria-expanded'), 'true');
+  assert.match(C.figuresLine('60 tasks'), /figs-line/);
+});
+
+test('alertLevel: the ladder, on every tone (look.alert-ladder)', () => {
+  assert.deepEqual(['fail', 'ask', 'act', 'ok', 'run', 'merged', 'pause'].map(C.alertLevel), [3, 2, 2, 1, 0, 0, 0]);
+  assert.equal(C.markTone(C.runState('capped')), 'fail', 'a cap that stops work is a Warning');
+  assert.equal(C.markTone(C.runState('gate')), 'act', 'an approval is the pencil');
+  assert.equal(C.markTone(C.runState('paused-you')), 'pause', 'a pause of yours is Normal');
+});
+
+test('kindMark: a task\'s glyph shows its state; merged is full ink with no ring; a plugin is one ink (list.kind-mark)', () => {
+  const inner = (tone) => { return dom(C.kindMark({ kind: 'task', tone })).querySelector(':scope > svg:not(.km-ring)').innerHTML; };
+  const glyph = (n) => dom(C.icon(n, 13)).innerHTML;
+  for (const [tone, n] of [['run', 'kind-task'], ['wait', 'waiting'], ['pause', 'pause'], ['ask', 'question'], ['act', 'approve'], ['ok', 'check'], ['fail', 'alert'], ['stop', 'sym-stop'], ['merged', 'merge']]) assert.equal(inner(tone), glyph(n), tone);
+  assert.doesNotMatch(C.kindMark({ kind: 'task', tone: 'merged' }), /km-ring/, 'merged has no ring');
+  assert.match(C.kindMark({ kind: 'chat', tone: 'ask' }), new RegExp(glyph('kind-chat').slice(0, 30).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'a chat keeps its bubble');
+  assert.match(C.kindMark({ kind: 'plugin', tone: 'act' }), /is-idle/, 'a plugin takes no colour');
+  assert.match(C.kindMark({ kind: 'task', tone: 'ok', advisory: true }), /is-adv/);
+  assert.match(C.kindMark({ kind: 'task', tone: 'ok', landed: true }), /is-landed/);
+});
+
+test('one icon, one meaning: Web access is the globe, failed checks are not ×, cost and time have their own (look.one-icon)', () => {
+  for (const n of ['hourglass', 'dollar', 'globe', 'approve', 'waiting']) assert.ok(C.ICONS[n], n);
+  assert.match(C.changeProposal({ kind: 'Web access', title: 'Read a page', state: 'proposed' }), new RegExp(C.ICONS.globe.slice(0, 20)));
 });

@@ -764,6 +764,30 @@
       "example": "Plan asks 2 questions"
     },
     {
+      "name": "FiguresToggle",
+      "code": "ui/public/design-system/components/figures.mjs#figuresToggle",
+      "kind": "showing",
+      "needs": [
+        "a page's or a task's counts and costs, on demand"
+      ],
+      "rules": [
+        "look.figures-on-demand"
+      ],
+      "example": "Figures, at the end of the sentence"
+    },
+    {
+      "name": "FiguresLine",
+      "code": "ui/public/design-system/components/figures.mjs#figuresLine",
+      "kind": "showing",
+      "needs": [
+        "what Figures opens: a page's totals on one line under its sentence"
+      ],
+      "rules": [
+        "look.figures-on-demand"
+      ],
+      "example": "60 tasks · $94.77 this week"
+    },
+    {
       "name": "Figures",
       "code": "ui/public/design-system/components/figures.mjs#figures",
       "kind": "showing",
@@ -1547,6 +1571,14 @@
     }
   ],
   "logic": [
+    {
+      "name": "How loud a state is",
+      "code": "ui/public/design-system/components/kind-mark.mjs#alertLevel",
+      "needs": [
+        "a state's place on the alert ladder: 3 Warning, 2 Caution, 1 Advisory, 0 Normal (look.alert-ladder)"
+      ],
+      "example": "alertLevel('fail') is 3"
+    },
     {
       "name": "Is this the second of a double click, on something else",
       "code": "ui/public/design-system/components/click-guard.mjs#secondClickIgnored",

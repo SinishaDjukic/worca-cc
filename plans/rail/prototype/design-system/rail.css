@@ -100,7 +100,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .sc-cell.is-now{background:var(--ink-2);animation:sc-breathe 1.6s ease-in-out infinite;}   /* running is ink, not a colour: colour is kept for what needs you or went wrong */
 .sc-cell.is-ask,.sc-cell.is-problem{background:var(--amber);}
 .sc-cell.is-failed{background:var(--red);}
-.sc-cell.is-merged{background:var(--violet);}
+.sc-cell.is-merged{background:var(--ink);}
 @keyframes sc-breathe{0%,100%{opacity:1}50%{opacity:.45}}
 @media (prefers-reduced-motion: reduce){.sc-cell.is-now{animation:none;}}
 
@@ -178,7 +178,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .sk-num{flex:none;font-size:var(--fs-meta);font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;}
 .sk-list .rd-route-name{font-family:var(--sans);font-size:var(--fs-body);font-weight:400;}
 .sk-word{color:var(--ink-2);}   /* leads the PR's second line */
-.sk-word.is-done{color:var(--green-ink);}
+.sk-word.is-done{color:var(--ink-2);}
 .sk-word.is-problem{color:var(--amber-ink);}
 .sk-list .rd-route-second{font-size:var(--fs-meta);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;overflow-wrap:normal;}
 .sk-list .is-next-up .sk-word{font-weight:600;}
@@ -1113,17 +1113,20 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 /* Wave 2 Shaping: KindMark and GitMark (kind-mark.mjs): one mark for what it is and how it stands; it breathes while work happens. */
 .kind-mark{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;width:var(--km,20px);height:var(--km,20px);color:var(--ink-2);}   /* ds-ok: a size or count the component sets on itself */
 .kind-mark .km-ring{position:absolute;inset:0;}
-.kind-mark.is-wait{color:var(--ink-3);}
+.kind-mark.is-wait,.kind-mark.is-idle,.kind-mark.is-pause,.kind-mark.is-stop,.kind-mark.is-closed,.kind-mark.is-ok{color:var(--ink-2);}   /* look.alert-ladder: Normal is off */
 .kind-mark.is-run{color:var(--ink-2);animation:wr-pulse 1.6s ease-in-out infinite;}   /* running: ink; its ring and breath say it works */
 .kind-mark.is-still{animation:none;}   /* a live mark that holds still: its ring says it runs; one breath per tree, three per list */
 .kind-mark.is-ask,.kind-mark.is-act{color:var(--amber);}
 .kind-mark.is-fail{color:var(--red);}
-.kind-mark.is-ok{color:var(--green);}
-.kind-mark.is-merged{color:var(--violet);}
+.kind-mark.is-fail{background:var(--red);border-radius:50%;} .kind-mark.is-fail > svg:not(.km-ring){color:var(--on-signal);} .kind-mark.is-fail .km-ring{display:none;}   /* Warning: the only filled mark */
+.kind-mark.is-adv{color:var(--ink);}   /* Advisory: full ink, no hue */
+.list-row:has(> .lr-rail .is-adv) .lr-t{font-weight:500;}
+.kind-mark.is-landed{color:var(--green);}   /* just landed, until seen */
+.kind-mark.is-merged{color:var(--ink);}   /* merged: full ink, no ring */
 @media (prefers-reduced-motion: reduce){.kind-mark.is-run{animation:none;}}
 .git-mark{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;color:var(--ink-2);}
 .git-mark .is-branch,.git-mark .is-draft,.git-mark .is-closed{color:var(--ink-3);}
-.git-mark .is-pass{color:var(--green);}.git-mark .is-fail{color:var(--red);}.git-mark .is-conflict{color:var(--amber);}.git-mark .is-merged{color:var(--violet);}
+.git-mark .is-pass{color:var(--ink-2);}.git-mark .is-fail{color:var(--red);}.git-mark .is-conflict{color:var(--amber);}.git-mark .is-merged{color:var(--ink);}
 .git-mark.is-watch.is-fix{animation:wr-pulse 1.1s ease-in-out infinite;}
 .git-mark.is-watch.is-fix{animation:wr-pulse 1.1s ease-in-out infinite;}
 @media (prefers-reduced-motion: reduce){.git-mark.is-watch.is-fix{animation:none;}}
@@ -1241,8 +1244,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .tl-tick.is-ask i,.tl-tick.is-act i{background:var(--amber);}
 .tl-tick.is-fail i{background:var(--red);}
 .tl-tick.is-run i{background:var(--ink-2);}
-.tl-tick.is-ok i{background:var(--green);}
-.tl-tick.is-merged i{background:var(--violet);}
+.tl-tick.is-ok i,.tl-tick.is-merged i{background:var(--ink-2);}
 .tline-card{position:absolute;right:30px;z-index:4;width:max-content;display:flex;gap:8px;align-items:flex-start;max-width:260px;margin-top:-18px;padding:8px 10px;border:1px solid var(--float-line);border-radius:var(--r-md);background:var(--float);box-shadow:var(--shadow-pop);font-size:var(--fs-meta);line-height:1.4;}
 .tline-card b{display:block;font-weight:600;}
 .tline-card span span{color:var(--ink-2);}
@@ -1266,14 +1268,14 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 }
 .stage-bar{margin-top:10px;color:var(--ink-2);}
 .stage-bar.is-run{color:var(--ink-2);}
-.stage-bar.is-ask,.stage-bar.is-act{color:var(--amber);}.stage-bar.is-fail{color:var(--red);}.stage-bar.is-ok{color:var(--green);}.stage-bar.is-merged{color:var(--violet);}.stage-bar.is-pause,.stage-bar.is-stop,.stage-bar.is-closed,.stage-bar.is-wait{color:var(--ink-3);}
+.stage-bar.is-ask,.stage-bar.is-act{color:var(--amber);}.stage-bar.is-fail{color:var(--red);}.stage-bar.is-ok,.stage-bar.is-merged{color:var(--ink-2);}.stage-bar.is-pause,.stage-bar.is-stop,.stage-bar.is-closed,.stage-bar.is-wait{color:var(--ink-3);}
 .sb-labels{display:grid;grid-template-columns:repeat(var(--n,5),1fr);gap:4px;}   /* ds-ok: a size or count the component sets on itself */
 /* StageBar as the rail line (look.stage-line): one hairline, a knot a stage, the stage it is on holds its steps; the one now breathes */
 .sl{position:relative;height:14px;}
 .sl-base{position:absolute;left:0;right:0;top:6px;height:2px;border-radius:1px;background:var(--line-2);}   /* ds-ok: a hairline's own end */
-.sl-done{position:absolute;left:0;top:6px;height:2px;border-radius:1px;background:var(--ink-3);} .sl-done.is-whole{background:currentColor;}   /* ds-ok: as above */
+.sl-done{position:absolute;left:0;top:6px;height:2px;border-radius:1px;background:var(--ink-2);} .sl-done.is-whole{background:currentColor;}   /* ds-ok: as above */
 .sl-knot{position:absolute;top:2px;width:10px;height:10px;border-radius:50%;background:var(--bg);border:1.5px solid var(--line-2);box-sizing:border-box;}
-.sl-knot.is-done{background:var(--ink-3);border-color:transparent;} .is-ok .sl-knot.is-done,.is-merged .sl-knot.is-done{background:currentColor;}
+.sl-knot.is-done{background:var(--ink-2);border-color:transparent;}
 .sl-knot.is-now{border-color:currentColor;}
 .sl-step{position:absolute;top:5px;height:4px;border-radius:2px;background:var(--line-2);}   /* ds-ok: a notch's own end */
 .sl-step.is-done{background:currentColor;} .sl-step.is-now{background:currentColor;animation:sl-breath 2.4s ease-in-out infinite;}
@@ -1293,7 +1295,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 
 /* A stepper that deepens by main stage (stepper.mjs). */
 .sc-track.is-deep{--sc-tone:var(--ink-2);}
-.sc-track.is-deep.is-ask,.sc-track.is-deep.is-act{--sc-tone:var(--amber);}.sc-track.is-deep.is-fail{--sc-tone:var(--red);}.sc-track.is-deep.is-ok{--sc-tone:var(--green);}.sc-track.is-deep.is-merged{--sc-tone:var(--violet);}.sc-track.is-deep.is-pause,.sc-track.is-deep.is-stop,.sc-track.is-deep.is-closed{--sc-tone:var(--ink-3);}
+.sc-track.is-deep.is-ask,.sc-track.is-deep.is-act{--sc-tone:var(--amber);}.sc-track.is-deep.is-fail{--sc-tone:var(--red);}.sc-track.is-deep.is-ok{--sc-tone:var(--ink-2);}.sc-track.is-deep.is-merged{--sc-tone:var(--ink);}.sc-track.is-deep.is-pause,.sc-track.is-deep.is-stop,.sc-track.is-deep.is-closed{--sc-tone:var(--ink-3);}
 .sc-track.is-deep .sc-cell.is-done{background:color-mix(in srgb, var(--sc-tone) var(--sc-mix,100%), var(--line-2));}   /* ds-ok: --sc-mix and --sc-tone are the stepper's own */
 
 /* TaskCard (kind-mark.mjs): the run page's anatomy, smaller. */
@@ -1516,7 +1518,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .convo-col .task-card > :is(.rc-card, .tc-foot, .tc-stream){margin-left:32px;}
 .tr-end{display:inline-flex;align-items:center;gap:4px;}
 /* A destructive action is quiet red words, never a filled red button (act.slots) */
-.btn.btn-quiet.is-danger{color:var(--red-ink);}
+.btn.btn-quiet.is-danger{color:var(--ink-2);}
 .btn.btn-quiet.is-danger:hover{background:var(--red-bg);}
 .tp-title-w{position:relative;display:flex;align-items:center;gap:6px;}
 .tp-edit{color:var(--ink-3);opacity:0;transition:opacity var(--motion-quick) var(--ease);}
@@ -1532,6 +1534,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .cmd-line{display:flex;align-items:center;gap:8px;}
 .cmd-line > .tr-line{flex:1 1 auto;min-width:0;}
 .cmd-s{color:var(--ink-2);}
+.cmd-s > svg{vertical-align:-2px;margin-right:4px;}
 .cmd-row.is-fail .cmd-s,.cmd-failed{color:var(--red-ink-strong);}   /* red words hold 4.5:1; the mark red is for marks */
 .cmd-row.is-run .cmd-s{color:var(--ink);}
 .cmd-row.is-stopped .cmd-s{color:var(--ink-3);}
@@ -1558,7 +1561,6 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 /* look.type-roles: readable words are never ink-3 (marks and separators only); the task page's times and future steps read in ink-2 */
 .rd-route-row .tr-end,.sc-subs .rd-route-row b,.rd-route-name{color:var(--ink-2);}
 .rd-route-row.is-now .rd-route-name,.rd-route-row.is-ask .rd-route-name,.rd-route-row.is-failed .rd-route-name{color:var(--ink);}
-.btn.btn-quiet.is-danger{color:var(--red-ink-strong);}
 
 /* Add project's fields: under its sentence, on the card's text edge, one column */
 .pj-fields{display:flex;flex-direction:column;gap:10px;margin-top:10px;max-width:420px;}
@@ -1567,10 +1569,9 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 /* panel.conversation-cards: one shape, never a box inside a box: a card's body sits on its rail under its head, with no frame of its own */
 .convo-col .task-card > .rc-card{background:none;border:0;border-radius:0;padding:0;margin-top:10px;}
 /* motion.attention: the breath takes the state's colour (failed red, ready green); amber is for what asks */
-.is-attn[data-attn="fail"]{--attn:var(--red);} .is-attn[data-attn="ok"]{--attn:var(--green);} .is-attn[data-attn="merged"]{--attn:var(--violet);}
+.is-attn[data-attn="fail"]{--attn:var(--red);} .is-attn[data-attn="ok"],.is-attn[data-attn="merged"]{--attn:var(--ink-2);}
 
 /* a task Worca watches says so in its facts, in words (not only in the PR mark's tooltip) */
-.rc-watch{color:var(--ink-2);font-size:var(--fs-meta);flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}   /* narrow.state-word: the facts' last words give way, with the whole in the tooltip */
 
 /* a task's own stages in its card (Show its stages): its stage lines on the rail, then the way to its full page */
 .own-stages{display:flex;flex-direction:column;gap:6px;margin:10px 0 0 32px;}
@@ -1614,7 +1615,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .pg-card{display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:12px;row-gap:3px;align-content:start;padding:14px 0;border-top:1px solid var(--line);}
 .pg-card > .kind-mark{grid-row:1 / span 2;margin-top:1px;}
 .pg-k{font-size:var(--fs-meta);color:var(--ink-2);}
-.pg-up{color:var(--amber-ink);}   /* readable amber: 4.5:1 at its size */
+.pg-up{color:var(--ink);}   /* an update is Advisory: ink */
 .pg-t{font:600 var(--fs-body)/1.35 var(--sans);}
 .pg-w{grid-column:2;font-size:var(--fs-body);line-height:1.45;}
 .pg-f,.pg-why{grid-column:2;font-size:var(--fs-meta);color:var(--ink-2);}
@@ -1625,15 +1626,18 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 /* panel.center: a card in a center */
 .convo-col.is-center{max-width:720px;}
 .pg-state{color:var(--ink-2);}
-.pg-state.is-fail{color:var(--red-ink-strong,var(--red));} .pg-state.is-ask,.pg-state.is-act{color:var(--amber-ink);} .pg-state.is-ok{color:var(--green-ink);} .pg-state.is-merged{color:var(--violet-ink);} .pg-state.is-run{color:var(--ink);}
+.pg-state.is-fail{color:var(--red-ink-strong,var(--red));} .pg-state.is-ask,.pg-state.is-act{color:var(--amber-ink);} .pg-state.is-ok,.pg-state.is-merged{color:var(--ink-2);} .pg-state.is-run{color:var(--ink);}
 .pg-line{grid-column:2;}
 .pg-f.is-one{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .pg-a > .btn-quiet:first-child{padding-left:0;}
 .run-outs{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);}
 .ro-sqs{display:inline-flex;gap:3px;flex:none;}
-.ro-sq{width:9px;height:9px;border-radius:var(--r-sm);box-sizing:border-box;}
-.ro-sq.is-ok{background:var(--green);} .ro-sq.is-fail{background:var(--red);} .ro-sq.is-run{border:1.5px solid var(--ink-2);} .ro-sq.is-miss{border:1.5px solid var(--amber);}
+.ro-sq{width:9px;height:9px;border-radius:2px;box-sizing:border-box;}   /* ds-ok: a square at this size */
+.ro-sq.is-ok{background:var(--ink-2);} .ro-sq.is-fail{position:relative;} .ro-sq.is-fail::after{content:'!';position:absolute;inset:-3px 0;text-align:center;font:600 12px/15px var(--sans);color:var(--ink);}   /* ds-ok: a run cell's mark */ .ro-sq.is-run{border:1.5px solid var(--ink-2);} .ro-sq.is-miss{border:1.5px solid var(--amber);}
 .center-sent{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);}
+.figs-line{margin:-2px 0 6px;font-size:var(--fs-meta);color:var(--ink-2);}
+.place-say{margin:3px 0 0;font-size:var(--fs-body);font-weight:500;color:var(--ink);}
+.tc-foot{display:flex;gap:6px;}
 .center-way{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
 .center-quiet{margin-top:4px;}
 .dc-link[data-c-filter]{color:inherit;text-decoration:none;}
@@ -1908,3 +1912,8 @@ button.fr-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 /* a form's field stacks under its label: the row basis must not become its height */
 .rc-confirm.is-form .fld{flex-direction:column;align-items:stretch;}
 .rc-confirm.is-form .fld>.input{flex:0 0 auto;}
+/* look.alert-ladder: the state word on a card wears its level's colour; a list keeps it on the mark */
+.tp-kicker:has(> .kind-mark.is-fail) > span:not(.kind-mark):not(.tp-menu){color:var(--red);}
+.tp-kicker:has(> .kind-mark:is(.is-ask,.is-act)) > span:not(.kind-mark):not(.tp-menu){color:var(--amber);}
+.topnav-badge[data-tone="need"]{background:var(--amber);color:var(--on-signal);}
+.topnav-badge[data-tone="warn"]{background:var(--red);color:var(--on-signal);}

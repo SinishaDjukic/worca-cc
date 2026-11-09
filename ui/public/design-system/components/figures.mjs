@@ -1,6 +1,7 @@
 // Figures (docs/rail/components.md): the few numbers of a thing (time, cost against its budget,
 // the diff), one line, the value bold. A figure with a home opens it.
 import { attrs, esc } from './html.mjs';
+import { icon } from './icons.mjs';
 
 /**
  * One figure.
@@ -36,3 +37,20 @@ export const figures = (parts) => `<div class="rc-figs">${parts.join('')}</div>`
 export function figureBreakdown({ label, rows, total, help = '' }) {
   return `<div class="menu rc-cost" role="dialog" data-motion="in"${attrs({ 'aria-label': label })}><p class="menu-h">${esc(label)}</p><ul>${rows.map(([k, v]) => `<li><span>${esc(k)}</span><span class="ct">${esc(v)}</span></li>`).join('')}<li class="is-total"><span>Total</span><span class="ct">${esc(total)}</span></li></ul><p class="menu-help">${esc(help)}</p></div>`;
 }
+
+/**
+ * Figures on demand (look.figures-on-demand): the word that opens a thing's counts and costs. At the end of a page's
+ * sentence, a picker-like word; on a card (`card`), a quiet fold beside Show its stages.
+ * @param {object} o
+ * @param {boolean} [o.open]
+ * @param {boolean} [o.card]
+ * @param {object} [o.attrs]
+ */
+export function figuresToggle({ open = false, card = false, attrs: a = {} } = {}) {
+  const hook = attrs({ 'aria-expanded': String(!!open), title: open ? 'Folds the figures' : 'Shows the counts and costs', ...a });
+  if (card) return `<button type="button" class="btn btn-sm btn-quiet"${hook}>${icon(open ? 'chevron' : 'chevR', 12)}Figures</button>`;
+  return `<span class="spick"><button type="button" class="spick-b"${hook}>Figures</button></span>`;
+}
+
+/** What Figures opens on a page: its totals on one line under the sentence (markup, from esc'd words). */
+export const figuresLine = (html) => `<p class="figs-line">${html}</p>`;

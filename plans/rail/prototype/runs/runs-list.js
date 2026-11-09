@@ -22,7 +22,7 @@
   const NEEDS = () => R.runState('question').word;
   // motion.attention: a task that needs you breathes in its colour until you open it, as it stands
   let openId = ''; addEventListener('hashchange', () => { if (!/^#run\//.test(location.hash)) openId = ''; });   // the task you have open holds still
-  const markOf = (state, kind = 'task', cs, key = '') => { const st = R.runState(state); return R.kindMark({ breathe: !!key && key !== openId, kind, tone: R.markTone(st), title: st.word, ...(cs ? RM.stageOf(cs) : {}) }); };
+  const markOf = (state, kind = 'task', cs, key = '', advisory = false) => { const st = R.runState(state); return R.kindMark({ breathe: !!key && key !== openId, kind, tone: R.markTone(st), advisory: advisory && R.markTone(st) === 'ok', title: st.word, ...(cs ? RM.stageOf(cs) : {}) }); };
   const gitOf = (r, state) => { if (!r.pr && (r.kind || 'Git') !== 'Git') return ''; const tone = R.markTone(R.runState(state)); const status = tone === 'merged' ? 'merged' : tone === 'closed' ? 'closed' : !r.pr ? 'branch' : /fail/.test(r.case) ? 'fail' : /conflict/.test(r.case) ? 'conflict' : state === 'approved' ? 'pass' : /draft/.test(r.case) ? 'draft' : 'open'; const watch = /round|pr-fixing/.test(r.case) ? 'fix' : ''; return R.gitMark({ status, watch, title: [r.pr, R.runState(state).word].filter(Boolean).join(' · ') }); };
   const membersOf = (g) => data.runs.filter((r) => r.group === g.id).sort((a, b) => (a.pos || 0) - (b.pos || 0));
   const groupState = (g) => RM.stateOf(g.case);
@@ -90,7 +90,7 @@
   const costTip = (r) => (r.cost == null ? 'Cost unknown' : `Cost ${usd(r.cost)}`);
   const row = (r, section, member) => {
     const x = { r };
-    const base = { key: `run:${r.id}`, _x: x, title: member && r.pos ? `${r.pos} · ${r.title}` : r.title, meta: '', mark: markOf(stateOf(r), 'task', r.archived ? null : r.case, r.id), endMark: section === 'needs' ? '' : gitOf(r, stateOf(r)), end: section === 'needs' ? R.needsReason(stateOf(r)) : gitOf(r, stateOf(r)) ? '' : r.time,
+    const base = { key: `run:${r.id}`, _x: x, title: member && r.pos ? `${r.pos} · ${r.title}` : r.title, meta: '', mark: markOf(stateOf(r), 'task', r.archived ? null : r.case, r.id, section === 'needs'), end: section === 'needs' ? R.needsReason(stateOf(r)) : gitOf(r, stateOf(r)) ? '' : r.time,
       unread: r.unread, tip: [r.title, metaOf(r, section, member), r.time].filter(Boolean).join('\n'), menu: null };
     x.key = base.key;
     base.menu = menuOf(x);
@@ -134,7 +134,7 @@
     const rows = (ts, s) => ts.map((t) => rowOf(t, s));
     if (view.show !== 'all') return [{ id: view.show, title: showOf(view.show).title || cap(showOf(view.show).text), rows: rows(list, view.show === 'needs' || view.show === 'running' ? view.show : '') }];
     const needs = list.filter((t) => t.section === 'needs'), rest = list.filter((t) => t.section !== 'needs');
-    const urgent = (t) => { const s = t.run ? stateOf(t.run) : ''; return s === 'failed' ? 0 : s === 'question' ? 1 : s === 'gate' ? 2 : 3; };   // the most pressing first
+    const urgent = (t) => { const s = t.run ? stateOf(t.run) : ''; return (3 - R.alertLevel(R.markTone(R.runState(s || 'working')))) * 10 + (s === 'question' ? 0 : 1); };   // highest level first (look.alert-ladder)
     const head = needs.length ? [{ id: 'needs', title: NEEDS(), rows: rows([...needs].sort((a, b) => urgent(a) - urgent(b)), 'needs') }] : [];
     if (view.by === 'project') {
       const names = [...new Set(rest.map((t) => t.project || 'No project'))];

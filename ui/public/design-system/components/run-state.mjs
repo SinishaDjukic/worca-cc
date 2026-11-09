@@ -752,11 +752,14 @@ export const stateIds = () => Object.keys(STATES);
 const NEEDS_REASON = { question: 'Question', gate: 'Needs approval', failed: 'Failed', approved: 'Ready to merge' };
 export const needsReason = (id) => NEEDS_REASON[id] || runState(id).word;
 
+// Warning on the alert ladder though their word is Paused (look.alert-ladder): a cost or usage cap, a lost connection, an interruption
+const WARNING = new Set(['capped', 'paused-limit', 'paused-budget', 'paused-team', 'paused-error', 'interrupted', 'interrupted-dead']);
+
 export function runState(id, ctx = {}) {
   const s = STATES[id];
   if (!s) throw new Error(`runState: unknown state ${id}`);
   const action = s.action ? { ...s.action, label: fill(s.action.label, ctx), items: [...(ctx.extraItems || []), ...s.action.items.map((x) => fill(x, ctx))], off: s.action.off || {} } : null;
-  return { word: (s.hostWord && HOST_WORD[ctx.host]) || s.word, dot: s.dot || '', sym: s.sym || '', action };
+  return { word: (s.hostWord && HOST_WORD[ctx.host]) || s.word, dot: s.dot || '', sym: s.sym || '', action, ...(WARNING.has(id) ? { alert: 3 } : {}), ...(id === 'gate' ? { approval: true } : {}) };
 }
 
 /** One line on what an action does: the main button's tooltip, and each menu item's help. */

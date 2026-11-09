@@ -3,9 +3,9 @@
 | Rule | What | Why | Held by |
 |---|---|---|---|
 | `rail.one-rail` | Everything aligns to one 20px rail and one text edge | Nothing floats, so a page is read straight down | ds-check |
-| `rail.state-first` | The state word and colour come first, then what you can do | You see what is happening before anything else | run-page-sweep |
+| `rail.state-first` | The state word and colour come first, then what you can do; normal is off, only what needs you is lit (`look.alert-ladder`) | You see what is happening before anything else | run-page-sweep |
 | `rail.one-place` | A fact appears once; everything else links to it | Two copies drift and make you compare | by hand |
-| `rail.one-action` | Each state offers one main control; the rest sit behind ▾ and ⋯ | You never have to weigh buttons | run-page-sweep |
+| `rail.one-action` | Each state offers one main control; the rest sit behind ▾ and ⋯. The primary button belongs to a Warning (`look.alert-ladder`); a Caution or Advisory action is outlined. A page with no Warning keeps its own primary (the composer's send, Start, Save) | You never have to weigh buttons, and filled means it stopped | run-page-sweep |
 | `rail.quiet` | Labels, banners and help appear only when there is something to say | Quiet pages make the exception visible | by hand |
 | `rail.drafts` | What you make or change by hand (a workflow, an agent, a script, on its page or its canvas) is a draft until you save it: tasks keep running the saved one; a DraftBar on the thing says it is a draft, how many changes it holds, Discard and Save; leaving keeps the draft, and Drafts in the bar lists every one with its count; a thing never saved is a draft that nothing can run. A chat's proposal is a draft too: its card, until you apply it | You can try a change without breaking what runs, and come back to it | design-system-components |
 | `rail.hand-to-chat` | Whatever a place sends to Chat arrives as a chip in the composer, its kind and its name, removable, and goes with the message. A workflow or project it picks is also set in the sentence; changing that there drops the chip. Pages call one handover, never pre-written text | What you chose is what Worca gets, the same way from every place | handover-check |

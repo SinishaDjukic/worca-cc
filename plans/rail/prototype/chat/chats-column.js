@@ -33,16 +33,19 @@
   const ATTN = ['ask', 'act', 'fail'];
   const unseen = (c) => ATTN.includes(toneOf(c.state)) && c.id !== current;   // breathes but where you have it open
   const ownAttn = (c) => unseen(c) && !(c.tasks || []).some(waits);   /* waits: the store's own rule for a task that needs you */
+  // one light per thing: the highest level among what waits, so Needs you reads from the top (look.alert-ladder)
+  const toneOfTask = (t) => R.markTone(R.runState(window.RunCardModel.stateOf(t.case)));
+  const levelOf = (c) => { const walk = (t) => [...(waits(t) ? [R.alertLevel(toneOfTask(t))] : []), ...(t.after || []).flatMap(walk)]; return Math.max(R.alertLevel(toneOf(c.state)), ...(c.tasks || []).flatMap(walk), 0); };
+  const rankNeeds = (l, of = (x) => x) => [...l].sort((a, b) => levelOf(of(b)) - levelOf(of(a)));
   const markOf = (state, kind, breathe = false) => R.kindMark({ breathe, kind: kind === 'workflow' && state === 'idle' ? 'workflow' : 'chat', tone: toneOf(state), title: state === 'idle' ? R.CHAT_KINDS[kind]?.label || 'Chat' : R.chatState(state).word });
   const RM = window.RunCardModel;
   const taskMenu = (t) => [{ id: 'open-task', text: t.kind === 'schedule' ? 'Open schedule' : 'Open task', help: 'Opens its card in its chat' }, { id: 'in-view', text: window.RailShell?.inView.has(t.kind === 'schedule' ? 'schedule' : 'task', t.id) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }, ...(t.git === 'open' || t.git === 'fail' ? [{ id: 'watch', text: t.watch ? 'Stop watching' : 'Watch', help: 'Worca follows the PR and fixes failing checks for you' }] : []), { id: 'label-task', text: 'Label…', hint: hint('L'), help: 'Adds a label to this task' }, ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }] : []), { sep: true }, { id: 'archive', text: 'Archive', hint: hint('E'), help: 'Undo in the notice' }];
-  const KIND_OF = { feature: 'feature', workflow: 'workflow' };   // what a chat started: a Shaper task, a workflow run, else a plain task
   // What hangs under a chat: its tasks and schedules, in their order of waiting.
   const treeOf = (c, list) => list.filter((t) => !t.gone).map((t) => {   // a deleted schedule leaves the bar
     const x = { t, c, key: `task:${t.id}` };
     if (t.kind === 'schedule') return { pick: false, key: x.key, _x: x, title: t.title, mark: R.kindMark({ kind: 'schedule', title: t.detail }), end: t.time, tip: `${t.title}\n${t.detail}\nOpens the schedule`, current: false, menu: taskMenu(t) };
     const st = R.runState(RM.stateOf(t.case));
-    return { pick: false, key: x.key, _x: x, title: t.title, mark: R.kindMark({ breathe: c.id !== current, kind: KIND_OF[t.kind] || 'task', tone: R.markTone(st), stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), endMark: t.git ? R.gitMark({ status: t.git, watch: t.watch || '', title: t.watch ? `Watching · ${t.detail}` : t.branch }) : '', end: t.git ? '' : t.endWord || '', tip: `${t.title}\n${st.word} · ${t.detail || ''}${(t.labels || []).length ? `\n${t.labels.join(', ')}` : ''}\nOpens the task`, tree: t.after ? treeOf(c, t.after) : undefined, menu: taskMenu(t) };
+    return { pick: false, key: x.key, _x: x, title: t.title, mark: R.kindMark({ breathe: c.id !== current, kind: 'task', tone: R.markTone(st), advisory: R.markTone(st) === 'ok' && sectionOfChat(c) === 'needs', stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), end: t.git ? '' : t.endWord || '', tip: `${t.title}\n${st.word} · ${t.detail || ''}${(t.labels || []).length ? `\n${t.labels.join(', ')}` : ''}\nOpens the task`, tree: t.after ? treeOf(c, t.after) : undefined, menu: taskMenu(t) };
   });
 
   // ---- the view ----
@@ -95,7 +98,7 @@
     const list = sorted(data.chats.filter((c) => passes(c, view)));
     // what needs you leads whichever way the list is cut
     const needsFirst = view.show === 'all' ? list.filter((c) => sectionOfChat(c) === 'needs') : [], later = list.filter((c) => !needsFirst.includes(c));
-    const needsHead = needsFirst.length ? [{ id: 'needs', title: NEEDS(), rows: needsFirst.map((c) => chatRow(c, false)) }] : [];
+    const needsHead = needsFirst.length ? [{ id: 'needs', title: NEEDS(), rows: rankNeeds(needsFirst).map((c) => chatRow(c, false)) }] : [];
     if (view.by === 'ai') { const names = [...new Set(later.map(aiTopic))]; return [...needsHead, ...names.map((n, i) => ({ id: `ai:${n}`, title: n, chip: i === 0 ? R.chip({ text: 'Worca · Haiku', title: 'A helper job names the topics. Change the sentence to undo it' }) : '', rows: later.filter((c) => aiTopic(c) === n).map((c) => chatRow(c, false)) }))]; }
     if (view.by === 'topic') {
       const sec = data.groups.map((g) => ({ id: `topic:${g.id}`, title: g.name, rows: later.filter((c) => c.group === g.id).map((c) => chatRow(c, false)) }));
@@ -105,7 +108,7 @@
     const rows = rowsOf(list, !flat);
     if (flat) return [{ id: view.show, title: showOf(view.show).title || view.show[0].toUpperCase() + view.show.slice(1), rows: rows.map((x) => x.row) }];
     const needs = rows.filter((x) => sectionOfChat(x.c) === 'needs'), rest = rows.filter((x) => sectionOfChat(x.c) !== 'needs');
-    const head = needs.length ? [{ id: 'needs', title: NEEDS(), rows: needs.map((x) => x.row) }] : [];
+    const head = needs.length ? [{ id: 'needs', title: NEEDS(), rows: rankNeeds(needs, (x) => x.c).map((x) => x.row) }] : [];
     if (view.by === 'day') return R.dateSections({ rows: rest, dayOf: (x) => x.c.day, row: (x) => x.row, head, days: M.DAYS });
     if (view.by === 'project') {
       const name = (x) => { const ps = x.row.members ? [...new Set(x.row.members.map((m) => m._x.c.project).filter(Boolean))] : []; return ps.length > 1 ? 'Several projects' : x.c.project || 'No project'; };

@@ -16,7 +16,7 @@
   const count = (label, hook, tip) => link(label, hook, tip);   // a number that opens what it counts (quiet until hovered: rail.css)
   const filterHook = (f) => ({ 'data-c-filter': JSON.stringify(f) });
   let menu = '', tasksHost = null, schedHost = null, quietOpen = false;
-  let view = { sort: 'most urgent', by: 'project', sSort: 'most urgent', from: '' };
+  let view = { sort: 'most urgent', by: 'project', sSort: 'most urgent', from: '' }, figs = { tasks: false, sched: false };
 
   // ---- what a task is on a card ----
   const costOf = (t) => (t.run ? t.run.cost || 0 : W.membersOf(t.group).reduce((a, m) => a + (m.cost || 0), 0));
@@ -66,8 +66,11 @@
   }
   function actionOf(g) {
     const top = g.needs[0] && taskOf(g.needs[0]);
-    if (top) { const a = R.cardAction(stateOf(top)); return R.button({ label: a.label, attrs: { 'data-c-act': `${a.does}|${top.id}`, title: `${a.label}: ${top.title}` } }); }
-    if (g.missed.length && advanced()) return R.button({ label: 'Run now', kind: 'primary', attrs: { 'data-c-sact': `run|${g.missed[0].id}`, title: `Runs ${g.missed[0].title} now to catch up` } });
+    if (top) {   // the one action, named when two things wait; only a Warning's is filled (rail.one-action)
+      const two = g.needs.slice(0, 2).map(taskOf).filter(Boolean);
+      return two.map((t) => { const a = R.cardAction(stateOf(t)), warn = R.alertLevel(R.markTone(R.runState(stateOf(t)))) === 3; return R.button({ label: two.length > 1 ? `${a.label} ${t.short || t.title}` : a.label, kind: warn ? 'primary' : '', attrs: { 'data-c-act': `${a.does}|${t.id}`, title: `${a.label}: ${t.title}` } }); }).join('');
+    }
+    if (g.missed.length && advanced()) return R.button({ label: 'Run now', attrs: { 'data-c-sact': `run|${g.missed[0].id}`, title: `Runs ${g.missed[0].title} now to catch up` } });
     return R.button({ label: 'Open', attrs: { 'data-c-filter': JSON.stringify(groupFilter(g)), title: `Opens ${g.name}'s tasks` } });
   }
   function cardOf(g) {
@@ -77,8 +80,9 @@
     const what = [...g.needs.slice(0, 2).map((t) => clause(taskOf(t))), ...g.missed.map((s) => `${schedLink(s)} missed ${esc(s.missed)}`), ...g.live.map((s) => `${schedLink(s)} is running`)].slice(0, 2);
     const running = !what.length && g.running[0] && taskOf(g.running[0]);
     const facts = factsOf(g);
-    return R.pluginCard({ mark: R.kindMark({ kind: view.by === 'workflow' ? 'workflow' : 'project', tone, breathe: !!(top || g.missed.length) }), word, tone, title: g.name,
-      whatHtml: what.join('; ') || (running ? `${link(running.title, { 'data-c-open': running.id })} is running` : 'Nothing is going on here.'), factsHtml: facts.html, factsTip: facts.tip, action: actionOf(g) });
+    const kind = top || g.running.length ? 'task' : g.missed.length ? 'schedule' : view.by === 'workflow' ? 'workflow' : 'project';   // the mark says how it stands (list.kind-mark)
+    return R.pluginCard({ mark: R.kindMark({ kind, tone, breathe: !!(top || g.missed.length) }), word, tone, title: g.name,
+      whatHtml: what.join('; ') || (running ? `${link(running.title, { 'data-c-open': running.id })} is running` : 'Nothing is going on here.'), action: actionOf(g), attrs: { title: facts.tip } });
   }
   const picker = (id, text, items, tip) => R.sentencePicker({ id, text, tip, items: items.map((v) => ({ id: v, text: v, checked: v === text })), open: menu === id, chevron: chev });
   function tasksHtml() {
@@ -87,12 +91,13 @@
     const cost = rows.filter((t) => inWeek(t.day)).reduce((a, t) => a + costOf(t), 0);
     const shown = all.filter((g) => !g.quiet), quiet = all.filter((g) => g.quiet);
     const facts = `${count(plural(rows.length, 'task'), filterHook({}), 'Opens every task')}${cost > 0 ? ` · ${count(`${usd(cost)} this week`, filterHook({ range: WEEK }), 'Opens this week\'s tasks')}` : ''}`;
-    const sent = `<div class="center-sent">Showing ${picker('c-sort', view.sort, Object.keys(SORTS), 'How the cards are ordered')} by ${picker('c-by', view.by, ['project', 'workflow'], 'What a card is')}</div>`;
+    const sent = `<div class="center-sent">Showing ${picker('c-sort', view.sort, Object.keys(SORTS), 'How the cards are ordered')} by ${picker('c-by', view.by, ['project', 'workflow'], 'What a card is')} ${R.figuresToggle({ open: figs.tasks, attrs: { 'data-c-figs': 'tasks' } })}</div>${figs.tasks ? R.figuresLine(facts) : ''}`;
+    const calm = !all.some((g) => g.needs.length || g.missed.length);
     const way = advanced() ? '' : `<p class="center-way">New work starts in Chat. ${link('Go to Chat', { 'data-c-chat': '' })}</p>`;
     const noun = view.by === 'workflow' ? 'workflow' : 'project';
-    const quietFacts = (() => { const n = quiet.reduce((a, g) => a + g.recent.length, 0), c = quiet.reduce((a, g) => a + g.cost, 0); return [quiet.map((g) => g.name).join(', '), n ? `${n} finished` : '', c > 0 ? `${usd(c)} this week` : ''].filter(Boolean).join(' · '); })();
+    const quietFacts = (() => { return quiet.map((g) => g.name).join(', '); })();
     const quietRow = quiet.length ? `<div class="center-quiet">${R.list({ groups: [{ title: '', rows: [R.listRow({ title: `${quiet.length} quiet ${noun}${quiet.length === 1 ? '' : 's'}`, meta: quietOpen ? '' : quietFacts, mark: R.kindMark({ kind: noun }), open: { 'data-c-quiet': '', 'aria-expanded': String(quietOpen), title: quietOpen ? 'Folds them' : `Shows the quiet ${noun}s` } })] }] })}</div>${quietOpen ? `<div class="pg-grid">${quiet.map(cardOf).join('')}</div>` : ''}` : '';
-    return wrap(`${R.placeHead({ title: 'Your tasks', facts: `<span>${facts}</span>` })}${sent}${way}<div class="pg-grid">${shown.map(cardOf).join('')}</div>${quietRow}`);
+    return wrap(`${R.placeHead({ title: 'Your tasks', say: calm ? 'Nothing needs you' : '' })}${sent}${way}<div class="pg-grid">${shown.map(cardOf).join('')}</div>${quietRow}`);
   }
   const wrap = (body) => `<div class="convo"><div class="convo-scroll"><div class="convo-col is-center">${body}</div></div></div>`;
 
@@ -111,7 +116,8 @@
     if (!week.length) return R.runOutcomes({ runs: [], says: s.started === Sch().dateWord(Sch().TODAY) ? `Started ${esc(s.started)} · no runs yet` : 'No runs in 7 days' });
     const num = done.length ? count(failed ? `${won} of ${done.length}` : `${won} of ${done.length} succeeded`, filterHook({ schedule: s.id }), `Opens these ${done.length} in Tasks`) : '';
     const pre = s.started === 'Nov 9' || week.length < 7 ? `Started ${esc(s.started)}${num ? ' · ' : ''}` : '';
-    const fail = failed ? ` · ${link(`failed ${failed.date} at ${stepOf(failed.meta).replace(/^Failed at /, '')}`, { 'data-c-srun': `${s.id}|${s.runs.indexOf(failed)}` }, 'Opens that run')}` : '';
+    const fixed = failed && done.at(-1) !== failed && OUT(done.at(-1)) === 'ok';   // a past failure a later run fixed (look.alert-ladder)
+    const fail = failed ? ` · ${link(`failed ${failed.date}${fixed ? '' : ` at ${stepOf(failed.meta).replace(/^Failed at /, '')}`}`, { 'data-c-srun': `${s.id}|${s.runs.indexOf(failed)}` }, 'Opens that run')}${fixed ? ' · next run passed' : ''}` : '';
     const pr = !failed && done[0] && /#\d+/.exec(done.at(-1)?.meta || '');
     return R.runOutcomes({ runs: week.map(OUT), says: `${pre}${num}${fail}${pr ? ` · merged ${pr[0]}` : ''}` });
   }
@@ -119,9 +125,9 @@
     const sec = sectionNow(s), run = Sch().runningRun(s), hourly = s.every === 'every hour', [d1, d2] = Sch().nextDates(s, 2).map(Sch().dateWord);
     const next = hourly ? (s.skip ? 'skips the next one' : 'within the hour') : s.skip ? `skips ${d1}, then ${d2}, ${s.at}` : `${d1}, ${s.at}`;
     const [word, kicker, tone] = sec === 'needs' ? ['Missed', `${s.missed}, ${s.at} · ${s.missedWhy}`, 'act'] : sec === 'running' ? ['Running', `for ${!run.time || run.time === 'now' ? 'a moment' : run.time}`, 'run'] : sec === 'paused' ? ['Paused', 'by you', 'idle'] : ['Next up', next, 'idle'];
-    const fact = esc(`${s.project || 'No project'} · ${R.scheduleWords(s).says}${s.tz && s.tz !== DEFAULT_TZ ? ` ${s.tz}` : ''}${s.cost ? ` · ${usd(s.cost)} a run` : ''}`);
-    const act = sec === 'needs' ? ['Run now', 'run', 'primary'] : sec === 'running' ? ['Stop', 'stop', 'quiet'] : sec === 'paused' ? ['Resume', 'pause', 'quiet'] : ['Run now', 'run', 'quiet'];
-    return R.pluginCard({ mark: R.kindMark({ kind: 'schedule', tone: sec === 'needs' ? 'act' : sec === 'paused' ? 'pause' : sec === 'running' ? 'run' : 'idle', breathe: sec === 'needs' }), word, kicker, tone, title: s.title, what: s.what || R.scheduleWords(s).says, line: schedLine(s), factsHtml: fact, factsTip: fact, action: R.button({ label: act[0], kind: act[2], attrs: { 'data-c-sact': `${act[1]}|${s.id}`, title: `${act[0]}: ${s.title}` } }), attrs: { 'data-c-card': s.id } });
+    const fact = esc(`${s.project || 'No project'} · ${R.scheduleWords(s).says}${s.tz && s.tz !== DEFAULT_TZ ? ` ${s.tz}` : ''}`);
+    const act = sec === 'needs' ? ['Run now', 'run', ''] : sec === 'running' ? ['Stop', 'stop', 'quiet'] : sec === 'paused' ? ['Resume', 'pause', 'quiet'] : ['Run now', 'run', 'quiet'];
+    return R.pluginCard({ mark: R.kindMark({ kind: 'schedule', tone: sec === 'needs' ? 'act' : sec === 'paused' ? 'pause' : sec === 'running' ? 'run' : 'idle', breathe: sec === 'needs' }), word, kicker, tone, title: s.title, what: s.what || R.scheduleWords(s).says, line: schedLine(s), factsHtml: fact, factsTip: fact, action: R.button({ label: act[0], kind: act[2], attrs: { 'data-c-sact': `${act[1]}|${s.id}`, title: `${act[0]}: ${s.title}` } }), attrs: { 'data-c-card': s.id, title: s.cost ? `${usd(s.cost)} a run` : null } });
   }
   function schedulesHtml() {
     const all = Sch().all(), list = all.filter((s) => (!view.from || (s.project || 'No project') === view.from) && (Sch().showing() === 'all' || s.state === 'paused')).sort(SCHED_SORTS[view.sSort]);
@@ -129,8 +135,8 @@
     const runs = all.flatMap((s) => s.runs.filter((r) => r.case !== 'stopped').slice(0, 7)).filter((r) => OUT(r) !== 'run'), won = runs.filter((r) => OUT(r) === 'ok').length;
     const facts = [esc(plural(all.length, 'schedule')), runs.length ? count(`${won} of ${runs.length} runs succeeded in 7 days`, filterHook({ schedule: 'any' }), 'Opens those runs in Tasks') : '', `times in ${DEFAULT_TZ}${all.some((s) => s.tz && s.tz !== DEFAULT_TZ) ? ', unless a card says' : ''}`].filter(Boolean).join(' · ');
     const projects = ['every project', ...new Set(all.map((s) => s.project || 'No project'))];
-    const sent = `<div class="center-sent">Showing ${picker('c-ssort', view.sSort, Object.keys(SCHED_SORTS), 'How the cards are ordered')} from ${picker('c-sfrom', view.from || 'every project', projects, 'Which project')}</div>`;
-    return wrap(`${R.placeHead({ title: 'Your schedules', facts: `<span>${facts}</span>` })}${sent}${list.length ? `<div class="pg-grid">${list.map(schedCard).join('')}</div>` : R.emptyState({ title: 'No paused schedules here.' })}`);
+    const sent = `<div class="center-sent">Showing ${picker('c-ssort', view.sSort, Object.keys(SCHED_SORTS), 'How the cards are ordered')} from ${picker('c-sfrom', view.from || 'every project', projects, 'Which project')} ${R.figuresToggle({ open: figs.sched, attrs: { 'data-c-figs': 'sched' } })}</div>${figs.sched ? R.figuresLine(facts) : ''}`;
+    return wrap(`${R.placeHead({ title: 'Your schedules' })}${sent}${list.length ? `<div class="pg-grid">${list.map(schedCard).join('')}</div>` : R.emptyState({ title: 'No paused schedules here.' })}`);
   }
 
   // ---- paint ----
@@ -151,6 +157,7 @@
   }
   function onClick(e) {
     const on = (q) => e.target.closest(q); let hit;
+    if ((hit = on('[data-c-figs]'))) { figs[hit.dataset.cFigs] = !figs[hit.dataset.cFigs]; paint(); return; }
     if ((hit = on('[data-c-filter]'))) { List().filter(JSON.parse(hit.dataset.cFilter)); return; }
     if ((hit = on('[data-c-open]'))) { act('open', hit.dataset.cOpen); return; }
     if ((hit = on('[data-c-act]'))) { const [d, id] = hit.dataset.cAct.split('|'); act(d, id); return; }

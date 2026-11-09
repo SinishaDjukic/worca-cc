@@ -12,10 +12,15 @@ export const ICONS = {
   'brand-cloudflare': P('M7 18a4.6 4.4 0 0 1 0-9 5 4.5 0 0 1 11 2h1a3.5 3.5 0 0 1 0 7Z'),
   'brand-telegram': P('M15 10l-4 4 6 6 4-16-18 7 4 2 2 6 3-4'),
   plug: P('M12 22v-5') + P('M9 8V2') + P('M15 8V2') + P('M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z'),
-  check: P('M5 12.5l4.5 4.5L19 7.5'),
+  check: P('M5.5 12.5l4.3 4.3L18.5 8'),
   now: '<circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"></circle>',
-  question: P('M9.2 9.2a2.9 2.9 0 1 1 4.2 2.6c-.9.5-1.4 1.1-1.4 2v.4') + P('M12 17.6h.01'),
-  alert: P('M12 6.8v6.6') + P('M12 17.6h.01'),
+  question: P('M8.8 9a3.2 3.2 0 1 1 5 2.7c-1.2.8-1.8 1.4-1.8 2.8') + P('M12 18.5h.01'),
+  alert: P('M12 5.5v8.5') + P('M12 18.5h.01'),
+  approve: P('M4.5 19.5l4.2-1 10-10-3.2-3.2-10 10z'),   // your approval: a pencil
+  waiting: P('M7.5 12h.01') + P('M12 12h.01') + P('M16.5 12h.01'),   // waiting to start
+  hourglass: P('M7 4h10M7 20h10M8 4c0 5 8 6 8 12v4M16 4c0 5-8 6-8 12v4'),   // time, duration
+  dollar: '<circle cx="12" cy="12" r="8"></circle>' + P('M14.5 9.2c-.6-1-1.5-1.4-2.6-1.4-1.5 0-2.7.8-2.7 2.1 0 3 5.7 1.3 5.7 4.3 0 1.3-1.3 2.1-2.8 2.1-1.2 0-2.3-.5-2.9-1.5') + P('M12 6.2v11.6'),   // cost
+  globe: '<circle cx="12" cy="12" r="8"></circle>' + P('M4 12h16M12 4c-3 2.5-3 13.5 0 16M12 4c3 2.5 3 13.5 0 16'),   // web access
   pause: P('M9 5v14M15 5v14'),
   stop: '<rect x="7" y="7" width="10" height="10" rx="1.5"></rect>',
   merge: '<circle cx="6" cy="5.5" r="2.2"></circle><circle cx="6" cy="18.5" r="2.2"></circle><circle cx="18" cy="12" r="2.2"></circle>' + P('M6 7.7v8.6') + P('M6 7.7c0 2.4 2.5 4.3 9.8 4.3'),

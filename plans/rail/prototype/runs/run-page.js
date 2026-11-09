@@ -358,7 +358,7 @@ function render() {
   logsGone = v.has.logsGone;
   const a = v.action;
   // The task's controls sit together on the status line: its one action (with ▾), then ⋯ for everything else.
-  const split = a ? R.splitButton({ main: { label: ui.busy && !ui.confirm && !ui.dialog ? R.workingWord(ui.busy.label) : a.label, kind: a.primary ? 'primary' : '', icon: svg(a.icon, 14), title: a.offWhy || a.help, attrs: { 'data-key': 'act-main', 'data-label': a.label, disabled: !!a.offWhy || !!ui.busy } },
+  const split = a ? R.splitButton({ main: { label: ui.busy && !ui.confirm && !ui.dialog ? R.workingWord(ui.busy.label) : a.label, kind: a.primary && ![1, 2].includes(R.alertLevel(R.markTone({ word: v.word, dot: v.dot, sym: v.sym}))) ? 'primary' : '', icon: svg(a.icon, 14), title: a.offWhy || a.help, attrs: { 'data-key': 'act-main', 'data-label': a.label, disabled: !!a.offWhy || !!ui.busy } },
     moreLabel: a.items.length ? 'More actions' : '', chevron: svg('chevron', 14), open: ui.menu === 'act', menuHtml: menu('act', a.items), moreAttrs: { 'data-menu': 'act', 'data-key': 'menu:act' }, cls: 'rc-action rc-pop is-right' }) : '';
   const action = `<div class="rc-side">${split}<span class="rc-pop is-right">${R.button({ label: 'More for this task', kind: SHELL ? 'quiet' : '', iconOnly: true, title: false, icon: DOTS, attrs: { 'aria-haspopup': 'menu', 'aria-expanded': String(ui.menu === 'more'), 'data-menu': 'more', 'data-key': 'menu:more' } })}${ui.menu === 'groups' ? groupEditorHtml() : menu('more', moreItems(v))}</span></div>`;
   // Many labels and tags, one group: a task already in a feature or chain, or a group page, joins none; a task you

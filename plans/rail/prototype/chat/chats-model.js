@@ -20,8 +20,8 @@
         { id: 's1', kind: 'schedule', title: 'Nightly export check', time: '02:00', detail: 'Every day at 02:00 · Next in 11h' }] }),
       chat('c0', 'Getting started', 'idle', 'chat', '', 'now', 'today', { pinned: true }),
       chat('c16', 'Migrate the cron parser', 'idle', 'started', 'worca-cc', '13:40', 'today', { cost: 6.1, tasks: [{ id: 't16', run: 'r2', title: 'Migrate cron parser', case: 'gate', stage: 2, git: 'branch', branch: 'refactor/cron-parser', detail: 'Waits for your OK on the review', why: ['Review sent it back 3 times; the limit is 3', '2 small things left: a name in parser.mjs, a leap-year test'] }] }),
-      chat('c17', 'Node 24', 'idle', 'started', 'web-app', '12:40', 'today', { cost: 4.2, labels: ['hotfix'], tasks: [{ id: 't17', run: 'r5', title: 'Update Node to 24', case: 'failed', stage: 1, git: 'branch', branch: 'chore/node-24', detail: 'Build · 3 tests failed', why: ['✗ fetch keeps the connection alive: socket hang up on Node 24', '✗ crypto.createCipher is gone in Node 24', '✗ the build image still pins node:20'] }] }),
-      chat('c18', 'Audit log pager', 'idle', 'started', 'worca-cc', '10:20', 'today', { cost: 5.2, tasks: [{ id: 't18', run: 'r9', title: 'Add pager to the audit log', case: 'approved', stage: 3, git: 'pass', watch: 'idle', branch: 'feat/audit-log-pager', detail: 'Approved · checks pass', why: ['✓ unit', '✓ e2e', '✓ lint', 'Approved by Maya'] }] }),
+      chat('c17', 'Node 24', 'idle', 'started', 'web-app', '12:40', 'today', { cost: 4.2, labels: ['hotfix'], tasks: [{ id: 't17', run: 'r5', facts: { cost: '$4.20', time: '31 min', agents: 2, files: 3, artifacts: 0 }, title: 'Update Node to 24', case: 'failed', stage: 1, git: 'branch', branch: 'chore/node-24', detail: 'Build · 3 tests failed', why: ['✗ fetch keeps the connection alive: socket hang up on Node 24', '✗ crypto.createCipher is gone in Node 24', '✗ the build image still pins node:20'] }] }),
+      chat('c18', 'Audit log pager', 'idle', 'started', 'worca-cc', '10:20', 'today', { cost: 5.2, tasks: [{ id: 't18', run: 'r9', short: 'audit pager', title: 'Add pager to the audit log', case: 'approved', stage: 3, git: 'pass', watch: 'idle', branch: 'feat/audit-log-pager', detail: 'Approved · checks pass', why: ['✓ unit', '✓ e2e', '✓ lint', 'Approved by Maya'] }] }),
       chat('c19', 'Retry on 502', 'idle', 'started', 'web-app', '11:20', 'today', { cost: 7.3, labels: ['hotfix'], tasks: [{ id: 't19', run: 'r7', title: 'Retry on 502', case: 'failing', stage: 3, git: 'fail', branch: 'fix/retry-502', detail: 'Checks failing · 2 of 7: unit, e2e' }] }),
       chat('c21', 'Add tax to the receipts', 'idle', 'chat', 'web-app', '14:05', 'today', { cost: 0.1 }),
       chat('c2', 'Why did the build fail', 'replying', 'chat', 'web-app', '14:30', 'today', { cost: 0.4 }),
@@ -49,7 +49,7 @@
   const link = (c, t) => {
     if (t.kind === 'schedule') return t;
     const W = window.RailWorld; if (t.run && W.find(t.run)) return t;
-    const r = W.add({ id: t.run || `k-${t.id}`, case: t.case || 'starting', title: t.title, project: c.project || '', detail: t.detail || '', stage: t.stage, chat: c.id, day: t.case === 'scheduled' ? 'upcoming' : 'today', when: t.case === 'scheduled' ? 'after' : undefined });
+    const r = W.add({ short: t.short, id: t.run || `k-${t.id}`, case: t.case || 'starting', title: t.title, project: c.project || '', detail: t.detail || '', stage: t.stage, chat: c.id, day: t.case === 'scheduled' ? 'upcoming' : 'today', when: t.case === 'scheduled' ? 'after' : undefined });
     t.run = r.id; return t;
   };
   const sync = (c) => {

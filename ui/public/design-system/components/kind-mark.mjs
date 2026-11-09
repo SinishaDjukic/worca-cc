@@ -1,6 +1,6 @@
 // What a row is and how it stands, in one mark (docs/rail/lists.md, docs/rail/look.md): the type's icon, inside one smooth
-// ring that fills by main stage and deepens into the state's colour. The dot and the icon are one thing: while work
-// happens the whole mark breathes. A question, a problem, a pause or a stop takes the centre.
+// ring in its level's colour (look.alert-ladder). The dot and the icon are one thing: while work happens the whole mark
+// breathes. A task's centre shows its state; a failure is filled; merged is the branch in full ink, with no ring.
 import { attrs, esc } from './html.mjs';
 import { icon } from './icons.mjs';
 import { statusLine } from './status-line.mjs';
@@ -9,7 +9,8 @@ import { button, splitButton } from './button.mjs';
 
 const STAGES = 5;
 const R = 9, L = 2 * Math.PI * R;
-const CENTRE = { pause: 'pause', stop: 'sym-stop' };   // attention is colour and a breath, never a ? or ! (list.kind-mark); a pause or a stop is a state, so it keeps its sign
+const CENTRE = { pause: 'pause', stop: 'sym-stop' };   // a chat or a schedule keeps its type; a pause or a stop is a state, so it keeps its sign
+const STATE_GLYPH = { run: 'kind-task', wait: 'waiting', pause: 'pause', ask: 'question', act: 'approve', ok: 'check', fail: 'alert', stop: 'sym-stop', merged: 'merge', closed: 'stop', idle: 'kind-task' };   // a task's glyph shows its state (list.kind-mark)
 const TYPED = new Set(['feature', 'workflow']), NEEDS_YOU = new Set(['ask', 'act', 'fail']);
 const KINDS = { chat: 'kind-chat', task: 'kind-task', schedule: 'kind-schedule', event: 'kind-event', feature: 'kind-feature', group: 'kind-group', workflow: 'kind-workflow', project: 'folder', workspace: 'nav-workspaces', requirement: 'list', agent: 'you', script: 'script', plugin: 'plug' };
 
@@ -20,6 +21,8 @@ const KINDS = { chat: 'kind-chat', task: 'kind-task', schedule: 'kind-schedule',
  */
 export function markTone(st = {}) {
   const w = st.word || '', d = st.dot || '';
+  if (st.alert === 3) return 'fail';   // it stopped and will not go on without you (look.alert-ladder)
+  if (st.approval) return 'act';
   if (st.sym === 'q') return 'ask';
   if (st.sym === 'x' || w === 'Failed') return 'fail';
   if (w === 'Paused') return 'pause';
@@ -29,10 +32,17 @@ export function markTone(st = {}) {
   if (['Ready', 'Ready to merge', 'Finished'].includes(w)) return 'ok';
   if (['Waiting', 'Mock task'].includes(w)) return 'wait';
   if (['Archived', 'Deleted', 'Idle', ''].includes(w)) return 'idle';
-  if (/amber/.test(d) || w === 'Needs you') return 'act';
+  if (/amber/.test(d) || w === 'Needs you') return 'ask';
   if (/grey/.test(d)) return 'wait';
   return 'run';
 }
+
+/**
+ * A tone's place on the alert ladder (look.alert-ladder): 3 Warning, 2 Caution, 1 Advisory, 0 Normal.
+ * @param {string} tone  markTone's answer
+ * @returns {0|1|2|3}
+ */
+export const alertLevel = (tone) => (tone === 'fail' ? 3 : tone === 'ask' || tone === 'act' ? 2 : tone === 'ok' ? 1 : 0);
 
 /**
  * KindMark.
@@ -46,21 +56,25 @@ export function markTone(st = {}) {
  * @param {boolean} [o.keepType]  the type stays in the centre whatever the state (a summary of many)
  * @param {boolean} [o.breathe]   it needs you and you have not opened it yet: it breathes in its state's colour (motion.attention)
  * @param {string} [o.icon]       its own mark in place of its kind's (a plugin's brand: brand-github)
+ * @param {boolean} [o.advisory]  ready and counted under Needs you: full ink (look.alert-ladder)
+ * @param {boolean} [o.landed]    just landed and not seen yet: green until seen (look.running-needs-apart)
  */
-export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = STAGES, size = 20, title = '', keepType = false, breathe = false, icon: own = '' } = {}) {
-  const noRing = kind === 'event' || kind === 'plugin' ||   /* a plugin has no stages: its brand, coloured by its state */ tone === 'idle' || (kind === 'schedule' && tone === 'wait');
+export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = STAGES, size = 20, title = '', keepType = false, breathe = false, icon: own = '', advisory = false, landed = false } = {}) {
+  if (kind === 'plugin' && tone !== 'fail') tone = 'idle';   // a plugin is one ink, whatever its state (look.one-icon)
+  const noRing = kind === 'event' || kind === 'plugin' ||   /* a plugin has no stages */ tone === 'idle' || tone === 'merged' || (kind === 'schedule' && tone === 'wait');
   const reach = tone === 'wait' ? 0 : stage < 0 ? 1 : Math.min(1, (stage + 1) / stages);
   const arc = (from, len, stroke, k = -1) => `<circle cx="10" cy="10" r="${R}" fill="none" stroke="${stroke}" stroke-width="1.1" stroke-dasharray="${len.toFixed(2)} ${(L - len).toFixed(2)}" stroke-dashoffset="${(L / 4 - from).toFixed(2)}"${k >= 0 ? ` style="--k:${k}"` : ''}></circle>`;   // --k: a filled step's order, so a changed mark's ring can fill in turn
   let ring = '';
   if (!noRing) {
-    ring = arc(0, L, 'var(--line-2)');
+    ring = arc(0, L, 'currentColor');
     const steps = Math.round(48 * reach);
     for (let k = 0; k < steps; k++) ring += arc(k * (L / 48), L / 48 + 0.15, `color-mix(in srgb, currentColor ${Math.round(30 + 70 * (k + 1) / steps)}%, var(--line-2))`, k);
   }
   const typed = TYPED.has(kind) && !NEEDS_YOU.has(tone);   // a Shaper task or a workflow run says so; only what needs you takes its centre
-  const centre = !noRing && !keepType && !typed && CENTRE[tone] ? CENTRE[tone] : own || KINDS[kind] || KINDS.task;
-  const glyph = icon(centre, Math.round((noRing ? 15 : 11) * size / 20));
-  return `<span class="kind-mark is-${tone}${breathe && NEEDS_YOU.has(tone) ? ' is-breathe' : ''}"${attrs({ style: `--km:${size}px`, title: title || null, role: title ? 'img' : null, 'aria-label': title || null, 'aria-hidden': title ? null : 'true' })}>${ring ? `<svg class="km-ring" width="${size}" height="${size}" viewBox="0 0 20 20" aria-hidden="true">${ring}</svg>` : ''}${glyph}</span>`;
+  const stated = !keepType && (kind === 'task' || (typed === false && TYPED.has(kind))) ? STATE_GLYPH[tone] : '';   // a task's glyph is its state; a Shaper task or workflow's only when it needs you
+  const centre = stated || (!noRing && !keepType && !typed && CENTRE[tone]) || own || KINDS[kind] || KINDS.task;
+  const glyph = icon(centre, Math.round((tone === 'merged' ? 16 : stated ? 13 : noRing ? 15 : 11) * size / 20));
+  return `<span class="kind-mark is-${tone}${breathe && NEEDS_YOU.has(tone) ? ' is-breathe' : ''}${advisory ? ' is-adv' : ''}${landed ? ' is-landed' : ''}"${attrs({ style: `--km:${size}px`, title: title || null, role: title ? 'img' : null, 'aria-label': title || null, 'aria-hidden': title ? null : 'true' })}>${ring ? `<svg class="km-ring" width="${size}" height="${size}" viewBox="0 0 20 20" aria-hidden="true">${ring}</svg>` : ''}${glyph}</span>`;
 }
 
 /**
@@ -218,14 +232,15 @@ export function cardHead({ mark, kicker, kickerHtml = '', title = '', titleHtml 
  * @param {string} [o.stages]   StageBar
  * @param {string} [o.rows]     a feature's slices, one TurnRow each (markup)
  * @param {string} [o.foot]     How it ran (markup)
+ * @param {string} [o.figures]  its Figures, when open (markup): under the foot
  * @param {string} [o.stream]   what How it ran opens (markup)
  * @param {boolean} [o.open]
  * @param {boolean} [o.compact]
  * @param {object} [o.attrs]
  */
-export function taskCard({ title, place = '', mark, word, detail = '', action = '', menu = '', stages = '', rows = '', foot = '', stream = '', open = false, compact = false, attrs: a = {} }) {
+export function taskCard({ title, place = '', mark, word, detail = '', action = '', menu = '', stages = '', rows = '', foot = '', figures = '', stream = '', open = false, compact = false, attrs: a = {} }) {
   if (compact) return `<article class="task-card rc is-compact"${attrs(a)}>${turnRow({ mark, text: `<b>${esc(title)}</b> ${esc(detail)}`, end: action })}</article>`;
-  return `<article class="task-card rc${open ? ' is-open' : ''}"${attrs(a)}>${cardHead({ mark, kicker: word, title, why: detail, facts: place, menu })}<section class="rc-card tp-body"${attrs({ 'aria-label': `${title}: ${word}` })}>${stages}${rows ? `<div class="tc-rows">${rows}</div>` : ''}${action ? `<div class="tp-actions">${action}</div>` : ''}</section>${foot ? `<div class="tc-foot">${foot}</div>` : ''}${open && stream ? `<div class="tc-stream">${stream}</div>` : ''}</article>`;
+  return `<article class="task-card rc${open ? ' is-open' : ''}"${attrs(a)}>${cardHead({ mark, kicker: word, title, why: detail, facts: place, menu })}<section class="rc-card tp-body"${attrs({ 'aria-label': `${title}: ${word}` })}>${stages}${rows ? `<div class="tc-rows">${rows}</div>` : ''}${action ? `<div class="tp-actions">${action}</div>` : ''}</section>${foot ? `<div class="tc-foot">${foot}</div>` : ''}${figures}${open && stream ? `<div class="tc-stream">${stream}</div>` : ''}</article>`;
 }
 
 /**
@@ -240,9 +255,10 @@ export function taskCard({ title, place = '', mark, word, detail = '', action = 
  * @param {string} [o.why]     one line after the word
  * @param {string} [o.action]  its one action (a Button)
  * @param {string} [o.menu]    its ⋯ (a MoreMenu)
+ * @param {string} [o.say]     one line under the title (Nothing needs you)
  */
-export function placeHead({ title, facts = '', mark = '', word = '', why = '', action = '', menu = '' }) {
-  const head = `<div class="place-head"><h1 class="place-title">${esc(title)}</h1>${facts ? `<div class="convo-head">${facts}</div>` : ''}</div>`;
+export function placeHead({ title, facts = '', mark = '', word = '', why = '', action = '', menu = '', say = '' }) {
+  const head = `<div class="place-head"><h1 class="place-title">${esc(title)}</h1>${say ? `<p class="place-say">${esc(say)}</p>` : ''}${facts ? `<div class="convo-head">${facts}</div>` : ''}</div>`;
   return head + (word ? `<div class="convo-card-line">${mark}<span class="convo-card-w">${esc(word)}${why ? `<span>${esc(why)}</span>` : ''}</span>${action}${menu}</div>` : '');
 }
 
@@ -318,7 +334,7 @@ export function taskProposal({ title, why = '', sentence, more = '', open = fals
 }
 
 // a change card's mark is its kind's, as in the bar (list.kind-mark): a schedule's clock, a project's folder
-const KIND_ICON = { Schedule: 'clock', Workflow: 'kind-workflow', 'Web access': 'plug', Away: 'away', Agent: 'you', Workspace: 'nav-workspaces', Project: 'folder', Clone: 'folder', Model: 'set-models', 'Sign-in': 'plug', Script: 'script', Changes: 'pr', Metrics: 'signal', Memory: 'set-memory', Guardrails: 'set-guardrails', Labels: 'tag', Requirements: 'list', Route: 'after' };
+const KIND_ICON = { Schedule: 'clock', Workflow: 'kind-workflow', 'Web access': 'globe', Away: 'away', Agent: 'you', Workspace: 'nav-workspaces', Project: 'folder', Clone: 'folder', Model: 'set-models', 'Sign-in': 'you', Script: 'script', Changes: 'pr', Metrics: 'signal', Memory: 'set-memory', Guardrails: 'set-guardrails', Labels: 'tag', Requirements: 'list', Route: 'after' };
 
 /**
  * ChangeProposal: a change Worca proposes to something that is not a task (a setting, a workflow, a schedule): what it is,
@@ -340,7 +356,7 @@ const KIND_ICON = { Schedule: 'clock', Workflow: 'kind-workflow', 'Web access': 
 export function changeProposal({ kind, title, why = '', rows = [], body = '', state = 'proposed', apply = 'Apply', actions = null, menu = '', hooks = {}, attrs: a = {} }) {
   const btn = (label, k, h, c = '') => button({ label, kind: k, cls: c, attrs: h || {} });
   if (state === 'applied') return turnRow({ mark: icon('check', 14), text: `<b>${esc(title)}</b> ${esc(rows.map((r) => `${r.name}: ${r.after}`).join(' · ') || kind)}`, end: btn('Revert', 'quiet', hooks.revert), attrs: a });
-  if (state !== 'proposed') return turnRow({ mark: kindMark({ kind: 'chat', tone: state === 'failed' ? 'fail' : 'idle', size: 16 }), text: `${state === 'failed' ? 'Could not change' : 'Not changed'}: <b>${esc(title)}</b>`, attrs: a });
+  if (state !== 'proposed') return turnRow({ mark: kindMark({ kind: 'task', tone: state === 'failed' ? 'fail' : 'idle', size: 16 }), text: `${state === 'failed' ? 'Could not change' : 'Not changed'}: <b>${esc(title)}</b>`, attrs: a });
   const list = rows.length ? `<dl class="cp-rows">${rows.map((r) => `<div class="cp-row"><dt>${esc(r.name)}</dt><dd>${r.before && r.before !== '—' ? `<s>${esc(r.before)}</s><span aria-hidden="true">→</span>` : ''}<b>${esc(r.after)}</b></dd></div>`).join('')}</dl>` : '';
   return `<article class="task-card rc cp"${attrs(a)}>${cardHead({ mark: icon(KIND_ICON[kind] || 'set-general', 14), kicker: kind, title, why, menu })}`
     + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed change: ${title}` })}>${list}${body}<div class="tp-actions">${actions ? actions.map((x) => (x.kind === 'danger' ? btn(x.label, 'quiet', x.attrs, 'is-danger') : btn(x.label, x.kind || 'quiet', x.attrs))).join('') : `${btn(apply, 'primary', hooks.apply)}${btn('Not now', 'quiet', hooks.decline)}`}</div></section></article>`;
@@ -377,10 +393,10 @@ export function turnDivider({ text }) {
  */
 export function planCard({ title, summary = '', version, roles, open = false, menu = '', extra = '', check = '', hooks = {}, full = '', fullOpen = false, attrs: a = {} }) {
   const left = roles.filter((r) => !r.ok).length;
-  const rows = roles.map((r) => turnRow({ mark: kindMark({ kind: 'chat', tone: r.ok ? 'ok' : 'ask', size: 16, keepType: false }), text: `<b>${esc(r.name)}</b> ${esc(r.note)}` })).join('');
+  const rows = roles.map((r) => turnRow({ mark: kindMark({ kind: 'task', tone: r.ok ? 'ok' : 'ask', size: 16, keepType: false }), text: `<b>${esc(r.name)}</b> ${esc(r.note)}` })).join('');
   const reviewed = turnRow({ mark: icon(open ? 'chevron' : 'chevR', 14), text: `Reviewed by ${roles.length <= 3 ? esc(roles.map((r) => r.name).join(', ')) : `${roles.length} roles`}${left ? ` · ${left} open` : ''}${check ? ` · ${esc(check)}` : ''}`, body: `<span class="plan-roles">${rows}</span>`, open, attrs: { 'data-fold-turn': '', ...(hooks.roles || {}) } }).replace('class="tr-body"', 'class="tr-body is-steps"');
   return `<article class="task-card rc plan"${attrs(a)}>${cardHead({ mark: kindMark({ kind: 'task', tone: 'ask', size: 16 }), kicker: 'Plan', kickerHtml: `Plan · ${version}`, title, why: summary, menu })}`
-    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Plan: ${title}` })}>${extra}${reviewed}<div class="tp-actions">${button({ label: 'Approve and build', kind: 'primary', attrs: hooks.approve || {} })}${button({ label: 'Ask for changes', kind: 'quiet', attrs: hooks.changes || {} })}</div></section>`
+    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Plan: ${title}` })}>${extra}${reviewed}<div class="tp-actions">${button({ label: 'Approve and build', attrs: hooks.approve || {} })}${button({ label: 'Ask for changes', kind: 'quiet', attrs: hooks.changes || {} })}</div></section>`
     + `${full ? `<div class="tc-foot">${button({ label: fullOpen ? 'Hide the plan' : 'Read the plan', kind: 'quiet', icon: icon(fullOpen ? 'chevron' : 'chevR', 12), attrs: { 'aria-expanded': String(fullOpen), ...(hooks.full || {}) } })}</div>${fullOpen ? `<div class="plan-full">${full}</div>` : ''}` : ''}</article>`;   // the plan itself is the card's foot, as a task's stages are
 }
 
@@ -443,7 +459,7 @@ export function stagePart({ label, says = '', open = false, attrs: a = {} }) {
  * StageBar (look.stage-line): a thing's main stages on a card as one line, Rail's own: a knot at each stage, filled when
  * done; the stage it is on holds its steps as short notches, done ones solid, the one now breathing, the rest waiting,
  * and its name carries the count (Review 2 of 3). The state's colour marks only the stage it is on (a failed Build is
- * red, the Plan before it is not); done and merged wear theirs all along.
+ * red, the Plan before it is not); done and merged are ink all along.
  * @param {object} o
  * @param {string[]} o.labels
  * @param {number} o.stage    the one it is on, from 0
@@ -454,7 +470,7 @@ export function stagePart({ label, says = '', open = false, attrs: a = {} }) {
 export const stageStep = (detail) => { const m = /step (\d+) of (\d+)/.exec(String(detail || '')); return m ? [+m[1], +m[2]] : null; };
 
 export function stageBar({ labels, stage, tone = 'run', step = null, bare = false }) {   // bare: the line alone, where a stage list under it names them (rail.one-place)
-  const n = labels.length, whole = tone === 'ok' || tone === 'merged';   // done and merged wear their colour all along; a failure, a question, a pause only where it is
+  const n = labels.length, whole = tone === 'ok' || tone === 'merged';   // done and merged are ink all along; a failure, a question, a pause only where it is
   const at = (i) => (i / n) * 100, W = 100 / n, live = !whole && stage >= 0 && stage < n;
   const [k, m] = live && step && step[1] > 1 ? step : [0, 0];
   const notches = m ? Array.from({ length: m }, (_, j) => `<i class="sl-step${j < k - 1 ? ' is-done' : j === k - 1 ? ' is-now' : ''}" style="left:calc(${at(stage) + 1.5 + (j * (W - 3)) / m}% + 6px);width:calc(${(W - 3) / m}% - 9px)"></i>`).join('') : '';

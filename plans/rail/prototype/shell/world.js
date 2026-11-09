@@ -13,14 +13,14 @@
   const ROUNDS = { line: 'Round 7 · fix checks · nothing pushed: tests still fail', list: [round(7, 'fix checks · nothing pushed', '11:20', 'round-failing'), round(6, 'merge dev in · pushed 3e4f5a6', '10:41'), round(5, 'fix checks · pushed 19ab20c', '09:50'), round(4, 'merge dev in · pushed 77d1e02', 'Thu'), round(3, 'fix checks · pushed a1b2c3d', 'Thu'), round(2, 'merge dev in · pushed 0f0e0d0', 'Wed')] };
   const table = () => Object.fromEntries([
     run('r1', 'question', 'Add CSV export to billing', 'billing-api', 'Review asks which date format', '14:32', 'today', { labels: ['billing', 'ui'], cost: 3.4, unread: true }),
-    run('r2', 'gate', 'Migrate cron parser', 'worca-cc', 'Waits for your OK on the review', '13:40', 'today', { labels: ['backend'], cost: 6.1 }),
+    run('r2', 'gate', 'Migrate cron parser', 'worca-cc', 'Waits for your OK on the review', '13:40', 'today', { labels: ['backend'], cost: 6.1, short: 'cron parser' }),
     run('r3', 'paused-limit', 'Refactor auth middleware', 'web-app', 'Usage limit · Gemini refused: daily quota', '13:12', 'today', { cost: 11.8 }),
     run('r4', 'capped', 'Rebuild the search index', 'docs-site', 'Cost cap · reached $120', '12:58', 'today', { cost: 120 }),
     run('r5', 'failed', 'Update Node to 24', 'web-app', 'Build · 3 tests failed', '12:40', 'today', { cost: 4.2, unread: true, labels: ['hotfix'] }),
     run('r6', 'interrupted', 'Move sessions to Redis', 'worca-cc', 'Worca was stopped', '11:58', 'today', { cost: 2.1 }),
     run('r7', 'failing', 'Retry on 502', 'web-app', 'Checks failing · 2 of 7: unit, e2e', '11:20', 'today', { pr: '#962', cost: 7.3, labels: ['hotfix'], rounds: ROUNDS }),
     run('r8', 'ready', 'Dark mode for the marketing site', 'marketing-site', 'Checks pass', '10:58', 'today', { cost: 9.9, labels: ['ui'] }),
-    run('r9', 'approved', 'Add pager to the audit log', 'worca-cc', 'Approved · checks pass', '10:20', 'today', { pr: '#959', cost: 5.2 }),
+    run('r9', 'approved', 'Add pager to the audit log', 'worca-cc', 'Approved · checks pass', '10:20', 'today', { pr: '#959', cost: 5.2, short: 'audit pager' }),
     run('r10', 'working', 'Fix flaky login test', 'web-app', 'Review · checking it in a browser', '12 min', 'today', { labels: ['ui', 'tests'], cost: 1.6 }),
     run('r11', 'checks', 'Rename settings keys', 'worca-cc', 'Checks running', '4 min', 'today', { pr: '#960', labels: ['backend'], cost: 2.7, rounds: { line: 'Round 2 · merge dev in · running', list: [round(2, 'merge dev in · running', '')] } }),
     run('r12', 'starting', 'Add rate limiting to the public API', 'billing-api', 'Plan is under way', 'now', 'today', { cost: 0 }),
