@@ -8,6 +8,8 @@
 (function () {
   const SM = window.SettingsModel, R = window.RailUI;
   for (const f of SM.FLAGS) R.prefs.setFlag(f.key, f.on);   // a Labs switch's default, for every page that reads a flag
+  const noSlash = () => { if (window.location?.hash === '#settings/') window.location.replace('#settings'); };   // the landing has one address
+  window.addEventListener?.('hashchange', noSlash); noSlash();
 
   const flat = (rows) => (rows || []).flatMap((r) => [r, ...flat(r.more)]);
   const allSections = () => Object.values(SM.SECTIONS).flatMap((x) => x.sections);
@@ -252,7 +254,8 @@
     if (key.startsWith('flag:')) {
       const k = key.slice(5), f = SM.FLAGS.find((x) => x.key === k);
       R.prefs.setFlag(k, !R.prefs.flag(k));
-      return `${f.name}: ${R.prefs.flag(k) ? 'on' : 'off'}`;
+      const hidden = R.prefs.flag(k) && f.min && !R.shows(f.min, R.prefs.mode());   // on, but this mode does not draw what it adds: the toast says so
+      return `${f.name}: ${R.prefs.flag(k) ? 'on' : 'off'}${hidden ? `. It shows in ${f.min[0].toUpperCase()}${f.min.slice(1)}; you are in ${R.prefs.mode()[0].toUpperCase()}${R.prefs.mode().slice(1)}` : ''}`;
     }
     sv[key] = !sv[key];
     const r = rowsOf().find((x) => x.sw && x.sw.key === key) || listsOf().find((x) => x.sw && x.sw.key === key);

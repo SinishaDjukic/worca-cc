@@ -35,7 +35,7 @@
   ];
   const EVENT = Object.fromEntries(GROUPS.flatMap((g) => g.events.map(([id, name, sev]) => [id, { id, name, sev, g: g.id }])));
   // Vitals › Scheduled, top to bottom.
-  const SCHED = [['missed', 'Missed'], ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['later', 'Later'], ['after', 'After a run'], ['reset', 'After a reset']];
+  const SCHED = [['missed', 'Missed'], ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['later', 'Later'], ['after', 'After a run'], ['reset', 'After a reset'], ['paused', 'Paused']];
   const LEVELS = [
     { id: 'needs', text: 'what needs you', help: 'Only what waits for you: questions, gates, a watched PR that needs a person' },
     { id: 'problems', text: 'what needs you and problems', help: 'Also what went wrong while nobody was waiting: a failed run, a missed start, a limit' },

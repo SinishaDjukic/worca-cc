@@ -836,7 +836,7 @@
         pr: c.pr !== undefined && c.pr !== '' ? c.pr : prOpen(c) ? '#959' : '', folder: c.folder || '', repos: c.repos || [],
         merged: c.stages.some((x) => x.key === 'merged' && x.subs.length && x.subs.every((y) => y.state === 'merged')), applied: c.word === 'Applied' },
       chips: (ui.chips || []).filter((x) => x.kind !== 'group'), inGroup: !!g || runStages.length > 0, addedGroup: ((ui.chips || []).find((x) => x.kind === 'group') || {}).text || '',
-      word: c.word, dot: c.dot || '', sym: c.sym || '', detail: R.fill(c.detail || '', Object.assign({}, liveCtx, { branch })), action, archived: !!c.archived,
+      alert: R.stateIds().includes(stateId) ? R.runState(stateId).alert : undefined, word: c.word, dot: c.dot || '', sym: c.sym || '', detail: R.fill(c.detail || '', Object.assign({}, liveCtx, { branch })), action, archived: !!c.archived,
       finished: !live && !/^(Waiting)$/.test(c.word),
       // Run after, as today: on any run with a project that is not archived or a group; its words follow the state.
       runAfter: c.archived || gone || runStages.length || !place || c.mock || (!started && c.word !== 'Waiting') || (c.action && [c.action.label].concat(c.action.items).includes('Start a new task')) ? null : !live && !/^(Waiting)$/.test(c.word)

@@ -753,7 +753,7 @@ const NEEDS_REASON = { question: 'Question', gate: 'Needs approval', failed: 'Fa
 export const needsReason = (id) => NEEDS_REASON[id] || runState(id).word;
 
 // Warning on the alert ladder though their word is Paused (look.alert-ladder): a cost or usage cap, a lost connection, an interruption
-const WARNING = new Set(['capped', 'paused-limit', 'paused-budget', 'paused-team', 'paused-error', 'interrupted', 'interrupted-dead']);
+const WARNING = new Set(['capped', 'paused-limit', 'paused-reset', 'paused-missed', 'paused-budget', 'paused-team', 'paused-reason', 'interrupted', 'interrupted-dead']);
 
 export function runState(id, ctx = {}) {
   const s = STATES[id];
@@ -789,7 +789,9 @@ export const memberKeeps = (label) => !GROUP_OWNS.test(label);
 // A state's section in a list of things that wait on you (Pulse's Vitals; Chat's list later): waiting on a person first,
 // then working, then the rest. Paused and Stopped are never Ready.
 const SECTION = { 'Needs you': 'needs', Working: 'running', Starting: 'running', 'In review': 'running', Waiting: 'scheduled', Paused: 'needs', 'Ready to merge': 'needs', Ready: 'needs', Failed: 'needs' };
-export const sectionOf = (word) => SECTION[word] || 'recent';
+// Paused by you or until a time you set holds on nobody: Normal, so it is not counted (look.alert-ladder). Give the state's id to know.
+const PAUSE_NORMAL = new Set(['paused', 'paused-you', 'paused-at', 'group-paused']);
+export const sectionOf = (word, id = '') => (PAUSE_NORMAL.has(id) ? 'scheduled' : SECTION[word] || 'recent');
 
 /**
  * A center's card action (panel.center): the one step that fits a task's state. `does` is what the page carries out;

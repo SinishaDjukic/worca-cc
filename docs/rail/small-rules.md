@@ -8,6 +8,7 @@
 | `small.name-short` | A chat's or a group's name holds 80 characters at most; its rename field stops there and says so | A name has to fit its row, its head and a notice | by hand |
 | `small.schedule-words` | A schedule's repeat and time read from one function (`scheduleWords`); every hour has no time of day | The sentence, the status, the row and its section cannot drift | design-system-components |
 | `small.sentence-pair` | In a sentence of pickers, a linking word (on, with, from, then, at) stays on one line with its picker | A word left at a line's end reads as a broken sentence | by hand |
+| `small.names-short` | A picker that holds several names says the first two and how many more (a, b, +3): `namesWord` | However many you tick, the sentence stays inside its column | by hand |
 | `small.no-emoji` | No emoji and no exclamation marks | Calm | by hand |
 | `small.sound` | A new event plays one soft chime for what the person chose; info never, a burst once, never in away hours | Hearing it is for what needs you; a sound that cries wolf gets turned off | design-system-logic |
 | `small.usage-rings` | Rings around the avatar show live usage of connected providers only, refreshed every minute; figures and money live in Usage and costs | What is drawn is what can stop a run now | worca-sweep |
@@ -43,7 +44,9 @@
   the warning line, `--red` at the limit; used up, full and solid red. Never green, never violet. Its figures live in
   one place, the profile menu's Usage and costs flyout; a limit interrupts a start only in New run, Resume
   and the confirm of a step that starts agent work, and only when the provider is at or past the warning line.
-- The needs-you count lives on Pulse's badge alone; the Runs row stays a place.
+- The bell has one number, the same on every page: the rows of Pulse's Needs you: each task, missed schedule, project that
+  needs you (Folder missing, Out of sync) and, from Advanced, workspace link question, once. A place's own Needs you counts
+  its own rows, in its own unit; the Runs row stays a place.
 - Pulse is the panel under its top-bar button, with no page of its own. Every notification setting lives in one
   Settings tab, Notifications.
 - Sound: `Play a sound for [what needs you ▾]` in Notifications › Channels; choices what needs you (the default), also

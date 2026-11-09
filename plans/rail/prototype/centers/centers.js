@@ -22,16 +22,10 @@
   const costOf = (t) => (t.run ? t.run.cost || 0 : W.membersOf(t.group).reduce((a, m) => a + (m.cost || 0), 0));
   const taskOf = (t) => t.run || (t.group ? W.membersOf(t.group).find(W.raises) || W.membersOf(t.group)[0] : null);
   const stateOf = (r) => RM.stateOf(r.case);
-  const RANK = (id) => (id === 'failed' ? 0 : id === 'question' ? 1 : id === 'gate' ? 2 : id === 'ready' || id === 'approved' ? 3 : 4);
+  const RANK = R.taskRank;
   const stepOf = (detail) => (detail || '').split(' · ')[0];
-  function clause(r) {
-    const id = stateOf(r), name = link(r.title, { 'data-c-open': r.id }, `Opens ${r.title} in its chat`);
-    if (id === 'failed') return `${name} failed at ${esc(stepOf(r.detail))}`;
-    if (id === 'question') return `${name}: ${esc(r.detail)}`;
-    if (id === 'gate') return `${name} waits for your OK`;
-    if (id === 'ready' || id === 'approved') return `${name} is ready to merge`;
-    return `${name}: ${esc(r.detail || R.runState(id).word)}`;
-  }
+  const clause = (r) => R.taskClause({ state: stateOf(r), name: link(r.title, { 'data-c-open': r.id }, `Opens ${r.title} in its chat`), detail: r.detail || '' });
+  const actionsOf = (rs) => R.taskActions(rs.map((t) => ({ id: t.id, title: t.title, short: t.short, state: stateOf(t) })));
   const schedLink = (s) => (advanced() ? link(s.title, { 'data-c-sched': s.id }, `Opens ${s.title}`) : esc(s.title));   // Simple: Schedules is locked, so no links lead there
 
   // ---- the Tasks center ----
@@ -66,11 +60,8 @@
   }
   function actionOf(g) {
     const top = g.needs[0] && taskOf(g.needs[0]);
-    if (top) {   // the one action, named when two things wait; only a Warning's is filled (rail.one-action)
-      const two = g.needs.slice(0, 2).map(taskOf).filter(Boolean);
-      return two.map((t) => { const a = R.cardAction(stateOf(t)), warn = R.alertLevel(R.markTone(R.runState(stateOf(t)))) === 3; return R.button({ label: two.length > 1 ? `${a.label} ${t.short || t.title}` : a.label, kind: warn ? 'primary' : '', attrs: { 'data-c-act': `${a.does}|${t.id}`, title: `${a.label}: ${t.title}` } }); }).join('');
-    }
-    if (g.missed.length && advanced()) return R.button({ label: 'Run now', attrs: { 'data-c-sact': `run|${g.missed[0].id}`, title: `Runs ${g.missed[0].title} now to catch up` } });
+    if (top) return actionsOf(g.needs.slice(0, 2).map(taskOf).filter(Boolean));   // the one action, named when two things wait
+    if (g.missed.length) return R.button({ label: 'Run now', attrs: { 'data-c-sact': `run|${g.missed[0].id}`, title: `Runs ${g.missed[0].title} now to catch up` } });
     return R.button({ label: 'Open', attrs: { 'data-c-filter': JSON.stringify(groupFilter(g)), title: `Opens ${g.name}'s tasks` } });
   }
   // one card per level (look.alert-ladder): Advisory never rides under Caution, a missed time and what runs each have their own
@@ -82,7 +73,7 @@
   }
   function cardOf(g) {
     const top = g.needs[0] && taskOf(g.needs[0]), st = top ? R.runState(stateOf(top)) : null;
-    const word = top ? R.needsReason(stateOf(top)) : g.missed.length ? 'Schedule missed' : g.running.length || g.live.length ? R.runState('working').word : 'Quiet';
+    const word = top ? R.needsReason(stateOf(top)) : g.missed.length ? 'Missed' : g.running.length || g.live.length ? R.runState('working').word : 'Quiet';
     const tone = top ? R.markTone(st) : g.missed.length ? 'act' : g.running.length || g.live.length ? 'run' : 'idle';
     const what = [...g.needs.slice(0, 2).map((t) => clause(taskOf(t))), ...g.missed.map((s) => `${schedLink(s)} missed ${esc(s.missed)}`), ...g.live.map((s) => `${schedLink(s)} is running`)].slice(0, 2);
     const running = !what.length && g.running[0] && taskOf(g.running[0]);
@@ -98,12 +89,12 @@
     const cost = rows.filter(inWeek).reduce((a, t) => a + costOf(t), 0);
     const shown = all.filter((g) => !g.quiet).flatMap(partsOf).sort(SORTS[view.sort]), quiet = all.filter((g) => g.quiet);
     const facts = `${count(plural(rows.length, 'task'), filterHook({}), 'Opens every task')}${cost > 0 ? ` · ${count(`${usd(cost)} this week`, filterHook({ range: WEEK }), 'Opens this week\'s tasks')}` : ''}`;
-    const sent = `<div class="center-sent">Showing ${picker('c-sort', view.sort, Object.keys(SORTS), 'How the cards are ordered')} by ${picker('c-by', view.by, ['project', 'workflow'], 'What a card is')} ${R.figuresToggle({ open: figs.tasks, attrs: { 'data-c-figs': 'tasks' } })}</div>${figs.tasks ? R.figuresLine(facts) : ''}`;
+    const sent = R.centerSentence({ words: `Showing ${picker('c-sort', view.sort, Object.keys(SORTS), 'How the cards are ordered')} by ${picker('c-by', view.by, ['project', 'workflow'], 'What a card is')}`, open: figs.tasks, attrs: { 'data-c-figs': 'tasks' }, facts });
     const calm = !all.some((g) => g.needs.length || g.missed.length);
     const way = advanced() ? '' : `<p class="center-way">New work starts in Chat. ${link('Go to Chat', { 'data-c-chat': '' })}</p>`;
     const noun = view.by === 'workflow' ? 'workflow' : 'project';
     const quietFacts = (() => { return quiet.map((g) => g.name).join(', '); })();
-    const quietRow = quiet.length ? `<div class="center-quiet">${R.list({ groups: [{ title: '', rows: [R.listRow({ title: `${quiet.length} quiet ${noun}${quiet.length === 1 ? '' : 's'}`, meta: quietOpen ? '' : quietFacts, mark: R.kindMark({ kind: noun }), open: { 'data-c-quiet': '', 'aria-expanded': String(quietOpen), title: quietOpen ? 'Folds them' : `Shows the quiet ${noun}s` } })] }] })}</div>${quietOpen ? `<div class="pg-grid">${quiet.map(cardOf).join('')}</div>` : ''}` : '';
+    const quietRow = quiet.length ? `${R.quietLine({ n: quiet.length, noun, names: quietFacts, open: quietOpen, hook: { 'data-c-quiet': '' } })}${quietOpen ? `<div class="pg-grid">${quiet.map(cardOf).join('')}</div>` : ''}` : '';
     return wrap(`${R.placeHead({ title: 'Your tasks', say: calm ? 'Nothing needs you' : '' })}${sent}${way}<div class="pg-grid">${shown.map(cardOf).join('')}</div>${quietRow}`);
   }
   const wrap = (body) => `<div class="convo"><div class="convo-scroll"><div class="convo-col is-center">${body}</div></div></div>`;
@@ -121,7 +112,7 @@
     if (sec === 'needs') return R.runOutcomes({ runs: ['miss'], says: esc(`Runs again ${Sch().dateWord(nextDate(s))}; run now to catch up`) });
     if (!week.length && sec === 'paused') return R.runOutcomes({ runs: [], says: 'No runs in 7 days' });
     if (!week.length) return R.runOutcomes({ runs: [], says: s.started === Sch().dateWord(Sch().TODAY) ? `Started ${esc(s.started)} · no runs yet` : 'No runs in 7 days' });
-    const num = done.length ? count(failed ? `${won} of ${done.length}` : `${won} of ${done.length} succeeded`, filterHook({ schedule: s.id }), `Opens these ${done.length} in Tasks`) : '';
+    const num = done.length ? count(failed ? `${won} of ${done.length}` : `${won} of ${done.length} succeeded`, filterHook({ schedule: s.id, show: 'finished' }), `Opens the ${won} that succeeded in Tasks`) : '';
     const pre = s.started === 'Nov 9' || week.length < 7 ? `Started ${esc(s.started)}${num ? ' · ' : ''}` : '';
     const fixed = failed && done.at(-1) !== failed && OUT(done.at(-1)) === 'ok';   // a past failure a later run fixed (look.alert-ladder)
     const fail = failed ? ` · ${link(`failed ${failed.date}${fixed ? '' : ` at ${stepOf(failed.meta).replace(/^Failed at /, '')}`}`, { 'data-c-srun': `${s.id}|${s.runs.indexOf(failed)}` }, 'Opens that run')}${fixed ? ' · next run passed' : ''}` : '';
@@ -129,27 +120,26 @@
     return R.runOutcomes({ runs: week.map(OUT), says: `${pre}${num}${fail}${pr ? ` · merged ${pr[0]}` : ''}${week.length !== done.length ? ` · last ${week.length} runs` : ''}` });
   }
   function schedCard(s) {
-    const sec = sectionNow(s), run = Sch().runningRun(s), hourly = s.every === 'every hour', [d1, d2] = Sch().nextDates(s, 2).map(Sch().dateWord);
-    const next = hourly ? (s.skip ? 'skips the next one' : 'within the hour') : s.skip ? `skips ${d1}, then ${d2}, ${s.at}` : `${d1}, ${s.at}`;
-    const [word, kicker, tone] = sec === 'needs' ? ['Missed', `${s.missed}, ${s.at} · ${s.missedWhy}`, 'act'] : sec === 'running' ? ['Running', `for ${!run.time || run.time === 'now' ? 'a moment' : run.time}`, 'run'] : sec === 'paused' ? ['Paused', 'by you', 'idle'] : ['Next up', next, 'idle'];
+    const sec = sectionNow(s), run = Sch().runningRun(s), next = Sch().nextLine(s);
+    const [word, kicker, tone] = sec === 'needs' ? ['Missed', `${s.missed}, ${s.at} · ${s.missedWhy}`, 'act'] : sec === 'running' ? [R.runState('working').word, `for ${!run.time || run.time === 'now' ? 'a moment' : run.time}`, 'run'] : sec === 'paused' ? ['Paused', 'by you', 'idle'] : ['Next up', next, 'idle'];
     const fact = esc(`${s.project || 'No project'} · ${R.scheduleWords(s).says}${s.tz && s.tz !== DEFAULT_TZ ? ` ${s.tz}` : ''}`);
     const act = sec === 'needs' ? ['Run now', 'run', ''] : sec === 'running' ? ['Stop', 'stop', 'quiet'] : sec === 'paused' ? ['Resume', 'pause', 'quiet'] : ['Run now', 'run', 'quiet'];
-    return R.pluginCard({ mark: R.kindMark({ kind: 'schedule', tone: sec === 'needs' ? 'act' : sec === 'paused' ? 'pause' : sec === 'running' ? 'run' : 'idle', breathe: sec === 'needs' }), word, kicker, tone, title: s.title, what: s.what || R.scheduleWords(s).says, line: schedLine(s), factsHtml: fact, factsTip: fact, action: R.button({ label: act[0], kind: act[2], attrs: { 'data-c-sact': `${act[1]}|${s.id}`, title: `${act[0]}: ${s.title}` } }), attrs: { 'data-c-card': s.id, title: s.cost ? `${usd(s.cost)} a run` : null } });
+    return R.pluginCard({ mark: R.kindMark({ kind: 'schedule', tone: sec === 'needs' ? 'act' : sec === 'paused' ? 'pause' : sec === 'running' ? 'run' : 'idle', breathe: sec === 'needs' }), word, kicker, tone, title: s.title, titleHtml: link(s.title, { 'data-c-sched': s.id }, `Opens ${s.title}`), what: s.what || R.scheduleWords(s).says, line: schedLine(s), factsHtml: fact, factsTip: fact, action: R.button({ label: act[0], kind: act[2], attrs: { 'data-c-sact': `${act[1]}|${s.id}`, title: `${act[0]}: ${s.title}` } }), attrs: { 'data-c-card': s.id, title: s.cost ? `${usd(s.cost)} a run` : null } });
   }
   function schedulesHtml() {
     const all = Sch().all(), list = all.filter((s) => (!view.from || (s.project || 'No project') === view.from) && (Sch().showing() === 'all' || s.state === 'paused')).sort(SCHED_SORTS[view.sSort]);
     if (!all.length) return wrap(`${R.placeHead({ title: 'Your schedules', facts: 'New work starts in Chat' })}${R.emptyState({ title: 'No schedules yet.', actions: R.button({ label: 'Schedule a task', kind: 'quiet', attrs: { 'data-c-new': 'schedule' } }) })}`);
     const runs = all.flatMap((s) => s.runs.filter((r) => r.case !== 'stopped').slice(0, 7)).filter((r) => OUT(r) !== 'run'), won = runs.filter((r) => OUT(r) === 'ok').length;
-    const facts = [esc(plural(all.length, 'schedule')), runs.length ? count(`${won} of ${runs.length} runs succeeded in 7 days`, filterHook({ schedule: 'any' }), 'Opens those runs in Tasks') : '', `times in ${DEFAULT_TZ}${all.some((s) => s.tz && s.tz !== DEFAULT_TZ) ? ', unless a card says' : ''}`].filter(Boolean).join(' · ');
+    const facts = [esc(plural(all.length, 'schedule')), runs.length ? count(`${won} of ${runs.length} runs succeeded in 7 days`, filterHook({ schedule: 'any', show: 'finished' }), 'Opens the runs that succeeded in Tasks') : '', `times in ${DEFAULT_TZ}${all.some((s) => s.tz && s.tz !== DEFAULT_TZ) ? ', unless a card says' : ''}`].filter(Boolean).join(' · ');
     const projects = ['every project', ...new Set(all.map((s) => s.project || 'No project'))];
-    const sent = `<div class="center-sent">Showing ${picker('c-ssort', view.sSort, Object.keys(SCHED_SORTS), 'How the cards are ordered')} from ${picker('c-sfrom', view.from || 'every project', projects, 'Which project')} ${R.figuresToggle({ open: figs.sched, attrs: { 'data-c-figs': 'sched' } })}</div>${figs.sched ? R.figuresLine(facts) : ''}`;
+    const sent = R.centerSentence({ words: `Showing ${picker('c-ssort', view.sSort, Object.keys(SCHED_SORTS), 'How the cards are ordered')} from ${picker('c-sfrom', view.from || 'every project', projects, 'Which project')}`, open: figs.sched, attrs: { 'data-c-figs': 'sched' }, facts });
     return wrap(`${R.placeHead({ title: 'Your schedules' })}${sent}${list.length ? `<div class="pg-grid">${list.map(schedCard).join('')}</div>` : R.emptyState({ title: 'No paused schedules here.' })}`);
   }
 
   // ---- paint ----
   const paintTasks = () => { if (tasksHost && !tasksHost.hidden && location.hash.startsWith('#runs')) tasksHost.innerHTML = tasksHtml(); };
   const paintSched = () => { if (schedHost && !schedHost.hidden && /^#schedules/.test(location.hash)) schedHost.innerHTML = schedulesHtml(); };
-  const paint = () => { paintTasks(); paintSched(); };
+  const paint = () => { paintTasks(); paintSched(); window.RailPlaces?.projects?.redraw?.(); };
 
   // ---- a card's action, on the thing itself ----
   function act(does, id) {
@@ -186,6 +176,7 @@
     if (wired) return; wired = true;
     document.getElementById('route-runs').addEventListener('click', onClick);
     document.getElementById('route-schedule').addEventListener('click', onClick);
+    document.getElementById('route-place').addEventListener('click', (e) => { if (e.target.closest('[data-c-filter], [data-c-open], [data-c-act], [data-c-sact], [data-c-sched]')) onClick(e); });   // the Projects center's cards act the same way
     W.onMove(paint); W.onChange(paint); R.prefs.onChange(paint);
     R.dismissOnOutside(document, { open: () => !!menu && !form, inside: '#route-runs .spick, #route-schedule .spick', back: () => null, close: () => { menu = ''; }, paint });
   }
@@ -228,7 +219,7 @@
     (focus ? h.querySelector(focus) : null)?.focus();
   }
   function openForm(kind, keep) { menu = ''; opener = document.activeElement; form = blank(kind, keep); paintForm(kind === 'schedule' ? '#cc-name' : '#cc-text'); }
-  function closeForm() { form = null; menu = ''; paintForm(); (opener?.isConnected && opener !== document.body ? opener : document.querySelector('[data-bar-new]'))?.focus(); }   // a menu's item is gone by now: back to its +
+  function closeForm() { form = null; menu = ''; paintForm(); (opener?.isConnected && opener !== document.body ? opener : document.querySelector('#bar-head [data-bar-new]'))?.focus(); }   // a menu's item is gone by now: back to its +
   function check() {
     const words = form.src === 'write' ? form.text.trim() : form.path.trim();
     if (form.kind === 'schedule' && !form.name.trim()) return ['Name it first', '#cc-name'];
@@ -276,6 +267,6 @@
     tasks: (el) => { wire(); tasksHost = el; menu = ''; paint(); },
     schedules: (el) => { wire(); schedHost = el; menu = ''; if (/^#schedules/.test(location.hash)) el.innerHTML = schedulesHtml(); },
     maker: (which) => (advanced() ? MAKERS[which] : null),
-    paint,
+    paint, wire, taskOf, stateOf, clause, actionsOf, schedLink, link, inWeek,
   };
 })();

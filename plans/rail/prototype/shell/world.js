@@ -143,18 +143,20 @@
   const wordOf = (r) => R.runState(stateOf(r)).word;
   // Where a run sorts: by its state, but a run paused at a limit that resumes by itself waits on nobody.
   // A missed schedule time never started, but it needs you (panel.task-truth); a schedule's failed run that a later run put right waits on nobody.
-  const section = (r) => (r.archived || r.over ? 'recent' : r.missed ? 'needs' : r.resumes ? 'scheduled' : R.sectionOf(wordOf(r)));
+  // A task a deep link joined to the store (r.peek) is no new work for you: it never raises Needs you. Normal states are not counted.
+  const sectionRaw = (r) => (r.archived || r.over ? 'recent' : r.missed ? 'needs' : r.resumes ? 'scheduled' : R.sectionOf(wordOf(r), stateOf(r)));
+  const section = (r) => { const s = sectionRaw(r); return r.peek && s === 'needs' ? 'recent' : s; };
   const membersOf = (g) => data.runs.filter((r) => r.group === g.id).sort((a, b) => (a.pos || 0) - (b.pos || 0));
   // A member that waits on a person raises its group; one that is simply ready ships with the group.
   const raises = (m) => section(m) === 'needs' && ![R.runState('ready').word, R.runState('approved').word].includes(wordOf(m));
-  const groupSection = (g) => (membersOf(g).filter((m) => !m.archived).some(raises) ? 'needs' : R.sectionOf(R.runState(RM.stateOf(g.case)).word));
+  const groupSection = (g) => (membersOf(g).filter((m) => !m.archived).some(raises) ? 'needs' : R.sectionOf(R.runState(RM.stateOf(g.case)).word, RM.stateOf(g.case)));
   // What the list shows at its top level: a run, or a group as one row. Vitals reads the same rows, so the counts agree.
   function tops() {
-    const out = data.runs.filter((r) => !r.group && !r.archived).map((r) => ({ ...r, state: stateOf(r), section: section(r) }));
+    const out = data.runs.filter((r) => !r.group && !r.archived).map((r) => ({ ...r, state: stateOf(r), section: section(r), when: r.when || (section(r) === 'scheduled' ? 'paused' : undefined) }));   // a paused run with no time of its own: Vitals's Paused, so its count equals its rows
     for (const g of data.groups) {
       const ms = membersOf(g); if (!ms.length || ms.every((m) => m.archived)) continue;
       const sec = groupSection(g), needy = ms.find(raises), own = RM.stateOf(g.case);
-      out.push({ id: g.id, case: g.case, title: g.title, project: g.project, time: g.time, detail: `${{ feature: 'Feature', chain: 'Chain', user: 'Group' }[g.kind]}${needy ? ` · Run ${needy.pos || ms.indexOf(needy) + 1} ${wordOf(needy).toLowerCase()}` : ''}`, section: sec, state: sec === 'needs' && needy && R.sectionOf(R.runState(own).word) !== 'needs' ? stateOf(needy) : own, when: 'after', isGroup: true });
+      out.push({ id: g.id, case: g.case, title: g.title, project: g.project, time: g.time, detail: `${{ feature: 'Feature', chain: 'Chain', user: 'Group' }[g.kind]}${needy ? ` · Run ${needy.pos || ms.indexOf(needy) + 1} ${wordOf(needy).toLowerCase()}` : ''}`, section: sec, state: sec === 'needs' && needy && R.sectionOf(R.runState(own).word, own) !== 'needs' ? stateOf(needy) : own, when: 'after', isGroup: true });
     }
     return out;
   }

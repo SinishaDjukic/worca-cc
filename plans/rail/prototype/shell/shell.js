@@ -31,7 +31,7 @@
 
   // ---- the sidebar: places only (a setting or a place, docs/rail/settings.md) ----
   // The one bar: Settings' behaviour for every feature. The house opens the places; a place with a list holds its list.
-  const PLACES = [['Work', [['chat', 'Chat', 'simple'], ['runs', 'Tasks', 'simple'], ['schedules', 'Schedules', 'advanced']]], ['Build', [['workflows', 'Workflows', 'simple'], ['requirements', 'Requirements', 'simple', 'requirements'], ['marketplace', 'Marketplace', 'advanced']]], ['Manage', [['projects', 'Projects', 'simple']]], ['Insight', [['insights', 'Insights', 'advanced']]]];
+  const PLACES = [['Work', [['chat', 'Chat', 'simple'], ['runs', 'Tasks', 'simple'], ['schedules', 'Schedules', 'advanced']]], ['Build', [['workflows', 'Workflows', 'simple'], ['requirements', 'Requirements', 'simple', 'requirements'], ['marketplace', 'Marketplace', 'advanced']]], ['Manage', [['projects', 'Projects', 'simple'], ['settings', 'Settings', 'simple']]], ['Insight', [['insights', 'Insights', 'advanced']]]];
   function sidebar() {
     const side = el(T.sidebar);
     const nav = side.querySelector('nav.nav');
@@ -187,7 +187,7 @@
     const side = document.getElementById('side-rail'), own = barOf(routed.view), which = homeOpen ? 'home' : own;
     side.dataset.bar = which;
     const maker = makerOf(which), act = maker?.newLabel ? [maker.newLabel, 'place'] : { chat: ['New chat', 'ask'] }[which];
-    document.getElementById('bar-head').innerHTML = R.barHead({ title: which === 'place' ? TITLES[routed.view] : BAR_TITLE[which], home: quickNav, menu: quickNav ? R.compactMenu({ items: quickItems() }) : '', logo: R.icon('worca-w', 20), action: act ? `<span class="rc-pop">${R.button({ label: act[0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-bar-new': act[1], ...(act[1] === 'place' && maker?.newMenu ? { 'aria-haspopup': 'menu', 'aria-expanded': String(barMenu) } : {}) } })}${barMenu && act[1] === 'place' && maker?.newMenu ? R.compactMenu({ label: act[0], items: maker.newMenu() }) : ''}</span>` : '', hide: isStrip() ? R.button({ label: 'Keep the bar open', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 15), attrs: { 'data-bar-pin': '', title: `Keep the bar open (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) : R.button({ label: 'Hide the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-hide', 15), attrs: { 'data-bar-hide': '', title: `Hide the bar: it opens under the pointer (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) });
+    document.getElementById('bar-head').innerHTML = R.barHead({ title: which === 'place' ? TITLES[routed.view] : BAR_TITLE[which], center: which === 'place' ? routed.view : { chat: 'chat', tasks: 'runs', schedules: 'schedules' }[which] || '', atCenter: location.hash.slice(1) === (which === 'place' ? routed.view : { chat: 'chat', tasks: 'runs', schedules: 'schedules' }[which]), home: quickNav, menu: quickNav ? R.compactMenu({ items: quickItems() }) : '', logo: R.icon('worca-w', 20), action: act ? `<span class="rc-pop">${R.button({ label: act[0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-bar-new': act[1], ...(act[1] === 'place' && maker?.newMenu ? { 'aria-haspopup': 'menu', 'aria-expanded': String(barMenu) } : {}) } })}${barMenu && act[1] === 'place' && maker?.newMenu ? R.compactMenu({ label: act[0], items: maker.newMenu() }) : ''}</span>` : '', hide: isStrip() ? R.button({ label: 'Keep the bar open', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 15), attrs: { 'data-bar-pin': '', title: `Keep the bar open (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) : R.button({ label: 'Hide the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-hide', 15), attrs: { 'data-bar-hide': '', title: `Hide the bar: it opens under the pointer (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) });
     barInert();
     // the bar switching places cross-fades: the list that comes in fades in (nav.bar-switch)
     for (const [id, b] of [['bar-chat', 'chat'], ['bar-tasks', 'tasks'], ['bar-schedules', 'schedules'], ['bar-place', 'place'], ['bar-back', 'home']]) {
@@ -347,7 +347,7 @@
       const pick = document.getElementById('case');
       if (pick && arg && (pick.value !== arg || reopen)) { reopen = false; pick.value = arg; pick.dispatchEvent(new Event('change', { bubbles: true })); }
       if (taskChat) window.RailChats?.show(taskChat); else window.RailRunsList?.show();
-      window.RailConversation?.dock(document.getElementById('task-dock'), { kind: 'task', title: RM?.titles?.[arg] || 'this task', chat: taskChat });
+      window.RailConversation?.dock(document.getElementById('task-dock'), { kind: 'task', title: RM?.titles?.[arg] || 'this task', chat: taskChat, warning: R.alertLevel(R.markTone(R.runState(RM.stateOf(arg)))) === 3 });
       drawTaskParts();
       scrollTo(0, 0);
     }
@@ -408,6 +408,7 @@
     if (on('[data-bar-home]')) { quickNav = false; window.RailChats?.home(); homeNext = true; window.RailShell.go('chat'); return; }   /* nav.one-bar: the W opens the features menu, with Chat's home behind it */
     if ((hit = on('[data-menu-pick^="bar-go|"]'))) { quickNav = false; location.hash = hit.dataset.menuPick.split('|')[1]; drawBar(); return; }
     if (on('[data-bar-house]')) { quickNav = !quickNav; drawBar(); return; }
+    if ((hit = on('[data-center-go]'))) { e.preventDefault(); drawer(false); homeOpen = false; quickNav = false; if (location.hash.slice(1) !== hit.dataset.centerGo) location.hash = hit.dataset.centerGo; else drawBar(); return; }   // nav.center-home
     if (quickNav) { quickNav = false; drawBar(); }   /* a page with no list of its own (a locked place): closing the places goes back to Chat */
     if ((hit = on('[data-menu-pick^="bar-new|"]'))) { barMenu = false; drawBar(); makerOf(document.getElementById('side-rail').dataset.bar)?.newPick?.(hit.dataset.menuPick.split('|')[1]); return; }
     if (barMenu && !on('[data-bar-new]')) { barMenu = false; drawBar(); }
@@ -553,7 +554,7 @@
   build();
   setAskW(askW); setBarW(barW);
   for (const t of ['pointerenter', 'pointerleave']) document.getElementById('side-rail').addEventListener(t, barInert);
-  R.watchClickGuard(document); R.watchOrbs(document); R.watchTooltips(document); R.watchMenus(document); R.watchStrips(document); R.watchScrollFades(document); R.watchFolds(document);
+  R.watchClickGuard(document); R.watchOrbs(document); R.watchTooltips(document); R.watchMenus(document); R.watchStrips(document); R.watchScrollFades(document); R.watchFolds(document); R.watchStageAdvance(document);
   // a new person starts in Simple; the mode they pick is remembered (docs/ui-levels.md)
   try { const m = localStorage.getItem('worca-rail.mode'); R.prefs.setMode(R.MODES.includes(m) ? m : 'simple'); } catch { R.prefs.setMode('simple'); }
   applyPrefs(); drawMini();   /* the sidebar drew before the mode was read: it shows only the places this mode has */

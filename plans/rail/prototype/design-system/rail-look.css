@@ -7,7 +7,7 @@
   --canvas-2:light-dark(#FAFAFA,#18181B); --side-bg:light-dark(#FAFAFA,#18181B);   /* ds-ok: the Rail look's table */
   --field:light-dark(#F4F4F5,#1F1F23); --surface:light-dark(#F4F4F5,#1F1F23);   /* ds-ok: the Rail look's table */
   --hover:light-dark(#F0F0F2,#222227); --side-sel-bg:light-dark(#F0F0F2,#26262B);   /* ds-ok: the Rail look's table */
-  --ink:light-dark(#18181B,#EDEDEF); --ink-2:light-dark(#63636B,#A1A1A9); --ink-3:light-dark(#A1A1A9,#6E6E76);   /* ds-ok: the Rail look's table */
+  --ink:light-dark(#18181B,#EDEDEF); --ink-2:light-dark(#63636B,#A1A1A9); --ink-3:light-dark(#A1A1A9,#6E6E76); --advisory:var(--ink);   /* ds-ok: the Rail look's table */
   --line:light-dark(#EEEEF0,#26262B); --line-2:light-dark(#E2E2E6,#35353B);   /* ds-ok: the Rail look's table */
   --float:light-dark(#FFFFFF,#1D1D21); --float-line:light-dark(#EEEEF0,#323238);   /* ds-ok: the Rail look's table */
   /* running is ink, never a colour (look.running-needs-apart): the old working gold and the app's blue map to ink, so no page brings them back */

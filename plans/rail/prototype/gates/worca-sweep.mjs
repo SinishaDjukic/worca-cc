@@ -56,6 +56,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   for (const pc of await p.evaluate(() => [...document.querySelectorAll('#pulse-case option')].map((o) => o.value))) {
     const got = await p.evaluate((v) => { const s = document.getElementById('pulse-case'); s.value = v; s.dispatchEvent(new Event('change', { bubbles: true })); document.querySelector('#runs-root [data-menu="show"]')?.click();
       const hint = document.querySelector('#runs-root [data-pick="show|needs"]')?.textContent.match(/\d+/)?.[0] || '0'; document.querySelector('#runs-root [data-menu="show"]')?.click(); return { list: +hint, badge: window.PulseModel && window.RailWorld.tops().filter((r) => r.section === 'needs' && !r.ticket).length, shown: +(document.querySelector('.pz-pulse-b .badge, .pz-pulse-b [class*="badge"]')?.textContent || 0) }; }, pc);
+    // the bell also holds what Projects adds, so the Runs list's part of it is the store's
     if (got.list !== got.badge) add('the badge and the Runs list disagree', `${pc}: ${JSON.stringify(got)}`);
     checks++;
   }
@@ -143,7 +144,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   const AGREE = () => { const W = window.RailWorld, needy = W.tops().filter((x) => !x.archived && x.section === 'needs'), badge = +(document.querySelector('.pz-pulse-b .topnav-badge')?.textContent || 0);
     const ids = new Set(W.rows().filter((r) => !r.archived && (r.group ? W.raises(r) : W.section(r) === 'needs')).map((r) => r.id)), runsOf = (c) => { const o = []; const w = (t) => { if (t.run) o.push(t.run); (t.after || []).forEach(w); }; (c.tasks || []).forEach(w); return o; };
     const want = window.RailChats.data().chats.filter((c) => !c.archived && runsOf(c).some((id) => ids.has(id))).map((c) => c.id).sort().join(','), g = [...document.querySelectorAll('#bar-chat .list-group')].find((x) => /Needs you/.test(x.textContent.slice(0, 40)));
-    return badge === needy.length && want === (g ? [...g.querySelectorAll('[data-row^="chat:"]')].map((r) => r.dataset.row.slice(5)).sort().join(',') : ''); };
+    return badge === needy.length + (window.RailProjects?.needItems().length || 0) && want === (g ? [...g.querySelectorAll('[data-row^="chat:"]')].map((r) => r.dataset.row.slice(5)).sort().join(',') : ''); };
   if (w > 760 && scheme === 'light') {
     await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(200); await p.evaluate((src) => { window.__agree = new Function(`return (${src})()`); }, AGREE.toString());
     await step('one store: Pulse and the bar agree at the start', () => {}, () => window.__agree());

@@ -19,6 +19,6 @@ export function workflowStory({ steps, loop = null, ways = [], byline = '', attr
   const panels = steps.map((s, i) => `<div class="ws-p${s.check ? ' is-check' : ''}"><div class="ws-n"><span class="ws-k">${i + 1}</span>${esc(s.name)}</div><div class="ws-t">${esc(s.says)}</div>${s.meta ? `<div class="ws-m">${esc(s.meta)}</div>` : ''}</div>`).join('');
   const lo = loop ? Math.min(loop.from, loop.to) : 0, hi = loop ? Math.max(loop.from, loop.to) : 0;
   const arc = loop ? `<div class="ws-loop" style="left:${((lo + 0.5) / n) * 100}%;width:${((hi - lo) / n) * 100}%"><svg viewBox="0 0 100 16" preserveAspectRatio="none" aria-hidden="true"><path d="M100 0 C100 14 0 14 0 0" vector-effect="non-scaling-stroke"/></svg><span>${esc(loop.text)}</span></div>` : '';
-  const how = ways.length ? list({ groups: [{ title: 'How a task goes through it', rows: ways.map((w) => listRow({ title: w.title, meta: w.meta, mark: kindMark({ kind: 'task', tone: w.tone, stage: w.stage ?? 0 }) })) }] }) : '';
+  const how = ways.length ? list({ groups: [{ title: 'How a task goes through it', rows: ways.map((w) => listRow({ title: w.title, meta: w.meta, mark: kindMark({ kind: 'workflow', tone: 'idle', advisory: true }) })) }] }) : '';   // a way through is not a state: one ink, no state's sign (look.one-icon)
   return `<section class="ws"${attrs({ 'aria-label': 'This workflow in plain words', ...a })}><div class="ws-board${loop ? ' has-loop' : ''}" style="--ws-n:${n}">${panels}${arc}</div>${how}${byline ? `<p class="ws-by">${icon('sparkle', 12)} ${esc(byline)}</p>` : ''}</section>`;
 }

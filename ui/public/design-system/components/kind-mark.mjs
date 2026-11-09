@@ -6,6 +6,7 @@ import { icon } from './icons.mjs';
 import { statusLine } from './status-line.mjs';
 import { orbMark } from './orb.mjs';
 import { button, splitButton } from './button.mjs';
+import { trail } from './navigation.mjs';
 
 const STAGES = 5;
 const R = 9, L = 2 * Math.PI * R;
@@ -73,7 +74,7 @@ export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = ST
     for (let k = 0; k < steps; k++) ring += arc(k * (L / 48), L / 48 + 0.15, `color-mix(in srgb, currentColor ${Math.round(30 + 70 * (k + 1) / steps)}%, var(--line-2))`, k);
   }
   const typed = TYPED.has(kind) && !NEEDS_YOU.has(tone);   // a Shaper task or a workflow run says so; only what needs you takes its centre
-  const stated = !keepType && (kind === 'task' || (typed === false && TYPED.has(kind))) ? STATE_GLYPH[tone] : '';   // a task's glyph is its state; a Shaper task or workflow's only when it needs you
+  const stated = !keepType && (kind === 'task' || (kind === 'requirement' && tone !== 'idle') || (typed === false && TYPED.has(kind))) ? STATE_GLYPH[tone] : '';   // a task's glyph is its state; a Shaper task or workflow's only when it needs you
   const centre = stated || (tone === 'fail' && PLACES.has(kind) ? 'alert' : '') || (!noRing && !keepType && !typed && CENTRE[tone]) || own || KINDS[kind] || KINDS.task;   // a project or workspace that stopped says so with the Warning's own sign
   const glyph = icon(centre, Math.round((tone === 'merged' ? 16 : stated ? 13 : noRing ? 15 : 11) * size / 20));
   return `<span class="kind-mark is-${tone}${breathe && NEEDS_YOU.has(tone) ? ' is-breathe' : ''}${advisory ? ' is-adv' : ''}${landed ? ' is-landed' : ''}${outline ? ' is-outline' : ''}"${attrs({ style: `--km:${size}px`, title: title || null, role: title ? 'img' : null, 'aria-label': title || null, 'aria-hidden': title ? null : 'true' })}>${ring ? `<svg class="km-ring" width="${size}" height="${size}" viewBox="0 0 20 20" aria-hidden="true">${ring}</svg>` : ''}${glyph}</span>`;
@@ -147,8 +148,8 @@ export function timelineCard({ mark, title, line = '', at = 0 }) {
  * @param {string} [o.logo]     the product's mark (markup); the house icon when none
  * @param {string} [o.hide]     the Hide button's markup
  */
-export function barHead({ title, home = false, menu = '', action = '', logo = '', hide = '' }) {
-  return `<div class="bar-head"><button type="button" class="bar-house"${attrs({ 'data-bar-home': '', title: 'Home', 'aria-label': 'Home' })}>${logo || icon('home', 16)}</button><h2 class="bar-title"><button type="button" class="bar-title-b"${attrs({ 'data-bar-house': '', 'aria-haspopup': 'menu', 'aria-expanded': String(home), title: 'Go to another place' })}>${esc(title)}${icon('chevron', 12)}</button></h2>${menu ? `<span class="rc-pop bar-quick">${menu}</span>` : ''}${action}${hide}</div>`;
+export function barHead({ title, home = false, menu = '', action = '', logo = '', hide = '', center = '', atCenter = false }) {   // center: the word goes to that center's home (nav.center-home); the ▾ stays the quick menu
+  return `<div class="bar-head"><button type="button" class="bar-house"${attrs({ 'data-bar-home': '', title: 'Home', 'aria-label': 'Home' })}>${logo || icon('home', 16)}</button><h2 class="bar-title">${center ? `<button type="button" class="bar-title-b"${attrs({ 'data-center-go': center, 'aria-current': atCenter ? 'page' : null, title: `${title} home` })}>${esc(title)}</button>` : `<span class="bar-title-w">${esc(title)}</span>`}<button type="button" class="bar-title-b bar-chev"${attrs({ 'data-bar-house': '', 'aria-haspopup': 'menu', 'aria-expanded': String(home), 'aria-label': 'Go to another place', title: 'Go to another place' })}>${icon('chevron', 12)}</button></h2>${menu ? `<span class="rc-pop bar-quick">${menu}</span>` : ''}${action}${hide}</div>`;
 }
 
 /**
@@ -260,8 +261,9 @@ export function taskCard({ title, place = '', mark, word, detail = '', action = 
  * @param {string} [o.say]     one line under the title (Nothing needs you)
  * @param {string} [o.tone]    the word's level when it is lit (markTone: act for a Caution)
  */
-export function placeHead({ title, facts = '', mark = '', word = '', why = '', action = '', menu = '', say = '', tone = '' }) {
-  const head = `<div class="place-head"><h1 class="place-title">${esc(title)}</h1>${say ? `<p class="place-say">${esc(say)}</p>` : ''}${facts ? `<div class="convo-head">${facts}</div>` : ''}</div>`;
+export function placeHead({ title, facts = '', mark = '', word = '', why = '', action = '', menu = '', say = '', tone = '', center = null }) {   // center: { label, to, via? }: the crumb to its center's home (nav.center-home)
+  const crumbs = center ? trail({ items: [{ label: center.label, button: true, attrs: { 'data-center-go': center.to } }, ...(center.via || []).map((v) => ({ ...v, button: true })), { label: title, current: true }] }) : '';
+  const head = `${crumbs}<div class="place-head"><h1 class="place-title">${esc(title)}</h1>${say ? `<p class="place-say">${esc(say)}</p>` : ''}${facts ? `<div class="convo-head">${facts}</div>` : ''}</div>`;
   return head + (word ? `<div class="convo-card-line${tone ? ` is-${tone}` : ''}">${mark}<span class="convo-card-w">${esc(word)}${why ? `<span>${esc(why)}</span>` : ''}</span>${action}${menu}</div>` : '');
 }
 
@@ -287,10 +289,11 @@ export function placeHead({ title, facts = '', mark = '', word = '', why = '', a
  * @param {string} [o.line]      markup in Worca's reason's place (RunOutcomes)
  * @param {string} [o.factsHtml] `facts` as markup: numbers that open what they count; kept to one line
  * @param {string} [o.factsTip]  the whole of that line, when it is cut
+ * @param {string} [o.titleHtml] the title as markup: a TextLink when the card has a page to open
  */
-export function pluginCard({ mark, kicker = '', update = '', title, what = '', why = '', facts = '', action, more = '', attrs: a = {}, word = '', tone = '', whatHtml = '', line = '', factsHtml = '', factsTip = '' }) {
+export function pluginCard({ titleHtml = '', mark, kicker = '', update = '', title, what = '', why = '', facts = '', action, more = '', attrs: a = {}, word = '', tone = '', whatHtml = '', line = '', factsHtml = '', factsTip = '' }) {
   const head = `${word ? `<span class="pg-state${tone ? ' is-' + tone : ''}">${esc(word)}</span>${kicker ? ' ' : ''}` : ''}${esc(kicker)}`;
-  return `<article class="pg-card"${attrs(a)}>${mark}<span class="pg-k">${head}${update ? ` · <span class="pg-up">update ${esc(update)}</span>` : ''}</span><span class="pg-t" title="${esc(title)}">${esc(title)}</span><span class="pg-w">${whatHtml || esc(what)}</span>${line ? `<span class="pg-line">${line}</span>` : why ? `<span class="pg-why">${icon('worca-w', 12)}${esc(why)}</span>` : ''}${factsHtml ? `<span class="pg-f is-one"${attrs({ title: factsTip || null })}>${factsHtml}</span>` : facts ? `<span class="pg-f">${esc(facts)}</span>` : ''}<span class="pg-a">${action}${more}</span></article>`;
+  return `<article class="pg-card"${attrs(a)}>${mark}<span class="pg-k">${head}${update ? ` · <span class="pg-up">update ${esc(update)}</span>` : ''}</span><span class="pg-t" title="${esc(title)}">${titleHtml || esc(title)}</span><span class="pg-w">${whatHtml || esc(what)}</span>${line ? `<span class="pg-line">${line}</span>` : why ? `<span class="pg-why">${icon('worca-w', 12)}${esc(why)}</span>` : ''}${factsHtml ? `<span class="pg-f is-one"${attrs({ title: factsTip || null })}>${factsHtml}</span>` : facts ? `<span class="pg-f">${esc(facts)}</span>` : ''}<span class="pg-a">${action}${more}</span></article>`;
 }
 
 /**
@@ -472,13 +475,13 @@ export function stagePart({ label, says = '', open = false, attrs: a = {} }) {
 /** The step a detail names ("Review · step 2 of 3"), for a StageBar: [2, 3], or null. */
 export const stageStep = (detail) => { const m = /step (\d+) of (\d+)/.exec(String(detail || '')); return m ? [+m[1], +m[2]] : null; };
 
-export function stageBar({ labels, stage, tone = 'run', step = null, bare = false }) {   // bare: the line alone, where a stage list under it names them (rail.one-place)
+export function stageBar({ labels, stage, tone = 'run', step = null, bare = false, key = '' }) {   // key: the thing it belongs to, so its advance plays once (motion.stage-advance)   // bare: the line alone, where a stage list under it names them (rail.one-place)
   const n = labels.length, whole = tone === 'ok' || tone === 'done' || tone === 'merged';   // done and merged are ink all along; a failure, a question, a pause only where it is
   const at = (i) => (i / n) * 100, W = 100 / n, live = !whole && stage >= 0 && stage < n;
   const [k, m] = live && step && step[1] > 1 ? step : [0, 0];
   const notches = m ? Array.from({ length: m }, (_, j) => `<i class="sl-step${j < k - 1 ? ' is-done' : j === k - 1 ? ' is-now' : ''}" style="left:calc(${at(stage) + 1.5 + (j * (W - 3)) / m}% + 6px);width:calc(${(W - 3) / m}% - 9px)"></i>`).join('') : '';
   const knots = labels.map((_, i) => `<i class="sl-knot${whole || i < stage ? ' is-done' : i === stage ? ' is-now' : ''}" style="left:${at(i)}%"></i>`).join('');
-  return `<div class="stage-bar is-${tone}" style="--n:${n}"><div class="sl" aria-hidden="true"><i class="sl-base" style="right:${100 - at(n - 1)}%"></i><i class="sl-done${whole ? ' is-whole' : ''}" style="width:${whole ? at(n - 1) : at(Math.max(0, stage))}%"></i>${notches}${knots}</div>${bare ? '' : `<div class="sb-labels">${labels.map((l, i) => (i === stage ? `<b>${esc(l)}${m ? `<small>${k} of ${m}</small>` : ''}</b>` : `<span>${esc(l)}</span>`)).join('')}</div>`}</div>`;
+  return `<div class="stage-bar is-${tone}" style="--n:${n}"${attrs({ 'data-advance': key || null, 'data-stage': key ? String(whole ? n : stage) : null })}><div class="sl" aria-hidden="true"><i class="sl-base" style="right:${100 - at(n - 1)}%"></i><i class="sl-done${whole ? ' is-whole' : ''}" style="width:${whole ? at(n - 1) : at(Math.max(0, stage))}%"></i>${notches}${knots}</div>${bare ? '' : `<div class="sb-labels">${labels.map((l, i) => (i === stage ? `<b>${esc(l)}${m ? `<small>${k} of ${m}</small>` : ''}</b>` : `<span>${esc(l)}</span>`)).join('')}</div>`}</div>`;
 }
 
 /**

@@ -358,7 +358,7 @@ function render() {
   logsGone = v.has.logsGone;
   const a = v.action;
   // The task's controls sit together on the status line: its one action (with ▾), then ⋯ for everything else.
-  const split = a ? R.splitButton({ main: { label: ui.busy && !ui.confirm && !ui.dialog ? R.workingWord(ui.busy.label) : a.label, kind: a.primary && ![1, 2].includes(R.alertLevel(R.markTone({ word: v.word, dot: v.dot, sym: v.sym}))) ? 'primary' : '', icon: svg(a.icon, 14), title: a.offWhy || a.help, attrs: { 'data-key': 'act-main', 'data-label': a.label, disabled: !!a.offWhy || !!ui.busy } },
+  const split = a ? R.splitButton({ main: { label: ui.busy && !ui.confirm && !ui.dialog ? R.workingWord(ui.busy.label) : a.label, kind: a.primary && R.alertLevel(R.markTone(v)) === 3 ? 'primary' : '', icon: svg(a.icon, 14), title: a.offWhy || a.help, attrs: { 'data-key': 'act-main', 'data-label': a.label, disabled: !!a.offWhy || !!ui.busy } },
     moreLabel: a.items.length ? 'More actions' : '', chevron: svg('chevron', 14), open: ui.menu === 'act', menuHtml: menu('act', a.items), moreAttrs: { 'data-menu': 'act', 'data-key': 'menu:act' }, cls: 'rc-action rc-pop is-right' }) : '';
   const action = `<div class="rc-side">${split}<span class="rc-pop is-right">${R.button({ label: 'More for this task', kind: SHELL ? 'quiet' : '', iconOnly: true, title: false, icon: DOTS, attrs: { 'aria-haspopup': 'menu', 'aria-expanded': String(ui.menu === 'more'), 'data-menu': 'more', 'data-key': 'menu:more' } })}${ui.menu === 'groups' ? groupEditorHtml() : menu('more', moreItems(v))}</span></div>`;
   // Many labels and tags, one group: a task already in a feature or chain, or a group page, joins none; a task you
@@ -516,7 +516,7 @@ const AWAY = [{ id: 'away:auto', text: 'As set up', help: 'Follows Settings and 
 function stageBarOf(v) {
   const reach = v.stages.reduce((n, st, i) => (st.cells.some((c) => !/is-next/.test(c)) ? i : n), 0);
   const cells = v.stages[reach]?.cells || [], k = cells.filter((c) => !/is-next/.test(c)).length;   // its steps: those begun, of all
-  return R.stageBar({ labels: v.stages.map((st) => st.label), bare: true, stage: reach, tone: R.markTone(v), step: cells.length > 1 ? [Math.max(1, k), cells.length] : null });   // the stage list right under it names them (rail.one-place)
+  return R.stageBar({ labels: v.stages.map((st) => st.label), bare: true, stage: reach, tone: R.markTone(v), step: cells.length > 1 ? [Math.max(1, k), cells.length] : null, key: `page:${v.title}` });   // the stage list right under it names them (rail.one-place)
 }
 function moreItems(v) {
   const group = !!v.kind; const live = v.bar.stop;
@@ -598,7 +598,7 @@ function done(f, label) {
   if (f.run) { f.run(); toast(f.say); pendingFocus = 'act-main'; }
   else if (f.to) { const was = ui.caseId;
     // a deep link to a state nobody is in: the task on this page joins the store first, so the step moves a row every count reads
-    if (SHELL && !M.titles?.[was]) { const v = M.view(was, ui); window.RailWorld.add({ id: `page-${Date.now().toString(36)}`, case: was, title: v.title, project: v.crumbs[1]?.t || '', detail: v.detail }); }
+    if (SHELL && !M.titles?.[was]) { const v = M.view(was, ui); window.RailWorld.add({ id: `page-${Date.now().toString(36)}`, case: was, title: v.title, project: v.crumbs[1]?.t || '', detail: v.detail, peek: true }); }
     if (SHELL && M.titles?.[was]) { M.titles[f.to] = M.titles[was]; if (M.branches?.[was]) M.branches[f.to] = M.branches[was]; if (M.asks?.[was]) M.asks[f.to] = M.asks[was]; if (M.whys) M.whys[f.to] = null; } goCase(f.to, f); toast(f.say); if (SHELL) document.dispatchEvent(new CustomEvent('rail:task-moved', { detail: { from: was, to: f.to, ask: M.asks?.[was] || '', title: M.titles?.[f.to] || '' } })); }   // on its page or lent to a card in a chat: the card, the bar, Pulse and In view follow
   else { toast(f.say); pendingFocus = pendingFocus || 'act-main'; }
 }
@@ -809,6 +809,7 @@ function goMember(group, i) {
   const m = M.memberAt(group, i, ui);
   Object.assign(ui, { caseId: m.id, run: m, parent: { caseId: group, index: i }, open: null, tab: '', focus: '', menu: '', titleOpen: false });
   pick.value = ui.caseId; pendingFocus = 'crumb:' + (M.view(ui.caseId, ui).crumbs.length - 1);
+  if (/^#run\//.test(location.hash)) location.hash = 'run/' + ui.caseId;   // the address follows the page; the picker already says it, so the shell does not reopen
 }
 function addChip(text, kind) {
   const t = String(text).trim();
@@ -926,7 +927,7 @@ document.addEventListener('click', (e) => {
     }
     else if (d.menuPick.startsWith('pushr:')) { ui.pr.push = d.menuPick.slice(6); ui.menu = ''; pendingFocus = 'menu:pdpush'; }
     else if (d.menuPick.startsWith('baser:')) { ui.pr.remote = d.menuPick.slice(6); ui.menu = ''; pendingFocus = 'menu:pdremote'; }
-    else if (d.menuPick === 'more:try') { const u = ui; u.tryBusy = 'checkout'; u.menu = ''; pendingFocus = 'menu:more'; setTimeout(() => { u.tryBusy = 'setup'; if (ui === u) render(); setTimeout(() => { u.tryBusy = ''; u.copy = true; if (ui === u) { toast('Would check out on this machine and open a local copy'); render(); } }, 500); }, 500); }
+    else if (d.menuPick === 'more:try') { const u = ui; u.tryBusy = 'checkout'; u.menu = 'more'; /* the menu stays open: it says each step, then offers the next */ pendingFocus = 'menu:more'; setTimeout(() => { u.tryBusy = 'setup'; if (ui === u) render(); setTimeout(() => { u.tryBusy = ''; u.copy = true; if (ui === u) { toast('Would check out on this machine and open a local copy'); render(); } }, 500); }, 500); }
     else if (/^try:(start|stop)$/.test(d.menuPick)) { const x = v0().tabData.services[0]; const on = d.menuPick === 'try:start'; ui.services = Object.assign({}, ui.services, { [x.id]: on }); ui.menu = ''; pendingFocus = 'menu:more'; toast((on ? 'Would start ' : 'Would stop ') + x.name + ' on localhost:' + x.port); }
     else if (d.menuPick === 'try:open') { ui.menu = ''; pendingFocus = 'menu:more'; toast('Would open localhost:' + v0().tabData.services[0].port); }
     else if (d.menuPick === 'try:actions') { ui.tab = 'changes'; ui.menu = ''; pendingFocus = 'menu:more'; }
@@ -971,7 +972,7 @@ document.addEventListener('click', (e) => {
     const go = M.view(ui.caseId, ui).crumbs[+d.crumb].go;
     const back = ui.back && ui.back.caseId === go.caseId ? ui.back : { caseId: go.caseId, open: go.open, tab: '' };
     Object.assign(ui, { caseId: back.caseId, run: ui.groupRun && ui.groupRun.id === back.caseId ? ui.groupRun : null, open: back.open, tab: back.tab, parent: null, back: null, menu: '' });
-    pick.value = ui.caseId; pendingFocus = 'open-run';
+    pick.value = ui.caseId; pendingFocus = 'open-run'; if (/^#run\//.test(location.hash)) location.hash = 'run/' + ui.caseId;
   }
   else if (d.stage) { ui.open = d.stage; ui.menu = ''; }
   else if (d.tab) { ui.tab = d.tab; ui.focus = ''; if (t.classList.contains('rc-fig-link')) pendingFocus = 'tab:' + d.tab; }

@@ -1113,7 +1113,9 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 /* Wave 2 Shaping: KindMark and GitMark (kind-mark.mjs): one mark for what it is and how it stands; it breathes while work happens. */
 .kind-mark{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;width:var(--km,20px);height:var(--km,20px);color:var(--ink-2);}   /* ds-ok: a size or count the component sets on itself */
 .kind-mark .km-ring{position:absolute;inset:0;}
-.kind-mark.is-wait,.kind-mark.is-idle,.kind-mark.is-pause,.kind-mark.is-stop,.kind-mark.is-closed,.kind-mark.is-ok,.kind-mark.is-done{color:var(--ink-2);}   /* look.alert-ladder: Normal is off */
+.kind-mark.is-wait,.kind-mark.is-idle,.kind-mark.is-pause,.kind-mark.is-stop,.kind-mark.is-closed,.kind-mark.is-done{color:var(--ink-2);}   /* look.alert-ladder: Normal is off */
+.kind-mark.is-ok{color:var(--advisory);}   /* look.alert-ladder: Advisory, one token on every surface */
+.rc-rail:has(> .kind-mark.is-fail:not(.is-outline)) ~ .rc-word{color:var(--red);} .rc-rail:has(> .kind-mark:is(.is-ask,.is-act)) ~ .rc-word{color:var(--amber);} .rc-rail:has(> .kind-mark:is(.is-ok,.is-merged)) ~ .rc-word{color:var(--advisory);} .rc-rail:has(> .kind-mark:is(.is-run,.is-wait,.is-pause,.is-stop,.is-done,.is-closed,.is-idle)) ~ .rc-word{color:var(--ink-2);}   /* the state word, per the ladder */
 .kind-mark.is-run{color:var(--ink-2);animation:wr-pulse 1.6s ease-in-out infinite;}   /* running: ink; its ring and breath say it works */
 .kind-mark.is-still{animation:none;}   /* a live mark that holds still: its ring says it runs; one breath per tree, three per list */
 .kind-mark.is-ask,.kind-mark.is-act{color:var(--amber);}
@@ -1144,6 +1146,8 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .bar-house{display:grid;place-items:center;flex:none;width:28px;height:28px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);cursor:pointer;}
 .bar-house:hover,.bar-house.is-on{background:var(--field);color:var(--ink);}
 .bar-house:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.bar-title-w{padding:2px 0;} .bar-chev{margin-left:0!important;padding:2px 4px!important;}   /* nav.center-home: the word and the ▾ are two controls */
+.rc-crumbs:has(+ .place-head){margin:0 0 6px;font-size:var(--fs-meta);color:var(--ink-2);} .rc-crumbs span.rc-crumb{color:var(--ink-2);}
 .bar-title{flex:1 1 auto;min-width:0;margin:0;font:600 var(--fs-section)/1.2 var(--sans);letter-spacing:-.01em;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .bar-list .pz-sentence,.bar-list .list-head{font-size:var(--fs-meta);}
 .side-ic{flex:none;color:inherit;}
@@ -1246,7 +1250,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .tl-tick.is-ask i,.tl-tick.is-act i{background:var(--amber);}
 .tl-tick.is-fail i{background:var(--red);}
 .tl-tick.is-run i{background:var(--ink-2);}
-.tl-tick.is-ok i,.tl-tick.is-merged i{background:var(--ink-2);}
+.tl-tick.is-ok i{background:var(--advisory);} .tl-tick.is-merged i{background:var(--ink-2);}
 .tline-card{position:absolute;right:30px;z-index:4;width:max-content;display:flex;gap:8px;align-items:flex-start;max-width:260px;margin-top:-18px;padding:8px 10px;border:1px solid var(--float-line);border-radius:var(--r-md);background:var(--float);box-shadow:var(--shadow-pop);font-size:var(--fs-meta);line-height:1.4;}
 .tline-card b{display:block;font-weight:600;}
 .tline-card span span{color:var(--ink-2);}
@@ -1270,7 +1274,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 }
 .stage-bar{margin-top:10px;color:var(--ink-2);}
 .stage-bar.is-run{color:var(--ink-2);}
-.stage-bar.is-ask,.stage-bar.is-act{color:var(--amber);}.stage-bar.is-fail{color:var(--red);}.stage-bar.is-ok,.stage-bar.is-done,.stage-bar.is-merged{color:var(--ink-2);}.stage-bar.is-pause,.stage-bar.is-stop,.stage-bar.is-closed,.stage-bar.is-wait{color:var(--ink-3);}
+.stage-bar.is-ask,.stage-bar.is-act{color:var(--amber);}.stage-bar.is-fail{color:var(--red);}.stage-bar.is-ok{color:var(--advisory);}.stage-bar.is-ok .sl-knot.is-done{background:var(--advisory);}.stage-bar.is-done,.stage-bar.is-merged{color:var(--ink-2);}.stage-bar.is-pause,.stage-bar.is-stop,.stage-bar.is-closed,.stage-bar.is-wait{color:var(--ink-3);}
 .sb-labels{display:grid;grid-template-columns:repeat(var(--n,5),1fr);gap:4px;}   /* ds-ok: a size or count the component sets on itself */
 /* StageBar as the rail line (look.stage-line): one hairline, a knot a stage, the stage it is on holds its steps; the one now breathes */
 .sl{position:relative;height:14px;}
@@ -1644,6 +1648,15 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .tc-foot{display:flex;gap:6px;}
 .center-way{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
 .center-quiet{margin-top:4px;}
+/* panel.center-shelf */
+.center-shelf{margin:30px 0 0;}
+.center-shelf .pg-shelf-h{margin:0;}
+.center-shelf .pg-shelf-m{margin:4px 0 8px;}
+.center-shelf .center-quiet{margin-top:0;}
+.center-shelf-l{margin-left:6px;font:400 var(--fs-meta)/1 var(--sans);}
+.center-also{display:flex;align-items:center;gap:12px;margin:12px 0 0;padding-top:12px;border-top:1px solid var(--line);font-size:var(--fs-body);color:var(--ink-2);}
+.center-also b{font-weight:500;color:var(--ink);}
+.center-flat{margin-top:14px;}
 .dc-link[data-c-filter]{color:inherit;text-decoration:none;}
 .dc-link[data-c-filter]:hover{text-decoration:underline;text-underline-offset:2px;}
 /* The Legacy approach's forms (form.dialog) */
@@ -1734,8 +1747,8 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
 .ws-k{width:22px;height:22px;border-radius:50%;border:1px solid var(--line-2);display:grid;place-items:center;font:500 var(--fs-meta)/1 var(--sans);color:var(--ink-2);flex:none;}
 .ws-p.is-check .ws-k{border-color:var(--amber-ink);color:var(--amber-ink);}
 .ws-t{font-size:var(--fs-body);line-height:var(--lh-body);overflow-wrap:anywhere;} .ws-m{font-size:var(--fs-meta);color:var(--ink-3);font-variant-numeric:tabular-nums;}
-.ws-loop{position:absolute;bottom:-40px;height:30px;font-size:var(--fs-meta);color:var(--amber-ink);text-align:center;}
-.ws-loop svg{position:absolute;inset:0 0 auto 0;width:100%;height:16px;overflow:visible;} .ws-loop path{fill:none;stroke:var(--amber-ink);stroke-dasharray:2 2;}
+.ws-loop{position:absolute;bottom:-40px;height:30px;font-size:var(--fs-meta);color:var(--ink);text-align:center;}
+.ws-loop svg{position:absolute;inset:0 0 auto 0;width:100%;height:16px;overflow:visible;} .ws-loop path{fill:none;stroke:var(--ink);stroke-dasharray:2 2;}
 .ws-loop span{position:absolute;left:-40%;right:-40%;top:16px;white-space:nowrap;}
 .ws-by{margin:8px 0 0;font-size:var(--fs-meta);color:var(--ink-3);display:flex;gap:6px;align-items:center;}
 @media (max-width:720px){.ws-board{grid-template-columns:1fr;gap:12px;} .ws-p + .ws-p::before{display:none;} .ws-board.has-loop{margin-bottom:14px;} .ws-loop{position:static;height:auto;text-align:left;} .ws-loop svg{display:none;} .ws-loop span{position:static;white-space:normal;}}
@@ -1765,18 +1778,18 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
 .gv-skin.is-view .ncap{display:none;}   /* the story says what each step does; the graph shows how they connect */
 
 /* DraftBar (rail.drafts): a draft on the thing it changes */
-.draft-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;margin:10px 0;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--ink);font-size:var(--fs-meta);}
-.draft-bar b{color:var(--amber-ink);font-weight:600;} .draft-bar span{color:var(--ink-2);} .draft-sp{flex:1;}
+.draft-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;margin:10px 0;border-radius:var(--r-sm);background:var(--field);color:var(--ink);font-size:var(--fs-meta);}   /* an unsaved draft: Advisory, ink (look.alert-ladder) */
+.draft-bar b{color:var(--advisory);font-weight:600;} .draft-bar span{color:var(--ink-2);} .draft-sp{flex:1;}
 .wf-ed-top .draft-bar{margin:0;padding:4px 4px 4px 10px;}
 /* the story's quiet lines readable; dev's graph in Rail's colours: ink wires and dots, the loop in amber */
 .ws-m,.ws-by{color:var(--ink-2);}
 .gv-skin .prow .dot,.gv-skin .prow .dot.md,.gv-skin .prow.wired .dot{background:var(--ink-2);border-color:var(--ink-2);} .gv-skin .ltile{color:var(--ink-2);background:var(--field);}
-.gv-skin .wire.w-md{stroke:var(--ink-3);} .gv-skin .wire.loop{stroke:var(--amber-ink);}
-.gv-skin .chip.am{color:var(--amber-ink);background:var(--amber-bg);font-size:var(--fs-meta);}
+.gv-skin .wire.w-md{stroke:var(--ink-3);} .gv-skin .wire.loop{stroke:var(--ink);}
+.gv-skin .chip.am{color:var(--ink);background:var(--field);font-size:var(--fs-meta);}
 /* the skin over dev's graph (.gv-world): Rail's ink for every port and tile, the loop's word in amber on the card */
 .gv-skin .gv-world .dot.md,.gv-skin .gv-world .prow.wired .dot.md{background:var(--ink-2);border-color:var(--ink-2);}
 .gv-skin .gv-world .ltile[class*="h-"]{background:var(--field);color:var(--ink-2);}
-.gv-skin .gv-world .prow .chip.am{background:none;color:var(--amber-ink);font-weight:600;}
+.gv-skin .gv-world .prow .chip.am{background:none;color:var(--ink);font-weight:600;}
 
 /* panel.open-line: an open toggle draws a gentle hairline from its words to the column's edge */
 .tc-foot:has(> .btn[aria-expanded="true"]),.open-line:has(> .btn[aria-expanded="true"]){display:flex;align-items:center;gap:8px;}

@@ -6,7 +6,7 @@
   const R = window.RailUI;
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const say = (t, undo) => window.RailPulse?.say(t, undo);
-  const WORD = { ok: '', behind: 'Out of sync', diverged: 'Out of sync', missing: 'Folder missing' };
+  const WORD = { ok: '', behind: 'Your copy is older', diverged: 'Out of sync', missing: 'Folder missing' };
   const data = { spaces: [
     { id: 'web-shop', tags: ['team: shop'], labels: ['shop'], title: 'Web shop', home: 'web-shop', runs: 12, scanned: 'yesterday', model: 'Sonnet 5.5 · medium', about: 'A shop front built on a design kit calls a payments service, which calls billing and mails receipts.',
       projects: [['web-app', 'ok'], ['payments-api', 'ok'], ['design-kit', 'ok'], ['email-service', 'ok'], ['billing-api', 'behind']],
@@ -25,7 +25,7 @@
   const live = (w) => { const P = window.RailProjects?.list() || []; w.projects = w.projects.map(([id, st]) => { const p = P.find((x) => x.id === id); return [id, p ? ORIGIN_TO[p.origin] || st : st]; }); return w; };   // one truth: Projects
   const unsure = (l) => l.state === 'auto' && !!SAYS_SURE[l.sure];   // what Worca is certain of or checked is no question, and is drawn solid
   const questions = (w) => w.links.filter(unsure);
-  const running = (ids) => (window.RailChats?.data().chats || []).filter((c) => ids.includes(c.project)).flatMap((c) => c.tasks || []).filter((t) => t.kind !== 'schedule' && ['run', 'ask', 'act'].includes(R.markTone(R.runState(window.RunCardModel.stateOf(t.case))))).length;
+  const running = (ids) => (window.RailChats?.data().chats || []).filter((c) => ids.includes(c.project)).flatMap((c) => c.tasks || []).filter((t) => t.kind !== 'schedule' && R.markTone(R.runState(window.RunCardModel.stateOf(t.case))) === 'run').length;   // running means running; what waits on you is said as such
   const toneOf = (w) => { const s = live(w).projects.map(([, x]) => x); return s.includes('missing') ? 'fail' : s.includes('diverged') || questions(w).length ? 'ask' : 'idle'; };
   const others = (w, id) => data.spaces.filter((x) => x !== w && x.projects.some(([p]) => p === id));
   const n = (k, one, many = `${one}s`) => `${k} ${k === 1 ? one : many}`;
@@ -48,7 +48,7 @@
     if (id === 'delete') { confirm = w; if (current === w.id) redraw(); else go(w.id); }
   }
   function mapOf(w, list) {
-    const nodes = list.map(([p, s]) => { const also = others(w, p)[0], r = running([p]), bits = [s !== 'ok' ? (s === 'behind' ? `Out of sync, ${(window.RailProjects?.list() || []).find((x) => x.id === p)?.behind || ''} behind` : WORD[s]) : '', r ? `${r} running` : '', also ? `Also in ${also.title}` : ''].filter(Boolean);
+    const nodes = list.map(([p, s]) => { const also = others(w, p)[0], r = running([p]), bits = [s !== 'ok' ? WORD[s] : '', r ? `${r} running` : '', also ? `Also in ${also.title}` : ''].filter(Boolean);
       return { id: p, title: p, status: bits[0] || '', tone: s === 'missing' ? 'fail' : s === 'diverged' ? 'ask' : '', attrs: { 'data-pj-go': `${p}@${w.id}`, title: `${p}${bits.length ? ` · ${bits.join(' · ')}` : ''}` } }; });
     return R.workspaceMap({ label: `How ${w.title} connects`, nodes, links: w.links.filter((l) => l.state !== 'rejected').map((l) => ({ from: l.from, to: l.to, word: `${l.how.split(' ')[0]}${unsure(l) ? '?' : ''}`, unsure: unsure(l) })) });
   }
@@ -59,7 +59,7 @@
   function pageHtml(w0) {
     const w = shown(live(w0)), q = questions(w), ids = w.projects.map(([p]) => p);
     const more = R.moreMenu({ id: 'ws-more', label: `More for ${w.title}`, icon: R.icon('more', 16), open: menu === 'ws-more', items: menuOf(w0, false) });
-    const head = R.placeHead({ title: w.title, facts: esc(w.projects.length ? [w.projects.length === 1 ? '1 project' : `${w.projects.length} projects that work together`, ids.reduce((a, p) => a + (window.RailProjects?.spend(p) || 0), 0) ? `$${ids.reduce((a, p) => a + (window.RailProjects?.spend(p) || 0), 0)} this month` : '', running(ids) ? `${running(ids)} running` : ''].filter(Boolean).join(' · ') : 'No projects yet'), mark: R.kindMark({ kind: 'workspace', tone: toneOf(w0) }), word: w0.fresh ? 'New workspace' : q.length ? `${n(q.length, 'question')} for you` : toneOf(w0) === 'idle' ? 'All well' : lines(w0)[0]?.[0] || '', why: '',
+    const head = R.placeHead({ center: { label: 'Projects', to: 'projects' }, title: w.title, facts: esc(w.projects.length ? [w.projects.length === 1 ? '1 project' : `${w.projects.length} projects that work together`, ids.reduce((a, p) => a + (window.RailProjects?.spend(p) || 0), 0) ? `$${ids.reduce((a, p) => a + (window.RailProjects?.spend(p) || 0), 0)} this month` : '', running(ids) ? `${running(ids)} running` : ''].filter(Boolean).join(' · ') : 'No projects yet'), mark: R.kindMark({ kind: 'workspace', tone: toneOf(w0) }), word: w0.fresh ? 'New workspace' : q.length ? `${n(q.length, 'question')} for you` : toneOf(w0) === 'idle' ? 'All well' : lines(w0)[0]?.[0] || '', why: '',
       action: R.button({ label: 'Change projects or links in a chat', kind: q.length ? 'quiet' : '', attrs: { 'data-ws': 'chat', title: 'Worca proposes the change as a card; you apply it' } }) , menu: more });
     const strip = confirm === w0 ? R.confirmStrip({ text: `Delete ${w.title}? Its projects stay; its map and history go.`, yes: 'Delete', danger: true }) : '';
     const draft = w0.draft ? R.draftBar({ changes: w0.draft.changes, fresh: !!w0.fresh, hooks: { save: { 'data-draft-save': '' }, discard: { 'data-draft-discard': '' } } }) : '';
@@ -105,7 +105,7 @@
   }
   if (window.RailFirstRun) data.spaces = [];   // the first run: nothing added yet
   const idOf = (title) => title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-  window.RailSpaces = { list: () => data.spaces, render, boxOf, toneOf, act, syncItem, menu: menuOf, named: (title) => data.spaces.find((w) => w.id === idOf(title) || w.title.toLowerCase() === title.toLowerCase()), hint: (w) => n(w.projects.length, 'project'), rowWord: (w) => (questions(w).length ? n(questions(w).length, 'question') : lines(w)[0]?.[0] && toneOf(w) !== 'idle' ? (toneOf(w) === 'fail' ? 'Folder missing' : 'Out of sync') : ''),
+  window.RailSpaces = { list: () => data.spaces, questions, saysSure: SAYS_SURE, render, boxOf, toneOf, act, syncItem, menu: menuOf, named: (title) => data.spaces.find((w) => w.id === idOf(title) || w.title.toLowerCase() === title.toLowerCase()), hint: (w) => n(w.projects.length, 'project'), rowWord: (w) => (questions(w).length ? n(questions(w).length, 'question') : lines(w)[0]?.[0] && toneOf(w) !== 'idle' ? (toneOf(w) === 'fail' ? 'Folder missing' : 'Out of sync') : ''),
     member: (id) => data.spaces.some((w) => w.projects.some(([p]) => p === id)),
     forget: (id) => { const was = data.spaces.map((w) => [w, w.projects, w.links, w.draft?.projects]), keep = ([p]) => p !== id; for (const w of data.spaces) { w.projects = w.projects.filter(keep); w.links = w.links.filter((l) => l.from !== id && l.to !== id); if (w.draft) w.draft.projects = w.draft.projects.filter(keep); } return () => was.forEach(([w, projects, links, draft]) => { Object.assign(w, { projects, links }); if (w.draft && draft) w.draft.projects = draft; }); },   // a project removed from Worca leaves every workspace; the undo puts it back
     remove: (id) => { data.spaces = data.spaces.filter((w) => w.id !== id); },

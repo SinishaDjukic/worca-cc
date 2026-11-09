@@ -61,6 +61,7 @@ export function fitMenu(m, vw) {
  * @param {() => string[]} o.spec.can    the list's actions, for its keys and its sheet
  * @param {string[]} [o.spec.scopes]     more of the keys' table (Chat's)
  * @param {(rows) => object[]} o.spec.bulk   the selection bar's actions
+ * @param {(rows) => number} [o.spec.count]  how many are selected, in the actions' unit, when a row stands for several (a group's)
  * @param {(id, rows) => void} o.spec.act    what an action does, from a row's ⋯, a key or the bar
  * @param {(row) => void} o.spec.open    what opening a row does
  * @param {(part, value) => void} o.spec.word  a choice in the sentence
@@ -130,7 +131,7 @@ export function listController({ root, spec }) {
       : v.state === 'waiting' ? '' : listState({ state: v.state, noun: spec.noun, retry: { 'data-retry': '' } });
     const strip = s.confirm ? confirmStrip({ text: s.confirm.text, yes: s.confirm.yes, danger: s.confirm.danger, id: `${spec.noun}-strip-t` }) : '';
     // the strip that asks about the selection stays with it, in sight however far the list has scrolled
-    const selection = s.pick.on ? strip + selectionBar({ label: spec.label, count: picked.length, actions: spec.bulk(picked), all: s.top.length ? selectAllState(s.pick, s.top) : undefined }) : '';
+    const selection = s.pick.on ? strip + selectionBar({ label: spec.label, count: spec.count ? spec.count(picked) : picked.length, actions: spec.bulk(picked), all: s.top.length ? selectAllState(s.pick, s.top) : undefined }) : '';
     return (s.pick.on ? '' : strip) + list({ sentence: listSentence({ parts: v.parts, open: s.menu }), tools, groups, empty, selection }) + popHtml() + dialogHtml();
   }
   const picks = () => s.pick.ids.map((k) => s.rows.get(k)).filter(Boolean);

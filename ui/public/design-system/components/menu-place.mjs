@@ -66,7 +66,9 @@ export function watchMenus(doc) {
     for (const m of doc.querySelectorAll('.menu:is([role="menu"], [role="dialog"]):not([data-placed])')) {
       m.dataset.placed = '';
       if (win.getComputedStyle(m).position !== 'absolute') continue;   // a menu in the flow (a panel's own list) is not a pop-up
-      const a = m.parentElement.getBoundingClientRect(), room = roomOf(m, win), h = m.getBoundingClientRect().height;
+      const a = m.parentElement.getBoundingClientRect(), room = roomOf(m, win);
+      if (m.matches('.is-two-cols')) m.style.maxHeight = `${Math.max(room.bottom - EDGE - a.bottom - GAP, a.top - GAP - EDGE - room.top, m.clientHeight)}px`;   // comp.menu-groups: a grouped menu takes the free height before it scrolls
+      const h = m.getBoundingClientRect().height;
       const up = menuUp(a, h, room.bottom, room.top), space = Math.floor(up ? a.top - GAP - EDGE - room.top : room.bottom - EDGE - a.bottom - GAP);
       if (up) { m.classList.add('is-up'); m.style.top = 'auto'; m.style.bottom = `calc(100% + ${GAP}px)`; }
       if (h > space && space > 0) { m.style.maxHeight = `${space}px`; m.style.overflowY = 'auto'; }   // no room either way: it scrolls inside

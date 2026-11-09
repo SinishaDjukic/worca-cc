@@ -35,8 +35,8 @@
   // the one reading of a source you typed: why it cannot be added, or ''
   const addProblem = (v) => (!v ? 'Say which repository or folder first.' : v.length > 200 ? 'That is too long for a repository or a folder.' : !/^(https?:\/\/\S+|[.~]{0,2}\/\S*|(www\.)?github\.com\/[\w.-]+\/[\w.-]+\/?|[\w.-]+\/[\w.-]+)$/.test(v) ? 'Use owner/repo, a GitHub URL or a folder.' : data.markets.some((m) => srcKey(m.url) === srcKey(v)) ? 'That source is already added.' : '');
   const stOf = (p) => (p.update ? { word: 'Update available', tone: 'act', act: `Update to ${p.update}` } : p.installed ? { word: 'Installed', tone: 'ok', act: 'Set it up' } : { word: 'Not installed', tone: 'idle', act: 'Install' });
-  const SHELF_ICON = ['track', 'kind-chat', 'plug', 'kind-workflow'];
-  const SORTS = { used: 'most used', new: 'newest', az: 'A–Z' };
+  const SHELF_ICON = ['track', 'kind-chat', 'sliders', 'kind-workflow'];   // the plug means a plugin, always (look.one-icon)
+  const SORTS = { used: 'most used', new: 'highest version', az: 'A–Z' };   // a plugin has a version and no date: the sort says what it reads
   const shown = {};   // how many of a view's plugins are shown: six, then Show N more
   const SHELVES = [['Bring tasks in', 'Tickets become tasks; the result goes back to the ticket.', ['Task sources']], ['Talk to Worca from', 'Answer what needs you without opening Worca.', ['Chat channels']], ['Give tasks tools', 'MCP servers and models a task can call.', ['MCP servers', 'Models']], ['New agents and workflows', 'Steps and whole flows for your workflows.', ['Agents', 'Workflows', 'Scripts', 'Skills']]];
   const nameOf = (p) => p.name || p.id;
@@ -52,18 +52,27 @@
   const marketOf = (p) => data.markets.find((m) => m.id === p.market)?.name || 'linked';
   const rowOf = (p) => ({ key: `plug:${p.id}`, _p: p, title: nameOf(p), mark: markOf(p), end: p.update ? `Update ${p.update}` : p.installed ? 'Installed' : p.ver, current: p.id === current, tip: `${p.id} ${p.ver}\n${p.kind} · ${marketOf(p)}\n${p.what}`,
     menu: [{ id: 'step', text: stOf(p).act, help: p.installed ? 'Its settings, in Settings › Plugins' : `Adds ${p.adds.join(', ')}` }, { id: 'source', text: 'View its source', help: `${marketOf(p)} · ${data.markets[0].sha}` }] });
+  // Set it up: a plugin that asks for nothing says so; one that asks lands on its own row in Settings › Plugins
+  function setUp(p) {
+    if (!p.asks.length) { say(`${nameOf(p)} is set up: it asks for nothing`); return; }
+    window.addEventListener('hashchange', () => {
+      const row = [...document.querySelectorAll('#route-settings .list-row')].find((r) => r.querySelector('.lr-t')?.textContent.trim() === nameOf(p));
+      if (row) { row.scrollIntoView({ block: 'center' }); row.querySelector('.lr-main')?.focus({ preventScroll: true }); R.land(row); }
+    }, { once: true });
+    window.RailShell.go('settings/plugins');
+  }
   function step(p) {
     if (p.update) { p.ver = p.update; delete p.update; draw(); say(`Updated ${nameOf(p)} to ${p.ver}`); return; }
-    if (p.installed) { window.RailShell.go('settings/plugins'); return; }
+    if (p.installed) { setUp(p); return; }
     form = { k: 'install', id: p.id }; if (current === p.id) draw(); else window.RailShell.go(`marketplace/${p.id}`);
   }
   function pageHtml(p) {
     const st = stOf(p);
     const asking = form?.id === p.id && form.k === 'install';   // the form below holds the one Install
-    const head = R.placeHead({ title: nameOf(p), facts: esc(`${p.kind.replace(/s$/, '')} · ${p.id} ${p.ver}`), mark: markOf(p), word: st.word, why: p.what,
-      action: asking ? '' : R.button({ label: st.act, kind: p.installed && !p.update ? '' : 'primary', attrs: { 'data-mk-step': '' } }),
+    const head = R.placeHead({ center: { label: 'Marketplace', to: 'marketplace' }, title: nameOf(p), facts: esc(`${p.kind.replace(/s$/, '')} · ${p.id} ${p.ver}`), mark: markOf(p), word: st.word, why: p.what,
+      action: asking ? '' : R.button({ label: st.act, attrs: { 'data-mk-step': '' } }),   // no Warning here: outlined (rail.one-action)
       menu: R.moreMenu({ id: 'mk-more', label: `More for ${p.id}`, icon: R.icon('more', 16), open: menu === 'mk-more', items: [{ id: 'source', text: 'View its source', help: 'Would open it on GitHub' }, ...(p.installed ? [{ sep: true }, { id: 'remove', text: 'Remove…', danger: true, help: 'Asks first; says what stops working' }] : [])] }) });
-    const install = form?.id === p.id && form.k === 'install' ? `<div class="card-form">${R.confirmForm({ form: 'install', id: 'mk-install-t', text: `Install ${p.id} ${p.ver}? It adds ${p.adds.map((a) => a.charAt(0).toLowerCase() + a.slice(1)).join(' and ')}${p.asks.length ? `, and asks for ${p.asks.map((a) => a.charAt(0).toLowerCase() + a.slice(1)).join(' and ')}: you set ${p.asks.length > 1 ? 'them' : 'it'} up in Settings after` : ''}.`, body: R.confirmActions({ yes: 'Install' }) })}</div>`
+    const install = form?.id === p.id && form.k === 'install' ? R.confirmForm({ form: 'install', id: 'mk-install-t', text: `Install ${p.id} ${p.ver}? It adds ${p.adds.map((a) => a.charAt(0).toLowerCase() + a.slice(1)).join(' and ')}${p.asks.length ? `, and asks for ${p.asks.map((a) => a.charAt(0).toLowerCase() + a.slice(1)).join(' and ')}: you set ${p.asks.length > 1 ? 'them' : 'it'} up in Settings after` : ''}.`, body: R.confirmActions({ yes: 'Install' }) })
       : form?.id === p.id && form.k === 'remove' ? R.confirmStrip({ text: `Remove ${p.id}? What it adds stops working; its settings and secrets stay until you purge them.`, yes: 'Remove', danger: true }) : '';
     const rows = R.settingsSection({ title: 'What it adds', rows: partsOf(p).map(([kind, name]) => R.settingsRow({ name: esc(kind), sentence: esc(name) })).join('') })
       + R.settingsSection({ title: 'What it asks for', rows: p.asks.length ? p.asks.map((a) => R.settingsRow({ name: /site$/.test(a) ? 'Site' : 'Token', sentence: esc(a.replace(/^(An?|Your) /, '').replace(/ (token|site)$/, '')), end: p.installed ? R.button({ label: 'Set up', kind: 'quiet', attrs: { 'data-mk-setup': '' } }) : '' })).join('') : R.settingsRow({ name: 'Setup', sentence: 'No secrets, nothing to do' }) })
@@ -89,7 +98,7 @@
     const w = wayOf(key); if (!w) return homeHtml();
     const sort = view.sort || 'used', list = w.list.sort((a, b) => (sort === 'az' ? nameOf(a).localeCompare(nameOf(b)) : sort === 'new' ? b.ver.localeCompare(a.ver, undefined, { numeric: true }) : (b.uses || 0) - (a.uses || 0))), n = shown[key] || 6;
     const ups = key === 'updates' && list.length > 1 ? R.button({ label: `Update all ${list.length}`, attrs: { 'data-mk-update-all': '' } }) : '';
-    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ title: w.title, facts: esc(`${list.length} ${list.length === 1 ? 'plugin' : 'plugins'} · ${w.meta}`), ...(ups ? { mark: R.kindMark({ kind: 'plugin', icon: 'refresh', tone: 'act' }), word: `${list.length} to update`, why: 'Each asks for nothing new', action: ups } : {}) })}
+    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ center: { label: 'Marketplace', to: 'marketplace' }, title: w.title, facts: esc(`${list.length} ${list.length === 1 ? 'plugin' : 'plugins'} · ${w.meta}`), ...(ups ? { mark: R.kindMark({ kind: 'plugin', icon: 'refresh', tone: 'act' }), word: `${list.length} to update`, why: 'Each asks for nothing new', action: ups } : {}) })}
       ${list.length > 1 ? `<div class="convo-head">Showing ${R.sentencePicker({ id: 'mk-sort', text: SORTS[sort], items: Object.entries(SORTS).map(([id, text]) => ({ id, text, checked: id === sort })), open: menu === 'mk-sort', chevron: R.icon('chevron', 10) })} first</div>` : ''}
       ${list.length ? `<div class="pg-grid">${list.slice(0, n).map((p) => cardOf(p, w.why)).join('')}</div>${list.length > n ? `<div style="margin:12px 0 0">${R.button({ label: `Show ${list.length - n} more`, kind: 'quiet', attrs: { 'data-mk-more': key } })}</div>` : ''}` : emptyOf(key, w)}
     </div></div></div>`;
@@ -101,7 +110,7 @@
       ...(ups.length ? { mark: R.kindMark({ kind: 'plugin', tone: 'act' }), word: `${ups.length} ${ups.length === 1 ? 'update' : 'updates'}`, why: `${ups.map((p) => `${nameOf(p)} ${p.update}`).join(', ')} asks for nothing new`, ...(ups.length > 1 ? { action: R.button({ label: 'Update all', attrs: { 'data-mk-update-all': '' } }) } : {}) } : {}) })}
       ${shelf('For you', 'Worca suggests these from how you work; each says why.', yours, 'pg-for')}
       ${SHELVES.map(([t, meta, kinds]) => shelf(t, meta, rest.filter((p) => kinds.includes(p.kind)))).join('')}
-      ${R.settingsSection({ title: 'Where plugins come from', rows: m.map((x) => R.settingsRow({ name: x.name, sentence: esc([x.url, `synced ${x.synced}`, x.sha].filter(Boolean).join(' · ')), end: R.button({ label: 'Sync', kind: 'quiet', attrs: { 'data-mk-sync': x.id } }) })).join('') + R.settingsRow({ name: 'Add one', sentence: R.field({ id: 'mk-add', label: 'Repository or folder', quietLabel: true, placeholder: 'owner/repo, a GitHub URL or a folder', value: addVal, error: addErr, attrs: { 'data-mk-add': '' } }), end: R.button({ label: 'Add', attrs: { 'data-mk-addgo': '' } }) }) })}</div></div></div>`;
+      ${R.settingsSection({ title: 'Where plugins come from', rows: m.map((x) => R.settingsRow({ name: x.name, sentence: esc([x.url, `synced ${x.synced}`, x.sha].filter(Boolean).join(' · ')), end: R.button({ label: 'Sync', kind: 'quiet', attrs: { 'data-mk-sync': x.id } }) + (x.id === 'official' ? '' : R.button({ label: 'Remove', kind: 'quiet', attrs: { 'data-mk-unsource': x.id, title: 'Stops looking here; Undo brings it back' } })) })).join('') + R.settingsRow({ name: 'Add one', sentence: R.field({ id: 'mk-add', label: 'Repository or folder', quietLabel: true, placeholder: 'owner/repo, a GitHub URL or a folder', value: addVal, error: addErr, attrs: { 'data-mk-add': '' } }), end: R.button({ label: 'Add', attrs: { 'data-mk-addgo': '' } }) }) })}</div></div></div>`;
   }
   const here = () => (location.hash.slice(1) || '').split('/')[0] === 'marketplace';   // the page area is shared by every place: draw only while this one is open
   function draw() {
@@ -118,13 +127,14 @@
     const way = (key, title, mark, n) => ({ key: `way:${key}`, _way: key, title, mark, end: String(n), current: current === `~${key}`, tip: `${title} · ${n}` });
     ctl = R.listController({ root: bar, spec: { noun: 'plugins', label: 'Selected plugins', view: () => ({ state: 'ready', parts: [],
       sections: [{ id: 'yours', title: 'Yours', noCount: true, rows: [way('updates', 'Updates', R.kindMark({ kind: 'plugin', icon: 'refresh', tone: data.plugins.some((p) => p.update) ? 'act' : 'idle' }), data.plugins.filter((p) => p.update).length), way('installed', 'Installed', R.kindMark({ kind: 'plugin', icon: 'check' }), data.plugins.filter((p) => p.installed).length)] },
-        { id: 'browse', title: 'Browse', noCount: true, rows: [way('for-you', 'For you', R.kindMark({ kind: 'plugin', icon: 'sparkle' }), forYou().length), ...SHELVES.map(([t, , kinds], n) => way(`shelf-${n}`, t, R.kindMark({ kind: 'plugin', icon: SHELF_ICON[n] }), data.plugins.filter((p) => kinds.includes(p.kind) && !forYou().includes(p)).length)), way('all', 'All plugins', R.kindMark({ kind: 'plugin', icon: 'list' }), data.plugins.length)] },
+        { id: 'browse', title: 'Browse', noCount: true, rows: [way('for-you', 'For you', R.kindMark({ kind: 'plugin', icon: 'whoYou' }), forYou().length), ...SHELVES.map(([t, , kinds], n) => way(`shelf-${n}`, t, R.kindMark({ kind: 'plugin', icon: SHELF_ICON[n] }), data.plugins.filter((p) => kinds.includes(p.kind) && !forYou().includes(p)).length)), way('all', 'All plugins', R.kindMark({ kind: 'plugin', icon: 'list' }), data.plugins.length)] },
         { id: 'sources', title: 'Sources', noCount: true, rows: data.markets.map((m) => way(`src-${m.id}`, m.name, R.kindMark({ kind: 'plugin', icon: /^[.~/]/.test(m.url) ? 'folder' : 'brand-github' }), data.plugins.filter((p) => p.market === m.id).length)) }] }),
       can: () => [], bulk: () => [], act: () => {}, open: (r) => window.RailShell.go(`marketplace/~${r._way}`), word: () => false, say, active: () => /^#marketplace/.test(location.hash) } });
     page.addEventListener('click', (e) => {
       if (!here()) return;   /* another place's page is showing */
       const on = (q) => e.target.closest(q); let hit; const p = data.plugins.find((x) => x.id === current);
       if ((hit = on('[data-mk-sync]'))) { const m = data.markets.find((y) => y.id === hit.dataset.mkSync); m.synced = 'just now'; draw(); say(`Synced ${m.name}: ${plugins(countOf(m))}, nothing new`); return; }
+      if ((hit = on('[data-mk-unsource]'))) { const i = data.markets.findIndex((y) => y.id === hit.dataset.mkUnsource), m = data.markets[i]; data.markets.splice(i, 1); draw(); say(`Removed the source ${m.name}`, () => { data.markets.splice(i, 0, m); draw(); }); return; }
       if ((hit = on('[data-mk-goto]'))) { window.RailShell.go(`marketplace/${hit.dataset.mkGoto}`); return; }
       if ((hit = on('[data-mk-more]'))) { shown[hit.dataset.mkMore] = Infinity; draw(); return; }
       if ((hit = on('[data-menu-pick^="mk-sort|"]'))) { view.sort = hit.dataset.menuPick.split('|')[1]; menu = ''; draw(); return; }
@@ -135,7 +145,7 @@
       if (on('[data-mk-addgo]')) { const v = page.querySelector('[data-mk-add]')?.value.trim() || ''; addErr = addProblem(v); addVal = addErr ? v : ''; if (addErr) { draw(); page.querySelector('[data-mk-add]')?.focus(); return; } data.markets.push({ id: `s${data.markets.length}`, name: srcKey(v) === v.toLowerCase() ? v : v.replace(/^(https?:\/\/)?(www\.)?(github\.com\/)?/, '').replace(/\.git$/, '').replace(/\/$/, ''), url: v, branch: 'main', sha: /^[.~/]/.test(v) ? '' : 'a1b2c3d', synced: 'just now' }); const added = data.markets[data.markets.length - 1]; window.RailShell.go(`marketplace/~src-${added.id}`); say(`Added ${added.name}: no plugins from it yet`); return; }
       if (!p || !page.querySelector('#mk-dock')) return;
       if (on('[data-mk-step]')) { step(p); return; }
-      if (on('[data-mk-setup]')) { window.RailShell.go('settings/plugins'); return; }
+      if (on('[data-mk-setup]')) { setUp(p); return; }
       if ((hit = on('[data-confirm]'))) { const yes = hit.dataset.confirm === 'yes', was = form?.k; form = null; if (yes && was === 'install') { setOn(p, true); say(`Installed ${p.id}${p.asks.length ? ': set it up in Settings' : ''}`); } if (yes && was === 'remove') { setOn(p, false); say(`Removed ${p.id}`); } draw(); return; }
       if ((hit = on('[data-menu-pick]'))) { const [, v] = hit.dataset.menuPick.split('|'); menu = ''; if (v === 'remove') form = { k: 'remove', id: p.id }; else say(`Would open ${data.markets[0].url} at ${data.markets[0].sha} on GitHub`); draw(); return; }
       if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }

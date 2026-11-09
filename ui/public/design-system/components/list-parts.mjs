@@ -27,6 +27,11 @@ export function listWord({ id, text, items, tip = '', align = '' }, { open = '',
   return wordPicker({ text, tip, cls: 'is-words', wrapCls: 'pz-pick', chevron: chevron || icon('chevron', 12), open: on, menuHtml: menu, attrs: { 'data-menu': id } });
 }
 
+/** small.names-short: a picker holding names says the first two and how many more: "a, b, +3". */
+export function namesWord(names = [], shown = 2) {
+  return names.length > shown ? `${names.slice(0, shown).join(', ')}, +${names.length - shown}` : names.join(', ');
+}
+
 /**
  * The list's sentence: `Showing [what ▾] from [where ▾] by [grouping ▾]`, each choice in its menu with its count.
  * @param {object} o

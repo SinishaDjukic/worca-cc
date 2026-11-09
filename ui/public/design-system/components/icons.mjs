@@ -67,6 +67,7 @@ export const ICONS = {
   'nav-schedules': '<circle cx="12" cy="12" r="8"></circle>' + P('M12 7.5V12l3 2'),
   'nav-stats': P('M6 20v-7M12 20V4M18 20v-11'),
   'nav-insights': P('M6 20v-7M12 20V4M18 20v-11'),
+  'nav-settings': '<circle cx="12" cy="12" r="3"></circle>' + P('M12 3.5v3M12 17.5v3M3.5 12h3M17.5 12h3M6 6l2 2M16 16l2 2M6 18l2-2M16 8l2-2'),
   'nav-team-metrics': '<circle cx="9" cy="8" r="3"></circle>' + P('M3.5 19.5a5.5 5.5 0 0 1 11 0') + P('M16 5.5a3 3 0 0 1 0 5.5M18 14.5a5.5 5.5 0 0 1 2.5 5'),
   'nav-workflows': '<circle cx="6" cy="12" r="2.2"></circle><circle cx="18" cy="6" r="2.2"></circle><circle cx="18" cy="18" r="2.2"></circle>' + P('M8.2 12H12V6h3.8M12 12v6h3.8'),
   'nav-requirements': P('M6 3.5h9l3 3v14H6z') + P('M9 12h6M9 16h4'),

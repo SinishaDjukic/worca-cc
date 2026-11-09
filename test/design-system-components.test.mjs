@@ -53,6 +53,26 @@ test('compactMenu: choices are radios, danger comes after one rule, help is the 
   assert.equal(items[2].dataset.menuPick, 'Copy link', 'the text when no id');
 });
 
+test('compactMenu: a choice with a mark shows its tick at the end (comp.menu-tick)', () => {
+  const m = dom(C.compactMenu({ items: [{ text: 'a', mark: '<i></i>', checked: true }, { text: 'b', mark: '<i></i>', checked: false }, { text: 'c', checked: true }] }));
+  assert.equal(m.querySelectorAll('.menu-check').length, 1);
+  assert.ok(m.children[0].querySelector('.menu-check svg'));
+});
+
+test('pluginCard: its title can open its page', () => {
+  const c = dom(C.pluginCard({ mark: '', title: 'A<b', titleHtml: C.textLink({ label: 'A', attrs: { 'data-x': '1' } }), action: '' }));
+  assert.ok(c.querySelector('.pg-t > .dc-link[data-x]'));
+  assert.equal(dom(C.pluginCard({ mark: '', title: 'A<b', action: '' })).querySelector('.pg-t').textContent, 'A<b');
+});
+
+test('listController: selected counts in the actions\' unit (list.select-bar)', () => {
+  const d = new JSDOM('<body><div id="r"></div></body>', { pretendToBeVisual: true }).window.document, root = d.getElementById('r');
+  const rows = [{ key: 'g', title: 'g', meta: '' }, { key: 'c', title: 'c', meta: '' }];
+  const ctl = C.listController({ root, spec: { noun: `cnt-${Math.random()}`, label: 'x', can: () => ['menu'], bulk: () => [{ id: 'a', label: 'A', n: 3 }], count: () => 3, act: () => {}, word: () => false, say: () => {}, active: () => true, open: () => {}, view: () => ({ state: 'ready', parts: [], sections: [{ id: 's', title: 'S', rows }] }) } });
+  ctl.state.pick = { on: true, ids: ['g'], last: 'g' }; ctl.paint();
+  assert.match(root.querySelector('.runs-bulk-n').textContent, /^3 selected/);
+});
+
 test('compactMenu: two columns live inside what scrolls (comp.menu-groups)', () => {
   const m = dom(C.compactMenu({ cls: 'pz-menu is-two-cols', items: [{ header: 'One' }, { text: 'a' }] }));
   assert.ok(m.firstElementChild.matches('.menu-cols') && m.querySelector('.menu-cols > .menu-g'));
@@ -913,6 +933,8 @@ test('KindMark: the type until the state matters more; the ring fills by stage; 
   assert.doesNotMatch(C.kindMark({ kind: 'task', tone: 'run', breathe: true }), /is-breathe/, 'only what needs you breathes so');
   assert.match(C.kindMark({ kind: 'task', tone: 'pause' }), /pause/, 'a pause keeps its sign');
   assert.equal(C.partsWord(['ok', 'merged', 'run']), '2 of 3');
+  assert.equal(C.namesWord(['a', 'b']), 'a, b'); assert.equal(C.namesWord(['a', 'b', 'c', 'd', 'e']), 'a, b, +3', 'small.names-short');
+  assert.match(C.barChart({ label: 'x', bars: [{ label: 'a', value: 1, text: '1', off: 'Opens nothing' }], play: true }), /data-off="Opens nothing"[^>]*aria-disabled|aria-disabled[^>]*data-off/, 'look.chart-play: a bar that opens nothing says why');
   assert.doesNotMatch(C.kindMark({ kind: 'event', tone: 'fail' }), /km-ring/, 'an event is a moment, with no progress');
   assert.equal(C.markTone({ word: 'Needs you', sym: 'q' }), 'ask'); assert.equal(C.markTone({ word: 'Needs you', dot: 'is-amber' }), 'ask');
   assert.equal(C.markTone({ word: 'Failed', sym: 'x' }), 'fail'); assert.equal(C.markTone({ word: 'Paused' }), 'pause'); assert.equal(C.markTone({ word: 'Merged' }), 'merged'); assert.equal(C.markTone({ word: 'Working', dot: 'is-peach is-pulse' }), 'run');
@@ -1037,6 +1059,23 @@ test('barHead: the W goes home; the ▾ opens the quick navigation inside the ba
   const h = C.barHead({ title: 'Workflows', home: true, menu: '<div class="menu"></div>' });
   assert.match(h, /data-bar-home/); assert.match(h, /data-bar-house/); assert.match(h, /bar-quick/);
 });
+test('nav.center-home: the title word goes home, the ▾ stays the menu; a page in a center has one crumb to it', () => {
+  const h = dom(C.barHead({ title: 'Projects', center: 'projects' }));
+  assert.equal(h.querySelector('[data-center-go]').textContent, 'Projects'); assert.equal(h.querySelector('[data-bar-house]').textContent, ''); assert.notEqual(h.querySelector('[data-center-go]'), h.querySelector('[data-bar-house]'));
+  assert.equal(dom(C.barHead({ title: 'Home' })).querySelector('[data-center-go]'), null);
+  const p = dom(`<div>${C.placeHead({ title: 'billing-api', center: { label: 'Projects', to: 'projects' } })}</div>`);
+  assert.equal(p.querySelector('.rc-crumbs button[data-center-go="projects"]').textContent, 'Projects'); assert.equal(p.querySelector('.rc-crumbs [aria-current="page"]').textContent, 'billing-api');
+  assert.equal(dom(`<div>${C.placeHead({ title: 'x' })}</div>`).querySelector('.rc-crumbs'), null);
+});
+test('motion.stage-advance: a keyed bar plays once when it reaches a later stage; first sight and reduced motion do not', async () => {
+  const run = async (reduced) => { const w = new JSDOM('<body><div id="r"></div></body>', { pretendToBeVisual: true }).window, r = w.document.getElementById('r'); let n = 0;
+    w.matchMedia = () => ({ matches: reduced }); w.Element.prototype.animate = () => { n++; return {}; };
+    const bar = (stage) => { r.innerHTML = C.stageBar({ labels: ['a', 'b', 'c'], stage, step: stage === 0 ? [2, 2] : null, key: 'k' }); };
+    bar(0); C.watchStageAdvance(w.document); await new Promise((f) => setTimeout(f)); const first = n;
+    bar(1); await new Promise((f) => setTimeout(f)); const after = n; bar(1); await new Promise((f) => setTimeout(f)); return { first, after, again: n }; };
+  const on = await run(false); assert.equal(on.first, 0); assert.ok(on.after > 0); assert.equal(on.again, on.after, 'once per change');
+  assert.equal((await run(true)).after, 0);
+});
 test('watchFolds: opening animates the new part; closing fades a copy that then goes (motion.fold)', () => {
   const w = new JSDOM('<body><div id="r"></div></body>', { pretendToBeVisual: true }).window, r = w.document.getElementById('r'); let open = false; const seen = [];
   w.Element.prototype.getBoundingClientRect = () => ({ height: 40 });
@@ -1151,6 +1190,25 @@ test('runOutcomes: a square per run, oldest first, named the last 7 runs (panel.
   assert.match(c.querySelector('.ro-sqs').getAttribute('title'), /last 7 runs/);
   assert.match(c.textContent, /3 of 4/);
   assert.equal(dom('<div>' + C.runOutcomes({ runs: [], says: 'No runs in 7 days' }) + '</div>').querySelector('.ro-sqs'), null);
+});
+
+test('center parts: a task said one way, a shelf, the line for a shared project (panel.center-shelf)', () => {
+  assert.equal(C.taskClause({ state: 'failed', name: 'N', detail: 'Build · 3 failed' }), 'N failed at Build');
+  assert.ok(C.taskRank('failed') < C.taskRank('question') && C.taskRank('question') < C.taskRank('gate') && C.taskRank('gate') < C.taskRank('ready'));
+  const one = dom(`<div>${C.taskActions([{ id: 'a', title: 'A', state: 'failed' }])}</div>`).querySelector('button');
+  assert.equal(one.textContent.trim(), 'Retry'); assert.match(one.className, /primary/);
+  const two = [...dom(`<div>${C.taskActions([{ id: 'a', title: 'A', short: 'cron', state: 'gate' }, { id: 'b', title: 'B', short: 'pager', state: 'ready' }])}</div>`).querySelectorAll('button')];
+  assert.deepEqual(two.map((b) => b.textContent.trim()), ['Approve cron', 'Merge pager']); assert.ok(two.every((b) => !/primary/.test(b.className)));
+  const s = dom(C.centerShelf({ title: 'Web<b', word: 'Failed', tone: 'fail', link: C.textLink({ label: 'Workspace map' }), cards: '<i class="c"></i>', rest: '<i class="r"></i>' }));
+  assert.equal(s.querySelector('.pg-shelf-h').firstChild.textContent, 'Web<b'); assert.equal(s.querySelector('.pg-state.is-fail').textContent, 'Failed');
+  assert.ok(s.querySelector('.center-shelf-l .dc-link') && s.querySelector('.pg-grid .c') && s.querySelector(':scope > .r'));
+  assert.equal(dom(C.centerShelf({ title: 'x' })).querySelector('.pg-shelf-m'), null);
+  assert.match(dom(C.centerAlso({ mark: '', name: 'billing-api', where: 'Web shop', link: 'Answer there' })).textContent, /billing-api · Also in Web shop · Answer there/);
+  const q = dom(C.quietLine({ n: 1, noun: 'project', names: 'a', hook: { 'data-q': '' } }));
+  assert.match(q.textContent, /1 quiet project/); assert.ok(q.querySelector('[data-q][aria-expanded="false"]'));
+  assert.equal(dom(C.quietLine({ n: 3, noun: 'project', names: 'zed', open: true })).textContent.includes('zed'), false);
+  const c = dom(`<div>${C.centerSentence({ words: 'Showing', open: true, facts: '4 running' })}</div>`);
+  assert.match(c.textContent, /4 running/); assert.doesNotMatch(dom(`<div>${C.centerSentence({ words: 'S', facts: '4 running' })}</div>`).textContent, /4 running/);
 });
 
 test('pluginCard in a center: its state first and in its colour, links in what it says, facts on one line (panel.center)', () => {

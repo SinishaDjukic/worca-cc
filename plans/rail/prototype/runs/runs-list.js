@@ -101,7 +101,7 @@
   function groupRowOf(g, section) {
     const ms = membersOf(g), done = ms.filter((m) => ['merged', 'in-review', 'ready'].includes(R.bulkStateOf(wordOf(m)))).length;
     const needy = ms.find(raises);
-    const state = section === 'needs' && needy && R.sectionOf(R.runState(groupState(g)).word) !== 'needs' ? stateOf(needy) : groupState(g);
+    const state = section === 'needs' && needy && R.sectionOf(R.runState(groupState(g)).word, groupState(g)) !== 'needs' ? stateOf(needy) : groupState(g);
     const why = section === 'needs' && needy ? `Run ${needy.pos || ms.indexOf(needy) + 1} ${wordOf(needy).toLowerCase()}${needy.detail ? ` · ${needy.detail}` : ''}` : R.runState(state).word;
     const kindWord = { feature: 'Feature', chain: 'Chain', user: 'Group' }[g.kind];
     const total = ms.reduce((a, m) => a + (m.cost || 0), 0);
@@ -116,7 +116,7 @@
     const projects = [...new Set(tops().map((t) => t.project || 'No project'))].sort();
     const out = [{ word: 'Showing', id: 'show', text: showOf(view.show).text, tip: 'Which tasks the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.help, checked: view.show === x.id, hint: x.id === 'needs' ? String(+count({ show: 'needs' }) + missedNow().length) : count({ show: x.id }) })) }];
     if (shared()) out.push({ word: 'started by', id: 'person', text: view.person || 'everyone', tip: 'Whose tasks it shows, on a shared sign-in', items: [{ id: '', text: 'everyone', checked: !view.person, hint: count({ person: '' }) }, { sep: true }, ...M.PEOPLE.map((p) => ({ id: p, text: p, checked: view.person === p, hint: count({ person: p }) }))] });
-    out.push({ word: 'from', id: 'from', text: view.from === 'all' ? 'all projects' : view.from, tip: 'Which project they come from', items: [{ id: 'all', text: 'all projects', checked: view.from === 'all', hint: count({ from: 'all' }) }, { sep: true }, ...projects.map((p) => ({ id: p, text: p, checked: view.from === p, hint: count({ from: p }) }))] });
+    if (!view.schedule || view.from !== 'all') out.push({ word: 'from', id: 'from', text: view.from === 'all' ? 'all projects' : view.from, tip: 'Which project they come from', items: [{ id: 'all', text: 'all projects', checked: view.from === 'all', hint: count({ from: 'all' }) }, { sep: true }, ...projects.map((p) => ({ id: p, text: p, checked: view.from === p, hint: count({ from: p }) }))] });
     if (view.workflow) out.push({ word: 'using', id: 'workflow', text: view.workflow, tip: 'Only tasks that ran this workflow', items: [{ id: '', text: 'any workflow', hint: count({ workflow: '' }) }, { sep: true }, { id: view.workflow, text: view.workflow, checked: true, hint: count({}) }] });
     if (view.schedule) out.push({ word: 'from', id: 'schedule', text: view.schedule === 'any' ? 'schedules' : window.RailSchedules?.find(view.schedule)?.title || 'a schedule', tip: 'Only the runs of a schedule', items: [{ id: '', text: 'anything', hint: count({ schedule: '' }) }, { sep: true }, { id: view.schedule, text: view.schedule === 'any' ? 'schedules' : window.RailSchedules?.find(view.schedule)?.title || 'a schedule', checked: true, hint: count({}) }] });
     if (view.range) out.push({ word: 'on', id: 'range', text: view.range.label, tip: 'Only these days', items: [{ id: '', text: 'any time', hint: count({ range: null }) }, { sep: true }, { id: 'keep', text: view.range.label, checked: true, hint: count({}) }] });
@@ -132,7 +132,7 @@
   const EMPTY = { needs: 'Nothing needs you.', running: 'No running tasks.', waiting: 'Nothing is waiting.', finished: 'No finished tasks yet.', ready: 'Nothing is ready to ship.', archived: 'No archived tasks.' };
   // A missed schedule time is not a task (panel.task-truth), but it needs you: its own clock row in Needs you, in the count; never in a day or project's tasks
   const missedNow = () => (view.day || view.range || view.person || view.labels.length || view.workflow || view.schedule ? [] : W.tops().filter((r) => r.missed && (view.from === 'all' || (r.project || 'No project') === view.from)));
-  const missedRow = (r) => { const x = { m: r, key: `missed:${r.id}` }; return { key: x.key, _x: x, pick: false, title: r.title, meta: '', mark: R.kindMark({ kind: 'schedule', tone: 'act', title: r.detail }), end: 'Schedule missed', tip: `${r.title}\n${r.detail}\nA missed time never started: it needs you and is not a task`, menu: null }; };
+  const missedRow = (r) => { const x = { m: r, key: `missed:${r.id}` }; return { key: x.key, _x: x, pick: false, title: r.title, meta: '', mark: R.kindMark({ kind: 'schedule', tone: 'act', title: r.detail }), end: 'Missed', tip: `${r.title}\n${r.detail}\nA missed time never started: it needs you and is not a task`, menu: null }; };
   function sections() {
     const list = tops().filter((t) => passes(t, view));
     const rows = (ts, s) => ts.map((t) => rowOf(t, s));

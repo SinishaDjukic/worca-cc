@@ -37,7 +37,7 @@
     const items = M.FILTERS.filter((d) => sub.src.rows[d] && (d !== 'workspace' || !simple())).flatMap((d) => [{ header: M.DIM[d] }, ...sub.src.rows[d].map((r) => ({ id: `${d}:${r.name}`, text: r.name, checked: st.filter.includes(`${d}:${r.name}`) }))]);
     return [{ id: 'all', text: 'everything', checked: !st.filter.length }, ...items];
   }
-  const filterWord = (st) => (st.filter.length ? st.filter.map((k) => k.slice(k.indexOf(':') + 1)).join(', ') : 'everything');
+  const filterWord = (st) => (st.filter.length ? R.namesWord(st.filter.map((k) => k.slice(k.indexOf(':') + 1))) : 'everything');
   function againsts(sub, st, c) { return ['none', ...(c.P ? ['before'] : []), ...(sub.budget && st.when === 'this month' ? ['budget'] : [])]; }
   function sentence(sub, st, c) {
     const dims = dimsNow(sub, st);
@@ -94,9 +94,11 @@
     const label = `${sub.title} by ${rowAxis ? M.DIM[st.by] : 'day'}, ${c.timeWord}`, hint = !rowAxis && axis.length > 2 && !dragged ? HINT : '', cur = !rowAxis && !sub.den && c.whole && st.when === 'this month' ? axis.length - 1 : -1;   // a day's rate is not a day in progress: no darker bar
     const caption = captionOf(sub, st, c), parts = stacks(sub, st, c) ? partsOf(sub, c) : null;
     const taskField = sub.src.fields.includes('tasks') ? 'tasks' : '';
-    const pointAt = (v, i) => ({ value: v ?? 0, text: v == null ? 'none' : sub.text(v), diff: before ? R.diffWords(v, before[i], sub.text) : '', note: rowAxis && M.TIME.has(st.by) ? (taskField ? `${tasksAt[i]} ${tasksAt[i] === 1 ? 'task' : 'tasks'}` : '') : taskField ? `${tasksAt[i]} ${tasksAt[i] === 1 ? 'task' : 'tasks'}, opens them` : 'Opens its tasks' });
+    const taskWords = (i) => (taskField ? `${tasksAt[i]} ${tasksAt[i] === 1 ? 'task' : 'tasks'}` : ''), reasonOf = () => (sub.team ? "The whole team's numbers: Tasks lists your own" : `Tasks narrow by project, time or status, not by ${byWord(st)}`);
+    const pointAt = (v, i) => { const off = targetOf(sub, st, c, i) ? '' : reasonOf(); return { value: v ?? 0, text: v == null ? 'none' : sub.text(v), diff: before ? R.diffWords(v, before[i], sub.text) : '', off, note: off ? [taskWords(i), off].filter(Boolean).join(' · ') : rowAxis && M.TIME.has(st.by) ? taskWords(i) : taskField ? `${taskWords(i)}, opens them` : 'Opens its tasks' }; };
     const bars = axis.map((l, i) => ({ label: l, ...pointAt(values[i], i) }));
     if (st.as === 'table') {
+      if (!parts && !before) return '';   // the rows below are this table: one table, not the same figures twice
       const when = { id: 'day', label: rowAxis ? `${M.DIM[st.by][0].toUpperCase()}${M.DIM[st.by].slice(1)}` : 'When' }, cell = (i) => (values[i] == null ? 'none' : sub.text(values[i]));
       const columns = parts ? [when, ...parts.map((p, k) => ({ id: `p${k}`, label: p.label, num: true })), { id: 'v', label: 'All', num: true }] : [when, { id: 'v', label: sub.noun, num: true }, ...(before ? [{ id: 'b', label: 'The period before', num: true }, { id: 'd', label: 'Difference', num: true }] : [])];
       return `<div class="in-table">${R.table({ label, columns, rows: axis.map((l, i) => ({ day: l, v: cell(i), ...(parts ? Object.fromEntries(parts.map((p, k) => [`p${k}`, p.texts[i]])) : { b: before?.[i] == null ? '' : sub.text(before[i]), d: bars[i].diff }) })) })}</div>`;
@@ -139,6 +141,7 @@
     if (st.by === 'status' && SHOW_OF[parent || name]) return { show: SHOW_OF[parent || name], ...one, ...within(c) };
     return null;
   }
+  const targetOf = (sub, st, c, i) => (axisIsRows(sub, st) ? tasksOf(c, st, c.rows[i].name) : tasksOf(c, { ...st, by: 'day', then: '' }, c.labels[i]));   // what a bar opens: null when it opens nothing
   const cellsOf = (sub, c, r) => [...(sub.noShare ? [] : [`${r.sharePct}%`]), ...sub.cols.map(([, get]) => get(r, c))];
   const columns = (sub) => [...(sub.noShare ? [] : [{ label: sub.shareLabel || 'Share' }]), ...sub.cols.map(([label], i) => ({ label, narrow: i < (sub.noShare ? 2 : 1) }))];
   function rowsHtml(sub, c) {
@@ -155,10 +158,10 @@
     const scope = st.narrow ? (c.days === 1 ? 'on this day' : `in these ${c.days} days`) : st.when === 'all time' ? 'in all' : st.when;
     const word = sub.wordAlways ? sub.wordAlways(c) : plain ? sub.word(c) : `${sub.text(c.v)} ${scope}`;
     const why = sub.whyAlways ? sub.whyAlways(c) : st.against === 'before' ? M.cmp(c, sub) : plain ? sub.why(c) : '';   // no comparison asked for: none in the headline; sub.why never compares
-    const pace = sub.pace && plain;   // over budget at this pace: a Caution, lit (look.alert-ladder)
-    const head = R.placeHead({ title: views.find((v) => v.id === arg)?.name || sub.title, mark: pace ? R.kindMark({ kind: 'figure', tone: 'act', icon: sub.icon, title: sub.pace }) : R.kindMark({ kind: 'plugin', icon: sub.icon }), tone: pace ? 'act' : '', word: pace ? sub.pace : word, why: pace ? [word, ...why.split(' · ').filter((x) => !/on pace for/i.test(x))].join(' · ') : why, menu: R.moreMenu({ id: 'in-more', label: `More for ${sub.title}`, icon: R.icon('more', 16), open: menu === 'in-more', items: [{ id: 'link', text: 'Copy a link', help: 'To this page, as you narrowed it' }] }) });
+    const pace = sub.pace && plain;   // over budget at this pace: Advisory, in ink (look.alert-ladder)
+    const head = R.placeHead({ center: arg === 'spend' ? null : { label: 'Insights', to: 'insights' }, title: views.find((v) => v.id === arg)?.name || sub.title, mark: pace ? R.kindMark({ kind: 'figure', tone: 'ok', icon: sub.icon, title: sub.pace }) : R.kindMark({ kind: 'plugin', icon: sub.icon }), tone: pace ? 'ok' : '', word: pace ? sub.pace : word, why: pace ? [word, ...why.split(' · ').filter((x) => !/on pace for/i.test(x))].join(' · ') : why, menu: R.moreMenu({ id: 'in-more', label: `More for ${sub.title}`, icon: R.icon('more', 16), open: menu === 'in-more', items: [{ id: 'link', text: 'Copy a link', help: 'To this page, as you narrowed it' }] }) });
     const stands = sub.id === 'why' ? `<p class="in-stands">A small change to try: <b>web-app</b> ${esc(M.STANDS.why.outcome)}</p><p class="in-stands">${esc(M.STANDS.why.because)}</p><div class="in-acts">${R.button({ label: 'Try Opus 5.5 on web-app', attrs: { 'data-in-try': '' } })}</div><p class="wf-ed-m">Try starts a new chat for you to send; nothing changes until you do. You can switch back to Sonnet 5.5 at any time.</p>` : sub.id === 'review' ? `<p class="in-stands">What stands out: <b>web-app</b> ${esc(M.STANDS.review)}</p><div class="in-acts">${R.button({ label: 'Ask why web-app goes back', attrs: { 'data-in-ask': '' } })}</div>` : '';
-    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${sentence(sub, st, c)}${chartHtml(sub, st, c)}${rowsHtml(sub, c)}${stands}${actions(sub, st, c)}</div></div><div class="convo-dock" id="in-dock"></div></div>`;
+    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${sentence(sub, st, c)}${chartHtml(sub, st, c)}${st.as === 'table' && (stacks(sub, st, c) || (st.against === 'before' && !axisIsRows(sub, st))) ? '' : rowsHtml(sub, c)}${stands}${actions(sub, st, c)}</div></div><div class="convo-dock" id="in-dock"></div></div>`;
   }
   const here = () => (location.hash.slice(1) || '').split('/')[0] === 'insights';   // the page area is shared by every place: draw only while this one is open
   function draw() {
@@ -174,7 +177,7 @@
     const scroller = page.querySelector('.convo-scroll'); if (scroller) scroller.scrollTop = scroll;
     const box = page.querySelector('#in-dock [data-composer-t]'); if (box && draft) box.value = draft;
     R.watchChart(page.querySelector('[data-chart]'), {
-      open: (i) => { const f = axisIsRows(sub, st) ? tasksOf(c, st, c.rows[i].name) : tasksOf(c, { ...st, by: 'day', then: '' }, c.labels[i]); if (f) window.RailRunsList.filter(f); },
+      open: (i) => { const f = targetOf(sub, st, c, i); if (f) window.RailRunsList.filter(f); },
       narrow: axisIsRows(sub, st) ? undefined : (a, b) => { const base = st.narrow ? st.narrow[0] : 0; st.narrow = [base + a, base + b]; menu = ''; dragged = true; try { localStorage.setItem(DRAGGED, '1'); } catch { /* remembering is a nicety */ } draw(); },
     });
     if (back) { page.querySelector(`[data-menu="${back}"]`)?.focus({ preventScroll: true }); back = ''; }
@@ -234,9 +237,9 @@
       if (on('[data-in-clear]')) { st.narrow = null; st.custom = false; menu = ''; draw(); return; }
       if (on('[data-in-csv]')) { csv(sub, st); return; }
       if (on('[data-in-save]')) { save(sub, st); return; }
-      if (on('[data-in-try]')) { window.RailConversation?.handOver({ project: 'web-app', about: { kind: 'Project', name: 'web-app' }, text: `Try Opus 5.5 for web-app's coding step for a while. ${M.STANDS.why.because}` }); return; }
+      if (on('[data-in-try]')) { window.RailConversation?.handOver({ project: 'web-app', about: { kind: 'Project', name: 'web-app' }, ph: "Try Opus 5.5 for web-app's coding step?" }); return; }
       if (on('[data-in-ask]')) { window.RailConversation?.handOver({ project: 'web-app', about: { kind: 'Project', name: 'web-app' }, ph: 'Why does review send web-app back so often?' }); return; }
-      if ((hit = on('[data-in-tag]'))) { window.RailConversation?.handOver({ about: { kind: 'Insights', name: sub.title }, text: `Tag the ${hit.dataset.inTag} tasks without a client.` }); return; }
+      if ((hit = on('[data-in-tag]'))) { window.RailConversation?.handOver({ about: { kind: 'Insights', name: [sub.title, st.filter.length ? `of ${filterWord(st)}` : '', M.compute(sub, st).timeWord].filter(Boolean).join(', ') }, ph: `How should the ${hit.dataset.inTag} tasks without a client be tagged?` }); return; }
       if (on('[data-in-default]')) { const top = [...M.SUB.untagged.src.rows.project].sort((a, b) => b.tasks - a.tasks)[0].name; window.RailProjects.editTags(top); say(`${top} has the most untagged tasks`); return; }
       if ((hit = on('[data-in-row]'))) { window.RailRunsList.filter(JSON.parse(hit.dataset.inRow)); return; }
       if ((hit = on('[data-pick]'))) { const t = hit.dataset.pick, at = t.indexOf('|'); choose(t.slice(0, at), t.slice(at + 1)); return; }
@@ -248,6 +251,7 @@
   window.RailPlaces = window.RailPlaces || {};
   window.RailPlaces.insights = {
     sample: 'spend',
+    spendOf: (project) => { stateOf('spend').filter = [`project:${project}`]; stateOf('spend').narrow = null; window.RailShell.go('insights/spend'); },   // a project's $ opens Spend narrowed to it
     search: (q) => [...M.SUBS.filter((s) => !s.team || team()).map((s) => ({ label: s.title, where: `Insights · ${barGroup(s)}`, hash: `insights/${s.id}` })), ...views.map((v) => ({ label: v.name, where: 'Insights · Your views', hash: `insights/${v.id}` }))].filter((x) => x.label.toLowerCase().includes(q)),
     has: (a) => !!ALIAS[a] || !!M.SUB[a] || views.some((v) => v.id === a),
     needs: (a) => { const s = M.SUB[ALIAS[a] || a]; return s?.team && !team() ? { min: 'expert', name: s.title } : null; },   // nav.locked: a Team page's own line, never Spend in its place

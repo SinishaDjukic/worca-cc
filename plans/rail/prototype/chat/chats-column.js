@@ -18,7 +18,7 @@
   const hint = (...k) => R.keyHint(k, R.isMac(window));
   // a chat whose task waits on you stays under Needs you, whatever the chat itself is doing (a member that needs you raises its group)
   // a task that waits on you (a question, a gate, a failure, a pause, a cap) lifts its chat, as it counts in Pulse
-  const NEEDS_TONES = ['ask', 'act', 'fail', 'pause'];
+  const NEEDS_TONES = ['ask', 'act', 'fail'];
   // the store says what waits on you (Pulse reads the same): a task needs you by its section; a slice that is only ready ships with its feature
   const W = window.RailWorld;
   const waits = (t) => { const r = t.run && W.find(t.run); if (r) return !r.archived && W.section(r) === 'needs'; return !!t.case && t.case !== 'scheduled' && NEEDS_TONES.includes(R.markTone(R.runState(window.RunCardModel.stateOf(t.case)))); };
@@ -91,12 +91,12 @@
       const g = foldGroups && c.group ? data.groups.find((x) => x.id === c.group) : null;
       if (!g) { out.push({ row: chatRow(c, false), c }); continue; }
       if (placed.has(g.id)) continue; placed.add(g.id);
-      out.push({ row: groupRowOf(g, sorted(list.filter((m) => m.group === g.id))), c: list.filter((m) => m.group === g.id).sort((a, b) => ({ needs: 0, running: 1, recent: 2 }[sectionOfChat(a)] - { needs: 0, running: 1, recent: 2 }[sectionOfChat(b)]))[0] });
+      out.push({ row: groupRowOf(g, sorted(list.filter((m) => m.group === g.id))), c: list.filter((m) => m.group === g.id).sort(KEYS.activity).sort((a, b) => ({ needs: 0, running: 1, recent: 2 }[sectionOfChat(a)] - { needs: 0, running: 1, recent: 2 }[sectionOfChat(b)]))[0] });
     }
     return out;
   }
   function sections() {
-    const list = sorted(data.chats.filter((c) => passes(c, view)));
+    const cut = sorted(data.chats.filter((c) => passes(c, view))), list = view.show === 'needs' ? rankNeeds(cut) : cut;   // Needs you filtered is still highest level first (look.alert-ladder)
     // what needs you leads whichever way the list is cut
     const needsFirst = view.show === 'all' ? list.filter((c) => sectionOfChat(c) === 'needs') : [], later = list.filter((c) => !needsFirst.includes(c));
     const needsHead = needsFirst.length ? [{ id: 'needs', title: NEEDS(), rows: rankNeeds(needsFirst).map((c) => chatRow(c, false)) }] : [];
@@ -209,9 +209,9 @@
     noun: 'chats', label: 'Selected chats', scopes: ['chat'],
     view: () => ({ state: listCase === 'loading' ? (ctl?.state.waited ? 'loading' : 'waiting') : ['offline', 'failed'].includes(listCase) ? listCase : 'ready', parts: parts(),
       tools: [{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick chats to act on several at once' }, R.resetViewTool({ changed: JSON.stringify({ show: view.show, from: view.from, by: view.by, sort: view.sort }) !== JSON.stringify({ show: FRESH.show, from: FRESH.from, by: FRESH.by, sort: FRESH.sort }), to: 'all chats, from all projects, by date' }), { sep: true }, { header: 'Sort' }, ...SORTS.map(([id, text, help]) => ({ id: `sort:${id}`, text, help, checked: view.sort === id })), { sep: true }, { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
-      sections: sections().map((s) => ({ ...s, count: s.rows.reduce((n, r) => n + (r.members ? r.members.length : 1), 0) })) /* one unit: chats, a folded group by its members */, empty: { text: listCase === 'empty' ? 'No chats yet.' : view.show === 'needs' ? 'No chat needs you.' : view.show === 'archived' ? 'No archived chats.' : view.show === 'running' ? 'No chat is running.' : 'No chats yet.', action: listCase === 'empty' ? 'New chat' : '' } }),
+      sections: sections().map((s) => ({ ...s, count: s.rows.reduce((n, r) => n + (r.members ? (s.id === 'needs' ? Math.max(1, r.members.filter((m) => sectionOfChat(m._x.c) === 'needs').length) : r.members.length) : 1), 0) })) /* one unit: chats, a folded group by its members */, empty: { text: listCase === 'empty' ? 'No chats yet.' : view.show === 'needs' ? 'No chat needs you.' : view.show === 'archived' ? 'No archived chats.' : view.show === 'running' ? 'No chat is running.' : 'No chats yet.', action: listCase === 'empty' ? 'New chat' : '' } }),
     can: () => ['menu', 'fold', 'archive', 'rename', 'pin', ...(has('advanced') ? ['group', 'delete'] : [])],
-    bulk: bulkActions, act,
+    bulk: bulkActions, count: (rows) => chatsOf(rows.map((r) => r._x)).length, act,
     open: (r) => { if (r._x.g) { ctl.toggleGroup(r.key); return; } if (r._x.t) { if (r._x.t.kind === 'schedule') window.RailShell.openSchedule(r._x.t.id); else window.RailShell.openTask(r._x.t.case, r._x.c.id, r._x.t.title); return; } openChat(r._x.c.id); },
     word: (id, v) => { view = { ...view, [id]: v }; set(STORE_V, JSON.stringify(view)); return false; },
     tool: (v) => { if (v === 'reset') { view = { ...FRESH }; set(STORE_V, JSON.stringify(view)); say('View reset'); return; } if (v.startsWith('sort:')) { view = { ...view, sort: v.slice(5) }; set(STORE_V, JSON.stringify(view)); } },

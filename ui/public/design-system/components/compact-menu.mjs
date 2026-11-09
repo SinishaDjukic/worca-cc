@@ -2,6 +2,7 @@
 // hint at the right (a count or a shortcut), the help in the tooltip. A header names a group of choices; danger items
 // come last, after one rule.
 import { attrs, esc } from './html.mjs';
+import { icon } from './icons.mjs';
 
 /**
  * @typedef {object} MenuItem
@@ -29,7 +30,7 @@ export function menuItem(it, { pickAttr = 'data-menu-pick', attrs: a = {} } = {}
   return `<button type="button" class="menu-item${it.danger ? ' is-danger' : ''}"${attrs({
     role: choice ? 'menuitemradio' : 'menuitem', 'aria-disabled': it.off ? 'true' : null,
     'aria-checked': choice ? String(!!it.checked) : null, ...(pickAttr ? { [pickAttr]: it.id || it.text } : {}), title: it.help || null, ...a,
-  })}>${it.mark || ''}<span class="mi-l">${esc(it.text)}</span>${it.hint ? `<span class="mi-hint">${esc(it.hint)}</span>` : ''}</button>`;
+  })}>${it.mark || ''}<span class="mi-l">${esc(it.text)}</span>${it.hint ? `<span class="mi-hint">${esc(it.hint)}</span>` : ''}${it.mark && it.checked ? `<span class="menu-check">${icon('check', 12)}</span>` : ''}</button>`;   // comp.menu-tick: a mark takes the choice's place, so the choice is a tick at the end
 }
 
 /**

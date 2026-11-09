@@ -3,6 +3,7 @@
 | Rule | What | Why | Held by |
 |---|---|---|---|
 | `nav.depths` | Place, thing, part, fact, in that order | One model of where you are | by hand |
+| `nav.center-home` | In the bar head a center's title word goes to that center's home and clears the selected row; the ▾ beside it is the quick menu, W is home and the features menu: separate controls. A page opened inside a center has one Trail at its top (Projects › billing-api), its first crumb the center's home (PlaceHead `center`) | One obvious way to the center's start | design-system-components |
 | `nav.one-back` | The trail is the one way back on screen | No second Back beside it | worca-sweep |
 | `nav.full-page` | A thing opens as a full page, never a pane beside its list | The run page needs its width | worca-sweep |
 | `nav.address` | The address holds place, thing, part and fact | Links and the browser's back just work | worca-sweep |

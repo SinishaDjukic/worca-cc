@@ -67,6 +67,8 @@ export function watchScrollbars(doc, { wait = setTimeout, clear = clearTimeout }
       wait(() => { if (s.v?.classList.contains('is-on') || s.h?.classList.contains('is-on')) return; s.v?.remove(); s.h?.remove(); shown.delete(el); }, 200);
     }, SCROLL_SHOW_MS);
   };
+  // a scroller drawn away (a menu closed by its pick) takes its bar with it, at once
+  if (win.MutationObserver && doc.body) new win.MutationObserver(() => { for (const [el, s] of shown) if (el !== root && !el.isConnected) { clear(s.timer); s.v?.remove(); s.h?.remove(); shown.delete(el); } }).observe(doc.body, { subtree: true, childList: true });
   doc.addEventListener('scroll', (e) => { const el = e.target === doc ? root : e.target; if (el?.matches && scrolls(el)) show(el); }, { capture: true, passive: true });
   doc.addEventListener('mousemove', (e) => {
     if (e.target?.classList?.contains('rail-thumb')) return;

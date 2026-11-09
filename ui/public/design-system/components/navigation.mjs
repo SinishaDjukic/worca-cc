@@ -13,10 +13,12 @@ import { button } from './button.mjs';
  * @param {string} [o.label]   aria-label
  */
 export function trail({ items, label = 'Breadcrumb' }) {
-  const step = (it) => (it.button
+  const step = (it) => (it.current
+    ? `<span class="rc-crumb" aria-current="page"${attrs({ title: it.label })}>${esc(it.label)}</span>`
+    : it.button
     ? `<button type="button" class="rc-crumb"${attrs({ ...(it.attrs || {}), title: it.label })}>${esc(it.label)}</button>`
     : `<a class="rc-crumb"${attrs({ href: it.href || '#', ...(it.attrs || {}), title: it.label })}>${esc(it.label)}</a>`);
-  return `<nav class="rc-crumbs"${attrs({ 'aria-label': label })}><ol>${items.map((it, i) => `<li${i === items.length - 1 ? ' class="is-parent"' : ''}>${step(it)}</li>`).join('')}</ol></nav>`;
+  return `<nav class="rc-crumbs"${attrs({ 'aria-label': label })}><ol>${items.map((it, i) => `<li${i === items.filter((x) => !x.current).length - 1 ? ' class="is-parent"' : ''}>${step(it)}</li>`).join('')}</ol></nav>`;
 }
 
 /**

@@ -100,6 +100,43 @@ export function morph(target, html, { motion = true } = {}) {
 }
 
 /**
+ * The stage line's advance (motion.stage-advance): when a keyed StageBar reaches a later stage, the last notch fills, the
+ * notches pulse once, the line travels, the next knot pops once. Once per change, whichever way the page redraws; first
+ * sight never plays; nothing under reduced motion.
+ * @param {Document} doc
+ * @returns {MutationObserver|null}
+ */
+export function watchStageAdvance(doc) {
+  const view = doc.defaultView; if (!view?.MutationObserver) return null;
+  const seen = new Map(), ease = 'cubic-bezier(.2, 0, 0, 1)';
+  const play = (el, from, notches) => {
+    const sl = el.querySelector('.sl'), to = +el.dataset.stage, n = el.querySelectorAll('.sl-knot').length; if (!sl || !sl.animate || !n) return;
+    const ghosts = notches.map((html, i) => { const t = doc.createElement('template'); t.innerHTML = html; const g = t.content.firstChild; g.classList.remove('is-now'); g.classList.add('is-done', 'sl-ghost'); sl.appendChild(g);
+      if (i === notches.length - 1) g.animate([{ opacity: 0.25 }, { opacity: 1 }], { duration: 200, easing: ease });
+      g.animate([{ opacity: 1, transform: 'scaleY(1)' }, { opacity: 1, transform: 'scaleY(1.8)' }, { opacity: 1, transform: 'scaleY(1)' }], { duration: 250, delay: 200, easing: ease });
+      return g; });
+    const line = sl.querySelector('.sl-done');
+    line?.animate([{ width: `${(from / n) * 100}%` }, { width: line.style.width }], { duration: 350, delay: 450, easing: ease, fill: 'backwards' });
+    const end = ghosts.length ? ghosts[0].animate([{ opacity: 1 }, { opacity: 0 }], { duration: 150, delay: 650, fill: 'forwards' }) : null;
+    ghosts.slice(1).forEach((g) => g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 150, delay: 650, fill: 'forwards' }));
+    if (end) end.onfinish = () => ghosts.forEach((g) => g.remove());
+    sl.querySelectorAll('.sl-knot')[Math.min(to, n - 1)]?.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.5)' }, { transform: 'scale(1)' }], { duration: 1000, delay: 750, easing: ease });
+  };
+  const scan = () => {
+    for (const el of doc.querySelectorAll('.stage-bar[data-advance]')) {
+      const key = el.dataset.advance, stage = +el.dataset.stage, was = seen.get(key);
+      const notches = [...el.querySelectorAll('.sl-step:not(.sl-ghost)')].map((x) => x.outerHTML);
+      seen.set(key, { stage, notches });
+      if (was && stage > was.stage && !view.matchMedia?.('(prefers-reduced-motion: reduce)').matches) play(el, was.stage, was.notches);
+    }
+  };
+  const mo = new view.MutationObserver(scan);
+  mo.observe(doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-stage'] });
+  scan();
+  return mo;
+}
+
+/**
  * Lands on a thing a link or a search pointed at: it comes into view and lights once over --motion-flash (Motion:
  * "A link lands on a fact's home"); under reduced motion it is outlined instead, and the page jumps.
  * @param {Element} el

@@ -57,7 +57,11 @@
 .pz-app .nav-fly.acct-menu{left:8px;bottom:64px;max-height:none;}
 .pz-fly{left:calc(8px + 258px + 4px);bottom:64px;width:296px;max-height:none;gap:0;padding:6px;}
 .pz-fly.lvl-menu{width:236px;gap:1px;}
-.pz-subback{display:none;}
+.nav-fly .pz-subback{display:flex;justify-content:flex-start;gap:8px;font-weight:600;}   /* every submenu names itself once: its arrow, then its name beside it */
+.nav-fly .pz-subback::before{display:none;}
+.nav-fly .pz-fly .pz-subback,.pz-fly.nav-fly .pz-subback{display:flex!important;gap:6px!important;}
+.nav-fly .pz-subback > svg{margin:0!important;}
+.nav-fly .pz-subback > span{flex:none!important;margin:0!important;padding:0!important;width:auto!important;}
 /* Appearance sits in the first section with Interface mode (both are how Worca looks), as a row of its own. */
 .acct-menu .msect > .theme-sect{display:flex;align-items:center;gap:10px;height:32px;padding:0 4px 0 9px;}
 .acct-menu .msect > .theme-sect .theme-k{flex:1;}

@@ -51,7 +51,7 @@
   }
   function pageHtml(f) {
     const done = checks(f).filter(([, ok]) => ok).length;
-    const head = R.placeHead({ title: f.title, facts: esc(`${f.id} · ${f.project} · ${f.cost} so far`), mark: mark(f, 20, true), word: st(f).word, why: st(f).why(f),
+    const head = R.placeHead({ center: { label: 'Requirements', to: 'requirements' }, title: f.title, facts: esc(`${f.id} · ${f.project} · ${f.cost} so far`), mark: mark(f, 20, true), word: st(f).word, why: st(f).why(f),
       action: f.state === 'decide' ? '' : R.button({ label: st(f).act, kind: ['turn', 'ready'].includes(f.state) ? 'primary' : '', attrs: { 'data-rq-next': '' } }),   // Decide: the step is the assumptions' own Confirm, below
       menu: R.moreMenu({ id: 'rq-more', label: `More for ${f.id}`, icon: R.icon('more', 16), open: menu === 'rq-more', items: [{ id: 'specs', text: 'Save to specs/', help: `As specs/${f.id.toLowerCase()}.md in ${f.project}` }, { id: 'copy', text: 'Copy as Markdown', help: 'The spec, ready to paste' }, ...(f.state === 'archived' ? [] : [{ sep: true }, { id: 'archive', text: 'Archive', help: 'Out of the way; nothing is deleted' }])] }) });
     const spec = R.settingsSection({ title: 'The spec', meta: 'What a task builds from; change any part by saying so in its chat.', rows: [R.settingsRow({ name: 'Goal', sentence: esc(f.goal || 'Not yet') }), R.settingsRow({ name: 'Who', sentence: esc(f.actors || 'Not yet') }),
@@ -74,10 +74,11 @@
   }
   function wire(b, pg) {
     bar = b; page = pg;
+    const CAUTION = ['turn', 'decide'];
     const shownIn = (proj) => data.features.filter((f) => f.project === proj && SHOWS.find((x) => x.id === view.show).test(f));
     ctl = R.listController({ root: bar, spec: { noun: 'features', label: 'Selected features', view: () => ({ state: 'ready',
       parts: [{ word: 'Showing', id: 'show', text: SHOWS.find((x) => x.id === view.show).text, tip: 'Which features the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, checked: view.show === x.id, hint: String(data.features.filter(x.test).length) })) }],
-      sections: [...new Set(data.features.map((f) => f.project))].map((p) => ({ id: p, title: p, rows: shownIn(p).map(rowOf) })),
+      sections: [{ id: 'needs', title: R.runState('question').word, rows: data.features.filter((f) => CAUTION.includes(f.state) && SHOWS.find((x) => x.id === view.show).test(f)).map(rowOf) }, ...[...new Set(data.features.map((f) => f.project))].map((p) => ({ id: p, title: p, rows: shownIn(p).filter((f) => !CAUTION.includes(f.state)).map(rowOf) }))].filter((s) => s.rows.length).map((s) => (s.id === 'needs' ? { ...s, count: s.rows.length } : s)),   // Caution is counted (look.alert-ladder)
       empty: { text: 'No features here.', action: 'Shape a feature' } }),
       can: () => ['menu'], bulk: () => [], act: (id, rows) => rows[0] && act(id, rows[0]._f), open: (r) => window.RailShell.go(`requirements/${r._f.id}`), word: (id, v) => { view[id] = v; return false; }, say,
       active: () => /^#requirements/.test(location.hash), emptyAct: () => window.RailConversation?.starter('pin:Shaper') } });

@@ -86,14 +86,14 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
 
   // ---- Labs: the registry's flags (src/shared/flags/registry.mjs), but its Flags demo ----
   const FLAGS = [
-    { key: 'commandSummaries', name: 'Command summaries', stage: 'Beta', on: true, say: 'Commands in Chat show as one line saying what they do', why: 'Adds Chat › Summaries, which needs Advanced' },
+    { key: 'commandSummaries', name: 'Command summaries', stage: 'Beta', on: true, say: 'Commands in Chat show as one line saying what they do', why: 'Adds Chat › Summaries, which needs Advanced', min: 'advanced' },
     { key: 'runLabels', name: 'Run labels', stage: 'Experimental', on: false, say: 'Free-word labels on runs, with a Label filter on the Runs list', why: 'Adds Settings › Labels and labels on runs' },
     { key: 'smartRunNaming', name: 'Smart run naming', stage: 'Experimental', on: false, say: 'A quick model suggests the run title and a branch name as you type', why: 'Adds Runs › Naming' },
     { key: 'requirements', name: 'Requirements', stage: 'Experimental', on: false, say: 'Turn an idea into a testable spec through a short interview, before any run', why: 'Adds Requirements to the sidebar' },
     { key: 'runTelemetry', name: 'Run telemetry', stage: 'Experimental', on: false, say: 'Runs record context size, tokens and timing of every model call', why: 'Adds these numbers to a run\'s log', locked: 'Locked by WORCA_FLAGS' },
-    { key: 'gitAutomations', name: 'Git event automations', stage: 'Experimental', on: false, say: 'Start a workflow when an issue or a pull request is opened', why: 'Adds Settings › Automations, which needs Advanced' },
+    { key: 'gitAutomations', name: 'Git event automations', stage: 'Experimental', on: false, say: 'Start a workflow when an issue or a pull request is opened', why: 'Adds Settings › Automations, which needs Advanced', min: 'advanced' },
     { key: 'sessionGroups', name: 'Shared session', stage: 'Experimental', on: false, say: 'Run 2 to 4 steps in a row in one agent session, so they share what they learned', why: 'Changes how a workflow\'s steps run' },
-    { key: 'ticketUpdates', name: 'Ticket updates', stage: 'Experimental', on: false, say: 'A finished run moves its ticket, by a rule per tracker project', why: 'Adds Plugins › Ticket updates, which needs Advanced' },
+    { key: 'ticketUpdates', name: 'Ticket updates', stage: 'Experimental', on: false, say: 'A finished run moves its ticket, by a rule per tracker project', why: 'Adds Plugins › Ticket updates, which needs Advanced', min: 'advanced' },
     { key: 'shapeRequirements', name: 'Requirements first', stage: 'Experimental', on: false, say: 'A medium or large Shaper task first agrees what must be true, then plans', why: 'Adds a step to Shaper' },
   ];
   const flagsChanged = () => FLAGS.filter((f) => !f.locked && window.RailUI.prefs.flag(f.key) !== f.on);
@@ -379,7 +379,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     ] },
 
     experimental: { title: 'Labs', meta: 'Features still being shaped. Each switch applies to everyone using this Worca.', sections: [
-      { title: 'Features', meta: 'Labs features may change, break or disappear in any release.', actions: [
+      { title: 'Features', meta: () => `Labs features may change, break or disappear in any release.${flagsChanged().length ? '' : ' Reset all waits until you change one.'}`, actions: [
         { label: 'Reset all', help: 'Every feature back to its default; asks first', off: () => (flagsChanged().length ? '' : 'Nothing to reset: every feature is at its default'),
           confirm: { text: 'Turn every Labs feature back to its default?', yes: 'Reset all', then: () => { for (const f of flagsChanged()) window.RailUI.prefs.setFlag(f.key, f.on); return 'Labs: back to its defaults'; } } },
       ], rows: [
@@ -578,7 +578,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         ] },
         { name: 'Connectors', say: (sv) => `Uses the **General** set: ${setCount(sv, 'General').replace(' · ', ', ')}`, acts: [{ label: 'Open', go: 'connectors' }] },
       ] },
-      { title: 'Channels', meta: 'Chat plugins that carry notifications and your replies. What each kind of update sends is in Notifications.', actions: [{ label: 'Add channel', page: 'marketplace', say: 'Opens the Marketplace, the store in the sidebar' }], list: [
+      { title: 'Channels', meta: 'Chat plugins that carry notifications and your replies. What each kind of update sends is in Notifications.', actions: [{ label: 'Add channel', go: 'plugins', help: 'A channel is a chat plugin: Plugins installs it and sets it up' }], list: [
         channel('Telegram', 'chTelegram', { on: true, meta: 'Personal bot · last message 2h ago' }),
         channel('Discord', 'chDiscord', { on: true, chatId: '99812', meta: 'Team server · replies count from allowed chats', warn: 'Commands are off: no chat is in Allowed chat IDs, so replies like /approve are ignored' }),
         channel('Slack', 'chSlack', { on: false, meta: 'Workspace bot' }),
@@ -616,7 +616,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         restorePoint('3 days ago', [['architecture.md', 'How the server and the UI are split · 1 Oct · from Chat'], ['conventions.md', 'Naming, commits and tests · 2 Oct · from run #398'], ['old-deploy.md', 'The old deploy steps · 12 Aug · from Chat']]),
       ] },
       { title: 'Proposals', meta: 'Changes runs suggest; nothing changes until you approve.', empty: 'Nothing to approve', list: [
-        { title: 'testing.md', meta: 'New note · from run #412 · 2h ago', mark: 'is-amber', menu: ['Approve', 'Reject'], quick: ['Approve'], open: (r, x) => x.dialog({ title: 'testing.md: the change', view: true, yes: 'Close', note: 'A new note, from run #412: `+ # How we test` · `+ Run the page\'s sweep before the full suite.` · `+ A new case must pass its sweep.`' }), on: { Approve: (r, x) => { x.remove(); x.add({ ...note('testing.md', 'How we test · today · from run #412') }, 'memory/Notes'); x.add({ ...teamNote('testing.md', x.sv.seeded ? 'Shared' : 'Local only', 'Yours', true) }, 'memory/Team memory'); return 'testing.md approved'; } } },
+        { title: 'testing.md', meta: 'New note: How we test · from run #412 · 2h ago', mark: 'is-amber', menu: ['Approve', 'Reject'], quick: ['Approve'], open: (r, x) => x.dialog({ title: 'testing.md: the change', view: true, yes: 'Close', note: 'A new note, from run #412: `+ # How we test` · `+ Run the page\'s sweep before the full suite.` · `+ A new case must pass its sweep.`' }), on: { Approve: (r, x) => { x.remove(); x.add({ ...note('testing.md', 'How we test · today · from run #412') }, 'memory/Notes'); x.add({ ...teamNote('testing.md', x.sv.seeded ? 'Shared' : 'Local only', 'Yours', true) }, 'memory/Team memory'); return 'testing.md approved'; } } },
       ] },
       { title: 'Team memory', listWhen: (sv) => sv.teamLoad !== 'local', rows: [
         { name: 'Load', help: 'Local is team memory off', say: 'Runs and chats load {teamLoad}', picks: { teamLoad: P('local', O(['local', 'this machine\'s notes'], ['team', 'the team\'s notes only'], ['both', 'yours and the team\'s']), 'Team and Both share this project\'s notes on the worca-memory branch') } },

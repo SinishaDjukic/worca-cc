@@ -68,9 +68,9 @@ const actionProject = (a) => C().runs.find((r) => r.title === a.run)?.project ||
 function vitalsShown(show = ui.vitalsShow, from = ui.vitalsFrom) {
   const c = vitalsRuns(), runs = (k) => (show === 'all' || show === k ? c[k].filter((r) => from === 'all' || r.project === from) : []);
   const actions = show === 'all' || show === 'actions' ? runningActions().filter((a) => from === 'all' || actionProject(a) === from) : [];
-  return { needs: runs('needs'), limits: show === 'all' || show === 'limits' ? limitsNow() : [], running: runs('running'), actions, scheduled: runs('scheduled') };
+  return { needs: runs('needs'), places: show === 'all' || show === 'needs' ? placeNeeds().filter((x) => from === 'all' || x.project === from) : [], limits: show === 'all' || show === 'limits' ? limitsNow() : [], running: runs('running'), actions, scheduled: runs('scheduled') };
 }
-const vitalsN = (v) => v.needs.length + v.limits.length + v.running.length + v.actions.length + v.scheduled.length;
+const vitalsN = (v) => v.needs.length + v.places.length + v.limits.length + v.running.length + v.actions.length + v.scheduled.length;
 const vitalsProjects = () => [...new Set(W.tops().map((r) => r.project).filter(Boolean))];
 const vitalsCount = () => vitalsN(vitalsShown());
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
@@ -151,7 +151,9 @@ function vitalsSections() {
     { word: 'Showing', id: 'vitalsShow', text: VITALS_SHOWS.find((x) => x.id === ui.vitalsShow).text, items: VITALS_SHOWS.map((x) => ({ ...x, checked: x.id === ui.vitalsShow, hint: String(vitalsN(vitalsShown(x.id, ui.vitalsFrom))) })), tip: 'Which of Vitals\'s sections the panel shows' },
     { word: 'from', id: 'vitalsFrom', text: ui.vitalsFrom === 'all' ? 'all projects' : ui.vitalsFrom, items: [{ id: 'all', text: 'all projects', checked: ui.vitalsFrom === 'all', hint: String(vitalsN(vitalsShown(ui.vitalsShow, 'all'))) }, { sep: true }].concat(vitalsProjects().map((p) => ({ id: p, text: p, checked: ui.vitalsFrom === p, hint: String(vitalsN(vitalsShown(ui.vitalsShow, p))) }))), tip: 'Which project\'s runs it shows; limits belong to a harness and show for every project' }])}</span></div>`;
   const sec = (h, n, rows, note) => (n ? `<section class="pz-sec"><h3 class="pz-h">${h} <span class="n">${n}${note ? ` · ${note}` : ''}</span></h3><div class="pz-list">${rows}</div></section>` : '');
-  const out = sec(R.runState('question').word, c.needs.length, c.needs.map((r) => (r.missed ? row({ mark: R.kindMark({ kind: 'schedule', tone: 'act', size: 16 }), title: r.title, meta: metaOf(r), time: r.time, key: 'r:' + r.id, tip: 'A missed time never started: it needs you and is not a task' }) : runRow(r, 'Opens the run page at what it asks'))).join(''), c.needs.some((r) => r.missed) ? needsWords().replace(/^\d+ needs? you \((.*)\)$/, '$1') : '')
+  const levelOfRun = (r) => (r.missed ? 2 : R.alertLevel(R.markTone(R.runState(window.RunCardModel.stateOf(r.case)))));
+  const needRows = [...c.needs.map((r) => [levelOfRun(r), r.missed ? row({ mark: R.kindMark({ kind: 'schedule', tone: 'act', size: 16 }), title: r.title, meta: metaOf(r), time: r.time, key: 'r:' + r.id, tip: 'A missed time never started: it needs you and is not a task' }) : runRow(r, 'Opens the run page at what it asks')]), ...c.places.map((x) => [R.alertLevel(x.tone), row({ mark: R.kindMark({ kind: x.kind, tone: x.tone, size: 16 }), title: x.title, meta: x.meta, key: `np:${x.go}`, tip: x.tip })])].sort((a, b) => b[0] - a[0]);   // highest level first (look.alert-ladder)
+  const out = sec(R.runState('question').word, needRows.length, needRows.map(([, h]) => h).join(''), needsWords().includes('(') ? needsWords().replace(/^\d+ needs? you \((.*)\)$/, '$1') : '')
     + sec('Limits', lim.length, lim.map((l, i) => row({ mark: R.kindMark({ kind: 'event', tone: l.tone === 'over' ? 'fail' : 'act', size: 16 }), title: l.title, meta: l.detail, time: l.time, key: 'lim' + i, tip: `${l.tip} · opens Usage and costs` })).join(''))
     + sec('Running', c.running.length, c.running.map((r) => runRow(r, 'Opens the live run')).join(''))
     + sec('Running actions', c.actions.length, c.actions.map((a) => R.pulseRow({ mark: runMark('working'), title: a.run, meta: a.label, time: '', id: 'act:' + a.id, tip: a.go ? `Opens ${a.run}` : 'Its run is gone; it can still be stopped',
@@ -284,7 +286,7 @@ function lookFly() {
 }
 function lvlFly() {
   if (ui.sub !== 'lvl') return '';
-  return R.navFlyout({ label: 'Interface mode', cls: `lvl-menu pz-fly${inCls('sub')}`, body: `${back('Interface mode')}<span class="nav-fly-k pz-beside-only">Interface mode</span>${LEVELS_UI.map(([id, t, h]) => R.menuItem({ text: t, checked: R.prefs.mode() === id, help: h }, { pickAttr: null, attrs: { 'data-level': id } })).join('')}` });
+  return R.navFlyout({ label: 'Interface mode', cls: `lvl-menu pz-fly${inCls('sub')}`, body: `${back('Interface mode')}${LEVELS_UI.map(([id, t, h]) => R.menuItem({ text: t, checked: R.prefs.mode() === id, help: h }, { pickAttr: null, attrs: { 'data-level': id } })).join('')}` });
 }
 
 // ---- New run: where a limit is about to be spent, the one place it warns before starting ----
@@ -618,10 +620,13 @@ function fitSearch() { const m = document.querySelector('.rl-search-res'); if (!
 let pulseSeen = null, pulseShakeTill = 0;   // a redraw during the shake keeps it going, never starts it again
 const pulseNews = (n) => { if (pulseSeen !== null && n > pulseSeen) pulseShakeTill = Date.now() + 700; pulseSeen = n; return Date.now() < pulseShakeTill; };
 // the master light wears the highest level that waits (look.alert-ladder)
-const needsWords = () => { const l = vitalsRuns().needs, m = l.filter((r) => r.missed).length, t = l.length - m; return l.length ? `${plural(l.length, 'needs you', 'need you')}${m ? ` (${[t && plural(t, 'task'), plural(m, 'missed schedule')].filter(Boolean).join(', ')})` : ''}` : ''; };   // panel.task-truth: a missed time needs you, and is not a task
-const masterTone = () => (vitalsRuns().needs.some((r) => R.alertLevel(R.markTone(R.runState(window.RunCardModel.stateOf(r.case)))) === 3) ? 'warn' : 'need');
+// The bell's one number: the rows of Needs you: tasks and missed times from the store, projects and workspace questions from Projects (small-rules)
+const placeNeeds = () => window.RailProjects?.needItems() || [];
+const needsTotal = () => vitalsRuns().needs.length + placeNeeds().length;
+const needsWords = () => { const l = vitalsRuns().needs, m = l.filter((r) => r.missed).length, t = l.length - m, more = placeNeeds(), q = more.filter((x) => x.kind === 'workspace').length, p = more.length - q, n = l.length + more.length; return n ? `${plural(n, 'needs you', 'need you')}${m || more.length ? ` (${[t && plural(t, 'task'), m && plural(m, 'missed schedule'), p && plural(p, 'project'), q && plural(q, 'question')].filter(Boolean).join(', ')})` : ''}` : ''; };   // panel.task-truth: a missed time needs you, and is not a task
+const masterTone = () => (vitalsRuns().needs.some((r) => R.alertLevel(R.markTone(R.runState(window.RunCardModel.stateOf(r.case)))) === 3) || placeNeeds().some((x) => x.tone === 'fail') ? 'warn' : 'need');
 function pulseButton() {
-  const needs = vitalsRuns().needs.length, un = unread().length, run = vitalsRuns().running.length, news = pulseNews(needs + un);
+  const needs = needsTotal(), un = unread().length, run = vitalsRuns().running.length, news = pulseNews(needs + un);
   const badge = needs ? { n: needs, tone: masterTone() } : null;   // normal is off (look.alert-ladder): unread waits in Updates, no count at rest
   const words = [needsWords(), un && `${un} unread`, run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
   return R.topBarAction({ label: 'Pulse', icon: svg('signal', 16), labelCls: 'pz-pulse-l', kind: 'quiet', full: true, cls: 'topnav-act pz-pulse-b', badge, news, title: 'Pulse: ' + words, attrs: { 'data-pop': true, 'aria-haspopup': 'dialog', 'aria-expanded': String(!!ui.pop) } });
@@ -672,7 +677,7 @@ function renderInShell() {
 
 // The tab title's count follows Settings › Notifications › Badge.
 function tabTitle() {
-  const needs = vitalsRuns().needs.length, problems = unread().filter((u) => u.sev === 'problem').length;
+  const needs = needsTotal(), problems = unread().filter((u) => u.sev === 'problem').length;
   const n = ui.s.badge === 'none' ? 0 : ui.s.badge === 'needs' ? needs : needs + problems;
   return n ? `(${n}) Worca` : 'Worca';
 }
@@ -843,6 +848,7 @@ document.addEventListener('click', (e) => {
       else openTarget(u.go, u.title.split(' · ')[1] || u.title, `Opens ${u.to}`);
     }
     else if (key.startsWith('lim')) { const l = limitsNow()[+key.slice(3)]; openUsage(l.p ? pname(l.p) : ''); return; }
+    else if (key.startsWith('np:')) { ui.pop = null; window.RailShell.go(key.slice(3)); }
     else if (key.startsWith('act:')) { const a = C().actions.find((x) => x.id === key.slice(4)), r = a.runId && W.find(a.runId); if (r) openTarget('run/' + r.case, r.title, `Opens ${r.title}`); else toast(`${a.run} is gone; ${a.label} can still be stopped`); }
     else {
       const id = key.slice(2), r = W.tops().find((x) => x.id === id);

@@ -189,7 +189,8 @@
         "opened from ⋯ or ▾",
         "danger last, after a rule",
         "a head and its options are one block; in columns they stay together, two columns at most, and a scrolling menu never ends on a head alone (comp.menu-groups)",
-        "a disabled item never acts, shows no pointer, and says why (comp.menu-off)"
+        "a disabled item never acts, shows no pointer, and says why (comp.menu-off)",
+        "a choice with a mark shows its tick at the row's end (comp.menu-tick)"
       ],
       "example": "Terminal, Copy link, Archive"
     },
@@ -1102,11 +1103,24 @@
       "code": "ui/public/design-system/components/kind-mark.mjs#barHead",
       "kind": "moving",
       "needs": [
-        "the head of the one bar: the house, its title, its one action"
+        "the head of the one bar: the house, its title (a center's home), the ▾ quick menu, its one action"
       ],
       "rules": [
-        "nav.one-bar"
+        "nav.one-bar",
+        "nav.center-home"
       ]
+    },
+    {
+      "name": "WatchStageAdvance",
+      "code": "ui/public/design-system/components/motion.mjs#watchStageAdvance",
+      "kind": "moving",
+      "needs": [
+        "a keyed StageBar reaching a later stage plays its advance once"
+      ],
+      "rules": [
+        "motion.stage-advance"
+      ],
+      "example": "watchStageAdvance(document); stageBar({ labels, stage, key: task.id })"
     },
     {
       "name": "TurnRow",
@@ -1253,12 +1267,58 @@
       ]
     },
     {
+      "name": "CenterShelf",
+      "code": "ui/public/design-system/components/center.mjs#centerShelf",
+      "kind": "showing",
+      "needs": [
+        "a center's cards grouped under a name, with its worst state word and a link to where it lives"
+      ],
+      "rules": [
+        "panel.center-shelf"
+      ]
+    },
+    {
+      "name": "CenterAlso",
+      "code": "ui/public/design-system/components/center.mjs#centerAlso",
+      "kind": "showing",
+      "needs": [
+        "a thing that sits in two groups: a single line in the group that does not hold its card"
+      ],
+      "rules": [
+        "panel.center-shelf"
+      ]
+    },
+    {
+      "name": "CenterSentence",
+      "code": "ui/public/design-system/components/center.mjs#centerSentence",
+      "kind": "showing",
+      "needs": [
+        "a center's Showing sentence with Figures at its end and its totals under it"
+      ],
+      "rules": [
+        "panel.center",
+        "look.figures-on-demand"
+      ]
+    },
+    {
+      "name": "QuietLine",
+      "code": "ui/public/design-system/components/center.mjs#quietLine",
+      "kind": "showing",
+      "needs": [
+        "what has nothing going on, folded into one line that opens"
+      ],
+      "rules": [
+        "panel.center"
+      ]
+    },
+    {
       "name": "PluginCard",
       "code": "ui/public/design-system/components/kind-mark.mjs#pluginCard",
       "kind": "showing",
       "needs": [
         "one plugin in the Marketplace: its brand, what it does, what it adds and asks for, one action",
-        "a center's card: a project, workflow or schedule, its state word in colour, an action that fits (panel.center)"
+        "a center's card: a project, workflow or schedule, its state word in colour, an action that fits (panel.center)",
+        "a card with a page of its own: its title opens it (titleHtml, a TextLink)"
       ],
       "rules": [
         "panel.plugin-card",
@@ -1645,7 +1705,8 @@
       "name": "A list page's behaviour",
       "code": "ui/public/design-system/components/list-page.mjs#listController",
       "needs": [
-        "a list with its sentence, selecting, keys and states"
+        "a list with its sentence, selecting, keys and states",
+        "selected counted in the actions' unit where a row stands for several (spec.count)"
       ],
       "example": "listController({ root, spec })"
     },
@@ -1665,6 +1726,30 @@
         "where a state sorts in a list"
       ],
       "example": "runState('paused'); sectionOf('Paused')"
+    },
+    {
+      "name": "Task on a card",
+      "code": "ui/public/design-system/components/center.mjs#taskClause",
+      "needs": [
+        "what a center's card says about one task, in words"
+      ],
+      "example": "taskClause({ state: 'failed', name: 'Update Node', detail: 'Build · 3 failed' })"
+    },
+    {
+      "name": "Task rank",
+      "code": "ui/public/design-system/components/center.mjs#taskRank",
+      "needs": [
+        "how urgent a task's state is on a center"
+      ],
+      "example": "taskRank('question')"
+    },
+    {
+      "name": "Task actions",
+      "code": "ui/public/design-system/components/center.mjs#taskActions",
+      "needs": [
+        "a card's buttons for the tasks that wait, named when two do"
+      ],
+      "example": "taskActions([{ id: 'r5', title: 'Update Node', state: 'failed' }])"
     },
     {
       "name": "Needs reason",
@@ -1734,6 +1819,17 @@
       ],
       "rules": [
         "list.kind-mark"
+      ]
+    },
+    {
+      "name": "namesWord",
+      "code": "ui/public/design-system/components/list-parts.mjs#namesWord",
+      "kind": "telling",
+      "needs": [
+        "several names in a picker, kept short: a, b, +3"
+      ],
+      "rules": [
+        "small.names-short"
       ]
     },
     {

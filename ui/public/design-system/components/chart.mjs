@@ -28,7 +28,7 @@ export function barChart({ label, bars, current = -1, height = 120, play = false
     // a number that would sit on the limit line goes beside its bar, under the line, so it never reads as the line's value
     const onLine = shown && limit && h <= lineAt && lineAt <= h + 20;
     const beside = onLine ? ` class="bc-v is-beside${i === 0 ? ' is-after' : ''}" style="bottom:${Math.max(0, h - 14)}px"` : ' class="bc-v"';
-    return `<span class="bc-col${i === current ? ' is-now' : ''}" data-i="${i}" tabindex="0"${play ? attrs({ 'data-read': readOf(noted(b, i)) }) : attrs({ title: `${b.label}: ${b.text}` })}><span${beside}>${shown ? esc(b.text) : ''}</span><span class="bc-bar${parts ? ' is-stack' : ''}" style="height:${h}px">${parts ? segs(i) : ''}</span><span class="bc-x">${esc(b.label)}</span></span>`;
+    return `<span class="bc-col${i === current ? ' is-now' : ''}" data-i="${i}" tabindex="0"${b.off ? attrs({ 'data-off': b.off, 'aria-disabled': 'true', style: 'cursor:default' }) : ''}${play ? attrs({ 'data-read': readOf(noted(b, i)) }) : attrs({ title: `${b.label}: ${b.text}` })}><span${beside}>${shown ? esc(b.text) : ''}</span><span class="bc-bar${parts ? ' is-stack' : ''}" style="height:${h}px">${parts ? segs(i) : ''}</span><span class="bc-x">${esc(b.label)}</span></span>`;
   }).join('');
   const table = parts
     ? srTable(label, ['All', ...parts.map((p) => p.label)], bars.map((b, i) => [b.label, b.text, ...parts.map((p) => (p.texts ? p.texts[i] : String(p.values[i])))]))
@@ -77,7 +77,7 @@ export function lineChart({ label, labels, series, limit = null, current = -1, h
   const lim = limit ? `<path class="ch-l is-limit" vector-effect="non-scaling-stroke" d="M0 ${y(limit.value).toFixed(2)}H100"/>` : '';
   const dots = known.map((i) => `<span class="ch-dot${i === current ? ' is-now' : ''}" data-dot="${i}" style="left:${x(i).toFixed(2)}%;top:${y(main[i].value).toFixed(2)}%"></span>`).join('');
   const nums = [...new Set([high, current].filter((i) => i >= 0 && main[i]))].map((i) => `<span class="ch-v" style="left:${x(i).toFixed(2)}%;top:${y(main[i].value).toFixed(2)}%">${esc(main[i].text)}</span>`).join('');
-  const hits = labels.map((l, i) => (main[i] ? `<span class="ch-hit" data-i="${i}" tabindex="0" role="img" aria-label="${esc([l, main[i].text, main[i].diff].filter(Boolean).join(', '))}" data-read="${esc(readOf({ ...main[i], label: l }))}"></span>` : '<span class="ch-none"></span>')).join('');
+  const hits = labels.map((l, i) => (main[i] ? `<span class="ch-hit" data-i="${i}" tabindex="0" role="img"${main[i].off ? attrs({ 'data-off': main[i].off, 'aria-disabled': 'true', style: 'cursor:default' }) : ''} aria-label="${esc([l, main[i].text, main[i].diff].filter(Boolean).join(', '))}" data-read="${esc(readOf({ ...main[i], label: l }))}"></span>` : '<span class="ch-none"></span>')).join('');
   const legend = series.length > 1 || limit ? legendOf([...series.map((s) => ({ cls: s.part != null ? `is-line is-s${s.part}` : s.dashed ? 'is-before' : 'is-main', text: s.label })), ...(limit ? [{ cls: 'is-limit', text: limit.text }] : [])]) : '';
   const rows = labels.flatMap((l, i) => (main[i] ? [[l, ...series.map((s) => (s.points[i] ? s.points[i].text : ''))]] : []));
   return `<figure class="chart" style="--ch-h:${height}px" data-chart data-n="${n}" data-last="${known[known.length - 1] ?? 0}">${capOf(caption)}<div class="ch-read" hidden></div><div class="ch-plot"><svg class="ch-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${lim}${series.slice(1).map(path).join('')}${path(series[0])}</svg>${dots}${nums}<div class="ch-hits" style="--ch-n:${n}">${hits}</div></div>${axisOf(labels)}${legend}${hintOf(hint)}${srTable(label, series.map((s) => s.label), rows)}</figure>`;
@@ -129,6 +129,8 @@ export function watchChart(fig, { open, narrow } = {}) {
     const box = plot.getBoundingClientRect(), mid = ((i + 0.5) / n) * box.width, w = read.offsetWidth;
     read.style.left = `${Math.max(0, Math.min(box.width - w, mid - w / 2))}px`;
   };
+  // look.chart-play: a point that opens nothing says why, as a disabled row does
+  const tryOpen = (i) => { const why = hitAt(i)?.dataset.off; if (why) doc.dispatchEvent(new doc.defaultView.CustomEvent('rail:disabled', { detail: { why } })); else open?.(i); };
   let start = -1, startX = 0, dragging = false, brush = null;
   const paint = (a, b) => {
     if (!brush) { brush = doc.createElement('span'); brush.className = 'ch-brush'; plot.append(brush); }
@@ -145,7 +147,7 @@ export function watchChart(fig, { open, narrow } = {}) {
     if (start < 0) return;
     const a = start, b = at(e.clientX), was = dragging; start = -1; dragging = false; brush?.remove(); brush = null;
     if (was) { if (a !== b) narrow(Math.min(a, b), Math.max(a, b)); return; }
-    if (hitAt(b)) open?.(b);
+    if (hitAt(b)) tryOpen(b);
   });
   plot.addEventListener('pointerleave', () => { if (start < 0) clear(); });
   plot.addEventListener('focusin', (e) => { const h = e.target.closest('[data-i]'); if (h) show(+h.dataset.i); });
@@ -153,7 +155,7 @@ export function watchChart(fig, { open, narrow } = {}) {
   plot.addEventListener('keydown', (e) => {
     const h = e.target.closest('[data-i]'); if (!h) return;
     const i = +h.dataset.i;
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open?.(i); }
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tryOpen(i); }
     if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); hitAt(i + (e.key === 'ArrowRight' ? 1 : -1))?.focus(); }
   });
 }

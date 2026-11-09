@@ -229,8 +229,8 @@
   };
   const SUBS = [
     { id: 'spend', title: 'Spend', group: 'Cost', pace: 'On pace for $1,545, $545 over', icon: 'set-spending', noun: 'AI spend', src: money, num: 'spend', text: usd, forms: SUM, budget: 1000, cols: moneyCols(), share: 'spend',
-      word: (c) => `${usd(c.v)} of $1,000`, why: (c) => (c.st.by === 'client' ? `${usd(noOwner.spend)} has no client` : `Saved about ${usd(c.T.saved)}, 3× what it cost · on pace for $1,545 · ${usd(noOwner.spend)} has no owner`) },
-    { id: 'per-task', title: 'Per task', group: 'Cost', icon: 'dollar', noun: 'cost a task', src: money, num: 'spend', den: 'tasks', text: usd2, forms: RATE, cols: moneyCols(['Per task', (r) => (r.tasks ? usd2(r.spend / r.tasks) : '-')]), share: 'spend',
+      word: (c) => `${usd(c.v)} of $1,000`, why: (c) => (c.st.by === 'client' ? `${usd(noOwner.spend)} has no client` : `Saved about ${usd(c.T.saved)}, 3× what it cost · on pace for $1,545 · ${usd(noOwner.spend)} has no client`) },
+    { id: 'per-task', title: 'Per task', group: 'Cost', icon: 'list', noun: 'cost a task', src: money, num: 'spend', den: 'tasks', text: usd2, forms: RATE, cols: moneyCols(['Per task', (r) => (r.tasks ? usd2(r.spend / r.tasks) : '-')]), share: 'spend',
       word: (c) => `${usd2(c.v)} a task`, why: (c) => `${usd(c.T.spend)} across ${c.T.tasks} tasks` },
     { id: 'why', title: 'Why it cost', group: 'Cost', icon: 'refresh', noun: 'rework and waste', src: waste, by: 'why', num: 'spend', text: usd, forms: SUM, cols: wasteCols, share: 'base',
       wordAlways: (c) => `${usd(c.v)} of ${usd(c.base)} went on rework and waste`, whyAlways: (c) => (c.P && c.st.against === 'before' ? `${pct(c.v / c.base)}, up from ${pct(c.P.spend / c.pbase)} ${c.whole && c.st.when === 'this month' ? 'last month' : 'in the period before'}` : pct(c.v / c.base)) },
@@ -271,7 +271,7 @@
       word: (c) => `${usd(c.v)} of $12,000`, why: () => 'Five people · on pace for $10,725 · pooled budget at 24%' },
     { id: 'untagged', title: 'Missing cost tags', group: 'Team', team: true, icon: 'tag', noun: 'tasks without a client', src: untagged, num: 'tasks', text: (n) => plural(n, 'task'), forms: COUNT, share: 'tasks',
       cols: [['Without a client', (r) => String(r.tasks)], ['AI spend', (r) => usd(r.spend)]],
-      word: (c) => `${c.T.tasks} tasks without a client`, why: (c) => `${usd(c.T.spend)} not counted to anyone` },
+      word: (c) => `${c.T.tasks} tasks without a client`, why: (c) => `${usd(c.T.spend)} has no client` },
   ];
   const SUB = Object.fromEntries(SUBS.map((s) => [s.id, s]));
 
@@ -352,7 +352,7 @@
     const sort = (rows, dim) => (ORDERED.has(dim) ? rows : [...rows].sort((x, y) => y[rowField] - x[rowField]));
     let rows = cut(baseRows(c, st.by), c.T, fields);
     if (c.dayCut && st.narrow) rows.forEach((r) => { const k = c.dayCut.names.indexOf(r.name); if (k >= 0) r[sub.num] = sum(c.dayCut.perDay.map((d) => d[k])); });
-    if (counted && ['project', 'workspace'].includes(st.by)) rows.forEach((r) => { const n = listCount(st.by, r.name, range); if (n == null) return; r.tasks = n; if (r.alone > n) r.alone = n; });
+    if (counted && ['project', 'workspace'].includes(st.by) && st.when === 'this month' && !st.narrow && !st.filter.length) rows.forEach(   /* the plain month is the list; any other stretch cuts the same per-day tasks the bars read, so rows and days add up */(r) => { const n = listCount(st.by, r.name, range); if (n == null) return; r.tasks = n; if (r.alone > n) r.alone = n; });
     rows = sort(rows, st.by);
     c.rowCount = rows.length;
     if (!all && !ordered) rows = topFive(rows, fields);
