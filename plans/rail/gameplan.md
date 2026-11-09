@@ -74,3 +74,7 @@ Chat, with the page you were on attached as a chip you can remove and its questi
 
 8. Very last, after all tests: a dev agent compares the dev branch with the prototype and lists every function dev has that the prototype lacks. Features only the prototype has are fine; Worca builds those later.
 9. Stage line animation (Emil, 9 Nov): when a stage's last notch fills, the notches give one quiet pulse together, then the line travels to the next knot, and that knot gives one small pop for about a second as the new stage begins. Once per change, never looping, none under reduced motion. Rule, component, test, gallery.
+
+## Decided 9 Nov (Emil): fixing stops here
+
+The fix rounds end with the Projects center and the running fixes. Everything still open goes into Worca's implementation prompt rather than more rounds on the prototype: one input (no composer outside Chat), the legacy approach wording, the shared data source, the onboarding redesign, the remaining sweep findings (plans/rail/click-sweep.md) and reviewers' notes. The boss round's bar applies to the implementation. Last step: a dev agent lists what dev has that the prototype lacks; features only the prototype has are fine.
