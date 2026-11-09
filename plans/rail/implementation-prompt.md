@@ -1,6 +1,6 @@
 # Rail: implementation prompt
 
-Build the Rail redesign in the real Worca app, from the prototype on branch `docs/rail-shaping`, behind the one `rail` flag. Work
+Build the Rail redesign in the real Worca app, from the prototype on branch `docs/rail-agreed` (start there; it holds everything), behind the one `rail` flag. Work
 on a feature branch into `dev`, by PR linked to an issue, with no attribution lines. Never merge without the owner's yes.
 
 ## Read first
