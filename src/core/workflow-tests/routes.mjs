@@ -10,6 +10,7 @@ import { readTryOutcome, checkTry } from './result.mjs';
 import { useFingerprint } from './uses.mjs';
 import { dirBytes, freeDiskBytes } from './project-copy.mjs';
 import { listProjects } from '../projects.mjs';
+import { beforeRun } from './before-run.mjs';
 
 const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_VERSIONABLE: 400, NOT_FOUND: 404, BUSY: 409, NOT_READY: 422, NO_DISK: 422 });
 const W = '/api/workflows/:id/tests';
@@ -45,7 +46,9 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
   const runner = createTestRunner({
     ...deps,
     outcomeOf: (pipelineId, o) => readTryOutcome(pipelineId, o),
-    judge: (example, outcome, o = {}) => checkTry(example, outcome, { scriptName, onCommand: o.onCommand }),
+    judge: (example, outcome, o = {}) => checkTry(example, outcome, { scriptName, onCommand: o.onCommand, beforeOf: o.beforeOf }),
+    // 3b (D75): the command on each project example's start point, before the tries (a test may pass its own).
+    beforeRun: deps.beforeRun || ((spec, o) => beforeRun(spec, o)),
     fingerprintOf: (workflowId, use) => useFingerprint(workflowId, use),
     // D62 (replaces D20 and review M9): each example on each version.
     // The runner reads the registry once per start (listProjects) and hands it to both.
@@ -157,7 +160,8 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
       quickCheck: b.quickCheck === true, capUsd: usdOf(b.capUsd), connectors: b.connectors === undefined ? 'pretend' : b.connectors, by: by(req) }) });
   });
   route('GET', `${W}/runs/:run`, async (req, res) => {
-    const p = service.progressOf(wid(req), num(req.params.run, 'test'), { costOf: runner.costOf, phaseOf: runner.phaseOf });
+    const p = service.progressOf(wid(req), num(req.params.run, 'test'), { costOf: runner.costOf, phaseOf: runner.phaseOf,
+      beforeNowOf: runner.beforeNowOf });
     if (p.project) p.project.disk = await service.progressDisk(wid(req), p.run, { diskOf: runner.diskOf });
     if (p.project && p.project.setupStop) p.project.setupStop.edited = await service.progressEdited(wid(req), p.run);
     res.json(p);

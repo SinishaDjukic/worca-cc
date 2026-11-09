@@ -430,6 +430,19 @@ export function avgSetupMs(exampleId, startCommit) {
   return r && Number(r.n) > 0 && r.a != null ? Math.round(Number(r.a)) : null;
 }
 
+/** 3b (D75, U2): how long an example's command check `checkId` last ran (the newest judged try that says), or null. */
+export function lastCommandMs(exampleId, checkId) {
+  getDb();
+  const rows = prepare('SELECT verdict FROM wf_test_tries WHERE example_id = ? AND verdict IS NOT NULL ORDER BY id DESC LIMIT 20').all(Number(exampleId));
+  for (const r of rows) {
+    let v = null;
+    try { v = JSON.parse(r.verdict); } catch { v = null; }
+    const c = v && Array.isArray(v.checks) ? v.checks.find((x) => x && x.id === checkId && Number.isFinite(x.ms)) : null;
+    if (c) return Math.round(c.ms);
+  }
+  return null;
+}
+
 /** D26: finished tries of `use` on one example that a new test may reuse, newest first. The connectors mode is part of the key (D35). */
 export function reusableTries({ workflowId, exampleId, use, fp, exampleFp, mock = false, connectors = 'pretend', limit }) {
   getDb();

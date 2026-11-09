@@ -16,6 +16,7 @@ import { TRY_SETUP_STAGE, firstLine } from './shell-step.mjs';
 import { PLUGINS_OFF_STAGE } from './project-claude-settings.mjs';
 import { WORKTREE_STAGE } from '../setup-stages.mjs';
 import { releaseCopy } from './project-copy.mjs';
+import { beforeSpecOf } from './before-run.mjs';
 
 export const MAX_PARALLEL = 3;   // D36. Library script checks stay one at a time (result.mjs), inside runBenchOnce's limit of 2.
 export const COST_POLL_MS = 2000;
@@ -115,6 +116,8 @@ export function createTestRunner(deps) {
   const live = new Map();       // test run id → { stopping, detail, running: Map<key, {runKey}>, done }
   const starting = new Set();   // workflow ids between the BUSY check and their run row (a start awaits fingerprints)
   const pollMs = deps.pollMs ?? COST_POLL_MS;
+  /** 3b (D75): a before run's key in a test: one example's one command check. */
+  const beforeKey = (exampleId, checkId) => `${exampleId}|${checkId}`;
   const notify = (run, extra = {}) => {
     // D33: `testRunId`, never `runId`: a tab turns any frame with a runId into a run.
     try { if (deps.notify) deps.notify({ type: 'workflow-tests-changed', workflowId: run.workflowId, testRunId: run.id, ...extra }); } catch { /* a frame only */ }
@@ -132,6 +135,7 @@ export function createTestRunner(deps) {
     if (st.stopping) return;
     st.stopping = reason;
     st.detail = detail;
+    if (st.beforeAbort) st.beforeAbort.abort();   // 3b (D75): a before run stops with the test
     for (const rec of st.running.values()) if (rec.runKey) stopQuietly(rec.runKey);
   }
 
@@ -223,7 +227,8 @@ export function createTestRunner(deps) {
 
   function drive(runId) {
     // madeAgain: the slots (example, side, try number) this drive made again after a Worca problem (U-T2: once each).
-    const st = { stopping: null, detail: null, running: new Map(), done: null, madeAgain: new Set() };
+    // 3b (D75): before = the before runs' results (judge's beforeOf); beforeNow = what the before phase does now (beforeNowOf).
+    const st = { stopping: null, detail: null, running: new Map(), done: null, madeAgain: new Set(), before: null, beforeNow: null, beforeAbort: null };
     live.set(runId, st);
     st.freeAtStart = null;   // D60, board 35's "Disk in use": free disk now minus free disk later
     if (deps.freeDisk) Promise.resolve().then(() => deps.freeDisk()).then((n) => { st.freeAtStart = n; }, () => {});
@@ -268,6 +273,9 @@ export function createTestRunner(deps) {
       if (quick.status === 'failed') { requestStop(st, 'quick-check', quick.detail); return; }
       if (st.stopping) return;
     }
+    // 3b (D75): before any try, each project example's command checks run once on its start point (kept results are reused).
+    await beforePhase(run, st);
+    if (st.stopping) return;
     const inflight = new Set();
     try {
       for (;;) {
@@ -288,6 +296,54 @@ export function createTestRunner(deps) {
       requestStop(st, 'error', msgOf(e));   // its running tries are stopped, never left to run unwatched
     } finally {
       await Promise.allSettled([...inflight]);
+    }
+  }
+
+  /**
+   * 3b (D75): the command checks of the examples that still have tries to make, one at a time, on their start points. The
+   * results stay in `st.before` for the judge (beforeOf, a synchronous lookup). A project that cannot be used stops the test
+   * as a try would; a before run that fails is recorded as not run and the tries go on (their own setup decides, D55).
+   * prepareProject holds the copy (U-T1) and has left the key lock when it returns: the before run's clone takes that lock
+   * itself, and the hold is released once the before run has ended.
+   */
+  async function beforePhase(run, st) {
+    st.before = new Map();
+    if (!deps.beforeRun) return;
+    const ids = [...new Set(queueOf(run).map((t) => t.exampleId))];
+    const jobs = [];
+    for (const id of ids) {
+      const ex = store.readExample(run.workflowId, id);
+      if (!ex || !ex.project) continue;
+      for (const c of ex.checks || []) if (c.kind === 'command') jobs.push({ ex, check: c });
+    }
+    if (!jobs.length) return;
+    st.beforeAbort = new AbortController();
+    try {
+      for (const [i, { ex, check }] of jobs.entries()) {
+        if (st.stopping) return;
+        st.beforeNow = { exampleId: ex.id, exampleName: ex.name, cmd: check.cmd, phase: 'copy', n: i + 1, of: jobs.length, startedMs: Date.now() };
+        notify(run);
+        let project;
+        try { project = await deps.prepareProject(ex); } catch (e) {
+          requestStop(st, e && e.code === 'NOT_READY' ? 'refused' : 'error', msgOf(e));
+          return;
+        }
+        let rec;
+        try {
+          if (st.stopping) return;
+          const spec = beforeSpecOf(ex, check, (project && project.startCommit) || ex.project.startCommit);
+          rec = await deps.beforeRun(spec, { signal: st.beforeAbort.signal, onPhase: (p) => { if (st.beforeNow) st.beforeNow.phase = p; } });
+        } catch (e) {
+          rec = { ran: false, reason: 'error', text: msgOf(e) };
+        } finally {
+          if (project) releaseCopy(ex.project.key);
+        }
+        st.before.set(beforeKey(ex.id, check.id), rec);
+      }
+    } finally {
+      st.beforeNow = null;
+      st.beforeAbort = null;
+      notify(run);
     }
   }
 
@@ -418,7 +474,8 @@ export function createTestRunner(deps) {
         return;
       }
       rec.phase = 'checking';
-      const verdict = await deps.judge(example, outcome, { onCommand: (cmd) => { rec.checking = cmd; } });
+      const verdict = await deps.judge(example, outcome, { onCommand: (cmd) => { rec.checking = cmd; },
+        beforeOf: (check) => (st.before ? st.before.get(beforeKey(example.id, check.id)) ?? null : null) });
       const checkProblem = worcaProblemOf({ checkErrors: verdict && verdict.checks });   // U-T2: a check Worca could not run
       if (checkProblem) { setAside(run, st, t, checkProblem, { costUsd: outcome.facts.costUsd, ...facts }); return; }
       // D60: the checkout's size after its setup, measured once per example and start.
@@ -646,5 +703,8 @@ export function createTestRunner(deps) {
   /** D60: what was free when the test started, for board 35's "Disk in use". */
   function diskOf(runId) { const st = live.get(Number(runId)); return st ? { freeAtStart: st.freeAtStart ?? null } : null; }
 
-  return { start, stop, continueRun, recover, idle, costOf, phaseOf, diskOf };
+  /** 3b (D75, U3): what the before phase is doing now, or null. */
+  function beforeNowOf(runId) { const st = live.get(Number(runId)); return st && st.beforeNow ? { ...st.beforeNow } : null; }
+
+  return { start, stop, continueRun, recover, idle, costOf, phaseOf, diskOf, beforeNowOf };
 }

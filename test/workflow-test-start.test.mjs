@@ -3,7 +3,7 @@
 // (api-workflow-test-try, api-workflow-test-project-try, api-workflow-test-project-restart) pin the wiring.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, utimesSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -81,6 +81,15 @@ test('the boot seams never throw and report what they did', async () => {
   } finally { rmSync(tmp, { recursive: true, force: true }); }
   assert.equal(testCopiesRoot(), join(home, 'workflow-tests', 'repos'));
   const logged = [];
-  assert.deepEqual(await start.sweepTestCopiesAtBoot((...a) => logged.push(a)), { copies: 0, branches: 0 });
+  assert.deepEqual(await start.sweepTestCopiesAtBoot((...a) => logged.push(a)), { copies: 0, branches: 0, beforeRuns: { runs: 0, kept: 0 } });
   assert.ok(logged.some(([level, msg]) => level === 'warn' && msg.includes(KEY)), 'a folder that is not a copy is left alone, said once');
+});
+
+test('the boot copy sweep also takes a before run a restart left, its owner gone (3b D75)', async () => {
+  const { beforeRoot } = await import('../src/core/workflow-tests/project-copy.mjs');
+  const left = join(beforeRoot(), 'run-0123456789ab');
+  mkdirSync(left, { recursive: true });
+  const r = await start.sweepTestCopiesAtBoot(() => {});
+  assert.deepEqual(r.beforeRuns, { runs: 1, kept: 0 });
+  assert.equal(existsSync(left), false);
 });

@@ -6,6 +6,7 @@ import { PROJECT_KEY_RE, testCopyKeyOf } from '../store.mjs';
 import { sweepStaleStagingDirs } from './try-spawn.mjs';
 import { CONNECTOR_MODES, recoverInterruptedTestRuns } from './store.mjs';
 import { sweepTestCopies } from './project-copy.mjs';
+import { sweepBeforeRuns } from './before-run.mjs';
 import { SETUP_TIMEOUT_MS } from './shell-step.mjs';
 
 export { TRY_NEVER_SHIPS_TEXT, TRY_NEEDS_GIT_TEXT, TEST_TRY_PAUSE_TEXT, TEST_TRY_RESUME_TEXT } from '../../shared/workflow-tests/project-text.mjs';
@@ -95,14 +96,23 @@ export function recoverTestsAtBoot({ tmpDir } = {}) {
 
 /**
  * Boot, after the run-root sweep (3a D61): every copy of a project prunes the worktrees that sweep removed and loses its
- * leftover try branches. Nothing tries at boot. Never rejects.
- * @returns {Promise<{copies: number, branches: number}|null>} null when the sweep failed
+ * leftover try branches. Then 3b (D75): before runs a restart left (their owner process is gone), and kept results older
+ * than a week. Nothing tries at boot. Never rejects.
+ * @returns {Promise<{copies: number, branches: number, beforeRuns: {runs: number, kept: number}|null}|null>} null when the
+ *   copy sweep failed; `beforeRuns` is null when the before-run sweep failed
  */
 export async function sweepTestCopiesAtBoot(log) {
+  let out = null;
   try {
-    return await sweepTestCopies({ log });
+    out = await sweepTestCopies({ log });
   } catch (err) {
     console.error(`[worca-ui] workflow tests copy sweep failed: ${err && err.message ? err.message : err}`);
-    return null;
   }
+  let beforeRuns = null;
+  try {
+    beforeRuns = await sweepBeforeRuns({ log });
+  } catch (err) {
+    console.error(`[worca-ui] workflow tests before-run sweep failed: ${err && err.message ? err.message : err}`);
+  }
+  return out ? { ...out, beforeRuns } : null;
 }

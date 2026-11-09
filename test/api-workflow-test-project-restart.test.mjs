@@ -47,6 +47,6 @@ test('boot: an interrupted project try loses its run folder and its branch', { t
   assert.equal(getDb().prepare("SELECT status FROM pipelines WHERE id = 'feed0009'").get().status, 'stopped');
   assert.equal(existsSync(runRoot), false, 'the run-root sweep took it');
   assert.throws(() => git(copy, 'rev-parse', '--verify', '--quiet', 'refs/heads/worca-cc/left-feed0009'));
-  assert.deepEqual(summary.testCopies, { copies: 1, branches: 1 });
+  assert.deepEqual(summary.testCopies, { copies: 1, branches: 1, beforeRuns: { runs: 0, kept: 0 } });
   assert.equal(repoSnapshot(real), was, "the boot sweep only touched Worca's copy: the person's repository is as it was");
 });

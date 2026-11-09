@@ -150,6 +150,7 @@ export function scriptSteps(graph, registry = {}) {
  * `userScope` = the `~/.claude.json` servers; `claudeAi` = the names seen (N2); `scripts` = the names of the workflow's
  * script steps; `engines` = the engine ids its steps run on (stepEngines). `engines` out = the display names of the
  * engines other than Claude, one engineNoteLine each. `mode` 'real' = the test uses the real connectors, so `pretend` is [].
+ * `personalOff`: Pretend and a step runs on Claude Code (board 34's Part 3b line).
  */
 export function connectorNotes({ copies = [], fileServers = [], userScope = [], claudeAi = [], scripts = [], quickScripts = [], engines = [],
   mode = 'pretend' } = {}) {
@@ -169,6 +170,8 @@ export function connectorNotes({ copies = [], fileServers = [], userScope = [], 
     // The script steps the free quick check runs for real too (scriptSteps `quick`): the dialog's caution counts it.
     quickScripts: [...new Set(quickScripts)],
     engines: [...new Set(engines.filter((e) => typeof e === 'string' && e && e !== 'claude'))].map(engineLabel),
+    // 3b (D70): a Pretend test's steps on Claude Code load none of the person's own plugins, skills, agents or hooks.
+    personalOff: mode !== 'real' && engines.includes('claude'),
   };
 }
 

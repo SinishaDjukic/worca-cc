@@ -29,6 +29,7 @@ import { parseRemoteUrl, forgeOf as forgeOfRemote, FORGE_LABEL } from '../forge.
 import { pushRemoteOf } from './guard-calls.mjs';
 import { leftOutText, folderMissingText, folderProjectText, notRegisteredText, diskRefusalText, diskRefusalOnceText, PAST_RUN_REFUSALS } from '../../shared/workflow-tests/project-text.mjs';
 import { mainResult } from './result.mjs';
+import { readBefore, beforeSpecOf, beforeHash } from './before-run.mjs';
 import { DIFF_PATCH_FILE } from '../results.mjs';
 import { connectorNotes, userScopeServerNames, seenClaudeAiServers, wouldHaveSent, stepEngines, scriptSteps, readConnectorCalls } from './connectors.mjs';
 
@@ -544,6 +545,36 @@ async function connectorsOf(workflowId, uses, { connectorsPreview = null, runEng
   return previewError ? { ...notes, previewError: true } : notes;
 }
 
+/**
+ * 3b (D75, U2): the command runs a test still has to make on its start points (none kept), and how long they take (each
+ * one's setup plus its command's last time); null when there are none. `ms` is null when one of them was never measured.
+ * `cmd` names the command when there is one.
+ */
+export async function beforePlanOf(examples, { readKept = (s) => readBefore(s), setupMsOf = store.avgSetupMs, commandMsOf = store.lastCommandMs } = {}) {
+  const seen = new Set();
+  const cmds = new Set();
+  let runs = 0;
+  let ms = 0;
+  let unknown = false;
+  for (const ex of examples) {
+    if (!ex || !ex.project) continue;
+    for (const c of ex.checks || []) {
+      if (c.kind !== 'command') continue;
+      const spec = beforeSpecOf(ex, c);
+      const h = `${spec.key}/${beforeHash(spec)}`;
+      if (seen.has(h)) continue;
+      seen.add(h);
+      if (await readKept(spec)) continue;
+      runs += 1;
+      cmds.add(c.cmd);
+      const s = spec.setupCmd ? setupMsOf(ex.id, ex.project.startCommit) : 0;
+      const m = commandMsOf(ex.id, c.id);
+      if (s == null || m == null) unknown = true; else ms += s + m;
+    }
+  }
+  return runs ? { runs, ms: unknown ? null : ms, cmd: cmds.size === 1 ? [...cmds][0] : null } : null;
+}
+
 /** Board 4: per version, what would be tried, what can be reused, and what a try usually costs; board 30's notes. */
 export async function testPlan(workflowId, { a = null, b = 'draft', exampleIds = [], tries = 3, connectors = 'pretend' } = {},
   { fingerprintOf = (id, use) => useFingerprint(id, use), mock = false, connectorsPreview = null, runEngine = null, registry: reg0 = null } = {}) {
@@ -575,7 +606,8 @@ export async function testPlan(workflowId, { a = null, b = 'draft', exampleIds =
     disk: await diskPlanOf(projEx, { tries, sides: a != null ? 2 : 1, projects }),
     setupCmd: cmds.length === 1 ? cmds[0] : null,
     setupMs: setupMsList.length ? Math.round(setupMsList.reduce((sum, n) => sum + n, 0) / setupMsList.length) : null,
-  } : (leftOut.length ? { names: [], leftOut: leftOutWhy.map((x) => x.name), leftOutWhy, disk: null, setupCmd: null, setupMs: null } : null);
+    before: await beforePlanOf(projEx),   // 3b (D75): the command runs before the change still to make
+  } : (leftOut.length ? { names: [], leftOut: leftOutWhy.map((x) => x.name), leftOutWhy, disk: null, setupCmd: null, setupMs: null, before: null } : null);
   const side = async (use) => {
     if (use == null) return null;
     let fp = null;
@@ -636,8 +668,9 @@ export function takenMs(run, tries) {
 }
 
 /** Board 20 (G8: two rows per example when both versions need tries). `costOf` = the runner's live cost. 3a (board 35):
- *  `phaseOf` = what a running project try is doing now (the runner's); `project.disk` is filled by progressDisk. */
-export function progressOf(workflowId, runId, { costOf = null, phaseOf = null } = {}) {
+ *  `phaseOf` = what a running project try is doing now (the runner's); `project.disk` is filled by progressDisk. 3b (D75):
+ *  `beforeNowOf` = what the before phase is doing now (the runner's), the answer's `before`. */
+export function progressOf(workflowId, runId, { costOf = null, phaseOf = null, beforeNowOf = null } = {}) {
   const run = runOf(workflowId, runId);
   const ctx = labelCtx(workflowId);
   const tries = store.triesOfRun(run.id);
@@ -689,6 +722,7 @@ export function progressOf(workflowId, runId, { costOf = null, phaseOf = null } 
     minutesLeft: ms !== null && remaining ? Math.max(1, Math.ceil((Math.ceil(remaining / TRIES_AT_ONCE) * ms) / 60000)) : null,
     takenMs: takenMs(run, own),
     quick: run.quick,
+    before: beforeNowOf ? beforeNowOf(run.id) : null,
     project,
     madeAgain: store.madeAgainOf(run.id),   // U-T2: tries made again after a problem in Worca (never counted)
   };
