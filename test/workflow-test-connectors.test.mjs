@@ -69,6 +69,7 @@ test('the dialog notes (board 30): pretend, switched off and why, script steps',
     scripts: ['Publish to wiki'],
     quickScripts: [],
     engines: [],
+    personalOff: false,   // 3b (D78): no step on Claude Code named here
   });
 });
 
