@@ -271,3 +271,31 @@ Same rules. Shared items first, since several places reported them.
 - P1 19 vs 18, 6 vs 4, Insights 21/9/3 vs 19/23/6: until one source, make the links' numbers agree; Needs you 5 with 4 rows; "1 project that work together"; legacy-billing no way forward (locate the folder); long values clamp; cost tags collapse toast; Simple leaks Memory's team notes, patterns, setup; Expert Confirm on Certain links; Not saved yet twice; bar menu lacks Check origin; alignment 11-12px; half-typed tag editor persists
 - P2 Save view claims saved for a different view; Set a default toast cut and lands with no project; a day's split changes with drag; Share vs Tasks on two bases; saved view's title; 12 vs 18 row click
 - P3 Settings Advanced sections, Expert runs/general/notifications/labs not run: covered in the re-test
+
+# Click sweep, round 5 (9 Nov), after the dark cockpit
+
+Same rules. Ladder, icons and counts first.
+
+## Ladder and counts (Q)
+
+- Q1 Needs you ranked by level everywhere (Chat's filtered view chats-column.js ~:128, Projects' bar: red below amber); Needs you count follows the filter and equals its rows; a group that hides a failed task keeps the count honest; Pulse rises wrongly after Pause, Use defaults, Cancel 14:00, Not now, Sign in (Normal states are not counted): Pulse, bar and rows from one list
+- Q2 Warning: cost or usage cap, error stop, `interrupted`, paused-error/limit/free/team/time/missed are drawn grey; they are filled red with "!". Paused by you stays Normal. Failed run a later run fixed is Normal (schedules.js runCard ~:77). Advisory in ink from one token on every surface (`.kind-mark.is-ok` rail.css:1116, stage-bar, tl-tick): Ready differs from Working. State word coloured on task pages (`.rc-word`) per the ladder. Requirements: one glyph per state, Caution counted. Pace over budget goes back to Advisory (ink); workflow loop, ways, fix/ok ports ink; draft bar Advisory, not filled amber
+- Q3 One primary only at Warning: composer Send, Resume now, Create PR again, Mark ready, plugin Install and Update, ticket-failed's three
+- Q4 Icons: Drafts' pencil, Straight through's check, Search's agent mark; Slack's globe; Give tasks tools' plug; For you's sparkle; Spend and Per task near-identical; run cards' branch twice; Voice's bare ▾
+- Q5 One word per state: Schedule missed vs Missed; Working vs Running; "$148 has no owner" / no client / not counted
+- Q6 Workspace head and map call waiting tasks "running" (workspaces.js:30)
+
+## Places (R)
+
+- R1 Chat: group section stable under sort; bulk numbers one unit; + Ticket, Shape, presets in Ask say what they do; Simple's More hides workspace, model, metrics; W menu gets Settings, "Pinned and recent" head same size as the others; a visible tick for the current place in ▾; Run after names and applies the picked task; draft keeps mode, fields and chips; Esc clears a starter; same-value label toast; c1 Delete schedule asks; c7 "Not now"
+- R2 Schedules: page words while running ("Running on Monday"); paused "Running by you"; card title opens the page; counts open what they say; Pause on missed updates Pulse; dialog focus returns to +; head dates; Skip moves the row; "from all projects from X"; Simple Docs sync has a way forward; fold summary repeats; run card branch twice
+- R3 Task pages: Try it dead on approved, failed, failed-kept, kept, merged; Open task on feature-asks changes page, not address; Ask about this task chip
+- R4 Workflows: pickers under the dock flip or scroll; bad addresses say not found; toasts clear of heads; expanded graph names the workflow; Simple draft toggle; "Run tests's"; Delete with a draft says so
+- R5 Marketplace, Requirements: bad addresses; Set it up focuses the plugin or says configured; Remove source; Newest named honestly; Labs toasts say when a mode hides the effect; Reset all's reason; Run labels show and filter; install form on the text edge
+- R6 Projects: $ links narrow to the project, Simple not locked out; pickers under the dock; Locate and Add reject bad paths, escape HTML; cost tag format and limits; focus after Esc; missing-folder page hides pickers that can't apply; `#settings/` trailing slash
+- R7 Insights: dead bars disable with their reason; Tasks column from the same per-day source; as table shows one table; By menu uses the free height; Of sentence wraps; stray scroll thumb; handed chip names the filter, no pre-written sentence
+- R8 Settings: landing title gap at 360/420; Stays in pulse lower case; Memory row and dialog agree; Add channel path
+
+## Owner's additions
+
+- U1 Stage line advance: last notch fills, notches pulse once, the line travels, the next knot pops once for about a second. Once per change, none under reduced motion. Rule, component, test, gallery
