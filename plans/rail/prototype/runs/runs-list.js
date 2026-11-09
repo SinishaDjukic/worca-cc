@@ -37,6 +37,7 @@
     }
     return out;
   }
+  const filterTo = (project) => window.RailRunsList.filter({ project: project || 'No project' });
   const finished = (t) => t.section === 'recent';   // what still needs you counts there, once: the Showing counts add up to all
   const readyToShip = (t) => t.word === 'Ready' && (t.run?.kind || 'Git') === 'Git' && !t.run?.pr;
   const SHOWS = [
@@ -113,7 +114,7 @@
   // ---- the sentence ----
   function parts() {
     const projects = [...new Set(tops().map((t) => t.project || 'No project'))].sort();
-    const out = [{ word: 'Showing', id: 'show', text: showOf(view.show).text, tip: 'Which tasks the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.help, checked: view.show === x.id, hint: count({ show: x.id }) })) }];
+    const out = [{ word: 'Showing', id: 'show', text: showOf(view.show).text, tip: 'Which tasks the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.help, checked: view.show === x.id, hint: x.id === 'needs' ? String(+count({ show: 'needs' }) + missedNow().length) : count({ show: x.id }) })) }];
     if (shared()) out.push({ word: 'started by', id: 'person', text: view.person || 'everyone', tip: 'Whose tasks it shows, on a shared sign-in', items: [{ id: '', text: 'everyone', checked: !view.person, hint: count({ person: '' }) }, { sep: true }, ...M.PEOPLE.map((p) => ({ id: p, text: p, checked: view.person === p, hint: count({ person: p }) }))] });
     out.push({ word: 'from', id: 'from', text: view.from === 'all' ? 'all projects' : view.from, tip: 'Which project they come from', items: [{ id: 'all', text: 'all projects', checked: view.from === 'all', hint: count({ from: 'all' }) }, { sep: true }, ...projects.map((p) => ({ id: p, text: p, checked: view.from === p, hint: count({ from: p }) }))] });
     if (view.workflow) out.push({ word: 'using', id: 'workflow', text: view.workflow, tip: 'Only tasks that ran this workflow', items: [{ id: '', text: 'any workflow', hint: count({ workflow: '' }) }, { sep: true }, { id: view.workflow, text: view.workflow, checked: true, hint: count({}) }] });
@@ -129,13 +130,17 @@
     return out;
   }
   const EMPTY = { needs: 'Nothing needs you.', running: 'No running tasks.', waiting: 'Nothing is waiting.', finished: 'No finished tasks yet.', ready: 'Nothing is ready to ship.', archived: 'No archived tasks.' };
+  // A missed schedule time is not a task (panel.task-truth), but it needs you: its own clock row in Needs you, in the count; never in a day or project's tasks
+  const missedNow = () => (view.day || view.range || view.person || view.labels.length || view.workflow || view.schedule ? [] : W.tops().filter((r) => r.missed && (view.from === 'all' || (r.project || 'No project') === view.from)));
+  const missedRow = (r) => { const x = { m: r, key: `missed:${r.id}` }; return { key: x.key, _x: x, pick: false, title: r.title, meta: '', mark: R.kindMark({ kind: 'schedule', tone: 'act', title: r.detail }), end: 'Schedule missed', tip: `${r.title}\n${r.detail}\nA missed time never started: it needs you and is not a task`, menu: null }; };
   function sections() {
     const list = tops().filter((t) => passes(t, view));
     const rows = (ts, s) => ts.map((t) => rowOf(t, s));
-    if (view.show !== 'all') return [{ id: view.show, title: showOf(view.show).title || cap(showOf(view.show).text), rows: rows(list, view.show === 'needs' || view.show === 'running' ? view.show : '') }];
+    if (view.show !== 'all') return [{ id: view.show, title: showOf(view.show).title || cap(showOf(view.show).text), rows: [...rows(list, view.show === 'needs' || view.show === 'running' ? view.show : ''), ...(view.show === 'needs' ? missedNow().map(missedRow) : [])] }];
     const needs = list.filter((t) => t.section === 'needs'), rest = list.filter((t) => t.section !== 'needs');
     const urgent = (t) => { const s = t.run ? stateOf(t.run) : ''; return (3 - R.alertLevel(R.markTone(R.runState(s || 'working')))) * 10 + (s === 'question' ? 0 : 1); };   // highest level first (look.alert-ladder)
-    const head = needs.length ? [{ id: 'needs', title: NEEDS(), rows: rows([...needs].sort((a, b) => urgent(a) - urgent(b)), 'needs') }] : [];
+    const sorted = [...needs].sort((a, b) => urgent(a) - urgent(b)), lit = sorted.filter((t) => urgent(t) < 20), missed = missedNow().map(missedRow);
+    const head = needs.length || missed.length ? [{ id: 'needs', title: NEEDS(), rows: [...rows(lit, 'needs'), ...missed, ...rows(sorted.filter((t) => urgent(t) >= 20), 'needs')] }] : [];   // Warnings and Cautions, then a missed time, then Advisory
     if (view.by === 'project') {
       const names = [...new Set(rest.map((t) => t.project || 'No project'))];
       return [...head, ...names.map((p) => { const ts = rest.filter((t) => (t.project || 'No project') === p), kinds = ts.map((t) => t.run?.kind).filter(Boolean); return { id: `project:${p}`, title: p, chip: kinds.length ? R.chip({ text: kinds[0] }) : '', rows: rows(ts, '') }; })];
@@ -213,6 +218,7 @@
   }
   function openThing(row) {
     const x = row._x;
+    if (x.m) { if (has('advanced')) window.RailShell.openSchedule(x.m.id.replace(/^sch-/, '')); else filterTo(x.m.project); return; }
     if (x.r) { x.r.unread = false; openId = x.r.id; }
     window.RailShell.openRun(`run/${x.g ? x.g.case : openCase(x.r)}`, x.g ? x.g.title : x.r.title, x.g ? window.RailWorld.membersOf(x.g)[0]?.id : x.r.id);   // the task itself, so its own chat opens
   }
@@ -261,6 +267,7 @@
       if (g) ctl.openGroup(`group:${g.id}`);
       ctl.paint(); centers(); window.RailShell?.go('runs');
     },
+    dateOf: dateKey,   // the date a row belongs to: Figures' week counts the real days
     focus: () => ctl.focusRow(),
     // from the search: the runs with this label
     label: (l) => { view = { ...view, labels: [l], show: 'all', from: 'all', day: '', person: '' }; store.set(view); ctl.clear(); ctl.paint(); },

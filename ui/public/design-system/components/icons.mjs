@@ -95,6 +95,12 @@ export const ICONS = {
   'set-general': '<circle cx="12" cy="12" r="3"></circle>' + P('M12 3.5v3M12 17.5v3M3.5 12h3M17.5 12h3M6 6l2 2M16 16l2 2M6 18l2-2M16 8l2-2'),
   'set-notifications': P('M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 1.5H5z') + P('M10 20.5h4'),
   'set-labs': P('M9.5 3.5h5M10.5 3.5v6L5 19a1 1 0 0 0 1 1.5h12a1 1 0 0 0 1-1.5l-5.5-9.5v-6'),
+  // an Insights page's own mark (look.one-icon): never a state's sign
+  'page-ends': P('M6 21V4') + P('M6 5h11l-2.5 3.5L17 12H6'),
+  'page-review': '<circle cx="10.5" cy="10.5" r="6"></circle>' + P('M15 15l5 5'),
+  'page-fails': P('M12 21s7-6.2 7-11.5A7 7 0 0 0 5 9.5C5 14.8 12 21 12 21Z') + '<circle cx="12" cy="9.5" r="2.2"></circle>',
+  'page-waiting': P('M4 13l2.5-8h11L20 13v6H4Z') + P('M4 13h5l1.5 2h3l1.5-2h5'),
+  'page-shipped': P('M12 3l8 4.5v9L12 21l-8-4.5v-9Z') + P('M4 7.5l8 4.5 8-4.5') + P('M12 12v9'),
   'set-spending': '<circle cx="12" cy="12" r="8"></circle>' + P('M14.5 9c-.5-1-1.5-1.3-2.5-1.3-1.5 0-2.6.8-2.6 2 0 3 5.3 1.5 5.3 4.5 0 1.2-1.2 2-2.7 2-1.1 0-2.2-.4-2.7-1.4M12 6v12'),
   'set-limits': P('M4.5 17a8.5 8.5 0 1 1 15 0') + P('M12 13.5l4-4.5'),
   'set-away': P('M19.5 14A8 8 0 0 1 10 4.5 8 8 0 1 0 19.5 14z'),

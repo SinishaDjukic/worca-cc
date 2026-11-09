@@ -51,7 +51,8 @@
   const money = (n) => `$${n.toFixed(2)}`;
   const costOf = (w) => w.steps.reduce((a, s) => a + (s[5] || 0), 0), minOf = (w) => w.steps.reduce((a, s) => a + (s[4] || 0), 0);
   const mergedOf = (w) => (w.tasks ? `${w.merged}% merged` : 'no tasks yet');   // a copy starts with no history of its own
-  const factsOf = (w) => (w.running ? `Its first task is running · ${money(4.8)} so far` : `${money(costOf(w))} a task · ${minOf(w)} min · ${mergedOf(w)}`);
+  let figs = false;   // look.figures-on-demand: a card's cost and time open with the page's Figures
+  const factsOf = (w) => (figs ? (w.running ? `Its first task is running · ${money(4.8)} so far` : `${money(costOf(w))} a task · ${minOf(w)} min · ${mergedOf(w)}`) : (w.running ? 'Its first task is running' : ''));
   const shape = (w) => `${w.steps.length} steps · ${w.tasks ? `used by ${w.tasks} ${w.tasks === 1 ? 'task' : 'tasks'}` : 'not used yet'}`;
   const markOf = (kind, size) => R.kindMark({ kind, size });
   // drafts (rail.drafts): a change by hand goes into the thing's draft; tasks keep running the saved one until you save
@@ -101,7 +102,7 @@
     if (way === 'team') list = teamOf();
     if (kind === 'workflow') list.sort(SORT[sort] || SORT['most used']);
     const T = { workflows: ['Your workflows', `${savedCount()} workflows · each made in a chat`], agents: ['Your agents', `${data.agent.length} agents · the steps workflows are made of`], scripts: ['Your scripts', `${data.script.length} scripts · checks a workflow runs`], 'for-you': ['For you', 'Workflows Worca thinks fit how you work'], team: ['Your team’s', `${teamOf().length} shared by your team · use one and it is yours too`] }[way] || ['Your workflows', ''];
-    const sentence = kind === 'workflow' && list.length > 1 ? `<div class="wf-sent">Showing ${R.sentencePicker({ id: 'wf-sort', text: sort, tip: 'How they are ordered', items: Object.keys(SORT).map((v) => ({ id: v, text: v, checked: v === sort })), open: menu === 'wf-sort', chevron: R.icon('chevron', 10) })}</div>` : '';
+    const sentence = kind === 'workflow' && list.length > 1 ? `<div class="wf-sent">Showing ${R.sentencePicker({ id: 'wf-sort', text: sort, tip: 'How they are ordered', items: Object.keys(SORT).map((v) => ({ id: v, text: v, checked: v === sort })), open: menu === 'wf-sort', chevron: R.icon('chevron', 10) })} ${R.figuresToggle({ open: figs, attrs: { 'data-wf-figs': '' } })}</div>` : '';
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ title: T[0], facts: esc(T[1]) })}${sentence}${list.length ? `<div class="pg-grid">${list.map((x) => cardOf(kind, x)).join('')}</div>` : R.emptyState({ title: way === 'team' ? 'Your team has shared nothing yet.' : 'Nothing to suggest yet.', text: way === 'team' ? 'A workflow your team shares shows here, ready to use.' : 'Worca suggests workflows once it has seen how you work.', actions: R.button({ label: 'Go to All workflows', kind: 'quiet', attrs: { 'data-wf-goto': 'workflows' } }) })}</div></div></div>`;
   }
 
@@ -221,6 +222,7 @@
       if (!here()) return;   /* another place's page is showing */
       const on = (q) => e.target.closest(q); let hit;
       if ((hit = on('[data-wf-goto]'))) { window.RailShell.go(hit.dataset.wfGoto); return; }
+      if (on('[data-wf-figs]')) { figs = !figs; draw(); return; }
       if (on('[data-wf-wide]')) { wide = !wide; draw(); return; }
       if ((hit = on('[data-wf-use]'))) { const x = data.workflow.find((w) => w.id === hit.dataset.wfUse); if (x) act('use', 'workflow', x); return; }
       if ((hit = on('[data-wf-chat]'))) { const { kind: k, x } = find(hit.dataset.wfChat); if (x) window.RailConversation?.handOver({ about: { kind: k.charAt(0).toUpperCase() + k.slice(1), name: x.title }, ph: `What should change in ${x.title}?` }); return; }

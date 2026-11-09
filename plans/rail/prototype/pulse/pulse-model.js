@@ -292,6 +292,8 @@
   function vitalsRuns() {
     const out = { needs: [], running: [], scheduled: [] };
     for (const r of W.tops()) out[r.section]?.push(r);
+    const lv = (r) => (r.missed ? 15 : R.alertLevel(R.markTone(R.runState(window.RunCardModel.stateOf(r.case)))) * 10 - (window.RunCardModel.stateOf(r.case) === 'gate' ? 1 : 0));   // highest level first, a missed time among the Cautions (look.alert-ladder)
+    out.needs.sort((a, b) => lv(b) - lv(a));
     return out;
   }
 

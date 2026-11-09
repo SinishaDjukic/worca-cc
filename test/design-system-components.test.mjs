@@ -1482,3 +1482,15 @@ test('one icon, one meaning: Web access is the globe, failed checks are not ×, 
   for (const n of ['hourglass', 'dollar', 'globe', 'approve', 'waiting']) assert.ok(C.ICONS[n], n);
   assert.match(C.changeProposal({ kind: 'Web access', title: 'Read a page', state: 'proposed' }), new RegExp(C.ICONS.globe.slice(0, 20)));
 });
+
+test('finished is a plain check, ready a check in a ring, merged the branch; a place that stopped shows "!" (look.alert-ladder)', () => {
+  const R = C;
+  assert.equal(R.markTone({ word: 'Finished' }), 'done');
+  assert.equal(R.markTone({ word: 'Ready to merge' }), 'ok');
+  assert.equal(R.alertLevel('done'), 0);
+  assert.equal(R.alertLevel('ok'), 1);
+  assert.ok(!R.kindMark({ kind: 'task', tone: 'done' }).includes('km-ring'));
+  assert.ok(R.kindMark({ kind: 'task', tone: 'ok' }).includes('km-ring'));
+  assert.equal(R.kindMark({ kind: 'project', tone: 'fail' }), R.kindMark({ kind: 'project', tone: 'fail', icon: 'alert' }));
+  assert.match(R.kindMark({ kind: 'chat', tone: 'fail', outline: true }), /is-outline/);
+});

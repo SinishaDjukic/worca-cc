@@ -120,8 +120,8 @@ function sidebar() {
 }
 function topbar() {
   const needs = vitalsRuns().needs.length, un = unread().length, run = vitalsRuns().running.length;
-  const badge = needs ? { n: needs, tone: masterTone() } : un ? { n: un, tone: 'run' } : null;
-  const words = [needs && plural(needs, 'needs you', 'need you'), un && `${un} unread`, run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
+  const badge = needs ? { n: needs, tone: masterTone() } : null;   // normal is off (look.alert-ladder): unread waits in Updates, no count at rest
+  const words = [needsWords(), un && `${un} unread`, run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
   return `<header class="pz-top"><div class="pz-top-l">${R.search({ value: ui.q || '', label: 'Search or ask', results: searchResults() })}</div><div class="pz-top-r">
     ${R.topBarAction({ label: 'Pulse', icon: svg('signal', 16), labelCls: 'pz-pulse-l', kind: 'quiet', cls: 'topnav-act pz-pulse-b', badge, title: 'Pulse: ' + words, attrs: { 'data-pop': true, 'aria-haspopup': 'dialog', 'aria-expanded': String(!!ui.pop) } })}
     ${R.topBarAction({ label: 'New run', icon: svg('plus', 14), labelCls: 'pz-new-l', kind: 'primary', title: 'Start a run', attrs: { 'data-newrun': true } })}
@@ -150,8 +150,8 @@ function vitalsSections() {
   const bar = `<div class="pz-bar"><span class="pz-rail"></span><span class="pz-sentence">${sentence([
     { word: 'Showing', id: 'vitalsShow', text: VITALS_SHOWS.find((x) => x.id === ui.vitalsShow).text, items: VITALS_SHOWS.map((x) => ({ ...x, checked: x.id === ui.vitalsShow, hint: String(vitalsN(vitalsShown(x.id, ui.vitalsFrom))) })), tip: 'Which of Vitals\'s sections the panel shows' },
     { word: 'from', id: 'vitalsFrom', text: ui.vitalsFrom === 'all' ? 'all projects' : ui.vitalsFrom, items: [{ id: 'all', text: 'all projects', checked: ui.vitalsFrom === 'all', hint: String(vitalsN(vitalsShown(ui.vitalsShow, 'all'))) }, { sep: true }].concat(vitalsProjects().map((p) => ({ id: p, text: p, checked: ui.vitalsFrom === p, hint: String(vitalsN(vitalsShown(ui.vitalsShow, p))) }))), tip: 'Which project\'s runs it shows; limits belong to a harness and show for every project' }])}</span></div>`;
-  const sec = (h, n, rows) => (n ? `<section class="pz-sec"><h3 class="pz-h">${h} <span class="n">${n}</span></h3><div class="pz-list">${rows}</div></section>` : '');
-  const out = sec(R.runState('question').word, c.needs.length, c.needs.map((r) => runRow(r, 'Opens the run page at what it asks')).join(''))
+  const sec = (h, n, rows, note) => (n ? `<section class="pz-sec"><h3 class="pz-h">${h} <span class="n">${n}${note ? ` · ${note}` : ''}</span></h3><div class="pz-list">${rows}</div></section>` : '');
+  const out = sec(R.runState('question').word, c.needs.length, c.needs.map((r) => (r.missed ? row({ mark: R.kindMark({ kind: 'schedule', tone: 'act', size: 16 }), title: r.title, meta: metaOf(r), time: r.time, key: 'r:' + r.id, tip: 'A missed time never started: it needs you and is not a task' }) : runRow(r, 'Opens the run page at what it asks'))).join(''), c.needs.some((r) => r.missed) ? needsWords().replace(/^\d+ needs? you \((.*)\)$/, '$1') : '')
     + sec('Limits', lim.length, lim.map((l, i) => row({ mark: R.kindMark({ kind: 'event', tone: l.tone === 'over' ? 'fail' : 'act', size: 16 }), title: l.title, meta: l.detail, time: l.time, key: 'lim' + i, tip: `${l.tip} · opens Usage and costs` })).join(''))
     + sec('Running', c.running.length, c.running.map((r) => runRow(r, 'Opens the live run')).join(''))
     + sec('Running actions', c.actions.length, c.actions.map((a) => R.pulseRow({ mark: runMark('working'), title: a.run, meta: a.label, time: '', id: 'act:' + a.id, tip: a.go ? `Opens ${a.run}` : 'Its run is gone; it can still be stopped',
@@ -618,11 +618,12 @@ function fitSearch() { const m = document.querySelector('.rl-search-res'); if (!
 let pulseSeen = null, pulseShakeTill = 0;   // a redraw during the shake keeps it going, never starts it again
 const pulseNews = (n) => { if (pulseSeen !== null && n > pulseSeen) pulseShakeTill = Date.now() + 700; pulseSeen = n; return Date.now() < pulseShakeTill; };
 // the master light wears the highest level that waits (look.alert-ladder)
+const needsWords = () => { const l = vitalsRuns().needs, m = l.filter((r) => r.missed).length, t = l.length - m; return l.length ? `${plural(l.length, 'needs you', 'need you')}${m ? ` (${[t && plural(t, 'task'), plural(m, 'missed schedule')].filter(Boolean).join(', ')})` : ''}` : ''; };   // panel.task-truth: a missed time needs you, and is not a task
 const masterTone = () => (vitalsRuns().needs.some((r) => R.alertLevel(R.markTone(R.runState(window.RunCardModel.stateOf(r.case)))) === 3) ? 'warn' : 'need');
 function pulseButton() {
   const needs = vitalsRuns().needs.length, un = unread().length, run = vitalsRuns().running.length, news = pulseNews(needs + un);
-  const badge = needs ? { n: needs, tone: masterTone() } : un ? { n: un, tone: 'run' } : null;
-  const words = [needs && plural(needs, 'needs you', 'need you'), un && `${un} unread`, run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
+  const badge = needs ? { n: needs, tone: masterTone() } : null;   // normal is off (look.alert-ladder): unread waits in Updates, no count at rest
+  const words = [needsWords(), un && `${un} unread`, run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
   return R.topBarAction({ label: 'Pulse', icon: svg('signal', 16), labelCls: 'pz-pulse-l', kind: 'quiet', full: true, cls: 'topnav-act pz-pulse-b', badge, news, title: 'Pulse: ' + words, attrs: { 'data-pop': true, 'aria-haspopup': 'dialog', 'aria-expanded': String(!!ui.pop) } });
 }
 // A redraw keeps the focus: on the same control, else on the row beside the one that left, else back on Pulse.

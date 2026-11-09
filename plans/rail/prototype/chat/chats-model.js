@@ -138,7 +138,7 @@
     if (c.id === 'c5') return [
       { t: 'you', id: 'a1', text: 'Plan the API rewrite as a workflow I can reuse', when: '12:20' },
       { t: 'think', text: 'Thought for 9s' },
-      { t: 'change', id: 'a2', kind: 'Workflow', title: 'API rewrite, in three slices', why: 'Plan once, then build each slice behind its own review; a person signs off the contract first.', graph: true, apply: 'Save', state: 'proposed' },
+      { t: 'change', id: 'a2', kind: 'Workflow', title: 'API rewrite, in three slices', why: 'Plan once, then build each slice behind its own review; a person signs off the contract first.', graph: true, apply: 'Save workflow', state: 'proposed' },
       { t: 'feature', id: 'a3', title: 'Unified page navigation', slices: [{ title: 'Trail in the top bar', case: 'ready', stage: 2, detail: 'Ready' }, { title: 'Pager between runs', case: 'working', stage: 1, detail: 'Build · step 1 of 2' }, { title: 'Deep links', case: 'scheduled', stage: -1, detail: 'After the pager' }] },
     ];
     if (c.id === 'c6') return [

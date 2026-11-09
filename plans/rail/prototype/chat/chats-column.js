@@ -21,7 +21,7 @@
   const NEEDS_TONES = ['ask', 'act', 'fail', 'pause'];
   // the store says what waits on you (Pulse reads the same): a task needs you by its section; a slice that is only ready ships with its feature
   const W = window.RailWorld;
-  const waits = (t) => { const r = t.run && W.find(t.run); if (r) return !r.archived && (r.group ? W.raises(r) : W.section(r) === 'needs'); return !!t.case && t.case !== 'scheduled' && NEEDS_TONES.includes(R.markTone(R.runState(window.RunCardModel.stateOf(t.case)))); };
+  const waits = (t) => { const r = t.run && W.find(t.run); if (r) return !r.archived && W.section(r) === 'needs'; return !!t.case && t.case !== 'scheduled' && NEEDS_TONES.includes(R.markTone(R.runState(window.RunCardModel.stateOf(t.case)))); };
   const asksInside = (c) => { const walk = (t) => waits(t) || (t.after || []).some(walk); return (c.tasks || []).some(walk); };
   const sectionOfChat = (c) => (asksInside(c) ? 'needs' : R.chatState(c.state).section);
   const busyOf = (c) => R.chatState(c.state).busy || '';
@@ -37,7 +37,8 @@
   const toneOfTask = (t) => R.markTone(R.runState(window.RunCardModel.stateOf(t.case)));
   const levelOf = (c) => { const walk = (t) => [...(waits(t) ? [R.alertLevel(toneOfTask(t))] : []), ...(t.after || []).flatMap(walk)]; return Math.max(R.alertLevel(toneOf(c.state)), ...(c.tasks || []).flatMap(walk), 0); };
   const rankNeeds = (l, of = (x) => x) => [...l].sort((a, b) => levelOf(of(b)) - levelOf(of(a)));
-  const markOf = (state, kind, breathe = false) => R.kindMark({ breathe, kind: kind === 'workflow' && state === 'idle' ? 'workflow' : 'chat', tone: toneOf(state), title: state === 'idle' ? R.CHAT_KINDS[kind]?.label || 'Chat' : R.chatState(state).word });
+  const LEVEL_TONE = { 3: 'fail', 2: 'ask', 1: 'ok' };   // a parent chat wears the ring of the highest level under it; the task holds the fill (one light per thing)
+  const markOf = (state, kind, breathe = false, lit = '') => R.kindMark({ breathe, kind: kind === 'workflow' && state === 'idle' ? 'workflow' : 'chat', tone: lit || toneOf(state), advisory: lit === 'ok', outline: lit === 'fail', title: state === 'idle' ? R.CHAT_KINDS[kind]?.label || 'Chat' : R.chatState(state).word });
   const RM = window.RunCardModel;
   const taskMenu = (t) => [{ id: 'open-task', text: t.kind === 'schedule' ? 'Open schedule' : 'Open task', help: 'Opens its card in its chat' }, { id: 'in-view', text: window.RailShell?.inView.has(t.kind === 'schedule' ? 'schedule' : 'task', t.id) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }, ...(t.git === 'open' || t.git === 'fail' ? [{ id: 'watch', text: t.watch ? 'Stop watching' : 'Watch', help: 'Worca follows the PR and fixes failing checks for you' }] : []), { id: 'label-task', text: 'Label…', hint: hint('L'), help: 'Adds a label to this task' }, ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }] : []), { sep: true }, { id: 'archive', text: 'Archive', hint: hint('E'), help: 'Undo in the notice' }];
   // What hangs under a chat: its tasks and schedules, in their order of waiting.
@@ -62,7 +63,7 @@
   // ---- rows ----
   function chatRow(c, member) {
     const st = R.chatState(c.state), x = { c, key: `chat:${c.id}` };
-    const r = { key: x.key, _x: x, title: c.title, lead: `${c.pinned ? `<span class="lr-pin" title="Pinned">${R.icon('pin', 12)}</span>` : ''}${c.origin ? R.originMark(c.origin) : ''}`, mark: markOf(c.state, c.kind, ownAttn(c)), unread: c.unread, current: current === c.id, tip: [c.title, [c.project || 'No project', ...(c.labels || [])].join(' · '), [st.line || (c.state === 'idle' ? R.CHAT_KINDS[c.kind]?.label : ''), c.time].filter(Boolean).join(' · '), c.pinned ? 'Pinned' : ''].filter(Boolean).join('\n'), end: c.time, tree: c.tasks?.length ? treeOf(c, c.tasks) : undefined,
+    const r = { key: x.key, _x: x, title: c.title, lead: `${c.pinned ? `<span class="lr-pin" title="Pinned">${R.icon('pin', 12)}</span>` : ''}${c.origin ? R.originMark(c.origin) : ''}`, mark: markOf(c.state, c.kind, ownAttn(c), sectionOfChat(c) === 'needs' ? LEVEL_TONE[levelOf(c)] || '' : ''), unread: c.unread, current: current === c.id, tip: [c.title, [c.project || 'No project', ...(c.labels || [])].join(' · '), [st.line || (c.state === 'idle' ? R.CHAT_KINDS[c.kind]?.label : ''), c.time].filter(Boolean).join(' · '), c.pinned ? 'Pinned' : ''].filter(Boolean).join('\n'), end: c.time, tree: c.tasks?.length ? treeOf(c, c.tasks) : undefined,
       meta: '' };
     r.menu = [{ id: 'toggle', text: 'Select', hint: hint('Space') }, { id: 'in-view', text: window.RailShell?.inView.has('chat', c.id) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }, { id: 'rename', text: 'Rename…', hint: hint('R'), help: 'Give it another name' }, { id: 'pin', text: c.pinned ? 'Unpin' : 'Pin', hint: hint('P'), help: 'A pinned chat leads its section' },
       ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }, ...(c.group ? [{ id: 'leave-group', text: 'Remove from group', hint: hint('shift', 'G'), help: 'It stays in Chats, in no group' }] : [])] : []),

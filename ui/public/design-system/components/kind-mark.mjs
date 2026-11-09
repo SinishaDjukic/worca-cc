@@ -10,14 +10,14 @@ import { button, splitButton } from './button.mjs';
 const STAGES = 5;
 const R = 9, L = 2 * Math.PI * R;
 const CENTRE = { pause: 'pause', stop: 'sym-stop' };   // a chat or a schedule keeps its type; a pause or a stop is a state, so it keeps its sign
-const STATE_GLYPH = { run: 'kind-task', wait: 'waiting', pause: 'pause', ask: 'question', act: 'approve', ok: 'check', fail: 'alert', stop: 'sym-stop', merged: 'merge', closed: 'stop', idle: 'kind-task' };   // a task's glyph shows its state (list.kind-mark)
-const TYPED = new Set(['feature', 'workflow']), NEEDS_YOU = new Set(['ask', 'act', 'fail']);
-const KINDS = { chat: 'kind-chat', task: 'kind-task', schedule: 'kind-schedule', event: 'kind-event', feature: 'kind-feature', group: 'kind-group', workflow: 'kind-workflow', project: 'folder', workspace: 'nav-workspaces', requirement: 'list', agent: 'you', script: 'script', plugin: 'plug' };
+const STATE_GLYPH = { run: 'kind-task', wait: 'waiting', pause: 'pause', ask: 'question', act: 'approve', ok: 'check', done: 'check', fail: 'alert', stop: 'sym-stop', merged: 'merge', closed: 'stop', idle: 'kind-task' };   // a task's glyph shows its state (list.kind-mark)
+const TYPED = new Set(['feature', 'workflow']), NEEDS_YOU = new Set(['ask', 'act', 'fail']), PLACES = new Set(['project', 'workspace']);
+const KINDS = { figure: 'dollar', chat: 'kind-chat', task: 'kind-task', schedule: 'kind-schedule', event: 'kind-event', feature: 'kind-feature', group: 'kind-group', workflow: 'kind-workflow', project: 'folder', workspace: 'nav-workspaces', requirement: 'list', agent: 'you', script: 'script', plugin: 'plug' };
 
 /**
  * The tone of a state, from what the library says about it (runState, chatState): never a page's own reading of a word.
  * @param {{word?:string, dot?:string, sym?:string}} st
- * @returns {'wait'|'run'|'ask'|'act'|'fail'|'pause'|'stop'|'ok'|'merged'|'closed'|'idle'}
+ * @returns {'wait'|'run'|'ask'|'act'|'fail'|'pause'|'stop'|'ok'|'done'|'merged'|'closed'|'idle'}
  */
 export function markTone(st = {}) {
   const w = st.word || '', d = st.dot || '';
@@ -29,7 +29,8 @@ export function markTone(st = {}) {
   if (['Stopped', 'Cancelled', 'Discarded'].includes(w)) return 'stop';
   if (w === 'Closed') return 'closed';
   if (['Merged', 'Applied'].includes(w)) return 'merged';
-  if (['Ready', 'Ready to merge', 'Finished'].includes(w)) return 'ok';
+  if (['Ready', 'Ready to merge'].includes(w)) return 'ok';
+  if (w === 'Finished') return 'done';   // finished: a plain check, no ring (look.alert-ladder)
   if (['Waiting', 'Mock task'].includes(w)) return 'wait';
   if (['Archived', 'Deleted', 'Idle', ''].includes(w)) return 'idle';
   if (/amber/.test(d) || w === 'Needs you') return 'ask';
@@ -57,11 +58,12 @@ export const alertLevel = (tone) => (tone === 'fail' ? 3 : tone === 'ask' || ton
  * @param {boolean} [o.breathe]   it needs you and you have not opened it yet: it breathes in its state's colour (motion.attention)
  * @param {string} [o.icon]       its own mark in place of its kind's (a plugin's brand: brand-github)
  * @param {boolean} [o.advisory]  ready and counted under Needs you: full ink (look.alert-ladder)
+ * @param {boolean} [o.outline]   a Warning's ring, not its fill: a parent over the task that holds the fill (one light per thing)
  * @param {boolean} [o.landed]    just landed and not seen yet: green until seen (look.running-needs-apart)
  */
-export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = STAGES, size = 20, title = '', keepType = false, breathe = false, icon: own = '', advisory = false, landed = false } = {}) {
+export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = STAGES, size = 20, title = '', keepType = false, breathe = false, icon: own = '', advisory = false, landed = false, outline = false } = {}) {
   if (kind === 'plugin' && tone !== 'fail') tone = 'idle';   // a plugin is one ink, whatever its state (look.one-icon)
-  const noRing = kind === 'event' || kind === 'plugin' ||   /* a plugin has no stages */ tone === 'idle' || tone === 'merged' || (kind === 'schedule' && tone === 'wait');
+  const noRing = kind === 'event' || kind === 'plugin' ||   /* a plugin has no stages */ tone === 'idle' || tone === 'merged' || tone === 'done' || (kind === 'schedule' && tone === 'wait');
   const reach = tone === 'wait' ? 0 : stage < 0 ? 1 : Math.min(1, (stage + 1) / stages);
   const arc = (from, len, stroke, k = -1) => `<circle cx="10" cy="10" r="${R}" fill="none" stroke="${stroke}" stroke-width="1.1" stroke-dasharray="${len.toFixed(2)} ${(L - len).toFixed(2)}" stroke-dashoffset="${(L / 4 - from).toFixed(2)}"${k >= 0 ? ` style="--k:${k}"` : ''}></circle>`;   // --k: a filled step's order, so a changed mark's ring can fill in turn
   let ring = '';
@@ -72,9 +74,9 @@ export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = ST
   }
   const typed = TYPED.has(kind) && !NEEDS_YOU.has(tone);   // a Shaper task or a workflow run says so; only what needs you takes its centre
   const stated = !keepType && (kind === 'task' || (typed === false && TYPED.has(kind))) ? STATE_GLYPH[tone] : '';   // a task's glyph is its state; a Shaper task or workflow's only when it needs you
-  const centre = stated || (!noRing && !keepType && !typed && CENTRE[tone]) || own || KINDS[kind] || KINDS.task;
+  const centre = stated || (tone === 'fail' && PLACES.has(kind) ? 'alert' : '') || (!noRing && !keepType && !typed && CENTRE[tone]) || own || KINDS[kind] || KINDS.task;   // a project or workspace that stopped says so with the Warning's own sign
   const glyph = icon(centre, Math.round((tone === 'merged' ? 16 : stated ? 13 : noRing ? 15 : 11) * size / 20));
-  return `<span class="kind-mark is-${tone}${breathe && NEEDS_YOU.has(tone) ? ' is-breathe' : ''}${advisory ? ' is-adv' : ''}${landed ? ' is-landed' : ''}"${attrs({ style: `--km:${size}px`, title: title || null, role: title ? 'img' : null, 'aria-label': title || null, 'aria-hidden': title ? null : 'true' })}>${ring ? `<svg class="km-ring" width="${size}" height="${size}" viewBox="0 0 20 20" aria-hidden="true">${ring}</svg>` : ''}${glyph}</span>`;
+  return `<span class="kind-mark is-${tone}${breathe && NEEDS_YOU.has(tone) ? ' is-breathe' : ''}${advisory ? ' is-adv' : ''}${landed ? ' is-landed' : ''}${outline ? ' is-outline' : ''}"${attrs({ style: `--km:${size}px`, title: title || null, role: title ? 'img' : null, 'aria-label': title || null, 'aria-hidden': title ? null : 'true' })}>${ring ? `<svg class="km-ring" width="${size}" height="${size}" viewBox="0 0 20 20" aria-hidden="true">${ring}</svg>` : ''}${glyph}</span>`;
 }
 
 /**
@@ -82,7 +84,7 @@ export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = ST
  * @param {string[]} parts  markTone answers
  */
 export function partsWord(parts = []) {
-  return `${parts.filter((t) => t === 'ok' || t === 'merged').length} of ${parts.length}`;
+  return `${parts.filter((t) => t === 'ok' || t === 'done' || t === 'merged').length} of ${parts.length}`;
 }
 
 // Git's own icons (Octicons, MIT, github.com/primer/octicons): a person reads these as git before they read anything else.
@@ -256,10 +258,11 @@ export function taskCard({ title, place = '', mark, word, detail = '', action = 
  * @param {string} [o.action]  its one action (a Button)
  * @param {string} [o.menu]    its ⋯ (a MoreMenu)
  * @param {string} [o.say]     one line under the title (Nothing needs you)
+ * @param {string} [o.tone]    the word's level when it is lit (markTone: act for a Caution)
  */
-export function placeHead({ title, facts = '', mark = '', word = '', why = '', action = '', menu = '', say = '' }) {
+export function placeHead({ title, facts = '', mark = '', word = '', why = '', action = '', menu = '', say = '', tone = '' }) {
   const head = `<div class="place-head"><h1 class="place-title">${esc(title)}</h1>${say ? `<p class="place-say">${esc(say)}</p>` : ''}${facts ? `<div class="convo-head">${facts}</div>` : ''}</div>`;
-  return head + (word ? `<div class="convo-card-line">${mark}<span class="convo-card-w">${esc(word)}${why ? `<span>${esc(why)}</span>` : ''}</span>${action}${menu}</div>` : '');
+  return head + (word ? `<div class="convo-card-line${tone ? ` is-${tone}` : ''}">${mark}<span class="convo-card-w">${esc(word)}${why ? `<span>${esc(why)}</span>` : ''}</span>${action}${menu}</div>` : '');
 }
 
 /**
@@ -470,7 +473,7 @@ export function stagePart({ label, says = '', open = false, attrs: a = {} }) {
 export const stageStep = (detail) => { const m = /step (\d+) of (\d+)/.exec(String(detail || '')); return m ? [+m[1], +m[2]] : null; };
 
 export function stageBar({ labels, stage, tone = 'run', step = null, bare = false }) {   // bare: the line alone, where a stage list under it names them (rail.one-place)
-  const n = labels.length, whole = tone === 'ok' || tone === 'merged';   // done and merged are ink all along; a failure, a question, a pause only where it is
+  const n = labels.length, whole = tone === 'ok' || tone === 'done' || tone === 'merged';   // done and merged are ink all along; a failure, a question, a pause only where it is
   const at = (i) => (i / n) * 100, W = 100 / n, live = !whole && stage >= 0 && stage < n;
   const [k, m] = live && step && step[1] > 1 ? step : [0, 0];
   const notches = m ? Array.from({ length: m }, (_, j) => `<i class="sl-step${j < k - 1 ? ' is-done' : j === k - 1 ? ' is-now' : ''}" style="left:calc(${at(stage) + 1.5 + (j * (W - 3)) / m}% + 6px);width:calc(${(W - 3) / m}% - 9px)"></i>`).join('') : '';
