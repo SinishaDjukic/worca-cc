@@ -4,7 +4,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
@@ -164,4 +164,75 @@ test('checkTry: "breaks nothing that passed before" is met on the before run\'s 
   const broke = (await result.checkTry(ex('breaks-nothing'), outcome, { beforeOf,
     runCommand: async () => ({ met: false, value: '1 passed, 1 failed', output: 'x', exitCode: 1, ms: 5, tests: tap(['adds'], ['rounds']) }) })).checks[0];
   assert.deepEqual([broke.met, broke.metWhy], [false, { why: 'broke', n: 1 }]);
+});
+
+// Task 9 fix round 1 (review I1): callers of the same before run share it, but not each other's stop or progress.
+const until = async (ok, ms = 20_000) => { const end = Date.now() + ms; while (!ok()) { if (Date.now() > end) throw new Error('timed out waiting'); await new Promise((r) => setTimeout(r, 10)); } };
+// A wait that cannot hang the file: what has not settled in 10 s reads 'still waiting'.
+const within = (p, ms = 10_000) => Promise.race([p, new Promise((r) => { setTimeout(() => r('still waiting'), ms).unref(); })]);
+const gatedRun = () => {
+  const g = { signal: null, calls: 0 };
+  g.gate = new Promise((r) => { g.release = r; });
+  g.run = async (o) => {
+    if (o.command !== 'node check.js') return shell.runShellStep(o);
+    g.calls += 1;
+    g.signal = o.signal;
+    await g.gate;
+    return o.signal && o.signal.aborted ? { ok: false, exitCode: null, timedOut: false, ms: 1, tail: '' } : shell.runShellStep(o);
+  };
+  return g;
+};
+
+test('shared: the first of three callers stops; the others still get the real result, and each sees the phases (a late one from where it joined)', async () => {
+  const g = gatedRun();
+  const ph = [[], [], []];
+  const ac1 = new AbortController();
+  const p1 = mod.beforeRun(spec({ timeoutMin: 2 }), { signal: ac1.signal, run: g.run, onPhase: (p) => ph[0].push(p) });
+  const p2 = mod.beforeRun(spec({ timeoutMin: 2 }), { signal: new AbortController().signal, onPhase: (p) => ph[1].push(p) });
+  await until(() => g.signal);
+  const p3 = mod.beforeRun(spec({ timeoutMin: 2 }), { onPhase: (p) => ph[2].push(p) });
+  ac1.abort();
+  try {
+    assert.deepEqual(await within(p1), { ran: false, reason: 'stopped' }, 'the caller that stopped is told so at once');
+    assert.equal(g.signal.aborted, false, 'the shared run goes on for the others');
+  } finally { g.release(); }
+  const [r2, r3] = await Promise.all([p2, p3]);
+  assert.deepEqual([r2.ran, r2.ok, r2.cached, r3.ran, r3.ok, r3.cached], [true, true, false, true, true, false]);
+  assert.equal(g.calls, 1, 'one run for all three');
+  assert.deepEqual(ph, [['copy', 'command'], ['copy', 'command'], ['command']]);
+  await until(() => runFolders().length === 0);
+});
+
+test('shared: when every caller stops, the run stops; a caller that comes after starts a new one', async () => {
+  const g = gatedRun();
+  const acA = new AbortController();
+  const acB = new AbortController();
+  const s = spec({ timeoutMin: 3 });
+  const pA = mod.beforeRun(s, { signal: acA.signal, run: g.run });
+  const pB = mod.beforeRun(s, { signal: acB.signal });
+  await until(() => g.signal);
+  acA.abort();
+  assert.equal(g.signal.aborted, false);
+  acB.abort();
+  try { assert.equal(g.signal.aborted, true, 'nobody waits for it any more'); } finally { g.release(); }
+  assert.deepEqual([await within(pA), await within(pB)], [{ ran: false, reason: 'stopped' }, { ran: false, reason: 'stopped' }]);
+  await until(() => runFolders().length === 0);
+  assert.equal(await mod.readBefore(s), null, 'a stopped run is not kept');
+  const again = await mod.beforeRun(s);
+  assert.deepEqual([again.ran, again.ok, again.cached], [true, true, false]);
+});
+
+test('never rejects: a before folder that cannot be made is an error result', async () => {
+  const root = pc.beforeRoot();
+  const aside = `${root}.aside`;
+  renameSync(root, aside);
+  writeFileSync(root, 'not a folder');
+  try {
+    const r = await mod.beforeRun(spec({ timeoutMin: 4 })).catch((e) => ({ rejected: e.message }));
+    assert.deepEqual([r.ran, r.reason, typeof r.text], [false, 'error', 'string']);
+    assert.ok(r.text.length > 0);
+  } finally {
+    rmSync(root, { force: true });
+    renameSync(aside, root);
+  }
 });

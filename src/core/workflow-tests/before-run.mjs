@@ -51,18 +51,71 @@ async function keep(spec, rec) {
   await rename(tmp, file);
 }
 
-const inflight = new Map();
+// One run per spec in this server, shared by every caller of it (the tries of a test start together, D36). The run has its
+// own stop: it is stopped only when every caller waiting on it has stopped; a caller that stops alone is answered 'stopped'
+// at once while the run goes on for the others. Each caller's onPhase gets the phases, a late one first the current phase.
+const inflight = new Map();   // key → { ac, waiting, phase, subs, p }
+const STOPPED = Object.freeze({ ran: false, reason: 'stopped' });
 /**
- * The command on the start commit: the kept result, else a fresh run (one at a time per spec in this server). Never throws.
+ * The command on the start commit: the kept result, else a fresh run (one at a time per spec in this server). Never throws
+ * and never rejects: an error is `{ ran: false, reason: 'error', text }`.
  * @param {{key: string, startCommit: string, setupCmd: string|null, cmd: string, timeoutMin: number}} spec
  * @param {{signal?: AbortSignal|null, onPhase?: (p: 'copy'|'setup'|'command') => void, run?: Function, clone?: Function}} [o]
+ *   `run` and `clone` (tests) are the first caller's.
  */
 export function beforeRun(spec, o = {}) {
-  const k = `${spec.key}/${beforeHash(spec)}`;
-  if (inflight.has(k)) return inflight.get(k);
-  const p = (async () => (await readBefore(spec)) || runFresh(spec, o))().finally(() => inflight.delete(k));
-  inflight.set(k, p);
-  return p;
+  try {
+    const { signal = null, onPhase = null } = o;
+    if (signal && signal.aborted) return Promise.resolve({ ...STOPPED });
+    const k = `${spec.key}/${beforeHash(spec)}`;
+    let job = inflight.get(k);
+    if (!job) {
+      const j = { ac: new AbortController(), waiting: 0, phase: null, subs: new Set() };
+      const phase = (ph) => {
+        j.phase = ph;
+        for (const f of j.subs) { try { f(ph); } catch { /* a caller's progress never stops the run */ } }
+      };
+      j.p = (async () => (await readBefore(spec)) || runFresh(spec, { ...o, signal: j.ac.signal, onPhase: phase }))()
+        .catch((e) => ({ ran: false, reason: 'error', text: firstLine(e) }))
+        .finally(() => { if (inflight.get(k) === j) inflight.delete(k); });
+      inflight.set(k, j);
+      job = j;
+    }
+    return waitOn(k, job, signal, onPhase);
+  } catch (e) {
+    return Promise.resolve({ ran: false, reason: 'error', text: firstLine(e) });
+  }
+}
+
+function waitOn(k, job, signal, onPhase) {
+  job.waiting += 1;
+  if (onPhase) {
+    job.subs.add(onPhase);
+    if (job.phase) { try { onPhase(job.phase); } catch { /* as above */ } }
+  }
+  return new Promise((resolve) => {
+    let done = false;
+    const leave = () => { if (onPhase) job.subs.delete(onPhase); if (signal) signal.removeEventListener('abort', stop); };
+    const stop = () => {
+      if (done) return;
+      done = true;
+      leave();
+      job.waiting -= 1;
+      if (job.waiting === 0) {
+        // Nobody waits for it any more: stop it, and let a later caller start a new one.
+        if (inflight.get(k) === job) inflight.delete(k);
+        job.ac.abort();
+      }
+      resolve({ ...STOPPED });
+    };
+    if (signal) signal.addEventListener('abort', stop, { once: true });
+    job.p.then((r) => {
+      if (done) return;
+      done = true;
+      leave();
+      resolve(r);
+    });
+  });
 }
 
 async function runFresh(spec, { signal = null, onPhase = () => {}, run = runShellStep, clone = cloneForBefore } = {}) {
