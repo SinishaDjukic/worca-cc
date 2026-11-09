@@ -60,7 +60,7 @@ Mock first, as PNG, for anything the prototype doesn't already settle, and show 
 
 Passing: run-page sweep, ds-check, colour-check, click-check (4,629 clicks), handover-check, settings-sentences, the design-system tests; `npm test` 21,182 passed.
 Failing, fix these first:
-- `npm test`: "boot: until the runs are known the chat list alone never picks the tab" (1 test). The Pulse counting changed in the last round.
+- `npm test`: "boot: until the runs are known the chat list alone never picks the tab" (1 test, in test/ui-chat-home.test.mjs). It passed when run alone, so check for a timing flake under load first.
 - `worca-sweep` steps at several widths: "one store: Pulse and the bar agree at the start", "answering moves the task everywhere", "accepting a gate moves it everywhere", "pausing moves it everywhere", "a Shaper slice is its own row with its type in the icon". The bell now counts every item that needs you (see above), and task marks changed with the dark cockpit, so decide for each whether the check or the code is out of date. Run `node plans/rail/prototype/gates/worca-sweep.mjs` for the whole list.
 
 ## Definition of done
