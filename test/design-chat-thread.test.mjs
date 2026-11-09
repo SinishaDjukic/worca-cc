@@ -69,7 +69,7 @@ test('POST /api/ask/threads mode design: 404 while the design flag is off', asyn
   const d = (await call('POST', '/api/design', { kind: 'web', title: 'F' })).body;
   await deleteChat(d.threadId);
   const prev = process.env.WORCA_FLAGS;
-  delete process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = '-design';
   try {
     const off = await call('POST', '/api/ask/threads', { mode: 'design', designId: d.design.id });
     assert.deepEqual([off.status, off.body], [404, { error: 'not found' }]);

@@ -513,10 +513,12 @@ export const DESIGN_SYSTEM_RULES = [
 /** The Design chat's system prompt: its rules, then the web section when on, in its composer form (`composer: true`:
  *  rule 11, no propose_web_access). No catalog: the chat names no agent, workflow or script. */
 export function buildDesignSystemPrompt({ web = null, engine = 'claude' } = {}) {
-  // A locked-down chat (Codex) has worca's read_file / grep / glob and its own words for images, as the composer.
+  // A locked-down chat (Codex) has worca's read_file / grep / glob and its own words for images, as the composer. Those
+  // tools reach the design's work/ folder and project only (ask/file-deps.mjs askFileRoots), at get_design's paths.
   const locked = chatDescriptor(engine);
   const rules = locked
     ? DESIGN_SYSTEM_RULES.replace('plus Read, Grep and Glob', 'plus the worca file tools read_file, grep and glob')
+      .replace('(and web tools when they are on).', "(and web tools when they are on). Open the design's files with read_file, grep and glob at the absolute paths get_design returns: paths.work, and paths.project when the design has a project.")
       .replace(COMPOSER_READ_BINARY, locked.prompt.composerBinary)
     : DESIGN_SYSTEM_RULES;
   return web && web.enabled === true ? `${rules}\n\n${renderWebSection(web, { engine, composer: true })}` : rules;

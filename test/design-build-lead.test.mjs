@@ -10,7 +10,7 @@ import { crewFile, designDir, designWorkDir, kitDir } from '../src/core/design/p
 import { getBuild, getDesign, listAgents } from '../src/core/design/store.mjs';
 import { addProject, listProjects } from '../src/core/projects.mjs';
 import { createSemaphore } from '../src/core/design/semaphore.mjs';
-import { designMaxBuilders } from '../src/core/design/spawn-options.mjs';
+import { designCaps } from '../src/core/design/limits.mjs';
 import { ASK_DENY_RULES } from '../src/core/ask/deny-rules.mjs';
 import { defaultGuardrailSetId, readGuardrailSet } from '../src/core/guardrail-store.mjs';
 import { guardrailsToPermissionRules } from '../src/core/guardrails.mjs';
@@ -360,19 +360,20 @@ test('semaphore: FIFO, an aborted waiter leaves the queue, resize never touches 
   assert.equal(next.state, 'ok', 'no holder: the waiter gets the slot');
 });
 
-test('useDesignEnv deletes WORCA_DESIGN_MAX_BUILDERS until after, then restores it', () => {
-  // tools/test.mjs keeps the variable, and the pinned caps (12 fast, 3 off) read the default.
-  const outer = process.env.WORCA_DESIGN_MAX_BUILDERS;
+test('useDesignEnv deletes WORCA_DESIGN_MAX_BUILDERS and WORCA_DESIGN_MAX_AGENTS until after, then restores them', () => {
+  // tools/test.mjs keeps the variables, and the pinned caps (12 fast, 3 off, 24 agents) read the defaults.
+  const keys = ['WORCA_DESIGN_MAX_BUILDERS', 'WORCA_DESIGN_MAX_AGENTS'];
+  const outer = keys.map((k) => process.env[k]);
   const hooks = [];
   process.env.WORCA_DESIGN_MAX_BUILDERS = '2';
+  process.env.WORCA_DESIGN_MAX_AGENTS = '5';
   try {
     useDesignEnv((fn) => hooks.push(fn));
-    assert.equal(process.env.WORCA_DESIGN_MAX_BUILDERS, undefined);
-    assert.deepEqual([designMaxBuilders({ fast: true, hosted: false }), designMaxBuilders({ fast: false, hosted: false })], [12, 3]);
+    assert.deepEqual(keys.map((k) => process.env[k]), [undefined, undefined]);
+    assert.deepEqual(designCaps(), { fast: 12, calm: 3, global: 24 });
   } finally {
     for (const fn of hooks) fn();
   }
-  assert.equal(process.env.WORCA_DESIGN_MAX_BUILDERS, '2', 'restored in after');
-  if (outer === undefined) delete process.env.WORCA_DESIGN_MAX_BUILDERS;
-  else process.env.WORCA_DESIGN_MAX_BUILDERS = outer;
+  assert.deepEqual(keys.map((k) => process.env[k]), ['2', '5'], 'restored in after');
+  keys.forEach((k, i) => { if (outer[i] === undefined) delete process.env[k]; else process.env[k] = outer[i]; });
 });

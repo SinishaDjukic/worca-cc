@@ -14,9 +14,10 @@ import { runClaude } from '../src/core/claude-runner.mjs';
 import { prepare } from '../src/core/db.mjs';
 import { DesignBuild } from '../src/core/design/build.mjs';
 import { DesignError } from '../src/core/design/ids.mjs';
+import { designCaps } from '../src/core/design/limits.mjs';
 import { designWorkDir } from '../src/core/design/paths.mjs';
 import { createDesignBuilds, RESTORE_RUNNING, ROUND_STARTING } from '../src/core/design/registry.mjs';
-import { createAgent, createBuild, deleteDesign, getAgent, getBuild, latestBuild, listAgents, updateBuild } from '../src/core/design/store.mjs';
+import { createAgent, createBuild, deleteDesign, getAgent, getBuild, getDesign, latestBuild, listAgents, updateBuild } from '../src/core/design/store.mjs';
 
 useDesignEnv(after);
 const mk = (over = {}) => { const frames = []; const r = createDesignBuilds({ broadcast: (f) => frames.push(f), deps: { staggerMs: 0, retryDelayMs: 0 }, ...over }); return { r, frames }; };
@@ -64,23 +65,30 @@ test('refusals are Errors with numeric status', async () => {
   await assert.rejects(r.start({ designId: 'd_000000000000', brief: 'x', by: 'local' }), status(404));
   await assert.rejects(mk({ draining: () => true }).r.start({ designId: newDesign().id, brief: 'x', by: 'local' }), status(503));
   await assert.rejects(mk({ deps: { budgetStatus: () => ({ blocked: true }) } }).r.start({ designId: newDesign().id, brief: 'x', by: 'local' }), (e) => e.status === 403 && /total cost limit reached/.test(e.message));
-  await assert.rejects(mk().r.start({ designId: newDesign({ engine: 'codex' }).id, brief: 'x', by: 'local' }), status(422));
   for (const engine of [null, 'claude', 'mock']) {
-    const one = mk(); const got = await one.r.start({ designId: newDesign({ engine }).id, brief: 'MOCK_SECTIONS=1', by: 'local' });
+    const one = mk(); const made = newDesign({ engine }); const got = await one.r.start({ designId: made.id, brief: 'MOCK_SECTIONS=1', by: 'local' });
     assert.equal(got.kind, 'first', `engine ${engine} counts as Claude`);
+    assert.equal(getDesign(made.id).engine, engine ?? 'claude', 'an engine resolved at start is stored with the build');
     await one.r.settled();
   }
+  const consented = mk(); const codex = await consented.r.start({ designId: newDesign({ engine: 'codex' }).id, brief: 'MOCK_SECTIONS=1', by: 'local' });
+  assert.equal(codex.kind, 'first', 'a stored codex design starts: its stored engine is the consent');
+  await consented.r.settled();
   r.pauseAll(); await r.settled();
 });
 test('the refusals answer in order: each one before the next', async () => {
   const blocked = { deps: { budgetStatus: () => ({ blocked: true }) } };
   await assert.rejects(mk({ draining: () => true }).r.start({ designId: 'd_000000000000', brief: 'x', by: 'local' }), status(503), 'draining before an unknown design');
-  await assert.rejects(mk().r.start({ designId: newDesign({ engine: 'codex' }).id, brief: '', by: 'local' }), (e) => e.status === 422 && /Claude/.test(e.message), 'the engine before the brief');
+  await assert.rejects(mk().r.start({ designId: newDesign({ engine: 'goose' }).id, brief: '', by: 'local' }), (e) => e.status === 409 && e.code === 'engine-refused', 'the engine before the brief');
+  const unset = newDesign({ engine: null });
+  await assert.rejects(mk().r.start({ designId: unset.id, brief: '', by: 'local' }), status(422));
+  await assert.rejects(mk(blocked).r.start({ designId: unset.id, brief: 'x', by: 'local' }), status(403));
+  assert.equal(getDesign(unset.id).engine, null, 'a start refused after the gate stores no engine');
   const { r } = mk(); const d = newDesign({ createdBy: 'a@x.io' });
   await r.start({ designId: d.id, brief: 'MOCK_HANG_LEAD', by: 'a@x.io' });
   await assert.rejects(r.start({ designId: d.id, brief: '', by: 'a@x.io' }), (e) => e.status === 422 && !/Claude/.test(e.message), 'the brief before the open build');
   await assert.rejects(r.start({ designId: d.id, brief: 'x', by: 'a@x.io' }), (e) => e.status === 409 && e.code === undefined && /this design/i.test(e.message), 'the design\'s open build before the person');
-  await assert.rejects(r.start({ designId: newDesign().id, brief: 'x', pins: Array(7).fill(PIN), by: 'a@x.io' }), (e) => e.status === 409 && /You already have a build running/.test(e.message), 'the person before the pins');
+  await assert.rejects(r.start({ designId: newDesign().id, brief: 'x', pins: Array(7).fill(PIN), by: 'a@x.io' }), (e) => e.status === 409 && e.code === 'person-busy' && /You already have a build running/.test(e.message), 'the person before the pins');
   await assert.rejects(mk(blocked).r.start({ designId: newDesign().id, brief: 'x', pins: Array(7).fill(PIN), by: 'local' }), status(422), 'the pins before the budget');
   await assert.rejects(mk(blocked).r.start({ designId: newDesign().id, instruction: 'x', sections: ['ghost'], by: 'local' }), status(403), 'the budget before the change checks');
   r.pauseAll(); await r.settled();
@@ -177,7 +185,7 @@ test('M6: fast on allows 12 at once under the default', async () => {
 });
 test('L2.12: hosted, fast on allows 6 at once', async () => {
   let now = 0; let peak = 0;
-  const { r } = mk({ hosted: true, deps: { staggerMs: 0, runClaude: async (o) => { if (o.cwd.includes('sections')) { now++; peak = Math.max(peak, now); } try { await new Promise((res) => setTimeout(res, 5)); return await runClaude({ ...o, mock: true }); } finally { if (o.cwd.includes('sections')) now--; } } } });
+  const { r } = mk({ caps: designCaps({ deployment: 'hosted', env: {} }), deps: { staggerMs: 0, runClaude: async (o) => { if (o.cwd.includes('sections')) { now++; peak = Math.max(peak, now); } try { await new Promise((res) => setTimeout(res, 5)); return await runClaude({ ...o, mock: true }); } finally { if (o.cwd.includes('sections')) now--; } } } });
   await r.start({ designId: newDesign({ fast: true }).id, brief: 'MOCK_SECTIONS=10', by: 'local' });
   await r.settled();
   assert.equal(peak, 6);
@@ -255,6 +263,29 @@ test('continueBuild: from a paused row, with sections; refuses while running or 
   assert.equal(frames.filter((f) => f.type === 'design-build' && f.buildId === buildId).at(-1).status, 'done', 'a continued build is wired to broadcast');
   assert.throws(() => r.continueBuild({ designId: d.id, buildId, by: 'local' }), status(409));
   assert.deepEqual([r.get(buildId), r.busy()], [null, false], 'a refused continue leaves nothing behind');
+});
+test('continue re-checks the gate: a stored engine\'s consent never lifts the broker', async () => {
+  const { r } = mk(); const d = newDesign({ engine: 'codex' });
+  const { buildId } = await r.start({ designId: d.id, brief: 'MOCK_SECTIONS=2 MOCK_FAIL_SECTION=hero', by: 'local' });
+  await r.settled();
+  assert.equal(getBuild(buildId).status, 'paused');
+  const prev = process.env.WORCA_BROKER_URL;
+  const rehydrate = DesignBuild.rehydrate;
+  let rehydrated = 0;
+  DesignBuild.rehydrate = (...a) => { rehydrated += 1; return rehydrate.apply(DesignBuild, a); };
+  try {
+    process.env.WORCA_BROKER_URL = 'http://127.0.0.1:9';
+    assert.throws(() => r.continueBuild({ designId: d.id, buildId, by: 'local' }), (e) => e.status === 409 && e.code === 'engine-refused' && /credential broker/.test(e.message));
+    assert.deepEqual([rehydrated, r.get(buildId), getBuild(buildId).status], [0, null, 'paused'], 'refused before any rehydrate');
+    delete process.env.WORCA_BROKER_URL;
+    assert.deepEqual(r.continueBuild({ designId: d.id, buildId, by: 'local' }), { buildId });
+    assert.equal(rehydrated, 1);
+    await r.settled();
+    assert.equal(getBuild(buildId).status, 'done');
+  } finally {
+    DesignBuild.rehydrate = rehydrate;
+    if (prev === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prev;
+  }
 });
 test('continueBuild runs as the person who continued it, owned by the design\'s maker', async () => {
   let who = null; let owner = null;
@@ -364,9 +395,10 @@ test('frameOwner names any design frame owner, design-restored included, and not
   const { r } = mk(); const d = newDesign({ createdBy: 'a@x.io' });
   assert.equal(r.frameOwner({ type: 'design-delta', designId: d.id }), 'a@x.io');
   assert.equal(r.frameOwner({ type: 'design-restored', designId: d.id, version: 2, restoredFrom: 1, ts: 1 }), 'a@x.io');
-  assert.equal(r.frameOwner({ type: 'ask-delta', threadId: 't' }), null);
-  assert.equal(r.frameOwner({ type: 'run-update', designId: d.id }), null, 'only design- frames');
-  assert.equal(r.frameOwner({ type: 'design-delta', designId: 'd_000000000000' }), null);
+  assert.equal(r.frameOwner({ type: 'ask-delta', threadId: 't' }), undefined);
+  assert.equal(r.frameOwner({ type: 'run-update', designId: d.id }), undefined, 'only design- frames');
+  assert.equal(r.frameOwner({ type: 'design-delta', designId: 'd_000000000000' }), false, 'no such design: no viewer gets it (L8.21)');
+  assert.equal(r.frameOwner({ type: 'design-delta', designId: newDesign({ createdBy: null }).id }), null, 'ownerless: everyone');
   // a design created by 'b@x.io' whose build a@x.io started through the registry: frameOwner and live({viewer})
   // follow 'b@x.io', never the build's by
   const e = newDesign({ createdBy: 'b@x.io' });
@@ -378,16 +410,28 @@ test('frameOwner names any design frame owner, design-restored included, and not
   assert.deepEqual([Boolean(r.snapshotFor(buildId, { viewer: 'b@x.io' })), r.snapshotFor(buildId, { viewer: 'a@x.io' })], [true, null]);
   await r.stopBuild(buildId);
 });
-test('frameOwner caches each owner, clears past 5000, and answers null on any error', () => {
+test('frameOwner caches each owner and each missing design, clears past 5000, and answers false on a throw', () => {
   const { r } = mk(); const d = newDesign({ createdBy: 'a@x.io' });
   assert.equal(r.frameOwner({ type: 'design-file', designId: d.id }), 'a@x.io');
   deleteDesign(d.id);
   assert.equal(r.frameOwner({ type: 'design-file', designId: d.id }), 'a@x.io', 'cached: broadcast reads no row per frame');
+  // Missing designs are cached too (false): these 5002 fill the cache past its cap.
   for (let i = 0; i <= 5001; i++) r.frameOwner({ type: 'design-delta', designId: `d_${String(i).padStart(12, '0')}` });
-  assert.equal(r.frameOwner({ type: 'design-file', designId: d.id }), null, 'the cache was cleared past 5000 entries');
-  assert.equal(r.frameOwner({ type: 'design-delta', get designId() { throw new Error('read'); } }), null);
-  assert.equal(r.frameOwner({ type: 'design-delta' }), null);
-  assert.equal(r.frameOwner(null), null);
+  assert.equal(r.frameOwner({ type: 'design-file', designId: d.id }), false, 'the cache was cleared past 5000 entries');
+  assert.equal(r.frameOwner({ type: 'design-delta', get designId() { throw new Error('read'); } }), false);
+  assert.equal(r.frameOwner({ type: 'design-delta' }), undefined);
+  assert.equal(r.frameOwner(null), undefined);
+});
+test('frameOwner: a lookup that throws answers false and is not cached (L8.21)', () => {
+  const { r } = mk(); const d = newDesign({ createdBy: 'a@x.io' });
+  // getDesign joins design_cost_ledger: without it the read throws. No build is live here to insert into it.
+  prepare('ALTER TABLE design_cost_ledger RENAME TO dcl_off').run();
+  try {
+    assert.equal(r.frameOwner({ type: 'design-file', designId: d.id }), false, 'unreadable: no viewer gets it');
+  } finally {
+    prepare('ALTER TABLE dcl_off RENAME TO design_cost_ledger').run();
+  }
+  assert.equal(r.frameOwner({ type: 'design-file', designId: d.id }), 'a@x.io', 'one failed read does not hide the design for good');
 });
 test('live filters by viewer', async () => {
   const { r } = mk(); const d = newDesign({ createdBy: 'a@x.io' }); const n = newDesign({ createdBy: null });

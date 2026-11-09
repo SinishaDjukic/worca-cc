@@ -67,7 +67,7 @@ async function rigDock(o = {}) {
       return reply(202, { userMessageId: `msg_u${String(sent).padStart(7, '0')}`, assistantMessageId: `msg_b${String(sent).padStart(7, '0')}` });
     }
     if (method === 'POST' && /\/cards\/[^/]+$/.test(url)) return reply(200, { ok: true });
-    if (method === 'POST' && /\/builds\/[^/]+\/answer$/.test(url)) return reply(200, { ok: true });
+    if (method === 'POST' && /\/builds\/[^/]+\/answer$/.test(url)) return o.answer ? reply(o.answer.status, o.answer.body) : reply(200, { ok: true });
     if (method === 'POST' && /\/versions\/\d+\/restore$/.test(url)) {
       const status = o.restoreStatus || 200;
       return reply(status, status < 300 ? { ok: true, version: 3, restoredFrom: 1 } : { error: o.restoreError });
@@ -321,6 +321,20 @@ test('an answered build question stays answered when its agent moves on; another
   const cards = host.querySelectorAll('section.chat-rc-q');
   assert.ok(cards[0].matches('.is-answered') && cards[0].querySelector('.qopt.sel[data-value="bold"]'));
   assert.equal(cards[1].querySelector('.chat-rc-receipt').textContent, 'Closed: the agent moved on');
+});
+test('a build question answered with no key yet stays open and says so (P8 credential-missing)', async () => {
+  const { dock, host, posts, tick } = await rigDock({ answer: { status: 409, body: { error: 'You have not added your key yet.', code: 'credential-missing' } } });
+  dock.pushDesignFrame({ type: 'design-question', designId: DID, buildId: 'b_1', agentId: 'a_1', askId: 'as_1', job: 'Hero', heading: 'H1', questions: [Q] });
+  await tick();
+  const card = host.querySelector('section.chat-rc-q');
+  card.querySelector('.qopt[data-value="bold"]').click();
+  card.querySelector('[data-qpanel-submit]').click();
+  await tick();
+  assert.ok(posts.some((p) => /\/builds\/b_1\/answer$/.test(p.url)), 'the answer was sent');
+  const now = host.querySelector('section.chat-rc-q');
+  assert.equal(now.querySelector('.chat-rc-receipt'), null, 'not closed');
+  const err = now.querySelector('.chat-rc-q-err');
+  assert.deepEqual([err.hidden, err.textContent], [false, 'You have not added your key yet.']);
 });
 test('a running reply shows Stop in place of Send, Stop reaches the stop route, and the reply\'s cost shows once done', async () => {
   const { dock, host, posts, tick } = await rigDock({});

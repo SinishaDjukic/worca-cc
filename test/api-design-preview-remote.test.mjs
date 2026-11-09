@@ -1,14 +1,17 @@
 // test/api-design-preview-remote.test.mjs
 // Design P3 Task 12, remote mode (REMOTE_MODE is fixed at import, hence its own file): the preview gate serves on the
 // token with no Access sign-in but still checks the Host, the CSP names X-Forwarded-Proto's scheme, every other route
-// keeps its sign-in and S1, and the mint route filters by owner.
+// keeps its sign-in and S1, and the mint route filters by owner. P8 Task 8: behind the proxy the doc embeds its CSS,
+// fonts and images by the server-side default, so the frame requests nothing after it.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { truncateSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
+import { BRIDGE_MARKER, STANDALONE_MAX_FILE_BYTES } from '../src/core/design/assemble.mjs';
 import { designWorkDir } from '../src/core/design/paths.mjs';
 import { previewGrants } from '../src/core/design/preview-grants.mjs';
 import { createDesign } from '../src/core/design/store.mjs';
@@ -20,18 +23,30 @@ const accessKey = makeAccessKey();
 const fakeCerts = certsFetch({ keys: [accessKey] });
 const realFetch = globalThis.fetch;
 const ENV_KEYS = ['WORCA_HOME', 'HOME', 'USERPROFILE', 'WORCA_MOCK', 'WORCA_ALLOWED_HOSTS', 'WORCA_CF_ACCESS_TEAM_DOMAIN',
-  'WORCA_CF_ACCESS_AUD', 'WORCA_FLAGS'];
+  'WORCA_CF_ACCESS_AUD', 'WORCA_FLAGS', 'WORCA_DESIGN_PREVIEW_INLINE'];
 const prev = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 let homeDir, srv, port, mine, theirs, base, tok;
+// A real 1x1 PNG.
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+const signedIn = () => ({ host: PUBLIC, origin: `https://${PUBLIC}`, 'cf-access-jwt-assertion': signAccessJwt(accessKey) });
 
-/** method + path + headers -> { status, headers, body }. Host defaults to PUBLIC (the remote host). */
+/** Hero (done in .crew.json) shows `<img src="assets/<img>">`, and global.css loads a font from assets/. */
+function writeAssetWork(work, img) {
+  writeDesignWork(work);
+  writeFileSync(join(work, 'assets', 'logo.png'), PNG);
+  writeFileSync(join(work, 'assets', 'brand.woff2'), 'wOF2-font-bytes');
+  writeFileSync(join(work, 'global.css'), '@font-face{font-family:Brand;src:url(assets/brand.woff2) format("woff2")}body{margin:0;font-family:Brand}');
+  writeFileSync(join(work, 'sections', 'hero', 'index.html'), `<section data-section="hero"><h1>Ship</h1><img src="assets/${img}" alt=""></section>`);
+}
+
+/** method + path + headers -> { status, headers, text, body }. Host defaults to PUBLIC (the remote host). */
 function call(method, path, headers = {}) {
   return new Promise((resolve, reject) => {
     const r = http.request({ host: '127.0.0.1', port, path, method, headers: { host: PUBLIC, ...headers } }, (res) => {
       let text = '';
       res.setEncoding('utf8');
       res.on('data', (c) => { text += c; });
-      res.on('end', () => { let body = null; try { body = text ? JSON.parse(text) : null; } catch { /* not json */ } resolve({ status: res.statusCode, headers: res.headers, body }); });
+      res.on('end', () => { let body = null; try { body = text ? JSON.parse(text) : null; } catch { /* not json */ } resolve({ status: res.statusCode, headers: res.headers, text, body }); });
     });
     r.on('error', reject);
     r.end();
@@ -48,12 +63,13 @@ before(async () => {
   process.env.WORCA_CF_ACCESS_TEAM_DOMAIN = TEAM;
   process.env.WORCA_CF_ACCESS_AUD = AUD;
   process.env.WORCA_FLAGS = 'design';   // tools/test.mjs deletes it, and the flag is off by default
+  delete process.env.WORCA_DESIGN_PREVIEW_INLINE;   // the rule decides, not a developer's override
   _resetForTests();
   // Before the import: the Access verifier takes the global fetch when the server builds it.
   globalThis.fetch = (url, opts) => (String(url) === CERTS_URL ? fakeCerts(url) : realFetch(url, opts));
   mine = createDesign({ kind: 'web' }, { by: 'me@example.com' }).id;
   theirs = createDesign({ kind: 'web' }, { by: 'other@example.com' }).id;
-  writeDesignWork(designWorkDir(mine));
+  writeAssetWork(designWorkDir(mine), 'logo.png');
   const mod = await import('../ui/server.mjs');
   srv = mod.server;
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -98,4 +114,32 @@ test('a design with no maker mints for anyone signed in, and the grant records w
   assert.equal(r.status, 200);
   assert.equal(previewGrants.check(r.body.base.split('/').pop()).owner, 'me@example.com');
   assert.equal(previewGrants.check(tok).owner, 'me@example.com');
+});
+test('behind an identity proxy nothing is requested after the doc, and the CSP is unchanged', async () => {
+  for (const mode of ['build', 'run']) {
+    const r = await call('GET', `${base}/${mode}/`, { host: PUBLIC, origin: 'null' });
+    assert.equal(r.status, 200, mode);
+    assert.ok(!r.text.includes('src="assets/logo.png"'), `${mode}: the image URL is gone`);
+    assert.ok(r.text.includes('src="data:image/png;base64,'), `${mode}: the image is embedded`);
+    assert.ok(r.text.includes(BRIDGE_MARKER), `${mode}: the bridge is still there`);
+    assert.match(r.headers['content-security-policy'], /^sandbox allow-scripts; default-src 'none'; script-src /);
+    assert.ok(r.headers['content-security-policy'].includes(`http://${PUBLIC}/design-preview/${tok}/`), `${mode}: {B} kept`);
+    assert.ok(!r.text.includes('url(assets/brand.woff2)'), `${mode}: the font URL is gone`);
+    assert.ok(r.text.includes('url(data:font/woff2;base64,'), `${mode}: the font is embedded`);
+  }
+});
+test('an asset over the limit is left as its URL, never a 500', async () => {
+  const big = createDesign({ kind: 'web' }, { by: 'me@example.com' }).id;
+  const work = designWorkDir(big);
+  writeAssetWork(work, 'huge.png');
+  const huge = join(work, 'assets', 'huge.png');
+  writeFileSync(huge, ''); truncateSync(huge, STANDALONE_MAX_FILE_BYTES + 1);
+  const minted = await call('POST', `/api/design/${big}/preview-token`, signedIn());
+  assert.equal(minted.status, 200);
+  for (const mode of ['build', 'run']) {
+    const r = await call('GET', `${minted.body.base}/${mode}/`, { host: PUBLIC, origin: 'null' });
+    assert.equal(r.status, 200, mode);
+    assert.ok(r.text.includes('src="assets/huge.png"'), `${mode}: the URL is kept`);
+    assert.ok(r.text.includes('url(data:font/woff2;base64,'), `${mode}: what fits is still embedded`);
+  }
 });

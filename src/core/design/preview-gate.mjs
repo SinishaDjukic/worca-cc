@@ -16,8 +16,24 @@ import { DESIGN_ID_RE } from './ids.mjs';
 import { TOKEN_RE } from './preview-grants.mjs';
 import { previewBase, previewCsp, previewHeaders } from './preview-doc.mjs';
 
-/** Task 1's switch: `true` would embed every asset in every doc, as `?inline=1` does. R5's probe kept it off. */
+/** Task 1's switch: `true` would embed every asset in every doc, as `?inline=1` does. R5's probe kept it off; P8
+ *  turns it on per server instead, behind an identity proxy (`designPreviewInline`, passed as `inlineDefault`). */
 export const PREVIEW_INLINE_DEFAULT = false;
+
+/**
+ * Whether a doc embeds its CSS, fonts and images by default (P8 L8.17, L8.18). Behind an identity proxy (Cloudflare
+ * Access, an issuer, or WORCA_INSECURE_NO_IDENTITY_CHECK) the sandboxed frame may get no cookies for its subresources
+ * (R6), so it is on there. `WORCA_DESIGN_PREVIEW_INLINE` `1` or `0` wins; any other value means "use the rule". Reads
+ * `env` on every call.
+ * @param {{ env?: Record<string, string | undefined>, remoteAccess?: { identity?: object | null, insecureNoIdentity?: boolean } | null }} [opts]
+ * @returns {boolean}
+ */
+export function designPreviewInline({ env = process.env, remoteAccess = null } = {}) {
+  const set = env.WORCA_DESIGN_PREVIEW_INLINE;
+  if (set === '1') return true;
+  if (set === '0') return false;
+  return !!remoteAccess?.identity || remoteAccess?.insecureNoIdentity === true;
+}
 
 const MODES = new Set(['build', 'run']);
 /** Refused in a decoded segment on every OS: separators, a drive colon and control characters (Global Constraints). */
@@ -93,10 +109,11 @@ const notFound = (res) => res.status(404).json({ error: 'not found' });
  *   designFor: (designId: string) => ({ workDir: string, kind: string } | null),
  *   renderDoc: (opts: { workDir: string, kind: string, mode: 'build' | 'run', nonce: string, inline: boolean }) => string | Promise<string>,
  *   enabled: () => boolean,
- * }} deps
+ *   inlineDefault?: () => boolean,
+ * }} deps `inlineDefault` is asked on every doc: true embeds every asset, as `?inline=1` does (P8 Task 8).
  * @returns {(req: import('express').Request, res: import('express').Response) => Promise<void>}
  */
-export function createPreviewGate({ grants, hostNameOk, designFor, renderDoc, enabled }) {
+export function createPreviewGate({ grants, hostNameOk, designFor, renderDoc, enabled, inlineDefault = () => false }) {
   return async (req, res) => {
     try {
       // 1. Host. hostGuard parses with `new URL`, so previewBase checks the characters again (L3.2, L3.3).
@@ -124,7 +141,7 @@ export function createPreviewGate({ grants, hostNameOk, designFor, renderDoc, en
       // 6. The generated doc, under a nonce minted for this response only.
       if (rel === '') {
         const nonce = freshNonce();
-        const inline = req.query?.inline === '1' || base === null || PREVIEW_INLINE_DEFAULT;
+        const inline = req.query?.inline === '1' || base === null || PREVIEW_INLINE_DEFAULT || inlineDefault();
         const html = await renderDoc({ workDir, kind, mode, nonce, inline });
         res.status(200).set(previewHeaders({ csp: previewCsp({ mode, base, nonce }) }));
         res.set('Content-Type', 'text/html; charset=utf-8');

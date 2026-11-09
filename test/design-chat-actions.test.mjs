@@ -4,8 +4,9 @@
 // request into designBuilds.start plus a running design-round card, or a notice and no card.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, existsSync, writeFileSync, mkdirSync, symlinkSync, rmSync, lstatSync, readdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { mkdtempSync, readFileSync, existsSync, writeFileSync, mkdirSync, symlinkSync, rmSync, lstatSync, readdirSync, chmodSync } from 'node:fs';
+import { copyFile, lstat, mkdir, open, readdir, rm } from 'node:fs/promises';
+import { join, dirname, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { safeAttachmentName, copyThreadAttachments } from '../src/core/design/attachments.mjs';
@@ -16,6 +17,8 @@ import { DESIGN_LIMITS, ATTACH_NOTE_MAX } from '../src/core/ask/design-payload.m
 import { designWorkDir } from '../src/core/design/paths.mjs';
 import { createDesignBuilds } from '../src/core/design/registry.mjs';
 import { stageDesignKit } from '../src/core/design/kit.mjs';
+import { DesignRefusal } from '../src/core/design/build.mjs';
+import { patchFs } from './helpers/fs-gate.mjs';
 
 useTempHome(after);
 test('safeAttachmentName: nothing leaves the folder or collides, on any OS', () => {
@@ -94,6 +97,17 @@ test('a chat turn trying a second build gets the 409 as a notice; only one build
   assert.deepEqual(two, { ok: false, notice: 'A build is already open: wait for it, or press Resume or Stop.' });
   assert.equal(calls.length, 2, 'both reached start; the engine refused the second');
 });
+test('P8: a design-start action carries no consent: the model cannot name an engine or allow one', async () => {
+  const { d, t } = made(); const { a, calls } = rig();
+  await a.apply({ kind: 'design-start', brief: 'x', allowUnguarded: true, engine: 'codex' }, { threadId: t.id, by: 'local' });
+  assert.deepEqual(calls, [{ designId: d.id, brief: 'x', by: 'local' }]);
+});
+test('P8: an engine refusal is the notice', async () => {
+  const { t } = made();
+  const refused = new DesignRefusal(409, 'Goose cannot be held to one folder.', 'engine-refused');
+  const r = await rig({ designBuilds: { start: async () => { throw refused; } } }).a.apply({ kind: 'design-start', brief: 'x' }, { threadId: t.id, by: 'local' });
+  assert.deepEqual(r, { ok: false, notice: 'Goose cannot be held to one folder.' });
+});
 test('a card the finished reply could not take still reaches the chat', async () => {
   const { t } = made(); const { a, rows } = rig();
   const r = await a.apply({ kind: 'design-start', brief: 'x' }, { threadId: t.id, by: 'local' });
@@ -149,16 +163,20 @@ test('a gone chat, a failed copy, a plain refusal; no plan means no section chec
   try {
     assert.deepEqual(await rig({ stageKit: async () => { throw new Error("ENOENT: no such file or directory, unlink '/srv/home/design/d_1/work/.kit/CONTRACT.md'"); } }).a.apply(ask, ctx),
       { ok: false, notice: 'Could not prepare the build: try again.' }, 'a staging error names no server path');
-    const { d: d0, t: t0 } = made();
+    const { t: t0 } = made();
     addAttachment(t0.id, appendMessage(t0.id, { role: 'user', text: 'x' }).id, { name: 'a.md', text: 'a' });
-    mkdirSync(join(designWorkDir(d0.id), 'assets/att/a.md'), { recursive: true });   // a folder where the upload goes
-    assert.deepEqual(await rig().a.apply(ask, { threadId: t0.id, by: 'local' }), { ok: false, notice: 'Could not copy the attachments: try again.' });
+    const restore = patchFs('copyFile', () => async () => { throw Object.assign(new Error("EIO: i/o error, copyfile '/srv/a' -> '/srv/b'"), { code: 'EIO' }); });
+    try {
+      assert.deepEqual(await rig().a.apply(ask, { threadId: t0.id, by: 'local' }), { ok: false, notice: 'Could not copy the attachments: try again.' });
+    } finally {
+      restore();
+    }
   } finally {
     console.error = logged;
   }
   assert.equal(errors.length, 2);
   assert.match(errors[0], /^\[worca-design\] staging the kit of d_[0-9a-f]+ failed: ENOENT: .*\.kit\/CONTRACT\.md'$/, 'the log keeps the fs message');
-  assert.match(errors[1], /^\[worca-design\] copying the uploads of d_[0-9a-f]+ failed: E[A-Z]+: /);
+  assert.match(errors[1], /^\[worca-design\] copying the uploads of d_[0-9a-f]+ failed: EIO: i\/o error, copyfile /);
   const brief = Object.assign(new Error('A brief is required'), { status: 422 });
   assert.deepEqual(await rig({ designBuilds: { start: async () => { throw brief; } } }).a.apply(ask, ctx), { ok: false, notice: 'Could not start the build: A brief is required.' });
   updateThread(t.id, { composer: { designId: d.id, pins: [{ id: 'hero', path: 'h1', tag: 'h1', text: 'x', html: '<h1>' }] } });
@@ -177,6 +195,302 @@ test('a gone chat, a failed copy, a plain refusal; no plan means no section chec
   assert.deepEqual(c.calls[0], { designId: d.id, instruction: `Y${note}`, sections: ['faq'], needsLead: true, by: 'local' }, 'no pins: no pins key');
   writeFileSync(join(designWorkDir(d.id), 'plan.json'), '{');
   assert.equal((await rig().a.apply(change, ctx)).ok, true, 'an invalid plan.json: P2 refuses it with its own 422');
+});
+
+test('M-1: a folder planted at an upload\'s name is a taken name, and a link at assets/att is replaced: every later hand-off still starts', async () => {
+  const { d, t } = made();
+  addAttachment(t.id, appendMessage(t.id, { role: 'user', text: 'x' }).id, { name: 'brief.md', text: 'hello' });
+  const att = join(designWorkDir(d.id), 'assets', 'att');
+  mkdirSync(join(att, 'brief.md'));   // a folder where the upload goes: work/ is the owner's agents' to write
+  const start = { kind: 'design-start', brief: 'A page' };
+  const ctx = { threadId: t.id, by: 'local' };
+  for (const round of [1, 2]) {
+    const { a, calls } = rig();
+    assert.equal((await a.apply(start, ctx)).ok, true, `hand-off ${round} starts`);
+    assert.deepEqual(calls, [{ designId: d.id, brief: 'A page\n\nAttached files, copied to assets/att/ in the source folder: brief-2.md', by: 'local' }]);
+  }
+  assert.equal(readFileSync(join(att, 'brief-2.md'), 'utf8'), 'hello', 'the upload lands under the next free name');
+  assert.ok(lstatSync(join(att, 'brief.md')).isDirectory(), 'the planted folder is left alone');
+  if (process.platform === 'win32') return;
+  // assets/att itself a link: the hand-off makes it a real folder again before copying, never writing through the link.
+  const out = scratchDir('dca-out-');
+  rmSync(att, { recursive: true });
+  symlinkSync(out, att, 'dir');
+  assert.equal((await rig().a.apply(start, ctx)).ok, true);
+  assert.deepEqual(readdirSync(out), [], 'nothing copied into the link\'s target');
+  assert.equal(lstatSync(att).isSymbolicLink(), false);
+  assert.equal(readFileSync(join(att, 'brief.md'), 'utf8'), 'hello');
+});
+
+/** A thread with one upload `brief.md` and a source folder whose `assets/att` exists. */
+function oneUpload() {
+  const t = createThread({ mode: 'design', title: 'x' });
+  addAttachment(t.id, appendMessage(t.id, { role: 'user', text: 'x' }).id, { name: 'brief.md', text: 'hello' });
+  const work = mkdtempSync(join(tmpdir(), 'dca-'));
+  after(() => rmSync(work, { recursive: true, force: true }));
+  const att = join(work, 'assets', 'att');
+  mkdirSync(att, { recursive: true });
+  return { t, work, att };
+}
+const realIo = () => ({ mkdir, lstat, rm, copyFile, open, readdir });
+
+test('major 1: a name taken many times costs about one look per name, never a rescan from -2', () => {
+  class Counting extends Set { looks = 0; has(v) { this.looks += 1; return super.has(v); } }
+  const taken = new Counting();
+  const names = Array.from({ length: 2000 }, () => safeAttachmentName('brief.md', taken));
+  assert.deepEqual([names[0], names[1], names.at(-1)], ['brief.md', 'brief-2.md', 'brief-2000.md']);
+  assert.ok(taken.looks < 3 * names.length, `${taken.looks} looks for ${names.length} names`);
+  const gaps = new Set(['a.md', 'a-2.md', 'a-4.md']);
+  assert.deepEqual([1, 2, 3].map(() => safeAttachmentName('a.md', gaps)), ['a-3.md', 'a-5.md', 'a-6.md'], 'still the smallest free number');
+});
+
+test('major 1: folders planted at an upload\'s next names are listed once: one look at a name, and every hand-off lands past them', async () => {
+  const { t, work, att } = oneUpload();
+  mkdirSync(join(att, 'brief.md'));
+  for (let n = 2; n <= 2000; n += 1) mkdirSync(join(att, `brief-${n}.md`));
+  let looks = 0;
+  const io = { ...realIo(), lstat: (p) => { if (basename(p).startsWith('brief')) looks += 1; return lstat(p); } };
+  for (const round of [1, 2]) {
+    looks = 0;
+    assert.deepEqual(await copyThreadAttachments({ threadId: t.id, workDir: work, io }), ['brief-2001.md'], `hand-off ${round}`);
+    // One look per entry listed (its identity, cycle 6 major 2), then about one at the free name.
+    assert.ok(looks <= 2002, `hand-off ${round}: ${looks} looks at upload names`);
+  }
+  assert.equal(readFileSync(join(att, 'brief-2001.md'), 'utf8'), 'hello');
+  // An agent making a folder at each next name while the copy runs: the copy gives up, never chasing it forever.
+  rmSync(join(att, 'brief-2001.md'));
+  const past = (p) => Number(/^brief-(\d+)\.md$/.exec(basename(p))?.[1]) > 2000;
+  let calls = 0;
+  const endless = { ...io, lstat: (p) => {
+    if (!past(p)) return lstat(p);
+    calls += 1;
+    if (calls > 1000) throw new Error('runaway');
+    return Promise.resolve({ isDirectory: () => true });
+  } };
+  await assert.rejects(copyThreadAttachments({ threadId: t.id, workDir: work, io: endless }),
+    { code: 'EEXIST', message: /^assets\/att\/brief-\d+\.md and the 63 names before it are taken while the uploads are copied$/ });
+  assert.equal(calls, 64);
+});
+
+/** Whether this disk finds `Brief.md` under `brief.md` (macOS and Windows by default). */
+function caseInsensitiveDisk() {
+  const dir = mkdtempSync(join(tmpdir(), 'dca-case-'));
+  try {
+    mkdirSync(join(dir, 'Brief.md'));
+    return existsSync(join(dir, 'brief.md'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('cycle 4 major 3: on a case-insensitive disk, upper-case folders at an upload\'s names are listed as taken: every hand-off lands past them', { skip: !caseInsensitiveDisk() && 'a case-sensitive disk' }, async () => {
+  const { t, work, att } = oneUpload();
+  addAttachment(t.id, appendMessage(t.id, { role: 'user', text: 'y' }).id, { name: 'class.css', text: 'a{}' });
+  mkdirSync(join(att, 'Brief.md'));
+  for (let n = 2; n <= 64; n += 1) mkdirSync(join(att, `Brief-${n}.md`));
+  // Cycle 5 major 3: APFS finds a folder `cla\u1E9E.css` (the capital sharp s) under `class.css`.
+  mkdirSync(join(att, 'cla\u1E9E.css'));
+  for (let n = 2; n <= 64; n += 1) mkdirSync(join(att, `cla\u1E9E-${n}.css`));
+  for (const round of [1, 2]) {
+    const names = await copyThreadAttachments({ threadId: t.id, workDir: work });
+    assert.deepEqual(names.sort(), ['brief-65.md', 'class-65.css'], `hand-off ${round}`);
+  }
+  assert.equal(readFileSync(join(att, 'brief-65.md'), 'utf8'), 'hello');
+});
+
+/** Every non-ASCII character macOS's APFS finds under an ASCII name, as the disk folds it (each probed on disk, cycle 5
+ *  major 3): a fixed table, so a fold in the code that misses one is caught, never faked by that same fold. */
+const APFS_FOLDS = Object.freeze({
+  '\u00DF': 'ss', '\u017F': 's', '\u1E9E': 'ss', '\u212A': 'k', '\uFB00': 'ff', '\uFB01': 'fi', '\uFB02': 'fl', '\uFB03': 'ffi',
+  '\uFB04': 'ffl', '\uFB05': 'st', '\uFB06': 'st',
+});
+
+test('cycle 4 major 3: listed folders are taken as a case-insensitive disk folds them (every character APFS folds onto ASCII), on any disk', async () => {
+  const { t, work, att } = oneUpload();
+  // [the upload's name, the stem of the folders an agent made, their extension]: one row per character in APFS_FOLDS.
+  const rows = [
+    ['brass.md', 'bra\u00DF', '.md'], ['style.css', '\u017Ftyle', '.css'], ['class.css', 'cla\u1E9E', '.css'], ['kit.md', '\u212Ait', '.md'],
+    ['off.md', 'o\uFB00', '.md'], ['fil.md', '\uFB01l', '.md'], ['flag.md', '\uFB02ag', '.md'], ['suffix.md', 'su\uFB03x', '.md'],
+    ['baffle.md', 'ba\uFB04e', '.md'], ['ost.md', 'o\uFB05', '.md'], ['est.md', 'e\uFB06', '.md'],
+  ];
+  assert.deepEqual(rows.flatMap(([, stem]) => [...stem].filter((c) => c > '~')).sort(), Object.keys(APFS_FOLDS).sort(), 'one row per character');
+  for (const [name] of rows) addAttachment(t.id, appendMessage(t.id, { role: 'user', text: 'y' }).id, { name, text: name });
+  // 64 of each, past NAME_TRIES: only a fold that matches the disk's lists them all as taken.
+  const many = (first, more) => [first, ...Array.from({ length: 63 }, (_, i) => more(i + 2))];
+  const folders = [
+    ...many('Brief.md', (n) => `BRIEF-${n}.MD`),
+    ...rows.flatMap(([, stem, ext]) => many(`${stem}${ext}`, (n) => `${stem}-${n}${ext}`)),
+  ];
+  for (const f of folders) mkdirSync(join(att, f));
+  // The disk as macOS's: a name finds the folder that folds to it (the table first: '\u1E9E'.toLowerCase() is '\u00DF').
+  const diskFold = (s) => [...s.normalize('NFC')].map((c) => APFS_FOLDS[c] ?? c).join('').toLowerCase();
+  const byFold = new Map(folders.map((f) => [diskFold(f), f]));
+  const io = { ...realIo(), lstat: (p) => {
+    const hit = byFold.get(diskFold(basename(p)));
+    return lstat(hit ? join(dirname(p), hit) : p);
+  } };
+  const want = ['brief-65.md', ...rows.map(([name]) => name.replace(/\.(\w+)$/, '-65.$1'))].sort();
+  for (const round of [1, 2]) {
+    const names = await copyThreadAttachments({ threadId: t.id, workDir: work, io });
+    assert.deepEqual(names.sort(), want, `hand-off ${round}`);
+  }
+});
+
+/** The code points an HFS+ disk ignores when it compares names (each probed on an `hdiutil` HFS+ image, cycle 6 major
+ *  2): a folder `brief\u200C.md` is found under `brief.md`. */
+const HFS_IGNORED = Object.freeze([
+  '\u200C', '\u200D', '\u200E', '\u200F', '\u202A', '\u202B', '\u202C', '\u202D', '\u202E',
+  '\u206A', '\u206B', '\u206C', '\u206D', '\u206E', '\u206F', '\uFEFF',
+]);
+
+test('cycle 6 major 2: a listed folder is known by its device and inode, whatever name the disk finds it under (HFS+ ignorables), on any disk', async () => {
+  const { t, work, att } = oneUpload();
+  // 64 folders past NAME_TRIES, each name holding one of the 16 ignorables (each used 4 times), plus an upper-case one.
+  const folders = Array.from({ length: 64 }, (_, i) => `${i ? `brief-${i + 1}` : 'brief'}${HFS_IGNORED[i % 16]}.md`);
+  folders[5] = `BRIEF-6${HFS_IGNORED[5]}.MD`;
+  for (const f of folders) mkdirSync(join(att, f));
+  // The disk as HFS+'s: a name finds the folder it equals once the ignorables are dropped and the case folded.
+  const diskName = (s) => [...s].filter((c) => !HFS_IGNORED.includes(c)).join('').toLowerCase();
+  const byName = new Map(folders.map((f) => [diskName(f), f]));
+  const io = { ...realIo(), lstat: (p) => {
+    const hit = byName.get(diskName(basename(p)));
+    return lstat(hit ? join(dirname(p), hit) : p);
+  } };
+  for (const round of [1, 2]) {
+    assert.deepEqual(await copyThreadAttachments({ threadId: t.id, workDir: work, io }), ['brief-65.md'], `hand-off ${round}`);
+  }
+  assert.equal(readFileSync(join(att, 'brief-65.md'), 'utf8'), 'hello');
+  // Each listed folder is free once: a disk finding one listed folder under every name still gives up, one look later.
+  const other = oneUpload();
+  mkdirSync(join(other.att, 'x'));
+  let looks = 0;
+  const same = { ...realIo(), lstat: (p) => {
+    if (!basename(p).startsWith('brief')) return lstat(p);
+    looks += 1;
+    if (looks > 1000) throw new Error('runaway');
+    return lstat(join(dirname(p), 'x'));
+  } };
+  await assert.rejects(copyThreadAttachments({ threadId: other.t.id, workDir: other.work, io: same }), { code: 'EEXIST' });
+  assert.equal(looks, 65, 'the listed folder once, then NAME_TRIES names');
+  // Folders an agent makes meanwhile were never listed, however many others were: each counts (device AND inode).
+  const busy = oneUpload();
+  for (let n = 1; n <= 200; n += 1) mkdirSync(join(busy.att, `x-${n}`));
+  let makes = 0;
+  const making = { ...realIo(), lstat: (p) => {
+    if (basename(p).startsWith('brief') && makes < 1000) {
+      makes += 1;
+      mkdirSync(p);
+    }
+    return lstat(p);
+  } };
+  await assert.rejects(copyThreadAttachments({ threadId: busy.t.id, workDir: busy.work, io: making }), { code: 'EEXIST' });
+  assert.equal(makes, 64, 'NAME_TRIES folders made meanwhile, none taken for a listed one');
+});
+
+test('cycle 6 major 2: listed files that cannot be removed are known by their device and inode too: every hand-off lands past them', async () => {
+  const { t, work, att } = oneUpload();
+  const locked = new Set(['brief.md', ...Array.from({ length: 63 }, (_, i) => `brief-${i + 2}.md`)]);
+  for (const f of locked) writeFileSync(join(att, f), 'locked');
+  const io = { ...realIo(), rm: (p, o) => (locked.has(basename(p)) ? Promise.reject(Object.assign(new Error('EPERM: no'), { code: 'EPERM' })) : rm(p, o)) };
+  for (const round of [1, 2]) {
+    assert.deepEqual(await copyThreadAttachments({ threadId: t.id, workDir: work, io }), ['brief-65.md'], `hand-off ${round}`);
+  }
+  assert.equal(readFileSync(join(att, 'brief.md'), 'utf8'), 'locked');
+  assert.equal(readFileSync(join(att, 'brief-65.md'), 'utf8'), 'hello');
+});
+
+test('cycle 7 major 2: a listed entry the listing cannot look at (HFS+, a name past the path limit) still costs no try: every hand-off lands past them', async () => {
+  const { t, work, att } = oneUpload();
+  addAttachment(t.id, appendMessage(t.id, { role: 'user', text: 'y' }).id, { name: 'notes.md', text: 'notes' });
+  // 64 folders past NAME_TRIES, each name holding an ignorable: on HFS+ such a name can be ~749 bytes, so the listing's
+  // `<att>/<name>` passes macOS's 1024-byte path limit (ENAMETOOLONG), while the short `<att>/brief-N.md` finds it.
+  const folders = Array.from({ length: 64 }, (_, i) => `${i ? `brief-${i + 1}` : 'brief'}${HFS_IGNORED[i % 16]}.md`);
+  for (const f of folders) mkdirSync(join(att, f));
+  const diskName = (s) => [...s].filter((c) => !HFS_IGNORED.includes(c)).join('').toLowerCase();
+  const byName = new Map(folders.map((f) => [diskName(f), f]));
+  const tooLong = (p) => Promise.reject(Object.assign(new Error(`ENAMETOOLONG: name too long, lstat '${p}'`), { code: 'ENAMETOOLONG' }));
+  let lists = 0;
+  const io = { ...realIo(),
+    readdir: (...a) => { lists += 1; return readdir(...a); },
+    lstat: (p) => {
+      if ([...basename(p)].some((c) => HFS_IGNORED.includes(c))) return tooLong(p);
+      const hit = byName.get(diskName(basename(p)));
+      return lstat(hit ? join(dirname(p), hit) : p);
+    } };
+  for (const round of [1, 2]) {
+    lists = 0;
+    assert.deepEqual((await copyThreadAttachments({ threadId: t.id, workDir: work, io })).sort(), ['brief-65.md', 'notes.md'], `hand-off ${round}`);
+    assert.equal(lists, 1, `hand-off ${round}: assets/att is listed once per copy, not once per upload`);
+  }
+  assert.equal(readFileSync(join(att, 'brief-65.md'), 'utf8'), 'hello');
+  // The bound stays the entries listed plus NAME_TRIES: one unidentified entry, then a new folder at every name.
+  const other = oneUpload();
+  mkdirSync(join(other.att, `x${HFS_IGNORED[0]}`));
+  let looks = 0;
+  const making = { ...realIo(), lstat: (p) => {
+    if (basename(p).startsWith('x')) return tooLong(p);
+    if (!basename(p).startsWith('brief')) return lstat(p);
+    looks += 1;
+    if (looks > 1000) throw new Error('runaway');
+    return Promise.resolve({ isDirectory: () => true, dev: 1, ino: 1e9 + looks });
+  } };
+  await assert.rejects(copyThreadAttachments({ threadId: other.t.id, workDir: other.work, io: making }), { code: 'EEXIST' });
+  assert.equal(looks, 65, 'the unidentified entry once, then NAME_TRIES names');
+  // A listed entry found again once its own credit is spent is not an unlisted one: it never spends the unknown credit.
+  const known = oneUpload();
+  mkdirSync(join(known.att, `x${HFS_IGNORED[0]}`));
+  mkdirSync(join(known.att, 'y'));
+  looks = 0;
+  const again = { ...realIo(), lstat: (p) => {
+    if (basename(p).startsWith('x')) return tooLong(p);
+    if (!basename(p).startsWith('brief')) return lstat(p);
+    looks += 1;
+    if (looks > 1000) throw new Error('runaway');
+    return lstat(join(dirname(p), 'y'));
+  } };
+  await assert.rejects(copyThreadAttachments({ threadId: known.t.id, workDir: known.work, io: again }), { code: 'EEXIST' });
+  assert.equal(looks, 65, 'y once, then NAME_TRIES names');
+});
+
+test('major 2: a file at an upload\'s name that cannot be removed (EPERM, EACCES) is a taken name; any other failure fails the copy', async () => {
+  for (const code of ['EPERM', 'EACCES', 'EIO']) {
+    const { t, work, att } = oneUpload();
+    writeFileSync(join(att, 'brief.md'), 'locked');
+    const io = { ...realIo(), rm: (p, o) => (basename(p) === 'brief.md' ? Promise.reject(Object.assign(new Error(`${code}: no`), { code })) : rm(p, o)) };
+    const copied = copyThreadAttachments({ threadId: t.id, workDir: work, io });
+    if (code === 'EIO') {
+      await assert.rejects(copied, { code: 'EIO' });
+      continue;
+    }
+    assert.deepEqual(await copied, ['brief-2.md'], code);
+    assert.equal(readFileSync(join(att, 'brief.md'), 'utf8'), 'locked');
+    assert.equal(readFileSync(join(att, 'brief-2.md'), 'utf8'), 'hello');
+  }
+});
+
+test('major 2: an assets/att another user owns, closed to worca, is set aside: every later hand-off still lands the upload', { skip: process.platform === 'win32' || process.getuid?.() === 0 ? 'POSIX, not root' : false }, async () => {
+  const { d, t } = made();
+  addAttachment(t.id, appendMessage(t.id, { role: 'user', text: 'x' }).id, { name: 'brief.md', text: 'hello' });
+  const work = designWorkDir(d.id);
+  const att = join(work, 'assets', 'att');
+  chmodSync(att, 0o500);   // what an agent that made its own assets/att could do to worca at any time
+  const start = { kind: 'design-start', brief: 'A page' };
+  const ctx = { threadId: t.id, by: 'local' };
+  const realUid = process.getuid;
+  process.getuid = () => realUid.call(process) + 1;   // every folder below work/ now reads as another user's
+  try {
+    for (const round of [1, 2]) {
+      const { a, calls } = rig();
+      assert.equal((await a.apply(start, ctx)).ok, true, `hand-off ${round} starts`);
+      assert.deepEqual(calls.map((c) => c.brief), ['A page\n\nAttached files, copied to assets/att/ in the source folder: brief.md']);
+      assert.equal(readFileSync(join(att, 'brief.md'), 'utf8'), 'hello', `hand-off ${round}: the upload lands`);
+    }
+  } finally {
+    process.getuid = realUid;
+  }
+  const aside = readdirSync(work).filter((n) => n.startsWith('.assets-'));
+  assert.equal(aside.length, 2, 'each hand-off set the other user\'s assets aside');
+  assert.ok(aside.some((n) => (lstatSync(join(work, n, 'att')).mode & 0o777) === 0o500), 'the closed att went with it, unused');
 });
 
 test('a brief or instruction at its limit plus any number of uploads fits P1\'s BRIEF_MAX; one over is refused before anything is staged', async () => {

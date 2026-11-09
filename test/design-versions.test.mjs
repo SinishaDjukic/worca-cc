@@ -30,6 +30,16 @@ test('a snapshot copies the source, skips dot entries and bumps the version', as
   assert.equal(readFileSync(join(v, 'sections/hero/index.html'), 'utf8'), '<div data-section="hero">one</div>');
   for (const hidden of ['.kit', '.crew.json', '.asks']) assert.equal(existsSync(join(v, hidden)), false, hidden);
 });
+test('P8: a snapshot skips dot entries at every depth: a builder read bundle, its questions, an engine folder', async () => {
+  const { d, w } = seed();
+  for (const dot of ['.ctx', '.asks', '.gemini']) {
+    mkdirSync(join(w, 'sections/hero', dot), { recursive: true });
+    writeFileSync(join(w, 'sections/hero', dot, 'x.json'), '{}');
+  }
+  const v = join(designDir(d.id), `versions/${await snapshotVersion({ designId: d.id })}`);
+  assert.equal(readFileSync(join(v, 'sections/hero/index.html'), 'utf8'), '<div data-section="hero">one</div>');
+  for (const dot of ['.ctx', '.asks', '.gemini']) assert.equal(existsSync(join(v, 'sections/hero', dot)), false, dot);
+});
 test('only the last 20 are kept', async () => {
   const { d } = seed();
   for (let i = 0; i < 22; i += 1) await snapshotVersion({ designId: d.id });

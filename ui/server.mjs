@@ -358,10 +358,11 @@ import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_I
 import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
 import { recoverAttachmentReads, sweepReadFolders, sweepTempBodies, withStagedRunFiles } from '../src/core/requirements/attachment-job.mjs';
 import { createDesignBuilds } from '../src/core/design/registry.mjs';
+import { designCaps } from '../src/core/design/limits.mjs';
 import { registerDesignRoutes } from '../src/core/design/routes.mjs';
 import { createThumbs } from '../src/core/design/thumb.mjs';
 import { recoverDesignBuilds } from '../src/core/design/recover.mjs';
-import { createPreviewGate, registerPreviewTokenRoute } from '../src/core/design/preview-gate.mjs';
+import { createPreviewGate, designPreviewInline, registerPreviewTokenRoute } from '../src/core/design/preview-gate.mjs';
 import { previewGrants } from '../src/core/design/preview-grants.mjs';
 import { renderPreviewDoc } from '../src/core/design/preview-doc.mjs';
 import { getDesign, getBuild } from '../src/core/design/store.mjs';
@@ -369,6 +370,7 @@ import { createRoundReceipts, ROUND_STATE_OF } from '../src/core/design/round-re
 import { createDesignChatActions } from '../src/core/design/chat-actions.mjs';
 import { stageDesignKit } from '../src/core/design/kit.mjs';
 import { designWorkDir } from '../src/core/design/paths.mjs';
+import { designIdForThread } from '../src/core/design/chat-thread.mjs';
 import { listVersions, restoreVersion, snapshotVersion } from '../src/core/design/versions.mjs';
 import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
@@ -763,7 +765,8 @@ const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityC
 // wherever a run's status or pendingQuestion changes, and when the setting changes.
 const keepAwake = createKeepAwake({ deployment: DEPLOYMENT, log: (line) => console.warn(line) });
 let designChatActions = null;   // a design chat's hand-off to the engine (Design P5), assigned below designRoundReceipts
-const designBuilds = createDesignBuilds({ broadcast: (f) => { broadcast(f); designRoundReceipts.onFrame(f); }, hosted: DEPLOYMENT === 'hosted', draining: () => DRAIN.on, onLiveChange: () => syncKeepAwake(), deps: { snapshotVersion } });
+const designBuilds = createDesignBuilds({ broadcast: (f) => { broadcast(f); designRoundReceipts.onFrame(f); }, caps: designCaps({ deployment: DEPLOYMENT }),
+  personOf: (by) => (by && by !== 'local' && (identityCheck || process.env.WORCA_IDENTITY_HEADER) ? by : null), draining: () => DRAIN.on, onLiveChange: () => syncKeepAwake(), deps: { snapshotVersion } });   // Design P8: one build per person behind a shared sign-in (askSharedOwner's rule)
 const designThumbs = createThumbs({ notify: broadcast, held: (id) => designBuilds.restoring(id) || designBuilds.starting(id) });   // Design P6: lazy Library thumbnails (`design-thumb` frames); none drawn while a restore or a hand-off rewrites work/
 const designRoundReceipts = createRoundReceipts({ threadOfDesign: (id) => getDesign(id)?.threadId || null, listMessages: askListMessages, flipCard, versionOf: (id) => getDesign(id)?.version ?? 0 });
 designChatActions = createDesignChatActions({
@@ -1206,13 +1209,15 @@ const askBus = new EventEmitter(); askBus.setMaxListeners(0);
 function broadcast(obj) {
   if (obj && typeof obj.type === 'string' && obj.type.startsWith('ask-') && typeof obj.threadId === 'string') { try { askBus.emit(obj.threadId, obj); } catch { /* listener bug never breaks broadcast */ } }
   const text = JSON.stringify(obj);
-  const owner = askFrameOwner(obj) ?? designBuilds.frameOwner(obj);
+  const designOwner = designBuilds.frameOwner(obj);                    // undefined: no design frame; false: no such design
+  const owner = askFrameOwner(obj) ?? (designOwner || null);
   const askFrame = !!(obj && typeof obj.type === 'string' && obj.type.startsWith('ask-'));
   let composer;                                                        // computed lazily, only if an extension socket is open
   for (const ws of sockets) {
     if (ws.worcaExtension && !askFrame) continue;                       // an extension sees its chat, nothing else
     if (ws.worcaExtension && (composer ??= askFrameComposer(obj))) continue;   // never a composer or design thread's frames
-    if (owner && ws.worcaViewer && ws.worcaViewer !== owner) continue;   // someone else's Ask thread
+    if (designOwner === false && ws.worcaViewer) continue;              // a missing or unreadable design: no viewer (L8.21)
+    if (owner && ws.worcaViewer && ws.worcaViewer !== owner) continue;   // someone else's Ask thread or design
     if (ws.readyState === ws.OPEN) {
       try {
         ws.send(text);
@@ -1892,6 +1897,7 @@ app.use('/design-preview', createPreviewGate({
   designFor: (id) => { const d = getDesign(id); return d ? { workDir: designWorkDir(id), kind: d.kind } : null; },
   renderDoc: renderPreviewDoc,
   enabled: () => flagEnabled('design'),
+  inlineDefault: () => designPreviewInline({ remoteAccess: REMOTE_ACCESS }),   // embed every asset behind an identity proxy
 }));
 
 app.use((req, res, next) => {
@@ -7769,14 +7775,14 @@ async function askPrCardFacts(row) {
 
 const askRelays = new Map();   // token -> { rpc, out, billTo, owner }
 
-function askAgentRelay({ threadId, reader, web = null, engine = 'claude', model = null, skillRoot = null }) {
+function askAgentRelay({ threadId, reader, web = null, engine = 'claude', model = null, skillRoot = null, designRoots = null }) {
   const token = randomBytes(24).toString('base64url');
   const life = new AbortController();
   const entry = { out: [], billTo: currentBillTo(), owner: currentOwner() };
   // The tools run here, so this turn's web access rides a private env copy (never process.env itself);
   // the search key is read from worca's own environment, where it was set.
-  // A locked-down turn's set skills (#635): this message's mount, one more read root for this relay (this turn) only.
-  const env = { ...process.env, ...askWebMcpEnv(web), ...(lockedChatEngine(engine) ? { WORCA_ASK_ENGINE: engine, ...(typeof model === 'string' && model ? { WORCA_ASK_MODEL: model } : {}), ...(skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}) } : {}) };
+  // A locked-down turn's set skills (#635) and a Design chat's design (L8.10): more read roots for this relay (turn) only.
+  const env = { ...process.env, ...askWebMcpEnv(web), ...(lockedChatEngine(engine) ? { WORCA_ASK_ENGINE: engine, ...(typeof model === 'string' && model ? { WORCA_ASK_MODEL: model } : {}), ...(skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}), ...(designRoots ? { WORCA_ASK_DESIGN_ROOTS: JSON.stringify(designRoots) } : {}) } : {}) };
   entry.rpc = createAskToolServer({
     threadId, reader, signal: life.signal, env, write: (s) => { entry.out.push(s); },
     // The tools run in THIS process, which holds the live runs: get_run_diff can read a run
@@ -9224,6 +9230,15 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // can attach (ask/mcp.mjs mcpForEngine): a locked-down chat's lockdown allows them by name beside worca's own server.
     const engine = ASK_ENGINES.includes(modelEngine) ? modelEngine : 'claude';
     const lockedDown = engine !== 'claude';
+    // Design P8 (L8.13): every Design chat turn claims its design for the turn's person's agent (a turn with none: the
+    // design's maker's). A refused claim throws its own safe text, which the catch below answers.
+    const dChat = designMode ? designIdForThread(id) : null;   // null: the design row went before its thread
+    if (dChat) designBuilds.claim(dChat, { owner: currentOwner() ?? getDesign(dChat)?.createdBy ?? null });
+    // Design P8 (L8.10): a locked-down Design chat reads its design with worca's file tools: work/ first, then its project.
+    const did = lockedDown ? dChat : null;
+    const dKey = did ? getDesign(did)?.projectKey : null;
+    const dProj = dKey ? (await listProjects()).find((p) => p.key === dKey)?.path : null;
+    const designRoots = did ? { workDir: designWorkDir(did), ...(dProj ? { projectDir: dProj } : {}) } : null;
     const mcp = surfaceMode ? { result: null } : await resolveAskMcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model, engine });
     // Skills registry §4.4: the same targets and choices for the skills from sets — resolved ONCE per turn; the turn
     // mounts them and appends the prompt section naming exactly what it wrote (a Codex chat reads them through read_file).
@@ -9276,6 +9291,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       agentMode: agentOn,
       composer: composerMode ? ((askGetThread(id) || {}).composer || null) : null,
       design: designMode,
+      ...(designRoots ? { designRoots } : {}),
       suggest: helpers.suggest,                     // ask-suggestion: a user's message only — an event turn suggests nothing
       ...(lockedDown ? {
         engine,
@@ -10503,7 +10519,7 @@ export const _testing = {
   pkgVersion: RUNNING_VERSION,
   wireRun, summarizeRuns, scanRequest, fireTicket, afterMembersChanged, markResumedRescan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
-  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, startAskTurn, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
+  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, startAskTurn, askAgentRelay, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
   startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES, MARKET_JOBS, pruneMarketJobs, marketJobFailure,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
   askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, invokeStartRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,

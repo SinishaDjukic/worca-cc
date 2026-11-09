@@ -98,9 +98,15 @@ test('flag off: the money stays in Spent and its row; only the figures go, and t
   const none = getStats({ ...off, range: 'lastMonth', now: new Date(2025, 8, 10, 12), report: true });
   assert.equal('design' in none.report, false);
   assert.equal('design' in getStats({ ...off, range: 'all', now: NOW }).totals, false, 'all time has no prev: the block must not throw');
-  const byFlag = getStats({ requirementsEnabled: true, range: 'lastMonth', now: NOW });
-  assert.equal('design' in byFlag.totals, false, 'no designEnabled: the design flag (default off) decides');
-  assert.equal(byFlag.totals.spentUsd, 4.25);
+  const was = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = '-design';
+  try {
+    const byFlag = getStats({ requirementsEnabled: true, range: 'lastMonth', now: NOW });
+    assert.equal('design' in byFlag.totals, false, 'no designEnabled: the design flag (off here) decides');
+    assert.equal(byFlag.totals.spentUsd, 4.25);
+  } finally {
+    if (was === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = was;
+  }
 });
 
 test('no designEnabled: the design flag itself decides (WORCA_FLAGS=design, requirements off)', () => {

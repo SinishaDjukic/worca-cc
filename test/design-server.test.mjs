@@ -18,7 +18,7 @@ import { readServerSource } from '../src/core/read-server-source.mjs';
 
 // `tools/test.mjs` deletes WORCA_FLAGS, so the flag is set here, before the import.
 const ENV = { WORCA_MOCK: '1', WORCA_FLAGS: 'design', WORCA_MOCK_DESIGN_MS: '2', WORCA_CHROME: 'none' };
-const SAVED_KEYS = [...Object.keys(ENV), 'WORCA_HOME', 'WORCA_DESIGN_MAX_BUILDERS'];
+const SAVED_KEYS = [...Object.keys(ENV), 'WORCA_HOME', 'WORCA_DESIGN_MAX_BUILDERS', 'WORCA_DESIGN_MAX_AGENTS'];
 const saved = {};
 let mod, srv, httpBase, wsBase, homeDir;
 const clients = [];
@@ -28,6 +28,7 @@ before(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'worca-design-server-'));
   Object.assign(process.env, ENV, { WORCA_HOME: homeDir });
   delete process.env.WORCA_DESIGN_MAX_BUILDERS;
+  delete process.env.WORCA_DESIGN_MAX_AGENTS;
   _resetForTests();
   mod = await import('../ui/server.mjs');
   srv = mod.server;
@@ -218,7 +219,9 @@ test('frames follow the owner, design-restored included; an extension socket get
 test('keep awake counts live build agents; the call-site options stay wired', () => {
   const src = readServerSource();
   assert.match(src, /countWorking\(runs\.values\(\)\) \+ designBuilds\.liveAgentCount\(\)/);
-  for (const re of [/onLiveChange: \(\) => syncKeepAwake\(\)/, /hosted: DEPLOYMENT === 'hosted'/, /isLive: \(id\) => !!designBuilds\.get\(id\)/]) assert.match(src, re);
+  for (const re of [/onLiveChange: \(\) => syncKeepAwake\(\)/, /caps: designCaps\(\{ deployment: DEPLOYMENT \}\)/,
+    /personOf: \(by\) => \(by && by !== 'local' && \(identityCheck \|\| process\.env\.WORCA_IDENTITY_HEADER\) \? by : null\)/,
+    /isLive: \(id\) => !!designBuilds\.get\(id\)/]) assert.match(src, re);
   // P6 review M5: a thumbnail whose turn comes during a restore or a hand-off draws nothing.
   assert.match(src, /createThumbs\(\{ notify: broadcast, held: \(id\) => designBuilds\.restoring\(id\) \|\| designBuilds\.starting\(id\) \}\)/);
 });

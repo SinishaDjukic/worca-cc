@@ -4,7 +4,8 @@
 // (L2.32) becomes a draft, for a builder only inside its own section (L2.36). The disk is the truth: every result of
 // such a tool, ok or error, and the process's end read the file back and land it, so a refused or killed `Write`
 // never leaves a half draft. Only the main stream counts: an event with a non-null `parentId` belongs to a sub-agent
-// and is ignored.
+// and is ignored. On an engine without token streaming (`live: 'watch'`, P8 L8.5, L8.23) the build's work-folder
+// watcher is the only lander: this stream then drafts and lands nothing and only reports status, tools and cost.
 import { createToolInputReader } from './tool-input.mjs';
 import { classifyDraftPath, toWorkRel } from './draft.mjs';
 
@@ -36,7 +37,7 @@ function lastLine(text) {
 
 /**
  * @param {{ agentId: string, role: 'lead'|'builder', sectionId?: string|null, cwd?: string, workDir: string,
- *   realWorkDir?: string, drafts: ReturnType<import('./draft.mjs').createDraftStore>,
+ *   realWorkDir?: string, live?: 'toolInput'|'toolEnd'|'watch', drafts: ReturnType<import('./draft.mjs').createDraftStore>,
  *   meter: ReturnType<import('./cost.mjs').createAgentMeter>, readDisk: (path: string) => string|null,
  *   on?: { status?: (s: string) => void, tool?: (t: {name: string, path: string|null}|null) => void,
  *     file?: (path: string, text: string, rev: number) => void, usage?: () => void, book?: (usd: number|null) => void,
@@ -52,8 +53,13 @@ function lastLine(text) {
  *   the rest, so a draft of them would show text that never lands (L2.36, U3). The lead drafts every drawn path.
  * - `on.file(path, text, rev)` follows `drafts.landed`: the disk's text (`''` when missing) and the rev it landed at.
  * - A listener that throws never breaks the stream.
+ * - `live` is the engine row's live signal: `'watch'` ignores `toolInput`, draws no whole tool call and lands nothing at
+ *   a tool result or at `finish` (the watcher lands the disk); `status` and `tool` still fire. Any other value, or
+ *   none, behaves as above (a bridged Claude model's `'toolEnd'` draws from whole tool calls).
  */
-export function createAgentStream({ agentId, role, sectionId = null, cwd, workDir, realWorkDir, drafts, meter, readDisk, on = {} }) {
+export function createAgentStream({ agentId, role, sectionId = null, cwd, workDir, realWorkDir, live, drafts, meter, readDisk, on = {} }) {
+  /** The watcher lands this engine's files: nothing here drafts or lands. */
+  const watched = live === 'watch';
   /** toolUseId -> the reader of a streaming Write or Edit, dropped at its `stop`. */
   const readers = new Map();
   /** toolUseId -> { name, path } once the tool's path is known, streamed or whole. */
@@ -126,12 +132,12 @@ export function createAgentStream({ agentId, role, sectionId = null, cwd, workDi
     const id = str(c.toolUseId);
     if (id && tools.has(id)) return;
     const path = report(id, c.name, inputPath(c.input));
-    if (path) drafts.applyWhole({ toolUseId: id, agentId, name: c.name, path, input: c.input });
+    if (path && !watched) drafts.applyWhole({ toolUseId: id, agentId, name: c.name, path, input: c.input });
   }
 
   /** Ok or error, the same: the disk says what the tool did. */
   function toolResult(evt) {
-    for (const r of Array.isArray(evt.results) ? evt.results : []) {
+    for (const r of watched || !Array.isArray(evt.results) ? [] : evt.results) {
       const t = isObj(r) && str(r.toolUseId) ? tools.get(r.toolUseId) : undefined;
       if (t && WRITE_TOOLS.has(t.name) && draws(t.path)) land(t.path, read(t.path));
     }
@@ -143,7 +149,7 @@ export function createAgentStream({ agentId, role, sectionId = null, cwd, workDi
     onEvent(evt) {
       if (!isObj(evt) || evt.parentId != null) return;
       switch (evt.type) {
-        case 'toolInput': toolInput(evt); return;
+        case 'toolInput': if (!watched) toolInput(evt); return;
         case 'tool': for (const c of Array.isArray(evt.calls) ? evt.calls : []) wholeTool(c); return;
         case 'toolResult': toolResult(evt); return;
         case 'text':
@@ -175,8 +181,9 @@ export function createAgentStream({ agentId, role, sectionId = null, cwd, workDi
     },
     /** The process ended: every path it wrote and every expected file on disk lands, so the stage shows the disk.
      *  A touched path that is missing lands `''`; an untouched missing file sends nothing; a builder's touched path
-     *  outside its section never lands. */
+     *  outside its section never lands. Nothing on a watch row. */
     finish() {
+      if (watched) return;
       const expected = role === 'lead' ? LEAD_FILES : SECTION_FILES.map((f) => `sections/${sectionId}/${f}`);
       for (const path of new Set([...expected, ...touched])) {
         if (!draws(path)) continue;

@@ -1,11 +1,9 @@
 # Design
 
 Describe a web page, a presentation, a pitch deck or an HTML and JavaScript video in its own chat, and real
-agents build it in front of you. In Labs: turn on **Design** in Settings › Labs (the `design` flag), or start
-worca with `WORCA_FLAGS=design`. With the flag off the page is hidden and every `/api/design` route answers 404;
-what Design already spent stays in Statistics.
-
-Builds run on Claude for now.
+agents build it in front of you. On by default (beta); `WORCA_FLAGS=-design` turns it off, and so does the
+**Design** switch in Settings › Labs (the `design` flag). With the flag off the page is hidden and every
+`/api/design` route answers 404; what Design already spent stays in Statistics.
 
 ## How it works
 
@@ -16,8 +14,8 @@ Builds run on Claude for now.
 2. **Describe it** in the composer (*What should we design?*) and pick a kind: **Web page** (the default),
    **Presentation**, **Pitch deck** or **Video**.
 3. **Pick a project, if you like.** The lead agent reads the project's brand and code and passes the brand on to
-   the agents that build the sections. Nothing is written to the project. With **No project** the design stands on
-   its own.
+   the agents that build the sections (not on every engine: see [Engines](#engines)). Nothing is written to the
+   project. With **No project** the design stands on its own.
 4. **Attach files** with the button, by pasting or by dropping them: pictures, a logo, notes. A file worca does not
    take is named under the composer.
 5. **Send.** The design opens in its own chat. Its title is the first line of what you wrote (the first sentence,
@@ -32,8 +30,9 @@ Then the build:
 - **The lead goes over the result** once more and fixes what does not fit together.
 
 Every cursor on the page is a real running agent, and the agents panel lists each one with what it is doing and
-what it has cost. Agents only read and write files: no shell commands and no web. The lead writes only inside the
-design's own folder, and each section's agent only inside its section.
+what it has cost. On Claude, agents only read and write files: no shell commands and no web. The lead writes only
+inside the design's own folder, and each section's agent only inside its section. Other engines cannot be held to
+all of this: see [Engines](#engines).
 
 When an agent needs an answer from you, the HUD reads **Needs you**. A usage limit, a sign-in, a quota or a model
 error pauses the whole build; **Resume** on the HUD picks it up. A build that is running shows in Activity; a
@@ -45,13 +44,47 @@ marked interrupted and nothing starts again by itself.
 **Build fast** is a switch in the composer and in the chat. It sets how many agents build sections at once:
 
 - **Off:** at most 3. The chat's label reads `up to 3`.
-- **On:** at most 12 (6 on a hosted worca), and the label reads `up to 12`.
+- **On:** at most 12, and the label reads `up to 12`. On a [hosted](#hosted) worca it is at most 6, and the label
+  reads `up to 6`.
 
 On a web page it also lets the lead plan more sections (16 to 32 instead of 4 to 8).
 
 It can change in the middle of a build. The new number applies to the next agent that starts; it never stops a
-running agent. On one machine at most 24 agents run at once across all builds. `WORCA_DESIGN_MAX_BUILDERS` (a whole
-number from 1 to 24) sets the number for every build, whatever the switch says.
+running agent. `WORCA_DESIGN_MAX_BUILDERS` sets the number for Build fast on: a whole number from 1 to 40, and a
+larger one counts as 40. Build fast off is then the smaller of 3 and it.
+
+Across all builds, at most 24 agents run at once on one worca, and `WORCA_DESIGN_MAX_AGENTS` (a whole number from 1
+up) sets that number. Any other value of either variable leaves its default. At that limit a new round or a
+**Resume** is refused (*worca is running 24 agents, its limit: try again when one ends.*), while a build that is
+already running waits for a free agent before it starts its next section.
+
+## Engines
+
+A design builds on the **Default engine** (Models page, Engines card, or its project's own) as it is when the
+design is created. Claude runs as is. Every other engine needs **Allow unguarded** when a design is created, once,
+because it cannot be held to worca's rules. When you send, a dialog names the engine and what it cannot hold:
+**Allow unguarded** creates the design on that engine anyway, **Use Claude** creates it on Claude, and **Cancel**
+creates nothing.
+
+- **Codex** keeps its shell, which it reads files with, so its agents can read anything on this machine. Its sandbox
+  holds their writes to their own folder.
+- **Cursor** cannot fully turn its shell off.
+- **Gemini CLI**, **Qwen Code** and **OpenCode** run with their shell and web tools off, but cannot be limited to
+  Design's tools.
+- **Copilot** reports no cost and cannot fully hold the rules.
+- **OpenCode** needs a model set first: a Design lead and a Design builder model for OpenCode (see
+  [Models](models.md)), or `WORCA_OPENCODE_ALLOW_DEFAULT_MODEL=1` to let it run its own default.
+- **Goose** cannot be used: it cannot be held to one folder or kept from running commands, so it has no **Allow
+  unguarded**.
+
+A design keeps its engine: a later change to the Default engine does not move it. Every new round and every
+**Resume** checks it again without asking again, so an engine worca no longer allows, a missing sign-in or a
+missing model stops the design there.
+
+Engines other than Claude show files as they land on disk, and have no per-process spend cap: worca checks spend
+between their processes. Copilot, Gemini CLI, Qwen Code and Cursor show `cost unknown`, so worca's spend limits
+cannot stop them. Copilot, Gemini CLI, Qwen Code and OpenCode cannot read the picked project: their lead is not given
+its path, and the dialog says so.
 
 ## Decks and video
 
@@ -175,3 +208,23 @@ show the kind's icon and PDF is refused inside its dialog.
 
 On Windows, a copy whose target path would pass 259 characters is refused, and the message names the file. On
 every OS, closing the tab during a PDF stops Chrome and every process it started.
+
+## Hosted
+
+A hosted worca is one that people reach over the network through an identity proxy, with remote access on (see
+[Remote access](remote-access.md) and [Railway](deploy-railway.md)). A worca in your own Docker container keeps the
+numbers of one machine.
+
+- **Build fast** runs at most 6 agents at once there, and its label reads `up to 6`. Off, it stays at 3.
+- **One build per person.** A second one is refused (*You already have a build running: stop it or wait for it.*).
+- **At most 24 agents on the server**, across everyone's builds, as under [Build fast](#build-fast).
+  `WORCA_DESIGN_MAX_BUILDERS` and `WORCA_DESIGN_MAX_AGENTS` change these numbers there too.
+- **Each person sees only their own designs.** Each design's folder is shared with its owner's agent only (with
+  [agent users per person](credential-broker.md#agent-users-per-person)), which can change the design's files in
+  `work/` but not the folder around them, and cannot open `dist/` or `versions/`.
+- **Each agent is billed to the person** who started its round or pressed **Resume**.
+- **The preview embeds its files.** Behind an identity proxy the page carries its CSS, fonts and images inside it
+  (`WORCA_DESIGN_PREVIEW_INLINE`), so the frame asks the proxy for nothing else. A file too large to embed stays a
+  link, and an image that lands during a build shows at the round's end. `WORCA_DESIGN_PREVIEW_INLINE=0` turns this
+  off, and `1` turns it on anywhere. Any other value leaves the default.
+- **PDF and thumbnails** need the `-full` image, which has Chromium (see [Mac, Linux, Windows](#mac-linux-windows)).

@@ -56,7 +56,7 @@ async function postWith(over, id, body) {
 
 test('flag off: the new routes answer the gate 404', async () => {
   const d = seedDone(); writeFileSync(thumbFile(d.id), 'PNG'); rig ??= await listen();
-  delete process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = '-design';
   try {
     assert.deepEqual((await post(d.id, { format: 'html' })).json, { error: 'not found' });
     const thumb = await fetch(`http://127.0.0.1:${rig.port}/api/design/${d.id}/thumb`);
@@ -227,7 +227,7 @@ test('in the real registration: the same gate, designFor and the real project li
   const srv = app.listen(0, '127.0.0.1'); await new Promise((r) => srv.once('listening', r)); servers.push(srv);
   const at = (id, body) => postTo(srv.address().port, id, body);
   const d = seedDone();
-  delete process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = '-design';
   try { assert.deepEqual((await at(d.id, { format: 'html' })).json, { error: 'not found' }); } finally { process.env.WORCA_FLAGS = 'design'; }
   assert.deepEqual((await at('d_000000000000', { format: 'html' })).json, { error: 'design not found' });
   assert.equal((await at(d.id, { format: 'project', projectKey: 'nope' })).json.code, 'no-project');

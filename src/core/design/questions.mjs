@@ -1,13 +1,16 @@
 // src/core/design/questions.mjs
-// Mid-build questions (P2). An agent writes `work/.asks/<agentId>.json` in the C-2 shape and ends its turn; the build
+// Mid-build questions (P2). An agent writes `work/.asks/<agentId>.json` in the C-2 shape and ends its turn (P8: a
+// builder that can write only its own folder writes `<section>/.asks/<agentId>.json`, L8.8; `asksFileFor`); the build
 // reads it on exit, asks the person through `design-question` (C-5) and resumes that session with the answers. The
 // shape is C-2's, never the clarify shape (`normalizeClarify` is not used, M10): at most 8 questions, 2 to 6 options
-// each, no free text, at most one option marked `recommended:true`. None of these throws.
+// each, no free text, at most one option marked `recommended:true`. `readAskFile` never throws; `asksFileFor` throws for
+// a bad id, and `removeAskFile` for a path that is not a question file or a removal that fails.
 
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants as fsc, fstatSync, lstatSync, openSync, readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { asksDir } from './paths.mjs';
+import { closeSync, constants as fsc, fstatSync, lstatSync, openSync, readFileSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
+import { DesignError } from './ids.mjs';
+import { asksDir, designRoot, designWorkDir, inWorkFolder, readFolder, removeWorkEntry, sectionDir } from './paths.mjs';
 
 /** Question rounds per agent row (one row per session, L2.1): a lead is answered at most twice in a round, a builder
  *  once; past them, one "no more questions" resume (L2.9). */
@@ -79,7 +82,41 @@ export function validateAsk(json) {
   return { ok: true, questions };
 }
 
-const askFile = (designId, agentId) => join(asksDir(designId), `${agentId}.json`);
+/**
+ * Where agent `agentId` writes its questions: `work/.asks/` on the hook row (Claude's write guard allows it beside the
+ * section, L1.4) and for every lead (its cwd is work/); `<section>/.asks/` for a builder on any other row, the only
+ * place such an engine can write (L8.8). A missing `row` is the hook row. Throws the paths' `DesignError` for a bad id.
+ * @param {{ row?: { confine: string }|null, designId: string, sectionId?: string|null, agentId: string }} opts
+ * @returns {string}
+ */
+export function asksFileFor({ row, designId, sectionId = null, agentId }) {
+  const inSection = sectionId != null && Boolean(row) && row.confine !== 'hook';
+  return join(inSection ? join(sectionDir(designId, sectionId), '.asks') : asksDir(designId), `${agentId}.json`);
+}
+
+/** A question file's path (asksFileFor) as its design, the folders from work/ down to its `.asks`, and its name:
+ *  P8 reaches it through those folders held open (paths.mjs), never by path, because work/ is the owner's agents' to
+ *  write. Anything else throws `BAD_REQUEST`. */
+function askPlace(path) {
+  const [designId, work, ...parts] = relative(designRoot(), String(path)).split(sep);
+  const file = parts.pop();
+  const shape = parts.length === 1 || (parts.length === 3 && parts[0] === 'sections');
+  if (work !== 'work' || !shape || parts.at(-1) !== '.asks' || !/^[^.].*\.json$/.test(file ?? '')) {
+    throw new DesignError('BAD_REQUEST', `${JSON.stringify(String(path))} is not a question file`);
+  }
+  return { designId, parts, file };
+}
+
+/** What `dir`, a question folder, is: `folder`, `none` (nothing there: an agent may delete its own section `.asks`),
+ *  or `other` (a link, a file), never read or written through. Other lstat errors throw. */
+function askFolder(dir) {
+  try {
+    return lstatSync(dir).isDirectory() ? 'folder' : 'other';
+  } catch (err) {
+    if (err?.code === 'ENOENT') return 'none';
+    throw err;
+  }
+}
 
 /** The file as text: a regular file only, never through a link at its own name and never blocking on a FIFO. */
 function readRegular(path) {
@@ -94,14 +131,23 @@ function readRegular(path) {
 }
 
 /**
- * An agent's question file: null when there is none; `{invalid}` when it cannot be read or is not the C-2 shape (the
- * build removes it and judges the agent by its output); else the normalized `{questions}`.
+ * The question file at `path` (`asksFileFor`): null when there is none, its folder included; `{invalid}` when it
+ * cannot be read, sits in a folder that is a link or a file, or is not the C-2 shape (the build removes it and judges
+ * the agent by its output); else the normalized `{questions}`. Read through its folders held as they are, changing
+ * nothing (readFolder): a folder above it that is a link reads as no question, never followed.
+ * @param {string} path
  * @returns {{ questions: object[] } | { invalid: string } | null}
  */
-export function readAskFile(designId, agentId) {
+export function readAskFile(path) {
   let text;
   try {
-    text = readRegular(askFile(designId, agentId));
+    const { designId, parts, file } = askPlace(path);
+    const work = designWorkDir(designId);
+    const folder = readFolder(work, parts.slice(0, -1), (base) => askFolder(join(base, '.asks')));
+    if (folder === null || folder === 'none') return null;
+    if (folder === 'other') return { invalid: 'the question folder is not a folder' };
+    text = readFolder(work, parts, (asks) => readRegular(join(asks, file)));
+    if (text === null) return null;
   } catch (err) {
     if (err?.code === 'ENOENT') return null;
     return { invalid: `the question file cannot be read: ${err?.message ?? err}` };
@@ -110,10 +156,13 @@ export function readAskFile(designId, agentId) {
   return check.ok ? { questions: check.questions } : { invalid: check.error };
 }
 
-/** Removes an agent's question file, if any, whatever the agent left at that name (a link goes, never its target);
- *  retries for Windows handles. */
-export function removeAskFile(designId, agentId) {
-  rmSync(askFile(designId, agentId), { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+/** Removes the question file at `path`, if any, whatever the agent left at that name (a link goes, never its target),
+ *  through its folders held open (inWorkFolder, removeWorkEntry): a folder on the way that is a link or a file (its
+ *  `.asks` included) is removed itself, and one swapped for a link meanwhile redirects nothing (P8). Retries for
+ *  Windows handles. */
+export function removeAskFile(path) {
+  const { designId, parts, file } = askPlace(path);
+  inWorkFolder(designId, parts, {}, (asks) => removeWorkEntry(designId, asks, file));
 }
 
 /**

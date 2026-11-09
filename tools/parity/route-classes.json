@@ -81,6 +81,7 @@
   "GET /api/design": {"class": "probe", "reason": "flag gate 404, else the viewer's designs, [] on a fresh home"},
   "GET /api/design/:id": {"class": "probe", "reason": "flag gate 404, else designFor 404 bad id"},
   "GET /api/design/:id/thumb": {"class": "probe", "reason": "flag-gated (404 off); bad id answers 404"},
+  "GET /api/design/limits": {"class": "probe", "reason": "flag-gated (404 off); read-only numbers"},
   "GET /api/diff-comments/counts": {"class": "probe", "reason": "local DB read"},
   "GET /api/engine-locks": {"class": "probe", "reason": "in-memory read"},
   "GET /api/engines": {"class": "probe", "reason": "WORCA_MOCK skips the engine preflights"},

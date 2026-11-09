@@ -94,19 +94,19 @@ test('validateAnswers: every question once, value from its options', () => {
 test('readAskFile and removeAskFile: missing, invalid, valid', () => {
   const d = newDesign();
   const file = askFileOf(d.id, 'a_00000001');
-  assert.equal(readAskFile(d.id, 'a_00000001'), null);
+  assert.equal(readAskFile(file), null);
   writeFileSync(file, '{');
-  assert.equal(typeof readAskFile(d.id, 'a_00000001').invalid, 'string');
+  assert.equal(typeof readAskFile(file).invalid, 'string');
   writeFileSync(file, JSON.stringify({ questions: [] }));
-  assert.equal(typeof readAskFile(d.id, 'a_00000001').invalid, 'string');
+  assert.equal(typeof readAskFile(file).invalid, 'string');
   writeFileSync(file, JSON.stringify({ questions: [Q] }));
-  assert.deepEqual(readAskFile(d.id, 'a_00000001'), { questions: [Q] });
-  removeAskFile(d.id, 'a_00000001');
+  assert.deepEqual(readAskFile(file), { questions: [Q] });
+  removeAskFile(file);
   assert.equal(existsSync(file), false);
-  removeAskFile(d.id, 'a_00000001');
+  removeAskFile(file);
   mkdirSync(join(file, 'x'), { recursive: true });
-  assert.equal(typeof readAskFile(d.id, 'a_00000001').invalid, 'string', 'a folder is not a question file');
-  removeAskFile(d.id, 'a_00000001');
+  assert.equal(typeof readAskFile(file).invalid, 'string', 'a folder is not a question file');
+  removeAskFile(file);
   assert.equal(existsSync(file), false, 'and it is removed');
 });
 
@@ -115,8 +115,8 @@ test('readAskFile never reads through a link at the file name', { skip: process.
   const target = join(asksDir(d.id), 'elsewhere.txt');
   writeFileSync(target, JSON.stringify({ questions: [Q] }));
   symlinkSync(target, askFileOf(d.id, 'a_00000002'));
-  assert.equal(typeof readAskFile(d.id, 'a_00000002').invalid, 'string');
-  removeAskFile(d.id, 'a_00000002');
+  assert.equal(typeof readAskFile(askFileOf(d.id, 'a_00000002')).invalid, 'string');
+  removeAskFile(askFileOf(d.id, 'a_00000002'));
   assert.equal(existsSync(askFileOf(d.id, 'a_00000002')), false);
   assert.equal(readFileSync(target, 'utf8'), JSON.stringify({ questions: [Q] }), 'the link goes, never its target');
 });

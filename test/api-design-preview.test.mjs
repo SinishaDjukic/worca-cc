@@ -6,6 +6,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { readServerSource } from '../src/core/read-server-source.mjs';
 import { BRIDGE_MARKER } from '../src/core/design/assemble.mjs';
 import { designWorkDir } from '../src/core/design/paths.mjs';
@@ -16,6 +18,10 @@ import { writeDesignWork } from './helpers/design-preview-fixture.mjs';
 
 let srv, port, id;
 
+// P8 Task 8: the local rule (no identity proxy, so no inline) decides here, not a developer's override. tools/test.mjs
+// does not delete it.
+delete process.env.WORCA_DESIGN_PREVIEW_INLINE;
+
 // Registered before useDesignEnv's own hooks, which run after it (FIFO): the server closes before its home goes.
 after(async () => { if (srv) await new Promise((r) => srv.close(r)); });
 useDesignEnv(after);
@@ -23,6 +29,8 @@ useDesignEnv(after);
 before(async () => {
   id = createDesign({ kind: 'web' }).id;
   writeDesignWork(designWorkDir(id));
+  writeFileSync(join(designWorkDir(id), 'assets', 'logo.png'), 'PNG-logo');
+  writeFileSync(join(designWorkDir(id), 'sections', 'hero', 'index.html'), '<section data-section="hero"><h1>Ship</h1><img src="assets/logo.png" alt=""></section>');
   const { app } = await import('../ui/server.mjs');
   srv = http.createServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -72,6 +80,15 @@ test('the token route answers Origin: null, with the real doc', async () => {
   assert.equal(r.headers['access-control-allow-origin'], '*');
   assert.ok(r.text.includes(BRIDGE_MARKER));
   assert.ok(r.text.includes('data-worca-slot="price"'));
+});
+test('P8 Task 8: with no identity proxy the doc keeps its asset URLs, nothing is embedded', async () => {
+  const { json: { base } } = await req('POST', `/api/design/${id}/preview-token`);
+  for (const mode of ['build', 'run']) {
+    const r = await req('GET', `${base}/${mode}/`, { origin: 'null' });
+    assert.equal(r.status, 200, mode);
+    assert.ok(r.text.includes('src="assets/logo.png"'), mode);
+    assert.ok(!r.text.includes('src="data:'), mode);
+  }
 });
 test('Origin: null stays refused on every other route, even holding a valid token', async () => {
   const { json: { base } } = await req('POST', `/api/design/${id}/preview-token`);

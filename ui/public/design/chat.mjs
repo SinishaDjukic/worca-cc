@@ -230,15 +230,16 @@ export function createQuestionState({ designId } = {}) {
 
 /**
  * Answers a mid-build question (C-8 `POST /api/design/:id/builds/:bid/answer`). `closed` when the build no longer
- * waits on it (409); any other refusal throws the server's words for the card.
+ * waits on it (409); any other refusal throws the server's words for the card, the 409 `credential-missing` included
+ * (P8: the person has not added their key yet, and the agent still waits).
  * @returns {Promise<'answered'|'closed'>}
  */
 export async function answerBuildQuestion({ designId, fetch: fetchFn }, q, picks) {
   const r = await postJson(fetchFn, `/api/design/${enc(designId)}/builds/${enc(q.buildId)}/answer`, { askId: q.askId, answers: answersOf(picks) });
   if (r.ok) return 'answered';
-  if (r.status === 409) return 'closed';
   const body = await readJson(r);
-  throw new Error(body.error || 'Answer not sent');
+  if (r.status === 409 && body?.code !== 'credential-missing') return 'closed';
+  throw new Error(body?.error || 'Answer not sent');
 }
 
 const SEP = ' · ';
@@ -278,8 +279,12 @@ const MAX_PINS = 6;
 const BUILD_LIVE = Object.freeze(['planning', 'building', 'integrating', 'paused']);
 const EMPTY_HINT = 'Describe what to build…';
 const CHANGE_HINT = 'Ask for a change';
-// M6: the crew Build fast allows, shown off too (board BuildCalm). The "on" label is DESIGN_FAST_LABEL; P8 moves it to the server.
-const fastCap = (on) => (on ? DESIGN_FAST_LABEL : 'up to 3');
+// M6: the crew Build fast allows, shown off too (board BuildCalm). P8: the server's caps (`GET /api/design/limits`,
+// `limits`) once it has answered, else DESIGN_FAST_LABEL on and `up to 3` off.
+const LIMITS_URL = '/api/design/limits';
+const fastCap = (on, limits) => (limits ? `up to ${on ? limits.fast : limits.calm}` : (on ? DESIGN_FAST_LABEL : 'up to 3'));
+/** The limits answer as `{fast, calm}` when both are whole numbers, else null. */
+const limitsOf = (body) => (body && Number.isInteger(body.fast) && Number.isInteger(body.calm) ? { fast: body.fast, calm: body.calm } : null);
 const answerLabel = (qs) => (qs.length > 1 ? 'Send answers' : 'Send answer');
 /** A chip's words: P4's `pinLabel` (never sent), else the pin's id and tag. */
 const pinText = (p) => (typeof p.label === 'string' && p.label ? p.label : `${p.id} · ${p.tag}`);
@@ -327,6 +332,7 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   let pins = [];                // the next message's pins, as P4 hands them over (label included)
   let pointing = false;
   let fast = row0.fast === true;
+  let limits = null;            // the server's Build fast caps (P8), asked once per dock: null until they answer
   let buildLive = BUILD_LIVE.includes(row0.status);
   // The build the stage's round belongs to: `design.currentBuild` stays set after a round ends (store.mjs).
   let roundBuild = typeof row0.currentBuild === 'string' && row0.currentBuild ? row0.currentBuild : null;
@@ -516,7 +522,7 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   // ── Build fast (L5.10): remembered on the design ─────────────────────────────────────────────────────────────
   function paintFast() {
     sw.input.checked = fast;
-    capEl.textContent = fastCap(fast);
+    capEl.textContent = fastCap(fast, limits);
   }
   sw.input.addEventListener('change', async () => {
     const want = sw.input.checked;
@@ -996,6 +1002,19 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   paintFast();
   paintPins();
   render();
+  (async () => {
+    let body = null;
+    try {
+      const r = await fetchFn(LIMITS_URL);
+      body = r.ok ? await readJson(r) : null;
+    } catch {
+      body = null;
+    }
+    const got = limitsOf(body);
+    if (destroyed || !got) return;
+    limits = got;
+    paintFast();
+  })();
   client.open().then(() => {
     if (destroyed || !initial || typeof initial.text !== 'string' || !initial.text.trim()) return;
     input.value = initial.text;

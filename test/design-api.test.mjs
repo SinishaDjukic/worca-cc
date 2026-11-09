@@ -79,12 +79,13 @@ const fill = (path) => path.replace(':id', 'd_000000000000').replace(':bid', 'b_
 const make = async (body = { kind: 'web' }) => (await call('POST', '/api/design', body)).json.design;
 const designFolders = () => readdirSync(dirname(designDir('d_000000000000')));
 
-test('DESIGN_ROUTES: the ten routes, frozen, in registration order', () => {
+test('DESIGN_ROUTES: the eleven routes, frozen, in registration order', () => {
   assert.ok(Object.isFrozen(DESIGN_ROUTES));
   assert.ok(DESIGN_ROUTES.every((r) => Object.isFrozen(r)));
   assert.deepEqual(DESIGN_ROUTES.map((r) => `${r.method} ${r.path}`), [
     'GET /api/design',
     'POST /api/design',
+    'GET /api/design/limits',
     'GET /api/design/:id',
     'PATCH /api/design/:id',
     'DELETE /api/design/:id',
@@ -97,7 +98,7 @@ test('DESIGN_ROUTES: the ten routes, frozen, in registration order', () => {
 });
 
 test('flag off: every route answers the flag gate 404', async () => {
-  delete process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = '-design';
   try {
     for (const { method, path } of DESIGN_ROUTES) {
       const r = await call(method, fill(path), method === 'GET' ? undefined : {});
@@ -408,6 +409,29 @@ test('continue: 202 with sections or with no body; 409, 422, 403, 503, credentia
   }
   assert.ok(billed.length > 0);
   assert.deepEqual([...new Set(billed)], ['ada@example.com']);
+});
+
+test('continue and answer check the broker first', async () => {
+  const d = await make();
+  const { buildId } = await designBuilds.start({ designId: d.id, brief: 'MOCK_SECTIONS=1', by: 'local' });
+  await designBuilds.settled();
+  const asked = [];
+  const refusing = await mkApp({ designBuilds, brokerStartRefusal: async (req, models) => { asked.push(models); return 'You have not added your key yet.'; } });
+  const B = `/api/design/${d.id}/builds/${buildId}`;
+  const saved = { WORCA_MOCK: process.env.WORCA_MOCK, ORCH_MOCK: process.env.ORCH_MOCK };
+  delete process.env.WORCA_MOCK; delete process.env.ORCH_MOCK;
+  let cont;
+  let answer;
+  try {
+    cont = await refusing('POST', `${B}/continue`, {});
+    answer = await refusing('POST', `${B}/answer`, { askId: 'as_ab12cd34', answers: [{ id: 'q1', value: 'a' }] });
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+  const refusal = { code: 'credential-missing', error: 'You have not added your key yet.' };
+  assert.deepEqual([cont.status, cont.json], [409, refusal]);
+  assert.deepEqual([answer.status, answer.json], [409, refusal]);
+  assert.deepEqual(asked, [[], []], 'both ask with the design\'s build models');
 });
 
 test('restore: 400 on a bad n, 409 while a build runs or is paused, delegates to versions, 404 without one', async () => {

@@ -3,6 +3,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSync, symlinkSync, chmodSync } from 'node:fs';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -349,16 +350,35 @@ test('build: the pass over the spliced page only escapes, so pieces each within 
   assert.ok(b.html.endsWith('</body></html>'));
 });
 
-test('dist: a failed copy throws IO, leaves no temp folder and keeps the old dist',{ skip: process.platform === 'win32' || process.getuid?.() === 0 ? 'POSIX, not root' : false }, () => {
-  const work = world({ ...BASE, 'assets/locked/x.png': 'X' });
+test('dist: a failed copy throws IO, leaves no temp folder and keeps the old dist; a folder worca cannot read is skipped', { skip: process.platform === 'win32' || process.getuid?.() === 0 ? 'POSIX, not root' : false }, () => {
+  const work = world({ ...BASE, 'assets/locked/x.png': 'X', 'assets/ok.png': 'O' });
   const dist = join(dirname(work), 'dist');
   mkdirSync(dist); writeFileSync(join(dist, 'old.html'), 'x');
-  chmodSync(join(work, 'assets', 'locked'), 0);
+  // A copy that fails (a full disk) fails the whole dist. node:fs writeSync, for every ESM importer (the asset copy's).
+  const fs = createRequire(import.meta.url)('node:fs');
+  const write = fs.writeSync;
+  fs.writeSync = () => { throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' }); };
+  syncBuiltinESMExports();
   try {
-    assert.throws(() => assembleDesign({ workDir: work, plan: PLAN, mode: 'dist' }), (e) => e instanceof DesignError && e.code === 'IO');
+    assert.throws(() => assembleDesign({ workDir: work, plan: PLAN, mode: 'dist' }), (e) => e instanceof DesignError && e.code === 'IO' && /ENOSPC/.test(e.message));
   } finally {
-    chmodSync(join(work, 'assets', 'locked'), 0o755);
+    fs.writeSync = write;
+    syncBuiltinESMExports();
   }
   assert.deepEqual(readdirSync(dirname(work)).sort(), ['dist', 'work']);
   assert.ok(existsSync(join(dist, 'old.html')));
+  // P8 review cycle 4 (major 2): an agent's folder worca cannot read is skipped and logged, as a link is, never failing
+  // this dist and every later one.
+  chmodSync(join(work, 'assets', 'locked'), 0);
+  const warn = console.warn;
+  const lines = [];
+  console.warn = (...a) => { lines.push(a.join(' ')); };
+  try {
+    assembleDesign({ workDir: work, plan: PLAN, mode: 'dist' });
+  } finally {
+    console.warn = warn;
+    chmodSync(join(work, 'assets', 'locked'), 0o755);
+  }
+  assert.deepEqual(readdirSync(join(dist, 'assets')), ['ok.png'], 'dist lacks the folder, nothing left of it');
+  assert.ok(lines.some((l) => /assets\/locked \((EACCES|EPERM)\)/.test(l)), lines.join(' | '));
 });

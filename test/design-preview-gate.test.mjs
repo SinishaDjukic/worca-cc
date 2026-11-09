@@ -61,7 +61,7 @@ function deps(over = {}) {
   return { grants: createPreviewGrants(), hostNameOk, designFor: lookup(DESIGNS), renderDoc: docStub([]), enabled: () => true, ...over };
 }
 
-async function boot({ now, renderDoc, enabled } = {}) {
+async function boot({ now, renderDoc, enabled, inlineDefault } = {}) {
   const grants = createPreviewGrants({ now });
   const calls = [];
   let designs = { ...DESIGNS };
@@ -70,6 +70,7 @@ async function boot({ now, renderDoc, enabled } = {}) {
     designFor: (id) => lookup(designs)(id),
     renderDoc: renderDoc ?? docStub(calls),
     ...(enabled ? { enabled } : {}),
+    ...(inlineDefault ? { inlineDefault } : {}),
   }));
   const app = express();
   app.use('/design-preview', gate);
@@ -235,6 +236,17 @@ test('inline=1 passes through; nothing else does', async () => {
   await raw(`/design-preview/${t}/build/?inline=1`); assert.equal(calls.at(-1).inline, true);
   await raw(`/design-preview/${t}/build/?inline=true`); assert.equal(calls.at(-1).inline, false);
   await raw(`/design-preview/${t}/build/`); assert.equal(calls.at(-1).inline, false);
+});
+test('inlineDefault (P8 Task 8): the server default embeds every asset, asked on every doc; off, ?inline=1 still does', async () => {
+  const on = await boot({ inlineDefault: () => true });
+  await on.raw(`/design-preview/${on.t}/build/`); assert.equal(on.calls.at(-1).inline, true);
+  await on.raw(`/design-preview/${on.t}/run/`); assert.equal(on.calls.at(-1).inline, true);
+  let flip = false;
+  const off = await boot({ inlineDefault: () => flip });
+  await off.raw(`/design-preview/${off.t}/build/`); assert.equal(off.calls.at(-1).inline, false);
+  await off.raw(`/design-preview/${off.t}/build/?inline=1`); assert.equal(off.calls.at(-1).inline, true);
+  flip = true;
+  await off.raw(`/design-preview/${off.t}/build/`); assert.equal(off.calls.at(-1).inline, true, 'read per request, not once at mount');
 });
 test('a failing doc is a bare 500 that names nothing, and the flag off is 404', async () => {
   const a = await boot({ renderDoc: () => { throw new Error('/secret/path'); } });

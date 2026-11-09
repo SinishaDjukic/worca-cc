@@ -131,7 +131,7 @@ test('HTTP: GET shape, PATCH true/false/null, 400/409, the flags frame, hello an
     await checkRows([
       { name: 'hello carries flags', run: async () => {
         await waitFor(() => msgs.some((m) => m.type === 'hello'));
-        assert.deepEqual(msgs.find((m) => m.type === 'hello').flags, { flagsDemo: false, commandSummaries: true, runLabels: false, smartRunNaming: false, requirements: false, runTelemetry: false, gitAutomations: false, sessionGroups: false, ticketUpdates: false, shapeRequirements: false, design: false });
+        assert.deepEqual(msgs.find((m) => m.type === 'hello').flags, { flagsDemo: false, commandSummaries: true, runLabels: false, smartRunNaming: false, requirements: false, runTelemetry: false, gitAutomations: false, sessionGroups: false, ticketUpdates: false, shapeRequirements: false, design: true });
       } },
       { name: 'GET /api/flags: the documented shape, plus docsUrl', run: async () => {
         const j = await (await fetch(`${base}/api/flags`)).json();
@@ -145,8 +145,8 @@ test('HTTP: GET shape, PATCH true/false/null, 400/409, the flags frame, hello an
         assert.equal((await r.json()).flags.find((f) => f.key === 'flagsDemo').on, true);
         assert.deepEqual(await stored(), { flagsDemo: true });
         await waitFor(() => msgs.some((m) => m.type === 'flags'));
-        assert.deepEqual(msgs.filter((m) => m.type === 'flags').at(-1), { type: 'flags', flags: { flagsDemo: true, commandSummaries: true, runLabels: false, smartRunNaming: false, requirements: false, runTelemetry: false, gitAutomations: false, sessionGroups: false, ticketUpdates: false, shapeRequirements: false, design: false } });
-        assert.match(await (await fetch(`${base}/`)).text(), /data-flags="flagsDemo commandSummaries"/);
+        assert.deepEqual(msgs.filter((m) => m.type === 'flags').at(-1), { type: 'flags', flags: { flagsDemo: true, commandSummaries: true, runLabels: false, smartRunNaming: false, requirements: false, runTelemetry: false, gitAutomations: false, sessionGroups: false, ticketUpdates: false, shapeRequirements: false, design: true } });
+        assert.match(await (await fetch(`${base}/`)).text(), /data-flags="flagsDemo commandSummaries design"/);
         assert.equal((await (await fetch(`${base}/api/settings`)).json()).flags.flagsDemo, true);
       } },
       { name: 'a beta flag on by default (commandSummaries): a stored false is respected; null restores it', run: async () => {

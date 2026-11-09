@@ -12,10 +12,13 @@ import { icon } from '../icons.mjs';
 import { makeSwitch } from '../switch.mjs';
 import { ATTACH_ACCEPT, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
 import { DESIGN_FAST_LABEL, DESIGN_KIND_LABELS } from '../../../src/shared/design-names.mjs';
+import { openEngineGateDialog } from './engine-gate-dialog.mjs';
 
 const LOADING_DELAY_MS = 300;
 const REFETCH_MS = 200;
 const LIST_URL = '/api/design';
+/** The server's Build fast caps (P8, M6): `{fast, calm}`. */
+const LIMITS_URL = '/api/design/limits';
 const DAY_MS = 86_400_000;
 const TITLE_MAX = 60;
 /** What a Delete loses, said on every Delete confirm (a re-opened one too). */
@@ -33,6 +36,8 @@ const STATE_WORDS = Object.freeze({
 const OPEN_BUILD = Object.freeze(['planning', 'building', 'integrating', 'paused']);
 /** A design-build frame that ends a round: the list comes again (cost, time, picture). */
 const ROUND_ENDS = Object.freeze(['done', 'stopped', 'error', 'interrupted']);
+/** The codes of POST /api/design's 409 that open the engine gate's dialog; any other 409 is the line under the box. */
+const GATE_CODES = Object.freeze(['engine-gated', 'engine-refused']);
 
 // The four kind icons (canvas build.mjs:346-349), drawn with the mockup's 1.75 stroke: a tile with no picture, and
 // the start composer's kind chips.
@@ -326,7 +331,10 @@ let menuSeq = 0;   // ids for the More and project menus on one page
  * .ask-composer-box` holding the file chips, `textarea.dz-input` and the row (Attach, the project, Build fast, Send),
  * the refusal line under the box, then the kind chips. Send waits for files still being read, POSTs
  * `{kind, fast, title}` (plus `projectKey` when one is picked) and on its 201 keeps `{text, files}` for takeStart,
- * resets all but the kind and opens `#design/<id>`. A refusal shows the server's words and keeps everything.
+ * resets all but the kind and opens `#design/<id>`. A refusal shows the server's words and keeps everything. The
+ * engine gate's 409 (`engine-gated`, `engine-refused`) opens its dialog instead (engine-gate-dialog.mjs), Send busy
+ * until it closes: Allow unguarded re-posts the body with `{allowUnguarded: true, engine}` naming the 409's engine,
+ * Use Claude with `{engine: 'claude'}`; a refusal of that second post is the line under the box.
  * @param {{doc: Document, win: Window, hero: HTMLElement, fetch: Function, navigate?: (hash: string) => void}} deps
  * @returns {{destroy: () => void}}
  */
@@ -376,7 +384,8 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
   menu.setAttribute('aria-label', 'Project');
   menu.hidden = true;
   scopeBtn.setAttribute('aria-controls', menu.id);
-  // Build fast as the dock's switch; its crew label (M6) shows only while it is on (L6.17).
+  // Build fast as the dock's switch; its crew label (M6) shows only while it is on (L6.17). P8: the server's cap, once
+  // it has answered (loadLimits); DESIGN_FAST_LABEL until then.
   const sw = makeSwitch(doc, { label: 'Build fast', rowClass: 'dz-fast', inputClass: 'dz-fast-input' });
   const capEl = make('span', 'dz-fast-cap dz-fast-n', DESIGN_FAST_LABEL);
   sw.row.append(capEl);
@@ -410,7 +419,8 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
   let project = null;          // {key, name} of the picked project, or none
   let projects = [];           // the projects there, from the last load; null when it failed
   let projectSeq = 0;
-  let busy = false;            // the create is on its way (and the files it waits for)
+  let busy = false;            // the create is on its way (and the files it waits for, and the engine gate's dialog)
+  let gate = null;             // the engine gate's dialog while it is open
   let pendingFiles = [];       // {name, bytes, dataBase64, attKind, mime}, as the dock's
   let adding = Promise.resolve();
 
@@ -557,16 +567,31 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
     const files = pendingFiles.slice();
     // `fast` is always a boolean: the store answers 400 on anything else.
     const body = { kind, fast, title: titleFromBrief(text), ...(project ? { projectKey: project.key } : {}) };
-    let ok = false;
-    let answer = null;
+    await create(body, { text, files }, true);
+  }
+  /** One POST /api/design: `{ok, status, answer}`; a request that never got an answer is status 0. */
+  async function post(body) {
     try {
       const res = await fetchFn(LIST_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-      ok = res.ok;
+      let answer = null;
       try { answer = await res.json(); } catch { answer = null; }
+      return { ok: res.ok, status: res.status, answer };
     } catch {
-      ok = false;
+      return { ok: false, status: 0, answer: null };
     }
+  }
+  /**
+   * Post `body` and settle Send: a 201 hands `start` over and opens the design; the engine gate's 409 opens its dialog
+   * (only when `mayAsk`: the first post), and Send stays busy until the dialog closes; anything else is the line under
+   * the box, with everything kept.
+   */
+  async function create(body, start, mayAsk) {
+    const { ok, status, answer } = await post(body);
     if (destroyed) return;
+    if (mayAsk && status === 409 && isObject(answer) && GATE_CODES.includes(answer.code) && typeof answer.engine === 'string' && answer.engine) {
+      askGate(body, start, answer);
+      return;
+    }
     busy = false;
     const id = ok && isObject(answer) && isObject(answer.design) && typeof answer.design.id === 'string' && answer.design.id ? answer.design.id : null;
     if (!id) {
@@ -574,6 +599,31 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
       paintSend();
       return;
     }
+    opened(id, start);
+  }
+  /** The gate's dialog. Its consent binds to the engine the 409 named (L8.25), never one re-read from Settings. */
+  function askGate(body, start, answer) {
+    const again = (extra) => {
+      gate = null;
+      void create({ ...body, ...extra }, start, false);
+    };
+    gate = openEngineGateDialog({
+      doc,
+      label: typeof answer.label === 'string' && answer.label ? answer.label : answer.engine,
+      overridable: answer.overridable === true,
+      reasons: Array.isArray(answer.reasons) && answer.reasons.length ? answer.reasons : [errorOf(answer, '')],
+      notes: answer.notes,
+      onAllow: () => again({ allowUnguarded: true, engine: answer.engine }),
+      ...(answer.engine !== 'claude' ? { onClaude: () => again({ engine: 'claude' }) } : {}),
+      onCancel: () => {
+        gate = null;
+        busy = false;
+        paintSend();
+      },
+    });
+  }
+  /** A design was made: keep the message for its chat (takeStart), reset all but the kind, and open it. */
+  function opened(id, { text, files }) {
     starts.set(id, { text, files });
     input.value = '';
     pendingFiles = [];
@@ -628,15 +678,32 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
     void addFiles(ev.dataTransfer.files);
   });
 
+  /** P8 (M6): the crew Build fast allows on this server, asked once per Library. An answer without whole `fast` and
+   *  `calm` numbers, or none, leaves DESIGN_FAST_LABEL. */
+  async function loadLimits() {
+    let body = null;
+    try {
+      const res = await fetchFn(LIMITS_URL);
+      body = res.ok ? await res.json() : null;
+    } catch {
+      body = null;
+    }
+    if (destroyed || !isObject(body) || !Number.isInteger(body.fast) || !Number.isInteger(body.calm)) return;
+    capEl.textContent = `up to ${body.fast}`;
+  }
+
   paintKinds();
   paintFast();
   paintScope();
   paintMenu();
   paintSend();
+  void loadLimits();
   return {
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      gate?.close();                                    // else it stays on document.body after the Library goes
+      gate = null;
       fly.destroy();
       menu.remove();
     },

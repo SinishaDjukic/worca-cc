@@ -66,14 +66,21 @@ test('stageDesignKit run twice at once never fails and leaves the kit whole, on 
     rmSync(w, { recursive: true, force: true });
   }
 });
-test('stageDesignKit refuses a .kit that is not a real folder and replaces a link at a kit file, writing nothing through either', { skip: process.platform === 'win32' }, async () => {
+test('stageDesignKit replaces a .kit that is not a real folder and a link at a kit file, writing nothing through either', { skip: process.platform === 'win32' }, async () => {
   const w = mkdtempSync(join(tmpdir(), 'dkit-'));
   try {
     mkdirSync(join(w, 'out'));
     mkdirSync(join(w, 'work'));
-    symlinkSync(join(w, 'out'), join(w, 'work/.kit'));
-    await assert.rejects(stageDesignKit({ kind: 'web', workDir: join(w, 'work') }), /^Error: \.kit is not a folder$/);
-    assert.deepEqual(readdirSync(join(w, 'out')), []);
+    // P8 review cycle 3 (critical 2): work/ is agent-writable, so a planted .kit is replaced, not refused for every round.
+    for (const plant of ['link', 'file']) {
+      if (plant === 'link') symlinkSync(join(w, 'out'), join(w, 'work/.kit'));
+      else writeFileSync(join(w, 'work/.kit'), 'x');
+      assert.equal(await stageDesignKit({ kind: 'web', workDir: join(w, 'work') }), true, plant);
+      assert.ok(lstatSync(join(w, 'work/.kit')).isDirectory(), `${plant}: a real .kit`);
+      assert.equal(readFileSync(join(w, 'work/.kit/CONTRACT.md'), 'utf8'), text);
+      assert.deepEqual(readdirSync(join(w, 'out')), [], `${plant}: nothing written through it`);
+      rmSync(join(w, 'work/.kit'), { recursive: true });
+    }
     writeFileSync(join(w, 'out/keep.md'), 'mine');
     mkdirSync(join(w, 'linked/.kit'), { recursive: true });
     symlinkSync(join(w, 'out/keep.md'), join(w, 'linked/.kit/CONTRACT.md'));
@@ -85,6 +92,25 @@ test('stageDesignKit refuses a .kit that is not a real folder and replaces a lin
     rmSync(w, { recursive: true, force: true });
   }
 });
+test('stageDesignKit sets aside a folder planted at a kit file: every staging lands the kit\'s file, nothing removed (P8 review cycle 4)', async () => {
+  const w = mkdtempSync(join(tmpdir(), 'dkit-'));
+  try {
+    const kit = join(w, 'work', '.kit');
+    mkdirSync(join(kit, 'CONTRACT.md'), { recursive: true });
+    writeFileSync(join(kit, 'CONTRACT.md', 'x'), 'agent');
+    for (const round of [1, 2]) {
+      assert.equal(await stageDesignKit({ kind: 'web', workDir: join(w, 'work') }), true, `staging ${round}`);
+      assert.equal(readFileSync(join(kit, 'CONTRACT.md'), 'utf8'), text, `staging ${round}: the kit's file`);
+    }
+    const aside = readdirSync(kit).filter((n) => n !== 'CONTRACT.md');
+    assert.equal(aside.length, 1, `one folder set aside: ${aside.join(', ')}`);
+    assert.match(aside[0], /^\.CONTRACT\.md-[0-9a-f]{8}$/);
+    assert.equal(readFileSync(join(kit, aside[0], 'x'), 'utf8'), 'agent', 'set aside, not removed');
+  } finally {
+    rmSync(w, { recursive: true, force: true });
+  }
+});
+
 test('pinsBlock renders the validated pins: a tag that is not a tag name reaches the prompt empty', () => {
   const pin = { id: 'hero', path: 'main', tag: 'img src=x onerror=alert(1)', text: 't', html: '<h1>' };
   assert.match(pinsBlock([pin], { planIds: ['hero'] }), /^- pin 1: section "hero" tag "" path "main"$/m);

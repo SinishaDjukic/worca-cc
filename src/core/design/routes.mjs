@@ -11,14 +11,16 @@ import { roundUsd } from '../cost-budget.mjs';
 import { requireFlag } from '../flags.mjs';
 import { actorOf, isSharedIdentity, resolveIdentity } from '../identity.mjs';
 import { listProjects } from '../projects.mjs';
-import { DesignRefusal } from './build.mjs';
-import { chatSpendUsd, createDesignThread } from './chat-thread.mjs';
+import { engineLabel } from '../../shared/engine-switch.mjs';
+import { DesignRefusal, projectDirFor } from './build.mjs';
+import { chatSpendUsd, createDesignThread, designBuildModels } from './chat-thread.mjs';
+import { designEngineGate, resolveDesignEngine } from './engines.mjs';
 import { registerDesignExportRoutes } from './export-routes.mjs';
 import { AGENT_ID_RE, BUILD_ID_RE, DESIGN_ID_RE, DesignError } from './ids.mjs';
 import { designWorkDir } from './paths.mjs';
 import { validatePlan } from './plan.mjs';
 import { createDesignBuilds, RESTORE_RUNNING, ROUND_STARTING } from './registry.mjs';
-import { resolveDesignModel } from './spawn-options.mjs';
+import { designDenyRules } from './spawn-options.mjs';
 import {
   createDesign, deleteDesign, designsWithUnknownCost, getBuild, getDesign, latestBuild, listAgents, listDesigns,
   updateDesign,
@@ -30,9 +32,9 @@ const ONE = `${P}/:id`;
 const BUILD = `${ONE}/builds/:bid`;
 
 /** Every Design route, in registration order: the one list registerDesignRoutes registers from and the flag-off test
- *  walks, so no route can skip the `design` gate unnoticed. */
+ *  walks, so no route can skip the `design` gate unnoticed. `limits` comes before `/:id`, which would answer it 404. */
 export const DESIGN_ROUTES = Object.freeze([
-  ['GET', P], ['POST', P],
+  ['GET', P], ['POST', P], ['GET', `${P}/limits`],
   ['GET', ONE], ['PATCH', ONE], ['DELETE', ONE],
   ['POST', `${BUILD}/stop`], ['POST', `${BUILD}/agents/:aid/stop`], ['POST', `${BUILD}/answer`], ['POST', `${BUILD}/continue`],
   ['POST', `${ONE}/versions/:n/restore`],
@@ -42,7 +44,6 @@ export const DESIGN_ROUTES = Object.freeze([
 const STORE_STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, CONFLICT: 409 });
 const VERSION_RE = /^[1-9]\d*$/;
 const VERSION_GONE = 'That version is no longer kept';
-const ROLES = Object.freeze(['lead', 'builder']);
 
 const messageOf = (err) => (err && typeof err.message === 'string' ? err.message : String(err));
 
@@ -154,6 +155,14 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
   const designBuilds = d.designBuilds ?? createDesignBuilds({ broadcast });
   const gate = requireFlag('design');
 
+  /** 409 `credential-missing` when the person cannot pay for `design`'s build models (the broker), before an agent
+   *  of its build spawns again (Continue, an answer); never asked on the mock. */
+  const refuseWithoutCredential = async (req, design) => {
+    if (mockEnabled({})) return;
+    const refusal = await d.brokerStartRefusal?.(req, designBuildModels(design));
+    if (refusal) throw new DesignRefusal(409, refusal, 'credential-missing');
+  };
+
   const handlers = {
     [`GET ${P}`]: async (req, res) => {
       const designs = listDesigns({ visibleTo: viewerOf(req) });
@@ -173,14 +182,44 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
 
     [`POST ${P}`]: async (req, res) => {
       const body = req.body || {};
+      if (body.engine !== undefined && typeof body.engine !== 'string') throw new DesignRefusal(400, 'engine must be text');
+      if (body.allowUnguarded !== undefined && typeof body.allowUnguarded !== 'boolean') {
+        throw new DesignRefusal(400, 'allowUnguarded must be true or false');
+      }
+      const named = typeof body.engine === 'string' && body.engine.trim() !== '';
+      // Consent binds to the engine the person was shown (L8.25), never to whatever the settings resolve to now.
+      if (body.allowUnguarded === true && !named) throw new DesignRefusal(400, 'allowUnguarded needs the engine it allows');
       await checkProject(body.projectKey);
+      // The engine is resolved and gated before the design exists (L8.3): a refusal makes nothing.
+      const projectKey = typeof body.projectKey === 'string' ? body.projectKey.trim() || null : null;
+      const engine = resolveDesignEngine({ explicit: named ? body.engine : null, projectKey });
+      const projectDir = await projectDirFor(projectKey);
+      const gate = designEngineGate({
+        engine, allowed: body.allowUnguarded === true, project: !!projectDir,
+        rules: { deny: await designDenyRules({ projectDir }) }, models: designBuildModels({ engine }),
+      });
+      if (!gate.ok) {
+        // Answered here: errorReply keeps only {error, code}, and the Library's dialog needs the rest.
+        const { error, code, overridable, reasons, notes } = gate;
+        res.status(409).json({ error, code, overridable, engine, label: engineLabel(engine), reasons, notes });
+        return;
+      }
       const design = createDesign(
-        { kind: body.kind, title: body.title, fast: body.fast, projectKey: body.projectKey, engine: 'claude' },
+        { kind: body.kind, title: body.title, fast: body.fast, projectKey: body.projectKey, engine },
         { by: actorOf(req) },
       );
       // The design owns its titled thread from the start (P5): no title call can fire on its first message.
       const thread = createDesignThread({ design, by: actorOf(req) });
-      res.status(201).json({ design: updateDesign(design.id, { threadId: thread.id }), threadId: thread.id });
+      const linked = updateDesign(design.id, { threadId: thread.id });
+      // P8 (L8.13): its maker's agent gets it once it is whole; a refused claim (500) keeps the design, and every later
+      // start and Continue claims it again and refuses the same way.
+      designBuilds.claim(design.id, { owner: actorOf(req) });
+      res.status(201).json({ design: linked, threadId: thread.id });
+    },
+
+    // P8 (M6): the Build fast caps the Library's and the chat's labels read; numbers only, the same for every viewer.
+    [`GET ${P}/limits`]: async (req, res) => {
+      res.json(designBuilds.limits());
     },
 
     [`GET ${ONE}`]: async (req, res) => {
@@ -253,6 +292,8 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
       if (typeof body.askId !== 'string' || !Array.isArray(body.answers)) {
         throw new DesignRefusal(422, 'An answer needs an askId and a list of answers');
       }
+      // P8: the answered agent spawns again, so the credential is checked first, as Continue does.
+      await refuseWithoutCredential(req, design);
       // L2.25: a build that is not running (paused, or paused by a drain) holds no open question.
       const build = designBuilds.get(row.id);
       if (!build) throw new DesignRefusal(409, 'This question is no longer open');
@@ -269,12 +310,7 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
         throw new DesignRefusal(422, 'sections must be a list of section ids');
       }
       const row = buildOf(design, req.params.bid);
-      if (!mockEnabled({})) {
-        const engine = design.engine ?? 'claude';
-        const models = [...new Set(ROLES.map((role) => resolveDesignModel(role, { engine }).model).filter(Boolean))];
-        const refusal = await d.brokerStartRefusal?.(req, models);
-        if (refusal) throw new DesignRefusal(409, refusal, 'credential-missing');
-      }
+      await refuseWithoutCredential(req, design);
       designBuilds.continueBuild({ designId: design.id, buildId: row.id, sections, by: actorOf(req) });
       res.status(202).json({ ok: true });
     },

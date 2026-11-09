@@ -13,7 +13,7 @@ import { createDesign, getBuild } from '../src/core/design/store.mjs';
 
 // `tools/test.mjs` deletes WORCA_FLAGS, so the flag is set here, before the import.
 const ENV = { WORCA_MOCK: '1', WORCA_FLAGS: 'design', WORCA_MOCK_DESIGN_MS: '2' };
-const SAVED_KEYS = [...Object.keys(ENV), 'WORCA_HOME', 'WORCA_DESIGN_MAX_BUILDERS'];
+const SAVED_KEYS = [...Object.keys(ENV), 'WORCA_HOME', 'WORCA_DESIGN_MAX_BUILDERS', 'WORCA_DESIGN_MAX_AGENTS'];
 const saved = {};
 let mod, srv, homeDir;
 
@@ -22,6 +22,7 @@ before(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'worca-design-drain-'));
   Object.assign(process.env, ENV, { WORCA_HOME: homeDir });
   delete process.env.WORCA_DESIGN_MAX_BUILDERS;
+  delete process.env.WORCA_DESIGN_MAX_AGENTS;
   _resetForTests();
   mod = await import('../ui/server.mjs');
   srv = mod.server;

@@ -140,6 +140,10 @@ test('answerBuildQuestion: the C-8 body; 200 answered, 409 closed, 422 throws', 
   assert.deepEqual(seen[0], [`/api/design/${DID}/builds/b_1/answer`, { askId: 'as_1', answers: [{ id: 'q1', value: 'a' }] }]);
   assert.equal(await answerBuildQuestion({ designId: DID, fetch: f(409) }, q, new Map()), 'closed');
   await assert.rejects(() => answerBuildQuestion({ designId: DID, fetch: f(422, { error: 'pick one' }) }, q, new Map()), /pick one/);
+  // P8: a missing key is a refusal the person can act on, never a question that moved on.
+  await assert.rejects(() => answerBuildQuestion({ designId: DID, fetch: f(409, { error: 'You have not added your key yet.', code: 'credential-missing' }) }, q, new Map()),
+    /^Error: You have not added your key yet\.$/);
+  assert.equal(await answerBuildQuestion({ designId: DID, fetch: f(409, { error: 'This question is no longer open' }) }, q, new Map()), 'closed');
 });
 test('roundRowText and canGoBack: the fixed copy; M2 keeps restore on finished rounds with a past', () => {
   const c = { round: 2, kind: 'first', baseVersion: 1, agents: 12, elapsedMs: 374000, costUsd: 4.2, costKnown: true };

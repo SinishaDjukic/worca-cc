@@ -18,5 +18,15 @@
   { "file": "ui/server.mjs", "from": 10484, "to": 10520, "commit": "097c93e73",
     "why": "Design P5: chat mode, turn start, hand-off, receipts and restore wiring; measured with grep -c" },
   { "file": "ui/server.mjs", "from": 10520, "to": 10522, "commit": "4819c3baf",
-    "why": "Design P6: thumbnail wiring; measured with grep -c" }
+    "why": "Design P6: thumbnail wiring; measured with grep -c" },
+  { "file": "ui/server.mjs", "from": 10522, "to": 10529, "commit": "cb05722e4",
+    "why": "Design P8 Task 3: design roots for locked-down Design chats; measured with grep -c" },
+  { "file": "ui/server.mjs", "from": 10529, "to": 10530, "commit": "cb05722e4",
+    "why": "Design P8 Task 8: inline preview default behind an identity proxy; measured with grep -c" },
+  { "file": "ui/server.mjs", "from": 10530, "to": 10534, "commit": "cb05722e4",
+    "why": "Design P8 Task 5: claim a Design chat's design for its owner; measured with grep -c" },
+  { "file": "ui/server.mjs", "from": 10534, "to": 10536, "commit": "cb05722e4",
+    "why": "Design P8 Task 6: design caps and personOf in createDesignBuilds; measured with grep -c" },
+  { "file": "ui/server.mjs", "from": 10536, "to": 10538, "commit": "cb05722e4",
+    "why": "Design P8 Task 7: frames for a missing design go to no viewer; measured with grep -c" }
 ]

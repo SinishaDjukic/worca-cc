@@ -13,7 +13,7 @@ import {
   leadPlanPrompt, leadSystemPrompt, leadTarget, noMoreQuestionsPrompt, pinsBlock, planFixPrompt, reworkPrompt, roundFixPrompt,
 } from '../src/core/design/prompts.mjs';
 import {
-  DESIGN_MAX_TURNS, DESIGN_TOOLS, designDenyRules, designMaxBuilders, designSpawnOptions, resolveDesignModel,
+  DESIGN_MAX_TURNS, DESIGN_TOOLS, designDenyRules, designSpawnOptions, resolveDesignModel,
 } from '../src/core/design/spawn-options.mjs';
 import { ASK_DENY_RULES } from '../src/core/ask/deny-rules.mjs';
 import { readGuardrailSet } from '../src/core/guardrail-store.mjs';
@@ -75,8 +75,8 @@ test('only the lead gets the project; it may write all of work/', () => {
 test('maxTurns follows C-3', () => {
   assert.deepEqual(DESIGN_MAX_TURNS, { 'lead:plan': 40, 'builder:first': 25, 'lead:integrate': 15, 'lead:change': 20, 'builder:change': 15 });
 });
-test('every engine but claude is refused in this phase', () => {
-  assert.throws(() => designSpawnOptions({ ...base, engine: 'codex', role: 'lead', stage: 'plan' }), /engine codex/);
+test('an engine Design refuses is refused at the spawn too', () => {
+  assert.throws(() => designSpawnOptions({ ...base, engine: 'goose', role: 'lead', stage: 'plan' }), /engine goose/);
 });
 test('builders share one system prompt, and a real spawn carries no mock marker', (t) => {
   const saved = [process.env.WORCA_MOCK, process.env.ORCH_MOCK]; delete process.env.WORCA_MOCK; delete process.env.ORCH_MOCK;
@@ -138,18 +138,6 @@ test('deny rules: Ask read denies always; no write-tool denies', async () => {
   const d = await designDenyRules({ projectDir: null });
   assert.ok(d.includes('Read(//**/.env*)'));
   assert.ok(!d.includes('Write') && !d.includes('Edit'));
-});
-test('designMaxBuilders', () => {
-  assert.equal(designMaxBuilders({ fast: false, hosted: false, env: {} }), 3);
-  assert.equal(designMaxBuilders({ fast: true, hosted: false, env: {} }), 12);
-  assert.equal(designMaxBuilders({ fast: true, hosted: true, env: {} }), 6);
-  assert.equal(designMaxBuilders({ fast: false, hosted: true, env: {} }), 3);
-  assert.equal(designMaxBuilders({ fast: true, hosted: false, env: { WORCA_DESIGN_MAX_BUILDERS: '5' } }), 5);
-  for (const bad of ['0', 'x', '999']) assert.equal(designMaxBuilders({ fast: true, hosted: false, env: { WORCA_DESIGN_MAX_BUILDERS: bad } }), 12);
-  // Rows beyond the plan: both ends of 1 to 24, a non-integer, a blank value, and the override on a slow build.
-  assert.equal(designMaxBuilders({ fast: true, hosted: false, env: { WORCA_DESIGN_MAX_BUILDERS: '24' } }), 24);
-  assert.equal(designMaxBuilders({ fast: false, hosted: true, env: { WORCA_DESIGN_MAX_BUILDERS: '1' } }), 1);
-  for (const bad of ['25', '2.5', '-3', '']) assert.equal(designMaxBuilders({ fast: false, hosted: false, env: { WORCA_DESIGN_MAX_BUILDERS: bad } }), 3, bad);
 });
 
 // ── Rows beyond the plan ────────────────────────────────────────────────────────────────────────────────────────────

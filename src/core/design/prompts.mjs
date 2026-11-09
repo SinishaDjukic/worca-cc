@@ -1,7 +1,8 @@
 // src/core/design/prompts.mjs
 // Every prompt string of a Design build (SPEC C-2, C-3 and §4; rulings M5 and M10). The two system prompts take only
-// the design's kind, so every builder of a design shares one prefix that can cache; the section, the round and every
-// path go in the user prompt, always absolute. A deck's or a video's copy lives in kind-prompts.mjs. The fixed lines (`Kind:`, `Section:`, `Question file:`, `Round file:`, `Change round:`,
+// the design's kind, so every builder of a design on the hook row (Claude) shares one prefix that can cache; a builder
+// on any other engine reads the shared files from its own `.ctx/` copies (P8, L8.7), so its system prompt names that
+// folder and is its own. The section, the round and every path go in the user prompt, always absolute. A deck's or a video's copy lives in kind-prompts.mjs. The fixed lines (`Kind:`, `Section:`, `Question file:`, `Round file:`, `Change round:`,
 // `Change:`, `Rework:`) are read by the mock roles and by the agents: each stands on a line of its own.
 
 import { join } from 'node:path';
@@ -37,7 +38,13 @@ const QUESTION_RULES = [
   '- Then end your turn at once and do nothing more. You are resumed with the answers.',
 ].join('\n');
 
-const BUILDER_SYSTEM = [
+/** Where a builder reads the shared files: work/ itself, or (`readRoot`, P8) the read-only copies in its `.ctx/`. */
+function readScope(readRoot) {
+  if (!readRoot) return '- Write only in your folder and your Question file. Read anything else in work/: `tokens.css` and `global.css` for the shared look, `plan.json`, `brand.md`, and `.crew.json` for the other sections and how far they are. Only the lead edits global files.';
+  return `- Write only in your folder and your Question file. Read the shared files from ${readRoot}, refreshed before each of your turns: \`tokens.css\` and \`global.css\` for the shared look, \`plan.json\`, \`brand.md\`, \`crew.json\` for the other sections and how far they are, and \`CONTRACT.md\` when your task names a kit contract. They are read-only copies: never edit them, and never link to them or \`@import\` them from your files. Only the lead edits global files.`;
+}
+
+const builderSystem = (readRoot) => [
   'You are a builder in a worca Design build. You write one section of the page, alone, in your own folder. Your task names the section, its job and brief, your folder, the shared files and your Question file.',
   '',
   'Rules, in order:',
@@ -49,7 +56,7 @@ const BUILDER_SYSTEM = [
   '6. End with one line, used as the `.crew.json` summary.',
   '',
   'Scope:',
-  '- Write only in your folder and your Question file. Read anything else in work/: `tokens.css` and `global.css` for the shared look, `plan.json`, `brand.md`, and `.crew.json` for the other sections and how far they are. Only the lead edits global files.',
+  readScope(readRoot),
   '- Your root element carries `data-section="<id>"`, with your section id as <id>.',
   '- Every CSS selector starts with `[data-section="<id>"]`, and every `@keyframes` name is your section id or starts with it and a hyphen.',
   '- Every `id` in your HTML starts with your section id and a hyphen, so ids stay unique across the page.',
@@ -61,6 +68,7 @@ const BUILDER_SYSTEM = [
   '',
   QUESTION_RULES,
 ].join('\n');
+const BUILDER_SYSTEM = builderSystem(null);
 
 /** The plan-shape bullets every kind's lead reads (C-2), shared by the web block and the board block. */
 const PLAN_SHAPE_HEAD = 'The plan shape (`kind` is the Kind line of your task):';
@@ -135,10 +143,12 @@ export function leadSystemPrompt({ kind = 'web' } = {}) {
   return isBoardKind(kind) ? leadSystem(boardShellRule(kind), boardSections(kind)) : LEAD_SYSTEM;
 }
 
-/** The builder's system prompt: identical for every builder of a kind, so the prefix can cache (C-3); a deck or a
- *  video adds its slide or scene block after P2's text. */
-export function builderSystemPrompt({ kind = 'web' } = {}) {
-  return isBoardKind(kind) ? `${BUILDER_SYSTEM}\n\n${builderKindBlock(kind)}` : BUILDER_SYSTEM;
+/** The builder's system prompt: identical for every builder of a kind on the hook row, so the prefix can cache (C-3);
+ *  a builder on any other engine passes `readRoot`, its section's `.ctx` (P8, L8.7), and its prompt names those
+ *  read-only copies, so it is that section's own. A deck or a video adds its slide or scene block after P2's text. */
+export function builderSystemPrompt({ kind = 'web', readRoot } = {}) {
+  const text = readRoot ? builderSystem(readRoot) : BUILDER_SYSTEM;
+  return isBoardKind(kind) ? `${text}\n\n${builderKindBlock(kind)}` : text;
 }
 
 /** M5's section target for one kind: decks one per slide, video one per scene, a web page by Build fast. */
@@ -148,14 +158,15 @@ export function leadTarget({ kind, fast } = {}) {
   return fast ? '16 to 32 sections' : '4 to 8 sections';
 }
 
-/** The lead's first prompt. Attachment names reach the lead inside the brief (P5 L5.5). */
-export function leadPlanPrompt({ brief, kind = 'web', fast, projectDir, kitContract, questionFile, planFile }) {
+/** The lead's first prompt. Attachment names reach the lead inside the brief (P5 L5.5). The project is named only to
+ *  an engine that can read it (`row.readsOutsideCwd`, P8 L8.9); with no `row`, as before. */
+export function leadPlanPrompt({ brief, kind = 'web', fast, projectDir, kitContract, questionFile, planFile, row }) {
   return lines([
     'Plan a new design and write its shared files.',
     `Kind: ${kind}`,
     `Target: ${leadTarget({ kind, fast })}.`,
     ...leadKindLines(kind),
-    projectDir ?`Project: ${projectDir} (read it for the brand; never write in it)` : null,
+    projectDir && row?.readsOutsideCwd !== false ? `Project: ${projectDir} (read it for the brand; never write in it)` : null,
     kitContract ? `Kit contract: ${kitContract}` : null,
     `Question file: ${questionFile}`,
     `Plan file: ${planFile}`,
@@ -224,8 +235,15 @@ export function integratePrompt({ findings, integrationFile }) {
   ]);
 }
 
-/** A builder's first prompt: one section of the plan; on a deck or a video, its slide or its scene's window too. */
-export function builderPrompt({ section, notes, sectionDir, tokensCss, globalCss, crewJson, questionFile, kitContract, kind, plan }) {
+/** A builder's first prompt: one section of the plan; on a deck or a video, its slide or its scene's window too. With
+ *  `readRoot` (P8, a builder off the hook row) the shared files are named by their copies there. */
+export function builderPrompt({ section, notes, sectionDir, tokensCss, globalCss, crewJson, questionFile, kitContract, kind, plan, readRoot }) {
+  if (readRoot) {
+    tokensCss = join(readRoot, 'tokens.css');
+    globalCss = join(readRoot, 'global.css');
+    crewJson = join(readRoot, 'crew.json');
+    kitContract = kitContract ? join(readRoot, 'CONTRACT.md') : kitContract;
+  }
   return lines([
     `Section: ${section.id}`,
     `Job: ${section.job}`,

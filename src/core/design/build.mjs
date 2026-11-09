@@ -10,45 +10,61 @@
 // ended short of `done` comes back with `DesignBuild.rehydrate` (from the P1 rows and the disk, after a pause or a
 // restart alike, L2.6) and `continue({sections})`, which re-enters only the stages and sections still owed. A change
 // round (`kind: 'change'`, SPEC §4, C-3) runs on the same engine: named sections alone, or a lead whose round.json
-// `applyRound` applies; each section it selects carries a `todo` in the build row only (L2.35, L2.37).
+// `applyRound` applies; each section it selects carries a `todo` in the build row only (L2.35, L2.37). P8: every spawn,
+// agent row, meter and model resolve runs on the design's engine (`_engine`, `_engineRow`); a builder off the hook row
+// reads `.ctx` copies staged before each of its processes and asks through `<section>/.asks` (L8.7, L8.8). An engine
+// without token streaming (`live: 'watch'`) draws from the disk alone: a work-folder watcher (`watch.mjs`) is its only
+// lander, re-read at every tool result and process exit, closed before dist and before the row leaves an open status
+// (L8.5, L8.23); Claude opens none (L8.6).
 
+import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { bridgeCostFor, forgetBridgeTag } from '../bridge/telemetry.mjs';
 import { runClaude } from '../claude-runner.mjs';
+import { bridgedModelInfo } from '../config.mjs';
 import { budgetStatus, recordDesignCostDelta } from '../cost-budget.mjs';
+import { chatDescriptor } from '../engines/chat.mjs';
 import { teamRunDiscover } from '../git-free/team-repo.mjs';
 import { writeJsonAtomic } from '../json-atomic.mjs';
 import { checkTeamTotalGate } from '../policy/gate.mjs';
 import { listProjects } from '../projects.mjs';
 import { classifyError } from '../recoverable-error.mjs';
 import { createAgentStream } from './agent-stream.mjs';
-import { assembleDesign, lintDesign } from './assemble.mjs';
+import { assembleDesign, lintDesign, readConfined } from './assemble.mjs';
+import { designBuildModels } from './chat-thread.mjs';
 import { createAgentMeter, isListPriced, processBudgetUsd, readDesignCaps } from './cost.mjs';
 import { classifyDraftPath, countLayers, createDraftStore } from './draft.mjs';
+import { designEngineFor, designEngineRow } from './engines.mjs';
 import { createFrameEmitter } from './frames.mjs';
 import { boundedParser, scanShellSlots } from './html-scan.mjs';
 import { isBoardKind } from './kinds.mjs';
 import { stageDesignKit } from './kit.mjs';
-import { asksDir, crewFile, designWorkDir, ensureDesignFolders, kitDir, sectionDir } from './paths.mjs';
+import { designCaps } from './limits.mjs';
+import { crewFile, designWorkDir, ensureDesignFolders, kitDir, realSectionDir, removeSectionDir, sectionDir } from './paths.mjs';
 import { validateIntegration, validatePlan, validateRound } from './plan.mjs';
 import {
   answersPrompt, builderChangePrompt, builderPrompt, continuePrompt, integratePrompt, leadChangePrompt, leadPlanPrompt,
   noMoreQuestionsPrompt, pinsBlock, planFixPrompt, reworkPrompt, roundFixPrompt,
 } from './prompts.mjs';
-import { ASK_ROUNDS, newAskId, readAskFile, removeAskFile, validateAnswers } from './questions.mjs';
+import { ASK_ROUNDS, asksFileFor, newAskId, readAskFile, removeAskFile, validateAnswers } from './questions.mjs';
+import { removeReadBundle, stageReadBundle } from './read-bundle.mjs';
 import { closeBuildRow } from './recover.mjs';
 import { createSemaphore } from './semaphore.mjs';
-import { designDenyRules, designMaxBuilders, designSpawnOptions, resolveDesignModel } from './spawn-options.mjs';
+import { designDenyRules, designSpawnOptions, resolveDesignModel } from './spawn-options.mjs';
 import {
   OPEN_BUILD_STATUSES, createAgent, createBuild, getBuild, getDesign, latestBuild, listAgents, requireDesign, updateAgent,
   updateBuild,
 } from './store.mjs';
+import { createWorkWatcher } from './watch.mjs';
 
 /** A `--resume` whose session the CLI no longer has (the text of session-host.mjs `VANISHED_RE`, copied to keep this
  *  module off the session host). */
 const LOST_SESSION_RE = /No conversation found/i;
+/** The line an adapter logs when the session it was told to resume is gone and it starts a fresh one on the same
+ *  prompt (Gemini, Qwen, OpenCode, Cursor): on a resumed spawn that outcome is a lost session (L8.30). */
+const FRESH_START_RE = /^\[worca\] [a-z]+: (session|chat) .* is gone — starting a fresh one$/;
 /** Error classes that hit every agent alike: the whole build pauses (L2.7). */
 const HALT_CLASSES = new Set(['usage_limit', 'auth', 'quota', 'model']);
 /** Transient error classes: that agent resumes once after `retryDelayMs` (L2.7). */
@@ -192,8 +208,8 @@ export function applyRound({ plan, round, shellHtml }) {
  * @throws {DesignRefusal}
  */
 function changeStart(design, { sections, pins, needsLead }) {
-  let text = null;
-  try { text = readFileSync(join(designWorkDir(design.id), 'plan.json'), 'utf8'); } catch { /* no plan yet */ }
+  // work/ is agent-writable: a link or a FIFO planted as plan.json reads as no plan (readConfined), never blocking.
+  const text = readConfined(designWorkDir(design.id), 'plan.json');
   const check = text === null ? null : validatePlan(text, { kind: design.kind });
   if (!check?.ok) throw new DesignRefusal(422, 'A change round needs a valid plan');
   const ids = check.plan.sections.map((s) => s.id);
@@ -235,7 +251,7 @@ function clearUnbuiltAdds(designId, records) {
   for (const rec of Array.isArray(records) ? records : []) {
     if (rec?.unbuiltAdd !== true) continue;
     try {
-      rmSync(sectionDir(designId, rec.id), { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      removeSectionDir(designId, rec.id);
     } catch (err) {
       throw new DesignRefusal(409, `sections/${rec.id} still holds the files of a removed section and could not be cleared `
         + `(${messageOf(err)}): close the program using that folder, then start the round again`);
@@ -243,14 +259,43 @@ function clearUnbuiltAdds(designId, records) {
   }
 }
 
+/**
+ * The engine a build of `design` spawns on (P8): its stored engine, else the resolved one. A stored `mock` builds as
+ * Claude did before P8 (its table row is the hook row, and `runClaude` refuses a write guard off `claude`; the runner
+ * runs the mock under `WORCA_MOCK` anyway). A resolve that throws falls back to Claude, so a rehydrate for Stop or a
+ * paused build's restore never fails on it; the registry's engine gate still refuses a Continue properly.
+ */
+function buildEngine(design) {
+  let engine;
+  try {
+    engine = designEngineFor(design).engine;
+  } catch {
+    engine = 'claude';
+  }
+  return engine === 'mock' ? 'claude' : engine;
+}
+
 /** The registered project's folder for a design's `projectKey`, matched by key (Contract issue 9), else null. */
-async function projectDirFor(key) {
+export async function projectDirFor(key) {
   if (!key) return null;
   return (await listProjects()).find((p) => p.key === key)?.path ?? null;
 }
 
 function realDir(dir) {
   try { return realpathSync(dir); } catch { return undefined; }
+}
+
+/** Writes `text` as `<workDir>/<name>` through a new dot temp file (`wx`) renamed over it (P8): work/ is the owner's
+ *  agents' to write, and a rename replaces a link or a FIFO planted at the name, never writing through it. */
+function replaceWorkFile(workDir, name, text) {
+  const tmp = join(workDir, `.${name}.${randomBytes(4).toString('hex')}.tmp`);
+  try {
+    writeFileSync(tmp, text, { flag: 'wx' });
+    renameSync(tmp, join(workDir, name));
+  } catch (err) {
+    rmSync(tmp, { force: true });
+    throw err;
+  }
 }
 
 /** The injectable dependencies; a key given as `undefined` keeps its default, and unknown keys pass through. */
@@ -260,7 +305,7 @@ function withDefaults(deps = {}) {
     now: Date.now,
     staggerMs: 250,
     retryDelayMs: 5000,
-    maxBuildersFor: (fast) => designMaxBuilders({ fast, hosted: false }),
+    maxBuildersFor: (fast) => designCaps()[fast ? 'fast' : 'calm'],
     acquireGlobal: async () => {},
     releaseGlobal: () => {},
     snapshotVersion: async () => {},
@@ -270,6 +315,7 @@ function withDefaults(deps = {}) {
     readCaps: readDesignCaps,
     isListPriced,
     stageKit: stageDesignKit,
+    createWorkWatcher,
     mock: undefined,
   };
   for (const [k, v] of Object.entries(deps || {})) if (v !== undefined) out[k] = v;
@@ -343,6 +389,9 @@ export class DesignBuild extends EventEmitter {
     this._deps = deps;
     this._design = design;
     this._row = row;
+    /** The engine every spawn, agent row, meter and model resolve of this round runs on (P8), and its table row. */
+    this._engine = buildEngine(design);
+    this._engineRow = designEngineRow(this._engine, { models: designBuildModels({ engine: this._engine }) });
     /** A change round's start (`changeStart`): `{plan, named, needsLead, pinBlock}`; empty on a rehydrate, since
      *  none of it is persisted (a Continue resumes sessions that already hold it). */
     this._start = start;
@@ -362,6 +411,11 @@ export class DesignBuild extends EventEmitter {
     this._sections = [];
     /** Section `index.html` path -> its layer count, from the latest `design-file`. */
     this._layers = new Map();
+    /** A watch row's work-folder watcher while a drive runs (`_drive` to `_finish` or `_settle`), else null. */
+    this._watcher = null;
+    /** Path -> the text `_landFile` last landed for it: the watcher never sends that text again, and a `gone` lands
+     *  only for a path in here. */
+    this._landedText = new Map();
     this._costUsd = Number(row.costUsd) || 0;
     /** worca's per-run cap for this round (Settings or the team), read at the start of each drive; null: none (M13). */
     this._cap = null;
@@ -449,8 +503,10 @@ export class DesignBuild extends EventEmitter {
     if (!CONTINUABLE.has(this._status) && !(this._status === 'done' && this._reason === 'partial')) {
       throw new DesignRefusal(409, 'This build has nothing left to continue');
     }
+    // Only a valid question file is an open question: one an engine left invalid (a link or a file as `.asks`) reopens
+    // nothing, as `_readAsk` ignores it.
     const asking = this._plan
-      ? this._agents.filter((a) => a.role === 'builder' && this._sections.some((s) => s.id === a.sectionId) && readAskFile(this.designId, a.id))
+      ? this._agents.filter((a) => a.role === 'builder' && this._sections.some((s) => s.id === a.sectionId) && readAskFile(this._questionFile(a))?.questions)
       : [];
     const ids = this._selection(sections);
     for (const a of asking) ids.add(a.sectionId);
@@ -621,6 +677,7 @@ export class DesignBuild extends EventEmitter {
     } catch (err) {
       console.error(`[design] build ${this.id}: end state not saved: ${messageOf(err)}`);
     }
+    this._closeWatcher();
     this._status = 'error';
     this._reason = 'engine-error';
     this._settled = true;
@@ -650,6 +707,13 @@ export class DesignBuild extends EventEmitter {
     this._emitBuild();
     if (fresh && this.kind === 'change') this._planFrame();
     ensureDesignFolders(this.designId);
+    // P8 L8.23: on a watch row the disk is the only lander. Every drive opens the watcher (run and Continue; a
+    // rehydrate never drives until its Continue), its baseline taken now, so a Continue re-sends no file.
+    if (this._engineRow.live === 'watch') {
+      this._closeWatcher();
+      this._watcher = this._deps.createWorkWatcher({ workDir: this._workDir, onLand: (rel, o) => this._onWatchLand(rel, o) });
+      this._watcher.start();
+    }
     // L7.12: a deck or a video inlines its runtime from work/.kit/, so every drive stages it, a Continue too: a round
     // whose staging threw, or one paused before P7, has no kit, and its end would fail every time (a web page keeps
     // P5's chat staging alone). A throw is the round's `engine-error` through `_guarded`.
@@ -718,7 +782,7 @@ export class DesignBuild extends EventEmitter {
       agent.firstPrompt = firstPrompt(agent);
       prompt = agent.sessionId ? continuePrompt({ role: 'lead' }) : agent.firstPrompt;
     } else {
-      const { model, effort } = resolveDesignModel('lead');
+      const { model, effort } = resolveDesignModel('lead', { engine: this._engine });
       agent = this._newAgent({ role: 'lead', sectionId: null, job: 'Lead', model, effort, cwd: this._workDir });
       agent.firstPrompt = firstPrompt(agent);
       prompt = agent.firstPrompt;
@@ -773,15 +837,16 @@ export class DesignBuild extends EventEmitter {
   }
 
   _readRound() {
-    let text;
-    try { text = readFileSync(this._roundFile(), 'utf8'); } catch { return { ok: false, errors: ['round.json was not written'], round: null }; }
+    const text = this._readWork('round.json');
+    if (text === null) return { ok: false, errors: ['round.json was not written'], round: null };
     return validateRound(text, { plan: this._plan });
   }
 
   /**
    * Applies a valid round: `applyRound` over the plan held and shell.html, given the NORMALIZED round (a web add
    * without `estHeight` gets 240), and the result must pass `validatePlan` before anything is written; else the
-   * plan's errors come back and nothing changed. Then plan.json and shell.html, the records (a touch `planned` with
+   * plan's errors come back and nothing changed. Then plan.json and shell.html, each renamed over its name (P8: a link
+   * an agent swaps in after the read is replaced, never written through, replaceWorkFile), the records (a touch `planned` with
    * `todo:{stage:'change',brief}`, an add `planned` with `todo:{stage:'first'}` and `unbuiltAdd`, every other section
    * as it was, a removed one gone), `design-section` `removed` per removed section and `design-plan` at planRev 2.
    * Last, and only best-effort (M5), round.json and each removed section's folder go: a Windows program holding one
@@ -799,7 +864,7 @@ export class DesignBuild extends EventEmitter {
     const check = validatePlan(out.plan, { kind: this._design.kind });
     if (!check.ok) return check.errors;
     writeJsonAtomic(this._planFile(), check.plan);
-    if (typeof shell === 'string' && out.shellHtml !== shell) writeFileSync(join(this._workDir, 'shell.html'), out.shellHtml);
+    if (typeof shell === 'string' && out.shellHtml !== shell) replaceWorkFile(this._workDir, 'shell.html', out.shellHtml);
     const before = new Map(this._sections.map((s) => [s.id, s]));
     const touched = new Map(round.touch.map((t) => [t.id, t.brief]));
     this._plan = check.plan;
@@ -830,7 +895,10 @@ export class DesignBuild extends EventEmitter {
     };
     tidy('round.json', () => this._dropRound());
     for (const id of removed) {
-      tidy(`the folder of removed section ${id}`, () => rmSync(sectionDir(this.designId, id), { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+      // Its watch goes first: on Windows a watched folder deleted raises EPERM, and a delete-pending one refuses the
+      // folder of a section added again under that id.
+      this._watcher?.drop(id);
+      tidy(`the folder of removed section ${id}`, () => removeSectionDir(this.designId, id));
     }
   }
 
@@ -841,7 +909,21 @@ export class DesignBuild extends EventEmitter {
     return existsSync(contract) ? contract : null;
   }
 
-  _questionFile(agent) { return join(asksDir(this.designId), `${agent.id}.json`); }
+  /** Whether this round's engine is off the hook row: no write guard, so a builder reads `.ctx` copies and asks in
+   *  its own folder (L8.7, L8.8). */
+  _offHook() { return this._engineRow.confine !== 'hook'; }
+
+  /** Where `agent` writes its questions (`asksFileFor`): `work/.asks/`, or a builder's own folder off the hook row. */
+  _questionFile(agent) {
+    return asksFileFor({
+      row: this._engineRow, designId: this.designId, sectionId: agent.role === 'builder' ? agent.sectionId : null, agentId: agent.id,
+    });
+  }
+
+  /** A builder's read bundle (`<section>/.ctx`) off the hook row, else undefined. */
+  _readRoot(agent) {
+    return agent.role === 'builder' && this._offHook() ? join(agent.cwd, '.ctx') : undefined;
+  }
 
   /** The plan stage's first prompt for the lead `agent`, from the build's brief. */
   _leadPlanPrompt(agent) {
@@ -853,6 +935,7 @@ export class DesignBuild extends EventEmitter {
       kitContract: this._kitContract(),
       questionFile: this._questionFile(agent),
       planFile: this._planFile(),
+      row: this._engineRow,
     });
   }
 
@@ -907,6 +990,7 @@ export class DesignBuild extends EventEmitter {
       kitContract: this._kitContract(),
       kind: this._design.kind,
       plan: this._plan,
+      readRoot: this._readRoot(agent),
     });
   }
 
@@ -942,7 +1026,7 @@ export class DesignBuild extends EventEmitter {
         seedUsd: r.costUsd, knownBefore: r.costKnown !== false,
         stopKind: null, stopCtl: new AbortController(), waiter: null, lostOnce: false, retried: false, controller: null,
         // `row.costUsd` is null until a first booking; a destructuring default would not replace it.
-        meter: createAgentMeter({ model: r.model, engine: 'claude', priorUsd: r.costUsd ?? 0, sessionUsd: sessionUsdOf(r) }),
+        meter: createAgentMeter({ model: r.model, engine: this._engine, priorUsd: r.costUsd ?? 0, sessionUsd: sessionUsdOf(r) }),
       };
       agent.firstPrompt = isLead ? this._leadFirstPrompt(agent) : this._builderFirstPrompt(agent);
       this._agents.push(agent);
@@ -961,8 +1045,8 @@ export class DesignBuild extends EventEmitter {
   }
 
   _readPlan() {
-    let text;
-    try { text = readFileSync(this._planFile(), 'utf8'); } catch { return { ok: false, errors: ['plan.json was not written'], plan: null }; }
+    const text = this._readWork('plan.json');
+    if (text === null) return { ok: false, errors: ['plan.json was not written'], plan: null };
     return validatePlan(text, { kind: this._design.kind });
   }
 
@@ -1008,7 +1092,7 @@ export class DesignBuild extends EventEmitter {
       items = items.filter((item) => this._clearAdded(item.section));
       this._landBases(items.map((item) => item.section));
     }
-    const builder = resolveDesignModel('builder');
+    const builder = resolveDesignModel('builder', { engine: this._engine });
     const loops = items.map((item) => this._runSection(item, builder).catch((err) => { this._abortAll(); throw err; }));
     const failure = (await Promise.allSettled(loops)).find((r) => r.status === 'rejected');
     if (failure) throw failure.reason;
@@ -1026,8 +1110,9 @@ export class DesignBuild extends EventEmitter {
   _clearAdded(section) {
     if (section.unbuiltAdd !== true || this._agents.some((a) => a.role === 'builder' && a.sectionId === section.id)) return true;
     this._layers.delete(`sections/${section.id}/index.html`);
+    this._watcher?.drop(section.id);
     try {
-      rmSync(sectionDir(this.designId, section.id), { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      removeSectionDir(this.designId, section.id);
     } catch (err) {
       console.error(`[design] build ${this.id}: added section ${section.id} not built: its folder holds a removed section's files and could not be cleared: ${messageOf(err)}`);
       this._setSection(section, 'failed');
@@ -1044,8 +1129,50 @@ export class DesignBuild extends EventEmitter {
       for (const file of SECTION_FILES) {
         const path = `sections/${s.id}/${file}`;
         const text = this._readWork(path);
-        if (typeof text === 'string') this._fileFrame(path, text, this._drafts.landed(path, text));
+        if (typeof text === 'string') this._landFile(path, text);
       }
+    }
+  }
+
+  /** `text` as `rel`'s disk text: the draft store lands it (its rev) and a `design-file` goes out; the text is kept as
+   *  the last one landed for `rel` when the store landed it (a path no stage draws gets no rev and sends nothing). */
+  _landFile(rel, text) {
+    const rev = this._drafts.landed(rel, text);
+    if (rev != null) this._landedText.set(rel, text);
+    this._fileFrame(rel, text, rev);
+  }
+
+  /**
+   * The watcher's landing of `rel` on a watch row: any current-plan section's file, whoever wrote it, and the two
+   * global files (L8.24: dist is assembled from the plan's sections on the same disk). Nothing once settled; nothing
+   * for a section the plan lacks or one still `unbuiltAdd` (a removed section's leftovers never land or count layers,
+   * M5); a `gone` only for a path this build landed (a leftover folder's files, removed before their debounce fired,
+   * must not land `''`); and never the text last landed for `rel` (a stat during a truncate-then-write, or coarse
+   * mtimes, would send it twice). The text is read through `readConfined` (`_readWork`): a link or a FIFO reads null.
+   */
+  _onWatchLand(rel, { gone = false } = {}) {
+    if (this._settled) return;
+    const c = classifyDraftPath(rel);
+    if (!c) return;
+    if (c.sectionId !== null) {
+      const s = this._sections.find((x) => x.id === c.sectionId);
+      if (!s || s.unbuiltAdd === true) return;
+    }
+    const last = this._landedText.get(rel);
+    if (gone && last === undefined) return;
+    const text = gone ? '' : this._readWork(rel);
+    if (typeof text !== 'string' || text === last) return;
+    this._landFile(rel, text);
+  }
+
+  /** Closes the work-folder watcher, if one is open; never throws. */
+  _closeWatcher() {
+    const w = this._watcher;
+    this._watcher = null;
+    try {
+      w?.close();
+    } catch (err) {
+      console.error(`[design] build ${this.id}: watcher not closed: ${messageOf(err)}`);
     }
   }
 
@@ -1104,10 +1231,12 @@ export class DesignBuild extends EventEmitter {
     }
   }
 
-  /** A section's builder: its folder first (M10), then its row, then its first prompt, every path absolute. */
+  /** A section's builder: its folder first (M10), and off the hook row its `.asks` in it (L8.8), then its row, then its
+   *  first prompt, every path absolute. Both folders are made through no link an agent planted (realSectionDir): a
+   *  `sections` or section link planted during the lead stage is removed, never becoming the builder's folder, and a
+   *  link, file or FIFO standing as `.asks` is replaced, so a planted one cannot fail every later round. */
   _newBuilder(section, { model, effort }) {
-    const cwd = sectionDir(this.designId, section.id);
-    mkdirSync(cwd, { recursive: true });
+    const cwd = realSectionDir(this.designId, section.id, { create: true, asks: this._offHook() });
     const agent = this._newAgent({ role: 'builder', sectionId: section.id, job: section.job, model, effort, cwd });
     agent.firstPrompt = this._builderFirstPrompt(agent);
     return agent;
@@ -1186,8 +1315,8 @@ export class DesignBuild extends EventEmitter {
   }
 
   _reworkItems() {
-    let text;
-    try { text = readFileSync(this._integrationFile(), 'utf8'); } catch { return []; }
+    const text = this._readWork('integration.json');
+    if (text === null) return [];
     const { ok, errors, integration } = validateIntegration(text, { plan: this._plan });
     if (!ok) {
       console.error(`[design] build ${this.id}: integration.json ignored: ${errors.join('; ')}`);
@@ -1211,8 +1340,16 @@ export class DesignBuild extends EventEmitter {
   }
 
   /** The done path, in this order (M10): `dist`, the version snapshot, then the end state with the terminal frame
-   *  last. A shell the assembler refuses ends `error`, `assemble-failed`; a failed snapshot is only logged. */
+   *  last. A shell the assembler refuses ends `error`, `assemble-failed`; a failed snapshot is only logged. Off the
+   *  hook row a lead can write work/.kit/, so a deck's or a video's kit is staged again first (P8): a lead's edit never
+   *  reaches the result, and a staging that throws is the round's `engine-error` through `_guarded`. A watch row's
+   *  watcher re-reads once more and closes before all of it, so no file lands after dist (L8.23). */
   async _finish() {
+    if (this._watcher) {
+      await this._watcher.rescan();
+      this._closeWatcher();
+    }
+    if (this._offHook() && isBoardKind(this._design.kind)) await this._deps.stageKit({ kind: this._design.kind, workDir: this._workDir });
     try {
       assembleDesign({ workDir: this._workDir, plan: this._plan, mode: 'dist' });
     } catch (err) {
@@ -1229,7 +1366,9 @@ export class DesignBuild extends EventEmitter {
 
   /**
    * One agent's session, process after process, until it is done, failed or halted (L2.7, L2.9, L2.31). A lost
-   * session starts fresh once from `restart` (default `agent.firstPrompt`); a transient error resumes once. A process
+   * session starts fresh once from `restart` (default `agent.firstPrompt`), and a second loss fails the agent: a resume
+   * the CLI refuses (`_lostSession`), or one the adapter restarted fresh on the same prompt (`restarted`, L8.30), which
+   * carries no task. A transient error resumes once. A process
    * that ends with a valid ask file asks the person: while the agent has rounds left (`ASK_ROUNDS`) it waits for the
    * answer and the session resumes with it (L2.8); past them it gets one "no more questions" resume, and asking again
    * fails it, the file removed (L2.9). The file goes, and `asks` moves, only once a process shows it received that
@@ -1263,7 +1402,7 @@ export class DesignBuild extends EventEmitter {
           prompt = answersPrompt({ questions: ask.questions, answers });
           taken = 'answered';
         } else if (agent.noMoreQuestions) {
-          removeAskFile(this.designId, agent.id);
+          removeAskFile(this._questionFile(agent));
           agent.error = 'Asked again after its last question round';
           return 'failed';
         } else {
@@ -1279,9 +1418,8 @@ export class DesignBuild extends EventEmitter {
       const outcome = await this._spawnOnce(agent, prompt, stage, onReceive);
       if (outcome.aborted) return keepQuestion();
       if (outcome.subtype === 'error_max_budget_usd') { this._halt('paused', 'total-limit'); return keepQuestion(); }
-      if (outcome.err) {
-        const message = messageOf(outcome.err);
-        if (LOST_SESSION_RE.test(message) && !agent.lostOnce) {
+      if (outcome.restarted || (outcome.err && this._lostSession(outcome.err))) {
+        if (!agent.lostOnce) {
           agent.lostOnce = true;
           // The session that asked is gone, and its question with it: the fresh session starts over.
           if (taken) { this._takeQuestion(agent, taken); taken = null; }
@@ -1289,6 +1427,13 @@ export class DesignBuild extends EventEmitter {
           prompt = restart ?? agent.firstPrompt;
           continue;
         }
+        if (!outcome.err) {
+          agent.error = 'Its session was lost again after a fresh start';
+          return 'failed';
+        }
+      }
+      if (outcome.err) {
+        const message = messageOf(outcome.err);
         const c = classifyError(outcome.err);
         if (HALT_CLASSES.has(c)) { this._halt('paused', c); return keepQuestion(); }
         if (RETRY_CLASSES.has(c) && !agent.retried) {
@@ -1308,10 +1453,16 @@ export class DesignBuild extends EventEmitter {
     }
   }
 
+  /** True when `err` is a resume of a session the engine no longer has: Claude's words, or the adapter's own
+   *  (`resumeNotFound`: Codex and Copilot fail with words `LOST_SESSION_RE` misses, L8.30). */
+  _lostSession(err) {
+    return LOST_SESSION_RE.test(messageOf(err)) || chatDescriptor(this._engine)?.resumeNotFound?.(err) === true;
+  }
+
   /** The question a process received the answers to (`taken` 'answered') or was told it has no more of ('last'): its
    *  file removed, and the agent's question rounds moved on (L2.8, L2.9). */
   _takeQuestion(agent, taken) {
-    removeAskFile(this.designId, agent.id);
+    removeAskFile(this._questionFile(agent));
     if (taken === 'last') {
       agent.noMoreQuestions = true;
       return;
@@ -1322,10 +1473,11 @@ export class DesignBuild extends EventEmitter {
 
   /** `agent`'s ask file, or null. An invalid one is removed and ignored, so the agent is judged by its output. */
   _readAsk(agent) {
-    const ask = readAskFile(this.designId, agent.id);
+    const file = this._questionFile(agent);
+    const ask = readAskFile(file);
     if (!ask || ask.invalid === undefined) return ask;
     console.error(`[design] build ${this.id}: question file of ${agent.id} ignored: ${ask.invalid}`);
-    removeAskFile(this.designId, agent.id);
+    removeAskFile(file);
     return null;
   }
 
@@ -1459,9 +1611,12 @@ export class DesignBuild extends EventEmitter {
    * `message_start`, before the abort (the question it answers, M1). Calling `runClaude` is no receipt: the CLI can
    * be killed while it starts, and the broker path awaits the network first. A throw from `onReceive` stops the
    * process and is thrown here once the exit is booked: a store that cannot take the question ends the round.
-   * @returns {Promise<{ aborted: boolean, subtype: string|null, err: unknown, session: boolean }>} `aborted`: the
-   *   signal fired before any result; an abort after the result keeps the result's outcome (L2.31). `session`: this
-   *   process reported a main-thread session, so a retry can resume it.
+   * A builder off the hook row gets its read bundle staged right before the process (so `crew.json` is current) and
+   * removed at its exit, a failed removal only logged (L8.7); a staging that throws is `err`.
+   * @returns {Promise<{ aborted: boolean, subtype: string|null, err: unknown, session: boolean, restarted: boolean }>}
+   *   `aborted`: the signal fired before any result; an abort after the result keeps the result's outcome (L2.31).
+   *   `session`: this process reported a main-thread session, so a retry can resume it. `restarted`: this process
+   *   resumed a session and its adapter said that session is gone and started a fresh one (`FRESH_START_RE`, L8.30).
    */
   async _spawnOnce(agent, prompt, stage, onReceive = null) {
     const bookedBefore = agent.meter.snapshot().costUsd ?? 0;
@@ -1472,6 +1627,11 @@ export class DesignBuild extends EventEmitter {
     let session = false;
     let received = false;
     let receiveErr = null;
+    const resumed = Boolean(agent.sessionId);
+    let restarted = false;
+    const onFresh = () => { if (resumed) restarted = true; };
+    const bundle = agent.role === 'builder' && this._offHook();
+    let staged = false;
     const receive = () => {
       if (received || controller.signal.aborted) return;
       received = true;
@@ -1489,6 +1649,7 @@ export class DesignBuild extends EventEmitter {
       cwd: agent.cwd,
       workDir: this._workDir,
       realWorkDir: this._realWorkDir,
+      live: this._engineRow.live,
       drafts: this._drafts,
       meter: agent.meter,
       readDisk: (rel) => this._readWork(rel),
@@ -1504,7 +1665,13 @@ export class DesignBuild extends EventEmitter {
     let err = null;
     try {
       if (this._waitSignal(agent).aborted) controller.abort();
-      else await this._deps.runClaude(this._processOptions(agent, prompt, stage, controller.signal, stream, receive));
+      else {
+        if (bundle) {
+          staged = true;
+          stageReadBundle({ designId: this.designId, sectionId: agent.sectionId });
+        }
+        await this._deps.runClaude(this._processOptions(agent, prompt, stage, controller.signal, stream, receive, onFresh));
+      }
     } catch (e) {
       err = e;
     } finally {
@@ -1513,7 +1680,14 @@ export class DesignBuild extends EventEmitter {
         if (!stream.sawResult()) this._book(agent, agent.meter.settleCut());
         this._bookUpstream(agent, (agent.meter.snapshot().costUsd ?? 0) - bookedBefore);
       } finally {
-        // A booking that throws still frees the slot and the running count.
+        // A booking that throws, or a bundle a Windows handle keeps, still frees the slot and the running count.
+        if (staged) {
+          try {
+            removeReadBundle({ designId: this.designId, sectionId: agent.sectionId });
+          } catch (e) {
+            console.error(`[design] build ${this.id}: read bundle of ${agent.sectionId} not removed: ${messageOf(e)}`);
+          }
+        }
         agent.controller = null;
         this._running.delete(agent);
         this._releaseGlobal();
@@ -1522,20 +1696,25 @@ export class DesignBuild extends EventEmitter {
     }
     const m = this._costOf(agent);
     updateAgent(agent.id, { costUsd: m.costUsd, costKnown: m.costKnown, tokens: this._rowTokens(agent, m) });
+    // A watch row's re-read at the exit (L8.23): every file the process left lands before its section is judged. Its
+    // controller is gone by now, so a stop during this rescan does not cut it short.
+    await this._watcher?.rescan();
     if (receiveErr) throw receiveErr;
     const line = stream.summary();
     if (line) agent.summary = line;
     const subtype = stream.resultSubtype();
-    if (controller.signal.aborted && !stream.sawResult()) return { aborted: true, subtype, err: null, session };
+    if (controller.signal.aborted && !stream.sawResult()) return { aborted: true, subtype, err: null, session, restarted };
     // The abort landed after the result (a halt that result's own booking raised, a stop a moment too late): the
     // outcome is the result's, whatever its subtype, so a builder that finished is judged by its output (L2.31).
     if (controller.signal.aborted && err?.name === 'AbortError') err = null;
-    return { aborted: false, subtype, err, session };
+    return { aborted: false, subtype, err, session, restarted };
   }
 
-  /** The runClaude options of one process of `agent` (C-3), its `--max-budget-usd` read now (L2.2, M13). `receive`
-   *  hears every main-thread `session` and `message_start` (`usage` phase `start`), before the stream does. */
-  _processOptions(agent, prompt, stage, signal, stream, receive = null) {
+  /** The runClaude options of one process of `agent` (C-3), its `--max-budget-usd` read now (L2.2, M13), on the
+   *  round's engine and row with the model's bridge info. `receive` hears every main-thread `session` and
+   *  `message_start` (`usage` phase `start`), before the stream does; `onFresh` the adapter's `FRESH_START_RE` line
+   *  (the stream has no `stderr` case). */
+  _processOptions(agent, prompt, stage, signal, stream, receive = null, onFresh = null) {
     const maxBudgetUsd = processBudgetUsd({
       remainingUsd: this._cap == null ? null : this._cap - this._spent(),
       sessionTotalUsd: agent.meter.sessionTotalUsd(),
@@ -1544,7 +1723,9 @@ export class DesignBuild extends EventEmitter {
     const opts = designSpawnOptions({
       role: agent.role,
       stage,
-      engine: 'claude',
+      engine: this._engine,
+      row: this._engineRow,
+      bridgedInfo: bridgedModelInfo(agent.model),
       kind: this._design.kind,
       agentId: agent.id,
       buildId: this.id,
@@ -1560,10 +1741,13 @@ export class DesignBuild extends EventEmitter {
       signal,
       onEvent: (evt) => {
         if (receive && evt?.parentId == null && (evt?.type === 'session' || (evt?.type === 'usage' && evt.phase === 'start'))) receive();
+        if (onFresh && evt?.type === 'stderr' && typeof evt.text === 'string' && FRESH_START_RE.test(evt.text)) onFresh();
         if (evt?.type === 'session' && evt.init === true && evt.parentId == null && typeof evt.model === 'string' && evt.model) {
           agent.sessionModel = evt.model;
         }
         stream.onEvent(evt);
+        // A watch row re-reads the disk at every main-thread tool result: the file that tool wrote lands now.
+        if (evt?.type === 'toolResult' && evt.parentId == null) void this._watcher?.rescan();
       },
       mock: this._deps.mock,
     });
@@ -1638,7 +1822,7 @@ export class DesignBuild extends EventEmitter {
   }
 
   _newAgent({ role, sectionId, job, model, effort, cwd }) {
-    const row = createAgent({ buildId: this.id, role, sectionId, job, engine: 'claude', model, effort });
+    const row = createAgent({ buildId: this.id, role, sectionId, job, engine: this._engine, model, effort });
     const agent = {
       id: row.id, role, sectionId, job, model, effort, cwd, status: row.status,
       sessionId: null, sessionModel: null, tool: null, error: null, asks: 0, ask: null, noMoreQuestions: false,
@@ -1646,7 +1830,7 @@ export class DesignBuild extends EventEmitter {
       /** A rehydrated agent's row figures the meter takes no seed for (`_costOf`). */
       seedUsd: null, knownBefore: true,
       stopKind: null, stopCtl: new AbortController(), waiter: null, lostOnce: false, retried: false, controller: null,
-      meter: createAgentMeter({ model, engine: 'claude' }),
+      meter: createAgentMeter({ model, engine: this._engine }),
     };
     this._agents.push(agent);
     this._emitAgent(agent);
@@ -1705,7 +1889,7 @@ export class DesignBuild extends EventEmitter {
       job: agent.job,
       sectionId: agent.sectionId,
       status: agent.status,
-      engine: 'claude',
+      engine: this._engine,
       model: agent.model ?? agent.sessionModel ?? null,
       tool: agent.tool ? { ...agent.tool } : null,
       tokens: m.tokens,
@@ -1774,8 +1958,10 @@ export class DesignBuild extends EventEmitter {
     this._frames.file({ path, sectionId: c.sectionId, part: c.part, rev, text: t });
   }
 
+  /** A work/ file's text, or null: read through `readConfined`, so a link out of work/ or a FIFO an engine with a shell
+   *  planted reads null instead of leaking a server-readable file or blocking the server (P8). */
   _readWork(rel) {
-    try { return readFileSync(join(this._workDir, rel), 'utf8'); } catch { return null; }
+    return readConfined(this._workDir, rel);
   }
 
   /** A listener that throws never breaks the build. */
@@ -1840,9 +2026,11 @@ export class DesignBuild extends EventEmitter {
    * Writes the round's end state, then sends the terminal `design-build` frame last. `endedAt` is always in the
    * patch, `paused` included (an open status, which the store leaves alone). An agent still open ends `stopped`, and
    * so does a section still `writing`; a queued section stays `planned`. Under a `paused` settle a waiting agent
-   * stays `waiting`, its section `writing` and its ask file kept (M12, L2.29): a Continue asks again.
+   * stays `waiting`, its section `writing` and its ask file kept (M12, L2.29): a Continue asks again. A watch row's
+   * watcher closes first: on Windows each watch holds a folder handle, and restore and delete refuse an open build.
    */
   _settle(status, reason) {
+    this._closeWatcher();
     const endedMs = this._deps.now();
     const kept = new Set();
     for (const a of this._agents) {

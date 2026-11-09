@@ -155,6 +155,7 @@ class AskTurn extends EventEmitter {
     agentMode = true,
     composer = null,
     design = false,
+    designRoots = null,
     suggest = false,
     deps = {},
   } = {}) {
@@ -204,6 +205,8 @@ class AskTurn extends EventEmitter {
     // Design chat (Design P5): its tool results go to deps.designAction (_onDesignAction). surfaceLocked: a page's own chat
     // (Workflows or Design) — no Ask cards, no sign-in probe, no Task built-in, no suggestion.
     this.design = design === true;
+    // Design P8 (L8.10): a locked-down Design chat's {workDir, projectDir?}, extra read roots of read_file / grep / glob.
+    this.designRoots = designRoots && typeof designRoots === 'object' && !Array.isArray(designRoots) ? designRoots : null;
     this.surfaceLocked = !!this.composer || this.design;
     this.suggestionPromise = Promise.resolve();   // stored for test determinism, never awaited by run()
     this._replyText = '';                         // the finished reply's text (set in _complete), the suggestion's input
@@ -1459,7 +1462,8 @@ class AskTurn extends EventEmitter {
       mcpConfigPath = join(scratchDir, `mcp-${this.assistantMessageId}.json`);
       // A Codex turn's set skills (#635): this message's mount folder only, read through read_file for this turn only.
       const skillRoot = this.lockedDown && this.skills && this.skillMount ? this._skillBase : null;
-      this.relay = d.agentRelay ? d.agentRelay({ threadId: this.threadId, reader: this.reader || null, web: this.web, ...(this.lockedDown ? { model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}) }) : null;
+      const designRoots = this.lockedDown ? this.designRoots : null;
+      this.relay = d.agentRelay ? d.agentRelay({ threadId: this.threadId, reader: this.reader || null, web: this.web, ...(this.lockedDown ? { model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}), ...(designRoots ? { designRoots } : {}) }) : null;
       // Agent mode never rides the relay: relay mode is agent isolation, where the terminal refuses agent callers.
       this.commands = !this.relay && this.agentMode && d.commandBridge ? d.commandBridge({ threadId: this.threadId }) : null;
       this.proxyBridge = !this.relay && d.proxyBridge ? d.proxyBridge({ threadId: this.threadId }) : null;
@@ -1471,7 +1475,7 @@ class AskTurn extends EventEmitter {
       await d.fs.writeFile(
         mcpConfigPath,
         // MCP registry §9.2: the copies ride after `worca` — refs only (`${MCPSECRET_…}`); the values go in spawnEnv.
-        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, git: d.gitAvailable(), ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.proxyBridge ? { proxy: this.proxyBridge } : {}), ...(this.lockedDown ? { engine: this.engine, model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
+        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, git: d.gitAvailable(), ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.proxyBridge ? { proxy: this.proxyBridge } : {}), ...(this.lockedDown ? { engine: this.engine, model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}), ...(designRoots ? { designRoots } : {}) }), null, 2),
         // Never a key value (webKeyVar: the key rides the process env). A relayed turn runs as
         // the person's agent user (agent-pool.mjs), which reads this file through its group. It
         // carries this turn's relay token: with a pool the file goes to that user's own group (worca

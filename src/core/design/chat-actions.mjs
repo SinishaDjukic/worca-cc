@@ -10,7 +10,7 @@ import { attachmentNote, designRoundSummary, validateDesignRequest } from '../as
 import { getThread } from '../ask/store.mjs';
 import { copyThreadAttachments } from './attachments.mjs';
 import { designBuildModels, designIdForThread } from './chat-thread.mjs';
-import { designWorkDir } from './paths.mjs';
+import { designWorkDir, ensureDesignFolders } from './paths.mjs';
 import { validatePlan } from './plan.mjs';
 import { getDesign } from './store.mjs';
 
@@ -78,7 +78,9 @@ export function createDesignChatActions({ designBuilds, receipts, flagOn, broker
     const pins = Array.isArray(thread.composer?.pins) ? thread.composer.pins : [];
     const what = change ? 'change' : 'build';
     /** Stages the kit and the uploads, then starts the round, all while the design is held against a restore (M3). A
-     *  file system error names server paths: the log keeps it, the chat gets words. */
+     *  file system error names server paths: the log keeps it, the chat gets words. The design's folders are made
+     *  real first (`ensureDesignFolders`): a link or a file an agent planted at `assets` or `assets/att` would
+     *  otherwise refuse this and every later copy, and only a started round makes them again. */
     const handOff = async () => {
       try {
         await stageKit({ kind: design.kind, workDir });
@@ -88,6 +90,7 @@ export function createDesignChatActions({ designBuilds, receipts, flagOn, broker
       }
       let names;
       try {
+        ensureDesignFolders(design.id);
         names = await copyThreadAttachments({ threadId, workDir });
       } catch (err) {
         console.error(`[worca-design] copying the uploads of ${design.id} failed: ${messageOf(err)}`);

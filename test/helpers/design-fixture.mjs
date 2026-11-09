@@ -9,8 +9,9 @@ import { useTempHome } from './temp-home.mjs';
 
 /**
  * `WORCA_MOCK=1`, `WORCA_FLAGS=design` and a temp `WORCA_HOME` for the calling test file, restored in `after`.
- * `tools/test.mjs` deletes `WORCA_FLAGS`, so the flag is set here. It keeps `WORCA_DESIGN_MAX_BUILDERS`, which would
- * override the builder cap the tests pin (12 fast, 3 off), so that one is deleted until `after`.
+ * `tools/test.mjs` deletes `WORCA_FLAGS`, so the flag is set here. It keeps `WORCA_DESIGN_MAX_BUILDERS` and
+ * `WORCA_DESIGN_MAX_AGENTS`, which would override the caps the tests pin (12 fast, 3 off, 24 agents), so those are
+ * deleted until `after`.
  * @param {(fn: () => void) => void} after the node:test `after` hook
  * @returns {string} the temp home
  */
@@ -19,10 +20,12 @@ export function useDesignEnv(after) {
     WORCA_MOCK: process.env.WORCA_MOCK,
     WORCA_FLAGS: process.env.WORCA_FLAGS,
     WORCA_DESIGN_MAX_BUILDERS: process.env.WORCA_DESIGN_MAX_BUILDERS,
+    WORCA_DESIGN_MAX_AGENTS: process.env.WORCA_DESIGN_MAX_AGENTS,
   };
   process.env.WORCA_MOCK = '1';
   process.env.WORCA_FLAGS = 'design';
   delete process.env.WORCA_DESIGN_MAX_BUILDERS;
+  delete process.env.WORCA_DESIGN_MAX_AGENTS;
   const home = useTempHome(after, 'worca-design-');
   after(() => {
     for (const [k, v] of Object.entries(saved)) {

@@ -1,32 +1,30 @@
 // src/core/design/registry.mjs
 // The Design build registry (P2, C-10): `createDesignBuilds` holds every build running on this server, and nothing
 // else, in memory (L2.6). It is never part of the `runs` Map. `start` answers once a round is accepted (M10), every
-// refusal an Error with a numeric `status`. Every agent of every build shares one machine-wide slot queue (24 agents).
+// refusal an Error with a numeric `status`. Every agent of every build shares one machine-wide slot queue (P8: the caps
+// of limits.mjs, 24 agents unless the operator says otherwise), and on a shared server one person runs one build.
 // Stop and Continue on a settled build rehydrate it from its P1 rows. `live()` lists every open build, paused ones
 // included (L2.20). A late joiner of a build that is not running gets a snapshot rebuilt from the rows, with the same
 // keys at every level as a live one. `frameOwner` names whose a design frame is, for `broadcast`'s viewer filter.
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { claimRunDir, shareFailureReason } from '../agent-pool.mjs';
 import { withBillTo } from '../billing.mjs';
 import { budgetStatus } from '../cost-budget.mjs';
 import { DesignBuild, DesignRefusal } from './build.mjs';
+import { designBuildModels } from './chat-thread.mjs';
+import { designEngineFor, designEngineGate } from './engines.mjs';
 import { DesignError } from './ids.mjs';
-import { designWorkDir } from './paths.mjs';
+import { readConfined } from './assemble.mjs';
+import { designCaps } from './limits.mjs';
+import { closeToWorca, designDir, designWorkDir, distDir, versionsDir } from './paths.mjs';
 import { validatePlan } from './plan.mjs';
 import { pinsBlock } from './prompts.mjs';
 import { createSemaphore } from './semaphore.mjs';
 import { closeBuildRow } from './recover.mjs';
-import { designMaxBuilders } from './spawn-options.mjs';
-import { OPEN_BUILD_STATUSES, getBuild, getDesign, listAgents, listOpenBuilds } from './store.mjs';
+import { OPEN_BUILD_STATUSES, getBuild, getDesign, listAgents, listOpenBuilds, updateDesign } from './store.mjs';
 
-/** Agents running at once across every build on this machine (SPEC pinned values). */
-export const GLOBAL_AGENT_CAP = 24;
 /** Design owners `frameOwner` keeps; past this the cache is cleared whole, as `ASK_OWNER_CACHE` is. */
 const OWNER_CACHE_MAX = 5000;
-/** Engines a P2 build runs on: Claude, and the mock standing in for it. A design's `null` engine is Claude. P8 adds
- *  the others. */
-const CLAUDE_ENGINES = new Set(['claude', 'mock']);
 const DRAINING = 'worca is stopping: start this again once it is back';
 /** The refusal while a restore rewrites the design's work/ (P5 Task 10): a start, a Continue, a hand-off, a restore. */
 export const RESTORE_RUNNING = 'A restore is running: try again in a moment';
@@ -34,6 +32,8 @@ export const RESTORE_RUNNING = 'A restore is running: try again in a moment';
 export const ROUND_STARTING = 'A round is starting: try again in a moment';
 /** The design's own build is open, paused included: `start` and a hand-off (P5 maps it to its chat notice). */
 const OPEN_BUILD = 'This design already has a build open: continue or stop it first';
+/** A person (shared sign-in) with a build running on this server: `start` and Continue (P8, code `person-busy`). */
+const PERSON_BUSY = 'You already have a build running: stop it or wait for it.';
 
 const noop = () => {};
 const messageOf = (err) => (err && typeof err.message === 'string' ? err.message : String(err));
@@ -63,10 +63,18 @@ function openBuildRefusal(design) {
   return current && OPEN_BUILD_STATUSES.includes(current.status) ? new DesignRefusal(409, OPEN_BUILD) : null;
 }
 
-/** The design's plan on disk when valid, else null. */
+/** The engine gate (P8) for a build of `engine`, `allowed` the consent: a refusal is a 409 carrying the gate's
+ *  code. Synchronous: `start` holds no `await` before `DesignBuild.create`. */
+function gateEngine(engine, allowed) {
+  const r = designEngineGate({ engine, allowed, models: designBuildModels({ engine }) });
+  if (!r.ok) throw new DesignRefusal(409, r.error, r.code);
+}
+
+/** The design's plan on disk when valid, else null. work/ is agent-writable, so it is read through `readConfined`:
+ *  a link (another design's plan, worca's own files) or a FIFO planted as plan.json reads as none, never blocking. */
 function planOnDisk(design) {
-  let text;
-  try { text = readFileSync(join(designWorkDir(design.id), 'plan.json'), 'utf8'); } catch { return null; }
+  const text = readConfined(designWorkDir(design.id), 'plan.json');
+  if (text === null) return null;
   const check = validatePlan(text, { kind: design.kind });
   return check.ok ? check.plan : null;
 }
@@ -152,17 +160,22 @@ function rowSnapshot(row, design) {
 
 class DesignBuilds {
   /** Calls none of its hooks: the server passes `() => DRAIN.on` before `DRAIN` is declared. */
-  constructor({ broadcast, hosted, draining, onLiveChange, globalCap, deps }) {
+  constructor({ broadcast, caps, personOf, draining, onLiveChange, globalCap, deps, claimDir }) {
     this._broadcast = typeof broadcast === 'function' ? broadcast : noop;
-    this._hosted = Boolean(hosted);
+    /** `{fast, calm, global}` (limits.mjs designCaps): the builder caps and the start-time agent cap. */
+    this._caps = caps;
+    /** The person `by` names on a shared server, else null: only a person is held to one build. */
+    this._personOf = personOf;
     this._draining = typeof draining === 'function' ? draining : () => false;
     this._onLiveChange = typeof onLiveChange === 'function' ? onLiveChange : noop;
     this._deps = deps && typeof deps === 'object' ? deps : {};
-    /** Every agent process of every build takes one of these (M6's machine cap). */
+    /** Gives one folder to an owner's agent (agent-pool.mjs claimRunDir): `claim` calls it. */
+    this._claimDir = typeof claimDir === 'function' ? claimDir : claimRunDir;
+    /** Every agent process of every build takes one of these (M6's machine cap): waiters go in the order they asked. */
     this._global = createSemaphore(globalCap);
-    /** buildId -> { build, person, done }: builds running now, dropped once settled. */
+    /** buildId -> { build, person, done }: builds running now, dropped once settled; `person` is `personOf(by)`. */
     this._builds = new Map();
-    /** designId -> createdBy | null, for `frameOwner`. */
+    /** designId -> createdBy | null | false (no such design), for `frameOwner`. */
     this._owners = new Map();
     /** designIds whose restore is running (whileRestoring). */
     this._restoring = new Set();
@@ -208,7 +221,9 @@ class DesignBuilds {
    * refused before `fn` runs, in `start`'s order: 503 while draining, 404 once the design is gone (a Delete that
    * landed before the hold: staging would recreate its folder with no row), and `start`'s open-build 409 while the
    * design's build is open, paused included. So the second of two meets the first's build before it stages anything,
-   * and nothing is staged under a running build or for a deleted design.
+   * and nothing is staged under a running build or for a deleted design. `start`'s other refusals (P8: the engine
+   * gate, `person-busy`, `agents-full`; the cost limit, pins) come after `fn` has staged: the kit and uploads it
+   * copied stay in work/, where the next round stages them again.
    * @template T
    * @param {string} designId
    * @param {() => Promise<T>} fn
@@ -237,32 +252,57 @@ class DesignBuilds {
   }
 
   /**
+   * Gives `designId`'s folders to `owner`'s agent (P8, L8.13, L8.28): the design folder 2750 (its agent reads and
+   * traverses, and can never rename `work/`, `versions/`, `dist/` or `thumb.png`), then `work/` 2770, which also makes
+   * the design folder sticky. Both in the owner's own group, or the shared agent group when there is no pool
+   * (`sharedFallback`, which claimRunDir honours only then). Both claims are no-ops without agent isolation.
+   * Then `dist/` and `versions/` are closed to worca (0700, `closeToWorca`, on every install): restore and assembly
+   * copy through them, so no agent may plant a link there, and none reads them. Called at creation, at every start
+   * and Continue, and at every Design chat turn.
+   * @param {string} designId
+   * @param {{ owner?: string|null }} [opts]
+   * @throws {DesignRefusal} 500 with the failure's code only: the error's own message can carry server paths
+   */
+  claim(designId, { owner } = {}) {
+    try {
+      this._claimDir(designDir(designId), { owner, mode: 0o2750, sharedFallback: true });
+      this._claimDir(designWorkDir(designId), { owner, sharedFallback: true });
+      closeToWorca(distDir(designId));
+      closeToWorca(versionsDir(designId));
+    } catch (err) {
+      throw new DesignRefusal(500, `Could not prepare this design's folder (${shareFailureReason(err)})`);
+    }
+  }
+
+  /**
    * Starts a round: a first build from `brief`, or a change round when `instruction` is given (`brief` is then
    * ignored). Resolves `{buildId, round, kind}` once accepted, never when the round ends (M10). Refusals, in order:
-   * draining 503; no design 404; an engine other than Claude 422; no brief and no instruction 422; this design's
-   * current build open, paused included, 409; a restore of the design running 409 (P5); a person (not `local`) with a build running here 409; pins `pinsBlock`
-   * refuses 422; worca's total cost limit 403; then the change round's own checks (a valid plan, known sections, 422),
+   * draining 503; no design 404; the engine gate 409 (P8: `engine-gated` for an engine no person allowed,
+   * `engine-refused` for one no consent lifts); no brief and no instruction 422; this design's
+   * current build open, paused included, 409; a restore of the design running 409 (P5); a person with a build running
+   * here 409 `person-busy` and the server at its agent cap 409 `agents-full` (P8, `refuseBusy`); pins `pinsBlock`
+   * refuses 422; worca's total cost limit 403; a design folder its owner's agent cannot be given 500 (`claim`, before
+   * the engine is stored or the build created); then the change round's own checks (a valid plan, known sections, 422),
    * the folder of an add the last round left unbuilt that cannot be cleared (409, either kind) and the store's, each
-   * with its status.
+   * with its status. A design's stored engine is its consent (L8.2), and no argument here can grant one: a design with
+   * no stored engine resolves it from the settings, meets the gate unconsented, and stores it once every refusal has
+   * passed, right before the build is created.
    * @param {{ designId: string, brief?: string, instruction?: string, sections?: string[], pins?: object[],
    *   needsLead?: boolean, by?: string|null }} opts
    * @returns {Promise<{ buildId: string, round: number, kind: 'first'|'change' }>}
    */
   async start({ designId, brief, instruction, sections, pins, needsLead, by } = {}) {
     if (this._draining()) throw new DesignRefusal(503, DRAINING);
-    const design = getDesign(designId);
+    let design = getDesign(designId);
     if (!design) throw new DesignRefusal(404, 'design not found');
-    if (!CLAUDE_ENGINES.has(design.engine ?? 'claude')) {
-      throw new DesignRefusal(422, `Design builds run on Claude for now, not ${design.engine}`);
-    }
+    const { engine, stored } = designEngineFor(design);
+    gateEngine(engine, stored);
     const change = isText(instruction);
     if (!change && !isText(brief)) throw new DesignRefusal(422, 'A brief is required');
     const open = openBuildRefusal(design);
     if (open) throw open;
     if (this._restoring.has(designId)) throw new DesignRefusal(409, RESTORE_RUNNING);
-    if (by && by !== 'local' && [...this._builds.values()].some((e) => e.person === by)) {
-      throw new DesignRefusal(409, 'You already have a build running: stop it or wait for it.');
-    }
+    this._refuseBusy(by);
     if (Array.isArray(pins) && pins.length) {
       try {
         pinsBlock(pins, { planIds: planOnDisk(design)?.sections.map((s) => s.id) ?? [] });
@@ -271,8 +311,10 @@ class DesignBuilds {
       }
     }
     if ((this._deps.budgetStatus ?? budgetStatus)().blocked) throw new DesignRefusal(403, 'total cost limit reached');
+    this.claim(designId, { owner: design.createdBy ?? by });
     let build;
     try {
+      if (!stored) design = updateDesign(designId, { engine });
       build = change
         ? DesignBuild.create({ design, kind: 'change', brief: instruction, sections, pins, needsLead, by, deps: this._buildDeps() })
         : DesignBuild.create({ design, kind: 'first', brief, by, deps: this._buildDeps() });
@@ -280,8 +322,13 @@ class DesignBuilds {
       throw refusalOf(err);
     }
     this._wire(build);
-    this._track(build, by, withBillTo(by, () => build.run(), { owner: design.createdBy ?? by }));
+    this._track(build, this._personOf(by), withBillTo(by, () => build.run(), { owner: design.createdBy ?? by }));
     return { buildId: build.id, round: build.round, kind: build.kind };
+  }
+
+  /** The Build fast caps of this server, as `GET /api/design/limits` serves them: `fast` on, `calm` off. */
+  limits() {
+    return { fast: this._caps.fast, calm: this._caps.calm };
   }
 
   /** The running build `buildId`, or null: builds that are not running hold no memory (L2.6). */
@@ -369,8 +416,11 @@ class DesignBuilds {
   /**
    * Continue (M8): the build `buildId` of `designId`, rehydrated from its rows (L2.6) and driven again, billed to
    * `by`. 503 while draining, 404 for an unknown build or one of another design, 409 while a restore of the design
-   * runs or a chat hand-off stages a round into it (P5), or while it runs here; then
-   * `DesignBuild.continue`'s own refusals, synchronously. A refused Continue leaves nothing in memory.
+   * runs or a chat hand-off stages a round into it (P5), or while it runs here; the engine gate 409 with consent given
+   * (P8, L8.31: the broker, a bridged model that is not ready, an engine now refused), before any rehydrate; `start`'s
+   * `person-busy` and `agents-full` 409s (P8, `refuseBusy`); the design's folders claimed for its owner's agent (`claim`,
+   * 500), also before it; then `DesignBuild.continue`'s own refusals, synchronously. A refused Continue leaves nothing
+   * in memory.
    * @returns {{ buildId: string }}
    * @throws {DesignRefusal}
    */
@@ -381,18 +431,21 @@ class DesignBuilds {
     if (this._restoring.has(designId)) throw new DesignRefusal(409, RESTORE_RUNNING);
     if (this._starting.has(designId)) throw new DesignRefusal(409, ROUND_STARTING);
     if (this._builds.has(buildId)) throw new DesignRefusal(409, 'This build is running');
+    gateEngine(designEngineFor(getDesign(designId)).engine, true);
+    this._refuseBusy(by);
+    const owner = getDesign(designId)?.createdBy ?? by;
+    this.claim(designId, { owner });
     let build;
     let drive;
     try {
       build = DesignBuild.rehydrate({ buildId, deps: this._buildDeps() });
       if (!build) throw new DesignRefusal(404, 'build not found');
       this._wire(build);
-      const owner = getDesign(designId)?.createdBy ?? by;
       drive = withBillTo(by, () => build.continue({ sections }), { owner });
     } catch (err) {
       throw refusalOf(err);
     }
-    this._track(build, by, drive);
+    this._track(build, this._personOf(by), drive);
     return { buildId };
   }
 
@@ -413,20 +466,23 @@ class DesignBuilds {
     }
   }
 
-  /** Whose a frame is: the maker of the design a `design-*` frame names (`design-restored` included), else null.
-   *  `broadcast` calls it for every frame: cached like `ASK_OWNER_CACHE`, and null on any error. */
+  /** Whose a frame is: `undefined` for anything but a `design-*` frame with a string `designId` (`design-restored`
+   *  included); `false` for a design that does not exist, or one that cannot be read; `null` for an ownerless one;
+   *  else its maker. `broadcast` calls it for every frame and sends a `false` one to no viewer (L8.21). Cached like
+   *  `ASK_OWNER_CACHE`, a missing design included; a read that throws is not cached, as `askFrameComposer`. */
   frameOwner(frame) {
     try {
-      if (!frame || typeof frame.type !== 'string' || !frame.type.startsWith('design-')) return null;
+      if (!frame || typeof frame.type !== 'string' || !frame.type.startsWith('design-')) return undefined;
       const id = frame.designId;
-      if (typeof id !== 'string') return null;
+      if (typeof id !== 'string') return undefined;
       if (this._owners.has(id)) return this._owners.get(id);
-      const owner = getDesign(id)?.createdBy || null;
+      const design = getDesign(id);
+      const owner = design ? design.createdBy || null : false;
       if (this._owners.size > OWNER_CACHE_MAX) this._owners.clear();
       this._owners.set(id, owner);
       return owner;
     } catch {
-      return null;
+      return false;
     }
   }
 
@@ -435,12 +491,27 @@ class DesignBuilds {
     while (this._builds.size) await Promise.all([...this._builds.values()].map((e) => e.done));
   }
 
+  /**
+   * A new round's refusals past its own design's checks, in this order, before any folder is claimed: 409
+   * `person-busy` while the person `by` names (`personOf`) has a build running here, then 409 `agents-full` while the
+   * server runs `caps.global` agents (L8.14: a running build's next agent waits for a slot instead).
+   * @throws {DesignRefusal}
+   */
+  _refuseBusy(by) {
+    const person = this._personOf(by);
+    if (person && [...this._builds.values()].some((e) => e.person === person)) throw new DesignRefusal(409, PERSON_BUSY, 'person-busy');
+    const cap = this._caps.global;
+    if (this.liveAgentCount() >= cap) {
+      throw new DesignRefusal(409, `worca is running ${cap} agents, its limit: try again when one ends.`, 'agents-full');
+    }
+  }
+
   /** The deps every build of this registry gets, `start`'s and a rehydrate's alike: the caller's first, then the
-   *  builder cap for this deployment and the shared machine slots; `onLiveChange` is always the registry's. */
+   *  builder caps of this server and the shared machine slots; `onLiveChange` is always the registry's. */
   _buildDeps() {
     const out = { ...this._deps };
     const own = {
-      maxBuildersFor: (fast) => designMaxBuilders({ fast, hosted: this._hosted }),
+      maxBuildersFor: (fast) => (fast ? this._caps.fast : this._caps.calm),
       acquireGlobal: ({ signal } = {}) => this._global.acquire({ signal }),
       releaseGlobal: () => this._global.release(),
     };
@@ -470,13 +541,18 @@ class DesignBuilds {
 }
 
 /**
- * The server's Design build registry.
- * @param {{ broadcast: (frame: object) => void, hosted?: boolean, draining?: () => boolean,
- *   onLiveChange?: () => void, globalCap?: number, deps?: object }} opts
+ * The server's Design build registry. `caps` (limits.mjs designCaps) sets the builder caps and the start-time agent
+ * cap; `globalCap`, the machine slots every agent takes, follows `caps.global` unless given. `personOf(by)` names the
+ * person a build counts against, or null for none (a local install: the server passes a shared sign-in's rule).
+ * @param {{ broadcast: (frame: object) => void, caps?: { fast: number, calm: number, global: number },
+ *   personOf?: (by: string|null|undefined) => string|null, draining?: () => boolean,
+ *   onLiveChange?: () => void, globalCap?: number, deps?: object,
+ *   claimDir?: (dir: string, opts: { owner: string|null, mode?: number, sharedFallback: boolean }) => void }} opts
  * @returns {DesignBuilds}
  */
 export function createDesignBuilds({
-  broadcast, hosted = false, draining = () => false, onLiveChange = () => {}, globalCap = GLOBAL_AGENT_CAP, deps = {},
+  broadcast, caps = designCaps(), personOf = (by) => (by && by !== 'local' ? by : null), draining = () => false,
+  onLiveChange = () => {}, globalCap = caps.global, deps = {}, claimDir = claimRunDir,
 } = {}) {
-  return new DesignBuilds({ broadcast, hosted, draining, onLiveChange, globalCap, deps });
+  return new DesignBuilds({ broadcast, caps, personOf, draining, onLiveChange, globalCap, deps, claimDir });
 }

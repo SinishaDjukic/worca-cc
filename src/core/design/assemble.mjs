@@ -3,10 +3,11 @@
 // offline. Only the shell is parsed for markers and slots; section text is copied verbatim, so a marker or
 // slot written inside a section is never expanded.
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants as fsc, cpSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { closeSync, constants as fsc, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { Parser } from 'htmlparser2';
 import { DesignError } from './ids.mjs';
+import { copyTreeOut } from './paths.mjs';
 import {
   boundedParser, classifyRef, divergenceWatch, escapeActive, HTML_MAX_DEPTH, HTML_MAX_SCAN_LENGTH, reservedTextCount, RESOURCE_ATTRS, scanCss, scanCssUrls, scanHtml, scanShellSlots,
   scanTags, srcsetUrls, stripActive,
@@ -536,27 +537,10 @@ function pickShell(workDir, mode, planIds, needHead, kind) {
   return { shell: DEFAULT_SHELL, map: shellMap(DEFAULT_SHELL) };
 }
 
-/** Copies one asset folder into the dist temp, skipping dot names and links; an absent folder is skipped. */
+/** Copies one asset folder into the dist temp, skipping dot names and links; an absent folder is skipped. work/ is
+ *  agent-writable (P8), so it is read by descriptor (copyTreeOut): a level swapped for a link is never followed. */
 function copyAssets(workDir, rel, tmp) {
-  const from = join(workDir, rel);
-  let st;
-  try {
-    st = lstatSync(from);
-  } catch (err) {
-    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return;
-    throw err;
-  }
-  if (!st.isDirectory() || !inside(realpathSync(workDir), realpathSync(from))) return;
-  const to = join(tmp, rel);
-  mkdirSync(dirname(to), { recursive: true });
-  cpSync(from, to, {
-    recursive: true,
-    filter: (src) => {
-      if (basename(src).startsWith('.')) return false;
-      const entry = lstatSync(src);
-      return entry.isFile() || entry.isDirectory();
-    },
-  });
+  copyTreeOut(workDir, rel.split('/'), join(tmp, rel));
 }
 
 /** Every non-folder entry below `dir`, POSIX-relative: what the folder really holds. */
@@ -567,14 +551,16 @@ function listFiles(dir, base = '') {
   });
 }
 
-/** Builds `dist.tmp-<8 hex>` beside work/, then swaps it in for dist/. */
+/** Builds `dist.tmp-<8 hex>` beside work/, then swaps it in for dist/. The temp, and so dist/, is worca's alone (0700,
+ *  P8): the design folder is setgid in its owner's agent group, and a temp that group could write would let an agent
+ *  plant a link the asset copies then write through. */
 function writeDist(workDir, html, ids) {
   const parent = dirname(workDir);
   const distDir = join(parent, 'dist');
   const tmp = join(parent, `dist.tmp-${randomBytes(4).toString('hex')}`);
   let files;
   try {
-    mkdirSync(tmp);
+    mkdirSync(tmp, { mode: 0o700 });
     writeFileSync(join(tmp, 'index.html'), html);
     for (const rel of ['assets', ...ids.map((id) => `sections/${id}/assets`)]) copyAssets(workDir, rel, tmp);
     files = listFiles(tmp).sort();

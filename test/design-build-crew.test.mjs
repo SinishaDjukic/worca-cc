@@ -2,7 +2,7 @@
 // pass with its one rework cycle, assembly, the end stats and snapshot().
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, sep } from 'node:path';
 import { framesOf, newBuild, newDesign, recordMockBuild, useDesignEnv, waitForFrame, waitUntil } from './helpers/design-fixture.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
@@ -364,14 +364,18 @@ test('every spawn takes the global slot once and frees it once, retries included
   assert.deepEqual(slot, { taken: 5, freed: 5 });
 });
 
-test('M8: a builder whose folder cannot be made gives its machine slot back', async () => {
+// POSIX, not root: a read-only sections/ is what makes a section folder impossible to make (P8: a file or a link at
+// its name is replaced, never a reason to fail).
+const LOCKED = { skip: process.platform === 'win32' || process.getuid?.() === 0 ? 'POSIX, not root: a read-only folder' : false };
+test('M8: a builder whose folder cannot be made gives its machine slot back', LOCKED, async () => {
   const slot = { taken: 0, freed: 0 };
   const d = newDesign();
+  const sections = dirname(sectionDir(d.id, 'hero'));
   const { build, calls } = newBuild(d, { brief: 'MOCK_SECTIONS=1', deps: {
     acquireGlobal: async () => {
       slot.taken += 1;
-      // The builder's slot: its section folder becomes a file, so mkdirSync throws in _newBuilder.
-      if (slot.taken === 2) { rmSync(sectionDir(d.id, 'hero'), { recursive: true, force: true }); writeFileSync(sectionDir(d.id, 'hero'), ''); }
+      // The builder's slot: its section folder is gone and sections/ is read-only, so _newBuilder's mkdir throws.
+      if (slot.taken === 2) { rmSync(sectionDir(d.id, 'hero'), { recursive: true, force: true }); chmodSync(sections, 0o555); }
     },
     releaseGlobal: () => { slot.freed += 1; },
   } });
@@ -380,6 +384,7 @@ test('M8: a builder whose folder cannot be made gives its machine slot back', as
   try {
     assert.deepEqual(await build.run(), { status: 'error', reason: 'engine-error' });
   } finally {
+    chmodSync(sections, 0o755);
     console.error = error;
   }
   assert.equal(calls.length, 1, 'the lead only');
