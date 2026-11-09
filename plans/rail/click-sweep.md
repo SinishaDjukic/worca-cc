@@ -178,3 +178,48 @@ Round 1's lines were re-tested; those not repeated below held. Same rules as abo
 ## Still owed after these
 
 Chat cards full click in Advanced and Expert; Dialogs in Simple and Advanced on Settings; Settings' Models, Memory, Guardrails, Connectors, Plugins judged; `~scripts`, `~team`, `~for-you`, `~drafts` crawl in Advanced and Simple; Marketplace's other plugin pages; narrow screens everywhere; Tasks persistence and repeated actions.
+
+# Click sweep, round 3 (9 Nov)
+
+All of round 2 not repeated here passed with real clicks. Accepted: Expert's facts open the task page (rail.stay-in-chat excepts Expert); a schedule made in a chat opens in Simple, the others lock; Insights' day counts may exceed what the mock's Tasks holds, project counts may not.
+
+## Shell and narrow (F)
+
+- F1 `narrow.nav` promises a 60px rail at 761-1080; code shows 280: the docs lead, start as the strip there
+- F2 360: workflow page's stat column one letter per line, action row past the edge; `wf-show` menu opens 740px away
+- F3 360/420: workspace "1 question for you" one word per line; c1 meta clipped with no ellipsis; `#schedules` blank pane, no prompt; Settings landing centred, 52px gutter; FEAT-1 focus box over meta
+- F4 700: Move through this chat menu breaks words mid-word
+- F5 A9: row ⋯ under touch hits the title until hover (prove with touch); A4: Ask Chat from a schedule page has no page chip; toasts sit over the canvas toolbar and Add one
+- F6 Prove A5, A6, A10, A11 directly (unverified last pass). Esc on c4's Stop strip (A10 in chat cards)
+- F7 Menus: a group head alone at the fold (comp.menu-groups); Of's column 1 starts 34px low
+
+## Chat (G)
+
+- G1 Enter sends in Task and Schedule too (:891), or a visible hint says what does; empty Enter says why
+- G2 Save as preset ignores the typed name, no preset appears; Move to group names none, nothing changes
+- G3 New workspace starter drops the typed name ("Zebra Crossing with web-app and docs-site")
+- G4 Task card Label… not clamped, toast 156 chars, box 622x220, Enter dead; rename has no limit, same name toasts
+- G5 c9: same value toasts "Changed", "Codex high high", "up to 1 times"; c3 command row dead; c6 disabled items leave the menu open
+
+## Tasks and Schedules (H)
+
+- H1 Schedule-mode composer: every pick throws reading `at` (schedules.js:129; guard `sc-`)
+- H2 New schedule lands in the wrong section (Friday under Tomorrow)
+- H3 Leftover claims: Downloading plan.md, Started/Stopped on services (:873,:923), Synced 3 commits (:554), run-state.mjs :692, Opens worca-web #88; Try it leaves the menu open with a stuck Setting up…
+- H4 Words: Report this run, "back in Runs", "Restarted: a new run", "Goes to Runs › New task"; nav says Tasks. Settings › Runs is renamed Tasks only if the section's id stays
+- H5 crumb worka-cc only toasts; Showing hints sum 54 against all 51
+
+## Workflows and Marketplace (I)
+
+- I1 Canvas opens with End under the inspector, zoom runs past it: open fitted, zoom stays within; 200-char step name (small.label-short); Run all claims it ran; empty Drafts has no way on
+- I2 Simple: Marketplace workflows row leads to a lock; Update offered twice (rail.one-action); Default card repeats its sentence; plugin page doesn't name what it adds; section row repeats its title
+- I3 Stray space "a JSON file , with"; not-found says workflow for agent and script; local source shows a made-up sha; deleting a running workflow doesn't mention it; For you changes on install
+
+## Projects, Insights, Settings (J)
+
+- J1 Headlines still compare under "with no comparison" on 14 pages (insights.js `sub.why`); Copy a link → "Would copy"; Showing lists AI spend twice
+- J2 Project counts on Insights equal the Tasks list (billing-api 18 vs 12, worca-cc 9 vs 22, docs-site 3 vs 1); Needs you counts one unit; worca-cc "1 needs you" vs 2
+- J3 by name doesn't sort; workspace Change in a chat: chip and sentence disagree on the project; removing a project leaves its questions; map node loses the workspace you came from
+- J4 Connectors: deleting a set leaves its references; Duplicate twice gives two same names
+- J5 Required fields checked at one moment everywhere (add the rule to forms.md); format checks where a hint promises one; emptied URLs; Save toasts with no change; Folders accepts `/`
+- J6 "$1000 an hour" vs "$1,000"; per-run bounds; "2 jobs back to its role" (settings-model.js:194); picker toasts repeat the sentence; Test "answered in 1.1s" → Would
