@@ -493,3 +493,9 @@ export function updateAgent(id, patch = {}) {
   if (!agent) throw new DesignError('NOT_FOUND', 'agent not found');
   return agent;
 }
+
+/** Every design with an agent whose cost is unknown: its total reads `cost unknown`, never `$0` (P6, C-9). */
+export function designsWithUnknownCost() {
+  return new Set(prepare(`SELECT DISTINCT b.design_id FROM design_agents a JOIN design_builds b ON a.build_id = b.id
+    WHERE a.cost_known = 0`).all().map((r) => r.design_id));
+}

@@ -7,10 +7,15 @@
 import { LIVE_BUILD, pinLabel } from './stage-model.mjs';
 import { createStage } from './stage.mjs';
 import { createPlanList } from './plan-list.mjs';
-import { createLibrary, kindWord } from './library.mjs';
+import { createLibrary, designMoreMenu, kindWord, takeStart } from './library.mjs';
+import { createDesignExport } from './export-dialog.mjs';
+import { icon } from '../icons.mjs';
 
 /** A design id as P2 mints it; anything else on `#design/…` goes back to the library. */
 const DESIGN_ID = /^d_[0-9a-f]{12}$/;
+
+/** The store's OPEN_BUILD_STATUSES: a build in one is open (a paused one too), and the store refuses a delete. */
+const OPEN_BUILD = Object.freeze([...LIVE_BUILD, 'paused']);
 
 const isObject = (v) => typeof v === 'object' && v !== null;
 
@@ -55,21 +60,22 @@ let current = null;   // { view, live } of the one mounted view
 /**
  * Mount the page into `deps.host`. `fetch` reaches C-8's routes, `sendWs` the socket, `route(id)` moves the hash
  * (`''` is the library). `createChat` is P5's seam: when given, the studio's chat is made with
- * `{doc, host, design, fetch, sendWs, renderMarkdown, confirm, setPick, onRestored, planList, unpin}` (`host` is the
- * chat column's `.dz-chat-slot`); without it the Plan list sits in that slot. `renderMarkdown` and `confirm` pass
+ * `{doc, host, design, fetch, sendWs, renderMarkdown, confirm, setPick, onRestored, planList, unpin, initial}` (`host` is
+ * the chat column's `.dz-chat-slot`; `initial` is the Library composer's first message for this design, once, else
+ * null); without it the Plan list sits in that slot. `renderMarkdown` and `confirm` pass
  * through unchanged. The mount also sets `win.__design` (the proof hook, as `window.__wfv`).
  * @param {{doc: Document, win?: Window, host?: HTMLElement, fetch?: Function, sendWs?: (msg: object) => void,
  *   route?: (id: string) => void, prompt?: Function, renderMarkdown?: Function, confirm?: Function,
  *   createChat?: (o: object) => {pushDesignFrame?: Function, addPin?: Function, destroy?: Function}}} [deps]
  */
 export function mountDesignView(deps = {}) {
-  const { doc, win, host, fetch: fetchFn, sendWs, route, renderMarkdown, confirm, createChat } = deps;
+  const { doc, win, host, fetch: fetchFn, sendWs, route, prompt, renderMarkdown, confirm, createChat } = deps;
   const live = createDesignLive();
   const paint = () => paintDesignNav(doc, live.count());
   let shown = false;
   let gen = 0;          // every show and leave moves it: a slow GET of an older show paints nothing
   let lib = null;       // the library, while `#design` shows it
-  let studio = null;    // { id, stage, planList, chat } of the open design
+  let studio = null;    // { id, stage, planList, chat, exp, more, status } of the open design
 
   const make = (tag, cls, text) => {
     const n = doc.createElement(tag);
@@ -84,6 +90,8 @@ export function mountDesignView(deps = {}) {
     return b;
   };
   const send = (msg) => { sendWs?.(msg); };
+  // The Library and More name a page by its hash; P4's route takes what follows `#design/`.
+  const navigate = (hash) => { route?.(String(hash).replace(/^#design\/?/, '')); };
 
   /** Whatever the host shows goes: the library, the studio (its chat first, which may hold the Plan list), a line. */
   function close() {
@@ -93,6 +101,8 @@ export function mountDesignView(deps = {}) {
       studio = null;
       s.chat?.destroy?.();
       s.planList.destroy();
+      s.exp.destroy();
+      s.more.destroy();
       s.stage.destroy();
     }
     host?.replaceChildren();
@@ -112,17 +122,20 @@ export function mountDesignView(deps = {}) {
       acts.append(button('btn btn-sm', 'Try again', () => { void view.show(id); }), back);
     }
     line.append(acts);
+    // The Library's frame, so the line keeps its padding.
     const page = make('div', 'dz-lib');
-    page.append(line);
+    const inner = make('div', 'dz-lib-in');
+    inner.append(line);
+    page.append(inner);
     host?.replaceChildren(page);
   }
 
   async function openLibrary() {
     if (studio || !lib) {
       close();
-      lib = createLibrary({ doc, win, host, fetch: fetchFn, route });
+      lib = createLibrary({ doc, win, host, fetch: fetchFn, navigate });
     }
-    await lib.show();
+    await lib.open();
   }
 
   async function openStudio(id, my) {
@@ -142,8 +155,8 @@ export function mountDesignView(deps = {}) {
       return;
     }
 
-    // `.dz-studio > .dz-chat + section.dz-stage`: the chat head names the design and its kind; no ⋯ until P6 gives
-    // it a menu (L4.15).
+    // `.dz-studio > .dz-chat + section.dz-stage`: the chat head names the design and its kind, then More (canvas
+    // build.mjs:213): Rename and Delete (L6.16).
     const el = make('div', 'dz-studio');
     const chatEl = make('aside', 'dz-chat');
     chatEl.setAttribute('aria-label', 'Design chat');
@@ -151,7 +164,12 @@ export function mountDesignView(deps = {}) {
     const titleText = typeof design.title === 'string' && design.title ? design.title : 'Untitled design';
     const title = make('span', 'dz-chat-title', titleText);
     title.title = titleText;
-    head.append(title, make('span', 'dz-kind', kindWord(design.kind)));
+    const moreBtn = make('button', 'btn btn-quiet btn-icon chat-head-btn');
+    moreBtn.type = 'button';
+    moreBtn.setAttribute('aria-label', 'More');
+    moreBtn.title = 'More';
+    moreBtn.append(icon(doc, 'more'));
+    head.append(title, make('span', 'dz-kind', kindWord(design.kind)), make('span', 'chat-head-spacer'), moreBtn);
     const slot = make('div', 'dz-chat-slot');
     chatEl.append(head, slot);
     const stageEl = make('section', 'dz-stage');
@@ -161,6 +179,7 @@ export function mountDesignView(deps = {}) {
 
     let stage = null;
     let chat = null;
+    let exp = null;
     const planList = createPlanList({
       doc,
       // The list keeps its button disabled until the call settles, and shows a refusal in the row or card.
@@ -172,7 +191,12 @@ export function mountDesignView(deps = {}) {
       // The chip and the box read the same tag.
       onPicked: (p) => { chat?.addPin?.({ ...p, label: pinLabel(stage.model(), p) }); },
       onPlan: (rows) => { planList.paint(rows); },
+      // The HUD's end-state Export opens the head's menu, as the mockup's toggleExport.
+      onExport: () => exp?.toggle(),
     });
+    // Only a finished round exports (L6.3): the head's Export shows while the design is done.
+    exp = createDesignExport({ doc, win, fetch: fetchFn, getDesign: () => design, anchor: stage.exportSlot });
+    exp.setReady(design.status === 'done');
     if (typeof createChat === 'function') {
       chat = createChat({
         doc, host: slot, design, fetch: fetchFn, sendWs: send, renderMarkdown, confirm,
@@ -180,11 +204,26 @@ export function mountDesignView(deps = {}) {
         onRestored: () => stage.loadRunDoc(),
         planList,
         unpin: (pinId, path) => stage.unpin(pinId, path),
+        // The Library's first message goes through the dock's own send, once (P6 Task 9).
+        initial: takeStart(design.id),
       });
     } else {
       slot.append(planList.el);
     }
-    studio = { id, stage, planList, chat };
+    // The design's status mirrors its current build (L1.20); design-build frames move it.
+    const st = { id, stage, planList, chat, exp, more: null, status: typeof design.status === 'string' ? design.status : '' };
+    st.more = designMoreMenu({
+      doc, win, button: moreBtn, getDesign: () => design, fetch: fetchFn, confirm, prompt, navigate,
+      buildLive: () => OPEN_BUILD.includes(st.status),
+      // The new name everywhere the studio shows it, and in the next Rename and the export's file name.
+      onRenamed: (row) => {
+        if (typeof row.title !== 'string' || !row.title) return;
+        design.title = row.title;
+        title.textContent = row.title;
+        title.title = row.title;
+      },
+    });
+    studio = st;
     await stage.open(detail);
   }
 
@@ -212,14 +251,28 @@ export function mountDesignView(deps = {}) {
       gen += 1;
       close();
     },
-    /** Every frame counts toward the nav; only the open design's reach its stage and its chat (text deltas too). */
+    /** Every frame counts toward the nav and reaches the open Library; only the open design's reach its stage and its
+     *  chat (text deltas too). */
     pushFrame(f) {
       live.frame(f);
       paint();
+      lib?.pushFrame(f);
       if (!studio || !isObject(f) || f.designId !== studio.id) return;
-      const { stage, chat } = studio;
+      const { stage, chat, exp } = studio;
       stage.pushFrame(f);
       chat?.pushDesignFrame?.(f);
+      // A snapshot (a reconnect, or a round ending between the detail GET and the subscribe) carries the build's
+      // status with no design-build frame after it: it moves Export and Delete the same way.
+      // Only the stage's own build's snapshot counts: one for an older round can still answer a rejoin after a newer
+      // round's first frame.
+      const status = f.type === 'design-build' ? f.status
+        : f.type === 'design-snapshot' && isObject(f.build) && f.buildId === stage.model().buildId ? f.build.status : null;
+      if (typeof status === 'string') {
+        studio.status = status;
+        exp.setReady(status === 'done');
+      } else if (f.type === 'design-restored') {
+        exp.setReady(true);
+      }
     },
     /** app.js's ask-* frames; the open chat keeps only its own thread's. */
     pushAskFrame(f) { studio?.chat?.pushAskFrame?.(f); },

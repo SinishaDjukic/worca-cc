@@ -159,15 +159,15 @@ function designAnswer(url, init = {}) {
   }
   return null;
 }
-test('in the real app: the library row opens the studio, which subscribes; a new bootId re-mints; leaving empties the host', async () => {
+test('in the real app: the library tile opens the studio, which subscribes; a new bootId re-mints; leaving empties the host', async () => {
   const { window, doc, recv, calls, sent } = await boot({ design: true }, {}, { answer: designAnswer, raf: true });
   const errors = [];
   window.addEventListener('error', (e) => { errors.push(String(e.error?.stack ?? e.message)); });
   const host = doc.getElementById('design-host');
   window.location.hash = 'design';
   await settle();
-  const row = host.querySelector('.dz-lib .row-btn');
-  assert.ok(row, 'the mount\'s fetch reached GET /api/design and the library painted its row');
+  const row = host.querySelector('.dz-lib a.dz-tile');
+  assert.ok(row, 'the mount\'s fetch reached GET /api/design and the library painted its tile');
   assert.match(row.textContent, /Apsida landing page/);
   row.click();
   await settle();
@@ -212,7 +212,7 @@ test('in the real app: the studio\'s chat is the design dock, and Ask frames and
   const host = doc.getElementById('design-host');
   window.location.hash = 'design';
   await settle();
-  host.querySelector('.dz-lib .row-btn').click();
+  host.querySelector('.dz-lib a.dz-tile').click();
   await settle();
   assert.equal(window.location.hash, `#design/${APP_DID}`);
   assert.ok(host.querySelector('.dz-chat-slot .dsc-input'), 'the mount passed createChat: the dock fills the chat slot');
@@ -241,7 +241,7 @@ test('in the real app: the dock\'s replies use the page\'s markdown and repaint 
   const host = doc.getElementById('design-host');
   window.location.hash = 'design';
   await settle();
-  host.querySelector('.dz-lib .row-btn').click();
+  host.querySelector('.dz-lib a.dz-tile').click();
   await settle();
   const thread = host.querySelector('.dz-chat-slot .dsc-thread');
   assert.match(thread.textContent, /Built the \*\*hero\*\*/, 'plain text while marked loads');

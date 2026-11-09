@@ -16,5 +16,7 @@
   { "file": "ui/server.mjs", "from": 10467, "to": 10484, "commit": "10efe705d",
     "why": "Design P3: preview gate mount and token route; measured with grep -c" },
   { "file": "ui/server.mjs", "from": 10484, "to": 10520, "commit": "097c93e73",
-    "why": "Design P5: chat mode, turn start, hand-off, receipts and restore wiring; measured with grep -c" }
+    "why": "Design P5: chat mode, turn start, hand-off, receipts and restore wiring; measured with grep -c" },
+  { "file": "ui/server.mjs", "from": 10520, "to": 10522, "commit": "4819c3baf",
+    "why": "Design P6: thumbnail wiring; measured with grep -c" }
 ]

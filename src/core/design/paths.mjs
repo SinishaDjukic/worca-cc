@@ -25,6 +25,8 @@ export function designWorkDir(id) { return join(designDir(id), 'work'); }
 export function distDir(id) { return join(designDir(id), 'dist'); }
 /** `versions/`: restore-only copies of work/ (M2). */
 export function versionsDir(id) { return join(designDir(id), 'versions'); }
+/** `thumb.png`: the Library's picture (P6), outside dist/ and work/, so it is never exported or agent-writable. */
+export function thumbFile(id) { return join(designDir(id), 'thumb.png'); }
 
 /** `versions/<n>/`; n is a whole number from 1. */
 export function versionDir(id, n) {

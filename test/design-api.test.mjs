@@ -119,7 +119,7 @@ test('create, read, list, patch', async () => {
   assert.equal(g.json.design.id, c.json.design.id);
   const l = await call('GET', '/api/design');
   const item = l.json.find((x) => x.id === c.json.design.id);
-  assert.deepEqual(Object.keys(item).sort(), ['costUsd', 'id', 'kind', 'status', 'thumb', 'title', 'updatedAt']);
+  assert.deepEqual(Object.keys(item).sort(), ['costKnown', 'costUsd', 'id', 'kind', 'status', 'thumb', 'title', 'updatedAt']);
   assert.deepEqual([item.thumb, item.costUsd, item.status, item.title], [null, 0, 'empty', 'Ship']);
   const p = await call('PATCH', `/api/design/${c.json.design.id}`, { title: 'New', fast: false });
   assert.equal(p.status, 200);
@@ -224,6 +224,10 @@ test('bad ids and other people answer 404, on every route', async () => {
       ['POST', `${AB}/answer`, {}],
       ['POST', `${AB}/continue`, { sections: 'x' }],
       ['POST', `/api/design/${a.id}/versions/abc/restore`, {}],
+      // P6's two routes, outside DESIGN_ROUTES: the export of Alice's finished design would answer 200, and the
+      // thumbnail its own 404 words; the loop asserts the owner check's 'design not found' body.
+      ['POST', `/api/design/${a.id}/export`, { format: 'html' }],
+      ['GET', `/api/design/${a.id}/thumb`],
       ['DELETE', `/api/design/${a.id}`],
     ]) {
       const r = await call(method, path, body, bob);

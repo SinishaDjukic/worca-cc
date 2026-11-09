@@ -72,22 +72,27 @@ export async function snapshotVersion({ designId } = {}) {
   return n;
 }
 
-/** Rebuilds `dist/` from the restored source as P2's done path does; no valid plan skips it, a refusal is logged. */
+/**
+ * Rebuilds `dist/` from the restored source as P2's done path does; no valid plan skips it, a refusal is logged.
+ * @returns {boolean} true only when `dist/` was rebuilt
+ */
 function rebuildDist(design, work) {
   const text = readConfined(work, 'plan.json');
   const check = text === null ? null : validatePlan(text, { kind: design.kind });
-  if (!check?.ok) return;
+  if (!check?.ok) return false;
   try {
     assembleDesign({ workDir: work, plan: check.plan, mode: 'dist' });
+    return true;
   } catch (err) {
     console.error(`[worca-design] dist not rebuilt: ${messageOf(err)}`);
+    return false;
   }
 }
 
 /**
  * Puts `versions/<n>` back as work/'s source: every top-level non-dot entry of work/ is removed, the version's
  * entries are copied in, the stale questions (`.asks`) and crew (`.crew.json`) go, the kit (`.kit`) stays. `dist/` is
- * rebuilt, and the result is snapshot as a new version.
+ * rebuilt (the design is then `done`), and the result is snapshot as a new version.
  * @param {{ designId: string, n: number }} opts
  * @returns {Promise<{ version: number, restoredFrom: number }>} rejects with `.status = 404` when `versions/<n>` is gone
  */
@@ -111,7 +116,8 @@ export async function restoreVersion({ designId, n } = {}) {
   }
   await rm(asksDir(designId), RM);
   await rm(crewFile(designId), RM);
-  rebuildDist(design, work);
+  // P6: a finished page exports only when `done`; a stale dist/ must not, so `done` follows only a rebuilt one.
+  if (rebuildDist(design, work)) updateDesign(designId, { status: 'done' });
   const version = await snapshotVersion({ designId });
   return { version, restoredFrom: n };
 }

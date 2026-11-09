@@ -48,7 +48,23 @@ test('restore brings the source back, clears stale questions, keeps the kit, and
   assert.equal(existsSync(join(w, '.asks/a_00000000.json')), false);
   assert.equal(existsSync(join(w, '.crew.json')), false);
   assert.equal(getDesign(d.id).version, 3);
+  assert.equal(getDesign(d.id).status, 'done');
   assert.match(readFileSync(join(distDir(d.id), 'index.html'), 'utf8'), /data-section="hero">one</, 'dist follows the restored source');
+});
+// P6 Task 5: `done` (which lets the page export) follows only a rebuilt dist/; a new design starts `empty`.
+test('restore with an invalid plan leaves the status alone', async () => {
+  const { d, w } = seed();
+  writeFileSync(join(w, 'plan.json'), '{');
+  await snapshotVersion({ designId: d.id });
+  await restoreVersion({ designId: d.id, n: 1 });
+  assert.equal(getDesign(d.id).status, 'empty');
+});
+test('restore whose assembly throws leaves the status alone', async () => {
+  const { d, w } = seed();
+  writeFileSync(join(w, 'shell.html'), '<p>no markers');
+  await snapshotVersion({ designId: d.id });
+  await restoreVersion({ designId: d.id, n: 1 });
+  assert.equal(getDesign(d.id).status, 'empty');
 });
 test('a pruned or unknown version is a 404; a symlink is not copied', async () => {
   const { d, w } = seed();

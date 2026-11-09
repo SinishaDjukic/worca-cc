@@ -1427,7 +1427,7 @@
     },
     {
       "name": "design",
-      "doc": null,
+      "doc": "docs/design.md",
       "routes": [],
       "css": [
         "^Design$"

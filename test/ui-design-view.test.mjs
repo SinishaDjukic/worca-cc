@@ -1,4 +1,4 @@
-// test/ui-design-view.test.mjs — the Design page (ui/public/design/view.mjs): the library stub on `#design`, the
+// test/ui-design-view.test.mjs — the Design page (ui/public/design/view.mjs): the library on `#design`, the
 // studio on `#design/<id>` (the chat column beside the stage), a bad id, the frames' route to the nav count, the stage
 // and the chat, and P5's chat seam. The rig is a JSDOM page holding the sidebar's Design row and `#design-host`, its
 // window on the fake clock (as test/helpers/design-stage-rig.mjs), and a fake `fetch` by route.
@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { fakeClock } from './helpers/design-clock.mjs';
-import { DID, BID, build, plan } from './helpers/design-stage-frames.mjs';
+import { DID, BID, build, plan, snapshot } from './helpers/design-stage-frames.mjs';
 import { mountDesignView } from '../ui/public/design/view.mjs';
 
 const trackDom = useDomRelease(afterEach);
@@ -24,12 +24,14 @@ function reply(status, body) {
 }
 
 /**
- * @param {{detail?: object, detailStatus?: number, createChat?: Function, createAnswer?: [number, object]}} [o]
+ * @param {{detail?: object, detailStatus?: number, createChat?: Function, createAnswer?: [number, object],
+ *   promptAnswers?: Array<object|null>, confirmAnswers?: boolean[]}} [o]
  *   `detail` answers `GET /api/design/:id`, `detailStatus` answers it with that error instead; `createAnswer` is what
  *   `POST /api/design` gets instead of its 201. `hold(url)` keeps the next GET of `url` until the returned release
- *   runs; that GET answers what was set when it was asked.
+ *   runs; that GET answers what was set when it was asked. The page's prompt resolves `promptAnswers` in order, then
+ *   null; with `confirmAnswers` the page has a confirm that resolves them in order. PATCH and DELETE land in `sent`.
  */
-function rig({ detail, detailStatus, createChat, createAnswer } = {}) {
+function rig({ detail, detailStatus, createChat, createAnswer, promptAnswers = [], confirmAnswers } = {}) {
   const clock = fakeClock();
   const dom = trackDom(new JSDOM(`<!doctype html><html><body>
     <nav class="nav"><button type="button" data-nav="design">Design<span class="nav-count n-grey" id="nav-design-count" hidden></span></button></nav>
@@ -47,6 +49,7 @@ function rig({ detail, detailStatus, createChat, createAnswer } = {}) {
   let list = [];
   const posts = [];
   const gets = [];
+  const sent = [];
   const holds = new Map();   // url -> the promise the next GET of it waits for
   const hold = (url) => {
     let release;
@@ -54,7 +57,13 @@ function rig({ detail, detailStatus, createChat, createAnswer } = {}) {
     return () => release();
   };
   async function fetch(url, init = {}) {
-    if (String(init.method ?? 'GET').toUpperCase() === 'POST') {
+    const method = String(init.method ?? 'GET').toUpperCase();
+    if (method === 'PATCH' || method === 'DELETE') {
+      const body = init.body == null ? null : JSON.parse(init.body);
+      sent.push({ method, url, ...(body ? { body } : {}) });
+      return method === 'PATCH' ? reply(200, { ...detail?.design, ...body }) : reply(200, { ok: true });
+    }
+    if (method === 'POST') {
       const body = JSON.parse(init.body ?? '{}');
       posts.push({ url, body });
       if (url === '/api/design') {
@@ -81,11 +90,13 @@ function rig({ detail, detailStatus, createChat, createAnswer } = {}) {
   const route = [];
   const ws = [];
   const prompts = [];
+  const confirms = [];
   const view = mountDesignView({
     doc, win, host: doc.getElementById('design-host'), fetch,
     sendWs: (m) => { ws.push(m); },
     route: (p) => { route.push(p); },
-    prompt: (o) => { prompts.push(o); return Promise.resolve(null); },
+    prompt: (o) => { prompts.push(o); return Promise.resolve(promptAnswers.shift() ?? null); },
+    ...(confirmAnswers ? { confirm: (o) => { confirms.push(o); return Promise.resolve(confirmAnswers.shift() ?? false); } } : {}),
     ...(createChat ? { createChat } : {}),
   });
   mounted.push(view);
@@ -111,29 +122,43 @@ function rig({ detail, detailStatus, createChat, createAnswer } = {}) {
   };
   const setList = (v) => { list = v; };
   return {
-    view, win, doc, clock, q, qa, route, posts, gets, ws, prompts, setList, hold, fireStageMsg,
+    view, win, doc, clock, q, qa, route, posts, gets, sent, ws, prompts, confirms, setList, hold, fireStageMsg,
     paint: () => clock.frame(), tick: flush,
   };
 }
 
 const DETAIL = { design: { id: DID, kind: 'web', title: 'Apsida landing page', version: 0, threadId: 'ask_1' }, plan: null, build: null, sections: [], versions: [] };
 const ROW = { id: BID, designId: DID, round: 1, kind: 'first', status: 'building', reason: null, agentsTotal: 1, layers: 0, costUsd: 0, costKnown: true, startedAt: '2026-11-05T10:00:00Z', endedAt: null };
-test('#design shows the library: rows, an empty line, a failure with Try again, and New design', async () => {
-  const { view, q, qa, route, posts, tick, setList } = rig();
+test('#design opens the real library', async () => {
+  const { view, q, qa, route, setList } = rig();
   setList([{ id: DID, title: 'Apsida', kind: 'web', status: 'done', updatedAt: 'x', costUsd: 4.2, thumb: null }]);
   await view.show('');
-  assert.equal(qa('.dz-lib .row-btn').length, 1);
-  assert.equal(q('.dz-lib .row-btn').textContent.includes('Apsida'), true);
-  q('.dz-lib .row-btn').click();
-  assert.deepEqual(route.at(-1), DID);
+  assert.ok(q('.dz-lib .dz-hero'));
+  assert.equal(qa('.dz-lib a.dz-tile').length, 1);
+  assert.equal(q('.dz-lib a.dz-tile .dz-tile-t').textContent, 'Apsida');
+  q('.dz-lib a.dz-tile').click();
+  assert.deepEqual(route.at(-1), DID, 'the tile\'s #design/<id> reaches P4\'s route as the id');
   setList([]); await view.show('');
-  assert.equal(q('.dz-lib .empty-line').textContent.startsWith('No designs yet'), true);
-  q('.dz-lib .btn').click(); await tick();
-  assert.deepEqual(posts.at(-1), { url: '/api/design', body: { kind: 'web' } });
-  assert.deepEqual(route.at(-1), 'd_0000000000aa', 'P2 answers {design, threadId}: route to design.id');
+  assert.equal(q('.dz-lib-body').hidden, true);
   setList(null); await view.show('');
-  assert.match(q('.dz-lib').textContent, /Could not load designs/);
-  assert.ok([...qa('.dz-lib button')].some((b) => b.textContent === 'Try again'));
+  assert.match(q('.dz-lib-err').textContent, /^Could not load designs/);
+  assert.ok([...qa('.dz-lib-err button')].some((b) => b.textContent === 'Try again'));
+});
+test('the open library takes the C-5 frames: a round\'s end loads the list again; the studio\'s frames do not reach a closed library', async () => {
+  const { view, q, gets, clock, tick, setList } = rig({ detail: DETAIL });
+  setList([{ id: DID, title: 'Apsida', kind: 'web', status: 'building', updatedAt: 'x', costUsd: 0, thumb: null }]);
+  await view.show('');
+  const listed = () => gets.filter((u) => u === '/api/design').length;
+  const n = listed();
+  view.pushFrame(build('paused'));
+  assert.match(q('.dz-lib a.dz-tile .dz-tile-m').textContent, /Paused/, 'in place');
+  view.pushFrame(build('done'));
+  clock.tick(200); await tick();
+  assert.equal(listed(), n + 1);
+  await view.show(DID); await tick();
+  view.pushFrame(build('done'));
+  clock.tick(1000); await tick();
+  assert.equal(listed(), n + 1, 'the studio replaced the library');
 });
 test('#design/<id> shows the studio: chat column with title and kind, the stage beside it', async () => {
   const { view, q, tick } = rig({ detail: DETAIL });
@@ -141,7 +166,7 @@ test('#design/<id> shows the studio: chat column with title and kind, the stage 
   assert.equal(q('.dz-chat .dz-chat-title').textContent, 'Apsida landing page');
   assert.equal(q('.dz-chat .dz-kind').textContent, 'Web page');
   assert.ok(q('.dz-studio > .dz-chat + .dz-stage'));
-  assert.equal(q('.chat-head-btn'), null, 'no ⋯ until there is a menu');
+  assert.ok(q('.chat-head-btn'));
   assert.ok(q('.dz-chat-slot .dz-plan'), 'the Plan list sits in the chat slot until the dock mounts it');
 });
 test('a bad or missing id says so and leads back', async () => {
@@ -168,7 +193,7 @@ test('the chat seam: makes the chat with P5\'s names; forwards every C-5 frame i
   const createChat = (o) => { made.push(o); return { pushDesignFrame: (f) => frames.push(f), addPin: (p) => pins.push(p), destroy() { made.destroyed = true; } }; };
   const { view, tick, fireStageMsg } = rig({ detail: { ...DETAIL, design: { ...DETAIL.design, version: 1 } }, createChat });   // a built design, so a frame exists to post from
   await view.show(DID); await tick();
-  for (const k of ['confirm', 'design', 'doc', 'fetch', 'host', 'onRestored', 'planList', 'renderMarkdown', 'sendWs', 'setPick', 'unpin']) assert.ok(k in made[0], k);   // P6 Task 9 adds `initial`
+  for (const k of ['confirm', 'design', 'doc', 'fetch', 'host', 'initial', 'onRestored', 'planList', 'renderMarkdown', 'sendWs', 'setPick', 'unpin']) assert.ok(k in made[0], k);   // P6 Task 9 added `initial`
   assert.ok(made[0].host.classList.contains('dz-chat-slot'));
   view.pushFrame({ type: 'design-restored', designId: DID, version: 3, restoredFrom: 1, ts: 1 });
   assert.equal(frames.at(-1).type, 'design-restored');
@@ -190,40 +215,57 @@ test('leave is cheap and idempotent; coming back opens fresh; hello forwards to 
   view.onHello([], { rebooted: false });
   assert.equal(ws.length, n + 1);
 });
-test('the library: nothing for 300 ms, then one loading line; a New design refusal says so inside the library', async () => {
-  const { view, win, q, qa, clock, hold, tick, route, posts, setList } = rig({ createAnswer: [409, { error: 'Design is off' }] });
+test('the library: nothing for 300 ms, then one loading line; a failure says so with Try again; an older answer paints nothing', async () => {
+  const { view, q, qa, clock, hold, tick, setList } = rig();
   await view.show('');
   clock.tick(1000);
-  assert.equal(q('.dz-lib .empty-line').textContent, 'No designs yet', 'a list that came in time is not covered by the loading line');
+  assert.equal(q('.dz-lib-load'), null, 'a list that came in time is not covered by the loading line');
   const release = hold('/api/design');
   const shown = view.show('');
   await tick();
-  assert.equal(q('.dz-lib-body').getAttribute('aria-busy'), 'true');
   clock.tick(299);
-  assert.equal(q('.dz-lib-body').textContent, 'No designs yet', 'nothing changes for 300 ms');
+  assert.equal(q('.dz-lib-load'), null, 'nothing changes for 300 ms');
   clock.tick(1);
-  assert.equal(q('.dz-lib-body').textContent, 'Loading designs…');
+  assert.equal(q('.dz-lib-load').textContent, 'Loading designs…');
+  assert.equal(q('.dz-lib-load').getAttribute('aria-busy'), 'true');
   release(); await shown;
-  assert.equal(q('.dz-lib-body').hasAttribute('aria-busy'), false);
-  assert.equal(q('.dz-lib .empty-line').textContent, 'No designs yet');
-  const n = route.length;
-  q('.dz-lib .btn-primary').click(); await tick();
-  assert.equal(posts.at(-1).url, '/api/design');
-  assert.equal(route.length, n, 'a refusal routes nowhere');
-  assert.match(q('.dz-lib [role="alert"]').textContent, /^Could not create a design.*Design is off.*Nothing changed\.$/);
-  assert.equal(q('.dz-lib .btn-primary').disabled, false);
-  const before = posts.length;
-  const add = q('.dz-lib .btn-primary');
-  add.dispatchEvent(new win.Event('click')); add.dispatchEvent(new win.Event('click')); await tick();
-  assert.equal(posts.length, before + 1, 'a second press while the first is out does nothing');
+  assert.equal(q('.dz-lib-load'), null);
+  setList(null); await view.show('');
+  assert.match(q('.dz-lib-err').textContent, /^Could not load designs/);
+  setList([]);
+  [...qa('.dz-lib-err button')].find((b) => b.textContent === 'Try again').click(); await tick();
+  assert.equal(q('.dz-lib-err'), null, 'Try again loads the list again');
   setList(null);
   const late = hold('/api/design');
   const older = view.show('');
   setList([{ id: DID, title: 'Apsida', kind: 'web', status: 'empty', updatedAt: 'x', costUsd: 0, thumb: null }]);
   await view.show('');
   late(); await older;
-  assert.equal(qa('.dz-lib .row-btn').length, 1, 'an older failure does not paint over the newer list');
-  assert.equal(q('.dz-lib .row-btn .dz-meta').textContent, 'Web page', 'nothing spent, no cost');
+  assert.equal(qa('.dz-lib a.dz-tile').length, 1, 'an older failure does not paint over the newer list');
+  assert.equal(q('.dz-lib-err'), null);
+});
+test('the chat head\'s More: Rename repaints the title; Delete is off while the build is open, paused too, and leads to the library', async () => {
+  const { view, q, qa, route, sent, tick } = rig({ detail: { ...DETAIL, design: { ...DETAIL.design, status: 'building' } }, promptAnswers: [{ title: 'Ship radar' }], confirmAnswers: [true] });
+  await view.show(DID); await tick();
+  const btn = q('.dz-chat .chat-head > .chat-head-btn');
+  assert.deepEqual([btn.getAttribute('aria-label'), btn.title, btn.previousElementSibling.className], ['More', 'More', 'chat-head-spacer']);
+  const items = () => [...qa('.menu.dz-more .menu-item')];
+  btn.click();
+  assert.equal(items()[1].getAttribute('aria-disabled'), 'true', 'opened building');
+  btn.click();
+  view.pushFrame(build('paused'));
+  btn.click();
+  assert.equal(items()[1].getAttribute('aria-disabled'), 'true', 'paused');
+  btn.click();
+  view.pushFrame(build('stopped'));
+  btn.click();
+  assert.equal(items()[1].hasAttribute('aria-disabled'), false, 'stopped');
+  items()[0].click(); await tick();
+  assert.deepEqual(sent.at(-1), { method: 'PATCH', url: `/api/design/${DID}`, body: { title: 'Ship radar' } });
+  assert.deepEqual([q('.dz-chat-title').textContent, q('.dz-chat-title').title], ['Ship radar', 'Ship radar']);
+  btn.click(); items()[1].click(); await tick();
+  assert.deepEqual(sent.at(-1), { method: 'DELETE', url: `/api/design/${DID}` });
+  assert.equal(route.at(-1), '', 'navigate(\'#design\') reaches P4\'s route as the library');
 });
 test('a slow GET paints nothing after a leave or a newer show; a second route keeps the open stage; the proof hook; a pin carries its tag', async () => {
   const pins = []; let chat = null;
@@ -292,4 +334,71 @@ test('leave destroys the stage: no timer, no animation frame and no window liste
   assert.ok(clock.pending() > 0, 'and has timers or a paint due');
   view.leave();
   assert.deepEqual([[...live.values()], clock.pending()], [[], 0]);
+});
+test('the head Export follows the round: hidden until done, shown by a done frame or a restore; the HUD Export opens its menu', async () => {
+  const { view, win, q, tick, paint } = rig({ detail: { ...DETAIL, build: ROW } });
+  await view.show(DID); await tick();
+  const head = q('.dz-stage-head .dz-menu-anchor > button');
+  assert.equal(head.hidden, true, 'a design that is not done has no Export');
+  view.pushFrame(build('done')); paint();
+  assert.equal(head.hidden, false);
+  const hudExport = [...win.document.querySelectorAll('.dz-hud button')].find((b) => b.textContent === 'Export');
+  assert.equal(hudExport.disabled, false, 'the HUD has its onExport now');
+  hudExport.dispatchEvent(new win.MouseEvent('click', { bubbles: true, detail: 1 }));
+  assert.equal(q('.menu.dz-export').hidden, false);
+  view.pushFrame(build('building', { round: 2, kind: 'change' }));
+  assert.deepEqual([head.hidden, q('.menu.dz-export').hidden], [true, true], 'a new round: nothing to export');
+  view.pushFrame({ type: 'design-restored', designId: DID, version: 1, restoredFrom: 1, ts: 1 });
+  assert.equal(head.hidden, false);
+});
+test('a snapshot moves Export and Delete as a design-build frame does: a reconnect or a late join that finds the round ended', async () => {
+  const { view, win, q, qa, tick, paint } = rig({ detail: { ...DETAIL, design: { ...DETAIL.design, status: 'building' }, build: ROW } });
+  await view.show(DID); await tick();
+  const head = q('.dz-stage-head .dz-menu-anchor > button');
+  const more = q('.dz-chat .chat-head > .chat-head-btn');
+  const deleteOff = () => { more.click(); const off = [...qa('.menu.dz-more .menu-item')][1].getAttribute('aria-disabled') === 'true'; more.click(); return off; };
+  assert.deepEqual([head.hidden, deleteOff()], [true, true]);
+  view.pushFrame(snapshot({ build: { ...snapshot().build, status: 'done' } })); paint();
+  assert.deepEqual([head.hidden, deleteOff()], [false, false], 'the round ended while the socket was down');
+  const hudExport = [...win.document.querySelectorAll('.dz-hud button')].find((b) => b.textContent === 'Export');
+  hudExport.dispatchEvent(new win.MouseEvent('click', { bubbles: true, detail: 1 }));
+  assert.equal(q('.menu.dz-export').hidden, false, 'the end-state Export opens the menu');
+  view.pushFrame(snapshot({ build: { ...snapshot().build, status: 'building' } })); paint();
+  assert.deepEqual([head.hidden, q('.menu.dz-export').hidden, deleteOff()], [true, true, true]);
+  view.pushFrame({ ...snapshot({ build: { ...snapshot().build, status: 'done' } }), designId: 'd_0000000000bb' }); paint();
+  assert.equal(head.hidden, true, 'another design\'s snapshot moves nothing');
+  view.pushFrame(build('building', { buildId: 'b_000000000002', round: 2, kind: 'change' })); paint();
+  view.pushFrame(snapshot({ build: { ...snapshot().build, status: 'done' } })); paint();
+  assert.deepEqual([head.hidden, deleteOff()], [true, true], 'an older round\'s snapshot, answering a rejoin late, moves nothing');
+});
+test('a design opened done shows Export at once; switching designs or going to the library leaves no window listener', async () => {
+  const { view, win, q, tick, setList } = rig({ detail: { ...DETAIL, design: { ...DETAIL.design, status: 'done' } } });
+  setList({ designs: [] });
+  const live = new Map();
+  const add = win.addEventListener.bind(win); const remove = win.removeEventListener.bind(win);
+  win.addEventListener = (t, fn, o) => { live.set(fn, t); add(t, fn, o); };
+  win.removeEventListener = (t, fn, o) => { live.delete(fn); remove(t, fn, o); };
+  await view.show(DID); await tick();
+  assert.equal(q('.dz-stage-head .dz-menu-anchor > button').hidden, false);
+  await view.show('d_0000000000bb'); await tick();
+  await view.show(''); await tick();
+  view.leave();
+  assert.deepEqual([...live.values()], []);
+});
+test('the Library\'s first message reaches the new design\'s chat once, as its initial (P6 Task 9)', async () => {
+  const made = [];
+  const createChat = (o) => { made.push(o); return { destroy() {} }; };
+  const { view, win, q, posts, route, tick } = rig({ detail: { ...DETAIL, design: { ...DETAIL.design, id: NEW_ID } }, createChat });
+  await view.show(''); await tick();
+  const input = q('.dz-hero textarea.dz-input');
+  input.value = 'A launch page';
+  input.dispatchEvent(new win.Event('input', { bubbles: true }));
+  q('.dz-hero .ask-send').click(); await tick();
+  assert.deepEqual(posts.map((p) => p.url), ['/api/design']);
+  assert.equal(route.at(-1), NEW_ID, 'the 201 opens the new design');
+  await view.show(NEW_ID); await tick();
+  assert.deepEqual(made[0].initial, { text: 'A launch page', files: [] });
+  view.leave();
+  await view.show(NEW_ID); await tick();
+  assert.equal(made[1].initial, null, 'a second open sends nothing again');
 });

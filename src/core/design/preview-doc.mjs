@@ -469,7 +469,8 @@ function escapeHidden(html, keep) {
  * The build doc's second strip pass (L3.4, L3.5, Contract issue 4), run after P1's `stripActive` and `escapeActive`:
  * - drops `script` (unless its `nonce` is exactly `nonce`), `iframe`, `frame`, `frameset`, `object`, `embed`,
  *   `applet` and `noscript` through their close tag, and a `set` or `animate` of `href` too (an SVG link follows it);
- * - drops the tag of `base` and of `meta[http-equiv]` (a refresh navigates with no script at all);
+ * - drops the tag of `base` and of `meta[http-equiv]` (a refresh navigates with no script at all), and with `dropLinks`
+ *   of every `link` (P6's server render: a preconnect or prefetch connects with no CSP directive to stop it);
  * - rebuilds a start tag holding an `on*` handler, a `javascript:`/`vbscript:` URL attribute, a `form` attribute or (on
  *   a `template`) a closed shadow root from its other attributes;
  * - copies everything else byte for byte by source offset, styles and comments included, so the board style and the
@@ -486,11 +487,11 @@ function escapeHidden(html, keep) {
  * P1's 8 MiB scan limit, and a bounded walk would drop its tail. The depth is bounded instead (`BUILD_MAX_DEPTH`): a doc
  * that would hold more elements open fails closed, so every tag costs at most that bound.
  * @param {string} html
- * @param {{ nonce: string }} opts the bridge's nonce
+ * @param {{ nonce: string, dropLinks?: boolean }} opts the bridge's nonce; `dropLinks` (off for the preview)
  * @returns {string}
  * @throws {RangeError} when the doc nests elements more than `BUILD_MAX_DEPTH` deep (the gate answers 500)
  */
-export function stripBuildDoc(html, { nonce } = {}) {
+export function stripBuildDoc(html, { nonce, dropLinks = false } = {}) {
   const text = String(html ?? '');
   const keepNonce = typeof nonce === 'string' && nonce !== '' ? nonce : null;
   /**
@@ -534,7 +535,7 @@ export function stripBuildDoc(html, { nonce } = {}) {
         return;
       }
       if (ANIMATIONS.has(name) && t.attrs.some(([key, value]) => animatesHref(asciiLower(key), value))) el.drop = t.start;
-      else if (name === 'base' || (name === 'meta' && firstAttr(t.attrs, 'http-equiv') !== undefined)) cuts.push([t.start, end, '']);
+      else if (name === 'base' || (dropLinks && name === 'link') || (name === 'meta' && firstAttr(t.attrs, 'http-equiv') !== undefined)) cuts.push([t.start, end, '']);
       else if (t.attrs.some((a) => hostileAttr(a, name))) cuts.push([t.start, end, rebuildTag(text, t, end, name)]);
     },
     onclosetag(name, isImplied) {

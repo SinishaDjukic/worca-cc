@@ -12,6 +12,7 @@ import { makeSwitch } from '../switch.mjs';
 import { buildChatQuestion, buildChatReceipt } from '../chat/question.mjs';
 import { createDotOrbs, turnPhase } from '../dot-orb.mjs';
 import { ATTACH_ACCEPT, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
+import { DESIGN_FAST_LABEL } from '../../../src/shared/design-names.mjs';
 
 const enc = encodeURIComponent;
 const readJson = async (res) => { try { return await res.json(); } catch { return {}; } };
@@ -277,8 +278,8 @@ const MAX_PINS = 6;
 const BUILD_LIVE = Object.freeze(['planning', 'building', 'integrating', 'paused']);
 const EMPTY_HINT = 'Describe what to build…';
 const CHANGE_HINT = 'Ask for a change';
-// M6: the crew Build fast allows, shown off too (board BuildCalm). P6 moves it to DESIGN_FAST_LABEL, P8 to the server.
-const fastCap = (on) => (on ? 'up to 12' : 'up to 3');
+// M6: the crew Build fast allows, shown off too (board BuildCalm). The "on" label is DESIGN_FAST_LABEL; P8 moves it to the server.
+const fastCap = (on) => (on ? DESIGN_FAST_LABEL : 'up to 3');
 const answerLabel = (qs) => (qs.length > 1 ? 'Send answers' : 'Send answer');
 /** A chip's words: P4's `pinLabel` (never sent), else the pin's id and tag. */
 const pinText = (p) => (typeof p.label === 'string' && p.label ? p.label : `${p.id} · ${p.tag}`);
@@ -299,12 +300,14 @@ const PIN_PATH = 'M12 17v5M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.2V16a1
  * @param {{doc: Document, host: HTMLElement, design: object, fetch: Function, sendWs?: Function,
  *   renderMarkdown?: Function|null, confirm?: Function|null, setPick?: (on: boolean) => void,
  *   onRestored?: (r: {version: number, restoredFrom: number}) => void, planList?: {el: HTMLElement}|null,
- *   unpin?: (id: string, path: string) => void}} o  `confirm` is app.js's confirmModal (absent = go ahead, a throw = no)
+ *   unpin?: (id: string, path: string) => void, initial?: {text: string, files: object[]}|null}} o  `confirm` is app.js's
+ *   confirmModal (absent = go ahead, a throw = no). `initial` is the Library's first message (P6 takeStart): once the
+ *   thread has loaded it goes through the dock's own send, files included, so a refusal stays in the input with its note.
  * @returns {{client: object, pushAskFrame: Function, pushDesignFrame: Function, addPin: Function, onHello: Function,
  *   repaint: Function, destroy: Function}}
  */
 export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = () => {}, renderMarkdown = null, confirm: confirmFn = null,
-  setPick = () => {}, onRestored = () => {}, planList = null, unpin = () => {} }) {
+  setPick = () => {}, onRestored = () => {}, planList = null, unpin = () => {}, initial = null }) {
   const win = doc.defaultView || globalThis;
   const row0 = design && typeof design === 'object' ? design : {};
   const designId = typeof row0.id === 'string' ? row0.id : '';
@@ -993,7 +996,15 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   paintFast();
   paintPins();
   render();
-  void client.open();
+  client.open().then(() => {
+    if (destroyed || !initial || typeof initial.text !== 'string' || !initial.text.trim()) return;
+    input.value = initial.text;
+    const files = Array.isArray(initial.files) ? initial.files : [];
+    pendingFiles = [...pendingFiles, ...files.filter((f) => f && typeof f.name === 'string' && typeof f.dataBase64 === 'string')];
+    renderFiles();
+    autosize();
+    void send();
+  }).catch(() => {});
   return {
     client,
     pushAskFrame(f) { if (!destroyed) client.pushFrame(f); },

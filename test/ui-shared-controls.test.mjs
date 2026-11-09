@@ -156,6 +156,7 @@ const JS_CHECKBOX_OK = [
   ['marketplace/browse.mjs', 'mk-hide-installed', 'Hide installed: an opt-in filter next to the list'],
   ['marketplace/remove-view.mjs', 'mk-purge-box', 'opt-in consent in the Remove dialog'],
   ['marketplace/update-view.mjs', 'mk-reviewed', 'acknowledges the reviewed changes'], ['marketplace/update-view.mjs', 'mk-include', 'picks updates'],
+  ['design/export-dialog.mjs', 'dsx-replace', 'consent: replace the listed files'],
 ].map(([file, token, reason]) => ({ file: `ui/public/${file}`, token, reason }));
 function checkboxEmitters(files) {
   const out = [];

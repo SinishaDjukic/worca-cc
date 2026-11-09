@@ -359,6 +359,7 @@ import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
 import { recoverAttachmentReads, sweepReadFolders, sweepTempBodies, withStagedRunFiles } from '../src/core/requirements/attachment-job.mjs';
 import { createDesignBuilds } from '../src/core/design/registry.mjs';
 import { registerDesignRoutes } from '../src/core/design/routes.mjs';
+import { createThumbs } from '../src/core/design/thumb.mjs';
 import { recoverDesignBuilds } from '../src/core/design/recover.mjs';
 import { createPreviewGate, registerPreviewTokenRoute } from '../src/core/design/preview-gate.mjs';
 import { previewGrants } from '../src/core/design/preview-grants.mjs';
@@ -763,6 +764,7 @@ const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityC
 const keepAwake = createKeepAwake({ deployment: DEPLOYMENT, log: (line) => console.warn(line) });
 let designChatActions = null;   // a design chat's hand-off to the engine (Design P5), assigned below designRoundReceipts
 const designBuilds = createDesignBuilds({ broadcast: (f) => { broadcast(f); designRoundReceipts.onFrame(f); }, hosted: DEPLOYMENT === 'hosted', draining: () => DRAIN.on, onLiveChange: () => syncKeepAwake(), deps: { snapshotVersion } });
+const designThumbs = createThumbs({ notify: broadcast, held: (id) => designBuilds.restoring(id) || designBuilds.starting(id) });   // Design P6: lazy Library thumbnails (`design-thumb` frames); none drawn while a restore or a hand-off rewrites work/
 const designRoundReceipts = createRoundReceipts({ threadOfDesign: (id) => getDesign(id)?.threadId || null, listMessages: askListMessages, flipCard, versionOf: (id) => getDesign(id)?.version ?? 0 });
 designChatActions = createDesignChatActions({
   designBuilds, receipts: designRoundReceipts, flagOn: () => flagEnabled('design'),
@@ -7314,7 +7316,7 @@ registerRequirementsRoutes(app, { broadcast, deps: {
   startRun: (body, opts) => invokeStartRun(body, null, opts),   // D6: through the run handler, as PR watch does
   runSummary: requirementsRunSummary,
 } });
-registerDesignRoutes(app, { broadcast, deps: { designBuilds, brokerStartRefusal, deleteThread: deleteAskThreadFully, dropGrants: (id) => previewGrants.revokeDesign(id), versions: { list: listVersions, restore: (id, n) => restoreVersion({ designId: id, n }) }, postSystemNotice: postAskSystemNotice } });
+registerDesignRoutes(app, { broadcast, deps: { designBuilds, brokerStartRefusal, deleteThread: deleteAskThreadFully, dropGrants: (id) => previewGrants.revokeDesign(id), versions: { list: listVersions, restore: (id, n) => restoreVersion({ designId: id, n }) }, postSystemNotice: postAskSystemNotice, thumbs: designThumbs } });
 registerPreviewTokenRoute(app, { flagGate: requireFlag('design'), grants: previewGrants, getDesign, viewerOf: askViewer });
 /** These routes push notes off the machine or rewrite them: a browser page must be served by THIS Worca —
  *  isLocalRequest checks the hostname, never the port, and a body-less POST needs no CORS preflight (decision E8).

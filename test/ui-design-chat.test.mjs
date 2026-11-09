@@ -32,8 +32,9 @@ const assistantWith = (...blocks) => {
  * `posts` holds `{url, body}` per POST and `{url, method, body}` per other write, `gets` each GET's url. `o.restoreStatus`/`o.restoreError`
  * refuse the restore, `o.patchError` the Build fast PATCH; `o.confirm(opts)` answers the confirm instead of yes;
  * `o.withPlanList` passes a planList of `{ el: <div class="dz-plan-wrap"> }`. `send(text, {refuse})` types and presses
- * Send; `refuse` answers that message 409 with those words. `o.renderMarkdown` draws a reply (default: its text);
- * `md.calls` counts the draws.
+ * Send; `refuse` answers that message 409 with those words, and `o.refuse` every message from the start. `o.initial` is
+ * the dock's `initial` (the Library's first message); `o.destroyNow` destroys the dock before its thread loads.
+ * `o.renderMarkdown` draws a reply (default: its text); `md.calls` counts the draws.
  */
 async function rigDock(o = {}) {
   const { doc, win } = rig();
@@ -47,7 +48,7 @@ async function rigDock(o = {}) {
   const unpins = [];
   const confirms = [];
   const restored = [];
-  let refuse = null;
+  let refuse = o.refuse ?? null;
   let sent = 0;
   const reply = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
   const fetch = async (url, opts = {}) => {
@@ -84,8 +85,10 @@ async function rigDock(o = {}) {
     onRestored: (r) => { restored.push(r); },
     planList,
     unpin: (id, path) => { unpins.push([id, path]); },
+    initial: o.initial,
   });
   docks.push(dock);
+  if (o.destroyNow) dock.destroy();
   await settle();
   async function send(text, { refuse: why = null } = {}) {
     refuse = why;
@@ -620,4 +623,22 @@ test('M5: a streaming reply shows its text as it comes; a snapshot of another bu
   dock.pushDesignFrame({ type: 'design-snapshot', designId: DID, buildId: 'b_0', seq: 0, build: { status: 'done' }, questions: [] });
   await tick();
   assert.equal(host.querySelector('.dsc-back'), null, 'an older build\'s snapshot says nothing of this round');
+});
+test('initial: the first message and its files go through the dock once; a refusal leaves it in the input', async () => {
+  const file = { name: 'logo.png', bytes: 3, dataBase64: 'UE5H', attKind: 'image', mime: 'image/png' };
+  const { host, posts, tick } = await rigDock({ initial: { text: 'A page', files: [file] } }); await tick();
+  const sent = posts.filter((p) => /\/messages$/.test(p.url));
+  assert.equal(sent.length, 1); assert.equal(sent[0].body.attachments[0].name, 'logo.png');
+  const refused = await rigDock({ initial: { text: 'A page', files: [] }, refuse: 'You have not added your key yet.' }); await refused.tick();
+  assert.equal(refused.host.querySelector('.dsc-input').value, 'A page');
+  assert.equal(refused.host.querySelector('.dsc-note').textContent, 'You have not added your key yet.');
+  assert.ok(host);
+});
+test('initial: the sent message leaves the input and its chips; a dock destroyed before its thread loads sends nothing', async () => {
+  const file = { name: 'logo.png', bytes: 3, dataBase64: 'UE5H', attKind: 'image', mime: 'image/png' };
+  const { host, posts, tick } = await rigDock({ initial: { text: 'A page', files: [file] } }); await tick();
+  assert.deepEqual(posts.filter((p) => /\/messages$/.test(p.url)).map((p) => [p.body.text, p.body.attachments]), [['A page', [{ name: 'logo.png', dataBase64: 'UE5H' }]]]);
+  assert.deepEqual([host.querySelector('.dsc-input').value, host.querySelectorAll('.dsc-files .ask-chip').length], ['', 0]);
+  const gone = await rigDock({ initial: { text: 'A page', files: [] }, destroyNow: true }); await gone.tick();
+  assert.deepEqual(gone.posts, []);
 });

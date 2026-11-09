@@ -46,6 +46,20 @@ body.view-design .main{display:flex;flex-direction:column;overflow:hidden;paddin
 .dz-wrap{position:relative;flex:1;min-height:0;background:var(--stage-well);overflow:hidden;}
 .dz-menu-anchor{position:relative;}
 
+/* The Export menu (board 6a) and its dialogs. The flyout writes the menu's viewport left and top, so it is fixed;
+   its z-index stays inside the stage head's stacking context, under the HUD and the Agents popover */
+.dz-export{position:fixed;width:244px;z-index:6;}
+.dz-export .menu-item svg{flex:none;width:16px;height:16px;color:var(--ink-2);}
+.dz-export .menu-item small{margin-left:auto;color:var(--ink-3);font-size:var(--fs-caption);}
+.dlg-status{margin:0;font-size:var(--fs-body);}
+.dlg-status.is-err{color:var(--red-ink);}
+.dsx-list{margin:0 0 12px;padding:4px 0;max-height:180px;overflow-y:auto;list-style:none;border:1px solid var(--line);border-radius:var(--r-sm);font-size:var(--fs-meta);}
+.dsx-list li{display:flex;align-items:baseline;gap:10px;padding:3px 10px;}
+.dsx-ref{min-width:0;font-family:var(--mono);overflow-wrap:anywhere;}
+.dsx-list small{flex:none;margin-left:auto;color:var(--ink-2);white-space:nowrap;}
+.dsx-more{margin:8px 0 0;color:var(--ink-2);font-size:var(--fs-meta);}
+.dsx-list .dsx-more{margin:0;}
+
 /* The HUD */
 .dz-hud{position:absolute;left:50%;bottom:20px;transform:translateX(-50%);z-index:4;display:flex;align-items:center;gap:12px;height:44px;max-width:calc(100% - 16px);padding:0 6px 0 14px;color-scheme:dark;border:1px solid var(--glass-line);border-radius:var(--r-md);background:var(--panel-veil);-webkit-backdrop-filter:blur(18px) saturate(1.5);backdrop-filter:blur(18px) saturate(1.5);box-shadow:var(--shadow-pop);color:var(--ink);white-space:nowrap;font-size:var(--fs-meta);font-weight:500;font-variant-numeric:tabular-nums;}
 .dz-hud.is-none{display:none;}
@@ -172,7 +186,51 @@ body.view-design .main{display:flex;flex-direction:column;overflow:hidden;paddin
 .dz-wire{position:absolute;box-sizing:border-box;background:var(--stage-wire);border:calc(1.2px * var(--k)) solid var(--stage-blue);--mc:var(--stage-blue);}
 .dz-wire.is-main{border-width:calc(2px * var(--k));}
 .dz-lost,.dz-empty{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color-scheme:dark;color:var(--ink-2);font-size:var(--fs-body);}
-.dz-lib{flex:1;min-width:0;min-height:0;overflow-y:auto;padding:32px;}
+/* The Library (board 1, canvas design.css:138-160): just the items. It scrolls, its padding is the inner column's,
+   and the grid reflows below the mockup's 1240. The body is a flex column, so its [hidden] needs its own rule */
+.dz-lib{flex:1;min-width:0;min-height:0;overflow-y:auto;background:var(--panel);}
+.dz-lib-in{display:flex;flex-direction:column;align-items:center;padding:64px 32px 24px;}
+/* The start composer (canvas design.css:140-150), then what the mockup does not draw: the files, the refusal line, the
+   project menu, which the flyout places in the viewport, so it is fixed, and the kind chips wrapping on a phone, where
+   the centred row would spill past both edges and leave its first chip out of reach */
+.dz-hero{width:100%;max-width:760px;}
+.dz-hero .ask-composer{padding:0;--ask-col-max:100%;--ask-col-inset:0px;}
+.dz-hero .ask-composer-box{padding:12px 12px 10px;border-color:var(--line-2);}
+.dz-hero .dz-input{min-height:64px;font-size:15px;line-height:1.55;}
+.dz-kinds{display:flex;justify-content:center;gap:8px;margin-top:14px;}
+.dz-kind-btn{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 10px;border:0;border-radius:var(--r-xs);background:var(--field);color:var(--ink);font:500 var(--fs-meta)/1 var(--sans);cursor:pointer;white-space:nowrap;}
+.dz-kind-btn:hover{background:var(--hover);}
+.dz-kind-btn svg{width:14px;height:14px;flex:none;color:var(--ink-2);}
+.dz-kind-btn.is-on{background:var(--ink);color:var(--on-ink);}
+.dz-kind-btn.is-on svg{color:var(--on-ink);}
+.dz-kind-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.dz-start-files{display:flex;flex-wrap:wrap;gap:6px;padding:2px 4px 4px;}
+.dz-start-files[hidden]{display:none;}
+.dz-start-file{display:inline-flex;align-items:center;gap:4px;max-width:240px;height:24px;padding:0 3px 0 8px;border-radius:var(--r-xs);background:var(--field);color:var(--ink);font:500 var(--fs-meta)/1 var(--sans);}
+.dz-start-file > span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dz-start-file-x{display:grid;place-items:center;flex:none;width:18px;height:18px;padding:0;border:0;border-radius:var(--r-xs);background:none;color:var(--ink-2);cursor:pointer;}
+.dz-start-file-x:hover{background:var(--quiet-hover);color:var(--ink);}
+.dz-start-file-x:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.dz-start-err{margin:8px 0 0;padding:0 4px;color:var(--red-ink);font-size:var(--fs-meta);}
+.dz-start-menu{position:fixed;min-width:200px;max-width:320px;z-index:6;}
+.dz-start-menu .menu-item > span:first-child{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dz-kinds{flex-wrap:wrap;}
+.dz-lib-body{width:100%;max-width:1240px;margin-top:44px;display:flex;flex-direction:column;gap:14px;}
+.dz-lib-body[hidden]{display:none;}
+.dz-lib-h{margin:0;font-size:var(--fs-section);font-weight:600;letter-spacing:-.01em;line-height:var(--lh-title);}
+.dz-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:20px;}
+.dz-tile{display:flex;flex-direction:column;gap:8px;min-width:0;padding:0;border:0;border-radius:var(--r-md);background:none;color:var(--ink);text-align:left;text-decoration:none;cursor:pointer;}
+.dz-tile:focus-visible{outline:2px solid var(--ink);outline-offset:3px;}
+.dz-thumb{position:relative;display:block;width:100%;aspect-ratio:16/10;overflow:hidden;border:1px solid var(--line);border-radius:var(--r-md);background:var(--field);}
+.dz-tile:hover .dz-thumb{border-color:var(--hover-outline);}
+.dz-thumb > img{display:block;width:100%;height:100%;object-fit:cover;object-position:top left;}
+.dz-thumb-none{display:flex;align-items:center;justify-content:center;height:100%;color:var(--ink-3);}
+.dz-thumb-none svg{width:28px;height:28px;}
+.dz-tile-t{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dz-tile-m{margin-top:-6px;color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;}
+.dz-lib-load,.dz-lib-err{width:100%;max-width:1240px;}
+/* The chat head's More (Rename, Delete): the flyout writes the menu's viewport left and top, so it is fixed */
+.dz-more{position:fixed;min-width:160px;z-index:6;}
 @keyframes dz-fade{to{opacity:0;}}
 @keyframes dz-sweep-v{from{transform:scaleY(0);}to{transform:scaleY(1);}}
 @keyframes dz-sweep-h{from{transform:scaleX(0);}to{transform:scaleX(1);}}

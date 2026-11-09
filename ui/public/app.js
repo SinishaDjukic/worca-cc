@@ -293,6 +293,7 @@ import { createSchedulesView } from './schedules-view.mjs';
 import { createRequirementsView } from './requirements-view.mjs';
 import { mountDesignView, pushDesignFrame, pushDesignAskFrame, repaintDesignChat, designHello, designNavCount, paintDesignNav } from './design/view.mjs';
 import { createDesignChat } from './design/chat.mjs';
+import { createDesignActivity } from './design/activity.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, currentFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
 import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
@@ -646,6 +647,12 @@ async function featureThreadFor(ref) {
 if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, refresh: refreshShapeFeatures, paintAsk: (ref, host) => chatPaintQuestion(ref, host),
   shaperCard: shaperCardFor, threadForRun: featureThreadFor };   // test seam
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
+// The open Design builds Activity lists (design/activity.mjs), from hello's list and the design-build frames. A build
+// first met in a frame reads "Design" until its title loads (asked once; a 404 or a bad body keeps "Design").
+const designActivity = createDesignActivity({
+  loadTitle: async (id) => (await safeJson(await fetch(`/api/design/${encodeURIComponent(id)}`))).design?.title,
+  onChange: () => updateNavCounts(),
+});
 let awayScreensaver = null;    // the away screensaver easter egg (away-screensaver.mjs) — assigned beside Activity; timerTick uses awayScreensaver?.
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
@@ -1772,7 +1779,7 @@ function handleServerMessage(msg) {
 
   // Design frames are tagged by designId + buildId (no runId) and reach every socket: the Design view keeps the
   // nav count and the open stage. Handle them BEFORE the !msg.runId early-return below.
-  if (typeof msg.type === 'string' && msg.type.startsWith('design-')) { pushDesignFrame(msg); return; }
+  if (typeof msg.type === 'string' && msg.type.startsWith('design-')) { pushDesignFrame(msg); if (msg.type === 'design-build' && designActivity.frame(msg)) updateNavCounts(); return; }
 
   // Ask Worca frames are tagged by threadId (job frames also carry messageId +
   // seq) and ride the same broadcast socket. Handle them BEFORE the
@@ -2288,6 +2295,7 @@ function onHello(msg) {
   askPanel?.onHello(msg.ask);
   wfvChat?.onHello();
   designHello(msg.design ?? [], { rebooted });   // the live builds (an older server's hello has none)
+  designActivity.hello(msg.design);              // Activity's builds, paused ones too (refreshAllCounts below repaints)
 
   // diff-comments-changed is a plain global broadcast with no per-socket buffer
   // (ui/server.mjs:389-398), so any comment written while the socket was down is
@@ -33384,7 +33392,7 @@ const designView = mountDesignView({ doc: document, win: window, host: $('#desig
     if (!hdMarkdown.isReady() && !hdMarkdown.isFailed()) void hdMarkdown.ensure().then((ok) => { if (ok) repaintDesignChat(); });
   },
 });
-onFlagChange('design', (on) => { if (!on && currentView() === 'design') showView('chat', ''); });
+onFlagChange('design', (on) => { if (!on && currentView() === 'design') showView('chat', ''); updateNavCounts(); });
 
 /** The workspace read-model, loaded once: a scheduled run card names "Workspace · <name>", not an id. */
 function withWorkspaces() {
@@ -37942,13 +37950,17 @@ function renderPipelineTabs() {
 
 // Needs you, counted without building the list (this runs on every WS frame): the same rule
 // as the Runs list's Needs-you group, over the same rows (runs-list.mjs countNeedsYou). The top
-// bar's Activity badge reads the SAME items (activity-model.mjs activityCounts), so its amber
-// number is this one; `active` is every live run: the grey Runs number, Activity's running count.
+// bar's Activity badge reads the SAME items plus the Design builds (activity-model.mjs
+// activityCounts), so its amber number is this one plus the builds that need you, while the Runs
+// badge (countNeedsYou) stays runs only; `active` is every live run: the grey Runs number,
+// Activity's running count. `designs` only while the design flag is on: hello lists the builds
+// either way, and a #design/<id> row would then lead nowhere.
 function runsNeedsInput() {
   return {
     live: overviewRuns().map((r) => ({ runId: r.runId, pipelineId: r.pipelineId || '', status: r.status, ask: r.pendingQuestion != null, unread: isLingering(r) })),
     history: Array.isArray(state.historyAll) ? state.historyAll : [],
     active: liveRuns().map((r) => ({ runId: r.runId })),
+    designs: flagOn('design') ? designActivity.items() : [],
   };
 }
 function runsNeedsCount() {
@@ -39449,9 +39461,11 @@ $('#topnav-new')?.addEventListener('click', () => {
 
 // Activity (#topnav-activity, activity-menu.mjs): what needs you, what is running and what is
 // scheduled, a list with no actions. Its badge repaints with the Runs badge (updateNavCounts),
-// from the same items; the open popover reads the Runs list's full rows (live: the Runs list's
-// live runs, active: every live run, agent-generation jobs too) and fetches the schedules when it
-// opens. A row routes like any page link: the route hides the Chat page when it is the one showing.
+// from the same items plus the Design builds (designActivity, while the design flag is on), so its
+// amber number includes the builds that need you while the Runs badge stays runs only; the open
+// popover reads the Runs list's full rows (live: the Runs list's live runs, active: every live run,
+// agent-generation jobs too) and the builds, and fetches the schedules when it opens. A row routes
+// like any page link: the route hides the Chat page when it is the one showing.
 activityMenu = $('#topnav-activity') ? createActivityMenu({
   button: $('#topnav-activity'), badge: $('#topnav-activity-n'), pop: $('#activity-pop'),
   getCounts: () => activityCounts(runsNeedsInput()),
@@ -39459,6 +39473,7 @@ activityMenu = $('#topnav-activity') ? createActivityMenu({
     live: overviewRuns().map(runsLiveItem),
     history: (Array.isArray(state.historyAll) ? state.historyAll : []).filter(Boolean).map(runsHistItem),
     active: liveRuns().sort(cmpTabRuns).map(runsLiveItem),
+    designs: flagOn('design') ? designActivity.items() : [],
   }),
   loadSchedules: async () => {
     await withWorkspaces();                              // a workspace's ticket names its workspace

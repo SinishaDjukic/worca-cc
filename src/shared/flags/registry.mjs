@@ -145,6 +145,7 @@ export const FLAGS = Object.freeze([
     since: '1.18.0',
     added: '2026-11-05',
     reviewBy: '2027-02-03',
+    docs: 'docs/design.md',
   }),
 ]);
 

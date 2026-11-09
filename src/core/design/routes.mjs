@@ -13,14 +13,17 @@ import { actorOf, isSharedIdentity, resolveIdentity } from '../identity.mjs';
 import { listProjects } from '../projects.mjs';
 import { DesignRefusal } from './build.mjs';
 import { chatSpendUsd, createDesignThread } from './chat-thread.mjs';
+import { registerDesignExportRoutes } from './export-routes.mjs';
 import { AGENT_ID_RE, BUILD_ID_RE, DESIGN_ID_RE, DesignError } from './ids.mjs';
 import { designWorkDir } from './paths.mjs';
 import { validatePlan } from './plan.mjs';
 import { createDesignBuilds, RESTORE_RUNNING, ROUND_STARTING } from './registry.mjs';
 import { resolveDesignModel } from './spawn-options.mjs';
 import {
-  createDesign, deleteDesign, getBuild, getDesign, latestBuild, listAgents, listDesigns, updateDesign,
+  createDesign, deleteDesign, designsWithUnknownCost, getBuild, getDesign, latestBuild, listAgents, listDesigns,
+  updateDesign,
 } from './store.mjs';
+import { thumbUrl } from './thumb.mjs';
 
 const P = '/api/design';
 const ONE = `${P}/:id`;
@@ -73,9 +76,9 @@ function viewerOf(req) {
 /**
  * The design `req.params.id` names when this viewer may see it, else null after answering 404 itself: a bad id, an
  * unknown design and another person's design read the same (`askThreadVisible`, server.mjs). A design with no maker is
- * everyone's, as `listDesigns({visibleTo})` keeps it.
+ * everyone's, as `listDesigns({visibleTo})` keeps it. The export route (P6) is handed it.
  */
-function designFor(req, res) {
+export function designFor(req, res) {
   const id = req.params.id;
   const design = typeof id === 'string' && DESIGN_ID_RE.test(id) ? getDesign(id) : null;
   const viewer = viewerOf(req);
@@ -143,7 +146,8 @@ function recordOut(s) {
  *     restore: (id: string, n: number) => Promise<{ version: number, restoredFrom: number }|void> },
  *   postSystemNotice?: (threadId: string, text: string) => unknown,
  *   dropGrants?: (id: string) => unknown, deleteThread?: (threadId: string) => Promise<unknown>,
- *   brokerStartRefusal?: (req: object, modelIds: string[]) => Promise<string|null> } }} [opts]
+ *   brokerStartRefusal?: (req: object, modelIds: string[]) => Promise<string|null>,
+ *   thumbs?: { ensure: (design: object) => void } } }} [opts] `thumbs` (`createThumbs`) is handed every listed design
  */
 export function registerDesignRoutes(app, { broadcast, deps } = {}) {
   const d = deps && typeof deps === 'object' ? deps : {};
@@ -152,11 +156,19 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
 
   const handlers = {
     [`GET ${P}`]: async (req, res) => {
-      res.json(listDesigns({ visibleTo: viewerOf(req) }).map((x) => ({
-        id: x.id, title: x.title, kind: x.kind, status: x.status, updatedAt: x.updatedAt, thumb: null,
-        // A design total is its builds plus its chat (P1 sums the build ledger only).
-        costUsd: roundUsd(x.costUsd + chatSpendUsd(x.threadId)),
-      })));
+      const designs = listDesigns({ visibleTo: viewerOf(req) });
+      const unknown = designsWithUnknownCost();
+      const rows = designs.map((x) => ({
+        id: x.id, title: x.title, kind: x.kind, status: x.status, updatedAt: x.updatedAt,
+        // A design total is its builds plus its chat (P1 sums the build ledger only); an unknown agent cost makes it
+        // `cost unknown`, never `$0` (P6).
+        costUsd: roundUsd(x.costUsd + chatSpendUsd(x.threadId)), costKnown: !unknown.has(x.id),
+        thumb: thumbUrl(x.id),
+      }));
+      res.json(rows);
+      // Thumbnails are lazy (L6.7): what is missing or stale renders now, and arrives as a `design-thumb` frame. After
+      // the answer: an idle render queue starts the first one in this tick.
+      for (const x of designs) d.thumbs?.ensure(x);
     },
 
     [`POST ${P}`]: async (req, res) => {
@@ -308,4 +320,11 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
   for (const { method, path } of DESIGN_ROUTES) {
     app[method.toLowerCase()](path, gate, handle(handlers[`${method} ${path}`]));
   }
+  // P6's export route: behind the same gate, outside DESIGN_ROUTES (test/design-export-routes.test.mjs walks its gate).
+  // A restore or a hand-off rewrites work/ while the design stays `done`: no export reads it meanwhile.
+  const held = (id) => {
+    if (designBuilds.restoring?.(id)) return RESTORE_RUNNING;
+    return designBuilds.starting?.(id) ? ROUND_STARTING : null;
+  };
+  registerDesignExportRoutes(app, { flagGate: gate, designFor, listProjects, held });
 }
