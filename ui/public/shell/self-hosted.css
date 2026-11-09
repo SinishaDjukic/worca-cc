@@ -85,10 +85,15 @@
   --slate-ink-strong:light-dark(#4A5661,#B3BEC8);   /* glyph on --slate-bg at tile size: 6.3:1 */
   /* The Design stage's grammar (docs/design-system.md › Design stage exceptions). The stage always reads on a dark ground. */
   --stage-blue:light-dark(#2F80FF,#2F80FF);--stage-red:light-dark(#FF4A3D,#FF4A3D);--stage-orange:light-dark(#FF9F0A,#FF9F0A);
-  --stage-page:light-dark(#06080C,#06080C);--stage-well:light-dark(#101217,#101217);--stage-chip-ink:light-dark(#0E1014,#0E1014);--stage-handle:light-dark(#FFFFFF,#FFFFFF);
+  --stage-page:light-dark(#06080C,#06080C);--stage-well:light-dark(#101217,#101217);--stage-rail:light-dark(#0B0D11,#0B0D11);--stage-chip-ink:light-dark(#0E1014,#0E1014);--stage-handle:light-dark(#FFFFFF,#FFFFFF);
   --stage-mark:light-dark(rgba(255,255,255,.62),rgba(255,255,255,.62));--stage-wire:light-dark(rgba(92,142,214,.10),rgba(92,142,214,.10));--stage-slotline:light-dark(rgba(47,128,255,.55),rgba(47,128,255,.55));
   --stage-edge:light-dark(rgba(255,255,255,.08),rgba(255,255,255,.08));--stage-cursor-shadow:light-dark(rgba(0,0,0,.5),rgba(0,0,0,.5));
   --stage-lemon:light-dark(#ECD86A,#ECD86A);--stage-coral:light-dark(#FF7B72,#FF7B72);--stage-sky:light-dark(#7FA6F5,#7FA6F5);
+  /* A deck's or a video's board: a tile's edge (dashed until it starts) and its chip. */
+  --stage-tile-line:color-mix(in srgb,var(--stage-handle) 10%,transparent);--stage-tile-dash:color-mix(in srgb,var(--stage-handle) 20%,transparent);
+  --stage-tag-bg:color-mix(in srgb,var(--stage-page) 72%,transparent);--stage-tag-ink:color-mix(in srgb,var(--stage-handle) 72%,transparent);
+  /* A video's timeline: its tick labels and a planned scene's plus. */
+  --stage-tick-ink:color-mix(in srgb,var(--stage-handle) 60%,transparent);
   --seq:light-dark(#B7B7BC,#8E8E92);   /* text role too (.ask-thinking-meter): 4.85:1 on panel */
   --t-md:light-dark(#5B8DEF,#7FA6F5);
   --t-md-bg:light-dark(#E4ECFD,#1E2A44);

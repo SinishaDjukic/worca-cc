@@ -59,9 +59,10 @@ export function registerDesignExportRoutes(app, {
     if (busy) throw new ExportRefusal(409, 'busy', busy);
   }
 
-  /** The HTML page: the standalone file, never run in worca's origin if opened in place. */
-  function sendHtml(res, design) {
-    const { name, html, problems } = exportHtml(design);
+  /** The HTML page: the standalone file, never run in worca's origin if opened in place. A deck's bundle stops when the
+   *  person leaves (`signal`). */
+  async function sendHtml(res, design, signal) {
+    const { name, html, problems } = await exportHtml(design, { signal });
     res.set({
       'Content-Type': 'text/html; charset=utf-8',
       'Content-Disposition': attachmentDisposition(name),
@@ -184,7 +185,7 @@ export function registerDesignExportRoutes(app, {
     let snap = null;
     try {
       requireReady(design);
-      if (body.format === 'html') sendHtml(res, design);
+      if (body.format === 'html') await sendHtml(res, design, signal);
       else if (body.format === 'pdf') await sendPdf(res, design, signal);
       else {
         // Taken in the checks' tick: what the zip or the copy reads afterwards is this round, whatever comes next.

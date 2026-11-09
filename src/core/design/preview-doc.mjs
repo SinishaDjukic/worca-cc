@@ -578,7 +578,8 @@ export function stripBuildDoc(html, { nonce, dropLinks = false } = {}) {
 /**
  * One preview doc, generated at serve time and written nowhere (C-7). The plan is read through P1's `readConfined`,
  * so a missing, half-written or linked-out `plan.json` is no plan (L3.17): the build doc is then P1's `plan: null` page
- * (tokens, global and the shell), and the run doc an empty page holding only the bridge, so the frame still sends
+ * (tokens, global and the shell, with the empty board of a deck or video `kind`), and the run doc an empty page
+ * holding only the bridge, so the frame still sends
  * `ready`. A `BAD_SHELL` from the run doc reaches the gate's 500 (L3.18). Only the build doc takes the second strip
  * pass. The response's `Content-Type` names the charset, so a `<meta charset>` behind the bridge does not matter.
  * @param {{ workDir: string, kind: string, mode: 'build' | 'run', nonce: string, inline?: boolean,
@@ -589,6 +590,6 @@ export function renderPreviewDoc({ workDir, kind, mode, nonce, inline = false, a
   const tag = bridgeScriptTag({ mode, nonce });
   const { ok, plan } = validatePlan(readConfined(workDir, 'plan.json'), { kind });
   if (!ok && mode === 'run') return `<!doctype html><html><head>${tag}</head><body></body></html>`;
-  const { html } = assemble({ workDir, plan: ok ? plan : null, mode, bridge: tag, inline });
+  const { html } = assemble({ workDir, plan: ok ? plan : null, kind, mode, bridge: tag, inline });
   return mode === 'build' ? stripBuildDoc(html, { nonce }) : html;
 }

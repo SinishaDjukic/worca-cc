@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { chromeNoSandbox, screenshotArgs } from '../../../assets/deck-preview/chrome.mjs';
 import { assembleDesign } from './assemble.mjs';
 import { readExportPlan } from './export.mjs';
+import { thumbStillCss } from './kinds.mjs';
 import { designWorkDir, distDir, thumbFile } from './paths.mjs';
 import { designChrome, RENDER_TIMEOUTS, renderQueue, runChrome, staticDoc } from './render.mjs';
 import { getDesign } from './store.mjs';
@@ -104,7 +105,7 @@ export function createThumbs({
     if (!current(id, stamp)) return;
     const design = getDesign(id);
     const plan = readExportPlan(design);
-    const html = staticDoc(assembleDesign({ workDir: designWorkDir(id), plan, mode: 'standalone' }).html);
+    const html = staticDoc(assembleDesign({ workDir: designWorkDir(id), plan, mode: 'standalone' }).html, { extraCss: thumbStillCss(design.kind) });
     const tmp = mkdtempSync(join(tmpdir(), 'worca-design-thumb-'));
     try {
       const htmlPath = join(tmp, 'index.html');

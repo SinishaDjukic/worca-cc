@@ -9,6 +9,7 @@
 // frame, so the marks hide while the scroll moves and come back once it rests. The cursors stay.
 
 import { icon } from '../icons.mjs';
+import { guideSpan } from './kind-view.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 // The mock's `_arrow` (engine.js:1584-1591), drawn 16 by 17 by `.dz-cursor > svg` (scale 1.14).
@@ -39,8 +40,12 @@ const PASS_MS = 200;
 const SCROLL_REST_MS = 200;
 const SCROLL_REST_REDUCED_MS = 600;
 
-// Mark kinds, bottom to top. `rect` kinds take `left/top/width/height` from `[x, y, w, h]`.
+// Mark kinds, bottom to top. `rect` kinds take `left/top/width/height` from `[x, y, w, h]`. A kind reads the marks'
+// `list` when it names one, else its own `name`: a board's tiles (P7) are an edge and an `N job` chip, placed at the
+// tile's bottom left (`anchor`), both under P4's own marks. Neither takes a press.
 const KINDS = [
+  { name: 'tileEdges', list: 'tiles', cls: 'dz-tile-edge', rect: true },
+  { name: 'tileChips', list: 'tiles', cls: 'dz-tile-chip', anchor: true },
   { name: 'slotLines', cls: 'dz-slotline' },
   { name: 'plus', cls: 'dz-plus' },
   { name: 'wires', cls: 'dz-wire', rect: true },
@@ -61,6 +66,17 @@ const glideMs = (dist) => (dist <= HOP_PX ? HOP_MS
 const edgeOf = (layout) => (num(layout.stageW) - num(layout.ox)) / layout.s;
 const crewVar = (crew) => `var(${crew})`;
 const isRect = (r) => Array.isArray(r) && r.length === 4;
+/**
+ * A rect mark cut at its tile (engine.js:1640-1650): `inset()` from the mark's own box, negative where the tile is
+ * larger, rounded as the tile. Its tag and handles are its children, so they are cut too.
+ */
+function tileClip([x, y, w, h], [cx, cy, cw, ch]) {
+  const top = num(cy) - num(y);
+  const right = num(x) + num(w) - num(cx) - num(cw);
+  const bottom = num(y) + num(h) - num(cy) - num(ch);
+  const left = num(cx) - num(x);
+  return `inset(${px(top)} ${px(right)} ${px(bottom)} ${px(left)} round var(--r-md))`;
+}
 
 /**
  * @param {{ doc: Document, win: { requestAnimationFrame: Function, cancelAnimationFrame: Function,
@@ -257,6 +273,8 @@ export function createOverlay({ doc, win, host, reduced = () => false, onCursor 
   function classOf(kind, m) {
     if (kind.name === 'guides') return m.kind === 'v' ? 'dz-guide-v' : 'dz-guide-h';
     if (kind.name === 'wires' && m.main === true) return 'dz-wire is-main';
+    if (kind.name === 'tileEdges' && m.planned === true) return `${kind.cls} is-planned`;
+    if (kind.name === 'tileChips' && m.done === true) return `${kind.cls} is-done`;
     return kind.cls;
   }
   function drawMark(kind, el, m, layout) {
@@ -268,7 +286,15 @@ export function createOverlay({ doc, win, host, reduced = () => false, onCursor 
       el.style.width = px(w);
       el.style.height = px(h);
       if (kind.name === 'meters') el.style.position = 'absolute';
+      // A box or wireframe on a tile is cut at the tile's rounded edge (p8t1).
+      el.style.setProperty('clip-path', isRect(m.clip) ? tileClip(m.rect, m.clip) : '');
       setTag(el, kind.name === 'meters' ? m.text : m.tag, num(w) * s > TAG_MIN_PX, kind.ui === true);
+    } else if (kind.anchor) {
+      const [x, y, , h] = m.rect;
+      el.style.left = px(x);
+      el.style.top = px(num(y) + num(h));
+      const text = typeof m.label === 'string' ? m.label : '';
+      if (el.textContent !== text) el.textContent = text;
     } else if (kind.name === 'plus') {
       el.style.left = px(m.x);
       el.style.top = px(m.y);
@@ -276,12 +302,22 @@ export function createOverlay({ doc, win, host, reduced = () => false, onCursor 
       el.style.top = px(m.y);
       setTag(el, m.tag, true, false);
     } else if (m.kind === 'v') {
+      // On a tile the guide stops at the tile's top and bottom.
+      const span = guideSpan(m.clip);
+      const y0 = span ? Math.max(num(m.y0), span.v[0]) : num(m.y0);
+      const y1 = span ? Math.min(num(m.y1), span.v[1]) : num(m.y1);
       el.style.left = px(m.x);
-      el.style.top = px(m.y0);
-      el.style.height = px(num(m.y1) - num(m.y0));
+      el.style.top = px(y0);
+      el.style.height = px(Math.max(0, y1 - y0));
       el.style.setProperty('--d', `${Math.round(num(m.ms))}ms`);
     } else {
+      // On a tile the guide runs the tile's width; otherwise CSS gives it the page's. A guide keeps its tile for life.
+      const span = guideSpan(m.clip);
       el.style.top = px(m.y);
+      if (span) {
+        el.style.left = px(span.h[0]);
+        el.style.width = px(span.h[1] - span.h[0]);
+      }
       el.style.setProperty('--d', `${Math.round(num(m.ms))}ms`);
       setTag(el, m.tag, true, false);
     }
@@ -290,9 +326,9 @@ export function createOverlay({ doc, win, host, reduced = () => false, onCursor 
     KINDS.forEach((kind, k) => {
       const have = marks.get(kind.name);
       const want = new Map();
-      const list = all?.[kind.name];
+      const list = all?.[kind.list ?? kind.name];
       for (const m of Array.isArray(list) ? list : []) {
-        if (!m || (kind.rect && !isRect(m.rect))) continue;
+        if (!m || ((kind.rect || kind.anchor) && !isRect(m.rect))) continue;
         want.set(m.key, m);
       }
       for (const [key, el] of have) {
@@ -360,7 +396,8 @@ export function createOverlay({ doc, win, host, reduced = () => false, onCursor 
       if (lastScroll && (lastScroll.x !== sx || lastScroll.y !== sy)) scrollMoved();
       lastScroll = { x: sx, y: sy };
       paintCursors(cursors, layout);
-      paintMarks(hidden ? { pins: all?.pins } : all, layout);
+      // Hide cursors keeps the pins and a board's tiles: they label the page, not an agent.
+      paintMarks(hidden ? { pins: all?.pins, tiles: all?.tiles } : all, layout);
     },
 
     // A process ended: its cursor flies past the stage's right edge and removes itself. Under reduced motion, or

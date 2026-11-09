@@ -2,7 +2,7 @@
 // Design P6 (C-8, L25, L6.3, L6.5, L6.10): exports of a finished round. Only `status === 'done'` with a written
 // `dist/index.html` exports, so `work/` (the standalone page) and `dist/` (the zip) always hold the same round. The
 // standalone page is P1's `assembleDesign` in `standalone` mode: no bridge, local refs inlined, what was left out comes
-// back as problems. The zip holds `dist/` under one top folder, streamed through `fflate`; entry names are built from
+// back as problems; a deck's then goes through the deck kit's own bundler (`deck-standalone.mjs`, P7). The zip holds `dist/` under one top folder, streamed through `fflate`; entry names are built from
 // dirent names with `/`, never from `path.relative` or `sep`, so Windows sees no backslash. Copying into a project
 // (C-8) writes `dist/` into a folder inside the project's real path, never into `.git`, never through a link, and
 // refuses every collision before it writes anything. The deck PDF (L6.1) prints the standalone page through
@@ -23,6 +23,8 @@ import { Zip, ZipDeflate, ZipPassThrough } from 'fflate';
 import { chromeNoSandbox, pdfArgs } from '../../../assets/deck-preview/chrome.mjs';
 import { isWithin, realOrNull } from '../fs-scope.mjs';
 import { assembleDesign, readConfined } from './assemble.mjs';
+import { assembleDeckStandalone } from './deck-standalone.mjs';
+import { DesignError } from './ids.mjs';
 import { RENDER_TIMEOUTS, runChrome, staticDoc } from './render.mjs';
 import { designWorkDir, distDir } from './paths.mjs';
 import { validatePlan } from './plan.mjs';
@@ -76,15 +78,43 @@ export function readExportPlan(design) {
 }
 
 /**
- * The standalone page: `<stem>.html`, the page with its local refs inlined, and what was left out.
- * @param {{ id: string, kind: string, title: string, status: string }} design
- * @returns {{ name: string, html: string, problems: Array<{ ref: string, why: string }> }}
+ * A kit file missing from `work/.kit/` (the assembler's `readKit` sets `kitFile`), on any board kind, as the route's
+ * 422 `kit`: its sentence names the file, never a path. Anything else is null.
+ * @param {unknown} e
+ * @returns {ExportRefusal | null}
  */
-export function exportHtml(design) {
+function kitRefusal(e) {
+  return e instanceof DesignError && typeof e.kitFile === 'string' ? new ExportRefusal(422, 'kit', e.message) : null;
+}
+
+/**
+ * The standalone page: `<stem>.html`, the page with its local refs inlined, and what was left out. A deck goes through
+ * the deck kit's bundler (`assembleDeckStandalone`); every other kind is P1's standalone page. A missing kit file is
+ * 422 `kit`; any other `IO` failure of a deck's bundle is 422 `bundle`, its whole message in the log only, since it
+ * names server paths. An aborted `signal` rethrows the abort as it is.
+ * @param {{ id: string, kind: string, title: string, status: string }} design
+ * @param {{ signal?: AbortSignal | null, spawnImpl?: Function }} [opts] `spawnImpl` is a seam for tests
+ * @returns {Promise<{ name: string, html: string, problems: Array<{ ref: string, why: string }> }>}
+ */
+export async function exportHtml(design, { signal = null, spawnImpl } = {}) {
   requireExportable(design);
   const plan = readExportPlan(design);
-  const { html, problems } = assembleDesign({ workDir: designWorkDir(design.id), plan, mode: 'standalone' });
-  return { name: `${exportStem(design.title)}.html`, html, problems };
+  const workDir = designWorkDir(design.id);
+  const deck = DECK_KINDS.has(design.kind);
+  let out;
+  try {
+    out = deck ? await assembleDeckStandalone({ workDir, plan, signal, spawnImpl }) : assembleDesign({ workDir, plan, mode: 'standalone' });
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    const kit = kitRefusal(e);
+    if (kit) throw kit;
+    if (deck && e instanceof DesignError && e.code === 'IO') {
+      console.error(`[worca-design] export of ${design.id} as html failed: ${e.message}`);
+      throw new ExportRefusal(422, 'bundle', 'Could not bundle the deck.');
+    }
+    throw e;
+  }
+  return { name: `${exportStem(design.title)}.html`, html: out.html, problems: out.problems };
 }
 
 /**
@@ -658,7 +688,13 @@ export async function printDeckPdf({ design, plan, chrome, signal = null, run = 
   const workDir = designWorkDir(design.id);
   const kitScript = readFileSync(DECK_KIT, 'utf8');
   const nonce = randomBytes(16).toString('base64url');
-  const { html, problems } = assembleDesign({ workDir, plan, mode: 'standalone' });
+  let assembled;
+  try {
+    assembled = assembleDesign({ workDir, plan, mode: 'standalone' });
+  } catch (e) {
+    throw kitRefusal(e) ?? e;
+  }
+  const { html, problems } = assembled;
   const doc = staticDoc(html, { nonce, kitScript });
   const slides = liveSlides({ workDir, plan });
 

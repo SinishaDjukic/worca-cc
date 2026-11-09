@@ -5,19 +5,19 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { unzipSync } from 'fflate';
 import express from 'express';
 import { useDesignEnv, waitUntil } from './helpers/design-fixture.mjs';
-import { exportApp, PLAN, seedDone } from './helpers/design-export-seed.mjs';
+import { exportApp, PLAN, SHELL, seedDone } from './helpers/design-export-seed.mjs';
 import { assembleDesign, BRIDGE_MARKER } from '../src/core/design/assemble.mjs';
 import { ExportRefusal, zipDist } from '../src/core/design/export.mjs';
-import { designWorkDir, distDir, thumbFile } from '../src/core/design/paths.mjs';
+import { designWorkDir, distDir, kitDir, thumbFile } from '../src/core/design/paths.mjs';
 import { RESTORE_RUNNING, ROUND_STARTING } from '../src/core/design/registry.mjs';
 import { registerDesignRoutes } from '../src/core/design/routes.mjs';
-import { deleteDesign, updateDesign } from '../src/core/design/store.mjs';
+import { createDesign, deleteDesign, updateDesign } from '../src/core/design/store.mjs';
 
 const servers = [];
 after(async () => {
@@ -336,4 +336,19 @@ test('an unexpected failure is a 500 with words; the log keeps the message', asy
     assert.deepEqual([r.status, r.json, r.headers.get('content-disposition')], [500, { error: 'Could not make the file.' }, null]);
   } finally { console.error = orig; }
   assert.ok(logged.some((l) => l.includes('EACCES /srv/secret')), logged.join('\n'));
+});
+// Review M10: a deck from before P7 has no work/.kit, so exportHtml rejects: the route answers its 422 `kit` as JSON.
+test('html: a deck whose kit is gone is a 422 kit with words, not a download', async () => {
+  const DECK = { v: 1, kind: 'pitch', title: 'T', canvas: { w: 1920, h: 1080 }, notes: '', sections: [{ id: 's1', job: 'One', brief: 'b', parts: ['html'] }] };
+  const d = createDesign({ kind: 'pitch', title: 'Old deck' }, { by: 'local' }); const w = designWorkDir(d.id);
+  const put = (rel, t) => { mkdirSync(join(w, rel, '..'), { recursive: true }); writeFileSync(join(w, rel), t); };
+  put('plan.json', JSON.stringify(DECK)); put('shell.html', SHELL); put('sections/s1/index.html', '<section data-section="s1" data-label="One">1</section>');
+  for (const name of ['deck-stage.js', 'deck-pipeline.js', 'deck-enhance.js']) put(`.kit/${name}`, '');
+  assembleDesign({ workDir: w, plan: DECK, mode: 'dist' }); updateDesign(d.id, { status: 'done' });
+  rmSync(kitDir(d.id), { recursive: true, force: true });
+  // Bounded: an export route that loses the rejection never answers.
+  rig ??= await listen();
+  const r = await fetch(`http://127.0.0.1:${rig.port}/api/design/${d.id}/export`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ format: 'html' }), signal: AbortSignal.timeout(5000) });
+  assert.deepEqual([r.status, await r.json(), r.headers.get('content-disposition')],
+    [422, { error: 'The kit file deck-stage.js is missing. Start a new round to stage it again.', code: 'kit' }, null]);
 });

@@ -1,17 +1,22 @@
 // src/core/design/kit.mjs
-// The kit a design kind ships (P5 Task 11): `assets/design-kit/<kind>/` holds the CONTRACT.md its agents follow.
-// Staging copies that folder into the design's source folder as `work/.kit/`, where `_kitContract()` reads it and the
-// write guard keeps agents out. A kind with no folder yet stages nothing; P7 adds its kinds by adding folders.
+// The kit a design kind ships (P5 Task 11, P7 Task 3): `assets/design-kit/<folder>/` holds the CONTRACT.md its agents
+// follow, where the folder is the kind's (`kitFolder`: `web`, `deck` for presentation and pitch, `video`). Staging
+// copies that folder into the design's source folder as `work/.kit/`, where `_kitContract()` reads it and the write
+// guard keeps agents out, plus the runtime a deck or a film inlines from there: OpenDeck's three scripts from
+// `assets/deck-kit/`, byte for byte, and gsap. Nothing else of the deck kit is staged: its bundler only ever runs
+// from the package, and nothing in Design runs its export or audit scripts.
 
 import { randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
 import { copyFile, lstat, mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gsapPath } from '../../../assets/promo-kit/tools/init-film.mjs';
+import { kitFolder, kitScriptNames } from './kinds.mjs';
 
 export const KIT_ROOT = fileURLToPath(new URL('../../../assets/design-kit/', import.meta.url));
 
-const KIND_RE = /^[a-z]+$/;
+const DECK_KIT = fileURLToPath(new URL('../../../assets/deck-kit/', import.meta.url));
 
 /** Puts the kit file `src` at `dest`: copied under a temp name and renamed over, so a file once staged is never
  *  missing, not even while another staging runs, and a link at `dest` is replaced, never written through. */
@@ -37,16 +42,27 @@ async function stageTree(from, to, name) {
   }
 }
 
+/** The runtime files a kit folder stages from outside itself, as `[source, name under .kit/]` pairs. `film.js`
+ *  arrives with the video folder; `gsapPath()` throws when gsap is not installed. */
+function runtimeFiles(folder, kind) {
+  if (folder === 'deck') return kitScriptNames(kind).map((name) => [join(DECK_KIT, name), name]);
+  if (folder === 'video') return [[gsapPath(), 'gsap.min.js']];
+  return [];
+}
+
 /**
- * Copy `assets/design-kit/<kind>/` into `<workDir>/.kit/`, replacing what a previous round staged. Safe to run twice
- * at once: no step unlinks a staged file first.
+ * Copy the kind's `assets/design-kit/<folder>/` and its runtime files into `<workDir>/.kit/`, replacing what a
+ * previous round staged. Safe to run twice at once: no step unlinks a staged file first.
  * @param {{ kind: string, workDir: string }} opts
- * @returns {Promise<boolean>} false for a kind that is not lowercase letters or has no kit folder
+ * @returns {Promise<boolean>} false for anything that is not a design kind, or a kind with no kit folder
  */
 export async function stageDesignKit({ kind, workDir } = {}) {
-  if (typeof kind !== 'string' || !KIND_RE.test(kind)) return false;
-  const from = join(KIT_ROOT, kind);
+  const folder = kitFolder(kind);
+  if (!folder) return false;
+  const from = join(KIT_ROOT, folder);
   try { await stat(from); } catch { return false; }
-  await stageTree(from, join(workDir, '.kit'), '.kit');
+  const to = join(workDir, '.kit');
+  await stageTree(from, to, '.kit');
+  for (const [src, name] of runtimeFiles(folder, kind)) await stageFile(src, join(to, name));
   return true;
 }

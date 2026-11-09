@@ -5,6 +5,8 @@
 //
 // P2's status lists (src/core/design/store.mjs) are copied here, since a browser module cannot reach src/core.
 
+import { BOARD_CANVAS, boardLayout, stageRegions, kindChromeView, cursorLabel, tagSize } from './kind-view.mjs';
+
 /** Agent statuses with a cursor on the stage: P2's AGENT_STATUSES less TERMINAL_AGENT_STATUSES. */
 export const ON_STAGE = Object.freeze(['starting', 'thinking', 'writing', 'reading', 'waiting', 'retrying']);
 /** Build statuses with agents at work: P2's OPEN_BUILD_STATUSES less `paused`. */
@@ -27,13 +29,16 @@ export const CREW_TOKENS = Object.freeze([
 /** The lead's colour; the lead holds no crew colour (`colorIndex` null). */
 export const LEAD_TOKEN = '--ink';
 
-/** What one plan section is called on each kind of stage, and which stage controls a kind has (M9: P7 fills the rest). */
+/**
+ * What one plan section is called on each kind of stage, and which stage controls a kind has (M9). A `board` kind
+ * builds as a grid of 1920×1080 tiles at scale 1 (kind-view.mjs), with no camera and no viewport switch.
+ */
 export const KIND_NOUN = Object.freeze({ web: 'section', presentation: 'slide', pitch: 'slide', video: 'scene' });
 export const KIND_STAGE = Object.freeze({
-  web: Object.freeze({ viewport: true, camera: true }),
-  presentation: Object.freeze({ viewport: false, camera: false }),
-  pitch: Object.freeze({ viewport: false, camera: false }),
-  video: Object.freeze({ viewport: false, camera: false }),
+  web: Object.freeze({ viewport: true, camera: true, board: false }),
+  presentation: Object.freeze({ viewport: false, camera: false, board: true }),
+  pitch: Object.freeze({ viewport: false, camera: false, board: true }),
+  video: Object.freeze({ viewport: false, camera: false, board: true }),
 });
 
 /**
@@ -140,6 +145,8 @@ function freshRound() {
 export function initialStage({ designId, kind, canvas, reduced = false }) {
   return {
     designId, kind, canvas: canvas ?? null, reduced: Boolean(reduced),
+    // The doc the frame shows, from its last `ready`: a new round forgets `docMode`, never this (p8t1).
+    frameMode: null,
     ...freshRound(),
     view: { stageW: 0, stageH: 0, viewport: 'desktop' },
     camera: { on: true, scale: null, y: null, key: '', pendingUntil: 0, doneFramed: false, force: false },
@@ -151,7 +158,8 @@ const reopenCamera = (camera) => ({ ...camera, on: true, key: '', y: null, doneF
 
 const isOnStage = (a) => ON_STAGE.includes(a.status);
 const onStage = (state) => state.agentOrder.map((id) => state.agents[id]).filter(isOnStage);
-const crewOf = (a) => (a.role === 'lead' ? LEAD_TOKEN : CREW_TOKENS[(a.colorIndex ?? 0) % CREW_TOKENS.length]);
+/** An agent's colour token: the lead's, else its crew colour. */
+export const crewOf = (a) => (a.role === 'lead' ? LEAD_TOKEN : CREW_TOKENS[(a.colorIndex ?? 0) % CREW_TOKENS.length]);
 
 function pageWidth(state) {
   const w = state.canvas?.w;
@@ -664,7 +672,7 @@ export function reduceBridge(state, msg, now = 0) {
 function onReady(state, m, now) {
   const { mode } = m;
   if (mode !== 'build' && mode !== 'run') return unchanged(state);
-  const s = { ...state, docMode: mode, nextMode: state.nextMode === mode ? null : state.nextMode };
+  const s = { ...state, docMode: mode, frameMode: mode, nextMode: state.nextMode === mode ? null : state.nextMode };
   const effects = [helloEffect(s, mode)];
   if (mode === 'build') {
     s.camera = { ...state.camera, pendingUntil: now + RESIZE_SETTLE_MS, key: '', y: null };
@@ -782,7 +790,8 @@ const liveGuides = (guides, now) => guides.filter((g) => now - g.at < g.ms + GUI
 /**
  * A guide pair from the first new element at least 60 wide (the mock's `_guideFor`): a red edge down its left side
  * and a blue line along its top carrying the job. Pairs are 500 ms apart at least, and one is added only while at most
- * 4 are live after pruning (the mock's `>= 6` check would let a 7th in). None under reduced motion.
+ * 4 are live after pruning (the mock's `>= 6` check would let a 7th in). None under reduced motion. On a board both
+ * carry `clip`, their section's tile as known then, so they stop at the tile.
  */
 function addGuides(s, a, marks, now) {
   if (s.reduced || now - s.lastGuideAt < GUIDE_GAP_MS) return s;
@@ -791,13 +800,15 @@ function addGuides(s, a, marks, now) {
   const live = liveGuides(s.guides, now);
   if (live.length > GUIDE_LIVE_MAX) return live.length === s.guides.length ? s : { ...s, guides: live };
   const [x, y, , h] = el.rect;
+  const tile = own(KIND_STAGE, s.kind)?.board ? own(s.rects, a.sectionId) : null;
+  const clip = () => (tile ? { clip: [...tile] } : {});
   return {
     ...s,
     lastGuideAt: now,
     guides: [
       ...live,
-      { key: `v:${a.id}:${now}`, kind: 'v', color: 'red', x, y0: y - 240, y1: y + h + 460, ms: 1100, at: now },
-      { key: `h:${a.id}:${now}`, kind: 'h', color: 'blue', y, ms: 900, tag: a.job, at: now },
+      { key: `v:${a.id}:${now}`, kind: 'v', color: 'red', x, y0: y - 240, y1: y + h + 460, ms: 1100, at: now, ...clip() },
+      { key: `h:${a.id}:${now}`, kind: 'h', color: 'blue', y, ms: 900, tag: a.job, at: now, ...clip() },
     ],
   };
 }
@@ -943,11 +954,31 @@ export function frameCrew({ sections, stageW, stageH, pageW, docH, curS = null, 
  * Where the page sits in the stage (M11): `.frame-box` is `pageW` wide and `viewH` tall in page px, scaled by `s` and
  * offset by `ox, oy`. `viewH` is `(stageH - 2 * oy) / s`, so the iframe's viewport tracks the scale (R20). The camera's
  * scale is capped at fit; a narrow page is framed, and so is a zoomed-out one.
+ *
+ * A board kind (L7.23) sits at scale 1 in its region (`stageRegions`): the whole board, or the fitted run doc, which
+ * is framed. A video's `stageH` ends above its timeline, so a parked cursor stays above the raised HUD. Until the
+ * stage is measured it is the layout below, whose `s` is 0, so nothing is painted.
  * @returns {{s: number, fit: number, ox: number, oy: number, viewH: number, frameW: number, frameH: number,
  *   pageW: number, stageW: number, stageH: number, narrow: boolean, zoomed: boolean, framed: boolean}}
  */
+/**
+ * The doc a board lays out for: `docMode`, or while a new round has not loaded its own yet (P4 resets `docMode` at a
+ * new build), the doc still on screen. Without it a change round's run doc was laid out as a board until the build
+ * doc's `ready`, and the slide jumped to the full well for 1 to 4 painted frames (p8t1).
+ */
+const shownDoc = (state) => state.docMode ?? state.frameMode ?? null;
+
 export function selectLayout(state) {
   const { stageW, stageH, viewport } = state.view;
+  if (own(KIND_STAGE, state.kind)?.board && stageW > 0 && stageH > 0) {
+    const shown = shownDoc(state);
+    const { frame: f, timeline } = stageRegions({ kind: state.kind, docMode: shown, cw: stageW, ch: stageH });
+    return {
+      s: 1, fit: 1, ox: f.x, oy: f.y, viewH: f.h, frameW: f.w, frameH: f.h, pageW: f.w,
+      stageW, stageH: timeline ? timeline.y : stageH,
+      narrow: false, zoomed: false, framed: shown === 'run',
+    };
+  }
   const pageW = own(VIEWPORTS, viewport) ?? pageWidth(state);
   const fit = fitWidth(stageW, pageW);
   const s = Math.min(state.camera.scale ?? fit, fit);
@@ -1053,10 +1084,14 @@ export function placeCursors(cursors, view) {
   });
 }
 
-/** One cursor per agent on stage, in the order the agents first appeared, where the facts put it. */
+/**
+ * One cursor per agent on stage, in the order the agents first appeared, where the facts put it. A video scene's
+ * agent writing its script is labelled `<job> · timeline`.
+ */
 export function selectCursors(state) {
   return onStage(state).map((a) => ({
-    agentId: a.id, role: a.role, job: a.job, sectionId: a.sectionId, crew: crewOf(a), colorIndex: a.colorIndex,
+    agentId: a.id, role: a.role, job: cursorLabel({ kind: state.kind, job: a.job, part: draftTarget(a.tool?.path)?.part }),
+    sectionId: a.sectionId, crew: crewOf(a), colorIndex: a.colorIndex,
     waiting: a.status === 'waiting', ...positionOf(state, a),
   }));
 }
@@ -1080,9 +1115,18 @@ export function pinLabel(state, pin) {
 
 const area = ([, , w, h]) => w * h;
 const meterText = (n) => (n < 1024 ? `js ${n} B` : `js ${(n / 1024).toFixed(1)} KB`);
-const guideMark = (g) => (g.kind === 'v'
-  ? { key: g.key, kind: g.kind, color: g.color, x: g.x, y0: g.y0, y1: g.y1, ms: g.ms }
-  : { key: g.key, kind: g.kind, color: g.color, y: g.y, ms: g.ms, tag: g.tag });
+// A guide's tile goes along only when it has one, so a web guide keeps its exact shape.
+const guideMark = (g) => ({
+  ...(g.kind === 'v'
+    ? { key: g.key, kind: g.kind, color: g.color, x: g.x, y0: g.y0, y1: g.y1, ms: g.ms }
+    : { key: g.key, kind: g.kind, color: g.color, y: g.y, ms: g.ms, tag: g.tag }),
+  ...(g.clip ? { clip: [...g.clip] } : {}),
+});
+/** A size tag on a board's tile, in slide px. */
+const tileTag = (tag, rect, s) => {
+  const [w, h] = tagSize(rect, s);
+  return `${tag} ${w}×${h}`;
+};
 
 /** Each section's JS length, summed over its JS drafts. */
 function jsLengths(state) {
@@ -1099,15 +1143,42 @@ function jsLengths(state) {
  * read, the red box of an overflow, the wireframe of new media, guides, `+` on sections still planned, slot lines while
  * planning, failed sections, the JS meter and pins. A round ended `done` shows only pins; a halted one keeps `+`,
  * failed boxes and pins.
+ *
+ * A board kind's marks also hold `tiles` (L7.27, L7.32): while its board is up (`selectBoard`), one per section not
+ * removed whose rect the frame reported, numbered in plan order as the rail numbers them, through a halted round too,
+ * and through a done one until the run doc replaces the build doc. On a board a box and a wireframe carry their tile
+ * as `clip`.
+ * Its size tags read slide px, and it draws no slot line: a full-width line would cross every tile.
  * @returns {{boxes: object[], oranges: object[], reds: object[], wires: object[], guides: object[], plus: object[],
- *   slotLines: object[], failed: object[], meters: object[], pins: object[]}}
+ *   slotLines: object[], failed: object[], meters: object[], pins: object[],
+ *   tiles?: {key: string, rect: number[], label: string, planned: boolean, done: boolean}[]}}
  */
 export function selectMarks(state, now = 0) {
   const marks = {
     boxes: [], oranges: [], reds: [], wires: [], guides: [], plus: [], slotLines: [], failed: [], meters: [],
     pins: state.pins.map((p) => ({ key: `${p.id}|${p.path}`, rect: [...p.rect], tag: pinLabel(state, p) })),
   };
+  if (own(KIND_STAGE, state.kind)?.board) marks.tiles = [];
+  const board = selectBoard(state);
+  // Tiles label the build doc's board, a done round's too, until the run doc takes its place (p8t1).
+  if (board) {
+    planSections(state).forEach(([id, sec], i) => {
+      const r = own(state.rects, id);
+      if (r) {
+        // Two spaces after the number, as engine.js:1653 draws the chip; no-break, so the DOM keeps both.
+        marks.tiles.push({
+          key: id, rect: [...r], label: `${i + 1}\u00a0\u00a0${jobOf(state, id)}`, planned: sec.status === 'planned', done: sec.status === 'done',
+        });
+      }
+    });
+  }
   if (state.status === 'done') return marks;
+  const sized = (tag, rect) => (board ? tileTag(tag, rect, board.s) : sizeTag(tag, rect));
+  // On a board a box and a wireframe stay inside their tile, as engine.js:1640-1650 clips them: `clip` is the tile.
+  const clipTo = (id) => {
+    const r = board ? own(state.rects, id) : null;
+    return r ? { clip: [...r] } : {};
+  };
   const placed = [];
   for (const id of state.sectionOrder) {
     const sec = own(state.sections, id);
@@ -1121,7 +1192,7 @@ export function selectMarks(state, now = 0) {
   // `done` returned above, so this is a round stopped, paused, failed or interrupted.
   if (HALTED_BUILD.includes(state.status)) return marks;
   for (const a of onStage(state)) {
-    if (a.status === 'writing' && a.box) marks.boxes.push({ key: a.id, rect: [...a.box.rect], tag: sizeTag(a.box.tag, a.box.rect) });
+    if (a.status === 'writing' && a.box) marks.boxes.push({ key: a.id, rect: [...a.box.rect], tag: sized(a.box.tag, a.box.rect), ...clipTo(a.sectionId) });
     const read = own(state.rects, a.reading);
     if (read) marks.oranges.push({ key: a.id, rect: [...read], tag: jobOf(state, a.reading) });
   }
@@ -1132,15 +1203,46 @@ export function selectMarks(state, now = 0) {
   for (const [id, list] of Object.entries(state.wires)) {
     if (own(state.sections, id)?.status === 'done') continue;
     const main = list.reduce((best, w, i) => (area(w.rect) > area(list[best].rect) ? i : best), 0);
-    list.forEach((w, i) => marks.wires.push({ key: `${id}:${i}`, rect: [...w.rect], tag: i === main ? sizeTag(w.tag, w.rect) : null, main: i === main }));
+    list.forEach((w, i) => marks.wires.push({ key: `${id}:${i}`, rect: [...w.rect], tag: i === main ? sized(w.tag, w.rect) : null, main: i === main, ...clipTo(id) }));
   }
   marks.guides = liveGuides(state.guides, now).map(guideMark);
-  if (effectiveStatus(state) === 'planning') {
+  if (effectiveStatus(state) === 'planning' && !board) {
     for (const [id, sec, r] of placed) if (sec.status !== 'removed') marks.slotLines.push({ key: id, y: r[1], tag: jobOf(state, id) });
   }
   const js = jsLengths(state);
   for (const [id, , r] of placed) if (js.get(id) > 0) marks.meters.push({ key: id, rect: [...r], text: meterText(js.get(id)) });
   return marks;
+}
+
+/**
+ * A board kind's tile grid while the frame holds the build doc (M9, L7.32): `boardLayout` for the sections not removed
+ * in the board's region. Null off board kinds, over the run doc (a restore loads it at any status, and its bridge
+ * reports rects too, which no tile may stand on), on a stage not yet measured and with no section.
+ * @returns {{cols: number, rows: number, s: number, tileW: number, tileH: number, gap: number, pad: number,
+ *   fits: boolean}|null}
+ */
+export function selectBoard(state) {
+  const { stageW, stageH } = state.view;
+  const shown = shownDoc(state);
+  if (!own(KIND_STAGE, state.kind)?.board || shown === 'run' || !(stageW > 0) || !(stageH > 0)) return null;
+  const regions = stageRegions({ kind: state.kind, docMode: shown, cw: stageW, ch: stageH });
+  return boardLayout({ n: planSections(state).length, cw: regions.frame.w, availH: regions.availH, canvas: BOARD_CANVAS });
+}
+
+/**
+ * What the deck and video chrome (kind-chrome.mjs) paints from: `kindChromeView` of the sections not removed, in plan
+ * order, live while the round is open (a pause included).
+ */
+export function selectKindChrome(state) {
+  const sections = planSections(state).map(([id, sec]) => ({
+    id, job: jobOf(state, id), status: sec.status,
+    agentId: typeof sec.agentId === 'string' && sec.agentId ? sec.agentId : null,
+    duration: Number.isFinite(sec.duration) ? sec.duration : null,
+  }));
+  return kindChromeView({
+    kind: state.kind, live: OPEN_BUILD.includes(state.status), docMode: state.docMode, sections,
+    stageW: state.view.stageW, stageH: state.view.stageH,
+  });
 }
 
 // The HUD, the Agents popover's rows and the chat's Plan list (SPEC sections 3 and 7, M5, M8, M12, M13): plain objects

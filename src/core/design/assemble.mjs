@@ -9,8 +9,9 @@ import { Parser } from 'htmlparser2';
 import { DesignError } from './ids.mjs';
 import {
   boundedParser, classifyRef, divergenceWatch, escapeActive, HTML_MAX_DEPTH, HTML_MAX_SCAN_LENGTH, reservedTextCount, RESOURCE_ATTRS, scanCss, scanCssUrls, scanHtml, scanShellSlots,
-  srcsetUrls, stripActive,
+  scanTags, srcsetUrls, stripActive,
 } from './html-scan.mjs';
+import { boardCss, filmPlanScript, isBoardKind, isDeckKind, isFilmKind, kindHead, kitScriptNames, wrapFills } from './kinds.mjs';
 
 /** The attribute that marks the bridge `<script>` (C-7, M10). `dist` and `standalone` never carry it. */
 export const BRIDGE_MARKER = 'data-worca-bridge';
@@ -129,13 +130,15 @@ function shellMap(shell) {
 
 /**
  * Why a mapped shell cannot be assembled: a shell not read to its end first, then markers (head, foot, sections),
- * then each malformed slot.
+ * then each malformed slot. A board kind (deck, video) puts every slide or scene at `<!--worca:sections-->`, so its
+ * shell needs that marker exactly once, whatever slots it holds (L7.4).
  * @param {ReturnType<typeof shellMap>} map
  * @param {string[]} planIds
  * @param {boolean} needHead a bridge goes in right after the first `head` open tag
+ * @param {string} kind the design kind
  * @returns {({ marker: 'shell'|'head'|'foot'|'sections', message: string }|{ slot: object, message: string })[]}
  */
-function shellFaults({ markers, head, slots, misplaced, joined, unread }, planIds, needHead) {
+function shellFaults({ markers, head, slots, misplaced, joined, unread }, planIds, needHead, kind) {
   const faults = [];
   if (unread) faults.push({ marker: 'shell', message: `the shell ${UNREAD[unread]}` });
   if (misplaced.length) {
@@ -153,7 +156,9 @@ function shellFaults({ markers, head, slots, misplaced, joined, unread }, planId
   if (markers.foot.length !== 1) faults.push({ marker: 'foot', message: once('foot') });
   const slotted = new Set(slots.filter((s) => s.ok).map((s) => s.id));
   const homeless = planIds.filter((id) => !slotted.has(id));
-  if (markers.sections.length > 1) {
+  if (isBoardKind(kind)) {
+    if (markers.sections.length !== 1) faults.push({ marker: 'sections', message: once('sections') });
+  } else if (markers.sections.length > 1) {
     faults.push({ marker: 'sections', message: `<!--worca:sections--> may appear once, found ${markers.sections.length}` });
   } else if (markers.sections.length === 0 && homeless.length) {
     faults.push({ marker: 'sections', message: `<!--worca:sections--> is missing, and sections ${homeless.join(', ')} have no slot` });
@@ -242,16 +247,56 @@ function headText(workDir, included, tagged) {
   }).join('\n');
 }
 
-/** `<!--worca:foot-->`: global.js, then one element per included section's script.js, so one error stays local (L1.13). */
-function footText(workDir, included) {
-  const scripts = [];
+/**
+ * A kit script's text, read from `work/.kit/` as staged for the design's last round (L7.2). Missing, a link out of
+ * work/, or not a regular file: an `IO` error whose `kitFile` names the file, which callers map by that field.
+ * @param {string} workDir
+ * @param {string} name a file name from `kitScriptNames`
+ * @returns {string}
+ */
+function readKit(workDir, name) {
+  const text = readConfined(workDir, `.kit/${name}`);
+  if (text === null) {
+    throw Object.assign(new DesignError('IO', `The kit file ${name} is missing. Start a new round to stage it again.`), { kitFile: name });
+  }
+  return text;
+}
+
+/**
+ * The scripts of `<!--worca:foot-->`, one element per script, so one error stays local (L1.13): a film's FILM_PLAN
+ * first, then a deck's or a film's kit scripts in `kitScriptNames` order, then global.js, then each included section's
+ * script.js. A film registers each scene with `F.scene` and starts once after them; a scene whose script does not parse
+ * loses only its own timeline, and a scene with no element keeps its window (L7.9). Other kinds wrap each script in an
+ * IIFE. Each text is escaped for an inline `<script>`; each name is the sibling file it becomes with `scriptFiles`: the
+ * kit's own name, `global.js`, then `section-<id>.js`.
+ * @param {string} workDir
+ * @param {{ id: string }[]} included
+ * @param {{ kind: string, plan: object|null, mode: 'run'|'dist'|'standalone' }} opts
+ * @returns {{ name: string, text: string }[]}
+ */
+function footScripts(workDir, included, { kind, plan, mode }) {
+  const film = isFilmKind(kind);
+  const scripts = film ? [{ name: 'film-plan.js', text: filmPlanScript({ plan, mode }) }] : [];
+  if (isBoardKind(kind)) for (const name of kitScriptNames(kind)) scripts.push({ name, text: escapeScript(readKit(workDir, name)) });
   const global = readConfined(workDir, 'global.js');
-  if (global !== null) scripts.push(escapeScript(global));
+  if (global !== null) scripts.push({ name: 'global.js', text: escapeScript(global) });
   for (const { id } of included) {
     const js = readConfined(workDir, `sections/${id}/script.js`);
-    if (js !== null) scripts.push(`(function(root){\n${escapeScript(js)}\n})(document.querySelector('[data-section="${id}"]'));`);
+    if (js === null) continue;
+    scripts.push({
+      name: `section-${id}.js`,
+      text: film
+        ? escapeScript(`F.scene(${JSON.stringify(id)},function(root,S){\n${js}\n});`)
+        : `(function(root){\n${escapeScript(js)}\n})(document.querySelector('[data-section="${id}"]'));`,
+    });
   }
-  return scripts.map((js) => `<script>${js}</script>`).join('\n');
+  if (film) scripts.push({ name: 'film-start.js', text: 'F.start();' });
+  return scripts;
+}
+
+/** `<!--worca:foot-->`: each script inline, or with `files` a `<script src>` naming its sibling file. */
+function footText(scripts, files) {
+  return scripts.map(({ name, text }) => (files ? `<script src="${name}"></script>` : `<script>${text}</script>`)).join('\n');
 }
 
 /** Applies non-overlapping `{ start, end, text }` edits to `text` in one pass. */
@@ -381,17 +426,80 @@ function decodeAttr(raw) {
 }
 
 /**
- * Embeds every local reference of a finished page as `data:` (standalone, or `inline: true`). It reads only
- * references, in resource attributes, `srcset` candidates, `style=` values and `<style>` bodies, never slots or
- * markers, and edits the raw markup by span, so separators, quotes, descriptors and every other byte stay as
+ * Every reference standalone mode reads in a page, in document order: resource attributes, `srcset` candidates, `style=`
+ * values and `<style>` bodies, never slots or markers. `onRef(value, start, end)` gets the value decoded as the parser
+ * decodes an attribute (a `<style>` body's url() as written) and its raw span. A `script[src]` value in `skip` is passed
+ * over. A page nested deeper than HTML_MAX_DEPTH, or longer than HTML_MAX_SCAN_LENGTH, is read up to that point.
+ * @param {string} html
+ * @param {(value: string, start: number, end: number) => void} onRef
+ * @param {{ skip?: Set<string>|null }} [opts]
+ * @returns {{ stop: number, unread: null|'depth'|'size' }} `boundedParser`'s `read()`
+ */
+function walkRefs(html, onRef, { skip = null } = {}) {
+  const each = (offset, urls, decode) => {
+    for (const u of urls) onRef(decode ? decodeAttr(u.value) : u.value, offset + u.start, offset + u.end);
+  };
+  let tag = '';
+  let style = null;
+  const { parser, read } = boundedParser(html, {
+    onopentagname(name) {
+      tag = name;
+    },
+    onattribute(name, value, quote) {
+      if (quote === undefined || (name !== 'style' && !RESOURCE_ATTRS.get(tag)?.includes(name))) return;
+      if (skip?.has(value) && tag === 'script' && name === 'src') return;
+      const raw = html.slice(parser.startIndex, parser.endIndex);
+      let at = raw.indexOf('=') + 1;
+      if (at === 0) return;
+      while (at < raw.length && HTML_SPACE.test(raw[at])) at += 1;
+      if (quote === '"' || quote === "'") at += 1;
+      const start = parser.startIndex + at;
+      const end = quote ? parser.endIndex - 1 : parser.endIndex;
+      if (end < start) return;
+      if (name === 'style') each(start, scanCssUrls(html.slice(start, end)), true);
+      else if (name === 'srcset') each(start, srcsetUrls(html.slice(start, end)), true);
+      else onRef(value, start, end);
+    },
+    onopentag(name) {
+      if (name === 'style') style = { start: parser.endIndex + 1, end: parser.endIndex + 1 };
+    },
+    ontext() {
+      // A style body is raw text, so its text events are the body; a self-closed <svg><style/> has none.
+      if (style) style.end = parser.endIndex + 1;
+    },
+    onclosetag(name) {
+      if (name !== 'style' || !style) return;
+      each(style.start, scanCssUrls(html.slice(style.start, style.end)), false);
+      style = null;
+    },
+  });
+  return read();
+}
+
+/**
+ * Every reference standalone mode reads in `html`, named as its `problems` name one (decoded, trimmed), handed to
+ * `onRef` in document order (C-7: the deck export asks which remotes its bundled output still loads).
+ * @param {string} html
+ * @param {(ref: string) => void} onRef
+ * @returns {boolean} whether the whole page was read (HTML_MAX_DEPTH, HTML_MAX_SCAN_LENGTH)
+ */
+export function eachStandaloneRef(html, onRef) {
+  return walkRefs(html, (value) => onRef(String(value).trim())).unread === null;
+}
+
+/**
+ * Embeds every local reference of a finished page as `data:` (standalone, or `inline: true`). It reads the references
+ * `walkRefs` reads and edits the raw markup by span, so separators, quotes, descriptors and every other byte stay as
  * written. A reference it cannot embed stays as it is and is reported once per `{ ref, why }`. A page nested deeper
  * than HTML_MAX_DEPTH, or longer than HTML_MAX_SCAN_LENGTH, is read up to that point: what follows stays as written,
- * reported once as `{ ref: 'index.html', why: 'too-large' }`.
+ * reported once as `{ ref: 'index.html', why: 'too-large' }`. A `script[src]` value in `skip` stays as written and is
+ * never reported: the sibling files a deck's bundler inlines (`scriptFiles`).
  * @param {string} html
  * @param {string} workDir
+ * @param {{ skip?: Set<string>|null }} [opts]
  * @returns {{ html: string, problems: { ref: string, why: 'missing'|'escaped'|'remote'|'too-large' }[] }}
  */
-function inlineRefs(html, workDir) {
+function inlineRefs(html, workDir, { skip = null } = {}) {
   const embed = embedder(workDir);
   const problems = [];
   const reported = new Set();
@@ -409,56 +517,19 @@ function inlineRefs(html, workDir) {
     if (got.uri === undefined) report(String(value).trim(), got.why);
     else edits.push({ start, end, text: got.uri });
   };
-  const replaceEach = (offset, urls, decode) => {
-    for (const u of urls) replace(decode ? decodeAttr(u.value) : u.value, offset + u.start, offset + u.end);
-  };
-
-  let tag = '';
-  let style = null;
-  const { parser, read } = boundedParser(html, {
-    onopentagname(name) {
-      tag = name;
-    },
-    onattribute(name, value, quote) {
-      if (quote === undefined || (name !== 'style' && !RESOURCE_ATTRS.get(tag)?.includes(name))) return;
-      const raw = html.slice(parser.startIndex, parser.endIndex);
-      let at = raw.indexOf('=') + 1;
-      if (at === 0) return;
-      while (at < raw.length && HTML_SPACE.test(raw[at])) at += 1;
-      if (quote === '"' || quote === "'") at += 1;
-      const start = parser.startIndex + at;
-      const end = quote ? parser.endIndex - 1 : parser.endIndex;
-      if (end < start) return;
-      if (name === 'style') replaceEach(start, scanCssUrls(html.slice(start, end)), true);
-      else if (name === 'srcset') replaceEach(start, srcsetUrls(html.slice(start, end)), true);
-      else replace(value, start, end);
-    },
-    onopentag(name) {
-      if (name === 'style') style = { start: parser.endIndex + 1, end: parser.endIndex + 1 };
-    },
-    ontext() {
-      // A style body is raw text, so its text events are the body; a self-closed <svg><style/> has none.
-      if (style) style.end = parser.endIndex + 1;
-    },
-    onclosetag(name) {
-      if (name !== 'style' || !style) return;
-      replaceEach(style.start, scanCssUrls(html.slice(style.start, style.end)), false);
-      style = null;
-    },
-  });
-  if (read().unread) report('index.html', 'too-large');
+  if (walkRefs(html, replace, { skip }).unread) report('index.html', 'too-large');
   return { html: splice(html, edits), problems };
 }
 
 /** The shell to fill and its map. Only build falls back to DEFAULT_SHELL; the other modes throw BAD_SHELL. */
-function pickShell(workDir, mode, planIds, needHead) {
+function pickShell(workDir, mode, planIds, needHead, kind) {
   const build = mode === 'build';
   const raw = readConfined(workDir, 'shell.html');
   if (raw === null && !build) throw new DesignError('BAD_SHELL', 'shell.html is missing');
   if (raw !== null) {
     const shell = build ? stripActive(raw) : raw;
     const map = shellMap(shell);
-    const faults = shellFaults(map, planIds, needHead);
+    const faults = shellFaults(map, planIds, needHead, kind);
     if (!faults.length) return { shell, map };
     if (!build) throw new DesignError('BAD_SHELL', `shell.html: ${faults.map((f) => f.message).join('; ')}`);
   }
@@ -528,10 +599,22 @@ function writeDist(workDir, html, ids) {
  * - `standalone`: the dist page with every local reference embedded as `data:`, nothing written.
  * `inline: true` embeds the same way in any mode, before the bridge goes in. Whatever standalone or inline could not
  * embed (L1.17) is listed in `problems`, once each, and left as written; the other modes return `problems: []`.
- * @param {{ workDir: string, plan: { sections?: { id: string }[] }|null, mode: 'build'|'run'|'dist'|'standalone', bridge?: string|null, inline?: boolean }} opts
- * @returns {{ html: string, mode: string, sections: { id: string, state: 'included'|'slot'|'missing' }[], problems: { ref: string, why: 'missing'|'escaped'|'remote'|'too-large' }[], distDir?: string, files?: string[] }}
+ * The design kind is the plan's, else `kind` (a build doc is served before plan.json exists), else `web`. A board
+ * kind (deck, video) takes no shell slot: each is emptied, and every section goes to the marker, in plan order. In
+ * build a board kind's marker is the board (M9): `<deck-stage data-worca-board>` or `<div data-film data-worca-board>`
+ * holding the fills and the sections comment the bridge places new slots by, with `<style data-worca-board-css>` last
+ * in the head block and no kit or film script; with no plan, the same empty board. A
+ * deck's marker is the real `deck-stage` outside build, and its foot inlines the kit scripts from `work/.kit/`, so
+ * no doc references `.kit/` by URL (L7.2); a missing kit file is an `IO` error with `kitFile` set. A film outside
+ * build puts its scenes in `<div data-film>`, and its foot is FILM_PLAN, the kit, global.js, one `F.scene` per
+ * included scene, then `F.start()`.
+ * `scriptFiles: true` (a deck's `standalone` only, for its bundler): the foot is one `<script src="<name>"></script>`
+ * per script, and `scripts` holds each `{ name, text }` to write beside the page, so no code is in the page itself.
+ * The inliner leaves those names as written. Asked for on another mode or kind, it is a `BAD_REQUEST`, before any read.
+ * @param {{ workDir: string, plan: { kind?: string, sections?: { id: string }[] }|null, mode: 'build'|'run'|'dist'|'standalone', bridge?: string|null, inline?: boolean, kind?: string|null, scriptFiles?: boolean }} opts
+ * @returns {{ html: string, mode: string, sections: { id: string, state: 'included'|'slot'|'missing' }[], problems: { ref: string, why: 'missing'|'escaped'|'remote'|'too-large' }[], distDir?: string, files?: string[], scripts?: { name: string, text: string }[] }}
  */
-export function assembleDesign({ workDir, plan, mode, bridge = null, inline = false } = {}) {
+export function assembleDesign({ workDir, plan, mode, bridge = null, inline = false, kind = null, scriptFiles = false } = {}) {
   if (!MODES.includes(mode)) throw new DesignError('BAD_REQUEST', `unknown assembly mode ${JSON.stringify(String(mode))}`);
   const build = mode === 'build';
   const live = build || mode === 'run';
@@ -539,9 +622,15 @@ export function assembleDesign({ workDir, plan, mode, bridge = null, inline = fa
     if (!live) throw new DesignError('BAD_REQUEST', `${mode} never carries the bridge`);
     if (!isBridge(bridge)) throw new DesignError('BAD_REQUEST', `the bridge must be one <script ${BRIDGE_MARKER}> element`);
   }
+  const designKind = plan?.kind ?? kind ?? 'web';
+  const files = scriptFiles === true;
+  if (files && (mode !== 'standalone' || !isDeckKind(designKind))) {
+    throw new DesignError('BAD_REQUEST', 'script files are for a deck\'s standalone page only');
+  }
+  const board = isBoardKind(designKind);
   // The sections lintDesign judges, no others: a section lint never read must not reach the page.
   const ids = Array.isArray(plan?.sections) ? plan.sections.filter((s) => typeof s?.id === 'string').map((s) => s.id) : [];
-  const { shell, map } = pickShell(workDir, mode, ids, bridge !== null);
+  const { shell, map } = pickShell(workDir, mode, ids, bridge !== null, designKind);
   const done = build ? doneSections(workDir) : new Set();
   const parts = ids.map((id) => fillSection(workDir, id, build, done));
   const included = parts.filter((p) => p.state === 'included');
@@ -549,7 +638,9 @@ export function assembleDesign({ workDir, plan, mode, bridge = null, inline = fa
 
   const edits = [];
   const slotted = new Set();
-  for (const slot of plan ? map.slots : []) {
+  // On a board a slot is no place: one left in a build doc would be the bridge's place for its section, off the board.
+  for (const slot of board ? map.slots.filter((s) => s.ok) : []) edits.push({ start: slot.start, end: slot.end, text: '' });
+  for (const slot of plan && !board ? map.slots : []) {
     if (fills.has(slot.id)) {
       edits.push({ start: slot.start, end: slot.end, text: slotted.has(slot.id) ? '' : fills.get(slot.id) });
       slotted.add(slot.id);
@@ -558,26 +649,32 @@ export function assembleDesign({ workDir, plan, mode, bridge = null, inline = fa
     }
   }
   const fillMarker = (name, text) => { for (const at of map.markers[name]) edits.push({ ...at, text }); };
-  fillMarker('head', headText(workDir, included, live));
-  fillMarker('sections', parts.filter((p) => !slotted.has(p.id) && p.fill).map((p) => p.fill).join('\n'));
-  fillMarker('foot', build ? '' : footText(workDir, included));
+  // A board's style goes last, so it wins over every section's own sizing on its tiles.
+  const boardStyle = build && board ? `<style data-worca-board-css>${boardCss()}</style>` : '';
+  fillMarker('head', [kindHead({ kind: designKind, mode }), headText(workDir, included, live), boardStyle].filter(Boolean).join('\n'));
+  const sectionFills = parts.filter((p) => !slotted.has(p.id) && p.fill).map((p) => p.fill).join('\n');
+  fillMarker('sections', wrapFills({ kind: designKind, mode, fills: sectionFills }));
+  const scripts = build ? [] : footScripts(workDir, included, { kind: designKind, plan, mode });
+  fillMarker('foot', footText(scripts, files));
   let html = splice(shell, edits);
   // Each piece was stripped alone, so text that is a tag only where two pieces meet (a fill ending `<scr`, the shell
   // going on `ipt>`) is escaped here: build carries no model JS at all. Escaping alone, unbounded, because the joined
   // page can nest deeper than each piece, where a second bounded strip would drop the rest. The bridge goes in after.
   if (build) html = escapeActive(html);
   let problems = [];
-  if (mode === 'standalone' || inline === true) ({ html, problems } = inlineRefs(html, workDir));
+  if (mode === 'standalone' || inline === true) {
+    ({ html, problems } = inlineRefs(html, workDir, { skip: files ? new Set(scripts.map((s) => s.name)) : null }));
+  }
   if (bridge !== null) html = insertBridge(html, bridge);
 
   const result = { html, mode, sections: parts.map(({ id, state }) => ({ id, state })), problems };
+  if (files) result.scripts = scripts;
   if (mode === 'dist') Object.assign(result, writeDist(workDir, html, ids));
   return result;
 }
 
 /** Each plan part's file in a section folder, in judging order. Nothing else in the folder is judged. */
 const PART_FILES = Object.freeze([['html', 'index.html'], ['css', 'style.css'], ['js', 'script.js']]);
-const DECK_KINDS = new Set(['presentation', 'pitch']);
 const SHELL_FILE = 'shell.html';
 /** Global stylesheets: URL checks only, no scope, keyframes or vh rules. */
 const GLOBAL_CSS = Object.freeze(['tokens.css', 'global.css']);
@@ -619,7 +716,7 @@ function rootFault({ roots, strayText, unread }, id, kind) {
   const [{ name, attrs }] = roots;
   if (name === 'html' || name === 'head' || name === 'body') return `has <${name}> as its root, which a section cannot be`;
   if (attrs['data-section'] !== id) return `needs data-section="${id}" on its root element`;
-  if (DECK_KINDS.has(kind) && !(name === 'section' && Object.hasOwn(attrs, 'data-label'))) return 'needs a <section data-label="…"> root: one slide';
+  if (isDeckKind(kind) && !(name === 'section' && Object.hasOwn(attrs, 'data-label'))) return 'needs a <section data-label="…"> root: one slide';
   if (kind === 'video' && !(name === 'div' && Object.hasOwn(attrs, 'data-scene'))) return 'needs a <div data-scene> root: one scene';
   return null;
 }
@@ -666,14 +763,100 @@ function lintSection(workDir, { id, parts }, kind) {
       findings.push(finding('section-vh', 'warn', id, file, `${file} uses a vh unit, which changes as the stage zooms: give heights in px or clamp() without vh`));
     }
   }
+  if (isFilmKind(kind)) findings.push(...filmFindings(id, text));
   return { findings, ids };
 }
 
-/** The shell's findings, markers, slots, reserved attributes, then URLs, and the ids it holds. A missing shell reads as ''. */
-function lintShell(workDir, planIds) {
+/** What makes a scene's script.js more than a function of film time (L7.19), each match naming its own token. */
+const FILM_JS = Object.freeze([
+  /\b(?:setTimeout|setInterval|requestAnimationFrame|requestIdleCallback|fetch)\s*\(/g,
+  /\bnew\s+Date\b/g,
+  /\bDate\.now\b/g,
+  /\bperformance\.now\b/g,
+  /\bMath\.random\b/g,
+  /\b(?:gsap|tl|S\.tl|timeline)\.from\s*\(/g,
+  /\bawait\b/g,
+  /\bwillChange\b/g,
+]);
+/**
+ * A CSS animation, transition or will-change property, in comment-stripped text: its name is group 2. will-change keeps
+ * a layer rasterized by its history, so a time sought out of order paints other pixels (p8t1 live proof).
+ */
+const FILM_CSS = /(^|[;{\s])((?:animation|transition)(?:-[a-z-]+)?|will-change)\s*:/g;
+const FILM_MEDIA = Object.freeze(['video', 'audio']);
+
+/**
+ * `text` with each comment replaced by one space and its strings kept: block comments always, and line comments up
+ * to the newline when `line` is set (JS), so a `//` inside a string is no comment. One forward pass, so a file
+ * full of open quotes or comments stays linear.
+ */
+function stripComments(text, line) {
+  let out = '';
+  let from = 0;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    const next = text[i + 1];
+    if (ch === '"' || ch === "'" || (line && ch === '`')) {
+      i += 1;
+      while (i < text.length && text[i] !== ch && (ch === '`' || text[i] !== '\n')) i += text[i] === '\\' ? 2 : 1;
+      i += 1;
+    } else if (ch === '/' && (next === '*' || (line && next === '/'))) {
+      const end = next === '*' ? text.indexOf('*/', i + 2) : text.indexOf('\n', i + 2);
+      out += `${text.slice(from, i)} `;
+      i = end === -1 ? text.length : end + (next === '*' ? 2 : 0);
+      from = i;
+    } else {
+      i += 1;
+    }
+  }
+  return out + text.slice(from);
+}
+
+/** One `film-determinism` error: `token` breaks a seek. */
+const filmFinding = (section, file, token) => finding('film-determinism', 'error', section, file, `${token} breaks a seek: the film must be a pure function of time`);
+
+/** What in a stylesheet breaks a seek: its `@keyframes`, then its animation, transition and will-change properties. */
+function filmCssTokens(css) {
+  const props = [...stripComments(css, false).matchAll(FILM_CSS)].map((m) => m[2]);
+  return [...scanCss(css).keyframes.map((name) => `@keyframes ${name}`), ...props];
+}
+
+/**
+ * The `film-determinism` errors of one video scene (L7.19): one per distinct token per file, in the html, css, js
+ * order of the other rules. A regex check that names what breaks a seek, never a run of the film: a false hit is a
+ * lead's call at integration.
+ * @param {string} id
+ * @param {{ html: string|null, css: string|null, js: string|null }} text
+ */
+function filmFindings(id, text) {
+  const findings = [];
+  const add = (name, tokens) => {
+    const file = `sections/${id}/${name}`;
+    for (const token of new Set(tokens)) findings.push(filmFinding(id, file, token));
+  };
+  // `refs` misses a <video> that only holds a <source>, so every start tag is read.
+  if (text.html !== null) add('index.html', scanTags(text.html).filter(({ name }) => FILM_MEDIA.includes(name)).map(({ name }) => `<${name}>`));
+  if (text.css !== null) add('style.css', filmCssTokens(text.css));
+  if (text.js !== null) {
+    const js = stripComments(text.js, true);
+    const hits = FILM_JS.flatMap((re) => [...js.matchAll(re)].map((m) => ({ at: m.index, token: m[0].replace(/\s*\($/, '()').replace(/\s+/g, ' ') })));
+    add('script.js', hits.sort((a, b) => a.at - b.at).map((h) => h.token));
+  }
+  return findings;
+}
+
+/**
+ * The shell's findings, markers, slots, a board's stage, reserved attributes, then URLs, and the ids it holds. A
+ * missing shell reads as ''. On a board kind every slot is a `shell-slot-kind` error, and a `deck-stage` or
+ * `data-film` element is one `shell-stage` error: the assembler writes the stage itself (L7.4).
+ */
+function lintShell(workDir, planIds, kind) {
   const shell = readConfined(workDir, SHELL_FILE) ?? '';
   const map = shellMap(shell);
-  const faults = shellFaults(map, planIds, true);
+  const faults = shellFaults(map, planIds, true, kind);
+  const board = isBoardKind(kind);
+  const pieces = isDeckKind(kind) ? 'slide' : 'scene';
   const findings = [];
   const add = (rule, severity, section, message) => findings.push(finding(rule, severity, section, SHELL_FILE, message));
   for (const fault of faults) if (fault.marker) add('shell-marker', 'error', null, fault.message);
@@ -687,11 +870,22 @@ function lintShell(workDir, planIds) {
       add('shell-slot-malformed', 'error', section, malformed.get(slot) ?? `slot ${shown} is malformed`);
       continue;
     }
+    if (board) {
+      add('shell-slot-kind', 'error', section, `slot ${shown}: a ${kind} takes no slots, every ${pieces} goes to <!--worca:sections--> in plan order, so take the slot out`);
+      continue;
+    }
     if (!known.has(slot.id)) add('shell-slot-unknown', 'error', section, `slot ${shown} is not a section in the plan`);
     if (seen.has(slot.id)) add('shell-slot-duplicate', 'error', section, `slot ${shown} appears more than once, and only the first is filled`);
     seen.add(slot.id);
     if (slot.extraAttrs) {
       add('shell-slot-attrs', 'warn', section, `slot ${shown} has other attributes, which go when the section fills it: lay it out from its parent or [data-section="${slot.id}"] in global.css`);
+    }
+  }
+  if (board) {
+    const stages = scanTags(shell).filter(({ name, attrs }) => name === 'deck-stage' || Object.hasOwn(attrs, 'data-film'));
+    if (stages.length) {
+      const what = listing([...new Set(stages.map(({ name }) => (name === 'deck-stage' ? '<deck-stage>' : `<${name} data-film>`)))]);
+      add('shell-stage', 'error', null, `the shell holds ${what}: worca writes the stage around the ${pieces}s itself, so take it out and leave <!--worca:sections--> where the ${pieces}s go`);
     }
   }
   const html = scanHtml(shell);
@@ -704,9 +898,10 @@ function lintShell(workDir, planIds) {
 
 /**
  * Lints a design's work/ folder against its plan: section roots per kind, CSS scope, references, reserved
- * attributes, the shell's markers and slots. Never throws. Findings follow plan order, then tokens.css and
- * global.css, the shell last; a `duplicate-id` goes last in its first holder's group. `ok` means no error. At most
- * 200 findings are listed, then one `truncated` warn; `counts` counts every finding, the `truncated` line aside.
+ * attributes, a film's determinism (its tokens.css and global.css too), the shell's markers and slots. Never throws.
+ * Findings follow plan order, then tokens.css and global.css, the shell last; a `duplicate-id` goes last in its
+ * first holder's group. `ok` means no error. At most 200 findings are listed, then one `truncated` warn; `counts`
+ * counts every finding, the `truncated` line aside.
  * @param {{ workDir: string, plan: { kind?: string, sections?: { id: string, parts?: string[] }[] }|null }} opts
  * @returns {{ ok: boolean, findings: { rule: string, severity: 'error'|'warn', section: string|null, file: string|null, message: string }[], counts: { error: number, warn: number } }}
  */
@@ -715,11 +910,14 @@ export function lintDesign({ workDir, plan } = {}) {
   const sections = Array.isArray(plan?.sections) ? plan.sections.filter((s) => typeof s?.id === 'string') : [];
   const planIds = sections.map((s) => s.id);
   const groups = sections.map((s) => ({ name: s.id, section: s.id, file: `sections/${s.id}/index.html`, ...lintSection(workDir, s, kind) }));
+  // A video's tokens.css and global.css style every scene, so the film's CSS rule holds there too (p8t1 live proof).
   const globals = GLOBAL_CSS.flatMap((file) => {
     const css = readConfined(workDir, file);
-    return css === null ? [] : refFindings(scanCss(css).urls.map((value) => ({ value, nav: false })), null, file);
+    if (css === null) return [];
+    const film = isFilmKind(kind) ? [...new Set(filmCssTokens(css))].map((token) => filmFinding(null, file, token)) : [];
+    return [...refFindings(scanCss(css).urls.map((value) => ({ value, nav: false })), null, file), ...film];
   });
-  const shell = { name: SHELL_FILE, section: null, file: SHELL_FILE, ...lintShell(workDir, planIds) };
+  const shell = { name: SHELL_FILE, section: null, file: SHELL_FILE, ...lintShell(workDir, planIds, kind) };
 
   const holders = new Map();
   for (const group of [...groups, shell]) {

@@ -13,14 +13,25 @@
   var ERR_MESSAGE_MAX = 300;
   var NONCE_RE = /^#n=([^&#]{1,256})/;
   var MODE_RE = /\/(build|run)\/[^/]*$/;
-  var PARENT_TYPES = ['hello', 'plan', 'section', 'css', 'scroll', 'pick', 'goto'];
-  // Types each doc drops silently: the build doc has no deck to drive and nothing to pick, and the run
-  // doc is the finished artifact, never merged into.
-  var IGNORED = { build: ['pick', 'goto'], run: ['plan', 'section', 'css'] };
+  var PARENT_TYPES = ['hello', 'plan', 'section', 'css', 'scroll', 'pick', 'goto', 'board', 'play', 'pause', 'seek'];
+  // Types each doc drops silently: the build doc has no deck to drive, no film to play and nothing to pick
+  // (M9), and the run doc is the finished artifact, never merged into or laid out as a board.
+  var IGNORED = { build: ['pick', 'goto', 'play', 'pause', 'seek'], run: ['plan', 'section', 'css', 'board'] };
+  // `board` (the build doc's tile grid for decks and video): a column count of 1 to the section cap, a scale above 0
+  // and at most 1, gaps and padding of 0 to BOARD_SPACE_MAX px, a tile radius of 0 to BOARD_RADIUS_MAX px, a #rrggbb.
+  var BOARD_SPACE_MAX = 200;
+  var BOARD_RADIUS_MAX = 16;
+  var BOARD_BG_RE = /^#[0-9a-fA-F]{6}$/;
+  // The root style variable `--worca-board-<name>` for each board field, and its unit.
+  var BOARD_VARS = [['cols', 'cols', ''], ['s', 's', ''], ['gap', 'gap', 'px'], ['pad', 'pad', 'px'], ['padB', 'pad-b', 'px'],
+    ['r', 'r', 'px'], ['bg', 'bg', '']];
+  // While the film plays, `time` goes at most once per this much film time (seconds), never by a timer (L7.18).
+  var FILM_TIME_STEP = 0.1;
 
   function isSectionId(v) { return typeof v === 'string' && SECTION_ID_RE.test(v); }
   function isRev(v) { return Number.isSafeInteger(v) && v >= 0; }
   function isFiniteNumber(v) { return typeof v === 'number' && isFinite(v); }
+  function inRange(v, lo, hi) { return isFiniteNumber(v) && v >= lo && v <= hi; }
 
   // The C-6 body check: '' for a good body, else what is wrong with it. Message data is not of this
   // realm, so arrays are tested with Array.isArray, never instanceof.
@@ -55,6 +66,21 @@
         return typeof d.on === 'boolean' ? '' : 'pick.on must be a boolean';
       case 'goto':
         return isRev(d.index) ? '' : 'goto.index must be a non-negative integer';
+      case 'board':
+        if (!Number.isSafeInteger(d.cols) || d.cols < 1 || d.cols > MAX_SECTIONS) return 'board.cols must be an integer from 1 to ' + MAX_SECTIONS;
+        if (!isFiniteNumber(d.s) || d.s <= 0 || d.s > 1) return 'board.s must be a number above 0 and at most 1';
+        if (!inRange(d.gap, 0, BOARD_SPACE_MAX)) return 'board.gap must be a number from 0 to ' + BOARD_SPACE_MAX;
+        if (!inRange(d.pad, 0, BOARD_SPACE_MAX)) return 'board.pad must be a number from 0 to ' + BOARD_SPACE_MAX;
+        if (!inRange(d.padB, 0, BOARD_SPACE_MAX)) return 'board.padB must be a number from 0 to ' + BOARD_SPACE_MAX;
+        if (!inRange(d.r, 0, BOARD_RADIUS_MAX)) return 'board.r must be a number from 0 to ' + BOARD_RADIUS_MAX;
+        return typeof d.bg === 'string' && BOARD_BG_RE.test(d.bg) ? '' : 'board.bg must be a #rrggbb colour';
+      case 'play':
+        return '';
+      case 'pause':
+        return '';
+      case 'seek':
+        // Film time is `at`: the envelope's `t` is the message type.
+        return isFiniteNumber(d.at) && d.at >= 0 ? '' : 'seek.at must be a finite number of at least 0';
     }
     return '';
   }
@@ -423,6 +449,9 @@
     var greeted = false;
     var kind = null;
     var canvas = null;
+    // Run doc only: the section id the last `visible` named. The deck and the film name their first slide or scene
+    // while the doc boots, before the parent hears `ready` and so before it listens: the first hello says it again.
+    var inView = null;
     // Section id -> element count of its root (the root included). `layers` is their sum: the
     // doc-wide count now, so it drops when a section shrinks.
     var counts = new Map();
@@ -747,6 +776,7 @@
         var roots = sectionRoots();
         roots.forEach(function (r) { counts.set(r.id, 1 + nodeCall('querySelectorAll', r.el, '*').length); });
         roots.forEach(function (r) { attempt(function () { postApplied(r.id, 0, counts.get(r.id), r.el, []); }); });
+        if (mode === 'run' && inView !== null) post('visible', { id: inView });
       }
       requestRects();
     }
@@ -1205,12 +1235,78 @@
       if (stage && typeof stage.goTo === 'function') stage.goTo(d.index);
     }
 
-    // Run doc only: the slide deck-stage shows now, when that slide is a section.
+    // Whether this doc has told deck-stage it is presenting.
+    var presenting = false;
+
+    // Run doc only: the slide deck-stage shows now, when that slide is a section. The first one also tells the deck it
+    // is presenting (`__omelette_presenting`, deck-stage.js _onMessage), so its own overlay and rail stay off: in worca
+    // the parent's chrome is the only chrome (L7.15). A direct postMessage to this window, never deferred: deck-stage
+    // reads it without a source or origin check, and onMessage drops it, since its source is not the parent.
     function onSlideChange(e) {
+      if (!presenting) {
+        presenting = true;
+        attempt(function () { win.postMessage({ __omelette_presenting: true }, '*'); });
+      }
       attempt(function () {
         var slide = e.detail && e.detail.slide;
         var id = slide instanceof win.Element ? nodeCall('getAttribute', slide, 'data-section') : null;
-        if (isSectionId(id)) post('visible', { id: id });
+        if (isSectionId(id)) {
+          inView = id;
+          post('visible', { id: id });
+        }
+      });
+    }
+
+    // Build doc only: the board the parent laid out (decks and video, M9), as root style variables the board style
+    // reads, then rects for the new layout. The style is read through the root's own prototype, as sizeSlot does.
+    function onBoard(d) {
+      var root = docCall('documentElement');
+      var style = member(Object.getPrototypeOf(root), 'style').call(root);
+      BOARD_VARS.forEach(function (v) { style.setProperty('--worca-board-' + v[1], d[v[0]] + v[2]); });
+      attempt(requestRects);
+    }
+
+    // Run doc only (M9: no playback before round end): the film's own `name`, read off `window.F` at the call. A page
+    // with no film ignores it, and so does markup named F (`id="F"` makes `window.F` an element, and a `<video id="F">`
+    // has a play and a pause of its own). The film clamps a seek itself.
+    function filmCall(name, args) {
+      var F = win.F;
+      if (F instanceof win.Node || typeof F?.[name] !== 'function') return;
+      F[name].apply(F, args);
+    }
+    function onPlay() { filmCall('play', []); }
+    function onPause() { filmCall('pause', []); }
+    function onSeek(d) { filmCall('seek', [d.at]); }
+
+    // Run doc only: film.js's `filmtime {t, playing, dur}` as `time {at, playing, dur}`. Posted whenever the film is not
+    // playing, when it starts playing (the first post included: `lastPlaying` starts false), and while it plays once its
+    // time is FILM_TIME_STEP or more from the last post's own `t`: throttled by film time, so no timer runs. `at` is `t`
+    // clamped to the film, never rounded (coord would post 0.11 as 0.1).
+    var lastAt = 0;
+    var lastPlaying = false;
+    function onFilmTime(e) {
+      attempt(function () {
+        var d = e.detail;
+        if (!d || typeof d !== 'object') return;
+        var t = d.t;
+        var dur = d.dur;
+        if (!isFiniteNumber(t) || !isFiniteNumber(dur) || dur < 0) return;
+        var playing = d.playing === true;
+        if (playing && lastPlaying && Math.abs(t - lastAt) < FILM_TIME_STEP) return;
+        lastAt = t;
+        lastPlaying = playing;
+        post('time', { at: Math.min(dur, Math.max(0, t)), playing: playing, dur: dur });
+      });
+    }
+
+    // Run doc only: the scene film.js shows now (`filmscene {id}`), when it is a section.
+    function onFilmScene(e) {
+      attempt(function () {
+        var id = e.detail && e.detail.id;
+        if (isSectionId(id)) {
+          inView = id;
+          post('visible', { id: id });
+        }
       });
     }
 
@@ -1267,7 +1363,8 @@
       post('zoom', { dy: e.deltaY, y: e.clientY });
     }
 
-    var handlers = { hello: onHello, css: onCss, plan: onPlan, section: onSection, scroll: onScroll, pick: onPick, goto: onGoto };
+    var handlers = { hello: onHello, css: onCss, plan: onPlan, section: onSection, scroll: onScroll, pick: onPick, goto: onGoto,
+      board: onBoard, play: onPlay, pause: onPause, seek: onSeek };
 
     // Every handler and every paced write runs inside this: a throw becomes `err {code:'apply-failed'}`
     // and a null result, never a frame error.
@@ -1317,6 +1414,9 @@
     // deck-stage dispatches it on itself, bubbling and composed; captured here so the deck's own code
     // cannot stop it first.
     if (mode === 'run') docCall('addEventListener', 'slidechange', onSlideChange, true);
+    // film.js dispatches both on the document.
+    if (mode === 'run') docCall('addEventListener', 'filmtime', onFilmTime, true);
+    if (mode === 'run') docCall('addEventListener', 'filmscene', onFilmScene, true);
     // Captured on the document, so a scroll inside any element counts too.
     docCall('addEventListener', 'scroll', onLayoutChange, true);
     win.addEventListener('resize', onLayoutChange);

@@ -619,6 +619,23 @@ export function scanShellSlots(html) {
 }
 
 /**
+ * Every start tag the parser reads in `html`, at any depth, in document order, with its lower-cased attribute names
+ * and decoded values. Bounded (boundedParser): nothing past where reading stops.
+ * @param {string} html
+ * @returns {{ name: string, attrs: Record<string, string> }[]}
+ */
+export function scanTags(html) {
+  const tags = [];
+  const { read } = boundedParser(String(html ?? ''), {
+    onopentag(name, attribs) {
+      tags.push({ name, attrs: { ...attribs } });
+    },
+  });
+  read();
+  return tags;
+}
+
+/**
  * What lint needs from an HTML file, read through the parser's open tags only: an element the parser drops
  * (a second `<form>` inside an open one, as a browser does) has no attributes here.
  * - `roots`: the depth-0 elements, `attrs` holding their lower-cased attribute names and decoded values.

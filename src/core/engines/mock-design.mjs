@@ -15,6 +15,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { isBoardKind, isDeckKind, isFilmKind } from '../design/kinds.mjs';
 
 const SECTION_IDS = ['hero', 'features', 'pricing', 'faq', 'team', 'contact', 'cta', 'footer'];
 const MAX_SECTIONS = 40;
@@ -313,12 +314,35 @@ function lostSession(sessionId, emit, signal) {
   throw new Error(`claude exited with code 1: ${message}`);
 }
 
-/** What a builder writes: 5 layers, one root carrying `data-section`. */
-function sectionHtml(id, job) {
-  return `<section data-section="${id}"><h2 class="t">${job}</h2><p>Mock ${id}.</p><div class="grid"><div></div></div></section>`;
+/** What a builder writes: 5 layers, one root carrying `data-section`; a slide's root is a labelled `<section>`, a
+ *  scene's a `<div data-scene>` (the board lint's `rootFault`). */
+function sectionHtml(id, job, kind = 'web') {
+  const inner = `<h2 class="t">${job}</h2><p>Mock ${id}.</p><div class="grid"><div></div></div>`;
+  if (isFilmKind(kind)) return `<div data-section="${id}" data-scene>${inner}</div>`;
+  if (isDeckKind(kind)) return `<section data-section="${id}" data-label="${job}">${inner}</section>`;
+  return `<section data-section="${id}">${inner}</section>`;
 }
 
 const sectionCss = (id) => `[data-section="${id}"] .t{font-weight:600}\n`;
+/** A scene's script: seekable, on the film's timeline only (no clock, no `from`). */
+const SCENE_JS = 'S.tl.set(root,{opacity:0},0).to(root,{opacity:1,duration:0.4},0);';
+/** The seconds every mock scene lasts. */
+const SCENE_SECONDS = 4;
+
+/** The kind-specific fields of a mock plan section or round add: `estHeight` on a web page; on a video, a `duration`
+ *  and a script; a deck neither. */
+function kindFields(kind) {
+  if (isFilmKind(kind)) return { parts: ['html', 'css', 'js'], duration: SCENE_SECONDS };
+  if (isBoardKind(kind)) return { parts: ['html', 'css'] };
+  return { parts: ['html', 'css'], estHeight: 600 };
+}
+
+/** The canvas of a mock plan: 1440 wide for a web page, the 1920×1080 stage for a deck, at 60 fps for a video. */
+function kindCanvas(kind) {
+  if (isFilmKind(kind)) return { w: 1920, h: 1080, fps: 60 };
+  if (isBoardKind(kind)) return { w: 1920, h: 1080 };
+  return { w: 1440 };
+}
 
 const TOKENS_CSS = ':root{--ink:#111;--paper:#fff;--accent:#2563eb}\n';
 const GLOBAL_CSS = 'body{margin:0;color:var(--ink);background:var(--paper);font-family:system-ui,sans-serif}.grid{display:grid;gap:16px}\n';
@@ -328,7 +352,7 @@ function shellHtml(slotIds) {
   return `<!doctype html><html><head><!--worca:head--></head><body><main class="grid">${slots}<!--worca:sections--></main><!--worca:foot--></body></html>`;
 }
 
-/** The lead's plan: `MOCK_SECTIONS` sections (default 3), web-shaped (other kinds' canvas is P7's). */
+/** The lead's plan: `MOCK_SECTIONS` sections (default 3), shaped for its kind (`kindFields`, `kindCanvas`). */
 function leadPlan(text, kind) {
   const n = Math.min(MAX_SECTIONS, Math.max(1, Number((/\bMOCK_SECTIONS=(\d+)/.exec(text) || [])[1] || 3)));
   const perSection = new Map();
@@ -344,20 +368,21 @@ function leadPlan(text, kind) {
     const id = sectionIdAt(i);
     const job = capitalise(id);
     const brief = [`Mock ${job} section.`, ...(perSection.get(id) || []), ...cost].join(' ');
-    sections.push({ id, job, brief, parts: ['html', 'css'], estHeight: 600, ...(bands && i < 2 ? { band: 'Top' } : {}) });
+    sections.push({ id, job, brief, ...kindFields(kind), ...(bands && i < 2 ? { band: 'Top' } : {}) });
   }
-  return { v: 1, kind, title: 'Mock', canvas: { w: 1440 }, notes: ['Mock plan.', ...cost, ...rework].join(' '), sections };
+  return { v: 1, kind, title: 'Mock', canvas: kindCanvas(kind), notes: ['Mock plan.', ...cost, ...rework].join(' '), sections };
 }
 
-/** The lead's `round.json`: the default touches the first section that stays, with brief `Mock touch`. */
-function leadRound(text, plan) {
+/** The lead's `round.json`: the default touches the first section that stays, with brief `Mock touch`. An add is
+ *  shaped for the `kind` of the round's `Kind:` line (a video add needs its `duration`). */
+function leadRound(text, plan, kind) {
   if (has(text, 'MOCK_BAD_ROUND')) return { v: 1, summary: '', touch: [], add: [], remove: [] };
   const ids = Array.isArray(plan?.sections) ? plan.sections.map((s) => s?.id).filter((id) => typeof id === 'string') : [];
   const remove = [...text.matchAll(ROUND_REMOVE_RE)].map((m) => m[1]);
   const cost = costTokens(text);
   const add = [...text.matchAll(ROUND_ADD_RE)].map(([, id, after]) => {
     const job = capitalise(id);
-    return { id, job, brief: [`Mock ${job} section.`, ...cost].join(' '), parts: ['html', 'css'], estHeight: 600, after };
+    return { id, job, brief: [`Mock ${job} section.`, ...cost].join(' '), ...kindFields(kind), after };
   });
   const touched = ids.find((id) => !remove.includes(id));
   return { v: 1, summary: 'Mock round', touch: touched ? [{ id: touched, brief: 'Mock touch' }] : [], add, remove };
@@ -396,11 +421,12 @@ async function runLead({ cwd, prompt, sessionId, session, emit, signal }) {
     reply = 'Asked a question.';
   } else if (memo.change) {
     const plan = await readJson(planPath);
-    await proc.write(memo.roundFile ?? resolve(cwd, 'round.json'), `${JSON.stringify(leadRound(text, plan), null, 2)}\n`);
+    await proc.write(memo.roundFile ?? resolve(cwd, 'round.json'), `${JSON.stringify(leadRound(text, plan, memo.kind), null, 2)}\n`);
     reply = 'Planned the change round.';
   } else {
     const plan = leadPlan(text, memo.kind);
-    const slots = has(text, 'MOCK_SHELL_SLOTS') ? plan.sections.map((s) => s.id) : [];
+    // A deck or a video has no shell slots (L7.4): worca wraps its sections in the stage.
+    const slots = has(text, 'MOCK_SHELL_SLOTS') && !isBoardKind(memo.kind) ? plan.sections.map((s) => s.id) : [];
     await proc.write(resolve(cwd, 'tokens.css'), TOKENS_CSS);
     await proc.write(resolve(cwd, 'global.css'), GLOBAL_CSS);
     await proc.write(resolve(cwd, 'shell.html'), shellHtml(slots));
@@ -419,6 +445,7 @@ async function runBuilder({ cwd, prompt, sessionId, session, emit, signal }) {
   const section = Array.isArray(plan?.sections) ? plan.sections.find((s) => s?.id === id) : null;
   const brief = typeof section?.brief === 'string' ? section.brief : '';
   const job = typeof section?.job === 'string' && section.job ? section.job : capitalise(id);
+  const kind = typeof plan?.kind === 'string' ? plan.kind : 'web';
   const named = linePath(prompt, 'Question file', cwd);
   if (named) { session.role = 'design-builder'; session.memo = { questionFile: named }; }
   const questionFile = named ?? (session.role === 'design-builder' ? session.memo?.questionFile ?? null : null);
@@ -429,7 +456,7 @@ async function runBuilder({ cwd, prompt, sessionId, session, emit, signal }) {
   if (has(brief, 'MOCK_RATE_LIMIT') && firstTime(cwd, 'MOCK_RATE_LIMIT')) throw limitError('rate_limit');
   if (has(brief, 'MOCK_USAGE_LIMIT') && firstTime(cwd, 'MOCK_USAGE_LIMIT')) throw limitError('usage_limit');
   const index = resolve(cwd, 'index.html');
-  const html = sectionHtml(id, job);
+  const html = sectionHtml(id, job, kind);
   let reply;
   if (questionFile && (has(brief, 'MOCK_ASK_ALWAYS') || (has(brief, 'MOCK_ASK') && firstTime(cwd, 'MOCK_ASK')))) {
     await proc.write(questionFile, JSON.stringify(QUESTIONS));
@@ -444,6 +471,7 @@ async function runBuilder({ cwd, prompt, sessionId, session, emit, signal }) {
     if (has(brief, 'MOCK_TOOL_ERROR')) await proc.refusedWrite(index, html);
     await proc.write(index, html);
     await proc.write(resolve(cwd, 'style.css'), sectionCss(id));
+    if (isFilmKind(kind) && Array.isArray(section?.parts) && section.parts.includes('js')) await proc.write(resolve(cwd, 'script.js'), SCENE_JS);
     reply = `Built ${id}.`;
   }
   await proc.say(reply);

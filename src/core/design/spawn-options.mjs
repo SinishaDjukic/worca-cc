@@ -28,19 +28,21 @@ function mockRole(role, stage) {
 }
 
 /**
- * The runClaude options for one Design process. Throws for an engine other than claude, for an unknown
+ * The runClaude options for one Design process; `ctx.kind` is the design's kind (default `web`). Throws for an engine
+ * other than claude, for an unknown
  * role and stage, for a bad design or section id, and (through `resolveModelEnv`, `errorClass:'auth'`) for a
  * bridged model whose provider is not ready.
  */
 export function designSpawnOptions(ctx) {
-  const { role, stage, engine = 'claude', agentId, buildId, designId, sectionId, projectDir, prompt, model, effort,
+  const { role, stage, engine = 'claude', kind, agentId, buildId, designId, sectionId, projectDir, prompt, model, effort,
     resumeSessionId, maxBudgetUsd, denyRules, signal, onEvent, mock } = ctx;
   if (engine !== 'claude') throw new Error(`design: engine ${engine} is not supported yet`);
   const maxTurns = DESIGN_MAX_TURNS[`${role}:${stage}`];
   if (!maxTurns) throw new Error(`design: no agent runs as ${role}:${stage}`);
   const builder = role === 'builder';
   const work = designWorkDir(designId);
-  const system = builder ? builderSystemPrompt() : leadSystemPrompt();
+  // The design's kind (`web` when absent) picks the system prompt: a deck or a video swaps P2's bands for its own block.
+  const system = builder ? builderSystemPrompt({ kind }) : leadSystemPrompt({ kind });
   return {
     engine: 'claude',
     cwd: builder ? sectionDir(designId, sectionId) : work,

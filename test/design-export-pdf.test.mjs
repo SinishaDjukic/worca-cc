@@ -18,7 +18,8 @@ const DECK = { v: 1, kind: 'pitch', title: 'T', canvas: { w: 1920, h: 1080 }, no
 function deck() {
   const d = createDesign({ kind: 'pitch', title: 'Seed deck' }, { by: 'local' }); const w = designWorkDir(d.id);
   const put = (rel, t) => { mkdirSync(dirname(join(w, rel)), { recursive: true }); writeFileSync(join(w, rel), t); };
-  put('plan.json', JSON.stringify(DECK)); put('shell.html', '<!doctype html><html><head><!--worca:head--></head><body><deck-stage><!--worca:sections--></deck-stage><!--worca:foot--></body></html>');
+  put('plan.json', JSON.stringify(DECK)); put('shell.html', '<!doctype html><html><head><!--worca:head--></head><body><!--worca:sections--><!--worca:foot--></body></html>');
+  for (const name of ['deck-stage.js', 'deck-pipeline.js', 'deck-enhance.js']) put(`.kit/${name}`, '');
   put('sections/s1/index.html', '<section data-section="s1">1</section>'); put('sections/s1/script.js', 'MODELJS()');
   put('sections/s2/index.html', '<section data-section="s2">2</section>'); put('sections/s3/index.html', '<section data-section="s3" data-deck-skip>3</section>');
   return { d: updateDesign(d.id, { status: 'done' }), w };

@@ -64,18 +64,20 @@ export function renderCsp({ nonce = null } = {}) {
  * 2. Right after a leading doctype (`LEADING_DOCTYPE`), or at byte 0: `<meta charset="utf-8">` (the kit can push the
  *    shell's own charset past the 1024-byte sniff window), the CSP meta, and with `kitScript` the kit as one nonced
  *    script. Never at the first `<head>` (L6.2): a shell comment holding `<head>` would swallow it and leave no CSP.
+ *    With `extraCss`, a `<style>` holding it comes right after the CSP meta (`style-src` keeps `'unsafe-inline'`).
  * @param {string} html
- * @param {{ nonce?: string | null, kitScript?: string | null }} [opts] `kitScript` (worca's own kit, never model text)
- *   needs `nonce`
+ * @param {{ nonce?: string | null, kitScript?: string | null, extraCss?: string }} [opts] `kitScript` (worca's own
+ *   kit, never model text) needs `nonce`; `extraCss` is worca's own style too (`thumbStillCss`), never model text
  * @returns {string}
  * @throws {RangeError} from `stripBuildDoc`, when the doc nests elements too deep
  * @throws {TypeError} when `nonce` is not base64, or `kitScript` comes without a nonce
  */
-export function staticDoc(html, { nonce = null, kitScript = null } = {}) {
+export function staticDoc(html, { nonce = null, kitScript = null, extraCss = '' } = {}) {
   if (kitScript !== null && nonce === null) throw new TypeError('staticDoc: a kit script needs a nonce');
   const csp = renderCsp({ nonce });
   const doc = escapeActive(stripBuildDoc(html, { dropLinks: true })).replace(LINK_OPEN, () => '&lt;');
   const head = `<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}">`
+    + (extraCss ? `<style>${extraCss}</style>` : '')
     + (kitScript === null ? '' : `<script nonce="${nonce}">${safeInlineScript(kitScript)}</script>`);
   const at = LEADING_DOCTYPE.exec(doc)?.[0].length ?? 0;
   return doc.slice(0, at) + head + doc.slice(at);

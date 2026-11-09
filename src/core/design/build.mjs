@@ -29,6 +29,8 @@ import { createAgentMeter, isListPriced, processBudgetUsd, readDesignCaps } from
 import { classifyDraftPath, countLayers, createDraftStore } from './draft.mjs';
 import { createFrameEmitter } from './frames.mjs';
 import { boundedParser, scanShellSlots } from './html-scan.mjs';
+import { isBoardKind } from './kinds.mjs';
+import { stageDesignKit } from './kit.mjs';
 import { asksDir, crewFile, designWorkDir, ensureDesignFolders, kitDir, sectionDir } from './paths.mjs';
 import { validateIntegration, validatePlan, validateRound } from './plan.mjs';
 import {
@@ -87,10 +89,16 @@ function capError(text) {
   return t.slice(0, c >= 0xd800 && c <= 0xdbff ? ERROR_MAX - 1 : ERROR_MAX);
 }
 
-/** The section record of a plan section (C-5 `design-plan.sections`, `snapshot().sections`); `band` only when given. */
+/** The section record of a plan section (C-5 `design-plan.sections`, `snapshot().sections`). `estHeight` only when the
+ *  plan has it (a web page), `band` only when given, `duration` only on a video: frames copy keys as they are, so an
+ *  absent field must be an absent key. */
 function sectionRecord(s) {
-  const rec = { id: s.id, job: s.job, status: 'planned', estHeight: s.estHeight, parts: [...s.parts], agentId: null, summary: '' };
+  const rec = {
+    id: s.id, job: s.job, status: 'planned', ...(s.estHeight !== undefined ? { estHeight: s.estHeight } : {}),
+    parts: [...s.parts], agentId: null, summary: '',
+  };
   if (s.band !== undefined) rec.band = s.band;
+  if (s.duration !== undefined) rec.duration = s.duration;
   return rec;
 }
 
@@ -261,6 +269,7 @@ function withDefaults(deps = {}) {
     teamTotalGate: checkTeamTotalGate,
     readCaps: readDesignCaps,
     isListPriced,
+    stageKit: stageDesignKit,
     mock: undefined,
   };
   for (const [k, v] of Object.entries(deps || {})) if (v !== undefined) out[k] = v;
@@ -630,7 +639,8 @@ export class DesignBuild extends EventEmitter {
    * on its own end state after any stage. `fresh` is `run()`'s first drive: a stale `integration.json` from an
    * earlier round is removed. `selection` (a Continue's section ids) limits the builder stage; the verdicts still
    * judge every section. A halt or a throw from the integrate pass through its rework cycle removes integration.json,
-   * so a Continue integrates again rather than losing the `rework` list. worca's per-run cap is read once, here.
+   * so a Continue integrates again rather than losing the `rework` list. worca's per-run cap is read once, here, and a
+   * deck's or a video's kit is staged on every drive.
    * A change round sends `design-plan` right after its first `design-build` (carried statuses, the selection
    * `planned`); its lead stage is the `change` stage (`_leadStageDue`), a stale round.json goes at `run()`, and its
    * builder stage and verdicts take only the sections with a `todo`. A lead stage that applied a round lifts the
@@ -640,6 +650,10 @@ export class DesignBuild extends EventEmitter {
     this._emitBuild();
     if (fresh && this.kind === 'change') this._planFrame();
     ensureDesignFolders(this.designId);
+    // L7.12: a deck or a video inlines its runtime from work/.kit/, so every drive stages it, a Continue too: a round
+    // whose staging threw, or one paused before P7, has no kit, and its end would fail every time (a web page keeps
+    // P5's chat staging alone). A throw is the round's `engine-error` through `_guarded`.
+    if (isBoardKind(this._design.kind)) await this._deps.stageKit({ kind: this._design.kind, workDir: designWorkDir(this.designId) });
     if (fresh) {
       this._dropIntegration();
       if (this.kind === 'change') this._dropRound();
@@ -878,6 +892,8 @@ export class DesignBuild extends EventEmitter {
         sectionDir: agent.cwd,
         questionFile: this._questionFile(agent),
         pinBlock: this._start.named?.includes(section.id) ? this._start.pinBlock : '',
+        kind: this._design.kind,
+        plan: this._plan,
       });
     }
     return builderPrompt({
@@ -889,6 +905,8 @@ export class DesignBuild extends EventEmitter {
       crewJson: crewFile(this.designId),
       questionFile: this._questionFile(agent),
       kitContract: this._kitContract(),
+      kind: this._design.kind,
+      plan: this._plan,
     });
   }
 
@@ -1527,6 +1545,7 @@ export class DesignBuild extends EventEmitter {
       role: agent.role,
       stage,
       engine: 'claude',
+      kind: this._design.kind,
       agentId: agent.id,
       buildId: this.id,
       designId: this.designId,

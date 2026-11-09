@@ -232,7 +232,8 @@ test('deterministic; BOM stripped; another kind assembles by the same rules', ()
   const work = world();
   assert.equal(assembleDesign({ workDir: work, plan: PLAN, mode: 'run' }).html, assembleDesign({ workDir: work, plan: PLAN, mode: 'run' }).html);
   assert.equal(assembleDesign({ workDir: world({ ...BASE, 'sections/hero/index.html': '\uFEFF<section data-section="hero">x</section>' }), plan: PLAN, mode: 'run' }).html.includes('\uFEFF'), false);
-  assert.equal(assembleDesign({ workDir: world(), plan: { ...PLAN, kind: 'pitch', canvas: { w: 1920, h: 1080 } }, mode: 'run' }).sections[0].state, 'included');
+  const kit = { '.kit/deck-stage.js': '', '.kit/deck-pipeline.js': '', '.kit/deck-enhance.js': '' };
+  assert.equal(assembleDesign({ workDir: world({ ...BASE, ...kit }), plan: { ...PLAN, kind: 'pitch', canvas: { w: 1920, h: 1080 } }, mode: 'run' }).sections[0].state, 'included');
 });
 
 test('spans come from the markup: a close tag with a space before its > shifts nothing, and EOF ends an open element', () => {

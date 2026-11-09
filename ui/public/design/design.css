@@ -185,6 +185,58 @@ body.view-design .main{display:flex;flex-direction:column;overflow:hidden;paddin
 .dz-slotline{position:absolute;left:0;width:100%;height:calc(1px * var(--k));background:var(--stage-slotline);}
 .dz-wire{position:absolute;box-sizing:border-box;background:var(--stage-wire);border:calc(1.2px * var(--k)) solid var(--stage-blue);--mc:var(--stage-blue);}
 .dz-wire.is-main{border-width:calc(2px * var(--k));}
+/* A deck's or a video's board (engine.js _renderTiles): each tile's edge, dashed until it starts, and its "N job" chip
+   lifted inside the tile's bottom left. A video's HUD, tip and popover sit above its 128px timeline. A fitted run doc
+   is ringed and rounded */
+.dz-tile-edge{position:absolute;box-sizing:border-box;border:1px solid var(--stage-tile-line);border-radius:var(--r-md);pointer-events:none;}
+.dz-tile-edge.is-planned{border:1px dashed var(--stage-tile-dash);}
+.dz-tile-chip{position:absolute;height:17px;padding:0 5px;border-radius:var(--r-xs);background:var(--stage-tag-bg);color:var(--stage-tag-ink);font:500 11px/17px var(--sans);white-space:nowrap;transform:translate(6px,-23px);pointer-events:none;}
+.dz-tile-chip.is-done{color:var(--stage-handle);}
+.dz-wrap.is-film .dz-hud{bottom:140px;}
+.dz-wrap.is-film .dz-tip{bottom:192px;}
+.dz-wrap.is-film .dz-pop{bottom:194px;max-height:calc(100% - 216px);}
+.frame-box.is-fitted{border-radius:var(--r-md);box-shadow:0 0 0 1px var(--stage-tile-line);}
+.frame-box.is-fitted .dz-frame{border-radius:var(--r-md);}
+/* A finished deck's rail (engine.js _renderDeck): one frame of thumbnails that takes no pointer events, the parent's
+   numbered buttons over it; the slide in view is ringed blue, a failed one red. Its focus ring is the stage's white */
+.dz-rail{position:absolute;left:0;top:0;bottom:0;width:148px;overflow-y:auto;scrollbar-width:thin;background:var(--stage-rail);border-right:1px solid var(--stage-edge);}
+.dz-rail-scroll{position:relative;}
+.dz-rail-frame-host{position:absolute;border-radius:var(--r-xs);overflow:hidden;}
+.dz-rail-frame-host iframe{display:block;width:100%;height:100%;border:0;pointer-events:none;}
+.dz-rail-tile{position:absolute;padding:0;border:0;border-radius:var(--r-xs);background:none;cursor:pointer;}
+.dz-rail-tile:disabled{cursor:default;}
+.dz-rail-tile[aria-current="true"]{outline:2px solid var(--stage-blue);outline-offset:0;}
+.dz-rail-tile.is-failed{outline:2px solid var(--stage-red);outline-offset:0;}
+.dz-rail-tile:focus-visible{outline:2px solid var(--stage-handle);outline-offset:2px;}
+.dz-rail-num{position:absolute;right:calc(100% + 7px);top:50%;transform:translateY(-50%);color:color-mix(in srgb,var(--stage-handle) 50%,transparent);font:500 11px/1 var(--sans);}
+.dz-rail-tile[aria-current="true"] .dz-rail-num{color:var(--stage-handle);}
+/* A video's timeline (engine.js _renderTimeline): one block per scene from the plan's durations, dashed with a plus
+   until it starts, tinted with its crew while it builds. Over the run doc it is a slider with a playhead, and the
+   transport sits above it at the left */
+.dz-film-timeline{position:absolute;left:0;right:0;bottom:0;height:128px;color-scheme:dark;background:var(--stage-rail);box-shadow:inset 0 1px 0 var(--stage-edge);touch-action:none;}
+.dz-film-timeline[role="slider"]{cursor:pointer;}
+.dz-tl-ticks{position:absolute;left:16px;right:16px;top:0;height:34px;}
+.dz-tl-tick{position:absolute;top:22px;width:1px;height:4px;background:var(--stage-tile-dash);}
+.dz-tl-tick.has-label{height:8px;}
+.dz-tl-tick span{position:absolute;left:4px;top:-12.5px;color:var(--stage-tick-ink);font:400 11px/1 var(--mono);}
+.dz-tl-lane{position:absolute;left:16px;right:16px;top:34px;height:66px;}
+.dz-tl-block{position:absolute;top:0;bottom:0;box-sizing:border-box;border-radius:var(--r-xs);background:color-mix(in srgb,var(--stage-handle) 6%,transparent);overflow:hidden;}
+.dz-tl-block.is-planned{background:none;outline:1px dashed color-mix(in srgb,var(--stage-handle) 22%,transparent);outline-offset:-1px;}
+.dz-tl-block.is-writing{background:color-mix(in srgb,var(--dz-crew,var(--stage-mark)) 30%,transparent);box-shadow:inset 0 3px 0 var(--dz-crew,var(--stage-mark));}
+.dz-tl-block.is-done{background:color-mix(in srgb,var(--dz-crew,var(--stage-handle)) 14%,transparent);box-shadow:inset 0 3px 0 var(--dz-crew,transparent);}
+.dz-tl-block.is-failed{outline:2px solid var(--stage-red);outline-offset:-1px;}
+.dz-tl-block.is-selected{outline:2px solid var(--stage-blue);outline-offset:-1px;}
+.dz-tl-plus{position:absolute;left:50%;top:33px;width:9px;height:9px;transform:translate(-50%,-50%);}
+.dz-tl-plus::before,.dz-tl-plus::after{content:"";position:absolute;background:var(--stage-tick-ink);}
+.dz-tl-plus::before{left:4px;top:0;width:1px;height:9px;}
+.dz-tl-plus::after{left:0;top:4px;width:9px;height:1px;}
+.dz-tl-name{position:absolute;left:4px;top:6px;height:17px;padding:0 5px;border-radius:var(--r-xs);background:var(--stage-tag-bg);color:var(--stage-tag-ink);font:500 11px/17px var(--sans);white-space:nowrap;}
+.dz-tl-block.is-done .dz-tl-name{color:var(--stage-handle);}
+.dz-tl-head{position:absolute;top:-18px;bottom:-20px;width:2px;margin-left:-1px;background:var(--stage-handle);pointer-events:none;}
+.dz-tl-head::before{content:"";position:absolute;left:-4px;top:-4px;width:0;height:0;border-style:solid;border-width:7px 5px 0;border-color:var(--stage-handle) transparent transparent;}
+.dz-transport{position:absolute;left:16px;bottom:140px;z-index:4;display:flex;align-items:center;gap:8px;height:36px;padding:0 10px 0 4px;color-scheme:dark;border:1px solid var(--glass-line);border-radius:var(--r-md);background:var(--panel-veil);color:var(--ink);font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}
+.dz-transport .btn svg{width:14px;height:14px;}
+.dz-transport b{font-weight:500;}
 .dz-lost,.dz-empty{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color-scheme:dark;color:var(--ink-2);font-size:var(--fs-body);}
 /* The Library (board 1, canvas design.css:138-160): just the items. It scrolls, its padding is the inner column's,
    and the grid reflows below the mockup's 1240. The body is a flex column, so its [hidden] needs its own rule */

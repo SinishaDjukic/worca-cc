@@ -6,17 +6,25 @@
 
 import {
   KIND_STAGE, LIVE_BUILD, initialStage, reduceFrame, reduceBridge, reduceUser, cameraStep, selectLayout, selectCursors,
-  placeCursors, selectMarks, pruneGuides, selectHud, selectAgentRows, selectPlanRows,
+  placeCursors, selectMarks, pruneGuides, selectHud, selectAgentRows, selectPlanRows, selectKindChrome, crewOf,
 } from './stage-model.mjs';
 import { createFrameHost } from './frame-host.mjs';
+import { createKindChrome } from './kind-chrome.mjs';
+import { BOARD_CANVAS } from './kind-view.mjs';
 import { createReveal } from './reveal.mjs';
 import { createOverlay } from './overlay.mjs';
 import { createHud } from './hud.mjs';
 import { createAgentsPanel, createDotTip } from './agents-panel.mjs';
 import { icon } from '../icons.mjs';
 
-// L4.9: the desktop page width before a plan names its canvas.
+// L4.9: the desktop page width before a plan names its canvas. A deck or a video is always 1920×1080 (a video at 60
+// fps), so its first `hello` has a height too.
 const CANVAS_FALLBACK = Object.freeze({ w: 1280 });
+const FILM_FPS = 60;
+const canvasFallback = (kind) => {
+  if (!KIND_STAGE[kind]?.board) return CANVAS_FALLBACK;
+  return kind === 'video' ? { ...BOARD_CANVAS, fps: FILM_FPS } : { ...BOARD_CANVAS };
+};
 // Under reduced motion the stage paints at 2 Hz, as the mock does.
 const REDUCED_PAINT_MS = 500;
 const REDUCED_QUERY = '(prefers-reduced-motion: reduce)';
@@ -101,7 +109,8 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
   const wallNow = () => (win.performance.timeOrigin || 0) + win.performance.now();
   const base = `/api/design/${enc(designId)}`;
 
-  let state = initialStage({ designId, kind, canvas: CANVAS_FALLBACK, reduced });
+  const board = KIND_STAGE[kind]?.board === true;
+  let state = initialStage({ designId, kind, canvas: canvasFallback(kind), reduced });
   let destroyed = false;
   let opened = false;
   let version = Number.isFinite(design.version) ? design.version : 0;
@@ -147,8 +156,10 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
   const exportSlot = make('div', 'dz-menu-anchor');
   head.append(exportSlot);
 
-  // The well. The frames get their own first child of `.frame-box`, so every new iframe stays under the overlay.
+  // The well. The frames get their own first child of `.frame-box`, so every new iframe stays under the overlay. A
+  // video's well raises the HUD, its tip and the Agents popover above the timeline.
   const wrap = make('div', 'dz-wrap');
+  if (kind === 'video') wrap.classList.add('is-film');
   const frameBox = make('div', 'frame-box');
   const frameMount = make('div');
   frameBox.append(frameMount);
@@ -211,6 +222,40 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
   });
 
   const overlay = createOverlay({ doc, win, host: frameBox, reduced: () => reduced, onCursor: (id) => showAgent(id) });
+
+  /**
+   * A finished deck's rail thumbnails (L7.6): a second frame host on the build doc in `mount`, laid out by the rail's
+   * own `board`. None of its messages reach the model; its `ready` gets the build doc's `hello`, then `onReady`.
+   * @param {HTMLElement} mount
+   * @param {{onReady: () => void}} o
+   * @returns {{post: (t: string, fields?: object) => boolean, destroy: () => void}}
+   */
+  function openRailFrame(mount, { onReady }) {
+    const rail = createFrameHost({
+      doc, win, mount, mint, now: wallNow,
+      onMessage: (m) => {
+        if (m.t !== 'ready') return;
+        rail.send('hello', { mode: 'build', kind, canvas: { ...BOARD_CANVAS } });
+        onReady();
+      },
+      onSwap() {},
+      onLost() {},
+    });
+    rail.load('build').catch(() => {});
+    return { post: rail.send, destroy: rail.destroy };
+  }
+
+  // A deck or a video (L7.23): the board message the build doc lays its tiles out by, and a finished deck's rail. An
+  // agent's colour is its crew token; one with no record (opened from detail frames) has none, and the CSS falls back.
+  const chrome = board ? createKindChrome({
+    doc, wrap, kind,
+    post: (t, f) => frame.send(t, f),
+    openRailFrame,
+    colorOf: (agentId) => {
+      const a = typeof agentId === 'string' && Object.hasOwn(state.agents, agentId) ? state.agents[agentId] : null;
+      return a ? `var(${crewOf(a)})` : null;
+    },
+  }) : null;
   const tip = createDotTip({ doc, host: wrap });
   const panel = createAgentsPanel({
     doc, host: wrap,
@@ -262,6 +307,8 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
     // shows the build doc.
     if (LIVE_BUILD.includes(state.status) && lastLoad === 'run') loadDoc('build');
     if (changed || effects.length) schedulePaint();
+    // At once, so a live status reaches the chrome before the next input; it compares before it posts or rebuilds.
+    chrome?.update(selectKindChrome(state));
   }
 
   function runEffect(e) {
@@ -324,13 +371,15 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
   }
 
   // A C-6 message the frame host passed: `zoom` is the person's ctrl or meta wheel over the frame, in its viewport px.
-  // Only the build doc's bridge sends it; one from a run doc is the page's own script, and zooms nothing.
+  // Only the build doc's bridge sends it; one from a run doc is the page's own script, and zooms nothing. The chrome
+  // sees a message after the model reduced it (L7.30): only `ready`'s reducer sets `docMode`, which the chrome reads.
   function onFrameMessage(msg) {
     if (msg.t === 'zoom') {
       if (frame.mode() === 'build') dispatch(reduceUser, { type: 'zoom', dy: msg.dy, stageY: msg.y * selectLayout(state).s });
       return;
     }
     dispatch(reduceBridge, msg);
+    if (!destroyed) chrome?.onFrameMessage(msg);
   }
 
   function writeHeight(h) {
@@ -347,6 +396,7 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
     frameBox.style.setProperty('--s', String(layout.s));
     frameBox.classList.toggle('is-narrow', layout.narrow);
     frameBox.classList.toggle('is-zoomed', layout.zoomed);
+    if (board) frameBox.classList.toggle('is-fitted', layout.framed);
     writeHeight(easeH === null ? layout.viewH : Math.max(layout.viewH, easeH));
   }
 
@@ -478,7 +528,10 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
       if (rebooted && mode) loadDoc(mode, { fresh: true });
       dispatch(reduceUser, { type: 'rejoin' });
     },
-    setPick(on) { dispatch(reduceUser, { type: 'pick', on: Boolean(on) }); },
+    setPick(on) {
+      if (on) chrome?.pause();
+      dispatch(reduceUser, { type: 'pick', on: Boolean(on) });
+    },
     loadRunDoc() { loadDoc('run'); },
     unpin(id, path) { dispatch(reduceUser, { type: 'unpin', id, path }); },
     resume,
@@ -497,6 +550,7 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
       if (ro) ro.disconnect();
       else win.removeEventListener('resize', measure);
       frame.destroy();
+      chrome?.destroy();
       reveal.destroy();
       overlay.destroy();
       hud.destroy();

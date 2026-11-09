@@ -53,6 +53,19 @@ It can change in the middle of a build. The new number applies to the next agent
 running agent. On one machine at most 24 agents run at once across all builds. `WORCA_DESIGN_MAX_BUILDERS` (a whole
 number from 1 to 24) sets the number for every build, whatever the switch says.
 
+## Decks and video
+
+**Presentation and Pitch deck.** One section is one slide, 1920 by 1080. While a round builds, every slide is a
+tile on the stage. When it finishes, the stage shows one slide with a rail of the slides: click a slide in the rail,
+or press the arrow keys inside the slide. The **Standalone HTML** export is the deck on its own: it opens offline,
+with its own slide rail, and the arrow keys, Page Up, Page Down and Space move between slides.
+
+**Video.** An HTML and JavaScript film. One section is one scene, 1920 by 1080 at 60 frames a second, and each scene
+has its own length in seconds. While a round builds, every scene is a tile, with a timeline of the scenes. When it
+finishes, the stage shows the film with play, pause and a scrub bar. The **Standalone HTML** export plays on its own,
+offline: it starts by itself unless the system asks for reduced motion, Space plays and pauses, and the arrow keys
+step one second.
+
 ## Changing it
 
 Ask for a change in the same chat: once the design has a round, the message box reads *Ask for a change*, and

@@ -29,6 +29,8 @@ const ERR_CODE_MAX = 64;
 const ZOOM_DY_MAX = 1000;
 // While a frame load waits for its doc's `loaded` report, at most this many messages wait each way.
 const HELD_MAX = 256;
+// A film's length in seconds (P7's `time`): at most 40 scenes of 600 s.
+const FILM_DUR_MAX = 24000;
 
 const isObject = (v) => typeof v === 'object' && v !== null;
 const finite = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -107,8 +109,14 @@ function readZoom(d) {
   return { dy: Math.max(-ZOOM_DY_MAX, Math.min(ZOOM_DY_MAX, d.dy)), y: d.y };
 }
 
-// One reader per C-6 frame-to-parent `t` (plus Task 16's `zoom`, and `loaded`: the doc's own window `load`). A Map,
-// so `__proto__` or `constructor` finds nothing.
+// P7's film clock: `at` (the envelope's `t` is the type) is never past the film's end.
+function readTime(d) {
+  if (!finite(d.at) || d.at < 0 || !finite(d.dur) || d.dur <= 0 || d.dur > FILM_DUR_MAX || typeof d.playing !== 'boolean') return null;
+  return { at: Math.min(d.at, d.dur), playing: d.playing, dur: d.dur };
+}
+
+// One reader per C-6 frame-to-parent `t` (plus Task 16's `zoom`, P7's `time`, and `loaded`: the doc's own window
+// `load`). A Map, so `__proto__` or `constructor` finds nothing.
 const READERS = new Map([
   ['ready', readReady],
   ['loaded', (d) => (MODES.has(d.mode) ? { mode: d.mode } : null)],
@@ -118,6 +126,7 @@ const READERS = new Map([
   ['visible', (d) => (isSectionId(d.id) ? { id: d.id } : null)],
   ['err', readErr],
   ['zoom', readZoom],
+  ['time', readTime],
 ]);
 
 /**
