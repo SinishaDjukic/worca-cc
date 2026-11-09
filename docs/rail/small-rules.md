@@ -13,7 +13,7 @@
 | `small.usage-rings` | Rings around the avatar show live usage of connected providers only, refreshed every minute; figures and money live in Usage and costs | What is drawn is what can stop a run now | worca-sweep |
 | `small.appearance` | The profile menu's Appearance opens the theme and the background, each a row of small pictures, its name in the tooltip; the menu row repeats neither | One place for how Worca looks | by hand |
 | `small.top-icons` | The top bar's own buttons are icons with their names in tooltips: Ask worca (Worca's W in a bubble), Pulse with its CountBadge | The top bar stays quiet; the search leads it | by hand |
-| `small.tooltip` | Every `title` is the library's Tooltip: quick on hover and on keyboard focus, a long-press on touch, inside the window | Help lives in tooltips, so they must be there when you look | design-system-components |
+| `small.tooltip` | Every `title` is the library's Tooltip: quick on hover and on keyboard focus, a long-press on touch, inside the window; a menu item's tip sits beside the menu, level with the item, never over the next option | Help lives in tooltips, so they must be there when you look | design-system-components |
 
 - **Names** (a page, a menu item, a section head, a settings row): the thing itself, as the people who use it call it,
   in 1–3 words, a plain noun first (`Budget`, `Labels`, `Away mode`, `Team policy`). One thing, one name: never two

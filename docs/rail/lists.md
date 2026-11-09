@@ -13,7 +13,8 @@
 | `list.ways-in` | A bar whose items can grow without end (plugins, a catalogue) lists no items: only ways in, each with its count (Updates 12, Installed 40, a shelf, a source); each opens on the page, sorted, six at a time with Show N more. Lists you work through one by one (chats, tasks, schedules) stay lists | A bar stays the same size at ten items or a thousand | by hand |
 | `list.row-one-target` | The whole row opens one target; a fact in it is text | No second links in a row | by hand |
 | `list.row-more` | A bar row's ⋯ shows on hover and on focus, stays in the tab order with a visible focus, and is simply there on a touch screen | Hover is one way in, never the only one | by hand |
-| `list.select` | Selecting works one way in every list that has it | One habit | design-system-logic |
+| `list.select` | Selecting works one way in every list that has it; a list with no bulk action has no selecting, by any way in. Only Cancel, Esc or a finished action end it: unticking the last row keeps selecting | One habit; nothing vanishes under the pointer | design-system-logic |
+| `list.select-bar` | While selecting, one bar stays in sight at the top of the list, however far it scrolls: Select all, how many are selected, Cancel, then the actions, each with how many it applies to; what asks about them (the strip) stays with it. Select all takes a list's rows, a group's row standing for its members; what hangs under a row and is not acted on in bulk has no box | How to act on several, and how to stop, is never below the fold | design-system-components |
 | `list.one-code` | A list calls the library for its sentence, selecting, keys and states; rail-gate sees its rows' markup only, the rest is by review | A list cannot drift | rail-gate |
 | `list.state-source` | A row's state and section come from runState and sectionOf on its real case | A list can never call Paused or Stopped Ready | design-system-logic |
 | `list.opens-page` | A row opens a full page; coming back restores the sentence, the scroll and the selection | One way to move | worca-sweep |
@@ -38,13 +39,13 @@ section shows its newest rows, then one quiet row, `Show 21 more`, opens the res
 filter button; grouping is one more word in it (`by [day ▾]`), each choice in its menu with its count. Every
 list (Runs, Chats, Pulse's Now and Updates, Schedules) uses this one sentence, so a list is narrowed the same way everywhere. Selecting is only for a list whose rows a person can act on together (Runs, Chats, Pulse's Updates); a list of states that leave by themselves (Pulse's Now) has the sentence and no selection. Selecting works the same in every list that has it. You start it from the list's menu
 (`Select`), with ⌘ or Ctrl-click, with Shift-click for a range, with Space or ⌘A, or with a long-press on touch.
-`Select all` joins the head and the sentence stays. The selection bar (`.runs-bulk`) sits at the list's foot:
-`2 selected · Archive 2 · Cancel`. Each action shows how many rows it applies to and is disabled at 0. Cancel or Esc
-ends selecting. An action that can be taken back does not confirm and offers Undo in its Toast; one that cannot confirms in the strip.
+The sentence stays. The selection bar (`.runs-bulk`, `list.select-bar`) sits under it and sticks to the top of the list while it scrolls:
+`Select all · 2 selected · Cancel`, then `Archive 2 · Delete 2`. Each action shows how many rows it applies to and is disabled at 0, its tooltip saying why, so
+what cannot apply to this selection cannot be pressed. Cancel or Esc ends selecting, wherever the focus is, and so does an action once it has finished; its Toast says how many it acted on. An action that can be taken back does not confirm and offers Undo in its Toast; one that cannot confirms in the strip.
 A list that has selecting calls the library: `selectionAction` and `selectApply` (`selection.mjs`) for what a click, a
 long-press or a key means, `selectionBar`, `selectAllBox` and `bindLongPress` (`selection-bar.mjs`) for its parts. On
 touch a list shows its marks by default, since state comes first; the tick boxes take the mark's place only while selecting, started by a
-long-press or `Select`, and while selecting a tap on a row ticks it instead of opening it. Unticking the last row ends selecting. The keys are in [keyboard.md](keyboard.md).
+long-press or `Select`, and while selecting a tap on a row ticks it instead of opening it. Unticking the last row keeps selecting, at `0 selected`. The keys are in [keyboard.md](keyboard.md).
 Empty is EmptyState's one sentence and, when there is one, the way forward as its one quiet action (`No schedules
 yet.` · New schedule).
 

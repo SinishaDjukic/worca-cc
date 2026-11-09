@@ -896,9 +896,14 @@ button.lr-main:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .lr-rounds > .list-rows{margin-left:0;grid-template-columns:0 minmax(0,1fr) fit-content(45%);column-gap:0;}
 .lr-rounds .lr-t{font-size:var(--fs-meta);color:var(--ink-2);}
 .lr-rounds > .btn{margin-left:calc(-1 * var(--btn-inset,8px));}
-/* The selection bar at the list's foot; the list's editor, under what opened it. */
-.list-foot{position:sticky;bottom:0;z-index:4;margin-top:12px;}
-.list-foot .runs-bulk{background:var(--bg);}
+/* The selection bar at the top of the list, in sight while it scrolls (list.select-bar); the list's editor, under what opened it. */
+.list-select{position:sticky;top:0;z-index:4;margin:0 0 8px;background:var(--bg);}
+.list-select .runs-bulk{position:static;display:block;padding:6px 0;border-top:0;border-bottom:1px solid var(--line);background:transparent;}
+.runs-bulk-top{display:flex;align-items:center;gap:12px;min-height:28px;}
+.runs-bulk-top .runs-bulk-n{margin:0 auto 0 0;font-size:var(--fs-meta);}
+.runs-bulk-acts{display:flex;flex-wrap:wrap;gap:4px 6px;margin-top:6px;}
+.bar-list .list-select{background:var(--side-bg);}
+:is(.bar-list,.pz-popover .panel-body):has(.list-select){--fade-t:0px!important;}   /* the fade must not eat the bar */
 .list-pop{position:fixed;z-index:46;}
 .list-pop .menu{max-height:min(420px,70vh);overflow-y:auto;}
 .list-pop .rc-list-ed{max-width:calc(100vw - 32px);}
@@ -1248,11 +1253,11 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .chat-home-bg{position:absolute;inset:0;pointer-events:none;}
 .chat-home-in{position:relative;width:100%;max-width:680px;padding-left:32px;box-sizing:border-box;}   /* the column, on the cards' rail: the input and its words on the cards' text edge */
 .chat-home h1{margin:0 0 14px;font:600 var(--fs-page)/1.2 var(--sans);letter-spacing:-.02em;color:var(--ink);}
-[data-bg="dots"] .chat-home-bg:not([class*=" is-"]),.chat-home-bg.is-dots{background-image:radial-gradient(light-dark(#D4D4DA,#35353B) 1px,transparent 1.2px);background-size:18px 18px;-webkit-mask-image:linear-gradient(to bottom,#000,transparent 92%);mask-image:linear-gradient(to bottom,#000,transparent 92%);}   /* ds-ok: a background's own colours, on Chat home only */
+[data-bg="dots"] .chat-home-bg:not([class*=" is-"]),.chat-home-bg.is-dots{background-image:radial-gradient(light-dark(#ABABB6,#35353B) 1px,transparent 1.2px);background-size:18px 18px;-webkit-mask-image:linear-gradient(to bottom,#000,transparent 92%);mask-image:linear-gradient(to bottom,#000,transparent 92%);}   /* ds-ok: a background's own colours, on Chat home only */
 [data-bg="aurora-dots"] .chat-home-bg:not([class*=" is-"]),[data-bg="dusk-dots"] .chat-home-bg:not([class*=" is-"]),.chat-home-bg.is-aurora-dots,.chat-home-bg.is-dusk-dots{-webkit-mask-size:18px 18px;mask-size:18px 18px;-webkit-mask-image:radial-gradient(#000 1.1px,transparent 1.4px);mask-image:radial-gradient(#000 1.1px,transparent 1.4px);}   /* ds-ok: a background's own colours, on Chat home only */
-[data-bg="aurora-dots"] .chat-home-bg:not([class*=" is-"]),.chat-home-bg.is-aurora-dots{background:radial-gradient(70% 70% at 15% 0%,light-dark(#6E93E8,#5C86E0) 0%,transparent 100%),radial-gradient(60% 70% at 100% 10%,light-dark(#4FBF9C,#46B592) 0%,transparent 100%),linear-gradient(light-dark(#D4D4DA,#35353B),light-dark(#E2E2E6,#26262B));}   /* ds-ok: a background's own colours, on Chat home only */
-[data-bg="dusk-dots"] .chat-home-bg:not([class*=" is-"]),.chat-home-bg.is-dusk-dots{background:radial-gradient(90% 70% at 50% 105%,light-dark(#E5944F,#E08A3F) 0%,transparent 100%),linear-gradient(light-dark(#D4D4DA,#35353B),light-dark(#D4D4DA,#35353B));}   /* ds-ok: a background's own colours, on Chat home only */
-[data-bg="mist"] .chat-home-bg:not([class*=" is-"]),.chat-home-bg.is-mist{background:radial-gradient(light-dark(#D4D4DA,#35353B) 1px,transparent 1.2px) 0 0/18px 18px,radial-gradient(70% 60% at 15% 0%,light-dark(#EDF2FD,#141C30) 0%,transparent 100%),radial-gradient(60% 60% at 100% 100%,light-dark(#FBF4EA,#211A10) 0%,transparent 100%);}   /* ds-ok: a background's own colours, on Chat home only */
+[data-bg="aurora-dots"] .chat-home-bg:not([class*=" is-"]),.chat-home-bg.is-aurora-dots{background:radial-gradient(85% 85% at 15% 0%,light-dark(#3D6BE0,#5C86E0) 0%,transparent 100%),radial-gradient(75% 85% at 100% 10%,light-dark(#17A57B,#46B592) 0%,transparent 100%),linear-gradient(light-dark(#B4B4BE,#35353B),light-dark(#CBCBD3,#26262B));}   /* ds-ok: a background's own colours, on Chat home only */
+[data-bg="dusk-dots"] .chat-home-bg:not([class*=" is-"]),.chat-home-bg.is-dusk-dots{background:radial-gradient(110% 85% at 50% 105%,light-dark(#DB6A1E,#E08A3F) 0%,transparent 100%),linear-gradient(light-dark(#B4B4BE,#35353B),light-dark(#B4B4BE,#35353B));}   /* ds-ok: a background's own colours, on Chat home only */
+[data-bg="mist"] .chat-home-bg:not([class*=" is-"]),.chat-home-bg.is-mist{background:radial-gradient(light-dark(#C4C4CD,#35353B) 1px,transparent 1.2px) 0 0/18px 18px,radial-gradient(85% 75% at 15% 0%,light-dark(#CFDDFA,#141C30) 0%,transparent 100%),radial-gradient(75% 75% at 100% 100%,light-dark(#F7DFC0,#211A10) 0%,transparent 100%);}   /* ds-ok: a background's own colours, on Chat home only */
 @media (max-width: 760px){
   .convo-scroll{padding:16px;}.convo-dock{padding:0 12px 10px;}.convo-you{max-width:88%;}
   .timeline{display:none;}.tl-list-btn{display:inline-flex;margin-left:auto;}
@@ -1645,7 +1650,7 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
 @keyframes bg-breathe{0%,100%{opacity:.6;}50%{opacity:1;}}
 [data-bg-breathe="1"] .page-bg .chat-home-bg,[data-bg-breathe="1"] .chat-home .chat-home-bg{animation:bg-breathe 10s ease-in-out infinite;}   /* ds-ok: a slow breath, ten seconds */
 @media (prefers-reduced-motion: reduce){[data-bg-breathe="1"] .chat-home-bg{animation:none;}}
-.lvl-menu .menu-item .bg-sw{flex:none;width:22px;height:16px;margin-right:2px;border-radius:var(--r-sm);overflow:hidden;position:relative;box-shadow:0 0 0 1px var(--line);}
+.lvl-menu .menu-item .bg-sw{flex:none;width:32px;height:22px;margin-right:2px;border-radius:var(--r-sm);overflow:hidden;position:relative;box-shadow:0 0 0 1px var(--line);}
 .lvl-menu.pz-fly{min-width:220px;}
 .lvl-menu .bg-line .mi-val{color:var(--ink);}   /* the chosen background's ✓ */
 

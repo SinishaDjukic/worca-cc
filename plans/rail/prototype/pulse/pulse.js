@@ -102,7 +102,7 @@ const isAway = () => awayRow().state === 'away';
 // The sidebar's foot: the avatar. The sidebar holds places only; what keeps running is in Vitals, a new version in Updates.
 function sideFoot() {
   const rs = M.rings(C(), ui.s.warnAt);
-  return R.accountButton({ name: personName(), avatar: avatar(), chevron: svg('updown', 14, 'pz-updown'), away: isAway(), open: !!ui.acct, label: `Account and usage${isAway() ? ', away' : ''}: ${rs.map((r) => r.line).join('; ') || 'no usage reported yet'}` });
+  return R.accountButton({ name: personName(), avatar: avatar(), chevron: svg('updown', 14, 'pz-updown'), away: isAway(), open: !!ui.acct, label: `Your menu and usage${isAway() ? ', away' : ''}: ${rs.map((r) => r.line).join('; ') || 'no usage reported yet'}` });
 }
 const mini = (pct, t) => gring(pct, 'pz-mini', t);
 const pname = (p) => M.PROVIDER[p].name;
@@ -201,7 +201,7 @@ function popover() {
     { id: 'clearread', text: 'Clear read', help: 'Moves every read update to Cleared, in any view; what still waits for you stays' },
     { id: 'select', text: 'Select', help: 'Tick updates to mark read or clear several at once' }, { sep: true },
     { id: 'settings', text: 'Notification settings', help: 'Settings › Notifications: what reaches you' }], 'right')}</span>`;
-  return R.panelFrame({ label: 'Pulse', cls: `pz-popover${inCls('pop')}`, head: `${R.tabs({ cls: 'pz-ptabs', items: [{ id: 'vitals', label: 'Now', count: vitalsCount(), selected: ui.popTab === 'vitals', tip: 'What is true right now: it changes by itself and cannot be cleared' }, { id: 'updates', label: 'Updates', count: shown().length, selected: ui.popTab === 'updates', tip: `What happened: read, select and clear, like runs. The count follows the sentence below. Kept for 90 days${C().identity ? '. Read and cleared are yours; others on this sign-in keep their own' : ''}` }], hooks: (t) => ({ 'data-ptab': t.id, title: t.tip }) })}${more}`, body: ui.popTab === 'vitals' ? vitalsSections() : updatesPanel(), foot: bulkBar() });
+  return R.panelFrame({ label: 'Pulse', cls: `pz-popover${inCls('pop')}`, head: `${R.tabs({ cls: 'pz-ptabs', items: [{ id: 'vitals', label: 'Now', count: vitalsCount(), selected: ui.popTab === 'vitals', tip: 'What is true right now: it changes by itself and cannot be cleared' }, { id: 'updates', label: 'Updates', count: shown().length, selected: ui.popTab === 'updates', tip: `What happened: read, select and clear, like runs. The count follows the sentence below. Kept for 90 days${C().identity ? '. Read and cleared are yours; others on this sign-in keep their own' : ''}` }], hooks: (t) => ({ 'data-ptab': t.id, title: t.tip }) })}${more}`, body: ui.popTab === 'vitals' ? vitalsSections() : updatesPanel() });
 }
 
 // ---- the profile menu: Worca's own menu (index.html #acct-menu); its spend card is now Usage and costs, the last row ----
@@ -220,7 +220,7 @@ function acctMenu() {
   const sub = (id) => ({ 'data-sub': id, 'aria-haspopup': 'menu', 'aria-expanded': String(ui.sub === id) });
   // Top to bottom, rarest to most used, since the menu opens up from the avatar: how Worca looks and the door to
   // Settings; you today (Away, Keep awake); what the rings say, right above the avatar that wears them.
-  return R.navFlyout({ label: 'Account', cls: `acct-menu${ui.sub ? ' has-sub' : ''}${inCls('acct')}`, body: `
+  return R.navFlyout({ label: 'Your menu', cls: `acct-menu${ui.sub ? ' has-sub' : ''}${inCls('acct')}`, body: `
     ${id}<div class="msect" role="group" aria-label="Worca">${team}
       ${R.accountItem({ label: 'Interface mode', mark: svg('sliders', 16, 'mi-ic'), value: lvl[1], chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('lvl'), title: 'How much of Worca you see' } })}
       ${SHELL ? R.accountItem({ label: 'Appearance', mark: svg('contrast', 16, 'mi-ic'), chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('look'), title: 'Theme and background' } }) : `<div class="theme-sect" role="group" aria-labelledby="pz-theme-k">${svg('contrast', 16, 'mi-ic')}<span class="theme-k" id="pz-theme-k">Appearance</span><div class="theme-seg">${[['system', 'monitor'], ['light', 'sun'], ['dark', 'moon']].map(([m, ic]) => R.themeChoice({ label: cap(m), icon: svg(ic, 14, 'mi-ic'), on: appearance === m, attrs: { 'data-appearance': m } })).join('')}</div></div>`}
@@ -236,7 +236,7 @@ function acctMenu() {
   ` }) + usageFly() + lvlFly() + lookFly();
 }
 // The side menus open beside the profile menu (side-flyout.mjs 'beside'); on a narrow screen in its place, with a way back.
-const back = R.accountItem({ label: 'Account', cls: 'pz-subback', mark: svg('chevL', 14, 'mi-chev'), attrs: { 'data-sub': '', title: 'Back to the profile menu' } });
+const back = (name) => R.accountItem({ label: name, cls: 'pz-subback', mark: svg('chevL', 14, 'mi-chev'), attrs: { 'data-sub': '', title: 'Back to your menu', 'aria-label': `${name}, back to your menu` } });
 function usageFly() {
   if (ui.sub !== 'usage') return '';
   const c = C(), w = ui.s.warnAt;
@@ -250,7 +250,7 @@ function usageFly() {
     const noSession = u.note ? `<p class="pz-unote" title="${esc(u.note.tip)}">${esc(u.note.text)}</p>` : '';
     return `<div class="pz-ublock"><div class="pz-uhead"><span class="pz-uname">${esc(pr.name)}</span><span class="pz-uplan" title="${esc(`${pr.vendor} · ${u.plan}`)}">${esc(pr.vendor)} · ${esc(u.plan)}</span><span class="pz-uas" title="As fresh as the last turn that used ${esc(pr.name)}">as of ${esc(u.asOf)}</span></div>${rows}${noSession}</div>`;
   };
-  return R.navFlyout({ label: 'Usage and costs', cls: `pz-fly${inCls('sub')}`, body: `${back}
+  return R.navFlyout({ label: 'Usage and costs', cls: `pz-fly${inCls('sub')}`, body: `${back('Usage and costs')}
     <span class="nav-fly-k" title="What can stop a run, per harness: the rings around your avatar show the closest of each">Limits</span>
     <div class="pz-ublocks">${c.usage.length ? c.usage.map(block).join('') : `<p class="pz-unote">No provider connected. ${R.textLink({ label: 'Open Sign-ins', attrs: { 'data-land': 'models|GitHub Copilot|list', title: 'Opens Settings › Models › Sign-ins' } })}</p>`}</div>${spendCard(c)}
     <div class="msect" role="group">${R.accountItem({ label: 'Limit settings', mark: svg('gear', 16, 'mi-ic'), attrs: { 'data-land': 'runs|Warning line', title: 'The warning line, and what Worca does when a limit is near: Settings › Tasks › Limits' } })}</div>
@@ -280,11 +280,11 @@ function lookFly() {
   // each background on its own line: its picture, its name, what it is; then whether it breathes
   const bgs = `<span class="nav-fly-k">Background</span>${BACKGROUNDS.map(([id, t, h]) => R.accountItem({ label: t, cls: 'bg-line', mark: `<span class="bg-sw" aria-hidden="true"><span class="chat-home-bg is-${id}"></span></span>`, value: (ui.bg || 'dots') === id ? 'On' : '', attrs: { 'data-bg-pick': id, 'aria-current': (ui.bg || 'dots') === id ? 'true' : null, title: h } })).join('')}
     ${R.accountItem({ label: 'Breathing', sw: true, cls: 'sw-item', mark: svg('sparkle', 16, 'mi-ic'), attrs: { 'data-bg-breathes': '', role: 'menuitemcheckbox', 'aria-checked': String(readBreathe()), title: 'The same picture, slowly brighter and quieter; still when your system reduces motion' } })}`;
-  return R.navFlyout({ label: 'Appearance', cls: `lvl-menu pz-fly${inCls('sub')}`, body: `${back}${theme}${bgs}` });
+  return R.navFlyout({ label: 'Appearance', cls: `lvl-menu pz-fly${inCls('sub')}`, body: `${back('Appearance')}${theme}${bgs}` });
 }
 function lvlFly() {
   if (ui.sub !== 'lvl') return '';
-  return R.navFlyout({ label: 'Interface mode', cls: `lvl-menu pz-fly${inCls('sub')}`, body: `${back}<span class="nav-fly-k">Interface mode</span>${LEVELS_UI.map(([id, t, h]) => R.menuItem({ text: t, checked: R.prefs.mode() === id, help: h }, { pickAttr: null, attrs: { 'data-level': id } })).join('')}` });
+  return R.navFlyout({ label: 'Interface mode', cls: `lvl-menu pz-fly${inCls('sub')}`, body: `${back('Interface mode')}<span class="nav-fly-k pz-beside-only">Interface mode</span>${LEVELS_UI.map(([id, t, h]) => R.menuItem({ text: t, checked: R.prefs.mode() === id, help: h }, { pickAttr: null, attrs: { 'data-level': id } })).join('')}` });
 }
 
 // ---- New run: where a limit is about to be spent, the one place it warns before starting ----
@@ -355,16 +355,14 @@ function shown(show = ui.show, from = ui.from) {
 }
 function updatesPanel() {
   const list = shown();
-  // While selecting, Select all sits at the sentence's right, as in the Runs list's head
-  const all = ui.pick.on && list.length ? R.selectAllBox({ state: R.selectAllState(ui.pick, list.map((u) => u.id)) }) : '';
   const bar = `<div class="pz-bar"><span class="pz-rail"></span><span class="pz-sentence">${sentence([
     { word: 'Showing', id: 'show', text: SHOWS.find((s) => s.id === ui.show).text, items: SHOWS.map((s) => ({ ...s, checked: s.id === ui.show, hint: String(shown(s.id, ui.from).length) })), tip: 'Which updates the list shows' },
-    { word: 'from', id: 'from', text: ui.from === 'all' ? 'all groups' : groupOf(ui.from).name, items: [{ id: 'all', text: 'all groups', checked: ui.from === 'all', hint: String(shown(ui.show, 'all').length) }, { sep: true }].concat(groupsShown().map((g) => ({ id: g.id, text: g.name, checked: ui.from === g.id, hint: String(shown(ui.show, g.id).length) }))), tip: 'Which group the updates come from' }])}</span>${all}</div>`;
+    { word: 'from', id: 'from', text: ui.from === 'all' ? 'all groups' : groupOf(ui.from).name, items: [{ id: 'all', text: 'all groups', checked: ui.from === 'all', hint: String(shown(ui.show, 'all').length) }, { sep: true }].concat(groupsShown().map((g) => ({ id: g.id, text: g.name, checked: ui.from === g.id, hint: String(shown(ui.show, g.id).length) }))), tip: 'Which group the updates come from' }])}</span></div>${bulkBar()}`;
   if (!list.length) return bar + `<p class="pz-empty">${ui.show === 'unread' ? 'You are up to date.' : ui.show === 'cleared' ? 'Nothing cleared.' : 'No updates here.'}</p>`;
   const days = [...new Set(list.map((u) => u.day))];
   return bar + days.map((d) => `<section class="pz-sec"><h3 class="pz-h pz-day">${d}</h3><div class="pz-list${ui.pick.on ? ' is-selecting' : ''}">${list.filter((u) => u.day === d).map((u) => updateRow(u, true)).join('')}</div></section>`).join('');
 }
-// The selection's actions: the bar at the panel's foot, each action with how many it applies to.
+// The selection's actions: the bar at the top of the list, each action with how many it applies to.
 const shownIds = () => shown().map((u) => u.id);
 function bulkBar() {
   if (ui.popTab !== 'updates' || !ui.pick.on) return '';
@@ -373,7 +371,7 @@ function bulkBar() {
   const actions = ui.show === 'cleared' ? [{ id: 'restore', label: 'Restore', n: ups.length, tip: 'Puts them back in All; Undo in the notice' }]
     : [{ id: 'read', label: 'Mark read', n: unreadN, tip: unreadN < ups.length ? `Skips ${ups.length - unreadN} already read` : 'Marks them read; Undo in the notice', why: 'All of them are read already' },
       { id: 'clear', label: 'Clear', n: ups.length, tip: openNeeds ? `${plural(openNeeds, 'run')} still ${openNeeds === 1 ? 'waits' : 'wait'} for you in Now: clearing does not answer it` : 'Moves them to Cleared; Undo in the notice' }];
-  return R.selectionBar({ label: 'Selected updates', count: ups.length, actions });
+  return `<div class="list-select">${R.selectionBar({ label: 'Selected updates', count: ups.length, actions, all: shownIds().length ? R.selectAllState(ui.pick, shownIds()) : undefined })}</div>`;
 }
 // The page behind Pulse: Runs is not in this prototype; Pulse opens over any page.
 function runsPage() {

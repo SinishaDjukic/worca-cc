@@ -741,6 +741,26 @@ test('selectionBar: how many, each action with its count, disabled at 0 with why
   assert.equal(none.querySelector('[data-bulk="a"]').title, 'Nothing selected');
 });
 
+test('selectionBar: Select all, the count and Cancel on one line, the actions under them', () => {
+  const b = dom(C.selectionBar({ label: 'x', count: 2, all: 'some', actions: [{ id: 'a', label: 'A', n: 2, tip: '' }] }));
+  const top = b.querySelector('.runs-bulk-top');
+  assert.ok(top.querySelector('[data-selall][data-mixed]')); assert.equal(top.querySelector('.runs-bulk-n').textContent, '2 selected'); assert.ok(top.querySelector('[data-bulk="cancel"]'));
+  assert.ok(b.querySelector('.runs-bulk-acts [data-bulk="a"]'));
+  assert.equal(dom(C.selectionBar({ label: 'x', count: 0 })).querySelector('[data-selall]'), null, 'nothing to tick: no Select all');
+});
+
+test('list: the selection sits under the head, before the first section', () => {
+  const l = dom(C.list({ sentence: 's', tools: '<i></i>', groups: [{ title: 'T', rows: ['<b></b>'] }], selection: '<u></u>' }));
+  assert.equal(l.querySelector('.list-head').nextElementSibling.className, 'list-select');
+});
+
+test('tipPlace: a menu item\'s tip sits beside the menu, else on its other side, level with the item', () => {
+  const item = { top: 100, bottom: 120, left: 20, width: 200 }, tip = { width: 150, height: 30 };
+  assert.deepEqual(C.tipPlace(item, tip, 1000, 700, { left: 10, right: 230 }), { top: 100, left: 236 });
+  assert.deepEqual(C.tipPlace(item, tip, 300, 700, { left: 200, right: 290 }), { top: 100, left: 44 });
+  assert.equal(C.tipPlace(item, tip, 240, 700, { left: 8, right: 232 }).top, 126, 'no room either side: under it');
+});
+
 test('selectAllBox: checked at all, mixed at some', () => {
   const box = (state) => dom(C.selectAllBox({ state })).querySelector('input');
   assert.ok(box('all').checked); assert.ok(!box('none').checked); assert.ok(!box('some').checked);

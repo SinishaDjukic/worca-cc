@@ -157,7 +157,7 @@
 .pz-list.is-selecting .pz-check{display:grid;}
 .pz-list.is-selecting .pz-rail > :not(.pz-check){visibility:hidden;}
 /* The Runs list's selection bar, at the panel's foot on the panel's own fill. */
-.pz-popover .runs-bulk{flex:none;padding:8px 12px;background:inherit;border-radius:0 0 var(--r-card) var(--r-card);}
+.pz-popover .list-select{background:var(--float);}
 
 /* The list's sentence on the rail; Select all at its right while selecting. */
 .pz-bar{display:grid;grid-template-columns:var(--rail) minmax(0,1fr) auto;column-gap:var(--gap);align-items:center;min-height:40px;margin-top:12px;}
@@ -203,7 +203,10 @@
   .pz-app .nav-fly.acct-menu,.pz-fly{left:4px;}
   .pz-fly{width:min(296px,calc(100% - 8px));}
   .acct-menu.has-sub{display:none;}
-  .pz-subback{display:flex;}
+  .nav-fly .pz-subback{display:flex!important;justify-content:flex-start;gap:8px;font-weight:600;}   /* the side menu's head: its arrow, its own name */
+  .nav-fly .pz-subback::before{display:none;}
+  .nav-fly .pz-subback > span{flex:none;margin:0;}
+  .pz-beside-only{display:none;}   /* in its place, the back row already names it */
 }
 @media (max-width: 480px){
   .pz-pulse-l,.pz-new-l{display:none;}
@@ -233,4 +236,8 @@
 .pz-fly .look-theme .theme-seg{display:inline-flex;}
 .look-bgs .theme-ic{width:auto;padding:3px;}
 .bg-sw{position:relative;display:block;width:30px;height:20px;overflow:hidden;border:1px solid var(--line-2);border-radius:var(--r-xs);background:var(--bg);}
-.bg-sw .chat-home-bg{position:absolute;inset:0;background-size:6px 6px;-webkit-mask-size:6px 6px;mask-size:6px 6px;}
+/* The small picture: the page's own colours, its grid drawn tighter so each still reads as itself at this size. */
+.bg-sw .chat-home-bg{position:absolute;inset:0;}
+.bg-sw .chat-home-bg.is-dots{background-size:4px 4px;-webkit-mask-image:none;mask-image:none;}
+.bg-sw .chat-home-bg:is(.is-aurora-dots,.is-dusk-dots){-webkit-mask-size:3px 3px;mask-size:3px 3px;-webkit-mask-image:radial-gradient(#000 1px,transparent 1.3px);mask-image:radial-gradient(#000 1px,transparent 1.3px);}
+.bg-sw .chat-home-bg.is-mist{background-size:4px 4px,auto,auto;}

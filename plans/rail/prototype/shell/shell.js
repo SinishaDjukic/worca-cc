@@ -171,7 +171,7 @@
   // ---- the bar: what it holds now; the house opens the places over it ----
   const BAR_TITLE = { home: 'Worca', chat: 'Chat', tasks: 'Tasks', schedules: 'Schedules', settings: 'Settings' };
   let quickNav = false;   // nav.quick: the ▾ beside a bar's name
-  const quickItems = () => [...document.querySelectorAll('#side-rail nav.nav [data-nav]')].filter((b) => !b.hidden && !b.closest('[hidden]') && b.style.display !== 'none').map((b) => ({ id: `bar-go|${b.dataset.nav}`, text: b.querySelector('.nav-label, span')?.textContent.trim() || b.textContent.trim(), checked: b.dataset.nav === routed.view, hint: b.dataset.flag ? 'Labs' : undefined }));   /* nav.labs: the word follows the row */
+  const quickItems = () => [...document.querySelectorAll('#side-rail nav.nav [data-nav]')].filter((b) => !b.hidden && !b.closest('[hidden]') && b.style.display !== 'none').map((b) => ({ id: `bar-go|${b.dataset.nav}`, text: b.querySelector('.nav-label, span')?.textContent.trim() || b.textContent.trim(), checked: b.dataset.nav === routed.view, hint: b.dataset.flag ? 'Labs' : undefined, mark: R.icon(`nav-${b.dataset.nav}`, 14) }));   /* nav.labs: the word follows the row */
   let barMenu = false;   // the + as a menu, where a place makes things more than one way (list.bar-model)
   let homeOpen = false, taskChat = '', lastThing = null, visited = [], taskHome = null, pinsAll = false;
   const barOf = (view) => (routed.locked ? 'home' : placeMod(view) ? 'place' : view === 'chat' ? 'chat' : view === 'runs' ? 'tasks' : view === 'run' ? (taskChat ? 'chat' : 'tasks') : view === 'schedules' || view === 'schedule' ? 'schedules' : view === 'settings' ? 'settings' : 'home');
@@ -395,7 +395,7 @@
     if (on('[data-bar-hide]')) { hideBar(); return; }
     if (on('[data-bar-pin]')) { setStrip(false); syncRail(); drawBar(); return; }
     if (on('#bar-show')) { setStrip(false); syncRail(); drawBar(); return; }
-    if (on('[data-bar-home]')) { quickNav = false; homeOpen = false; window.RailShell.go('chat'); drawBar(); return; }   /* nav.one-bar: the W is home */
+    if (on('[data-bar-home]')) { quickNav = false; homeOpen = false; window.RailChats?.home(); window.RailShell.go('chat'); drawBar(); return; }   /* nav.one-bar: the W is home, the bar as it starts */
     if ((hit = on('[data-menu-pick^="bar-go|"]'))) { quickNav = false; location.hash = hit.dataset.menuPick.split('|')[1]; drawBar(); return; }
     if (on('[data-bar-house]')) { quickNav = !quickNav; drawBar(); return; }
     if (quickNav) { quickNav = false; drawBar(); }   /* a page with no list of its own (a locked place): closing the places goes back to Chat */

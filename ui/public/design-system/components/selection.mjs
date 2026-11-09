@@ -12,10 +12,9 @@ export const selectClear = () => ({ on: false, ids: [], anchor: '' });
 /** Selecting with nothing ticked yet: the list's menu, `Select`. */
 export const selectStart = (s = selectClear()) => ({ ...s, on: true });
 
-/** Ticks or unticks one and makes it the anchor. Unticking the last one ends selecting. */
+/** Ticks or unticks one and makes it the anchor. Unticking the last one keeps selecting: only Cancel, Esc or a finished action end it. */
 export function selectToggle(s, id) {
-  const ids = s.ids.includes(id) ? s.ids.filter((x) => x !== id) : [...s.ids, id];
-  return ids.length ? { on: true, ids, anchor: id } : selectClear();
+  return { on: true, ids: s.ids.includes(id) ? s.ids.filter((x) => x !== id) : [...s.ids, id], anchor: id };
 }
 
 /** Adds every row from the anchor to `id`. With no anchor in the list, a plain toggle. The anchor stays. */

@@ -40,9 +40,9 @@
   // What hangs under a chat: its tasks and schedules, in their order of waiting.
   const treeOf = (c, list) => list.filter((t) => !t.gone).map((t) => {   // a deleted schedule leaves the bar
     const x = { t, c, key: `task:${t.id}` };
-    if (t.kind === 'schedule') return { key: x.key, _x: x, title: t.title, mark: R.kindMark({ kind: 'schedule', title: t.detail }), end: t.time, tip: `${t.title}\n${t.detail}\nOpens the schedule`, current: false, menu: taskMenu(t) };
+    if (t.kind === 'schedule') return { pick: false, key: x.key, _x: x, title: t.title, mark: R.kindMark({ kind: 'schedule', title: t.detail }), end: t.time, tip: `${t.title}\n${t.detail}\nOpens the schedule`, current: false, menu: taskMenu(t) };
     const st = R.runState(RM.stateOf(t.case));
-    return { key: x.key, _x: x, title: t.title, mark: R.kindMark({ breathe: c.id !== current, kind: KIND_OF[t.kind] || 'task', tone: R.markTone(st), stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), endMark: t.git ? R.gitMark({ status: t.git, watch: t.watch || '', title: t.watch ? `Watching · ${t.detail}` : t.branch }) : '', end: t.git ? '' : t.endWord || '', tip: `${t.title}\n${st.word} · ${t.detail || ''}\nOpens the task`, tree: t.after ? treeOf(c, t.after) : undefined, menu: taskMenu(t) };
+    return { pick: false, key: x.key, _x: x, title: t.title, mark: R.kindMark({ breathe: c.id !== current, kind: KIND_OF[t.kind] || 'task', tone: R.markTone(st), stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), endMark: t.git ? R.gitMark({ status: t.git, watch: t.watch || '', title: t.watch ? `Watching · ${t.detail}` : t.branch }) : '', end: t.git ? '' : t.endWord || '', tip: `${t.title}\n${st.word} · ${t.detail || ''}\nOpens the task`, tree: t.after ? treeOf(c, t.after) : undefined, menu: taskMenu(t) };
   });
 
   // ---- the view ----
@@ -128,7 +128,7 @@
   const snapshot = () => JSON.stringify(data);
   const undoTo = (snap, pick, tip) => ({ tip, run: () => { data = JSON.parse(snap); ctl.restore(pick); ctl.paint(); say('Undone'); } });
   const chatsOf = (rows) => [...new Map(rows.flatMap((x) => (x.g ? data.chats.filter((c) => c.group === x.g.id) : [x.c])).map((c) => [c.id, c])).values()];
-  const archivePlan = (rows) => { const all = chatsOf(rows), busy = all.filter(busyOf); return { apply: all.filter((c) => !busyOf(c)), skipped: busy, title: busy.length ? `Skipped ${plural(busy.length, 'busy chat')}: ${busy.map((c) => c.title).join(', ')}` : '' }; };
+  const archivePlan = (rows) => { const all = chatsOf(rows).filter((c) => !c.archived), busy = all.filter(busyOf); return { apply: all.filter((c) => !busyOf(c)), skipped: busy, title: busy.length ? `Skipped ${plural(busy.length, 'busy chat')}: ${busy.map((c) => c.title).join(', ')}` : '' }; };
   function bulkActions(rows0) {
     const rows = rows0.map((r) => r._x), arch = view.show === 'archived', p = archivePlan(rows), all = chatsOf(rows);
     return [arch ? { id: 'archive', label: 'Restore', n: all.length, tip: 'Brings them back' } : { id: 'archive', label: 'Archive', n: p.apply.length, tip: p.title || 'Undo in the notice', why: p.title },
@@ -224,9 +224,12 @@
   window.RailWorld.onChange(() => setCase(listCase));   // another Pulse case: what waits on you follows it
   window.RailWorld.onMove(() => { data.chats.forEach(M.sync); ctl?.paint(); });   // a task moved anywhere: its row and its chat's place in Needs you follow
   R.prefs.onChange(() => ctl.paint());
+  let toTop = false;
   window.RailChats = {
-    show: (id) => { current = id || ''; ctl.paint(); return true; },
+    show: (id) => { current = id || ''; ctl.paint(); if (toTop) { toTop = false; requestAnimationFrame(() => { bar.scrollTop = 0; }); } return true; },   // after the route has shown the bar: a hidden one cannot scroll
     opened: () => true,
+    /** nav.one-bar: the bar as it starts: the fresh view, nothing selected, no chat open, at the top. */
+    home: () => { view = { ...FRESH }; set(STORE_V, JSON.stringify(view)); current = ''; ctl.clear(); ctl.paint(); toTop = true; },
     toggle,
     newChat,
     data: () => data,

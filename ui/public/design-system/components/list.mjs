@@ -71,7 +71,7 @@ export function listRow({ title, meta = '', mark = '', end = '', endText = '', o
  * @param {{title?:string, meta?:string, count?:string|number, chip?:string, rows:string[], more?:{n:number, attrs:object}, fold?:{open:boolean, attrs:object}}[]} o.groups
  * @param {string} [o.empty]      EmptyState markup when every group is empty
  * @param {string} [o.tools]      at the sentence's right: Select all while selecting, the list's ⋯
- * @param {string} [o.foot]       at the list's foot: the SelectionBar
+ * @param {string} [o.selection]  under the head, kept in sight while the list scrolls: the SelectionBar
  * @param {object} [o.attrs]
  */
 function groupHtml(g) {
@@ -83,8 +83,8 @@ function groupHtml(g) {
   return `<section class="list-group">${head}${g.meta ? `<p class="list-m">${esc(g.meta)}</p>` : ''}<div class="list-rows">${g.rows.join('')}</div>${g.more ? `<button type="button" class="dc-link list-more"${attrs(g.more.attrs)}>${g.more.less ? 'Show less' : `Show ${esc(g.more.n)} more`}</button>` : ''}</section>`;
 }
 
-export function list({ sentence = '', groups, empty = '', tools = '', foot = '', attrs: a = {} }) {
+export function list({ sentence = '', groups, empty = '', tools = '', selection = '', attrs: a = {} }) {
   const shown = groups.filter((g) => g.rows.length);
   const body = shown.length ? shown.map((g) => groupHtml(g)).join('') : empty;
-  return `<div class="list"${attrs(a)}>${tools ? `<div class="list-head"><div class="list-sentence">${sentence}</div><span class="list-tools">${tools}</span></div>` : sentence ? `<div class="list-sentence">${sentence}</div>` : ''}${body}${foot}</div>`;
+  return `<div class="list"${attrs(a)}>${tools ? `<div class="list-head"><div class="list-sentence">${sentence}</div><span class="list-tools">${tools}</span></div>` : sentence ? `<div class="list-sentence">${sentence}</div>` : ''}${selection ? `<div class="list-select">${selection}</div>` : ''}${body}</div>`;
 }

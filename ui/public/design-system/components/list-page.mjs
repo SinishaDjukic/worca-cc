@@ -12,7 +12,7 @@ import { list, listRow, moreMenu } from './list.mjs';
 import { groupRow, listSentence, listState, roundRows } from './list-parts.mjs';
 import { land } from './motion.mjs';
 import { selectionAction, selectApply, selectClear, selectPrune, selectStart, selectStep, selectAllState, keepFocus } from './selection.mjs';
-import { bindLongPress, selectAllBox, selectionBar } from './selection-bar.mjs';
+import { bindLongPress, selectionBar } from './selection-bar.mjs';
 import { keyFacts, listMove, openShortcutsSheet, shortcutAction } from './shortcuts.mjs';
 import { listEditor } from './tag-group.mjs';
 
@@ -92,7 +92,7 @@ export function listController({ root, spec }) {
     const base = { title: r.title, meta: r.meta, mark: r.mark, lead: r.lead, unread: r.unread, current: r.current, holds: r.holds, flash: s.flash === r.key,
       open: { 'data-open': r.key, title: r.tip || r.title }, attrs: { 'data-row': r.key },
       menu: r.menu ? { id: `row:${r.key}`, label: `More for ${r.title}`, icon: dots(), items: r.menu, open: s.menu === `row:${r.key}` } : null,
-      check: selecting ? s.pick.ids.includes(r.key) : undefined, boxAttrs: { 'data-sel': r.key } };
+      check: selecting && r.pick !== false ? s.pick.ids.includes(r.key) : undefined, boxAttrs: { 'data-sel': r.key } };
     if (r.tree && r.treeShut && !s.treeSeen.has(r.key)) { s.treeSeen.add(r.key); if (!r.tree.some((c) => c.current)) s.treeShut.add(r.key); }   // list.bar-model: a healthy parent starts folded; the row you are on keeps it open
     if (r.tree) { base.after = `<div class="lr-members lr-tree" role="list"><div class="list-rows">${r.tree.map(rowHtml).join('')}</div></div>`; if (r.tree.length) base.markFold = { open: !s.treeShut.has(r.key), attrs: { 'data-fold-tree': r.key } }; }
     if (r.endMark) base.end = r.endMark;
@@ -108,7 +108,7 @@ export function listController({ root, spec }) {
   }
 
   function html(v) {
-    s.rows = new Map(); s.order = [];
+    s.rows = new Map(); s.order = []; s.top = [];
     calmMarks(v.sections || []);
     const note = (r) => { s.rows.set(r.key, r); (r.members || []).forEach(note); (r.tree || []).forEach(note); };
     v.sections.forEach((x) => x.rows.forEach(note));
@@ -119,18 +119,19 @@ export function listController({ root, spec }) {
       // the row you are on never folds behind Show N more: it stays under the first ones (docs/rail/lists.md › list.fold-keeps-current)
       const rows = shut ? [] : all ? x.rows : [...x.rows.slice(0, limit), ...x.rows.slice(limit).filter((r) => r.current || r.holds)];
       const walk = (r) => { s.order.push(r.key); (r.tree || []).forEach(walk); if (r.members && groupOpen(r)) r.members.forEach(walk); }; rows.forEach(walk);
+      s.top.push(...rows.filter((r) => r.pick !== false).map((r) => r.key));   // Select all: a group's row stands for its members, so a count never counts one twice
       return { title: x.title, count: x.noCount ? '' : x.count ?? x.rows.length, chip: x.chip, rows: shut ? [''] : rows.map(rowHtml), fold: x.fold ? { open: !shut, attrs: { 'data-fold-section': x.id } } : null, more: shut || x.rows.length <= limit ? null : s.more.has(x.id) ? { less: true, attrs: { 'data-less': x.id } } : rows.length >= x.rows.length ? null : { n: x.rows.length - rows.length, attrs: { 'data-more': x.id } } };
     }) : [];
     s.pick = selectPrune(s.pick, [...s.rows.keys()]);
     const shown = s.order;
-    const tools = [s.pick.on && shown.length ? selectAllBox({ state: selectAllState(s.pick, shown) }) : '',
-      v.tools ? moreMenu({ id: 'tools', label: 'More for this list', icon: dots(), items: v.tools, open: s.menu === 'tools' }) : ''].join('');
+    const tools = v.tools ? moreMenu({ id: 'tools', label: 'More for this list', icon: dots(), items: v.tools, open: s.menu === 'tools' }) : '';
     const picked = picks();
-    const foot = s.pick.on ? `<div class="list-foot">${selectionBar({ label: spec.label, count: picked.length, actions: spec.bulk(picked) })}</div>` : '';
     const empty = ready ? listState({ state: 'empty', noun: spec.noun, text: v.empty?.text, action: v.empty?.action ? button({ label: v.empty.action, kind: 'quiet', attrs: { 'data-empty': '' } }) : '' })
       : v.state === 'waiting' ? '' : listState({ state: v.state, noun: spec.noun, retry: { 'data-retry': '' } });
     const strip = s.confirm ? confirmStrip({ text: s.confirm.text, yes: s.confirm.yes, danger: s.confirm.danger, id: `${spec.noun}-strip-t` }) : '';
-    return strip + list({ sentence: listSentence({ parts: v.parts, open: s.menu }), tools, groups, empty, foot }) + popHtml() + dialogHtml();
+    // the strip that asks about the selection stays with it, in sight however far the list has scrolled
+    const selection = s.pick.on ? strip + selectionBar({ label: spec.label, count: picked.length, actions: spec.bulk(picked), all: s.top.length ? selectAllState(s.pick, s.top) : undefined }) : '';
+    return (s.pick.on ? '' : strip) + list({ sentence: listSentence({ parts: v.parts, open: s.menu }), tools, groups, empty, selection }) + popHtml() + dialogHtml();
   }
   const picks = () => s.pick.ids.map((k) => s.rows.get(k)).filter(Boolean);
   function popHtml() {
@@ -186,7 +187,9 @@ export function listController({ root, spec }) {
     (keep && root.querySelector(keep) || rowEl(keepFocus(before, s.order, fromRow)))?.focus();
   }
   const rowEl = (k) => (k ? root.querySelector(`[data-open="${q(k)}"]`) : null);
-  const applyPick = (act, id) => { s.pick = selectApply(s.pick, act, { id, shown: s.order }); paint(); };
+  const pickable = () => (spec.bulk?.([]) || []).length > 0;   // list.select: a list with nothing to do together has no selecting, by any way in
+  const pickOrder = () => s.order.filter((k) => s.rows.get(k)?.pick !== false);
+  const applyPick = (act, id) => { s.pick = selectApply(s.pick, act, { id, shown: pickOrder() }); paint(); };
 
   // what a row's ⋯ or a key does: on a ticked row, it means every ticked row
   function run(id, row, { viaKey = false } = {}) {
@@ -214,7 +217,7 @@ export function listController({ root, spec }) {
       return;
     }
     if ((el = t('[data-menu]'))) { s.menu = s.menu === el.dataset.menu ? '' : el.dataset.menu; s.pop = null; paint(); return; }
-    if ((el = t('[data-selall]'))) { s.pick = el.checked ? selectApply(s.pick, 'all', { shown: s.order }) : selectPrune(s.pick, []); s.menu = ''; paint(); return; }
+    if ((el = t('[data-selall]'))) { s.pick = el.checked ? selectApply(s.pick, 'all', { shown: s.top }) : selectPrune(s.pick, []); s.menu = ''; paint(); return; }
     if ((el = t('[data-sel]'))) { s.menu = ''; applyPick(selectionAction({ click: true, onBox: true, shiftKey: e.shiftKey }), el.dataset.sel); return; }
     if (t('.lr-check, .runs-all-wrap')) return;   // its label: the click that follows reaches the box
     if ((el = t('[data-bulk]'))) {
@@ -246,7 +249,9 @@ export function listController({ root, spec }) {
     if ((el = t('[data-retry]'))) { spec.retry?.(); paint(); return; }
     if ((el = t('[data-empty]'))) { spec.emptyAct?.(); return; }
     if ((el = t('[data-open]'))) {
-      const act = selectionAction({ click: true, button: e.button, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey }, { selecting: s.pick.on });
+      const row = s.rows.get(el.dataset.open);
+      if (s.pick.on && row?.pick === false) { e.preventDefault(); return; }   // while selecting no row opens: one that cannot be ticked stays put
+      const act = pickable() && row?.pick !== false ? selectionAction({ click: true, button: e.button, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey }, { selecting: s.pick.on }) : null;
       if (act) { e.preventDefault(); applyPick(act, el.dataset.open); return; }
       s.focus = el.dataset.open;
       spec.open(s.rows.get(el.dataset.open));
@@ -263,7 +268,7 @@ export function listController({ root, spec }) {
     else if (e.target.hasAttribute('data-dlg-name') && s.dialog) { s.dialog.value = e.target.value; s.dialog.typed = true; }
   });
   root.addEventListener('focusin', (e) => { const r = e.target.closest('[data-row]'); if (r) s.focus = r.dataset.row; });
-  bindLongPress({ root, selector: '[data-row]', onPress: (r) => { s.pick = selectStart(s.pick); applyPick(selectionAction({ press: true }), r.dataset.row); }, win });
+  bindLongPress({ root, selector: '[data-row]', accept: (r) => pickable() && s.rows.get(r.dataset.row)?.pick !== false, onPress: (r) => { s.pick = selectStart(s.pick); applyPick(selectionAction({ press: true }), r.dataset.row); }, win });
 
   function openSheet() {
     openShortcutsSheet({ doc, scopes: ['anywhere', 'list', 'selecting', ...(spec.scopes || [])], can: spec.can(), fallback: () => rowEl(s.focus) || root.querySelector('[data-open]') });
@@ -302,15 +307,16 @@ export function listController({ root, spec }) {
     const scopes = ['selecting', 'list', ...(spec.scopes || []), 'anywhere'];
     const act = shortcutAction(keyFacts(e, '[data-open]'), { scopes, selecting: s.pick.on, can: spec.can() });
     if (!act || act === 'search' || act === 'close') return;
+    if (act === 'clear') { e.preventDefault(); s.pick = selectClear(); paint(); return; }   // Esc ends selecting wherever the focus is
     if (e.target.closest?.('.ask-side:not(.chats-side), #app')) return;
     e.preventDefault();
     const from = e.target.closest?.('[data-row]')?.dataset.row || s.focus, row = s.rows.get(from);
     if (act === 'help') { openSheet(); return; }
     if (act === 'down' || act === 'up') { rowEl(listMove(s.order, from, act === 'down' ? 1 : -1))?.focus(); return; }
     if (act === 'open') { e.target.closest('[data-open]').click(); return; }
-    if (act === 'clear') { s.pick = selectClear(); paint(); return; }
     if (act === 'toggle' || act === 'all' || act === 'extend-down' || act === 'extend-up') {
-      const r = selectStep(act === 'all' || act === 'toggle' ? selectStart(s.pick) : s.pick, act, { from, shown: s.order });
+      if (!pickable() || (act !== 'all' && row?.pick === false)) return;
+      const r = selectStep(act === 'all' || act === 'toggle' ? selectStart(s.pick) : s.pick, act, { from, shown: act === 'all' ? s.top : pickOrder() });
       s.pick = r.pick; paint({ focus: r.to ? `[data-open="${q(r.to)}"]` : '' }); return;
     }
     if (act === 'menu') { if (row?.menu) { s.menu = `row:${row.key}`; paint(); root.querySelector('.rc-pop > .menu .menu-item')?.focus(); } return; }

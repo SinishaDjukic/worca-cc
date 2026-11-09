@@ -195,7 +195,7 @@ test('tryStep: says what is happening, then the next step; never a dead end', ()
   assert.equal(R.tryStep({})[0].text, 'Open Actions');
 });
 
-test('selection: toggle sets the anchor, unticking the last ends selecting, a range adds from the anchor', () => {
+test('selection: toggle sets the anchor, unticking the last keeps selecting, a range adds from the anchor', () => {
   const shown = ['a', 'b', 'c', 'd'];
   let s = R.selectToggle(R.selectClear(), 'b');
   assert.deepEqual(s, { on: true, ids: ['b'], anchor: 'b' });
@@ -204,7 +204,7 @@ test('selection: toggle sets the anchor, unticking the last ends selecting, a ra
   assert.deepEqual(R.selectRange(s, shown, 'a').ids, ['b', 'a'], 'upwards too');
   assert.deepEqual(R.selectRange(R.selectClear(), shown, 'c'), { on: true, ids: ['c'], anchor: 'c' }, 'no anchor: a toggle');
   assert.equal(R.selectRange(s, shown, 'gone'), s, 'a row not shown: nothing');
-  assert.deepEqual(R.selectToggle(s, 'b'), R.selectClear());
+  assert.deepEqual(R.selectToggle(s, 'b'), { on: true, ids: [], anchor: 'b' });
 });
 
 test('selection: all, clear, count, what Select all shows, and starting with nothing ticked', () => {

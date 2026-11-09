@@ -1,26 +1,28 @@
-// The selection's parts (docs/rail/lists.md): the bar at a list's foot, the Select all box in its head, and the touch
-// long-press that starts selecting. The logic is selection.mjs.
+// The selection's parts (docs/rail/lists.md): the bar at the top of a list, its Select all box, and the touch long-press
+// that starts selecting. The logic is selection.mjs.
 import { attrs } from './html.mjs';
 import { button } from './button.mjs';
 import { checkbox } from './checkbox.mjs';
 import { PRESS_MS } from './selection.mjs';
 
 /**
- * SelectionBar: `2 selected · Archive 2 · Cancel`. Each action shows how many it applies to and is disabled at 0.
- * Clicks arrive as data-bulk: the action's id, or `cancel`.
+ * SelectionBar: `Select all · 2 selected · Cancel`, then `Archive 2 · Delete 2`. It stays in sight at the top of the
+ * list. Each action shows how many it applies to and is disabled at 0. Clicks arrive as data-bulk: the action's id, or
+ * `cancel`.
  * @param {object} o
  * @param {string} o.label      the toolbar's name for a screen reader ("Selected updates")
  * @param {number} o.count      how many are selected
  * @param {{id:string, label:string, n:number, tip:string, why?:string}[]} o.actions  `why`: disabled with some selected
  * @param {string} [o.cancel]   Cancel's tooltip
+ * @param {'none'|'some'|'all'} [o.all]  selectAllState(): draws Select all (absent: a list with nothing to tick)
  */
-export function selectionBar({ label, count, actions = [], cancel = 'Stop selecting · Esc' }) {
+export function selectionBar({ label, count, actions = [], cancel = 'Stop selecting · Esc', all }) {
   const act = (a) => button({ label: a.label, count: a.n, title: a.n ? a.tip : count ? a.why : 'Nothing selected', attrs: { 'data-bulk': a.id, disabled: !a.n } });
-  return `<div class="runs-bulk" role="toolbar"${attrs({ 'aria-label': label })}><span class="runs-bulk-n">${count} selected</span>${actions.map(act).join('')}${button({ label: 'Cancel', kind: 'quiet', title: cancel, attrs: { 'data-bulk': 'cancel' } })}</div>`;
+  return `<div class="runs-bulk" role="toolbar"${attrs({ 'aria-label': label })}><div class="runs-bulk-top">${all ? selectAllBox({ state: all }) : ''}<span class="runs-bulk-n" aria-live="polite">${count} selected</span>${button({ label: 'Cancel', kind: 'quiet', title: cancel, attrs: { 'data-bulk': 'cancel' } })}</div>${actions.length ? `<div class="runs-bulk-acts">${actions.map(act).join('')}</div>` : ''}</div>`;
 }
 
 /**
- * Select all, which joins the list's head while selecting. Some ticked shows as mixed: data-mixed asks the page to set
+ * Select all, in the SelectionBar. Some ticked shows as mixed: data-mixed asks the page to set
  * `indeterminate` once it is drawn.
  * @param {object} o
  * @param {'none'|'some'|'all'} o.state  selectAllState()

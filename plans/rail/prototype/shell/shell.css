@@ -72,8 +72,6 @@
 .mk-tools a{color:var(--ink);}
 .mk-tools{z-index:95;}
 .mk-tools .mk-stamp{color:var(--ink-2);font-weight:400;font-size:var(--fs-caption);}
-/* The corner sits over the foot of the window: a selection bar keeps clear of it. */
-#route-runs .runs-bulk{padding-right:120px;}
 
 /* The one bar: which of its lists is showing. */
 #side-rail nav.nav{display:none;}

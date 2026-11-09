@@ -325,19 +325,20 @@
         "acting on several rows of a list together"
       ],
       "parts": [
+        "Select all",
         "how many are selected",
-        "each action with how many it applies to",
-        "Cancel"
+        "Cancel",
+        "each action with how many it applies to"
       ],
-      "place": "at the list's foot, while selecting",
+      "place": "at the top of the list, in sight while it scrolls, while selecting",
       "rules": [
         "an action is disabled at 0 and says why in its tooltip",
-        "Cancel or Esc ends selecting",
+        "Cancel or Esc ends selecting; unticking the last row keeps selecting",
         "an action that can be taken back offers Undo in its Toast; one that cannot confirms in the strip",
-        "Select all joins the head: selectAllBox",
+        "Select all is its own: selectAllBox, drawn by the `all` state",
         "only for a list whose rows a person can act on together"
       ],
-      "example": "2 selected · Mark read 2 · Clear 2 · Cancel"
+      "example": "Select all · 2 selected · Cancel, then Mark read 2 · Clear 2"
     },
     {
       "name": "ShortcutsSheet",
