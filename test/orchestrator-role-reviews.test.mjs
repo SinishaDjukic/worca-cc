@@ -407,7 +407,7 @@ test('no silent fallbacks: a Codex run names a dropped Security pick once; the b
   });
   const res = await h.done;
   assert.equal(res.status, 'done', res.error);
-  const line = "Plan Review · Security: claude-opus-5-5 is not on Codex, runs the node's model";
+  const line = "Plan Review · Security: claude-opus-5-5 is not on OpenAI Codex, runs the node's model";
   const warnings = h.orch.getState().warnings;
   assert.equal(warnings.filter((w) => w === line).length, 1, warnings.join('\n'));
   assert.deepEqual(warnings.filter((w) => w.startsWith('Plan Review')), [line], 'the node\'s sonnet and Product\'s opus are built-in defaults: recorded, not warned');

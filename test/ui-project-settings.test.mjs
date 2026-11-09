@@ -53,7 +53,7 @@ test('every field says what it inherits and from where; an override shows Projec
   assert.equal(field(host, 'askMaxBudgetUsd').querySelector('.inherit-input').placeholder, 'no cap (default)');
   const engine = field(host, 'run.engine').querySelector('.inherit-input');
   assert.equal(engine.value, 'codex');
-  assert.equal(engine.options[0].textContent, 'Claude (your setting)');
+  assert.equal(engine.options[0].textContent, 'Claude Code (your setting)');
   const plan = field(host, 'models.codex.steps.planner').querySelector('.inherit-model');
   assert.equal(plan.options[0].textContent, 'GPT-5.5 (your setting)');
   assert.equal(field(host, 'models.codex.steps.planner').querySelector('.inherit-effort').options[0].textContent, 'low (your setting)');

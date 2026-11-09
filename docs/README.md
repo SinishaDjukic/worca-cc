@@ -27,6 +27,7 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 - [Storage](storage.md) — where state lives, project keys, migration
 - [Workspace map](workspace-map.md) — how a workspace scan maps relations, reviewing them, measuring a scan
 - [Actions](actions.md) — check out a finished run and run the project's commands from Worca
+- [Agent readiness](agent-readiness.md) — whether a project is ready for the coding agents it uses, and how to fix each gap
 - [Terminal](terminal.md) — the terminal pane, and Chat's agent mode with a shared terminal
 
 ## Chat

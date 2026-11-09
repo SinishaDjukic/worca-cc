@@ -320,7 +320,7 @@ test('setup.smartNaming accepts every stored smartNaming key', () => {
 });
 
 test('fmtValue shows roles and records in words', () => {
-  assert.equal(fmtValue(fieldMeta('models.roles'), { claude: { deep: { model: 'claude-opus-5-5', effort: 'high' } } }), 'Claude Deep thinking claude-opus-5-5 / high');
+  assert.equal(fmtValue(fieldMeta('models.roles'), { claude: { deep: { model: 'claude-opus-5-5', effort: 'high' } } }), 'Claude Code Deep thinking claude-opus-5-5 / high');
   assert.equal(fmtValue(fieldMeta('setup.networkWait'), { enabled: true, maxWaitMin: 60 }), 'enabled on · maxWaitMin 60');
 });
 

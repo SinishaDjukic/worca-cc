@@ -73,6 +73,10 @@ worca plugin validate ./my-plugin --run-cases
 # the browser extension packaged with Worca
 worca extension --open          # the packaged browser extension folder
 
+# is this project ready for its coding agents? (exit 2: not ready)
+worca readiness
+worca readiness --project shop --engine codex
+
 # feature flags
 worca flags                     # list them
 worca flags on smartRunNaming   # a Labs feature, off by default
@@ -86,7 +90,7 @@ worca flags on smartRunNaming   # a Labs feature, off by default
   `worca projects list`.
 - The rest: `ui`, `run --preset`, `resume`, `runs`, `logs`, `stop`, `pause`, `schedule`, `workflow`, `script`,
   `plugin`, `marketplace`, `models`, `config`, `flags`, `metrics`, `policy`, `memory team`, `container`, `broker`,
-  `proxy`, `setup`, `extension`, `doctor` and `version`.
+  `proxy`, `setup`, `extension`, `readiness`, `doctor` and `version`.
 
 ## Exit codes
 

@@ -101,6 +101,7 @@ for it, which you review before it runs. More in [Runs](docs/runs.md).
 | Outputs | Presentation decks, Architecture (C4) models, Promo videos | [Workflows](docs/workflows.md#presentations) |
 | Projects | Git repositories, plain folders, or no project; workspaces of related repos with a code-derived map | [Workspace map](docs/workspace-map.md), [Storage](docs/storage.md) |
 | | Actions: check out a result and run its dev server or tests; a terminal pane | [Actions](docs/actions.md), [Terminal](docs/terminal.md) |
+| | Agent readiness: whether a project is ready for the coding agents it uses, and how to fix each gap | [Agent readiness](docs/agent-readiness.md) |
 | Chat | Ask Worca about runs and code; changes become cards you confirm; agent mode, memory, voice | [Chat](docs/chat.md), [Voice](docs/speech.md) |
 | Integrations | Plugins and marketplaces, GitHub Issues, Azure Boards, Jira | [Plugins](docs/plugins.md), [Azure DevOps](docs/azure-devops.md), [Bitbucket](docs/bitbucket.md) |
 | | Worca's own MCP registry and skill sets | [MCP servers](docs/mcp-servers.md), [Skills](docs/skills.md) |

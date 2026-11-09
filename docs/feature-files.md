@@ -50,7 +50,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/chat/chat-action.css` | 109 |
 | `ui/public/chat/chat-artifacts.css` | 135 |
 | `ui/public/chat/chat-connectivity.css` | 9 |
-| `ui/public/chat/chat-home.css` | 127 |
+| `ui/public/chat/chat-home.css` | 126 |
 | `ui/public/chat/chat-pinpoint.css` | 160 |
 | `ui/public/chat/chat-run-card.css` | 166 |
 | `ui/public/chat/chat-run-panel.css` | 92 |
@@ -210,11 +210,12 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/projects/folder-browser.html` | 26 |
 | `ui/public/projects/list-head.css` | 7 |
 | `ui/public/projects/project-add.html` | 120 |
-| `ui/public/projects/project-settings.css` | 29 |
-| `ui/public/projects/projects-management.css` | 146 |
-| `ui/public/projects/projects.html` | 75 |
-| `ui/routes/projects/project-settings.mjs` | 164 |
-| `ui/routes/projects/projects.mjs` | 280 |
+| `ui/public/projects/project-settings.css` | 47 |
+| `ui/public/projects/projects-management.css` | 150 |
+| `ui/public/projects/readiness.css` | 68 |
+| `ui/public/projects/projects.html` | 76 |
+| `ui/routes/projects/project-settings.mjs` | 171 |
+| `ui/routes/projects/projects.mjs` | 287 |
 | `ui/routes/projects/terminal-and-actions.mjs` | 121 |
 
 ## workspace-map ([workspace-map.md](workspace-map.md))
