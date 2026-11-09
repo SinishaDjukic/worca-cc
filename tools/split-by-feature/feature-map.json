@@ -1,7 +1,6 @@
 {
   "version": 1,
   "docless": {
-    "runs": "the Runs list and live run page have no docs page yet",
     "history": "History has no docs page yet",
     "settings": "Settings has no docs page yet",
     "new-run": "the New run page has no docs page yet",
@@ -951,7 +950,7 @@
     },
     {
       "name": "chat",
-      "doc": "docs/chat-home.md",
+      "doc": "docs/chat.md",
       "routes": [
         "/api/ask",
         "/api/chat",
@@ -998,7 +997,7 @@
     },
     {
       "name": "runs",
-      "doc": null,
+      "doc": "docs/runs.md",
       "routes": [
         "/api/run",
         "/api/runs",
@@ -1103,7 +1102,7 @@
     },
     {
       "name": "workflows",
-      "doc": null,
+      "doc": "docs/workflows.md",
       "routes": [
         "/api/workflows",
         "/api/agents"
