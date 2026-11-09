@@ -7,7 +7,7 @@ export const PR_OPEN = Object.freeze(['none', 'draft', 'ready']);
 export const PR_SLICES = Object.freeze(['each', 'one']);
 export const PR_OPEN_LABELS = Object.freeze({ none: "Don't create a PR", draft: 'Create a draft PR', ready: 'Create a PR ready for review' });
 export const PR_SLICES_LABELS = Object.freeze({ each: 'A PR per slice, stacked', one: 'One PR for the whole feature' });
-export const PR_EXEMPT = Object.freeze(['automation', 'pr-watch', 'round', 'resolve', 'no-work', 'same-as-source', 'no-project']);
+export const PR_EXEMPT = Object.freeze(['automation', 'pr-watch', 'round', 'resolve', 'no-work', 'same-as-source', 'no-project', 'workflow-test']);
 
 const SOURCE_TEXT = Object.freeze({
   run: 'This run', project: 'Project setting', workspace: 'Workspace setting',
@@ -21,6 +21,7 @@ const EXEMPT_TEXT = Object.freeze({
   'no-work': 'This kind of run changes no repository, so it opens no PR',
   'same-as-source': 'This run works on the source branch, so there is no branch to create a PR from',
   'no-project': 'A run with no project has no repository to create a PR in',
+  'workflow-test': "A workflow test's try works in Worca's copy of the project and never creates a PR",
 });
 
 /** 'run' → 'This run', 'team' → 'Team default'; an unknown source is shown as-is. */

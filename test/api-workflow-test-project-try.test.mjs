@@ -379,3 +379,23 @@ test('final review round 2: a retained try\'s snapshot never runs the copy\'s fi
     try { git(copyDir, 'config', '--unset', 'core.fsmonitor'); } catch { /* not set */ }
   }
 });
+
+test('a project try never opens a PR when it finishes, even where its folder\'s settings ask for one (dev #1156, PR when done)', { timeout: 240000 }, async () => {
+  const { writeProjectSettings } = await import('../src/core/settings-cascade.mjs');
+  const { resolveRunPr } = await import('../src/core/pr-auto.mjs');
+  writeProjectSettings(copyDir, { 'pr.open': 'ready' });
+  try {
+    assert.equal((await resolveRunPr({ projectDir: copyDir })).open, 'ready', 'a normal run in that folder would open one');
+    const out = await _testing.invokeStartRun(await tryBody({ title: 'Test: Ticket 482 · try 9' }), null,
+      { workflowTest: { use: 'draft', project: { key, setupCmd: null } } });
+    assert.equal(out.status, 200, JSON.stringify(out.body));
+    const entry = await settled(out.body.runId);
+    const row = artifacts.findPipelineRowById(entry.pipelineId);
+    const pa = JSON.parse(row.pr_auto);
+    assert.deepEqual([row.is_test, pa.open, pa.exempt], [1, 'none', 'workflow-test'], row.pr_auto);
+    const { prExemptText } = await import('../src/shared/pr-auto.mjs');
+    assert.match(prExemptText(pa.exempt), /test/, 'the run header says why');
+  } finally {
+    writeProjectSettings(copyDir, { 'pr.open': null });
+  }
+});
