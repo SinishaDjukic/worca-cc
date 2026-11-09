@@ -144,8 +144,11 @@ test('a switch-off Worca cannot write: no step runs, and the try is Worca\'s pro
   const { PLUGINS_OFF_STAGE } = await import('../src/core/workflow-tests/project-claude-settings.mjs');
   const { worcaProblemOf, pauseVerdict } = await import('../src/core/workflow-tests/runner.mjs');
   const { TRY_SETUP_STAGE } = await import('../src/core/workflow-tests/shell-step.mjs');
-  // The person's setup (which runs first) leaves the settings file read-only: Worca's write then fails (EACCES / EPERM).
-  const setupCmd = 'node -e "require(\'fs\').chmodSync(\'.claude/settings.json\', 0o444)"';
+  // The person's setup (which runs first) leaves the settings file and its .claude folder read-only: Worca's write then
+  // fails (EACCES / EPERM). Both, because Worca replaces the file through a temp file and a rename (M6, 4435f05ca): on Linux
+  // and macOS a rename replaces a read-only file, so only the read-only folder (no temp file can be made in it) refuses the
+  // write; on Windows a folder's read-only flag refuses nothing, and the rename over the read-only file is what fails.
+  const setupCmd = 'node -e "const fs=require(\'fs\');fs.chmodSync(\'.claude/settings.json\',0o444);fs.chmodSync(\'.claude\',0o555)"';
   const from = spawns.length;
   const out = await _testing.invokeStartRun(await projectBody('Test: Ticket 482 · try 3'), null,
     { workflowTest: { use: 'draft', connectors: 'pretend', project: { key, setupCmd } } });
@@ -164,6 +167,7 @@ test('a switch-off Worca cannot write: no step runs, and the try is Worca\'s pro
     assert.equal(spawns.slice(from).filter((o) => String(o.cwd || '').startsWith(br.worktreeDir)).length, 0, 'before any step');
   } finally {
     const { chmodSync } = await import('node:fs');
+    try { chmodSync(join(br.worktreeDir, '.claude'), 0o755); } catch { /* already gone */ }   // first: the cleanup removes its files
     try { chmodSync(join(br.worktreeDir, '.claude', 'settings.json'), 0o644); } catch { /* already gone */ }
     await stopRun(out.body.runId).catch(() => {});
   }
