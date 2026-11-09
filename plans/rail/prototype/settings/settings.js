@@ -292,7 +292,7 @@
     if (d.steps && d.at < d.steps.length - 1) { d.at += 1; d.status = ''; return ''; }
     sv.__dialog = null;
     if (d.view && !d.then) return '';
-    if ((d.yes || 'Save') === 'Save' && Object.keys(d.vals).length && Object.keys(d.vals).every((k) => same(d.vals[k], d.start[k]))) return '';   // Save with nothing changed: no toast
+    if (['Save', 'Add to changes'].includes(d.yes || 'Save') && Object.keys(d.vals).length && Object.keys(d.vals).every((k) => same(d.vals[k], d.start[k]))) return '';   // Save with nothing changed: no toast
     const said = d.then ? d.then(d.vals, sv) : (Object.assign(sv, d.vals), undefined);
     return said === '' ? '' : said || d.done || `${d.title}: saved`;   // a then that returns '' changed nothing
   }

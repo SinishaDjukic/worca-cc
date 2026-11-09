@@ -4,7 +4,7 @@
 |---|---|---|---|
 | `act.slots` | Each kind of action has one slot | You look in one place | by hand |
 | `act.confirm` | A step that others see or cannot be taken back confirms first; spending alone never does | Asks only when it matters | design-system-logic |
-| `act.flow` | Confirm, working, then the state moves on or the place you acted says what failed | The same flow on every page | design-system-logic |
+| `act.flow` | Confirm, working, then the state moves on or the place you acted says what failed; a step that only says something (`Would open…`) goes straight to its words, with no working | The same flow on every page, and no flash for what does no work | design-system-logic |
 | `act.this-thing` | An action moves this thing: its name, its figures and where its work goes stay; the target supplies only the state | A step never lands you on someone else's page | run-page-model |
 | `act.archive` | Archive removes the local branch, worktree and logs; the remote branch and any PR stay. Restore and Undo bring back the record, read only, never those files or a way to resume | One rule on the run page and in a list, as in the app | design-system-logic |
 | `act.fail-words` | A failure says Could not …, the reason, Nothing changed., Try again | Calm, and you know where you stand | design-system-components |

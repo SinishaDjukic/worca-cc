@@ -58,6 +58,7 @@ export { stageStep } from './kind-mark.mjs';
 export { runOutcomes, handedChip, expandFrame, markTone, kindMark, partsWord, gitMark, timeline, timelineCard, barHead, turnRow, composer, stageBar, cardHead, taskCard, taskProposal, changeProposal, turnDivider, planCard, filesCard, youTurn, stageLine, stagePart, thinkingRow, placeHead, pluginCard } from './kind-mark.mjs';
 export { tipPlace, watchTooltips } from './tooltip.mjs';
 export { menuUp, menuShift, watchMenus } from './menu-place.mjs';
+export { secondClickIgnored, watchClickGuard } from './click-guard.mjs';
 export { scrollEdges, watchScrollFades } from './scroll-fade.mjs';
 export { commandHead, commandLine, commandRow, commandGroup } from './commands.mjs';
 export { orbMark, watchOrbs } from './orb.mjs';

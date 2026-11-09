@@ -110,7 +110,8 @@ test('the step flow: Dialog, confirm, always working, then what perform promises
   const log = []; let confirmed = false; let shown = false; let end = { ok: true };
   const follow = R.stepFlow({ dialogShown: () => shown, openDialog: () => log.push('dialog'), confirmed: () => confirmed, askConfirm: () => log.push('ask'), working: (l) => log.push(R.workingWord(l)),
     perform: async () => { log.push('call'); if (end === 'throws') throw new Error('x'); return end; }, done: () => log.push('done'), failed: (l, e) => log.push(`${e.title} / ${e.detail}`) });
-  await follow({ say: 'x' }, 'Pause'); assert.deepEqual(log.splice(0), ['Pausing…', 'call', 'done']);   // no confirm: it still says what is happening
+  await follow({ say: 'x', to: 'paused' }, 'Pause'); assert.deepEqual(log.splice(0), ['Pausing…', 'call', 'done']);   // no confirm: it still says what is happening
+  await follow({ say: 'Would open it' }, 'View PR'); assert.deepEqual(log.splice(0), ['done']);   // a step that only says something: no working
   await follow({ dialog: 'pr' }, 'Create PR'); assert.deepEqual(log.splice(0), ['dialog']);
   shown = true; await follow({ dialog: 'pr' }, 'Create PR'); assert.deepEqual(log.splice(0), ['Creating…', 'call', 'done']);
   await follow({ confirm: 'Merge?' }, 'Merge PR'); assert.deepEqual(log.splice(0), ['ask']);
@@ -347,7 +348,7 @@ test('listMove: on by one, stopping at the ends; from nowhere, the first row', (
 test('a project with no remote offers Link remote, never Create PR; a mock run offers nothing to ship', () => {
   assert.equal(R.runState('no-remote').action.label, 'Link remote');
   assert.ok(!R.runState('no-remote').action.items.includes('Create PR'));
-  assert.equal(R.runState('mock-run').word, 'Mock run'); assert.equal(R.runState('mock-run').action, null);
+  assert.equal(R.runState('mock-run').word, 'Mock task'); assert.equal(R.runState('mock-run').action, null);
 });
 
 test('sectionOf: a list reads a real case: Paused and Stopped are never Ready, and every state has its section', () => {

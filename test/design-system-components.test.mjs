@@ -66,6 +66,23 @@ test('toastText: the whole text in its tooltip, Undo beside it (comp.toast-clamp
   assert.ok(dom(`<div>${C.toastText('x', C.toastUndo())}</div>`).querySelector('.rc-toast-t + [data-undo]'));
 });
 
+test('watchClickGuard: a double click fires only what was pressed (comp.click-guard)', () => {
+  const at = (t, sign, el = {}, x = 10) => ({ t, x, y: 10, el, sign });
+  const a = at(0, 'a');
+  assert.equal(C.secondClickIgnored(null, at(100, 'b')), false);
+  assert.equal(C.secondClickIgnored(a, at(100, 'b')), true, 'another button landed under the pointer');
+  assert.equal(C.secondClickIgnored(a, at(100, 'a')), false, 'the same button, redrawn');
+  assert.equal(C.secondClickIgnored(a, { ...a, t: 100 }), false, 'the same element');
+  assert.equal(C.secondClickIgnored(a, at(400, 'b')), false, 'after the guard');
+  assert.equal(C.secondClickIgnored(a, at(100, 'b', {}, 40)), false, 'elsewhere on the page');
+  const d = new JSDOM('<button id="a">Approve</button><button id="b">Merge</button>').window;
+  C.watchClickGuard(d.document);
+  const acted = []; for (const id of ['a', 'b']) d.document.getElementById(id).addEventListener('click', () => acted.push(id));
+  const press = (id, detail) => d.document.getElementById(id).dispatchEvent(new d.MouseEvent('click', { bubbles: true, detail, clientX: 5, clientY: 5 }));
+  press('a', 1); press('b', 2); assert.deepEqual(acted, ['a'], 'the second click is eaten');
+  press('b', 0); assert.deepEqual(acted, ['a', 'b'], 'a keyboard click passes');
+});
+
 test('watchMenus: a disabled item acts for nothing and says why (comp.menu-off)', () => {
   const d = new JSDOM('<div id="r"><button class="menu-item" aria-disabled="true" title="Needs a project">x</button></div>').window;
   C.watchMenus(d.document);
@@ -1347,6 +1364,8 @@ test('countBadge, barStrip, stageLine, searchResults by area', () => {
   assert.match(strip, /aria-label="Chats: 4 open"/); assert.equal((strip.match(/topnav-badge/g) || []).length, 1, 'no badge at 0');
   assert.match(C.stageLine({ mark: '', label: 'Plan', parts: '<b>x</b>' }), /stage-tools/);
   assert.match(C.stageLine({ mark: '', label: 'PR', next: true }), /is-next/);
+  assert.doesNotMatch(C.stageLine({ mark: '', label: 'Plan' }), /<button/);   // nothing to open: a row, not a dead button
+  assert.match(C.stageLine({ mark: '', label: 'Plan', attrs: { 'data-stage-line': 'plan' } }), /<button[^>]*data-turn-toggle/);
   const res = C.searchResults([{ id: 'a', text: 'Export', where: 'billing', area: 'Chats', mark: '<i></i>' }], 'None', { areas: [['Settings', ''], ['Chats', '']] });
   assert.match(res, /menu-h">Chats/); assert.doesNotMatch(res, /Settings/);
 });
@@ -1378,6 +1397,7 @@ test('dateSections: what waits on you first, then each day folding; Older and La
   const sw = C.scheduleWords;   // small.schedule-words
   assert.deepEqual(sw({ every: 'every hour', at: '07:30' }), { runs: 'every hour', says: 'Every hour', next: 'Next within the hour', time: 'Hourly', day: 'today' });
   assert.equal(sw({ every: 'every month on the 1st', at: '07:30' }).next, 'Next on the 1st at 07:30');
+  assert.equal(sw({ every: 'every weekend', at: '02:00' }).next, 'Next weekend at 02:00');
   assert.equal(sw({ every: 'every Monday', at: '09:00' }).day, 'week'); assert.equal(sw({ every: 'every day', at: '02:00' }).day, 'tomorrow'); assert.equal(sw({ every: 'every day', at: '20:00' }).time, '20:00');
   assert.ok(C.REPEATS.includes('every day') && C.REPEATS.includes('once') && C.REPEATS.includes('every weekend') && C.REPEATS.includes('every Sunday')); assert.equal(C.TIMES_OF_DAY.length, 48); assert.equal(C.TIMES_OF_DAY[5], '02:30');
   assert.deepEqual(C.dateSections({ rows: [], dayOf: () => '', days: C.NEXT_RUN_SECTIONS }).map((x) => x.title), ['Today', 'Tomorrow', 'This week', 'Later']);

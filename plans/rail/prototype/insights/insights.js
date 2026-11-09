@@ -74,8 +74,8 @@
   // each period cut by the top rows of "by": a period's parts add up to the period, a row's parts over the periods to the row
   function partsOf(sub, c) {
     const keep = c.rows.length > 4 ? 3 : 4, top = c.rows.slice(0, keep), rest = c.rows.slice(keep), weights = [...top, ...(rest.length ? [{ name: 'Other', [sub.num]: M.sum(rest.map((r) => r[sub.num])) }] : [])];
-    let left = weights.map((r) => r[sub.num]);
-    const perDay = c.labels.map((_, i) => { const got = M.allocate(left, c.F[sub.num][i]); left = left.map((v, k) => v - got[k]); return got; });
+    const named = top.map((r) => c.dayCut.names.indexOf(r.name));   // the model's cut: the same whatever the drag; what is not on top is Other
+    const perDay = c.dayCut.perDay.map((d) => [...named.map((k) => d[k]), ...(rest.length ? [M.sum(d.filter((_, k) => !named.includes(k)))] : [])]);
     return weights.map((r, k) => ({ label: r.name, values: perDay.map((d) => d[k]), texts: perDay.map((d) => sub.text(d[k])) }));
   }
   function captionOf(sub, st, c) {
@@ -125,13 +125,13 @@
   }
   // ---- the rows ----
   // what Tasks can narrow to from a row or a bar (RailRunsList.filter): a project, a stretch of time, how they ended; null when it cannot
-  const SHOW_OF = { Finished: 'finished' }, MON = { Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11 };
+  const SHOW_OF = { Finished: 'finished' };
   const isDates = (label) => /^(Jul|Aug|Sep|Oct|Nov)( \d+(-\d+)?)?$/.test(label);
-  const edge = (label, end) => { const [m, d] = label.split(' '), days = d ? d.split('-') : ['1', '31']; return MON[m] * 100 + +(end ? days[days.length - 1] : days[0]); };
-  const rangeOf = (labels) => ({ from: edge(labels[0]), to: edge(labels[labels.length - 1], true), label: M.rangeWord(labels) });
+  const rangeOf = M.rangeOf;
   // this chart's stretch, when it is not the plain month: a drag, or another period, travels with the click
-  const within = (c) => (c.st.narrow || !['this month', 'all time'].includes(c.st.when) ? { range: rangeOf(c.labels) } : {});
+  const within = (c) => { const range = M.rangeIn(c.labels, c.st); return range ? { range } : {}; };
   function tasksOf(c, st, name, parent = '') {
+    if (c.sub.team) return null;   // the whole team's numbers: Tasks lists your own
     const ofs = st.filter.filter((k) => k.startsWith('project:')), project = ofs.length === 1 ? ofs[0].slice(8) : undefined, one = project ? { project } : {};
     if (st.by === 'project' && name !== 'Other') return { project: parent || name, ...within(c) };
     if (st.then === 'project' && parent && name !== 'Other') return { project: name, ...within(c) };
@@ -140,9 +140,9 @@
     return null;
   }
   const cellsOf = (sub, c, r) => [...(sub.noShare ? [] : [`${r.sharePct}%`]), ...sub.cols.map(([, get]) => get(r, c))];
-  const columns = (sub) => [...(sub.noShare ? [] : [{ label: 'Share' }]), ...sub.cols.map(([label], i) => ({ label, narrow: i < (sub.noShare ? 2 : 1) }))];
+  const columns = (sub) => [...(sub.noShare ? [] : [{ label: sub.shareLabel || 'Share' }]), ...sub.cols.map(([label], i) => ({ label, narrow: i < (sub.noShare ? 2 : 1) }))];
   function rowsHtml(sub, c) {
-    const rowOf = (r, parent, s) => { const f = tasksOf(c, c.st, r.name, parent); return { name: r.name, cells: cellsOf(sub, c, r), sub: s, quiet: /^No /.test(r.name) || r.name === 'Other', attrs: f ? { 'data-in-row': JSON.stringify(f), title: `Opens Tasks, narrowed to ${parent ? `${parent}, ` : ''}${r.name}` } : { disabled: true, title: `Tasks narrow by project, time or status, not by ${byWord(c.st)}` } }; };
+    const rowOf = (r, parent, s) => { const f = tasksOf(c, c.st, r.name, parent); return { name: r.name, cells: cellsOf(sub, c, r), sub: s, quiet: /^No /.test(r.name) || r.name === 'Other', attrs: f ? { 'data-in-row': JSON.stringify(f), title: `Opens Tasks, narrowed to ${parent ? `${parent}, ` : ''}${r.name}` } : { disabled: true, title: c.sub.team ? "The whole team's numbers: Tasks lists your own" : `Tasks narrow by project, time or status, not by ${byWord(c.st)}` } }; };
     return R.figureRows({ label: `By ${M.DIM[c.st.by]}`, columns: columns(sub), rows: c.rows.flatMap((r) => [rowOf(r, '', false), ...(r.kids || []).map((k) => rowOf(k, r.name, true))]) });
   }
   function actions(sub, st, c) {
@@ -155,7 +155,7 @@
     const scope = st.narrow ? (c.days === 1 ? 'on this day' : `in these ${c.days} days`) : st.when === 'all time' ? 'in all' : st.when;
     const word = sub.wordAlways ? sub.wordAlways(c) : plain ? sub.word(c) : `${sub.text(c.v)} ${scope}`;
     const why = sub.whyAlways ? sub.whyAlways(c) : st.against === 'before' ? M.cmp(c, sub) : plain ? sub.why(c) : '';   // no comparison asked for: none in the headline; sub.why never compares
-    const head = R.placeHead({ title: sub.title, mark: R.kindMark({ kind: 'plugin', icon: sub.icon }), word, why, menu: R.moreMenu({ id: 'in-more', label: `More for ${sub.title}`, icon: R.icon('more', 16), open: menu === 'in-more', items: [{ id: 'link', text: 'Copy a link', help: 'To this page, as you narrowed it' }] }) });
+    const head = R.placeHead({ title: views.find((v) => v.id === arg)?.name || sub.title, mark: R.kindMark({ kind: 'plugin', icon: sub.icon }), word, why, menu: R.moreMenu({ id: 'in-more', label: `More for ${sub.title}`, icon: R.icon('more', 16), open: menu === 'in-more', items: [{ id: 'link', text: 'Copy a link', help: 'To this page, as you narrowed it' }] }) });
     const stands = sub.id === 'why' ? `<p class="in-stands">A small change to try: <b>web-app</b> ${esc(M.STANDS.why.outcome)}</p><p class="in-stands">${esc(M.STANDS.why.because)}</p><div class="in-acts">${R.button({ label: 'Try Opus 5.5 on web-app', attrs: { 'data-in-try': '' } })}</div><p class="wf-ed-m">Try starts a new chat for you to send; nothing changes until you do. You can switch back to Sonnet 5.5 at any time.</p>` : sub.id === 'review' ? `<p class="in-stands">What stands out: <b>web-app</b> ${esc(M.STANDS.review)}</p><div class="in-acts">${R.button({ label: 'Ask why web-app goes back', attrs: { 'data-in-ask': '' } })}</div>` : '';
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${sentence(sub, st, c)}${chartHtml(sub, st, c)}${rowsHtml(sub, c)}${stands}${actions(sub, st, c)}</div></div><div class="convo-dock" id="in-dock"></div></div>`;
   }
@@ -217,7 +217,7 @@
     say(`Downloaded ${sub.title}, ${count} ${count === 1 ? 'row' : 'rows'}`);
   }
   function save(sub, st) {
-    const c = M.compute(sub, st), name = `${sub.title} by ${M.DIM[st.by]}${st.then ? `, then ${M.DIM[st.then]}` : ''}, ${c.timeWord}`;
+    const dflt = M.defaults(sub), c = M.compute(sub, st), name = [`${sub.title} by ${M.DIM[st.by]}${st.then ? `, then ${M.DIM[st.then]}` : ''}, ${c.timeWord}`, st.filter.length ? `of ${filterWord(st)}` : '', st.as !== dflt.as ? `as ${AS[st.as]}` : '', st.against !== dflt.against ? `against ${AGAINST[st.against]}` : ''].filter(Boolean).join(', ');   // the whole state, so two different views never share a name
     if (views.some((v) => v.name === name)) { say(`${name} is already in Your views`); return; }
     const id = `v${seq++}`, copy = { ...st, filter: [...st.filter], narrow: st.narrow ? [...st.narrow] : null };
     views.push({ id, name, sub: sub.id, st: copy }); bar.innerHTML = barHtml();
@@ -236,7 +236,7 @@
       if (on('[data-in-try]')) { window.RailConversation?.handOver({ project: 'web-app', about: { kind: 'Project', name: 'web-app' }, text: `Try Opus 5.5 for web-app's coding step for a while. ${M.STANDS.why.because}` }); return; }
       if (on('[data-in-ask]')) { window.RailConversation?.handOver({ project: 'web-app', about: { kind: 'Project', name: 'web-app' }, ph: 'Why does review send web-app back so often?' }); return; }
       if ((hit = on('[data-in-tag]'))) { window.RailConversation?.handOver({ about: { kind: 'Insights', name: sub.title }, text: `Tag the ${hit.dataset.inTag} tasks without a client.` }); return; }
-      if (on('[data-in-default]')) { window.RailShell.go('projects'); say('Set it in a project: Every new task here gets'); return; }
+      if (on('[data-in-default]')) { const top = [...M.SUB.untagged.src.rows.project].sort((a, b) => b.tasks - a.tasks)[0].name; window.RailProjects.editTags(top); say(`${top} has the most untagged tasks`); return; }
       if ((hit = on('[data-in-row]'))) { window.RailRunsList.filter(JSON.parse(hit.dataset.inRow)); return; }
       if ((hit = on('[data-pick]'))) { const t = hit.dataset.pick, at = t.indexOf('|'); choose(t.slice(0, at), t.slice(at + 1)); return; }
       if ((hit = on('[data-menu-pick]'))) { menu = ''; if (hit.dataset.menuPick.startsWith('in-more|')) say('Would copy a link to this page'); draw(); return; }

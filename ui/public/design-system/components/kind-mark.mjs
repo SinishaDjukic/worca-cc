@@ -27,7 +27,7 @@ export function markTone(st = {}) {
   if (w === 'Closed') return 'closed';
   if (['Merged', 'Applied'].includes(w)) return 'merged';
   if (['Ready', 'Ready to merge', 'Finished'].includes(w)) return 'ok';
-  if (['Waiting', 'Mock run'].includes(w)) return 'wait';
+  if (['Waiting', 'Mock task'].includes(w)) return 'wait';
   if (['Archived', 'Deleted', 'Idle', ''].includes(w)) return 'idle';
   if (/amber/.test(d) || w === 'Needs you') return 'act';
   if (/grey/.test(d)) return 'wait';
@@ -271,7 +271,7 @@ export function placeHead({ title, facts = '', mark = '', word = '', why = '', a
  */
 export function pluginCard({ mark, kicker = '', update = '', title, what = '', why = '', facts = '', action, more = '', attrs: a = {}, word = '', tone = '', whatHtml = '', line = '', factsHtml = '', factsTip = '' }) {
   const head = `${word ? `<span class="pg-state${tone ? ' is-' + tone : ''}">${esc(word)}</span>${kicker ? ' ' : ''}` : ''}${esc(kicker)}`;
-  return `<article class="pg-card"${attrs(a)}>${mark}<span class="pg-k">${head}${update ? ` · <span class="pg-up">update ${esc(update)}</span>` : ''}</span><span class="pg-t">${esc(title)}</span><span class="pg-w">${whatHtml || esc(what)}</span>${line ? `<span class="pg-line">${line}</span>` : why ? `<span class="pg-why">${icon('worca-w', 12)}${esc(why)}</span>` : ''}${factsHtml ? `<span class="pg-f is-one"${attrs({ title: factsTip || null })}>${factsHtml}</span>` : facts ? `<span class="pg-f">${esc(facts)}</span>` : ''}<span class="pg-a">${action}${more}</span></article>`;
+  return `<article class="pg-card"${attrs(a)}>${mark}<span class="pg-k">${head}${update ? ` · <span class="pg-up">update ${esc(update)}</span>` : ''}</span><span class="pg-t" title="${esc(title)}">${esc(title)}</span><span class="pg-w">${whatHtml || esc(what)}</span>${line ? `<span class="pg-line">${line}</span>` : why ? `<span class="pg-why">${icon('worca-w', 12)}${esc(why)}</span>` : ''}${factsHtml ? `<span class="pg-f is-one"${attrs({ title: factsTip || null })}>${factsHtml}</span>` : facts ? `<span class="pg-f">${esc(facts)}</span>` : ''}<span class="pg-a">${action}${more}</span></article>`;
 }
 
 /**
@@ -424,7 +424,7 @@ export function youTurn({ text, quote = '', files = [], refs = [], attrs: a = {}
  * @param {object} [o.attrs]   on its line (the click that opens it)
  */
 export function stageLine({ mark, label, meta = '', parts = '', body = '', next = false, attrs: a = {} }) {
-  return `<div class="stage-line${body ? ' is-open' : ''}${next ? ' is-next' : ''}"><div class="stage-head">${turnRow({ mark, text: `<b>${esc(label)}</b>`, end: esc(meta), open: !!body, attrs: { 'data-fold-turn': '', ...a } })}${parts ? `<span class="stage-tools">${parts}</span>` : ''}</div>${body}</div>`;
+  return `<div class="stage-line${body ? ' is-open' : ''}${next ? ' is-next' : ''}"><div class="stage-head">${turnRow({ mark, text: `<b>${esc(label)}</b>`, end: esc(meta), open: !!body, attrs: Object.keys(a).length ? { 'data-fold-turn': '', ...a } : a })}${parts ? `<span class="stage-tools">${parts}</span>` : ''}</div>${body}</div>`;
 }
 
 /**

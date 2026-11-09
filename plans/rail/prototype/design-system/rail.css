@@ -883,6 +883,7 @@ button.lr-main:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .list-row.is-unread > .lr-main .lr-t{font-weight:500;}
 .list-row.is-current > .lr-main{background:var(--field);}
 .list-row.is-holds > .lr-main{background:var(--hover);}
+.list-row:has(.rc-pop > .menu){position:relative;z-index:1;}   /* list.row-more: an open ⋯ stays over the rows after it, a breathing row's own layer too */
 .lr-check{display:grid;place-items:center;width:100%;height:100%;cursor:pointer;}
 .lr-check input{margin:0;cursor:pointer;accent-color:var(--ink);}
 .lr-kind{display:grid;place-items:center;color:var(--ink-2);}
@@ -1151,10 +1152,10 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 /* motion.scroll-fade: the chat softens where it slides under the composer (and the top bar), only while there is more past that edge */
 @property --fade-b{syntax:'<length>';inherits:false;initial-value:0px;}
 @property --fade-t{syntax:'<length>';inherits:false;initial-value:0px;}
-:is(.convo-scroll,[data-scroll-fade],.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main){--fade-b:0px;--fade-t:0px;transition:--fade-b var(--motion-change) var(--ease),--fade-t var(--motion-change) var(--ease);-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 var(--fade-t),#000 calc(100% - var(--fade-b)),transparent 100%);mask-image:linear-gradient(to bottom,transparent 0,#000 var(--fade-t),#000 calc(100% - var(--fade-b)),transparent 100%);}
-:is(.convo-scroll,[data-scroll-fade],.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main)[data-more-below]{--fade-b:48px;}   /* ds-ok: the fade's own reach */
-:is(.convo-scroll,[data-scroll-fade],.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main)[data-more-above]{--fade-t:36px;}   /* ds-ok: the fade's own reach */
-@media (prefers-reduced-motion: reduce){:is(.convo-scroll,[data-scroll-fade],.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main){transition:none;}}
+:is(.convo-scroll,[data-scroll-fade],.menu.is-two-cols,.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main){--fade-b:0px;--fade-t:0px;transition:--fade-b var(--motion-change) var(--ease),--fade-t var(--motion-change) var(--ease);-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 var(--fade-t),#000 calc(100% - var(--fade-b)),transparent 100%);mask-image:linear-gradient(to bottom,transparent 0,#000 var(--fade-t),#000 calc(100% - var(--fade-b)),transparent 100%);}
+:is(.convo-scroll,[data-scroll-fade],.menu.is-two-cols,.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main)[data-more-below]{--fade-b:48px;}   /* ds-ok: the fade's own reach */
+:is(.convo-scroll,[data-scroll-fade],.menu.is-two-cols,.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main)[data-more-above]{--fade-t:36px;}   /* ds-ok: the fade's own reach */
+@media (prefers-reduced-motion: reduce){:is(.convo-scroll,[data-scroll-fade],.menu.is-two-cols,.bar-list,.rail-side-settings,.rl-side-body,.side-menu,.pz-popover .panel-body,#card,body.view-settings .main,body.view-runs .main){transition:none;}}
 .rail-locked{max-width:680px;margin:0 auto;}   /* a locked place starts on the text edge of the pages around it */
 .convo-col{max-width:680px;margin:0 auto;display:flex;flex-direction:column;gap:14px;font-size:var(--fs-body);line-height:1.55;color:var(--ink);overflow-wrap:anywhere;}
 .convo-col .convo-head .kind-chip{white-space:normal;}   /* a long label wraps in the column; nothing runs off the window */
@@ -1201,7 +1202,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .convo-steps-l b{font-weight:500;color:var(--ink);}
 .convo-dock{flex:none;padding:0 56px 14px 24px;position:relative;}
 .jump-latest{position:absolute;left:50%;top:-44px;translate:-50% 4px;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--motion-change) var(--ease),translate var(--motion-change) var(--ease),visibility var(--motion-change) var(--ease);background:var(--bg);box-shadow:0 0 0 1px var(--line-2);}   /* ds-ok: floats just above the input */
-.convo:has(> .convo-scroll[data-more-below]) .jump-latest{opacity:1;visibility:visible;translate:-50% 0;pointer-events:auto;}   /* only while there is more below: back to the latest */
+.convo:has(> .convo-scroll[data-far-below]) .jump-latest{opacity:1;visibility:visible;translate:-50% 0;pointer-events:auto;}   /* only while the end is well below: near it, the pill would sit on the last row */
 @media (prefers-reduced-motion: reduce){.jump-latest{transition:none;}}
 .convo-dock .composer{width:calc(100% - 32px);max-width:648px;margin:0 auto;translate:16px 0;}   /* ds-ok: on the cards' rail (32px in), as wide as the cards */
 .convo-dock-note{max-width:680px;margin:4px auto 0;font-size:var(--fs-caption);color:var(--ink-3);}
@@ -1785,7 +1786,7 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
 .wb.is-solo{grid-template-columns:minmax(0,1fr);} .wb-side{display:grid;gap:10px;}
 .wb-age{display:flex;gap:8px;align-items:center;margin:0 0 10px;font-size:var(--fs-meta);color:var(--ink-2);}
 .wm-scroll{overflow-x:auto;container-type:inline-size;} .wm{position:relative;color:var(--ink-3);}
-@container (max-width:660px){.wm{display:grid;gap:8px;width:auto !important;height:auto !important;} .wm svg{display:none;} .wm-n.wm-n{position:static;width:100%;}}   /* ds-ok: no room for the arrows: the projects one under another, whole; how they connect is listed under the map */
+@container (max-width:480px){.wm{display:grid;gap:8px;width:auto !important;height:auto !important;} .wm svg{display:none;} .wm-n.wm-n{position:static;width:100%;}}   /* ds-ok: no room for the arrows: the projects one under another, whole; how they connect is listed under the map */
 .wm svg{position:absolute;inset:0;} .wm-w{fill:none;stroke:var(--ink-3);} .wm-w.is-unsure{stroke:var(--amber-ink);stroke-dasharray:3 3;}
 .wm-t{font:400 var(--fs-caption) var(--sans);fill:var(--ink-2);} .wm-t.is-unsure{fill:var(--amber-ink);}
 .wm-n{position:absolute;box-sizing:border-box;width:150px;height:48px;display:grid;align-content:center;padding:0 10px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--bg);color:var(--ink);font:inherit;text-align:left;cursor:pointer;}   /* ds-ok: the map lays its nodes out by size */
@@ -1802,6 +1803,7 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
 /* look.chart-play: the forms a chart takes when you ask; ink only, one axis, the reading in the band above the plot */
 .chart,.bar-chart.is-read-able{position:relative;margin:12px 0 4px;padding-top:36px;}
 .bar-chart.is-read-able{padding-bottom:0;}
+.bar-chart.is-read-able:not(:has(.ch-legend,.ch-hint)){padding-bottom:26px;}   /* ds-ok: nothing under the plot: the x-labels keep their own room above what follows */
 .bar-chart.is-read-able .ch-hint{margin-top:26px;}
 .bar-chart.is-read-able .bc-plot + .bc-table{position:absolute;}
 .bar-chart.is-read-able .bc-plot{position:relative;cursor:crosshair;touch-action:pan-y;}
@@ -1903,3 +1905,7 @@ button.fr-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .bar-head{position:relative;}
 .bar-quick{position:absolute;left:36px;top:100%;z-index:30;}
 .bar-quick>.menu{position:static;}
+
+/* a form's field stacks under its label: the row basis must not become its height */
+.rc-confirm.is-form .fld{flex-direction:column;align-items:stretch;}
+.rc-confirm.is-form .fld>.input{flex:0 0 auto;}

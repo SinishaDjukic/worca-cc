@@ -462,7 +462,7 @@ const NOTIF_ROWS = ['Desktop', 'Badge', 'Sound', 'Breathing', 'Chat', 'Runs', 'S
 const RUNS_LIMIT_ROWS = ['Warning line', 'Manual starts', 'Automatic starts'];
 const strict = (...ms) => ms.filter(Boolean).sort((a, b) => R.MODES.indexOf(b) - R.MODES.indexOf(a))[0] || '';
 function settingsFinds() {
-  const out = [{ label: SM.title('notifications'), sset: 'notifications', where: 'Settings' }, ...NOTIF_ROWS.map((n) => ({ label: n, sset: 'notifications', where: 'Notifications' })), ...RUNS_LIMIT_ROWS.map((n) => ({ label: n, sset: 'runs', where: 'Runs › Limits' }))];
+  const out = [{ label: 'Settings', sset: SM.FIRST, where: 'Your menu' }, { label: SM.title('notifications'), sset: 'notifications', where: 'Settings' }, ...NOTIF_ROWS.map((n) => ({ label: n, sset: 'notifications', where: 'Notifications' })), ...RUNS_LIMIT_ROWS.map((n) => ({ label: n, sset: 'runs', where: 'Runs › Limits' }))];
   const text = (x) => (typeof x === 'function' ? x(ui.sv) : x);
   for (const g of SM.GROUPS) for (const id of g.items) {
     const sec = SM.SECTIONS[id]; if (!sec) continue;
@@ -751,16 +751,16 @@ function pick(id, v) {
     else if (v === 'allread') { const n = unread().length; const was = ui.read; ui.read = ui.read.concat(unread().map((u) => u.id)); toast(n ? `Marked ${plural(n, 'update')} read` : 'Nothing is unread', n ? { tip: 'Marks them unread again', run: () => { ui.read = was; toast('Unread again'); } } : null); }
     else { const read = live().filter((u) => !isUnread(u)), waits = read.filter((u) => u.sev === 'needs' && u.open && !u.resolved && !isFixed(u)), ids = read.filter((u) => !waits.includes(u)).map((u) => u.id); ui.cleared = ui.cleared.concat(ids); ui.pick = R.selectPrune(ui.pick, []); toast(ids.length ? `Cleared ${plural(ids.length, 'read update')}${waits.length ? `; ${waits.length} still ${waits.length === 1 ? 'waits' : 'wait'} for you` : ''}` : waits.length ? `Nothing to clear: ${waits.length} read still ${waits.length === 1 ? 'waits' : 'wait'} for you` : 'Nothing read to clear', ids.length ? undoClear(ids) : null); }
   }
-  else if (id === 'attnFor') { s.attnFor = v; window.RailAttnFor = v; toast(`What needs you breathes ${ATTN_FOR.find((x) => x.id === v).text}${v === 'act' ? '' : ' once you open it'}`); }
-  else if (id === 'badge') { if (s.badge !== v) toast(`Badge: the tab title ${M.BADGE.find((b) => b.id === v).text}`); s.badge = v; }
-  else if (id === 'sound') { if (s.sound !== v) toast(`Sound: ${R.SOUND_CHOICES.find((x) => x.id === v).text}`); s.sound = v; }
-  else if (id === 'mine') { if (s.mine !== v) toast(`Manual starts: New run and Resume near a limit ${MINE.find((m) => m.id === v).text}`); s.mine = v; }
-  else if (id === 'auto') { if (s.auto !== v) toast(`Automatic starts: a slice or scheduled run near a limit ${AUTO.find((m) => m.id === v).text}`); s.auto = v; }
+  else if (id === 'attnFor') { s.attnFor = v; window.RailAttnFor = v; }
+  else if (id === 'badge') s.badge = v;   // the sentence has changed before your eyes: no toast repeats it
+  else if (id === 'sound') s.sound = v;
+  else if (id === 'mine') s.mine = v;
+  else if (id === 'auto') s.auto = v;
   else if (id === 'nr-on') ui.nr = { ...ui.nr, on: v, wait: false, moved: '' };
   else if (id === 'nr-project') ui.nr = { ...ui.nr, project: v };
   else if (id === 'warn') { if (s.warnAt !== +v) toast(`Warning line at ${v}%: rings, Now and updates follow it`); s.warnAt = +v; }
-  else if (id.startsWith('lvl:')) { const g = s.groups[id.slice(4)]; if (g.level !== v) { g.level = v; toast(`${M.GROUPS.find((x) => x.id === id.slice(4)).name}: ${g.where === 'pulse' ? whereText(g.where) : `send ${levelText(v)} to ${whereText(g.where)}`}`); } }
-  else if (id.startsWith('whr:')) { const g = s.groups[id.slice(4)]; if (g.where !== v) { g.where = v; toast(`${M.GROUPS.find((x) => x.id === id.slice(4)).name}: ${v === 'pulse' ? whereText(v) : `send ${levelText(g.level)} to ${whereText(v)}`}`); } }
+  else if (id.startsWith('lvl:')) { const g = s.groups[id.slice(4)]; g.level = v; }
+  else if (id.startsWith('whr:')) { const g = s.groups[id.slice(4)]; g.where = v; }
   else if (id.startsWith('ev:')) {
     const evId = id.slice(3), g = M.GROUPS.find((x) => x.events.some((e) => e[0] === evId)), gs = s.groups[g.id], ev = g.events.find((e) => e[0] === evId);
     const base = M.qualifies(gs.level, ev[2]) ? gs.where : 'pulse';
@@ -790,8 +790,8 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-pop]'))) { ui.pop = !ui.pop; ui.acct = false; ui.nr = null; if (ui.pop) opening = 'pop'; render(); return; }
   if ((el = tg('[data-acct]'))) { ui.acct = !ui.acct; ui.sub = ''; ui.pop = false; ui.nr = null; if (ui.acct) opening = 'acct'; render(); return; }
   if ((el = tg('[data-sub]'))) { const v = el.dataset.sub; ui.sub = v && ui.sub !== v ? v : ''; if (ui.sub) opening = 'sub'; render(); return; }
-  if ((el = tg('[data-desk]'))) { ui.s.desktop = ui.s.desktop === 'on' ? 'off' : 'on'; toast(ui.s.desktop === 'on' ? 'Desktop notifications on' : 'Desktop notifications off'); render(); return; }
-  if ((el = tg('[data-level]'))) { ui.sub = ''; toast(`Interface mode: ${cap(el.dataset.level)}`); R.prefs.setMode(el.dataset.level); return; }
+  if ((el = tg('[data-desk]'))) { ui.s.desktop = ui.s.desktop === 'on' ? 'off' : 'on'; render(); return; }
+  if ((el = tg('[data-level]'))) { ui.sub = ''; if (el.dataset.level !== R.prefs.mode()) toast(`Interface mode: ${cap(el.dataset.level)}`); R.prefs.setMode(el.dataset.level); return; }
   if ((el = tg('[data-sw="away"]'))) {
     const back = isAway(); ui.awayStatus = back ? (C().away.hours ? 'here' : 'no-hours') : 'away-now';
     // coming back brings back what Worca did meanwhile: one update at the top of Updates, unread

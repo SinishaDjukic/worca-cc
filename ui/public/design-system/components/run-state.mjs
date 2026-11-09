@@ -11,7 +11,7 @@ export const TRACKER_MOVES = { jira: ['In review', 'Resolved', 'Done'], azure: [
 
 const STATES = {
   'no-remote': { word: 'Ready', dot: 'is-green', action: { label: 'Link remote', icon: 'up', primary: true, items: ['How to merge', 'Discard'] } },
-  'mock-run': { word: 'Mock run', dot: 'is-grey' },
+  'mock-run': { word: 'Mock task', dot: 'is-grey' },
   starting: {
     word: "Starting",
     dot: "is-peach is-pulse"

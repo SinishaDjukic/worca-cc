@@ -218,7 +218,7 @@ function changesPanel(v) {
   const head = (name, n, a, dl) => `<li class="ch-dir ch-group"><span class="ch-gn">${name}</span><span class="rtab-dim">${n}</span>${a !== undefined ? `<span class="ct"><span class="add">+${a}</span><span class="del">−${dl}</span></span>` : ''}</li>`;
   const rows = kinds.map(([name, xs]) => head(name, `${xs.length} ${xs.length === 1 ? 'file' : 'files'}`, xs.reduce((s, x) => s + x.a, 0), xs.reduce((s, x) => s + x.dl, 0)) + xs.slice().sort((x, y) => (y.a + y.dl) - (x.a + x.dl)).map((r) => {
     const m = d.fileMeta[r.p] || { st: 'M' };
-    const diff = open === r.i ? `<div class="ch-diff"><p class="ch-at">${esc(d.hunk.at)}</p><pre>${d.hunk.lines.map(([k, t]) => `<span class="${k === '+' ? 'add' : k === '-' ? 'del' : ''}">${esc(k + ' ' + t)}</span>`).join('\n')}</pre>${commentsHtml(r.p, d)}${R.button({ label: 'Open the whole diff', attrs: { 'data-key': 'file-full', 'data-say': 'Opens the whole diff of the file' } })}</div>` : '';
+    const diff = open === r.i ? `<div class="ch-diff"><p class="ch-at">${esc(d.hunk.at)}</p><pre>${d.hunk.lines.map(([k, t]) => `<span class="${k === '+' ? 'add' : k === '-' ? 'del' : ''}">${esc(k + ' ' + t)}</span>`).join('\n')}</pre>${commentsHtml(r.p, d)}${R.button({ label: 'Open the whole diff', attrs: { 'data-key': 'file-full', 'data-say': 'Would open the whole diff of the file' } })}</div>` : '';
     return `<li class="ch-file${open === r.i ? ' is-open' : ''}${ui.land === 'file:' + r.i ? ' is-flash' : ''}">${R.fileRow({ status: m.st, name: r.name, dir: r.dir, path: r.p, notes: notesOf(r.p, d), added: r.a, removed: r.dl, blocks: blocks(r.a, r.dl), open: open === r.i, attrs: { 'data-file': r.i, 'data-key': 'file:' + r.i } })}${diff}</li>`;
   }).join('')).join('');
   // Documents its steps wrote: they stay with the task and are not in the PR. A name opens it; one download at the end.
@@ -300,7 +300,7 @@ function costHtml(v) {
   return `<section class="rtab rl-sec"><h2 class="rtab-h">Cost</h2>${R.table({ label: 'Cost', columns: [{ id: 'name', label: 'Spent on' }, { id: 'cost', label: 'Cost', num: true }], rows })}${v.agentsUnknown ? '<p class="rl-note">This engine reports no cost, so the total is only Worca’s own calls.</p>' : ''}<p class="rl-note">Apart, not in the total: ${d.costApart.map(([a, b]) => esc(a) + ' ' + esc(b)).join(' · ')}</p></section>`;
 }
 // A view that only shows is a Dialog without a form (docs/rail/forms.md): the graph, a document, a transcript.
-const viewDialog = (title, body, cls) => R.dialog({ title, id: 'vd-h', close: svg('x', 14), body, yes: 'Close', view: true, cls, hooks: { close: { 'data-viewclose': true, 'data-key': 'vd-close' }, yes: { 'data-viewclose': true, 'data-key': 'vd-ok' } } });
+const viewDialog = (title, body, cls) => R.dialog({ title, id: 'vd-h', body, yes: 'Close', view: true, cls, hooks: { yes: { 'data-viewclose': true, 'data-key': 'vd-close' } } });   // a view closes one way: its Close
 function viewDialogHtml(v) {
   if (ui.dialog === 'doc') {
     const d = ui.doc; return viewDialog(d.name, `<div class="rl-tools">${R.button({ label: 'Download', kind: 'quiet', attrs: { 'data-say': 'Would download ' + d.name, 'data-key': 'doc-dl' } })}</div><div class="doc-view">${md(d.body)}</div>`);
@@ -389,7 +389,7 @@ function render() {
   const o = v.open;
   const enter = o.key !== lastOpen; lastOpen = o.key;   // the steps fade in only when another stage opens, never on a repaint
   const head = o.isRun ? `<div class="sc-head"><span class="sc-run" title="${esc(o.title)}">${esc(o.title)}</span>${v.independent ? R.chip({ text: 'Independent', title: 'It does not start from another task’s branch' }) : ''}${o.meta ? `<span class="rtab-dim sc-run-cost">${esc(o.meta)}</span>` : ''}${o.canOpen && !(a && a.label === 'Open task ' + (o.runIndex + 1)) ? `${R.button({ label: 'Open task', attrs: { 'data-open-run': o.runIndex, 'data-key': 'open-run' } })}` : v.bar.stop ? R.button({ label: 'Re-plan from here', title: 'The planner re-cuts this task and the ones after it', attrs: { 'data-replan': o.runIndex, 'data-key': 'replan' } }) : ''}</div>`
-    : v.planHead ? `<div class="sc-head"><span class="sc-run">How the work was cut into runs</span>${R.button({ label: 'Open the plan', attrs: { 'data-key': 'open-plan', 'data-doc': 0 } })}</div>` : '';
+    : v.planHead ? `<div class="sc-head"><span class="sc-run">How the work was cut into tasks</span>${R.button({ label: 'Open the plan', attrs: { 'data-key': 'open-plan', 'data-doc': 0 } })}</div>` : '';
   // the next task of a group, under the task it follows: starts by itself, or asks first
   const then = v.then ? `<div class="sc-then">Then <b title="${esc(v.then.title)}">Run ${v.then.n} · ${esc(v.then.title)}</b>${wordPick('then', ui.askEach ? 'asks me first' : 'starts by itself', `When task ${v.then.n} starts`, [{ id: 'group:go', text: 'Starts by itself', checked: !ui.askEach, help: 'Each task starts when the one before it is ready' }, { id: 'group:ask', text: 'Asks me first', checked: !!ui.askEach, help: 'Stops for your OK before the next task starts' }], 'pd-ship')}</div>` : '';
   const ask = v.ask && o.rows.some((r) => /is-ask/.test(r.rowCls)) ? answerHtml(v.ask) : v.under && o.rows.some((r) => /is-ask/.test(r.rowCls)) ? underHtml(v.under) : '';
@@ -596,7 +596,10 @@ function done(f, label) {
   if (f.leave) { if (SHELL) { window.RailShell.taskGone?.(ui.caseId, M.titles?.[ui.caseId]); ui = fresh('starting'); SHELL.go('runs'); window.RailPulse?.say(f.say); } else { goCase('deleted', {}); toast(f.say); } return; }
   if (f.fix) { ui.fixed = Object.assign({}, ui.fixed, { [f.fix]: true }); toast(f.say); pendingFocus = 'act-main'; return; }
   if (f.run) { f.run(); toast(f.say); pendingFocus = 'act-main'; }
-  else if (f.to) { const was = ui.caseId; if (SHELL && M.titles?.[was]) { M.titles[f.to] = M.titles[was]; if (M.branches?.[was]) M.branches[f.to] = M.branches[was]; if (M.asks?.[was]) M.asks[f.to] = M.asks[was]; if (M.whys) M.whys[f.to] = null; } goCase(f.to, f); toast(f.say); if (SHELL) document.dispatchEvent(new CustomEvent('rail:task-moved', { detail: { from: was, to: f.to, ask: M.asks?.[was] || '', title: M.titles?.[f.to] || '' } })); }   // on its page or lent to a card in a chat: the card, the bar, Pulse and In view follow
+  else if (f.to) { const was = ui.caseId;
+    // a deep link to a state nobody is in: the task on this page joins the store first, so the step moves a row every count reads
+    if (SHELL && !M.titles?.[was]) { const v = M.view(was, ui); window.RailWorld.add({ id: `page-${Date.now().toString(36)}`, case: was, title: v.title, project: v.crumbs[1]?.t || '', detail: v.detail }); }
+    if (SHELL && M.titles?.[was]) { M.titles[f.to] = M.titles[was]; if (M.branches?.[was]) M.branches[f.to] = M.branches[was]; if (M.asks?.[was]) M.asks[f.to] = M.asks[was]; if (M.whys) M.whys[f.to] = null; } goCase(f.to, f); toast(f.say); if (SHELL) document.dispatchEvent(new CustomEvent('rail:task-moved', { detail: { from: was, to: f.to, ask: M.asks?.[was] || '', title: M.titles?.[f.to] || '' } })); }   // on its page or lent to a card in a chat: the card, the bar, Pulse and In view follow
   else { toast(f.say); pendingFocus = pendingFocus || 'act-main'; }
 }
 // Why a step fails here (a mock's reasons); a failure keeps the state as it was.
@@ -741,7 +744,7 @@ function prDialogHtml(v) {
   const rowLine = (f, i) => f.made ? `<span class="st-sum">Opened ${esc(f.made)}</span>` : f.gen || f.genTitle ? '<span class="st-writing">Writing…</span>'
     : (f.errDesc || f.errTitle) && !f.open ? '<span class="st-sum">Couldn’t write it; today’s text stays</span>'
     : v.tabData.prFlag[i] ? `<span class="st-flag">${esc(v.tabData.prFlag[i])}</span>` : `<span class="st-sum" title="${esc(v.tabData.prSum[i] || '')}">${esc(v.tabData.prSum[i] || '')}</span>`;
-  const rowsHtml = stacked && pr.prs ? `<div class="pd-f"><span class="pd-hint">Worca writes each title and description from its run. Open a row only to change it.</span><ol class="st-list">${pr.prs.map((f, i) => R.stackedPrRow({ n: i + 1, title: f.title, line: rowLine(f, i), meta: [`${(sh.sizes || [])[i] || ''} · ${v.tabData.prFiles[i] || 1} files`, i && sh.word !== 'separate' ? 'into PR ' + i : 'into ' + pr.base], open: f.open, made: f.made, body: f.open && !f.made ? fields(f, i) : '', attrs: { 'data-prrow': i, 'data-key': 'prrow:' + i } })).join('')}</ol></div>` : '';
+  const rowsHtml = stacked && pr.prs ? `<div class="pd-f"><span class="pd-hint">Worca writes each title and description from its task. Open a row only to change it.</span><ol class="st-list">${pr.prs.map((f, i) => R.stackedPrRow({ n: i + 1, title: f.title, line: rowLine(f, i), meta: [`${(sh.sizes || [])[i] || ''} · ${v.tabData.prFiles[i] || 1} files`, i && sh.word !== 'separate' ? 'into PR ' + i : 'into ' + pr.base], open: f.open, made: f.made, body: f.open && !f.made ? fields(f, i) : '', attrs: { 'data-prrow': i, 'data-key': 'prrow:' + i } })).join('')}</ol></div>` : '';
   const title = stacked ? '' : fields(pr, -1);
   const branch = v.place.branch || 'feat/unified-page-navigation';
   // The sentence says what opens, from where, into what; how many PRs is a picker in it, like the base.
@@ -821,6 +824,8 @@ document.addEventListener('click', (e) => {
   if (SHELL && !SHELL.owns('run', e.target)) return;
   // in the one Worca the trail's first step is the Runs list itself
   if (SHELL && e.target.closest('#card [data-key="crumb:0"]')) { e.preventDefault(); SHELL.back(); return; }
+  const groupHit = SHELL && e.target.closest('#card [data-key^="crumb:"][data-say]'), groupCrumb = groupHit && M.view(ui.caseId, ui).crumbs[+groupHit.dataset.key.slice(6)];
+  if (groupCrumb?.group) { e.preventDefault(); window.RailRunsList.showGroup(groupCrumb.t, M.view(ui.caseId, ui).title); return; }   // a group added with +: Tasks, with that group open
   const placeCrumb = SHELL && e.target.closest('#card [data-key="crumb:1"][data-say]');   // the place: Tasks, narrowed to it
   if (placeCrumb && !M.view(ui.caseId, ui).crumbs[1].group) { e.preventDefault(); const name = placeCrumb.textContent.trim(); window.RailRunsList.filter(window.RailWorld.tops().some((x) => x.project === name) ? { project: name } : {}); return; }   // a folder or workspace is no project in the list: all of Tasks
   const t = e.target.closest('button');
@@ -915,8 +920,8 @@ document.addEventListener('click', (e) => {
     else if (pid === 'cut:merge' || pid === 'cut:remove' || pid === 'cut:undo') {
       const runs = (ui.outline || v0().outlineRuns).slice(); const i = +pval; ui.menu = '';
       if (pid === 'cut:undo') { ui.outline = null; ui.outlineEdited = false; toast('Back to the split as Worca wrote it'); }
-      else if (pid === 'cut:merge') { runs.splice(i, 2, runs[i] + ' + ' + runs[i + 1]); ui.outline = runs; ui.outlineEdited = true; toast('Merged runs ' + (i + 1) + ' and ' + (i + 2)); }
-      else { runs.splice(i, 1); ui.outline = runs; ui.outlineEdited = true; toast('Removed run ' + (i + 1)); }
+      else if (pid === 'cut:merge') { runs.splice(i, 2, runs[i] + ' + ' + runs[i + 1]); ui.outline = runs; ui.outlineEdited = true; toast('Merged tasks ' + (i + 1) + ' and ' + (i + 2)); }
+      else { runs.splice(i, 1); ui.outline = runs; ui.outlineEdited = true; toast('Removed task ' + (i + 1)); }
       pendingFocus = 'act-main';
     }
     else if (d.menuPick.startsWith('pushr:')) { ui.pr.push = d.menuPick.slice(6); ui.menu = ''; pendingFocus = 'menu:pdpush'; }
@@ -1021,6 +1026,8 @@ document.addEventListener('keydown', (e) => {
   if (t.closest('.menu')) { next.focus(); return; }
   pendingFocus = next.dataset.key; next.click();
 });
+// Enter in the task's Ask box sends it, as in every composer; Shift+Enter is a new line.
+document.addEventListener('keydown', (e) => { if (!SHELL || e.key !== 'Enter' || e.shiftKey || e.isComposing || !e.target.closest?.('#task-dock [data-composer-t]')) return; e.preventDefault(); e.target.closest('#task-dock').querySelector('[data-dock-send]')?.click(); });
 // A case named in the address (#question) opens on load, so a review sheet can show every state at once.
 R.prefs.onChange(render);
 // A menu, a picker, an editor and a Dialog close on a click outside or Esc (docs/rail/panels.md).

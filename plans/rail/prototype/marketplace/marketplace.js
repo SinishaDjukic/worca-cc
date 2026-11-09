@@ -29,11 +29,11 @@
   };
   const view = { sort: 'used' };
   let current = '', form = null, ctl = null, home = null, bar = null, page = null, menu = '', addVal = '', addErr = '';
-  const srcKey = (s) => s.trim().replace(/^https?:\/\/(www\.)?/, '').replace(/^github\.com\//, '').replace(/\.git$/, '').replace(/\/$/, '').toLowerCase();
+  const srcKey = (s) => s.trim().replace(/^(https?:\/\/)?(www\.)?/, '').replace(/^github\.com\//, '').replace(/\.git$/, '').replace(/\/$/, '').toLowerCase();
   const countOf = (m) => data.plugins.filter((p) => p.market === m.id).length;
   const plugins = (n) => `${n} ${n === 1 ? 'plugin' : 'plugins'}`;
   // the one reading of a source you typed: why it cannot be added, or ''
-  const addProblem = (v) => (!v ? 'Say which repository or folder first.' : v.length > 200 ? 'That is too long for a repository or a folder.' : !/^(https?:\/\/\S+|[.~]{0,2}\/\S*|[\w.-]+\/[\w.-]+)$/.test(v) ? 'Use owner/repo, a GitHub URL or a folder.' : data.markets.some((m) => srcKey(m.url) === srcKey(v)) ? 'That source is already added.' : '');
+  const addProblem = (v) => (!v ? 'Say which repository or folder first.' : v.length > 200 ? 'That is too long for a repository or a folder.' : !/^(https?:\/\/\S+|[.~]{0,2}\/\S*|(www\.)?github\.com\/[\w.-]+\/[\w.-]+\/?|[\w.-]+\/[\w.-]+)$/.test(v) ? 'Use owner/repo, a GitHub URL or a folder.' : data.markets.some((m) => srcKey(m.url) === srcKey(v)) ? 'That source is already added.' : '');
   const stOf = (p) => (p.update ? { word: 'Update available', tone: 'act', act: `Update to ${p.update}` } : p.installed ? { word: 'Installed', tone: 'ok', act: 'Set it up' } : { word: 'Not installed', tone: 'idle', act: 'Install' });
   const SHELF_ICON = ['track', 'kind-chat', 'plug', 'kind-workflow'];
   const SORTS = { used: 'most used', new: 'newest', az: 'A–Z' };
@@ -75,9 +75,15 @@
     if (key === 'installed') return { title: 'Installed', meta: 'Turn one off, remove it or set it up in Settings › Plugins', list: data.plugins.filter((p) => p.installed) };
     if (key === 'for-you') return { title: 'For you', meta: 'Worca suggests these from how you work; each says why', list: forYou(), why: true };
     if (key === 'all') return { title: 'All plugins', meta: 'Every plugin from every source', list: data.plugins.slice() };
-    if (key.startsWith('shelf-')) { const [t, meta, kinds] = SHELVES[+key.slice(6)]; return { title: t, meta, list: data.plugins.filter((p) => kinds.includes(p.kind)) }; }
+    if (key.startsWith('shelf-')) { const [t, meta, kinds] = SHELVES[parseInt(key.slice(6), 10)], fresh = key.endsWith('-new'); return { title: t, meta: fresh ? 'What you have not installed yet' : meta, list: data.plugins.filter((p) => kinds.includes(p.kind) && !(fresh && p.installed)), fresh }; }
     if (key.startsWith('src-')) { const m = data.markets.find((x) => x.id === key.slice(4)); return { title: m?.name || 'Source', meta: m ? `${m.url} · synced ${m.synced}` : '', list: data.plugins.filter((p) => p.market === m?.id) }; }
     return null;
+  }
+  function emptyOf(key, w) {   // an empty view says what comes next
+    const goto = (label, to) => R.button({ label, kind: 'quiet', attrs: { 'data-mk-goto': to } });
+    if (key.startsWith('src-')) return R.emptyState({ title: 'No plugins from this source yet.', text: 'A plugin shows here once its repository or folder holds a worca-cc-plugin.json. Sync after adding one.', actions: R.button({ label: 'Sync', attrs: { 'data-mk-sync': key.slice(4) } }) + goto('All plugins', '~all') });
+    if (w.fresh) return R.emptyState({ title: 'You have installed them all.', text: 'What they added is in your workflows and agents.', actions: goto('Installed', '~installed') });
+    return R.emptyState({ title: key === 'updates' ? 'Everything is up to date.' : 'Nothing here yet.', actions: goto('All plugins', '~all') });
   }
   function wayHtml(key) {
     const w = wayOf(key); if (!w) return homeHtml();
@@ -85,7 +91,7 @@
     const ups = key === 'updates' && list.length ? R.button({ label: list.length === 1 ? `Update ${nameOf(list[0])}` : `Update all ${list.length}`, attrs: { 'data-mk-update-all': '' } }) : '';
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ title: w.title, facts: esc(`${list.length} ${list.length === 1 ? 'plugin' : 'plugins'} · ${w.meta}`), ...(ups ? { mark: R.kindMark({ kind: 'plugin', icon: 'refresh', tone: 'act' }), word: `${list.length} to update`, why: 'Each asks for nothing new', action: ups } : {}) })}
       ${list.length > 1 ? `<div class="convo-head">Showing ${R.sentencePicker({ id: 'mk-sort', text: SORTS[sort], items: Object.entries(SORTS).map(([id, text]) => ({ id, text, checked: id === sort })), open: menu === 'mk-sort', chevron: R.icon('chevron', 10) })} first</div>` : ''}
-      ${list.length ? `<div class="pg-grid">${list.slice(0, n).map((p) => cardOf(p, w.why, key === 'updates')).join('')}</div>${list.length > n ? `<div style="margin:12px 0 0">${R.button({ label: `Show ${list.length - n} more`, kind: 'quiet', attrs: { 'data-mk-more': key } })}</div>` : ''}` : R.emptyState({ title: key === 'updates' ? 'Everything is up to date.' : 'Nothing here yet.' })}
+      ${list.length ? `<div class="pg-grid">${list.slice(0, n).map((p) => cardOf(p, w.why, key === 'updates')).join('')}</div>${list.length > n ? `<div style="margin:12px 0 0">${R.button({ label: `Show ${list.length - n} more`, kind: 'quiet', attrs: { 'data-mk-more': key } })}</div>` : ''}` : emptyOf(key, w)}
     </div></div></div>`;
   }
   function homeHtml() {
@@ -119,13 +125,14 @@
       if (!here()) return;   /* another place's page is showing */
       const on = (q) => e.target.closest(q); let hit; const p = data.plugins.find((x) => x.id === current);
       if ((hit = on('[data-mk-sync]'))) { const m = data.markets.find((y) => y.id === hit.dataset.mkSync); m.synced = 'just now'; draw(); say(`Synced ${m.name}: ${plugins(countOf(m))}, nothing new`); return; }
+      if ((hit = on('[data-mk-goto]'))) { window.RailShell.go(`marketplace/${hit.dataset.mkGoto}`); return; }
       if ((hit = on('[data-mk-more]'))) { shown[hit.dataset.mkMore] = Infinity; draw(); return; }
       if ((hit = on('[data-menu-pick^="mk-sort|"]'))) { view.sort = hit.dataset.menuPick.split('|')[1]; menu = ''; draw(); return; }
       if (!p && (hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); return; }
       if ((hit = on('[data-mk-card]'))) { step(data.plugins.find((x) => x.id === hit.dataset.mkCard)); return; }
       if ((hit = on('[data-mk-open]'))) { window.RailShell.go(`marketplace/${hit.dataset.mkOpen}`); return; }
       if (on('[data-mk-update-all]')) { const ups = data.plugins.filter((x) => x.update); ups.forEach((x) => { x.ver = x.update; delete x.update; }); draw(); say(`Updated ${ups.map(nameOf).join(', ')}`); return; }
-      if (on('[data-mk-addgo]')) { const v = page.querySelector('[data-mk-add]')?.value.trim() || ''; addErr = addProblem(v); addVal = addErr ? v : ''; if (addErr) { draw(); page.querySelector('[data-mk-add]')?.focus(); return; } data.markets.push({ id: `s${data.markets.length}`, name: srcKey(v) === v.toLowerCase() ? v : v.replace(/^https?:\/\/(www\.)?(github\.com\/)?/, '').replace(/\.git$/, '').replace(/\/$/, ''), url: v, branch: 'main', sha: /^[.~/]/.test(v) ? '' : 'a1b2c3d', synced: 'just now' }); draw(); say(`Added ${data.markets[data.markets.length - 1].name}: no plugins from it yet`); return; }
+      if (on('[data-mk-addgo]')) { const v = page.querySelector('[data-mk-add]')?.value.trim() || ''; addErr = addProblem(v); addVal = addErr ? v : ''; if (addErr) { draw(); page.querySelector('[data-mk-add]')?.focus(); return; } data.markets.push({ id: `s${data.markets.length}`, name: srcKey(v) === v.toLowerCase() ? v : v.replace(/^(https?:\/\/)?(www\.)?(github\.com\/)?/, '').replace(/\.git$/, '').replace(/\/$/, ''), url: v, branch: 'main', sha: /^[.~/]/.test(v) ? '' : 'a1b2c3d', synced: 'just now' }); const added = data.markets[data.markets.length - 1]; window.RailShell.go(`marketplace/~src-${added.id}`); say(`Added ${added.name}: no plugins from it yet`); return; }
       if (!p || !page.querySelector('#mk-dock')) return;
       if (on('[data-mk-step]')) { step(p); return; }
       if (on('[data-mk-setup]')) { window.RailShell.go('settings/plugins'); return; }
@@ -141,11 +148,11 @@
   }
   window.RailPlaces = window.RailPlaces || {};
   const byName = (name) => data.plugins.find((p) => nameOf(p) === name);
-  const isWay = (k) => (k.startsWith('shelf-') ? !!SHELVES[+k.slice(6)] : k.startsWith('src-') ? data.markets.some((m) => m.id === k.slice(4)) : ['updates', 'installed', 'for-you', 'all'].includes(k));
+  const isWay = (k) => (k.startsWith('shelf-') ? /^shelf-\d+(-new)?$/.test(k) && !!SHELVES[parseInt(k.slice(6), 10)] : k.startsWith('src-') ? data.markets.some((m) => m.id === k.slice(4)) : ['updates', 'installed', 'for-you', 'all'].includes(k));
   window.RailPlaces.marketplace = { has: (a) => (a.startsWith('~') ? isWay(a.slice(1)) : data.plugins.some((p) => p.id === a)),
     // the one truth of what is installed: Settings › Plugins and Workflows read it (undefined: not a plugin of this list)
     isInstalled: (name) => byName(name)?.installed, setInstalled: (name, on) => { const p = byName(name); if (p) setOn(p, on); },
     hasUpdate: (name) => !!byName(name)?.update, update: (name) => { const p = byName(name); if (p?.update) { p.ver = p.update; delete p.update; } },
-    shelfCount: (n) => data.plugins.filter((p) => SHELVES[n][2].includes(p.kind)).length,
+    notInstalled: (n) => data.plugins.filter((p) => SHELVES[n][2].includes(p.kind) && !p.installed).length,
     search: (q) => data.plugins.filter((p) => `${nameOf(p)} ${p.id} ${p.what}`.toLowerCase().includes(q)).map((p) => ({ label: nameOf(p), where: `${p.kind.replace(/s$/, '')}${p.installed ? ' · installed' : ''}`, hash: `marketplace/${p.id}` })), sample: 'slack-chat', show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) menu = ''; if (form && form.id !== arg) form = null; current = arg || ''; draw(); } };
 })();

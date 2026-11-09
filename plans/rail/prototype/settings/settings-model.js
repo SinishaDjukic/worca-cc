@@ -236,12 +236,12 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     menu: ['Change rule', 'Remove'],
     on: { 'Change rule': (r, x) => x.dialog({ title: `Rule for ${r.title}`, yes: 'Save', fields: [{ key: 'to', label: 'Move its ticket', value: r.move, options: [['none', 'Don\'t move'], ['done', 'Any Done status'], ...MOVES[r.tracker].filter((m) => m !== r.gone).map((m) => [m, m])] }], then: (v) => { r.move = v.to; r.gone = ''; r.meta = ruleWords(v.to); r.mark = ''; return `${r.title}: ${r.meta}`; } }) } });
 
-  const plugin = (title, meta, key, on, o = {}) => ({ title, meta, sw: { key, on }, mark: o.mark, menu: o.menu ? (r) => (store()?.hasUpdate?.(title) === false ? ['Settings', 'Uninstall'] : o.menu) : ['Settings', 'Uninstall'], when: (sv) => installed(sv, title), live: () => (store()?.hasUpdate?.(title) === false ? meta.replace(' · 1 update', '') : meta),
+  const plugin = (title, meta, key, on, o = {}) => ({ title, meta, sw: { key, on }, mark: o.mark, menu: o.nothing ? ['Uninstall'] : o.menu ? (r) => (store()?.hasUpdate?.(title) === false ? ['Settings', 'Uninstall'] : o.menu) : ['Settings', 'Uninstall'], when: (sv) => installed(sv, title), live: () => (store()?.hasUpdate?.(title) === false ? meta.replace(' · 1 update', '') : meta),
     on: {
       Settings: (r, x) => x.dialog({ title: `${title} settings`, fields: o.fields || [{ key: 'url', label: 'Address', value: o.url || '' }], check: o.fields ? undefined : (v) => (isUrl(v.url) ? '' : 'An address reads like https://example.com'), done: `${title} saved` }),
       Update: (r) => { store()?.update?.(title); r.meta = meta.replace(' · 1 update', ''); r.mark = ''; r.menu = ['Settings', 'Uninstall']; return `${title} updated`; },
       Uninstall: uninstall(title),
-    }, open: (r, x) => r.on.Settings(r, x) });
+    }, open: o.nothing ? undefined : (r, x) => r.on.Settings(r, x) });   // nothing: it asks for no setup, so it has no settings to open
   // A chat channel's plugin installs it and sets it up; its switch and state are Chat's, one link away.
   const channelPlugin = (title, key) => ({ title, meta: 'A chat channel', when: (sv) => installed(sv, title),
     live: (sv) => (sv.chToken[title] ? `A chat channel · ${channelState(sv, title, key) === 'Off' ? 'off' : 'on'} in Chat` : 'A chat channel · needs a bot token'),
@@ -384,7 +384,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
           confirm: { text: 'Turn every Labs feature back to its default?', yes: 'Reset all', then: () => { for (const f of flagsChanged()) window.RailUI.prefs.setFlag(f.key, f.on); return 'Labs: back to its defaults'; } } },
       ], rows: [
         { name: 'Guide', say: 'How Labs works, and what a stage means', acts: [{ label: 'Open', say: 'Would open the Labs guide in a new tab' }] },
-      ], groups: ['Beta', 'Experimental'].map((stage) => ({ title: stage, rows: FLAGS.filter((f) => f.stage === stage).map((f) => ({ name: f.name, say: f.say, sw: { flag: f.key, on: f.on, why: f.why, locked: f.locked } })) })) },
+      ], groups: ['Beta', 'Experimental'].map((stage) => ({ title: stage, rows: FLAGS.filter((f) => f.stage === stage).map((f) => ({ name: f.name, say: f.locked ? `${f.say}. ${f.locked}` : f.say, sw: { flag: f.key, on: f.on, why: f.why, locked: f.locked } })) })) },
     ] },
 
     runs: { title: 'Tasks', meta: 'How tasks spend, start and wait.', sections: [
@@ -652,6 +652,9 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         { title: 'Others', list: [
           plugin('Notion', 'An MCP server · worca-official', 'pNotion', true, { url: 'https://mcp.notion.com' }),
           plugin('Sentry', 'An MCP server · worca-official', 'pSentry', true, { url: 'https://mcp.sentry.dev' }),
+          plugin('Cloudflare', '2 MCP servers · worca-official', 'pCloudflare', true, { url: 'https://mcp.cloudflare.com' }),
+          plugin('Review pack', '2 agents · worca-official', 'pReviewPack', true, { nothing: true }),
+          plugin('Promo video', 'A workflow and 3 agents · worca-official', 'pPromoVideo', true, { nothing: true }),
         ] },
       ] },
     ] },

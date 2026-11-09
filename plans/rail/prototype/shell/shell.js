@@ -91,10 +91,16 @@
   const inTablet = () => innerWidth > 760 && innerWidth <= 1080;
   const isStrip = () => (innerWidth <= 760 ? false : inTablet() ? !tabletOpen : collapsed);
   const setStrip = (on) => { if (inTablet()) tabletOpen = !on; else { collapsed = on; store.set(KEY_RAIL, on ? '1' : '0'); } };
+  // nav.strip-inert: while the bar is the strip, what it hides is out of the tab order; the pointer on it, or a menu open in it, brings it back
+  function barInert() {
+    const s = document.getElementById('side-rail'), open = !s.classList.contains('is-strip') || (!s.classList.contains('is-resting') && s.matches(':hover, :has(.rc-pop > .menu, .pz-pick .menu, .viewer-modal, .list-pop)'));
+    s.querySelectorAll('.side-scroll, .bar-title, .bar-head .btn').forEach((x) => x.toggleAttribute('inert', !open));
+  }
   function syncRail() {
     const w = innerWidth, side = document.getElementById('side-rail'), rail = isStrip();
     side.classList.toggle('is-strip', rail);   // not the app's own `collapsed`: its 60px rail rules would fight the strip
     document.body.classList.toggle('bar-hidden', rail);
+    barInert();
     const t = document.getElementById('side-toggle');
     if (t) { t.setAttribute('aria-expanded', String(!rail)); const word = rail ? 'Expand menu' : 'Collapse menu'; t.title = word; t.setAttribute('aria-label', word); }
     if (w > 760) drawer(false);
@@ -182,6 +188,7 @@
     side.dataset.bar = which;
     const maker = makerOf(which), act = maker?.newLabel ? [maker.newLabel, 'place'] : { chat: ['New chat', 'ask'] }[which];
     document.getElementById('bar-head').innerHTML = R.barHead({ title: which === 'place' ? TITLES[routed.view] : BAR_TITLE[which], home: quickNav, menu: quickNav ? R.compactMenu({ items: quickItems() }) : '', logo: R.icon('worca-w', 20), action: act ? `<span class="rc-pop">${R.button({ label: act[0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-bar-new': act[1], ...(act[1] === 'place' && maker?.newMenu ? { 'aria-haspopup': 'menu', 'aria-expanded': String(barMenu) } : {}) } })}${barMenu && act[1] === 'place' && maker?.newMenu ? R.compactMenu({ label: act[0], items: maker.newMenu() }) : ''}</span>` : '', hide: isStrip() ? R.button({ label: 'Keep the bar open', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 15), attrs: { 'data-bar-pin': '', title: `Keep the bar open (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) : R.button({ label: 'Hide the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-hide', 15), attrs: { 'data-bar-hide': '', title: `Hide the bar: it opens under the pointer (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) });
+    barInert();
     // the bar switching places cross-fades: the list that comes in fades in (nav.bar-switch)
     for (const [id, b] of [['bar-chat', 'chat'], ['bar-tasks', 'tasks'], ['bar-schedules', 'schedules'], ['bar-place', 'place'], ['bar-back', 'home']]) {
       const list = document.getElementById(id); if (!list) continue;
@@ -431,7 +438,7 @@
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     setStrip(true); syncRail(); document.activeElement?.blur(); drawMini(); drawBar();
     // just hidden, it stays a strip until the pointer has left it once, so the click that hid it is seen to work
-    const side = document.getElementById('side-rail'); side.classList.add('is-resting');
+    const side = document.getElementById('side-rail'); side.classList.add('is-resting'); barInert();
     const away = (e) => { if (side.contains(e.target)) return; side.classList.remove('is-resting'); document.removeEventListener('pointermove', away); };
     document.addEventListener('pointermove', away);
   }
@@ -538,12 +545,14 @@
   R.neverOutside(document, '.mk-tools');   // the prototype's own corner closes nothing
   // the drawer and the narrow search close on a click outside or Esc (docs/rail/panels.md)
   R.dismissOnOutside(document, { open: () => quickNav, inside: '#bar-head', back: () => '[data-bar-house]', close: () => { quickNav = false; }, paint: () => drawBar() });
+  R.dismissOnOutside(document, { open: () => barMenu, inside: '#bar-head', back: () => '[data-bar-new]', close: () => { barMenu = false; }, paint: () => drawBar() });
   R.dismissOnOutside(document, { open: () => inViewMenu, inside: '#in-view-slot', back: () => '[data-in-view-more]', close: () => { inViewMenu = false; }, paint: () => drawInView() });
   R.dismissOnOutside(document, { open: () => document.body.classList.contains('nav-open'), inside: '#side-rail, #mbar-menu', back: () => '#mbar-menu', close: () => drawer(false), paint: () => {} });
   R.dismissOnOutside(document, { open: () => !!document.querySelector('#topnav .tsearch.is-open'), inside: '.tsearch, #tsearch-open', back: () => '#tsearch-open', close: () => searchFold(false), paint: () => {} });
   build();
   setAskW(askW); setBarW(barW);
-  R.watchOrbs(document); R.watchTooltips(document); R.watchMenus(document); R.watchStrips(document); R.watchScrollFades(document); R.watchFolds(document);
+  for (const t of ['pointerenter', 'pointerleave']) document.getElementById('side-rail').addEventListener(t, barInert);
+  R.watchClickGuard(document); R.watchOrbs(document); R.watchTooltips(document); R.watchMenus(document); R.watchStrips(document); R.watchScrollFades(document); R.watchFolds(document);
   // a new person starts in Simple; the mode they pick is remembered (docs/ui-levels.md)
   try { const m = localStorage.getItem('worca-rail.mode'); R.prefs.setMode(R.MODES.includes(m) ? m : 'simple'); } catch { R.prefs.setMode('simple'); }
   applyPrefs(); drawMini();   /* the sidebar drew before the mode was read: it shows only the places this mode has */

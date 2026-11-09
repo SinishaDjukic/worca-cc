@@ -1174,6 +1174,17 @@
       ]
     },
     {
+      "name": "ClickGuard",
+      "code": "ui/public/design-system/components/click-guard.mjs#watchClickGuard",
+      "kind": "telling",
+      "needs": [
+        "a double click on a button that swaps or moves never fires what lands under the pointer"
+      ],
+      "rules": [
+        "comp.click-guard"
+      ]
+    },
+    {
       "name": "MenuPlace",
       "code": "ui/public/design-system/components/menu-place.mjs#watchMenus",
       "kind": "telling",
@@ -1536,6 +1547,12 @@
     }
   ],
   "logic": [
+    {
+      "name": "Is this the second of a double click, on something else",
+      "code": "ui/public/design-system/components/click-guard.mjs#secondClickIgnored",
+      "needs": ["whether a click lands within 400 ms where another button just was (comp.click-guard)"],
+      "example": "secondClickIgnored(first, now)"
+    },
     {
       "name": "The order a change goes through a workspace",
       "code": "ui/public/design-system/components/workspace-map.mjs#workspaceOrder",

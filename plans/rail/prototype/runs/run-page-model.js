@@ -58,7 +58,7 @@
       stages: run({ build: [s('Implementation', 'failed', '1h 30m', { loops: 3, live: 'Tests still failing after every retry' })], review: allNext(REVIEW) }) },
     { id: 'ready', group: 'Ready', label: 'Ready', figs: DONE_FIGS, stages: run({}) },
     { id: 'no-remote', group: 'Ready', label: 'Ready, no git remote', detail: 'This project has no git remote', figs: DONE_FIGS, stages: run({ pr: [next('Create PR', { live: 'Needs a git remote' }), next('Checks'), next('Approval')] }) },
-    { id: 'mock-run', group: 'Ready', label: 'Mock run', detail: 'No model was called; it adds nothing to Saved', mock: true, diff: '+1 \u22120', files: [['README.md', 1, 0]], figs: [['Time', '2m'], ['Cost', '$0.00']], stages: run({ pr: [next('Create PR', { live: 'A mock run’s change is a placeholder' }), next('Checks'), next('Approval')] }).map((st) => Object.assign({}, st, { subs: st.subs.map((y) => Object.assign({}, y, { time: '', loops: 0, cost: '$0.00' })) })) },
+    { id: 'mock-run', group: 'Ready', label: 'Mock task', detail: 'No model was called; it adds nothing to Saved', mock: true, diff: '+1 \u22120', files: [['README.md', 1, 0]], figs: [['Time', '2m'], ['Cost', '$0.00']], stages: run({ pr: [next('Create PR', { live: 'A mock task’s change is a placeholder' }), next('Checks'), next('Approval')] }).map((st) => Object.assign({}, st, { subs: st.subs.map((y) => Object.assign({}, y, { time: '', loops: 0, cost: '$0.00' })) })) },
     { id: 'checks', group: 'Pull requests', label: 'Checks running', figs: DONE_FIGS,
       stages: run({ pr: PR_OPEN(s('Checks', 'now', '', { live: '3 of 7 passed', when: 'running' }), next('Approval')) }) },
     { id: 'failing', group: 'Pull requests', label: 'Checks failing', figs: DONE_FIGS,
@@ -135,7 +135,7 @@
         member(3, RUNS[2], ['next', 'next', 'next', 'next']),
         { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2'), next('#3')] }] },
     { id: 'featureready', n: 3, group: 'Groups', runCases: ['ready', 'ready', 'ready'], label: 'Feature ready', kind: 'Feature', title: 'Unified page navigation', branch: '', figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS,
-      stack: { mode: 'create', runs: RUNS, rec: 'stack', sizes: ['+278 \u221264', '+41 \u221258', '+39 \u221222'], reason: '3 runs and 502 changed lines, most of them in task 1: three focused reviews go faster than one mixed one.' },
+      stack: { mode: 'create', runs: RUNS, rec: 'stack', sizes: ['+278 \u221264', '+41 \u221258', '+39 \u221222'], reason: '3 tasks and 502 changed lines, most of them in task 1: three focused reviews go faster than one mixed one.' },
       stages: [{ key: 'plan', label: 'Plan', subs: [ok('Clarify', '34s'), ok('Plan', '33m 57s', { live: 'Plan accepted by you · pass 2' }), ok('Cut into tasks', '7m', { live: '3 tasks, one PR each · accepted by you' })] },
         member(1, RUNS[0], ['done', 'done', 'done', 'done'], { times: ['22m', '58m', '31m'] }), member(2, RUNS[1], ['done', 'done', 'done', 'done'], { times: ['18m', '1h 2m', '27m'] }),
         member(3, RUNS[2], ['done', 'done', 'done', 'done'], { times: ['12m', '44m', '19m'] }),
@@ -176,7 +176,7 @@
   const userGroup = (id, label, runCases, o) => Object.assign({ id, group: 'Groups', label, runCases, runTitles: GROUP_RUNS, kind: 'Group', independent: true, sizes: ['+120 −40', '+38 −22'], title: 'Billing cleanup', branch: '', figs: [['Time', '1h 40m'], ['Cost', '$21.70']], tabs: GROUP_TABS, task: 'Clean up billing: remove the old invoices page, and export billing as CSV.',
     decisions: [{ step: 'Remove the old invoices page', q: 'Keep the old invoices address working?', a: 'Redirect it to Billing', who: 'you', when: '10:14' }, { step: 'Billing export as CSV', q: 'Which dates does the export use?', a: 'The invoice date', who: 'away', when: '11:02', note: 'Sonnet 5.5 · $0.21' }],
     stages: [member(1, GROUP_RUNS[0], ['done', 'done', 'done', 'done']), member(2, GROUP_RUNS[1], ['done', 'done', 'done', 'done']), { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2')] }] }, o || {});
-  const READY3 = (o) => Object.assign({ mode: 'create', runs: RUNS, rec: 'stack', sizes: ['+278 −64', '+41 −58', '+39 −22'], reason: '3 runs and 502 changed lines: three focused reviews go faster than one mixed one.' }, o || {});
+  const READY3 = (o) => Object.assign({ mode: 'create', runs: RUNS, rec: 'stack', sizes: ['+278 −64', '+41 −58', '+39 −22'], reason: '3 tasks and 502 changed lines: three focused reviews go faster than one mixed one.' }, o || {});
   const READY_STAGES = [{ key: 'plan', label: 'Plan', subs: RECEIPT_PLAN }, member(1, RUNS[0], ['done', 'done', 'done', 'done'], { times: ['22m', '58m', '31m'] }), member(2, RUNS[1], ['done', 'done', 'done', 'done'], { times: ['18m', '1h 2m', '27m'] }), member(3, RUNS[2], ['done', 'done', 'done', 'done'], { times: ['12m', '44m', '19m'] }), { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2'), next('#3')] }];
   const REC_EV = { title: 'This step could not reach the model', log: 'Open the log', lines: ['api.anthropic.com: connection reset, 3 tries', 'Retrying by itself until 14:40'] };
   const AUTH_EV = { title: 'This step could not reach the model', log: 'Open the log', lines: ['401: the Claude token has expired', 'Run claude setup-token or /login, then Retry'] };
@@ -540,14 +540,17 @@
   // broke, or what to check); a running run shows its plan's progress. What went fine is one line each once it is
   // built: the ask, and the evidence (left out when the focus is what broke: that is the evidence). Files and documents
   // are Changes'.
+  // act.this-thing: a seeded task's own branch, ask and plan (shell/world.js); a page with none keeps its case's.
+  const seedOf = (c) => window.RunCardModel?.seeds?.[(c.movedFrom && c.title) || TITLES[c.id] || c.title] || null;
   function overview(c, live, ui) {
+    const PLAN_ITEMS = seedOf(c)?.plan || DETAIL.plan;
     const built = c.stages.some((x) => x.key === 'build' && x.subs.some(isDone));
     const planDone = c.stages.some((x) => x.key === 'plan' && x.subs.every(isDone));
     const buildLive = c.stages.some((x) => x.key === 'build' && x.subs.some((y) => LIVE[y.state]));
     const clean = c.stages.filter((x) => !SHIP.test(x.key)).every((x) => x.subs.every(isDone));
     const ev = c.ev ? c.ev : c.id === 'kept' ? EVIDENCE['review/Manual web UI testing'] : c.id === 'failed' ? EVIDENCE['build/Implementation'] : c.id === 'failing' ? EVIDENCE['pr/Checks'] : /^(conflicts|workspace)$/.test(c.id) ? EVIDENCE['pr/Conflicts with dev'] : null;
     let focus = null;
-    if (c.id === 'plan') focus = { kind: 'plan', items: DETAIL.plan.map((t) => ({ t, state: 'next' })), issues: ui && ui.fixed && ui.fixed.plan ? [] : DETAIL.planIssues };
+    if (c.id === 'plan') focus = { kind: 'plan', items: PLAN_ITEMS.map((t) => ({ t, state: 'next' })), issues: ui && ui.fixed && ui.fixed.plan ? [] : DETAIL.planIssues };
     else if (c.reqsCheck) focus = { kind: 'reqs', items: DETAIL.criteria, left: reqLeft(ui) };
     else if (c.id === 'requirements') focus = { kind: 'criteria', items: DETAIL.criteria };
     else if (c.id === 'gate') focus = { kind: 'findings', title: 'What Review still holds open', issues: DETAIL.issues, roles: DETAIL.roles };
@@ -555,16 +558,16 @@
     else if (c.issues) focus = { kind: 'findings', title: '2 open issues', note: 'A review ran out of cycles with these open, and the task went on past them', issues: DETAIL.issues, roles: DETAIL.roles };
     else if (ev) focus = { kind: 'broke', ev };
     else if (planDone && !c.runCases && (buildLive || c.stages.some((x) => x.key === 'review' && x.subs.some((y) => LIVE[y.state])))) {
-      const doneN = buildLive ? 3 : DETAIL.plan.length;
+      const doneN = buildLive ? 3 : PLAN_ITEMS.length;
       const moving = !/^(Paused|Stopped)$/.test(c.word);   // a task held up is not working on its next item
-      focus = { kind: 'progress', note: buildLive ? doneN + ' of ' + DETAIL.plan.length + ' built' : 'all ' + DETAIL.plan.length + ' built · now in Review', items: DETAIL.plan.map((t, i) => ({ t, state: i < doneN ? 'done' : i === doneN ? (moving ? 'now' : 'paused') : 'next' })) };
+      focus = { kind: 'progress', note: buildLive ? doneN + ' of ' + PLAN_ITEMS.length + ' built' : 'all ' + PLAN_ITEMS.length + ' built · now in Review', items: PLAN_ITEMS.map((t, i) => ({ t, state: i < doneN ? 'done' : i === doneN ? (moving ? 'now' : 'paused') : 'next' })) };
     } else if (built && !c.runCases && !c.mock && !/^(Failed|Merged|Archived|Discarded|Deleted|Applied|Stopped|Finished|Closed|Abandoned|Declined)$/.test(c.word)) focus = { kind: 'check', items: DETAIL.check, title: prOpen(c) ? 'Before you merge' : 'Before you ship' };
     const areas = {};
     if (built && !c.noDiff) DETAIL.files.forEach(([f, a, d]) => { const k = f.slice(0, f.lastIndexOf('/') + 1); const x = areas[k] || (areas[k] = { dir: k, n: 0, add: 0, del: 0 }); x.n++; x.add += a; x.del += d; });
     const max = Math.max(1, ...Object.values(areas).map((x) => x.add + x.del));
     const rounds = DETAIL.rounds['Review implementation'].length;
     const done = built && !live;
-    return { focus, checklist: c.shaped || c.id === 'gate' ? DETAIL.checklist : null, outcome: done ? c.outcome || DETAIL.outcome : [], task: c.task || DETAIL.task,   // what it did, once it is done
+    return { focus, checklist: c.shaped || c.id === 'gate' ? DETAIL.checklist : null, outcome: done ? c.outcome || DETAIL.outcome : [], task: seedOf(c)?.ask || c.task || DETAIL.task,   // what it did, once it is done
       // It says it did what you asked only when everything ran, nothing stayed open, and there is a change to show for it.
       ask: done && clean && !c.issues && !c.noDiff && !c.mock && !c.evidence && !/^(Archived|Discarded|Deleted)$/.test(c.word) ? { parts: DETAIL.ask, unasked: DETAIL.unasked } : null,
       evidence: !done || c.mock || (focus && focus.kind === 'broke') ? '' : c.evidence || (clean ? `Tests pass · Review passed on round ${rounds} · Manual test passed` : ''),
@@ -729,6 +732,8 @@
     const par = ui.parent || c0.parent || null;
     const g = par ? (ui.groupRun && ui.groupRun.id === par.caseId ? ui.groupRun : CASES.find((x) => x.id === par.caseId)) : null;
     let c = resolve(g ? asMember(c0, g, par.index) : c0, ui);
+    const seed = seedOf(c);
+    if (seed) c = Object.assign({}, c, { stages: c.stages.map((st) => Object.assign({}, st, { subs: st.subs.map((x) => (x.live && /breadcrumb/i.test(x.live) ? Object.assign({}, x, { live: x.state === 'ask' && seed.question ? seed.question.q : seed.plan[Math.min(2, seed.plan.length - 1)] }) : x)) })) });
     // A group held up by one of its runs reads from that run, and says which.
     const hold = groupHold(c);
     let stateId = c.state || c.id;
@@ -819,7 +824,7 @@
       .concat(g ? [{ t: g.title, go: { caseId: g.id, open: 'run' + (par.index + 1) } }] : [])
       .concat((ui.chips || []).filter((x) => x.kind === 'group').map((x) => ({ t: x.text, group: true })));   // a group added with +
     const sibling = (j) => (g && g.stages.some((x) => x.key === 'run' + (j + 1)) ? { index: j, ok: !!(g.runCases || [])[j] } : null);
-    const branch = c.branch === undefined ? BRANCH : c.branch;
+    const branch = c.branch === undefined ? seed?.branch || BRANCH : c.branch;
     return {
       bar: { pause: live && c.word !== 'Paused' && c.sym !== 'q', stop: live, more: true, scope: runStages.length ? c.kind.toLowerCase() : '' },
       id: c.id, has: { changes: hasChanges, started, worktree: !gone && started && !!(c.folder || (c.branch === undefined || c.branch)) , try: hasChanges && !gone && !c.noTry && !c.mock, report: !gone && !c.mock && (started || /^Failed$/.test(c.word)), logsGone }, gone,
@@ -827,7 +832,7 @@
       kind: runStages.length && c.kind ? c.kind : '',   // the stepper already counts the tasks
       crumbs, pager: g ? { index: par.index, n: g.stages.filter((x) => x.run).length, prev: sibling(par.index - 1), next: sibling(par.index + 1), group: g.id } : null,
       // The place line: where the code lives and where it goes, the PR once it exists. Each part once on the page.
-      place: { branch, copy: !!branch && branch !== 'main', base: c.base || (c.onSource ? 'origin' : branch === 'main' ? 'origin/main' : branch ? 'dev' : ''), onSource: !!c.onSource, hidden: c.hidden || '',
+      place: { branch, copy: !!branch && branch !== 'main', base: c.base || (c.onSource ? 'origin' : branch === 'main' ? 'origin/main' : branch ? 'dev' : ''), onSource: !!c.onSource, hidden: seed ? '' : c.hidden || '',
         pr: c.pr !== undefined && c.pr !== '' ? c.pr : prOpen(c) ? '#959' : '', folder: c.folder || '', repos: c.repos || [],
         merged: c.stages.some((x) => x.key === 'merged' && x.subs.length && x.subs.every((y) => y.state === 'merged')), applied: c.word === 'Applied' },
       chips: (ui.chips || []).filter((x) => x.kind !== 'group'), inGroup: !!g || runStages.length > 0, addedGroup: ((ui.chips || []).find((x) => x.kind === 'group') || {}).text || '',
@@ -880,19 +885,19 @@
       }),
       tryIt: (() => {
         if (g) return 'Would copy: git switch ' + BRANCH + '-' + (par.index + 1) + (par.index ? ' · runs 1\u2013' + (par.index + 1) + ' together' : ' · run 1 alone');
-        if (runStages.length) return pick === 'one' ? 'Would copy: git switch ' + BRANCH + ' · ' + (runStages.length === 2 ? 'both tasks' : 'all ' + runStages.length + ' runs') + ' on one branch'
-          : 'Would copy: git switch ' + BRANCH + '-' + runStages.length + ' · the top of the stack holds ' + (runStages.length === 2 ? 'both tasks' : 'all ' + runStages.length + ' runs');
+        if (runStages.length) return pick === 'one' ? 'Would copy: git switch ' + BRANCH + ' · ' + (runStages.length === 2 ? 'both tasks' : 'all ' + runStages.length + ' tasks') + ' on one branch'
+          : 'Would copy: git switch ' + BRANCH + '-' + runStages.length + ' · the top of the stack holds ' + (runStages.length === 2 ? 'both tasks' : 'all ' + runStages.length + ' tasks');
         return branch ? 'Would copy: git switch ' + branch : 'Would open the copy in a terminal';
       })(),
       ship: sh ? { pick, rec: sh.rec, n: sh.runs.length, word: stackWord, owned, reason: sh.reason, oneBlocked: sh.oneBlocked || '', sizes: sh.sizes || [] } : null,
       // A group's next run, under the task it follows: whether it starts by itself or asks first is set right there.
       then: c.independent || hold ? null : (() => { const k = runStages.findIndex((x) => stageState(x.subs) === 'live'); const nx = k >= 0 && runStages[k + 1]; return nx && nx.subs.every((y) => y.state === 'next') && open === runStages[k].key ? { n: k + 2, title: nx.title } : null; })(),
       planHead: runStages.length > 0 && open === 'plan',
-      runCases: c.runCases || [], parent: par, over: overview(c, live, ui), ask: clarifying ? Object.assign({}, clarifying[qIndex], { n: (qIndex + 1) + ' of ' + clarifying.length }) : DETAIL.asks[c.id] || null, under: /^(gate|plan|outline)$/.test(c.id) ? { issues: c.id === 'gate' ? DETAIL.issues : [], roles: DETAIL.roles } : null,
+      runCases: c.runCases || [], parent: par, over: overview(c, live, ui), ask: clarifying ? Object.assign({}, clarifying[qIndex], { n: (qIndex + 1) + ' of ' + clarifying.length }) : (c.id === 'question' && seed?.question) || DETAIL.asks[c.id] || null, under: /^(gate|plan|outline)$/.test(c.id) ? { issues: c.id === 'gate' ? DETAIL.issues : [], roles: DETAIL.roles } : null,
       flow: flowOf(c, stateId, liveCtx), state: stateId, event: EVENT_OF(c, stateId, liveCtx), runFlow: R.runFlow(liveCtx), liveRun: runStages.findIndex((x) => stageState(x.subs) === 'live' && x.member && /^(Working|Starting)$/.test(x.member.word)), formCtx: liveCtx,
       hasSetup: !c.noSetup && !runStages.length, dependents: c.dependents || 0, heldBy: c.heldBy || '', hosted: !!c.hosted, baseMoved: !!c.baseMoved, independent: !!c.independent, reqsLeft: left, reqsCheck: !!c.reqsCheck, holdIndex: c.k ? c.k - 1 : -1,
       logs: logsGone ? [] : logsOf(c), agents: logsGone ? [] : agentsOf(c), sessions: logsGone ? [] : sessionsOf(c), usage: usageOf(c), graph: graphOf(c, ui), agentsUnknown: !!c.agentsUnknown, isWorkspace: !!(c.repos && c.repos.length), docsHere: !hasChanges, outlineN, outlineRuns: ui.outline || RUNS, rounds: DETAIL.rounds,
-      tabData: Object.assign({}, DETAIL, { files, decisions: decisionsOf(c, runStages) }),
+      tabData: Object.assign({}, DETAIL, seed ? { plan: seed.plan, docBody: Object.assign({}, DETAIL.docBody, { 'plan.md': '## The plan\n' + seed.plan.map((t) => '- ' + t).join('\n') }) } : {}, { files, decisions: decisionsOf(c, runStages) }),
     };
   }
 

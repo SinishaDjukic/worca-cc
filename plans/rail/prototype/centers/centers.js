@@ -35,12 +35,15 @@
   const schedLink = (s) => (advanced() ? link(s.title, { 'data-c-sched': s.id }, `Opens ${s.title}`) : esc(s.title));   // Simple: Schedules is locked, so no links lead there
 
   // ---- the Tasks center ----
+  const inFrom = (project) => { const f = List().from(); return f === 'all' || (project || 'No project') === f; };   // the list's "from": the page shows the same project
+  const fromRows = () => List().rows().filter((t) => inFrom(t.project));
   function groups() {
-    const rows = List().rows(), key = (t) => (view.by === 'workflow' ? t.workflow || 'Default' : t.project || 'No project');
+    const rows = fromRows(), key = (t) => (view.by === 'workflow' ? t.workflow || 'Default' : t.project || 'No project');
     const map = new Map();
     const of = (k) => { if (!map.has(k)) map.set(k, { name: k, rows: [], missed: [], live: [] }); return map.get(k); };
     rows.forEach((t) => of(key(t)).rows.push(t));
     for (const s of Sch().all()) {
+      if (!inFrom(s.project)) continue;
       const k = view.by === 'workflow' ? s.workflow || 'Default' : s.project || 'No project';
       if (s.section === 'needs') of(k).missed.push(s); else if (Sch().running(s.id)) of(k).live.push(s);
     }
@@ -64,7 +67,7 @@
   function actionOf(g) {
     const top = g.needs[0] && taskOf(g.needs[0]);
     if (top) { const a = R.cardAction(stateOf(top)); return R.button({ label: a.label, attrs: { 'data-c-act': `${a.does}|${top.id}`, title: `${a.label}: ${top.title}` } }); }
-    if (g.missed.length) return R.button({ label: 'Run now', kind: 'primary', attrs: { 'data-c-sact': `run|${g.missed[0].id}`, title: `Runs ${g.missed[0].title} now to catch up` } });
+    if (g.missed.length && advanced()) return R.button({ label: 'Run now', kind: 'primary', attrs: { 'data-c-sact': `run|${g.missed[0].id}`, title: `Runs ${g.missed[0].title} now to catch up` } });
     return R.button({ label: 'Open', attrs: { 'data-c-filter': JSON.stringify(groupFilter(g)), title: `Opens ${g.name}'s tasks` } });
   }
   function cardOf(g) {
@@ -79,7 +82,7 @@
   }
   const picker = (id, text, items, tip) => R.sentencePicker({ id, text, tip, items: items.map((v) => ({ id: v, text: v, checked: v === text })), open: menu === id, chevron: chev });
   function tasksHtml() {
-    const rows = List().rows(), all = groups().sort(SORTS[view.sort]);
+    const rows = fromRows(), all = groups().sort(SORTS[view.sort]);
     if (!rows.length) return wrap(`${R.placeHead({ title: 'Your tasks', facts: 'New work starts in Chat' })}${R.emptyState({ title: 'No tasks yet.', actions: R.button({ label: 'Go to Chat', kind: 'quiet', attrs: { 'data-c-chat': '' } }) })}`);
     const cost = rows.filter((t) => inWeek(t.day)).reduce((a, t) => a + costOf(t), 0);
     const shown = all.filter((g) => !g.quiet), quiet = all.filter((g) => g.quiet);
@@ -88,14 +91,15 @@
     const way = advanced() ? '' : `<p class="center-way">New work starts in Chat. ${link('Go to Chat', { 'data-c-chat': '' })}</p>`;
     const noun = view.by === 'workflow' ? 'workflow' : 'project';
     const quietFacts = (() => { const n = quiet.reduce((a, g) => a + g.recent.length, 0), c = quiet.reduce((a, g) => a + g.cost, 0); return [quiet.map((g) => g.name).join(', '), n ? `${n} finished` : '', c > 0 ? `${usd(c)} this week` : ''].filter(Boolean).join(' · '); })();
-    const quietRow = quiet.length ? `<div class="center-quiet">${R.list({ groups: [{ title: '', rows: [R.listRow({ title: `${quiet.length} quiet ${noun}${quiet.length === 1 ? '' : 's'}`, meta: quietFacts, mark: R.kindMark({ kind: noun }), open: { 'data-c-quiet': '', 'aria-expanded': String(quietOpen), title: quietOpen ? 'Folds them' : `Shows the quiet ${noun}s` } })] }] })}</div>${quietOpen ? `<div class="pg-grid">${quiet.map(cardOf).join('')}</div>` : ''}` : '';
+    const quietRow = quiet.length ? `<div class="center-quiet">${R.list({ groups: [{ title: '', rows: [R.listRow({ title: `${quiet.length} quiet ${noun}${quiet.length === 1 ? '' : 's'}`, meta: quietOpen ? '' : quietFacts, mark: R.kindMark({ kind: noun }), open: { 'data-c-quiet': '', 'aria-expanded': String(quietOpen), title: quietOpen ? 'Folds them' : `Shows the quiet ${noun}s` } })] }] })}</div>${quietOpen ? `<div class="pg-grid">${quiet.map(cardOf).join('')}</div>` : ''}` : '';
     return wrap(`${R.placeHead({ title: 'Your tasks', facts: `<span>${facts}</span>` })}${sent}${way}<div class="pg-grid">${shown.map(cardOf).join('')}</div>${quietRow}`);
   }
   const wrap = (body) => `<div class="convo"><div class="convo-scroll"><div class="convo-col is-center">${body}</div></div></div>`;
 
   // ---- the Schedules center ----
   const OUT = (r) => { const t = RM.stateOf(r.case); return t === 'failed' ? 'fail' : R.sectionOf(R.runState(t).word) === 'running' ? 'run' : 'ok'; };
-  const sectionNow = (s) => (s.state === 'paused' ? 'paused' : s.section === 'needs' ? 'needs' : Sch().running(s.id) ? 'running' : 'next');
+  const sectionNow = (s) => (Sch().running(s.id) ? 'running' : s.state === 'paused' ? 'paused' : s.section === 'needs' ? 'needs' : 'next');
+  const DEFAULT_TZ = 'Europe/Sofia';
   const SCHED_RANK = { needs: 0, running: 1, next: 2, paused: 3 };
   const nextDate = (s) => Sch().nextDates(s)[0];
   const SCHED_SORTS = { 'most urgent': (a, b) => SCHED_RANK[sectionNow(a)] - SCHED_RANK[sectionNow(b)] || nextDate(a) - nextDate(b), 'next to run': (a, b) => (a.state === 'paused') - (b.state === 'paused') || nextDate(a) - nextDate(b), 'A–Z': (a, b) => a.title.localeCompare(b.title) };
@@ -112,20 +116,21 @@
     return R.runOutcomes({ runs: week.map(OUT), says: `${pre}${num}${fail}${pr ? ` · merged ${pr[0]}` : ''}` });
   }
   function schedCard(s) {
-    const sec = sectionNow(s), next = `${Sch().dateWord(nextDate(s))}, ${s.at}`, run = Sch().runningRun(s);
+    const sec = sectionNow(s), run = Sch().runningRun(s), hourly = s.every === 'every hour', [d1, d2] = Sch().nextDates(s, 2).map(Sch().dateWord);
+    const next = hourly ? (s.skip ? 'skips the next one' : 'within the hour') : s.skip ? `skips ${d1}, then ${d2}, ${s.at}` : `${d1}, ${s.at}`;
     const [word, kicker, tone] = sec === 'needs' ? ['Missed', `${s.missed}, ${s.at} · ${s.missedWhy}`, 'act'] : sec === 'running' ? ['Running', `for ${!run.time || run.time === 'now' ? 'a moment' : run.time}`, 'run'] : sec === 'paused' ? ['Paused', 'by you', 'idle'] : ['Next up', next, 'idle'];
-    const fact = esc(`${s.project || 'No project'} · ${R.scheduleWords(s).says}${s.cost ? ` · ${usd(s.cost)} a run` : ''}`);
+    const fact = esc(`${s.project || 'No project'} · ${R.scheduleWords(s).says}${s.tz && s.tz !== DEFAULT_TZ ? ` ${s.tz}` : ''}${s.cost ? ` · ${usd(s.cost)} a run` : ''}`);
     const act = sec === 'needs' ? ['Run now', 'run', 'primary'] : sec === 'running' ? ['Stop', 'stop', 'quiet'] : sec === 'paused' ? ['Resume', 'pause', 'quiet'] : ['Run now', 'run', 'quiet'];
     return R.pluginCard({ mark: R.kindMark({ kind: 'schedule', tone: sec === 'needs' ? 'act' : sec === 'paused' ? 'pause' : sec === 'running' ? 'run' : 'idle', breathe: sec === 'needs' }), word, kicker, tone, title: s.title, what: s.what || R.scheduleWords(s).says, line: schedLine(s), factsHtml: fact, factsTip: fact, action: R.button({ label: act[0], kind: act[2], attrs: { 'data-c-sact': `${act[1]}|${s.id}`, title: `${act[0]}: ${s.title}` } }), attrs: { 'data-c-card': s.id } });
   }
   function schedulesHtml() {
-    const all = Sch().all(), list = all.filter((s) => !view.from || (s.project || 'No project') === view.from).sort(SCHED_SORTS[view.sSort]);
+    const all = Sch().all(), list = all.filter((s) => (!view.from || (s.project || 'No project') === view.from) && (Sch().showing() === 'all' || s.state === 'paused')).sort(SCHED_SORTS[view.sSort]);
     if (!all.length) return wrap(`${R.placeHead({ title: 'Your schedules', facts: 'New work starts in Chat' })}${R.emptyState({ title: 'No schedules yet.', actions: R.button({ label: 'Schedule a task', kind: 'quiet', attrs: { 'data-c-new': 'schedule' } }) })}`);
     const runs = all.flatMap((s) => s.runs.filter((r) => r.case !== 'stopped').slice(0, 7)).filter((r) => OUT(r) !== 'run'), won = runs.filter((r) => OUT(r) === 'ok').length;
-    const facts = [esc(plural(all.length, 'schedule')), runs.length ? count(`${won} of ${runs.length} runs succeeded in 7 days`, filterHook({ schedule: 'any' }), 'Opens those runs in Tasks') : '', `times in ${esc(all[0].tz || 'Europe/Sofia')}`].filter(Boolean).join(' · ');
+    const facts = [esc(plural(all.length, 'schedule')), runs.length ? count(`${won} of ${runs.length} runs succeeded in 7 days`, filterHook({ schedule: 'any' }), 'Opens those runs in Tasks') : '', `times in ${DEFAULT_TZ}${all.some((s) => s.tz && s.tz !== DEFAULT_TZ) ? ', unless a card says' : ''}`].filter(Boolean).join(' · ');
     const projects = ['every project', ...new Set(all.map((s) => s.project || 'No project'))];
     const sent = `<div class="center-sent">Showing ${picker('c-ssort', view.sSort, Object.keys(SCHED_SORTS), 'How the cards are ordered')} from ${picker('c-sfrom', view.from || 'every project', projects, 'Which project')}</div>`;
-    return wrap(`${R.placeHead({ title: 'Your schedules', facts: `<span>${facts}</span>` })}${sent}<div class="pg-grid">${list.map(schedCard).join('')}</div>`);
+    return wrap(`${R.placeHead({ title: 'Your schedules', facts: `<span>${facts}</span>` })}${sent}${list.length ? `<div class="pg-grid">${list.map(schedCard).join('')}</div>` : R.emptyState({ title: 'No paused schedules here.' })}`);
   }
 
   // ---- paint ----
@@ -173,6 +178,7 @@
 
   // ---- the Legacy approach's forms (form.dialog, form.check-at-save) ----
   let form = null, opener = null;
+  const NAME_MAX = 80;   // form.name-limit
   const THEN = { 'open a PR': 'opens a PR', 'leave it on the branch': 'leaves it on the branch', 'merge when checks pass': 'merges when checks pass' };
   const VERB = { Plan: 'plans', Build: 'builds', Review: 'reviews', Clarify: 'asks first', 'Run tests': 'runs the tests', 'Security check': 'checks security', 'Diff gate': 'checks the size' };
   const flows = () => window.RailPlaces.workflows.names();
@@ -188,13 +194,13 @@
     const what = `<div class="cc-lbl">${form.src === 'write' ? R.field({ id: 'cc-text', label: 'What should it do', multiline: true, value: form.text, placeholder: sched ? 'What should each run do?' : 'Describe the software task to build…', attrs: { 'data-f': 'text', rows: 5 } }) : R.field({ id: 'cc-path', label: 'What should it do', value: form.path, placeholder: 'A file in the project: docs/task.md', attrs: { 'data-f': 'path' } })}${src}</div>`;
     const fold = (label, says) => `<div class="cc-fold">${R.button({ label, kind: 'quiet', icon: R.icon(form.more ? 'chevron' : 'chevR', 12), attrs: { 'data-c-more': '', 'aria-expanded': String(form.more) } })}<span>${esc(says)}</span></div>`;
     if (sched) {
-      const body = `${frame}${R.field({ id: 'cc-name', label: 'Name', value: form.name, placeholder: 'What to call this schedule', attrs: { 'data-f': 'name' } })}${what}
+      const body = `${frame}${R.field({ id: 'cc-name', label: 'Name', value: form.name, placeholder: 'What to call this schedule', attrs: { 'data-f': 'name', maxlength: 80 } })}${what}
         <div class="cc-frame"><span>Every ${fPick('every')} at ${fPick('at')} in ${fPick('tz')}</span><span class="cc-proof">Next: ${esc(R.scheduleDates({ every: `every ${form.every}`, at: form.at, from: Sch().TODAY }).map((d) => d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).replace(',', '')).join(', '))}.</span></div>
         ${fold('If something gets in the way', `${cap(form.ends)}; ${form.overlap}; ${form.fails}`)}${form.more ? `<div class="cc-more"><span>It ends with ${fPick('ends')}</span><span>A run still going means ${fPick('overlap')}</span><span>When runs fail, ${fPick('fails')}</span></div>` : ''}`;
-      return R.dialog({ title: 'New schedule', body, yes: R.scheduleButton({ every: `every ${form.every}`, at: form.at }), status: form.err ? `<span class="cc-err">${esc(form.err)}</span>` : '', close: R.icon('close', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
+      return R.dialog({ title: 'New schedule', body, yes: R.scheduleButton({ every: `every ${form.every}`, at: form.at }), status: form.err ? `<span class="cc-err">${esc(form.err)}</span>` : '', close: R.icon('x', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
     }
-    const body = `${frame}${what}${fold('More options', 'Title, branch, cost tags, agents, guardrails, files')}${form.more ? `<div class="cc-more">${R.field({ id: 'cc-title', label: 'Title', value: form.title, placeholder: 'Worca names it from what it should do', attrs: { 'data-f': 'title' } })}${R.field({ id: 'cc-branch', label: 'Branch', value: form.branch, placeholder: 'Worca makes one', attrs: { 'data-f': 'branch' } })}${R.field({ id: 'cc-tags', label: 'Cost tags', value: form.tags, placeholder: 'Comma separated', attrs: { 'data-f': 'tags' } })}<span>Agents: ${fPick('agents')}</span><span>Cost cap: ${fPick('cap')}</span><span>${R.button({ label: 'Add files…', kind: 'quiet', attrs: { 'data-c-files': '', title: 'Attaches files to the task' } })}</span></div>` : ''}`;
-    return R.dialog({ title: 'New task', body, yes: 'Start task', status: `${R.button({ label: 'Schedule…', kind: 'quiet', attrs: { 'data-c-tosched': '', title: 'The same task, at a time' } })}${form.err ? `<span class="cc-err">${esc(form.err)}</span>` : ''}`, close: R.icon('close', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
+    const body = `${frame}${what}${fold('More options', 'Title, branch, cost tags, agents, guardrails, files')}${form.more ? `<div class="cc-more">${R.field({ id: 'cc-title', label: 'Title', value: form.title, placeholder: 'Worca names it from what it should do', attrs: { 'data-f': 'title', maxlength: NAME_MAX } })}${R.field({ id: 'cc-branch', label: 'Branch', value: form.branch, placeholder: 'Worca makes one', attrs: { 'data-f': 'branch' } })}${R.field({ id: 'cc-tags', label: 'Cost tags', value: form.tags, placeholder: 'Comma separated', attrs: { 'data-f': 'tags' } })}<span>Agents: ${fPick('agents')}</span><span>Cost cap: ${fPick('cap')}</span><span>${R.button({ label: 'Add files…', kind: 'quiet', attrs: { 'data-c-files': '', title: 'Attaches files to the task' } })}</span></div>` : ''}`;
+    return R.dialog({ title: 'New task', body, yes: 'Start task', status: `${R.button({ label: 'Schedule…', kind: 'quiet', attrs: { 'data-c-tosched': '', title: 'The same task, at a time' } })}${form.err ? `<span class="cc-err">${esc(form.err)}</span>` : ''}`, close: R.icon('x', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
   }
   const hooksOf = () => ({ close: {}, cancel: {}, yes: {} });
   const cap = (t) => t[0].toUpperCase() + t.slice(1);
@@ -205,10 +211,9 @@
     if (!form) return;
     const b = h.querySelector('.dlg-body'); if (b) b.scrollTop = scroll;
     (focus ? h.querySelector(focus) : null)?.focus();
-    window.RailUI.watchMenus?.(h);
   }
   function openForm(kind, keep) { menu = ''; opener = document.activeElement; form = blank(kind, keep); paintForm(kind === 'schedule' ? '#cc-name' : '#cc-text'); }
-  function closeForm() { form = null; menu = ''; paintForm(); opener?.isConnected && opener.focus(); }
+  function closeForm() { form = null; menu = ''; paintForm(); (opener?.isConnected && opener !== document.body ? opener : document.querySelector('[data-bar-new]'))?.focus(); }   // a menu's item is gone by now: back to its +
   function check() {
     const words = form.src === 'write' ? form.text.trim() : form.path.trim();
     if (form.kind === 'schedule' && !form.name.trim()) return ['Name it first', '#cc-name'];
@@ -225,7 +230,7 @@
       W.add({ id: `n-${k}`, case: 'starting', title, project, detail: 'Plan is under way', time: 'now', day: 'today', cost: 0, workflow: f.workflow, kind: project ? 'Git' : 'No project' });
       say(`Started ${title}`); paint(); return;
     }
-    const every = `every ${form.every}`, w = R.scheduleWords({ every, at: form.at }), s = { id: `n${k}`, title: form.name.trim(), project, chat: '', every, at: form.at, tz: form.tz, next: w.next, day: w.day, state: 'scheduled', time: w.time, section: 'next', labels: [], what: words.endsWith('.') ? words : `${words}.`, cost: 0, started: Sch().dateWord(Sch().TODAY), workflow: form.workflow, runs: [] };
+    const every = `every ${form.every}`, w = R.scheduleWords({ every, at: form.at }), s = { id: `n${k}`, title: form.name.trim(), project, chat: '', every, at: form.at, tz: form.tz, next: w.next, day: w.day, state: 'scheduled', time: w.time, section: 'next', labels: [], what: words.endsWith('.') ? words : `${words}.`, cost: 0, started: Sch().dateWord(Sch().TODAY), workflow: form.workflow, agent: form.agent, base: form.base, then: form.then, ends: form.ends, overlap: form.overlap, fails: form.fails, runs: [] };
     closeForm(); Sch().add(s); say(`Scheduled ${s.title}: ${R.scheduleWords(s).runs}`); paint();
   }
   function dlgClick(e) {
@@ -256,5 +261,6 @@
     tasks: (el) => { wire(); tasksHost = el; menu = ''; paint(); },
     schedules: (el) => { wire(); schedHost = el; menu = ''; if (/^#schedules/.test(location.hash)) el.innerHTML = schedulesHtml(); },
     maker: (which) => (advanced() ? MAKERS[which] : null),
+    paint,
   };
 })();

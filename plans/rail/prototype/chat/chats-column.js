@@ -42,7 +42,7 @@
     const x = { t, c, key: `task:${t.id}` };
     if (t.kind === 'schedule') return { pick: false, key: x.key, _x: x, title: t.title, mark: R.kindMark({ kind: 'schedule', title: t.detail }), end: t.time, tip: `${t.title}\n${t.detail}\nOpens the schedule`, current: false, menu: taskMenu(t) };
     const st = R.runState(RM.stateOf(t.case));
-    return { pick: false, key: x.key, _x: x, title: t.title, mark: R.kindMark({ breathe: c.id !== current, kind: KIND_OF[t.kind] || 'task', tone: R.markTone(st), stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), endMark: t.git ? R.gitMark({ status: t.git, watch: t.watch || '', title: t.watch ? `Watching · ${t.detail}` : t.branch }) : '', end: t.git ? '' : t.endWord || '', tip: `${t.title}\n${st.word} · ${t.detail || ''}\nOpens the task`, tree: t.after ? treeOf(c, t.after) : undefined, menu: taskMenu(t) };
+    return { pick: false, key: x.key, _x: x, title: t.title, mark: R.kindMark({ breathe: c.id !== current, kind: KIND_OF[t.kind] || 'task', tone: R.markTone(st), stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), endMark: t.git ? R.gitMark({ status: t.git, watch: t.watch || '', title: t.watch ? `Watching · ${t.detail}` : t.branch }) : '', end: t.git ? '' : t.endWord || '', tip: `${t.title}\n${st.word} · ${t.detail || ''}${(t.labels || []).length ? `\n${t.labels.join(', ')}` : ''}\nOpens the task`, tree: t.after ? treeOf(c, t.after) : undefined, menu: taskMenu(t) };
   });
 
   // ---- the view ----
@@ -93,10 +93,13 @@
   }
   function sections() {
     const list = sorted(data.chats.filter((c) => passes(c, view)));
-    if (view.by === 'ai') { const names = [...new Set(list.map(aiTopic))]; return names.map((n, i) => ({ id: `ai:${n}`, title: n, chip: i === 0 ? R.chip({ text: 'Worca · Haiku', title: 'A helper job names the topics. Change the sentence to undo it' }) : '', rows: list.filter((c) => aiTopic(c) === n).map((c) => chatRow(c, false)) })); }
+    // what needs you leads whichever way the list is cut
+    const needsFirst = view.show === 'all' ? list.filter((c) => sectionOfChat(c) === 'needs') : [], later = list.filter((c) => !needsFirst.includes(c));
+    const needsHead = needsFirst.length ? [{ id: 'needs', title: NEEDS(), rows: needsFirst.map((c) => chatRow(c, false)) }] : [];
+    if (view.by === 'ai') { const names = [...new Set(later.map(aiTopic))]; return [...needsHead, ...names.map((n, i) => ({ id: `ai:${n}`, title: n, chip: i === 0 ? R.chip({ text: 'Worca · Haiku', title: 'A helper job names the topics. Change the sentence to undo it' }) : '', rows: later.filter((c) => aiTopic(c) === n).map((c) => chatRow(c, false)) }))]; }
     if (view.by === 'topic') {
-      const sec = data.groups.map((g) => ({ id: `topic:${g.id}`, title: g.name, rows: list.filter((c) => c.group === g.id).map((c) => chatRow(c, false)) }));
-      return [...sec, { id: 'topic:none', title: 'Ungrouped', rows: list.filter((c) => !c.group || !data.groups.some((g) => g.id === c.group)).map((c) => chatRow(c, false)) }];
+      const sec = data.groups.map((g) => ({ id: `topic:${g.id}`, title: g.name, rows: later.filter((c) => c.group === g.id).map((c) => chatRow(c, false)) }));
+      return [...needsHead, ...sec, { id: 'topic:none', title: 'Ungrouped', rows: later.filter((c) => !c.group || !data.groups.some((g) => g.id === c.group)).map((c) => chatRow(c, false)) }];
     }
     const flat = view.show !== 'all';
     const rows = rowsOf(list, !flat);
@@ -120,7 +123,7 @@
     const projects = [...new Set(data.chats.map((c) => c.project || 'No project'))].sort();
     return [{ word: 'Showing', id: 'show', text: showOf(view.show).text, tip: 'Which chats the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.help, checked: view.show === x.id, hint: count({ show: x.id }) })) },
       { word: 'from', id: 'from', text: view.from === 'all' ? 'all projects' : view.from, tip: 'Which project they belong to', items: [{ id: 'all', text: 'all projects', checked: view.from === 'all', hint: count({ from: 'all' }) }, { sep: true }, ...projects.map((p) => ({ id: p, text: p, checked: view.from === p, hint: count({ from: p }) }))] },
-      R.byPart({ by: view.by, choices: [{ id: 'day', hint: String(M.DAYS.filter(([d]) => data.chats.some((c) => c.day === d && passes(c, view))).length) }, { id: 'state', help: `${NEEDS()}, Running, Recent`, hint: count({}) }, { id: 'project', hint: String(projects.length) }, { id: 'topic', help: 'One section per group, then Ungrouped', hint: String(data.groups.length) }, { id: 'ai', help: 'A helper job names the topics (Models › Jobs: Haiku); your groups are kept' }] })];
+      R.byPart({ by: view.by, choices: [{ id: 'day' }, { id: 'state', help: `${NEEDS()}, Running, Recent` }, { id: 'project' }, { id: 'topic', help: 'One section per group, then Ungrouped' }, { id: 'ai', help: 'A helper job names the topics (Models › Jobs: Haiku); your groups are kept' }] })];
   }
   const SORTS = [['activity', 'Recent', 'Last activity first'], ['created', 'Created', 'Newest chat first'], ['title', 'A to Z', 'By title'], ['cost', 'Cost', 'Most spent first']];
 
@@ -141,8 +144,10 @@
       const t = x.t;
       if (id === 'open-task') { if (t.kind === 'schedule') window.RailShell.openSchedule(t.id); else window.RailShell.openTask(t.case, x.c.id, t.title); return; }
       if (id === 'watch') { t.watch = t.watch ? '' : 'idle'; ctl.paint(); say(t.watch ? 'Watching: Worca fixes failing checks' : 'Stopped watching', undoTo(snap, pick, 'As it was')); return; }
-      if (id === 'label-task') { t.labels = [...new Set([...(t.labels || []), 'hotfix'])]; const run = t.run && window.RailWorld?.find(t.run), had = run?.labels; if (run) run.labels = [...new Set([...(run.labels || []), 'hotfix'])]; ctl.paint(); const back = undoTo(snap, pick, 'As it was'); say(`Labelled ${t.title}: hotfix`, { tip: back.tip, run: () => { if (run) run.labels = had; back.run(); } }); return; }
-      if (id === 'archive') { const drop = (l) => l.filter((y) => y !== t).map((y) => (y.after ? { ...y, after: drop(y.after) } : y)); x.c.tasks = drop(x.c.tasks); ctl.paint(); say(`Archived ${t.title}`, undoTo(snap, pick, 'Puts it back')); window.RailConversation?.refresh(); return; }
+      if (id === 'label-task') { const focus = `[data-open="${CSS.escape(x.key)}"]`; ctl.dialog({ title: 'Label this task', label: 'Label', value: '', max: 40, yes: 'Add label', back: focus, run: (v) => {
+        const word = v.toLowerCase(); if ((t.labels || []).includes(word)) { ctl.paint({ focus }); return; }   // already on it: nothing happened, nothing to say
+        t.labels = [...(t.labels || []), word]; const run = t.run && window.RailWorld?.find(t.run), had = run?.labels; if (run) run.labels = [...(run.labels || []), word]; ctl.paint({ focus }); window.RailConversation?.refresh(); const back = undoTo(snap, pick, 'As it was'); say(`Labelled ${t.title}: ${word}`, { tip: back.tip, run: () => { if (run) run.labels = had; back.run(); window.RailConversation?.refresh(); } }); } }); return; }
+      if (id === 'archive') { const drop = (l) => l.flatMap((y) => (y === t ? y.after || [] : y.after ? [{ ...y, after: drop(y.after) }] : [y])); x.c.tasks = drop(x.c.tasks);   /* its follow-up is a task of its own: it stays */ ctl.paint(); say(`Archived ${t.title}`, undoTo(snap, pick, 'Puts it back')); window.RailConversation?.refresh(); return; }
     }
     const back = !bulk && x ? `[data-open="${CSS.escape(x.key)}"]` : '';
     if (id === 'rename') {
@@ -170,15 +175,15 @@
   }
   function openGroups(chats, anchor) {
     const own = chats.length === 1 ? chats[0].group : '', snap = snapshot(), pick = ctl.state.pick;
-    const nOf = (id) => String(data.chats.filter((c) => c.group === id).length);
+    const nOf = (id) => String(data.chats.filter((c) => c.group === id && !c.archived).length);   // a group's count, as its row says it
     ctl.picker({ label: 'Add to group', placeholder: 'Find or create a group', anchor, hint: '↑ ↓ move · Enter adds · Esc closes',
       sections: (q) => { const f = q.trim().toLowerCase(), all = data.groups.filter((g) => g.id !== own && g.name.toLowerCase().includes(f)), rec = f ? [] : recent.map((id) => all.find((g) => g.id === id)).filter(Boolean).slice(0, 3), rest = all.filter((g) => !rec.includes(g));
         const exact = data.groups.some((g) => g.name.toLowerCase() === f);
         return [...(f && !exact ? [{ title: 'New', kind: 'create', rows: [{ text: `Create “${q.trim()}”`, n: '', on: false }] }] : f ? [] : [{ title: 'New', kind: 'new', rows: [{ text: 'New group…', n: '', on: false }] }]),
           ...(rec.length ? [{ title: 'Recent', kind: 'group', rows: rec.map((g) => ({ text: g.name, n: nOf(g.id), on: false })) }] : []), ...(rest.length ? [{ title: rec.length ? 'All groups' : 'Groups', kind: 'group', rows: rest.map((g) => ({ text: g.name, n: nOf(g.id), on: false })) }] : [])]; },
       pick: (kind, text) => {
-        if (kind === 'new') { ctl.closePicker(); ctl.dialog({ title: 'New group', label: 'Name', value: R.prefs.flag('smartRunNaming') ? `${chats[0].title.split(' ').slice(0, 3).join(' ')} work` : '', hint: R.prefs.flag('smartRunNaming') ? 'Suggested from the chats in it; change it if it is wrong' : '', yes: 'Create group', back: anchor, run: (name) => place(chats, newGroup(name), snap, pick) }); return; }
-        place(chats, kind === 'create' ? newGroup(text.slice(8, -1)) : data.groups.find((g) => g.name === text), snap, pick);
+        if (kind === 'new') { ctl.closePicker(); ctl.dialog({ title: 'New group', label: 'Name', max: 80, value: R.prefs.flag('smartRunNaming') ? `${chats[0].title.split(' ').slice(0, 3).join(' ')} work` : '', hint: R.prefs.flag('smartRunNaming') ? 'Suggested from the chats in it; change it if it is wrong' : '', yes: 'Create group', back: anchor, run: (name) => place(chats, newGroup(name), snap, pick) }); return; }
+        place(chats, kind === 'create' ? newGroup(text.slice(8, -1).slice(0, 80)) : data.groups.find((g) => g.name === text), snap, pick);
       } });
   }
   const newGroup = (name) => { const g = { id: `t-${Date.now().toString(36)}`, name }; data.groups.push(g); return g; };
@@ -200,7 +205,7 @@
     noun: 'chats', label: 'Selected chats', scopes: ['chat'],
     view: () => ({ state: listCase === 'loading' ? (ctl?.state.waited ? 'loading' : 'waiting') : ['offline', 'failed'].includes(listCase) ? listCase : 'ready', parts: parts(),
       tools: [{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick chats to act on several at once' }, R.resetViewTool({ changed: JSON.stringify({ show: view.show, from: view.from, by: view.by, sort: view.sort }) !== JSON.stringify({ show: FRESH.show, from: FRESH.from, by: FRESH.by, sort: FRESH.sort }), to: 'all chats, from all projects, by date' }), { sep: true }, { header: 'Sort' }, ...SORTS.map(([id, text, help]) => ({ id: `sort:${id}`, text, help, checked: view.sort === id })), { sep: true }, { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
-      sections: sections(), empty: { text: listCase === 'empty' ? 'No chats yet.' : view.show === 'needs' ? 'No chat needs you.' : view.show === 'archived' ? 'No archived chats.' : view.show === 'running' ? 'No chat is running.' : 'No chats yet.', action: listCase === 'empty' ? 'New chat' : '' } }),
+      sections: sections().map((s) => ({ ...s, count: s.rows.reduce((n, r) => n + (r.members ? r.members.length : 1), 0) })) /* one unit: chats, a folded group by its members */, empty: { text: listCase === 'empty' ? 'No chats yet.' : view.show === 'needs' ? 'No chat needs you.' : view.show === 'archived' ? 'No archived chats.' : view.show === 'running' ? 'No chat is running.' : 'No chats yet.', action: listCase === 'empty' ? 'New chat' : '' } }),
     can: () => ['menu', 'fold', 'archive', 'rename', 'pin', ...(has('advanced') ? ['group', 'delete'] : [])],
     bulk: bulkActions, act,
     open: (r) => { if (r._x.g) { ctl.toggleGroup(r.key); return; } if (r._x.t) { if (r._x.t.kind === 'schedule') window.RailShell.openSchedule(r._x.t.id); else window.RailShell.openTask(r._x.t.case, r._x.c.id, r._x.t.title); return; } openChat(r._x.c.id); },

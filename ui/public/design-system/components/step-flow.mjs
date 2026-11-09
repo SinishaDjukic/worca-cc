@@ -17,6 +17,8 @@ export function failureOf(label, why, { odd = false } = {}) {
   return { title: `Could not ${label.charAt(0).toLowerCase()}${label.slice(1)}`, detail: `${reason[0].toUpperCase()}${reason.slice(1)}. Nothing changed.`, reason, odd };
 }
 
+const saysOnly = (f) => !!f.say && !f.dialog && !f.confirm && !f.to && !f.run && f.member === undefined && !f.fix && !f.leave;
+
 /**
  * The flow itself.
  * @param {object} h
@@ -34,6 +36,7 @@ export function stepFlow(h) {
   return async function follow(f, label) {
     if (f.dialog && !h.dialogShown(f, label)) { h.openDialog(f, label); return; }
     if (f.confirm && !h.confirmed()) { h.askConfirm(f, label); return; }
+    if (saysOnly(f)) { h.done(f, label); return; }   // nothing to wait for: no Working… flash
     h.working(label);
     let end;
     try { end = await h.perform(f, label); } catch { end = { ok: false, odd: true }; }

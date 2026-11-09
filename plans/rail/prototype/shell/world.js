@@ -128,8 +128,17 @@
   function titles() {
     if (!RM?.titles) return;
     for (const k of Object.keys(RM.titles)) delete RM.titles[k];
-    for (const x of [...data.groups, ...data.runs]) if (!RM.titles[x.case]) RM.titles[x.case] = x.title;
+    const counted = (r) => !r.over && !r.ticket && !r.archived && !r.schedule;   // a deep link names a task that counts: not a schedule's run
+    for (const x of [...data.groups, ...data.runs.filter((r) => counted(r) && RM.seeds?.[r.title]), ...data.runs.filter(counted), ...data.runs]) if (!RM.titles[x.case]) RM.titles[x.case] = x.title;
   }
+  // act.this-thing: what a seeded task has of its own, by its name; the page shows these, never its case's fixture.
+  if (RM) RM.seeds = {
+    'Add CSV export to billing': { branch: 'feat/billing-csv-export', ask: 'Add a CSV export to the billing page: one row per invoice, with its date, customer and amount.', plan: ['Add an export route to billing-api', 'Stream the invoices as CSV', 'Add the Export button to the billing page', 'Test it on a month of invoices'],
+      question: { q: 'Which date format should the CSV use?', why: 'Review found the export has no agreed date format, and the finance import is strict.', options: ['ISO 8601, 2026-11-09', 'The account’s locale', 'Ask on each export'], pick: 0 } },
+    'Fix flaky login test': { branch: 'fix/flaky-login-test', ask: 'The login test fails about one run in five on CI. Find out why and make it reliable.', plan: ['Reproduce the failure with a slowed session', 'Wait on the session cookie, not on a timer', 'Run the login test 50 times on CI', 'Remove the retry the test no longer needs'] },
+    'Dark mode for the marketing site': { branch: 'feat/marketing-dark-mode', ask: 'Give the marketing site a dark mode that follows the system setting.', plan: ['Move the site’s colours to tokens', 'Add the dark palette', 'Follow the system setting', 'Check every page in both themes'] },
+    'Trail in the top bar': { branch: 'feat/trail-top-bar', ask: 'Show where you are as a trail in the top bar, on every page of the feature.', plan: ['Take the parent from the route', 'Draw the trail in the top bar', 'Fold the middle on a phone', 'Test a deep link into a task'] },
+  };
   const stateOf = (r) => RM.stateOf(r.case);
   const wordOf = (r) => R.runState(stateOf(r)).word;
   // Where a run sorts: by its state, but a run paused at a limit that resumes by itself waits on nobody.
@@ -165,6 +174,7 @@
     add: (o) => { const r = { ...run(o.id, o.case || 'starting', o.title, o.project || '', o.detail || '', o.time || 'now', o.day || 'today'), ...o }; data.runs.unshift(r); titles(); tell(r.id); return r; },
     remove: (id) => { data.runs = data.runs.filter((x) => x.id !== id); titles(); tell(id); },   // a deleted schedule's waiting row
     onMove: (fn) => moved.push(fn),
+    touch: () => { titles(); tell(); },   // the Tasks list changed the store itself (archive, delete, Undo): everything reads it again
     facts: (caseId = current) => ({ ...CASES[caseId], actions: CASES[caseId].actions.map(([aid, r, label, gone]) => ({ id: aid, runId: r, run: gone || table()[r].title, label })) }),
     // A step taken on a run from elsewhere (Pulse's Try again, Resume): the run moves, and every list reads it.
     move: (id, kase, detail, o = {}) => { const r = data.runs.find((x) => x.id === id); if (!r) return; Object.assign(r, { case: kase, detail, time: 'now', day: kase === 'scheduled' ? r.day : 'today', when: kase === 'scheduled' ? r.when : undefined, resumes: false, unread: false }, o); titles(); tell(id); },

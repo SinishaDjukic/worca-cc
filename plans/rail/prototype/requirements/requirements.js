@@ -43,7 +43,9 @@
       if (f.state === 'ready') { Object.assign(f, { state: 'started', run: 'Plan · writing the plan' }); window.RailWorld?.add({ id: `feat-${f.id}`, case: 'working', title: f.title, project: f.project, detail: 'Plan · writing the plan', time: 'now', day: 'today' }); draw(); say(`Started ${f.id}: a task builds it from the spec`); return; }
       if (f.state === 'started') {   // its card in its chat, on its project: the seeded ones are told to the world here
         if (!window.RailWorld?.find(`feat-${f.id}`)) window.RailWorld?.add({ id: `feat-${f.id}`, case: 'working', title: f.title, project: f.project, detail: f.run, time: 'now', day: 'today' });
-        window.RailShell.openRun('run/working', f.title, `feat-${f.id}`);
+        const run = `feat-${f.id}`;   // its chat exists before you open it: a card opens, not a notice about a new chat
+        if (!window.RailConversation?.chatOfTask({ run, title: f.title })) { window.RailChats?.newChat(f.title, f.project, { fromTask: true, tasks: [{ id: `t-${run}`, run, title: f.title, case: 'working', stage: 1, detail: f.run, branch: '' }] }); window.RailChats?.refresh(); }
+        window.RailShell.openRun('run/working', f.title, run);
       }
     }
   }

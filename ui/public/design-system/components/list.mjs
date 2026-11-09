@@ -54,7 +54,7 @@ export function listRow({ title, meta = '', mark = '', end = '', endText = '', o
   const main = open ? `<button type="button" class="lr-main"${attrs(open)}>${body}</button>` : `<span class="lr-main">${body}</span>`;
   const more = menu ? moreMenu(menu) : '';
   // a row with rows under it folds from its mark (list.fold-by-mark): the root icon is the trigger, its name still opens it
-  const railMark = markFold ? `<button type="button" class="lr-mark-fold"${attrs({ 'aria-expanded': String(!!markFold.open), title: `${markFold.open ? 'Fold' : 'Show'} what is under ${title}`, 'aria-label': `${markFold.open ? 'Fold' : 'Show'} what is under ${title}`, ...(markFold.attrs || {}) })}>${mark}</button>` : mark;
+  const railMark = markFold ? `<button type="button" class="lr-mark-fold"${attrs({ 'aria-expanded': String(!!markFold.open), title: markFold.label || `${markFold.open ? 'Fold' : 'Show'} what is under ${title}`, 'aria-label': markFold.label || `${markFold.open ? 'Fold' : 'Show'} what is under ${title}`, ...(markFold.attrs || {}) })}>${mark}</button>` : mark;
   const rail = check === undefined ? railMark : checkbox({ cls: 'lr-check', why: 'Select', checked: !!check, attrs: { 'aria-label': `Select ${title}`, ...boxAttrs } });
   const foldBtn = fold ? button({ label: fold.open ? 'Done' : 'Customise', kind: 'quiet', attrs: { 'aria-expanded': String(!!fold.open), title: fold.help || null, ...(fold.attrs || {}) } }) : '';
   const shown = (!fold || fold.open) && (!markFold || markFold.open) ? after : '';

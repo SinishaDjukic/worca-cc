@@ -88,7 +88,7 @@ export const REPEATS = Object.freeze(['every day', 'every weekday', 'every Monda
 export function scheduleWords({ every, at, nowAt = '15:00' }) {
   const hourly = every === 'every hour', when = every.replace(/^every /, '');
   const runs = hourly ? every : `${every} at ${at}`, day = /^(Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day$/.test(when) ? when : '';
-  const next = hourly ? 'Next within the hour' : every === 'every day' ? `Next ${at > nowAt ? 'today' : 'tomorrow'} at ${at}` : day ? `Next on ${day} at ${at}` : every === 'every weekday' ? `Next weekday at ${at}` : /month/.test(every) ? `Next on the 1st at ${at}` : `Next at ${at}`;
+  const next = hourly ? 'Next within the hour' : every === 'every day' ? `Next ${at > nowAt ? 'today' : 'tomorrow'} at ${at}` : day ? `Next on ${day} at ${at}` : every === 'every weekday' ? `Next weekday at ${at}` : every === 'every weekend' ? `Next weekend at ${at}` : /month/.test(every) ? `Next on the 1st at ${at}` : `Next at ${at}`;
   return { runs, says: `${runs[0].toUpperCase()}${runs.slice(1)}`, next, time: hourly ? 'Hourly' : day ? day.slice(0, 3) : /month/.test(every) ? '1st' : at,
     day: hourly || (every === 'every day' && at > nowAt) ? 'today' : every === 'every day' || every === 'every weekday' ? 'tomorrow' : day ? 'week' : 'later' };
 }
@@ -127,8 +127,9 @@ export const DAY_SECTIONS = Object.freeze([['upcoming', 'Waiting'], ['today', 'T
  * @param {string} [o.rows]   the member rows' markup
  */
 export function groupRow({ count, shown, noun, toggle, rows = '', end = '', ...row }) {
-  const fold = button({ label: `${shown ? 'Hide' : 'Show'} the ${noun} in ${row.title}`, kind: 'quiet', iconOnly: true, title: false, icon: icon(shown ? 'chevron' : 'chevR', 14), attrs: { 'aria-expanded': String(shown), ...toggle } });
-  return listRow({ ...row, endText: count, end: fold + end, markFold: { open: shown, attrs: toggle }, after: shown && rows ? `<div class="lr-members" role="list"><div class="list-rows">${rows}</div></div>` : '' });   // its mark folds it too
+  const foldName = `${shown ? 'Hide' : 'Show'} the ${noun} in ${row.title}`;   // the chevron and the mark fold the same thing: one name
+  const fold = button({ label: foldName, kind: 'quiet', iconOnly: true, title: false, icon: icon(shown ? 'chevron' : 'chevR', 14), attrs: { 'aria-expanded': String(shown), ...toggle } });
+  return listRow({ ...row, endText: count, end: fold + end, markFold: { open: shown, attrs: toggle, label: foldName }, after: shown && rows ? `<div class="lr-members" role="list"><div class="list-rows">${rows}</div></div>` : '' });   // its mark folds it too
 }
 
 /**

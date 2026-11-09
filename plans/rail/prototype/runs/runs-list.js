@@ -72,7 +72,7 @@
     const isArchived = g ? membersOf(g).every((m) => m.archived) : r.archived;
     const items = [{ id: 'toggle', text: 'Select', hint: hint('Space') }, ...(r ? [{ id: 'in-view', text: window.RailShell?.inView.has('task', `run:${r.id}`) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }] : []),
       { id: 'stop', text: 'Stop', hint: hint('S'), off: !n(stop), help: n(stop) ? 'Stops it; the branch and changes stay' : R.skipText(stop) },
-      isArchived ? { id: 'archive', text: 'Restore', hint: hint('E'), help: 'Brings the record back to Tasks; its branch, worktree and logs stay gone' } : { id: 'archive', text: 'Archive', hint: hint('E'), off: !n(arch), help: n(arch) ? 'Removes its local branch, worktree and logs; Undo brings back the record' : R.skipText(arch) }];
+      isArchived ? { id: 'archive', text: 'Restore', hint: hint('E'), help: 'Brings the record back to Tasks; its branch, worktree and logs stay gone' } : { id: 'archive', text: 'Archive', hint: hint('E'), off: !n(arch), help: n(arch) ? (has('advanced') ? 'Removes its local branch, worktree and logs; Undo brings back the record' : 'Takes it out of Tasks; Undo brings it back') : R.skipText(arch) }];
     if (has('advanced') && r && !(r.group && !r.adhoc)) items.push({ sep: true }, { id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' });
     if (has('advanced') && r?.adhoc && r.group) items.push({ id: 'leave-group', text: 'Remove from group', hint: hint('shift', 'G'), help: 'It stays in Tasks, in no group' });
     const pr = r?.pr || (g ? membersOf(g).find((m) => m.pr)?.pr : '');
@@ -146,7 +146,7 @@
 
   // ---- actions ----
   const snapshot = () => JSON.stringify(data);
-  const undoTo = (snap, pick, words) => ({ tip: words, run: () => { data = JSON.parse(snap); W.replace(data); ctl.restore(pick); ctl.paint(); say('Undone'); } });
+  const undoTo = (snap, pick, words) => ({ tip: words, run: () => { data = JSON.parse(snap); W.replace(data); ctl.restore(pick); ctl.paint(); W.touch(); say('Undone'); } });
   const rowsNow = (rows) => rows.map((x) => x._x);
   const byId = (id) => data.runs.find((r) => r.id === id);
   function bulkActions(rows0) {
@@ -154,7 +154,7 @@
     const stop = plan('stop', rows), arch = plan('archive', rows), del = plan('delete', rows), all = runRows(rows);
     const off = (p) => R.skipText(p) || 'None of these';
     const acts = [{ id: 'stop', label: 'Stop', n: n(stop), tip: R.skipText(stop) || 'Asks first; the branches and changes stay', why: off(stop) },
-      archivedView ? { id: 'archive', label: 'Restore', n: all.length, tip: 'Brings the records back to Tasks; their branches, worktrees and logs stay gone' } : { id: 'archive', label: 'Archive', n: n(arch), tip: R.skipText(arch) || 'Removes local branches, worktrees and logs; Undo brings back the records', why: off(arch) }];
+      archivedView ? { id: 'archive', label: 'Restore', n: all.length, tip: 'Brings the records back to Tasks; their branches, worktrees and logs stay gone' } : { id: 'archive', label: 'Archive', n: n(arch), tip: R.skipText(arch) || (has('advanced') ? 'Removes local branches, worktrees and logs; Undo brings back the records' : 'Takes them out of Tasks; Undo brings them back'), why: off(arch) }];
     if (has('advanced')) acts.push({ id: 'delete', label: 'Delete', n: n(del), tip: R.skipText(del) || 'Asks first; it cannot be taken back', why: off(del) });
     if (labelsOn()) acts.push({ id: 'label', label: 'Label', n: all.length, tip: 'Adds or removes a label on each' });
     if (has('advanced')) { const can = rows.filter((x) => x.r && !(x.r.group && !x.r.adhoc)); acts.push({ id: 'add-to-group', label: 'Add to group', n: can.length, tip: can.length < rows.length ? `Skips ${rows.length - can.length}: a feature's runs and groups stay as they are` : 'Find a group, or make a new one', why: 'A feature\'s runs and groups stay as they are' }); }
@@ -164,15 +164,15 @@
     const rows = rowsNow(rows0), pick = ctl.state.pick, snap = snapshot(), names = rows.length === 1 ? `“${(rows[0].r || rows[0].g).title}”` : plural(rows.length, 'task');
     const backTo = rows.length === 1 && !bulk ? `[data-open="${CSS.escape(rows[0].key)}"]` : '';
     if (id === 'in-view' && rows[0]?.r) { const r = rows[0].r; window.RailShell.inView.toggle({ type: 'task', id: `run:${r.id}`, title: r.title, case: r.case }); ctl.paint(); return; }
-    if (id === 'stop') { const p = plan('stop', rows), c = n(p); if (!c) { say(R.skipText(p)); return; } ctl.confirm({ text: `Stop ${rows.length === 1 ? names : plural(c, 'task')}? Its branch and changes stay.${p.skip.length ? ` ${R.skipText(p)}` : ''}`, yes: `Stop ${c}`, danger: true, back: backTo, run: () => { p.apply.forEach((t) => { byId(t.id).case = 'stopped'; }); p.cancel.forEach((t) => { byId(t.id).case = 'ticket-canceled'; }); ctl.clear(); say(`Stopped ${plural(c, 'task')}`); } }); return; }
+    if (id === 'stop') { const p = plan('stop', rows), c = n(p); if (!c) { say(R.skipText(p)); return; } ctl.confirm({ text: `Stop ${rows.length === 1 ? names : plural(c, 'task')}? Its branch and changes stay.${p.skip.length ? ` ${R.skipText(p)}` : ''}`, yes: `Stop ${c}`, danger: true, back: backTo, run: () => { p.apply.forEach((t) => { byId(t.id).case = 'stopped'; }); p.cancel.forEach((t) => { byId(t.id).case = 'ticket-canceled'; }); ctl.clear(); W.touch(); say(`Stopped ${plural(c, 'task')}`); } }); return; }
     if (id === 'archive') {
       const back = view.show === 'archived' || rows.every((x) => (x.g ? membersOf(x.g).every((m) => m.archived) : x.r.archived));
-      if (back) { runRows(rows).forEach((r) => { r.archived = false; }); ctl.clear(); ctl.paint(); say(`Restored ${plural(runRows(rows).length, 'task')}`, undoTo(snap, pick, 'Archives them again')); return; }
+      if (back) { runRows(rows).forEach((r) => { r.archived = false; }); ctl.clear(); ctl.paint(); W.touch(); say(`Restored ${plural(runRows(rows).length, 'task')}`, undoTo(snap, pick, 'Archives them again')); return; }
       const p = plan('archive', rows), c = n(p); if (!c) { say(R.skipText(p)); return; }
-      p.apply.forEach((t) => { byId(t.id).archived = true; }); ctl.clear(); ctl.paint();
+      p.apply.forEach((t) => { byId(t.id).archived = true; }); ctl.clear(); ctl.paint(); W.touch();
       say(`Archived ${plural(c, 'task')}${p.skip.length ? ` · ${R.skipText(p)}` : ''}`, undoTo(snap, pick, 'Puts them back')); return;
     }
-    if (id === 'delete') { const p = plan('delete', rows), c = n(p); if (!c) { say(R.skipText(p)); return; } ctl.confirm({ text: `Delete ${rows.length === 1 ? names : plural(c, 'task')}? This cannot be taken back.${p.skip.length ? ` ${R.skipText(p)}` : ''}`, yes: `Delete ${c}`, danger: true, back: '', run: () => { const gone = new Set([...p.apply, ...p.cancel].map((t) => t.id)); data.runs = data.runs.filter((r) => !gone.has(r.id)); ctl.clear(); say(`Deleted ${plural(c, 'task')}`); } }); return; }
+    if (id === 'delete') { const p = plan('delete', rows), c = n(p); if (!c) { say(R.skipText(p)); return; } ctl.confirm({ text: `Delete ${rows.length === 1 ? names : plural(c, 'task')}? This cannot be taken back.${p.skip.length ? ` ${R.skipText(p)}` : ''}`, yes: `Delete ${c}`, danger: true, back: '', run: () => { const gone = new Set([...p.apply, ...p.cancel].map((t) => t.id)); data.runs = data.runs.filter((r) => !gone.has(r.id)); ctl.clear(); W.touch(); say(`Deleted ${plural(c, 'task')}`); } }); return; }
     if (id === 'label') { openLabels(rows); return; }
     if (id === 'add-to-group') { openGroups(rows, rows.length === 1 && !bulk ? `[data-menu="row:${CSS.escape(rows[0].key)}"]` : '[data-bulk="add-to-group"]'); return; }
     if (id === 'leave-group') { const r = rows[0].r, g = data.groups.find((x) => x.id === r.group); r.group = ''; r.adhoc = false; ctl.paint(); say(`Removed from ${g.title}`, undoTo(snap, pick, 'Puts it back in the group')); return; }
@@ -203,13 +203,13 @@
       } });
   }
   const makeGroup = (title) => { const g = { id: `g-${Date.now().toString(36)}`, title }; data.userGroups.push(g); return g; };
-  function place(runs, ug, snap, pick) {
+  function place(runs, ug, snap, pick, quiet) {
     if (!data.groups.some((g) => g.id === ug.id)) data.groups.push({ id: ug.id, kind: 'user', case: 'group-working', title: ug.title, project: runs[0].project, time: runs[0].time, day: runs[0].day, cost: null });
     data.userGroups = data.userGroups.filter((g) => g.id !== ug.id);
     runs.forEach((r) => { r.group = ug.id; r.adhoc = true; });
     recent = [ug.id, ...recent.filter((x) => x !== ug.id)].slice(0, 8);
     ctl.closePicker(); ctl.clear(); ctl.openGroup(`group:${ug.id}`); ctl.paint(); ctl.landOn(`run:${runs[0].id}`);
-    say(`Added to ${ug.title} · ${runs.length === 1 ? runs[0].title : plural(runs.length, 'task')}`, undoTo(snap, pick, 'Puts them back where they were'));
+    if (!quiet) say(`Added to ${ug.title} · ${runs.length === 1 ? runs[0].title : plural(runs.length, 'task')}`, undoTo(snap, pick, 'Puts them back where they were'));
   }
   function openThing(row) {
     const x = row._x;
@@ -217,9 +217,10 @@
     window.RailShell.openRun(`run/${x.g ? x.g.case : openCase(x.r)}`, x.g ? x.g.title : x.r.title, x.g ? window.RailWorld.membersOf(x.g)[0]?.id : x.r.id);   // the task itself, so its own chat opens
   }
 
+  const centers = () => window.RailCenters?.paint();   // the page beside this list reads the same project
   ctl = R.listController({ root, spec: {
     noun: 'tasks', label: 'Selected tasks',
-    tool: (v) => { if (v === 'reset') { view = { ...FRESH }; store.set(view); say('View reset'); } },
+    tool: (v) => { if (v === 'reset') { view = { ...FRESH }; store.set(view); centers(); say('View reset'); } },
     view: () => ({ state: listCase === 'loading' ? (ctl?.state.waited ? 'loading' : 'waiting') : ['offline', 'failed'].includes(listCase) ? listCase : 'ready', parts: parts(), tools: [{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick tasks to act on several at once' }, R.resetViewTool({ changed: !(view.show === FRESH.show && view.from === FRESH.from && !view.day && !view.range && !view.person && view.by === FRESH.by && !view.labels.length && !view.workflow && !view.schedule), to: 'all tasks, from all projects, by date' }), { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
       sections: sections(), empty: listCase === 'empty' ? { text: 'No tasks yet.', action: 'Start a task' } : { text: view.from !== 'all' || view.day || view.range || view.person || view.labels.length || view.workflow || view.schedule ? 'No tasks in this view.' : EMPTY[view.show] || 'No tasks yet.', action: 'Show all tasks' } }),
     can: () => ['menu', 'fold', 'stop', 'archive', ...(has('advanced') ? ['group', 'delete'] : [])],
@@ -228,10 +229,10 @@
     word: (id, v) => {
       if (id === 'labels') { if (!v) { view.labels = []; return false; } view.labels = view.labels.includes(v) ? view.labels.filter((l) => l !== v) : [...view.labels, v]; store.set(view); return view.labels.length > 0; }
       if (id === 'range') { if (!v) { view = { ...view, range: null }; store.set(view); } return false; }
-      view = { ...view, [id]: v }; store.set(view); return false;
+      view = { ...view, [id]: v }; store.set(view); centers(); return false;
     },
     say, active: () => !root.closest('[hidden]') && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #app .nav-fly'),
-    retry: () => setCase('full'), emptyAct: () => { if (listCase === 'empty') { document.getElementById('topnav-new')?.click(); return; } view = { ...FRESH }; store.set(view); ctl.clear(); ctl.paint(); },
+    retry: () => setCase('full'), emptyAct: () => { if (listCase === 'empty') { document.getElementById('topnav-new')?.click(); return; } view = { ...FRESH }; store.set(view); ctl.clear(); ctl.paint(); centers(); },
   } });
 
   function setCase(c) {
@@ -250,11 +251,21 @@
     // what the Tasks center counts: the very rows of this list, so a number and what it opens agree
     rows: () => tops().filter((t) => !t.archived),
     summary: () => { const t = tops().filter((x) => !x.archived); return { n: t.filter((x) => x.section === 'running' || x.section === 'needs').length, needs: t.filter((x) => x.section === 'needs').length }; },
+    from: () => view.from,   // the project the list is narrowed to: the Tasks center follows it
+    // a group crumb on a task's page: Tasks with that group open; a group the page named for this task joins the store
+    showGroup: (title, taskTitle) => {
+      view = { ...FRESH, by: view.by }; store.set(view); ctl.clear();
+      let g = data.groups.find((x) => x.title === title);
+      const r = !g && data.runs.find((x) => x.title === taskTitle && !x.group);
+      if (r) { place([r], data.userGroups.find((x) => x.title === title) || makeGroup(title), snapshot(), ctl.state.pick, true); g = data.groups.find((x) => x.title === title); W.touch(); }
+      if (g) ctl.openGroup(`group:${g.id}`);
+      ctl.paint(); centers(); window.RailShell?.go('runs');
+    },
     focus: () => ctl.focusRow(),
     // from the search: the runs with this label
     label: (l) => { view = { ...view, labels: [l], show: 'all', from: 'all', day: '', person: '' }; store.set(view); ctl.clear(); ctl.paint(); },
     // from another page: opens Tasks narrowed; the sentence says it and you can widen it there. project: a project's name, day: an id of M.DAYS (today, yesterday, week, month, older, upcoming), show: a SHOWS id, range: { from, to, label } as month*100+day
-    filter: ({ project = 'all', day = '', show = 'all', range = null, workflow = '', schedule = '' } = {}) => { view = { ...FRESH, by: view.by, from: project, day, range, workflow, schedule, show: showOf(show) ? show : 'all' }; store.set(view); ctl.clear(); ctl.paint(); window.RailShell?.go('runs'); },
+    filter: ({ project = 'all', day = '', show = 'all', range = null, workflow = '', schedule = '' } = {}) => { view = { ...FRESH, by: view.by, from: project, day, range, workflow, schedule, show: showOf(show) ? show : 'all' }; store.set(view); ctl.clear(); ctl.paint(); centers(); window.RailShell?.go('runs'); },
   };
   ctl.paint();
 })();

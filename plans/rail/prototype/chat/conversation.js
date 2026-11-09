@@ -53,6 +53,7 @@
     let sideNoPage = false;   // × on the page's chip: this question goes without the page
   const where = opts.where || (side ? '#ask-convo' : '#route-chat');
   let chatId = '', comp = fresh(opts.mode), menu = '', hover = null, opened = new Set(), timer = 0;
+  const drafts = new Map();   // what is typed in each chat's composer, kept while another chat is open
   const chat = () => data().chats.find((c) => c.id === chatId);
   // the first screen points a newcomer to Getting started until its sign-in is done; then it says nothing
   const newHere = () => { const gs = data().chats.find((c) => c.id === 'c0' && !c.archived); if (!gs || threads.get('c0')?.find((y) => y.id === 'g1')?.done) return ''; return `<p class="chat-home-new">New here? ${R.textLink({ label: 'Getting started', attrs: { 'data-back-to': 'chat/c0', title: 'Opens Getting started: sign in, add a project, then your first task' } })} signs you in and adds your first project.</p>`; };
@@ -117,7 +118,7 @@
   function arm(id) {
     const x = intentOf(id); if (!x) return;
     menu = ''; comp = { ...comp, intent: id, mode: 'ask', text: x.text || '', preset: '' };
-    paint(); const t = root.querySelector('[data-composer-t]'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); }
+    paint(false); const t = root.querySelector('[data-composer-t]'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); }
   }
   // what can be followed: every task still going, wherever it was started; one chat follows it
   const liveTasks = () => (window.RailChats?.data().chats || []).flatMap((c) => (c.tasks || []).filter((t) => t.case && t.kind !== 'schedule' && !t.followed && !['ok', 'merged', 'stop', 'closed', 'idle'].includes(R.markTone(stOf(t)))).map((t) => ({ t, c })));
@@ -305,7 +306,7 @@
     const pp = (f, text, items, tip) => R.sentencePicker({ id: `pp-${x.id}-${f}`, text, tip, items: items.map((v) => (typeof v === 'string' ? { id: v, text: v, checked: v === text } : v.id ? { ...v, checked: v.id === text } : v)), open: menu === `pp-${x.id}-${f}`, chevron: R.icon('chevron', 10) });
     const shaper = x.workflow === 'Shaper', later = x.when && x.when !== 'now';
     const sentence = W(/^every/.test(x.when || '') ? 'Schedule' : 'Task') + W('on') + pp('project', x.project, PROJECTS, 'Which project') + W('with') + pp('workflow', x.workflow, Object.keys(WORKFLOWS), 'Which workflow') + W('on') + pp('engine', x.engine, ENGINE_ITEMS, 'Which engine, then its model') + W('·') + pp('effort', x.effort || 'high', EFFORT, 'How hard it thinks') + pp('when', x.when || 'now', WHEN, 'When it starts: now, at a time, repeating, or after another task') + W('then') + pp('then', x.then, ['open a PR', 'leave a branch', 'merge into dev'], 'What happens when it is done');
-    const brief = `<div class="tp-brief">${R.field({ id: `pp-brief-${x.id}`, label: 'Brief: what the first agent reads · Markdown', value: x.brief ?? x.why.replace(/^From this chat: /, ''), multiline: true, hint: `${(x.brief ?? x.why).length} characters`, attrs: { 'data-pp-brief': x.id } })}${(x.files || []).length ? `<span class="you-files">${x.files.map((f) => R.button({ label: f, kind: 'quiet', icon: R.icon('x', 11), attrs: { 'data-pp-unfile': `${x.id}|${f}`, title: `Removes ${f}` } })).join('')}</span>` : ''}</div>`;
+    const brief = `<div class="tp-brief">${R.field({ id: `pp-brief-${x.id}`, label: 'Brief: what the first agent reads · Markdown', value: x.brief ?? x.why.replace(/^From this chat: /, ''), multiline: true, hint: `${(x.brief ?? x.why.replace(/^From this chat: /, '')).length} characters`, attrs: { 'data-pp-brief': x.id } })}${(x.files || []).length ? `<span class="you-files">${x.files.map((f) => R.button({ label: f, kind: 'quiet', icon: R.icon('x', 11), attrs: { 'data-pp-unfile': `${x.id}|${f}`, title: `Removes ${f}` } })).join('')}</span>` : ''}</div>`;
     // Shaper's perspectives: a picker in the sentence ("reviewed by Product, Security"), each a tick; Product always reviews
     const pl = x.persp || ['Product'];
     const persp = shaper ? W('reviewed by') + R.sentencePicker({ id: `pp-${x.id}-persp`, text: pl.join(', '), tip: 'Who reviews the plan; Product always does', items: PERSPECTIVES.map((v) => ({ id: v, text: v, checked: pl.includes(v), off: v === 'Product', help: v === 'Product' ? 'Always reviews' : '' })), open: menu === `pp-${x.id}-persp`, chevron: R.icon('chevron', 10) }) : '';
@@ -411,13 +412,14 @@
       const graph = x.steps && x.state !== 'applied' ? `<div class="set-rows" style="margin:6px 0 0">${x.steps.map(([n, who, m, e], k) => R.settingsRow({ name: `${k + 1}. ${n}`, sentence: `${esc(who)} on ${wpick(`wfs-${x.id}-${k}-m`, m, ENGINES, 'Its model')} ${wpick(`wfs-${x.id}-${k}-e`, e, ['low', 'medium', 'high'], 'How hard it thinks')}` })).join('')}${x.loop ? R.settingsRow({ name: 'Loop', sentence: `${esc(x.loop[0])} sends it back to ${esc(x.loop[1])} up to ${wpick(`wfl-${x.id}`, x.loop[2], ['1', '2', '3', '5'], 'How many rounds')} ${x.loop[2] === '1' ? 'time' : 'times'}` }) : ''}</div>${x.cost ? `<p class="convo-head" style="margin:6px 0 0">${esc(x.cost)}</p>` : ''}` : '';
       const choice = x.choice ? `<div class="tp-sentence"><span>${esc(x.choice.label)}</span>${R.sentencePicker({ id: `cpch-${x.id}`, text: x.picked || x.choice.rec, tip: `${x.choice.label}: ${x.choice.rec} is what Worca recommends`, items: x.choice.items.map((v) => ({ id: v, text: v, help: v === x.choice.rec ? 'Worca recommends it' : '', checked: (x.picked || x.choice.rec) === v })), open: menu === `cpch-${x.id}`, chevron: R.icon('chevron', 10) })}</div>` : '';
       const HOW = { Folder: ['a folder on this machine', 'Add'], Clone: ['a repository URL', 'Clone'], New: ['a new, empty project', 'Create'] };
-      const pf = (k, label, v, ph) => R.field({ id: `pj-${x.id}-${k}`, label, value: x.f?.[k] ?? v, placeholder: ph || '', attrs: { 'data-pj-field': `${x.id}|${k}` } });
+      const pf = (k, label, v, ph) => R.field({ id: `pj-${x.id}-${k}`, label, value: x.f?.[k] ?? v, placeholder: ph || '', attrs: { 'data-pj-field': `${x.id}|${k}`, maxlength: 1024 } });
       const project = x.kind === 'Project' && x.how ? `<div class="tp-sentence"><span>Add a project from</span>${R.sentencePicker({ id: `pj-${x.id}`, text: HOW[x.how][0], tip: 'Where the project comes from', items: Object.entries(HOW).map(([k, [w]]) => ({ id: k, text: w, checked: x.how === k })), open: menu === `pj-${x.id}`, chevron: R.icon('chevron', 10) })}</div><div class="pj-fields">${
         x.how === 'Folder' ? pf('path', 'Folder', '', '~/src/your-project') + R.button({ label: 'Choose a folder…', kind: 'quiet', attrs: { 'data-say': 'Would open a folder picker on this machine' } })
         : x.how === 'Clone' ? pf('url', 'Repository URL', '', 'https://github.com/acme/billing-web') + pf('branch', 'Branch', 'main') + pf('dir', 'Folder name', '', 'Worca names it from the URL')
           : pf('name', 'Name', '', 'billing-web') + pf('where', 'Where', '~/src') + `<div class="tp-sentence"><span>with</span>${R.sentencePicker({ id: `pjg-${x.id}`, text: x.git || 'git', tip: 'Start it as a git repository', items: ['git', 'no git'].map((v) => ({ id: v, text: v, checked: (x.git || 'git') === v })), open: menu === `pjg-${x.id}`, chevron: R.icon('chevron', 10) })}</div>`}</div>` : '';
       if (project) x.apply = HOW[x.how][1];
-      const acts = x.actions ? x.actions.map(([label, kind, done], k) => ({ label: x.diff && k === 1 && x.diffOpen ? 'Hide the diff' : label, kind, attrs: { 'data-cp-act': `${x.id}|${k}`, ...(x.diff && k === 1 ? { 'aria-expanded': String(!!x.diffOpen) } : {}) } })) : null;
+      const runningNow = x.kind === 'Schedule' && window.RailSchedules?.running(x.schedule);
+      const acts = x.actions ? x.actions.map(([label, kind, done], k) => ({ label: x.diff && k === 1 && x.diffOpen ? 'Hide the diff' : label, kind, attrs: { 'data-cp-act': `${x.id}|${k}`, ...(runningNow && label === 'Run now' ? { disabled: true, title: 'Its task is running; it can start again when that ends' } : {}), ...(x.diff && k === 1 ? { 'aria-expanded': String(!!x.diffOpen) } : {}) } })) : null;
       const diff = x.diff && x.diffOpen ? R.list({ groups: [{ title: `The diff · ${x.diff.length} files`, rows: x.diff.map(([f, n]) => R.listRow({ title: f, meta: n, mark: R.kindMark({ kind: 'plugin', icon: 'file' }), open: { 'data-say': `Would open ${f}: its lines, added and removed` } })) }] }) : '';
       if (x.done) return R.turnRow({ mark: R.icon('check', 14), text: `<b>${esc(x.title)}</b> ${esc(x.done)}` });
       const cfm = x.confirmDelete ? R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'ask', size: 16 }), text: `<b>${esc(x.confirmDelete)}?</b> Its times end; the tasks it ran stay`, end: R.button({ label: 'Delete', kind: 'quiet', cls: 'is-danger', attrs: { 'data-chg-yes': x.id } }) + R.button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-chg-no': x.id } }) }) : '';   // act.confirm
@@ -530,6 +532,7 @@
     const t = root.querySelector('[data-composer-t]');
     if (t && caret) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); }
     size(t);
+    root.querySelector('[data-menu="starter-more"] + .menu')?.setAttribute('data-scroll-fade', '');   // it scrolls: the fade says there is more
   }
   const size = (t) => { if (t) { t.style.height = 'auto'; t.style.height = `${Math.max(t.scrollHeight, t.closest('.is-plain') ? 0 : 44)}px`; } };
 
@@ -591,9 +594,9 @@
     if (!threads.has(c.id)) threads.set(c.id, M.thread(c));
     const list = threads.get(c.id), n = Date.now().toString(36);
     const intent = comp.intent || '';
-    const handed = aboutNow(); list.push({ t: 'you', id: `y${n}`, text, when: 'now', refs: comp.refs || [], files: handed ? [`${handed.kind} · ${handed.name}`] : [] }); comp.about = null;
+    const handed = aboutNow(); list.push({ t: 'you', id: `y${n}`, text, when: 'now', refs: comp.refs || [], files: [...(handed ? [`${handed.kind} · ${handed.name}`] : []), ...(comp.mode === 'task' ? [] : comp.files)] }); comp.about = null;   // a task's files go on its proposal
     if (comp.mode === 'task') {   // one way to start a task: the proposal, checked, then Start
-      list.push({ t: 'words', html: 'Here it is. Check it, then start it:' }, { t: 'proposal', id: `p${n}`, title: comp.title || clip(text.charAt(0).toUpperCase() + text.slice(1)), feature: comp.branch || undefined, labels: comp.labels, asks: comp.asks, memory: comp.memory, guard: comp.guard, why: whyOf(text), project: comp.project, workflow: comp.workflow, engine: comp.engine, effort: comp.effort, then: comp.then, when: comp.startAt ? `at ${comp.startAt}` : 'now', preset: comp.preset, files: comp.files, open: false, nudge: false });
+      list.push({ t: 'words', html: 'Here it is. Check it, then start it:' }, { t: 'proposal', id: `p${n}`, title: comp.title || clip(text.charAt(0).toUpperCase() + text.slice(1)), feature: comp.branch || undefined, labels: comp.labels, asks: comp.asks, memory: comp.memory, guard: comp.guard, why: whyOf(text), brief: text, project: comp.project, workflow: comp.workflow, engine: comp.engine, effort: comp.effort, then: comp.then, when: comp.startAt ? `at ${comp.startAt}` : 'now', preset: comp.preset, files: comp.files, open: false, nudge: false });
     } else if (false) {
       const t = { id: `t${n}`, title: clip(text), ask: text, case: 'starting', stage: 0, git: 'branch', branch: `feat/${slug(text)}`, detail: `Plan · ${comp.workflow} on ${comp.engine}` };
       if (comp.startAt) { t.case = 'scheduled'; t.detail = `Starts at ${comp.startAt}`; t.git = ''; }
@@ -668,15 +671,16 @@
     if (id === 'cl-label') { const c = chat(); c.labels = (c.labels || []).includes(v) ? c.labels.filter((l) => l !== v) : [...(c.labels || []), v]; window.RailChats.refresh(); menu = ''; refreshAll(); return; }
     if (id === 'cp-mode') { comp.mode = v.toLowerCase(); if (comp.mode !== 'task') comp.more = false; }
     else if (id === 'cp-plus') {
-      if (v === 'Reuse') comp.text = 'Add a CSV export to the billing page';
+      const add = (words) => { const had = root.querySelector('[data-composer-t]')?.value.trim(); comp.text = had ? `${had}\n\n${words}` : words; };   // what you typed stays: it goes first
+      if (v === 'Reuse') add('Add a CSV export to the billing page');
       else if (v === 'Shape') { comp.mode = 'task'; comp.workflow = 'Shaper'; say('Worca will ask first, then write the requirements'); }
       else if (v === 'Files') { const f = SAMPLE_FILES.find((n) => !comp.files.includes(n)); if (f) comp.files = [...comp.files, f]; say(f ? `Would open a file picker: ${f} stands in` : 'Would open a file picker'); }
       else if (v === 'md') comp.files = [...new Set([...comp.files, 'Markdown'])];
-      else if (v === 'Ticket') { comp.files = [...new Set([...comp.files, 'SHOP-124'])]; comp.text = 'Export button does nothing on Safari'; comp.mode = 'task'; }
+      else if (v === 'Ticket') { comp.files = [...new Set([...comp.files, 'SHOP-124'])]; add('Export button does nothing on Safari'); comp.mode = 'task'; }
     } else if (id === 'cp-preset') { comp.preset = v === 'No preset' ? '' : v; if (v === 'Hotfix') { comp.workflow = 'Lean'; comp.then = 'open a PR'; } if (v === 'Docs only') comp.workflow = 'Lean'; Object.assign(comp, SAVED[v]); if (comp.preset) comp.mode = 'task'; }
     else comp[id.slice(3)] = v;
     menu = '';
-    paint(id !== 'cp-plus');   // Reuse and a ticket write the box: what it held gives way
+    paint(id !== 'cp-plus');   // Reuse and a ticket write the box
   }
   const unitsOf = (x) => `${x.value} ${x.value === 1 ? x.unit.replace(/s$/, '') : x.unit}`;
   root.addEventListener('click', (e) => {
@@ -693,6 +697,7 @@
       const typed = root.querySelector(`[data-cf-field="${t.id}"]`)?.value?.trim(), picked = ['preset', 'team-cap', 'label'].includes(fm.kind) ? typed || fm.value : fm.value; let value = picked;
       if (fm.kind === 'preset') { value = clip(picked, LABEL_MAX); if (PRESETS.includes(value)) { fm.typed = typed ?? ''; t.form = fm; paint(); say(`There is already a preset called ${value}`); return; } PRESETS.push(value); SAVED[value] = t.setup || {}; }
       if (fm.kind === 'group') t.inGroup = value;
+      if (fm.kind === 'label' && (t.labels || []).includes(value.toLowerCase().slice(0, LABEL_MAX))) { t.form = null; paint(); return; }   // already on it: nothing happened, nothing to say
       if (fm.kind === 'label') { const v = value.toLowerCase().slice(0, LABEL_MAX); value = v; if (!LABELS.includes(v)) LABELS.push(v); t.labels = [...new Set([...(t.labels || []), v])]; const r = t.run && window.RailWorld.find(t.run); if (r) r.labels = [...new Set([...(r.labels || []), v])]; }
       if (fm.kind === 'team-cap' && !typed) { t.form = fm; paint(); say('Say why it goes on first'); return; }
       const F = FORMS[fm.kind], flow = { ...fm.flow, dialog: '', say: (F.say ? F.say({ ...t, form: fm }, fm.flow) : fm.flow.say || fm.label).replace('{value}', value) };
@@ -788,11 +793,12 @@
       if (x?.kind === 'Workspace' && x.name && +k === 0) window.RailSpaces?.add({ title: x.name, projects: x.holds });   // Worca's suggestion kept: it is a workspace now
       if (x?.kind === 'Requirements' && x.actions[+k][0] === 'Ask for changes') { x.asking = true; paint(); root.querySelector(`[data-ask-changes="${x.id}"]`)?.focus(); return; }
       if (x?.kind === 'Requirements' && +k === 0) { x.done = 'Requirements agreed'; const l = turns(); const qs = l.filter((y) => y.t === 'question' && y.shaper === x.from); l.splice(l.indexOf(x) + 1, 0, { t: 'words', html: 'Writing the plan from them.' }); afterClarify(); paint(); say('Requirements agreed: writing the plan'); return; }
-      if (x) { x.done = x.actions[+k][2] + (x.choice ? ` · ${x.picked || x.choice.rec}` : ''); paint(); say(x.done); } return; }
+      if (x?.kind === 'Schedule' && x.actions[+k][0] === 'Run now' && window.RailSchedules?.find(x.schedule)) { window.RailSchedules.act(x.schedule, 'run'); paint(); return; }   // the real thing, once; its button then says why not
+      if (x) { x.done = x.actions[+k][2] + (x.choice && x.actions[+k][1] !== 'quiet' ? ` · ${x.picked || x.choice.rec}` : ''); paint(); say(x.done); } return; }
     if ((hit = on('[data-cp-choice]'))) { const [id, v] = hit.dataset.cpChoice.split('|'), x = turns().find((y) => y.id === id); if (x) { x.picked = v; paint(); } return; }
     if ((hit = on('[data-act]'))) { const [id, k] = hit.dataset.act.split('|'), x = turns().find((y) => y.id === id); if (x) { if (x.actions[+k][3]) { say(x.actions[+k][3]); return; }   /* it only shows something: the card still waits */ x.done = x.actions[+k][2]; paint(); say(x.done); } return; }
     if ((hit = on('[data-cp-apply], [data-cp-decline], [data-cp-revert]'))) { const id = hit.dataset.cpApply || hit.dataset.cpDecline || hit.dataset.cpRevert, x = turns().find((y) => y.id === id); if (x && x.kind === 'Project' && x.how && hit.dataset.cpApply) {   // the project is added: its name joins every project picker, and the next words offer the first task
-      const f = x.f || {}, name = (f.name || f.dir || (f.url || '').split('/').pop()?.replace(/\.git$/, '') || (f.path || '').split('/').pop() || '').trim();
+      const f = x.f || {}, name = (f.name || f.dir || (f.url || '').split('/').pop()?.replace(/\.git$/, '') || (f.path || '').split('/').pop() || '').trim().slice(0, 80);
       if (!name) { say(x.how === 'Clone' ? 'Say which repository to clone first' : x.how === 'New' ? 'Name the project first' : 'Say which folder first'); root.querySelector('[data-pj-field]')?.focus(); return; }
       if (!PROJECTS.includes(name)) PROJECTS.splice(PROJECTS.length - 1, 0, name);
       comp.project = name; lastProject = name; window.RailProjects?.add({ id: name, path: f.path || f.dir || (f.url ? `~/src/${name}` : `~/Projects/${name}`) });   /* one store: Projects lists it */ const ch = chat(); if (ch && !ch.project) { ch.project = name; window.RailChats.refresh(); } x.done = `${name} added${x.how === 'Clone' ? ', cloned' : ''}`; const l = turns(); l.splice(l.indexOf(x) + 1, 0, { t: 'words', html: `<b>${esc(name)}</b> is in. Tell me the first thing to do in it, and I'll propose it as a task you check before it starts.` });
@@ -881,6 +887,7 @@
     put(chat(), t);
   });
   // the Label picker's field: typing finds, Enter makes a new label and adds it to this chat
+  root.addEventListener('keydown', (e) => { if (e.key !== 'Escape' || !e.target.matches('[data-ask-changes]')) return; const x = turns().find((y) => y.id === e.target.dataset.askChanges); if (x) { e.stopPropagation(); x.asking = false; x.askValue = ''; paint(); } });   // Esc is its Not now
   function keepLabelQ() { const q = root.querySelector('#cl-label-q'); if (q) { q.value = labelQ; q.focus(); q.setSelectionRange(labelQ.length, labelQ.length); } }
   root.addEventListener('input', (e) => { const f = e.target.dataset?.cpField; if (f) comp[f] = e.target.value; });
   root.addEventListener('input', (e) => { const k = e.target.dataset?.pjField; if (!k) return; const [id, f] = k.split('|'), x = turns().find((y) => y.id === id); if (x) { x.f = x.f || {}; x.f[f] = e.target.value; } });   // Add project's fields keep what you type   // Customise's fields keep what you type
@@ -889,8 +896,8 @@
     if (e.target.id !== 'cl-label-q' || e.key !== 'Enter') return;
     e.preventDefault(); const v = labelQ.trim().toLowerCase(), c = chat(); if (!v || !c) return;
     if (!LABELS.includes(v)) LABELS.push(v);
-    if (!(c.labels || []).includes(v)) c.labels = [...(c.labels || []), v];
-    labelQ = ''; window.RailChats.refresh(); refreshAll(); keepLabelQ(); say(`Labelled ${v}`);
+    const isNew = !(c.labels || []).includes(v); if (isNew) c.labels = [...(c.labels || []), v];
+    labelQ = ''; window.RailChats.refresh(); refreshAll(); keepLabelQ(); if (isNew) say(`Labelled ${v}`);   // already on it: nothing happened, nothing to say
   });
   root.addEventListener('keydown', (e) => { if (e.target.matches('[data-composer-t]') && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
   root.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('[data-card-form] input')) { e.preventDefault(); e.target.closest('[data-card-form]').querySelector('[data-confirm="yes"]')?.click(); } });   // a form under a card: Enter is its action
@@ -918,7 +925,7 @@
       el.classList.remove('is-flash'); void el.offsetWidth; el.classList.add('is-flash');
       return true;
     },
-    show: (id) => { setTimeout(() => settle(id), 0); if (id !== chatId) { opened = new Set(); hover = null; menu = ''; comp = { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'No project' : lastProject };   /* a new chat starts on the project you added last */ } chatId = id || ''; paint(); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = 0; paintTimeline(); } } },
+    show: (id) => { setTimeout(() => settle(id), 0); const other = id !== chatId; if (other) { drafts.set(chatId, root.querySelector('[data-composer-t]')?.value ?? comp.text); opened = new Set(); hover = null; menu = ''; comp = { ...fresh(), text: drafts.get(id) || '', project: id ? data().chats.find((c) => c.id === id)?.project || 'No project' : lastProject };   /* a new chat starts on the project you added last */ } chatId = id || ''; paint(!other); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = 0; paintTimeline(); } } },
     start: (mode, text, project) => { chatId = ''; comp = { ...fresh(mode), text: text || '', ...(project ? { project } : {}) }; if (!side) window.RailShell.go('chat'); paint(false); root.querySelector('[data-composer-t]')?.focus(); },   /* what another place hands over stays in the box, on its project */
     pin: (w, on) => { pins = on ? [...new Set([...pins, w])] : pins.filter((x) => x !== w); refreshAll(); },
     handOver: ({ mode = 'ask', about, text = '', ph = '', project, workflow }) => {   // rail.hand-to-chat: the one way a place sends something to Chat

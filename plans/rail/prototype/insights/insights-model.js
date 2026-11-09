@@ -54,8 +54,8 @@
     series: { spend: [38, 61, 22, 74, 55, 9, 93, 60], hours: [4, 7, 3, 8, 6, 1, 10, 8], saved: [105, 184, 79, 210, 157, 26, 262, 210], tasks: [5, 8, 2, 9, 7, 1, 11, 6] },
     before: { spend: [29, 44, 30, 51, 40, 14, 66, 49], hours: [3, 5, 3, 6, 5, 2, 7, 5], saved: [79, 131, 79, 157, 131, 52, 184, 131], tasks: [3, 5, 3, 6, 5, 2, 7, 5] },
     dims: {
-      project: [['billing-api', 186, 21, 549, 12], ['web-app', 131, 14, 359, 14], ['worca-cc', 72, 9, 243, 22], ['docs-site', 23, 3, 82, 1]],   // tasks: what the Tasks list holds per project
-      workspace: [['web-shop', 317, 35, 908, 26], ['internal', 95, 12, 325, 23]],
+      project: [['billing-api', 186, 21, 549], ['web-app', 131, 14, 359], ['worca-cc', 72, 9, 243], ['docs-site', 23, 3, 82]],   // tasks: read from the Tasks list (compute)
+      workspace: [['web-shop', 317, 35, 908], ['internal', 95, 12, 325]],
       branch: [['feat/invoice-export', 64], ['feat/checkout-retry', 58], ['feat/usage-page', 52], ['fix/webhook-race', 47], ['feat/csv-import', 41], ['fix/tax-rounding', 38], ['fix/rate-limit', 33], ['chore/deps-bump', 26], ['docs/api-guide', 23], ['fix/login-redirect', 18], ['chore/ci-cache', 12]],
       ticket: [['BILL-212', 72], ['WEB-88', 61], ['BILL-240', 55], ['WEB-91', 44], ['CC-17', 38], ['No ticket', 142]],
       pr: [['#482', 64], ['#477', 58], ['#490', 47], ['#471', 41], ['#466', 33], ['No PR yet', 169]],
@@ -128,7 +128,7 @@
     fields: ['alone', 'tasks'],
     series: { alone: [4, 6, 1, 6, 4, 1, 6, 4], tasks: [5, 8, 2, 9, 7, 1, 11, 6] }, before: { alone: [2, 3, 2, 4, 3, 1, 5, 3], tasks: [3, 5, 3, 6, 5, 2, 7, 5] },
     dims: {
-      project: [['billing-api', 10, 12], ['web-app', 8, 14], ['worca-cc', 13, 22], ['docs-site', 1, 1]],
+      project: [['billing-api', 10], ['web-app', 8], ['worca-cc', 13], ['docs-site', 1]],
       workflow: [['Default', 19, 29], ['Full', 6, 11], ['Quick Fix', 7, 9]],
       away: [['At the desk', 18, 33], ['Away', 14, 16]],
     },
@@ -219,7 +219,7 @@
 
   // ---- the sub-features ----
   const moneyCols = (mid = ['Cost per hour saved', (r) => (r.hours ? usd2(r.spend / r.hours) : '-')]) => [['AI spend', (r) => usd(r.spend)], ['Hours saved', (r) => `${r.hours} h`], ['Saved', (r) => usd(r.saved)], mid, ['Tasks', (r) => String(r.tasks)]];
-  const wasteCols = [['AI spend', (r) => usd(r.spend)], ['Tasks', (r) => String(r.tasks)]];
+  const wasteCols = [['AI spend', (r) => usd(r.spend)], ['Tasks affected', (r) => String(r.tasks)]];
   const SUM = ['bars', 'lines', 'running', 'table'], COUNT = ['bars', 'lines', 'table'], RATE = ['bars', 'lines', 'table'];
   const cmp = (c, sub, w = 'in the period before') => {
     if (c.p == null || !isFinite(c.p)) return '';
@@ -240,8 +240,8 @@
       word: (c) => `${usd(c.v)} saved`, why: (c) => `About ${c.T.hours} hours of work` },
     { id: 'value', title: 'Value for spend', group: 'Value', icon: 'sparkle', noun: 'saved for each dollar', src: money, num: 'saved', den: 'spend', text: (n) => `${n.toFixed(1)}×`, forms: RATE, cols: moneyCols(), share: 'spend',
       word: (c) => `${c.v.toFixed(1)}× what it cost`, why: (c) => `${usd(c.T.saved)} saved on ${usd(c.T.spend)} · ${usd2(c.T.spend / c.T.hours)} for each hour saved` },
-    { id: 'ends', title: 'How tasks end', group: 'Quality', icon: 'check', noun: 'finished tasks', src: ends, num: 'finished', text: (n) => plural(n, 'task'), forms: COUNT, share: 'finished',
-      cols: [['Tasks', (r) => String(r.finished + r.failed + r.stopped)], ['Finished', (r) => String(r.finished)], ['Failed', (r) => String(r.failed)], ['Stopped', (r) => String(r.stopped)]],
+    { id: 'ends', title: 'How tasks end', group: 'Quality', icon: 'check', noun: 'finished tasks', src: ends, num: 'finished', text: (n) => plural(n, 'task'), forms: COUNT, share: 'finished', shareLabel: 'Share of finished',
+      cols: [['Ended', (r) => String(r.finished + r.failed + r.stopped)], ['Finished', (r) => String(r.finished)], ['Failed', (r) => String(r.failed)], ['Stopped', (r) => String(r.stopped)]],
       word: (c) => `${c.T.finished} of ${c.T.finished + c.T.failed + c.T.stopped} finished`, why: (c) => `${c.T.failed} failed, ${c.T.stopped} stopped · ${pct(c.T.finished / (c.T.finished + c.T.failed + c.T.stopped))} finish` },
     { id: 'review', title: 'Review', group: 'Quality', icon: 'edit', noun: 'rounds a task', src: review, note: "A round is one review and its fixes; a round back is any after a task's first", num: 'rounds', den: 'tasks', text: (n) => `${n.toFixed(1)} rounds`, forms: RATE, share: 'reviews', noShare: true,
       cols: [['Rounds a task', (r) => (r.tasks ? (r.rounds / r.tasks).toFixed(1) : '-')], ['First-time pass', (r) => (r.tasks ? pct(r.first / r.tasks) : '-')], ['Raised', (r) => String(r.fixed + r.disputed + r.open)], ['Fixed', (r) => String(r.fixed)], ['You rejected', (r) => String(r.disputed)], ['Open', (r) => String(r.open)]],
@@ -249,7 +249,7 @@
     { id: 'fails', title: 'Where it fails', group: 'Quality', icon: 'stop', noun: 'tasks that did not finish', src: fails, by: 'stage', num: 'count', text: (n) => plural(n, 'task'), forms: COUNT, share: 'count',
       cols: [['Did not finish', (r) => String(r.count)], ['AI spend', (r) => usd(r.spend)]],
       word: (c) => `${c.T.count} tasks did not finish, ${usd(c.T.spend)}`, why: (c) => `Most at Build: 3 of ${c.T.count}` },
-    { id: 'autonomy', title: 'Autonomy', group: 'Quality', icon: 'away', noun: 'tasks that ran without you', src: alone, num: 'alone', den: 'tasks', text: pct, forms: RATE, share: 'alone',
+    { id: 'autonomy', title: 'Autonomy', group: 'Quality', icon: 'away', noun: 'tasks that ran without you', src: alone, num: 'alone', den: 'tasks', text: pct, forms: RATE, share: 'alone', shareLabel: 'Share of without you',
       cols: [['Tasks', (r) => String(r.tasks)], ['Without you', (r) => String(r.alone)], ['Asked you', (r) => String(r.tasks - r.alone)], ['Rate', (r) => (r.tasks ? pct(r.alone / r.tasks) : '-')]],
       word: (c) => `${c.T.alone} of ${c.T.tasks} ran without you`, why: (c) => `${pct(c.v)} of tasks` },
     { id: 'cache', title: 'Cache', group: 'Quality', icon: 'set-memory', noun: 'input from the cache', src: cache, by: 'model', num: 'read', den: 'input', text: pct, forms: RATE, share: 'read',
@@ -270,7 +270,7 @@
     { id: 'team', title: 'By person', group: 'Team', team: true, icon: 'nav-team-metrics', noun: 'team spend', src: team, by: 'person', num: 'spend', text: usd, forms: SUM, budget: 12000, cols: moneyCols(), share: 'spend',
       word: (c) => `${usd(c.v)} of $12,000`, why: () => 'Five people · on pace for $10,725 · pooled budget at 24%' },
     { id: 'untagged', title: 'Missing cost tags', group: 'Team', team: true, count: 18, icon: 'tag', noun: 'tasks without a client', src: untagged, num: 'tasks', text: (n) => plural(n, 'task'), forms: COUNT, share: 'tasks',
-      cols: [['Tasks', (r) => String(r.tasks)], ['AI spend', (r) => usd(r.spend)]],
+      cols: [['Without a client', (r) => String(r.tasks)], ['AI spend', (r) => usd(r.spend)]],
       word: (c) => `${c.T.tasks} tasks without a client`, why: (c) => `${usd(c.T.spend)} not counted to anyone` },
   ];
   const SUB = Object.fromEntries(SUBS.map((s) => [s.id, s]));
@@ -300,13 +300,45 @@
     for (const f of fields) other[f] = sum(rest.map((r) => r[f]));
     return [...rows.slice(0, 5), other];
   }
-  function compute(sub, st, all = false) {
+  // the stretch a row carries to Tasks, when it is not the plain month: a drag, or another period (RailRunsList.filter's range)
+  const MON = { Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11 };
+  const edge = (label, end) => { const [m, d] = label.split(' '), days = d ? d.split('-') : ['1', '31']; return MON[m] * 100 + +(end ? days[days.length - 1] : days[0]); };
+  const rangeOf = (labels) => ({ from: edge(labels[0]), to: edge(labels[labels.length - 1], true), label: rangeWord(labels) });
+  const rangeIn = (labels, st) => (st.narrow || !['this month', 'all time'].includes(st.when) ? rangeOf(labels) : null);
+  // the Tasks list's own date of a row (runs-list.js dateKey, which that file keeps private)
+  const WEEKDAY = { Sun: 1, Mon: 2, Tue: 3, Wed: 4, Thu: 5, Fri: 6, Sat: 7 }, MONTH_NO = { Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12 };
+  const dateKey = (t) => { if (t.day === 'today') return 1108; if (t.day === 'yesterday') return 1107; if (t.day === 'upcoming') return 0; const w = (t.run || t.group).time || '', m = /^([A-Z][a-z]{2}) (\d+)$/.exec(w); return WEEKDAY[w] ? 1100 + WEEKDAY[w] : m ? MONTH_NO[m[1]] * 100 + +m[2] : 0; };
+  // a row's number of tasks is what its click opens: the rows of the Tasks list itself. A workspace is the projects its row stands for.
+  const WS_OF = { 'web-shop': ['billing-api', 'web-app'], internal: ['worca-cc', 'docs-site'] };
+  function listCount(dim, name, range) {
+    const L = window.RailRunsList?.rows(); if (!L) return null;
+    const names = dim === 'workspace' ? WS_OF[name] || [] : [name];
+    return L.filter((t) => names.includes(t.project) && (!range || (dateKey(t) >= range.from && dateKey(t) <= range.to))).length;
+  }
+  // each row's part of each day, cut once over the whole period: a day's split stays the same however the chart is narrowed
+  function dayCutOf(sub, st) {
+    const c = compute(sub, { ...st, narrow: null }, true, true), names = c.rows.map((r) => r.name);
+    let left = c.rows.map((r) => r[sub.num]);
+    const perDay = c.F[sub.num].map((total) => { const got = allocate(left, total); left = left.map((v, k) => v - got[k]); return got; });
+    return { names, perDay, days: c.F[sub.num] };
+  }
+  function compute(sub, st, all = false, whole0 = false) {
     const src = sub.src, fields = src.fields, first = periodSeries(src, fields[0], st.when), n = first.labels.length, [a, b] = st.narrow || [0, n - 1];
     const c = { sub, st, src, labels: first.labels.slice(a, b + 1), days: sum(first.days.slice(a, b + 1)), F: {}, B: first.before ? {} : null, T: {}, P: first.before ? {} : null, whole: !st.narrow };
     for (const f of fields) {
       const s = periodSeries(src, f, st.when), share = filterShare(src, st.filter, f), now = s.now.slice(a, b + 1);
       c.T[f] = Math.round(sum(now) * share); c.F[f] = allocate(now, c.T[f]);
       if (c.B) { const was = s.before.slice(a, b + 1); c.P[f] = Math.round(sum(was) * share); c.B[f] = allocate(was, c.P[f]); }
+    }
+    const counted = src === money || src === alone, range = rangeIn(c.labels, st);
+    if (counted && st.when === 'this month' && !st.narrow && !st.filter.length && window.RailRunsList) {   // the plain month: the headline is the list too
+      c.T.tasks = sum(src.rows.project.map((r) => listCount('project', r.name, null))); c.F.tasks = allocate(periodSeries(src, 'tasks', st.when).now, c.T.tasks);
+    }
+    const splits = !whole0 && !sub.den && !ORDERED.has(st.by) && !!src.rows[st.by];
+    if (splits) {
+      const cutAll = dayCutOf(sub, st), perDay = cutAll.perDay.slice(a, b + 1);
+      c.dayCut = { names: cutAll.names, perDay };
+      if (st.narrow) { c.F[sub.num] = cutAll.days.slice(a, b + 1); c.T[sub.num] = sum(c.F[sub.num]); }
     }
     const val = (A, i) => (sub.den ? (A[sub.den][i] ? A[sub.num][i] / A[sub.den][i] : null) : A[sub.num][i]);
     c.points = c.labels.map((_, i) => val(c.F, i));
@@ -318,7 +350,10 @@
     c.timeWord = st.narrow ? rangeWord(c.labels) : st.when;
     const ordered = ORDERED.has(st.by), rowField = sub.share === 'base' ? 'spend' : sub.share;
     const sort = (rows, dim) => (ORDERED.has(dim) ? rows : [...rows].sort((x, y) => y[rowField] - x[rowField]));
-    let rows = sort(cut(baseRows(c, st.by), c.T, fields), st.by);
+    let rows = cut(baseRows(c, st.by), c.T, fields);
+    if (c.dayCut && st.narrow) rows.forEach((r) => { const k = c.dayCut.names.indexOf(r.name); if (k >= 0) r[sub.num] = sum(c.dayCut.perDay.map((d) => d[k])); });
+    if (counted && ['project', 'workspace'].includes(st.by)) rows.forEach((r) => { const n = listCount(st.by, r.name, range); if (n == null) return; r.tasks = n; if (r.alone > n) r.alone = n; });
+    rows = sort(rows, st.by);
     c.rowCount = rows.length;
     if (!all && !ordered) rows = topFive(rows, fields);
     const whole100 = sub.share === 'base' ? (c.base ? Math.round((c.T.spend / c.base) * 100) : 0) : 100;
@@ -338,5 +373,5 @@
     const [ma, da] = a.split(' '), [mb, db] = b.split(' ');
     return ma === mb && da && db && !/-/.test(da + db) ? `${ma} ${da}-${db}` : `${a} to ${b}`;
   }
-  window.RailInsightsModel = { STANDS, SUBS, SUB, DIM, DIM_GROUPS, TIME, FILTERS, WHEN, usd, cmp, compute, defaults, dimsOf, allocate, sum, rangeWord };
+  window.RailInsightsModel = { rangeOf, rangeIn, STANDS, SUBS, SUB, DIM, DIM_GROUPS, TIME, FILTERS, WHEN, usd, cmp, compute, defaults, dimsOf, allocate, sum, rangeWord };
 })();
