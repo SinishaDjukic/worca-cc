@@ -1,6 +1,6 @@
 # Rail: implementation prompt
 
-Build the Rail redesign in the real Worca app, from the prototype on branch `docs/rail-agreed` (start there; it holds everything), behind the one `rail` flag. Work
+Build the Rail redesign in the real Worca app, from the prototype on branch `docs/rail-agreed` (start there; it holds everything), behind the one `rail` flag. Merge the latest `dev` in first and keep it merged. Work
 on a feature branch into `dev`, by PR linked to an issue, with no attribution lines. Never merge without the owner's yes.
 
 ## Read first
@@ -9,6 +9,10 @@ on a feature branch into `dev`, by PR linked to an issue, with no attribution li
 `plans/rail/click-sweep.md`. The working design is `plans/rail/prototype/`; the rules are `docs/rail/`; the components are
 `ui/public/design-system/components/` (`docs/design-system-catalog.json` says which meets which need). Approved mocks:
 `plans/rail/mocks/wave-3/` (`cockpit/ladder.png` is the alert ladder, `projects-center/`, `tasks-*`, `schedules-*`).
+
+**Order of authority:** the concept below, then `docs/rail/`, then the prototype's HTML, then PNG mocks. The prototype still has things the concept removes (the "Ask about this…" docks, some "by hand" labels): the concept wins.
+
+**The prototype is a mock; the real app is not.** Its seeded data, and every toast saying "Would open…", "Would save…" or "Would run…", stand for real behaviour. Build the real action, on real data, using dev's existing function; never ship a "Would…" or a seeded number.
 
 **The prototype's HTML is the source of truth.** Run it (`plans/rail/prototype/index.html`; build its bundle with `node plans/rail/prototype/gates/components-js.mjs`) and read its code. The PNG mocks only show intent from a moment in time and may be behind it: where they differ, the prototype and `docs/rail/` win.
 
@@ -21,7 +25,7 @@ rule in `docs/rail/`, catalog entry, component, test, gallery example. Never onl
 
 Before building, compare `dev` with the prototype and write `plans/rail/dev-vs-prototype.md`: every function dev has that the prototype lacks,
 by area, with where it lives in dev. Things only the prototype has are fine; they are built here. Bring the list to the owner; missing
-functions must be kept unless the owner drops them.
+functions must be kept unless the owner drops them. Stop for the owner's review of this list before building any later slice: if slices are dispatched as runs, turn on "Ask me before each run".
 
 ## Iterate and validate against dev, all the way through
 
@@ -68,7 +72,7 @@ Mock first, as PNG, for anything the prototype doesn't already settle, and show 
 
 ## Still open from the prototype
 
-- Everything not fixed in `plans/rail/click-sweep.md`, and the coverage it lists as owed.
+- `plans/rail/click-sweep.md` keeps every round's findings, most since fixed: re-check each against the code, and fix what still fails. Also the coverage it lists as owed.
 - Toasts sit over page heads (`rc-toast` under the head). Run labels show on Tasks and filter. "Pinned and recent" head matches the other heads. Settings landing title spacing at 360/420; "Stays in Pulse only" lower case; `#settings/` trailing slash.
 - The bell: count what needs you once. It currently reads 10 (8 in Simple) and a project can count twice.
 - Shaper card: the text says one thing is open while two questions follow, and Approve comes before the questions it depends on.
