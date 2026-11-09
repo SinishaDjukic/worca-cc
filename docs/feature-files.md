@@ -38,7 +38,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/design-system/scan-loader.css` | 20 |
 | `ui/public/design-system/viewer-modal.css` | 40 |
 
-## chat ([chat-home.md](chat-home.md))
+## chat ([chat.md](chat.md))
 
 | File | Lines |
 |---|---|
@@ -85,7 +85,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/routes/new-run/run-defaults.mjs` | 26 |
 | `ui/routes/new-run/sources.mjs` | 152 |
 
-## runs
+## runs ([runs.md](runs.md))
 
 | File | Lines |
 |---|---|
@@ -175,7 +175,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/artifacts/saved-markdown-viewer.html` | 18 |
 | `ui/public/artifacts/saved-markdown.css` | 20 |
 
-## workflows
+## workflows ([workflows.md](workflows.md))
 
 | File | Lines |
 |---|---|
