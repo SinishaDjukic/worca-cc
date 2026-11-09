@@ -478,7 +478,7 @@ export function stageBar({ labels, stage, tone = 'run', step = null, bare = fals
   const [k, m] = live && step && step[1] > 1 ? step : [0, 0];
   const notches = m ? Array.from({ length: m }, (_, j) => `<i class="sl-step${j < k - 1 ? ' is-done' : j === k - 1 ? ' is-now' : ''}" style="left:calc(${at(stage) + 1.5 + (j * (W - 3)) / m}% + 6px);width:calc(${(W - 3) / m}% - 9px)"></i>`).join('') : '';
   const knots = labels.map((_, i) => `<i class="sl-knot${whole || i < stage ? ' is-done' : i === stage ? ' is-now' : ''}" style="left:${at(i)}%"></i>`).join('');
-  return `<div class="stage-bar is-${tone}" style="--n:${n}"><div class="sl" aria-hidden="true"><i class="sl-base"></i><i class="sl-done${whole ? ' is-whole' : ''}" style="width:${whole ? 100 : at(Math.max(0, stage))}%"></i>${notches}${knots}</div>${bare ? '' : `<div class="sb-labels">${labels.map((l, i) => (i === stage ? `<b>${esc(l)}${m ? `<small>${k} of ${m}</small>` : ''}</b>` : `<span>${esc(l)}</span>`)).join('')}</div>`}</div>`;
+  return `<div class="stage-bar is-${tone}" style="--n:${n}"><div class="sl" aria-hidden="true"><i class="sl-base" style="right:${100 - at(n - 1)}%"></i><i class="sl-done${whole ? ' is-whole' : ''}" style="width:${whole ? at(n - 1) : at(Math.max(0, stage))}%"></i>${notches}${knots}</div>${bare ? '' : `<div class="sb-labels">${labels.map((l, i) => (i === stage ? `<b>${esc(l)}${m ? `<small>${k} of ${m}</small>` : ''}</b>` : `<span>${esc(l)}</span>`)).join('')}</div>`}</div>`;
 }
 
 /**
