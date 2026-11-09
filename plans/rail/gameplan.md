@@ -61,3 +61,13 @@ Chat, with the page you were on attached as a chip you can remove and its questi
 
 - **One data source for the prototype, before the boss round.** Every page reads the same facts (tasks, schedules, projects, costs), so a number cannot differ between pages. The product's goal is that Worca builds itself from the design system, so the DS and its data shapes must be enough to compose a page.
 - **Icons, colours and themes are checked in every validation round**, with improvements proposed: does each icon mean one thing, do the colours mean state only, do both themes fit, can anything be calmer.
+
+## Open from Emil, 9 Nov (nothing here is dropped)
+
+1. W opens the full features menu with Chat's home as the default page; the arrow stays the small quick menu and does not replace it; rebuild the prototype right after.
+2. The full round's fixes, then re-test, with Task pages split across several agents.
+3. One data source for the prototype, before the boss round.
+4. Icons, colours and themes in every validation round, improvements proposed.
+5. Dark cockpit (A320) combined with the icon and colour proposals: PNGs before and after, confirmed by Emil before anything changes. Nordic calm is the yardstick. The ECAM-style action list stays out unless Emil adds it.
+6. Then the gameplan from step 1. Tasks and Schedules' 8.0 list goes into step 6.
+7. The final goal: Worca builds itself on Rail. A page must be composable from the DS and its data shapes alone, so every rule, component and data shape added here serves that.
