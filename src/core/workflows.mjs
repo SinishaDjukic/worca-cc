@@ -1049,7 +1049,10 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     if (candidates.length && (await authState()) === 'signed-out') signInBlocked.push(...candidates);
   }
   return {
-    template: tpl, ports: portsFn, loops, nodes, wires, agentsByKey, agentKeys, scriptsByKey, scriptKeys, versionNo: stored.versionNo ?? null,
+    template: tpl, ports: portsFn, loops, nodes, wires, agentsByKey, agentKeys, scriptsByKey, scriptKeys,
+    // The named version that runs (workflow tests Part 1), only when one does: the row itself adds no key, so a workflow
+    // without versions resolves exactly as before (test/wf-default-snapshot.test.mjs). Readers test Number.isInteger.
+    ...(Number.isInteger(stored.versionNo) ? { versionNo: stored.versionNo } : {}),
     ...(factoryNotes.length ? { factoryNotes } : {}), ...(signInBlocked.length ? { signInBlocked } : {}),
   };
 }

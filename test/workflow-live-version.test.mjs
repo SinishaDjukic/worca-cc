@@ -64,7 +64,9 @@ test('resolveGraph resolves the version in use and reports its number', async ()
   assert.equal(live.versionNo, 1);
   assert.equal(live.template.name, 'Live test');
   const draft = await resolveGraph(null, 'wf_live', registry, undefined, { use: 'draft' });
-  assert.equal(draft.versionNo, null);
+  // The draft (the row itself) adds no versionNo key: a graph without a version resolves exactly as before versions
+  // existed (test/wf-default-snapshot.test.mjs compares the built-ins' resolved graphs key by key).
+  assert.equal('versionNo' in draft, false);
 });
 
 test('a run records the version it used in its manifest', async () => {
