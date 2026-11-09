@@ -11,6 +11,7 @@ import { devNull, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
+import { readServerSource } from '../src/core/read-server-source.mjs';
 import { resolveServerRuntime, serverTreeRoot, buildServerEnv, serverSpawnSpec, startServer, stopServer } from '../desktop/src/server-process.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -234,6 +235,6 @@ let n = 0; const t = setInterval(() => { console.log('line', n); console.error('
   delete base.WORCA_DESKTOP;
   assert.equal(await run({ ...base, WORCA_DESKTOP: '1' }), 0, 'the desktop server keeps running');
   assert.equal(await run(base), 1, 'web: the EPIPE is unhandled as before');
-  const src = readFileSync(join(ROOT, 'ui/server.mjs'), 'utf8');
+  const src = readServerSource();
   assert.match(src, /\nif \(isMain\) \{\n  ignoreClosedDesktopOutput\(\);\n/, 'the guard is the first thing the server does when run directly');
 });

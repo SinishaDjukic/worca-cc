@@ -161,6 +161,7 @@ const ALLOW = new Map([
   ['test/house-brief.test.mjs', "writes a fixture project's own ui/public/style.css and ui/server.mjs"],
   ['test/parity.test.mjs', "edits a copied tree's ui/server.mjs and style.css to prove the parity gates catch a change"],
   ['test/parity-reuse.test.mjs', "writes fixture trees' own ui/public/style.css and index.html to fingerprint them"],
+  ['test/desktop-build.test.mjs', "reads the ui/server.mjs a fixture tarball extracted into a scratch staging dir"],
   ['e2e/extension/fixtures.mjs', "spawns ui/server.mjs; its only reads (openSync, readFileSync) are of the server's own log file"],
 ]);
 const ALLOW_PREFIX = ['tools/split-by-feature/', 'test/split-by-feature',   // the tool and its fixture strings
