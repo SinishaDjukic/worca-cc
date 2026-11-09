@@ -56,6 +56,13 @@ Mock first, as PNG, for anything the prototype doesn't already settle, and show 
 - Expert: only part of the Task pages were click-tested.
 - Scores so far are mostly 7 to 8.5 of 10; Projects' center was not re-scored after its last revision.
 
+## Known red at handover (final gates on this branch)
+
+Passing: run-page sweep, ds-check, colour-check, click-check (4,629 clicks), handover-check, settings-sentences, the design-system tests; `npm test` 21,182 passed.
+Failing, fix these first:
+- `npm test`: "boot: until the runs are known the chat list alone never picks the tab" (1 test). The Pulse counting changed in the last round.
+- `worca-sweep` steps at several widths: "one store: Pulse and the bar agree at the start", "answering moves the task everywhere", "accepting a gate moves it everywhere", "pausing moves it everywhere", "a Shaper slice is its own row with its type in the icon". The bell now counts every item that needs you (see above), and task marks changed with the dark cockpit, so decide for each whether the check or the code is out of date. Run `node plans/rail/prototype/gates/worca-sweep.mjs` for the whole list.
+
 ## Definition of done
 
 Each slice: `npm test` and every page gate in `docs/rail/gate.md`, with no raising of the ratchet baseline. Then the validation below, fixes, re-test of what was fixed.
