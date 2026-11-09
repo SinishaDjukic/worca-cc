@@ -146,3 +146,30 @@ test('2026-11-09: a test that passed before and is skipped now counts as broken;
   // With no evidence a passing command stays met: nothing shows a test switched off.
   assert.deepEqual(BN(true, { ran: true, level: 'exit', beforeOk: true, beforeTimedOut: false, afterOk: true }), { met: true, why: null });
 });
+
+test('2026-11-09 (fix round 2): a passing test deleted, or fewer passing than before, makes "breaks nothing" not met even when the command passes', () => {
+  const BN = (afterOk, ba) => commandMet({ metWhen: 'breaks-nothing', afterOk, ba });
+  // (a) Tests by name, the command passes, a test that passed before is gone now.
+  const deleted = beforeAfter(B(true, T('tap', ['a', 'b'], [])), A(true, T('tap', ['a'], [])));
+  assert.deepEqual([deleted.lostPass, deleted.gone, deleted.broke], [{ n: 1 }, { n: 1, names: ['b'] }, { n: 0, names: [] }]);
+  assert.deepEqual(BN(true, deleted), { met: false, why: 'lost', n: 1 });
+  assert.deepEqual(commandMet({ metWhen: 'passes', afterOk: true, ba: deleted }), { met: true, why: null }, 'the default stays the exit code');
+  // A broken test is named first, as when the command fails.
+  const both = beforeAfter(B(true, T('tap', ['a', 'b', 'c'], [])), A(true, T('tap', ['a'], [], { skip: ['c'] })));
+  assert.deepEqual(BN(true, both), { met: false, why: 'broke', n: 1 });
+  // A test that failed before and is gone now did not pass before: still met.
+  assert.deepEqual(BN(true, beforeAfter(B(false, T('tap', ['a'], ['x'])), A(true, T('tap', ['a'], [])))), { met: true, why: null });
+  // (b) Only failures by name, the command passes, fewer passing now than before.
+  const counts = (b, a) => ({ before: { passed: b, failed: 0, skipped: 0 }, after: { passed: a, failed: 0, skipped: 0 } });
+  const fails = (c) => ({ ran: true, level: 'failures', beforeOk: true, beforeTimedOut: false, afterOk: true, failingNow: { n: 0, names: [] }, counts: c });
+  assert.deepEqual(BN(true, fails(counts(212, 209))), { met: false, why: 'fewer-pass', before: 212, after: 209 });
+  assert.deepEqual(BN(true, fails(counts(212, 212))), { met: true, why: null });
+  assert.deepEqual(BN(true, fails({ before: null, after: null })), { met: true, why: null }, 'no counts: no evidence, still met');
+  // (c) A rename (one gone, one new, both passing): not met; the expert sees both names and can overrule.
+  const renamed = beforeAfter(B(true, T('tap', ['a', 'old name'], [])), A(true, T('tap', ['a', 'new name'], [])));
+  assert.deepEqual([renamed.gone, renamed.added, renamed.lostPass], [{ n: 1, names: ['old name'] }, { n: 1, failing: 0 }, { n: 1 }]);
+  assert.deepEqual(BN(true, renamed), { met: false, why: 'lost', n: 1 });
+  // A cut list proves nothing went missing: a passing command stays met (as with no evidence).
+  const cut = beforeAfter(B(true, T('tap', ['a', 'b'], [])), A(true, T('tap', ['a'], [], { truncated: true })));
+  assert.deepEqual(BN(true, cut), { met: true, why: null });
+});

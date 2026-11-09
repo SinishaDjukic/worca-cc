@@ -50,8 +50,9 @@ export function beforeAfter(before, after, { max = NAMES_MAX } = {}) {
  * passed before fails now, is skipped now (2026-11-09) or went missing, judged only on the evidence its level has: tests by
  * name (broke, which holds the skipped ones too, and lostPass both zero); failures by name (no new failing name, both counts
  * read, no fewer passing and no more skipped now); an exit code alone is never evidence. A command that ends without an error
- * is met, unless 'breaks-nothing' has evidence that a test which passed before is broken or skipped now: switching a passing
- * test off never makes "breaks nothing" met. Pure.
+ * is met, unless 'breaks-nothing' has evidence that a test which passed before is broken, skipped or gone now, or that fewer
+ * pass than before (2026-11-09, fix round 2): switching a passing test off or deleting it never makes "breaks nothing" met.
+ * A renamed test counts as gone (its old name passed before): the expert sees both names and can overrule. Pure.
  * @returns {{met: boolean, why: string|null, n?: number, before?: number, after?: number}}
  */
 export function commandMet({ metWhen = 'passes', afterOk = false, afterTimedOut = false, ba = null } = {}) {
@@ -82,10 +83,17 @@ function moreSkipped(ba) {
   const a = ba.counts && ba.counts.after;
   return b && a && (a.skipped || 0) > (b.skipped || 0) ? { met: false, why: 'more-skipped', before: b.skipped || 0, after: a.skipped || 0 } : null;
 }
-// The command passed: its evidence still says no when a test that passed before is broken or skipped now (tests by name),
-// or more are skipped (failures by name).
+// The command passed: its evidence still says no when a test that passed before is broken, skipped or gone now (tests by
+// name; a cut list proves nothing went missing), or fewer pass or more are skipped (failures by name, both counts read).
 function switchedOff(ba) {
   if (!ba || !ba.ran) return null;
-  if (ba.level === 'tests') return ba.broke && ba.broke.n ? { met: false, why: 'broke', n: ba.broke.n } : null;
-  return ba.level === 'failures' ? moreSkipped(ba) : null;
+  if (ba.level === 'tests') {
+    if (ba.broke && ba.broke.n) return { met: false, why: 'broke', n: ba.broke.n };
+    return !ba.truncated && ba.lostPass && ba.lostPass.n ? { met: false, why: 'lost', n: ba.lostPass.n } : null;
+  }
+  if (ba.level !== 'failures') return null;
+  const b = ba.counts && ba.counts.before;
+  const a = ba.counts && ba.counts.after;
+  if (b && a && a.passed < b.passed) return { met: false, why: 'fewer-pass', before: b.passed, after: a.passed };
+  return moreSkipped(ba);
 }
