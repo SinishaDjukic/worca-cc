@@ -173,7 +173,7 @@
   let quickNav = false;   // nav.quick: the ▾ beside a bar's name
   const quickItems = () => [...document.querySelectorAll('#side-rail nav.nav [data-nav]')].filter((b) => !b.hidden && !b.closest('[hidden]') && b.style.display !== 'none').map((b) => ({ id: `bar-go|${b.dataset.nav}`, text: b.querySelector('.nav-label, span')?.textContent.trim() || b.textContent.trim(), checked: b.dataset.nav === routed.view, hint: b.dataset.flag ? 'Labs' : undefined, mark: R.icon(`nav-${b.dataset.nav}`, 14) }));   /* nav.labs: the word follows the row */
   let barMenu = false;   // the + as a menu, where a place makes things more than one way (list.bar-model)
-  let homeOpen = false, taskChat = '', lastThing = null, visited = [], pinsAll = false;
+  let homeNext = false, homeOpen = false, taskChat = '', lastThing = null, visited = [], pinsAll = false;
   const barOf = (view) => (routed.locked ? 'home' : placeMod(view) ? 'place' : view === 'chat' ? 'chat' : view === 'runs' ? 'tasks' : view === 'run' ? (taskChat ? 'chat' : 'tasks') : view === 'schedules' || view === 'schedule' ? 'schedules' : view === 'settings' ? 'settings' : 'home');
   // who makes things from this bar's +: a place, or Tasks and Schedules from Advanced up (rail.chat-first)
   const makerOf = (which) => (which === 'place' ? placeMod(routed.view) : which === 'tasks' || which === 'schedules' ? window.RailCenters?.maker(which) : null);
@@ -295,7 +295,7 @@
     const gone = goneOf(kind, arg0), arg = gone ? '' : arg0;
     const view = gone?.lost ? 'lost' : TITLES[kind] ? kind : kind === 'run' || kind === 'settings' || kind === 'schedule' ? kind : 'chat';
     drawer(false);
-    homeOpen = false;
+    homeOpen = homeNext; homeNext = false;
     const pane = { today: document.getElementById('route-today'), chat: document.getElementById('route-chat'), schedule: document.getElementById('route-schedule'), place: document.getElementById('route-place'), run: document.getElementById('route-run'), settings: document.getElementById('route-settings'), runs: document.getElementById('route-runs') };
     const lock = !gone && (view === 'schedule' || !!TITLES[view] && view !== 'chat') && lockHere(view, arg);   // nav.locked: every place, by the bar's own data
     const ownPage = !!placeMod(view) || view === 'run' || view === 'settings' || view === 'runs' || view === 'chat' || view === 'schedules' || view === 'schedule';
@@ -397,7 +397,7 @@
     if (on('[data-bar-hide]')) { hideBar(); return; }
     if (on('[data-bar-pin]')) { setStrip(false); syncRail(); drawBar(); return; }
     if (on('#bar-show')) { setStrip(false); syncRail(); drawBar(); return; }
-    if (on('[data-bar-home]')) { quickNav = false; homeOpen = false; window.RailChats?.home(); window.RailShell.go('chat'); drawBar(); return; }   /* nav.one-bar: the W is home, the bar as it starts */
+    if (on('[data-bar-home]')) { quickNav = false; window.RailChats?.home(); homeNext = true; window.RailShell.go('chat'); return; }   /* nav.one-bar: the W opens the features menu, with Chat's home behind it */
     if ((hit = on('[data-menu-pick^="bar-go|"]'))) { quickNav = false; location.hash = hit.dataset.menuPick.split('|')[1]; drawBar(); return; }
     if (on('[data-bar-house]')) { quickNav = !quickNav; drawBar(); return; }
     if (quickNav) { quickNav = false; drawBar(); }   /* a page with no list of its own (a locked place): closing the places goes back to Chat */

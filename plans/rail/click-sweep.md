@@ -223,3 +223,51 @@ All of round 2 not repeated here passed with real clicks. Accepted: Expert's fac
 - J4 Connectors: deleting a set leaves its references; Duplicate twice gives two same names
 - J5 Required fields checked at one moment everywhere (add the rule to forms.md); format checks where a hint promises one; emptied URLs; Save toasts with no change; Folders accepts `/`
 - J6 "$1000 an hour" vs "$1,000"; per-run bounds; "2 jobs back to its role" (settings-model.js:194); picker toasts repeat the sentence; Test "answered in 1.1s" → Would
+
+# Click sweep, round 4 (9 Nov), full round
+
+Same rules. Shared items first, since several places reported them.
+
+## Shared (K)
+
+- K1 Double click fires what reflows under the pointer: Tasks cards (Approve then Merge), c21, c13, c4/c5 Pause and Resume. One guard in the library: ignore a second click for about 400 ms after an action that swaps or moves buttons
+- K2 Text typed in one chat's composer shows in another's: one draft per chat
+- K3 Esc does not close the bar's + menu (all places)
+- K4 centers.js:207 `watchMenus(h)` throws on every New task and New schedule; dialog has no Close (`R.icon('close')` is `x`, :194,:197); focus lands on body after closing, should return to +
+- K5 Requirements FEAT-1 row ⋯: the next row covers the menu, the click opens FEAT-2 (list.row-more)
+- K6 Chart x-labels overlap table heads on one-bar-per-row pages (`.bc-x`, rail.css:1602)
+- K7 By and Of menus show 4 of 7 heads with no scroll cue (rail.css:1874): fit them or show the cue
+- K8 Reset view enabled with "already the default"; toasts when nothing changed (mode, Team policy); Notifications toasts one form; ⌘K finds Settings and its sections; Run telemetry says why in text
+- K9 Tab walks a hidden bar's controls: inert
+- K10 Workspace map draws no links at 1440: column is 650, the stack starts at 660 (rail.css:1788). A regression from F-round: the stack belongs to real narrow widths only
+
+## Tasks and task pages (L)
+
+- L1 Sidebar Archive, Delete, Stop leave the center stale (centers.js:236); Counts don't follow: `starting` Pause, `failed` Restart Build, `scheduled` Start now, `stopped` Start a new task. One state change drives bar, Pulse and In view
+- L2 In view underlines the wrong tab; `question`, `working`, `ready` carry another task's branch and plan (act.this-thing): each page its own seeded title, branch, plan
+- L3 Task composer Enter does nothing (goes in step 2 anyway); group crumb only toasts; Open the whole diff → Would open; words: "Merged runs", "Removed run", "cut into runs", "3 runs", "from its run", "Mock run"; Working… flash on non-work actions; viewer has x and Close
+- L4 Title without a limit; quiet fold repeats its row; tints end at different widths; validation line beside Schedule…; Simple's Archive tooltip jargon; Simple cards offer Run now on a schedule
+- L5 Project filter on the Tasks page body: page ignores it, still shows every project's card
+
+## Schedules (M)
+
+- M1 New schedule keeps none of agent, workflow, ends, overlap, failures; a timezone flips the line for all (centers.js:228,:125)
+- M2 Skip invisible on cards; no Stop on a running schedule's page, chat card's Run now stays enabled; hourly says "Next up Nov 13, 02:00"; weekend "Next at 02:00"; long names clamp; Waiting vs Next up, Needs you vs Missed; row ⋯ lacks Skip and Delete; Showing=paused doesn't filter cards; paused Run now toasts started with nothing running
+
+## Chat (N)
+
+- N1 Archive on a task also removes its follow-up, toast says one (chats-column.js:145)
+- N2 Files and Markdown chips dropped on send in Ask and Schedule; Task's Brief reads 0 characters
+- N3 More menu capped with no cue; New group no 80 limit; Label… asks nothing and doesn't show; counts one unit (31 vs 28, 12 vs 14, Billing export 3 vs 2, Chats top bar vs list); By topic drops Needs you; two fold names on a group row; Step away Enter; Reuse and Ticket replace typed text; draft follows you to the next chat
+- N4 c1, c4, c5, c17-19: "Show its stages" rows reported dead (contradicts round 3's 24 of 24: check by hand first); c6 Ask for changes Esc; 3,000-char path; "Not changed · Partial re-scan"; existing label toast; Latest pill over the last row
+
+## Workflows, Marketplace, Requirements (O)
+
+- O1 Expand survives navigation; canvas Discard has no Undo; a draft equal to saved counts as changes; a never-saved hand-built counted and listed twice; bad addresses in Workflows; Delete doesn't say the step stays; workflow name unchecked; canvas Undo, Redo disabled with no reason; Your team's empty has no way on; inline graph unreadable (6px): show it larger or story by default
+- O2 Settings › Plugins misses Review pack, Promo video, Cloudflare; Marketplace workflows 2 never changes; github.com/owner/repo refused; added source empty, no next step; Open its task toasts instead of opening its card; reasons for disabled shown in text; feature page head band
+
+## Projects, Insights, Settings (P)
+
+- P1 19 vs 18, 6 vs 4, Insights 21/9/3 vs 19/23/6: until one source, make the links' numbers agree; Needs you 5 with 4 rows; "1 project that work together"; legacy-billing no way forward (locate the folder); long values clamp; cost tags collapse toast; Simple leaks Memory's team notes, patterns, setup; Expert Confirm on Certain links; Not saved yet twice; bar menu lacks Check origin; alignment 11-12px; half-typed tag editor persists
+- P2 Save view claims saved for a different view; Set a default toast cut and lands with no project; a day's split changes with drag; Share vs Tasks on two bases; saved view's title; 12 vs 18 row click
+- P3 Settings Advanced sections, Expert runs/general/notifications/labs not run: covered in the re-test
