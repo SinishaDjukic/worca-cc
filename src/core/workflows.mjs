@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { effortOn } from '../shared/connections.mjs';
 
 import { getDb, prepare, tx } from './db.mjs';
-import { runnableOf, rowChanges, snapshotBeforeWrite } from './workflow-tests/runnable.mjs';
+import { runnableOf, readRunnableWorkflow, rowChanges, snapshotBeforeWrite } from './workflow-tests/runnable.mjs';
 import { worcaHome } from './projects.mjs';
 import { resolveRunConfig, readConfig, EFFORTS, stepSlotDefaults, modelForEngine, projectRolesFor, modelConnection, modelHasBaseUrlRouting, resolveModelEnv, listModels } from './config.mjs';
 import { claudeAuthFromEnv } from './preflight.mjs';
@@ -46,7 +46,7 @@ import {
   SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID, GRAPH_SHAPE_SLICE_REQ_WORKFLOW, GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW, SHAPE_SLICE_REQ_WORKFLOW_IDS,
   GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID,
 } from './graph/builtin-workflows.mjs';
-export { GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID, isReservedWorkflowId, runnableOf };
+export { GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID, isReservedWorkflowId, runnableOf, readRunnableWorkflow };
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { resolveRoleModel, roleOf } from './model-roles.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
@@ -402,7 +402,6 @@ export async function readWorkflow(id, opts = {}) {
   if (id === SHAPE_UX_SLICE_REQ_WORKFLOW_ID) return GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW;
   return readRaw(id, opts);
 }
-export async function readRunnableWorkflow(id, o) { return runnableOf(await readWorkflow(id), o); } // see runnableOf
 
 /**
  * A row owned by a plugin that is DISABLED in the lock. Disabling a plugin already
@@ -536,7 +535,8 @@ export async function setWorkflowNodeDefaults(id, map) {
       return { ...node, config: { ...kept, ...clean } };
     });
     const now = new Date().toISOString();
-    tx(() => { snapshotBeforeWrite(id, (p) => p.graph !== JSON.stringify({ nodes, wires: tpl.wires, ...pickTemplateExtras(tpl, nodes) }), { source: 'defaults', now });
+    tx(() => {
+      snapshotBeforeWrite(id, (p) => p.graph !== JSON.stringify({ nodes, wires: tpl.wires, ...pickTemplateExtras(tpl, nodes) }), { source: 'defaults', now });
       prepare('UPDATE workflows SET graph = ?, updated_at = ? WHERE id = ?')
         .run(JSON.stringify({ nodes, wires: tpl.wires, ...pickTemplateExtras(tpl, nodes) }), now, id);
     });
@@ -575,7 +575,8 @@ export async function deleteWorkflow(id) {
   getDb();
   let changed = 0;
   tx(() => {
-    snapshotBeforeWrite(id, () => true, { source: 'delete' }); changed = prepare('DELETE FROM workflows WHERE id = ?').run(id).changes;
+    snapshotBeforeWrite(id, () => true, { source: 'delete' });
+    changed = prepare('DELETE FROM workflows WHERE id = ?').run(id).changes;
   });
   return changed > 0;
 }

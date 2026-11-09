@@ -1,7 +1,9 @@
 // src/core/workflow-tests/runnable.mjs
 // What a RUN of a workflow uses (plans/workflow-tests-plan.md D2, D9, D13) and the revision snapshot taken before a
-// write. Kept out of core/workflows.mjs (size cap); workflows.mjs re-exports runnableOf.
+// write. Kept out of core/workflows.mjs (size cap); workflows.mjs re-exports runnableOf and readRunnableWorkflow.
+// The import of workflows.mjs below is circular on purpose: readWorkflow is only called at run time, never while loading.
 import { prepare } from '../db.mjs';
+import { readWorkflow } from '../workflows.mjs';
 import { snapshotRowTx, readVersion, liveVersionNo } from '../workflow-revisions.mjs';
 import { flagEnabled } from '../flags.mjs';
 import { isReservedWorkflowId } from '../graph/builtin-workflows.mjs';
@@ -20,6 +22,9 @@ export function snapshotBeforeWrite(id, changes, opts) {
   const prev = prepare('SELECT * FROM workflows WHERE id = ?').get(id);
   if (prev && changes(prev)) snapshotRowTx(prev, opts);
 }
+
+/** The workflow as a run of it uses it (see runnableOf). */
+export async function readRunnableWorkflow(id, o) { return runnableOf(await readWorkflow(id), o); }
 
 /** readRunnableWorkflow over a template already read (readWorkflow / listWorkflows output). Synchronous.
  *  `use`: 'live' (default; the version in use when the workflowTests flag is on, else the row), 'draft' (the row),
