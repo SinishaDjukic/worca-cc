@@ -36,7 +36,6 @@ import { isSharedInstall, updateEligibility, probeNpmGlobal, UPDATE_MESSAGES } f
 import { limitResumeDecision } from '../src/core/limit-resume.mjs';
 import { selectRunEngine, reapAgentGroupsAtBoot } from '../src/core/engines/index.mjs';
 import { mockSlowMs } from '../src/core/engines/mock.mjs';
-import { sweepStaleStagingDirs } from '../src/core/engines/claude.mjs';
 import { stopPausedRun, StopPausedError } from '../src/core/stop-paused.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
@@ -352,10 +351,7 @@ import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
 import {
   registerRequirementsRoutes, requirementsChangeNotifier, REQUIREMENTS_UPLOAD_ROUTES, REQUIREMENTS_UPLOAD_JSON_LIMIT, requirementsUploadSlots,
 } from '../src/core/requirements/routes.mjs';
-import { CONNECTOR_MODES, recoverInterruptedTestRuns } from '../src/core/workflow-tests/store.mjs';
-import { sweepTestCopies } from '../src/core/workflow-tests/project-copy.mjs';
-import { SETUP_TIMEOUT_MS } from '../src/core/workflow-tests/shell-step.mjs';
-import { TRY_NEVER_SHIPS_TEXT, TRY_STAYS_IN_COPY_TEXT, TRY_NEEDS_GIT_TEXT } from '../src/shared/workflow-tests/project-text.mjs';
+import { workflowTestOf, tryStartRefusal, tryRunOptions, holdTryOrch, recoverTestsAtBoot, sweepTestCopiesAtBoot, TRY_NEVER_SHIPS_TEXT, TRY_NEEDS_GIT_TEXT, TEST_TRY_PAUSE_TEXT, TEST_TRY_RESUME_TEXT } from '../src/core/workflow-tests/start.mjs';
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
 import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
 import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
@@ -364,7 +360,7 @@ import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STAT
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import { exportWorkflowToMarketplace, listPublishTargets } from '../src/core/marketplace-publish.mjs';
 import {
-  saveGraphWorkflow, importGraphWorkflow, exportGraphJson, isExportUse, workflowFileSlug, nodeDefaultsError,
+  saveGraphWorkflow, importGraphWorkflow, exportGraphJson, workflowFileSlug, nodeDefaultsError,
 } from '../src/core/workflow-share.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { loadScriptRegistry } from '../src/core/script-registry.mjs';
@@ -456,7 +452,7 @@ import { dimensionsForTarget, allTagDimensions, applyTagRules, teamTagPolicy, pr
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { generatePrDescription, resolvePrDescriptionModel, PR_BODY_MAX } from '../src/core/pr-description.mjs';
 import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
-import { runProjectDir, noProjectWorkDir, isNoProjectWorkDir, isNoProjectKey, NO_PROJECT_KEY, testCopyKeyOf } from '../src/core/store.mjs';   // P3 — its own line: test/api-memory.test.mjs pins the one above
+import { runProjectDir, noProjectWorkDir, isNoProjectWorkDir, isNoProjectKey, NO_PROJECT_KEY } from '../src/core/store.mjs';   // P3 — its own line: test/api-memory.test.mjs pins the one above
 import { WORK_ARTIFACT_KIND } from '../src/core/no-project-work.mjs';
 import { NO_PROJECT_NAME, NO_PROJECT_ERRORS } from '../src/shared/no-project.mjs';
 import { whereOf } from '../src/shared/ask-where.mjs';
@@ -1297,6 +1293,7 @@ function bufferEvent(entry, event) {
   if (entry.events.length > MAX_BUFFER) entry.events.splice(0, entry.events.length - MAX_BUFFER);
   return tagged;
 }
+const broadcastFor = (entry, frame) => { if (!entry.isTest) broadcast(frame); };   // D21: a test try's frames reach no tab (app.js upserts a run per runId)
 
 // Clear an entry's active pending question and tell EVERY connected client to drop
 // its clarify/gate card — not just the tab that answered. A second tab's post-answer
@@ -1310,8 +1307,7 @@ function resolvePending(entry, { id = null, reason = 'resolved' } = {}) {
   const pq = entry && entry.pendingQuestion;
   if (!pq || (id && pq.id !== id)) return false;
   entry.pendingQuestion = null;
-  const resolved = bufferEvent(entry, { type: 'question-resolved', id: pq.id, reason });
-  if (!entry.isTest) broadcast(resolved);   // D21: the runner answers a try's questions; no tab hears of them
+  broadcastFor(entry, bufferEvent(entry, { type: 'question-resolved', id: pq.id, reason }));   // D21: the runner answers a try's questions
   syncKeepAwake();
   return true;
 }
@@ -2687,29 +2683,8 @@ const startRunHandler = async (req, res) => {
     // Workspace scan (wf_workspace_scan): scanRequest hands the target in-process — a workspace
     // that may not exist yet ({ id, name, projectPaths, description:'' }, D3). Never from HTTP.
     const scanTarget = req._workspaceScan && typeof req._workspaceScan === 'object' ? req._workspaceScan : null;
-    // Workflow tests (plans/workflow-tests-part2-plan.md D20–D23): a test try, set in-process by the test runner through
-    // invokeStartRun only, never from HTTP. { use: 'draft' | n, connectors?: 'pretend' | 'real', onOrch?(orch, { runKey }) }.
-    const workflowTest = req._workflowTest && typeof req._workflowTest === 'object' ? req._workflowTest : null;
-    // 3a (D42): a project try runs in Worca's copy of the project it names (workflowTest.project.key), never in a person's
-    // folder; the copy is never a registered project, so the key travels in-process with it.
-    const tryProject = workflowTest && workflowTest.project && typeof workflowTest.project === 'object' ? workflowTest.project : null;
-    if (workflowTest && !(body.noProject === true
-      || (tryProject && typeof tryProject.key === 'string' && PROJECT_KEY_RE.test(tryProject.key)
-        && typeof body.projectDir === 'string' && testCopyKeyOf(body.projectDir) === tryProject.key))) {
-      return badRequest(res, "a test try runs without a project, or in Worca's copy of one");
-    }
-    if (workflowTest && (body.sameAsSource === true || body.scheduledFor != null || body.repeat != null || body.after != null || body.workspaceId)) {
-      return badRequest(res, 'a test try starts now, on a branch of its own');
-    }
-    if (tryProject && tryProject.setupCmd != null && (typeof tryProject.setupCmd !== 'string' || /[\r\n]/.test(tryProject.setupCmd))) {
-      return badRequest(res, 'a test try names its setup command on one line');
-    }
-    if (workflowTest && !(workflowTest.use === 'draft' || (Number.isInteger(workflowTest.use) && workflowTest.use > 0))) {
-      return badRequest(res, 'a test try names the draft or a version number');
-    }
-    if (workflowTest && workflowTest.connectors !== undefined && !CONNECTOR_MODES.includes(workflowTest.connectors)) {
-      return badRequest(res, 'a test try names its connectors: pretend or real');
-    }
+    const workflowTest = workflowTestOf(req), tryRefusal = tryStartRefusal(workflowTest, body);   // workflow tests (D20–D23, D42): in-process only, never from HTTP
+    if (tryRefusal) return badRequest(res, tryRefusal);
     const stored = internal && body.internal && typeof body.internal === 'object' ? body.internal : {};
     // Who started it (identity.mjs): this request's resolved identity; a scheduled run keeps the
     // identity of whoever scheduled it (stored with the request, never taken from an HTTP body).
@@ -3120,14 +3095,11 @@ const startRunHandler = async (req, res) => {
         ...(nightMode ? { nightMode: true } : {}),
         tags,
         ...(shape ? { shape } : {}),
-        // D19/D21/D23: the version under test, the row's mark, no memory, and the fixed title (no smart naming spend).
-        ...(workflowTest ? { workflowUse: workflowTest.use, workflowTest: true, noMemory: true, titleLocked: true,
-          testConnectors: workflowTest.connectors === 'real' ? 'real' : 'pretend' } : {}),   // D35: pretend unless real is named
+        ...tryRunOptions(workflowTest),   // a test try: the version under test, hidden, no memory, a fixed title
       });
       entry = {
         id: runId, orch, projectDir, projectKey: NO_PROJECT_KEY, workMode: 'none', kind: 'run', pipelineId,
         title, status: 'starting', startedAt: new Date().toISOString(), startedBy, tags, events: [], pendingQuestion: null,
-        ...(workflowTest ? { isTest: true } : {}),
       };
     } else if (hasWorkspace) {
       // ── Workspace target (§2.6) ────────────────────────────────────────────
@@ -3304,12 +3276,8 @@ const startRunHandler = async (req, res) => {
       // P1 (CONTRACT §2, U3, L4, S3): a registered Folder project — or any project while git is missing — runs on a
       // copy; an unregistered dir keeps git mode while git is installed. Replaces P0's start guard for projects.
       // gitOn and projectRow were read before the mkdir (A-m5): the stored row (S7), never projectKey(dir)
-      let workMode = workModeForStart({ projectDir }, { getProjectByPath: () => projectRow, gitAvailable: gitOn });
-      // F3: a stored "no git" can be a minute old: a try asks git once more (a fresh probe) before it is refused.
-      if (workflowTest && workMode !== 'git' && !gitOn) {
-        gitOn = (await gitState({ fresh: true })).available;
-        workMode = workModeForStart({ projectDir }, { getProjectByPath: () => projectRow, gitAvailable: gitOn });
-      }
+      if (workflowTest && !gitOn) gitOn = (await gitState({ fresh: true })).available;   // F3: a stored "no git" can be a minute old
+      const workMode = workModeForStart({ projectDir }, { getProjectByPath: () => projectRow, gitAvailable: gitOn });
       if (workflowTest && workMode !== 'git') return badRequest(res, TRY_NEEDS_GIT_TEXT);
       // #693: a git run in a folder inside a repository it is not the top of would `git init` there (or act on the
       // parent). Refused before the mkdir, a row or a ticket; a missing path counts by its nearest existing ancestor.
@@ -3458,11 +3426,7 @@ const startRunHandler = async (req, res) => {
         labels,
         ...(shape ? { shape } : {}),
         ...(runSetup ? { runSetup } : {}),
-        // 3a (D21, D43, D55): a project try is a hidden try like Part 2's. It keeps its checkout for its checks and runs its
-        // setup before any step. Its key is the real project's: projectKey() answers it for the copy (D52).
-        ...(workflowTest ? { workflowUse: workflowTest.use, workflowTest: true, noMemory: true, titleLocked: true,
-          testConnectors: workflowTest.connectors === 'real' ? 'real' : 'pretend', keepCheckout: true,
-          ...(tryProject && tryProject.setupCmd ? { trySetup: { cmd: tryProject.setupCmd, timeoutMs: SETUP_TIMEOUT_MS } } : {}) } : {}),
+        ...tryRunOptions(workflowTest, { project: true }),   // 3a: a project try also keeps its checkout and runs its setup
       });
 
       entry = {
@@ -3477,7 +3441,6 @@ const startRunHandler = async (req, res) => {
         tags,
         events: [],
         pendingQuestion: null,
-        ...(workflowTest ? { isTest: true } : {}),
       };
     }
 
@@ -3495,12 +3458,10 @@ const startRunHandler = async (req, res) => {
       entry.scheduleId = internal.ticket.scheduleId || null;
       entry.scheduledFor = internal.ticket.runAt;
     }
+    if (workflowTest) entry.isTest = true;   // D21: hidden from every tab, list and chat
     runs.set(runId, entry);
     wireRun(entry);
-    // The runner holds the orchestrator before orch.run() can ask anything (correction 7).
-    if (workflowTest && typeof workflowTest.onOrch === 'function') {
-      try { workflowTest.onOrch(orch, { runKey: runId }); } catch (err) { runs.delete(runId); syncKeepAwake(); throw err; }
-    }
+    try { holdTryOrch(workflowTest, orch, runId); } catch (err) { runs.delete(runId); syncKeepAwake(); throw err; }   // correction 7
     if (askLink) {
       // Card-state TOCTOU: awaits (source-ref check, budget) sit between Hunk
       // B's `proposed` check and here — a concurrent Start may have flipped
@@ -3556,7 +3517,7 @@ const startRunHandler = async (req, res) => {
         const event = { runId, type: 'error', message: err && err.message ? err.message : String(err) };
         entry.status = 'error';
         entry.events.push(event);
-        if (!entry.isTest) broadcast(event);   // review I7: a tab would upsert a phantom run from this runId (app.js:1973)
+        broadcastFor(entry, event);   // review I7: a tab would upsert a phantom run from this runId (app.js:1973)
         syncKeepAwake();
       })
       // #620: the harness's post-run base check landed after the run's last frame; History re-reads it.
@@ -3934,8 +3895,7 @@ async function invokeStartRun(body, internal, { startedBy = null, runId = null, 
     };
     await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: id,
       _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}), ...(extrasPaths ? { _extrasPaths: extrasPaths } : {}),
-      ...(reportTo ? { _reportTo: reportTo } : {}), ...(automation ? { _automation: true } : {}),
-      ...(workflowTest ? { _workflowTest: workflowTest } : {}) }, res);
+      ...(reportTo ? { _reportTo: reportTo } : {}), ...(automation ? { _automation: true } : {}), ...(workflowTest ? { _workflowTest: workflowTest } : {}) }, res);
     if (staged && out.status >= 200 && out.status <= 299) dropStagedOnceCopied(id, staged.drop);
     return out;
   };
@@ -4823,8 +4783,6 @@ async function stopRun(runId, by = 'local') {
   syncKeepAwake();
   return { ok: true };
 }
-/** A test try is never paused (a paused try is a failed try, runner.mjs pauseVerdict): its test is stopped instead. */
-const TEST_TRY_PAUSE_TEXT = 'A test try cannot be paused: stop its test instead.';
 function pauseRun(runId, by = 'local') {
   const entry = runs.get(runId);
   if (!entry) throw new Error('unknown runId');
@@ -4945,11 +4903,8 @@ function settleStaleParked(pipelineId) {
     e.pauseDetail = null;
     // A later subscribe snapshots the entry's orchestrator (sendStateSnapshot): it must read the same.
     if (e.orch && e.orch.state) e.orch.state.status = status;
-    // A test try is hidden from every tab (D21): its status settles, nothing is sent.
-    if (!e.isTest) {
-      broadcast(bufferEvent(e, { type: 'state', status, id: pipelineId }));
-      broadcast(bufferEvent(e, { type: 'done', status, pipelineDir: null }));
-    }
+    broadcastFor(e, bufferEvent(e, { type: 'state', status, id: pipelineId }));   // a test try settles, sends nothing (D21)
+    broadcastFor(e, bufferEvent(e, { type: 'done', status, pipelineDir: null }));
   }
   syncKeepAwake();
 }
@@ -5377,9 +5332,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   const engineOpts = resumeEngineOpts(engine, allowUnguardedEngine);
   const saved = readPipelineForResume(pipelineId);
   if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
-  // Workflow tests (D22, review I7): a try is driven by its test. "Finish the rest" makes it again; nothing resumes it
-  // (POST /api/resume, chat /resume, a stale tab), which would also give it a new entry without isTest.
-  if (saved.row.is_test) throw new ResumeError(409, { error: 'A test try cannot be resumed: finish the rest from its test.' });
+  if (saved.row.is_test) throw new ResumeError(409, { error: TEST_TRY_RESUME_TEXT });   // D22: nothing resumes a try (a new entry would lack isTest)
   if (workModeOfRow(saved.row) === 'git' && !(await gitState()).available) throw new ResumeError(409, { error: GIT_MISSING.message, code: GIT_MISSING.code });
   // Resume with another model (a usage limit spent on one provider): every remaining step runs on it. It must be a
   // catalog model the run's harness — the one it resumes on — can run (src/shared/connections.mjs).
@@ -6856,8 +6809,7 @@ async function resolvePrPipeline(src, res) {
     return null;
   }
   if (!state) { res.status(404).json({ error: 'pipeline not found' }); return null; }
-  // Workflow tests 3a (D45): a test try never leaves Worca. Every push, pull request and publish route comes through here.
-  if (isTestPipeline(state.id || id)) { res.status(409).json({ error: TRY_NEVER_SHIPS_TEXT }); return null; }
+  if (isTestPipeline(state.id || id)) { res.status(409).json({ error: TRY_NEVER_SHIPS_TEXT }); return null; }   // 3a D45: every push, PR and publish route
   return { id, state };
 }
 
@@ -9992,14 +9944,7 @@ export async function bootMaintenance({ log } = {}) {
   } catch (err) {
     console.error(`[worca-ui] requirements sweep failed: ${err && err.message ? err.message : err}`);
   }
-  // Workflow tests (D27, review M4): a test this restart cut short is stopped; its tries keep their cost and their runs
-  // lose their resume points. Synchronous, like the requirements sweep: boot maintenance is not awaited before listen.
-  try {
-    const t = recoverInterruptedTestRuns();
-    if (t.runs) console.log(`[worca-ui] workflow tests: ${t.runs} interrupted test(s) stopped`);
-  } catch (err) {
-    console.error(`[worca-ui] workflow tests sweep failed: ${err && err.message ? err.message : err}`);
-  }
+  recoverTestsAtBoot();   // workflow tests (D27, 3b M2): interrupted tests and stale Claude staging folders; synchronous, never throws
   // Requirements A7 (D15): a product brief left `making` by this restart gets INTERRUPTED. This runs before the
   // first await, but boot maintenance is not awaited before listen, so recoverBriefs skips a brief whose job runs.
   try {
@@ -10014,15 +9959,6 @@ export async function bootMaintenance({ log } = {}) {
     if (summary.recoveredAttachmentReads) console.log(`[worca-ui] requirements: ${summary.recoveredAttachmentReads} interrupted file read(s) marked`);
   } catch (err) {
     console.error(`[worca-ui] requirements file-read sweep failed: ${err && err.message ? err.message : err}`);
-  }
-
-  // Workflow tests 3b, Task 5 (security review M2): Claude staging folders a killed Worca left in the OS temp folder (they
-  // may hold a Pretend try's carried sign-in helpers). Only folders older than a day: another Worca may share the folder.
-  try {
-    const gone = sweepStaleStagingDirs();
-    if (gone.length) console.log(`[worca-ui] removed ${gone.length} leftover Claude staging folder(s)`);
-  } catch (err) {
-    console.error(`[worca-ui] Claude staging folder sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   try {
@@ -10040,13 +9976,7 @@ export async function bootMaintenance({ log } = {}) {
   } catch (err) {
     console.error(`[worca-ui] run-root sweep failed: ${err && err.message ? err.message : err}`);
   }
-  // Workflow tests 3a (D61): every copy of a project prunes the worktrees the sweep above removed and loses its leftover
-  // try branches. Nothing tries at boot.
-  try {
-    summary.testCopies = await sweepTestCopies({ log: sink('workflow-tests') });
-  } catch (err) {
-    console.error(`[worca-ui] workflow tests copy sweep failed: ${err && err.message ? err.message : err}`);
-  }
+  summary.testCopies = await sweepTestCopiesAtBoot(sink('workflow-tests'));   // workflow tests (D61): after the run-root sweep; never rejects
 
   // The one-time legacy sweep (§6 Phase 7). A TOTAL no-op while the effective mode is
   // `legacy` — under legacy those paths hold every live and every paused run, so
@@ -10493,8 +10423,7 @@ if (isMain) {
 export { app, server, runs };
 export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, invokeStartRun, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePending, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
 export const _testing = {
-  chatBridge, invokeAskCard, askBus, chatAgentModeFor, chatTurnIdentity,
-  settleStaleParkedEntries,
+  chatBridge, invokeAskCard, askBus, chatAgentModeFor, chatTurnIdentity, settleStaleParkedEntries,
   updateChecker,
   // Chat context: tests never reach a CDN (null = the real fetch again).
   setChatFileFetch: (fn) => { chatFileFetch = typeof fn === 'function' ? fn : defaultChatFileFetch; },

@@ -23,6 +23,10 @@ export const TRY_NEVER_SHIPS_TEXT = 'A test try stays in Worca: it is never push
 // Final review C1: the checkout, base-check and update-branch routes' answer for a test try (409). Its branch lives only in
 // Worca's copy of the project, so nothing acts on it from the person's folder.
 export const TRY_STAYS_IN_COPY_TEXT = "A test try's branch stays in Worca's copy of the project: it cannot be checked out, checked against its base or updated.";
+// A test try is never paused (a paused try is a failed try, runner.mjs pauseVerdict): its test is stopped instead (409).
+export const TEST_TRY_PAUSE_TEXT = 'A test try cannot be paused: stop its test instead.';
+// D22, review I7: a try is driven by its test. "Finish the rest" makes it again; nothing resumes it (409).
+export const TEST_TRY_RESUME_TEXT = 'A test try cannot be resumed: finish the rest from its test.';
 // D60, boards 34 and 39: disk.
 const GB = 2 ** 30;
 /** "0.9 GB", "1.2 GB", and whole GB from 10 GB up ("48 GB"), as boards 34 and 35 write them. */
