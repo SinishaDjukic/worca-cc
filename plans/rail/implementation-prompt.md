@@ -10,6 +10,8 @@ on a feature branch into `dev`, by PR linked to an issue, with no attribution li
 `ui/public/design-system/components/` (`docs/design-system-catalog.json` says which meets which need). Approved mocks:
 `plans/rail/mocks/wave-3/` (`cockpit/ladder.png` is the alert ladder, `projects-center/`, `tasks-*`, `schedules-*`).
 
+**The prototype's HTML is the source of truth.** Run it (`plans/rail/prototype/index.html`; build its bundle with `node plans/rail/prototype/gates/components-js.mjs`) and read its code. The PNG mocks only show intent from a moment in time and may be behind it: where they differ, the prototype and `docs/rail/` win.
+
 ## The goal behind it
 
 Worca builds itself on Rail. A page only composes the design system and its data shapes. Anything a page needs and Rail lacks is added first:
