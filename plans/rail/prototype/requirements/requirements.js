@@ -41,7 +41,10 @@
       if (f.state === 'turn') { if (f.chat) window.RailShell.go(`chat/${f.chat}`); else handOver(f, `Answer what Worca asked about ${f.title}`); return; }
       if (f.state === 'decide') { window.RailShell.go(`requirements/${f.id}`); return; }   // the row's way in; on its page the assumptions are the step
       if (f.state === 'ready') { Object.assign(f, { state: 'started', run: 'Plan · writing the plan' }); window.RailWorld?.add({ id: `feat-${f.id}`, case: 'working', title: f.title, project: f.project, detail: 'Plan · writing the plan', time: 'now', day: 'today' }); draw(); say(`Started ${f.id}: a task builds it from the spec`); return; }
-      if (f.state === 'started') window.RailShell.openRun('run/working', f.title, `feat-${f.id}`);
+      if (f.state === 'started') {   // its card in its chat, on its project: the seeded ones are told to the world here
+        if (!window.RailWorld?.find(`feat-${f.id}`)) window.RailWorld?.add({ id: `feat-${f.id}`, case: 'working', title: f.title, project: f.project, detail: f.run, time: 'now', day: 'today' });
+        window.RailShell.openRun('run/working', f.title, `feat-${f.id}`);
+      }
     }
   }
   function pageHtml(f) {

@@ -72,6 +72,7 @@ export function fitMenu(m, vw) {
  * @param {() => void} [o.spec.emptyAct]
  * A row: { key, title, meta, mark, lead, end, endMark, tree (what hangs under it, always open), tip, unread, current, holds, menu, members, open (a group's first state), noun, count, rounds }.
  */
+const OWNER = new WeakMap();   // root → the controller whose rows it shows
 export function listController({ root, spec }) {
   const doc = root.ownerDocument, win = doc.defaultView;
   const s = { pick: selectClear(), menu: '', more: new Set(), shut: new Set(), treeShut: new Set(), treeSeen: new Set(), opening: '', seen: new Set(), arrived: new Map(), groups: new Map(), rounds: new Set(), roundsAll: new Set(), confirm: null, pop: null, dialog: null, focus: '', flash: '', order: [], rows: new Map() };
@@ -152,7 +153,7 @@ export function listController({ root, spec }) {
   }
 
   function paint({ focus = '' } = {}) {
-    stale = false;
+    stale = false; OWNER.set(root, s);
     const a = doc.activeElement, inside = root.contains(a);
     const scroller = root.closest('.main, .rl-side-body'), y = scroller?.scrollTop || 0;
     const before = s.order, fromRow = a?.closest?.('[data-row]')?.dataset.row || s.focus;
@@ -197,6 +198,7 @@ export function listController({ root, spec }) {
   }
 
   root.addEventListener('click', (e) => {
+    if (OWNER.get(root) !== s) return;   // two places can share one bar: the rows showing are the last painter's
     const t = (sel) => e.target.closest(sel);
     let el;
     if ((el = t('[aria-disabled="true"]'))) { spec.say(el.title); return; }
@@ -296,7 +298,7 @@ export function listController({ root, spec }) {
       return;
     }
     if (s.confirm && e.key === 'Escape') { e.preventDefault(); s.confirm = null; paint(); return; }
-    if (doc.querySelector('[role="menu"]')) return;   // a menu open anywhere on the page owns the keys: typing in it never renames or archives a row
+    if ([...doc.querySelectorAll('[role="menu"]')].some((m) => m.getClientRects().length)) return;   // a menu open anywhere on the page owns the keys: typing in it never renames or archives a row
     const scopes = ['selecting', 'list', ...(spec.scopes || []), 'anywhere'];
     const act = shortcutAction(keyFacts(e, '[data-open]'), { scopes, selecting: s.pick.on, can: spec.can() });
     if (!act || act === 'search' || act === 'close') return;

@@ -188,7 +188,8 @@
       "rules": [
         "opened from ⋯ or ▾",
         "danger last, after a rule",
-        "a head and its options are one block; in columns they stay together, two columns at most (comp.menu-groups)"
+        "a head and its options are one block; in columns they stay together, two columns at most (comp.menu-groups)",
+        "a disabled item never acts, shows no pointer, and says why (comp.menu-off)"
       ],
       "example": "Terminal, Copy link, Archive"
     },
@@ -218,6 +219,7 @@
         "for a step that changes what other people see (a PR, a branch, a merge, a comment) or cannot be taken back; never for spending alone",
         "opens on the safe choice",
         "names what goes",
+        "Esc takes it back (keys.esc-strip, `watchStrips`)",
         "a provider at or past the warning line: a step that starts agent work adds the limit note in one line"
       ],
       "example": "Merge #959 into dev?",
@@ -988,7 +990,8 @@
       "rules": [
         "title at most 6 words",
         "never moves focus",
-        "Undo for a step that can be taken back (`toastUndo`)"
+        "Undo for a step that can be taken back (`toastUndo`)",
+        "at most 480px and two lines, the whole text in its tooltip (comp.toast-clamp)"
       ],
       "example": "PR merged; Something went wrong"
     },

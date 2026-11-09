@@ -30,7 +30,7 @@
   const edit = (title, fields, o = {}) => ({ label: 'Change…', edit: { title, fields, yes: 'Save', ...o } });
   const ENGINES = O(['claude', 'Claude'], ['codex', 'Codex (beta)'], ['copilot', 'Copilot (beta)'], ['cursor', 'Cursor (beta)'], ['gemini', 'Gemini CLI (beta)'], ['goose', 'Goose (beta)'], ['opencode', 'OpenCode (beta)'], ['qwen', 'Qwen Code (beta)']);
   const usd = (v) => (v === '' || v == null ? 'no limit' : '$' + Number(v).toLocaleString('en-US'));
-  const opens = (where) => ({ label: 'Open', say: `Opens ${where} in a new tab` });
+  const opens = (where) => ({ label: 'Open', say: `Would open ${where} in a new tab` });
 const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const plural = (n, w) => `${n} ${w}${+n === 1 ? '' : 's'}`;
   const andList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
@@ -215,7 +215,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     // A row's one step: a problem's way out first; Test once nothing is wrong.
     menu: (r, sv) => (!sv.chToken[title] ? ['Set up'] : o.warn && !sv.chAllowed[title] ? ['Allow chat'] : [sv[key] ? 'Test' : { text: 'Test', off: true, help: 'Turn it on to send a test' }]),
     on: {
-      Test: () => `Test sent to ${title}`,
+      Test: () => `Would send a test to ${title}`,
       'Set up': (r, x) => x.go('plugins'),
       'Allow chat': (r, x) => x.dialog({ title: `Allow a chat on ${title}`, yes: 'Allow', fields: [{ key: 'chat', label: 'Chat id', value: o.chatId || '', hint: 'Replies like /approve from this chat count' }], check: (v) => (v.chat.trim() ? '' : 'It needs a chat id'), then: (v, sv) => { sv.chAllowed = { ...sv.chAllowed, [title]: v.chat }; return `Chat ${v.chat} can answer on ${title}`; } }),
     } });
@@ -293,7 +293,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       ] },
       { title: 'Storage', min: 'advanced', rows: [
         { name: 'Folders', say: 'Data lives in `{root}`; new projects go in `{projects}`', vals: { root: '~/.worca-cc', projects: '~/src' },
-          acts: [edit('Change the folders', [{ key: 'root', label: 'Worca folder', hint: 'Does not move data: Worca starts fresh here, and the old folder stays as it was' }, { key: 'projects', label: 'Projects folder', hint: 'Its CLAUDE.md, skills and .mcp.json reach every agent' }, { key: 'useDefaults', button: 'Use the defaults', hint: 'Fills in ~/.worca-cc and ~/src; Save applies them', when: (v) => v.root !== '~/.worca-cc' || v.projects !== '~/src', do: (v) => { v.root = '~/.worca-cc'; v.projects = '~/src'; return 'Save to start fresh in ~/.worca-cc'; } }], { done: 'Folders saved; new tasks use them', check: (v) => (v.root.trim() && v.projects.trim() ? '' : 'A folder needs a path') })] },
+          acts: [edit('Change the folders', [{ key: 'root', label: 'Worca folder', hint: 'Does not move data: Worca starts fresh here, and the old folder stays as it was' }, { key: 'projects', label: 'Projects folder', hint: 'Its CLAUDE.md, skills and .mcp.json reach every agent' }, { key: 'useDefaults', button: 'Use the defaults', hint: 'Fills in ~/.worca-cc and ~/src; Save applies them', when: (v) => v.root !== '~/.worca-cc' || v.projects !== '~/src', do: (v) => { v.root = '~/.worca-cc'; v.projects = '~/src'; return 'Save to start fresh in ~/.worca-cc'; } }], { done: 'Folders saved; new tasks use them', check: (v) => (/^[~/]/.test(v.root.trim()) && /^[~/]/.test(v.projects.trim()) ? '' : 'A folder is a path starting with ~ or /') })] },
         { name: 'Diagnostics', min: 'expert', say: 'Log each agent start in the run log: its binary, arguments and routing, never a credential. A set `WORCA_DEBUG_SPAWN` overrides this', sw: { key: 'spawnLog', on: false, why: 'Applies to runs started here and from the CLI, with no restart' } },
       ] },
       { title: 'Credentials', rows: [
@@ -314,8 +314,8 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
             { name: 'Last update', when: (sv) => sv.upd === 'failed', say: (sv) => { const f = updateFailed(sv); return `${f.title}. ${f.detail} Update from a terminal instead`; }, acts: [{ label: 'Dismiss', do: (sv) => { sv.upd = 'available'; return ''; } }] },
             { name: 'npm output', when: (sv) => sv.upd === 'failed', say: 'The last lines npm wrote', acts: [{ label: 'View', edit: { title: 'npm output', view: true, yes: 'Close', note: '`npm ERR! code EACCES` · `npm ERR! syscall rename` · `npm ERR! path /usr/local/lib/node_modules/@worca/app`' } }] },
             { name: 'Repository', say: '`github.com/SinishaDjukic/worca-cc`', acts: [opens('the repository')] },
-            { name: 'Report a bug', say: 'Opens a new issue, labelled bug', acts: [{ label: 'Open', id: 'bug', say: 'Opens a new bug issue on GitHub in a new tab' }] },
-            { name: 'Suggest an improvement', say: 'Opens a new issue, labelled enhancement', acts: [{ label: 'Open', id: 'idea', say: 'Opens a new enhancement issue on GitHub in a new tab' }] },
+            { name: 'Report a bug', say: 'Opens a new issue, labelled bug', acts: [{ label: 'Open', id: 'bug', say: 'Would open a new bug issue on GitHub in a new tab' }] },
+            { name: 'Suggest an improvement', say: 'Opens a new issue, labelled enhancement', acts: [{ label: 'Open', id: 'idea', say: 'Would open a new enhancement issue on GitHub in a new tab' }] },
           ] },
       ] },
     ] },
@@ -326,7 +326,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         { label: 'Cancel editing', do: (sv) => { Object.assign(sv, sv.pol); return 'Changes dropped; the policy is as published'; } },
         { label: 'Publish to worca-policy', id: 'publish', confirm: (sv) => ({ text: `Publish ${plural(pending(sv).length, 'change')} to worca-policy? Every teammate's Worca reads it at its next run.`, yes: 'Publish', then: (s) => { s.pol = Object.fromEntries(Object.keys(POLICY).map((k) => [k, s[k]])); return 'Policy published · commit 7a1c3e2'; } }) },
       ], rows: [
-        { name: 'Changes', say: (sv) => pending(sv).map((k) => POLICY_WORDS[k](sv[k])).join(' · '), acts: [{ label: 'Copy for PR', help: 'The whole policy as JSON, for a pull request against worca-policy', copy: (sv) => JSON.stringify(Object.fromEntries(Object.keys(POLICY).map((k) => [k, sv[k]])), null, 2), copied: 'Copied: paste it into .worca-policy/policy.json on a pull request' }] },
+        { name: 'Changes', say: (sv) => pending(sv).map((k) => POLICY_WORDS[k](sv[k])).join(' · '), acts: [{ label: 'Copy for PR', help: 'The whole policy as JSON, for a pull request against worca-policy', copy: (sv) => JSON.stringify(Object.fromEntries(Object.keys(POLICY).map((k) => [k, sv[k]])), null, 2), copied: 'Would copy it, to paste into .worca-policy/policy.json on a pull request' }] },
       ] },
       { title: 'Effective policy', meta: 'What the next run on this machine will use.', table: { label: 'Effective policy', columns: [{ id: 'f', label: 'Field' }, { id: 't', label: 'Team', narrow: false }, { id: 'k', label: 'Kind', narrow: false }, { id: 'y', label: 'Yours', narrow: false }, { id: 'e', label: 'Effective' }],
         rows: (sv) => [
@@ -375,21 +375,21 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         { label: 'Reset all', help: 'Every feature back to its default; asks first', off: () => (flagsChanged().length ? '' : 'Nothing to reset: every feature is at its default'),
           confirm: { text: 'Turn every Labs feature back to its default?', yes: 'Reset all', then: () => { for (const f of flagsChanged()) window.RailUI.prefs.setFlag(f.key, f.on); return 'Labs: back to its defaults'; } } },
       ], rows: [
-        { name: 'Guide', say: 'How Labs works, and what a stage means', acts: [{ label: 'Open', say: 'Opens the Labs guide in a new tab' }] },
+        { name: 'Guide', say: 'How Labs works, and what a stage means', acts: [{ label: 'Open', say: 'Would open the Labs guide in a new tab' }] },
       ], groups: ['Beta', 'Experimental'].map((stage) => ({ title: stage, rows: FLAGS.filter((f) => f.stage === stage).map((f) => ({ name: f.name, say: f.say, sw: { flag: f.key, on: f.on, why: f.why, locked: f.locked } })) })) },
     ] },
 
     runs: { title: 'Runs', meta: 'How tasks spend, start and wait.', sections: [
       { title: 'Spending', meta: spentWords, rows: [
         { name: 'Budget', say: (sv) => `All tasks pause at ${totalCap(sv)}; one run at ${runCap(sv)}`,
-          acts: [{ label: 'Change…', edit: { title: 'Change the budget', yes: 'Save', note: 'Empty means only your team\'s cap applies. The tighter of the two wins.', check: (v) => (/^\d*(\.\d+)?$/.test(v.perRun) && /^\d*(\.\d+)?$/.test(v.total) ? '' : 'A limit is an amount in dollars'), fields: [
+          acts: [{ label: 'Change…', edit: { title: 'Change the budget', yes: 'Save', note: 'Empty means only your team\'s cap applies. The tighter of the two wins.', check: (v) => { const run = String(v.perRun).trim(), all = String(v.total).trim(), ok = (s) => !s || (isAmount(s) && +s > 0); return !ok(run) || !ok(all) ? 'A limit is an amount in dollars above 0, or empty' : run && all && +run > +all ? 'One run cannot be allowed more than the total' : ''; }, fields: [
             { key: 'perRun', label: 'Per run (USD)', placeholder: 'No limit' }, { key: 'total', label: 'Total (USD)', placeholder: 'No limit' }, { key: 'period', label: 'The total starts again', options: O(['day', 'Each day, at midnight'], ['week', 'Each week, from Monday'], ['month', 'Each month, from the 1st']) },
           ], done: 'Budget saved' } }],
           more: [
             { name: 'Team caps', say: 'Your team sets its own caps; you can continue past one when a task pauses, and that is recorded', min: 'advanced', acts: [{ label: 'Open', id: 'team', go: 'team', help: 'Settings › Team policy' }] },
-            { name: 'Usage', say: 'What was spent, per harness', acts: [{ label: 'Open', id: 'usage', click: ['[data-acct]', '[data-sub="usage"]'], help: 'The profile menu\'s Usage and costs' }] },
+            { name: 'Usage', min: 'advanced', say: 'What was spent, per harness', acts: [{ label: 'Open', id: 'usage', click: ['[data-acct]', '[data-sub="usage"]'], help: 'The profile menu\'s Usage and costs' }] },
           ] },
-        { name: 'Hourly rate', say: 'Time saved is counted at **${rate}** an hour', vals: { rate: '35' }, acts: [edit('Change the hourly rate', [{ key: 'rate', label: 'USD an hour', hint: 'What an hour of a developer costs, for Statistics' }], { done: 'Hourly rate saved', check: (v) => (isAmount(v.rate) ? '' : 'A rate is an amount in dollars') })] },
+        { name: 'Hourly rate', say: 'Time saved is counted at **${rate}** an hour', vals: { rate: '35' }, acts: [edit('Change the hourly rate', [{ key: 'rate', label: 'USD an hour', hint: 'What an hour of a developer costs, for Statistics' }], { done: 'Hourly rate saved', check: (v) => (isAmount(v.rate) && +v.rate > 0 && +v.rate <= 1000 ? '' : 'A rate is an amount in dollars, above 0 and up to 1,000') })] },
         { name: 'Cost tags', say: (sv) => { const tags = sv.__recs['runs/Spending/Cost tags'] || COST_TAGS, req = tags.filter((t) => t.required).map((t) => `**${t.title}**`); if (!tags.length) return 'No cost tags: spend is counted per run only'; return `Spend is counted by ${andList(tags.map((t) => `**${t.title}**`))}; ${sv.tagsReq && req.length ? `a task needs its ${andList(req)}` : 'a task starts without any'}`; }, acts: [{ label: 'Add tag', edit: (sv) => ({ title: 'Add a cost tag', yes: 'Add', fields: costTagFields('', '', false), check: (v) => (v.name.trim() ? '' : 'A tag needs a name'), then: (v) => { const k = 'runs/Spending/Cost tags'; sv.__recs[k] ||= COST_TAGS.map((it, i) => ({ ...it, id: 'r' + i })); sv.__recs[k].push({ ...costTag(v.name, v.vals, v.req), id: 'n' + Date.now() }); sv.__open = 'more:' + k; return `Cost tag added: ${v.name}`; } }) }], more: [
           { name: 'Required', say: 'A run starts only with every required cost tag set', sw: { key: 'tagsReq', on: true } },
         ], moreList: COST_TAGS },
@@ -429,9 +429,9 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         ] },
       ] },
       { title: 'Machine', rows: [
-        { name: 'Capacity', min: 'advanced', say: (sv) => `Up to {n} ${sv.n === '1' ? 'run' : 'runs'} at a time; finished runs ${pickText(ARCHIVE, sv.arch)}`, picks: { n: P('3', O('1', '2', '3', '4', '6', '8', '12', '20'), 'More runs wait in line') }, more: [
+        { name: 'Capacity', min: 'advanced', say: (sv) => `Up to {n} ${sv.n === '1' ? 'task' : 'tasks'} at a time; finished tasks ${pickText(ARCHIVE, sv.arch)}`, picks: { n: P('3', O('1', '2', '3', '4', '6', '8', '12', '20'), 'More tasks wait in line') }, more: [
           { name: 'Test workers', say: 'Each task tests with {w}', picks: { w: P('half', O(['half', 'half the cores'], ['1', '1 worker'], ['2', '2 workers'], ['4', '4 workers'], ['8', '8 workers']), 'Test workers per run') } },
-          { name: 'Archive', say: 'Finished runs {arch}', picks: { arch: P('never', ARCHIVE, 'Archiving removes the branch, worktree and logs') } },
+          { name: 'Archive', say: 'Finished tasks {arch}', picks: { arch: P('never', ARCHIVE, 'Archiving removes the branch, worktree and logs') } },
           { name: 'Checkouts', help: GIT_TIP, say: 'An action\'s checkout is {keep}; {coMax}', picks: { keep: P('demand', O(['demand', 're-created when needed'], ['success', 'kept after a successful run'], ['pr', 'kept until the PR closes']), 'When a checkout is removed'), coMax: P('none', O(['none', 'any number are kept'], ['5', 'at most 5 are kept'], ['10', 'at most 10 are kept'], ['20', 'at most 20 are kept']), 'The oldest go first', true) } },
         ] },
         { name: 'Tools', min: 'advanced', help: `${GIT_TIP}. Actions are off on hosted deployments unless an administrator enables them`, say: 'Folders open with `{editorNow}`, shells with `{terminalNow}`', vals: { editorNow: (sv) => sv.editor, terminalNow: (sv) => sv.terminal }, more: [
@@ -439,7 +439,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
           { name: 'Editor', say: 'Opens folders with `{editor}` (found on this machine)', vals: { editor: 'code {folder}' }, acts: [{ label: 'Change…', edit: launcher('editor', 'Editor', O(['code {folder}', 'VS Code'], ['cursor {folder}', 'Cursor'], ['zed {folder}', 'Zed'])) }] },
           { name: 'Terminal', say: 'Opens shells with `{terminal}` (found on this machine)', vals: { terminal: 'open -a iTerm {folder}' }, acts: [{ label: 'Change…', edit: launcher('terminal', 'Terminal', O(['open -a iTerm {folder}', 'iTerm'], ['open -a Terminal {folder}', 'Terminal'], ['wezterm start --cwd {folder}', 'WezTerm'])) }] },
         ] },
-        { name: 'Network', say: (sv) => `${sv.proxy ? `Through ${sv.proxyHost}:${sv.proxyPort}` : 'A direct connection'}; ${sv.netWait ? `a task waits up to **${pickText(WAIT, sv.wait)}** offline` : 'a task fails when offline'}`, more: [
+        { name: 'Network', min: 'advanced', say: (sv) => `${sv.proxy ? `Through ${sv.proxyHost}:${sv.proxyPort}` : 'A direct connection'}; ${sv.netWait ? `a task waits up to **${pickText(WAIT, sv.wait)}** offline` : 'a task fails when offline'}`, more: [
           { name: 'Proxy', say: (sv) => (!sv.proxy ? 'Off: Worca connects directly. Turn it on to use **{proxyHost}:{proxyPort}**' : sv.auth === 'none' ? 'Through **{proxyHost}:{proxyPort}**, {auth}' : 'Through **{proxyHost}:{proxyPort}**, signing in with {auth}'), vals: { proxyHost: 'proxy.corp.example', proxyPort: '8080', proxyLocal: '' },
             picks: { auth: P('auto', O(['auto', 'NTLMv2'], ['basic', 'Basic', 'Sends the password in cleartext; cannot use a saved login'], ['digest', 'Digest', 'Cannot use a saved login'], ['none', 'with no login']), 'How Worca signs in to the proxy') },
             acts: [{ label: 'Change…', edit: (sv) => ({ title: 'Change the proxy', yes: 'Save and test', fields: [{ key: 'proxyHost', label: 'Host' }, { key: 'proxyPort', label: 'Port' }, { key: 'proxyLocal', label: 'Local port', hint: 'Empty: Worca picks one and keeps it', placeholder: 'Automatic' }], check: (v) => (!v.proxyHost.trim() ? 'A proxy needs a host' : !/^\d+$/.test(v.proxyPort) || +v.proxyPort > 65535 ? 'A port is a number up to 65535' : ''), then: (v, s) => { Object.assign(s, v); return `Reached ${v.proxyHost}:${v.proxyPort}: proxy saved${s.proxy ? '' : '; turn it on to use it'}`; } }) }], sw: { key: 'proxy', on: false, why: 'Off: Worca connects directly' } },
@@ -474,7 +474,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     automations: { min: 'advanced', flag: 'gitAutomations', title: 'Automations', meta: 'What runs by itself across projects; each project keeps its own rules.', sections: [
       { title: 'Waiting', empty: 'Nothing is waiting', list: [
         { title: 'Issue #1088', meta: 'A fix is proposed · worca-cc', mark: 'is-amber', fig: '2h ago', menu: ['Approve', 'Skip'], quick: ['Approve'],
-          on: { Approve: (r, x) => { x.remove(); x.add({ title: r.title, meta: 'Approved: a task started · worca-cc', fig: 'now' }, 'automations/Recent'); return 'Issue #1088: a task started'; }, Skip: (r, x) => { x.remove(); x.add({ title: r.title, meta: 'Skipped by you · worca-cc', fig: 'now' }, 'automations/Recent'); return 'Issue #1088: skipped'; } } },
+          on: { Approve: (r, x) => { x.remove(); window.RailWorld?.add({ id: `auto-1088-${Date.now()}`, title: 'Fix Issue #1088', project: 'worca-cc', detail: 'Started by you from Automations' }); x.add({ title: r.title, meta: 'Approved: a task started · worca-cc', fig: 'now', open: (o, y) => y.page('runs', 'Opens Tasks') }, 'automations/Recent'); return 'Issue #1088: a task started, in Tasks'; }, Skip: (r, x) => { x.remove(); x.add({ title: r.title, meta: 'Skipped by you · worca-cc', fig: 'now' }, 'automations/Recent'); return 'Issue #1088: skipped'; } } },
       ] },
       { title: 'Projects', list: [
         { title: 'worca-cc', meta: 'Proposes a fix for new issues and reviews PRs · 3 rules', open: (r, x) => x.page('projects', 'Opens the project worca-cc, where its 3 rules are') },
@@ -654,8 +654,8 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         { title: 'postgres', meta: 'stdio · needs a secret in Frontend', mark: 'is-amber', menu: ['Edit', 'Remove'] },
       ] },
       { title: 'Sets', actions: [{ label: 'New set', edit: addTo('connectors/Sets', 'New set', 'Name', '0 servers · 0 skills · no project', ['Rename', 'Duplicate', 'Delete']) }], list: [
-        { title: 'General', meta: 'Built in', live: (sv) => `Built in · ${setCount(sv, 'General')} · Chat and 5 projects`, menu: ['Duplicate'], copy: { menu: ['Rename', 'Duplicate', 'Delete'], live: (sv) => `${setCount(sv, 'General')} · no project` } },
-        { title: 'Frontend', meta: 'A set', live: (sv) => `${setCount(sv, 'Frontend')} · 2 projects`, menu: ['Rename', 'Duplicate', 'Delete'] },
+        { title: 'General', meta: 'Built in', live: (sv) => `Built in · ${setCount(sv, 'General')} · Chat and 5 projects`, menu: ['Duplicate'], copy: { menu: ['Rename', 'Duplicate', 'Delete'], follows: 'No project uses it.', live: (sv) => `${setCount(sv, 'General')} · no project` } },
+        { title: 'Frontend', meta: 'A set', live: (sv) => `${setCount(sv, 'Frontend')} · 2 projects`, menu: ['Rename', 'Duplicate', 'Delete'], follows: 'Its 2 projects go back to General.', copy: { follows: 'No project uses it.' } },
       ] },
       { title: 'Skills', actions: [{ label: 'Import skill', edit: addTo('connectors/Skills', 'Import a skill', 'Skill', 'From your Claude Code skills · in no set', ['Edit', 'Remove']) }], empty: 'No skills', list: [
         { title: 'pdf-tools', meta: 'From your Claude Code skills · in 2 sets', menu: ['Edit', 'Remove'] },
@@ -719,7 +719,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   }
   function editable(title, tail, lists) {
     const set = lists || GUARD_SETS[title];
-    return { id: 'n' + title, title, tail, deny: [...set.deny], paths: [...set.paths], meta: `${guardCounts(set)} · ${tail}`, live: (sv, r) => `${guardCounts(r)} · ${r.tail}`, menu: () => (atLevel('expert') ? ['Edit', 'Duplicate', 'Delete'] : ['Edit', 'Delete']), open: (r, x) => SHARED_EDIT(r, x), on: { Edit: (r, x) => SHARED_EDIT(r, x) }, copy: { tail: 'no project' } };
+    return { id: 'n' + title, title, tail, deny: [...set.deny], paths: [...set.paths], meta: `${guardCounts(set)} · ${tail}`, live: (sv, r) => `${guardCounts(r)} · ${r.tail}`, menu: () => (atLevel('expert') ? ['Edit', 'Duplicate', 'Delete'] : ['Edit', 'Delete']), open: (r, x) => SHARED_EDIT(r, x), on: { Edit: (r, x) => SHARED_EDIT(r, x) }, copy: { tail: 'no project' }, follows: (r) => (r.tail === 'no project' ? 'No project uses it.' : `Its ${r.tail} ${/^1 /.test(r.tail) ? 'goes' : 'go'} back to Default.`) };
   }
   function SHARED_EDIT(r, x) {
     const lines = (s) => s.split('\n').map((t) => t.trim()).filter(Boolean);

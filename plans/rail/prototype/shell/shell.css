@@ -102,8 +102,10 @@
 .bar-list .lr-rail{height:30px;}
 .bar-list .lr-main{padding:3px 4px;margin:0;}
 .bar-list .lr-end{padding-top:5px;position:relative;}
-.bar-list .lr-end .rc-pop{display:none;}
-.bar-list .list-row:is(:hover,:focus-within) > .lr-end .rc-pop,.bar-list .lr-end .rc-pop:has(.menu){display:inline-flex;position:absolute;right:calc(100% + 2px);top:-3px;background:var(--side-bg);border-radius:var(--r-sm);}   /* ⋯ beside the end, never over it */
+.bar-list .lr-end .rc-pop{position:absolute;right:calc(100% + 2px);top:-3px;background:var(--side-bg);border-radius:var(--r-sm);opacity:0;pointer-events:none;}   /* always in the tab order (list.row-more) */
+.bar-list .lr-end .rc-pop > .btn:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+@media (hover:none){.bar-list .lr-end .rc-pop{position:static;background:none;opacity:1;pointer-events:auto;}}   /* no hover on a touch screen: it is simply there */
+.bar-list .list-row:is(:hover,:focus-within) > .lr-end .rc-pop,.bar-list .lr-end .rc-pop:has(.menu){opacity:1;pointer-events:auto;}   /* ⋯ beside the end, never over it */
 body.view-rail-chat .main{display:flex;flex-direction:column;overflow:hidden;}
 .convo-answer{margin:6px 0 0 32px;}.convo-answer-go{margin-top:8px;}
 #route-run{position:relative;}
@@ -188,7 +190,7 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 #side-rail.is-strip .bar-head{padding-left:14px;}
 #side-rail.is-strip .pz-acct{padding-left:0;margin-left:-1px;justify-content:flex-start;}   /* the avatar and its usage ring (38px) centred on the 56px strip, never cut */
 @media (prefers-reduced-motion: reduce){ #side-rail.is-strip, #side-rail.is-strip *{transition:none!important;} }
-body.bar-hidden .bar-show{display:none;}
+body.bar-hidden .bar-show{display:inline-flex;}   /* nav.one-bar: hidden, the way back is on screen */
 @media (prefers-reduced-motion: reduce){ #side-rail.is-strip{transition:none;} }
 /* The top bar's own buttons are icons: Ask worca is Worca's W in a bubble; Pulse's count sits on its corner. */
 #topnav-ask .topnav-ask-label,.pz-pulse-l{display:none;}

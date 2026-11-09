@@ -46,20 +46,23 @@ function align(g) { const pos = autoLayout(g.tpl, g.portsFn, { describe: true })
  * Draws a workflow into host, fitted to width.
  * @param {HTMLElement} host
  * @param {object} wf          the prototype's workflow
- * @param {{width?:number, mode?:'static'|'edit', aligned?:boolean, select?:string, says?:(ref:string)=>string, g?:object}} [o]
- * @returns {{g:object, view:object}}   g is the drawn template (keep it for Undo)
+ * @param {{width?:number, zoom?:number, mode?:'static'|'edit', aligned?:boolean, select?:string, says?:(ref:string)=>string, g?:object}} [o]
+ *   zoom: the graph's real size (1 is full size; the view never magnifies past it) and the host takes its width; 0 fits width
+ * @returns {{g:object, view:object, fit:number}}   g is the drawn template (keep it for Undo); fit is the zoom that fits width
  */
-function mount(host, wf, { width = 680, mode = 'static', aligned = false, select = '', says = null, g = null } = {}) {
+function mount(host, wf, { width = 680, zoom, mode = 'static', aligned = false, select = '', says = null, g = null } = {}) {
   let graph = g || build(wf, says); if (!g && aligned) graph = align(graph);
   host.innerHTML = '';
   const view = createGraphView(host, { doc: host.ownerDocument, mode, portsFn: graph.portsFn, agents: graph.agents, describe: true, modelLabel: (id) => MODEL_WORDS[id] || id });
   view.render(graph.tpl, {});
+  const full = view.bounds(60)?.w || width, fit = Math.min(1, width / full);   // fitToWidth measures with this padding
+  if (zoom !== undefined) { width = Math.round(full * (zoom || fit)); host.style.width = `${width}px`; }
   const b = view.bounds(24); if (b) host.style.height = `${Math.ceil(b.h * Math.min(1, width / b.w)) + 8}px`;
   view.fitToWidth(width);
   host.querySelectorAll('.wbadge').forEach((w) => { if (mode === 'static') w.textContent = w.textContent.replace(/≤\s*(\d+)/, 'sends fixes back, up to $1×'); });
   if (mode === 'static') host.querySelectorAll('[tabindex]').forEach((n) => n.removeAttribute('tabindex'));   // a drawing: nothing in it takes a key
   if (select) host.querySelector(`[data-node-id="${select}"]`)?.classList.add('is-picked');
-  return { g: graph, view };
+  return { g: graph, view, fit };
 }
 
 window.RailGraph = { mount, build, align };

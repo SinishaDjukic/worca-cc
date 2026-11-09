@@ -52,5 +52,5 @@ export function compactMenu({ items, role = 'menu', label, cls = '', pickAttr = 
     if (it.danger) ruled = true;
     return rule + menuItem(it, { pickAttr });
   }).join('') + endGroup();
-  return `<div class="menu${cls ? ' ' + cls : ''}"${attrs({ role, 'aria-label': label, 'data-motion': motion ? 'in' : null })}>${body}</div>`;
+  return `<div class="menu${cls ? ' ' + cls : ''}"${attrs({ role, 'aria-label': label, 'data-motion': motion ? 'in' : null })}>${/\bis-two-cols\b/.test(cls) ? `<div class="menu-cols">${body}</div>` : body}</div>`;   // the columns live inside what scrolls: a height on a multicol box makes more columns
 }

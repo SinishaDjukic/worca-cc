@@ -18,7 +18,7 @@ const stepsOf = (v, key) => (v.activity.find((st) => st.key === key) || { rows: 
 const ran = (rows) => rows.some((y) => !/is-next/.test(y.rowCls));
 
 // Labels the page answers itself, not the flow table: a list of what and why, never a silent pass.
-const PAGE_ACTIONS = /^(Pause|Pause after this step|Stop the run|Stop run \d+|Re-plan the rest|Cancel the rest|Ask for changes|Revise|Create \d+ (stacked|separate) PRs instead|Create one PR instead|Previous question|worca-\w+ #\d+)$/;
+const PAGE_ACTIONS = /^(Pause|Pause after this step|Stop the task|Stop task \d+|Re-plan the rest|Cancel the rest|Ask for changes|Revise|Create \d+ (stacked|separate) PRs instead|Create one PR instead|Previous question|worca-\w+ #\d+)$/;
 
 test('rows and tabs follow the state: what a case shows does not contradict it', () => {
   for (const id of ids) {

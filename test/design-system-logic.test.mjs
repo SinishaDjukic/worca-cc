@@ -22,7 +22,7 @@ test('Paused and Stopped are never Ready: their word and their section stay thei
 
 test('one main action per state; names fill from the run; every main step leads somewhere', () => {
   assert.equal(R.runState('approved', CTX).action.label, 'Merge PR');
-  assert.equal(R.runState('outline', CTX).action.label, 'Approve 3 runs');
+  assert.equal(R.runState('outline', CTX).action.label, 'Approve 3 tasks');
   assert.equal(R.actionHelp('Merge PR', CTX), 'Merges the PR into main on GitHub');
   assert.equal(R.actionFlow('approved', CTX)['Merge PR'].confirm, 'Merge #1 into main?');
   for (const id of R.stateIds()) {
@@ -61,7 +61,7 @@ test('act.flow: a Fix shows a Fixing state first; a move says what happened; a R
     assert.doesNotMatch(f.say || '', /^git /, `${id}: ${label} puts commands in a toast that fades`);
     if (f.to) assert.ok(R.stateIds().includes(f.to) || /-/.test(f.to) || f.to === 'discarded', `${id}: ${label} leads to ${f.to}`);
   }
-  assert.equal(R.actionFlow('scheduled', CTX)['Delete run'].no, 'Keep');
+  assert.equal(R.actionFlow('scheduled', CTX)['Delete task'].no, 'Keep');
   assert.ok(R.actionFlow('ready', CTX)['How to merge'].commands);
 });
 

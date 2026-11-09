@@ -53,6 +53,49 @@ test('compactMenu: choices are radios, danger comes after one rule, help is the 
   assert.equal(items[2].dataset.menuPick, 'Copy link', 'the text when no id');
 });
 
+test('compactMenu: two columns live inside what scrolls (comp.menu-groups)', () => {
+  const m = dom(C.compactMenu({ cls: 'pz-menu is-two-cols', items: [{ header: 'One' }, { text: 'a' }] }));
+  assert.ok(m.firstElementChild.matches('.menu-cols') && m.querySelector('.menu-cols > .menu-g'));
+  assert.equal(dom(C.compactMenu({ items: [{ text: 'a' }] })).querySelector('.menu-cols'), null);
+});
+
+test('toastText: the whole text in its tooltip, Undo beside it (comp.toast-clamp)', () => {
+  const t = dom(C.toast({ text: 'Merged <#959>' }));
+  assert.equal(t.querySelector('.rc-toast-t').title, 'Merged <#959>');
+  assert.equal(dom(C.toast({})).innerHTML, '');
+  assert.ok(dom(`<div>${C.toastText('x', C.toastUndo())}</div>`).querySelector('.rc-toast-t + [data-undo]'));
+});
+
+test('watchMenus: a disabled item acts for nothing and says why (comp.menu-off)', () => {
+  const d = new JSDOM('<div id="r"><button class="menu-item" aria-disabled="true" title="Needs a project">x</button></div>').window;
+  C.watchMenus(d.document);
+  let acted = 0, why = '';
+  d.document.getElementById('r').addEventListener('click', () => { acted++; });
+  d.document.addEventListener('rail:disabled', (e) => { why = e.detail.why; });
+  d.document.querySelector('.menu-item').click();
+  assert.equal(acted, 0); assert.equal(why, 'Needs a project');
+});
+
+test('watchStrips: Esc presses the strip\'s Cancel; what is typed stays (keys.esc-strip)', () => {
+  const d = new JSDOM(`<div>${C.confirmForm({ form: 'f', text: 'Add?', body: `<input value="a">${C.confirmActions({ yes: 'Add' })}` })}</div>`, { pretendToBeVisual: true }).window;
+  d.document.querySelector('.rc-confirm').getClientRects = () => [1];
+  C.watchStrips(d.document);
+  let no = 0;
+  d.document.querySelector('[data-confirm="no"]').addEventListener('click', () => { no++; });
+  const esc = () => d.document.body.dispatchEvent(new d.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  d.document.querySelector('input').value = 'typed'; esc(); assert.equal(no, 0);
+  d.document.querySelector('input').value = 'a'; esc(); assert.equal(no, 1);
+});
+
+test('listController: two lists on one bar, the rows showing answer (one owner per root)', () => {
+  const dom2 = new JSDOM('<div id="b"></div>').window, root = dom2.document.getElementById('b');
+  const opened = [], mk = (n) => C.listController({ root, spec: { noun: `own-${n}-${Math.random()}`, label: 'x', can: () => [], bulk: () => [], act: () => {}, word: () => false, say: () => {}, active: () => true, open: () => opened.push(n), view: () => ({ state: 'ready', parts: [], sections: [{ id: 's', title: 'S', noCount: true, rows: [{ key: 'k', title: 'T' }] }] }) } });
+  const a = mk('a'), b = mk('b');
+  a.paint(); b.paint();
+  root.querySelector('[data-open]').click();
+  assert.deepEqual(opened, ['b']);
+});
+
 test('compactMenu: a head and its options are one block (comp.menu-groups)', () => {
   const m = dom(C.compactMenu({ items: [{ header: 'One' }, { text: 'a' }, { text: 'b' }, { header: 'Two' }, { text: 'c' }, { sep: true }, { text: 'd' }] }));
   const g = [...m.querySelectorAll('.menu-g')];
@@ -897,7 +940,7 @@ test('question forms: a slider with Worca\'s pick, an order with Up and Down, ro
   const s = dom(C.sliderPick({ id: 'r', label: 'Rounds', min: 1, max: 6, value: 3, pick: 4, words: (n) => `${n} rounds` }));
   assert.equal(s.querySelector('input[type="range"]').value, '3'); assert.match(s.querySelector('.q-slide-pick').textContent, /4 rounds/);
   const r = dom(C.rankList({ label: 'Order', items: [{ id: 'a', text: 'A' }, { id: 'b', text: 'B' }], move: (id, d) => ({ 'data-rank': `${id}|${d}` }) }));
-  assert.equal(r.querySelectorAll('.q-rank-r').length, 2); assert.ok(r.querySelector('[data-rank="a|up"]').disabled, 'the first cannot go up');
+  assert.equal(r.querySelectorAll('.q-rank-r').length, 2); assert.ok(r.querySelector('[data-rank="a|up"]').disabled, 'the first cannot go up'); assert.equal(r.querySelector('[data-rank="a|up"]').closest('.tip-wrap').title, 'It is already first', 'and says why (small.disabled-why)');
   const p = dom(C.pickRows({ cols: ['Ticket', 'Estimate'], rows: [{ id: 't1', cells: ['BILL-1', '1 day'], checked: true }], tick: (id) => ({ 'data-tick-row': id }) }));
   assert.ok(p.querySelector('[data-tick-row="t1"]')); assert.equal(p.querySelectorAll('.q-rows-h span').length, 3);
   const f = dom(C.factsLine([{ n: '$1.84', word: 'so far', attrs: { 'data-cost': '' } }, { n: '23 min', word: '' }]));

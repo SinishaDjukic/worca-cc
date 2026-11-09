@@ -7,7 +7,7 @@
   if (!root) return;
   const KEY = 'worca-rail.runs.view';
   const store = { get: () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { return null; } }, set: (v) => { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch { /* the view lasts the session */ } } };
-  const FRESH = { show: 'all', from: 'all', day: '', person: '', by: window.RailUI.BY_DEFAULT, labels: [] };
+  const FRESH = { show: 'all', from: 'all', day: '', range: null, person: '', by: window.RailUI.BY_DEFAULT, labels: [] };
   let view = { ...FRESH, ...(store.get() || {}) }, data = M.seed(), listCase = 'full', recent = [], ctl = null;
   const say = (t, undo) => window.RailPulse?.say(t, undo);
   const cap = (w) => w[0].toUpperCase() + w.slice(1);
@@ -40,16 +40,19 @@
   const finished = (t) => t.section === 'recent' || !!t.run?.pr || t.word === 'Ready' || t.word === 'Failed';
   const readyToShip = (t) => t.word === 'Ready' && (t.run?.kind || 'Git') === 'Git' && !t.run?.pr;
   const SHOWS = [
-    { id: 'all', text: 'all', help: 'Every run that is not archived', test: (t) => !t.archived },
+    { id: 'all', text: 'all', help: 'Every task that is not archived', test: (t) => !t.archived },
     { id: 'needs', text: NEEDS().toLowerCase(), help: 'Waiting on a person: a question, a gate, a pause, a failure, ready to ship', title: NEEDS(), test: (t) => !t.archived && t.section === 'needs' },
     { id: 'running', text: 'running', help: 'Working now', test: (t) => !t.archived && t.section === 'running' },
-    { id: 'waiting', text: 'waiting', help: 'Not started yet: after another run, or at a time', test: (t) => !t.archived && t.section === 'scheduled' },
-    { id: 'finished', text: 'finished', help: 'Every run that has ended', test: (t) => !t.archived && finished(t) },
+    { id: 'waiting', text: 'waiting', help: 'Not started yet: after another task, or at a time', test: (t) => !t.archived && t.section === 'scheduled' },
+    { id: 'finished', text: 'finished', help: 'Every task that has ended', test: (t) => !t.archived && finished(t) },
     { id: 'ready', text: 'ready to ship', help: 'Finished with no PR open: nothing else needs doing but shipping it', test: (t) => !t.archived && readyToShip(t) },
-    { id: 'archived', text: 'archived', help: 'Runs you archived', test: (t) => t.archived },
+    { id: 'archived', text: 'archived', help: 'Tasks you archived', test: (t) => t.archived },
   ];
   const showOf = (id) => SHOWS.find((x) => x.id === id);
-  const passes = (t, v) => showOf(v.show).test(t) && (v.from === 'all' || (t.project || 'No project') === v.from) && (!v.day || t.day === v.day) && (!v.person || t.by === v.person)
+  // the date a row belongs to, as month*100+day, in the mock's today (Nov 8): what a stretch of Insights narrows to; 0 for what is still to come
+  const WEEKDAY = { Sun: 1, Mon: 2, Tue: 3, Wed: 4, Thu: 5, Fri: 6, Sat: 7 }, MONTH = { Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12 };
+  const dateKey = (t) => { if (t.day === 'today') return 1108; if (t.day === 'yesterday') return 1107; if (t.day === 'upcoming') return 0; const w = (t.run || t.group).time || '', m = /^([A-Z][a-z]{2}) (\d+)$/.exec(w); return WEEKDAY[w] ? 1100 + WEEKDAY[w] : m ? MONTH[m[1]] * 100 + +m[2] : 0; };
+  const passes = (t, v) => showOf(v.show).test(t) && (v.from === 'all' || (t.project || 'No project') === v.from) && (!v.day || t.day === v.day) && (!v.range || (dateKey(t) >= v.range.from && dateKey(t) <= v.range.to)) && (!v.person || t.by === v.person)
     && (!labelsOn() || !v.labels.length || t.labels.some((l) => v.labels.includes(l)));
   const labelsOn = () => R.prefs.flag('runLabels');
   const shared = () => listCase === 'shared';
@@ -102,7 +105,7 @@
     const kindWord = { feature: 'Feature', chain: 'Chain', user: 'Group' }[g.kind];
     const total = ms.reduce((a, m) => a + (m.cost || 0), 0);
     const x = { g, key: `group:${g.id}` };
-    return { key: x.key, _x: x, title: g.title, meta: '', mark: markOf(state, 'feature'), count: `${done}/${ms.length}`, noun: 'runs',
+    return { key: x.key, _x: x, title: g.title, meta: '', mark: markOf(state, 'feature'), count: `${done}/${ms.length}`, noun: 'tasks',
       open: !(['Ready', 'Stopped', 'Merged', 'Failed'].includes(R.runState(groupState(g)).word)), tip: [g.title, [kindWord, view.by !== 'project' ? g.project : ''].filter(Boolean).join(' · '), why].filter(Boolean).join('\n'), menu: menuOf(x), members: ms.map((m) => row(m, '', true)) };
   }
   const rowOf = (t, section) => (t.group ? groupRowOf(t.group, section) : row(t.run, section, false));
@@ -110,20 +113,20 @@
   // ---- the sentence ----
   function parts() {
     const projects = [...new Set(tops().map((t) => t.project || 'No project'))].sort();
-    const out = [{ word: 'Showing', id: 'show', text: showOf(view.show).text, tip: 'Which runs the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.help, checked: view.show === x.id, hint: count({ show: x.id }) })) }];
-    if (shared()) out.push({ word: 'started by', id: 'person', text: view.person || 'everyone', tip: 'Whose runs it shows, on a shared sign-in', items: [{ id: '', text: 'everyone', checked: !view.person, hint: count({ person: '' }) }, { sep: true }, ...M.PEOPLE.map((p) => ({ id: p, text: p, checked: view.person === p, hint: count({ person: p }) }))] });
+    const out = [{ word: 'Showing', id: 'show', text: showOf(view.show).text, tip: 'Which tasks the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.help, checked: view.show === x.id, hint: count({ show: x.id }) })) }];
+    if (shared()) out.push({ word: 'started by', id: 'person', text: view.person || 'everyone', tip: 'Whose tasks it shows, on a shared sign-in', items: [{ id: '', text: 'everyone', checked: !view.person, hint: count({ person: '' }) }, { sep: true }, ...M.PEOPLE.map((p) => ({ id: p, text: p, checked: view.person === p, hint: count({ person: p }) }))] });
     out.push({ word: 'from', id: 'from', text: view.from === 'all' ? 'all projects' : view.from, tip: 'Which project they come from', items: [{ id: 'all', text: 'all projects', checked: view.from === 'all', hint: count({ from: 'all' }) }, { sep: true }, ...projects.map((p) => ({ id: p, text: p, checked: view.from === p, hint: count({ from: p }) }))] });
+    if (view.range) out.push({ word: 'on', id: 'range', text: view.range.label, tip: 'Only these days', items: [{ id: '', text: 'any time', hint: count({ range: null }) }, { sep: true }, { id: 'keep', text: view.range.label, checked: true, hint: count({}) }] });
     if (view.day) out.push({ word: 'in', id: 'day', text: M.DAYS.find(([d]) => d === view.day)?.[1] || view.day, tip: 'Only this period', items: [{ id: '', text: 'any time', hint: count({ day: '' }) }, { sep: true }, ...M.DAYS.map(([d, t]) => ({ id: d, text: t, checked: view.day === d, hint: count({ day: d }) }))] });
-    // each choice counts its own sections, so the three numbers mean the same thing
-    const sectionsBy = (key) => String(new Set(tops().filter((t) => passes(t, view)).map(key)).size);
-    out.push(R.byPart({ by: view.by, choices: [{ id: 'day', help: `${M.DAYS.map(([, t]) => t).join(', ')}`, hint: sectionsBy((t) => (t.section === 'needs' ? 'needs' : t.day)) }, { id: 'state', help: `${NEEDS()}, Running, Waiting, Recent`, hint: sectionsBy((t) => t.section) }, { id: 'project', hint: sectionsBy((t) => (t.section === 'needs' ? 'needs' : t.project || 'No project')) }] }));
+    // grouping only arranges the same tasks: no count here, so every number in these menus counts tasks
+    out.push(R.byPart({ by: view.by, choices: [{ id: 'day', help: `${M.DAYS.map(([, t]) => t).join(', ')}` }, { id: 'state', help: `${NEEDS()}, Running, Waiting, Recent` }, { id: 'project' }] }));
     if (labelsOn() && view.labels.length) {
       const all = [...new Set(data.runs.flatMap((r) => r.labels))].sort();
-      out.push({ word: 'labelled', id: 'labels', text: view.labels.join(', '), tip: 'Runs with any of these labels', items: [{ id: '', text: 'any label', help: 'Every label', hint: count({ labels: [] }) }, { sep: true }, ...all.map((l) => ({ id: l, text: l, checked: view.labels.includes(l), hint: count({ labels: [l] }) }))] });
+      out.push({ word: 'labelled', id: 'labels', text: view.labels.join(', '), tip: 'Tasks with any of these labels', items: [{ id: '', text: 'any label', help: 'Every label', hint: count({ labels: [] }) }, { sep: true }, ...all.map((l) => ({ id: l, text: l, checked: view.labels.includes(l), hint: count({ labels: [l] }) }))] });
     }
     return out;
   }
-  const EMPTY = { needs: 'Nothing needs you.', running: 'No running runs.', waiting: 'Nothing is waiting.', finished: 'No finished runs yet.', ready: 'Nothing is ready to ship.', archived: 'No archived runs.' };
+  const EMPTY = { needs: 'Nothing needs you.', running: 'No running tasks.', waiting: 'Nothing is waiting.', finished: 'No finished tasks yet.', ready: 'Nothing is ready to ship.', archived: 'No archived tasks.' };
   function sections() {
     const list = tops().filter((t) => passes(t, view));
     const rows = (ts, s) => ts.map((t) => rowOf(t, s));
@@ -155,18 +158,18 @@
     return acts;
   }
   function act(id, rows0, { bulk } = {}) {
-    const rows = rowsNow(rows0), pick = ctl.state.pick, snap = snapshot(), names = rows.length === 1 ? `“${(rows[0].r || rows[0].g).title}”` : plural(rows.length, 'run');
+    const rows = rowsNow(rows0), pick = ctl.state.pick, snap = snapshot(), names = rows.length === 1 ? `“${(rows[0].r || rows[0].g).title}”` : plural(rows.length, 'task');
     const backTo = rows.length === 1 && !bulk ? `[data-open="${CSS.escape(rows[0].key)}"]` : '';
     if (id === 'in-view' && rows[0]?.r) { const r = rows[0].r; window.RailShell.inView.toggle({ type: 'task', id: `run:${r.id}`, title: r.title, case: r.case }); ctl.paint(); return; }
-    if (id === 'stop') { const p = plan('stop', rows), c = n(p); if (!c) { say(R.skipText(p)); return; } ctl.confirm({ text: `Stop ${rows.length === 1 ? names : plural(c, 'run')}? Its branch and changes stay.${p.skip.length ? ` ${R.skipText(p)}` : ''}`, yes: `Stop ${c}`, danger: true, back: backTo, run: () => { p.apply.forEach((t) => { byId(t.id).case = 'stopped'; }); p.cancel.forEach((t) => { byId(t.id).case = 'ticket-canceled'; }); ctl.clear(); say(`Stopped ${plural(c, 'run')}`); } }); return; }
+    if (id === 'stop') { const p = plan('stop', rows), c = n(p); if (!c) { say(R.skipText(p)); return; } ctl.confirm({ text: `Stop ${rows.length === 1 ? names : plural(c, 'task')}? Its branch and changes stay.${p.skip.length ? ` ${R.skipText(p)}` : ''}`, yes: `Stop ${c}`, danger: true, back: backTo, run: () => { p.apply.forEach((t) => { byId(t.id).case = 'stopped'; }); p.cancel.forEach((t) => { byId(t.id).case = 'ticket-canceled'; }); ctl.clear(); say(`Stopped ${plural(c, 'task')}`); } }); return; }
     if (id === 'archive') {
       const back = view.show === 'archived' || rows.every((x) => (x.g ? membersOf(x.g).every((m) => m.archived) : x.r.archived));
-      if (back) { runRows(rows).forEach((r) => { r.archived = false; }); ctl.clear(); ctl.paint(); say(`Restored ${plural(runRows(rows).length, 'run')}`, undoTo(snap, pick, 'Archives them again')); return; }
+      if (back) { runRows(rows).forEach((r) => { r.archived = false; }); ctl.clear(); ctl.paint(); say(`Restored ${plural(runRows(rows).length, 'task')}`, undoTo(snap, pick, 'Archives them again')); return; }
       const p = plan('archive', rows), c = n(p); if (!c) { say(R.skipText(p)); return; }
       p.apply.forEach((t) => { byId(t.id).archived = true; }); ctl.clear(); ctl.paint();
-      say(`Archived ${plural(c, 'run')}${p.skip.length ? ` · ${R.skipText(p)}` : ''}`, undoTo(snap, pick, 'Puts them back')); return;
+      say(`Archived ${plural(c, 'task')}${p.skip.length ? ` · ${R.skipText(p)}` : ''}`, undoTo(snap, pick, 'Puts them back')); return;
     }
-    if (id === 'delete') { const p = plan('delete', rows), c = n(p); if (!c) { say(R.skipText(p)); return; } ctl.confirm({ text: `Delete ${rows.length === 1 ? names : plural(c, 'run')}? This cannot be taken back.${p.skip.length ? ` ${R.skipText(p)}` : ''}`, yes: `Delete ${c}`, danger: true, back: '', run: () => { const gone = new Set([...p.apply, ...p.cancel].map((t) => t.id)); data.runs = data.runs.filter((r) => !gone.has(r.id)); ctl.clear(); say(`Deleted ${plural(c, 'run')}`); } }); return; }
+    if (id === 'delete') { const p = plan('delete', rows), c = n(p); if (!c) { say(R.skipText(p)); return; } ctl.confirm({ text: `Delete ${rows.length === 1 ? names : plural(c, 'task')}? This cannot be taken back.${p.skip.length ? ` ${R.skipText(p)}` : ''}`, yes: `Delete ${c}`, danger: true, back: '', run: () => { const gone = new Set([...p.apply, ...p.cancel].map((t) => t.id)); data.runs = data.runs.filter((r) => !gone.has(r.id)); ctl.clear(); say(`Deleted ${plural(c, 'task')}`); } }); return; }
     if (id === 'label') { openLabels(rows); return; }
     if (id === 'add-to-group') { openGroups(rows, rows.length === 1 && !bulk ? `[data-menu="row:${CSS.escape(rows[0].key)}"]` : '[data-bulk="add-to-group"]'); return; }
     if (id === 'leave-group') { const r = rows[0].r, g = data.groups.find((x) => x.id === r.group); r.group = ''; r.adhoc = false; ctl.paint(); say(`Removed from ${g.title}`, undoTo(snap, pick, 'Puts it back in the group')); return; }
@@ -177,7 +180,7 @@
     const runs = runRows(rows), snap = snapshot(), pick = ctl.state.pick;
     ctl.picker({ label: 'Labels', placeholder: 'Find or add a label', anchor: '[data-bulk="label"]', hint: 'Enter adds what you typed',
       sections: (q) => { const all = [...new Set(data.runs.flatMap((r) => r.labels))].sort().filter((l) => l.includes(q.trim().toLowerCase())); const add = q.trim() && !all.includes(q.trim().toLowerCase()) ? [{ text: q.trim().toLowerCase(), n: 'New', on: false }] : []; return [{ title: 'Labels', kind: 'label', many: true, rows: [...add, ...all.map((l) => { const c = runs.filter((r) => r.labels.includes(l)).length; return { text: l, n: `${c} of ${runs.length}`, on: c === runs.length }; })] }]; },
-      pick: (k, l) => { const on = runs.every((r) => r.labels.includes(l)); runs.forEach((r) => { r.labels = on ? r.labels.filter((x) => x !== l) : [...new Set([...r.labels, l])]; }); ctl.state.pop.q = ''; const i = root.querySelector('#list-pop-q'); if (i) i.value = ''; ctl.paint(); say(`${on ? 'Removed' : 'Added'} ${l} ${on ? 'from' : 'to'} ${plural(runs.length, 'run')}`, undoTo(snap, pick, 'Puts the labels back')); } });
+      pick: (k, l) => { const on = runs.every((r) => r.labels.includes(l)); runs.forEach((r) => { r.labels = on ? r.labels.filter((x) => x !== l) : [...new Set([...r.labels, l])]; }); ctl.state.pop.q = ''; const i = root.querySelector('#list-pop-q'); if (i) i.value = ''; ctl.paint(); say(`${on ? 'Removed' : 'Added'} ${l} ${on ? 'from' : 'to'} ${plural(runs.length, 'task')}`, undoTo(snap, pick, 'Puts the labels back')); } });
   }
   const userGroups = () => [...data.userGroups, ...data.groups.filter((g) => g.kind === 'user').map((g) => ({ id: g.id, title: g.title }))];
   function openGroups(rows, anchor) {
@@ -203,7 +206,7 @@
     runs.forEach((r) => { r.group = ug.id; r.adhoc = true; });
     recent = [ug.id, ...recent.filter((x) => x !== ug.id)].slice(0, 8);
     ctl.closePicker(); ctl.clear(); ctl.openGroup(`group:${ug.id}`); ctl.paint(); ctl.landOn(`run:${runs[0].id}`);
-    say(`Added to ${ug.title} · ${runs.length === 1 ? runs[0].title : plural(runs.length, 'run')}`, undoTo(snap, pick, 'Puts them back where they were'));
+    say(`Added to ${ug.title} · ${runs.length === 1 ? runs[0].title : plural(runs.length, 'task')}`, undoTo(snap, pick, 'Puts them back where they were'));
   }
   function openThing(row) {
     const x = row._x;
@@ -212,19 +215,20 @@
   }
 
   ctl = R.listController({ root, spec: {
-    noun: 'runs', label: 'Selected runs',
+    noun: 'tasks', label: 'Selected tasks',
     tool: (v) => { if (v === 'reset') { view = { ...FRESH }; store.set(view); say('View reset'); } },
-    view: () => ({ state: listCase === 'loading' ? (ctl?.state.waited ? 'loading' : 'waiting') : ['offline', 'failed'].includes(listCase) ? listCase : 'ready', parts: parts(), tools: [{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick runs to act on several at once' }, R.resetViewTool({ changed: !(view.show === FRESH.show && view.from === FRESH.from && !view.day && !view.person && view.by === FRESH.by && !view.labels.length), to: 'all tasks, from all projects, by date' }), { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
-      sections: sections(), empty: listCase === 'empty' ? { text: 'No runs yet.', action: 'Start a run' } : { text: EMPTY[view.show] || 'Nothing here with these words.' } }),
+    view: () => ({ state: listCase === 'loading' ? (ctl?.state.waited ? 'loading' : 'waiting') : ['offline', 'failed'].includes(listCase) ? listCase : 'ready', parts: parts(), tools: [{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick tasks to act on several at once' }, R.resetViewTool({ changed: !(view.show === FRESH.show && view.from === FRESH.from && !view.day && !view.range && !view.person && view.by === FRESH.by && !view.labels.length), to: 'all tasks, from all projects, by date' }), { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
+      sections: sections(), empty: listCase === 'empty' ? { text: 'No tasks yet.', action: 'Start a task' } : { text: view.from !== 'all' || view.day || view.range || view.person || view.labels.length ? 'No tasks in this view.' : EMPTY[view.show] || 'No tasks yet.', action: 'Show all tasks' } }),
     can: () => ['menu', 'fold', 'stop', 'archive', ...(has('advanced') ? ['group', 'delete'] : [])],
     bulk: bulkActions, act, open: openThing,
     openRound: (row, n2) => { const rd = row._x.r.rounds.list.find((x) => x.n === n2); window.RailShell.openRun(`run/${rd.case}`, `${row._x.r.title} · Round ${n2}`); },
     word: (id, v) => {
       if (id === 'labels') { if (!v) { view.labels = []; return false; } view.labels = view.labels.includes(v) ? view.labels.filter((l) => l !== v) : [...view.labels, v]; store.set(view); return view.labels.length > 0; }
+      if (id === 'range') { if (!v) { view = { ...view, range: null }; store.set(view); } return false; }
       view = { ...view, [id]: v }; store.set(view); return false;
     },
     say, active: () => !root.closest('[hidden]') && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #app .nav-fly'),
-    retry: () => setCase('full'), emptyAct: () => document.getElementById('topnav-new')?.click(),
+    retry: () => setCase('full'), emptyAct: () => { if (listCase === 'empty') { document.getElementById('topnav-new')?.click(); return; } view = { ...FRESH }; store.set(view); ctl.clear(); ctl.paint(); },
   } });
 
   function setCase(c) {
@@ -244,8 +248,8 @@
     focus: () => ctl.focusRow(),
     // from the search: the runs with this label
     label: (l) => { view = { ...view, labels: [l], show: 'all', from: 'all', day: '', person: '' }; store.set(view); ctl.clear(); ctl.paint(); },
-    // from another page: opens Tasks narrowed; the sentence says it and you can widen it there. project: a project's name, day: an id of M.DAYS (today, yesterday, week, month, older, upcoming), show: a SHOWS id
-    filter: ({ project = 'all', day = '', show = 'all' } = {}) => { view = { ...FRESH, by: view.by, from: project, day, show: showOf(show) ? show : 'all' }; store.set(view); ctl.clear(); ctl.paint(); window.RailShell?.go('runs'); },
+    // from another page: opens Tasks narrowed; the sentence says it and you can widen it there. project: a project's name, day: an id of M.DAYS (today, yesterday, week, month, older, upcoming), show: a SHOWS id, range: { from, to, label } as month*100+day
+    filter: ({ project = 'all', day = '', show = 'all', range = null } = {}) => { view = { ...FRESH, by: view.by, from: project, day, range, show: showOf(show) ? show : 'all' }; store.set(view); ctl.clear(); ctl.paint(); window.RailShell?.go('runs'); },
   };
   ctl.paint();
 })();

@@ -6,6 +6,10 @@ import { attrs, esc } from './html.mjs';
 import { icon } from './icons.mjs';
 import { button } from './button.mjs';
 import { checkbox } from './checkbox.mjs';
+import { tooltip } from './field.mjs';
+
+// small.disabled-why: the end of the order says why it cannot go further
+const moveBtn = (x, d, ic, off, why, move) => { const b = button({ label: `Move ${x.text} ${d}`, kind: 'quiet', iconOnly: true, title: off ? false : undefined, icon: ic, attrs: { disabled: off || null, ...move(x.id, d) } }); return off ? tooltip({ text: why, off: true, html: b }) : b; };
 
 /**
  * SliderPick: a number in its range; the value in words above, Worca's pick as a tick on the track.
@@ -33,7 +37,7 @@ export function sliderPick({ id, label, min, max, value, pick, words = (n) => St
  * @param {(id:string, dir:'up'|'down')=>object} o.move  the attrs of a row's Up and Down
  */
 export function rankList({ label, items, move }) {
-  return `<ol class="q-rank" aria-label="${esc(label)}">${items.map((x, i) => `<li class="q-rank-r"><span class="q-rank-n">${i + 1}</span><span class="q-rank-t">${esc(x.text)}</span><span class="q-rank-h" aria-hidden="true">${icon('updown', 14)}</span><span class="q-rank-a">${button({ label: `Move ${x.text} up`, kind: 'quiet', iconOnly: true, icon: icon('up', 12), attrs: { disabled: i === 0 || null, ...move(x.id, 'up') } })}${button({ label: `Move ${x.text} down`, kind: 'quiet', iconOnly: true, icon: `<span style="display:inline-flex;transform:rotate(180deg)">${icon('up', 12)}</span>`, attrs: { disabled: i === items.length - 1 || null, ...move(x.id, 'down') } })}</span></li>`).join('')}</ol>`;
+  return `<ol class="q-rank" aria-label="${esc(label)}">${items.map((x, i) => `<li class="q-rank-r"><span class="q-rank-n">${i + 1}</span><span class="q-rank-t">${esc(x.text)}</span><span class="q-rank-h" aria-hidden="true">${icon('updown', 14)}</span><span class="q-rank-a">${moveBtn(x, 'up', icon('up', 12), i === 0, 'It is already first', move)}${moveBtn(x, 'down', `<span style="display:inline-flex;transform:rotate(180deg)">${icon('up', 12)}</span>`, i === items.length - 1, 'It is already last', move)}</span></li>`).join('')}</ol>`;
 }
 
 /**

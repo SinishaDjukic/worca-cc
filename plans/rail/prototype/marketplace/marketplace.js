@@ -10,18 +10,21 @@
   const data = {
     markets: [{ id: 'official', name: 'Worca CC Official', url: 'github.com/SinishaDjukic/worca-cc', branch: 'dev', sha: '42eb305', synced: 'just now' }],
     plugins: [
-      { id: 'github-source', name: 'GitHub Issues', brand: 'brand-github', ver: '0.2.0', kind: 'Task sources', market: 'official', what: 'Pull tasks from GitHub Issues; close them when the PR merges.', adds: ['A task source: GitHub Issues'], asks: ['A GitHub token'], installed: false, why: 'Your projects live on GitHub' },
-      { id: 'jira-source', name: 'Jira', brand: 'brand-jira', ver: '0.1.0', kind: 'Task sources', market: 'official', what: 'Pull tasks from Jira issues; write the result back to the ticket.', adds: ['A task source: Jira'], asks: ['A Jira API token', 'Your Jira site'], installed: true, update: '0.2.0' },
-      { id: 'slack-chat', name: 'Slack', brand: 'brand-slack', ver: '0.2.0', kind: 'Chat channels', market: 'official', what: 'Talk to Worca from Slack: notices, and /status, /pause, /approve.', adds: ['A chat channel: Slack', 'Keeps a small worker running that listens for commands'], asks: ['A Slack bot token', 'A Slack app token'], installed: false, why: 'You step away most evenings: answer from your phone' },
-      { id: 'telegram-chat', name: 'Telegram', brand: 'brand-telegram', ver: '0.1.0', kind: 'Chat channels', market: 'official', what: 'Notices and answers from Telegram.', adds: ['A chat channel: Telegram'], asks: ['A Telegram bot token'], installed: true },
-      { id: 'cloudflare-mcp', name: 'Cloudflare', brand: 'brand-cloudflare', ver: '0.1.0', kind: 'MCP servers', market: 'official', what: 'The whole Cloudflare API and its docs, for your tasks.', adds: ['2 MCP servers'], asks: ['A Cloudflare API token'], installed: false },
-      { id: 'notion-mcp', name: 'Notion', brand: 'brand-notion', ver: '0.1.0', kind: 'MCP servers', market: 'official', what: 'Search, read and edit Notion pages and databases.', adds: ['An MCP server: Notion'], asks: ['A Notion integration token'], installed: true },
-      { id: 'azure-source', name: 'Azure Boards', ver: '0.1.0', kind: 'Task sources', market: 'official', what: 'Pull tasks from Azure Boards work items.', adds: ['A task source: Azure Boards'], asks: ['An Azure DevOps token'], installed: true },
-      { id: 'discord-chat', name: 'Discord', ver: '0.1.0', kind: 'Chat channels', market: 'official', what: 'Notices and answers from Discord.', adds: ['A chat channel: Discord'], asks: ['A Discord bot token'], installed: true },
-      { id: 'teams-chat', name: 'Teams', ver: '0.1.0', kind: 'Chat channels', market: 'official', what: 'Notices and answers from Microsoft Teams.', adds: ['A chat channel: Teams'], asks: ['A Teams bot token'], installed: true },
-      { id: 'sentry-mcp', name: 'Sentry', ver: '0.1.0', kind: 'MCP servers', market: 'official', what: 'Read issues and traces from Sentry, for your tasks.', adds: ['An MCP server: Sentry'], asks: ['A Sentry auth token'], installed: false },
-      { id: 'review-pack', name: 'Review pack', ver: '1.0.0', kind: 'Agents', market: 'official', what: 'A security and a performance reviewer, ready for your workflows.', adds: ['2 agents'], asks: [], installed: false },
-      { id: 'promo-video', name: 'Promo video', ver: '0.3.0', kind: 'Workflows', market: 'official', what: 'From a feature to a 30-second video: script, shots, cut.', adds: ['A workflow and 3 agents'], asks: [], installed: false },
+      { id: 'github-source', name: 'GitHub Issues', brand: 'brand-github', ver: '0.2.0', kind: 'Task sources', market: 'official', what: 'Pull tasks from GitHub Issues; close them when the PR merges.', adds: ['A task source: GitHub Issues'], asks: ['A GitHub token'], installed: false, uses: 120, why: 'Your projects live on GitHub' },
+      { id: 'jira-source', name: 'Jira', brand: 'brand-jira', ver: '0.1.0', kind: 'Task sources', market: 'official', what: 'Pull tasks from Jira issues; write the result back to the ticket.', adds: ['A task source: Jira'], asks: ['A Jira API token', 'Your Jira site'], installed: true, uses: 60, update: '0.2.0' },
+      { id: 'slack-chat', name: 'Slack', brand: 'brand-slack', ver: '0.2.0', kind: 'Chat channels', market: 'official', what: 'Talk to Worca from Slack: notices, and /status, /pause, /approve.', adds: ['A chat channel: Slack', 'Keeps a small worker running that listens for commands'], asks: ['A Slack bot token', 'A Slack app token'], installed: false, uses: 88, why: 'You step away most evenings: answer from your phone' },
+      { id: 'telegram-chat', name: 'Telegram', brand: 'brand-telegram', ver: '0.1.0', kind: 'Chat channels', market: 'official', what: 'Notices and answers from Telegram.', adds: ['A chat channel: Telegram'], asks: ['A Telegram bot token'], installed: true, uses: 21 },
+      { id: 'cloudflare-mcp', name: 'Cloudflare', brand: 'brand-cloudflare', ver: '0.1.0', kind: 'MCP servers', market: 'official', what: 'The whole Cloudflare API and its docs, for your tasks.', adds: ['2 MCP servers'], asks: ['A Cloudflare API token'], installed: false, uses: 45 },
+      { id: 'notion-mcp', name: 'Notion', brand: 'brand-notion', ver: '0.1.0', kind: 'MCP servers', market: 'official', what: 'Search, read and edit Notion pages and databases.', adds: ['An MCP server: Notion'], asks: ['A Notion integration token'], installed: true, uses: 52 },
+      { id: 'azure-source', name: 'Azure Boards', ver: '0.1.0', kind: 'Task sources', market: 'official', what: 'Pull tasks from Azure Boards work items.', adds: ['A task source: Azure Boards'], asks: ['An Azure DevOps token'], installed: true, uses: 12 },
+      { id: 'discord-chat', name: 'Discord', ver: '0.1.0', kind: 'Chat channels', market: 'official', what: 'Notices and answers from Discord.', adds: ['A chat channel: Discord'], asks: ['A Discord bot token'], installed: true, uses: 18 },
+      { id: 'teams-chat', name: 'Teams', ver: '0.1.0', kind: 'Chat channels', market: 'official', what: 'Notices and answers from Microsoft Teams.', adds: ['A chat channel: Teams'], asks: ['A Teams bot token'], installed: true, uses: 30 },
+      { id: 'sentry-mcp', name: 'Sentry', ver: '0.1.0', kind: 'MCP servers', market: 'official', what: 'Read issues and traces from Sentry, for your tasks.', adds: ['An MCP server: Sentry'], asks: ['A Sentry auth token'], installed: false, uses: 70 },
+      { id: 'review-pack', name: 'Review pack', ver: '1.0.0', kind: 'Agents', market: 'official', what: 'A security and a performance reviewer, ready for your workflows.', adds: ['2 agents'], asks: [], installed: false, uses: 34,
+        gives: { agent: [{ id: 'sec-review', title: 'Security review', type: 'verifier', ins: 'the change', outs: 'findings when it blocks', model: 'Opus 5.5', effort: 'high', asks: false, fan: false, says: 'Reviews the change for security problems.' }, { id: 'perf-review', title: 'Performance review', type: 'verifier', ins: 'the change', outs: 'findings when it blocks', model: 'Sonnet 5.5', effort: 'high', asks: false, fan: false, says: 'Reviews the change for what would run slowly.' }] } },
+      { id: 'promo-video', name: 'Promo video', ver: '0.3.0', kind: 'Workflows', market: 'official', what: 'From a feature to a 30-second video: script, shots, cut.', adds: ['A workflow and 3 agents'], asks: [], installed: false, uses: 7,
+        gives: { agent: [{ id: 'script-writer', title: 'Script writer', type: 'producer', ins: 'the feature', outs: 'the script', model: 'Opus 5.5', effort: 'high', asks: true, fan: false, says: 'Writes the 30-second script.' }, { id: 'shot-maker', title: 'Shot maker', type: 'producer', ins: 'the script', outs: 'the shots', model: 'Sonnet 5.5', effort: 'medium', asks: false, fan: false, says: 'Makes each shot.' }, { id: 'video-cutter', title: 'Video cutter', type: 'producer', ins: 'the shots', outs: 'the video', model: 'Haiku 5.5', effort: 'medium', asks: false, fan: false, says: 'Cuts the shots into the video.' }],
+          workflow: [{ id: 'promo-video', title: 'Promo video', what: 'From a feature to a 30-second video: script, shots, cut.', steps: [['Script', 'script-writer', 'Opus 5.5', 'high', 4, 0.30], ['Shots', 'shot-maker', 'Sonnet 5.5', 'medium', 12, 0.60], ['Cut', 'video-cutter', 'Haiku 5.5', 'medium', 3, 0.05]] }] } },
     ],
   };
   const view = { sort: 'used' };
@@ -73,17 +76,17 @@
   }
   function wayHtml(key) {
     const w = wayOf(key); if (!w) return homeHtml();
-    const sort = view.sort || 'used', list = w.list.sort((a, b) => (sort === 'az' ? nameOf(a).localeCompare(nameOf(b)) : sort === 'new' ? b.ver.localeCompare(a.ver, undefined, { numeric: true }) : (b.installed ? 1 : 0) - (a.installed ? 1 : 0))), n = shown[key] || 6;
+    const sort = view.sort || 'used', list = w.list.sort((a, b) => (sort === 'az' ? nameOf(a).localeCompare(nameOf(b)) : sort === 'new' ? b.ver.localeCompare(a.ver, undefined, { numeric: true }) : (b.uses || 0) - (a.uses || 0))), n = shown[key] || 6;
     const ups = key === 'updates' && list.length ? R.button({ label: list.length === 1 ? `Update ${nameOf(list[0])}` : `Update all ${list.length}`, attrs: { 'data-mk-update-all': '' } }) : '';
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ title: w.title, facts: esc(`${list.length} ${list.length === 1 ? 'plugin' : 'plugins'} · ${w.meta}`), ...(ups ? { mark: R.kindMark({ kind: 'plugin', icon: 'refresh', tone: 'act' }), word: `${list.length} to update`, why: 'Each asks for nothing new', action: ups } : {}) })}
-      <div class="convo-head">Showing ${R.sentencePicker({ id: 'mk-sort', text: SORTS[sort], items: Object.entries(SORTS).map(([id, text]) => ({ id, text, checked: id === sort })), open: menu === 'mk-sort', chevron: R.icon('chevron', 10) })} first</div>
+      ${list.length > 1 ? `<div class="convo-head">Showing ${R.sentencePicker({ id: 'mk-sort', text: SORTS[sort], items: Object.entries(SORTS).map(([id, text]) => ({ id, text, checked: id === sort })), open: menu === 'mk-sort', chevron: R.icon('chevron', 10) })} first</div>` : ''}
       ${list.length ? `<div class="pg-grid">${list.slice(0, n).map((p) => cardOf(p, w.why)).join('')}</div>${list.length > n ? `<div style="margin:12px 0 0">${R.button({ label: `Show ${list.length - n} more`, kind: 'quiet', attrs: { 'data-mk-more': key } })}</div>` : ''}` : R.emptyState({ title: key === 'updates' ? 'Everything is up to date.' : 'Nothing here yet.' })}
     </div></div></div>`;
   }
   function homeHtml() {
     const m = data.markets, ups = data.plugins.filter((p) => p.update), forYou = data.plugins.filter((p) => p.why && !p.installed), rest = data.plugins.filter((p) => !forYou.includes(p));   // each plugin once
     const shelf = (title, meta, list, cls = '') => (list.length ? `<section class="pg-shelf ${cls}"><h2 class="pg-shelf-h">${esc(title)} <span class="n">${list.length}</span></h2>${meta ? `<p class="pg-shelf-m">${esc(meta)}</p>` : ''}<div class="pg-grid">${list.map((p) => cardOf(p, cls === 'pg-for')).join('')}</div></section>` : '');
-    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ title: 'Marketplace', facts: `${data.plugins.length} plugins · ${data.plugins.filter((p) => p.installed).length} installed · from ${esc(m.map((x) => x.name).join(', '))}`,
+    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ title: 'Marketplace', facts: `${data.plugins.length} plugins · ${data.plugins.filter((p) => p.installed).length} installed · from ${m.length === 1 ? esc(m[0].name) : `${m.length} sources`}`,
       ...(ups.length ? { mark: R.kindMark({ kind: 'plugin', tone: 'act' }), word: `${ups.length} ${ups.length === 1 ? 'update' : 'updates'}`, why: `${ups.map((p) => `${nameOf(p)} ${p.update}`).join(', ')} asks for nothing new`, action: R.button({ label: ups.length === 1 ? `Update ${nameOf(ups[0])}` : 'Update all', attrs: { 'data-mk-update-all': '' } }) } : {}) })}
       ${shelf('For you', 'Worca suggests these from how you work; each says why.', forYou, 'pg-for')}
       ${SHELVES.map(([t, meta, kinds]) => shelf(t, meta, rest.filter((p) => kinds.includes(p.kind)))).join('')}
@@ -96,14 +99,16 @@
     const p = data.plugins.find((x) => x.id === current);
     page.innerHTML = p ? pageHtml(p) : current.startsWith('~') ? wayHtml(current.slice(1)) : homeHtml();
     if (p) window.RailConversation?.dock(document.getElementById('mk-dock'), { kind: 'plugin', title: p.id, chat: '' });
+    if (p && form && !form.focused) { form.focused = true; page.querySelector('[data-confirm="yes"]')?.focus(); }   // Enter takes it, Esc leaves it
   }
+  const setOn = (p, on) => { p.installed = on; if (!on) delete p.update; window.RailPlaces.workflows?.plugin(p.id, nameOf(p), p.gives, on); };   // one truth: Workflows' lists and counts follow
   function wire(b, pg) {
     bar = b; page = pg;
     const way = (key, title, mark, n) => ({ key: `way:${key}`, _way: key, title, mark, end: String(n), current: current === `~${key}`, tip: `${title} · ${n}` });
     ctl = R.listController({ root: bar, spec: { noun: 'plugins', label: 'Selected plugins', view: () => ({ state: 'ready', parts: [],
       sections: [{ id: 'yours', title: 'Yours', noCount: true, rows: [way('updates', 'Updates', R.kindMark({ kind: 'plugin', icon: 'refresh', tone: data.plugins.some((p) => p.update) ? 'act' : 'idle' }), data.plugins.filter((p) => p.update).length), way('installed', 'Installed', R.kindMark({ kind: 'plugin', icon: 'check' }), data.plugins.filter((p) => p.installed).length)] },
         { id: 'browse', title: 'Browse', noCount: true, rows: [way('for-you', 'For you', R.kindMark({ kind: 'plugin', icon: 'sparkle' }), data.plugins.filter((p) => p.why && !p.installed).length), ...SHELVES.map(([t, , kinds], n) => way(`shelf-${n}`, t, R.kindMark({ kind: 'plugin', icon: SHELF_ICON[n] }), data.plugins.filter((p) => kinds.includes(p.kind)).length)), way('all', 'All plugins', R.kindMark({ kind: 'plugin', icon: 'list' }), data.plugins.length)] },
-        { id: 'sources', title: 'Sources', noCount: true, rows: data.markets.map((m) => way(`src-${m.id}`, m.name, R.kindMark({ kind: 'plugin', icon: 'brand-github' }), data.plugins.filter((p) => p.market === m.id).length)) }] }),
+        { id: 'sources', title: 'Sources', noCount: true, rows: data.markets.map((m) => way(`src-${m.id}`, m.name, R.kindMark({ kind: 'plugin', icon: /^[.~/]/.test(m.url) ? 'folder' : 'brand-github' }), data.plugins.filter((p) => p.market === m.id).length)) }] }),
       can: () => [], bulk: () => [], act: () => {}, open: (r) => window.RailShell.go(`marketplace/~${r._way}`), word: () => false, say, active: () => /^#marketplace/.test(location.hash) } });
     page.addEventListener('click', (e) => {
       if (!here()) return;   /* another place's page is showing */
@@ -119,17 +124,22 @@
       if (!p || !page.querySelector('#mk-dock')) return;
       if (on('[data-mk-step]')) { step(p); return; }
       if (on('[data-mk-setup]')) { window.RailShell.go('settings/plugins'); return; }
-      if ((hit = on('[data-confirm]'))) { const yes = hit.dataset.confirm === 'yes', was = form?.k; form = null; if (yes && was === 'install') { p.installed = true; say(`Installed ${p.id}${p.asks.length ? ': set it up in Settings' : ''}`); } if (yes && was === 'remove') { p.installed = false; delete p.update; say(`Removed ${p.id}`); } draw(); return; }
+      if ((hit = on('[data-confirm]'))) { const yes = hit.dataset.confirm === 'yes', was = form?.k; form = null; if (yes && was === 'install') { setOn(p, true); say(`Installed ${p.id}${p.asks.length ? ': set it up in Settings' : ''}`); } if (yes && was === 'remove') { setOn(p, false); say(`Removed ${p.id}`); } draw(); return; }
       if ((hit = on('[data-menu-pick]'))) { const [, v] = hit.dataset.menuPick.split('|'); menu = ''; if (v === 'remove') form = { k: 'remove', id: p.id }; else say(`Would open ${data.markets[0].url} at ${data.markets[0].sha} on GitHub`); draw(); return; }
       if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
     });
     R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .rc-pop, #route-place .spick', back: () => null, close: () => { menu = ''; }, paint: draw });
+    document.addEventListener('keydown', (e) => { if (e.key !== 'Escape' || !here() || menu || !form) return; form = null; draw(); }, true);   // capture: an open menu takes Esc first
+    page.addEventListener('keydown', (e) => { if (!here() || !e.target.matches('[data-mk-add]')) return;
+      if (e.key === 'Enter') { e.preventDefault(); page.querySelector('[data-mk-addgo]')?.click(); }
+      if (e.key === 'Escape' && (e.target.value || addErr)) { addVal = ''; addErr = ''; draw(); page.querySelector('[data-mk-add]')?.focus(); } });
   }
   window.RailPlaces = window.RailPlaces || {};
   const byName = (name) => data.plugins.find((p) => nameOf(p) === name);
-  window.RailPlaces.marketplace = { has: (a) => a.startsWith('~') || data.plugins.some((p) => p.id === a),
+  const isWay = (k) => (k.startsWith('shelf-') ? !!SHELVES[+k.slice(6)] : k.startsWith('src-') ? data.markets.some((m) => m.id === k.slice(4)) : ['updates', 'installed', 'for-you', 'all'].includes(k));
+  window.RailPlaces.marketplace = { has: (a) => (a.startsWith('~') ? isWay(a.slice(1)) : data.plugins.some((p) => p.id === a)),
     // the one truth of what is installed: Settings › Plugins and Workflows read it (undefined: not a plugin of this list)
-    isInstalled: (name) => byName(name)?.installed, setInstalled: (name, on) => { const p = byName(name); if (p) { p.installed = on; if (!on) delete p.update; } },
+    isInstalled: (name) => byName(name)?.installed, setInstalled: (name, on) => { const p = byName(name); if (p) setOn(p, on); },
     hasUpdate: (name) => !!byName(name)?.update, update: (name) => { const p = byName(name); if (p?.update) { p.ver = p.update; delete p.update; } },
     shelfCount: (n) => data.plugins.filter((p) => SHELVES[n][2].includes(p.kind)).length,
     search: (q) => data.plugins.filter((p) => `${nameOf(p)} ${p.id} ${p.what}`.toLowerCase().includes(q)).map((p) => ({ label: nameOf(p), where: `${p.kind.replace(/s$/, '')}${p.installed ? ' · installed' : ''}`, hash: `marketplace/${p.id}` })), sample: 'slack-chat', show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) menu = ''; if (form && form.id !== arg) form = null; current = arg || ''; draw(); } };

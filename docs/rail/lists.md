@@ -11,6 +11,7 @@
 | `list.sections-start-folded` | In a bar's list every period but Today starts folded; Needs you never folds, and a period holding the row you are on starts open; a period you open or fold stays so for that list | The bar shows today's work first; the rest is one click away | design-system-components |
 | `list.ways-in` | A bar whose items can grow without end (plugins, a catalogue) lists no items: only ways in, each with its count (Updates 12, Installed 40, a shelf, a source); each opens on the page, sorted, six at a time with Show N more. Lists you work through one by one (chats, tasks, schedules) stay lists | A bar stays the same size at ten items or a thousand | by hand |
 | `list.row-one-target` | The whole row opens one target; a fact in it is text | No second links in a row | by hand |
+| `list.row-more` | A bar row's ⋯ shows on hover and on focus, stays in the tab order with a visible focus, and is simply there on a touch screen | Hover is one way in, never the only one | by hand |
 | `list.select` | Selecting works one way in every list that has it | One habit | design-system-logic |
 | `list.one-code` | A list calls the library for its sentence, selecting, keys and states; rail-gate sees its rows' markup only, the rest is by review | A list cannot drift | rail-gate |
 | `list.state-source` | A row's state and section come from runState and sectionOf on its real case | A list can never call Paused or Stopped Ready | design-system-logic |

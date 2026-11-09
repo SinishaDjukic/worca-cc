@@ -45,6 +45,12 @@ export function watchMenus(doc) {
   if (seen.has(doc)) return;
   seen.add(doc);
   const win = doc.defaultView;
+  // comp.menu-off: a disabled item never acts, in any menu; it stays open and the page is told why
+  win.addEventListener('click', (e) => {
+    const off = e.target.closest?.('.menu-item[aria-disabled="true"]'); if (!off) return;
+    e.stopImmediatePropagation(); e.preventDefault();
+    doc.dispatchEvent(new win.CustomEvent('rail:disabled', { detail: { why: off.title } }));
+  }, true);
   const place = () => {
     for (const m of doc.querySelectorAll('.menu:is([role="menu"], [role="dialog"]):not([data-placed])')) {
       m.dataset.placed = '';

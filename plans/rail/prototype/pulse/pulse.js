@@ -413,7 +413,7 @@ function notifications() {
   const channels = desk
     + R.settingsRow({ name: 'Badge', changed: changedFrom('badge', 'Badge', (v) => BADGE.find((b) => b.id === v).text), sentence: `The tab title ${sp('badge', BADGE.find((b) => b.id === s.badge).text, BADGE.map((b) => ({ ...b, checked: b.id === s.badge })), 'What the count in the tab title counts')}` })
     + R.settingsRow({ name: 'Sound', changed: changedFrom('sound', 'Sound', (v) => R.SOUND_CHOICES.find((x) => x.id === v).text), sentence: `${sp('sound', R.SOUND_CHOICES.find((x) => x.id === s.sound).text, R.SOUND_CHOICES.map((x) => ({ ...x, checked: x.id === s.sound })), 'What makes a sound as it arrives. Never during away hours; a burst plays once')}` })
-    + R.settingsRow({ name: 'Breathing', changed: changedFrom('attnFor', 'Breathing', (v) => ATTN_FOR.find((x) => x.id === v).text), sentence: `What needs you keeps breathing ${sp('attnFor', ATTN_FOR.find((x) => x.id === s.attnFor).text, ATTN_FOR.map((x) => ({ ...x, checked: x.id === s.attnFor })), 'How long it breathes once you open it, before it counts as seen')} once you open it` })
+    + R.settingsRow({ name: 'Breathing', changed: changedFrom('attnFor', 'Breathing', (v) => ATTN_FOR.find((x) => x.id === v).text), sentence: `What needs you keeps breathing ${sp('attnFor', ATTN_FOR.find((x) => x.id === s.attnFor).text, ATTN_FOR.map((x) => ({ ...x, checked: x.id === s.attnFor })), 'How long it breathes once you open it, before it counts as seen')}${s.attnFor === 'act' ? '' : ' once you open it'}` })
     + R.settingsRow({ name: 'Chat channels', sentence: esc(M.chatWords(SM.workingChannels(ui.sv))), end: R.shows('advanced', R.prefs.mode()) ? quiet('Channels', { 'data-sset': 'ask', title: 'Their switches and allow-lists are in Settings › Chat' }) : '' });
   const groups = groupsShown().map((g) => {
     const gs = s.groups[g.id], g0 = startOf().groups[g.id], open = ui.custom === g.id, nEx = Object.keys(gs.ex).length;
@@ -531,7 +531,8 @@ function searchHits() {
   const named = [...own, ...places, ...M.find(q).slice(0, 14)];
   // a setting found only by the words of its sentence counts when nothing is found by name
   const rest = [...named, ...(named.length || setByName.length ? setByName : set)].sort((a, b) => score(a) - score(b));
-  return [...page, ...rest].filter((e) => { const k = `${e.sset ? 'set|' : ''}${plain(e.label)}`; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 14);
+  const look = q.length > 2 && /\b(appearance|theme|dark|light|system|background)/.test(q) ? [{ label: 'Appearance', where: 'Theme and background · your menu', area: 'Settings', look: true }] : [];   // lives in the profile menu, not in Settings
+  return [...page, ...look, ...rest].filter((e) => { const k = `${e.sset ? 'set|' : ''}${plain(e.label)}`; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 14);
 }
 // One search, everything it finds under the area it belongs to.
 const AREAS = [['On this page', 'eye'], ['Places', 'home'], ['Marketplace', 'nav-marketplace'], ['Projects', 'nav-projects'], ['Workflows', 'nav-workflows'], ['Requirements', 'nav-requirements'], ['Chats', 'kind-chat'], ['Tasks', 'kind-task'], ['Schedules', 'kind-schedule'], ['Settings', 'set-general'], ['Other', 'list']];
@@ -551,7 +552,7 @@ function searchResults() {
     if (area === 'Places') return R.icon(`nav-${e.go || e.id || ''}`, 14) || R.icon('home', 14);
     return R.icon('list', 14);
   };
-  const line = (e, i) => ({ id: 'srch|' + i, text: e.label, mark: markOf(e, areaOf(e)), hint: [e.sset ? e.where.replace(/^Settings › /, '') : e.where, lockNote(e)].filter(Boolean).join(' · ') });
+  const line = (e, i) => ({ id: 'srch|' + i, text: e.label, mark: markOf(e, areaOf(e)), hint: [e.kind === 'place' ? '' : e.sset ? e.where.replace(/^Settings › /, '') : e.where, lockNote(e)].filter(Boolean).join(' · ') });
   return R.searchResults(found.map((e, i) => ({ ...line(e, i), text: e.label, where: line(e, i).hint, area: areaOf(e) })), 'Nothing matches', { areas: AREAS.map(([a, ic]) => [a, R.icon(ic, 13)]), tail: [{ id: 'srch|ask', text: `Ask Chat: ${askWords()}`, hint: 'Chat' }] });
 }
 const askWords = () => ui.q.trim().replace(/^label:\s*/i, '');
@@ -596,6 +597,7 @@ function pickResult(v) {
     render(); return;
   }
   const e = found[+v]; if (!e) return;
+  if (e.look) { closeOverlays(); ui.acct = true; ui.sub = 'look'; opening = 'acct'; render(); return; }
   if (e.el) { closeOverlays(); render(); R.land(e.el.closest('.pg-card, .list-row, .set-row, .rc, .place-head, section') || e.el); return; }   // on this page: it lands where it is
   if (e.hash) { closeOverlays(); if (e.chat) SHELL.openTask(e.hash.split('/')[1], e.chat); else SHELL.go(e.hash); render(); return; }
   const locked = locksOf(e).length;
@@ -658,7 +660,7 @@ function renderInShell() {
   if (sideNow) document.getElementById('route-settings').innerHTML = `<div class="pz-page">${settingsPage()}</div>`;
   const res = document.querySelector('[data-search-res]'); if (res) res.innerHTML = searchResults();
   document.getElementById('app').innerHTML = `${popover()}${newRun()}${acctMenu()}${sessionDialog()}`;
-  const t = toastEl(); t.innerHTML = ui.toast ? esc(ui.toast) + (undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
+  const t = toastEl(); t.innerHTML = ui.toast ? R.toastText(ui.toast, undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
   const pb = document.querySelector('.panel-body'); if (pb && !opening) pb.scrollTop = keepP;
   fitMenus();
@@ -718,7 +720,7 @@ function paintAlone() {
   const pageEl = document.querySelector('main.main'); const keepMain = pageEl?.scrollTop || 0;   // the page scrolls in main in the one Worca
   const keepP = document.querySelector('.panel-body')?.scrollTop || 0;
   document.getElementById('app').innerHTML = `<div class="pz-app">${sidebar()}<div class="pz-main">${topbar()}<main class="pz-page">${unlockStrip() || settingsStrip()}${ui.page === 'settings' ? settingsPage() : runsPage()}</main></div>${popover()}${newRun()}${acctMenu()}</div>`;
-  const t = toastEl(); t.innerHTML = ui.toast ? esc(ui.toast) + (undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
+  const t = toastEl(); t.innerHTML = ui.toast ? R.toastText(ui.toast, undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
   const pb = document.querySelector('.panel-body'); if (pb && !opening) pb.scrollTop = keepP;
   fitMenus();
@@ -751,7 +753,7 @@ function pick(id, v) {
     else if (v === 'allread') { const n = unread().length; const was = ui.read; ui.read = ui.read.concat(unread().map((u) => u.id)); toast(n ? `Marked ${plural(n, 'update')} read` : 'Nothing is unread', n ? { tip: 'Marks them unread again', run: () => { ui.read = was; toast('Unread again'); } } : null); }
     else { const read = live().filter((u) => !isUnread(u)), waits = read.filter((u) => u.sev === 'needs' && u.open && !u.resolved && !isFixed(u)), ids = read.filter((u) => !waits.includes(u)).map((u) => u.id); ui.cleared = ui.cleared.concat(ids); ui.pick = R.selectPrune(ui.pick, []); toast(ids.length ? `Cleared ${plural(ids.length, 'read update')}${waits.length ? `; ${waits.length} still ${waits.length === 1 ? 'waits' : 'wait'} for you` : ''}` : waits.length ? `Nothing to clear: ${waits.length} read still ${waits.length === 1 ? 'waits' : 'wait'} for you` : 'Nothing read to clear', ids.length ? undoClear(ids) : null); }
   }
-  else if (id === 'attnFor') { s.attnFor = v; window.RailAttnFor = v; toast(`What needs you breathes ${ATTN_FOR.find((x) => x.id === v).text} once you open it`); }
+  else if (id === 'attnFor') { s.attnFor = v; window.RailAttnFor = v; toast(`What needs you breathes ${ATTN_FOR.find((x) => x.id === v).text}${v === 'act' ? '' : ' once you open it'}`); }
   else if (id === 'badge') { if (s.badge !== v) toast(`Badge: the tab title ${M.BADGE.find((b) => b.id === v).text}`); s.badge = v; }
   else if (id === 'sound') { if (s.sound !== v) toast(`Sound: ${R.SOUND_CHOICES.find((x) => x.id === v).text}`); s.sound = v; }
   else if (id === 'mine') { if (s.mine !== v) toast(`Manual starts: New run and Resume near a limit ${MINE.find((m) => m.id === v).text}`); s.mine = v; }
@@ -854,7 +856,7 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-confirm]')) && ui.unlock?.strip) { if (el.dataset.confirm === 'yes') R.prefs.setMode(ui.unlock.strip); else { ui.unlock = null; render(); } return; }
   if ((el = tg('[data-confirm]')) && ui.sv.__confirm) { const say = SV.confirm(ui.sv, el.dataset.confirm === 'yes'); if (say) toast(say); render(); return; }
   if ((el = tg('[data-confirm]'))) { if (el.dataset.confirm === 'yes') { const d = ui.s.desktop; ui.s = freshSettings(C()); ui.s.desktop = d; ui.custom = ''; toast('Every group is back to its defaults'); } ui.confirm = ''; render(); return; }
-  if ((el = tg('[data-test]'))) { toast('Test notification sent'); render(); return; }
+  if ((el = tg('[data-test]'))) { toast('Would send a test notification'); render(); return; }
   if ((el = tg('[data-how]'))) { toast(el.title); render(); return; }
 });
 const isUpdate = (id) => C().updates.some((u) => u.id === id);

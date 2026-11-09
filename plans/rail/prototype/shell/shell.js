@@ -50,8 +50,9 @@
   }
   // What a place needs: the sidebar's own data-min-level and data-flag, as the app's sidebar.html has them.
   const needsOf = (view0) => { const view = view0 === 'schedule' ? 'schedules' : view0; const b = document.querySelector(`#side-rail nav.nav [data-nav="${view}"]`); return b ? { min: b.dataset.minLevel || '', flag: b.dataset.flag || '' } : {}; };
-  const lockOf = (view) => { if (view === 'schedule') return null;   /* a schedule you made opens in any mode; the Schedules list is Advanced */
-    const n = needsOf(view); return !R.shows(n.min) ? { min: n.min } : n.flag && !R.prefs.flag(n.flag) ? { flag: n.flag } : null; };
+  const lockOf = (view) => { const n = needsOf(view); return !R.shows(n.min) ? { min: n.min } : n.flag && !R.prefs.flag(n.flag) ? { flag: n.flag } : null; };
+  // A page inside a place may need more than the place (nav.locked); a schedule made in a chat opens in any mode, with its chat.
+  const lockHere = (view, arg) => (view === 'schedule' && window.RailSchedules?.find(arg)?.chat ? null : lockOf(view) || placeMod(view)?.needs?.(arg) || null);
   // The sidebar draws again when the interface mode or a Labs flag changes; a group with no place left goes, with its head.
   function applyPrefs() {
     const nav = document.querySelector('#side-rail nav.nav');
@@ -111,7 +112,7 @@
     document.querySelector('#ask-side .ask-side-grip')?.setAttribute('aria-valuenow', askW);
   };
   function pageContext() {
-    const v = routed.view, name = document.querySelector('#main-row main .place-title, #main-row main [data-title], #card .rc-title')?.textContent?.trim() || TITLES[v] || 'this page';
+    const v = routed.view, name = [...document.querySelectorAll('#main-row main .place-title, #main-row main [data-title], #card .rc-title')].find((x) => x.getClientRects().length)?.textContent?.trim() || TITLES[v] || 'this page';   /* what shows: the task page waits hidden behind every other page */
     const SUG = {
       run: ['Why did it stop?', 'What does it need from me?', 'What did it change?'],
       projects: [`Why is ${name} behind, and is it safe to sync?`, 'What ran here this week, and what did it cost?', 'What needs me here?'],
@@ -170,7 +171,7 @@
   const quickItems = () => [...document.querySelectorAll('#side-rail nav.nav [data-nav]')].filter((b) => !b.hidden && !b.closest('[hidden]') && b.style.display !== 'none').map((b) => ({ id: `bar-go|${b.dataset.nav}`, text: b.querySelector('.nav-label, span')?.textContent.trim() || b.textContent.trim(), checked: b.dataset.nav === routed.view, hint: b.dataset.flag ? 'Labs' : undefined }));   /* nav.labs: the word follows the row */
   let barMenu = false;   // the + as a menu, where a place makes things more than one way (list.bar-model)
   let homeOpen = false, taskChat = '', lastThing = null, visited = [], taskHome = null, pinsAll = false;
-  const barOf = (view) => (placeMod(view) ? (lockOf(view) ? 'home' : 'place') : view === 'chat' ? 'chat' : view === 'runs' ? 'tasks' : view === 'run' ? (taskChat ? 'chat' : 'tasks') : view === 'schedules' || view === 'schedule' ? 'schedules' : view === 'settings' ? 'settings' : 'home');
+  const barOf = (view) => (routed.locked ? 'home' : placeMod(view) ? 'place' : view === 'chat' ? 'chat' : view === 'runs' ? 'tasks' : view === 'run' ? (taskChat ? 'chat' : 'tasks') : view === 'schedules' || view === 'schedule' ? 'schedules' : view === 'settings' ? 'settings' : 'home');
   function drawBar() {
     const side = document.getElementById('side-rail'), own = barOf(routed.view), which = homeOpen ? 'home' : own;
     side.dataset.bar = which;
@@ -232,7 +233,7 @@
   // the eye on a task's head says whether it is kept in view; set only when it changes, so the page's observer stays quiet
   function syncEye(live = inViewList.map((x) => ({ x, now: inViewNow(x) })).filter((y) => y.now)) {
     const eye = document.querySelector('[data-keep-view]'); if (!eye) return;
-    const on = String(live.some(({ now }) => now.task?.cs === eye.dataset.keepView));
+    const named = document.querySelector('#card [data-title]')?.textContent, on = String(live.some(({ now }) => now.task?.cs === eye.dataset.keepView && now.task.title === named));   // many tasks share a case: this one, by its name
     if (eye.getAttribute('aria-pressed') === on) return;
     eye.setAttribute('aria-pressed', on); eye.setAttribute('aria-label', on === 'true' ? 'Out of view' : 'Keep in view');
     eye.title = on === 'true' ? 'Out of view: its mark leaves the top bar' : 'Keep in view: its mark stays in the top bar, on every page';
@@ -240,8 +241,8 @@
   const isInView = (type, id) => inViewList.some((x) => x.type === type && x.id === id);
   // a task's own page keeps it in view by its case: the one already kept from its chat counts, never twice
   function toggleCaseInView(cs, title) {
-    const had = inViewList.find((x) => inViewNow(x)?.task?.cs === cs);
-    toggleInView(had || { type: 'task', id: `case-${cs}`, case: cs, chat: '', title: title || RM?.titles?.[cs] || 'This task' });
+    const name = title || RM?.titles?.[cs] || 'This task', had = inViewList.find((x) => { const t = inViewNow(x)?.task; return t?.cs === cs && t.title === name; });
+    toggleInView(had || { type: 'task', id: `case-${cs}-${name.replace(/:/g, ' ')}`, case: cs, chat: '', title: name });
   }
   function toggleInView(item) {
     const had = isInView(item.type, item.id);
@@ -291,14 +292,14 @@
     drawer(false);
     homeOpen = false;
     const pane = { today: document.getElementById('route-today'), chat: document.getElementById('route-chat'), schedule: document.getElementById('route-schedule'), place: document.getElementById('route-place'), run: document.getElementById('route-run'), settings: document.getElementById('route-settings'), runs: document.getElementById('route-runs') };
-    const lock = !gone && (view === 'schedule' || !!TITLES[view] && view !== 'chat') && lockOf(view);   // nav.locked: every place, by the bar's own data
+    const lock = !gone && (view === 'schedule' || !!TITLES[view] && view !== 'chat') && lockHere(view, arg);   // nav.locked: every place, by the bar's own data
     const ownPage = !!placeMod(view) || view === 'run' || view === 'settings' || view === 'runs' || view === 'chat' || view === 'schedules' || view === 'schedule';
     pane.today.hidden = ownPage && !lock; pane.run.hidden = view !== 'run'; pane.settings.hidden = view !== 'settings';
     pane.runs.hidden = view !== 'runs' || !!lock; pane.chat.hidden = view !== 'chat'; pane.schedule.hidden = !(view === 'schedule' || view === 'schedules') || !!lock; pane.place.hidden = !placeMod(view) || !!lock;
     document.body.className = view === 'run' ? 'view-run' : view === 'settings' ? 'view-settings' : view === 'runs' ? 'view-runs' : view === 'chat' ? 'view-rail-chat' : view === 'schedule' || view === 'schedules' || placeMod(view) ? 'view-rail-chat' : (T.pages[view]?.body || '');
     if (gone) { for (const p of Object.values(pane)) p.hidden = p !== pane.today; document.body.className = ''; }
     if (view !== 'run') taskChat = view === 'chat' ? taskChat : '';
-    routed = { view, locked: !!lock };
+    routed = { view, arg, locked: !!lock };
     document.getElementById('topnav-title').textContent = pageTitle(view, arg);
     window.RailPulse?.show(view === 'settings' ? 'settings' : 'page', view === 'settings' ? arg || '' : '', view);   // first: it may give the sidebar back
     markNav(view);
@@ -308,7 +309,7 @@
       scrollTo(0, 0);
     } else if (lock) {   // a deep link above the mode, or a place whose Labs feature is off: one line, and its one way on
       document.body.className = '';
-      const name = TITLES[view] || 'Schedules', need = lock.min ? lock.min[0].toUpperCase() + lock.min.slice(1) : '';
+      const name = lock.name || TITLES[view] || 'Schedules', need = lock.min ? lock.min[0].toUpperCase() + lock.min.slice(1) : '';
       pane.today.innerHTML = `<div class="rail-locked">${R.emptyState({ title: lock.min ? `${name} needs ${need}` : `${name} is in Labs`, actions: R.button({ label: lock.min ? `Switch to ${need}` : 'Turn on Labs', kind: 'quiet', attrs: { 'data-unlock': lock.min ? 'mode:' + lock.min : 'flag:' + lock.flag, 'data-to': view } }) })}</div>`;
       scrollTo(0, 0);
     } else if (!pane.today.hidden && SOON[view]) {   // nav.locked: a place not yet in Rail draws a true page, never a blank one, and the bar stays
@@ -445,6 +446,14 @@
     if ((e.metaKey || e.ctrlKey) && e.key === '\\' && innerWidth > 760) { e.preventDefault(); if (collapsed) { collapsed = false; store.set(KEY_RAIL, '0'); syncRail(); drawBar(); } else hideBar(); return; }
     if (e.target.closest?.('#ask-side .ask-side-grip') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); setAskW(askW + (e.key === 'ArrowLeft' ? 20 : -20)); return; }
   });
+  // a disabled menu item says why (comp.menu-off); on a strip's icon the strip stays, so the icon can be clicked: anywhere else on it, it opens
+  document.addEventListener('rail:disabled', (e) => { if (e.detail?.why) window.RailPulse?.say(e.detail.why); });
+  let iconRest = false;
+  document.addEventListener('pointerover', (e) => {
+    const side = document.getElementById('side-rail'), on = !!e.target.closest?.('.bar-strip-i');
+    if (on && side.classList.contains('is-strip') && !side.classList.contains('is-resting')) { iconRest = true; side.classList.add('is-resting'); }
+    else if (!on && iconRest) { iconRest = false; side.classList.remove('is-resting'); }
+  });
   // The prototype's corner: what the connection does, and the screensaver.
   let conn = 'ok';
   document.getElementById('conn')?.addEventListener('change', (e) => {
@@ -466,6 +475,7 @@
       return who === 'run' ? inRun : !inRun && !inShell;
     },
     runActive: () => !document.getElementById('route-run')?.hidden,
+    taskGone: (cs, title) => { const r = window.RailWorld.rows().find((x) => x.case === cs && x.title === title); if (r) window.RailWorld.remove(r.id); },
     pageContext: () => pageContext(),
     needs: (view) => needsOf(view),
     locked: (view) => !!lockOf(view),
@@ -528,17 +538,27 @@
   R.dismissOnOutside(document, { open: () => !!document.querySelector('#topnav .tsearch.is-open'), inside: '.tsearch, #tsearch-open', back: () => '#tsearch-open', close: () => searchFold(false), paint: () => {} });
   build();
   setAskW(askW); setBarW(barW);
-  R.watchOrbs(document); R.watchTooltips(document); R.watchMenus(document); R.watchScrollFades(document); R.watchFolds(document);
+  R.watchOrbs(document); R.watchTooltips(document); R.watchMenus(document); R.watchStrips(document); R.watchScrollFades(document); R.watchFolds(document);
   // a new person starts in Simple; the mode they pick is remembered (docs/ui-levels.md)
   try { const m = localStorage.getItem('worca-rail.mode'); R.prefs.setMode(R.MODES.includes(m) ? m : 'simple'); } catch { R.prefs.setMode('simple'); }
   applyPrefs(); drawMini();   /* the sidebar drew before the mode was read: it shows only the places this mode has */
   R.prefs.onChange(() => { try { localStorage.setItem('worca-rail.mode', R.prefs.mode()); } catch { /* remembering is a nicety */ } });
   addEventListener('resize', () => { syncRail(); });
   // A change of mode or a Labs flag: the sidebar follows, and the page if that changes whether it is locked.
-  R.prefs.onChange(() => { applyPrefs(); drawMini(); if (routed.view && (TITLES[routed.view] || routed.view === 'schedule') && !!lockOf(routed.view) !== routed.locked) route(); });
+  R.prefs.onChange(() => { applyPrefs(); drawMini(); if (routed.view && (TITLES[routed.view] || routed.view === 'schedule') && !!lockHere(routed.view, routed.arg) !== routed.locked) route(); });
   addEventListener('hashchange', route);
   document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') { e.preventDefault(); if (routed.view === 'chat') { document.querySelector('#route-chat [data-composer-t]')?.focus(); return; } askOpen = !askOpen; syncAsk(routed.view); if (askOpen) setTimeout(() => document.querySelector('#ask-side [data-composer-t]')?.focus(), 50); } });   // ⌘J: Ask worca beside this page
   // another Pulse case: the run page in view takes its title from it
   window.RailWorld.onChange(() => { drawInView(); if (routed.view === 'run') { reopen = true; route(); } });
+  // a step taken on a task's page moves the task everywhere: its row, the bar's and Pulse's counts, In view
+  document.addEventListener('rail:task-moved', (e) => {
+    const { from, to, title } = e.detail || {}; if (!title) return;
+    const r = window.RailWorld.rows().find((x) => x.case === from && x.title === title);
+    if (r) window.RailWorld.move(r.id, to, R.runState(RM.stateOf(to)).word);
+    if (routed.view === 'run') { for (const c of window.RailChats?.data().chats || []) for (const t of allTasksOf(c)) if (t.case === from && t.title === title) { t.case = to; t.detail = ''; const st = RM.stageOf?.(to); if (st?.stage >= 0) t.stage = st.stage; } window.RailChats?.refresh(); }   /* lent to a card, its chat does this itself */
+    for (const x of inViewList) if (x.case === from && x.title === title) x.case = to;
+    RM.titles[to] = title;   // the store names a state after its first task: this page stays this task
+    drawBar();
+  });
   window.RailShell.start = () => { applyPrefs(); drawMini(); route(); };   /* the places have registered by now: the first bar shows them */
 })();

@@ -403,7 +403,7 @@ export function youTurn({ text, quote = '', files = [], refs = [], attrs: a = {}
  * @param {object} [o.attrs]   on its line (the click that opens it)
  */
 export function stageLine({ mark, label, meta = '', parts = '', body = '', next = false, attrs: a = {} }) {
-  return `<div class="stage-line${body ? ' is-open' : ''}${next ? ' is-next' : ''}"><div class="stage-head">${turnRow({ mark, text: `<b>${esc(label)}</b>`, end: esc(meta), attrs: { 'data-fold-turn': '', ...a } })}${parts ? `<span class="stage-tools">${parts}</span>` : ''}</div>${body}</div>`;
+  return `<div class="stage-line${body ? ' is-open' : ''}${next ? ' is-next' : ''}"><div class="stage-head">${turnRow({ mark, text: `<b>${esc(label)}</b>`, end: esc(meta), open: !!body, attrs: { 'data-fold-turn': '', ...a } })}${parts ? `<span class="stage-tools">${parts}</span>` : ''}</div>${body}</div>`;
 }
 
 /**

@@ -444,11 +444,12 @@ html,body{height:auto;overflow:visible;margin:0;}
 .pz-page > .rc-confirm{position:sticky;top:8px;z-index:6;}   /* a page with no shell: the strip stays on screen too */
 .rc-confirm-t{color:var(--ink);font-weight:500;}
 .rc-confirm-acts{display:flex;gap:8px;}
-.rc-toast{position:fixed;left:50%;bottom:24px;z-index:50;transform:translate(-50%,0);max-width:calc(100vw - 32px);padding:8px 14px;border-radius:var(--r-md);
+.rc-toast{position:fixed;left:50%;bottom:24px;z-index:50;transform:translate(-50%,0);display:flex;align-items:baseline;gap:10px;width:max-content;max-width:min(480px,calc(100vw - 32px));padding:8px 14px;border-radius:var(--r-md);
   background:var(--ink);color:var(--bg);font-size:var(--fs-meta);box-shadow:var(--shadow-pop);opacity:0;pointer-events:none;transition:opacity var(--motion-change) var(--ease);}   /* out over change */
 .rc-toast.is-on{opacity:1;transform:translate(-50%,0);transition-duration:var(--motion-quick);}   /* in over quick */
 @starting-style{.rc-toast.is-on{opacity:0;}}
 .rc-toast:empty{display:none;}
+.rc-toast-t{min-width:0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;}   /* comp.toast-clamp */
 @media (prefers-reduced-motion: reduce){.rc-toast{transition:none;}}
 .menu-item[data-narrow]{display:none;}
 @container (max-width: 520px){ .menu-item[data-narrow]{display:flex;} }
@@ -558,7 +559,8 @@ html,body{height:auto;overflow:visible;margin:0;}
 
 /* The PR stage: Worca's suggestion first, then what it opens. */
 .sk-rec{margin:0 0 4px;}
-.menu-item[aria-disabled="true"]{color:var(--ink-3);}
+.menu-item[aria-disabled="true"]{color:var(--ink-3);cursor:not-allowed;}
+.menu-item[aria-disabled="true"]:hover{background:none;}   /* comp.menu-off */
 
 /* Proposed, not in today's app: a quiet tag, never a colour of its own. */
 /* A shorter tab never pulls the page up: the panel keeps at least a screen of height. */
@@ -1181,8 +1183,8 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .convo-steps-l{display:grid;grid-template-columns:repeat(var(--n,5),1fr);gap:4px;margin-top:4px;font-size:var(--fs-caption);color:var(--ink-3);}   /* ds-ok: a size or count the component sets on itself */
 .convo-steps-l b{font-weight:500;color:var(--ink);}
 .convo-dock{flex:none;padding:0 56px 14px 24px;position:relative;}
-.jump-latest{position:absolute;left:50%;top:-44px;translate:-50% 4px;opacity:0;pointer-events:none;transition:opacity var(--motion-change) var(--ease),translate var(--motion-change) var(--ease);background:var(--bg);box-shadow:0 0 0 1px var(--line-2);}   /* ds-ok: floats just above the input */
-.convo:has(> .convo-scroll[data-more-below]) .jump-latest{opacity:1;translate:-50% 0;pointer-events:auto;}   /* only while there is more below: back to the latest */
+.jump-latest{position:absolute;left:50%;top:-44px;translate:-50% 4px;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--motion-change) var(--ease),translate var(--motion-change) var(--ease),visibility var(--motion-change) var(--ease);background:var(--bg);box-shadow:0 0 0 1px var(--line-2);}   /* ds-ok: floats just above the input */
+.convo:has(> .convo-scroll[data-more-below]) .jump-latest{opacity:1;visibility:visible;translate:-50% 0;pointer-events:auto;}   /* only while there is more below: back to the latest */
 @media (prefers-reduced-motion: reduce){.jump-latest{transition:none;}}
 .convo-dock .composer{width:calc(100% - 32px);max-width:648px;margin:0 auto;translate:16px 0;}   /* ds-ok: on the cards' rail (32px in), as wide as the cards */
 .convo-dock-note{max-width:680px;margin:4px auto 0;font-size:var(--fs-caption);color:var(--ink-3);}
@@ -1731,8 +1733,8 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
 .wb-open{padding:12px 14px;border:1px solid var(--ink-3);border-radius:var(--r-md);background:var(--panel);min-width:0;} .wb-open-h{margin:0 0 10px;font:600 var(--fs-body)/1.3 var(--sans);}
 .wb.is-solo{grid-template-columns:minmax(0,1fr);} .wb-side{display:grid;gap:10px;}
 .wb-age{display:flex;gap:8px;align-items:center;margin:0 0 10px;font-size:var(--fs-meta);color:var(--ink-2);}
-.wm-scroll{overflow-x:auto;} .wm{position:relative;color:var(--ink-3);}
-@media (max-width:520px){.wm{display:grid;gap:8px;width:auto !important;height:auto !important;} .wm svg{display:none;} .wm-n.wm-n{position:static;width:100%;}}   /* ds-ok: no room for the arrows: the projects one under another, whole; how they connect is listed under the map */
+.wm-scroll{overflow-x:auto;container-type:inline-size;} .wm{position:relative;color:var(--ink-3);}
+@container (max-width:660px){.wm{display:grid;gap:8px;width:auto !important;height:auto !important;} .wm svg{display:none;} .wm-n.wm-n{position:static;width:100%;}}   /* ds-ok: no room for the arrows: the projects one under another, whole; how they connect is listed under the map */
 .wm svg{position:absolute;inset:0;} .wm-w{fill:none;stroke:var(--ink-3);} .wm-w.is-unsure{stroke:var(--amber-ink);stroke-dasharray:3 3;}
 .wm-t{font:400 var(--fs-caption) var(--sans);fill:var(--ink-2);} .wm-t.is-unsure{fill:var(--amber-ink);}
 .wm-n{position:absolute;box-sizing:border-box;width:150px;height:48px;display:grid;align-content:center;padding:0 10px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--bg);color:var(--ink);font:inherit;text-align:left;cursor:pointer;}   /* ds-ok: the map lays its nodes out by size */
@@ -1818,11 +1820,12 @@ button.fr-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 @media (max-width:640px){.fr-list{grid-template-columns:minmax(0,1fr) repeat(2,auto);}.fr-c.is-wide{display:none;}}
 /* comp.menu-groups: two columns at most, a head never parted from its options, inside the window */
 .menu-g{display:contents;}
-.pz-menu.is-two-cols{display:block;column-count:2;column-gap:10px;width:min(440px,calc(100vw - 32px));height:auto;max-height:min(420px,calc(100vh - 32px));overflow-y:auto;}
+.pz-menu.is-two-cols{display:block;width:min(440px,calc(100vw - 32px));height:auto;max-height:min(420px,calc(100vh - 32px));overflow-y:auto;}
+.pz-menu.is-two-cols .menu-cols{column-count:2;column-gap:10px;}
 .pz-menu.is-two-cols .menu-g{display:block;break-inside:avoid;}
 .pz-menu.is-two-cols .menu-h{margin:0;}
 .pz-menu.is-two-cols .menu-item{break-inside:avoid;width:100%;height:auto;min-height:26px;padding-block:3px;}
-@media (max-width:640px){.pz-menu.is-two-cols{column-count:1;}}
+@media (max-width:640px){.pz-menu.is-two-cols .menu-cols{column-count:1;}}
 .in-acts{--btn-inset:11px;display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0;}
 .in-acts > .btn-quiet:first-child{margin-left:calc(-1 * var(--btn-inset));}   /* rail.one-rail: a quiet button starts at the text edge */
 .in-stands{margin:14px 0 8px;line-height:var(--lh-body);}

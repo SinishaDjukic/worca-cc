@@ -124,11 +124,11 @@
   const clickThrough = (sels) => setTimeout(() => sels.forEach((s) => document.querySelector(s)?.click()));
   // The record actions every list shares; anything else is the record's own `on`, or a model error (a dead control).
   const SHARED = {
-    Rename: (r, x) => x.dialog({ title: `Rename ${r.title}`, yes: 'Rename', fields: [{ key: 'name', label: 'Name', value: r.title }], then: (v) => { const old = r.title; r.title = v.name.trim() || old; return `Renamed to ${r.title}`; } }),
+    Rename: (r, x) => x.dialog({ title: `Rename ${r.title}`, yes: 'Rename', fields: [{ key: 'name', label: 'Name', value: r.title }], check: (v) => { const t = v.name.trim(); return !t ? 'It needs a name' : x.list.some((o) => o !== r && o.title.toLowerCase() === t.toLowerCase()) ? `${t} already exists` : ''; }, then: (v) => { const t = v.name.trim(); if (t === r.title) return ''; r.title = t; return `Renamed to ${t}`; } }),
     Duplicate: (r, x) => { x.add({ ...r, title: r.title + ' copy', ...(r.copy || {}) }); return `Duplicated: ${r.title} copy`; },
     Edit: (r, x) => x.dialog({ title: `Edit ${r.title}`, fields: [{ key: 'name', label: 'Name', value: r.title }, { key: 'meta', label: 'Details', value: r.meta || '' }], then: (v) => { r.title = v.name.trim() || r.title; r.meta = v.meta; return `${r.title} saved`; } }),
     Reject: (r, x) => { x.remove(); return `Rejected: ${r.title}`; },
-    ...Object.fromEntries(['Delete', 'Remove', 'Revoke', 'Uninstall'].map((w) => [w, (r, x) => x.confirm({ text: `${w} ${r.title}?`, yes: w, danger: true, then: () => { x.remove(); return `${w === 'Revoke' ? 'Revoked' : w === 'Uninstall' ? 'Uninstalled' : w === 'Delete' ? 'Deleted' : 'Removed'}: ${r.title}`; } })])),
+    ...Object.fromEntries(['Delete', 'Remove', 'Revoke', 'Uninstall'].map((w) => [w, (r, x) => x.confirm({ text: `${w} ${r.title}?${r.follows ? ` ${typeof r.follows === 'function' ? r.follows(r) : r.follows}` : ''}`, yes: w, danger: true, then: () => { x.remove(); return `${w === 'Revoke' ? 'Revoked' : w === 'Uninstall' ? 'Uninstalled' : w === 'Delete' ? 'Deleted' : 'Removed'}: ${r.title}`; } })])),
   };
   function recordRows(items, sv, c, where) {
     const recs = recsOf(sv, where, items);
@@ -274,7 +274,7 @@
     if (a.rec) return runRec(sv, a);
     if (a.edit) { openDialog(sv, typeof a.edit === 'function' ? a.edit(sv) : a.edit); return ''; }
     if (a.confirm) { sv.__confirm = typeof a.confirm === 'function' ? a.confirm(sv) : a.confirm; return ''; }
-    if (a.copy) { try { navigator.clipboard?.writeText(textOf(a.copy, sv))?.catch(() => {}); } catch { /* a page without clipboard access */ } return a.copied || `Copied: ${textOf(a.copy, sv)}`; }
+    if (a.copy) { try { navigator.clipboard?.writeText(textOf(a.copy, sv))?.catch(() => {}); } catch { /* a page without clipboard access */ } return a.copied || `Would copy: ${textOf(a.copy, sv)}`; }
     if (a.do) return a.do(sv) || '';
     if (a.click) { clickThrough(a.click); return a.say || ''; }
     if (a.page) return toPage(a.page, a.say);

@@ -141,7 +141,7 @@
       const t = x.t;
       if (id === 'open-task') { if (t.kind === 'schedule') window.RailShell.openSchedule(t.id); else window.RailShell.openTask(t.case, x.c.id, t.title); return; }
       if (id === 'watch') { t.watch = t.watch ? '' : 'idle'; ctl.paint(); say(t.watch ? 'Watching: Worca fixes failing checks' : 'Stopped watching', undoTo(snap, pick, 'As it was')); return; }
-      if (id === 'label-task') { x.c.labels = [...new Set([...(x.c.labels || []), 'hotfix'])]; ctl.paint(); say(`Labelled ${t.title}: hotfix`, undoTo(snap, pick, 'As it was')); return; }
+      if (id === 'label-task') { t.labels = [...new Set([...(t.labels || []), 'hotfix'])]; const run = t.run && window.RailWorld?.find(t.run), had = run?.labels; if (run) run.labels = [...new Set([...(run.labels || []), 'hotfix'])]; ctl.paint(); const back = undoTo(snap, pick, 'As it was'); say(`Labelled ${t.title}: hotfix`, { tip: back.tip, run: () => { if (run) run.labels = had; back.run(); } }); return; }
       if (id === 'archive') { const drop = (l) => l.filter((y) => y !== t).map((y) => (y.after ? { ...y, after: drop(y.after) } : y)); x.c.tasks = drop(x.c.tasks); ctl.paint(); say(`Archived ${t.title}`, undoTo(snap, pick, 'Puts it back')); window.RailConversation?.refresh(); return; }
     }
     const back = !bulk && x ? `[data-open="${CSS.escape(x.key)}"]` : '';

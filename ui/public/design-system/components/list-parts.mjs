@@ -88,7 +88,7 @@ export const REPEATS = Object.freeze(['every day', 'every weekday', 'every Monda
 export function scheduleWords({ every, at, nowAt = '15:00' }) {
   const hourly = every === 'every hour', when = every.replace(/^every /, '');
   const runs = hourly ? every : `${every} at ${at}`, day = /^(Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day$/.test(when) ? when : '';
-  const next = hourly ? 'Next within the hour' : every === 'every day' ? `Next at ${at}` : day ? `Next on ${day} at ${at}` : every === 'every weekday' ? `Next weekday at ${at}` : /month/.test(every) ? `Next on the 1st at ${at}` : `Next at ${at}`;
+  const next = hourly ? 'Next within the hour' : every === 'every day' ? `Next ${at > nowAt ? 'today' : 'tomorrow'} at ${at}` : day ? `Next on ${day} at ${at}` : every === 'every weekday' ? `Next weekday at ${at}` : /month/.test(every) ? `Next on the 1st at ${at}` : `Next at ${at}`;
   return { runs, says: `${runs[0].toUpperCase()}${runs.slice(1)}`, next, time: hourly ? 'Hourly' : day ? day.slice(0, 3) : /month/.test(every) ? '1st' : at,
     day: hourly || (every === 'every day' && at > nowAt) ? 'today' : every === 'every day' || every === 'every weekday' ? 'tomorrow' : day ? 'week' : 'later' };
 }

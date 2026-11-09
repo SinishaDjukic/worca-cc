@@ -72,7 +72,8 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await step('the profile menu opens Settings', () => document.querySelector('#app [data-go="settings"]')?.click(), () => location.hash.startsWith('#settings') && !document.querySelector('#route-settings').hidden);
   if (w > 1080) {
     await step('a Settings section opens', () => document.querySelector('#side-rail [data-sset="runs"]')?.click(), () => location.hash === '#settings/runs' && [...document.querySelectorAll('#route-settings .pz-title')].find((t) => t.offsetParent)?.textContent === 'Tasks');
-    await step('the house opens the places', () => document.querySelector('[data-bar-house]')?.click(), () => document.getElementById('side-rail').dataset.bar === 'home' && !!document.querySelector('#side-rail [data-nav="chat"]').offsetParent);
+    await step('the arrow opens the quick navigation', () => document.querySelector('[data-bar-house]')?.click(), () => !!document.querySelector('.bar-quick [data-menu-pick="bar-go|chat"]'));
+    await step('the arrow closes it', () => document.querySelector('[data-bar-house]')?.click(), () => !document.querySelector('.bar-quick'));
   }
   // the one bar: Chat's list is in it; a row opens its conversation, and a task opens from its tree (nav.one-bar)
   await p.goto(`${URL_}#chat`); await p.waitForTimeout(120);
@@ -81,7 +82,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await step('a task in the tree leads to its card', () => document.querySelector('#bar-chat [data-open="task:t1"]')?.click(), () => location.hash === '#chat/c1' && document.getElementById('side-rail').dataset.bar === 'chat' && !!document.querySelector('#route-chat .is-flash'));
   await step('How it ran opens the card in place', () => document.querySelector('#route-chat [data-open-task="t1"]')?.click(), () => document.querySelectorAll('#route-chat .task-card .own-stages .stage-line').length === 5);   // its own five stages, from the task itself
   await step('and folds it, the page going home', () => document.querySelector('#route-chat [data-open-task="t1"]')?.click(), () => !document.querySelector('#route-chat #card') && !!document.getElementById('card'));
-  await step('its page is still there', () => window.RailShell.openTaskPage('question', 'c1', 'Add CSV export'), () => location.hash === '#run/question');
+  await step('its page is still there', () => window.RailShell.openTaskPage('question', 'c1', 'Add CSV export to billing'), () => location.hash === '#run/question');
   await step('asking from a task goes to its chat', () => { const t = document.querySelector('#task-dock [data-composer-t]'); t.value = 'Why?'; document.querySelector('[data-dock-send]').click(); }, () => location.hash === '#chat/c1');
   // the hidden bar: a 56px strip with the work's summary, nothing sticking out; hover opens it over the page; a menu keeps it open
   if (w > 760) {
@@ -167,7 +168,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   if (w > 760) {
     await step('the tab you are on has its line', () => {}, () => document.querySelector('#in-view-slot [data-in-view="task:t1"]')?.getAttribute('aria-current') === 'page');
     await step('a mark in view holds still', () => {}, () => [...document.querySelectorAll('.in-view .kind-mark')].every((m) => getComputedStyle(m).animationName === 'none'));
-    await step('its page has the eye', () => window.RailShell.openTaskPage('question', 'c1', 'Add CSV export'), () => location.hash === '#run/question');
+    await step('its page has the eye', () => window.RailShell.openTaskPage('question', 'c1', 'Add CSV export to billing'), () => location.hash === '#run/question');
     await step('the eye on a task says it is in view', () => {}, () => document.querySelector('[data-keep-view]')?.getAttribute('aria-pressed') === 'true');
     await step('the eye takes it out of view', () => document.querySelector('[data-keep-view]').click(), () => !document.querySelector('#in-view-slot [data-in-view="task:t1"]') && document.querySelector('[data-keep-view]').getAttribute('aria-pressed') === 'false');
     await step('the eye keeps it in view again', () => document.querySelector('[data-keep-view]').click(), () => document.querySelectorAll('#in-view-slot .in-view-w').length === 2);

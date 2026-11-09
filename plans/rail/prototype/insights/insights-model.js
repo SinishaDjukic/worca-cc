@@ -233,7 +233,7 @@
     { id: 'per-task', title: 'Per task', group: 'Cost', icon: 'kind-task', noun: 'cost a task', src: money, num: 'spend', den: 'tasks', text: usd2, forms: RATE, cols: moneyCols(['Per task', (r) => (r.tasks ? usd2(r.spend / r.tasks) : '-')]), share: 'spend',
       word: (c) => `${usd2(c.v)} a task`, why: (c) => `${usd(c.T.spend)} across ${c.T.tasks} tasks · ${usd2(c.p)} in the same days last month` },
     { id: 'why', title: 'Why it cost', group: 'Cost', icon: 'refresh', noun: 'rework and waste', src: waste, by: 'why', num: 'spend', text: usd, forms: SUM, cols: wasteCols, share: 'base',
-      wordAlways: (c) => `${usd(c.v)} of ${usd(c.base)} went on rework and waste`, whyAlways: (c) => (c.P ? `${pct(c.v / c.base)}, up from ${pct(c.P.spend / c.pbase)} ${c.whole && c.st.when === 'this month' ? 'last month' : 'in the period before'}` : pct(c.v / c.base)) },
+      wordAlways: (c) => `${usd(c.v)} of ${usd(c.base)} went on rework and waste`, whyAlways: (c) => (c.P && c.st.against === 'before' ? `${pct(c.v / c.base)}, up from ${pct(c.P.spend / c.pbase)} ${c.whole && c.st.when === 'this month' ? 'last month' : 'in the period before'}` : pct(c.v / c.base)) },
     { id: 'budget', title: 'Budget', group: 'Cost', icon: 'set-limits', noun: 'AI spend', src: money, num: 'spend', text: usd, forms: SUM, as: 'running', against: 'budget', budget: 1000, cols: moneyCols(), share: 'spend',
       word: (c) => `${Math.round((c.v / 1000) * 100)}% of $1,000 used`, why: (c) => `${usd(c.v)} so far · on pace for $1,545, $545 over · 8 of 30 days gone` },
     { id: 'time-saved', title: 'Time saved', group: 'Value', icon: 'clock', noun: 'money saved', src: money, num: 'saved', text: usd, forms: SUM, cols: moneyCols(), share: 'saved',

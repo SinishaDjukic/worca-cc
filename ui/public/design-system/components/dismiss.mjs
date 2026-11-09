@@ -57,6 +57,19 @@ function storeOf(doc) {
   return s;
 }
 
+/**
+ * Esc takes back the confirm strip or short form that shows (keys.esc-strip): its own Cancel answers, so no page writes this.
+ * What lies over the page goes first (the registry above stops the key); a form with something typed stays, as a Dialog does.
+ */
+export function watchStrips(doc) {
+  doc.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || e.defaultPrevented || doc.querySelector('.keys-modal')) return;
+    const strip = [...doc.querySelectorAll('.rc-confirm')].filter((x) => x.getClientRects().length).pop(), no = strip?.querySelector('[data-confirm="no"]');
+    if (!no || [...strip.querySelectorAll('input:not([type="checkbox"]):not([type="radio"]), textarea')].some((f) => f.value !== f.defaultValue)) return;
+    e.preventDefault(); e.stopImmediatePropagation(); no.click();
+  });
+}
+
 /** What else a page says closes nothing when clicked: tools that live beside the page. */
 export function neverOutside(doc, selector) { const s = storeOf(doc); s.never += `, ${selector}`; }
 

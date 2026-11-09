@@ -125,20 +125,24 @@
   }
   // ---- the rows ----
   // what Tasks can narrow to from a row or a bar (RailRunsList.filter): a project, a stretch of time, how they ended; null when it cannot
-  const dayOf = (label) => ({ 'Nov 8': 'today', 'Nov 7': 'yesterday' }[label] || (/^Nov [1-6]$/.test(label) ? 'week' : /^Oct|^Nov/.test(label) ? 'month' : 'older'));
-  const SHOW_OF = { Finished: 'finished' };
-  function tasksOf(st, name, parent = '') {
-    const ofs = st.filter.filter((k) => k.startsWith('project:')), project = ofs.length === 1 ? ofs[0].slice(8) : undefined;
-    if (st.by === 'project' && name !== 'Other') return { project: parent || name };
-    if (st.then === 'project' && parent && name !== 'Other') return { project: name };
-    if (st.by === 'day') return { day: dayOf(name), ...(project ? { project } : {}) };
-    if (st.by === 'status' && SHOW_OF[parent || name]) return { show: SHOW_OF[parent || name], ...(project ? { project } : {}) };
+  const SHOW_OF = { Finished: 'finished' }, MON = { Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11 };
+  const isDates = (label) => /^(Jul|Aug|Sep|Oct|Nov)( \d+(-\d+)?)?$/.test(label);
+  const edge = (label, end) => { const [m, d] = label.split(' '), days = d ? d.split('-') : ['1', '31']; return MON[m] * 100 + +(end ? days[days.length - 1] : days[0]); };
+  const rangeOf = (labels) => ({ from: edge(labels[0]), to: edge(labels[labels.length - 1], true), label: M.rangeWord(labels) });
+  // this chart's stretch, when it is not the plain month: a drag, or another period, travels with the click
+  const within = (c) => (c.st.narrow || !['this month', 'all time'].includes(c.st.when) ? { range: rangeOf(c.labels) } : {});
+  function tasksOf(c, st, name, parent = '') {
+    const ofs = st.filter.filter((k) => k.startsWith('project:')), project = ofs.length === 1 ? ofs[0].slice(8) : undefined, one = project ? { project } : {};
+    if (st.by === 'project' && name !== 'Other') return { project: parent || name, ...within(c) };
+    if (st.then === 'project' && parent && name !== 'Other') return { project: name, ...within(c) };
+    if (M.TIME.has(st.by) && isDates(parent || name)) return { range: rangeOf([parent || name]), ...one };
+    if (st.by === 'status' && SHOW_OF[parent || name]) return { show: SHOW_OF[parent || name], ...one, ...within(c) };
     return null;
   }
   const cellsOf = (sub, c, r) => [...(sub.noShare ? [] : [`${r.sharePct}%`]), ...sub.cols.map(([, get]) => get(r, c))];
   const columns = (sub) => [...(sub.noShare ? [] : [{ label: 'Share' }]), ...sub.cols.map(([label], i) => ({ label, narrow: i < (sub.noShare ? 2 : 1) }))];
   function rowsHtml(sub, c) {
-    const rowOf = (r, parent, s) => { const f = tasksOf(c.st, r.name, parent); return { name: r.name, cells: cellsOf(sub, c, r), sub: s, quiet: /^No /.test(r.name) || r.name === 'Other', attrs: f ? { 'data-in-row': JSON.stringify(f), title: `Opens Tasks, narrowed to ${parent ? `${parent}, ` : ''}${r.name}` } : { disabled: true, title: `Tasks narrow by project, time or status, not by ${byWord(c.st)}` } }; };
+    const rowOf = (r, parent, s) => { const f = tasksOf(c, c.st, r.name, parent); return { name: r.name, cells: cellsOf(sub, c, r), sub: s, quiet: /^No /.test(r.name) || r.name === 'Other', attrs: f ? { 'data-in-row': JSON.stringify(f), title: `Opens Tasks, narrowed to ${parent ? `${parent}, ` : ''}${r.name}` } : { disabled: true, title: `Tasks narrow by project, time or status, not by ${byWord(c.st)}` } }; };
     return R.figureRows({ label: `By ${M.DIM[c.st.by]}`, columns: columns(sub), rows: c.rows.flatMap((r) => [rowOf(r, '', false), ...(r.kids || []).map((k) => rowOf(k, r.name, true))]) });
   }
   function actions(sub, st, c) {
@@ -150,7 +154,7 @@
     const plain = st.when === 'this month' && !st.narrow && !st.filter.length;
     const scope = st.narrow ? (c.days === 1 ? 'on this day' : `in these ${c.days} days`) : st.when === 'all time' ? 'in all' : st.when;
     const word = sub.wordAlways ? sub.wordAlways(c) : plain ? sub.word(c) : `${sub.text(c.v)} ${scope}`;
-    const why = sub.whyAlways ? sub.whyAlways(c) : plain ? sub.why(c) : M.cmp(c, sub);
+    const why = sub.whyAlways ? sub.whyAlways(c) : plain ? sub.why(c) : st.against === 'before' ? M.cmp(c, sub) : '';   // no comparison asked for: none in the headline
     const head = R.placeHead({ title: sub.title, mark: R.kindMark({ kind: 'plugin', icon: sub.icon }), word, why, menu: R.moreMenu({ id: 'in-more', label: `More for ${sub.title}`, icon: R.icon('more', 16), open: menu === 'in-more', items: [{ id: 'link', text: 'Copy a link', help: 'To this page, as you narrowed it' }] }) });
     const stands = sub.id === 'why' ? `<p class="in-stands">A small change to try: <b>web-app</b> ${esc(M.STANDS.why.outcome)}</p><p class="in-stands">${esc(M.STANDS.why.because)}</p><div class="in-acts">${R.button({ label: 'Try Opus 5.5 on web-app', attrs: { 'data-in-try': '' } })}</div><p class="wf-ed-m">Try starts a new chat for you to send; nothing changes until you do. You can switch back to Sonnet 5.5 at any time.</p>` : sub.id === 'review' ? `<p class="in-stands">What stands out: <b>web-app</b> ${esc(M.STANDS.review)}</p><div class="in-acts">${R.button({ label: 'Ask why web-app goes back', attrs: { 'data-in-ask': '' } })}</div>` : '';
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${sentence(sub, st, c)}${chartHtml(sub, st, c)}${rowsHtml(sub, c)}${stands}${actions(sub, st, c)}</div></div><div class="convo-dock" id="in-dock"></div></div>`;
@@ -169,7 +173,7 @@
     const scroller = page.querySelector('.convo-scroll'); if (scroller) scroller.scrollTop = scroll;
     const box = page.querySelector('#in-dock [data-composer-t]'); if (box && draft) box.value = draft;
     R.watchChart(page.querySelector('[data-chart]'), {
-      open: (i) => { const f = axisIsRows(sub, st) ? tasksOf(st, c.rows[i].name) : tasksOf({ ...st, by: 'day', then: '' }, c.labels[i]); if (f) window.RailRunsList.filter(f); },
+      open: (i) => { const f = axisIsRows(sub, st) ? tasksOf(c, st, c.rows[i].name) : tasksOf(c, { ...st, by: 'day', then: '' }, c.labels[i]); if (f) window.RailRunsList.filter(f); },
       narrow: axisIsRows(sub, st) ? undefined : (a, b) => { const base = st.narrow ? st.narrow[0] : 0; st.narrow = [base + a, base + b]; menu = ''; dragged = true; try { localStorage.setItem(DRAGGED, '1'); } catch { /* remembering is a nicety */ } draw(); },
     });
     if (back) { page.querySelector(`[data-menu="${back}"]`)?.focus({ preventScroll: true }); back = ''; }
@@ -245,6 +249,7 @@
     sample: 'spend',
     search: (q) => [...M.SUBS.filter((s) => !s.team || team()).map((s) => ({ label: s.title, where: `Insights · ${barGroup(s)}`, hash: `insights/${s.id}` })), ...views.map((v) => ({ label: v.name, where: 'Insights · Your views', hash: `insights/${v.id}` }))].filter((x) => x.label.toLowerCase().includes(q)),
     has: (a) => !!ALIAS[a] || !!M.SUB[a] || views.some((v) => v.id === a),
+    needs: (a) => { const s = M.SUB[ALIAS[a] || a]; return s?.team && !team() ? { min: 'expert', name: s.title } : null; },   // nav.locked: a Team page's own line, never Spend in its place
     show: ({ bar: b, page: pg, arg: a }) => { if (b !== bar) wire(b, pg); const next = ALIAS[a] || a || 'spend'; if (arg !== next) menu = ''; arg = next; draw(); },
   };
 })();

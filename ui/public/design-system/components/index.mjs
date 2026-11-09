@@ -8,7 +8,7 @@ export { confirmStrip, confirmActions, confirmForm } from './confirm-strip.mjs';
 export { tabs } from './tabs.mjs';
 export { segmented } from './segmented.mjs';
 export { figure, figures, figureBreakdown } from './figures.mjs';
-export { toast, errorToast, toastUndo } from './toast.mjs';
+export { toast, toastText, errorToast, toastUndo } from './toast.mjs';
 export { emptyState, notFound } from './empty-state.mjs';
 export { textLink, documentLink } from './text-link.mjs';
 export { morph, land, watchFolds, foldKey } from './motion.mjs';
@@ -50,7 +50,7 @@ export { PRESS_MS, selectClear, selectStart, selectToggle, selectRange, selectAl
 export { DAY_SECTIONS, BY_CHOICES, BY_DEFAULT, byPart, dateSections, NEXT_RUN_SECTIONS, REPEATS, scheduleWords, TIMES_OF_DAY, listWord, listSentence, groupRow, roundRows, listState, resetViewTool, originMark, chatKindIcon } from './list-parts.mjs';
 export { listController, LIST_SHOWN, BREATHE, calmMarks, fitMenu } from './list-page.mjs';
 export { planBulk, skipText } from '../../../../src/shared/run-bulk.mjs';
-export { dismissOnOutside, neverOutside, REAL_CONTROL } from './dismiss.mjs';
+export { dismissOnOutside, neverOutside, watchStrips, REAL_CONTROL } from './dismiss.mjs';
 export { selectionBar, selectAllBox, bindLongPress } from './selection-bar.mjs';
 export { barChart, lineChart, mixChart, figureRows, watchChart, diffWords } from './chart.mjs';
 export { sliderPick, rankList, pickRows, factsLine } from './question-forms.mjs';

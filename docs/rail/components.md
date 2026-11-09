@@ -5,7 +5,9 @@
 | `comp.one-per-need` | Each need has one component; a page names needs, not looks | One fix reaches every page | ds-check |
 | `comp.no-hand-markup` | A component in code is called, never rewritten by hand | Copies drift | rail-gate |
 | `comp.no-radio-cards` | A choice is never a full-width toggle or radio cards; a yes or no never covers the page | It stays in the sentence or place it changes | by hand |
-| `comp.menu-groups` | A menu's head stays with its options: CompactMenu makes them one block, so columns never part them; two columns at most, and a menu stays inside the window | A head alone at a column's foot names nothing | design-system-components |
+| `comp.menu-groups` | A menu's head stays with its options: CompactMenu makes them one block, so columns never part them; two columns at most, and a menu stays inside the window, scrolling inside it (the columns sit inside what scrolls: a height on a columned box only makes more columns) | A head alone at a column's foot names nothing | design-system-components |
+| `comp.menu-off` | A disabled menu item never acts, in any menu: it stays open, shows no pointer or hover, and says why (`watchMenus`) | A control acts, or is disabled and says why | design-system-components |
+| `comp.toast-clamp` | A toast is at most 480px wide and two lines; the whole text is in its tooltip (`toastText`) | A long name never runs over the composer | design-system-components |
 | `comp.sentence-block` | A sentence that holds a picker is a block (`div`), never a `<p>`: a menu cannot live in a paragraph, and the parser throws it out of place | The menu opens where the sentence is | rail-gate |
 | `comp.row` | A row in a list is row(): rail, text, end, ⋯; a changed file and a stacked PR are their own rows | One rail and one end on every list | rail-gate |
 | `comp.end-column` | A list's ends share one column, as wide as the widest, capped; the title gives way first | Figures and buttons line up down a list | ds-check |

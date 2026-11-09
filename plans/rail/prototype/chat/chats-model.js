@@ -110,7 +110,7 @@
       { t: 'you', id: 'a1', text: 'Is the release branch ready?', when: '11:40' },
       { t: 'think', text: 'Thought for 5s' },
       { t: 'words', html: 'Everything for 1.20 is in and the checks passed.' },
-      { t: 'act', id: 'a2', mark: 'git', text: '<b>Ready to open a PR</b> 12 files +540 −96 into main', actions: [['Create PR', 'primary', 'Opened PR #1104 into main'], ['View changes', 'quiet', '', 'Would open the 12 changed files']] },
+      { t: 'act', id: 'a2', mark: 'git', text: '<b>Ready to open a PR</b> 12 files +540 −96 into main', actions: [['Create PR', 'primary', 'Would open PR #1104 into main'], ['View changes', 'quiet', '', 'Would open the 12 changed files']] },
       { t: 'you', id: 'a3', text: 'Bump the version to 1.20.0', when: '11:42' },
       { t: 'change', id: 'a4', kind: 'Version', title: 'Version bumped', rows: [{ name: 'package.json', before: '1.19.4', after: '1.20.0' }], state: 'applied' },
       { t: 'task', id: 'a4b', task: 't9s' },
@@ -169,9 +169,9 @@
     if (c.id === 'c10') return [
       { t: 'you', id: 'a1', text: 'Make an agent that drafts the changelog from merged PRs', when: 'Oct 1' },
       { t: 'change', id: 'a2', kind: 'Agent', title: 'Changelog writer', why: 'Reads the PRs merged since the last tag and writes one line per change, grouped by area.', rows: [{ name: 'Reads', before: '', after: 'Merged PRs since the last tag' }, { name: 'Writes', before: '', after: 'CHANGELOG.md, a draft' }, { name: 'Model', before: '', after: 'Sonnet 5.5' }], apply: 'Save', state: 'proposed' },
-      { t: 'act', id: 'a3', mark: 'ask', text: '<b>Run scripts/release-notes.sh?</b> It reads git tags and writes nothing', actions: [['Run', 'primary', 'Ran scripts/release-notes.sh: 14 changes found'], ['Not now', 'quiet', 'Not run']] },
+      { t: 'act', id: 'a3', mark: 'ask', text: '<b>Run scripts/release-notes.sh?</b> It reads git tags and writes nothing', actions: [['Run', 'primary', 'Would run scripts/release-notes.sh'], ['Not now', 'quiet', 'Not run']] },
       { t: 'you', id: 'a4', text: 'Write a guide for the CSV export', when: 'Yesterday' },
-      { t: 'change', id: 'a5', kind: 'Changes', title: '3 files changed on a copy of docs-site', why: 'docs-site has no git: the task worked on a copy. Apply it to the folder, or discard it.', rows: [{ name: 'Adds', before: '', after: 'guides/export.md' }, { name: 'Updates', before: '', after: 'index.md, nav.yml' }, { name: 'Checked', before: '', after: 'nothing changed in the folder since it started' }], diff: [['guides/export.md', '+42'], ['index.md', '+3 −1'], ['nav.yml', '+1']], actions: [['Apply 3 files', 'primary', 'Applied 3 files to docs-site'], ['Show the diff', 'quiet', ''], ['Discard', 'danger', 'Discarded the copy: docs-site is as it was']], state: 'proposed' },
+      { t: 'change', id: 'a5', kind: 'Changes', title: '3 files changed on a copy of docs-site', why: 'docs-site has no git: the task worked on a copy. Apply it to the folder, or discard it.', rows: [{ name: 'Adds', before: '', after: 'guides/export.md' }, { name: 'Updates', before: '', after: 'index.md, nav.yml' }, { name: 'Checked', before: '', after: 'nothing changed in the folder since it started' }], diff: [['guides/export.md', '+42'], ['index.md', '+3 −1'], ['nav.yml', '+1']], actions: [['Apply 3 files', 'primary', 'Would apply 3 files to docs-site'], ['Show the diff', 'quiet', ''], ['Discard', 'danger', 'Discarded the copy: docs-site is as it was']], state: 'proposed' },
     ];
     if (c.id === 'c7') return [
       { t: 'you', id: 'a1', text: 'Check what Stripe says about CSV exports', when: 'Oct 3' },
