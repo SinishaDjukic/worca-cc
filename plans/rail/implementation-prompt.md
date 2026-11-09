@@ -36,7 +36,9 @@ The comparison in step 1 was never run on the prototype; it is the first job her
 ## Opt-in: Stillhet
 
 The new design system's public name is **Stillhet** (codename Rail). It ships behind a feature flag, opt-in and opt-out (`docs/feature-flags.md`).
-- When a user reloads Worca from dev, ask them once, in plain words: this is an evolution of Worca's design system called Stillhet; say what it is for (calm: only what needs you is lit; Chat first); invite them to adopt it for testing and to report any bugs on our GitHub (link to the issues page).
+- It is one flag under Labs. Every path only sets that flag. New users are asked as part of onboarding, never by the reload prompt; if they skip, it stays a flag in Labs.
+- **Header toggle:** a small switch in the top bar on the right of Pulse (right of Activity in today's app, before New run), labelled "Stillhet Design" with a small beta badge; switch only at phone width. Grey only, it is a normal state. It is the same setting as Settings › Labs, acts at once, explains itself on hover, and is disabled with the reason when the flag is locked. It shows with the flag off too, so the flag-off comparison excludes it.
+- When an existing user reloads Worca from dev, ask them once, in plain words: this is an evolution of Worca's design system called Stillhet; say what it is for (calm: only what needs you is lit; Chat first); invite them to adopt it for testing and to report any bugs on our GitHub (link to the issues page).
 - Accepting turns the flag on. Declining leaves everything as it is and does not ask again on each reload. They can turn it off or on later in Settings, and turning it off returns them to today's app.
 - With the flag off, or while opting in or out, existing code and functions must not break: same behaviour, same data, no migration that can't be undone. Test both states.
 
