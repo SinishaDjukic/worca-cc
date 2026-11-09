@@ -3,7 +3,7 @@
 // server keeps one call per seam: the start route reads the try, refuses a bad one and spreads its run options; boot
 // maintenance calls the two recoveries below. The words a try is refused with live in src/shared/workflow-tests/project-text.mjs.
 import { PROJECT_KEY_RE, testCopyKeyOf } from '../store.mjs';
-import { sweepStaleStagingDirs } from '../engines/claude.mjs';
+import { sweepStaleStagingDirs } from './try-spawn.mjs';
 import { CONNECTOR_MODES, recoverInterruptedTestRuns } from './store.mjs';
 import { sweepTestCopies } from './project-copy.mjs';
 import { SETUP_TIMEOUT_MS } from './shell-step.mjs';

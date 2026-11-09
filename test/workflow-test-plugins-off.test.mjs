@@ -5,10 +5,11 @@ import assert from 'node:assert/strict';
 import { appendFileSync, chmodSync, existsSync, linkSync, renameSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildSettingsPayload, buildClaudeArgs, planClaudeInvocation, signInCarry, secretValuesOf, runClaudeProcess, carryLine, CARRY_WARNING_PREFIX, CARRY_NOTE_PREFIX,
-  carryRedactValues, carryOverModelEnv, sweepStaleStagingDirs, STAGING_PREFIX, redactTryLog, _testing } from '../src/core/engines/claude.mjs';
+import { buildSettingsPayload, buildClaudeArgs, planClaudeInvocation, runClaudeProcess, carryOverModelEnv, _testing } from '../src/core/engines/claude.mjs';
+import { signInCarry, secretValuesOf, carryLine, carryRedactValues, CARRY_WARNING_PREFIX, CARRY_NOTE_PREFIX } from '../src/core/workflow-tests/try-carry.mjs';
+import { sweepStaleStagingDirs, STAGING_PREFIX } from '../src/core/workflow-tests/try-spawn.mjs';
 import { createRedactor } from '../src/core/redact.mjs';
-import { openTryLog, pendingTryLogRedactor, redactTryLogRetrying, _testing as tryLogTesting } from '../src/core/engines/try-log-redaction.mjs';
+import { openTryLog, pendingTryLogRedactor, redactTryLog, redactTryLogRetrying, _testing as tryLogTesting } from '../src/core/engines/try-log-redaction.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
 import { composeSpawnEnv } from '../src/core/engines/spawn.mjs';
 import { SETTINGS_IGNORED_FILE, isSettingsIgnoredFile } from '../src/core/workflow-tests/try-guard-env.mjs';

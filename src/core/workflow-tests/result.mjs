@@ -116,7 +116,7 @@ export async function readTryOutcome(pipelineId, { help = [], failReason = null,
   const project = projectRun ? await projectOutcome(row, dir) : null;
   const files = project ? project.paths : row ? (await listRunArtifacts(row.id, { kind: WORK_ARTIFACT_KIND })).map((a) => a.relPath) : [];
   // Task 5 fix review (concern 8): a spawn of this try ran without Worca's settings file (its canary's marker was missing).
-  // Re-review 3 (m4): under the usual name, or a fresh one of its own when a link sat there (claude.mjs writeSettingsIgnored).
+  // Re-review 3 (m4): under the usual name, or a fresh one of its own when a link sat there (try-spawn.mjs writeSettingsIgnored).
   const settingsIgnored = !!dir && (await readdir(dir).catch(() => [])).some(isSettingsIgnoredFile);
   return { pipelineId: row ? row.id : null, facts, ...main, files, project,
     setup: projectRun && dir ? await readTrySetup(dir) : null, logFile: dir ? join(dir, CONNECTOR_CALLS_FILE) : null,
