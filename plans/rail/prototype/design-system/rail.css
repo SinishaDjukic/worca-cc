@@ -1921,3 +1921,6 @@ button.fr-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .tp-kicker:has(> .kind-mark:is(.is-ask,.is-act)) > span:not(.kind-mark):not(.tp-menu){color:var(--amber);}
 .topnav-badge[data-tone="need"]{background:var(--amber);color:var(--on-signal);}
 .topnav-badge[data-tone="warn"]{background:var(--red);color:var(--on-signal);}
+
+/* a row that needs you: its wash has a small curve at the ends, not a feather */
+.list-row:has(> .lr-rail > .kind-mark.is-breathe)::before{-webkit-mask-image:none;mask-image:none;border-radius:var(--r-md);}
