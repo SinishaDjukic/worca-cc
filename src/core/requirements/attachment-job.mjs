@@ -2,7 +2,9 @@
 // A feature's files and a made brief's documents (plans/requirements-a8-design.md D3–D5, D9–D12): their bodies on disk,
 // the one read per file through A1.1's callModel, the queue (MAX_READ_JOBS across every feature and brief), the spend,
 // recovery after a restart, the boot sweep and the estimates. A read never throws out: a failure is the file's `failed`
-// status, and a read the spending limit stops leaves it `unread-budget`. And what a start sends to its run (D14).
+// status, and a read the spending limit stops leaves it `unread-budget`. And what a start sends to its run (D14). A6.1: a picked
+// tracker attachment's download is a job of this queue too (`download`, at most MAX_DOWNLOAD_JOBS at a time beside the reads'
+// MAX_READ_JOBS; the download itself is attachment-fetch.mjs's runDownload), so it shares the waiters, settle and cancel.
 // interview.mjs and this module import each other: neither uses the other's bindings at module top level.
 import { chmodSync, constants as fsConstants, copyFileSync, createReadStream, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { copyFile, mkdir, rm } from 'node:fs/promises';
@@ -25,13 +27,17 @@ import { RoundError } from './round.mjs';
 import {
   REQ_ATT_ID_RE, REQ_ATTACH_LIMITS, ATTACHMENT_SYSTEM_PROMPT, buildReadPrompt, buildAskPrompt, normalizeSummary, mockSummary, checkNewFiles,
   readRule, normalizeAnswer, mockAnswer, pushHistory, selectInlineAttachments, renderAttachmentsForPrompt, renderDocumentsForPrompt, sourceNames, hasText,
-  mentions, displayName, genericSummary,
+  mentions, displayName, fileOrigins, fenceTrackerText, genericSummary,
 } from './attachments.mjs';
 import {
   mintAttachmentId, insertAttachment, getAttachment, listAttachments, updateAttachment, addAttachmentCost, deleteAttachmentRow,
-  listReadingAttachments, recentReadCosts, appendTurn, addFeatureCost, getFeature, usableBrief,
+  listReadingAttachments, listDownloadingAttachments, recentReadCosts, appendTurn, addFeatureCost, getFeature, usableBrief, listTurns,
 } from './store.mjs';
 import { callModel, interviewModel, maybeFollowUpFiles } from './interview.mjs';
+import { attachmentsDir, attachmentFile } from './attachment-paths.mjs';
+import { MAX_DOWNLOAD_JOBS, runDownload, downloadInterrupted } from './attachment-fetch.mjs';
+
+export { attachmentsDir, attachmentFile };
 
 export const MAX_READ_JOBS = 2;
 export const READ_TIMEOUT_MS = 180_000;
@@ -40,7 +46,7 @@ const DEFAULTS = Object.freeze({
   runClaudeImpl: runClaude, listModels, listProjects, workspaceTarget, budget: () => budgetStatus(),
   onChange: () => {}, onBriefChange: () => {}, mockEnabled: () => mockEnabled({}), readTimeoutMs: READ_TIMEOUT_MS,
   renameBody: renameSync, copyBody: copyFileSync,   // how a replaced body is put in place (a test makes them fail)
-  writeBody: writeFileSync,                         // how an added file's body is written (a test makes it fail)
+  writeBody: writeFileSync,                         // how an added or downloaded file's body is written (a test makes it fail)
 });
 const READING = 'Worca is reading this file.';
 // What a failed read stores (D5): product messages only; the raw error goes to the log, with the file's id.
@@ -56,14 +62,8 @@ const iso = () => new Date().toISOString();
 
 // ---------------------------------------------------------------- bodies (D9)
 
-export const attachmentsDir = () => join(worcaHome(), 'requirements', 'att');
 const readBase = () => { const d = join(worcaHome(), 'tmp', 'requirements'); mkdirSync(d, { recursive: true, mode: DIR_MODE }); return d; };
 
-/** A body's path, from the store-minted id and the kind's extension only; a generic binary adds its name's sanitised extension. */
-export function attachmentFile(row) {
-  if (!row || typeof row.id !== 'string' || !REQ_ATT_ID_RE.test(row.id)) throw new Error('attachmentFile: refusing an id the store never minted');
-  return join(attachmentsDir(), `${row.id}${extensionForAttachment(row.kind, row.mime, row.name)}`);
-}
 function removeBody(row) {
   try { rmSync(attachmentFile(row), { force: true }); } catch (e) { console.error('requirements: could not remove a file body:', message(e)); }
 }
@@ -88,9 +88,13 @@ export function ownAttachment(owner, id) {
 
 // ---------------------------------------------------------------- the queue (D5)
 
-const queue = [];          // waiting jobs, in order: { id, name, owner, kind: 'read' | 'ask', question?, by, d }
+const queue = [];          // waiting jobs, in order: { id, name, owner, kind: 'read' | 'ask' | 'download', question?, by, d }
 const running = new Map(); // attachment id → its running job (one per file), with `ctrl` and `cancelled`
 const waiters = new Map(); // owner key → readsSettled resolvers
+/** How many jobs of a kind may run at once: reads and asks share MAX_READ_JOBS, downloads have their own (A6.1 D17). */
+const laneOf = (kind) => (kind === 'download' ? 'download' : 'read');
+const LANE_LIMIT = Object.freeze({ read: MAX_READ_JOBS, download: MAX_DOWNLOAD_JOBS });
+const runningIn = (lane) => [...running.values()].filter((e) => laneOf(e.kind) === lane).length;
 
 const pendingFor = (key) => queue.some((e) => ownerKey(e.owner) === key) || [...running.values()].some((e) => ownerKey(e.owner) === key);
 export const isReading = (id) => queue.some((e) => e.id === id && e.kind === 'read') || running.get(id)?.kind === 'read';
@@ -102,10 +106,12 @@ export function askingQuestion(id) {
   const q = queue.find((e) => e.id === id && e.kind === 'ask');
   return q ? q.question : null;
 }
-/** Whether the owner has a read or ask queued or running (readsSettled waits for none). */
+/** A6.1 D10: whether the file's download is queued or running. */
+export const isDownloading = (id) => queue.some((e) => e.id === id && e.kind === 'download') || running.get(id)?.kind === 'download';
+/** Whether the owner has a read, ask or download queued or running (readsSettled waits for none). */
 export const filesPending = (owner) => pendingFor(ownerKey(owner));
 
-/** Resolves once the owner has no read or ask queued or running. */
+/** Resolves once the owner has no read, ask or download queued or running. */
 export function readsSettled(owner) {
   const key = ownerKey(owner);
   if (!pendingFor(key)) return Promise.resolve();
@@ -119,15 +125,39 @@ function release(key) {
 }
 
 function enqueue(e) { queue.push(e); pump(); }
+/** A6.1 D10: the picked tracker attachments' rows (attachment-fetch.mjs's insertDownloadRow) join the queue as downloads. */
+export function queueDownloads(owner, ids, { by = null } = {}, deps = {}) {
+  const d = { ...DEFAULTS, ...deps };
+  for (const id of ids || []) if (!isDownloading(id)) queue.push({ id, name: null, owner, kind: 'download', by, d });
+  pump();
+}
+/** A6.1 D10: Try again on a failed download: the row waits again and is queued. */
+export function redownload(owner, row, { by = null } = {}, deps = {}) {
+  const out = updateAttachment(row.id, { status: 'downloading', error: null }, { by });
+  queueDownloads(owner, [row.id], { by }, deps);
+  return out;
+}
+/** A download that brought its body: the file is then read as any A8 file (D9); pump starts the read once the download is off
+ *  the running list. */
+async function runDownloadJob(e) {
+  if (!(await runDownload(e)) || e.cancelled) return;
+  const row = getAttachment(e.id);
+  if (row) queue.push({ id: row.id, name: row.name, owner: e.owner, kind: 'read', by: e.by, d: e.d });
+}
+const runJob = (e) => (e.kind === 'ask' ? runAsk(e) : e.kind === 'download' ? runDownloadJob(e) : runRead(e));
 function pump() {
-  while (running.size < MAX_READ_JOBS) {
-    const i = queue.findIndex((e) => !running.has(e.id));
+  for (;;) {
+    // the first job in order whose file is not busy and whose lane has room: a waiting download never holds a read back
+    const i = queue.findIndex((e) => !running.has(e.id) && runningIn(laneOf(e.kind)) < LANE_LIMIT[laneOf(e.kind)]);
     if (i < 0) return;
     const [e] = queue.splice(i, 1);
     e.ctrl = new AbortController();
     running.set(e.id, e);
     void (async () => {
-      try { await (e.kind === 'ask' ? runAsk(e) : runRead(e)); } catch (err) { console.error('requirements: a file job failed:', message(err)); }
+      try { await runJob(e); } catch (err) {
+        // a download's log line keeps the first line only (its error may carry a plugin's output)
+        console.error(`requirements: a file job (${e.kind}) failed:`, e.kind === 'download' ? message(err).split(/\r?\n/)[0].slice(0, 200) : message(err));
+      }
       finally { running.delete(e.id); settle(e); pump(); }
     })();
   }
@@ -358,7 +388,7 @@ function finishAsk(e, { answer, costUsd, model }) {
 
 /** Stores new files (each body first, then its row and, for a feature, its `added` turn) and queues their reads.
  *  `files` are validateAttachmentUploads' files: `{ name, kind, mime, data, bytes, sha256 }`. */
-export function addAttachments(owner, files, { by = null } = {}, deps = {}) {
+export function addAttachments(owner, files, { by = null, from = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const planned = checkNewFiles(owner.type, listAttachments(owner.type, owner.id), files).map((f) => ({ ...f, id: mintAttachmentId() }));
   mkdirSync(attachmentsDir(), { recursive: true, mode: DIR_MODE });
@@ -371,7 +401,7 @@ export function addAttachments(owner, files, { by = null } = {}, deps = {}) {
         row = tx(() => {
           const r = insertAttachment({ id: p.id, ownerType: owner.type, ownerId: owner.id, name: p.name, kind: p.kind, mime: p.mime,
             bytes: p.bytes, sha256: p.sha256 }, { by });
-          if (owner.type === 'feature') appendTurn(owner.id, { kind: 'file', payload: { action: 'added', id: p.id, name: p.name } }, { by });
+          if (owner.type === 'feature') appendTurn(owner.id, { kind: 'file', payload: { action: 'added', id: p.id, name: p.name, ...(from ? { from } : {}) } }, { by });
           return r;
         });
       } catch (err) { removeBody(p); throw err; }
@@ -389,7 +419,7 @@ export function addAttachments(owner, files, { by = null } = {}, deps = {}) {
 export function removeAttachment(owner, id, { by = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const row = ownAttachment(owner, id);
-  stopJobs([row.id]);
+  stopJobs([row.id]);   // A6.1 D10: a download in flight too; its result is thrown away
   tx(() => {
     deleteAttachmentRow(row.id);
     if (owner.type === 'feature') appendTurn(owner.id, { kind: 'file', payload: { action: 'removed', id: row.id, name: row.name } }, { by });
@@ -404,6 +434,7 @@ export function removeAttachment(owner, id, { by = null } = {}, deps = {}) {
 export function editSummary(owner, id, summary, { by = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const row = ownAttachment(owner, id);
+  if (row.status === 'downloading' || isDownloading(row.id)) throw new RequirementsError('CONFLICT', gettingOf(row));
   if (row.status === 'reading' || isReading(row.id)) throw new RequirementsError('CONFLICT', READING);
   const text = clip(summary, REQ_ATTACH_LIMITS.summary);
   if (!text) throw new RequirementsError('BAD_REQUEST', 'What Worca took from it cannot be empty.');
@@ -431,8 +462,12 @@ const STORE_FAILED = 'Worca could not store the new version. Replace it again.';
 const READ_FIRST = 'Read it again first: Worca could not read this file.';
 const storeFailed = (row) => row.status === 'failed' && row.error?.code === 'STORE_FAILED';
 const budgetMessage = (b) => `The spending limit${b && b.totalLimitUsd != null ? ` of $${b.totalLimitUsd}` : ''} is reached for this period. Worca can read the file when the limit resets or is raised.`;
+// A6.1 D10: a tracker file on its way (no body yet), and one Worca refused after it arrived (Try again would refuse it again)
+const gettingOf = (row) => `Worca is still getting this file from ${(row.fetch && row.fetch.tracker) || 'the tracker'}.`;
+const CANNOT_USE = 'Worca cannot use this file. Remove it from the ⋯ menu.';
 /** One job per file: no replace, ask or read again while the file is read or a question about it is answered. */
 function notIdle(row) {
+  if (row.status === 'downloading' || isDownloading(row.id)) throw new RequirementsError('CONFLICT', gettingOf(row));
   if (row.status === 'reading' || isReading(row.id)) throw new RequirementsError('CONFLICT', READING);
   if (isAsking(row.id)) throw new RequirementsError('CONFLICT', ASKING);
 }
@@ -444,6 +479,13 @@ export function readAgain(owner, id, { by = null } = {}, deps = {}) {
   const row = ownAttachment(owner, id);
   notIdle(row);
   if (storeFailed(row)) throw new RequirementsError('CONFLICT', STORE_FAILED);
+  // A6.1 D10: a tracker file whose download failed is fetched again first; one Worca refused after it arrived is not
+  if (row.status === 'failed' && row.error && row.error.job === 'download') {
+    if (row.error.code === 'REFUSED') throw new RequirementsError('CONFLICT', CANNOT_USE);
+    const out = redownload(owner, row, { by }, d);
+    notifyOwner(owner, d);
+    return out;
+  }
   const patch = { status: 'reading', error: null };
   if (row.summary) {
     patch.history = pushHistory(row.history, { at: iso(), by, reason: 'read-again', name: row.name, sha256: row.sha256, summary: row.summary,
@@ -700,12 +742,21 @@ export async function withStagedRunFiles(runId, list, start, { base = tmpdir() }
 
 /** What a round's prompt carries of the files (D6): the feature's <attachments> text (null without files), the scope's
  *  documents for <product_brief> ('' without any), the names a reply may give as a source, and the rows. `carried` (D8):
- *  the ids of the files whose text the prompt carried (a summary it shows, or their full text). */
+ *  the ids of the files whose text the prompt carried (a summary it shows, or their full text). A file an import added (A6.1 D14:
+ *  its `added` turn names the ticket) has its full text fenced as the tracker's material (fenceTrackerText), and the budget counts
+ *  the fenced text, as the prompt carries it; a feature with no imported file gets the same text as before. */
 export function promptFiles(f) {
   const rows = listAttachments('feature', f.seq);
   const brief = usableBrief(f.scopeType, f.scopeKey);
   const docs = brief ? listAttachments('brief', brief.id) : [];
-  const texts = selectInlineAttachments(rows, (r) => { try { return redactAskText(readFileSync(attachmentFile(r), 'utf8')); } catch { return null; } });
+  const origins = fileOrigins(listTurns(f.seq));
+  const readText = (r) => {
+    let t;
+    try { t = redactAskText(readFileSync(attachmentFile(r), 'utf8')); } catch { return null; }
+    const from = origins.get(r.id);
+    return from ? fenceTrackerText(t, from) : t;
+  };
+  const texts = selectInlineAttachments(rows, readText);
   return { rows, docs, attachments: rows.length ? renderAttachmentsForPrompt(rows, { texts }) : null,
     documents: docs.length ? renderDocumentsForPrompt(docs) : '', sources: sourceNames(rows, docs),
     carried: rows.filter((r) => hasText(r) || texts.has(r.id)).map((r) => r.id) };   // the same test the render uses
@@ -713,7 +764,8 @@ export function promptFiles(f) {
 
 // ---------------------------------------------------------------- boot, estimates
 
-/** D5: a file left `reading` by a restart, whose read is not queued or running, fails with INTERRUPTED (Try again). */
+/** D5: a file left `reading` by a restart, whose read is not queued or running, fails with INTERRUPTED (Try again); A6.1 D10: a file
+ *  left `downloading`, whose download is not queued or running, fails with INTERRUPTED too (Try again fetches it). */
 export function recoverAttachmentReads() {
   let n = 0;
   for (const r of listReadingAttachments()) {
@@ -721,16 +773,21 @@ export function recoverAttachmentReads() {
     updateAttachment(r.id, { status: 'failed', error: { code: 'INTERRUPTED', message: 'Worca restarted before it finished reading this file.', at: iso() } });
     n += 1;
   }
+  for (const r of listDownloadingAttachments()) {
+    if (isDownloading(r.id)) continue;
+    updateAttachment(r.id, { status: 'failed', error: downloadInterrupted(r) });
+    n += 1;
+  }
   return n;
 }
 
-/** D5: read folders a restart left behind, older than an hour. */
+/** D5, A6.1 D9: read and download folders a restart left behind, older than an hour. */
 export function sweepReadFolders(base = join(worcaHome(), 'tmp', 'requirements'), { olderThanMs = 60 * 60 * 1000, now = Date.now() } = {}) {
   const out = { removed: [], failed: [] };
   let names = [];
   try { names = readdirSync(base); } catch { return out; }
   for (const n of names) {
-    if (!/^att-read-[0-9a-f]{8}$/.test(n)) continue;
+    if (!/^att-(?:read|get)-[0-9a-f]{8}$/.test(n)) continue;
     const p = join(base, n);
     try {
       if (now - statSync(p).mtimeMs < olderThanMs) continue;
@@ -771,13 +828,14 @@ export const readEstimates = () => ({ text: readEstimate('text'), image: readEst
 
 /** A file as the page shows it (§5): a feature file carries `sendWithRun`, a document `sendWithEveryRun`. `estimates` is
  *  readEstimates() read once by the caller (else each file reads its kind's). */
-export function fileView(row, { spec = null, href, doc = false, estimates = null } = {}) {
+export function fileView(row, { spec = null, href, doc = false, estimates = null, from = null } = {}) {
   return {
     id: row.id, name: row.name, kind: row.kind, mime: row.mime, bytes: row.bytes, status: row.status, error: row.error,
     summary: row.summary, summaryEdited: row.summaryEdited, asks: row.asks, history: row.history,
     [doc ? 'sendWithEveryRun' : 'sendWithRun']: row.sendWithRun, costUsd: row.costUsd, readAt: row.readAt, readModel: row.readModel,
     estimateUsd: isGenericBinary(row) ? 0 : estimates ? (estimates[row.kind] ?? null) : readEstimate(row.kind), mentions: spec ? mentions(spec, row.name) : [], href,
     asking: askingQuestion(row.id),
+    from, fetched: !!row.fetch,   // A6.1 D14: the ticket an import added it from; a tracker file (its download states)
     sendable: bodyUsable(row),   // D14: Start would refuse it otherwise; the page lets it be switched off, not on
   };
 }

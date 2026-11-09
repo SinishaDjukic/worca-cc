@@ -46,11 +46,17 @@ export function stepTitle(pq, who = '') {
   }
 }
 
+/** The waiting card has hidden its foot for its open Ask for changes field (the Requirements card): the field's Send
+ *  changes is the only primary, so the host's bar must not draw Answer as one. */
+export const answerFieldOpen = (root) => !!root && !!root.querySelector('.qpanel:not(.hidden) .plan-actions[hidden]');
+
 /** Run 4 (D4): the control a waiting question takes the focus on — the card's own primary (Approve 2 runs, Approve and
- *  build) when it has an enabled one, else its first control that is not a menu trigger (a run row's ⋯). */
+ *  build) when it has an enabled one in a foot that shows, else its open Ask for changes field, else its first control
+ *  that is not a menu trigger (a run row's ⋯). */
 export function questionFocusTarget(root) {
   if (!root) return null;
-  return root.querySelector('.qpanel:not(.hidden) .plan-actions .btn-primary:not([disabled])')
+  return root.querySelector('.qpanel:not(.hidden) .plan-actions:not([hidden]) .btn-primary:not([disabled])')
+    || root.querySelector('.qpanel:not(.hidden) .plan-typed:not([hidden]) textarea')
     || root.querySelector('.qpanel:not(.hidden) :is(button, input, textarea, [tabindex]):not([disabled]):not([aria-haspopup])');
 }
 

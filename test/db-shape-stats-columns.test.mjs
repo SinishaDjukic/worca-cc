@@ -20,10 +20,10 @@ test('pipelines has shape_stats and run_size on a fresh DB and on a current DB m
   assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
 });
 
-// #990 slice 6: pipelines.review_stats (a run's per-role review counts) is healed the same way, with no version bump.
-// (It shipped at dev's SCHEMA_VERSION 84; dev has since reached 86 and feat/workflow-tests' rungs 87–89 sit above it, so
-// the stamp is checked as current.)
-test('pipelines has review_stats on a fresh DB and on a current DB missing it; no version of its own', () => {
+// #990 slice 6: pipelines.review_stats (a run's per-role review counts) is healed the same way, with no version bump
+// (#990's own step is v84; #1145 and #1142 took v85, #1142 v86, PR-when-done #1156 v87 and Requirements A6.1 v88 after it,
+// and feat/workflow-tests' rungs 89–91 sit above them).
+test('pipelines has review_stats on a fresh DB and on a current DB missing it; the stamp stays SCHEMA_VERSION', () => {
   assert.ok(SCHEMA_VERSION >= 84);
   const fresh = new DatabaseSync(':memory:');
   migrate(fresh);

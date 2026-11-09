@@ -242,8 +242,8 @@ level and has no **Diff**, **Changes** or **Actions**.
   bar keeps only Back, **Workflows ▾** (New canvas, Open…, Import…, Export…),
   the name, the Library toggle and **Save**; **Auto-layout** and the zoom menu
   sit bottom right. See [`docs/ui-levels.md`](docs/ui-levels.md#workflows).
-- **The Library** — the card beside the canvas switches between **Agents**,
-  **Scripts** and **Workflows**. Every agent and script action lives there (view,
+- **The Library** — the card beside the canvas switches between **Workflows**,
+  **Agents** and **Scripts** (it opens on Workflows). Every agent and script action lives there (view,
   edit, create, duplicate, delete, the script test bench); their editors open in
   a sheet inside the view. The old `#composer`, `#agents`, `#scripts` and
   `#agent-create` addresses land in the view.
@@ -259,11 +259,13 @@ level and has no **Diff**, **Changes** or **Actions**.
 - **From Chat too** — the main chat drafts agents and scripts and proposes whole workflows (scripts, gates and
   new agents included) with the same cards, without a canvas: **Save** a draft or open it in its editor, and **Save as
   workflow**, **Open in Workflows** (a new unsaved workflow on the canvas) or **Decline** a proposed graph.
-- **Saved pipelines** — the Library's **Workflows** tab lists them with domain
-  chips; click a row to open it. The built-in **Default** and **Memory
-  defragment** open read-only (Save makes a copy). Saved pipelines are offered
-  in New pipeline's **Workflow** picker, and so in schedules.
-- **Share a pipeline** — **Export…** on a Library row (or in **Workflows ▾**)
+- **Saved pipelines** — the Library's **Workflows** section, its first, lists **Yours** on top, then
+  **Built-in**, then **Archived**, each split into domain folders. **Edit** (or a click on the row) opens one of
+  yours, and Save changes it. **Use as template** opens a workflow as a new unsaved copy that Save keeps as your
+  own. Built-in and plugin workflows offer only that; yours offer it from the row's ⋯ menu. A badge beside the
+  name says what the canvas holds: **Editing** or **Unsaved copy**. Saved pipelines are offered in New pipeline's
+  **Workflow** picker, and so in schedules.
+- **Share a pipeline** — **Export…** in a Library row's ⋯ menu (or in **Workflows ▾**)
   offers three formats. A **JSON file** carries the graph only; the recipient
   picks it up with **Workflows ▾ › Import…** (a taken name gets a ` (2)` suffix; nothing is ever overwritten,
   and any script commands are shown for approval first). In Expert, a
@@ -599,7 +601,8 @@ level and has no **Diff**, **Changes** or **Actions**.
 - **Runs keep going while you're away** — during your away hours, or after you turn on **Away**
   in the account menu (the corner at the foot of the sidebar), Worca answers what a run would wait on: clarifying
   questions, mid-step questions, input forms, review-loop gates, proposed workflows and failed-step
-  retries. It trusts the agent's recommendation when the agent is sure enough. Otherwise a
+  retries. On a Shaper run you still answer what to build (Clarify, Requirements, and any plan whose check did not pass);
+  Worca approves the outline and plans whose checks passed, flagging concerns *please check*. It trusts the agent's recommendation when the agent is sure enough. Otherwise a
   read-only review (it can only read files), on the run's engine, scores each option against your
   Worca memory, how easily it can be undone, scope, the codebase's conventions and cost. An answer it is unsure of is
   still given, but flagged *please check*.

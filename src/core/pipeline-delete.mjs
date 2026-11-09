@@ -36,6 +36,7 @@ import {
 } from './run-manifest.mjs';
 import { branchExists, anyPrHost, findPrForBranch } from './git-info.mjs';
 import { retainedWorkPatchName } from './results.mjs';
+import { buildRunCommitMessage, readCommitSummary } from './commit-message.mjs';
 import { deleteCommentsForRun } from './diff-comments.mjs';
 import { byActor } from './identity.mjs';
 import { workModeOfRow } from './project-kind.mjs';
@@ -668,7 +669,11 @@ async function applyRetainedUnderLock({ storeKey, id, projectDir, by }) {
   }
   const records = new Map(branchRecordsOf(row));
   const modeOf = (br) => br?.runRootMode || parseJson(row.workspace_meta)?.runRootMode || 'legacy';
-  const message = `worca: ${row.title || row.base_name || 'changes'}\n\nPipeline ${row.id}`;   // teardown: title || baseName || 'changes'
+  // The run's commit message, rebuilt now with teardown's builder (commit-message.mjs): one summary for every
+  // member, each member's own staged stats, and the Worca-Run trailer. Teardown: title || baseName || 'changes'.
+  const summary = await readCommitSummary({ pipelineId: row.id, pipelineDir: runDir, storeRoot: projectStorePath(storeKey) });
+  const title = row.title || row.base_name || 'changes';
+  const message = (changes) => buildRunCommitMessage({ title, runId: row.id, summary, changes });
   const at = new Date().toISOString();
   const outcome = new Map();                     // projectKey -> { sha, hooksBypassed, mergeBack }
   const released = [];

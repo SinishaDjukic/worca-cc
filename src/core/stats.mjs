@@ -22,6 +22,7 @@ import { readTagsFor } from './run-tags-store.mjs';
 import {
   budgetStatus, costWindowStart, costWindowEnd, roundUsd,
   askWindowedSpendUsd, requirementsWindowedSpendUsd, utilityTotals,
+  REAL_RUN_HOURS,
 } from './cost-budget.mjs';
 import { savedUsd } from '../shared/human-estimate.mjs';
 import { effectiveHumanRateUsd } from './human-rate.mjs';
@@ -106,7 +107,7 @@ const TOTALS_COLUMNS = `COUNT(*) AS runs,
       COALESCE(SUM(pr_state = 'MERGED'), 0)                                  AS prsMerged,
       COALESCE(SUM(CASE WHEN p.total_cost_usd  > 0 THEN p.total_cost_usd  ELSE COALESCE(s.sc, 0) END), 0) AS spend,
       COALESCE(SUM(CASE WHEN p.total_active_ms > 0 THEN p.total_active_ms ELSE COALESCE(s.sa, 0) END), 0) AS active,
-      COALESCE(SUM(p.human_hours), 0) AS humanHours`;
+      COALESCE(SUM(${REAL_RUN_HOURS}), 0) AS humanHours`;
 const TOTALS_FROM = `
     FROM pipelines p
     LEFT JOIN (SELECT pipeline_id, SUM(cost_usd) sc, SUM(active_ms) sa
@@ -344,7 +345,7 @@ function tagGroupsFor(configured, ctx) {
 // Statistics › Cost (value report, labels-cost-tags s3): one fact per run the window counts.
 const FACT_SELECT = `
     SELECT p.id AS id, p.project_key AS projectKey, pj.name AS projectName, p.started_by AS who, p.status AS status,
-      p.pr_url AS prUrl, p.pr_state AS prState, COALESCE(p.human_hours, 0) AS hours,
+      p.pr_url AS prUrl, p.pr_state AS prState, COALESCE(${REAL_RUN_HOURS}, 0) AS hours,
       COALESCE(p.started_at, p.updated_at) AS startedAt,
       json_extract(CASE WHEN json_valid(p.stepper) THEN p.stepper END, '$.template.name') AS wfName,
       json_extract(CASE WHEN json_valid(p.stepper) THEN p.stepper END, '$.template.id') AS wfId,
@@ -475,7 +476,7 @@ function requirementsTotals(fromMs, toMs) {
  *  @returns {{windowHumanHours:number, windowSavedUsd:number}} */
 export function budgetWindowSavings(budget) {
   const row = prepare(`
-    SELECT COALESCE(SUM(p.human_hours), 0) AS humanHours
+    SELECT COALESCE(SUM(${REAL_RUN_HOURS}), 0) AS humanHours
     FROM pipelines p
     WHERE COALESCE(p.started_at, p.updated_at) >= ?
       AND COALESCE(p.started_at, p.updated_at) <  ?

@@ -21,6 +21,7 @@ import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
 import { buildNodeConfigRows, buildRoleRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
+import { PR_OPEN, PR_OPEN_LABELS, prSourceText } from '../../src/shared/pr-auto.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
 import { runsOn, modelGroups } from '../../src/shared/connections.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
@@ -41,7 +42,7 @@ import { CHATS_PAGE } from './chats-list.mjs';
 import { chatPageKeyAction, keyHint, isMac, LIST_FIELD } from './list-keys.mjs';
 import { openKeysSheet } from './keys-sheet.mjs';
 import { gitOn } from './git-gate.mjs';
-import { originMark } from './chat-origin.mjs';
+import { originMark, platformName } from './chat-origin.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NEEDS_REPO_NOTE } from '../../src/shared/no-project.mjs';
 import { createTagInput, fetchTagVocabulary, createTagRulesLine } from './tag-input.mjs';
 import { INTENTS, splitIntentLead } from './chat/intent.mjs';
@@ -3729,6 +3730,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // the node rows' in `reviewRoleEdits[nodeId][roleKey]` (`row.role` already names Default's legacy step role).
     return { wf, registry, runConfig, rows, edits: {}, reviewRoleRows: buildRoleRows(wf, rows, runConfig), reviewRoleEdits: {},
       editable: true, explicit: !projectDir, engine, defaultEngine, allModels, proposal: {}, proposed: {}, warnings: [],
+      prDefault: defaults && defaults.pr && defaults.pr.scope === 'project' ? defaults.pr : null,
       models, efforts: engine === 'claude' ? (Array.isArray(cfg.efforts) ? cfg.efforts : []) : [...(ENGINE_EFFORTS[engine] || [])],
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
@@ -4293,6 +4295,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     };
   }
 
+  /** "Saved to Workflows: <name>" under a saved card's name (#1126). The name is a real link to the row's address;
+   *  with the app's openComposer the click takes the card's own way in (the Library then shows the row). */
+  function savedToLine(workflowId, name) {
+    const line = make('div', 'ask-wfcard-savedto', 'Saved to Workflows: ');
+    const a = make('a', 'ask-wfcard-savedlink', name || workflowId);
+    a.href = `#workflows/${encodeURIComponent(workflowId)}`;
+    a.setAttribute('data-ask-wf-link', '');
+    a.addEventListener('click', (e) => {
+      if (typeof openComposer !== 'function') return;      // a bare host: the href navigates
+      e.preventDefault();
+      openComposer(workflowId);
+    });
+    line.appendChild(a);
+    return line;
+  }
+
   function buildWorkflowCard(block, prev) {
     const card = block.card || {};
     const name = card.name || '';
@@ -4340,6 +4358,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       handle.parts.name.replaceWith(saved);
       // The chip says Saved and the tag says Auto: the line stays only when it says something new.
       if (card.adopted) saved.after(make('div', 'ask-wfcard-savedline', 'Uses a workflow you already had'));
+      else if (block.workflowId) saved.after(savedToLine(block.workflowId, name));   // a new row: say where it went (#1126)
     } else if (matched) {
       const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow. Edit them in the Workflows view.');
       handle.parts.match.after(hint);
@@ -5280,6 +5299,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     lvTag(engineField, 'advanced', !!card.engine && card.engine !== 'claude');
     wfRow.append(wfField, engineField, guardField);
     targetSec.appendChild(wfRow);
+    // Pull request when the run finishes: "Use the setting" sends nothing (the project's or workspace's value, with its source, once the lane has read it); a pick is this run's own choice.
+    const prSel = rpSelect('ask-card-pr', 'Pull request when done');
+    fillSelect(prSel, [{ value: '', label: 'Use the setting' }, ...PR_OPEN.map((v) => ({ value: v, label: PR_OPEN_LABELS[v] }))], (card.pr && card.pr.open) || '');
+    const prField = lvTag(rpField('Pull request when done', prSel), 'advanced', !!(card.pr && card.pr.open));
+    const prRow = make('div', 'ask-rp-grid wf-row');
+    prRow.appendChild(prField);
+    targetSec.appendChild(prRow);
     if (shapeUi) rootEl.appendChild(shapeUi.el);
     rootEl.appendChild(targetSec);
     engineSel.addEventListener('change', () => reloadLane());   // the agent rows offer the engine's models
@@ -5739,6 +5765,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         }
         if (lane) {
           engineSel.options[0].textContent = `${engineLabel(lane.defaultEngine)} (default)`;
+          prSel.options[0].textContent = lane.prDefault && local.target === 'project' ? `Use the setting: ${PR_OPEN_LABELS[lane.prDefault.open.value]} (${prSourceText(lane.prDefault.open.source)})` : 'Use the setting';
           for (const o of engineSel.options) o.hidden = o.value !== '' && o.value === lane.defaultEngine && engineSel.value !== o.value;   // listed once
         }
         wfDesc.textContent = lane ? workflowDesc(lane.wf, lane.registry, lane.runConfig) : '';
@@ -5832,6 +5859,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (tags.length) body.tags = tags;                      // none: a legacy body, byte for byte
     const engine = (rootEl.querySelector('.ask-card-engine') || {}).value;
     if (engine) body.engine = engine;                       // none: /api/run's default engine
+    // Pull request when done: only an explicit pick (and the proposal's slices mode on a project run); none: the setting decides.
+    const prOpen = (rootEl.querySelector('.ask-card-pr') || {}).value;
+    const pr = { ...(prOpen ? { open: prOpen } : {}), ...(card.pr && card.pr.slices && local.target === 'project' ? { slices: card.pr.slices } : {}) };
+    if (local.target !== 'none' && Object.keys(pr).length) body.pr = pr;
     // A tracker task: the reference, never a prompt (POST /api/run takes source OR prompt).
     if (card.source) {
       delete body.prompt;
@@ -6839,7 +6870,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (history.length) parts.push(`${history.length} earlier message${history.length === 1 ? '' : 's'}`);
     const own = Array.isArray(b.files) ? b.files.filter((f) => f && typeof f.name === 'string') : [];
     if (own.length) parts.push(`${own.length} file${own.length === 1 ? '' : 's'} not saved`);
-    const where = b.platform === 'discord' ? 'Discord' : 'chat';
+    const where = platformName(b.platform) || 'chat';
     box.appendChild(make('summary', 'ask-user-context-h', `Context from ${where}${parts.length ? `: ${parts.join(', ')}` : ''}`));
     const fileLine = (f) => make('div', 'ask-user-context-f', f.note ? `${f.name} — ${String(f.note)}` : f.name);
     const quote = (q) => {

@@ -746,6 +746,7 @@
         "selectors": [
           ".req-",
           "a.req-",
+          "span.req-",
           ".viewer-modal.req-dlg-wrap",
           ":root:not([data-git=\"off\"]) .req-",
           ".form-msg.req-msg-warn",

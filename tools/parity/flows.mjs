@@ -8,7 +8,7 @@ import { finishRun, SEED_PROMPT } from './seed.mjs';
 const CHROME = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome',
   '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser', '/usr/bin/chromium'];
 // The done words for a finished run, minus 'Needs you' (a finished run needs no one).
-export const DONE_WORDS = ['ready', 'in-review', 'merged'].map(doneStatusWord);
+export const DONE_WORDS = [...['ready', 'in-review', 'merged'].map(doneStatusWord), 'Mock run'];   // the flows run on mock
 
 export function chromePath(env = process.env, exists = existsSync) {
   if (env.CHROME_BIN) return env.CHROME_BIN;

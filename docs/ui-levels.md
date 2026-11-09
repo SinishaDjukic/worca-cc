@@ -14,8 +14,8 @@ and update the [catalogue](#catalogue).
 
 | Level | Who | What it shows |
 |---|---|---|
-| `simple` | New to Worca | The core loop: pick a project, describe the task, watch the run, answer its questions, read the result. Budget limits. The Workflows view: workflows, agents and scripts. Nothing here can break a run. |
-| `advanced` | Regular use | How a run executes and what it changed: branches, guardrails, per-agent model and effort, the live log, the diff, pull requests, plugins, memory files. |
+| `simple` | New to Worca | The core loop: pick a project, describe the task, watch the run, answer its questions, read the result and its diff. Budget limits. The Workflows view: workflows, agents and scripts. Nothing here can break a run. |
+| `advanced` | Regular use | How a run executes: branches, guardrails, per-agent model and effort, the live log, pull requests, plugins, memory files. |
 | `expert` | Authoring and team setup | Everything: model and guardrail authoring, routing env and secrets, fan-out and loop limits, log filters, per-node run detail, diagnostics, team metrics. |
 
 Levels are **cumulative**. Advanced shows everything Simple shows; Expert shows
@@ -78,8 +78,7 @@ Then check two things:
 - **Can it hold a non-default value?** If yes, keep it visible when it does
   (rule 2).
 - **Is it the only way to reach something a lower level needs?** If hiding it
-  strands a Simple user, either lower it or give Simple a plain substitute (the
-  "Files changed" list on the History overview stands in for the Diff tab).
+  strands a Simple user, either lower it or give Simple a plain substitute.
 
 Whole pages follow the same questions: tag the **entry points** (the nav item,
 the tab button), never the page container, so deep links keep working.
@@ -154,7 +153,7 @@ be skipped by forgetting it.
 |---|---|
 | Project, prompt, title, extra files, Start run; "Reuse last task" after a run starts (#687) | S |
 | Start run's caret menu (Schedule…) | A |
-| Workflow picker | S — lists Auto and Default only; the selected workflow always stays listed |
+| Workflow picker | S — lists Auto, Default and the workflows saved from Chat (Auto cards and Ask graph cards); every other saved workflow from A; the selected workflow always stays listed |
 | Mock mode | S — sits beside Start run, outside the Advanced disclosure |
 | Preset ▾ button and its menu (presets, Rename…, Delete…, Save as preset), its ✕, Update preset | S |
 | Preset picker's "Manage presets…" entry | A |
@@ -177,7 +176,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | "Scheduled" group (runs due within 24 h) | S — it only exists when something is scheduled |
 | Needs-input pill and banner; clarify questions; Auto proposal ("Review the workflow": preview that opens a pan/zoom popup, Accept) — all answered on the run page | S |
 | Recovery prompt, cycle gate, cost-pause banner | all |
-| Run page card head: the status line, the head buttons (Try it, Create PR, Push, View PR │ ▾, Fix conflicts, Ask for changes, Discard / Apply to branch, How to merge, Discard / Apply to folder, Report) and the route (Where the work is) | S |
+| Run page card head: the status line, the head buttons (Try it and its next step: Checking out… / Setting up…, Start <service>, Open :port and Stop, a failed setup's error, Create PR, Push, View PR │ ▾, Fix conflicts, Ask for changes, Discard / Apply to branch, How to merge, Discard / Apply to folder, Report) and the route (Where the work is) | S |
 | View PR ▾ › Watch | A |
 | Summary card › a live checkout: the Results row with Discard / Unlink | S |
 | Summary card › the Actions row value (`Local copy open · since 18:12`, `Try it on this machine`) and the Actions tab's Download patch | A |
@@ -200,7 +199,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Workflow graph with status colours, gate pip, End result; Workflow, Overview and Q&A tabs | S |
 | Run header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the Overview cost card's Away mode share | S |
 | "Answered for you": one group per ask (kind · time · model · cost of its review, or "review stopped" and its lower bound), the answers, Check; the heading's answer count and what the Away mode reviews cost | S |
-| Diff tab (live worktree while running, the final patch after) | A |
+| Diff tab (live worktree while running, the final patch after) | S |
 | Folder run (a Folder project): Changes tab, the Folder chip, the "<n> files · on a copy" bar with Discard and Apply to folder, the Apply to folder dialog | S |
 | Run without a project (No project): the Artifacts tab, opened first; the No project chip | S |
 | Live log pane (run page › Logs), log search / copy / auto-scroll, Summaries / Raw switch (flag `commandSummaries`) | A |
@@ -223,11 +222,12 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Save as preset (a run with a stored setup) | S |
 | Run page bar: Back (every layout) and ⋯ (Away mode while live, Save as preset, Terminal, Report this run, Archive / Restore) | S |
 | History: usage-limit notice | S |
-| "Files changed" list on the Overview | S — the stand-in for the Diff tab |
+| "Files changed" list on the Overview | S |
 | Folder run: Changes tab, the Folder chip, the Apply bar and dialog, Discard; the Git / Folder chip on a project's group in the Runs list | S |
 | Run without a project: the Artifacts tab, opened first; the No project group and its chip in the Runs list | S |
 | Overview: Perspective checklists, as on the run page (shaped runs) | S |
-| Diff tab, diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; Artifacts tab | A |
+| Run page head on a project with no remote: Link remote, How to merge | S |
+| Diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; Artifacts tab | A |
 | Actions tab, Overview actions strip, Create PR 'Try it first' button and strip | A |
 | Create PR dialog: Draft switch, "Will close owner/repo#N" line | A — ungated inside the modal (no `data-min-level`), so they show wherever the modal opens |
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
@@ -287,7 +287,8 @@ gated: the view shows the same controls at every level.
 | The canvas, the top bar (Back, Workflows ▾ with New canvas, Open…, Import… and Export…, the name and its validation chip, the Library toggle, Save), Auto-layout and the zoom menu | all |
 | The "+" menu: Task, End, AND, OR, Combine, Agent…, Script…, New agent…, New script… | all |
 | The selection toolbar and its More / Params popover: model, effort, fan-out, ask questions, await all inputs, input count, seed the plan store, loop max cycles; a script's params, timeout and port editor | all |
-| The Library: its Agents / Scripts / Workflows selector with each registry count, the domain folders that expand in place (Flow, Archived), the header search, every row action (Add to canvas, View, Edit, Duplicate, Delete, Open, Export), New agent and New script, legacy and archived rows | all |
+| The Library: its Workflows / Agents / Scripts selector with each registry count, the domain folders that expand in place (Flow; Workflows' Yours, Built-in and Archived), the header search, every row action (Add to canvas, View, Edit, Duplicate, Delete, Open, Use as template, Export), New agent and New script, legacy and archived rows | all |
+| The canvas badge beside the name: Editing / Unsaved copy / Built-in / Not saved | all |
 | The agent sheet: the full agent form (runner type, ports, side effect, mock role, workspace variants) and the agent wizard | all |
 | The script sheet: the runtime step, the workspace and the bench under its editor; the Import dialog's command list | all |
 | The composer chat in the dock | all |
@@ -326,6 +327,7 @@ inside the view.
 | General: Appearance, Alerts, Interface mode, Getting started, About | S |
 | Runs tab: Budget & cost limits (incl. Resume runs automatically when a usage limit resets) | S |
 | Runs tab: Pull requests (Draft the PR description with AI automatically) | S |
+| Runs tab: the filter box above its cards | S |
 | Runs tab: Network proxy | S — timeouts and the local port under More |
 | Labs tab (feature flags) | S — flags are independent of levels (docs/feature-flags.md) |
 | General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Chat tab (limits, tools, web access, chat history) | A |
@@ -365,6 +367,8 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Export to a tracker: Export ▾'s Export to Jira… and Export setup…, the setup dialog, the preview (fields, labels, the description, Export anyway), Export again and the comment preview, the failure states, the header's ticket chip, "Created SHOP-123", the History card, Report back on Ready to build, the start dialog and the runs card; on a phone (900 px and narrower) the dialogs as full-screen sheets | S — product owners are its users |
 | Connect a tracker… (the menu item and its dialog) | S |
 | Connect a tracker's Open the Marketplace page | A — the Marketplace page is Advanced |
+| Start from a ticket: New feature's From a ticket…, the pick and the preview and their phone sheets, the filled form (Starting from SHOP-124, Change ticket…, the criteria, the ticket's files), Downloading… and the download states on the Files card, "from SHOP-124", the criteria's ticket tag, History's import line, Export to Jira… on an imported feature | S — product owners are its users |
+| Start from a ticket's "Fix the connection on the Marketplace page (Installed › Jira), then try again." | A — the Marketplace page is Advanced |
 | A feature's interview: the question card (options, Recommended, your own answer, Finish now, Skip, use recommended, Submit), Earlier rounds and Change, the working line, the error line and Try again | S |
 | Feature chat: the header's Feature chat, Help me answer on each open question, the panel beside the spec and the phone sheet (Back), the first-open text and its three questions, the composer and its cost line, Answering… and Stop, the failed, stopped and spending-limit lines, Try again, ⋯ Clear chat | S — product owners are its users |
 | Feature chat's drafts in the question card (drafted by Worca, ×, "Worca's draft: …") and its proposal cards (Before / After, New, Remove, Confirm / Reject, Why, Reject / Accept / Ask again, Accepted, Rejected, "The spec changed since Worca proposed this.") | S |

@@ -124,3 +124,25 @@ test('re-entry drops the per-id memo so a re-saved workflow repaints with its ne
   assert.equal(sel.value, 'wf_a', 'selection kept across the refresh');
   assert.deepEqual(rows(), ['s0_0', 's1_0'], 'accordion painted from the re-fetched topology');
 });
+
+test('Simple lists Auto, Default and the workflows saved from chat (origin auto); Advanced lists every saved workflow (#1126)', async () => {
+  const { window, server } = await boot();
+  server.workflows.push(
+    { ...WF_A, id: 'wf_chat', name: 'From chat', origin: 'auto' },
+    { ...WF_A, id: 'wf_mine', name: 'Mine', origin: null },
+    { ...WF_A, id: 'wf_plug', name: 'Plugged', origin: 'plugin:demo' },
+  );
+  const doc = window.document;
+  const sel = doc.getElementById('workflowSelect');
+  // As ui-level.mjs dispatches it (test/ui-run-presets-form.test.mjs): onLevelChange → refreshNewPipelinePickers.
+  const setLevel = async (level, previous) => {
+    doc.documentElement.dataset.level = level;
+    doc.dispatchEvent(new window.CustomEvent('worca:level', { detail: { level, previous } }));
+    await tick(10);
+  };
+  await setLevel('simple', 'expert');
+  assert.deepEqual(optionIds(sel), ['wf_auto', 'wf_default', 'wf_chat'], 'Simple: Auto, Default and the chat-saved workflow only');
+  assert.equal(sel.value, 'wf_default', 'the selection is kept');
+  await setLevel('advanced', 'simple');
+  assert.deepEqual(optionIds(sel), ['wf_auto', 'wf_default', 'wf_chat', 'wf_mine', 'wf_plug'], 'Advanced: every saved workflow');
+});

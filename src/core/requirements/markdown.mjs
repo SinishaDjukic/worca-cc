@@ -39,8 +39,9 @@ export function renderTaskMarkdown(feature, { spec = feature.spec, targetName = 
   return `${TASK_PREAMBLE}\n\n${lines.join('\n')}`;
 }
 
-/** A criterion as one ticket line (A6 D4): "R-po-1 <text>", with A8's "(from <name>)". */
-export const criterionLine = (c) => `${c.id} ${c.text}${from(c)}`;
+/** A criterion as one ticket line (A6 D4): "R-po-1 <text>", with A8's "(from <name>)" — except in the ticket the criterion came
+ *  from (A6.1 D7: `ownKey`). */
+export const criterionLine = (c, ownKey = null) => `${c.id} ${c.text}${ownKey && c.source === ownKey ? '' : from(c)}`;
 
 /**
  * The ticket's description (plans/requirements-a6-design.md D4), board 27's order: Goal (text, then "Measure: ..."), Actors
@@ -49,7 +50,7 @@ export const criterionLine = (c) => `${c.id} ${c.text}${from(c)}`;
  * "_None yet._" is never sent); open questions, open and rejected assumptions and the first description are not in it. An
  * Export anyway reason leads.
  */
-export function renderTicketMarkdown(f, { reason = null, exportedOn, criteriaInDescription = true, mentionedFiles = [] } = {}) {
+export function renderTicketMarkdown(f, { reason = null, exportedOn, criteriaInDescription = true, mentionedFiles = [], ownKey = null } = {}) {
   const s = f.spec;
   const out = [];
   const section = (title, body) => { if (body) out.push(`## ${title}`, body); };
@@ -60,7 +61,7 @@ export function renderTicketMarkdown(f, { reason = null, exportedOn, criteriaInD
   section('Business rules', s.rules.length ? bullets(s.rules) : '');
   section('Edge cases', s.edgeCases.length ? bullets(s.edgeCases) : '');
   section('Out of scope', s.outOfScope.length ? bullets(s.outOfScope) : '');
-  if (criteriaInDescription) section('Acceptance criteria', s.criteria.length ? bullets(s.criteria.map(criterionLine)) : '');
+  if (criteriaInDescription) section('Acceptance criteria', s.criteria.length ? bullets(s.criteria.map((c) => criterionLine(c, ownKey))) : '');
   const confirmed = s.assumptions.filter((a) => a.status === 'confirmed');
   section('Confirmed assumptions', confirmed.length ? bullets(confirmed.map((a) => `${a.id} ${a.text}${from(a)}`)) : '');
   section('Files the spec mentions', mentionedFiles.length ? bullets(mentionedFiles) : '');

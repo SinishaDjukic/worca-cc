@@ -175,8 +175,11 @@ app.get('/api/schedules/after-candidates', (req, res) => {
     // The ROWS are the source of truth (spec §5): SETTLED_RUN contains 'paused', and another
     // process's run is not in this host's runs Map at all. The Map only adds live runIds.
     const where = workspaceId ? 'workspace_key = ?' : "project_key = ? AND target = 'project'";
+    // An interrupted run that kept its resume point is still going (core's pipelineGate waits for it); one without
+    // a point ended and resolveAfterRef refuses it under done, so it is no candidate.
     const rows = getDb().prepare(`SELECT id, title, status FROM pipelines WHERE ${where}
-      AND status IN ('created', 'starting', 'running', 'pausing', 'paused') AND archived_at IS NULL AND is_test IS NULL ORDER BY started_at DESC LIMIT 50`)
+      AND (status IN ('created', 'starting', 'running', 'pausing', 'paused') OR (status = 'interrupted' AND resume_point IS NOT NULL))
+      AND archived_at IS NULL AND is_test IS NULL ORDER BY started_at DESC LIMIT 50`)
       .all(workspaceId || projectKey(projectDir));
     const byPipeline = new Map(rows.map((r) => [r.id, { pipelineId: r.id, runId: null, title: r.title || null, status: r.status }]));
     for (const r of runs.values()) {
@@ -230,7 +233,9 @@ app.get('/api/schedules/after/:id', async (req, res) => {
       projectDir = (projects.find((p) => projectKey(p.path) === ref.projectKey) || {}).path || null;
     }
     res.json({ kind: ref.kind, id: ref.id, title: ref.title, status: ref.status, projectDir, workspaceId: ref.workspaceId || null,
-      branchGone: await predecessorBranchGone(ref, projectDir) });
+      branchGone: await predecessorBranchGone(ref, projectDir),
+      // afterRefOf sets it on an interrupted pipeline only: the deep link presets `done` when the run can still resume.
+      ...('resumable' in ref ? { resumable: ref.resumable } : {}) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

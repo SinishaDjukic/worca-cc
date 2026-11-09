@@ -24,6 +24,7 @@ import { listProjects, worcaHome, runOnboarded } from './projects.mjs';
 import { claimRunDir, claimRunExtras, shareFailureReason } from './agent-pool.mjs';
 import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead, withRefSnapshot } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
+import { cleanOutcome } from './shape/rounds.mjs';
 import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
 import { RUN_LOG_FILE } from './run-log.mjs';
 import { readRunLedger } from './metrics/ledger.mjs';
@@ -70,6 +71,11 @@ export function projectDirOfRow(row) {
   if (isNoProjectKey(row.project_key)) return noProjectWorkDir(row.id);
   if (row.is_test) return PROJECT_KEY_RE.test(String(row.project_key ?? '')) ? testCopyDirFor(row.project_key) : null;
   return readStoreMeta(row.project_key)?.path ?? null;
+}
+
+/** Was this run started as a mock (pipelines.run_setup)? A row without the column, or unreadable JSON: no. */
+function isMockSetup(raw) {
+  try { return JSON.parse(raw || 'null')?.mock === true; } catch { return false; }
 }
 
 export function readStoreMeta(key) {
@@ -397,6 +403,24 @@ export async function listRunArtifacts(pipelineId, filter = {}) {
     bytes: sizeOf(r.rel_path),
     createdAt: r.created_at ?? null,
   }));
+}
+
+/**
+ * The newest plan a run indexed (kind 'plan', store-root-relative) that still exists as a regular file (a symlink
+ * does not count: readers refuse it, so the next plan is tried), as an absolute path under `storeRoot`; null when none. Newest by time, then by the -vN suffix: two writes in one
+ * millisecond share a time, and the index's tie-break, the file name, sorts "x-v2.md" before "x.md".
+ * Shared by the Away review (run-harness `_nightPlanPaths`) and the run commit summary (commit-message.mjs).
+ */
+export async function newestPlanPath(pipelineId, storeRoot) {
+  if (!pipelineId || !storeRoot) return null;
+  const ver = (rel) => Number(/-v(\d+)\.md$/.exec(rel)?.[1] || 1);
+  const plans = (await listRunArtifacts(pipelineId, { kind: 'plan' }))
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || ver(b.relPath) - ver(a.relPath));
+  for (const a of plans) {
+    const f = join(storeRoot, a.relPath);
+    try { if (lstatSync(f).isFile()) return f; } catch { /* gone: try the next one */ }
+  }
+  return null;
 }
 
 /**
@@ -1182,6 +1206,7 @@ export async function readPromptFile(projectDir, promptFile) {
  * @param {object} [opts.sourceMeta]  { plugin, sourceId, taskId, url, title } | null
  * @param {string} [opts.guardrailsId] the run's selected guardrail set id (per-run)
  * @param {string|null} [opts.runSetup] JSON of the run's setup (pipelines.run_setup, v62); never on the state object
+ * @param {object|null} [opts.prAuto] the run's PR-when-done decision (pipelines.pr_auto, v86); same rule as runSetup
  * @param {string[]} [opts.extras]    paths to extra files copied into dir/extras
  * @param {string} [opts.title]       human title (defaults to derived text)
  * @param {string} [opts.workspaceKey]   opt-in: route to the workspace store
@@ -1195,7 +1220,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const {
     prompt, promptFile, extras = [], title, isTest = false,
     promptText: precomputedPromptText = null, sourceType = null, sourceMeta = null,
-    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], labels = [], runSetup = null,
+    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], labels = [], runSetup = null, prAuto = null,
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
@@ -1347,7 +1372,7 @@ export async function createPipeline(projectDir, opts = {}) {
   // no more state.json on disk. writeState also seeds the dir->id cache
   // (rememberDir) so appendAudit resolves this run without any call-site change
   // (A4). recordArtifact runs AFTER the row exists (FK -> pipelines).
-  await writeState(dir, state, { prWatchRunId, runSetup, isTest });
+  await writeState(dir, state, { prWatchRunId, runSetup, prAuto, isTest });
   // Run tags (#718): written once, after the row exists (FK) and after writeState's tx has
   // committed (tx cannot nest). writeState updates never touch them.
   insertRunTags(id, tags);
@@ -1455,7 +1480,7 @@ function rememberDir(dir, id) { if (dir && id) _dirIdCache.set(resolve(dir), id)
  * @param {object} stateObj
  * @returns {Promise<object>}
  */
-export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, runSetup = null, isTest = false } = {}) {
+export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, runSetup = null, prAuto = null, isTest = false } = {}) {
   const obj = { ...stateObj, updatedAt: new Date().toISOString() };
   const id = obj.id;
   if (!id) return obj; // pre-id state (constructor default): nothing to persist yet
@@ -1465,11 +1490,11 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats, is_test)
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats, pr_auto, is_test)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats,@is_test)
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats,@pr_auto,@is_test)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1484,7 +1509,8 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
         run_size=COALESCE(excluded.run_size, run_size),
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
-    `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null, is_test: isTest ? 1 : null });
+    `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null,
+      pr_auto: prAuto ? JSON.stringify(prAuto) : null, is_test: isTest ? 1 : null });
 
     // A Watch PR fix run (#619): ownership lands in the same transaction that creates the row.
     if (prWatchRunId) attachWatchPipeline(prWatchRunId, id, obj.updatedAt);
@@ -2443,6 +2469,16 @@ export function resultsFilesCount(res) {
  * @param {string|null} repoDir git repo root for live branch facts
  * @param {object} opts { withPr?, lite? }
  */
+/** A round's marker on the History wire (shape/rounds.mjs, plan Task 1): { pipelineId, round, request, by?, kinds?,
+ *  outcome? } from branch.roundOf, or null for round 1, a plain run and a malformed marker. */
+function wireRoundOf(m) {
+  if (!m || typeof m !== 'object' || !m.pipelineId || !Number.isInteger(m.round) || m.round < 2) return null;
+  const outcome = cleanOutcome(m.outcome);
+  return { pipelineId: String(m.pipelineId), round: m.round, request: String(m.request || ''),
+    ...(m.by ? { by: String(m.by) } : {}), ...(Array.isArray(m.kinds) ? { kinds: m.kinds.map(String) } : {}),
+    ...(outcome ? { outcome } : {}) };
+}
+
 async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
   const branchObj = j(row.branch, null);
   const feature = branchObj?.feature ?? (typeof branchObj === 'string' ? branchObj : null);
@@ -2473,6 +2509,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     branch: feature,
     sourceBranch: source,
     guardrailsId: row.guardrails_id ?? null,
+    mock: isMockSetup(row.run_setup),
     startedBy: row.started_by ?? null,
     pauseReason: row.pause_reason ?? null,
     pauseDetail: row.pause_detail ?? null,
@@ -2503,6 +2540,9 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     totalActiveMs: active,
     mtime: row.updated_at ? (Date.parse(row.updated_at) || 0) : 0,
   };
+  // A round of another run (Runs list fold, plan D1): the key only when the marker is valid.
+  const roundOf = wireRoundOf(branchObj?.roundOf);
+  if (roundOf) entry.roundOf = roundOf;
   // Workspace rows: eligibility is decided across EVERY member, never the primary alone.
   // Computed BEFORE the PR lookup so a row WITH members skips the primary-only search.
   if (row.target === 'workspace' && !opts.lite) {
@@ -2586,7 +2626,7 @@ async function listPipelinesNow(projectDir, opts, workspaceKey) {
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at, total_cost_usd, total_active_ms,
-           branch, workspace_meta, guardrails_id, started_by, pr_url,
+           branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
@@ -2634,7 +2674,7 @@ export function listAllPipelines(opts = {}, cfg = {}) {
 async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
-           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, started_by, pr_url, archived_at,
+           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url, archived_at,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
@@ -2877,6 +2917,7 @@ function rowToState(row) {
     stepper: j(row.stepper, null),
     tools: j(row.tools, null),
     guardrailsId: row.guardrails_id ?? null,
+    mock: isMockSetup(row.run_setup),
     startedBy: row.started_by ?? null,
     // v31 provenance: set when a schedule started this run (NULL = started by hand).
     scheduledFor: row.scheduled_for ?? null,

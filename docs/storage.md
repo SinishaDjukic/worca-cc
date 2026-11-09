@@ -29,6 +29,10 @@ project's working tree, so nothing is ever committed to your repo.
                                         chat_deliveries (one row per delivered message part with the platform
                                         message id and the card state it shows) and chat_inbound_seen (handled
                                         message/interaction ids, 2 days).
+                                        Requirements import (v88): req_export_links.origin ('export' | 'import'; a link
+                                        an import made keeps the ticket's issue type and priority) and
+                                        req_attachments.fetch_json (the tracker file a row comes from: the
+                                        connection, the ticket key and the attachment id; NULL for an upload).
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
   store/no-project-00000000/            runs without a project: one store, the History group "No project";
                                         a run's work/ moves into its pipeline folder as work/ when it ends
@@ -94,6 +98,9 @@ project's working tree, so nothing is ever committed to your repo.
   tmp/requirements/att-read-<8 hex>/    one file read's folder: a copy of that one file (a text file's copy is its
                                         redacted text), mode 0700 / 0600, removed when the read ends (a restart's
                                         leftovers older than an hour are swept at boot)
+  tmp/requirements/att-get-<8 hex>/     one tracker download's folder, mode 0700: the connector writes the body to
+                                        body.part, Worca checks it and writes it into requirements/att/; removed when the
+                                        download ends (a restart's leftovers older than an hour are swept at boot)
   tmp/ask/                              the Chat assistant's scratch cwd + per-turn
                                         mcp-<messageId>.json, mode 0600 (never a project folder)
   logs/ask-web.jsonl                    Chat web access: one line per web_fetch/web_search
@@ -179,7 +186,7 @@ Everything that used to be a per-run `.json`/`.md` control file —
 plan/review **markdown**, `prompt.md`, and `extras/` remain on disk (their
 existence is indexed in the database).
 
-### Workflow history and versions (v87)
+### Workflow history and versions (v89)
 
 Behind the experimental flag `workflowTests`; the data is kept either way.
 
@@ -206,7 +213,7 @@ Behind the experimental flag `workflowTests`; the data is kept either way.
   Never a path, a display name, a colour, an icon or the order.
 - A loop's limit is part of the graph: the stored wire keeps it in `config.maxCycles` (with `config.onExhausted`).
 
-### Workflow tests (v88)
+### Workflow tests (v90)
 
 Behind the experimental flag `workflowTests`; the data is kept either way. No foreign keys, like `workflow_revisions`:
 a deleted workflow keeps its examples, and they come back with a workflow saved again under the same id.
@@ -248,9 +255,9 @@ a deleted workflow keeps its examples, and they come back with a workflow saved 
 - `workflow-tests/seen-connectors.json` (worcaHome): the claude.ai connector names Worca saw when a run started, so
   Test a version can name the ones a pretend try switches off.
 
-### Workflow tests on a project (v89)
+### Workflow tests on a project (v91)
 
-Behind the flag `workflowTests`, like v88. FK-free like the v88 tables.
+Behind the flag `workflowTests`, like v90. FK-free like the v90 tables.
 
 - `wf_test_example_projects`: one row per example that works on a project:
   - the project's key and its name when the start was pinned (`project_name`: shown when the project is no longer

@@ -2,7 +2,7 @@
 // from the plugin's declared hosts under the chat caps (mock fetch), the chat-context block and how the model reads it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planChatFiles, fetchChatFiles, fitChatContext, chatContextBlock, isAllowedFileUrl, CHAT_FILE_LIMITS, CHAT_CONTEXT_TEXT_BUDGET } from '../src/core/chat/inbound-context.mjs';
+import { planChatFiles, fetchChatFiles, fitChatContext, chatContextBlock, isAllowedFileUrl, nameByImageBytes, CHAT_FILE_LIMITS, CHAT_CONTEXT_TEXT_BUDGET } from '../src/core/chat/inbound-context.mjs';
 import { renderChatContextPrompt, buildTurnPrompt, renderChatChannelSection } from '../src/core/ask/prompt.mjs';
 import { validateAttachmentBuffer, validateAttachmentUploads } from '../src/core/attachment-upload.mjs';
 
@@ -173,4 +173,67 @@ test('renderChatContextPrompt: after the person\'s words, fenced, every quoted l
   assert.ok(turn.indexOf('[/chat context]') < turn.indexOf('attachment att_1 mine.md'));
   assert.equal(buildTurnPrompt('', 'hi', [], ''), 'hi', 'no context: byte-identical');
   assert.match(renderChatChannelSection({ platform: 'discord' }), /\[chat context\] … \[\/chat context\] block .* untrusted DATA/);
+});
+
+test('fetchChatFiles: ref files through the worker (fetchRef) under the same caps; unavailable files listed, never fetched; no ref or url in a source', async () => {
+  const limits = { ...CHAT_FILE_LIMITS, perFileBytes: 64, turnBytes: 100 };
+  const R = (c) => c.repeat(24);
+  const rf = (name, size, refId) => ({ name, contentType: null, size, ref: refId });
+  const asked = [];
+  const fetchRef = async (ref, o) => {
+    asked.push({ ref: ref.ref, ...o });
+    if (ref.ref === R('a')) return { buf: Buffer.from('# notes\n') };
+    if (ref.ref === R('p')) return { buf: PNG };
+    if (ref.ref === R('z')) return { tooBig: true };
+    throw new Error('worker said no');
+  };
+  const logs = [];
+  const r = await fetchChatFiles({
+    attachments: [rf('a.md', 8, R('a')), rf('z.md', 1, R('z')), { name: 'report.docx', contentType: null, size: 0, unavailable: 'a SharePoint file link' }],
+    replyTo: q('alice', 'r', [rf('p.png', 24, R('p')), rf('boom.md', 3, R('b'))]),
+    history: [],
+  }, { fetchFn: async () => { throw new Error('the URL path must not be used for a ref'); }, fetchRef, allowedHosts: HOSTS, limits, log: (l, m) => logs.push(`${l}:${m}`) });
+  assert.deepEqual(r.files.map((f) => [f.name, f.kind, f.source.from]), [['a.md', 'text', 'message'], ['p.png', 'image', 'reply']]);
+  assert.deepEqual(r.skipped.map((s) => [s.name, s.why]), [
+    ['report.docx', 'not saved: a SharePoint file link'],
+    ['z.md', 'not saved: over the 64 B limit per file'],
+    ['boom.md', 'not saved: download failed'],
+  ]);
+  assert.deepEqual(asked.map((a) => a.ref), [R('a'), R('z'), R('p'), R('b')], 'an unavailable file is never asked for');
+  assert.ok(asked.every((a) => a.maxBytes <= 64 && a.timeoutMs >= 1000 && a.timeoutMs <= limits.fileTimeoutMs));
+  assert.equal(asked[2].maxBytes, 64, 'the cap is the per-file limit while the turn has room');
+  const stored = JSON.stringify(r);
+  for (const c of ['a', 'z', 'p', 'b']) assert.ok(!stored.includes(R(c)), 'no ref in a file, a source or a skip');
+  assert.ok(logs.some((l) => /boom\.md not downloaded: worker said no/.test(l)));
+
+  const none = await fetchChatFiles({ attachments: [rf('a.md', 8, R('a'))] }, { allowedHosts: HOSTS, limits });
+  assert.deepEqual(none.skipped.map((s) => s.why), ['not saved: this chat plugin cannot download files'], 'no fetchRef: listed, not fetched');
+  const turn = await fetchChatFiles({ attachments: [rf('a.md', 60, R('a')), rf('b.md', 60, R('a'))] }, { fetchRef: async () => ({ buf: Buffer.alloc(60, 0x61) }), limits });
+  assert.deepEqual(turn.skipped.map((s) => s.why), ['not saved: over the 100 B limit per message'], 'the turn byte cap holds for refs');
+});
+
+test('renderChatContextPrompt names Slack, Telegram and Microsoft Teams', () => {
+  const block = (platform) => ({ kind: 'chat-context', platform, replyTo: q('alice', 'hi') });
+  assert.match(renderChatContextPrompt(block('slack')), /Quoted from Slack /);
+  assert.match(renderChatContextPrompt(block('telegram')), /Quoted from Telegram /);
+  assert.match(renderChatContextPrompt(block('teams')), /Quoted from Microsoft Teams /);
+  assert.match(renderChatContextPrompt(block('constructor')), /Quoted from the chat app /);
+});
+
+test('fetchChatFiles: a worker-fetched image is named by its bytes (Teams sends image/*, named .png); a URL file keeps its name', async () => {
+  const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(20)]);
+  assert.equal(nameByImageBytes('image-1.png', JPEG), 'image-1.jpg');
+  assert.equal(nameByImageBytes('image-1.png', PNG), 'image-1.png');
+  assert.equal(nameByImageBytes('photo.JPEG', JPEG), 'photo.JPEG', 'a .jpeg name already fits JPEG bytes');
+  assert.equal(nameByImageBytes('notes.md', JPEG), 'notes.md', 'only image names are renamed');
+  assert.equal(nameByImageBytes('image-2.png', Buffer.from('not an image at all')), 'image-2.png', 'unknown bytes: kept, the validator decides');
+  const R24 = 'J'.repeat(24);
+  const r = await fetchChatFiles({ attachments: [{ name: 'image-1.png', contentType: null, size: 0, ref: R24 }] },
+    { fetchRef: async () => ({ buf: JPEG }), limits: CHAT_FILE_LIMITS });
+  assert.deepEqual([r.files.map((f) => [f.name, f.kind]), r.skipped], [[['image-1.jpg', 'image']], []]);
+  const u = await fetchChatFiles({ attachments: [{ name: 'x.png', contentType: null, size: 24, url: 'https://cdn.discordapp.com/a/x.png' }] },
+    { fetchFn: async () => new Response(JPEG), allowedHosts: HOSTS, limits: CHAT_FILE_LIMITS });
+  assert.deepEqual(u.files.map((f) => [f.name, f.kind, f.mime]), [['x.png', 'binary', 'application/octet-stream']],
+    'the URL path is unchanged: a mismatched name is not renamed, it is kept as a generic binary file');
+  assert.deepEqual(u.skipped, []);
 });

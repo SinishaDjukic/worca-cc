@@ -9,6 +9,7 @@ import { appendAuditById, checkoutRecordsFor, findPipelineRowById, memberChangeF
 import { assertFinishedRow, assertNotResolving, baseMembersOfRow, checkRunBase, pickBaseMember, resolveMark, resolveTaskText, settleResolutions, toRecord, updateRunBranch } from '../../../src/core/base-conflicts.mjs';
 import { checkoutPathFor, checkoutRun, checkoutRunUnderLock, discardCheckout, enforceCheckoutCap, membersOfRow, updateBranchRecords, withRunLock } from '../../../src/core/checkout.mjs';
 import { readActionsMeta, readProjectActions } from '../../../src/core/config.mjs';
+import { prAutoView } from '../../../src/core/pr-auto.mjs';
 import { attachmentDisposition } from '../../../src/core/download-filename.mjs';
 import { branchPushedTo, uncommittedPatch, withRefSnapshot } from '../../../src/core/git-info.mjs';
 import { INTERACTIVE_TTL_MS, branchCheckouts, checkBaseMerge, startConflictMerge } from '../../../src/core/git-sync.mjs';
@@ -563,6 +564,12 @@ app.get('/api/pipelines/:id/setup', (req, res) => {
   const run = readRunSetup(req.params.id);
   if (run === undefined) return res.status(404).json({ error: 'run not found' });
   res.json({ setup: run.setup, target: run.target });
+});
+
+// PR when the run finishes: the decision the run saved at its start (read-only; a slice run shows its feature's values) and its outcome.
+app.get('/api/pipelines/:id/pr-auto', (req, res) => {
+  if (!findPipelineRowById(req.params.id)) return res.status(404).json({ error: 'run not found' });
+  res.json({ prAuto: prAutoView(req.params.id) });
 });
 
 app.post('/api/pipelines/:id/preset', async (req, res) => {

@@ -328,7 +328,12 @@ test('the built-in Default workflow cannot promote defaults (it has no row to st
 // and the re-render undoes the edit — which reads as "this control is broken".
 
 test('with no project every control is disabled and the header says why; selecting a project re-enables them', async () => {
-  const { window } = await boot({ fetchHandler: apiFetch() });
+  // Two projects: a lone project is picked for you, so nothing would be "no project" here.
+  const base = apiFetch();
+  const twoProjects = (url, ...rest) => (String(url).includes('/api/projects')
+    ? Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: PROJECT, exists: true }, { name: 'other', path: `${PROJECT}-other`, exists: true }] }) })
+    : base(url, ...rest));
+  const { window } = await boot({ fetchHandler: twoProjects });
   await tick(); await tick(); // no selectProjectAnd: this IS the empty state
   const doc = window.document;
   await checkRows([
