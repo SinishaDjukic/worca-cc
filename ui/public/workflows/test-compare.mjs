@@ -14,6 +14,7 @@ import { changesTitle, changeCountText, FILE_BADGE, READ_ALL_CHANGES, BOTH_START
   changesLine, notMetFor, COMMAND_ENDED, COMMAND_TIMED_OUT, SEE_COMMAND_OUTPUT, NOTHING_PUSHED_TEXT, REAL_BLOCKED_TEXT, EACH_ANSWERED_TEXT,
   EACH_STOPPED_ANSWERED_TEXT, READING_CHANGES, inSentence,
   FAILED_LEAD, splitTestName, moreNamesText, NO_FILE_DIFF_TEXT, BINARY_FILE_TEXT, CHANGES_UNREAD_TEXT, DIFF_SHORTENED_TEXT, moreFilesText, NO_DIFF_TEXT, madeAgainText,
+  metFor, MET_DESPITE_TEXT, metWhyText,
   BEFORE_HEADING, beforeExitText, beforeNotRunText, BEFORE_GROUPS, FAILURES_ONLY_NOTE, EXIT_ONLY_NOTE, passedCountsText, skippedCountsText, TESTS_CUT_NOTE, addedRest, DEV_BEFORE_LEAD, devBeforeRest }
   from '../../../src/shared/workflow-tests/project-text.mjs';
 
@@ -546,10 +547,20 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
       if (key === 'checks') {
         for (const [side, vl, v] of [['a', s.labels.a, once ? null : cur.a], ['b', s.labels.b, cur.b]]) {
           const it = v && v.verdict ? (v.verdict.checks || []).find((x) => x.label === label) : null;
-          if (!it || it.met || (typeof it.output !== 'string' && !it.timedOut)) continue;
+          // U4 (D82, board 44): met although the command ended with an error: a neutral note in the red box's place, never the box.
+          if (it && it.met && it.metWhy && it.metWhy.why === 'nothing-broke') {
+            const note = el(doc, 'div', 'wft-met-note');
+            note.append(el(doc, 'b', '', metFor(inSentence(vl))), doc.createTextNode(MET_DESPITE_TEXT));
+            row.append(note);
+            continue;
+          }
+          // U4: a "breaks nothing" check says why it was not met, also when the command passed and kept no output (a runner
+          // that threw never ran it: no reason to give, as in 3a).
+          if (!it || it.met || (typeof it.output !== 'string' && !it.timedOut && !(it.metWhy && !it.worcaProblem))) continue;
           const why = el(doc, 'div', 'wft-why-cmd');
           const words = el(doc, 'span');
-          words.append(el(doc, 'b', '', notMetFor(inSentence(vl))), doc.createTextNode(it.timedOut ? COMMAND_TIMED_OUT : COMMAND_ENDED));
+          words.append(el(doc, 'b', '', notMetFor(inSentence(vl))),
+            doc.createTextNode(it.metWhy ? metWhyText(it.metWhy) : it.timedOut ? COMMAND_TIMED_OUT : COMMAND_ENDED));
           const col = el(doc, 'span', 'wft-why-col');
           col.append(words);
           if (Array.isArray(it.failed) && it.failed.length) col.append(failedLine(doc, it));   // P45

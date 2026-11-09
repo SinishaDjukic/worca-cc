@@ -20,7 +20,8 @@ export function startInto(doc, node, start, dateText, { bold = false } = {}) {
 export function checkWords(doc, c, label) {
   const s = el(doc, 'span');
   const codes = (list, sep) => list.forEach((x, i) => { if (i) s.append(doc.createTextNode(sep(i, list.length))); s.append(el(doc, 'span', 'code', x)); });
-  if (c && c.kind === 'command') s.append(doc.createTextNode('The command '), el(doc, 'span', 'code', c.cmd), doc.createTextNode(' passes'));
+  if (c && c.kind === 'command') s.append(doc.createTextNode('The command '), el(doc, 'span', 'code', c.cmd),
+    doc.createTextNode(c.metWhen === 'breaks-nothing' ? ' breaks nothing that passed before' : ' passes'));   // D82, U4 (board 43)
   else if (c && c.kind === 'under' && Array.isArray(c.dirs) && c.dirs.length) {
     s.append(doc.createTextNode('Changes only files under '));
     codes(c.dirs, (i, n) => (i === n - 1 ? ' and ' : ', '));

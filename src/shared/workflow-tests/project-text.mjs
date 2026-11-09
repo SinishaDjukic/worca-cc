@@ -94,7 +94,8 @@ export const CHECK_DIALOG_HINT_PROJECT = "Counted exactly, without AI. Project c
 export const GROUP_RESULT = 'The result';
 export const GROUP_PROJECT = 'The project';
 export const COMMAND_LABEL = 'Command';
-export const COMMAND_HINT = 'It runs in Worca\'s own copy of the project after the try is done. Met when the command ends without an error. Worca shows its last summary line, for example "212 passed, 1 failed".';
+// 3b polish 7 (board 43): when the command is met is its own choice now (U4, "Met when"), so the hint no longer says it.
+export const COMMAND_HINT = 'It runs in Worca\'s own copy of the project after the try is done. Worca shows its last summary line, for example "212 passed, 1 failed".';
 export const TIMEOUT_LABEL = 'Stop the command after';
 export const TIMEOUT_HINT = 'A command that runs longer counts as not met.';
 export const timeoutText = (n) => `${n} ${n === 1 ? 'minute' : 'minutes'}`;
@@ -171,6 +172,33 @@ export const COMMAND_ENDED = ' the command ended with an error.';
 // P32 (not drawn; decided 2026-10-30 by the controller): a command its time limit stopped.
 export const COMMAND_TIMED_OUT = ' the command ran longer than its time limit and was stopped.';
 export const SEE_COMMAND_OUTPUT = 'See the command output';
+// ── 3b, U4 (D82; boards 43, 44 and their polish 8, 13): "Met when it breaks nothing that passed before" ─────────────────────
+export const MET_WHEN_LEGEND = 'Met when';
+export const MET_WHEN_PASSES = 'It passes';
+export const MET_WHEN_PASSES_SUB = ' · the command ends without an error';
+export const MET_WHEN_NOTHING = 'It breaks nothing that passed before';
+export const MET_WHEN_NOTHING_SUB = ' · Worca runs it once on the start point first and compares';
+export const MET_WHEN_HINT = 'Use this when some tests already fail on the start point. Those tests then do not count against the change, if Worca can read which tests failed.';
+export const metFor = (label) => `Met for ${label}:`;
+// Controller 2026-11-09: a test skipped or gone now also counts against the change, so "no test … fails now" would say too little.
+export const MET_DESPITE_TEXT = ' the command ended with an error, but every test that passed before still passes.';
+/** Why a "breaks nothing that passed before" check was not met (before-after.mjs commandMet's `why`), after "Not met for
+ *  <version>:". Each reads right also when the command itself passed (a test skipped, gone, or fewer passing now). */
+export function metWhyText(w) {
+  const n = Number(w && w.n) || 0;
+  switch (w && w.why) {
+    case 'broke': return ` it broke ${n1(n, 'test', 'tests')} that passed before.`;
+    case 'lost': return ` ${n1(n, 'test', 'tests')} that passed before ${n === 1 ? 'no longer runs' : 'no longer run'}.`;
+    case 'failing-now': return ` ${n1(n, 'test fails', 'tests fail')} now that did not fail before.`;
+    case 'fewer-pass': return ` fewer tests pass now: ${w.before} before, ${w.after} now.`;
+    case 'more-skipped': return ` more tests are skipped now: ${w.before} before, ${w.after} now.`;
+    case 'broke-exit': return ' it passed before the change and fails now.';
+    case 'no-before': return ' Worca could not run it before the change, so it cannot tell what broke.';
+    case 'timed-out': return COMMAND_TIMED_OUT;
+    case 'failed': return COMMAND_ENDED;
+    default: return ' the command ended with an error, and Worca could not read which tests failed, so it cannot tell whether the change broke something.';
+  }
+}
 export const NOTHING_PUSHED_TEXT = "The changes stayed in Worca's own copy of the project: nothing was pushed.";
 export const REAL_BLOCKED_TEXT = ' Pushes, pull requests and issues stay blocked in every test, also with Real connectors.';
 export const EACH_ANSWERED_TEXT = 'Each one answered "Not sent: this is a test."';

@@ -138,7 +138,7 @@ test('board 33: the project checks, the command, read from a file; without a pro
   kind.value = 'command'; kind.dispatchEvent(new window.Event('change'));
   assert.equal(doc.querySelector('label[for="wft-ck-cmd"]').textContent, 'Command');
   assert.equal(doc.querySelector('#wft-ck-cmd').closest('.field').querySelector('.hint').textContent,
-    'It runs in Worca\'s own copy of the project after the try is done. Met when the command ends without an error. Worca shows its last summary line, for example "212 passed, 1 failed".');
+    'It runs in Worca\'s own copy of the project after the try is done. Worca shows its last summary line, for example "212 passed, 1 failed".');
   const time = doc.querySelector('#wft-ck-timeout');
   assert.deepEqual([...time.options].map((o) => o.textContent), ['1 minute', '5 minutes', '10 minutes', '30 minutes']);
   assert.equal(time.value, '10');

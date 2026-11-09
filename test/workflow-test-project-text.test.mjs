@@ -25,7 +25,7 @@ test('board 32: where it starts', () => {
 
 test('board 33: the project checks in the dialog', () => {
   assert.equal(t.CHECK_DIALOG_HINT_PROJECT, "Counted exactly, without AI. Project checks look at what a try changed in Worca's own copy of the project.");
-  assert.equal(t.COMMAND_HINT, 'It runs in Worca\'s own copy of the project after the try is done. Met when the command ends without an error. Worca shows its last summary line, for example "212 passed, 1 failed".');
+  assert.equal(t.COMMAND_HINT, 'It runs in Worca\'s own copy of the project after the try is done. Worca shows its last summary line, for example "212 passed, 1 failed".');
   assert.deepEqual([t.TIMEOUT_LABEL, t.TIMEOUT_HINT], ['Stop the command after', 'A command that runs longer counts as not met.']);
   assert.deepEqual([t.GROUP_RESULT, t.GROUP_PROJECT], ['The result', 'The project']);
   assert.deepEqual([t.READ_FROM_LEGEND, t.READ_FROM_RESULT, t.READ_FROM_RESULT_SUB, t.READ_FROM_FILE],

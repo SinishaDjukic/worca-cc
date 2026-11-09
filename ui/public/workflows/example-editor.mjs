@@ -17,7 +17,8 @@ import {
   READ_FROM_FILE, ADD_CHECK, lfsText, submodulesText, MISSING_FOLDER_ADD_AGAIN, notRegisteredText, PROJECTS_UNREAD_TEXT,
   NOT_ON_BRANCH_TEXT, changesMovesText, FILE_NAME_NEEDED, NO_BRANCHES_TEXT, startNowText, startWillBeText, PICK_BRANCH_FIRST, BRANCHES_UNREAD_TEXT,
   START_NOT_MOVED_TEXT, FILE_IN_PROJECT_LABEL, DISK_TITLE, DISK_KEY, diskRow, FOLDERS_LABEL, FOLDERS_HINT, FILES_LABEL, FILES_HINT_LEAD,
-  FILES_HINT_CODE, FILES_HINT_REST, MOST_FILES_LABEL, MOST_FILES_HINT,
+  FILES_HINT_CODE, FILES_HINT_REST, MOST_FILES_LABEL, MOST_FILES_HINT, MET_WHEN_LEGEND, MET_WHEN_PASSES, MET_WHEN_PASSES_SUB, MET_WHEN_NOTHING,
+  MET_WHEN_NOTHING_SUB, MET_WHEN_HINT,
 } from '../../../src/shared/workflow-tests/project-text.mjs';
 
 export const BLANK_EXAMPLE = Object.freeze({
@@ -156,8 +157,29 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], project 
       for (const n of COMMAND_TIMEOUTS) { const o = el(doc, 'option', '', timeoutText(n)); o.value = String(n); time.append(o); }
       time.value = String(c.timeoutMin ?? 10);
       time.addEventListener('change', paintPreview);
-      fields.append(field(doc, COMMAND_LABEL, cmd, { id: cmd.id, hint: COMMAND_HINT }), field(doc, TIMEOUT_LABEL, skinned(doc, time, 'wft-ck-time'), { id: time.id, hint: TIMEOUT_HINT }));
-      read = () => ({ kind: 'command', cmd: cmd.value, timeoutMin: Number(time.value) });
+      // U4 (D82, board 43): when the check is met. Radios, as "Read from" (3a P17); the hint describes them; the default
+      // ('passes') is not stored (normaliseCheck).
+      const mw = el(doc, 'fieldset', 'wft-rads wft-ck-metwhen');
+      mw.append(el(doc, 'legend', '', MET_WHEN_LEGEND));
+      const pickMw = (value, label, sub) => {
+        const l = el(doc, 'label', 'wft-rad');
+        const r = el(doc, 'input');
+        r.type = 'radio'; r.name = 'wft-ck-metwhen'; r.value = value; r.checked = (c.metWhen || 'passes') === value;
+        const words = el(doc, 'span', '', label);
+        words.append(el(doc, 'span', 'wft-rad-sub', sub));
+        l.append(r, words);
+        r.addEventListener('change', paintPreview);
+        return l;
+      };
+      mw.append(pickMw('passes', MET_WHEN_PASSES, MET_WHEN_PASSES_SUB), pickMw('breaks-nothing', MET_WHEN_NOTHING, MET_WHEN_NOTHING_SUB));
+      const mwHint = el(doc, 'p', 'hint wft-ck-metwhen-hint', MET_WHEN_HINT);
+      mwHint.id = 'wft-ck-metwhen-hint';
+      mw.setAttribute('aria-describedby', mwHint.id);
+      const mwWrap = el(doc, 'div', 'wft-ck-metwhen-wrap');
+      mwWrap.append(mw, mwHint);
+      fields.append(field(doc, COMMAND_LABEL, cmd, { id: cmd.id, hint: COMMAND_HINT }), field(doc, TIMEOUT_LABEL, skinned(doc, time, 'wft-ck-time'), { id: time.id, hint: TIMEOUT_HINT }),
+        mwWrap);
+      read = () => ({ kind: 'command', cmd: cmd.value, timeoutMin: Number(time.value), metWhen: (mw.querySelector('input:checked') || {}).value || 'passes' });
     } else if (kind.value === 'under') {
       const dirs = input('wft-ck-dirs', 'text', Array.isArray(c.dirs) ? c.dirs.join(', ') : '', { maxLength: 2000, className: 'wft-mono' });
       fields.append(field(doc, FOLDERS_LABEL, dirs, { id: dirs.id, hint: FOLDERS_HINT }));

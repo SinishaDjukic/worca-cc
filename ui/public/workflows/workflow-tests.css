@@ -426,3 +426,9 @@ input.wft-mono[type="text"],textarea.wft-mono{font-family:var(--mono);}
 .wft-bnow-dot{flex:0 0 auto;width:10px;height:10px;margin-top:4px;border-radius:50%;background:var(--peach);}
 .wft-bnow-words{display:flex;flex-direction:column;gap:2px;min-width:0;}
 .wft-bnow-words .hint{margin:0;font-size:var(--fs-meta);}
+/* Workflow tests 3b, U4 (boards 43, 44): Met when and its hint, together under the time limit; a row met although the command
+   ended with an error says so in a neutral note, where the red "Not met" box would be. */
+.wft-ck-metwhen-wrap{display:flex;flex-direction:column;gap:8px;}
+.wft-ck-metwhen-hint{margin:0;}
+.wft-met-note{grid-column:1 / -1;padding:10px 12px;border-radius:var(--r-sm);background:var(--field);color:var(--ink);font-size:var(--fs-body);line-height:1.45;}
+.wft-met-note b{font-weight:600;}
