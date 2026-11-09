@@ -53,6 +53,13 @@ const CHECK_ID_RE = /^c_[a-z0-9]{1,24}$/;
 
 export const fmtUsd = (n) => `$${(Math.round(Number(n || 0) * 100) / 100).toFixed(2)}`;
 
+/** A cost a try, where cents hide it: under $0.10 three significant digits ("$0.0131"), else as fmtUsd. For the compare tiles, rows and progress cost; fmtUsd stays for limits. */
+export function fmtUsdFine(n) {
+  const x = Number(n || 0);
+  if (!(x > 0) || x >= 0.095) return fmtUsd(x);
+  return `$${x.toFixed(Math.min(8, 2 - Math.floor(Math.log10(x))))}`;
+}
+
 /**
  * Dollars a person typed: "$15", "15,50" or "15.50" (a decimal comma or point), "1.234,50" or "1,234.50" (thousands
  * either way). Empty → null. A negative, an exponent, letters or an ambiguous "1,000" (one dollar or a thousand?) → NaN.

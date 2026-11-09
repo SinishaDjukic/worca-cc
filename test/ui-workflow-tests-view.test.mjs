@@ -51,6 +51,9 @@ test('the list: subtitle, the three buttons, How testing works, the latest test'
   assert.equal(latest.querySelector('.hint').textContent, '2 hours ago · 6 examples, 3 tries each · cost $10.26');
   assert.deepEqual(texts(latest, '.badge'), ['2 better', '1 worse', '3 same']);
   assert.deepEqual([...latest.querySelectorAll('.badge')].map((b) => b.className), ['badge green', 'badge red', 'badge']);
+  // U-T5 F30: a zero count is the plain badge, never green or red.
+  const zero = boot(overview({ latest: { ...overview().latest, counts: { better: 0, worse: 0, same: 6 } } })).root.querySelector('.wft-latest');
+  assert.deepEqual([...zero.querySelectorAll('.badge')].map((b) => b.className), ['badge', 'badge', 'badge']);
   click(latest);
   for (const b of root.querySelectorAll('.wft-head .wft-acts button')) click(b);
   assert.deepEqual(calls.map((c) => c[0]), ['openLatest', 'addFromRun', 'newExample', 'testVersion']);

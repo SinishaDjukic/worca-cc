@@ -2,7 +2,7 @@
 // plans/workflow-tests-part2-plan.md Task 13, C7, C9, G8, D39). Pure DOM: app.js reads GET …/runs/:run and repaints on
 // every workflow-tests-changed frame, so a repaint keeps the focus (data-focus-key) and one live line says what changed.
 import { el, btn, startInto } from './test-ui.mjs';
-import { fmtUsd, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
+import { fmtUsd, fmtUsdFine, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
 import { icon } from '../icons.mjs';
 import { DISK_IN_USE, diskInUseSub, fmtGb, PHASES, PHASE_SUB, PHASES_TITLE, phasesShownFor, nowText, forMinutes, RUNNING_LEAD, FROM_LEAD,
@@ -81,7 +81,7 @@ function setupStopCard(doc, root, runId, ss, costUsd) {
   words.append(b, doc.createTextNode(SETUP_STOP_REST));
   box.append(icon(doc, 'stop', 16), words);
   const hint = el(doc, 'p', 'hint wft-setup-hint', SETUP_STOP_HINT);
-  hint.append(el(doc, 'span', 'code', fmtUsd(costUsd)), doc.createTextNode('.'));
+  hint.append(el(doc, 'span', 'code', fmtUsdFine(costUsd)), doc.createTextNode('.'));
   const log = el(doc, 'pre', 'wft-outlog', ss.tail || SETUP_NO_OUTPUT);
   log.id = 'wft-pg-setup-log';
   log.hidden = LOG_OPEN.get(root) !== runId;
@@ -271,7 +271,7 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s 
   const timeFact = over
     ? fact(doc, 'Time taken', Number.isFinite(p.takenMs) ? `${Math.max(1, Math.round(p.takenMs / 60000))} min` : 'not known')
     : fact(doc, 'Time left', p.minutesLeft ? `about ${p.minutesLeft} min` : 'not known yet');
-  facts.append(timeFact, fact(doc, 'Cost so far', fmtUsd(p.costUsd), costLine), ...(diskFact ? [diskFact] : []), quickFact);   // board 35's order
+  facts.append(timeFact, fact(doc, 'Cost so far', fmtUsdFine(p.costUsd), costLine), ...(diskFact ? [diskFact] : []), quickFact);   // board 35's order
   prog.append(bar, facts);
   let stopped = null;
   let setupCard = null;

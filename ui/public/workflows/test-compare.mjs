@@ -6,7 +6,7 @@
 import { el, btn, startInto, checkWords } from './test-ui.mjs';
 import { icon } from '../icons.mjs';
 import { createDialog } from '../marketplace/layers.mjs';
-import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
+import { fmtUsd, fmtUsdFine } from '../../../src/shared/workflow-tests/checks.mjs';
 import { agoText, countsText, fmtDuration, pctDelta, durationDelta, countDelta, fmtTimes } from '../../../src/shared/workflow-tests/compare.mjs';
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
 import { splitPatchSections, parseFileSection } from '../diff-view.mjs';
@@ -19,12 +19,13 @@ import { changesTitle, changeCountText, FILE_BADGE, READ_ALL_CHANGES, BOTH_START
   from '../../../src/shared/workflow-tests/project-text.mjs';
 
 const RESULT = { better: ['badge green', 'Better'], worse: ['badge red', 'Worse'], same: ['badge', 'Same'] };
-const usdOr = (n) => (typeof n === 'number' && Number.isFinite(n) ? fmtUsd(n) : '—');
+const usdOr = (n) => (typeof n === 'number' && Number.isFinite(n) ? fmtUsdFine(n) : '—');
 const timeOr = (ms) => (typeof ms === 'number' && Number.isFinite(ms) ? fmtDuration(ms) : '—');
 const wrote = (label) => `What ${inSentence(label)} wrote`;
 const plural = (w) => (/(?:s|sh|ch|x)$/.test(w) ? `${w}es` : `${w}s`);
 /** A test tries an example at most this often (src/core/workflow-tests/store.mjs MAX_TRIES): Try 3 more has no room above. */
 const MAX_TRIES = 10;
+const SAME_WORDS = 'about the same';
 const STARTED_FROM = ' · started from ';   // one version (Try it once now): "both" would be wrong
 /** The picked file's diff shows at most this many lines; Read all the changes has the rest. */
 const DIFF_LINES_MAX = 400;
@@ -200,6 +201,11 @@ export function renderCompare(root, c, actions, { doc, now = Date.now() }) {
   }
 
   const a = m.tiles.a || { passed: { passed: 0, total: 0 }, costPerTry: null, timePerTry: null, sentBack: null, steady: { n: 0, of: 0 } };
+  const diff = m.tiles.diff || {};   // an older model has none: no gap is claimed
+  const finite = (x) => typeof x === 'number' && Number.isFinite(x);
+  // D5: the same rule as In short (compare.mjs differs): a gap under the threshold is "about the same".
+  const same = (x, y) => (finite(x) && finite(y) ? SAME_WORDS : null);
+  const sentDelta = (d) => { const v = Math.round(Math.abs(b.sentBack - a.sentBack) * 10) / 10; return `${v} ${d === 'more' ? 'more' : 'fewer'}`; };
   const b = m.tiles.b;
   // The passed tile counts every finished try; the per-try tiles only the examples both versions finished. When the two
   // differ (a test stopped before every example was compared), the passed tile says so.
@@ -210,10 +216,11 @@ export function renderCompare(root, c, actions, { doc, now = Date.now() }) {
   tiles.append(
     tile(doc, 'Tries passed', `${b.passed.passed} of ${b.passed.total}`, `${A}: ${a.passed.passed} of ${a.passed.total}`, countDelta(a.passed.passed, b.passed.passed),
       apart ? 'Counts every finished try.' : null),   // controller-approved copy (2026-10-27)
-    tile(doc, 'Cost per try', usdOr(b.costPerTry), `${A}: ${usdOr(a.costPerTry)}`, pctDelta(a.costPerTry, b.costPerTry) || null),
-    tile(doc, 'Time per try', timeOr(b.timePerTry), `${A}: ${timeOr(a.timePerTry)}`, durationDelta(a.timePerTry, b.timePerTry) || null),
-    tile(doc, 'Sent back for fixes', fmtTimes(b.sentBack) || '—', `per try, on average · ${A}: ${fmtTimes(a.sentBack) || '—'}`),
-    tile(doc, 'Steady results', `${b.steady.n} of ${b.steady.of}`, `examples with the same result in every try · ${A}: ${a.steady.n} of ${a.steady.of}`),
+    tile(doc, 'Cost per try', usdOr(b.costPerTry), `${A}: ${usdOr(a.costPerTry)}`, diff.cost ? pctDelta(a.costPerTry, b.costPerTry) || null : same(a.costPerTry, b.costPerTry)),
+    tile(doc, 'Time per try', timeOr(b.timePerTry), `${A}: ${timeOr(a.timePerTry)}`, diff.time ? durationDelta(a.timePerTry, b.timePerTry) || null : same(a.timePerTry, b.timePerTry)),
+    tile(doc, 'Sent back for fixes', fmtTimes(b.sentBack) || '—', `per try, on average · ${A}: ${fmtTimes(a.sentBack) || '—'}`,
+      diff.sentBack ? sentDelta(diff.sentBack) : same(a.sentBack, b.sentBack)),
+    tile(doc, 'Passed every try', `${b.steady.n} of ${b.steady.of}`, `examples that passed in every try · ${A}: ${a.steady.n} of ${a.steady.of}`),
   );
   page.append(tiles);
 

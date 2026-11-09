@@ -207,6 +207,9 @@ test('the cost limit is exact (never rounded like an estimate); Try it once now 
   const once = boot(progress({ done: 1, total: 1, costUsd: 0.55, estimateUsd: 0.52, capUsd: null, quick: null, takenMs: 300000,
     rows: [{ exampleId: 1, name: 'Bulk', label: null, dots: ['passed'], summary: 'Done · 1 of 1 passed' }] }, { kind: 'once', status: 'done', tries: 1 }));
   assert.deepEqual(facts(once.root), [['Time taken', '5 min'], ['Cost so far', '$0.55'], ['Free quick check', 'Off']]);
+  const cheap = boot(progress({ done: 1, total: 1, costUsd: 0.0131, estimateUsd: null, capUsd: null, quick: null, takenMs: 300000,
+    rows: [{ exampleId: 1, name: 'Bulk', label: null, dots: ['passed'], summary: 'Done · 1 of 1 passed' }] }, { kind: 'once', status: 'done', tries: 1 }));
+  assert.equal(facts(cheap.root)[1][1], '$0.0131', 'U-T5: under $0.10 the progress cost keeps three significant digits');
 });
 
 test('Stop testing and Finish the rest stay busy across repaints until their action answers (one post per click)', async () => {

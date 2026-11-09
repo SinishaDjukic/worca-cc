@@ -45,7 +45,7 @@ test('board 5: the title and meta, In short with Look at it, five tiles', () => 
   assert.equal(root.querySelector('.wft-title').textContent, 'Your v5 draft compared with v4');
   assert.equal(root.querySelector('.wft-titles .hint').textContent, '6 examples, 3 tries each · ready 2 hours ago · cost $10.26');
   assert.deepEqual(texts(root, '.wft-crumbs .wft-acts button'), ['Test again']);
-  assert.equal(root.querySelector('.wft-short p').textContent, `v5 draft is cheaper and faster, and better on 2 examples. It is worse on 1 example, Bulk invoice export: it missed "${SECTIONS}" in 2 of 3 tries. Its results also vary more from try to try. Look at Bulk invoice export before you share v5 draft.`);
+  assert.equal(root.querySelector('.wft-short p').textContent, `v5 draft is cheaper and faster, and better on 2 examples. It is worse on 1 example, Bulk invoice export: it missed "${SECTIONS}" (2 of 3 tries). It is sent back for fixes less often: 1 times a try, against 2. Its results also vary more from try to try. Look at Bulk invoice export before you share v5 draft.`);
   assert.equal(root.querySelector('.wft-short p b').textContent, 'Bulk invoice export');
   click([...root.querySelectorAll('.wft-short button')].find((b) => b.textContent === 'Look at it'));
   assert.deepEqual(calls, [['open', 1]]);
@@ -53,10 +53,36 @@ test('board 5: the title and meta, In short with Look at it, five tiles', () => 
     ['Tries passed', '2 more', '14 of 18', 'v4: 12 of 18'],
     ['Cost per try', '38% less', '$0.52', 'v4: $0.84'],
     ['Time per try', '1½ min less', '4 min 40 s', 'v4: 6 min 10 s'],
-    ['Sent back for fixes', null, '1.0×', 'per try, on average · v4: 2.0×'],
-    ['Steady results', null, '3 of 6', 'examples with the same result in every try · v4: 4 of 6'],
+    ['Sent back for fixes', '1 fewer', '1.0×', 'per try, on average · v4: 2.0×'],
+    ['Passed every try', null, '3 of 6', 'examples that passed in every try · v4: 3 of 6'],
   ]);
   assert.equal(root.querySelector('.wft-tile-note'), null, 'every example compared: the tiles count the same tries');
+});
+
+// U-T5 (D5): the tiles and rows say only what is true.
+const sameModel = (aMarks, bMarks, a, b, ex = [{ id: 1, name: 'X' }]) => compareModel({ examples: ex, a: { label: 'v4' }, b: { label: 'v5 draft' },
+  tries: [...tries('a', 1, aMarks, a.cost, a.ms), ...tries('b', 1, bMarks, b.cost, b.ms)] });
+
+test('U-T5: tiles say "about the same" under the threshold, never a raw 10% gap; Passed every try', () => {
+  const m = sameModel('PPP', 'PPP', { cost: 1, ms: 40000 }, { cost: 1.05, ms: 44000 });
+  const { root } = boot(renderCompare, compare({ examples: 1, model: m }));
+  const rows = tileRows(root);
+  assert.deepEqual([rows[1][1], rows[2][1], rows[3][1]], ['about the same', 'about the same', '1 fewer'], 'sent back: this helper sends A back 2 times, B once');
+  assert.deepEqual(rows[2].slice(2), ['44 s', 'v4: 40 s']);
+  assert.ok(!/slower|faster/.test(root.querySelector('.wft-short p').textContent));
+  assert.deepEqual(rows[4], ['Passed every try', null, '1 of 1', 'examples that passed in every try · v4: 1 of 1']);
+  const far = boot(renderCompare, compare({ examples: 1, model: sameModel('PPP', 'PPP', { cost: 0.0131, ms: 30000 }, { cost: 0.0328, ms: 45000 }) }));
+  assert.deepEqual(tileRows(far.root).slice(1, 3), [['Cost per try', '150% more', '$0.0328', 'v4: $0.0131'], ['Time per try', '15 s more', '45 s', 'v4: 30 s']]);
+});
+
+test('U-T5: a row that fails on both versions says so and has no "Might be luck" or "Try 3 more"', () => {
+  const m = sameModel('PFFFF', 'FFFFF', { cost: 1, ms: 20000 }, { cost: 1, ms: 20000 });
+  const { root } = boot(renderCompare, compare({ examples: 1, model: m }));
+  const row = root.querySelector('.wft-crow2:not(.is-head)');
+  assert.equal(row.querySelector('.badge').textContent, 'Same');
+  assert.equal(row.querySelector('.wft-why').textContent, `Fails on both versions: "${SECTIONS}" is missed most (9 of 10 tries). Look at the example or its checks.`);
+  assert.equal(root.querySelectorAll('.wft-why button').length, 0);
+  assert.ok(!/luck/i.test(root.textContent));
 });
 
 test('U-T2: tries made again after a problem in Worca are one more line of the fair comparison', () => {
@@ -76,7 +102,7 @@ test('board 5: by example (G9), why, might be luck with Try 3 more (G15), what y
   const rows = [...root.querySelectorAll('.wft-crow2:not(.is-head)')];
   assert.deepEqual(rows.map((r) => r.querySelector('.badge').textContent), ['Worse', 'Better', 'Better', 'Same', 'Same', 'Same']);
   assert.deepEqual(rows.map((r) => [...r.querySelectorAll('.wft-res')].map((x) => x.textContent)).slice(0, 2), [['3 of 3', '1 of 3'], ['1 of 3', '3 of 3']]);
-  assert.equal(rows[0].querySelector('.wft-why').textContent, `v5 draft missed "${SECTIONS}" in 2 of 3 tries`);
+  assert.equal(rows[0].querySelector('.wft-why').textContent, `v5 draft missed "${SECTIONS}" (2 of 3 tries)`);
   click(rows[2].querySelector('.wft-ex-open'));
   assert.deepEqual(texts(root, '.wft-changes .wft-chg'), ['Draft brief: AI model opus → sonnet', 'New step Fact check']);
   assert.equal(root.querySelector('.wft-changes h2').textContent, 'What you changed since v4');

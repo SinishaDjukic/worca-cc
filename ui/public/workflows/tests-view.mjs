@@ -100,7 +100,9 @@ function latestCard(doc, l, actions, now) {
   meta.append(el(doc, 'span', 'code', fmtUsd(l.costUsd)));
   main.append(el(doc, 'span', 'wft-latest-title', l.title), meta);
   const badges = el(doc, 'span', 'wft-badges');
-  badges.append(el(doc, 'span', 'badge green', `${l.counts.better} better`), el(doc, 'span', 'badge red', `${l.counts.worse} worse`),
+  // F30: a zero count is the plain badge, never green or red.
+  badges.append(el(doc, 'span', l.counts.better ? 'badge green' : 'badge', `${l.counts.better} better`),
+    el(doc, 'span', l.counts.worse ? 'badge red' : 'badge', `${l.counts.worse} worse`),
     el(doc, 'span', 'badge', `${l.counts.same} same`));
   if (l.status === 'stopped') badges.append(el(doc, 'span', 'badge', 'Stopped early'));
   c.append(main, badges, el(doc, 'span', 'wft-link', 'See what changed'));
