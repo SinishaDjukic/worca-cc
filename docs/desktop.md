@@ -97,7 +97,20 @@ OS double-click, which needs Accessibility permission for the terminal; `--keep`
   tools from Homebrew, mise or nvm are found. Only `PATH` is read: other variables your shell exports are not.
 - **Links** to other sites open in your browser. The window is sandboxed, with no Node access, and only Worca's
   own pages may use the microphone (voice), notifications, the clipboard and full screen. A preload
-  (`desktop/preload.cjs`) marks the page as the desktop shell and reports the theme; it exposes nothing to the page.
+  (`desktop/preload.cjs`) marks the page as the desktop shell and reports the theme and the badge; it exposes
+  nothing to the page.
+- **Badge.** The app mirrors the page's Alerts badge, so it shows only while **Settings › General › Alerts ›
+  Badge when something is waiting** is on. The count is the runs that need you (the page title's `(N)`). Unread
+  schedule problems alone show a dot.
+  - macOS: the Dock badge shows the number, or `•` for problems only.
+  - Windows: a red taskbar overlay shows `1`–`9`, `9+`, or a plain dot for problems only.
+  - Linux: the launcher count (`app.setBadgeCount`), on desktops whose launcher shows one (Unity, KDE).
+  - The tray tooltip says it too, for example `Worca — 2 runs need you` or `Worca — unread schedule problems`.
+
+  The badge clears at 0, when a server the app started stops, when the window loads a new page (the Restart reload,
+  a reload, a moved server) or fails to load one, and when the page's renderer crashes.
+- **Notifications on Windows.** The app sets its AppUserModelID (`dev.worca.desktop`, the build's `appId`) at
+  start, so Windows shows toasts under Worca's name and icon. The installer's Start menu shortcut carries the same ID.
 
 ## Window and icons
 
@@ -235,6 +248,12 @@ The desktop app does not install the `worca` command. To use it in a terminal, i
   Restart that Worca from the new version to fix it.
 - Running `npm start --prefix desktop` from a checkout shows Electron's own Dock icon on macOS; the packaged app
   shows Worca's.
+- Linux has no dot badge: unread schedule problems alone show nothing there, only the tray tooltip says it.
+- Run from a checkout on Windows, toasts need a Start menu shortcut that carries the AppUserModelID
+  `dev.worca.desktop`. Without one, Windows may label them oddly or drop them. Installing the app provides it.
+- An already running Worca that is older than the app still sets the app badge itself (the web Badging API) and may
+  race the Dock text, for example showing a number where the app would show `•`. Restart that Worca from the new
+  version to fix it.
 
 ## Third-party binaries
 

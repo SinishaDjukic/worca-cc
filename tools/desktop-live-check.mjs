@@ -3,7 +3,8 @@
 // launch the app in a sandbox HOME with Electron through playwright-core and measure what jsdom cannot: the wordmark
 // and the header controls clear the traffic lights, the drag strip is app-region: drag (its controls no-drag), the
 // collapsed rail puts the lights above the mark, a double-click on the strip zooms and restores (or minimizes, as
-// "Double-click a window's title bar to…" says), and full screen drops the inset. Not part of npm test: it needs a
+// "Double-click a window's title bar to…" says), full screen drops the inset, and the Dock badge follows the page's
+// "(N) " title and dotted favicon and clears on a reload. Not part of npm test: it needs a
 // display and `npm ci --prefix desktop`. It never stops a process it did not start.
 //   node tools/desktop-live-check.mjs                              # this checkout's app, its own server
 //   node tools/desktop-live-check.mjs --reuse-old 0e006ee4d        # the app reuses an older worca server (no desktop CSS)
@@ -301,6 +302,36 @@ async function run(opts) {
       if (!seen && before === after && !counts.maximize && !counts.unmaximize) report('os-dblclick', false, `OS events not delivered (Accessibility permission?) — ${base}`, { unverified: true });
       else report('os-dblclick', counts.maximize + counts.unmaximize === 1 && before !== after, `${counts.maximize + counts.unmaximize > 1 ? 'DOUBLE TOGGLE (native zoom + IPC) — ' : ''}${base}`);
       if (after) await win.evaluate((w) => w.unmaximize());
+    }
+
+    // The Dock badge (desktop/src/badge.mjs). A fresh sandbox has the Alerts badge off, so each step writes the DOM
+    // the way ui/public/alerts.mjs would; app.js puts the title and favicon back on every WS frame, so a step writes
+    // and reads again every 100 ms until the Dock shows what it should (3 s at most).
+    if (process.platform === 'darwin') {
+      const dockNow = () => electronApp.evaluate(({ app }) => (app.dock ? app.dock.getBadge() : null));
+      const expectDock = async (name, write, want, arg) => {
+        const end = Date.now() + 3000;
+        let seen;
+        for (;;) {
+          if (write) await page.evaluate(write, arg);
+          seen = await dockNow();
+          if (seen === want || Date.now() >= end) break;
+          await sleep(100);
+        }
+        report(name, seen === want, `Dock badge ${JSON.stringify(seen)}, expected ${JSON.stringify(want)}`);
+      };
+      const ICON = '/assets/worca-favicon.png';
+      const DOTTED = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+      await expectDock('badge-start', null, '');
+      await expectDock('badge-count', () => { document.title = '(2) Worca'; }, '2');
+      await expectDock('badge-dot', (href) => { document.querySelector('link[rel~="icon"]').setAttribute('href', href); document.title = 'Worca'; }, '•', DOTTED);
+      await expectDock('badge-clear', (href) => { document.querySelector('link[rel~="icon"]').setAttribute('href', href); document.title = 'Worca'; }, '', ICON);
+      await expectDock('badge-before-reload', () => { document.title = '(3) Worca'; }, '3');
+      await page.reload();
+      await page.waitForSelector('.brand', { state: 'attached', timeout: 60000 });
+      await expectDock('badge-reload', null, '');
+    } else {
+      report('badge', true, 'macOS only', { unverified: true });
     }
     return results.some((r) => !r.ok && !r.unverified) ? 1 : 0;
   } catch (err) {

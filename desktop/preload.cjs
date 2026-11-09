@@ -3,7 +3,9 @@
 // desktop-only CSS keys off them), reports the theme and the sidebar rail as enums ({ mode, scheme, rail }; main picks
 // the colours), and follows main's full-screen flag. A double-click on the title strip's empty space (the drag
 // regions of desktop-shell.css, never a control) goes to main over worca:title-dblclick, which zooms or minimizes
-// as the OS says. It exposes nothing to the page: no bridge API, no globals.
+// as the OS says. It also reports the page's "needs you" badge over worca:badge as { count, dot }: the count from the
+// "(N) " title prefix alerts.mjs writes, the dot from its favicon swapped to a data: URL (main draws the Dock, taskbar
+// and tray from it). It exposes nothing to the page: no bridge API, no globals.
 'use strict';
 
 (() => {
@@ -11,6 +13,9 @@
   const CHROMES = ['inset', 'overlay', 'native'];
   const MODES = ['system', 'light', 'dark'];
   const ARG = '--worca-chrome=';
+  // desktop/src/badge.mjs BADGE_CHANNEL and MAX_BADGE_COUNT (test/desktop-preload.test.mjs compares them).
+  const BADGE = 'worca:badge';
+  const MAX_COUNT = 99999;
   // The double-click mirrors desktop-shell.css: the strips that are app-region: drag per chrome, and every no-drag
   // selector of its rules (test/desktop-preload.test.mjs checks NO_DRAG covers them all).
   const SEND_CHROMES = ['inset', 'overlay'];
@@ -65,6 +70,25 @@
     ipcRenderer.send('worca:shell-state', { mode, scheme, rail });
   }
 
+  /** { count, dot } as primitives: the "(N) " title prefix (clamped; 0 without one) and a data: favicon. */
+  function readBadge() {
+    const m = /^\((\d+)\) /.exec(document.title || '');
+    const n = m ? Number(m[1]) : 0;
+    const count = Number.isFinite(n) ? Math.min(n, MAX_COUNT) : 0;
+    const link = document.querySelector('link[rel~="icon"]');
+    const dot = /^data:/i.test((link && link.getAttribute('href')) || '');
+    return { count, dot };
+  }
+
+  let lastBadge = null;
+  function reportBadge() {
+    const { count, dot } = readBadge();
+    const key = `${count}|${dot}`;
+    if (key === lastBadge) return;
+    lastBadge = key;
+    ipcRenderer.send(BADGE, { count, dot });
+  }
+
   let started = false;
   window.addEventListener('DOMContentLoaded', () => {
     mark();
@@ -75,6 +99,10 @@
     if (document.documentElement) changed.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     const rail = document.getElementById('side-rail');
     if (rail) changed.observe(rail, { attributes: true, attributeFilter: ['class'] });
+    // The page's module scripts may already have written the title or the favicon: the first report reads them.
+    reportBadge();
+    const head = document.head || document.documentElement;
+    if (head) new MutationObserver(reportBadge).observe(head, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['href', 'rel'] });
     try {
       if (typeof window.matchMedia === 'function') window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', report);
     } catch { /* no media queries: the scheme stays as reported */ }

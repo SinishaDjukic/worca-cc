@@ -12,6 +12,8 @@ import { createDesktopController, openServerLog } from '../desktop/src/controlle
 import { appMenuTemplate } from '../desktop/src/app-menu.mjs';
 import { TRAFFIC_LIGHTS, THEME_COLORS } from '../desktop/src/title-bar.mjs';
 import { serverTreeRoot } from '../desktop/src/server-process.mjs';
+import { BADGE_CHANNEL, NO_BADGE, badgeBitmap } from '../desktop/src/badge.mjs';
+import { APP_ID } from '../desktop/src/app-id.mjs';
 
 const tick = () => new Promise((r) => setImmediate(r));
 async function until(cond, n = 100) { for (let i = 0; i < n && !cond(); i++) await tick(); assert.ok(cond(), 'condition reached'); }
@@ -35,7 +37,7 @@ const THROW = Symbol('throw');
 const MISSING = Symbol('missing');
 
 function fakeElectron({ lock = true, loginItem = { openAtLogin: false, wasOpenedAtLogin: false }, dark = false, systemUIDark = dark, appleAction } = {}) {
-  const calls = { userDefaults: [], quit: 0, enableSandbox: 0, setLogin: [], getLogin: [], openExternal: [], errorBox: [], messageBox: [], windows: [], trays: [], menus: [], images: [], setName: [], order: [], about: [], setPath: [], dockIcon: [], appMenu: [] };
+  const calls = { userDefaults: [], quit: 0, enableSandbox: 0, setLogin: [], getLogin: [], openExternal: [], errorBox: [], messageBox: [], windows: [], trays: [], menus: [], images: [], setName: [], order: [], about: [], setPath: [], dockIcon: [], appMenu: [], dockBadge: [], badgeCount: [], aumid: [], overlay: [], toolTips: [], bitmaps: [] };
   const app = new EventEmitter();
   app.isPackaged = false;
   app.requestSingleInstanceLock = () => lock;
@@ -46,7 +48,10 @@ function fakeElectron({ lock = true, loginItem = { openAtLogin: false, wasOpened
   app.getVersion = () => '0.0.0';
   app.setAboutPanelOptions = (o) => { calls.about.push(o); };
   app.setPath = (...a) => { calls.setPath.push(a); };
-  app.dock = { setIcon: (p) => calls.dockIcon.push(p) };
+  let dockText = '';
+  app.dock = { setIcon: (p) => calls.dockIcon.push(p), setBadge: (t) => { calls.dockBadge.push(t); dockText = t; }, getBadge: () => dockText };
+  app.setBadgeCount = (n) => { calls.badgeCount.push(n); return true; };
+  app.setAppUserModelId = (id) => { calls.aumid.push(id); calls.order.push('setAppUserModelId'); };
   app.setLoginItemSettings = (o) => { calls.setLogin.push(o); loginItem = { ...loginItem, openAtLogin: o.openAtLogin }; };
   app.getLoginItemSettings = (o) => { calls.getLogin.push(o); return loginItem; };
   app.getPath = () => '/user-data';
@@ -76,12 +81,13 @@ function fakeElectron({ lock = true, loginItem = { openAtLogin: false, wasOpened
     maximize() { this.winCalls.push('maximize'); this.maximized = true; }
     unmaximize() { this.winCalls.push('unmaximize'); this.maximized = false; }
     minimize() { this.winCalls.push('minimize'); }
+    setOverlayIcon(img, desc) { calls.overlay.push([img, desc]); }
   }
   class Tray extends EventEmitter {
     constructor(img) { super(); this.img = img; this.menu = null; this.images = []; calls.trays.push(this); }
     setContextMenu(m) { this.menu = m; }
     setImage(img) { this.images.push(img); }
-    setToolTip() {}
+    setToolTip(t) { calls.toolTips.push(t); }
   }
   const Menu = { buildFromTemplate: (t) => { calls.menus.push(t); return { template: t }; }, setApplicationMenu: (m) => { calls.appMenu.push(m); } };
   const shell = { openExternal: (u) => { calls.openExternal.push(u); return Promise.resolve(); } };
@@ -92,7 +98,7 @@ function fakeElectron({ lock = true, loginItem = { openAtLogin: false, wasOpened
   };
   const handlers = {};
   const session = { defaultSession: { setPermissionRequestHandler: (fn) => { handlers.request = fn; }, setPermissionCheckHandler: (fn) => { handlers.check = fn; } } };
-  const nativeImage = { createFromPath: (p) => { calls.images.push(p); const img = { path: p, template: [], isEmpty: () => false, setTemplateImage: (v) => img.template.push(v) }; return img; } };
+  const nativeImage = { createFromBitmap: (buf, opts) => { calls.bitmaps.push([buf, opts]); return { bitmap: true, opts }; }, createFromPath: (p) => { calls.images.push(p); const img = { path: p, template: [], isEmpty: () => false, setTemplateImage: (v) => img.template.push(v) }; return img; } };
   const ipcMain = new EventEmitter();
   const nativeTheme = new EventEmitter();
   nativeTheme.shouldUseDarkColors = dark;
@@ -1042,4 +1048,275 @@ test('28c. title double-click refused: another sender, a sub-frame, no frame, a 
   await started;
   assert.deepEqual(early.calls.windows[0].winCalls, []);
   assert.equal(early.electron.ipcMain.listenerCount('worca:title-dblclick'), 1);
+});
+
+/** A badge report from the main window's own top frame (or a forged event). */
+const sendBadge = (mk, state, ev) => mk.electron.ipcMain.emit(BADGE_CHANNEL, ev ?? shellEvent(mk.calls.windows[0]), state);
+const B = (count, dot = false) => ({ count, dot });
+const badgeCalls = (calls) => ({ dock: calls.dockBadge, overlay: calls.overlay, count: calls.badgeCount, bitmaps: calls.bitmaps });
+const NO_CALLS = { dock: [], overlay: [], count: [], bitmaps: [] };
+/** Test 18's server helper: the first start on 4317, a Restart on 50777. */
+const movingServer = (ref) => {
+  let n = 0;
+  return { startServer: async ({ env }) => { const port = ++n === 1 ? 4317 : 50777; const hd = fakeChildHandle(`http://127.0.0.1:${port}`, port, 900 + n); ref.mk.seen.start.push({ env, handle: hd }); return hd; } };
+};
+
+test('29a. darwin: (2) → dock \'2\' and tooltip \'Worca — 2 runs need you\'; problems only → \'•\'; 0 → \'\' and \'Worca\'; the same state twice → no call; no overlay or setBadgeCount', async () => {
+  const mk = makeController({ platform: 'darwin' });
+  await mk.ctl.start();
+  const { calls } = mk;
+  assert.deepEqual(calls.toolTips, ['Worca'], 'the tray starts with the plain name');
+  sendBadge(mk, B(2));
+  assert.deepEqual(calls.dockBadge, ['2']);
+  assert.equal(calls.toolTips.at(-1), 'Worca — 2 runs need you');
+  assert.deepEqual(mk.ctl.state().badge, B(2));
+  sendBadge(mk, B(2));
+  assert.deepEqual(calls.dockBadge, ['2'], 'unchanged → no call');
+  assert.equal(calls.toolTips.length, 2, 'unchanged → no tooltip call');
+  sendBadge(mk, B(0, true));
+  assert.deepEqual(calls.dockBadge, ['2', '•']);
+  assert.equal(calls.toolTips.at(-1), 'Worca — unread schedule problems');
+  sendBadge(mk, B(2, true));
+  assert.deepEqual(calls.dockBadge, ['2', '•', '2']);
+  sendBadge(mk, B(0));
+  assert.deepEqual(calls.dockBadge, ['2', '•', '2', '']);
+  assert.equal(calls.toolTips.at(-1), 'Worca');
+  assert.equal(mk.electron.app.dock.getBadge(), '');
+  assert.deepEqual(mk.ctl.state().badge, B(0));
+  assert.deepEqual([calls.overlay, calls.badgeCount, calls.bitmaps], [[], [], []]);
+});
+
+test('29b. win32: 2 → overlay bitmap \'2\' with \'2 runs need you\'; 12 → the \'9+\' bitmap; problems only → the dot bitmap; 0 → setOverlayIcon(null, \'\'); bitmaps cached per label; no dock or setBadgeCount', async () => {
+  const mk = makeController({ platform: 'win32' });
+  await mk.ctl.start();
+  const { calls } = mk;
+  const OPTS = { width: 32, height: 32, scaleFactor: 2 };
+  sendBadge(mk, B(2));
+  assert.equal(calls.overlay.length, 1);
+  assert.deepEqual(calls.overlay[0], [{ bitmap: true, opts: OPTS }, '2 runs need you']);
+  assert.ok(calls.bitmaps[0][0].equals(badgeBitmap('2').buffer), 'the \'2\' bitmap');
+  assert.deepEqual(calls.bitmaps[0][1], OPTS);
+  assert.equal(calls.toolTips.at(-1), 'Worca — 2 runs need you');
+  sendBadge(mk, B(12));
+  assert.ok(calls.bitmaps[1][0].equals(badgeBitmap('9+').buffer), 'the \'9+\' bitmap');
+  assert.deepEqual(calls.overlay[1][1], '12 runs need you');
+  sendBadge(mk, B(0, true));
+  assert.ok(calls.bitmaps[2][0].equals(badgeBitmap('•').buffer), 'the dot bitmap');
+  assert.deepEqual(calls.overlay[2][1], 'Unread schedule problems');
+  sendBadge(mk, B(0));
+  assert.deepEqual(calls.overlay[3], [null, '']);
+  assert.equal(calls.toolTips.at(-1), 'Worca');
+  sendBadge(mk, B(2));
+  assert.equal(calls.bitmaps.length, 3, 'the \'2\' image is reused');
+  assert.equal(calls.overlay[4][0], calls.overlay[0][0], 'the same nativeImage');
+  sendBadge(mk, B(15));
+  assert.equal(calls.bitmaps.length, 3, '\'9+\' again: reused');
+  assert.equal(calls.overlay[5][0], calls.overlay[1][0]);
+  assert.deepEqual([calls.dockBadge, calls.badgeCount], [[], []]);
+});
+
+test('29c. linux: setBadgeCount(2), then 0 for problems only and for 0; no dock or overlay; the tooltip follows', async () => {
+  const mk = makeController({ platform: 'linux' });
+  await mk.ctl.start();
+  const { calls } = mk;
+  sendBadge(mk, B(2));
+  assert.deepEqual(calls.badgeCount, [2]);
+  assert.equal(calls.toolTips.at(-1), 'Worca — 2 runs need you');
+  sendBadge(mk, B(0, true));
+  assert.deepEqual(calls.badgeCount, [2, 0]);
+  assert.equal(calls.toolTips.at(-1), 'Worca — unread schedule problems');
+  sendBadge(mk, B(0));
+  assert.deepEqual(calls.badgeCount, [2, 0, 0]);
+  assert.equal(calls.toolTips.at(-1), 'Worca');
+  assert.deepEqual([calls.dockBadge, calls.overlay, calls.bitmaps], [[], [], []]);
+});
+
+test('29d. refused badge messages change nothing: another sender, a sub-frame, no frame, a foreign or stale origin (after a Restart), before the window exists; bad payloads', async () => {
+  for (const platform of ['win32', 'darwin']) {
+    const ref = {};
+    const mk = makeController({ platform, over: movingServer(ref) });
+    ref.mk = mk;
+    await mk.ctl.start();
+    const w = mk.calls.windows[0];
+    const popup = fakeContents();
+    popup.mainFrame = { url: `${APP}/` };
+    const refused = [
+      [{ sender: popup, senderFrame: popup.mainFrame }, B(2)],
+      [shellEvent(w, { senderFrame: { url: `${APP}/` } }), B(2)],
+      [shellEvent(w, { senderFrame: null }), B(2)],
+      [shellEvent(w, { senderFrame: undefined }), B(2)],
+      [{ sender: w.webContents }, B(2)],
+      [null, B(2)],
+    ];
+    for (const payload of ['2', 2, NaN, 2.5, -1, 100000, null, undefined, [2, false], { count: 1, dot: 'yes' }, { count: '2', dot: false }, { count: NaN, dot: false }, { count: 2.5, dot: false }, { count: -1, dot: false }, { count: 100000, dot: false }, { count: 1 }]) {
+      refused.push([shellEvent(w), payload]);
+    }
+    const check = (label) => {
+      assert.deepEqual(badgeCalls(mk.calls), NO_CALLS, `${platform} ${label}`);
+      assert.deepEqual(mk.calls.toolTips, ['Worca'], `${platform} ${label}`);
+      assert.deepEqual(mk.ctl.state().badge, NO_BADGE, `${platform} ${label}`);
+      assert.deepEqual(w.webContents.sent, [], `${platform} ${label}: no reply`);
+      assert.deepEqual(popup.sent, [], `${platform} ${label}`);
+    };
+    for (const [ev, payload] of refused) {
+      assert.doesNotThrow(() => mk.electron.ipcMain.emit(BADGE_CHANNEL, ev, payload));
+      check(String(JSON.stringify(payload)));
+    }
+    w.webContents.mainFrame = { url: 'https://evil.example/' };
+    sendBadge(mk, B(2));
+    check('foreign origin');
+    w.webContents.mainFrame = { url: `${APP}/#history` };
+    mk.seen.start[0].handle.die(1);
+    await until(() => w.loaded.length === 2);
+    w.webContents.mainFrame = { url: `${APP}/#history` };   // still on the old port
+    sendBadge(mk, B(2));
+    check('stale origin after a Restart');
+    w.webContents.mainFrame = { url: 'http://127.0.0.1:50777/#history' };
+    sendBadge(mk, B(2));
+    assert.deepEqual(mk.ctl.state().badge, B(2), `${platform}: the new origin is accepted`);
+    assert.equal(platform === 'darwin' ? mk.calls.dockBadge.length : mk.calls.overlay.length, 1);
+  }
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const early = makeController({ platform: 'win32', over: { startServer: async ({ env }) => { await gate; const hd = fakeChildHandle(APP, 4317); early.seen.start.push({ env, handle: hd }); return hd; } } });
+  const started = early.ctl.start();
+  await tick();
+  const wc = fakeContents();
+  wc.mainFrame = { url: `${APP}/` };
+  assert.doesNotThrow(() => early.electron.ipcMain.emit(BADGE_CHANNEL, { sender: wc, senderFrame: wc.mainFrame }, B(2)));
+  release();
+  await started;
+  assert.deepEqual(badgeCalls(early.calls), NO_CALLS, 'before the window exists');
+  assert.deepEqual(early.calls.toolTips, ['Worca']);
+  assert.deepEqual(early.ctl.state().badge, NO_BADGE);
+});
+
+test('29e. an owned server exit clears the badge before the Restart dialog; after Restart the new origin\'s badge is accepted', async () => {
+  const ref = {};
+  const mk = makeController({ platform: 'darwin', over: movingServer(ref) });
+  ref.mk = mk;
+  await mk.ctl.start();
+  const w = mk.calls.windows[0];
+  sendBadge(mk, B(2));
+  assert.deepEqual(mk.calls.dockBadge, ['2']);
+  const snap = {};
+  const show = mk.electron.dialog.showMessageBox;
+  mk.electron.dialog.showMessageBox = (o) => { snap.badge = mk.ctl.state().badge; snap.dock = [...mk.calls.dockBadge]; snap.tip = mk.calls.toolTips.at(-1); return show(o); };
+  mk.seen.start[0].handle.die(3);
+  await until(() => w.loaded.length === 2);
+  assert.deepEqual(snap, { badge: NO_BADGE, dock: ['2', ''], tip: 'Worca' }, 'cleared before the dialog');
+  assert.equal(w.webContents.mainFrame.url, 'http://127.0.0.1:50777/#history');
+  sendBadge(mk, B(3));
+  assert.deepEqual(mk.calls.dockBadge, ['2', '', '3']);
+  assert.deepEqual(mk.ctl.state().badge, B(3));
+});
+
+test('29f. did-navigate clears; did-fail-load clears for (main frame, -105) but not for (main frame, -3) nor (sub-frame, -105); did-start-navigation and did-navigate-in-page leave the badge; render-process-gone clears', async () => {
+  const mk = makeController({ platform: 'darwin' });
+  await mk.ctl.start();
+  const wc = mk.calls.windows[0].webContents;
+  const URL_ = `${APP}/`;
+  const cases = [
+    ['did-navigate', [{}, URL_, 200, 'OK'], true],
+    ['did-fail-load', [{}, -105, 'ERR_NAME_NOT_RESOLVED', URL_, true, 1, 1], true],
+    ['did-fail-load', [{}, -3, 'ERR_ABORTED', URL_, true, 1, 1], false],
+    ['did-fail-load', [{}, -105, 'ERR_NAME_NOT_RESOLVED', 'http://frame.example/', false, 1, 2], false],
+    ['did-fail-load', [{}, -105, 'ERR_NAME_NOT_RESOLVED', URL_, 1, 1, 1], false],
+    ['did-start-navigation', [{ url: URL_, isMainFrame: true, isSameDocument: false }], false],
+    ['did-navigate-in-page', [{}, `${APP}/#chat`, true, 1, 1], false],
+    ['render-process-gone', [{}, { reason: 'crashed', exitCode: 1 }], true],
+  ];
+  for (const [ev, args, clears] of cases) {
+    sendBadge(mk, B(2));
+    assert.deepEqual(mk.ctl.state().badge, B(2), `${ev} set`);
+    const before = mk.calls.dockBadge.length;
+    wc.emit(ev, ...args);
+    const label = `${ev} ${JSON.stringify(args.slice(1))}`;
+    if (clears) {
+      assert.deepEqual(mk.ctl.state().badge, NO_BADGE, label);
+      assert.deepEqual(mk.calls.dockBadge.slice(before), [''], label);
+      assert.equal(mk.calls.toolTips.at(-1), 'Worca', label);
+    } else {
+      assert.deepEqual(mk.ctl.state().badge, B(2), label);
+      assert.equal(mk.calls.dockBadge.length, before, label);
+    }
+  }
+});
+
+test('29g. win32: setAppUserModelId(APP_ID) once, third in calls.order after setName and enableSandbox, before whenReady, also when the single-instance lock is refused; darwin and linux never call it', async () => {
+  assert.equal(APP_ID, 'dev.worca.desktop');
+  for (const lock of [true, false]) {
+    const mk = makeController({ platform: 'win32', lock });
+    mk.electron.app.whenReady = async () => { mk.calls.order.push('whenReady'); };
+    await mk.ctl.start();
+    assert.deepEqual(mk.calls.aumid, [APP_ID], `lock ${lock}`);
+    assert.deepEqual(mk.calls.order, lock ? ['setName', 'enableSandbox', 'setAppUserModelId', 'whenReady'] : ['setName', 'enableSandbox', 'setAppUserModelId'], `lock ${lock}`);
+  }
+  for (const platform of ['darwin', 'linux']) {
+    const mk = makeController({ platform });
+    await mk.ctl.start();
+    assert.deepEqual(mk.calls.aumid, [], platform);
+    assert.ok(!mk.calls.order.includes('setAppUserModelId'), platform);
+  }
+  const bare = makeController({ platform: 'win32' });
+  bare.electron.app.setAppUserModelId = undefined;
+  await assert.doesNotReject(bare.ctl.start());
+  assert.equal(bare.calls.windows.length, 1);
+});
+
+test('29h. a throwing dock.setBadge / setOverlayIcon / setBadgeCount is logged and the tooltip is still set; nothing throws out of the IPC handler', async () => {
+  const boom = () => { throw new Error('boom'); };
+  const rows = [
+    ['darwin', (mk) => { mk.electron.app.dock.setBadge = boom; }, 'worca desktop: the Dock badge failed: boom'],
+    ['win32', (mk) => { mk.calls.windows[0].setOverlayIcon = boom; }, 'worca desktop: the taskbar overlay failed: boom'],
+    ['win32', (mk) => { mk.electron.nativeImage.createFromBitmap = boom; }, 'worca desktop: the taskbar overlay failed: boom'],
+    ['linux', (mk) => { mk.electron.app.setBadgeCount = boom; }, 'worca desktop: the launcher badge failed: boom'],
+  ];
+  for (const [platform, breakIt, line] of rows) {
+    const errors = [];
+    const mk = makeController({ platform, log: { info() {}, error: (m) => errors.push(m) } });
+    await mk.ctl.start();
+    breakIt(mk);
+    assert.doesNotThrow(() => sendBadge(mk, B(2)), platform);
+    assert.deepEqual(errors, [line], platform);
+    assert.equal(mk.calls.toolTips.at(-1), 'Worca — 2 runs need you', platform);
+    assert.deepEqual(mk.ctl.state().badge, B(2), platform);
+  }
+  const errors = [];
+  const mk = makeController({ platform: 'darwin', log: { info() {}, error: (m) => errors.push(m) } });
+  await mk.ctl.start();
+  mk.calls.trays[0].setToolTip = boom;
+  assert.doesNotThrow(() => sendBadge(mk, B(2)));
+  assert.deepEqual(errors, ['worca desktop: the tray tooltip failed: boom']);
+  assert.deepEqual(mk.calls.dockBadge, ['2'], 'the Dock still got it');
+});
+
+test('29i. exactly one listener on worca:badge', async () => {
+  const mk = makeController();
+  await mk.ctl.start();
+  assert.equal(BADGE_CHANNEL, 'worca:badge');
+  assert.equal(mk.electron.ipcMain.listenerCount(BADGE_CHANNEL), 1);
+});
+
+test('29j. win32: showing the window again re-applies a shown overlay; none when the badge is clear', async () => {
+  const mk = makeController({ platform: 'win32' });
+  await mk.ctl.start();
+  const w = mk.calls.windows[0];
+  w.emit('show');
+  assert.deepEqual(mk.calls.overlay, [], 'nothing to re-apply');
+  sendBadge(mk, B(2));
+  assert.equal(mk.calls.overlay.length, 1);
+  w.emit('show');
+  assert.equal(mk.calls.overlay.length, 2);
+  assert.deepEqual(mk.calls.overlay[1], mk.calls.overlay[0], 'the same image and text');
+  assert.equal(mk.calls.bitmaps.length, 1, 'from the cache');
+  sendBadge(mk, B(0));
+  assert.deepEqual(mk.calls.overlay[2], [null, '']);
+  w.emit('show');
+  assert.equal(mk.calls.overlay.length, 3, 'a clear badge is not re-applied');
+  const mac = makeController({ platform: 'darwin' });
+  await mac.ctl.start();
+  sendBadge(mac, B(2));
+  mac.calls.windows[0].emit('show');
+  assert.deepEqual(mac.calls.overlay, [], 'darwin has no overlay');
 });

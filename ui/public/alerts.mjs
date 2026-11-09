@@ -214,7 +214,10 @@ export function createAlerts({ Notification: N = null, doc, nav = {}, storage = 
     }
     if (n !== appBadge) {
       appBadge = n;
-      const fn = n > 0 ? nav && nav.setAppBadge : nav && nav.clearAppBadge;
+      // The desktop app (its preload marks <html data-shell="desktop">) draws its own badge from the title and the
+      // favicon, so the Badging API would race its Dock text: there main is the only app-icon writer.
+      const desktop = doc.documentElement?.getAttribute('data-shell') === 'desktop';
+      const fn = desktop ? null : n > 0 ? nav && nav.setAppBadge : nav && nav.clearAppBadge;
       if (typeof fn === 'function') {
         try { const p = n > 0 ? fn.call(nav, n) : fn.call(nav); if (p && typeof p.catch === 'function') p.catch(() => {}); } catch { /* not installed as an app */ }
       }

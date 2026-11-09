@@ -384,6 +384,26 @@ test('badge: setAppBadge / clearAppBadge are called only when they exist', () =>
   assert.doesNotThrow(() => { b.alerts.updateBadge({ waitingRuns: 2 }); b.alerts.updateBadge({ waitingRuns: 0 }); });
 });
 
+test('in the desktop shell (data-shell="desktop") setAppBadge / clearAppBadge are never called; the title and favicon still change', async () => {
+  const calls = [];
+  const nav = { setAppBadge: (n) => { calls.push(['set', n]); }, clearAppBadge: () => { calls.push(['clear']); } };
+  const a = setup({ badge: true, nav });
+  a.doc.documentElement.setAttribute('data-shell', 'desktop');
+  const link = a.doc.querySelector('link[rel~="icon"]');
+  a.alerts.updateBadge({ waitingRuns: 2, unreadProblems: 1 });
+  assert.equal(a.doc.title, '(2) Worca');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(link.getAttribute('href'), 'data:image/png;base64,DOT');
+  a.alerts.updateBadge({ waitingRuns: 0, unreadProblems: 0 });
+  assert.equal(a.doc.title, 'Worca');
+  assert.equal(link.getAttribute('href'), '/assets/worca-favicon.png');
+  assert.deepEqual(calls, [], 'main is the only app-badge writer in the desktop shell');
+  // The attribute gone (a browser), the next change calls the Badging API again.
+  a.doc.documentElement.removeAttribute('data-shell');
+  a.alerts.updateBadge({ waitingRuns: 3 });
+  assert.deepEqual(calls, [['set', 3]]);
+});
+
 test('badge switch off: no title, favicon or app-badge change; turning it off clears a shown badge', async () => {
   const calls = [];
   const nav = { setAppBadge: (n) => { calls.push(n); } };

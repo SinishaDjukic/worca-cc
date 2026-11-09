@@ -16,6 +16,7 @@ import {
   signingEnv, desktopBuilderConfig, builderCommand, packagedResourcesDir, fetchNodeRuntime, packJsonFromStdout,
   withoutSigning, stageServer, checkSmoke, missingPackagedFiles, step, packagedAppPath, infoPlistProblems, checkPackagedInfoPlist,
 } from '../tools/build.mjs';
+import { APP_ID } from '../desktop/src/app-id.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PKG = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
@@ -236,6 +237,15 @@ test('infoPlistProblems: a Worca plist passes; Electron names, a wrong identifie
   assert.deepEqual(infoPlistProblems({ ...good, CFBundleName: 'Other' }, { productName: 'Other' }), [
     'CFBundleDisplayName is "Worca", expected "Other"',
   ]);
+});
+
+test('APP_ID is dev.worca.desktop and the builder config, the Info.plist check and nothing else in tools/build.mjs name it', () => {
+  assert.equal(APP_ID, 'dev.worca.desktop');
+  assert.equal(desktopBuilderConfig({ version: PKG.version, platform: 'win', arch: 'x64', signed: false, notarize: false }).appId, APP_ID);
+  assert.deepEqual(infoPlistProblems({ CFBundleName: 'Worca', CFBundleDisplayName: 'Worca', CFBundleIdentifier: APP_ID, CFBundleIconFile: 'icon.icns' }), []);
+  const source = readFileSync(join(ROOT, 'tools/build.mjs'), 'utf8');
+  assert.doesNotMatch(source, /['"`]dev\.worca\.desktop['"`]/, 'no appId literal in tools/build.mjs');
+  assert.match(source, /^import \{ APP_ID \} from '\.\.\/desktop\/src\/app-id\.mjs';$/m);
 });
 
 test('checkPackagedInfoPlist: plutil -convert json of the given plist; a Worca plist returns it; Electron names, a failed or unstartable plutil and bad JSON each throw', () => {

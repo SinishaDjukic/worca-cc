@@ -2,7 +2,8 @@
 // only module is `electron`, with the page's window as its global (a JSDOM window here; jsdom is needed for real
 // MutationObserver and DOMContentLoaded timing). It marks <html> as the desktop shell, reports { mode, scheme, rail }
 // and follows the full-screen flag; a double-click on the title strip (not on a control) goes to main over
-// worca:title-dblclick. It must expose nothing to the page.
+// worca:title-dblclick. It reports the page's badge ({ count, dot } from the "(N) " title and the dotted favicon) over
+// worca:badge. It must expose nothing to the page.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -11,6 +12,8 @@ import { compileFunction } from 'node:vm';
 import { JSDOM } from 'jsdom';
 import { cssRules } from './helpers/css-rules.mjs';
 import { TITLE_DBLCLICK_CHANNEL } from '../desktop/src/title-bar.mjs';
+import { BADGE_CHANNEL, MAX_BADGE_COUNT } from '../desktop/src/badge.mjs';
+import { titleWithCount } from '../ui/public/alerts.mjs';
 
 const SOURCE = readFileSync(new URL('../desktop/preload.cjs', import.meta.url), 'utf8');
 const tick = () => new Promise((r) => setImmediate(r));
@@ -24,8 +27,8 @@ const MAIN_HTML = `<div class="main-col"><header class="topnav" id="topnav"><div
   + `<main class="main"><section class="view" data-view="workflows"><div class="wfv"><div class="wfv-node">node</div></div></section><p class="outside">body text</p>`
   + `<aside class="term-pane"><div class="term-resize"></div><div class="term-head"><span class="term-title">Terminal</span><button type="button" class="term-x">x</button></div><div class="term-screen">$</div></aside></main></div>`;
 
-function page({ theme = 'system', collapsed = false, argv = ['--worca-chrome=inset'], dark = false, matchMedia = true, bodyClass = '' } = {}) {
-  const dom = new JSDOM(`<!DOCTYPE html><html lang="en" data-theme="${theme}"><head></head><body class="${bodyClass}"><aside class="sidebar${collapsed ? ' collapsed' : ''}" id="side-rail">${STRIP_HTML}</aside>${MAIN_HTML}</body></html>`, { runScripts: 'outside-only' });
+function page({ theme = 'system', collapsed = false, argv = ['--worca-chrome=inset'], dark = false, matchMedia = true, bodyClass = '', head = '' } = {}) {
+  const dom = new JSDOM(`<!DOCTYPE html><html lang="en" data-theme="${theme}"><head>${head}</head><body class="${bodyClass}"><aside class="sidebar${collapsed ? ' collapsed' : ''}" id="side-rail">${STRIP_HTML}</aside>${MAIN_HTML}</body></html>`, { runScripts: 'outside-only' });
   const win = dom.window;
   const media = new EventEmitter();
   media.matches = dark;
@@ -277,4 +280,81 @@ test('the preload\'s no-drag list covers every selector of the CSS no-drag rules
   assert.deepEqual(sourceArray('SEND_CHROMES'), ['inset', 'overlay']);
   const sends = [...SOURCE.matchAll(/ipcRenderer\.send\('([^']+)'\)/g)].map((x) => x[1]);
   assert.deepEqual(sends, [TITLE_DBLCLICK_CHANNEL], 'one payload-free send, on the shared channel');
+});
+
+// The page's own head (ui/public/shell/sidebar.html): the base title and the one icon link alerts.mjs dots.
+const HEAD = '<title>Worca</title><link rel="icon" type="image/png" href="/assets/worca-favicon.png">';
+const FAVICON = '/assets/worca-favicon.png';
+const DOTTED = 'data:image/png;base64,iVBORw0KGgo=';
+const badgeSends = (p) => p.ipcRenderer.sent.filter(([c]) => c === BADGE_CHANNEL);
+const badges = (p) => badgeSends(p).map(([, b]) => JSON.parse(JSON.stringify(b)));
+const B = (count, dot = false) => ({ count, dot });
+
+test('badge: the first report at DOMContentLoaded is {count:0, dot:false}; a title already in the parsed head (\'(2) Worca\' via the head param) is reported then', async () => {
+  const p = page({ head: HEAD });
+  assert.deepEqual(badges(p), [], 'nothing before DOMContentLoaded');
+  await p.loaded;
+  assert.deepEqual(badges(p), [B(0)]);
+  p.win.close();
+  const two = page({ head: '<title>(2) Worca</title><link rel="icon" href="/assets/worca-favicon.png">' });
+  await two.loaded;
+  assert.deepEqual(badges(two), [B(2)]);
+  assert.deepEqual(two.required, ['electron']);
+  two.win.close();
+});
+
+test('badge: titleWithCount(\'Worca\', 2) → {2,false}; a data: favicon → dot; title back to Worca with the dot → {0,true}; the original href → {0,false}; an unchanged state sends nothing', async () => {
+  const p = page({ head: HEAD });
+  await p.loaded;
+  const link = p.doc.querySelector('link[rel~="icon"]');
+  p.doc.title = titleWithCount(p.doc.title, 2);
+  await tick();
+  assert.deepEqual(badges(p).at(-1), B(2));
+  link.setAttribute('href', DOTTED);
+  await tick();
+  assert.deepEqual(badges(p).at(-1), B(2, true));
+  link.setAttribute('href', DOTTED);   // app.js re-sets the same dotted href on every frame
+  p.doc.title = titleWithCount(p.doc.title, 2);
+  await tick();
+  assert.equal(badges(p).length, 3, 'unchanged: nothing sent');
+  p.doc.title = titleWithCount(p.doc.title, 0);
+  await tick();
+  assert.deepEqual(badges(p).at(-1), B(0, true), 'problems only');
+  link.setAttribute('href', FAVICON);
+  await tick();
+  assert.deepEqual(badges(p), [B(0), B(2), B(2, true), B(0, true), B(0)]);
+  p.win.close();
+});
+
+test('badge: a title created later in an empty head is seen; \'(x) Worca\', \'Worca (2)\' and \'(2)Worca\' → 0', async () => {
+  const p = page();
+  await p.loaded;
+  assert.deepEqual(badges(p), [B(0)]);
+  const seq = [['(3) Worca', 3], ['(x) Worca', 0], ['(4) Worca', 4], ['Worca (2)', 0], ['(5) Worca', 5], ['(2)Worca', 0]];
+  for (const [title, count] of seq) {
+    p.doc.title = title;
+    await tick();
+    assert.deepEqual(badges(p).at(-1), B(count), title);
+  }
+  assert.equal(badges(p).length, seq.length + 1);
+  p.win.close();
+});
+
+test('badge: channel and clamp — the sent channel is BADGE_CHANNEL, \'(123456) Worca\' → MAX_BADGE_COUNT, the payload has exactly the keys count and dot with primitive types', async () => {
+  assert.equal(/const BADGE = '([^']+)';/.exec(SOURCE)?.[1], BADGE_CHANNEL);
+  assert.equal(Number(/const MAX_COUNT = (\d+);/.exec(SOURCE)?.[1]), MAX_BADGE_COUNT);
+  const p = page({ head: '<title>(123456) Worca</title><link rel="icon" href="data:image/png;base64,AA==">' });
+  await p.loaded;
+  const sends = badgeSends(p);
+  assert.equal(sends.length, 1);
+  const [channel, payload] = sends[0];
+  assert.equal(channel, BADGE_CHANNEL);
+  assert.deepEqual(Object.keys(payload).sort(), ['count', 'dot']);
+  assert.equal(typeof payload.count, 'number');
+  assert.equal(typeof payload.dot, 'boolean');
+  assert.deepEqual(JSON.parse(JSON.stringify(payload)), B(MAX_BADGE_COUNT, true));
+  p.doc.title = '(99999) Worca';
+  await tick();
+  assert.equal(badgeSends(p).length, 1, 'the clamp: the same state');
+  p.win.close();
 });

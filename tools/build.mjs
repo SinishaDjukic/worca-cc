@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as tar from 'tar';
 import { checkPackFiles, packJsonPaths } from './check-pack.mjs';
 import { buildServerEnv, startServer, stopServer } from '../desktop/src/server-process.mjs';
+import { APP_ID } from '../desktop/src/app-id.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DESKTOP = join(ROOT, 'desktop');
@@ -119,7 +120,7 @@ export function signingEnv(env, platform) {
 export function desktopBuilderConfig({ version, platform, arch, signed, notarize }) {
   const entitlements = signed ? 'build-resources/entitlements.mac.plist' : undefined;
   return {
-    appId: 'dev.worca.desktop',
+    appId: APP_ID,
     productName: 'Worca',
     extraMetadata: { version },
     directories: { output: 'dist', buildResources: 'build-resources' },
@@ -176,7 +177,7 @@ export function packagedResourcesDir({ platform, arch, distDir }) {
 }
 
 /** What is wrong with a built Worca.app's Info.plist (parsed to an object); [] when the app is named right. */
-export function infoPlistProblems(plist, { productName = 'Worca', appId = 'dev.worca.desktop' } = {}) {
+export function infoPlistProblems(plist, { productName = 'Worca', appId = APP_ID } = {}) {
   if (!plist || typeof plist !== 'object' || Array.isArray(plist)) return ['Info.plist is not a dictionary'];
   const problems = [];
   for (const key of ['CFBundleName', 'CFBundleDisplayName']) {

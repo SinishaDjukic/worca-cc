@@ -5,8 +5,12 @@
 // window's own top frame on the app origin. A double-click on the title strip arrives over `worca:title-dblclick`
 // under the same guard and zooms, minimizes or does nothing as the OS setting says. A server this app did not start
 // may serve an older page without the desktop CSS, so main injects its own copy of desktop-shell.css into the main
-// window on every document load of the app origin. `electron` and every helper are injected: tests pass fakes, and
-// desktop/main.mjs is the only file that imports electron. Imports only node: builtins and sibling modules.
+// window on every document load of the app origin. The page's "needs you" badge arrives over `worca:badge` (badge.mjs)
+// under the same guard and becomes the Dock text (macOS), a taskbar overlay (Windows), the launcher count (Linux) and
+// the tray tooltip; it clears when an owned server stops, a new document commits or fails to load, or the renderer
+// dies. On Windows the AppUserModelID (APP_ID) is set first, so toasts carry the app's name and icon. `electron` and
+// every helper are injected: tests pass fakes, and desktop/main.mjs is the only file that imports electron. Imports
+// only node: builtins and sibling modules.
 import { createWriteStream, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { readLoginShellPath } from './shell-path.mjs';
@@ -18,6 +22,8 @@ import { trayMenuTemplate } from './tray-menu.mjs';
 import { APP_NAME, appMenuTemplate, aboutPanelOptions, readRootVersion, aboutVersion, devIconPath } from './app-menu.mjs';
 import { THEME_COLORS, TOP_BAR_HEIGHT, TRAFFIC_LIGHTS, TITLE_DBLCLICK_CHANNEL, DESKTOP_SHELL_CSS, titleBarChrome, titleDoubleClickAction, parseShellState, resolveScheme, readShellPrefs, writeShellPrefs, readDesktopShellCss } from './title-bar.mjs';
 import { windowIconFile, trayImageFile, systemUIDark } from './app-icons.mjs';
+import { APP_ID } from './app-id.mjs';
+import { BADGE_CHANNEL, NO_BADGE, parseBadgeState, dockBadgeText, overlayLabel, badgeDescription, trayToolTip, linuxBadgeCount, badgeBitmap } from './badge.mjs';
 
 /** <userData>/logs/server.log, truncated on every start. An open or write error is logged: createWriteStream reports
  *  it asynchronously, and an unhandled stream 'error' would end the main process. */
@@ -41,7 +47,7 @@ const lastLines = (text, n) => String(text || '').split(/\r?\n/).filter((l) => l
 export function createDesktopController({ electron, platform = process.platform, argv = [], env = process.env, home, resourcesPath, packaged, desktopDir, helpers = {}, log = { info: console.log, error: console.error } }) {
   const { app, BrowserWindow, Tray, Menu, shell, dialog, session, nativeImage, ipcMain, nativeTheme, systemPreferences } = electron;
   const h = { ...DEFAULT_HELPERS, ...helpers };
-  const st = { url: null, owned: false, quitting: false, stopping: false, stopped: false, handle: null, starting: null, storeDir: null, loginPath: null, win: null, tray: null, trayFile: null, openAtLogin: false, logPath: null, logStream: null, pendingShow: false, chrome: titleBarChrome(platform), scheme: 'light', shellState: null, prefs: null, shellCss: undefined };
+  const st = { url: null, owned: false, quitting: false, stopping: false, stopped: false, handle: null, starting: null, storeDir: null, loginPath: null, win: null, tray: null, trayFile: null, openAtLogin: false, logPath: null, logStream: null, pendingShow: false, chrome: titleBarChrome(platform), scheme: 'light', shellState: null, prefs: null, shellCss: undefined, badge: NO_BADGE, overlayImages: new Map() };
 
   const getAppOrigin = () => { try { return st.url ? new URL(st.url).origin : null; } catch { return null; } };
   const loginArgs = () => (platform === 'win32' ? { args: ['--hidden'] } : undefined);
@@ -197,6 +203,55 @@ export function createDesktopController({ electron, platform = process.platform,
     }
   }
 
+  /** The renderer's { count, dot }: a refused message changes nothing, gets no reply and logs nothing. */
+  function onBadge(event, payload) {
+    if (!fromMainTopFrame(event)) return;
+    const state = parseBadgeState(payload);
+    if (!state) return;
+    applyBadgeState(state);
+  }
+
+  /** One platform call; a failure is logged and never reaches Electron. */
+  function badgeCall(what, fn) {
+    try {
+      fn();
+    } catch (err) {
+      try { log.error(`worca desktop: ${what} failed: ${errText(err)}`); } catch { /* a failing logger must not reach Electron */ }
+    }
+  }
+
+  /** The cached overlay image for a label (nativeImage.createFromBitmap of badgeBitmap). */
+  function overlayImage(label) {
+    if (!st.overlayImages.has(label)) {
+      const bmp = badgeBitmap(label);
+      st.overlayImages.set(label, nativeImage.createFromBitmap(bmp.buffer, { width: bmp.width, height: bmp.height, scaleFactor: bmp.scaleFactor }));
+    }
+    return st.overlayImages.get(label);
+  }
+
+  /** Windows: the taskbar overlay for st.badge (null clears it). */
+  function setOverlay() {
+    badgeCall('the taskbar overlay', () => {
+      const win = st.win;
+      if (!win || typeof win.setOverlayIcon !== 'function') return;
+      const label = overlayLabel(st.badge);
+      win.setOverlayIcon(label ? overlayImage(label) : null, badgeDescription(st.badge));
+    });
+  }
+
+  /** An unchanged { count, dot } makes no platform call; each call fails alone. */
+  function applyBadgeState(state) {
+    if (state.count === st.badge.count && state.dot === st.badge.dot) return;
+    st.badge = state;
+    if (platform === 'darwin') badgeCall('the Dock badge', () => { app.dock?.setBadge?.(dockBadgeText(state)); });
+    if (platform === 'win32') setOverlay();
+    // false means the desktop has no launcher badge: nothing to do.
+    if (platform === 'linux') badgeCall('the launcher badge', () => { app.setBadgeCount?.(linuxBadgeCount(state)); });
+    badgeCall('the tray tooltip', () => { st.tray?.setToolTip?.(trayToolTip(state, APP_NAME)); });
+  }
+
+  const clearBadge = () => applyBadgeState(NO_BADGE);
+
   function createWindow() {
     // The saved mode and rail (not colours) give the launch background, overlay and lights: no flash before the page reports.
     const prefs = h.readShellPrefs(app.getPath('userData'));
@@ -210,6 +265,15 @@ export function createDesktopController({ electron, platform = process.platform,
     win.on('enter-full-screen', () => sendFullScreen(win.webContents, true));
     win.on('leave-full-screen', () => sendFullScreen(win.webContents, false));
     win.webContents.on('dom-ready', () => injectShellCss(win.webContents));
+    // The badge belongs to a document: clear it once a new one commits (a Restart, a moved server, a reload; hash
+    // routes are did-navigate-in-page), when an error page replaces it (ERR_ABORTED (-3) leaves the page in place)
+    // and when the renderer dies. Never on a navigation that only starts: it may not commit, and the page would not
+    // report the same badge again.
+    win.webContents.on('did-navigate', () => clearBadge());
+    win.webContents.on('did-fail-load', (_e, errorCode, _desc, _url, isMainFrame) => { if (isMainFrame === true && errorCode !== -3) clearBadge(); });
+    win.webContents.on('render-process-gone', () => clearBadge());
+    // Hiding to the tray removes the taskbar button, and Windows may drop its overlay with it.
+    win.on('show', () => { if (platform === 'win32' && overlayLabel(st.badge) !== null) setOverlay(); });
     const ses = session.defaultSession;
     ses.setPermissionRequestHandler((_wc, permission, cb, details) => cb(permissionAllowed(permission, details && details.requestingUrl, getAppOrigin())));
     ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) => permissionAllowed(permission, requestingOrigin, getAppOrigin()));
@@ -243,7 +307,7 @@ export function createDesktopController({ electron, platform = process.platform,
         if (typeof st.tray.setImage === 'function') st.tray.setImage(trayImage(file));
       });
     }
-    if (typeof st.tray.setToolTip === 'function') st.tray.setToolTip('Worca');
+    if (typeof st.tray.setToolTip === 'function') st.tray.setToolTip(trayToolTip(st.badge, APP_NAME));
     st.openAtLogin = platform === 'linux' ? false : !!app.getLoginItemSettings(loginArgs()).openAtLogin;
     buildTrayMenu();
     if (platform !== 'darwin') st.tray.on('click', showWindow);
@@ -271,6 +335,7 @@ export function createDesktopController({ electron, platform = process.platform,
 
   async function onOwnedExit(handle, code) {
     if (st.quitting || st.stopping || handle !== st.handle) return;
+    clearBadge();   // the server is gone: its count is stale
     log.error(`worca desktop: the server stopped (exit ${code})`);
     const { response } = await dialog.showMessageBox({ type: 'warning', message: `The Worca server stopped (exit ${code}).`, buttons: ['Restart', 'Quit'], defaultId: 0, cancelId: 1 });
     if (response !== 0) { app.quit(); return; }
@@ -288,6 +353,8 @@ export function createDesktopController({ electron, platform = process.platform,
   async function start() {
     app.setName(APP_NAME);   // the same name the userData folder already has (productName): it does not move
     app.enableSandbox();
+    // Windows files toasts under the AppUserModelID: the installer's shortcut carries the same APP_ID.
+    if (platform === 'win32' && typeof app.setAppUserModelId === 'function') app.setAppUserModelId(APP_ID);
     app.on('web-contents-created', (_e, wc) => applyContentsPolicy(wc, { getAppOrigin, openExternal: (u) => shell.openExternal(u), getScheme: () => st.scheme }));
     if (!setupSingleInstance(app, { onSecondInstance: showWindow })) return;
     await app.whenReady();
@@ -295,6 +362,7 @@ export function createDesktopController({ electron, platform = process.platform,
     if (ipcMain) {
       ipcMain.on('worca:shell-state', onShellState);
       ipcMain.on(TITLE_DBLCLICK_CHANNEL, onTitleDoubleClick);
+      ipcMain.on(BADGE_CHANNEL, onBadge);
     }
     app.on('before-quit', (e) => {
       st.quitting = true;
@@ -328,6 +396,6 @@ export function createDesktopController({ electron, platform = process.platform,
 
   return {
     start,
-    state: () => ({ url: st.url, owned: st.owned, quitting: st.quitting, windowVisible: !!(st.win && st.win.isVisible()), scheme: st.scheme, chrome: st.chrome }),
+    state: () => ({ url: st.url, owned: st.owned, quitting: st.quitting, windowVisible: !!(st.win && st.win.isVisible()), scheme: st.scheme, chrome: st.chrome, badge: { ...st.badge } }),
   };
 }
