@@ -148,7 +148,7 @@ test('setFeatureModel: refused while busy, archived or starting', async () => {
 test('featureModel: a stored model of an unavailable engine is kept, no notice (D13); available + gone = removed', async () => {
   const f = { model: { engine: 'codex', model: 'gpt-everyday', effort: null } };
   const a = ask();
-  const off = deps('codex', { catalog: async () => { const c = await a.askCatalog({ withSecrets: false }); return { ...c, models: c.models.filter((m) => m.engine !== 'codex'), defaults: { ...c.defaults, codex: null } }; } });
+  const off = deps('codex', { validate: async () => ({ ok: false, error: 'unknown model "gpt-everyday"' }), catalog: async () => { const c = await a.askCatalog({ withSecrets: false }); return { ...c, models: c.models.filter((m) => m.engine !== 'codex'), defaults: { ...c.defaults, codex: null } }; } });
   assert.deepEqual(await featureModel(f, off), { engine: 'codex', model: 'gpt-everyday', effort: null, notice: null });
 });
 

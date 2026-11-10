@@ -123,7 +123,7 @@ export async function checkChoice({ engine, model, effort } = {}, d = {}) {
   return { ok: true, choice: { engine, model: entry.id, effort: e } };
 }
 
-/** D3: switch a feature's (callers validate the pick with checkChoice first; the API route does)  harness/model/effort, as a `model` turn. Refused while busy, archived or starting. */
+/** D3: switch a feature's harness, model and effort, as a `model` turn. Callers validate the pick with checkChoice first (the API route does). Refused while busy, archived or starting. */
 export async function setFeatureModel(seq, choice, { by = null } = {}, d = {}) {
   const x = dd(d);
   const f = editable(seq);
