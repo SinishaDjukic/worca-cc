@@ -18,9 +18,13 @@ import { withRole } from '../model-roles.mjs';
 import { designEngineRow } from './engines.mjs';
 import { builderWriteDirs, designRoot, designWorkDir, leadWriteDirs, sectionDir } from './paths.mjs';
 import { builderSystemPrompt, leadSystemPrompt } from './prompts.mjs';
+import { DESIGN_WEB_GRANT } from './web-mcp.mjs';
 
-/** Builder and lead tools: no Bash, web, MCP, skills or Agent. */
+/** Builder and lead tools: no Bash, web, MCP, skills or Agent. A lead with web access adds DESIGN_WEB_TOOLS. */
 export const DESIGN_TOOLS = Object.freeze(['Read', 'Write', 'Edit', 'Glob', 'Grep']);
+/** What a lead adds when "Let the lead use the web" is on (docs/design.md "Web access"): the engine's own web search
+ *  and page fetch. Its pictures come through worca's `save_image` (web-mcp.mjs). Never a builder's. */
+export const DESIGN_WEB_TOOLS = Object.freeze(['WebSearch', 'WebFetch']);
 /** What a process off the hook row denies by rule, since its tool list cannot be held (SPEC L13, L8.27). */
 export const DESIGN_OFF_RULES = Object.freeze(['Bash', 'WebSearch', 'WebFetch']);
 /** Codex reads files through its shell, so it keeps it and denies web search only (L8.27). */
@@ -47,6 +51,9 @@ function mockRole(role, stage) {
 export function designSpawnOptions(ctx) {
   const { role, stage, engine = 'claude', kind, agentId, buildId, designId, sectionId, projectDir, prompt, model, effort,
     resumeSessionId, maxBudgetUsd, denyRules, signal, onEvent, mock } = ctx;
+  // Web access is the lead's alone, and only with the build's MCP config in hand (`save_image`'s server).
+  const web = ctx.web === true && role === 'lead';
+  const webMcp = web && typeof ctx.webMcpConfigPath === 'string' && ctx.webMcpConfigPath ? ctx.webMcpConfigPath : null;
   const row = ctx.row ?? designEngineRow(engine);
   if (row.gate === 'refused') throw new Error(`design: engine ${engine} does not run Design`);
   const maxTurns = DESIGN_MAX_TURNS[`${role}:${stage}`];
@@ -57,8 +64,10 @@ export function designSpawnOptions(ctx) {
   const cwd = builder ? sectionDir(designId, sectionId) : work;
   // The design's kind (`web` when absent) picks the system prompt: a deck or a video swaps P2's bands for its own block.
   // A builder off the hook row reads its `.ctx` copies (L8.7), staged by the build before each process.
-  const system = builder ? builderSystemPrompt({ kind, readRoot: hooked ? undefined : join(cwd, '.ctx') }) : leadSystemPrompt({ kind });
-  const off = hooked ? [] : (engine === 'codex' ? CODEX_OFF_RULES : DESIGN_OFF_RULES);
+  const system = builder ? builderSystemPrompt({ kind, readRoot: hooked ? undefined : join(cwd, '.ctx') }) : leadSystemPrompt({ kind, web });
+  const offAll = hooked ? [] : (engine === 'codex' ? CODEX_OFF_RULES : DESIGN_OFF_RULES);
+  const off = web ? offAll.filter((r) => !DESIGN_WEB_TOOLS.includes(r)) : offAll;
+  const tools = web ? [...DESIGN_TOOLS, ...DESIGN_WEB_TOOLS] : [...DESIGN_TOOLS];
   const excluded = ctx.bridgedInfo?.excludeTools;
   return {
     engine,
@@ -70,8 +79,10 @@ export function designSpawnOptions(ctx) {
     effort,
     modelEnv: resolveModelEnv(model, { tag: agentId }),
     permissionMode: 'acceptEdits',
-    ...(hooked ? { tools: [...DESIGN_TOOLS] } : {}),
-    allowedTools: [...DESIGN_TOOLS],
+    ...(hooked ? { tools: [...tools] } : {}),
+    allowedTools: [...tools],
+    // `save_image`: the build's own MCP config and, for Claude, the grant that lets its tool run under acceptEdits.
+    ...(webMcp ? { mcpConfigPath: webMcp, mcpServerGrants: [DESIGN_WEB_GRANT] } : {}),
     ...(Array.isArray(excluded) && excluded.length ? { disallowedTools: [...excluded] } : {}),
     strictMcpConfig: true,
     settingSources: ['project'],

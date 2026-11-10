@@ -1112,8 +1112,16 @@ export function chatPrefs() {
   }
   // `suggestions`: Ask Worca's next-prompt ghost text after each reply — default ON, only a stored false stops it.
   // `summariseCommands` (#911, flag commandSummaries): chat commands as one-line rows — default ON.
+  // `designWeb`: Design's lead may search the web, read pages and save pictures — default OFF, only a stored true turns it on.
   return { notify, channels, scriptTools: chat.scriptTools !== false, suggestions: chat.suggestions !== false,
-    summariseCommands: chat.summariseCommands !== false };
+    summariseCommands: chat.summariseCommands !== false, designWeb: chat.designWeb === true };
+}
+
+/** Settings › Design "Let the lead use the web": whether a Design lead gets web search, page fetch and `save_image`
+ *  (docs/design.md "Web access"). Off unless a person switched it on; off under a guarded home. */
+export function designWebOn() {
+  if (homeGuarded()) return false;
+  try { return chatPrefs().designWeb === true; } catch { return false; }
 }
 
 /**
@@ -1134,6 +1142,8 @@ export async function setChatPrefs(patch = {}) {
   if (hasSuggestions && typeof patch.suggestions !== 'boolean') throw new Error('chat suggestions must be true or false');
   const hasSummaries = Object.prototype.hasOwnProperty.call(patch, 'summariseCommands');
   if (hasSummaries && typeof patch.summariseCommands !== 'boolean') throw new Error('chat summariseCommands must be true or false');
+  const hasDesignWeb = Object.prototype.hasOwnProperty.call(patch, 'designWeb');
+  if (hasDesignWeb && typeof patch.designWeb !== 'boolean') throw new Error('chat designWeb must be true or false');
   const settings = readSettings();
   const cur = settings.chat && typeof settings.chat === 'object' ? settings.chat : {};
   settings.chat = {
@@ -1148,6 +1158,7 @@ export async function setChatPrefs(patch = {}) {
     ...(hasScriptTools ? { scriptTools: patch.scriptTools } : {}),
     ...(hasSuggestions ? { suggestions: patch.suggestions } : {}),
     ...(hasSummaries ? { summariseCommands: patch.summariseCommands } : {}),
+    ...(hasDesignWeb ? { designWeb: patch.designWeb } : {}),
   };
   await persistSettings(settings);
   return chatPrefs();
