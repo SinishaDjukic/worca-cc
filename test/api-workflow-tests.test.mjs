@@ -97,7 +97,7 @@ test('examples, a past run as an example, a test of v1 against the draft, reuse,
 
   // Test v1 against the draft on the written example, with the free quick check.
   const plan = (await call('GET', `${WF}/plan?a=1&b=draft&examples=${ex.id}&tries=1`)).body;
-  assert.deepEqual([plan.a.want, plan.a.reusable, plan.b.label], [1, 0, 'v2 draft · your changes']);
+  assert.deepEqual([plan.a.want, plan.a.reusable, plan.b.label], [1, 0, 'Your draft (same as v1)']);   // U-T4: the draft is still the saved v1, so "your changes" would be untrue
   assert.deepEqual(plan.connectors, { mode: 'pretend', pretend: [], off: [], scripts: [], quickScripts: [], engines: [], personalOff: true },
     "board 30: no connector, no script step, Claude only; 3b (D78): Pretend on Claude Code, so the person's plugins are off");
   const started = await call('POST', `${WF}/runs`, { a: 1, b: 'draft', exampleIds: [ex.id], tries: 1, quickCheck: true, capUsd: 5 });
