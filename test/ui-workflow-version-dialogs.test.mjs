@@ -28,6 +28,25 @@ test('Save version: title, the changes since the latest version, a note, and "Al
   assert.equal(doc.querySelector('#mk-dialog'), null, 'closes on success');
 });
 
+test('U-T7 (F15): an unchanged draft says there is nothing to save, and the Save button is disabled', async () => {
+  const { doc, win } = dom();
+  let sent = 0;
+  openSaveVersionDialog({ doc, win, nextNo: 3, sinceNo: 2, changes: [], unchanged: true, onSubmit: async () => { sent += 1; return { ok: true }; } });
+  assert.equal(doc.querySelector('.wfv-sv-since').textContent, 'Nothing changed since v2, so there is nothing to save.');
+  assert.equal(doc.querySelector('.wfv-changes-none'), null, 'said once');
+  const save = [...doc.querySelectorAll('.mk-dialog-foot button')].find((b) => b.textContent === 'Save version 3');
+  assert.equal(save.disabled, true);
+  click(save);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(sent, 0);
+});
+
+test('U-T7: a changed draft keeps Save version active', () => {
+  const { doc, win } = dom();
+  openSaveVersionDialog({ doc, win, nextNo: 3, sinceNo: 2, changes: ['x'], unchanged: false, onSubmit: async () => ({ ok: true }) });
+  assert.equal([...doc.querySelectorAll('.mk-dialog-foot button')].find((b) => b.textContent === 'Save version 3').disabled, false);
+});
+
 test('Save version with nothing changed since the latest version: says so, shows the refusal and stays open', async () => {
   const { doc, win } = dom();
   openSaveVersionDialog({ doc, win, nextNo: 2, sinceNo: 1, changes: [], onSubmit: async () => ({ ok: false, error: 'nothing changed since version 1' }) });

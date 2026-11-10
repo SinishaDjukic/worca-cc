@@ -109,7 +109,9 @@ function latestCard(doc, l, actions, now) {
   return c;
 }
 
-function table(doc, o, actions, dateText) {
+function table(doc, o0, actions, dateText) {
+  // U-T7 (D7): a draft identical to a saved version has no column of its own.
+  const o = Number.isInteger(o0.draftSameAs) && o0.columns.length > 1 ? { ...o0, columns: o0.columns.filter((c) => c.use !== 'draft') } : o0;
   const sec = el(doc, 'section', 'card wft-table');
   sec.setAttribute('aria-label', 'Test examples');
   const scroll = el(doc, 'div', 'wft-scroll');

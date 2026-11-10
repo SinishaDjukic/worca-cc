@@ -61,6 +61,16 @@ test('the list: subtitle, the three buttons, How testing works, the latest test'
   assert.match(root.querySelector('.wft-foot').textContent, /^Why 3 tries\? AI can give a different answer each time, so one good try can be luck\. A try passes when everything checked is met\.$/);
 });
 
+test('U-T7 (F13, D7): a draft identical to a version has no column; a changed one keeps it', () => {
+  const same = boot(overview({ draftSameAs: 4 }));
+  assert.deepEqual(texts(same.root, '.wft-row-head > span'), ['Example', 'What is checked', 'v4 · the team uses it', '']);
+  const rows = [...same.root.querySelectorAll('.wft-row:not(.wft-row-head)')];
+  assert.deepEqual(rows.map((r) => texts(r, '.wft-res')), [['3 of 3 passed'], ['1 of 3 passed · before a change'], ['Not good · a past run']]);
+  assert.ok(same.root.querySelector('.wft-grid').classList.contains('is-one'));
+  const changed = boot(overview({ draftSameAs: null }));
+  assert.deepEqual(texts(changed.root, '.wft-row-head > span'), ['Example', 'What is checked', 'v4 · the team uses it', 'v5 draft · yours', '']);
+});
+
 test('the examples table: columns, hints, what is checked, results with dots, the ⋯ menu', () => {
   const { root, calls } = boot(overview());
   assert.deepEqual(texts(root, '.wft-row-head > span'), ['Example', 'What is checked', 'v4 · the team uses it', 'v5 draft · yours', '']);

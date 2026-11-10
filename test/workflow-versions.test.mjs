@@ -78,15 +78,26 @@ test('status: sinceLatest compares the draft with the LATEST version (what Save 
   const s = await versionStatus('wf_v', { deps });
   assert.equal(s.liveVersionNo, 1);
   assert.deepEqual(s.draft.changes, ['Planner: AI model inherit → sonnet'], 'draft.changes still compares with the version in use');
-  assert.deepEqual(s.draft.sinceLatest, { versionNo: 2, changes: [] });
+  assert.deepEqual(s.draft.sinceLatest, { versionNo: 2, changed: false, changes: [] }, 'U-T7: the draft is the latest version');
   assert.deepEqual(s.sinceLatest, s.draft.sinceLatest);
   // A Library edit after v2 shows since v2 too.
   await writeFile(deps.mdPath, 'Plan it carefully.');
   const s2 = await versionStatus('wf_v', { deps });
-  assert.deepEqual(s2.draft.sinceLatest, { versionNo: 2, changes: ['Planner: changed in the Library'] });
+  assert.deepEqual(s2.draft.sinceLatest, { versionNo: 2, changed: true, changes: ['Planner: changed in the Library'] });
   const o = await versionsOverview('wf_v', { deps });
-  assert.deepEqual(o.sinceLatest, { versionNo: 2, changes: ['Planner: changed in the Library'] });
+  assert.deepEqual(o.sinceLatest, { versionNo: 2, changed: true, changes: ['Planner: changed in the Library'] });
   assert.deepEqual(o.draft.sinceLatest, o.sinceLatest);
+});
+
+test('U-T7 (F14, F15): sinceLatest.changed is false right after Save version and true after a rename or any edit', async () => {
+  await writeGraphWorkflow(tpl());
+  await createVersion('wf_v', { deps });
+  assert.equal((await versionStatus('wf_v', { deps })).sinceLatest.changed, false);
+  await writeGraphWorkflow(tpl({ name: 'Renamed' }));
+  const s = await versionStatus('wf_v', { deps });
+  assert.equal(s.sinceLatest.changed, true, 'a rename alone is a change (Save version would accept it)');
+  await createVersion('wf_v', { deps });
+  assert.equal((await versionStatus('wf_v', { deps })).sinceLatest.changed, false);
 });
 
 test('restore puts a saved state into the draft, keeps the version in use, and can itself be undone', async () => {

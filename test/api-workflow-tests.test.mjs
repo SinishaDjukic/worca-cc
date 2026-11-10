@@ -89,7 +89,8 @@ test('examples, a past run as an example, a test of v1 against the draft, reuse,
   const up = await call('POST', `${WF}/examples/${ex.id}/files`, { name: 'notes.md', dataBase64: Buffer.from('# Notes').toString('base64') });
   assert.deepEqual(up.body.example.files.map((f) => [f.name, f.size]), [['notes.md', 7]]);
   o = (await call('GET', WF)).body;
-  assert.deepEqual(o.columns.map((c) => c.label), ['v1 · the team uses it', 'v2 draft · yours']);
+  // U-T7 (D7): the draft is still the saved v1, so it has no column of its own.
+  assert.deepEqual([o.columns.map((c) => c.label), o.draftSameAs], [['v1 · the team uses it'], 1]);
   const saved = o.examples.find((e) => e.name === 'Saved filters');
   assert.deepEqual([saved.cells['1'], saved.cells.draft, saved.files], [{ passed: null, total: null, stale: false, past: 'not-good' }, null, ['usage.csv']]);
   assert.equal(o.pastRuns.length, 1);

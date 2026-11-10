@@ -185,6 +185,18 @@ function optInRow(doc, box, lead, rest) {
   return row;
 }
 
+/** U-T7 (D7): what the dialog opens on. A draft identical to a saved version (`sameAs`) is never a side by default: a = the version
+ *  in use if it is not the latest, else the one before the latest; b = the latest version. Otherwise the draft is b, as before. */
+export function defaultPicks({ nos = [], liveNo = null, sameAs = null }) {
+  const sorted = [...nos].sort((x, y) => x - y);
+  if (sameAs == null || !sorted.length) return { a: liveNo || sorted.at(-1) || null, b: 'draft' };
+  const latest = sorted.at(-1);
+  const before = sorted.filter((n) => n < latest).at(-1) ?? null;
+  return { a: liveNo && liveNo !== latest && sorted.includes(liveNo) ? liveNo : before, b: latest };
+}
+const SAME_DRAFT_PICK = (n) => `Your draft is the same as v${n}. Pick another version.`;
+const SAME_DRAFT_ONLY = (n) => `Your draft is the same as v${n}: change it on the canvas, then test it.`;
+
 /**
  * Boards 4 and 30: Test a version (G10, G12, G16, C6, C12, C16, C19). The plan comes from the server per pick (loadPlan);
  * the estimate, the default cost cap, the connectors' notes and "Start N tries" follow it live.
@@ -194,6 +206,11 @@ function optInRow(doc, box, lead, rest) {
 export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'draft', examples = [], exampleIds = null, tries: wantTries = null, connectors = 'pretend',
   dateText, loadPlan, onStart }) {
   const versions = options.filter((o) => o.use !== 'draft');
+  const draftOpt = options.find((o) => o.use === 'draft');
+  const sameAs = draftOpt && Number.isInteger(draftOpt.sameAs) ? draftOpt.sameAs : null;   // U-T7 (D7)
+  const onlySame = sameAs !== null && versions.length === 1;   // nothing else to compare the draft with
+  const noVersion = () => !versions.length || onlySame;
+  const sameDraft = () => sameAs !== null && selB.value === 'draft' && selA.value === String(sameAs);
   const selA = el(doc, 'select');
   selA.id = 'wft-tv-a';
   if (!versions.length) { const o = el(doc, 'option', '', 'No saved version yet'); o.value = ''; selA.append(o); selA.disabled = true; }
@@ -202,7 +219,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
   const selB = el(doc, 'select');
   selB.id = 'wft-tv-b';
   selB.setAttribute('aria-label', 'Second version');   // its label is not shown (board 4)
-  for (const o of options) { const x = el(doc, 'option', '', o.label); x.value = String(o.use); selB.append(x); }
+  for (const o of options) { const x = el(doc, 'option', '', o.use === 'draft' && sameAs !== null ? `Your draft (same as v${sameAs})` : o.label); x.value = String(o.use); selB.append(x); }
   selB.value = String(b);
   const pickEx = el(doc, 'select');
   pickEx.id = 'wft-tv-examples';
@@ -308,7 +325,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
     body: [vs, reuse, row2, conn, quickRow, safe, lock, est, refuse, capField, note],
     onConfirm: async () => {
       // testDialog gives the button back after a refusal: a pick made meanwhile may have nothing to start.
-      if (!estimate || !estimate.total || !versions.length || selA.value === selB.value) return { ok: false, error: note.textContent || 'Wait for the estimate, then start.' };
+      if (!estimate || !estimate.total || noVersion() || selA.value === selB.value || sameDraft()) return { ok: false, error: note.textContent || 'Wait for the estimate, then start.' };
       const capUsd = parseUsd(cap.value);   // I2: "15,50" is $15.50, not $1,550
       if (!(capUsd > 0)) return { ok: false, error: 'Give the cost limit in dollars, such as $15.' };
       posting = true;
@@ -323,8 +340,8 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
     const held = [boxA, boxB].find((x) => x === doc.activeElement) || null;   // the rows are rebuilt: a ticked box keeps the focus
     reuse.replaceChildren();
     est.replaceChildren();
-    const noA = !versions.length;
-    const same = !noA && selA.value === selB.value;
+    const noA = noVersion();
+    const same = !noA && (selA.value === selB.value || sameDraft());
     if (plan) {
       for (const [side, box, other] of [['a', boxA, 'b'], ['b', boxB, 'a']]) {
         const s = plan[side];
@@ -409,8 +426,8 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
     const noneReady = !noA && !ready.length;
     triesField.hidden = noneReady;
     if (noneReady) { for (const n of [reuse, conn, quickRow, est, capField, safe, lock]) n.hidden = true; }
-    const text = noA ? 'Save a version first: a test compares two versions. Try it once now tries one example on your draft.'   // C16
-      : noneReady ? NONE_READY_TEXT : same ? 'Pick two different versions.' : e && total === 0 ? 'Nothing to try: both versions have results for these examples.' : '';
+    const text = onlySame ? SAME_DRAFT_ONLY(sameAs) : noA ? 'Save a version first: a test compares two versions. Try it once now tries one example on your draft.'   // C16
+      : noneReady ? NONE_READY_TEXT : sameDraft() ? SAME_DRAFT_PICK(sameAs) : same ? 'Pick two different versions.' : e && total === 0 ? 'Nothing to try: both versions have results for these examples.' : '';
     if (note.textContent !== text) note.textContent = text;   // aria-live: only a change is news
     // A disabled Start says why: the disk refusal, else the note (P28, C16).
     const why2 = !refuse.hidden ? refuse.id : dlg.okButton.disabled && text ? note.id : null;
@@ -469,7 +486,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
     const my = (seq += 1);
     plan = null;
     paint();
-    if (!selA.value || selA.value === selB.value || !ready.length) return;   // P28: an empty list would plan every example
+    if (!selA.value || selA.value === selB.value || sameDraft() || onlySame || !ready.length) return;   // P28: an empty list would plan every example
     let p = null;
     try {
       p = await loadPlan({ a: selA.value, b: selB.value, examples: chosen().map((e) => e.id).join(','), tries: String(tries), connectors: mode });

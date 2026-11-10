@@ -110,10 +110,13 @@ async function statusOf(row, deps) {
   const modelLabel = await modelLabeler(deps);
   const graph = parse(row.graph, {});
   const parts = await workflowParts(graph, { ...deps, ...regs });
-  const sinceLatest = latest ? { versionNo: latest.versionNo, changes: changesSince(latest, row, graph, parts, labelOf, modelLabel).changes } : null;
+  // `changed` is Save version's own test (createVersion): a different fingerprint or name, even when no change can be listed.
+  const fingerprint = workflowFingerprint(graph, parts);
+  const sinceLatest = latest ? { versionNo: latest.versionNo, changed: fingerprint !== latest.fingerprint || row.name !== latest.name,
+    changes: changesSince(latest, row, graph, parts, labelOf, modelLabel).changes } : null;
   if (!live) return { liveVersionNo: null, latestVersionNo, draft: null, sinceLatest };
   const { changes, partsChanged } = changesSince(live, row, graph, parts, labelOf, modelLabel);
-  const changed = workflowFingerprint(graph, parts) !== live.fingerprint || row.name !== live.name;
+  const changed = fingerprint !== live.fingerprint || row.name !== live.name;
   return { liveVersionNo: live.versionNo, latestVersionNo, draft: { changed, changes, partsChanged, sinceLatest }, sinceLatest };
 }
 

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog, scriptCaution, engineNoteLine, fileServerOffLine }
+import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog, defaultPicks, scriptCaution, engineNoteLine, fileServerOffLine }
   from '../ui/public/workflows/test-dialogs.mjs';
 import * as serverConnectors from '../src/core/workflow-tests/connectors.mjs';
 import { runStatusBadge } from '../ui/public/workflows/test-ui.mjs';
@@ -335,6 +335,54 @@ test('C16 with no saved version; two equal versions; one example starts at its o
   await tick();
   assert.equal(one.started.length, 1);
   assert.equal(one.started[0].capUsd, 15.5, 'I2: a decimal comma, not $1,550');
+});
+
+// U-T7 (F13, D7): a draft identical to a saved version.
+const SAME_OPTIONS = [{ use: 3, label: 'v3' }, { use: 4, label: 'v4 · the team uses it' }, { use: 'draft', label: 'v5 draft · your changes', sameAs: 4 }];
+
+test('U-T7: defaults when the draft equals a version: a = the version in use if not the latest, else the one before; b = the latest', () => {
+  assert.deepEqual(defaultPicks({ nos: [1, 2, 3, 4], liveNo: 2, sameAs: 4 }), { a: 2, b: 4 });
+  assert.deepEqual(defaultPicks({ nos: [1, 2, 3, 4], liveNo: 4, sameAs: 4 }), { a: 3, b: 4 });
+  assert.deepEqual(defaultPicks({ nos: [1, 2, 4], liveNo: null, sameAs: 2 }), { a: 2, b: 4 });
+  assert.deepEqual(defaultPicks({ nos: [4], liveNo: 4, sameAs: 4 }), { a: null, b: 4 });
+  assert.deepEqual(defaultPicks({ nos: [3, 4], liveNo: 4, sameAs: null }), { a: 4, b: 'draft' }, 'a changed draft: as before');
+  assert.deepEqual(defaultPicks({ nos: [], liveNo: null, sameAs: null }), { a: null, b: 'draft' });
+});
+
+test('U-T7: the draft option reads "Your draft (same as v{n})", and picking it against v{n} is refused', async () => {
+  const { doc, plans } = openTv({ options: SAME_OPTIONS, a: 3, b: 4 });
+  await tick();
+  const b = doc.querySelector('#wft-tv-b');
+  assert.deepEqual([...b.options].map((o) => o.textContent), ['v3', 'v4 · the team uses it', 'Your draft (same as v4)']);
+  assert.deepEqual([doc.querySelector('#wft-tv-a').value, b.value], ['3', '4'], 'never the default');
+  assert.equal(plans.length, 1);
+  b.value = 'draft'; change(b);
+  const a = doc.querySelector('#wft-tv-a');
+  a.value = '4'; change(a);
+  await tick();
+  assert.equal(doc.querySelector('.wft-tv-note').textContent, 'Your draft is the same as v4. Pick another version.');
+  const ok = doc.querySelector('.wft-dlg-ok');
+  assert.deepEqual([ok.disabled, ok.textContent], [true, 'Start']);
+  assert.equal(plans.length, 2, 'draft against v3 asked for a plan; v4 against the draft did not');
+});
+
+test('U-T7: the draft against another version than the one it equals is allowed', async () => {
+  const { doc, started } = openTv({ options: SAME_OPTIONS, a: 3, b: 'draft' });
+  await tick();
+  assert.equal(doc.querySelector('.wft-tv-note').textContent, '');
+  assert.equal(doc.querySelector('.wft-dlg-ok').disabled, false);
+  click(doc.querySelector('.wft-dlg-ok'));
+  await tick();
+  assert.equal(started.length, 1);
+});
+
+test('U-T7: one version and a draft identical to it: change the draft first, nothing to start', async () => {
+  const { doc, plans } = openTv({ options: [{ use: 4, label: 'v4 · the team uses it' }, { use: 'draft', label: 'v5 draft', sameAs: 4 }], a: null, b: 4 });
+  await tick();
+  assert.equal(doc.querySelector('.wft-tv-note').textContent, 'Your draft is the same as v4: change it on the canvas, then test it.');
+  const ok = doc.querySelector('.wft-dlg-ok');
+  assert.deepEqual([ok.disabled, ok.textContent], [true, 'Start']);
+  assert.equal(plans.length, 0);
 });
 
 test('C16 every result reused: Start 0 tries, disabled; C12 a cost not known yet', async () => {

@@ -7,7 +7,7 @@ import { join, basename } from 'node:path';
 import { getDb, prepare } from '../db.mjs';
 import { isSafeWorkflowId } from '../workflows.mjs';
 import { isReservedWorkflowId } from '../graph/builtin-workflows.mjs';
-import { isVersionableRow, liveVersionNo, latestVersion } from '../workflow-revisions.mjs';
+import { isVersionableRow, liveVersionNo, latestVersion, listRevisions } from '../workflow-revisions.mjs';
 import { loadAgentRegistry } from '../agent-registry.mjs';
 import { modelLabeler } from '../workflow-versions.mjs';
 import { findPipelineRowById, readStepQuestions, readClarifyRow, runDirForRow, resolveIndexedArtifactFileForRow,
@@ -473,6 +473,19 @@ function modelInput(run, ctx) {
   return { examples, a: run.a != null ? { label: useLabel(run.a, ctx) } : null, b: { label: useLabel(run.b, ctx) }, tries: store.triesOfRun(run.id) };
 }
 
+/** U-T7 (F13, D7): the newest saved version whose useFingerprint equals the draft's, or null (a fingerprint that cannot be
+ *  read is never "the same"). Such a draft is not a new version: the list hides its column, the dialog labels it. */
+async function draftSameAs(workflowId, fingerprintOf, draftFp) {
+  if (!draftFp) return null;
+  const nos = listRevisions(workflowId).map((r) => r.versionNo).filter((n) => Number.isInteger(n)).sort((x, y) => y - x);
+  for (const no of nos) {
+    let fp = null;
+    try { fp = await fingerprintOf(workflowId, no); } catch { fp = null; }
+    if (fp && fp === draftFp) return no;
+  }
+  return null;
+}
+
 /** Boards 1 and 19 in one read. */
 export async function testsOverview(workflowId, { registry = loadAgentRegistry(), fingerprintOf = (id, use) => useFingerprint(id, use) } = {}) {
   const { row, needsProject } = testTarget(workflowId, { registry });   // D62: always testable, so the overview no longer says so
@@ -482,6 +495,7 @@ export async function testsOverview(workflowId, { registry = loadAgentRegistry()
   for (const use of uses) {
     try { fpNow[store.useRef(use)] = await fingerprintOf(workflowId, use); } catch { fpNow[store.useRef(use)] = null; }
   }
+  const sameAs = await draftSameAs(workflowId, fingerprintOf, fpNow.draft);
   const projects = await listProjects();   // read once: every example's project and the past runs' names
   const behindMemo = new Map();   // one drift count per start point and folder, however many examples share it
   const examples = [];
@@ -505,7 +519,8 @@ export async function testsOverview(workflowId, { registry = loadAgentRegistry()
   const own = running ? store.triesOfRun(running.id).filter((t) => t.runId === running.id) : [];
   return {
     workflowId, name: row.name, needsProject, ctx,
-    columns: uses.map((use) => ({ use, label: useLabel(use, ctx, 'column') })),
+    draftSameAs: sameAs,   // U-T7 (D7): an identical draft has no column of its own
+    columns: uses.filter((use) => !(use === 'draft' && sameAs !== null && uses.length > 1)).map((use) => ({ use, label: useLabel(use, ctx, 'column') })),
     examples,
     running: running ? { runId: running.id, title: testTitle(running, ctx, { mode: 'testing', exampleName: firstExampleName(running) }),
       done: own.filter((t) => FIN.has(t.status)).length, total: own.length } : null,
@@ -623,7 +638,8 @@ export async function testPlan(workflowId, { a = null, b = 'draft', exampleIds =
       }
     }
     const perTryUsd = perTryCost(workflowId, use);
-    return { use, label: useLabel(use, ctx, 'select'), short: useLabel(use, ctx), want: readyEx.length * tries, reusable,
+    const sameAs = use === 'draft' ? await draftSameAs(workflowId, fingerprintOf, fp) : null;   // U-T7 (D7)
+    return { use, sameAs, label: useLabel(use, ctx, 'select'), short: useLabel(use, ctx), want: readyEx.length * tries, reusable,
       reusableAt: at, perTryUsd, savesUsd: perTryUsd === null ? null : reusable * perTryUsd };
   };
   return { a: await side(a), b: await side(b), examples: readyEx.length, tries, perTryMs: perTryMs(workflowId), project,

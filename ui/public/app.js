@@ -227,7 +227,7 @@ import { renderTestsPage } from './workflows/tests-view.mjs';
 import { sentence as wftSentence } from './workflows/test-ui.mjs';
 import { renderExampleEditor, BLANK_EXAMPLE } from './workflows/example-editor.mjs';
 import { SAVE_FIRST_TEXT, CHANGES_NOT_READ_TITLE, NO_DIFF_TEXT, PATCH_CUT_TEXT } from '../../src/shared/workflow-tests/project-text.mjs';
-import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog } from './workflows/test-dialogs.mjs';
+import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog, defaultPicks } from './workflows/test-dialogs.mjs';
 import { renderTestProgress } from './workflows/test-progress.mjs';
 import { renderCompare, renderSideBySide, openWholeResult } from './workflows/test-compare.mjs';
 import { useLabel as wftUseLabel } from '../../src/shared/workflow-tests/compare.mjs';
@@ -3635,7 +3635,7 @@ async function wfvSaveVersion({ afterSave = false } = {}) {
   // What Save version compares against: the latest version (null: this will be the first).
   const since = o.sinceLatest || null;
   openSaveVersionDialog({ doc: document, win: window, nextNo: (since ? since.versionNo : 0) + 1,
-    sinceNo: since ? since.versionNo : null, changes: since ? since.changes : [],
+    sinceNo: since ? since.versionNo : null, changes: since ? since.changes : [], unchanged: !!since && since.changed === false,
     onSubmit: async (body) => { const r = await gvApi.saveVersion(t.id, body); if (r.ok) await wfvRefreshVersions(); return r; } });
 }
 /** Paint the Versions page (versions-view.mjs) from the last overview; without one, wfvVersionsError says why. */
@@ -3996,7 +3996,7 @@ function wftRunMenuItems(record, data) {
 }
 /** Board 4. `a`/`b`/`exampleIds` prefill it (Compare's Test again). The workflow is read before any await: the dialog
  *  opens, and Start shows the progress page, only while that workflow's Tests page still shows. */
-async function wftTestVersion({ a, b = 'draft', exampleIds = null, tries = null } = {}) {
+async function wftTestVersion({ a, b, exampleIds = null, tries = null } = {}) {
   const id = wftWorkflowId();
   if (!id) return;
   const live = () => currentView() === 'workflows' && wftWorkflowId() === id && !wfvEls().tests?.hidden;
@@ -4009,8 +4009,8 @@ async function wftTestVersion({ a, b = 'draft', exampleIds = null, tries = null 
   // A failed versions read is not "No saved version yet" (C16): say why instead.
   if (!versions) { notify({ tone: 'err', title: 'Could not open Test a version', detail: wftSentence(vr && vr.error) }); return; }
   const nos = versions.versions.map((v) => v.versionNo).sort((x, y) => x - y);
-  const options = [...nos.map((no) => ({ use: no, label: wftUseLabel(no, o.ctx, 'select') })), { use: 'draft', label: wftUseLabel('draft', o.ctx, 'select') }];
-  openTestVersionDialog({ doc: document, win: window, options, a: a !== undefined ? a : (o.ctx.liveVersionNo || nos.at(-1) || null), b,
+  const options = [...nos.map((no) => ({ use: no, label: wftUseLabel(no, o.ctx, 'select') })), { use: 'draft', label: wftUseLabel('draft', o.ctx, 'select'), sameAs: o.draftSameAs ?? null }];
+  const picks = defaultPicks({ nos, liveNo: o.ctx.liveVersionNo, sameAs: o.draftSameAs ?? null }); openTestVersionDialog({ doc: document, win: window, options, a: a !== undefined ? a : picks.a, b: b !== undefined ? b : picks.b,   // U-T7 (D7): an identical draft is never a default side
     examples: o.examples.map((e) => ({ id: e.id, name: e.name, tries: e.tries, ready: e.ready !== false, reason: e.reason || null, projectName: e.project ? e.project.name : null })),
     exampleIds, tries, dateText: wftDate,
     loadPlan: async (q) => { const r = await wftCall('GET', `${wftBase(id)}/plan?${new URLSearchParams(q).toString()}`); return r.ok ? r.data : null; },
