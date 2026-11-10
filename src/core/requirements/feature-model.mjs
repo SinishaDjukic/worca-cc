@@ -4,8 +4,9 @@ import { createAskModels } from '../ask/models.mjs';
 import { resolveRunEngine } from '../settings-cascade.mjs';
 import { roleModelFor, resolveRoleModel } from '../model-roles.mjs';
 import { engineReadiness } from '../engines/readiness.mjs';
-import { requirementsEngines } from '../helper-call/profiles.mjs';
-import { runsOn } from '../../shared/connections.mjs';
+import { requirementsEngines, notReadyWords, noRepoStartsOn, capabilities } from '../helper-call/profiles.mjs';
+import { runsOn, effortsOn } from '../../shared/connections.mjs';
+import { engineLabel } from '../../shared/engine-switch.mjs';
 import { interviewModel } from './interview-model.mjs';
 
 const real = createAskModels();
@@ -57,3 +58,60 @@ export async function featureModel(f, d = {}) {
   return { ...def, notice: `${model} is no longer available, so this step used the default.` };
 }
 
+/** The scope a feature's settings read at: a project key, or the workspace layer. */
+export function scopeOf(f) {
+  return f.scopeType === 'workspace' ? { workspace: true } : { projectKey: f.scopeKey };
+}
+
+/** Why the default engine cannot start a feature (null when it can), as the D4 sentence. */
+async function unreadyReason(engine, x) {
+  if (!x.engines().includes(engine)) {
+    return engine === 'cursor' ? notReadyWords('cursor', '').startsOn : `${engineLabel(engine)} can't run Requirements, so this starts on Claude.`;
+  }
+  if (engine === 'claude') return null;
+  let list = [];
+  try { list = (await x.readiness()) || []; } catch { list = []; }
+  const r = list.find((e) => e.name === engine);
+  if (r && (r.broker || !r.ready)) return notReadyWords(engine, r.reason, { broker: !!r.broker }).startsOn;
+  return null;
+}
+
+/** D4: the New feature form's pick: the project's/workspace's Default engine, or Claude with the reason why. */
+export async function defaultChoice(scope, d = {}) {
+  const x = dd(d);
+  const { engine } = x.resolveEngine(scope);
+  const reason = await unreadyReason(engine, x);
+  if (reason) return { choice: await claudePair(x), fallbackReason: reason };
+  return { choice: await engineDefault(engine, x), fallbackReason: null };
+}
+
+/** D18: like defaultChoice, but only a harness that reads the repo makes a Product brief. */
+export async function briefDefault(scope, d = {}) {
+  const x = dd(d);
+  const { engine } = x.resolveEngine(scope);
+  const reason = await unreadyReason(engine, x);
+  if (reason) return { choice: await claudePair(x), fallbackReason: reason };
+  if (!capabilities(engine).repo) return { choice: await claudePair(x), fallbackReason: noRepoStartsOn(engine) };
+  return { choice: await engineDefault(engine, x), fallbackReason: null };
+}
+
+/** The harness's recommended (deep) model, or null. */
+export function recommendedModel(engine, d = {}) {
+  return dd(d).resolveRole(engine, 'deep')?.model ?? null;
+}
+
+/** D3: is this pick offerable? */
+export async function checkChoice({ engine, model, effort } = {}, d = {}) {
+  const x = dd(d);
+  if (engine === 'cursor') return { ok: false, error: "Cursor can't run Requirements." };
+  if (!x.engines().includes(engine)) return { ok: false, error: `${engine ? engineLabel(engine) : 'That harness'} can't run Requirements.` };
+  const cat = await x.catalog();
+  const entry = (cat.models || []).find((m) => typeof model === 'string' && m.id.toLowerCase() === model.toLowerCase());
+  if (!entry) return { ok: false, error: `unknown model "${String(model).slice(0, 80)}"` };
+  if (!runsOn(entry, engine)) return { ok: false, error: `${entry.id} doesn't run on ${engineLabel(engine)}.` };
+  const e = effort == null || effort === '' ? null : effort;
+  if (e !== null && !effortsOn(entry, engine).includes(e) && !(engine === 'claude' && entry.efforts.includes(e))) {
+    return { ok: false, error: `effort "${e}" is not available for model "${entry.id}"` };
+  }
+  return { ok: true, choice: { engine, model: entry.id, effort: e } };
+}

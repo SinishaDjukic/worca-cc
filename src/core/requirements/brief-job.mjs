@@ -17,7 +17,10 @@ import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { readWorkspace } from '../workspaces.mjs';
 import { defaultBranchRef, commitOf, isAncestor } from '../worktree.mjs';
 import { commitsAhead, commitFilesSince } from '../git-info.mjs';
+import { capabilities } from '../helper-call/profiles.mjs';
+import { engineLabel } from '../../shared/engine-switch.mjs';
 import { RequirementsError } from './spec.mjs';
+import { briefDefault, checkChoice, scopeOf } from './feature-model.mjs';
 import { RoundError } from './round.mjs';
 import { REQUIREMENTS_READ_DENY_RULES } from '../ask/deny-rules.mjs';
 import { callModel, interviewModel } from './interview.mjs';
@@ -26,7 +29,7 @@ import {
 } from './store.mjs';
 import { renderDocumentsForPrompt } from './attachments.mjs';
 import {
-  BRIEF_SYSTEM_PROMPT, BRIEF_OUT_OF_STEPS, buildBriefPrompt, normalizeBrief, mergeBrief, mockBrief, touchedAreas,
+  briefSystemPrompt, BRIEF_OUT_OF_STEPS, buildBriefPrompt, normalizeBrief, mergeBrief, mockBrief, touchedAreas,
 } from './brief.mjs';
 
 /** At most this many briefs are made at once (separate from the interview's MAX_JOBS), one per scope. */
@@ -82,9 +85,13 @@ function notify(d, scopeType, scopeKey) {
 
 // ---------------------------------------------------------------- the model and the call: A1.1's (design §9)
 
-/** The brief's model and effort (D5): the interview's, `interviewModel(d)` (A1.1 D2). */
-export async function briefModel(d) {
-  return interviewModel(d);
+/** The brief's harness, model and effort. Without a scope (the estimate) it is the interview's Claude pair, `interviewModel(d)`
+ *  (A1.1 D2). With a scope: the picked `choice`, else 9c D18's `briefDefault` (a repo-reading harness, else Claude). */
+export async function briefModel(d, { scopeType, scopeKey, choice } = {}) {
+  if (choice) return { engine: choice.engine, model: choice.model ?? null, effort: choice.effort ?? null };
+  if (!scopeType) return { engine: 'claude', ...(await interviewModel(d)) };
+  const { choice: c } = await briefDefault(scopeOf({ scopeType, scopeKey }), d);
+  return { engine: c.engine, model: c.model ?? null, effort: c.effort ?? null };
 }
 
 /** The brief's one model call (D5) through A1.1's call path: a look (replace mode, the hermetic flags, the
@@ -92,10 +99,10 @@ export async function briefModel(d) {
  *  effort, so the interview's effort is passed here. A8 (D15): the look reads summaries of the product owner's documents,
  *  third-party material, so it carries Ask's deny rules (REQUIREMENTS_READ_DENY_RULES: the checkout under tmp/requirements
  *  stays readable). */
-function briefCall(d, { cwd, prompt, model, effort, timeoutMs }) {
+function briefCall(d, { cwd, prompt, model, effort, timeoutMs, engine = 'claude' }) {
   return callModel(d, {
-    kind: 'look', cwd, prompt, model, ...(effort ? { effort } : {}), timeoutMs,
-    systemPrompt: BRIEF_SYSTEM_PROMPT, maxTurns: BRIEF_MAX_TURNS, permissionRules: { deny: [...REQUIREMENTS_READ_DENY_RULES] },
+    kind: 'look', cwd, prompt, model, engine, ...(effort ? { effort } : {}), timeoutMs,
+    systemPrompt: briefSystemPrompt(engine), maxTurns: BRIEF_MAX_TURNS, permissionRules: { deny: [...REQUIREMENTS_READ_DENY_RULES] },
     noSessionPersistence: true,   // A8 (D15): no Claude Code session transcript of the documents' summaries
   });
 }
@@ -195,7 +202,7 @@ async function mockSources(target) {
 /** Starts the job and registers it under the scope's key before any of its code can settle it: the job's body
  *  begins after one await, so even a failure that throws synchronously (the scratch folder, a checkout that throws
  *  at once) runs its `finally` after the registration, and the `finally` removes only its own entry. */
-function runJob(row, target, scopeType, scopeKey, by, d) {
+function runJob(row, target, scopeType, scopeKey, by, d, choice = null) {
   const key = jobKey(scopeType, scopeKey);
   let self = null;
   self = (async () => {
@@ -206,6 +213,7 @@ function runJob(row, target, scopeType, scopeKey, by, d) {
     let look = null;
     let model = null;
     let effort = null;
+    let engine = null;
     let cost = 0;
     try {
       let fresh;
@@ -224,7 +232,7 @@ function runJob(row, target, scopeType, scopeKey, by, d) {
         }
         if (ctrl.signal.aborted) throw coded('TIMEOUT', CHECKOUT_TIMEOUT);
         if (!look) throw coded('NO_REPO', 'Worca could not check out the code. Try again.');
-        ({ model, effort } = await briefModel(d));
+        ({ model, effort, engine } = await briefModel(d, { scopeType, scopeKey, choice }));
         assertBriefBudget(d);   // again: the limit may have been reached since the press (a recorded failure now)
         const now = getBrief(scopeType, scopeKey);
         const members = look.members || null;
@@ -237,7 +245,7 @@ function runJob(row, target, scopeType, scopeKey, by, d) {
         const timeoutMs = deadline - Date.now();
         if (timeoutMs < MIN_CALL_MS) throw coded('TIMEOUT', CHECKOUT_TIMEOUT);   // not "no reply within 0 seconds"
         let reply;
-        try { reply = await briefCall(d, { cwd: look.cwd, prompt, model: model || undefined, effort, timeoutMs }); }
+        try { reply = await briefCall(d, { cwd: look.cwd, prompt, model: model || undefined, effort, timeoutMs, engine }); }
         catch (err) { cost = Number(err?.costUsd) || 0; throw err; }
         cost = Number(reply.costUsd) || 0;
         fresh = normalizeBrief(reply.text, { cwds: cwdsOf(look.cwd), members, sources: docs.map((x) => x.name) });   // while the checkout is still there
@@ -248,7 +256,7 @@ function runJob(row, target, scopeType, scopeKey, by, d) {
       }
       // The row as it is now: the product owner may have edited it while the look ran (D6).
       const merged = mergeBrief(getBrief(scopeType, scopeKey), fresh);
-      saveBriefResult(row.id, { sections: merged.sections, edited: merged.edited, sources, files: fresh.files, seed: target.seed || null, model }, { by });
+      saveBriefResult(row.id, { sections: merged.sections, edited: merged.edited, sources, files: fresh.files, seed: target.seed || null, model, engine }, { by });
     } catch (err) {
       try { failBrief(row.id, failureOf(err)); } catch (e) { console.error('requirements: could not record a failed brief:', message(e)); }
     } finally {
@@ -270,7 +278,7 @@ function runJob(row, target, scopeType, scopeKey, by, d) {
  * never rejects; callers need not await it) and the briefTarget the refusals read (the route reuses it rather than
  * probing git again). The refusals need the target's git probes, hence the promise.
  */
-export async function makeBrief(scopeType, scopeKey, { by = null } = {}, deps = {}) {
+export async function makeBrief(scopeType, scopeKey, { by = null, choice = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const where = scopeType === 'workspace' ? 'workspace' : 'project';
   const assertSwitchOn = () => {
@@ -279,6 +287,14 @@ export async function makeBrief(scopeType, scopeKey, { by = null } = {}, deps = 
     }
   };
   assertSwitchOn();   // before the git probes: no git runs with the switch off
+  // 9c D18: a picked harness must read the repo and be offered; absent, runJob takes briefDefault. (BAD_REQUEST is the code the routes answer 400 for.)
+  let picked = null;
+  if (choice) {
+    if (!capabilities(choice.engine).repo) throw new RequirementsError('BAD_REQUEST', `${engineLabel(choice.engine)} can't read the repo, so it can't make a Product brief.`);
+    const ok = await checkChoice(choice, d);
+    if (!ok.ok) throw new RequirementsError('BAD_REQUEST', ok.error);
+    picked = ok.choice;
+  }
   const target = await briefTarget(scopeType, scopeKey, d, { probeMs: BRIEF_PRESS_PROBE_MS });
   // From here to the job's start nothing awaits: two presses cannot both pass the checks below.
   assertSwitchOn();   // again: it may have been turned off while the target was read
@@ -294,7 +310,7 @@ export async function makeBrief(scopeType, scopeKey, { by = null } = {}, deps = 
   if (jobs.size >= MAX_BRIEF_JOBS) throw new RequirementsError('BUSY', 'Worca is making other briefs; try again in a moment.');
   assertBriefBudget(d);
   const row = beginBrief(scopeType, scopeKey, { by });
-  const job = runJob(row, target, scopeType, scopeKey, by, d);   // registers itself under the scope's key
+  const job = runJob(row, target, scopeType, scopeKey, by, d, picked);   // registers itself under the scope's key
   notify(d, scopeType, scopeKey);
   return { brief: row, job, target };
 }

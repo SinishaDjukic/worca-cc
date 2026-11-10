@@ -1,12 +1,18 @@
 // test/requirements-9c-steps.test.mjs — rounds and code looks run on the feature's harness (9c Task 7); fake runner only.
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { prepare } from '../src/core/db.mjs';
-import { createFeature, getFeature, listTurns, updateFeature, setContext } from '../src/core/requirements/store.mjs';
+import { createFeature, getFeature, listTurns, updateFeature, setContext, listHelperMessages, listAttachments, getBrief, beginBrief, saveBriefResult } from '../src/core/requirements/store.mjs';
+import { sendMessage } from '../src/core/requirements/helper.mjs';
+import { addAttachments, readsSettled, queueSkippedReads } from '../src/core/requirements/attachment-job.mjs';
+import { makeBrief, briefSettled } from '../src/core/requirements/brief-job.mjs';
+import { BRIEF_SYSTEM_PROMPT, briefSystemPrompt } from '../src/core/requirements/brief.mjs';
 import { startOrientation, settled } from '../src/core/requirements/interview.mjs';
 import { ORIENTATION_SYSTEM_PROMPT, orientationSystemPrompt } from '../src/core/requirements/round.mjs';
 
@@ -175,4 +181,151 @@ test('a NULL-model feature runs on Claude with today\'s options', async () => {
   assert.equal(r.calls.length, 2);
   for (const c of r.calls) { assert.equal(c.engine, undefined); assert.equal(c.askLockdown, undefined); assert.equal(c.sandbox, undefined); }
   assert.deepEqual([...r.calls[0].tools].sort(), ['Glob', 'Grep', 'Read']);
+});
+
+// ---------------------------------------------------------------- Task 8: Feature chat, file reads, the brief
+
+const CHAT = { text: 'Cancelling until pick-up covers it.', drafts: [], proposals: [] };
+const sha = (b) => createHash('sha256').update(b).digest('hex');
+const textFile = (name, text) => { const data = Buffer.from(text); return { name, kind: 'text', mime: 'text/plain', data, text, bytes: data.length, sha256: sha(data) }; };
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+const pngFile = (name = 'screen.png') => ({ name, kind: 'image', mime: 'image/png', data: PNG, bytes: PNG.length, sha256: sha(PNG) });
+const own = (f) => ({ type: 'feature', id: f.seq });
+
+test('Feature chat on Codex is locked down and stores its engine', async () => {
+  const f = featureOn('codex');
+  const r = fakeRunner([CHAT]);
+  await sendMessage(f.seq, { text: 'Who may cancel?' }, { by: 'po' }, deps(r));
+  assert.equal(r.calls.length, 1);
+  assert.equal(r.calls[0].engine, 'codex');
+  assert.equal(r.calls[0].askLockdown, true);
+  const row = listHelperMessages(f.seq).at(-1);
+  assert.equal(row.role, 'worca');
+  assert.equal(row.engine, 'codex');
+  assert.equal(row.error, null);
+});
+
+test('Feature chat on Gemini stores the keeps-copy notice', async () => {
+  const f = featureOn('gemini');
+  const r = fakeRunner([CHAT]);
+  await sendMessage(f.seq, { text: 'Hi' }, { by: 'po' }, deps(r));
+  const row = listHelperMessages(f.seq).at(-1);
+  assert.equal(row.engine, 'gemini');
+  assert.ok(row.notices.includes('Gemini CLI keeps its own copy of this step in its history on this computer.'));
+});
+
+test('Feature chat on a harness that is not signed in: NOT_READY row, no call, nothing booked', async () => {
+  const f = featureOn('codex');
+  const r = fakeRunner([CHAT]);
+  await sendMessage(f.seq, { text: 'Hi' }, { by: 'po' }, deps(r, { gate: async () => ({ message: 'Codex is not signed in' }) }));
+  assert.equal(r.calls.length, 0);
+  const row = listHelperMessages(f.seq).at(-1);
+  assert.equal(row.error.code, 'NOT_READY');
+  assert.equal(row.error.message, "Codex isn't signed in. Sign in, or change the model.");
+  assert.equal(prepare('SELECT count(*) AS n FROM req_cost_ledger WHERE feature_seq = ?').get(f.seq).n, 0);
+});
+
+test("a NULL-model feature's chat keeps today's options", async () => {
+  const f = createFeature({ scopeType: 'project', scopeKey: 'shop-1234abcd', title: 'Cancel order', description: 'x' });
+  const r = fakeRunner([CHAT]);
+  await sendMessage(f.seq, { text: 'Hi' }, { by: 'po' }, deps(r));
+  assert.equal(r.calls[0].engine, undefined);
+  assert.equal(r.calls[0].askLockdown, undefined);
+});
+
+test('a PNG on a Codex feature is not sent anywhere; a 30 KB text says too large; a 2 KB text on Gemini is read inline', async () => {
+  const f = featureOn('codex');
+  const r = fakeRunner([]);
+  addAttachments(own(f), [pngFile(), textFile('big.txt', 'x'.repeat(30 * 1024))], { by: 'po' }, deps(r));
+  await readsSettled(own(f));
+  assert.equal(r.calls.length, 0);
+  const rows = listAttachments('feature', f.seq);
+  const png = rows.find((x) => x.name === 'screen.png');
+  assert.equal(png.status, 'failed');
+  assert.equal(png.error.code, 'SKIPPED_ENGINE');
+  assert.equal(png.error.message, 'screen.png skipped: Codex gets files as text only.');
+  assert.equal(rows.find((x) => x.name === 'big.txt').error.message, 'big.txt skipped: it is too large for Codex.');
+
+  const g = featureOn('gemini');
+  const r2 = fakeRunner([{ summary: 'Refunds within 14 days.' }]);
+  addAttachments(own(g), [textFile('policy.md', 'Refunds in 14 days.')], { by: 'po' }, deps(r2));
+  await readsSettled(own(g));
+  assert.equal(r2.calls.length, 1);
+  assert.equal(r2.calls[0].engine, 'gemini');
+  assert.equal(r2.calls[0].askLockdown, true);
+  assert.equal(r2.calls[0].readGuard, undefined);
+  const row = listAttachments('feature', g.seq)[0];
+  assert.equal(row.status, 'done');
+  assert.equal(row.readEngine, 'gemini');
+});
+
+test('switching the feature to Claude re-queues the skipped files (queueSkippedReads); Codex re-queues neither', async () => {
+  const f = featureOn('codex');
+  const r = fakeRunner([{ summary: 'Hello.' }]);
+  addAttachments(own(f), [pngFile(), textFile('big.txt', 'x'.repeat(30 * 1024)), textFile('small.txt', 'hello')], { by: 'po' }, deps(r));
+  await readsSettled(own(f));
+  assert.equal(r.calls.length, 1, 'only the small text was read');
+  assert.equal(queueSkippedReads(f.seq, 'codex', deps(r)), 0);
+  updateFeature(f.seq, { model: { engine: 'claude', model: 'claude-opus-5-5', effort: null } });
+  const r2 = fakeRunner([{ summary: 'A screen.' }, { summary: 'A big text.' }]);
+  assert.equal(queueSkippedReads(f.seq, 'claude', deps(r2)), 2);
+  await readsSettled(own(f));
+  assert.equal(r2.calls.length, 2);
+  assert.ok(listAttachments('feature', f.seq).every((x) => x.error?.code !== 'SKIPPED_ENGINE'), 'none is skipped any more');
+});
+
+test('a brief made with a Codex choice runs read-only with the files server and stores the engine; a no-repo choice is refused', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'req-9c-brief-'));
+  const g = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf8' });
+  g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't'); g('config', 'commit.gpgsign', 'false');
+  mkdirSync(join(repo, 'src'), { recursive: true }); writeFileSync(join(repo, 'README.md'), 'hi'); g('add', '.'); g('commit', '-q', '-m', 'init');
+  const KEY = 'brief-9c0001';
+  setContext('project', KEY, { lookAtCode: true });
+  const lookDir = mkdtempSync(join(tmpdir(), 'req-9c-lookdir-'));
+  const reply = { product: 'A shop.', users: [], terms: [], areas: [], files: [] };
+  const r = fakeRunner([reply, reply, reply]);
+  const bd = (runner, key, extra = {}) => deps(runner, { listProjects: async () => [{ key, name: 'Shop', path: repo, exists: true }],
+    openLook: async () => ({ cwd: lookDir, commit: 'abc', close: async () => {} }), budget: () => ({ blocked: false }),
+    catalog: async () => ({ models: [{ id: 'gpt-x', harnesses: ['codex', 'gemini'], efforts: [] }] }), ...extra });
+  await assert.rejects(() => makeBrief('project', KEY, { by: 'po', choice: { engine: 'gemini', model: 'gpt-x', effort: null } }, bd(r, KEY)),
+    (e) => e.code === 'BAD_REQUEST' && e.message === "Gemini CLI can't read the repo, so it can't make a Product brief.");
+  assert.equal(r.calls.length, 0);
+  const { job } = await makeBrief('project', KEY, { by: 'po', choice: { engine: 'codex', model: 'gpt-x', effort: null } }, bd(r, KEY));
+  await job; await briefSettled('project', KEY);
+  const call = r.calls[0];
+  assert.equal(call.engine, 'codex');
+  assert.equal(call.sandbox, 'read-only');
+  assert.ok(call.mcpConfigPath);
+  assert.equal(call.systemPrompt, briefSystemPrompt('codex'));
+  assert.ok(call.systemPrompt.includes('read_file, grep and glob'));
+  const b = getBrief('project', KEY);
+  assert.equal(b.engine, 'codex');
+  assert.equal(b.model, 'gpt-x');
+  // no choice with Default engine gemini: made on Claude
+  const KEY2 = 'brief-9c0002';
+  setContext('project', KEY2, { lookAtCode: true });
+  const r3 = fakeRunner([reply]);
+  const m = await makeBrief('project', KEY2, { by: 'po' }, bd(r3, KEY2, { resolveEngine: () => ({ engine: 'gemini' }), readiness: async () => [{ name: 'gemini', ready: true }] }));
+  await m.job; await briefSettled('project', KEY2);
+  assert.equal(r3.calls[0].engine, undefined);
+  assert.equal(getBrief('project', KEY2).engine, 'claude');
+  assert.equal(briefSystemPrompt('claude'), BRIEF_SYSTEM_PROMPT);
+});
+
+test("a brief document is read with the brief's own engine; a Claude brief's document reads as ever", async () => {
+  const KEY = 'brief-9c0003';
+  const b = beginBrief('project', KEY, { by: 'po' });
+  saveBriefResult(b.id, { sections: undefined, model: 'gpt-x', engine: 'codex' }, { by: 'po' });
+  const owner = { type: 'brief', id: b.id, scopeType: 'project', scopeKey: KEY };
+  const r = fakeRunner([{ summary: 'Policy.' }]);
+  addAttachments(owner, [textFile('policy.md', 'Refunds in 14 days.')], { by: 'po' }, deps(r));
+  await readsSettled(owner);
+  assert.equal(r.calls[0].engine, 'codex');
+  assert.equal(r.calls[0].askLockdown, true);
+  assert.equal(listAttachments('brief', b.id)[0].readEngine, 'codex');
+  saveBriefResult(b.id, { model: 'claude-opus-5-5', engine: 'claude' }, { by: 'po' });
+  const r2 = fakeRunner([{ summary: 'Policy.' }]);
+  addAttachments(owner, [textFile('other.md', 'More.')], { by: 'po' }, deps(r2));
+  await readsSettled(owner);
+  assert.equal(r2.calls[0].engine, undefined);
 });

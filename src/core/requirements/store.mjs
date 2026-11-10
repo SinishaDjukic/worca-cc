@@ -273,7 +273,7 @@ function toBrief(r) {
     id: Number(r.id), scopeType: r.scope_type, scopeKey: r.scope_key, status: r.status,
     sections: { ...emptySections(), ...json(r.sections_json, {}) }, edited: json(r.edited_json, {}),
     sources: json(r.sources_json, []), files: json(r.files_json, []), seed: json(r.seed_json, null),
-    model: r.model || null, costUsd: Math.round((Number(r.cost_usd) || 0) * 1e4) / 1e4,
+    model: r.model || null, engine: r.engine || null, costUsd: Math.round((Number(r.cost_usd) || 0) * 1e4) / 1e4,
     error: json(r.error_json, null), madeBy: r.made_by || null, madeAt: r.made_at || null,
     createdBy: r.created_by || null, createdAt: r.created_at, updatedBy: r.updated_by || null, updatedAt: r.updated_at,
   };
@@ -318,13 +318,13 @@ export function beginBrief(scopeType, scopeKey, { by = null } = {}) {
   return getBrief(scopeType, key);
 }
 
-export function saveBriefResult(id, { sections, edited, sources, files, seed, model } = {}, { by = null } = {}) {
+export function saveBriefResult(id, { sections, edited, sources, files, seed, model, engine } = {}, { by = null } = {}) {
   getDb();
   const ts = iso();
   prepare(`UPDATE req_briefs SET status = 'ready', sections_json = ?, edited_json = ?, sources_json = ?, files_json = ?,
-      seed_json = ?, model = ?, error_json = NULL, made_by = ?, made_at = ?, updated_by = ?, updated_at = ? WHERE id = ?`)
+      seed_json = ?, model = ?, engine = ?, error_json = NULL, made_by = ?, made_at = ?, updated_by = ?, updated_at = ? WHERE id = ?`)
     .run(JSON.stringify(sections || emptySections()), JSON.stringify(edited || {}), JSON.stringify(sources || []),
-      JSON.stringify(files || []), seed ? JSON.stringify(seed) : null, model || null, by, ts, by, ts, Number(id));
+      JSON.stringify(files || []), seed ? JSON.stringify(seed) : null, model || null, engine || null, by, ts, by, ts, Number(id));
   return briefById(id);
 }
 

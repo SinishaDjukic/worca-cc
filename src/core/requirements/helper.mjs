@@ -12,7 +12,8 @@ import {
   getFeature, requireFeature, listTurns, getContext, insertHelperMessage, listHelperMessages, recentHelperCosts,
   getHelperMessage, updateHelperMessage, deleteHelperMessages,
 } from './store.mjs';
-import { isBusy, holdSlot, assertBudget, scratchDir, chargeHelper, callModel, interviewModel, briefFor } from './interview.mjs';
+import { isBusy, holdSlot, assertBudget, scratchDir, chargeHelper, callModel, briefFor } from './interview.mjs';
+import { featureModel } from './feature-model.mjs';
 import { promptFiles } from './attachment-job.mjs';
 import { editable, setSection, addCriterion, editCriterion, removeCriterion, setAssumption } from './edits.mjs';
 import { isStarting, STARTING_MESSAGE } from './starting.mjs';
@@ -396,6 +397,8 @@ async function answer(seq, po, d, signal) {
   let reply = null;
   let cost = 0;
   let model = null;
+  let engine = null;
+  let notices = [];
   let error = null;
   if (mockEnabled({})) {
     await mockWait(signal);
@@ -406,15 +409,18 @@ async function answer(seq, po, d, signal) {
     const brief = briefFor(f, files.documents);
     const prompt = buildHelperPrompt({ feature: f, context: getContext(f.scopeType, f.scopeKey).body, turns, brief: brief ? brief.text : null,
       attachments: files.attachments, pending, history, focus, message: po.text });
-    const im = await interviewModel(d);
-    model = im.model || null;
+    const fm = await featureModel(f, d);
+    engine = fm.engine;
+    model = fm.model || null;
+    if (fm.notice) notices.push(fm.notice);
     let lastErr = null;
     try {
       for (let attempt = 1; attempt <= 2 && !reply && !signal.aborted; attempt += 1) {
         checkBudget(d);   // before every call; an earlier attempt is already in `cost`
-        const r = await callModel(d, { kind: 'round', cwd: scratchDir(), prompt, model: model || undefined, systemPrompt: HELPER_SYSTEM_PROMPT, tools: [],
-          noSessionPersistence: true, ...(im.effort ? { effort: im.effort } : {}), timeoutMs: HELPER_TIMEOUT_MS, signal });
+        const r = await callModel(d, { kind: 'round', cwd: scratchDir(), prompt, model: model || undefined, engine, systemPrompt: HELPER_SYSTEM_PROMPT, tools: [],
+          noSessionPersistence: true, ...(fm.effort ? { effort: fm.effort } : {}), timeoutMs: HELPER_TIMEOUT_MS, signal });
         cost += r.costUsd;
+        for (const n of r.notices || []) if (!notices.includes(n)) notices.push(n);
         try { reply = normalizeHelperReply(safeParseJson(r.text), ctx); } catch (err) { if (!(err instanceof RoundError)) throw err; lastErr = err; }
       }
       if (!reply) {
@@ -423,7 +429,9 @@ async function answer(seq, po, d, signal) {
       }
     } catch (err) {
       cost += Number(err && err.costUsd) || 0;
+      for (const n of (err && err.notices) || []) if (!notices.includes(n)) notices.push(n);
       if (signal.aborted) error = STOPPED;
+      else if (err && (err.code === 'NOT_READY' || err.code === 'NOT_OFFERED')) error = { code: err.code, message: err.message };   // D13: the harness is not ready; nothing ran, nothing is booked
       else if (err && err.code === 'TIMEOUT') error = { code: 'TIMEOUT', message: COULD_NOT };
       else if (err && err.code === 'BUDGET') error = { code: 'BUDGET', message: err.message };
       else { error = { code: 'FAILED', message: COULD_NOT }; console.error('requirements: a Feature chat call failed:', message(err)); }
@@ -437,7 +445,7 @@ async function answer(seq, po, d, signal) {
   const drafts = reply ? reply.drafts.map((x) => ({ ...x, dropped: moved })) : [];
   chargeHelper(seq, cost, model, () => insertHelperMessage({ featureSeq: seq, role: 'worca', text: reply ? reply.text : '',
     roundTurnId: pending ? pending.turnId : null, drafts, proposals: reply ? reply.proposals : [], error,
-    costUsd: cost > 0 ? cost : null, model }));
+    costUsd: cost > 0 ? cost : null, model, engine, notices }));
 }
 
 /** D13: the lowest and highest cost of the last 10 helper calls, or null before any. */
