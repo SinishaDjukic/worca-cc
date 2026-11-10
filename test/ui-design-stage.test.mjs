@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { detailToFrames } from '../ui/public/design/stage.mjs';
 import { rig } from './helpers/design-stage-rig.mjs';
-import { DID, BID, A1, A2, build, plan, agent, section, delta, file } from './helpers/design-stage-frames.mjs';
+import { DID, BID, A1, A2, LEAD as LEAD_ID, build, plan, agent, section, delta, file } from './helpers/design-stage-frames.mjs';
 const ROW = { id: BID, designId: DID, round: 1, kind: 'first', status: 'building', brief: 'b', fast: false, reason: null, agentsTotal: 1, layers: 0, costUsd: 0, costKnown: true, startedAt: '2026-11-05T10:00:00Z', endedAt: null, createdBy: null };
 const LIVE = { design: { id: DID, kind: 'web', title: 'T', version: 0, threadId: null }, plan: null, build: ROW, sections: [], versions: [] };
 const DONE = { ...LIVE, design: { ...LIVE.design, version: 1 }, build: { ...ROW, status: 'done', agentsTotal: 29, costUsd: 4.2, endedAt: '2026-11-05T10:06:14Z' } };
@@ -503,4 +503,32 @@ test('a zoom from a run doc is its page\'s own script, and zooms nothing (review
   const before = q('.frame-box').style.getPropertyValue('--s');
   fireMsg('zoom', { dy: 50, y: 100 }); paint();
   assert.equal(q('.frame-box').style.getPropertyValue('--s'), before);
+});
+
+// 2026-11-10: a design with nothing built showed its empty (black) page for the whole planning phase. The frame now
+// waits out of sight until it has something to show, and the well says what is going on.
+test('standby: the frame is out of sight until a plan lands; the well says who is at work; a built design never blanks', async () => {
+  const EMPTY = { ...LIVE, build: null, design: { ...LIVE.design, version: 0 } };
+  const e = await rig(EMPTY);
+  assert.ok(e.q('.dz-wrap').classList.contains('is-blank'));
+  assert.equal(e.q('.dz-empty').hidden, false, 'idle: the one line, as before');
+  assert.equal(e.q('.dz-standby').hidden, true);
+  e.stage.setChatBusy(true); e.paint();
+  assert.equal(e.q('.dz-empty').hidden, true);
+  assert.equal(e.q('.dz-standby').hidden, false);
+  assert.equal(e.q('.dz-standby-title').textContent, 'Reading your request');
+  e.stage.setChatBusy(false);
+  e.stage.pushFrame(build('planning')); e.paint();
+  assert.equal(e.q('.dz-standby-title').textContent, 'Planning the page');
+  assert.equal(e.q('.dz-standby-doing').hidden, true);
+  e.stage.pushFrame(agent(LEAD_ID, 'reading', { role: 'lead', job: 'Lead', sectionId: null, tool: { name: 'Read', path: 'work/brief.md' } })); e.paint();
+  assert.equal(e.q('.dz-standby-doing').textContent, 'Reading brief.md…');
+  assert.ok(e.q('.dz-wrap').classList.contains('is-blank'), 'still nothing to look at');
+  e.stage.pushFrame(plan(['hero', 'pricing'])); e.paint();
+  assert.equal(e.q('.dz-wrap').classList.contains('is-blank'), false, 'the plan\'s slots show: the frame comes in');
+  assert.equal(e.q('.dz-standby').hidden, true);
+  const d = await rig(DONE);
+  assert.equal(d.q('.dz-wrap').classList.contains('is-blank'), false);
+  d.stage.pushFrame(build('planning', { buildId: 'b_000000000002', round: 2, kind: 'change' })); d.paint();
+  assert.equal(d.q('.dz-wrap').classList.contains('is-blank'), false, 'a change round keeps the page in view');
 });

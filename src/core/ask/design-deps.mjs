@@ -15,7 +15,7 @@ import { listProjects } from '../projects.mjs';
 import { renderDesignBlock, validateDesignQuestions, validateDesignRequest, DESIGN_BLOCK_END } from './design-payload.mjs';
 
 /** What the model may say after the parent acts on its call (rule 7 of DESIGN_SYSTEM_RULES). */
-const NOTE_ACT = 'worca starts it right after this call and puts a receipt in the chat, or a notice says why not: never say it started or finished. Your whole reply is ONE short sentence of at most 15 words (rule 7).';
+const NOTE_ACT = 'worca starts it right after this call and puts a receipt in the chat, or a notice says why not: never say it started or finished. Your reply after this call is at most TWO short sentences, 40 words in all (rule 7).';
 const NOTE_ASK = 'The user sees these as a card. END YOUR TURN: the answers arrive as a [worca event] message.';
 const NO_DESIGN = 'this chat has no design';
 
@@ -94,7 +94,9 @@ function designKit({ io, threadId }) {
       const r = validateDesignQuestions(input);
       if (!r.ok) return r;
       if (!now()) return fail(NO_DESIGN);
-      return { ok: true, heading: r.value.heading, questions: r.value.questions, note: NOTE_ASK };
+      return r.value.form
+        ? { ok: true, heading: r.value.heading, form: r.value.form, note: NOTE_ASK }
+        : { ok: true, heading: r.value.heading, questions: r.value.questions, note: NOTE_ASK };
     },
   };
 }

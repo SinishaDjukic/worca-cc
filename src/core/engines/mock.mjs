@@ -17,6 +17,7 @@ import { safeEmit } from './spawn.mjs';
 import { writeMockC4 } from '../c4-mock.mjs';
 import { demoAskReply, demoChunks } from '../demo-scenario.mjs';
 import { runMockDesign } from './mock-design.mjs';
+import { validateDesignQuestions } from '../ask/design-payload.mjs';
 
 export const MOCK_SPAWN_LOG_MAX = 500;
 export const mockSpawnLog = [];
@@ -319,6 +320,22 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
       const input = { heading: 'Your turn: pick a tone', questions: [{ id: 'tone', text: 'Which tone?', why: 'It sets the copy.',
         options: [{ label: 'Plain', value: 'plain' }, { label: 'Playful', value: 'playful' }] }] };
       return { name: 'mcp__worca__design_questions', input, out: { ok: true, ...input, note: 'end your turn' } };
+    }
+    // MOCK_DESIGN_FIELDS: the card's second shape, one of each kind of component, compiled as the real tool does.
+    if (/\bMOCK_DESIGN_FIELDS\b/.test(userText)) {
+      const input = { heading: 'A few things before the crew starts', fields: [
+        { id: 'name', widget: 'text', label: 'What is the product called?', placeholder: 'Acme' },
+        { id: 'tone', widget: 'select', label: 'Which tone fits?', help: 'It sets the copy and the type.', options: [
+          { label: 'Plain', value: 'plain', description: 'Short sentences, no jokes.', recommended: true },
+          { label: 'Playful', value: 'playful', description: 'Lighter, with a wink.' }] },
+        { id: 'parts', widget: 'multiselect', label: 'Which parts should the page have?', style: 'chips', options: [
+          { label: 'Pricing', value: 'pricing' }, { label: 'FAQ', value: 'faq' }, { label: 'Team', value: 'team' }] },
+        { id: 'density', widget: 'slider', label: 'How dense should it be?', min: 1, max: 5, step: 1, default: 2, minLabel: 'Airy', maxLabel: 'Dense' },
+        { id: 'dark', widget: 'toggle', label: 'Dark theme' },
+        { id: 'jokes', widget: 'textarea', label: 'Anything it must not joke about?', required: false, showWhen: { tone: 'playful' } },
+        { id: 'note', widget: 'note', text: 'You can change any of this after the first build.' }] };
+      const checked = validateDesignQuestions(input);
+      return { name: 'mcp__worca__design_questions', input, out: checked.ok ? { ok: true, ...checked.value, note: 'end your turn' } : checked };
     }
     if (/^sections: none yet$/m.test(designBlock)) {
       return { name: 'mcp__worca__start_design_build', input: { brief: firstLine },

@@ -14,6 +14,9 @@ import { createDotOrbs, turnPhase } from '../dot-orb.mjs';
 import { ATTACH_ACCEPT, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
 import { DESIGN_FAST_LABEL } from '../../../src/shared/design-names.mjs';
 import { createModelPills } from './model-pills.mjs';
+import { createBuildNarration, nameList } from './narration.mjs';
+import { currentLevel, levelShows } from '../ui-level.mjs';
+import { renderAskForm } from '../ask/form-renderer.mjs';
 
 const enc = encodeURIComponent;
 const readJson = async (res) => { try { return await res.json(); } catch { return {}; } };
@@ -166,6 +169,19 @@ export function createDesignChatClient({ designId, threadId: initial = null, fet
       if (!r.ok) throw new Error(body.error || 'Answer not sent');
       return body;
     },
+    /** A `fields` card's values (`{fieldId: value}`). A refusal throws the server's words; one that names fields (422)
+     *  carries them as `err.errors` for the form's own marks. */
+    async answerForm(cardId, values) {
+      if (!threadId) throw new Error('Answer not sent');
+      const r = await post(`/api/ask/threads/${enc(threadId)}/cards/${enc(cardId)}`, { answers: values });
+      const body = await readJson(r);
+      if (!r.ok) {
+        const err = new Error(body.error || 'Answer not sent');
+        if (Array.isArray(body.errors)) err.errors = body.errors;
+        throw err;
+      }
+      return body;
+    },
     pushFrame(frame) {
       // Settings › Delete all chat history deletes design chats too (L5.3): drop the dead thread, or every next
       // message posts to it and fails. A shared clear names its threads.
@@ -293,6 +309,38 @@ const activityLabel = (label) => { const l = String(label || 'Thinking'); return
 // The design tools whose result the thread already shows as a receipt row, a question card or a notice: the mockup's
 // chat column draws no tool line for them (boards BuildCalm, Done, Change, Question). A failed call keeps its line.
 const QUIET_TOOLS = Object.freeze(['start_design_build', 'change_design', 'design_questions']);
+const shortTool = (b) => String(b.name || '').replace(/^mcp__worca__/, '');
+/** The tool blocks a reply folds into its one steps row: every call but the design tools a receipt, a card or a notice
+ *  already stands for (a failed one of those stays: it says why nothing happened). */
+const stepBlocks = (blocks) => blocks.filter((b) => b.kind === 'tool' && (b.status === 'error' || !QUIET_TOOLS.includes(shortTool(b))));
+const FILE_TOOLS = Object.freeze(['Read', 'Grep', 'Glob', 'read_file', 'grep', 'glob']);
+const WEB_TOOLS = Object.freeze(['WebSearch', 'WebFetch', 'web_search', 'web_fetch']);
+const plural = (n, one, many) => (n === 1 ? one : `${n} ${many}`);
+/**
+ * What a reply's tool calls did, as one sentence (the folded row's words): `Looked at the design, 4 attachments and
+ * 5 files`, `Looking at…` while one still runs, the failures counted after it.
+ * @param {object[]} tools the reply's step blocks
+ */
+export function stepsSentence(tools) {
+  const names = tools.map(shortTool);
+  const n = (list) => names.filter((x) => list.includes(x)).length;
+  const parts = [];
+  if (names.includes('get_design')) parts.push('the design');
+  if (names.includes('list_projects')) parts.push('your projects');
+  const atts = n(['read_attachment']);
+  if (atts) parts.push(plural(atts, 'an attachment', 'attachments'));
+  const files = n(FILE_TOOLS);
+  if (files) parts.push(plural(files, 'a file', 'files'));
+  if (n(WEB_TOOLS)) parts.push('the web');
+  const known = ['get_design', 'list_projects', 'read_attachment', ...FILE_TOOLS, ...WEB_TOOLS];
+  const other = names.filter((x) => !known.includes(x)).length;
+  if (other) parts.push(plural(other, parts.length ? 'one more thing' : 'one thing', parts.length ? 'more things' : 'things'));
+  const running = tools.some((b) => (b.status || 'running') === 'running');
+  const failed = tools.filter((b) => b.status === 'error').length;
+  return `${running ? 'Looking at' : 'Looked at'} ${nameList(parts, 4)}${failed ? ` · ${failed} failed` : ''}`;
+}
+/** How many of a build's milestone lines the thread shows before `Show all`. */
+const LINES_SHOWN = 4;
 const errorOf = (body, fallback) => (body && typeof body.error === 'string' && body.error ? body.error : fallback);
 const blocksOf = (msg) => (Array.isArray(msg.blocks) ? msg.blocks.filter((b) => b && typeof b === 'object') : []);
 // The mockup's pin glyph (icons.mjs has none).
@@ -313,7 +361,7 @@ const PIN_PATH = 'M12 17v5M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.2V16a1
  *   repaint: Function, destroy: Function}}
  */
 export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = () => {}, renderMarkdown = null, confirm: confirmFn = null,
-  setPick = () => {}, onRestored = () => {}, planList = null, unpin = () => {}, initial = null }) {
+  setPick = () => {}, onRestored = () => {}, planList = null, unpin = () => {}, initial = null, onBusy = () => {} }) {
   const win = doc.defaultView || globalThis;
   const row0 = design && typeof design === 'object' ? design : {};
   const designId = typeof row0.id === 'string' ? row0.id : '';
@@ -352,6 +400,12 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   const restoring = new Set();  // round card ids whose restore is out
   const restoreErr = new Map(); // round card id -> the refusal shown in its row
   const questions = createQuestionState({ designId });
+  const narration = createBuildNarration({ designId, kind: row0.kind });
+  const openSteps = new Set();  // reply ids whose folded tool rows are open
+  let allLines = false;         // the build's milestone lines: every one, or the last few
+  let buildEl = null;
+  let buildSig = '';
+  let busyTold = null;
   const client = createDesignChatClient({ designId, threadId: row0.threadId, fetch: fetchFn, sendWs, onChange: (kind) => schedule(kind) });
   const orbs = createDotOrbs({ doc, win });
 
@@ -535,7 +589,10 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   }
   /** What a C-5 frame can change in the thread (M5): the mid-build questions (their cards, the `sr` line) and whether a
    *  build is open (each receipt row's Back). A new round's chips and Point repaint in onBuildFrame. */
-  const frameShown = () => JSON.stringify([buildLive, questions.list().map((q) => [q.askId, q.state, q.buildId, q.heading, q.questions])]);
+  const frameShown = () => JSON.stringify([buildLive, questions.list().map((q) => [q.askId, q.state, q.buildId, q.heading, q.questions]),
+    feedShown()]);
+  /** The build's milestone lines the thread shows now: none while no build runs. */
+  function feedShown() { const v = narration.view(); return v.live && v.lines.length ? v.lines : null; }
 
   // ── Build fast (L5.10): remembered on the design ─────────────────────────────────────────────────────────────
   function paintFast() {
@@ -764,8 +821,74 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   }
 
   // ── question cards: only buildChatQuestion and buildChatReceipt ──────────────────────────────────────────────
+  /** A `fields` card (design_questions' second shape): the ask-forms renderer inside the ask-card grammar: the heading
+   *  with its `?` disc, one white panel holding the components, the pill footer. Answered, it stays with what was
+   *  given, read-only; closed unanswered, one line. */
+  function formCard(b) {
+    const c = b.card;
+    if (b.state !== 'asking' && b.state !== 'answered') return buildChatReceipt(doc, 'Not answered');
+    const answered = b.state === 'answered';
+    const el = h('section', answered ? 'chat-rc-q chat-q dsc-form is-answered' : 'chat-rc-q chat-q dsc-form');
+    const head = h('h3', 'chat-rc-q-head', typeof c.heading === 'string' ? c.heading : '');
+    head.id = `chat-q-${b.id}-h`;
+    el.setAttribute('aria-labelledby', head.id);
+    const panel = h('div', 'qpanel');
+    panel.dataset.kind = 'form';
+    const body = h('div', 'qbody');
+    const count = h('span', 'qanswered');
+    const go = h('button', 'btn btn-primary', 'Send answers');
+    go.type = 'button';
+    go.dataset.qpanelSubmit = '';
+    const err = h('div', 'chat-rc-q-err');
+    err.setAttribute('role', 'status');
+    err.hidden = true;
+    let busy = false;
+    const paintCount = () => {
+      const p = form.progress();
+      count.textContent = p.total ? `${p.done} of ${p.total} answered` : '';
+      count.hidden = !p.total;
+      go.disabled = busy;
+    };
+    const form = renderAskForm({ answerSchema: c.form.answerSchema, layout: c.form.layout, data: {}, files: [] }, {
+      doc, readonly: answered, values: answered && c.answers && typeof c.answers === 'object' && !Array.isArray(c.answers) ? c.answers : null,
+      onChange: () => paintCount(),
+    });
+    body.append(form.el);
+    if (!answered) {
+      const foot = h('div', 'qpanel-foot');
+      foot.append(count, go);
+      body.append(foot);
+      go.addEventListener('click', async () => {
+        if (busy) return;
+        const out = form.collect();
+        form.setErrors(out.errors);            // the marks always show the last verdict
+        if (out.errors.length) return;
+        busy = true;
+        err.hidden = true;
+        paintCount();
+        try {
+          await client.answerForm(b.id, out.values);   // the card stays busy: it waits for its answered state
+        } catch (e) {
+          busy = false;
+          if (Array.isArray(e && e.errors)) form.setErrors(e.errors);
+          err.textContent = (e && e.message) || 'Answer not sent';
+          err.hidden = false;
+          paintCount();
+          go.focus();
+        }
+      });
+      paintCount();
+    }
+    panel.append(body);
+    const wrap = h('div', 'chat-rc-qbody');
+    wrap.append(panel);
+    el.append(head, wrap, err);
+    el.__dispose = () => form.dispose();
+    return el;
+  }
   function clarifyCard(b) {
     const c = b.card;
+    if (c.form && typeof c.form === 'object' && Array.isArray(c.form.layout)) return formCard(b);
     const qs = Array.isArray(c.questions) ? c.questions : [];
     const spec = { id: `chat-q-${b.id}`, heading: c.heading, questions: qs, submitLabel: () => answerLabel(qs) };
     if (b.state === 'asking') return buildChatQuestion(doc, { ...spec, onSubmit: (p) => client.answerCard(b.id, p) }).el;
@@ -794,7 +917,14 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
     map.set(key, { sig, el });
     return el;
   }
-  function prune(map, seen) { for (const k of [...map.keys()]) if (!seen.has(k)) map.delete(k); }
+  function prune(map, seen) {
+    for (const k of [...map.keys()]) {
+      if (seen.has(k)) continue;
+      const gone = map.get(k).el;
+      if (gone && typeof gone.__dispose === 'function') gone.__dispose();
+      map.delete(k);
+    }
+  }
   // buildLive in the signature: a `building` frame must not reuse a row whose Back is still enabled. A reply holding the
   // row reads the same signature.
   const roundSig = (b) => JSON.stringify([b.state, b.card, buildLive, restoring.has(b.id), restoreErr.get(b.id) || '']);
@@ -808,6 +938,53 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
     const el = h('div', `dsc-tool dz-reply-meta is-${status}`, `${short.replace(/_/g, ' ')}${target ? ` ${target.slice(0, 80)}` : ''}`);
     el.dataset.minLevel = 'advanced';                    // what the chat ran, as Ask's tool rows (ask-panel.mjs)
     if (status === 'error' && typeof b.error === 'string' && b.error) el.title = b.error;
+    return el;
+  }
+  /** A reply's tool calls as ONE row: a sentence saying what they looked at, closed until asked. Its rows show from
+   *  Advanced on (as Ask's): a Simple dock gets the sentence alone, with nothing to open. */
+  function stepsRow(msgId, tools) {
+    const canOpen = levelShows(currentLevel(doc), 'advanced');
+    const open = canOpen && openSteps.has(msgId);
+    const wrap = h('div', 'dsc-steps dz-reply-meta');
+    const head = h(canOpen ? 'button' : 'div', 'dsc-steps-head');
+    head.append(h('span', 'dsc-steps-text', stepsSentence(tools)));
+    if (canOpen) {
+      head.type = 'button';
+      head.setAttribute('aria-expanded', String(open));
+      const chev = h('span', 'dsc-steps-chev', '›');
+      chev.setAttribute('aria-hidden', 'true');
+      head.append(chev);
+      head.addEventListener('click', () => {
+        if (openSteps.has(msgId)) openSteps.delete(msgId); else openSteps.add(msgId);
+        schedule();
+      });
+    }
+    wrap.append(head);
+    if (open) {
+      const body = h('div', 'dsc-steps-body');
+      for (const b of tools) body.append(toolLine(b));
+      wrap.append(body);
+    }
+    return wrap;
+  }
+  /** The running build in sentences (narration.mjs): its milestones so far, the last few unless asked for all. What it
+   *  does right now is the composer's live line. Null when no build runs. */
+  function buildFeed() {
+    const v = narration.view();
+    if (!v.live || !v.lines.length) { buildEl = null; buildSig = ''; return null; }
+    const sig = JSON.stringify([v.lines, allLines]);
+    if (buildEl && sig === buildSig) return buildEl;
+    const el = h('div', 'dsc-build dz-reply');
+    const hiddenN = allLines ? 0 : Math.max(0, v.lines.length - LINES_SHOWN);
+    if (v.lines.length > LINES_SHOWN) {
+      const more = h('button', 'dsc-build-more', allLines ? 'Show fewer' : `Show all ${v.lines.length}`);
+      more.type = 'button';
+      more.addEventListener('click', () => { allLines = !allLines; schedule(); });
+      el.append(more);
+    }
+    for (const l of v.lines.slice(hiddenN)) el.append(h('p', l.tone === 'fail' ? 'dsc-build-line is-fail' : 'dsc-build-line', l.text));
+    buildEl = el;
+    buildSig = sig;
     return el;
   }
   function answer(text) {
@@ -871,16 +1048,20 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
     const blocks = blocksOf(msg);
     const rounds = blocks.filter((b) => b.kind === 'card' && typeof b.id === 'string' && b.card && b.card.type === 'design-round');
     // Its fields and blocks, and each receipt row's own signature (its Back reads more than the block).
-    const sig = JSON.stringify([msg.role, msg.status, msg.text, msg.costUsd, msg.errorMessage, msg.reason, blocks, rounds.map(roundSig)]);
+    const sig = JSON.stringify([msg.role, msg.status, msg.text, msg.costUsd, msg.errorMessage, msg.reason, blocks, rounds.map(roundSig),
+      openSteps.has(msg.id), currentLevel(doc)]);
     for (const b of blocks) if (b.kind === 'card' && typeof b.id === 'string') seen.add(b.id);   // a reused row keeps its cards
     return cached(replyEls, msg.id, sig, () => replyRow(msg, null, seen), seenReplies);
   }
   function replyRow(msg, live, seen) {
     const isLive = Boolean(live && live.messageId === msg.id);
     const wrap = h('div', 'ask-msg dsc-reply');
+    const steps = stepBlocks(blocksOf(msg));
+    let stepsPlaced = false;
     for (const b of blocksOf(msg)) {
       if (b.kind === 'tool') {
-        if (b.status === 'error' || !QUIET_TOOLS.includes(String(b.name || '').replace(/^mcp__worca__/, ''))) wrap.append(toolLine(b));
+        // Every call of the reply sits in one folded row, where the first one happened.
+        if (!stepsPlaced && steps.includes(b)) { wrap.append(stepsRow(msg.id, steps)); stepsPlaced = true; }
       }
       else if (b.kind === 'notice' && typeof b.text === 'string' && b.text) wrap.append(h('p', 'dsc-notice dz-reply dz-reply-meta', b.text));
       else if (b.kind === 'card' && typeof b.id === 'string' && b.card && typeof b.card === 'object') {
@@ -914,6 +1095,16 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
     const text = on ? activityLabel(label) : '';
     if (liveLabelEl.textContent !== text) liveLabelEl.textContent = text;
     liveEl.hidden = !on;
+  }
+  /** The composer's live line and its orb: the chat's own turn first (`Reading the design…`), else the running build in
+   *  one sentence (`3 agents are working on Hero, Pricing and Footer · 2 of 12 done…`), else nothing. Tells the stage
+   *  whether the chat is at work, so an empty stage can say so. */
+  function paintActivity(live, liveRow, waiting) {
+    const phase = !live && !waiting ? narration.view().phase : '';
+    paintLive(live ? live.label : phase || null, Boolean(live) || waiting || Boolean(phase));
+    orbs.set(orb, live ? turnPhase(live, liveRow ? blocksOf(liveRow) : []) : waiting ? 'think' : phase ? 'tool' : 'rest');
+    const busy = Boolean(live) || waiting;
+    if (busy !== busyTold) { busyTold = busy; try { onBusy(busy); } catch { /* the stage's line is cosmetic */ } }
   }
   function paintChrome(live) {
     // Hiding the focused Send or Stop would drop the keyboard to <body>: hand it to the one taking its place.
@@ -966,9 +1157,7 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
       && liveAnswerEl && liveAnswerEl.isConnected && liveAnswerEl.dataset.messageId === live.messageId;
     if (textOnly) {
       if (d.answer.size) { if (typeof renderMarkdown === 'function') renderMarkdown(live.text || '', liveAnswerEl); else liveAnswerEl.textContent = live.text || ''; }
-      paintLive(live.label, true);
-      const msg = msgs.find((x) => x && x.id === live.messageId);
-      orbs.set(orb, turnPhase(live, msg ? blocksOf(msg) : []));
+      paintActivity(live, msgs.find((x) => x && x.id === live.messageId), false);
       followEnd();
       return;
     }
@@ -997,11 +1186,12 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
     prune(cardEls, seenCards);
     prune(askEls, seenAsks);
     prune(replyEls, seenReplies);
+    const feed = buildFeed();
+    if (feed) kids.push(feed);
     const waiting = !live && (pending || client.busy());
-    paintLive(live ? live.label : null, Boolean(live) || waiting);
     placeKids(kids);
     const liveRow = live ? msgs.find((x) => x && x.id === live.messageId) : null;
-    orbs.set(orb, live ? turnPhase(live, liveRow ? blocksOf(liveRow) : []) : waiting ? 'think' : 'rest');
+    paintActivity(live, liveRow, waiting);
     if (focused && focused.isConnected) { if (doc.activeElement !== focused) focused.focus({ preventScroll: true }); }
     else if (focused) input.focus({ preventScroll: true });
     followEnd();
@@ -1051,11 +1241,15 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
     pushDesignFrame(f) {
       if (destroyed || !f || typeof f !== 'object' || f.designId !== designId || f.type === 'design-delta') return;
       const was = frameShown();
+      const phaseWas = narration.view().phase;
       questions.push(f);
+      narration.push(f);
       if (f.type === 'design-build') onBuildFrame(f);
       else if (f.type === 'design-snapshot') onSnapshotFrame(f);
       // Most of a build's frames (design-agent, -file, -section, -plan, a design-build's stats) change nothing drawn here.
       if (frameShown() !== was) schedule();
+      // What the build does right now changes with most agent frames: only the composer's line, never the thread.
+      else if (narration.view().phase !== phaseWas) { const m = client.model(); if (!(m && m.live()) && !pending && !client.busy()) paintActivity(null, null, false); }
     },
     addPin,
     onHello() { if (!destroyed) client.onHello(); },

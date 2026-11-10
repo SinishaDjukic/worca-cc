@@ -6,7 +6,7 @@
 
 import {
   KIND_STAGE, LIVE_BUILD, initialStage, reduceFrame, reduceBridge, reduceUser, cameraStep, selectLayout, selectCursors,
-  placeCursors, selectMarks, pruneGuides, selectHud, selectAgentRows, selectPlanRows, selectKindChrome, crewOf,
+  placeCursors, selectMarks, pruneGuides, selectHud, selectAgentRows, selectPlanRows, selectKindChrome, selectStandby, crewOf,
 } from './stage-model.mjs';
 import { createFrameHost } from './frame-host.mjs';
 import { createKindChrome } from './kind-chrome.mjs';
@@ -16,6 +16,7 @@ import { createOverlay } from './overlay.mjs';
 import { createHud } from './hud.mjs';
 import { createAgentsPanel, createDotTip } from './agents-panel.mjs';
 import { icon } from '../icons.mjs';
+import { createDotOrbs } from '../dot-orb.mjs';
 
 // L4.9: the desktop page width before a plan names its canvas. A deck or a video is always 1920×1080 (a video at 60
 // fps), so its first `hello` has a height too.
@@ -122,6 +123,9 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
   let preview = null;
   let lastLoad = null;
   let lostMode = null;
+  let built = version > 0;      // the design has a page from an earlier round: the frame always shows it
+  let chatBusy = false;
+  let standbySig = '';
 
   const make = (tag, cls, text) => {
     const n = doc.createElement(tag);
@@ -165,12 +169,23 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
   frameBox.append(frameMount);
   const empty = make('div', 'dz-empty', 'Nothing built yet');
   empty.hidden = true;
+  // What the well says while the frame has nothing to show (selectStandby): the orb, a title, a line, and what the
+  // lead does right now. The frame stays mounted under it, so it loads and measures meanwhile.
+  const orbs = createDotOrbs({ doc, win });
+  const standby = make('div', 'dz-standby');
+  standby.hidden = true;
+  standby.setAttribute('role', 'status');
+  const standbyOrb = orbs.create(44, 'dz-standby-orb');
+  const standbyTitle = make('div', 'dz-standby-title');
+  const standbyText = make('div', 'dz-standby-text');
+  const standbyDoing = make('div', 'dz-standby-doing');
+  standby.append(standbyOrb, standbyTitle, standbyText, standbyDoing);
   const lost = make('div', 'dz-lost');
   lost.hidden = true;
   const reload = make('button', 'btn btn-sm', 'Reload');
   reload.type = 'button';
   lost.append(make('span', null, 'The page left its preview'), reload);
-  wrap.append(frameBox, empty, lost);
+  wrap.append(frameBox, empty, standby, lost);
   host.append(head, wrap);
 
   async function post(url, body) {
@@ -464,7 +479,29 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
       b.classList.toggle('on', on);
       b.setAttribute('aria-pressed', String(on));
     }
-    empty.hidden = !(opened && !state.buildId && !(version > 0));
+    empty.hidden = !(opened && !state.buildId && !(version > 0)) || chatBusy;
+    paintStandby();
+  }
+
+  /** The frame shows only once it has something to show; until then the well says what is going on. */
+  function paintStandby() {
+    if (state.status === 'done') built = true;
+    const sb = opened ? selectStandby(state, { built, chatBusy }) : null;
+    wrap.classList.toggle('is-blank', Boolean(sb));
+    // The idle line stays `.dz-empty`'s; the standby panel is for work in progress and a round halted before its plan.
+    const show = Boolean(sb) && empty.hidden;
+    const sig = show ? JSON.stringify(sb) : '';
+    if (sig === standbySig) return;
+    standbySig = sig;
+    standby.hidden = !show;
+    if (!show) { orbs.set(standbyOrb, 'rest'); return; }
+    standbyTitle.textContent = sb.title;
+    standbyText.textContent = sb.text;
+    standbyText.hidden = !sb.text;
+    standbyDoing.textContent = sb.doing ? `${sb.doing}…` : '';
+    standbyDoing.hidden = !sb.doing;
+    standbyOrb.hidden = !sb.busy;
+    orbs.set(standbyOrb, sb.busy ? 'think' : 'rest');
   }
 
   function measure() {
@@ -514,6 +551,7 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
       opened = true;
       const v = detail?.design?.version;
       if (Number.isFinite(v)) version = v;
+      if (version > 0) built = true;
       measure();
       for (const f of detailToFrames(detail, wallNow())) dispatch(reduceFrame, f);
       if (!isObject(detail?.build) && version > 0) loadDoc('run');
@@ -532,7 +570,13 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
       if (on) chrome?.pause();
       dispatch(reduceUser, { type: 'pick', on: Boolean(on) });
     },
-    loadRunDoc() { loadDoc('run'); },
+    loadRunDoc() { built = true; loadDoc('run'); schedulePaint(); },
+    /** The chat is working on a message (or stopped): an empty stage says so instead of `Nothing built yet`. */
+    setChatBusy(on) {
+      if (destroyed || chatBusy === Boolean(on)) return;
+      chatBusy = Boolean(on);
+      schedulePaint();
+    },
     unpin(id, path) { dispatch(reduceUser, { type: 'unpin', id, path }); },
     resume,
     setViewport,
@@ -550,6 +594,7 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
       if (ro) ro.disconnect();
       else win.removeEventListener('resize', measure);
       frame.destroy();
+      orbs.destroy();
       chrome?.destroy();
       reveal.destroy();
       overlay.destroy();

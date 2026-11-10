@@ -215,6 +215,8 @@ async function askCardHandler(req, res) {
     if (found.block.card && found.block.card.type === 'design-round') return res.status(409).json({ error: 'a round receipt has no action here' });
     if (found.block.card && found.block.card.type === 'design-questions') {
       const v = validateDesignAnswers(found.block.card, body.answers);
+      // A `fields` card's refusal names each field (422, as a form ask's): the card marks them.
+      if (!v.ok && Array.isArray(v.errors)) return res.status(422).json({ error: v.error, errors: v.errors });
       if (!v.ok) return badRequest(res, v.error);
       if (found.block.state !== 'asking') return res.status(409).json({ error: `card is ${found.block.state}` });
       if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });

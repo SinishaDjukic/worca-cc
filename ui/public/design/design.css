@@ -110,6 +110,8 @@ body.view-design .main{display:flex;flex-direction:column;overflow:hidden;paddin
 .dz-chat .chat-rc-q .qblock{padding:14px;}
 .dz-chat .chat-rc-q .qtext{font-size:var(--fs-body);}
 .dz-chat .qpanel-foot .btn{flex:none;}
+/* A fields card's footer wears the neutral line, as the questions card's (chat-scope.css): never the amber one. */
+.dz-chat .chat-q.chat-rc-q .qpanel[data-kind="form"] .qpanel-foot{border-color:var(--line);}
 
 /* The chat dock (chat.mjs): the mockup's chat column on the Ask classes; only the thread scrolls, so the composer stays in view */
 .dsc-root{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;}
@@ -146,6 +148,20 @@ body.view-design .main{display:flex;flex-direction:column;overflow:hidden;paddin
 .dsc-sent-pin{padding-right:8px;}
 .dsc-tool{min-width:0;font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .dsc-tool.is-error,.dsc-err,.dsc-round-err{color:var(--red-ink);}
+/* A reply's tool calls, folded into one sentence (stepsRow); the build's milestones as sentences (buildFeed). */
+.dsc-steps{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.dsc-steps-head{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;}
+button.dsc-steps-head{cursor:pointer;}
+button.dsc-steps-head:hover{color:var(--ink);}
+.dsc-steps-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dsc-steps-chev{flex:none;transition:transform .15s;}
+.dsc-steps-head[aria-expanded="true"] .dsc-steps-chev{transform:rotate(90deg);}
+.dsc-steps-body{display:flex;flex-direction:column;gap:2px;padding-left:10px;}
+.dsc-build{display:flex;flex-direction:column;align-items:flex-start;gap:6px;color:var(--ink-2);}
+.dsc-build-line{margin:0;line-height:1.5;}
+.dsc-build-line.is-fail{color:var(--red-ink);}
+.dsc-build-more{padding:0;border:0;background:none;color:var(--ink-3,var(--ink-2));font:inherit;font-size:var(--fs-meta);cursor:pointer;}
+.dsc-build-more:hover{color:var(--ink);}
 .dsc-round{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;border-radius:var(--r-sm);}
 .dsc-round-text{flex:1 1 auto;min-width:0;}
 .dsc-round-err{flex-basis:100%;}
@@ -247,6 +263,17 @@ body.view-design .main{display:flex;flex-direction:column;overflow:hidden;paddin
 .dz-transport{position:absolute;left:16px;bottom:140px;z-index:4;display:flex;align-items:center;gap:8px;height:36px;padding:0 10px 0 4px;color-scheme:dark;border:1px solid var(--glass-line);border-radius:var(--r-md);background:var(--panel-veil);color:var(--ink);font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}
 .dz-transport .btn svg{width:14px;height:14px;}
 .dz-transport b{font-weight:500;}
+/* A stage with nothing to show yet: the frame waits out of sight (it still loads and measures), and the well says
+   what is going on. It fades in with the plan's first slots. */
+.frame-box{transition:transform var(--cam-ms,0ms) cubic-bezier(.65,0,.35,1),opacity .35s ease;}
+.dz-wrap.is-blank .frame-box{opacity:0;pointer-events:none;}
+.dz-standby{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:24px;color-scheme:dark;color:var(--ink-2);font-size:var(--fs-body);text-align:center;pointer-events:none;}
+.dz-standby[hidden]{display:none;}
+.dz-standby-orb{color:var(--ink);margin-bottom:6px;}
+.dz-standby-title{color:var(--ink);font-size:var(--fs-section);font-weight:500;}
+.dz-standby-text{max-width:360px;line-height:1.5;}
+.dz-standby-doing{min-height:1.5em;font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}
+@media (prefers-reduced-motion: reduce){.frame-box{transition:transform var(--cam-ms,0ms) cubic-bezier(.65,0,.35,1);}}
 .dz-lost,.dz-empty{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color-scheme:dark;color:var(--ink-2);font-size:var(--fs-body);}
 /* The Library (board 1, canvas design.css:138-160): just the items. It scrolls, its padding is the inner column's,
    and the grid reflows below the mockup's 1240. The body is a flex column, so its [hidden] needs its own rule */

@@ -1424,6 +1424,38 @@ export function selectHud(state) {
   return { ...hud, text: [by, cost, ...(stopped > 0 ? [`${stopped} stopped`] : [])].join(SEP) };
 }
 
+const KIND_THING = Object.freeze({ web: 'page', presentation: 'deck', pitch: 'deck', video: 'video' });
+const STANDBY_HALT = Object.freeze({ paused: 'Paused before the plan', stopped: 'Stopped before the plan', error: 'The build failed before the plan', interrupted: 'Interrupted before the plan' });
+
+/**
+ * What the well shows INSTEAD of the frame while the frame has nothing to show: a design never built, whose round has
+ * no plan and no draft yet. `null` once there is something to look at (a plan's slots, a draft, a built page), and the
+ * frame shows from then on. `built` is whether the design has a page from an earlier round; `chatBusy` whether the chat
+ * is working on a message. `busy` rows carry the orb; `doing` is what the lead does right now, when it says.
+ * @param {object} state
+ * @param {{built?: boolean, chatBusy?: boolean}} [o]
+ * @returns {{busy: boolean, title: string, text: string, doing: string}|null}
+ */
+export function selectStandby(state, { built = false, chatBusy = false } = {}) {
+  if (built || state.status === 'done') return null;
+  if (planSections(state).length > 0 || Object.keys(state.drafts).length > 0) return null;
+  const thing = own(KIND_THING, state.kind) ?? 'page';
+  const noun = own(KIND_NOUN, state.kind) ?? 'section';
+  const status = state.buildId ? effectiveStatus(state) : null;
+  if (LIVE_BUILD.includes(status)) {
+    const lead = onStage(state).find((a) => a.role === 'lead');
+    const doing = lead ? agentAction(lead, null) : '';
+    return {
+      busy: true, title: `Planning the ${thing}`,
+      text: `The lead is working out the ${noun}s. They show up here as soon as the plan is ready.`,
+      doing: doing && doing !== 'Thinking' && doing !== 'Starting' ? doing : '',
+    };
+  }
+  if (status && own(STANDBY_HALT, status)) return { busy: false, title: STANDBY_HALT[status], text: 'Nothing was built yet.', doing: '' };
+  if (chatBusy) return { busy: true, title: 'Reading your request', text: `The ${thing} shows up here once the crew starts.`, doing: '' };
+  return { busy: false, title: 'Nothing built yet', text: '', doing: '' };
+}
+
 /**
  * The Agents popover's rows: the agents on stage first, then the finished ones, each group in the order the agents
  * first appeared, so a finished agent stays listed. A per-agent Stop shows only on a builder on stage while the build

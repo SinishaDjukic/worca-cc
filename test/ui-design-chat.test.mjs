@@ -425,11 +425,64 @@ test('the design tools leave no tool line: their receipt row or card stands for 
     { kind: 'tool', id: 't4', name: 'mcp__worca__get_design', input: {}, status: 'done' },
     { kind: 'tool', id: 't5', name: 'mcp__worca__change_design', input: {}, status: 'error', error: 'a build is running' },
   ), text: 'Changing the hero only.' }] });
+  // The calls that remain fold into ONE row that says what they did in a sentence; nothing else of them shows.
   assert.deepEqual([...host.querySelector('.dsc-reply').children].map((n) => n.className), [
-    'dsc-round dz-reply dz-reply-meta', 'dsc-tool dz-reply-meta is-done', 'dsc-tool dz-reply-meta is-error', 'dsc-text dz-reply']);
-  assert.deepEqual([...host.querySelectorAll('.dsc-tool')].map((n) => n.textContent), ['get design', 'change design']);
-  // What the chat ran shows from Advanced on, as Ask's tool rows (ask-panel.mjs): a Simple dock reads like the mockup.
-  assert.deepEqual([...host.querySelectorAll('.dsc-tool')].map((n) => n.dataset.minLevel), ['advanced', 'advanced']);
+    'dsc-round dz-reply dz-reply-meta', 'dsc-steps dz-reply-meta', 'dsc-text dz-reply']);
+  assert.equal(host.querySelector('.dsc-steps-text').textContent, 'Looked at the design and one more thing · 1 failed');
+  assert.equal(host.querySelectorAll('.dsc-tool').length, 0, 'closed: no tool line');
+});
+test('a Simple dock gets the steps sentence alone, with nothing to open (tool rows are Advanced, as Ask\'s)', async () => {
+  const { host, doc, dock, tick } = await rigDock({ messages: [{ ...assistantWith(
+    { kind: 'tool', id: 't1', name: 'mcp__worca__get_design', input: {}, status: 'done' }), text: 'x' }] });
+  doc.documentElement.dataset.level = 'simple';
+  dock.repaint();
+  await tick();
+  assert.equal(host.querySelector('.dsc-steps-head').tagName, 'DIV');
+  assert.equal(host.querySelector('.dsc-steps-chev'), null);
+});
+test('the folded steps row opens from Advanced on, shows each call, and stays open across a repaint', async () => {
+  const { host, doc, dock, tick } = await rigDock({ messages: [{ ...assistantWith(
+    { kind: 'tool', id: 't1', name: 'mcp__worca__get_design', input: {}, status: 'done' },
+    { kind: 'tool', id: 't2', name: 'mcp__worca__read_attachment', input: { id: 'att_1' }, status: 'done' },
+    { kind: 'tool', id: 't3', name: 'mcp__worca__read_attachment', input: { id: 'att_2' }, status: 'done' },
+    { kind: 'tool', id: 't4', name: 'Read', input: {}, status: 'done' },
+  ), text: 'A landing page.' }] });
+  doc.documentElement.dataset.level = 'advanced';
+  dock.repaint();
+  await tick();
+  const head = host.querySelector('button.dsc-steps-head');
+  assert.equal(head.querySelector('.dsc-steps-text').textContent, 'Looked at the design, 2 attachments and a file');
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  head.click();
+  await tick();
+  assert.equal(host.querySelector('.dsc-steps-head').getAttribute('aria-expanded'), 'true');
+  assert.deepEqual([...host.querySelectorAll('.dsc-steps-body .dsc-tool')].map((n) => n.textContent), ['get design', 'read attachment', 'read attachment', 'Read']);
+  dock.pushAskFrame({ type: 'ask-title', threadId: 'ask_00000001', title: 'x' });
+  await tick();
+  assert.equal(host.querySelectorAll('.dsc-steps-body .dsc-tool').length, 4, 'still open');
+});
+test('a running build is told in sentences: milestones in the thread, what happens now on the composer line', async () => {
+  const { host, dock, tick } = await rigDock({ design: { status: 'planning', currentBuild: 'b_1' }, messages: [] });
+  const f = { designId: DID, buildId: 'b_1' };
+  dock.pushDesignFrame({ ...f, type: 'design-build', status: 'planning', kind: 'first', waiting: 0 });
+  dock.pushDesignFrame({ ...f, type: 'design-agent', agentId: 'a_l', role: 'lead', job: 'Lead', status: 'thinking' });
+  await tick();
+  assert.equal(host.querySelector('.dsc-act').hidden, false);
+  assert.equal(host.querySelector('.dsc-act-l').textContent, 'The lead is planning the page…');
+  assert.equal(host.querySelector('.dsc-build'), null, 'no milestone yet');
+  dock.pushDesignFrame({ ...f, type: 'design-plan', planRev: 1, sections: [
+    { id: 'hero', job: 'Hero', status: 'planned', parts: ['html'] }, { id: 'pricing', job: 'Pricing', status: 'planned', parts: ['html'] }] });
+  dock.pushDesignFrame({ ...f, type: 'design-build', status: 'building', kind: 'first', waiting: 0 });
+  dock.pushDesignFrame({ ...f, type: 'design-agent', agentId: 'a_1', role: 'builder', job: 'Hero', sectionId: 'hero', status: 'writing' });
+  dock.pushDesignFrame({ ...f, type: 'design-section', sectionId: 'pricing', status: 'done', agentId: 'a_2', summary: 'Three tiers on a quiet grid' });
+  await tick();
+  assert.deepEqual([...host.querySelectorAll('.dsc-build-line')].map((n) => n.textContent),
+    ['The lead planned 2 sections: Hero and Pricing.', 'Pricing: Three tiers on a quiet grid.']);
+  assert.equal(host.querySelector('.dsc-act-l').textContent, 'One agent is working on Hero · 1 of 2 done…');
+  dock.pushDesignFrame({ ...f, type: 'design-build', status: 'done', kind: 'first', waiting: 0 });
+  await tick();
+  assert.equal(host.querySelector('.dsc-build'), null, 'the receipt row speaks for a finished round');
+  assert.equal(host.querySelector('.dsc-act').hidden, true);
 });
 // p7t1 live check: every design frame repainted the thread and pulled it to its end (a reader could not scroll up
 // during a build), and a growing composer (a pin chip, a longer draft) hid the thread's last rows (board Done).
@@ -655,4 +708,49 @@ test('initial: the sent message leaves the input and its chips; a dock destroyed
   assert.deepEqual([host.querySelector('.dsc-input').value, host.querySelectorAll('.dsc-files .ask-chip').length], ['', 0]);
   const gone = await rigDock({ initial: { text: 'A page', files: [] }, destroyNow: true }); await gone.tick();
   assert.deepEqual(gone.posts, []);
+});
+
+// 2026-11-10: design_questions' `fields` shape. The card is the ask-forms renderer inside the ask-card grammar.
+const FORM = {
+  answerSchema: { type: 'object', required: ['name', 'tone'], properties: {
+    name: { type: 'string', maxLength: 2000 }, tone: { type: 'string', enum: ['calm', 'bold'] }, dark: { type: 'boolean', default: false } } },
+  layout: [
+    { widget: 'text', field: 'name', label: 'Product name' },
+    { widget: 'select', field: 'tone', label: 'Tone', labels: { calm: 'Calm', bold: 'Bold' } },
+    { widget: 'toggle', field: 'dark', label: 'Dark theme' },
+    { widget: 'callout', text: 'You can change this later.', tone: 'info' },
+  ],
+};
+test('a fields card: components in the ask-card grammar; local marks before it posts; then the values go up', async () => {
+  const { host, win, posts, tick } = await rigDock({ messages: [assistantWith(
+    { kind: 'card', id: 'card_00000009', state: 'asking', card: { type: 'design-questions', heading: 'A few things', form: FORM } })] });
+  const card = host.querySelector('section.chat-rc-q.dsc-form');
+  assert.equal(card.querySelector('.chat-rc-q-head').textContent, 'A few things');
+  assert.ok(card.querySelector('.qpanel[data-kind="form"] .af-form'), 'the ask-forms tree, in a panel');
+  assert.equal(card.querySelector('.qanswered').textContent, '0 of 2 answered');
+  const go = card.querySelector('[data-qpanel-submit]');
+  go.click();
+  await tick();
+  assert.equal(posts.filter((p) => /\/cards\//.test(p.url)).length, 0, 'nothing posted while a required field is empty');
+  assert.ok([...card.querySelectorAll('.af-err')].some((n) => !n.hidden), 'the empty required fields are marked');
+  const name = card.querySelector('input[type="text"], input:not([type])');
+  name.value = 'Worca';
+  name.dispatchEvent(new win.Event('input', { bubbles: true }));
+  [...card.querySelectorAll('.af-choice, .seg button, button')].find((b) => /Calm/.test(b.textContent)).click();
+  await tick();
+  assert.equal(card.querySelector('.qanswered').textContent, '2 of 2 answered');
+  go.click();
+  await tick();
+  assert.deepEqual(posts.at(-1), { url: '/api/ask/threads/ask_00000001/cards/card_00000009', body: { answers: { name: 'Worca', tone: 'calm', dark: false } } });
+});
+test('an answered fields card stays with what was given, read-only, no footer; a closed one is one line', async () => {
+  const { host } = await rigDock({ messages: [assistantWith(
+    { kind: 'card', id: 'card_00000010', state: 'answered', card: { type: 'design-questions', heading: 'A few things', form: FORM, answers: { name: 'Worca', tone: 'bold', dark: true } } },
+    { kind: 'card', id: 'card_00000011', state: 'closed', card: { type: 'design-questions', heading: 'More', form: FORM } })] });
+  const [done, closed] = host.querySelectorAll('section.chat-rc-q');
+  assert.ok(done.classList.contains('is-answered'));
+  assert.ok(done.querySelector('.af-form.af-readonly'));
+  assert.equal(done.querySelector('[data-qpanel-submit]'), null);
+  assert.equal(done.querySelector('input').value, 'Worca');
+  assert.equal(closed.querySelector('.chat-rc-receipt').textContent, 'Not answered');
 });

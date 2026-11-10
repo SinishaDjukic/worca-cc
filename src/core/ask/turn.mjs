@@ -569,7 +569,10 @@ class AskTurn extends EventEmitter {
     const d = this.deps;
     if (name === 'design_questions') {
       const added = this.reducer.addBlock({ kind: 'card', id: d.newAskId('card'), state: 'asking',
-        card: { type: 'design-questions', heading: out.heading, questions: out.questions, summary: out.heading } });
+        // `fields` asked: the card carries its compiled form (design-payload.mjs compileDesignFields) instead of questions.
+        card: out.form && typeof out.form === 'object'
+          ? { type: 'design-questions', heading: out.heading, form: out.form, summary: out.heading }
+          : { type: 'design-questions', heading: out.heading, questions: out.questions, summary: out.heading } });
       if (added) this._persistBlocks();
       return;
     }

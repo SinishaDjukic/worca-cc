@@ -204,6 +204,8 @@ export function mountDesignView(deps = {}) {
         onRestored: () => stage.loadRunDoc(),
         planList,
         unpin: (pinId, path) => stage.unpin(pinId, path),
+        // An empty stage says the chat is reading the request, instead of showing a blank page.
+        onBusy: (on) => stage.setChatBusy(on),
         // The Library's first message goes through the dock's own send, once (P6 Task 9).
         initial: takeStart(design.id),
       });

@@ -43,7 +43,7 @@ test('start_design_build: asks the parent to act; refused on a plan or a running
   const r = await tools().call('start_design_build', { brief: 'A landing page' });
   assert.deepEqual(r.requested, { kind: 'design-start', brief: 'A landing page' });
   assert.match(r.note, /never say it started/);
-  assert.match(r.note, /Your whole reply is ONE short sentence of at most 15 words \(rule 7\)\.$/, 'the note the model reads last agrees with rule 7');
+  assert.match(r.note, /Your reply after this call is at most TWO short sentences, 40 words in all \(rule 7\)\.$/, 'the note the model reads last agrees with rule 7');
   await assert.rejects(() => tools().call('start_design_build', { brief: '' }), /start_design_build: brief is required/);
   await assert.rejects(() => tools({ readPlan: () => PLAN }).call('start_design_build', { brief: 'x' }), /already has a plan: use change_design/);
   await assert.rejects(() => tools({ latestBuild: () => ({ id: 'b_1', round: 2, status: 'building' }) }).call('start_design_build', { brief: 'x' }), /a build is running \(round 2\)/);
@@ -77,11 +77,15 @@ test('the system prompt names only tools the chat has; rule 11 is the DATA rule 
   assert.match(buildDesignSystemPrompt({ engine: 'codex' }), /plus the worca file tools read_file, grep and glob/);
   assert.doesNotMatch(buildDesignSystemPrompt({ engine: 'claude' }), /## Web access/);
 });
-// p7t1 live proof (plan Task 15 Step 5, Chat row): Opus 5.5 answered in two or three sentences after a build or change
-// while rule 10 allowed "one or two sentences"; the reply is one short sentence, also on a resumed chat.
-test('rule 7 asks for one sentence after a build tool, on every reply; no rule allows two', () => {
+// p7t1 live proof (plan Task 15 Step 5, Chat row): Opus 5.5 answered in long paragraphs after a build or change. The
+// reply is capped, also on a resumed chat: two short sentences (2026-11-10: one read as silence next to a 13-minute
+// build; the chat speaks in sentences, and its tool calls fold away).
+test('rule 7 caps the reply after a build tool at two short sentences, on every reply; rule 13 has it say what it looks at', () => {
   const rule = (n) => DESIGN_SYSTEM_RULES.split('\n').find((l) => l.startsWith(`${n}. `)) || '';
-  assert.match(rule(7), /Your whole reply is then ONE short sentence of at most 15 words/);
+  assert.match(rule(7), /Your reply after the call is then at most TWO short sentences, 40 words in all/);
+  assert.match(rule(13), /Before your first tool call of a reply, write one short sentence/);
+  assert.match(rule(13), /do not name tools, paths or ids/);
+  assert.match(rule(5), /`fields` for anything else/);
   assert.match(rule(7), /however long your earlier replies in this chat were/);
   assert.match(rule(7), /never offer a follow-up/);
   assert.equal(rule(10), '10. Never write HTML, CSS or JavaScript into the chat: the page shows the work.');
