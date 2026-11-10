@@ -14,7 +14,7 @@ name: worca
 
 services:
   worca:
-    image: ghcr.io/sinishadjukic/worca:${WORCA_TAG:-latest}
+    image: ${WORCA_IMAGE:-ghcr.io/sinishadjukic/worca}:${WORCA_TAG:-latest}
     init: true
     # A stop pauses active runs before the server exits (WORCA_DRAIN_TIMEOUT_MS, 20 s by default);
     # Docker's own default of 10 s would SIGKILL it halfway.

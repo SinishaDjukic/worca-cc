@@ -12,7 +12,7 @@
 
 services:
   worca:
-    image: ghcr.io/sinishadjukic/worca:${WORCA_TAG:-dev}
+    image: ${WORCA_IMAGE:-ghcr.io/sinishadjukic/worca}:${WORCA_TAG:-dev}
     working_dir: /app
     volumes:
       - ..:/app
