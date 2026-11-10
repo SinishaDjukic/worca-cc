@@ -361,7 +361,7 @@ test('app.js: Compare and side by side are wired; Task 10\'s "comes in a later s
   const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
   // assert.ok, not assert.match: a failure would print all of app.js.
   assert.ok(!app.includes('This page comes in a later step.'), 'the stub is gone');
-  assert.ok(/import \{ renderCompare, renderSideBySide, openWholeResult \} from '\.\/workflows\/test-compare\.mjs';/.test(app));
+  assert.ok(/import \{ renderCompare, renderSideBySide, openWholeResult, askMoreTries \} from '\.\/workflows\/test-compare\.mjs';/.test(app));
   assert.ok(/wftCall\('GET', `\$\{base\}\/compare`\)/.test(app) && /wftCall\('GET', `\$\{base\}\/examples\/\$\{wft\.exampleId\}`\)/.test(app), 'the two reads');
   assert.ok(/connectors: run\.connectors/.test(app), 'Try 3 more keeps the test\'s connectors choice');
 });
