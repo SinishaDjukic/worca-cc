@@ -59,7 +59,8 @@ export function planAnswer(q, { answers = [], otherwise = 'pick' } = {}) {
         if (otherwise === 'fail') {
           help.push({ question: String(item.question || '') });
           list.push(asked(item.question, null, unusable ? 'unusable' : 'none'));   // the try stops here: the questions after it are never answered
-          return { kind: 'fail', reason: `Worca asked ${quote(item.question)}, and this example has no answer for it.`, help, asked: list };
+          const why = unusable ? "this example's answer could not be used for it" : 'this example has no answer for it';
+          return { kind: 'fail', reason: `Worca asked ${quote(item.question)}, and ${why}.`, help, asked: list };
         }
         choice = autoChoice(item);
         list.push(asked(item.question, choice, unusable ? 'unusable' : 'picked'));   // Worca picks: listed, not help

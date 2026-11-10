@@ -179,6 +179,8 @@ test('D24 (2026-11-10): an unusable example answer under "the try counts as fail
   const noFree = { kind: 'questions', questions: [{ id: 'q3', question: 'Which file formats should the export have?', options: ['PDF', 'CSV'], allowFreeText: false }] };
   const f = planAnswer(noFree, { ...example, otherwise: 'fail' });
   assert.deepEqual([f.kind, f.help.length, f.asked], ['fail', 1, [{ question: 'Which file formats should the export have?', answer: null, how: 'unusable' }]]);
+  // The example has an answer, so the reason must not say it has none.
+  assert.equal(f.reason, 'Worca asked "Which file formats should the export have?", and this example\'s answer could not be used for it.');
   const empty = planAnswer({ kind: 'form', form: 'x', title: 'Nothing to fill', autoValues: {} }, example);
   assert.deepEqual([empty.asked, empty.help], [[{ question: 'Nothing to fill', answer: '', how: 'picked' }], []]);
 });
