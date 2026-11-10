@@ -42,7 +42,7 @@ const claudePair = async (x) => {
 /** Why the default engine cannot start a feature (null when it can), as the D4 sentence. */
 async function unreadyReason(engine, x) {
   if (!x.engines().includes(engine)) {
-    return engine === 'cursor' ? notReadyWords('cursor', '').startsOn : notReadyWords(engine, 'cannot run Requirements').startsOn;
+    return engine === 'cursor' ? notReadyWords('cursor', '').startsOn : `${engineLabel(engine)} can't run Requirements, so this starts on Claude.`;
   }
   if (engine === 'claude') return null;
   let list = [];
@@ -96,7 +96,15 @@ export async function featureModel(f, d = {}) {
   const r = await x.validate(model, effort ?? 'medium', { engine });
   if (r.ok) return { engine, model: r.model, effort, notice: null };
   if (/^effort /.test(r.error)) return { engine, model, effort: null, notice: null };
-  return { ...(await engineDefault(engine, x)), notice: `${model} is no longer available, so this step used the default.` };
+  // Only a model missing from an engine that IS available is removed; an unavailable engine's models are not listed at all,
+  // so the stored pick stays and the step stops with D13's not-ready error.
+  let cat = null;
+  try { cat = await x.catalog(); } catch { cat = null; }
+  const available = engine === 'claude' || !cat || (cat.models || []).some((m) => runsOn(m, engine));
+  if (!available) return { engine, model, effort, notice: null };
+  const def = await engineDefault(engine, x);
+  if (!def.model) return { engine, model, effort, notice: null };
+  return { ...def, notice: `${model} is no longer available, so this step used the default.` };
 }
 
 /** D3: is this pick offerable? */
@@ -115,7 +123,7 @@ export async function checkChoice({ engine, model, effort } = {}, d = {}) {
   return { ok: true, choice: { engine, model: entry.id, effort: e } };
 }
 
-/** D3: switch a feature's harness/model/effort, as a `model` turn. Refused while busy, archived or starting. */
+/** D3: switch a feature's (callers validate the pick with checkChoice first; the API route does)  harness/model/effort, as a `model` turn. Refused while busy, archived or starting. */
 export async function setFeatureModel(seq, choice, { by = null } = {}, d = {}) {
   const x = dd(d);
   const f = editable(seq);

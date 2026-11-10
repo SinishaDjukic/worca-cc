@@ -144,3 +144,15 @@ test('setFeatureModel: refused while busy, archived or starting', async () => {
   try { await assert.rejects(setFeatureModel(s.seq, choice, {}, deps('claude')), (e) => e.code === 'BUSY'); } finally { unmarkStarting(s.seq); }
   assert.equal(getFeature(s.seq).model, null);
 });
+
+test('featureModel: a stored model of an unavailable engine is kept, no notice (D13); available + gone = removed', async () => {
+  const f = { model: { engine: 'codex', model: 'gpt-everyday', effort: null } };
+  const a = ask();
+  const off = deps('codex', { catalog: async () => { const c = await a.askCatalog({ withSecrets: false }); return { ...c, models: c.models.filter((m) => m.engine !== 'codex'), defaults: { ...c.defaults, codex: null } }; } });
+  assert.deepEqual(await featureModel(f, off), { engine: 'codex', model: 'gpt-everyday', effort: null, notice: null });
+});
+
+test('defaultChoice: an engine that is not offered (not Cursor) reads the can-not-run sentence', async () => {
+  const r = await defaultChoice({ projectKey: 'k' }, deps('opencode'));
+  assert.deepEqual(r, { choice: claude, fallbackReason: "OpenCode can't run Requirements, so this starts on Claude." });
+});
