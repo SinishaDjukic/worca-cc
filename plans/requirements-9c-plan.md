@@ -12,9 +12,9 @@
 
 **Visual reference (UI tasks):** the Claude Design canvas "Requirements model choice" (boards 1–8): board 1 New feature (Who interviews, the note), board 2 the harness list open, 3 the feature page's model chip and dialog, 4 the switch confirm, 5 the thread's step lines, notices and errors, 6 Cost of this feature, 7 the fallback on New feature, 8 board 2 in dark (tokens only). They use upstream classes (`card`, `btn`, `btn-sm`/`btn-mini`, `chip`, `hint`, `select-wrap`, `input select`, `badge`); inline styles are layout hints.
 
-## Spec gaps found (resolutions this plan builds; ⚑ = confirm with the user before Task 8 / Task 11)
+## Spec gaps found (resolutions this plan builds)
 
-1. ⚑ **The Product brief belongs to a project or workspace, not a feature** (`brief-job.mjs` runs per scope). The spec puts "the brief's code look" in the repo profile but never says which choice it uses. Resolution: the brief runs on the **scope's default** (D3, with D4's fallback), resolved when Create or Refresh is pressed; on a harness that can't read the repo, Create and Refresh are disabled and the brief card says "<Harness> can't read the repo, so it can't make a Product brief. Pick a harness that can as your Default engine." The brief's existing model line ("<model> · counts toward your limit") gains " on <harness>".
+1. **The Product brief belongs to a project or workspace, not a feature** — resolved by the user (2026-11-10, option B) as spec **D18** (board 9): the brief page asks for the harness, model and effort on each Create and Refresh; harnesses without repo reading are disabled there; a Default engine without repo reading makes the box pick Claude with a line; nothing is saved as a setting; `req_briefs` gains `engine`.
 2. **Today's look estimate has history only per model in `req_turns`**, not in the ledger. D9 (1) therefore reads `req_turns` (`kind = 'orientation'` for `look`, `kind = 'round'` for `round`, `model = ?`, `cost_usd > 0`), as `recentLookCosts` does today; only D9 (2) reads the new ledger token columns. Otherwise every estimate would read "no estimate yet" right after the upgrade.
 3. **Requirements' mock mode returns before the runner** (`mockEnabled({})` in `orient`, `runRound`, `answer`, `runRead`), so `recordMockSpawn` (spec §8.5) never sees a Requirements call. The whole-step tests use Requirements' own seam, a fake `runClaudeImpl` that records `engine`, `sandbox`, `askLockdown`, `mcpConfigPath` and `model` (the same facts `recordMockSpawn` records).
 4. **Native `<select>` options are one line**, and every upstream picker (and `engine-locks.mjs`) is a `<select>`. Board 2's second line goes into the option text: "Gemini CLI (beta) · Can't read the repo", "Copilot (beta) · Not installed" (disabled), "Qwen Code (beta) · Not signed in" (disabled); a broker-locked engine keeps `lockEngineOptions`' suffix ": off while the credential broker is on".
@@ -137,13 +137,13 @@ function normalize(o) {
 - Test: create `test/db-migrate-v89.test.mjs`; modify `test/requirements-store.test.mjs`, `test/cost-budget-requirements.test.mjs`, `test/requirements-helper-store.test.mjs`; any test that pins the ledger's columns (`grep -l "req_cost_ledger" test/`)
 
 **Interfaces (produced):**
-- Columns (all nullable): `req_features.model_json TEXT`; `req_cost_ledger.engine TEXT, step TEXT, cost_kind TEXT, input_tokens INTEGER, output_tokens INTEGER`; `req_turns.engine TEXT, notices_json TEXT`; `req_helper_messages.engine TEXT, notices_json TEXT`; `req_attachments.read_engine TEXT`.
+- Columns (all nullable): `req_features.model_json TEXT`; `req_briefs.engine TEXT` (D18); `req_cost_ledger.engine TEXT, step TEXT, cost_kind TEXT, input_tokens INTEGER, output_tokens INTEGER`; `req_turns.engine TEXT, notices_json TEXT`; `req_helper_messages.engine TEXT, notices_json TEXT`; `req_attachments.read_engine TEXT`.
 - `spec.mjs`: `TURN_KINDS` gains `'model'` (a switch event: payload `{ engine, model, effort, from: { engine, model, effort } }`).
-- `store.mjs`: feature objects gain `model` (`{ engine, model, effort } | null`); `createFeature({ …, model = null })`; `updateFeature` accepts `model` (JSON field); `appendTurn(seq, { kind, payload, model, costUsd, engine = null, notices = null })`; turns read back `engine` and `notices` (`[]` when NULL); `insertHelperMessage({ …, engine = null, notices = null })` and its rows carry them; `updateAttachment` accepts `readEngine`; `recentStepCosts(step, { model, limit = 10 })` (`step` `'look'` → `kind = 'orientation'`, `'round'` → `kind = 'round'`; `cost_usd > 0`, newest first); `recentStepTokens(step, limit = 10)` → `[{ input, output }]` from ledger rows with both token columns set; `featureCostRows(seq)` → ledger rows of the feature, oldest first, with their turn's kind and payload, attachment name, helper message id; `unknownCostCount(fromMs)`.
+- `store.mjs`: feature objects gain `model` (`{ engine, model, effort } | null`); `createFeature({ …, model = null })`; `updateFeature` accepts `model` (JSON field); `appendTurn(seq, { kind, payload, model, costUsd, engine = null, notices = null })`; turns read back `engine` and `notices` (`[]` when NULL); `insertHelperMessage({ …, engine = null, notices = null })` and its rows carry them; `updateAttachment` accepts `readEngine`; `recentStepCosts(step, { model, limit = 10 })` (`step` `'look'` → `kind = 'orientation'`, `'round'` → `kind = 'round'`, `'brief'` → ledger rows with `brief_id` and `model = ?`; `cost_usd > 0`, newest first); `recentStepTokens(step, limit = 10)` → `[{ input, output }]` from ledger rows with both token columns set; `featureCostRows(seq)` → ledger rows of the feature, oldest first, with their turn's kind and payload, attachment name, helper message id; `unknownCostCount(fromMs)`.
 - `cost-budget.mjs`: `recordRequirementsCostDelta({ …, engine = null, step = null, costKind = 'billed', inputTokens = null, outputTokens = null })` — writes a row when `amountUsd > 0`, **and** when `costKind === 'unknown'` (then `amount_usd = 0`); never a row for `amountUsd <= 0` otherwise.
 - Readers that must not see `$0` rows: `recentBriefCosts`, `recentHelperCosts` gain `AND amount_usd > 0`; `stats.mjs requirementsTotals` counts `COUNT(DISTINCT CASE WHEN amount_usd > 0 THEN NULLIF(feature_seq, 0) END)`.
 
-- [ ] **Step 1: Write `test/db-migrate-v89.test.mjs`** on the v88 file's pattern: a fresh DB has the nine columns; a DB at 88 (drop the nine with `ALTER TABLE … DROP COLUMN`, stamp 88, migrate) reaches 89 with them and `shape(db)` equal to a fresh one; one stamped 89 without them is repaired.
+- [ ] **Step 1: Write `test/db-migrate-v89.test.mjs`** on the v88 file's pattern: a fresh DB has the ten columns; a DB at 88 (drop the ten with `ALTER TABLE … DROP COLUMN`, stamp 88, migrate) reaches 89 with them and `shape(db)` equal to a fresh one; one stamped 89 without them is repaired.
 - [ ] **Step 2: Run it** → FAIL (no such column).
 - [ ] **Step 3: Add the columns:**
 
@@ -154,6 +154,7 @@ function normalize(o) {
   req_turns:              { engine: 'TEXT', notices_json: 'TEXT' },   // v89: the harness a step ran on, its D12 notices
   req_helper_messages:    { engine: 'TEXT', notices_json: 'TEXT' },   // v89: as req_turns
   req_attachments:        { fetch_json: 'TEXT', read_engine: 'TEXT' },   // v88: …; v89: the harness that read the file
+  req_briefs:             { engine: 'TEXT' },   // v89: the harness that made the brief (9c D18); NULL = Claude
 ```
 
   and the rung (with a comment in the v88 style) `if (current < 89) repairSchemaGaps(db, schemaGaps(db));`.
@@ -329,9 +330,9 @@ export function launchOptions(o) {
 - `answer`: `featureModel(f, d)`; `callModel(d, { kind: 'round', engine: fm.engine, … })`; the Worca row stores `engine` and `notices`; a `NOT_READY` error becomes the row's error `{ code: 'NOT_READY', message }` (the D13 sentence).
 - `readCall(e, row)`: for a feature file `featureModel(getFeature(owner.id), d)`; for a brief document the scope's `defaultChoice(scope, d).choice`. Off Claude: an inline text (≤ 24 KB) runs `profile: 'none'` with today's prompt; anything else makes no call and throws `SKIPPED_ENGINE` (code) with message "<name> skipped: <Harness> gets files as text only." or "<name> skipped: it is too large for <Harness>."; `failureOf` keeps that code and message; `updateAttachment(id, { readEngine })` on success.
 - `queueSkippedReads(seq, engine, d)`: re-queues the feature's `failed` rows with `error.code === 'SKIPPED_ENGINE'` that `engine` can read (Claude: all; others: text ≤ 24 KB).
-- Brief (gap 1, ⚑): `briefModel(d, scope)` → `defaultChoice(scope, d).choice`; when its engine cannot read the repo, `makeBrief` / refresh refuse with `RequirementsError('CONFLICT', "<Harness> can't read the repo, so it can't make a Product brief. Pick a harness that can as your Default engine.")`; on Codex and Copilot `briefCall` runs `profile: 'repo'` with the swapped tools sentence.
+- Brief (D18): `makeBrief` / refresh take `choice: { engine, model, effort }` (checked with `checkChoice` plus `capabilities(engine).repo`, else `RequirementsError('BAD_INPUT', "<Harness> can't read the repo, so it can't make a Product brief.")`); absent → `briefDefault(scope, d)` = `defaultChoice` restricted to repo-reading harnesses (a Default engine without repo reading → Claude, `fallbackReason` "Your default engine is <Harness>, which can't read the repo, so this brief is made on Claude."). The brief row stores `model` and `engine`. On Codex and Copilot `briefCall` runs `profile: 'repo'` with the swapped tools sentence. A brief document's read uses the brief's stored `{ engine, model }` (before a first make: `briefDefault`).
 
-- [ ] **Step 1: Tests:** Feature chat on Codex locks down; on Gemini stores the keeps-copy notice; a PNG on a Codex feature is not sent anywhere and shows the skipped words; a 30 KB text on Codex says "too large"; a 2 KB text on Gemini is read inline with `askLockdown`; switching the feature to Claude re-queues the PNG (`queueSkippedReads`); a brief with Default engine codex runs read-only with the files server; with Default engine gemini Create is refused with the sentence; every Claude case still matches the golden test.
+- [ ] **Step 1: Tests:** Feature chat on Codex locks down; on Gemini stores the keeps-copy notice; a PNG on a Codex feature is not sent anywhere and shows the skipped words; a 30 KB text on Codex says "too large"; a 2 KB text on Gemini is read inline with `askLockdown`; switching the feature to Claude re-queues the PNG (`queueSkippedReads`); a brief made with `choice` codex runs read-only with the files server and stores `engine: 'codex'`; a `choice` on gemini is refused with the sentence; no `choice` with Default engine gemini makes it on Claude; a brief document is read with the brief's engine; every Claude case still matches the golden test.
 - [ ] **Step 2: Run** the four test files → FAIL on the new cases.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `node tools/test.mjs test/requirements-helper-job.test.mjs test/requirements-attachment-job.test.mjs test/requirements-brief-job.test.mjs test/requirements-9c-steps.test.mjs test/requirements-9c-golden.test.mjs` → pass.
@@ -367,6 +368,7 @@ export function launchOptions(o) {
 - `GET /api/requirements/estimates?engine=&model=` (new) → `{ look, round, recommended: { model, look, round } | null }`, each `{ usd } | { usd: null, reason }` from `stepEstimate`.
 - `POST /api/requirements` — body `model: { engine, model, effort }` (required from 9c's page; when absent, `defaultChoice` is stored, so an API client keeps working); `checkChoice` → 400 with its error. Also on the ticket path.
 - `PUT /api/requirements/:seq/model` (new) — same body, `setFeatureModel(seq, choice, { by }, { ...d, afterSwitch: (s, e) => queueSkippedReads(s, e, d) })`, answers the feature view; 409 while busy, archived or starting. `lookCostUsd` now passes the feature's engine (`featureModel(f, d).engine`).
+- `POST /api/requirements/brief/:scopeType/:scopeKey` — body `choice: { engine, model, effort }` (optional; absent → `briefDefault`); 400 for a harness without repo reading. `GET …/brief/:scopeType/:scopeKey` adds `madeWith: { engine, model, label }` and `briefDefault: { choice, fallbackReason }`; its `estimate` comes from `stepEstimate({ step: 'brief' })` for the default (the page refetches `GET /api/requirements/estimates?engine=&model=&step=brief` on a change; `estimates` gains `step=brief` → `{ brief, recommended: { model, brief } }`).
 - `GET /api/requirements/:seq/costs` (new) → `{ rows: [{ step: 'look' | 'round' | 'read' | 'chat', label, ranOn, usd, kind }], billedUsd, estimatedUsd, unknownSteps, totalUsd, anyEstimated }` with labels "Code look", "Round N" (N = the round's number among the feature's round turns), "File read · <name>", "Feature chat"; `ranOn` "<model label> on <Harness>".
 - Feature view: `feature.model` (the stored choice or the NULL-feature's resolved Claude pair with `legacy: true`), `feature.modelLabel` ("GPT-5.6 Sol on Codex"), `feature.anyEstimated`; every turn and helper message keeps `engine` and `notices`; `interview` keeps its shape for the privacy note, from `featureModel`.
 
@@ -397,10 +399,10 @@ export function launchOptions(o) {
 
 ---
 
-### Task 12: Feature page — the model chip, its dialog, the switch confirm (boards 3, 4)
+### Task 12: Feature page — the model chip, its dialog, the switch confirm (boards 3, 4); the brief page (board 9)
 
 **Files:**
-- Modify: `ui/public/requirements-view.mjs` (the header chips next to `${usd(f.costUsd)} so far`), `ui/public/requirements-model.mjs`, `ui/public/app.js` (the view's `deps` gain `confirm: (o) => confirmModal(o)`), `ui/public/style.css`
+- Modify: `ui/public/requirements-view.mjs` (the header chips next to `${usd(f.costUsd)} so far`; `headStartCard`, `moreMenu`, `briefChips`), `ui/public/requirements-model.mjs`, `ui/public/app.js` (the view's `deps` gain `confirm: (o) => confirmModal(o)`), `ui/public/style.css`
 - Test: extend `test/requirements-view-model.test.mjs`
 
 **Interfaces:**
@@ -408,8 +410,9 @@ export function launchOptions(o) {
 - `modelDialog(doc, { … })` → role=dialog "Model for this feature", sub "Interviews, code looks, file reads and Feature chat use it.", `whoInterviews`, the harness hint, "Applies from the next step. Steps already done keep the model that ran them.", `defaultLine`, `recommendationNote`, **Cancel** / **Save**.
 - `switchConfirm({ from, to, harnesses, files, feature })` → `{ title, message, confirmLabel } | null` in `engineSwitchConfirm`'s format (`ui/public/ask-engine.mjs`): title "Switch this feature to <Harness>?", lead "Worca's next step runs on <Harness> with <model>. Steps already done keep their answers and their cost.", then "\n\nWhat changes:\n• …" with only the lines that apply: "<Harness> can't read the repo: code looks are skipped, for this feature and for the Product brief." (D17) · "Attached files go as text: <a> and <b> are skipped." · "<Harness> keeps its own copy of each step in its history on this computer." · "Your feature's description, answers and attachments are sent to <company>." · "<Harness> reports no cost. Worca estimates it from list prices where it can."; confirm label "Switch to <Harness>". `null` (no confirm) when the target loses nothing and `sameCompany`.
 - Save: `switchConfirm` → `deps.confirm(…)` when not null → `PUT /api/requirements/:seq/model` → repaint.
+- **Brief page (board 9, D18):** `headStartCard`'s box replaces the `req-brief-model` line with `whoInterviews(doc, { …, legend: 'Who makes it', repoOnly: true })` (harnesses without repo reading disabled with " · Can't read the repo"), the `fallbackLine` when `briefDefault.fallbackReason`, and `recommendationNote(doc, { …, kind: 'brief' })` ("A brief works best with a strong model, like <rec> on <Harness>: about $X. You picked <model>: about $Y. Counts toward your limit." + **Use <rec>**); **Create the brief** posts `choice`. The ⋯ menu's **Refresh the brief** opens `briefRefreshDialog(doc, { … })`: title "Refresh the brief", sub "One look at <branch>, read-only, 3 to 5 minutes. Your edits are kept." (a workspace: "One look at each project's default branch, …"), the selects starting from `madeWith` (else the default), "Last made with <model> on <Harness>. Your default: <model> on <Harness>. Use the default" (default part only when it differs; no first part before a first make), the note, **Cancel** / **Refresh the brief**. `briefChips` names what made it: "<model> on <Harness> · $X".
 
-- [ ] **Step 1: Tests:** the chip's text and position; the dialog's parts; Codex → Gemini lists repo, the two skipped files, keeps-copy, Google, cost; Codex → Claude with nothing lost asks only "sent to Anthropic"; Claude → Claude (another model) asks nothing and saves; Cancel saves nothing.
+- [ ] **Step 1: Tests:** the chip's text and position; the dialog's parts; the brief box's selects with Gemini disabled, the Claude fallback line and the brief note; Refresh opens its dialog starting from `madeWith` and posts `choice`; the brief chip text; Codex → Gemini lists repo, the two skipped files, keeps-copy, Google, cost; Codex → Claude with nothing lost asks only "sent to Anthropic"; Claude → Claude (another model) asks nothing and saves; Cancel saves nothing.
 - [ ] **Step 2–4:** run → FAIL, implement, run `node tools/test.mjs test/requirements-view-model.test.mjs test/requirements-view.test.mjs` → pass.
 - [ ] **Step 5: Commit** `Requirements: change a feature's model, with the switch confirm (9c boards 3, 4)`.
 
@@ -443,7 +446,7 @@ export function launchOptions(o) {
 - Modify: `test/requirements-9c-steps.test.mjs`, `tools/verify-requirements-cdp.mjs`, `docs/requirements.md` ("Which model interviews" becomes "Choosing the harness and model"), `docs/changelog/unreleased.md`
 
 - [ ] **Whole steps** (fake `runClaudeImpl` standing in for each harness, gap 3): for codex, gemini and copilot one feature runs create → look → round → file read → Feature chat; assert each launch's `engine`, `sandbox`, `askLockdown`, `mcpConfigPath`, the stored notices, and `GET …/costs`.
-- [ ] **Browser proof** (mock mode): New feature shows Who interviews and the note; the harness list has no Cursor; changing the harness refills Model; the feature chip opens the dialog; Codex → Gemini shows the confirm; the cost chip opens the cost dialog; a code look shows as a step row and **Show what it found** opens its card; light and dark at 1280 px and 390 px (the selects stack under 600 px). `npm run verify:requirements` → all checks passed.
+- [ ] **Browser proof** (mock mode): New feature shows Who interviews and the note; the harness list has no Cursor; changing the harness refills Model; the feature chip opens the dialog; Codex → Gemini shows the confirm; the cost chip opens the cost dialog; a code look shows as a step row and **Show what it found** opens its card; the brief box shows Who makes it and Refresh opens its dialog; light and dark at 1280 px and 390 px (the selects stack under 600 px). `npm run verify:requirements` → all checks passed.
 - [ ] **Docs:** "Choosing the harness and model" (the three selects, the default, the fallback, what each harness can't do, the copy kept in a harness's history, cost words, changing a running feature, the code look as a step), in product language, with "code look" as the one name; the changelog entry.
 - [ ] **Run** `node tools/test.mjs test/requirements-9c-steps.test.mjs` → pass; check that docs and plans carry no local path.
 - [ ] **Commit** `Requirements: whole-step proof, docs and changelog (9c)`.
@@ -484,10 +487,11 @@ export function launchOptions(o) {
 | D15 copies in a harness's history | 4, 5 |
 | D16 security unchanged | 4, 5, 8 |
 | D17 the code look as a step; one name | 12 (confirm line), 13, 14 |
+| D18 the brief's choice (board 9) | 2, 8, 10, 12, 14 |
 | §3 data | 2, 9 |
 | §4 the helper call | 3, 4, 5, 7, 8 |
 | §5 API | 10 |
-| §6 screens (boards 1–8) | 11, 12, 13, 14 |
+| §6 screens (boards 1–9) | 11, 12, 13, 14 |
 | §7 code changes, docs | 2–14 |
 | §8 testing (8.1 guard, 8.2–8.6, 8.7 real harnesses) | 1, 3–14, 15 |
 | §9 #981, #608, broker | 4, 6, 10 |
