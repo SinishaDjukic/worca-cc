@@ -5,6 +5,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { prepare } from '../src/core/db.mjs';
 import { createFeature, getFeature, listTurns, updateFeature, setContext } from '../src/core/requirements/store.mjs';
 import { startOrientation, settled } from '../src/core/requirements/interview.mjs';
 import { ORIENTATION_SYSTEM_PROMPT, orientationSystemPrompt } from '../src/core/requirements/round.mjs';
@@ -118,6 +119,52 @@ test('a Codex feature that is not signed in: a NOT_READY error turn, nothing cha
   assert.ok(err.payload.docsUrl === null || typeof err.payload.docsUrl === 'string');
   assert.equal(getFeature(f.seq).status, 'your_turn');
   assert.ok(!(getFeature(f.seq).costUsd > 0));
+  assert.equal(prepare('SELECT count(*) AS n FROM req_cost_ledger WHERE feature_seq = ?').get(f.seq).n, 0, 'nothing booked, not even an unknown row');
+});
+
+test('a Codex look that is not signed in: the NOT_READY error turn records the engine, nothing booked', async () => {
+  const f = featureOn('codex');
+  const r = fakeRunner([]);
+  startOrientation(f.seq, {}, deps(r, { gate: async () => ({ message: 'Codex is not signed in' }) }));
+  await settled(f.seq);
+  assert.equal(r.calls.length, 0);
+  const err = listTurns(f.seq).find((t) => t.kind === 'error');
+  assert.equal(err.payload.code, 'NOT_READY');
+  assert.equal(err.payload.job, 'look');
+  assert.equal(err.engine, 'codex');
+  assert.equal(prepare('SELECT count(*) AS n FROM req_cost_ledger WHERE feature_seq = ?').get(f.seq).n, 0);
+});
+
+test('a Copilot feature: the look is read-only with a files server', async () => {
+  const f = featureOn('copilot');
+  const r = fakeRunner([LOOK, ROUND1]);
+  startOrientation(f.seq, {}, deps(r));
+  await settled(f.seq);
+  const [look, round] = r.calls;
+  assert.equal(look.engine, 'copilot');
+  assert.equal(look.sandbox, 'read-only');
+  assert.ok(look.mcpConfigPath);
+  assert.ok(look.systemPrompt.includes('read_file, grep and glob'));
+  assert.equal(round.askLockdown, true);
+});
+
+test('a billed attempt then a pre-result failure stays billed in the ledger', async () => {
+  const f = createFeature({ scopeType: 'project', scopeKey: 'shop-1234abcd', title: 'Cancel order', description: 'x' });
+  setContext('project', 'shop-1234abcd', { lookAtCode: false });
+  let n = 0;
+  const runClaudeImpl = async (opts) => {
+    n += 1;
+    if (n === 2) throw new Error('the model crashed');
+    opts.onEvent?.({ type: 'result', raw: { type: 'result', total_cost_usd: 0.1, result: 'not json' }, costUsd: 0.1 });
+    return { text: 'not json at all' };
+  };
+  startOrientation(f.seq, {}, deps({ runClaudeImpl }));
+  await settled(f.seq);
+  assert.equal(n, 2);
+  const rows = prepare('SELECT cost_kind, amount_usd FROM req_cost_ledger WHERE feature_seq = ?').all(f.seq);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].cost_kind, 'billed');
+  assert.ok(rows[0].amount_usd > 0);
 });
 
 test('a NULL-model feature runs on Claude with today\'s options', async () => {

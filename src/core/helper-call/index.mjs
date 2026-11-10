@@ -15,7 +15,7 @@ import { requirementsEngines, capabilities, launchOptions, stepNotices, notReady
 
 /** A helper call that did not produce text. `code`: NOT_READY | NOT_OFFERED | TIMEOUT | the runner's own; `costUsd`/`costKind` are what it spent. */
 export class HelperCallError extends Error {
-  constructor(message, { code, docsUrl = null, costUsd = 0, costKind = 'unknown', cause } = {}) {
+  constructor(message, { code, docsUrl = null, costUsd = 0, costKind = null, cause } = {}) {
     super(message, cause ? { cause } : undefined);
     this.name = 'HelperCallError';
     this.code = code;
@@ -99,7 +99,8 @@ export async function helperCall(args, deps = {}) {
     return notices;
   };
   try {
-    const res = await withRecoveryRetry(() => run({ ...options, signal: ctrl.signal, onEvent }),
+    // Per attempt: a retried call's events (and the guard decisions beside them) are the last attempt's; cost and Codex threads accumulate.
+    const res = await withRecoveryRetry(() => { events.length = 0; return run({ ...options, signal: ctrl.signal, onEvent }); },
       { classes: ['rate_limit'], signal: ctrl.signal, ...(deps.retryEnv ? { env: deps.retryEnv } : {}) });
     const notices = noticesFor(dropSessions());
     return {

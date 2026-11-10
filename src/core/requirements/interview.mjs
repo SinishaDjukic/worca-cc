@@ -8,6 +8,7 @@ import { join, isAbsolute } from 'node:path';
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
 import { helperCall } from '../helper-call/index.mjs';
 import { capabilities, stepNotices } from '../helper-call/profiles.mjs';
+import { addCost } from '../helper-call/cost.mjs';
 import { featureModel } from './feature-model.mjs';
 import { requirementsModel, interviewModel, DEFAULT_INTERVIEW_EFFORT } from './interview-model.mjs';
 export { requirementsModel, interviewModel, DEFAULT_INTERVIEW_EFFORT };
@@ -113,7 +114,7 @@ function startJob(seq, d, fn, by, kind = 'round', { waiting = false } = {}) {
     const job = { kind };
     try { await fn(job); }
     catch (err) {
-      try { failTurn(seq, { code: err?.code || 'FAILED', message: message(err), job: job.kind, docsUrl: err?.docsUrl ?? null }, by, failedStatus(seq, job.kind)); }
+      try { failTurn(seq, { code: err?.code || 'FAILED', message: message(err), job: job.kind, docsUrl: err?.docsUrl ?? null, engine: err?.engine ?? null, notices: err?.notices ?? null }, by, failedStatus(seq, job.kind)); }
       catch (e) { console.error('requirements: could not record the failure:', message(e)); }
     } finally {
       jobs.delete(seq);
@@ -139,6 +140,7 @@ const isArchived = (seq) => getFeature(seq)?.status === 'archived';
 
 /** The one way a failure is recorded: an error turn (with whatever the failed work cost, booked too), then the status. */
 function failTurn(seq, { code, message: msg, job, costUsd = 0, model = null, docsUrl = null, engine = null, notices = null, costKind = 'billed', inputTokens = null, outputTokens = null }, by, status) {
+  // costKind null: the step never ran (not signed in, not offered), so nothing is booked, not even an 'unknown' row.
   const turnId = appendTurn(seq, { kind: 'error', payload: { code, message: msg, job, ...(code === 'NOT_READY' ? { docsUrl } : {}) }, model: model || null, costUsd: costUsd || null,
     engine, notices }, { by });
   charge(seq, turnId, costUsd, model, { engine, step: job, costKind, inputTokens, outputTokens });
@@ -161,6 +163,7 @@ export function assertBudget(d) {
 /** The cost on the feature and its ledger row, in one transaction: both or neither (the brief's book() does the same). */
 function charge(seq, turnId, costUsd, model, extra = null) {
   // 9c: a harness that reports no cost books a $0 'unknown' row (counted apart); a Claude call that reported none books nothing, as before.
+  if (extra && extra.costKind === null) return;
   const unknown = !!extra && extra.costKind === 'unknown' && extra.engine && extra.engine !== 'claude';
   if (!(costUsd > 0) && !unknown) return;
   tx(() => {
@@ -333,7 +336,7 @@ async function orient(f, d, brief = null) {
     return { ...normalizeOrientation(safeParseJson(r.text)), skipped: null, model: model || null, costUsd: r.costUsd, engine: r.engine, notices,
       costKind: r.costKind, inputTokens: r.inputTokens, outputTokens: r.outputTokens };
   } catch (err) {
-    if (err?.code === 'NOT_READY') throw err;   // D13: never a silent switch; the job records the NOT_READY error turn
+    if (err?.code === 'NOT_READY') throw Object.assign(err, { engine });   // D13: never a silent switch; the job records the NOT_READY error turn
     return { summary: '', files: [], skipped: 'failed', error: message(err), model, costUsd: Number(err?.costUsd) || 0, engine,
       notices: err?.notices || null, costKind: err?.costKind, inputTokens: null, outputTokens: null };
   } finally {
@@ -357,7 +360,11 @@ async function runOrientation(seq, d, by, { useBrief = false } = {}) {
   setStatus(seq, 'looking', by);
   notify(d, seq);
   const f = requireFeature(seq);
-  if (getContext(f.scopeType, f.scopeKey).lookAtCode && gitAvailable() && !mockEnabled({})) assertBudget(d);   // only when a call will follow
+  let reads = true;   // a harness that cannot read the repo makes no call (orient), so no budget check either
+  if (getContext(f.scopeType, f.scopeKey).lookAtCode && gitAvailable() && !mockEnabled({})) {
+    try { reads = capabilities((await featureModel(f, d)).engine).repo; } catch { reads = true; }
+    if (reads) assertBudget(d);   // only when a call will follow
+  }
   const o = await orient(f, d, brief);
   if (o.skipped === 'archived') return;   // archived meanwhile: nothing was spent, nothing to record
   const turnId = appendTurn(seq, { kind: 'orientation', payload: { summary: o.summary, files: o.files, skipped: o.skipped, error: o.error || null },
@@ -390,10 +397,11 @@ async function runRound(seq, d, by, { final = false, followUp = null, followUpFi
   let lastErr = null;
   let engine = null;
   let notices = [];
-  const kinds = [];
+  let acc = null;   // the rounds' cost so far, combined by addCost's rule
+  const addPart = (p) => { acc = acc ? addCost(acc, p) : p; };
   let inTok = null;
   let outTok = null;
-  const costKind = () => (kinds.length === 0 ? 'billed' : kinds.every((k) => k === 'unknown') ? 'unknown' : kinds.every((k) => k === 'billed') ? 'billed' : 'estimated');
+  const costKind = () => (acc ? acc.costKind : null);
   const addTokens = (r) => { if (r?.inputTokens != null) inTok = (inTok ?? 0) + r.inputTokens; if (r?.outputTokens != null) outTok = (outTok ?? 0) + r.outputTokens; };
   if (mockEnabled({})) {
     applied = applyRound(f.spec, mockRoundReply(f, isFinal, { followUp: followItems, followUpFiles: fileNames, sources: files.sources }), seqs);
@@ -415,7 +423,7 @@ async function runRound(seq, d, by, { final = false, followUp = null, followUpFi
         assertBudget(d);   // before every call; an earlier attempt is already counted in `cost`
         const r = await callModel(d, { kind: 'round', cwd, prompt, model, engine: fm.engine, ...(effort ? { effort } : {}), timeoutMs: ROUND_TIMEOUT_MS });
         cost += r.costUsd;
-        kinds.push(r.costKind);
+        addPart({ costUsd: r.costUsd, costKind: r.costKind });
         addTokens(r);
         for (const n of r.notices || []) if (!notices.includes(n)) notices.push(n);
         try { applied = applyRound(f.spec, safeParseJson(r.text), seqs); }
@@ -424,7 +432,7 @@ async function runRound(seq, d, by, { final = false, followUp = null, followUpFi
     } catch (err) {
       // Everything spent so far (earlier attempts + the call that threw) is booked on the error turn.
       cost += Number(err?.costUsd) || 0;
-      if (err?.costKind) kinds.push(err.costKind);
+      if (err?.costKind) addPart({ costUsd: Number(err.costUsd) || 0, costKind: err.costKind });
       for (const n of err?.notices || []) if (!notices.includes(n)) notices.push(n);
       fail(err?.code || 'FAILED', message(err), { docsUrl: err?.docsUrl ?? null });
       return;

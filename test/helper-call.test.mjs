@@ -228,3 +228,26 @@ test('aborting via signal stops the call', async () => {
   setTimeout(() => ac.abort(), 10);
   await assert.rejects(p, (e) => e.message === 'stopped' && e.code !== 'TIMEOUT');
 });
+
+test('a retried call returns only the last attempt events and books both attempts cost', async () => {
+  let n = 0;
+  const run = async (o) => {
+    n += 1;
+    o.onEvent({ type: 'assistant', raw: { type: 'assistant', message: { content: [{ type: 'text', text: `attempt ${n}` }] } } });
+    o.onEvent(result({ costUsd: 0.1 }));
+    if (n === 1) throw new Error('429 rate limit exceeded');
+    return { text: 'ok' };
+  };
+  const claudeOptions = { cwd: '/w', prompt: 'p', model: 'sonnet', tools: [], spawnKind: 'aux' };
+  const r = await helperCall({ ...base, engine: 'claude', profile: 'none', claudeOptions }, { run, gate: ok, retryEnv: RETRY });
+  assert.equal(n, 2);
+  assert.equal(r.events.filter((e) => e.type === 'result').length, 1, 'only the second attempt result event');
+  assert.equal(JSON.stringify(r.events).includes('attempt 1'), false);
+  assert.ok(Math.abs(r.costUsd - 0.2) < 1e-9, `both attempts booked: ${r.costUsd}`);
+});
+
+test('a refusal before any spawn carries no cost kind', async () => {
+  const gate = async () => ({ message: 'not signed in' });
+  await assert.rejects(helperCall({ ...base, engine: 'codex', profile: 'none' }, { run: async () => ({ text: '' }), gate }),
+    (e) => e.code === 'NOT_READY' && e.costKind === null && e.costUsd === 0);
+});
