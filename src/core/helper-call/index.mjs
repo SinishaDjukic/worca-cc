@@ -115,6 +115,8 @@ export async function helperCall(args, deps = {}) {
       : base;
     out.costUsd = spent().costUsd;
     out.costKind = spent().costKind;
+    out.inputTokens = inputTokens;
+    out.outputTokens = outputTokens;
     out.notices = notices;
     throw out;
   } finally {

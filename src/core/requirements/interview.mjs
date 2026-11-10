@@ -162,26 +162,49 @@ export function assertBudget(d) {
 
 /** The cost on the feature and its ledger row, in one transaction: both or neither (the brief's book() does the same). */
 function charge(seq, turnId, costUsd, model, extra = null) {
-  // 9c: a harness that reports no cost books a $0 'unknown' row (counted apart); a Claude call that reported none books nothing, as before.
-  if (extra && extra.costKind === null) return;
-  const unknown = !!extra && extra.costKind === 'unknown' && extra.engine && extra.engine !== 'claude';
-  if (!(costUsd > 0) && !unknown) return;
+  if (!bookable(costUsd, extra)) return;
   tx(() => {
     if (costUsd > 0) addFeatureCost(seq, costUsd);
-    recordRequirementsCostDelta({ featureSeq: seq, turnId, amountUsd: costUsd, model: model || null,
-      ...(extra && extra.engine ? { engine: extra.engine, step: extra.step || null, costKind: extra.costKind || 'billed', inputTokens: extra.inputTokens ?? null, outputTokens: extra.outputTokens ?? null } : {}) });
+    recordRequirementsCostDelta({ featureSeq: seq, turnId, amountUsd: costUsd, model: model || null, ...ledgerExtra(extra) });
   });
+}
+
+/** 9c D14: does a call leave a ledger row? Money always does; a harness that ran and reports no cost leaves a $0 'unknown' row
+ *  (counted apart); a call that never ran (costKind null) leaves none; a Claude call that reported none books nothing, as before. */
+export function bookable(costUsd, extra) {
+  if (extra && extra.costKind === null) return false;
+  if (costUsd > 0) return true;
+  return !!extra && extra.costKind === 'unknown' && !!extra.engine && extra.engine !== 'claude';
+}
+
+/** The ledger row's 9c columns for a call: engine, step, cost kind and tokens. Nothing without an engine (the pre-9c shape). */
+export function ledgerExtra(extra) {
+  if (!extra || !extra.engine) return {};
+  return { engine: extra.engine, step: extra.step || null, costKind: extra.costKind || 'billed', inputTokens: extra.inputTokens ?? null, outputTokens: extra.outputTokens ?? null };
+}
+
+/** Fold a call's (or failed call's) result into a running total: money and kind by addCost's rule, tokens summed. */
+export function foldCall(total, part) {
+  const next = total || { costUsd: 0, costKind: null, inputTokens: null, outputTokens: null };
+  if (part && part.costKind) {
+    const p = { costUsd: Number(part.costUsd) || 0, costKind: part.costKind };
+    const c = next.costKind ? addCost({ costUsd: next.costUsd, costKind: next.costKind }, p) : p;
+    next.costUsd = c.costUsd; next.costKind = c.costKind;
+  }
+  if (part?.inputTokens != null) next.inputTokens = (next.inputTokens ?? 0) + part.inputTokens;
+  if (part?.outputTokens != null) next.outputTokens = (next.outputTokens ?? 0) + part.outputTokens;
+  return next;
 }
 
 /** A3 D13: Worca's reply row (`writeRow()`, which returns it), the call's cost on the feature ("$X so far") and its ledger row
  *  (`helper_message_id` = the row's id, no turn), all in one transaction, so the reply never stands without what it cost and the
  *  cost counts toward the spending limit like every requirements call. A call that cost nothing writes the row only. */
-export function chargeHelper(seq, costUsd, model, writeRow) {
+export function chargeHelper(seq, costUsd, model, writeRow, extra = null) {
   return tx(() => {
     const row = writeRow();
-    if (costUsd > 0) {
-      addFeatureCost(seq, costUsd);
-      recordRequirementsCostDelta({ featureSeq: seq, helperMessageId: row.id, amountUsd: costUsd, model: model || null });
+    if (bookable(costUsd, extra)) {
+      if (costUsd > 0) addFeatureCost(seq, costUsd);
+      recordRequirementsCostDelta({ featureSeq: seq, helperMessageId: row.id, amountUsd: costUsd, model: model || null, ...ledgerExtra(extra) });
     }
     return row;
   });
@@ -248,7 +271,7 @@ export async function callModel(d, { kind, cwd, prompt, model, timeoutMs, signal
     run: d.runClaudeImpl,
     ...(d.gate ? { gate: d.gate } : {}), ...(d.engines ? { engines: d.engines() } : {}),
     ...(d.writeFilesMcpConfig ? { writeFilesMcpConfig: d.writeFilesMcpConfig } : {}), ...(d.removeCodexThread ? { removeCodexThread: d.removeCodexThread } : {}),
-    ...(d.scratch ? { scratch: d.scratch } : {}), ...(d.helperMock ? { mock: d.helperMock } : {}),
+    ...(d.scratch ? { scratch: d.scratch } : {}), ...(d.ratesFor ? { ratesFor: d.ratesFor } : {}), ...(d.helperMock ? { mock: d.helperMock } : {}),
   };
   let res;
   if (!engine || engine === 'claude') {

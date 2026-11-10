@@ -35,7 +35,7 @@ import {
   mintAttachmentId, insertAttachment, getAttachment, listAttachments, updateAttachment, addAttachmentCost, deleteAttachmentRow,
   listReadingAttachments, listDownloadingAttachments, recentReadCosts, appendTurn, addFeatureCost, getFeature, usableBrief, listTurns, getBriefById,
 } from './store.mjs';
-import { callModel, maybeFollowUpFiles } from './interview.mjs';
+import { callModel, maybeFollowUpFiles, bookable, ledgerExtra } from './interview.mjs';
 import { attachmentsDir, attachmentFile } from './attachment-paths.mjs';
 import { MAX_DOWNLOAD_JOBS, runDownload, downloadInterrupted } from './attachment-fetch.mjs';
 
@@ -184,18 +184,25 @@ export function stopJobs(ids) {
  *  its cost on the feature, the file and the ledger; a document books under the brief (feature_seq 0), never on
  *  req_briefs.cost_usd. */
 function bookWrites(e, costUsd, model, action, row, via = {}) {
+  // 9c D14: the ledger row names its harness, step ('read' for a read and an ask alike), cost kind and tokens. A caller that knows
+  // no kind (a skipped file, a cancel) leaves the pre-9c shape: money books, nothing else does.
+  const extra = via.costKind === undefined ? null : { engine: via.engine, step: 'read', costKind: via.costKind, inputTokens: via.inputTokens, outputTokens: via.outputTokens };
+  const book = bookable(costUsd, extra);
+  const cols = ledgerExtra(extra);
   if (e.owner.type === 'feature') {
     const turnId = appendTurn(e.owner.id, { kind: 'file', payload: { action, id: e.id, name: row ? row.name : e.name },
       model: model || null, costUsd: costUsd > 0 ? costUsd : null, engine: via.engine || null, notices: via.notices || null }, { by: e.by });
-    if (!(costUsd > 0)) return;
-    addFeatureCost(e.owner.id, costUsd);
-    if (row) addAttachmentCost(row.id, costUsd);
-    recordRequirementsCostDelta({ featureSeq: e.owner.id, turnId, attachmentId: e.id, amountUsd: costUsd, model: model || null });
+    if (!book) return;
+    if (costUsd > 0) {
+      addFeatureCost(e.owner.id, costUsd);
+      if (row) addAttachmentCost(row.id, costUsd);
+    }
+    recordRequirementsCostDelta({ featureSeq: e.owner.id, turnId, attachmentId: e.id, amountUsd: costUsd, model: model || null, ...cols });
     return;
   }
-  if (!(costUsd > 0)) return;
-  if (row) addAttachmentCost(row.id, costUsd);
-  recordRequirementsCostDelta({ briefId: e.owner.id, attachmentId: e.id, amountUsd: costUsd, model: model || null });
+  if (!book) return;
+  if (costUsd > 0 && row) addAttachmentCost(row.id, costUsd);
+  recordRequirementsCostDelta({ briefId: e.owner.id, attachmentId: e.id, amountUsd: costUsd, model: model || null, ...cols });
 }
 
 // ---------------------------------------------------------------- the call (D3)
@@ -227,7 +234,7 @@ function guardCovered(r) {
 }
 /** An inline read has no tools: a tool call on its stream means the call did not run as Worca built it. */
 const inlineClean = (r) => toolCalls(Array.isArray(r.events) ? r.events : []).length === 0;
-const unchecked = (costUsd) => Object.assign(new Error(UNCHECKED), { code: 'UNCHECKED', costUsd });
+const unchecked = (costUsd, r = {}) => Object.assign(new Error(UNCHECKED), { code: 'UNCHECKED', costUsd, costKind: r.costKind, inputTokens: r.inputTokens, outputTokens: r.outputTokens });
 
 /** 9c D12: who reads a file. A feature's file: the feature's harness. A brief document: the harness the brief was made on (its
  *  stored engine and model), else the scope's brief default. A Claude brief reads as the interview always did. */
@@ -315,9 +322,9 @@ async function readCall(e, row, { question = null } = {}) {
     const r = await callModel(d, { ...call, model: model || undefined, engine, ...(im.effort ? { effort: im.effort } : {}),
       systemPrompt: ATTACHMENT_SYSTEM_PROMPT, timeoutMs: d.readTimeoutMs, signal: e.ctrl.signal });
     const costUsd = Number(r.costUsd) || 0;
-    if (inline ? !inlineClean(r) : !guardCovered(r)) throw unchecked(costUsd);
+    if (inline ? !inlineClean(r) : !guardCovered(r)) throw unchecked(costUsd, r);
     for (const n of r.notices || []) if (!notices.includes(n)) notices.push(n);
-    return { text: r.text, costUsd, model, engine, notices };
+    return { text: r.text, costUsd, model, engine, notices, costKind: r.costKind, inputTokens: r.inputTokens, outputTokens: r.outputTokens };
   } catch (err) {
     const out = err instanceof Error ? err : new Error(String(err));
     throw Object.assign(out, { model, engine, notices: out.notices || notices });
@@ -359,8 +366,8 @@ async function runRead(e) {
     const r = await readCall(e, row);
     cost = r.costUsd;
     model = r.model;
-    if (e.cancelled) { tx(() => bookWrites(e, cost, model, 'read', null)); return; }
-    finishRead(e, { summary: normalizeSummary(r.text), costUsd: cost, model, engine: r.engine, notices: r.notices });
+    if (e.cancelled) { tx(() => bookWrites(e, cost, model, 'read', null, { engine: r.engine, notices: r.notices, costKind: r.costKind, inputTokens: r.inputTokens, outputTokens: r.outputTokens })); return; }
+    finishRead(e, { summary: normalizeSummary(r.text), costUsd: cost, model, engine: r.engine, notices: r.notices, costKind: r.costKind, inputTokens: r.inputTokens, outputTokens: r.outputTokens });
   } catch (err) {
     cost = cost || Number(err?.costUsd) || 0;
     model = model || err?.model || null;
@@ -369,13 +376,13 @@ async function runRead(e) {
     if (failure.code === 'FAILED') console.error(`requirements: reading file ${e.id} failed:`, message(err));
     tx(() => {
       if (now && !e.cancelled) updateAttachment(now.id, { status: 'failed', error: { ...failure, at: iso() } });
-      bookWrites(e, cost, model, 'read', e.cancelled ? null : now, { engine: err?.engine, notices: err?.notices });
+      bookWrites(e, cost, model, 'read', e.cancelled ? null : now, { engine: err?.engine, notices: err?.notices, costKind: err?.costKind, inputTokens: err?.inputTokens, outputTokens: err?.outputTokens });
     });
   }
 }
 
 /** D4: a read writes the summary, unless the product owner's text stands: then its summary goes to the history. */
-function finishRead(e, { summary, costUsd, model, engine = null, notices = null }) {
+function finishRead(e, { summary, costUsd, model, engine = null, notices = null, costKind, inputTokens, outputTokens }) {
   const row = getAttachment(e.id);
   const at = iso();
   tx(() => {
@@ -385,7 +392,7 @@ function finishRead(e, { summary, costUsd, model, engine = null, notices = null 
       else patch.summary = summary;
       updateAttachment(row.id, patch);
     }
-    bookWrites(e, costUsd, model, 'read', row, { engine, notices });
+    bookWrites(e, costUsd, model, 'read', row, { engine, notices, costKind, inputTokens, outputTokens });
   });
 }
 
@@ -412,12 +419,12 @@ async function runAsk(e) {
     const r = await readCall(e, row, { question: e.question });
     cost = r.costUsd;
     model = r.model;
-    if (e.cancelled) { tx(() => bookWrites(e, cost, model, 'asked', null)); return; }
-    finishAsk(e, { answer: normalizeAnswer(r.text), costUsd: cost, model, engine: r.engine, notices: r.notices });
+    if (e.cancelled) { tx(() => bookWrites(e, cost, model, 'asked', null, { engine: r.engine, notices: r.notices, costKind: r.costKind, inputTokens: r.inputTokens, outputTokens: r.outputTokens })); return; }
+    finishAsk(e, { answer: normalizeAnswer(r.text), costUsd: cost, model, engine: r.engine, notices: r.notices, costKind: r.costKind, inputTokens: r.inputTokens, outputTokens: r.outputTokens });
   } catch (err) {
     const failure = failureOf(err);
     if (failure.code === 'FAILED') console.error(`requirements: asking about file ${e.id} failed:`, message(err));
-    failAsk(e, failure, cost || Number(err?.costUsd) || 0, model || err?.model || null, { via: { engine: err?.engine, notices: err?.notices } });
+    failAsk(e, failure, cost || Number(err?.costUsd) || 0, model || err?.model || null, { via: { engine: err?.engine, notices: err?.notices, costKind: err?.costKind, inputTokens: err?.inputTokens, outputTokens: err?.outputTokens } });
   }
 }
 
@@ -434,14 +441,14 @@ function failAsk(e, failure, costUsd, model, { book = true, via = {} } = {}) {
 }
 
 /** The answer under the summary, labelled with its question, apart from the summary (`asks`), so a read never overwrites it. */
-function finishAsk(e, { answer, costUsd, model, engine = null, notices = null }) {
+function finishAsk(e, { answer, costUsd, model, engine = null, notices = null, costKind, inputTokens, outputTokens }) {
   tx(() => {
     const row = getAttachment(e.id);
     if (row) {
       updateAttachment(row.id, { ...(row.error && askError(row) ? { error: null } : {}),
         asks: [...row.asks, { question: e.question, answer, by: e.by, at: iso(), costUsd }] });
     }
-    bookWrites(e, costUsd, model, 'asked', row, { engine, notices });
+    bookWrites(e, costUsd, model, 'asked', row, { engine, notices, costKind, inputTokens, outputTokens });
   });
 }
 

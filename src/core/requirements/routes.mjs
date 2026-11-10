@@ -15,6 +15,7 @@ import { RequirementsError, parseFeatureSeq, SCOPE_TYPES } from './spec.mjs';
 import {
   createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature, setEarlyStartReason, listStarts, latestStart,
   getBrief, usableBrief, listBriefs, setBriefSections, deleteBrief, briefUsers, listAttachments, countHelperMessages,
+  unknownCostCount,
 } from './store.mjs';
 import {
   sendMessage, retryMessage, stopHelper, acceptProposal, rejectProposal, askAgain, clearChat, isAnswering, helperView,
@@ -286,10 +287,10 @@ async function interviewInfo(resolve, list) {
 
 /** Requirements spend in the budget window budgetStatus() uses, the total limit (null: none) and the
  *  window's period ('weekly' | 'monthly'), so the page names the right one. */
-function requirementsSpend() {
+export function requirementsSpend() {
   const b = budgetStatus();
   return { windowUsd: requirementsWindowedSpendUsd(b.windowStartMs), totalLimitUsd: b.totalLimitUsd ?? null,
-    resetPeriod: b.resetPeriod === 'weekly' ? 'weekly' : 'monthly' };
+    resetPeriod: b.resetPeriod === 'weekly' ? 'weekly' : 'monthly', unknownSteps: unknownCostCount(b.windowStartMs) };
 }
 
 /** The budget window's period alone (A8: "for this <month | week>"), the list's `spend.resetPeriod` values. It reads only

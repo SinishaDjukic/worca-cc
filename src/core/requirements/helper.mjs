@@ -12,7 +12,7 @@ import {
   getFeature, requireFeature, listTurns, getContext, insertHelperMessage, listHelperMessages, recentHelperCosts,
   getHelperMessage, updateHelperMessage, deleteHelperMessages,
 } from './store.mjs';
-import { isBusy, holdSlot, assertBudget, scratchDir, chargeHelper, callModel, briefFor } from './interview.mjs';
+import { isBusy, holdSlot, assertBudget, scratchDir, chargeHelper, callModel, briefFor, foldCall } from './interview.mjs';
 import { featureModel } from './feature-model.mjs';
 import { promptFiles } from './attachment-job.mjs';
 import { editable, setSection, addCriterion, editCriterion, removeCriterion, setAssumption } from './edits.mjs';
@@ -399,6 +399,7 @@ async function answer(seq, po, d, signal) {
   let model = null;
   let engine = null;
   let notices = [];
+  let total = null;   // 9c D14: the call(s)' cost kind and tokens, for the ledger row
   let error = null;
   if (mockEnabled({})) {
     await mockWait(signal);
@@ -420,6 +421,7 @@ async function answer(seq, po, d, signal) {
         const r = await callModel(d, { kind: 'round', cwd: scratchDir(), prompt, model: model || undefined, engine, systemPrompt: HELPER_SYSTEM_PROMPT, tools: [],
           noSessionPersistence: true, ...(fm.effort ? { effort: fm.effort } : {}), timeoutMs: HELPER_TIMEOUT_MS, signal });
         cost += r.costUsd;
+        total = foldCall(total, r);
         for (const n of r.notices || []) if (!notices.includes(n)) notices.push(n);
         try { reply = normalizeHelperReply(safeParseJson(r.text), ctx); } catch (err) { if (!(err instanceof RoundError)) throw err; lastErr = err; }
       }
@@ -429,6 +431,7 @@ async function answer(seq, po, d, signal) {
       }
     } catch (err) {
       cost += Number(err && err.costUsd) || 0;
+      if (err && err.costKind) total = foldCall(total, err);
       for (const n of (err && err.notices) || []) if (!notices.includes(n)) notices.push(n);
       if (signal.aborted) error = STOPPED;
       else if (err && (err.code === 'NOT_READY' || err.code === 'NOT_OFFERED')) error = { code: err.code, message: err.message };   // D13: the harness is not ready; nothing ran, nothing is booked
@@ -445,7 +448,8 @@ async function answer(seq, po, d, signal) {
   const drafts = reply ? reply.drafts.map((x) => ({ ...x, dropped: moved })) : [];
   chargeHelper(seq, cost, model, () => insertHelperMessage({ featureSeq: seq, role: 'worca', text: reply ? reply.text : '',
     roundTurnId: pending ? pending.turnId : null, drafts, proposals: reply ? reply.proposals : [], error,
-    costUsd: cost > 0 ? cost : null, model, engine, notices }));
+    costUsd: cost > 0 ? cost : null, model, engine, notices }),
+    total && total.costKind && engine ? { engine, step: 'chat', costKind: total.costKind, inputTokens: total.inputTokens, outputTokens: total.outputTokens } : null);
 }
 
 /** D13: the lowest and highest cost of the last 10 helper calls, or null before any. */

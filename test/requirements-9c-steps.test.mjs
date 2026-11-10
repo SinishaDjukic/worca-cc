@@ -418,3 +418,143 @@ test('a brief whose harness is not signed in fails with the NOT_READY sentence: 
   assert.equal(b.error.message, "Codex isn't signed in. Sign in, or change the model.");
   assert.equal(prepare('SELECT count(*) AS n FROM req_cost_ledger WHERE brief_id = ?').get(brief.id).n, 0);
 });
+
+// ---------------------------------------------------------------- Task 9: every row books its harness, step, cost kind and tokens
+
+import { unknownCostCount } from '../src/core/requirements/store.mjs';
+import { requirementsWindowedSpendUsd } from '../src/core/cost-budget.mjs';
+import { requirementsSpend } from '../src/core/requirements/routes.mjs';
+
+const ROWS = (seq) => prepare('SELECT * FROM req_cost_ledger WHERE feature_seq = ? ORDER BY id').all(seq).map((r) => ({ ...r }));
+/** A runner whose one result event carries `event`, then the next reply. */
+function eventRunner(replies, event) {
+  const calls = [];
+  const runClaudeImpl = async (opts) => {
+    calls.push(opts);
+    const reply = replies.shift();
+    opts.onEvent?.({ type: 'result', ...event });
+    return { text: typeof reply === 'string' ? reply : JSON.stringify(reply) };
+  };
+  return { calls, runClaudeImpl };
+}
+const Q = { engines: () => ['claude', 'codex', 'copilot', 'gemini', 'qwen'] };
+const noLook = () => setContext('project', 'shop-1234abcd', { lookAtCode: false });
+
+test('a billed Codex round books engine, step, kind and tokens', async () => {
+  noLook();
+  const f = featureOn('codex');
+  startOrientation(f.seq, {}, deps(eventRunner([ROUND1], { costUsd: 0.05, usage: { input_tokens: 120, output_tokens: 30 } })));
+  await settled(f.seq);
+  const rows = ROWS(f.seq);
+  assert.equal(rows.length, 1);
+  assert.deepEqual([rows[0].engine, rows[0].step, rows[0].cost_kind, rows[0].input_tokens, rows[0].output_tokens], ['codex', 'round', 'billed', 120, 30]);
+  assert.ok(rows[0].amount_usd > 0);
+});
+
+test('an estimated Gemini round counts toward the window spend', async () => {
+  noLook();
+  const f = featureOn('gemini');
+  const t0 = Date.now() - 1000;
+  const before = requirementsWindowedSpendUsd(t0);
+  startOrientation(f.seq, {}, deps(eventRunner([ROUND1], { usage: { input_tokens: 1000, output_tokens: 500 } }), { ratesFor: () => ({ input: 1, output: 2 }) }));
+  await settled(f.seq);
+  const rows = ROWS(f.seq);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].cost_kind, 'estimated');
+  assert.equal(rows[0].engine, 'gemini');
+  assert.ok(rows[0].amount_usd > 0);
+  assert.ok(requirementsWindowedSpendUsd(t0) > before);
+});
+
+test('an unknown Qwen round books a $0 row, leaves the spend alone and raises unknownSteps', async () => {
+  noLook();
+  const f = featureOn('qwen');
+  const t0 = Date.now() - 1000;
+  const spend = requirementsWindowedSpendUsd(t0);
+  const unknown = unknownCostCount(t0);
+  startOrientation(f.seq, {}, deps(eventRunner([ROUND1], {}), Q));
+  await settled(f.seq);
+  const rows = ROWS(f.seq);
+  assert.equal(rows.length, 1);
+  assert.deepEqual([rows[0].engine, rows[0].step, rows[0].cost_kind, rows[0].amount_usd], ['qwen', 'round', 'unknown', 0]);
+  assert.equal(requirementsWindowedSpendUsd(t0), spend);
+  assert.equal(unknownCostCount(t0), unknown + 1);
+});
+
+test('requirementsSpend carries unknownSteps over the budget window', async () => {
+  noLook();
+  const f = featureOn('qwen');
+  const a = requirementsSpend();
+  assert.equal(typeof a.unknownSteps, 'number');
+  startOrientation(f.seq, {}, deps(eventRunner([ROUND1], {}), Q));
+  await settled(f.seq);
+  assert.equal(requirementsSpend().unknownSteps, a.unknownSteps + 1);
+});
+
+test('a Qwen round that never ran (not signed in) books no row, not even an unknown one', async () => {
+  noLook();
+  const f = featureOn('qwen');
+  const r = fakeRunner([ROUND1]);
+  startOrientation(f.seq, {}, deps(r, { ...Q, gate: async () => ({ code: 'NOT_READY', message: "Qwen Code isn't signed in. Sign in, or change the model." }) }));
+  await settled(f.seq);
+  assert.equal(r.calls.length, 0);
+  assert.equal(ROWS(f.seq).length, 0);
+});
+
+test('a failed Codex round books its spend with its kind', async () => {
+  noLook();
+  const f = featureOn('codex');
+  startOrientation(f.seq, {}, deps(eventRunner(['not json', 'still not json'], { costUsd: 0.04, usage: { input_tokens: 10, output_tokens: 2 } })));
+  await settled(f.seq);
+  const rows = ROWS(f.seq);
+  assert.equal(rows.length, 1);
+  assert.deepEqual([rows[0].engine, rows[0].step, rows[0].cost_kind, rows[0].input_tokens], ['codex', 'round', 'billed', 20]);
+});
+
+test('Feature chat books its step: a billed Codex reply and an unknown Qwen reply', async () => {
+  const f = featureOn('codex');
+  await sendMessage(f.seq, { text: 'Who?' }, { by: 'po' }, deps(eventRunner([CHAT], { costUsd: 0.02, usage: { input_tokens: 50, output_tokens: 9 } })));
+  const g = featureOn('qwen');
+  await sendMessage(g.seq, { text: 'Who?' }, { by: 'po' }, deps(eventRunner([CHAT], {}), Q));
+  const [a] = ROWS(f.seq);
+  assert.deepEqual([a.engine, a.step, a.cost_kind, a.input_tokens, a.output_tokens], ['codex', 'chat', 'billed', 50, 9]);
+  assert.ok(a.helper_message_id != null);
+  const [b] = ROWS(g.seq);
+  assert.deepEqual([b.engine, b.step, b.cost_kind, b.amount_usd], ['qwen', 'chat', 'unknown', 0]);
+  assert.ok(b.helper_message_id != null);
+});
+
+test('a file read books step read; an unknown one leaves a $0 row', async () => {
+  const f = featureOn('gemini');
+  addAttachments(own(f), [textFile('policy.md', 'Refunds in 14 days.')], { by: 'po' }, deps(eventRunner([{ summary: 'Refunds within 14 days.' }], {})));
+  await readsSettled(own(f));
+  const rows = ROWS(f.seq);
+  assert.equal(rows.length, 1);
+  assert.deepEqual([rows[0].engine, rows[0].step, rows[0].cost_kind, rows[0].amount_usd], ['gemini', 'read', 'unknown', 0]);
+  const g = featureOn('codex');
+  addAttachments(own(g), [textFile('p.md', 'x')], { by: 'po' }, deps(eventRunner([{ summary: 's' }], { costUsd: 0.01, usage: { input_tokens: 5, output_tokens: 1 } })));
+  await readsSettled(own(g));
+  const [r] = ROWS(g.seq);
+  assert.deepEqual([r.engine, r.step, r.cost_kind, r.input_tokens], ['codex', 'read', 'billed', 5]);
+});
+
+test('a brief look books step brief with its harness and tokens', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'req-9c-brief-cost-'));
+  const g = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf8' });
+  g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't'); g('config', 'commit.gpgsign', 'false');
+  writeFileSync(join(repo, 'README.md'), 'hi'); g('add', '.'); g('commit', '-q', '-m', 'init');
+  const KEY = 'brief-9c0009';
+  setContext('project', KEY, { lookAtCode: true });
+  const lookDir = mkdtempSync(join(tmpdir(), 'req-9c-lookdir-'));
+  const reply = { product: 'A shop.', users: [], terms: [], areas: [], files: [] };
+  const bd = deps(eventRunner([reply], { costUsd: 0.07, usage: { input_tokens: 700, output_tokens: 70 } }), {
+    listProjects: async () => [{ key: KEY, name: 'Shop', path: repo, exists: true }],
+    openLook: async () => ({ cwd: lookDir, commit: 'abc', close: async () => {} }), budget: () => ({ blocked: false }),
+    catalog: async () => ({ models: [{ id: 'gpt-x', harnesses: ['codex'], efforts: [] }] }) });
+  const { job } = await makeBrief('project', KEY, { by: 'po', choice: { engine: 'codex', model: 'gpt-x', effort: null } }, bd);
+  await job; await briefSettled('project', KEY);
+  const b = getBrief('project', KEY);
+  const rows = prepare('SELECT * FROM req_cost_ledger WHERE brief_id = ?').all(b.id);
+  assert.equal(rows.length, 1);
+  assert.deepEqual([rows[0].engine, rows[0].step, rows[0].cost_kind, rows[0].input_tokens, rows[0].output_tokens], ['codex', 'brief', 'billed', 700, 70]);
+});

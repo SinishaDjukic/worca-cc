@@ -23,7 +23,7 @@ import { RequirementsError } from './spec.mjs';
 import { briefDefault, checkChoice, scopeOf } from './feature-model.mjs';
 import { RoundError } from './round.mjs';
 import { REQUIREMENTS_READ_DENY_RULES } from '../ask/deny-rules.mjs';
-import { callModel, interviewModel } from './interview.mjs';
+import { callModel, interviewModel, foldCall, bookable, ledgerExtra } from './interview.mjs';
 import {
   getContext, getBrief, beginBrief, saveBriefResult, failBrief, addBriefCost, listMakingBriefs, recentBriefCosts, listAttachments,
 } from './store.mjs';
@@ -174,12 +174,12 @@ function failureOf(err) {
 }
 
 /** The look's cost on the brief row and its ledger row, in one transaction: both or neither. */
-function book(id, costUsd, model) {
-  if (!(costUsd > 0)) return;
+function book(id, costUsd, model, extra = null) {
+  if (!bookable(costUsd, extra)) return;
   try {
     tx(() => {
-      addBriefCost(id, costUsd);
-      recordRequirementsCostDelta({ briefId: id, amountUsd: costUsd, model: model || null });
+      if (costUsd > 0) addBriefCost(id, costUsd);
+      recordRequirementsCostDelta({ briefId: id, amountUsd: costUsd, model: model || null, ...ledgerExtra(extra) });
     });
   } catch (e) { console.error('requirements: could not book a brief look:', message(e)); }
 }
@@ -215,6 +215,7 @@ function runJob(row, target, scopeType, scopeKey, by, d, choice = null) {
     let effort = null;
     let engine = null;
     let cost = 0;
+    let spent = null;   // 9c D14: the look's cost kind and tokens
     try {
       let fresh;
       let sources;
@@ -246,8 +247,9 @@ function runJob(row, target, scopeType, scopeKey, by, d, choice = null) {
         if (timeoutMs < MIN_CALL_MS) throw coded('TIMEOUT', CHECKOUT_TIMEOUT);   // not "no reply within 0 seconds"
         let reply;
         try { reply = await briefCall(d, { cwd: look.cwd, prompt, model: model || undefined, effort, timeoutMs, engine }); }
-        catch (err) { cost = Number(err?.costUsd) || 0; throw err; }
+        catch (err) { cost = Number(err?.costUsd) || 0; spent = foldCall(null, err); throw err; }
         cost = Number(reply.costUsd) || 0;
+        spent = foldCall(null, reply);
         fresh = normalizeBrief(reply.text, { cwds: cwdsOf(look.cwd), members, sources: docs.map((x) => x.name) });   // while the checkout is still there
         sources = scopeType === 'project'
           ? [{ project: target.dirs[0].project, branch: target.dirs[0].base.branch, ref: target.dirs[0].base.ref, sha: look.commit || null }]
@@ -261,7 +263,7 @@ function runJob(row, target, scopeType, scopeKey, by, d, choice = null) {
       try { failBrief(row.id, failureOf(err)); } catch (e) { console.error('requirements: could not record a failed brief:', message(e)); }
     } finally {
       clearTimeout(timer);
-      book(row.id, cost, model);
+      book(row.id, cost, model, spent && spent.costKind && engine ? { engine, step: 'brief', costKind: spent.costKind, inputTokens: spent.inputTokens, outputTokens: spent.outputTokens } : null);
       if (look) { try { await look.close(); } catch (e) { console.error('requirements: could not close a brief look:', message(e)); } }
       if (jobs.get(key) === self) jobs.delete(key);
       notify(d, scopeType, scopeKey);
