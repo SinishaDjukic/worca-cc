@@ -105,10 +105,10 @@ import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBa
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
 import { outcomeNote } from './run-outcome.mjs';
-import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, createPrLabel, doneStatusWord } from './ship-words.mjs';
+import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, viewPrLabel, createPrLabel, doneStatusWord } from './ship-words.mjs';
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, rowMenuPrs, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
@@ -34086,7 +34086,7 @@ function memberRun(m) {
   // Runs redesign slice 4 (D24): a member's round / Watch PR facts pass through untouched; the run model words them.
   const facts = { round: m.round || (h && h.round) || null, watch: m.watch || (h && h.watch) || null };
   // A chain member carries its PR as `prUrl` (a shared One PR before History has it), a run-groups member as `pr`.
-  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: runPrFor(h, m.pr || (m.prUrl ? { url: m.prUrl } : null)), ...(h.inBase ? { inBase: h.inBase } : {}), ...facts };
+  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: runPrFor(h, m.pr || (m.prUrl ? { url: m.prUrl } : null)), ...(h.inBase ? { inBase: h.inBase } : {}), ...(memberPrsOf(h).length ? { memberPrs: memberPrsOf(h) } : {}), ...facts };
   if (m.status) return { status: m.status, pr: runPrFor(null, m.pr), ...facts };
   return { status: CHAIN_MEMBER_STATUS[m.state] || 'stopped', pr: runPrFor(null, m.prUrl ? { url: m.prUrl } : null), ...facts };
 }
@@ -35036,6 +35036,7 @@ function runsRowMenuItems(r, more) {
   const prUrl = (r.model.pr && r.model.pr.url) || (r.kind === 'chain' && r.model.current && r.model.current.pr && r.model.current.pr.url) || '';
   // An archived row's E brings it back (D7): the run page's word, the bulk restore action.
   const back = r.archived ? planBulk('restore', [t]) : null;
+  const prs = rowMenuPrs(r);
   return [
     { label: 'Select', key: 'toggle', hint: k('Space'), onSelect: () => { runsUi.selecting = true; runsUi.anchorKey = r.key; toggleRunsKey(r.key); } },
     { label: 'Stop', key: 'stop', hint: k('S'), disabled: !m.stop.count, title: m.stop.title, onSelect: () => runBulkAction('stop', [t]) },
@@ -35048,7 +35049,11 @@ function runsRowMenuItems(r, more) {
     ...(adv && r.kind !== 'chain' && r.pipelineId && !(g && !adhoc) ? [{ sep: true }, { label: 'Add to group…', key: 'add-to-group', hint: k('G'),
       onSelect: () => openAddToGroup(more, runsUi.sel.has(r.key) ? pipelineTargets(selectedTargets()) : [{ pipelineId: r.pipelineId, title: r.title }], r.key) }] : []),
     ...(adv && adhoc ? [{ sep: true }, { label: 'Remove from group', key: 'leave-group', hint: k('shift', 'G'), onSelect: () => removeRunFromGroup(r) }] : []),
-    ...(prUrl ? [{ label: VIEW_PR_LABEL, onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
+    // A workspace run with PRs in several repositories opens each one, as the run page's View PRs ▾ does.
+    ...(prs.length ? [
+      ...prs.map((p) => ({ label: p.repo ? `${viewPrLabel(p.number)} · ${p.repo}` : viewPrLabel(p.number), onSelect: () => window.open(p.url, '_blank', 'noopener') })),
+      { label: 'Copy PR links', onSelect: () => copyPrLinks(prs.map((p) => p.url)) },
+    ] : prUrl ? [{ label: VIEW_PR_LABEL, onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
     ...(r.groupKind === 'feature' ? [{ label: 'Open feature', onSelect: () => { location.hash = r.href; } }] : []),
   ];
 }
@@ -37475,10 +37480,13 @@ function openGroupPrMenu(row, anchor) {
           notify(rs.every((r) => r && r.ok) ? { tone: 'ok', title: 'Watching every PR' } : { tone: 'err', title: 'Could not watch every PR' });
         },
         onCopyAll: async (all) => {
-          try { await navigator.clipboard.writeText(all.map((p) => p.url).join('\n')); notify({ tone: 'ok', title: 'PR links copied' }); }
-          catch { notify({ tone: 'err', title: 'Could not copy the links' }); }
+          await copyPrLinks(all.map((p) => p.url));
         },
       } : {}) }) });
+}
+async function copyPrLinks(urls) {
+  try { await navigator.clipboard.writeText(urls.join('\n')); notify({ tone: 'ok', title: 'PR links copied' }); }
+  catch { notify({ tone: 'err', title: 'Could not copy the links' }); }
 }
 async function copyPrLink(url) {
   try { await navigator.clipboard.writeText(url); notify({ tone: 'ok', title: 'PR link copied' }); }
