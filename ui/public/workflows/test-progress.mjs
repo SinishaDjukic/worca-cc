@@ -177,7 +177,7 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s 
   const count = `${p.done} of ${p.total} ${p.total === 1 ? 'try' : 'tries'} done`;
   // D39: board 20's status pill in every state, its dot still once the test is over (green done, grey stopped).
   const pill = el(doc, 'span', st === 'running' ? 'pill-run peach wft-pill' : st === 'done' ? 'pill-run green wft-pill is-parked' : 'pill-run wft-pill is-stopped is-parked');
-  const pillText = `${st === 'running' ? 'Testing' : st === 'done' ? 'Done' : 'Stopped'} · ${count}`;
+  const pillText = `${st === 'running' ? 'Running' : st === 'done' ? 'Done' : 'Stopped'} · ${count}`;
   const pdot = el(doc, 'span', 'pdot');
   pdot.setAttribute('aria-hidden', 'true');
   pill.append(pdot, doc.createTextNode(pillText));
@@ -211,7 +211,7 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s 
     return b;
   };
   if (st === 'running') acts.append(act('Stop testing', () => actions.stop(), 'btn btn-danger', 'wft-pg-stop'));
-  else if (st === 'done') acts.append(act(p.run.kind === 'once' ? 'See the result' : 'See what changed', () => actions.open(), 'btn btn-primary', 'wft-pg-open'));
+  else if (st === 'done') acts.append(act(p.run.kind === 'once' ? 'See the result' : 'See the comparison', () => actions.open(), 'btn btn-primary', 'wft-pg-open'));
   else if (p.run.stopReason === 'setup') {   // board 35: the setup failed: edit the example or try again; no cost limit to change
     const where = p.project && p.project.setupStop;
     if (where && actions.editExample) acts.append(act(EDIT_EXAMPLE, () => actions.editExample(where.exampleId), 'btn', 'wft-pg-edit'));

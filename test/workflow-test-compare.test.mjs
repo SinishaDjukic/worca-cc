@@ -35,7 +35,9 @@ test('labels and titles in the board\'s words', () => {
   assert.deepEqual([useLabel('draft', {}), useLabel('draft', {}, 'column')], ['Your draft', 'Your draft']);
   const run = { kind: 'compare', a: 4, b: 'draft' };
   assert.equal(testTitle(run, ctx), 'Your v5 draft compared with v4');
-  assert.equal(testTitle(run, ctx, { mode: 'testing' }), 'Testing your v5 draft');
+  assert.equal(testTitle(run, ctx, { mode: 'testing' }), 'Your v5 draft compared with v4', 'U-T8 (F20): running, done and stopped share the compare title');
+  assert.equal(testTitle({ kind: 'compare', a: 4, b: 5 }, ctx, { mode: 'testing' }), 'v5 compared with v4');
+  assert.equal(testTitle({ kind: 'compare', a: null, b: 'draft' }, ctx, { mode: 'testing' }), 'Your v5 draft', 'no version A: the tested version alone');
   assert.equal(latestTitle(run, ctx), 'Latest test: your v5 draft compared with v4');
   assert.equal(testTitle({ kind: 'compare', a: 4, b: 5 }, { liveVersionNo: 4, latestVersionNo: 5 }), 'v5 compared with v4');
   assert.equal(testTitle({ kind: 'once', a: null, b: 'draft' }, ctx, { exampleName: 'Bulk invoice export' }), 'Tried once: Bulk invoice export');

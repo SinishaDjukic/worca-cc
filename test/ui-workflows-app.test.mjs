@@ -2828,7 +2828,7 @@ async function bootCompare({ holdPost = false, holdResult = false, sbs = SBS, ch
   await go(booted.window, 'workflows/wf_g/tests/run/7');
   await tick(8);
   const page = booted.window.document.getElementById('wfv-tests');
-  clickEl(booted.window, [...page.querySelectorAll('.wft-acts button')].find((b) => b.textContent === 'See what changed'));
+  clickEl(booted.window, [...page.querySelectorAll('.wft-acts button')].find((b) => b.textContent === 'See the comparison'));
   await tick(6);
   return { ...booted, log, held, page };
 }

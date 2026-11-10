@@ -835,3 +835,26 @@ test('concern 8: a try whose spawn ran without Worca\'s settings (the canary mis
     { kind: 'settings', detail: 'Claude Code did not load Worca\'s settings for this try (an invalid settings file or a managed hooks policy).' });
   assert.equal(worcaTryText('settings'), 'Worca could not run this try: Claude Code did not load Worca\'s settings for it (an invalid settings file or a managed hooks policy), so its guards may not have applied.');
 });
+
+test('U-T8 (F20): the progress title is the compare title while it runs, once done and once stopped; one try: Trying once, then Tried once', async () => {
+  for (const k of Object.keys(fps)) delete fps[k];
+  let hold = true;
+  const h = harness({ plan: () => (hold ? { status: 'done', cost: 0.1, hold: true } : { status: 'done', cost: 0.1 }) });
+  const runner = createTestRunner(h.deps);
+  const ex = example({ tries: 1 });
+  const run = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await until(() => h.started.length === 2);
+  assert.equal(progressOf(WF, run.id).title, 'Your draft compared with v1', 'running');
+  await runner.stop(run.id);
+  assert.equal(progressOf(WF, run.id).title, 'Your draft compared with v1', 'stopped');
+  hold = false;
+  await runner.continueRun(run.id);
+  await runner.idle(run.id);
+  assert.deepEqual([store.readTestRun(run.id).status, progressOf(WF, run.id).title], ['done', 'Your draft compared with v1'], 'done');
+  hold = true;
+  const once = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await until(() => h.started.length === 5);
+  assert.equal(progressOf(WF, once.id).title, 'Trying once: Bulk invoice export');
+  await runner.stop(once.id);
+  assert.equal(progressOf(WF, once.id).title, 'Tried once: Bulk invoice export');
+});

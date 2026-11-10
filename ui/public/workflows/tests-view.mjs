@@ -105,7 +105,7 @@ function latestCard(doc, l, actions, now) {
     el(doc, 'span', l.counts.worse ? 'badge red' : 'badge', `${l.counts.worse} worse`),
     el(doc, 'span', 'badge', `${l.counts.same} same`));
   if (l.status === 'stopped') badges.append(el(doc, 'span', 'badge', 'Stopped early'));
-  c.append(main, badges, el(doc, 'span', 'wft-link', 'See what changed'));
+  c.append(main, badges, el(doc, 'span', 'wft-link', 'See the comparison'));   // U-T8 (F20): not the version diff's words
   return c;
 }
 

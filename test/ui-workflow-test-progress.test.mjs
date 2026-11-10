@@ -10,7 +10,7 @@ import { PAUSE_REFUSED_TEXT, PAUSE_REFUSED_OTHER } from '../src/core/workflow-te
 const click = (el) => el.dispatchEvent(new el.ownerDocument.defaultView.MouseEvent('click', { bubbles: true }));
 const progress = (over = {}, run = {}) => ({
   run: { id: 9, kind: 'compare', a: 4, b: 'draft', tries: 3, status: 'running', stopReason: null, stopDetail: null, exampleIds: [1, 2, 3], ...run },
-  title: 'Testing your v5 draft',
+  title: 'Your v5 draft compared with v4',
   rows: [
     { exampleId: 1, name: 'Offline mode for the field app', label: null, dots: ['passed', 'passed', 'passed'], summary: 'Done · 3 of 3 passed' },
     { exampleId: 2, name: 'Bulk invoice export', label: null, dots: ['passed', 'failed', 'running'], summary: 'Trying 3 of 3' },
@@ -30,8 +30,8 @@ const stoppedLine = (stopReason, stopDetail = null) => boot(progress({}, { statu
 
 test('board 20 while it runs: title, pill, Stop testing, the bar, the facts, the rows', () => {
   const { root, calls } = boot(progress());
-  assert.equal(root.querySelector('.wft-title').textContent, 'Testing your v5 draft');
-  assert.equal(root.querySelector('.wft-pill').textContent, 'Testing · 7 of 18 tries done');
+  assert.equal(root.querySelector('.wft-title').textContent, 'Your v5 draft compared with v4');
+  assert.equal(root.querySelector('.wft-pill').textContent, 'Running · 7 of 18 tries done');
   assert.equal(root.querySelector('.wft-pill').className, 'pill-run peach wft-pill');
   const stop = root.querySelector('.wft-acts .btn-danger');
   assert.equal(stop.textContent, 'Stop testing');
@@ -109,7 +109,7 @@ test('C7: every stop line is one sentence; a stored detail gets its full stop on
   assert.equal(stoppedLine('something-new', 'the try could not go on'), 'Stopped: the try could not go on.', 'an unknown reason reads as an error');
 });
 
-test('done: See what changed (or See the result after Try it once now); two rows per example when both versions are tried (G8)', () => {
+test('done: See the comparison (or See the result after Try it once now); two rows per example when both versions are tried (G8)', () => {
   const done = boot(progress({ done: 18, minutesLeft: null, quick: null, takenMs: 26 * 60000 - 20000 }, { status: 'done' }));
   assert.deepEqual([done.root.querySelector('.wft-pill').textContent, done.root.querySelector('.wft-pill').className], ['Done · 18 of 18 tries done', 'pill-run green wft-pill is-parked']);
   assert.deepEqual(facts(done.root)[0], ['Time taken', '26 min'], 'board 28');
@@ -121,7 +121,7 @@ test('done: See what changed (or See the result after Try it once now); two rows
   assert.equal(done.root.querySelector('.wft-page > .hint'), null, 'nothing left to stop or finish');
   assert.ok(done.root.querySelector('.wft-bar').classList.contains('is-done'), 'board 28: a green bar');
   click(done.root.querySelector('.wft-acts .btn-primary'));
-  assert.deepEqual([done.root.querySelector('.wft-acts .btn-primary').textContent, done.calls], ['See what changed', [['open']]]);
+  assert.deepEqual([done.root.querySelector('.wft-acts .btn-primary').textContent, done.calls], ['See the comparison', [['open']]], 'U-T8 (F20): never "See what changed", the version diff\'s words');
   const once = boot(progress({ done: 1, total: 1, rows: [{ exampleId: 1, name: 'Bulk', label: null, dots: ['passed'], summary: 'Done · 1 of 1 passed' }] }, { kind: 'once', status: 'done', tries: 1 }));
   assert.equal(once.root.querySelector('.wft-acts .btn-primary').textContent, 'See the result');
   assert.equal(once.root.querySelector('.wft-pill').textContent, 'Done · 1 of 1 try done');
@@ -169,13 +169,13 @@ test('stopped by a change during the test (D27): the C18 sentence, and no Finish
 test('a repaint keeps the focus on the same control and announces the new state once (frames repaint the page)', () => {
   const b = boot(progress());
   const live = b.root.querySelector('.wft-pg-live');
-  assert.deepEqual([live.getAttribute('aria-live'), live.textContent], ['polite', 'Testing · 7 of 18 tries done']);
+  assert.deepEqual([live.getAttribute('aria-live'), live.textContent], ['polite', 'Running · 7 of 18 tries done']);
   b.root.querySelector('.wft-acts .btn-danger').focus();
   b.again(progress({ done: 8 }));
   const doc = b.window.document;
   assert.equal(doc.activeElement, b.root.querySelector('.wft-acts .btn-danger'), 'Stop testing keeps the focus');
   assert.equal(b.root.querySelector('.wft-pg-live'), live, 'one live line across repaints');
-  assert.equal(live.textContent, 'Testing · 8 of 18 tries done');
+  assert.equal(live.textContent, 'Running · 8 of 18 tries done');
   b.root.querySelector('.wft-crumb').focus();
   b.again(progress({ done: 18 }, { status: 'stopped', stopReason: 'cap' }));
   assert.equal(doc.activeElement, b.root.querySelector('.wft-crumb'));

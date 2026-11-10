@@ -51,6 +51,7 @@ test('the list: subtitle, the three buttons, How testing works, the latest test'
   assert.equal(latest.querySelector('.hint').textContent, '2 hours ago · 6 examples, 3 tries each · cost $10.26');
   assert.deepEqual(texts(latest, '.badge'), ['2 better', '1 worse', '3 same']);
   assert.deepEqual([...latest.querySelectorAll('.badge')].map((b) => b.className), ['badge green', 'badge red', 'badge']);
+  assert.equal(latest.querySelector('.wft-link').textContent, 'See the comparison', 'U-T8 (F20): never "See what changed", the version diff\'s words');
   // U-T5 F30: a zero count is the plain badge, never green or red.
   const zero = boot(overview({ latest: { ...overview().latest, counts: { better: 0, worse: 0, same: 6 } } })).root.querySelector('.wft-latest');
   assert.deepEqual([...zero.querySelectorAll('.badge')].map((b) => b.className), ['badge', 'badge', 'badge']);
@@ -103,12 +104,12 @@ test('How testing works hides for good when the storage works, and never breaks 
 });
 
 test('a running test shows above the latest one (G13), and no second test can start (G19, board 26)', () => {
-  const { root, calls } = boot(overview({ running: { runId: 9, title: 'Testing your v5 draft', done: 7, total: 18 } }));
+  const { root, calls } = boot(overview({ running: { runId: 9, title: 'Your v5 draft compared with v4', done: 7, total: 18 } }));
   const testBtn = root.querySelector('.wft-head .wft-acts button.btn-primary');
   assert.deepEqual([testBtn.textContent, testBtn.disabled, testBtn.getAttribute('aria-describedby')], ['Test a version', true, 'wft-busy']);
   assert.equal(root.querySelector('#wft-busy').textContent, 'A test of this workflow is running. Wait for it, or stop it first.');
   const card = root.querySelector('.wft-running');
-  assert.equal(card.querySelector('.wft-latest-title').textContent, 'Testing your v5 draft · 7 of 18 tries done');
+  assert.equal(card.querySelector('.wft-latest-title').textContent, 'Your v5 draft compared with v4 · 7 of 18 tries done');
   assert.equal(card.querySelector('.wft-link').textContent, 'See progress');
   assert.equal(card.querySelector('.wft-run-dot').getAttribute('aria-hidden'), 'true', 'the peach running dot (board 26)');
   click(card);

@@ -30,11 +30,11 @@ const bWords = (use, ctx) => {
   return use === 'draft' ? (s === 'Your draft' ? 'your draft' : `your ${s}`) : s;
 };
 
-/** "Your v5 draft compared with v4", "Testing your v5 draft", "Tried once: <example>" / "Trying once: <example>". */
+/** "Your v5 draft compared with v4", "v5 compared with v4" (running, done and stopped alike, U-T8 F20); one try:
+ *  "Trying once: <example>" while it runs (mode 'testing'), "Tried once: <example>" after. */
 export function testTitle(run, ctx = {}, { mode = 'compare', exampleName = '' } = {}) {
   if (run.kind === 'once') return `${mode === 'testing' ? 'Trying' : 'Tried'} once: ${exampleName || 'an example'}`;
   const b = bWords(run.b, ctx);
-  if (mode === 'testing') return `Testing ${b}`;
   const head = run.b === 'draft' ? cap1(b) : b;   // "Your v5 draft …", but "v5 compared with v4"
   return run.a == null ? head : `${head} compared with ${useLabel(run.a, ctx)}`;
 }
