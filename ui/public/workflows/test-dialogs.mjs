@@ -81,20 +81,22 @@ function keepRow(doc, id, text, detail = null) {
   return { row: l, box };
 }
 
-/** F33: a run's title as the example's name: its first sentence, else up to 60 characters cut at a word end. */
-export function defaultExampleName(title) {
+/** F33: a run's title as the example's name: its first sentence, else up to 60 characters cut at a word end. With no
+ *  words left, "Example from {when}" (the run's date as the page writes it), never an empty name. */
+export function defaultExampleName(title, { when = null } = {}) {
   let t = String(title || '').trim();
   const stop = /[.!?](?:\s|$)/.exec(t);
   if (stop) t = t.slice(0, stop.index);
   if (t.length > 60) { const cut = t.slice(0, 61); const sp = cut.lastIndexOf(' '); t = sp > 0 ? cut.slice(0, sp) : t.slice(0, 60); }
-  return t.replace(/[\s,;:–-]+$/, '').trim();
+  t = t.replace(/[\s,;:–-]+$/, '').trim();
+  return /[\p{L}\p{N}]/u.test(t) ? t : `Example from ${when || 'a past run'}`;   // no letter or digit: no words left
 }
 
 /** Board 3: "Use this run as a test example" (C4: the verdict is the version's result until it is tested, D29). Board 38
  *  (D65): a project run's example starts where the run started, and its setup is filled in from the project's. */
 export function openFromRunDialog({ doc, win, past, onSubmit, dateText = (s) => s }) {
   const name = el(doc, 'input');
-  name.type = 'text'; name.id = 'wft-fr-name'; name.maxLength = 120; name.value = defaultExampleName(past.title);
+  name.type = 'text'; name.id = 'wft-fr-name'; name.maxLength = 120; name.value = defaultExampleName(past.title, { when: past.at ? dateText(past.at) : null });
   const nf = past.files.length;
   const nq = past.qa.length;
   const keep = el(doc, 'div', 'wft-keep');
@@ -196,7 +198,7 @@ function reuseWords(s, other, dateText) {
     return same ? `the ${count}${word} of ${name} (your draft is the same)` : `${name}'s ${count}${word}`;
   };
   return s.reusable >= s.want
-    ? { lead: `Use ${results(null)} from ${when}. `, rest: `Nothing in ${name} or in the examples has changed since, so only ${otherShort} needs to be tried.${saves}` }
+    ? { lead: `Use ${results(s.want === 1 ? 1 : null)} from ${when}. `, rest: `Nothing in ${name} or in the examples has changed since, so only ${otherShort} needs to be tried.${saves}` }
     : { lead: `Use ${results(s.reusable)} from ${when}. `, rest: `Nothing in ${name} or in those examples has changed since, so only the other tries are made.${saves}` };
 }
 

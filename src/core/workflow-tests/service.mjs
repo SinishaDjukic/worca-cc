@@ -25,7 +25,7 @@ import { changedSinceStart } from './changed.mjs';
 import { useGraph, useFingerprint } from './uses.mjs';
 import { testTargetOf, exampleReadiness } from './try-body.mjs';
 import { ensureStartCommit, treeBytes, freeDiskBytes, removeTryCheckout, pinStart, listBranches, behindCount, headOf, commitExists,
-  commitDate, commitSubject, remoteUrl } from './project-copy.mjs';
+  commitDate, copySubject, remoteUrl } from './project-copy.mjs';
 import { parseRemoteUrl, forgeOf as forgeOfRemote, FORGE_LABEL } from '../forge.mjs';
 import { pushRemoteOf } from './guard-calls.mjs';
 import { leftOutText, folderMissingText, folderProjectText, notRegisteredText, diskRefusalText, diskRefusalOnceText, PAST_RUN_REFUSALS } from '../../shared/workflow-tests/project-text.mjs';
@@ -179,10 +179,10 @@ export async function projectBranches(key) {
   return { branches: (await listBranches(reg.path)).map((b) => ({ ...b, short: b.sha.slice(0, 7) })) };
 }
 
-/** F26: the subject of a start's commit, read live from the project's folder (read only); null when it cannot be read. */
-export async function subjectOfStart({ key, sha }) {
-  const { reg } = await projectStateOf({ key });
-  return reg && reg.exists ? commitSubject(reg.path, sha) : null;
+/** F26: the subject of a start's commit, read from Worca's copy of the project (read only, kept per commit); null when the
+ *  copy does not have it. Never the person's folder (fix round 1). */
+export function subjectOfStart({ key, sha }) {
+  return copySubject(key, sha);
 }
 
 /** Board 32 / 38: an example's project as the page shows it, with its drift (D63). The name: projectNameOf. `behindMemo`
@@ -201,7 +201,7 @@ export async function projectView(project, { projects = null, behindMemo = null 
     }
   }
   return { key: project.key, name: reg ? reg.name : projectNameOf(project.key, { pinName: project.name }), path: reg ? reg.path : null,
-    state, startSha: project.startSha, subject: reg && reg.exists ? await commitSubject(reg.path, project.startSha) : null,   // F26
+    state, startSha: project.startSha, subject: await copySubject(project.key, project.startSha),   // F26: from Worca's copy
     short: project.startSha.slice(0, 7), startRef: project.startRef, startAt: project.startAt, changes: !!project.changesSha256,
     setupCmd: project.setupCmd, behind };
 }
@@ -393,12 +393,12 @@ export async function pastRunSummary(pipelineId, { registry = loadAgentRegistry(
   if (start) {
     const projects = await listProjects();
     const reg = projects.find((p) => p.key === row.project_key) || null;
-    project = { key: row.project_key, name: projectNameOf(row.project_key, { projects }), startSha: start.sha, short: start.sha.slice(0, 7), startRef: start.ref, subject: reg && reg.exists ? await commitSubject(reg.path, start.sha) : null,
+    project = { key: row.project_key, name: projectNameOf(row.project_key, { projects }), startSha: start.sha, short: start.sha.slice(0, 7), startRef: start.ref, subject: await copySubject(row.project_key, start.sha),
       startAt: (reg && reg.exists ? await commitDate(reg.path, start.sha) : null) || row.started_at || null, setupCmd: setupOf(row.project_key) };
   }
   return {
     pipelineId: row.id, workflowId, workflowName: target ? target.row.name : (tpl.name || ''),
-    title: row.title || '', request: row.prompt || '', files: extrasOf(row.id).map((p) => basename(p)), qa: pastAnswers(row.id),
+    title: row.title || '', at: row.started_at || null, request: row.prompt || '', files: extrasOf(row.id).map((p) => basename(p)), qa: pastAnswers(row.id),
     use, useLabel: use === 'draft' ? 'your draft' : useLabel(use, ctx), testable: !reason, reason,
     reasonText: reason ? NOT_TESTABLE_REASONS[reason] : null,
     project,

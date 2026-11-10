@@ -32,17 +32,17 @@ const RETRY_CODES = new Set(['EPERM', 'EBUSY', 'ENOTEMPTY', 'EACCES']);
  *  does in what it prints; Node's JS realpath keeps them, and the same folder would read as two. */
 const realpathNative = process.platform === 'win32' ? realpathSync.native : realpathSync;
 
-async function git(cwd, args, { env = null } = {}) {
+async function git(cwd, args, { env = null, timeout = GIT_TIMEOUT_MS } = {}) {
   const e = { ...(env || process.env) };
   if (!env) for (const k of GIT_DIR_ENV) delete e[k];
   // Security G2 (git-guard.mjs): repository-local config never picks a command here either, in the person's project or in
   // Worca's copy (whose config a try's setup and agent write). The guard lists config over this call's own env (copyGit's
   // try env included) and refuses a repository it cannot make safe; that refusal is a failed git call.
   let guarded;
-  try { guarded = await guardedGitEnv(cwd, { env: e, timeout: GIT_TIMEOUT_MS }); }
+  try { guarded = await guardedGitEnv(cwd, { env: e, timeout }); }
   catch (err) { return { ok: false, code: -1, stdout: '', stderr: String(err?.message || err) }; }
   return new Promise((done) => {
-    execFile('git', args, { cwd, env: guarded, timeout: GIT_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+    execFile('git', args, { cwd, env: guarded, timeout, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
       done({ ok: !err, code: err ? (typeof err.code === 'number' ? err.code : -1) : 0, stdout: String(stdout || ''), stderr: String(stderr || '') });
     });
   });
@@ -52,14 +52,14 @@ async function git(cwd, args, { env = null } = {}) {
  * git in Worca's copy (or a folder being made into one). GIT_CEILING_DIRECTORIES stops git's walk up at testCopiesRoot():
  * a copy whose .git is missing or broken must fail, never act on an enclosing repository (a worcaHome inside a repo).
  */
-function copyGit(dir, args, { env = null } = {}) {
-  if (gitSeam) { const r = gitSeam(dir, args); if (r) return Promise.resolve(r); }   // tests only (_testing.seamGit)
+function copyGit(dir, args, { env = null, timeout = GIT_TIMEOUT_MS } = {}) {
+  if (gitSeam) { const r = gitSeam(dir, args, { timeout }); if (r) return Promise.resolve(r); }   // tests only (_testing.seamGit)
   const e = { ...(env || process.env) };
   if (!env) for (const k of GIT_DIR_ENV) delete e[k];
   e.GIT_CEILING_DIRECTORIES = resolve(testCopiesRoot());
   // Final review I2: the copy's config is written by tries (a setup, an agent), so Worca's own git here runs none of its
   // hooks or fsmonitor and carries the try guard's env (no token, no sign-in).
-  return git(dir, withSafeGitArgs(args), { env: tryGitEnv({ env: e }) });
+  return git(dir, withSafeGitArgs(args), { env: tryGitEnv({ env: e }), timeout });
 }
 /** A test seam: (dir, args) → a git result to use instead of running git, or null to run it. */
 let gitSeam = null;
@@ -502,6 +502,7 @@ async function commitChanges(dir, base, patch, at) {
 async function pinRef(dir, sha) {
   const r = await copyGit(dir, ['update-ref', `refs/worca-tests/${sha}`, sha]);
   if (!r.ok) throw testError(`Worca could not keep the start point in its copy of the project: ${firstLine(r.stderr)}`, 'NOT_READY');
+  subjects.delete(subjectKey(dir, sha));   // a kept "not there yet" ends now
 }
 
 /**
@@ -804,10 +805,40 @@ export async function remoteUrl(projectDir, name) {
 }
 
 /** F26: a commit's subject line (`git show -s --format=%s`), or null when it cannot be read. Read only; never throws. */
-export async function commitSubject(projectDir, sha) {
-  if (!isSha(sha)) return null;
-  const r = await git(projectDir, ['show', '-s', '--format=%s', sha]);
-  return r.ok && r.stdout.trim() ? r.stdout.trim().split(/\r?\n/)[0].slice(0, 200) : null;
+export function commitSubject(projectDir, sha) {
+  return subjectOf(projectDir, sha, git);
+}
+
+/** F26 (fix round 1): a start's subject from Worca's copy of the project, where the pinned start is kept; never from the
+ *  person's folder. null when there is no copy or the copy does not have the commit. Read only; never throws. */
+export function copySubject(key, sha) {
+  if (!PROJECT_KEY_RE.test(String(key ?? '')) || !isSha(sha)) return Promise.resolve(null);
+  const dir = testCopyDirFor(key);
+  return existsSync(join(dir, '.git')) ? subjectOf(dir, sha, copyGit) : Promise.resolve(null);
+}
+
+// F26 (fix round 1): the subject is display only and never changes for a commit, so one read per (folder, commit) is kept
+// in memory, at most SUBJECTS_MAX (the oldest goes first), with a short timeout. A miss is kept SUBJECT_MISS_MS only (the
+// commit may be pinned later; pinRef ends it at once). A read in flight is shared.
+const SUBJECT_TIMEOUT_MS = 3_000;
+const SUBJECTS_MAX = 500;
+const SUBJECT_MISS_MS = 30_000;
+const subjects = new Map();
+const subjectKey = (dir, sha) => `${resolve(dir)}\0${String(sha).toLowerCase()}`;
+function subjectOf(dir, sha, run) {
+  if (!isSha(sha)) return Promise.resolve(null);
+  const k = subjectKey(dir, sha);
+  const hit = subjects.get(k);
+  if (hit && (hit.kept || Date.now() - hit.at < SUBJECT_MISS_MS)) { subjects.delete(k); subjects.set(k, hit); return hit.p; }
+  const entry = { at: Date.now(), kept: false, p: null };
+  entry.p = run(dir, ['show', '-s', '--format=%s', sha], { timeout: SUBJECT_TIMEOUT_MS }).then((r) => {
+    const s = r.ok && r.stdout.trim() ? r.stdout.trim().split(/\r?\n/)[0].slice(0, 200) : null;
+    entry.kept = s !== null;
+    return s;
+  }, () => null);
+  subjects.set(k, entry);
+  while (subjects.size > SUBJECTS_MAX) subjects.delete(subjects.keys().next().value);
+  return entry.p;
 }
 
 /** A commit's committer date as ISO, or null. Read only. */
@@ -862,4 +893,5 @@ export const _testing = Object.freeze({
   commitWhole, copyBusy, isDamage, remakeCopy,
   /** Use `fn(dir, args)` before every git call in the copy; its non-null result stands for the call. Returns the undo. */
   seamGit(fn) { gitSeam = fn; return () => { gitSeam = null; }; },
+  SUBJECTS_MAX, clearSubjects: () => subjects.clear(), subjectsSize: () => subjects.size,
 });

@@ -3160,3 +3160,41 @@ test('U-T14 (F35): a test page writes /run/<id>; a reload on it comes back to it
   assert.deepEqual([...page.querySelectorAll('.wft-ex-open')].map((b) => b.textContent), ['Bulk invoice export'], 'the list');
   assert.equal(lost.window.location.hash, '#workflows/wf_g/tests');
 });
+
+test('Fix round 1 (F35): an example that finishes loading, or a gone test that falls back, after the person left Workflows never rewrites the other view\'s address', async () => {
+  const holds = { projects: null, run: null };
+  const held = (k, answer) => new Promise((done) => { holds[k] = () => done(answer); });
+  const b = await bootVersions({ extra: (url) => {
+    if (url.endsWith('/api/workflows/wf_g/tests')) return okJson(TESTS_OVERVIEW);
+    const ex = /\/api\/workflows\/wf_g\/tests\/examples\/(\d+)$/.exec(url);
+    if (ex) return okJson({ example: fullExample(Number(ex[1]), 'Bulk invoice export') });
+    if (url.includes('/api/workflows/wf_g/tests/plan')) return okJson({ a: null, b: { use: 'draft', perTryUsd: 0.5 }, examples: 0, tries: 1 });
+    if (url.includes('/api/workflow-tests/projects')) return held('projects', { ok: true, status: 200, json: async () => ({ projects: [] }) });
+    if (url.includes('/api/workflows/wf_g/tests/runs/999')) return held('run', { ok: false, status: 404, json: async () => ({ error: 'no test 999' }) });
+    return null;
+  } });
+  const w = b.window;
+  const doc = w.document;
+  const replaced = [];
+  const real = w.history.replaceState.bind(w.history);
+  w.history.replaceState = (s, t, url) => { replaced.push(String(url)); return real(s, t, url); };
+  await go(w, 'workflows/wf_g');
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="tests"]'));
+  await tick(6);
+  clickEl(w, [...doc.getElementById('wfv-tests').querySelectorAll('.wft-ex-open')].find((x) => x.textContent === 'Bulk invoice export'));
+  await tick(6);
+  assert.ok(holds.projects, 'the example editor waits for the project list');
+  await go(w, 'runs');
+  replaced.length = 0;
+  holds.projects();
+  await tick(10);
+  assert.deepEqual([w.location.hash, replaced], ['#runs', []], 'the late example load leaves the Runs address alone');
+  await go(w, 'workflows/wf_g/tests/run/999');
+  await tick(4);
+  assert.ok(holds.run, 'the gone test is being read');
+  await go(w, 'runs');
+  replaced.length = 0;
+  holds.run();
+  await tick(10);
+  assert.deepEqual([w.location.hash, replaced], ['#runs', []], 'the late 404 fallback leaves the Runs address alone');
+});

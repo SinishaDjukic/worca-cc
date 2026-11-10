@@ -3953,10 +3953,11 @@ function wftRender() {
 }
 // Final review M6: the opened diffs (up to 5 MB each) are let go on every move; the side by side reads them again.
 function wftShow(view, extra = {}) { wftPatchCut.clear(); wft = { ...wft, view, data: null, patches: null, ...extra }; wftSyncHash(); void wftRefresh(); }
-/** F35: the address names the Tests page that shows, so a reload comes back to it. replaceState: no history entry, Back and Forward keep their meaning. */
+/** F35: the address names the Tests page that shows, so a reload comes back to it. replaceState: no history entry, Back and Forward keep their meaning.
+ *  Shown only while the Workflows view is (els.tests stays unhidden when it is left): a late load never rewrites another view's address. */
 function wftSyncHash() {
   const els = wfvEls();
-  const shown = !!(els.tests && !els.tests.hidden) && flagOn('workflowTests');
+  const shown = currentView() === 'workflows' && !!(els.tests && !els.tests.hidden) && flagOn('workflowTests');
   const h = testsAddress({ workflowId: wftWorkflowId(), shown, view: wft.view, runId: wft.runId, exampleId: wft.example ? wft.example.id : null });
   if (window.location.hash === h || (!shown && !/^#workflows\/[A-Za-z0-9_-]+\/tests(\/|$)/.test(window.location.hash))) return;
   try { window.history.replaceState(null, '', h); } catch { /* sandboxed */ }

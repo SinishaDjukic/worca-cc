@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { readFileSync } from 'node:fs';
 import { renderTestsPage, exampleHint, HOW_HIDDEN_KEY } from '../ui/public/workflows/tests-view.mjs';
 
 const click = (el) => el.dispatchEvent(new el.ownerDocument.defaultView.MouseEvent('click', { bubbles: true }));
@@ -301,14 +302,29 @@ test('U-T14 (F31): "Tests are not available" for an unsaved workflow has a "Save
   assert.equal(other.root.querySelector('.wft-empty button'), null);
 });
 
-test('U-T14 (F52, board UfMockNote): the list has the mock-mode note first under the title only in mock mode', () => {
+test('U-T14 (F52, board UfMockNote): the list has the mock-mode note under the subtitle and buttons only in mock mode', () => {
   const { window } = new JSDOM('<!doctype html><body><section id="root"></section></body>');
   const root = window.document.getElementById('root');
   renderTestsPage(root, overview(), {}, { doc: window.document, dateText, now: NOW, mock: true });
   const note = root.querySelector('.wft-mock-note');
   assert.equal(note.textContent, 'Mock mode: the results are canned answers, not a real verdict.');
-  assert.equal(root.querySelector('.wft-page').firstElementChild, note);
+  // Fix round 1 (board M4): below the subtitle and the buttons, above the rest of the page; plain text with an info icon.
+  assert.ok(note.previousElementSibling.classList.contains('wft-head'), 'right under the subtitle and the buttons');
+  assert.ok(note.previousElementSibling.querySelector('.subtitle') && note.previousElementSibling.querySelector('.wft-acts'));
+  assert.equal(note.classList.contains('hint'), false, 'ink text, not a grey hint');
+  assert.equal(note.getAttribute('role'), 'note');
+  assert.ok(note.querySelector('svg'), 'an information icon');
   assert.equal(boot(overview()).root.querySelector('.wft-mock-note'), null);
+});
+
+test('Fix round 1 (F52, board M4): the mock note is plain ink text with a blue information icon, not a coloured box', () => {
+  const css = readFileSync(new URL('../ui/public/workflows/workflow-tests.css', import.meta.url), 'utf8');
+  const rule = (sel) => { const m = new RegExp(`(?:^|\\n|\\})${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`).exec(css); return m ? m[1] : ''; };
+  const note = rule('.wft-mock-note');
+  assert.match(note, /color:var\(--ink\)/);
+  assert.match(note, /gap:8px/);
+  assert.doesNotMatch(note, /background|border/, 'not a box');
+  assert.match(rule('.wft-mock-note .ic'), /color:var\(--blue-ink-strong\)/);
 });
 
 test('U-T14 (F34, board UfMockNote): tries that replaced a "Good" past mark and failed keep an amber reminder under the cell; passing tries do not', () => {

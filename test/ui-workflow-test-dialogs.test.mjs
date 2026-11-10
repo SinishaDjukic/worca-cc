@@ -3,8 +3,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog, defaultPicks, scriptCaution, engineNoteLine, fileServerOffLine }
-  from '../ui/public/workflows/test-dialogs.mjs';
+import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog, defaultPicks, scriptCaution, engineNoteLine, fileServerOffLine,
+  defaultExampleName } from '../ui/public/workflows/test-dialogs.mjs';
 import * as serverConnectors from '../src/core/workflow-tests/connectors.mjs';
 import { runStatusBadge } from '../ui/public/workflows/test-ui.mjs';
 import { AUTO_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
@@ -64,6 +64,7 @@ test('one file, no questions, no name: the words follow, and a name is needed', 
   const { doc, win } = dom();
   openFromRunDialog({ doc, win, past: past({ files: ['usage.csv'], qa: [], title: '' }), onSubmit: async () => ({ ok: false, error: 'Never sent.' }) });
   assert.deepEqual([...doc.querySelectorAll('.wft-keep .wft-chk')].map((l) => l.textContent), ['The request and its file (usage.csv)']);
+  doc.querySelector('#wft-fr-name').value = '';   // Fix round 1 (F33): an empty title now gives a default name; the person clears it
   click(doc.querySelector('.wft-dlg-ok'));
   await tick();
   assert.equal(doc.querySelector('.wft-dlg-error').textContent, 'Give the example a name.');
@@ -527,12 +528,38 @@ test('U-T14 (F28): "ready in about 1 minute", and "Use v4\'s result" for one reu
   assert.equal(some.doc.querySelector('.wft-reuse .wft-chk').textContent.split('. ')[0], "Use v4's 6 results from 19 Oct");
 });
 
+test('Fix round 1 (F28): one example, "1 · quick look", its one result reused in full: "Use v4\'s result", also for an identical draft', async () => {
+  const one = openTv({ examples: [{ id: 1, name: 'A', tries: 3 }] });
+  await tick();
+  click([...one.doc.querySelectorAll('.wft-tv-tries .seg button')].find((b) => b.textContent === '1 · quick look'));
+  await tick();
+  assert.deepEqual([one.plans.at(-1).examples, one.plans.at(-1).tries], ['1', '1']);
+  assert.equal(one.doc.querySelector('.wft-reuse .wft-chk').textContent.split('. ')[0], "Use v4's result from 19 Oct");
+  assert.equal(estRows(one.doc).some((r) => r[0] === 'v4 result from 19 Oct'), true, JSON.stringify(estRows(one.doc)));
+  const same = openTv({ options: SAME_OPTIONS, a: 3, b: 'draft', examples: [{ id: 1, name: 'A', tries: 1 }] },
+    { b: { use: 'draft', sameAs: 4, label: 'Your draft (same as v4)', short: 'your draft (same as v4)', want: 1, reusable: 1, reusableAt: '2026-10-20T10:00:00Z', perTryUsd: 0.52, savesUsd: 0.52 } });
+  await tick();
+  const boxB = same.doc.querySelector('#wft-tv-reuse-b');
+  assert.ok(boxB.closest('label').textContent.startsWith('Use the result of v4 (your draft is the same) from 19 Oct. '), boxB.closest('label').textContent);
+});
+
 test('U-T14 (F33): the default example name is the first sentence, or 60 characters cut at a word', () => {
   const nameFor = (title) => { const { doc, win } = dom(); openFromRunDialog({ doc, win, past: past({ title }), onSubmit: async () => ({ ok: true }) }); return doc.querySelector('#wft-fr-name').value; };
   assert.equal(nameFor('Add a saved filter to the reports page. Keep the existing layout and the export button working.'), 'Add a saved filter to the reports page');
   assert.equal(nameFor('Make the invoice totals round the same way in the app, the PDF and the CSV export for every customer'), 'Make the invoice totals round the same way in the app, the');
   assert.equal(nameFor('Ticket 482: invoice totals round wrong'), 'Ticket 482: invoice totals round wrong');
   assert.equal(nameFor('x'.repeat(80)), 'x'.repeat(60));
+});
+
+test('Fix round 1 (F33): a title with no words left gives "Example from {date}", never an empty name', () => {
+  const nameFor = (over) => { const { doc, win } = dom(); openFromRunDialog({ doc, win, past: past(over), dateText: () => '19 Oct', onSubmit: async () => ({ ok: true }) }); return doc.querySelector('#wft-fr-name').value; };
+  for (const title of ['', '   ', '. Then the rest of the request', '?!', ' - ']) {
+    assert.equal(nameFor({ title, at: '2026-10-19T10:00:00Z' }), 'Example from 19 Oct', JSON.stringify(title));
+  }
+  assert.equal(nameFor({ title: '', at: null }), 'Example from a past run', 'no date known');
+  assert.equal(defaultExampleName(''), 'Example from a past run');
+  assert.equal(defaultExampleName('', { when: '19 Oct' }), 'Example from 19 Oct');
+  assert.equal(defaultExampleName('Ticket 482', { when: '19 Oct' }), 'Ticket 482', 'a title with words keeps them');
 });
 
 test('U-T14 (F25): the picker names the example a run already is, and pre-selects nothing', () => {

@@ -167,7 +167,7 @@ function table(doc, o0, actions, dateText) {
   return sec;
 }
 
-function list(doc, page, o, actions, { root, storage, dateText, now }) {
+function list(doc, page, o, actions, { root, storage, dateText, now, mock }) {
   const head = el(doc, 'div', 'wft-head');
   const acts = el(doc, 'div', 'wft-acts');
   const testBtn = btn(doc, 'Test a version', () => actions.testVersion(), 'btn btn-primary');
@@ -184,6 +184,7 @@ function list(doc, page, o, actions, { root, storage, dateText, now }) {
     head.append(busy);
   }
   page.append(head);
+  if (mock) page.append(mockNote(doc));   // F52 (board M4): under the subtitle and buttons
   if (!howHidden(storage)) {
     const how = howCard(doc, { first: false, onHide: () => { hideHow(storage); how.remove(); holdFocus(root, doc); } });
     page.append(how);
@@ -287,8 +288,7 @@ export function renderTestsPage(root, o, actions, { doc, storage = null, loading
   } else if (!o.examples.length) {
     firstUse(doc, page, o, actions, { dateText });
   } else {
-    if (mock) page.append(mockNote(doc));   // F52
-    list(doc, page, o, actions, { root, storage, dateText, now });
+    list(doc, page, o, actions, { root, storage, dateText, now, mock });
   }
   root.append(page);
   if (hadFocus) holdFocus(root, doc);   // the repaint took the focused control: the page holds the focus

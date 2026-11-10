@@ -44,8 +44,9 @@
 .wft-dev-commit{display:block;font-size:var(--fs-caption);color:var(--ink-2);}
 .wft-cell{display:flex;flex-direction:column;gap:3px;min-width:0;}
 .wft-ask{font-size:var(--fs-caption);line-height:1.4;color:var(--amber-ink-strong);}
-.wft-mock-note{display:flex;align-items:flex-start;gap:7px;margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
-.wft-mock-note .ic{flex:0 0 auto;margin-top:2px;}
+.wft-mock-note{display:flex;align-items:flex-start;gap:8px;margin:0;font-size:var(--fs-meta);line-height:1.45;color:var(--ink);}
+.wft-mock-note .ic{flex:0 0 auto;margin-top:2px;color:var(--blue-ink-strong);}
+.wft-mock-note b{font-weight:600;}
 .wft-res.is-stale,.wft-res.is-none{color:var(--ink-2);}
 .wft-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;}
 .wft-dot.ok{background:var(--green);}

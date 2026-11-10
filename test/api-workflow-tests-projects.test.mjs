@@ -119,12 +119,41 @@ test('an example with a project: the overview says where it starts; drift; Start
   assert.deepEqual([x1.behind, x2.behind, memo.size], [0, 0, 1]);
   // U-T14 (F26): the start's commit subject is read live (read only); a start that cannot be read has none, never an error.
   assert.equal(x1.subject, 'later again');
-  assert.equal(gone.subject, null, 'no folder to read: no subject');
+  // Fix round 1 (F26): it is read from Worca's copy, where the pinned start is kept, so a project that is no longer
+  // registered still shows it.
+  assert.equal(gone.subject, 'later again', 'read from Worca\'s copy, not from the folder');
   assert.equal(await service.projectView({ ...repinned.body.example.project, startSha: 'f'.repeat(40) }).then((v) => v.subject), null, 'an unknown commit: no subject');
   const branches = (await call('GET', `/api/workflow-tests/projects/${key}/branches`)).body.branches;
   assert.equal(branches.find((b) => b.current).subject, 'later again');
   const listed = await service.projectsForTests();
   assert.equal(listed.projects.find((x) => x.key === key).current.subject, 'later again');
+  // Fix round 1 (F26): a commit only the person's folder has (never pinned, so not in Worca's copy): no subject, never a
+  // read of the person's checkout. The folder goes back to where it was; the commit object stays readable there.
+  writeFileSync(join(real, 'README.md'), '# t4\n');
+  git(real, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-am', 'only in your folder');
+  const onlyThere = git(real, 'rev-parse', 'HEAD');
+  git(real, 'reset', '-q', '--hard', 'HEAD~1');
+  assert.equal(git(real, 'show', '-s', '--format=%s', onlyThere), 'only in your folder');
+  assert.equal((await service.projectView({ ...repinned.body.example.project, startSha: onlyThere })).subject, null, 'not in the copy: no subject');
+  assert.equal(await service.subjectOfStart({ key, sha: onlyThere }), null);
+  // Fix round 1 (review minor 3): the read is display only: a short timeout, and one git call per (copy, commit), kept.
+  const pc = (await import('../src/core/workflow-tests/project-copy.mjs'))._testing;
+  pc.clearSubjects();
+  const shows = [];
+  const undo = pc.seamGit((dir, args, opts) => { if (args[0] === 'show') shows.push(opts && opts.timeout); return null; });
+  try {
+    const views = await Promise.all([1, 2, 3].map(() => service.projectView(repinned.body.example.project)));
+    for (let i = 0; i < 3; i += 1) views.push(await service.projectView(repinned.body.example.project, { behindMemo: memo }));
+    assert.deepEqual(views.map((v) => v.subject), Array(6).fill('later again'));
+    assert.equal(shows.length, 1, `one read for one commit: ${JSON.stringify(shows)}`);
+    assert.ok(shows[0] > 0 && shows[0] <= 3000, `a short timeout: ${shows[0]}`);
+    // A bounded memory: many commits never grow it past its cap.
+    const fake = pc.seamGit((dir, args) => (args[0] === 'show' ? { ok: true, code: 0, stdout: 'a subject\n', stderr: '' } : null));
+    try {
+      for (let i = 0; i < pc.SUBJECTS_MAX + 50; i += 1) await service.subjectOfStart({ key, sha: i.toString(16).padStart(40, '0') });
+    } finally { fake(); }
+    assert.ok(pc.subjectsSize() <= pc.SUBJECTS_MAX, `${pc.subjectsSize()} kept`);
+  } finally { undo(); pc.clearSubjects(); }
   const ps = (await import('../src/core/projects.mjs'));
   assert.deepEqual(listed.projects.map((x) => x.key), (await ps.listProjects()).map((x) => x.key), 'read 4 at a time, in the registry\'s order');
 });
@@ -240,6 +269,7 @@ test('a past project run: it starts where the run started; a Folder run is refus
   const past = (await call('GET', `/api/workflow-tests/past-run/${pipelineId}`)).body;
   assert.deepEqual([past.testable, past.project.key, past.project.startRef, past.project.name, past.project.setupCmd], [true, key, 'main', 'tickets', 'node -e "0"']);
   assert.equal(past.project.subject, git(real, 'show', '-s', '--format=%s', past.project.startSha), 'U-T14 (F26): the subject of the start commit, read live');
+  assert.ok(typeof past.at === 'string' && Number.isFinite(Date.parse(past.at)), 'Fix round 1 (F33): when the run started, for a default name with no words');
   const o = (await call('GET', WF)).body;
   const listed = o.pastRuns.find((x) => x.pipelineId === pipelineId);
   assert.deepEqual([listed.project, listed.refusal], ['tickets', null]);
