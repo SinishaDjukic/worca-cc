@@ -57,7 +57,7 @@ From a terminal, inside a project:
 worca "Add a /search endpoint with pagination"
 ```
 
-See [Install](docs/install.md) for npm install scripts, Windows, the container image and a
+See [Install](docs/install.md) for npm install scripts, Gentoo, Windows, the container image and a
 hosted setup, and [CLI](docs/cli.md) for every command.
 
 ## How a run works
