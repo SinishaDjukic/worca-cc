@@ -145,6 +145,22 @@ test('overview: changesFromInUse is what changes for new runs (the version in us
     ['Renamed from "Versioned 3" to "Versioned"', 'Planner: AI model sonnet → inherit']);
 });
 
+test('the Versions change lines show the catalog name of a model, not its id (real catalog, no labeler seam)', async () => {
+  const withModel = (model) => { const t = tpl(); t.nodes[1] = { ...t.nodes[1], config: { model } }; return t; };
+  await writeGraphWorkflow(withModel('claude-opus-4-7'));
+  await createVersion('wf_v', { deps });                       // v1, in use
+  await writeGraphWorkflow(withModel('claude-sonnet-5-5'));
+  await createVersion('wf_v', { deps });                       // v2
+  const o = await versionsOverview('wf_v', { deps });
+  const by = Object.fromEntries(o.versions.map((v) => [v.versionNo, v]));
+  assert.deepEqual(by[2].changes, ['Planner: AI model Opus 4.7 → Sonnet 5.5']);
+  assert.deepEqual(by[2].changesFromInUse, ['Planner: AI model Opus 4.7 → Sonnet 5.5']);
+  await writeGraphWorkflow(withModel('claude-haiku-5-5'));
+  const s = await versionStatus('wf_v', { deps });
+  assert.deepEqual(s.draft.changes, ['Planner: AI model Opus 4.7 → Haiku 5.5'], 'versionStatus labels too');
+  assert.deepEqual(s.sinceLatest.changes, ['Planner: AI model Sonnet 5.5 → Haiku 5.5']);
+});
+
 // C1: the loop budget lives in the stored wire.config (composer.mjs, canvas-ops.mjs), not at the wire's top level.
 const loopTpl = (cycles) => ({
   id: 'wf_loop', name: 'Loop', domain: 'coding',

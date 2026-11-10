@@ -311,6 +311,23 @@ test('uses: the draft and a version have the same fingerprint until either chang
   await assert.rejects(useFingerprint('wf_uses', 7, deps), { code: 'NOT_FOUND' });
 });
 
+test('compare "What you changed" shows the catalog name of a model, not its id (real catalog, no labeler seam)', async () => {
+  const { writeGraphWorkflow } = await import('../src/core/workflows.mjs');
+  const { createVersion } = await import('../src/core/workflow-versions.mjs');
+  const md = join(home, 'planner.md');
+  await writeFile(md, 'Plan it.');
+  const deps = { registry: { planner: { key: 'planner', origin: 'builtin', agentPath: md, displayName: 'Planner' } }, scripts: {} };
+  const tpl = (model) => ({ id: 'wf_lbl', name: 'Labels', domain: 'product',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} }, { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: { model } }],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } }] });
+  await writeGraphWorkflow(tpl('claude-opus-4-7'));
+  await createVersion('wf_lbl', { deps });
+  await writeGraphWorkflow(tpl('claude-sonnet-5-5'));
+  const run = store.createTestRun({ workflowId: 'wf_lbl', a: 1, b: 'draft', aFp: 'x', bFp: 'y', exampleIds: [], tries: 1 });
+  const c = await compareOf('wf_lbl', run.id, { registry: deps.registry, fingerprintOf: async () => null });
+  assert.deepEqual(c.changes, ['Planner: AI model Opus 4.7 → Sonnet 5.5']);
+});
+
 // ── Review points (Tasks 3/4): pauses, detaching, an idempotent fail, restarts, errors, never --yes ──────────────
 
 test('a try paused by a drain or a cost/usage limit is stopped, not judged; the test stops; finish the rest re-makes it', async () => {
