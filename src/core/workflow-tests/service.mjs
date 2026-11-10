@@ -284,12 +284,15 @@ export function perTryCost(workflowId, use) {
       AND status = 'done' AND total_cost_usd > 0 AND ${templateIdSql} = ? ORDER BY started_at DESC LIMIT 20)`, workflowId);
 }
 
-/** How long one try usually takes, in ms; null = unknown. */
-export function perTryMs(workflowId) {
+/** How long one try usually takes, in ms; null = unknown. U-T8 (F21): `mock` = from the mock tries' own times (a mock
+ *  try takes seconds), never from a real run's; with none, unknown. */
+export function perTryMs(workflowId, { mock = false } = {}) {
   getDb();
-  return avgOf(`SELECT AVG((julianday(finished_at) - julianday(started_at)) * 86400000) AS c, COUNT(*) AS n FROM (SELECT started_at, finished_at
-      FROM wf_test_tries WHERE workflow_id = ? AND mock = 0 AND status IN ('passed', 'failed') AND started_at IS NOT NULL
-      AND finished_at IS NOT NULL ORDER BY id DESC LIMIT 10)`, workflowId)
+  const own = avgOf(`SELECT AVG((julianday(finished_at) - julianday(started_at)) * 86400000) AS c, COUNT(*) AS n FROM (SELECT started_at, finished_at
+      FROM wf_test_tries WHERE workflow_id = ? AND mock = ? AND status IN ('passed', 'failed') AND started_at IS NOT NULL
+      AND finished_at IS NOT NULL ORDER BY id DESC LIMIT 10)`, workflowId, mock ? 1 : 0);
+  if (mock) return own;
+  return own
     ?? avgOf(`SELECT AVG((julianday(updated_at) - julianday(started_at)) * 86400000) AS c, COUNT(*) AS n FROM (SELECT started_at, updated_at
       FROM pipelines WHERE is_test IS NULL AND status = 'done' AND started_at IS NOT NULL AND updated_at IS NOT NULL
       AND ${templateIdSql} = ? ORDER BY started_at DESC LIMIT 20)`, workflowId);
@@ -732,7 +735,7 @@ export function progressOf(workflowId, runId, { costOf = null, phaseOf = null, b
   const costFor = (use) => { const k = store.useRef(use); if (!costBy.has(k)) costBy.set(k, perTryCost(workflowId, use)); return costBy.get(k); };
   const estimateUsd = own.reduce((s, t) => { const c = costFor(t.use); return s === null || c === null ? null : s + c; }, 0);
   const remaining = own.filter((t) => t.status === 'waiting' || t.status === 'running').length;
-  const ms = perTryMs(workflowId);
+  const ms = perTryMs(workflowId, { mock: own.some((t) => t.mock) });   // U-T8 (F21): a mock test's time left from mock tries
   return {
     run, title: testTitle(run, ctx, { mode: run.status === 'running' ? 'testing' : 'compare', exampleName: firstExampleName(run) }), rows,
     done: own.filter((t) => FIN.has(t.status)).length, total: own.length,

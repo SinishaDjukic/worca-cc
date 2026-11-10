@@ -3,7 +3,7 @@
 // every workflow-tests-changed frame, so a repaint keeps the focus (data-focus-key) and one live line says what changed.
 import { el, btn, startInto } from './test-ui.mjs';
 import { fmtUsd, fmtUsdFine, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
-import { aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
+import { aboutUsd, fmtDuration } from '../../../src/shared/workflow-tests/compare.mjs';
 import { icon } from '../icons.mjs';
 import { DISK_IN_USE, diskInUseSub, fmtGb, PHASES, PHASE_SUB, PHASES_TITLE, phasesShownFor, nowText, forMinutes, RUNNING_LEAD, FROM_LEAD,
   SETUP_STOP_REST, SETUP_STOP_HINT, SEE_SETUP_OUTPUT, setupWhere, SETUP_FIX_HINT, SETUP_EDITED_HINT, START_NEW_TEST, SETUP_NO_OUTPUT, EDIT_EXAMPLE, TRY_AGAIN,
@@ -243,7 +243,9 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s 
     // P36: Try again is Finish the rest, which is refused once an example of the test was edited: then a new test instead.
     if (where && where.edited && actions.startNew) acts.append(act(START_NEW_TEST, () => actions.startNew(), 'btn btn-primary', 'wft-pg-new'));
     else acts.append(act(TRY_AGAIN, () => actions.continue(null), 'btn btn-primary', 'wft-pg-finish'));   // Finish the rest (it checks the disk again)
-  } else if (p.run.stopReason !== 'changed') {   // N5: after a change, Finish the rest would only be refused
+  } else if (p.run.stopReason === 'changed') {   // N5: after a change, Finish the rest would only be refused
+    if (actions.startNew) acts.append(act(START_NEW_TEST, () => actions.startNew(), 'btn btn-primary', 'wft-pg-new'));   // U-T8 (F17)
+  } else {
     let capInput = null;
     // Board 27: the start dialog's cost limit beside Finish the rest, raised when the cap stopped it. Try it once now
     // has no limit to change.
@@ -292,9 +294,9 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s 
   const inUse = dk && dk.inUseBytes != null ? (dk.inUseBytes < 0.05 * 2 ** 30 ? '0 GB' : fmtGb(dk.inUseBytes)) : null;   // fmtGb never says less than 0.1
   const diskFact = inUse ? fact(doc, DISK_IN_USE, inUse, dk.needBytes != null && dk.freeBytes != null ? diskInUseSub(dk.needBytes, dk.freeBytes) : null) : null;
   const facts = el(doc, 'div', `wft-facts${diskFact ? ' is-four' : ''}`);
-  // Boards 27/28: once it is over, how long it took (service.takenMs), in the time left's minutes ("35 min").
+  // Boards 27/28: once it is over, how long it took (service.takenMs). U-T8 (F29): seconds under a minute ("3 s").
   const timeFact = over
-    ? fact(doc, 'Time taken', Number.isFinite(p.takenMs) ? `${Math.max(1, Math.round(p.takenMs / 60000))} min` : 'not known')
+    ? fact(doc, 'Time taken', Number.isFinite(p.takenMs) ? fmtDuration(p.takenMs) : 'not known')
     : fact(doc, 'Time left', p.minutesLeft ? `about ${p.minutesLeft} min` : 'not known yet');
   facts.append(timeFact, fact(doc, over ? 'Cost' : 'Cost so far', fmtUsdFine(p.costUsd), costLine), ...(diskFact ? [diskFact] : []), quickFact);   // board 35's order
   prog.append(bar, facts);
@@ -336,7 +338,8 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s 
   // Not after a setup stop (final review): no try was done, and the setup card says what to do. U-T2: the tries made again
   // after a problem in Worca, in the same hint (its own once the test is done).
   const hints = [];
-  if (st !== 'done' && p.run.stopReason !== 'setup') hints.push('Stop testing keeps the tries that are done. You can finish the rest later without paying for them twice.');
+  // U-T8 (F24): one try has no rest to finish.
+  if (st !== 'done' && p.run.stopReason !== 'setup' && p.run.kind !== 'once') hints.push('Stop testing keeps the tries that are done. You can finish the rest later without paying for them twice.');
   if (p.madeAgain > 0) hints.push(madeAgainText(p.madeAgain));
   if (hints.length) page.append(el(doc, 'p', 'hint', hints.join(' ')));
   root.append(page, live);

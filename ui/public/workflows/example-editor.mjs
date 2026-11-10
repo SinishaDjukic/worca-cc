@@ -5,6 +5,7 @@
 import { el, btn, iconBtn, seg, field, card, testDialog, sentence, BUSY_HINT, startInto, checkWords } from './test-ui.mjs';
 import { makeSwitch } from '../switch.mjs';
 import { icon } from '../icons.mjs';
+import { withButton } from '../feedback.mjs';
 import {
   CHECK_KINDS, PROJECT_KINDS, CHECK_KIND_LABELS, DEFAULT_BASICS, PROJECT_FILE_KIND_LABEL, COMMAND_TIMEOUTS, checkLabel, normaliseCheck, normaliseBasics, fmtUsd, parseUsd,
 } from '../../../src/shared/workflow-tests/checks.mjs';
@@ -26,6 +27,8 @@ export const BLANK_EXAMPLE = Object.freeze({
   project: null,
 });
 const clone = (v) => JSON.parse(JSON.stringify(v));
+/** U-T8 (F21): the Save button while the save pins a start point (Worca copies the project), withButton's busy label. */
+const COPYING_PROJECT = 'Copying the project…';
 const GONE_TEXT = 'This script is no longer in the Library.';
 /** A script check whose script left the Library. `scripts` null: the Library did not load, so no claim either way. */
 const scriptGone = (scripts, key) => Array.isArray(scripts) && !!key && !scripts.some((s) => s.key === key);
@@ -326,11 +329,11 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   crumbs.append(btn(doc, 'Tests', () => actions.back(), 'wft-crumb'), title);
   const acts = el(doc, 'div', 'wft-acts');
   const run = async (fn) => {
-    if (busyN) return;
+    if (busyN) return { ok: false };
     error.textContent = '';
     page.querySelector('.wft-refusal')?.remove();
     const problem = limitsProblem();
-    if (problem) { error.textContent = problem; return; }
+    if (problem) { error.textContent = problem; return { ok: false }; }
     const r = await busyWhile(() => fn(value()));
     if (!unsupported(r)) failed(r, 'That did not work. Try again.');
     if (r && !r.ok && r.body && r.body.code === 'NO_DISK' && r.body.disk) {   // board 39: Try it once now, not enough free disk
@@ -345,9 +348,19 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
       error.textContent = '';
       error.after(c);
     }
+    return r;
+  };
+  /** U-T8 (F21): whether this save pins a start point, so Worca copies the project (service resolveProjectInput: a
+   *  project picked anew, another branch, Start from the latest, or the changes switched). A kept pin copies nothing. */
+  const pinsStart = (pr) => !!pr && (!stored || stored.key !== pr.key || pr.repin === true
+    || (pr.ref != null && pr.ref !== stored.startRef) || (pr.includeChanges !== undefined && pr.includeChanges !== !!stored.changesSha256));
+  const save = () => {
+    if (busyN) return;
+    if (pinsStart(value().project)) void withButton(saveBtn, () => run(actions.save), { busy: COPYING_PROJECT });
+    else void run(actions.save);
   };
   const tryBtn = btn(doc, 'Try it once now', () => void run(actions.tryOnce), 'btn');
-  const saveBtn = btn(doc, 'Save example', () => void run(actions.save), 'btn btn-primary');
+  const saveBtn = btn(doc, 'Save example', save, 'btn btn-primary');
   acts.append(btn(doc, 'Cancel', () => actions.back(), 'btn'), tryBtn, saveBtn);
   head.append(crumbs, acts);
   if (testRunning) {   // G19, D37: one test per workflow at a time

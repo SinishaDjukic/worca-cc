@@ -59,7 +59,7 @@ test('stopped by the cap: why, a higher cap and Finish the rest (C7); by a perso
   assert.equal(capped.root.querySelector('.wft-stopped').textContent, 'Stopped: the cost went over $15.00.');
   assert.equal(capped.root.querySelector('#wft-pg-cap').value, '$25');
   assert.equal(capped.root.querySelector('label[for="wft-pg-cap"]').textContent, 'Stop if the cost goes over');
-  assert.deepEqual(facts(capped.root)[0], ['Time taken', '35 min'], 'board 27');
+  assert.deepEqual(facts(capped.root)[0], ['Time taken', '35 min 12 s'], 'board 27; U-T8 (F29): fmtDuration');
   click([...capped.root.querySelectorAll('.wft-acts button')].find((b) => b.textContent === 'Finish the rest'));
   assert.deepEqual(capped.calls, [['continue', 25]]);
   const person = boot(progress({}, { status: 'stopped', stopReason: 'person' }));
@@ -112,9 +112,10 @@ test('C7: every stop line is one sentence; a stored detail gets its full stop on
 test('done: See the comparison (or See the result after Try it once now); two rows per example when both versions are tried (G8)', () => {
   const done = boot(progress({ done: 18, minutesLeft: null, quick: null, takenMs: 26 * 60000 - 20000 }, { status: 'done' }));
   assert.deepEqual([done.root.querySelector('.wft-pill').textContent, done.root.querySelector('.wft-pill').className], ['Done · 18 of 18 tries done', 'pill-run green wft-pill is-parked']);
-  assert.deepEqual(facts(done.root)[0], ['Time taken', '26 min'], 'board 28');
+  assert.deepEqual(facts(done.root)[0], ['Time taken', '25 min 40 s'], 'board 28; U-T8 (F29): fmtDuration');
   const short = (takenMs) => facts(boot(progress({ takenMs }, { status: 'done' })).root)[0];
-  assert.deepEqual([short(20000), short(null)], [['Time taken', '1 min'], ['Time taken', 'not known']], 'under a minute is 1 min; no times at all');
+  assert.deepEqual([short(3000), short(20000), short(60000), short(null)], [['Time taken', '3 s'], ['Time taken', '20 s'], ['Time taken', '1 min'], ['Time taken', 'not known']],
+    'U-T8 (F29): seconds under a minute, never "1 min" for 3 s; no times at all');
   assert.deepEqual(facts(boot(progress({ takenMs: 9 * 60000 })).root)[0], ['Time left', 'about 15 min'], 'while it runs, the time left');
   assert.deepEqual(facts(done.root)[2], ['Free quick check', 'Off']);
   assert.deepEqual([...done.root.querySelectorAll('.wft-prow.is-head > span')].map((s) => s.textContent), ['Example', 'Tries', 'Result'], 'board 28');
@@ -241,6 +242,27 @@ test('Stop testing and Finish the rest stay busy across repaints until their act
   assert.equal(finish().disabled, false);
   paint(progress({}, { id: 10, status: 'stopped', stopReason: 'person' }));
   assert.equal(finish().disabled, false, 'another test is never busy with this one\'s action');
+});
+
+test('U-T8 (F17): stopped by a change, the page offers Start a new test (and still no Finish the rest)', () => {
+  const { window } = new JSDOM('<!doctype html><body><section id="root" tabindex="-1"></section></body>');
+  const root = window.document.getElementById('root');
+  const calls = [];
+  const actions = { back() {}, open() {}, stop() {}, continue: () => calls.push('continue'), startNew: () => calls.push('startNew') };
+  renderTestProgress(root, progress({}, { status: 'stopped', stopReason: 'changed', stopDetail: 'Your draft changed since this test started: start a new test.' }), actions, { doc: window.document });
+  const buttons = [...root.querySelectorAll('.wft-acts button')];
+  assert.deepEqual(buttons.map((b) => [b.textContent, b.className]), [['Start a new test', 'btn btn-primary']]);
+  click(buttons[0]);
+  assert.deepEqual(calls, ['startNew']);
+});
+
+test('U-T8 (F24): one try never says "Stop testing keeps the tries…", running or stopped', () => {
+  const once = (run) => boot(progress({ done: 0, total: 1, rows: [{ exampleId: 1, name: 'Bulk', label: null, dots: ['running'], summary: 'Trying 1 of 1' }] },
+    { kind: 'once', tries: 1, exampleIds: [1], ...run })).root;
+  const hint = (root) => [...root.querySelectorAll('.wft-page > p.hint')].map((n) => n.textContent).join(' ');
+  assert.doesNotMatch(hint(once({})), /Stop testing keeps/);
+  assert.doesNotMatch(hint(once({ status: 'stopped', stopReason: 'person' })), /Stop testing keeps/);
+  assert.match(hint(boot(progress()).root), /^Stop testing keeps the tries that are done\./, 'a test of several tries still says it');
 });
 
 test('U-T8 (F20): "Cost so far" while the test runs, "Cost" once it is over', () => {

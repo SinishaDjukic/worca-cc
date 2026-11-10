@@ -12,7 +12,7 @@ import * as store from '../src/core/workflow-tests/store.mjs';
 import { worcaTryText } from '../src/shared/workflow-tests/project-text.mjs';
 import { createTestRunner, MAX_PARALLEL, PAUSE_REFUSED_TEXT, PAUSE_REFUSED_OTHER, pauseVerdict, worcaProblemOf } from '../src/core/workflow-tests/runner.mjs';
 import { checkTry } from '../src/core/workflow-tests/result.mjs';
-import { progressOf, compareOf } from '../src/core/workflow-tests/service.mjs';
+import { progressOf, compareOf, perTryMs } from '../src/core/workflow-tests/service.mjs';
 import { compareModel } from '../src/shared/workflow-tests/compare.mjs';
 import { WORKTREE_STAGE } from '../src/core/setup-stages.mjs';
 import { TRY_SETUP_STAGE } from '../src/core/workflow-tests/shell-step.mjs';
@@ -910,4 +910,30 @@ test('U-T8 (F43): the cost progressOf shows never goes down while the test runs'
   assert.deepEqual([shown(1.2), shown(0.4), shown(0), shown(1.5), shown(1.3)], [1.2, 1.2, 1.2, 1.5, 1.5], 'the highest so far');
   await runner.stop(run.id);
   assert.equal(shown(0.2), 0.2, 'once over, the stored cost as it is');
+});
+
+test('U-T8 (F21): in mock mode the time left comes from the mock tries\' own times; with none it is not known yet', async () => {
+  for (const k of Object.keys(fps)) delete fps[k];
+  let hold = false;
+  const h = harness({ plan: () => (hold ? { status: 'done', cost: 0, hold: true } : { status: 'done', cost: 0 }) });
+  const runner = createTestRunner({ ...h.deps, mockMode: () => true });
+  const ex = example({ tries: 1 });
+  assert.deepEqual([perTryMs(WF, { mock: true }), perTryMs(WF)], [null, null], 'no tries yet');
+  hold = true;
+  const first = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await until(() => h.started.length === 2);
+  assert.equal(progressOf(WF, first.id).minutesLeft, null, 'no finished mock try: not known yet');
+  await runner.stop(first.id);
+  hold = false;
+  await runner.continueRun(first.id);
+  await runner.idle(first.id);
+  assert.ok(h.started.every((s) => s.mock), 'mock tries');
+  assert.equal(typeof perTryMs(WF, { mock: true }), 'number', 'the mock tries\' own times');
+  assert.equal(perTryMs(WF), null, 'a real estimate never uses mock times');
+  hold = true;
+  store.updateExample(WF, ex.id, { request: 'Write another brief.' });   // nothing to reuse: both tried again
+  const second = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await until(() => h.started.length === 6);
+  assert.equal(progressOf(WF, second.id).minutesLeft, 1, '"about 1 min" from the mock tries\' times');
+  await runner.stop(second.id);
 });
