@@ -111,7 +111,7 @@ test('board 39: no project picked for a workflow that changes a project; a missi
   assert.equal(none.root.querySelector('#wft-ex-project').options[0].textContent, 'Pick a project');
   assert.deepEqual(texts(none.root, '.wft-notice > p'), ['Pick the project this example works on',
     "Fix a bug from a ticket changes a project's code, so each example needs one. Each try works in Worca's own copy of the project."]);
-  assert.equal(byText(none.root, '.wft-acts button', 'Try it once now').disabled, true);
+  assert.equal(byText(none.root, '.wft-acts button', 'Try your draft once now').disabled, true);
   const sel = none.root.querySelector('#wft-ex-project');
   sel.value = 'gone-1a2b3c4f'; sel.dispatchEvent(new none.doc.defaultView.Event('change'));
   assert.deepEqual(texts(none.root, '.wft-notice > p'), ['The project folder is missing',
@@ -211,7 +211,7 @@ test('review 3, 12, 14: Start from the latest is busy, then says the new start; 
   click(latestBtn);
   assert.deepEqual([latestBtn.disabled, latestBtn.getAttribute('aria-busy')], [true, 'true']);
   await tick(); await tick();
-  assert.equal(root.querySelector('.wft-start-status').textContent, 'The start point is now main at fffffff.');
+  assert.equal(root.querySelector('.wft-start-status').textContent, 'Saved: the start point is now main · 28 Oct.');
   assert.equal(doc.activeElement, byText(root, '.wft-start button', 'Change'));
   const lfs = "worca-cc keeps large files with Git LFS. Worca's own copy of the project would not have them, so tries could go wrong.";
   const subs = "worca-cc holds other projects inside it (submodules). Worca's own copy of the project would not have them, so tries could go wrong.";
@@ -251,30 +251,30 @@ test('review 9, 13, 15: server words as sentences; no branches, no dialog; the f
 
 test('review 5, 6, 7, 10: no longer registered, projects not read, not on a branch; a blocked Try points at the notice', () => {
   const ok = boot();
-  const okTry = byText(ok.root, '.wft-acts button', 'Try it once now');
+  const okTry = byText(ok.root, '.wft-acts button', 'Try your draft once now');
   assert.deepEqual([okTry.disabled, okTry.getAttribute('aria-describedby')], [false, null]);
   assert.equal(ok.root.querySelector('.wft-notice').getAttribute('aria-live'), 'polite');
   const gone = boot(example({ project: { ...PIN, key: 'old-00000000', name: 'billing' } }));
   assert.deepEqual(texts(gone.root, '.wft-notice > p'), ["billing is no longer one of Worca's projects. Add it again under Projects, or pick another project."]);
-  const goneTry = byText(gone.root, '.wft-acts button', 'Try it once now');
+  const goneTry = byText(gone.root, '.wft-acts button', 'Try your draft once now');
   assert.deepEqual([goneTry.disabled, goneTry.getAttribute('aria-describedby')], [true, 'wft-ex-notice']);
   assert.equal(gone.root.querySelector('#wft-ex-project').selectedOptions[0].textContent, 'billing', 'its name, never the key');
   const unread = boot(example(), { projects: null });
   assert.deepEqual(texts(unread.root, '.wft-notice > p'), ['Worca could not read your projects. Reload the page to try again.']);
-  assert.equal(byText(unread.root, '.wft-acts button', 'Try it once now').getAttribute('aria-describedby'), 'wft-ex-notice');
+  assert.equal(byText(unread.root, '.wft-acts button', 'Try your draft once now').getAttribute('aria-describedby'), 'wft-ex-notice');
   const unreadNoPin = boot(example({ project: null }), { projects: null, projectView: null });
   assert.equal(unreadNoPin.root.querySelector('.wft-notice').hidden, true, 'P21: no project pinned and none needed: nothing to say');
-  assert.equal(byText(unreadNoPin.root, '.wft-acts button', 'Try it once now').disabled, false);
+  assert.equal(byText(unreadNoPin.root, '.wft-acts button', 'Try your draft once now').disabled, false);
   const unreadNeeds = boot(example({ project: null }), { projects: null, projectView: null, needsProject: true });
   assert.deepEqual(texts(unreadNeeds.root, '.wft-notice > p'), ['Worca could not read your projects. Reload the page to try again.']);
-  assert.equal(byText(unreadNeeds.root, '.wft-acts button', 'Try it once now').disabled, true);
+  assert.equal(byText(unreadNeeds.root, '.wft-acts button', 'Try your draft once now').disabled, true);
   const detached = [{ ...PROJECTS[0], key: 'det-1', name: 'detached', current: { branch: null, sha: SHA, short: 'abc1234', at: '2026-10-28T09:00:00.000Z' } }];
   const det = boot(example({ project: null }), { projects: detached, projectView: null });
   const sel = det.root.querySelector('#wft-ex-project');
   sel.value = 'det-1'; sel.dispatchEvent(new det.doc.defaultView.Event('change'));
   assert.deepEqual(texts(det.root, '.wft-notice > p'), ['The project folder is not on a branch. Check out a branch in it, then come back.']);
   assert.equal(det.root.querySelector('.wft-start-field').hidden, true);
-  assert.equal(byText(det.root, '.wft-acts button', 'Try it once now').disabled, true);
+  assert.equal(byText(det.root, '.wft-acts button', 'Try your draft once now').disabled, true);
 });
 
 test('board 39: Try it once now with too little free disk shows its card', async () => {
@@ -284,7 +284,7 @@ test('board 39: Try it once now with too little free disk shows its card', async
   const { root } = boot(example(), { over: { tryOnce: async () => { n += 1; return n === 1
     ? { ok: false, status: 422, error: once, body: { code: 'NO_DISK', disk: { needBytes: 0.4 * GB, freeBytes: 0.2 * GB } } }
     : { ok: false, status: 409, error: 'A test of this workflow is running.' }; } } });
-  click(byText(root, '.wft-acts button', 'Try it once now'));
+  click(byText(root, '.wft-acts button', 'Try your draft once now'));
   await tick(); await tick();
   const card = root.querySelector('.wft-refusal');
   assert.equal(card.querySelector('h2').textContent, 'Not enough free disk');
@@ -292,7 +292,7 @@ test('board 39: Try it once now with too little free disk shows its card', async
   assert.equal(card.querySelector('.hint').textContent, once);
   assert.equal(card.querySelector('.hint').getAttribute('role'), 'alert');
   assert.equal(root.querySelector('.wft-error').textContent, '', 'the card says it, not also the error line');
-  click(byText(root, '.wft-acts button', 'Try it once now'));
+  click(byText(root, '.wft-acts button', 'Try your draft once now'));
   await tick(); await tick();
   assert.equal(root.querySelector('.wft-refusal'), null, 'a new try takes the card away');
   assert.equal(root.querySelector('.wft-error').textContent, 'A test of this workflow is running.');

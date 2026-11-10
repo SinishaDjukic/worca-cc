@@ -230,6 +230,7 @@ test('the example routes: edit, delete a file, add from runs, stop a test, a try
   // Stop a running test: its tries stop, the test says the person stopped it.
   const run = (await call('POST', `${WF}/runs`, { a: 1, b: 'draft', exampleIds: [ex.id], tries: 3, reuseA: false })).body.run;
   assert.equal((await call('GET', `${WF}/runs/${run.id}`)).body.run.status, 'running', 'still running when the stop is sent (else this row proves nothing)');
+  assert.deepEqual((await call('GET', WF)).body.running.exampleIds, [ex.id], 'U-T9 (F17): the overview names the examples the running test tries');
   const stopped = await call('POST', `${WF}/runs/${run.id}/stop`);
   assert.deepEqual([stopped.status, stopped.body.run.status, stopped.body.run.stopReason], [200, 'stopped', 'person']);
 

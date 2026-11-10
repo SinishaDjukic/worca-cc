@@ -523,7 +523,8 @@ export async function testsOverview(workflowId, { registry = loadAgentRegistry()
     columns: uses.filter((use) => !(use === 'draft' && sameAs !== null && uses.length > 1)).map((use) => ({ use, label: useLabel(use, ctx, 'column') })),
     examples,
     running: running ? { runId: running.id, title: testTitle(running, ctx, { mode: 'testing', exampleName: firstExampleName(running) }),
-      done: own.filter((t) => FIN.has(t.status)).length, total: own.length } : null,
+      done: own.filter((t) => FIN.has(t.status)).length, total: own.length,
+      exampleIds: running.exampleIds } : null,   // U-T9 (F17): the editor asks before a save that would stop it
     latest: last ? { runId: last.id, title: latestTitle(last, ctx), finishedAt: last.finishedAt, examples: last.exampleIds.length,
       tries: last.tries, costUsd: store.spentOfRun(last.id), counts: compareModel(modelInput(last, ctx)).counts, status: last.status,
       stopReason: last.stopReason } : null,

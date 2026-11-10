@@ -19,6 +19,16 @@ const past = (over = {}) => ({
   use: 4, useLabel: 'v4', testable: true, reason: null, reasonText: null, ...over,
 });
 
+test('U-T9 (M1, D8): the note in the Use-as-example dialog has the same label, mark and hint as the editor', () => {
+  const { doc, win } = dom();
+  openFromRunDialog({ doc, win, past: past(), onSubmit: async () => ({ ok: true }) });
+  const f = doc.querySelector('#wft-fr-note').closest('.field');
+  assert.equal(f.querySelector('.label').childNodes[0].textContent, 'What a good result has');
+  assert.equal(f.querySelector('.label .opt').textContent.trim(), 'in your own words');
+  assert.equal(f.querySelector('.hint').textContent, 'A note for people. Worca does not check it.');
+  assert.equal(doc.querySelector('#wft-fr-note').rows, 3);
+});
+
 test('board 3: the heading, what is kept, the verdict and its hint, and what is sent', async () => {
   const { doc, win } = dom();
   let sent = null;
@@ -87,9 +97,11 @@ test('U-T4 (F4, board UfFirstRun): the empty picker has Cancel, "Run it once" an
   const calls = [];
   openPickRunDialog({ doc, win, workflowName: 'Product brief writer', runs: [], dateText: () => '', onPick: () => calls.push('pick'),
     onRunOnce: () => calls.push('once'), onWrite: () => calls.push('write') });
-  assert.deepEqual([...doc.querySelectorAll('.mk-dialog-foot button')].map((b) => b.textContent), ['Cancel', 'Run it once']);
-  assert.deepEqual([...doc.querySelectorAll('.mk-dialog-body button')].map((b) => b.textContent), ['Or write an example yourself']);
-  click(doc.querySelector('.mk-dialog-body .wft-linkbtn'));
+  // U-T9 (board UfFirstRun): the link sits at the left of the footer row, Cancel and Run it once on the right.
+  assert.deepEqual([...doc.querySelectorAll('.mk-dialog-foot button')].map((b) => b.textContent), ['Or write an example yourself', 'Cancel', 'Run it once']);
+  assert.ok(doc.querySelector('.mk-dialog-foot > .wft-linkbtn').classList.contains('mk-foot-start'), 'pushed to the left of the row');
+  assert.equal(doc.querySelector('.mk-dialog-body .wft-linkbtn'), null, 'not in the body');
+  click(doc.querySelector('.mk-dialog-foot .wft-linkbtn'));
   assert.deepEqual(calls, ['write']);
   assert.equal(doc.querySelector('.mk-dialog'), null, 'the link closes the dialog');
   const second = dom();
@@ -116,6 +128,10 @@ test('U-T4: an identical draft compared with another version reads "your draft (
   boxB.checked = true; change(boxB);
   const text = doc.querySelector('.wft-reuse').textContent + estRows(doc).flat().join(' ');
   assert.doesNotMatch(text, /your changes/);
+  // U-T9: no possessive after a parenthesis.
+  assert.ok(boxB.closest('label').textContent.startsWith('Use the results of v4 (your draft is the same) from 19 Oct. Nothing in v4 or in the examples has changed since, so only '),
+    boxB.closest('label').textContent);
+  assert.doesNotMatch(text, /\)'s/);
   assert.ok(estRows(doc).some((r) => r[0] === 'Your draft (same as v4) results from 19 Oct'), JSON.stringify(estRows(doc)));
 });
 

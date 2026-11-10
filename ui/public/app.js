@@ -4040,7 +4040,7 @@ function wftRenderEditor(root) {
   const o = wft.overview;
   const row = o && wft.example && wft.example.id ? o.examples.find((e) => e.id === wft.example.id) : null;
   renderExampleEditor(root, wft.example, wftEditorActions(session), { doc: document, win: window, scripts: wft.scripts, perTryUsd: wft.perTryUsd,
-    draftLabel: o ? wftUseLabel('draft', o.ctx) : 'your draft', testRunning: !!(o && o.running),   // G19
+    draftLabel: o ? wftUseLabel('draft', o.ctx) : 'your draft', testRunning: !!(o && o.running), runningExampleIds: o && o.running ? o.running.exampleIds || [] : [], confirm: confirmModal,   // G19; F17
     // 3a (boards 32, 39): the projects to pick, whether the workflow needs one, and the overview's drift of this example's pin
     projects: wft.projects || null, needsProject: !!(o && o.needsProject), workflowName: o ? o.name : '',
     projectView: row ? row.project : null, dateText: wftDate });
@@ -4992,6 +4992,7 @@ async function loadWorkflowsInto(selectId) {
   // Fall back to Default if the wanted id is gone (a deleted workflow). Memory defragment holds one
   // project scope, so a workspace target SHOWS Default in its place but never persists it.
   const known = list.some((wf) => wf.id === want);
+  if (!known) state.pinWorkflowId = null;   // U-T9: a pinned workflow that is gone leaves no stale pin
   state.workflowId = !known || (isWorkspace && want === MEMORY_DEFRAG_WORKFLOW_ID) ? 'wf_default' : want;
   sel.value = state.workflowId;
   paintNeedsRepoNote();
@@ -39881,7 +39882,7 @@ if (typeof window !== 'undefined') {
 let currentSettingsTab = null;
 
 function showView(name, param = '') {
-  if (name !== 'new') state.pinWorkflowId = null;   // U-T4: Run it once's pin lasts only for that New run
+  if (name !== 'new' || !newPipelinePrefill) state.pinWorkflowId = null;   // U-T4: Run it once's pin lasts only for that New run (a hand-off sets it again)
   // Runs redesign slice 4 (D16): #feature/ID is the group page; a bare #feature goes to Chat.
   if (name === 'feature' && !param) return showView('chat', '');
   if (name === 'group' && !param) return showView('runs', '');

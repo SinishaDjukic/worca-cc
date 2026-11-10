@@ -1,6 +1,6 @@
 // ui/public/workflows/test-dialogs.mjs — the workflow tests dialogs (plans/workflow-tests-part2-plan.md Tasks 12–13):
 // pick a past run (G7), use this run as a test example (board 3), and test a version with its connectors (boards 4, 30). Pure DOM.
-import { el, btn, seg, field, testDialog, runStatusBadge, refusedRun, startInto } from './test-ui.mjs';
+import { el, btn, seg, field, testDialog, runStatusBadge, refusedRun, startInto, noteField } from './test-ui.mjs';
 import { icon } from '../icons.mjs';
 import { fmtUsd, andList, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { estimateOf, fmtUsdRange, aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
@@ -27,10 +27,11 @@ export function canUseAsExample({ flag, noProject, projectRun = false, status, t
 export function openPickRunDialog({ doc, win, workflowName, runs = [], dateText, onPick, needsProject = false, onRunOnce = null, onWrite = null }) {
   const body = [];
   let dlg = null;
+  let footStart = null;
   if (!runs.length) {
     // U-T4 (F4, board UfFirstRun): no runs to pick, so the dialog offers a first one, or an example written by hand.
     body.push(el(doc, 'p', 'hint', pickerNoneText(workflowName, { needsProject })));   // board 39 (P16)
-    body.push(btn(doc, WRITE_YOURSELF, () => { dlg.close(); if (onWrite) onWrite(); }, 'wft-linkbtn'));
+    footStart = btn(doc, WRITE_YOURSELF, () => { dlg.close(); if (onWrite) onWrite(); }, 'wft-linkbtn');   // U-T9: the footer row, as the board
   } else {
     body.push(el(doc, 'p', 'hint', `Pick a run of ${workflowName} to keep as an example.`));
     const list = el(doc, 'div', 'wft-pick-list');
@@ -56,7 +57,7 @@ export function openPickRunDialog({ doc, win, workflowName, runs = [], dateText,
     body.push(list);
   }
   dlg = testDialog({
-    doc, win, title: 'Add from a past run', confirmLabel: runs.length ? 'Next' : RUN_IT_ONCE, body,
+    doc, win, title: 'Add from a past run', confirmLabel: runs.length ? 'Next' : RUN_IT_ONCE, body, footStart,
     onConfirm: () => {
       if (!runs.length) { if (onRunOnce) onRunOnce(); return { ok: true }; }
       const hit = [...doc.querySelectorAll('input[name="wft-pick-run"]')].find((x) => x.checked && !x.disabled);
@@ -134,7 +135,7 @@ export function openFromRunDialog({ doc, win, past, onSubmit, dateText = (s) => 
         : `Worca keeps the request and files, so every new version of ${past.workflowName} can be tried on exactly the same thing.`),
       field(doc, 'Name of the example', name, { id: name.id }), ...(startBox ? [startBox] : []), keep, ...(devBox ? [devBox] : []),
       field(doc, 'How was this result?', how),
-      field(doc, 'What should a good result have?', note, { id: note.id, opt: 'in your own words' }),
+      noteField(doc, note),
       hint,
     ],
     onConfirm: () => {
@@ -175,9 +176,13 @@ function reuseWords(s, other, dateText) {
   const when = s.reusableAt ? dateText(s.reusableAt) : 'earlier';
   const saves = typeof s.savesUsd === 'number' && s.savesUsd > 0 ? ` This saves about ${aboutUsd(s.savesUsd)}.` : '';
   const otherShort = other ? other.short : 'the other version';
+  // U-T9: an identical draft is "the results of v4 (your draft is the same)", never a possessive after a parenthesis.
+  const same = typeof s.sameAs === 'number';
+  const name = same ? `v${s.sameAs}` : s.short;
+  const results = (n) => (same ? `the ${n === null ? '' : `${n} `}results of ${name} (your draft is the same)` : `${name}'s ${n === null ? '' : `${n} `}results`);
   return s.reusable >= s.want
-    ? { lead: `Use ${s.short}'s results from ${when}. `, rest: `Nothing in ${s.short} or in the examples has changed since, so only ${otherShort} needs to be tried.${saves}` }
-    : { lead: `Use ${s.short}'s ${s.reusable} results from ${when}. `, rest: `Nothing in ${s.short} or in those examples has changed since, so only the other tries are made.${saves}` };
+    ? { lead: `Use ${results(null)} from ${when}. `, rest: `Nothing in ${name} or in the examples has changed since, so only ${otherShort} needs to be tried.${saves}` }
+    : { lead: `Use ${results(s.reusable)} from ${when}. `, rest: `Nothing in ${name} or in those examples has changed since, so only the other tries are made.${saves}` };
 }
 
 /** An opt-in row: the box, then one span of text that wraps beside it (the lead in ink, the rest as a hint). */

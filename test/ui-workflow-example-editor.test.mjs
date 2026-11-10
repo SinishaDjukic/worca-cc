@@ -14,7 +14,7 @@ const example = () => ({
   checks: [{ id: 'c_1', kind: 'words', min: 400, max: 900 }, { id: 'c_2', kind: 'sections', names: ['Problem', 'Users', 'Success metric', 'Risks'] }],
   tries: 3, files: [{ name: 'interviews-q3.md', size: 10, sha256: 'x' }], note: null,
 });
-function boot(ex = example(), { perTryUsd = 0.55, result = { ok: true }, testRunning = false, over = {}, scripts = [{ key: 'lint-md', displayName: 'Markdown lint' }] } = {}) {
+function boot(ex = example(), { perTryUsd = 0.55, result = { ok: true }, testRunning = false, over = {}, ctx = {}, scripts = [{ key: 'lint-md', displayName: 'Markdown lint' }] } = {}) {
   const { window } = new JSDOM('<!doctype html><body><section id="root"></section></body>');
   const calls = [];
   const actions = {
@@ -26,22 +26,25 @@ function boot(ex = example(), { perTryUsd = 0.55, result = { ok: true }, testRun
     ...over,
   };
   const root = window.document.getElementById('root');
-  const ed = renderExampleEditor(root, ex, actions, { doc: window.document, win: window, scripts, perTryUsd, draftLabel: 'v5 draft', testRunning });
+  const ed = renderExampleEditor(root, ex, actions, { doc: window.document, win: window, scripts, perTryUsd, draftLabel: 'v5 draft', testRunning, ...ctx });
   return { root, doc: window.document, win: window, calls, ed };
 }
 
-test('the board-2 layout: title, actions, cards 1, 2, 4 on the left and 3 on the right', () => {
+test('the board-2 layout (M1 numbering): title, actions, cards 1, 2, 3 on the left and 4 on the right', () => {
   const { root } = boot();
   assert.equal(root.querySelector('.wft-crumbs .wft-title').textContent, 'Example: Bulk invoice export');
-  assert.deepEqual([...root.querySelectorAll('.wft-crumbs .wft-acts button')].map((b) => b.textContent), ['Cancel', 'Try it once now', 'Save example']);
-  assert.deepEqual([...root.querySelectorAll('.wft-col > .card h2')].map((h) => h.textContent), ['1. What Worca gets', "2. Your answers to Worca's questions", '4. How many tries']);
-  assert.equal(root.querySelector('.wft-cols > .card h2').textContent, '3. What a good result needs');
+  assert.deepEqual([...root.querySelectorAll('.wft-crumbs .wft-acts button')].map((b) => b.textContent), ['Cancel', 'Try your draft once now', 'Save example']);
+  assert.deepEqual([...root.querySelectorAll('.wft-col > .card h2')].map((h) => h.textContent), ['1. What Worca gets', "2. Your answers to Worca's questions", '3. How many tries']);
+  assert.equal(root.querySelector('.wft-cols > .card h2').textContent, '4. What a good result needs');
   assert.deepEqual([...root.querySelectorAll('.wft-card > h2 + .hint')].map((h) => h.textContent), [
     'The same request and files are used every time this example is tried.',
     'Nobody watches while a test runs. If Worca asks one of these questions, it gets your answer.',
     'AI can answer differently each time. More tries give a surer result, and cost more.',
-    'A try passes only when everything below is met.',
   ]);
+  // M1: the note comes first in card 4, then "A try passes only when everything below is met." covers only what is checked.
+  assert.deepEqual([...root.querySelector('.wft-c3').children].slice(0, 4).map((c) => c.tagName + (c.classList.contains('field') ? '.field' : c.classList.contains('hint') ? '.hint' : '')),
+    ['H2', 'DIV.field', 'P.hint', 'P']);
+  assert.equal(root.querySelector('.wft-c3 > .hint').textContent, 'A try passes only when everything below is met.');
   assert.equal(root.querySelector('.wft-c3 .wft-grp-hint').textContent, 'Counted exactly, without AI. Pick a ready check, or a script from the Library.');
   assert.deepEqual([...root.querySelectorAll('.wft-sect .wft-line-text')].map((n) => n.textContent), ['Length is 400 to 900 words', 'Has the sections Problem, Users, Success metric and Risks']);
   const name = root.querySelector('#wft-ex-name');
@@ -91,7 +94,7 @@ test('a limit switched on with its box empty is refused in plain words before an
   root.querySelector('#wft-b-cost-usd').value = '$2';
   root.querySelector('#wft-b-fix').checked = true;
   root.querySelector('#wft-b-fix-n').value = '';
-  click(byText(root, '.wft-acts button', 'Try it once now'));
+  click(byText(root, '.wft-acts button', 'Try your draft once now'));
   await tick();
   assert.equal(root.querySelector('.wft-error').textContent, 'The fix limit must be a whole number from 0 to 50.');
   assert.equal(calls.length, 0, 'nothing was sent');
@@ -175,7 +178,7 @@ test('save, try once, the error line, files', async () => {
   await tick();
   assert.equal(calls[0][0], 'save');
   assert.equal(root.querySelector('.wft-error').textContent, 'The name must be 1 to 120 characters.');
-  click(byText(root, '.wft-acts button', 'Try it once now'));
+  click(byText(root, '.wft-acts button', 'Try your draft once now'));
   await tick();
   assert.equal(calls[1][0], 'tryOnce');
   const x = root.querySelector('.wft-file-x');
@@ -197,7 +200,7 @@ test('save, try once, the error line, files', async () => {
 
 test('while a test of the workflow runs, Try it once now is disabled with the hint (G19); Save still works', async () => {
   const { root, calls } = boot(example(), { testRunning: true });
-  const tryBtn = byText(root, '.wft-acts button', 'Try it once now');
+  const tryBtn = byText(root, '.wft-acts button', 'Try your draft once now');
   assert.deepEqual([tryBtn.disabled, tryBtn.getAttribute('aria-describedby')], [true, 'wft-busy']);
   assert.equal(root.querySelector('#wft-busy').textContent, 'A test of this workflow is running. Wait for it, or stop it first.');
   click(byText(root, '.wft-acts button', 'Save example'));
@@ -234,7 +237,7 @@ test('while an editor action runs, Save, Try it once now and the file controls w
   Object.defineProperty(picker, 'files', { configurable: true, value: [{ name: 'a.md' }, { name: 'b.md' }] });
   picker.dispatchEvent(new picker.ownerDocument.defaultView.Event('change'));
   await tick();
-  const state = () => [byText(root, '.wft-acts button', 'Save example').disabled, byText(root, '.wft-acts button', 'Try it once now').disabled,
+  const state = () => [byText(root, '.wft-acts button', 'Save example').disabled, byText(root, '.wft-acts button', 'Try your draft once now').disabled,
     byText(root, '.wft-files button', 'Add file').disabled, root.querySelector('.wft-file-x').disabled, picker.disabled];
   assert.deepEqual(state(), [true, true, true, true, true]);
   click(byText(root, '.wft-acts button', 'Save example'));
@@ -288,4 +291,116 @@ test('style.css: the Basics boxes keep their width and the switch keeps its labe
   assert.ok(/\.wft-basic \.wft-num\{[^}]*width:84px/.test(css), 'beats input[type="text"]{width:100%}');
   assert.ok(/\.wft-basic > \.wft-chk\{[^}]*flex-wrap:nowrap/.test(css), 'the label never drops under the switch');
   assert.ok(/\.wft-basic-val\{[^}]*white-space:nowrap/.test(css), 'the box and "times" stay together');
+});
+
+// ── U-T9 (M1, D8, F16 F17 F24 F38 F39 F41, F23's hint) ──
+const input = (el, value) => { el.value = value; el.dispatchEvent(new el.ownerDocument.defaultView.Event('input', { bubbles: true })); };
+
+test('M1: the note field sits first in card 4 with its label, mark and hint; it round-trips and is empty in New example', () => {
+  const ex = { ...example(), note: 'Sections Problem, Users and Risks. Plain language.' };
+  const { root, ed } = boot(ex);
+  const f = root.querySelector('.wft-c3 > .field');
+  assert.equal(f.querySelector('.label').childNodes[0].textContent, 'What a good result has');
+  assert.equal(f.querySelector('.label .opt').textContent.trim(), 'in your own words');
+  assert.equal(f.querySelector('.hint').textContent, 'A note for people. Worca does not check it.');
+  const ta = root.querySelector('#wft-ex-note');
+  assert.equal(ta.tagName, 'TEXTAREA');
+  assert.equal(ta.rows, 3);
+  assert.equal(ta.value, 'Sections Problem, Users and Risks. Plain language.');
+  assert.equal(ed.value().note, 'Sections Problem, Users and Risks. Plain language.');
+  input(ta, '  <b>Short</b> and clear.  ');
+  assert.equal(ed.value().note, '<b>Short</b> and clear.', 'kept as text, trimmed');
+  assert.equal(root.querySelector('.wft-c3 b'), null, 'never parsed as markup');
+  input(ta, '   ');
+  assert.equal(ed.value().note, null, 'an empty note is none');
+  const fresh = boot({ ...BLANK_EXAMPLE });
+  assert.equal(fresh.root.querySelector('#wft-ex-note').value, '');
+  assert.equal(fresh.root.querySelector('.wft-c3 > .field .hint').textContent, 'A note for people. Worca does not check it.');
+  assert.equal(fresh.ed.value().note, null);
+});
+
+const CONFIRM = { title: 'Save and stop the test?', confirmLabel: 'Save and stop', cancelLabel: 'Cancel',
+  message: 'A test of this workflow is trying this example. Saving changes it, so the test stops. Tries already done are kept.' };
+
+test('F17: saving an example that a running test is trying asks first; Cancel keeps the editor and saves nothing', async () => {
+  const asked = [];
+  const { root, calls } = boot(example(), { testRunning: true, ctx: { runningExampleIds: [4], confirm: async (o) => { asked.push(o); return false; } } });
+  input(root.querySelector('#wft-ex-request'), 'Another request');
+  click(byText(root, '.wft-acts button', 'Save example'));
+  await tick(); await tick();
+  assert.deepEqual(asked, [CONFIRM]);
+  assert.deepEqual(calls, [], 'nothing saved');
+  assert.equal(byText(root, '.wft-acts button', 'Save example').disabled, false, 'the editor stays usable');
+});
+
+test('F17: "Save and stop" saves; a request, Basics or "If Worca asks something else" change each count', async () => {
+  const asked = [];
+  const { root, calls } = boot(example(), { testRunning: true, ctx: { runningExampleIds: [4], confirm: async (o) => { asked.push(o); return true; } } });
+  input(root.querySelector('#wft-ex-request'), 'Another request');
+  click(byText(root, '.wft-acts button', 'Save example'));
+  await tick(); await tick();
+  assert.equal(asked.length, 1);
+  assert.deepEqual(calls.map((c) => c[0]), ['save']);
+  const changes = {
+    basics: (r) => { const b = r.querySelector('#wft-b-error'); b.checked = false; b.dispatchEvent(new b.ownerDocument.defaultView.Event('change', { bubbles: true })); },
+    otherwise: (r) => click(byText(r, '.seg button', 'The try counts as failed')),
+  };
+  for (const [what, change] of Object.entries(changes)) {
+    const t = boot(example(), { testRunning: true, ctx: { runningExampleIds: [4], confirm: async () => { asked.push(what); return false; } } });
+    change(t.root);
+    click(byText(t.root, '.wft-acts button', 'Save example'));
+    await tick(); await tick();
+    assert.equal(asked.at(-1), what, `${what} changes what a try gets`);
+  }
+});
+
+test('F17: no question when only the name, the note or the tries changed, or nothing, or this example is not in the running test', async () => {
+  let asked = 0;
+  const confirm = async () => { asked += 1; return true; };
+  const t = boot(example(), { testRunning: true, ctx: { runningExampleIds: [4], confirm } });
+  input(t.root.querySelector('#wft-ex-name'), 'Renamed');
+  input(t.root.querySelector('#wft-ex-note'), 'A new note');
+  click(byText(t.root, '.seg button', '5'));
+  click(byText(t.root, '.wft-acts button', 'Save example'));
+  await tick(); await tick();
+  assert.equal(asked, 0, 'name, note and tries do not change a try');
+  assert.deepEqual(t.calls.map((c) => c[0]), ['save']);
+  const same = boot(example(), { testRunning: true, ctx: { runningExampleIds: [4], confirm } });
+  click(byText(same.root, '.wft-acts button', 'Save example'));
+  await tick(); await tick();
+  assert.equal(asked, 0, 'nothing changed');
+  assert.equal(same.calls.length, 1);
+  const other = boot(example(), { testRunning: true, ctx: { runningExampleIds: [9], confirm } });
+  input(other.root.querySelector('#wft-ex-request'), 'Another request');
+  click(byText(other.root, '.wft-acts button', 'Save example'));
+  await tick(); await tick();
+  assert.equal(asked, 0, 'a test that is not trying this example');
+  assert.equal(other.calls.length, 1);
+  const idle = boot(example(), { ctx: { confirm } });
+  input(idle.root.querySelector('#wft-ex-request'), 'Another request');
+  click(byText(idle.root, '.wft-acts button', 'Save example'));
+  await tick(); await tick();
+  assert.equal(asked, 0, 'no test running');
+  assert.equal(idle.calls.length, 1);
+});
+
+const REG = { key: 'p1', name: 'worca-cc', exists: true, vcs: 'git', current: { branch: 'main', sha: 'a'.repeat(40), short: 'aaaaaaa', at: '2026-10-28T09:00:00.000Z' } };
+test('F38: "Where it starts" and its hint are left out when no project is picked and none is needed', () => {
+  const none = boot(example());
+  const shown = (r) => [...r.querySelectorAll('.wft-where > .wft-grp, .wft-where > .wft-grp-hint')].map((n) => !n.hidden);
+  assert.deepEqual(shown(none.root), [false, false]);
+  const needs = boot(example(), { ctx: { needsProject: true, projects: [REG], workflowName: 'Fix a bug' } });
+  assert.deepEqual(shown(needs.root), [true, true]);
+  const pick = boot(example(), { ctx: { projects: [REG] } });
+  assert.deepEqual(shown(pick.root), [false, false]);
+  const sel = pick.root.querySelector('#wft-ex-project');
+  sel.value = 'p1'; sel.dispatchEvent(new sel.ownerDocument.defaultView.Event('change'));
+  assert.deepEqual(shown(pick.root), [true, true], 'picking a project brings them back');
+});
+
+test('F23: the answers dialog tells where to copy the question from and what happens when Worca asks something else', () => {
+  const { root, doc } = boot();
+  click(byText(root, '.wft-lines button', 'Add a question and answer'));
+  assert.equal(doc.querySelector('.mk-dialog-body > .hint').textContent,
+    "Copy the question from a past run of this workflow. Case, spacing and punctuation do not matter. If Worca asks something else, the example's choice below decides.");
 });

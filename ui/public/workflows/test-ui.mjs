@@ -131,7 +131,7 @@ export function card(doc, title, id, hint = null, cls = '') {
  * onConfirm() → {ok, error?} (or a promise of it); the dialog closes on ok and shows the error otherwise.
  * onRemove() may return the element to focus once the dialog closes.
  */
-export function testDialog({ doc, win, title, body, confirmLabel, onConfirm, onRemove = null, width = 'md' }) {
+export function testDialog({ doc, win, title, body, confirmLabel, onConfirm, onRemove = null, footStart = null, width = 'md' }) {
   const dlg = createDialog({ doc, win, width });
   const h = el(doc, 'h2', 'mk-dialog-title', title);
   h.id = 'mk-dialog-title';
@@ -140,6 +140,7 @@ export function testDialog({ doc, win, title, body, confirmLabel, onConfirm, onR
   const foot = [];
   // onRemove may return where the focus goes next (the opener left with the removed line).
   if (onRemove) foot.push(btn(doc, 'Remove', () => { const next = onRemove(); dlg.close(); if (next && typeof next.focus === 'function') next.focus(); }, 'btn btn-danger wft-dlg-remove'));
+  if (footStart) { footStart.classList.add('mk-foot-start'); foot.unshift(footStart); }   // U-T9: a link at the left of the row
   foot.push(btn(doc, 'Cancel', () => dlg.close(), 'btn'));
   const ok = btn(doc, confirmLabel, async () => {
     if (ok.disabled) return;   // busy, or nothing to confirm (a dispatched click still reaches a disabled button's listener)
@@ -156,4 +157,13 @@ export function testDialog({ doc, win, title, body, confirmLabel, onConfirm, onR
   dlg.replace({ head: [h], body: [...body, error], foot });
   dlg.open();
   return Object.assign(dlg, { okButton: ok, errorLine: error });
+}
+
+// U-T9 (M1, D8): the person's own note on what a good result is. Worca does not check it.
+export const NOTE_LABEL = 'What a good result has';
+export const NOTE_OPT = 'in your own words';
+export const NOTE_HINT = 'A note for people. Worca does not check it.';
+/** The note's textarea in its field (the editor's card and the Use-as-example dialog share the words). */
+export function noteField(doc, textarea) {
+  return field(doc, NOTE_LABEL, textarea, { id: textarea.id, hint: NOTE_HINT, opt: NOTE_OPT });
 }

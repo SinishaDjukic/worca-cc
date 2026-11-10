@@ -2,7 +2,7 @@
 // what Worca gets, your answers to its questions, what a good result needs (Basics + automatic checks; "Your criteria"
 // is Part 3), how many tries. Plus the two small dialogs: a question and its answer, and an automatic check (G1).
 // Pure DOM; app.js saves.
-import { el, btn, iconBtn, seg, field, card, testDialog, sentence, BUSY_HINT, startInto, checkWords } from './test-ui.mjs';
+import { el, btn, iconBtn, seg, field, card, testDialog, sentence, BUSY_HINT, startInto, checkWords, noteField } from './test-ui.mjs';
 import { makeSwitch } from '../switch.mjs';
 import { icon } from '../icons.mjs';
 import {
@@ -74,7 +74,7 @@ export function openAnswerDialog({ doc, win, pair = null, onSave, onRemove = nul
   a.id = 'wft-qa-answer'; a.rows = 3; a.maxLength = 2000; a.value = pair ? pair.answer : '';
   return testDialog({
     doc, win, title: pair ? 'Edit the question and answer' : 'Add a question and answer', confirmLabel: 'Save',
-    body: [el(doc, 'p', 'hint', 'Write the question as Worca asks it. Case, spacing and punctuation do not matter.'),
+    body: [el(doc, 'p', 'hint', "Copy the question from a past run of this workflow. Case, spacing and punctuation do not matter. If Worca asks something else, the example's choice below decides."),
       field(doc, 'Question', q, { id: q.id }), field(doc, 'Your answer', a, { id: a.id })],
     onRemove: pair && onRemove ? onRemove : null,
     onConfirm: () => {
@@ -277,14 +277,15 @@ function basicRow(doc, id, text, on, extra = null, after = null) {
  *   3a: also branches(key) → {ok, data: {branches}} and startLatest() → {ok, example}
  * @param {{doc: Document, win: Window, scripts?: Array<{key:string, displayName?:string}>|null, perTryUsd?: number|null,
  *   draftLabel?: string, testRunning?: boolean, projects?: Array<object>|null, needsProject?: boolean, workflowName?: string,
- *   projectView?: object|null, dateText?: (iso: string) => string}} ctx  scripts null: the Library did not load; testRunning:
+ *   projectView?: object|null, dateText?: (iso: string) => string, runningExampleIds?: number[], confirm?: Function}} ctx  scripts null: the Library did not load; testRunning:
  *   a test of this workflow runs, so Try it once now waits (G19); projects: GET /api/workflow-tests/projects (null: not
  *   read); needsProject: the workflow changes a project's code (D62); projectView: the overview's view of the example's
- *   project (its drift, D63)
+ *   project (its drift, D63); runningExampleIds + confirm (app.js's confirmModal): a save that changes an example the
+ *   running test is trying asks first (U-T9, F17)
  * @returns {{value: () => object}}
  */
 export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [], perTryUsd = null, draftLabel = 'your draft', testRunning = false,
-  projects = null, needsProject = false, workflowName = '', projectView = null, dateText = (s) => s }) {
+  runningExampleIds = [], confirm = null, projects = null, needsProject = false, workflowName = '', projectView = null, dateText = (s) => s }) {
   const listed = scripts;
   const lib = Array.isArray(scripts) ? scripts : [];
   const draft = clone({ ...BLANK_EXAMPLE, ...ex });
@@ -325,12 +326,30 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   paintTitle();
   crumbs.append(btn(doc, 'Tests', () => actions.back(), 'wft-crumb'), title);
   const acts = el(doc, 'div', 'wft-acts');
+  // U-T9 (F17): only what a try gets or is judged by (store.mjs exampleFingerprint) stops a running test: the name, the
+  // note and the tries do not. The baseline is taken once the page is painted.
+  const fingerprintSig = () => {
+    const v = value();
+    return JSON.stringify([v.request, v.answers, v.otherwise, v.basics, v.checks.map(({ id: _id, ...c }) => c), v.project]);
+  };
+  let baseline = null;
+  let asking = false;
+  const confirmSave = async () => {
+    if (asking) return false;
+    if (typeof confirm !== 'function' || draft.id == null || !runningExampleIds.includes(draft.id) || fingerprintSig() === baseline) return true;
+    asking = true;
+    try {
+      return !!(await confirm({ title: 'Save and stop the test?', confirmLabel: 'Save and stop', cancelLabel: 'Cancel',
+        message: 'A test of this workflow is trying this example. Saving changes it, so the test stops. Tries already done are kept.' }));
+    } finally { asking = false; }
+  };
   const run = async (fn) => {
     if (busyN) return;
     error.textContent = '';
     page.querySelector('.wft-refusal')?.remove();
     const problem = limitsProblem();
     if (problem) { error.textContent = problem; return; }
+    if (fn === actions.save && !(await confirmSave())) return;
     const r = await busyWhile(() => fn(value()));
     if (!unsupported(r)) failed(r, 'That did not work. Try again.');
     if (r && !r.ok && r.body && r.body.code === 'NO_DISK' && r.body.disk) {   // board 39: Try it once now, not enough free disk
@@ -346,7 +365,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
       error.after(c);
     }
   };
-  const tryBtn = btn(doc, 'Try it once now', () => void run(actions.tryOnce), 'btn');
+  const tryBtn = btn(doc, 'Try your draft once now', () => void run(actions.tryOnce), 'btn');
   const saveBtn = btn(doc, 'Save example', () => void run(actions.save), 'btn btn-primary');
   acts.append(btn(doc, 'Cancel', () => actions.back(), 'btn'), tryBtn, saveBtn);
   head.append(crumbs, acts);
@@ -425,6 +444,8 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   let view = projectView;                                // the overview's view of it (state, behind)
   const pick = { key: stored ? stored.key : '', ref: undefined, branch: null, repin: false };
   const where = el(doc, 'div', 'wft-sect wft-where');
+  const whereTitle = el(doc, 'p', 'wft-grp', WHERE_TITLE);
+  const whereHint = el(doc, 'p', 'wft-grp-hint', WHERE_HINT);
   const projectSel = el(doc, 'select');
   projectSel.id = 'wft-ex-project';
   const startField = el(doc, 'div', 'field wft-start-field');
@@ -517,6 +538,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     else if (!st) say(null, only(NOT_ON_BRANCH_TEXT));   // P22
     const usableProject = !!(pick.key && r && r.exists && r.vcs === 'git' && st);
     tryBlocked = pick.key ? !usableProject : needsProject;
+    whereTitle.hidden = whereHint.hidden = !pick.key && !needsProject;   // U-T9 (F38, M1): nothing to say about a start that is not there
     if (usableProject) {
       const row = el(doc, 'div', 'wft-start');
       const words = el(doc, 'span');
@@ -564,7 +586,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
    *  saved ("will be"); Start from the latest is already stored ("is now"). */
   const startMoved = (saved) => {
     const st = startShown();
-    status.textContent = st ? (saved ? startNowText : startWillBeText)(st.ref || st.short, st.short) : '';
+    status.textContent = !st ? '' : saved ? startNowText(st.ref || st.short, dateText(st.at)) : startWillBeText(st.ref || st.short, st.short);
     if (changeBtn) changeBtn.focus();
   };
   async function changeStart() {
@@ -597,7 +619,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     paintWhere();
   });
   fillProjects();
-  where.append(el(doc, 'p', 'wft-grp', WHERE_TITLE), el(doc, 'p', 'wft-grp-hint', WHERE_HINT),
+  where.append(whereTitle, whereHint,
     field(doc, PROJECT_LABEL, skinned(doc, projectSel), { id: projectSel.id }), notice, startField, status, changesRow, changesHint, dev);
   c1.append(where);
 
@@ -634,12 +656,17 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
       ? `About ${fmtUsd(perTryUsd)} a try with ${draftLabel}, so about ${fmtUsd(perTryUsd * draft.tries)} for this example.`
       : 'Worca does not know the cost of a try yet: it learns it from the first tries.';   // C12
   };
-  const c4 = card(doc, '4. How many tries', 'wft-c4-h', 'AI can answer differently each time. More tries give a surer result, and cost more.', 'wft-c4');
+  const c4 = card(doc, '3. How many tries', 'wft-c4-h', 'AI can answer differently each time. More tries give a surer result, and cost more.', 'wft-c4');
   c4.append(seg(doc, 'How many tries', [[1, '1'], [3, '3'], [5, '5']], draft.tries, (v) => { draft.tries = Number(v); paintEst(); }), est);
   paintEst();
 
   // ── 3. What a good result needs ──
-  const c3 = card(doc, '3. What a good result needs', 'wft-c3-h', 'A try passes only when everything below is met.', 'wft-c3');
+  // M1: the person's own note comes first, so the sentence under it covers only what is checked.
+  const c3 = card(doc, '4. What a good result needs', 'wft-c3-h', null, 'wft-c3');
+  const noteBox = el(doc, 'textarea');
+  noteBox.id = 'wft-ex-note'; noteBox.rows = 3; noteBox.maxLength = 2000; noteBox.value = draft.note || '';
+  noteBox.addEventListener('input', () => { draft.note = noteBox.value; });
+  c3.append(noteField(doc, noteBox), el(doc, 'p', 'hint', 'A try passes only when everything below is met.'));
   const b = draft.basics || DEFAULT_BASICS;
   const cost = el(doc, 'input');
   cost.type = 'text'; cost.inputMode = 'decimal'; cost.className = 'wft-num'; cost.id = 'wft-b-cost-usd';
@@ -718,7 +745,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
         maxCostUsd: rows.cost.input.checked ? orNull(readMoney()) : null,
         maxSentBack: rows.fix.input.checked ? orNull(readFix()) : null,
       },
-      checks: draft.checks, tries: draft.tries, note: draft.note,
+      checks: draft.checks, tries: draft.tries, note: noteBox.value.trim() || null,
       // D41, P2–P4: the server keeps the pin unless the key, the branch (`ref`), `repin` or the changes switch say otherwise.
       // The setup only while "For developers" shows: '' clears it; left out, the server keeps the pin's.
       project: !pick.key ? null : {
@@ -728,5 +755,6 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
       },
     };
   }
+  baseline = fingerprintSig();
   return { value };
 }

@@ -2630,6 +2630,58 @@ test('U-T4 (F4, D4): picking the project on that New run keeps the chosen workfl
   assert.equal(sel.value, 'wf_default', 'a choice made by hand ends the pin');
 });
 
+const PIN_EXTRA = (url) => {
+  if (/\/api\/workflows\/wf_g\/tests$/.test(url)) return okJson({ ...TESTS_OVERVIEW, examples: [], pastRuns: [], latest: null });
+  if (/\/api\/projects(\?|$)/.test(url)) return okJson({ projects: [{ name: 'alpha', path: '/repos/alpha', exists: true }, { name: 'beta', path: '/repos/beta', exists: true }] });
+  if (/\/api\/config(\?|$)/.test(url)) return okJson({ config: { steps: {}, customModels: [], activeWorkflowId: 'wf_default' }, models: [], efforts: [] });
+  return null;
+};
+
+test('U-T9 (U-T4 review): opening New run again while on New ends the Run it once pin', async () => {
+  const booted = await bootVersions({ extra: PIN_EXTRA });
+  const w = booted.window;
+  w.document.documentElement.dataset.level = 'simple';
+  await go(w, 'workflows/wf_g/tests');
+  await tick(6);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-tests .wft-run-once'));
+  await tick(12);
+  const sel = doc.getElementById('workflowSelect');
+  assert.equal(sel.value, 'wf_g');
+  clickEl(w, doc.getElementById('topnav-new'));   // already on #new: showView('new') runs again, with no hand-off
+  await tick(6);
+  const project = doc.getElementById('projectSelect');
+  project.selectedIndex = 2;
+  project.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await tick(12);
+  assert.equal(sel.value, 'wf_default', "no pin is left: the project's own workflow decides");
+});
+
+test('U-T9 (U-T4 review): a pinned workflow the list no longer has falls back to Default and the pin ends with it', async () => {
+  const rows = [DEFAULT_ROW, V2_ROW, V1_ROW];
+  const booted = await bootVersions({ workflows: rows, extra: PIN_EXTRA });
+  const w = booted.window;
+  w.document.documentElement.dataset.level = 'simple';
+  await go(w, 'workflows/wf_g/tests');
+  await tick(6);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-tests .wft-run-once'));
+  await tick(12);
+  const sel = doc.getElementById('workflowSelect');
+  assert.equal(sel.value, 'wf_g');
+  rows.splice(rows.indexOf(V2_ROW), 1);   // the workflow is gone when the project is picked
+  const project = doc.getElementById('projectSelect');
+  project.selectedIndex = 1;
+  project.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await tick(12);
+  assert.equal(sel.value, 'wf_default', 'the fallback');
+  rows.push(V2_ROW);   // it is back; the dead pin must not pull the choice to it
+  project.selectedIndex = 2;
+  project.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await tick(12);
+  assert.equal(sel.value, 'wf_default', 'no stale pin');
+});
+
 test('Tests page (Task 10 fix 1): Workflows ▾ › New canvas while it shows: the page follows to C15, never the last workflow\'s examples', async () => {
   const { window: w, reads } = await bootTests();
   await go(w, 'workflows/wf_g');
@@ -2753,7 +2805,7 @@ test('Example editor (Task 11 fix 1): Try it once now saves, starts the try and 
   await go(w, 'workflows/wf_g/tests/4');
   await tick(6);
   const page = w.document.getElementById('wfv-tests');
-  clickEl(w, editorBtn(page, 'Try it once now'));
+  clickEl(w, editorBtn(page, 'Try your draft once now'));
   await tick(8);
   assert.deepEqual(writes(log), ['PUT /examples/4', 'POST /examples/4/try-once']);
   assert.equal(page.querySelector('#wft-ex-name'), null, 'the editor is gone');

@@ -80,7 +80,7 @@ export const NOT_ON_BRANCH_TEXT = 'The project folder is not on a branch. Check 
 export const changesMovesText = (branch) => `Turning this on also moves the start point to the newest commit on ${branch}.`;   // P23
 export const FILE_NAME_NEEDED = 'Write the file name.';   // P24
 export const NO_BRANCHES_TEXT = 'Worca found no branches in this project.';   // P25
-export const startNowText = (ref, short) => `The start point is now ${ref} at ${short}.`;   // P26
+export const startNowText = (ref, date) => `Saved: the start point is now ${ref} · ${date}.`;   // P26, U-T9 (F41): it is stored already
 export const startWillBeText = (ref, short) => `The start point will be ${ref} at ${short} when you save the example.`;   // P26: a Change pick, not yet saved
 // The editor's fallbacks and labels (Task 10 review, item 15).
 export const PICK_BRANCH_FIRST = 'Pick a branch first.';
