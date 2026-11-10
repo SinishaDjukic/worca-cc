@@ -667,6 +667,17 @@ export function takenMs(run, tries) {
   return total + (to - from);
 }
 
+/** U-T8 (F43): test run id → the highest cost shown while it runs, so "Cost so far" never goes down (a live run's cost
+ *  is 0 once its run is gone, before its row is read). In memory only; dropped once the test is over. */
+const COST_SHOWN = new Map();
+function shownCost(run, usd) {
+  const key = `${run.id}|${run.createdAt}`;   // the creation time too: an id is never reused, a test database's may be
+  if (run.status !== 'running') { COST_SHOWN.delete(key); return usd; }
+  const top = Math.max(usd, COST_SHOWN.get(key) ?? usd);
+  COST_SHOWN.set(key, top);
+  return top;
+}
+
 /** Board 20 (G8: two rows per example when both versions need tries). `costOf` = the runner's live cost. 3a (board 35):
  *  `phaseOf` = what a running project try is doing now (the runner's); `project.disk` is filled by progressDisk. 3b (D75):
  *  `beforeNowOf` = what the before phase is doing now (the runner's), the answer's `before`. U-T8: `stoppingOf` = the
@@ -725,7 +736,7 @@ export function progressOf(workflowId, runId, { costOf = null, phaseOf = null, b
   return {
     run, title: testTitle(run, ctx, { mode: run.status === 'running' ? 'testing' : 'compare', exampleName: firstExampleName(run) }), rows,
     done: own.filter((t) => FIN.has(t.status)).length, total: own.length,
-    costUsd: costOf ? costOf(run.id) : store.spentOfRun(run.id), estimateUsd, capUsd: run.capUsd,
+    costUsd: shownCost(run, costOf ? costOf(run.id) : store.spentOfRun(run.id)), estimateUsd, capUsd: run.capUsd,
     minutesLeft: ms !== null && remaining ? Math.max(1, Math.ceil((Math.ceil(remaining / TRIES_AT_ONCE) * ms) / 60000)) : null,
     takenMs: takenMs(run, own),
     quick: run.quick,

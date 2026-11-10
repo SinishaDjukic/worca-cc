@@ -874,3 +874,40 @@ test('U-T8 (F19): stoppingOf says a test is stopping from the stop until it has 
   assert.deepEqual([runner.stoppingOf(run.id), seen(), store.readTestRun(run.id).status], [null, false, 'stopped'], 'stopped: no longer stopping');
   assert.equal(progressOf(WF, run.id).stopping, false, 'no runner read: never stopping');
 });
+
+test('U-T8 (F43): a try\'s live cost counts only until its row has its cost (no double count during the clean-up)', async () => {
+  for (const k of Object.keys(fps)) delete fps[k];
+  const h = harness({ plan: () => ({ status: 'done', cost: 0.5 }) });
+  let release;
+  const cleaning = new Promise((r) => { release = r; });
+  let cleanups = 0;
+  const projectOf = { key: 'tickets-1a2b3c4d', checkoutDir: '/copy/x', files: [], paths: [], total: 0, counts: { added: 0, changed: 0, removed: 0 }, added: 0, removed: 0 };
+  const runner = createTestRunner({ ...h.deps,
+    outcomeOf: async (pipelineId, o) => ({ ...(await h.deps.outcomeOf(pipelineId, o)), project: projectOf }),
+    prepareProject: async (ex) => ({ copyDir: '/copy', startCommit: ex.project.startCommit }),
+    cleanupTry: async () => { cleanups += 1; await cleaning; return { removed: true, error: null }; } });
+  const SHA = 'b'.repeat(40);
+  const ex = store.createExample(WF, { name: 'Ticket 482', request: 'Fix the rounding.', tries: 1 },
+    { project: { key: 'tickets-1a2b3c4d', startSha: SHA, startRef: 'main', startAt: '2026-10-28T09:00:00.000Z', startCommit: SHA, changes: null, setupCmd: null } });
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await until(() => cleanups === 1);
+  const [t] = store.triesOfRun(run.id);
+  assert.deepEqual([t.status, t.costUsd, store.readTestRun(run.id).status], ['passed', 0.5, 'running'], 'the row has its cost while the try still cleans up');
+  assert.equal(runner.costOf(run.id), 0.5, 'counted once, never stored + live');
+  release();
+  await runner.idle(run.id);
+  assert.equal(runner.costOf(run.id), 0.5);
+});
+
+test('U-T8 (F43): the cost progressOf shows never goes down while the test runs', async () => {
+  for (const k of Object.keys(fps)) delete fps[k];
+  const h = harness({ plan: () => ({ status: 'done', cost: 0.1, hold: true }) });
+  const runner = createTestRunner(h.deps);
+  const ex = example({ tries: 1 });
+  const run = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await until(() => h.started.length === 2);
+  const shown = (usd) => progressOf(WF, run.id, { costOf: () => usd }).costUsd;
+  assert.deepEqual([shown(1.2), shown(0.4), shown(0), shown(1.5), shown(1.3)], [1.2, 1.2, 1.2, 1.5, 1.5], 'the highest so far');
+  await runner.stop(run.id);
+  assert.equal(shown(0.2), 0.2, 'once over, the stored cost as it is');
+});

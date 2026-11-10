@@ -123,11 +123,12 @@ export function createTestRunner(deps) {
     try { if (deps.notify) deps.notify({ type: 'workflow-tests-changed', workflowId: run.workflowId, testRunId: run.id, ...extra }); } catch { /* a frame only */ }
   };
 
-  /** D27: the run's own finished and stopped tries plus what its live tries have spent so far. */
+  /** D27: the run's own finished and stopped tries plus what its live tries have spent so far. U-T8 (F43): a try's live
+   *  cost only until its row has its cost (rec.costStored): a project try stays in st.running through its clean-up. */
   function costOf(runId) {
     let usd = store.spentOfRun(runId);
     const st = live.get(Number(runId));
-    for (const rec of st ? st.running.values() : []) usd += liveCost(rec.runKey);
+    for (const rec of st ? st.running.values() : []) if (!rec.costStored) usd += liveCost(rec.runKey);
     return usd;
   }
 
@@ -464,33 +465,37 @@ export function createTestRunner(deps) {
       // Only try-setup.json's ok:false is one: a run that ended in error without it is judged as the workflow's.
       if (outcome.setup && outcome.setup.ok === false) {
         store.updateTry(t.id, { status: 'stopped', costUsd: outcome.facts.costUsd, finishedAt: nowIso(), ...facts });
+        rec.costStored = true;
         requestStop(st, 'setup', setupFailedText(outcome.setup.cmd));
         return;
       }
       // U-T2: a try Worca itself could not run is never judged: it is set aside (and made again once).
       const problem = unfinished || st.stopping ? null
         : worcaProblemOf({ pause: s.pause, liveState: s.liveState, outcome, failReason: { reason: rec.failReason, worca: rec.failWorca } });
-      if (problem) { setAside(run, st, t, problem, { costUsd: outcome.facts.costUsd, ...facts }); return; }
+      if (problem) { setAside(run, st, t, problem, { costUsd: outcome.facts.costUsd, ...facts }); rec.costStored = true; return; }
       if ((unfinished || st.stopping) && !rec.failReason && outcome.facts.status !== 'done') {
         store.updateTry(t.id, { status: 'stopped', costUsd: outcome.facts.costUsd, finishedAt: nowIso(), ...facts });
+        rec.costStored = true;
         return;
       }
       rec.phase = 'checking';
       const verdict = await deps.judge(example, outcome, { onCommand: (cmd) => { rec.checking = cmd; },
         beforeOf: (check) => (st.before ? st.before.get(beforeKey(example.id, check.id)) ?? null : null) });
       const checkProblem = worcaProblemOf({ checkErrors: verdict && verdict.checks });   // U-T2: a check Worca could not run
-      if (checkProblem) { setAside(run, st, t, checkProblem, { costUsd: outcome.facts.costUsd, ...facts }); return; }
+      if (checkProblem) { setAside(run, st, t, checkProblem, { costUsd: outcome.facts.costUsd, ...facts }); rec.costStored = true; return; }
       // D60: the checkout's size after its setup, measured once per example and start.
       const diskBytes = outcome.project && outcome.project.checkoutDir && deps.measureDisk && facts.startCommit
         && store.lastDiskBytes(example.id, facts.startCommit) === null ? await deps.measureDisk(outcome.project.checkoutDir) : null;
       store.updateTry(t.id, { status: verdict.passed ? 'passed' : 'failed', verdict, costUsd: outcome.facts.costUsd, finishedAt: nowIso(),
         ...facts, ...(diskBytes != null ? { diskBytes } : {}) });
+      rec.costStored = true;
     } catch (e) {
       // Never leave a try 'running' behind: one that never started waits again, one that ran is stopped with its cost.
       if (rec.runKey) {
         stopQuietly(rec.runKey);
         const cost = rec.outcome ? rec.outcome.facts.costUsd : liveCost(rec.runKey);
         store.updateTry(t.id, { status: 'stopped', costUsd: cost, finishedAt: nowIso() });
+        rec.costStored = true;
       } else {
         store.updateTry(t.id, { status: 'waiting', startedAt: null });
       }

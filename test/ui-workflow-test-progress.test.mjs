@@ -203,10 +203,10 @@ test('app.js: the WS frame reaches wftChanged; Task 10\'s "comes in a later step
 test('the cost limit is exact (never rounded like an estimate); Try it once now shows a bare cost, as board 28\'s one-try panel', () => {
   const capped = boot(progress({ costUsd: 12.9, capUsd: 12.5, estimateUsd: 9.4 }, { status: 'stopped', stopReason: 'cap' }));
   assert.equal(capped.root.querySelector('.wft-stopped').textContent, 'Stopped: the cost went over $12.50.');
-  assert.deepEqual(facts(capped.root)[1], ['Cost so far', '$12.90', 'of about $9 · stops at $12.50'], 'the estimate keeps its "about"');
+  assert.deepEqual(facts(capped.root)[1], ['Cost', '$12.90', 'of about $9 · stops at $12.50'], 'the estimate keeps its "about"');
   const once = boot(progress({ done: 1, total: 1, costUsd: 0.55, estimateUsd: 0.52, capUsd: null, quick: null, takenMs: 300000,
     rows: [{ exampleId: 1, name: 'Bulk', label: null, dots: ['passed'], summary: 'Done · 1 of 1 passed' }] }, { kind: 'once', status: 'done', tries: 1 }));
-  assert.deepEqual(facts(once.root), [['Time taken', '5 min'], ['Cost so far', '$0.55'], ['Free quick check', 'Off']]);
+  assert.deepEqual(facts(once.root), [['Time taken', '5 min'], ['Cost', '$0.55'], ['Free quick check', 'Off']]);
   const cheap = boot(progress({ done: 1, total: 1, costUsd: 0.0131, estimateUsd: null, capUsd: null, quick: null, takenMs: 300000,
     rows: [{ exampleId: 1, name: 'Bulk', label: null, dots: ['passed'], summary: 'Done · 1 of 1 passed' }] }, { kind: 'once', status: 'done', tries: 1 }));
   assert.equal(facts(cheap.root)[1][1], '$0.0131', 'U-T5: under $0.10 the progress cost keeps three significant digits');
@@ -241,6 +241,12 @@ test('Stop testing and Finish the rest stay busy across repaints until their act
   assert.equal(finish().disabled, false);
   paint(progress({}, { id: 10, status: 'stopped', stopReason: 'person' }));
   assert.equal(finish().disabled, false, 'another test is never busy with this one\'s action');
+});
+
+test('U-T8 (F20): "Cost so far" while the test runs, "Cost" once it is over', () => {
+  const label = (p) => facts(boot(p).root).find((f) => f[0].startsWith('Cost'))[0];
+  assert.deepEqual([label(progress()), label(progress({ stopping: true })), label(progress({}, { status: 'done' })),
+    label(progress({}, { status: 'stopped', stopReason: 'person' }))], ['Cost so far', 'Cost so far', 'Cost', 'Cost']);
 });
 
 test('U-T8 (F19): "Stopping…" in the pill and on the button, disabled, from the click until the server says stopped', async () => {

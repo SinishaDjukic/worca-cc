@@ -296,7 +296,7 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s 
   const timeFact = over
     ? fact(doc, 'Time taken', Number.isFinite(p.takenMs) ? `${Math.max(1, Math.round(p.takenMs / 60000))} min` : 'not known')
     : fact(doc, 'Time left', p.minutesLeft ? `about ${p.minutesLeft} min` : 'not known yet');
-  facts.append(timeFact, fact(doc, 'Cost so far', fmtUsdFine(p.costUsd), costLine), ...(diskFact ? [diskFact] : []), quickFact);   // board 35's order
+  facts.append(timeFact, fact(doc, over ? 'Cost' : 'Cost so far', fmtUsdFine(p.costUsd), costLine), ...(diskFact ? [diskFact] : []), quickFact);   // board 35's order
   prog.append(bar, facts);
   let stopped = null;
   let setupCard = null;
