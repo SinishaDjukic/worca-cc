@@ -459,7 +459,8 @@ export function basicsList(basics) {
 /** U-T11 (F5, D10): why a try whose review loop ran out of rounds does not count as finished without an error. */
 const loopLimitText = (rounds) => {
   const n = Number(rounds) || 0;
-  return `The checker sent it back ${n === 1 ? '1 time' : `${n} times`} and the loop stopped at its limit, so the result is the checker's last review.`;
+  const sent = n === 0 ? 'asked for changes' : `sent it back ${n === 1 ? '1 time' : `${n} times`}`;   // a loop allowed no send-back
+  return `The checker ${sent} and the loop stopped at its limit, so the result is the checker's last review.`;
 };
 
 /**

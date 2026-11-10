@@ -87,6 +87,9 @@ test('a loop that ran out of rounds fails "Finishes without an error" and says w
   assert.equal(v.basics[0].detail, "The checker sent it back 3 times and the loop stopped at its limit, so the result is the checker's last review.");
   assert.deepEqual(v.facts.loopLimit, { nodeId: 'n_check', rounds: 3 });
   assert.match(judgeTry(example, { ...facts, loopLimit: { nodeId: 'n', rounds: 1 } }, []).basics[0].detail, /^The checker sent it back 1 time and/);
+  // A loop allowed no send-back at all: no "0 times".
+  assert.equal(judgeTry(example, { ...facts, loopLimit: { nodeId: 'n', rounds: 0 } }, []).basics[0].detail,
+    "The checker asked for changes and the loop stopped at its limit, so the result is the checker's last review.");
   const own = judgeTry(example, { ...facts, failReason: 'Boom.', loopLimit: { nodeId: 'n', rounds: 3 } }, []);
   assert.equal(own.basics[0].detail, 'Boom.', 'a real failure reason wins');
   assert.equal(judgeTry(example, facts, []).passed, true);
