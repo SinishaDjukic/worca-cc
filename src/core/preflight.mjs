@@ -445,10 +445,11 @@ export async function probeClaudeCapabilities(bin = 'claude') {
 
 /** Env vars that authenticate the CLI without a stored sign-in, which `claude
  *  auth status` does not (reliably) report: a custom endpoint or the model bridge
- *  (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN), an API key or OAuth token, and
- *  the cloud transports (Bedrock / Vertex / Foundry). */
+ *  (ANTHROPIC_AUTH_TOKEN), an API key or OAuth token, and the cloud transports
+ *  (Bedrock / Vertex / Foundry). ANTHROPIC_BASE_URL is not one: it says where
+ *  calls go, and the CLI still answers "Not logged in" without a credential. */
 export const CLAUDE_AUTH_ENV_KEYS = Object.freeze([
-  'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN',
 ]);
 export const CLAUDE_AUTH_ENV_FLAGS = Object.freeze([
   'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY',

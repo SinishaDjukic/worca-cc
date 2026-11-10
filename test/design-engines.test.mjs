@@ -38,7 +38,7 @@ test('open, consent, refused', async () => {
   for (const engine of ['claude', 'mock']) assert.deepEqual(gate({ engine }).ok, true, engine);
   const codex = gate({ engine: 'codex' });
   assert.deepEqual(verdict(codex), [false, true, 'engine-gated']);
-  assert.match(codex.reasons[0], /^Codex cannot be kept from running shell commands\. Its sandbox holds writes/);
+  assert.match(codex.reasons[0], /^OpenAI Codex cannot be kept from running shell commands\. Its sandbox holds writes/);
   assert.equal(codex.error, codex.reasons[0]);
   assert.equal(gate({ engine: 'codex', allowed: true }).ok, true);
   await checkRows(['gemini', 'qwen', 'cursor', 'opencode'].map((engine) => ({
@@ -67,8 +67,8 @@ test('copilot: Bash can be denied, yet spend and rules still need consent', () =
   const r = gate({ engine: 'copilot', rules });
   assert.deepEqual(verdict(r), [false, true, 'engine-gated']);
   assert.deepEqual(r.reasons, [
-    "Copilot reports no cost, so worca's spend limits cannot stop it.",
-    'Copilot cannot fully hold these rules: Read(//**/.env*), Bash(rm:*).',
+    "GitHub Copilot reports no cost, so worca's spend limits cannot stop it.",
+    'GitHub Copilot cannot fully hold these rules: Read(//**/.env*), Bash(rm:*).',
   ]);
   assert.equal(gate({ engine: 'copilot', rules, allowed: true }).ok, true);
   assert.deepEqual(gate({ engine: 'claude', rules }).ok, true, 'rules are skipped on Claude: its hook holds them');

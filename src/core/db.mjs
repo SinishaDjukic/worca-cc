@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 88;
+export const SCHEMA_VERSION = 90;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -840,11 +840,13 @@ ${STEP_QUESTIONS_DDL}
  * against the live schema so the gap can be healed regardless of the stamp.
  */
 const INCREMENTAL_COLUMNS = {
-  designs:                { models_json: 'TEXT' },   // v88: the design's own lead and builder picks ({lead?, builder?}); NULL = the Models page's
+  designs:                { models_json: 'TEXT' },   // v90: the design's own lead and builder picks ({lead?, builder?}); NULL = the Models page's
   req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13)
   req_features:           { early_start_reason: 'TEXT' },   // v85: the reason given for starting a feature before Ready, kept until a run starts; NULL = none
   req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
   run_groups:             { name_source: "TEXT NOT NULL DEFAULT 'user'" },   // v79: 'suggested' | 'user' (Smart naming), as ask_chat_groups
+  req_export_links:       { origin: "TEXT NOT NULL DEFAULT 'export'" },   // v88: where the link came from, 'export' | 'import' (A6.1 D11, D13)
+  req_attachments:        { fetch_json: 'TEXT' },   // v88: the tracker file a row comes from (A6.1 D10, D13); NULL for an upload
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
@@ -865,7 +867,8 @@ const INCREMENTAL_COLUMNS = {
                             release_target: 'TEXT',   // v66: the branch the tag points at (the PR's base)
                             release_at: 'TEXT',       // v66: when the draft release was claimed (set once; never cleared)
                             release_url: 'TEXT',      // v66: the draft release's URL
-                            release_error: 'TEXT' },  // v66: why creating it failed (not retried)
+                            release_error: 'TEXT',    // v66: why creating it failed (not retried)
+                            pr_auto: 'TEXT' },        // v87: the run's PR-when-done decision and its outcome (JSON, src/core/pr-auto.mjs); NULL = before v87 or a CLI start
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
@@ -906,7 +909,11 @@ const INCREMENTAL_COLUMNS = {
                             release_target: 'TEXT',   // v66: the branch the tag points at (the feature's base)
                             release_at: 'TEXT',       // v66: when the draft release was claimed (set once; never cleared)
                             release_url: 'TEXT',      // v66: the draft release's URL
-                            release_error: 'TEXT' },  // v66: why creating it failed (not retried)
+                            release_error: 'TEXT',    // v66: why creating it failed (not retried)
+                            pr_open: 'TEXT',          // v87: the feature's PR-when-done choice, saved at outline approval; NULL = before v87 (reads as none)
+                            pr_slices: 'TEXT',        // v87: 'each' | 'one'
+                            pr_source: 'TEXT',        // v87: JSON { open, slices } — where the values came from
+                            pr_outcome: 'TEXT' },     // v87: JSON outcome of the automatic one-PR attempt; NULL = none yet
   shape_feature_slices:   { draft_pr_url: 'TEXT',      // v58 (D24): the PR openSliceDraft opened as a draft
                             kind: 'TEXT' },            // v67 (Shaper s5): 'extra' | 'follow-up' (appendFeatureRun); NULL = from the outline
   pipeline_events:        { actor: 'TEXT' },         // v38: who did it (identity.mjs actor); NULL = the run itself / before attribution
@@ -916,7 +923,8 @@ const INCREMENTAL_COLUMNS = {
                             map_overrides_json: 'TEXT', // v40: confirm / reject / manual edge overrides; NULL = none
                             description_origin: 'TEXT',     // v40: 'generated' | 'edited'; NULL = before v40
                             actions_json: 'TEXT',           // v47: stack actions { stacks:[…] } (issue #529); NULL = none
-                            scan_models_json: 'TEXT' },     // v57: the scan pick captured at creation { scanModel, scanEffort, agentModel, agentEffort }; NULL = none
+                            scan_models_json: 'TEXT',       // v57: the scan pick captured at creation { scanModel, scanEffort, agentModel, agentEffort }; NULL = none
+                            settings_json: 'TEXT' },        // v87: the workspace's own settings { "pr.open"?: … } (src/core/workspace-settings.mjs); NULL = none
   schedules:              { ask_thread_id: 'TEXT', ask_card_id: 'TEXT',   // v31: the Ask Worca card a series came from
                             created_by: 'TEXT', updated_by: 'TEXT',   // v39: who made / last changed it (identity.mjs actor)
                             preset_id: 'TEXT' },   // v63: the run preset the series follows (read at fire time); NULL = none
@@ -1558,7 +1566,7 @@ CREATE TABLE IF NOT EXISTS req_export_links (
 );
 `;
 
-// v87 Design (SPEC C-9): the library row per design, one row per build round, one per agent process, and the spend
+// v89 Design (SPEC C-9): the library row per design, one row per build round, one per agent process, and the spend
 // ledger (its rows outlive a deleted design). <home>/design/<designId>/ is the disk half. No spending limit of its own
 // (M13): spend counts toward worca's limits. Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES; no foreign keys.
 const DESIGN_DDL = `
@@ -1644,10 +1652,10 @@ const INCREMENTAL_TABLES = {
   req_helper_messages: REQUIREMENTS_HELPER_DDL,
   req_export_setups: REQUIREMENTS_EXPORT_DDL,  // v80 (A6)
   req_export_links:  REQUIREMENTS_EXPORT_DDL,  // v80 (A6)
-  designs:            DESIGN_DDL,  // v87 Design (C-9)
-  design_builds:      DESIGN_DDL,  // v87
-  design_agents:      DESIGN_DDL,  // v87
-  design_cost_ledger: DESIGN_DDL,  // v87
+  designs:            DESIGN_DDL,  // v89 Design (C-9)
+  design_builds:      DESIGN_DDL,  // v89
+  design_agents:      DESIGN_DDL,  // v89
+  design_cost_ledger: DESIGN_DDL,  // v89
 };
 
 /**
@@ -2829,9 +2837,17 @@ export function migrate(db) {
     if (current < 85) db.exec(CHAT_CONVERSATIONS_DDL);   // v85 freeform chat conversations (first written as v84; dev took 84)
     // v86: chat_conversations.header_new_off — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps (a v85 DB) or
     // by the v85 DDL above (an older DB)
-    if (current < 87) db.exec(DESIGN_DDL);   // v87 Design: library, builds, agents, spend
-    // v88: designs.models_json — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps (a v87 DB) or by the v87 DDL
-    // above (an older DB)
+    // v87: pipelines.pr_auto, workspaces.settings_json, shape_features.pr_* — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v88 requirements A6.1: req_export_links.origin + req_attachments.fetch_json (INCREMENTAL_COLUMNS; first written as v80, then v81,
+    // v82, v84, v85, v86, then v87: A6 took 80, security #854 took 81, dev's automations #711 took 82, #943 took 83, #990 took 84, #1145 and
+    // freeform chat #1142 took 85, #1142 took 86 and PR-when-done #1156 took 87). The repair runs here, after the v77 and v80 rungs created
+    // those tables on a DB coming from below them.
+    if (current < 88) repairSchemaGaps(db, schemaGaps(db));
+    // v89 Design: library, builds, agents, spend (first written as v87; PR-when-done #1156 took 87 and Requirements A6.1 took 88).
+    // IF NOT EXISTS, so a DB the earlier numbering stamped 87 or 88 keeps its Design tables and gains dev's columns above.
+    if (current < 89) db.exec(DESIGN_DDL);
+    // v90: designs.models_json — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps (a v89 DB) or by the v89 DDL
+    // above (an older DB). First written as v88.
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

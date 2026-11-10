@@ -83,6 +83,16 @@ export function removedCriteria(turns) {
     .map((t) => t.payload.text);
 }
 
+/** A6.1 D14: the one thread line an import writes, from its turn: the tracker, the key, the criteria it made and the comments file
+ *  it stored (`commentsFile`, null without one). threadText escapes it with asData. */
+export function importThreadLine({ tracker, key, criteria = [], commentsFile = null } = {}) {
+  const ids = Array.isArray(criteria) ? criteria : [];
+  const crit = !ids.length ? 'It had no acceptance criteria'
+    : ids.length === 1 ? `Its acceptance criterion is ${ids[0]}` : `Its acceptance criteria are ${ids[0]} to ${ids.at(-1)}`;
+  const files = commentsFile ? `; its comments are in “${commentsFile}”` : '';
+  return `The product owner started this feature from ${tracker} ticket ${key}. ${crit}${files}.`;
+}
+
 /** The thread as a round's prompt writes it; the helper's prompt carries the same block (A3 D4). */
 export function threadText(turns) {
   const lines = [];
@@ -137,6 +147,8 @@ export function threadText(turns) {
       else if (t.payload.action === 'edited') lines.push(`The product owner edited what Worca took from ${n}.`);
     } else if (t.kind === 'start') {
       lines.push(`The product owner started build v${asData(t.payload.version)}.`);
+    } else if (t.kind === 'import') {   // A6.1 D14: where the feature came from, as data (A6's export turns write no line)
+      lines.push(asData(importThreadLine(t.payload)));
     } else if (t.kind === 'finish') {
       lines.push('The product owner asked to finish the interview now.');
     }

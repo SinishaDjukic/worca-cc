@@ -19,7 +19,7 @@ import {
   chainBaseBranchesOf, stackedPrBaseOf, markTicketFired, cancelResumeTicketsFor, runChains, CHAIN_SHIP_WINDOW_MS, skipTicket,
 } from '../src/core/scheduler.mjs';
 import { projectKey } from '../src/core/store.mjs';
-import { listNotifications, unreadCount } from '../src/core/notifications.mjs';
+import { listNotifications, unreadCount, markRead, addNotification } from '../src/core/notifications.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 useTempHome(after);
@@ -38,6 +38,9 @@ const clearTables = () => {
   getDb().exec('DELETE FROM scheduled_runs; DELETE FROM schedules; DELETE FROM notifications; DELETE FROM pipelines;');
 };
 beforeEach(clearTables);
+
+// A row a Resume can take on: the scheduler reads only `resume_point IS NOT NULL` (seedPipelineRow sets no point).
+const withPoint = (id) => getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?').run(JSON.stringify({ version: 2 }), id);
 
 test('a one-shot ticket waits, fires once, and records its pipeline', async () => {
   const t = createTicket({ projectDir: DIR, title: 'Upgrade', runAtMs: T0 + HOUR, request: REQ, now: T0 });
@@ -449,6 +452,100 @@ test('predecessorState follows a ticket into its pipeline and reads the outcome 
   assert.equal(predecessorState({ kind: 'ticket', id: fired.id }, { now: T0 + 10 * MIN }).state, 'gone', 'the ticket follows into the archived pipeline');
 });
 
+test('an interrupted predecessor with a resume point keeps its dependents waiting under either policy, then fires them on its branch once it finishes', async () => {
+  seedPipelineRow({ id: 'p0000091', title: 'Slice 1', status: 'interrupted', startedAt: new Date(T0).toISOString(), branch: { source: 'main', feature: 'worca-cc/slice-1' } });
+  withPoint('p0000091');
+  const on = { kind: 'pipeline', id: 'p0000091' };
+  const slice2 = createTicket({ projectDir: DIR, title: 'Slice 2', request: REQ, after: on, sourceFromPrevious: true, now: T0 });
+  const any = createTicket({ projectDir: DIR, title: 'Any', request: REQ, after: on, afterPolicy: 'any', now: T0 });
+  const forced = createTicket({ projectDir: DIR, title: 'Forced', request: REQ, after: on, now: T0 });
+  const gate = (policy) => predecessorState(on, { policy, now: T0 });
+  assert.deepEqual([gate('done').state, gate('any').state], ['waiting', 'waiting'], 'clarify: wait under any too, like a paused run');
+  assert.equal(gate('done').status, 'interrupted', 'the waiting answer carries the status the UI words as "waits for a Resume"');
+
+  const started = [];
+  const start = async (t) => {
+    const p = predecessorState(t.after, { policy: t.after.policy });
+    started.push({ id: t.id, from: t.sourceFromPrevious ? previousBranchesOf(p.pipelineId) : null });
+    return { ok: true };
+  };
+  requestRunNow(forced.id, { now: T0 });
+  let out = await runDueTickets({ now: T0 + MIN, start });
+  assert.deepEqual(out.fired, [forced.id], 'Run now still bypasses the gate');
+  assert.deepEqual(out.waiting.sort(), [slice2.id, any.id].sort());
+  assert.deepEqual(out.missed, [], 'the bug: interrupted no longer misses its dependents');
+  assert.equal(getTicket(slice2.id).status, 'scheduled');
+  assert.equal(getTicket(slice2.id).failReason, null);
+
+  // A Resume claims the row (`running`, claimForResume); the run then finishes `done` and drops its point.
+  getDb().prepare("UPDATE pipelines SET status = 'running' WHERE id = 'p0000091'").run();
+  out = await runDueTickets({ now: T0 + 2 * MIN, start });
+  assert.deepEqual(out.waiting.sort(), [slice2.id, any.id].sort(), 'still waiting while the resumed run runs');
+  getDb().prepare("UPDATE pipelines SET status = 'done', resume_point = NULL WHERE id = 'p0000091'").run();
+  out = await runDueTickets({ now: T0 + 3 * MIN, start });
+  assert.deepEqual(out.fired.sort(), [slice2.id, any.id].sort());
+  assert.deepEqual(started.find((s) => s.id === slice2.id).from, { sourceBranch: 'worca-cc/slice-1' }, 'sourceFromPrevious: the predecessor\'s branch');
+  assert.equal(getTicket(slice2.id).status, 'fired');
+});
+
+test('an interrupted predecessor releases its dependents once it really ends: stopped → missed, archived → gone, no resume point → ended', async () => {
+  const seedI = (id, point = true) => {
+    seedPipelineRow({ id, title: id, status: 'interrupted', startedAt: new Date(T0).toISOString(), branch: { source: 'main', feature: `worca-cc/${id}` } });
+    if (point) withPoint(id);
+    return id;
+  };
+  const after = (id, afterPolicy = 'done') => createTicket({ projectDir: DIR, title: `after ${id}`, request: REQ, after: { kind: 'pipeline', id }, afterPolicy, now: T0 });
+  const stops = seedI('p00000a1');
+  const archives = seedI('p00000a2');
+  const swept = seedI('p00000a3', false);   // sweepV1Runs / a restored archive: interrupted, resume_point NULL
+  const ts = after(stops), ta = after(archives), tn = after(swept), tnAny = after(swept, 'any');
+
+  let out = await runDueTickets({ now: T0 + MIN, start: okStart() });
+  assert.deepEqual(out.waiting.sort(), [ts.id, ta.id].sort(), 'both resumable runs hold their dependents');
+  assert.deepEqual(out.missed, [tn.id], 'clarify: no resume point = ended, missed under done');
+  assert.deepEqual(out.fired, [tnAny.id], 'clarify: no resume point = ended, started under any');
+  assert.equal(getTicket(tn.id).failReason, 'The run before it was interrupted.');
+
+  // Resumed, then stopped (an interrupted row itself cannot be stopped: stopPausedRun refuses it; the stop clears the point).
+  getDb().prepare("UPDATE pipelines SET status = 'stopped', resume_point = NULL WHERE id = ?").run(stops);
+  // Archive keeps status and, here, a point: archived_at must still win.
+  getDb().prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?').run(new Date(T0).toISOString(), archives);
+  out = await runDueTickets({ now: T0 + 2 * MIN, start: okStart() });
+  assert.deepEqual(out.missed.sort(), [ts.id, ta.id].sort(), 'never a wait forever');
+  assert.equal(getTicket(ts.id).failReason, 'The run before it was stopped.');
+  assert.equal(getTicket(ta.id).failReason, 'The run before it was archived.');
+});
+
+test('error and stopped keep their gate under both policies, even with a stale resume point', () => {
+  for (const [status, reason] of [['error', 'ended with an error'], ['stopped', 'was stopped']]) {
+    const id = `x-${status}`;
+    seedPipelineRow({ id, title: id, status, startedAt: new Date(T0).toISOString() });
+    withPoint(id);   // only `interrupted` reads the point
+    const done = predecessorState({ kind: 'pipeline', id }, { now: T0 });
+    assert.deepEqual([done.state, done.reason], ['bad', reason], `${status} under done`);
+    assert.equal(predecessorState({ kind: 'pipeline', id }, { now: T0, policy: 'any' }).state, 'ok', `${status} under any`);
+  }
+});
+
+test('resolveAfterRef and afterRefOf: a resumable interrupted run is accepted under done, one without a point is refused as before; a cycle through its resume is refused', () => {
+  seedPipelineRow({ id: 'p00000b1', title: 'Parked', status: 'interrupted', startedAt: new Date(T0).toISOString() });
+  const on = { kind: 'pipeline', id: 'p00000b1' };
+  assert.equal(resolveAfterRef(on, {}).error, '‘Parked’ was interrupted — nothing to wait for', 'no point: refused under done');
+  assert.equal(resolveAfterRef(on, { policy: 'any' }).ok, true, 'no point: any still accepts it');
+  assert.equal(afterRefOf('p00000b1').resumable, false);
+  withPoint('p00000b1');
+  const r = resolveAfterRef(on, {});
+  assert.equal(r.ok, true, 'the chat\'s and the form\'s final gate accepts it now');
+  assert.equal(r.after.status, 'interrupted');
+  assert.equal(afterRefOf('p00000b1').resumable, true);
+  seedPipelineRow({ id: 'p00000b2', title: 'Done', status: 'done', startedAt: new Date(T0).toISOString() });
+  assert.equal('resumable' in afterRefOf('p00000b2'), false, 'the key exists only on an interrupted pipeline');
+  // waitReaches is status-free: T waits on the run, so the run's resume may not wait on T.
+  const t = createTicket({ projectDir: DIR, title: 'Next', request: REQ, after: on, now: T0 });
+  assert.throws(() => createTicket({ projectDir: DIR, title: 'Resume', request: {}, resumePipelineId: 'p00000b1', after: { kind: 'ticket', id: t.id }, now: T0 }),
+    /‘Next’ already waits for this run/);
+});
+
 test('previousBranchesOf: a member whose branch was dropped (unchanged) chains from its source', () => {
   seedPipelineRow({ id: 'w0000009', title: 'Ws', status: 'done', target: 'workspace', workspaceKey: 'ws_9', startedAt: new Date(T0).toISOString(),
     workspaceMeta: { workspaceId: 'ws_9', branches: {
@@ -604,6 +701,100 @@ test('a predecessor that ends badly, is canceled, removed or archived strands it
       assert.deepEqual(out.missed, [t.id]); assert.deepEqual(out.fired, []);
       assert.equal(getTicket(t.id).failReason, 'The run before it was archived.');
       assert.equal(listNotifications().find((x) => x.ticketId === t.id).message, 'was waiting for ‘Old’, which was archived.');
+    } },
+  ]);
+});
+
+test('a run that starts after all, after its miss was resolved, says so in the feed and links the old miss to the run', async () => {
+  const byTicket = (id) => listNotifications().filter((n) => n.ticketId === id).reverse();
+  await checkRows([
+    { name: 'interrupted predecessor → missed; re-chained, resumed and done → the run fires: the miss is resolved with the pipeline, a started entry names the predecessor', run: async () => {
+      clearTables();
+      seedPipelineRow({ id: 'g0000010', title: 'Chat MCP', status: 'running', startedAt: new Date(T0).toISOString() });
+      const t = createTicket({ projectDir: DIR, title: 'Run 2', request: REQ, after: { kind: 'pipeline', id: 'g0000010' }, sourceFromPrevious: true, now: T0 });
+      getDb().prepare("UPDATE pipelines SET status = 'interrupted' WHERE id = 'g0000010'").run();
+      assert.deepEqual((await runDueTickets({ now: T0 + MIN, start: okStart() })).missed, [t.id]);
+      // The person waits on it again; the predecessor is resumed and finishes.
+      updateTicket(t.id, { after: { kind: 'pipeline', id: 'g0000010' } }, { now: T0 + 2 * MIN });
+      getDb().prepare("UPDATE pipelines SET status = 'running' WHERE id = 'g0000010'").run();
+      assert.deepEqual((await runDueTickets({ now: T0 + 3 * MIN, start: okStart() })).waiting, [t.id]);
+      getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = 'g0000010'").run();
+      seedPipelineRow({ id: 'g0000011', title: 'Run 2', status: 'running', startedAt: new Date(T0 + HOUR).toISOString() });
+      assert.deepEqual((await runDueTickets({ now: T0 + HOUR, start: okStart({ pipelineId: 'g0000011' }) })).fired, [t.id]);
+      const [missed, started, ...rest] = byTicket(t.id);
+      assert.deepEqual(rest, []);
+      assert.equal(missed.kind, 'missed');
+      assert.ok(missed.resolvedAt, 'the miss is resolved');
+      assert.equal(missed.pipelineId, 'g0000011', 'the miss links to the run it became');
+      assert.equal(missed.unread, false);
+      assert.equal(started.kind, 'started');
+      assert.equal(started.severity, 'info');
+      assert.equal(started.pipelineId, 'g0000011');
+      assert.equal(started.message, 'started after all, when ‘Chat MCP’ finished.');
+      assert.equal(unreadCount(), 0);
+    } },
+    { name: 'a start that learns its pipeline later (the server\'s pipeline event, a --wait terminal) back-fills every row of the ticket', run: async () => {
+      clearTables();
+      seedPipelineRow({ id: 'g0000012', title: 'A', status: 'stopped', startedAt: new Date(T0).toISOString() });
+      const t = createTicket({ projectDir: DIR, title: 'B', request: REQ, after: { kind: 'pipeline', id: 'g0000012' }, now: T0 });
+      await runDueTickets({ now: T0 + MIN, start: okStart() });
+      requestRunNow(t.id, { now: T0 + 2 * MIN });
+      assert.deepEqual((await runDueTickets({ now: T0 + 2 * MIN, start: okStart() })).fired, [t.id]);
+      let [missed, started] = byTicket(t.id);
+      assert.equal(missed.pipelineId, null); assert.equal(started.pipelineId, null);
+      assert.equal(started.message, 'started after all.', 'Run now: no predecessor sentence');
+      seedPipelineRow({ id: 'g0000013', title: 'B', status: 'running', startedAt: new Date(T0).toISOString() });
+      const named = addNotification({ kind: 'canceled', severity: 'info', ticketId: t.id, pipelineId: 'g0000099', message: 'names another run.' });
+      setTicketPipeline(t.id, 'g0000013');
+      assert.equal(listNotifications().find((n) => n.id === named.id).pipelineId, 'g0000099', 'a row that already names a run keeps it');
+      [missed, started] = byTicket(t.id);
+      assert.equal(missed.pipelineId, 'g0000013'); assert.equal(started.pipelineId, 'g0000013');
+      assert.equal(listNotifications().filter((n) => n.pipelineId === 'g0000013').length, 2, 'only this ticket\'s rows');
+    } },
+    { name: 'a one-off `when` run missed while Worca was down, then Run now (or a --wait terminal) → started entry; a series occurrence too', run: async () => {
+      clearTables();
+      const t = createTicket({ projectDir: DIR, title: 'When', runAtMs: T0, ifMissed: 'skip', request: REQ, now: T0 - HOUR });
+      await runDueTickets({ now: T0 + HOUR, start: okStart() });
+      assert.equal(getTicket(t.id).status, 'missed');
+      requestRunNow(t.id, { now: T0 + 2 * HOUR });
+      claimTicket(t.id, { now: T0 + 2 * HOUR });
+      markTicketFired(t.id, { pipelineId: 'g0000014', now: T0 + 2 * HOUR });
+      const [missed, started] = byTicket(t.id);
+      assert.ok(missed.resolvedAt); assert.equal(missed.pipelineId, 'g0000014');
+      assert.equal(started.kind, 'started'); assert.equal(started.pipelineId, 'g0000014');
+      const { schedule: s, ticket: occ } = createSchedule({ projectDir: DIR, title: 'Nightly', rule: nightly, request: REQ, ifMissed: 'skip', now: T0 });
+      await runDueTickets({ now: Date.parse(occ.runAt) + HOUR, start: okStart() });
+      assert.equal(getTicket(occ.id).status, 'missed');
+      requestRunNow(occ.id, { now: Date.parse(occ.runAt) + 2 * HOUR });
+      await runDueTickets({ now: Date.parse(occ.runAt) + 2 * HOUR, start: okStart({ pipelineId: 'g0000015' }) });
+      const occRows = byTicket(occ.id);
+      assert.deepEqual(occRows.map((n) => n.kind), ['missed', 'started']);
+      assert.equal(occRows[1].scheduleId, s.id);
+    } },
+    { name: 'a run that never missed writes no started entry (the feed stays quiet)', run: async () => {
+      clearTables();
+      seedPipelineRow({ id: 'g0000016', title: 'A', status: 'done', startedAt: new Date(T0).toISOString() });
+      const t = createTicket({ projectDir: DIR, title: 'B', request: REQ, after: { kind: 'pipeline', id: 'g0000016' }, now: T0 });
+      assert.deepEqual((await runDueTickets({ now: T0 + MIN, start: okStart({ pipelineId: 'g0000017' }) })).fired, [t.id]);
+      assert.deepEqual(byTicket(t.id), []);
+    } },
+    { name: 'a resolved problem never counts as unread, even marked unread again; the problems filter leaves it out', run: async () => {
+      clearTables();
+      seedPipelineRow({ id: 'g0000018', title: 'A', status: 'error', startedAt: new Date(T0).toISOString() });
+      const t = createTicket({ projectDir: DIR, title: 'B', request: REQ, after: { kind: 'pipeline', id: 'g0000018' }, now: T0 });
+      await runDueTickets({ now: T0 + MIN, start: okStart() });
+      assert.equal(unreadCount(), 1);
+      assert.equal(unreadCount('schedule', { reader: 'ada@example.com' }), 1);
+      assert.equal(listNotifications({ problems: true }).length, 1);
+      requestRunNow(t.id, { now: T0 + 2 * MIN });
+      const [missed] = byTicket(t.id);
+      markRead(missed.id, { read: false });
+      assert.equal(unreadCount(), 0);
+      assert.equal(unreadCount('schedule', { reader: 'ada@example.com' }), 0, 'per person too (a shared deployment)');
+      assert.equal(listNotifications({ unread: true }).length, 0);
+      assert.equal(listNotifications({ unread: true, reader: 'ada@example.com' }).length, 0);
+      assert.equal(byTicket(t.id)[0].unread, false);
+      assert.deepEqual(listNotifications({ problems: true }), []);
     } },
   ]);
 });
@@ -873,10 +1064,22 @@ test('runChains: lists each open chain in pre-order with member states, links on
     { name: 'isLive turns a bad-status row current; without it the same row is failed', run: () => {
       clearTables();
       chainRun('p0000051', 'dev', 'nb1');
-      setStatus('p0000051', 'interrupted');
+      // `error`, not `interrupted`: an interrupted run with a resume point is parked (current), so it no longer tests the override.
+      setStatus('p0000051', 'error');
       createTicket({ projectDir: DIR, title: 'next', request: REQ, sourceFromPrevious: true, after: { kind: 'pipeline', id: 'p0000051' }, now: T0 });
       assert.equal(runChains({ isLive: (q) => q.pipelineId === 'p0000051' })[0].members[0].state, 'current');
       assert.equal(runChains()[0].members[0].state, 'failed');
+    } },
+    { name: 'an interrupted member is current while it keeps a resume point (as a paused one), failed without one', run: () => {
+      clearTables();
+      chainRun('p0000052', 'dev', 'nb1');
+      setStatus('p0000052', 'interrupted');
+      createTicket({ projectDir: DIR, title: 'next', request: REQ, sourceFromPrevious: true, after: { kind: 'pipeline', id: 'p0000052' }, now: T0 });
+      assert.equal(runChains()[0].members[0].state, 'failed', 'no resume point: it can never resume, so it ended');
+      withPoint('p0000052');
+      assert.deepEqual(runChains()[0].members.map((m) => m.state), ['current', 'waiting'], 'resumable: still going, its dependent waits');
+      setStatus('p0000052', 'error');
+      assert.equal(runChains()[0].members[0].state, 'failed', 'a stale point never makes an ended run current');
     } },
     { name: 'a purged predecessor ticket makes the dependent its own root', run: () => {
       clearTables();
@@ -1163,7 +1366,7 @@ test('a paused usage limit an engine hit says it can continue now on the other e
   recordOutcome(await fire('20'), { status: 'paused', reason: 'usage_limit', detail: 'free requests used up' });
   const msgs = listNotifications().filter((n) => n.kind === 'run_paused' && n.scheduleId === schedule.id).map((n) => n.message).reverse();
   assert.deepEqual(msgs, [
-    "paused (usage limit): You've hit your usage limit — resume on Claude, Copilot, Cursor, Gemini CLI, Goose, OpenCode or Qwen Code to continue now.",
+    "paused (usage limit): You've hit your usage limit — resume on Claude Code, GitHub Copilot, Cursor, Gemini CLI, Goose, OpenCode or Qwen Code to continue now.",
     'paused (usage limit): free requests used up',
   ]);
 });
@@ -1181,6 +1384,8 @@ test('a same-branch predecessor: the gate waits while its merge back is pending 
   const plain = seed('sab-plain', { source: 'main', feature: 'worca-cc/p-5' });
   // Resumable, so it gets no teardown until a resume: only a `done` run merges back.
   const interrupted = seed('sab-interrupted', { source: 'main', feature: 'worca-cc/h-6', worktreeDir: '/w/6', sameAsSource: true }, fresh, 'interrupted');
+  const parked = seed('sab-parked', { source: 'main', feature: 'worca-cc/h-7', worktreeDir: '/w/7', sameAsSource: true }, fresh, 'interrupted');
+  withPoint(parked);
   assert.deepEqual(previousBranchesOf(merged), { sourceBranch: 'main' });
   assert.deepEqual(previousBranchesOf(failed), { sourceBranch: 'worca-cc/h-2' });
   assert.deepEqual(previousBranchesOf(tearing), { pending: true });
@@ -1188,6 +1393,7 @@ test('a same-branch predecessor: the gate waits while its merge back is pending 
   assert.equal(previousBranchesOf(setupFailed), null, 'no worktree → nothing to wait for: "left no branch", never a wait forever');
   assert.deepEqual(previousBranchesOf(plain), { sourceBranch: 'worca-cc/p-5' }, 'unchanged for every other run');
   assert.deepEqual(previousBranchesOf(interrupted), { sourceBranch: 'worca-cc/h-6' }, 'never pending: an interrupted run merges nothing back');
+  assert.deepEqual(previousBranchesOf(parked), { sourceBranch: 'worca-cc/h-7' }, 'a resumable interrupted run is never pending either');
   const gate = (id) => predecessorState({ kind: 'pipeline', id }).state;
   assert.equal(gate(tearing), 'waiting', 'a done same-branch run still merging back holds EVERY dependent (no attempt, no retry_at)');
   assert.equal(gate(merged), 'ok');
@@ -1195,10 +1401,18 @@ test('a same-branch predecessor: the gate waits while its merge back is pending 
   assert.equal(gate(crashed), 'ok');
   assert.equal(gate(setupFailed), 'ok');
   assert.equal(gate(plain), 'ok', 'unchanged for every other run');
-  assert.equal(gate(interrupted), 'bad', 'answered at once, as for any interrupted predecessor today (BAD_PIPELINE_REASON)');
+  assert.equal(gate(interrupted), 'bad', 'no resume point: it can never resume, so it ended — the answer it always had');
+  assert.equal(gate(parked), 'waiting', 'resumable: it waits for its Resume like a paused run (was `bad` before this fix)');
 });
 
 test('summarizeRequest: sameAsSource only when set', () => {
   assert.equal(summarizeRequest({ sameAsSource: true }).sameAsSource, true);
   assert.equal('sameAsSource' in summarizeRequest({}), false);
+});
+
+test('summarizeRequest carries pr only when the request has one', () => {
+  assert.deepEqual(summarizeRequest({ pr: { open: 'draft' } }).pr, { open: 'draft', slices: null });
+  assert.deepEqual(summarizeRequest({ pr: { open: 'ready', slices: 'one' } }).pr, { open: 'ready', slices: 'one' });
+  assert.equal('pr' in summarizeRequest({}), false);
+  assert.equal('pr' in summarizeRequest({ pr: 'draft' }), false);
 });

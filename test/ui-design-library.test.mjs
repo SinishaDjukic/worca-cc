@@ -534,8 +534,11 @@ test('a refused create stays in the composer with everything kept: text, kind, B
 test('attach: pills, removal, a refusal shown in place, files handed over', async () => {
   const { lib, host, tick, addFiles, setText, win } = rig({ rows: [], created: { design: { id: 'd_00000000000a' } } });
   await lib.open(); await tick();
-  await addFiles([new win.File(['x'], 'logo.png', { type: 'image/png' }), new win.File(['x'], 'evil.exe')]);
-  assert.equal(host.querySelector('.dz-start-err').textContent, 'attachment type not allowed: evil.exe');
+  // No file is refused for its type (dev's "accept any file type"): the refusal here is a file over the size cap.
+  const big = new win.File(['x'], 'huge.bin');
+  Object.defineProperty(big, 'size', { value: 100 * 1024 * 1024 + 1 });
+  await addFiles([new win.File(['x'], 'logo.png', { type: 'image/png' }), big]);
+  assert.match(host.querySelector('.dz-start-err').textContent, /huge\.bin/);
   assert.deepEqual([...host.querySelectorAll('.dz-start-file')].map((c) => c.querySelector('span').textContent), ['logo.png']);
   setText('Use this'); host.querySelector('.ask-send').click(); await tick();
   assert.equal(takeStart('d_00000000000a').files[0].name, 'logo.png');

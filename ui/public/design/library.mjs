@@ -10,7 +10,7 @@
 import { createFlyout } from '../side-flyout.mjs';
 import { icon } from '../icons.mjs';
 import { makeSwitch } from '../switch.mjs';
-import { ATTACH_ACCEPT, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
+import { bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
 import { DESIGN_FAST_LABEL, DESIGN_KIND_LABELS } from '../../../src/shared/design-names.mjs';
 import { openEngineGateDialog } from './engine-gate-dialog.mjs';
 import { createModelPills } from './model-pills.mjs';
@@ -369,7 +369,6 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
   const fileInput = make('input');
   fileInput.type = 'file';
   fileInput.multiple = true;
-  fileInput.accept = ATTACH_ACCEPT;
   fileInput.hidden = true;
   // The project button, as the real scope button: the folder, the name, the chevron; its name says the pick.
   const scopeBtn = make('button', 'btn btn-sm btn-quiet ask-scope-btn');

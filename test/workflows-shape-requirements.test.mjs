@@ -209,3 +209,17 @@ test('the requirements refiner asks for a plain twin on every decision', () => {
   assert.match(text, /Write `plain` on every decision and every option/);
   assert.doesNotMatch(text, /`plain` \(optional\)/);
 });
+
+test('the requirements refiner asks for persona and reason, real questions, and conflict options in findings order', () => {
+  const text = readFileSync(new URL('../agents/worca-cc-requirements-refiner.md', import.meta.url), 'utf8');
+  assert.match(text, /"persona": "security", "reason": "emails are personal data, and exports get forwarded"/);
+  assert.match(text, /`persona` is one key from `product, architect, ux, qa, security, devops, release`/);
+  assert.match(text, /`reason` is one plain line, at most 200 characters/);
+  assert.match(text, /An option nobody asked for has neither/);
+  assert.match(text, /as a question a person can answer/);
+  assert.match(text, /Gate the export on read access or write access/);
+  // The rule governs the dispositions file, where `conflicts[]` lives: step 3, not the decisions file's step 2.
+  assert.match(text, /^3\. .*In a `conflicts` entry, `options` follow the order of `findings`: option 1 is the side of the first finding\./m);
+  assert.match(text, /^3\. .*Do not also list that conflict in the decisions file\./m);
+  assert.doesNotMatch(text, /When you turn a conflict into a decision/);
+});

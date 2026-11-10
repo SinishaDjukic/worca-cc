@@ -24,6 +24,11 @@ export function originLabel(origin) {
   return `From ${name}`;
 }
 
+/** A known chat platform's display name ("Microsoft Teams"), or null. */
+export function platformName(platform) {
+  return has(NAMES, platform) ? NAMES[platform] : null;
+}
+
 /** The small logo before a chat title: span.chat-origin (role img, label and tooltip "From Discord"), or null for an
  *  app chat. data-platform is the known platform or "other". */
 export function originMark(doc, origin, size = 13) {

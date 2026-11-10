@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  REQUIREMENTS_ROLE_CHECKLIST, REQUIREMENT_PREFIX, requirementsAsks, shapeRequirementsEligible,
+  REQUIREMENTS_ROLE_CHECKLIST, REQUIREMENT_PREFIX, requirementsAsks, shapeRequirementsEligible, criterionPerspective,
 } from '../src/shared/shape/requirements.mjs';
 import { ROLE_CHECKLISTS, roleReviewOf } from '../src/shared/graph/role-review-step.mjs';
 
@@ -35,6 +35,15 @@ test('the lead brief differs from the supporting brief; both list the role\'s cr
     assert.doesNotMatch(b, /R-po-1/);
   }
   assert.equal(requirementsAsks('fit', { lead: 'product' }), '');
+});
+
+test('criterionPerspective: R-po-1 is product, R-sec-2 is security; an unknown prefix or bad id is null', () => {
+  assert.equal(criterionPerspective('R-po-1'), 'product');
+  assert.equal(criterionPerspective('R-sec-2'), 'security');
+  for (const [key, prefix] of Object.entries(REQUIREMENT_PREFIX)) assert.equal(criterionPerspective(`R-${prefix}-12`), key);
+  for (const bad of ['R-zzz-1', 'R-po', 'R-po-0', 'po-1', 'XR-po-1', 'R-constructor-1', 'R-valueof-1', '', null, undefined, 7]) {
+    assert.equal(criterionPerspective(bad), null, String(bad));
+  }
 });
 
 test('shapeRequirementsEligible: flag on, medium or large, not a slice ticket', () => {

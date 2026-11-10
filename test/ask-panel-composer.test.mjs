@@ -91,15 +91,14 @@ test('ask-panel-composer: attachment chips — dedupe by name (newest wins), bad
       ctx.panel.open();
       injectFiles(ctx, [mkFile(ctx, 'evil.exe', 'x')]);
       await ctx.tick(); await ctx.tick();
-      assert.equal(ctx.doc.querySelector('.ask-chip'), null);
-      assert.match(ctx.doc.querySelector('.ask-composer-msg').textContent, /attachment type not allowed: evil\.exe/);
+      assert.equal(ctx.doc.querySelectorAll('.ask-chip').length, 1, 'evil.exe attaches as a generic file');
       injectFiles(ctx, [mkFile(ctx, 'big.md', 'x'.repeat(100 * 1024 * 1024 + 1))]);
       await ctx.tick(); await ctx.tick();
       assert.match(ctx.doc.querySelector('.ask-composer-msg').textContent, /attachment over 104857600 bytes: big\.md/);
       injectFiles(ctx, [mkFile(ctx, 'ok.md', 'fine')]);
       await ctx.tick(); await ctx.tick();
       assert.ok(ctx.doc.querySelector('.ask-chip'));
-      ctx.doc.querySelector('.ask-chip .ask-chip-x').click();
+      for (const x of [...ctx.doc.querySelectorAll('.ask-chip .ask-chip-x')]) x.click();
       assert.equal(ctx.doc.querySelector('.ask-chip'), null);
     } },
     { name: 'ask-panel-composer: at most 8 attachments', run: async () => {
@@ -134,11 +133,10 @@ test('ask-panel-composer: accepted kinds — png (thumbnail chip), pdf, .html/.h
       injectFiles(ctx, [new ctx.window.File([new Uint8Array(100 * 1024 * 1024 + 1)], 'big.png', { type: 'image/png' })]);
       await ctx.tick(); await ctx.tick();
       assert.match(ctx.doc.querySelector('.ask-composer-msg').textContent, /attachment over 104857600 bytes: big\.png/);
-      // the file input advertises the binary types
-      const accept = ctx.doc.querySelector('.ask-composer input[type="file"]').accept;
-      for (const e of ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf']) assert.ok(accept.includes(e), `accept carries ${e}`);
+      // the file input has no accept filter
+      assert.equal(ctx.doc.querySelector('.ask-composer input[type="file"]').hasAttribute('accept'), false);
     } },
-    { name: 'ask-panel-composer: .html and .htm are accepted as text attachments; the file input advertises them', run: async () => {
+    { name: 'ask-panel-composer: .html and .htm are accepted as text attachments; the file input has no accept filter', run: async () => {
       const bodies = [];
       const calls = {
         messages: (url, opts) => { bodies.push(JSON.parse(opts.body)); return { ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000001', assistantMessageId: MID }) }; },
@@ -149,8 +147,6 @@ test('ask-panel-composer: accepted kinds — png (thumbnail chip), pdf, .html/.h
       await ctx.tick(); await ctx.tick();
       assert.equal(ctx.doc.querySelectorAll('.ask-chip').length, 2, 'both HTML files become chips');
       assert.equal(ctx.doc.querySelectorAll('.ask-chip img.ask-chip-thumb').length, 0, 'no thumbnail: HTML is a text kind');
-      const accept = ctx.doc.querySelector('.ask-composer input[type="file"]').accept.split(',');
-      for (const e of ['.html', '.htm']) assert.ok(accept.includes(e), `accept carries ${e}`);
       ctx.doc.querySelector('textarea.ask-input').value = 'read it';
       ctx.doc.querySelector('[data-ask-send]').click();
       await ctx.tick(); await ctx.tick(); await ctx.tick();

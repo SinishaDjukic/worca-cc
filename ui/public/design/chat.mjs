@@ -11,7 +11,7 @@ import { icon } from '../icons.mjs';
 import { makeSwitch } from '../switch.mjs';
 import { buildChatQuestion, buildChatReceipt } from '../chat/question.mjs';
 import { createDotOrbs, turnPhase } from '../dot-orb.mjs';
-import { ATTACH_ACCEPT, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
+import { bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
 import { DESIGN_FAST_LABEL } from '../../../src/shared/design-names.mjs';
 import { createModelPills } from './model-pills.mjs';
 import { createComposerSettings } from './composer-settings.mjs';
@@ -442,7 +442,6 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   const fileInput = h('input', 'dsc-file-input');
   fileInput.type = 'file';
   fileInput.multiple = true;
-  fileInput.accept = ATTACH_ACCEPT;
   fileInput.hidden = true;
   const pointBtn = iconBtn('btn btn-quiet btn-icon dsc-point', 'Point at the page', 'cursor');
   const sw = makeSwitch(doc, { label: 'Build fast', checked: fast, rowClass: 'dsc-fast dz-fast', inputClass: 'dsc-fast-input' });

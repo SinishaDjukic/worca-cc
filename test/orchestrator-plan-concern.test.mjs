@@ -13,6 +13,7 @@ import { getDb } from '../src/core/db.mjs';
 import { _testing } from '../src/core/graph/executor.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { MOCK_OUTLINE } from '../src/core/engines/mock.mjs';
+import { resolveShapeRequest } from '../src/core/shape/run.mjs';
 
 useTempHome(after);
 
@@ -142,21 +143,38 @@ test('#990 s5 under --yes the concern is overridden without an ask and the audit
   assert.ok(auditOf(h.orch).some((t) => t.startsWith(`Plan concern overridden automatically (--yes): "${CONCERN.title}".`)));
 });
 
-test('#990 s5 Away mode without --yes waits for a person: the concern ask is pending and not armed', async () => {
+test('Away approves a plan concern, keeps the plan and flags it', async () => {
   raise();
-  const clock = { now: () => Date.now(), setTimeout: () => 0, clearTimeout: () => {} };
-  const armed = [];
-  const h = start({ projectDir: gitDir('concern-away'), nightMode: true, nightClock: clock },
-    (q, orch) => { if (!q.concern) approve(q, orch); });
-  h.orch._nightActiveNow = () => true;
-  const orig = h.orch._nightArm.bind(h.orch);
-  h.orch._nightArm = (q) => { armed.push(q); return orig(q); };
-  await waitFor(() => h.plans.length === 2);
-  await new Promise((r) => setTimeout(r, 300));
-  assert.equal(h.orch.pendingQuestion?.id, 'plan-concern-n_impl-c1', 'still waiting for a person');
-  assert.ok(!armed.some((q) => q?.concern), 'no Away arm for the concern ask');
-  h.orch.answer('plan-concern-n_impl-c1', { decision: 'approve' });
+  const h = start({}, (q, orch) => { if (!q.concern) approve(q, orch); });
+  h.orch.setNightOverride('on');
   assert.equal((await h.done).status, 'done');
+  const id = 'plan-concern-n_impl-c1';
+  assert.ok(h.plans.some((q) => q.id === id));
+  assert.equal(h.orch.answeredBy(id), 'night-mode');
+  const rec = h.orch.nightDecision(id);
+  assert.equal(rec.flagged, true);
+  assert.equal(rec.rationale, `the implementer raised a concern on the plan: ${CONCERN.title}; the plan is built as written`);
+  assert.equal(shells(h.execs, 'n_plan').length, 1, 'the plan is kept');
+  assert.match(implPrompts(h)[1], /## Plan concern overridden/);
+  assert.ok(auditOf(h.orch).includes('Plan concern **overridden** by night-mode.'));
+});
+test('Away approves a requirement concern, keeps it and flags it', async () => {
+  process.env.WORCA_MOCK_ROLE_REVIEW = JSON.stringify({ qa: { 1: { severity: 'major', requirement: 'R-po-1' } } });
+  try {
+    const req = resolveShapeRequest({ shape: { size: 'large', lead: 'security' } }, { requirementsOn: true, internal: false });
+    const h = start({ workflowId: req.workflowId, shape: req.shape }, (q, orch) => { if (q.plan?.criteria) approve(q, orch); });
+    h.orch._planCheck = async () => ({ ok: true, passed: 8, total: 8, items: [] });
+    h.orch.setNightOverride('on');
+    assert.equal((await h.done).status, 'done');
+    assert.equal(h.orch.answeredBy('plan-n_reqrefine-1') === 'night-mode', false, 'the Requirements hold is a person\'s');
+    assert.equal(h.orch.answeredBy('plan-n_refine-1'), 'night-mode');
+    const rec = h.orch.nightDecision('plan-n_refine-1');
+    assert.equal(rec.flagged, true);
+    assert.match(rec.rationale, /the requirement stays as agreed$/);
+    const texts = auditOf(h.orch);
+    assert.ok(texts.includes('Plan concern **overridden** by night-mode.'));
+    assert.ok(texts.includes('Requirement concern overridden: R-po-1 kept as agreed.'));
+  } finally { delete process.env.WORCA_MOCK_ROLE_REVIEW; }
 });
 
 test('#990 s5 a Default run\'s implementer is not offered a concern', async () => {

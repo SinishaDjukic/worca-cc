@@ -18,7 +18,6 @@
 
 import { redactAskText } from './ask/redact.mjs';
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,83 +52,17 @@ export class PluginOpError extends Error {
 // ── WORCA_MOCK=1: canned responses, never spawns ─────────────────────────────
 
 let _mockResponses = null; // op -> value | (args) => value; null = defaults only
+// The canned answers (plugin-shim-mock.mjs), imported on the first mock call only: a real run never loads the fixtures.
+let _mockModule = null;
+const mockFixtures = () => (_mockModule ??= import('./plugin-shim-mock.mjs'));
 
 /** Tests: override/extend the canned per-op responses. Pass null to reset (A6: the mock ticket numbers restart at 123). */
 export function setMockSourceResponses(map) {
   _mockResponses = map && typeof map === 'object' ? map : null;
-  if (!_mockResponses) resetMockTickets();
+  // fixtures not loaded yet have nothing to reset; once loaded the reset runs before any later mock call reads them
+  if (!_mockResponses && _mockModule) _mockModule.then((m) => m.resetMockTickets());
 }
 
-const MOCK_TASKS = [
-  { id: 'MOCK-1', title: 'Fix the login redirect', url: 'https://mock.test/MOCK-1', state: 'open', labels: ['bug'], updatedAt: '2026-07-12T00:00:00.000Z' },
-  { id: 'MOCK-2', title: 'Add CSV export to reports', url: 'https://mock.test/MOCK-2', state: 'open', labels: ['feature'], updatedAt: '2026-07-12T00:00:00.000Z' },
-];
-// A6 (plans/requirements-a6-design.md §4, D19): the export ops' canned answers, so the Requirements browser proof runs
-// offline. Tickets are numbered <project>-123, -124, … in one sequence; the fingerprint is the description's sha256 and
-// ticketState returns the last one written.
-let mockTicketNo = 123;
-const mockFingerprints = new Map();
-function resetMockTickets() { mockTicketNo = 123; mockFingerprints.clear(); }
-const mockFingerprint = (text) => createHash('sha256').update(String(text ?? '')).digest('hex');
-const mockUrl = (key) => `https://mock.test/browse/${key}`;
-// Ticket updates (plans/ticket-updates-design.md D17): board 3's projects, board 4's CRM workflow (SHOP adds Resolved), and a
-// reportResult that answers by its move, so the Marketplace section and its browser proof run offline.
-const MOCK_PROJECTS = [['SHOP', 'Shop'], ['CRM', 'Customer portal'], ['OPS', 'Operations'], ['SUP', 'Support desk'],
-  ['MKT', 'Marketing site'], ['DATA', 'Data platform']].map(([value, name]) => ({ value, label: `${name} (${value})`, name }));
-function mockStatuses(project) {
-  const done = [{ value: '10001', label: 'Done', category: 'done' }, { value: '10002', label: 'Released', category: 'done' },
-    ...(project === 'SHOP' ? [{ value: '10012', label: 'Resolved', category: 'done' }] : [])];
-  return [...done, { value: '3', label: 'In Progress', category: 'in_progress' },
-    { value: '10003', label: 'Waiting for customer', category: 'in_progress' }, { value: '1', label: 'Open', category: 'todo' },
-    { value: '10004', label: "Won't Fix", category: 'cancelled' }];
-}
-function mockReport(move) {
-  if (move && move.category === 'done') return { moved: { from: 'In Progress', to: 'Done' }, note: 'Moved to Done.' };
-  if (move && typeof move.status === 'string' && move.status) {
-    const to = move.name || move.status;
-    return { moved: { from: 'In Progress', to }, note: `Moved to ${to}.` };
-  }
-  return { moved: null, note: '' };
-}
-const MOCK_DEFAULTS = {
-  listTasks: () => ({ tasks: MOCK_TASKS.map((t) => ({ ...t })) }),
-  getTask: (args) => ({
-    ...MOCK_TASKS[0],
-    id: args?.id || MOCK_TASKS[0].id,
-    body: 'Mock task body.\n\n1. reproduce\n2. fix\n3. verify',
-    meta: { mock: true },
-  }),
-  reportResult: (args = {}) => mockReport(args.move),
-  validateConfig: () => ({ ok: true }),
-  // Write-back stays on (what a missing capabilities op defaulted to before A6), the mock source can export, and it answers
-  // Ticket updates' ops (D17).
-  capabilities: () => ({ writeBack: true, export: true, ticketUpdates: true }),
-  listProjects: () => MOCK_PROJECTS.map((p) => ({ ...p })),
-  listStatuses: (args = {}) => mockStatuses(args.project),
-  legacyMove: () => ({ field: 'transitionOnComplete', target: null }),
-  exportOptions: (args = {}) => ({
-    projects: [{ value: 'SHOP', label: 'SHOP — Shop web' }, { value: 'OPS', label: 'OPS — Operations' }],
-    ...(args.project ? { issueTypes: [{ value: '10001', label: 'Story' }, { value: '10002', label: 'Task' }, { value: '10003', label: 'Bug' }] } : {}),
-    ...(args.project && args.issueType ? {
-      priorities: [{ value: '1', label: 'Highest' }, { value: '2', label: 'High' }, { value: '3', label: 'Medium' }, { value: '4', label: 'Low' }],
-      criteriaFields: [{ value: 'customfield_10070', label: 'Acceptance Criteria' }, { value: 'customfield_10071', label: 'Definition of Done' }],
-    } : {}),
-    doneStatus: 'Done',
-  }),
-  createTicket: (args = {}) => {
-    const t = args.ticket || {};
-    const key = `${t.project || 'MOCK'}-${mockTicketNo++}`;
-    mockFingerprints.set(key, mockFingerprint(t.description));
-    return { key, url: mockUrl(key), fingerprint: mockFingerprints.get(key) };
-  },
-  updateTicket: (args = {}) => {
-    mockFingerprints.set(args.key, mockFingerprint(args.ticket && args.ticket.description));
-    return { key: args.key, url: mockUrl(args.key), fingerprint: mockFingerprints.get(args.key) };
-  },
-  commentTicket: () => ({ ok: true }),
-  ticketState: (args = {}) => ({ exists: true, url: mockUrl(args.key), fingerprint: mockFingerprints.get(args.key) ?? null }),
-  findTicket: () => null,
-};
 
 /** Same env-flag semantics as claude-runner.mjs#mockEnabled — one shared rule. */
 function mockMode() {
@@ -137,7 +70,7 @@ function mockMode() {
 }
 
 async function mockCall(op, args) {
-  const entry = _mockResponses && op in _mockResponses ? _mockResponses[op] : MOCK_DEFAULTS[op];
+  const entry = _mockResponses && op in _mockResponses ? _mockResponses[op] : (await mockFixtures()).MOCK_DEFAULTS[op];
   if (entry === undefined) {
     // Mirror the real child's answer for an unimplemented op — Task 13's
     // capabilities tolerant-default keys on exactly this kind.

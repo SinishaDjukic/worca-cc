@@ -17,7 +17,7 @@ test('a gated engine is refused until a person allows it; the choice is stored',
   const before = await count();
   const gated = await post({ kind: 'web', engine: 'codex' });
   assert.equal(gated.status, 409);
-  assert.deepEqual([gated.body.code, gated.body.overridable, gated.body.engine, gated.body.label], ['engine-gated', true, 'codex', 'Codex']);
+  assert.deepEqual([gated.body.code, gated.body.overridable, gated.body.engine, gated.body.label], ['engine-gated', true, 'codex', 'OpenAI Codex']);
   assert.ok(gated.body.reasons.length > 0);
   assert.equal(gated.body.error, gated.body.reasons[0]);
   assert.deepEqual(gated.body.notes, []);
@@ -28,7 +28,7 @@ test('a gated engine is refused until a person allows it; the choice is stored',
   assert.equal(allowed.body.design.engine, 'codex');
   const copilot = await post({ kind: 'web', engine: 'copilot' });
   assert.equal(copilot.body.reasons.length, 2, 'cost, then the deny rules Design hands every build');
-  assert.match(copilot.body.reasons[1], /^Copilot cannot fully hold these rules: Read\(/);
+  assert.match(copilot.body.reasons[1], /^GitHub Copilot cannot fully hold these rules: Read\(/);
   const goose = await post({ kind: 'web', engine: 'goose', allowUnguarded: true });
   assert.equal(goose.status, 409);
   assert.deepEqual([goose.body.code, goose.body.overridable, goose.body.engine, goose.body.label], ['engine-refused', false, 'goose', 'Goose']);
@@ -109,7 +109,7 @@ test('M3 (L8.31): a bridged role model whose provider lost its key stops a new d
     await settings.updateProvider('openai', { apiKey: null });
     const before = await count();
     const refused = await post({ kind: 'web' });
-    assert.deepEqual([refused.status, refused.body.code, refused.body.overridable, refused.body.engine, refused.body.label], [409, 'engine-refused', false, 'claude', 'Claude']);
+    assert.deepEqual([refused.status, refused.body.code, refused.body.overridable, refused.body.engine, refused.body.label], [409, 'engine-refused', false, 'claude', 'Claude Code']);
     assert.match(refused.body.error, /openai/);
     assert.equal(await count(), before, 'no design is made');
     let rehydrated = 0;

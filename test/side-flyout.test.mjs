@@ -567,3 +567,41 @@ test('createFlyout: a right-click on the popup (its context menu takes the mouse
   $('out').focus();
   assert.equal(fly.isOpen(), false, 'focus leaving after a right-click still closes it');
 });
+
+// 'below' is 'down' with `fit` always on, left-aligned to its trigger (the readiness chip sits at the left of a row).
+const belowSetup = (rect) => {
+  const { window } = new JSDOM('<button id="t"></button><div id="m"></div>');
+  const doc = window.document;
+  const trigger = doc.getElementById('t');
+  const menu = doc.getElementById('m');
+  trigger.getBoundingClientRect = () => rect;
+  Object.defineProperty(menu, 'offsetWidth', { value: 460 });
+  Object.defineProperty(menu, 'offsetHeight', { value: 560, configurable: true });
+  return { trigger, menu, win: { innerWidth: 1200, innerHeight: 900 } };
+};
+
+test('placeFlyout below: under the trigger and left-aligned when it fits; shifted left near the right edge', () => {
+  const { trigger, menu, win } = belowSetup({ left: 300, right: 420, top: 100, bottom: 122, width: 120, height: 22 });
+  placeFlyout(menu, trigger, { mode: 'below', win });
+  assert.equal(menu.style.left, '300px');
+  assert.equal(menu.style.top, '128px');
+  assert.equal(menu.style.maxHeight, '');
+  trigger.getBoundingClientRect = () => ({ left: 1000, right: 1120, top: 100, bottom: 122, width: 120, height: 22 });
+  placeFlyout(menu, trigger, { mode: 'below', win });
+  assert.equal(menu.style.left, '732px');        // 1200 - 460 - 8
+  assert.equal(menu.style.top, '128px');
+});
+
+test('placeFlyout below: a low trigger opens above, never over it; with no room either way it is capped and scrolls', () => {
+  const { trigger, menu, win } = belowSetup({ left: 300, right: 420, top: 760, bottom: 782, width: 120, height: 22 });
+  placeFlyout(menu, trigger, { mode: 'below', win });
+  // room below: 900 - 782 - 6 - 8 = 104; room above: 760 - 6 - 8 = 746, which holds all 560px
+  assert.equal(menu.style.top, '194px');         // 760 - 6 - 560: its bottom edge sits gap px over the trigger
+  assert.equal(menu.style.maxHeight, '');
+  trigger.getBoundingClientRect = () => ({ left: 300, right: 420, top: 400, bottom: 422, width: 120, height: 22 });
+  Object.defineProperty(menu, 'offsetHeight', { value: 800 });
+  placeFlyout(menu, trigger, { mode: 'below', win });
+  // room below 464, above 386: stays below, capped to the room there
+  assert.equal(menu.style.top, '428px');
+  assert.equal(menu.style.maxHeight, '464px');
+});

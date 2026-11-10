@@ -15,7 +15,7 @@ import { defragDefaultModel } from '../../../src/core/memory-defrag-model.mjs';
 import { approveProposal, listProposals, rejectProposal } from '../../../src/core/memory-proposals.mjs';
 import { memoryRoot } from '../../../src/core/memory-store.mjs';
 import { queueTeamChanges, teamClientText } from '../../../src/core/memory-team.mjs';
-import { withRole } from '../../../src/core/model-roles.mjs';
+import { withRole, withScanRole } from '../../../src/core/model-roles.mjs';
 import { resolveNamingModel } from '../../../src/core/naming.mjs';
 import { resolveNightConfig } from '../../../src/core/night/config.mjs';
 import { syncPluginSlots } from '../../../src/core/plugin-broker-slots.mjs';
@@ -135,7 +135,9 @@ const settingsState = () => ({
   secondOpinionModel: secondOpinionModelSetting(),        // Models › Helper jobs › Second-opinion reviewer: the STORED pair (null = the factory default)
   factoryModels: factoryModelsPayload(),                  // what "(default)" means on the Claude tab's helper and step rows
   workspaceScan: workspaceScanModels(),                   // Settings › Runs › Workspaces: the STORED pick (null = the defaults)
-  workspaceScanDefault: WORKSPACE_SCAN_DEFAULT_MODELS,    // what null means: Sonnet 5 · medium, project agents sonnet · medium
+  // What null means: the Everyday coding role as the scan model when set, else Sonnet 5 · medium; project agents sonnet · medium.
+  workspaceScanDefault: withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS) || WORKSPACE_SCAN_DEFAULT_MODELS,
+  workspaceScanFromRole: !!withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS),   // the wizard stores no pick of its own then (re-scans follow the role)
   runEngine: runEngineSetting() ?? null,
   stepModels: stepModelsSetting(),
   designModels: designModelsSetting(),                    // Models › Engines › Design: { <engine>: { lead|builder: { model, effort } } }

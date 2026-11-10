@@ -38,7 +38,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/design-system/scan-loader.css` | 20 |
 | `ui/public/design-system/viewer-modal.css` | 40 |
 
-## chat ([chat-home.md](chat-home.md))
+## chat ([chat.md](chat.md))
 
 | File | Lines |
 |---|---|
@@ -50,7 +50,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/chat/chat-action.css` | 109 |
 | `ui/public/chat/chat-artifacts.css` | 135 |
 | `ui/public/chat/chat-connectivity.css` | 9 |
-| `ui/public/chat/chat-home.css` | 127 |
+| `ui/public/chat/chat-home.css` | 126 |
 | `ui/public/chat/chat-pinpoint.css` | 160 |
 | `ui/public/chat/chat-run-card.css` | 166 |
 | `ui/public/chat/chat-run-panel.css` | 92 |
@@ -85,7 +85,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/routes/new-run/run-defaults.mjs` | 26 |
 | `ui/routes/new-run/sources.mjs` | 152 |
 
-## runs
+## runs ([runs.md](runs.md))
 
 | File | Lines |
 |---|---|
@@ -175,7 +175,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/artifacts/saved-markdown-viewer.html` | 18 |
 | `ui/public/artifacts/saved-markdown.css` | 20 |
 
-## workflows
+## workflows ([workflows.md](workflows.md))
 
 | File | Lines |
 |---|---|
@@ -210,11 +210,12 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/projects/folder-browser.html` | 26 |
 | `ui/public/projects/list-head.css` | 7 |
 | `ui/public/projects/project-add.html` | 120 |
-| `ui/public/projects/project-settings.css` | 29 |
-| `ui/public/projects/projects-management.css` | 146 |
-| `ui/public/projects/projects.html` | 75 |
-| `ui/routes/projects/project-settings.mjs` | 164 |
-| `ui/routes/projects/projects.mjs` | 280 |
+| `ui/public/projects/project-settings.css` | 47 |
+| `ui/public/projects/projects-management.css` | 150 |
+| `ui/public/projects/readiness.css` | 68 |
+| `ui/public/projects/projects.html` | 76 |
+| `ui/routes/projects/project-settings.mjs` | 171 |
+| `ui/routes/projects/projects.mjs` | 287 |
 | `ui/routes/projects/terminal-and-actions.mjs` | 121 |
 
 ## workspace-map ([workspace-map.md](workspace-map.md))
@@ -353,7 +354,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 
 | File | Lines |
 |---|---|
-| `ui/public/requirements/requirements.css` | 725 |
+| `ui/public/requirements/requirements.css` | 829 |
 | `ui/public/requirements/requirements.html` | 10 |
 
 ## shape ([shape-it-first.md](shape-it-first.md))

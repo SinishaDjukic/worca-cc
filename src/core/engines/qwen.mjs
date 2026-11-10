@@ -58,6 +58,9 @@ import { chatSelfTest, SELF_TEST_MODEL } from './chat-selftest.mjs';
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const qwenDefaultBin = () => process.env.WORCA_QWEN_BIN || 'qwen';
 export const QWEN_SESSION_PREFIX = 'qwen:';
+/** The instruction files Qwen Code reads from its cwd, all combined (qwenlm.github.io/qwen-code-docs/en/users/features/memory/).
+ *  Its personal `.qwen/QWEN.local.md` is git-ignored, so it never reaches a run checkout. */
+export const QWEN_INSTRUCTION_FILES = Object.freeze(['QWEN.md', 'AGENTS.md']);
 
 const QWEN_FALSE = new Set(['allowedTools', 'cost', 'subagents', 'hookTelemetry', 'skills', 'subagentSystemPrompt', 'turnBudget']);
 /** Qwen Code's reasoning-effort tiers (its settings' `model.reasoningEffort`, written into worca's system settings). A
