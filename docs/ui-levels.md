@@ -123,7 +123,8 @@ be skipped by forgetting it.
   The guides open that dialog too when a save failed.
 - `ui-level.mjs` paints all three (the menu row and side menu, the Settings card,
   the dialog) from one controller.
-- Stored as `uiLevel` in `settings.json`. Absent means "never chosen".
+- Stored as `uiLevel` in the server's `settings.json`, so a choice applies in every browser that
+  opens this Worca. Absent means "never chosen".
 
 ## Catalogue
 
@@ -303,6 +304,8 @@ inside the view.
 | Element | Level |
 |---|---|
 | Projects list, add, project page Overview, remove, Use git (Folder projects) and Link remote (Git projects without origin) | S |
+| Agent readiness chip (Projects row, project page header) and its report, incl. Not used here / Undo and Recheck | S — status of the project a run starts in; its Settings links open the project Settings tab by deep link |
+| Project Settings tab: Agent readiness card (Detect / Used / Not used per tool, skipped checks) | A — the tab's level |
 | Project Memory tab (view and edit files) | A |
 | Project Memory tab › Team view (Local · Team · Both choice, note states, share existing notes, Compare, Undo seeding); project Settings › Team memory | A |
 | Project page Overview › "Your team shares memory for this repository" (Turn on, Not now); the "team memory available" mark in the Projects list and the workspace wizard's import list | A |

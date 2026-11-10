@@ -75,10 +75,10 @@ test('v2 — before a decor speaks for a session, the tray follows the run\'s en
   assert.equal(t.doc.querySelector('.gv-sess-head .st').textContent, 'One session · Cursor: separate sessions', 'the view was built with the run\'s engine');
   const off = mount({ sessionVerified: OPEN, sessionsOn: false });
   off.update({ ...off.decor, sessions: {} });
-  assert.equal(off.doc.querySelector('.gv-sess-head .st').textContent, 'One session · Claude: separate sessions', 'sessionsOn reaches the view');
+  assert.equal(off.doc.querySelector('.gv-sess-head .st').textContent, 'One session · Claude Code: separate sessions', 'sessionsOn reaches the view');
   const on = mount({ sessionVerified: OPEN, sessionsOn: true });
   on.update({ ...on.decor, sessions: {} });
-  assert.equal(on.doc.querySelector('.gv-sess-head .st').textContent, 'One session · Claude · 2 sub-agents', 'and so does sessionVerified');
+  assert.equal(on.doc.querySelector('.gv-sess-head .st').textContent, 'One session · Claude Code · 2 sub-agents', 'and so does sessionVerified');
 });
 
 test('v2 — the run page: state frames carry sessionHosts, the monitor wires the header, openSessionLog picks the member', async () => {

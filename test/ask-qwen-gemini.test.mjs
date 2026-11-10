@@ -132,7 +132,7 @@ test('the panel: each engine\'s section and what it refuses before upload', () =
   assert.deepEqual(pickerGroups(ROWS).map((g) => g.engine), ['claude', 'gemini', 'qwen']);
   for (const engine of ['qwen', 'gemini', 'goose', 'opencode']) {
     assert.equal(attachRefusal({ ext: '.png', engine }), null);
-    assert.equal(attachRefusal({ ext: '.pdf', engine }), engine === 'goose' ? 'a Goose chat cannot view PDFs (Claude, Copilot, Gemini CLI, OpenCode or Qwen Code chats can)' : null);
+    assert.equal(attachRefusal({ ext: '.pdf', engine }), engine === 'goose' ? 'a Goose chat cannot view PDFs (Claude Code, GitHub Copilot, Gemini CLI, OpenCode or Qwen Code chats can)' : null);
     assert.equal(attachRefusal({ ext: '.md', engine }), null);
   }
   assert.equal(isEngineSetupNotice({ kind: 'notice', qwenSetup: true }), true);

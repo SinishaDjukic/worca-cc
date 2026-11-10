@@ -15,10 +15,10 @@ const SPLIT = planSplit({ root: ROOT }).alreadySplit === true;
 const UNSPLIT_ONLY = SPLIT && 'this checkout is already split (ui/public/parts.json): there is no unsplit tree to refuse';
 const map = (features, docless = {}) => JSON.stringify({ version: 1, docless, features });
 const F = (name, routes = [], css = [], doc = null) => ({ name, doc, routes, css, html: [] });
-const MINI = map([F('shell', [], ['.*']), F('runs', ['/api/runs'])], { runs: 'test' });
+const MINI = map([F('shell', [], ['.*']), F('runs', ['/api/runs'], [], 'docs/runs.md')]);
 
 test('longest prefix wins and a sibling prefix does not match', () => {
-  const m = loadMap(ROOT, map([F('runs', ['/api/runs']), F('groups', ['/api/runs/groups'])], { runs: 't', groups: 't' }));
+  const m = loadMap(ROOT, map([F('runs', ['/api/runs'], [], 'docs/runs.md'), F('groups', ['/api/runs/groups'])], { groups: 't' }));
   assert.equal(featureForRoute(m, '/api/runs/groups/x'), 'groups');
   assert.equal(featureForRoute(m, '/api/runs/:id'), 'runs');
   assert.equal(featureForRoute(m, '/api/runsx'), null);
@@ -37,10 +37,10 @@ test('the naming block is type-checked: areas, generic and cssBlocks', () => {
 });
 
 test('feature names: docs basename, ui/public folder, shell or docless — nothing else', () => {
-  loadMap(ROOT, map([F('statistics', [], [], 'docs/statistics.md'), F('chat', [], [], 'docs/chat-home.md'), F('shell')]));
+  loadMap(ROOT, map([F('statistics', [], [], 'docs/statistics.md'), F('chat', [], [], 'docs/chat.md'), F('shell')]));
   assert.throws(() => loadMap(ROOT, map([F('labs')])), /bad feature name: labs .*feature-map\.json:\d+/);
   assert.throws(() => loadMap(ROOT, map([F('statistics')])), /doc must be docs\/statistics\.md/);
-  assert.throws(() => loadMap(ROOT, map([F('runs')], { runs: '' })), /needs a reason/);
+  assert.throws(() => loadMap(ROOT, map([F('labs')], { labs: '' })), /needs a reason/);
 });
 
 test('--root: the map is read from that root, not from the tool\'s own copy', () => {

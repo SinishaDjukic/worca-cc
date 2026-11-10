@@ -24,9 +24,9 @@
  *             the adapters, because the browser and src/core/model-env.mjs read it and neither may import an adapter.
  */
 export const ENGINES = Object.freeze({
-  claude: Object.freeze({ label: 'Claude', models: true, cost: true, subagents: true, helpers: true, beta: false, signin: false, chat: Object.freeze({ images: true, pdfs: true }) }),
-  codex: Object.freeze({ label: 'Codex', models: true, cost: true, subagents: true, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: false }) }),
-  copilot: Object.freeze({ label: 'Copilot', models: true, cost: false, subagents: true, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: true }) }),
+  claude: Object.freeze({ label: 'Claude Code', models: true, cost: true, subagents: true, helpers: true, beta: false, signin: false, chat: Object.freeze({ images: true, pdfs: true }) }),
+  codex: Object.freeze({ label: 'OpenAI Codex', models: true, cost: true, subagents: true, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: false }) }),
+  copilot: Object.freeze({ label: 'GitHub Copilot', models: true, cost: false, subagents: true, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: true }) }),
   cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, subagents: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: false, pdfs: false, verified: false }) }),
   gemini: Object.freeze({ label: 'Gemini CLI', models: true, cost: false, subagents: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }) }),
   goose: Object.freeze({ label: 'Goose', models: true, cost: true, subagents: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: false }) }),
@@ -55,9 +55,9 @@ export function chatAttachRefusal({ engine, kind, pdf = false }) {
   const c = Object.hasOwn(ENGINES, engine || 'claude') ? ENGINES[engine || 'claude'].chat : null;
   if (!c || c.verified === false || kind === 'text') return null;
   const label = engineLabel(engine);
-  if (!c.images && !c.pdfs) return `a ${label} chat cannot view images or PDFs (${chatEnginesTaking('images', 'pdfs')} chats view both)`;
-  if (pdf && !c.pdfs) return `a ${label} chat cannot view PDFs (${chatEnginesTaking('pdfs')} chats can)`;
-  if (!pdf && kind === 'image' && !c.images) return `a ${label} chat cannot view images (${chatEnginesTaking('images')} chats can)`;
+  if (!c.images && !c.pdfs) return `${withArticle(label)} chat cannot view images or PDFs (${chatEnginesTaking('images', 'pdfs')} chats view both)`;
+  if (pdf && !c.pdfs) return `${withArticle(label)} chat cannot view PDFs (${chatEnginesTaking('pdfs')} chats can)`;
+  if (!pdf && kind === 'image' && !c.images) return `${withArticle(label)} chat cannot view images (${chatEnginesTaking('images')} chats can)`;
   return null;
 }
 
@@ -100,10 +100,16 @@ export function engineChoiceLabel(engine) {
   return isBetaEngine(engine) ? `${engineLabel(engine)} (beta)` : engineLabel(engine);
 }
 
-/** The display name of an engine ('codex' -> 'Codex'); a missing engine is Claude. */
+/** The display name of an engine ('codex' -> 'OpenAI Codex'); a missing engine is Claude Code. */
 export function engineLabel(engine) {
   const e = engine || 'claude';
   return Object.hasOwn(ENGINES, e) ? ENGINES[e].label : String(e);
+}
+
+/** `label` with its indefinite article: "an OpenAI Codex", "a Claude Code". `An` for the start of a sentence. */
+export function withArticle(label, { capital = false } = {}) {
+  const a = /^[aeiou]/i.test(label) ? 'an' : 'a';
+  return `${capital ? a[0].toUpperCase() + a.slice(1) : a} ${label}`;
 }
 
 /** Whether runs on `engine` report a cost. Where not, a cost shows as unknown, never $0.00. An unknown engine does. */

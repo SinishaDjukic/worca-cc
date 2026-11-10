@@ -17,7 +17,7 @@ const SID = 's_aaaaaaaa';
 const ev = (transition, f = {}) => ({ sid: SID, transition, engine: 'claude', mode: 'subagents', transport: 'turns', hostEpoch: 1, hostSessionId: 'H', ts: 'x', ...f });
 
 test('live lines for the transitions that matter, nothing for the rest', () => {
-  assert.equal(formatSessionHostLine(ev('open')), `◇ session ${SID} · opened (sub-agents on Claude)`);
+  assert.equal(formatSessionHostLine(ev('open')), `◇ session ${SID} · opened (sub-agents on Claude Code)`);
   assert.equal(formatSessionHostLine(ev('dispatch', { nodeId: 'n_impl', attempt: 2, turnId: `t:${SID}:4` }), { labelOf: () => 'Implementation' }), `◇ session ${SID} · dispatch Implementation (attempt 2, turn 4)`);
   assert.equal(formatSessionHostLine(ev('degrade', { reason: 'Cursor has no sub-agents' })), `◇ session ${SID} · runs as separate sessions — Cursor has no sub-agents`);
   assert.equal(formatSessionHostLine(ev('watchdog', { dispatchId: 'd:x:n_impl:2:a1', reason: 'SESSION_HOST_NO_DISPATCH' })), `◇ session ${SID} · dispatch d:x:n_impl:2:a1 failed — SESSION_HOST_NO_DISPATCH`);
@@ -29,7 +29,7 @@ test('the report table', () => {
     turnRows: [{ turnId: `t:${SID}:1`, nodeId: 'n_impl', attempt: 1, durationMs: 0, tokens: { in: 5000, out: 700, cr: 0, cw: 0 }, memberUsd: 0, hostOverheadUsd: 0, costSource: 'harness', verdict: 'none' }],
     dispatches: 1, rotations: 0, restarts: 0, costUsd: 0, hostOverheadUsd: 0, reconciled: true, history: [], reconcile: { ok: true, mismatches: [] }, integrity: { torn: 0, invalid: 0, seqGaps: 0 } }] };
   const lines = formatSessionsReport(report, { labelOf: () => 'Implementation' }).split('\n');
-  assert.equal(lines[0], `Session ${SID} · One session · sub-agents · Claude · main agent default model`);
+  assert.equal(lines[0], `Session ${SID} · One session · sub-agents · Claude Code · main agent default model`);
   assert.match(lines[1], /host mock-host-1 \(epoch 1\) · 1 turn · 1 dispatch · 0 rotations · 0 restarts · \$0\.00 \(steps \$0\.00, hand-offs \$0\.00\) · reconciled/);
   assert.match(lines[3], /^ {2}1 {5}Implementation {10}1 {8}0s {8}5\.0k\/700\/0 {11}\$0\.00 {3}harness {2}none$/);
 });
@@ -54,7 +54,7 @@ test('v2 — live lines: a watchdog warning, close, resume, restart, rotate, a r
     { name: 'degrade with no reason', run: () => assert.equal(formatSessionHostLine(ev('degrade')), `◇ session ${SID} · runs as separate sessions`) },
     { name: 'v4: the flag is named by its Labs title, never its key', run: () => assert.equal(formatSessionHostLine(ev('degrade', { reason: 'the Labs flag sessionGroups is off' })),
       `◇ session ${SID} · runs as separate sessions — the One session Labs flag is off`) },
-    { name: 'open as one conversation', run: () => assert.equal(formatSessionHostLine(ev('open', { mode: 'shared' })), `◇ session ${SID} · opened (one conversation on Claude)`) },
+    { name: 'open as one conversation', run: () => assert.equal(formatSessionHostLine(ev('open', { mode: 'shared' })), `◇ session ${SID} · opened (one conversation on Claude Code)`) },
     { name: 'pause and mode print nothing', run: () => assert.deepEqual([formatSessionHostLine(ev('pause')), formatSessionHostLine(ev('mode'))], [null, null]) },
     { name: 'a session that never had a host: no resume or restart line (every restore writes one)', run: () => {
       assert.equal(formatSessionHostLine(ev('resume', { mode: 'separate', hostSessionId: null, reason: 'pause' })), null);
@@ -83,12 +83,12 @@ test('v2 — the report: unknown cost, a failed check, skipped trace lines, hist
     reconcile: { ok: false, mismatches: [{ turnId: `t:${SID}:2`, method: 'estimate', harnessUsd: 0.65, otherUsd: 0.9 }, { turnId: null, method: 'epoch', harnessUsd: 1.2, otherUsd: 1.2004, epoch: 1 }] },
     integrity: { torn: 1, invalid: 2, seqGaps: 0 } };
   const lines = formatSessionsReport({ sessions: [s] }, { labelOf: (id) => ({ n_review: 'Review' })[id] }).split('\n');
-  assert.equal(lines[0], `Session ${SID} · Build · sub-agents · Claude · main agent claude-haiku-4-5`);
+  assert.equal(lines[0], `Session ${SID} · Build · sub-agents · Claude Code · main agent claude-haiku-4-5`);
   assert.equal(lines[1], '  host H (epoch 2) · 2 turns · 3 dispatches · 1 rotation · 1 restart · $0.68 (steps $0.65, hand-offs $0.03) · not reconciled');
   // Task 66: one conversation has no main agent: neither its model nor a hand-off split is printed; it names its
   // conversation, and it has no dispatch or rotation to count (v4).
   const shared = formatSessionsReport({ sessions: [{ ...s, mode: 'shared', hostOverheadUsd: 0 }] }, { labelOf: (id) => ({ n_review: 'Review' })[id] }).split('\n');
-  assert.equal(shared[0], `Session ${SID} · Build · one conversation · Claude`);
+  assert.equal(shared[0], `Session ${SID} · Build · one conversation · Claude Code`);
   assert.equal(shared[1], '  conversation H (epoch 2) · 2 turns · 1 restart · $0.68 · not reconciled');
   const none = formatSessionsReport({ sessions: [{ ...s, mode: 'shared', hostSessionId: null, turns: 0, restarts: 0, costUsd: null, reconcile: null, reconciled: null }] }).split('\n');
   assert.equal(none[1], '  no conversation · 0 turns · 0 restarts · no turn · not checked');
@@ -103,11 +103,11 @@ test('v2 — the report: unknown cost, a failed check, skipped trace lines, hist
   assert.equal(lines[8], '  history: rotated to a fresh host (dispatches) · paused · resumed after pause · runs as separate sessions', 'no reason that repeats its kind, no dangling dash');
   const sep = formatSessionsReport({ sessions: [{ ...s, mode: 'separate', modeReason: 'the Labs flag is off', hostSessionId: null, turns: 0, dispatches: 0, rotations: 0, restarts: 0, turnRows: [],
     costUsd: null, hostOverheadUsd: null, history: [{ kind: 'degrade', reason: 'the Labs flag is off' }], reconcile: { ok: true, mismatches: [] }, integrity: { torn: 0, invalid: 0, seqGaps: 0 } }] }).split('\n');
-  assert.deepEqual(sep, [`Session ${SID} · Build · separate sessions — the Labs flag is off · Claude`,
+  assert.deepEqual(sep, [`Session ${SID} · Build · separate sessions — the Labs flag is off · Claude Code`,
     '  no host session · 0 turns · 0 dispatches · 0 rotations · 0 restarts · no host turn · not checked'], 'no main agent, no cost of its own, its degrade (a real separate trace has one) is not repeated, and nothing was compared (v4)');
   const flagOff = formatSessionsReport({ sessions: [{ ...s, mode: 'separate', modeReason: 'the Labs flag sessionGroups is off', hostSessionId: null, turns: 0, dispatches: 0, rotations: 0, restarts: 0, turnRows: [],
     costUsd: null, hostOverheadUsd: null, history: [{ kind: 'degrade', reason: 'the Labs flag sessionGroups is off' }], reconcile: { ok: true, mismatches: [] }, integrity: {} }] }).split('\n');
-  assert.equal(flagOff[0], `Session ${SID} · Build · separate sessions — the One session Labs flag is off · Claude`, 'v4: never the flag key ("never \'group\'")');
+  assert.equal(flagOff[0], `Session ${SID} · Build · separate sessions — the One session Labs flag is off · Claude Code`, 'v4: never the flag key ("never \'group\'")');
   const restored = formatSessionsReport({ sessions: [{ ...s, mode: 'separate', modeReason: 'the Labs flag is off', hostSessionId: null, turns: 0, dispatches: 0, rotations: 0, restarts: 1, turnRows: [],
     costUsd: null, hostOverheadUsd: null, reconcile: { ok: true, mismatches: [] }, integrity: {},
     history: [{ kind: 'degrade', reason: 'the Labs flag is off' }, { kind: 'pause', reason: 'pause' }, { kind: 'resume', reason: 'pause' }, { kind: 'restart', reason: 'engine-switch' }] }] }).split('\n');
@@ -167,7 +167,7 @@ test('v2 — worca sessions: an unknown run, a bad option, no sessions, the tabl
   const dir = await seedRun('5e550002');
   assert.equal(await cmdSessions(['5e550002'], io), 0);
   const text = lines.splice(0).join('\n').split('\n');
-  assert.equal(text[0], `Session ${SID} · One session · sub-agents · Claude · main agent default model`);
+  assert.equal(text[0], `Session ${SID} · One session · sub-agents · Claude Code · main agent default model`);
   assert.match(text[3], /^ {2}1 {5}Implementation {10}1 {8}1s {8}—/, 'the step label comes from the run manifest');
   assert.equal(await cmdSessions(['5e550002', '--json'], io), 0);
   assert.deepEqual(JSON.parse(lines.splice(0).join('\n')), await sessionsReport(dir), 'the API report, verbatim');
@@ -197,7 +197,7 @@ test('v2 — a foreground run prints its session\'s lines (the orch.on(\'session
   child.stderr.on('data', (b) => { stderr += b; });
   const code = await new Promise((r) => child.on('exit', r));
   assert.equal(code, 0, stderr);
-  assert.match(stdout, new RegExp(`◇ session ${SID} · opened \\(sub-agents on Claude\\)`));
+  assert.match(stdout, new RegExp(`◇ session ${SID} · opened \\(sub-agents on Claude Code\\)`));
   assert.match(stdout, new RegExp(`◇ session ${SID} · dispatch Implementation \\(attempt 1, turn 1\\)`), 'the label from the run manifest');
   assert.match(stdout, new RegExp(`◇ session ${SID} · closed · \\d+ turns · \\$`));
 });

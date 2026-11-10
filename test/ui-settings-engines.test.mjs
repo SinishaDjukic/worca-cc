@@ -602,7 +602,7 @@ test('the Models page: the Codex tab offers the Second-opinion reviewer with Cod
   const { doc, window, posts, tick } = await boot({ utilityModels: {}, factoryModels: FACTORY }, { hash: 'models' });
   const row = doc.querySelector('.engine-card[data-engine="codex"] .engine-helpers [data-setting="models.codex.secondOpinion"]');
   assert.ok(row);
-  assert.match(row.querySelector('.inherit-model option[value=""]').textContent, /^Codex's default model/);
+  assert.match(row.querySelector('.inherit-model option[value=""]').textContent, /^OpenAI Codex's default model/);
   const model = row.querySelector('.inherit-model');
   model.value = 'gpt-5.5'; model.dispatchEvent(new window.Event('change', { bubbles: true }));
   doc.getElementById('engineSettingsSave').click();
