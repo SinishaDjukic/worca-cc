@@ -294,6 +294,7 @@ const QWEN_SPEC = Object.freeze({
   classify: classifyQwenError, resumeNotFoundRe: QWEN_RESUME_NOT_FOUND_RE,
   createNormalizer: createQwenNormalizer,
   askLockdown: QWEN_ASK_LOCKDOWN,
+  askMinVersion: QWEN_ASK_MIN_VERSION,
   prepare({ bin, sys, prompt, model, effort, servers, permissionRules, includeDirs, scratchDir, ask, probe }) {
     const plan = qwenRulePlan(permissionRules);
     const mcpServers = servers ? familyMcpServers(servers) : {};

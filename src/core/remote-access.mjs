@@ -141,7 +141,7 @@ export function checkRemoteAccessConfig(cfg, { bindHost = '127.0.0.1', gateways 
     warnings.push(`${vars} is set but WORCA_ALLOWED_HOSTS is empty: only localhost requests are accepted`);
   }
   if (!LOOPBACK_BINDS.has(String(bindHost).toLowerCase()) && !remote) {
-    const via = gateways.length ? ` or through Docker's gateway (${gateways.join(', ')})` : '';
+    const via = gateways.length ? ` or through the container network's gateway (${gateways.join(', ')})` : '';
     warnings.push(`listening on ${bindHost} but WORCA_ALLOWED_HOSTS is empty: only connections from this machine${via} are answered, every other caller gets a 403`);
   }
   return { errors, warnings };

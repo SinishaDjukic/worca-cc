@@ -51,7 +51,11 @@ export function hostGuardHookEntry() {
 export function hostGuardSystemPrompt(pid) {
   return [
     '## Host process protection',
-    `You run under the worca app server (PID ${pid}, \`node ui/server.mjs\`). Never kill it, and never kill any process you did not spawn yourself.`,
+    // On a worker container (`pid` null) the server is elsewhere and its pid means nothing in this pid namespace:
+    // the process to leave alone is the worca worker, the parent of the agent's own.
+    pid == null
+      ? 'You run under a worca worker process (`worca worker`, the parent of your own process). Never kill it, and never kill any process you did not spawn yourself.'
+      : `You run under the worca app server (PID ${pid}, \`node ui/server.mjs\`). Never kill it, and never kill any process you did not spawn yourself.`,
     'Pattern kills are forbidden and a PreToolUse hook blocks them on every OS: `pkill`, `killall`, `xargs kill`, `taskkill /IM`, `Stop-Process -Name`, `wmic process … delete`, and any `kill` fed from a pipe, variable, or substitution (e.g. `ps aux | grep … | while read p; do kill $p; done`).',
     'To stop a process you started: record its PID when you spawn it (or list PIDs with `ps`, which is always allowed), then run `kill <literal pid>`.',
   ].join('\n');

@@ -15,7 +15,7 @@ test('shellArgv per platform', () => {
 });
 
 test('base env strips worca internals and GitHub credentials', () => {
-  const env = actionBaseEnv({ PATH: '/bin', WORCA_HOME: '/h', WORCA_HOST_PID: '1', WORCA_RUN_ROOT: 'x', GH_TOKEN: 's', GITHUB_TOKEN: 's' });
+  const env = actionBaseEnv({ PATH: '/bin', WORCA_HOME: '/h', WORCA_DB_DIR: '/worca-db', WORCA_HOST_PID: '1', WORCA_RUN_ROOT: 'x', GH_TOKEN: 's', GITHUB_TOKEN: 's' });
   assert.deepEqual(Object.keys(env).sort(), ['PATH']);
 });
 

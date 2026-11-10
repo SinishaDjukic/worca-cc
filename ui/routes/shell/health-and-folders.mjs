@@ -7,7 +7,7 @@ import { isSharedIdentity, resolveIdentity } from '../../../src/core/identity.mj
 import { isInContainer } from '../../../src/core/remote-access.mjs';
 import { UI_HEALTH_NAME } from '../../../src/core/ui-instance.mjs';
 import process from 'node:process';
-import { HOST, PKG_VERSION, PORT, REMOTE_MODE, badRequest, bearerMatches, fsAllowedRoots, fsLimitedHere, uiControl } from '../../server.mjs';
+import { HOST, PKG_VERSION, PORT, REMOTE_MODE, badRequest, bearerMatches, fsAllowedRoots, fsLimitedHere, uiControl, workersHealth } from '../../server.mjs';
 
 export function register(app) {
 // GET answers whether "Choose folder…" can open a native dialog for the viewer, without opening
@@ -55,6 +55,8 @@ app.get('/api/health', (req, res) => {
     host: HOST,
     port: addr || PORT,
     startedAt: startedAtIso(),
+    // Where agents run (src/core/executor): absent under the local executor.
+    ...(workersHealth() ? { executor: workersHealth() } : {}),
   });
 });
 

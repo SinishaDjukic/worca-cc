@@ -371,3 +371,37 @@ test('a reply with a cost and no usage still books the cost', () => {
   for (const l of opencodeReplyLines('hi', 'ses_x', { cost: 0.5, tokens: {} })) n.push(l);
   assert.equal(n.finish().costUsd, 0.5);
 });
+
+import { createLoopbackRegistry, createLoopbackSession } from './helpers/loopback-worker-session.mjs';
+import { installExecutor, workerHomeDir } from '../src/core/executor/index.mjs';
+import { withExecutorScope } from '../src/core/executor/scope.mjs';
+import { geminiRulePlan } from '../src/core/engines/gemini.mjs';
+import { homedir } from 'node:os';
+
+test("on a worker: a sub-agent's session is exported there, and `~/` deny rules name the worker's home", POSIX, async () => {
+  const lines = frames('task-subagent.jsonl');
+  const fake = fakeOpencode(tmp(), null, { lines, exportDoc: JSON.parse(text('export-subsession.json')) });
+  const session = createLoopbackSession({ workerId: 'w-oc' });
+  installExecutor({ kind: 'docker', registry: createLoopbackRegistry({ session }) });
+  const scope = { kind: 'run', id: 'oc-sub', engine: 'opencode' };
+  const events = [];
+  try {
+    await withExecutorScope(scope, () => runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'go', model: 'anthropic/x', allowedTools: ['Read', 'Agent'],
+      appendSubagentSystemPrompt: 'MEMORY', permissionRules: { deny: ['Read(~/.claude/.credentials.json)'] }, onEvent: (e) => events.push(e) }));
+  } finally { installExecutor(null); }
+  // Both the run and the export went through the worker: the controller's image has no opencode, and the sessions
+  // are in the worker's home.
+  assert.deepEqual(session.specs.map((s) => s.args[0]), ['run', 'export']);
+  assert.deepEqual(session.specs[1].args, ['export', 'ses_ee2c6ffe4ffe2lbboOzQjzEkHc']);
+  const result = events.find((e) => e.type === 'result');
+  assert.deepEqual(result.usage, { input_tokens: 5998 + 1046 + 5351, output_tokens: 176 + 406 + 84 + 135 + 267, cache_read_input_tokens: 2048 + 8000 + 5522, cache_creation_input_tokens: 0 }, "the sub-agent's spend is counted");
+  assert.ok(!events.some((e) => e.type === 'stderr' && /could not read sub-agent session/.test(e.text)));
+  // The login a worker copies sits in ITS home: that is the path the rule must name.
+  const config = JSON.stringify(fake.config());
+  assert.ok(config.includes('worker-homes/run/oc-sub/.claude/.credentials.json'), config.slice(0, 400));
+  // Gemini CLI compiles the same rule into a pattern on the home it is given (gemini.mjs prepare gives it the spawn's).
+  const pattern = geminiRulePlan({ deny: ['Read(~/.claude/.credentials.json)'] }, { home: workerHomeDir(scope) }).rules[0].argsPattern;
+  assert.ok(new RegExp(pattern).test(JSON.stringify(`${workerHomeDir(scope)}/.claude/.credentials.json`)), pattern);
+  assert.ok(!new RegExp(pattern).test(JSON.stringify(`${homedir()}/.claude/.credentials.json`)) || workerHomeDir(scope) === homedir());
+  assert.match(readFileSync(new URL('../src/core/engines/gemini.mjs', import.meta.url), 'utf8'), /geminiRulePlan\(permissionRules, \{ home: spawnHomeDir\(\) \}\)/);
+});

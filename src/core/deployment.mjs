@@ -30,6 +30,9 @@ export function githubMode(env = process.env) {
  *  local install (whose header stays exactly as before). */
 export function deploymentFacts(env = process.env, { remoteMode = false, projectsRoot = null } = {}) {
   const deployment = detectDeployment(env, { remoteMode });
+  // Where agents run (src/core/executor): named on a container or hosted worca when they run in worker containers.
+  const executor = String(env.WORCA_EXECUTOR || '').trim().toLowerCase();
+  const remoteExecutor = executor && executor !== 'local' ? executor : null;
   if (deployment === 'local') return null;
   // Actions and the terminal (docs/actions.md, docs/terminal.md "Security"): a hosted worca runs none
   // unless the operator set WORCA_ACTIONS_REMOTE / WORCA_TERMINAL_REMOTE.
@@ -42,6 +45,7 @@ export function deploymentFacts(env = process.env, { remoteMode = false, project
   // "Push as me" (docs/credential-broker.md): GitHub calls go out as the acting person who connected GitHub.
   const asPerson = asPersonMode(env);
   return { deployment, projectsRoot: projectsRoot || null, github: githubMode(env),
+    ...(remoteExecutor ? { executor: remoteExecutor } : {}),
     ...(asPerson ? { githubAsPerson: asPerson } : {}),
     ...(ado !== 'none' ? { azureDevOps: ado } : {}),
     ...(egress.enforced ? { egress: egress.mode } : {}),
