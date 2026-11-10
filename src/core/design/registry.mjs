@@ -63,10 +63,11 @@ function openBuildRefusal(design) {
   return current && OPEN_BUILD_STATUSES.includes(current.status) ? new DesignRefusal(409, OPEN_BUILD) : null;
 }
 
-/** The engine gate (P8) for a build of `engine`, `allowed` the consent: a refusal is a 409 carrying the gate's
- *  code. Synchronous: `start` holds no `await` before `DesignBuild.create`. */
-function gateEngine(engine, allowed) {
-  const r = designEngineGate({ engine, allowed, models: designBuildModels({ engine }) });
+/** The engine gate (P8) for a build of `design` on `engine`, `allowed` the consent: a refusal is a 409 carrying the
+ *  gate's code. The design's own model picks are gated with it. Synchronous: `start` holds no `await` before
+ *  `DesignBuild.create`. */
+function gateEngine(design, engine, allowed) {
+  const r = designEngineGate({ engine, allowed, design, models: designBuildModels({ ...design, engine }) });
   if (!r.ok) throw new DesignRefusal(409, r.error, r.code);
 }
 
@@ -296,7 +297,7 @@ class DesignBuilds {
     let design = getDesign(designId);
     if (!design) throw new DesignRefusal(404, 'design not found');
     const { engine, stored } = designEngineFor(design);
-    gateEngine(engine, stored);
+    gateEngine(design, engine, stored);
     const change = isText(instruction);
     if (!change && !isText(brief)) throw new DesignRefusal(422, 'A brief is required');
     const open = openBuildRefusal(design);
@@ -431,7 +432,8 @@ class DesignBuilds {
     if (this._restoring.has(designId)) throw new DesignRefusal(409, RESTORE_RUNNING);
     if (this._starting.has(designId)) throw new DesignRefusal(409, ROUND_STARTING);
     if (this._builds.has(buildId)) throw new DesignRefusal(409, 'This build is running');
-    gateEngine(designEngineFor(getDesign(designId)).engine, true);
+    const current = getDesign(designId);
+    gateEngine(current, designEngineFor(current).engine, true);
     this._refuseBusy(by);
     const owner = getDesign(designId)?.createdBy ?? by;
     this.claim(designId, { owner });

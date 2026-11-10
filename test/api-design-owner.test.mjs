@@ -50,12 +50,15 @@ const ROUTES = [
   { method: 'POST', path: '/api/design/:id/versions/:n/restore', body: {} },
   { method: 'POST', path: '/api/design/:id/export', body: { format: 'html' } },
   { method: 'GET', path: '/api/design/:id/thumb' },
+  { method: 'GET', path: '/api/design/:id/models' },
 ];
-/** Not about one design: the list filters by viewer, a create makes the caller's own, the limits are the same for all. */
+/** Not about one design: the list filters by viewer, a create makes the caller's own, the limits and a new design's
+ *  model choices are the same for all. */
 const OPEN = [
   { method: 'GET', path: '/api/design' },
   { method: 'POST', path: '/api/design' },
   { method: 'GET', path: '/api/design/limits' },
+  { method: 'GET', path: '/api/design/models' },
 ];
 const FRAME_TYPES = ['design-build', 'design-plan', 'design-agent', 'design-section', 'design-delta', 'design-file',
   'design-question', 'design-restored', 'design-thumb'];

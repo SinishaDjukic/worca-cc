@@ -1295,6 +1295,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'modelRoles',                              // Models › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
   'requirementsInterview',                  // Models › Engines › Claude: the requirements interview { model, effort }
   'askEngine', 'askModels',                  // Chat's engine for new chats and its model per engine (user-only, D17)
+  'designModels',                            // Models › Engines › Design: { <engine>: { lead|builder: { model, effort } } }
   'tagDimensions',                           // Settings › Tags › Tag dimensions [{ key, label, values, required, default? }]
   'enforceTags',                             // Settings › Tags › Require mandatory tags to start a run
 ]);
@@ -1387,6 +1388,52 @@ export async function setAskModels(input) {
   if (v === undefined) delete settings.askModels; else settings.askModels = v;
   await persistSettings(settings);
   return { askModels: askModelsSetting() };
+}
+/** Design's agents: the lead (the main agent) and the builders (one per section). */
+export const DESIGN_AGENT_ROLES = Object.freeze(['lead', 'builder']);
+/** The Models page's Design picks, { <engine>: { lead?: {model, effort?}, builder?: {model, effort?} } } (user-only). A
+ *  design's own pick wins over these; an unset one falls back to the Deep thinking (lead) or Everyday coding (builder) role. */
+export function designModelsSetting() {
+  if (homeGuarded()) return {};
+  const value = readSettings().designModels;
+  return isObj(value) ? value : {};
+}
+/** One Design pick: { model, effort? } with a model, or null to clear. `engine` checks the effort. */
+export function normalizeDesignPick(engine, input, label = 'model') {
+  const pair = normalizeModelPair(engine, input, label);
+  if (pair && !pair.model) throw new Error(`${label}.model is required: pick a model, or clear the pick`);
+  return pair;
+}
+export function assertDesignModelsInput(input) {
+  if (!isObj(input)) throw new Error('designModels must be { <engine>: { lead|builder: { model, effort } | null } }');
+  const out = {};
+  for (const [engine, roles] of Object.entries(input)) {
+    if (!MODEL_ENGINES.includes(engine)) throw new Error(`designModels: unknown engine "${engine}"`);
+    if (!isObj(roles)) throw new Error(`designModels.${engine} must be an object of lead|builder → { model, effort } | null`);
+    out[engine] = {};
+    for (const [role, value] of Object.entries(roles)) {
+      if (!DESIGN_AGENT_ROLES.includes(role)) throw new Error(`designModels.${engine}: unknown agent "${role}" (one of ${DESIGN_AGENT_ROLES.join(', ')})`);
+      out[engine][role] = normalizeDesignPick(engine, value, `designModels.${engine}.${role}`);
+    }
+  }
+  return out;
+}
+/** setDesignModels' merge, pure, over an ALREADY asserted patch. undefined = delete. */
+export function nextDesignModels(current, patch) {
+  const all = isObj(current) ? { ...current } : {};
+  for (const [engine, roles] of Object.entries(patch)) {
+    const cur = isObj(all[engine]) ? { ...all[engine] } : {};
+    for (const [role, pair] of Object.entries(roles)) { if (pair === null) delete cur[role]; else cur[role] = pair; }
+    if (Object.keys(cur).length) all[engine] = cur; else delete all[engine];
+  }
+  return Object.keys(all).length ? all : undefined;
+}
+/** Merge a Design pick patch (null clears a pick) and write it. Returns what it wrote, so the answer holds under homeGuarded. */
+export async function setDesignModels(input) {
+  const patch = assertDesignModelsInput(input); const settings = readSettings();
+  const v = nextDesignModels(settings.designModels, patch);
+  if (v === undefined) delete settings.designModels; else settings.designModels = v;
+  await persistSettings(settings); return { designModels: v ?? {} };
 }
 export function assertRunEngineInput(input) {
   if (input === null || input === undefined || input === '') return null;

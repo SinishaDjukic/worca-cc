@@ -134,6 +134,13 @@ body.view-design .main{display:flex;flex-direction:column;overflow:hidden;paddin
 .dz-fast{display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 4px;color:var(--ink);font:500 var(--fs-meta)/1 var(--sans);white-space:nowrap;}
 .dz-fast-n{color:var(--ink-2);font-weight:400;}
 .dz-fast .switch-label{order:-1;font:inherit;color:inherit;}
+/* The lead's and the builders' model pickers (model-pills.mjs) wear the Chat picker's .ask-model-btn and .ask-pop-model;
+   only where the menu sits is Design's: a fixed popup placed by side-flyout.mjs beside its button. */
+.dz-models{display:inline-flex;align-items:center;gap:2px;min-width:0;}
+.dz-model-btn{flex:none;white-space:nowrap;}
+.ask-pop.dz-model-pop{position:fixed;right:auto;bottom:auto;z-index:6;max-height:min(420px,70vh);}
+.dsc-models{display:flex;min-width:0;padding:0 0 4px;}
+.dsc-models .dz-models{flex-wrap:wrap;}
 .dsc-user{align-items:flex-end;}
 .dsc-sent-pins{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;max-width:100%;}
 .dsc-sent-pin{padding-right:8px;}

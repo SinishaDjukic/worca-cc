@@ -48,8 +48,46 @@ function toDesign(r) {
     id: r.id, title: r.title, kind: r.kind, fast: !!r.fast, projectKey: r.project_key ?? null,
     threadId: r.thread_id ?? null, engine: r.engine ?? null, status: r.status, currentBuild: r.current_build ?? null,
     version: Number(r.version), createdBy: r.created_by ?? null, createdAt: r.created_at, updatedAt: r.updated_at,
-    costUsd: roundUsd(Number(r.spend) || 0),
+    costUsd: roundUsd(Number(r.spend) || 0), models: readModels(r.models_json),
   };
+}
+
+/** The design's own agents' picks: `{lead?, builder?}`, each `{model, effort?}`. */
+export const DESIGN_MODEL_ROLES = Object.freeze(['lead', 'builder']);
+const MODEL_ID_MAX = 200;
+const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** A stored models_json as `{lead?, builder?}`; anything unreadable is no pick (`{}`), never a throw. */
+function readModels(text) {
+  if (typeof text !== 'string' || !text) return {};
+  let v;
+  try { v = JSON.parse(text); } catch { return {}; }
+  if (!isObj(v)) return {};
+  const out = {};
+  for (const role of DESIGN_MODEL_ROLES) {
+    const p = v[role];
+    if (isObj(p) && typeof p.model === 'string' && p.model) out[role] = { model: p.model, ...(typeof p.effort === 'string' && p.effort ? { effort: p.effort } : {}) };
+  }
+  return out;
+}
+
+/** `{lead?, builder?}` with each pick `{model, effort?}` (null or absent = no pick), as stored text or null for none.
+ *  The shape only: the routes check the model runs on the design's engine. */
+function cleanModels(v) {
+  if (v == null) return null;
+  if (!isObj(v)) throw new DesignError('BAD_REQUEST', 'models must be { lead, builder }');
+  const out = {};
+  for (const [role, p] of Object.entries(v)) {
+    if (!DESIGN_MODEL_ROLES.includes(role)) throw new DesignError('BAD_REQUEST', `models: unknown agent "${role}" (one of ${DESIGN_MODEL_ROLES.join(', ')})`);
+    if (p == null) continue;
+    if (!isObj(p) || Object.keys(p).some((k) => k !== 'model' && k !== 'effort')) throw new DesignError('BAD_REQUEST', `models.${role} must be { model, effort } or null`);
+    const model = typeof p.model === 'string' ? p.model.trim() : '';
+    if (!model || model.length > MODEL_ID_MAX) throw new DesignError('BAD_REQUEST', `models.${role}.model must be a model id`);
+    if (p.effort != null && typeof p.effort !== 'string') throw new DesignError('BAD_REQUEST', `models.${role}.effort must be text`);
+    const effort = typeof p.effort === 'string' ? p.effort.trim() : '';
+    out[role] = { model, ...(effort ? { effort } : {}) };
+  }
+  return Object.keys(out).length ? JSON.stringify(out) : null;
 }
 
 /** One line, whitespace collapsed; blank is DEFAULT_TITLE; longer than TITLE_MAX is refused, never truncated. */
@@ -111,8 +149,9 @@ function freshDesignId() {
   throw new DesignError('IO', 'could not pick a free design id');
 }
 
-export function createDesign({ kind, title, fast, projectKey, threadId, engine } = {}, { by = null } = {}) {
+export function createDesign({ kind, title, fast, projectKey, threadId, engine, models } = {}, { by = null } = {}) {
   const k = cleanKind(kind);
+  const m = cleanModels(models);
   const t = cleanTitle(title);
   const f = cleanFast(fast);
   const pk = cleanRef(projectKey, 'projectKey');
@@ -124,8 +163,8 @@ export function createDesign({ kind, title, fast, projectKey, threadId, engine }
   try {
     ensureDesignFolders(id);
     prepare(`INSERT INTO designs (id, title, kind, fast, project_key, thread_id, engine, status, current_build, version,
-        created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'empty', NULL, 0, ?, ?, ?)`)
-      .run(id, t, k, f ? 1 : 0, pk, th, en, by ?? null, ts, ts);
+        created_by, created_at, updated_at, models_json) VALUES (?, ?, ?, ?, ?, ?, ?, 'empty', NULL, 0, ?, ?, ?, ?)`)
+      .run(id, t, k, f ? 1 : 0, pk, th, en, by ?? null, ts, ts, m);
   } catch (err) {
     try { rmSync(designDir(id), RM_OPTS); } catch { /* the original error is the one worth reporting */ }
     throw err;
@@ -161,6 +200,7 @@ const PATCH = Object.freeze({
   status: ['status', cleanStatus],
   currentBuild: ['current_build', cleanCurrentBuild],
   version: ['version', cleanVersion],
+  models: ['models_json', cleanModels],
 });
 
 export function updateDesign(id, patch = {}) {

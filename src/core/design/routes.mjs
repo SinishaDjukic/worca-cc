@@ -7,6 +7,10 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mockEnabled } from '../claude-runner.mjs';
+import { assertSlotModels as realAssertSlotModels, listModels as realListModels } from '../config.mjs';
+import { effortsForEngine } from '../model-env.mjs';
+import { normalizeDesignPick } from '../settings.mjs';
+import { effortsOn, runsOn } from '../../shared/connections.mjs';
 import { roundUsd } from '../cost-budget.mjs';
 import { requireFlag } from '../flags.mjs';
 import { actorOf, isSharedIdentity, resolveIdentity } from '../identity.mjs';
@@ -14,16 +18,16 @@ import { listProjects } from '../projects.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { DesignRefusal, projectDirFor } from './build.mjs';
 import { chatSpendUsd, createDesignThread, designBuildModels } from './chat-thread.mjs';
-import { designEngineGate, resolveDesignEngine } from './engines.mjs';
+import { designEngineFor, designEngineGate, resolveDesignEngine } from './engines.mjs';
 import { registerDesignExportRoutes } from './export-routes.mjs';
 import { AGENT_ID_RE, BUILD_ID_RE, DESIGN_ID_RE, DesignError } from './ids.mjs';
 import { designWorkDir } from './paths.mjs';
 import { validatePlan } from './plan.mjs';
 import { createDesignBuilds, RESTORE_RUNNING, ROUND_STARTING } from './registry.mjs';
-import { designDenyRules } from './spawn-options.mjs';
+import { designDenyRules, designModelPick } from './spawn-options.mjs';
 import {
-  createDesign, deleteDesign, designsWithUnknownCost, getBuild, getDesign, latestBuild, listAgents, listDesigns,
-  updateDesign,
+  createDesign, deleteDesign, DESIGN_MODEL_ROLES, designsWithUnknownCost, getBuild, getDesign, latestBuild, listAgents,
+  listDesigns, updateDesign,
 } from './store.mjs';
 import { thumbUrl } from './thumb.mjs';
 
@@ -34,8 +38,8 @@ const BUILD = `${ONE}/builds/:bid`;
 /** Every Design route, in registration order: the one list registerDesignRoutes registers from and the flag-off test
  *  walks, so no route can skip the `design` gate unnoticed. `limits` comes before `/:id`, which would answer it 404. */
 export const DESIGN_ROUTES = Object.freeze([
-  ['GET', P], ['POST', P], ['GET', `${P}/limits`],
-  ['GET', ONE], ['PATCH', ONE], ['DELETE', ONE],
+  ['GET', P], ['POST', P], ['GET', `${P}/limits`], ['GET', `${P}/models`],
+  ['GET', ONE], ['PATCH', ONE], ['DELETE', ONE], ['GET', `${ONE}/models`],
   ['POST', `${BUILD}/stop`], ['POST', `${BUILD}/agents/:aid/stop`], ['POST', `${BUILD}/answer`], ['POST', `${BUILD}/continue`],
   ['POST', `${ONE}/versions/:n/restore`],
 ].map(([method, path]) => Object.freeze({ method, path })));
@@ -123,6 +127,29 @@ function patchOf(body) {
   return patch;
 }
 
+const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** The picks that name a model, as the store keeps them: `{lead?, builder?}`. */
+function ownPicks(picks) {
+  const out = {};
+  for (const role of DESIGN_MODEL_ROLES) if (picks?.[role]) out[role] = picks[role];
+  return out;
+}
+
+/** The design's model choices for its pills: the catalog models `engine` runs (each with that engine's efforts), the
+ *  design's own picks, and what each agent runs on with no pick of its own (`defaults`: the Models page's Design pick,
+ *  else the model role, else the engine's default model, each with its `source`). */
+async function modelOptions(engine, design, listModels) {
+  const all = await listModels('');
+  const models = (Array.isArray(all) ? all : [])
+    .filter((m) => m && typeof m.id === 'string' && m.custom !== 'project' && runsOn(m, engine))
+    .map((m) => ({ ...m, efforts: effortsOn(m, engine) }));
+  const defaults = Object.fromEntries(DESIGN_MODEL_ROLES.map((role) => [role, designModelPick(role, { engine })]));
+  const own = design?.models ?? {};
+  const picks = Object.fromEntries(DESIGN_MODEL_ROLES.map((role) => [role, own[role] ?? null]));
+  return { engine, label: engineLabel(engine), efforts: effortsForEngine(engine), models, picks, defaults };
+}
+
 /** The design's plan on disk when valid, else null. */
 function planOf(design) {
   let text;
@@ -154,6 +181,31 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
   const d = deps && typeof deps === 'object' ? deps : {};
   const designBuilds = d.designBuilds ?? createDesignBuilds({ broadcast });
   const gate = requireFlag('design');
+  const listModels = d.listModels ?? realListModels;
+  const assertSlotModels = d.assertSlotModels ?? realAssertSlotModels;
+
+  /**
+   * A `{lead?, builder?}` body for `engine`: each pick null (cleared) or `{model, effort?}` a catalog model `engine`
+   * runs, with an effort it takes. `undefined` passes through (no change), `null` clears both. 400 on anything else.
+   * @returns {Promise<undefined|null|{lead?: object|null, builder?: object|null}>}
+   */
+  const checkModels = async (models, engine) => {
+    if (models === undefined || models === null) return models;
+    if (!isObj(models)) throw new DesignRefusal(400, 'models must be { lead, builder }');
+    const out = {};
+    const items = [];
+    for (const [role, value] of Object.entries(models)) {
+      if (!DESIGN_MODEL_ROLES.includes(role)) {
+        throw new DesignRefusal(400, `models: unknown agent "${role}" (one of ${DESIGN_MODEL_ROLES.join(', ')})`);
+      }
+      let pick;
+      try { pick = normalizeDesignPick(engine, value, `models.${role}`); } catch (err) { throw new DesignRefusal(400, messageOf(err)); }
+      out[role] = pick;
+      if (pick) items.push({ id: `models.${role}`, engine, value: pick });
+    }
+    try { await assertSlotModels(items); } catch (err) { throw new DesignRefusal(400, messageOf(err)); }
+    return out;
+  };
 
   /** 409 `credential-missing` when the person cannot pay for `design`'s build models (the broker), before an agent
    *  of its build spawns again (Continue, an answer); never asked on the mock. */
@@ -194,9 +246,11 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
       const projectKey = typeof body.projectKey === 'string' ? body.projectKey.trim() || null : null;
       const engine = resolveDesignEngine({ explicit: named ? body.engine : null, projectKey });
       const projectDir = await projectDirFor(projectKey);
+      // The design's own lead and builder picks, checked against the engine it will build on.
+      const models = ownPicks(await checkModels(body.models, engine));
       const gate = designEngineGate({
-        engine, allowed: body.allowUnguarded === true, project: !!projectDir,
-        rules: { deny: await designDenyRules({ projectDir }) }, models: designBuildModels({ engine }),
+        engine, allowed: body.allowUnguarded === true, project: !!projectDir, design: { models },
+        rules: { deny: await designDenyRules({ projectDir }) }, models: designBuildModels({ engine, models }),
       });
       if (!gate.ok) {
         // Answered here: errorReply keeps only {error, code}, and the Library's dialog needs the rest.
@@ -205,7 +259,7 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
         return;
       }
       const design = createDesign(
-        { kind: body.kind, title: body.title, fast: body.fast, projectKey: body.projectKey, engine },
+        { kind: body.kind, title: body.title, fast: body.fast, projectKey: body.projectKey, engine, models },
         { by: actorOf(req) },
       );
       // The design owns its titled thread from the start (P5): no title call can fire on its first message.
@@ -220,6 +274,22 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
     // P8 (M6): the Build fast caps the Library's and the chat's labels read; numbers only, the same for every viewer.
     [`GET ${P}/limits`]: async (req, res) => {
       res.json(designBuilds.limits());
+    },
+
+    // The start composer's pills: the model choices on the engine a new design would build on (`engine` when named,
+    // else the project's or the user's Default engine).
+    [`GET ${P}/models`]: async (req, res) => {
+      const q = req.query || {};
+      const text = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+      const engine = resolveDesignEngine({ explicit: text(q.engine), projectKey: text(q.projectKey) });
+      res.json(await modelOptions(engine, null, listModels));
+    },
+
+    // A design's pills: the choices on its own engine, and its picks.
+    [`GET ${ONE}/models`]: async (req, res) => {
+      const design = designFor(req, res);
+      if (!design) return;
+      res.json(await modelOptions(designEngineFor(design).engine, design, listModels));
     },
 
     [`GET ${ONE}`]: async (req, res) => {
@@ -243,6 +313,13 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
       const body = req.body || {};
       const patch = patchOf(body);
       await checkProject(patch.projectKey);
+      // A pick changes from the next round: a round in progress keeps the models it started with.
+      if (body.models !== undefined) {
+        const picks = await checkModels(body.models, designEngineFor(design).engine);
+        // `{lead: null}` clears that pick (ownPicks drops it); `null` clears both.
+        const merged = picks === null ? {} : ownPicks({ ...design.models, ...picks });
+        patch.models = Object.keys(merged).length ? merged : null;
+      }
       const row = updateDesign(design.id, patch);
       // M7: the next spawn's cap follows; nothing running is killed, and nothing else reaches the build.
       if ('fast' in patch) designBuilds.get(row.currentBuild)?.setFast(patch.fast);

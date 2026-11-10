@@ -6,6 +6,11 @@ export const DESIGN_KIND_LABELS = Object.freeze({ web: 'Web page', presentation:
 export const DECK_KINDS = Object.freeze(['presentation', 'pitch']);
 // M6: the Build fast label when the switch is on.
 export const DESIGN_FAST_LABEL = 'up to 12';
+// The engines Design builds on (core/design/engines.mjs DESIGN_ENGINES, gate not `refused`, the mock left out): the
+// Models page lists a Design lead and Design builders row for each.
+export const DESIGN_ENGINE_NAMES = Object.freeze(['claude', 'codex', 'copilot', 'cursor', 'gemini', 'opencode', 'qwen']);
+// Design's two agents, as the pills and the Models page name them.
+export const DESIGN_AGENT_LABELS = Object.freeze({ lead: 'Lead', builder: 'Builders' });
 
 const STEM_MAX = 60;
 const EDGES = /^[.\-_ ]+|[.\-_ ]+$/g;

@@ -84,6 +84,7 @@ function looseRules(adapter, rules) {
  * `DesignBuild.create`. A refusal no consent lifts is `engine-refused`; reasons a person may accept are
  * `engine-gated`, and `allowed` (a person's `Allow unguarded`, or a stored engine) lets those through.
  * @param {{ engine: string, models?: string[], rules?: { deny?: string[] }|null, allowed?: boolean, project?: boolean,
+ *   design?: { models?: object|null }|null,
  *   adapterOf?: (engine: string) => object, broker?: (engine: string, env: object) => string|null,
  *   bridged?: (modelId: string) => object|null, modelFor?: (role: 'lead'|'builder') => string|null, env?: object }} opts
  * @returns {{ ok: true, row: object, notes: string[] }
@@ -92,7 +93,8 @@ function looseRules(adapter, rules) {
  */
 export function designEngineGate({
   engine, models = [], rules = null, allowed = false, project = false, adapterOf = getEngine,
-  broker = brokerEngineRefusal, bridged = bridgedModelInfo, modelFor = (role) => resolveDesignModel(role, { engine }).model,
+  design = null, broker = brokerEngineRefusal, bridged = bridgedModelInfo,
+  modelFor = (role) => resolveDesignModel(role, { engine, design }).model,
   env = process.env,
 } = {}) {
   let row = designEngineRow(engine, { models, bridged });

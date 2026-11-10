@@ -66,6 +66,9 @@ export function roleOfSettingId(settingId, { name = '' } = {}) {
   const [, engine, rest] = m;
   if (rest.startsWith('roles.')) return null;
   if (rest.startsWith('steps.')) return roleOf(rest, { name });
+  // Design's agents (Engines card › Design): the lead thinks deep, the builders write everyday code.
+  if (rest === 'design.lead') return roleOf('designLead');
+  if (rest === 'design.builder') return roleOf('designBuilder');
   const job = rest.startsWith('utility.') ? rest.slice('utility.'.length) : rest;
   return roleOfJob(engine, job);
 }

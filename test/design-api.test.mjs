@@ -79,16 +79,18 @@ const fill = (path) => path.replace(':id', 'd_000000000000').replace(':bid', 'b_
 const make = async (body = { kind: 'web' }) => (await call('POST', '/api/design', body)).json.design;
 const designFolders = () => readdirSync(dirname(designDir('d_000000000000')));
 
-test('DESIGN_ROUTES: the eleven routes, frozen, in registration order', () => {
+test('DESIGN_ROUTES: the thirteen routes, frozen, in registration order', () => {
   assert.ok(Object.isFrozen(DESIGN_ROUTES));
   assert.ok(DESIGN_ROUTES.every((r) => Object.isFrozen(r)));
   assert.deepEqual(DESIGN_ROUTES.map((r) => `${r.method} ${r.path}`), [
     'GET /api/design',
     'POST /api/design',
     'GET /api/design/limits',
+    'GET /api/design/models',
     'GET /api/design/:id',
     'PATCH /api/design/:id',
     'DELETE /api/design/:id',
+    'GET /api/design/:id/models',
     'POST /api/design/:id/builds/:bid/stop',
     'POST /api/design/:id/builds/:bid/agents/:aid/stop',
     'POST /api/design/:id/builds/:bid/answer',

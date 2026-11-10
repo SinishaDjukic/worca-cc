@@ -37,9 +37,9 @@ export function designScope(designId) {
   return k ? { projectKey: k } : null;
 }
 
-/** The distinct models a build of `design` spawns (lead and builder on the design's engine), as P2's continue check
- *  builds them. */
+/** The distinct models a build of `design` spawns (lead and builder on the design's engine, its own picks first), as
+ *  P2's continue check builds them. */
 export function designBuildModels(design) {
   const engine = design?.engine ?? 'claude';
-  return [...new Set(['lead', 'builder'].map((r) => resolveDesignModel(r, { engine }).model).filter(Boolean))];
+  return [...new Set(['lead', 'builder'].map((r) => resolveDesignModel(r, { engine, design }).model).filter(Boolean))];
 }

@@ -13,6 +13,7 @@ import { buildChatQuestion, buildChatReceipt } from '../chat/question.mjs';
 import { createDotOrbs, turnPhase } from '../dot-orb.mjs';
 import { ATTACH_ACCEPT, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
 import { DESIGN_FAST_LABEL } from '../../../src/shared/design-names.mjs';
+import { createModelPills } from './model-pills.mjs';
 
 const enc = encodeURIComponent;
 const readJson = async (res) => { try { return await res.json(); } catch { return {}; } };
@@ -397,8 +398,25 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   const sendBtn = iconBtn('btn btn-primary btn-icon ask-send dsc-send', 'Send', 'arrow-up');
   const row = h('div', 'ask-composer-row dsc-row');
   row.append(attachBtn, fileInput, pointBtn, sw.row, h('span', 'dz-spacer'), stopBtn, sendBtn);
+  // The lead's and the builders' models, remembered on the design (PATCH): a change applies from the next round.
+  const pills = createModelPills({ doc, win, fetch: fetchFn, mode: 'up', url: () => (designId ? `/api/design/${enc(designId)}/models` : null),
+    save: async (role, pick) => {
+      setNote('');
+      try {
+        const r = await fetchFn(`/api/design/${enc(designId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ models: { [role]: pick } }) });
+        if (r.ok) return '';
+        const error = errorOf(await readJson(r), `The model was not saved (HTTP ${r.status}).`);
+        if (!destroyed) setNote(error);
+        return error;
+      } catch {
+        if (!destroyed) setNote('The model was not saved.');
+        return 'The model was not saved.';
+      }
+    } });
+  const modelRow = h('div', 'dsc-models');
+  modelRow.append(pills.el);
   const box = h('div', 'ask-composer-box');
-  box.append(pinRow, fileRow, input, row);
+  box.append(pinRow, fileRow, input, modelRow, row);
   const composer = h('div', 'ask-composer dsc-composer');
   composer.append(liveEl, noteEl, box);
   const dropEl = h('div', 'dsc-drop');
@@ -1002,6 +1020,7 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   paintFast();
   paintPins();
   render();
+  void pills.load();
   (async () => {
     let body = null;
     try {
@@ -1046,6 +1065,7 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
       if (destroyed) return;
       destroyed = true;
       orbs.destroy();
+      pills.destroy();
       root.remove();
     },
   };

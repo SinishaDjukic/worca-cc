@@ -12,6 +12,7 @@ import { ASK_DENY_RULES } from '../ask/deny-rules.mjs';
 import { mockEnabled } from '../claude-runner.mjs';
 import { resolveModelEnv } from '../config.mjs';
 import { defaultGuardrailSetId, readGuardrailSet } from '../guardrail-store.mjs';
+import { designModelsSetting } from '../settings.mjs';
 import { guardrailsToPermissionRules } from '../guardrails.mjs';
 import { withRole } from '../model-roles.mjs';
 import { designEngineRow } from './engines.mjs';
@@ -100,14 +101,41 @@ export function designSpawnOptions(ctx) {
   };
 }
 
+const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+/** A stored `{model, effort?}` pick with a model, else null. */
+const pickOf = (v) => (isObj(v) && typeof v.model === 'string' && v.model.trim()
+  ? { model: v.model.trim(), effort: typeof v.effort === 'string' && v.effort ? v.effort : null } : null);
+
 /**
- * The model role's pick for a lead (`designLead`, deep) or a builder (`designBuilder`, everyday). An unset role
- * gives `model: null`, the CLI default; an unset effort gives the role default, `high` for a lead, `medium` for a builder.
+ * Who picks the model of a lead (the main agent) or a builder (a section's agent), first match wins: the design's own
+ * pick (`design.models.lead|builder`, its composer's pills), the Models page's Design pick for the engine
+ * (`designModels`), the model role (`designLead` → Deep thinking, `designBuilder` → Everyday coding), else the engine's
+ * default model. An unset effort is `high` for a lead and `medium` for a builder.
+ * @param {'lead'|'builder'} role
+ * @param {{ engine?: string, design?: { models?: object|null }|null, settings?: () => object }} [opts]
+ * @returns {{ model: string|null, effort: string, source: 'design'|'setting'|'role'|'default' }}
  */
-export function resolveDesignModel(role, { engine = 'claude' } = {}) {
+export function designModelPick(role, { engine = 'claude', design = null, settings = designModelsSetting } = {}) {
   const lead = role === 'lead';
-  const pick = withRole({ model: null, effort: null }, engine, lead ? 'designLead' : 'designBuilder');
-  return { model: pick?.model || null, effort: pick?.effort || DEFAULT_EFFORT[lead ? 'lead' : 'builder'] };
+  const key = lead ? 'lead' : 'builder';
+  const effortOf = (p) => p.effort || DEFAULT_EFFORT[key];
+  const own = pickOf(design?.models?.[key]);
+  if (own) return { model: own.model, effort: effortOf(own), source: 'design' };
+  let stored = null;
+  try { stored = pickOf(settings()?.[engine]?.[key]); } catch { stored = null; }
+  if (stored) return { model: stored.model, effort: effortOf(stored), source: 'setting' };
+  const role0 = withRole(null, engine, lead ? 'designLead' : 'designBuilder');
+  if (role0?.model) return { model: role0.model, effort: role0.effort || DEFAULT_EFFORT[key], source: 'role' };
+  return { model: null, effort: DEFAULT_EFFORT[key], source: 'default' };
+}
+
+/**
+ * The model and effort a lead or a builder of `design` runs on (designModelPick without its source). Unset everywhere
+ * gives `model: null`, the CLI default.
+ */
+export function resolveDesignModel(role, { engine = 'claude', design = null } = {}) {
+  const { model, effort } = designModelPick(role, { engine, design });
+  return { model, effort };
 }
 
 /**

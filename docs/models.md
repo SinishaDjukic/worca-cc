@@ -111,6 +111,10 @@ Where a slot looks, in order:
   model, then the built-in Haiku). Memory defragment and the workspace scan read
   this way even as steps of their own run.
 
+**Design** has rows of its own on each engine's tab of the Engines card: **Design lead** and **Design builders**
+(`designModels.<engine>.lead|builder`, a `{ model, effort }` pair). An unset row falls back to its role, and a
+design's own pick in its composer wins over the row (see [Design › Models](design.md#models)).
+
 Roles are kept per harness (`modelRoles.claude`, `modelRoles.codex`): a Claude
 run never reads the Codex roles, and a harness with no roles keeps today's
 fallbacks. With no `modelRoles` at all, every slot resolves exactly as it did

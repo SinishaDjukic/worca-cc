@@ -39,6 +39,25 @@ error pauses the whole build; **Resume** on the HUD picks it up. A build that is
 paused one, or one with a question for you, shows under Needs you. If worca restarts during a build, the build is
 marked interrupted and nothing starts again by itself.
 
+## Models
+
+A build has two kinds of agent: the **lead**, which plans the sections and puts them together, and the **builders**,
+one per section. Two model pickers in the composer and in the chat pick their models, and they work as the Chat
+model picker: **Lead** `Opus 5.5` `high` and **Builders** `Sonnet 5.5` `medium`. Each opens a menu with **Default**,
+the models the design's engine runs (**More models** for the rest), and **Effort**.
+
+**Default** is, in this order:
+
+1. The **Design lead** or **Design builders** row of the design's engine on the Models page (Engines card, Design).
+2. The model role: **Deep thinking** for the lead, **Everyday coding** for the builders.
+3. The engine's own default model.
+
+Its effort is `high` for the lead and `medium` for the builders unless the row or the role names one.
+
+A pick in a picker belongs to that design. It applies from the next round: a round that is running keeps the
+models it started with. The start composer offers the models of the engine the design will build on; if the engine
+dialog moves the design to Claude, its picks are dropped and Default applies.
+
 ## Build fast
 
 **Build fast** is a switch in the composer and in the chat. It sets how many agents build sections at once:
@@ -72,8 +91,9 @@ creates nothing.
 - **Gemini CLI**, **Qwen Code** and **OpenCode** run with their shell and web tools off, but cannot be limited to
   Design's tools.
 - **Copilot** reports no cost and cannot fully hold the rules.
-- **OpenCode** needs a model set first: a Design lead and a Design builder model for OpenCode (see
-  [Models](models.md)), or `WORCA_OPENCODE_ALLOW_DEFAULT_MODEL=1` to let it run its own default.
+- **OpenCode** needs a model set first: a lead and a builders model for OpenCode (the design's pickers, the
+  Models page's Design rows or the roles, see [Models](#models)), or `WORCA_OPENCODE_ALLOW_DEFAULT_MODEL=1` to let it
+  run its own default.
 - **Goose** cannot be used: it cannot be held to one folder or kept from running commands, so it has no **Allow
   unguarded**.
 

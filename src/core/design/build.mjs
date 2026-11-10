@@ -391,7 +391,7 @@ export class DesignBuild extends EventEmitter {
     this._row = row;
     /** The engine every spawn, agent row, meter and model resolve of this round runs on (P8), and its table row. */
     this._engine = buildEngine(design);
-    this._engineRow = designEngineRow(this._engine, { models: designBuildModels({ engine: this._engine }) });
+    this._engineRow = designEngineRow(this._engine, { models: designBuildModels({ ...design, engine: this._engine }) });
     /** A change round's start (`changeStart`): `{plan, named, needsLead, pinBlock}`; empty on a rehydrate, since
      *  none of it is persisted (a Continue resumes sessions that already hold it). */
     this._start = start;
@@ -782,7 +782,7 @@ export class DesignBuild extends EventEmitter {
       agent.firstPrompt = firstPrompt(agent);
       prompt = agent.sessionId ? continuePrompt({ role: 'lead' }) : agent.firstPrompt;
     } else {
-      const { model, effort } = resolveDesignModel('lead', { engine: this._engine });
+      const { model, effort } = resolveDesignModel('lead', { engine: this._engine, design: this._design });
       agent = this._newAgent({ role: 'lead', sectionId: null, job: 'Lead', model, effort, cwd: this._workDir });
       agent.firstPrompt = firstPrompt(agent);
       prompt = agent.firstPrompt;
@@ -1092,7 +1092,7 @@ export class DesignBuild extends EventEmitter {
       items = items.filter((item) => this._clearAdded(item.section));
       this._landBases(items.map((item) => item.section));
     }
-    const builder = resolveDesignModel('builder', { engine: this._engine });
+    const builder = resolveDesignModel('builder', { engine: this._engine, design: this._design });
     const loops = items.map((item) => this._runSection(item, builder).catch((err) => { this._abortAll(); throw err; }));
     const failure = (await Promise.allSettled(loops)).find((r) => r.status === 'rejected');
     if (failure) throw failure.reason;

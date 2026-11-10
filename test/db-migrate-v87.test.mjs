@@ -13,7 +13,7 @@ const fresh = () => { const db = new DatabaseSync(':memory:'); migrate(db); retu
 test('a fresh DB has the C-9 tables and indexes', () => {
   const db = fresh();
   assert.ok(SCHEMA_VERSION >= 87);
-  assert.deepEqual(cols(db, 'designs'), ['id', 'title', 'kind', 'fast', 'project_key', 'thread_id', 'engine', 'status', 'current_build', 'version', 'created_by', 'created_at', 'updated_at']);
+  assert.deepEqual(cols(db, 'designs'), ['id', 'title', 'kind', 'fast', 'project_key', 'thread_id', 'engine', 'status', 'current_build', 'version', 'created_by', 'created_at', 'updated_at', 'models_json']);
   assert.deepEqual(cols(db, 'design_builds'), ['id', 'design_id', 'round', 'kind', 'status', 'brief', 'fast', 'reason', 'sections_json', 'agents_total', 'layers', 'cost_usd', 'started_at', 'ended_at', 'created_by']);
   assert.deepEqual(cols(db, 'design_agents'), ['id', 'build_id', 'role', 'section_id', 'job', 'engine', 'model', 'effort', 'session_id', 'status', 'cost_usd', 'cost_known', 'tokens', 'asks', 'started_at', 'ended_at', 'error']);
   assert.deepEqual(cols(db, 'design_cost_ledger'), ['id', 'design_id', 'build_id', 'agent_id', 'amount_usd', 'model', 'ts']);

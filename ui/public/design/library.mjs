@@ -13,6 +13,7 @@ import { makeSwitch } from '../switch.mjs';
 import { ATTACH_ACCEPT, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
 import { DESIGN_FAST_LABEL, DESIGN_KIND_LABELS } from '../../../src/shared/design-names.mjs';
 import { openEngineGateDialog } from './engine-gate-dialog.mjs';
+import { createModelPills } from './model-pills.mjs';
 
 const LOADING_DELAY_MS = 300;
 const REFETCH_MS = 200;
@@ -390,8 +391,13 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
   const capEl = make('span', 'dz-fast-cap dz-fast-n', DESIGN_FAST_LABEL);
   sw.row.append(capEl);
   const sendBtn = iconBtn('btn btn-primary btn-icon ask-send', 'Send', 'arrow-up');
+  // The lead's and the builders' models, on the engine a design made now would build on (the project's or the user's
+  // Default engine): a project pick may move it, so the choices load again.
+  let project = null;          // {key, name} of the picked project, or none
+  const pills = createModelPills({ doc, win, fetch: fetchFn, mode: 'down',
+    url: () => `${LIST_URL}/models${project ? `?projectKey=${encodeURIComponent(project.key)}` : ''}` });
   const row = make('div', 'ask-composer-row');
-  row.append(attachBtn, fileInput, scopeBtn, menu, make('span', 'dz-spacer'), sw.row, sendBtn);
+  row.append(attachBtn, fileInput, scopeBtn, menu, pills.el, make('span', 'dz-spacer'), sw.row, sendBtn);
   const box = make('div', 'ask-composer-box');
   box.append(fileRow, input, row);
   const errEl = make('p', 'dz-start-err');
@@ -416,7 +422,6 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
   let destroyed = false;
   let kind = KINDS[0];
   let fast = false;
-  let project = null;          // {key, name} of the picked project, or none
   let projects = [];           // the projects there, from the last load; null when it failed
   let projectSeq = 0;
   let busy = false;            // the create is on its way (and the files it waits for, and the engine gate's dialog)
@@ -483,9 +488,11 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
     menu.replaceChildren(...rows);
   }
   function pick(p) {
+    const moved = (project?.key ?? null) !== (p?.key ?? null);
     project = p;
     paintScope();
     paintMenu();
+    if (moved) void pills.load();
   }
   async function loadProjects() {
     const my = ++projectSeq;
@@ -566,7 +573,9 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
     if (destroyed) return;
     const files = pendingFiles.slice();
     // `fast` is always a boolean: the store answers 400 on anything else.
-    const body = { kind, fast, title: titleFromBrief(text), ...(project ? { projectKey: project.key } : {}) };
+    const models = pills.picks();
+    const body = { kind, fast, title: titleFromBrief(text), ...(project ? { projectKey: project.key } : {}),
+      ...(Object.keys(models).length ? { models } : {}) };
     await create(body, { text, files }, true);
   }
   /** One POST /api/design: `{ok, status, answer}`; a request that never got an answer is status 0. */
@@ -605,7 +614,10 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
   function askGate(body, start, answer) {
     const again = (extra) => {
       gate = null;
-      void create({ ...body, ...extra }, start, false);
+      const next = { ...body, ...extra };
+      // Use Claude moves the design to another engine: picks made for the first one do not run there.
+      if (extra.engine && extra.engine !== pills.engine()) delete next.models;
+      void create(next, start, false);
     };
     gate = openEngineGateDialog({
       doc,
@@ -630,8 +642,11 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
     renderFiles();
     fast = false;
     paintFast();
+    const hadProject = project !== null;
     project = null;
     paintScope();
+    pills.reset();
+    if (hadProject) void pills.load();
     paintSend();
     navigate?.(`#design/${encodeURIComponent(id)}`);
   }
@@ -698,6 +713,7 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
   paintMenu();
   paintSend();
   void loadLimits();
+  void pills.load();
   return {
     destroy() {
       if (destroyed) return;
@@ -706,6 +722,7 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
       gate = null;
       fly.destroy();
       menu.remove();
+      pills.destroy();
     },
   };
 }
