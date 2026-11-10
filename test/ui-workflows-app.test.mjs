@@ -1961,8 +1961,8 @@ test('F-26: the Save reason shows as text, linked by aria-describedby, and hides
 // ------------------------------------------------- Workflow versions (plans/workflow-tests-plan.md Part 1, Task 7)
 const VERSIONS_OVERVIEW = {
   workflowId: 'wf_g', name: 'Graph one', liveVersionNo: 1,
-  draft: { changed: true, changes: ['Renamed since v1'], partsChanged: [], sinceLatest: { versionNo: 2, changes: ['New step Fact check'] } },
-  sinceLatest: { versionNo: 2, changes: ['New step Fact check'] },
+  draft: { changed: true, changes: ['Renamed since v1'], partsChanged: [], sinceLatest: { versionNo: 2, changed: true, changes: ['New step Fact check'] } },
+  sinceLatest: { versionNo: 2, changed: true, changes: ['New step Fact check'] },
   versions: [{ id: 2, versionNo: 2, note: null, by: null, createdAt: '2026-10-25', inUse: false, runs: 0, changes: [],
     changesFromInUse: ['New step Fact check'], libraryEdited: true },
     { id: 1, versionNo: 1, note: null, by: null, createdAt: '2026-10-24', inUse: true, runs: 0, changes: ['First version'], changesFromInUse: [], libraryEdited: true }],
@@ -2110,7 +2110,7 @@ test('Versions page: the version table, and Use for new runs asks first, then sw
   const page = doc.getElementById('wfv-versions');
   const rows = [...page.querySelectorAll('.wfv-vt-row')];
   assert.deepEqual(rows.map((r) => r.querySelector('.wfv-vt-no').textContent), ['v2', 'v1']);
-  assert.match(page.querySelector('.wfv-vt-draft').textContent, /Renamed since v1/);
+  assert.match(page.querySelector('.wfv-vt-draft').textContent, /Changes since v2: New step Fact check/, 'U-T7: against the latest version, not the one in use');
   clickEl(w, [...rows[0].querySelectorAll('button')].find((b) => b.textContent === 'Use for new runs'));
   await tick(2);
   assert.equal(doc.querySelector('#mk-dialog-title').textContent, 'Use v2 for new runs?');
