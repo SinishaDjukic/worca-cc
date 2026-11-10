@@ -992,7 +992,9 @@ test('A8: callModel returns the normalized events it saw (one shape) and the gua
   assert.equal(out.events[1].numTurns, 2);
   assert.deepEqual(out.readGuardDecisions, decisions);
   const plain = await callModel({ userSignIn: () => false, runClaudeImpl: async () => ({ text: 'y' }) }, { kind: 'round', cwd: '/c', prompt: 'P', model: 'm1', timeoutMs: 5000 });
-  assert.deepEqual(plain, { text: 'y', costUsd: 0, events: [] }, 'no decisions key when the runner returned none');
+  assert.deepEqual({ text: plain.text, costUsd: plain.costUsd, events: plain.events }, { text: 'y', costUsd: 0, events: [] });
+  assert.ok(!('readGuardDecisions' in plain), 'no decisions key when the runner returned none');
+  assert.deepEqual([plain.engine, plain.costKind, plain.notices], ['claude', 'unknown', []], '9c: the harness, the cost kind and the notices ride along');
 });
 
 test('callModel: sends the built options plus signal and onEvent, and books the cost', async () => {

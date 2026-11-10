@@ -418,11 +418,11 @@ test('an empty reply: "Worca ran out of steps…", the earlier brief kept, the c
 test('a call that throws after spending books what it spent; the checkout is closed', async () => {
   const r = repo();
   const lk = looks();
-  const runner = fakeRunner([{ costFirst: 0.07, error: new Error('the model is overloaded') }]);
+  const runner = fakeRunner([{ costFirst: 0.07, error: new Error('the model crashed') }]);
   const k = key();
   await (await makeBrief('project', k, {}, deps({ runner, lk, projects: [project(k, r.dir)] }))).job;
   const b = getBrief('project', k);
-  assert.deepEqual({ code: b.error.code, message: b.error.message }, { code: 'FAILED', message: 'the model is overloaded' });
+  assert.deepEqual({ code: b.error.code, message: b.error.message }, { code: 'FAILED', message: 'the model crashed' });
   assert.equal(b.costUsd, 0.07);
   assert.deepEqual(ledger(b.id), [{ feature_seq: 0, brief_id: b.id, amount_usd: 0.07, model: 'claude-opus-5-5' }]);
   assert.equal(lk.closed, 1);
