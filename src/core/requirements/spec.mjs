@@ -19,7 +19,8 @@ export const SECTIONS = Object.freeze(['goal', ...LIST_SECTIONS]);
 export const TURN_KINDS = Object.freeze(['orientation', 'round', 'answers', 'edit', 'assumption', 'finish', 'error', 'followup', 'start',
   'file',     // A8: a file was added, replaced, removed, edited, read or asked about
   'export',   // A6: a ticket was created, updated, commented on, made anew, linked or forgotten (no thread line)
-  'import']); // A6.1: the feature was started from a ticket (one thread line, D14)
+  'import',   // A6.1: the feature was started from a ticket (one thread line, D14)
+  'model']);  // 9c: the feature's harness or model was switched; payload { engine, model, effort, from: { engine, model, effort } }
 export const ASSUMPTION_STATUSES = Object.freeze(['open', 'confirmed', 'rejected']);
 export const LIMITS = Object.freeze({ title: 200, description: 20000, item: 500, items: 30, context: 10000 });
 export const MAX_ROUNDS = 6;      // D5
