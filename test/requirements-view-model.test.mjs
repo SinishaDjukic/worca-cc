@@ -339,12 +339,21 @@ test('sentTo: the named company, or the provider of the model for Goose, OpenCod
 
 const sw = (from, to, files = FILES) => switchConfirm({ from, to, harnesses: H9, models: MODELS9, files });
 
-test('switchConfirm: Codex to Gemini lists the repo, the two skipped files, the kept copy, Google and the missing cost', () => {
+test('switchConfirm: Codex to Gemini lists the repo, the kept copy, Google and the missing cost (Codex reports one); not the files (Codex already skipped them)', () => {
   const plan = sw({ engine: 'codex', model: 'gpt-sol' }, { engine: 'gemini', model: 'gem-flash' }, FILES.slice(0, 3));
   assert.equal(plan.title, 'Switch this feature to Gemini CLI?');
   assert.equal(plan.confirmLabel, 'Switch to Gemini CLI');
   assert.equal(plan.message, "Worca's next step runs on Gemini CLI with Gemini Flash. Steps already done keep their answers and their cost.\n\nWhat changes:\n"
     + "• Gemini CLI can't read the repo: code looks are skipped, for this feature and for the Product brief.\n"
+    + '• Gemini CLI keeps its own copy of each step in its history on this computer.\n'
+    + "• Your feature's description, answers and attachments are sent to Google.\n"
+    + '• Gemini CLI reports no cost. Worca estimates it from list prices where it can.');
+});
+
+test('switchConfirm: Claude to Gemini lists the repo, the two skipped files, the kept copy, Google and the missing cost', () => {
+  const plan = sw({ engine: 'claude', model: 'claude-sonnet-5-5' }, { engine: 'gemini', model: 'gem-flash' }, FILES.slice(0, 3));
+  assert.equal(plan.message.split('What changes:\n')[1],
+    "• Gemini CLI can't read the repo: code looks are skipped, for this feature and for the Product brief.\n"
     + '• Attached files go as text: spec.pdf and mockup.png are skipped.\n'
     + '• Gemini CLI keeps its own copy of each step in its history on this computer.\n'
     + "• Your feature's description, answers and attachments are sent to Google.\n"
@@ -529,6 +538,7 @@ test('feature page: Save to Gemini asks the switch confirm first; Cancel on it s
   assert.deepEqual(putCalls(yes.calls).map((c) => c.body), [{ engine: 'gemini', model: 'gem-flash', effort: null }]);
   assert.equal(dialogEl(), null);
   assert.equal(text(yes.host.querySelector('[data-ui="model-chip"]')), 'Gemini Flash on gemini');
+  assert.equal(document.activeElement, yes.host.querySelector('[data-ui="model-chip"]'), 'the focus is on the new chip, not <body>');
 });
 
 test('feature page: Claude to Gemini lists the skipped files in the confirm', async () => {
@@ -591,10 +601,11 @@ const openBrief9 = async (body, extra = {}) => {
   const calls = fakeApi({ ...ROUTES(), 'GET /api/requirements/models': CATALOG9, 'GET /api/requirements/estimates': BRIEF_ESTIMATES, [`GET ${BRIEF9}`]: body, ...extra });
   const host = document.createElement('div');
   document.body.replaceChildren(host);
-  const view = createRequirementsView({ host, subEl: document.createElement('div'), msgEl: document.createElement('p'), deps: { route: () => {}, confirm: async () => true } });
+  const msgEl = document.createElement('p');
+  const view = createRequirementsView({ host, subEl: document.createElement('div'), msgEl, deps: { route: () => {}, confirm: async () => true } });
   await view.show('brief/project/shop-1');
   await settle();
-  return { host, calls, view };
+  return { host, calls, view, msgEl };
 };
 
 test('brief page (board 9): the box picks who makes it, Gemini is greyed with "Can\'t read the repo", the note is the brief\'s own', async () => {
@@ -693,4 +704,17 @@ test('styles: the model chip, the dialog and the brief box rules sit inside the 
   const lines = css.slice(start, end).split('\n').filter((l) => /req-model-chip|req-model-dialog|req-brief-who|req-model-applies/.test(l));
   assert.ok(lines.length > 0);
   assert.ok(lines.every((l) => !/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(l)), 'tokens only');
+});
+
+test('brief page: a pick the server refuses (400) is said in the message line and the page stays', async () => {
+  const refusal = "Gemini CLI can't read the repo, so it can't make a Product brief.";
+  const { host, msgEl } = await openBrief9(briefBody9());
+  const inner = globalThis.fetch;
+  globalThis.fetch = async (u, o = {}) => (o.method === 'POST' ? { ok: false, status: 400, json: async () => ({ error: refusal }) } : inner(u, o));
+  host.querySelector('[data-ui="brief-create"]').click();
+  await settle();
+  assert.equal(text(msgEl), refusal);
+  assert.ok(msgEl.classList.contains('err'));
+  assert.match(host.querySelector('[data-ui="brief-create"]').textContent, /Create the brief/, 'the button is back');
+  assert.equal(host.querySelector('[data-ui="brief-create"]').disabled, false);
 });

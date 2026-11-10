@@ -3478,8 +3478,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           if (plan && !(await asConfirm(plan))) { busy = false; saveBtn.disabled = false; saveBtn.focus(); return; }   // Cancel: nothing is saved
           await api('PUT', `/api/requirements/${f.seq}/model`, { engine: c.engine, model: c.model, effort: c.effort || null });
           busy = false;
-          closeDialog(true);
+          closeDialog(false);
           await paint();
+          const chip = host.querySelector('[data-ui="model-chip"]');   // the header was rebuilt: the new chip takes the focus
+          if (chip) chip.focus();
         } catch (err) {
           busy = false; saveBtn.disabled = false;
           msg.textContent = errText(err);

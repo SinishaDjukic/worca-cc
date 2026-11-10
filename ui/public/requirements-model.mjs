@@ -258,16 +258,16 @@ export function switchConfirm({ from, to, harnesses = [], models = [], files, fe
   const lines = [];
   const move = from.engine !== to.engine;
   if (hf.repo !== false && ht.repo === false) lines.push(`${name} can't read the repo: code looks are skipped, for this feature and for the Product brief.`);
-  if (move && !ht.files) {
+  if (hf.files && !ht.files) {
     const all = Array.isArray(files) ? files : (feature && feature.attachments) || [];
     const skipped = all.filter((a) => a && !(a.kind === 'text' && Number(a.bytes) <= TEXT_INLINE_BYTES)).map((a) => a.name);
     if (skipped.length) lines.push(`Attached files go as text: ${joinAnd(skipped)} ${skipped.length === 1 ? 'is' : 'are'} skipped.`);
   }
-  if (move && ht.keepsCopy) lines.push(`${name} keeps its own copy of each step in its history on this computer.`);
+  if (move && ht.keepsCopy && !hf.keepsCopy) lines.push(`${name} keeps its own copy of each step in its history on this computer.`);
   const a = sentTo(hf, entry(from.model), label(from.model));
   const b = sentTo(ht, entry(to.model), label(to.model));
   if (!(a.named && b.named && a.company === b.company)) lines.push(`Your feature's description, answers and attachments are sent to ${b.company}.`);
-  if (move && ht.reportsCost === false) lines.push(`${name} reports no cost. Worca estimates it from list prices where it can.`);
+  if (hf.reportsCost !== false && ht.reportsCost === false) lines.push(`${name} reports no cost. Worca estimates it from list prices where it can.`);
   if (!lines.length) return null;
   return {
     title: `Switch this feature to ${name}?`,
