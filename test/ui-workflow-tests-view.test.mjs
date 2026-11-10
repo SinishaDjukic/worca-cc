@@ -167,12 +167,33 @@ test('a workflow that needs a project (3a D62, replaces D20 / C8), loading and e
   assert.equal(exampleHint({ hasRequest: true, files: [], fromAt: null, note: null }), 'Request only');
 });
 
-test('first use with no past run (board 29): the sentence, and Add 0 examples is disabled', () => {
-  const { root } = boot(overview({ examples: [], latest: null, pastRuns: [] }));
-  assert.equal(root.querySelector('.wft-pick > .hint').textContent, 'Worca found no runs of Product brief writer yet. Write an example yourself, or run the workflow once and come back.');
+test('U-T4 (F4, board UfFirstRun): first use with no past run: the sentence, "Run it once" and the link inside the card; no Add button, no 3-to-10 line', () => {
+  const { root, calls } = boot(overview({ examples: [], latest: null, pastRuns: [] }));
+  assert.equal(root.querySelector('.wft-pick > .hint').textContent, 'Worca found no runs of Product brief writer yet. Run it once to get a first result, or write an example yourself.');
   assert.equal(root.querySelectorAll('.wft-pick-row').length, 0);
-  const add = root.querySelector('.wft-first-foot .btn-primary');
-  assert.deepEqual([add.textContent, add.disabled], ['Add 0 examples', true]);
+  assert.equal(root.querySelector('.wft-first-foot'), null, 'the line and the disabled Add button are left out');
+  assert.doesNotMatch(root.textContent, /3 to 10 examples/);
+  assert.deepEqual([...root.querySelectorAll('.wft-pick button')].map((b) => b.textContent), ['Run it once', 'Or write an example yourself']);
+  const once = root.querySelector('.wft-pick .wft-run-once');
+  assert.equal(once.textContent, 'Run it once');
+  assert.equal(once.className.includes('btn-primary'), true);
+  click(once);
+  click(root.querySelector('.wft-pick .wft-linkbtn'));
+  assert.deepEqual(calls, [['runOnce'], ['newExample']]);
+});
+
+test('U-T4: with past runs there is no "Run it once" button; the line and the Add button stay', () => {
+  const { root } = boot(overview({ examples: [], pastRuns: [{ pipelineId: 'p1', title: 'Bulk invoice export', at: '2026-10-14T10:00:00Z', status: 'done', files: 2, sameAs: null }] }));
+  assert.equal(root.querySelector('.wft-run-once'), null);
+  assert.ok(root.querySelector('.wft-first-foot .btn-primary'));
+  assert.match(root.querySelector('.wft-first-foot .hint').textContent, /^3 to 10 examples are a good start\./);
+});
+
+test('U-T4: a workflow that needs a project has the same button, with the project sentence', () => {
+  const { root, calls } = boot(overview({ examples: [], pastRuns: [], needsProject: true }));
+  assert.equal(root.querySelector('.wft-pick > .hint').textContent, 'Worca found no runs of Product brief writer yet. Run it once on a project to get a first result, or write an example yourself.');
+  click(root.querySelector('.wft-run-once'));
+  assert.deepEqual(calls, [['runOnce']]);
 });
 
 test('a past "Good" verdict, a test stopped early, and one column when no version is in use', () => {

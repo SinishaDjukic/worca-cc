@@ -77,3 +77,11 @@ test('testPlan: the draft side names the version it equals (sameAs); other sides
   const diff = await service.testPlan('wf_same', { a: 1, b: 'draft', tries: 1 }, { fingerprintOf: fps({ 1: 'A', 2: 'D', 3: 'C', draft: 'E' }) });
   assert.equal(diff.b.sameAs, null);
 });
+
+test('U-T4: an identical draft compared with another version is named "Your draft (same as v{n})", never "your changes"', async () => {
+  await threeVersions();
+  const same = await service.testPlan('wf_same', { a: 1, b: 'draft', tries: 1 }, { fingerprintOf: fps({ 1: 'A', 2: 'D', 3: 'C', draft: 'D' }) });
+  assert.deepEqual([same.b.label, same.b.short], ['Your draft (same as v2)', 'your draft (same as v2)']);
+  const diff = await service.testPlan('wf_same', { a: 1, b: 'draft', tries: 1 }, { fingerprintOf: fps({ 1: 'A', 2: 'D', 3: 'C', draft: 'E' }) });
+  assert.deepEqual([diff.b.label, diff.b.short], ['v4 draft · your changes', 'v4 draft'], 'a changed draft: as before');
+});

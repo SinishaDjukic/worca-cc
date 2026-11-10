@@ -113,10 +113,12 @@ test('boards 38 and 39: the list, a past run, the empty and refused states', () 
   assert.equal(t.PICK_PROJECT_OPTION, 'Pick a project');
   assert.equal(t.NO_PROJECT_OPTION, 'No project');
   assert.equal(t.PICK_THE_FOLDER, 'Pick the folder');
-  assert.equal(t.firstUseNoneText('Fix a bug from a ticket', { needsProject: true }), 'Worca found no runs of Fix a bug from a ticket yet. Run the workflow once on a project, or write an example yourself.');
-  assert.equal(t.firstUseNoneText('Brief writer', { needsProject: false }), 'Worca found no runs of Brief writer yet. Write an example yourself, or run the workflow once and come back.');
-  assert.equal(t.pickerNoneText('Brief writer', { needsProject: false }), 'Worca found no runs of Brief writer yet. Run the workflow once, or write an example yourself.');
-  assert.equal(t.pickerNoneText('Fix', { needsProject: true }), 'Worca found no runs of Fix yet. Run the workflow once on a project, or write an example yourself.');
+  assert.equal(t.firstUseNoneText('Fix a bug from a ticket', { needsProject: true }), 'Worca found no runs of Fix a bug from a ticket yet. Run it once on a project to get a first result, or write an example yourself.');
+  assert.equal(t.firstUseNoneText('Brief writer', { needsProject: false }), 'Worca found no runs of Brief writer yet. Run it once to get a first result, or write an example yourself.');
+  assert.equal(t.pickerNoneText('Brief writer', { needsProject: false }), 'Worca found no runs of Brief writer yet. Run it once to get a first result, or write an example yourself.');
+  assert.equal(t.pickerNoneText('Fix', { needsProject: true }), 'Worca found no runs of Fix yet. Run it once on a project to get a first result, or write an example yourself.');
+  assert.equal(t.RUN_IT_ONCE, 'Run it once');
+  assert.equal(t.WRITE_YOURSELF, 'Or write an example yourself');
   assert.deepEqual([t.START_DIALOG_TITLE, t.START_DIALOG_HINT, t.START_DIALOG_OK],
     ['Start point', 'Pick the branch this example starts from. Worca takes its newest commit.', 'Use this start point']);
 });

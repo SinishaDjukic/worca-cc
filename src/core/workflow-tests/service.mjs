@@ -639,7 +639,10 @@ export async function testPlan(workflowId, { a = null, b = 'draft', exampleIds =
     }
     const perTryUsd = perTryCost(workflowId, use);
     const sameAs = use === 'draft' ? await draftSameAs(workflowId, fingerprintOf, fp) : null;   // U-T7 (D7)
-    return { use, sameAs, label: useLabel(use, ctx, 'select'), short: useLabel(use, ctx), want: readyEx.length * tries, reusable,
+    // U-T4: a draft identical to v{n} is not "your changes": it is named as the version picker names it.
+    const same = sameAs !== null;
+    return { use, sameAs, label: same ? `Your draft (same as v${sameAs})` : useLabel(use, ctx, 'select'),
+      short: same ? `your draft (same as v${sameAs})` : useLabel(use, ctx), want: readyEx.length * tries, reusable,
       reusableAt: at, perTryUsd, savesUsd: perTryUsd === null ? null : reusable * perTryUsd };
   };
   return { a: await side(a), b: await side(b), examples: readyEx.length, tries, perTryMs: perTryMs(workflowId), project,

@@ -3211,7 +3211,8 @@ async function loadConfig(projectDir) {
   // then populate the dropdown + render the chosen workflow's accordion. The
   // Default workflow goes through the SAME renderer as a saved one; only its
   // storage differs (legacy per-role steps, resolved in buildNodeConfigRows).
-  if (state.config.activeWorkflowId) state.workflowId = state.config.activeWorkflowId;
+  if (state.pinWorkflowId) state.workflowId = state.pinWorkflowId;   // U-T4: Run it once keeps its workflow when a project is picked
+  else if (state.config.activeWorkflowId) state.workflowId = state.config.activeWorkflowId;
   await loadWorkflowsInto(state.workflowId);
   if (stale()) return;                     // the newer chain repaints guardrails itself
   await loadGuardrailsInto(state.guardrailsId);
@@ -3931,6 +3932,7 @@ function wftListActions() {
   return {
     newExample: () => void wftOpenExample(null),
     addFromRun: () => wftPickRun(),
+    runOnce: () => wftRunOnce(),   // U-T4 (F4, D4): New run opens with this workflow chosen, also in Simple mode
     testVersion: () => void wftTestVersion(),
     openExample: (exampleId) => void wftOpenExample(exampleId),
     exampleMenu: (anchor, e) => toggleMenu({ doc: document, anchor, align: 'end', label: `More for ${e.name}`, items: [   // G18
@@ -3953,6 +3955,7 @@ function wftListActions() {
     },
   };
 }
+const wftRunOnce = () => { const id = wftWorkflowId(); if (id) openNewPipeline({ workflowId: id, pinWorkflow: true }); };
 /** G7: which past run (the overview's pastRuns), then board 3 while the same workflow's list still shows. */
 function wftPickRun() {
   const o = wft.overview;
@@ -3960,7 +3963,7 @@ function wftPickRun() {
   if (!o || !id) return;
   const live = () => currentView() === 'workflows' && wftWorkflowId() === id && wft.view === 'list' && !wfvEls().tests?.hidden;
   openPickRunDialog({ doc: document, win: window, workflowName: o.name, runs: o.pastRuns || [], dateText: wftDate, needsProject: !!o.needsProject,
-    onPick: (pid) => void wftAddFromRun(pid, { live }) });
+    onPick: (pid) => void wftAddFromRun(pid, { live }), onRunOnce: wftRunOnce, onWrite: () => void wftOpenExample(null) });
 }
 /** Board 3 from a run page or the picker: read what the run keeps, ask, create, then open the example in the editor.
  *  `live()`: the opener still shows once the run is read (else no dialog over another page). */
@@ -5533,6 +5536,7 @@ function renderFeedbackRows(rows) {
 if (el.workflowSelect) {
   el.workflowSelect.addEventListener('change', async () => {
     state.workflowId = el.workflowSelect.value || 'wf_default';
+    state.pinWorkflowId = null;
     paintNeedsRepoNote();
     saveActiveWorkflow(state.workflowId);
     await renderWorkflowConfig(state.workflowId);
@@ -39877,6 +39881,7 @@ if (typeof window !== 'undefined') {
 let currentSettingsTab = null;
 
 function showView(name, param = '') {
+  if (name !== 'new') state.pinWorkflowId = null;   // U-T4: Run it once's pin lasts only for that New run
   // Runs redesign slice 4 (D16): #feature/ID is the group page; a bare #feature goes to Chat.
   if (name === 'feature' && !param) return showView('chat', '');
   if (name === 'group' && !param) return showView('runs', '');
@@ -40808,7 +40813,8 @@ async function applyAskPrefill() {
   const p = newPipelinePrefill;
   if (!p) return;
   newPipelinePrefill = null;
-  setRunTarget(p.target === 'workspace' ? 'workspace' : p.target === 'none' ? 'none' : 'project');
+  state.pinWorkflowId = p.pinWorkflow ? p.workflowId : null;
+  const targetLoad = setRunTarget(p.target === 'workspace' ? 'workspace' : p.target === 'none' ? 'none' : 'project');
   // The card's engine pick (none: the defaults the project change loads decide). Touched, so they keep off it.
   if (p.engine) { state.engineTouched = true; setRunEngine(p.engine); }
   // pick the source from the prefill (a Markdown handoff, else the prompt) — the three-step reset of the segment handler
@@ -40839,7 +40845,7 @@ async function applyAskPrefill() {
     if (idx >= 0) el.projectSelect.selectedIndex = idx + 1; // +1 past the placeholder
     // AWAITED: onProjectChanged → loadConfig → loadWorkflowsInto/loadGuardrailsInto — un-awaited, that tail lands after our own awaits and resets both pickers.
     await onProjectChanged();
-  }
+  } else if (p.pinWorkflow) await targetLoad;   // U-T4: its config tail must land before the chosen workflow is set
   el.prompt.value = src === 'prompt' ? (p.prompt || '') : '';
   if (el.promptMarkdown) el.promptMarkdown.value = src === 'markdown' ? p.promptMarkdown : el.promptMarkdown.value;
   refreshMentionHighlights();

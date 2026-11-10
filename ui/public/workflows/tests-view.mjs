@@ -6,7 +6,7 @@ import { el, btn, iconBtn, BUSY_HINT, runStatusBadge, refusedRun } from './test-
 import { withButton } from '../feedback.mjs';
 import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { agoText, countsText } from '../../../src/shared/workflow-tests/compare.mjs';
-import { NO_PROJECT_YET_TAIL, WITH_CHANGES_HINT, MOVED_BADGE, behindText, PICK_FIRST_TEXT, CANT_TRY_TEXT, LIST_FOOT_HINT, firstUseNoneText,
+import { NO_PROJECT_YET_TAIL, WITH_CHANGES_HINT, MOVED_BADGE, behindText, PICK_FIRST_TEXT, CANT_TRY_TEXT, LIST_FOOT_HINT, firstUseNoneText, RUN_IT_ONCE, WRITE_YOURSELF,
   refusedRunsCount }
   from '../../../src/shared/workflow-tests/project-text.mjs';
 
@@ -225,6 +225,12 @@ function firstUse(doc, page, o, actions, { dateText }) {
     boxes.push(box);
   }
   page.append(pick);
+  if (!runs.length) {   // U-T4 (F4, board UfFirstRun): no past runs: run it once, or write one; no Add button, no 3-to-10 line
+    const once = el(doc, 'div', 'wft-first-once');
+    once.append(btn(doc, RUN_IT_ONCE, () => actions.runOnce(), 'btn btn-primary wft-run-once'), btn(doc, WRITE_YOURSELF, () => actions.newExample(), 'wft-linkbtn'));
+    pick.append(once);
+    return;
+  }
   const foot = el(doc, 'div', 'wft-first-foot');
   const hint = el(doc, 'span', 'hint');
   hint.append(doc.createTextNode('3 to 10 examples are a good start. You add what a good result needs in the next step. '),

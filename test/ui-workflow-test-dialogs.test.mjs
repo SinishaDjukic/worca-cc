@@ -77,8 +77,46 @@ test('G7: pick a past run, then Next', async () => {
   assert.deepEqual(picked, ['p2']);
   const empty = dom();
   openPickRunDialog({ doc: empty.doc, win: empty.win, workflowName: 'Product brief writer', runs: [], dateText: () => '', onPick: () => {} });
-  assert.equal(empty.doc.querySelector('.mk-dialog-body > .hint').textContent, 'Worca found no runs of Product brief writer yet. Run the workflow once, or write an example yourself.');
-  assert.equal(empty.doc.querySelector('.wft-dlg-ok').disabled, true, 'board 25: nothing to pick, Next is disabled');
+  assert.equal(empty.doc.querySelector('.mk-dialog-body > .hint').textContent, 'Worca found no runs of Product brief writer yet. Run it once to get a first result, or write an example yourself.');
+  assert.equal(empty.doc.querySelector('.wft-dlg-ok').textContent, 'Run it once', 'U-T4: nothing to pick, so the main button is Run it once, not Next');
+  assert.equal(empty.doc.querySelector('.wft-dlg-ok').disabled, false);
+});
+
+test('U-T4 (F4, board UfFirstRun): the empty picker has Cancel, "Run it once" and the link; Run it once closes it and calls onRunOnce', async () => {
+  const { doc, win } = dom();
+  const calls = [];
+  openPickRunDialog({ doc, win, workflowName: 'Product brief writer', runs: [], dateText: () => '', onPick: () => calls.push('pick'),
+    onRunOnce: () => calls.push('once'), onWrite: () => calls.push('write') });
+  assert.deepEqual([...doc.querySelectorAll('.mk-dialog-foot button')].map((b) => b.textContent), ['Cancel', 'Run it once']);
+  assert.deepEqual([...doc.querySelectorAll('.mk-dialog-body button')].map((b) => b.textContent), ['Or write an example yourself']);
+  click(doc.querySelector('.mk-dialog-body .wft-linkbtn'));
+  assert.deepEqual(calls, ['write']);
+  assert.equal(doc.querySelector('.mk-dialog'), null, 'the link closes the dialog');
+  const second = dom();
+  openPickRunDialog({ doc: second.doc, win: second.win, workflowName: 'Product brief writer', runs: [], dateText: () => '', onPick: () => calls.push('pick'),
+    onRunOnce: () => calls.push('once'), onWrite: () => calls.push('write') });
+  click(second.doc.querySelector('.wft-dlg-ok'));
+  await tick();
+  assert.deepEqual(calls, ['write', 'once']);
+  assert.equal(second.doc.querySelector('.mk-dialog'), null);
+});
+
+test('U-T4: with runs the picker is unchanged: Next, no link, no Run it once', () => {
+  const { doc, win } = dom();
+  openPickRunDialog({ doc, win, workflowName: 'Product brief writer', dateText: () => '14 Oct', onPick: () => {}, onRunOnce: () => {},
+    runs: [{ pipelineId: 'p1', title: 'Bulk invoice export', at: 'x', status: 'done', files: 2, sameAs: null }] });
+  assert.equal(doc.querySelector('.wft-dlg-ok').textContent, 'Next');
+  assert.equal(doc.querySelector('.mk-dialog-body .wft-linkbtn'), null);
+});
+
+test('U-T4: an identical draft compared with another version reads "your draft (same as v{n})", never "your changes"', async () => {
+  const { doc } = openTv({ options: SAME_OPTIONS, a: 3, b: 'draft' }, { b: { use: 'draft', sameAs: 4, label: 'Your draft (same as v4)', short: 'your draft (same as v4)', want: 18, reusable: 18, reusableAt: '2026-10-20T10:00:00Z', perTryUsd: 0.52, savesUsd: 9.36 } });
+  await tick();
+  const boxB = doc.querySelector('#wft-tv-reuse-b');
+  boxB.checked = true; change(boxB);
+  const text = doc.querySelector('.wft-reuse').textContent + estRows(doc).flat().join(' ');
+  assert.doesNotMatch(text, /your changes/);
+  assert.ok(estRows(doc).some((r) => r[0] === 'Your draft (same as v4) results from 19 Oct'), JSON.stringify(estRows(doc)));
 });
 
 test('G6: only a finished no-project run (3a: or a single-project git run, D65) of a saved user workflow, with the flag on', () => {

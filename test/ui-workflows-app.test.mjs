@@ -2583,6 +2583,53 @@ test('Tests page (Task 10): #workflows/<id>/tests opens the workflow on its Test
   assert.equal(page.querySelectorAll('.wft-row:not(.wft-row-head)').length, 1);
 });
 
+test('U-T4 (F4, D4): Run it once on a workflow with no past runs opens New run with that workflow chosen, also in Simple mode', async () => {
+  const booted = await bootVersions({ extra: (url) => (/\/api\/workflows\/wf_g\/tests$/.test(url)
+    ? okJson({ ...TESTS_OVERVIEW, examples: [], pastRuns: [], latest: null }) : null) });
+  const w = booted.window;
+  w.document.documentElement.dataset.level = 'simple';
+  await go(w, 'workflows/wf_g/tests');
+  await tick(6);
+  const doc = w.document;
+  const once = doc.querySelector('#wfv-tests .wft-run-once');
+  assert.equal(once.textContent, 'Run it once');
+  clickEl(w, once);
+  await tick(12);
+  assert.equal(w.location.hash, '#new');
+  const sel = doc.getElementById('workflowSelect');
+  assert.equal(sel.value, 'wf_g', 'the chosen workflow is not dropped');
+  assert.deepEqual([...sel.options].map((o) => o.value).sort(), ['wf_auto', 'wf_default', 'wf_g'], 'Simple mode lists it, besides Auto and Default');
+});
+
+test('U-T4 (F4, D4): picking the project on that New run keeps the chosen workflow, though the project has another one active', async () => {
+  const booted = await bootVersions({ extra: (url) => {
+    if (/\/api\/workflows\/wf_g\/tests$/.test(url)) return okJson({ ...TESTS_OVERVIEW, examples: [], pastRuns: [], latest: null });
+    if (/\/api\/projects(\?|$)/.test(url)) return okJson({ projects: [{ name: 'alpha', path: '/repos/alpha', exists: true }, { name: 'beta', path: '/repos/beta', exists: true }] });
+    if (/\/api\/config(\?|$)/.test(url)) return okJson({ config: { steps: {}, customModels: [], activeWorkflowId: 'wf_default' }, models: [], efforts: [] });
+    return null;
+  } });
+  const w = booted.window;
+  w.document.documentElement.dataset.level = 'simple';
+  await go(w, 'workflows/wf_g/tests');
+  await tick(6);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-tests .wft-run-once'));
+  await tick(12);
+  const sel = doc.getElementById('workflowSelect');
+  assert.equal(sel.value, 'wf_g', 'chosen before any project is picked');
+  const project = doc.getElementById('projectSelect');
+  project.selectedIndex = 2;
+  project.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await tick(12);
+  assert.equal(sel.value, 'wf_g', "the project's own workflow does not replace it");
+  sel.value = 'wf_default'; sel.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await tick(6);
+  project.selectedIndex = 1;
+  project.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await tick(12);
+  assert.equal(sel.value, 'wf_default', 'a choice made by hand ends the pin');
+});
+
 test('Tests page (Task 10 fix 1): Workflows ▾ › New canvas while it shows: the page follows to C15, never the last workflow\'s examples', async () => {
   const { window: w, reads } = await bootTests();
   await go(w, 'workflows/wf_g');

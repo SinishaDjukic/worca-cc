@@ -241,12 +241,11 @@ export const PAST_RUN_REFUSALS = Object.freeze({
 export const PICK_PROJECT_TITLE = 'Pick the project this example works on';
 export const pickProjectText = (workflow) => `${workflow} changes a project's code, so each example needs one. Each try works in Worca's own copy of the project.`;
 export const PICK_THE_FOLDER = 'Pick the folder';
-export const firstUseNoneText = (workflow, { needsProject }) => (needsProject
-  ? `Worca found no runs of ${workflow} yet. Run the workflow once on a project, or write an example yourself.`
-  : `Worca found no runs of ${workflow} yet. Write an example yourself, or run the workflow once and come back.`);
-export const pickerNoneText = (workflow, { needsProject }) => (needsProject
-  ? `Worca found no runs of ${workflow} yet. Run the workflow once on a project, or write an example yourself.`
-  : `Worca found no runs of ${workflow} yet. Run the workflow once, or write an example yourself.`);
+/** U-T4 (F4, board UfFirstRun): no past runs. "Run it once" opens New run with the workflow chosen. */
+export const RUN_IT_ONCE = 'Run it once';
+export const WRITE_YOURSELF = 'Or write an example yourself';
+export const firstUseNoneText = (workflow, { needsProject }) => `Worca found no runs of ${workflow} yet. Run it once${needsProject ? ' on a project' : ''} to get a first result, or write an example yourself.`;
+export const pickerNoneText = firstUseNoneText;
 
 // ── U-T2 (D2): a try Worca itself could not run is set aside, made again once, and never counted ─────────────
 /** Why Worca could not run a try, by kind (runner.mjs worcaProblemOf). No full stop: the sentences below compose it. */

@@ -1,12 +1,12 @@
 // ui/public/workflows/test-dialogs.mjs — the workflow tests dialogs (plans/workflow-tests-part2-plan.md Tasks 12–13):
 // pick a past run (G7), use this run as a test example (board 3), and test a version with its connectors (boards 4, 30). Pure DOM.
-import { el, seg, field, testDialog, runStatusBadge, refusedRun, startInto } from './test-ui.mjs';
+import { el, btn, seg, field, testDialog, runStatusBadge, refusedRun, startInto } from './test-ui.mjs';
 import { icon } from '../icons.mjs';
 import { fmtUsd, andList, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { estimateOf, fmtUsdRange, aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
 import { allOnProject, leftOutText, leftOutBlockedText, NONE_READY_TEXT, LOCK_LEAD, LOCK_REST, REAL_BLOCKED_HINT, DISK_KEY, TIME_KEY, diskRow, aboutDuration, SETUP_TAKES_LEAD, setupTakesRest,
-  pickerNoneText, fromRunIntro, WHERE_TITLE, STARTS_FROM_RUN, pastRunProjectNote, DEV_CAPTION, SETUP_LABEL, SETUP_HINT_PAST,
+  pickerNoneText, RUN_IT_ONCE, WRITE_YOURSELF, fromRunIntro, WHERE_TITLE, STARTS_FROM_RUN, pastRunProjectNote, DEV_CAPTION, SETUP_LABEL, SETUP_HINT_PAST,
   PLUGINS_OFF_PERSONAL, PLUGINS_OFF_PROJECT, pluginsEngineNoteLine, BEFORE_RUNS_LEAD, BEFORE_RUNS_SEVERAL, beforeRunsRest }
   from '../../../src/shared/workflow-tests/project-text.mjs';
 
@@ -24,10 +24,13 @@ export function canUseAsExample({ flag, noProject, projectRun = false, status, t
 }
 
 /** G7: the Tests list's "Add from a past run" — which run, then board 3. */
-export function openPickRunDialog({ doc, win, workflowName, runs = [], dateText, onPick, needsProject = false }) {
+export function openPickRunDialog({ doc, win, workflowName, runs = [], dateText, onPick, needsProject = false, onRunOnce = null, onWrite = null }) {
   const body = [];
+  let dlg = null;
   if (!runs.length) {
+    // U-T4 (F4, board UfFirstRun): no runs to pick, so the dialog offers a first one, or an example written by hand.
     body.push(el(doc, 'p', 'hint', pickerNoneText(workflowName, { needsProject })));   // board 39 (P16)
+    body.push(btn(doc, WRITE_YOURSELF, () => { dlg.close(); if (onWrite) onWrite(); }, 'wft-linkbtn'));
   } else {
     body.push(el(doc, 'p', 'hint', `Pick a run of ${workflowName} to keep as an example.`));
     const list = el(doc, 'div', 'wft-pick-list');
@@ -52,16 +55,16 @@ export function openPickRunDialog({ doc, win, workflowName, runs = [], dateText,
     }
     body.push(list);
   }
-  const dlg = testDialog({
-    doc, win, title: 'Add from a past run', confirmLabel: 'Next', body,
+  dlg = testDialog({
+    doc, win, title: 'Add from a past run', confirmLabel: runs.length ? 'Next' : RUN_IT_ONCE, body,
     onConfirm: () => {
+      if (!runs.length) { if (onRunOnce) onRunOnce(); return { ok: true }; }
       const hit = [...doc.querySelectorAll('input[name="wft-pick-run"]')].find((x) => x.checked && !x.disabled);
       if (!hit) return { ok: false, error: 'Pick a run first.' };
       onPick(hit.value);
       return { ok: true };
     },
   });
-  if (!runs.length) dlg.okButton.disabled = true;   // board 25: nothing to pick
   return dlg;
 }
 
@@ -164,6 +167,7 @@ export function scriptCaution(names, quick = []) {
     ? { lead: 'The script step ', name: names[0], rest: ` runs as in a normal run. If it posts or sends something, it does it in ${where}.`, more }
     : { lead: 'The script steps ', name: andList(names), rest: ` run as in a normal run. If they post or send something, they do it in ${where}.`, more };
 }
+const startOfLine = (s) => (s.startsWith('your draft') ? `Y${s.slice(1)}` : s);   // U-T4: "Your draft (same as v4) results from …"
 const useOfValue = (v) => (v === 'draft' ? 'draft' : Number(v));
 
 /** Board 4's reuse sentence (C6 for a partial reuse). */
@@ -389,7 +393,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
       if (e.toRun.b) line(`${triesN(e.toRun.b)} of ${plan.b.short}`, priced(plan.b, e.toRun.b));
       if (plan.a && e.toRun.a) line(`${triesN(e.toRun.a)} of ${plan.a.short}`, priced(plan.a, e.toRun.a));
       for (const side of ['a', 'b']) {
-        if (reused(side)) line(`${plan[side].short} results from ${plan[side].reusableAt ? dateText(plan[side].reusableAt) : 'earlier'}`, '$0.00');
+        if (reused(side)) line(`${startOfLine(plan[side].short)} results from ${plan[side].reusableAt ? dateText(plan[side].reusableAt) : 'earlier'}`, '$0.00');
       }
       line(timeShown ? 'Total' : e.minutes ? `Total · ready in about ${e.minutes} minutes` : 'Total', e.usd === null ? 'cost not known yet' : fmtUsdRange(e.low, e.high), 'is-total');
       if (!capTouched) cap.value = `$${e.capUsd}`;
