@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { prepare } from '../src/core/db.mjs';
-import { createFeature, getFeature, listTurns, updateFeature, setContext, listHelperMessages, listAttachments, getBrief, beginBrief, saveBriefResult } from '../src/core/requirements/store.mjs';
+import { createFeature, getFeature, listTurns, updateFeature, setContext, listHelperMessages, listAttachments, getBrief, beginBrief, saveBriefResult, updateAttachment } from '../src/core/requirements/store.mjs';
 import { sendMessage } from '../src/core/requirements/helper.mjs';
 import { addAttachments, readsSettled, queueSkippedReads, askAttachment } from '../src/core/requirements/attachment-job.mjs';
 import { makeBrief, briefSettled } from '../src/core/requirements/brief-job.mjs';
@@ -347,6 +347,25 @@ test('a brief document is read on the brief\'s harness even without a stored mod
   await readsSettled(owner);
   assert.equal(r2.calls[0].engine, undefined);
   assert.equal(r2.calls[0].model, 'claude-sonnet-5');
+  assert.equal(r2.calls[0].effort, 'medium', "the interview pair's effort");
+});
+
+test('a pre-9c brief (engine NULL, model set) reads a document exactly as a pre-9c feature does', async () => {
+  const KEY = 'brief-9c0006';
+  const b = beginBrief('project', KEY, { by: 'po' });
+  saveBriefResult(b.id, { model: 'claude-sonnet-5', engine: null }, { by: 'po' });
+  const owner = { type: 'brief', id: b.id, scopeType: 'project', scopeKey: KEY };
+  const rb = fakeRunner([{ summary: 'Policy.' }]);
+  addAttachments(owner, [textFile('policy.md', 'Refunds in 14 days.')], { by: 'po' }, deps(rb));
+  await readsSettled(owner);
+  const f = createFeature({ scopeType: 'project', scopeKey: 'shop-1234abcd', title: 'Old', description: 'x' });
+  const rf = fakeRunner([{ summary: 'Policy.' }]);
+  addAttachments(own(f), [textFile('policy.md', 'Refunds in 14 days.')], { by: 'po' }, deps(rf));
+  await readsSettled(own(f));
+  const strip = (o) => { const { signal, onEvent, prompt, ...rest } = o; return rest; };   // the prompt names the owner
+  assert.deepEqual(strip(rb.calls[0]), strip(rf.calls[0]));
+  assert.equal(rb.calls[0].model, 'claude-opus-5-5');
+  assert.equal(rb.calls[0].effort, 'medium');
 });
 
 test('mock mode skips a PNG on a Codex feature with the same words, and the failed turn carries the engine', async () => {
@@ -367,9 +386,17 @@ test('an ask about a skipped PNG on a Codex feature makes no call', async () => 
   addAttachments(own(f), [pngFile()], { by: 'po' }, deps(r));
   await readsSettled(own(f));
   const row = listAttachments('feature', f.seq)[0];
-  try { askAttachment(own(f), row.id, 'What is on it?', { by: 'po' }, deps(r)); } catch { /* refused up front is fine too */ }
+  // a skipped file cannot be asked about: refused up front, no call
+  assert.throws(() => askAttachment(own(f), row.id, 'What is on it?', { by: 'po' }, deps(r)), (e) => e.code === 'CONFLICT');
+  // a file read earlier, then the feature moved to Codex: the ask is skipped with the same words, as an ask error, no call
+  updateAttachment(row.id, { status: 'done', error: null, summary: 'A screen.' });
+  askAttachment(own(f), row.id, 'What is on it?', { by: 'po' }, deps(r));
   await readsSettled(own(f));
   assert.equal(r.calls.length, 0);
+  const after = listAttachments('feature', f.seq)[0];
+  assert.equal(after.error.code, 'SKIPPED_ENGINE');
+  assert.equal(after.error.job, 'ask');
+  assert.equal(after.error.message, 'screen.png skipped: Codex gets files as text only.');
 });
 
 test('a brief whose harness is not signed in fails with the NOT_READY sentence: no call, nothing booked', async () => {

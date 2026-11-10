@@ -238,25 +238,36 @@ async function readerOf(e, d) {
   if (b && b.madeAt) {
     // The brief's own harness and model, as stored (NULL engine = Claude). A harness without a stored model takes its own default,
     // never Claude's: a document is not silently read on another harness.
-    const engine = b.engine || 'claude';
-    if (b.model) return featureModel({ model: { engine, model: b.model, effort: null } }, d);
-    if (engine === 'claude') return featureModel({ model: null }, d);
-    return { ...(await engineDefault(engine, dd(d))), notice: null };
+    // A brief made before 9c (engine NULL) reads exactly as before: the interview pair. A Claude brief made in 9c keeps its stored model
+    // with the interview pair's effort (a brief stores no effort).
+    if (!b.engine) return featureModel({ model: null }, d);
+    if (b.engine === 'claude') {
+      const pair = await featureModel({ model: null }, d);
+      return b.model ? { ...pair, model: b.model } : pair;
+    }
+    if (b.model) return featureModel({ model: { engine: b.engine, model: b.model, effort: null } }, d);
+    return { ...(await engineDefault(b.engine, dd(d))), notice: null };
   }
+  return briefScopeDefault(o, b, d);
+}
+
+async function briefScopeDefault(o, b, d) {
   const scope = scopeOf({ scopeType: o.scopeType || (b && b.scopeType), scopeKey: o.scopeKey || (b && b.scopeKey) });
   return { ...(await briefDefault(scope, d)).choice, notice: null };
 }
 
-/** The harness a file will be read on, without any catalog lookup: the feature's or the made brief's stored engine (Claude when none). */
-function storedEngine(e) {
-  if (e.owner.type === 'feature') return (getFeature(e.owner.id)?.model?.engine) || 'claude';
-  const b = getBriefById(e.owner.id);
-  return (b && b.madeAt && b.engine) || 'claude';
+/** The harness a file will be read on, decided as readerOf decides it but without the catalog lookup of a model. */
+async function readerEngine(e, d) {
+  const o = e.owner;
+  if (o.type === 'feature') return (getFeature(o.id)?.model?.engine) || 'claude';
+  const b = getBriefById(o.id);
+  if (b && b.madeAt) return b.engine || 'claude';
+  return (await briefScopeDefault(o, b, d)).engine || 'claude';
 }
 
 /** Mock mode makes no call, but it skips what a harness would skip, with the same words (the browser proof shows them). */
-function mockSkip(e, row) {
-  const engine = storedEngine(e);
+async function mockSkip(e, row) {
+  const engine = await readerEngine(e, e.d);
   if (engine !== 'claude' && !(row.kind === 'text' && row.bytes <= REQ_ATTACH_LIMITS.inlineBytes)) {
     throw Object.assign(new Error(skipWords(row, engine)), { code: 'SKIPPED_ENGINE', costUsd: 0, engine });
   }
@@ -341,7 +352,7 @@ async function runRead(e) {
     if (d.mockEnabled()) {
       const ms = Number(process.env.WORCA_MOCK_READ_MS) || 0;   // the browser proof sees "Reading N files…" (D17)
       if (ms > 0) await new Promise((r) => setTimeout(r, ms));
-      mockSkip(e, row);
+      await mockSkip(e, row);
       finishRead(e, { summary: mockSummary(row.name), costUsd: 0, model: null });
       return;
     }
@@ -394,7 +405,7 @@ async function runAsk(e) {
       const ms = Number(process.env.WORCA_MOCK_READ_MS) || 0;   // the browser proof sees "Asking…" too (D17)
       if (ms > 0) await new Promise((r) => setTimeout(r, ms));
       if (e.cancelled) return;
-      mockSkip(e, row);
+      await mockSkip(e, row);
       finishAsk(e, { answer: mockAnswer(e.question), costUsd: 0, model: null });
       return;
     }
