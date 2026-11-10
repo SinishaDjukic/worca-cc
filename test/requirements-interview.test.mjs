@@ -790,7 +790,7 @@ test('Look closer: the explicit look carries the brief, asks for what it does no
   assert.equal(g.status, 'your_turn');
 });
 
-test('Look closer, mock mode: a canned closer look with an absolute path and an area', async () => {
+test('Look closer, mock mode: a canned code look with an absolute path and an area', async () => {
   process.env.WORCA_MOCK = '1';
   briefOn();
   savedBrief();
@@ -801,7 +801,7 @@ test('Look closer, mock mode: a canned closer look with an absolute path and an 
   await startOrientation(f.seq, { thenRound: false }, d);
   await settled(f.seq);
   const o = getFeature(f.seq).orientation;
-  assert.match(o.summary, /^\[mock\] A closer look: /);
+  assert.match(o.summary, /^\[mock\] A code look: /);
   assert.deepEqual(o.files, ['/tmp/mock/auto-look-0000abcd/README.md']);
   assert.equal(o.area, 'Orders');
 });
@@ -817,7 +817,7 @@ test('switch off with a brief: creation still skips; an explicit look is refused
   const before = { turns: listTurns(f.seq).length, f: getFeature(f.seq) };
   const r = fakeRunner([]);
   assert.throws(() => startOrientation(f.seq, { thenRound: false }, briefDeps(r).d),
-    (e) => e.code === 'CONFLICT' && e.message === 'Looking at the code is off for this project.');
+    (e) => e.code === 'CONFLICT' && e.message === 'Code looks are off for this project.');
   assert.equal(isBusy(f.seq), false);
   assert.equal(r.calls.length, 0);
   assert.equal(listTurns(f.seq).length, before.turns);

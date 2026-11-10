@@ -551,7 +551,7 @@ export function helperView(seq) {
         ...(LIST_SECTIONS.includes(p.target) ? diffList(p.before || [], p.value || []) : {}),
         askedAgain: asked.has(`${m.id}:${p.n}`),
       })),
-      error: m.error, costUsd: m.costUsd, model: m.model, createdAt: m.createdAt, createdBy: m.createdBy,
+      error: m.error, costUsd: m.costUsd, model: m.model, engine: m.engine, notices: m.notices, createdAt: m.createdAt, createdBy: m.createdBy,
     })),
     answering: isAnswering(f.seq),
     estimate: helperEstimate(),

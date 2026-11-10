@@ -16,7 +16,7 @@ import { icon as sharedIcon } from './icons.mjs';
 import { openRunSetupOverlay } from './run-setup-overlay.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
 import { whoInterviews, recommendationNote, defaultLine, fallbackLine, harnessLine, otherHarnessPrivacy, modelChip, modelDialog, switchConfirm, choiceBox,
-  briefRefreshDialog } from './requirements-model.mjs';
+  briefRefreshDialog, stepMeta, stepNotices, costDialog } from './requirements-model.mjs';
 import {
   ATTACH_BINARY, ATTACH_TEXT_EXT, extOf, checkAttachment, bytesToBase64, carriesFiles, pastedFiles, createPasteNamer, REQ_ATTACH, reqLimits,
 } from './attach-files.mjs';
@@ -53,7 +53,7 @@ const BRIEF_SECTIONS = [['product', 'What the product does'], ['users', 'Who use
 const AREA_STATUS = Object.freeze({ exists: { label: 'Exists', cls: 'green' }, partly: { label: 'Partly', cls: 'amber' } });
 const BRIEF_FORMAT = Object.freeze({ users: 'One per line, as Name: what they can do.', terms: 'One per line, as Term: what it means.',
   areas: 'One per line, as Name (exists or partly): what exists. The status is optional.' });
-/** An area as the page names it: "<belongsTo>: <name>" for one added from a closer look (A7 D11). */
+/** An area as the page names it: "<belongsTo>: <name>" for one added from a code look (A7 D11). */
 const areaLabel = (a) => (a.belongsTo ? `${a.belongsTo}: ${a.name}` : a.name);
 /** A section as the editor's text (A7 §3, the server's `sectionText`): one item per line, split on the first ": ". */
 function briefSectionText(key, value) {
@@ -210,6 +210,20 @@ const briefPath = (scopeType, scopeKey) => `brief/${scopeType}/${encodeURICompon
 const decodeKey = (k) => { try { return decodeURIComponent(k); } catch { return k; } };
 const sentence = (s) => { const t = String(s || '').replace(/[_-]+/g, ' ').trim(); return t ? t[0].toUpperCase() + t.slice(1) : ''; };
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** A moment as the thread says it (9c board 5): "9 Nov, 14:02", in local time; '' for something that is not a date. */
+function when(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}, ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+/** The first sentence of a look's summary, at most 200 characters (9c D17). */
+function firstSentence(s) {
+  const text = String(s || '').trim();
+  const at = text.indexOf('. ');
+  const one = at >= 0 ? text.slice(0, at + 1) : text;
+  return one.length > 200 ? `${one.slice(0, 199).trimEnd()}…` : one;
+}
 
 const badge = (state) => h('span', { class: `badge ${STATE[state]?.cls || ''}`.trim(), text: STATE[state]?.label || state });
 const runColour = (status) => (RUN_LIVE.includes(status) ? 'peach' : status === 'done' ? 'green'
@@ -246,7 +260,7 @@ function rowMeta(f) {
         : run && run.status ? ` · run ${run.status}${run.phase ? ` · ${sentence(run.phase)}` : ''}` : '';
       return { text: `Started${runText}${k ? ` · ${plural(k, 'question')} for you` : ''}`, need: k > 0 || waits };
     }
-    case 'looking': return { text: 'Worca is looking at the code…' };
+    case 'looking': return { text: 'Worca is doing the code look…' };
     case 'thinking': return { text: 'Worca is thinking…' };
     default: return null;
   }
@@ -632,7 +646,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('div', { class: 'card req-rows' }, g.items.map(listRow)))),
       spend && typeof spend.windowUsd === 'number'
         ? h('p', { class: 'hint req-spend', text: `Spent on requirements this ${spend.resetPeriod === 'weekly' ? 'week' : 'month'}: ${usd(spend.windowUsd)}${
-          typeof spend.totalLimitUsd === 'number' ? ` of your ${usd(spend.totalLimitUsd)} limit` : ''}.` })
+          typeof spend.totalLimitUsd === 'number' ? ` of your ${usd(spend.totalLimitUsd)} limit` : ''}${
+          spend.unknownSteps > 0 ? ` plus ${plural(spend.unknownSteps, 'step')} with cost unknown` : ''}.` })
         : null,
     );
     // a filter chosen from the keyboard keeps the focus on the tabs across the rebuild
@@ -821,9 +836,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const git = gitOn();
       const next = b ? briefLine(s, select.options[select.selectedIndex]?.textContent || s.scopeKey, b)
         : h('span', { class: 'hint req-new-look', text: !git
-          ? `Worca does not look at the code: ${GIT_MISSING_TEXT}. It starts asking right away.`
+          ? `Worca does not do a code look: ${GIT_MISSING_TEXT}. It starts asking right away.`
           : scopeType === 'workspace'
-            ? "Worca looks at the code of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca."
+            ? "Worca does a code look of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca."
             : "Worca looks at this project's code once, read-only, to learn what already exists. Change that in Your notes for Worca." });
       if (lookHint.parentNode) lookHint.replaceWith(next);
       lookHint = next;
@@ -1162,7 +1177,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // no repository: a project without a default branch, a workspace whose members have none (`repositories` 0)
     const noRepo = !slow && (s.scopeType === 'project' ? !t.branch : t.repositories === 0);
     const whyNot = making ? 'Worca is reading the code. This takes a few minutes; you can leave this page.'
-      : switchOff ? 'Looking at the code is off. Turn it on under Your notes for Worca.'
+      : switchOff ? 'Code looks are off. Turn them on under Your notes for Worca.'
         : noRepo ? 'There is no repository to look at.' : null;
     // 9c board 9: with the models known the box picks who makes it and the note says the cost; else A7's line stays
     const bd = data.briefDefault && data.briefDefault.choice && data.briefDefault.choice.model ? data.briefDefault : null;
@@ -1185,7 +1200,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     return h('section', { class: 'card req-brief-start', 'aria-label': 'Give Worca a head start' },
       h('div', { class: 'req-brief-main' },
         h('h3', { text: 'Give Worca a head start' }),
-        h('p', { class: 'req-brief-why', text: 'Today Worca looks at the code again for every new feature. A brief is one deeper look, done once, that every feature here reuses: interviews ask better questions sooner, and each feature saves its own look.' }),
+        h('p', { class: 'req-brief-why', text: 'Today Worca does a code look again for every new feature. A brief is one deeper look, done once, that every feature here reuses: interviews ask better questions sooner, and each feature saves its own code look.' }),
         h('ul', { class: 'req-brief-parts' },
           part('What the product does', ', in a few sentences'),
           part('Who uses it', ' and what each of them can do'),
@@ -1221,7 +1236,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     area.value = v.body;
     // the shared switch (switch.mjs): an on/off setting is a switch, not a checkbox (docs/design-system.md › Switch)
     const { row: lookRow, input: look } = makeSwitch(document, { checked: v.look, rowClass: 'req-brief-notes-look', data: { ui: 'notes-look' },
-      label: 'Let Worca look at the code (for the brief, and when you ask it to look closer at a feature)' });
+      label: 'Let Worca do code looks (for the brief, and when you press Look closer on a feature)' });
     const save = () => act(async () => {
       await api('PUT', `/api/requirements/context/${s.scopeType}/${encodeURIComponent(s.scopeKey)}`, { body: area.value, lookAtCode: look.checked });
       notesDraft = null; notesBase = null;
@@ -1342,8 +1357,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const del = () => act(async () => {
       const ids = ((briefData && briefData.usedBy) || []).map((u) => u && (u.id || (u.seq != null ? `FEAT-${u.seq}` : null))).filter(Boolean);
       const who = !ids.length ? 'No feature uses this brief yet.'
-        : ids.length === 1 ? `${ids[0]} uses this brief; it goes back to looking at the code when asked.`
-          : `${joinAnd(ids)} use this brief; they go back to looking at the code when asked.`;
+        : ids.length === 1 ? `${ids[0]} uses this brief; it goes back to doing its own code look when asked.`
+          : `${joinAnd(ids)} use this brief; they go back to doing their own code look when asked.`;
       // A8 (design §6): the brief's documents go with it
       const nDocs = docsOf(briefData).length;
       const docsWord = nDocs === 1 ? ' Its 1 document is deleted too.' : nDocs ? ` Its ${nDocs} documents are deleted too.` : '';
@@ -1510,7 +1525,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       docsCard(data, name),
       h('section', { class: 'card req-brief-how', 'aria-label': 'How Worca uses it' },
         h('h3', { text: 'How Worca uses it' }),
-        h('p', {}, `${reads}New features no longer need their own look at the code; `,
+        h('p', {}, `${reads}New features no longer need their own code look; `,
           h('b', { text: 'Look closer' }), ' on a feature adds one when the brief is not enough.'),
         used.length ? h('p', { class: 'req-brief-used' }, 'Used by ', ...used.flatMap((u, i) => [i ? ', ' : null, featureLink(u)])) : null),
       notes,
@@ -1527,7 +1542,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     for (const t of turns) if (t.kind === 'answers') latest.set(t.payload.roundTurnId, t.payload.answers || []);
     let n = 0;
     return turns.filter((t) => t.kind === 'round').map((t) => ({
-      turnId: t.id, n: ++n, questions: t.payload.questions || [], note: t.payload.note || '',
+      turnId: t.id, n: ++n, turn: t, questions: t.payload.questions || [], note: t.payload.note || '',
       given: new Map((latest.get(t.id) || []).map((a) => [a.id, a])),
     }));
   }
@@ -1569,7 +1584,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('button', { type: 'button', class: 'btn btn-primary', onclick: () => post({}) }, 'Submit')];
     const panel = h('div', { class: `qpanel req-q${revise ? ' req-revise' : ''}` },
       h('div', { class: 'qpanel-head' }, h('b', { text: revise ? `Change round ${round.n}` : 'Your turn' }),
-        h('span', { class: 'qcount', text: plural(round.questions.length, 'question') })),
+        h('span', { class: 'qcount', text: plural(round.questions.length, 'question') }), stepMetaEl(round.turn)),
+      stepNotices(document, round.turn && round.turn.notices),
       round.note ? h('p', { class: 'hint req-q-note', text: round.note }) : null,
       ...round.questions.map((q, i) => {
         const buttons = q.options.map((o, k) => h('button', { type: 'button', class: 'qopt', 'data-key': KEYS[k], 'data-ui': `q-${round.turnId}-${i}-${k}`,
@@ -1617,17 +1633,59 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   // Earlier rounds: one card, each answered question with its latest answer, a Change per round (D12).
   // The round waiting for answers is the question card instead.
-  function earlierRounds(f, rounds) {
+  /** The right-aligned "<model label> on <Harness> · <cost>" of a step; null when nothing is known of it. */
+  function stepMetaEl(item, opts) {
+    const words = stepMeta(item, opts);
+    return words ? h('span', { class: 'hint req-step-meta', text: words }) : null;
+  }
+  /** A look that shows as a row (9c D17): every orientation turn but the ones skipped for the brief, the switch, no git or no repo. */
+  const looksAsRow = (t) => t.kind === 'orientation' && !['brief', 'off', 'no-git', 'no-repo'].includes(t.payload && t.payload.skipped);
+  /** "Show what it found": opens the folded Code look card (or the What Worca knows card, which carries the look with a brief) and scrolls to it. */
+  function showLook() {
+    const folded = host.querySelector('.req-orient');
+    if (folded) folded.open = true;   // the paint reads the fold's state off the page
+    ui.orientOpen = true;
+    redraw();
+    const card = host.querySelector('.req-orient, [data-ui="knows"]');
+    if (card && typeof card.scrollIntoView === 'function') card.scrollIntoView({ block: 'nearest' });
+  }
+  /** The code look as a step (board 5): its title with the file count, what ran it, the summary's first sentence, Show what it found. */
+  function lookRow(t) {
+    const p = t.payload || {};
+    const nFiles = Array.isArray(p.files) ? p.files.length : 0;
+    const first = p.skipped ? '' : firstSentence(p.summary);
+    return h('div', { class: 'req-step req-step-look', 'data-look': t.id },
+      h('div', { class: 'req-round-head' }, h('span', { class: 'req-round-n', text: nFiles ? `Code look · ${plural(nFiles, 'file')}` : 'Code look' }), stepMetaEl(t)),
+      stepNotices(document, t.notices),
+      first ? h('p', { class: 'req-step-first', text: first }) : null,
+      first ? h('button', { type: 'button', class: 'link-btn', 'data-ui': 'look-show', onclick: showLook }, 'Show what it found') : null);
+  }
+  /** A switch of the feature's model (a `model` turn): one plain row. */
+  function switchRow(t) {
+    const p = t.payload || {};
+    const at = when(t.at);
+    return h('p', { class: 'hint req-step req-step-switch', text:
+      `You switched this feature to ${t.modelLabel || p.model} on ${engineLabel(p.engine || 'claude')}${at ? ` · ${at}` : ''}` });
+  }
+  function earlierRounds(f, rounds, turns = []) {
     const open = !isLocked(f);
     const shown = rounds.filter((r) => !(f.pending && r.turnId === f.pending.turnId));
-    if (!shown.length) return null;
-    return h('section', { class: 'card req-rounds' }, h('h3', { text: 'Earlier rounds' }),
-      ...shown.map((r) => h('div', { class: 'req-round', 'data-round': r.turnId },
+    const steps = [
+      ...shown.map((r) => ({ id: r.turnId, el: roundRow(f, r, open) })),
+      ...turns.filter(looksAsRow).map((t) => ({ id: t.id, el: lookRow(t) })),
+      ...turns.filter((t) => t.kind === 'model' && t.payload && t.payload.model).map((t) => ({ id: t.id, el: switchRow(t) })),
+    ].sort((a, b) => a.id - b.id);
+    if (!steps.length) return null;
+    return h('section', { class: 'card req-rounds' }, h('h3', { text: shown.length ? 'Earlier rounds' : 'Steps' }), ...steps.map((s) => s.el));
+  }
+  function roundRow(f, r, open) {
+    return h('div', { class: 'req-round', 'data-round': r.turnId },
         h('div', { class: 'req-round-head' }, h('span', { class: 'req-round-n', text: `Round ${r.n}` }),
           open && r.questions.length && revising !== r.turnId
             ? h('button', { type: 'button', class: 'hint req-link req-change', 'data-ui': `change-${r.turnId}`, 'aria-label': `Change round ${r.n}`,
               onclick: () => { revising = r.turnId; revDraft = null; focusNext = `q-${r.turnId}-0-0`; redraw(); } }, 'Change')
-            : null),
+            : null, stepMetaEl(r.turn)),
+        stepNotices(document, r.turn && r.turn.notices),
         r.note ? h('p', { class: 'hint req-round-note', text: r.note }) : null,
         ...r.questions.map((q) => {
           const a = r.given.get(q.id);
@@ -1635,7 +1693,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
             h('div', { class: 'req-round-qt', text: q.question }),
             h('div', { class: 'req-round-answer' }, a ? `→ ${a.answer}` : 'Not answered',
               a && a.recommended ? ' ' : null, a && a.recommended ? h('code', { text: 'recommended' }) : null));
-        }))));
+        }));
   }
 
   // A8 D2, A6.1 D10: a feature created with files gets them (from the tracker) and reads them before round 1. One role=status node for
@@ -1669,7 +1727,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // The current card: a round being changed, the pending round, Ready to build, or Decide (A2 §5).
     const card = !open ? null
       : rev ? questionCard(f, rev, { revise: true })
-        : f.pending ? questionCard(f, { ...f.pending, n: rounds.find((r) => r.turnId === f.pending.turnId)?.n })
+        : f.pending ? questionCard(f, { ...f.pending, n: rounds.find((r) => r.turnId === f.pending.turnId)?.n, turn: rounds.find((r) => r.turnId === f.pending.turnId)?.turn })
           : buildCardShown(f) ? buildCard(f)
             : f.state === 'decide' || decideNeeded(f) ? decideCard(f)
               : null;
@@ -1677,13 +1735,36 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       hasStarts ? runsCard(f) : null,
       hasStarts && (f.changedSinceStart || []).length ? changedNotice(f) : null,
       f.status === 'archived' ? h('p', { class: 'hint req-note', text: 'This feature is archived. Restore it to continue.' }) : null,
-      readingLine(f) || (working ? h('p', { class: 'hint req-working', text: f.status === 'looking' ? 'Worca is looking at the code…' : 'Worca is thinking…' }) : null),
-      open && f.lastError ? h('div', { class: 'req-error form-msg err' }, f.lastError, ' ',
-        h('button', { type: 'button', class: 'btn btn-sm req-retry', onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/retry`, {}); await paint(); }) }, 'Try again')) : null,
+      readingLine(f) || (working ? h('p', { class: 'hint req-working', text: f.status === 'looking' ? 'Worca is doing the code look…' : 'Worca is thinking…' }) : null),
+      open && f.lastError ? errorBlock(f, turns, rounds) : null,
       card,
       moved,   // A3 D2: Ready to start?, Files and Spec, while Feature chat takes the right column
-      earlierRounds(f, rounds),
+      earlierRounds(f, rounds, turns),
       f.brief ? knowsCard(f, turns) : orientationBox(f, turns));
+  }
+
+  /** The newest turn's error (9c D13). A NOT_READY one is a block of its own: the step that stopped, what ran it, the sentence,
+   *  Change the model, Try again and the harness's sign-in page; any other error keeps its text and Try again. */
+  function errorBlock(f, turns, rounds) {
+    const retry = h('button', { type: 'button', class: 'btn btn-sm req-retry', onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/retry`, {}); await paint(); }) }, 'Try again');
+    const last = turns.filter((t) => t.kind !== 'file' && t.kind !== 'export' && t.kind !== 'import').at(-1);
+    if (!last || last.kind !== 'error' || !last.payload || last.payload.code !== 'NOT_READY') {
+      return h('div', { class: 'req-error form-msg err' }, f.lastError, ' ', retry);
+    }
+    return notReadyBlock(f, { title: last.payload.job === 'look' ? 'Code look stopped' : `Round ${rounds.length + 1} stopped`, item: last,
+      message: last.payload.message || f.lastError, docsUrl: last.payload.docsUrl, retry });
+  }
+  /** A NOT_READY stop of a step: shared by the thread's error and a Feature chat reply. */
+  function notReadyBlock(f, { title, item, message, docsUrl, retry, cls = 'req-error' }) {
+    const safe = typeof docsUrl === 'string' && /^https?:\/\//i.test(docsUrl) ? docsUrl : null;
+    const harness = item && item.engine ? engineLabel(item.engine) : null;
+    return h('div', { class: `${cls} form-msg err`, role: 'alert' },
+      h('div', { class: 'req-round-head' }, h('b', { class: 'req-error-title', text: title }), stepMetaEl(item, { error: true })),
+      h('p', { class: 'req-error-text', text: message }),
+      h('div', { class: 'req-error-btns' },
+        h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'error-change-model', onclick: (e) => { void openModelDialog(current && current.f.seq === f.seq ? current.f : f, e.currentTarget); } }, 'Change the model'),
+        retry,
+        safe ? h('a', { class: 'req-error-docs', href: safe, target: '_blank', rel: 'noopener noreferrer', text: `How to sign in to ${harness || 'the harness'}` }) : null));
   }
 
   // ---- Decide (board Decisions.dc.html, A2 D3/D4): Confirm / Reject per assumption, Confirm the N left,
@@ -2662,11 +2743,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // A version that could not be stored (D11): the server's words, and Replace, which mends it (Read again is refused).
     const stuck = storeFailedOf(a);
     const dl = !!a.error && a.error.job === 'download';   // A6.1 D10: a tracker file that could not be got, or used
-    const said = stuck ? String(a.error.message || '')
+    const skipped = !!a.error && a.error.code === 'SKIPPED_ENGINE';   // 9c D12: this harness cannot take the file; Claude can (grey, not an alert)
+    const said = stuck || skipped ? String(a.error.message || '')
       : dl ? downloadSaid(a)
         : `Worca could not read this file${reasonOf(a.error) ? `: ${reasonOf(a.error)}` : ''}. ${ctx.doc ? 'Interviews list' : 'The interview lists'} it by name only.`;
     if (n.failed.words.textContent !== said) n.failed.words.textContent = said;
-    const label = stuck ? 'Replace with a newer version…' : 'Try again';
+    n.failed.p.classList.toggle('req-file-skipped', skipped);
+    if (skipped) n.failed.p.removeAttribute('role'); else n.failed.p.setAttribute('role', 'alert');
+    const label = stuck ? 'Replace with a newer version…' : skipped ? 'Read again' : 'Try again';
     if (n.failed.btn.textContent !== label) n.failed.btn.textContent = label;
     n.failed.btn.hidden = dl && a.error.code === 'REFUSED';   // the same file would be refused again: Remove is in the ⋯ menu
     n.failed.btn.setAttribute('data-ui', `${stuck ? 'file-replace' : 'file-retry'}-${a.id}`);
@@ -2873,7 +2957,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('p', { class: 'hint req-docs-foot', text: `Interviews use a new document right away. The brief's sections change only when you Refresh it. “Send with every run” adds the document to every run started from a ${name} feature; each start card lists it.` }));
   }
 
-  // The looks at the code this feature made (A2: the orientation turns not skipped), and what they cost.
+  // The code looks this feature made (A2: the orientation turns not skipped), and what they cost.
   function looksOf(turns) {
     const looks = turns.filter((t) => t.kind === 'orientation' && !(t.payload && t.payload.skipped));
     return { looks, cost: looks.reduce((sum, t) => sum + (Number(t.costUsd) || 0), 0) };
@@ -2884,19 +2968,21 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // gone now (deleted, or the feature moved) says so and offers Look again (D10).
   function orientationBox(f, turns) {
     const o = f.orientation;
+    const lastLook = turns.filter((t) => t.kind === 'orientation').at(-1);
     const text = !o ? 'Not looked yet.'
-      : o.skipped === 'brief' ? 'Worca has not looked at the code for this feature.'
-        : o.skipped === 'off' ? 'Looking at the code is turned off for this one (Your notes for Worca).'
-          : o.skipped === 'no-git' ? `Worca did not look at the code: ${GIT_MISSING_TEXT}.`
+      : o.skipped === 'brief' ? 'Worca has not done a code look for this feature.'
+        : o.skipped === 'off' ? 'Code looks are turned off for this one (Your notes for Worca).'
+          : o.skipped === 'no-git' ? `Worca did not do a code look: ${GIT_MISSING_TEXT}.`
             : o.skipped === 'no-repo' ? 'There is no repository to look at yet.'
-              : o.skipped === 'failed' ? 'Worca could not look at the code this time; the interview runs without it.'
-                : o.summary || 'Nothing relevant found.';
+              : o.skipped === 'engine' ? (lastLook && lastLook.notices && lastLook.notices[0]) || 'Worca did not do a code look: the harness cannot read the repo.'
+                : o.skipped === 'failed' ? 'Worca could not do the code look this time; the interview runs without it.'
+                  : o.summary || 'Nothing relevant found.';
     const { looks, cost } = looksOf(turns);
     const times = looks.length === 1 ? 'looked once' : looks.length === 2 ? 'looked twice' : `looked ${looks.length} times`;
     const nFiles = ((o && o.files) || []).length;
     const meta = looks.length ? [times, nFiles ? plural(nFiles, 'file') : null, cost > 0 ? usd(cost) : null].filter(Boolean).join(' · ') : null;
     return h('details', { class: 'card req-orient', open: ui.orientOpen }, // `open: false` is skipped by h()
-      h('summary', {}, 'What Worca found in the code', meta ? h('span', { class: 'hint req-orient-meta', text: meta }) : null),
+      h('summary', {}, 'Code look: what Worca found', meta ? h('span', { class: 'hint req-orient-meta', text: meta }) : null),
       h('p', { text }),
       o && o.skipped === 'brief' ? h('div', { class: 'req-actions' },
         h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'orient-look-again', 'data-needs-git': true, disabled: isLocked(f), onclick: () => postLook(f) }, 'Look again')) : null,
@@ -2904,7 +2990,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
 
   // What Worca knows (board 14, A7 D10/D11): the card that replaces A2's box when the scope has a usable brief.
-  // Before a closer look Worca works from the brief (Look closer offers one); after it, the look's summary, Add
+  // Before a code look Worca works from the brief (Look closer offers one); after it, the look's summary, Add
   // this to the brief (until added) and Look again. The switch off hides both looks; the A1 lock disables them.
   function knowsCard(f, turns) {
     const b = f.brief;
@@ -2924,11 +3010,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const isAre = names.length + more === 1 ? 'is' : 'are';
       const said = (f.attachments || []).length
         // A8 (board 16): the feature's files are part of what Worca works from
-        ? `Worca works from the ${targetName(f)} brief and the files below.${subject ? ` ${subject[0].toUpperCase()}${subject.slice(1)} ${isAre} described in the brief.` : ''} It has not looked at the code for this feature.`
-        : `Worca works from the ${targetName(f)} brief${names.length ? `: ${subject} ${isAre} described there.` : '.'} It has not looked at the code for this feature.`;
+        ? `Worca works from the ${targetName(f)} brief and the files below.${subject ? ` ${subject[0].toUpperCase()}${subject.slice(1)} ${isAre} described in the brief.` : ''} It has not done a code look for this feature.`
+        : `Worca works from the ${targetName(f)} brief${names.length ? `: ${subject} ${isAre} described there.` : '.'} It has not done a code look for this feature.`;
       meta = ['from the ', briefLink(to), ` · ${ageOld(b.madeAt)}`];
       body = [h('p', { class: 'req-knows-text', text: said }),
-        o && o.skipped === 'failed' ? h('p', { class: 'hint req-knows-failed', text: 'Worca could not look at the code this time.' }) : null];
+        o && o.skipped === 'failed' ? h('p', { class: 'hint req-knows-failed', text: 'Worca could not do the code look this time.' }) : null];
       if (lookOn) {
         // a look checks out the code: the hint and Look closer hide while git is missing (git-gate.mjs)
         foot = [h('span', { class: 'hint', 'data-needs-git': true, text: 'Worth it when the feature touches something the brief only skims.' }),
@@ -2938,7 +3024,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     } else {
       const { cost } = looksOf(turns);
       const nFiles = (Array.isArray(o.files) ? o.files : []).length;
-      meta = [['brief + a closer look', nFiles ? plural(nFiles, 'file') : null, usd(cost)].filter(Boolean).join(' · ')];
+      meta = [['brief + a code look', nFiles ? plural(nFiles, 'file') : null, usd(cost)].filter(Boolean).join(' · ')];
       // The link goes once added: the focus moves to Look again (else to this card) and the message line names the area.
       const add = () => act(async () => {
         await api('POST', `/api/requirements/${f.seq}/brief-addition`, {});
@@ -2948,7 +3034,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       });
       // Only a look made for this scope against this brief can be added (the server refuses any other, A7 D11).
       const ofThisBrief = o.scopeType === f.scopeType && o.scopeKey === f.scopeKey && o.briefId != null && (b.id == null || o.briefId === b.id);
-      body = [h('p', { class: 'req-knows-text', text: o.summary || 'Nothing relevant found.' }),
+      body = [h('h4', { class: 'req-knows-look', text: 'Code look: what Worca found' }),
+        h('p', { class: 'req-knows-text', text: o.summary || 'Nothing relevant found.' }),
         o.summary && !o.addedToBrief && ofThisBrief ? h('p', { class: 'hint req-knows-add' }, 'Not in the brief yet. ',
           h('button', { type: 'button', class: 'link-btn', 'data-ui': 'brief-add', disabled: locked, onclick: add }, 'Add this to the brief')) : null];
       if (lookOn) foot = [h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'look-again', 'data-needs-git': true, disabled: locked, onclick: () => postLook(f) }, 'Look again')];
@@ -3255,6 +3342,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function helperLine(f, m, ctx) {
     const code = m && m.error ? m.error.code : null;
     if (code === 'BUDGET') return budgetLine(f);
+    if (code === 'NOT_READY' || code === 'NOT_OFFERED') {   // 9c D13: the harness is not ready; never a silent switch
+      const retry = ctx.newest && !ctx.answering && !ctx.archived
+        ? h('button', { type: 'button', class: 'btn btn-sm req-help-retry', 'data-ui': 'helper-retry', disabled: ctx.working,
+          onclick: () => helperPost(f, 'POST', '/retry', 'helper-in') }, 'Try again') : null;
+      return notReadyBlock(f, { title: 'Feature chat stopped', item: m, message: m.error.message || HELP_FAILED, docsUrl: m.error.docsUrl, retry, cls: 'req-help-fail req-help-notready' });
+    }
     const again = ctx.newest && !ctx.answering && !ctx.archived
       ? h('button', { type: 'button', class: 'btn btn-sm req-help-retry', 'data-ui': 'helper-retry', disabled: ctx.working,
         onclick: () => helperPost(f, 'POST', '/retry', 'helper-in') }, 'Try again') : null;
@@ -3284,7 +3377,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       (m.drafts || []).some((x) => x.dropped) ? { k: 'dropped', sig: '',
         make: () => h('p', { class: 'hint req-help-dropped', text: "The question you asked about has been answered, so Worca's draft for it was dropped." }) } : null,
       ...(m.proposals || []).map((p) => ({ k: `card-${m.id}-${p.n}`, sig: JSON.stringify(p), make: () => proposalCard(f, m, p, ctx) })),
-      m.costUsd > 0 ? { k: 'cost', sig: String(m.costUsd), make: () => h('p', { class: 'hint req-help-cost', text: usd(m.costUsd) }) } : null,
+      (m.notices || []).length ? { k: 'notices', sig: JSON.stringify(m.notices), make: () => stepNotices(document, m.notices) } : null,
+      !(m.error && (code === 'NOT_READY' || code === 'NOT_OFFERED')) && stepMeta(m) ? { k: 'cost', sig: JSON.stringify([m.modelLabel, m.model, m.engine, m.costUsd, m.costKind]), make: () => h('p', { class: 'hint req-help-cost', text: stepMeta(m) }) } : null,
     ].filter(Boolean);
   }
   /** A Worca row's shell made what `parts` say: a part whose signature changed is replaced in place (`replaceWith`), the rest
@@ -3360,7 +3454,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
   /** Card 7: what Worca knows, and three questions that send at once (none on an archived feature). */
   const helperEmpty = (f, ctx) => h('div', { class: 'req-help-empty' },
-    h('p', { text: 'Ask about this feature here. It knows the spec, the interview so far, the product brief, your files and what it found in the code. It can draft answers to open questions and suggest spec changes — nothing changes until you accept.' }),
+    h('p', { text: 'Ask about this feature here. It knows the spec, the interview so far, the product brief, your files and what its code look found. It can draft answers to open questions and suggest spec changes — nothing changes until you accept.' }),
     ctx.archived ? null : h('div', { class: 'req-help-starters' }, ...HELP_STARTERS.map((q, i) => h('button', { type: 'button', class: 'btn btn-sm req-help-starter',
       'data-ui': `helper-starter-${i}`, disabled: ctx.working, onclick: () => sendHelper(f, q, null) }, q))));
   /** The composer (board 22): Enter sends, Shift+Enter adds a line; the count past 1,800; Send off when empty, past 2,000, while
@@ -3492,6 +3586,18 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     openModal(dlg.card, { trigger, first: dlg.first, canClose: () => !busy });
   }
 
+  /** Board 6: the cost list, from GET /:seq/costs; the focus goes into the dialog and back to the chip. */
+  async function openCostDialog(f, trigger) {
+    closeDialog(false);
+    const gen = dlgGen;
+    let data = null;
+    try { data = await api('GET', `/api/requirements/${f.seq}/costs`); } catch { data = null; }
+    if (dlgGen !== gen || seqShown !== f.seq) return;   // another dialog or page came first
+    if (!data || !Array.isArray(data.rows)) { say('The costs could not be loaded. Try again.', 'err'); return; }
+    const dlg = costDialog(document, { data, onClose: () => closeDialog(true) });
+    openModal(dlg.card, { trigger, first: dlg.first });
+  }
+
   function header(f) {
     const save = () => act(async () => {
       try {
@@ -3519,7 +3625,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('div', { class: 'req-chips' },
           h('span', { class: 'chip', text: targetLabel(f) }),
           h('span', { class: 'chip', text: done ? `Interview done · ${plural(rounds, 'round')}` : `Round ${Math.min(rounds || 1, MAX_ROUNDS)} of ${MAX_ROUNDS}` }),
-          h('span', { class: 'chip', text: `${f.anyEstimated ? '≈' : ''}${usd(f.costUsd)} so far` }),
+          h('button', { type: 'button', class: 'chip req-cost-chip', 'data-ui': 'cost-chip', 'aria-haspopup': 'dialog',
+            onclick: (e) => { void openCostDialog(f, e.currentTarget); } }, `${f.anyEstimated ? '≈' : ''}${usd(f.costUsd)} so far`),
           f.modelLabel ? modelChip(document, f, (btn) => { void openModelDialog(f, btn); }) : null,   // 9c board 3: after the cost chip
           (f.attachments || []).length ? h('span', { class: 'chip', text: plural(f.attachments.length, 'file') }) : null,   // A8 (board 16)
           f.savedPath ? h('span', { class: 'chip', text: `Saved as ${f.savedPath}` }) : null,

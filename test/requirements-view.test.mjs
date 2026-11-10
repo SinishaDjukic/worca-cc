@@ -150,7 +150,7 @@ test('list: each state\'s badge and meta line', async () => {
   assert.equal(meta(12), 'Interview done · Ready 5 of 6 · 1 assumption to decide');
   assert.equal(meta(13), 'Interview done · Ready 5 of 6');
   assert.equal(meta(4), 'Ready 6 of 6');
-  assert.equal(meta(5), 'Worca is looking at the code…');
+  assert.equal(meta(5), 'Worca is doing the code look…');
   assert.equal(meta(6), 'Worca is thinking…');
   assert.equal(meta(7), 'Started · run running · Implement');
   assert.equal(meta(8), 'Started · run done');
@@ -198,6 +198,18 @@ test('list: Archived refetches with archived=1 and shows only the archived featu
   tab(host, /^All open/).click(); await tick(); await tick();
   assert.equal(calls.slice(n).find((c) => c.url.startsWith('/api/requirements'))?.url, '/api/requirements');
   assert.equal(host.querySelectorAll('.req-row').length, 1);
+});
+
+test('list: the spend footer adds "plus N steps with cost unknown" (9c D14)', async () => {
+  const say = async (spend) => {
+    fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([row()], { spend }) });
+    const { host, view } = make();
+    await view.show('');
+    return host.querySelector('.req-spend').textContent;
+  };
+  assert.equal(await say({ windowUsd: 2.09, totalLimitUsd: 50, unknownSteps: 2 }), 'Spent on requirements this month: $2.09 of your $50.00 limit plus 2 steps with cost unknown.');
+  assert.equal(await say({ windowUsd: 0.5, totalLimitUsd: null, unknownSteps: 1 }), 'Spent on requirements this month: $0.50 plus 1 step with cost unknown.');
+  assert.equal(await say({ windowUsd: 0.5, totalLimitUsd: null, unknownSteps: 0 }), 'Spent on requirements this month: $0.50.');
 });
 
 test('list: the spend footer, with and without a limit; an empty list or filter never shows "null"', async () => {
@@ -418,7 +430,7 @@ test('new feature: back link, heading, field blocks, the For select with its gro
   assert.equal(fields[3].querySelector('.hint').textContent, "Worca looks at this project's code once, read-only, to learn what already exists. Change that in Your notes for Worca.");
   select.value = 'workspace:ws1';
   select.dispatchEvent(new window.Event('change'));
-  assert.equal(fields[3].querySelector('.hint').textContent, "Worca looks at the code of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca.");
+  assert.equal(fields[3].querySelector('.hint').textContent, "Worca does a code look of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca.");
   assert.equal(fields[3].querySelector('.req-brief-line'), null, 'no brief, no green line');
   // A6.1: From a ticket… is in the form but hidden until a connection can import (none here); it is the one button skipped
   const fromTicket = form.querySelector('[data-ui="import-open"]');
@@ -861,7 +873,7 @@ test('spec card: pencil buttons with labels, edited inline, remove icons, the fo
   assert.deepEqual(sections(), ['goal', 'actors', 'criteria', 'assumptions', 'openQuestions']);
 });
 
-test('What Worca found in the code: folded below the rounds, with how often it looked, the files and the cost', async () => {
+test('Code look: what Worca found: folded below the rounds, with how often it looked, the files and the cost', async () => {
   const look = (id, costUsd) => ({ id, kind: 'orientation', costUsd, payload: { summary: 'x', files: ['src/o.js'], skipped: null } });
   let turns = [look(2, 0.14)];
   fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: feature(), turns }) });
@@ -869,7 +881,7 @@ test('What Worca found in the code: folded below the rounds, with how often it l
   await view.show('feature/4');
   const box = () => host.querySelector('.req-left > details.req-orient');
   assert.equal(box().open, false);
-  assert.match(box().querySelector('summary').textContent, /^What Worca found in the code/);
+  assert.match(box().querySelector('summary').textContent, /^Code look: what Worca found/);
   assert.equal(box().querySelector('.req-orient-meta').textContent, 'looked once · 1 file · $0.14');
   turns = [look(2, 0.14), look(7, 0.1)];
   box().open = true;
@@ -1884,7 +1896,7 @@ test('brief page, none yet: the head-start card, the four parts, the cost box wi
   const card = host.querySelector('section.req-brief-start');
   assert.ok(card.classList.contains('card'));
   assert.equal(card.querySelector('h3').textContent, 'Give Worca a head start');
-  assert.equal(text(card.querySelector('.req-brief-why')), 'Today Worca looks at the code again for every new feature. A brief is one deeper look, done once, that every feature here reuses: interviews ask better questions sooner, and each feature saves its own look.');
+  assert.equal(text(card.querySelector('.req-brief-why')), 'Today Worca does a code look again for every new feature. A brief is one deeper look, done once, that every feature here reuses: interviews ask better questions sooner, and each feature saves its own code look.');
   const parts = [...card.querySelectorAll('.req-brief-parts li')];
   assert.deepEqual(parts.map(text), ['What the product does, in a few sentences', 'Who uses it and what each of them can do',
     'The words the product uses: its concepts and what they mean', 'What exists today, area by area, and what only partly exists']);
@@ -1951,7 +1963,7 @@ test('brief page, none yet: making, a failed first make, the switch off, no repo
     [briefBody({ brief: briefRow({ status: 'empty', error: { code: 'BAD_REPLY', message: 'Worca ran out of steps before writing the brief.', at: 'x' } }) }),
       { label: 'Try again', disabled: false, failed: 'Worca ran out of steps before writing the brief.' }],
     [briefBody({ notes: { body: '', lookAtCode: false } }), { label: 'Create the brief', disabled: true,
-      hint: 'Looking at the code is off. Turn it on under Your notes for Worca.' }],
+      hint: 'Code looks are off. Turn them on under Your notes for Worca.' }],
     [briefBody({ target: { name: 'shop', branch: null, leftOut: [], slow: [] } }), { label: 'Create the brief', disabled: true,
       hint: 'There is no repository to look at.' }],
   ];
@@ -2006,7 +2018,7 @@ test('brief page: Your notes for Worca: the card, Save notes puts the body and t
   assert.equal(area.value, 'Shoppers order things.');
   const sw = card.querySelector('input[type="checkbox"][data-ui="notes-look"]');
   assert.equal(sw.checked, true);
-  assert.equal(text(sw.closest('label')), 'Let Worca look at the code (for the brief, and when you ask it to look closer at a feature)');
+  assert.equal(text(sw.closest('label')), 'Let Worca do code looks (for the brief, and when you press Look closer on a feature)');
   area.value = 'New notes';
   sw.checked = false;
   const save = btn(host, 'Save notes');
@@ -2016,7 +2028,7 @@ test('brief page: Your notes for Worca: the card, Save notes puts the body and t
   assert.deepEqual(calls.find((c) => c.method === 'PUT').body, { body: 'New notes', lookAtCode: false });
   assert.ok(calls.filter((c) => c.method === 'GET' && c.url === BRIEF_URL).length >= 2, 'repainted from the server');
   assert.equal(createBtn(host).disabled, true, 'the switch, now off, disables Create');
-  assert.equal(text(host.querySelector('.req-brief-why-not')), 'Looking at the code is off. Turn it on under Your notes for Worca.');
+  assert.equal(text(host.querySelector('.req-brief-why-not')), 'Code looks are off. Turn them on under Your notes for Worca.');
   assert.equal(host.querySelector('[data-ui="notes-look"]').checked, false);
   assert.equal(host.querySelector('[data-ui="notes-body"]').value, 'New notes');
 });
@@ -2250,7 +2262,7 @@ test('brief page, made: Export (Copy Markdown, Download .md) and ⋯ (Refresh wi
   assert.deepEqual([...more.querySelectorAll('[role="menuitem"]')].map((x) => x.textContent), ['Refresh the brief · about $1.50', 'Delete the brief']);
   // Delete: the confirmation names the features using the brief; No keeps it
   let asked = await withConfirm(false, async () => { host.querySelector('[data-ui="mi-brief-delete"]').click(); await tick(); await tick(); });
-  assert.deepEqual(asked, ['Delete the brief? FEAT-2 and FEAT-3 use this brief; they go back to looking at the code when asked.']);
+  assert.deepEqual(asked, ['Delete the brief? FEAT-2 and FEAT-3 use this brief; they go back to doing their own code look when asked.']);
   assert.equal(calls.filter((c) => c.method === 'DELETE').length, 0);
   await withConfirm(true, async () => { host.querySelector('[data-ui="mi-brief-delete"]').click(); await tick(); await tick(); });
   assert.equal(calls.filter((c) => c.method === 'DELETE' && c.url === BRIEF_URL).length, 1);
@@ -2265,7 +2277,7 @@ test('brief page, made: Export (Copy Markdown, Download .md) and ⋯ (Refresh wi
   // one user, no user
   const one = await openBrief(madeBody({ usedBy: [{ seq: 2, id: 'FEAT-2' }] }));
   asked = await withConfirm(false, async () => { one.host.querySelector('[data-ui="mi-brief-delete"]').click(); await tick(); });
-  assert.deepEqual(asked, ['Delete the brief? FEAT-2 uses this brief; it goes back to looking at the code when asked.']);
+  assert.deepEqual(asked, ['Delete the brief? FEAT-2 uses this brief; it goes back to doing its own code look when asked.']);
   const none = await openBrief(madeBody({ usedBy: [] }));
   asked = await withConfirm(false, async () => { none.host.querySelector('[data-ui="mi-brief-delete"]').click(); await tick(); });
   assert.deepEqual(asked, ['Delete the brief? No feature uses this brief yet.']);
@@ -2553,7 +2565,7 @@ test('brief page, made: How Worca uses it, Your notes for Worca with Edit notes,
   assert.ok(side, 'the right column');
   const how = side.querySelector('section[aria-label="How Worca uses it"]');
   assert.equal(how.querySelector('h3').textContent, 'How Worca uses it');
-  assert.equal(text(how.querySelector('p')), 'Every interview round for shop reads it. New features no longer need their own look at the code; Look closer on a feature adds one when the brief is not enough.');
+  assert.equal(text(how.querySelector('p')), 'Every interview round for shop reads it. New features no longer need their own code look; Look closer on a feature adds one when the brief is not enough.');
   assert.equal(how.querySelector('p b').textContent, 'Look closer');
   const used = how.querySelector('.req-brief-used');
   assert.equal(text(used), 'Used by FEAT-2, FEAT-3');
@@ -2697,7 +2709,7 @@ const openKnows = async (f, turns = [], extra = {}) => {
   return { ...m, calls, set: (nf, nt = turns) => { cur = { feature: nf, turns: nt }; } };
 };
 
-test('What Worca knows, before a closer look: from the brief, the matches, the hint and Look closer with its price', async () => {
+test('What Worca knows, before a code look: from the brief, the matches, the hint and Look closer with its price', async () => {
   const { host, calls, routed } = await openKnows(knowsFeature(), [], { 'POST /api/requirements/4/look': { feature: knowsFeature(), turns: [] } });
   const card = knows(host);
   assert.ok(card, 'the card');
@@ -2710,7 +2722,7 @@ test('What Worca knows, before a closer look: from the brief, the matches, the h
   assert.equal(meta.querySelector('a').getAttribute('href'), '#requirements/brief/project/shop-1');
   meta.querySelector('a').click();
   assert.deepEqual(routed, ['brief/project/shop-1']);
-  assert.equal(text(card.querySelector('.req-knows-text')), 'Worca works from the shop brief: Orders, Packing and Packing slip are described there. It has not looked at the code for this feature.');
+  assert.equal(text(card.querySelector('.req-knows-text')), 'Worca works from the shop brief: Orders, Packing and Packing slip are described there. It has not done a code look for this feature.');
   assert.equal(text(card.querySelector('.req-knows-foot .hint')), 'Worth it when the feature touches something the brief only skims.');
   const go = card.querySelector('[data-ui="look-closer"]');
   assert.equal(go.textContent, 'Look closer · about $0.25');
@@ -2723,18 +2735,18 @@ test('What Worca knows, before a closer look: from the brief, the matches, the h
   assert.doesNotMatch(host.textContent, /null|undefined/);
 });
 
-test('What Worca knows, before: one match, no match, no price, made today, a failed closer look, the switch off, locked', async () => {
+test('What Worca knows, before: one match, no match, no price, made today, a failed code look, the switch off, locked', async () => {
   const say = async (over) => text(knows((await openKnows(knowsFeature(over))).host).querySelector('.req-knows-text'));
-  assert.equal(await say({ brief: briefOf({ matches: ['Orders'] }) }), 'Worca works from the shop brief: Orders is described there. It has not looked at the code for this feature.');
-  assert.equal(await say({ brief: briefOf({ matchesMore: 2 }) }), 'Worca works from the shop brief: Orders, Packing, Packing slip and 2 more are described there. It has not looked at the code for this feature.');
-  assert.equal(await say({ brief: briefOf({ matches: ['Orders', 'Refund'], matchesMore: undefined }) }), 'Worca works from the shop brief: Orders and Refund are described there. It has not looked at the code for this feature.');
-  assert.equal(await say({ brief: briefOf({ matches: [], matchesMore: 0 }) }), 'Worca works from the shop brief. It has not looked at the code for this feature.');
+  assert.equal(await say({ brief: briefOf({ matches: ['Orders'] }) }), 'Worca works from the shop brief: Orders is described there. It has not done a code look for this feature.');
+  assert.equal(await say({ brief: briefOf({ matchesMore: 2 }) }), 'Worca works from the shop brief: Orders, Packing, Packing slip and 2 more are described there. It has not done a code look for this feature.');
+  assert.equal(await say({ brief: briefOf({ matches: ['Orders', 'Refund'], matchesMore: undefined }) }), 'Worca works from the shop brief: Orders and Refund are described there. It has not done a code look for this feature.');
+  assert.equal(await say({ brief: briefOf({ matches: [], matchesMore: 0 }) }), 'Worca works from the shop brief. It has not done a code look for this feature.');
   const today = await openKnows(knowsFeature({ brief: briefOf({ madeAt: new Date().toISOString() }), lookCostUsd: null }));
   assert.equal(text(knows(today.host).querySelector('.req-knows-meta')), 'from the product brief · made today');
   assert.equal(knows(today.host).querySelector('[data-ui="look-closer"]').textContent, 'Look closer', 'no price without an estimate');
-  // a closer look that failed: the card stays as before and says so
+  // a code look that failed: the card stays as before and says so
   const failed = await openKnows(knowsFeature({ orientation: { summary: '', files: [], skipped: 'failed' } }));
-  assert.equal(text(knows(failed.host).querySelector('.req-knows-failed')), 'Worca could not look at the code this time.');
+  assert.equal(text(knows(failed.host).querySelector('.req-knows-failed')), 'Worca could not do the code look this time.');
   assert.ok(knows(failed.host).querySelector('[data-ui="look-closer"]'));
   // the switch off: no Look closer, no hint about it
   const off = await openKnows(knowsFeature({ brief: briefOf({ lookAtCode: false }) }));
@@ -2747,7 +2759,7 @@ test('What Worca knows, before: one match, no match, no price, made today, a fai
   }
 });
 
-test('What Worca knows, after a closer look: brief + a closer look, the summary, Add this to the brief until added, Look again', async () => {
+test('What Worca knows, after a code look: brief + a code look, the summary, Add this to the brief until added, Look again', async () => {
   const LOOKED = { summary: 'The packing slip is printed from the order with its prices.', files: ['src/slip.mjs', 'src/order.mjs'], skipped: null, area: 'Orders',
     scopeType: 'project', scopeKey: 'shop-1', briefId: 3 };
   const turns = [{ id: 2, kind: 'orientation', costUsd: 0, payload: SKIPPED }, { id: 7, kind: 'orientation', costUsd: 0.22, payload: { ...LOOKED } }];
@@ -2762,7 +2774,7 @@ test('What Worca knows, after a closer look: brief + a closer look, the summary,
     'POST /api/requirements/4/brief-addition': () => { set(knowsFeature({ orientation: { ...LOOKED, addedToBrief: '2026-10-22T10:00:00Z' } })); return { feature: knowsFeature(), turns }; },
     'POST /api/requirements/4/look': { feature: knowsFeature(), turns } });
   const card = knows(host);
-  assert.equal(text(card.querySelector('.req-knows-meta')), 'brief + a closer look · 2 files · $0.22');
+  assert.equal(text(card.querySelector('.req-knows-meta')), 'brief + a code look · 2 files · $0.22');
   assert.equal(text(card.querySelector('.req-knows-text')), LOOKED.summary);
   const add = card.querySelector('[data-ui="brief-add"]');
   assert.equal(text(add.parentElement), 'Not in the brief yet. Add this to the brief');
@@ -2783,7 +2795,7 @@ test('What Worca knows, after a closer look: brief + a closer look, the summary,
   await view.changed(4);
   assert.equal(knows(host).querySelector('[data-ui="look-again"]'), null);
   assert.equal(knows(host).querySelector('[data-ui="brief-add"]'), null);
-  assert.equal(text(knows(host).querySelector('.req-knows-meta')), 'brief + a closer look · $0.22', 'no files, no file count');
+  assert.equal(text(knows(host).querySelector('.req-knows-meta')), 'brief + a code look · $0.22', 'no files, no file count');
   // locked: both disabled
   const l = await openKnows(knowsFeature({ orientation: LOOKED, busy: true, status: 'thinking', state: 'thinking', pending: null }), turns);
   assert.equal(knows(l.host).querySelector('[data-ui="brief-add"]').disabled, true);
@@ -2796,7 +2808,7 @@ test("A2's box without a brief: skipped for a brief reads it has not looked, wit
   const box = s.host.querySelector('.req-left > details.req-orient');
   assert.ok(box, "A2's box");
   assert.equal(knows(s.host), null);
-  assert.equal(box.querySelector('p').textContent, 'Worca has not looked at the code for this feature.');
+  assert.equal(box.querySelector('p').textContent, 'Worca has not done a code look for this feature.');
   assert.equal(box.querySelector('.req-orient-meta'), null);
   const again = box.querySelector('[data-ui="orient-look-again"]');
   assert.equal(again.textContent, 'Look again');
@@ -2804,7 +2816,7 @@ test("A2's box without a brief: skipped for a brief reads it has not looked, wit
   await tick(); await tick();
   assert.equal(s.calls.filter((c) => c.method === 'POST' && c.url === '/api/requirements/4/look').length, 1);
   const off = await openKnows(feature({ orientation: { summary: '', files: [], skipped: 'off' } }));
-  assert.equal(off.host.querySelector('details.req-orient p').textContent, 'Looking at the code is turned off for this one (Your notes for Worca).');
+  assert.equal(off.host.querySelector('details.req-orient p').textContent, 'Code looks are turned off for this one (Your notes for Worca).');
   assert.equal(off.host.querySelector('[data-ui="orient-look-again"]'), null, 'only for the brief-skipped look');
   const plain = await openKnows(feature());
   assert.equal(plain.host.querySelector('details.req-orient p').textContent, 'Orders have a status.', 'unchanged otherwise');
@@ -2825,7 +2837,7 @@ test('⋯ with a brief: Look closer while the look was skipped for the brief, Lo
   // without a brief, a look skipped for a (since deleted) brief is looked at again
   const d = await openKnows(feature({ orientation: SKIPPED }));
   assert.deepEqual(labels(d.host), ['Your notes for Worca', 'Look again', 'Archive']);
-  // with a brief the entry says what the card says: Look closer until a closer look has been made
+  // with a brief the entry says what the card says: Look closer until a code look has been made
   for (const orientation of [null, { summary: '', files: [], skipped: 'failed' }, { summary: '', files: [], skipped: 'no-repo' }, { summary: '', files: [], skipped: 'off' }]) {
     const e = await openKnows(knowsFeature({ orientation }));
     assert.deepEqual(labels(e.host), ['Your notes for Worca', 'Look closer', 'Archive'], JSON.stringify(orientation));
@@ -2937,15 +2949,15 @@ test('git missing: New feature says there is no look and costs cents per round; 
     fakeApi({ ...BASE, 'GET /api/requirements': listOf([], { lookCostUsd: 0.25, interview: { model: 'claude-opus-5-5', label: 'Opus 5.5', effort: 'medium' } }) });
     const { host, view } = make();
     await view.show('new');
-    assert.equal(text(host.querySelector('.req-new-look')), 'Worca does not look at the code: git is not installed on this machine. It starts asking right away.');
+    assert.equal(text(host.querySelector('.req-new-look')), 'Worca does not do a code look: git is not installed on this machine. It starts asking right away.');
     assert.equal(host.querySelector('.req-new-cost').hidden, true, 'no look, no files: nothing to say');
     view.destroy();
     const f = await openKnows(feature({ orientation: { summary: '', files: [], skipped: 'no-git' } }));
-    assert.equal(f.host.querySelector('details.req-orient p').textContent, 'Worca did not look at the code: git is not installed on this machine.');
+    assert.equal(f.host.querySelector('details.req-orient p').textContent, 'Worca did not do a code look: git is not installed on this machine.');
   });
   // with git, a feature whose look was skipped for git says so too, after git came back
   const back = await openKnows(feature({ orientation: { summary: '', files: [], skipped: 'no-git' } }));
-  assert.equal(back.host.querySelector('details.req-orient p').textContent, 'Worca did not look at the code: git is not installed on this machine.');
+  assert.equal(back.host.querySelector('details.req-orient p').textContent, 'Worca did not do a code look: git is not installed on this machine.');
 });
 
 test('Add this to the brief: says so in the message line and keeps the focus on the card', async () => {
@@ -3017,7 +3029,7 @@ test('git appears or goes missing: New feature says its look line again and keep
     await view.show('new');
     host.querySelector('#req-new-title').value = 'Typed';
     applyGit({ available: false });
-    assert.match(text(host.querySelector('.req-new-look')), /^Worca does not look at the code/);
+    assert.match(text(host.querySelector('.req-new-look')), /^Worca does not do a code look/);
     assert.equal(host.querySelector('#req-new-title').value, 'Typed', 'the form is not rebuilt');
     applyGit({ available: true });
     assert.match(text(host.querySelector('.req-new-look')), /^Worca looks at this project's code once/);
@@ -3057,7 +3069,7 @@ test('the notes switch is the shared switch (role=switch), with its label', asyn
   assert.equal(sw.getAttribute('role'), 'switch');
   assert.ok(sw.classList.contains('sw-input'));
   assert.ok(sw.closest('label').classList.contains('switch-row'));
-  assert.equal(text(sw.closest('label')), 'Let Worca look at the code (for the brief, and when you ask it to look closer at a feature)');
+  assert.equal(text(sw.closest('label')), 'Let Worca do code looks (for the brief, and when you press Look closer on a feature)');
 });
 
 test('Add this to the brief without git: Look again is hidden, so the focus goes to the card', async () => {

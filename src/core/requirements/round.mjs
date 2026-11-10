@@ -230,7 +230,7 @@ export function buildOrientationPrompt({ feature, context = '', members = null, 
     `<feature>${asData(feature.title)}</feature>`,
     `<description>\n${asData(feature.description)}\n</description>`,
     `<project_context>\n${asData(context) || '(none)'}\n</project_context>`,
-    ...(brief ? [`<product_brief>\n${asData(brief)}\n</product_brief>`] : []),   // A7 D11: the closer look
+    ...(brief ? [`<product_brief>\n${asData(brief)}\n</product_brief>`] : []),   // A7 D11: the code look
     members && members.length
       ? (cwd
         ? `The working directory, ${asData(cwd)}, holds one checkout per project under repos/<project>: ${members.map(asData).join(', ')}.`

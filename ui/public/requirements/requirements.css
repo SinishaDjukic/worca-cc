@@ -867,3 +867,36 @@ span.req-file-name{color:var(--ink)}
 .req-brief-who{margin:0}
 .req-brief-who .req-who{margin-bottom:0}
 @media (max-width:600px){.req-who{grid-template-columns:1fr}}
+/* 9c boards 5, 6: what each step ran on, its notices, the code look as a step, a step that could not start, the cost list. */
+.req-step-meta{margin:0 0 0 auto;font-size:12px;color:var(--ink-2);text-align:right}
+.qpanel-head .req-step-meta{flex:1}
+.req-step{display:flex;flex-direction:column;gap:6px}
+.req-rounds > :is(.req-round,.req-step) + :is(.req-round,.req-step){margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.req-step-look .req-round-n{color:var(--ink);font-size:13px}
+.req-step-first{margin:0;font-size:12.5px;color:var(--ink-2)}
+.req-step-switch{margin:0;font-size:12.5px;color:var(--ink-2)}
+.req-step-notices{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.req-step-notices li{display:flex;gap:8px;align-items:flex-start;color:var(--ink-2)}
+.req-step-notices li > svg{flex:none;margin-top:2px}
+.req-step-notices .hint{margin:0}
+.req-error-title{font-weight:600;color:var(--red-ink-strong)}
+.req-error-text{margin:0;color:var(--ink)}
+.req-error-btns{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.req-error-docs{font-size:12px;margin-left:4px}
+.req-error:has(.req-error-title),.req-help-notready{flex-direction:column;align-items:stretch}
+.req-error .req-round-head{display:flex;gap:12px;justify-content:space-between;align-items:baseline}
+.req-file-skipped{color:var(--ink-2)}
+.req-cost-chip{font:inherit;font-weight:600;font-size:12px;color:var(--ink);background:var(--panel);cursor:pointer}
+.req-cost-chip:hover{background:var(--hover)}
+.req-cost-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-dlg-wrap .card.req-dialog.req-cost-dialog{width:min(620px,100%)}
+.req-cost-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.req-cost-table th{text-align:left;font-weight:500;font-size:11.5px;color:var(--ink-2);padding:0 0 8px}
+.req-cost-table td{padding:8px 0;border-top:1px solid var(--line)}
+.req-cost-table .req-cost-ran{color:var(--ink-2)}
+.req-cost-table .req-cost-num{text-align:right}
+.req-cost-table td.req-cost-num{font-family:var(--mono)}
+.req-cost-table td.req-cost-unknown{font-family:inherit;color:var(--ink-2)}
+.req-cost-table .req-cost-total td{border-top:1.5px solid var(--line-2);font-weight:600;padding-top:10px}
+.req-cost-sentence{margin:0}
+.req-knows-look{margin:0 0 4px;font-size:12px;font-weight:600;color:var(--ink-2)}

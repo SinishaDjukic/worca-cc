@@ -60,7 +60,7 @@ const feature = (over = {}) => ({ seq: 7, id: 'FEAT-7', scopeType: 'project', sc
   attachments: [], briefDocuments: [], unaskedFiles: [], interview: INTERVIEW, resetPeriod: 'monthly', helper: { answering: false, messages: 0 }, ...over });
 const chat = (messages = [], over = {}) => ({ messages, answering: false, estimate: null, ...over });
 const po = (id, t, focus = null) => ({ id, role: 'po', text: t, focus, roundTurnId: null, drafts: [], proposals: [], error: null, costUsd: null, model: null });
-const worca = (id, t, over = {}) => ({ id, role: 'worca', text: t, focus: null, roundTurnId: 11, drafts: [], proposals: [], error: null, costUsd: 0.02, model: 'claude-opus-5-5', ...over });
+const worca = (id, t, over = {}) => ({ id, role: 'worca', text: t, focus: null, roundTurnId: 11, drafts: [], proposals: [], error: null, costUsd: 0.02, model: 'claude-opus-5-5', modelLabel: 'Opus 5.5', ...over });
 
 /** `s.f` and `s.helper` are what the server answers now: a test changes them to change the server. */
 async function openFeature(s = {}, extra = {}) {
@@ -115,7 +115,7 @@ test('board 22 / card 7: the head, the log, the first-open text and three questi
   assert.equal(p.querySelector('[data-ui="helper-back"]').getAttribute('aria-label'), 'Back to FEAT-7');
   const log = p.querySelector('.req-help-log');
   assert.deepEqual([log.getAttribute('role'), log.getAttribute('aria-live')], ['log', 'polite']);
-  assert.equal(text(p.querySelector('.req-help-empty p')), 'Ask about this feature here. It knows the spec, the interview so far, the product brief, your files and what it found in the code. It can draft answers to open questions and suggest spec changes — nothing changes until you accept.');
+  assert.equal(text(p.querySelector('.req-help-empty p')), 'Ask about this feature here. It knows the spec, the interview so far, the product brief, your files and what its code look found. It can draft answers to open questions and suggest spec changes — nothing changes until you accept.');
   const starters = [...p.querySelectorAll('.req-help-starter')];
   assert.deepEqual(starters.map((b) => b.textContent), ['Is anything missing from this spec?', "Which criteria can't be tested?", 'What edge cases am I missing?']);
   starters[1].click();
@@ -176,8 +176,8 @@ test("board 22: the product owner's message on the right with its cap; Worca's r
   const reply = p.querySelector('[data-msg="2"]');
   assert.ok(reply.classList.contains('req-help-msg-w'));
   assert.equal(reply.querySelector('.req-help-text').textContent, 'Your support-tickets.pdf says 38 of 52 cancel requests came after the label was printed.');
-  assert.equal(reply.querySelector('.req-help-cost').textContent, '$0.02');
-  assert.equal(p.querySelector('[data-msg="4"] .req-help-cost'), null, 'no cost line when it cost nothing');
+  assert.equal(reply.querySelector('.req-help-cost').textContent, 'Opus 5.5 on Claude · $0.02', '9c: what ran the reply, then its cost');
+  assert.equal(p.querySelector('[data-msg="4"] .req-help-cost').textContent, 'Opus 5.5 on Claude', 'when it cost nothing the line only says what ran it');
   assert.equal(p.querySelector('[data-msg="3"] .req-help-cap'), null);
 });
 
@@ -211,7 +211,7 @@ test('§6 lines: a failed reply, Try again on the newest row only; the spending 
   const p = await openPanel(m);
   assert.deepEqual([...p.querySelectorAll('.req-help-fail')].map((l) => [l.getAttribute('role'), text(l)]),
     [['alert', 'Worca could not answer. Try again.'], ['alert', 'Worca could not answer. Try again. Try again']]);
-  assert.equal(p.querySelector('[data-msg="4"] .req-help-cost').textContent, '$0.01');
+  assert.equal(p.querySelector('[data-msg="4"] .req-help-cost').textContent, 'Opus 5.5 on Claude · $0.01');
   p.querySelector('[data-ui="helper-retry"]').click();
   await settle();
   assert.deepEqual(retries, [1]);
@@ -1241,4 +1241,25 @@ test('board 25 a11y: a dialog opened over the sheet stays operable, and the live
     phone.set(false); phone.set(true);
     assert.ok(!inner.inert && !inner.closest('[inert]'), 'nor one mounted beside the sheet');
   } finally { phone.restore(); }
+});
+
+test('9c: a Feature chat reply on another harness names it, with an estimated or unknown cost and its notices; a stopped reply says so', async () => {
+  const s = { f: feature({ helper: { answering: false, messages: 6 } }), helper: chat([
+    po(1, 'A'), worca(2, 'Estimated.', { model: 'gem-flash', modelLabel: 'Gemini Flash', engine: 'gemini', costUsd: 0.04, costKind: 'estimated',
+      notices: ['Cost estimated: Gemini CLI reports none.'] }),
+    po(3, 'B'), worca(4, 'Unknown.', { model: 'gpt-sol', modelLabel: 'GPT-5.6 Sol', engine: 'codex', costUsd: null, costKind: 'unknown' }),
+    po(5, 'C'), worca(6, '', { model: 'gpt-sol', modelLabel: 'GPT-5.6 Sol', engine: 'codex', costUsd: null, costKind: null,
+      error: { code: 'NOT_READY', message: "Codex isn't signed in. Sign in, or change the model.", docsUrl: 'https://docs.example.org/codex-login' } })]) };
+  const m = await openFeature(s, { 'GET /api/requirements/models': { harnesses: [], models: [] } });
+  const p = await openPanel(m);
+  assert.equal(p.querySelector('[data-msg="2"] .req-help-cost').textContent, 'Gemini Flash on Gemini CLI · ≈$0.04');
+  assert.deepEqual([...p.querySelectorAll('[data-msg="2"] ul[aria-label="What this step could not do"] li')].map((l) => text(l)), ['Cost estimated: Gemini CLI reports none.']);
+  assert.equal(p.querySelector('[data-msg="4"] .req-help-cost').textContent, 'GPT-5.6 Sol on Codex · cost unknown');
+  const stopped = p.querySelector('[data-msg="6"] .req-help-notready');
+  assert.equal(text(stopped.querySelector('.req-error-title')), 'Feature chat stopped');
+  assert.equal(text(stopped.querySelector('.req-step-meta')), 'GPT-5.6 Sol on Codex · nothing spent');
+  assert.equal(text(stopped.querySelector('.req-error-text')), "Codex isn't signed in. Sign in, or change the model.");
+  assert.deepEqual([...stopped.querySelectorAll('button')].map((b) => text(b)), ['Change the model', 'Try again']);
+  assert.equal(text(stopped.querySelector('a.req-error-docs')), 'How to sign in to Codex');
+  assert.equal(p.querySelector('[data-msg="6"] .req-help-cost'), null, 'the stopped row says it once');
 });

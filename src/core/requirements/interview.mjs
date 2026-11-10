@@ -319,7 +319,7 @@ export function briefFor(f, documents = '') {
 const LOOK_MIN_CALL_MS = 1000;
 
 /** D7: a short product-language summary of what exists, or why there is none. Never throws. With a brief
- *  this is A7's closer look (D11): it asks only for what the brief does not say, and for the area. */
+ *  this is A7's code look (D11): it asks only for what the brief does not say, and for the area. */
 async function orient(f, d, brief = null) {
   const ctx = getContext(f.scopeType, f.scopeKey);
   if (!ctx.lookAtCode) return { summary: '', files: [], skipped: 'off' };
@@ -327,7 +327,7 @@ async function orient(f, d, brief = null) {
   // why after git comes back (Look closer and the brief answer GIT_MISSING at the route, routes.mjs REQUIREMENTS_GIT_ROUTES).
   if (!gitAvailable()) return { summary: '', files: [], skipped: 'no-git' };
   if (mockEnabled({}) && brief) {
-    return { summary: `[mock] A closer look: "${f.title}" needs something the brief does not describe yet.`, files: ['/tmp/mock/auto-look-0000abcd/README.md'], area: 'Orders', skipped: null };
+    return { summary: `[mock] A code look: "${f.title}" needs something the brief does not describe yet.`, files: ['/tmp/mock/auto-look-0000abcd/README.md'], area: 'Orders', skipped: null };
   }
   if (mockEnabled({})) return { summary: `[mock] What exists around "${f.title}": orders, each with a status.`, files: [], skipped: null };
   let look = null;
@@ -370,7 +370,7 @@ async function orient(f, d, brief = null) {
 
 async function runOrientation(seq, d, by, { useBrief = false } = {}) {
   const f0 = requireFeature(seq);
-  const brief = briefFor(f0, promptFiles(f0).documents);   // A8 D6: the closer look reads the brief's documents too
+  const brief = briefFor(f0, promptFiles(f0).documents);   // A8 D6: the code look reads the brief's documents too
   // A7 D11: every stored look names the scope it was made for and the brief it was made against (null: none yet).
   // The scope cannot change while the look runs (header edits wait for the job), so it is read here.
   const stamp = { scopeType: f0.scopeType, scopeKey: f0.scopeKey, briefId: brief ? brief.id : null };
@@ -491,7 +491,7 @@ export function startOrientation(seq, { by = null, thenRound = true } = {}, deps
   const f = guard(seq);
   // A7 D11: with the switch off an explicit look would overwrite the brief's skipped orientation with "off".
   if (!thenRound && !getContext(f.scopeType, f.scopeKey).lookAtCode && usableBrief(f.scopeType, f.scopeKey)) {
-    throw new RequirementsError('CONFLICT', `Looking at the code is off for this ${f.scopeType === 'workspace' ? 'workspace' : 'project'}.`);
+    throw new RequirementsError('CONFLICT', `Code looks are off for this ${f.scopeType === 'workspace' ? 'workspace' : 'project'}.`);
   }
   // A8 D2: round 1 waits for the reads of the files the feature was created with, at most ROUND1_WAIT_MS; then it runs
   // and lists a file still being read by name only. The waiting job does not count against MAX_JOBS (the feature is
@@ -617,7 +617,7 @@ export function recoverInterrupted() {
     if ((f.status !== 'looking' && f.status !== 'thinking') || isBusy(f.seq)) continue;
     const job = f.status === 'looking' ? 'look' : 'round';
     const msg = job === 'look'
-      ? 'The look at the code did not finish because Worca restarted. Try again.'
+      ? 'The code look did not finish because Worca restarted. Try again.'
       : 'The last round did not finish because Worca restarted. Try again.';
     appendTurn(f.seq, { kind: 'error', payload: { code: 'INTERRUPTED', message: msg, job } });
     updateFeature(f.seq, { status: failedStatus(f.seq, job) });

@@ -34,7 +34,7 @@ export const JOB_HINTS = Object.freeze({
   naming: 'Suggests the title and branch name on the New run form (Smart run naming). Unset: the cheapest ready Claude model.',
   commandSummary: 'Writes the one-line summary of a chat command when the chat gave none, from the command alone (secrets hidden, never its output). Turn it off in Settings › Chat › Summarise commands. Unset: the cheapest ready Claude model; with none ready, commands keep their raw text.',
   workspaceScan: 'Runs the workspace scan that maps how member projects connect.',
-  requirementsInterview: 'Makes product briefs, looks at the code for a feature and runs the interview rounds on the Requirements page.',
+  requirementsInterview: 'Makes product briefs, does code looks for a feature and runs the interview rounds on the Requirements page.',
   secondOpinion: 'The one role review that runs on another model than its step, so one reviewer judges on its own (Shaper\'s Product reviewer).',
 });
 

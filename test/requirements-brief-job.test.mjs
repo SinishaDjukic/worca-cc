@@ -146,10 +146,10 @@ test('refusals write nothing and call nothing: switch off, no repository, no def
   const k1 = key();
   setContext('project', k1, { lookAtCode: false });
   await refused('project', k1, deps({ runner, lk, projects: [project(k1, r.dir)] }), 'CONFLICT',
-    'Looking at the code is off for this project. Turn it on under Your notes for Worca.');
+    'Code looks are off for this project. Turn them on under Your notes for Worca.');
   setContext('workspace', 'ws-off', { lookAtCode: false });
   await refused('workspace', 'ws-off', deps({ runner, lk, ws: { id: 'ws-off', name: 'WS', description: '', members: [{ projectKey: 'a', projectName: 'A', projectDir: r.dir }] } }),
-    'CONFLICT', 'Looking at the code is off for this workspace. Turn it on under Your notes for Worca.');
+    'CONFLICT', 'Code looks are off for this workspace. Turn them on under Your notes for Worca.');
 
   const NO_REPO = 'There is no repository to look at.';
   const k2 = key();
@@ -524,7 +524,7 @@ test('recoverBriefs: a brief left making by a restart gets INTERRUPTED; a runnin
   const b = getBrief('project', k);
   assert.equal(b.status, 'empty');
   assert.deepEqual({ code: b.error.code, message: b.error.message },
-    { code: 'INTERRUPTED', message: 'The look at the code did not finish because Worca restarted. Try again.' });
+    { code: 'INTERRUPTED', message: 'The code look did not finish because Worca restarted. Try again.' });
   assert.equal(getBrief('project', k2).status, 'making');
   assert.equal(getBrief('project', k2).error, null);
   gate.resolve();
@@ -814,7 +814,7 @@ test('the switch turned off while the target is read refuses the press, writing 
   const runner = fakeRunner([]);
   const listProjects = async () => { setContext('project', k, { lookAtCode: false }); return [project(k, r.dir)]; };
   await assert.rejects(makeBrief('project', k, {}, deps({ runner, listProjects })),
-    (e) => e.code === 'CONFLICT' && e.message === 'Looking at the code is off for this project. Turn it on under Your notes for Worca.');
+    (e) => e.code === 'CONFLICT' && e.message === 'Code looks are off for this project. Turn them on under Your notes for Worca.');
   assert.equal(getBrief('project', k), null);
   assert.equal(runner.calls.length, 0);
 });

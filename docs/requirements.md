@@ -7,10 +7,10 @@ turn on **Requirements** in Settings › Labs (the `requirements` flag), or star
 ## How it works
 
 1. **New feature** on the Requirements page: a title, a few sentences, and the project or workspace it is for.
-2. **Worca looks at the code once** (a read-only temporary copy, removed straight after) and writes, in
-   plain words, what already exists in that area. You see it under *What Worca found in the code*;
+2. **Worca does a code look once** (a read-only temporary copy, removed straight after) and writes, in
+   plain words, what already exists in that area. You see it under *Code look: what Worca found*;
    **Look again** (in the **⋯** menu) refreshes it. With a [product brief](#product-brief) for the project or
-   workspace, a new feature skips this look and shows *What Worca knows* instead. Turn looking at the code off
+   workspace, a new feature skips this look and shows *What Worca knows* instead. Turn code looks off
    per project or workspace in **Your notes for Worca** (also in **⋯**).
 3. **The interview**: rounds of at most 3 questions, each with options and a recommended answer, at most
    6 rounds. **Skip, use recommended** answers the rest for you; **Finish now** ends it early. Earlier
@@ -55,16 +55,16 @@ read the checked-out branch). Once there is an estimate, the cost is shown befor
 the median of recent brief looks, failed ones included, project and workspace briefs alike (before the first
 brief look there is none). A brief look is a model call like any other here: it counts toward your spending
 limit and takes a few minutes, and you can leave the page while it works; the page says when the brief is ready
-or could not be made. Worca refuses it, and spends nothing, when looking at the code is switched off, when git is not installed, when there
+or could not be made. Worca refuses it, and spends nothing, when code looks are switched off, when git is not installed, when there
 is no repository or default branch, when a repository could not be read in time (Worca names it; try again), when
 this brief is already being made, when two other briefs are being made, or when the limit is reached.
 Without git on this machine, Create, Refresh, Look closer and Look again are not offered (the API answers 409
-`GIT_MISSING`); a new feature then skips its look at the code and the interview starts right away.
+`GIT_MISSING`); a new feature then skips its code look and the interview starts right away.
 
 **Your edits win.** Edit any part with the pencil; Worca keeps your text and a refresh never overwrites it
 (**Let Worca rewrite this** hands a part back). Each user, word and area needs its own name: a name given twice
 is refused, and your text stays in the editor to fix. Editing **What exists today** makes the areas yours: a refresh
-no longer updates them, and "the code moved on" no longer checks them. Areas added from a closer look (below)
+no longer updates them, and "the code moved on" no longer checks them. Areas added from a code look (below)
 survive a refresh too.
 
 **Staleness.** A brief says what it was made from, for example *Made from main @ 3f96738*. When the default branch
@@ -76,15 +76,15 @@ none of the projects it was made from is in the workspace any more). A workspace
 did not check or that joined after it was made.
 
 **Your notes for Worca.** Standing facts every feature there should know (actors, terms, rules) and the switch
-for looking at the code. It is opened from the brief page or from **⋯** on a feature.
+for code looks. It is opened from the brief page or from **⋯** on a feature.
 
-**How interviews use it.** With a brief, a new feature skips its own look at the code: the New feature page
+**How interviews use it.** With a brief, a new feature skips its own code look: the New feature page
 says "Worca knows <name> from its product brief" and the cost is cents per round, and round 1 starts right
 away. The feature page shows *What Worca knows*. When the brief is not enough, **Look closer** makes one look at
 the code for that feature (its cost is shown first). **Add this to the brief** then keeps what it found as a new
 area named after the feature ("Orders: <feature title>"); it never replaces an area that is already there. A
-closer look is not part of the brief until you add it, and only a look made for the feature's current project
-or workspace, against its current brief, can be added (otherwise **Look again** first). With looking at the code
+code look is not part of the brief until you add it, and only a look made for the feature's current project
+or workspace, against its current brief, can be added (otherwise **Look again** first). With code looks
 switched off, interviews still read an existing brief; only new looks (Create, Refresh, Look closer) stop.
 
 **Workspaces.** A workspace brief starts from the workspace's own description (its map of projects) and reads at
@@ -169,7 +169,7 @@ is a full-screen sheet with **Back**. **Help me answer** on a question of the ro
 in the composer. You send it yourself: every message costs money.
 
 **What it knows.** What the interview already has: the spec, the interview so far, the product brief, your files (what Worca
-took from them, and small text files in full) and what Worca found in the code. It has no tools: it reads no code and opens no
+took from them, and small text files in full) and what its code look found. It has no tools: it reads no code and opens no
 file. When that is not enough it says so and suggests **Look closer** or **Ask about this file**.
 
 **Drafts.** Worca can draft answers to the open questions. A draft fills the question card, marked **drafted by Worca**, with
@@ -202,7 +202,17 @@ jobs says otherwise. A model picked with no effort runs at that model's own defa
 falls back to the default model but keeps a stored effort. The New feature page
 names the model and effort ("Worca interviews with …").
 
-## What a look or round loads
+## What each step shows
+
+Every step on the feature page (a round, the code look, a Feature chat reply) names what ran it and its cost on the right:
+"Opus 5.5 on Claude · $0.19" (billed), "≈$0.04" (estimated from list prices) or "cost unknown", never $0.00. The code look is a
+step of its own ("Code look · 3 files", with its first sentence and **Show what it found**). What a step could not do, such as
+the repo it could not read or a file it skipped, is listed under it in grey. A harness that is not signed in stops the step with
+**Change the model** and **Try again**; Worca never switches to Claude by itself. The **so far** chip in the header opens
+**Cost of this feature**: each step, what it ran on and its cost, with what the Requirements budget counts and the steps with
+cost unknown (counted apart, not against the limit).
+
+## What a code look or round loads
 
 Worca's own instructions, not Claude Code's coding-agent ones, and none of your user-level Claude Code
 plugins, hooks, skills or settings. The look's temporary checkout still loads the project's own

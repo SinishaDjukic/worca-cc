@@ -285,7 +285,7 @@ export async function makeBrief(scopeType, scopeKey, { by = null, choice = null 
   const where = scopeType === 'workspace' ? 'workspace' : 'project';
   const assertSwitchOn = () => {
     if (!getContext(scopeType, scopeKey).lookAtCode) {
-      throw new RequirementsError('CONFLICT', `Looking at the code is off for this ${where}. Turn it on under Your notes for Worca.`);
+      throw new RequirementsError('CONFLICT', `Code looks are off for this ${where}. Turn them on under Your notes for Worca.`);
     }
   };
   assertSwitchOn();   // before the git probes: no git runs with the switch off
@@ -322,7 +322,7 @@ export function recoverBriefs() {
   let n = 0;
   for (const b of listMakingBriefs()) {
     if (isBriefBusy(b.scopeType, b.scopeKey)) continue;
-    failBrief(b.id, { code: 'INTERRUPTED', message: 'The look at the code did not finish because Worca restarted. Try again.' });
+    failBrief(b.id, { code: 'INTERRUPTED', message: 'The code look did not finish because Worca restarted. Try again.' });
     n += 1;
   }
   return n;

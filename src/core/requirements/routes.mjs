@@ -203,7 +203,7 @@ export function requirementsBriefNotifier(broadcast) {
 
 const noSummary = () => null;
 
-/** What the feature page shows of its scope's brief (A7 §5, board 14): its id (a closer look made against another
+/** What the feature page shows of its scope's brief (A7 §5, board 14): its id (a code look made against another
  *  brief offers no Add), status and age, the sources, the area names and terms the feature mentions, and the
  *  switch; null without a usable brief. */
 function featureBrief(f) {
@@ -245,6 +245,8 @@ export async function featureView(seq, d = {}) {
   const model = (im && im.model) || null;
   const listFn = d.listModels || listModels;
   const estimates = readEstimates();   // once per view, not once per file
+  const ledger = featureCostRows(seq);
+  await rememberLabels(listFn, [...turns.map((t) => t.model), ...ledger.map((r) => r.model)]);
   return {
     feature: { ...f, busy, pending, lastError: last && last.kind === 'error' ? last.payload.message : null,
       readiness: ready, state: displayState({ ...f, busy }, { ready, starts: rows }), unaskedRejections: unaskedRejections(f.spec, turns),
@@ -253,7 +255,7 @@ export async function featureView(seq, d = {}) {
       // 9c D2: the stored choice, or a pre-9c feature's resolved Claude pair (legacy); "GPT-5.6 Sol on Codex"; the chip's "≈"
       model: f.model || (im ? { engine: im.engine, model: im.model, effort: im.effort ?? null, legacy: true } : null),
       modelLabel: im && im.model ? await labelOn(listFn, im.model, im.engine) : null,
-      anyEstimated: featureCostRows(seq).some((r) => r.costKind === 'estimated'),
+      anyEstimated: ledger.some((r) => r.costKind === 'estimated'),
       attachments: files.map((r) => fileView(r, { spec: f.spec, href: `${P}/${seq}/attachments/${r.id}`, estimates, from: origins.get(r.id) || null })),
       briefDocuments: docs.map((r) => fileView(r, { spec: f.spec, href: `${briefPathOf(f.scopeType, f.scopeKey)}/documents/${r.id}`, doc: true, estimates })),
       unaskedFiles: unaskedFiles(files, turns),
@@ -261,8 +263,28 @@ export async function featureView(seq, d = {}) {
       resetPeriod: resetPeriod(),
       export: await exportView(f, turns, d),   // A6 §6: the menu, the chip, the History card, Report back (never throws)
       helper: { answering: isAnswering(seq), messages: countHelperMessages(seq) } },
-    turns,
+    // 9c D14: each turn says which model label and cost kind its step ran with ('billed' | 'estimated' | 'unknown'; null: nothing booked)
+    turns: turns.map((t) => ({ ...t, modelLabel: t.model ? labelOf(t.model) : null, costKind: costKindOf(ledger, (r) => r.turnId === t.id) })),
   };
+}
+
+/** The labels of the models seen in views, so the sync helper view can name a model the way the page does (9c D14). */
+const LABELS = new Map();
+async function rememberLabels(list, ids) {
+  for (const id of new Set(ids.filter(Boolean))) if (!LABELS.has(id)) LABELS.set(id, await modelLabelOf(list, id));
+}
+const labelOf = (id) => LABELS.get(id) || id;
+/** The cost kind of the ledger rows `match` picks: unknown when any is, else estimated when any is, else billed; null with none. */
+function costKindOf(rows, match) {
+  const mine = rows.filter(match);
+  if (!mine.length) return null;
+  return mine.some((r) => r.costKind === 'unknown') ? 'unknown' : mine.some((r) => r.costKind === 'estimated') ? 'estimated' : 'billed';
+}
+/** The helper's view with each reply's model label and cost kind (9c D14). */
+function helperWithKinds(view, seq) {
+  const ledger = featureCostRows(seq);
+  return { ...view, messages: view.messages.map((m) => ({ ...m, modelLabel: m.model ? labelOf(m.model) : null,
+    costKind: costKindOf(ledger, (r) => r.helperMessageId === m.id) })) };
 }
 
 /** One list row: no spec, orientation or description; the derived state, the Ready count, the pending
@@ -356,7 +378,12 @@ async function costsView(seq, d) {
   const billedUsd = sum('billed');
   const estimatedUsd = sum('estimated');
   return { rows: out, billedUsd, estimatedUsd, unknownSteps: out.filter((r) => r.kind === 'unknown').length,
-    totalUsd: round4(billedUsd + estimatedUsd), anyEstimated: out.some((r) => r.kind === 'estimated') };
+    totalUsd: round4(billedUsd + estimatedUsd), anyEstimated: out.some((r) => r.kind === 'estimated'), ...budgetOf() };
+}
+
+/** The Requirements budget the cost dialog names: its total limit (null: none) and period. */
+function budgetOf() {
+  try { const b = requirementsSpend(); return { limitUsd: b.totalLimitUsd, resetPeriod: b.resetPeriod }; } catch { return { limitUsd: null, resetPeriod: 'monthly' }; }
 }
 
 /** GET /models (9c D6): the offered harnesses with their capabilities and readiness, the catalog, each harness's default and
@@ -567,7 +594,7 @@ export function registerRequirementsRoutes(app, { broadcast, server, deps = {} }
     return Number(v);
   };
   // The helper's body; the call's start and end send their own frames (helper.mjs notify), a decision sends one here.
-  const helperBody = (res, seq, code = 200) => res.status(code).json(helperView(seq));
+  const helperBody = (res, seq, code = 200) => res.status(code).json(helperWithKinds(helperView(seq), seq));
 
   const handlers = {
     [`GET ${P}/context/:scopeType/:scopeKey`]: async (req, res) => {

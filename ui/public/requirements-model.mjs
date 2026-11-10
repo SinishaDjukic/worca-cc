@@ -379,3 +379,87 @@ export function briefRefreshDialog(doc, { catalog, choice, defaultChoice = null,
   card.append(title, sub, box.el, btns);
   return { card, first: box.el.querySelector('select'), value: box.value, go };
 }
+
+// ── 9c boards 5 and 6: what each step ran on, its notices, and the cost list ──
+
+/** A step's cost in Worca's words: "$0.03" billed, "≈$0.04" estimated, "cost unknown" (never $0.00); with nothing booked, "nothing
+ *  spent" when `nothing` (an error that ran no call), else null. */
+export function costWord(kind, amount, nothing = false) {
+  if (kind === 'unknown') return 'cost unknown';
+  if (!(Number(amount) > 0)) return nothing ? 'nothing spent' : null;
+  return `${kind === 'estimated' ? '≈' : ''}${usd(amount)}`;
+}
+
+/** "<model label> on <Harness> · <cost>" for a turn or a Feature chat reply ({ engine, model, modelLabel, costUsd, costKind }); a
+ *  model with no harness named ran on Claude (a step from before 9c). null when nothing is known. */
+export function stepMeta(item, { error = false } = {}) {
+  if (!item) return null;
+  const engine = item.engine || (item.model ? 'claude' : null);
+  const label = item.modelLabel || item.model || null;
+  const ranOn = engine ? (label ? `${label} on ${engineLabel(engine)}` : engineLabel(engine)) : label;
+  return [ranOn, costWord(item.costKind, item.costUsd, error)].filter(Boolean).join(' · ') || null;
+}
+
+/** The notices of a step: a grey list under its head (info icon, hint text, never amber). null with none. */
+export function stepNotices(doc, notices) {
+  const list = (Array.isArray(notices) ? notices : []).filter((n) => typeof n === 'string' && n);
+  if (!list.length) return null;
+  const ul = node(doc, 'ul', 'req-step-notices');
+  ul.setAttribute('aria-label', 'What this step could not do');
+  for (const n of list) {
+    const li = node(doc, 'li');
+    li.append(infoIcon(doc, 14), node(doc, 'span', 'hint', n));
+    ul.append(li);
+  }
+  return ul;
+}
+
+const stepsWord = (n) => `${n} step${n === 1 ? '' : 's'}`;
+/** The sentence under the cost table (board 6): what was billed and estimated, the steps with no cost, and what the budget counts. */
+export function costSentence(data) {
+  const billed = Number(data.billedUsd) || 0;
+  const estimated = Number(data.estimatedUsd) || 0;
+  const unknown = Number(data.unknownSteps) || 0;
+  const parts = [billed > 0 ? `${usd(billed)} billed` : null, estimated > 0 ? `≈${usd(estimated)} estimated` : null].filter(Boolean);
+  let first = parts.join(' and ');
+  if (unknown) first = first ? `${first}, plus ${stepsWord(unknown)} with cost unknown` : `${stepsWord(unknown)} with cost unknown`;
+  const period = data.resetPeriod === 'weekly' ? 'week' : 'month';
+  const total = `${data.anyEstimated ? '≈' : ''}${usd(data.totalUsd)}`;
+  const limit = typeof data.limitUsd === 'number' ? ` of ${usd(data.limitUsd)}` : '';
+  const who = unknown === 1 ? 'the step' : `the ${unknown} steps`;
+  const budget = `The Requirements budget counts ${total}${limit} this ${period}${unknown ? `; ${who} with cost unknown ${unknown === 1 ? 'is' : 'are'} not counted` : ''}.`;
+  return `${first ? `${first}. ` : ''}${budget}`;
+}
+
+/** The feature's cost list (board 6): role=dialog "Cost of this feature", the table (Step / Ran on / Cost), "So far" and the sentence.
+ *  Returns { card, first }. */
+export function costDialog(doc, { data, onClose = () => {} } = {}) {
+  const { card, title } = dialogCard(doc, 'req-cost-dialog', 'Cost of this feature');
+  const table = node(doc, 'table', 'req-cost-table');
+  const head = node(doc, 'tr');
+  for (const [name, cls] of [['Step', ''], ['Ran on', ''], ['Cost', 'req-cost-num']]) {
+    const th = node(doc, 'th', cls, name);
+    th.setAttribute('scope', 'col');
+    head.append(th);
+  }
+  const thead = node(doc, 'thead');
+  thead.append(head);
+  const body = node(doc, 'tbody');
+  for (const r of data.rows || []) {
+    const tr = node(doc, 'tr');
+    tr.append(node(doc, 'td', null, r.label), node(doc, 'td', 'req-cost-ran', r.ranOn), node(doc, 'td', `req-cost-num${r.kind === 'unknown' ? ' req-cost-unknown' : ''}`, costWord(r.kind, r.usd) || 'cost unknown'));
+    body.append(tr);
+  }
+  const sum = node(doc, 'tr', 'req-cost-total');
+  const label = node(doc, 'td', null, 'So far');
+  label.setAttribute('colspan', '2');
+  sum.append(label, node(doc, 'td', 'req-cost-num', `${data.anyEstimated ? '≈' : ''}${usd(data.totalUsd)}`));
+  body.append(sum);
+  table.append(thead, body);
+  const close = button(doc, 'btn btn-primary', 'Close', 'cost-close');
+  close.addEventListener('click', () => onClose());
+  const btns = node(doc, 'div', 'req-dlg-btns');
+  btns.append(close);
+  card.append(title, table, node(doc, 'p', 'hint req-cost-sentence', costSentence(data)), btns);
+  return { card, first: close };
+}

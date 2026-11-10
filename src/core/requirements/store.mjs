@@ -209,7 +209,7 @@ export function linkPipeline(runId, pipelineId) {
   return Number(r.changes) > 0;
 }
 
-/** Costs of the newest orientation ("look at the code") turns that cost something, newest first.
+/** Costs of the newest orientation (code look) turns that cost something, newest first.
  *  With `model`, only the looks made on that model. */
 export function recentLookCosts(limit = 10, { model = null } = {}) {
   getDb();

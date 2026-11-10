@@ -11,7 +11,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { createAskModels } from '../src/core/ask/models.mjs';
 import { recordRequirementsCostDelta } from '../src/core/cost-budget.mjs';
 import {
-  createFeature, getFeature, listTurns, updateFeature, appendTurn, setContext, listAttachments, getBrief, beginBrief, saveBriefResult,
+  createFeature, getFeature, listTurns, insertHelperMessage, updateFeature, appendTurn, setContext, listAttachments, getBrief, beginBrief, saveBriefResult,
 } from '../src/core/requirements/store.mjs';
 import { settled, startOrientation } from '../src/core/requirements/interview.mjs';
 import { addAttachments, readsSettled } from '../src/core/requirements/attachment-job.mjs';
@@ -270,6 +270,22 @@ test('GET /:seq/costs: rows with labels and ran-on, billed, estimated and unknow
   assert.deepEqual([r.json.billedUsd, r.json.estimatedUsd, r.json.unknownSteps, r.json.totalUsd, r.json.anyEstimated], [0.04, 0.04, 1, 0.08, true]);
   assert.equal((await call('GET', `${P}/${f.seq}`)).json.feature.anyEstimated, true);
   assert.equal((await call('GET', `${P}/999999/costs`)).status, 404);
+  // the dialog's budget sentence: the limit (null: none) and the period
+  assert.ok('limitUsd' in r.json && ['weekly', 'monthly'].includes(r.json.resetPeriod));
+  // each turn names its model label and cost kind (null: nothing booked)
+  const turns = (await call('GET', `${P}/${f.seq}`)).json.turns;
+  assert.deepEqual(turns.map((t) => [t.id, t.modelLabel, t.costKind]), [[look, null, 'billed'], [r1, null, 'estimated'], [r2, null, 'unknown']]);
+});
+
+test('GET /:seq/helper: each reply carries its engine, notices, model label and cost kind', async () => {
+  const f = featureOn('codex', 'gpt-everyday');
+  appendTurn(f.seq, { kind: 'round', payload: {}, model: 'gpt-everyday', engine: 'codex' });
+  await call('GET', `${P}/${f.seq}`);   // a feature view remembers the labels of the models its turns ran on
+  const { id } = insertHelperMessage({ featureSeq: f.seq, role: 'worca', text: 'Hi', costUsd: 0.04, model: 'gpt-everyday', engine: 'codex',
+    notices: ['Cost estimated: Codex reports none.'] });
+  recordRequirementsCostDelta({ featureSeq: f.seq, turnId: null, helperMessageId: id, amountUsd: 0.04, model: 'gpt-everyday', engine: 'codex', step: 'chat', costKind: 'estimated' });
+  const m = (await call('GET', `${P}/${f.seq}/helper`)).json.messages[0];
+  assert.deepEqual([m.engine, m.notices, m.modelLabel, m.costKind], ['codex', ['Cost estimated: Codex reports none.'], 'GPT Everyday', 'estimated']);
 });
 
 test('GET /:seq/costs: a file read is "File read · <name>"', async () => {

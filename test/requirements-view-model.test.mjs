@@ -12,7 +12,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async () => { for (let i = 0; i < 10; i += 1) await tick(); };
 after(() => window.close());
 const { createRequirementsView } = await import('../ui/public/requirements-view.mjs');
-const { whoInterviews, recommendationNote, defaultLine, fallbackLine, modelChip, switchConfirm, sentTo } = await import('../ui/public/requirements-model.mjs');
+const { whoInterviews, recommendationNote, defaultLine, fallbackLine, modelChip, switchConfirm, sentTo, costSentence } = await import('../ui/public/requirements-model.mjs');
 const { setEngineLocks } = await import('../ui/public/engine-locks.mjs');
 
 const text = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : null);
@@ -434,12 +434,12 @@ const F9 = (over = {}) => ({
   pending: null, lastError: null, readiness: { ok: false, passed: 0, total: 6, checks: [], overridable: false }, starts: [], unaskedRejections: [], changedSinceStart: [],
   model: { engine: 'codex', model: 'gpt-sol', effort: 'high' }, modelLabel: 'GPT-5.6 Sol on Codex', anyEstimated: false, attachments: FILES, ...over,
 });
-const openFeature = async ({ f = F9(), confirm, extra = {} } = {}) => {
+const openFeature = async ({ f = F9(), confirm, extra = {}, turns = [] } = {}) => {
   let cur = f;
   const calls = fakeApi({
     ...ROUTES(),
     'GET /api/requirements/models': CATALOG9,
-    'GET /api/requirements/4': () => ({ feature: cur, turns: [] }),
+    'GET /api/requirements/4': () => ({ feature: cur, turns }),
     'GET /api/requirements': LIST({ interview: { default: { engine: 'claude', model: 'claude-sonnet-5-5', label: 'Sonnet 5.5', effort: 'medium' }, fallbackReason: null } }),
     'PUT /api/requirements/4/model': (q, o) => {
       const b = JSON.parse(o.body);
@@ -717,4 +717,223 @@ test('brief page: a pick the server refuses (400) is said in the message line an
   assert.ok(msgEl.classList.contains('err'));
   assert.match(host.querySelector('[data-ui="brief-create"]').textContent, /Create the brief/, 'the button is back');
   assert.equal(host.querySelector('[data-ui="brief-create"]').disabled, false);
+});
+
+// ── 9c boards 5 and 6: the thread, the code look as a step, notices, errors, the cost list ──
+
+const STEP_NOTICE = 'GPT-5.5 is no longer available, so this step used the default.';
+const turn = (id, kind, o = {}) => ({ id, kind, payload: {}, model: null, modelLabel: null, costUsd: null, costKind: null, engine: null, notices: [], by: null, at: '2026-11-09T10:00:00', ...o });
+const Q = (id = 'q1') => [{ id, question: 'Who may cancel an order?', options: ['Customers', 'Support'], recommended: 'Customers', why: '' }];
+const lookTurn = (id = 1, o = {}) => turn(id, 'orientation', { model: 'claude-opus-5-5', modelLabel: 'Opus 5.5', engine: 'claude', costUsd: 0.19, costKind: 'billed',
+  payload: { summary: 'Products already bring in downloadable documents during import and show them on product pages. A second sentence follows.', files: ['/a.js', '/b.js', '/c.js'], skipped: null }, ...o });
+const roundTurn = (id, o = {}) => turn(id, 'round', { payload: { questions: Q(`q${id}`), note: '' }, model: 'gpt-sol', modelLabel: 'GPT-5.6 Sol', engine: 'codex', costUsd: 0.03, costKind: 'billed', ...o });
+const answersTurn = (id, roundTurnId) => turn(id, 'answers', { payload: { roundTurnId, answers: [{ id: `q${roundTurnId}`, answer: 'Customers', recommended: true }] } });
+const pendingOf = (turnId) => ({ turnId, questions: Q(`q${turnId}`), note: '' });
+const noticeLines = (el) => [...el.querySelectorAll('ul[aria-label="What this step could not do"] li')].map((li) => text(li));
+
+test('thread: each round says what it ran on and its cost, right-aligned, with its notices as grey hint lines', async () => {
+  const { host } = await openFeature({ f: F9({ pending: pendingOf(4), status: 'your_turn' }), turns: [
+    roundTurn(2, { notices: [STEP_NOTICE] }), answersTurn(3, 2),
+    roundTurn(4, { model: 'gem-flash', modelLabel: 'Gemini Flash', engine: 'gemini', costUsd: 0.04, costKind: 'estimated',
+      notices: ["Repo not read: Gemini CLI can't read the repo.", 'Cost estimated: Gemini CLI reports none.'] })] });
+  const r1 = host.querySelector('.req-round[data-round="2"]');
+  assert.equal(text(r1.querySelector('.req-round-n')), 'Round 1');
+  assert.equal(text(r1.querySelector('.req-step-meta')), 'GPT-5.6 Sol on Codex · $0.03');
+  assert.deepEqual(noticeLines(r1), [STEP_NOTICE]);
+  assert.ok(!r1.querySelector('.amber'), 'notices are never amber');
+  assert.ok(r1.querySelector('ul[aria-label] li svg'), 'with the info icon');
+  const q = host.querySelector('.qpanel');
+  assert.equal(text(q.querySelector('.req-step-meta')), 'Gemini Flash on Gemini CLI · ≈$0.04');
+  assert.deepEqual(noticeLines(q), ["Repo not read: Gemini CLI can't read the repo.", 'Cost estimated: Gemini CLI reports none.']);
+});
+
+test('thread: an unknown cost says "cost unknown", never $0.00; a Claude round with nothing booked says only what ran it', async () => {
+  const { host } = await openFeature({ f: F9({ status: 'done', state: 'done' }), turns: [
+    roundTurn(2, { costUsd: null, costKind: 'unknown' }), answersTurn(3, 2),
+    roundTurn(4, { model: 'claude-opus-5-5', modelLabel: 'Opus 5.5', engine: 'claude', costUsd: null, costKind: null }), answersTurn(5, 4)] });
+  assert.equal(text(host.querySelector('.req-round[data-round="2"] .req-step-meta')), 'GPT-5.6 Sol on Codex · cost unknown');
+  assert.equal(text(host.querySelector('.req-round[data-round="4"] .req-step-meta')), 'Opus 5.5 on Claude');
+  assert.ok(!/\$0\.00/.test(host.querySelector('.req-left').textContent));
+});
+
+test('thread: the code look is a step row in turn order: "Code look · 3 files", what ran it, the first sentence, Show what it found', async () => {
+  const scrolled = [];
+  window.HTMLElement.prototype.scrollIntoView = function scroll() { scrolled.push(this.className); };
+  const { host } = await openFeature({ f: F9({ orientation: { summary: 'x', files: ['/a.js'], skipped: null } }),
+    turns: [lookTurn(1), roundTurn(2), answersTurn(3, 2)] });
+  const rows = [...host.querySelectorAll('.req-rounds > .req-round, .req-rounds > .req-step')];
+  assert.deepEqual(rows.map((r) => r.className.includes('req-step-look')), [true, false], 'the look first, then Round 1');
+  const row = rows[0];
+  assert.equal(text(row.querySelector('.req-round-n')), 'Code look · 3 files');
+  assert.equal(text(row.querySelector('.req-step-meta')), 'Opus 5.5 on Claude · $0.19');
+  assert.equal(text(row.querySelector('.req-step-first')), 'Products already bring in downloadable documents during import and show them on product pages.');
+  const btn = row.querySelector('button[data-ui="look-show"]');
+  assert.equal(text(btn), 'Show what it found');
+  assert.equal(host.querySelector('details.req-orient').open, false);
+  btn.click();
+  await settle();
+  assert.equal(host.querySelector('details.req-orient').open, true, 'the folded card opens');
+  assert.ok(scrolled.some((c) => /req-orient/.test(c)), 'and scrolls into view');
+  assert.ok(text(host.querySelector('details.req-orient summary')).startsWith('Code look: what Worca found'));
+});
+
+test('thread: a look with no files has no count; the first sentence is at most 200 characters', async () => {
+  const long = `${'word '.repeat(80)}end.`;
+  const { host } = await openFeature({ turns: [lookTurn(1, { payload: { summary: long, files: [], skipped: null } })] });
+  assert.equal(text(host.querySelector('.req-step-look .req-round-n')), 'Code look');
+  assert.ok(host.querySelector('.req-step-look .req-step-first').textContent.length <= 200);
+});
+
+test('thread: a look skipped for the harness is a row with its notice and no button; a look skipped for the brief adds no row', async () => {
+  const skippedEngine = turn(1, 'orientation', { engine: 'gemini', notices: ["Repo not read: Gemini CLI can't read the repo."], payload: { summary: '', files: [], skipped: 'engine' } });
+  const { host } = await openFeature({ f: F9({ orientation: { summary: '', files: [], skipped: 'engine' } }), turns: [skippedEngine] });
+  const row = host.querySelector('.req-step-look');
+  assert.equal(text(row.querySelector('.req-round-n')), 'Code look');
+  assert.equal(text(row.querySelector('.req-step-meta')), 'Gemini CLI');
+  assert.deepEqual(noticeLines(row), ["Repo not read: Gemini CLI can't read the repo."]);
+  assert.equal(row.querySelector('button'), null);
+  const brief = await openFeature({ f: F9({ orientation: { summary: '', files: [], skipped: 'brief' } }),
+    turns: [turn(1, 'orientation', { payload: { summary: '', files: [], skipped: 'brief' } })] });
+  assert.equal(brief.host.querySelector('.req-step-look'), null);
+  assert.equal(text(brief.host.querySelector('details.req-orient p')), 'Worca has not done a code look for this feature.');
+});
+
+test('thread: a model turn is one plain row "You switched this feature to <model> on <Harness> · <time>"', async () => {
+  const { host } = await openFeature({ turns: [roundTurn(2), answersTurn(3, 2),
+    turn(4, 'model', { modelLabel: 'Gemini Flash', at: '2026-11-09T14:02:00', payload: { engine: 'gemini', model: 'gem-flash', effort: null, from: { engine: 'codex', model: 'gpt-sol' } } })] });
+  const row = host.querySelector('.req-step-switch');
+  assert.equal(text(row), 'You switched this feature to Gemini Flash on Gemini CLI · 9 Nov, 14:02');
+  assert.equal(row.querySelector('button'), null);
+});
+
+const readyError = (job = 'look', o = {}) => turn(9, 'error', { engine: 'codex', model: 'gpt-sol', modelLabel: 'GPT-5.6 Sol', costUsd: null, costKind: null,
+  payload: { code: 'NOT_READY', message: "Codex isn't signed in. Sign in, or change the model.", job, docsUrl: 'https://docs.example.org/codex-login' }, ...o });
+
+test('errors: a NOT_READY look stops with the D13 sentence, Change the model, Try again and the docs link', async () => {
+  const { host, calls } = await openFeature({ f: F9({ lastError: "Codex isn't signed in. Sign in, or change the model." }),
+    turns: [readyError('look')], extra: { 'POST /api/requirements/4/retry': { feature: F9(), turns: [] } } });
+  const box = host.querySelector('.req-error');
+  assert.equal(box.getAttribute('role'), 'alert');
+  assert.equal(text(box.querySelector('.req-error-title')), 'Code look stopped');
+  assert.equal(text(box.querySelector('.req-step-meta')), 'GPT-5.6 Sol on Codex · nothing spent');
+  assert.equal(text(box.querySelector('.req-error-text')), "Codex isn't signed in. Sign in, or change the model.");
+  const docs = box.querySelector('a.req-error-docs');
+  assert.equal(text(docs), 'How to sign in to Codex');
+  assert.equal(docs.getAttribute('href'), 'https://docs.example.org/codex-login');
+  assert.deepEqual([...box.querySelectorAll('button')].map((b) => text(b)), ['Change the model', 'Try again']);
+  box.querySelector('[data-ui="error-change-model"]').click();
+  await settle();
+  assert.equal(text(document.getElementById(dialogEl().getAttribute('aria-labelledby'))), 'Model for this feature');
+  dialogEl().querySelector('[data-ui="model-cancel"]').click();
+  await settle();
+  host.querySelector('.req-error .req-retry').click();
+  await settle();
+  assert.equal(calls.filter((c) => c.method === 'POST' && /retry$/.test(c.url)).length, 1);
+});
+
+test('errors: a NOT_READY round is "Round N stopped" (N: the round that did not run); other errors keep their text and Try again', async () => {
+  const { host } = await openFeature({ f: F9({ lastError: "Codex isn't signed in. Sign in, or change the model." }),
+    turns: [roundTurn(2), answersTurn(3, 2), readyError('round', { payload: { code: 'NOT_READY', message: "Codex isn't signed in. Sign in, or change the model.", job: 'round' } })] });
+  assert.equal(text(host.querySelector('.req-error-title')), 'Round 2 stopped');
+  assert.equal(host.querySelector('a.req-error-docs'), null, 'no docs link without a docsUrl');
+  const limit = await openFeature({ f: F9({ lastError: 'Limit reached. Try later.' }), turns: [turn(9, 'error', { payload: { code: 'RATE_LIMIT', message: 'Limit reached. Try later.', job: 'round' } })] });
+  assert.equal(text(limit.host.querySelector('.req-error')), 'Limit reached. Try later. Try again');
+  assert.equal(limit.host.querySelector('.req-error-title'), null);
+});
+
+test('files: a SKIPPED_ENGINE file is a grey line (not an alert) with Read again', async () => {
+  const skipped = { id: 7, name: 'spec.pdf', kind: 'pdf', bytes: 90000, status: 'failed', href: '/api/requirements/4/attachments/7',
+    error: { code: 'SKIPPED_ENGINE', message: 'spec.pdf skipped: Gemini CLI gets files as text only.' } };
+  const { host, calls } = await openFeature({ f: F9({ attachments: [skipped] }), extra: { 'POST /api/requirements/4/attachments/7/read-again': { feature: F9({ attachments: [skipped] }), turns: [] } } });
+  const line = host.querySelector('.req-file-failed');
+  assert.equal(line.getAttribute('role'), null, 'grey, nothing to rush');
+  assert.ok(line.classList.contains('req-file-skipped'));
+  assert.equal(text(line.querySelector('.req-file-failed-text')), 'spec.pdf skipped: Gemini CLI gets files as text only.');
+  const btn = line.querySelector('button');
+  assert.equal(text(btn), 'Read again');
+  btn.click();
+  await settle();
+  assert.equal(calls.filter((c) => c.method === 'POST' && /read-again$/.test(c.url)).length, 1);
+});
+
+const COSTS = (o = {}) => ({ rows: [
+  { step: 'look', label: 'Code look', ranOn: 'Opus 5.5 on Claude', usd: 0.16, kind: 'billed' },
+  { step: 'round', label: 'Round 1', ranOn: 'GPT-5.6 Sol on Codex', usd: 0.03, kind: 'billed' },
+  { step: 'round', label: 'Round 2', ranOn: 'GPT-5.6 Sol on Codex', usd: 0.02, kind: 'billed' },
+  { step: 'round', label: 'Round 3', ranOn: 'gemini-3-pro on Gemini CLI', usd: 0.04, kind: 'estimated' },
+  { step: 'read', label: 'File read · notes.txt', ranOn: 'qwen3-coder-plus on Qwen Code', usd: null, kind: 'unknown' }],
+billedUsd: 0.21, estimatedUsd: 0.04, unknownSteps: 1, totalUsd: 0.25, anyEstimated: true, limitUsd: 5, resetPeriod: 'monthly', ...o });
+
+test('cost chip: a button that opens "Cost of this feature" with the table, the So far row and the sentence', async () => {
+  const { host, calls } = await openFeature({ f: F9({ anyEstimated: true, costUsd: 0.25 }), extra: { 'GET /api/requirements/4/costs': COSTS() } });
+  const chip = host.querySelector('[data-ui="cost-chip"]');
+  assert.equal(chip.tagName, 'BUTTON');
+  assert.equal(chip.getAttribute('aria-haspopup'), 'dialog');
+  assert.equal(text(chip), '≈$0.25 so far');
+  chip.click();
+  await settle();
+  assert.ok(calls.some((c) => c.url === '/api/requirements/4/costs'));
+  const d = dialogEl();
+  assert.equal(text(document.getElementById(d.getAttribute('aria-labelledby'))), 'Cost of this feature');
+  assert.deepEqual([...d.querySelectorAll('thead th')].map((t) => text(t)), ['Step', 'Ran on', 'Cost']);
+  assert.deepEqual([...d.querySelectorAll('tbody tr')].map((r) => [...r.children].map((c) => text(c))), [
+    ['Code look', 'Opus 5.5 on Claude', '$0.16'], ['Round 1', 'GPT-5.6 Sol on Codex', '$0.03'], ['Round 2', 'GPT-5.6 Sol on Codex', '$0.02'],
+    ['Round 3', 'gemini-3-pro on Gemini CLI', '≈$0.04'], ['File read · notes.txt', 'qwen3-coder-plus on Qwen Code', 'cost unknown'], ['So far', '≈$0.25']]);
+  assert.equal(text(d.querySelector('.req-cost-sentence')),
+    '$0.21 billed and ≈$0.04 estimated, plus 1 step with cost unknown. The Requirements budget counts ≈$0.25 of $5.00 this month; the step with cost unknown is not counted.');
+  assert.equal(document.activeElement.closest('[role="dialog"]'), d, 'the focus is in the dialog');
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await settle();
+  assert.equal(dialogEl(), null, 'Escape closes it');
+  assert.equal(document.activeElement, chip, 'and the focus goes back to the chip');
+});
+
+test('costSentence: billed only, estimated only, unknown only, weekly, with no limit', () => {
+  assert.equal(costSentence(COSTS({ rows: [], billedUsd: 0.21, estimatedUsd: 0, unknownSteps: 0, totalUsd: 0.21, anyEstimated: false })),
+    '$0.21 billed. The Requirements budget counts $0.21 of $5.00 this month.');
+  assert.equal(costSentence(COSTS({ billedUsd: 0, estimatedUsd: 0.04, unknownSteps: 0, totalUsd: 0.04, limitUsd: null })),
+    '≈$0.04 estimated. The Requirements budget counts ≈$0.04 this month.');
+  assert.equal(costSentence(COSTS({ billedUsd: 0, estimatedUsd: 0, unknownSteps: 2, totalUsd: 0, anyEstimated: false, resetPeriod: 'weekly' })),
+    '2 steps with cost unknown. The Requirements budget counts $0.00 of $5.00 this week; the 2 steps with cost unknown are not counted.');
+});
+
+test('cost chip: plain "$0.25 so far" without an estimate; a costs read that fails says so and opens nothing', async () => {
+  const { host, msgEl } = await openFeature({ f: F9({ anyEstimated: false, costUsd: 0.25 }) });
+  assert.equal(text(host.querySelector('[data-ui="cost-chip"]')), '$0.25 so far');
+  host.querySelector('[data-ui="cost-chip"]').click();
+  await settle();
+  assert.equal(dialogEl(), null);
+  assert.equal(text(msgEl), 'The costs could not be loaded. Try again.');
+});
+
+test('code look: no old name is left in what the feature page shows', async () => {
+  const OLD = /closer look|look at the code|looked at the code|looking at the code|found in the code/i;
+  const brief = { id: 3, status: 'ready', madeAt: new Date(Date.now() - 2 * 864e5).toISOString(), sources: [], matches: ['Orders'], matchesMore: 0, lookAtCode: true };
+  const variants = [
+    F9({ orientation: null }),
+    F9({ orientation: { summary: '', files: [], skipped: 'off' } }),
+    F9({ orientation: { summary: '', files: [], skipped: 'no-git' } }),
+    F9({ orientation: { summary: '', files: [], skipped: 'failed' } }),
+    F9({ orientation: { summary: '', files: [], skipped: 'brief' } }),
+    F9({ brief, lookCostUsd: 0.2, orientation: { summary: '', files: [], skipped: 'brief' } }),
+    F9({ brief, lookCostUsd: 0.2, orientation: { summary: 'Orders live in orders.js.', files: ['/o.js'], skipped: null, scopeType: 'project', scopeKey: 'shop-1', briefId: 3 } }),
+    F9({ brief, orientation: { summary: '', files: [], skipped: 'failed' } }),
+  ];
+  for (const f of variants) {
+    const { host } = await openFeature({ f, turns: [lookTurn(1)] });
+    assert.ok(!OLD.test(host.textContent), `${JSON.stringify(f.orientation)}: ${(host.textContent.match(OLD) || [])[0]}`);
+  }
+});
+
+test('styles: the step rows, notices, error and cost dialog rules sit inside the Requirements block with tokens only', () => {
+  const css = readStyleCss();
+  const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
+  const end = css.indexOf('/* ── marketplace P3 ── */');
+  for (const s of ['.req-step-meta', '.req-step-notices', '.req-error-title', '.req-cost-dialog', '.req-cost-chip']) {
+    const at = css.indexOf(s);
+    assert.ok(at > start && at < end, `${s} inside the Requirements block`);
+  }
+  const lines = css.slice(start, end).split('\n').filter((l) => /req-step-|req-error-|req-cost-|req-file-skipped/.test(l));
+  assert.ok(lines.length > 0);
+  assert.ok(lines.every((l) => !/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(l)), 'tokens only');
 });
