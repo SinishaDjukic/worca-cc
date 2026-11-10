@@ -100,4 +100,6 @@ Judge the outcome, not that something happened: what was picked is what arrived,
 
 **Reviewers:** a new user, a daily user and a UX/UI reviewer against Rail, independent, unprompted, on every design round: 8.0 of 10 from each; below is revised and re-challenged; after three rounds it goes to the owner with the reason.
 
+**Final prototype check:** before the boss round and the final end-to-end tests, one full side-by-side pass of every page against the prototype (as above, all three modes), with every difference fixed or explained.
+
 **Boss round before done:** every area, three independent agents, two rounds with fixes, average at least 7.5 per area, none under 7.0, no critical open, then final validation.
