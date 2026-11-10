@@ -27,14 +27,14 @@ test('an answer equal to an option picks the option; free text only where it is 
   assert.deepEqual(planAnswer(q, example).payload.answers, [{ id: 'q2', choice: 'finance admins.' }]);
   const noFree = { kind: 'questions', questions: [{ id: 'q3', question: 'Which file formats should the export have?', options: ['PDF', 'CSV'], allowFreeText: false, recommended: 'CSV' }] };
   assert.deepEqual(planAnswer(noFree, example), {
-    kind: 'answer', payload: { answers: [{ id: 'q3', choice: 'CSV' }] }, help: [{ question: 'Which file formats should the export have?' }],
-    asked: [{ question: 'Which file formats should the export have?', answer: 'CSV', how: 'picked' }],
+    kind: 'answer', payload: { answers: [{ id: 'q3', choice: 'CSV' }] }, help: [],
+    asked: [{ question: 'Which file formats should the export have?', answer: 'CSV', how: 'unusable' }],
   });
 });
 
-test('nothing matches: Worca picks a sensible answer and it counts as help, or the try counts as failed', () => {
+test('nothing matches: Worca picks a sensible answer and the person chose that, so it is no help; or the try counts as failed', () => {
   const q = { kind: 'questions', questions: [{ id: 'q9', question: 'Which screens come first?', options: ['Settings', 'Home'] }] };
-  assert.deepEqual(planAnswer(q, example), { kind: 'answer', payload: { answers: [{ id: 'q9', choice: 'Settings' }] }, help: [{ question: 'Which screens come first?' }],
+  assert.deepEqual(planAnswer(q, example), { kind: 'answer', payload: { answers: [{ id: 'q9', choice: 'Settings' }] }, help: [],
     asked: [{ question: 'Which screens come first?', answer: 'Settings', how: 'picked' }] });
   assert.deepEqual(planAnswer(q, { ...example, otherwise: 'fail' }), {
     kind: 'fail', reason: 'Worca asked "Which screens come first?", and this example has no answer for it.', help: [{ question: 'Which screens come first?' }],
@@ -49,7 +49,7 @@ test('gates continue; a recovery prompt or a plan approval stops the try; a form
   assert.equal(planAnswer({ kind: 'plan' }, example).reason, 'Worca asked a person to approve a plan.');
   const form = { kind: 'form', form: 'release', title: 'Release details', autoValues: { tag: 'v1' } };
   const picked = planAnswer(form, example);
-  assert.deepEqual([picked.kind, picked.payload.values, picked.help], ['answer', { tag: 'v1' }, [{ question: 'Release details' }]]);
+  assert.deepEqual([picked.kind, picked.payload.values, picked.help], ['answer', { tag: 'v1' }, []]);
   assert.equal(planAnswer(form, { ...example, otherwise: 'fail' }).reason, 'Worca asked to fill in "Release details", and this example has no answers for forms.');
 });
 
@@ -173,4 +173,12 @@ test('U-T12: attachAnswerer reports each asked question through onAsked, in orde
   quiet.emit('question', { id: 'a3', kind: 'questions', questions: [{ id: 'q1', question: 'Who is allowed to export?', options: [] }] });
   await tick();
   assert.deepEqual(fails, [], 'a failing note never stops the try');
+});
+
+test('D24 (2026-11-10): an unusable example answer under "the try counts as failed" is still help and says so; an empty form is picked with no values', () => {
+  const noFree = { kind: 'questions', questions: [{ id: 'q3', question: 'Which file formats should the export have?', options: ['PDF', 'CSV'], allowFreeText: false }] };
+  const f = planAnswer(noFree, { ...example, otherwise: 'fail' });
+  assert.deepEqual([f.kind, f.help.length, f.asked], ['fail', 1, [{ question: 'Which file formats should the export have?', answer: null, how: 'unusable' }]]);
+  const empty = planAnswer({ kind: 'form', form: 'x', title: 'Nothing to fill', autoValues: {} }, example);
+  assert.deepEqual([empty.asked, empty.help], [[{ question: 'Nothing to fill', answer: '', how: 'picked' }], []]);
 });

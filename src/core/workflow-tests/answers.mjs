@@ -1,8 +1,9 @@
 // src/core/workflow-tests/answers.mjs
 // Nobody watches a test try (plans/workflow-tests-part2-plan.md D24). Every question gets the example's answer, or the
 // example's "If Worca asks something else" rule: Worca picks a sensible answer (the --yes answer), or the try counts as
-// failed. A question the example had no answer for is "help": it fails the Basic "Finishes without needing help from
-// someone". Gates are the workflow's own stops and continue; a recovery prompt or a plan approval needs a person, so the
+// failed. A question the example had no answer for is "help" (it fails the Basic "Finishes without needing help from
+// someone") only when the rule is "counts as failed". Where the person chose "Worca picks", no person was needed: the
+// pick is listed in `asked` (how: 'picked'|'unusable') but is not help (2026-11-10, supersedes D24). Gates are the workflow's own stops and continue; a recovery prompt or a plan approval needs a person, so the
 // try stops.
 import { autoAnswerPayload, autoChoice } from '../run-harness.mjs';
 import { PLAN_ASK_KIND } from '../shape/run.mjs';
@@ -35,7 +36,7 @@ const formValuesText = (values) => Object.entries(values && typeof values === 'o
 
 /**
  * How a try answers one question. U-T12 (F23): `asked` lists what the workflow asked the person, in order, as
- * `{ question, answer, how: 'example'|'picked'|'none' }`: its questions and its forms. A gate (a loop's own stop), a
+ * `{ question, answer, how: 'example'|'picked'|'unusable'|'none' }`: its questions and its forms. A gate (a loop's own stop), a
  * recovery prompt (Worca hit a problem) and a plan approval are Worca's own stops, not the workflow asking: none listed.
  * @param {{kind: string, questions?: Array, recovery?: {message?: string}, title?: string}} q the harness's `question` payload
  * @param {{answers?: Array<{question: string, answer: string}>, otherwise?: 'pick'|'fail'}} example
@@ -49,18 +50,19 @@ export function planAnswer(q, { answers = [], otherwise = 'pick' } = {}) {
     for (const item of Array.isArray(q.questions) ? q.questions : []) {
       const canned = findAnswer(item.question, answers);
       let choice = null;
+      const unusable = canned != null;   // the example has an answer; it may still match no option
       if (canned != null) {
         const opt = (Array.isArray(item.options) ? item.options : []).find((o) => typeof o === 'string' && normQuestion(o) === normQuestion(canned));
         choice = opt ?? (item.allowFreeText !== false ? canned : null);
       }
       if (choice == null) {
-        help.push({ question: String(item.question || '') });
         if (otherwise === 'fail') {
-          list.push(asked(item.question, null, 'none'));   // the try stops here: the questions after it are never answered
+          help.push({ question: String(item.question || '') });
+          list.push(asked(item.question, null, unusable ? 'unusable' : 'none'));   // the try stops here: the questions after it are never answered
           return { kind: 'fail', reason: `Worca asked ${quote(item.question)}, and this example has no answer for it.`, help, asked: list };
         }
         choice = autoChoice(item);
-        list.push(asked(item.question, choice, 'picked'));
+        list.push(asked(item.question, choice, unusable ? 'unusable' : 'picked'));   // Worca picks: listed, not help
       } else list.push(asked(item.question, canned, 'example'));   // the example's own words
       out.push({ id: item.id, choice });
     }
@@ -75,13 +77,13 @@ export function planAnswer(q, { answers = [], otherwise = 'pick' } = {}) {
   if (kind === PLAN_ASK_KIND) return { kind: 'fail', reason: 'Worca asked a person to approve a plan.', help: [{ question: 'Approve the plan' }], asked: [] };
   if (kind === 'form') {
     const title = String(q.title || 'Fill in a form');
-    const help = [{ question: title }];
     if (otherwise === 'fail') {
+      const help = [{ question: title }];
       return { kind: 'fail', reason: `Worca asked to fill in ${quote(q.title || 'a form')}, and this example has no answers for forms.`, help,
         asked: [asked(title, null, 'none')] };
     }
     const payload = autoAnswerPayload(q);
-    return { kind: 'answer', payload, help, asked: [asked(title, formValuesText(payload.values), 'picked')] };
+    return { kind: 'answer', payload, help: [], asked: [asked(title, formValuesText(payload.values), 'picked')] };
   }
   return { kind: 'answer', payload: autoAnswerPayload(q), help: [], asked: [] };
 }

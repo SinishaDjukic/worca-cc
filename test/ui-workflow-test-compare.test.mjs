@@ -496,3 +496,14 @@ test('H1/H2: on a phone the By example and What was checked rows stack; each cel
   const once = boot(renderSideBySide, side({ run: { id: 7, kind: 'once' }, labels: { a: null, b: 'v5 draft' } }), { tryIndex: 0 });
   assert.deepEqual([...once.root.querySelectorAll('.wft-crow:not(.is-head)')][0].querySelectorAll('[data-label]').length, 1);
 });
+
+test('D24 (2026-11-10): an empty pick says Worca left it empty; an unusable example answer says so, not "not in the example"', () => {
+  const s = asking([], [{ question: 'Release details', answer: '', how: 'picked' }, { question: 'Which formats?', answer: 'CSV', how: 'unusable' },
+    { question: 'Who pays?', answer: null, how: 'unusable' }]);
+  const { root } = boot(renderSideBySide, s, { tryIndex: 0 });
+  const card = [...root.querySelectorAll('.wft-qs-card')][1];
+  assert.deepEqual(qLines(card), ['Worca asked "Release details" · not in the example: Worca left it empty',
+    'Worca asked "Which formats?" · your answer could not be used: Worca picked "CSV"',
+    'Worca asked "Who pays?" · your answer could not be used: the try counts as failed']);
+  assert.deepEqual(texts(card, '.wft-q-failed'), ['· your answer could not be used: the try counts as failed']);
+});

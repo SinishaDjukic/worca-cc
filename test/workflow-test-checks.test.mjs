@@ -110,6 +110,9 @@ test('a try passes only when every Basic switched on and every check is met', ()
   const helped = judgeTry(example, { ...facts, help: [{ kind: 'questions', question: 'Which formats?' }] }, []);
   assert.equal(helped.passed, false);
   assert.equal(helped.basics[1].detail, 'Worca asked: "Which formats?"');
+  const pickedFacts = { ...facts, asked: [{ question: 'Which formats?', answer: 'CSV', how: 'picked' }] };
+  const picked = judgeTry(example, pickedFacts, []);
+  assert.deepEqual([picked.passed, picked.basics[1].met, picked.facts.asked[0].how], [true, true, 'picked'], 'D24 (2026-11-10): Worca picking is no help');
   const why = 'Worca asked "Who?", and this example has no answer for it.';
   const stopped = judgeTry(example, { ...facts, status: 'stopped', failReason: why }, []);
   assert.deepEqual([stopped.passed, stopped.basics[0].met, stopped.basics[0].detail], [false, false, why]);

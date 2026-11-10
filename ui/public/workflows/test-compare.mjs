@@ -137,6 +137,21 @@ function sentCard(doc, v, key, { project = false } = {}) {
   return c;
 }
 
+/** How one question was answered. 'unusable': the example had an answer, but it fits no option (and free text is off). */
+function askedAnswer(doc, a) {
+  const how = a && a.how;
+  if (how === 'example') return el(doc, 'span', 'wft-q-ans', `· your answer: "${a.answer}"`);
+  if (how === 'picked') {
+    return el(doc, 'span', 'wft-q-ans', a.answer === '' || a.answer == null ? '· not in the example: Worca left it empty'
+      : `· not in the example: Worca picked "${a.answer}"`);
+  }
+  if (how === 'unusable') {
+    return a.answer == null ? el(doc, 'span', 'wft-q-failed', '· your answer could not be used: the try counts as failed')
+      : el(doc, 'span', 'wft-q-ans', `· your answer could not be used: Worca picked "${a.answer}"`);
+  }
+  return el(doc, 'span', 'wft-q-failed', '· not in the example: the try counts as failed');
+}
+
 /** U-T12 (F23, board 47): what Worca asked in one try, in the order asked, and how each was answered. Questions and
  *  answers are the workflow's and the example's text: set as text, never markup; long ones wrap, never cut. */
 function questionsCard(doc, asked, key) {
@@ -152,9 +167,7 @@ function questionsCard(doc, asked, key) {
   const ul = el(doc, 'ul', 'wft-qs');
   for (const a of asked) {
     const li = el(doc, 'li', '', `Worca asked "${a && a.question}" `);
-    li.append(a && a.how === 'example' ? el(doc, 'span', 'wft-q-ans', `· your answer: "${a.answer}"`)
-      : a && a.how === 'picked' ? el(doc, 'span', 'wft-q-ans', `· not in the example: Worca picked "${a.answer}"`)
-        : el(doc, 'span', 'wft-q-failed', '· not in the example: the try counts as failed'));
+    li.append(askedAnswer(doc, a));
     ul.append(li);
   }
   c.append(ul);

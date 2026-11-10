@@ -120,7 +120,7 @@ test('canned answers: "the try counts as failed" stops it; "Worca picks" goes on
   const r2 = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [loose.id], tries: 1 });
   await runner.idle(r2.id);
   const [t2] = store.triesOfRun(r2.id);
-  assert.deepEqual([t2.status, t2.verdict.facts.status, t2.verdict.facts.help.length], ['failed', 'done', 1]);
+  assert.deepEqual([t2.status, t2.verdict.facts.status, t2.verdict.facts.help.length, t2.verdict.basics[1].met], ['passed', 'done', 0, true]);
   assert.deepEqual(h.entries.get(t2.runKey).answered, ['q-1', { answers: [{ id: 'q1', choice: 'Home' }] }]);
   const answered = example({ name: 'Answered', tries: 1, answers: [{ question: 'Which screens come first?', answer: 'Settings' }] });
   const r3 = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [answered.id], tries: 1 });
