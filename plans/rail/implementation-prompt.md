@@ -9,7 +9,7 @@ on a feature branch into `dev`, by PR linked to an issue, with no attribution li
 `plans/rail/click-sweep.md`. The working design is `plans/rail/prototype/`; the rules are `docs/rail/`; the components are
 `ui/public/design-system/components/` (`docs/design-system-catalog.json` says which meets which need).
 
-**Order of authority:** the concept below, then `docs/rail/`, then the prototype's HTML. The prototype still has things the concept removes (the "Ask about this…" docks, some "by hand" labels): the concept wins.
+**Order of authority:** the concept below, then `docs/rail/`, then the prototype's HTML. The prototype still has things the concept removes (the "Ask about this…" docks): the concept wins.
 
 **The prototype is a mock; the real app is not.** Its seeded data, and every toast saying "Would open…", "Would save…" or "Would run…", stand for real behaviour. Build the real action, on real data, using dev's existing function; never ship a "Would…" or a seeded number.
 
@@ -53,7 +53,7 @@ Focus on testing and validation: full end-to-end in a real browser against the r
 - **Side chat goes.** Under Stillhet, "Side chat beside a page" is removed (`plans/rail/dev-vs-prototype.md`: drop it): ⌘J and Ask hand over to Chat instead. With the flag off it stays as it is today. The rest of that list was reviewed and stands.
 - **Centers.** Pages outside Chat are centers: Tasks, Schedules, Workflows, Marketplace, Projects, Insights, Requirements. Each lands on a grid of cards
   that sums up what the sidebar cannot (`rail.center`, `panel.center`, `panel.center-shelf`). Projects is by workspace from Advanced.
-- **Manual creation** stays from Advanced up as the **"Legacy approach"** (exact words, replacing every remaining "by hand") in the same + menu:
+- **Manual creation** stays from Advanced up in the same + menu, under the heading **"Legacy approach"**; the actions themselves keep **"by hand"**, as the prototype has them ("Edit by hand", "Add a project by hand", "By hand: a draft until you save it"). Never replace "by hand" with "Legacy approach" or "yourself":
   "Ask in chat" first, "Legacy approach" second. In Simple nothing is created outside Chat.
 - **Stay in the chat.** Outside Expert you stay with the card in its chat (`rail.stay-in-chat`).
 - **Dark cockpit, Nordic calm.** Normal is off; only what needs you is lit. One ranked ladder everywhere: 3 Warning, 2 Caution, 1 Advisory, 0 Normal
