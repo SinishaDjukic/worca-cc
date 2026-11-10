@@ -24,7 +24,7 @@ import { guardDecisionsCover, toolCalls } from '../file-read-guard.mjs';
 import { downloadFilename } from '../download-filename.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { RequirementsError, clip } from './spec.mjs';
-import { featureModel, briefDefault, scopeOf } from './feature-model.mjs';
+import { featureModel, briefDefault, scopeOf, engineDefault, dd } from './feature-model.mjs';
 import { RoundError } from './round.mjs';
 import {
   REQ_ATT_ID_RE, REQ_ATTACH_LIMITS, ATTACHMENT_SYSTEM_PROMPT, buildReadPrompt, buildAskPrompt, normalizeSummary, mockSummary, checkNewFiles,
@@ -236,11 +236,30 @@ async function readerOf(e, d) {
   if (o.type === 'feature') return featureModel(getFeature(o.id) || { model: null }, d);
   const b = getBriefById(o.id);
   if (b && b.madeAt) {
-    if (b.engine && b.engine !== 'claude' && b.model) return { engine: b.engine, model: b.model, effort: null, notice: null };
-    return featureModel({ model: null }, d);
+    // The brief's own harness and model, as stored (NULL engine = Claude). A harness without a stored model takes its own default,
+    // never Claude's: a document is not silently read on another harness.
+    const engine = b.engine || 'claude';
+    if (b.model) return featureModel({ model: { engine, model: b.model, effort: null } }, d);
+    if (engine === 'claude') return featureModel({ model: null }, d);
+    return { ...(await engineDefault(engine, dd(d))), notice: null };
   }
   const scope = scopeOf({ scopeType: o.scopeType || (b && b.scopeType), scopeKey: o.scopeKey || (b && b.scopeKey) });
   return { ...(await briefDefault(scope, d)).choice, notice: null };
+}
+
+/** The harness a file will be read on, without any catalog lookup: the feature's or the made brief's stored engine (Claude when none). */
+function storedEngine(e) {
+  if (e.owner.type === 'feature') return (getFeature(e.owner.id)?.model?.engine) || 'claude';
+  const b = getBriefById(e.owner.id);
+  return (b && b.madeAt && b.engine) || 'claude';
+}
+
+/** Mock mode makes no call, but it skips what a harness would skip, with the same words (the browser proof shows them). */
+function mockSkip(e, row) {
+  const engine = storedEngine(e);
+  if (engine !== 'claude' && !(row.kind === 'text' && row.bytes <= REQ_ATTACH_LIMITS.inlineBytes)) {
+    throw Object.assign(new Error(skipWords(row, engine)), { code: 'SKIPPED_ENGINE', costUsd: 0, engine });
+  }
 }
 
 /** 9c gap 8: why a file is not sent to a harness that gets text only. */
@@ -289,7 +308,8 @@ async function readCall(e, row, { question = null } = {}) {
     for (const n of r.notices || []) if (!notices.includes(n)) notices.push(n);
     return { text: r.text, costUsd, model, engine, notices };
   } catch (err) {
-    throw Object.assign(err instanceof Error ? err : new Error(String(err)), { model });
+    const out = err instanceof Error ? err : new Error(String(err));
+    throw Object.assign(out, { model, engine, notices: out.notices || notices });
   } finally {
     if (dir) { try { rmSync(dir, { recursive: true, force: true }); } catch (x) { console.error('requirements: could not remove a read folder:', message(x)); } }
   }
@@ -321,6 +341,7 @@ async function runRead(e) {
     if (d.mockEnabled()) {
       const ms = Number(process.env.WORCA_MOCK_READ_MS) || 0;   // the browser proof sees "Reading N files…" (D17)
       if (ms > 0) await new Promise((r) => setTimeout(r, ms));
+      mockSkip(e, row);
       finishRead(e, { summary: mockSummary(row.name), costUsd: 0, model: null });
       return;
     }
@@ -337,7 +358,7 @@ async function runRead(e) {
     if (failure.code === 'FAILED') console.error(`requirements: reading file ${e.id} failed:`, message(err));
     tx(() => {
       if (now && !e.cancelled) updateAttachment(now.id, { status: 'failed', error: { ...failure, at: iso() } });
-      bookWrites(e, cost, model, 'read', e.cancelled ? null : now);
+      bookWrites(e, cost, model, 'read', e.cancelled ? null : now, { engine: err?.engine, notices: err?.notices });
     });
   }
 }
@@ -373,6 +394,7 @@ async function runAsk(e) {
       const ms = Number(process.env.WORCA_MOCK_READ_MS) || 0;   // the browser proof sees "Asking…" too (D17)
       if (ms > 0) await new Promise((r) => setTimeout(r, ms));
       if (e.cancelled) return;
+      mockSkip(e, row);
       finishAsk(e, { answer: mockAnswer(e.question), costUsd: 0, model: null });
       return;
     }
@@ -384,7 +406,7 @@ async function runAsk(e) {
   } catch (err) {
     const failure = failureOf(err);
     if (failure.code === 'FAILED') console.error(`requirements: asking about file ${e.id} failed:`, message(err));
-    failAsk(e, failure, cost || Number(err?.costUsd) || 0, model || err?.model || null);
+    failAsk(e, failure, cost || Number(err?.costUsd) || 0, model || err?.model || null, { via: { engine: err?.engine, notices: err?.notices } });
   }
 }
 
@@ -392,11 +414,11 @@ async function runAsk(e) {
 // a failed read's error stays until the file is read again.
 const askError = (row) => !row.error || row.error.job === 'ask';
 
-function failAsk(e, failure, costUsd, model, { book = true } = {}) {
+function failAsk(e, failure, costUsd, model, { book = true, via = {} } = {}) {
   tx(() => {
     const now = e.cancelled ? null : getAttachment(e.id);
     if (now && askError(now)) updateAttachment(now.id, { error: { ...failure, at: iso(), job: 'ask', question: e.question } });
-    if (book) bookWrites(e, costUsd, model, 'asked', now);
+    if (book) bookWrites(e, costUsd, model, 'asked', now, via);
   });
 }
 

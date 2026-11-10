@@ -10,7 +10,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { prepare } from '../src/core/db.mjs';
 import { createFeature, getFeature, listTurns, updateFeature, setContext, listHelperMessages, listAttachments, getBrief, beginBrief, saveBriefResult } from '../src/core/requirements/store.mjs';
 import { sendMessage } from '../src/core/requirements/helper.mjs';
-import { addAttachments, readsSettled, queueSkippedReads } from '../src/core/requirements/attachment-job.mjs';
+import { addAttachments, readsSettled, queueSkippedReads, askAttachment } from '../src/core/requirements/attachment-job.mjs';
 import { makeBrief, briefSettled } from '../src/core/requirements/brief-job.mjs';
 import { BRIEF_SYSTEM_PROMPT, briefSystemPrompt } from '../src/core/requirements/brief.mjs';
 import { startOrientation, settled } from '../src/core/requirements/interview.mjs';
@@ -328,4 +328,66 @@ test("a brief document is read with the brief's own engine; a Claude brief's doc
   addAttachments(owner, [textFile('other.md', 'More.')], { by: 'po' }, deps(r2));
   await readsSettled(owner);
   assert.equal(r2.calls[0].engine, undefined);
+});
+
+test('a brief document is read on the brief\'s harness even without a stored model; a Claude brief reads with its stored model', async () => {
+  const KEY = 'brief-9c0004';
+  const b = beginBrief('project', KEY, { by: 'po' });
+  saveBriefResult(b.id, { model: null, engine: 'codex' }, { by: 'po' });
+  const owner = { type: 'brief', id: b.id, scopeType: 'project', scopeKey: KEY };
+  const cat = { catalog: async () => ({ defaults: { codex: { model: 'gpt-x' } }, models: [{ id: 'gpt-x', harnesses: ['codex'], efforts: [] }] }) };
+  const r = fakeRunner([{ summary: 'Policy.' }]);
+  addAttachments(owner, [textFile('policy.md', 'Refunds in 14 days.')], { by: 'po' }, deps(r, cat));
+  await readsSettled(owner);
+  assert.equal(r.calls[0].engine, 'codex');
+  assert.equal(r.calls[0].model, 'gpt-x');
+  saveBriefResult(b.id, { model: 'claude-sonnet-5', engine: 'claude' }, { by: 'po' });
+  const r2 = fakeRunner([{ summary: 'More.' }]);
+  addAttachments(owner, [textFile('more.md', 'More.')], { by: 'po' }, deps(r2, { listModels: async () => [{ id: 'claude-sonnet-5' }, { id: 'claude-opus-5-5' }] }));
+  await readsSettled(owner);
+  assert.equal(r2.calls[0].engine, undefined);
+  assert.equal(r2.calls[0].model, 'claude-sonnet-5');
+});
+
+test('mock mode skips a PNG on a Codex feature with the same words, and the failed turn carries the engine', async () => {
+  const f = featureOn('codex');
+  const r = fakeRunner([]);
+  addAttachments(own(f), [pngFile()], { by: 'po' }, deps(r, { mockEnabled: () => true }));
+  await readsSettled(own(f));
+  const row = listAttachments('feature', f.seq)[0];
+  assert.equal(row.status, 'failed');
+  assert.equal(row.error.code, 'SKIPPED_ENGINE');
+  assert.equal(row.error.message, 'screen.png skipped: Codex gets files as text only.');
+  assert.equal(listTurns(f.seq).filter((t) => t.kind === 'file').at(-1).engine, 'codex');
+});
+
+test('an ask about a skipped PNG on a Codex feature makes no call', async () => {
+  const f = featureOn('codex');
+  const r = fakeRunner([]);
+  addAttachments(own(f), [pngFile()], { by: 'po' }, deps(r));
+  await readsSettled(own(f));
+  const row = listAttachments('feature', f.seq)[0];
+  try { askAttachment(own(f), row.id, 'What is on it?', { by: 'po' }, deps(r)); } catch { /* refused up front is fine too */ }
+  await readsSettled(own(f));
+  assert.equal(r.calls.length, 0);
+});
+
+test('a brief whose harness is not signed in fails with the NOT_READY sentence: no call, nothing booked', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'req-9c-brief-nr-'));
+  const g = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf8' });
+  g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't'); g('config', 'commit.gpgsign', 'false');
+  writeFileSync(join(repo, 'README.md'), 'hi'); g('add', '.'); g('commit', '-q', '-m', 'init');
+  const KEY = 'brief-9c0005';
+  setContext('project', KEY, { lookAtCode: true });
+  const r = fakeRunner([]);
+  const d = deps(r, { listProjects: async () => [{ key: KEY, name: 'Shop', path: repo, exists: true }],
+    openLook: async () => ({ cwd: repo, commit: 'abc', close: async () => {} }), budget: () => ({ blocked: false }),
+    catalog: async () => ({ models: [{ id: 'gpt-x', harnesses: ['codex'], efforts: [] }] }), gate: async () => ({ message: 'Codex is not signed in' }) });
+  const { brief, job } = await makeBrief('project', KEY, { by: 'po', choice: { engine: 'codex', model: 'gpt-x', effort: null } }, d);
+  await job; await briefSettled('project', KEY);
+  assert.equal(r.calls.length, 0);
+  const b = getBrief('project', KEY);
+  assert.equal(b.error.code, 'NOT_READY');
+  assert.equal(b.error.message, "Codex isn't signed in. Sign in, or change the model.");
+  assert.equal(prepare('SELECT count(*) AS n FROM req_cost_ledger WHERE brief_id = ?').get(brief.id).n, 0);
 });
