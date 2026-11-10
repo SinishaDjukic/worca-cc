@@ -35050,9 +35050,8 @@ function runsRowMenuItems(r, more) {
       onSelect: () => openAddToGroup(more, runsUi.sel.has(r.key) ? pipelineTargets(selectedTargets()) : [{ pipelineId: r.pipelineId, title: r.title }], r.key) }] : []),
     ...(adv && adhoc ? [{ sep: true }, { label: 'Remove from group', key: 'leave-group', hint: k('shift', 'G'), onSelect: () => removeRunFromGroup(r) }] : []),
     // A workspace run with PRs in several repositories opens each one, as the run page's View PRs ▾ does.
-    ...(prs.length ? [
+    ...(prs.length ? [{ sep: true },
       ...prs.map((p) => ({ label: p.repo ? `${viewPrLabel(p.number)} · ${p.repo}` : viewPrLabel(p.number), onSelect: () => window.open(p.url, '_blank', 'noopener') })),
-      { label: 'Copy PR links', onSelect: () => copyPrLinks(prs.map((p) => p.url)) },
     ] : prUrl ? [{ label: VIEW_PR_LABEL, onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
     ...(r.groupKind === 'feature' ? [{ label: 'Open feature', onSelect: () => { location.hash = r.href; } }] : []),
   ];
@@ -37480,13 +37479,10 @@ function openGroupPrMenu(row, anchor) {
           notify(rs.every((r) => r && r.ok) ? { tone: 'ok', title: 'Watching every PR' } : { tone: 'err', title: 'Could not watch every PR' });
         },
         onCopyAll: async (all) => {
-          await copyPrLinks(all.map((p) => p.url));
+          try { await navigator.clipboard.writeText(all.map((p) => p.url).join('\n')); notify({ tone: 'ok', title: 'PR links copied' }); }
+          catch { notify({ tone: 'err', title: 'Could not copy the links' }); }
         },
       } : {}) }) });
-}
-async function copyPrLinks(urls) {
-  try { await navigator.clipboard.writeText(urls.join('\n')); notify({ tone: 'ok', title: 'PR links copied' }); }
-  catch { notify({ tone: 'err', title: 'Could not copy the links' }); }
 }
 async function copyPrLink(url) {
   try { await navigator.clipboard.writeText(url); notify({ tone: 'ok', title: 'PR link copied' }); }

@@ -182,22 +182,30 @@ export function memberPrsOf(x) {
 }
 
 /** The repository a PR url names: the path segment before its pull / pullrequest / merge_requests part
- *  (GitHub, GitLab, Azure DevOps, Bitbucket). A member PR object carries no member name. '' when the url has none. */
-export function prRepoOf(url) {
+ *  (GitHub, GitLab, Azure DevOps, Bitbucket). A member PR object carries no member name. '' when the url has none.
+ *  `owner`: "owner/repo", the segment before the repo (Azure DevOps' _git and Bitbucket Server's repos skipped). */
+export function prRepoOf(url, { owner = false } = {}) {
   let segs;
   try { segs = new URL(String(url || '')).pathname.split('/').filter(Boolean); } catch { return ''; }
   const i = segs.findIndex((s) => /^(pull|pulls|pullrequest|pull-requests|merge_requests)$/.test(s));
   const before = i > 0 ? segs.slice(0, i).filter((s) => s !== '-') : [];
-  return before.length ? before[before.length - 1] : '';
+  if (!before.length) return '';
+  const repo = before[before.length - 1];
+  const up = owner ? before.slice(0, -1).filter((s) => s !== '_git' && s !== 'repos') : [];
+  return up.length ? `${up[up.length - 1]}/${repo}` : repo;
 }
 
 /** The PRs a run's row ⋯ menu offers to open: one { number, url, repo } per member PR with a url when a workspace run has
- *  several; [] otherwise (the menu keeps its single View PR from the row's own PR). */
+ *  several; [] otherwise (the menu keeps its single View PR from the row's own PR). Two repos with one name (in different
+ *  owners) are told apart as "owner/repo". */
 export function rowMenuPrs(row) {
   // A group member row has no memberPrs of its own: its raw run carries them.
   const own = memberPrsOf(row);
   const prs = (own.length || !row || !row.run ? own : memberPrsOf(row.run)).filter((p) => p && p.url);
-  return prs.length > 1 ? prs.map((p) => ({ number: p.number ?? null, url: p.url, repo: prRepoOf(p.url) })) : [];
+  if (prs.length < 2) return [];
+  const names = prs.map((p) => prRepoOf(p.url));
+  const twice = (n) => !!n && names.indexOf(n) !== names.lastIndexOf(n);
+  return prs.map((p, i) => ({ number: p.number ?? null, url: p.url, repo: twice(names[i]) ? prRepoOf(p.url, { owner: true }) : names[i] }));
 }
 
 /** A run (History row, a row's raw run, a member's run) that a finished run's PR or Watch PR raises to Needs you
