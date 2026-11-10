@@ -187,16 +187,19 @@ function changesBlock(changes) {
 /**
  * The run's commit message. Paragraphs, in order, each dropped when empty: `worca: <title>`, the summary
  * wrapped at 72 columns, the staged file stats, and the `Worca-Run: <id>` trailer (always last, so git's
- * trailer parser reads it).
- * @param {{title?:string, runId?:string|null, summary?:string, changes?:ReturnType<typeof parseStagedChanges>|null}} o
+ * trailer parser reads it). `prefix: false` drops the "worca: " in front of the title and `runTrailer: false`
+ * drops the trailer (Settings › Runs › Commit message, settings.mjs commitMessageSettings).
+ * @param {{title?:string, runId?:string|null, summary?:string, changes?:ReturnType<typeof parseStagedChanges>|null,
+ *          prefix?:boolean, runTrailer?:boolean}} o
  */
-export function buildRunCommitMessage({ title = '', runId = null, summary = '', changes = null } = {}) {
-  const paras = [`worca: ${oneLine(title) || 'changes'}`];
+export function buildRunCommitMessage({ title = '', runId = null, summary = '', changes = null, prefix = true, runTrailer = true } = {}) {
+  const head = oneLine(title) || 'changes';
+  const paras = [prefix ? `worca: ${head}` : head];
   const body = wrapText(summary);
   if (body) paras.push(body);
   const stats = changesBlock(changes);
   if (stats) paras.push(stats);
-  const id = oneLine(runId);
+  const id = runTrailer ? oneLine(runId) : '';
   if (id) paras.push(`${RUN_TRAILER}: ${id}`);
   return paras.join('\n\n');
 }

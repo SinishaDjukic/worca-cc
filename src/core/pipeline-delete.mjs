@@ -36,6 +36,7 @@ import {
 import { branchExists, anyPrHost, findPrForBranch } from './git-info.mjs';
 import { retainedWorkPatchName } from './results.mjs';
 import { buildRunCommitMessage, readCommitSummary } from './commit-message.mjs';
+import { commitMessageSettings } from './settings.mjs';
 import { deleteCommentsForRun } from './diff-comments.mjs';
 import { byActor } from './identity.mjs';
 import { workModeOfRow } from './project-kind.mjs';
@@ -669,7 +670,8 @@ async function applyRetainedUnderLock({ storeKey, id, projectDir, by }) {
   // member, each member's own staged stats, and the Worca-Run trailer. Teardown: title || baseName || 'changes'.
   const summary = await readCommitSummary({ pipelineId: row.id, pipelineDir: runDir, storeRoot: projectStorePath(storeKey) });
   const title = row.title || row.base_name || 'changes';
-  const message = (changes) => buildRunCommitMessage({ title, runId: row.id, summary, changes });
+  const style = commitMessageSettings();         // Settings › Runs › Commit message: the prefix and the trailer
+  const message = (changes) => buildRunCommitMessage({ title, runId: row.id, summary, changes, ...style });
   const at = new Date().toISOString();
   const outcome = new Map();                     // projectKey -> { sha, hooksBypassed, mergeBack }
   const released = [];

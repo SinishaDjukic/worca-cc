@@ -164,7 +164,7 @@ import { runNightAnalysis, readMemoryText } from './night/analysis.mjs';
 import { resolveDeciderPair } from './night/decider-model.mjs';
 import { writeNightDecision, countNightDecisions, nightCounts, nightGateCycles, nightSpendSinceUsd } from './night/store.mjs';
 import { NIGHT_ACTOR, NIGHT_TOGGLES, nightNeverDecides } from './night/config.mjs';
-import { nightModeToggleFor, nightModeHereSinceFor, personAwayStatus, awayPerPerson, awayPersonKey, effectiveNetworkWait, runLimits } from './settings.mjs';
+import { nightModeToggleFor, nightModeHereSinceFor, personAwayStatus, awayPerPerson, awayPersonKey, effectiveNetworkWait, runLimits, commitMessageSettings } from './settings.mjs';
 import { acquireRunSlot } from './run-slots.mjs';
 import { seedNodeModules } from './dep-seed.mjs';
 import { probeTargetForModel, probeReachable, hostOf } from './upstream-probe.mjs';
@@ -5918,10 +5918,11 @@ export class RunHarness extends EventEmitter {
     }
     // The run's commit message (commit-message.mjs, #1143): no model call; a summary shared by every member,
     // this commit's own staged stats, and a Worca-Run trailer. Apply to branch rebuilds the same message.
+    // The "worca:" prefix and the trailer follow Settings › Runs › Commit message.
     const title = this.state.title || this.baseName || 'changes';
     const changes = await readStagedChanges((args) => this._git(args, gitOpts));
     const summary = this.pipeline ? await this._commitSummary() : '';
-    const msg = buildRunCommitMessage({ title, runId: this.pipeline?.id || null, summary, changes });
+    const msg = buildRunCommitMessage({ title, runId: this.pipeline?.id || null, summary, changes, ...commitMessageSettings() });
     // Plain commit first (uses the repo's configured identity); fall back to a
     // local identity so a repo with no user.name/email still commits — mirrors
     // _ensureGitCheckpoint's belt-and-braces.
