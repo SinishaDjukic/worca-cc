@@ -46,7 +46,7 @@ function boot(s = side(), { patches = new Map([[12, PATCH]]) } = {}) {
 
 test('board 36: the start in the header, what changed per version, the picked file\'s diff', () => {
   const { root, calls } = boot();
-  assert.equal(root.querySelector('.wft-pg-head .hint').textContent, 'v2 passed 3 of 3 tries · v3 draft passed 1 of 3 · both started from main at abc1234 · 28 Oct');
+  assert.equal(root.querySelector('.wft-pg-head .hint').textContent, 'v2 passed 3 of 3 tries · v3 draft passed 1 of 3 · both started from main · 28 Oct');   // U-T14 (F26): the commit id is under "For developers" only
   assert.deepEqual(texts(root, '.wft-chgcard h2'), ['What changed in the project · v2', 'What changed in the project · v3 draft']);
   assert.deepEqual(texts(root, '.wft-chg-head .hint'), ['3 changed', '1 added, 2 changed, 1 removed']);
   const b = root.querySelectorAll('.wft-chgcard')[1];
@@ -176,7 +176,7 @@ test('P7: a project try\'s "What it wrote" card only when it left a result; Try 
   const once = side({ run: { id: 5, kind: 'once' }, labels: { a: null, b: 'Your draft' }, row: { result: null, a: { passed: 0, total: 0 }, b: { passed: 1, total: 1 } },
     tries: [{ n: 1, a: null, b: A }] });
   const { root: r1 } = paint(once);
-  assert.equal(r1.querySelector('.wft-pg-head .hint').textContent, 'Your draft passed 1 of 1 try · started from main at abc1234 · 28 Oct');
+  assert.equal(r1.querySelector('.wft-pg-head .hint').textContent, 'Your draft passed 1 of 1 try · started from main · 28 Oct');
   assert.deepEqual(texts(r1, '.wft-chgcard h2'), ['What changed in the project · Your draft']);
   assert.deepEqual(texts(r1, '.wft-dev-facts > span').slice(2), ['Your draft: 3 files, 14 lines added, 3 removed']);
   assert.equal(paint({ ...once, tries: [{ n: 1, a: null, b: B }] }).root.querySelector('.wft-why-cmd span').textContent,

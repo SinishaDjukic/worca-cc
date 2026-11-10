@@ -324,3 +324,17 @@ test('U-T14 (F34, board UfMockNote): tries that replaced a "Good" past mark and 
   assert.equal(cells({ passed: 3, total: 3, stale: false, past: null, pastGood: true }).parentElement.querySelector('.wft-ask'), null);
   assert.equal(cells({ passed: 0, total: 3, stale: false, past: null }).parentElement.querySelector('.wft-ask'), null);
 });
+
+test('U-T14 (F35): testsAddress names the Tests page that shows, and falls back to #workflows', async () => {
+  const { testsAddress } = await import('../ui/public/workflows/tests-view.mjs');
+  const on = { workflowId: 'wf_g', shown: true };
+  assert.equal(testsAddress({ ...on, view: 'list' }), '#workflows/wf_g/tests');
+  assert.equal(testsAddress({ ...on, view: 'progress', runId: 7 }), '#workflows/wf_g/tests/run/7');
+  assert.equal(testsAddress({ ...on, view: 'compare', runId: 7 }), '#workflows/wf_g/tests/run/7');
+  assert.equal(testsAddress({ ...on, view: 'detail', runId: 7, exampleId: 4 }), '#workflows/wf_g/tests/run/7');
+  assert.equal(testsAddress({ ...on, view: 'editor', exampleId: 4 }), '#workflows/wf_g/tests/4');
+  assert.equal(testsAddress({ ...on, view: 'editor', exampleId: null }), '#workflows/wf_g/tests', 'a new example has no id yet');
+  assert.equal(testsAddress({ ...on, view: 'list', runId: 7 }), '#workflows/wf_g/tests', 'a stale run id is not named on the list');
+  assert.equal(testsAddress({ workflowId: 'wf_g', shown: false, view: 'list' }), '#workflows');
+  assert.equal(testsAddress({ workflowId: null, shown: true, view: 'list' }), '#workflows', 'an unsaved canvas');
+});

@@ -41,6 +41,7 @@
 .wft-kind{background:var(--field);color:var(--ink-2);font-size:var(--fs-caption);font-weight:600;padding:3px 9px;border-radius:var(--r-xs);white-space:nowrap;}
 .wft-res{display:inline-flex;align-items:center;gap:7px;font-size:var(--fs-meta);color:var(--ink);}
 .wft-res.is-bad{color:var(--red-ink-strong);}
+.wft-dev-commit{display:block;font-size:var(--fs-caption);color:var(--ink-2);}
 .wft-cell{display:flex;flex-direction:column;gap:3px;min-width:0;}
 .wft-ask{font-size:var(--fs-caption);line-height:1.4;color:var(--amber-ink-strong);}
 .wft-mock-note{display:flex;align-items:flex-start;gap:7px;margin:0;font-size:var(--fs-meta);color:var(--ink-2);}

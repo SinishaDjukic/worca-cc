@@ -104,16 +104,21 @@ test('M5 and M8: "What was checked" sets the command in code; one try is "1 try"
   assert.match(root.querySelector('.wft-pg-head .hint').textContent, /^v1 passed 1 of 1 try · v3 draft passed 1 of 1/);
 });
 
-test('M7: one helper writes "ref at sha · date" (bold ref where asked); the four views use it', () => {
+test('M7 (U-T14, F26): one helper writes "branch · date · "subject"" (bold branch where asked), the commit id only for developers; the four views use it', () => {
   const { window } = new JSDOM('<!doctype html><body></body>');
   const doc = window.document;
   const plain = startInto(doc, doc.createElement('span'), { ref: 'main', short: 'abc1234', at: 'x' }, () => '28 Oct');
-  assert.equal(plain.textContent, 'main at abc1234 · 28 Oct');
-  assert.equal(plain.querySelector('.code').textContent, 'abc1234');
+  assert.equal(plain.textContent, 'main · 28 Oct');
+  assert.equal(plain.querySelector('.code'), null);
   assert.equal(plain.querySelector('b'), null);
+  const said = startInto(doc, doc.createElement('span'), { ref: 'main', short: 'abc1234', at: 'x', subject: 'Fix the date filter' }, () => '28 Oct');
+  assert.equal(said.textContent, 'main · 28 Oct · "Fix the date filter"');
+  const dev = startInto(doc, doc.createElement('span'), { ref: 'main', short: 'abc1234', at: 'x', subject: 'Fix the date filter' }, () => '28 Oct', { dev: true });
+  assert.equal(dev.textContent, 'main at abc1234 · 28 Oct', 'For developers: the commit id, no subject');
+  assert.equal(dev.querySelector('.code').textContent, 'abc1234');
   const bold = startInto(doc, doc.createElement('span'), { ref: null, short: 'abc1234', at: null }, () => '28 Oct', { bold: true });
-  assert.equal(bold.textContent, 'abc1234 at abc1234', 'no date when the start has none');
-  assert.equal(bold.querySelector('b').textContent, 'abc1234');
+  assert.equal(bold.textContent, 'a commit', 'no branch and no date: never the commit id');
+  assert.equal(bold.querySelector('b').textContent, 'a commit');
   for (const f of ['example-editor.mjs', 'test-compare.mjs', 'test-dialogs.mjs', 'test-progress.mjs']) {
     const src = read(`../ui/public/workflows/${f}`);
     assert.ok(/startInto\(/.test(src), `${f} uses the helper`);

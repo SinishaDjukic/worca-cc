@@ -163,6 +163,8 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
     const p = service.progressOf(wid(req), num(req.params.run, 'test'), { costOf: runner.costOf, phaseOf: runner.phaseOf,
       beforeNowOf: runner.beforeNowOf, stoppingOf: runner.stoppingOf });
     if (p.project) p.project.disk = await service.progressDisk(wid(req), p.run, { diskOf: runner.diskOf });
+    const st = p.project && p.project.phases && p.project.phases.start;
+    if (st) st.subject = await service.subjectOfStart(st);   // F26
     if (p.project && p.project.setupStop) p.project.setupStop.edited = await service.progressEdited(wid(req), p.run);
     res.json(p);
   });

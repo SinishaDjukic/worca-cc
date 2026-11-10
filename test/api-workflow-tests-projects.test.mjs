@@ -117,7 +117,14 @@ test('an example with a project: the overview says where it starts; drift; Start
   const memo = new Map();
   const [x1, x2] = await Promise.all([1, 2].map(() => service.projectView(repinned.body.example.project, { behindMemo: memo })));
   assert.deepEqual([x1.behind, x2.behind, memo.size], [0, 0, 1]);
+  // U-T14 (F26): the start's commit subject is read live (read only); a start that cannot be read has none, never an error.
+  assert.equal(x1.subject, 'later again');
+  assert.equal(gone.subject, null, 'no folder to read: no subject');
+  assert.equal(await service.projectView({ ...repinned.body.example.project, startSha: 'f'.repeat(40) }).then((v) => v.subject), null, 'an unknown commit: no subject');
+  const branches = (await call('GET', `/api/workflow-tests/projects/${key}/branches`)).body.branches;
+  assert.equal(branches.find((b) => b.current).subject, 'later again');
   const listed = await service.projectsForTests();
+  assert.equal(listed.projects.find((x) => x.key === key).current.subject, 'later again');
   const ps = (await import('../src/core/projects.mjs'));
   assert.deepEqual(listed.projects.map((x) => x.key), (await ps.listProjects()).map((x) => x.key), 'read 4 at a time, in the registry\'s order');
 });
@@ -209,6 +216,7 @@ test('a whole project test: the plan\'s disk, the progress phases, then what cha
   assert.deepEqual(v.wouldHaveSent, [], 'the mock pushed nothing');
   assert.equal(s.nothingPushed, true);
   assert.equal(s.start.ref, 'main');
+  assert.equal(git(real, 'show', '-s', '--format=%s', s.start.sha), s.start.subject, 'U-T14 (F26): the side by side reads the subject of the start commit live');
   const ch = await call('GET', `${WF}/runs/${runId}/tries/${v.tryId}/changes`);
   assert.match(ch.body.patch, /src\/feature\.mjs/);
   assert.equal(ch.body.cut, false);
@@ -231,6 +239,7 @@ test('a past project run: it starts where the run started; a Folder run is refus
   const { pipelineId } = await settled(out.body.runId);
   const past = (await call('GET', `/api/workflow-tests/past-run/${pipelineId}`)).body;
   assert.deepEqual([past.testable, past.project.key, past.project.startRef, past.project.name, past.project.setupCmd], [true, key, 'main', 'tickets', 'node -e "0"']);
+  assert.equal(past.project.subject, git(real, 'show', '-s', '--format=%s', past.project.startSha), 'U-T14 (F26): the subject of the start commit, read live');
   const o = (await call('GET', WF)).body;
   const listed = o.pastRuns.find((x) => x.pipelineId === pipelineId);
   assert.deepEqual([listed.project, listed.refusal], ['tickets', null]);
@@ -274,6 +283,9 @@ test('progress (board 35): a running project try shows its phase; an example wit
   assert.deepEqual(asked, [tp.id], 'an example without a project is never asked for its phase');
   assert.deepEqual([p.project.phases.exampleName, p.project.phases.phase, p.project.phases.start.ref, p.project.phases.start.short.length,
     p.project.phases.setupCmd, p.project.disk, p.project.setupStop], ['Ticket 600', 'setup', 'main', 7, 'npm ci', null, null]);
+  const st = p.project.phases.start;   // U-T14 (F26): the route fills the subject (an async, read only git call) from the start's key and commit
+  assert.equal(await service.subjectOfStart(st), git(real, 'show', '-s', '--format=%s', st.sha));
+  assert.equal(await service.subjectOfStart({ key: 'nope-00000000', sha: st.sha }), null, 'a project that is gone: no subject, no error');
   const disk = await service.progressDisk('wf_pt', run, { diskOf: () => ({ freeAtStart: null }) });
   assert.ok(disk.needBytes > 0 && disk.inUseBytes === null);
   store.updateTry(tp.id, { status: 'stopped', setup: { cmd: 'npm ci', ok: false, exitCode: 1, timedOut: false, ms: 10, tail: 'npm ERR! missing' } });

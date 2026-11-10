@@ -654,11 +654,11 @@ export async function dirBytes(dir, { maxEntries = 300_000 } = {}) {
 export async function listBranches(projectDir, { max = 50 } = {}) {
   const current = (await git(projectDir, ['symbolic-ref', '-q', '--short', 'HEAD'])).stdout.trim() || null;
   const r = await git(projectDir, ['for-each-ref', '--sort=-committerdate', `--count=${max}`,
-    '--format=%(refname:short)%00%(objectname)%00%(committerdate:iso-strict)', 'refs/heads']);
+    '--format=%(refname:short)%00%(objectname)%00%(committerdate:iso-strict)%00%(contents:subject)', 'refs/heads']);
   if (!r.ok) return [];
   const out = r.stdout.split('\n').filter(Boolean).map((line) => {
-    const [name, sha, at] = line.split('\0');
-    return { name, sha, at: new Date(at).toISOString(), current: name === current };
+    const [name, sha, at, subject] = line.split('\0');
+    return { name, sha, at: new Date(at).toISOString(), subject: subject || null, current: name === current };   // F26: the subject, read only
   });
   return out.sort((x, y) => Number(y.current) - Number(x.current));
 }
@@ -785,7 +785,7 @@ export async function headOf(projectDir) {
   const sha = (await git(projectDir, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'])).stdout.trim();
   if (!sha) return null;
   const branch = (await git(projectDir, ['symbolic-ref', '-q', '--short', 'HEAD'])).stdout.trim() || null;
-  return { branch, sha, at: await commitDate(projectDir, sha) };
+  return { branch, sha, at: await commitDate(projectDir, sha), subject: await commitSubject(projectDir, sha) };
 }
 
 // A commit id (a run's branch record or a stored pin): never an option or a ref expression handed to git.
@@ -801,6 +801,13 @@ export async function remoteUrl(projectDir, name) {
   if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/.test(name)) return null;   // never an option
   const r = await git(projectDir, ['remote', 'get-url', name]);
   return r.ok ? r.stdout.trim().split(/\r?\n/)[0] || null : null;
+}
+
+/** F26: a commit's subject line (`git show -s --format=%s`), or null when it cannot be read. Read only; never throws. */
+export async function commitSubject(projectDir, sha) {
+  if (!isSha(sha)) return null;
+  const r = await git(projectDir, ['show', '-s', '--format=%s', sha]);
+  return r.ok && r.stdout.trim() ? r.stdout.trim().split(/\r?\n/)[0].slice(0, 200) : null;
 }
 
 /** A commit's committer date as ISO, or null. Read only. */

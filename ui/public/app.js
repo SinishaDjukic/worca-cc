@@ -223,7 +223,7 @@ import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
 import { createLibrary, folderLabel, folderKeys } from './workflows/library.mjs';
 import { createChatDock } from './workflows/chat-dock.mjs';
 import { openSaveVersionDialog, openUseVersionDialog, statusText } from './workflows/version-dialogs.mjs';
-import { renderTestsPage } from './workflows/tests-view.mjs';
+import { renderTestsPage, testsAddress } from './workflows/tests-view.mjs';
 import { sentence as wftSentence } from './workflows/test-ui.mjs';
 import { renderExampleEditor, BLANK_EXAMPLE } from './workflows/example-editor.mjs';
 import { SAVE_FIRST_TEXT, CHANGES_NOT_READ_TITLE, NO_DIFF_TEXT, PATCH_CUT_TEXT } from '../../src/shared/workflow-tests/project-text.mjs';
@@ -3614,9 +3614,11 @@ function wfvShowPage(page) {
     gvComposer?.select(null);
     els.tests?.focus();
     wft.view = 'list';
+    wftSyncHash();
     void wftRefresh();
     return;
   }
+  wftSyncHash();
   if (page !== 'versions') return;
   // The canvas keys skip only targets inside [data-canvas-keys="off"]: nothing stays selected on the hidden canvas,
   // and the focus sits on the page (tabindex -1), so a click on its text never hands Delete or the arrows to <body>.
@@ -3764,15 +3766,18 @@ async function wftRefresh() {
   if (!flagOn('workflowTests') || !id) {
     wft = { ...WFT_EMPTY };
     renderTestsPage(els.tests, null, wftListActions(), { doc: document, unsaved: true, error: 'Save the workflow first: tests belong to a saved workflow.' });   // C15, F31
+    wftSyncHash();
     return;
   }
   if (wft.workflowId !== id) wft = { ...WFT_EMPTY, workflowId: id };
+  wftSyncHash();
   if (wft.view === 'editor') return;
   const view = wft.view;
   const page = `${wft.runId}|${wft.exampleId}`;                    // which test and example the view shows
   if (view === 'list' && !wft.overview) renderTestsPage(els.tests, null, wftListActions(), { doc: document, loading: true });
   const r = view === 'list' ? await wftCall('GET', wftBase(id)) : await wftReadView(id);
   if (wftWorkflowId() !== id || wft.view !== view || `${wft.runId}|${wft.exampleId}` !== page) return;   // another workflow, view or test meanwhile
+  if (!r.ok && r.status === 404 && view !== 'list') { wftShow('list', { overview: null }); return; }   // F35: an address naming a test that is gone: the list
   if (view === 'list') wft.overview = r.ok ? r.data : null; else wft.data = r.ok ? r.data : null;
   wft.error = r.ok ? null : r.error;
   wftRender();
@@ -3947,7 +3952,15 @@ function wftRender() {
   renderTestsPage(els.tests, wft.overview, wftListActions(), { doc: document, storage: wftStorage(), error: wft.error, dateText: wftDate, mock: serverMock.on });
 }
 // Final review M6: the opened diffs (up to 5 MB each) are let go on every move; the side by side reads them again.
-function wftShow(view, extra = {}) { wftPatchCut.clear(); wft = { ...wft, view, data: null, patches: null, ...extra }; void wftRefresh(); }
+function wftShow(view, extra = {}) { wftPatchCut.clear(); wft = { ...wft, view, data: null, patches: null, ...extra }; wftSyncHash(); void wftRefresh(); }
+/** F35: the address names the Tests page that shows, so a reload comes back to it. replaceState: no history entry, Back and Forward keep their meaning. */
+function wftSyncHash() {
+  const els = wfvEls();
+  const shown = !!(els.tests && !els.tests.hidden) && flagOn('workflowTests');
+  const h = testsAddress({ workflowId: wftWorkflowId(), shown, view: wft.view, runId: wft.runId, exampleId: wft.example ? wft.example.id : null });
+  if (window.location.hash === h || (!shown && !/^#workflows\/[A-Za-z0-9_-]+\/tests(\/|$)/.test(window.location.hash))) return;
+  try { window.history.replaceState(null, '', h); } catch { /* sandboxed */ }
+}
 
 function wftListActions() {
   return {
@@ -4087,6 +4100,7 @@ async function wftOpenExample(exampleId) {
   if (stale()) return;
   wft = { ...wft, workflowId: id, view: 'editor', example, scripts, ...(o.ok ? { overview: o.data } : {}),
     perTryUsd: plan.ok && plan.data.b ? plan.data.b.perTryUsd : null, projects: pj.ok ? pj.data.projects : null };
+  wftSyncHash();
   wftRender();
 }
 /** Save the session's example: PUT when it has an id, else POST (and remember the new id). */

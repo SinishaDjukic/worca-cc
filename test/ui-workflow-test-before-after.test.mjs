@@ -228,7 +228,7 @@ test('U3 (board 42): before any try, "What happens in each try" sits under "Befo
   assert.equal(card.previousElementSibling.classList.contains('wft-before-now'), true, 'under "Before the tries"');
   assert.equal(card.querySelector('h2').textContent, 'What happens in each try');
   assert.deepEqual(texts(card, '.wft-ph b'), ['Preparing a copy of the project', 'Running setup', 'Working', 'Checking']);
-  assert.deepEqual(texts(card, '.wft-ph .s'), ['From main at abc1234 · 28 Oct', 'npm ci', 'The workflow does its work', 'The checks run, then the copy is deleted']);
+  assert.deepEqual(texts(card, '.wft-ph .s'), ['From main · 28 Oct', 'npm ci', 'The workflow does its work', 'The checks run, then the copy is deleted']);
   assert.deepEqual([...card.querySelectorAll('.wft-ph')].map((li) => li.className), ['wft-ph', 'wft-ph', 'wft-ph', 'wft-ph'], 'no step done or current');
   assert.equal(card.querySelector('[aria-current]'), null);
   assert.equal(card.querySelectorAll('.sr-only').length, 0, 'nothing said done');
@@ -379,9 +379,9 @@ test('end to end U3: progressOf\'s `before` (the runner\'s beforeNowOf) reaches 
   assert.equal(card.querySelector('.wft-before-now-line').textContent, 'Running npm test on the start point of Ticket 482 · 1 of 1');
   assert.equal(card.querySelector('.wft-before-now-phase').textContent, 'Running setup');
   // Fix round 1 (board 42): no try yet, so the steps come from the plan: the first project example's start point and setup.
-  assert.deepEqual(p.project.phases, { before: true, phase: null, start: { ref: 'main', short: SHA.slice(0, 7), at: AT }, setupCmd: 'npm ci' });
+  assert.deepEqual(p.project.phases, { before: true, phase: null, start: { ref: 'main', short: SHA.slice(0, 7), at: AT, key: 'tickets-1a2b3c4d', sha: SHA }, setupCmd: 'npm ci' });   // U-T14 (F26): key and sha let the route read the subject
   const ph = paintProgress(p).querySelector('.wft-phases');
-  assert.deepEqual(texts(ph, '.wft-ph .s').slice(0, 2), [`From main at ${SHA.slice(0, 7)} · 28 Oct`, 'npm ci']);
+  assert.deepEqual(texts(ph, '.wft-ph .s').slice(0, 2), ['From main · 28 Oct', 'npm ci']);
   assert.equal(ph.querySelector('.is-now'), null);
   await runner.stop(run.id);
   release();

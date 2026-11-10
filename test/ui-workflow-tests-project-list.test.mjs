@@ -35,12 +35,12 @@ function boot(o) {
 test('board 38: project examples in the list, the moved-on line, an example left out, the foot', () => {
   const { root } = boot(overview());
   const rows = [...root.querySelectorAll('.wft-row:not(.wft-row-head)')];
-  assert.equal(rows[0].querySelector('.wft-ex > .hint').textContent, 'Request · worca-cc · from abc1234');
-  assert.equal(rows[0].querySelector('.wft-ex > .hint .code').textContent, 'abc1234');
+  assert.equal(rows[0].querySelector('.wft-ex > .hint').textContent, 'Request · worca-cc · from main · 28 Oct');   // U-T14 (F26): no commit id
+  assert.equal(rows[0].querySelector('.wft-ex > .hint .code'), null);
   const moved = rows[0].querySelector('.wft-moved-line');
   assert.deepEqual([moved.querySelector('.badge').textContent, moved.querySelector('.badge').className], ['Moved on', 'badge amber']);
   assert.equal(moved.lastChild.textContent, 'The project has moved on: 14 newer commits on main since this start point.');
-  assert.equal(rows[1].querySelector('.wft-ex > .hint').textContent, 'Request · worca-cc · from e9f2c47 · with changes not committed yet');
+  assert.equal(rows[1].querySelector('.wft-ex > .hint').textContent, 'Request · worca-cc · from main · 28 Oct · with changes not committed yet');
   assert.equal(rows[2].querySelector('.wft-ex > .hint').textContent, 'Request only · no project yet, so it is left out of tests');
   assert.deepEqual(texts(rows[2], '.wft-res'), ['Pick a project first', 'Pick a project first']);
   assert.equal(root.querySelector('.wft-foot-start').textContent, 'Each example keeps its start point. Open an example and pick "Start from the latest" to move it to the newest commit. Both versions are then tried again from there.');
@@ -91,7 +91,7 @@ test('board 38: use a project run as a test example: where it starts, its setup,
   openFromRunDialog({ doc, win: window, past, dateText: () => '28 Oct', onSubmit: async (b) => { sent.push(b); return { ok: true }; } });
   assert.equal(doc.querySelector('.wft-fr-intro').textContent, 'Worca keeps the request and where the run started, so every new version of Fix a bug from a ticket can be tried on exactly the same thing.');
   const box = doc.querySelector('.wft-startbox');
-  assert.deepEqual(texts(box, ':scope > span'), ['Where it starts', 'Starts from where this run started: main at abc1234 · 28 Oct',
+  assert.deepEqual(texts(box, ':scope > span'), ['Where it starts', 'Starts from where this run started: main · 28 Oct',
     "Project: worca-cc · Changes that were not committed: none. Runs always start from a commit. Each try works in Worca's own copy of the project."]);
   assert.equal(box.querySelector('b').textContent, 'main');
   assert.equal(doc.querySelector('#wft-fr-setup').value, 'npm ci');
@@ -114,7 +114,7 @@ test('P33: an example left out for another reason says why in its row, and its c
   const missing = "Worca can't find worca-cc in /code/worca-cc. Move the folder back, or pick where it is now. The start point is kept.";
   const { root } = boot(overview({ examples: [ex(4, 'Ticket 500: slow export', { project: proj({ state: 'missing', behind: null }), ready: false, reason: 'missing', readyText: missing })] }));
   const row = root.querySelector('.wft-row:not(.wft-row-head)');
-  assert.equal(row.querySelector('.wft-ex > .hint').textContent, 'Request · worca-cc · from abc1234');
+  assert.equal(row.querySelector('.wft-ex > .hint').textContent, 'Request · worca-cc · from main · 28 Oct');
   assert.equal(row.querySelector('.wft-left-line').textContent, missing);
   assert.deepEqual(texts(row, '.wft-res'), ["Can't be tried yet", "Can't be tried yet"]);
   assert.deepEqual([...row.querySelectorAll('.wft-res')].map((n) => n.dataset.label), ['v2 · the team uses it', 'v3 draft · yours'], 'each still names its column on a phone');
@@ -200,7 +200,7 @@ test("board 38: a cleared setup sends '' (no setup, Fix 1); the dialog body keep
   openFromRunDialog({ doc, win: window, past, dateText: () => '28 Oct', onSubmit: async (b) => { sent.push(b); return { ok: true }; } });
   const kids = [...doc.querySelector('.mk-dialog-body').children].map((n) => n.className.split(' ')[0]);
   assert.deepEqual(kids.slice(0, 5), ['wft-fr-intro', 'field', 'wft-startbox', 'wft-keep', 'wft-dev']);
-  assert.equal(doc.querySelector('.wft-startbox b').textContent, 'abc1234', 'no branch recorded: the commit');
+  assert.equal(doc.querySelector('.wft-startbox b').textContent, 'a commit', 'no branch recorded: never the commit id (U-T14, F26)');
   assert.equal(doc.querySelector('#wft-fr-setup').value, '');
   click([...doc.querySelectorAll('.mk-dialog button')].find((b) => b.textContent === 'Add example'));
   await tick();
@@ -210,7 +210,7 @@ test("board 38: a cleared setup sends '' (no setup, Fix 1); the dialog body keep
 test('Fix 1: a project example keeps the run it came from and its note after its start point; first use counts the runs it cannot use', () => {
   const { root } = boot(overview({ examples: [ex(1, 'A', { fromAt: '2026-10-28T09:00:00Z', note: 'Worca should ask first', project: proj({ changes: true }) })] }));
   assert.equal(root.querySelector('.wft-ex > .hint').textContent,
-    'Request · worca-cc · from abc1234 · with changes not committed yet · from a run on 28 Oct · Worca should ask first');
+    'Request · worca-cc · from main · 28 Oct · with changes not committed yet · from a run on 28 Oct · Worca should ask first');
   const run = (id, refusal) => ({ pipelineId: id, title: id, at: 'x', status: 'done', files: 0, sameAs: null, project: 'worca-cc', refusal,
     refusalText: refusal ? "This run worked on a Folder project. Folder projects can't be tested yet." : null });
   const some = boot(overview({ examples: [], pastRuns: [run('a', null), run('b', 'folder'), run('c', 'folder')] }));
@@ -218,4 +218,15 @@ test('Fix 1: a project example keeps the run it came from and its note after its
     "Worca found 3 recent runs of Fix a bug from a ticket (2 can't be used yet). Pick different kinds of requests, and include ones where the result was not good: they show what must improve.");
   const fine = boot(overview({ examples: [], pastRuns: [run('a', null)] }));
   assert.match(fine.root.querySelector('.wft-pick > .hint').textContent, /^Worca found 1 recent run of Fix a bug from a ticket\. Pick/);
+});
+
+test('U-T14 (F26): the list and the "use this run" dialog read "{branch} · {date} · "{commit subject}"", never a commit id', () => {
+  const { root } = boot(overview({ examples: [ex(1, 'A', { project: proj({ subject: 'Fix the date filter' }) })] }));
+  assert.equal(root.querySelector('.wft-ex > .hint').textContent, 'Request · worca-cc · from main · 28 Oct · "Fix the date filter"');
+  const { window } = new JSDOM('<!doctype html><body></body>');
+  const past = { pipelineId: 'aaaa0001', workflowId: 'wf_fix', workflowName: 'Fix a bug from a ticket', title: 'Ticket 482', request: 'Ticket 482', files: [], qa: [], use: 2, useLabel: 'v2',
+    testable: true, reason: null, project: { key: 'k', name: 'worca-cc', startSha: 'abc1234'.padEnd(40, '0'), short: 'abc1234', startRef: 'main', startAt: '2026-10-28T09:00:00Z', subject: 'Fix the date filter', setupCmd: null } };
+  openFromRunDialog({ doc: window.document, win: window, past, dateText: () => '28 Oct', onSubmit: async () => ({ ok: true }) });
+  assert.equal(window.document.querySelector('.wft-startbox').textContent.includes('abc1234'), false);
+  assert.match(window.document.querySelector('.wft-startbox').textContent, /Starts from where this run started: main · 28 Oct · "Fix the date filter"/);
 });

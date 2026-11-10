@@ -58,7 +58,7 @@ export function openStartDialog({ doc, win, branches = [], current = null, dateT
     const radio = el(doc, 'input');
     radio.type = 'radio'; radio.name = 'wft-start-ref'; radio.value = b.name; radio.checked = b.name === current;
     const text = el(doc, 'span', 'wft-pick-text');
-    text.append(el(doc, 'b', '', b.name), el(doc, 'span', 'hint', ' · '), el(doc, 'span', 'code', b.short), el(doc, 'span', 'hint', ` · ${dateText(b.at)}`));
+    text.append(el(doc, 'b', '', b.name), el(doc, 'span', 'hint', ` · ${dateText(b.at)}${b.subject ? ` · "${b.subject}"` : ''}`));   // F26: no commit id
     row.append(radio, text);
     list.append(row);
   }
@@ -517,7 +517,8 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   setup.type = 'text'; setup.id = 'wft-ex-setup'; setup.className = 'wft-mono'; setup.maxLength = 4000;
   setup.addEventListener('input', () => { setup.dataset.touched = '1'; });
   const dev = el(doc, 'div', 'wft-dev');
-  dev.append(el(doc, 'span', 'wft-dev-cap', DEV_CAPTION), field(doc, SETUP_LABEL, setup, { id: setup.id, hint: SETUP_HINT }));
+  const devCommit = el(doc, 'span', 'wft-dev-commit');   // F26: the commit id of the start point lives here
+  dev.append(el(doc, 'span', 'wft-dev-cap', DEV_CAPTION), devCommit, field(doc, SETUP_LABEL, setup, { id: setup.id, hint: SETUP_HINT }));
   /** A project no longer registered keeps its name (Task 8: never the internal key while a name is known). */
   const nameOf = (key) => (view && view.key === key && view.name) || (stored && stored.key === key && stored.name) || key;
   const fillProjects = () => {
@@ -532,10 +533,10 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   /** The start point the row shows: a branch picked in Change, the stored pin, else the branch the folder is on (none
    *  when the folder is not on a branch: P22). */
   const startShown = () => {
-    if (pick.branch) return { ref: pick.branch.name, short: pick.branch.short, at: pick.branch.at };
-    if (stored && stored.key === pick.key) return { ref: stored.startRef, short: stored.startSha.slice(0, 7), at: stored.startAt };
+    if (pick.branch) return { ref: pick.branch.name, short: pick.branch.short, at: pick.branch.at, subject: pick.branch.subject };
+    if (stored && stored.key === pick.key) return { ref: stored.startRef, short: stored.startSha.slice(0, 7), at: stored.startAt, subject: view && view.startSha === stored.startSha ? view.subject : null };
     const r = reg(pick.key);
-    return r && r.current && r.current.branch ? { ref: r.current.branch, short: r.current.short, at: r.current.at } : null;
+    return r && r.current && r.current.branch ? { ref: r.current.branch, short: r.current.short, at: r.current.at, subject: r.current.subject } : null;
   };
   /** Board 39: a save or Start from the latest refused because the project keeps files with Git LFS or holds submodules.
    *  Said in the notice only (not also on the error line). Matched on the shared sentences, not on a pattern. */
@@ -618,6 +619,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     const moves = onCurrent && !pick.branch && !!stored && stored.key === pick.key && !stored.changesSha256 && r.current.sha !== stored.startSha;
     changesMoves.textContent = moves ? ` ${changesMovesText(r.current.branch)}` : '';
     dev.hidden = !usableProject;
+    devCommit.textContent = usableProject && st.short ? `Start commit: ${st.short}` : '';
     // The kept pin's setup (null: none, as cleared); a project picked anew starts with the project's own.
     if (usableProject && !setup.dataset.touched) setup.value = stored && stored.key === pick.key ? (stored.setupCmd || '') : (r.setupCmd || '');
     c1Hint.textContent = pick.key ? CARD1_HINT_PROJECT : P2_CARD1_HINT;
@@ -633,7 +635,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
    *  saved ("will be"); Start from the latest is already stored ("is now"). */
   const startMoved = (saved) => {
     const st = startShown();
-    status.textContent = !st ? '' : saved ? startNowText(st.ref || st.short, dateText(st.at)) : startWillBeText(st.ref || st.short, st.short);
+    status.textContent = !st ? '' : saved ? startNowText(st.ref || 'a commit', dateText(st.at)) : startWillBeText(st.ref || 'a commit', dateText(st.at));
     if (changeBtn) changeBtn.focus();
   };
   async function changeStart() {

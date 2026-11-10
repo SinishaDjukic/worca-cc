@@ -2,7 +2,7 @@
 // of examples (canvas board 1) and first use (board 19). 3a (boards 38, 39; D62): every workflow can be tested, so an
 // example's row says which project it works on, where it starts and whether a test leaves it out.
 // Pure DOM: app.js owns data and actions.
-import { el, btn, iconBtn, BUSY_HINT, runStatusBadge, refusedRun, mockNote } from './test-ui.mjs';
+import { el, btn, iconBtn, BUSY_HINT, runStatusBadge, refusedRun, mockNote, startInto } from './test-ui.mjs';
 import { withButton } from '../feedback.mjs';
 import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { agoText, countsText } from '../../../src/shared/workflow-tests/compare.mjs';
@@ -52,6 +52,14 @@ function howCard(doc, { first, onHide }) {
   return c;
 }
 
+/** F35: the address of the Tests page that shows: #workflows/<id>/tests[/run/<runId>|/<exampleId>]. No page shown: #workflows. */
+export function testsAddress({ workflowId, shown, view, runId, exampleId }) {
+  if (!shown || !workflowId) return '#workflows';
+  const base = `#workflows/${workflowId}/tests`;
+  if (['progress', 'compare', 'detail'].includes(view) && Number.isInteger(runId)) return `${base}/run/${runId}`;
+  return view === 'editor' && Number.isInteger(exampleId) ? `${base}/${exampleId}` : base;
+}
+
 /** What follows an example's start: where it came from, its note (Part 2; a project example too, after its start point). */
 const hintTail = (e, dateText) => [e.hasRequest && e.fromAt ? `from a run on ${dateText(e.fromAt)}` : null, e.hasRequest && e.note ? e.note : null]
   .filter(Boolean).map((x) => ` · ${x}`).join('');
@@ -69,7 +77,8 @@ export function exampleHintEl(doc, e, { dateText = defaultDate } = {}) {
   if (e.reason === 'pick-project') { h.textContent = `${hasText(e)}${NO_PROJECT_YET_TAIL}`; return h; }   // final review M3: what it has
   if (!e.project) { h.textContent = exampleHint(e, { dateText }); return h; }
   const lead = !e.hasRequest ? 'No request yet' : e.files && e.files.length ? `Request + ${e.files.join(', ')}` : 'Request';
-  h.append(doc.createTextNode(`${lead} · ${e.project.name} · from `), el(doc, 'span', 'code', e.project.short));
+  h.append(doc.createTextNode(`${lead} · ${e.project.name} · from `));
+  startInto(doc, h, { ref: e.project.startRef, at: e.project.startAt, subject: e.project.subject }, dateText);   // F26: branch, date, subject; no commit id
   if (e.project.changes) h.append(doc.createTextNode(WITH_CHANGES_HINT));
   const tail = hintTail(e, dateText);   // the run it came from and its note, as Part 2 says them
   if (tail) h.append(doc.createTextNode(tail));

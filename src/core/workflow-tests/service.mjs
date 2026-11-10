@@ -25,7 +25,7 @@ import { changedSinceStart } from './changed.mjs';
 import { useGraph, useFingerprint } from './uses.mjs';
 import { testTargetOf, exampleReadiness } from './try-body.mjs';
 import { ensureStartCommit, treeBytes, freeDiskBytes, removeTryCheckout, pinStart, listBranches, behindCount, headOf, commitExists,
-  commitDate, remoteUrl } from './project-copy.mjs';
+  commitDate, commitSubject, remoteUrl } from './project-copy.mjs';
 import { parseRemoteUrl, forgeOf as forgeOfRemote, FORGE_LABEL } from '../forge.mjs';
 import { pushRemoteOf } from './guard-calls.mjs';
 import { leftOutText, folderMissingText, folderProjectText, notRegisteredText, diskRefusalText, diskRefusalOnceText, PAST_RUN_REFUSALS } from '../../shared/workflow-tests/project-text.mjs';
@@ -151,7 +151,7 @@ export async function projectsForTests({ projects = null } = {}) {
   const out = await mapLimit(list, PROJECT_READS_AT_ONCE, async (p) => {
     const head = p.exists && p.vcs === 'git' ? await headOf(p.path) : null;
     return { key: p.key, name: p.name, path: p.path, exists: p.exists, vcs: p.vcs,
-      current: head ? { branch: head.branch, sha: head.sha, short: head.sha.slice(0, 7), at: head.at } : null, setupCmd: setupOf(p.key) };
+      current: head ? { branch: head.branch, sha: head.sha, short: head.sha.slice(0, 7), at: head.at, subject: head.subject } : null, setupCmd: setupOf(p.key) };
   });
   return { projects: out };
 }
@@ -179,6 +179,12 @@ export async function projectBranches(key) {
   return { branches: (await listBranches(reg.path)).map((b) => ({ ...b, short: b.sha.slice(0, 7) })) };
 }
 
+/** F26: the subject of a start's commit, read live from the project's folder (read only); null when it cannot be read. */
+export async function subjectOfStart({ key, sha }) {
+  const { reg } = await projectStateOf({ key });
+  return reg && reg.exists ? commitSubject(reg.path, sha) : null;
+}
+
 /** Board 32 / 38: an example's project as the page shows it, with its drift (D63). The name: projectNameOf. `behindMemo`
  *  (a Map) shares one drift count between the examples of one page read that start at the same point. */
 export async function projectView(project, { projects = null, behindMemo = null } = {}) {
@@ -195,7 +201,7 @@ export async function projectView(project, { projects = null, behindMemo = null 
     }
   }
   return { key: project.key, name: reg ? reg.name : projectNameOf(project.key, { pinName: project.name }), path: reg ? reg.path : null,
-    state, startSha: project.startSha,
+    state, startSha: project.startSha, subject: reg && reg.exists ? await commitSubject(reg.path, project.startSha) : null,   // F26
     short: project.startSha.slice(0, 7), startRef: project.startRef, startAt: project.startAt, changes: !!project.changesSha256,
     setupCmd: project.setupCmd, behind };
 }
@@ -387,7 +393,7 @@ export async function pastRunSummary(pipelineId, { registry = loadAgentRegistry(
   if (start) {
     const projects = await listProjects();
     const reg = projects.find((p) => p.key === row.project_key) || null;
-    project = { key: row.project_key, name: projectNameOf(row.project_key, { projects }), startSha: start.sha, short: start.sha.slice(0, 7), startRef: start.ref,
+    project = { key: row.project_key, name: projectNameOf(row.project_key, { projects }), startSha: start.sha, short: start.sha.slice(0, 7), startRef: start.ref, subject: reg && reg.exists ? await commitSubject(reg.path, start.sha) : null,
       startAt: (reg && reg.exists ? await commitDate(reg.path, start.sha) : null) || row.started_at || null, setupCmd: setupOf(row.project_key) };
   }
   return {
@@ -745,7 +751,7 @@ export function progressOf(workflowId, runId, { costOf = null, phaseOf = null, b
       edited: false };
   }
   const before = beforeNowOf ? beforeNowOf(run.id) : null;
-  const startOf = (ex) => ({ ref: ex.project.startRef, short: ex.project.startSha.slice(0, 7), at: ex.project.startAt });
+  const startOf = (ex) => ({ ref: ex.project.startRef, short: ex.project.startSha.slice(0, 7), at: ex.project.startAt, key: ex.project.key, sha: ex.project.startSha });
   const phases = (() => {
     const ex = firstNow ? store.readExample(workflowId, firstNow.exampleId) : null;
     if (ex && ex.project) {
@@ -878,7 +884,7 @@ export async function sideBySide(workflowId, runId, exampleId, { forgeFor = null
   const m = compareModel({ examples: [{ id: ex.id, name: ex.name }], a: labels.a ? { label: labels.a } : null, b: { label: labels.b }, tries });
   return { run, compareTitle: testTitle(run, ctx, { exampleName: ex.name }), example: { id: ex.id, name: ex.name }, labels, row: m.examples[0],
     connectors: run.connectors, tries: out,
-    start: ex.project ? { ref: ex.project.startRef, short: ex.project.startSha.slice(0, 7), at: ex.project.startAt, setupCmd: ex.project.setupCmd,
+    start: ex.project ? { ref: ex.project.startRef, short: ex.project.startSha.slice(0, 7), at: ex.project.startAt, sha: ex.project.startSha, subject: await subjectOfStart({ key: ex.project.key, sha: ex.project.startSha }), setupCmd: ex.project.setupCmd,
       setupMs: store.avgSetupMs(ex.id, ex.project.startCommit) } : null,
     nothingPushed: !!ex.project,
   };

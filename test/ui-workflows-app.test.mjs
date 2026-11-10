@@ -3118,3 +3118,45 @@ test('#1127: Edit opens your row in place, Use as template opens a built-in (or 
   await go(w, 'workflows/wf_gone');
   assert.match(lastToast(doc).detail, /"wf_gone" was deleted or renamed/);
 });
+
+// ------------------------------------------------- U-T14 (F35): the address names the Tests page that shows
+test('U-T14 (F35): the Tests page writes #workflows/<id>/tests with replaceState (no history entry), the Canvas tab clears it, and an example editor names its example', async () => {
+  const { window: w } = await bootEditor();
+  const before = w.history.length;
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  const histAfterGo = w.history.length;
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="tests"]'));
+  await tick(6);
+  assert.equal(w.location.hash, '#workflows/wf_g/tests');
+  clickEl(w, [...doc.getElementById('wfv-tests').querySelectorAll('.wft-ex-open')].find((b) => b.textContent === 'Bulk invoice export'));
+  await tick(8);
+  assert.equal(w.location.hash, '#workflows/wf_g/tests/4');
+  clickEl(w, editorBtn(doc.getElementById('wfv-tests'), 'Cancel'));
+  await tick(6);
+  assert.equal(w.location.hash, '#workflows/wf_g/tests');
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="canvas"]'));
+  await tick(2);
+  assert.equal(w.location.hash, '#workflows');
+  assert.equal(w.history.length, histAfterGo, 'replaceState adds no history entry: Back and Forward keep their meaning');
+  assert.ok(histAfterGo >= before);
+});
+
+test('U-T14 (F35): a test page writes /run/<id>; a reload on it comes back to it; an unknown run in the address falls back to the list', async () => {
+  const { window: w, log } = await bootCompare({});
+  assert.equal(w.location.hash, '#workflows/wf_g/tests/run/7');
+  void log;
+  const lost = await bootVersions({ extra: (url) => {
+    if (url.endsWith('/api/workflows/wf_g/tests')) return okJson(TESTS_OVERVIEW);
+    if (url.includes('/api/workflows/wf_g/tests/runs/999')) return okJson({ error: 'no test 999' }, 404);
+    return null;
+  } });
+  await go(lost.window, 'workflows/wf_g/tests/run/999');
+  await tick(8);
+  const page = lost.window.document.getElementById('wfv-tests');
+  assert.equal(page.hidden, false);
+  assert.equal(page.querySelector('.wft-title'), null, 'not an error card, not a test page');
+  assert.deepEqual([...page.querySelectorAll('.wft-ex-open')].map((b) => b.textContent), ['Bulk invoice export'], 'the list');
+  assert.equal(lost.window.location.hash, '#workflows/wf_g/tests');
+});

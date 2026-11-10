@@ -6,13 +6,16 @@ import { icon } from '../icons.mjs';
 /** G19, D37: the hint beside a start button while a test of the workflow runs (the server's BUSY_TEXT). */
 export const BUSY_HINT = 'A test of this workflow is running. Wait for it, or stop it first.';
 
-/** Final review M7: "main at <code>abc1234</code> · 28 Oct" appended to `node`: the ref (bold with `bold`), the short SHA in
- *  code, the date when the start has one. `start` is { ref, short, at }; a start without a ref names its SHA. */
-export function startInto(doc, node, start, dateText, { bold = false } = {}) {
+/** U-T14 (F26): a start point as "main · 28 Oct · "Fix the login"" appended to `node`: the branch (bold with `bold`), the date when the
+ *  start has one, the commit subject when it could be read. No commit id: `dev` (the "For developers" facts) keeps the old
+ *  "main at <code>abc1234</code> · 28 Oct". `start` is { ref, short, at, subject }; a start without a branch says "a commit". */
+export function startInto(doc, node, start, dateText, { bold = false, dev = false } = {}) {
   const st = start || {};
-  const name = st.ref || st.short || '';
-  node.append(bold ? el(doc, 'b', '', name) : doc.createTextNode(name), doc.createTextNode(' at '), el(doc, 'span', 'code', st.short || ''));
+  const name = st.ref || (dev ? st.short : '') || 'a commit';
+  node.append(bold ? el(doc, 'b', '', name) : doc.createTextNode(name));
+  if (dev) node.append(doc.createTextNode(' at '), el(doc, 'span', 'code', st.short || ''));
   if (st.at) node.append(doc.createTextNode(` · ${dateText(st.at)}`));
+  if (!dev && st.subject) node.append(doc.createTextNode(` · "${st.subject}"`));
   return node;
 }
 /** A check as the editor, the dialog's preview and the side by side write it: the command, folders and patterns in code

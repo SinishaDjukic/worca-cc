@@ -90,7 +90,7 @@ test('board 35: disk in use, what happens in each try, the Now column', () => {
   assert.deepEqual(texts(disk, 'span, b'), ['Disk in use', '0.9 GB', 'of about 1.2 GB · 47 GB free']);
   assert.equal(root.querySelector('.wft-phases h2').textContent, 'What happens in each try');
   assert.deepEqual(texts(root, '.wft-ph b'), ['Preparing a copy of the project', 'Running setup', 'Working', 'Checking']);
-  assert.deepEqual(texts(root, '.wft-ph .s'), ['From main at abc1234 · 28 Oct', 'npm ci', 'The workflow does its work', 'The checks run, then the copy is deleted']);
+  assert.deepEqual(texts(root, '.wft-ph .s'), ['From main · 28 Oct', 'npm ci', 'The workflow does its work', 'The checks run, then the copy is deleted']);
   assert.deepEqual([...root.querySelectorAll('.wft-ph')].map((li) => li.className), ['wft-ph is-done', 'wft-ph is-done', 'wft-ph is-now', 'wft-ph']);
   assert.equal(root.querySelector('.wft-phases > .hint').textContent, 'Shown for Ticket 482, v3 draft, try 1. Up to three tries run at once, each in its own copy of the project.');
   assert.equal(root.querySelector('.wft-prow.is-head').lastChild.textContent, 'Now');

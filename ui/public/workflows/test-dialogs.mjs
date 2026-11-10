@@ -131,7 +131,7 @@ export function openFromRunDialog({ doc, win, past, onSubmit, dateText = (s) => 
     startBox = el(doc, 'div', 'wft-startbox');
     const where = el(doc, 'span');
     where.append(doc.createTextNode(STARTS_FROM_RUN));
-    startInto(doc, where, { ref: past.project.startRef, short: past.project.short, at: past.project.startAt }, dateText, { bold: true });
+    startInto(doc, where, { ref: past.project.startRef, short: past.project.short, at: past.project.startAt, subject: past.project.subject }, dateText, { bold: true });
     startBox.append(el(doc, 'span', 'label', WHERE_TITLE), where, el(doc, 'span', 'hint', pastRunProjectNote(past.project.name)));
     setup = el(doc, 'input');
     setup.type = 'text'; setup.id = 'wft-fr-setup'; setup.className = 'wft-mono'; setup.maxLength = 4000; setup.value = past.project.setupCmd || '';

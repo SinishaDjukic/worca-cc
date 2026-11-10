@@ -12,7 +12,7 @@ const texts = (root, sel) => [...root.querySelectorAll(sel)].map((n) => n.textCo
 const SHA = 'abc1234def5678abc1234def5678abc1234def56';
 const PROJECTS = [
   { key: 'worca-cc-1a2b3c4d', name: 'worca-cc', path: '/code/worca-cc', exists: true, vcs: 'git',
-    current: { branch: 'main', sha: SHA, short: 'abc1234', at: '2026-10-28T09:00:00.000Z' }, setupCmd: 'npm ci' },
+    current: { branch: 'main', sha: SHA, short: 'abc1234', at: '2026-10-28T09:00:00.000Z', subject: 'Fix the date filter' }, setupCmd: 'npm ci' },
   { key: 'docs-site-1a2b3c4e', name: 'docs-site', path: '/code/docs', exists: true, vcs: 'none', current: null, setupCmd: null },
   { key: 'gone-1a2b3c4f', name: 'gone', path: '/code/gone', exists: false, vcs: 'git', current: null, setupCmd: null },
 ];
@@ -47,8 +47,10 @@ test('board 32: where it starts, the start point, the moved-on note, the changes
   const sel = root.querySelector('#wft-ex-project');
   assert.deepEqual([...sel.options].map((o) => o.textContent), ['No project', 'worca-cc', 'docs-site', 'gone']);
   assert.equal(sel.value, 'worca-cc-1a2b3c4d');
-  assert.equal(root.querySelector('.wft-start > span').textContent, 'main at abc1234 · 28 Oct');
-  assert.equal(root.querySelector('.wft-start .code').textContent, 'abc1234');
+  // U-T14 (F26): branch, date, the commit subject; the commit id only under "For developers".
+  assert.equal(root.querySelector('.wft-start > span').textContent, 'main · 28 Oct');
+  assert.equal(root.querySelector('.wft-start .code'), null);
+  assert.equal(root.querySelector('.wft-dev-commit').textContent, 'Start commit: abc1234');
   assert.ok(byText(root, '.wft-start button', 'Change'));
   assert.ok(texts(root, '.wft-start-field > .hint').includes('Both versions start from here. It stays the same until you change it, so results can be compared.'));
   assert.equal(root.querySelector('.wft-moved').getAttribute('role'), 'note');
@@ -81,7 +83,7 @@ test('the value: the project and its setup; the changes box; a new start point f
   click(byText(doc, '.mk-dialog button', 'Use this start point'));
   await tick();
   assert.deepEqual(ed.value().project, { key: 'worca-cc-1a2b3c4d', setupCmd: 'npm ci', ref: 'release', repin: true });
-  assert.equal(root.querySelector('.wft-start > span').textContent, 'release at e9f2c47 · 28 Oct');
+  assert.equal(root.querySelector('.wft-start > span').textContent, 'release · 28 Oct');
   assert.equal(root.querySelector('.wft-uncommitted').hidden, true, 'not the branch the folder is on: no changes box');
   assert.equal(root.querySelector('.wft-moved'), null, 'a new start point is not behind');
   const sel = root.querySelector('#wft-ex-project');
@@ -98,7 +100,7 @@ test('Start from the latest moves the start point and the note goes', async () =
   await tick(); await tick();
   assert.deepEqual(calls.at(-1), ['latest']);
   assert.equal(root.querySelector('.wft-moved'), null);
-  assert.equal(root.querySelector('.wft-start .code').textContent, 'fffffff');
+  assert.equal(root.querySelector('.wft-dev-commit').textContent, 'Start commit: fffffff');
 });
 
 // U-T9 fix round 1 (review Important 2): the store refuses a new pin while a test tries the example (BUSY), so
@@ -231,7 +233,7 @@ test('review 3, 12: Change is busy while it loads; a pick says the new start and
   await tick(); await tick();
   const status = root.querySelector('.wft-start-status');
   assert.deepEqual([status.getAttribute('role'), status.getAttribute('aria-live'), status.textContent],
-    ['status', 'polite', 'The start point will be release at e9f2c47 when you save the example.']);
+    ['status', 'polite', 'The start point will be release · 28 Oct when you save the example.']);
   assert.equal(doc.activeElement, byText(root, '.wft-start button', 'Change'));
 });
 
@@ -419,4 +421,18 @@ test('U-T8 fix round (review minor 2): Try it once now also reads "Copying the p
   assert.deepEqual([b2.textContent, b2.disabled], ['Try your draft once now', true]);
   held.shift()();
   await tick();
+});
+
+test('U-T14 (F26): the start point reads "{branch} · {date} · "{commit subject}"" from the view, and a start whose subject could not be read leaves it out', async () => {
+  const withSubject = boot(example(), { projectView: { state: 'ok', behind: 0, startRef: 'main', startSha: SHA, subject: 'Fix the date filter' } });
+  assert.equal(withSubject.root.querySelector('.wft-start > span').textContent, 'main · 28 Oct · "Fix the date filter"');
+  const none = boot(example(), { projectView: { state: 'ok', behind: 0, startRef: 'main', startSha: SHA, subject: null } });
+  assert.equal(none.root.querySelector('.wft-start > span').textContent, 'main · 28 Oct', 'never an error or an empty pair of quotes');
+  const { root, doc } = boot(example(), { over: { branches: async () => ({ ok: true, data: { branches: [
+    { name: 'main', sha: SHA, short: 'abc1234', at: '2026-10-28T09:00:00.000Z', subject: 'Fix the date filter', current: true },
+    { name: 'release', sha: 'e9f2c47'.padEnd(40, '0'), short: 'e9f2c47', at: '2026-10-20T09:00:00.000Z', subject: null, current: false }] } }) } });
+  click(byText(root, '.wft-start button', 'Change'));
+  await tick(); await tick();
+  assert.deepEqual(texts(doc, '.wft-pick-text'), ['main · 28 Oct · "Fix the date filter"', 'release · 28 Oct']);   // dateText is a fixed stub here
+  assert.equal(doc.querySelector('.mk-dialog').textContent.includes('abc1234'), false, 'no commit id outside "For developers"');
 });

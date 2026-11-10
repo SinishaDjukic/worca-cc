@@ -347,7 +347,7 @@ function devCard(doc, s, cur, once, dateText) {
   h.id = 'wft-sbs-dev';
   c.setAttribute('aria-labelledby', h.id);
   const facts = el(doc, 'div', 'wft-dev-facts');
-  facts.append(startInto(doc, el(doc, 'span', '', DEV_START_LEAD), s.start, dateText));
+  facts.append(startInto(doc, el(doc, 'span', '', DEV_START_LEAD), s.start, dateText, { dev: true }));   // F26: the commit id lives here
   if (s.start.setupCmd) {
     const su = el(doc, 'span', '', DEV_SETUP_LEAD);
     su.append(el(doc, 'span', 'code', s.start.setupCmd));
