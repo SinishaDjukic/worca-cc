@@ -20,6 +20,68 @@ import { isWithin } from '../fs-scope.mjs';
 import { withNoGitPath } from '../nogit-stub.mjs';
 import { withoutProxyLogin } from '../env-proxy.mjs';
 import { testWorkerCap } from '../settings.mjs';
+import { sessionFor, spawnsRemotely } from '../executor/index.mjs';
+import { abortError } from '../executor/shared.mjs';
+import { createRemoteChild } from '../executor/remote-child.mjs';
+import { DEFAULT_ENGINE_BINS, ENGINE_CLIS } from './cli-specs.mjs';
+
+const ENGINE_BIN_NAMES = new Set(Object.values(DEFAULT_ENGINE_BINS));
+const binName = (p) => String(p).split(/[\\/]/).pop().replace(/\.(exe|cmd|bat)$/i, '');   // either separator: a worker may report a Windows path
+
+/**
+ * Why `exe` cannot run on this worker, or null. A worker's hello lists the engine binaries its
+ * image has (worker/capabilities.mjs); an engine binary absent from that list would only die
+ * with ENOENT on the far side, so say so here, naming the fix. Anything that is not an engine
+ * binary (sh, node, a script node's command) is not judged — the worker decides.
+ */
+export function missingOnWorker(session, exe) {
+  const engines = session?.capabilities?.engines;
+  if (!engines || typeof engines !== 'object') return null;
+  const want = binName(exe);
+  if (!ENGINE_BIN_NAMES.has(want)) return null;
+  const present = Object.values(engines).filter(Boolean).map((c) => c?.bin && binName(c.bin)).filter(Boolean);
+  if (present.includes(want)) return null;
+  const engine = Object.entries(DEFAULT_ENGINE_BINS).find(([, b]) => b === want)?.[0] || want;
+  const has = present.length ? `has ${present.join(', ')}` : 'reports no engine binary';
+  return `worker ${session.workerId || '?'} has no ${want}: the ${engine} engine is not in its image (it ${has}). `
+    + `Point the ${engine} worker image at one that ships it: WORCA_WORKER_IMAGE (Compose) or worker.engines.${engine}.image (Helm).`;
+}
+
+/** `a` is at least `b` (dotted numbers; a leading name such as `codex-cli ` and a pre-release tag are ignored, a part
+ *  that is not a number counts as 0). The one compare for every engine's version floor, here and on a worker. */
+export function versionAtLeast(a, b) {
+  const n = (v) => String(v).replace(/^[^0-9]*/, '').split(/[.-]/).slice(0, 3).map((x) => Number.parseInt(x, 10) || 0);
+  const [x, y] = [n(a), n(b)];
+  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return true;
+}
+/** True when `have` is below `min`; a version that could not be read at all (null) is not judged. */
+export function olderThan(have, min) {
+  return have != null && min != null && !versionAtLeast(have, min);
+}
+
+/**
+ * Why `exe` on this worker is too old for the spawn, or null. A chat's lockdown rests on flags and settings its
+ * engine has only from some version on; the controller checks its own binary before a turn (chat-descriptor.mjs),
+ * but under a remote executor the binary that runs is the worker image's, known by the version in its hello.
+ */
+export function tooOldOnWorker(session, exe, min, what = 'a chat', { below = null } = {}) {
+  const engines = session?.capabilities?.engines;
+  if ((!min && !below) || !engines || typeof engines !== 'object') return null;
+  const want = binName(exe);
+  const cap = Object.values(engines).find((c) => c?.bin && binName(c.bin) === want);
+  if (!cap?.version) return null;
+  const engine = Object.entries(DEFAULT_ENGINE_BINS).find(([, b]) => b === want)?.[0] || want;
+  const fix = `WORCA_WORKER_IMAGE (Compose) or worker.engines.${engine}.image (Helm)`;
+  if (min && olderThan(cap.version, min)) {
+    return `worker ${session.workerId || '?'} has ${want} ${cap.version}: ${what} needs ${min} or newer. Point the ${engine} worker image at a newer one: ${fix}.`;
+  }
+  // A major the controller's own gate refuses (its lockdown is unverified there): the same answer for a worker's binary.
+  if (below && versionAtLeast(cap.version, below)) {
+    return `worker ${session.workerId || '?'} has ${want} ${cap.version}: ${what} is verified below ${below} only. Point the ${engine} worker image at one before ${below}: ${fix}.`;
+  }
+  return null;
+}
 
 // Grace between the abort SIGTERM and the SIGKILL escalation. Claude Code shuts
 // down synchronously (fsync'd ~/.claude.json saves); a SIGKILL that lands inside
@@ -94,6 +156,14 @@ export function cleanRunEnv(env) {
   return Object.keys(out).length ? out : null;
 }
 
+/** The variable a scrubbed spawn carries to its worker (never to the child): what the scrub lets through, as a comma
+ *  list of names and `PREFIX*` entries. The worker adds nothing of its own that is not on it (worker/exec.mjs). */
+export const ENV_KEEP_VAR = 'WORCA_ENV_KEEP';
+export function scrubKeepList(envAllowlist, prefixes = ['ANTHROPIC_', 'CLAUDE_']) {
+  // An allowlist name is matched exactly here (buildSpawnEnv): one written as a glob matches nothing, and must not become a prefix on the worker.
+  return [...prefixes.map((p) => `${p}*`), ...(Array.isArray(envAllowlist) ? envAllowlist : []).filter((n) => typeof n === 'string' && !n.includes('*'))].filter((n) => typeof n === 'string' && n && !n.includes(',')).join(',');
+}
+
 /**
  * The final child env, in the order the claude runner always applied it: the
  * scrubbed env (undefined when scrub is off -> process.env), the run-level env
@@ -118,6 +188,8 @@ export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, over
   // The per-run test-worker cap (Settings › Runs › Machine load): a test runner that reads it (this repo's
   // tools/test-run.mjs) leaves cores for the run's other work and for other runs. A value already set wins.
   if (!env.WORCA_TEST_CONCURRENCY) env = { ...env, WORCA_TEST_CONCURRENCY: String(testWorkerCap()) };
+  // Scrubbed, and bound for a worker that holds credentials of its own: the scrub's rule rides along so it holds there too.
+  if (scrubbedEnv && spawnsRemotely()) env = { ...env, [ENV_KEEP_VAR]: scrubKeepList(envAllowlist, prefixes) };
   return { env, scrubbed: !!scrubbedEnv };
 }
 
@@ -157,7 +229,10 @@ process.on('exit', () => {
 /** Signal a child's whole tree. The group id stays allocated while any member lives, so `-pid`
  *  only ever reaches our descendants; an empty group answers ESRCH. Never throws. */
 export function signalTree(child, sig, { group = true, platform = process.platform } = {}) {
-  if (!child || typeof child.pid !== 'number') return;
+  if (!child) return;
+  // A child on a worker (executor/remote-child.mjs): the worker signals the whole group itself.
+  if (child.remote) { try { child.kill(sig); } catch { /* gone */ } return; }
+  if (typeof child.pid !== 'number') return;
   if (platform === 'win32') {
     if (child.exitCode === null && child.signalCode === null) {
       try { spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); } catch { /* best effort */ }
@@ -203,6 +278,10 @@ export function signalTree(child, sig, { group = true, platform = process.platfo
  *   still streamed, but never classified and never the exit detail while other evidence exists
  * @param {(err:Error, prefix:string) => Error} o.spawnError
  * @param {(code:number) => any} o.onDone
+ * @param {string|null} [o.workerMinVersion] the lowest version of the engine's CLI this spawn may run on when it goes
+ *   to a worker (a chat's lockdown floor): an older one in the worker image is refused before anything starts
+ * @param {string|null} [o.workerBelowVersion] a version the engine's CLI must stay below (a major the lockdown is unverified on)
+ * @param {string} [o.workerMinVersionFor] what needs the floor, for the refusal (default: 'a chat')
  */
 const notedResolutions = new Set();
 /** Log a shim substitution once per process: the same bin resolves on every spawn. */
@@ -214,23 +293,66 @@ function noteResolved(r) {
   console.warn('[worca] ' + r.note);
 }
 
+/** The engine a spawn belongs to: its adapter's CLI spec, else its binary's name; null for anything else. */
+export function engineOfSpawn({ cli, file } = {}) {
+  for (const [name, spec] of Object.entries(ENGINE_CLIS)) if (spec === cli) return name;
+  const bin = file ? binName(file) : null;
+  return Object.entries(DEFAULT_ENGINE_BINS).find(([, b]) => b === bin)?.[0] ?? null;
+}
+
+/** An adapter's spawnError builds a fresh Error: the recovery class and the code of what it wraps ride along,
+ *  so "no worker could start" (network) and "the worker image lacks this engine" (auth) pause instead of failing hard. */
+export function carryClass(out, err) {
+  if (out && err && typeof out === 'object') {
+    if (err.errorClass && !out.errorClass) out.errorClass = err.errorClass;
+    if (err.code && !out.code) out.code = err.code;
+  }
+  return out;
+}
+
+/** The pid the host-guard preamble names: this process's, or null when the spawn goes to a worker container. */
+export function guardPid() {
+  return spawnsRemotely() ? null : process.pid;
+}
+
 export function superviseSpawn(o) {
+  // The executor seam (executor/index.mjs): a spawn inside a run or chat scope under a remote
+  // executor runs on that scope's worker for its engine; everything else — the default — spawns here.
+  if (!spawnsRemotely()) return superviseLocal(o);
+  return sessionFor({ signal: o.signal, engine: engineOfSpawn(o) }).then(
+    (session) => superviseLocal(o, session),
+    (err) => {
+      o.cleanup();
+      if (err?.name === 'AbortError') throw err;   // stopped while its worker was starting: an abort, as after a spawn
+      throw carryClass(o.spawnError(err, `Failed to start a worker for ${o.displayBin}`), err);
+    },
+  );
+}
+
+/**
+ * The supervisor proper. With a `session` the child is a remote-child on that worker: no sudo
+ * wrapper (the container is the isolation), no local process group, and the complete env is
+ * sent explicitly (a remote exec never inherits this process's environment). Every other line
+ * is the local path.
+ */
+function superviseLocal(o, session = null) {
   const { file, args, cli = GENERIC_CLI, displayBin, cwd, env, stdin, signal, asAgent, stagedDir, agentHome = null, cleanup, onEvent,
     onStdoutLine, onStderrLine = null, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone } = o;
   return new Promise((resolveP, rejectP) => {
     let childEnv = env;
     // ENOENT/EINVAL on a Windows script shim: say why (the same text the preflight shows).
     const withShimHint = (err) => {
-      if (!err || !/^(ENOENT|EINVAL)$/.test(String(err.code))) return err;
+      if (session || !err || !/^(ENOENT|EINVAL)$/.test(String(err.code))) return err;   // a worker's ENOENT is about the worker's image, not this filesystem
       let hint = null;
       try { hint = explainUnspawnableCli(file, cli); } catch { /* no hint */ }
       return hint ? Object.assign(new Error(`${err.message} — ${hint}`), { code: err.code }) : err;
     };
     // Agent isolation (agent-user.mjs): the same command under the agent's uid, via sudo, in its
     // own process group so a stuck agent can still be SIGKILLed through sudo.
-    const agentId = asAgent ? agentIdentityFor(currentOwner()) : null;   // the owner's pool user (agent-pool.mjs)
-    // E3: our own process group (POSIX). The agent user's sudo spawn already has one (killAgentGroup).
-    const ownGroup = !agentId && process.platform !== 'win32';
+    const agentId = asAgent && !session ? agentIdentityFor(currentOwner()) : null;   // the owner's pool user (agent-pool.mjs)
+    // E3: our own process group (POSIX). The agent user's sudo spawn already has one (killAgentGroup);
+    // a worker owns its children's groups.
+    const ownGroup = !session && !agentId && process.platform !== 'win32';
     let child;
     try {
       const cmd = resolveCliCommand(file, args, cli);
@@ -243,15 +365,23 @@ export function superviseSpawn(o) {
         for (const d of [stagedDir].flat()) if (d) shareWithAgent(typeof d === 'string' ? d : d.dir, agentId, { stopAt: join(worcaHome(), 'tmp'), writable: typeof d === 'object' && d.writable === true });
         ({ file: exe, args: argv, env: childEnv } = agentSpawn(exe, argv, childEnv, agentId, agentHome ? { home: agentHome(agentId) } : {}));
       }
-      child = spawn(exe, argv, {
-        cwd, stdio: [stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'], ...(childEnv ? { env: childEnv } : {}),
-        ...(agentId || ownGroup ? { detached: true } : {}),
-        windowsHide: true,
-      });
+      if (session) {
+        const missing = missingOnWorker(session, exe);
+        if (missing) throw Object.assign(new Error(missing), { code: 'EWORKERNOBIN', errorClass: 'auth' });
+        const old = tooOldOnWorker(session, exe, o.workerMinVersion, o.workerMinVersionFor || 'a chat', { below: o.workerBelowVersion ?? null });
+        if (old) throw Object.assign(new Error(old), { code: 'EWORKEROLDBIN', errorClass: 'auth' });
+      }
+      child = session
+        ? createRemoteChild(session, { file: exe, args: argv, cwd, env: childEnv ?? composeSpawnEnv({}).env, stdin, displayBin, reap: true })   // no env given: this process's, minus what no spawn may carry (never raw across the boundary)
+        : spawn(exe, argv, {
+          cwd, stdio: [stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'], ...(childEnv ? { env: childEnv } : {}),
+          ...(agentId || ownGroup ? { detached: true } : {}),
+          windowsHide: true,
+        });
       if (ownGroup && typeof child.pid === 'number') trackGroup(child.pid, displayBin);
     } catch (err) {
       cleanup();
-      rejectP(spawnError(withShimHint(err), `Failed to spawn ${displayBin}`));
+      rejectP(carryClass(spawnError(withShimHint(err), `Failed to spawn ${displayBin}`), err));
       return;
     }
     if (stdin != null) {
@@ -344,16 +474,16 @@ export function superviseSpawn(o) {
     });
 
     child.on('error', (err) => {
-      finish(rejectP, spawnError(withShimHint(err), `${displayBin} error`));
+      // A lost worker arrives here pre-classified (remote-child.mjs); an adapter's spawnError that
+      // builds a fresh Error must not drop the class the failure policy acts on, nor the code.
+      finish(rejectP, carryClass(spawnError(withShimHint(err), `${displayBin} error`), err));
     });
 
     child.on('close', (code) => {
       rl.close();
       rlErr.close(); // readline already flushed its final unterminated line when the stream ended
       if (signal?.aborted) {
-        const err = new Error('aborted');
-        err.name = 'AbortError';
-        finish(rejectP, err);
+        finish(rejectP, abortError());
         return;
       }
       if (stdoutFatalError) {

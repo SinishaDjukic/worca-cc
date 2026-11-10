@@ -66,7 +66,8 @@ import { join, relative } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
-import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
+import { superviseSpawn, guardPid, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
+import { spawnHomeDir, spawnsRemotely } from '../executor/index.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { envFlag } from '../model-env.mjs';
@@ -508,7 +509,8 @@ export async function runOpencodeProcess({
 
   let realCwd = cwd;
   try { realCwd = realpathSync(cwd); } catch { /* not there: the spawn says so */ }
-  const rules = opencodeRulePlan(ask ? null : permissionRules, { cwd: realCwd });
+  // `~/…` rules name the home this spawn runs with: on a worker that is the worker's, where a copied login lives.
+  const rules = opencodeRulePlan(ask ? null : permissionRules, { cwd: realCwd, home: spawnHomeDir() });
   const rand = () => Math.random().toString(36).slice(2, 8);
   let mcp = null;
   const serverNames = {};   // a chat's per-spawn server name -> the server's own
@@ -533,7 +535,7 @@ export async function runOpencodeProcess({
   }
 
   const guardOn = hostGuardEnabled();
-  const sys = guardOn ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n') : String(systemPrompt || '');
+  const sys = guardOn ? [hostGuardSystemPrompt(guardPid()), systemPrompt].filter(Boolean).join('\n\n') : String(systemPrompt || '');
   const fanOut = !ask && Array.isArray(allowedTools) && allowedTools.some((t) => t === 'Agent' || t === 'Task');
   // A chat's agent has a name no user config can know (its permission would merge into one it did know).
   const nodeAgent = ask ? `worca-chat-${rand()}${rand()}` : OPENCODE_NODE_AGENT;
@@ -596,6 +598,7 @@ export async function runOpencodeProcess({
     const res = await superviseSpawn({
       cli: OPENCODE_CLI,
       file: bin, args, displayBin: bin, cwd, env, stdin: String(prompt ?? ''), signal: spawnSignal, asAgent, stagedDir: asAgent ? scratch : null, onEvent,
+      ...(ask ? { workerMinVersion: OPENCODE_ASK_MIN_VERSION, workerBelowVersion: '2.0.0' } : {}),   // as opencodeAskSupport: 1.x only
       cleanup: () => {},
       isBenignStderr,
       stdoutErrorDetail: () => normalizer.finish().error || '',
@@ -632,12 +635,26 @@ export async function runOpencodeProcess({
 
   // A sub-agent's steps are not in the stream: its session's export carries its tool calls (emitted under the `task`
   // call, for the audit), cost and tokens.
+  // On a worker the sessions (and the binary) are the worker's: the export runs there, through the same seam.
+  const exportSession = (id) => {
+    if (!spawnsRemotely()) {
+      return new Promise((resolve) => {
+        execCli(OPENCODE_CLI, bin, ['export', id], { cwd, env, timeout: 20000, maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => resolve(err ? null : stdout));
+      });
+    }
+    const lines = [];
+    const limit = AbortSignal.timeout(20000);
+    return superviseSpawn({
+      cli: OPENCODE_CLI, file: bin, args: ['export', id], displayBin: bin, cwd, env, stdin: null, signal: signal ? AbortSignal.any([signal, limit]) : limit,
+      stagedDir: null, onEvent: () => {}, cleanup: () => {}, stdoutErrorDetail: () => '', classify: () => null,
+      spawnError: (err, pfx) => new Error(`${pfx}: ${err.message}`), onDone: (code) => (code === 0 ? lines.join('\n') : null),
+      onStdoutLine: (line) => { lines.push(line); },
+    }).catch(() => null);
+  };
   const subSpend = async (subs) => {
     let costUsd = 0; let usage = { ...ZERO_USAGE }; const missed = [];
     for (const { sessionId: id, toolUseId } of subs) {
-      const text = await new Promise((resolve) => {
-        execCli(OPENCODE_CLI, bin, ['export', id], { cwd, env, timeout: 20000, maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => resolve(err ? null : stdout));
-      });
+      const text = await exportSession(id);
       const s = text == null ? null : readSubsession(text, { parentId: toolUseId, mcpServers: Object.keys(mcp || {}) });
       if (!s) { missed.push(id); continue; }
       for (const e of s.events) safeEmit(onEvent, e);

@@ -602,7 +602,7 @@ export function buildContextHeader(ctx = {}, { maxChars = ASK_LIMITS.contextHead
     // How this worca runs (src/core/deployment.mjs), server-resolved; absent on a local install.
     if (ctx.deployment) {
       const d = ctx.deployment;
-      push(`deployment: ${label(d.deployment)}${d.projectsRoot ? ` projects root ${clip(d.projectsRoot, 200)}` : ''} github=${label(d.github || 'none')}${d.githubAsPerson ? ` githubAsPerson=${label(d.githubAsPerson)}` : ''}${d.actions === 'off' ? ' actions=off' : ''}${d.terminal === 'off' ? ' terminal=off' : ''}${d.azureDevOps ? ` azureDevOps=${label(d.azureDevOps)}` : ''}${d.egress ? ` egress=${label(d.egress)}` : ''}`);
+      push(`deployment: ${label(d.deployment)}${d.projectsRoot ? ` projects root ${clip(d.projectsRoot, 200)}` : ''} github=${label(d.github || 'none')}${d.githubAsPerson ? ` githubAsPerson=${label(d.githubAsPerson)}` : ''}${d.actions === 'off' ? ' actions=off' : ''}${d.terminal === 'off' ? ' terminal=off' : ''}${d.azureDevOps ? ` azureDevOps=${label(d.azureDevOps)}` : ''}${d.egress ? ` egress=${label(d.egress)}` : ''}${d.executor ? ` executor=${label(d.executor)}` : ''}`);
     }
     // The identity the sign-in proxy verified for THIS request; never client-supplied.
     if (ctx.signedIn) push(`signed in: ${clip(ctx.signedIn, 120)}`);

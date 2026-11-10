@@ -59,3 +59,10 @@ export const ENGINE_CLIS = Object.freeze({
   claude: CLAUDE_CLI, codex: CODEX_CLI, copilot: COPILOT_CLI, cursor: CURSOR_CLI,
   gemini: GEMINI_CLI, qwen: QWEN_CLI, goose: GOOSE_CLI, opencode: OPENCODE_CLI,
 });
+
+/** The binary each engine's adapter spawns when nothing overrides it (a worker reports which of
+ *  these it has; the spawn seam refuses an engine binary a worker lacks before trying it). */
+export const DEFAULT_ENGINE_BINS = Object.freeze({
+  claude: 'claude', codex: 'codex', copilot: 'copilot', cursor: 'cursor-agent',
+  gemini: 'gemini', qwen: 'qwen', goose: 'goose', opencode: 'opencode',
+});

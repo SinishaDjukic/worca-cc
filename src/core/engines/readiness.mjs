@@ -10,6 +10,7 @@ import { probeClaudeAuth } from '../preflight.mjs';
 import { configuredClaudeBin, explainUnspawnableCli } from '../cli-resolve.mjs';
 import { CLAUDE_CLI } from './cli-specs.mjs';
 import { brokerEngineRefusal } from '../broker-client.mjs';
+import { engineOnWorker, currentExecutor } from '../executor/index.mjs';
 
 /** Claude's readiness: its sign-in (claude auth status, cached; env keys and the broker count as signed in). Only a
  *  definite signed-out refuses — an unknown answer (an older CLI) reads as ready, as the run-start check treats it. */
@@ -31,7 +32,11 @@ async function claudeSignIn() {
  * WORCA_MOCK=0 a mock and miss ORCH_MOCK=1.
  * @param {{force?:boolean, now?:number, mock?:boolean, preflights?:Record<string,()=>Promise<object>>}} [o]
  *   preflights: a test seam replacing adapters' preflight by name. mock: every engine ready, nothing spawned.
- * @returns {Promise<Array<{name:string, label:string, ready:boolean, reason:string|null, broker?:true}>>}
+ * Under a remote executor (WORCA_EXECUTOR=docker|kubernetes) the engines run on per-engine worker images, not
+ * here: a non-Claude engine's preflight on the controller would only say the controller image lacks it. Those
+ * entries read ready with `worker: true` and a reason naming the image; a worker that lacks the binary refuses the
+ * spawn itself (engines/spawn.mjs missingOnWorker). Claude's sign-in is still the controller's own (its aux calls).
+ * @returns {Promise<Array<{name:string, label:string, ready:boolean, reason:string|null, broker?:true, worker?:true}>>}
  */
 /** The engines this instance never starts, whatever their sign-in (the credential broker is on): no preflight, nothing
  *  spawned, so a page can ask on every load (GET /api/engine-locks). */
@@ -49,6 +54,10 @@ export async function engineReadiness({ force = false, now = Date.now(), mock = 
     // tell this (an instance setting) from a sign-in the user can fix.
     const refusal = brokerEngineRefusal(e.name);
     if (refusal) return { name: e.name, label: engineLabel(e.name), ready: false, reason: refusal, broker: true };
+    if (engineOnWorker(e.name)) {
+      return { name: e.name, label: engineLabel(e.name), ready: true, worker: true,
+        reason: `runs on the ${e.name} worker image (WORCA_EXECUTOR=${currentExecutor().kind}) — not checked on the controller` };
+    }
     const check = preflights[e.name] || (e.name === 'claude' ? claudeSignIn : e.preflight);
     if (mock || typeof check !== 'function') return { name: e.name, label: engineLabel(e.name), ready: true, reason: null };
     let r;

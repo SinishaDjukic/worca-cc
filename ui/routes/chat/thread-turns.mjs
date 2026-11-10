@@ -23,7 +23,7 @@ import { CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../../../src/
 import { changesCard, landingFacts, landingFactsOfFeature } from '../../../src/core/shape/changes.mjs';
 import { isGenericBinary } from '../../../src/shared/artifact-kinds.mjs';
 import { chatAttachRefusal, chatSwitchChanges, engineLabel } from '../../../src/shared/engine-switch.mjs';
-import { askChatEngine, askChatEngineGate, askContextTokens, askCredentialGate, askDeleting, askEngineSwitchText, askIdParam, askInFlight, askRunningCount, askSignedIn, askSwitchTranscript, askTurnEngine, askViewer, badRequest, broadcast, brokerStartRefusal, factDeps, liveRunEntry, postDirection, startAskTurn, switchThreadScope } from '../../server.mjs';
+import { askChatEngine, askChatEngineGate, askContextTokens, askCredentialGate, askDeleting, askEngineSwitchText, askIdParam, askInFlight, askRunningCount, askSignedIn, askSwitchTranscript, askTurnEngine, askViewer, badRequest, broadcast, factDeps, liveRunEntry, postDirection, startAskTurn, switchThreadScope } from '../../server.mjs';
 
 export function register(app) {
 
@@ -41,10 +41,10 @@ async function askEnginePreflight({ thread, engine, model, req }) {
   const broker = brokerEngineRefusal(engine);
   if (broker) return { ok: false, status: 409, error: `${engineLabel(engine)}: ${broker}`, code: 'engine-broker' };
   const mock = mockEnabled({});
-  if (!mock) {
-    const refusal = await brokerStartRefusal(req, [model]);
-    if (refusal) return { ok: false, status: 409, error: refusal, code: 'credential-missing' };
-  }
+  // The same gate a turn runs (askCredentialGate: a bridged model workers cannot reach, then the broker policy and the
+  // person's key), so a switch never parks a chat on a model its next message is refused for.
+  const credGate = await askCredentialGate(req, model);
+  if (credGate) return { ok: false, status: credGate.status, error: credGate.error, code: credGate.code };
   if (engine === 'claude') {
     // As the turn: a relayed chat signs in as its agent user, and an endpoint-routed model at its endpoint.
     if (await claudeChatSignedOut({ model, relay: !!agentIdentity(), mock })) {

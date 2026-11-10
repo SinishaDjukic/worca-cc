@@ -127,6 +127,10 @@ test('runClaude systemPromptMode replace: --system-prompt starts with the preamb
   assert.ok(!argv.includes('--append-system-prompt'), 'no append flag when replacing');
   const sys = argv[argv.indexOf('--system-prompt') + 1];
   assert.ok(sys.startsWith(hostGuardSystemPrompt(process.pid)), 'preamble first');
+  // On a worker container the server's pid means nothing: the preamble names the worker process instead, and no pid.
+  const remote = hostGuardSystemPrompt(null);
+  assert.match(remote, /You run under a worca worker process \(`worca worker`, the parent of your own process\)\. Never kill it/);
+  assert.doesNotMatch(remote, /PID \d|ui\/server\.mjs/);
   assert.ok(sys.endsWith('SYS'), 'role prompt last');
   assert.match(argv[argv.indexOf('--settings') + 1], /host-guard\.mjs/, 'guard hook still in --settings');
 });

@@ -6,7 +6,6 @@ import { askCatalog } from '../../../src/core/ask/models.mjs';
 import { validateClientContext } from '../../../src/core/ask/prompt.mjs';
 import { RUN_CARD_ARTIFACTS, RUN_CARD_FINISHED, lastArtifactsWindow, runCardResults } from '../../../src/core/ask/run-card-extras.mjs';
 import { countAttachments as askCountAttachments, countThreads as askCountThreads, countWorktrees as askCountWorktrees, getThread as askGetThread } from '../../../src/core/ask/store.mjs';
-import { withBillTo } from '../../../src/core/billing.mjs';
 import { WORK_ARTIFACT_KIND } from '../../../src/core/no-project-work.mjs';
 import { getWatch, stoppedWatchFact } from '../../../src/core/pr-watch.mjs';
 import { PROXY_AGENT_TEXT } from '../../../src/core/proxy-host.mjs';
@@ -16,7 +15,7 @@ import { featureOfPipeline } from '../../../src/core/shape/features.mjs';
 import { roundsOf } from '../../../src/core/shape/rounds.mjs';
 import { isNoProjectKey } from '../../../src/core/store.mjs';
 import { REFS_MAX } from '../../../src/shared/chip-refs.mjs';
-import { REMOTE_MODE, agentMayBeCaller, askCommandBridges, askCommands, askCommandsEnabled, askIdParam, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askThreadVisible, askTurnEngine, askViewer, badRequest, builtins, liveRunEntry, proxyHost, terminalSameOrigin } from '../../server.mjs';
+import { REMOTE_MODE, agentMayBeCaller, askCommandBridges, askCommands, askCommandsEnabled, askIdParam, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askThreadVisible, askTurnEngine, askViewer, badRequest, builtins, liveRunEntry, proxyHost, relayAskLine, terminalSameOrigin } from '../../server.mjs';
 
 export function register(app) {
 
@@ -40,18 +39,14 @@ app.get('/api/ask/commands/status', (req, res) => {
 
 app.post('/api/ask/relay', async (req, res) => {
   if (!isInContainer(req)) return res.status(403).json({ error: 'relay: loopback callers only' });
-  const entry = askRelays.get(String(req.headers['x-worca-relay'] || ''));
-  if (!entry) return res.status(403).json({ error: 'relay: unknown or finished turn' });
+  const token = String(req.headers['x-worca-relay'] || '');
+  if (!askRelays.has(token)) return res.status(403).json({ error: 'relay: unknown or finished turn' });
   const line = req.body && typeof req.body.line === 'string' ? req.body.line : null;
   if (line === null) return badRequest(res, 'relay: line is required');
-  // One line at a time per turn (the child sends sequentially), so the output collected
-  // between feed and idle is this line's answer.
-  await withBillTo(entry.billTo, async () => {
-    entry.out = [];
-    await entry.rpc.feed(line);
-    await entry.rpc.idle();
-  }, { owner: entry.owner });
-  res.json({ out: entry.out });
+  // The same answerer a worker's `relay` frame reaches (src/core/executor/controller.mjs relayAskLine).
+  const r = await relayAskLine(token, line);
+  if (r.error) return res.status(403).json({ error: r.error });
+  res.json({ out: r.lines });
 });
 
 // The Chat home's pinned workflows (src/shared/home-pins.mjs): one ordered list per person, in settings.json.

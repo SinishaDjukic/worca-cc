@@ -49,7 +49,7 @@ import { join, dirname, resolve } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS, describeUnattachableMcp } from './capabilities.mjs';
-import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from './spawn.mjs';
+import { superviseSpawn, guardPid, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from './spawn.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { mcpResultText } from './codex.mjs';
@@ -625,7 +625,7 @@ export async function runCopilotProcess({
     if (inHome.length) throw new Error(`${bin}: refusing to start copilot — it would be able to write ${inHome.join(', ')}, inside Worca's home (${worcaHome()}), where Worca keeps its database, settings and plugins; copilot cannot hold the rules that protect them`);
   }
   const guardOn = hostGuardEnabled();
-  const sys = guardOn ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n') : String(systemPrompt || '');
+  const sys = guardOn ? [hostGuardSystemPrompt(guardPid()), systemPrompt].filter(Boolean).join('\n\n') : String(systemPrompt || '');
 
   // MCP: the spawn's --mcp-config servers in Copilot's shape. `${VAR}` references stay references; their values
   // (the run's MCPSECRET_* names) join the copilot env, filled from this spawn's env plus the run's spawn env.
@@ -716,6 +716,7 @@ export async function runCopilotProcess({
   const res = await superviseSpawn({
     cli: COPILOT_CLI,
     file: bin, args, displayBin: bin, cwd, env, stdin: String(prompt ?? ''), signal: spawnSignal, asAgent,
+    ...(askLockdown ? { workerMinVersion: COPILOT_ASK_MIN_VERSION } : {}),
     // Copilot writes its usage file into the scratch folder, so an agent user gets it writable.
     stagedDir: asAgent ? { dir: scratch, writable: true } : null, onEvent,
     cleanup: () => {},

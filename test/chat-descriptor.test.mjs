@@ -2,6 +2,7 @@
 // agrees with engine-switch.mjs on attachments, and Codex and Copilot keep the words and checks they had before the
 // descriptors existed.
 import { test } from 'node:test';
+import { installExecutor } from '../src/core/executor/index.mjs';
 import assert from 'node:assert/strict';
 import { CHAT_ENGINES, chatDescriptor, chatDescriptors, chatCostCapRefusal, chatEngineGate } from '../src/core/engines/chat.mjs';
 import { makeChatDescriptor } from '../src/core/engines/chat-descriptor.mjs';
@@ -90,6 +91,17 @@ test('chatEngineGate: the turn gate\'s checks, in its order, without a turn (#94
   assert.deepEqual(calls, []);
   assert.equal(await chatEngineGate(d, { model: 'gpt-5.5', relay: true }), null, 'a relayed chat skips the sign-in check');
   assert.deepEqual(calls, ['support']);
+  // Under a remote executor the chat's engine runs on its worker image: this container (Claude Code only) does not
+  // probe the binary or the sign-in, or every Codex chat would be told "install codex". Claude is here and stays checked.
+  calls.length = 0;
+  installExecutor({ kind: 'kubernetes', registry: {} });
+  try {
+    assert.equal(await chatEngineGate(d, { model: 'gpt-5.5' }), null);
+    assert.deepEqual(calls, [], 'nothing probed on the controller');
+    const claude = makeChatDescriptor({ engine: 'claude', lockdown: () => ({}), askSupport: async () => { calls.push('claude-support'); return { refusal: 'claude is too old' }; } });
+    assert.equal((await chatEngineGate(claude, { model: 'claude-sonnet-5' })).message, 'claude is too old');
+    assert.deepEqual(calls, ['claude-support']);
+  } finally { installExecutor(null); }
   const off = makeChatDescriptor({ engine: 'codex', lockdown: () => null });
   assert.deepEqual(await chatEngineGate(off, { model: 'gpt-5.5' }), { message: off.noLockdownMessage });
   assert.match((await chatEngineGate(d, { model: 'gpt-5.5', capped: true, modelPriced: () => false })).message, /^A per-turn cost cap is set/);
