@@ -475,6 +475,21 @@ test('U-T6: grammar for one try, and the ten-try ceiling', async () => {
   assert.equal(one.out.tries, 10);
 });
 
+test('U-T8 (U-T6 review minor 2): the title says how many more the ten-try ceiling lets run', async () => {
+  const one = await askOf({ run: { a: null, tries: 9 }, plan: { a: null, b: planSide('draft', 10, 9, 0.5) } });
+  assert.equal(one.asked[0].title, 'Try Bulk invoice export 1 more time?');
+  const two = await askOf({ run: { a: null, tries: 8 }, plan: { a: null, b: planSide('draft', 10, 8, 0.5) } });
+  assert.equal(two.asked[0].title, 'Try Bulk invoice export 2 more times?');
+  assert.equal(two.out.tries, 10);
+  const three = await askOf({ run: { a: null, tries: 7 }, plan: { a: null, b: planSide('draft', 10, 7, 0.5) } });
+  assert.equal(three.asked[0].title, 'Try Bulk invoice export 3 more times?');
+});
+
+test('U-T8 (U-T6 review minor 1): the estimate is in the page\'s "about" style: whole dollars from $5 up', async () => {
+  const { asked } = await askOf({ run: { capUsd: 50 }, plan: { a: planSide(4, 6, 3, 2.0625), b: planSide('draft', 6, 3, 2.0625), perTryMs: 1000 } });
+  assert.equal(asked[0].message, '6 more tries of v5 draft and v4: about $12. The test stops if the cost goes over $50.00.');
+});
+
 test('U-T6: without a plan the count is the extra tries on each version', async () => {
   const { asked } = await askOf({ plan: null, run: { a: null, tries: 3 } });
   assert.equal(asked[0].message, '3 more tries of v5 draft: the cost is not known yet. The test stops if the cost goes over $15.00.');

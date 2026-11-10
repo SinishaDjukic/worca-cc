@@ -7,7 +7,7 @@ import { el, btn, startInto, checkWords } from './test-ui.mjs';
 import { icon } from '../icons.mjs';
 import { createDialog } from '../marketplace/layers.mjs';
 import { fmtUsd, fmtUsdFine } from '../../../src/shared/workflow-tests/checks.mjs';
-import { estimateOf, agoText, countsText, fmtDuration, pctDelta, durationDelta, countDelta, fmtTimes } from '../../../src/shared/workflow-tests/compare.mjs';
+import { estimateOf, aboutUsd, agoText, countsText, fmtDuration, pctDelta, durationDelta, countDelta, fmtTimes } from '../../../src/shared/workflow-tests/compare.mjs';
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
 import { splitPatchSections, parseFileSection } from '../diff-view.mjs';
 import { changesTitle, changeCountText, FILE_BADGE, READ_ALL_CHANGES, BOTH_STARTED_FROM, DEV_CAPTION, DEV_SBS_HINT, DEV_START_LEAD, DEV_SETUP_LEAD,
@@ -700,8 +700,9 @@ export async function askMoreTries({ run, labels, exampleId, exampleName, loadPl
   const n = est && est.total ? est.total : extra * (run.a != null ? 2 : 1);
   const cap = est && est.usd !== null && !(est.usd <= run.capUsd) ? est.capUsd : (run.capUsd ?? (est ? est.capUsd : 10));
   const versions = labels.a && run.a != null ? `${labels.b} and ${labels.a}` : labels.b;
-  const cost = est && est.usd !== null ? `about ${fmtUsdFine(est.usd)}` : 'the cost is not known yet';
-  const ok = await confirm({ title: `Try ${exampleName} 3 more times?`,
+  const cost = est && est.usd !== null ? `about ${aboutUsd(est.usd)}` : 'the cost is not known yet';   // an estimate: the page's "about"
+  // U-T8: the ten-try ceiling may let only 1 or 2 more run on each version: the title says so.
+  const ok = await confirm({ title: `Try ${exampleName} ${extra} more ${extra === 1 ? 'time' : 'times'}?`,
     message: `${n} more ${n === 1 ? 'try' : 'tries'} of ${versions}: ${cost}. The test stops if the cost goes over ${fmtUsd(cap)}.`,
     confirmLabel: `Start ${n} ${n === 1 ? 'try' : 'tries'}`, cancelLabel: 'Cancel' });
   return ok ? { tries, capUsd: cap } : null;
