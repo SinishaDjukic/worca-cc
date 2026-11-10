@@ -347,7 +347,7 @@ test('C16 with no saved version; two equal versions; one example starts at its o
   await tick();
   const selA = none.doc.querySelector('#wft-tv-a');
   assert.deepEqual([selA.disabled, selA.options[0].textContent], [true, 'No saved version yet']);
-  assert.equal(none.doc.querySelector('.wft-tv-note').textContent, 'Save a version first: a test compares two versions. Try it once now tries one example on your draft.');
+  assert.equal(none.doc.querySelector('.wft-tv-note').textContent, 'Save a version first: a test compares two versions. Try your draft once now tries it on one example.');
   assert.deepEqual([none.doc.querySelector('.wft-dlg-ok').disabled, none.doc.querySelector('.wft-dlg-ok').textContent], [true, 'Start']);
   assert.equal(none.plans.length, 0);
   // M6 (board 29): only the two selects, the sentence, Cancel and Start.

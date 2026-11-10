@@ -435,7 +435,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
     const noneReady = !noA && !ready.length;
     triesField.hidden = noneReady;
     if (noneReady) { for (const n of [reuse, conn, quickRow, est, capField, safe, lock]) n.hidden = true; }
-    const text = onlySame ? SAME_DRAFT_ONLY(sameAs) : noA ? 'Save a version first: a test compares two versions. Try it once now tries one example on your draft.'   // C16
+    const text = onlySame ? SAME_DRAFT_ONLY(sameAs) : noA ? 'Save a version first: a test compares two versions. Try your draft once now tries it on one example.'   // C16
       : noneReady ? NONE_READY_TEXT : sameDraft() ? SAME_DRAFT_PICK(sameAs) : same ? 'Pick two different versions.' : e && total === 0 ? 'Nothing to try: both versions have results for these examples.' : '';
     if (note.textContent !== text) note.textContent = text;   // aria-live: only a change is news
     // A disabled Start says why: the disk refusal, else the note (P28, C16).

@@ -23,6 +23,7 @@ function boot(ex = example(), { perTryUsd = 0.55, result = { ok: true }, testRun
     tryOnce: async (v) => { calls.push(['tryOnce', v]); return { ok: true }; },
     addFiles: async (files, v) => { calls.push(['addFiles', files.map((f) => f.name), v.name]); return { ok: true, example: { id: 4, files: [...ex.files, { name: files[0].name, size: 1, sha256: 'y' }] } }; },
     removeFile: async (name) => { calls.push(['removeFile', name]); return { ok: true, example: { id: 4, files: [] } }; },
+    stopTest: async () => { calls.push(['stopTest']); return { ok: true, data: { run: { id: 31, status: 'stopped' } } }; },
     ...over,
   };
   const root = window.document.getElementById('root');
@@ -319,7 +320,7 @@ test('M1: the note field sits first in card 4 with its label, mark and hint; it 
   assert.equal(fresh.ed.value().note, null);
 });
 
-const CONFIRM = { title: 'Save and stop the test?', confirmLabel: 'Save and stop', cancelLabel: 'Cancel',
+const CONFIRM = { title: 'Save and stop the test?', confirmLabel: 'Save and stop', cancelLabel: 'Cancel', focus: 'cancel',
   message: 'A test of this workflow is trying this example. Saving changes it, so the test stops. Tries already done are kept.' };
 
 test('F17: saving an example that a running test is trying asks first; Cancel keeps the editor and saves nothing', async () => {
@@ -333,14 +334,14 @@ test('F17: saving an example that a running test is trying asks first; Cancel ke
   assert.equal(byText(root, '.wft-acts button', 'Save example').disabled, false, 'the editor stays usable');
 });
 
-test('F17: "Save and stop" saves; a request, Basics or "If Worca asks something else" change each count', async () => {
+test('F17: "Save and stop" stops the test first, then saves; a request, Basics or "If Worca asks something else" change each count', async () => {
   const asked = [];
   const { root, calls } = boot(example(), { testRunning: true, ctx: { runningExampleIds: [4], confirm: async (o) => { asked.push(o); return true; } } });
   input(root.querySelector('#wft-ex-request'), 'Another request');
   click(byText(root, '.wft-acts button', 'Save example'));
-  await tick(); await tick();
+  await tick(); await tick(); await tick();
   assert.equal(asked.length, 1);
-  assert.deepEqual(calls.map((c) => c[0]), ['save']);
+  assert.deepEqual(calls.map((c) => c[0]), ['stopTest', 'save'], 'the test is stopped before the save');
   const changes = {
     basics: (r) => { const b = r.querySelector('#wft-b-error'); b.checked = false; b.dispatchEvent(new b.ownerDocument.defaultView.Event('change', { bubbles: true })); },
     otherwise: (r) => click(byText(r, '.seg button', 'The try counts as failed')),
@@ -382,6 +383,83 @@ test('F17: no question when only the name, the note or the tries changed, or not
   await tick(); await tick();
   assert.equal(asked, 0, 'no test running');
   assert.equal(idle.calls.length, 1);
+});
+
+// Fix round 1 (review Important 1): a file added or removed changes what a try gets, so it asks too.
+const pick = (root, files) => {
+  const picker = root.querySelector('#wft-ex-file');
+  Object.defineProperty(picker, 'files', { configurable: true, value: files });
+  picker.dispatchEvent(new picker.ownerDocument.defaultView.Event('change'));
+};
+const settle = async () => { for (let i = 0; i < 5; i += 1) await tick(); };
+
+test('F17: removing or adding a file on an example the running test is trying asks first; Cancel changes nothing', async () => {
+  const asked = [];
+  const { root, calls } = boot(example(), { testRunning: true, ctx: { runningExampleIds: [4], confirm: async (o) => { asked.push(o); return false; } } });
+  click(root.querySelector('.wft-file-x'));
+  await settle();
+  assert.deepEqual(asked, [CONFIRM]);
+  assert.deepEqual(calls, [], 'nothing removed, nothing stopped');
+  assert.deepEqual([...root.querySelectorAll('.wft-file > span')].map((s) => s.textContent), ['interviews-q3.md']);
+  pick(root, [{ name: 'usage.csv' }]);
+  await settle();
+  assert.deepEqual(asked, [CONFIRM, CONFIRM]);
+  assert.deepEqual(calls, [], 'nothing added, nothing stopped');
+  assert.equal(byText(root, '.wft-files button', 'Add file').disabled, false, 'the editor stays usable');
+});
+
+test('F17: "Save and stop" on a file stops the test first, then changes the file; the next change does not ask again', async () => {
+  let asked = 0;
+  const { root, calls } = boot(example(), { testRunning: true, ctx: { runningExampleIds: [4], confirm: async () => { asked += 1; return true; } } });
+  click(root.querySelector('.wft-file-x'));
+  await settle();
+  assert.equal(asked, 1);
+  assert.deepEqual(calls, [['stopTest'], ['removeFile', 'interviews-q3.md']], 'stopped, then removed');
+  assert.equal(root.querySelectorAll('.wft-file').length, 0);
+  assert.equal(root.querySelector('#wft-busy'), null, 'the test is stopped: no "a test is running" hint');
+  assert.equal(byText(root, '.wft-acts button', 'Try your draft once now').disabled, false);
+  pick(root, [{ name: 'usage.csv' }]);
+  await settle();
+  assert.equal(asked, 1, 'nothing runs any more');
+  assert.deepEqual(calls.slice(2), [['addFiles', ['usage.csv'], 'Bulk invoice export']]);
+  const add = boot(example(), { testRunning: true, ctx: { runningExampleIds: [4], confirm: async () => true } });
+  pick(add.root, [{ name: 'usage.csv' }]);
+  await settle();
+  assert.deepEqual(add.calls.map((c) => c[0]), ['stopTest', 'addFiles'], 'an added file: stopped, then added');
+});
+
+test('F17: a stop that fails changes nothing and says why', async () => {
+  const no = { stopTest: async () => ({ ok: false, error: 'Worca did not answer (offline).' }) };
+  const f = boot(example(), { testRunning: true, over: no, ctx: { runningExampleIds: [4], confirm: async () => true } });
+  click(f.root.querySelector('.wft-file-x'));
+  await settle();
+  assert.deepEqual(f.calls, [], 'the file stays');
+  assert.equal(f.root.querySelectorAll('.wft-file').length, 1);
+  assert.equal(f.root.querySelector('.wft-error').textContent, 'Worca did not answer (offline).');
+  const s = boot(example(), { testRunning: true, over: no, ctx: { runningExampleIds: [4], confirm: async () => true } });
+  input(s.root.querySelector('#wft-ex-request'), 'Another request');
+  click(byText(s.root, '.wft-acts button', 'Save example'));
+  await settle();
+  assert.deepEqual(s.calls, [], 'nothing saved');
+  assert.equal(s.root.querySelector('.wft-error').textContent, 'Worca did not answer (offline).');
+  const quiet = boot(example(), { testRunning: true, over: { stopTest: async () => ({ ok: false }) }, ctx: { runningExampleIds: [4], confirm: async () => true } });
+  click(quiet.root.querySelector('.wft-file-x'));
+  await settle();
+  assert.equal(quiet.root.querySelector('.wft-error').textContent, 'The test was not stopped, so nothing was changed.');
+});
+
+test('F17: file changes do not ask when no test runs or the running test is not trying this example', async () => {
+  let asked = 0;
+  const confirm = async () => { asked += 1; return true; };
+  for (const ctx of [{ confirm }, { runningExampleIds: [9], confirm }]) {
+    const t = boot(example(), { testRunning: !!ctx.runningExampleIds, ctx });
+    click(t.root.querySelector('.wft-file-x'));
+    await settle();
+    pick(t.root, [{ name: 'usage.csv' }]);
+    await settle();
+    assert.deepEqual(t.calls.map((c) => c[0]), ['removeFile', 'addFiles']);
+  }
+  assert.equal(asked, 0);
 });
 
 const REG = { key: 'p1', name: 'worca-cc', exists: true, vcs: 'git', current: { branch: 'main', sha: 'a'.repeat(40), short: 'aaaaaaa', at: '2026-10-28T09:00:00.000Z' } };

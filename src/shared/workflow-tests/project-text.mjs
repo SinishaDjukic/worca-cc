@@ -86,6 +86,8 @@ export const startWillBeText = (ref, short) => `The start point will be ${ref} a
 export const PICK_BRANCH_FIRST = 'Pick a branch first.';
 export const BRANCHES_UNREAD_TEXT = 'Worca could not read the branches of the project.';
 export const START_NOT_MOVED_TEXT = 'The start point did not move.';
+// U-T9 fix round 1 (F17): the store refuses a new start while a test tries the example (BUSY, 409).
+export const LATEST_BUSY_TEXT = 'A test is trying this example. Stop it first, then start from the latest.';
 export const FILE_IN_PROJECT_LABEL = 'File in the project';
 export const SAVE_FIRST_TEXT = 'Save the example first.';
 

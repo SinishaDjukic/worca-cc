@@ -21,7 +21,7 @@ const PIN = { key: 'worca-cc-1a2b3c4d', startSha: SHA, startRef: 'main', startAt
 const example = (over = {}) => ({ id: 7, name: 'Ticket 482, invoice totals round wrong', request: 'Ticket 482: invoice totals round wrong.', answers: [],
   otherwise: 'pick', basics: { noError: true, noHelp: true, maxCostUsd: null, maxSentBack: null },
   checks: [{ id: 'c_1', kind: 'command', cmd: 'npm test', timeoutMin: 10 }], tries: 3, files: [], note: null, project: PIN, ...over });
-function boot(ex = example(), { needsProject = false, projectView = { state: 'ok', behind: 14, startRef: 'main' }, over = {}, projects = PROJECTS } = {}) {
+function boot(ex = example(), { needsProject = false, projectView = { state: 'ok', behind: 14, startRef: 'main' }, over = {}, projects = PROJECTS, ctx = {} } = {}) {
   const { window } = new JSDOM('<!doctype html><body><section id="root"></section></body>');
   const calls = [];
   const actions = {
@@ -35,7 +35,7 @@ function boot(ex = example(), { needsProject = false, projectView = { state: 'ok
   };
   const root = window.document.getElementById('root');
   const ed = renderExampleEditor(root, ex, actions, { doc: window.document, win: window, scripts: [], perTryUsd: 0.95, draftLabel: 'v3 draft',
-    projects, needsProject, workflowName: 'Fix a bug from a ticket', projectView, dateText: () => '28 Oct' });
+    projects, needsProject, workflowName: 'Fix a bug from a ticket', projectView, dateText: () => '28 Oct', ...ctx });
   return { root, doc: window.document, win: window, calls, ed };
 }
 
@@ -99,6 +99,36 @@ test('Start from the latest moves the start point and the note goes', async () =
   assert.deepEqual(calls.at(-1), ['latest']);
   assert.equal(root.querySelector('.wft-moved'), null);
   assert.equal(root.querySelector('.wft-start .code').textContent, 'fffffff');
+});
+
+// U-T9 fix round 1 (review Important 2): the store refuses a new pin while a test tries the example (BUSY), so
+// "Save and stop" stops the test first and saves after.
+test('F17: a project, start point or setup change asks, and "Save and stop" stops the test before it saves', async () => {
+  const changes = {
+    project: (r) => { const s = r.querySelector('#wft-ex-project'); s.value = ''; s.dispatchEvent(new s.ownerDocument.defaultView.Event('change')); },
+    setup: (r) => { const s = r.querySelector('.wft-dev textarea, .wft-dev input'); s.value = 'npm install'; s.dispatchEvent(new s.ownerDocument.defaultView.Event('input')); },
+  };
+  for (const [what, change] of Object.entries(changes)) {
+    const asked = [];
+    const stop = [];
+    const { root, calls } = boot(example(), { over: { stopTest: async () => { calls.push(['stopTest']); stop.push(what); return { ok: true }; } },
+      ctx: { testRunning: true, runningExampleIds: [7], confirm: async (o) => { asked.push(o.title); return true; } } });
+    change(root);
+    click(byText(root, '.wft-acts button', 'Save example'));
+    for (let i = 0; i < 5; i += 1) await tick();
+    assert.deepEqual(asked, ['Save and stop the test?'], `${what}: asked`);
+    assert.deepEqual(calls.map((c) => c[0]), ['stopTest', 'save'], `${what}: stopped, then saved`);
+  }
+});
+
+test('F17: Start from the latest while a test tries the example: the refusal says what to do, in plain words', async () => {
+  const { root, calls } = boot(example(), { over: {
+    startLatest: async () => { calls.push(['latest']); return { ok: false, status: 409, error: 'A test is trying this example: stop it first.' }; } } });
+  click(byText(root, '.wft-moved button', 'Start from the latest'));
+  await tick(); await tick();
+  assert.deepEqual(calls, [['latest']], 'the server decides (its refusal stays the safety net)');
+  assert.equal(root.querySelector('.wft-error').textContent, 'A test is trying this example. Stop it first, then start from the latest.');
+  assert.ok(root.querySelector('.wft-moved'), 'the start point did not move');
 });
 
 test('a drift counted for an older pin is not shown (the pin moved since the overview was read)', () => {

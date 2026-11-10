@@ -2707,7 +2707,7 @@ const exampleRow = (e) => ({ id: e.id, name: e.name, hasRequest: true, files: e.
 const fullExample = (id, name) => ({ id, name, request: `The request of ${name}.`, answers: [], otherwise: 'pick',
   basics: { noError: true, noHelp: true, maxCostUsd: null, maxSentBack: null }, checks: [], tries: 3, files: [], note: null });
 /** A small examples store behind /api/workflows/wf_g/tests; `holdFiles` keeps every file upload waiting until released. */
-async function bootEditor({ holdFiles = false } = {}) {
+async function bootEditor({ holdFiles = false, running = null } = {}) {
   const store = { 4: fullExample(4, 'Bulk invoice export'), 7: fullExample(7, 'Weekly report') };
   let nextId = 8;
   const log = [];
@@ -2720,8 +2720,14 @@ async function bootEditor({ holdFiles = false } = {}) {
     const body = init.body ? JSON.parse(init.body) : undefined;
     log.push({ method, path: rest, body });
     let x;
-    if (rest === '') return okJson({ ...TESTS_OVERVIEW, examples: Object.values(store).map(exampleRow) });
+    if (rest === '') return okJson({ ...TESTS_OVERVIEW, examples: Object.values(store).map(exampleRow), running });
     if (rest === '/plan') return okJson({ a: null, b: { use: 'draft', perTryUsd: 0.5 }, examples: 0, tries: 1 });
+    if ((x = /^\/runs\/(\d+)\/stop$/.exec(rest)) && method === 'POST') return okJson({ run: { id: Number(x[1]), status: 'stopped' } });
+    if ((x = /^\/examples\/(\d+)\/files\/([^/]+)$/.exec(rest)) && method === 'DELETE') {
+      const e = store[x[1]];
+      e.files = e.files.filter((f) => f.name !== decodeURIComponent(x[2]));
+      return okJson({ example: { ...e } });
+    }
     if (rest === '/examples' && method === 'POST') {
       const e = { ...fullExample(nextId, body.name), ...body, id: nextId, files: [] };
       nextId += 1;
@@ -2809,6 +2815,24 @@ test('Example editor (Task 11 fix 1): Try it once now saves, starts the try and 
   await tick(8);
   assert.deepEqual(writes(log), ['PUT /examples/4', 'POST /examples/4/try-once']);
   assert.equal(page.querySelector('#wft-ex-name'), null, 'the editor is gone');
+});
+
+test('U-T9 fix round 1 (F17): removing a file of an example the running test is trying asks; Save and stop stops the test, then removes', async () => {
+  const { window: w, log, store } = await bootEditor({ running: { runId: 31, title: 'Testing', done: 0, total: 3, exampleIds: [4] } });
+  store[4].files = [{ name: 'notes.md', size: 2, sha256: 'z' }];
+  await go(w, 'workflows/wf_g/tests/4');
+  await tick(6);
+  const doc = w.document;
+  const page = doc.getElementById('wfv-tests');
+  clickEl(w, page.querySelector('.wft-file-x'));
+  await tick(4);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Save and stop the test?');
+  assert.equal(doc.activeElement, doc.getElementById('confirm-cancel'), 'Cancel is the default: the action stops paid work');
+  assert.deepEqual(writes(log), [], 'nothing posted before the answer');
+  doc.getElementById('confirm-ok').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  await tick(8);
+  assert.deepEqual(writes(log), ['POST /runs/31/stop', 'DELETE /examples/4/files/notes.md'], 'the progress page\'s stop, then the file');
+  assert.equal(page.querySelectorAll('.wft-file').length, 0);
 });
 
 // ------------------------------------------- Use a past run as a test example (plans/workflow-tests-part2-plan.md Task 12)

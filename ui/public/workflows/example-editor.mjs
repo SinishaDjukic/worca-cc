@@ -16,7 +16,7 @@ import {
   COMMAND_LABEL, COMMAND_HINT, TIMEOUT_LABEL, TIMEOUT_HINT, timeoutText, READ_FROM_LEGEND, READ_FROM_RESULT, READ_FROM_RESULT_SUB,
   READ_FROM_FILE, ADD_CHECK, lfsText, submodulesText, MISSING_FOLDER_ADD_AGAIN, notRegisteredText, PROJECTS_UNREAD_TEXT,
   NOT_ON_BRANCH_TEXT, changesMovesText, FILE_NAME_NEEDED, NO_BRANCHES_TEXT, startNowText, startWillBeText, PICK_BRANCH_FIRST, BRANCHES_UNREAD_TEXT,
-  START_NOT_MOVED_TEXT, FILE_IN_PROJECT_LABEL, DISK_TITLE, DISK_KEY, diskRow, FOLDERS_LABEL, FOLDERS_HINT, FILES_LABEL, FILES_HINT_LEAD,
+  START_NOT_MOVED_TEXT, LATEST_BUSY_TEXT, FILE_IN_PROJECT_LABEL, DISK_TITLE, DISK_KEY, diskRow, FOLDERS_LABEL, FOLDERS_HINT, FILES_LABEL, FILES_HINT_LEAD,
   FILES_HINT_CODE, FILES_HINT_REST, MOST_FILES_LABEL, MOST_FILES_HINT, MET_WHEN_LEGEND, MET_WHEN_PASSES, MET_WHEN_PASSES_SUB, MET_WHEN_NOTHING,
   MET_WHEN_NOTHING_SUB, MET_WHEN_HINT,
 } from '../../../src/shared/workflow-tests/project-text.mjs';
@@ -280,8 +280,9 @@ function basicRow(doc, id, text, on, extra = null, after = null) {
  *   projectView?: object|null, dateText?: (iso: string) => string, runningExampleIds?: number[], confirm?: Function}} ctx  scripts null: the Library did not load; testRunning:
  *   a test of this workflow runs, so Try it once now waits (G19); projects: GET /api/workflow-tests/projects (null: not
  *   read); needsProject: the workflow changes a project's code (D62); projectView: the overview's view of the example's
- *   project (its drift, D63); runningExampleIds + confirm (app.js's confirmModal): a save that changes an example the
- *   running test is trying asks first (U-T9, F17)
+ *   project (its drift, D63); runningExampleIds + confirm (app.js's confirmModal): a save or a file change that changes
+ *   an example the running test is trying asks first, and "Save and stop" calls actions.stopTest() → {ok, error?} before
+ *   it (U-T9, F17)
  * @returns {{value: () => object}}
  */
 export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [], perTryUsd = null, draftLabel = 'your draft', testRunning = false,
@@ -334,14 +335,28 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   };
   let baseline = null;
   let asking = false;
-  const confirmSave = async () => {
-    if (asking) return false;
-    if (typeof confirm !== 'function' || draft.id == null || !runningExampleIds.includes(draft.id) || fingerprintSig() === baseline) return true;
+  /** A change to what a try gets: 'go' when no running test tries this example (or nothing such changes), 'stop' when
+   *  the person agreed to stop it, 'cancel' otherwise. Cancel is the default button: the answer stops paid work. */
+  const askFirst = async (changes) => {
+    if (asking) return 'cancel';
+    if (!changes || typeof confirm !== 'function' || draft.id == null || !runningExampleIds.includes(draft.id)) return 'go';
     asking = true;
     try {
-      return !!(await confirm({ title: 'Save and stop the test?', confirmLabel: 'Save and stop', cancelLabel: 'Cancel',
-        message: 'A test of this workflow is trying this example. Saving changes it, so the test stops. Tries already done are kept.' }));
+      return (await confirm({ title: 'Save and stop the test?', confirmLabel: 'Save and stop', cancelLabel: 'Cancel', focus: 'cancel',
+        message: 'A test of this workflow is trying this example. Saving changes it, so the test stops. Tries already done are kept.' })) ? 'stop' : 'cancel';
     } finally { asking = false; }
+  };
+  /** Fix round 1 (F17): "Save and stop" stops the test first (the progress page's stop, which answers once it has
+   *  stopped), then makes the change, so the store's BUSY refusal of a new pin never meets it. A stop that fails changes
+   *  nothing. Once stopped, nothing here runs any more: no second question, Try is free again. */
+  const stopFirst = async (how, fn) => {
+    if (how !== 'stop') return fn();
+    const s = await actions.stopTest();
+    if (!s || !s.ok) return { ok: false, error: (s && s.error) || 'The test was not stopped, so nothing was changed.' };
+    runningExampleIds = [];
+    testRunning = false;
+    head.querySelector('#wft-busy')?.remove();
+    return fn();
   };
   const run = async (fn) => {
     if (busyN) return;
@@ -349,8 +364,9 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     page.querySelector('.wft-refusal')?.remove();
     const problem = limitsProblem();
     if (problem) { error.textContent = problem; return; }
-    if (fn === actions.save && !(await confirmSave())) return;
-    const r = await busyWhile(() => fn(value()));
+    const how = fn === actions.save ? await askFirst(fingerprintSig() !== baseline) : 'go';
+    if (how === 'cancel') return;
+    const r = await busyWhile(() => stopFirst(how, () => fn(value())));
     if (!unsupported(r)) failed(r, 'That did not work. Try again.');
     if (r && !r.ok && r.body && r.body.code === 'NO_DISK' && r.body.disk) {   // board 39: Try it once now, not enough free disk
       const c = card(doc, DISK_TITLE, 'wft-ex-disk-h', null, 'wft-refusal');
@@ -397,7 +413,9 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
       const x = iconBtn(doc, 'x', `Remove ${f.name}`, async () => {
         if (busyN) return;
         error.textContent = '';
-        const r = await busyWhile(() => actions.removeFile(f.name));
+        const how = await askFirst(true);   // the files are part of what a try gets (F17)
+        if (how === 'cancel') return;
+        const r = await busyWhile(() => stopFirst(how, () => actions.removeFile(f.name)));
         showFiles(r);
         failed(r, 'The file was not removed.');
         if (r && r.ok) addFileBtn.focus();   // the pill and its × are gone
@@ -429,7 +447,9 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     if (twin) { error.textContent = `A file named ${twin} is already here.`; return; }
     const problem = draft.id == null ? limitsProblem() : null;   // G17: an example never saved is saved first
     if (problem) { error.textContent = problem; return; }
-    const r = await busyWhile(() => actions.addFiles(list, value()));
+    const how = await askFirst(true);
+    if (how === 'cancel') return;
+    const r = await busyWhile(() => stopFirst(how, () => actions.addFiles(list, value())));
     showFiles(r);   // also after a partly done upload: the files that went up
     failed(r, 'The file was not added.');
   });
@@ -604,6 +624,8 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     if (busyN) return;
     error.textContent = '';
     const r = await loading(latestBtn, () => actions.startLatest());
+    // F17: the store refuses a new start while a test tries the example (BUSY, 409): say what to do.
+    if (r && !r.ok && r.status === 409) { error.textContent = LATEST_BUSY_TEXT; return; }
     if (!r || !r.ok) { if (!unsupported(r)) failed(r, START_NOT_MOVED_TEXT); return; }
     stored = r.example.project;
     draft.project = stored;

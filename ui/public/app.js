@@ -4120,6 +4120,7 @@ function wftEditorActions(session) {
       }
       return { ok: true, example };
     },
+    stopTest: () => { const t = wft.overview && wft.overview.running; return t ? wftCall('POST', `${base}/runs/${t.runId}/stop`, {}) : Promise.resolve({ ok: true }); },   // F17: as the progress page
     removeFile: async (name) => {
       const r = await wftCall('DELETE', `${base}/examples/${session.exampleId}/files/${encodeURIComponent(name)}`);
       if (!r.ok) return r;
