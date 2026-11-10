@@ -184,7 +184,7 @@ test('the dialog notes (D35): the file servers a try without a project loads, an
     const plan = (await call('GET', `${WF}/plan?b=draft&tries=1`)).body;
     assert.deepEqual(plan.connectors.off, [{ name: 'shared_db', reason: 'file-server' }]);
     const codex = await service.testPlan('wf_api_t', { b: 'draft', tries: 1 }, { connectorsPreview: async () => ({ copies: [], fileServers: [] }), runEngine: 'codex' });
-    assert.deepEqual(codex.connectors.engines, ['Codex']);
+    assert.deepEqual(codex.connectors.engines, ['OpenAI Codex']);   // the engine catalog's name (dev renamed Codex)
   } finally { await rm(join(root, '.mcp.json'), { force: true }); }
 });
 
