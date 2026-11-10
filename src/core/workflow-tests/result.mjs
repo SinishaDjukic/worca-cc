@@ -164,6 +164,8 @@ export function runScriptCheck(check, { pipelineId, cwdDir = null, logFile = nul
       for (let attempt = 0; ; attempt += 1) {
         try {
           const r = await runBench({ key: check.key, params: check.params || {}, inputs: {}, timeoutMs, cwd: { kind: 'dir', dir } }, { allowDirCwd: true, tryGuard });
+          // U-T10 (F18): a run that returned no verdict looked at nothing, so it cannot count as Met.
+          if (r && r.status === 'clean' && !r.verdict) return { met: false, value: 'The script checked nothing' };
           const met = !!r && r.status === 'clean';
           return { met, value: met ? 'Met' : String((r && (r.summary || r.status)) || 'Not met').split('\n')[0].slice(0, 120) };
         } catch (err) {

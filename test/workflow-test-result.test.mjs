@@ -88,7 +88,7 @@ test('a script check runs on a copy of the result folder, waits while the bench 
   const runBench = async (req, deps) => {
     if (busy-- > 0) throw Object.assign(new Error('busy'), { code: 'BUSY' });
     seen.push({ copied: existsSync(join(req.cwd.dir, 'brief.md')), allow: deps.allowDirCwd, kind: req.cwd.kind, dir: req.cwd.dir });
-    return { status: 'clean', summary: '' };
+    return { status: 'clean', summary: '', verdict: { issues: [] } };
   };
   const ok = await runScriptCheck({ kind: 'script', key: 'lint-md', params: {} }, { pipelineId: t.id, runBench, waitMs: 1 });
   assert.deepEqual(ok, { met: true, value: 'Met' });
@@ -109,7 +109,7 @@ test('a stuck script check times out, frees the queue, and still removes its cop
   let release; let stuckDir = null;
   const stuck = (req) => { stuckDir = req.cwd.dir; return new Promise((r) => { release = r; }); };
   const first = runScriptCheck({ kind: 'script', key: 'a' }, { pipelineId: t.id, runBench: stuck, deadlineMs: 50 });
-  const second = runScriptCheck({ kind: 'script', key: 'b' }, { pipelineId: t.id, runBench: async () => ({ status: 'clean', summary: '' }), deadlineMs: 50 });
+  const second = runScriptCheck({ kind: 'script', key: 'b' }, { pipelineId: t.id, runBench: async () => ({ status: 'clean', summary: '', verdict: { issues: [] } }), deadlineMs: 50 });
   assert.deepEqual(await first, { met: false, value: 'Not met', error: 'timed out', worcaProblem: true }, 'U-T2: the backstop is Worca\'s');
   assert.deepEqual(await second, { met: true, value: 'Met' });
   assert.equal(existsSync(stuckDir), true, 'still there while the job is stuck');
@@ -162,7 +162,7 @@ test('the bench gets the script own timeout, the backstop deadline follows it, a
   const t = await seedTry({ work: { 'brief.md': BRIEF } });
   const reqs = [];
   const ok = await runScriptCheck({ kind: 'script', key: 'long' }, { pipelineId: t.id, timeoutOf: async () => 7200000,
-    runBench: async (req) => { reqs.push(req); return { status: 'clean' }; } });
+    runBench: async (req) => { reqs.push(req); return { status: 'clean', verdict: { issues: [] } }; } });
   assert.equal(ok.met, true, JSON.stringify(ok));
   assert.equal(reqs[0].timeoutMs, 7200000);
   // the backstop is the declared timeout plus a margin, so a 2 h script is not cut at 10 minutes
@@ -188,4 +188,13 @@ test('concern 8: an outcome says when Claude Code ignored Worca\'s settings for 
   const u = await seedTry();
   await writeFile(join(u.dir, 'settings-ignored-0a1b2c3d4e5f6a7b.ndjson'), 'x\n');
   assert.equal((await readTryOutcome(u.id)).settingsIgnored, true);
+});
+
+test('U-T10 (F18): a script run with no verdict checked nothing and is Not met; a blocking verdict is Not met; a clean verdict is Met', async () => {
+  const t = await seedTry({ work: { 'brief.md': BRIEF } });
+  const run = (r) => runScriptCheck({ kind: 'script', key: 'lint-md' }, { pipelineId: t.id, runBench: async () => r });
+  assert.deepEqual(await run({ status: 'clean', summary: '', verdict: null }), { met: false, value: 'The script checked nothing' });
+  assert.deepEqual(await run({ status: 'clean', summary: 'all fine' }), { met: false, value: 'The script checked nothing' });
+  assert.equal((await run({ status: 'blocking', summary: 'Too long', verdict: { issues: [{ severity: 'major', message: 'x' }] } })).met, false);
+  assert.deepEqual(await run({ status: 'clean', summary: '', verdict: { issues: [] } }), { met: true, value: 'Met' });
 });

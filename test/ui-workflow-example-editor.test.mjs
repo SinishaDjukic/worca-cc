@@ -14,7 +14,7 @@ const example = () => ({
   checks: [{ id: 'c_1', kind: 'words', min: 400, max: 900 }, { id: 'c_2', kind: 'sections', names: ['Problem', 'Users', 'Success metric', 'Risks'] }],
   tries: 3, files: [{ name: 'interviews-q3.md', size: 10, sha256: 'x' }], note: null,
 });
-function boot(ex = example(), { perTryUsd = 0.55, result = { ok: true }, testRunning = false, over = {}, scripts = [{ key: 'lint-md', displayName: 'Markdown lint' }] } = {}) {
+function boot(ex = example(), { perTryUsd = 0.55, result = { ok: true }, testRunning = false, over = {}, scripts = [{ key: 'lint-md', displayName: 'Markdown lint', description: 'Checks the headings.', verdict: { filename: 'verdict.json' } }] } = {}) {
   const { window } = new JSDOM('<!doctype html><body><section id="root"></section></body>');
   const calls = [];
   const actions = {
@@ -288,4 +288,34 @@ test('style.css: the Basics boxes keep their width and the switch keeps its labe
   assert.ok(/\.wft-basic \.wft-num\{[^}]*width:84px/.test(css), 'beats input[type="text"]{width:100%}');
   assert.ok(/\.wft-basic > \.wft-chk\{[^}]*flex-wrap:nowrap/.test(css), 'the label never drops under the switch');
   assert.ok(/\.wft-basic-val\{[^}]*white-space:nowrap/.test(css), 'the box and "times" stay together');
+});
+
+test('U-T10 (F18): only scripts that declare a verdict are offered, the hint says what the check means, and the kind hides with none', () => {
+  const scripts = [
+    { key: 'lint-md', displayName: 'Markdown lint', description: 'Checks the headings.', verdict: { filename: 'verdict.json' } },
+    { key: 'tidy', displayName: 'Tidy up', description: 'Rewrites files.' },
+  ];
+  const { root, doc } = boot(example(), { scripts });
+  click(byText(root, '.wft-sect button', 'Add an automatic check'));
+  const k = doc.querySelector('#wft-ck-kind');
+  k.value = 'script'; k.dispatchEvent(new doc.defaultView.Event('change'));
+  const sel = doc.querySelector('#wft-ck-script');
+  assert.deepEqual([...sel.options].map((o) => o.value), ['lint-md'], 'a script with no verdict is not offered');
+  assert.equal(sel.closest('.field').querySelector('.hint').textContent, 'Checks the headings. Met when the script finds no problems in the result.');
+  const none = boot(example(), { scripts: [scripts[1]] });
+  click(byText(none.root, '.wft-sect button', 'Add an automatic check'));
+  assert.ok(![...none.doc.querySelector('#wft-ck-kind').options].some((o) => o.value === 'script'), 'no verdict script: the kind is hidden');
+});
+
+test('U-T10 (F18): a saved check on a script with no verdict still opens, marked as checking nothing', () => {
+  const scripts = [{ key: 'tidy', displayName: 'Tidy up', description: 'Rewrites files.' }, { key: 'lint-md', displayName: 'Markdown lint', verdict: { filename: 'verdict.json' } }];
+  const ex = { ...example(), checks: [{ id: 'c_9', kind: 'script', key: 'tidy', params: {} }] };
+  const { root, doc } = boot(ex, { scripts });
+  click(byText(root, '.wft-sect .wft-line button', 'Edit'));
+  assert.equal(doc.querySelector('#wft-ck-kind').value, 'script');
+  const sel = doc.querySelector('#wft-ck-script');
+  assert.equal(sel.value, 'tidy');
+  assert.deepEqual([...sel.options].map((o) => o.textContent), ['Markdown lint', 'Tidy up (checks nothing)']);
+  assert.equal(sel.closest('.field').querySelector('.hint').textContent, 'This script returns no verdict, so the check is never met. Pick another script.');
+  assert.equal(doc.querySelector('.mk-dialog .wft-gone').hidden, true, 'it is still in the Library');
 });

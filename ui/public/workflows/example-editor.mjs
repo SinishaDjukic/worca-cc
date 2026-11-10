@@ -26,6 +26,9 @@ export const BLANK_EXAMPLE = Object.freeze({
   project: null,
 });
 const clone = (v) => JSON.parse(JSON.stringify(v));
+const declaresVerdict = (s) => !!(s && s.verdict);   // U-T10 (F18): only a script that returns a verdict can fail a check
+const SCRIPT_MEANS = 'Met when the script finds no problems in the result.';
+const NO_VERDICT_HINT = 'This script returns no verdict, so the check is never met. Pick another script.';
 const GONE_TEXT = 'This script is no longer in the Library.';
 /** A script check whose script left the Library. `scripts` null: the Library did not load, so no claim either way. */
 const scriptGone = (scripts, key) => Array.isArray(scripts) && !!key && !scripts.some((s) => s.key === key);
@@ -99,7 +102,7 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], project 
   // An edited script check keeps its kind, also when the Library lists none.
   // The project checks (3a D57, 3b D73) are their own group.
   const resultKinds = CHECK_KINDS.filter((k) => !PROJECT_KINDS.includes(k) &&
-     !(k === 'script' && !scripts.length && !(check && check.kind === 'script')));
+     !(k === 'script' && !scripts.some(declaresVerdict) && !(check && check.kind === 'script')));   // U-T10 (D9): no verdict script, no kind
   if (project) {
     const g1 = el(doc, 'optgroup'); g1.label = GROUP_RESULT;
     for (const k of resultKinds) g1.append(opt(k, k === 'file' ? PROJECT_FILE_KIND_LABEL : undefined));   // D59, board 33
@@ -197,14 +200,22 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], project 
     } else {
       const sel = el(doc, 'select');
       sel.id = 'wft-ck-script';
-      const offer = c.key && !scripts.some((s) => s.key === c.key) ? [...scripts, { key: c.key }] : scripts;   // a script no longer listed stays picked
-      for (const s of offer) { const o = el(doc, 'option', '', s.displayName || s.key); o.value = s.key; sel.append(o); }
+      const offer = scripts.filter(declaresVerdict);
+      const kept = c.key && !offer.some((s) => s.key === c.key) ? (scripts.find((s) => s.key === c.key) || { key: c.key }) : null;   // a saved pick stays: gone, or with no verdict
+      for (const s of kept ? [...offer, kept] : offer) {
+        const o = el(doc, 'option', '', (s.displayName || s.key) + (kept === s && s.displayName && !declaresVerdict(s) ? ' (checks nothing)' : '')); o.value = s.key; sel.append(o);
+      }
       if (c.key) sel.value = c.key;
       const gone = el(doc, 'p', 'hint wft-gone', GONE_TEXT);
       const paintGone = () => { gone.hidden = !scriptGone(listed, sel.value); };
-      sel.addEventListener('change', () => { paintPreview(); paintGone(); });
+      const hintOf = () => {
+        const s = scripts.find((x) => x.key === sel.value);
+        return s && !declaresVerdict(s) ? NO_VERDICT_HINT : `${s && s.description ? `${s.description.trim()} ` : ''}${SCRIPT_MEANS}`;
+      };
+      const scriptField = field(doc, 'Script', sel, { id: sel.id, hint: hintOf() });
+      sel.addEventListener('change', () => { paintPreview(); paintGone(); scriptField.querySelector('.hint').textContent = hintOf(); });
       paintGone();
-      fields.append(field(doc, 'Script', sel, { id: sel.id, hint: 'For developers: the check is met when the script finds no problems in the result.' }), gone);
+      fields.append(scriptField, gone);
       read = () => ({ kind: 'script', key: sel.value, params: c.params || {} });
     }
     if (project && TEXT_KIND_SET.has(kind.value)) {   // board 33, P17: a text check reads the final result or a file in the project
