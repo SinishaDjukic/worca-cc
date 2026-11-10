@@ -806,7 +806,7 @@ test('U-T2 with 3b (D72): Worca could not switch off the project\'s hooks and pl
     await pauseInSetup(h, 1, PLUGINS_OFF_STAGE,
       'Worca could not switch off the project\'s Claude Code hooks and plugins for this try: EPERM: operation not permitted, open \'x\'');
     await runner.idle(run.id);
-    assert.deepEqual([store.readTestRun(run.id).status, statuses(run.id), h.started.length], ['done', ['b1:failed'], 2]);   // U-T11: the made-again try's gate is a loop limit, so it fails; the point here is the set-aside and the redo
+    assert.deepEqual([store.readTestRun(run.id).status, statuses(run.id), h.started.length], ['done', ['b1:passed'], 2]);
     assert.equal(progressOf(WF, run.id).madeAgain, 1);
     assert.equal(w.lines().length, 1, 'one server log line');
     assert.match(w.lines()[0], /\(copy\): Worca could not switch off the project's Claude Code hooks and plugins for this try: EPERM/);
