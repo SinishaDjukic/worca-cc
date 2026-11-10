@@ -41,12 +41,13 @@ function writeEnvProbe(key) {
     "  writeFileSync(join(ctx.cwd, 'env.json'), JSON.stringify({ first: String(process.env[pathKey] || '').split(delimiter)[0],",
     "    tokens: keys.filter((k) => process.env[k] !== undefined), ssh: process.env.GIT_SSH_COMMAND || null,",
     `    log: process.env.${TRY_GUARD_LOG_ENV} || null, prompt: process.env.GIT_TERMINAL_PROMPT || null }));`,
-    "  return { summary: 'ok' };",
+    "  return { verdict: { issues: [], summary: 'clean' }, summary: 'ok' };",   // a clean verdict: a check that returns none is not met (U-T10)
     '}',
     '',
   ].join('\n'));
   writeFileSync(join(dir, `${key}.meta.json`), JSON.stringify({
     key, metaVersion: 2, displayName: key, runtime: 'node', file: `${key}.mjs`, order: 900, inputs: [], outputs: [],
+    verdict: { filename: `${key}-cycle{cycle}.json` },
   }, null, 2) + '\n');
 }
 
