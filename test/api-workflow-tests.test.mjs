@@ -220,6 +220,10 @@ test('the example routes: edit, delete a file, add from runs, stop a test, a try
   assert.deepEqual([long.status, long.body.error, count()], [400, 'the request is longer than 100000 characters', before], 'nothing is added');
   const twice = await call('POST', `${WF}/examples/from-runs`, { pipelineIds: [pastId, pastId] });
   assert.deepEqual([twice.status, twice.body.examples.length, twice.body.skipped, count()], [201, 1, [], before + 1]);
+  // U-T14 (F25): the run it came from says which example it already is; the others say nothing.
+  const listed = await service.recentRuns('wf_api_t');
+  assert.equal(listed.find((r) => r.pipelineId === pastId).alreadyExample, twice.body.examples[0].name);
+  assert.ok(listed.filter((r) => r.pipelineId !== pastId).every((r) => r.alreadyExample === null));
   assert.equal((await call('DELETE', `${WF}/examples/${twice.body.examples[0].id}`)).status, 200);
   assert.equal(count(), before);
 

@@ -3763,7 +3763,7 @@ async function wftRefresh() {
   const id = wftWorkflowId();
   if (!flagOn('workflowTests') || !id) {
     wft = { ...WFT_EMPTY };
-    renderTestsPage(els.tests, null, wftListActions(), { doc: document, error: 'Save the workflow first: tests belong to a saved workflow.' });   // C15
+    renderTestsPage(els.tests, null, wftListActions(), { doc: document, unsaved: true, error: 'Save the workflow first: tests belong to a saved workflow.' });   // C15, F31
     return;
   }
   if (wft.workflowId !== id) wft = { ...WFT_EMPTY, workflowId: id };
@@ -3952,6 +3952,7 @@ function wftShow(view, extra = {}) { wftPatchCut.clear(); wft = { ...wft, view, 
 function wftListActions() {
   return {
     newExample: () => void wftOpenExample(null),
+    saveWorkflow: () => gvComposer.openSaveDialog(),   // F31
     addFromRun: () => wftPickRun(),
     runOnce: () => wftRunOnce(),   // U-T4 (F4, D4): New run opens with this workflow chosen, also in Simple mode
     testVersion: () => void wftTestVersion(),

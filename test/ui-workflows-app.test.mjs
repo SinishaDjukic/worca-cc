@@ -2699,6 +2699,7 @@ test('Tests page (Task 10 fix 1): Workflows ▾ › New canvas while it shows: t
   assert.equal(page.querySelectorAll('.wft-ex-open').length, 0, 'the last workflow\'s examples are gone');
   assert.match(page.textContent, /Save the workflow first: tests belong to a saved workflow\./);
   assert.equal(reads.length, before, 'no read for a canvas that is not saved');
+  assert.equal(page.querySelector('.wft-empty button').textContent, 'Save the workflow', 'U-T14 (F31)');
 });
 
 // ------------------------------------------------- The example editor (plans/workflow-tests-part2-plan.md Task 11)

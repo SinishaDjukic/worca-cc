@@ -313,6 +313,7 @@ export async function recentRuns(workflowId, { limit = 10, projects = null } = {
       WHERE is_test IS NULL AND archived_at IS NULL AND deleted_at IS NULL AND status IN ('done', 'stopped', 'error') AND ${templateIdSql} = ?
       ORDER BY started_at DESC LIMIT ?`).all(workflowId, limit);
   const first = new Map();
+  const asExample = new Map(store.listExamples(workflowId).filter((e) => e.from && e.from.pipelineId).map((e) => [e.from.pipelineId, e.name]));   // F25
   return rows.map((r) => {
     const key = normPrompt(r.prompt);
     const sameAs = key && first.has(key) ? first.get(key) : null;
@@ -326,7 +327,7 @@ export async function recentRuns(workflowId, { limit = 10, projects = null } = {
       .map((m) => regName(m.projectKey) || m.projectName || m.name || (m.projectKey ? projectNameOf(m.projectKey, { projects: list }) : null))
       .filter(Boolean) : [];
     const project = ws ? members.join(', ') || null : own ? projectNameOf(r.project_key, { projects: list }) : null;
-    return { pipelineId: r.id, title: r.title || r.id, at: r.started_at, status: r.status, files: extrasOf(r.id).length, sameAs, project, refusal,
+    return { pipelineId: r.id, title: r.title || r.id, at: r.started_at, status: r.status, files: extrasOf(r.id).length, sameAs, alreadyExample: asExample.get(r.id) ?? null, project, refusal,
       refusalText: refusal ? PAST_RUN_REFUSALS[REFUSAL_REASON[refusal]] : null };
   });
 }

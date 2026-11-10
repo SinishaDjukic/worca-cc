@@ -224,7 +224,7 @@ test('board 4: v4 against the draft, v4 reused, the live estimate, Start N tries
   assert.equal(doc.querySelector('#wft-tv-quick').checked, true);
   assert.equal(doc.querySelector('#wft-tv-quick').closest('label').textContent, 'Do a free quick check first. Worca makes sure every step of the workflow is connected, without using AI.');
   assert.ok([...doc.querySelectorAll('#mk-dialog input[type="checkbox"]')].every((b) => b.classList.contains('wft-tv-optin')), 'the listed opt-in token (ui-shared-controls)');
-  assert.equal(doc.querySelector('.wft-safe').textContent, 'Tests never touch real work through your connectors.');
+  assert.equal(doc.querySelector('.wft-safe').textContent, 'With Pretend, this test never touches real work through your connectors.');
   assert.equal(doc.querySelector('.wft-est').getAttribute('aria-live'), 'polite');
   assert.deepEqual(estRows(doc), [['18 tries of v5 draft', 'about $9.36'], ['v4 results from 19 Oct', '$0.00'], ['Total · ready in about 28 minutes', '$9 to $11']]);
   assert.equal(doc.querySelector('#wft-tv-cap').value, '$15');
@@ -507,4 +507,41 @@ test('board 30 (Task 13 review): an off reason Worca does not know reads generic
   reuseB.checked = true; change(reuseB);   // everything reused: nothing to try
   assert.equal(all.doc.querySelectorAll('.wft-conn .radio-card-text')[1].textContent,
     'RealTries use your real connectors. If the workflow posts or sends something, it does it in every try.');
+});
+
+// ── U-T14: the smaller words (F22, F28, F33) ──
+test('U-T14 (F22): the shield line says it is about Pretend', async () => {
+  const { doc } = openTv();
+  await tick();
+  assert.equal(doc.querySelector('.wft-safe').textContent, 'With Pretend, this test never touches real work through your connectors.');
+});
+
+test('U-T14 (F28): "ready in about 1 minute", and "Use v4\'s result" for one reusable result', async () => {
+  const one = openTv({}, { perTryMs: 1000, a: { use: 4, label: 'v4 · in use', short: 'v4', want: 18, reusable: 1, reusableAt: '2026-10-19T10:00:00Z', perTryUsd: 0.84, savesUsd: 0.84 } });
+  await tick();
+  assert.equal(one.doc.querySelector('.wft-reuse .wft-chk').textContent.split('. ')[0], "Use v4's result from 19 Oct");
+  assert.equal(estRows(one.doc).at(-1)[0], 'Total · ready in about 1 minute');
+  assert.equal(estRows(one.doc).some((r) => r[0] === 'v4 result from 19 Oct'), true, JSON.stringify(estRows(one.doc)));
+  const some = openTv({}, { a: { use: 4, label: 'v4 · in use', short: 'v4', want: 18, reusable: 6, reusableAt: '2026-10-19T10:00:00Z', perTryUsd: 0.84, savesUsd: 5 } });
+  await tick();
+  assert.equal(some.doc.querySelector('.wft-reuse .wft-chk').textContent.split('. ')[0], "Use v4's 6 results from 19 Oct");
+});
+
+test('U-T14 (F33): the default example name is the first sentence, or 60 characters cut at a word', () => {
+  const nameFor = (title) => { const { doc, win } = dom(); openFromRunDialog({ doc, win, past: past({ title }), onSubmit: async () => ({ ok: true }) }); return doc.querySelector('#wft-fr-name').value; };
+  assert.equal(nameFor('Add a saved filter to the reports page. Keep the existing layout and the export button working.'), 'Add a saved filter to the reports page');
+  assert.equal(nameFor('Make the invoice totals round the same way in the app, the PDF and the CSV export for every customer'), 'Make the invoice totals round the same way in the app, the');
+  assert.equal(nameFor('Ticket 482: invoice totals round wrong'), 'Ticket 482: invoice totals round wrong');
+  assert.equal(nameFor('x'.repeat(80)), 'x'.repeat(60));
+});
+
+test('U-T14 (F25): the picker names the example a run already is, and pre-selects nothing', () => {
+  const { doc, win } = dom();
+  openPickRunDialog({ doc, win, workflowName: 'Product brief writer', dateText: () => '19 Oct', onPick() {}, runs: [
+    { pipelineId: 'p1', title: 'Saved filters', at: 'x', status: 'done', files: 0, sameAs: null, alreadyExample: 'Filters example' },
+    { pipelineId: 'p2', title: 'Offline mode', at: 'x', status: 'done', files: 0, sameAs: null, alreadyExample: null }] });
+  const rows = [...doc.querySelectorAll('.wft-pick-row')];
+  assert.match(rows[0].textContent, /^Saved filters · 19 Oct · already an example: Filters example/);
+  assert.doesNotMatch(rows[1].textContent, /already an example/);
+  assert.deepEqual(rows.map((r) => r.querySelector('input').checked), [false, false]);
 });

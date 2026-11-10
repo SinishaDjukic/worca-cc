@@ -265,3 +265,38 @@ test('H1: every result cell carries its column name as data-label', () => {
     rows.map(() => ['v4 · the team uses it', 'v5 draft · yours']));
   assert.ok(rows.every((r) => [...r.querySelectorAll('[data-label]')].every((c) => c.classList.contains('wft-res'))));
 });
+
+test('U-T14 (F32): with no run picked the Add button is disabled and says "Pick past runs to add"', () => {
+  const runs = [{ pipelineId: 'p1', title: 'Bulk invoice export', at: '2026-10-14T10:00:00Z', status: 'done', files: 0, sameAs: null }];
+  const { root } = boot(overview({ examples: [], latest: null, pastRuns: runs }));
+  const add = root.querySelector('.wft-first-foot .btn-primary');
+  assert.deepEqual([add.textContent, add.disabled], ['Add 1 example', false]);
+  const box = root.querySelector('.wft-pick-box');
+  box.checked = false; box.dispatchEvent(new box.ownerDocument.defaultView.Event('change'));
+  assert.deepEqual([add.textContent, add.disabled], ['Pick past runs to add', true]);
+});
+
+test('U-T14 (F25): a run that is already an example says so, and starts unticked', () => {
+  const runs = [
+    { pipelineId: 'p1', title: 'Bulk invoice export', at: '2026-10-14T10:00:00Z', status: 'done', files: 0, sameAs: null, alreadyExample: 'Invoice export' },
+    { pipelineId: 'p2', title: 'Offline mode', at: '2026-10-09T09:00:00Z', status: 'done', files: 0, sameAs: null, alreadyExample: null },
+  ];
+  const { root } = boot(overview({ examples: [], latest: null, pastRuns: runs }));
+  const rows = [...root.querySelectorAll('.wft-pick-row')];
+  assert.deepEqual(rows.map((r) => r.querySelector('.wft-pick-text').textContent), ['Bulk invoice export · 14 Oct · already an example: Invoice export', 'Offline mode · 14 Oct']);
+  assert.deepEqual(rows.map((r) => r.querySelector('input').checked), [false, true]);
+  assert.equal(root.querySelector('.wft-first-foot .btn-primary').textContent, 'Add 1 example');
+});
+
+test('U-T14 (F31): "Tests are not available" for an unsaved workflow has a "Save the workflow" button; other errors have none', () => {
+  const { window } = new JSDOM('<!doctype html><body><section id="root"></section></body>');
+  const calls = [];
+  const root = window.document.getElementById('root');
+  renderTestsPage(root, null, { saveWorkflow: () => calls.push('save') }, { doc: window.document, unsaved: true, error: 'Save the workflow first: tests belong to a saved workflow.' });
+  const b = root.querySelector('.wft-empty button');
+  assert.equal(b.textContent, 'Save the workflow');
+  click(b);
+  assert.deepEqual(calls, ['save']);
+  const other = boot(null, { error: 'Worca did not answer.' });
+  assert.equal(other.root.querySelector('.wft-empty button'), null);
+});

@@ -212,11 +212,11 @@ function firstUse(doc, page, o, actions, { dateText }) {
     const box = el(doc, 'input', 'wft-pick-box');   // test/ui-shared-controls.test.mjs JS_CHECKBOX_OK: picks runs
     box.type = 'checkbox';
     box.value = r.pipelineId;
-    box.checked = !r.refusal && !r.sameAs && ticked < 3;
+    box.checked = !r.refusal && !r.sameAs && !r.alreadyExample && ticked < 3;
     if (box.checked) ticked += 1;
     const text = el(doc, 'span', 'wft-pick-text');
     const detail = [r.project, dateText(r.at), r.files ? (r.files === 1 ? '1 file' : `${r.files} files`) : null,
-      r.sameAs ? `the same request as "${r.sameAs}"` : null].filter(Boolean).join(' · ');
+      r.sameAs ? `the same request as "${r.sameAs}"` : null, r.alreadyExample ? `already an example: ${r.alreadyExample}` : null].filter(Boolean).join(' · ');
     text.append(el(doc, 'b', '', r.title), el(doc, 'span', 'hint', ` · ${detail}`));
     // Board 39: a Folder or workspace run is listed, but cannot be picked.
     if (r.refusal) refusedRun(doc, { row, input: box, text, reason: r.refusalText, id: `wft-pick-why-${boxes.length}` });
@@ -244,7 +244,7 @@ function firstUse(doc, page, o, actions, { dateText }) {
   const paint = () => {
     if (add.dataset.fbState) return;   // busy or done: withButton owns the label, and paint() runs again after
     const n = picked().length;
-    add.textContent = n === 1 ? 'Add 1 example' : `Add ${n} examples`;
+    add.textContent = n === 0 ? 'Pick past runs to add' : n === 1 ? 'Add 1 example' : `Add ${n} examples`;   // F32
     add.disabled = n === 0;
   };
   for (const b of boxes) b.addEventListener('change', paint);
@@ -258,7 +258,7 @@ function firstUse(doc, page, o, actions, { dateText }) {
  * @param {object|null} o the overview (GET /api/workflows/:id/tests), null while loading or after an error
  * @param {object} actions see the Interfaces of Task 10
  */
-export function renderTestsPage(root, o, actions, { doc, storage = null, loading = false, error = null, dateText = defaultDate, now = Date.now() } = {}) {
+export function renderTestsPage(root, o, actions, { doc, storage = null, loading = false, error = null, unsaved = false, dateText = defaultDate, now = Date.now() } = {}) {
   const hadFocus = root.contains(doc.activeElement) && doc.activeElement !== root;
   root.replaceChildren();
   const page = el(doc, 'div', 'wft-page');
@@ -267,6 +267,7 @@ export function renderTestsPage(root, o, actions, { doc, storage = null, loading
   } else if (!o) {
     const box = el(doc, 'div', 'card wft-empty');
     box.append(el(doc, 'h2', '', 'Tests are not available'), el(doc, 'p', 'hint', error || 'Worca did not answer.'));
+    if (unsaved && actions.saveWorkflow) box.append(btn(doc, 'Save the workflow', () => actions.saveWorkflow(), 'btn btn-primary'));   // F31
     page.append(box);
   } else if (!o.examples.length) {
     firstUse(doc, page, o, actions, { dateText });

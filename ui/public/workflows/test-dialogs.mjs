@@ -23,6 +23,8 @@ export function canUseAsExample({ flag, noProject, projectRun = false, status, t
     && templateId !== AUTO_WORKFLOW_ID && !/^wfp_/.test(String(templateId));
 }
 
+const alreadyText = (r) => (r.alreadyExample ? `already an example: ${r.alreadyExample}` : null);   // F25
+
 /** G7: the Tests list's "Add from a past run" — which run, then board 3. */
 export function openPickRunDialog({ doc, win, workflowName, runs = [], dateText, onPick, needsProject = false, onRunOnce = null, onWrite = null }) {
   const body = [];
@@ -45,9 +47,9 @@ export function openPickRunDialog({ doc, win, workflowName, runs = [], dateText,
       if (r.project || r.refusal) {   // boards 38, 39: the title and its badge, then the project and the date
         const top = el(doc, 'span', 'wft-pick-top');
         top.append(el(doc, 'b', '', r.title), runStatusBadge(doc, r));
-        text.append(top, el(doc, 'span', 'wft-pick-sub', [r.project, dateText(r.at)].filter(Boolean).join(' · ')));
+        text.append(top, el(doc, 'span', 'wft-pick-sub', [r.project, dateText(r.at), alreadyText(r)].filter(Boolean).join(' · ')));
       } else {
-        text.append(el(doc, 'b', '', r.title), el(doc, 'span', 'hint', ` · ${dateText(r.at)} · `), runStatusBadge(doc, r));   // C11: an exactly equal request says so, as on the Tests page
+        text.append(el(doc, 'b', '', r.title), el(doc, 'span', 'hint', ` · ${dateText(r.at)} · ${alreadyText(r) ? `${alreadyText(r)} · ` : ''}`), runStatusBadge(doc, r));   // C11: an exactly equal request says so, as on the Tests page
       }
       row.append(radio, text);
       // Board 39: a Folder or workspace run is listed, disabled, with its reason.
@@ -79,11 +81,20 @@ function keepRow(doc, id, text, detail = null) {
   return { row: l, box };
 }
 
+/** F33: a run's title as the example's name: its first sentence, else up to 60 characters cut at a word end. */
+export function defaultExampleName(title) {
+  let t = String(title || '').trim();
+  const stop = /[.!?](?:\s|$)/.exec(t);
+  if (stop) t = t.slice(0, stop.index);
+  if (t.length > 60) { const cut = t.slice(0, 61); const sp = cut.lastIndexOf(' '); t = sp > 0 ? cut.slice(0, sp) : t.slice(0, 60); }
+  return t.replace(/[\s,;:–-]+$/, '').trim();
+}
+
 /** Board 3: "Use this run as a test example" (C4: the verdict is the version's result until it is tested, D29). Board 38
  *  (D65): a project run's example starts where the run started, and its setup is filled in from the project's. */
 export function openFromRunDialog({ doc, win, past, onSubmit, dateText = (s) => s }) {
   const name = el(doc, 'input');
-  name.type = 'text'; name.id = 'wft-fr-name'; name.maxLength = 120; name.value = past.title || '';
+  name.type = 'text'; name.id = 'wft-fr-name'; name.maxLength = 120; name.value = defaultExampleName(past.title);
   const nf = past.files.length;
   const nq = past.qa.length;
   const keep = el(doc, 'div', 'wft-keep');
@@ -179,7 +190,11 @@ function reuseWords(s, other, dateText) {
   // U-T9: an identical draft is "the results of v4 (your draft is the same)", never a possessive after a parenthesis.
   const same = typeof s.sameAs === 'number';
   const name = same ? `v${s.sameAs}` : s.short;
-  const results = (n) => (same ? `the ${n === null ? '' : `${n} `}results of ${name} (your draft is the same)` : `${name}'s ${n === null ? '' : `${n} `}results`);
+  const results = (n) => {   // F28: "result" for one
+    const word = n === 1 ? 'result' : 'results';
+    const count = n === null || n === 1 ? '' : `${n} `;
+    return same ? `the ${count}${word} of ${name} (your draft is the same)` : `${name}'s ${count}${word}`;
+  };
   return s.reusable >= s.want
     ? { lead: `Use ${results(null)} from ${when}. `, rest: `Nothing in ${name} or in the examples has changed since, so only ${otherShort} needs to be tried.${saves}` }
     : { lead: `Use ${results(s.reusable)} from ${when}. `, rest: `Nothing in ${name} or in those examples has changed since, so only the other tries are made.${saves}` };
@@ -266,7 +281,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
   const quickRow = optInRow(doc, quick, 'Do a free quick check first.', ' Worca makes sure every step of the workflow is connected, without using AI.');
   // D21 with D35: the promise holds only with Pretend connectors, so it shows only then.
   const safe = el(doc, 'div', 'wft-safe');
-  safe.append(icon(doc, 'shield', 16), el(doc, 'b', '', 'Tests never touch real work through your connectors.'));
+  safe.append(icon(doc, 'shield', 16), el(doc, 'b', '', 'With Pretend, this test never touches real work through your connectors.'));
   // Board 34 (P13): a test with a project example says it never pushes, in both modes, in the shield line's place.
   const lock = el(doc, 'div', 'wft-lock');
   const lockWords = el(doc, 'span');
@@ -398,9 +413,9 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
       if (e.toRun.b) line(`${triesN(e.toRun.b)} of ${plan.b.short}`, priced(plan.b, e.toRun.b));
       if (plan.a && e.toRun.a) line(`${triesN(e.toRun.a)} of ${plan.a.short}`, priced(plan.a, e.toRun.a));
       for (const side of ['a', 'b']) {
-        if (reused(side)) line(`${startOfLine(plan[side].short)} results from ${plan[side].reusableAt ? dateText(plan[side].reusableAt) : 'earlier'}`, '$0.00');
+        if (reused(side)) line(`${startOfLine(plan[side].short)} ${plan[side].reusable === 1 ? 'result' : 'results'} from ${plan[side].reusableAt ? dateText(plan[side].reusableAt) : 'earlier'}`, '$0.00');
       }
-      line(timeShown ? 'Total' : e.minutes ? `Total · ready in about ${e.minutes} minutes` : 'Total', e.usd === null ? 'cost not known yet' : fmtUsdRange(e.low, e.high), 'is-total');
+      line(timeShown ? 'Total' : e.minutes ? `Total · ready in about ${e.minutes} ${e.minutes === 1 ? 'minute' : 'minutes'}` : 'Total', e.usd === null ? 'cost not known yet' : fmtUsdRange(e.low, e.high), 'is-total');
       if (!capTouched) cap.value = `$${e.capUsd}`;
     }
     const total = e ? e.total : 0;
