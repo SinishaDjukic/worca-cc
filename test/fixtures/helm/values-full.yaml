@@ -1,0 +1,135 @@
+# test/helm-chart.test.mjs: every optional part of the chart on at once (broker, Ingress,
+# NetworkPolicy, PDB, a chart-made Secret, a separate projects claim, the prepare init
+# container, per-engine overrides, the full variant). Rendered against full.golden.yaml.
+image:
+  tag: 9.9.9
+  variant: full
+imagePullSecrets:
+  - name: ghcr-pull
+instanceId: worca-prod
+
+controller:
+  drainTimeoutMs: 60000
+  env:
+    WORCA_CF_ACCESS_TEAM_DOMAIN: acme.cloudflareaccess.com
+    WORCA_CF_ACCESS_AUD: aud-tag
+    GIT_AUTHOR_NAME: worca
+    GIT_AUTHOR_EMAIL: worca@example.com
+    TZ: Europe/Berlin
+  extraEnv:
+    - name: WORCA_BROKER_SYSTEM_BILL_TO
+      valueFrom:
+        configMapKeyRef:
+          name: worca-billing
+          key: system
+  envFrom:
+    - configMapRef:
+        name: worca-extra
+  extraNoProxy: .internal.example.com
+  nodeSelector:
+    kubernetes.io/os: linux
+  tolerations:
+    - key: worca
+      operator: Exists
+      effect: NoSchedule
+  priorityClassName: worca-controller
+
+storage:
+  db:
+    storageClassName: fast-ssd
+    size: 20Gi
+  shared:
+    storageClassName: nfs-rwx
+    size: 200Gi
+    prepare:
+      enabled: true
+  projects:
+    existingClaim: team-projects
+
+secrets:
+  create: true
+  values:
+    WORCA_BROKER_SECRET: shared-secret
+    GH_TOKEN: ghp-redacted
+
+worker:
+  variant: slim
+  engines:
+    claude:
+      variant: full
+      resources:
+        limits:
+          memory: 8Gi
+    codex:
+      image: ghcr.io/example/worca-worker-codex:custom
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      memory: 8Gi
+  activeDeadlineSeconds: 7200
+  pendingTimeoutSeconds: 120
+  idleTimeoutSeconds: 600
+  maxWorkers: 8
+  credentialsSecret: worca-worker-credentials
+  env:
+    GIT_AUTHOR_NAME: worca
+  envFrom:
+    - configMapRef:
+        name: worker-extra
+  nodeSelector:
+    worca.dev/pool: workers
+  tolerations:
+    - key: workers
+      operator: Exists
+  priorityClassName: worca-worker
+  tmpSizeLimit: 8Gi
+  podLabels:
+    team: platform
+  podAnnotations:
+    cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+
+broker:
+  enabled: true
+  mode: multi
+  existingSecret: worca-broker
+  env:
+    WORCA_BROKER_PUBLIC_URL: https://worca-keys.example.com
+    WORCA_CF_ACCESS_TEAM_DOMAIN: acme.cloudflareaccess.com
+    WORCA_CF_ACCESS_AUD: keys-aud-tag
+  storage:
+    storageClassName: fast-ssd
+    size: 2Gi
+  keyPage:
+    ingress:
+      enabled: true
+      className: nginx
+      hosts:
+        - host: worca-keys.example.com
+          paths:
+            - path: /
+              pathType: Prefix
+      tls:
+        - secretName: worca-keys-tls
+          hosts: [worca-keys.example.com]
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+  hosts:
+    - host: worca.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: worca-tls
+      hosts: [worca.example.com]
+
+networkPolicy:
+  enabled: true
+
+pdb:
+  enabled: true

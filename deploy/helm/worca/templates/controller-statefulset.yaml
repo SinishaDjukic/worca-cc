@@ -1,0 +1,188 @@
+{{- if ne (join "," .Values.storage.db.accessModes) "ReadWriteOnce" }}
+{{- fail (printf "storage.db.accessModes must be [ReadWriteOnce] (got %s): SQLite corrupts on a shared file system, and one controller owns the database" (join "," .Values.storage.db.accessModes)) }}
+{{- end }}
+{{- $secretName := include "worca.secretName" . }}
+# The controller: `worca ui` (orchestrator, scheduler, SQLite, the UI) as a StatefulSet of one,
+# so its database claim follows the pod. An upgrade or a node drain rolls it by delete + create:
+# SIGTERM starts the drain (new runs refused, active runs paused with the reason 'drain'),
+# the new pod resumes them on boot (docs/kubernetes.md, Install, upgrade, uninstall).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "worca.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "worca.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+spec:
+  replicas: 1
+  serviceName: {{ include "worca.workersServiceName" . }}
+  selector:
+    matchLabels:
+      {{- include "worca.selectorLabels" . | nindent 6 }}
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        {{- include "worca.selectorLabels" . | nindent 8 }}
+        {{- with .Values.controller.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # A changed worker pod template restarts the controller, which re-reads it at boot.
+        checksum/worker-pod: {{ include "worca.workerPod" . | sha256sum }}
+        {{- with .Values.controller.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "worca.serviceAccountName" . }}
+      # The executor backend talks to the API server (RBAC: role.yaml).
+      automountServiceAccountToken: true
+      enableServiceLinks: false
+      # The drain (WORCA_DRAIN_TIMEOUT_MS) plus ~40 s for the rest of the shutdown (chat channels,
+      # actions, terminals, the workers' release) before the kubelet sends SIGKILL.
+      terminationGracePeriodSeconds: {{ add (div (int .Values.controller.drainTimeoutMs) 1000) 40 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.controller.podSecurityContext | nindent 8 }}
+      {{- with .Values.controller.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.storage.shared.prepare.enabled }}
+      initContainers:
+        # Where fsGroup does not reach (hostPath, NFS exports that squash ownership): create the
+        # shared claim's directories and the DB directory, owned by uid 1000. Root only here.
+        - name: prepare-volumes
+          image: {{ include "worca.controllerImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              mkdir -p /shared/worca /shared/projects
+              chown 1000:1000 /shared/worca /shared/projects /worca-db
+              {{- if .Values.storage.projects.existingClaim }}
+              chown 1000:1000 /projects
+              {{- end }}
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "DAC_OVERRIDE", "FOWNER"]
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+            - name: db
+              mountPath: /worca-db
+            {{- if .Values.storage.projects.existingClaim }}
+            - name: projects
+              mountPath: /projects
+            {{- end }}
+      {{- end }}
+      containers:
+        - name: controller
+          image: {{ include "worca.controllerImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["worca", "ui"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.controller.port }}
+              protocol: TCP
+            - name: workers
+              containerPort: {{ .Values.controller.workerPort }}
+              protocol: TCP
+          env:
+            {{- include "worca.controllerEnv" . | trim | nindent 12 }}
+          {{- if or $secretName .Values.controller.envFrom }}
+          envFrom:
+            {{- if $secretName }}
+            - secretRef:
+                name: {{ $secretName }}
+            {{- end }}
+            {{- with .Values.controller.envFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          # The server's Host guard answers 403 to any Host it does not know; the kubelet sends
+          # the pod IP as Host unless told otherwise. Keep the Host: localhost header.
+          startupProbe:
+            {{- include "worca.healthProbe" . | nindent 12 }}
+            periodSeconds: {{ .Values.controller.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.controller.probes.startup.failureThreshold }}
+          readinessProbe:
+            {{- include "worca.healthProbe" . | nindent 12 }}
+            periodSeconds: {{ .Values.controller.probes.readiness.periodSeconds }}
+          livenessProbe:
+            {{- include "worca.healthProbe" . | nindent 12 }}
+            initialDelaySeconds: {{ .Values.controller.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.controller.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.controller.probes.liveness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.controller.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.controller.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: db
+              mountPath: /worca-db
+            - name: shared
+              mountPath: /worca
+              subPath: worca
+            {{- if .Values.storage.projects.existingClaim }}
+            - name: projects
+              mountPath: /projects
+            {{- else }}
+            - name: shared
+              mountPath: /projects
+              subPath: projects
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+            - name: worker-pod
+              mountPath: /etc/worca
+              readOnly: true
+      volumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: {{ include "worca.sharedClaimName" . }}
+        {{- with .Values.storage.projects.existingClaim }}
+        - name: projects
+          persistentVolumeClaim:
+            claimName: {{ . }}
+        {{- end }}
+        - name: tmp
+          emptyDir: {}
+        - name: worker-pod
+          configMap:
+            name: {{ include "worca.fullname" . }}-worker-pod
+  volumeClaimTemplates:
+    - metadata:
+        name: db
+        labels:
+          {{- include "worca.selectorLabels" . | nindent 10 }}
+      spec:
+        accessModes:
+          {{- toYaml .Values.storage.db.accessModes | nindent 10 }}
+        {{- with .Values.storage.db.storageClassName }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.db.size }}

@@ -1,0 +1,100 @@
+{{- if .Values.broker.enabled }}
+# The credential broker (docs/credential-broker.md): the controller image with
+# `args: [worca, broker]`. Model keys live here and nowhere else; the controller reaches it at
+# WORCA_BROKER_URL (port 8080, private), people reach the key page (8081) in multi mode.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "worca.brokerServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "worca.labels" . | nindent 4 }}
+    app.kubernetes.io/component: broker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "worca.brokerSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "worca.brokerSelectorLabels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: broker
+          image: {{ include "worca.controllerImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["worca", "broker"]
+          ports:
+            - name: private
+              containerPort: 8080
+              protocol: TCP
+            - name: keypage
+              containerPort: 8081
+              protocol: TCP
+          env:
+            - name: WORCA_BROKER_MODE
+              value: {{ .Values.broker.mode | quote }}
+            - name: WORCA_BROKER_HOST
+              value: {{ .Values.broker.host | quote }}
+            - name: WORCA_BROKER_PORT
+              value: "8080"
+            - name: WORCA_BROKER_UI_PORT
+              value: "8081"
+            - name: WORCA_BROKER_DATA_DIR
+              value: /data
+            {{- range $k, $v := .Values.broker.env }}
+            - name: {{ $k }}
+              value: {{ toString $v | quote }}
+            {{- end }}
+          {{- with .Values.broker.existingSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ . }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: private
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: private
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.broker.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "worca.brokerServiceName" . }}
+        - name: tmp
+          emptyDir: {}
+{{- end }}

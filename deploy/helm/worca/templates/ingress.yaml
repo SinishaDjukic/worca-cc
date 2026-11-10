@@ -1,0 +1,39 @@
+{{- if .Values.ingress.enabled }}
+# The UI only. The hosts here become WORCA_ALLOWED_HOSTS (unless controller.env sets it), and
+# a non-loopback host needs an identity check: WORCA_CF_ACCESS_TEAM_DOMAIN + WORCA_CF_ACCESS_AUD
+# (Cloudflare Access) or WORCA_IDENTITY_ISSUER in controller.env, or the server refuses to start.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "worca.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "worca.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType | default "Prefix" }}
+            backend:
+              service:
+                name: {{ include "worca.fullname" $ }}
+                port:
+                  name: http
+          {{- end }}
+    {{- end }}
+{{- end }}

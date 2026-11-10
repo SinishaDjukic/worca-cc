@@ -1,0 +1,64 @@
+{{- if .Values.broker.enabled }}
+# 8080: the private port the controller (and the workers' claude processes) use. 8081: the key
+# page, for people, in multi mode; put it behind broker.keyPage.ingress with an identity check,
+# never 8080.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "worca.brokerServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "worca.labels" . | nindent 4 }}
+    app.kubernetes.io/component: broker
+spec:
+  type: ClusterIP
+  ports:
+    - name: private
+      port: 8080
+      targetPort: private
+      protocol: TCP
+    - name: keypage
+      port: 8081
+      targetPort: keypage
+      protocol: TCP
+  selector:
+    {{- include "worca.brokerSelectorLabels" . | nindent 4 }}
+{{- if .Values.broker.keyPage.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "worca.brokerServiceName" . }}-keypage
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "worca.labels" . | nindent 4 }}
+    app.kubernetes.io/component: broker
+  {{- with .Values.broker.keyPage.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.broker.keyPage.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.broker.keyPage.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.broker.keyPage.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType | default "Prefix" }}
+            backend:
+              service:
+                name: {{ include "worca.brokerServiceName" $ }}
+                port:
+                  name: keypage
+          {{- end }}
+    {{- end }}
+{{- end }}
+{{- end }}
