@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node ESM, `node:sqlite`, `node:test`, jsdom, Express (`ui/server.mjs`), vanilla DOM (`ui/public/*.mjs`), the engine adapters through `runClaude({ engine, … })` (`src/core/claude-runner.mjs`).
 
-**Spec:** `plans/requirements-9c-design.md` (D1–D16, §3–§10; it wins where this plan is unclear, except for the gaps below, which need the user's OK where marked). Earlier parts: A1.1 `plans/requirements-a11-design.md`, A3, A7, A8 `plans/requirements-a8-design.md`.
+**Spec:** `plans/requirements-9c-design.md` (D1–D17, §3–§10; it wins where this plan is unclear, except for the gaps below, which need the user's OK where marked). Earlier parts: A1.1 `plans/requirements-a11-design.md`, A3, A7, A8 `plans/requirements-a8-design.md`.
 
 **Visual reference (UI tasks):** the Claude Design canvas "Requirements model choice" (boards 1–8): board 1 New feature (Who interviews, the note), board 2 the harness list open, 3 the feature page's model chip and dialog, 4 the switch confirm, 5 the thread's step lines, notices and errors, 6 Cost of this feature, 7 the fallback on New feature, 8 board 2 in dark (tokens only). They use upstream classes (`card`, `btn`, `btn-sm`/`btn-mini`, `chip`, `hint`, `select-wrap`, `input select`, `badge`); inline styles are layout hints.
 
@@ -40,6 +40,7 @@
   - D12: "Repo not read: <Harness> can't read the repo." · "<file> skipped: <Harness> gets files as text only." · "<file> skipped: it is too large for <Harness>." · "<Harness> keeps its own copy of this step in its history on this computer." · "Cost estimated: <Harness> reports none."
   - D13: "<Harness> isn't signed in. Sign in, or change the model." · "<model> is no longer available, so this step used the default." · buttons **Change the model**, **Try again**.
   - D4: "Your default engine is Cursor, which can't run Requirements, so this starts on Claude." · "Codex isn't signed in, so this starts on Claude." · "Codex is off while the credential broker is on, so this starts on Claude." · "Copilot isn't installed, so this starts on Claude." (the pattern: "<Harness> <reason>, so this starts on Claude.").
+  - D17: one name, "code look", in every user-facing string; the step row "Code look · N files"; **Show what it found**; the card "Code look: what Worca found"; the error row "Code look stopped"; the confirm line "<Harness> can't read the repo: code looks are skipped, for this feature and for the Product brief."; the buttons stay **Look closer** and **Look again**.
   - `<Harness>` is `engineLabel(engine)` ("Gemini CLI"); option text uses `engineChoiceLabel` ("Codex (beta)").
 - **Offered harnesses**: Claude plus every `ASK_ENGINES` engine whose chat descriptor has a lockdown (`chatDescriptor(e).lockdown()`), exactly askCatalog's `available`. Capabilities: `repo` on claude, codex, copilot (`ENGINES[e].helpers`); `files` (images, PDFs, text over 24 KB) on claude only; `keepsCopy` on copilot, gemini, goose, qwen; `reportsCost` = `ENGINES[e].cost`.
 - **Security unchanged (D16):** ticket and file text stay `asData`; the file-read guard stays Claude-only (`runClaude` already throws for `readGuard` on another engine); no file tool for attachments on other harnesses; no-tools steps on other harnesses use `askLockdown: true, envScrub: true`.
@@ -73,7 +74,7 @@
 | `src/core/requirements/interview.mjs`, `round.mjs` | 7 | `callModel` over `helperCall`; rounds and looks on the feature's choice |
 | `src/core/requirements/helper.mjs`, `attachment-job.mjs`, `brief-job.mjs`, `brief.mjs` | 8 | Feature chat, reads, the brief on the helper call |
 | `src/core/requirements/routes.mjs`, `ui/server.mjs` | 10 | API |
-| `ui/public/requirements-view.mjs`, `ui/public/requirements-model.mjs` (new), `ui/public/app.js`, `ui/public/style.css` | 11–13 | the screens |
+| `ui/public/requirements-view.mjs`, `ui/public/requirements-model.mjs` (new), `ui/public/app.js`, `ui/public/style.css` | 11–13 | the screens; the code look as a step (D17) |
 | `tools/verify-requirements-cdp.mjs`, `docs/requirements.md`, `docs/changelog/unreleased.md` | 14 | proof, docs |
 
 ---
@@ -405,7 +406,7 @@ export function launchOptions(o) {
 **Interfaces:**
 - `modelChip(doc, f, onOpen)` → a `button.chip` with `aria-haspopup="dialog"`, text `f.modelLabel` and a chevron, after the cost chip.
 - `modelDialog(doc, { … })` → role=dialog "Model for this feature", sub "Interviews, code looks, file reads and Feature chat use it.", `whoInterviews`, the harness hint, "Applies from the next step. Steps already done keep the model that ran them.", `defaultLine`, `recommendationNote`, **Cancel** / **Save**.
-- `switchConfirm({ from, to, harnesses, files, feature })` → `{ title, message, confirmLabel } | null` in `engineSwitchConfirm`'s format (`ui/public/ask-engine.mjs`): title "Switch this feature to <Harness>?", lead "Worca's next step runs on <Harness> with <model>. Steps already done keep their answers and their cost.", then "\n\nWhat changes:\n• …" with only the lines that apply: "<Harness> can't read the repo: Look closer and the code look for the Product brief are skipped." · "Attached files go as text: <a> and <b> are skipped." · "<Harness> keeps its own copy of each step in its history on this computer." · "Your feature's description, answers and attachments are sent to <company>." · "<Harness> reports no cost. Worca estimates it from list prices where it can."; confirm label "Switch to <Harness>". `null` (no confirm) when the target loses nothing and `sameCompany`.
+- `switchConfirm({ from, to, harnesses, files, feature })` → `{ title, message, confirmLabel } | null` in `engineSwitchConfirm`'s format (`ui/public/ask-engine.mjs`): title "Switch this feature to <Harness>?", lead "Worca's next step runs on <Harness> with <model>. Steps already done keep their answers and their cost.", then "\n\nWhat changes:\n• …" with only the lines that apply: "<Harness> can't read the repo: code looks are skipped, for this feature and for the Product brief." (D17) · "Attached files go as text: <a> and <b> are skipped." · "<Harness> keeps its own copy of each step in its history on this computer." · "Your feature's description, answers and attachments are sent to <company>." · "<Harness> reports no cost. Worca estimates it from list prices where it can."; confirm label "Switch to <Harness>". `null` (no confirm) when the target loses nothing and `sameCompany`.
 - Save: `switchConfirm` → `deps.confirm(…)` when not null → `PUT /api/requirements/:seq/model` → repaint.
 
 - [ ] **Step 1: Tests:** the chip's text and position; the dialog's parts; Codex → Gemini lists repo, the two skipped files, keeps-copy, Google, cost; Codex → Claude with nothing lost asks only "sent to Anthropic"; Claude → Claude (another model) asks nothing and saves; Cancel saves nothing.
@@ -414,7 +415,7 @@ export function launchOptions(o) {
 
 ---
 
-### Task 13: The thread and the cost list (boards 5, 6)
+### Task 13: The thread (the code look as a step) and the cost list (boards 5, 6)
 
 **Files:**
 - Modify: `ui/public/requirements-view.mjs` (round and look cards, the error block at `f.lastError`, Feature chat rows, the cost chip, the list's spend line), `ui/public/style.css`
@@ -423,15 +424,16 @@ export function launchOptions(o) {
 **Behaviour:**
 - Each round, look and Feature chat reply shows "<model label> on <Harness> · <cost>" right-aligned (`$0.03`, `≈$0.04`, `cost unknown`; an error with nothing spent: "nothing spent").
 - Notices: grey `hint` lines with the info icon under the step's head (`ul aria-label="What this step could not do"`), never amber.
-- A `NOT_READY` error turn: title "<Look closer | Round N> stopped", the D13 sentence, **Change the model** (opens the dialog of Task 12), **Try again** (today's retry), and the descriptor's docs link "How to sign in to <Harness>" when `docsUrl` is present.
+- **The code look as a step (D17):** every `orientation` turn becomes a step row in the thread, in turn order like the rounds: "Code look · N files" (`plural(n, 'file')`; no count when 0), "<model label> on <Harness> · <cost>" on the right, the summary's first sentence (up to the first `. `, at most 200 characters), and **Show what it found**, which sets `ui.orientOpen = true`, repaints and scrolls the folded card into view. A look skipped for the harness (`skipped: 'engine'`) is a row with its D12 notice and no button; the other skipped reasons (`brief`, `off`, `no-git`, `no-repo`) keep today's card text and add no row. The card (`orientationBox`, and `knowsCard`'s look part) is titled "Code look: what Worca found". **One name**: every user-facing "closer look", "look at the code", "looked at the code", "Looking at the code" in `requirements-view.mjs` (about 18 places: `grep -n "closer look\|look at the code\|looked at the code\|Looking at the code\|What Worca found in the code"`) and in the server's texts (`src/core/requirements/*.mjs` messages and `docs/requirements.md`) becomes "code look" wording ("Worca has not done a code look for this feature.", "Code looks are turned off for this one (Your notes for Worca).", "Worca did not do a code look: <git text>.", "Worca could not do the code look this time; the interview runs without it."); the buttons **Look closer** and **Look again** keep their names, and every test that pins an old string is updated in the same commit.
+- A `NOT_READY` error turn: title "Code look stopped" or "Round N stopped" ("Feature chat stopped" for a chat row), the D13 sentence, **Change the model** (opens the dialog of Task 12), **Try again** (today's retry), and the descriptor's docs link "How to sign in to <Harness>" when `docsUrl` is present.
 - A `model` turn: one plain row "You switched this feature to <model> on <Harness> · <time>".
 - A `SKIPPED_ENGINE` file: grey line with **Read again** (gap 8).
 - The header cost chip: `${anyEstimated ? '≈' : ''}${usd(f.costUsd)} so far` as a `button` (`aria-haspopup="dialog"`) opening **Cost of this feature**: the table (Step / Ran on / Cost) from `GET …/costs`, the "So far" row, and the sentence "$X billed and ≈$Y estimated, plus N step(s) with cost unknown. The Requirements budget counts ≈$T of $L this month; the step(s) with cost unknown <is|are> not counted." (parts with zero left out; "this week" for a weekly budget; without a limit: "The Requirements budget counts ≈$T this month.").
 - The list's spend line adds " plus N step(s) with cost unknown" when `spend.unknownSteps > 0`.
 
-- [ ] **Step 1: Tests:** each piece above with fixed feature JSON (no server); the error block's buttons; the cost dialog's sums and sentence for billed only, estimated, and unknown.
+- [ ] **Step 1: Tests:** each piece above with fixed feature JSON (no server); a Codex look row with "Code look · 3 files", "Opus 5.5 on Claude · $0.19"-style meta, its first sentence and **Show what it found** opening the card; a Gemini look row with its notice and no button; no row for `skipped: 'brief'`; the card's new title; no user-facing "closer look" / "look at the code" string left (a grep over the rendered DOM); the error block's buttons; the cost dialog's sums and sentence for billed only, estimated, and unknown.
 - [ ] **Step 2–4:** run → FAIL, implement, run `node tools/test.mjs test/requirements-view-model.test.mjs test/requirements-view-helper.test.mjs test/requirements-view.test.mjs` → pass.
-- [ ] **Step 5: Commit** `Requirements: step lines, notices, errors and the cost list (9c boards 5, 6)`.
+- [ ] **Step 5: Commit** `Requirements: the code look as a step, notices, errors and the cost list (9c boards 5, 6, D17)`.
 
 ---
 
@@ -441,8 +443,8 @@ export function launchOptions(o) {
 - Modify: `test/requirements-9c-steps.test.mjs`, `tools/verify-requirements-cdp.mjs`, `docs/requirements.md` ("Which model interviews" becomes "Choosing the harness and model"), `docs/changelog/unreleased.md`
 
 - [ ] **Whole steps** (fake `runClaudeImpl` standing in for each harness, gap 3): for codex, gemini and copilot one feature runs create → look → round → file read → Feature chat; assert each launch's `engine`, `sandbox`, `askLockdown`, `mcpConfigPath`, the stored notices, and `GET …/costs`.
-- [ ] **Browser proof** (mock mode): New feature shows Who interviews and the note; the harness list has no Cursor; changing the harness refills Model; the feature chip opens the dialog; Codex → Gemini shows the confirm; the cost chip opens the cost dialog; light and dark at 1280 px and 390 px (the selects stack under 600 px). `npm run verify:requirements` → all checks passed.
-- [ ] **Docs:** "Choosing the harness and model" (the three selects, the default, the fallback, what each harness can't do, the copy kept in a harness's history, cost words, changing a running feature), in product language; the changelog entry.
+- [ ] **Browser proof** (mock mode): New feature shows Who interviews and the note; the harness list has no Cursor; changing the harness refills Model; the feature chip opens the dialog; Codex → Gemini shows the confirm; the cost chip opens the cost dialog; a code look shows as a step row and **Show what it found** opens its card; light and dark at 1280 px and 390 px (the selects stack under 600 px). `npm run verify:requirements` → all checks passed.
+- [ ] **Docs:** "Choosing the harness and model" (the three selects, the default, the fallback, what each harness can't do, the copy kept in a harness's history, cost words, changing a running feature, the code look as a step), in product language, with "code look" as the one name; the changelog entry.
 - [ ] **Run** `node tools/test.mjs test/requirements-9c-steps.test.mjs` → pass; check that docs and plans carry no local path.
 - [ ] **Commit** `Requirements: whole-step proof, docs and changelog (9c)`.
 
@@ -481,6 +483,7 @@ export function launchOptions(o) {
 | D14 cost words, cost list, budget | 3, 9, 10, 13 |
 | D15 copies in a harness's history | 4, 5 |
 | D16 security unchanged | 4, 5, 8 |
+| D17 the code look as a step; one name | 12 (confirm line), 13, 14 |
 | §3 data | 2, 9 |
 | §4 the helper call | 3, 4, 5, 7, 8 |
 | §5 API | 10 |
