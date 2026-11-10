@@ -90,6 +90,8 @@ const namesText = (list) => {
   return parts.length < 2 ? parts.join('') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 };
 const n1 = (x) => String(Math.round(x * 10) / 10);
+const timesWord = (x) => (n1(x) === '1' ? 'time' : 'times');
+const timesATry = (x) => `${n1(x)} ${timesWord(x)} a try`;
 
 const avg = (list, f) => {
   const xs = list.map(f).filter((x) => typeof x === 'number' && Number.isFinite(x));
@@ -105,14 +107,15 @@ const DIFF_AT = { cost: { share: 0.2, floor: 0.01 }, time: { share: 0.2, floor: 
 
 /**
  * The one rule for the tiles, "In short" and the rows. a, b = the average a try; nA, nB = the finished tries behind them.
- * Returns 'more', 'less' (B against A) or null: about the same. Needs at least 2 finished tries on each side.
+ * Returns 'more' or 'less' (B against A), 'same' (a gap under the threshold), or null (cannot tell: under 2 finished tries
+ * on a side, or no number). A $0 baseline has no share, so the absolute part alone decides.
  */
 export function differs(kind, a, b, nA, nB) {
   const t = DIFF_AT[kind];
   if (!t || !(nA >= 2) || !(nB >= 2) || !Number.isFinite(a) || !Number.isFinite(b)) return null;
   const d = b - a;
-  if (Math.abs(d) < t.floor - 1e-9) return null;
-  if (t.share && !(a > 0 && Math.abs(d) >= a * t.share - 1e-9)) return null;
+  if (Math.abs(d) < t.floor - 1e-9) return 'same';
+  if (t.share && a > 0 && Math.abs(d) < a * t.share - 1e-9) return 'same';
   return d > 0 ? 'more' : 'less';
 }
 const diffOf = (a, b) => ({ cost: differs('cost', a.costPerTry, b.costPerTry, a.n, b.n), time: differs('time', a.timePerTry, b.timePerTry, a.n, b.n),
@@ -120,12 +123,14 @@ const diffOf = (a, b) => ({ cost: differs('cost', a.costPerTry, b.costPerTry, a.
 
 /** "Same result, but B costs 2.5× as much a try ($0.0500 against $0.0200), and is sent back for fixes 2 times a try, against 1." (F10) */
 function sameButWhy(label, pa, pb) {
-  const cost = differs('cost', pa.cost, pb.cost, pa.n, pb.n) === 'more';
-  const sent = differs('sentBack', pa.sentBack, pb.sentBack, pa.n, pb.n) === 'more';
+  const isDiff = (v) => v === 'more' || v === 'less';
+  const cost = isDiff(differs('cost', pa.cost, pb.cost, pa.n, pb.n));
+  const sent = isDiff(differs('sentBack', pa.sentBack, pb.sentBack, pa.n, pb.n));
   if (!cost && !sent) return null;
-  const sentText = `is sent back for fixes ${n1(pb.sentBack)} times a try, against ${n1(pa.sentBack)}`;
+  const sentText = `is sent back for fixes ${timesATry(pb.sentBack)}, against ${n1(pa.sentBack)}`;
   if (!cost) return `Same result, but ${label} ${sentText}.`;
-  return `Same result, but ${label} costs ${fmtTimes(pb.cost / pa.cost)} as much a try (${fmtUsdFine(pb.cost)} against ${fmtUsdFine(pa.cost)})${sent ? `, and ${sentText}` : ''}.`;
+  const how = pa.cost > 0 ? `${fmtTimes(pb.cost / pa.cost)} as much` : (pb.cost > pa.cost ? 'more' : 'less');
+  return `Same result, but ${label} costs ${how} a try (${fmtUsdFine(pb.cost)} against ${fmtUsdFine(pa.cost)})${sent ? `, and ${sentText}` : ''}.`;
 }
 
 /**
@@ -214,15 +219,16 @@ function inShortSentences({ a, b, tiles, counts, worst, allCompared, nothing }) 
   const out = [];
   const { diff } = tiles;
   const adj = [];
-  if (diff.cost) adj.push(diff.cost === 'less' ? 'cheaper' : 'more expensive');
-  if (diff.time) adj.push(diff.time === 'less' ? 'faster' : 'slower');
+  if (diff.cost === 'more' || diff.cost === 'less') adj.push(diff.cost === 'less' ? 'cheaper' : 'more expensive');
+  if (diff.time === 'more' || diff.time === 'less') adj.push(diff.time === 'less' ? 'faster' : 'slower');
   const exs = (n) => (n === 1 ? '1 example' : `${n} examples`);
   const is = adj.length ? `is ${adj.join(' and ')}` : '';
-  let first = true;   // sentence 1 present: later sentences say "It", otherwise the version label
+  let first = true;   // an earlier sentence names the version: later ones say "It", otherwise the version label
   if (nothing) {   // F7: no example passes on either side
     out.push('Neither version passes any example yet.');
     if (nothing.label) out.push(`Most often missed: "${nothing.label}" (${nothing.k} of ${nothing.n} ${triesWord(nothing.n)}).`);
     if (is) out.push(`${b.label} ${is} than ${a.label}.`);
+    else first = false;   // nothing has named the version yet
   } else if (counts.better) out.push(is ? `${b.label} ${is}, and better on ${exs(counts.better)}.` : `${b.label} is better on ${exs(counts.better)}.`);
   else if (!counts.worse) {
     const same = allCompared ? 'on every example' : 'on the examples both versions finished';
@@ -230,15 +236,20 @@ function inShortSentences({ a, b, tiles, counts, worst, allCompared, nothing }) 
   } else if (is) out.push(`${b.label} ${is}.`);
   else first = false;
   const subject = first ? 'It' : b.label;
+  let named = first;   // some sentence above already names the version
+  if (counts.worse >= 1) named = true;
   if (counts.worse === 1 && worst) {
     out.push(worst.missedList.length && !worst.luck
       ? `${subject} is worse on 1 example, ${worst.name}: it missed ${namesText(worst.missedList)}.`
       : `${subject} is worse on 1 example, ${worst.name}.`);
   } else if (counts.worse > 1) out.push(`${subject} is worse on ${counts.worse} examples.`);
-  if (diff.sentBack) out.push(`It is sent back for fixes ${diff.sentBack === 'more' ? 'more' : 'less'} often: ${n1(tiles.b.sentBack)} times a try, against ${n1(tiles.a.sentBack)}.`);
+  if (diff.sentBack === 'more' || diff.sentBack === 'less') {
+    out.push(`${named ? 'It' : b.label} is sent back for fixes ${diff.sentBack} often: ${timesATry(tiles.b.sentBack)}, against ${n1(tiles.a.sentBack)}.`);
+    named = true;
+  }
   // F11: steadier only counts examples that passed every try; "vary more" only examples with mixed results.
-  if (tiles.b.mixed > tiles.a.mixed) out.push('Its results also vary more from try to try.');
-  else if (tiles.b.steady.n > tiles.a.steady.n) out.push('Its results are also steadier from try to try.');
+  if (tiles.b.mixed > tiles.a.mixed) out.push(`${named ? 'Its' : `${b.label}'s`} results also vary more from try to try.`);
+  else if (tiles.b.steady.n > tiles.a.steady.n) out.push(`${named ? 'Its' : `${b.label}'s`} results are also steadier from try to try.`);
   return out;
 }
 

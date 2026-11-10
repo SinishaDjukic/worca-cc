@@ -201,10 +201,11 @@ export function renderCompare(root, c, actions, { doc, now = Date.now() }) {
   }
 
   const a = m.tiles.a || { passed: { passed: 0, total: 0 }, costPerTry: null, timePerTry: null, sentBack: null, steady: { n: 0, of: 0 } };
-  const diff = m.tiles.diff || {};   // an older model has none: no gap is claimed
+  const diff = m.tiles.diff || { cost: 'same', time: 'same', sentBack: 'same' };   // an older model has none: no gap is claimed
   const finite = (x) => typeof x === 'number' && Number.isFinite(x);
-  // D5: the same rule as In short (compare.mjs differs): a gap under the threshold is "about the same".
-  const same = (x, y) => (finite(x) && finite(y) ? SAME_WORDS : null);
+  // D5: the same rule as In short (compare.mjs differs): 'same' is "about the same"; null (cannot tell) shows no delta.
+  const isDiff = (v) => v === 'more' || v === 'less';
+  const gap = (v, x, y, text) => (isDiff(v) ? text() : v === 'same' && finite(x) && finite(y) ? SAME_WORDS : null);
   const sentDelta = (d) => { const v = Math.round(Math.abs(b.sentBack - a.sentBack) * 10) / 10; return `${v} ${d === 'more' ? 'more' : 'fewer'}`; };
   const b = m.tiles.b;
   // The passed tile counts every finished try; the per-try tiles only the examples both versions finished. When the two
@@ -216,10 +217,10 @@ export function renderCompare(root, c, actions, { doc, now = Date.now() }) {
   tiles.append(
     tile(doc, 'Tries passed', `${b.passed.passed} of ${b.passed.total}`, `${A}: ${a.passed.passed} of ${a.passed.total}`, countDelta(a.passed.passed, b.passed.passed),
       apart ? 'Counts every finished try.' : null),   // controller-approved copy (2026-10-27)
-    tile(doc, 'Cost per try', usdOr(b.costPerTry), `${A}: ${usdOr(a.costPerTry)}`, diff.cost ? pctDelta(a.costPerTry, b.costPerTry) || null : same(a.costPerTry, b.costPerTry)),
-    tile(doc, 'Time per try', timeOr(b.timePerTry), `${A}: ${timeOr(a.timePerTry)}`, diff.time ? durationDelta(a.timePerTry, b.timePerTry) || null : same(a.timePerTry, b.timePerTry)),
+    tile(doc, 'Cost per try', usdOr(b.costPerTry), `${A}: ${usdOr(a.costPerTry)}`, gap(diff.cost, a.costPerTry, b.costPerTry, () => pctDelta(a.costPerTry, b.costPerTry) || diff.cost)),
+    tile(doc, 'Time per try', timeOr(b.timePerTry), `${A}: ${timeOr(a.timePerTry)}`, gap(diff.time, a.timePerTry, b.timePerTry, () => durationDelta(a.timePerTry, b.timePerTry) || null)),
     tile(doc, 'Sent back for fixes', fmtTimes(b.sentBack) || '—', `per try, on average · ${A}: ${fmtTimes(a.sentBack) || '—'}`,
-      diff.sentBack ? sentDelta(diff.sentBack) : same(a.sentBack, b.sentBack)),
+      gap(diff.sentBack, a.sentBack, b.sentBack, () => sentDelta(diff.sentBack))),
     tile(doc, 'Passed every try', `${b.steady.n} of ${b.steady.of}`, `examples that passed in every try · ${A}: ${a.steady.n} of ${a.steady.of}`),
   );
   page.append(tiles);

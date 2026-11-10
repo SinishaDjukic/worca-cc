@@ -60,7 +60,7 @@ test('board 5: tries passed, better, worse, same, why, steady and In short', () 
   assert.deepEqual(m.inShort, [
     'v5 draft is cheaper and faster, and better on 2 examples.',
     `It is worse on 1 example, Bulk invoice export: it missed "${SECTIONS}" (2 of 3 tries).`,
-    'It is sent back for fixes less often: 1 times a try, against 2.',
+    'It is sent back for fixes less often: 1 time a try, against 2.',
     'Its results also vary more from try to try.',
   ]);
   assert.deepEqual(m.look, { exampleId: 1, name: 'Bulk invoice export', before: 'Look at ', after: ' before you share v5 draft.' });
@@ -179,26 +179,62 @@ const cmp2 = (exs) => compareModel({ examples: exs.map(([id, name]) => ({ id, na
   tries: exs.flatMap(([id, , at, bt]) => [...at(id, 'a'), ...bt(id, 'b')]) });
 
 test('U-T5 D5: differs needs 20% and the floor, and 2 finished tries on each side', () => {
-  assert.equal(differs('time', 40000, 44000, 3, 3), null, '40 s against 44 s is 10%');
+  assert.equal(differs('time', 40000, 44000, 3, 3), 'same', '40 s against 44 s is 10%');
   assert.equal(differs('time', 30000, 40000, 3, 3), 'more', '33% and 10 s');
-  assert.equal(differs('time', 30000, 39000, 3, 3), null, 'under 10 s');
+  assert.equal(differs('time', 30000, 39000, 3, 3), 'same', 'under 10 s');
   assert.equal(differs('time', 100000, 70000, 3, 3), 'less');
-  assert.equal(differs('cost', 0.1, 0.115, 3, 3), null, '15%');
+  assert.equal(differs('cost', 0.1, 0.115, 3, 3), 'same', '15%');
   assert.equal(differs('cost', 0.1, 0.125, 3, 3), 'more');
-  assert.equal(differs('cost', 0.001, 0.002, 3, 3), null, 'under a cent a try');
+  assert.equal(differs('cost', 0.001, 0.002, 3, 3), 'same', 'under a cent a try');
   assert.equal(differs('cost', 0.05, 0.02, 3, 3), 'less');
   assert.equal(differs('cost', 1, 3, 1, 3), null, 'one try on a side is not enough');
   assert.equal(differs('cost', 1, 3, 3, 0), null);
-  assert.equal(differs('sentBack', 1, 1.4, 3, 3), null);
+  assert.equal(differs('sentBack', 1, 1.4, 3, 3), 'same');
   assert.equal(differs('sentBack', 1, 1.5, 3, 3), 'more');
   assert.equal(differs('sentBack', 2, 1, 3, 3), 'less');
   assert.equal(differs('cost', null, 1, 3, 3), null);
 });
 
+test('Fix 3: $0 baseline decides on the absolute part; too few tries is cannot-tell, not same', () => {
+  assert.equal(differs('cost', 0, 0.5, 3, 3), 'more');
+  assert.equal(differs('cost', 0, 0.005, 3, 3), 'same');
+  assert.equal(differs('time', 0, 12000, 3, 3), 'more');
+  assert.equal(differs('time', 0, 5000, 3, 3), 'same');
+  assert.equal(differs('cost', 1, 3, 1, 1), null);
+  const few = cmp2([[1, 'X', sd('P', { cost: 1, ms: 20000 }), sd('P', { cost: 3, ms: 20000 })]]);
+  assert.deepEqual([few.tiles.diff.cost, few.tiles.diff.time], [null, null]);
+  assert.deepEqual(few.inShort, ['v5 draft gives the same results as v4 on every example.'], 'says nothing about cost');
+  const zero = cmp2([[1, 'X', sd('PPP', { cost: 0 }), sd('PPP', { cost: 0.5 })]]);
+  assert.equal(zero.tiles.diff.cost, 'more');
+  assert.equal(zero.inShort[0], 'v5 draft is more expensive, and gives the same results as v4.');
+});
+
+test('Fix 2: no dangling It / Its when no earlier sentence names the version', () => {
+  const sent = cmp2([[1, 'X', sd('FFF', { sent: 2 }), sd('FFF', { sent: 1 })]]);
+  assert.equal(sent.inShort.join(' '), `Neither version passes any example yet. Most often missed: "${SECTIONS}" (6 of 6 tries). v5 draft is sent back for fixes less often: 1 time a try, against 2.`);
+  const vary = cmp2([[1, 'X', sd('FFF'), sd('FFF')], [2, 'Y', sd('PPP'), sd('PPP')]]);
+  assert.ok(!/\bIts?\b/.test(vary.inShort.join(' ')), vary.inShort.join(' '));
+});
+
+test('Fix 2: steadiness names the version too', () => {
+  const m = cmp2([[1, 'X', sd('FFF'), sd('PFF')]]);
+  assert.equal(m.inShort[m.inShort.length - 1], "v5 draft's results also vary more from try to try.");
+  assert.ok(!/Its?/.test(m.inShort.join(' ')), m.inShort.join(' '));
+});
+
+test('Fix 4: "Same result, but" shows both directions', () => {
+  const cheap = cmp2([[1, 'X', sd('PPP', { cost: 0.05 }), sd('PPP', { cost: 0.02 })]]);
+  assert.equal(cheap.examples[0].why, 'Same result, but v5 draft costs 0.4× as much a try ($0.0200 against $0.0500).');
+  const less = cmp2([[1, 'X', sd('PPP', { sent: 3 }), sd('PPP', { sent: 1 })]]);
+  assert.equal(less.examples[0].why, 'Same result, but v5 draft is sent back for fixes 1 time a try, against 3.');
+  const mix = cmp2([[1, 'X', sd('PPP', { cost: 0.02, sent: 1 }), sd('PPP', { cost: 0.05, sent: 0 })]]);
+  assert.equal(mix.examples[0].why, 'Same result, but v5 draft costs 2.5× as much a try ($0.0500 against $0.0200), and is sent back for fixes 0 times a try, against 1.');
+});
+
 test('U-T5 F6: 40 s against 44 s is not "slower"; a real gap still is', () => {
   const m = cmp2([[1, 'X', sd('PPP', { ms: 40000 }), sd('PPP', { ms: 44000 })]]);
   assert.deepEqual(m.inShort, ['v5 draft gives the same results as v4 on every example.']);
-  assert.deepEqual(m.tiles.diff, { cost: null, time: null, sentBack: null });
+  assert.deepEqual(m.tiles.diff, { cost: 'same', time: 'same', sentBack: 'same' });
   const slow = cmp2([[1, 'X', sd('PPP', { ms: 30000 }), sd('PPP', { ms: 45000 })]]);
   assert.deepEqual(slow.inShort, ['v5 draft is slower, and gives the same results as v4.']);
   assert.equal(slow.tiles.diff.time, 'more');
@@ -237,8 +273,8 @@ test('U-T5 F10: same pass result at a different cost or sent back', () => {
   assert.equal(both.examples[0].why, 'Same result, but v5 draft costs 2.5× as much a try ($0.0500 against $0.0200), and is sent back for fixes 2 times a try, against 1.');
   assert.deepEqual(both.inShort, ['v5 draft is more expensive, and gives the same results as v4.', 'It is sent back for fixes more often: 2 times a try, against 1.']);
   const less = cmp2([[1, 'X', sd('PPP', { sent: 2 }), sd('PPP', { sent: 1 })]]);
-  assert.deepEqual(less.inShort, ['v5 draft gives the same results as v4 on every example.', 'It is sent back for fixes less often: 1 times a try, against 2.']);
-  assert.equal(less.examples[0].why, null, 'less is not a reason to look');
+  assert.deepEqual(less.inShort, ['v5 draft gives the same results as v4 on every example.', 'It is sent back for fixes less often: 1 time a try, against 2.']);
+  assert.equal(less.examples[0].why, 'Same result, but v5 draft is sent back for fixes 1 time a try, against 2.', 'both directions (Fix 4)');
   const same = cmp2([[1, 'X', sd('PPP', { cost: 0.5 }), sd('PPP', { cost: 0.51 })]]);
   assert.equal(same.examples[0].why, null);
 });

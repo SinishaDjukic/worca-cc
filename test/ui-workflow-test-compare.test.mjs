@@ -45,7 +45,7 @@ test('board 5: the title and meta, In short with Look at it, five tiles', () => 
   assert.equal(root.querySelector('.wft-title').textContent, 'Your v5 draft compared with v4');
   assert.equal(root.querySelector('.wft-titles .hint').textContent, '6 examples, 3 tries each · ready 2 hours ago · cost $10.26');
   assert.deepEqual(texts(root, '.wft-crumbs .wft-acts button'), ['Test again']);
-  assert.equal(root.querySelector('.wft-short p').textContent, `v5 draft is cheaper and faster, and better on 2 examples. It is worse on 1 example, Bulk invoice export: it missed "${SECTIONS}" (2 of 3 tries). It is sent back for fixes less often: 1 times a try, against 2. Its results also vary more from try to try. Look at Bulk invoice export before you share v5 draft.`);
+  assert.equal(root.querySelector('.wft-short p').textContent, `v5 draft is cheaper and faster, and better on 2 examples. It is worse on 1 example, Bulk invoice export: it missed "${SECTIONS}" (2 of 3 tries). It is sent back for fixes less often: 1 time a try, against 2. Its results also vary more from try to try. Look at Bulk invoice export before you share v5 draft.`);
   assert.equal(root.querySelector('.wft-short p b').textContent, 'Bulk invoice export');
   click([...root.querySelectorAll('.wft-short button')].find((b) => b.textContent === 'Look at it'));
   assert.deepEqual(calls, [['open', 1]]);
@@ -73,6 +73,17 @@ test('U-T5: tiles say "about the same" under the threshold, never a raw 10% gap;
   assert.deepEqual(rows[4], ['Passed every try', null, '1 of 1', 'examples that passed in every try · v4: 1 of 1']);
   const far = boot(renderCompare, compare({ examples: 1, model: sameModel('PPP', 'PPP', { cost: 0.0131, ms: 30000 }, { cost: 0.0328, ms: 45000 }) }));
   assert.deepEqual(tileRows(far.root).slice(1, 3), [['Cost per try', '150% more', '$0.0328', 'v4: $0.0131'], ['Time per try', '15 s more', '45 s', 'v4: 30 s']]);
+});
+
+test('Fix 3 (UI): no delta when too few tries; $0 baseline tile agrees with In short', () => {
+  const few = sameModel('P', 'P', { cost: 1, ms: 20000 }, { cost: 3, ms: 20000 });
+  const r1 = tileRows(boot(renderCompare, compare({ examples: 1, model: few })).root);
+  assert.equal(r1[1][1], null);
+  assert.equal(r1[2][1], null);
+  const zero = sameModel('PPP', 'PPP', { cost: 0, ms: 20000 }, { cost: 0.5, ms: 20000 });
+  const z = boot(renderCompare, compare({ examples: 1, model: zero }));
+  assert.equal(tileRows(z.root)[1][1], 'more');
+  assert.ok(/more expensive/.test(z.root.querySelector('.wft-short p').textContent));
 });
 
 test('U-T5: a row that fails on both versions says so and has no "Might be luck" or "Try 3 more"', () => {
