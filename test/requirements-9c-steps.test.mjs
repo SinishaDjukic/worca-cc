@@ -558,3 +558,90 @@ test('a brief look books step brief with its harness and tokens', async () => {
   assert.equal(rows.length, 1);
   assert.deepEqual([rows[0].engine, rows[0].step, rows[0].cost_kind, rows[0].input_tokens, rows[0].output_tokens], ['codex', 'brief', 'billed', 700, 70]);
 });
+
+// ---------------------------------------------------------------- Task 14: a whole feature on each harness (fake runner stands in for the harness)
+
+import express from 'express';
+import { registerRequirementsRoutes } from '../src/core/requirements/routes.mjs';
+
+const WHOLE = {
+  codex: { label: 'Codex', model: 'gpt-x', repo: true, keeps: false, estimated: false, files: 'Codex gets files as text only.' },
+  gemini: { label: 'Gemini CLI', model: 'gem-x', repo: false, keeps: true, estimated: true },
+  copilot: { label: 'Copilot', model: 'cop-x', repo: true, keeps: true, estimated: false },
+};
+for (const [engine, w] of Object.entries(WHOLE)) {
+  test(`a whole ${w.label} feature: create with a model, code look, round, file read, Feature chat, then its costs`, async () => {
+    process.env.WORCA_FLAGS = 'requirements';
+    configs.length = 0;
+    const replies = w.repo ? [LOOK, ROUND1, { summary: 'Refunds within 14 days.' }, CHAT] : [ROUND1, { summary: 'Refunds within 14 days.' }, CHAT];
+    const calls = [];
+    const projects = [];
+    const runClaudeImpl = async (opts) => {
+      calls.push(opts);
+      const text = JSON.stringify(replies.shift());
+      opts.onEvent?.({ type: 'result', ...(w.estimated ? {} : { costUsd: 0.02 }), usage: { input_tokens: 1000, output_tokens: 100 } });
+      return { text };
+    };
+    const d = deps({ runClaudeImpl }, {
+      catalog: async () => ({ models: [{ id: w.model, label: w.model, harnesses: [engine], efforts: [] }] }),
+      listModels: async () => [{ id: w.model, label: w.model, engine, efforts: [] }],
+      ratesFor: () => ({ input: 1, output: 2 }), listProjects: async () => projects,
+      readiness: async () => [], resolveEngine: () => ({ engine: 'claude' }), roleModel: () => null, resolveRole: () => null,
+      budget: () => ({ blocked: false }),
+    });
+    const app = express();
+    app.use(express.json());
+    registerRequirementsRoutes(app, { broadcast: () => {}, deps: d });
+    const srv = app.listen(0, '127.0.0.1');
+    await new Promise((r) => srv.once('listening', r));
+    const call = async (method, path, body) => {
+      const r = await fetch(`http://127.0.0.1:${srv.address().port}${path}`, { method, headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      return { status: r.status, json: await r.json().catch(() => null) };
+    };
+    try {
+      const wholeDir = mkdtempSync(join(tmpdir(), `req-9c-whole-${engine}-`));
+      const { addProject } = await import('../src/core/projects.mjs');
+      const key = (await addProject({ name: 'shop' + engine, path: wholeDir })).find((p) => p.name === 'shop' + engine).key;
+      setContext('project', key, { lookAtCode: true });
+      projects.push({ key, name: 'shop' + engine, path: wholeDir, exists: true });
+      const made = await call('POST', '/api/requirements', { scopeType: 'project', scopeKey: key, title: 'Cancel order', description: 'Before it ships', model: { engine, model: w.model, effort: null } });
+      assert.equal(made.status, 201, JSON.stringify(made.json));
+      const seq = (made.json.feature || made.json).seq;
+      await settled(seq);
+      const f = { seq };
+      addAttachments(own(f), [textFile('policy.md', 'Refunds in 14 days.')], { by: 'po' }, d);
+      await readsSettled(own(f));
+      await sendMessage(seq, { text: 'Who may cancel?' }, { by: 'po' }, d);
+
+      // each launch: the harness, never Claude's options
+      assert.equal(calls.length, w.repo ? 4 : 3);
+      assert.ok(calls.every((c) => c.engine === engine));
+      const [look, round, read, chat] = w.repo ? calls : [null, ...calls];
+      if (w.repo) { assert.equal(look.sandbox, 'read-only'); assert.ok(look.mcpConfigPath); assert.equal(configs.at(-1).roots.length, 1); }
+      for (const c of [round, read, chat]) { assert.equal(c.askLockdown, true); assert.equal(c.sandbox, 'read-only'); assert.equal(c.mcpConfigPath, undefined); assert.equal(c.model, w.model); }
+      assert.equal(read.readGuard, undefined);
+
+      // the stored notices
+      const turns = listTurns(seq);
+      const lookTurn = turns.find((t) => t.kind === 'orientation');
+      if (!w.repo) assert.deepEqual(lookTurn.notices, [`Repo not read: ${w.label} can't read the repo.`]);
+      const kept = `${w.label} keeps its own copy of this step in its history on this computer.`;
+      assert.equal(turns.find((t) => t.kind === 'round').notices.includes(kept), w.keeps);
+      assert.equal(listHelperMessages(seq).at(-1).notices.includes(kept), w.keeps);
+      if (w.estimated) assert.ok(turns.find((t) => t.kind === 'round').notices.includes(`Cost estimated: ${w.label} reports none.`));
+
+      // GET …/costs
+      const costs = (await call('GET', `/api/requirements/${seq}/costs`)).json;
+      assert.deepEqual(costs.rows.map((r) => r.step), w.repo ? ['look', 'round', 'read', 'chat'] : ['round', 'read', 'chat']);
+      assert.ok(costs.rows.every((r) => r.ranOn === `${w.model} on ${w.label}`));
+      assert.ok(costs.rows.every((r) => r.kind === (w.estimated ? 'estimated' : 'billed')));
+      assert.equal(costs.anyEstimated, w.estimated);
+      assert.equal(costs.unknownSteps, 0);
+      assert.ok(costs.totalUsd > 0);
+    } finally {
+      srv.closeAllConnections?.();
+      await new Promise((r) => srv.close(r));
+      delete process.env.WORCA_FLAGS;
+    }
+  });
+}

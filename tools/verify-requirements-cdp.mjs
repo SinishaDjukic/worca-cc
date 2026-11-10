@@ -52,6 +52,8 @@ const SANDBOX = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 
 const ONLY_A6 = process.argv.includes('--only=a6');
 // --only=a61: the boot, the flag and the A6.1 section (start from a ticket) alone, then the page-error gate.
 const ONLY_A61 = process.argv.includes('--only=a61');
+// --only=9c: the boot, the flag and the 9c section (harness and model choice) alone, then the page-error gate.
+const ONLY_9C = process.argv.includes('--only=9c');
 const SHOTS = process.env.REQ_SHOTS || '';
 if (!existsSync(CHROME)) { console.error(`no Chrome at ${CHROME} - set CHROME_BIN`); process.exit(1); }
 const PORT = Number(process.env.CDP_PORT || 9344);
@@ -188,11 +190,13 @@ await sleep(500);
 check('flag off: no Requirements row', !(await navShown()));
 await A.evalJs(`window.__np.flags.set('requirements', true)`);
 check('flag on: the row appears without a reload', await until(navShown, 2000));
-if (!ONLY_A6 && !ONLY_A61) {   // --only=a6 / --only=a61 skip to their section
+if (!ONLY_A6 && !ONLY_A61 && !ONLY_9C) {   // --only=a6 / --only=a61 / --only=9c skip to their section
   await A.evalJs(`location.hash = '#requirements/new'`);
   check('the new-feature form renders', await until(() => A.evalJs(`!!document.getElementById('req-new-title')`)));
-  check('the New feature page names the interview model ("Worca interviews with …")',
-    await until(() => A.evalJs(`(document.querySelector('.req-new .req-new-cost')?.textContent || '').startsWith('Worca interviews with')`), 4000));
+  check('the New feature page shows Who interviews (9c): the three selects and the note under them',
+    await until(() => A.evalJs(`(() => { const b = document.querySelector('.req-new .req-who-box'); return !!b && !b.hidden
+      && b.querySelector('.req-who legend')?.textContent === 'Who interviews' && b.querySelectorAll('.req-who select').length === 3
+      && (b.querySelector('.req-new-note')?.textContent || '').length > 0; })()`), 8000));
   const filled = await A.evalJs(`(() => { const sel = document.getElementById('req-new-target');
     const opt = [...sel.options].find((o) => o.text === 'shop'); if (!opt) return false; sel.value = opt.value;
     document.getElementById('req-new-title').value = 'Cancel an order';
@@ -311,10 +315,10 @@ if (!ONLY_A6 && !ONLY_A61) {   // --only=a6 / --only=a61 skip to their section
   const picked = await until(() => A.evalJs(`(() => { const sel = document.getElementById('req-new-target'); if (!sel) return false;
     const opt = [...sel.options].find((o) => o.text === 'shop'); if (!opt) return false; sel.value = opt.value;
     sel.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`));
-  check('New feature for that project shows "Worca knows shop from its product brief" and cents per round',
+  check('New feature for that project shows "Worca knows shop from its product brief" and the note under Who interviews',
     picked && await until(() => A.evalJs(`(() => { const l = document.querySelector('.req-new .req-brief-line');
       return !!l && /^Worca knows shop from its product brief/.test(l.textContent)
-        && /cents per round/.test(document.querySelector('.req-new .req-new-cost')?.textContent || ''); })()`)));
+        && !!document.querySelector('.req-new .req-who-box .req-new-note'); })()`)));
   await A.evalJs(`(() => { document.getElementById('req-new-title').value = 'Orders report';
     document.getElementById('req-new-desc').value = 'A report of orders per day';
     [...document.querySelectorAll('.req-new .btn-primary')].at(-1).click(); })()`);
@@ -840,7 +844,7 @@ const tabWalk = async (n) => {
 // answers (SHOP — Shop web, Story, tickets SHOP-123, 124, …, doneStatus Done). This server runs in this process, so a Ready
 // feature is made straight in the store, and a tracker that cannot be reached is the shim's answer swapped for one op
 // (setMockSourceResponses; `{}` puts the canned answers back without restarting the ticket numbers). Runs alone with --only=a6.
-if (!ONLY_A61) {
+if (!ONLY_A61 && !ONLY_9C) {
   const store = await import(new URL('../src/core/requirements/store.mjs', import.meta.url).href);
   const { emptySpec } = await import(new URL('../src/core/requirements/spec.mjs', import.meta.url).href);
   const { linkPlugin } = await import(new URL('../src/core/plugin-store.mjs', import.meta.url).href);
@@ -1131,7 +1135,7 @@ if (!ONLY_A61) {
 // ---- A6.1: start from a ticket (boards 32–36), in mock mode: jira-source linked with one connection; the shim's canned import answers
 // (four tickets; SHOP-124 with six comments, one by an app, and five attachments, two of them not offered); a mock download writes a tiny
 // body after WORCA_MOCK_DOWNLOAD_MS, a mock read takes READ_MS. Runs alone with --only=a61.
-if (!ONLY_A6) {
+if (!ONLY_A6 && !ONLY_9C) {
   const { linkPlugin } = await import(new URL('../src/core/plugin-store.mjs', import.meta.url).href);
   const { createProfile } = await import(new URL('../src/core/plugin-config.mjs', import.meta.url).href);
   try { await linkPlugin('jira-source', fileURLToPath(new URL('../plugins/jira-source', import.meta.url))); } catch { /* the A6 section linked it */ }
@@ -1279,6 +1283,180 @@ if (!ONLY_A6) {
   await A.evalJs(`location.hash = '#runs'`);
   check('A6.1 D19: leaving the Requirements view closes the sheet and puts the page back (nothing left inert)',
     await until(async () => !(await A.evalJs(`!!${DLG}`)) && (await noneInert()), 8000));
+  await A.send('Emulation.clearDeviceMetricsOverride');
+}
+// ---- 9c: choosing the harness and model (boards 1-9), in mock mode. The mock offers Claude, Codex, Copilot and (greyed for the
+// repo) Gemini CLI, but the catalog has no Gemini model, so this section seeds one the way a user would: a model of the global
+// catalog that names its harness. A project of its own (git, one commit, no brief) lets a new feature start with a code look.
+// Nothing here makes a real model call. Runs alone with --only=9c.
+if (!ONLY_A6 && !ONLY_A61) {
+  const { settingsFile, readSettings } = await import(new URL('../src/core/settings.mjs', import.meta.url).href);
+  const cur = readSettings();
+  writeFileSync(settingsFile(), JSON.stringify({ ...cur, models: [...(Array.isArray(cur.models) ? cur.models : []), { id: 'gemini-3-pro', label: 'Gemini 3 Pro', engine: 'gemini' }] }, null, 2));
+  const dir9c = path.join(home, 'orders9c');
+  await mkdir(dir9c, { recursive: true });
+  const g9 = (...a) => execFileSync('git', a, { cwd: dir9c, stdio: 'ignore' });
+  g9('init'); g9('config', 'user.name', 'proof'); g9('config', 'user.email', 'proof@example.invalid'); g9('commit', '--allow-empty', '-m', 'init');
+  const key9c = (await (await import(new URL('../src/core/projects.mjs', import.meta.url).href)).addProject({ name: 'orders9c', path: dir9c })).find((p) => p.name === 'orders9c').key;
+  await A.evalJs(`fetch('/api/onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ welcomeSeen: true }) })
+    .then(() => { document.querySelector('#welcome-modal:not(.hidden) .ob-skip')?.click(); })`);
+  const DESKTOP = { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false };
+  const PHONE = { width: 390, height: 844, deviceScaleFactor: 1, mobile: true };
+  await A.send('Emulation.setDeviceMetricsOverride', DESKTOP);
+  const DLG = `document.querySelector('.req-dlg-wrap [role="dialog"]')`;
+  const click = (sel) => A.evalJs(`document.querySelector(${JSON.stringify(sel)}).click()`);
+  const setSel = (sel, v) => A.evalJs(`(() => { const s = document.querySelector(${JSON.stringify(sel)}); s.value = ${JSON.stringify(v)}; s.dispatchEvent(new Event('change', { bubbles: true })); return s.value; })()`);
+  const opts = (sel) => A.evalJs(`[...document.querySelector(${JSON.stringify(sel)}).options].map((o) => o.value)`);
+  const dlgTitle = () => A.evalJs(`${DLG}?.querySelector('h2')?.textContent || null`);
+  const closeDlg = async (ui) => { await click(`.req-dlg-wrap [data-ui="${ui}"]`); await until(async () => !(await A.evalJs(`!!${DLG}`)), 4000); };
+  const newForm = async () => {
+    await A.evalJs(`location.hash = '#requirements'`);
+    await sleep(300);
+    await A.evalJs(`location.hash = '#requirements/new'`);
+    return until(() => A.evalJs(`(() => { const b = document.querySelector('.req-new .req-who-box'); return !!b && !b.hidden && !!b.querySelector('.req-new-note') && !!document.getElementById('req-new-target'); })()`), 15000);
+  };
+  const WHO = '.req-new .req-who-box';
+  const stacked = (root) => A.evalJs(`(() => { const f = [...${root}.querySelectorAll('.req-who-field')].filter((x) => !x.hidden).map((x) => x.getBoundingClientRect());
+    return { n: f.length, stacked: f.every((r, i) => i === 0 || (r.top >= f[i - 1].bottom - 1 && Math.abs(r.left - f[0].left) < 1)), fits: document.documentElement.scrollWidth === document.documentElement.clientWidth }; })()`);
+
+  // New feature (boards 1, 2, 7)
+  check('9c board 1: New feature shows Who interviews (Harness, Model, Effort) and a note under them', await newForm());
+  const who = await A.evalJs(`(() => { const b = document.querySelector('${WHO}'); return { legend: b.querySelector('.req-who legend')?.textContent,
+    labels: [...b.querySelectorAll('.req-who-field > label')].map((l) => l.textContent), note: b.querySelector('.req-new-note')?.textContent || '' }; })()`);
+  check('9c board 1: the legend reads "Who interviews", the labels Harness, Model, Effort, and the note names a cost',
+    who.legend === 'Who interviews' && who.labels.join('|') === 'Harness|Model|Effort' && /\$|no estimate|cost unknown/i.test(who.note), JSON.stringify(who));
+  const harnesses = await opts(`${WHO} .req-who-harness`);
+  const harnessText = await A.evalJs(`[...document.querySelector('${WHO} .req-who-harness').options].map((o) => o.textContent).join(' | ')`);
+  check('9c D6: the harness list offers Claude, Codex and Gemini CLI, and never Cursor',
+    ['claude', 'codex', 'gemini'].every((e) => harnesses.includes(e)) && !harnesses.includes('cursor') && !/cursor/i.test(harnessText), harnessText);
+  const claudeModels = await opts(`${WHO} .req-who-model`);
+  await setSel(`${WHO} .req-who-harness`, 'codex');
+  const codexModels = await opts(`${WHO} .req-who-model`);
+  const codexNow = await A.evalJs(`document.querySelector('${WHO} .req-who-model').value`);
+  check('9c board 2: changing the harness to Codex refills Model with Codex models (no Claude one) and picks its default',
+    codexModels.length > 0 && codexModels.join() !== claudeModels.join() && codexModels.every((m) => !m.startsWith('claude-')) && codexNow === 'gpt-6.1-sol', JSON.stringify({ codexNow, codexModels }));
+  check('9c board 2: a line says what Codex can do ("Codex reads the repo read-only. Files go to it as text.")',
+    await until(() => A.evalJs(`(document.querySelector('${WHO} .req-new-harness')?.textContent || '') === 'Codex reads the repo read-only. Files go to it as text.'`), 4000));
+  await setSel(`${WHO} .req-who-harness`, 'claude');
+  check('9c board 2: back to Claude refills Model with Claude models', (await opts(`${WHO} .req-who-model`)).join() === claudeModels.join());
+  await setSel(`${WHO} .req-who-harness`, 'codex');
+  const newAA = await contrastBoth([WHO], '9c-board1-new-dark');
+  check('9c board 1: Who interviews and its note are AA in light and dark at 1280 px', newAA.light.length === 0 && newAA.dark.length === 0, JSON.stringify(newAA));
+  await shot('9c-board1-new');
+  await A.send('Emulation.setDeviceMetricsOverride', PHONE);
+  await sleep(300);
+  const stack = await stacked(`document.querySelector('${WHO}')`);
+  check('9c board 7: at 390 px the three selects stack in one column and the page does not scroll sideways', stack.n === 3 && stack.stacked && stack.fits, JSON.stringify(stack));
+  const newPhoneAA = await contrastBoth([WHO], '9c-board7-new-phone-dark');
+  check('9c board 7: Who interviews is AA in light and dark at 390 px', newPhoneAA.light.length === 0 && newPhoneAA.dark.length === 0, JSON.stringify(newPhoneAA));
+  await shot('9c-board7-new-phone');
+  await A.send('Emulation.setDeviceMetricsOverride', DESKTOP);
+
+  // Start a feature on Codex in the project that has no brief: the mock round asks, the mock code look is a step row
+  await A.evalJs(`(() => { const sel = document.getElementById('req-new-target'); const opt = [...sel.options].find((o) => o.text === 'orders9c'); sel.value = opt.value;
+    sel.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await setSel(`${WHO} .req-who-harness`, 'codex');
+  await A.evalJs(`(() => { document.getElementById('req-new-title').value = 'Cancel an order';
+    document.getElementById('req-new-desc').value = 'Customers cancel before it ships';
+    [...document.querySelectorAll('.req-new .btn-primary')].at(-1).click(); })()`);
+  check('9c: a feature made with Codex shows the question card (mock round) and its model chip names Codex',
+    await until(() => A.evalJs(`!!document.querySelector('#requirements-host .qpanel .qopt') && /Codex/.test(document.querySelector('#requirements-host [data-ui="model-chip"]')?.textContent || '')`), 20000));
+  const seq9 = await A.evalJs(`/feature\\/(\\d+)/.exec(location.hash)[1]`);
+  check('9c: the stored choice is Codex with its default model',
+    await A.evalJs(`fetch('/api/requirements/${seq9}').then((r) => r.json()).then((d) => d.feature.model?.engine === 'codex' && d.feature.model?.model === 'gpt-6.1-sol')`));
+
+  // The code look as a step (board 5, D17)
+  check('9c board 5 (D17): the code look is a step row "Code look" with Show what it found',
+    await until(() => A.evalJs(`(() => { const r = document.querySelector('#requirements-host .req-step-look'); return !!r && /^Code look/.test(r.querySelector('.req-round-n')?.textContent || '')
+      && r.querySelector('[data-ui="look-show"]')?.textContent === 'Show what it found'; })()`), 10000));
+  await shot('9c-board5-step');
+  await click('#requirements-host [data-ui="look-show"]');
+  check('9c board 5: Show what it found opens the card "Code look: what Worca found"',
+    await until(() => A.evalJs(`(() => { const c = document.querySelector('#requirements-host .req-orient'); return !!c && c.open && c.querySelector('summary')?.textContent.startsWith('Code look: what Worca found'); })()`), 4000));
+
+  // The model chip and its dialog (boards 3, 4); the confirm on Codex -> Gemini
+  await click('#requirements-host [data-ui="model-chip"]');
+  check('9c board 3: the model chip opens the dialog "Model for this feature" on the feature\'s harness',
+    await until(async () => (await dlgTitle()) === 'Model for this feature', 6000) && (await A.evalJs(`${DLG}.querySelector('.req-who-harness').value`)) === 'codex');
+  const gem = await setSel('.req-dlg-wrap .req-who-harness', 'gemini');
+  check('9c board 3: choosing Gemini CLI refills Model with the Gemini model', gem === 'gemini' && (await A.evalJs(`${DLG}.querySelector('.req-who-model').value`)) === 'gemini-3-pro');
+  await shot('9c-board3-model-dialog');
+  await click('.req-dlg-wrap [data-ui="model-save"]');
+  check('9c board 4: Save on Codex -> Gemini CLI asks the switch confirm: title, what changes (no repo, kept copy) and Switch to Gemini CLI',
+    await until(() => A.evalJs(`(() => { const m = document.getElementById('confirm-modal'); if (!m || m.classList.contains('hidden')) return false;
+      const t = document.getElementById('confirm-message').textContent;
+      return document.getElementById('confirm-title').textContent === 'Switch this feature to Gemini CLI?'
+        && t.includes("Gemini CLI can't read the repo: code looks are skipped, for this feature and for the Product brief.")
+        && t.includes('Gemini CLI keeps its own copy of each step in its history on this computer.')
+        && document.getElementById('confirm-ok').textContent === 'Switch to Gemini CLI'; })()`), 8000));
+  await shot('9c-board4-switch-confirm');
+  await click('#confirm-cancel');
+  check('9c board 4: Cancel saves nothing (the feature stays on Codex) and leaves the dialog open',
+    await until(() => A.evalJs(`document.getElementById('confirm-modal').classList.contains('hidden')`), 4000)
+      && (await A.evalJs(`!!${DLG}`))
+      && await A.evalJs(`fetch('/api/requirements/${seq9}').then((r) => r.json()).then((d) => d.feature.model.engine === 'codex')`));
+  const modelAA = await contrastBoth(['.req-dlg-wrap .req-model-dialog'], '9c-board3-model-dialog-dark');
+  check('9c board 3: the model dialog is AA in light and dark', modelAA.light.length === 0 && modelAA.dark.length === 0, JSON.stringify(modelAA));
+  await closeDlg('model-cancel');
+
+  // The cost chip and its dialog (board 6)
+  await click('#requirements-host [data-ui="cost-chip"]');
+  check('9c board 6: the cost chip opens "Cost of this feature": the Step / Ran on / Cost table ends with "So far" (the mock books no step)',
+    await until(async () => (await dlgTitle()) === 'Cost of this feature', 6000)
+      && await A.evalJs(`(() => { const d = ${DLG}; return [...d.querySelectorAll('thead th')].map((x) => x.textContent).join('|') === 'Step|Ran on|Cost' && d.querySelector('.req-cost-total td')?.textContent === 'So far'; })()`));
+  await shot('9c-board6-cost-dialog');
+  const costAA = await contrastBoth(['.req-dlg-wrap .req-cost-dialog'], '9c-board6-cost-dialog-dark');
+  check('9c board 6: the cost dialog is AA in light and dark', costAA.light.length === 0 && costAA.dark.length === 0, JSON.stringify(costAA));
+  await closeDlg('cost-close');
+
+  // The feature page, light and dark, at 1280 and 390 px
+  const pageSel = ['#requirements-host .req-head .req-chips', '#requirements-host .req-step-look'];
+  const pageAA = await contrastBoth(pageSel, '9c-feature-dark');
+  check('9c: the feature header (cost and model chips) and the code look step are AA in light and dark at 1280 px', pageAA.light.length === 0 && pageAA.dark.length === 0, JSON.stringify(pageAA));
+  await A.send('Emulation.setDeviceMetricsOverride', PHONE);
+  await sleep(300);
+  const phoneFit = await A.evalJs(`document.documentElement.scrollWidth === document.documentElement.clientWidth`);
+  const pagePhoneAA = await contrastBoth(pageSel, '9c-feature-phone-dark');
+  check('9c: at 390 px the feature page does not scroll sideways, and chips and code look step are AA in light and dark',
+    phoneFit && pagePhoneAA.light.length === 0 && pagePhoneAA.dark.length === 0, JSON.stringify({ phoneFit, pagePhoneAA }));
+  await click('#requirements-host [data-ui="model-chip"]');
+  await until(async () => (await dlgTitle()) === 'Model for this feature', 6000);
+  const dlgStack = await stacked(DLG);
+  check('9c board 7: at 390 px the dialog\'s selects stack too', dlgStack.n >= 2 && dlgStack.stacked, JSON.stringify(dlgStack));
+  const modelPhoneAA = await contrastBoth(['.req-dlg-wrap .req-model-dialog'], '9c-board7-model-phone-dark');
+  check('9c board 7: the model dialog is AA in light and dark at 390 px', modelPhoneAA.light.length === 0 && modelPhoneAA.dark.length === 0, JSON.stringify(modelPhoneAA));
+  await closeDlg('model-cancel');
+  await A.send('Emulation.setDeviceMetricsOverride', DESKTOP);
+
+  // The product brief: Who makes it (board 9), then ⋯ > Refresh the brief
+  await A.evalJs(`location.hash = '#requirements/brief/project/${key9c}'`);
+  check('9c board 9: the brief page (none yet) shows Who makes it with the three selects',
+    await until(() => A.evalJs(`(() => { const b = document.querySelector('#requirements-host .req-brief-who'); return !!b && b.querySelector('.req-who legend')?.textContent === 'Who makes it'
+      && b.querySelectorAll('.req-who select').length === 3; })()`), BRIEF_WAIT_MS));
+  const briefBoxAA = await contrastBoth(['#requirements-host .req-brief-who'], '9c-board9-brief-dark');
+  check('9c board 9: Who makes it is AA in light and dark', briefBoxAA.light.length === 0 && briefBoxAA.dark.length === 0, JSON.stringify(briefBoxAA));
+  await shot('9c-board9-brief');
+  await A.send('Emulation.setDeviceMetricsOverride', PHONE);
+  await sleep(300);
+  const briefStack = await stacked(`document.querySelector('#requirements-host .req-brief-who')`);
+  const briefPhoneAA = await contrastBoth(['#requirements-host .req-brief-who'], '9c-board9-brief-phone-dark');
+  check('9c board 9: at 390 px Who makes it stacks its selects, the page does not scroll sideways, and the box is AA in light and dark',
+    briefStack.n === 3 && briefStack.stacked && briefStack.fits && briefPhoneAA.light.length === 0 && briefPhoneAA.dark.length === 0, JSON.stringify({ briefStack, briefPhoneAA }));
+  await A.send('Emulation.setDeviceMetricsOverride', DESKTOP);
+  await click('#requirements-host [data-ui="brief-create"]');
+  check('9c board 9: Create (mock) makes the brief',
+    await until(() => A.evalJs(`document.querySelectorAll('#requirements-host .req-brief-card [data-section]').length === 4`), BRIEF_PRESS_PROBE_MS + 10_000));
+  await click('#requirements-host [data-ui="brief-more"]');
+  check('9c board 9: the brief box has Who makes it; its ⋯ menu offers Refresh the brief',
+    await until(() => A.evalJs(`!!document.querySelector('#requirements-host [data-ui="mi-brief-refresh"]')`), 4000));
+  await click('#requirements-host [data-ui="mi-brief-refresh"]');
+  check('9c board 9: Refresh the brief opens the dialog "Refresh the brief" with Who makes it and its button',
+    await until(async () => (await dlgTitle()) === 'Refresh the brief', 6000)
+      && await A.evalJs(`${DLG}.querySelectorAll('.req-who select').length === 3 && !!${DLG}.querySelector('[data-ui="brief-refresh-go"]')`));
+  await shot('9c-board9-refresh-dialog');
+  const refreshAA = await contrastBoth(['.req-dlg-wrap .req-brief-refresh'], '9c-board9-refresh-dark');
+  check('9c board 9: the Refresh dialog is AA in light and dark', refreshAA.light.length === 0 && refreshAA.dark.length === 0, JSON.stringify(refreshAA));
+  await closeDlg('brief-refresh-cancel');
   await A.send('Emulation.clearDeviceMetricsOverride');
 }
 await sleep(1000);

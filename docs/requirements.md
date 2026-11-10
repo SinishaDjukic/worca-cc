@@ -195,12 +195,63 @@ interview. **Send**, **Accept** and **Clear chat** wait while Worca answers.
 **Clear chat** (⋯) deletes the feature's chat; changes you accepted stay in the spec. An archived feature's chat can be read,
 not used. Everything here is behind the `requirements` flag.
 
-## Which model interviews
+## Choosing the harness and model
 
-The newest Opus at medium effort, unless **Requirements interview** on Models › Engines › Claude › Helper
-jobs says otherwise. A model picked with no effort runs at that model's own default effort. A model removed from the catalog
-falls back to the default model but keeps a stored effort. The New feature page
-names the model and effort ("Worca interviews with …").
+**Who interviews** on New feature has three selects: **Harness**, **Model** and **Effort**. They pick who runs the interview
+rounds, the code looks, the reading of your files and Feature chat for that feature. The choice is stored with the feature:
+changing your Default engine later does not move features you already made, and a feature from before this choice existed keeps
+running on Claude as it always did.
+
+**The default.** The form starts on your Default engine, with that harness's Everyday coding model and its default effort. On
+Claude it is the newest Opus at medium effort, unless **Requirements interview** on Models › Engines › Claude › Helper jobs says
+otherwise. A model picked with no effort runs at that model's own default effort; Effort is hidden for a model that has none.
+Changing the harness refills Model with that harness's default. A grey line, "Your default: <model> on <Harness>. Use the
+default", shows only when your pick differs from it. A note under the selects says what a strong model costs ("about $0.50 for a
+code look, about $0.12 a round") and offers **Use <model>** when you picked another one.
+
+**The fallback.** If your Default engine cannot run Requirements, the form starts on Claude and says why before anything runs:
+"Your default engine is Cursor, which can't run Requirements, so this starts on Claude." (or "Codex isn't signed in…", "Codex is
+off while the credential broker is on…", "Copilot isn't installed…"). Only the form does this. A feature that is running never
+moves to Claude by itself. Cursor is not in the harness list, and the API refuses it.
+
+**The list of harnesses.** Claude and every harness Worca can run with its read-only chat lockdown: Codex, Copilot, Gemini CLI and
+the others you have set up. One that is not installed, not signed in, or off while the credential broker is on is greyed with its
+reason. Model lists the models that run on the chosen harness, including plugin and bridged ones.
+
+**What a harness can't do.** Worca skips it with a note on the step, and never sends it to Claude instead.
+
+| | Reads the repo | Files |
+|---|---|---|
+| Claude | yes | images, PDFs and text |
+| Codex, Copilot | yes, read-only | text up to 24 KB |
+| Gemini CLI and others | no: code looks are skipped | text up to 24 KB |
+
+The notes read "Repo not read: Gemini CLI can't read the repo.", "screen.png skipped: Codex gets files as text only." and
+"big.txt skipped: it is too large for Codex." They are grey hint lines under the step, never alerts. The Product brief needs the
+repo, so a harness that cannot read it is greyed under **Who makes it**.
+
+**The copy kept in a harness's history.** On Claude nothing is kept. Codex steps run under a Worca-managed home and Worca removes
+the call's session files when it ends. Copilot, Gemini CLI, Goose and Qwen Code have no way to turn saving off, so the step runs
+and says "Gemini CLI keeps its own copy of this step in its history on this computer." Your text is still sent as data, and
+Worca stores no more of it than before.
+
+**Cost words.** "$0.03" is billed, "≈$0.04" is estimated from list prices because that harness reports none ("Cost estimated:
+Gemini CLI reports none."), and "cost unknown" means no price is known: never "$0.00". The feature's chip shows ≈ as soon as any
+part is estimated. Estimated costs count toward the Requirements budget; steps with cost unknown cannot, so the budget says "plus
+N steps with cost unknown".
+
+**Changing a running feature.** The chip after the cost chip names the model and harness; it opens **Model for this feature**
+with the same three selects. A change applies from the next step: a step already running keeps its model, and steps already done
+keep their answers and their cost. When the new choice loses something, or sends your text to another company, Worca asks first
+("Switch this feature to Gemini CLI?", with what changes) and saves nothing if you cancel. A harness that is not signed in stops
+the step with **Change the model** and **Try again**. A model removed from the catalog falls back to the default model, and the
+step says so.
+
+**The code look is a step.** Each code look shows in the thread like a round: "Code look · 3 files", what ran it and its cost, its
+first sentence and **Show what it found**, which opens the card "Code look: what Worca found". **Look closer** and **Look again**
+start one. A look a harness cannot do shows as a step row with its note, and "Code look stopped" is the error row when one fails.
+The Product brief is made on a choice of its own each time: **Create the brief** and **⋯ › Refresh the brief** have **Who makes
+it**, starting from what made the brief last.
 
 ## What each step shows
 
