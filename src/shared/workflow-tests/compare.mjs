@@ -21,7 +21,7 @@ export function useLabel(use, ctx = {}, form = 'short') {
   }
   const short = `v${use}`;
   if (form === 'short') return short;
-  return use === ctx.liveVersionNo ? `${short} · the team uses it` : short;
+  return use === ctx.liveVersionNo ? `${short} · in use` : short;
 }
 
 /** The tested version inside a sentence: "your v5 draft", "your draft", "v4". */

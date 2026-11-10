@@ -3786,11 +3786,11 @@ function wftReadView(id) {
 }
 function wftRenderView(root) {
   if (!wft.data) { renderTestsPage(root, null, wftListActions(), { doc: document, error: wft.error }); return; }
-  if (wft.view === 'progress') { renderTestProgress(root, wft.data, wftProgressActions(), { doc: document, dateText: wftDate }); return; }
-  if (wft.view === 'compare') { renderCompare(root, wft.data, wftCompareActions(), { doc: document }); return; }
+  if (wft.view === 'progress') { renderTestProgress(root, wft.data, wftProgressActions(), { doc: document, dateText: wftDate, mock: serverMock.on }); return; }
+  if (wft.view === 'compare') { renderCompare(root, wft.data, wftCompareActions(), { doc: document, mock: serverMock.on }); return; }
   if (wft.view === 'detail') {
     renderSideBySide(root, wft.data, wftDetailActions(), { doc: document, tryIndex: wft.tryIndex || 0, renderMarkdown: wftMarkdown,
-      patches: wft.patches || (wft.patches = new Map()), picked: wft.picked || {}, dateText: wftDate });
+      patches: wft.patches || (wft.patches = new Map()), picked: wft.picked || {}, dateText: wftDate, mock: serverMock.on });
     return;
   }
   wft.view = 'list';
@@ -3944,7 +3944,7 @@ function wftRender() {
   if (!els.tests) return;
   if (wft.view === 'editor') { wftRenderEditor(els.tests); return; }
   if (wft.view !== 'list') { wftRenderView(els.tests); return; }
-  renderTestsPage(els.tests, wft.overview, wftListActions(), { doc: document, storage: wftStorage(), error: wft.error, dateText: wftDate });
+  renderTestsPage(els.tests, wft.overview, wftListActions(), { doc: document, storage: wftStorage(), error: wft.error, dateText: wftDate, mock: serverMock.on });
 }
 // Final review M6: the opened diffs (up to 5 MB each) are let go on every move; the side by side reads them again.
 function wftShow(view, extra = {}) { wftPatchCut.clear(); wft = { ...wft, view, data: null, patches: null, ...extra }; void wftRefresh(); }

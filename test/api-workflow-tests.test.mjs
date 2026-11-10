@@ -90,7 +90,7 @@ test('examples, a past run as an example, a test of v1 against the draft, reuse,
   assert.deepEqual(up.body.example.files.map((f) => [f.name, f.size]), [['notes.md', 7]]);
   o = (await call('GET', WF)).body;
   // U-T7 (D7): the draft is still the saved v1, so it has no column of its own.
-  assert.deepEqual([o.columns.map((c) => c.label), o.draftSameAs], [['v1 · the team uses it'], 1]);
+  assert.deepEqual([o.columns.map((c) => c.label), o.draftSameAs], [['v1 · in use'], 1]);
   const saved = o.examples.find((e) => e.name === 'Saved filters');
   assert.deepEqual([saved.cells['1'], saved.cells.draft, saved.files], [{ passed: null, total: null, stale: false, past: 'not-good' }, null, ['usage.csv']]);
   assert.equal(o.pastRuns.length, 1);
@@ -131,6 +131,14 @@ test('examples, a past run as an example, a test of v1 against the draft, reuse,
   const again = await call('POST', `${WF}/runs`, { a: 1, b: 'draft', exampleIds: [ex.id], tries: 1, reuseA: true, capUsd: 5 });
   await finished(again.body.run.id);
   assert.equal(store.triesOfRun(again.body.run.id).filter((t) => t.runId === again.body.run.id).length, 1);
+
+  // U-T14 (F34): an example marked good from a past run of v1 now has v1's tries; the cell says the tries replaced that mark.
+  getDb().prepare('UPDATE wf_test_examples SET from_pipeline = ?, from_use = ?, from_verdict = ? WHERE id = ?').run(past.body.pipelineId, store.useRef(1), 'good', ex.id);
+  const marked = (await call('GET', WF)).body.examples.find((e) => e.id === ex.id);
+  assert.equal(marked.cells['1'].past, null);
+  assert.equal(marked.cells['1'].pastGood, true);
+  assert.equal(marked.cells.draft.pastGood, false, 'a version the past run was not of has no such flag');
+  getDb().prepare('UPDATE wf_test_examples SET from_pipeline = NULL, from_use = NULL, from_verdict = NULL WHERE id = ?').run(ex.id);
 
   // Try it once now: one try of the draft; the side by side has one column.
   const once = await call('POST', `${WF}/examples/${ex.id}/try-once`, {});

@@ -463,7 +463,8 @@ function cellOf(ex, use, fpNow) {
   const tries = store.latestTriesFor({ workflowId: ex.workflowId, exampleId: ex.id, use });
   if (tries.length) {
     return { passed: tries.filter((t) => t.status === 'passed').length, total: tries.length,
-      stale: tries.some((t) => t.fp !== fpNow || t.exampleFp !== ex.fingerprint), past: null };
+      stale: tries.some((t) => t.fp !== fpNow || t.exampleFp !== ex.fingerprint), past: null,
+      pastGood: !!(ex.from && ex.from.verdict === 'good' && ex.from.use != null && store.useRef(ex.from.use) === store.useRef(use)) };   // F34: the tries replaced a good past mark
   }
   if (ex.from && ex.from.verdict && ex.from.use != null && store.useRef(ex.from.use) === store.useRef(use)) {
     return { passed: null, total: null, stale: false, past: ex.from.verdict };   // D29

@@ -2,7 +2,7 @@
 // of examples (canvas board 1) and first use (board 19). 3a (boards 38, 39; D62): every workflow can be tested, so an
 // example's row says which project it works on, where it starts and whether a test leaves it out.
 // Pure DOM: app.js owns data and actions.
-import { el, btn, iconBtn, BUSY_HINT, runStatusBadge, refusedRun } from './test-ui.mjs';
+import { el, btn, iconBtn, BUSY_HINT, runStatusBadge, refusedRun, mockNote } from './test-ui.mjs';
 import { withButton } from '../feedback.mjs';
 import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { agoText, countsText } from '../../../src/shared/workflow-tests/compare.mjs';
@@ -76,6 +76,8 @@ export function exampleHintEl(doc, e, { dateText = defaultDate } = {}) {
   return h;
 }
 
+const PAST_GOOD_ASK = 'You marked a past run good: are the checks right?';
+
 /** A result cell (C14): "3 of 3 passed" with a dot (green all, grey some, red none), a past verdict (D29), "Not tried". */
 export function cellView(doc, cell) {
   const span = el(doc, 'span', 'wft-res');
@@ -142,9 +144,13 @@ function table(doc, o0, actions, dateText) {
     const results = o.columns.map((c) => {   // D62, board 38: an example a test leaves out has no result
       const v = e.ready === false ? el(doc, 'span', 'wft-res is-none', blocked ? CANT_TRY_TEXT : PICK_FIRST_TEXT) : cellView(doc, e.cells[String(c.use)] || null);
       v.dataset.label = c.label;
-      return v;
+      const cell = e.cells[String(c.use)];
+      if (!(cell && cell.pastGood && cell.total && cell.passed < cell.total)) return v;
+      const wrap = el(doc, 'span', 'wft-cell');   // F34 (board UfMockNote): the reminder sits under the cell, in amber
+      wrap.append(v, el(doc, 'span', 'wft-ask', PAST_GOOD_ASK));
+      return wrap;
     });
-    row.append(name, kinds, ...results, more);
+    row.append(name, kinds, ...results, more);   // F34: a failed result that replaced a good past mark is wrapped with its reminder (below)
     grid.append(row);
   }
   scroll.append(grid);
@@ -258,7 +264,7 @@ function firstUse(doc, page, o, actions, { dateText }) {
  * @param {object|null} o the overview (GET /api/workflows/:id/tests), null while loading or after an error
  * @param {object} actions see the Interfaces of Task 10
  */
-export function renderTestsPage(root, o, actions, { doc, storage = null, loading = false, error = null, unsaved = false, dateText = defaultDate, now = Date.now() } = {}) {
+export function renderTestsPage(root, o, actions, { doc, storage = null, loading = false, error = null, unsaved = false, mock = false, dateText = defaultDate, now = Date.now() } = {}) {
   const hadFocus = root.contains(doc.activeElement) && doc.activeElement !== root;
   root.replaceChildren();
   const page = el(doc, 'div', 'wft-page');
@@ -272,6 +278,7 @@ export function renderTestsPage(root, o, actions, { doc, storage = null, loading
   } else if (!o.examples.length) {
     firstUse(doc, page, o, actions, { dateText });
   } else {
+    if (mock) page.append(mockNote(doc));   // F52
     list(doc, page, o, actions, { root, storage, dateText, now });
   }
   root.append(page);

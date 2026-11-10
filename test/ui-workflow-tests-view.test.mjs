@@ -300,3 +300,27 @@ test('U-T14 (F31): "Tests are not available" for an unsaved workflow has a "Save
   const other = boot(null, { error: 'Worca did not answer.' });
   assert.equal(other.root.querySelector('.wft-empty button'), null);
 });
+
+test('U-T14 (F52, board UfMockNote): the list has the mock-mode note first under the title only in mock mode', () => {
+  const { window } = new JSDOM('<!doctype html><body><section id="root"></section></body>');
+  const root = window.document.getElementById('root');
+  renderTestsPage(root, overview(), {}, { doc: window.document, dateText, now: NOW, mock: true });
+  const note = root.querySelector('.wft-mock-note');
+  assert.equal(note.textContent, 'Mock mode: the results are canned answers, not a real verdict.');
+  assert.equal(root.querySelector('.wft-page').firstElementChild, note);
+  assert.equal(boot(overview()).root.querySelector('.wft-mock-note'), null);
+});
+
+test('U-T14 (F34, board UfMockNote): tries that replaced a "Good" past mark and failed keep an amber reminder under the cell; passing tries do not', () => {
+  const ASK = 'You marked a past run good: are the checks right?';
+  const ex = overview().examples[0];
+  const cells = (cell) => boot(overview({ examples: [{ ...ex, cells: { 4: cell, draft: null } }] })).root.querySelector('.wft-row:not(.wft-row-head) .wft-res');
+  const failed = cells({ passed: 0, total: 3, stale: false, past: null, pastGood: true });
+  assert.equal(failed.parentElement.querySelector('.wft-ask').textContent, ASK);
+  assert.ok(failed.parentElement.classList.contains('wft-cell'), 'under the cell, in the same column');
+  assert.equal(failed.textContent, '0 of 3 passed');
+  const some = cells({ passed: 1, total: 3, stale: false, past: null, pastGood: true });
+  assert.equal(some.parentElement.querySelector('.wft-ask').textContent, ASK);
+  assert.equal(cells({ passed: 3, total: 3, stale: false, past: null, pastGood: true }).parentElement.querySelector('.wft-ask'), null);
+  assert.equal(cells({ passed: 0, total: 3, stale: false, past: null }).parentElement.querySelector('.wft-ask'), null);
+});

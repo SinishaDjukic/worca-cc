@@ -1,7 +1,7 @@
 // ui/public/workflows/test-progress.mjs — While the test runs, stopped and done (canvas boards 20, 27, 28;
 // plans/workflow-tests-part2-plan.md Task 13, C7, C9, G8, D39). Pure DOM: app.js reads GET …/runs/:run and repaints on
 // every workflow-tests-changed frame, so a repaint keeps the focus (data-focus-key) and one live line says what changed.
-import { el, btn, startInto } from './test-ui.mjs';
+import { el, btn, startInto, mockNote } from './test-ui.mjs';
 import { fmtUsd, fmtUsdFine, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { aboutUsd, fmtDuration } from '../../../src/shared/workflow-tests/compare.mjs';
 import { icon } from '../icons.mjs';
@@ -161,10 +161,10 @@ function beforeNowCard(doc, b) {
  * @param {{back:Function, stop:Function, continue:(capUsd:number|null)=>void, open:Function, editExample?:(exampleId:number)=>void}} actions
  * @param {{doc: Document, dateText?: (iso: string) => string}} ctx
  */
-export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s }) {
+export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s, mock = false }) {
   clearTimeout(TICK.get(root));
   TICK.delete(root);
-  LAST.set(root, { p, actions, ctx: { doc, dateText } });
+  LAST.set(root, { p, actions, ctx: { doc, dateText, mock } });
   // What the repaint takes away: the focused control (by its key), a cost limit typed for this test, the live line.
   const active = doc.activeElement;
   const hadFocus = !!active && active !== root && root.contains(active);
@@ -270,6 +270,7 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s 
   }
   head.append(left, acts);
   page.append(head);
+  if (mock) page.append(mockNote(doc));   // F52
 
   const prog = el(doc, 'section', 'card wft-prog');
   prog.setAttribute('aria-label', 'Progress');

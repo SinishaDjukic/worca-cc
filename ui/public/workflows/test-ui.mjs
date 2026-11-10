@@ -32,6 +32,15 @@ export function checkWords(doc, c, label) {
   return s;
 }
 
+/** F52 (board UfMockNote): in mock mode, the one line under a Tests page's title: plain text with an information icon. */
+export function mockNote(doc) {
+  const p = el(doc, 'p', 'hint wft-mock-note');
+  const words = el(doc, 'span');
+  words.append(el(doc, 'b', '', 'Mock mode:'), doc.createTextNode(' the results are canned answers, not a real verdict.'));
+  p.append(icon(doc, 'info', 14), words);
+  return p;
+}
+
 export const el = (doc, tag, cls, text) => {
   const n = doc.createElement(tag);
   if (cls) n.className = cls;

@@ -585,3 +585,16 @@ test('U-T8 fix round: the button is labelled with the number of tries that can r
     .root.querySelector('.wft-why button').textContent;
   assert.deepEqual([label(3), label(7), label(8), label(9)], ['Try 3 more', 'Try 3 more', 'Try 2 more', 'Try 1 more']);
 });
+
+test('U-T14 (F52, board UfMockNote): in mock mode the comparison and one example side by side carry one note under the title; otherwise none', () => {
+  const NOTE = 'Mock mode: the results are canned answers, not a real verdict.';
+  for (const [render, data] of [[renderCompare, compare()], [renderSideBySide, side()]]) {
+    const on = boot(render, data, { mock: true });
+    const notes = on.root.querySelectorAll('.wft-mock-note');
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].textContent, NOTE);
+    assert.ok(notes[0].querySelector('svg'), 'an information icon, plain text, not a coloured box');
+    assert.ok(notes[0].previousElementSibling.classList.contains('wft-pg-head'), 'right under the title');
+    assert.equal(boot(render, data).root.querySelector('.wft-mock-note'), null);
+  }
+});

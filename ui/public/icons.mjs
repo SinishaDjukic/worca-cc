@@ -36,6 +36,7 @@ export const ICONS = Object.freeze({
   refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"></path>',
   question: '<path d="M9.2 9.2a2.9 2.9 0 1 1 4.2 2.6c-.9.5-1.4 1.1-1.4 2v.4"></path><path d="M12 17.6h.01"></path>',
   alert: '<path d="M12 6.8v6.6"></path><path d="M12 17.6h.01"></path>',
+  info: '<circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><path d="M12 7.5h.01"></path>',
   'pull-request': '<circle cx="6" cy="6" r="2.2"></circle><circle cx="6" cy="18" r="2.2"></circle><circle cx="18" cy="18" r="2.2"></circle><path d="M6 8.2v7.6"></path><path d="M18 15.8V9a3 3 0 0 0-3-3h-4"></path><path d="M13 3.5 10.5 6 13 8.5"></path>',
   // A pull request with a plus where its head will be: Create PR.
   'pr-create': '<circle cx="6" cy="6" r="2.5"></circle><path d="M6 8.5V21M13 6h3a2 2 0 0 1 2 2v3M18 15v6M15 18h6"></path>',

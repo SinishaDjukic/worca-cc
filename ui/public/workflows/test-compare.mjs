@@ -3,7 +3,7 @@
 // C10, C19, G2, G3, G9, G15). Pure DOM: app.js reads the server's models (service.compareOf / sideBySide) and owns the
 // actions. A repaint keeps the focus on the same control (data-focus-key), and a button whose action is out stays busy
 // across repaints (BUSY), as the progress page does.
-import { el, btn, startInto, checkWords } from './test-ui.mjs';
+import { el, btn, startInto, checkWords, mockNote } from './test-ui.mjs';
 import { icon } from '../icons.mjs';
 import { createDialog } from '../marketplace/layers.mjs';
 import { fmtUsd, fmtUsdFine } from '../../../src/shared/workflow-tests/checks.mjs';
@@ -205,7 +205,7 @@ function titles(doc, crumb, nameEl, hint) {
  * Board 5. `c` = GET …/runs/:run/compare: { run, title, labels: {a, b}, examples, costUsd, model, changes, fair }.
  * @param {{back:Function, testAgain:Function, open:(exampleId:number)=>void, tryMore:(exampleId:number)=>void|Promise}} actions
  */
-export function renderCompare(root, c, actions, { doc, now = Date.now() }) {
+export function renderCompare(root, c, actions, { doc, now = Date.now(), mock = false }) {
   const held = heldFocus(root, doc);
   root.replaceChildren();
   const runId = c.run.id;
@@ -222,6 +222,7 @@ export function renderCompare(root, c, actions, { doc, now = Date.now() }) {
   acts.append(act(doc, root, runId, 'Test again', () => actions.testAgain(), 'btn', 'wft-cmp-again', { busy: true }));
   head.append(acts);
   page.append(head);
+  if (mock) page.append(mockNote(doc));   // F52
 
   if (m.inShort.length) {   // C2: the model's sentences; none when nothing compares (D38)
     const s = el(doc, 'section', 'wft-short');
@@ -380,7 +381,7 @@ function devCard(doc, s, cur, once, dateText) {
  *   picked?: {a?:string, b?:string}, dateText?: (iso:string)=>string}} o the app's sandboxed markdown (ask-markdown.mjs), board
  *   31's excerpt; each try's diff (undefined: not read yet, null: could not be read); the file picked per column
  */
-export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMarkdown = null, patches = new Map(), picked = {}, dateText = (x) => x }) {
+export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMarkdown = null, patches = new Map(), picked = {}, dateText = (x) => x, mock = false }) {
   const held = heldFocus(root, doc);
   const live = root.querySelector('.wft-sbs-live') || el(doc, 'p', 'sr-only wft-sbs-live');
   live.setAttribute('aria-live', 'polite');
@@ -426,6 +427,7 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
     head.append(tabs);
   }
   page.append(head);
+  if (mock) page.append(mockNote(doc));   // F52
   // Board 31's pretend note; board 37 adds the lock note below it (a project try never pushes, in either mode), the two
   // close together.
   const notes = s.nothingPushed ? el(doc, 'div', 'wft-modes') : page;

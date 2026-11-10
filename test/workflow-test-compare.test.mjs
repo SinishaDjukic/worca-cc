@@ -31,7 +31,7 @@ const board = () => {
 
 test('labels and titles in the board\'s words', () => {
   assert.deepEqual([useLabel('draft', ctx), useLabel('draft', ctx, 'column'), useLabel('draft', ctx, 'select')], ['v5 draft', 'v5 draft · yours', 'v5 draft · your changes']);
-  assert.deepEqual([useLabel(4, ctx, 'column'), useLabel(3, ctx, 'column'), useLabel(4, ctx)], ['v4 · the team uses it', 'v3', 'v4']);
+  assert.deepEqual([useLabel(4, ctx, 'column'), useLabel(3, ctx, 'column'), useLabel(4, ctx)], ['v4 · in use', 'v3', 'v4']);   // U-T14 (F37): "in use", as the Versions page says it
   assert.deepEqual([useLabel('draft', {}), useLabel('draft', {}, 'column')], ['Your draft', 'Your draft']);
   const run = { kind: 'compare', a: 4, b: 'draft' };
   assert.equal(testTitle(run, ctx), 'Your v5 draft compared with v4');

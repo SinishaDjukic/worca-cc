@@ -342,3 +342,14 @@ test('style.css: the stopped page\'s cost limit sits inline beside Finish the re
   const css = readStyleCss();
   assert.ok(/\.wft-acts \.wft-cap\{[^}]*width:96px/.test(css), 'beats input[type="text"]{width:100%}');
 });
+
+test('U-T14 (F52, board UfMockNote): the progress page has the mock-mode note under the title only in mock mode, also after a tick repaint', () => {
+  const NOTE = 'Mock mode: the results are canned answers, not a real verdict.';
+  const { window } = new JSDOM('<!doctype html><body><section id="root" tabindex="-1"></section></body>');
+  const root = window.document.getElementById('root');
+  const actions = { back() {}, stop() {}, continue() {}, open() {} };
+  renderTestProgress(root, progress(), actions, { doc: window.document, mock: true });
+  assert.equal(root.querySelector('.wft-mock-note').textContent, NOTE);
+  assert.equal(root.querySelectorAll('.wft-mock-note').length, 1);
+  assert.equal(boot(progress()).root.querySelector('.wft-mock-note'), null);
+});
