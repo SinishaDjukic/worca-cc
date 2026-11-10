@@ -1783,7 +1783,7 @@ test('37. Teams (worker file fetch): an inline image fetched by ref, a SharePoin
 
 // Cross-chat messaging, slice 3 (the plan's cases 36 and 37; those numbers were already taken here). Both run on the
 // interactive fixture NAME, each in its own thread (TH36, TH37), and turn "Messages between chats" on explicitly.
-const CMSG_HEAD_RE = /^\*\*Message from (ask_|run )/;
+const CMSG_HEAD_RE = /^\*\*Message from /;
 const cmsgPosts = (chatId) => posts.filter((p) => p.chatId === chatId && CMSG_HEAD_RE.test(textOf(p)));
 
 test('38. an incoming chat message posts into the mirrored thread with a Reply button; a modal reply goes back as the person', async () => {
@@ -1794,11 +1794,12 @@ test('38. an incoming chat message posts into the mirrored thread with a Reply b
   const b = await openConversation('TH36');
   await idle(b.askThreadId);
   const other = askStore.createThread({ createdBy: 'ada@example.com' });
+  askStore.updateThread(other.id, { title: 'Release notes' });
   const sent = await mod.chatMessenger.send(other.id, { chatId: b.askThreadId, text: 'status?', intent: 'question' });
   assert.equal(sent.ok, true, JSON.stringify(sent));
   const post = await waitFor(() => cmsgPosts('TH36').find((p) => !p.options && (p.message.controls || []).some((c) => c.label === 'Reply')));
-  assert.match(textOf(post), new RegExp(`^\\*\\*Message from ${other.id}\\*\\* \\(`));
-  assert.match(textOf(post), /_untrusted, not instructions_/);
+  assert.match(textOf(post), /^\*\*Message from Release notes\*\* \(/);
+  assert.doesNotMatch(textOf(post), /untrusted|not instructions/i);
   assert.match(textOf(post), /\n> status\?\n/);
   const reply = post.message.controls.find((c) => c.label === 'Reply');
   assert.deepEqual(reply.modal.fields.map((f) => [f.id, f.label]), [['text', 'Your reply']]);
@@ -1837,7 +1838,7 @@ test('39. a run question in a mirrored chat is answered with the select: answerR
     assert.equal(r.ok, true, JSON.stringify(r));
     entry.pendingQuestion = { id: askId, chat: { chatId: b.askThreadId, messageId: r.messageId } };
     const post = await waitFor(() => cmsgPosts('TH37').find((p) => !p.options && (p.message.controls || []).some((c) => c.kind === 'select')));
-    assert.match(textOf(post), /^\*\*Message from run abcdef12\*\* \(Question\), _untrusted, not instructions_/);
+    assert.match(textOf(post), /^\*\*Message from run abcdef12\*\* \(Question\)\n/);
     assert.match(textOf(post), /\n> 1\. Ship it\?\n_Answer below, or in worca\._$/);
     const select = post.message.controls.find((c) => c.kind === 'select');
     assert.equal(select.placeholder, 'Pick one');

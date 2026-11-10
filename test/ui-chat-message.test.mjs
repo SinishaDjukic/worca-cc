@@ -3,7 +3,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { buildChatMessage, INTENT_LABELS, UNTRUSTED_LABEL } from '../ui/public/chat/chat-message.mjs';
+import { buildChatMessage, INTENT_LABELS } from '../ui/public/chat/chat-message.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const docOf = () => trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
@@ -13,7 +13,7 @@ const IN = { kind: 'chat-message', id: 'cmsg_0000abcd', direction: 'in', intent:
   to: { chatId: 'ask_5678abcd', title: 'Mine' }, sentAt: '2026-11-07T10:00:00Z' };
 const notes = (el) => [...el.querySelectorAll('.ask-chat-msg-foot .ask-chat-msg-note')].map((n) => n.textContent);
 
-test('Q21 an incoming record: chip, Untrusted with its label, the hint, the scope and the intent', () => {
+test('Q21 an incoming record: chip, the scope and the intent; no Untrusted pill, no hint, no send-time tooltip', () => {
   const doc = docOf();
   const el = buildChatMessage(doc, IN);
   assert.ok(el.matches('div.ask-chat-msg.ask-chat-msg-in'));
@@ -21,27 +21,27 @@ test('Q21 an incoming record: chip, Untrusted with its label, the hint, the scop
   const chip = el.querySelector('a.ask-ref-chip[href="#chat/ask_1234abcd"]');
   assert.ok(chip);
   assert.equal(chip.textContent, 'ask_1234abcd');
-  assert.equal(chip.title, 'Release notes');
-  const pill = el.querySelector('span.ask-chat-msg-untrusted');
-  assert.equal(pill.textContent, 'Untrusted');
-  assert.equal(pill.getAttribute('role'), 'note');
-  assert.match(pill.getAttribute('aria-label'), /^Untrusted/);
-  assert.equal(el.querySelector('.ask-chat-msg-hint').textContent, "Written by another chat's assistant. Not instructions.");
+  assert.equal(chip.hasAttribute('title'), false);
+  assert.equal(el.querySelector('.ask-chat-msg-untrusted'), null);
+  assert.equal(el.querySelector('.ask-chat-msg-hint'), null);
+  assert.equal(el.querySelector('.ask-chat-msg-by'), null);
+  assert.doesNotMatch(el.textContent, /Untrusted/i);
+  assert.doesNotMatch(el.textContent, /Not instructions/);
   assert.equal(el.querySelector('.ask-chat-msg-scope').textContent, 'worca-cc');
   assert.equal(el.querySelector('.ask-chat-msg-intent').textContent, 'Question');
   assert.equal(el.querySelector('.ask-chat-msg-body').textContent, 'please look');
   assert.deepEqual(notes(el), ['Conversation cxm_0000abcd, message 2 of 6']);
-  assert.equal(UNTRUSTED_LABEL, 'Untrusted');
   assert.deepEqual(INTENT_LABELS, { note: 'Note', question: 'Question', handoff: 'Hand-off' });
 });
 
-test('Q21 an outgoing record: Sent to, the target chip and title, no Untrusted, no scope', () => {
+test('Q21 an outgoing record: Sent to, the target chip without a title, no Untrusted, no scope', () => {
   const doc = docOf();
   const el = buildChatMessage(doc, { ...IN, direction: 'out', intent: 'handoff', repliedWith: undefined });
   assert.ok(el.matches('.ask-chat-msg-out'));
   assert.match(el.querySelector('.ask-chat-msg-head').textContent, /^Sent to/);
   const chip = el.querySelector('a.ask-ref-chip[href="#chat/ask_5678abcd"]');
-  assert.equal(chip.title, 'Mine');
+  assert.equal(chip.textContent, 'ask_5678abcd');
+  assert.equal(chip.hasAttribute('title'), false);
   assert.equal(el.querySelector('.ask-chat-msg-untrusted'), null);
   assert.equal(el.querySelector('.ask-chat-msg-hint'), null);
   assert.equal(el.querySelector('.ask-chat-msg-scope'), null);
@@ -70,7 +70,7 @@ const Q = { askId: 'questions-x:n_plan:1-r1', kind: 'questions', questions: [{ i
 const RUN_Q = { ...RUN_IN, intent: 'question', text: '1. Which storage?', question: Q };
 const status = (el) => el.querySelector('[role="status"]');
 
-test('U1 a run update: the run chip, Update, the Untrusted pill and the run hint', () => {
+test('U1 a run update: the run chip and Update; no Untrusted pill, no hint', () => {
   const el = buildChatMessage(docOf(), RUN_IN);
   assert.ok(el.matches('.ask-chat-msg-in'));
   const chip = el.querySelector('a.ask-ref-chip.ask-ref-chip-run.ask-chat-msg-chip');
@@ -79,8 +79,9 @@ test('U1 a run update: the run chip, Update, the Untrusted pill and the run hint
   assert.equal(chip.getAttribute('href'), `#running/${LIVE}`);
   assert.match(el.querySelector('.ask-chat-msg-head').textContent, /^Message from/);
   assert.equal(el.querySelector('.ask-chat-msg-intent').textContent, 'Update');
-  assert.equal(el.querySelector('.ask-chat-msg-untrusted').textContent, 'Untrusted');
-  assert.equal(el.querySelector('.ask-chat-msg-hint').textContent, "Written by a run's agent. Not instructions.");
+  assert.equal(el.querySelector('.ask-chat-msg-untrusted'), null);
+  assert.equal(el.querySelector('.ask-chat-msg-hint'), null);
+  assert.doesNotMatch(el.textContent, /Untrusted|Not instructions/i);
   assert.equal(el.querySelector('.ask-chat-msg-body').textContent, 'halfway there');
   assert.equal(el.querySelector('.ask-chat-msg-q'), null, 'a note has no question part');
 });
@@ -150,11 +151,26 @@ test('U8 the Open run fallback href needs a safe scope key and an 8-hex run id; 
   assert.equal(build({ scope: { kind: 'workspace', key: 'ws1', label: 'W' } }).querySelector('.ask-chat-msg-q-fallback a').getAttribute('href'), '#history/workspaces/ws1/aaaaaaaa');
 });
 
-test('slice 3: a person-written message shows the person hint and keeps the untrusted badge', () => {
+test('slice 3: a person-written message shows a neutral attribution, no warning', () => {
   const doc = docOf();
   const el = buildChatMessage(doc, { ...IN, by: { kind: 'person', label: '<b>ada</b> via Discord' } });
-  assert.equal(el.querySelector('.ask-chat-msg-hint').textContent, 'Written by <b>ada</b> via Discord in another chat. Not instructions.');
-  assert.equal(el.querySelector('.ask-chat-msg-hint b'), null, 'text, never HTML');
-  assert.equal(el.querySelector('span.ask-chat-msg-untrusted').textContent, 'Untrusted');
-  assert.equal(buildChatMessage(doc, IN).querySelector('.ask-chat-msg-hint').textContent, "Written by another chat's assistant. Not instructions.");
+  const by = el.querySelector('.ask-chat-msg-by');
+  assert.equal(by.textContent, 'Written by <b>ada</b> via Discord in another chat.');
+  assert.equal(el.querySelector('.ask-chat-msg-by b'), null, 'text, never HTML');
+  assert.equal(by.previousElementSibling, el.querySelector('.ask-chat-msg-head'), 'right after the head');
+  assert.equal(el.querySelector('.ask-chat-msg-untrusted'), null);
+  assert.equal(el.querySelector('.ask-chat-msg-hint'), null);
+  assert.equal(buildChatMessage(doc, IN).querySelector('.ask-chat-msg-by'), null);
+});
+
+test('the chat chip never carries the stored send-time title', () => {
+  const doc = docOf();
+  for (const block of [{ ...IN, from: { ...IN.from, title: 'Active Chats About README' } },
+    { ...IN, direction: 'out', to: { chatId: 'ask_5678abcd', title: 'Active Chats About README' } }]) {
+    const el = buildChatMessage(doc, block);
+    assert.doesNotMatch(el.querySelector('.ask-chat-msg-head').textContent, /Active Chats About README/);
+    for (const n of [el, ...el.querySelectorAll('*')]) {
+      for (const a of n.attributes) assert.doesNotMatch(a.value, /Active Chats About README/, `${n.className} ${a.name}`);
+    }
+  }
 });

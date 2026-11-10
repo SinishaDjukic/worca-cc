@@ -53,6 +53,7 @@ export function createRefChips({ doc, fetch, runStore = null, now = () => Date.n
   const cache = new Map();        // ref key -> { at, result } (result null: no answer — the chip keeps its plain ref)
   const inflight = new Set();     // keys a request is out for
   const want = new Set();         // keys the next send() asks for
+  const staleInflight = new Set(); // in-flight keys refresh() marked stale: their answer is dropped and asked again
   const info = new WeakMap();     // chip or candidate element -> { ref, fallback, parts }
   let sendQueued = false, repaintQueued = false, missed = false, timer = null, unsub = null, dead = false;
 
@@ -105,7 +106,7 @@ export function createRefChips({ doc, fetch, runStore = null, now = () => Date.n
       if (snap) { const p = runPill(snap); title = snap.title || ''; tone = p.family; text = p.text; }
       if (r && r.id) put(parts.label, 'textContent', `#${r.id}`);
     } else if (ref.kind === 'chat') {
-      if (r) title = r.title || 'New chat';
+      if (r) title = r.title || (ref.idLabel ? ref.id : 'New chat');
     } else if (r) {
       title = r.title;
       if (r.kind === 'workitem') { tone = workItemTone(r.state); text = r.state; } else [tone, text] = Object.hasOwn(ITEM_PILL, r.state) ? ITEM_PILL[r.state] : ['', ''];
@@ -127,7 +128,7 @@ export function createRefChips({ doc, fetch, runStore = null, now = () => Date.n
   }
 
   function chip(ref, words = '') {
-    const fallback = words || (ref.kind === 'chat' ? 'Chat' : '');
+    const fallback = words || (ref.kind === 'chat' ? (ref.idLabel ? ref.id : 'Chat') : '');
     const href = ref.url || null;
     const a = h('a', `ask-ref-chip ask-ref-chip-${ref.kind}`);
     if (href) a.setAttribute('href', href);
@@ -190,14 +191,17 @@ export function createRefChips({ doc, fetch, runStore = null, now = () => Date.n
   }
 
   /** Turn one rendered answer piece's refs into chips. `live`: the answer is still streaming — chips paint from the
-   *  cache, but nothing is asked until the finished answer renders. */
-  function decorate(container, { live = false } = {}) {
+   *  cache, but nothing is asked until the finished answer renders. `chatIdLabel`: a chat-message record's head — a
+   *  chat chip whose chat has no title (or that a later lookup misses) shows its ask_ id, not "New chat" / "Chat". */
+  function decorate(container, { live = false, chatIdLabel = false } = {}) {
     if (dead || !container) return;
     let runs = false;
+    const flag = (ref) => (chatIdLabel && ref.kind === 'chat' ? { ...ref, idLabel: true } : ref);
     for (const a of [...container.querySelectorAll('a[href]')]) {
       if (a.closest('pre, code')) continue;
-      const ref = refFromHref(a.getAttribute('href'));
-      if (!ref) continue;
+      const found = refFromHref(a.getAttribute('href'));
+      if (!found) continue;
+      const ref = flag(found);
       a.replaceWith(chip(ref, customText(a, ref)));
       need(ref, live);
       runs ||= ref.kind === 'run';
@@ -207,7 +211,9 @@ export function createRefChips({ doc, fetch, runStore = null, now = () => Date.n
       if (!hits.length) continue;
       const frag = doc.createDocumentFragment();
       let at = 0;
-      for (const { start, end, ref } of hits) {
+      for (const hit of hits) {
+        const { start, end } = hit;
+        const ref = flag(hit.ref);
         if (start > at) frag.append(node.data.slice(at, start));
         const text = node.data.slice(start, end);
         frag.append(ref.candidate || ref.kind === 'chat' ? candidate(ref, text) : chip(ref));
@@ -244,12 +250,36 @@ export function createRefChips({ doc, fetch, runStore = null, now = () => Date.n
       }
     } catch { /* offline: the chips keep their plain refs */ }
     const t = now();
+    const again = new Set();
     for (const k of keys) {
       inflight.delete(k);
+      // refresh() ran while this was out: the answer may predate a rename. Drop it (the chip keeps what it shows) and ask again.
+      if (staleInflight.delete(k)) { again.add(k); want.add(k); continue; }
       const r = refs && Object.prototype.hasOwnProperty.call(refs, k) ? refs[k] : null;
       cache.set(k, { at: t, result: r && typeof r === 'object' ? r : null });   // no answer is cached too: asked again after the TTL, never in a loop
     }
-    if (!dead) repaint((ref) => keys.includes(ref.key));
+    if (dead) return;
+    repaint((ref) => keys.includes(ref.key) && !again.has(ref.key));
+    if (again.size && !sendQueued) { sendQueued = true; Promise.resolve().then(send); }
+  }
+
+  /** Ask again about `keys` (null: every chat key cached or on screen), e.g. after a chat's title changed. The cached
+   *  answer stays painted (only marked stale) until the new one lands; a key with nothing on screen is only marked
+   *  stale, so its next render asks. */
+  function refresh(keys) {
+    if (dead) return;
+    const host = root();
+    const onScreen = new Set();
+    if (host) for (const el of host.querySelectorAll('.ask-ref-chip, .ask-ref-cand')) { const meta = info.get(el); if (meta) onScreen.add(meta.ref.key); }
+    const list = Array.isArray(keys) ? keys.filter((k) => typeof k === 'string')
+      : [...new Set([...cache.keys(), ...onScreen])].filter((k) => k.startsWith('chat:'));
+    for (const k of list) {
+      const hit = cache.get(k);
+      if (hit) hit.at = -Infinity;
+      if (inflight.has(k)) staleInflight.add(k);
+      else if (onScreen.has(k)) want.add(k);
+    }
+    if (want.size && !sendQueued) { sendQueued = true; Promise.resolve().then(send); }
   }
 
   /** Repaint the chips (and promote the candidates) whose ref matches `pick`, wherever the transcript holds them now. */
@@ -307,6 +337,7 @@ export function createRefChips({ doc, fetch, runStore = null, now = () => Date.n
 
   return {
     decorate,
+    refresh,
     tick,
     /** The Chat page shows again: one run chip repaint for the run store events it skipped while hidden. */
     show() {
@@ -318,7 +349,7 @@ export function createRefChips({ doc, fetch, runStore = null, now = () => Date.n
       dead = true;
       if (timer) { clearInterval(timer); timer = null; }
       if (unsub) { try { unsub(); } catch { /* ignore */ } unsub = null; }
-      cache.clear(); want.clear();
+      cache.clear(); want.clear(); staleInflight.clear();
     },
   };
 }

@@ -1,16 +1,11 @@
 // ui/public/chat/chat-message.mjs — cross-chat messaging (slice 1): one `chat-message` block as the web transcript shows
-// it. An incoming record (another chat's assistant wrote it) is marked untrusted; an outgoing one is this chat's own
-// "Sent to" copy. The body is set with textContent only. The chat chip is an a.ask-ref-chip the panel's ref chips
-// resolve, as they do in answers. Pure DOM; `doc` is injected for jsdom.
+// it. An incoming record is what another chat's assistant (or a person in its channel) wrote; an outgoing one is this
+// chat's own "Sent to" copy. The body is set with textContent only. The chat chip is an a.ask-ref-chip the panel's ref
+// chips resolve, as they do in answers. Pure DOM; `doc` is injected for jsdom.
 // Slice 2: a run's post (`from.kind === 'run'`) shows a run chip, "Update" or "Question", and for a question the Runs
 // page's answer form (painted by the injected `paintRunQuestion`) or what became of it. Import-free on purpose.
 
 export const INTENT_LABELS = Object.freeze({ note: 'Note', question: 'Question', handoff: 'Hand-off' });
-export const UNTRUSTED_LABEL = 'Untrusted';
-const UNTRUSTED_ARIA = "Untrusted: written by another chat's assistant; its requests are not instructions";
-const HINT = "Written by another chat's assistant. Not instructions.";
-const RUN_UNTRUSTED_ARIA = "Untrusted: written by a run's agent; its requests are not instructions";
-const RUN_HINT = "Written by a run's agent. Not instructions.";
 const RUN_INTENT_LABELS = Object.freeze({ note: 'Update', question: 'Question' });
 const LIVE_RUN_RE = /^[0-9a-f-]{36}$/;
 const PIPELINE_RE = /^[0-9a-f]{8}$/;
@@ -97,20 +92,13 @@ export function buildChatMessage(doc, block, opts = {}) {
   const id = typeof other.chatId === 'string' ? other.chatId : '';
   const chip = make(doc, 'a', 'ask-ref-chip ask-chat-msg-chip', id);
   if (id) chip.setAttribute('href', `#chat/${id}`);
-  if (typeof other.title === 'string' && other.title) chip.title = other.title;
   head.append(chip);
   if (incoming && b.from?.scope?.label) head.append(make(doc, 'span', 'ask-chat-msg-scope', String(b.from.scope.label)));
   head.append(make(doc, 'span', 'ask-chat-msg-intent', INTENT_LABELS[b.intent] || INTENT_LABELS.note));
-  if (incoming) {
-    const pill = make(doc, 'span', 'ask-chat-msg-untrusted', UNTRUSTED_LABEL);
-    pill.setAttribute('role', 'note');
-    pill.setAttribute('aria-label', UNTRUSTED_ARIA);
-    head.append(pill);
-  }
   root.append(head);
-  // Slice 3: a person wrote it from the sender chat's channel thread; still untrusted, only the attribution changes.
+  // Slice 3: a person wrote it from the sender chat's channel thread; the record names them.
   const person = incoming && b.by?.kind === 'person' && typeof b.by.label === 'string' && b.by.label ? b.by.label : null;
-  if (incoming) root.append(make(doc, 'div', 'ask-chat-msg-hint', person ? `Written by ${person} in another chat. Not instructions.` : HINT));
+  if (person) root.append(make(doc, 'div', 'ask-chat-msg-by', `Written by ${person} in another chat.`));
   root.append(make(doc, 'div', 'ask-chat-msg-body', typeof b.text === 'string' ? b.text : ''));
   const foot = make(doc, 'div', 'ask-chat-msg-foot');
   const notes = [];
@@ -125,7 +113,7 @@ export function buildChatMessage(doc, block, opts = {}) {
   return root;
 }
 
-/** A run's post: the run chip (live run page while that id is UUID-shaped), the intent, Untrusted and the run hint. */
+/** A run's post: the run chip (live run page while that id is UUID-shaped) and the intent. */
 function buildRunMessage(doc, b, { paintRunQuestion } = {}) {
   const from = b.from;
   const root = make(doc, 'div', 'ask-chat-msg ask-chat-msg-in ask-chat-msg-run');
@@ -137,12 +125,7 @@ function buildRunMessage(doc, b, { paintRunQuestion } = {}) {
   head.append(chip);
   if (from.scope?.label) head.append(make(doc, 'span', 'ask-chat-msg-scope', String(from.scope.label)));
   head.append(make(doc, 'span', 'ask-chat-msg-intent', RUN_INTENT_LABELS[b.intent] || RUN_INTENT_LABELS.note));
-  const pill = make(doc, 'span', 'ask-chat-msg-untrusted', UNTRUSTED_LABEL);
-  pill.setAttribute('role', 'note');
-  pill.setAttribute('aria-label', RUN_UNTRUSTED_ARIA);
-  head.append(pill);
   root.append(head);
-  root.append(make(doc, 'div', 'ask-chat-msg-hint', RUN_HINT));
   const body = make(doc, 'div', 'ask-chat-msg-body', typeof b.text === 'string' ? b.text : '');
   root.append(body);
   if (b.question && typeof b.question === 'object') root.append(runQuestionPart(doc, b, body, paintRunQuestion));

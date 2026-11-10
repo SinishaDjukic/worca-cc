@@ -865,6 +865,56 @@ test('reply passes the channel actor and the trimmed text; an empty reply is ref
   assert.deepEqual(B.replies, [{ threadId: B.c.askThreadId, messageId: 'cmsg_000000b1', text: 'all good', by: 'ada via Discord' }]);
 });
 
+const cmHead = (p) => p.message.body[0].value.split('\n')[0];
+const titleMap = (titles) => (id) => (Object.hasOwn(titles, id) ? { id, title: titles[id], mode: 'ask' } : null);
+
+test('a chat-message post names the other chat by its current stored title; a state edit uses the title of that moment; a rename alone edits nothing', async () => {
+  const titles = { ask_0000000c: 'Release notes' };
+  const B = await cmsgBridge({ ask: { getThread: titleMap(titles) } });
+  B.msgs.push(cmRow(CM_CHAT()));
+  await B.bridge.reconcile(B.c);
+  assert.match(cmHead(B.cmPosts()[0]), /^\*\*Message from Release notes\*\* \(/);
+  assert.ok(!B.cmPosts()[0].message.body[0].value.includes('Other'), "never the block's send-time title");
+  const n = B.posts.length;
+  titles.ask_0000000c = 'Renamed';
+  await B.bridge.reconcile(B.c);
+  assert.equal(B.posts.length, n, 'a rename alone posts and edits nothing');
+  B.msgs[0].blocks[0].repliedWith = 'cmsg_000000b2';
+  await B.bridge.reconcile(B.c);
+  const edit = B.posts.slice(n).find((p) => p.options?.edit);
+  assert.ok(edit, 'the replied state edits the post');
+  assert.match(cmHead(edit), /^\*\*Message from Renamed\*\* \(/);
+  for (const getThread of [() => null, () => ({ id: 'ask_0000000c', title: 'Workflow chat', mode: 'composer' })]) {
+    const G = await cmsgBridge({ ask: { getThread } });
+    G.msgs.push(cmRow(CM_CHAT()));
+    await G.bridge.reconcile(G.c);
+    assert.match(cmHead(G.cmPosts()[0]), /^\*\*Message from ask_0000000c\*\* \(/);
+  }
+});
+
+test('a chat-message post whose edit finds the message deleted is posted again under the current title', async () => {
+  const titles = { ask_0000000c: 'Release notes' };
+  const B = await cmsgBridge({ ask: { getThread: titleMap(titles) } });
+  B.msgs.push(cmRow(CM_CHAT()));
+  await B.bridge.reconcile(B.c);
+  const cmId = `SM${stubSeq}`;
+  assert.match(cmHead(B.cmPosts()[0]), /^\*\*Message from Release notes\*\* \(/);
+  const s2 = stubBridge({ listMessages: () => B.msgs.map((m) => structuredClone(m)), getThread: titleMap(titles) }, {
+    host: { sendMessage: async ({ chatId, message, options }) => {
+      if (options?.edit?.messageId === cmId) throw Object.assign(new Error('Unknown Message: not found'), { permanent: true });
+      B.posts.push({ chatId, message, options: options || null });
+      return { ok: true, detail: { messageIds: [`SM${++stubSeq}`] } };
+    } },
+    deps: { interactive: () => true } });
+  titles.ask_0000000c = 'Renamed';
+  B.msgs[0].blocks[0].repliedWith = 'cmsg_000000b2';
+  const n = B.posts.length;
+  await s2.bridge.reconcile(B.c);
+  const repost = B.posts.slice(n).find((p) => p.chatId === B.th && !p.options?.edit && /Message from/.test(p.message.body[0].value));
+  assert.ok(repost, 'posted again as a new message');
+  assert.match(cmHead(repost), /^\*\*Message from Renamed\*\* \(/);
+});
+
 test('a later message still arrives after a permanent edit failure of a cmsg part', async () => {
   let refuse = false;
   const B = await cmsgBridge({ host: {} });

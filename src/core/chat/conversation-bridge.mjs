@@ -776,6 +776,9 @@ export function createConversationBridge(deps) {
     const DRY = DRY_ISSUE;
     const realIssue = (action, cardId, state) => conv.issueControl({ conversationId: c.id, cardId, action, issuedState: state,
       ownerUserId: c.ownerUserId, singleUse: !REUSABLE_CARD_ACTIONS.has(action) }, { now: deps.now() });
+    // A chat-message post names the other chat by its stored title at the moment it is posted or edited (card-render
+    // falls back to the id, and catches a throw). A rename alone edits nothing: edits follow state only.
+    const chatTitle = (id) => { const t = deps.ask.getThread?.(id); return t && t.mode !== 'composer' && typeof t.title === 'string' ? t.title : null; };
     for (const m of deps.ask.listMessages(c.askThreadId)) {
       if (m.createdAt < c.createdAt) continue;                       // history from before the binding stays in worca
       if (m.role === 'assistant' && m.status === 'streaming') continue;
@@ -785,13 +788,13 @@ export function createConversationBridge(deps) {
       if (m.role === 'assistant' && !have.size && activeIn(c).some((st) => st.phase === 'starting')) continue;
       const fromWorca = m.role === 'user' && !isSyntheticUserRow(m);
       const st = m.role === 'assistant' ? activeIn(c).find((x) => x.phase === 'bound' && x.assistantId === m.id && !x.used) : null;
-      const parts = renderMessageParts(m, { issue: DRY, links, fromWorca, interactive });
+      const parts = renderMessageParts(m, { issue: DRY, links, fromWorca, interactive, chatTitle });
       for (const part of parts) {
         const prev = have.get(part.part);
         if (prev && (!part.cardId || prev.shownState === part.state)) continue;   // delivered and current
         // Order matters: spend the card's older refs FIRST, then mint the ones this post will carry.
         if (part.cardId) conv.retireCardControls(c.id, part.cardId, { now: deps.now() });
-        const real = renderCardOrPart(m, part.part, { issue: realIssue, links, fromWorca, interactive });
+        const real = renderCardOrPart(m, part.part, { issue: realIssue, links, fromWorca, interactive, chatTitle });
         // The reply's first new part goes INTO the status message. A transient failure stops the pass (retried with the
         // same edit: nothing is posted twice); a refusal (deleted message, no access) posts the part as a new message.
         if (!prev && st && !st.used) {
@@ -823,7 +826,7 @@ export function createConversationBridge(deps) {
           }
         }
         if (editFailed) conv.retireCardControls(c.id, part.cardId, { now: deps.now() });   // the failed edit's refs were never shown
-        const post = editFailed ? renderCardOrPart(m, part.part, { issue: realIssue, links, fromWorca, interactive }) : real;
+        const post = editFailed ? renderCardOrPart(m, part.part, { issue: realIssue, links, fromWorca, interactive, chatTitle }) : real;
         try {
           const r = await send(c, post.message);
           const ids = r?.detail?.messageIds || r?.messageIds || [];

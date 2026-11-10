@@ -159,9 +159,7 @@
 .ask-chat-msg-head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:12px;color:var(--ink-2);min-width:0;}
 .ask-chat-msg-dir{font-weight:600;color:var(--ink);}
 .ask-chat-msg-scope,.ask-chat-msg-intent{font-size:11px;color:var(--ink-2);}
-.ask-chat-msg-untrusted{display:inline-flex;align-items:center;padding:1px 7px;border-radius:var(--r-xs);font-size:11px;font-weight:600;
-  background:var(--amber-bg);color:var(--amber-ink-strong);}
-.ask-chat-msg-hint{font-size:11px;color:var(--ink-2);}
+.ask-chat-msg-by{font-size:11px;color:var(--ink-2);}
 .ask-chat-msg-body{color:var(--ink);white-space:pre-wrap;min-width:0;overflow-wrap:anywhere;}
 .ask-chat-msg-foot{display:flex;flex-wrap:wrap;gap:2px 10px;font-size:11px;color:var(--ink-2);}
 /* A run's question (slice 2): the Runs page's form painted inside the record, or what became of the question. */

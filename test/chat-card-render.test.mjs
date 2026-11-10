@@ -198,7 +198,8 @@ test('Q13 non-interactive: a chat-message record mirrors as one labelled text pa
   assert.equal(parts[0].cardId, undefined);
   assert.ok(isValidMessage(parts[0].message));
   const lines = parts[0].message.body[0].value.split('\n');
-  assert.equal(lines[0], '**Message from ask_1234abcd** (worca-cc, Question), _untrusted, not instructions_');
+  assert.equal(lines[0], '**Message from ask_1234abcd** (worca-cc, Question)');
+  assert.doesNotMatch(parts[0].message.body[0].value, /untrusted|not instructions/i);
   assert.equal(lines.at(-1), '_Reply in worca._');
   assert.deepEqual(lines.slice(1, -1), BODY_LINES, 'every body line is inside the quote');
   // An explicit interactive:false on a chat that holds controls elsewhere: still text only.
@@ -208,6 +209,7 @@ test('Q13 non-interactive: a chat-message record mirrors as one labelled text pa
   const out = renderMessageParts({ role: 'system', text: 'Sent to ask_5678abcd (Note)', blocks: [{ ...CMSG, direction: 'out', intent: 'note', text: 'hi' }] }, { issue, links: {} });
   assert.equal(out.length, 1);
   assert.equal(out[0].message.body[0].value, '**Sent to ask_5678abcd** (Note)\n> hi');
+  assert.doesNotMatch(out[0].message.body[0].value, /untrusted|not instructions/i);
   const long = renderMessageParts({ role: 'system', text: '', blocks: [{ ...CMSG, text: 'y'.repeat(4000) }] }, { issue, links: {} })[0].message.body[0].value;
   assert.ok(long.length < 1700, 'the body is clipped to 1500 characters');
   const run = renderMessageParts({ role: 'system', text: 'Message from run aaaaaaaa (Question, untrusted)', blocks: [runQ([Q1(['Yes', 'No'])])] }, { issue, links });
@@ -215,11 +217,33 @@ test('Q13 non-interactive: a chat-message record mirrors as one labelled text pa
   assert.equal(run[0].message.controls, undefined, 'no controls on a channel without interactive support');
   assert.equal(run[0].cardId, undefined, 'so it is never edited');
   const runLines = run[0].message.body[0].value.split('\n');
-  assert.equal(runLines[0], '**Message from run aaaaaaaa** (Question), _untrusted, not instructions_');
+  assert.equal(runLines[0], '**Message from run aaaaaaaa** (Question)');
+  assert.doesNotMatch(run[0].message.body[0].value, /untrusted|not instructions/i);
   assert.deepEqual(runLines.slice(1, -1), [...BODY_LINES, '> 1. Ship it?']);
   assert.equal(runLines.at(-1), '_Reply in worca to answer._');
   const note = renderMessageParts(sys([{ ...runQ([]), intent: 'note', question: undefined }]), { issue, links: {} });
   assert.deepEqual(note[0].message.body[0].value.split('\n').slice(1), BODY_LINES, 'a run note has no footer');
+});
+
+test('chatTitle labels the header with the current title, falls back to the id, never the block\'s copy', () => {
+  const head = (blocks, o = {}) => renderMessageParts(sys(blocks), { issue, links: {}, ...o })[0].message.body[0].value.split('\n')[0];
+  const value = renderMessageParts(sys([CMSG]), { issue, links: {}, chatTitle: (id) => (id === 'ask_1234abcd' ? 'Release notes' : null) })[0].message.body[0].value;
+  assert.equal(value.split('\n')[0], '**Message from Release notes** (worca-cc, Question)');
+  assert.ok(!value.includes('Other'), "never the block's from.title");
+  assert.ok(!value.includes('ask_1234abcd'));
+  assert.equal(head([{ ...CMSG, direction: 'out', intent: 'note', text: 'hi' }], { chatTitle: () => 'Mine now' }), '**Sent to Mine now** (Note)');
+  const ID = '**Message from ask_1234abcd** (worca-cc, Question)';
+  assert.equal(head([CMSG], { chatTitle: () => '' }), ID, 'an empty title');
+  assert.equal(head([CMSG], { chatTitle: () => null }), ID, 'no title');
+  assert.equal(head([CMSG], { chatTitle: () => { throw new Error('boom'); } }), ID, 'a throw');
+  assert.equal(head([CMSG]), ID, 'no chatTitle');
+  assert.equal(head([CMSG], { chatTitle: () => '  \n ' }), ID, 'a blank title');
+  assert.equal(head([CMSG], { chatTitle: () => 'a\nb' }), '**Message from a b** (worca-cc, Question)');
+  assert.equal(head([CMSG], { chatTitle: () => 't'.repeat(200) }), `**Message from ${'t'.repeat(79)}…** (worca-cc, Question)`);
+  const live = renderMessageParts(sys([CMSG]), { issue, links, interactive: true, chatTitle: () => 'Release notes' })[0];
+  assert.equal(live.cardId, CMSG.id, 'the interactive path');
+  assert.equal(live.message.body[0].value.split('\n')[0], '**Message from Release notes** (worca-cc, Question)');
+  assert.equal(head([runQ([Q1(['Yes', 'No'])])], { chatTitle: () => 'Nope' }), '**Message from run aaaaaaaa** (Question)', 'a run keeps its id');
 });
 
 test('Q14 chatMessageState: run question states, open / replied / last for a chat message, null for an out copy and a run note', () => {

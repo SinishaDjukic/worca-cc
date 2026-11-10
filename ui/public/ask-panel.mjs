@@ -3538,7 +3538,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   /** Cross-chat messaging: one chat-message record. Its chat id goes to the ref chips as plain text, as an answer's
-   *  bare ask_ id does: a chat this person can open becomes its chip, an unknown (deleted) chat keeps the id. */
+   *  bare ask_ id does: a chat this person can open becomes its chip showing its current title (its id while
+   *  untitled); an unknown or deleted chat keeps the id. */
   function buildChatRecord(b) {
     // Slice 2: a run question's record holds the Runs page's answer form. It is kept while the block is unchanged (in
     // practice: while question.state is), so a row rebuild never drops a half-typed free-text answer.
@@ -3552,7 +3553,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const chip = head && head.querySelector('a.ask-chat-msg-chip');
     if (chip && chip.textContent) {
       chip.replaceWith(doc.createTextNode(chip.textContent));
-      refChips.decorate(head, { live: false });
+      refChips.decorate(head, { live: false, chatIdLabel: true });
     }
     if (runQ) st.chatRecEls.set(b.id, { el: rec, key });
     return rec;
@@ -7403,6 +7404,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function pushServerFrame(frame) {
     if (st.destroyed || !frame) return;
     if (chatsCol) chatsCol.onFrame(frame);   // #948 s2: before the ask-command branch below returns
+    // A chat's title changed (a rename, a first auto-title) or chats were removed: chat chips naming them ask again.
+    if (frame.type === 'ask-title' && typeof frame.threadId === 'string') refChips.refresh([`chat:${frame.threadId}`]);
+    if (frame.type === 'ask-history-cleared') refChips.refresh(Array.isArray(frame.threadIds) ? frame.threadIds.map((id) => `chat:${id}`) : null);
     if (frame.type === 'ask-history-cleared') {
       // The chats it removed (every one when it names none) leave the "asked in" set, and a Chat row dot lit for one
       // of them goes out: the Chat row never routes to a deleted chat.

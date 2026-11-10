@@ -279,7 +279,9 @@ test('Q22 a chat-message system row renders through buildChatMessage; an unknown
   ctx.flush();
   const rec = ctx.doc.querySelector('.ask-msg-system .ask-chat-msg.ask-chat-msg-in');
   assert.ok(rec, 'the record is built by buildChatMessage');
-  assert.match(rec.querySelector('.ask-chat-msg-untrusted').textContent, /Untrusted/);
+  assert.equal(rec.querySelector('.ask-chat-msg-untrusted'), null);
+  assert.equal(rec.querySelector('.ask-chat-msg-hint'), null);
+  assert.doesNotMatch(rec.querySelector('.ask-chat-msg-head').textContent, /Untrusted/);
   assert.equal(ctx.doc.querySelector('.ask-msg-system .ask-notice'), null, 'no notice fallback for that row');
   assert.match(rec.querySelector('.ask-chat-msg-head').textContent, /ask_1234abcd/, 'an unresolved chat keeps its plain id');
   assert.ok(resolves.some((b) => b.refs.includes('chat:ask_1234abcd')), 'the ref chips were asked to resolve the sender');
@@ -289,6 +291,82 @@ test('Q22 a chat-message system row renders through buildChatMessage; an unknown
   await ctx.tick();
   ctx.flush();
   assert.match(ctx.doc.querySelector('.ask-msg-system .ask-chat-msg-foot').textContent, /Replied/, 'the patched row rebuilt with no reload');
+  ctx.panel.destroy();
+});
+
+// The record's chat chip: the other chat's stored title from the resolver (its id while untitled or gone), following
+// title frames. `state.refs` is what the resolve stub answers now; `state.asked` counts the POSTs naming the sender.
+function chatRecordPanel(state) {
+  const TID = 'ask_00000001';
+  const BLOCK = { kind: 'chat-message', id: 'cmsg_0000abcd', direction: 'in', intent: 'question', text: 'please look', conversationId: 'cxm_0000abcd',
+    hop: 1, maxHops: 6, replyTo: null, repliedWith: null,
+    from: { kind: 'chat', chatId: 'ask_1234abcd', title: 'Active Chats About README', scope: { kind: 'none', key: null, label: 'No project' }, owner: 'local' },
+    to: { chatId: TID, title: 'T' }, sentAt: 't' };
+  const row = { id: 'askm_s0000001', threadId: TID, seq: 1, role: 'system', text: 'Message from ask_1234abcd (Question, untrusted)', blocks: [BLOCK], status: null, createdAt: 't' };
+  state.asked = 0;
+  const ctx = makePanel({ fetchHandler: (url, opts) => {
+    const method = ((opts || {}).method || 'GET').toUpperCase();
+    if (url === `/api/ask/threads/${TID}` && method === 'GET') {
+      return { ok: true, status: 200, json: async () => ({ thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} },
+        messages: [row], attachments: [], runLinks: [], worktrees: [], inFlight: null }) };
+    }
+    if (url === '/api/ask/refs/resolve') {
+      const body = JSON.parse(opts.body);
+      if (body.refs.includes('chat:ask_1234abcd')) state.asked++;
+      return { ok: true, status: 200, json: async () => ({ refs: Object.fromEntries(body.refs.filter((k) => k in state.refs).map((k) => [k, state.refs[k]])) }) };
+    }
+    return { ok: true, status: 200, json: async () => ({}) };
+  } });
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  const head = () => ctx.doc.querySelector('.ask-msg-system .ask-chat-msg-head');
+  const title = () => head().querySelector('.ask-ref-chip-chat .ask-ref-title')?.textContent;
+  const settle = async (n = 8) => { for (let i = 0; i < n; i++) await ctx.tick(); ctx.flush(); };
+  return { ctx, head, title, settle };
+}
+
+test("a chat-message record's chip shows the other chat's stored title, never the block's send-time title, and follows a rename", async () => {
+  const state = { refs: { 'chat:ask_1234abcd': { ok: true, kind: 'chat', title: 'Release notes' } } };
+  const { ctx, head, title, settle } = chatRecordPanel(state);
+  ctx.panel.open();
+  await settle();
+  assert.equal(title(), 'Release notes');
+  assert.equal(head().querySelector('a.ask-ref-chip-chat').getAttribute('href'), '#chat/ask_1234abcd');
+  assert.ok(!head().textContent.includes('Active Chats About README'));
+  const before = state.asked;
+  state.refs['chat:ask_1234abcd'] = { ok: true, kind: 'chat', title: 'Renamed' };
+  ctx.panel.pushServerFrame({ type: 'ask-title', threadId: 'ask_1234abcd', title: 'Renamed' });
+  await settle();
+  assert.equal(title(), 'Renamed');
+  assert.equal(state.asked, before + 1, 'exactly one more lookup of that chat');
+  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'T', "another chat's title frame never re-titles the open chat");
+  ctx.panel.destroy();
+});
+
+test('an untitled other chat shows its ask_ id, not New chat', async () => {
+  const state = { refs: { 'chat:ask_1234abcd': { ok: true, kind: 'chat', title: '' } } };
+  const { ctx, head, title, settle } = chatRecordPanel(state);
+  ctx.panel.open();
+  await settle();
+  assert.equal(title(), 'ask_1234abcd');
+  assert.ok(!head().closest('.ask-chat-msg').textContent.includes('New chat'));
+  ctx.panel.destroy();
+});
+
+test('a history clear naming the other chat turns its chip back into its id', async () => {
+  const state = { refs: { 'chat:ask_1234abcd': { ok: true, kind: 'chat', title: 'Release notes' } } };
+  const { ctx, head, title, settle } = chatRecordPanel(state);
+  ctx.panel.open();
+  await settle();
+  assert.equal(title(), 'Release notes');
+  const before = state.asked;
+  state.refs = {};
+  ctx.panel.pushServerFrame({ type: 'ask-history-cleared', threadIds: ['ask_1234abcd'] });
+  await settle();
+  assert.equal(state.asked, before + 1);
+  const text = head().textContent;
+  assert.match(text, /ask_1234abcd/);
+  assert.doesNotMatch(text, /Release notes|\bChat\b|New chat/);
+  assert.ok(ctx.doc.querySelector('.ask-msg-system .ask-chat-msg'), 'the open chat (another id) did not reset');
   ctx.panel.destroy();
 });
 

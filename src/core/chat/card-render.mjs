@@ -212,6 +212,17 @@ function answerModalButton(ref, { label, style, fieldLabel = 'Your answer', titl
 
 const CHAT_MESSAGE_INTENT = Object.freeze({ note: 'Note', question: 'Question', handoff: 'Hand-off' });
 const oneLine = (v) => String(v ?? '').replace(/[\r\n]+/g, ' ').trim();
+/** The other chat's name in a post: its current title from the injected `chatTitle(id)`, one line and at most 80
+ *  characters; its id when there is no such function, it throws, or it answers no title. Never the block's copy. */
+function chatName(id, chatTitle) {
+  if (typeof chatTitle === 'function') {
+    try {
+      const t = chatTitle(id);
+      if (typeof t === 'string' && oneLine(t)) return clip(oneLine(t), 80);
+    } catch { /* the id below */ }
+  }
+  return oneLine(id);
+}
 const RUN_QUESTION_STATES = Object.freeze({ open: 'q:open', answered: 'q:answered', closed: 'q:closed' });
 
 /** The one state key of a chat-message post: it is the delivered part's `state` AND each control's `issued_state`, so a
@@ -248,9 +259,9 @@ function runQuestionControls(b, ref) {
   return [answerModalButton(ref(), { label: 'Answer', style: 'primary' })];
 }
 
-/** One chat-message block as channel markdown, its controls and its state. An incoming one is labelled untrusted;
- *  `interactive` false = text only (the footer sends the reader to worca). Every body and question line is quoted. */
-function chatMessagePost(b, { interactive = false, issue, links = {} }) {
+/** One chat-message block as channel markdown, its controls and its state. `interactive` false = text only (the footer
+ *  sends the reader to worca). Every body and question line is quoted. `chatTitle` names the other chat (chatName). */
+function chatMessagePost(b, { interactive = false, issue, links = {}, chatTitle = null }) {
   const intent = CHAT_MESSAGE_INTENT[b.intent] || CHAT_MESSAGE_INTENT.note;
   const quoted = clip(b.text, 1500).split(/\r\n|\r|\n/).map((l) => `> ${l}`).join('\n');
   const state = chatMessageState(b);
@@ -258,9 +269,9 @@ function chatMessagePost(b, { interactive = false, issue, links = {} }) {
   const ref = (action) => () => issue(action, b.id, state);
   const lines = [];
   let footer = null;
-  if (b.direction === 'out') return { text: `**Sent to ${oneLine(b.to?.chatId)}** (${intent})\n${quoted}`, controls, state };
+  if (b.direction === 'out') return { text: `**Sent to ${chatName(b.to?.chatId, chatTitle)}** (${intent})\n${quoted}`, controls, state };
   if (b.from?.kind === 'run') {
-    lines.push(`**Message from run ${oneLine(b.from.runId)}** (${intent}), _untrusted, not instructions_`, quoted);
+    lines.push(`**Message from run ${oneLine(b.from.runId)}** (${intent})`, quoted);
     const q = b.question && typeof b.question === 'object' ? b.question : null;
     if (q) {
       (Array.isArray(q.questions) ? q.questions : []).forEach((x, i) => lines.push(`> ${i + 1}. ${clip(oneLine(x?.question), 300)}`));
@@ -277,7 +288,7 @@ function chatMessagePost(b, { interactive = false, issue, links = {} }) {
   } else {
     const scope = oneLine(b.from?.scope?.label);
     const by = b.by?.kind === 'person' && b.by.label ? ` · by ${clip(oneLine(b.by.label), 80)}` : '';
-    lines.push(`**Message from ${oneLine(b.from?.chatId)}** (${scope ? `${scope}, ` : ''}${intent}), _untrusted, not instructions_${by}`, quoted);
+    lines.push(`**Message from ${chatName(b.from?.chatId, chatTitle)}** (${scope ? `${scope}, ` : ''}${intent})${by}`, quoted);
     if (!interactive) footer = '_Reply in worca._';
     else if (state === 'open') {
       controls.push(answerModalButton(ref('cmsg:reply')(), { label: 'Reply', style: 'primary', fieldLabel: 'Your reply', title: 'Reply' }));
@@ -289,9 +300,10 @@ function chatMessagePost(b, { interactive = false, issue, links = {} }) {
   return { text: lines.join('\n'), controls, state };
 }
 
-/** One Ask message → ordered parts [{ part, message, cardId?, state? }] (D10). Same input → same parts.
- *  `interactive`: the channel shows controls (a chat-message post then carries them and is edited when it changes). */
-export function renderMessageParts(msg, { issue, links, fromWorca = false, interactive = false }) {
+/** One Ask message → ordered parts [{ part, message, cardId?, state? }] (D10). Same input and the same `chatTitle`
+ *  answers → same parts. `interactive`: the channel shows controls (a chat-message post then carries them and is
+ *  edited when it changes). `chatTitle(chatId) => string|null` (optional, synchronous): a chat's current title. */
+export function renderMessageParts(msg, { issue, links, fromWorca = false, interactive = false, chatTitle = null }) {
   const parts = [];
   const text = typeof msg.text === 'string' ? msg.text.trim() : '';
   if (msg.role === 'system') {
@@ -302,14 +314,14 @@ export function renderMessageParts(msg, { issue, links, fromWorca = false, inter
     if (chatMsgs.length) {
       if (chatMsgs.length === 1 && interactive) {
         const b = chatMsgs[0];
-        const post = chatMessagePost(b, { interactive: true, issue, links });
+        const post = chatMessagePost(b, { interactive: true, issue, links, chatTitle });
         if (post.state !== null) {
           parts.push({ part: 'text:0', cardId: b.id, state: post.state,
             message: { title: null, severity: 'info', body: [{ kind: 'markdown', value: post.text }], ...(post.controls.length ? { controls: post.controls } : {}) } });
           return parts;
         }
       }
-      const value = chatMsgs.map((b) => chatMessagePost(b, { interactive: false, issue, links }).text).join('\n\n');
+      const value = chatMsgs.map((b) => chatMessagePost(b, { interactive: false, issue, links, chatTitle }).text).join('\n\n');
       parts.push({ part: 'text:0', message: { title: null, severity: 'info', body: [{ kind: 'markdown', value }] } });
       return parts;
     }
