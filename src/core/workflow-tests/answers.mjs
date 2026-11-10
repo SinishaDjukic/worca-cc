@@ -71,14 +71,20 @@ const WORCA = Object.freeze({ worca: true });
  * Answer every question `orch` asks during one try. `answer(id, payload)` returns false when the run no longer waits on
  * that question. `onHelp` fires per question the example had no answer for; `onFail` fires when the try must stop, with
  * `{ worca: true }` when the answerer itself failed (U-T2: a Worca problem, never counted against the workflow).
+ * U-T11 (F5): a gate is a review loop that ran out of rounds; it still answers continue, and `onLoopLimit({ nodeId, rounds })`
+ * says how many times the checker sent the work back (a hold stands in for delivery `deliveryNo`, so `deliveryNo - 1` were made).
  * `question` is emitted BEFORE the harness installs pendingQuestion (run-harness.mjs _ask), so the answer goes out on
  * the next turn (`defer` = setImmediate), the pattern of test/orchestrator-questions.test.mjs:173.
  * @returns {() => void} detach
  */
-export function attachAnswerer(orch, example, { answer, onHelp = () => {}, onFail = () => {}, defer = setImmediate } = {}) {
+export function attachAnswerer(orch, example, { answer, onHelp = () => {}, onFail = () => {}, onLoopLimit = () => {}, defer = setImmediate } = {}) {
   const handler = (q) => {
     let plan;
     try { plan = planAnswer(q, example || {}); } catch (err) { onFail(`Worca could not answer a question: ${err && err.message ? err.message : err}`, WORCA); return; }
+    if (q && q.kind === 'gate') {
+      const n = Number(q.deliveryNo);
+      try { onLoopLimit({ nodeId: q.nodeId ?? null, rounds: Number.isFinite(n) && n > 1 ? n - 1 : 0 }); } catch { /* a note, never a reason to stop the try */ }
+    }
     for (const h of plan.help) onHelp({ kind: q.kind, question: h.question });
     if (plan.kind === 'fail') { onFail(plan.reason); return; }
     defer(() => {

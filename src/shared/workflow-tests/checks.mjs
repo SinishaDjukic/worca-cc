@@ -456,6 +456,12 @@ export function basicsList(basics) {
   return out;
 }
 
+/** U-T11 (F5, D10): why a try whose review loop ran out of rounds does not count as finished without an error. */
+const loopLimitText = (rounds) => {
+  const n = Number(rounds) || 0;
+  return `The checker sent it back ${n === 1 ? '1 time' : `${n} times`} and the loop stopped at its limit, so the result is the checker's last review.`;
+};
+
 /**
  * The verdict of one try (D18): it passes only when every Basic switched on and every automatic check is met.
  * @param {{basics: object}} example
@@ -466,12 +472,13 @@ export function basicsList(basics) {
 export function judgeTry(example, facts, checkResults = [], result = {}) {
   const f = facts || {};
   const b = (example && example.basics) || DEFAULT_BASICS;
-  const finished = f.status === 'done' && !f.failReason;
+  const loopLimit = f.loopLimit && typeof f.loopLimit === 'object' ? f.loopLimit : null;   // U-T11 (F5)
+  const finished = f.status === 'done' && !f.failReason && !loopLimit;
   const help = Array.isArray(f.help) ? f.help : [];
   const basics = basicsList(b).map(({ key, label }) => {
     if (key === 'noError') {
       return { key, label, met: finished, value: finished ? 'Met' : 'Not met',
-        ...(finished ? {} : { detail: f.failReason || `The try ended as ${f.status || 'unknown'}` }) };
+        ...(finished ? {} : { detail: f.failReason || (loopLimit ? loopLimitText(loopLimit.rounds) : `The try ended as ${f.status || 'unknown'}`) }) };
     }
     if (key === 'noHelp') {
       return { key, label, met: help.length === 0, value: help.length === 0 ? 'Met' : 'Not met',
@@ -487,7 +494,7 @@ export function judgeTry(example, facts, checkResults = [], result = {}) {
     basics,
     checks,
     facts: { status: f.status || null, costUsd: Number(f.costUsd || 0), durationMs: f.durationMs ?? null,
-      sentBack: Number(f.sentBack || 0), help, failReason: f.failReason || null },
+      sentBack: Number(f.sentBack || 0), help, failReason: f.failReason || null, ...(loopLimit ? { loopLimit } : {}) },
     result: { name: result.name ?? null, source: result.source ?? null, words: result.words ?? null },
   };
 }

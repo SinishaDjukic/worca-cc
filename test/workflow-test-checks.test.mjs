@@ -79,6 +79,19 @@ test('basics: defaults, limits and the board labels', () => {
   assert.equal(normaliseBasics({ maxSentBack: 1.5 }).error, 'the fix limit must be a whole number from 0 to 50');
 });
 
+test('a loop that ran out of rounds fails "Finishes without an error" and says why', () => {
+  const example = { basics: { noError: true, noHelp: true, maxCostUsd: null, maxSentBack: null } };
+  const facts = { status: 'done', costUsd: 0.1, durationMs: 1, sentBack: 3, help: [], failReason: null };
+  const v = judgeTry(example, { ...facts, loopLimit: { nodeId: 'n_check', rounds: 3 } }, []);
+  assert.deepEqual([v.passed, v.basics[0].met, v.basics[0].value], [false, false, 'Not met']);
+  assert.equal(v.basics[0].detail, "The checker sent it back 3 times and the loop stopped at its limit, so the result is the checker's last review.");
+  assert.deepEqual(v.facts.loopLimit, { nodeId: 'n_check', rounds: 3 });
+  assert.match(judgeTry(example, { ...facts, loopLimit: { nodeId: 'n', rounds: 1 } }, []).basics[0].detail, /^The checker sent it back 1 time and/);
+  const own = judgeTry(example, { ...facts, failReason: 'Boom.', loopLimit: { nodeId: 'n', rounds: 3 } }, []);
+  assert.equal(own.basics[0].detail, 'Boom.', 'a real failure reason wins');
+  assert.equal(judgeTry(example, facts, []).passed, true);
+});
+
 test('a try passes only when every Basic switched on and every check is met', () => {
   const example = { basics: { noError: true, noHelp: true, maxCostUsd: 1.5, maxSentBack: null } };
   const facts = { status: 'done', costUsd: 0.86, durationMs: 1000, sentBack: 1, help: [], failReason: null };

@@ -68,6 +68,20 @@ test('attachAnswerer answers on the next turn, reports help, fails once, and det
   assert.equal(sent.length, 1, 'detached');
 });
 
+test('a gate still answers continue, and tells onLoopLimit which loop ran out and how many times the checker sent it back', async () => {
+  const orch = new EventEmitter(); const sent = []; const limits = []; const fails = [];
+  attachAnswerer(orch, example, { answer: (id, p) => { sent.push([id, p]); return true; }, onLoopLimit: (l) => limits.push(l), onFail: (r) => fails.push(r) });
+  // The hold stands in for delivery deliveryNo; deliveryNo - 1 send-backs were already made.
+  orch.emit('question', { id: 'gate-w1-3', kind: 'gate', nodeId: 'n_check', wireId: 'w1', deliveryNo: 3, holdNo: 1 });
+  await tick();
+  assert.deepEqual(sent, [['gate-w1-3', { decision: 'continue' }]]);
+  assert.deepEqual(limits, [{ nodeId: 'n_check', rounds: 2 }]);
+  orch.emit('question', { id: 'q', kind: 'questions', questions: [{ id: 'q1', question: 'Who?', options: ['A'] }] });
+  await tick();
+  assert.equal(limits.length, 1, 'only a gate is a loop limit');
+  assert.deepEqual(fails, []);
+});
+
 test('an answer the run did not take, or refused, fails the try', async () => {
   const orch = new EventEmitter(); const fails = [];
   attachAnswerer(orch, example, { answer: () => false, onFail: (r) => fails.push(r) });

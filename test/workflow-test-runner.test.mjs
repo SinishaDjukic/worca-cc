@@ -66,9 +66,9 @@ function harness({ plan = () => ({ status: 'done', cost: 0.5 }), refuse = null }
     liveRun: (k) => entries.get(k) || null,
     stopRun: async (k) => { stopped.push(k); entries.get(k)?.end('stopped'); },
     answer: (k, id, payload) => entries.get(k).orch.answer(id, payload),
-    outcomeOf: async (pipelineId, { help = [], failReason = null, durationMs = null } = {}) => {
+    outcomeOf: async (pipelineId, { help = [], failReason = null, durationMs = null, loopLimit = null } = {}) => {
       const e = [...entries.values()].find((x) => x.pipelineId === pipelineId);
-      return { pipelineId, facts: { status: e.status, costUsd: e.orch.state.totalCostUsd, durationMs, sentBack: 0, help, failReason },
+      return { pipelineId, facts: { status: e.status, costUsd: e.orch.state.totalCostUsd, durationMs, sentBack: 0, help, failReason, ...(loopLimit ? { loopLimit } : {}) },
         text: e.text, name: 'result.md', source: 'work', files: ['work/result.md'] };
     },
     judge: (example, outcome) => checkTry(example, outcome),
@@ -373,6 +373,22 @@ test('a fail that fires twice stops the try once and keeps the first reason', as
   const [t] = store.triesOfRun(run.id);
   assert.equal(t.status, 'failed');
   assert.equal(t.verdict.basics[0].detail, 'Worca asked "First?", and this example has no answer for it.');
+});
+
+test('a review loop that runs out of rounds fails "Finishes without an error", with the rounds in the sentence', async () => {
+  // The hold stands in for delivery 4, so the checker had sent it back 3 times.
+  const ask = { id: 'gate-w1-4', kind: 'gate', nodeId: 'n_check', wireId: 'w1', deliveryNo: 4, holdNo: 1 };
+  const h = harness({ plan: () => ({ status: 'done', cost: 0.2, ask }) });
+  const runner = createTestRunner(h.deps);
+  const ex = example({ tries: 1 });
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await runner.idle(run.id);
+  const [t] = store.triesOfRun(run.id);
+  assert.deepEqual(h.entries.get(t.runKey).answered, ['gate-w1-4', { decision: 'continue' }], 'the gate is still answered continue');
+  assert.equal(t.status, 'failed');
+  assert.equal(t.verdict.basics[0].value, 'Not met');
+  assert.equal(t.verdict.basics[0].detail, "The checker sent it back 3 times and the loop stopped at its limit, so the result is the checker's last review.");
+  assert.deepEqual(t.verdict.facts.loopLimit, { nodeId: 'n_check', rounds: 3 });
 });
 
 test('a try is never an auto (--yes) run: canned answers need the question to wait', async () => {
@@ -790,7 +806,7 @@ test('U-T2 with 3b (D72): Worca could not switch off the project\'s hooks and pl
     await pauseInSetup(h, 1, PLUGINS_OFF_STAGE,
       'Worca could not switch off the project\'s Claude Code hooks and plugins for this try: EPERM: operation not permitted, open \'x\'');
     await runner.idle(run.id);
-    assert.deepEqual([store.readTestRun(run.id).status, statuses(run.id), h.started.length], ['done', ['b1:passed'], 2]);
+    assert.deepEqual([store.readTestRun(run.id).status, statuses(run.id), h.started.length], ['done', ['b1:failed'], 2]);   // U-T11: the made-again try's gate is a loop limit, so it fails; the point here is the set-aside and the redo
     assert.equal(progressOf(WF, run.id).madeAgain, 1);
     assert.equal(w.lines().length, 1, 'one server log line');
     assert.match(w.lines()[0], /\(copy\): Worca could not switch off the project's Claude Code hooks and plugins for this try: EPERM/);
@@ -808,7 +824,7 @@ test('U-T2: the answerer\'s own failure is a Worca problem: set aside and made a
     const ex = example({ tries: 1 });
     const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
     await runner.idle(run.id);
-    assert.deepEqual([store.readTestRun(run.id).status, statuses(run.id), h.started.length], ['done', ['b1:passed'], 2]);
+    assert.deepEqual([store.readTestRun(run.id).status, statuses(run.id), h.started.length], ['done', ['b1:failed'], 2]);   // U-T11: the made-again try's gate is a loop limit, so it fails; the point here is the set-aside and the redo
     assert.equal(progressOf(WF, run.id).madeAgain, 1);
     assert.equal(w.lines().length, 1, 'one server log line');
     assert.match(w.lines()[0], /\(answer\)/);

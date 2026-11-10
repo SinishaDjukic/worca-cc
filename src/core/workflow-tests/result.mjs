@@ -99,7 +99,7 @@ const sumDeliveries = (wd) => Object.values(wd && typeof wd === 'object' ? wd : 
   .reduce((s, n) => s + (Number.isFinite(Number(n)) ? Number(n) : 0), 0);
 
 /** Everything the verdict needs from a finished try. `help` and `failReason` come from the runner (answers.mjs). */
-export async function readTryOutcome(pipelineId, { help = [], failReason = null, durationMs = null } = {}) {
+export async function readTryOutcome(pipelineId, { help = [], failReason = null, loopLimit = null, durationMs = null } = {}) {
   const row = pipelineId ? findPipelineRowById(pipelineId) : null;
   const state = row ? readPipelineStateById(row.id) : null;
   const facts = {
@@ -109,6 +109,7 @@ export async function readTryOutcome(pipelineId, { help = [], failReason = null,
     sentBack: sumDeliveries(state && state.wireDeliveries),   // correction 2: loop deliveries
     help,
     failReason: failReason || (row ? null : 'The try did not start.'),
+    ...(loopLimit ? { loopLimit } : {}),   // U-T11 (F5): a review loop ran out of rounds (answers.mjs onLoopLimit)
   };
   const dir = row ? await runDirForRow(row).catch(() => null) : null;   // a Part 2 row may have no run folder on disk
   const projectRun = !!row && isProjectRow(row);
