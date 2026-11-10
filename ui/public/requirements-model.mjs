@@ -32,7 +32,14 @@ export function priceWords(est) {
   if (est && typeof est.usd === 'number') return usd(est.usd);
   return est && est.reason === 'no-price' ? 'cost unknown' : 'no estimate yet';
 }
-const costs = (est, repo) => `${repo ? `about ${priceWords(est && est.look)} for a code look, ` : ''}about ${priceWords(est && est.round)} a round`;
+/** One part of a note: "about $X for a code look" when known, else "no estimate yet for ..." / "cost unknown for ...". */
+const part = (est, what, noun) => (est && typeof est.usd === 'number' ? { ok: true, text: `about ${usd(est.usd)} ${what}` }
+  : { ok: false, words: priceWords(est), text: `${priceWords(est)} for ${noun}` });
+const costs = (est, repo) => {
+  const parts = [...(repo ? [part(est && est.look, 'for a code look', 'a code look')] : []), part(est && est.round, 'a round', 'a round')];
+  if (parts.length > 1 && parts.every((p) => !p.ok && p.words === parts[0].words)) return parts[0].words;
+  return parts.map((p) => p.text).join(', ');
+};
 
 /** The line under the harness choice (board 2): what the harness can and can't do. */
 export function harnessLine(engine, harness) {
@@ -132,6 +139,7 @@ export function whoInterviews(doc, { models = [], harnesses = [], choice, defaul
  */
 export function recommendationNote(doc, { picked, recommended, estimates, labels = {}, repo = true, onUse = () => {} } = {}) {
   const p = node(doc, 'p', 'hint req-new-note');
+  p.setAttribute('aria-live', 'polite');
   p.append(infoIcon(doc));
   const body = node(doc, 'span');
   p.append(body);

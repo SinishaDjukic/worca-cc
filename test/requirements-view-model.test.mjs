@@ -164,7 +164,14 @@ test('recommendationNote: no repo leaves the code look out; missing parts say "n
   assert.equal(text(n), 'Requirements work best with a strong model, like Gemini Pro on Gemini CLI: about $0.01 a round.');
   const u = recommendationNote(document, { picked: 'y', recommended: 'x', estimates: { look: { usd: null, reason: 'no-estimate' }, round: { usd: null, reason: 'no-price' },
     recommended: { model: 'x', look: { usd: null, reason: 'no-price' }, round: { usd: null, reason: 'no-estimate' } } }, labels });
-  assert.match(text(u), /about cost unknown for a code look, about no estimate yet a round\. You picked Gemini Flash: about no estimate yet for a code look, about cost unknown a round\./);
+  assert.match(text(u), /: cost unknown for a code look, no estimate yet for a round\. You picked Gemini Flash: no estimate yet for a code look, cost unknown for a round\./);
+  const both = recommendationNote(document, { picked: 'x', recommended: 'x', estimates: { recommended: { model: 'x', look: { usd: null, reason: 'no-estimate' }, round: { usd: null, reason: 'no-estimate' } } }, labels });
+  assert.equal(text(both), 'Requirements work best with a strong model, like Gemini Pro on Gemini CLI: no estimate yet.');
+  const unk = recommendationNote(document, { picked: 'x', recommended: 'x', estimates: { recommended: { model: 'x', look: { usd: null, reason: 'no-price' }, round: { usd: null, reason: 'no-price' } } }, labels });
+  assert.match(text(unk), /on Gemini CLI: cost unknown\.$/);
+  const mixed = recommendationNote(document, { picked: 'x', recommended: null, estimates: { look: { usd: null, reason: 'no-estimate' }, round: { usd: 0.02 } }, labels });
+  assert.equal(text(mixed), 'No estimate yet for a code look, about $0.02 a round.');
+  assert.equal(mixed.getAttribute('aria-live'), 'polite');
 });
 
 test('defaultLine: only when the choice differs from the default; fallbackLine: the grey D4 line', () => {

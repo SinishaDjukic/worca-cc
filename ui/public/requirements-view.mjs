@@ -833,7 +833,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // 9c boards 1, 2, 7: Who interviews. The harness list, models and estimates load once the form is open; the default and the
     // fallback reason come from the list call. The group is drawn when both are known; without the models the form works as before.
     const whoBox = h('div', { class: 'req-who-box', hidden: true });
-    const slots = { fallback: h('div'), def: h('div'), hint: h('div'), note: h('div') };
+    const slots = { fallback: h('div'), def: h('div'), hint: h('div'), note: h('div', { 'aria-live': 'polite' }) };
     whoBox.append(slots.fallback, slots.def, slots.hint, slots.note);
     let catalog = null;
     let listInterview = interview;

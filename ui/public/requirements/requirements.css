@@ -843,10 +843,8 @@ span.req-file-name{color:var(--ink)}
 .req-runsetup-msg:empty{display:none}
 @media (max-width:600px){.req-runsetup-row{grid-template-columns:1fr}}
 /* 9c boards 1, 2, 7, 8: Who interviews on New feature. Tokens only, so the dark board follows the theme. */
-.req-who{border:0;margin:0 0 12px;padding:0;min-width:0}
-.req-who legend{padding:0;margin:0 0 8px;font-weight:600;color:var(--ink)}
-.req-who{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
-.req-who legend{grid-column:1/-1}
+.req-who{border:0;margin:0 0 12px;padding:0;min-width:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.req-who legend{padding:0;margin:0 0 8px;font-weight:600;color:var(--ink);grid-column:1/-1}
 .req-who-field{min-width:0}
 .req-who-field[hidden]{display:none}
 .req-who-field > label{display:block;margin:0 0 4px;font-size:var(--fs-meta);color:var(--ink-2)}
