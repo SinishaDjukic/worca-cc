@@ -224,7 +224,7 @@ import { createLibrary, folderLabel, folderKeys } from './workflows/library.mjs'
 import { createChatDock } from './workflows/chat-dock.mjs';
 import { createWorkflowVersions, workflowVersionsApi, workflowCanHaveVersions, hasVersionInUse, keepPicksForVersionInUse } from './workflows/versions-app.mjs';
 import { createWorkflowTests } from './workflows/tests-app.mjs';
-import { exportUseChoices, exportUseValue, paintExportUse } from './workflows/export-use.mjs';
+import { createExportUse } from './workflows/export-use.mjs';
 import { mintId } from '../../src/shared/graph/template.mjs';
 // mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
 // bare <select> with no preview host on this branch (the v1 read-only mini-graph
@@ -41952,13 +41952,10 @@ async function exportApply(id, opts) { return exportCall(id, opts); }
 // read in flight, shared by every caller while it runs and reset per open (a reopen reads afresh;
 // the older read's late answer is dropped). `busy`: a Preview or an Export is in flight. `seq`: bumped by every
 // plan invalidation, close and open; a Preview answer that lands after a bump is for a dialog that no longer exists.
-// `exportUse` (D17): the Version field's choices (export-use.mjs), null while it is hidden (flag off, no version, the
-// versions not read yet) — then no `use` is sent and the export is of the draft, as before. `useSeq`: bumped by every
-// open and close only (not by a plan invalidation): a versions read that lands after a bump is for another open.
-// `useLoading`: that read is out; Download, Preview and Export wait for it (exportHoldForUse), so nothing is exported
-// as the draft while the default (the version new runs use) is still unknown.
-const exportModalState = { item: null, format: 'json', destination: 'global', pluginDest: 'folder', targets: null, skipped: [], targetsLoad: null, busy: false, conflicts: [], planned: false, seq: 0, exportUse: null, useSeq: 0, useLoading: false };
+const exportModalState = { item: null, format: 'json', destination: 'global', pluginDest: 'folder', targets: null, skipped: [], targetsLoad: null, busy: false, conflicts: [], planned: false, seq: 0 };
 const exportModalHidden = () => { const m = document.getElementById('export-modal'); return !m || m.classList.contains('hidden'); };
+const exportUse = createExportUse({ doc: document, readVersions: (id) => gvApi.versionsRead(id), modalHidden: exportModalHidden,   // D17: the Version field
+  guard: () => exportGuard, syncButtons: () => exportSyncMarketplaceButtons() });
 // Set by bindExportModal. A form: a backdrop click never closes it; Escape asks once a choice changed; while
 // a Preview or an Export is out, Cancel and Escape wait for its answer.
 let exportGuard = null;
@@ -41976,10 +41973,7 @@ function openExportModal(item) {
   exportModalState.skipped = [];
   exportModalState.conflicts = [];
   exportModalState.planned = false;
-  exportModalState.exportUse = null;                     // read afresh below: a version may have been saved since
-  exportModalState.useSeq++;
-  exportModalState.useLoading = flagOn('workflowTests') && !!item.versionable;   // D17: the Version field
-  paintExportUse(exportUseEls(), null, { doc: document });
+  exportUse.open(item);
   document.getElementById('export-draft').checked = false;   // draft is opt-in per export, never remembered
   exportSetBusy(false);
   document.getElementById('export-slug').value = '';
@@ -41995,46 +41989,15 @@ function openExportModal(item) {
   exportSyncSlugPreview();
   modal.classList.remove('hidden');
   exportGuard?.opened();
-  if (exportModalState.useLoading) void exportLoadUse(item.id);
+  exportUse.opened(item.id);
 }
 function closeExportModal() {
   const modal = document.getElementById('export-modal');
   if (modal) modal.classList.add('hidden');
   exportModalState.seq++;                                 // a Preview still in flight has no dialog to land in
-  exportModalState.useSeq++;                              // so has a versions read
+  exportUse.close();
   exportSetDone(false);
 }
-const exportUseEls = () => ({ field: document.getElementById('export-use-field'), select: document.getElementById('export-use'),
-  hint: document.getElementById('export-use-hint') });
-/** The Version field (D17): read the workflow's versions (the Versions page's call) and show the field when it has
- *  one, defaulting to the version new runs use. A failed read or no version keeps it hidden: the export is of the
- *  draft, as before. Download, Preview and Export wait for the answer (useLoading), so no request is ever built
- *  before it. An answer for an earlier open is dropped. */
-async function exportLoadUse(workflowId) {
-  const ticket = exportModalState.useSeq;
-  const r = await gvApi.versionsRead(workflowId);
-  if (ticket !== exportModalState.useSeq || exportModalHidden()) return;
-  exportModalState.useLoading = false;
-  const choices = r.ok ? exportUseChoices(r.overview) : null;
-  if (choices) {
-    exportModalState.exportUse = choices;
-    paintExportUse(exportUseEls(), choices, { doc: document });
-    if (exportGuard && !exportGuard.touched) exportGuard.markClean();   // a filled-in default is no change of the user's
-  }
-  // The buttons back, by the dialog's own rules (the marketplace's: targets and busy).
-  document.getElementById('export-plan-btn').disabled = false;
-  document.getElementById('export-apply-btn').disabled = false;
-  exportSyncMarketplaceButtons();
-}
-/** While the versions read is out (useLoading), Download, Preview and Export stay disabled; every sync that enables
- *  them ends here. */
-function exportHoldForUse() {
-  if (!exportModalState.useLoading) return;
-  document.getElementById('export-plan-btn').disabled = true;
-  document.getElementById('export-apply-btn').disabled = true;
-}
-/** The request's `use`: the Version field's pick, or undefined while the field is hidden (send nothing). */
-const exportUseNow = () => (exportModalState.exportUse ? exportUseValue(document.getElementById('export-use').value) : undefined);
 /** Swap the form for the result view (or back). The dialog stays open so the
  *  user reads where the export went and what to do next, then clicks Done. */
 function exportSetDone(done) {
@@ -42109,7 +42072,7 @@ function exportSyncFormat() {
   const apply = document.getElementById('export-apply-btn');
   apply.textContent = json ? 'Download' : market ? CREATE_PR_LABEL : 'Export';
   apply.disabled = false;
-  exportHoldForUse();
+  exportUse.hold();
   const name = exportModalState.item ? exportModalState.item.name : '';
   document.getElementById('export-subtitle').textContent = json
     ? `Download "${name}" as a JSON file another Worca user can import.`
@@ -42169,11 +42132,10 @@ async function exportFetchTargets() {
   } catch (err) { return { error: err && err.message ? err.message : String(err) }; }
 }
 function exportSyncMarketplaceButtons(n = (exportModalState.targets || []).length) {
-  if (exportIsMarketplace()) {
-    syncMarketplaceButtons({ plan: document.getElementById('export-plan-btn'), apply: document.getElementById('export-apply-btn') },
-      { busy: exportModalState.busy, targets: n });
-  }
-  exportHoldForUse();
+  if (!exportIsMarketplace()) { exportUse.hold(); return; }
+  syncMarketplaceButtons({ plan: document.getElementById('export-plan-btn'), apply: document.getElementById('export-apply-btn') },
+    { busy: exportModalState.busy, targets: n });
+  exportUse.hold();
 }
 /** A Preview or an Export starts (`busy`) or ends: Cancel is off while it runs (the guard holds Escape too). For a
  *  marketplace request both action buttons are off as well, then back by the dialog's rule
@@ -42220,12 +42182,7 @@ function exportSyncSlugPreview() {
   const el = document.getElementById('export-slug-preview');
   el.textContent = valid ? `Command: ${preview}` : 'Invalid slug (letters, digits, . _ - only)';
 }
-/** The export request body: the format's own fields plus `use` when the Version field is shown (D17). */
-function exportBuildOpts() {
-  const opts = exportBuildFormatOpts();
-  const use = exportUseNow();
-  return use === undefined ? opts : { ...opts, use };
-}
+function exportBuildOpts() { return exportUse.withUse(exportBuildFormatOpts()); }   // + `use` while the Version field shows (D17)
 function exportBuildFormatOpts() {
   const dest = exportModalState.destination;
   if (exportModalState.format === 'plugin') {
@@ -42313,7 +42270,7 @@ function exportUpdateApplyEnabled() {
   const resolutions = exportGatherResolutions();
   const allResolved = exportModalState.conflicts.every((cf) => resolutions[cf.path]);
   document.getElementById('export-apply-btn').disabled = !allResolved;
-  exportHoldForUse();
+  exportUse.hold();
 }
 // A plan is keyed to the slug/destination/include-agents/folder in effect when Plan ran.
 // If any of those change afterward, the shown plan (and its gathered resolutions) no longer
@@ -42351,10 +42308,7 @@ function bindExportModal() {
   document.getElementById('export-plugin-name').addEventListener('input', () => { exportSyncPluginNamePreview(); exportInvalidatePlan(); });
   document.getElementById('export-folder').addEventListener('input', () => { if (exportModalState.format === 'plugin') exportSyncPluginNamePreview(); });
   document.getElementById('export-keep-version').addEventListener('change', exportInvalidatePlan);
-  document.getElementById('export-use').addEventListener('change', () => {
-    paintExportUse(exportUseEls(), exportModalState.exportUse, { doc: document, keep: true });   // the draft's hint
-    exportInvalidatePlan();
-  });
+  exportUse.bind(exportInvalidatePlan);   // the Version field (D17)
   // Browse…: the native OS folder dialog (the server opens it — a web page never
   // learns an absolute path from its own file picker), exactly like Add Project;
   // the in-app browser is the fallback when the native one is unsupported.
@@ -42375,7 +42329,7 @@ function bindExportModal() {
   // marketplace, a switched destination, a close) and the inputs still build the body that was sent. A
   // marketplace plan has no `created` list, so rendering it after a switch to Local folder would also throw.
   document.getElementById('export-plan-btn').addEventListener('click', async () => {
-    if (exportModalState.useLoading) return;               // a synthetic click reaches a disabled button too
+    if (exportUse.loading()) return;                       // a synthetic click reaches a disabled button too
     const market = exportIsMarketplace();
     const nameProblem = market ? marketplaceNameProblem(exportPluginName()) : '';
     if (nameProblem) { exportSay(nameProblem, true); return; }
@@ -42406,12 +42360,11 @@ function bindExportModal() {
   // itself first; a conflict (only the skill format can raise one) stops it and is
   // shown for per-file resolution — nothing is ever written past an unresolved one.
   document.getElementById('export-apply-btn').addEventListener('click', async () => {
-    if (exportModalState.useLoading) return;               // the default version is not known yet (D17)
+    if (exportUse.loading()) return;                       // the default version is not known yet (D17)
     if (exportModalState.format === 'json') {
-      // A plain download of the stored graph, or of the version picked (D17) — the server sets Content-Disposition.
+      // A plain download of the stored graph — the server sets Content-Disposition.
       const a = document.createElement('a');
-      const use = exportUseNow();
-      a.href = `/api/workflows/${encodeURIComponent(exportModalState.item.id)}/json${use === undefined ? '' : `?use=${encodeURIComponent(use)}`}`;
+      a.href = exportUse.jsonUrl(`/api/workflows/${encodeURIComponent(exportModalState.item.id)}/json`);   // or of the version picked (D17)
       a.setAttribute('download', '');
       document.body.appendChild(a);
       a.click();
