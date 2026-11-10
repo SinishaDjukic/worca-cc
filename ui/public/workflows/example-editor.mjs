@@ -354,13 +354,14 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
    *  project picked anew, another branch, Start from the latest, or the changes switched). A kept pin copies nothing. */
   const pinsStart = (pr) => !!pr && (!stored || stored.key !== pr.key || pr.repin === true
     || (pr.ref != null && pr.ref !== stored.startRef) || (pr.includeChanges !== undefined && pr.includeChanges !== !!stored.changesSha256));
-  const save = () => {
+  // Save and Try it once now both save first: the one that was pressed says "Copying the project…" when that save copies.
+  const saving = (button, action) => () => {
     if (busyN) return;
-    if (pinsStart(value().project)) void withButton(saveBtn, () => run(actions.save), { busy: COPYING_PROJECT });
-    else void run(actions.save);
+    if (pinsStart(value().project)) void withButton(button(), () => run(action), { busy: COPYING_PROJECT });
+    else void run(action);
   };
-  const tryBtn = btn(doc, 'Try it once now', () => void run(actions.tryOnce), 'btn');
-  const saveBtn = btn(doc, 'Save example', save, 'btn btn-primary');
+  const tryBtn = btn(doc, 'Try it once now', saving(() => tryBtn, (v) => actions.tryOnce(v)), 'btn');
+  const saveBtn = btn(doc, 'Save example', saving(() => saveBtn, (v) => actions.save(v)), 'btn btn-primary');
   acts.append(btn(doc, 'Cancel', () => actions.back(), 'btn'), tryBtn, saveBtn);
   head.append(crumbs, acts);
   if (testRunning) {   // G19, D37: one test per workflow at a time

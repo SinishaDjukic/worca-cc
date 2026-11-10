@@ -495,3 +495,11 @@ test('U-T6: without a plan the count is the extra tries on each version', async 
   assert.equal(asked[0].message, '3 more tries of v5 draft: the cost is not known yet. The test stops if the cost goes over $15.00.');
   assert.equal(asked[0].confirmLabel, 'Start 3 tries');
 });
+
+test('U-T8 fix round: the button is labelled with the number of tries that can run, like its dialog title', () => {
+  const luckList = [...tries('a', 1, 'PPF', 0.5, 1000), ...tries('b', 1, 'PPP', 0.5, 1000)];
+  const label = (n) => boot(renderCompare, compare({ examples: 1, run: { ...compare().run, tries: n },
+    model: compareModel({ examples: [{ id: 1, name: 'X' }], a: { label: 'v4' }, b: { label: 'v5 draft' }, tries: luckList }) }))
+    .root.querySelector('.wft-why button').textContent;
+  assert.deepEqual([label(3), label(7), label(8), label(9)], ['Try 3 more', 'Try 3 more', 'Try 2 more', 'Try 1 more']);
+});

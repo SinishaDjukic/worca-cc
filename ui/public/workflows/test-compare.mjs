@@ -251,7 +251,7 @@ export function renderCompare(root, c, actions, { doc, now = Date.now() }) {
       if (c.run.tries >= MAX_TRIES) why.textContent = luck;   // the most a test tries: the note stays, the button goes
       else {
         why.append(doc.createTextNode(`${luck} `),
-          act(doc, root, runId, 'Try 3 more', () => actions.tryMore(r.id), 'wft-linkbtn', `wft-cmp-more-${r.id}`, { busy: true }));
+          act(doc, root, runId, `Try ${Math.min(3, MAX_TRIES - c.run.tries)} more`, () => actions.tryMore(r.id), 'wft-linkbtn', `wft-cmp-more-${r.id}`, { busy: true }));
       }
       row.append(why);
     } else if (r.why) {

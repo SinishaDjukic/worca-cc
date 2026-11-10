@@ -670,14 +670,17 @@ export function takenMs(run, tries) {
   return total + (to - from);
 }
 
-/** U-T8 (F43): test run id → the highest cost shown while it runs, so "Cost so far" never goes down (a live run's cost
- *  is 0 once its run is gone, before its row is read). In memory only; dropped once the test is over. */
+/** U-T8 (F43): workflow id → the highest cost shown while its test runs, so "Cost so far" never goes down (a live run's
+ *  cost is 0 once its run is gone, before its row is read). One test per workflow runs at a time (D37), so a new test
+ *  replaces the entry: the map is bounded by the number of workflows, even when a page was closed mid-test. In memory only. */
 const COST_SHOWN = new Map();
-function shownCost(run, usd) {
+export const costShownSize = () => COST_SHOWN.size;
+function shownCost(workflowId, run, usd) {
   const key = `${run.id}|${run.createdAt}`;   // the creation time too: an id is never reused, a test database's may be
-  if (run.status !== 'running') { COST_SHOWN.delete(key); return usd; }
-  const top = Math.max(usd, COST_SHOWN.get(key) ?? usd);
-  COST_SHOWN.set(key, top);
+  if (run.status !== 'running') { if (COST_SHOWN.get(workflowId)?.key === key) COST_SHOWN.delete(workflowId); return usd; }
+  const seen = COST_SHOWN.get(workflowId);
+  const top = Math.max(usd, seen && seen.key === key ? seen.top : usd);
+  COST_SHOWN.set(workflowId, { key, top });
   return top;
 }
 
@@ -739,7 +742,7 @@ export function progressOf(workflowId, runId, { costOf = null, phaseOf = null, b
   return {
     run, title: testTitle(run, ctx, { mode: run.status === 'running' ? 'testing' : 'compare', exampleName: firstExampleName(run) }), rows,
     done: own.filter((t) => FIN.has(t.status)).length, total: own.length,
-    costUsd: shownCost(run, costOf ? costOf(run.id) : store.spentOfRun(run.id)), estimateUsd, capUsd: run.capUsd,
+    costUsd: shownCost(workflowId, run, costOf ? costOf(run.id) : store.spentOfRun(run.id)), estimateUsd, capUsd: run.capUsd,
     minutesLeft: ms !== null && remaining ? Math.max(1, Math.ceil((Math.ceil(remaining / TRIES_AT_ONCE) * ms) / 60000)) : null,
     takenMs: takenMs(run, own),
     quick: run.quick,

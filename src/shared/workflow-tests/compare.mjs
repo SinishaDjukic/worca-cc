@@ -271,9 +271,13 @@ export function estimateOf(plan, { reuseA = true, reuseB = false } = {}) {
   return { toRun, total, usd, low: usd === null ? null : usd * 0.95, high: usd === null ? null : usd * 1.15, minutes, capUsd };
 }
 
+/** A time that rounds to nothing (a test done in under half a second). */
+export const UNDER_A_SECOND = 'under 1 s';
+
 export function fmtDuration(ms) {
   if (!Number.isFinite(ms) || ms < 0) return '';
   const s = Math.round(ms / 1000);
+  if (s < 1) return UNDER_A_SECOND;
   if (s < 60) return `${s} s`;
   const m = Math.floor(s / 60); const r = s % 60;
   if (m < 60) return r ? `${m} min ${r} s` : `${m} min`;

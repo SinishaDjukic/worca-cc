@@ -308,3 +308,7 @@ test('U-T5 money: under $0.10 three significant digits, from $0.10 two decimals'
   assert.equal(fmtUsd(0.0131), '$0.01', 'fmtUsd stays for limits');
 });
 
+
+test('U-T8 fix round: a time under one second reads "under 1 s", not "0 s"', () => {
+  assert.deepEqual([fmtDuration(0), fmtDuration(120), fmtDuration(499), fmtDuration(500), fmtDuration(1400)], ['under 1 s', 'under 1 s', 'under 1 s', '1 s', '1 s']);
+});

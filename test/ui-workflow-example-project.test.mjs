@@ -368,3 +368,25 @@ test('review 9, 15: "A file in the project" with no file name is refused; its bo
   assert.equal(doc.querySelector('.wft-dlg-error').textContent, 'Write the file name.');
   assert.deepEqual(saved, []);
 });
+
+test('U-T8 fix round (review minor 2): Try it once now also reads "Copying the project…" when its save pins a start point, and not when it keeps the pin', async () => {
+  const held = [];
+  const over = { tryOnce: () => new Promise((r) => held.push(() => r({ ok: true }))) };
+  const tryBtn = (root) => byText(root, '.wft-acts button', 'Try it once now');
+  const changes = boot(example(), { over });
+  changes.root.querySelector('.wft-changes-box').checked = true;
+  const b1 = tryBtn(changes.root);
+  click(b1);
+  await tick();
+  assert.deepEqual([b1.textContent, b1.disabled], ['Copying the project…', true]);
+  held.shift()();
+  await tick(); await tick();
+  assert.notEqual(b1.textContent, 'Copying the project…', 'the copy is done');
+  const kept = boot(example(), { over });
+  const b2 = tryBtn(kept.root);
+  click(b2);
+  await tick();
+  assert.deepEqual([b2.textContent, b2.disabled], ['Try it once now', true]);
+  held.shift()();
+  await tick();
+});
