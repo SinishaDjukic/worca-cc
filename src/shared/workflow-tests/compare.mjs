@@ -30,11 +30,11 @@ const bWords = (use, ctx) => {
   return use === 'draft' ? (s === 'Your draft' ? 'your draft' : `your ${s}`) : s;
 };
 
-/** "Your v5 draft compared with v4", "Testing your v5 draft", "Tried once: <example>" / "Trying once: <example>". */
+/** "Your v5 draft compared with v4", "v5 compared with v4" (running, done and stopped alike, U-T8 F20); one try:
+ *  "Trying once: <example>" while it runs (mode 'testing'), "Tried once: <example>" after. */
 export function testTitle(run, ctx = {}, { mode = 'compare', exampleName = '' } = {}) {
   if (run.kind === 'once') return `${mode === 'testing' ? 'Trying' : 'Tried'} once: ${exampleName || 'an example'}`;
   const b = bWords(run.b, ctx);
-  if (mode === 'testing') return `Testing ${b}`;
   const head = run.b === 'draft' ? cap1(b) : b;   // "Your v5 draft …", but "v5 compared with v4"
   return run.a == null ? head : `${head} compared with ${useLabel(run.a, ctx)}`;
 }
@@ -271,9 +271,13 @@ export function estimateOf(plan, { reuseA = true, reuseB = false } = {}) {
   return { toRun, total, usd, low: usd === null ? null : usd * 0.95, high: usd === null ? null : usd * 1.15, minutes, capUsd };
 }
 
+/** A time that rounds to nothing (a test done in under half a second). */
+export const UNDER_A_SECOND = 'under 1 s';
+
 export function fmtDuration(ms) {
   if (!Number.isFinite(ms) || ms < 0) return '';
   const s = Math.round(ms / 1000);
+  if (s < 1) return UNDER_A_SECOND;
   if (s < 60) return `${s} s`;
   const m = Math.floor(s / 60); const r = s % 60;
   if (m < 60) return r ? `${m} min ${r} s` : `${m} min`;

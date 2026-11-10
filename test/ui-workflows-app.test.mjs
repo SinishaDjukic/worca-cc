@@ -2807,10 +2807,11 @@ async function bootCompare({ holdPost = false, holdResult = false, sbs = SBS, ch
     const method = init.method || 'GET';
     const rest = m[1] || '';
     let x;
-    log.push({ method, path: rest, body: init.body ? JSON.parse(init.body) : undefined });
+    log.push({ method, path: rest, query: url.split('?')[1], body: init.body ? JSON.parse(init.body) : undefined });
     if (rest === '') return okJson(TESTS_OVERVIEW);
     if (rest === '/runs/7') return okJson(PROGRESS_DONE);
     if (rest === '/runs/8') return okJson({ ...PROGRESS_DONE, run: { ...CMP_RUN, id: 8, status: 'running', exampleIds: [1], tries: 6 }, done: 3 });
+    if (rest === '/plan') return okJson({ a: { use: 1, want: 6, reusable: 3, perTryUsd: 0.5 }, b: { use: 'draft', want: 6, reusable: 3, perTryUsd: 0.5 }, perTryMs: 1000 });
     if (rest === '/runs/7/compare') return okJson(CMP);
     if (rest === '/runs/7/examples/1') return okJson(sbs);
     if (changes && (x = /^\/runs\/7\/tries\/(\d+)\/changes$/.exec(rest))) return changes(Number(x[1]), held);
@@ -2827,7 +2828,7 @@ async function bootCompare({ holdPost = false, holdResult = false, sbs = SBS, ch
   await go(booted.window, 'workflows/wf_g/tests/run/7');
   await tick(8);
   const page = booted.window.document.getElementById('wfv-tests');
-  clickEl(booted.window, [...page.querySelectorAll('.wft-acts button')].find((b) => b.textContent === 'See what changed'));
+  clickEl(booted.window, [...page.querySelectorAll('.wft-acts button')].find((b) => b.textContent === 'See the comparison'));
   await tick(6);
   return { ...booted, log, held, page };
 }
@@ -2839,9 +2840,16 @@ test('Compare (Task 14): See what changed reads and paints board 5; Try 3 more p
   assert.equal(page.querySelector('.wft-compare .wft-title').textContent, 'Your v3 draft compared with v1');
   assert.ok(!page.textContent.includes('This page comes in a later step.'));
   const more = () => page.querySelector('.wft-why button');
+  const doc = w.document;
   clickEl(w, more());
-  clickEl(w, more());
-  await tick(2);
+  await tick(4);
+  assert.deepEqual(log.filter((e) => e.path === '/plan').map((e) => e.query), ['examples=1&tries=6&connectors=real&a=1&b=draft']);
+  assert.equal(log.filter((e) => e.method === 'POST').length, 0, 'nothing is posted before OK');
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Try Bulk invoice export 3 more times?');
+  assert.equal(doc.getElementById('confirm-message').textContent, '6 more tries of v3 draft and v1: about $3.00. The test stops if the cost goes over $15.00.');
+  assert.equal(doc.getElementById('confirm-ok').textContent, 'Start 6 tries');
+  doc.getElementById('confirm-ok').click();
+  await tick(4);
   const posts = log.filter((e) => e.method === 'POST');
   assert.deepEqual(posts.map((e) => [e.path, e.body]), [['/runs', { a: 1, b: 'draft', exampleIds: [1], tries: 6, reuseA: true, reuseB: true, quickCheck: false,
     capUsd: 15, connectors: 'real' }]], 'one post, G15');
@@ -2852,9 +2860,21 @@ test('Compare (Task 14): See what changed reads and paints board 5; Try 3 more p
   assert.ok(page.querySelector('.wft-progress'), 'the new test\'s progress page');
 });
 
+test('Compare (U-T6): Cancel on the Try 3 more confirm posts nothing', async () => {
+  const { window: w, page, log } = await bootCompare();
+  clickEl(w, page.querySelector('.wft-why button'));
+  await tick(4);
+  w.document.getElementById('confirm-cancel').click();
+  await tick(6);
+  assert.equal(log.filter((e) => e.method === 'POST').length, 0);
+  assert.ok(page.querySelector('.wft-compare'), 'still on Compare');
+});
+
 test('Compare (Task 14): a Try 3 more answer that lands after Tests was opened leaves the list on screen', async () => {
   const { window: w, page, held } = await bootCompare({ holdPost: true });
   clickEl(w, page.querySelector('.wft-why button'));
+  await tick(4);
+  w.document.getElementById('confirm-ok').click();
   await tick(2);
   clickEl(w, page.querySelector('.wft-compare .wft-crumb'));
   await tick(6);

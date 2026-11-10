@@ -284,12 +284,15 @@ export function perTryCost(workflowId, use) {
       AND status = 'done' AND total_cost_usd > 0 AND ${templateIdSql} = ? ORDER BY started_at DESC LIMIT 20)`, workflowId);
 }
 
-/** How long one try usually takes, in ms; null = unknown. */
-export function perTryMs(workflowId) {
+/** How long one try usually takes, in ms; null = unknown. U-T8 (F21): `mock` = from the mock tries' own times (a mock
+ *  try takes seconds), never from a real run's; with none, unknown. */
+export function perTryMs(workflowId, { mock = false } = {}) {
   getDb();
-  return avgOf(`SELECT AVG((julianday(finished_at) - julianday(started_at)) * 86400000) AS c, COUNT(*) AS n FROM (SELECT started_at, finished_at
-      FROM wf_test_tries WHERE workflow_id = ? AND mock = 0 AND status IN ('passed', 'failed') AND started_at IS NOT NULL
-      AND finished_at IS NOT NULL ORDER BY id DESC LIMIT 10)`, workflowId)
+  const own = avgOf(`SELECT AVG((julianday(finished_at) - julianday(started_at)) * 86400000) AS c, COUNT(*) AS n FROM (SELECT started_at, finished_at
+      FROM wf_test_tries WHERE workflow_id = ? AND mock = ? AND status IN ('passed', 'failed') AND started_at IS NOT NULL
+      AND finished_at IS NOT NULL ORDER BY id DESC LIMIT 10)`, workflowId, mock ? 1 : 0);
+  if (mock) return own;
+  return own
     ?? avgOf(`SELECT AVG((julianday(updated_at) - julianday(started_at)) * 86400000) AS c, COUNT(*) AS n FROM (SELECT started_at, updated_at
       FROM pipelines WHERE is_test IS NULL AND status = 'done' AND started_at IS NOT NULL AND updated_at IS NOT NULL
       AND ${templateIdSql} = ? ORDER BY started_at DESC LIMIT 20)`, workflowId);
@@ -667,10 +670,25 @@ export function takenMs(run, tries) {
   return total + (to - from);
 }
 
+/** U-T8 (F43): workflow id → the highest cost shown while its test runs, so "Cost so far" never goes down (a live run's
+ *  cost is 0 once its run is gone, before its row is read). One test per workflow runs at a time (D37), so a new test
+ *  replaces the entry: the map is bounded by the number of workflows, even when a page was closed mid-test. In memory only. */
+const COST_SHOWN = new Map();
+export const costShownSize = () => COST_SHOWN.size;
+function shownCost(workflowId, run, usd) {
+  const key = `${run.id}|${run.createdAt}`;   // the creation time too: an id is never reused, a test database's may be
+  if (run.status !== 'running') { if (COST_SHOWN.get(workflowId)?.key === key) COST_SHOWN.delete(workflowId); return usd; }
+  const seen = COST_SHOWN.get(workflowId);
+  const top = Math.max(usd, seen && seen.key === key ? seen.top : usd);
+  COST_SHOWN.set(workflowId, { key, top });
+  return top;
+}
+
 /** Board 20 (G8: two rows per example when both versions need tries). `costOf` = the runner's live cost. 3a (board 35):
  *  `phaseOf` = what a running project try is doing now (the runner's); `project.disk` is filled by progressDisk. 3b (D75):
- *  `beforeNowOf` = what the before phase is doing now (the runner's), the answer's `before`. */
-export function progressOf(workflowId, runId, { costOf = null, phaseOf = null, beforeNowOf = null } = {}) {
+ *  `beforeNowOf` = what the before phase is doing now (the runner's), the answer's `before`. U-T8: `stoppingOf` = the
+ *  runner's stopping read, the answer's `stopping`. */
+export function progressOf(workflowId, runId, { costOf = null, phaseOf = null, beforeNowOf = null, stoppingOf = null } = {}) {
   const run = runOf(workflowId, runId);
   const ctx = labelCtx(workflowId);
   const tries = store.triesOfRun(run.id);
@@ -720,17 +738,18 @@ export function progressOf(workflowId, runId, { costOf = null, phaseOf = null, b
   const costFor = (use) => { const k = store.useRef(use); if (!costBy.has(k)) costBy.set(k, perTryCost(workflowId, use)); return costBy.get(k); };
   const estimateUsd = own.reduce((s, t) => { const c = costFor(t.use); return s === null || c === null ? null : s + c; }, 0);
   const remaining = own.filter((t) => t.status === 'waiting' || t.status === 'running').length;
-  const ms = perTryMs(workflowId);
+  const ms = perTryMs(workflowId, { mock: own.some((t) => t.mock) });   // U-T8 (F21): a mock test's time left from mock tries
   return {
-    run, title: testTitle(run, ctx, { mode: 'testing', exampleName: firstExampleName(run) }), rows,
+    run, title: testTitle(run, ctx, { mode: run.status === 'running' ? 'testing' : 'compare', exampleName: firstExampleName(run) }), rows,
     done: own.filter((t) => FIN.has(t.status)).length, total: own.length,
-    costUsd: costOf ? costOf(run.id) : store.spentOfRun(run.id), estimateUsd, capUsd: run.capUsd,
+    costUsd: shownCost(workflowId, run, costOf ? costOf(run.id) : store.spentOfRun(run.id)), estimateUsd, capUsd: run.capUsd,
     minutesLeft: ms !== null && remaining ? Math.max(1, Math.ceil((Math.ceil(remaining / TRIES_AT_ONCE) * ms) / 60000)) : null,
     takenMs: takenMs(run, own),
     quick: run.quick,
     before,
     project,
     madeAgain: store.madeAgainOf(run.id),   // U-T2: tries made again after a problem in Worca (never counted)
+    stopping: run.status === 'running' && !!(stoppingOf && stoppingOf(run.id)),   // U-T8 (F19): the runner's stopping read
   };
 }
 

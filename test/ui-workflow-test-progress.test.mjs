@@ -10,7 +10,7 @@ import { PAUSE_REFUSED_TEXT, PAUSE_REFUSED_OTHER } from '../src/core/workflow-te
 const click = (el) => el.dispatchEvent(new el.ownerDocument.defaultView.MouseEvent('click', { bubbles: true }));
 const progress = (over = {}, run = {}) => ({
   run: { id: 9, kind: 'compare', a: 4, b: 'draft', tries: 3, status: 'running', stopReason: null, stopDetail: null, exampleIds: [1, 2, 3], ...run },
-  title: 'Testing your v5 draft',
+  title: 'Your v5 draft compared with v4',
   rows: [
     { exampleId: 1, name: 'Offline mode for the field app', label: null, dots: ['passed', 'passed', 'passed'], summary: 'Done · 3 of 3 passed' },
     { exampleId: 2, name: 'Bulk invoice export', label: null, dots: ['passed', 'failed', 'running'], summary: 'Trying 3 of 3' },
@@ -30,8 +30,8 @@ const stoppedLine = (stopReason, stopDetail = null) => boot(progress({}, { statu
 
 test('board 20 while it runs: title, pill, Stop testing, the bar, the facts, the rows', () => {
   const { root, calls } = boot(progress());
-  assert.equal(root.querySelector('.wft-title').textContent, 'Testing your v5 draft');
-  assert.equal(root.querySelector('.wft-pill').textContent, 'Testing · 7 of 18 tries done');
+  assert.equal(root.querySelector('.wft-title').textContent, 'Your v5 draft compared with v4');
+  assert.equal(root.querySelector('.wft-pill').textContent, 'Running · 7 of 18 tries done');
   assert.equal(root.querySelector('.wft-pill').className, 'pill-run peach wft-pill');
   const stop = root.querySelector('.wft-acts .btn-danger');
   assert.equal(stop.textContent, 'Stop testing');
@@ -59,7 +59,7 @@ test('stopped by the cap: why, a higher cap and Finish the rest (C7); by a perso
   assert.equal(capped.root.querySelector('.wft-stopped').textContent, 'Stopped: the cost went over $15.00.');
   assert.equal(capped.root.querySelector('#wft-pg-cap').value, '$25');
   assert.equal(capped.root.querySelector('label[for="wft-pg-cap"]').textContent, 'Stop if the cost goes over');
-  assert.deepEqual(facts(capped.root)[0], ['Time taken', '35 min'], 'board 27');
+  assert.deepEqual(facts(capped.root)[0], ['Time taken', '35 min 12 s'], 'board 27; U-T8 (F29): fmtDuration');
   click([...capped.root.querySelectorAll('.wft-acts button')].find((b) => b.textContent === 'Finish the rest'));
   assert.deepEqual(capped.calls, [['continue', 25]]);
   const person = boot(progress({}, { status: 'stopped', stopReason: 'person' }));
@@ -109,19 +109,20 @@ test('C7: every stop line is one sentence; a stored detail gets its full stop on
   assert.equal(stoppedLine('something-new', 'the try could not go on'), 'Stopped: the try could not go on.', 'an unknown reason reads as an error');
 });
 
-test('done: See what changed (or See the result after Try it once now); two rows per example when both versions are tried (G8)', () => {
+test('done: See the comparison (or See the result after Try it once now); two rows per example when both versions are tried (G8)', () => {
   const done = boot(progress({ done: 18, minutesLeft: null, quick: null, takenMs: 26 * 60000 - 20000 }, { status: 'done' }));
   assert.deepEqual([done.root.querySelector('.wft-pill').textContent, done.root.querySelector('.wft-pill').className], ['Done · 18 of 18 tries done', 'pill-run green wft-pill is-parked']);
-  assert.deepEqual(facts(done.root)[0], ['Time taken', '26 min'], 'board 28');
+  assert.deepEqual(facts(done.root)[0], ['Time taken', '25 min 40 s'], 'board 28; U-T8 (F29): fmtDuration');
   const short = (takenMs) => facts(boot(progress({ takenMs }, { status: 'done' })).root)[0];
-  assert.deepEqual([short(20000), short(null)], [['Time taken', '1 min'], ['Time taken', 'not known']], 'under a minute is 1 min; no times at all');
+  assert.deepEqual([short(3000), short(20000), short(60000), short(null)], [['Time taken', '3 s'], ['Time taken', '20 s'], ['Time taken', '1 min'], ['Time taken', 'not known']],
+    'U-T8 (F29): seconds under a minute, never "1 min" for 3 s; no times at all');
   assert.deepEqual(facts(boot(progress({ takenMs: 9 * 60000 })).root)[0], ['Time left', 'about 15 min'], 'while it runs, the time left');
   assert.deepEqual(facts(done.root)[2], ['Free quick check', 'Off']);
   assert.deepEqual([...done.root.querySelectorAll('.wft-prow.is-head > span')].map((s) => s.textContent), ['Example', 'Tries', 'Result'], 'board 28');
   assert.equal(done.root.querySelector('.wft-page > .hint'), null, 'nothing left to stop or finish');
   assert.ok(done.root.querySelector('.wft-bar').classList.contains('is-done'), 'board 28: a green bar');
   click(done.root.querySelector('.wft-acts .btn-primary'));
-  assert.deepEqual([done.root.querySelector('.wft-acts .btn-primary').textContent, done.calls], ['See what changed', [['open']]]);
+  assert.deepEqual([done.root.querySelector('.wft-acts .btn-primary').textContent, done.calls], ['See the comparison', [['open']]], 'U-T8 (F20): never "See what changed", the version diff\'s words');
   const once = boot(progress({ done: 1, total: 1, rows: [{ exampleId: 1, name: 'Bulk', label: null, dots: ['passed'], summary: 'Done · 1 of 1 passed' }] }, { kind: 'once', status: 'done', tries: 1 }));
   assert.equal(once.root.querySelector('.wft-acts .btn-primary').textContent, 'See the result');
   assert.equal(once.root.querySelector('.wft-pill').textContent, 'Done · 1 of 1 try done');
@@ -169,13 +170,13 @@ test('stopped by a change during the test (D27): the C18 sentence, and no Finish
 test('a repaint keeps the focus on the same control and announces the new state once (frames repaint the page)', () => {
   const b = boot(progress());
   const live = b.root.querySelector('.wft-pg-live');
-  assert.deepEqual([live.getAttribute('aria-live'), live.textContent], ['polite', 'Testing · 7 of 18 tries done']);
+  assert.deepEqual([live.getAttribute('aria-live'), live.textContent], ['polite', 'Running · 7 of 18 tries done']);
   b.root.querySelector('.wft-acts .btn-danger').focus();
   b.again(progress({ done: 8 }));
   const doc = b.window.document;
   assert.equal(doc.activeElement, b.root.querySelector('.wft-acts .btn-danger'), 'Stop testing keeps the focus');
   assert.equal(b.root.querySelector('.wft-pg-live'), live, 'one live line across repaints');
-  assert.equal(live.textContent, 'Testing · 8 of 18 tries done');
+  assert.equal(live.textContent, 'Running · 8 of 18 tries done');
   b.root.querySelector('.wft-crumb').focus();
   b.again(progress({ done: 18 }, { status: 'stopped', stopReason: 'cap' }));
   assert.equal(doc.activeElement, b.root.querySelector('.wft-crumb'));
@@ -203,10 +204,10 @@ test('app.js: the WS frame reaches wftChanged; Task 10\'s "comes in a later step
 test('the cost limit is exact (never rounded like an estimate); Try it once now shows a bare cost, as board 28\'s one-try panel', () => {
   const capped = boot(progress({ costUsd: 12.9, capUsd: 12.5, estimateUsd: 9.4 }, { status: 'stopped', stopReason: 'cap' }));
   assert.equal(capped.root.querySelector('.wft-stopped').textContent, 'Stopped: the cost went over $12.50.');
-  assert.deepEqual(facts(capped.root)[1], ['Cost so far', '$12.90', 'of about $9 · stops at $12.50'], 'the estimate keeps its "about"');
+  assert.deepEqual(facts(capped.root)[1], ['Cost', '$12.90', 'of about $9 · stops at $12.50'], 'the estimate keeps its "about"');
   const once = boot(progress({ done: 1, total: 1, costUsd: 0.55, estimateUsd: 0.52, capUsd: null, quick: null, takenMs: 300000,
     rows: [{ exampleId: 1, name: 'Bulk', label: null, dots: ['passed'], summary: 'Done · 1 of 1 passed' }] }, { kind: 'once', status: 'done', tries: 1 }));
-  assert.deepEqual(facts(once.root), [['Time taken', '5 min'], ['Cost so far', '$0.55'], ['Free quick check', 'Off']]);
+  assert.deepEqual(facts(once.root), [['Time taken', '5 min'], ['Cost', '$0.55'], ['Free quick check', 'Off']]);
   const cheap = boot(progress({ done: 1, total: 1, costUsd: 0.0131, estimateUsd: null, capUsd: null, quick: null, takenMs: 300000,
     rows: [{ exampleId: 1, name: 'Bulk', label: null, dots: ['passed'], summary: 'Done · 1 of 1 passed' }] }, { kind: 'once', status: 'done', tries: 1 }));
   assert.equal(facts(cheap.root)[1][1], '$0.0131', 'U-T5: under $0.10 the progress cost keeps three significant digits');
@@ -241,6 +242,91 @@ test('Stop testing and Finish the rest stay busy across repaints until their act
   assert.equal(finish().disabled, false);
   paint(progress({}, { id: 10, status: 'stopped', stopReason: 'person' }));
   assert.equal(finish().disabled, false, 'another test is never busy with this one\'s action');
+});
+
+test('U-T8 (F17): stopped by a change, the page offers Start a new test (and still no Finish the rest)', () => {
+  const { window } = new JSDOM('<!doctype html><body><section id="root" tabindex="-1"></section></body>');
+  const root = window.document.getElementById('root');
+  const calls = [];
+  const actions = { back() {}, open() {}, stop() {}, continue: () => calls.push('continue'), startNew: () => calls.push('startNew') };
+  renderTestProgress(root, progress({}, { status: 'stopped', stopReason: 'changed', stopDetail: 'Your draft changed since this test started: start a new test.' }), actions, { doc: window.document });
+  const buttons = [...root.querySelectorAll('.wft-acts button')];
+  assert.deepEqual(buttons.map((b) => [b.textContent, b.className]), [['Start a new test', 'btn btn-primary']]);
+  click(buttons[0]);
+  assert.deepEqual(calls, ['startNew']);
+});
+
+test('U-T8 (F24): one try never says "Stop testing keeps the tries…", running or stopped', () => {
+  const once = (run) => boot(progress({ done: 0, total: 1, rows: [{ exampleId: 1, name: 'Bulk', label: null, dots: ['running'], summary: 'Trying 1 of 1' }] },
+    { kind: 'once', tries: 1, exampleIds: [1], ...run })).root;
+  const hint = (root) => [...root.querySelectorAll('.wft-page > p.hint')].map((n) => n.textContent).join(' ');
+  assert.doesNotMatch(hint(once({})), /Stop testing keeps/);
+  assert.doesNotMatch(hint(once({ status: 'stopped', stopReason: 'person' })), /Stop testing keeps/);
+  assert.match(hint(boot(progress()).root), /^Stop testing keeps the tries that are done\./, 'a test of several tries still says it');
+});
+
+test('U-T8 (F20): "Cost so far" while the test runs, "Cost" once it is over', () => {
+  const label = (p) => facts(boot(p).root).find((f) => f[0].startsWith('Cost'))[0];
+  assert.deepEqual([label(progress()), label(progress({ stopping: true })), label(progress({}, { status: 'done' })),
+    label(progress({}, { status: 'stopped', stopReason: 'person' }))], ['Cost so far', 'Cost so far', 'Cost', 'Cost']);
+});
+
+test('U-T8 (F19): "Stopping…" in the pill and on the button, disabled, from the click until the server says stopped', async () => {
+  const { window } = new JSDOM('<!doctype html><body><section id="root" tabindex="-1"></section></body>');
+  const doc = window.document;
+  const root = doc.getElementById('root');
+  const pending = [];
+  let stops = 0;
+  const actions = { back() {}, open() {}, continue() {}, stop: () => { stops += 1; return new Promise((r) => pending.push(r)); } };
+  const paint = (p) => renderTestProgress(root, p, actions, { doc });
+  const pill = () => root.querySelector('.wft-pill').textContent;
+  const stop = () => root.querySelector('.wft-acts .btn-danger');
+  paint(progress());
+  click(stop());
+  assert.deepEqual([pill(), stop().textContent, stop().disabled], ['Stopping…', 'Stopping…', true], 'optimistic on the click');
+  assert.equal(root.querySelector('.wft-pg-live').textContent, 'Stopping…');
+  paint(progress({ done: 8 }));                       // a frame before the server has stopped it
+  assert.deepEqual([pill(), stop().textContent, stop().disabled], ['Stopping…', 'Stopping…', true], 'a repaint keeps it');
+  paint(progress({ done: 8, stopping: true }));       // the server says it is stopping
+  assert.deepEqual([pill(), stop().textContent, stop().disabled], ['Stopping…', 'Stopping…', true]);
+  pending.shift()();                                  // the stop answered, but the page was not repainted as stopped (it failed)
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual([pill(), stop().textContent, stop().disabled], ['Stopping…', 'Stopping…', true], 'the server still says stopping');
+  paint(progress({ done: 8 }));
+  assert.deepEqual([pill(), stop().textContent, stop().disabled], ['Running · 8 of 18 tries done', 'Stop testing', false], 'not stopping: given back');
+  click(stop());
+  paint(progress({ done: 8 }, { status: 'stopped', stopReason: 'person' }));
+  assert.equal(pill(), 'Stopped · 8 of 18 tries done', 'the server says stopped');
+  pending.shift()();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(stops, 2);
+  const other = boot(progress({ stopping: true }));     // another tab, or a page opened while it stops
+  assert.deepEqual([other.root.querySelector('.wft-pill').textContent, other.root.querySelector('.wft-acts .btn-danger').textContent,
+    other.root.querySelector('.wft-acts .btn-danger').disabled], ['Stopping…', 'Stopping…', true]);
+  click(other.root.querySelector('.wft-acts .btn-danger'));
+  assert.deepEqual(other.calls, [], 'nothing to send twice');
+});
+
+test('U-T8 (F19): a stop that answers while the page still runs gives the button and the pill back', async () => {
+  const { window } = new JSDOM('<!doctype html><body><section id="root" tabindex="-1"></section></body>');
+  const doc = window.document;
+  const root = doc.getElementById('root');
+  const pending = [];
+  const actions = { back() {}, open() {}, continue() {}, stop: () => new Promise((r) => pending.push(r)) };
+  renderTestProgress(root, progress(), actions, { doc });
+  click(root.querySelector('.wft-acts .btn-danger'));
+  renderTestProgress(root, progress({ done: 9 }), actions, { doc });
+  pending.shift()();
+  await new Promise((r) => setTimeout(r, 0));
+  const stop = root.querySelector('.wft-acts .btn-danger');
+  assert.deepEqual([root.querySelector('.wft-pill').textContent, stop.textContent, stop.disabled], ['Running · 9 of 18 tries done', 'Stop testing', false],
+    'the latest data, not the click\'s');
+});
+
+test('app.js (U-T8, F19): Stop testing waits for the stopped page before it gives the button back (no "Stop testing" flash)', () => {
+  const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+  assert.ok(/stop: async \(\) => \{\s*const r = await wftCall\('POST', `\$\{wftBase\(id\)\}\/runs\/\$\{runId\}\/stop`, \{\}\);\s*if \(!r\.ok\) notify\(\{ tone: 'err', title: 'Not stopped', detail: r\.error \}\);\s*if \(still\(\)\) await wftRefresh\(\);/.test(app),
+    'the stop action awaits the repaint');
 });
 
 test('app.js (Task 13 review): frames repaint only the shown Tests page, re-entry repaints it, a failed versions read is said', () => {

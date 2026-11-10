@@ -298,6 +298,50 @@ test('board 39: Try it once now with too little free disk shows its card', async
   assert.equal(root.querySelector('.wft-error').textContent, 'A test of this workflow is running.');
 });
 
+test('U-T8 (F21): a save that pins a start point reads "Copying the project…" while it runs; a save that keeps the pin does not', async () => {
+  const held = [];
+  const over = { save: () => new Promise((r) => held.push(() => r({ ok: true }))) };
+  const saveBtn = (root) => byText(root, '.wft-acts button', 'Save example') || root.querySelector('.wft-acts .btn-primary');
+  // The changes switch pins again (resolveProjectInput): a copy.
+  const changes = boot(example(), { over });
+  changes.root.querySelector('.wft-changes-box').checked = true;
+  const b1 = saveBtn(changes.root);
+  click(b1);
+  await tick();
+  assert.deepEqual([b1.textContent, b1.disabled], ['Copying the project…', true]);
+  held.shift()();
+  await tick(); await tick();
+  assert.notEqual(b1.textContent, 'Copying the project…', 'the copy is done');
+  // A project picked for the first time: a copy.
+  const fresh = boot(example({ project: null, checks: [] }), { over, projectView: null });
+  const sel = fresh.root.querySelector('#wft-ex-project');
+  sel.value = 'worca-cc-1a2b3c4d';
+  sel.dispatchEvent(new fresh.win.Event('change'));
+  const b2 = saveBtn(fresh.root);
+  click(b2);
+  await tick();
+  assert.equal(b2.textContent, 'Copying the project…');
+  held.shift()();
+  await tick(); await tick();
+  // The kept pin (a request edit): no copy, no busy words.
+  const kept = boot(example(), { over });
+  const b3 = saveBtn(kept.root);
+  click(b3);
+  await tick();
+  assert.deepEqual([b3.textContent, b3.disabled], ['Save example', true]);
+  held.shift()();
+  await tick(); await tick();
+  assert.deepEqual([b3.textContent, b3.disabled], ['Save example', false]);
+  // No project: no copy.
+  const none = boot(example({ project: null, checks: [] }), { over, projectView: null });
+  const b4 = saveBtn(none.root);
+  click(b4);
+  await tick();
+  assert.equal(b4.textContent, 'Save example');
+  held.shift()();
+  await tick();
+});
+
 test('review 8: switching the changes on says it moves the start, only when it would', () => {
   const same = boot();
   assert.equal(same.root.querySelector('.wft-changes-hint').textContent, 'Off: the example starts from the commit only. On: your changes are saved with the example.');
@@ -323,4 +367,26 @@ test('review 9, 15: "A file in the project" with no file name is refused; its bo
   await tick();
   assert.equal(doc.querySelector('.wft-dlg-error').textContent, 'Write the file name.');
   assert.deepEqual(saved, []);
+});
+
+test('U-T8 fix round (review minor 2): Try it once now also reads "Copying the project…" when its save pins a start point, and not when it keeps the pin', async () => {
+  const held = [];
+  const over = { tryOnce: () => new Promise((r) => held.push(() => r({ ok: true }))) };
+  const tryBtn = (root) => byText(root, '.wft-acts button', 'Try it once now');
+  const changes = boot(example(), { over });
+  changes.root.querySelector('.wft-changes-box').checked = true;
+  const b1 = tryBtn(changes.root);
+  click(b1);
+  await tick();
+  assert.deepEqual([b1.textContent, b1.disabled], ['Copying the project…', true]);
+  held.shift()();
+  await tick(); await tick();
+  assert.notEqual(b1.textContent, 'Copying the project…', 'the copy is done');
+  const kept = boot(example(), { over });
+  const b2 = tryBtn(kept.root);
+  click(b2);
+  await tick();
+  assert.deepEqual([b2.textContent, b2.disabled], ['Try it once now', true]);
+  held.shift()();
+  await tick();
 });

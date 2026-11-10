@@ -12,7 +12,7 @@ import * as store from '../src/core/workflow-tests/store.mjs';
 import { worcaTryText } from '../src/shared/workflow-tests/project-text.mjs';
 import { createTestRunner, MAX_PARALLEL, PAUSE_REFUSED_TEXT, PAUSE_REFUSED_OTHER, pauseVerdict, worcaProblemOf } from '../src/core/workflow-tests/runner.mjs';
 import { checkTry } from '../src/core/workflow-tests/result.mjs';
-import { progressOf, compareOf } from '../src/core/workflow-tests/service.mjs';
+import { progressOf, compareOf, perTryMs } from '../src/core/workflow-tests/service.mjs';
 import { compareModel } from '../src/shared/workflow-tests/compare.mjs';
 import { WORKTREE_STAGE } from '../src/core/setup-stages.mjs';
 import { TRY_SETUP_STAGE } from '../src/core/workflow-tests/shell-step.mjs';
@@ -865,4 +865,106 @@ test('concern 8: a try whose spawn ran without Worca\'s settings (the canary mis
   assert.deepEqual(worcaProblemOf({ outcome: { pipelineId: 'p1', facts: { status: 'done' }, settingsIgnored: true } }),
     { kind: 'settings', detail: 'Claude Code did not load Worca\'s settings for this try (an invalid settings file or a managed hooks policy).' });
   assert.equal(worcaTryText('settings'), 'Worca could not run this try: Claude Code did not load Worca\'s settings for it (an invalid settings file or a managed hooks policy), so its guards may not have applied.');
+});
+
+test('U-T8 (F20): the progress title is the compare title while it runs, once done and once stopped; one try: Trying once, then Tried once', async () => {
+  for (const k of Object.keys(fps)) delete fps[k];
+  let hold = true;
+  const h = harness({ plan: () => (hold ? { status: 'done', cost: 0.1, hold: true } : { status: 'done', cost: 0.1 }) });
+  const runner = createTestRunner(h.deps);
+  const ex = example({ tries: 1 });
+  const run = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await until(() => h.started.length === 2);
+  assert.equal(progressOf(WF, run.id).title, 'Your draft compared with v1', 'running');
+  await runner.stop(run.id);
+  assert.equal(progressOf(WF, run.id).title, 'Your draft compared with v1', 'stopped');
+  hold = false;
+  await runner.continueRun(run.id);
+  await runner.idle(run.id);
+  assert.deepEqual([store.readTestRun(run.id).status, progressOf(WF, run.id).title], ['done', 'Your draft compared with v1'], 'done');
+  hold = true;
+  const once = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await until(() => h.started.length === 5);
+  assert.equal(progressOf(WF, once.id).title, 'Trying once: Bulk invoice export');
+  await runner.stop(once.id);
+  assert.equal(progressOf(WF, once.id).title, 'Tried once: Bulk invoice export');
+});
+
+test('U-T8 (F19): stoppingOf says a test is stopping from the stop until it has stopped, and progressOf says so', async () => {
+  for (const k of Object.keys(fps)) delete fps[k];
+  const h = harness({ plan: () => ({ status: 'done', cost: 0.1, hold: true }) });
+  const runner = createTestRunner(h.deps);
+  const ex = example({ tries: 1 });
+  const run = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await until(() => h.started.length === 2);
+  const seen = () => progressOf(WF, run.id, { stoppingOf: runner.stoppingOf }).stopping;
+  assert.deepEqual([runner.stoppingOf(run.id), seen()], [null, false], 'running, not stopping');
+  const stopped = runner.stop(run.id);
+  assert.deepEqual([runner.stoppingOf(run.id), seen(), store.readTestRun(run.id).status], ['person', true, 'running'], 'the stop is out: stopping');
+  await stopped;
+  assert.deepEqual([runner.stoppingOf(run.id), seen(), store.readTestRun(run.id).status], [null, false, 'stopped'], 'stopped: no longer stopping');
+  assert.equal(progressOf(WF, run.id).stopping, false, 'no runner read: never stopping');
+});
+
+test('U-T8 (F43): a try\'s live cost counts only until its row has its cost (no double count during the clean-up)', async () => {
+  for (const k of Object.keys(fps)) delete fps[k];
+  const h = harness({ plan: () => ({ status: 'done', cost: 0.5 }) });
+  let release;
+  const cleaning = new Promise((r) => { release = r; });
+  let cleanups = 0;
+  const projectOf = { key: 'tickets-1a2b3c4d', checkoutDir: '/copy/x', files: [], paths: [], total: 0, counts: { added: 0, changed: 0, removed: 0 }, added: 0, removed: 0 };
+  const runner = createTestRunner({ ...h.deps,
+    outcomeOf: async (pipelineId, o) => ({ ...(await h.deps.outcomeOf(pipelineId, o)), project: projectOf }),
+    prepareProject: async (ex) => ({ copyDir: '/copy', startCommit: ex.project.startCommit }),
+    cleanupTry: async () => { cleanups += 1; await cleaning; return { removed: true, error: null }; } });
+  const SHA = 'b'.repeat(40);
+  const ex = store.createExample(WF, { name: 'Ticket 482', request: 'Fix the rounding.', tries: 1 },
+    { project: { key: 'tickets-1a2b3c4d', startSha: SHA, startRef: 'main', startAt: '2026-10-28T09:00:00.000Z', startCommit: SHA, changes: null, setupCmd: null } });
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await until(() => cleanups === 1);
+  const [t] = store.triesOfRun(run.id);
+  assert.deepEqual([t.status, t.costUsd, store.readTestRun(run.id).status], ['passed', 0.5, 'running'], 'the row has its cost while the try still cleans up');
+  assert.equal(runner.costOf(run.id), 0.5, 'counted once, never stored + live');
+  release();
+  await runner.idle(run.id);
+  assert.equal(runner.costOf(run.id), 0.5);
+});
+
+test('U-T8 (F43): the cost progressOf shows never goes down while the test runs', async () => {
+  for (const k of Object.keys(fps)) delete fps[k];
+  const h = harness({ plan: () => ({ status: 'done', cost: 0.1, hold: true }) });
+  const runner = createTestRunner(h.deps);
+  const ex = example({ tries: 1 });
+  const run = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await until(() => h.started.length === 2);
+  const shown = (usd) => progressOf(WF, run.id, { costOf: () => usd }).costUsd;
+  assert.deepEqual([shown(1.2), shown(0.4), shown(0), shown(1.5), shown(1.3)], [1.2, 1.2, 1.2, 1.5, 1.5], 'the highest so far');
+  await runner.stop(run.id);
+  assert.equal(shown(0.2), 0.2, 'once over, the stored cost as it is');
+});
+
+test('U-T8 (F21): in mock mode the time left comes from the mock tries\' own times; with none it is not known yet', async () => {
+  for (const k of Object.keys(fps)) delete fps[k];
+  let hold = false;
+  const h = harness({ plan: () => (hold ? { status: 'done', cost: 0, hold: true } : { status: 'done', cost: 0 }) });
+  const runner = createTestRunner({ ...h.deps, mockMode: () => true });
+  const ex = example({ tries: 1 });
+  assert.deepEqual([perTryMs(WF, { mock: true }), perTryMs(WF)], [null, null], 'no tries yet');
+  hold = true;
+  const first = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await until(() => h.started.length === 2);
+  assert.equal(progressOf(WF, first.id).minutesLeft, null, 'no finished mock try: not known yet');
+  await runner.stop(first.id);
+  hold = false;
+  await runner.continueRun(first.id);
+  await runner.idle(first.id);
+  assert.ok(h.started.every((s) => s.mock), 'mock tries');
+  assert.equal(typeof perTryMs(WF, { mock: true }), 'number', 'the mock tries\' own times');
+  assert.equal(perTryMs(WF), null, 'a real estimate never uses mock times');
+  hold = true;
+  store.updateExample(WF, ex.id, { request: 'Write another brief.' });   // nothing to reuse: both tried again
+  const second = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await until(() => h.started.length === 6);
+  assert.equal(progressOf(WF, second.id).minutesLeft, 1, '"about 1 min" from the mock tries\' times');
+  await runner.stop(second.id);
 });

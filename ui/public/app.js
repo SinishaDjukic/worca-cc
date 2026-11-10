@@ -229,7 +229,7 @@ import { renderExampleEditor, BLANK_EXAMPLE } from './workflows/example-editor.m
 import { SAVE_FIRST_TEXT, CHANGES_NOT_READ_TITLE, NO_DIFF_TEXT, PATCH_CUT_TEXT } from '../../src/shared/workflow-tests/project-text.mjs';
 import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog } from './workflows/test-dialogs.mjs';
 import { renderTestProgress } from './workflows/test-progress.mjs';
-import { renderCompare, renderSideBySide, openWholeResult } from './workflows/test-compare.mjs';
+import { renderCompare, renderSideBySide, openWholeResult, askMoreTries } from './workflows/test-compare.mjs';
 import { useLabel as wftUseLabel } from '../../src/shared/workflow-tests/compare.mjs';
 import { renderVersionsPage } from './workflows/versions-view.mjs';
 import { exportUseChoices, exportUseValue, paintExportUse } from './workflows/export-use.mjs';
@@ -3788,9 +3788,13 @@ function wftCompareActions() {
     back: () => wftShow('list', { overview: null }),
     testAgain: () => wftTestVersion({ a: run.a, b: run.b, exampleIds: run.exampleIds }),
     open: (exampleId) => wftShow('detail', { runId: run.id, exampleId, tryIndex: 0, picked: {} }),
-    tryMore: async (exampleId) => {   // G15: at once, reusing the tries made, with the same cap and connectors choice
-      const r = await wftCall('POST', `${wftBase(id)}/runs`, { a: run.a, b: run.b, exampleIds: [exampleId], tries: Math.min(10, run.tries + 3),
-        reuseA: true, reuseB: true, quickCheck: false, capUsd: run.capUsd, connectors: run.connectors });
+    tryMore: async (exampleId) => {   // G15 + U-T6 (F12, D6): reusing the tries made and the connectors choice, after a confirm with the estimate
+      const ask = await askMoreTries({ run, labels: wft.data.labels, exampleId, confirm: confirmModal,
+        exampleName: (wft.data.model.examples.find((x) => x.id === exampleId) || {}).name || 'this example',
+        loadPlan: async (q) => { const p = await wftCall('GET', `${wftBase(id)}/plan?${new URLSearchParams(q)}`); return p.ok ? p.data : null; } });
+      if (!ask) return;
+      const r = await wftCall('POST', `${wftBase(id)}/runs`, { a: run.a, b: run.b, exampleIds: [exampleId], tries: ask.tries,
+        reuseA: true, reuseB: true, quickCheck: false, capUsd: ask.capUsd, connectors: run.connectors });
       if (!r.ok) { notify({ tone: 'err', title: 'More tries did not start', detail: r.error }); return; }
       if (still()) wftShow('progress', { runId: r.data.run.id });   // elsewhere by now: the results-ready toast opens it (C13)
     },
@@ -3871,7 +3875,7 @@ function wftProgressActions() {
     stop: async () => {
       const r = await wftCall('POST', `${wftBase(id)}/runs/${runId}/stop`, {});
       if (!r.ok) notify({ tone: 'err', title: 'Not stopped', detail: r.error });
-      if (still()) void wftRefresh();
+      if (still()) await wftRefresh();   // U-T8: the stopped page first, then the button is given back
     },
     continue: async (capUsd) => {
       if (Number.isNaN(capUsd)) { notify({ tone: 'err', title: 'The rest did not start', detail: 'Give the cost limit in dollars, such as $15.' }); return; }

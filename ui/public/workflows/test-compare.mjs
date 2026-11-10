@@ -7,7 +7,7 @@ import { el, btn, startInto, checkWords } from './test-ui.mjs';
 import { icon } from '../icons.mjs';
 import { createDialog } from '../marketplace/layers.mjs';
 import { fmtUsd, fmtUsdFine } from '../../../src/shared/workflow-tests/checks.mjs';
-import { agoText, countsText, fmtDuration, pctDelta, durationDelta, countDelta, fmtTimes } from '../../../src/shared/workflow-tests/compare.mjs';
+import { estimateOf, aboutUsd, agoText, countsText, fmtDuration, pctDelta, durationDelta, countDelta, fmtTimes } from '../../../src/shared/workflow-tests/compare.mjs';
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
 import { splitPatchSections, parseFileSection } from '../diff-view.mjs';
 import { changesTitle, changeCountText, FILE_BADGE, READ_ALL_CHANGES, BOTH_STARTED_FROM, DEV_CAPTION, DEV_SBS_HINT, DEV_START_LEAD, DEV_SETUP_LEAD,
@@ -288,7 +288,7 @@ export function renderCompare(root, c, actions, { doc, now = Date.now() }) {
       if (c.run.tries >= MAX_TRIES) why.textContent = luck;   // the most a test tries: the note stays, the button goes
       else {
         why.append(doc.createTextNode(`${luck} `),
-          act(doc, root, runId, 'Try 3 more', () => actions.tryMore(r.id), 'wft-linkbtn', `wft-cmp-more-${r.id}`, { busy: true }));
+          act(doc, root, runId, `Try ${Math.min(3, MAX_TRIES - c.run.tries)} more`, () => actions.tryMore(r.id), 'wft-linkbtn', `wft-cmp-more-${r.id}`, { busy: true }));
       }
       row.append(why);
     } else if (r.why) {
@@ -723,4 +723,29 @@ export function openWholeResult({ doc, win, title, name = null, text = null, ren
   dlg.replace({ head: [h], body, foot: [btn(doc, 'Close', () => dlg.close(), 'btn')] });
   dlg.open();
   return dlg;
+}
+
+/**
+ * U-T6 (F12, D6): "Try 3 more" asks before it spends. Reads the plan for this example at tries+3 (capped at MAX_TRIES), reusing
+ * the tries made on both sides, and confirms with the cost. Resolves {tries, capUsd} to start with, or null when the person
+ * cancels (no POST). The cap is the test's own, or the dialog's default when the new spend would pass it.
+ */
+export async function askMoreTries({ run, labels, exampleId, exampleName, loadPlan, confirm }) {
+  const tries = Math.min(MAX_TRIES, run.tries + 3);
+  const q = { examples: String(exampleId), tries: String(tries), connectors: run.connectors === 'real' ? 'real' : 'pretend' };
+  if (run.a != null) q.a = String(run.a);
+  q.b = String(run.b);
+  let plan = null;
+  try { plan = await loadPlan(q); } catch { plan = null; }
+  const est = plan ? estimateOf(plan, { reuseA: true, reuseB: true }) : null;
+  const extra = tries - run.tries;
+  const n = est && est.total ? est.total : extra * (run.a != null ? 2 : 1);
+  const cap = est && est.usd !== null && !(est.usd <= run.capUsd) ? est.capUsd : (run.capUsd ?? (est ? est.capUsd : 10));
+  const versions = labels.a && run.a != null ? `${labels.b} and ${labels.a}` : labels.b;
+  const cost = est && est.usd !== null ? `about ${aboutUsd(est.usd)}` : 'the cost is not known yet';   // an estimate: the page's "about"
+  // U-T8: the ten-try ceiling may let only 1 or 2 more run on each version: the title says so.
+  const ok = await confirm({ title: `Try ${exampleName} ${extra} more ${extra === 1 ? 'time' : 'times'}?`,
+    message: `${n} more ${n === 1 ? 'try' : 'tries'} of ${versions}: ${cost}. The test stops if the cost goes over ${fmtUsd(cap)}.`,
+    confirmLabel: `Start ${n} ${n === 1 ? 'try' : 'tries'}`, cancelLabel: 'Cancel' });
+  return ok ? { tries, capUsd: cap } : null;
 }

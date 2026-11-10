@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { renderCompare, renderSideBySide, openWholeResult, sentCount } from '../ui/public/workflows/test-compare.mjs';
+import { renderCompare, renderSideBySide, openWholeResult, sentCount, askMoreTries } from '../ui/public/workflows/test-compare.mjs';
 import { serverName } from '../src/shared/workflow-tests/connector-name.mjs';
 import { plainClaudeAiName } from '../src/core/workflow-tests/connectors.mjs';
 import { compareModel } from '../src/shared/workflow-tests/compare.mjs';
@@ -432,7 +432,7 @@ test('app.js: Compare and side by side are wired; Task 10\'s "comes in a later s
   const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
   // assert.ok, not assert.match: a failure would print all of app.js.
   assert.ok(!app.includes('This page comes in a later step.'), 'the stub is gone');
-  assert.ok(/import \{ renderCompare, renderSideBySide, openWholeResult \} from '\.\/workflows\/test-compare\.mjs';/.test(app));
+  assert.ok(/import \{ renderCompare, renderSideBySide, openWholeResult, askMoreTries \} from '\.\/workflows\/test-compare\.mjs';/.test(app));
   assert.ok(/wftCall\('GET', `\$\{base\}\/compare`\)/.test(app) && /wftCall\('GET', `\$\{base\}\/examples\/\$\{wft\.exampleId\}`\)/.test(app), 'the two reads');
   assert.ok(/connectors: run\.connectors/.test(app), 'Try 3 more keeps the test\'s connectors choice');
 });
@@ -506,4 +506,82 @@ test('D24 (2026-11-10): an empty pick says Worca left it empty; an unusable exam
     'Worca asked "Which formats?" · your answer could not be used: Worca picked "CSV"',
     'Worca asked "Who pays?" · your answer could not be used: the try counts as failed']);
   assert.deepEqual(texts(card, '.wft-q-failed'), ['· your answer could not be used: the try counts as failed']);
+});
+
+// U-T6 (F12, D6): Try 3 more asks first, with the estimate; nothing is posted unless the person confirms.
+const planSide = (use, want, reusable, perTryUsd) => ({ use, want, reusable, perTryUsd });
+const askOf = async ({ run = {}, plan, ok = true } = {}) => {
+  const q = []; const asked = [];
+  const out = await askMoreTries({ run: { id: 7, a: 4, b: 'draft', tries: 3, capUsd: 15, connectors: 'real', ...run }, labels: { a: 'v4', b: 'v5 draft' },
+    exampleId: 2, exampleName: 'Bulk invoice export',
+    loadPlan: async (p) => { q.push(p); return plan === undefined ? { a: planSide(4, 6, 3, 0.5), b: planSide('draft', 6, 3, 0.5), perTryMs: 1000 } : plan; },
+    confirm: async (o) => { asked.push(o); return ok; } });
+  return { out, q, asked };
+};
+
+test('U-T6: Try 3 more reads the plan for 3 more tries on this example, then asks with the cost', async () => {
+  const { out, q, asked } = await askOf();
+  assert.deepEqual(q, [{ a: '4', b: 'draft', examples: '2', tries: '6', connectors: 'real' }]);
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0].title, 'Try Bulk invoice export 3 more times?');
+  assert.equal(asked[0].message, '6 more tries of v5 draft and v4: about $3.00. The test stops if the cost goes over $15.00.');
+  assert.equal(asked[0].confirmLabel, 'Start 6 tries');
+  assert.equal(asked[0].cancelLabel, 'Cancel');
+  assert.deepEqual(out, { tries: 6, capUsd: 15 });
+});
+
+test('U-T6: Cancel gives nothing back, so nothing is posted', async () => {
+  assert.equal((await askOf({ ok: false })).out, null);
+});
+
+test('U-T6: a cost that would pass the test\'s cap uses the dialog default, and the answer carries it', async () => {
+  const { out, asked } = await askOf({ run: { capUsd: 2 } });
+  assert.equal(asked[0].message, '6 more tries of v5 draft and v4: about $3.00. The test stops if the cost goes over $5.00.');
+  assert.deepEqual(out, { tries: 6, capUsd: 5 });
+});
+
+test('U-T6: an unknown cost says so, keeps the test\'s cap, and an unreadable plan is the same', async () => {
+  const noPrice = { a: planSide(4, 6, 3, null), b: planSide('draft', 6, 3, null) };
+  for (const plan of [noPrice, null]) {
+    const { out, asked } = await askOf({ plan });
+    assert.equal(asked[0].message, '6 more tries of v5 draft and v4: the cost is not known yet. The test stops if the cost goes over $15.00.');
+    assert.deepEqual(out, { tries: 6, capUsd: 15 });
+  }
+});
+
+test('U-T6: grammar for one try, and the ten-try ceiling', async () => {
+  const one = await askOf({ run: { a: null, tries: 9 }, plan: { a: null, b: planSide('draft', 10, 9, 0.5) } });
+  assert.equal(one.asked[0].message, '1 more try of v5 draft: about $0.50. The test stops if the cost goes over $15.00.');
+  assert.equal(one.asked[0].confirmLabel, 'Start 1 try');
+  assert.deepEqual(one.q, [{ b: 'draft', examples: '2', tries: '10', connectors: 'real' }]);
+  assert.equal(one.out.tries, 10);
+});
+
+test('U-T8 (U-T6 review minor 2): the title says how many more the ten-try ceiling lets run', async () => {
+  const one = await askOf({ run: { a: null, tries: 9 }, plan: { a: null, b: planSide('draft', 10, 9, 0.5) } });
+  assert.equal(one.asked[0].title, 'Try Bulk invoice export 1 more time?');
+  const two = await askOf({ run: { a: null, tries: 8 }, plan: { a: null, b: planSide('draft', 10, 8, 0.5) } });
+  assert.equal(two.asked[0].title, 'Try Bulk invoice export 2 more times?');
+  assert.equal(two.out.tries, 10);
+  const three = await askOf({ run: { a: null, tries: 7 }, plan: { a: null, b: planSide('draft', 10, 7, 0.5) } });
+  assert.equal(three.asked[0].title, 'Try Bulk invoice export 3 more times?');
+});
+
+test('U-T8 (U-T6 review minor 1): the estimate is in the page\'s "about" style: whole dollars from $5 up', async () => {
+  const { asked } = await askOf({ run: { capUsd: 50 }, plan: { a: planSide(4, 6, 3, 2.0625), b: planSide('draft', 6, 3, 2.0625), perTryMs: 1000 } });
+  assert.equal(asked[0].message, '6 more tries of v5 draft and v4: about $12. The test stops if the cost goes over $50.00.');
+});
+
+test('U-T6: without a plan the count is the extra tries on each version', async () => {
+  const { asked } = await askOf({ plan: null, run: { a: null, tries: 3 } });
+  assert.equal(asked[0].message, '3 more tries of v5 draft: the cost is not known yet. The test stops if the cost goes over $15.00.');
+  assert.equal(asked[0].confirmLabel, 'Start 3 tries');
+});
+
+test('U-T8 fix round: the button is labelled with the number of tries that can run, like its dialog title', () => {
+  const luckList = [...tries('a', 1, 'PPF', 0.5, 1000), ...tries('b', 1, 'PPP', 0.5, 1000)];
+  const label = (n) => boot(renderCompare, compare({ examples: 1, run: { ...compare().run, tries: n },
+    model: compareModel({ examples: [{ id: 1, name: 'X' }], a: { label: 'v4' }, b: { label: 'v5 draft' }, tries: luckList }) }))
+    .root.querySelector('.wft-why button').textContent;
+  assert.deepEqual([label(3), label(7), label(8), label(9)], ['Try 3 more', 'Try 3 more', 'Try 2 more', 'Try 1 more']);
 });
