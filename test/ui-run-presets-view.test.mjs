@@ -28,7 +28,7 @@ test('a card names the preset, its scope, workflow and engine; each button calls
   assert.equal(cards.length, 2);
   assert.ok(list.classList.contains('drows'));
   for (const c of cards) assert.ok(c.classList.contains('drow') && !c.classList.contains('card'), 'a divided row, not a card');
-  assert.match(cards[0].textContent, /Quick fix.*Any project.*Default · Codex · Updated 2 d ago/);
+  assert.match(cards[0].textContent, /Quick fix.*Any project.*Default · OpenAI Codex · Updated 2 d ago/);
   assert.match(cards[1].textContent, /Only api/);
   assert.equal(cards[1].querySelector('.preset-gone'), null);
   for (const b of cards[0].querySelectorAll('button')) b.click();
@@ -58,8 +58,8 @@ test('the meta line names the workflow and engine: Auto workflow, a muted Workfl
     preset({ id: 'rp_4', setup: { workflowId: 'wf_default', engine: 'cursor' } }),
   ], { workflowNames: { wf_default: 'Default', wf_x1: 'Bug triage' }, now: NOW });
   const metas = [...list.querySelectorAll('.preset-meta')].map((m) => m.textContent);
-  assert.deepEqual(metas, ['Auto workflow · Codex · Updated 2 d ago', 'Workflow removed · Claude · Updated 2 d ago',
-    'Bug triage · Copilot · Updated 2 d ago', 'Default · Cursor · Updated 2 d ago']);
+  assert.deepEqual(metas, ['Auto workflow · OpenAI Codex · Updated 2 d ago', 'Workflow removed · Claude Code · Updated 2 d ago',
+    'Bug triage · GitHub Copilot · Updated 2 d ago', 'Default · Cursor · Updated 2 d ago']);
   assert.ok(list.querySelector('[data-preset="rp_2"] .preset-wf').classList.contains('muted'));
   assert.ok(!list.querySelector('[data-preset="rp_1"] .preset-wf').classList.contains('muted'));
   assert.doesNotMatch(list.textContent, /wf_|\b(claude|codex|copilot|cursor)\b/);
@@ -73,5 +73,5 @@ test('style.css dims a muted workflow label on the card meta line', () => {
 test('with no workflow list the meta line names only the engine', () => {
   const { document } = new JSDOM('').window;
   const list = renderPresetsList(document, [preset({ setup: { workflowId: 'wf_x1', engine: 'codex' } })], { workflowNames: null, now: NOW });
-  assert.equal(list.querySelector('.preset-meta').textContent, 'Codex · Updated 2 d ago');
+  assert.equal(list.querySelector('.preset-meta').textContent, 'OpenAI Codex · Updated 2 d ago');
 });

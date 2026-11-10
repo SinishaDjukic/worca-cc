@@ -90,6 +90,7 @@ import {
   isValidSourceRef, snapshotWorktreePatch, listLocalBranches, worktreeHead, deleteBranchIfAt,
   reusedBranchBase, isAncestor, withoutIgnored,
 } from './worktree.mjs';
+import { writeReadinessSnapshot } from './repo-readiness/snapshot.mjs';
 import { deriveBranchName, uniqueBranch } from './naming.mjs';
 import { flagEnabled } from './flags.mjs';
 import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS, mergeBaseBeforeRun, baseMovedAudit } from './git-sync.mjs';
@@ -2917,6 +2918,15 @@ export class RunHarness extends EventEmitter {
           projectDir: resolve(m.projectDir),               // the REAL repo — what `git worktree remove` needs
           worktreeDir: this.workDirs.get(m.projectKey),
         })),
+    });
+    // Agent-readiness snapshot of the primary project's REAL dir, for the run's own engine.
+    // Merged right after the Phase-1 write so every later updateRunManifest keeps the key.
+    // Best-effort and cache-free: a failure records nothing, and the Projects chip is untouched. Capped (SNAPSHOT_TIMEOUT_MS),
+    // so a slow git never holds the run start.
+    if (detached) await writeReadinessSnapshot({
+      runRoot: this.runRoot, projectDir: primary.projectDir,
+      projectKey: primary.projectKey, engine: this.claude.engine,
+      folder: this._memberWorkMode(primary.projectKey) === 'folder',   // a Folder member: no git in it
     });
     // P5: a Folder member's copy warnings land AFTER the minimal manifest, which replaces run.json (P1's order).
     for (const w of folderWarns) await this._recordRunWarning(w);

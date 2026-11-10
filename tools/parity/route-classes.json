@@ -151,6 +151,7 @@
   "GET /api/projects": {"class": "probe", "reason": "lists registered projects, try/catch"},
   "GET /api/projects/:key/actions": {"class": "probe", "reason": "tmProject lookup, then local action config read"},
   "GET /api/projects/:key/house-brief": {"class": "probe", "reason": "local file hashing only (house-brief.mjs), try/catch"},
+  "GET /api/projects/:key/readiness": {"class": "probe", "reason": "tmProject answers 404 for an unknown key; a known one reads local git through the guard (repo-readiness/facts.mjs)"},
   "GET /api/projects/:key/policy": {"class": "probe", "reason": "discover off without ?discover=1; local status"},
   "GET /api/projects/:key/settings": {"class": "probe", "reason": "tmProject lookup, local settings read"},
   "GET /api/projects/:key/sync": {"class": "probe", "reason": "mode 'status' never touches network (project-sync.mjs:63)"},

@@ -19,7 +19,7 @@ const labelOf = (id) => ({ n_refine: 'Refine Plan', n_decompose: 'Decompose' })[
 test('one line per session, per engine and gate', () => {
   assert.deepEqual(sessionStartNotices(t, realPortsFn(), { engine: 'claude', verified: { claude: true }, labelOf }), ['2 steps share one session (Refine Plan + Decompose).']);
   assert.deepEqual(sessionStartNotices(t, realPortsFn(), { engine: 'cursor', verified: {}, labelOf }), ['Cursor has no sub-agents: Refine Plan and Decompose run as separate sessions.']);
-  assert.deepEqual(sessionStartNotices(t, realPortsFn(), { engine: 'claude', verified: { claude: false }, labelOf }), ['Sub-agents are not available on Claude yet: Refine Plan and Decompose run as separate sessions.']);
+  assert.deepEqual(sessionStartNotices(t, realPortsFn(), { engine: 'claude', verified: { claude: false }, labelOf }), ['Sub-agents are not available on Claude Code yet: Refine Plan and Decompose run as separate sessions.']);
   const shared = { ...t, sessions: { s_aaaaaaaa: { mode: 'shared' } } };
   assert.deepEqual(sessionStartNotices(shared, realPortsFn(), { engine: 'cursor', verified: {}, labelOf, sharedReady: true }), ['Refine Plan and Decompose share one conversation.']);
   assert.deepEqual(sessionStartNotices(SEED_TEMPLATES[0], realPortsFn(), { engine: 'claude', labelOf }), []);
@@ -52,7 +52,7 @@ test('v2 — the flag off, One conversation as shipped and before its runtime, t
     'three names: "A, B and C"');
   assert.deepEqual(sessionStartNotices(three, realPortsFn(), { engine: 'claude', verified: { claude: true }, labelOf: lab }), ['3 steps share one session (Plan + Refine Plan + Decompose).']);
   assert.deepEqual(sessionStartNotices(t, realPortsFn(), { engine: 'claude', verified: { claude: true } }), ['2 steps share one session (n_refine + n_decompose).'], 'no label: the id');
-  assert.deepEqual(sessionStartNotices(t, realPortsFn(), { engine: 'claude', labelOf }), ['Sub-agents are not available on Claude yet: Refine Plan and Decompose run as separate sessions.'],
+  assert.deepEqual(sessionStartNotices(t, realPortsFn(), { engine: 'claude', labelOf }), ['Sub-agents are not available on Claude Code yet: Refine Plan and Decompose run as separate sessions.'],
     'the shipped gate (Task 53 flips it, and this row with it)');
   assert.deepEqual(sessionStartNotices(t, realPortsFn(), { engine: 'gemini', labelOf }), ['Gemini CLI has no sub-agents: Refine Plan and Decompose run as separate sessions.']);
   assert.deepEqual(sessionStartNotices(null, realPortsFn(), { engine: 'claude' }), [], 'no template: nothing');
@@ -113,7 +113,7 @@ test('v2 — the New pipeline form: one notice per session under the engine; the
   await waitFor(() => !box.hidden);
   assert.deepEqual(notes(doc), ['One session is off in Settings › Labs: Refine Plan and Decompose run as separate sessions.'], 'the Labs flag ships off');
   applyFlags({ sessionGroups: true }, doc);
-  assert.deepEqual(notes(doc), ['Sub-agents are not available on Claude yet: Refine Plan and Decompose run as separate sessions.'], 'the shipped gate');
+  assert.deepEqual(notes(doc), ['Sub-agents are not available on Claude Code yet: Refine Plan and Decompose run as separate sessions.'], 'the shipped gate');
   doc.getElementById('mock-switch').click();
   assert.deepEqual(notes(doc), ['2 steps share one session (Refine Plan + Decompose).'], 'a mock run counts as verified (C13)');
   pickSel(doc, 'engineSelect', 'cursor');
@@ -167,7 +167,7 @@ test('v4 — a newly picked workflow\'s notice waits for its own fetch: the last
   await waitFor(() => !box.hidden);
   assert.deepEqual(notes(doc), ['2 steps share one session (Refine Plan + Decompose).'], 'the new workflow\'s own notice, with the Mock switch on');
   doc.getElementById('mock-switch').click();
-  assert.deepEqual(notes(doc), ['Sub-agents are not available on Claude yet: Refine Plan and Decompose run as separate sessions.'], 'the same workflow repaints in place');
+  assert.deepEqual(notes(doc), ['Sub-agents are not available on Claude Code yet: Refine Plan and Decompose run as separate sessions.'], 'the same workflow repaints in place');
 });
 
 // ── v4: D2 — a member that fans out runs its ×N tasks (or role reviews) outside the session ──
