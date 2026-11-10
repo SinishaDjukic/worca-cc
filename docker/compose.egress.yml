@@ -34,7 +34,7 @@ services:
       PLAYWRIGHT_DOWNLOAD_HOST: ${PLAYWRIGHT_DOWNLOAD_HOST:-}
 
   egress:
-    image: ghcr.io/sinishadjukic/worca:${WORCA_TAG:-latest}
+    image: ${WORCA_IMAGE:-ghcr.io/sinishadjukic/worca}:${WORCA_TAG:-latest}
     entrypoint: ["tini", "-s", "--", "node", "/usr/local/lib/worca-egress-proxy.mjs"]
     command: []
     environment:
@@ -50,6 +50,9 @@ services:
     mem_limit: 256m
     restart: unless-stopped
 
+# With compose.workers.yml as well, set WORCA_UPLINK_NETWORK=internal (`worca container up --with
+# egress,workers` does): the controller then shares this network with its workers and stays off
+# the open one. Workers join the internal network either way.
 networks:
   internal:
     internal: true

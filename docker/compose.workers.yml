@@ -1,0 +1,92 @@
+# docker/compose.workers.yml — agents in their own containers (docs/workers.md).
+#
+#   docker compose -f compose.yml -f compose.workers.yml up -d
+#   worca container up --with workers
+#
+# The worca service becomes the controller: it keeps the scheduler, the database and the UI, and
+# starts one worker container per run and per chat through the Docker Engine, replicating its own
+# mounts, network and user so every path matches. It reaches the Engine through a socket proxy that
+# allows exactly what it needs (create/start/inspect/remove containers, list networks), never the
+# raw socket. Worker images: <WORCA_IMAGE>-worker:<tag>-<engine> (ghcr.io/sinishadjukic/worca-worker by default); set
+# WORCA_WORKER_IMAGE=self to run workers from the worca image itself (Claude Code only).
+services:
+  worca:
+    depends_on:
+      - docker-proxy
+    environment:
+      WORCA_EXECUTOR: docker
+      WORCA_DOCKER_HOST: tcp://docker-proxy:2375
+      WORCA_WORKER_PORT: ${WORCA_WORKER_PORT:-4319}
+      WORCA_CONTROLLER_URL: ws://worca:${WORCA_WORKER_PORT:-4319}
+      # Empty = derived by the controller from its own image: <WORCA_IMAGE>-worker:<WORCA_TAG>-<engine>.
+      # (No default with `{engine}` here: Compose would end the `${…}` at that brace and append a stray `}`
+      # to every value you do set.)
+      WORCA_WORKER_IMAGE: ${WORCA_WORKER_IMAGE:-}
+      # WORCA_WORKER_NETWORK: the network workers join, by its compose name (`internal`) or the Engine's (`worca_internal`); default: chosen from the controller's own.
+      WORCA_WORKER_MEM: ${WORCA_WORKER_MEM:-4g}
+      WORCA_WORKER_CPUS: ${WORCA_WORKER_CPUS:-2}
+      WORCA_WORKER_PIDS: ${WORCA_WORKER_PIDS:-2048}
+      WORCA_WORKER_MAX: ${WORCA_WORKER_MAX:-20}
+      # Optional (.env): which controller network workers join, and this installation's name on a shared Docker host.
+      WORCA_WORKER_NETWORK: ${WORCA_WORKER_NETWORK:-}
+      WORCA_INSTANCE_ID: ${WORCA_INSTANCE_ID:-}
+      # From `.env`, passed through only when set there (a bare name is not defined in the container when unset).
+      # Credentials of the engines the workers run: the controller holds them and sends them with each spawn
+      # (docs/workers.md, Credentials on workers). compose.yml already passes Claude's.
+      OPENAI_API_KEY:
+      OPENAI_BASE_URL:
+      OPENAI_MODEL:
+      GEMINI_API_KEY:
+      GOOGLE_API_KEY:
+      COPILOT_GITHUB_TOKEN:
+      CURSOR_API_KEY:
+      DASHSCOPE_API_KEY:
+      OPENROUTER_API_KEY:
+      # Worker settings the controller reads.
+      WORCA_WORKER_START_TIMEOUT_MS:
+      WORCA_WORKER_CHAT_IDLE_MS:
+      WORCA_WORKER_CAP_WAIT_MS:
+      WORCA_WORKER_RELAY_PORT:
+      WORCA_WORKER_FULL_ENGINES:
+      WORCA_WORKER_ENGINE:
+      WORCA_WORKER_USER:
+      WORCA_DOCKER_TIMEOUT_MS:
+      NO_PROXY: ${NO_PROXY:-127.0.0.1,localhost},docker-proxy,worca,broker,egress
+    networks:
+      # The network the controller shares with its workers. With the egress overlay it must be
+      # `internal` (WORCA_UPLINK_NETWORK=internal; `worca container up --with egress,workers`
+      # sets it): on `default` the controller, and with it every worker, would have a direct
+      # route out and the allowlist would be advisory.
+      - ${WORCA_UPLINK_NETWORK:-default}
+      - docker-proxy
+
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0@sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b3344794e3ea334ff00ae677ac2   # multi-arch index digest: a re-pushed tag cannot change what holds the socket
+    environment:
+      CONTAINERS: 1      # list, inspect, create, remove
+      POST: 1            # create/start are POSTs
+      ALLOW_START: 1
+      ALLOW_STOP: 1
+      NETWORKS: 1
+      INFO: 1
+      VERSION: 1
+      IMAGES: 0
+      EXEC: 0
+      BUILD: 0
+      VOLUMES: 0
+      SECRETS: 0
+      SWARM: 0
+      SYSTEM: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker-proxy
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+networks:
+  docker-proxy:
+    internal: true
+    labels:
+      worca.role: docker-api     # the backend never puts a worker on this network
