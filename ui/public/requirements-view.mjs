@@ -15,7 +15,8 @@ import { makeSwitch } from './switch.mjs';
 import { icon as sharedIcon } from './icons.mjs';
 import { openRunSetupOverlay } from './run-setup-overlay.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
-import { whoInterviews, recommendationNote, defaultLine, fallbackLine, harnessLine, otherHarnessPrivacy } from './requirements-model.mjs';
+import { whoInterviews, recommendationNote, defaultLine, fallbackLine, harnessLine, otherHarnessPrivacy, modelChip, modelDialog, switchConfirm, choiceBox,
+  briefRefreshDialog } from './requirements-model.mjs';
 import {
   ATTACH_BINARY, ATTACH_TEXT_EXT, extOf, checkAttachment, bytesToBase64, carriesFiles, pastedFiles, createPasteNamer, REQ_ATTACH, reqLimits,
 } from './attach-files.mjs';
@@ -274,6 +275,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // the notes as last painted and their unsaved text, and each feature's scope as the page has seen it
   // (seq -> '<type>:<key>'), so a feature's frame repaints the brief page of its scope only.
   let briefShown = null;     // { scopeType, scopeKey } | null
+  let briefCatalogAsked = false;
+  let briefCatalog = null;   // 9c board 9: the harnesses and models the brief's box picks from; null until loaded or when they cannot be
+  let briefBoxRef = null;    // the head-start box's choice, read by Create
+  let briefPick = null;      // { id, value }: that choice kept across repaints of the page
   let briefData = null;
   let creating = false;
   let notesBase = null;      // { body, look } as painted from the server
@@ -1082,6 +1087,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     }
     briefData = data;
     const s = briefShown;
+    if (!briefCatalog && !briefCatalogAsked) {
+      briefCatalogAsked = true;
+      void loadCatalog().then((c) => { briefCatalog = c; if (c) redrawBrief(); });
+    }
     for (const u of data.usedBy || []) if (u && u.seq != null) seqScope.set(Number(u.seq), scopeId(s));
     const kept = captureBrief();
     const name = (data.target && data.target.name) || s.scopeKey;
@@ -1116,7 +1125,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   // Create, and Refresh (the same POST, D7): every control that starts it is marked `data-brief-go` and disabled
   // at once, so a double press posts once.
-  function createBrief() {
+  function createBrief(choice) {
     if (creating || !briefShown) return;
     const s = briefShown;
     creating = true;
@@ -1125,7 +1134,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     void (async () => {
       try {
         const refresh = !!(briefData && briefData.brief && briefData.brief.madeAt);
-        const data = await api('POST', briefApi(s), {});
+        const data = await api('POST', briefApi(s), choice && choice.model ? { choice: { engine: choice.engine, model: choice.model, effort: choice.effort || null } } : {});
         creating = false;
         paintAnswer(s, data);
         // the pressed button is disabled now, so the focus is lost: the polite message line says the work started
@@ -1155,9 +1164,20 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const whyNot = making ? 'Worca is reading the code. This takes a few minutes; you can leave this page.'
       : switchOff ? 'Looking at the code is off. Turn it on under Your notes for Worca.'
         : noRepo ? 'There is no repository to look at.' : null;
+    // 9c board 9: with the models known the box picks who makes it and the note says the cost; else A7's line stays
+    const bd = data.briefDefault && data.briefDefault.choice && data.briefDefault.choice.model ? data.briefDefault : null;
+    const picker = briefCatalog && bd;
+    briefBoxRef = null;
+    if (picker) {
+      const id = scopeId(s);
+      const start = briefPick && briefPick.id === id ? briefPick.value : bd.choice;
+      briefBoxRef = choiceBox(document, { catalog: briefCatalog, choice: start, defaultChoice: null, fallbackReason: bd.fallbackReason, kind: 'brief', legend: 'Who makes it',
+        repoOnly: true, hint: false, fetchEstimate: estimateFor('brief'), onChange: (v) => { briefPick = { id, value: v }; } });
+      briefBoxRef.el.className = 'req-who-box req-brief-who';
+    }
     const facts = [
       s.scopeType === 'workspace' ? ["Each project's default branch"] : t.branch ? ['Branch ', h('code', { text: t.branch })] : null,
-      typeof est.costUsd === 'number' ? ['about ', h('code', { text: usd(est.costUsd) })] : null,
+      !picker && typeof est.costUsd === 'number' ? ['about ', h('code', { text: usd(est.costUsd) })] : null,
       ['3 to 5 minutes'],
     ].filter(Boolean).flatMap((part, i) => (i ? [' · ', ...part] : part));
     const leftOut = s.scopeType === 'workspace' && Array.isArray(t.leftOut) && t.leftOut.length ? t.leftOut : null;
@@ -1176,12 +1196,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('div', { class: 'req-brief-cost', 'data-needs-git': true },
         h('span', { class: 'req-brief-look', text: 'One look, read-only' }),
         h('span', { class: 'req-brief-facts' }, ...facts),
-        est.model && est.model.label ? h('span', { class: 'hint req-brief-model', text: `${est.model.label} · counts toward your limit` }) : null,
+        picker ? briefBoxRef.el : est.model && est.model.label ? h('span', { class: 'hint req-brief-model', text: `${est.model.label} · counts toward your limit` }) : null,
         slow ? h('span', { class: 'hint req-brief-slow', text: `Worca could not read ${joinAnd(t.slow)} in time; Create tries again.` }) : null,
         leftOut ? h('span', { class: 'hint req-brief-left-out',
           text: `Worca reads at most 8 projects of a workspace: ${joinAnd(leftOut)} ${leftOut.length === 1 ? 'is' : 'are'} left out.` }) : null,
         failed ? h('p', { class: 'form-msg err req-brief-failed', role: 'status', text: failed }) : null,
-        h('button', { type: 'button', class: 'btn btn-primary req-brief-create', 'data-ui': 'brief-create', 'data-brief-go': true, disabled: creating || !!whyNot, onclick: createBrief },
+        h('button', { type: 'button', class: 'btn btn-primary req-brief-create', 'data-ui': 'brief-create', 'data-brief-go': true, disabled: creating || !!whyNot,
+          onclick: () => createBrief(briefBoxRef ? briefBoxRef.value() : undefined) },
           making || creating ? 'Creating…' : failed ? 'Try again' : 'Create the brief'),
         whyNot ? h('span', { class: 'hint req-brief-why-not', text: whyNot }) : null),
       // shown only while git is missing (style.css), in place of the box above
@@ -1256,11 +1277,36 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const seed = b.seed && b.seed.kind === 'workspace-map' ? b.seed : null;
     return [
       h('span', { class: 'chip' }, ...from, when ? (srcs.length ? ` · ${when}` : ` ${when}`) : ''),
-      h('span', { class: 'chip', text: usd(b.costUsd) }),
+      h('span', { class: 'chip', text: data.madeWith && data.madeWith.model ? `${data.madeWith.label || data.madeWith.model} on ${engineLabel(data.madeWith.engine)} · ${usd(b.costUsd)}` : usd(b.costUsd) }),
       h('span', { class: 'chip', text: `Used by ${plural(used, 'feature')}` }),
       docs ? h('span', { class: 'chip', text: plural(docs, 'document') }) : null,   // A8 board 19
       seed ? h('span', { class: 'chip', text: `Built from the workspace map${seed.scannedAt ? `, scanned ${String(seed.scannedAt).slice(0, 10)}` : ''}` }) : null,
     ];
+  }
+
+  /** Board 9: Refresh asks who makes it first (starting from what made the brief last); without the models it refreshes at once, as before. */
+  async function openRefresh(trigger) {
+    if (creating || !briefShown) return;
+    closeDialog(false);
+    const gen = dlgGen;
+    const s = briefShown;
+    // a Refresh button is off while the models are asked for (no second press); the dialog or the post then takes over
+    const pressed = trigger && trigger.hasAttribute && trigger.hasAttribute('data-brief-go') ? trigger : null;
+    if (pressed) pressed.disabled = true;
+    const catalog = briefCatalog || await loadCatalog();
+    if (pressed && pressed.isConnected) pressed.disabled = false;
+    if (dlgGen !== gen || !briefShown || scopeId(briefShown) !== scopeId(s)) return;
+    const data = briefData;
+    const bd = data && data.briefDefault && data.briefDefault.choice && data.briefDefault.choice.model ? data.briefDefault.choice : null;
+    if (!catalog || !bd) { createBrief(); return; }   // the models are not there: refresh at once, as before
+    briefCatalog = catalog;
+    const mw = data.madeWith && data.madeWith.model ? data.madeWith : null;
+    const t = data.target || {};
+    const dlg = briefRefreshDialog(document, { catalog, choice: mw ? { engine: mw.engine, model: mw.model, effort: null } : bd, defaultChoice: bd, madeWith: mw,
+      branch: s.scopeType === 'project' ? t.branch || null : null, workspace: s.scopeType === 'workspace', fetchEstimate: estimateFor('brief'),
+      onCancel: () => closeDialog(true),
+      onSave: (c) => { closeDialog(true); createBrief(c); } });
+    openModal(dlg.card, { trigger, first: dlg.first });
   }
 
   const estimateText = (data) => (data.estimate && typeof data.estimate.costUsd === 'number' ? ` · about ${usd(data.estimate.costUsd)}` : '');
@@ -1268,7 +1314,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function refreshButton(data, label, key) {
     const making = !!(data.brief && data.brief.status === 'making');
     // a refresh checks out the code again: hidden while git is missing (git-gate.mjs)
-    return h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': key, 'data-brief-go': true, 'data-needs-git': true, disabled: creating || making, onclick: createBrief }, label);
+    return h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': key, 'data-brief-go': true, 'data-needs-git': true, disabled: creating || making,
+      onclick: (e) => { void openRefresh(e.currentTarget); } }, label);
   }
 
   function exportMenu() {
@@ -1289,7 +1336,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function moreMenu(data) {
     const s = briefShown;
     const making = data.brief.status === 'making';
-    const refresh = menuItem(`Refresh the brief${estimateText(data)}`, createBrief, { disabled: creating || making, ui: 'mi-brief-refresh' });
+    const refresh = menuItem(`Refresh the brief${estimateText(data)}`, () => { void openRefresh(host.querySelector('[data-ui="brief-more"]')); }, { disabled: creating || making, ui: 'mi-brief-refresh' });
     refresh.setAttribute('data-brief-go', '');
     refresh.dataset.needsGit = '';   // a refresh checks out the code again: hidden while git is missing (git-gate.mjs)
     const del = () => act(async () => {
@@ -2238,6 +2285,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // On the document, in the capture phase: Escape and Tab work wherever the focus is, even after a click
     // on the scrim left it on <body>. Removed on close.
     const onKey = (e) => {
+      // the app's confirm (the model switch asks it over its dialog) owns Escape and Tab while it is up
+      const cm = document.getElementById('confirm-modal');
+      if (cm && !cm.classList.contains('hidden')) return;
       if (e.key === 'Escape') {
         if (e.isComposing) return;   // Escape that ends an IME composition is the input method's, not the dialog's
         e.preventDefault(); e.stopPropagation(); if (canClose()) closeDialog(true); return;
@@ -3393,6 +3443,53 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         : helperComposer(f, data, ctx));
   }
 
+  // 9c boards 3, 4: the models and prices behind the pickers (GET /models), asked for each time a dialog opens; null when they cannot be read.
+  const loadCatalog = () => api('GET', '/api/requirements/models')
+    .then((c) => (c && Array.isArray(c.harnesses) && c.harnesses.length && Array.isArray(c.models) ? c : null), () => null);
+  const estimateFor = (step) => (c) => api('GET', `/api/requirements/estimates?engine=${encodeURIComponent(c.engine)}&model=${encodeURIComponent(c.model)}${step ? `&step=${step}` : ''}`);
+  const asConfirm = async (plan) => {
+    if (typeof deps.confirm === 'function') return !!(await deps.confirm(plan));
+    return window.confirm(`${plan.title}\n\n${plan.message}`);
+  };
+
+  /** Board 3: the chip's dialog. Save asks the switch confirm (board 4) when the new pick loses something or sends the text elsewhere. */
+  async function openModelDialog(f, trigger) {
+    closeDialog(false);
+    const gen = dlgGen;
+    const [catalog, listed] = await Promise.all([loadCatalog(),
+      api('GET', `/api/requirements?scopeType=${encodeURIComponent(f.scopeType)}&scopeKey=${encodeURIComponent(f.scopeKey)}`).catch(() => null)]);
+    if (dlgGen !== gen || seqShown !== f.seq) return;   // another dialog or page came first
+    if (!catalog) { say('The models could not be loaded. Try again.', 'err'); return; }
+    const cur = (current && current.f.seq === f.seq ? current.f : f).model || null;
+    const d = listed && listed.interview && listed.interview.default;
+    let busy = false;
+    const msg = h('p', { class: 'form-msg err req-dlg-msg', role: 'alert' });
+    const dlg = modelDialog(document, {
+      catalog, choice: cur, defaultChoice: d && d.model ? { engine: d.engine || 'claude', model: d.model, effort: d.effort || null } : null,
+      fetchEstimate: estimateFor(null),
+      onCancel: () => { if (!busy) closeDialog(true); },
+      onSave: async (c, saveBtn) => {
+        if (busy) return;
+        const unchanged = cur && c.engine === cur.engine && c.model === cur.model && (c.effort || null) === (cur.effort || null);
+        if (unchanged) { closeDialog(true); return; }
+        busy = true; saveBtn.disabled = true; msg.textContent = '';
+        try {
+          const plan = cur ? switchConfirm({ from: cur, to: c, harnesses: catalog.harnesses, models: catalog.models, feature: current && current.f.seq === f.seq ? current.f : f }) : null;
+          if (plan && !(await asConfirm(plan))) { busy = false; saveBtn.disabled = false; saveBtn.focus(); return; }   // Cancel: nothing is saved
+          await api('PUT', `/api/requirements/${f.seq}/model`, { engine: c.engine, model: c.model, effort: c.effort || null });
+          busy = false;
+          closeDialog(true);
+          await paint();
+        } catch (err) {
+          busy = false; saveBtn.disabled = false;
+          msg.textContent = errText(err);
+        }
+      },
+    });
+    dlg.card.insertBefore(msg, dlg.card.querySelector('.req-dlg-btns'));
+    openModal(dlg.card, { trigger, first: dlg.first, canClose: () => !busy });
+  }
+
   function header(f) {
     const save = () => act(async () => {
       try {
@@ -3420,7 +3517,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('div', { class: 'req-chips' },
           h('span', { class: 'chip', text: targetLabel(f) }),
           h('span', { class: 'chip', text: done ? `Interview done · ${plural(rounds, 'round')}` : `Round ${Math.min(rounds || 1, MAX_ROUNDS)} of ${MAX_ROUNDS}` }),
-          h('span', { class: 'chip', text: `${usd(f.costUsd)} so far` }),
+          h('span', { class: 'chip', text: `${f.anyEstimated ? '≈' : ''}${usd(f.costUsd)} so far` }),
+          f.modelLabel ? modelChip(document, f, (btn) => { void openModelDialog(f, btn); }) : null,   // 9c board 3: after the cost chip
           (f.attachments || []).length ? h('span', { class: 'chip', text: plural(f.attachments.length, 'file') }) : null,   // A8 (board 16)
           f.savedPath ? h('span', { class: 'chip', text: `Saved as ${f.savedPath}` }) : null,
           exportChip(f)),   // A6 board 28: the ticket, after the header chips

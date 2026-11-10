@@ -855,4 +855,15 @@ span.req-file-name{color:var(--ink)}
 .req-new-note > svg{flex:none;margin-top:2px}
 .req-new-note .req-new-use,.req-new-default .req-new-use{margin-left:4px}
 .req-new-fallback,.req-new-default,.req-new-harness{margin:8px 0 0}
+/* 9c boards 3, 4, 9: the feature's model chip and dialog, the brief's box and Refresh dialog. */
+.req-model-chip{display:inline-flex;align-items:center;gap:6px;font:inherit;font-weight:600;font-size:12px;color:var(--ink);background:var(--panel);border:1.5px solid var(--ink);border-radius:var(--r-xs);cursor:pointer}
+.req-model-chip:hover{background:var(--hover)}
+.req-model-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-dlg-wrap .card.req-dialog.req-model-dialog{width:min(520px,100%)}
+.req-dlg-wrap .card.req-dialog.req-brief-refresh{width:min(600px,100%)}
+.req-model-dialog .req-who-box,.req-brief-refresh .req-who-box{display:flex;flex-direction:column;gap:0}
+.req-model-dialog .req-who,.req-brief-refresh .req-who{margin-bottom:0}
+.req-model-applies{margin:8px 0 0}
+.req-brief-who{margin:0}
+.req-brief-who .req-who{margin-bottom:0}
 @media (max-width:600px){.req-who{grid-template-columns:1fr}}
