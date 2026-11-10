@@ -139,7 +139,7 @@ Set these where worca runs (for Railway: on the `worca` service).
 | `WORCA_ALLOWED_HOSTS` | `worca.example.com` | Hostnames accepted in `Host` and `Origin` besides loopback. Comma-separated. A leading dot (`.example.com`) matches subdomains, but prefer the exact name. On Railway add `healthcheck.railway.app` (see [deploy-railway.md](deploy-railway.md)). |
 | `WORCA_CF_ACCESS_TEAM_DOMAIN` | `acme.cloudflareaccess.com` | Your team domain. Turns on the token check. |
 | `WORCA_CF_ACCESS_AUD` | `4714c1…` | The application's AUD tag. Tokens issued for any other application are refused. |
-| `WORCA_HOST` | `::` | Listen address. Must be non-loopback so `cloudflared` in another container can reach worca; `::` accepts IPv6 and IPv4. Without `WORCA_ALLOWED_HOSTS` a non-loopback bind still answers only callers on the same machine (a loopback TCP peer, or Docker's gateway in the worca image): a network caller gets a 403 even with `Host: localhost`. |
+| `WORCA_HOST` | `::` | Listen address. Must be non-loopback so `cloudflared` in another container can reach worca; `::` accepts IPv6 and IPv4. Without `WORCA_ALLOWED_HOSTS` a non-loopback bind still answers only callers on the same machine (a loopback TCP peer, or the container network's gateway in the worca image: Docker's bridge, or the pod network's on Kubernetes): a network caller gets a 403 even with `Host: localhost`. |
 | `WORCA_INSECURE_NO_IDENTITY_CHECK` | `1` | Runs with an allowlist but **no** token check, trusting the proxy alone. Never needed with Cloudflare Access; it exists for proxies that sign nothing. |
 
 ### Worca refuses to start if the setup is unsafe

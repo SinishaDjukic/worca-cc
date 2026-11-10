@@ -114,6 +114,7 @@ for it, which you review before it runs. More in [Runs](docs/runs.md).
 | | Team metrics and team policy, shared through git | [Team metrics](docs/team-metrics.md), [Team policy](docs/team-policy.md) |
 | | Labs features behind flags | [Feature flags](docs/feature-flags.md) |
 | Deployment | Container image, hosted behind Cloudflare Access, credential broker | [Docker](docs/docker.md), [Railway](docs/deploy-railway.md), [Remote access](docs/remote-access.md), [Credential broker](docs/credential-broker.md) |
+| | Worker containers: one controller, and a container or Kubernetes pod per run and chat thread | [Worker containers](docs/workers.md), [Kubernetes](docs/kubernetes.md) |
 
 ![A finished run, "CSV export for contacts", on its Diff tab: 4 files changed (+36 −0) in a file tree beside the highlighted patch of src/routes/contacts.js, with the run's worca-cc/ branch, its time and cost, and the Create PR and Publish branch buttons](docs/screenshots/run-detail.png)
 
