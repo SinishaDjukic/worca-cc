@@ -27,8 +27,8 @@ before it closes on unsaved changes.
 
 ### Harnesses, providers and models
 
-A **harness** runs the agents: Claude Code, Codex, Copilot, Cursor or Goose, picked per
-run. A **provider** is where a model's tokens are billed: a harness's own
+A **harness** runs the agents: Claude Code, Codex, Copilot, Cursor, Gemini CLI, Goose,
+OpenCode or Qwen Code, picked per run (see [Engines](#engines)). A **provider** is where a model's tokens are billed: a harness's own
 sign-in, or an endpoint. A **model** sits on one provider. Which harnesses can
 run a model follows from its connection, never from a setting:
 
@@ -81,29 +81,63 @@ set the key.
 file adds, worca's fail-closed read and write guards included. A spawn that
 carries one of those guards also drops both keys from the shell's env.
 
+## Engines
+
+Agents run on Claude Code by default. The other engines are all in **beta**: OpenAI's
+[Codex](#codex) CLI, GitHub's [Copilot CLI](#github-copilot-cli), Cursor's
+[CLI agent](#cursor), Google's [Gemini CLI and Qwen Code](#gemini-cli-and-qwen-code),
+[Goose](#goose) and [OpenCode](#opencode).
+
+- Pick one per run with **Engine** on New pipeline (Advanced) or
+  `--engine claude|codex|copilot|cursor|gemini|goose|opencode|qwen`, or set a default on the
+  Models page's **Engines** card or in a project's settings.
+- Each needs its own CLI installed and signed in; each section below says how.
+- The beta engines hold guardrail rules only in part, so a run under Normal or Strict needs
+  **Allow unguarded** (`--allow-unguarded-engine`), or Permissive (`--guardrails permissive`); the partial
+  rules still apply, and the run log lists what is held.
+- Copilot, Cursor, Gemini CLI and Qwen Code report no dollar cost; Goose and OpenCode price
+  what they know. Each section's **Cost** note says how worca shows it.
+- Chat runs on every engine but Cursor ([Chat](#chat)).
+- A model's connection decides which engines can run it
+  ([Harnesses, providers and models](#harnesses-providers-and-models)).
+
+![New pipeline in Advanced mode for the nimbus-crm project: the Workflow picker on Auto beside the Engine picker set to Codex (Beta), the hint that Codex runs this pipeline including titles and summaries, a typed task to add an Idempotency-Key header to POST /contacts, and the Branches table starting from main, up to date](screenshots/engine-picker.png)
+
 ## The catalog
 
 The Models page is the catalog and nothing else. Above the rows sit a search
 box (id, label or upstream id) and filter chips — *All*, *Yours*, *Built-in*,
 *Plugin*, *Team*, *Needs setup*, plus *Just imported* right after an import.
 Each group folds, with the count in its header; built-in models start folded.
+*Hide built-in models* (`hideBuiltinModels`) drops the built-ins from every picker; their ids
+still resolve.
+
+*Add model* registers any model id (a proxy, a fine-tune, an alternative provider), declares
+which effort levels it supports, and attaches per-model routing env (for example
+`ANTHROPIC_BASE_URL`) that is merged into that model's agent spawns. An entry that routes to
+a custom endpoint also gets Claude Code's internal tier keys
+(`ANTHROPIC_DEFAULT_HAIKU_MODEL`, `…_SONNET_…`, `…_OPUS_…`, `…_FABLE_…`) set to its own id
+wherever its env leaves them unset, so the CLI's own calls (session titles, a Task's
+`model: haiku`) never fall back to the Anthropic API.
 
 ## Model roles
 
 Every model slot that has no value of its own falls back to one of three
-roles. The Roles card on the Models page (above the Engines card) sets them:
+roles. Set them once in the setup assistant (its Models step), or on the Roles
+card of the Models page (above the Engines card). Everything else then follows
+them: you only set a model elsewhere to override a role.
 
 | Role | Setting key | What it covers |
 |---|---|---|
 | Deep thinking | `deep` | Plans and reviews: the Plan, Plan review, Refine plan, Review implementation, Deck review and Bug Root Cause steps, Away mode's decider (`nightMode.deciderModel`) and the Design page's lead (`designLead`) |
-| Everyday coding | `everyday` | Every other step, Chat (`askModels`), Agent generation (`agentGenModel`), the Requirements interview (`requirementsInterview`), Claude's Auto classifier (`autoWorkflowModel`) and Design builders (`designBuilder`) |
-| Quick jobs | `quick` | Titles (`titleModel`), Run naming (`namingModel`), Command summaries (`commandSummaryModel`), PR description (`prDescriptionModel`), Memory defragment (`memoryDefrag`, including its step), Workspace scan (`workspaceScan`, the scan model only) and every `utilityModels.<engine>.*` job, Codex's Auto classifier included (not `secondOpinion`, which has no role) |
+| Everyday coding | `everyday` | Every other step, Chat (`askModels`), Agent generation (`agentGenModel`), the Requirements interview (`requirementsInterview`), Claude's Auto classifier (`autoWorkflowModel`), the Workspace scan (`workspaceScan`, the scan agent; it surveys every member and writes the cross-project synthesis) and Design builders (`designBuilder`) |
+| Quick jobs | `quick` | Titles (`titleModel`), Run naming (`namingModel`), Command summaries (`commandSummaryModel`), PR description (`prDescriptionModel`), Memory defragment (`memoryDefrag`, including its step) and every other `utilityModels.<engine>.*` job, Codex's Auto classifier included (not `secondOpinion`, which has no role) |
 
 Where a slot looks, in order:
 
 - **Steps:** the node's own pick, the project's step model, your or the team's
-  step model, the workflow template's own model, else Worca's factory default
-  for that slot, then the role. A run started
+  step model, the workflow template's own model, then the role, else Worca's
+  factory default for that slot. A run started
   with its own model (`--model`) uses that model for every unset step instead
   of the role, and an Auto run skips the role, as it skips your step models.
 - **Helper jobs:** the job's own setting, then the role, then Worca's factory
@@ -115,10 +149,18 @@ Where a slot looks, in order:
 (`designModels.<engine>.lead|builder`, a `{ model, effort }` pair). An unset row falls back to its role, and a
 design's own pick in its composer wins over the row (see [Design › Models](design.md#models)).
 
-Roles are kept per harness (`modelRoles.claude`, `modelRoles.codex`): a Claude
-run never reads the Codex roles, and a harness with no roles keeps today's
-fallbacks. With no `modelRoles` at all, every slot resolves exactly as it did
-before roles existed.
+Roles are kept per harness (`modelRoles.claude`, `modelRoles.codex`,
+`modelRoles.copilot`, … one per engine): a Claude run never reads the Codex
+roles, and a harness with no roles keeps today's fallbacks. With no
+`modelRoles` at all, every slot resolves exactly as it did before roles
+existed. Every engine has roles, so a Copilot, Cursor, Gemini CLI, Qwen Code,
+Goose or OpenCode run takes its steps' models from that engine's roles. Helper
+jobs still run on Claude or Codex only, so the other engines' roles cover
+steps and Chat. On OpenCode, which refuses a step that names no model, roles
+are the simple way to give every step one. The setup assistant shows roles for
+Claude, the engines it found ready and your run engine; the Models page's
+engine switch (Expert) shows every engine. A team policy's `models.roles` and a
+shared team setup carry Claude's and Codex's roles only.
 
 A role names a catalog model that runs on its harness; the server refuses any
 other and stores the catalog's own spelling of the id (`Claude-Opus-5-5` is
@@ -147,13 +189,13 @@ their hint, because it applies to role reviews only:
 | Step models › Requirements Review | role reviews of the requirements (Shaper with requirements first) | Sonnet 5.5 · medium |
 | Helper jobs › Second-opinion reviewer | the one role a role review names as its second opinion (Shaper's Product reviewer) | Opus 5.5 · medium |
 | Helper jobs › Memory defragment | the Memory defragment run | Sonnet 5 |
-| Settings › Runs › Workspaces | the workspace scan | Sonnet 5 · medium, project agents `sonnet` · medium |
+| Settings › Runs › Workspaces | the workspace scan | your Everyday coding role (else Sonnet 5 · medium), project agents `sonnet` · medium |
 
-The factory default sits where the template's own model used to, so a node
-pick, a project pick and your step model still win over it. On the Plan Review
-step it applies to role reviews only: a plain plan review step (Default, Auto)
-keeps your Deep thinking role. Memory defragment and the workspace scan take
-the Quick jobs role first, as before.
+The factory default comes after your role: a node pick, a project pick, your
+step model and your role all win over it, so it only fills a slot nothing else
+names. On the Plan Review step it applies to role reviews only: a plain plan
+review step (Default, Auto) keeps your Deep thinking role. Memory defragment
+takes the Quick jobs role first, and the workspace scan the Everyday coding role.
 
 **Second-opinion reviewer** (`secondOpinionModel` on Claude, a `{ model, effort }`
 pair; `utilityModels.codex.secondOpinion` on Codex) is a helper job of its own.
@@ -549,6 +591,11 @@ worca models set openrouter apiKey='${OPENROUTER_KEY}'   # openai provider → O
 A `worca --model copilot-gpt-5 --prompt …` run starts its own bridge.
 
 ## Plugins and team policy
+
+*Share as plugin…* on the Models page exports your models as a plugin scaffold. Each env
+value is **Include value** (committed), **Omit**, or **Require at install**: kept out of the
+repository as a secret each teammate enters once, after installing, under the plugin's
+*Model secrets*.
 
 A plugin manifest's `models[]` entry may carry the same `upstream` block
 (`provider`, `api`, `model`, optional `baseUrl` / `headers` / `capabilities`).

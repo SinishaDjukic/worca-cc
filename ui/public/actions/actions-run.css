@@ -119,3 +119,15 @@ button.act-srow-name{cursor:pointer}
 .badge.act-kept{background:var(--blue-bg);color:var(--blue-ink)}
 .shipit-try{display:flex;gap:8px;align-items:center;margin:10px 0}
 .shipit-try[hidden]{display:none}
+/* In-flight states (Check out, setup, Discard, Start): one spinner, drawn in the text colour so it follows light and
+   dark. A busy button keeps its place in the row; the status line under it says what is happening now. */
+.act-spin{display:inline-block;flex:none;width:12px;height:12px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:ws-spin .8s linear infinite;vertical-align:-2px}
+.btn .act-spin{margin-right:6px}
+.act-status{margin:0;font-size:13px;line-height:1.5;color:var(--ink-2)}
+.act-status > .act-spin{margin-right:8px}
+.act-status .act-cmd{font-family:var(--mono);font-size:12px;color:var(--ink);overflow-wrap:anywhere;min-width:0}
+.act-status .act-elapsed{font-variant-numeric:tabular-nums;color:var(--ink)}
+.act-starting{display:inline-flex;align-items:center;gap:6px;color:var(--ink-2)}
+@media (prefers-reduced-motion:reduce){.act-spin{animation:none}}
+/* Forced colours paint a transparent border in CanvasText: the spinner would close into a full ring. */
+@media (forced-colors:active){.act-spin{border-right-color:Canvas}}

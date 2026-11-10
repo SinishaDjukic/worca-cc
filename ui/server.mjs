@@ -396,6 +396,7 @@ import { parseReleaseChoice } from '../src/shared/release-version.mjs';
 import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, sourcePushRemote, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
+import { getReadiness, reevaluateReadiness, reevaluateAllReadiness, evaluateAddedProject, watchReadiness, readinessAfterSettingsPatch } from '../src/core/repo-readiness/projects.mjs';
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, prBaseBranch, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips, tipsRelation,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
@@ -416,7 +417,9 @@ import { forkRefusal, workItemIdFromSourceRef, prSummary, workItemSummaries } fr
 import { forkRefusal as bitbucketForkRefusal } from '../src/core/pr/bitbucket.mjs';
 // Forges whose PRs worca opens over REST (pr/azure.mjs, pr/bitbucket.mjs): gh body edits and GitHub "Closes" lines skip them.
 const REST_PR_FORGES = new Set(['azure', 'bitbucket']);
-import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
+import { checkRunPrBody, resolveRunPr } from '../src/core/pr-auto.mjs';
+import { createPrAutoFinisher, setPrAutoFinisher, prAutoFinisher } from '../src/core/pr-auto-finish.mjs';
+import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock, openWorkspaceRunPrs, createPrWithDraftRetry } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
 import { createRefResolver } from '../src/core/ask/refs.mjs';
 import { REFS_MAX } from '../src/shared/chip-refs.mjs';
@@ -488,7 +491,7 @@ import { onboardingPrefs, setOnboardingPrefs } from '../src/core/settings.mjs';
 import { settingsErrorReply, asSettingsField } from '../src/core/settings-errors.mjs';
 import { configuredClaudeBin, onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
 import { probeClaudeAuth, CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../src/core/preflight.mjs';
-import { failedBecauseSignedOut, claudeChatSignedOut } from '../src/core/claude-auth.mjs';
+import { failedBecauseSignedOut, claudeChatSignedOut, claudeRunSignedOut } from '../src/core/claude-auth.mjs';
 import { createAgentGen, resolveAgentGenModel } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
 import {
@@ -1281,6 +1284,7 @@ function emitPluginsChanged(action) { emitChanged('plugins-changed', action); }
 metricsEvents.on('changed', (e) => emitChanged('team-metrics-changed', e && e.action ? e.action : null));
 policyEvents.on('changed', (e) => emitChanged('team-policy-changed', e && e.action ? e.action : null));
 projectSyncEvents.on('changed', (e) => emitChanged('project-sync-changed', e && e.projectKey ? e.projectKey : null));
+watchReadiness({ projectSyncEvents, policyEvents, emitChanged, broadcast });
 // D6: every open tab rewrites <html data-flags> and #flag-gates, without a reload.
 flagEvents.on('changed', (flags) => broadcast({ type: 'flags', flags }));
 
@@ -1517,6 +1521,8 @@ function wireRun(entry) {
       }
       if (name === 'done') {
         entry.status = (payload && payload.status) || 'done';
+        // A finished run adds to the project's run history, a readiness signal (used.mjs).
+        if (entry.projectDir && !entry.workspaceId) void reevaluateReadiness(projectKey(entry.projectDir));
         // Remember the pause reason for summarizeRuns (hello). Reset on every
         // done so a later reasonless finish cannot leave a stale cost banner.
         entry.pauseReason = (payload && payload.reason) || null;
@@ -2931,6 +2937,8 @@ const startRunHandler = async (req, res) => {
     if (body.noMemory != null && typeof body.noMemory !== 'boolean') return badRequest(res, 'noMemory must be true or false');
     const noMemory = body.noMemory === true;
     if (noMemory && memoryScope) return badRequest(res, 'noMemory cannot be set on a Memory defragment run');
+    const prBody = checkRunPrBody(body.pr);   // before any side effect: a refused pr creates no run and no ticket
+    if (!prBody.ok) return badRequest(res, prBody.error);
     // Settings › Memory: a defragment run may name its model/effort PAIR at start — tier 1, above
     // the setting (memory-defrag-model.mjs). Defragment runs only: every other workflow picks its
     // models per node, and a body model there stays ignored exactly as before. The shape here; the
@@ -3002,6 +3010,12 @@ const startRunHandler = async (req, res) => {
     const engineShape = runEngineOpts(body, hasWorkspace ? { workspace: true } : { projectDir: resolveProjectDir(body.projectDir) });
     if (engineShape.error) return badRequest(res, engineShape.error);
     const runEngine = engineShape.opts;
+    // Signed out with no routed model, a Claude run can only fail on its first call: say so now, not as a paused run.
+    if (!internal && !scanTarget && body.mock !== true && !mockEnabled({}) && (runEngine.engine || 'claude') === 'claude'
+      && workflowNeedsModel(workflowRow)
+      && await claudeRunSignedOut(hasWorkspace ? '' : (resolveProjectDir(body.projectDir) || ''))) {
+      return res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
+    }
 
     // Per-run agent picks (the Ask run card's lane; docs/models.md "Per-agent models for one run"): `overlay.nodes`
     // merges PER NODE over the project's saved agent settings for THIS run only and never writes them. Checked here
@@ -3062,6 +3076,8 @@ const startRunHandler = async (req, res) => {
     // auto-names its hidden branch, so a typed feature name is ignored (and never date-suffixed).
     // A Workspace scan or a memory defragment lands no work: the flag does not apply there.
     const sameAsSource = body.sameAsSource === true && !scanTarget && !memoryScope;
+    // PR when the run finishes: these runs never open one through the finisher (src/shared/pr-auto.mjs PR_EXEMPT).
+    const prExempt = req._automation ? 'automation' : req._prWatchRunId || startedBy === 'pr-watch' ? 'pr-watch' : roundOf ? 'round' : resolveOf ? 'resolve' : scanTarget || memoryScope || workflowId === MEMORY_DEFRAG_WORKFLOW_ID ? 'no-work' : sameAsSource ? 'same-as-source' : null;
     // Smart run naming: a title that was given is kept (typed, or suggested on the form); read at start and at fire time.
     const smartNamingOn = flagEnabled('smartRunNaming');
     const titleLocked = smartNamingOn && typeof body.title === 'string' && !!body.title.trim();
@@ -3238,7 +3254,9 @@ const startRunHandler = async (req, res) => {
         if (blocked) return res.status(blocked.status).json(blocked.body);
       }
 
+      const prAuto = await resolveRunPr({ pr: prBody.pr, shape, workspaceId: ws.id, exempt: prExempt });
       orch = await createOrchestratorFor({
+        prAuto,
         workspace: {
           id: ws.id,
           key: ws.id, // ws.id === workspaceKey(ws); routes artifacts to its store
@@ -3412,7 +3430,9 @@ const startRunHandler = async (req, res) => {
         if (blocked) return res.status(blocked.status).json(blocked.body);
       }
 
+      const prAuto = await resolveRunPr({ pr: prBody.pr, shape, projectDir, exempt: prExempt });
       orch = await createOrchestratorFor({
+        prAuto,
         projectDir,
         workMode,
         ...(projectRow && workMode !== 'git' ? { projectKey: projectRow.key } : {}),   // S52 / S68: git runs keep projectKey(dir)
@@ -4136,6 +4156,8 @@ function afterRunSettled(orch) {
       card = Promise.resolve().then(() => offerShipCard(st.id))
         .catch((err) => console.error(`[worca-ui] ship card failed: ${err?.message || err}`));
     }
+    // PR when the run finishes, after the Ship card exists (a ship flips it); never throws.
+    card = Promise.resolve(card).then(() => prAutoFinisher()?.afterSettled(st)).catch((err) => console.error(`[worca-ui] PR when done failed: ${err?.message || err}`));
     if (!ranMergeBack(st)) return card;
     emitChanged('pipelines-changed', 'updated');
     setTimeout(() => { void schedulerTick(); }, 0);
@@ -4640,6 +4662,8 @@ const chatBridge = createConversationBridge({
         const engine = askTurnEngine(threadId, fresh, mv.model);
         const got = await fetchChatFiles(fitted, {
           fetchFn: chatFileFetch,
+          // Files a plugin announced by opaque ref: its worker downloads them with its own credential (never the host).
+          fetchRef: (ref, o) => channelHost.fetchFile({ plugin: inbound.plugin, channelId: inbound.channelId, ref: ref.ref, ...o }),
           allowedHosts: chatAttachmentHosts(inbound.plugin, inbound.channelId),
           refuse: (cls, name) => { const r = chatAttachRefusal({ engine, kind: cls.kind, pdf: cls.mime === 'application/pdf' }); return r ? `${r}: ${name}` : null; },
           log: (level, m) => console.error(`[worca-ui] chat ${level}: ${m}`),
@@ -4960,14 +4984,14 @@ function broadcastFeaturesOf(lookup) {
 
 // ── D24, D25: Ship as ─────────────────────────────────────────────────────────────────────────────────────────
 /** The last slice's run, its PR target and the feature's base (the chain root), or { error }. */
-function shipCtxOf(view) {
+function shipCtxOf(view, { base: forced = null } = {}) {
   const last = view.slices[view.slices.length - 1];
   const state = last && last.pipelineId ? readPipelineStateById(last.pipelineId) : null;
   if (!state) return { error: 'the last slice has no run' };
   const target = prTargetFor(state);
   if (target.error) return { error: target.error };
   if (!target.repoDir || !target.feature) return { error: 'the last slice has no branch to ship' };
-  const base = chainBaseBranchesOf(last.pipelineId)[0] || null;
+  const base = forced || chainBaseBranchesOf(last.pipelineId)[0] || null;
   if (!base) return { error: 'the feature has no base branch' };
   return { state, target, base };
 }
@@ -4994,22 +5018,22 @@ const featureShipping = (id) => SHIPPING.has(String(id));   // s3 (D9): the acce
 function storeReadyPr(pid, pr) {
   const cur = readPrState(pid);
   const { fixing, url, number, state, ...verdict } = cur && cur.url === pr.url ? cur : {};
-  persistPrState(pid, { url: pr.url, number: pr.number ?? number ?? null, state: 'OPEN', verdict: { ...verdict, draft: false } });
+  persistPrState(pid, { url: pr.url, number: pr.number ?? number ?? null, state: 'OPEN', verdict: { ...verdict, draft: !!pr.draft } });
 }
 // Shaper s4: one ship path for the group page route and the Ship card. → { status, body }. `release` = { version } |
 // null (validated by the caller).
-async function shipFeatureNow(id, mode, { actor = null, release = null, watch = false } = {}) {
+async function shipFeatureNow(id, mode, { actor = null, release = null, watch = false, draft = false, base = null, onDraftFallback = null } = {}) {
   if (!SHIP_MODES.includes(mode)) return { status: 400, body: { error: 'mode must be stacked or one' } };
-  if (SHIPPING.has(id)) return { status: 409, body: { error: 'this feature is already shipping' } };
+  if (SHIPPING.has(id)) return { status: 409, body: { code: 'SHIPPING', error: 'this feature is already shipping' } };
   const view = featureView(id, { live: liveSliceOf });
   if (!view) return { status: 404, body: { error: 'unknown feature' } };
-  if (view.ship.mode) return { status: 409, body: { error: `this feature was already shipped as ${view.ship.mode === 'one' ? 'one PR' : 'stacked PRs'}` } };
+  if (view.ship.mode) return { status: 409, body: { code: 'ALREADY_SHIPPED', error: `this feature was already shipped as ${view.ship.mode === 'one' ? 'one PR' : 'stacked PRs'}` } };
   const round = liveRoundOf(id);                    // Shaper s5 (D16): a live round holds Ship back
   if (round) {
     const s = view.slices.find((x) => (x.rounds || []).some((r) => r.pipelineId === round.pipelineId));
-    return { status: 409, body: { error: `a round of run ${s ? s.index : '?'} is still going` } };
+    return { status: 409, body: { code: 'ROUND_LIVE', error: `a round of run ${s ? s.index : '?'} is still going` } };
   }
-  if (!view.ship.ready) return { status: 409, body: { error: 'every slice must be done before the feature ships' } };
+  if (!view.ship.ready) return { status: 409, body: { code: 'NOT_READY', error: 'every slice must be done before the feature ships' } };
   // Shaper requirements s3 (D8): every agreed requirement is marked before any PR, changelog, push or forge call.
   const unmarked = flagEnabled('shapeRequirements') && acceptanceRefusal(view);
   if (unmarked) return { status: 409, body: unmarked };
@@ -5020,7 +5044,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
     let shown = view;
     // D5: One closes slice drafts only; a ready slice PR (made by a partly finished stacked ship) is never closed.
     if (mode === 'one' && shown.slices.some((s) => s.pr && s.pr.url && s.pr.state !== 'CLOSED' && !s.pr.draft)) {
-      return { status: 409, body: { error: 'a run in this feature already has a PR: create one PR per run' } };
+      return { status: 409, body: { code: 'HAS_SLICE_PR', error: 'a run in this feature already has a PR: create one PR per run' } };
     }
     clearShip(id);                                   // a withdrawn ship (its PRs all closed unmerged); no-op otherwise
     // A slice whose PR was closed gets a new one (openMemberPr opens past a CLOSED PR).
@@ -5036,7 +5060,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
       shown = featureView(id, { live: liveSliceOf }) || view;
     }
     const input = await featureShipInput(shown);
-    const ctx = shipCtxOf(shown);
+    const ctx = shipCtxOf(shown, { base });
     if (ctx.error) return { status: 409, body: { error: ctx.error } };
     let onePr = null;
     const out = await shipFeature({ feature: input, mode, maxBody: PR_BODY_MAX - 2000 }, {
@@ -5049,13 +5073,13 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
         return p.ok ? { ok: true } : { ok: false, error: p.stderr };
       },
       openOnePr: async ({ pipelineId, title, body }) => {
-        const r = await createRunPr({ id: pipelineId, state: ctx.state, target: ctx.target, base: ctx.base,
-          description: body, title, actor, preamble: false });
-        if (r.ok) onePr = r.pr;
+        const r = await createPrWithDraftRetry(createRunPr, { id: pipelineId, state: ctx.state, target: ctx.target, base: ctx.base,
+          description: body, title, actor, preamble: false, draft }, onDraftFallback);
+        if (r.ok) onePr = { ...r.pr, newDraft: !!r.newDraft };
         return r.ok ? { ok: true, url: r.pr.url, existed: !!r.pr.existed } : { ok: false, error: r.error };
       },
       adoptOnePr: async ({ url, body }) => {
-        const r = await markPrReady({ prUrl: url });
+        const r = draft ? { ok: true } : await markPrReady({ prUrl: url });   // a draft ship leaves the PR it found a draft
         if (!r.ok) return r;
         if (!REST_PR_FORGES.has(forgeOfPrUrl(url))) await editPrBody({ projectDir: ctx.target.repoDir, prUrl: url, body }).catch(() => null);
         return { ok: true };
@@ -5076,20 +5100,21 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
     if (!out.ok) return { status: out.status, body: { error: out.error } };
     // The one PR is every slice's PR, as a chain shipped as One records it on every run: the group reads In review.
     if (out.mode === 'one' && out.prUrl) {
-      for (const s of shown.slices) if (s.pipelineId) storeReadyPr(s.pipelineId, { url: out.prUrl, number: onePr && onePr.url === out.prUrl ? onePr.number : null });
+      for (const s of shown.slices) if (s.pipelineId) storeReadyPr(s.pipelineId, { url: out.prUrl, number: onePr && onePr.url === out.prUrl ? onePr.number : null, draft: !!onePr?.newDraft });
     }
     recordShip(id, { mode: out.mode, prUrl: out.prUrl, closed: out.closed, release: release ? { version: release.version, target: ctx.base } : null });
     appendAuditById(ctx.state.id, `Feature shipped as ${out.mode === 'one' ? 'one PR' : 'stacked PRs'}${byActor(actor)}${out.prUrl ? `: ${out.prUrl}` : ''}`
       + `${release ? ` · draft release ${release.version} after merge` : ''}`, { actor });
     broadcastFeature(id);
     syncShipCard(id);
+    prAutoFinisher()?.onShipped(id);
     emitChanged('pipelines-changed', 'updated');      // the Runs list and the group page reload History and run groups
     if (watch) {
       const after = featureView(id, { live: liveSliceOf }) || shown;   // the slice PRs now marked ready
       const pairs = out.prUrl ? [[out.prUrl, ctx.state.id]] : after.slices.filter((s) => s.pr && s.pr.url).map((s) => [s.pr.url, s.pipelineId]);
       await watchShipped(pairs, ctx.target.repoDir, actor);
     }
-    return { status: 200, body: { ok: true, mode: out.mode, prUrl: out.prUrl, warnings: out.warnings } };
+    return { status: 200, body: { ok: true, mode: out.mode, prUrl: out.prUrl, warnings: out.warnings, newDraft: !!onePr?.newDraft } };
   } finally { SHIPPING.delete(id); }
 }
 /** Watch PR for each shipped PR (D18): the push remote the PR came from, as POST /api/pr does. Best effort. */
@@ -5909,6 +5934,7 @@ async function applyProjectSettingsPatch(project, patch) {
   else write();
   if (teamSwitch && isTeamMemoryOn(project.key) !== wasOn) void teamMemorySettingChanged(project.key, project.path).catch(teamWarn);   // on: fetch now · off: drop the queue
   emitChanged('settings-changed');
+  readinessAfterSettingsPatch(project, patch);
   return projectSettingsState(project.path);
 }
 const commentIdParam = (res, value) => {
@@ -6312,67 +6338,32 @@ async function automationPlanText(pipelineId) {
   const hit = await resolveIndexedArtifactForRow(row, plans[plans.length - 1].relPath);
   return hit ? hit.text : null;
 }
-/** Open the fix run's draft PR (createRunPr: the issue source adds `Closes #N`) and turn on Watch PR for it. A
- *  workspace run opens one per changed member (automationWorkspacePrs). */
-async function automationDraftPr(pipelineId) {
+/** Open a run's PR (createRunPr: the issue source adds `Closes #N`) and turn on Watch PR for it. The defaults are the Git automation's
+ *  draft; the PR-when-done step passes `draft`, the starter as `actor` and `onDraftFallback`. A workspace run opens one per changed member. */
+async function automationDraftPr(pipelineId, { draft = true, actor = 'automation', onDraftFallback = null } = {}) {
   if (!(await anyPrHost())) return { ok: false, error: 'no pull request host is available (install the GitHub CLI)' };
   const state = readPipelineStateById(pipelineId);
   if (!state) return { ok: false, error: 'the run is gone' };
-  if (state.target === 'workspace') return automationWorkspacePrs(pipelineId, state);
+  if (state.target === 'workspace') return automationWorkspacePrs(pipelineId, state, { draft, actor, onDraftFallback });
   const target = prTargetFor(state);
   if (target.error || !target.repoDir) return { ok: false, error: target.error || 'the run has no project' };
   const walked = chainBaseBranchesOf(pipelineId);
   const chain = (walked.length ? walked : (target.source ? [target.source] : [])).filter((b) => b !== target.feature);
   const base = chain[0] || null;
   if (!base) return { ok: false, error: 'the run has no base branch' };
-  let out = await createRunPr({ id: pipelineId, state, target, base, draft: true, actor: 'automation' });
-  if (!out.ok && /draft/i.test(out.error || '')) out = await createRunPr({ id: pipelineId, state, target, base, draft: false, actor: 'automation' });
+  const out = await createPrWithDraftRetry(createRunPr, { id: pipelineId, state, target, base, draft, actor }, onDraftFallback);
   if (!out.ok) return { ok: false, error: out.error };
-  if (watchablePrUrl(out.pr.url)) {
+  if (!out.pr.existed && watchablePrUrl(out.pr.url)) {   // a PR a person already opened keeps its own Watch state
     try {
-      setWatch({ prUrl: out.pr.url, pipelineId: out.pipelineIdForPr, memberKey: '', pushRemote: out.pushRemote, enabled: true, enabledBy: 'automation' });
+      setWatch({ prUrl: out.pr.url, pipelineId: out.pipelineIdForPr, memberKey: '', pushRemote: out.pushRemote, enabled: true, enabledBy: actor });
       broadcast(prWatchFrame(out.pipelineIdForPr, null));
       kickPrWatch();
-    } catch (err) { console.error(`[worca-ui] automation: could not watch ${out.pr.url}: ${err?.message || err}`); }
+    } catch (err) { console.error(`[worca-ui] ${actor}: could not watch ${out.pr.url}: ${err?.message || err}`); }
   }
-  return { ok: true, url: out.pr.url };
+  return { ok: true, url: out.pr.url, fellBack: !!out.fellBack, existed: !!out.pr.existed, newDraft: !!out.newDraft };
 }
-/**
- * A workspace fix's PRs: one draft per member whose branch has commits (a member the planner left untouched gets
- * none), each on its own base, Watch PR on each, then the PRs cross-linked. Only the issue's own repository's PR
- * closes the issue (runSourceIssue; on Azure DevOps, links the work item). → { ok, url, prs } with `url` that PR's
- * (else the first), or { ok:false, error } when no member changed or none opened.
- */
-async function automationWorkspacePrs(pipelineId, state) {
-  const prs = []; let changed = 0;
-  for (const m of prStateMembers(state)) {
-    if (m.workMode === 'folder' || !m.projectDir || !m.feature || !m.source) continue;
-    if (!(await branchExists(m.projectDir, m.feature)) || !((await commitsAhead(m.projectDir, m.source, m.feature)) > 0)) continue;
-    changed++;
-    const target = prTargetFor(state, m.memberKey);
-    if (target.error) { prs.push({ name: m.name, repo: null, url: null, error: target.error }); continue; }
-    const open = (draft) => createRunPr({ id: pipelineId, state, target, base: m.source, memberKey: m.memberKey, draft, actor: 'automation' });
-    let out = await open(true);
-    if (!out.ok && /draft/i.test(out.error || '')) out = await open(false);
-    if (!out.ok) { prs.push({ name: m.name, repo: null, url: null, error: out.error }); continue; }
-    prs.push({ name: m.name, repo: out.repo, url: out.pr.url, closes: !!out.closes });
-    if (watchablePrUrl(out.pr.url)) {
-      try {
-        setWatch({ prUrl: out.pr.url, pipelineId: out.pipelineIdForPr, memberKey: m.memberKey, pushRemote: out.pushRemote, enabled: true, enabledBy: 'automation' });
-        broadcast(prWatchFrame(out.pipelineIdForPr, m.memberKey));
-      } catch (err) { console.error(`[worca-ui] automation: could not watch ${out.pr.url}: ${err?.message || err}`); }
-    }
-  }
-  if (!changed) return { ok: false, error: 'the run changed no repository' };
-  const opened = prs.filter((p) => p.url);
-  if (!opened.length) return { ok: false, error: prs.map((p) => `${p.name}: ${p.error}`).join('; ') };
-  kickPrWatch();
-  if (opened.length >= 2) {
-    const r = await crosslinkMemberPrs(pipelineId, readPipelineStateById(pipelineId) || state).catch((err) => ({ failed: [{ error: err?.message || String(err) }] }));
-    if (r.edited?.length) appendAuditById(pipelineId, `Cross-linked ${r.edited.length} pull requests to their siblings (automation).`, { actor: 'automation' });
-  }
-  return { ok: true, url: (opened.find((p) => p.closes) || opened[0]).url, prs };
-}
+/** A workspace run's PRs, one per changed member (src/core/workspace-prs.mjs openWorkspaceRunPrs). */
+const automationWorkspacePrs = (id, state, opts) => openWorkspaceRunPrs(id, state, opts, { prStateMembers, branchExists, commitsAhead, prTargetFor, createRunPr, watchablePrUrl, setWatch, broadcast, prWatchFrame, kickPrWatch, crosslinkMemberPrs, readPipelineStateById, appendAuditById });
 const automationHost = {
   listIssues: async ({ repo, since, etag }) => {
     const q = new URLSearchParams({ state: 'open', sort: 'updated', direction: 'asc', since, per_page: '50' });
@@ -6500,6 +6491,9 @@ const automations = createAutomationEngine({
   log: (m) => console.warn(`[worca-ui] ${m}`),
 });
 const kickAutomations = () => { void automations.runner.kick(); };
+// PR when a run finishes (src/core/pr-auto-finish.mjs): the server's PR paths and notices, plugged in once.
+setPrAutoFinisher(createPrAutoFinisher({ openRunPrs: automationDraftPr, openMemberPr, shipFeatureNow, postNotice: postAskSystemNotice, live: liveSliceOf, changed: emitChanged,
+  pushRemoteUrls: async (dirs) => (await Promise.all(dirs.map((dir) => pickPrRemotes({}, dir).catch(() => ({}))))).map((p) => p.pushR?.pushUrl || p.pushR?.fetchUrl).filter(Boolean) }));
 for (const mod of ROUTE_SEGMENTS[0]) mod.register(app);   // feature routes (#919), segment 0 of 5: before app.use('/api/automations', requireFlag('gitAutomations')); …
 
 app.use('/api/automations', requireFlag('gitAutomations'));
@@ -6673,7 +6667,7 @@ function handleTerminalMessage(ws, msg) {
  * Taking a value, not `req`, lets the stack loop (which runs after its response) call it too.
  */
 function ensureSetup(runId, pk, { enabled, rerun = false }) {
-  const key = `${runId}:${pk}`;
+  const key = `${runId}:${pk}`; let settled = false;   // settled: this job wrote a setup state (none / skipped / ok / failed)
   if (setupJobs.has(key)) return setupJobs.get(key);
   const job = (async () => {
     const rec = checkoutRecOf(runId, pk);
@@ -6682,8 +6676,8 @@ function ensureSetup(runId, pk, { enabled, rerun = false }) {
     if (!rerun && ['ok', 'none', 'skipped'].includes(status)) return true;
     if (!rerun && status === 'failed') return false;
     const cfg = readProjectActions(pk);
-    if (!cfg.setup) { setSetupState(runId, pk, { status: 'none', at: new Date().toISOString() }); return true; }
-    if (!enabled) { setSetupState(runId, pk, { status: 'skipped', at: new Date().toISOString() }); return true; }
+    if (!cfg.setup) { setSetupState(runId, pk, { status: 'none', at: new Date().toISOString() }); settled = true; return true; }
+    if (!enabled) { setSetupState(runId, pk, { status: 'skipped', at: new Date().toISOString() }); settled = true; return true; }
     const t0 = Date.now();
     setSetupState(runId, pk, { status: 'running', at: new Date().toISOString() });
     emitChanged('pipelines-changed', 'updated');
@@ -6695,11 +6689,11 @@ function ensureSetup(runId, pk, { enabled, rerun = false }) {
     } catch { /* start failed or timed out → failed below */ }
     const ok = end?.status === 'exited' && end.exitCode === 0;
     const ms = Date.now() - t0;
-    setSetupState(runId, pk, { status: ok ? 'ok' : 'failed', exitCode: end?.exitCode ?? null, at: new Date().toISOString(), ms });
+    setSetupState(runId, pk, { status: ok ? 'ok' : 'failed', exitCode: end?.exitCode ?? null, at: new Date().toISOString(), ms }); settled = true;
     if (ok) writeActionsMeta(pk, { lastSetupMs: ms });
     emitChanged('pipelines-changed', 'updated');
     return ok;
-  })().catch(() => false).finally(() => setupJobs.delete(key));
+  })().catch(() => false).finally(() => { setupJobs.delete(key); if (settled) emitChanged('actions-changed', 'setup-done'); });   // the tab follows actions-changed only: a frame once the job is gone ends "Setting up"
   setupJobs.set(key, job);
   return job;
 }
@@ -6893,7 +6887,7 @@ function stackedBaseFor(pipelineId, target) {
   try { return stackedPrBaseOf(pipelineId, chain) || chain[0] || null; } catch { return chain[0] || null; }
 }
 /** One ship flow: a member's own PR, ready for review, on its stacked base (feature slices and chain runs). */
-async function openMemberPr(pipelineId, { actor = null } = {}) {
+async function openMemberPr(pipelineId, { actor = null, draft = false, onDraftFallback = null } = {}) {
   const had = readPrState(pipelineId);
   if (had && had.url && had.state !== 'CLOSED') return { ok: true, existed: true, pr: had };   // once only
   const state = readPipelineStateById(pipelineId);
@@ -6902,9 +6896,12 @@ async function openMemberPr(pipelineId, { actor = null } = {}) {
   if (target.error || !target.repoDir || !target.feature) return { ok: false, status: 409, error: target.error || 'the run has no branch to ship' };
   const base = stackedBaseFor(pipelineId, target);
   if (!base) return { ok: false, status: 409, error: 'the run has no base branch' };
-  const out = await createRunPr({ id: pipelineId, state, target, base, actor });
+  const out = await createPrWithDraftRetry(createRunPr, { id: pipelineId, state, target, base, actor, draft }, onDraftFallback);
   if (!out.ok) appendAuditById(pipelineId, `Could not create the run's PR: ${out.error}`);
-  else broadcastFeaturesOf(() => { const at = featureOfPipeline(pipelineId); return at ? [at.featureId] : []; });
+  else {
+    if (out.newDraft) recordSliceDraft(pipelineId, out.pr.url);   // the feature page reads it as a draft until the feature ships
+    broadcastFeaturesOf(() => { const at = featureOfPipeline(pipelineId); return at ? [at.featureId] : []; });
+  }
   return out;
 }
 
@@ -6923,6 +6920,7 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   const picked = await pickPrRemotes(chosen, repoDir);
   if (picked.error) return { ok: false, status: picked.status, error: picked.error };
   const { remotes, pushRemote, baseRemote, pushR, baseR } = picked;
+  if (!remotes.length && (await listRemotes(repoDir)).ok) return { ok: false, status: 409, error: 'This project has no git remote, so there is nowhere to create a PR. Link a remote on its project page, or merge the branch locally.' };
   // A remote-tracking source (`origin/dev`) names the branch `dev` on the remote.
   base = await prBaseBranch(repoDir, base, remotes.map((r) => r.name));
   // Always target the chosen base repo explicitly (gh's default-repo guess prefers
@@ -7120,6 +7118,7 @@ async function startCloneJob(req) {
         .then(() => emitChanged('team-metrics-changed', 'discovered'))
         .catch(() => { /* offline or not a git repo: discovery retries hourly */ });
       discoverPolicy(project.path, { force: true }).catch(() => { /* offline: the background discovery retries */ });
+      void evaluateAddedProject(project.path);
       detectTeamMemorySoon(project.path);
     } catch (err) {
       Object.assign(job, { state: 'error', code: err instanceof CloneError ? err.code : 'failed', error: err && err.message ? err.message : String(err) });
@@ -7318,7 +7317,7 @@ registerMemoryRoutes('/api/memory/global', { family: 'global' });
 registerMemoryRoutes('/api/memory/projects/:key', { family: 'projects' });
 
 // Requirements (plans/requirements-design.md): product-owner feature specs, behind the `requirements` flag.
-registerRequirementsRoutes(app, { broadcast, deps: {
+registerRequirementsRoutes(app, { broadcast, server, deps: {
   startRun: (body, opts) => invokeStartRun(body, null, opts),   // D6: through the run handler, as PR watch does
   runSummary: requirementsRunSummary,
 } });
@@ -7445,18 +7444,18 @@ async function supersedeRescans(id) {
  * POST /api/workspaces/:id/scan (scanRequest), and tag its run as automatic. A workspace the
  * scan cannot read (a member that is not its own repository with a commit), a scan model that
  * no longer fits, or a signed-out CLI skips it with the reason — the page offers Re-scan.
- * { needsModel: true } when the workspace has no usable stored pick (the page asks the user).
+ * { needsModel: true } when the workspace has no usable stored pick (the page asks the user), unless `seedPick`
+ * (Ask's create card, #1129): a never-picked workspace then scans on Settings/defaults, saved as its pick.
  * @returns {Promise<{runId:string}|{skipped:string}|{needsModel:boolean}>}
  */
-async function startAutoRescan(ws, { workflowId = WORKSPACE_SCAN_WORKFLOW_ID } = {}) {
+async function startAutoRescan(ws, { workflowId = WORKSPACE_SCAN_WORKFLOW_ID, seedPick = false } = {}) {
   const problems = scanMemberProblems(ws.projectPaths);
   if (problems.length) return { skipped: `read-only workspace scan: ${problems.join('; ')}` };
   let models;
-  try { models = await scanModelsFor({}, ws.projectPaths, ws); }
+  try { models = await scanModelsFor({}, ws.projectPaths, ws);
+    if (models && models.needsModel && seedPick && !ws.scanModels) await setWorkspaceScanPick(ws.id, models = await scanModelsFor({}, ws.projectPaths, null)); }
   catch (err) { return { skipped: err && err.message ? err.message : String(err) }; }
-  // No usable stored pick (a legacy workspace, or one whose model left the catalog): the page
-  // opens the pick-a-model window and starts the scan itself; the member change stands.
-  if (models && models.needsModel) return { needsModel: true };
+  if (models && models.needsModel) return { needsModel: true };   // legacy, or its model left the catalog: the page asks
   if (!(models && modelHasBaseUrlRouting(models.scanModel))) {
     const { state } = await probeClaudeAuth({ bin: configuredClaudeBin(), mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) });
     if (state === 'signed-out') return { skipped: CLAUDE_SIGNED_OUT_MESSAGE };
@@ -7507,10 +7506,10 @@ function prunedNote(rec) {
  * always 'full'. A 'partial' whose stored map does not cover exactly the members (resynthBlocker)
  * runs 'full' instead, with a `note` saying why — decided HERE, before launch, so a partial run that
  * cannot work never starts (its seed would pause it, and a paused one owns the workspace).
- * Runs build their own graphs per member worktree from the registry at start.
+ * Runs build their own graphs per member worktree from the registry at start. `seedPick`: see startAutoRescan.
  * @returns {Promise<{mode:'none'|'partial'|'full', runId?:string, skipped?:string, needsModel?:boolean, note?:string}>}
  */
-async function afterMembersChanged(workspace, added = [], { rescan = 'full' } = {}) {
+async function afterMembersChanged(workspace, added = [], { rescan = 'full', seedPick = false } = {}) {
   for (const dir of added) {
     if (getProjectByPath(dir)?.vcs === 'none') continue;   // P5: a Folder member has no origin of its own (nested in a repository it would take that one's)
     discoverProject(dir, { force: true }).then(() => emitChanged('team-metrics-changed', 'discovered')).catch(() => { /* retried hourly */ });
@@ -7528,7 +7527,7 @@ async function afterMembersChanged(workspace, added = [], { rescan = 'full' } = 
   const told = note ? { note } : {};
   if (!autoRescanOn) return { mode, ...told, skipped: 'automatic re-scans are off (test seam)' };
   const workflowId = mode === 'partial' ? WORKSPACE_RESYNTH_WORKFLOW_ID : WORKSPACE_SCAN_WORKFLOW_ID;
-  try { return { mode, ...told, ...(await startAutoRescan(workspace, { workflowId })) }; }
+  try { return { mode, ...told, ...(await startAutoRescan(workspace, { workflowId, seedPick })) }; }
   catch (err) { return { mode, ...told, skipped: err && err.message ? err.message : String(err) }; }
 }
 
@@ -7608,20 +7607,19 @@ function workspacePickUsable(pick, models) {
  *  'workspace' — captured at creation, reused by auto re-scans), else Settings › Runs › Workspaces,
  *  else the defaults (only when a known catalog offers the default) — checked against the primary
  *  member's catalog. Throws on a bad explicit pick (400) or when no model is available (D19).
- *  A RE-SCAN of a workspace with no usable stored pick — every legacy pre-v57 workspace, or one
- *  whose model left the catalog — is NOT silently resolved: scanModelsFor returns the marker
- *  { needsModel: true, models: <PRIMARY_CATALOG> } and the caller asks the user to pick a model
- *  (D20). An explicit body.models always wins (the prompted client sends one; API/CLI callers can
+ *  A RE-SCAN with no usable stored pick (legacy, created pick-less, or its model left the catalog) runs
+ *  silently only when the Everyday coding role covers it; else the marker { needsModel: true, models }
+ *  asks the user (D20). An explicit body.models always wins (the prompted client sends one; API/CLI callers can
  *  still force a pick). */
 async function scanModelsFor(body, projectPaths, workspace = null) {
   const models = await listModels(primaryMemberOf(projectPaths));
-  if (workspace && !(body && body.models) && !workspacePickUsable(workspace.scanModels, models)) {
+  if (workspace && !(body && body.models) && !workspacePickUsable(workspace.scanModels, models) && !workspacePickUsable(withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS), models)) {
     return { needsModel: true, models };
   }
   return resolveScanModels({
     explicit: body && body.models,
-    // Model roles (D3): with no stored pick, the quick role is the scan model.
-    stored: withScanRole(workspaceScanModels(), WORKSPACE_SCAN_DEFAULT_MODELS),
+    // Model roles (D3): with no stored pick, the Everyday coding role is the scan model.
+    stored: withScanRole(workspaceScanModels(), WORKSPACE_SCAN_DEFAULT_MODELS), storedSource: workspaceScanModels() ? 'settings' : 'role',
     workspacePick: workspace && workspace.scanModels ? workspace.scanModels : null,
     models,
   });
@@ -8217,6 +8215,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasCommandSummaryModelKey) await setCommandSummaryModel(body.commandSummaryModel, { models: csModels }); if (secondOpinionModels) await setSecondOpinionModel(body.secondOpinionModel, { models: secondOpinionModels });
     if (hasWorkspaceScanKey) await setWorkspaceScanModels(body.workspaceScan, { models: wsScanModels });
     if (hasRunEngineKey) await asSettingsField('runEngine', () => setRunEngineSetting(body.runEngine));
+    if (hasRunEngineKey) void reevaluateAllReadiness();   // which tool each project judges follows run.engine
     if (hasStepModelsKey) await asSettingsField('stepModels', () => setStepModels(body.stepModels)); if (hasDesignModelsKey) await asSettingsField('designModels', () => setDesignModels(body.designModels));
     if (hasModelRolesKey) await asSettingsField('modelRoles', () => setModelRoles(modelRolesPatch));
     if (hasUtilityModelsKey) await asSettingsField('utilityModels', () => setUtilityModels(body.utilityModels));

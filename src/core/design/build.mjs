@@ -58,6 +58,7 @@ import {
   updateBuild,
 } from './store.mjs';
 import { createWorkWatcher } from './watch.mjs';
+import { stageDesignWeb } from './web-access.mjs';
 
 /** A `--resume` whose session the CLI no longer has (the text of session-host.mjs `VANISHED_RE`, copied to keep this
  *  module off the session host). */
@@ -315,6 +316,7 @@ function withDefaults(deps = {}) {
     readCaps: readDesignCaps,
     isListPriced,
     stageKit: stageDesignKit,
+    stageWeb: stageDesignWeb,
     createWorkWatcher,
     mock: undefined,
   };
@@ -401,6 +403,8 @@ export class DesignBuild extends EventEmitter {
     this._realWorkDir = undefined;
     this._projectDir = null;
     this._denyRules = [];
+    /** The lead's web access for this drive (web-access.mjs): `{ mcpConfigPath }`, or null when it is off. */
+    this._web = null;
     /** Every agent of the round, in creation order. */
     this._agents = [];
     /** Agents whose process runs now. */
@@ -725,6 +729,9 @@ export class DesignBuild extends EventEmitter {
     this._realWorkDir = realDir(this._workDir);
     this._projectDir = await projectDirFor(this._design.projectKey);
     this._denyRules = await designDenyRules({ projectDir: this._projectDir });
+    // Settings › Design "Let the lead use the web", read at every drive. A config that cannot be written leaves the
+    // lead without the web rather than failing the round.
+    try { this._web = (await this._deps.stageWeb({ designId: this.designId })) || null; } catch { this._web = null; }
     const caps = await this._deps.readCaps({ projectDir: this._projectDir });
     this._cap = Number.isFinite(caps?.perRunCapUsd) ? caps.perRunCapUsd : null;
     let pick = selection;
@@ -1738,6 +1745,8 @@ export class DesignBuild extends EventEmitter {
       resumeSessionId: agent.sessionId,
       maxBudgetUsd,
       denyRules: this._denyRules,
+      web: !!this._web,
+      webMcpConfigPath: this._web?.mcpConfigPath ?? null,
       signal,
       onEvent: (evt) => {
         if (receive && evt?.parentId == null && (evt?.type === 'session' || (evt?.type === 'usage' && evt.phase === 'start'))) receive();

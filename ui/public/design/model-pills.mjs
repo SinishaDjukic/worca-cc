@@ -116,15 +116,18 @@ export function splitModels(models, current) {
 
 /**
  * Two pickers, `Lead` and `Builders`, in one `span.dz-models`.
- * @param {{doc: Document, win?: Window, fetch: Function, url: () => string|null, mode?: 'up'|'down',
+ * @param {{doc: Document, win?: Window, fetch: Function, url: () => string|null, mode?: 'up'|'down'|'beside',
+ *   parent?: HTMLElement|null,
  *   save?: (role: 'lead'|'builder', pick: object|null) => Promise<string>,
  *   onChange?: (picks: {lead: object|null, builder: object|null}) => void}} o
  *   `url` names the choices to load (null loads nothing). `save` stores a pick and answers '' or the refusal, which
  *   puts the pick back (the dock); without it a pick is only kept here (the start composer reads `picks()`).
+ *   `parent` is the popup the pickers sit in (composer-settings.mjs): each menu then opens as its submenu, so opening
+ *   one leaves that popup open (use `mode: 'beside'`).
  * @returns {{el: HTMLElement, load: () => Promise<void>, picks: () => {lead?: object, builder?: object},
  *   engine: () => string|null, reset: () => void, destroy: () => void}}
  */
-export function createModelPills({ doc, win = doc.defaultView || globalThis, fetch: fetchFn, url, mode = 'down', save = null, onChange = () => {} }) {
+export function createModelPills({ doc, win = doc.defaultView || globalThis, fetch: fetchFn, url, mode = 'down', parent = null, save = null, onChange = () => {} }) {
   const make = (tag, cls, text) => {
     const n = doc.createElement(tag);
     if (cls) n.className = cls;
@@ -159,7 +162,7 @@ export function createModelPills({ doc, win = doc.defaultView || globalThis, fet
     btn.setAttribute('aria-controls', menu.id);
     el.append(btn, menu);
     const p = { role, btn, label, effort, menu, fly: null, pane: 'main' };
-    p.fly = createFlyout({ doc, win, trigger: btn, menu, mode, onOpen: () => renderPane(p, 'main') });
+    p.fly = createFlyout({ doc, win, trigger: btn, menu, mode, parent, onOpen: () => renderPane(p, 'main') });
     return p;
   });
 

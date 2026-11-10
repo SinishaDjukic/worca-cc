@@ -12,11 +12,12 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline, seedPipelineRow } from './helpers/db-seed.mjs';
 import { templateRepo } from './helpers/git-dir.mjs';
 import { createWorktree, listLocalBranches } from '../src/core/worktree.mjs';
-import { lookupPipelineRow, retainedWorkFor, branchRecordsOf } from '../src/core/artifacts.mjs';
+import { lookupPipelineRow, retainedWorkFor, branchRecordsOf, recordArtifact } from '../src/core/artifacts.mjs';
 import { updateBranchRecords } from '../src/core/checkout.mjs';
 import { applyRetainedWork } from '../src/core/pipeline-delete.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { writeRunManifest, readRunManifest } from '../src/core/run-manifest.mjs';
+import { projectStorePath } from '../src/core/store.mjs';
 
 useTempHome(after, 'worca-cc-apply-');
 const created = [];
@@ -50,7 +51,9 @@ test('applies: commits on the branch, clears the stamp, releases the worktree, k
   const [a] = report.applied;
   assert.equal(a.committed, true);
   assert.equal(a.sha, git(repo, ['rev-parse', `refs/heads/${wt.branch}`]).stdout.trim());
-  assert.match(git(repo, ['log', '-1', '--format=%B', wt.branch]).stdout, /^worca: Add login\n\nPipeline /);
+  assert.match(git(repo, ['log', '-1', '--format=%B', wt.branch]).stdout, /^worca: Add login\n\n/);
+  assert.equal(git(repo, ['log', '-1', '--format=%(trailers:key=Worca-Run,valueonly)', wt.branch]).stdout.trim(), id);
+  assert.doesNotMatch(git(repo, ['log', '-1', '--format=%B', wt.branch]).stdout, /Pipeline /);
   assert.equal(git(repo, ['cat-file', '-e', `${wt.branch}:login.js`]).status, 0, 'the work is on the branch');
   assert.equal(existsSync(wt.worktreeDir), false, 'the worktree is released');
   assert.ok((await listLocalBranches(repo)).includes(wt.branch), 'the branch is kept');
@@ -243,4 +246,26 @@ test('a worktree removal that fails after a good commit: the DB stamp and the ru
   assert.equal(recordOf(key, id).commitFailed, undefined);
   assert.equal(retainedWorkFor(lookupPipelineRow(key, id)), null);
   assert.equal((await readRunManifest(runRoot)).retain, null, 'Archive and the boot sweep no longer see retained work');
+});
+
+test('the Apply commit carries the plan summary, the staged file stats and a Worca-Run trailer', async () => {
+  const { repo, id, key, wt } = await retainedRun();
+  const root = projectStorePath(key);
+  await mkdir(join(root, 'plans'), { recursive: true });
+  await writeFile(join(root, 'plans', '05-11-26-login.md'),
+    '# Plan: login\n\n## Goal\n\nAdd a login helper so the app can check a session before it renders.\n');
+  recordArtifact(id, 'plan', 'plans/05-11-26-login.md');
+  const report = await applyRetainedWork({ key, id });
+  assert.equal(report.failed.length, 0, JSON.stringify(report));
+  assert.equal(git(repo, ['log', '-1', '--format=%B', wt.branch]).stdout.trimEnd(), [
+    'worca: Add login',
+    '',
+    'Add a login helper so the app can check a session before it renders.',
+    '',
+    '1 file changed, 1 insertion(+)',
+    '',
+    'A  login.js (+1)',
+    '',
+    `Worca-Run: ${id}`,
+  ].join('\n'));
 });

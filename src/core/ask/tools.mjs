@@ -573,6 +573,9 @@ export function createAskTools(deps) {
         commentIds: { type: 'array', items: { type: 'string' },
           description: 'diff comment ids (dc_…) this run is meant to address. They are stamped with the run id once the user confirms the card AND the run actually starts; nothing is resolved.' },
         ...SHAPE_PROPS,
+        pr: { type: 'object', additionalProperties: false,
+          description: 'open a pull request when the run finishes — only when the user asks. open: none | draft | ready; slices (project runs, planned by Shaper): each = a stacked PR per slice, one = one PR for the whole feature. Omit it to follow the project\'s or workspace\'s setting (the card shows it).',
+          properties: { open: { type: 'string', enum: ['none', 'draft', 'ready'] }, slices: { type: 'string', enum: ['each', 'one'] } } },
         ...SCHEDULE_FIELDS }, ['brief']) },
     { name: 'propose_workflow',
       description: 'Propose a NEW workflow for the user to save — it never writes anything; the user sees a card and decides. Exactly one of task / shape: task = the full task text (worca\'s Auto classifier picks the agents, loops and models exactly as an Auto run would — use this when the user says "auto" or simply gives a task); shape = a hand-authored ladder of catalog agents (see "Workflows you can create" in your instructions — only when the user describes the steps; a script, a gate or a new agent needs build_workflow). Target: projectKey OR workspaceId (not both); with neither, the chat\'s scope is used, whichever kind it is (a target outside it is refused; in a No-project chat, use propose_run with noProject: true instead). A workspace proposal runs its plan, refine and implement stages across every member. thenRun = the user also asked to run it. Returns {ok:true, name, match, warnings, summary, shape}: match names the saved workflow with the same shape (Save reuses it), summary lists the stages and loops. Returns {ok:false, error} when worca\'s classifier failed (timeout, unusable replies): tell the user, retry at most once. Do not search list_workflows for a match yourself — the tool does.',
@@ -592,7 +595,8 @@ export function createAskTools(deps) {
     { name: 'read_attachment',
       description: 'Read an attachment of this conversation by id. Text attachments return their content, paged by byte offset (default 32000 bytes per page). HTML attachments (.html / .htm) return their raw markup by default; as: "text" converts them to readable text first (scripts, styles and page chrome dropped, the page title reported, conversionTruncated when the conversion itself was cut) and offset / nextOffset then count bytes of that converted text. ' + (deps.engine
         ? 'Image and PDF attachments come back as an image or document block of the result itself, beside their metadata (when this chat can view that kind; the note says when it cannot).'
-        : 'Image and PDF attachments return metadata plus a file path — pass that path to your Read tool to view the content.'),
+        : 'Image and PDF attachments return metadata plus a file path — pass that path to your Read tool to view the content.')
+        + ' Any other binary file returns its name, type and size' + (deps.engine ? '.' : ', plus a path.'),
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('attachment id'), offset: SCHEMA.i('byte offset', 0, Number.MAX_SAFE_INTEGER), maxBytes: SCHEMA.i('bytes per page', 1, L.attachmentReadMaxBytes),
         as: SCHEMA.s('HTML attachments only: "raw" (default) = the markup as uploaded | "text" = converted to readable text; ignored for every other attachment') }, ['id']) },
     { name: 'list_diff_comments',
@@ -2432,6 +2436,13 @@ export function createAskTools(deps) {
       if (!['raw', 'text'].includes(as)) throw new AskToolError('read_attachment: as must be raw or text');
       const a = deps.readAttachment(id);
       if (!a) throw new AskToolError('read_attachment: attachment not found');
+      // A generic binary (GENERIC_BINARY_MIME, application/octet-stream): neither an image nor a PDF, so never a media block.
+      if (a.kind && a.kind !== 'text' && a.mime === 'application/octet-stream') {
+        const meta = { name: a.name, kind: a.kind, mime: a.mime, totalBytes: a.bytes };
+        const what = 'a binary file that is not an image or a PDF';
+        if (deps.engine) return { ...meta, note: `${what}: this chat has no file tools to open it, so only its name, type and size are available` };
+        return { ...meta, path: a.path, note: `${what}: Read shows only text, images and PDFs, so \`path\` is for tools that can open this type` };
+      }
       if (a.kind && a.kind !== 'text' && deps.engine) {
         // A locked-down chat has no Read tool and no file path to follow: worca sends the image or PDF itself, as an MCP
         // content block of this result, on an engine that forwards such blocks to its model (engine-switch.mjs `chat`).

@@ -227,3 +227,23 @@ export function collectAskWebFields(root) {
     search: url ? { url, key: val('askWebSearchKey'), keyHeader: val('askWebSearchHeader'), keyPrefix: q('askWebSearchPrefix') ? q('askWebSearchPrefix').value : '' } : null,
   };
 }
+
+/** Settings › Chat "Let the Design lead use the web" (docs/design.md "Web access"): a Design's lead may search the
+ *  web, read pages and save pictures into the design. Default OFF; saved with the Ask Worca card. The host carries
+ *  data-flag, so the row hides with Design. */
+export function renderDesignWebToggle({ prefs } = {}, { doc = globalThis.document } = {}) {
+  const wrap = doc.createElement('div');
+  const { row, input } = makeSwitch(doc, { label: 'Design: let the lead use the web', checked: prefs?.designWeb === true, inputClass: 'design-web' });
+  input.id = 'designWeb';
+  const hint = doc.createElement('small');
+  hint.className = 'hint drow-help';
+  hint.textContent = 'The lead of a design may search the web, read pages and save pictures into the design, on every engine that has web tools. Builders stay offline, and a finished design still loads nothing from another site. On: the lead can read the picked project and reach the internet in the same session, so a web page could talk it into sending project content out. Off: no agent of a design reaches the web.';
+  wrap.append(row, hint);
+  return wrap;
+}
+
+/** collectDesignWebToggle(root) -> the {chat} patch part for the switch. */
+export function collectDesignWebToggle(root) {
+  const cb = root && typeof root.querySelector === 'function' ? root.querySelector('input.design-web') : null;
+  return { designWeb: cb ? cb.checked : false };
+}

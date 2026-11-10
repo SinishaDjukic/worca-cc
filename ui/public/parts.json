@@ -44,6 +44,7 @@
     "scripts/scripts-view.css",
     "scripts/script-wizard.css",
     "projects/projects-management.css",
+    "projects/readiness.css",
     "workspace-map/workspaces-shell.css",
     "workspace-map/workspace-guide.css",
     "guardrails/guardrail-rows.css",

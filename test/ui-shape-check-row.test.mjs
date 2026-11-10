@@ -6,7 +6,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
-import { fold, buildCheckRows, buildCheckFold } from '../ui/public/shape/check-row.mjs';
+import { fold, swapOpen, buildCheckRows, buildCheckFold } from '../ui/public/shape/check-row.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -47,6 +47,60 @@ test('update() repaints in place and an open fold stays open', () => {
 test('buildCheckRows: nothing for a check without items', () => {
   assert.deepEqual(buildCheckRows(doc, null), []);
   assert.deepEqual(buildCheckRows(doc, { items: 'x' }), []);
+});
+
+test('buildCheckFold with no opts matches today; opts.text, rows and open replace them; update keeps it open', () => {
+  const html = (f) => f.line.outerHTML + f.rows.outerHTML;
+  assert.equal(html(buildCheckFold(doc, CHECK, 'Shape', {})), html(buildCheckFold(doc, CHECK)));
+  const closed = buildCheckFold(doc, CHECK, 'Shape', { text: () => 'x' });
+  assert.deepEqual([closed.line.querySelector('.plan-fold-text').textContent, closed.line.getAttribute('aria-expanded'), closed.rows.hidden], ['x', 'false', true]);
+  assert.equal(closed.rows.querySelectorAll('.plan-check-row').length, 5, 'no opts.rows: the rows of the check');
+  const opts = { text: (c) => `${c.items.length} things`, rows: (d, c) => [d.createElement('dl'), ...c.items.slice(0, 1).map(() => d.createElement('p'))], open: true };
+  const f = buildCheckFold(doc, CHECK, 'Shape', opts);
+  assert.equal(f.line.querySelector('.plan-fold-text').textContent, '5 things');
+  assert.deepEqual([...f.rows.children].map((e) => e.tagName), ['DL', 'P']);
+  assert.deepEqual([f.line.getAttribute('aria-expanded'), f.rows.hidden], ['true', false]);
+  f.update({ items: [] });
+  assert.equal(f.line.querySelector('.plan-fold-text').textContent, '0 things');
+  assert.deepEqual([...f.rows.children].map((e) => e.tagName), ['DL']);
+  assert.deepEqual([f.line.getAttribute('aria-expanded'), f.rows.hidden], ['true', false], 'update keeps it open');
+  f.line.click();
+  assert.deepEqual([f.line.getAttribute('aria-expanded'), f.rows.hidden], ['false', true], 'an open fold still closes');
+});
+
+test('buildCheckRows: tip sets the row title and an sr-only id; no tip leaves the markup unchanged', () => {
+  const [row] = buildCheckRows(doc, { items: [{ id: 'R-po-1', label: 'Export', pass: true, tip: 'R-po-1' }] });
+  assert.equal(row.title, 'R-po-1');
+  assert.equal(row.querySelector('.sr-only').textContent, 'R-po-1');
+  assert.equal(row.querySelector('.plan-check-label').textContent, 'Export');
+  assert.equal(row.querySelector('.sr-only').compareDocumentPosition(row.querySelector('.plan-check-label')) & 4, 4, 'the id is read before the label');
+  assert.equal(row.querySelectorAll(':is(button, [tabindex])').length, 0, 'no tab stop');
+  const [bare] = buildCheckRows(doc, { items: [{ id: 'R-po-1', label: 'Export', pass: true }] });
+  assert.equal(bare.outerHTML.includes('sr-only'), false);
+  assert.equal(bare.hasAttribute('title'), false);
+  assert.deepEqual([...bare.children].map((e) => e.className), ['plan-check-mark', 'plan-check-label']);
+});
+
+test('swapOpen: onClose runs before the button takes focus; without it Cancel behaves as today', () => {
+  const rig = (onClose) => {
+    const b = doc.createElement('button'); const region = doc.createElement('div'); region.hidden = true;
+    const cancel = doc.createElement('button');
+    const foot = doc.createElement('div'); foot.appendChild(b);
+    doc.body.append(foot, region, cancel);
+    swapOpen(b, region, cancel, () => { if (onClose) foot.hidden = true; }, onClose && (() => onClose(foot)));
+    return { b, region, cancel, foot };
+  };
+  const order = [];
+  const r = rig((foot) => { order.push('close'); foot.hidden = false; });
+  r.b.addEventListener('focus', () => order.push(`focus foot-hidden=${r.foot.hidden} region-hidden=${r.region.hidden}`));
+  r.b.click();
+  assert.deepEqual([r.region.hidden, r.b.hidden, r.b.getAttribute('aria-expanded')], [false, true, 'true']);
+  r.cancel.click();
+  assert.deepEqual(order, ['close', 'focus foot-hidden=false region-hidden=true']);
+  const plain = rig();
+  plain.b.click();
+  plain.cancel.click();
+  assert.deepEqual([plain.region.hidden, plain.b.hidden, plain.b.getAttribute('aria-expanded'), doc.activeElement === plain.b], [true, false, 'false', true]);
 });
 
 test('fold() toggles the region and aria-expanded, and calls onOpen only on open', () => {

@@ -10,7 +10,8 @@ project's working tree, so nothing is ever committed to your repo.
 
 ```
 <worcaHome>/                            default ~/.worca-cc
-  settings.json                         { root } only — the bootstrap that locates the DB
+  settings.json                         global settings, including the bootstrap `root` that locates the DB;
+                                        always ~/.worca-cc/settings.json, never moved (see Resolution rules)
   worca-cc.db  (+ -wal, -shm)           ALL structured state (SQLite, WAL mode)
                                         (the Requirements Feature chat: req_helper_messages (v78), one row per
                                         message, kept until Clear chat; its spend is in req_cost_ledger with
@@ -29,6 +30,10 @@ project's working tree, so nothing is ever committed to your repo.
                                         chat_deliveries (one row per delivered message part with the platform
                                         message id and the card state it shows) and chat_inbound_seen (handled
                                         message/interaction ids, 2 days).
+                                        Requirements import (v88): req_export_links.origin ('export' | 'import'; a link
+                                        an import made keeps the ticket's issue type and priority) and
+                                        req_attachments.fetch_json (the tracker file a row comes from: the
+                                        connection, the ticket key and the attachment id; NULL for an upload).
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
   store/no-project-00000000/            runs without a project: one store, the History group "No project";
                                         a run's work/ moves into its pipeline folder as work/ when it ends
@@ -93,11 +98,14 @@ project's working tree, so nothing is ever committed to your repo.
                                         it over the body; one a crash left, older than an hour, is swept at boot
   design/<designId>/                    a Design: work/ (the only place agents write), dist/ (assembled, no bridge),
                                         versions/<n>/ (copy of work/ after each finished round, last 20). Rows: designs,
-                                        design_builds, design_agents (v87). Spend: design_cost_ledger, which keeps its
+                                        design_builds, design_agents (v89). Spend: design_cost_ledger, which keeps its
                                         rows after a design is deleted.
   tmp/requirements/att-read-<8 hex>/    one file read's folder: a copy of that one file (a text file's copy is its
                                         redacted text), mode 0700 / 0600, removed when the read ends (a restart's
                                         leftovers older than an hour are swept at boot)
+  tmp/requirements/att-get-<8 hex>/     one tracker download's folder, mode 0700: the connector writes the body to
+                                        body.part, Worca checks it and writes it into requirements/att/; removed when the
+                                        download ends (a restart's leftovers older than an hour are swept at boot)
   tmp/ask/                              the Chat assistant's scratch cwd + per-turn
                                         mcp-<messageId>.json, mode 0600 (never a project folder)
   logs/ask-web.jsonl                    Chat web access: one line per web_fetch/web_search
@@ -121,6 +129,7 @@ project's working tree, so nothing is ever committed to your repo.
   policy/
     repos/<owner~repo>/                  git worktree of the project repo, detached at origin/worca-policy
     locks/<owner~repo>.lock              cross-process lock for enable / follow / publish
+  memory/                               agent memory notes: global/ and projects/<projectKey>/
   team-memory/                          team memory (phases 1a and 1b; projects/ only for projects with memory.team on)
     projects/<projectKey>/
       team.json                         last fetched snapshot of origin/worca-memory (what runs and chats load)
@@ -210,7 +219,10 @@ The Runs list's groups (runs redesign §3.3) are the one new named state of the 
 - **`<worcaHome>`** = `<base>/.worca-cc`, where `<base>` is `WORCA_HOME` if
   set, else the persisted "Worca root folder" from Settings, else your OS
   home. By default this is `~/.worca-cc`, so the DB is
-  `~/.worca-cc/worca-cc.db` and the store is `~/.worca-cc/store/`.
+  `~/.worca-cc/worca-cc.db` and the store is `~/.worca-cc/store/`. The "Worca
+  root folder" is under Settings › General (Advanced level). Moving the home
+  moves everything except the global `settings.json`, which stays at
+  `~/.worca-cc/settings.json` in your OS home.
 - **`<projectKey>`** = `<repo-basename-slug>-<sha1(canonicalRoot)[:8]>`,
   derived from the repository's identity (the parent of its shared `.git`).
   It is **stable across all git worktrees of the same repo**, so every
@@ -222,11 +234,16 @@ The Runs list's groups (runs redesign §3.3) are the one new named state of the 
   realpath is also the root of the repository git init makes there. A run without a project uses the
   reserved key `no-project-00000000`; no project row is ever made for it.
 - **projects root** = `WORCA_PROJECTS_ROOT` if set, else Settings › Projects root folder, else
-  `<worcaHome>/projects` (created on the first New or Clone).
+  `<worcaHome>/projects` (created on the first New or Clone). **New** (just a name) names the
+  folder in lowercase with `_` for each run of spaces (**Worca Presentation** →
+  `worca_presentation`); the project keeps the name as typed. Moving the root leaves
+  existing projects where they are.
 
-Because state is machine-wide and keyed by repo identity, the web UI has an
-**"All projects"** view (and `GET /api/history`) that lists runs across every
-project on the machine — backed by indexed SQL queries.
+Because state is machine-wide and keyed by repo identity, **Runs** in the
+sidebar (and `GET /api/history`) lists live, scheduled and finished runs across
+every project on the machine — backed by indexed SQL queries.
+
+![Runs page — runs from nimbus-crm, lumen-docs and nimbus-web grouped by project, one scheduled and one stopped, with the finished run Paginate the search endpoint open: Ready to ship, 17m 2s, $3.65, +29 −2 across 4 files](screenshots/history.png)
 
 ## First-launch migration
 

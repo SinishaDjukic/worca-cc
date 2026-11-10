@@ -5,6 +5,7 @@ import { actorOf } from '../../../src/core/identity.mjs';
 import { cancelRest, currentFeatureId, featureShipSuggestion, featureThread, featureView, listShapePlans, rechainWaiting, replanRest, resumeFeature, setApproveEach, setFeatureAcceptance, shaperCard, sliceOfPipeline } from '../../../src/core/shape/features.mjs';
 import { normalizeAcceptance } from '../../../src/shared/shape/acceptance.mjs';
 import { flagEnabled } from '../../../src/core/flags.mjs';
+import { prAutoFinisher } from '../../../src/core/pr-auto-finish.mjs';
 import { engineRefusalFor } from '../../../src/shared/engine-switch.mjs';
 import { parseReleaseChoice } from '../../../src/shared/release-version.mjs';
 import { ResumeError, badRequest, broadcastFeature, emitChanged, featureShipping, findShipCardIn, flipCard, liveRunEntry, liveSliceOf, resumeRun, schedulerTick, shipCtxOf, shipFeatureNow } from '../../server.mjs';
@@ -147,6 +148,7 @@ app.put('/api/shape/features/:id/acceptance', (req, res) => {
     const found = th ? findShipCardIn(th.threadId, id) : null;
     if (found && found.block.state === 'proposed') flipCard(th.threadId, found.block.id, { card: { acceptance } });
     broadcastFeature(id);
+    void prAutoFinisher()?.onAcceptanceChanged(id);   // a feature whose one PR waited for the last mark opens it now
     res.json({ acceptance });
   } catch (err) { shapeRouteError(res, err); }
 });

@@ -10,10 +10,11 @@
 import { createFlyout } from '../side-flyout.mjs';
 import { icon } from '../icons.mjs';
 import { makeSwitch } from '../switch.mjs';
-import { ATTACH_ACCEPT, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
+import { bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
 import { DESIGN_FAST_LABEL, DESIGN_KIND_LABELS } from '../../../src/shared/design-names.mjs';
 import { openEngineGateDialog } from './engine-gate-dialog.mjs';
 import { createModelPills } from './model-pills.mjs';
+import { createComposerSettings } from './composer-settings.mjs';
 
 const LOADING_DELAY_MS = 300;
 const REFETCH_MS = 200;
@@ -368,7 +369,6 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
   const fileInput = make('input');
   fileInput.type = 'file';
   fileInput.multiple = true;
-  fileInput.accept = ATTACH_ACCEPT;
   fileInput.hidden = true;
   // The project button, as the real scope button: the folder, the name, the chevron; its name says the pick.
   const scopeBtn = make('button', 'btn btn-sm btn-quiet ask-scope-btn');
@@ -394,10 +394,13 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
   // The lead's and the builders' models, on the engine a design made now would build on (the project's or the user's
   // Default engine): a project pick may move it, so the choices load again.
   let project = null;          // {key, name} of the picked project, or none
-  const pills = createModelPills({ doc, win, fetch: fetchFn, mode: 'down',
+  // The models and Build fast sit in one popup behind a gear, so the row keeps to Attach, the project, the gear and Send.
+  const settings = createComposerSettings({ doc, win, mode: 'down' });
+  const pills = createModelPills({ doc, win, fetch: fetchFn, mode: 'beside', parent: settings.panel,
     url: () => `${LIST_URL}/models${project ? `?projectKey=${encodeURIComponent(project.key)}` : ''}` });
   const row = make('div', 'ask-composer-row');
-  row.append(attachBtn, fileInput, scopeBtn, menu, pills.el, make('span', 'dz-spacer'), sw.row, sendBtn);
+  settings.fill(pills.el, settings.divider(), sw.row);
+  row.append(attachBtn, fileInput, scopeBtn, menu, make('span', 'dz-spacer'), settings.el, sendBtn);
   const box = make('div', 'ask-composer-box');
   box.append(fileRow, input, row);
   const errEl = make('p', 'dz-start-err');
@@ -723,6 +726,7 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
       fly.destroy();
       menu.remove();
       pills.destroy();
+      settings.destroy();
     },
   };
 }

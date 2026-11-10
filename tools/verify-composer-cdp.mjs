@@ -406,13 +406,23 @@ try {
       gone:[...lib.querySelectorAll('#wfl-up, .wfl-crumbs, .wfl-crumb, #wfl-crumb-home, .wfl-search')].length,
       folders:[...lib.querySelectorAll('.wfl-folder')].map((f)=>[f.dataset.folder||'',f.getAttribute('aria-expanded'),f.textContent.trim()]),
       folds:lib.querySelectorAll('.wfl-fold').length};})()`);
-  // No Home any more: the card opens on Agents, with Flow pinned among its folders, every folder collapsed.
-  check(10, 'the Library card is 380px wide, open, right of the stage, on Agents: the selector\'s Agents / Scripts / Workflows tabs with their counts (Agents selected), the "+" right of them, the Agents folders (Flow among them) collapsed; no breadcrumb, back row or Home',
-    lib.open === 'true' && Math.abs(lib.lib.w - 380) < 0.6 && lib.lib.l >= lib.stage.r - 0.6 && lib.tab === 'agents' && !lib.path && lib.gone === 0
-    && JSON.stringify(lib.tabs.map(([id, t, sel]) => [id, t, sel])) === JSON.stringify([['wfl-tab-agents', 'agents', 'true'], ['wfl-tab-scripts', 'scripts', 'false'], ['wfl-tab-workflows', 'workflows', 'false']])
-    && lib.tabs.every(([, t, , s]) => s.toLowerCase().startsWith(t) && /\d/.test(s)) && lib.plusRight
-    && lib.folders.length > 0 && lib.folders.every(([f, x]) => f.startsWith('agents/') && x === 'false')
-    && lib.folders.some(([f, , s]) => f === 'agents/_flow' && s.startsWith('Flow')) && lib.folds === 0, lib);
+  // #1127: the card opens on Workflows — Yours above Built-in, both open. Agents (second tab) keeps its "+" and its
+  // folders, Flow among them, all collapsed.
+  await ev(`(()=>{document.getElementById('wfl-tab-agents').click();return 1;})()`); await settle('lib-agents');
+  const libA = await ev(`(()=>{const lib=document.querySelector('#wfv-library');const r=(e)=>e.getBoundingClientRect();
+    const seg=lib.querySelector('.wfl-bar > .wfl-seg'),plus=lib.querySelector('.wfl-bar #wfl-new-agent');
+    return {tab:lib.dataset.tab,plusRight:!!plus&&!!seg&&r(plus).left>=r(seg).right-0.6,
+      folders:[...lib.querySelectorAll('.wfl-folder')].map((f)=>[f.dataset.folder||'',f.getAttribute('aria-expanded'),f.textContent.trim()]),
+      folds:lib.querySelectorAll('.wfl-fold').length};})()`);
+  check(10, 'the Library card is 380px wide, open, right of the stage, on Workflows: the selector\'s Workflows / Agents / Scripts tabs with their counts (Workflows selected), Yours and Built-in open; Agents keeps the "+" right of the tabs and its folders (Flow among them) collapsed; no breadcrumb, back row or Home',
+    lib.open === 'true' && Math.abs(lib.lib.w - 380) < 0.6 && lib.lib.l >= lib.stage.r - 0.6 && lib.tab === 'workflows' && !lib.path && lib.gone === 0
+    && JSON.stringify(lib.tabs.map(([id, t, sel]) => [id, t, sel])) === JSON.stringify([['wfl-tab-workflows', 'workflows', 'true'], ['wfl-tab-agents', 'agents', 'false'], ['wfl-tab-scripts', 'scripts', 'false']])
+    && lib.tabs.every(([, t, , s]) => s.toLowerCase().startsWith(t) && /\d/.test(s))
+    && lib.folders.every(([f]) => f.startsWith('workflows/'))
+    && ['workflows/_yours', 'workflows/_builtin'].every((k) => lib.folders.some(([f, x]) => f === k && x === 'true'))
+    && libA.tab === 'agents' && libA.plusRight
+    && libA.folders.length > 0 && libA.folders.every(([f, x]) => f.startsWith('agents/') && x === 'false')
+    && libA.folders.some(([f, , s]) => f === 'agents/_flow' && s.startsWith('Flow')) && libA.folds === 0, { lib, libA });
   const bar = await ev(`(()=>{const q=(s)=>document.querySelector(s);
     const shown=(e)=>!!e&&!e.closest('[hidden]')&&getComputedStyle(e).display!=='none'&&e.getClientRects().length>0;
     const ctl=[...document.querySelectorAll('#wfv-stage .wfv-tl button, #wfv-stage .wfv-tl input, #wfv-stage .wfv-tr button, #wfv-stage .wfv-tr input')]
@@ -569,14 +579,14 @@ try {
     for (const width of [1440, 1024]) {
       await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
       await load();
-      // Open Default from the Library (openFolder selects Workflows and expands Default's domain folder); answer a discard confirm if one shows.
+      // Use Default as a template from the Library (openFolder selects Workflows and opens every folder on its path); answer a discard confirm if one shows.
       for (let i = 0; i < 60; i += 1) {
         if (await ev(`(()=>{const L=window.__wfv.library();L.openFolder(L.folderOf('workflow','wf_default'));
           const e=document.querySelector('#wfv-library .wfl-wf[data-id="wf_default"] .wfl-main');if(e)e.click();return !!e;})()`)) break;
         await sleep(100);
       }
       for (let i = 0; i < 60; i += 1) {
-        if (await ev(`document.getElementById('wfv-name').value==='Default'`)) break;
+        if (await ev(`document.getElementById('wfv-name').value==='Default copy'`)) break;
         await ev(`(()=>{const m=document.getElementById('confirm-modal');if(m&&!m.classList.contains('hidden'))document.getElementById('confirm-ok').click();return 1;})()`);
         await sleep(100);
       }
@@ -586,7 +596,7 @@ try {
     }
     await cdp('Emulation.clearDeviceMetricsOverride');
     check(18, 'beside the 380px Library the stage keeps its room: the content area less the Library and the 8px padding and gap at 1440 and 1024, and with Default open the top-left bar ends left of the top-right bar',
-      room.length === 2 && room.every((m) => !!m.lib && !!m.stage && !!m.tl && !!m.tr && Math.abs(m.lib.w - 380) < 0.6 && m.name === 'Default' && m.tl.r < m.tr.l)
+      room.length === 2 && room.every((m) => !!m.lib && !!m.stage && !!m.tl && !!m.tr && Math.abs(m.lib.w - 380) < 0.6 && m.name === 'Default copy' && m.tl.r < m.tr.l)
       && room.every((m) => !!m.main && m.stage.w >= m.main.w - 380 - 24 - 0.6), room);
   }
 
@@ -623,9 +633,9 @@ try {
       tours.push({ width, hops, name: await ev(`document.getElementById('wfv-name').value`), graph });
     }
     await cdp('Emulation.clearDeviceMetricsOverride');
-    check(19, 'the Workflows tour walks the Library at 1440, 760 and 390 px: every ringed control takes the real click (never the scrim), through the selector\'s Workflows tab (and Default\'s folder, expanded in place) to Default on the canvas, fitted readable (≥ 150px wide, never a dot under the 390px overlay); at <= 760px it opens the Library first',
-      tours.length === 3 && tours.every((r) => r.hops.every((x) => x.hit && !x.scrim) && r.hops.some((x) => x.id === 'wfl-tab-workflows' && x.tab === 'workflows')
-        && r.hops.some((x) => x.wf === 'wf_default') && r.name === 'Default' && r.graph >= 150)
+    check(19, 'the Workflows tour walks the Library at 1440, 760 and 390 px: every ringed control takes the real click (never the scrim), through the Library (already on Workflows, Default\'s Built-in folder open) to a copy of Default on the canvas, fitted readable (≥ 150px wide, never a dot under the 390px overlay); at <= 760px it opens the Library first',
+      tours.length === 3 && tours.every((r) => r.hops.every((x) => x.hit && !x.scrim) && !r.hops.some((x) => x.id === 'wfl-tab-workflows')
+        && r.hops.some((x) => x.wf === 'wf_default') && r.name === 'Default copy' && r.graph >= 150)
       && tours.filter((r) => r.width <= 760).every((r) => r.hops.length > 0 && r.hops[0].id === 'wfv-lib-toggle'), tours);
   }
 

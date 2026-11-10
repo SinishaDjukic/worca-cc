@@ -5,7 +5,7 @@
 
 export const PRESET_SETUP_KEYS = Object.freeze([
   'workflowId', 'engine', 'guardrailsId', 'mcpOptOut', 'mock', 'nightMode', 'humanInLoop',
-  'sourceBranch', 'sourceBranchByKey', 'sameAsSource', 'syncBeforeStart', 'tags', 'overlay',
+  'sourceBranch', 'sourceBranchByKey', 'sameAsSource', 'syncBeforeStart', 'tags', 'overlay', 'pr',
 ]);
 export const PRESET_LIMITS = Object.freeze({ nameMax: 80, setupBytes: 32 * 1024 });
 export const PRESET_SCOPES = Object.freeze(['global', 'project', 'workspace']);

@@ -74,6 +74,12 @@ test('a large task: one requirements hold, then one plan hold, no Clarify; 2 app
   assert.equal(reqAsk.criteria.ok, true);
   assert.equal(reqAsk.criteria.total, 8);
   assert.equal(reqAsk.decisions.length, 3);
+  assert.deepEqual(reqAsk.decisions[0].options.map((o) => [o.persona, o.reason]), [
+    ['security', 'emails are personal data, and exports get forwarded'], ['ux', 'people use them to tell who started a run'],
+  ]);
+  assert.deepEqual(reqAsk.decisions[1].options.map((o) => o.persona ?? null), ['security', null], 'an option nobody asked for stays bare');
+  assert.equal(reqAsk.decisions[2].plain, 'What access does exporting need?');
+  assert.deepEqual(reqAsk.decisions[2].options.map((o) => [o.plain, o.persona ?? null]), [['View access', null], ['Edit access', null]]);
   assert.equal(reqAsk.lead, 'security');
   assert.equal(reqAsk.check, undefined, 'the criteria hold skips the shape check');
   assert.deepEqual(plans[1].plan.coverage && [plans[1].plan.coverage.passed, plans[1].plan.coverage.total], [8, 8]);
@@ -422,6 +428,19 @@ const withConcern = async (fn) => {
   process.env.WORCA_MOCK_ROLE_REVIEW = QA_CONCERN;
   try { return await fn(); } finally { delete process.env.WORCA_MOCK_ROLE_REVIEW; }
 };
+
+test('Away on: the run holds at Requirements, nothing answered', async () => {
+  const h = start({}, () => {});
+  h.orch.setNightOverride('on');
+  for (const end = Date.now() + 60000; !h.asks.some(isReqAsk) && Date.now() < end;) await new Promise((r) => setTimeout(r, 10));
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(h.orch.pendingQuestion?.id, 'plan-n_reqrefine-1');
+  assert.equal(h.orch.state.night.openedAt, null, 'no countdown');
+  assert.equal(h.orch.state.night.decisions, 0);
+  assert.equal(h.orch.answeredBy('plan-n_reqrefine-1') === 'night-mode', false);
+  h.orch.stop();
+  await h.done;
+});
 
 test('a QA finding naming R-po-1: one plan approval carries the concern; no extra round; the Planner runs once', () => withConcern(async () => {
   const h = start({});

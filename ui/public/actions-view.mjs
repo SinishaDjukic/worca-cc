@@ -84,7 +84,7 @@ export function renderRunPill(instances, { doc, onClick } = {}) {
 }
 
 const STATE_TEXT = {
-  'no-branch': 'No branch', 'not-checked-out': 'Not checked out', 'setting-up': 'Setting up',
+  'no-branch': 'No branch', 'not-checked-out': 'Not checked out', 'checking-out': 'Checking out', 'setting-up': 'Setting up',
   'setup-failed': 'Setup failed', ready: 'Checked out', running: 'Running', 'task-result': 'Checked out',
 };
 const POLICY_TEXT = { 'on-success': 'on success', 'until-pr': 'until PR' };
@@ -101,6 +101,45 @@ function renderLog(doc, instanceId, lines) {
   return pre;
 }
 function logLine(doc, l) { return h(doc, 'span', l.stream === 'out' ? null : l.stream, `${l.text}\n`); }
+
+/** The spinner every in-flight state draws (actions-run.css: still, under reduced motion). */
+function spinner(doc) { const s = h(doc, 'span', 'act-spin'); s.setAttribute('aria-hidden', 'true'); return s; }
+/** A button whose press is in flight: a spinner and its "…ing" label, disabled until the server answers. */
+function busyButton(b, label) {
+  b.disabled = true;
+  b.setAttribute('aria-busy', 'true');
+  b.replaceChildren(spinner(b.ownerDocument), b.ownerDocument.createTextNode(label));
+  return b;
+}
+/** A live status line under the row: a spinner, then what is happening now. */
+function statusRow(doc, ...parts) {
+  const p = h(doc, 'p', 'act-status');
+  p.setAttribute('role', 'status');
+  p.append(spinner(doc), ...parts);
+  return p;
+}
+/** When the setup now running began: its instance's start, else the checkout's `running` stamp (the job has
+ *  only just begun and has no instance yet). */
+function setupSince(m, mine) {
+  const inst = latest(mine.filter((s) => s.actionId === '__setup' && ACTIVE.has(s.status)));
+  if (inst?.startedAt) return inst.startedAt;
+  const at = m.checkout?.setup?.status === 'running' ? Date.parse(m.checkout.setup.at) : NaN;
+  return Number.isFinite(at) ? at : null;
+}
+/** "Running setup: <cmd> · 12s · usually ~20s". The elapsed span carries its start, so the controller's
+ *  one-second tick updates it in place (the log under it is never rebuilt for a tick). */
+function setupStatus(doc, m, mine, estimateMs, now) {
+  const parts = [m.setup ? 'Running setup: ' : 'Running setup'];
+  if (m.setup) parts.push(h(doc, 'code', 'act-cmd', m.setup));
+  const since = setupSince(m, mine);
+  if (since != null) {
+    const el = h(doc, 'span', 'act-elapsed', formatUptime(now - since));
+    el.dataset.since = String(since);
+    parts.push(' · ', el);
+  }
+  if (estimateMs) parts.push(` · usually ~${formatUptime(estimateMs)}`);
+  return statusRow(doc, ...parts);
+}
 
 /** Long branch names and paths keep both ends (the run id is at the end): "worca-cc/github-…-da7d143d". */
 export function middleClip(text, max = 56) {
@@ -129,6 +168,7 @@ const COLLAPSE_ROWS_AT = 10;
 /** The chip a changed row shows, as [text, className, spinner?]. Reuses memberViewState as-is. */
 function rowChip(m, state) {
   if (m.workMode === 'folder') return ['On a copy', 'badge act-state'];
+  if (state === 'checking-out') return ['Checking out', 'badge act-busy', true];
   if (state === 'not-checked-out') return m.heldBy ? ['In your folder', 'badge act-kept'] : ['Not checked out', 'badge act-state'];
   if (state === 'setting-up') return ['Setting up', 'badge act-busy', true];
   if (state === 'setup-failed') return ['Setup failed', 'badge amber'];
@@ -179,11 +219,14 @@ function metaRows(doc, m, handlers) {
 
 /** One section.card.act-card for a SINGLE-PROJECT run's member. A workspace member is a row of the
  *  checkout table (renderCheckoutTable / checkedOutRow), never a card. */
-function memberCard(model, m, { doc, handlers, logs, queued }) {
+function memberCard(model, m, { doc, handlers, logs, queued, busy, now }) {
   const sec = h(doc, 'section', 'card act-card');
   sec.dataset.member = m.projectKey;
   const mine = instancesOf(model, m.projectKey);
-  const state = memberViewState(m, mine);
+  // `busy`: the presses still waiting for the server (controller keys `checkout:<pk>`, `discard:<pk>`, `start:<pk>:<id>`).
+  const isBusy = (what) => !!busy?.has(`${what}:${m.projectKey}`);
+  let state = memberViewState(m, mine);
+  if (state === 'not-checked-out' && isBusy('checkout')) state = 'checking-out';
   sec.dataset.state = state;
   // Name and state on top (the badge keeps one place, top right), then Branch and Folder as labelled rows.
   const head = h(doc, 'div', 'act-head');
@@ -198,11 +241,14 @@ function memberCard(model, m, { doc, handlers, logs, queued }) {
   if (!model.enabled) sec.append(h(doc, 'p', 'hint', 'Actions are turned off on this hosted deployment. Check out and Copy command still work.'));
   const copyBtn = () => (m.copyCommand ? copyAct(doc, handlers, 'Copy command', 'command', m.copyCommand,
     { action: true, title: 'Copy the git commands that put this branch in your own clone' }) : null);
-  const discardBtn = () => (m.checkout?.external
-    ? btn(doc, 'Unlink', 'btn act-discard', () => handlers.onUnlink?.(m.projectKey),
-      'Stop using your folder for this run. Running services stop; the folder and its changes stay as they are.')
-    : btn(doc, 'Discard', 'btn act-discard', () => handlers.onDiscard?.([m.projectKey]),
-      'Delete the checkout folder. Running services stop, and uncommitted changes are saved as a patch first.'));
+  const discardBtn = () => {
+    const b = m.checkout?.external
+      ? btn(doc, 'Unlink', 'btn act-discard', () => handlers.onUnlink?.(m.projectKey),
+        'Stop using your folder for this run. Running services stop; the folder and its changes stay as they are.')
+      : btn(doc, 'Discard', 'btn act-discard', () => handlers.onDiscard?.([m.projectKey]),
+        'Delete the checkout folder. Running services stop, and uncommitted changes are saved as a patch first.');
+    return isBusy('discard') ? busyButton(b, m.checkout?.external ? 'Unlinking…' : 'Discarding…') : b;
+  };
   const diffBtn = () => btn(doc, 'Download patch', 'btn act-diff', (e) => handlers.onDiff?.(m.projectKey, e.currentTarget),
     'Download a patch of the folder\'s uncommitted changes. Read-only: nothing in the folder is staged or changed.');
   // The note under the row names the apps a click opens and where they are changed (Settings › Runs › Actions).
@@ -219,15 +265,19 @@ function memberCard(model, m, { doc, handlers, logs, queued }) {
     return appendWithPageLinks(doc, h(doc, 'p', 'hint act-apps'), [lead, set].filter(Boolean).join(' '));
   };
 
-  if (state === 'not-checked-out') {
+  if (state === 'not-checked-out' || state === 'checking-out') {
+    const checkingOut = state === 'checking-out';
     const row = h(doc, 'div', 'act-row');
     // Only the single-project card reaches here (a workspace member is a table row now).
     const changedHere = isChangedMember(m);
     if (!changedHere) sec.append(h(doc, 'p', 'hint', 'No changes in this project.'));
     else if (m.heldBy) row.append(btn(doc, 'Use that folder', 'btn-primary', () => handlers.onUseExisting?.(m.projectKey),
       'Use the folder that already has this branch for this run. Worca never changes or deletes it.'));
-    else row.append(btn(doc, 'Check out', 'btn-primary', () => handlers.onCheckout?.([m.projectKey]),
-      `Put this run's branch in a folder of its own${m.setup ? ', then run the setup command' : ''}`));
+    else {
+      const b = btn(doc, 'Check out', 'btn-primary', () => handlers.onCheckout?.([m.projectKey]),
+        `Put this run's branch in a folder of its own${m.setup ? ', then run the setup command' : ''}`);
+      row.append(checkingOut ? busyButton(b, 'Checking out…') : b);
+    }
     const c = copyBtn(); if (c) row.append(c);
     // The other built-ins open the checkout folder, which Check out creates: a click asks first, then checks
     // out and opens. With nothing to check out there is no folder to open and the server answers
@@ -238,11 +288,13 @@ function memberCard(model, m, { doc, handlers, logs, queued }) {
       row.append(h(doc, 'span', 'act-sep'));
       for (const b of opens) {
         const o = btn(doc, b.label, null, () => handlers.onOpenBeforeCheckout?.(m.projectKey, b.key, b.label));
-        o.title = m.heldBy ? `${builtinTip(b.key, b.label, 'the folder that has this branch')} (asks first)` : `Check out first (asks), then: ${builtinTip(b.key, b.label).replace(/^./, (c) => c.toLowerCase())}`;
+        if (checkingOut) { o.disabled = true; o.title = 'Available after Check out'; }
+        else o.title = m.heldBy ? `${builtinTip(b.key, b.label, 'the folder that has this branch')} (asks first)` : `Check out first (asks), then: ${builtinTip(b.key, b.label).replace(/^./, (c) => c.toLowerCase())}`;
         row.append(o);
       }
     }
     if (row.childNodes.length) sec.append(row);
+    if (checkingOut) sec.append(statusRow(doc, `Checking out ${middleClip(m.branch)}…`));
     // Nothing to check out: no estimate for a checkout that will not happen, and no note about apps opening
     // a folder that will never exist. "No changes in this project." above is the whole story.
     if (!changedHere) return sec;
@@ -260,7 +312,9 @@ function memberCard(model, m, { doc, handlers, logs, queued }) {
   const setup = m.checkout.setup || {};
   const row = h(doc, 'div', 'act-row');
   if (state === 'setting-up') {
-    sec.append(h(doc, 'p', 'hint', m.setup ? `Running setup: ${m.setup}` : 'Running setup'));
+    // The estimate is the first member's project's last setup (the model carries only that one).
+    const est = model.members?.[0]?.projectKey === m.projectKey ? model.estimate?.lastSetupMs : null;
+    sec.append(setupStatus(doc, m, mine, est, now));
   } else if (state === 'setup-failed') {
     const why = setup.status === 'interrupted' ? 'Setup was interrupted.' : `Setup failed${setup.exitCode != null ? ` (exit ${setup.exitCode})` : ''}.`;
     sec.append(h(doc, 'p', 'hint act-exit fail', why));
@@ -271,7 +325,8 @@ function memberCard(model, m, { doc, handlers, logs, queued }) {
       const live = a.kind === 'service' ? activeService(mine, a.id) : null;
       if (live) { row.append(stopButton(doc, a.label, () => handlers.onStop?.(m.projectKey, a.id))); continue; }
       if (queued?.has(`${m.projectKey}:${a.id}`)) { const b = btn(doc, 'Starts after setup', null, null, `${a.label} starts when the setup command finishes`); b.disabled = true; row.append(b); continue; }
-      row.append(btn(doc, a.label, a.kind === 'service' ? 'btn-primary' : null, () => handlers.onStart?.(m.projectKey, a.id), actionTip(a)));
+      const b = btn(doc, a.label, a.kind === 'service' ? 'btn-primary' : null, () => handlers.onStart?.(m.projectKey, a.id), actionTip(a));
+      row.append(busy?.has(`start:${m.projectKey}:${a.id}`) ? busyButton(b, 'Starting…') : b);
     }
     // Setup was skipped (a linked folder of yours, or actions off when checked out): it never runs by itself
     // there, so this is the way to run it. Only when the project has a setup command: otherwise nothing would run.
@@ -307,7 +362,10 @@ function memberCard(model, m, { doc, handlers, logs, queued }) {
     line.append(h(doc, 'span', 'act-label', withPort(labelOf(m, s), s)));
     const link = openLink(doc, s.url, portOf(s) != null ? `Open :${portOf(s)}` : 'Open');
     if (link) line.append(link);
-    if (s.startedAt) line.append(h(doc, 'span', 'act-uptime', `up ${formatUptime(Date.now() - s.startedAt)}`));
+    // Started but not ready yet (the ready check still waits): a spinner, never an uptime that reads as "up".
+    if (s.status !== 'ready' && !s.readyError) {
+      const w = h(doc, 'span', 'act-starting'); w.append(spinner(doc), doc.createTextNode('Starting…')); line.append(w);
+    } else if (s.startedAt) line.append(h(doc, 'span', 'act-uptime', `up ${formatUptime(now - s.startedAt)}`));
     if (s.readyError) line.append(h(doc, 'span', 'hint act-ready-error', s.readyError));
     sec.append(line);
   }
@@ -316,13 +374,15 @@ function memberCard(model, m, { doc, handlers, logs, queued }) {
     const ok = task.exitCode === 0;
     sec.append(h(doc, 'p', `act-exit ${ok ? 'ok' : 'fail'}`, `${labelOf(m, task)} ${task.status} (exit ${task.exitCode ?? '?'})`));
   }
-  const shown = latest(mine);
+  // While setup runs, and after it failed, the log shown is setup's own (an older action's never covers it).
+  const setupState = state === 'setting-up' || state === 'setup-failed';
+  const shown = (setupState && latest(mine.filter((s) => s.actionId === '__setup'))) || latest(mine);
   if (shown && logs) sec.append(renderLog(doc, shown.instanceId, logs.get(shown.instanceId)));
   return sec;
 }
 
 /** The changed members that are not checked out yet, as one table. Returns null when there are none. */
-function renderCheckoutTable(model, rows, { doc, handlers, pickable, picked, onPick }) {
+function renderCheckoutTable(model, rows, { doc, handlers, pickable, picked, onPick, busy = null }) {
   if (!rows.length) return null;
   const live = model.finished !== false;
   // More than one row the footer button could act on: `pickable`, the same list the footer uses, so a
@@ -395,7 +455,7 @@ function renderCheckoutTable(model, rows, { doc, handlers, pickable, picked, onP
     else lines.append(h(doc, 'span', 'diff-add', `+${m.added | 0}`), ' ', h(doc, 'span', 'diff-del', `−${m.removed | 0}`));
     const stTd = h(doc, 'td', 'act-c-end');
     stTd.dataset.label = 'State';
-    const [text, cls, spin] = rowChip(m, 'not-checked-out');
+    const [text, cls, spin] = rowChip(m, busy?.has(`checkout:${m.projectKey}`) ? 'checking-out' : 'not-checked-out');
     const chip = h(doc, 'span', cls);
     if (spin) { const s = h(doc, 'span', 'act-spin'); s.setAttribute('aria-hidden', 'true'); chip.append(s); }
     chip.append(text);
@@ -416,7 +476,7 @@ function renderCheckoutTable(model, rows, { doc, handlers, pickable, picked, onP
 /** A member that IS checked out (whether or not the run changed it): the row grows its folder, its actions
  *  and the open-in buttons. `collapsible` (a long card) hides all that behind a Show button unless the row
  *  needs attention (a service running, setup failed), in which case it stays open and has no button. */
-function checkedOutRow(model, m, state, { doc, handlers, logs, queued, collapsible = false, expanded = false, onToggle = null }) {
+function checkedOutRow(model, m, state, { doc, handlers, logs, queued, busy = null, now = Date.now(), collapsible = false, expanded = false, onToggle = null }) {
   const mine = instancesOf(model, m.projectKey);
   const needsEye = state === 'running' || state === 'setup-failed';
   const open = !collapsible || needsEye || expanded;
@@ -459,7 +519,9 @@ function checkedOutRow(model, m, state, { doc, handlers, logs, queued, collapsib
 
   const acts = h(doc, 'div', 'act-wt-acts');
   if (state === 'setting-up') {
-    r.append(h(doc, 'p', 'hint', m.setup ? `Running setup: ${m.setup}` : 'Running setup'));
+    // The estimate is the first member's project's last setup (the model carries only that one).
+    const est = model.members?.[0]?.projectKey === m.projectKey ? model.estimate?.lastSetupMs : null;
+    r.append(setupStatus(doc, m, mine, est, now));
   } else if (state === 'setup-failed') {
     const s = m.checkout.setup || {};
     r.append(h(doc, 'p', 'hint act-exit fail', s.status === 'interrupted' ? 'Setup was interrupted.'
@@ -474,7 +536,8 @@ function checkedOutRow(model, m, state, { doc, handlers, logs, queued, collapsib
         const b = btn(doc, 'Starts after setup', null, null, `${a.label} starts when the setup command finishes`);
         b.disabled = true; acts.append(b); continue;
       }
-      acts.append(btn(doc, a.label, a.kind === 'service' ? 'btn-primary' : null, () => handlers.onStart?.(m.projectKey, a.id), actionTip(a)));
+      const b = btn(doc, a.label, a.kind === 'service' ? 'btn-primary' : null, () => handlers.onStart?.(m.projectKey, a.id), actionTip(a));
+      acts.append(busy?.has(`start:${m.projectKey}:${a.id}`) ? busyButton(b, 'Starting…') : b);
     }
     if ((m.checkout.setup || {}).status === 'skipped' && m.setup) {
       acts.append(btn(doc, 'Run setup', null, () => handlers.onSetupAgain?.(m.projectKey), `Run the project's setup command here: ${m.setup}`));
@@ -492,22 +555,28 @@ function checkedOutRow(model, m, state, { doc, handlers, logs, queued, collapsib
   // Rarely used, and never the loudest button on the row (quiet, and last).
   if (handlers.onDiff) acts.append(btn(doc, 'Download patch', 'btn-quiet act-diff', (e) => handlers.onDiff?.(m.projectKey, e.currentTarget),
     'Download a patch of the folder\'s uncommitted changes. Read-only: nothing in the folder is staged or changed.'));
-  acts.append(m.checkout?.external
+  const discard = m.checkout?.external
     ? btn(doc, 'Unlink', 'btn-quiet act-discard', () => handlers.onUnlink?.(m.projectKey),
       'Stop using your folder for this run. Running services stop; the folder and its changes stay as they are.')
     : btn(doc, 'Discard', 'btn-quiet act-discard', () => handlers.onDiscard?.([m.projectKey]),
-      'Delete the checkout folder. Running services stop, and uncommitted changes are saved as a patch first.'));
+      'Delete the checkout folder. Running services stop, and uncommitted changes are saved as a patch first.');
+  acts.append(busy?.has(`discard:${m.projectKey}`) ? busyButton(discard, m.checkout?.external ? 'Unlinking…' : 'Discarding…') : discard);
   r.append(acts);
 
   for (const s of mine.filter((x) => x.kind === 'service' && ACTIVE.has(x.status))) {
     const line = h(doc, 'div', 'act-wt-svc');
     const link = openLink(doc, s.url, portOf(s) != null ? `Open :${portOf(s)}` : 'Open');
     if (link) line.append(link);
-    if (s.startedAt) line.append(h(doc, 'span', 'act-uptime', `up ${formatUptime(Date.now() - s.startedAt)}`));
+    // Started but not ready yet (the ready check still waits): a spinner, never an uptime that reads as "up".
+    if (s.status !== 'ready' && !s.readyError) {
+      const w = h(doc, 'span', 'act-starting'); w.append(spinner(doc), doc.createTextNode('Starting…')); line.append(w);
+    } else if (s.startedAt) line.append(h(doc, 'span', 'act-uptime', `up ${formatUptime(now - s.startedAt)}`));
     if (s.readyError) line.append(h(doc, 'span', 'hint act-ready-error', s.readyError));
     if (line.childNodes.length) r.append(line);
   }
-  const shown = latest(mine);
+  // While setup runs, and after it failed, the log shown is setup's own (an older action's never covers it).
+  const setupState = state === 'setting-up' || state === 'setup-failed';
+  const shown = (setupState && latest(mine.filter((s) => s.actionId === '__setup'))) || latest(mine);
   if (shown && logs) r.append(renderLog(doc, shown.instanceId, logs.get(shown.instanceId)));
   return r;
 }
@@ -533,7 +602,7 @@ function renderUnchangedFold(doc, members) {
 
 /** One footer line: the button that counts the selection, Copy git commands, and the one place the
  *  setup estimate, where apps open and the Settings link are said. */
-function renderCheckoutFoot(model, rows, { doc, handlers, pickable, picked }) {
+function renderCheckoutFoot(model, rows, { doc, handlers, pickable, picked, busy = null }) {
   const foot = h(doc, 'div', 'act-co-foot');
   if (model.finished === false) {
     foot.append(h(doc, 'p', 'hint', 'Check out is available once the run has finished.'));
@@ -552,7 +621,7 @@ function renderCheckoutFoot(model, rows, { doc, handlers, pickable, picked }) {
       () => handlers.onCheckout?.(chosen.length ? chosen : only ? [only.projectKey] : []),
       'Put the chosen branches in folders of their own, then run each project\'s setup command');
     go.disabled = !only && chosen.length === 0;
-    foot.append(go);
+    foot.append(pickable.some((m) => busy?.has(`checkout:${m.projectKey}`)) ? busyButton(go, 'Checking out…') : go);
   }
   if (rows.length) {
     const copyable = rows.filter((m) => m.copyCommand);
@@ -575,7 +644,7 @@ function renderCheckoutFoot(model, rows, { doc, handlers, pickable, picked }) {
  *  changed, expanded rows for the ones checked out, its stacks, and one collapsed line for the rest.
  *  A single-project run keeps its own card (memberCard). */
 export function renderActionsCard(model, { doc, handlers = {}, logs = null, queued = null, notice = null, picked = null, onPick = null,
-  expanded = null, onExpand = null } = {}) {
+  expanded = null, onExpand = null, busy = null, now = Date.now() } = {}) {
   const root = h(doc, 'div', 'act-view');
   if (notice) {
     // kind 'error' | 'ok' (and older 'err'): an error is a tinted alert box, a success a green status line.
@@ -586,7 +655,7 @@ export function renderActionsCard(model, { doc, handlers = {}, logs = null, queu
   }
   const members = model.members || [];
   if (!model.workspace) {
-    for (const m of members) root.append(memberCard(model, m, { doc, handlers, logs, queued }));
+    for (const m of members) root.append(memberCard(model, m, { doc, handlers, logs, queued, busy, now }));
     return root;
   }
 
@@ -622,7 +691,7 @@ export function renderActionsCard(model, { doc, handlers = {}, logs = null, queu
       h(doc, 'p', 'hint', `None of the ${plural(members.length, 'project')} has commits on its branch, so there is nothing to check out.`));
     card.append(e);
   } else {
-    const table = renderCheckoutTable(model, pending, { doc, handlers, pickable, picked: picks, onPick: onPick || (() => {}) });
+    const table = renderCheckoutTable(model, pending, { doc, handlers, pickable, picked: picks, onPick: onPick || (() => {}), busy });
     if (table) card.append(table);
     if (out.length) {
       const wt = h(doc, 'div', 'act-wt');
@@ -631,12 +700,12 @@ export function renderActionsCard(model, { doc, handlers = {}, logs = null, queu
       // the long page this collapse exists for.
       const collapsible = pending.length + out.length >= COLLAPSE_ROWS_AT;
       for (const m of out) {
-        wt.append(checkedOutRow(model, m, memberViewState(m, model.instances || []), { doc, handlers, logs, queued,
+        wt.append(checkedOutRow(model, m, memberViewState(m, model.instances || []), { doc, handlers, logs, queued, busy, now,
           collapsible, expanded: opened.has(m.projectKey), onToggle: onExpand }));
       }
       card.append(wt);
     }
-    card.append(renderCheckoutFoot(model, pending, { doc, handlers, pickable, picked: picks }));
+    card.append(renderCheckoutFoot(model, pending, { doc, handlers, pickable, picked: picks, busy }));
   }
 
   // Stacks can reference members the run did not change; they still start — stack start checks such a member
@@ -796,8 +865,10 @@ export async function releaseCheckout({ api, url, members, external = false, dir
 
 /** The live Actions tab: fetches the run model, renders the card, follows action-* frames. */
 export function createActionsController({ runId, scopeQuery, api, ws, host, doc, confirm, navigate, onModel, downloadPatch }) {
+  // busy: key → shown. A key is held from the press until its refresh is done, so a second press does nothing;
+  // `shown` turns on when the request goes out (Discard's after its confirm), and only shown keys draw as busy.
   const st = { model: null, dead: false, lastSeq: new Map(), logs: new Map(), queued: new Set(), subscribed: new Set(), notice: null,
-    picked: null, expanded: new Set() };
+    picked: null, expanded: new Set(), busy: new Map(), ticker: null };
   const base = `/api/runs/${encodeURIComponent(runId)}`;
   const q = scopeQuery ? `?${scopeQuery}` : '';
   const prefix = `act:${runId}:`;
@@ -814,12 +885,31 @@ export function createActionsController({ runId, scopeQuery, api, ws, host, doc,
     if (st.picked === null) st.picked = defaultPicks(pending);
     // Drop keys that left the table (checked out, or no longer offered) so the count never over-reports.
     for (const k of [...st.picked]) if (!pending.some((m) => m.projectKey === k)) st.picked.delete(k);
+    const busy = new Set([...st.busy].filter(([, shown]) => shown).map(([k]) => k));
     host.replaceChildren(renderActionsCard(st.model, { doc, handlers, logs: st.logs, queued: st.queued, notice: st.notice,
       picked: st.picked, onPick: (next) => { st.picked = next; render(); },
       // A row the person opened by hand stays open across the re-render every action triggers.
       expanded: st.expanded,
-      onExpand: (k) => { if (st.expanded.has(k)) st.expanded.delete(k); else st.expanded.add(k); render(); } }));
+      onExpand: (k) => { if (st.expanded.has(k)) st.expanded.delete(k); else st.expanded.add(k); render(); }, busy }));
+    // Setup's elapsed time ticks in place once a second, and only while one is on screen.
+    const ticking = !!host.querySelector('.act-elapsed');
+    if (ticking && !st.ticker) st.ticker = setInterval(tickElapsed, 1000);
+    else if (!ticking && st.ticker) { clearInterval(st.ticker); st.ticker = null; }
   }
+  function tickElapsed() {
+    for (const el of host.querySelectorAll('.act-elapsed')) el.textContent = formatUptime(Date.now() - Number(el.dataset.since));
+  }
+  /** Runs one press for `keys` (one per member, or per action). A press while any of them is held does nothing.
+   *  `fn(show)` gets the hook that turns the busy look on; `showNow` turns it on at once. */
+  async function busyWhile(keys, fn, { showNow = true } = {}) {
+    if (!keys.length || keys.some((k) => st.busy.has(k))) return undefined;
+    for (const k of keys) st.busy.set(k, showNow);
+    if (showNow) render();
+    const show = () => { for (const k of keys) if (st.busy.has(k)) st.busy.set(k, true); render(); };
+    try { return await fn(show); } finally { for (const k of keys) st.busy.delete(k); render(); }
+  }
+  const memberKeys = (what, members) => (members || (st.model?.members || []).filter((m) => m.branch && !m.checkout).map((m) => m.projectKey))
+    .map((pk) => `${what}:${pk}`);
   function fail(r) { st.notice = { text: r.data?.error || `Request failed (${r.status})`, kind: 'error' }; render(); }
   function upsert(snap) {
     if (!st.model || !snap?.instanceId) return;
@@ -856,7 +946,8 @@ export function createActionsController({ runId, scopeQuery, api, ws, host, doc,
     : `Checkout discarded. ${(r.data?.patches || []).length ? 'Uncommitted changes were saved as a patch in the run\'s files.' : 'Nothing uncommitted needed saving.'}` });
 
   const handlers = {
-    onCheckout: async (members) => after(await api('POST', `${base}/checkout${q}`, members ? { members } : {})),
+    onCheckout: async (members) => busyWhile(memberKeys('checkout', members),
+      async () => after(await api('POST', `${base}/checkout${q}`, members ? { members } : {}))),
     // The branch is already checked out in another folder (the person's clone): link it as the checkout.
     onUseExisting: async (member, { then = null } = {}) => {
       const m = (st.model?.members || []).find((x) => x.projectKey === member);
@@ -868,16 +959,18 @@ export function createActionsController({ runId, scopeQuery, api, ws, host, doc,
       const r = await after(await api('POST', `${base}/checkout${q}`, { members: [member], useExisting: true }));
       if (r?.ok && then) await handlers.onBuiltin(member, then.key);
     },
-    onUnlink: async (member) => {
+    // Busy from the DELETE (after the confirm) until the refreshed card is up; held from the press, so a second
+    // press while the confirm is open asks nothing.
+    onUnlink: async (member) => busyWhile([`discard:${member}`], async (show) => {
       const m = (st.model?.members || []).find((x) => x.projectKey === member);
-      const r = await releaseCheckout({ api, url: `${base}/checkout${q}`, members: [member], external: true,
+      const r = await releaseCheckout({ api: (...a) => { show(); return api(...a); }, url: `${base}/checkout${q}`, members: [member], external: true,
         dir: m?.checkout?.worktreeDir || 'the folder', confirm });
-      if (r && (await after(r))?.ok) { st.notice = released(true, r); render(); }
-    },
-    onDiscard: async (members) => {
-      const r = await releaseCheckout({ api, url: `${base}/checkout${q}`, members, confirm });
-      if (r && (await after(r))?.ok) { st.notice = released(false, r); render(); }
-    },
+      if (r && (await after(r))?.ok) st.notice = released(true, r);
+    }, { showNow: false }),
+    onDiscard: async (members) => busyWhile(memberKeys('discard', members), async (show) => {
+      const r = await releaseCheckout({ api: (...a) => { show(); return api(...a); }, url: `${base}/checkout${q}`, members, confirm });
+      if (r && (await after(r))?.ok) st.notice = released(false, r);
+    }, { showNow: false }),
     // Download patch: a read-only patch of the checkout's uncommitted changes. The page fetches and saves it.
     ...(downloadPatch ? { onDiff: async (member, btnEl) => {
       const m = (st.model?.members || []).find((x) => x.projectKey === member);
@@ -885,7 +978,7 @@ export function createActionsController({ runId, scopeQuery, api, ws, host, doc,
       if (member) qs.set('member', member);
       await downloadPatch({ url: `${base}/checkout/diff?${qs}`, branch: m?.branch || runId, btn: btnEl });
     } } : {}),
-    onStart: async (member, actionId) => {
+    onStart: async (member, actionId) => busyWhile([`start:${member}:${actionId}`], async () => {
       const r = await api('POST', `${base}/actions/${encodeURIComponent(actionId)}/start${q}`, { member });
       if (!r.ok) return fail(r);
       st.notice = null;
@@ -896,8 +989,8 @@ export function createActionsController({ runId, scopeQuery, api, ws, host, doc,
         upsert(r.data);
         if (r.data?.instanceId) subscribe(r.data.instanceId);
       }
-      render();
-    },
+      return undefined;
+    }),
     onStop: async (member, actionId) => after(await api('POST', `${base}/actions/${encodeURIComponent(actionId)}/stop${q}`, { member })),
     onBuiltin: async (member, key) => { const r = await api('POST', `${base}/builtins/${encodeURIComponent(key)}${q}`, { member }); if (!r.ok) fail(r); },
     // Terminal / Finder / Editor before Check out: they open the checkout folder, so ask, check out, then open.
@@ -911,7 +1004,8 @@ export function createActionsController({ runId, scopeQuery, api, ws, host, doc,
           ...(m?.setup ? [' Then the setup command runs: ', { strong: m.setup }] : [])],
         confirmLabel: `Check out and open` });
       if (!ok) return;
-      const r = await after(await api('POST', `${base}/checkout${q}`, { members: [member] }));
+      // The card shows Checking out while the POST is out, as a Check out press does.
+      const r = await busyWhile([`checkout:${member}`], async () => after(await api('POST', `${base}/checkout${q}`, { members: [member] })));
       if (r?.ok) await handlers.onBuiltin(member, key);
     },
     onSetupAgain: async (member) => {
@@ -950,6 +1044,8 @@ export function createActionsController({ runId, scopeQuery, api, ws, host, doc,
     if (msg.type === 'action-status') {
       if (msg.snapshot) {
         upsert(msg.snapshot);
+        // An instance the last refresh did not list (setup, which starts after Check out answers): its lines replay.
+        subscribe(msg.snapshot.instanceId);
         st.queued.delete(`${msg.snapshot.member}:${msg.snapshot.actionId}`);
       } else st.queued.delete(msg.instanceId.slice(prefix.length));
       if (typeof msg.error === 'string' && msg.error) st.notice = { text: msg.error, kind: 'error' };
@@ -957,7 +1053,7 @@ export function createActionsController({ runId, scopeQuery, api, ws, host, doc,
     }
   }
 
-  function destroy() { st.dead = true; host.replaceChildren(); }
+  function destroy() { st.dead = true; if (st.ticker) clearInterval(st.ticker); st.ticker = null; host.replaceChildren(); }
 
   return { runId, refresh, onFrame, destroy };
 }

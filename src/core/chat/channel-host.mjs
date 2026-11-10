@@ -25,7 +25,7 @@ import { normalizeManifest, negotiatedApi } from '../plugin-manifest.mjs';
 import { WORCA_PLUGIN_API } from '../plugin-api.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../plugins-lock.mjs';
 import { readPluginConfig, readPluginState, writePluginState } from '../plugin-config.mjs';
-import { encodeFrame, decodeFrame, isValidMessage, isValidSendOptions, isValidHistory, CONTROL_LIMITS, MAX_FRAME_BYTES, INBOUND_LIMITS } from './channel-protocol.mjs';
+import { encodeFrame, decodeFrame, isValidMessage, isValidSendOptions, isValidHistory, CONTROL_LIMITS, MAX_FRAME_BYTES, INBOUND_LIMITS, FILE_REF_RE, FILE_LIMITS } from './channel-protocol.mjs';
 import { redactSecrets } from './redact.mjs';
 
 const CHILD_PATH = fileURLToPath(new URL('./channel-worker-child.mjs', import.meta.url));
@@ -55,7 +55,10 @@ function mockMode() {
 
 // ── mock hooks (tests / offline smoke) ───────────────────────────────────────
 
-let _mockBehavior = null;   // key or '*' -> { send?(chatId, message), webhook?(req), react?(frame), history?(frame), typing?(frame) }
+/** Key of a host verdict on a worker's file chunks (fetchFile): a symbol, so no frame field can carry it. */
+const CHUNK_VERDICT = Symbol('file-chunk verdict');
+
+let _mockBehavior = null;   // key or '*' -> { send?(chatId, message), webhook?(req), react?(frame), history?(frame), typing?(frame), file?(frame) }
 const _mockSent = [];       // every sendMessage seen in mock mode
 
 /** Tests: override mock worker behavior per "plugin/channelId" key ('*' = all). */
@@ -241,6 +244,13 @@ export function createChannelHost({ logger, onInbound, onInteraction, onStatus, 
         try { onInteraction?.({ plugin: w.entry.plugin, channelId: w.entry.channelId, platform: w.entry.platform, evt: frame.evt }); }
         catch (err) { log('error', `chat interaction handler failed: ${w.redact(err?.message || err)}`); }
         break;
+      case 'file-chunk': {
+        const p = w.pending.get(frame.id);
+        if (!p?.onChunk) break;            // a request already settled (over the cap, timed out): its later chunks are dropped
+        const settle = p.onChunk(frame);
+        if (settle) { w.pending.delete(frame.id); clearTimeout(p.timer); p.resolve(settle); }
+        break;
+      }
       case 'send-result':
       case 'webhook-result': {
         const p = w.pending.get(frame.id);
@@ -424,7 +434,7 @@ export function createChannelHost({ logger, onInbound, onInteraction, onStatus, 
     });
   };
 
-  const rpc = (w, frame, timeoutMs, kindOnTimeout = 'timeout') => new Promise((resolveRpc, rejectRpc) => {
+  const rpc = (w, frame, timeoutMs, kindOnTimeout = 'timeout', onChunk = null) => new Promise((resolveRpc, rejectRpc) => {
     const timer = setTimeout(() => {
       w.pending.delete(frame.id);
       // Still queued behind backpressure? Drop it: a later drain must not
@@ -434,7 +444,7 @@ export function createChannelHost({ logger, onInbound, onInteraction, onStatus, 
       rejectRpc(new PluginOpError(kindOnTimeout, `worker did not answer within ${timeoutMs}ms`));
     }, timeoutMs);
     timer.unref?.();
-    w.pending.set(frame.id, { resolve: resolveRpc, reject: rejectRpc, timer });
+    w.pending.set(frame.id, { resolve: resolveRpc, reject: rejectRpc, timer, onChunk });
     try { writeFrame(w, frame); } catch (err) {
       w.pending.delete(frame.id);
       clearTimeout(timer);
@@ -615,6 +625,56 @@ export function createChannelHost({ logger, onInbound, onInteraction, onStatus, 
       }
       if (!isValidHistory(messages)) throw new PluginOpError('protocol', 'the channel worker answered an invalid history');
       return messages.slice(-frame.limit);
+    },
+
+    /** v2 (worker file fetch): the bytes of one attachment the worker announced with an opaque `ref`. The worker
+     *  downloads it with its own credential and streams `file-chunk` frames; the HOST enforces `maxBytes` on what
+     *  arrives (a worker that sends more is cut off at the cap). Resolves {buf, contentType} or {tooBig: true}; throws
+     *  PluginOpError (a refusal that would fail again is `permanent`). Mock mode asks behavior.file(frame) → {data,
+     *  contentType?}. */
+    async fetchFile({ plugin, channelId, ref, maxBytes, timeoutMs = 20000 }) {
+      const w = workers.get(workerKey(plugin, channelId));
+      if (!w) throw new PluginOpError('plugin', `no such channel worker "${plugin}/${channelId}"`);
+      if (!w.entry.capabilities.inbound) throw refused(new PluginOpError('plugin', 'channel has no inbound messages'));
+      const frame = {
+        ref: String(ref ?? ''), maxBytes: Math.trunc(Number(maxBytes)),
+        timeoutMs: Math.max(FILE_LIMITS.minTimeoutMs, Math.min(FILE_LIMITS.maxTimeoutMs, Math.trunc(Number(timeoutMs)) || FILE_LIMITS.minTimeoutMs)),
+      };
+      if (!FILE_REF_RE.test(frame.ref) || !Number.isSafeInteger(frame.maxBytes) || frame.maxBytes < 1 || frame.maxBytes > FILE_LIMITS.maxBytes) {
+        throw refused(new PluginOpError('plugin', 'invalid file request'));
+      }
+      if (w.mock) {
+        const behavior = _mockBehavior?.[w.key] ?? _mockBehavior?.['*'];
+        if (!behavior?.file) throw refused(new PluginOpError('plugin', 'worker cannot download files'));
+        let r;
+        try { r = await behavior.file(frame); } catch (err) { if (err?.tooBig === true) return { tooBig: true }; throw err; }
+        const buf = Buffer.from(r?.data ?? []);
+        return buf.length > frame.maxBytes ? { tooBig: true } : { buf, contentType: typeof r?.contentType === 'string' ? r.contentType : null };
+      }
+      if (w.state === 'unconfigured' || w.state === 'failed' || !w.proc) throw new PluginOpError('plugin', `channel worker is ${w.state}`);
+      const chunks = [];
+      let total = 0;
+      let next = 0;
+      const res = await rpc(w, { type: 'file', id: `f-${++rpcSeq}`, ...frame }, frame.timeoutMs + 1000, 'timeout', (c) => {
+        if (c.seq !== next) return { [CHUNK_VERDICT]: `file chunk ${c.seq} out of order` };
+        next += 1;
+        const b = Buffer.from(c.dataB64, 'base64');
+        total += b.length;
+        if (total > frame.maxBytes) return { [CHUNK_VERDICT]: 'tooBig' };
+        chunks.push(b);
+        return null;
+      });
+      // A host verdict on the chunks (never a field of the worker's own send-result, which could carry any text).
+      if (res[CHUNK_VERDICT] === 'tooBig') return { tooBig: true };
+      if (res[CHUNK_VERDICT]) throw new PluginOpError('protocol', res[CHUNK_VERDICT]);
+      if (!res.ok) {
+        if (res.error?.tooBig === true) return { tooBig: true };
+        const err = new PluginOpError(res.error?.kind || 'plugin', w.redact(res.error?.message || 'file download failed'));
+        if (Number.isFinite(res.error?.retryAfterMs)) err.retryAfterMs = res.error.retryAfterMs;
+        throw res.error?.permanent === true ? refused(err) : err;
+      }
+      if (res.detail?.bytes !== total || res.detail?.chunks !== next) throw new PluginOpError('protocol', 'the channel worker answered an incomplete file');
+      return { buf: Buffer.concat(chunks, total), contentType: typeof res.detail.contentType === 'string' ? res.detail.contentType : null };
     },
 
     /** Tests: the interaction twin of injectInboundMessage. */

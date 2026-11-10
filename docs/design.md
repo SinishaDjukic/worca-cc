@@ -30,9 +30,9 @@ Then the build:
 - **The lead goes over the result** once more and fixes what does not fit together.
 
 Every cursor on the page is a real running agent, and the agents panel lists each one with what it is doing and
-what it has cost. On Claude, agents only read and write files: no shell commands and no web. The lead writes only
-inside the design's own folder, and each section's agent only inside its section. Other engines cannot be held to
-all of this: see [Engines](#engines).
+what it has cost. On Claude, agents only read and write files: no shell commands and no web, unless you give the
+lead the web (see [Web access](#web-access)). The lead writes only inside the design's own folder, and each
+section's agent only inside its section. Other engines cannot be held to all of this: see [Engines](#engines).
 
 When an agent needs an answer from you, the HUD reads **Needs you**. A usage limit, a sign-in, a quota or a model
 error pauses the whole build; **Resume** on the HUD picks it up. A build that is running shows in Activity; a
@@ -42,7 +42,7 @@ marked interrupted and nothing starts again by itself.
 ## Models
 
 A build has two kinds of agent: the **lead**, which plans the sections and puts them together, and the **builders**,
-one per section. Two model pickers in the composer and in the chat pick their models, and they work as the Chat
+one per section. Two model pickers pick their models (the gear in the composer and in the chat opens them), and they work as the Chat
 model picker: **Lead** `Opus 5.5` `high` and **Builders** `Sonnet 5.5` `medium`. Each opens a menu with **Default**,
 the models the design's engine runs (**More models** for the rest), and **Effort**.
 
@@ -60,7 +60,7 @@ dialog moves the design to Claude, its picks are dropped and Default applies.
 
 ## Build fast
 
-**Build fast** is a switch in the composer and in the chat. It sets how many agents build sections at once:
+**Build fast** is a switch behind the gear in the composer and in the chat, under the model pickers. It sets how many agents build sections at once:
 
 - **Off:** at most 3. The chat's label reads `up to 3`.
 - **On:** at most 12, and the label reads `up to 12`. On a [hosted](#hosted) worca it is at most 6, and the label
@@ -89,7 +89,7 @@ creates nothing.
   holds their writes to their own folder.
 - **Cursor** cannot fully turn its shell off.
 - **Gemini CLI**, **Qwen Code** and **OpenCode** run with their shell and web tools off, but cannot be limited to
-  Design's tools.
+  Design's tools. With [Web access](#web-access) on, the lead's web tools stay on.
 - **Copilot** reports no cost and cannot fully hold the rules.
 - **OpenCode** needs a model set first: a lead and a builders model for OpenCode (the design's pickers, the
   Models page's Design rows or the roles, see [Models](#models)), or `WORCA_OPENCODE_ALLOW_DEFAULT_MODEL=1` to let it
@@ -105,6 +105,30 @@ Engines other than Claude show files as they land on disk, and have no per-proce
 between their processes. Copilot, Gemini CLI, Qwen Code and Cursor show `cost unknown`, so worca's spend limits
 cannot stop them. Copilot, Gemini CLI, Qwen Code and OpenCode cannot read the picked project: their lead is not given
 its path, and the dialog says so.
+
+## Web access
+
+Off by default. **Settings**, the Ask Worca card, **Design: let the lead use the web** turns it on for every
+design, on every engine; a build reads the switch each time it starts or resumes.
+
+With it on, the **lead**, and only the lead, can:
+
+- **search the web and read pages** with its engine's own web tools (Claude's web search and fetch, Gemini's,
+  Codex's web search, and so on). An engine or model without web tools gets none from worca: a Claude model served
+  through a translated bridge has no search or fetch.
+- **save pictures** with `save_image`, a tool worca gives it on every engine. worca downloads the file, not the
+  agent: https only, never an address on a private or local network, PNG, JPEG, GIF, WebP, AVIF or SVG by the
+  file's own bytes, at most 8 MB each and 64 MB and 120 files per design. A picture lands in `work/assets/web/`
+  as a new file, and the page points at it as `assets/web/<name>`.
+
+Section agents stay offline: the lead tells each one which saved pictures to use. A finished design still loads
+nothing from another site, so every export works offline as before. Each download, refused ones too, is one line
+in `<worca home>/logs/design-web.jsonl`.
+
+What it costs you in safety: the lead can read the picked project and reach the internet in the same session. A
+web page it reads could talk it into putting project content into a search or an address. The files Design never
+reads (keys, `.env` files) stay unreadable, but ordinary source is not protected. Leave the switch off for a
+project whose code must not leave the machine. worca cannot check that you may use a picture: that stays with you.
 
 ## Decks and video
 
@@ -207,7 +231,7 @@ database and store (see [Storage](storage.md)). No git is needed.
 
 | Inside | What it holds |
 |---|---|
-| `work/` | What the agents write: the sections, the shared files and your attachments |
+| `work/` | What the agents write: the sections, the shared files, your attachments and the pictures the lead saved from the web (`assets/web/`) |
 | `dist/` | The finished page; exports read it |
 | `versions/` | The state after each finished round, the last 20, for **Back to before this** |
 | `thumb.png` | The Library picture; never exported, and agents cannot write it |

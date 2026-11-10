@@ -209,7 +209,7 @@
                 <h2>Getting started</h2>
               </div>
               <div class="gs-settings-row">
-                <p class="gs-settings-text">The Getting started checklist walks through the first nine things to do with Worca. Hidden it, or want the guided tour back?</p>
+                <p class="gs-settings-text">The Getting started checklist walks through the first nine things to do with Worca. Hid it, or want the guided tour back?</p>
                 <button type="button" id="gsShowAgain" class="btn btn-sm">Show again</button>
               </div>
               <small class="hint" id="gsSettingsMsg"></small>
@@ -355,6 +355,7 @@
             <div class="topbar">
               <div>
                 <div class="sub">Cost limits and defaults for your pipeline runs</div>
+                <div class="drows"><div class="drow drow-wide"><div class="drow-control"><input id="settings-runs-filter" class="input settings-filter" type="search" placeholder="Filter these settings" aria-label="Filter the Runs settings" autocomplete="off" /></div></div></div>
               </div>
             </div>
 
@@ -906,6 +907,9 @@
               <!-- Ask web access (off by default): rendered by chat-settings-view.mjs; saved with this
                    card's Save button, and only when one of its fields was touched. -->
               <div class="field drow drow-stack" id="ask-web-host"></div>
+              <!-- Design's web access (off by default, flag design): rendered by chat-settings-view.mjs; saved with this
+                   card's Save button. -->
+              <div class="field drow drow-stack" id="design-web-host" data-flag="design"></div>
               <!-- Sets (docs/mcp-servers.md, docs/skills.md): the General set's servers and skills in one line, painted by
                    mcp-view.mjs; the Edit General set link opens the Connectors page under the level banner. -->
               <div class="field drow drow-stack" id="ask-mcp-host"></div>

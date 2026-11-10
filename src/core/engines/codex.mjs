@@ -37,6 +37,10 @@ import { scopeLauncherEnv } from '../mcp/launch.mjs';
 
 export const CODEX_DEFAULT_BIN = process.env.WORCA_CODEX_BIN || 'codex';
 
+/** The instruction files Codex reads from its cwd (checked against codex-cli 0.146/0.154), in its order: Codex
+ *  reads only the first non-empty one per directory (learn.chatgpt.com/docs/agent-configuration/agents-md). */
+export const CODEX_INSTRUCTION_FILES = Object.freeze(['AGENTS.override.md', 'AGENTS.md']);
+
 /** Stored session ids are engine-qualified so a resume never hands a codex
  *  thread to claude (or a claude session to codex). */
 export const CODEX_SESSION_PREFIX = 'codex:';
@@ -948,7 +952,7 @@ export const codexChat = makeChatDescriptor({
   // OpenAI's list price, unless the model runs on an endpoint of its own (its Models page price then, or none).
   listRates: (model) => { const m = model || CODEX_DEFAULT_MODEL; return findCodexEndpointEntry(m) ? null : openaiListRates(m); },
   resumeNotFound: codexResumeNotFound,
-  shellTrippedMessage: 'Codex tried to run a shell command although its shell was switched off — worca stopped the turn.',
+  shellTrippedMessage: 'OpenAI Codex tried to run a shell command although its shell was switched off — worca stopped the turn.',
   titles: true,
   suggestionModel: 'gpt-5.6-luna',
   turnImages: true,

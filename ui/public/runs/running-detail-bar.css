@@ -123,6 +123,13 @@
 .rd-sheet-head > .rd-head-acts[hidden]{display:none;}
 /* The PR slot may shrink in the row (its own max-width caps the label; style below), never past the card. */
 .rd-head-acts > .rd-pr-slot{min-width:0;}
+/* Try it's progress (Checking out… / Setting up… / Starting …): a busy button is aria-disabled, not disabled, so it keeps
+   the focus; it looks disabled and does not react to hover. */
+.rd-head-acts > .rd-head-btn[aria-disabled="true"]{opacity:.6;cursor:progress;}
+.rd-head-acts > .rd-head-btn[aria-disabled="true"]:hover{background-color:var(--panel);}
+/* The Try it step's note (a failed setup, or "Checked out" with nothing to start): words, never only a colour. */
+.rd-head-note{font-size:13px;line-height:1.3;color:var(--ink-2);white-space:nowrap;}
+.rd-head-note.is-bad{color:var(--red-ink);}
 @container rd-head (max-width:420px){.rd-sheet-head > .rd-head-acts{grid-area:2 / 1 / 3 / -1;justify-self:start;flex-wrap:wrap;margin:12px 0 0;max-width:100%;}
   .rd-head-acts > .rd-pr-slot{max-width:100%;}
   .rd-head-acts .btn-split-menu{right:auto;left:0;}}

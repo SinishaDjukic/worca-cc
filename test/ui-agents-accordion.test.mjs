@@ -302,7 +302,12 @@ test('the built-in Default workflow cannot promote defaults (it has no row to st
 // and the re-render undoes the edit — which reads as "this control is broken".
 
 test('with no project every control is disabled and the header says why; selecting a project re-enables them', async () => {
-  const { window } = await boot({ fetchHandler: apiFetch() });
+  // Two projects: a lone project is picked for you, so nothing would be "no project" here.
+  const base = apiFetch();
+  const twoProjects = (url, ...rest) => (String(url).includes('/api/projects')
+    ? Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: PROJECT, exists: true }, { name: 'other', path: `${PROJECT}-other`, exists: true }] }) })
+    : base(url, ...rest));
+  const { window } = await boot({ fetchHandler: twoProjects });
   await tick(); await tick(); // no selectProjectAnd: this IS the empty state
   const doc = window.document;
   await checkRows([
@@ -448,7 +453,7 @@ test("sub-agent model writes: a value is PATCHed and marked, inherit is stored a
 
       const write = sink.find((w) => w.method === 'PATCH' && w.body && w.body.nodes && w.body.nodes.n0);
       assert.equal(write.body.nodes.n0.subagentModel, 'opus', 'the value reaches the node writer');
-      assert.match(doc.querySelector('.agent-sum[data-node-id="n0"]').textContent, /subs: opus/);
+      assert.match(doc.querySelector('.agent-sum[data-node-id="n0"]').textContent, /subs: Opus \(deep thinking\)/);
       assert.ok(doc.querySelector('.agent-row[data-node-id="n0"] .agent-mod'), 'it deviates from the default');
     } },
     { name: 'an explicit inherit is stored as a value, marked modified, and captioned', run: async () => {

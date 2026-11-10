@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import { renderPlanBody, SEND_FAILED } from '../ui/public/shape/plan-body.mjs';
+import { buildFeedbackRow } from '../ui/public/shape/feedback-row.mjs';
 import { fixAllFeedback, perspectiveChangeFeedback } from '../ui/public/shape/plan-text.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 
@@ -218,6 +219,15 @@ test('a second click while a post is in flight is ignored', async () => {
   await flush();
   $('.plan-approve').click();
   assert.equal(calls.submit.length, 2);
+});
+
+test('buildFeedbackRow: Send changes is primary only with primary:true; the plan card\'s stays plain', () => {
+  const row = (o) => buildFeedbackRow(doc, { label: 'x', onSend: () => {}, ...o }).row;
+  assert.equal(row().querySelector('.plan-revise').className, 'btn btn-sm plan-revise');
+  assert.equal(row({ primary: true }).querySelector('.plan-revise').className, 'btn btn-sm btn-primary plan-revise');
+  const { $ } = setup();
+  $('.plan-ask-changes').click();
+  assert.equal($('.plan-revise').classList.contains('btn-primary'), false);
 });
 
 test('Ask for changes is closed by default and opens the box; Send changes posts the revise', () => {

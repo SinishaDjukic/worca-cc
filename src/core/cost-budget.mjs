@@ -11,6 +11,9 @@ import {
   COST_RESET_PERIODS, DEFAULT_COST_RESET_PERIOD,
 } from './settings.mjs';
 
+/** A run's human hours for the Saved figures: a mock run (pipelines.run_setup) saved nobody any work. SQL over alias `p`. */
+export const REAL_RUN_HOURS = `CASE WHEN json_extract(CASE WHEN json_valid(p.run_setup) THEN p.run_setup END, '$.mock') = 1 THEN 0 ELSE p.human_hours END`;
+
 export { COST_RESET_PERIODS, DEFAULT_COST_RESET_PERIOD };
 
 /** Round a USD amount to 4 decimal places — the same grain as the orchestrator's
@@ -143,7 +146,7 @@ export function allTimeTotals() {
     SELECT
       COALESCE(SUM(CASE WHEN p.total_cost_usd  > 0 THEN p.total_cost_usd  ELSE COALESCE(s.sc, 0) END), 0) AS spend,
       COALESCE(SUM(CASE WHEN p.total_active_ms > 0 THEN p.total_active_ms ELSE COALESCE(s.sa, 0) END), 0) AS active,
-      COALESCE(SUM(p.human_hours), 0) AS humanHours
+      COALESCE(SUM(${REAL_RUN_HOURS}), 0) AS humanHours
     FROM pipelines p
     LEFT JOIN (SELECT pipeline_id, SUM(cost_usd) sc, SUM(active_ms) sa
                FROM pipeline_steps GROUP BY pipeline_id) s ON s.pipeline_id = p.id

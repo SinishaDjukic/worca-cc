@@ -17,7 +17,7 @@ test('the agent inspector groups models by provider, names a harness other than 
   const el = renderNodeInspector({ id: 'n_agent', kind: 'agent', key: 'planner', config: { model: 'gpt-5.5', effort: 'low' } }, opts(MODELS));
   const sel = el.querySelector('[data-field="model"]');
   assert.deepEqual([...sel.querySelectorAll('optgroup')].map((g) => g.label), ['Claude sign-in', 'ChatGPT sign-in']);
-  assert.deepEqual([...sel.querySelectorAll('optgroup[label="ChatGPT sign-in"] option')].map((o) => [o.value, o.textContent]), [['gpt-5.5', 'GPT-5.5 · Codex']]);
+  assert.deepEqual([...sel.querySelectorAll('optgroup[label="ChatGPT sign-in"] option')].map((o) => [o.value, o.textContent]), [['gpt-5.5', 'GPT-5.5 · OpenAI Codex']]);
   assert.equal(sel.options[0].value, '', 'inherit stays first, outside the groups');
   assert.equal(sel.value, 'gpt-5.5');
   assert.deepEqual([...el.querySelector('[data-field="effort"]').options].map((o) => o.value), ['', 'minimal', 'low', 'medium', 'high']);
@@ -34,5 +34,5 @@ test('an endpoint model both harnesses reach is listed once, under its provider,
   const el = renderNodeInspector({ id: 'n_agent', kind: 'agent', key: 'planner', config: {} }, opts([...MODELS, ep]));
   const sel = el.querySelector('[data-field="model"]');
   assert.deepEqual([...sel.querySelectorAll('optgroup')].map((g) => g.label), ['Claude sign-in', 'ChatGPT sign-in', 'OpenAI-compatible']);
-  assert.deepEqual([...sel.querySelectorAll('optgroup[label="OpenAI-compatible"] option')].map((o) => o.textContent), ['GPT-5.5 (API) · Claude, Codex']);
+  assert.deepEqual([...sel.querySelectorAll('optgroup[label="OpenAI-compatible"] option')].map((o) => o.textContent), ['GPT-5.5 (API) · Claude Code, OpenAI Codex']);
 });

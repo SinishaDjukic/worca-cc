@@ -169,7 +169,7 @@ export function renderEngineSection(host, options) {
     card.append(slotTable(doc, 'engine-steps', 'Step models', steps, { what: 'step', from, onTest: options.onTest }));
     const jobs = options.jobs?.[engine] || [];
     if (jobs.length) {
-      const helpers = jobs.map((job) => row(utilityId(engine, job), JOB_LABELS[job] || job, options.defaultLabels?.[engine] || (engine === 'codex' ? "Codex's default model (GPT-5.6 Sol)" : 'the default model'), JOB_HINTS[job]));
+      const helpers = jobs.map((job) => row(utilityId(engine, job), JOB_LABELS[job] || job, options.defaultLabels?.[engine] || (engine === 'codex' ? `${engineLabel('codex')}'s default model (GPT-5.6 Sol)` : 'the default model'), JOB_HINTS[job]));
       card.append(slotTable(doc, 'engine-helpers', 'Helper jobs', helpers, { what: 'helper job', from, onTest: options.onTest }));
     } else if (SIGN_IN_ENGINE_NAMES.includes(engine) || engine === 'copilot') {
       const sec = doc.createElement('section'); sec.className = 'engine-slots engine-helpers';
@@ -205,10 +205,11 @@ function bindStatusOnce(host, paint, events) {
 }
 export const readEngineSection = (host) => readDirtyFields(host);
 
-/** The Claude / Codex / … engine switch (Expert). Used by the Engines card and the Roles card. `onPick(engine)`
- *  is called on a click; returns { el, pick } where pick(engine) sets the pressed button. */
-export function engineSwitch(doc, engines, onPick) {
-  const sw = doc.createElement('div'); sw.className = 'seg engine-switch'; sw.setAttribute('role', 'group'); sw.setAttribute('aria-label', 'Engine'); sw.dataset.minLevel = 'expert';
+/** The Claude / Codex / … engine switch (Expert unless `minLevel` says otherwise; null = every level). Used by the
+ *  Engines card and the Roles card. `onPick(engine)` is called on a click; returns { el, pick } where pick(engine)
+ *  sets the pressed button. */
+export function engineSwitch(doc, engines, onPick, { minLevel = 'expert' } = {}) {
+  const sw = doc.createElement('div'); sw.className = 'seg engine-switch'; sw.setAttribute('role', 'group'); sw.setAttribute('aria-label', 'Engine'); if (minLevel) sw.dataset.minLevel = minLevel;
   for (const engine of engines) {
     const btn = doc.createElement('button'); btn.type = 'button'; btn.dataset.engine = engine; btn.textContent = engineLabel(engine);
     if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'flag-chip flag-chip-beta beta-badge'; beta.textContent = 'Beta'; btn.append(beta); }
@@ -219,15 +220,19 @@ export function engineSwitch(doc, engines, onPick) {
 }
 
 const ROLES_HOST = new WeakMap();
-/** The Roles card body (Models page): per harness, one model + effort row per role. Binds its listeners once per host. */
-export function renderRolesSection(host, { roles = {}, catalog = [], engine = 'claude', status = null, onChange = null } = {}) {
+/** The Roles card body (Models page, setup assistant): per harness, one model + effort row per role. Binds its
+ *  listeners once per host. `engines`: the harnesses to show (every engine with roles by default; the setup assistant
+ *  passes the ready ones); `switchLevel`: the engine switch's level (Expert on the Models page, every level in setup). */
+export function renderRolesSection(host, { roles = {}, catalog = [], engine = 'claude', engines = ROLE_HARNESSES, switchLevel = 'expert', status = null, onChange = null } = {}) {
   const doc = host.ownerDocument; host.replaceChildren();
-  const first = ROLE_HARNESSES.includes(engine) ? engine : 'claude';
+  const shown = ROLE_HARNESSES.filter((h) => engines.includes(h));
+  if (!shown.length) shown.push('claude');
+  const first = shown.includes(engine) ? engine : shown[0];
   const panels = {};
   const show = (h) => { for (const [e, p] of Object.entries(panels)) p.hidden = e !== h; sw.pick(h); };
-  const sw = engineSwitch(doc, ROLE_HARNESSES, show);
-  host.append(sw.el);
-  for (const h of ROLE_HARNESSES) {
+  const sw = engineSwitch(doc, shown, show, { minLevel: switchLevel });
+  if (shown.length > 1) host.append(sw.el);
+  for (const h of shown) {
     const panel = doc.createElement('section'); // Not .engine-card: that class names the Engines card's own panels.
     panel.className = 'roles-engine'; panel.dataset.engine = h;
     panel.append(Object.assign(doc.createElement('h3'), { className: 'engine-card-name', textContent: engineLabel(h) }));
@@ -334,11 +339,11 @@ export function renderAskEngineSection(host, { catalog = [], askEngine, askModel
   const oldVersion = rest.filter((x) => !ENGINES[x].signin);
   if (oldVersion.length === 1) sentences.push(`Chat on ${engineLabel(oldVersion[0])} is unavailable on this ${oldVersion[0]} version.`);
   else if (oldVersion.length > 1) sentences.push(`Chat on ${list(oldVersion.map(engineLabel))} is unavailable on these engine versions.`);
-  if (broker.length || rest.length > needModel.length) sentences.push('New chats start on Claude.');
+  if (broker.length || rest.length > needModel.length) sentences.push(`New chats start on ${engineLabel('claude')}.`);
   const notes = sentences.join(' ');
   host.append(renderInheritField(doc, { id: 'askEngine', label: 'Engine for new chats', kind: 'select', level: 'user',
     hint: `New chats start here. A chat can move to another engine later, from its model picker.${notes ? ` ${notes}` : ''}`,
-    options: [{ value: 'claude', label: 'Claude' }, ...others.map((e) => ({ value: e, label: offered[e] ? engineChoiceLabel(e) : `${engineLabel(e)} (unavailable)` }))],
+    options: [{ value: 'claude', label: engineLabel('claude') }, ...others.map((e) => ({ value: e, label: offered[e] ? engineChoiceLabel(e) : `${engineLabel(e)} (unavailable)` }))],
     own: askEngine ?? undefined, inherited: { value: 'claude', source: 'default' }, format: engineName }));
   applyEngineLocks(host);
   // The chat models: the Engines card's table, one row per engine and always listed (no switch, nothing folded).

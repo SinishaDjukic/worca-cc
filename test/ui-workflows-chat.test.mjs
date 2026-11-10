@@ -181,12 +181,13 @@ function fakeComposer() {
   return {
     log,
     docToken: () => token, undoDepth: () => depth, gesture: () => null, isDirty: () => false, origin: () => '',
+    copyOf: () => null,
     template: () => ({ id: 'wf_x', name: 'Mine', nodes: [], wires: [] }),
     applyOps: (ops, label) => { log.push(['applyOps', ops.length, label]); depth += 1; return { ok: true, depth }; },
     undo: () => { log.push(['undo']); depth -= 1; },
     guardDiscard: async () => true,
     loadDraft: (d) => { log.push(['loadDraft', d.name]); token = 'd_newdoc01'; depth = 0; },
-    loadTemplate: (t) => { log.push(['loadTemplate', t.id]); token = 'd_back0001'; },
+    loadTemplate: (t, o) => { log.push(['loadTemplate', t.id, o]); token = 'd_back0001'; },
     setName: () => {}, fit: () => {}, openSaveDialog: () => log.push(['save']),
     serialize: () => ({ id: 'wf_x', nodes: [], wires: [] }),
     view: { world: null }, setTok: (t) => { token = t; },
@@ -668,7 +669,7 @@ test('collapsed pill: the still orb, one-line input with a rotating example, att
   const file = root.querySelector('input[type="file"]');
   assert.equal(file.multiple, true);
   assert.equal(file.hidden, true);
-  assert.equal(file.accept, '.md,.markdown,.txt,.json,.csv,.log,.html,.htm,.xml,.png,.jpg,.jpeg,.gif,.webp,.pdf,text/*');
+  assert.equal(file.hasAttribute('accept'), false, 'every file type is offered');
   assert.equal(root.querySelector('.wfc-files').hidden, true, 'no chips until a file is picked');
   assert.equal(root.querySelector('#wfc-send').getAttribute('aria-disabled'), 'true');
 });
@@ -1382,22 +1383,21 @@ test('Enter sends the chips as base64 with the text; a refused send keeps them, 
     [['wfc-upill', 'spec.md'], ['wfc-upill', 'flow.png']], 'this stub 202 returns no rows: the echo has no ids, so the image is a name pill');
 });
 
-test('Ask\'s early checks and messages in the dock: type, 100 MB text, 8 files; a Codex chat refuses PDFs', async () => {
+test('Ask\'s early checks and messages in the dock: 100 MB text, 8 files; a Codex chat refuses PDFs', async () => {
   const s = await bootDock();
   const root = s.g('wfc');
   const note = () => root.querySelector('.wfc-note');
   root.querySelector('#wfc-input').dispatchEvent(new s.win.Event('focus'));
   pickFiles(s, [mkFile(s, 'evil.exe', 'x')]);
   await settle();
-  assert.equal(note().textContent, 'attachment type not allowed: evil.exe');
-  assert.equal(note().hidden, false);
-  assert.match(root.querySelector('.wfc-sr').textContent, /attachment type not allowed: evil\.exe/, 'said once to a screen reader');
+  assert.equal(note().hidden, true, 'evil.exe is accepted');
+  assert.equal(root.querySelectorAll('.wfc-files > *').length > 0, true);
   pickFiles(s, [mkFile(s, 'big.md', 'x'.repeat(100 * 1024 * 1024 + 1))]);
   await settle();
   assert.equal(note().textContent, 'attachment over 104857600 bytes: big.md');
   pickFiles(s, [mkFile(s, 'spec.pdf', '%PDF-1.7', 'application/pdf')]);
   await settle();
-  assert.deepEqual(chipNames(root), ['spec.pdf'], 'a Claude chat takes a PDF');
+  assert.deepEqual(chipNames(root), ['evil.exe', 'spec.pdf'], 'a Claude chat takes a PDF');
   assert.equal(note().hidden, true, 'a new batch clears the last refusal');
   pickFiles(s, Array.from({ length: 9 }, (_, i) => mkFile(s, `f${i}.md`, 'x')));
   await settle();
@@ -1410,7 +1410,7 @@ test('Ask\'s early checks and messages in the dock: type, 100 MB text, 8 files; 
   croot.querySelector('#wfc-input').dispatchEvent(new c.win.Event('focus'));
   pickFiles(c, [mkFile(c, 'spec.pdf', '%PDF-1.7', 'application/pdf'), pngFile(c)]);
   await settle();
-  assert.equal(croot.querySelector('.wfc-note').textContent, 'a Codex chat cannot view PDFs (Claude, Copilot, Gemini CLI, OpenCode or Qwen Code chats can): spec.pdf');
+  assert.equal(croot.querySelector('.wfc-note').textContent, 'an OpenAI Codex chat cannot view PDFs (Claude Code, GitHub Copilot, Gemini CLI, OpenCode or Qwen Code chats can): spec.pdf');
   assert.deepEqual(chipNames(croot), ['flow.png'], 'an image still attaches on Codex');
 });
 
@@ -1593,7 +1593,7 @@ test('Send clears the last refusal note', async () => {
   const s = await bootDock();
   const root = s.g('wfc');
   root.querySelector('#wfc-input').dispatchEvent(new s.win.Event('focus'));
-  pickFiles(s, [mkFile(s, 'evil.exe', 'x')]);
+  pickFiles(s, [mkFile(s, 'big.md', 'x'.repeat(100 * 1024 * 1024 + 1))]);
   await settle();
   assert.equal(root.querySelector('.wfc-note').hidden, false);
   typeEnter(s, 'Hello');
@@ -1799,4 +1799,20 @@ test('card-views: one DOM for both chats — a draft card shows the state its ho
     { h, graph, actions: (row) => row.appendChild(h('span', 'x', 'act')) });
   assert.ok(build.querySelector('.my-graph'));
   assert.equal(build.querySelector('.wfc-actions').textContent, 'act');
+});
+
+test('#1127: the build\'s Undo brings back an unsaved Use as template copy as a copy', async () => {
+  const { createCardController } = await imp('chat-cards.mjs');
+  const dom = new JSDOM('<!doctype html><body></body>');
+  const composer = fakeComposer();
+  composer.copyOf = () => ({ id: 'wf_default', name: 'Default' });
+  const build = card('card_0000eeee', 'proposed', { type: 'workflow-build', name: 'Bug fix', counts: {}, workflow: { nodes: [{ id: 'n_a', kind: 'task' }], wires: [] }, drafts: [], loops: [] });
+  const cc = createCardController({ doc: dom.window.document, composer, sessionId: 'cs_ab12cd34', blocks: () => [build], client: { postCard: async () => ({ ok: true }) } });
+  [...cc.render(build).querySelectorAll('button')].find((b) => b.textContent === 'Apply to canvas').click();
+  await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0));
+  [...cc.render({ ...build, state: 'applied' }).querySelectorAll('button')].find((b) => b.textContent === 'Undo').click();
+  await new Promise((r) => setTimeout(r, 0));
+  const back = composer.log.find((l) => l[0] === 'loadTemplate');
+  assert.ok(back, 'precondition: Undo reloaded the previous document');
+  assert.deepEqual(back[2], { copyOf: { id: 'wf_default', name: 'Default' } });
 });
