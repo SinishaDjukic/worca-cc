@@ -9,6 +9,7 @@ import { isSafeWorkflowId } from '../workflows.mjs';
 import { isReservedWorkflowId } from '../graph/builtin-workflows.mjs';
 import { isVersionableRow, liveVersionNo, latestVersion } from '../workflow-revisions.mjs';
 import { loadAgentRegistry } from '../agent-registry.mjs';
+import { modelLabeler } from '../workflow-versions.mjs';
 import { findPipelineRowById, readStepQuestions, readClarifyRow, runDirForRow, resolveIndexedArtifactFileForRow,
   readStoreMeta } from '../artifacts.mjs';
 import { isNoProjectKey, testCopyDirFor } from '../store.mjs';
@@ -767,20 +768,20 @@ export async function progressDisk(workflowId, run, { diskOf = null, planOf = (e
   return { inUseBytes: start != null && free != null ? Math.max(0, start - free) : null, needBytes, freeBytes: free ?? null };
 }
 
-async function changesBetween(workflowId, a, b, registry) {
+async function changesBetween(workflowId, a, b, registry, modelLabel) {
   const ga = await useGraph(workflowId, a);
   const gb = await useGraph(workflowId, b);
   if (!ga || !gb) return [];
   const labelOf = (n) => (n && n.kind === 'agent' && registry[n.key] && registry[n.key].displayName) || (n && (n.key || n.kind)) || 'step';
-  return diffGraphs(ga, gb, { labelOf }).map((c) => c.text);
+  return diffGraphs(ga, gb, { labelOf, modelLabel }).map((c) => c.text);
 }
 
 /** Board 5: the model, Part 1's "what you changed" texts (graph changes only, D16), and the fair-comparison notes. */
-export async function compareOf(workflowId, runId, { registry = loadAgentRegistry(), fingerprintOf = (id, use) => useFingerprint(id, use) } = {}) {
+export async function compareOf(workflowId, runId, { registry = loadAgentRegistry(), fingerprintOf = (id, use) => useFingerprint(id, use), modelLabel = null } = {}) {
   const run = runOf(workflowId, runId);
   const ctx = labelCtx(workflowId);
   const input = modelInput(run, ctx);
-  const changes = run.a != null ? await changesBetween(workflowId, run.a, run.b, registry) : [];
+  const changes = run.a != null ? await changesBetween(workflowId, run.a, run.b, registry, await modelLabeler({ modelLabel })) : [];
   const fair = [];
   for (const [use, fp] of [[run.a, run.aFp], [run.b, run.bFp]]) {
     if (use == null) continue;

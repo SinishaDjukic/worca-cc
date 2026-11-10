@@ -11,6 +11,7 @@ import { workflowFingerprint } from './workflow-fingerprint.mjs';
 import { workflowParts } from './workflow-parts.mjs';
 import { diffGraphs } from '../shared/graph/diff-graphs.mjs';
 import { pickTemplateExtras } from '../shared/graph/template.mjs';
+import { listModels } from './config.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
 import { loadScriptRegistry } from './script-registry.mjs';
 
@@ -36,6 +37,14 @@ const labeler = ({ registry, scripts }) => (n) => {
   const meta = n && n.kind === 'agent' ? registry[n.key] : n && n.kind === 'script' ? scripts[n.key] : null;
   return (meta && meta.displayName) || (n && (n.key || n.kind)) || 'step';
 };
+
+/** Model id → the catalog's label (the picker's names); an id the catalog does not know stays as it is. `deps.modelLabel` is a test seam. */
+export async function modelLabeler(deps = {}) {
+  if (typeof deps.modelLabel === 'function') return deps.modelLabel;
+  let labels = {};
+  try { labels = Object.fromEntries((await listModels()).map((m) => [m.id, m.label || m.id])); } catch { /* the ids show instead */ }
+  return (id) => labels[id] || null;
+}
 
 /** Save version: keep the row as the next numbered version. The first version is also put in use (D2). */
 export async function createVersion(workflowId, { note = null, by = null, deps = {} } = {}) {
@@ -67,7 +76,7 @@ export function useVersion(workflowId, versionNo) {
   return { liveVersionNo: n };
 }
 
-const graphChanges = (a, b, labelOf) => diffGraphs({ name: a.name, ...a.graph }, { name: b.name, ...b.graph }, { labelOf }).map((c) => c.text);
+const graphChanges = (a, b, labelOf, modelLabel) => diffGraphs({ name: a.name, ...a.graph }, { name: b.name, ...b.graph }, { labelOf, modelLabel }).map((c) => c.text);
 /** The agents and scripts both lists hold whose content hash differs. */
 function partsDiffering(before, after) {
   const was = new Map((before || []).map((p) => [`${p.kind}:${p.key}`, p.hash]));
@@ -76,8 +85,8 @@ function partsDiffering(before, after) {
 }
 /** What differs from saved version `ver` to the draft: the graph diff plus "<label>: changed in the Library" per part.
  *  True here (and only here): a Library edit changes what the next Save version records. */
-function changesSince(ver, row, graph, parts, labelOf) {
-  const changes = graphChanges(ver, { name: row.name, graph }, labelOf);
+function changesSince(ver, row, graph, parts, labelOf, modelLabel) {
+  const changes = graphChanges(ver, { name: row.name, graph }, labelOf, modelLabel);
   const partsChanged = partsDiffering(ver.parts, parts);
   for (const p of partsChanged) changes.push(`${labelOf(p)}: changed in the Library`);
   return { changes, partsChanged };
@@ -98,11 +107,12 @@ async function statusOf(row, deps) {
   if (!live && !latest) return { liveVersionNo: null, latestVersionNo, draft: null, sinceLatest: null };
   const regs = registries(deps);
   const labelOf = labeler(regs);
+  const modelLabel = await modelLabeler(deps);
   const graph = parse(row.graph, {});
   const parts = await workflowParts(graph, { ...deps, ...regs });
-  const sinceLatest = latest ? { versionNo: latest.versionNo, changes: changesSince(latest, row, graph, parts, labelOf).changes } : null;
+  const sinceLatest = latest ? { versionNo: latest.versionNo, changes: changesSince(latest, row, graph, parts, labelOf, modelLabel).changes } : null;
   if (!live) return { liveVersionNo: null, latestVersionNo, draft: null, sinceLatest };
-  const { changes, partsChanged } = changesSince(live, row, graph, parts, labelOf);
+  const { changes, partsChanged } = changesSince(live, row, graph, parts, labelOf, modelLabel);
   const changed = workflowFingerprint(graph, parts) !== live.fingerprint || row.name !== live.name;
   return { liveVersionNo: live.versionNo, latestVersionNo, draft: { changed, changes, partsChanged, sinceLatest }, sinceLatest };
 }
@@ -137,6 +147,7 @@ export async function versionsOverview(workflowId, { deps = {} } = {}) {
   const regs = registries(deps);
   const status = await statusOf(row, { ...deps, ...regs });
   const labelOf = labeler(regs);
+  const modelLabel = await modelLabeler(deps);
   const all = listRevisions(workflowId);
   const named = all.filter((r) => r.versionNo !== null).sort((a, b) => b.versionNo - a.versionNo)
     .map((r) => readVersion(workflowId, r.versionNo)).filter(Boolean);
@@ -147,11 +158,11 @@ export async function versionsOverview(workflowId, { deps = {} } = {}) {
   const today = await workflowParts(union, { ...deps, ...regs });
   const versions = named.map((cur, i) => {
     const prev = named[i + 1] || null;
-    const changes = prev ? graphChanges(prev, cur, labelOf) : ['First version'];
+    const changes = prev ? graphChanges(prev, cur, labelOf, modelLabel) : ['First version'];
     // What changes for new runs if this version is put in use (the Use dialog); `changes` is against the previous one.
     // I4 / D6: graph changes only. Every version runs today's agent and script text, so a Library edit is no
     // difference between two versions; `libraryEdited` lets the dialog say that once.
-    const changesFromInUse = !inUse ? null : cur.versionNo === inUse.versionNo ? [] : graphChanges(inUse, cur, labelOf);
+    const changesFromInUse = !inUse ? null : cur.versionNo === inUse.versionNo ? [] : graphChanges(inUse, cur, labelOf, modelLabel);
     const libraryEdited = partsDiffering(cur.parts, today).length > 0;
     return { id: cur.id, versionNo: cur.versionNo, note: cur.note, by: cur.by, createdAt: cur.createdAt,
       inUse: cur.versionNo === status.liveVersionNo, runs: counts.get(cur.versionNo) || 0, changes, changesFromInUse, libraryEdited };

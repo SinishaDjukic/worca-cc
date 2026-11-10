@@ -58,7 +58,7 @@ test('status: the draft differs from the version in use, in plain words, includi
   const s = await versionStatus('wf_v', { deps });
   assert.equal(s.liveVersionNo, 1);
   assert.equal(s.draft.changed, true);
-  assert.deepEqual(s.draft.changes, ['Planner: AI model default → sonnet', 'Planner: changed in the Library']);
+  assert.deepEqual(s.draft.changes, ['Planner: AI model inherit → sonnet', 'Planner: changed in the Library']);
   assert.deepEqual(s.draft.partsChanged, [{ kind: 'agent', key: 'planner' }]);
   // The latest version is the one in use: Save version's comparison lists the same changes as the status.
   assert.deepEqual(s.sinceLatest.changes, s.draft.changes);
@@ -77,7 +77,7 @@ test('status: sinceLatest compares the draft with the LATEST version (what Save 
   await createVersion('wf_v', { deps });                       // v2, not in use
   const s = await versionStatus('wf_v', { deps });
   assert.equal(s.liveVersionNo, 1);
-  assert.deepEqual(s.draft.changes, ['Planner: AI model default → sonnet'], 'draft.changes still compares with the version in use');
+  assert.deepEqual(s.draft.changes, ['Planner: AI model inherit → sonnet'], 'draft.changes still compares with the version in use');
   assert.deepEqual(s.draft.sinceLatest, { versionNo: 2, changes: [] });
   assert.deepEqual(s.sinceLatest, s.draft.sinceLatest);
   // A Library edit after v2 shows since v2 too.
@@ -133,16 +133,16 @@ test('overview: changesFromInUse is what changes for new runs (the version in us
   const o = await versionsOverview('wf_v', { deps });
   const by = Object.fromEntries(o.versions.map((v) => [v.versionNo, v]));
   assert.deepEqual(by[1].changesFromInUse, [], 'the version in use differs from nothing');
-  assert.deepEqual(by[2].changesFromInUse, ['Planner: AI model default → sonnet']);
+  assert.deepEqual(by[2].changesFromInUse, ['Planner: AI model inherit → sonnet']);
   // I4 / D6: every version runs today's agent text, so a Library edit is not a difference between versions.
-  assert.deepEqual(by[3].changesFromInUse, ['Renamed from "Versioned" to "Versioned 3"', 'Planner: AI model default → sonnet']);
+  assert.deepEqual(by[3].changesFromInUse, ['Renamed from "Versioned" to "Versioned 3"', 'Planner: AI model inherit → sonnet']);
   // …but the Use dialog may say once that Library edits apply to every version: v1 and v2 recorded the old text.
   assert.deepEqual(o.versions.map((v) => [v.versionNo, v.libraryEdited]), [[3, false], [2, true], [1, true]]);
   assert.deepEqual(by[3].changes, ['Renamed from "Versioned" to "Versioned 3"'], 'changes still compares with the previous version');
   useVersion('wf_v', 3);
   const o3 = await versionsOverview('wf_v', { deps });
   assert.deepEqual(o3.versions.find((v) => v.versionNo === 1).changesFromInUse,
-    ['Renamed from "Versioned 3" to "Versioned"', 'Planner: AI model sonnet → default']);
+    ['Renamed from "Versioned 3" to "Versioned"', 'Planner: AI model sonnet → inherit']);
 });
 
 // C1: the loop budget lives in the stored wire.config (composer.mjs, canvas-ops.mjs), not at the wire's top level.
