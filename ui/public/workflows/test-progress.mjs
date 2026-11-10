@@ -235,8 +235,7 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s 
     const stop = act(stopping ? STOPPING : 'Stop testing', () => actions.stop(), 'btn btn-danger', STOP_KEY);
     if (p.stopping === true) stop.disabled = true;   // the server is stopping it: nothing to send again
     acts.append(stop);
-  }
-  else if (st === 'done') acts.append(act(p.run.kind === 'once' ? 'See the result' : 'See the comparison', () => actions.open(), 'btn btn-primary', 'wft-pg-open'));
+  } else if (st === 'done') acts.append(act(p.run.kind === 'once' ? 'See the result' : 'See the comparison', () => actions.open(), 'btn btn-primary', 'wft-pg-open'));
   else if (p.run.stopReason === 'setup') {   // board 35: the setup failed: edit the example or try again; no cost limit to change
     const where = p.project && p.project.setupStop;
     if (where && actions.editExample) acts.append(act(EDIT_EXAMPLE, () => actions.editExample(where.exampleId), 'btn', 'wft-pg-edit'));
