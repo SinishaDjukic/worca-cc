@@ -3875,7 +3875,7 @@ function wftProgressActions() {
     stop: async () => {
       const r = await wftCall('POST', `${wftBase(id)}/runs/${runId}/stop`, {});
       if (!r.ok) notify({ tone: 'err', title: 'Not stopped', detail: r.error });
-      if (still()) void wftRefresh();
+      if (still()) await wftRefresh();   // U-T8: the stopped page first, then the button is given back
     },
     continue: async (capUsd) => {
       if (Number.isNaN(capUsd)) { notify({ tone: 'err', title: 'The rest did not start', detail: 'Give the cost limit in dollars, such as $15.' }); return; }

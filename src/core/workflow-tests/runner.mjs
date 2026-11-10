@@ -708,5 +708,8 @@ export function createTestRunner(deps) {
   /** 3b (D75, U3): what the before phase is doing now, or null. */
   function beforeNowOf(runId) { const st = live.get(Number(runId)); return st && st.beforeNow ? { ...st.beforeNow } : null; }
 
-  return { start, stop, continueRun, recover, idle, costOf, phaseOf, diskOf, beforeNowOf };
+  /** U-T8 (F19): why a running test is stopping (st.stopping), from the stop until it has stopped; else null. */
+  function stoppingOf(runId) { const st = live.get(Number(runId)); return st ? st.stopping : null; }
+
+  return { start, stop, continueRun, recover, idle, costOf, phaseOf, diskOf, beforeNowOf, stoppingOf };
 }

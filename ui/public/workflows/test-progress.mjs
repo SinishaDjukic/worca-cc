@@ -48,6 +48,11 @@ function fact(doc, label, value, sub = null, cls = '') {
 }
 /** root → { runId, key } of the Stop testing / Finish the rest whose action is still out. */
 const BUSY = new WeakMap();
+/** root → the last paint's arguments: a stop that answers while the test still runs repaints from the latest data. */
+const LAST = new WeakMap();
+const STOP_KEY = 'wft-pg-stop';
+/** U-T8 (F19): the pill and the Stop button from the click until the server says stopped. */
+const STOPPING = 'Stopping…';
 /** root → the run id whose setup output is open: a repaint keeps it open. */
 const LOG_OPEN = new WeakMap();
 /** root → the timer that repaints "for N minutes" once a minute while a try is working (a frame repaints sooner). */
@@ -159,6 +164,7 @@ function beforeNowCard(doc, b) {
 export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s }) {
   clearTimeout(TICK.get(root));
   TICK.delete(root);
+  LAST.set(root, { p, actions, ctx: { doc, dateText } });
   // What the repaint takes away: the focused control (by its key), a cost limit typed for this test, the live line.
   const active = doc.activeElement;
   const hadFocus = !!active && active !== root && root.contains(active);
@@ -175,9 +181,12 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s 
   const st = p.run.status;
   const over = st !== 'running';
   const count = `${p.done} of ${p.total} ${p.total === 1 ? 'try' : 'tries'} done`;
+  // U-T8 (F19): stopping while this page's stop is out (optimistic) or while the server says so (p.stopping).
+  const held0 = BUSY.get(root);
+  const stopping = st === 'running' && (p.stopping === true || (!!held0 && held0.runId === p.run.id && held0.key === STOP_KEY));
   // D39: board 20's status pill in every state, its dot still once the test is over (green done, grey stopped).
   const pill = el(doc, 'span', st === 'running' ? 'pill-run peach wft-pill' : st === 'done' ? 'pill-run green wft-pill is-parked' : 'pill-run wft-pill is-stopped is-parked');
-  const pillText = `${st === 'running' ? 'Running' : st === 'done' ? 'Done' : 'Stopped'} · ${count}`;
+  const pillText = stopping ? STOPPING : `${st === 'running' ? 'Running' : st === 'done' ? 'Done' : 'Stopped'} · ${count}`;
   const pdot = el(doc, 'span', 'pdot');
   pdot.setAttribute('aria-hidden', 'true');
   pill.append(pdot, doc.createTextNode(pillText));
@@ -188,7 +197,9 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s 
   left.append(crumb, el(doc, 'h2', 'wft-title', p.title), pill);
   const acts = el(doc, 'div', 'wft-acts');
   /** A button that is disabled while its action is out, so a second click sends nothing. The busy state lives on the
-   *  root (BUSY), not the button: a frame that repaints the page meanwhile paints the new button busy too. */
+   *  root (BUSY), not the button: a frame that repaints the page meanwhile paints the new button busy too. U-T8 (F19):
+   *  Stop testing reads "Stopping…" at once (pill too), and when its answer comes with the page still running (the stop
+   *  failed), the page repaints from its latest data instead of keeping the click's words. */
   const act = (label, fn, cls, key) => {
     const b = btn(doc, label, null, cls);
     b.dataset.focusKey = key;
@@ -199,18 +210,32 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s 
       b.disabled = true;
       const mine = { runId: p.run.id, key };
       BUSY.set(root, mine);
+      if (key === STOP_KEY) {
+        b.textContent = STOPPING;
+        pill.lastChild.textContent = STOPPING;
+        live.textContent = STOPPING;
+      }
       let out;
       try { out = fn(); } catch { out = null; }
       Promise.resolve(out).catch(() => {}).finally(() => {
         if (BUSY.get(root) !== mine) return;
         BUSY.delete(root);
         const now = keyed(root, key);   // this button, or the one a repaint put in its place
+        const last = LAST.get(root);
+        if (now && key === STOP_KEY && last && last.p.run.id === mine.runId) {
+          renderTestProgress(root, last.p, last.actions, last.ctx);
+          return;
+        }
         if (now) now.disabled = false;
       });
     });
     return b;
   };
-  if (st === 'running') acts.append(act('Stop testing', () => actions.stop(), 'btn btn-danger', 'wft-pg-stop'));
+  if (st === 'running') {
+    const stop = act(stopping ? STOPPING : 'Stop testing', () => actions.stop(), 'btn btn-danger', STOP_KEY);
+    if (p.stopping === true) stop.disabled = true;   // the server is stopping it: nothing to send again
+    acts.append(stop);
+  }
   else if (st === 'done') acts.append(act(p.run.kind === 'once' ? 'See the result' : 'See the comparison', () => actions.open(), 'btn btn-primary', 'wft-pg-open'));
   else if (p.run.stopReason === 'setup') {   // board 35: the setup failed: edit the example or try again; no cost limit to change
     const where = p.project && p.project.setupStop;

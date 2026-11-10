@@ -243,6 +243,64 @@ test('Stop testing and Finish the rest stay busy across repaints until their act
   assert.equal(finish().disabled, false, 'another test is never busy with this one\'s action');
 });
 
+test('U-T8 (F19): "Stopping…" in the pill and on the button, disabled, from the click until the server says stopped', async () => {
+  const { window } = new JSDOM('<!doctype html><body><section id="root" tabindex="-1"></section></body>');
+  const doc = window.document;
+  const root = doc.getElementById('root');
+  const pending = [];
+  let stops = 0;
+  const actions = { back() {}, open() {}, continue() {}, stop: () => { stops += 1; return new Promise((r) => pending.push(r)); } };
+  const paint = (p) => renderTestProgress(root, p, actions, { doc });
+  const pill = () => root.querySelector('.wft-pill').textContent;
+  const stop = () => root.querySelector('.wft-acts .btn-danger');
+  paint(progress());
+  click(stop());
+  assert.deepEqual([pill(), stop().textContent, stop().disabled], ['Stopping…', 'Stopping…', true], 'optimistic on the click');
+  assert.equal(root.querySelector('.wft-pg-live').textContent, 'Stopping…');
+  paint(progress({ done: 8 }));                       // a frame before the server has stopped it
+  assert.deepEqual([pill(), stop().textContent, stop().disabled], ['Stopping…', 'Stopping…', true], 'a repaint keeps it');
+  paint(progress({ done: 8, stopping: true }));       // the server says it is stopping
+  assert.deepEqual([pill(), stop().textContent, stop().disabled], ['Stopping…', 'Stopping…', true]);
+  pending.shift()();                                  // the stop answered, but the page was not repainted as stopped (it failed)
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual([pill(), stop().textContent, stop().disabled], ['Stopping…', 'Stopping…', true], 'the server still says stopping');
+  paint(progress({ done: 8 }));
+  assert.deepEqual([pill(), stop().textContent, stop().disabled], ['Running · 8 of 18 tries done', 'Stop testing', false], 'not stopping: given back');
+  click(stop());
+  paint(progress({ done: 8 }, { status: 'stopped', stopReason: 'person' }));
+  assert.equal(pill(), 'Stopped · 8 of 18 tries done', 'the server says stopped');
+  pending.shift()();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(stops, 2);
+  const other = boot(progress({ stopping: true }));     // another tab, or a page opened while it stops
+  assert.deepEqual([other.root.querySelector('.wft-pill').textContent, other.root.querySelector('.wft-acts .btn-danger').textContent,
+    other.root.querySelector('.wft-acts .btn-danger').disabled], ['Stopping…', 'Stopping…', true]);
+  click(other.root.querySelector('.wft-acts .btn-danger'));
+  assert.deepEqual(other.calls, [], 'nothing to send twice');
+});
+
+test('U-T8 (F19): a stop that answers while the page still runs gives the button and the pill back', async () => {
+  const { window } = new JSDOM('<!doctype html><body><section id="root" tabindex="-1"></section></body>');
+  const doc = window.document;
+  const root = doc.getElementById('root');
+  const pending = [];
+  const actions = { back() {}, open() {}, continue() {}, stop: () => new Promise((r) => pending.push(r)) };
+  renderTestProgress(root, progress(), actions, { doc });
+  click(root.querySelector('.wft-acts .btn-danger'));
+  renderTestProgress(root, progress({ done: 9 }), actions, { doc });
+  pending.shift()();
+  await new Promise((r) => setTimeout(r, 0));
+  const stop = root.querySelector('.wft-acts .btn-danger');
+  assert.deepEqual([root.querySelector('.wft-pill').textContent, stop.textContent, stop.disabled], ['Running · 9 of 18 tries done', 'Stop testing', false],
+    'the latest data, not the click\'s');
+});
+
+test('app.js (U-T8, F19): Stop testing waits for the stopped page before it gives the button back (no "Stop testing" flash)', () => {
+  const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+  assert.ok(/stop: async \(\) => \{\s*const r = await wftCall\('POST', `\$\{wftBase\(id\)\}\/runs\/\$\{runId\}\/stop`, \{\}\);\s*if \(!r\.ok\) notify\(\{ tone: 'err', title: 'Not stopped', detail: r\.error \}\);\s*if \(still\(\)\) await wftRefresh\(\);/.test(app),
+    'the stop action awaits the repaint');
+});
+
 test('app.js (Task 13 review): frames repaint only the shown Tests page, re-entry repaints it, a failed versions read is said', () => {
   const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
   const body = (name) => { const i = app.indexOf(`function ${name}(`); return i < 0 ? '' : app.slice(i, app.indexOf('\n}\n', i)); };

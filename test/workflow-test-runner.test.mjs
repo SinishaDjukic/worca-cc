@@ -858,3 +858,19 @@ test('U-T8 (F20): the progress title is the compare title while it runs, once do
   await runner.stop(once.id);
   assert.equal(progressOf(WF, once.id).title, 'Tried once: Bulk invoice export');
 });
+
+test('U-T8 (F19): stoppingOf says a test is stopping from the stop until it has stopped, and progressOf says so', async () => {
+  for (const k of Object.keys(fps)) delete fps[k];
+  const h = harness({ plan: () => ({ status: 'done', cost: 0.1, hold: true }) });
+  const runner = createTestRunner(h.deps);
+  const ex = example({ tries: 1 });
+  const run = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await until(() => h.started.length === 2);
+  const seen = () => progressOf(WF, run.id, { stoppingOf: runner.stoppingOf }).stopping;
+  assert.deepEqual([runner.stoppingOf(run.id), seen()], [null, false], 'running, not stopping');
+  const stopped = runner.stop(run.id);
+  assert.deepEqual([runner.stoppingOf(run.id), seen(), store.readTestRun(run.id).status], ['person', true, 'running'], 'the stop is out: stopping');
+  await stopped;
+  assert.deepEqual([runner.stoppingOf(run.id), seen(), store.readTestRun(run.id).status], [null, false, 'stopped'], 'stopped: no longer stopping');
+  assert.equal(progressOf(WF, run.id).stopping, false, 'no runner read: never stopping');
+});

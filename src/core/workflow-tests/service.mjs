@@ -669,8 +669,9 @@ export function takenMs(run, tries) {
 
 /** Board 20 (G8: two rows per example when both versions need tries). `costOf` = the runner's live cost. 3a (board 35):
  *  `phaseOf` = what a running project try is doing now (the runner's); `project.disk` is filled by progressDisk. 3b (D75):
- *  `beforeNowOf` = what the before phase is doing now (the runner's), the answer's `before`. */
-export function progressOf(workflowId, runId, { costOf = null, phaseOf = null, beforeNowOf = null } = {}) {
+ *  `beforeNowOf` = what the before phase is doing now (the runner's), the answer's `before`. U-T8: `stoppingOf` = the
+ *  runner's stopping read, the answer's `stopping`. */
+export function progressOf(workflowId, runId, { costOf = null, phaseOf = null, beforeNowOf = null, stoppingOf = null } = {}) {
   const run = runOf(workflowId, runId);
   const ctx = labelCtx(workflowId);
   const tries = store.triesOfRun(run.id);
@@ -731,6 +732,7 @@ export function progressOf(workflowId, runId, { costOf = null, phaseOf = null, b
     before,
     project,
     madeAgain: store.madeAgainOf(run.id),   // U-T2: tries made again after a problem in Worca (never counted)
+    stopping: run.status === 'running' && !!(stoppingOf && stoppingOf(run.id)),   // U-T8 (F19): the runner's stopping read
   };
 }
 
