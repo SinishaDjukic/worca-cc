@@ -21,7 +21,7 @@ const PIN = { key: 'worca-cc-1a2b3c4d', startSha: SHA, startRef: 'main', startAt
 const example = (over = {}) => ({ id: 7, name: 'Ticket 482, invoice totals round wrong', request: 'Ticket 482: invoice totals round wrong.', answers: [],
   otherwise: 'pick', basics: { noError: true, noHelp: true, maxCostUsd: null, maxSentBack: null },
   checks: [{ id: 'c_1', kind: 'command', cmd: 'npm test', timeoutMin: 10 }], tries: 3, files: [], note: null, project: PIN, ...over });
-function boot(ex = example(), { needsProject = false, projectView = { state: 'ok', behind: 14, startRef: 'main' }, over = {}, projects = PROJECTS } = {}) {
+function boot(ex = example(), { needsProject = false, projectView = { state: 'ok', behind: 14, startRef: 'main' }, over = {}, projects = PROJECTS, ctx = {} } = {}) {
   const { window } = new JSDOM('<!doctype html><body><section id="root"></section></body>');
   const calls = [];
   const actions = {
@@ -35,7 +35,7 @@ function boot(ex = example(), { needsProject = false, projectView = { state: 'ok
   };
   const root = window.document.getElementById('root');
   const ed = renderExampleEditor(root, ex, actions, { doc: window.document, win: window, scripts: [], perTryUsd: 0.95, draftLabel: 'v3 draft',
-    projects, needsProject, workflowName: 'Fix a bug from a ticket', projectView, dateText: () => '28 Oct' });
+    projects, needsProject, workflowName: 'Fix a bug from a ticket', projectView, dateText: () => '28 Oct', ...ctx });
   return { root, doc: window.document, win: window, calls, ed };
 }
 
@@ -101,6 +101,36 @@ test('Start from the latest moves the start point and the note goes', async () =
   assert.equal(root.querySelector('.wft-start .code').textContent, 'fffffff');
 });
 
+// U-T9 fix round 1 (review Important 2): the store refuses a new pin while a test tries the example (BUSY), so
+// "Save and stop" stops the test first and saves after.
+test('F17: a project, start point or setup change asks, and "Save and stop" stops the test before it saves', async () => {
+  const changes = {
+    project: (r) => { const s = r.querySelector('#wft-ex-project'); s.value = ''; s.dispatchEvent(new s.ownerDocument.defaultView.Event('change')); },
+    setup: (r) => { const s = r.querySelector('.wft-dev textarea, .wft-dev input'); s.value = 'npm install'; s.dispatchEvent(new s.ownerDocument.defaultView.Event('input')); },
+  };
+  for (const [what, change] of Object.entries(changes)) {
+    const asked = [];
+    const stop = [];
+    const { root, calls } = boot(example(), { over: { stopTest: async () => { calls.push(['stopTest']); stop.push(what); return { ok: true }; } },
+      ctx: { testRunning: true, runningExampleIds: [7], confirm: async (o) => { asked.push(o.title); return true; } } });
+    change(root);
+    click(byText(root, '.wft-acts button', 'Save example'));
+    for (let i = 0; i < 5; i += 1) await tick();
+    assert.deepEqual(asked, ['Save and stop the test?'], `${what}: asked`);
+    assert.deepEqual(calls.map((c) => c[0]), ['stopTest', 'save'], `${what}: stopped, then saved`);
+  }
+});
+
+test('F17: Start from the latest while a test tries the example: the refusal says what to do, in plain words', async () => {
+  const { root, calls } = boot(example(), { over: {
+    startLatest: async () => { calls.push(['latest']); return { ok: false, status: 409, error: 'A test is trying this example: stop it first.' }; } } });
+  click(byText(root, '.wft-moved button', 'Start from the latest'));
+  await tick(); await tick();
+  assert.deepEqual(calls, [['latest']], 'the server decides (its refusal stays the safety net)');
+  assert.equal(root.querySelector('.wft-error').textContent, 'A test is trying this example. Stop it first, then start from the latest.');
+  assert.ok(root.querySelector('.wft-moved'), 'the start point did not move');
+});
+
 test('a drift counted for an older pin is not shown (the pin moved since the overview was read)', () => {
   const { root } = boot(example(), { projectView: { state: 'ok', behind: 14, startRef: 'main', startSha: 'e'.repeat(40) } });
   assert.equal(root.querySelector('.wft-moved'), null);
@@ -111,7 +141,7 @@ test('board 39: no project picked for a workflow that changes a project; a missi
   assert.equal(none.root.querySelector('#wft-ex-project').options[0].textContent, 'Pick a project');
   assert.deepEqual(texts(none.root, '.wft-notice > p'), ['Pick the project this example works on',
     "Fix a bug from a ticket changes a project's code, so each example needs one. Each try works in Worca's own copy of the project."]);
-  assert.equal(byText(none.root, '.wft-acts button', 'Try it once now').disabled, true);
+  assert.equal(byText(none.root, '.wft-acts button', 'Try your draft once now').disabled, true);
   const sel = none.root.querySelector('#wft-ex-project');
   sel.value = 'gone-1a2b3c4f'; sel.dispatchEvent(new none.doc.defaultView.Event('change'));
   assert.deepEqual(texts(none.root, '.wft-notice > p'), ['The project folder is missing',
@@ -211,7 +241,7 @@ test('review 3, 12, 14: Start from the latest is busy, then says the new start; 
   click(latestBtn);
   assert.deepEqual([latestBtn.disabled, latestBtn.getAttribute('aria-busy')], [true, 'true']);
   await tick(); await tick();
-  assert.equal(root.querySelector('.wft-start-status').textContent, 'The start point is now main at fffffff.');
+  assert.equal(root.querySelector('.wft-start-status').textContent, 'Saved: the start point is now main · 28 Oct.');
   assert.equal(doc.activeElement, byText(root, '.wft-start button', 'Change'));
   const lfs = "worca-cc keeps large files with Git LFS. Worca's own copy of the project would not have them, so tries could go wrong.";
   const subs = "worca-cc holds other projects inside it (submodules). Worca's own copy of the project would not have them, so tries could go wrong.";
@@ -251,30 +281,30 @@ test('review 9, 13, 15: server words as sentences; no branches, no dialog; the f
 
 test('review 5, 6, 7, 10: no longer registered, projects not read, not on a branch; a blocked Try points at the notice', () => {
   const ok = boot();
-  const okTry = byText(ok.root, '.wft-acts button', 'Try it once now');
+  const okTry = byText(ok.root, '.wft-acts button', 'Try your draft once now');
   assert.deepEqual([okTry.disabled, okTry.getAttribute('aria-describedby')], [false, null]);
   assert.equal(ok.root.querySelector('.wft-notice').getAttribute('aria-live'), 'polite');
   const gone = boot(example({ project: { ...PIN, key: 'old-00000000', name: 'billing' } }));
   assert.deepEqual(texts(gone.root, '.wft-notice > p'), ["billing is no longer one of Worca's projects. Add it again under Projects, or pick another project."]);
-  const goneTry = byText(gone.root, '.wft-acts button', 'Try it once now');
+  const goneTry = byText(gone.root, '.wft-acts button', 'Try your draft once now');
   assert.deepEqual([goneTry.disabled, goneTry.getAttribute('aria-describedby')], [true, 'wft-ex-notice']);
   assert.equal(gone.root.querySelector('#wft-ex-project').selectedOptions[0].textContent, 'billing', 'its name, never the key');
   const unread = boot(example(), { projects: null });
   assert.deepEqual(texts(unread.root, '.wft-notice > p'), ['Worca could not read your projects. Reload the page to try again.']);
-  assert.equal(byText(unread.root, '.wft-acts button', 'Try it once now').getAttribute('aria-describedby'), 'wft-ex-notice');
+  assert.equal(byText(unread.root, '.wft-acts button', 'Try your draft once now').getAttribute('aria-describedby'), 'wft-ex-notice');
   const unreadNoPin = boot(example({ project: null }), { projects: null, projectView: null });
   assert.equal(unreadNoPin.root.querySelector('.wft-notice').hidden, true, 'P21: no project pinned and none needed: nothing to say');
-  assert.equal(byText(unreadNoPin.root, '.wft-acts button', 'Try it once now').disabled, false);
+  assert.equal(byText(unreadNoPin.root, '.wft-acts button', 'Try your draft once now').disabled, false);
   const unreadNeeds = boot(example({ project: null }), { projects: null, projectView: null, needsProject: true });
   assert.deepEqual(texts(unreadNeeds.root, '.wft-notice > p'), ['Worca could not read your projects. Reload the page to try again.']);
-  assert.equal(byText(unreadNeeds.root, '.wft-acts button', 'Try it once now').disabled, true);
+  assert.equal(byText(unreadNeeds.root, '.wft-acts button', 'Try your draft once now').disabled, true);
   const detached = [{ ...PROJECTS[0], key: 'det-1', name: 'detached', current: { branch: null, sha: SHA, short: 'abc1234', at: '2026-10-28T09:00:00.000Z' } }];
   const det = boot(example({ project: null }), { projects: detached, projectView: null });
   const sel = det.root.querySelector('#wft-ex-project');
   sel.value = 'det-1'; sel.dispatchEvent(new det.doc.defaultView.Event('change'));
   assert.deepEqual(texts(det.root, '.wft-notice > p'), ['The project folder is not on a branch. Check out a branch in it, then come back.']);
   assert.equal(det.root.querySelector('.wft-start-field').hidden, true);
-  assert.equal(byText(det.root, '.wft-acts button', 'Try it once now').disabled, true);
+  assert.equal(byText(det.root, '.wft-acts button', 'Try your draft once now').disabled, true);
 });
 
 test('board 39: Try it once now with too little free disk shows its card', async () => {
@@ -284,7 +314,7 @@ test('board 39: Try it once now with too little free disk shows its card', async
   const { root } = boot(example(), { over: { tryOnce: async () => { n += 1; return n === 1
     ? { ok: false, status: 422, error: once, body: { code: 'NO_DISK', disk: { needBytes: 0.4 * GB, freeBytes: 0.2 * GB } } }
     : { ok: false, status: 409, error: 'A test of this workflow is running.' }; } } });
-  click(byText(root, '.wft-acts button', 'Try it once now'));
+  click(byText(root, '.wft-acts button', 'Try your draft once now'));
   await tick(); await tick();
   const card = root.querySelector('.wft-refusal');
   assert.equal(card.querySelector('h2').textContent, 'Not enough free disk');
@@ -292,7 +322,7 @@ test('board 39: Try it once now with too little free disk shows its card', async
   assert.equal(card.querySelector('.hint').textContent, once);
   assert.equal(card.querySelector('.hint').getAttribute('role'), 'alert');
   assert.equal(root.querySelector('.wft-error').textContent, '', 'the card says it, not also the error line');
-  click(byText(root, '.wft-acts button', 'Try it once now'));
+  click(byText(root, '.wft-acts button', 'Try your draft once now'));
   await tick(); await tick();
   assert.equal(root.querySelector('.wft-refusal'), null, 'a new try takes the card away');
   assert.equal(root.querySelector('.wft-error').textContent, 'A test of this workflow is running.');
@@ -372,7 +402,7 @@ test('review 9, 15: "A file in the project" with no file name is refused; its bo
 test('U-T8 fix round (review minor 2): Try it once now also reads "Copying the project…" when its save pins a start point, and not when it keeps the pin', async () => {
   const held = [];
   const over = { tryOnce: () => new Promise((r) => held.push(() => r({ ok: true }))) };
-  const tryBtn = (root) => byText(root, '.wft-acts button', 'Try it once now');
+  const tryBtn = (root) => byText(root, '.wft-acts button', 'Try your draft once now');   // U-T9's name
   const changes = boot(example(), { over });
   changes.root.querySelector('.wft-changes-box').checked = true;
   const b1 = tryBtn(changes.root);
@@ -386,7 +416,7 @@ test('U-T8 fix round (review minor 2): Try it once now also reads "Copying the p
   const b2 = tryBtn(kept.root);
   click(b2);
   await tick();
-  assert.deepEqual([b2.textContent, b2.disabled], ['Try it once now', true]);
+  assert.deepEqual([b2.textContent, b2.disabled], ['Try your draft once now', true]);
   held.shift()();
   await tick();
 });

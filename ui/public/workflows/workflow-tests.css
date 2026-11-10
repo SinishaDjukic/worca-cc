@@ -56,6 +56,7 @@
 .wft-pick-text .hint{display:inline;margin:0;}
 .wft-first-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;}
 .wft-first-foot .hint{margin:0;}
+.wft-first-once{display:flex;flex-wrap:wrap;align-items:center;gap:16px;margin-top:12px;}
 .wft-linkbtn{border:0;background:transparent;padding:0;font:inherit;color:var(--blue-ink-strong);cursor:pointer;text-decoration:underline;}
 .wft-empty{display:flex;flex-direction:column;gap:6px;}
 .wft-dlg-error:empty{display:none;}

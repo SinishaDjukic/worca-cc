@@ -8,6 +8,7 @@ const click = (el) => el.dispatchEvent(new el.ownerDocument.defaultView.MouseEve
 const overview = () => ({
   workflowId: 'wf_b', name: 'Product brief writer', liveVersionNo: 4,
   draft: { changed: true, changes: ['New step Fact check', 'Draft brief: AI model opus → sonnet'], partsChanged: [] },
+  sinceLatest: { versionNo: 4, changed: true, changes: ['New step Fact check', 'Draft brief: AI model opus → sonnet'] },
   versions: [
     { id: 30, versionNo: 4, note: 'Shorter briefs', by: 'Tomica Brkovic', createdAt: '2026-10-12T09:00:00Z', inUse: true, runs: 41, changes: ['Removed step Summary'] },
     { id: 20, versionNo: 3, note: null, by: null, createdAt: '2026-10-08T09:00:00Z', inUse: false, runs: 28, changes: ['Review loop: at most 2 rounds → 3'] },
@@ -30,7 +31,7 @@ test('the draft row says what changed and offers Save version', () => {
   const { root, calls } = boot();
   const draft = root.querySelector('.wfv-vt-draft');
   assert.match(draft.textContent, /Your draft/);
-  assert.match(draft.textContent, /New step Fact check · Draft brief: AI model opus → sonnet/);
+  assert.match(draft.textContent, /Changes since v4: New step Fact check · Draft brief: AI model opus → sonnet/);
   click([...draft.querySelectorAll('button')].find((b) => b.textContent === 'Save version'));
   assert.deepEqual(calls.at(-1), ['save']);
 });
@@ -70,6 +71,29 @@ test('no versions yet: an explanation and Save version, no table', () => {
   const { root } = boot({ ...overview(), liveVersionNo: null, draft: null, versions: [] });
   assert.match(root.textContent, /No versions yet/);
   assert.equal(root.querySelectorAll('.wfv-vt-row').length, 0);
+});
+
+// U-T7 (F14, D7): the Draft row compares with the LATEST version, so it is right straight after Save version.
+test('the Draft row says "Same as v{n}" when the draft is the latest version and that one is in use', () => {
+  const { root } = boot({ ...overview(), draft: { changed: false, changes: [], partsChanged: [] }, sinceLatest: { versionNo: 4, changed: false, changes: [] } });
+  assert.equal(root.querySelector('.wfv-vt-draft .wfv-vt-main .hint').textContent, 'Same as v4');
+});
+
+test('the Draft row says which version new runs use when the latest is not in use', () => {
+  const o = { ...overview(), liveVersionNo: 3, draft: { changed: true, changes: ['x'], partsChanged: [] }, sinceLatest: { versionNo: 4, changed: false, changes: [] } };
+  const { root } = boot(o);
+  assert.equal(root.querySelector('.wfv-vt-draft .wfv-vt-main .hint').textContent, 'Same as v4 · new runs use v3');
+  // The Save version button stays: a click explains.
+  assert.ok([...root.querySelectorAll('.wfv-vt-draft button')].some((b) => b.textContent === 'Save version' && !b.disabled));
+});
+
+test('the Draft row lists the changes since the latest version, not since the one in use', () => {
+  const o = { ...overview(), liveVersionNo: 3, draft: { changed: true, changes: ['Old list'], partsChanged: [] },
+    sinceLatest: { versionNo: 4, changed: true, changes: ['New step Fact check'] } };
+  const { root } = boot(o);
+  assert.equal(root.querySelector('.wfv-vt-draft .wfv-vt-main .hint').textContent, 'Changes since v4: New step Fact check');
+  const none = boot({ ...o, sinceLatest: { versionNo: 4, changed: true, changes: [] } });
+  assert.equal(none.root.querySelector('.wfv-vt-draft .wfv-vt-main .hint').textContent, 'Changes since v4', 'a change that cannot be listed: no dangling colon');
 });
 
 test('M1: versions but none in use (deleted, then saved again): the draft row says so, never "vnull"', () => {

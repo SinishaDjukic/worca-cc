@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog, scriptCaution, engineNoteLine, fileServerOffLine }
+import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog, defaultPicks, scriptCaution, engineNoteLine, fileServerOffLine }
   from '../ui/public/workflows/test-dialogs.mjs';
 import * as serverConnectors from '../src/core/workflow-tests/connectors.mjs';
 import { runStatusBadge } from '../ui/public/workflows/test-ui.mjs';
@@ -17,6 +17,16 @@ const past = (over = {}) => ({
   request: 'Write the brief.', files: ['reports-interviews.md', 'usage.csv'],
   qa: [{ question: 'Who uses filters?', answer: 'Analysts' }, { question: 'Which reports?', answer: 'Monthly' }],
   use: 4, useLabel: 'v4', testable: true, reason: null, reasonText: null, ...over,
+});
+
+test('U-T9 (M1, D8): the note in the Use-as-example dialog has the same label, mark and hint as the editor', () => {
+  const { doc, win } = dom();
+  openFromRunDialog({ doc, win, past: past(), onSubmit: async () => ({ ok: true }) });
+  const f = doc.querySelector('#wft-fr-note').closest('.field');
+  assert.equal(f.querySelector('.label').childNodes[0].textContent, 'What a good result has');
+  assert.equal(f.querySelector('.label .opt').textContent.trim(), 'in your own words');
+  assert.equal(f.querySelector('.hint').textContent, 'A note for people. Worca does not check it.');
+  assert.equal(doc.querySelector('#wft-fr-note').rows, 3);
 });
 
 test('board 3: the heading, what is kept, the verdict and its hint, and what is sent', async () => {
@@ -77,8 +87,52 @@ test('G7: pick a past run, then Next', async () => {
   assert.deepEqual(picked, ['p2']);
   const empty = dom();
   openPickRunDialog({ doc: empty.doc, win: empty.win, workflowName: 'Product brief writer', runs: [], dateText: () => '', onPick: () => {} });
-  assert.equal(empty.doc.querySelector('.mk-dialog-body > .hint').textContent, 'Worca found no runs of Product brief writer yet. Run the workflow once, or write an example yourself.');
-  assert.equal(empty.doc.querySelector('.wft-dlg-ok').disabled, true, 'board 25: nothing to pick, Next is disabled');
+  assert.equal(empty.doc.querySelector('.mk-dialog-body > .hint').textContent, 'Worca found no runs of Product brief writer yet. Run it once to get a first result, or write an example yourself.');
+  assert.equal(empty.doc.querySelector('.wft-dlg-ok').textContent, 'Run it once', 'U-T4: nothing to pick, so the main button is Run it once, not Next');
+  assert.equal(empty.doc.querySelector('.wft-dlg-ok').disabled, false);
+});
+
+test('U-T4 (F4, board UfFirstRun): the empty picker has Cancel, "Run it once" and the link; Run it once closes it and calls onRunOnce', async () => {
+  const { doc, win } = dom();
+  const calls = [];
+  openPickRunDialog({ doc, win, workflowName: 'Product brief writer', runs: [], dateText: () => '', onPick: () => calls.push('pick'),
+    onRunOnce: () => calls.push('once'), onWrite: () => calls.push('write') });
+  // U-T9 (board UfFirstRun): the link sits at the left of the footer row, Cancel and Run it once on the right.
+  assert.deepEqual([...doc.querySelectorAll('.mk-dialog-foot button')].map((b) => b.textContent), ['Or write an example yourself', 'Cancel', 'Run it once']);
+  assert.ok(doc.querySelector('.mk-dialog-foot > .wft-linkbtn').classList.contains('mk-foot-start'), 'pushed to the left of the row');
+  assert.equal(doc.querySelector('.mk-dialog-body .wft-linkbtn'), null, 'not in the body');
+  click(doc.querySelector('.mk-dialog-foot .wft-linkbtn'));
+  assert.deepEqual(calls, ['write']);
+  assert.equal(doc.querySelector('.mk-dialog'), null, 'the link closes the dialog');
+  const second = dom();
+  openPickRunDialog({ doc: second.doc, win: second.win, workflowName: 'Product brief writer', runs: [], dateText: () => '', onPick: () => calls.push('pick'),
+    onRunOnce: () => calls.push('once'), onWrite: () => calls.push('write') });
+  click(second.doc.querySelector('.wft-dlg-ok'));
+  await tick();
+  assert.deepEqual(calls, ['write', 'once']);
+  assert.equal(second.doc.querySelector('.mk-dialog'), null);
+});
+
+test('U-T4: with runs the picker is unchanged: Next, no link, no Run it once', () => {
+  const { doc, win } = dom();
+  openPickRunDialog({ doc, win, workflowName: 'Product brief writer', dateText: () => '14 Oct', onPick: () => {}, onRunOnce: () => {},
+    runs: [{ pipelineId: 'p1', title: 'Bulk invoice export', at: 'x', status: 'done', files: 2, sameAs: null }] });
+  assert.equal(doc.querySelector('.wft-dlg-ok').textContent, 'Next');
+  assert.equal(doc.querySelector('.mk-dialog-body .wft-linkbtn'), null);
+});
+
+test('U-T4: an identical draft compared with another version reads "your draft (same as v{n})", never "your changes"', async () => {
+  const { doc } = openTv({ options: SAME_OPTIONS, a: 3, b: 'draft' }, { b: { use: 'draft', sameAs: 4, label: 'Your draft (same as v4)', short: 'your draft (same as v4)', want: 18, reusable: 18, reusableAt: '2026-10-20T10:00:00Z', perTryUsd: 0.52, savesUsd: 9.36 } });
+  await tick();
+  const boxB = doc.querySelector('#wft-tv-reuse-b');
+  boxB.checked = true; change(boxB);
+  const text = doc.querySelector('.wft-reuse').textContent + estRows(doc).flat().join(' ');
+  assert.doesNotMatch(text, /your changes/);
+  // U-T9: no possessive after a parenthesis.
+  assert.ok(boxB.closest('label').textContent.startsWith('Use the results of v4 (your draft is the same) from 19 Oct. Nothing in v4 or in the examples has changed since, so only '),
+    boxB.closest('label').textContent);
+  assert.doesNotMatch(text, /\)'s/);
+  assert.ok(estRows(doc).some((r) => r[0] === 'Your draft (same as v4) results from 19 Oct'), JSON.stringify(estRows(doc)));
 });
 
 test('G6: only a finished no-project run (3a: or a single-project git run, D65) of a saved user workflow, with the flag on', () => {
@@ -293,7 +347,7 @@ test('C16 with no saved version; two equal versions; one example starts at its o
   await tick();
   const selA = none.doc.querySelector('#wft-tv-a');
   assert.deepEqual([selA.disabled, selA.options[0].textContent], [true, 'No saved version yet']);
-  assert.equal(none.doc.querySelector('.wft-tv-note').textContent, 'Save a version first: a test compares two versions. Try it once now tries one example on your draft.');
+  assert.equal(none.doc.querySelector('.wft-tv-note').textContent, 'Save a version first: a test compares two versions. Try your draft once now tries it on one example.');
   assert.deepEqual([none.doc.querySelector('.wft-dlg-ok').disabled, none.doc.querySelector('.wft-dlg-ok').textContent], [true, 'Start']);
   assert.equal(none.plans.length, 0);
   // M6 (board 29): only the two selects, the sentence, Cancel and Start.
@@ -335,6 +389,54 @@ test('C16 with no saved version; two equal versions; one example starts at its o
   await tick();
   assert.equal(one.started.length, 1);
   assert.equal(one.started[0].capUsd, 15.5, 'I2: a decimal comma, not $1,550');
+});
+
+// U-T7 (F13, D7): a draft identical to a saved version.
+const SAME_OPTIONS = [{ use: 3, label: 'v3' }, { use: 4, label: 'v4 · the team uses it' }, { use: 'draft', label: 'v5 draft · your changes', sameAs: 4 }];
+
+test('U-T7: defaults when the draft equals a version: a = the version in use if not the latest, else the one before; b = the latest', () => {
+  assert.deepEqual(defaultPicks({ nos: [1, 2, 3, 4], liveNo: 2, sameAs: 4 }), { a: 2, b: 4 });
+  assert.deepEqual(defaultPicks({ nos: [1, 2, 3, 4], liveNo: 4, sameAs: 4 }), { a: 3, b: 4 });
+  assert.deepEqual(defaultPicks({ nos: [1, 2, 4], liveNo: null, sameAs: 2 }), { a: 2, b: 4 });
+  assert.deepEqual(defaultPicks({ nos: [4], liveNo: 4, sameAs: 4 }), { a: null, b: 4 });
+  assert.deepEqual(defaultPicks({ nos: [3, 4], liveNo: 4, sameAs: null }), { a: 4, b: 'draft' }, 'a changed draft: as before');
+  assert.deepEqual(defaultPicks({ nos: [], liveNo: null, sameAs: null }), { a: null, b: 'draft' });
+});
+
+test('U-T7: the draft option reads "Your draft (same as v{n})", and picking it against v{n} is refused', async () => {
+  const { doc, plans } = openTv({ options: SAME_OPTIONS, a: 3, b: 4 });
+  await tick();
+  const b = doc.querySelector('#wft-tv-b');
+  assert.deepEqual([...b.options].map((o) => o.textContent), ['v3', 'v4 · the team uses it', 'Your draft (same as v4)']);
+  assert.deepEqual([doc.querySelector('#wft-tv-a').value, b.value], ['3', '4'], 'never the default');
+  assert.equal(plans.length, 1);
+  b.value = 'draft'; change(b);
+  const a = doc.querySelector('#wft-tv-a');
+  a.value = '4'; change(a);
+  await tick();
+  assert.equal(doc.querySelector('.wft-tv-note').textContent, 'Your draft is the same as v4. Pick another version.');
+  const ok = doc.querySelector('.wft-dlg-ok');
+  assert.deepEqual([ok.disabled, ok.textContent], [true, 'Start']);
+  assert.equal(plans.length, 2, 'draft against v3 asked for a plan; v4 against the draft did not');
+});
+
+test('U-T7: the draft against another version than the one it equals is allowed', async () => {
+  const { doc, started } = openTv({ options: SAME_OPTIONS, a: 3, b: 'draft' });
+  await tick();
+  assert.equal(doc.querySelector('.wft-tv-note').textContent, '');
+  assert.equal(doc.querySelector('.wft-dlg-ok').disabled, false);
+  click(doc.querySelector('.wft-dlg-ok'));
+  await tick();
+  assert.equal(started.length, 1);
+});
+
+test('U-T7: one version and a draft identical to it: change the draft first, nothing to start', async () => {
+  const { doc, plans } = openTv({ options: [{ use: 4, label: 'v4 · the team uses it' }, { use: 'draft', label: 'v5 draft', sameAs: 4 }], a: null, b: 4 });
+  await tick();
+  assert.equal(doc.querySelector('.wft-tv-note').textContent, 'Your draft is the same as v4: change it on the canvas, then test it.');
+  const ok = doc.querySelector('.wft-dlg-ok');
+  assert.deepEqual([ok.disabled, ok.textContent], [true, 'Start']);
+  assert.equal(plans.length, 0);
 });
 
 test('C16 every result reused: Start 0 tries, disabled; C12 a cost not known yet', async () => {

@@ -1961,8 +1961,8 @@ test('F-26: the Save reason shows as text, linked by aria-describedby, and hides
 // ------------------------------------------------- Workflow versions (plans/workflow-tests-plan.md Part 1, Task 7)
 const VERSIONS_OVERVIEW = {
   workflowId: 'wf_g', name: 'Graph one', liveVersionNo: 1,
-  draft: { changed: true, changes: ['Renamed since v1'], partsChanged: [], sinceLatest: { versionNo: 2, changes: ['New step Fact check'] } },
-  sinceLatest: { versionNo: 2, changes: ['New step Fact check'] },
+  draft: { changed: true, changes: ['Renamed since v1'], partsChanged: [], sinceLatest: { versionNo: 2, changed: true, changes: ['New step Fact check'] } },
+  sinceLatest: { versionNo: 2, changed: true, changes: ['New step Fact check'] },
   versions: [{ id: 2, versionNo: 2, note: null, by: null, createdAt: '2026-10-25', inUse: false, runs: 0, changes: [],
     changesFromInUse: ['New step Fact check'], libraryEdited: true },
     { id: 1, versionNo: 1, note: null, by: null, createdAt: '2026-10-24', inUse: true, runs: 0, changes: ['First version'], changesFromInUse: [], libraryEdited: true }],
@@ -2110,7 +2110,7 @@ test('Versions page: the version table, and Use for new runs asks first, then sw
   const page = doc.getElementById('wfv-versions');
   const rows = [...page.querySelectorAll('.wfv-vt-row')];
   assert.deepEqual(rows.map((r) => r.querySelector('.wfv-vt-no').textContent), ['v2', 'v1']);
-  assert.match(page.querySelector('.wfv-vt-draft').textContent, /Renamed since v1/);
+  assert.match(page.querySelector('.wfv-vt-draft').textContent, /Changes since v2: New step Fact check/, 'U-T7: against the latest version, not the one in use');
   clickEl(w, [...rows[0].querySelectorAll('button')].find((b) => b.textContent === 'Use for new runs'));
   await tick(2);
   assert.equal(doc.querySelector('#mk-dialog-title').textContent, 'Use v2 for new runs?');
@@ -2583,6 +2583,105 @@ test('Tests page (Task 10): #workflows/<id>/tests opens the workflow on its Test
   assert.equal(page.querySelectorAll('.wft-row:not(.wft-row-head)').length, 1);
 });
 
+test('U-T4 (F4, D4): Run it once on a workflow with no past runs opens New run with that workflow chosen, also in Simple mode', async () => {
+  const booted = await bootVersions({ extra: (url) => (/\/api\/workflows\/wf_g\/tests$/.test(url)
+    ? okJson({ ...TESTS_OVERVIEW, examples: [], pastRuns: [], latest: null }) : null) });
+  const w = booted.window;
+  w.document.documentElement.dataset.level = 'simple';
+  await go(w, 'workflows/wf_g/tests');
+  await tick(6);
+  const doc = w.document;
+  const once = doc.querySelector('#wfv-tests .wft-run-once');
+  assert.equal(once.textContent, 'Run it once');
+  clickEl(w, once);
+  await tick(12);
+  assert.equal(w.location.hash, '#new');
+  const sel = doc.getElementById('workflowSelect');
+  assert.equal(sel.value, 'wf_g', 'the chosen workflow is not dropped');
+  assert.deepEqual([...sel.options].map((o) => o.value).sort(), ['wf_auto', 'wf_default', 'wf_g'], 'Simple mode lists it, besides Auto and Default');
+});
+
+test('U-T4 (F4, D4): picking the project on that New run keeps the chosen workflow, though the project has another one active', async () => {
+  const booted = await bootVersions({ extra: (url) => {
+    if (/\/api\/workflows\/wf_g\/tests$/.test(url)) return okJson({ ...TESTS_OVERVIEW, examples: [], pastRuns: [], latest: null });
+    if (/\/api\/projects(\?|$)/.test(url)) return okJson({ projects: [{ name: 'alpha', path: '/repos/alpha', exists: true }, { name: 'beta', path: '/repos/beta', exists: true }] });
+    if (/\/api\/config(\?|$)/.test(url)) return okJson({ config: { steps: {}, customModels: [], activeWorkflowId: 'wf_default' }, models: [], efforts: [] });
+    return null;
+  } });
+  const w = booted.window;
+  w.document.documentElement.dataset.level = 'simple';
+  await go(w, 'workflows/wf_g/tests');
+  await tick(6);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-tests .wft-run-once'));
+  await tick(12);
+  const sel = doc.getElementById('workflowSelect');
+  assert.equal(sel.value, 'wf_g', 'chosen before any project is picked');
+  const project = doc.getElementById('projectSelect');
+  project.selectedIndex = 2;
+  project.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await tick(12);
+  assert.equal(sel.value, 'wf_g', "the project's own workflow does not replace it");
+  sel.value = 'wf_default'; sel.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await tick(6);
+  project.selectedIndex = 1;
+  project.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await tick(12);
+  assert.equal(sel.value, 'wf_default', 'a choice made by hand ends the pin');
+});
+
+const PIN_EXTRA = (url) => {
+  if (/\/api\/workflows\/wf_g\/tests$/.test(url)) return okJson({ ...TESTS_OVERVIEW, examples: [], pastRuns: [], latest: null });
+  if (/\/api\/projects(\?|$)/.test(url)) return okJson({ projects: [{ name: 'alpha', path: '/repos/alpha', exists: true }, { name: 'beta', path: '/repos/beta', exists: true }] });
+  if (/\/api\/config(\?|$)/.test(url)) return okJson({ config: { steps: {}, customModels: [], activeWorkflowId: 'wf_default' }, models: [], efforts: [] });
+  return null;
+};
+
+test('U-T9 (U-T4 review): opening New run again while on New ends the Run it once pin', async () => {
+  const booted = await bootVersions({ extra: PIN_EXTRA });
+  const w = booted.window;
+  w.document.documentElement.dataset.level = 'simple';
+  await go(w, 'workflows/wf_g/tests');
+  await tick(6);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-tests .wft-run-once'));
+  await tick(12);
+  const sel = doc.getElementById('workflowSelect');
+  assert.equal(sel.value, 'wf_g');
+  clickEl(w, doc.getElementById('topnav-new'));   // already on #new: showView('new') runs again, with no hand-off
+  await tick(6);
+  const project = doc.getElementById('projectSelect');
+  project.selectedIndex = 2;
+  project.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await tick(12);
+  assert.equal(sel.value, 'wf_default', "no pin is left: the project's own workflow decides");
+});
+
+test('U-T9 (U-T4 review): a pinned workflow the list no longer has falls back to Default and the pin ends with it', async () => {
+  const rows = [DEFAULT_ROW, V2_ROW, V1_ROW];
+  const booted = await bootVersions({ workflows: rows, extra: PIN_EXTRA });
+  const w = booted.window;
+  w.document.documentElement.dataset.level = 'simple';
+  await go(w, 'workflows/wf_g/tests');
+  await tick(6);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-tests .wft-run-once'));
+  await tick(12);
+  const sel = doc.getElementById('workflowSelect');
+  assert.equal(sel.value, 'wf_g');
+  rows.splice(rows.indexOf(V2_ROW), 1);   // the workflow is gone when the project is picked
+  const project = doc.getElementById('projectSelect');
+  project.selectedIndex = 1;
+  project.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await tick(12);
+  assert.equal(sel.value, 'wf_default', 'the fallback');
+  rows.push(V2_ROW);   // it is back; the dead pin must not pull the choice to it
+  project.selectedIndex = 2;
+  project.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await tick(12);
+  assert.equal(sel.value, 'wf_default', 'no stale pin');
+});
+
 test('Tests page (Task 10 fix 1): Workflows ▾ › New canvas while it shows: the page follows to C15, never the last workflow\'s examples', async () => {
   const { window: w, reads } = await bootTests();
   await go(w, 'workflows/wf_g');
@@ -2608,7 +2707,7 @@ const exampleRow = (e) => ({ id: e.id, name: e.name, hasRequest: true, files: e.
 const fullExample = (id, name) => ({ id, name, request: `The request of ${name}.`, answers: [], otherwise: 'pick',
   basics: { noError: true, noHelp: true, maxCostUsd: null, maxSentBack: null }, checks: [], tries: 3, files: [], note: null });
 /** A small examples store behind /api/workflows/wf_g/tests; `holdFiles` keeps every file upload waiting until released. */
-async function bootEditor({ holdFiles = false } = {}) {
+async function bootEditor({ holdFiles = false, running = null } = {}) {
   const store = { 4: fullExample(4, 'Bulk invoice export'), 7: fullExample(7, 'Weekly report') };
   let nextId = 8;
   const log = [];
@@ -2621,8 +2720,14 @@ async function bootEditor({ holdFiles = false } = {}) {
     const body = init.body ? JSON.parse(init.body) : undefined;
     log.push({ method, path: rest, body });
     let x;
-    if (rest === '') return okJson({ ...TESTS_OVERVIEW, examples: Object.values(store).map(exampleRow) });
+    if (rest === '') return okJson({ ...TESTS_OVERVIEW, examples: Object.values(store).map(exampleRow), running });
     if (rest === '/plan') return okJson({ a: null, b: { use: 'draft', perTryUsd: 0.5 }, examples: 0, tries: 1 });
+    if ((x = /^\/runs\/(\d+)\/stop$/.exec(rest)) && method === 'POST') return okJson({ run: { id: Number(x[1]), status: 'stopped' } });
+    if ((x = /^\/examples\/(\d+)\/files\/([^/]+)$/.exec(rest)) && method === 'DELETE') {
+      const e = store[x[1]];
+      e.files = e.files.filter((f) => f.name !== decodeURIComponent(x[2]));
+      return okJson({ example: { ...e } });
+    }
     if (rest === '/examples' && method === 'POST') {
       const e = { ...fullExample(nextId, body.name), ...body, id: nextId, files: [] };
       nextId += 1;
@@ -2706,10 +2811,28 @@ test('Example editor (Task 11 fix 1): Try it once now saves, starts the try and 
   await go(w, 'workflows/wf_g/tests/4');
   await tick(6);
   const page = w.document.getElementById('wfv-tests');
-  clickEl(w, editorBtn(page, 'Try it once now'));
+  clickEl(w, editorBtn(page, 'Try your draft once now'));
   await tick(8);
   assert.deepEqual(writes(log), ['PUT /examples/4', 'POST /examples/4/try-once']);
   assert.equal(page.querySelector('#wft-ex-name'), null, 'the editor is gone');
+});
+
+test('U-T9 fix round 1 (F17): removing a file of an example the running test is trying asks; Save and stop stops the test, then removes', async () => {
+  const { window: w, log, store } = await bootEditor({ running: { runId: 31, title: 'Testing', done: 0, total: 3, exampleIds: [4] } });
+  store[4].files = [{ name: 'notes.md', size: 2, sha256: 'z' }];
+  await go(w, 'workflows/wf_g/tests/4');
+  await tick(6);
+  const doc = w.document;
+  const page = doc.getElementById('wfv-tests');
+  clickEl(w, page.querySelector('.wft-file-x'));
+  await tick(4);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Save and stop the test?');
+  assert.equal(doc.activeElement, doc.getElementById('confirm-cancel'), 'Cancel is the default: the action stops paid work');
+  assert.deepEqual(writes(log), [], 'nothing posted before the answer');
+  doc.getElementById('confirm-ok').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  await tick(8);
+  assert.deepEqual(writes(log), ['POST /runs/31/stop', 'DELETE /examples/4/files/notes.md'], 'the progress page\'s stop, then the file');
+  assert.equal(page.querySelectorAll('.wft-file').length, 0);
 });
 
 // ------------------------------------------- Use a past run as a test example (plans/workflow-tests-part2-plan.md Task 12)

@@ -78,3 +78,27 @@ test('C1: another loop setting (onExhausted) is listed; config {} and missing ar
 test('canon sorts keys at every depth', () => {
   assert.equal(canon({ b: 1, a: { d: [1, { z: 1, y: 2 }], c: null } }), '{"a":{"c":null,"d":[1,{"y":2,"z":1}]},"b":1}');
 });
+
+test('F27: each setting reads in its own words, one line per changed key', () => {
+  const words = { promptHints: 'instructions changed', params: 'script settings changed', approve: 'approval stop changed',
+    maxQuestions: 'question limit changed', ports: 'inputs and outputs changed', roleReview: 'review settings changed', fanOut: 'settings changed' };
+  for (const [key, text] of Object.entries(words)) {
+    const after = g();
+    after.nodes[2] = { ...after.nodes[2], config: { [key]: key === 'maxQuestions' ? 3 : { x: 1 } } };
+    assert.deepEqual(diffGraphs(g(), after, { labelOf }).map((c) => c.text), [`Review: ${text}`], key);
+  }
+  const many = g();
+  many.nodes[2] = { ...many.nodes[2], config: { promptHints: 'a', approve: true, fanOut: true, other: 1 } };
+  assert.deepEqual(diffGraphs(g(), many, { labelOf }).map((c) => c.text),
+    ['Review: approval stop changed', 'Review: instructions changed', 'Review: settings changed']);
+});
+
+test('F27: models show the catalog names; an unknown id stays as it is; empty reads inherit', () => {
+  const modelLabel = (id) => ({ opus: 'Claude Opus 4.7' }[id] || null);
+  const after = g();
+  after.nodes[1] = { ...after.nodes[1], config: { model: 'claude-x-9' } };
+  assert.deepEqual(diffGraphs(g(), after, { labelOf, modelLabel }).map((c) => c.text), ['Draft brief: AI model Claude Opus 4.7 → claude-x-9']);
+  const none = g();
+  none.nodes[1] = { ...none.nodes[1], config: {} };
+  assert.deepEqual(diffGraphs(g(), none, { labelOf, modelLabel }).map((c) => c.text), ['Draft brief: AI model Claude Opus 4.7 → inherit']);
+});

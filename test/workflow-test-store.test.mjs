@@ -158,3 +158,13 @@ test('round 8: boot maintenance settles only dead tries: a live owner\'s try sur
   assert.equal(st('b8000002'), 'stopped', 'a crashed ownerless try older than the reconcile\'s window is settled');
   assert.equal(st('b8000003'), 'created', 'a fresh ownerless row waits for that window (WORCA_STALE_RUN_MS, 30 minutes)');
 });
+
+test('U-T9 (F16): a note-only, name-only or tries-only edit each keep the fingerprint on their own', () => {
+  const ex = store.createExample(WF, input());
+  for (const over of [{ note: 'What a good result has, in my own words.' }, { name: 'Another name' }, { tries: 5 }]) {
+    assert.equal(store.updateExample(WF, ex.id, over).fingerprint, ex.fingerprint, JSON.stringify(over));
+  }
+  const noted = store.updateExample(WF, ex.id, { note: 'Kept with the example' });
+  assert.equal(noted.note, 'Kept with the example');
+  assert.equal(store.readExample(WF, ex.id).note, 'Kept with the example');
+});

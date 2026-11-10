@@ -30,16 +30,28 @@ const list = (a) => (Array.isArray(a) ? a.filter((x) => x && typeof x === 'objec
 const byId = (a) => new Map(list(a).map((x) => [x.id, x]));
 const plainLabel = (n) => (n && (n.key || n.kind)) || 'step';
 const ends = (w) => canon({ from: w.from ?? null, to: w.to ?? null });
+// Plain words for the other node settings (F27, U-T13). Any key not listed reads "settings changed".
+export const CONFIG_KEY_WORDS = {
+  promptHints: 'instructions changed',
+  params: 'script settings changed',
+  approve: 'approval stop changed',
+  maxQuestions: 'question limit changed',
+  ports: 'inputs and outputs changed',
+  roleReview: 'review settings changed',
+};
+const OTHER_WORDS = 'settings changed';
 const shown = (v) => (v === undefined || v === null || v === '' ? 'default' : String(v));
 
 /**
  * @param {{name?: string, nodes?: Array, wires?: Array}} before
  * @param {{name?: string, nodes?: Array, wires?: Array}} after
- * @param {{labelOf?: (node: object) => string}} [opts]
+ * @param {{labelOf?: (node: object) => string, modelLabel?: (id: string) => string|null}} [opts]
+ *  `modelLabel(id)` is the model catalog's label for an id (null/absent: the id is shown as it is).
  * @returns {Array<{kind: string, nodeId?: string, text: string}>}
  */
-export function diffGraphs(before, after, { labelOf = plainLabel } = {}) {
+export function diffGraphs(before, after, { labelOf = plainLabel, modelLabel = null } = {}) {
   const out = [];
+  const modelShown = (v) => (v === undefined || v === null || v === '' ? 'inherit' : (typeof modelLabel === 'function' && modelLabel(String(v))) || String(v));
   const label = (n) => labelOf(n) || plainLabel(n);
   if ((before?.name ?? '') !== (after?.name ?? '') && before?.name && after?.name) {
     out.push({ kind: 'name', text: `Renamed from "${before.name}" to "${after.name}"` });
@@ -56,10 +68,16 @@ export function diffGraphs(before, after, { labelOf = plainLabel } = {}) {
     }
     const ca = cleanConfig(na.config) || {};
     const cb = cleanConfig(nb.config) || {};
-    if ((ca.model ?? null) !== (cb.model ?? null)) out.push({ kind: 'model', nodeId: id, text: `${label(nb)}: AI model ${shown(ca.model)} → ${shown(cb.model)}` });
+    if ((ca.model ?? null) !== (cb.model ?? null)) out.push({ kind: 'model', nodeId: id, text: `${label(nb)}: AI model ${modelShown(ca.model)} → ${modelShown(cb.model)}` });
     if ((ca.effort ?? null) !== (cb.effort ?? null)) out.push({ kind: 'effort', nodeId: id, text: `${label(nb)}: effort ${shown(ca.effort)} → ${shown(cb.effort)}` });
-    const rest = (c) => canon(Object.fromEntries(Object.entries(c).filter(([k]) => k !== 'model' && k !== 'effort')));
-    if (rest(ca) !== rest(cb)) out.push({ kind: 'config', nodeId: id, text: `${label(nb)}: settings changed` });
+    const restKeys = [...new Set([...Object.keys(ca), ...Object.keys(cb)])].filter((k) => k !== 'model' && k !== 'effort').sort();
+    let other = false;
+    for (const k of restKeys) {
+      if (canon(ca[k] ?? null) === canon(cb[k] ?? null)) continue;
+      if (CONFIG_KEY_WORDS[k]) out.push({ kind: 'config', nodeId: id, text: `${label(nb)}: ${CONFIG_KEY_WORDS[k]}` });
+      else other = true;
+    }
+    if (other) out.push({ kind: 'config', nodeId: id, text: `${label(nb)}: ${OTHER_WORDS}` });
   }
   const wa = byId(before?.wires);
   const wb = byId(after?.wires);

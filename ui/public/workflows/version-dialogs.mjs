@@ -17,14 +17,15 @@ function changesList(doc, changes, none) {
   return ul;
 }
 
-function frame({ doc, win, title, body, confirmLabel, onConfirm }) {
+function frame({ doc, win, title, body, confirmLabel, confirmDisabled = false, onConfirm }) {
   const dlg = createDialog({ doc, win, width: 'md' });
   const h = el(doc, 'h2', 'mk-dialog-title', title); h.id = 'mk-dialog-title';
   const error = el(doc, 'p', 'hint err wfv-dlg-error'); error.setAttribute('aria-live', 'polite');
   const cancel = el(doc, 'button', 'btn', 'Cancel'); cancel.type = 'button';
-  const ok = el(doc, 'button', 'btn btn-primary', confirmLabel); ok.type = 'button';
+  const ok = el(doc, 'button', 'btn btn-primary', confirmLabel); ok.type = 'button'; ok.disabled = confirmDisabled;
   cancel.addEventListener('click', () => dlg.close());
   ok.addEventListener('click', async () => {
+    if (ok.disabled) return;   // U-T7: nothing to save, or already saving
     dlg.setBusy(true); ok.disabled = true; error.textContent = '';
     let res;
     try { res = await onConfirm(); } catch (e) { res = { ok: false, error: e && e.message ? e.message : String(e) }; }
@@ -38,7 +39,7 @@ function frame({ doc, win, title, body, confirmLabel, onConfirm }) {
 
 /** Save version N: what changed since the latest version `sinceNo` (null: this is the first version), a short note,
  *  and "Also use vN for new runs". `changes` compares with v<sinceNo>, the version Save version compares against. */
-export function openSaveVersionDialog({ doc, win, nextNo, sinceNo = null, changes, onSubmit }) {
+export function openSaveVersionDialog({ doc, win, nextNo, sinceNo = null, changes, unchanged = false, onSubmit }) {
   const label = el(doc, 'label', 'label', 'What changed, in a few words '); label.htmlFor = 'wfv-sv-note';
   label.append(el(doc, 'span', 'opt', 'optional'));
   const note = el(doc, 'input'); note.type = 'text'; note.id = 'wfv-sv-note'; note.maxLength = 200;
@@ -46,11 +47,14 @@ export function openSaveVersionDialog({ doc, win, nextNo, sinceNo = null, change
   const use = el(doc, 'input'); use.type = 'checkbox'; use.id = 'wfv-sv-use';
   useWrap.append(use, el(doc, 'span', '', ` Also use v${nextNo} for new runs`));
   const field = el(doc, 'div', 'field'); field.append(label, note);
-  const since = Number.isInteger(sinceNo)
+  // U-T7 (F15): an unchanged draft has nothing to save; the server would refuse it (UNCHANGED).
+  const nothing = unchanged && Number.isInteger(sinceNo);
+  const since = nothing ? [el(doc, 'p', 'hint wfv-sv-since', `Nothing changed since v${sinceNo}, so there is nothing to save.`)]
+    : Number.isInteger(sinceNo)
     ? [el(doc, 'p', 'hint wfv-sv-since', `What changed since v${sinceNo}:`), changesList(doc, changes, `Nothing changed since v${sinceNo}.`)]
     : [el(doc, 'p', 'hint wfv-sv-since', 'This is the first version.')];
   return frame({
-    doc, win, title: `Save version ${nextNo}`, confirmLabel: `Save version ${nextNo}`,
+    doc, win, title: `Save version ${nextNo}`, confirmLabel: `Save version ${nextNo}`, confirmDisabled: nothing,
     body: [...since, field, useWrap],
     onConfirm: () => onSubmit({ note: note.value.trim(), use: use.checked }),
   });

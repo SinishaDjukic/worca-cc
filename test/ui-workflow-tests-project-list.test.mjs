@@ -49,7 +49,7 @@ test('board 38: project examples in the list, the moved-on line, an example left
 
 test('board 39: first use of a workflow that changes a project; a Folder and a workspace run are listed, disabled', () => {
   const none = boot(overview({ examples: [], pastRuns: [] }));
-  assert.equal(none.root.querySelector('.wft-pick > .hint').textContent, 'Worca found no runs of Fix a bug from a ticket yet. Run the workflow once on a project, or write an example yourself.');
+  assert.equal(none.root.querySelector('.wft-pick > .hint').textContent, 'Worca found no runs of Fix a bug from a ticket yet. Run it once on a project to get a first result, or write an example yourself.');
   const some = boot(overview({ examples: [], pastRuns: [
     { pipelineId: 'aaaa0001', title: 'Fix: invoice totals round wrong', at: '2026-10-28T09:00:00Z', status: 'done', files: 0, sameAs: null, project: 'worca-cc', refusal: null, refusalText: null },
     { pipelineId: 'aaaa0002', title: 'Fix: broken link on the help page', at: '2026-10-18T09:00:00Z', status: 'done', files: 0, sameAs: null, project: 'docs-site', refusal: 'folder',
@@ -78,7 +78,7 @@ test('board 38/39: the picker: a project run\'s title, badge and sub-line; refus
   assert.deepEqual(picked, ['aaaa0001']);
   const { window: w2 } = new JSDOM('<!doctype html><body></body>');
   openPickRunDialog({ doc: w2.document, win: w2, workflowName: 'Fix a bug from a ticket', needsProject: true, runs: [], dateText: () => '', onPick() {} });
-  assert.equal(w2.document.querySelector('.mk-dialog-body > .hint').textContent, 'Worca found no runs of Fix a bug from a ticket yet. Run the workflow once on a project, or write an example yourself.');
+  assert.equal(w2.document.querySelector('.mk-dialog-body > .hint').textContent, 'Worca found no runs of Fix a bug from a ticket yet. Run it once on a project to get a first result, or write an example yourself.');
 });
 
 test('board 38: use a project run as a test example: where it starts, its setup, and what is sent', async () => {

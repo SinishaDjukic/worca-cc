@@ -89,14 +89,15 @@ test('examples, a past run as an example, a test of v1 against the draft, reuse,
   const up = await call('POST', `${WF}/examples/${ex.id}/files`, { name: 'notes.md', dataBase64: Buffer.from('# Notes').toString('base64') });
   assert.deepEqual(up.body.example.files.map((f) => [f.name, f.size]), [['notes.md', 7]]);
   o = (await call('GET', WF)).body;
-  assert.deepEqual(o.columns.map((c) => c.label), ['v1 · the team uses it', 'v2 draft · yours']);
+  // U-T7 (D7): the draft is still the saved v1, so it has no column of its own.
+  assert.deepEqual([o.columns.map((c) => c.label), o.draftSameAs], [['v1 · the team uses it'], 1]);
   const saved = o.examples.find((e) => e.name === 'Saved filters');
   assert.deepEqual([saved.cells['1'], saved.cells.draft, saved.files], [{ passed: null, total: null, stale: false, past: 'not-good' }, null, ['usage.csv']]);
   assert.equal(o.pastRuns.length, 1);
 
   // Test v1 against the draft on the written example, with the free quick check.
   const plan = (await call('GET', `${WF}/plan?a=1&b=draft&examples=${ex.id}&tries=1`)).body;
-  assert.deepEqual([plan.a.want, plan.a.reusable, plan.b.label], [1, 0, 'v2 draft · your changes']);
+  assert.deepEqual([plan.a.want, plan.a.reusable, plan.b.label], [1, 0, 'Your draft (same as v1)']);   // U-T4: the draft is still the saved v1, so "your changes" would be untrue
   assert.deepEqual(plan.connectors, { mode: 'pretend', pretend: [], off: [], scripts: [], quickScripts: [], engines: [], personalOff: true },
     "board 30: no connector, no script step, Claude only; 3b (D78): Pretend on Claude Code, so the person's plugins are off");
   const started = await call('POST', `${WF}/runs`, { a: 1, b: 'draft', exampleIds: [ex.id], tries: 1, quickCheck: true, capUsd: 5 });
@@ -229,6 +230,7 @@ test('the example routes: edit, delete a file, add from runs, stop a test, a try
   // Stop a running test: its tries stop, the test says the person stopped it.
   const run = (await call('POST', `${WF}/runs`, { a: 1, b: 'draft', exampleIds: [ex.id], tries: 3, reuseA: false })).body.run;
   assert.equal((await call('GET', `${WF}/runs/${run.id}`)).body.run.status, 'running', 'still running when the stop is sent (else this row proves nothing)');
+  assert.deepEqual((await call('GET', WF)).body.running.exampleIds, [ex.id], 'U-T9 (F17): the overview names the examples the running test tries');
   const stopped = await call('POST', `${WF}/runs/${run.id}/stop`);
   assert.deepEqual([stopped.status, stopped.body.run.status, stopped.body.run.stopReason], [200, 'stopped', 'person']);
 

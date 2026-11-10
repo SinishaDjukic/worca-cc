@@ -20,7 +20,7 @@ test('board 32: where it starts', () => {
   assert.equal(t.shortSha('abc1234def'), 'abc1234');
   // P26: a Change pick waits for the save; Start from the latest is stored at once.
   assert.equal(t.startWillBeText('release', 'e9f2c47'), 'The start point will be release at e9f2c47 when you save the example.');
-  assert.equal(t.startNowText('main', 'fffffff'), 'The start point is now main at fffffff.');
+  assert.equal(t.startNowText('main', '28 Oct'), 'Saved: the start point is now main · 28 Oct.');
 });
 
 test('board 33: the project checks in the dialog', () => {
@@ -113,10 +113,12 @@ test('boards 38 and 39: the list, a past run, the empty and refused states', () 
   assert.equal(t.PICK_PROJECT_OPTION, 'Pick a project');
   assert.equal(t.NO_PROJECT_OPTION, 'No project');
   assert.equal(t.PICK_THE_FOLDER, 'Pick the folder');
-  assert.equal(t.firstUseNoneText('Fix a bug from a ticket', { needsProject: true }), 'Worca found no runs of Fix a bug from a ticket yet. Run the workflow once on a project, or write an example yourself.');
-  assert.equal(t.firstUseNoneText('Brief writer', { needsProject: false }), 'Worca found no runs of Brief writer yet. Write an example yourself, or run the workflow once and come back.');
-  assert.equal(t.pickerNoneText('Brief writer', { needsProject: false }), 'Worca found no runs of Brief writer yet. Run the workflow once, or write an example yourself.');
-  assert.equal(t.pickerNoneText('Fix', { needsProject: true }), 'Worca found no runs of Fix yet. Run the workflow once on a project, or write an example yourself.');
+  assert.equal(t.firstUseNoneText('Fix a bug from a ticket', { needsProject: true }), 'Worca found no runs of Fix a bug from a ticket yet. Run it once on a project to get a first result, or write an example yourself.');
+  assert.equal(t.firstUseNoneText('Brief writer', { needsProject: false }), 'Worca found no runs of Brief writer yet. Run it once to get a first result, or write an example yourself.');
+  assert.equal(t.pickerNoneText('Brief writer', { needsProject: false }), 'Worca found no runs of Brief writer yet. Run it once to get a first result, or write an example yourself.');
+  assert.equal(t.pickerNoneText('Fix', { needsProject: true }), 'Worca found no runs of Fix yet. Run it once on a project to get a first result, or write an example yourself.');
+  assert.equal(t.RUN_IT_ONCE, 'Run it once');
+  assert.equal(t.WRITE_YOURSELF, 'Or write an example yourself');
   assert.deepEqual([t.START_DIALOG_TITLE, t.START_DIALOG_HINT, t.START_DIALOG_OK],
     ['Start point', 'Pick the branch this example starts from. Worca takes its newest commit.', 'Use this start point']);
 });

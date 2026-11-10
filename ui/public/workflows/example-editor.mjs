@@ -2,7 +2,7 @@
 // what Worca gets, your answers to its questions, what a good result needs (Basics + automatic checks; "Your criteria"
 // is Part 3), how many tries. Plus the two small dialogs: a question and its answer, and an automatic check (G1).
 // Pure DOM; app.js saves.
-import { el, btn, iconBtn, seg, field, card, testDialog, sentence, BUSY_HINT, startInto, checkWords } from './test-ui.mjs';
+import { el, btn, iconBtn, seg, field, card, testDialog, sentence, BUSY_HINT, startInto, checkWords, noteField } from './test-ui.mjs';
 import { makeSwitch } from '../switch.mjs';
 import { icon } from '../icons.mjs';
 import { withButton } from '../feedback.mjs';
@@ -17,7 +17,7 @@ import {
   COMMAND_LABEL, COMMAND_HINT, TIMEOUT_LABEL, TIMEOUT_HINT, timeoutText, READ_FROM_LEGEND, READ_FROM_RESULT, READ_FROM_RESULT_SUB,
   READ_FROM_FILE, ADD_CHECK, lfsText, submodulesText, MISSING_FOLDER_ADD_AGAIN, notRegisteredText, PROJECTS_UNREAD_TEXT,
   NOT_ON_BRANCH_TEXT, changesMovesText, FILE_NAME_NEEDED, NO_BRANCHES_TEXT, startNowText, startWillBeText, PICK_BRANCH_FIRST, BRANCHES_UNREAD_TEXT,
-  START_NOT_MOVED_TEXT, FILE_IN_PROJECT_LABEL, DISK_TITLE, DISK_KEY, diskRow, FOLDERS_LABEL, FOLDERS_HINT, FILES_LABEL, FILES_HINT_LEAD,
+  START_NOT_MOVED_TEXT, LATEST_BUSY_TEXT, FILE_IN_PROJECT_LABEL, DISK_TITLE, DISK_KEY, diskRow, FOLDERS_LABEL, FOLDERS_HINT, FILES_LABEL, FILES_HINT_LEAD,
   FILES_HINT_CODE, FILES_HINT_REST, MOST_FILES_LABEL, MOST_FILES_HINT, MET_WHEN_LEGEND, MET_WHEN_PASSES, MET_WHEN_PASSES_SUB, MET_WHEN_NOTHING,
   MET_WHEN_NOTHING_SUB, MET_WHEN_HINT,
 } from '../../../src/shared/workflow-tests/project-text.mjs';
@@ -80,7 +80,7 @@ export function openAnswerDialog({ doc, win, pair = null, onSave, onRemove = nul
   a.id = 'wft-qa-answer'; a.rows = 3; a.maxLength = 2000; a.value = pair ? pair.answer : '';
   return testDialog({
     doc, win, title: pair ? 'Edit the question and answer' : 'Add a question and answer', confirmLabel: 'Save',
-    body: [el(doc, 'p', 'hint', 'Write the question as Worca asks it. Case, spacing and punctuation do not matter.'),
+    body: [el(doc, 'p', 'hint', "Copy the question from a past run of this workflow. Case, spacing and punctuation do not matter. If Worca asks something else, the example's choice below decides."),
       field(doc, 'Question', q, { id: q.id }), field(doc, 'Your answer', a, { id: a.id })],
     onRemove: pair && onRemove ? onRemove : null,
     onConfirm: () => {
@@ -291,14 +291,16 @@ function basicRow(doc, id, text, on, extra = null, after = null) {
  *   3a: also branches(key) → {ok, data: {branches}} and startLatest() → {ok, example}
  * @param {{doc: Document, win: Window, scripts?: Array<{key:string, displayName?:string}>|null, perTryUsd?: number|null,
  *   draftLabel?: string, testRunning?: boolean, projects?: Array<object>|null, needsProject?: boolean, workflowName?: string,
- *   projectView?: object|null, dateText?: (iso: string) => string}} ctx  scripts null: the Library did not load; testRunning:
+ *   projectView?: object|null, dateText?: (iso: string) => string, runningExampleIds?: number[], confirm?: Function}} ctx  scripts null: the Library did not load; testRunning:
  *   a test of this workflow runs, so Try it once now waits (G19); projects: GET /api/workflow-tests/projects (null: not
  *   read); needsProject: the workflow changes a project's code (D62); projectView: the overview's view of the example's
- *   project (its drift, D63)
+ *   project (its drift, D63); runningExampleIds + confirm (app.js's confirmModal): a save or a file change that changes
+ *   an example the running test is trying asks first, and "Save and stop" calls actions.stopTest() → {ok, error?} before
+ *   it (U-T9, F17)
  * @returns {{value: () => object}}
  */
 export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [], perTryUsd = null, draftLabel = 'your draft', testRunning = false,
-  projects = null, needsProject = false, workflowName = '', projectView = null, dateText = (s) => s }) {
+  runningExampleIds = [], confirm = null, projects = null, needsProject = false, workflowName = '', projectView = null, dateText = (s) => s }) {
   const listed = scripts;
   const lib = Array.isArray(scripts) ? scripts : [];
   const draft = clone({ ...BLANK_EXAMPLE, ...ex });
@@ -339,13 +341,47 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   paintTitle();
   crumbs.append(btn(doc, 'Tests', () => actions.back(), 'wft-crumb'), title);
   const acts = el(doc, 'div', 'wft-acts');
+  // U-T9 (F17): only what a try gets or is judged by (store.mjs exampleFingerprint) stops a running test: the name, the
+  // note and the tries do not. The baseline is taken once the page is painted.
+  const fingerprintSig = () => {
+    const v = value();
+    return JSON.stringify([v.request, v.answers, v.otherwise, v.basics, v.checks.map(({ id: _id, ...c }) => c), v.project]);
+  };
+  let baseline = null;
+  let asking = false;
+  /** A change to what a try gets: 'go' when no running test tries this example (or nothing such changes), 'stop' when
+   *  the person agreed to stop it, 'cancel' otherwise. Cancel is the default button: the answer stops paid work. */
+  const askFirst = async (changes) => {
+    if (asking) return 'cancel';
+    if (!changes || typeof confirm !== 'function' || draft.id == null || !runningExampleIds.includes(draft.id)) return 'go';
+    asking = true;
+    try {
+      return (await confirm({ title: 'Save and stop the test?', confirmLabel: 'Save and stop', cancelLabel: 'Cancel', focus: 'cancel',
+        message: 'A test of this workflow is trying this example. Saving changes it, so the test stops. Tries already done are kept.' })) ? 'stop' : 'cancel';
+    } finally { asking = false; }
+  };
+  /** Fix round 1 (F17): "Save and stop" stops the test first (the progress page's stop, which answers once it has
+   *  stopped), then makes the change, so the store's BUSY refusal of a new pin never meets it. A stop that fails changes
+   *  nothing. Once stopped, nothing here runs any more: no second question, Try is free again. */
+  const stopFirst = async (how, fn) => {
+    if (how !== 'stop') return fn();
+    const s = await actions.stopTest();
+    if (!s || !s.ok) return { ok: false, error: (s && s.error) || 'The test was not stopped, so nothing was changed.' };
+    runningExampleIds = [];
+    testRunning = false;
+    head.querySelector('#wft-busy')?.remove();
+    return fn();
+  };
   const run = async (fn) => {
     if (busyN) return { ok: false };
     error.textContent = '';
     page.querySelector('.wft-refusal')?.remove();
     const problem = limitsProblem();
     if (problem) { error.textContent = problem; return { ok: false }; }
-    const r = await busyWhile(() => fn(value()));
+    // U-T9: a save that changes what a running test is trying asks first, and "Save and stop" stops the test, then saves.
+    const how = fn === actions.save ? await askFirst(fingerprintSig() !== baseline) : 'go';
+    if (how === 'cancel') return { ok: false };
+    const r = await busyWhile(() => stopFirst(how, () => fn(value())));
     if (!unsupported(r)) failed(r, 'That did not work. Try again.');
     if (r && !r.ok && r.body && r.body.code === 'NO_DISK' && r.body.disk) {   // board 39: Try it once now, not enough free disk
       const c = card(doc, DISK_TITLE, 'wft-ex-disk-h', null, 'wft-refusal');
@@ -371,8 +407,9 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     if (pinsStart(value().project)) void withButton(button(), () => run(action), { busy: COPYING_PROJECT });
     else void run(action);
   };
-  const tryBtn = btn(doc, 'Try it once now', saving(() => tryBtn, (v) => actions.tryOnce(v)), 'btn');
-  const saveBtn = btn(doc, 'Save example', saving(() => saveBtn, (v) => actions.save(v)), 'btn btn-primary');
+  // The actions themselves (not wrappers): run() asks first only for actions.save (U-T9).
+  const tryBtn = btn(doc, 'Try your draft once now', saving(() => tryBtn, actions.tryOnce), 'btn');
+  const saveBtn = btn(doc, 'Save example', saving(() => saveBtn, actions.save), 'btn btn-primary');
   acts.append(btn(doc, 'Cancel', () => actions.back(), 'btn'), tryBtn, saveBtn);
   head.append(crumbs, acts);
   if (testRunning) {   // G19, D37: one test per workflow at a time
@@ -403,7 +440,9 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
       const x = iconBtn(doc, 'x', `Remove ${f.name}`, async () => {
         if (busyN) return;
         error.textContent = '';
-        const r = await busyWhile(() => actions.removeFile(f.name));
+        const how = await askFirst(true);   // the files are part of what a try gets (F17)
+        if (how === 'cancel') return;
+        const r = await busyWhile(() => stopFirst(how, () => actions.removeFile(f.name)));
         showFiles(r);
         failed(r, 'The file was not removed.');
         if (r && r.ok) addFileBtn.focus();   // the pill and its × are gone
@@ -435,7 +474,9 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     if (twin) { error.textContent = `A file named ${twin} is already here.`; return; }
     const problem = draft.id == null ? limitsProblem() : null;   // G17: an example never saved is saved first
     if (problem) { error.textContent = problem; return; }
-    const r = await busyWhile(() => actions.addFiles(list, value()));
+    const how = await askFirst(true);
+    if (how === 'cancel') return;
+    const r = await busyWhile(() => stopFirst(how, () => actions.addFiles(list, value())));
     showFiles(r);   // also after a partly done upload: the files that went up
     failed(r, 'The file was not added.');
   });
@@ -450,6 +491,8 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   let view = projectView;                                // the overview's view of it (state, behind)
   const pick = { key: stored ? stored.key : '', ref: undefined, branch: null, repin: false };
   const where = el(doc, 'div', 'wft-sect wft-where');
+  const whereTitle = el(doc, 'p', 'wft-grp', WHERE_TITLE);
+  const whereHint = el(doc, 'p', 'wft-grp-hint', WHERE_HINT);
   const projectSel = el(doc, 'select');
   projectSel.id = 'wft-ex-project';
   const startField = el(doc, 'div', 'field wft-start-field');
@@ -542,6 +585,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     else if (!st) say(null, only(NOT_ON_BRANCH_TEXT));   // P22
     const usableProject = !!(pick.key && r && r.exists && r.vcs === 'git' && st);
     tryBlocked = pick.key ? !usableProject : needsProject;
+    whereTitle.hidden = whereHint.hidden = !pick.key && !needsProject;   // U-T9 (F38, M1): nothing to say about a start that is not there
     if (usableProject) {
       const row = el(doc, 'div', 'wft-start');
       const words = el(doc, 'span');
@@ -589,7 +633,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
    *  saved ("will be"); Start from the latest is already stored ("is now"). */
   const startMoved = (saved) => {
     const st = startShown();
-    status.textContent = st ? (saved ? startNowText : startWillBeText)(st.ref || st.short, st.short) : '';
+    status.textContent = !st ? '' : saved ? startNowText(st.ref || st.short, dateText(st.at)) : startWillBeText(st.ref || st.short, st.short);
     if (changeBtn) changeBtn.focus();
   };
   async function changeStart() {
@@ -607,6 +651,8 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     if (busyN) return;
     error.textContent = '';
     const r = await loading(latestBtn, () => actions.startLatest());
+    // F17: the store refuses a new start while a test tries the example (BUSY, 409): say what to do.
+    if (r && !r.ok && r.status === 409) { error.textContent = LATEST_BUSY_TEXT; return; }
     if (!r || !r.ok) { if (!unsupported(r)) failed(r, START_NOT_MOVED_TEXT); return; }
     stored = r.example.project;
     draft.project = stored;
@@ -622,7 +668,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     paintWhere();
   });
   fillProjects();
-  where.append(el(doc, 'p', 'wft-grp', WHERE_TITLE), el(doc, 'p', 'wft-grp-hint', WHERE_HINT),
+  where.append(whereTitle, whereHint,
     field(doc, PROJECT_LABEL, skinned(doc, projectSel), { id: projectSel.id }), notice, startField, status, changesRow, changesHint, dev);
   c1.append(where);
 
@@ -659,12 +705,17 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
       ? `About ${fmtUsd(perTryUsd)} a try with ${draftLabel}, so about ${fmtUsd(perTryUsd * draft.tries)} for this example.`
       : 'Worca does not know the cost of a try yet: it learns it from the first tries.';   // C12
   };
-  const c4 = card(doc, '4. How many tries', 'wft-c4-h', 'AI can answer differently each time. More tries give a surer result, and cost more.', 'wft-c4');
+  const c4 = card(doc, '3. How many tries', 'wft-c4-h', 'AI can answer differently each time. More tries give a surer result, and cost more.', 'wft-c4');
   c4.append(seg(doc, 'How many tries', [[1, '1'], [3, '3'], [5, '5']], draft.tries, (v) => { draft.tries = Number(v); paintEst(); }), est);
   paintEst();
 
   // ── 3. What a good result needs ──
-  const c3 = card(doc, '3. What a good result needs', 'wft-c3-h', 'A try passes only when everything below is met.', 'wft-c3');
+  // M1: the person's own note comes first, so the sentence under it covers only what is checked.
+  const c3 = card(doc, '4. What a good result needs', 'wft-c3-h', null, 'wft-c3');
+  const noteBox = el(doc, 'textarea');
+  noteBox.id = 'wft-ex-note'; noteBox.rows = 3; noteBox.maxLength = 2000; noteBox.value = draft.note || '';
+  noteBox.addEventListener('input', () => { draft.note = noteBox.value; });
+  c3.append(noteField(doc, noteBox), el(doc, 'p', 'hint', 'A try passes only when everything below is met.'));
   const b = draft.basics || DEFAULT_BASICS;
   const cost = el(doc, 'input');
   cost.type = 'text'; cost.inputMode = 'decimal'; cost.className = 'wft-num'; cost.id = 'wft-b-cost-usd';
@@ -743,7 +794,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
         maxCostUsd: rows.cost.input.checked ? orNull(readMoney()) : null,
         maxSentBack: rows.fix.input.checked ? orNull(readFix()) : null,
       },
-      checks: draft.checks, tries: draft.tries, note: draft.note,
+      checks: draft.checks, tries: draft.tries, note: noteBox.value.trim() || null,
       // D41, P2–P4: the server keeps the pin unless the key, the branch (`ref`), `repin` or the changes switch say otherwise.
       // The setup only while "For developers" shows: '' clears it; left out, the server keeps the pin's.
       project: !pick.key ? null : {
@@ -753,5 +804,6 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
       },
     };
   }
+  baseline = fingerprintSig();
   return { value };
 }

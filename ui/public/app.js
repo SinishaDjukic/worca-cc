@@ -227,7 +227,7 @@ import { renderTestsPage } from './workflows/tests-view.mjs';
 import { sentence as wftSentence } from './workflows/test-ui.mjs';
 import { renderExampleEditor, BLANK_EXAMPLE } from './workflows/example-editor.mjs';
 import { SAVE_FIRST_TEXT, CHANGES_NOT_READ_TITLE, NO_DIFF_TEXT, PATCH_CUT_TEXT } from '../../src/shared/workflow-tests/project-text.mjs';
-import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog } from './workflows/test-dialogs.mjs';
+import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog, defaultPicks } from './workflows/test-dialogs.mjs';
 import { renderTestProgress } from './workflows/test-progress.mjs';
 import { renderCompare, renderSideBySide, openWholeResult, askMoreTries } from './workflows/test-compare.mjs';
 import { useLabel as wftUseLabel } from '../../src/shared/workflow-tests/compare.mjs';
@@ -3211,7 +3211,8 @@ async function loadConfig(projectDir) {
   // then populate the dropdown + render the chosen workflow's accordion. The
   // Default workflow goes through the SAME renderer as a saved one; only its
   // storage differs (legacy per-role steps, resolved in buildNodeConfigRows).
-  if (state.config.activeWorkflowId) state.workflowId = state.config.activeWorkflowId;
+  if (state.pinWorkflowId) state.workflowId = state.pinWorkflowId;   // U-T4: Run it once keeps its workflow when a project is picked
+  else if (state.config.activeWorkflowId) state.workflowId = state.config.activeWorkflowId;
   await loadWorkflowsInto(state.workflowId);
   if (stale()) return;                     // the newer chain repaints guardrails itself
   await loadGuardrailsInto(state.guardrailsId);
@@ -3635,7 +3636,7 @@ async function wfvSaveVersion({ afterSave = false } = {}) {
   // What Save version compares against: the latest version (null: this will be the first).
   const since = o.sinceLatest || null;
   openSaveVersionDialog({ doc: document, win: window, nextNo: (since ? since.versionNo : 0) + 1,
-    sinceNo: since ? since.versionNo : null, changes: since ? since.changes : [],
+    sinceNo: since ? since.versionNo : null, changes: since ? since.changes : [], unchanged: !!since && since.changed === false,
     onSubmit: async (body) => { const r = await gvApi.saveVersion(t.id, body); if (r.ok) await wfvRefreshVersions(); return r; } });
 }
 /** Paint the Versions page (versions-view.mjs) from the last overview; without one, wfvVersionsError says why. */
@@ -3935,6 +3936,7 @@ function wftListActions() {
   return {
     newExample: () => void wftOpenExample(null),
     addFromRun: () => wftPickRun(),
+    runOnce: () => wftRunOnce(),   // U-T4 (F4, D4): New run opens with this workflow chosen, also in Simple mode
     testVersion: () => void wftTestVersion(),
     openExample: (exampleId) => void wftOpenExample(exampleId),
     exampleMenu: (anchor, e) => toggleMenu({ doc: document, anchor, align: 'end', label: `More for ${e.name}`, items: [   // G18
@@ -3957,6 +3959,7 @@ function wftListActions() {
     },
   };
 }
+const wftRunOnce = () => { const id = wftWorkflowId(); if (id) openNewPipeline({ workflowId: id, pinWorkflow: true }); };
 /** G7: which past run (the overview's pastRuns), then board 3 while the same workflow's list still shows. */
 function wftPickRun() {
   const o = wft.overview;
@@ -3964,7 +3967,7 @@ function wftPickRun() {
   if (!o || !id) return;
   const live = () => currentView() === 'workflows' && wftWorkflowId() === id && wft.view === 'list' && !wfvEls().tests?.hidden;
   openPickRunDialog({ doc: document, win: window, workflowName: o.name, runs: o.pastRuns || [], dateText: wftDate, needsProject: !!o.needsProject,
-    onPick: (pid) => void wftAddFromRun(pid, { live }) });
+    onPick: (pid) => void wftAddFromRun(pid, { live }), onRunOnce: wftRunOnce, onWrite: () => void wftOpenExample(null) });
 }
 /** Board 3 from a run page or the picker: read what the run keeps, ask, create, then open the example in the editor.
  *  `live()`: the opener still shows once the run is read (else no dialog over another page). */
@@ -4000,7 +4003,7 @@ function wftRunMenuItems(record, data) {
 }
 /** Board 4. `a`/`b`/`exampleIds` prefill it (Compare's Test again). The workflow is read before any await: the dialog
  *  opens, and Start shows the progress page, only while that workflow's Tests page still shows. */
-async function wftTestVersion({ a, b = 'draft', exampleIds = null, tries = null } = {}) {
+async function wftTestVersion({ a, b, exampleIds = null, tries = null } = {}) {
   const id = wftWorkflowId();
   if (!id) return;
   const live = () => currentView() === 'workflows' && wftWorkflowId() === id && !wfvEls().tests?.hidden;
@@ -4013,8 +4016,8 @@ async function wftTestVersion({ a, b = 'draft', exampleIds = null, tries = null 
   // A failed versions read is not "No saved version yet" (C16): say why instead.
   if (!versions) { notify({ tone: 'err', title: 'Could not open Test a version', detail: wftSentence(vr && vr.error) }); return; }
   const nos = versions.versions.map((v) => v.versionNo).sort((x, y) => x - y);
-  const options = [...nos.map((no) => ({ use: no, label: wftUseLabel(no, o.ctx, 'select') })), { use: 'draft', label: wftUseLabel('draft', o.ctx, 'select') }];
-  openTestVersionDialog({ doc: document, win: window, options, a: a !== undefined ? a : (o.ctx.liveVersionNo || nos.at(-1) || null), b,
+  const options = [...nos.map((no) => ({ use: no, label: wftUseLabel(no, o.ctx, 'select') })), { use: 'draft', label: wftUseLabel('draft', o.ctx, 'select'), sameAs: o.draftSameAs ?? null }];
+  const picks = defaultPicks({ nos, liveNo: o.ctx.liveVersionNo, sameAs: o.draftSameAs ?? null }); openTestVersionDialog({ doc: document, win: window, options, a: a !== undefined ? a : picks.a, b: b !== undefined ? b : picks.b,   // U-T7 (D7): an identical draft is never a default side
     examples: o.examples.map((e) => ({ id: e.id, name: e.name, tries: e.tries, ready: e.ready !== false, reason: e.reason || null, projectName: e.project ? e.project.name : null })),
     exampleIds, tries, dateText: wftDate,
     loadPlan: async (q) => { const r = await wftCall('GET', `${wftBase(id)}/plan?${new URLSearchParams(q).toString()}`); return r.ok ? r.data : null; },
@@ -4041,7 +4044,7 @@ function wftRenderEditor(root) {
   const o = wft.overview;
   const row = o && wft.example && wft.example.id ? o.examples.find((e) => e.id === wft.example.id) : null;
   renderExampleEditor(root, wft.example, wftEditorActions(session), { doc: document, win: window, scripts: wft.scripts, perTryUsd: wft.perTryUsd,
-    draftLabel: o ? wftUseLabel('draft', o.ctx) : 'your draft', testRunning: !!(o && o.running),   // G19
+    draftLabel: o ? wftUseLabel('draft', o.ctx) : 'your draft', testRunning: !!(o && o.running), runningExampleIds: o && o.running ? o.running.exampleIds || [] : [], confirm: confirmModal,   // G19; F17
     // 3a (boards 32, 39): the projects to pick, whether the workflow needs one, and the overview's drift of this example's pin
     projects: wft.projects || null, needsProject: !!(o && o.needsProject), workflowName: o ? o.name : '',
     projectView: row ? row.project : null, dateText: wftDate });
@@ -4121,6 +4124,7 @@ function wftEditorActions(session) {
       }
       return { ok: true, example };
     },
+    stopTest: () => { const t = wft.overview && wft.overview.running; return t ? wftCall('POST', `${base}/runs/${t.runId}/stop`, {}) : Promise.resolve({ ok: true }); },   // F17: as the progress page
     removeFile: async (name) => {
       const r = await wftCall('DELETE', `${base}/examples/${session.exampleId}/files/${encodeURIComponent(name)}`);
       if (!r.ok) return r;
@@ -4993,6 +4997,7 @@ async function loadWorkflowsInto(selectId) {
   // Fall back to Default if the wanted id is gone (a deleted workflow). Memory defragment holds one
   // project scope, so a workspace target SHOWS Default in its place but never persists it.
   const known = list.some((wf) => wf.id === want);
+  if (!known) state.pinWorkflowId = null;   // U-T9: a pinned workflow that is gone leaves no stale pin
   state.workflowId = !known || (isWorkspace && want === MEMORY_DEFRAG_WORKFLOW_ID) ? 'wf_default' : want;
   sel.value = state.workflowId;
   paintNeedsRepoNote();
@@ -5537,6 +5542,7 @@ function renderFeedbackRows(rows) {
 if (el.workflowSelect) {
   el.workflowSelect.addEventListener('change', async () => {
     state.workflowId = el.workflowSelect.value || 'wf_default';
+    state.pinWorkflowId = null;
     paintNeedsRepoNote();
     saveActiveWorkflow(state.workflowId);
     await renderWorkflowConfig(state.workflowId);
@@ -39881,6 +39887,7 @@ if (typeof window !== 'undefined') {
 let currentSettingsTab = null;
 
 function showView(name, param = '') {
+  if (name !== 'new' || !newPipelinePrefill) state.pinWorkflowId = null;   // U-T4: Run it once's pin lasts only for that New run (a hand-off sets it again)
   // Runs redesign slice 4 (D16): #feature/ID is the group page; a bare #feature goes to Chat.
   if (name === 'feature' && !param) return showView('chat', '');
   if (name === 'group' && !param) return showView('runs', '');
@@ -40812,7 +40819,8 @@ async function applyAskPrefill() {
   const p = newPipelinePrefill;
   if (!p) return;
   newPipelinePrefill = null;
-  setRunTarget(p.target === 'workspace' ? 'workspace' : p.target === 'none' ? 'none' : 'project');
+  state.pinWorkflowId = p.pinWorkflow ? p.workflowId : null;
+  const targetLoad = setRunTarget(p.target === 'workspace' ? 'workspace' : p.target === 'none' ? 'none' : 'project');
   // The card's engine pick (none: the defaults the project change loads decide). Touched, so they keep off it.
   if (p.engine) { state.engineTouched = true; setRunEngine(p.engine); }
   // pick the source from the prefill (a Markdown handoff, else the prompt) — the three-step reset of the segment handler
@@ -40843,7 +40851,7 @@ async function applyAskPrefill() {
     if (idx >= 0) el.projectSelect.selectedIndex = idx + 1; // +1 past the placeholder
     // AWAITED: onProjectChanged → loadConfig → loadWorkflowsInto/loadGuardrailsInto — un-awaited, that tail lands after our own awaits and resets both pickers.
     await onProjectChanged();
-  }
+  } else if (p.pinWorkflow) await targetLoad;   // U-T4: its config tail must land before the chosen workflow is set
   el.prompt.value = src === 'prompt' ? (p.prompt || '') : '';
   if (el.promptMarkdown) el.promptMarkdown.value = src === 'markdown' ? p.promptMarkdown : el.promptMarkdown.value;
   refreshMentionHighlights();

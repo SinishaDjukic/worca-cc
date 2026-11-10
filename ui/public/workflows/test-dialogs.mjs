@@ -1,12 +1,12 @@
 // ui/public/workflows/test-dialogs.mjs — the workflow tests dialogs (plans/workflow-tests-part2-plan.md Tasks 12–13):
 // pick a past run (G7), use this run as a test example (board 3), and test a version with its connectors (boards 4, 30). Pure DOM.
-import { el, seg, field, testDialog, runStatusBadge, refusedRun, startInto } from './test-ui.mjs';
+import { el, btn, seg, field, testDialog, runStatusBadge, refusedRun, startInto, noteField } from './test-ui.mjs';
 import { icon } from '../icons.mjs';
 import { fmtUsd, andList, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { estimateOf, fmtUsdRange, aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
 import { allOnProject, leftOutText, leftOutBlockedText, NONE_READY_TEXT, LOCK_LEAD, LOCK_REST, REAL_BLOCKED_HINT, DISK_KEY, TIME_KEY, diskRow, aboutDuration, SETUP_TAKES_LEAD, setupTakesRest,
-  pickerNoneText, fromRunIntro, WHERE_TITLE, STARTS_FROM_RUN, pastRunProjectNote, DEV_CAPTION, SETUP_LABEL, SETUP_HINT_PAST,
+  pickerNoneText, RUN_IT_ONCE, WRITE_YOURSELF, fromRunIntro, WHERE_TITLE, STARTS_FROM_RUN, pastRunProjectNote, DEV_CAPTION, SETUP_LABEL, SETUP_HINT_PAST,
   PLUGINS_OFF_PERSONAL, PLUGINS_OFF_PROJECT, pluginsEngineNoteLine, BEFORE_RUNS_LEAD, BEFORE_RUNS_SEVERAL, beforeRunsRest }
   from '../../../src/shared/workflow-tests/project-text.mjs';
 
@@ -24,10 +24,14 @@ export function canUseAsExample({ flag, noProject, projectRun = false, status, t
 }
 
 /** G7: the Tests list's "Add from a past run" — which run, then board 3. */
-export function openPickRunDialog({ doc, win, workflowName, runs = [], dateText, onPick, needsProject = false }) {
+export function openPickRunDialog({ doc, win, workflowName, runs = [], dateText, onPick, needsProject = false, onRunOnce = null, onWrite = null }) {
   const body = [];
+  let dlg = null;
+  let footStart = null;
   if (!runs.length) {
+    // U-T4 (F4, board UfFirstRun): no runs to pick, so the dialog offers a first one, or an example written by hand.
     body.push(el(doc, 'p', 'hint', pickerNoneText(workflowName, { needsProject })));   // board 39 (P16)
+    footStart = btn(doc, WRITE_YOURSELF, () => { dlg.close(); if (onWrite) onWrite(); }, 'wft-linkbtn');   // U-T9: the footer row, as the board
   } else {
     body.push(el(doc, 'p', 'hint', `Pick a run of ${workflowName} to keep as an example.`));
     const list = el(doc, 'div', 'wft-pick-list');
@@ -52,16 +56,16 @@ export function openPickRunDialog({ doc, win, workflowName, runs = [], dateText,
     }
     body.push(list);
   }
-  const dlg = testDialog({
-    doc, win, title: 'Add from a past run', confirmLabel: 'Next', body,
+  dlg = testDialog({
+    doc, win, title: 'Add from a past run', confirmLabel: runs.length ? 'Next' : RUN_IT_ONCE, body, footStart,
     onConfirm: () => {
+      if (!runs.length) { if (onRunOnce) onRunOnce(); return { ok: true }; }
       const hit = [...doc.querySelectorAll('input[name="wft-pick-run"]')].find((x) => x.checked && !x.disabled);
       if (!hit) return { ok: false, error: 'Pick a run first.' };
       onPick(hit.value);
       return { ok: true };
     },
   });
-  if (!runs.length) dlg.okButton.disabled = true;   // board 25: nothing to pick
   return dlg;
 }
 
@@ -131,7 +135,7 @@ export function openFromRunDialog({ doc, win, past, onSubmit, dateText = (s) => 
         : `Worca keeps the request and files, so every new version of ${past.workflowName} can be tried on exactly the same thing.`),
       field(doc, 'Name of the example', name, { id: name.id }), ...(startBox ? [startBox] : []), keep, ...(devBox ? [devBox] : []),
       field(doc, 'How was this result?', how),
-      field(doc, 'What should a good result have?', note, { id: note.id, opt: 'in your own words' }),
+      noteField(doc, note),
       hint,
     ],
     onConfirm: () => {
@@ -164,6 +168,7 @@ export function scriptCaution(names, quick = []) {
     ? { lead: 'The script step ', name: names[0], rest: ` runs as in a normal run. If it posts or sends something, it does it in ${where}.`, more }
     : { lead: 'The script steps ', name: andList(names), rest: ` run as in a normal run. If they post or send something, they do it in ${where}.`, more };
 }
+const startOfLine = (s) => (s.startsWith('your draft') ? `Y${s.slice(1)}` : s);   // U-T4: "Your draft (same as v4) results from …"
 const useOfValue = (v) => (v === 'draft' ? 'draft' : Number(v));
 
 /** Board 4's reuse sentence (C6 for a partial reuse). */
@@ -171,9 +176,13 @@ function reuseWords(s, other, dateText) {
   const when = s.reusableAt ? dateText(s.reusableAt) : 'earlier';
   const saves = typeof s.savesUsd === 'number' && s.savesUsd > 0 ? ` This saves about ${aboutUsd(s.savesUsd)}.` : '';
   const otherShort = other ? other.short : 'the other version';
+  // U-T9: an identical draft is "the results of v4 (your draft is the same)", never a possessive after a parenthesis.
+  const same = typeof s.sameAs === 'number';
+  const name = same ? `v${s.sameAs}` : s.short;
+  const results = (n) => (same ? `the ${n === null ? '' : `${n} `}results of ${name} (your draft is the same)` : `${name}'s ${n === null ? '' : `${n} `}results`);
   return s.reusable >= s.want
-    ? { lead: `Use ${s.short}'s results from ${when}. `, rest: `Nothing in ${s.short} or in the examples has changed since, so only ${otherShort} needs to be tried.${saves}` }
-    : { lead: `Use ${s.short}'s ${s.reusable} results from ${when}. `, rest: `Nothing in ${s.short} or in those examples has changed since, so only the other tries are made.${saves}` };
+    ? { lead: `Use ${results(null)} from ${when}. `, rest: `Nothing in ${name} or in the examples has changed since, so only ${otherShort} needs to be tried.${saves}` }
+    : { lead: `Use ${results(s.reusable)} from ${when}. `, rest: `Nothing in ${name} or in those examples has changed since, so only the other tries are made.${saves}` };
 }
 
 /** An opt-in row: the box, then one span of text that wraps beside it (the lead in ink, the rest as a hint). */
@@ -185,6 +194,18 @@ function optInRow(doc, box, lead, rest) {
   return row;
 }
 
+/** U-T7 (D7): what the dialog opens on. A draft identical to a saved version (`sameAs`) is never a side by default: a = the version
+ *  in use if it is not the latest, else the one before the latest; b = the latest version. Otherwise the draft is b, as before. */
+export function defaultPicks({ nos = [], liveNo = null, sameAs = null }) {
+  const sorted = [...nos].sort((x, y) => x - y);
+  if (sameAs == null || !sorted.length) return { a: liveNo || sorted.at(-1) || null, b: 'draft' };
+  const latest = sorted.at(-1);
+  const before = sorted.filter((n) => n < latest).at(-1) ?? null;
+  return { a: liveNo && liveNo !== latest && sorted.includes(liveNo) ? liveNo : before, b: latest };
+}
+const SAME_DRAFT_PICK = (n) => `Your draft is the same as v${n}. Pick another version.`;
+const SAME_DRAFT_ONLY = (n) => `Your draft is the same as v${n}: change it on the canvas, then test it.`;
+
 /**
  * Boards 4 and 30: Test a version (G10, G12, G16, C6, C12, C16, C19). The plan comes from the server per pick (loadPlan);
  * the estimate, the default cost cap, the connectors' notes and "Start N tries" follow it live.
@@ -194,6 +215,11 @@ function optInRow(doc, box, lead, rest) {
 export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'draft', examples = [], exampleIds = null, tries: wantTries = null, connectors = 'pretend',
   dateText, loadPlan, onStart }) {
   const versions = options.filter((o) => o.use !== 'draft');
+  const draftOpt = options.find((o) => o.use === 'draft');
+  const sameAs = draftOpt && Number.isInteger(draftOpt.sameAs) ? draftOpt.sameAs : null;   // U-T7 (D7)
+  const onlySame = sameAs !== null && versions.length === 1;   // nothing else to compare the draft with
+  const noVersion = () => !versions.length || onlySame;
+  const sameDraft = () => sameAs !== null && selB.value === 'draft' && selA.value === String(sameAs);
   const selA = el(doc, 'select');
   selA.id = 'wft-tv-a';
   if (!versions.length) { const o = el(doc, 'option', '', 'No saved version yet'); o.value = ''; selA.append(o); selA.disabled = true; }
@@ -202,7 +228,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
   const selB = el(doc, 'select');
   selB.id = 'wft-tv-b';
   selB.setAttribute('aria-label', 'Second version');   // its label is not shown (board 4)
-  for (const o of options) { const x = el(doc, 'option', '', o.label); x.value = String(o.use); selB.append(x); }
+  for (const o of options) { const x = el(doc, 'option', '', o.use === 'draft' && sameAs !== null ? `Your draft (same as v${sameAs})` : o.label); x.value = String(o.use); selB.append(x); }
   selB.value = String(b);
   const pickEx = el(doc, 'select');
   pickEx.id = 'wft-tv-examples';
@@ -308,7 +334,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
     body: [vs, reuse, row2, conn, quickRow, safe, lock, est, refuse, capField, note],
     onConfirm: async () => {
       // testDialog gives the button back after a refusal: a pick made meanwhile may have nothing to start.
-      if (!estimate || !estimate.total || !versions.length || selA.value === selB.value) return { ok: false, error: note.textContent || 'Wait for the estimate, then start.' };
+      if (!estimate || !estimate.total || noVersion() || selA.value === selB.value || sameDraft()) return { ok: false, error: note.textContent || 'Wait for the estimate, then start.' };
       const capUsd = parseUsd(cap.value);   // I2: "15,50" is $15.50, not $1,550
       if (!(capUsd > 0)) return { ok: false, error: 'Give the cost limit in dollars, such as $15.' };
       posting = true;
@@ -323,8 +349,8 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
     const held = [boxA, boxB].find((x) => x === doc.activeElement) || null;   // the rows are rebuilt: a ticked box keeps the focus
     reuse.replaceChildren();
     est.replaceChildren();
-    const noA = !versions.length;
-    const same = !noA && selA.value === selB.value;
+    const noA = noVersion();
+    const same = !noA && (selA.value === selB.value || sameDraft());
     if (plan) {
       for (const [side, box, other] of [['a', boxA, 'b'], ['b', boxB, 'a']]) {
         const s = plan[side];
@@ -372,7 +398,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
       if (e.toRun.b) line(`${triesN(e.toRun.b)} of ${plan.b.short}`, priced(plan.b, e.toRun.b));
       if (plan.a && e.toRun.a) line(`${triesN(e.toRun.a)} of ${plan.a.short}`, priced(plan.a, e.toRun.a));
       for (const side of ['a', 'b']) {
-        if (reused(side)) line(`${plan[side].short} results from ${plan[side].reusableAt ? dateText(plan[side].reusableAt) : 'earlier'}`, '$0.00');
+        if (reused(side)) line(`${startOfLine(plan[side].short)} results from ${plan[side].reusableAt ? dateText(plan[side].reusableAt) : 'earlier'}`, '$0.00');
       }
       line(timeShown ? 'Total' : e.minutes ? `Total · ready in about ${e.minutes} minutes` : 'Total', e.usd === null ? 'cost not known yet' : fmtUsdRange(e.low, e.high), 'is-total');
       if (!capTouched) cap.value = `$${e.capUsd}`;
@@ -409,8 +435,8 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
     const noneReady = !noA && !ready.length;
     triesField.hidden = noneReady;
     if (noneReady) { for (const n of [reuse, conn, quickRow, est, capField, safe, lock]) n.hidden = true; }
-    const text = noA ? 'Save a version first: a test compares two versions. Try it once now tries one example on your draft.'   // C16
-      : noneReady ? NONE_READY_TEXT : same ? 'Pick two different versions.' : e && total === 0 ? 'Nothing to try: both versions have results for these examples.' : '';
+    const text = onlySame ? SAME_DRAFT_ONLY(sameAs) : noA ? 'Save a version first: a test compares two versions. Try your draft once now tries it on one example.'   // C16
+      : noneReady ? NONE_READY_TEXT : sameDraft() ? SAME_DRAFT_PICK(sameAs) : same ? 'Pick two different versions.' : e && total === 0 ? 'Nothing to try: both versions have results for these examples.' : '';
     if (note.textContent !== text) note.textContent = text;   // aria-live: only a change is news
     // A disabled Start says why: the disk refusal, else the note (P28, C16).
     const why2 = !refuse.hidden ? refuse.id : dlg.okButton.disabled && text ? note.id : null;
@@ -469,7 +495,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
     const my = (seq += 1);
     plan = null;
     paint();
-    if (!selA.value || selA.value === selB.value || !ready.length) return;   // P28: an empty list would plan every example
+    if (!selA.value || selA.value === selB.value || sameDraft() || onlySame || !ready.length) return;   // P28: an empty list would plan every example
     let p = null;
     try {
       p = await loadPlan({ a: selA.value, b: selB.value, examples: chosen().map((e) => e.id).join(','), tries: String(tries), connectors: mode });

@@ -19,6 +19,14 @@ const keyed = (b, key) => { b.dataset.focusKey = key; return b; };
 const who = (by) => (typeof by === 'string' && by.trim() && by.trim() !== 'local' ? by.trim() : null);
 const when = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); };
 
+/** U-T7 (F14, D7): the Draft row against the LATEST version (what Save version compares with), so it is right at once after a save. */
+function draftSaid(o) {
+  const si = o.sinceLatest || (o.draft ? { versionNo: o.liveVersionNo, changed: o.draft.changed, changes: o.draft.changes } : null);
+  if (!si) return `Same as v${o.liveVersionNo}`;
+  if (si.changed) return si.changes.length ? `Changes since v${si.versionNo}: ${si.changes.join(' · ')}` : `Changes since v${si.versionNo}`;
+  return si.versionNo === o.liveVersionNo ? `Same as v${si.versionNo}` : `Same as v${si.versionNo} · new runs use v${o.liveVersionNo}`;
+}
+
 /**
  * @param {HTMLElement} root
  * @param {{name:string, liveVersionNo:number|null, draft:null|{changed:boolean, changes:string[]}, versions:Array, history:Array}} o
@@ -51,8 +59,7 @@ export function renderVersionsPage(root, o, actions, { doc, error = null, loadin
     const draft = el(doc, 'div', 'wfv-vt-draft');
     const d = o.draft;
     // M1: a workflow deleted and saved again keeps its old versions with none in use: new runs use the draft.
-    const what = !Number.isInteger(o.liveVersionNo) ? 'No version in use yet: new runs use your draft'
-      : d && d.changed ? d.changes.join(' · ') : `Same as v${o.liveVersionNo}`;
+    const what = !Number.isInteger(o.liveVersionNo) ? 'No version in use yet: new runs use your draft' : draftSaid(o);
     draft.append(el(doc, 'span', 'wfv-vt-no', 'Draft'),
       (() => { const c = el(doc, 'span', 'wfv-vt-main'); c.append(el(doc, 'b', '', 'Your draft'), el(doc, 'span', 'hint', what)); return c; })(),
       keyed(btn(doc, 'Save version', () => actions.saveVersion(), 'btn btn-sm btn-primary'), 'vp:save'));

@@ -80,12 +80,14 @@ export const NOT_ON_BRANCH_TEXT = 'The project folder is not on a branch. Check 
 export const changesMovesText = (branch) => `Turning this on also moves the start point to the newest commit on ${branch}.`;   // P23
 export const FILE_NAME_NEEDED = 'Write the file name.';   // P24
 export const NO_BRANCHES_TEXT = 'Worca found no branches in this project.';   // P25
-export const startNowText = (ref, short) => `The start point is now ${ref} at ${short}.`;   // P26
+export const startNowText = (ref, date) => `Saved: the start point is now ${ref} · ${date}.`;   // P26, U-T9 (F41): it is stored already
 export const startWillBeText = (ref, short) => `The start point will be ${ref} at ${short} when you save the example.`;   // P26: a Change pick, not yet saved
 // The editor's fallbacks and labels (Task 10 review, item 15).
 export const PICK_BRANCH_FIRST = 'Pick a branch first.';
 export const BRANCHES_UNREAD_TEXT = 'Worca could not read the branches of the project.';
 export const START_NOT_MOVED_TEXT = 'The start point did not move.';
+// U-T9 fix round 1 (F17): the store refuses a new start while a test tries the example (BUSY, 409).
+export const LATEST_BUSY_TEXT = 'A test is trying this example. Stop it first, then start from the latest.';
 export const FILE_IN_PROJECT_LABEL = 'File in the project';
 export const SAVE_FIRST_TEXT = 'Save the example first.';
 
@@ -241,12 +243,11 @@ export const PAST_RUN_REFUSALS = Object.freeze({
 export const PICK_PROJECT_TITLE = 'Pick the project this example works on';
 export const pickProjectText = (workflow) => `${workflow} changes a project's code, so each example needs one. Each try works in Worca's own copy of the project.`;
 export const PICK_THE_FOLDER = 'Pick the folder';
-export const firstUseNoneText = (workflow, { needsProject }) => (needsProject
-  ? `Worca found no runs of ${workflow} yet. Run the workflow once on a project, or write an example yourself.`
-  : `Worca found no runs of ${workflow} yet. Write an example yourself, or run the workflow once and come back.`);
-export const pickerNoneText = (workflow, { needsProject }) => (needsProject
-  ? `Worca found no runs of ${workflow} yet. Run the workflow once on a project, or write an example yourself.`
-  : `Worca found no runs of ${workflow} yet. Run the workflow once, or write an example yourself.`);
+/** U-T4 (F4, board UfFirstRun): no past runs. "Run it once" opens New run with the workflow chosen. */
+export const RUN_IT_ONCE = 'Run it once';
+export const WRITE_YOURSELF = 'Or write an example yourself';
+export const firstUseNoneText = (workflow, { needsProject }) => `Worca found no runs of ${workflow} yet. Run it once${needsProject ? ' on a project' : ''} to get a first result, or write an example yourself.`;
+export const pickerNoneText = firstUseNoneText;
 
 // ── U-T2 (D2): a try Worca itself could not run is set aside, made again once, and never counted ─────────────
 /** Why Worca could not run a try, by kind (runner.mjs worcaProblemOf). No full stop: the sentences below compose it. */
