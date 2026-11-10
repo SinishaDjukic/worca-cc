@@ -153,8 +153,9 @@ test('the footer "Stop testing keeps the tries that are done" is not shown after
   assert.equal(foot('user'), true, 'other stops keep it');
 });
 
-test('M6: app.js lets go of the opened diffs when it leaves the side by side', () => {
-  const app = read('../ui/public/app.js');
+test('M6: the Tests page lets go of the opened diffs when it leaves the side by side', () => {
+  const app = read('../ui/public/workflows/tests-app.mjs');   // the Tests page's controller (moved out of app.js)
+  assert.ok(app.includes('function wftShow('), 'wftShow found');
   const show = app.slice(app.indexOf('function wftShow('), app.indexOf('function wftShow(') + 400);
   assert.ok(/patches: null/.test(show) && /wftPatchCut\.clear\(\)/.test(show), 'wftShow drops the diff cache');
 });

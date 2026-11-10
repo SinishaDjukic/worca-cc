@@ -192,12 +192,16 @@ test('a repaint keeps the focus on the same control and announces the new state 
 
 test('app.js: the WS frame reaches wftChanged; Task 10\'s "comes in a later step" toast is gone', () => {
   const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+  const ctl = readFileSync(new URL('../ui/public/workflows/tests-app.mjs', import.meta.url), 'utf8');   // the Tests page's controller
   // assert.ok, not assert.match: a failure would print all of app.js.
-  assert.ok(/if \(msg\.type === 'workflow-tests-changed'\) \{\s*wftChanged\(msg\);\s*return;\s*\}/.test(app), 'the WS dispatcher hands the frame to wftChanged');
-  assert.ok(!/detail: 'This page comes in a later step\.'/.test(app), 'Task 10\'s temporary toast is gone');
-  assert.ok(!/title: 'Test a version', detail: 'This comes in a later step\.'/.test(app), 'Test a version opens the dialog');
-  assert.ok(/title: msg\.status === 'done' \? 'Test results are ready' : 'Test stopped'/.test(app), 'C13: the results-ready toast');
-  assert.ok(/continue: async \(capUsd\) => \{\s*if \(Number\.isNaN\(capUsd\)\) \{ notify\(\{ tone: 'err', title: 'The rest did not start', detail: 'Give the cost limit in dollars, such as \$15\.' \}\); return; \}/.test(app),
+  assert.ok(/if \(msg\.type === 'workflow-tests-changed'\) \{\s*wfvTests\.changed\(msg\);\s*return;\s*\}/.test(app), 'the WS dispatcher hands the frame to the controller');
+  assert.ok(/changed: wftChanged\b/.test(ctl), 'the controller\'s changed is wftChanged');
+  for (const src of [app, ctl]) {
+    assert.ok(!/detail: 'This page comes in a later step\.'/.test(src), 'Task 10\'s temporary toast is gone');
+    assert.ok(!/title: 'Test a version', detail: 'This comes in a later step\.'/.test(src), 'Test a version opens the dialog');
+  }
+  assert.ok(/title: msg\.status === 'done' \? 'Test results are ready' : 'Test stopped'/.test(ctl), 'C13: the results-ready toast');
+  assert.ok(/continue: async \(capUsd\) => \{\s*if \(Number\.isNaN\(capUsd\)\) \{ notify\(\{ tone: 'err', title: 'The rest did not start', detail: 'Give the cost limit in dollars, such as \$15\.' \}\); return; \}/.test(ctl),
     'I2: a cost limit that is not a number is refused with the start dialog\'s sentence, before anything is sent');
 });
 
@@ -323,18 +327,21 @@ test('U-T8 (F19): a stop that answers while the page still runs gives the button
     'the latest data, not the click\'s');
 });
 
-test('app.js (U-T8, F19): Stop testing waits for the stopped page before it gives the button back (no "Stop testing" flash)', () => {
-  const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
-  assert.ok(/stop: async \(\) => \{\s*const r = await wftCall\('POST', `\$\{wftBase\(id\)\}\/runs\/\$\{runId\}\/stop`, \{\}\);\s*if \(!r\.ok\) notify\(\{ tone: 'err', title: 'Not stopped', detail: r\.error \}\);\s*if \(still\(\)\) await wftRefresh\(\);/.test(app),
+test('tests-app.mjs (U-T8, F19): Stop testing waits for the stopped page before it gives the button back (no "Stop testing" flash)', () => {
+  const ctl = readFileSync(new URL('../ui/public/workflows/tests-app.mjs', import.meta.url), 'utf8');
+  assert.ok(/stop: async \(\) => \{\s*const r = await wftCall\('POST', `\$\{wftBase\(id\)\}\/runs\/\$\{runId\}\/stop`, \{\}\);\s*if \(!r\.ok\) notify\(\{ tone: 'err', title: 'Not stopped', detail: r\.error \}\);\s*if \(still\(\)\) await wftRefresh\(\);/.test(ctl),
     'the stop action awaits the repaint');
 });
 
-test('app.js (Task 13 review): frames repaint only the shown Tests page, re-entry repaints it, a failed versions read is said', () => {
+test('app.js + tests-app.mjs (Task 13 review): frames repaint only the shown Tests page, re-entry repaints it, a failed versions read is said', () => {
   const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
-  const body = (name) => { const i = app.indexOf(`function ${name}(`); return i < 0 ? '' : app.slice(i, app.indexOf('\n}\n', i)); };
-  assert.ok(/currentView\(\) !== 'workflows'/.test(body('wftChanged')), 'wftChanged repaints only inside the Workflows view');
-  assert.ok(/wftRefresh\(\)/.test(body('enterWorkflowsView')), 'entering the Workflows view again repaints a shown Tests page');
-  const tv = body('wftTestVersion');
+  const ctl = readFileSync(new URL('../ui/public/workflows/tests-app.mjs', import.meta.url), 'utf8');
+  // A top-level function of app.js ends at "\n}\n"; one inside the controller's factory at "\n  }\n".
+  const body = (name, src = app, end = '\n}\n') => { const i = src.indexOf(`function ${name}(`); return i < 0 ? '' : src.slice(i, src.indexOf(end, i)); };
+  assert.ok(/currentView\(\) !== 'workflows'/.test(body('wftChanged', ctl, '\n  }\n')), 'wftChanged repaints only inside the Workflows view');
+  assert.ok(/wfvTests\.refresh\(\)/.test(body('enterWorkflowsView')), 'entering the Workflows view again repaints a shown Tests page');
+  assert.ok(/async function wftRefresh\(\) \{\s*const els = wfvEls\(\);\s*if \(!els\.tests \|\| els\.tests\.hidden\) return;/.test(ctl), '… only a shown one');
+  const tv = body('wftTestVersion', ctl, '\n  }\n');
   assert.ok(/if \(!versions\) \{ notify\(\{ tone: 'err', title: 'Could not open Test a version'/.test(tv), 'no versions read: a toast, never "No saved version yet"');
 });
 

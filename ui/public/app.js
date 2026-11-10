@@ -146,7 +146,7 @@ import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, s
 import { createAskPanel } from './ask-panel.mjs';
 import { pageChips, pageScopeOf } from './ask-page-chips.mjs';
 import { createAskSide, sideTier } from './ask-side.mjs';
-import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 } from './attach-files.mjs';
+import { ATTACH_MAX_MESSAGE_BYTES } from './attach-files.mjs';
 // worca Chat P2: the receipt, stop and pull-request cards (registered below, before the chat mounts).
 import { registerChatActionCards, refreshChatPrWatch } from './chat/action-cards.mjs';
 import { registerScopeSwitchCard } from './chat/scope-switch-card.mjs';
@@ -218,20 +218,12 @@ import {
 import { renderStatsBody, renderStatsView, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv, statsRangeLabel, DEFAULT_FMT } from './stats-view.mjs';
 import { createCostReport } from './cost-report.mjs';
 import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
-import { createComposer, isReservedWorkflowId, isBuiltinWorkflow, pluginOriginName } from './graph/composer.mjs';
+import { createComposer, isReservedWorkflowId, isBuiltinWorkflow } from './graph/composer.mjs';
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
 import { createLibrary, folderLabel, folderKeys } from './workflows/library.mjs';
 import { createChatDock } from './workflows/chat-dock.mjs';
-import { openSaveVersionDialog, openUseVersionDialog, statusText } from './workflows/version-dialogs.mjs';
-import { renderTestsPage, testsAddress } from './workflows/tests-view.mjs';
-import { sentence as wftSentence } from './workflows/test-ui.mjs';
-import { renderExampleEditor, BLANK_EXAMPLE } from './workflows/example-editor.mjs';
-import { SAVE_FIRST_TEXT, CHANGES_NOT_READ_TITLE, NO_DIFF_TEXT, PATCH_CUT_TEXT } from '../../src/shared/workflow-tests/project-text.mjs';
-import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog, defaultPicks } from './workflows/test-dialogs.mjs';
-import { renderTestProgress } from './workflows/test-progress.mjs';
-import { renderCompare, renderSideBySide, openWholeResult, askMoreTries } from './workflows/test-compare.mjs';
-import { useLabel as wftUseLabel } from '../../src/shared/workflow-tests/compare.mjs';
-import { renderVersionsPage } from './workflows/versions-view.mjs';
+import { createWorkflowVersions, workflowVersionsApi, workflowCanHaveVersions, hasVersionInUse, keepPicksForVersionInUse } from './workflows/versions-app.mjs';
+import { createWorkflowTests } from './workflows/tests-app.mjs';
 import { exportUseChoices, exportUseValue, paintExportUse } from './workflows/export-use.mjs';
 import { mintId } from '../../src/shared/graph/template.mjs';
 // mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
@@ -1870,10 +1862,9 @@ function handleServerMessage(msg) {
     if (currentView() === 'requirements') void requirementsView.changed(msg.seq, msg.brief);
     return;
   }
-  // Workflow tests (plans/workflow-tests-part2-plan.md D33): sent only while the flag is on. It carries testRunId, never runId,
-  // so the run upsert below (`if (!msg.runId) return;`) never makes a phantom run of it.
+  // Workflow tests (D33): it carries testRunId, never runId, so it must not reach the run upsert below.
   if (msg.type === 'workflow-tests-changed') {
-    wftChanged(msg);
+    wfvTests.changed(msg);
     return;
   }
   // Scheduled runs: a ticket or a repeating schedule changed (here, in another tab, from the
@@ -3315,10 +3306,6 @@ const gvNewIds = new Set(); // workflows imported this page session (a NEW pill 
 // length cap), a plugin's `wfp_<plugin>_<slug>`, or any safe id a POST /api/workflows body kept (`myflow`).
 const WF_ID_RE = /^[A-Za-z0-9_-]+$/;
 
-/** Plugin rows and the built-ins never have versions (D5); a format-1 row is not a graph (isVersionableRow). */
-function workflowCanHaveVersions(w) {
-  return !!w && Number(w.version) === 2 && !isReservedWorkflowId(w.id) && !String(w.origin || '').startsWith('plugin:');
-}
 const gvApi = {
   agents: async () => { const r = await fetchAgents(); return Array.isArray(r) ? r : (r && r.agents) || []; },
   agentsAll: async () => {
@@ -3353,36 +3340,10 @@ const gvApi = {
     const d = await safeJson(res);
     // 422 = the shared validator's issues, rendered verbatim by the dialog.
     if (!res.ok) return { ok: false, status: res.status, issues: d && (d.issues || d.errors), error: d && d.error, id: d && d.id };
-    setTimeout(() => void wfvRefreshVersions(), 0);
+    setTimeout(() => void wfvVersions.refresh(), 0);
     return { ok: true, workflow: (d && d.workflow) || d };
   },
-  // {ok, overview} | {ok: false, status, error}: never throws (a refused fetch is status 0). 400 = this row cannot
-  // have versions (a plugin's, or not a graph).
-  versionsRead: async (id) => {
-    try {
-      const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/versions`);
-      const d = await safeJson(res);
-      return res.ok ? { ok: true, overview: d } : { ok: false, status: res.status, error: (d && d.error) || `versions failed (${res.status})` };
-    } catch (e) { return { ok: false, status: 0, error: `Worca did not answer (${e.message}).` }; }
-  },
-  versions: async (id) => { const r = await gvApi.versionsRead(id); return r.ok ? r.overview : null; },
-  saveVersion: async (id, body) => {
-    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/versions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
-    const d = await safeJson(res);
-    return res.ok ? { ok: true, overview: d } : { ok: false, error: d && d.error };
-  },
-  useVersion: async (id, no) => {
-    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/versions/${no}/use`, { method: 'POST' });
-    const d = await safeJson(res);
-    return res.ok ? { ok: true, overview: d } : { ok: false, error: d && d.error };
-  },
-  restoreRevision: async (id, rev) => {
-    try {
-      const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/history/${rev}/restore`, { method: 'POST' });
-      const d = await safeJson(res);
-      return res.ok ? { ok: true, ...d } : { ok: false, status: res.status, error: d && d.error, errors: d && d.errors };
-    } catch (e) { return { ok: false, status: 0, error: `Worca did not answer (${e.message}).` }; }
-  },
+  ...workflowVersionsApi({ fetch: (...a) => fetch(...a), safeJson }),   // versionsRead, versions, saveVersion, useVersion, restoreRevision
   // {ok, error} — the refusal string comes from the JSON body, because every
   // delete this API can refuse (the built-in, a 404, a 409) says WHY there and
   // the user has to read it (MAJ-17).
@@ -3505,14 +3466,7 @@ async function initWorkflows() {
   });
   wfvLibrary = createLibrary({ doc: document, host: els.library, actions: wfvLibraryActions() });
   wfvShell = createWorkflowsShell({ doc: document, els: { ...els, inspector: insBody }, composer: gvComposer, actions: wfvShellActions() });
-  {
-    const e = wfvEls();
-    e.pages?.addEventListener('click', (ev) => { const b = ev.target.closest('button[data-page]'); if (b) wfvShowPage(b.dataset.page); });
-    e.saveVersion?.addEventListener('click', () => void wfvSaveVersion());
-  }
-  // Every new document on the canvas (a Library row's Open, an address, New canvas, a chat build) repaints the
-  // version line, so it never shows the previous workflow's version.
-  gvComposer.hooks.onDocChange = () => { void wfvRefreshVersions(); };
+  wfvVersions.mount();   // the Canvas · Versions · Tests switch, Save version, the version line (versions-app.mjs)
   wfvChat = createChatDock({
     doc: document, host: els.chat, composer: gvComposer, sessionId: WFV_SESSION,
     fetch: (...a) => fetch(...a),
@@ -3572,624 +3526,12 @@ function wfvSetLibraryOpen(open) {
   wfvShell?.paintLibToggle(open);
 }
 
-// Workflow versions (plans/workflow-tests-plan.md Part 1): the Canvas · Versions switch, the status line and Save version.
-let wfvVersionsOverview = null;
-let wfvVersionsError = null;     // {status, error} of the last failed read (status 0: no answer, 400: cannot have versions)
-/** Read the open workflow's versions, paint the status line and (when shown) the Versions page. Never rejects. */
-async function wfvRefreshVersions() {
-  const els = wfvEls();
-  const paintPage = () => { if (els.versions && !els.versions.hidden) wfvRenderVersionsPage(); };
-  const t = gvComposer && gvComposer.template();
-  if (!flagOn('workflowTests') || !t || !t.id) {
-    wfvVersionsOverview = null; wfvVersionsError = null;
-    if (els.vstatus) els.vstatus.hidden = true;
-    paintPage();
-    if (els.tests && !els.tests.hidden) void wftRefresh();   // a new, unsaved canvas: the Tests page says so (C15)
-    return null;
-  }
-  // Another workflow is open now: the page drops the rows of the one that left at once ("Reading the versions…").
-  if (!wfvVersionsOverview || wfvVersionsOverview.workflowId !== t.id) paintPage();
-  const r = await gvApi.versionsRead(t.id);
-  // Another workflow opened while this one was asked for: its own refresh paints the line, not this late answer.
-  const now = gvComposer.template();
-  if (!now || now.id !== t.id) return null;
-  wfvVersionsOverview = r.ok ? r.overview : null;
-  wfvVersionsError = r.ok ? null : { status: r.status, error: r.error, workflowId: t.id };
-  const text = statusText(wfvVersionsOverview);
-  // M5: #wfv-vstatus is aria-live: a repeat of the same text after every save is not news, so only a change is written.
-  if (els.vstatus) { if (els.vstatus.textContent !== text) els.vstatus.textContent = text; els.vstatus.hidden = !text; }
-  paintPage();
-  if (els.tests && !els.tests.hidden) void wftRefresh();   // another workflow, or a save: the Tests page follows
-  return wfvVersionsOverview;
-}
-function wfvShowPage(page) {
-  const els = wfvEls();
-  for (const b of els.pages ? els.pages.querySelectorAll('button[data-page]') : []) {
-    const on = b.dataset.page === page;
-    b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false');
-  }
-  if (els.versions) els.versions.hidden = page !== 'versions';
-  if (els.tests) els.tests.hidden = page !== 'tests';
-  if (page === 'tests') {
-    gvComposer?.select(null);
-    els.tests?.focus();
-    wft.view = 'list';
-    wftSyncHash();
-    void wftRefresh();
-    return;
-  }
-  wftSyncHash();
-  if (page !== 'versions') return;
-  // The canvas keys skip only targets inside [data-canvas-keys="off"]: nothing stays selected on the hidden canvas,
-  // and the focus sits on the page (tabindex -1), so a click on its text never hands Delete or the arrows to <body>.
-  gvComposer?.select(null);
-  els.versions?.focus();
-  void wfvRefreshVersions();       // paints the page (it is shown now)
-}
-async function wfvSaveVersion({ afterSave = false } = {}) {
-  // Save the draft first when the canvas has unsaved changes: the same path Export… takes (wfvShellActions
-  // exportCurrent → gvComposer.openSaveDialog({ then })), so an unsaved canvas is never versioned by surprise.
-  // A plugin's row and the built-ins never have versions: their Save is Save a copy (composer saveMode), and the copy can.
-  const t = gvComposer.template();
-  const copyFirst = !t || !t.id || isReservedWorkflowId(t.id) || Boolean(pluginOriginName(gvComposer.origin()));
-  // afterSave is the loop guard: a save that still left nothing to version (an edit during the save) stops here.
-  const stop = () => notify({ tone: 'err', title: 'Save version did not start', detail: 'Save the pipeline, then press Save version again.' });
-  if (gvComposer.isDirty() || copyFirst) {
-    if (afterSave) { stop(); return; }
-    gvComposer.openSaveDialog({ then: () => void wfvSaveVersion({ afterSave: true }) });
-    return;
-  }
-  const o = await wfvRefreshVersions();
-  if (gvComposer.template().id !== t.id) return;            // another workflow opened meanwhile
-  if (!o && wfvVersionsError && wfvVersionsError.status === 400) {
-    // The server says this row cannot have versions: save it (a copy where the composer must) first. After that save
-    // a 400 again is the server's verdict on this row, not a save left undone: its reason is the useful text.
-    if (afterSave) { notify({ tone: 'err', title: 'Save version did not start', detail: wfvVersionsError.error }); return; }
-    gvComposer.openSaveDialog({ then: () => void wfvSaveVersion({ afterSave: true }) });
-    return;
-  }
-  if (!o) {
-    notify({ tone: 'err', title: 'Versions are not available', detail: (wfvVersionsError && wfvVersionsError.error) || 'Worca did not answer.' });
-    return;
-  }
-  // What Save version compares against: the latest version (null: this will be the first).
-  const since = o.sinceLatest || null;
-  openSaveVersionDialog({ doc: document, win: window, nextNo: (since ? since.versionNo : 0) + 1,
-    sinceNo: since ? since.versionNo : null, changes: since ? since.changes : [], unchanged: !!since && since.changed === false,
-    onSubmit: async (body) => { const r = await gvApi.saveVersion(t.id, body); if (r.ok) await wfvRefreshVersions(); return r; } });
-}
-/** Paint the Versions page (versions-view.mjs) from the last overview; without one, wfvVersionsError says why. */
-function wfvRenderVersionsPage() {
-  const els = wfvEls();
-  if (!els.versions || !gvComposer) return;
-  const t = gvComposer.template();
-  const id = t && t.id;
-  const o = id && wfvVersionsOverview && wfvVersionsOverview.workflowId === id ? wfvVersionsOverview : null;
-  // A repaint replaces the page's buttons: the focus they held goes to the same button again (its data-focus-key),
-  // else to the page, never <body>, where the canvas keys would answer.
-  const focused = document.activeElement;
-  const hadKey = focused && focused !== els.versions && els.versions.contains(focused) ? (focused.dataset.focusKey || '') : null;
-  try { wfvPaintVersions(els, id, o); } finally {
-    if (hadKey !== null && !els.versions.contains(document.activeElement)) {
-      const again = hadKey ? [...els.versions.querySelectorAll('[data-focus-key]')].find((n) => n.dataset.focusKey === hadKey) : null;
-      (again || els.versions).focus();
-    }
-  }
-}
-function wfvPaintVersions(els, id, o) {
-  const err = wfvVersionsError && wfvVersionsError.workflowId === id ? wfvVersionsError : null;
-  renderVersionsPage(els.versions, o, {
-    saveVersion: () => void wfvSaveVersion(),
-    useVersion: (no) => {
-      if (!o) return;
-      const target = o.versions.find((v) => v.versionNo === no);
-      const inUse = o.versions.find((v) => v.inUse);
-      openUseVersionDialog({ doc: document, win: window, versionNo: no,
-        // What changes for new runs: the version in use → this one (server changesFromInUse), not this version's own changes.
-        // null: no version is in use yet (a workflow deleted and saved again), never "Nothing differs".
-        changes: target && Array.isArray(target.changesFromInUse) ? target.changesFromInUse : null,
-        // D6: every version runs today's Library text; say so once when either version recorded older text.
-        libraryEdited: Boolean((target && target.libraryEdited) || (inUse && inUse.libraryEdited)),
-        onConfirm: async () => {
-          const r = await gvApi.useVersion(id, no);
-          // Another workflow opened meanwhile: its overview is not this answer.
-          if (r.ok && gvComposer.template().id === id) { wfvVersionsOverview = r.overview; await wfvRefreshVersions(); }
-          return r;
-        } });
-    },
-    restore: async (rev, label) => {
-      // #721: restoring the workflow open on the canvas while it has unsaved changes asks first. That one question
-      // covers the canvas too: the restored draft loads with loadTemplate, not openTemplate, whose own
-      // "Discard changes?" would ask the same thing a second time.
-      if (gvComposer.isDirty()) {
-        const ok = await confirmModal({ title: 'Restore into your draft?', confirmLabel: 'Restore',
-          message: 'Your canvas has unsaved changes. Restoring replaces them with the saved state.' });
-        if (!ok) return;
-      }
-      const r = await gvApi.restoreRevision(id, rev);
-      if (!r.ok) { notify({ tone: 'err', title: 'Not restored', detail: wfvRestoreRefusal(r) }); return; }
-      if (gvComposer.template().id !== id) {
-        // Another workflow opened meanwhile: the canvas keeps it, and the toast says which workflow's draft changed.
-        notify({ tone: 'ok', title: `Restored ${label} into the draft of "${(o && o.name) || id}"` });
-        return;
-      }
-      gvComposer.loadTemplate(r.workflow);
-      wfvVersionsOverview = r.overview || wfvVersionsOverview;
-      wfvRenderVersionsPage();
-      notify({ tone: 'ok', title: `Restored ${label} into your draft` });
-    },
-    openCanvas: () => wfvShowPage('canvas'),
-  }, { doc: document, error: id && !o && err ? err.error : null, loading: Boolean(id && !o && !err) });
-}
-/** A refused restore in plain words. A 422 carries the validator's issues under the bare message 'invalid graph':
- *  name the agents and scripts they cite (display names where Worca knows them), never the code words. */
-function wfvRestoreRefusal(r) {
-  const errors = Array.isArray(r.errors) ? r.errors : [];
-  if (!errors.length && r.error && r.error !== 'invalid graph') return r.error;
-  const agents = (gvComposer.getAgents && gvComposer.getAgents()) || {};
-  const scripts = (gvComposer.getScripts && gvComposer.getScripts()) || {};
-  const names = [];
-  for (const e of errors) {
-    const m = /\b(?:agent|script) "([^"]+)"/.exec(String((e && e.message) || ''));
-    if (!m) continue;
-    const meta = agents[m[1]] || scripts[m[1]];
-    const name = (meta && meta.displayName) || m[1];
-    if (!names.includes(name)) names.push(name);
-  }
-  if (!names.length) return 'This saved state no longer fits the agents and steps it uses.';
-  const list = names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', ');
-  return `This saved state no longer fits the agents it uses: ${list}.`;
-}
-// Workflow tests (plans/workflow-tests-part2-plan.md): the Tests page. Task 10 is the list and first use; Task 11 adds the
-// example editor, Task 12 Add from a past run, Task 13 Test a version and the progress page, Task 14 Compare and side by side.
-const WFT_EMPTY = Object.freeze({ view: 'list', workflowId: null, overview: null, error: null, example: null, runId: null,
-  exampleId: null, tryIndex: 0, data: null, scripts: [], perTryUsd: null, editorToken: 0 });
-let wft = { ...WFT_EMPTY };
-const wftBase = (id) => `/api/workflows/${encodeURIComponent(id)}/tests`;
-/** {ok, data} | {ok:false, status, error} (the server's reason as a sentence); never throws. */
-async function wftCall(method, path, body) {
-  try {
-    const res = await fetch(path, { method, ...(body !== undefined ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) });
-    const d = await safeJson(res);
-    return res.ok ? { ok: true, data: d } : { ok: false, status: res.status, error: wftSentence((d && d.error) || `That did not work (${res.status})`), body: d };
-  } catch (e) { return { ok: false, status: 0, error: `Worca did not answer (${e.message}).` }; }
-}
-const wftWorkflowId = () => { const t = gvComposer && gvComposer.template(); return t && t.id ? t.id : null; };
-const wftStorage = () => { try { return window.localStorage; } catch { return null; } };
-const wftDate = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); };
-
-/** Read what the current view shows and paint it; never repaints over the editor. Never rejects. */
-async function wftRefresh() {
-  const els = wfvEls();
-  if (!els.tests || els.tests.hidden) return;
-  const id = wftWorkflowId();
-  if (!flagOn('workflowTests') || !id) {
-    wft = { ...WFT_EMPTY };
-    renderTestsPage(els.tests, null, wftListActions(), { doc: document, unsaved: true, error: 'Save the workflow first: tests belong to a saved workflow.' });   // C15, F31
-    wftSyncHash();
-    return;
-  }
-  if (wft.workflowId !== id) wft = { ...WFT_EMPTY, workflowId: id };
-  wftSyncHash();
-  if (wft.view === 'editor') return;
-  const view = wft.view;
-  const page = `${wft.runId}|${wft.exampleId}`;                    // which test and example the view shows
-  if (view === 'list' && !wft.overview) renderTestsPage(els.tests, null, wftListActions(), { doc: document, loading: true });
-  const r = view === 'list' ? await wftCall('GET', wftBase(id)) : await wftReadView(id);
-  if (wftWorkflowId() !== id || wft.view !== view || `${wft.runId}|${wft.exampleId}` !== page) return;   // another workflow, view or test meanwhile
-  if (!r.ok && r.status === 404 && view !== 'list') { wftShow('list', { overview: null }); return; }   // F35: an address naming a test that is gone: the list
-  if (view === 'list') wft.overview = r.ok ? r.data : null; else wft.data = r.ok ? r.data : null;
-  wft.error = r.ok ? null : r.error;
-  wftRender();
-}
-function wftReadView(id) {
-  const base = `${wftBase(id)}/runs/${wft.runId}`;
-  if (wft.view === 'progress') return wftCall('GET', base);
-  if (wft.view === 'compare') return wftCall('GET', `${base}/compare`);
-  if (wft.view === 'detail') return wftCall('GET', `${base}/examples/${wft.exampleId}`);
-  return Promise.resolve({ ok: false, error: 'This page does not exist.' });
-}
-function wftRenderView(root) {
-  if (!wft.data) { renderTestsPage(root, null, wftListActions(), { doc: document, error: wft.error }); return; }
-  if (wft.view === 'progress') { renderTestProgress(root, wft.data, wftProgressActions(), { doc: document, dateText: wftDate, mock: serverMock.on }); return; }
-  if (wft.view === 'compare') { renderCompare(root, wft.data, wftCompareActions(), { doc: document, mock: serverMock.on }); return; }
-  if (wft.view === 'detail') {
-    renderSideBySide(root, wft.data, wftDetailActions(), { doc: document, tryIndex: wft.tryIndex || 0, renderMarkdown: wftMarkdown,
-      patches: wft.patches || (wft.patches = new Map()), picked: wft.picked || {}, dateText: wftDate, mock: serverMock.on });
-    return;
-  }
-  wft.view = 'list';
-  void wftRefresh();
-}
-/** Board 5's actions. The workflow and the test are read when the page paints: an answer that lands after the page moved
- *  on (another workflow, another view or test) changes nothing. Each returns its promise, so its button stays busy. */
-function wftCompareActions() {
-  const id = wftWorkflowId();
-  const run = wft.data.run;
-  const still = () => currentView() === 'workflows' && wftWorkflowId() === id && wft.view === 'compare' && wft.runId === run.id && !wfvEls().tests?.hidden;
-  return {
-    back: () => wftShow('list', { overview: null }),
-    testAgain: () => wftTestVersion({ a: run.a, b: run.b, exampleIds: run.exampleIds }),
-    open: (exampleId) => wftShow('detail', { runId: run.id, exampleId, tryIndex: 0, picked: {} }),
-    tryMore: async (exampleId) => {   // G15 + U-T6 (F12, D6): reusing the tries made and the connectors choice, after a confirm with the estimate
-      const ask = await askMoreTries({ run, labels: wft.data.labels, exampleId, confirm: confirmModal,
-        exampleName: (wft.data.model.examples.find((x) => x.id === exampleId) || {}).name || 'this example',
-        loadPlan: async (q) => { const p = await wftCall('GET', `${wftBase(id)}/plan?${new URLSearchParams(q)}`); return p.ok ? p.data : null; } });
-      if (!ask) return;
-      const r = await wftCall('POST', `${wftBase(id)}/runs`, { a: run.a, b: run.b, exampleIds: [exampleId], tries: ask.tries,
-        reuseA: true, reuseB: true, quickCheck: false, capUsd: ask.capUsd, connectors: run.connectors });
-      if (!r.ok) { notify({ tone: 'err', title: 'More tries did not start', detail: r.error }); return; }
-      if (still()) wftShow('progress', { runId: r.data.run.id });   // elsewhere by now: the results-ready toast opens it (C13)
-    },
-  };
-}
-/** Board 31's excerpt (M1): a try's result through hdMarkdown (marked + DOMPurify, ask-markdown.mjs); plain text until the
- *  renderer has loaded, then the open side by side repaints once. */
-function wftMarkdown(text, mount) {
-  const out = hdMarkdown.render(text);
-  if (out && out.kind === 'md') { mount.classList.add('ask-md'); mount.replaceChildren(out.frag); return; }
-  mount.textContent = text;
-  if (!hdMarkdown.isReady() && !hdMarkdown.isFailed()) void hdMarkdown.ensure().then((ok) => { if (ok && wft.view === 'detail' && wft.data) wftRender(); });
-}
-/** Board 6's actions (G2: a Try it once now goes back to the Tests list). */
-function wftDetailActions() {
-  const id = wftWorkflowId();
-  const s = wft.data;
-  const still = () => currentView() === 'workflows' && wftWorkflowId() === id && wft.view === 'detail' && wft.runId === s.run.id
-    && wft.exampleId === s.example.id && !wfvEls().tests?.hidden;
-  return {
-    back: () => (s.run.kind === 'once' ? wftShow('list', { overview: null }) : wftShow('compare', { runId: s.run.id })),
-    pick: (k) => { if (!still()) return; wft.tryIndex = k; wftRender(); },
-    readWhole: async (tryId, title) => {
-      const shown = wft.tryIndex;                                     // the try on screen when Read was clicked
-      const r = await wftCall('GET', `${wftBase(id)}/runs/${s.run.id}/tries/${tryId}/result`);
-      if (!still() || wft.tryIndex !== shown) return;                 // another try shows by now: not its dialog
-      if (!r.ok) { notify({ tone: 'err', title: 'Could not read the result', detail: r.error }); return; }
-      openWholeResult({ doc: document, win: window, title, name: r.data.name, text: r.data.text, renderMarkdown: wftMarkdown });
-    },
-    // 3a (board 36): a project try's diff, read once per try (wft.patches: a string, '' when none was kept, null when it
-    // could not be read); the page repaints when it lands.
-    loadChanges: async (tryId) => {
-      const cache = wft.patches || (wft.patches = new Map());
-      if (cache.has(tryId) || wftPatchLoading.has(tryId)) return;
-      wftPatchLoading.add(tryId);
-      const r = await wftCall('GET', `${wftBase(id)}/runs/${s.run.id}/tries/${tryId}/changes`);
-      wftPatchLoading.delete(tryId);
-      if (wftWorkflowId() !== id) return;                            // another workflow: its wft has its own cache
-      cache.set(tryId, r.ok ? String(r.data.patch || '') : null);
-      if (r.ok && r.data.cut) wftPatchCut.add(tryId);
-      if (still()) wftRender();
-    },
-    pickFile: (side, path) => { if (!still()) return; wft.picked = { ...(wft.picked || {}), [side]: path }; wftRender(); },
-    readChanges: async (tryId, title) => {
-      const cache = wft.patches || (wft.patches = new Map());
-      let patch = cache.get(tryId);
-      if (typeof patch !== 'string') {
-        if (patch === null) cache.delete(tryId);                       // Fix 1: a failed read is tried again, here and in the card
-        wftPatchLoading.add(tryId);                                    // a repaint meanwhile (empty cache) sends no second GET
-        const r = await wftCall('GET', `${wftBase(id)}/runs/${s.run.id}/tries/${tryId}/changes`);   // never rejects
-        wftPatchLoading.delete(tryId);
-        if (!r.ok) {
-          if (wftWorkflowId() === id && !cache.has(tryId)) cache.set(tryId, null);
-          notify({ tone: 'err', title: CHANGES_NOT_READ_TITLE, detail: r.error });
-          return;
-        }
-        patch = String(r.data.patch || '');
-        if (r.data.cut) wftPatchCut.add(tryId);
-        if (wftWorkflowId() === id) cache.set(tryId, patch);
-        if (still()) wftRender();                                       // the card shows the diff it could not read before
-      }
-      if (!still()) return;
-      // Text, never markup: the diff is the project's data (openWholeResult shows it in a <pre> without a renderer).
-      openWholeResult({ doc: document, win: window, title, name: wftPatchCut.has(tryId) ? PATCH_CUT_TEXT : null, text: patch || NO_DIFF_TEXT });
-    },
-    commandOutput: (title, output) => openWholeResult({ doc: document, win: window, title, text: output || '' }),
-  };
-}
-/** Board 20's actions. The workflow and the test are read when the page paints: an answer that lands after the page
- *  moved on (another workflow, another view) repaints nothing. */
-function wftProgressActions() {
-  const id = wftWorkflowId();
-  const runId = wft.runId;
-  const run = wft.data && wft.data.run;
-  const still = () => wftWorkflowId() === id && wft.view === 'progress' && wft.runId === runId;
-  return {
-    back: () => wftShow('list', { overview: null }),
-    stop: async () => {
-      const r = await wftCall('POST', `${wftBase(id)}/runs/${runId}/stop`, {});
-      if (!r.ok) notify({ tone: 'err', title: 'Not stopped', detail: r.error });
-      if (still()) await wftRefresh();   // U-T8: the stopped page first, then the button is given back
-    },
-    continue: async (capUsd) => {
-      if (Number.isNaN(capUsd)) { notify({ tone: 'err', title: 'The rest did not start', detail: 'Give the cost limit in dollars, such as $15.' }); return; }
-      const r = await wftCall('POST', `${wftBase(id)}/runs/${runId}/continue`, capUsd != null ? { capUsd } : {});
-      if (!r.ok) { notify({ tone: 'err', title: 'The rest did not start', detail: r.error }); return; }   // boards 27, 29 (C18)
-      if (still()) void wftRefresh();
-    },
-    open: () => {
-      if (run && run.kind === 'once') wftShow('detail', { runId, exampleId: run.exampleIds[0], tryIndex: 0 });   // G2
-      else wftShow('compare', { runId });
-    },
-    // P36: the same versions, examples and tries. P38: a Try it once run has no version a: it reopens Try it once on the
-    // same example (the draft), never a two-version compare at twice the cost.
-    startNew: async () => {
-      if (!(run && run.kind === 'once')) { wftTestVersion({ a: run.a, b: run.b, exampleIds: run.exampleIds, tries: run.tries }); return; }
-      const r = await wftCall('POST', `${wftBase(id)}/examples/${run.exampleIds[0]}/try-once`, {});
-      if (!r.ok) { notify({ tone: 'err', title: 'The test did not start', detail: r.error }); return; }
-      if (still()) wftShow('progress', { runId: r.data.run.id });
-    },
-    editExample: (exampleId) => void wftOpenExample(exampleId),   // board 35: a setup that failed is fixed in the example
-  };
-}
-/** D33: a test changed (a try ended, the test finished): the toast for a finished test (C13), and the open page. */
-function wftChanged(msg) {
-  if (msg.finished && msg.title) {
-    notify({ tone: msg.status === 'done' ? 'ok' : 'info', title: msg.status === 'done' ? 'Test results are ready' : 'Test stopped', detail: msg.title,
-      key: `wft-${msg.testRunId}`, action: { label: 'Open', run: () => wftOpenTest(msg.workflowId, msg.testRunId) } });
-  }
-  // Only the Tests page on screen repaints; leaving it hidden behind another view, it repaints on re-entry (enterWorkflowsView).
-  if (currentView() !== 'workflows') return;
-  const els = wfvEls();
-  if (!els.tests || els.tests.hidden || wftWorkflowId() !== msg.workflowId) return;
-  // The list, or the open page of the test that changed (progress, its Compare or one example of it).
-  if (wft.view === 'list' || (['progress', 'compare', 'detail'].includes(wft.view) && wft.runId === msg.testRunId)) void wftRefresh();
-}
-/** The toast's Open: the test's page. Its workflow already open on the canvas: only the Tests page changes (no reload,
- *  no discard question); anywhere else the address opens it (routeWorkflows). */
-function wftOpenTest(workflowId, testRunId) {
-  if (currentView() === 'workflows' && wftWorkflowId() === workflowId) {
-    if (wfvEls().tests?.hidden) wfvShowPage('tests');
-    wftShow('progress', { runId: testRunId });
-    return;
-  }
-  location.hash = `workflows/${workflowId}/tests/run/${testRunId}`;
-}
-function wftRender() {
-  const els = wfvEls();
-  if (!els.tests) return;
-  if (wft.view === 'editor') { wftRenderEditor(els.tests); return; }
-  if (wft.view !== 'list') { wftRenderView(els.tests); return; }
-  renderTestsPage(els.tests, wft.overview, wftListActions(), { doc: document, storage: wftStorage(), error: wft.error, dateText: wftDate, mock: serverMock.on });
-}
-// Final review M6: the opened diffs (up to 5 MB each) are let go on every move; the side by side reads them again.
-function wftShow(view, extra = {}) { wftPatchCut.clear(); wft = { ...wft, view, data: null, patches: null, ...extra }; wftSyncHash(); void wftRefresh(); }
-/** F35: the address names the Tests page that shows, so a reload comes back to it. replaceState: no history entry, Back and Forward keep their meaning.
- *  Shown only while the Workflows view is (els.tests stays unhidden when it is left): a late load never rewrites another view's address. */
-function wftSyncHash() {
-  const els = wfvEls();
-  const shown = currentView() === 'workflows' && !!(els.tests && !els.tests.hidden) && flagOn('workflowTests');
-  const h = testsAddress({ workflowId: wftWorkflowId(), shown, view: wft.view, runId: wft.runId, exampleId: wft.example ? wft.example.id : null });
-  if (window.location.hash === h || (!shown && !/^#workflows\/[A-Za-z0-9_-]+\/tests(\/|$)/.test(window.location.hash))) return;
-  try { window.history.replaceState(null, '', h); } catch { /* sandboxed */ }
-}
-
-function wftListActions() {
-  return {
-    newExample: () => void wftOpenExample(null),
-    saveWorkflow: () => gvComposer.openSaveDialog(),   // F31
-    addFromRun: () => wftPickRun(),
-    runOnce: () => wftRunOnce(),   // U-T4 (F4, D4): New run opens with this workflow chosen, also in Simple mode
-    testVersion: () => void wftTestVersion(),
-    openExample: (exampleId) => void wftOpenExample(exampleId),
-    exampleMenu: (anchor, e) => toggleMenu({ doc: document, anchor, align: 'end', label: `More for ${e.name}`, items: [   // G18
-      { label: 'Edit', onSelect: () => void wftOpenExample(e.id) },
-      { label: 'Delete', danger: true, onSelect: () => void wftDeleteExample(e) },
-    ] }),
-    openRun: (runId) => wftShow('progress', { runId }),
-    openLatest: (runId) => wftShow('compare', { runId }),
-    // → {ok}: the view's Add button stays busy until the post answers (one post per click, withButton).
-    addPastRuns: async (pipelineIds) => {
-      const id = wftWorkflowId();                                  // the workflow the picks belong to, before any await
-      if (!id) return { ok: false };
-      const r = await wftCall('POST', `${wftBase(id)}/examples/from-runs`, { pipelineIds });
-      if (!r.ok) { notify({ tone: 'err', title: 'Examples not added', detail: r.error }); return { ok: false }; }
-      const n = r.data.examples.length;
-      notify({ tone: 'ok', title: n === 1 ? 'Added 1 example' : `Added ${n} examples`, detail: 'Open each to say what a good result needs.' });   // G4
-      if (r.data.skipped.length) notify({ tone: 'info', title: 'Some files were left out', detail: `${r.data.skipped.join(', ')}: larger than 5 MB, or more than 8 files.` });
-      if (wftWorkflowId() === id) wftShow('list', { overview: null });   // another workflow opened meanwhile: its page stays
-      return { ok: true };
-    },
-  };
-}
-const wftRunOnce = () => { const id = wftWorkflowId(); if (id) openNewPipeline({ workflowId: id, pinWorkflow: true }); };
-/** G7: which past run (the overview's pastRuns), then board 3 while the same workflow's list still shows. */
-function wftPickRun() {
-  const o = wft.overview;
-  const id = wftWorkflowId();
-  if (!o || !id) return;
-  const live = () => currentView() === 'workflows' && wftWorkflowId() === id && wft.view === 'list' && !wfvEls().tests?.hidden;
-  openPickRunDialog({ doc: document, win: window, workflowName: o.name, runs: o.pastRuns || [], dateText: wftDate, needsProject: !!o.needsProject,
-    onPick: (pid) => void wftAddFromRun(pid, { live }), onRunOnce: wftRunOnce, onWrite: () => void wftOpenExample(null) });
-}
-/** Board 3 from a run page or the picker: read what the run keeps, ask, create, then open the example in the editor.
- *  `live()`: the opener still shows once the run is read (else no dialog over another page). */
-async function wftAddFromRun(pipelineId, { live = () => true } = {}) {
-  const r = await wftCall('GET', `/api/workflow-tests/past-run/${encodeURIComponent(pipelineId)}`);
-  if (!live()) return;
-  if (!r.ok) { notify({ tone: 'err', title: 'Could not read the run', detail: r.error }); return; }
-  const past = r.data;
-  if (!past.testable) { notify({ tone: 'err', title: 'This run cannot become a test example', detail: past.reasonText || '' }); return; }
-  openFromRunDialog({ doc: document, win: window, past, dateText: wftDate, onSubmit: async (body) => {
-    const s = await wftCall('POST', `${wftBase(past.workflowId)}/examples/from-run`, { pipelineId: past.pipelineId, ...body });
-    if (!s.ok) return s;
-    if (s.data.skipped.length) notify({ tone: 'info', title: 'Some files were left out', detail: `${s.data.skipped.join(', ')}: larger than 5 MB, or more than 8 files.` });
-    if (currentView() === 'workflows' && wftWorkflowId() === past.workflowId) {
-      if (wfvEls().tests?.hidden) wfvShowPage('tests');
-      void wftOpenExample(s.data.example.id);
-    } else location.hash = `workflows/${past.workflowId}/tests/${s.data.example.id}`;   // routeWorkflows opens the editor
-    return { ok: true };
-  } });
-}
-/** G6: the saved run page's ⋯ item. `data.state.stepper` is the run's manifest (artifacts.mjs rowToState). 3a (D65): a
- *  single-project git run too; never a Folder or workspace run (the server would only refuse it). */
-function wftRunMenuItems(record, data) {
-  const st = data && data.state;
-  const tpl = st && st.stepper && st.stepper.template;
-  const noProject = !!st && !!record && isNoProjectRun({ ...record, state: st });
-  const projectRun = !!st && !!record && !noProject && record.target !== 'workspace' && st.target !== 'workspace' && isGitRun({ ...record, state: st });
-  const ok = !!record && canUseAsExample({ flag: flagOn('workflowTests'), noProject, projectRun,
-    status: st && st.status, templateId: tpl && tpl.id, reserved: !!(tpl && tpl.id && isReservedWorkflowId(tpl.id)) });
-  if (!ok) return [];
-  const pid = record.id;
-  return [{ label: 'Use as test example', onSelect: () => void wftAddFromRun(pid, { live: () => !!histDetailState && histDetailState.id === pid }) }];
-}
-/** Board 4. `a`/`b`/`exampleIds` prefill it (Compare's Test again). The workflow is read before any await: the dialog
- *  opens, and Start shows the progress page, only while that workflow's Tests page still shows. */
-async function wftTestVersion({ a, b, exampleIds = null, tries = null } = {}) {
-  const id = wftWorkflowId();
-  if (!id) return;
-  const live = () => currentView() === 'workflows' && wftWorkflowId() === id && !wfvEls().tests?.hidden;
-  const fresh = await wftCall('GET', wftBase(id));                 // fresh examples (another tab may have added one)
-  const o = fresh.ok ? fresh.data : (wft.workflowId === id ? wft.overview : null);
-  const vr = o ? await gvApi.versionsRead(id) : null;              // {ok, overview} | {ok: false, error}
-  const versions = vr && vr.ok ? vr.overview : null;
-  if (!live()) return;
-  if (!o) { notify({ tone: 'err', title: 'Could not open Test a version', detail: fresh.error }); return; }
-  // A failed versions read is not "No saved version yet" (C16): say why instead.
-  if (!versions) { notify({ tone: 'err', title: 'Could not open Test a version', detail: wftSentence(vr && vr.error) }); return; }
-  const nos = versions.versions.map((v) => v.versionNo).sort((x, y) => x - y);
-  const options = [...nos.map((no) => ({ use: no, label: wftUseLabel(no, o.ctx, 'select') })), { use: 'draft', label: wftUseLabel('draft', o.ctx, 'select'), sameAs: o.draftSameAs ?? null }];
-  const picks = defaultPicks({ nos, liveNo: o.ctx.liveVersionNo, sameAs: o.draftSameAs ?? null }); openTestVersionDialog({ doc: document, win: window, options, a: a !== undefined ? a : picks.a, b: b !== undefined ? b : picks.b,   // U-T7 (D7): an identical draft is never a default side
-    examples: o.examples.map((e) => ({ id: e.id, name: e.name, tries: e.tries, ready: e.ready !== false, reason: e.reason || null, projectName: e.project ? e.project.name : null })),
-    exampleIds, tries, dateText: wftDate,
-    loadPlan: async (q) => { const r = await wftCall('GET', `${wftBase(id)}/plan?${new URLSearchParams(q).toString()}`); return r.ok ? r.data : null; },
-    onStart: async (body) => {
-      const r = await wftCall('POST', `${wftBase(id)}/runs`, body);
-      if (!r.ok) return r;                                         // the dialog stays open and says why
-      if (live()) wftShow('progress', { runId: r.data.run.id });   // elsewhere by now: the results-ready toast opens it (C13)
-      return { ok: true };
-    } });
-}
-
-// The example editor (Task 11). Each painted editor is a session {workflowId, exampleId, token}: its actions save to
-// session.exampleId (set by the G17 auto-save), and write wft / change the view only while that editor still shows. A
-// slow upload that lands after Cancel and another Open never retargets the next editor.
-let wftEditorSeq = 0;
-/** Board 36: the tries whose diff is being read (one read each), and those whose diff is longer than the server reads. */
-const wftPatchLoading = new Set();
-const wftPatchCut = new Set();
-let wftOpenSeq = 0;
-const wftEditorLive = (s) => wft.view === 'editor' && wft.editorToken === s.token && wftWorkflowId() === s.workflowId;
-function wftRenderEditor(root) {
-  const session = { workflowId: wftWorkflowId(), exampleId: wft.example && wft.example.id ? wft.example.id : null, token: ++wftEditorSeq };
-  wft.editorToken = session.token;
-  const o = wft.overview;
-  const row = o && wft.example && wft.example.id ? o.examples.find((e) => e.id === wft.example.id) : null;
-  renderExampleEditor(root, wft.example, wftEditorActions(session), { doc: document, win: window, scripts: wft.scripts, perTryUsd: wft.perTryUsd,
-    draftLabel: o ? wftUseLabel('draft', o.ctx) : 'your draft', testRunning: !!(o && o.running), runningExampleIds: o && o.running ? o.running.exampleIds || [] : [], confirm: confirmModal,   // G19; F17
-    // 3a (boards 32, 39): the projects to pick, whether the workflow needs one, and the overview's drift of this example's pin
-    projects: wft.projects || null, needsProject: !!(o && o.needsProject), workflowName: o ? o.name : '',
-    projectView: row ? row.project : null, dateText: wftDate });
-}
-async function wftOpenExample(exampleId) {
-  const id = wftWorkflowId();
-  if (!id) return;
-  const seq = ++wftOpenSeq;                                         // a later Open wins over this one
-  const stale = () => seq !== wftOpenSeq || wftWorkflowId() !== id;
-  let example = { ...BLANK_EXAMPLE, basics: { ...BLANK_EXAMPLE.basics } };
-  if (exampleId != null) {
-    const r = await wftCall('GET', `${wftBase(id)}/examples/${exampleId}`);
-    if (stale()) return;
-    if (!r.ok) { notify({ tone: 'err', title: 'Could not open the example', detail: r.error }); return; }
-    example = r.data.example;
-  }
-  let scripts = null;                                               // null: the Library did not load (no "left the Library" claims)
-  try { scripts = (await gvApi.scripts()).filter((s) => s && s.placeable !== false); } catch { scripts = null; }
-  const pj = await wftCall('GET', '/api/workflow-tests/projects');   // 3a: the Project select (board 32); null when not read
-  const plan = await wftCall('GET', `${wftBase(id)}/plan?b=draft&tries=1`);
-  const o = await wftCall('GET', wftBase(id));                      // fresh: G19 reads whether a test runs
-  if (stale()) return;
-  wft = { ...wft, workflowId: id, view: 'editor', example, scripts, ...(o.ok ? { overview: o.data } : {}),
-    perTryUsd: plan.ok && plan.data.b ? plan.data.b.perTryUsd : null, projects: pj.ok ? pj.data.projects : null };
-  wftSyncHash();
-  wftRender();
-}
-/** Save the session's example: PUT when it has an id, else POST (and remember the new id). */
-async function wftSaveExample(session, value) {
-  const base = wftBase(session.workflowId);
-  const r = session.exampleId ? await wftCall('PUT', `${base}/examples/${session.exampleId}`, value) : await wftCall('POST', `${base}/examples`, value);
-  if (!r.ok) return r;
-  session.exampleId = r.data.example.id;
-  if (wftEditorLive(session)) wft.example = r.data.example;
-  return { ok: true, example: r.data.example };
-}
-function wftEditorActions(session) {
-  const base = wftBase(session.workflowId);
-  const keep = (example) => { if (wftEditorLive(session)) wft.example = example; };
-  return {
-    back: () => { if (wftEditorLive(session)) wftShow('list', { overview: null }); },
-    // 3a: the start point dialog's branches (P2) and "Start from the latest" (D63, board 32)
-    branches: (key) => wftCall('GET', `/api/workflow-tests/projects/${encodeURIComponent(key)}/branches`),
-    startLatest: async () => {
-      if (!session.exampleId) return { ok: false, error: SAVE_FIRST_TEXT };
-      const r = await wftCall('POST', `${base}/examples/${session.exampleId}/project/latest`, {});
-      if (!r.ok) return r;
-      keep(r.data.example);
-      return { ok: true, example: r.data.example };
-    },
-    save: async (value) => {
-      const r = await wftSaveExample(session, value);
-      if (r.ok) { notify({ tone: 'ok', title: 'Example saved' }); if (wftEditorLive(session)) wftShow('list', { overview: null }); }
-      return r;
-    },
-    tryOnce: async (value) => {
-      const s = await wftSaveExample(session, value);
-      if (!s.ok) return s;
-      const r = await wftCall('POST', `${base}/examples/${session.exampleId}/try-once`, {});
-      if (!r.ok) return r;
-      if (wftEditorLive(session)) wftShow('progress', { runId: r.data.run.id });   // G2
-      return { ok: true };
-    },
-    // → the example as the store has it after the last file that went up, also with the error of the one that did not.
-    addFiles: async (files, value) => {
-      let example = null;
-      if (!session.exampleId) {                                     // G17: an example never saved is saved first
-        const s = await wftSaveExample(session, value);
-        if (!s.ok) return s;
-        example = s.example;
-      }
-      for (const f of files) {
-        const dataBase64 = bytesToBase64(new Uint8Array(await f.arrayBuffer()));
-        const r = await wftCall('POST', `${base}/examples/${session.exampleId}/files`, { name: f.name, dataBase64 });
-        if (!r.ok) return { ...r, ...(example ? { example } : {}) };
-        example = r.data.example;
-        keep(example);
-      }
-      return { ok: true, example };
-    },
-    stopTest: () => { const t = wft.overview && wft.overview.running; return t ? wftCall('POST', `${base}/runs/${t.runId}/stop`, {}) : Promise.resolve({ ok: true }); },   // F17: as the progress page
-    removeFile: async (name) => {
-      const r = await wftCall('DELETE', `${base}/examples/${session.exampleId}/files/${encodeURIComponent(name)}`);
-      if (!r.ok) return r;
-      keep(r.data.example);
-      return { ok: true, example: r.data.example };
-    },
-  };
-}
-
-async function wftDeleteExample(e) {
-  const id = wftWorkflowId();                                      // the example's workflow, before any await
-  if (!id) return;
-  const ok = await confirmModal({ title: `Delete "${e.name}"?`, confirmLabel: 'Delete', danger: true,
-    message: 'Its request, files, answers and checks are removed. The tries already made stay in the tests they belong to.' });
-  if (!ok) return;
-  const r = await wftCall('DELETE', `${wftBase(id)}/examples/${e.id}`);
-  if (!r.ok) { notify({ tone: 'err', title: 'Not deleted', detail: r.error }); return; }
-  if (wftWorkflowId() === id) wftShow('list', { overview: null });
-}
-// ⌘Z / ⇧⌘Z reach the canvas even from a fenced button (composer.mjs onKeyDown, before its data-canvas-keys fence).
-// While the Versions page covers the canvas, an undo there would edit a graph nobody sees: it does nothing. Capture
-// phase, so the composer's document listener sees defaultPrevented and returns. Fields keep their own undo.
-document.addEventListener('keydown', (ev) => {
-  if (!(ev.metaKey || ev.ctrlKey) || (ev.key !== 'z' && ev.key !== 'Z')) return;
-  const page = ['wfv-versions', 'wfv-tests'].map((x) => document.getElementById(x)).find((p) => p && !p.hidden && !p.closest('.view.hidden'));
-  if (!page) return;                                                    // the Workflows view, its Versions or Tests page shown
-  const t = ev.target;
-  if (t && ((t.matches && t.matches('input, textarea, select')) || t.isContentEditable)) return;
-  ev.preventDefault();
-}, true);
-// The flag flips live: off leaves the Versions page (its markup hides, the canvas tools come back); on paints the line.
-onFlagChange('workflowTests', (on) => { if (!on) wfvShowPage('canvas'); void wfvRefreshVersions(); });
+// Workflow versions and tests (plans/workflow-tests-plan.md, part2): the Versions and Tests pages' controllers.
+const wfvVersions = createWorkflowVersions({ doc: document, win: window, composer: () => gvComposer, els: wfvEls, api: gvApi,
+  confirmModal, tests: () => wfvTests });
+const wfvTests = createWorkflowTests({ doc: document, win: window, fetch: (...a) => fetch(...a), safeJson, composer: () => gvComposer,
+  els: wfvEls, api: gvApi, versions: () => wfvVersions, currentView, confirmModal, openNewPipeline, hdMarkdown,
+  mock: () => serverMock.on, runPageShows: (pid) => !!histDetailState && histDetailState.id === pid });
 
 function wfvShellActions() {
   return {
@@ -4361,14 +3703,7 @@ async function routeWorkflows(param = '') {
   }
   const opened = await wfvOpenSaved(head);
   if (reveal && opened !== null) await wfvRevealWorkflow(head);   // also when the discard prompt kept the canvas (D2)
-  // Workflow tests: #workflows/<id>/tests[/<example>|/run/<test>] (Use as test example, the results-ready toast). Only when
-  // the canvas holds that row itself: a built-in or plugin row opens as an unsaved copy (#1127), which has no tests.
-  const m = /^tests(?:\/(\d+)|\/run\/(\d+))?$/.exec(sub);
-  if (opened && m && flagOn('workflowTests') && gvComposer.template().id === head) {
-    wfvShowPage('tests');
-    if (m[1]) void wftOpenExample(Number(m[1]));
-    else if (m[2]) wftShow('progress', { runId: Number(m[2]) });
-  }
+  wfvTests.route(head, sub, opened);   // #workflows/<id>/tests[/<example>|/run/<test>] (tests-app.mjs)
 }
 
 async function enterWorkflowsView(param = '', prevView = '') {
@@ -4379,8 +3714,7 @@ async function enterWorkflowsView(param = '', prevView = '') {
   const first = await initWorkflows();
   if (!first) gvComposer.fit();
   await routeWorkflows(param);
-  // Frames skip the Tests page while another view shows (wftChanged): a shown Tests page catches up on re-entry.
-  if (wfvEls().tests && !wfvEls().tests.hidden) void wftRefresh();
+  void wfvTests.refresh();   // frames skip a Tests page hidden behind another view: a shown one catches up on re-entry
 }
 
 // Where focus goes back when the sheet closes: the opener's id, or a Library control's focus key.
@@ -4537,13 +3871,7 @@ function wfvLibraryActions() {
     // #1127: a row of the user's opens to Edit (Save changes it); Use as template opens any row as a new unsaved copy.
     editWorkflow: (id) => wfvOpenSaved(id),
     useAsTemplate: (id) => wfvOpenSaved(id, { copy: true }),
-    // A row that can have versions is the user's own, so it opens in place (Edit), then on its Versions page.
-    openVersions: async (id) => {
-      if (await wfvOpenSaved(id)) wfvShowPage('versions');
-    },
-    // Plugin rows and the built-ins never have versions (D5); their ⋯ menu has no Versions….
-    // A format-1 row is not a graph and cannot have versions either (isVersionableRow).
-    versionsEnabled: (w) => flagOn('workflowTests') && workflowCanHaveVersions(w),
+    ...wfvVersions.libraryActions(wfvOpenSaved),   // openVersions, versionsEnabled
     deleteWorkflow: async (wf) => {
       const schedNote = await scheduleDependentsNote(`workflowId=${encodeURIComponent(wf.id)}`, 'They will fail to start until you point them at another pipeline.');
       const ok = await confirmModal({ title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
@@ -4938,9 +4266,7 @@ async function listWorkflowsApi() {
 async function getWorkflowApi(id) {
   if (state.workflowCache[id]) return state.workflowCache[id];
   try {
-    // use=live: what a run of this workflow will use — the version in use once it has versions (plans/workflow-tests-plan.md
-    // D2), never the Composer's draft, so the step rows describe the graph that runs. Without the workflowTests flag the
-    // server answers the row, as before.
+    // use=live (workflow tests D2): the version a run uses once it has versions, never the draft; flag off: the row, as before.
     const q = id === MEMORY_DEFRAG_WORKFLOW_ID ? `&engine=${state.engine}${state.projectDir ? `&projectDir=${encodeURIComponent(state.projectDir)}` : ''}` : '';
     const res = await fetch(`/api/workflows/${encodeURIComponent(id)}?use=live${q}`);
     const data = await safeJson(res);
@@ -6132,19 +5458,11 @@ if (el.agentsPromote) {
         appendLog({ source: 'ui', level: 'error', text: `workflow defaults: ${data.error || res.status}`, ts: Date.now() });
         return;
       }
-      // A version in use (flag workflowTests; GET ?use=live carries its versionNo): the defaults went into the draft,
-      // and new runs keep using the version in use, which does not have them. The project's picks are therefore kept,
-      // so new runs keep running them; the hint says where the defaults went (user decision, final review).
-      const shown = state.workflowCache[workflowId];
-      const versionInUse = Boolean(shown && Number.isInteger(shown.versionNo));
+      const versionInUse = hasVersionInUse(state.workflowCache[workflowId]);   // the defaults went into the draft (versions-app.mjs)
       // The cached template still carries the OLD defaults; drop it so the
       // reset below repaints against what was just persisted.
       delete state.workflowCache[workflowId];
-      if (versionInUse) {
-        notify({ tone: 'ok', title: 'Saved to your draft. New runs keep these picks until you use a new version.' });
-        await renderWorkflowConfig(workflowId);
-        return;
-      }
+      if (versionInUse) { await keepPicksForVersionInUse(() => renderWorkflowConfig(workflowId)); return; }
       el.agentsReset.click(); // clearing the now-redundant overrides is the second half
     } catch (err) {
       appendLog({ source: 'ui', level: 'error', text: `workflow defaults error: ${err.message}`, ts: Date.now() });
@@ -24973,7 +24291,7 @@ function openHistDetail(parsed, { instant = false, host: where = 'page' } = {}) 
   screen.querySelector('.hd-to-run').addEventListener('click', toRun);
   // Run 3 (D13): the saved bar is the primary action, Run after, Stop and ⋯; ⋯ drives the controls CSS hides there.
   screen.querySelector('.hd-bar-more')?.addEventListener('click', (e) => {
-    const extra = histDetailState ? wftRunMenuItems(histDetailState.record, histDetailState.data) : [];   // G6: Use as test example
+    const extra = histDetailState ? wfvTests.runMenuItems(histDetailState.record, histDetailState.data) : [];   // G6: Use as test example
     toggleMenu({ doc: document, anchor: e.currentTarget, items: runMoreItems(screen, { extra }), align: 'end', label: 'More for this run' });
   });
   screen.querySelector('.hd-glance .rd-sheet').addEventListener('click', (e) => {

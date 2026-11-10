@@ -2061,12 +2061,12 @@ test('Save version when the versions cannot be read: an error toast, no "Save ve
 });
 
 test('source: wfvSaveVersion saves a dirty or unsaved canvas through openSaveDialog before any version, with a loop guard', () => {
-  const src = readFileSync(appPath, 'utf8');
+  const src = readFileSync(fileURLToPath(new URL('../ui/public/workflows/versions-app.mjs', import.meta.url)), 'utf8');   // moved out of app.js
   const body = src.slice(src.indexOf('async function wfvSaveVersion('), src.indexOf('function wfvRenderVersionsPage('));
   assert.ok(body.length > 0, 'wfvSaveVersion found');
-  const save = body.indexOf('gvComposer.openSaveDialog(');
+  const save = body.indexOf('composer().openSaveDialog(');
   assert.ok(save > 0, 'routes through openSaveDialog');
-  assert.match(body, /gvComposer\.isDirty\(\)/);
+  assert.match(body, /composer\(\)\.isDirty\(\)/);
   assert.ok(save < body.indexOf('openSaveVersionDialog('), 'the save comes before the version dialog');
   assert.match(body, /afterSave/, 'a save that did not leave a versionable row does not reopen the dialog forever');
 });

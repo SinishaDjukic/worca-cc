@@ -430,11 +430,13 @@ test('a connector by its plain name (one shared helper): no claude.ai prefix, no
 
 test('app.js: Compare and side by side are wired; Task 10\'s "comes in a later step" page is gone', () => {
   const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+  const ctl = readFileSync(new URL('../ui/public/workflows/tests-app.mjs', import.meta.url), 'utf8');   // the Tests page's controller
   // assert.ok, not assert.match: a failure would print all of app.js.
-  assert.ok(!app.includes('This page comes in a later step.'), 'the stub is gone');
-  assert.ok(/import \{ renderCompare, renderSideBySide, openWholeResult, askMoreTries \} from '\.\/workflows\/test-compare\.mjs';/.test(app));
-  assert.ok(/wftCall\('GET', `\$\{base\}\/compare`\)/.test(app) && /wftCall\('GET', `\$\{base\}\/examples\/\$\{wft\.exampleId\}`\)/.test(app), 'the two reads');
-  assert.ok(/connectors: run\.connectors/.test(app), 'Try 3 more keeps the test\'s connectors choice');
+  assert.ok(!app.includes('This page comes in a later step.') && !ctl.includes('This page comes in a later step.'), 'the stub is gone');
+  assert.ok(/import \{ createWorkflowTests \} from '\.\/workflows\/tests-app\.mjs';/.test(app));
+  assert.ok(/import \{ renderCompare, renderSideBySide, openWholeResult, askMoreTries \} from '\.\/test-compare\.mjs';/.test(ctl));
+  assert.ok(/wftCall\('GET', `\$\{base\}\/compare`\)/.test(ctl) && /wftCall\('GET', `\$\{base\}\/examples\/\$\{wft\.exampleId\}`\)/.test(ctl), 'the two reads');
+  assert.ok(/connectors: run\.connectors/.test(ctl), 'Try 3 more keeps the test\'s connectors choice');
 });
 
 // Browser check M1: "What v1 wrote" is the board's rendered excerpt, through the app's sandboxed markdown renderer.
@@ -473,12 +475,14 @@ test('board 6/31 (M1): what each version wrote is rendered markdown, sanitized; 
   assert.equal(whole.querySelector('script, img'), null);
 });
 
-test('app.js hands the side by side and Read the whole result the sandboxed renderer (M1)', () => {
+test('tests-app.mjs hands the side by side and Read the whole result the sandboxed renderer (M1)', () => {
   const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+  const ctl = readFileSync(new URL('../ui/public/workflows/tests-app.mjs', import.meta.url), 'utf8');   // the Tests page's controller
   // 3a (Task 12) passes the project diff context after the renderer: patches, picked, dateText.
-  assert.ok(/renderSideBySide\(root, wft\.data, wftDetailActions\(\), \{ doc: document, tryIndex: wft\.tryIndex \|\| 0, renderMarkdown: wftMarkdown[,\s]/.test(app));
-  assert.ok(/openWholeResult\(\{ doc: document, win: window, title, name: r\.data\.name, text: r\.data\.text, renderMarkdown: wftMarkdown \}\)/.test(app));
-  assert.ok(/function wftMarkdown\(text, mount\) \{\s*const out = hdMarkdown\.render\(text\);/.test(app), 'hdMarkdown: marked + DOMPurify (ask-markdown.mjs)');
+  assert.ok(/renderSideBySide\(root, wft\.data, wftDetailActions\(\), \{ doc, tryIndex: wft\.tryIndex \|\| 0, renderMarkdown: wftMarkdown[,\s]/.test(ctl));
+  assert.ok(/openWholeResult\(\{ doc, win, title, name: r\.data\.name, text: r\.data\.text, renderMarkdown: wftMarkdown \}\)/.test(ctl));
+  assert.ok(/function wftMarkdown\(text, mount\) \{\s*const out = hdMarkdown\.render\(text\);/.test(ctl), 'hdMarkdown: marked + DOMPurify (ask-markdown.mjs)');
+  assert.ok(/createWorkflowTests\(\{[^}]*\bhdMarkdown\b/.test(app), 'app.js hands the controller its hdMarkdown (createMarkdownRenderer)');
 });
 
 test('H1/H2: on a phone the By example and What was checked rows stack; each cell names its column', () => {
