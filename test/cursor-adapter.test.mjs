@@ -110,7 +110,7 @@ test('spawn: rules and MCP land in <cwd>/.cursor, hidden by info/exclude; reply 
     permissionRules: { deny: ['Bash(curl)'] }, spawnEnv: { MCPSECRET_GH: 's3cret' }, onEvent: (e) => events.push(e) });
   assert.equal(r.text, 'done');
   const rec = fake.record();
-  assert.deepEqual(JSON.parse(rec.cli), { permissions: { deny: ['Shell(curl)'] } });
+  assert.deepEqual(JSON.parse(rec.cli), { permissions: { allow: [], deny: ['Shell(curl)'] } });
   assert.deepEqual(JSON.parse(rec.mcp).mcpServers.gh.env, { GITHUB_TOKEN: '${env:MCPSECRET_GH}' }, 'no secret value on disk');
   assert.equal(rec.env.MCPSECRET_GH, 's3cret');
   assert.ok(rec.args.includes('--approve-mcps'));
@@ -249,7 +249,7 @@ test('ownership: an edited worca file is no longer worca\'s', POSIX, async () =>
 test('G14: deny rules the agent edits during a spawn are restored when it ends, and the next spawn sees worca\'s copy', POSIX, async () => {
   const cwd = tmp();
   execFileSync('git', ['init', '-q'], { cwd });
-  const want = `${JSON.stringify({ permissions: { deny: ['Shell(curl)'] } }, null, 2)}\n`;
+  const want = `${JSON.stringify({ permissions: { allow: [], deny: ['Shell(curl)'] } }, null, 2)}\n`;
   const events = [];
   const rules = { deny: ['Bash(curl)'] };
   await runCursorProcess({ cwd, bin: fakeCursor(tmp(), 'ok', { sh: `printf '{"permissions":{"deny":[]}}' > .cursor/cli.json` }).bin,
@@ -270,7 +270,17 @@ test('G14: a deny file the agent replaces with a symlink is unlinked and rewritt
     prompt: 'go', permissionRules: { deny: ['Bash'] } });
   assert.equal(readFileSync(target, 'utf8'), 'theirs');
   assert.equal(lstatSync(join(cwd, '.cursor', 'cli.json')).isSymbolicLink(), false);
-  assert.deepEqual(JSON.parse(readFileSync(join(cwd, '.cursor', 'cli.json'), 'utf8')), { permissions: { deny: ['Shell(*)'] } });
+  assert.deepEqual(JSON.parse(readFileSync(join(cwd, '.cursor', 'cli.json'), 'utf8')), { permissions: { allow: [], deny: ['Shell(*)'] } });
+});
+
+test('spawn: cli.json always includes permissions.allow (cursor-agent rejects deny-only)', POSIX, async () => {
+  const cwd = tmp();
+  const fake = fakeCursor(tmp(), 'ok');
+  await runCursorProcess({ cwd, bin: fake.bin, prompt: 'go', permissionRules: { deny: ['Bash(curl)'] } });
+  const doc = JSON.parse(readFileSync(join(cwd, '.cursor', 'cli.json'), 'utf8'));
+  assert.deepEqual(doc.permissions.allow, []);
+  assert.deepEqual(doc.permissions.deny, ['Shell(curl)']);
+  assert.deepEqual(JSON.parse(fake.record().cli), doc, 'the agent saw the same document');
 });
 
 test('G14: an MCP file the agent edits is restored too, and a failed spawn still restores', POSIX, async () => {
