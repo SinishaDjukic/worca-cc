@@ -41,7 +41,7 @@ const put = (key, name, text) => writeMemory(memoryRoot(), projectScope(key), na
 /** A team.json the way a fetch writes it: each note through the module's own reader; `deleted` = the notes a commit removed. */
 const snapshotOf = (notes, deleted = []) => ({ schema: 1, branch: 'worca-memory', headSha: 'f'.repeat(40), fetchedAt: NOW, missing: false, deleted,
   notes: Object.fromEntries(Object.entries(notes).map(([name, o]) => [name,
-    _testing.noteEntry(name, teamNoteText({ name, description: o.desc ?? name, paths: [], updated: o.updated ?? NOW }, o.body ?? `${name} body`, { author: 'mate' }))])) });
+    _testing.noteEntry(name, teamNoteText({ name, description: o.desc ?? name, paths: o.paths ?? [], updated: o.updated ?? NOW }, o.body ?? `${name} body`, { author: 'mate' }))])) });
 
 test('contentHash: name, description, paths and body only — never source, updated, the marker or other extras', () => {
   const meta = { name: 'trap', description: 'Read before deploying', paths: ['src/**'], source: 'run:1', updated: NOW, extra: { team: 'x', owner: 'y' } };
@@ -254,6 +254,56 @@ test('teamMountNames: shadowing is case-insensitive, a note over the local per-f
   assert.deepEqual(teamMountNames(notes, ['b'], { maxBytes: 32768 }), ['c', 'a']);
   assert.deepEqual(teamMountNames(notes, [], { maxFiles: 2, maxBytes: 32768 }), ['B', 'c']);
   assert.deepEqual(teamMountNames(notes, []), ['big', 'B', 'c', 'a'], 'no caps given: everything, newest first');
+});
+
+test('teamMountNames: teamMaxFiles caps only always-on notes — a note with paths loads past it (it costs nothing until a matching file is read), still under the per-file cap', () => {
+  const notes = { old: { updated: '2026-09-01T00:00:00.000Z', bytes: 10, paths: ['src/a.mjs'] }, on1: { updated: '2026-10-16T00:00:00.000Z', bytes: 10, paths: [] },
+    on2: { updated: '2026-10-15T00:00:00.000Z', bytes: 10 }, on3: { updated: '2026-10-14T00:00:00.000Z', bytes: 10, paths: [] },
+    bigScoped: { updated: '2026-10-17T00:00:00.000Z', bytes: 40_000, paths: ['src/**'] } };
+  assert.deepEqual(teamMountNames(notes, [], { maxFiles: 2, maxBytes: 32768 }), ['on1', 'on2', 'old'], 'two always-on notes, newest first, and every scoped one');
+  assert.deepEqual(teamMountNames(notes, ['OLD'], { maxFiles: 1, maxBytes: 32768 }), ['on1'], 'a shadowed scoped note still never loads');
+});
+
+test('teamMountNames: a glob that matches anywhere (wildcard first segment) counts as always-on; scoped notes stop at 4× the cap', () => {
+  const day = (d) => `2026-10-${String(d).padStart(2, '0')}T00:00:00.000Z`;
+  const broad = { all: { updated: day(20), bytes: 10, paths: ['**'] }, ext: { updated: day(19), bytes: 10, paths: ['src/a.mjs', '*.mjs'] },
+    dot: { updated: day(18), bytes: 10, paths: ['./src/**'] }, on: { updated: day(17), bytes: 10, paths: [] } };
+  assert.deepEqual(teamMountNames(broad, [], { maxFiles: 1, maxBytes: 32768 }), ['all', 'dot'], '`**` and `*.mjs` take the one always-on slot; ./src/** is scoped');
+  // A hand-pushed branch file keeps `roles:` (teamNoteText drops it from what this machine pushes).
+  const role = (name, roles) => _testing.noteEntry(name, `---\nname: ${name}\ndescription: d\npaths: src/**\nupdated: ${day(21)}\nroles: ${roles}\n---\nBody.\n`);
+  assert.deepEqual(teamMountNames({ ...broad, planner: role('planner', 'planner') }, [], { maxFiles: 1, maxBytes: 32768 }), ['planner', 'dot'],
+    'a note with roles is always-on for its role (its body goes into the system prompt), paths or not');
+  const many = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`s${i}`, { updated: day(10 + i), bytes: 10, paths: ['src/**'] }]));
+  assert.deepEqual(teamMountNames(many, [], { maxFiles: 2, maxBytes: 32768 }), ['s9', 's8', 's7', 's6', 's5', 's4', 's3', 's2'], 'newest 8 scoped at a cap of 2');
+});
+
+test('teamOnlyLoad: one always-on cap over local and team notes; scoped notes of either kind load past it', () => {
+  const snapshot = { notes: { mate: { updated: '2026-10-16T00:00:00.000Z', bytes: 10, paths: [] }, scopedMate: { updated: '2020-01-01T00:00:00.000Z', bytes: 10, paths: ['src/**'] },
+    oldMate: { updated: '2020-01-01T00:00:00.000Z', bytes: 10, paths: [] } } };
+  const rows = [{ name: 'mine', local: true, state: 'shared', updated: '2026-10-17T00:00:00.000Z', scoped: false },
+    { name: 'mineScoped', local: true, state: 'shared', updated: '2019-01-01T00:00:00.000Z', scoped: true }];
+  const r = teamOnlyLoad({ rows, snapshot, maxFiles: 2, maxBytes: 32768 });
+  assert.deepEqual([[...r.local].sort(), [...r.team].sort()], [['mine', 'mineScoped'], ['mate', 'scopedMate']]);
+});
+
+test('mount and status: a scoped team note past teamMaxFiles is mounted, in Both and in Team mode', async () => {
+  const K = 'scopedcap-0000003d';
+  writeProjectSettings({ projectKey: K }, { 'memory.team': true, 'memory.teamMaxFiles': 1 });
+  await put(K, 'local-scoped', '---\nname: x\ndescription: d\npaths: src/**\n---\nMine.\n');
+  _testing.writeSnapshot(K, snapshotOf({ newest: { updated: '2026-10-16T00:00:00.000Z' }, older: { updated: '2026-10-15T00:00:00.000Z' },
+    trap: { updated: '2020-01-01T00:00:00.000Z', paths: ['ui/server.mjs'] } }));
+  assert.deepEqual((await teamMountNotes(K)).map((n) => n.name), ['newest', 'trap']);
+  const mounted = (st) => Object.fromEntries(st.notes.map((n) => [n.name, n.mounted]));
+  assert.deepEqual(mounted(await teamMemoryStatus(K)), { 'local-scoped': false, newest: true, older: false, trap: true });
+  writeProjectSettings({ projectKey: K }, { 'memory.team': 'only' });
+  const scope = projectScope(K);
+  const f = await readMemory(memoryRoot(), scope, 'local-scoped');
+  const h = contentHash({ ...f.meta, name: 'local-scoped' }, f.body);
+  await setMemoryExtra(memoryRoot(), scope, 'local-scoped', TEAM_MARKER_KEY, h);
+  _testing.markShared(K, 'local-scoped', h);
+  const plan = await memoryLoadPlan(K);
+  assert.deepEqual([[...plan.localNames], plan.team.map((n) => n.name)], [['local-scoped'], ['newest', 'trap']], 'the scoped tracked copy takes no always-on slot');
+  assert.deepEqual(mounted(await teamMemoryStatus(K)), { 'local-scoped': true, newest: true, older: false, trap: true });
 });
 
 test('follow the team: an unedited tracked copy takes the team version or goes with a deletion COMMIT; a merely absent one is untracked, kept; edited, queued and plain copies stay; a missing branch deletes nothing', async () => {
