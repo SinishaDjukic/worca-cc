@@ -13,7 +13,7 @@ import { listProjects } from '../projects.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, parseFeatureSeq, SCOPE_TYPES } from './spec.mjs';
 import {
-  createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature, setEarlyStartReason, listStarts, latestStart, recentLookCosts,
+  createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature, setEarlyStartReason, listStarts, latestStart,
   getBrief, usableBrief, listBriefs, setBriefSections, deleteBrief, briefUsers, listAttachments, countHelperMessages,
 } from './store.mjs';
 import {
@@ -27,6 +27,7 @@ import {
 import { isStarting, STARTING_MESSAGE } from './starting.mjs';
 import { startOrientation, submitAnswers, finishInterview, followUp, retry, isBusy, assertCapacity, interviewModel } from './interview.mjs';
 import { listModels } from '../config.mjs';
+import { stepEstimate } from '../helper-call/cost.mjs';
 import { pendingRound } from './round.mjs';
 import {
   updateHeader, setSection, releaseSection, addCriterion, editCriterion, removeCriterion, setAssumption, confirmOpenAssumptions, setArchived,
@@ -267,16 +268,10 @@ async function summary(f, targetOf, runSummary) {
     latestRun: latest ? (await startView(latest, runSummary)).run : null };
 }
 
-/** Median of the recent code-look costs, for the New feature page's hint: the looks made on `model` when there
- *  are any, else all recent looks (null when there are none at all). */
+/** What a code look will cost on `model`, for the New feature page's hint (9c D9): the median of the looks made on that
+ *  model, else typical token counts at its price; null when neither is known. Never another model's looks. */
 function lookCostUsd(model = null) {
-  let costs = model ? recentLookCosts(10, { model }) : [];
-  if (!costs.length) costs = recentLookCosts(10);
-  costs = costs.sort((a, b) => a - b);
-  if (!costs.length) return null;
-  const m = costs.length >> 1;
-  const mid = costs.length % 2 ? costs[m] : (costs[m - 1] + costs[m]) / 2;
-  return Math.round(mid * 1e4) / 1e4;
+  return stepEstimate({ engine: 'claude', model, step: 'look' }).usd;
 }
 
 /** The interview's model for the New feature line: { model, label, effort, source }, or null when it cannot be told. */

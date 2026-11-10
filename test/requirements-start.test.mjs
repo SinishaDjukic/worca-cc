@@ -43,6 +43,7 @@ before(async () => {
   registerRequirementsRoutes(app, { broadcast: () => {}, deps: {
     startRun: async (body, opts) => { calls.push({ body, opts }); return runImpl(body, opts); },
     runSummary: (q) => summaryImpl(q),
+    interviewModel: async () => ({ model: 'start-model', effort: null, source: 'settings' }),   // the looks below are made on it
   } });
   srv = app.listen(0, '127.0.0.1');
   await new Promise((r) => srv.once('listening', r));
@@ -463,9 +464,9 @@ test('list: state, ready, latestRun; lookCostUsd and spend', async () => {
   assert.equal(r.json.spend.resetPeriod, 'monthly', 'the budget period (the default)');
   assert.equal(r.json.spend.totalLimitUsd, null);
   const w0 = r.json.spend.windowUsd;
-  for (const c of [0.3, 0.1, 0.2, 0.5]) appendTurn(g.seq, { kind: 'orientation', payload: {}, costUsd: c });
+  for (const c of [0.3, 0.1, 0.2, 0.5]) appendTurn(g.seq, { kind: 'orientation', payload: {}, costUsd: c, model: 'start-model' });
   assert.equal((await call('GET', '/api/requirements')).json.lookCostUsd, 0.25);
-  appendTurn(g.seq, { kind: 'orientation', payload: {}, costUsd: 0.9 });
+  appendTurn(g.seq, { kind: 'orientation', payload: {}, costUsd: 0.9, model: 'start-model' });
   assert.equal((await call('GET', '/api/requirements')).json.lookCostUsd, 0.3);
   const { recordRequirementsCostDelta } = await import('../src/core/cost-budget.mjs');
   recordRequirementsCostDelta({ featureSeq: g.seq, amountUsd: 0.07 });
