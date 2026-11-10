@@ -246,7 +246,7 @@ export async function featureView(seq, d = {}) {
   const listFn = d.listModels || listModels;
   const estimates = readEstimates();   // once per view, not once per file
   const ledger = featureCostRows(seq);
-  await rememberLabels(listFn, [...turns.map((t) => t.model), ...ledger.map((r) => r.model)]);
+  await rememberLabels(listFn, [...turns.map(turnModel), ...ledger.map((r) => r.model)]);
   return {
     feature: { ...f, busy, pending, lastError: last && last.kind === 'error' ? last.payload.message : null,
       readiness: ready, state: displayState({ ...f, busy }, { ready, starts: rows }), unaskedRejections: unaskedRejections(f.spec, turns),
@@ -256,6 +256,7 @@ export async function featureView(seq, d = {}) {
       model: f.model || (im ? { engine: im.engine, model: im.model, effort: im.effort ?? null, legacy: true } : null),
       modelLabel: im && im.model ? await labelOn(listFn, im.model, im.engine) : null,
       anyEstimated: ledger.some((r) => r.costKind === 'estimated'),
+      unknownSteps: ledger.filter((r) => r.costKind === 'unknown').length,
       attachments: files.map((r) => fileView(r, { spec: f.spec, href: `${P}/${seq}/attachments/${r.id}`, estimates, from: origins.get(r.id) || null })),
       briefDocuments: docs.map((r) => fileView(r, { spec: f.spec, href: `${briefPathOf(f.scopeType, f.scopeKey)}/documents/${r.id}`, doc: true, estimates })),
       unaskedFiles: unaskedFiles(files, turns),
@@ -264,14 +265,21 @@ export async function featureView(seq, d = {}) {
       export: await exportView(f, turns, d),   // A6 §6: the menu, the chip, the History card, Report back (never throws)
       helper: { answering: isAnswering(seq), messages: countHelperMessages(seq) } },
     // 9c D14: each turn says which model label and cost kind its step ran with ('billed' | 'estimated' | 'unknown'; null: nothing booked)
-    turns: turns.map((t) => ({ ...t, modelLabel: t.model ? labelOf(t.model) : null, costKind: costKindOf(ledger, (r) => r.turnId === t.id) })),
+    turns: turns.map((t) => ({ ...t, modelLabel: turnModel(t) ? labelOf(turnModel(t)) : null, costKind: costKindOf(ledger, (r) => r.turnId === t.id) })),
   };
 }
 
 /** The labels of the models seen in views, so the sync helper view can name a model the way the page does (9c D14). */
 const LABELS = new Map();
+/** The model a turn names: its own, or for a switch (`model` turn) the one it switched to. */
+const turnModel = (t) => t.model || (t.kind === 'model' && t.payload && t.payload.model) || null;
+/** Remember the labels of `ids`; a raw-id fallback (the catalog could not be read) is not cached. */
 async function rememberLabels(list, ids) {
-  for (const id of new Set(ids.filter(Boolean))) if (!LABELS.has(id)) LABELS.set(id, await modelLabelOf(list, id));
+  for (const id of new Set(ids.filter(Boolean))) {
+    if (LABELS.has(id)) continue;
+    const label = await modelLabelOf(list, id);
+    if (label && label !== id) LABELS.set(id, label);
+  }
 }
 const labelOf = (id) => LABELS.get(id) || id;
 /** The cost kind of the ledger rows `match` picks: unknown when any is, else estimated when any is, else billed; null with none. */
@@ -353,8 +361,7 @@ async function costsView(seq, d) {
   const list = d.listModels || listModels;
   const rows = featureCostRows(seq);
   const roundIds = listTurns(seq).filter((t) => t.kind === 'round').map((t) => t.id);
-  const labels = new Map();
-  for (const r of rows) if (r.model && !labels.has(r.model)) labels.set(r.model, await modelLabelOf(list, r.model));
+  await rememberLabels(list, rows.map((r) => r.model));
   const stepOf = (r) => {
     if (COST_STEPS.includes(r.step)) return r.step;
     if (r.attachmentId) return 'read';
@@ -371,7 +378,7 @@ async function costsView(seq, d) {
   const out = rows.map((r) => {
     const step = stepOf(r);
     const engine = r.engine || 'claude';
-    return { step, label: wordsOf(r, step), ranOn: r.model ? `${labels.get(r.model)} on ${engineLabel(engine)}` : engineLabel(engine),
+    return { step, label: wordsOf(r, step), ranOn: r.model ? `${labelOf(r.model)} on ${engineLabel(engine)}` : engineLabel(engine),
       usd: r.costKind === 'unknown' ? null : round4(r.amountUsd), kind: r.costKind };
   });
   const sum = (kind) => round4(out.filter((r) => r.kind === kind).reduce((n, r) => n + (r.usd || 0), 0));

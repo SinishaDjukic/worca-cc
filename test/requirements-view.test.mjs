@@ -427,7 +427,7 @@ test('new feature: back link, heading, field blocks, the For select with its gro
   assert.ok(select);
   assert.deepEqual([...select.querySelectorAll('optgroup')].map((g) => g.label), ['Projects', 'Workspaces']);
   assert.deepEqual([...select.options].map((o) => o.value), ['project:shop-1', 'workspace:ws1']);
-  assert.equal(fields[3].querySelector('.hint').textContent, "Worca looks at this project's code once, read-only, to learn what already exists. Change that in Your notes for Worca.");
+  assert.equal(fields[3].querySelector('.hint').textContent, "Worca does a code look of this project once, read-only, to learn what already exists. Change that in Your notes for Worca.");
   select.value = 'workspace:ws1';
   select.dispatchEvent(new window.Event('change'));
   assert.equal(fields[3].querySelector('.hint').textContent, "Worca does a code look of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca.");
@@ -2656,7 +2656,7 @@ test('new feature: with a brief, the green line names it and links to it; the co
   select.value = 'project:blog';
   select.dispatchEvent(new window.Event('change'));
   assert.equal(line(), null);
-  assert.match(text(field.querySelector('.req-new-look')), /looks at this project's code once/);
+  assert.match(text(field.querySelector('.req-new-look')), /does a code look of this project once/);
   assert.equal(cost().hidden, false);
   assert.equal(cost().textContent, 'About $0.25 for the code look, then cents per round.');
   // the workspace's brief, made today, with the switch off: no "looks closer" sentence
@@ -3032,7 +3032,7 @@ test('git appears or goes missing: New feature says its look line again and keep
     assert.match(text(host.querySelector('.req-new-look')), /^Worca does not do a code look/);
     assert.equal(host.querySelector('#req-new-title').value, 'Typed', 'the form is not rebuilt');
     applyGit({ available: true });
-    assert.match(text(host.querySelector('.req-new-look')), /^Worca looks at this project's code once/);
+    assert.match(text(host.querySelector('.req-new-look')), /^Worca does a code look of this project once/);
     view.destroy();
     // a scope of its own: views of earlier tests still show other pages
     const URL = '/api/requirements/brief/project/flip-9';

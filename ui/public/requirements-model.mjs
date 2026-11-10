@@ -424,7 +424,8 @@ export function costSentence(data) {
   let first = parts.join(' and ');
   if (unknown) first = first ? `${first}, plus ${stepsWord(unknown)} with cost unknown` : `${stepsWord(unknown)} with cost unknown`;
   const period = data.resetPeriod === 'weekly' ? 'week' : 'month';
-  const total = `${data.anyEstimated ? '≈' : ''}${usd(data.totalUsd)}`;
+  const none = !(Number(data.totalUsd) > 0);
+  const total = none ? 'nothing' : `${data.anyEstimated ? '≈' : ''}${usd(data.totalUsd)}`;
   const limit = typeof data.limitUsd === 'number' ? ` of ${usd(data.limitUsd)}` : '';
   const who = unknown === 1 ? 'the step' : `the ${unknown} steps`;
   const budget = `The Requirements budget counts ${total}${limit} this ${period}${unknown ? `; ${who} with cost unknown ${unknown === 1 ? 'is' : 'are'} not counted` : ''}.`;
@@ -453,7 +454,7 @@ export function costDialog(doc, { data, onClose = () => {} } = {}) {
   const sum = node(doc, 'tr', 'req-cost-total');
   const label = node(doc, 'td', null, 'So far');
   label.setAttribute('colspan', '2');
-  sum.append(label, node(doc, 'td', 'req-cost-num', `${data.anyEstimated ? '≈' : ''}${usd(data.totalUsd)}`));
+  sum.append(label, node(doc, 'td', 'req-cost-num', Number(data.totalUsd) > 0 ? `${data.anyEstimated ? '≈' : ''}${usd(data.totalUsd)}` : Number(data.unknownSteps) > 0 ? 'cost unknown' : usd(0)));
   body.append(sum);
   table.append(thead, body);
   const close = button(doc, 'btn btn-primary', 'Close', 'cost-close');

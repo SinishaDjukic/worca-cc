@@ -1263,3 +1263,12 @@ test('9c: a Feature chat reply on another harness names it, with an estimated or
   assert.equal(text(stopped.querySelector('a.req-error-docs')), 'How to sign in to Codex');
   assert.equal(p.querySelector('[data-msg="6"] .req-help-cost'), null, 'the stopped row says it once');
 });
+
+test('9c: on an archived feature the chat Change the model is off like Try again would be (and absent)', async () => {
+  const m = await openFeature({ f: feature({ status: 'archived', state: 'archived', pending: null, helper: { answering: false, messages: 2 } }), helper: chat([po(1, 'A'),
+    worca(2, '', { model: 'gpt-sol', modelLabel: 'GPT-5.6 Sol', engine: 'codex', costUsd: null, error: { code: 'NOT_READY', message: "Codex isn't signed in. Sign in, or change the model." } })]) });
+  const p = await openPanel(m);
+  const block = p.querySelector('.req-help-notready');
+  assert.equal(block.querySelector('[data-ui="error-change-model"]').disabled, true);
+  assert.equal(block.querySelector('[data-ui="helper-retry"]'), null);
+});

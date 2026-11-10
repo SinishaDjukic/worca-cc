@@ -80,8 +80,8 @@ for code looks. It is opened from the brief page or from **⋯** on a feature.
 
 **How interviews use it.** With a brief, a new feature skips its own code look: the New feature page
 says "Worca knows <name> from its product brief" and the cost is cents per round, and round 1 starts right
-away. The feature page shows *What Worca knows*. When the brief is not enough, **Look closer** makes one look at
-the code for that feature (its cost is shown first). **Add this to the brief** then keeps what it found as a new
+away. The feature page shows *What Worca knows*. When the brief is not enough, **Look closer** makes one code look
+for that feature (its cost is shown first). **Add this to the brief** then keeps what it found as a new
 area named after the feature ("Orders: <feature title>"); it never replaces an area that is already there. A
 code look is not part of the brief until you add it, and only a look made for the feature's current project
 or workspace, against its current brief, can be added (otherwise **Look again** first). With code looks

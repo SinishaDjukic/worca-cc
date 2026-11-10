@@ -800,9 +800,9 @@ test('thread: a look skipped for the harness is a row with its notice and no but
 
 test('thread: a model turn is one plain row "You switched this feature to <model> on <Harness> · <time>"', async () => {
   const { host } = await openFeature({ turns: [roundTurn(2), answersTurn(3, 2),
-    turn(4, 'model', { modelLabel: 'Gemini Flash', at: '2026-11-09T14:02:00', payload: { engine: 'gemini', model: 'gem-flash', effort: null, from: { engine: 'codex', model: 'gpt-sol' } } })] });
+    turn(4, 'model', { at: '2026-11-09T14:02:00', payload: { engine: 'gemini', model: 'gem-flash', effort: null, from: { engine: 'codex', model: 'gpt-sol' } } })] });
   const row = host.querySelector('.req-step-switch');
-  assert.equal(text(row), 'You switched this feature to Gemini Flash on Gemini CLI · 9 Nov, 14:02');
+  assert.equal(text(row), 'You switched this feature to gem-flash on Gemini CLI · 9 Nov, 14:02');
   assert.equal(row.querySelector('button'), null);
 });
 
@@ -813,7 +813,7 @@ test('errors: a NOT_READY look stops with the D13 sentence, Change the model, Tr
   const { host, calls } = await openFeature({ f: F9({ lastError: "Codex isn't signed in. Sign in, or change the model." }),
     turns: [readyError('look')], extra: { 'POST /api/requirements/4/retry': { feature: F9(), turns: [] } } });
   const box = host.querySelector('.req-error');
-  assert.equal(box.getAttribute('role'), 'alert');
+  assert.equal(box.getAttribute('role'), 'status', 'a repaint does not announce it again');
   assert.equal(text(box.querySelector('.req-error-title')), 'Code look stopped');
   assert.equal(text(box.querySelector('.req-step-meta')), 'GPT-5.6 Sol on Codex · nothing spent');
   assert.equal(text(box.querySelector('.req-error-text')), "Codex isn't signed in. Sign in, or change the model.");
@@ -894,7 +894,9 @@ test('costSentence: billed only, estimated only, unknown only, weekly, with no l
   assert.equal(costSentence(COSTS({ billedUsd: 0, estimatedUsd: 0.04, unknownSteps: 0, totalUsd: 0.04, limitUsd: null })),
     '≈$0.04 estimated. The Requirements budget counts ≈$0.04 this month.');
   assert.equal(costSentence(COSTS({ billedUsd: 0, estimatedUsd: 0, unknownSteps: 2, totalUsd: 0, anyEstimated: false, resetPeriod: 'weekly' })),
-    '2 steps with cost unknown. The Requirements budget counts $0.00 of $5.00 this week; the 2 steps with cost unknown are not counted.');
+    '2 steps with cost unknown. The Requirements budget counts nothing of $5.00 this week; the 2 steps with cost unknown are not counted.');
+  assert.equal(costSentence(COSTS({ billedUsd: 0, estimatedUsd: 0, unknownSteps: 1, totalUsd: 0, anyEstimated: false, limitUsd: null })),
+    '1 step with cost unknown. The Requirements budget counts nothing this month; the step with cost unknown is not counted.');
 });
 
 test('cost chip: plain "$0.25 so far" without an estimate; a costs read that fails says so and opens nothing', async () => {
@@ -936,4 +938,22 @@ test('styles: the step rows, notices, error and cost dialog rules sit inside the
   const lines = css.slice(start, end).split('\n').filter((l) => /req-step-|req-error-|req-cost-|req-file-skipped/.test(l));
   assert.ok(lines.length > 0);
   assert.ok(lines.every((l) => !/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(l)), 'tokens only');
+});
+
+test('cost chip: "Cost unknown so far" when every step is unknown; money with unknown parts keeps the money; no steps keeps $0.00', async () => {
+  const chip = async (o) => text((await openFeature({ f: F9(o) })).host.querySelector('[data-ui="cost-chip"]'));
+  assert.equal(await chip({ costUsd: 0, unknownSteps: 2 }), 'Cost unknown so far');
+  assert.equal(await chip({ costUsd: 0.25, unknownSteps: 1, anyEstimated: true }), '≈$0.25 so far');
+  assert.equal(await chip({ costUsd: 0.1, unknownSteps: 1 }), '$0.10 so far');
+  assert.equal(await chip({ costUsd: 0, unknownSteps: 0 }), '$0.00 so far');
+});
+
+test('cost dialog: "So far" says "cost unknown" when the total is 0 and steps are unknown', async () => {
+  const data = COSTS({ rows: [{ step: 'round', label: 'Round 1', ranOn: 'GPT-5.6 Sol on Codex', usd: null, kind: 'unknown' }], billedUsd: 0, estimatedUsd: 0, unknownSteps: 1, totalUsd: 0, anyEstimated: false });
+  const { host } = await openFeature({ f: F9({ costUsd: 0, unknownSteps: 1 }), extra: { 'GET /api/requirements/4/costs': data } });
+  host.querySelector('[data-ui="cost-chip"]').click();
+  await settle();
+  const last = [...dialogEl().querySelectorAll('tbody tr')].at(-1);
+  assert.deepEqual([...last.children].map((c) => text(c)), ['So far', 'cost unknown']);
+  assert.ok(!/$0.00/.test(dialogEl().textContent));
 });

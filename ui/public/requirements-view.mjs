@@ -839,7 +839,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           ? `Worca does not do a code look: ${GIT_MISSING_TEXT}. It starts asking right away.`
           : scopeType === 'workspace'
             ? "Worca does a code look of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca."
-            : "Worca looks at this project's code once, read-only, to learn what already exists. Change that in Your notes for Worca." });
+            : "Worca does a code look of this project once, read-only, to learn what already exists. Change that in Your notes for Worca." });
       if (lookHint.parentNode) lookHint.replaceWith(next);
       lookHint = next;
       // with a brief, or without git, the code look's cost is not said: only the words after the dot change (A7 §6 / §9)
@@ -1755,14 +1755,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       message: last.payload.message || f.lastError, docsUrl: last.payload.docsUrl, retry });
   }
   /** A NOT_READY stop of a step: shared by the thread's error and a Feature chat reply. */
-  function notReadyBlock(f, { title, item, message, docsUrl, retry, cls = 'req-error' }) {
+  function notReadyBlock(f, { title, item, message, docsUrl, retry, cls = 'req-error', locked = false }) {
     const safe = typeof docsUrl === 'string' && /^https?:\/\//i.test(docsUrl) ? docsUrl : null;
     const harness = item && item.engine ? engineLabel(item.engine) : null;
-    return h('div', { class: `${cls} form-msg err`, role: 'alert' },
+    return h('div', { class: `${cls} form-msg err`, role: 'status' },
       h('div', { class: 'req-round-head' }, h('b', { class: 'req-error-title', text: title }), stepMetaEl(item, { error: true })),
       h('p', { class: 'req-error-text', text: message }),
       h('div', { class: 'req-error-btns' },
-        h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'error-change-model', onclick: (e) => { void openModelDialog(current && current.f.seq === f.seq ? current.f : f, e.currentTarget); } }, 'Change the model'),
+        h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'error-change-model', disabled: !!locked, onclick: (e) => { void openModelDialog(current && current.f.seq === f.seq ? current.f : f, e.currentTarget); } }, 'Change the model'),
         retry,
         safe ? h('a', { class: 'req-error-docs', href: safe, target: '_blank', rel: 'noopener noreferrer', text: `How to sign in to ${harness || 'the harness'}` }) : null));
   }
@@ -3346,7 +3346,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const retry = ctx.newest && !ctx.answering && !ctx.archived
         ? h('button', { type: 'button', class: 'btn btn-sm req-help-retry', 'data-ui': 'helper-retry', disabled: ctx.working,
           onclick: () => helperPost(f, 'POST', '/retry', 'helper-in') }, 'Try again') : null;
-      return notReadyBlock(f, { title: 'Feature chat stopped', item: m, message: m.error.message || HELP_FAILED, docsUrl: m.error.docsUrl, retry, cls: 'req-help-fail req-help-notready' });
+      return notReadyBlock(f, { title: 'Feature chat stopped', item: m, message: m.error.message || HELP_FAILED, docsUrl: m.error.docsUrl, retry, cls: 'req-help-fail req-help-notready', locked: ctx.archived });
     }
     const again = ctx.newest && !ctx.answering && !ctx.archived
       ? h('button', { type: 'button', class: 'btn btn-sm req-help-retry', 'data-ui': 'helper-retry', disabled: ctx.working,
@@ -3586,6 +3586,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     openModal(dlg.card, { trigger, first: dlg.first, canClose: () => !busy });
   }
 
+  /** The header chip: "Cost unknown so far" when every step's cost is unknown, else the money (≈ when any part is estimated). */
+  const costChipText = (f) => (!(Number(f.costUsd) > 0) && Number(f.unknownSteps) > 0 ? 'Cost unknown so far' : `${f.anyEstimated ? '≈' : ''}${usd(f.costUsd)} so far`);
   /** Board 6: the cost list, from GET /:seq/costs; the focus goes into the dialog and back to the chip. */
   async function openCostDialog(f, trigger) {
     closeDialog(false);
@@ -3626,7 +3628,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           h('span', { class: 'chip', text: targetLabel(f) }),
           h('span', { class: 'chip', text: done ? `Interview done · ${plural(rounds, 'round')}` : `Round ${Math.min(rounds || 1, MAX_ROUNDS)} of ${MAX_ROUNDS}` }),
           h('button', { type: 'button', class: 'chip req-cost-chip', 'data-ui': 'cost-chip', 'aria-haspopup': 'dialog',
-            onclick: (e) => { void openCostDialog(f, e.currentTarget); } }, `${f.anyEstimated ? '≈' : ''}${usd(f.costUsd)} so far`),
+            onclick: (e) => { void openCostDialog(f, e.currentTarget); } }, costChipText(f)),
           f.modelLabel ? modelChip(document, f, (btn) => { void openModelDialog(f, btn); }) : null,   // 9c board 3: after the cost chip
           (f.attachments || []).length ? h('span', { class: 'chip', text: plural(f.attachments.length, 'file') }) : null,   // A8 (board 16)
           f.savedPath ? h('span', { class: 'chip', text: `Saved as ${f.savedPath}` }) : null,

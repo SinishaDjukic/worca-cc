@@ -288,6 +288,16 @@ test('GET /:seq/helper: each reply carries its engine, notices, model label and 
   assert.deepEqual([m.engine, m.notices, m.modelLabel, m.costKind], ['codex', ['Cost estimated: Codex reports none.'], 'GPT Everyday', 'estimated']);
 });
 
+test('feature view: a model turn carries the label of the model it switched to; unknownSteps counts unknown costs', async () => {
+  const f = featureOn('codex', 'gpt-everyday');
+  const t = appendTurn(f.seq, { kind: 'model', payload: { engine: 'codex', model: 'gpt-everyday', effort: null, from: null } });
+  const r = appendTurn(f.seq, { kind: 'round', payload: {} });
+  recordRequirementsCostDelta({ featureSeq: f.seq, turnId: r, amountUsd: 0, model: 'gpt-everyday', engine: 'codex', step: 'round', costKind: 'unknown' });
+  const v = (await call('GET', `${P}/${f.seq}`)).json;
+  assert.equal(v.turns.find((x) => x.id === t).modelLabel, 'GPT Everyday');
+  assert.equal(v.feature.unknownSteps, 1);
+});
+
 test('GET /:seq/costs: a file read is "File read · <name>"', async () => {
   const f = featureOn('claude', 'claude-opus-x');
   addAttachments(own(f), [png], { by: 'po' }, deps);
