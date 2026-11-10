@@ -1291,6 +1291,8 @@ if (!ONLY_A6 && !ONLY_9C) {
 // Nothing here makes a real model call. Runs alone with --only=9c.
 if (!ONLY_A6 && !ONLY_A61) {
   const { settingsFile, readSettings } = await import(new URL('../src/core/settings.mjs', import.meta.url).href);
+  // settingsFile() is under HOME / USERPROFILE (settings.mjs defaultRoot), not WORCA_HOME: this write reaches the proof's temp home
+  // only because the top of this file points WORCA_HOME, HOME and USERPROFILE at it. Never run this section without that.
   const cur = readSettings();
   writeFileSync(settingsFile(), JSON.stringify({ ...cur, models: [...(Array.isArray(cur.models) ? cur.models : []), { id: 'gemini-3-pro', label: 'Gemini 3 Pro', engine: 'gemini' }] }, null, 2));
   const dir9c = path.join(home, 'orders9c');

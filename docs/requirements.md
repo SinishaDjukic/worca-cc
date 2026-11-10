@@ -237,8 +237,10 @@ Worca stores no more of it than before.
 
 **Cost words.** "$0.03" is billed, "≈$0.04" is estimated from list prices because that harness reports none ("Cost estimated:
 Gemini CLI reports none."), and "cost unknown" means no price is known: never "$0.00". The feature's chip shows ≈ as soon as any
-part is estimated. Estimated costs count toward the Requirements budget; steps with cost unknown cannot, so the budget says "plus
-N steps with cost unknown".
+part is estimated, and "Cost unknown so far" when every step's cost is unknown; the dialog's total then reads "cost unknown".
+Estimated costs count toward the Requirements budget; steps with cost unknown cannot. The dialog's budget line says so ("The
+Requirements budget counts nothing of $50.00 this month; the step with cost unknown is not counted."), and the list's line says
+"plus N steps with cost unknown".
 
 **Changing a running feature.** The chip after the cost chip names the model and harness; it opens **Model for this feature**
 with the same three selects. A change applies from the next step: a step already running keeps its model, and steps already done

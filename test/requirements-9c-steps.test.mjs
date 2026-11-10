@@ -609,7 +609,7 @@ for (const [engine, w] of Object.entries(WHOLE)) {
       const seq = (made.json.feature || made.json).seq;
       await settled(seq);
       const f = { seq };
-      addAttachments(own(f), [textFile('policy.md', 'Refunds in 14 days.')], { by: 'po' }, d);
+      addAttachments(own(f), [textFile('policy.md', 'Refunds in 14 days.'), pngFile('screen.png')], { by: 'po' }, d);
       await readsSettled(own(f));
       await sendMessage(seq, { text: 'Who may cancel?' }, { by: 'po' }, d);
 
@@ -617,9 +617,15 @@ for (const [engine, w] of Object.entries(WHOLE)) {
       assert.equal(calls.length, w.repo ? 4 : 3);
       assert.ok(calls.every((c) => c.engine === engine));
       const [look, round, read, chat] = w.repo ? calls : [null, ...calls];
-      if (w.repo) { assert.equal(look.sandbox, 'read-only'); assert.ok(look.mcpConfigPath); assert.equal(configs.at(-1).roots.length, 1); }
-      for (const c of [round, read, chat]) { assert.equal(c.askLockdown, true); assert.equal(c.sandbox, 'read-only'); assert.equal(c.mcpConfigPath, undefined); assert.equal(c.model, w.model); }
+      // the look is the repo profile (the classifier's read-only look shape: sandbox read-only + files server + REPO_LOOK_TOOLS), not the lockdown
+      if (w.repo) { assert.equal(look.sandbox, 'read-only'); assert.equal(look.askLockdown, undefined); assert.equal(look.envScrub, undefined); assert.ok(look.mcpConfigPath); assert.equal(configs.at(-1).roots.length, 1); }
+      for (const c of [round, read, chat]) { assert.equal(c.askLockdown, true); assert.equal(c.envScrub, true); assert.equal(c.sandbox, 'read-only'); assert.equal(c.mcpConfigPath, undefined); assert.equal(c.model, w.model); }
       assert.equal(read.readGuard, undefined);
+      // the PNG is skipped with its words and never sent: only policy.md was read
+      const png = listAttachments('feature', seq).find((x) => x.name === 'screen.png');
+      assert.equal(png.status, 'failed');
+      assert.equal(png.error.code, 'SKIPPED_ENGINE');
+      assert.equal(png.error.message, `screen.png skipped: ${w.label} gets files as text only.`);
 
       // the stored notices
       const turns = listTurns(seq);
