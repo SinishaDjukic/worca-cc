@@ -26,6 +26,8 @@ on:
     paths:
       - "**"
       - "!docs/**"
+  # On demand: the Kubernetes end-to-end job (k8s-smoke) runs only from here.
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -54,6 +56,7 @@ jobs:
       pull-requests: read
     outputs:
       engine: ${{ steps.filter.outputs.engine }}
+      helm: ${{ steps.filter.outputs.helm }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -61,6 +64,11 @@ jobs:
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           filters: |
+            helm:
+              - 'deploy/helm/**'
+              - 'test/helm-*'
+              - 'test/fixtures/helm/**'
+              - '.github/workflows/ci.yml'
             engine:
               - 'src/**'
               - 'ui/server.mjs'
@@ -413,6 +421,34 @@ jobs:
       - name: Mock-mode smoke inside the image
         run: npm run docker:smoke -- --image ghcr.io/sinishadjukic/worca:ci
 
+      # The worker image (docs/workers.md): the `worker` target with Claude Code only, slim,
+      # amd64, loaded locally; then its contract (uid 1000, no sudo, exit 78 without an
+      # assignment, `--check`, WORCA_NO_DB, SIGTERM). The other engines are built by the
+      # release workflow.
+      - name: Build worker image (claude, slim, amd64)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: worker
+          load: true
+          tags: ghcr.io/sinishadjukic/worca-worker:ci
+          build-args: |
+            WORCA_TARBALL=${{ steps.pack.outputs.tarball }}
+            CLAUDE_CODE_VERSION=${{ steps.pack.outputs.claude_code }}
+            VARIANT=slim
+            ENGINE=claude
+            APT_REFRESH=${{ steps.pack.outputs.apt_refresh }}
+          cache-from: |
+            type=gha,scope=ci-worker-claude
+            type=gha,scope=ci-slim
+          cache-to: type=gha,scope=ci-worker-claude,mode=max
+
+      - name: Worker contract smoke + controller/worker end to end
+        # Both images: the worker's contract, then the controller under WORCA_EXECUTOR=docker
+        # running a mock script node on a worker container it starts and removes.
+        run: node tools/docker-smoke.mjs --image ghcr.io/sinishadjukic/worca:ci --worker-image ghcr.io/sinishadjukic/worca-worker:ci
+
       # Blocking: the Debian layer we ship. Node/npm library findings inside the
       # base image (e.g. node-tar under the bundled npm) are the node image's to
       # fix and arrive with the weekly rebuild's newer base, so they are reported
@@ -438,3 +474,82 @@ jobs:
           ignore-unfixed: true
           exit-code: "0"
           skip-setup-trivy: true
+
+  # The Helm chart (deploy/helm/worca, docs/kubernetes.md): lint, render with the default and
+  # the kind values, validate every rendered manifest against the Kubernetes schemas
+  # (kubeconform, a pinned release checked by sha256), and the chart's own test
+  # (test/helm-chart.test.mjs: contracts the executor backend relies on, golden files). Always
+  # on a push to dev; on a pull request only when the chart, its test or its fixtures changed
+  # (`changes` above). The same !cancelled() / != 'false' shape as the slow tier.
+  # The controller/worker topology end to end on a kind cluster (tools/k8s-smoke.mjs): builds both
+  # images, installs the chart with values-kind.yaml and runs a mock script node on a worker pod.
+  # Ten-plus minutes, so on demand only (Actions -> CI -> Run workflow), not on every PR; the
+  # chart itself is linted and rendered by the `helm` job on every change.
+  k8s-smoke:
+    name: Kubernetes end to end (kind)
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version-file: .nvmrc, cache: npm }
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.17.2
+      - uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+        with:
+          cluster_name: worca-smoke
+      - run: npm ci --ignore-scripts
+      - name: Build the images, install the chart, run a script node on a worker pod
+        run: node tools/k8s-smoke.mjs --cluster worca-smoke
+
+  helm:
+    name: Helm chart
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.helm != 'false') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      KUBECONFORM_VERSION: v0.8.0
+      KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.17.2
+
+      - name: Install kubeconform
+        run: |
+          curl -fsSL -o kubeconform.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  kubeconform.tar.gz" | sha256sum -c -
+          tar -xzf kubeconform.tar.gz kubeconform
+          sudo install -m 0755 kubeconform /usr/local/bin/kubeconform
+          rm -f kubeconform kubeconform.tar.gz
+          kubeconform -v
+
+      - name: helm lint
+        run: |
+          helm lint deploy/helm/worca
+          helm lint deploy/helm/worca -f deploy/helm/worca/values-kind.yaml
+
+      - name: helm template + kubeconform
+        run: |
+          for values in "" deploy/helm/worca/values-kind.yaml test/fixtures/helm/values-full.yaml; do
+            echo "::group::helm template ${values:-default}"
+            helm template worca deploy/helm/worca --namespace worca ${values:+-f "$values"} \
+              | kubeconform -strict -summary -ignore-missing-schemas -schema-location default
+            echo "::endgroup::"
+          done
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Chart test (contracts and golden files)
+        run: node --test test/helm-chart.test.mjs

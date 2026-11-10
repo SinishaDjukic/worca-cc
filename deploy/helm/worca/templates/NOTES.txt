@@ -1,0 +1,55 @@
+{{- $fullname := include "worca.fullname" . }}
+Worca {{ include "worca.imageTag" . }} is installing in namespace {{ .Release.Namespace }}:
+
+  controller  StatefulSet {{ $fullname }} (1 replica, executor {{ .Values.controller.executor }})
+  UI          Service {{ $fullname }}:{{ .Values.service.port }}
+  workers     Service {{ include "worca.workersServiceName" . }}:{{ .Values.controller.workerPort }} (cluster-internal: worker pods connect back here)
+{{- if .Values.broker.enabled }}
+  broker      Deployment {{ include "worca.brokerServiceName" . }} ({{ .Values.broker.mode }} mode), Service :8080 private, :8081 key page
+{{- end }}
+
+Watch it come up:
+
+  kubectl -n {{ .Release.Namespace }} rollout status statefulset/{{ $fullname }}
+  kubectl -n {{ .Release.Namespace }} logs statefulset/{{ $fullname }} -f
+
+{{- if .Values.ingress.enabled }}
+
+The UI is on the Ingress:
+{{- range .Values.ingress.hosts }}
+  https://{{ .host }}
+{{- end }}
+WORCA_ALLOWED_HOSTS is set to those hosts{{ if hasKey .Values.controller.env "WORCA_ALLOWED_HOSTS" }} (from controller.env){{ end }}. A host besides
+localhost needs an identity check, or the server refuses to start: set WORCA_CF_ACCESS_TEAM_DOMAIN
+and WORCA_CF_ACCESS_AUD (Cloudflare Access) or WORCA_IDENTITY_ISSUER in controller.env.
+{{- if not (or (hasKey .Values.controller.env "WORCA_CF_ACCESS_TEAM_DOMAIN") (hasKey .Values.controller.env "WORCA_IDENTITY_ISSUER") (hasKey .Values.controller.env "WORCA_INSECURE_NO_IDENTITY_CHECK")) }}
+
+  WARNING: controller.env has neither WORCA_CF_ACCESS_TEAM_DOMAIN nor WORCA_IDENTITY_ISSUER.
+  The controller will log the reason and exit until one is set.
+{{- end }}
+{{- else }}
+
+No Ingress: reach the UI from your machine (the Host guard accepts localhost):
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ $fullname }} {{ .Values.service.port }}:{{ .Values.service.port }}
+  open http://localhost:{{ .Values.service.port }}
+{{- end }}
+
+Check it:
+
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+  kubectl -n {{ .Release.Namespace }} get pods -l worca.dev/instance={{ include "worca.instanceId" . }} -w   # worker pods, while a run is active
+
+{{- if not (or .Values.secrets.existingSecret .Values.secrets.create) }}
+
+No controller Secret is configured (secrets.existingSecret / secrets.create): fine for mock runs
+(controller.env WORCA_MOCK=1). Real runs need CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
+in worker.credentialsSecret, or the broker (broker.enabled). docs/kubernetes.md, Credentials.
+{{- end }}
+{{- if .Values.storage.shared.hostPath.enabled }}
+
+storage.shared.hostPath is on: the shared volume is a directory on one node. For kind and
+minikube only.
+{{- end }}
+
+Docs: https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/kubernetes.md

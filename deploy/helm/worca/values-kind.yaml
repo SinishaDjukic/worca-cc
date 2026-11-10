@@ -1,0 +1,40 @@
+# kind / minikube: a single-node cluster with no ReadWriteMany storage class.
+#
+#   kind create cluster --name worca
+#   helm install worca deploy/helm/worca -n worca --create-namespace -f deploy/helm/worca/values-kind.yaml
+#   kubectl -n worca port-forward svc/worca 4317:4317   # http://localhost:4317
+#
+# A hostPath PersistentVolume on the node stands in for the RWX claim (every pod is on the one
+# node, so "many writers" is one kernel), the init container makes its directories writable by
+# uid 1000 (kubelet creates hostPath directories root-owned, and fsGroup does not reach them),
+# and WORCA_MOCK=1 runs the pipeline without Claude calls or spend.
+
+storage:
+  shared:
+    hostPath:
+      enabled: true
+      path: /var/lib/worca-shared
+    prepare:
+      enabled: true
+    size: 10Gi
+  db:
+    size: 1Gi
+
+controller:
+  env:
+    WORCA_MOCK: "1"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 2Gi
+
+worker:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 2Gi
+  tmpSizeLimit: 512Mi

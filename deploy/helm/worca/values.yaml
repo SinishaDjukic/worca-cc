@@ -1,0 +1,272 @@
+# Default values for the worca chart. docs/kubernetes.md explains the topology; README.md
+# beside this file is the values reference.
+#
+# One always-on controller pod (the `worca ui` process: orchestrator, scheduler, SQLite, UI)
+# and ephemeral worker pods, one per run and one per chat thread, that the controller creates
+# through the `kubernetes` executor and removes afterwards. Controller and workers share files
+# through one ReadWriteMany claim mounted at identical paths (/worca, /projects). SQLite lives
+# on the controller's own ReadWriteOnce volume (/worca-db): never on the shared one.
+
+image:
+  registry: ghcr.io
+  repository: sinishadjukic/worca
+  # The controller image tag; empty = Chart.appVersion. Also the worker tag (worker.image).
+  tag: ""
+  # slim | full: `full` adds the extra toolchains (tag suffix -full). Workers follow it unless
+  # worker.variant says otherwise.
+  variant: slim
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+#  - name: ghcr-pull
+
+nameOverride: ""
+fullnameOverride: ""
+
+# WORCA_INSTANCE_ID: names this instance in the worker pods it creates (label worca.dev/instance),
+# so two releases in one namespace never reap each other's workers. Empty = the release name.
+instanceId: ""
+
+controller:
+  # WORCA_EXECUTOR. `kubernetes` is what this chart is for; `local` runs agents inside the
+  # controller pod (no workers, no RBAC needed) like the Compose and Railway deployments.
+  executor: kubernetes
+  port: 4317        # the UI and API (the Service, the Ingress, the probes)
+  workerPort: 4319  # the workers' listener (the -workers Service; never on the Ingress)
+  # WORCA_DRAIN_TIMEOUT_MS: how long a stop waits for active runs to pause before the server
+  # exits. terminationGracePeriodSeconds is derived from it (drain + 40 s for the rest of the
+  # shutdown), so raise this, not the pod's grace period.
+  drainTimeoutMs: 20000
+  # Plain name: value environment for the controller. Overrides the chart's own entries of the
+  # same name (except NO_PROXY, which the chart manages: see extraNoProxy).
+  # WORCA_ALLOWED_HOSTS is derived from ingress.hosts when the Ingress is on and this map does
+  # not set it; it then needs WORCA_CF_ACCESS_TEAM_DOMAIN + WORCA_CF_ACCESS_AUD (or
+  # WORCA_IDENTITY_ISSUER), or the server refuses to start: it won't run unprotected.
+  env: {}
+  #  WORCA_CF_ACCESS_TEAM_DOMAIN: acme.cloudflareaccess.com
+  #  WORCA_CF_ACCESS_AUD: "<aud tag>"
+  #  GIT_AUTHOR_NAME: worca
+  #  GIT_AUTHOR_EMAIL: worca@example.com
+  #  TZ: Europe/Berlin
+  # Raw EnvVar entries (valueFrom etc.), appended after `env`.
+  extraEnv: []
+  # Extra envFrom sources (the secrets.* Secret is added by the chart).
+  envFrom: []
+  # Hosts the controller must reach without a corporate proxy, added to the chart's NO_PROXY
+  # (loopback, the -workers Service and, when enabled, the -broker Service).
+  extraNoProxy: ""
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      memory: 4Gi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  podLabels: {}
+  priorityClassName: ""
+  # The image runs as uid/gid 1000 (`worca`). fsGroup makes the ReadWriteOnce DB volume and
+  # block-backed shared volumes writable; NFS ignores fsGroup (docs/kubernetes.md, Storage).
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  # Probe timings. Startup: 60 x 5 s = 5 min for the first boot (migrations, the orphan sweep).
+  probes:
+    startup:
+      periodSeconds: 5
+      failureThreshold: 60
+    readiness:
+      periodSeconds: 10
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      failureThreshold: 6
+
+storage:
+  # SQLite: the controller's own ReadWriteOnce claim (a volumeClaimTemplate), mounted at
+  # /worca-db (WORCA_DB_DIR). The access mode must stay ReadWriteOnce: the template fails
+  # otherwise, because SQLite on a network file system corrupts under concurrent access.
+  db:
+    storageClassName: ""   # empty = the cluster default
+    size: 5Gi
+    accessModes: ["ReadWriteOnce"]
+  # The ReadWriteMany claim controller and workers share: worca home (subPath `worca` -> /worca)
+  # and the projects (subPath `projects` -> /projects, unless projects.existingClaim).
+  shared:
+    existingClaim: ""      # use this claim instead of creating one
+    storageClassName: ""   # an RWX class: NFS, CephFS, EFS, Filestore, Azure Files NFS, Longhorn
+    size: 50Gi
+    accessModes: ["ReadWriteMany"]
+    # kind/minikube only: a hostPath PersistentVolume stands in for an RWX class. Single node.
+    hostPath:
+      enabled: false
+      path: /var/lib/worca-shared
+      nodeName: ""         # pin the PV to one node when the cluster has several
+    # An init container (root, the controller image) that creates the `worca` and `projects`
+    # directories on the shared claim and the DB directory, owned by uid 1000. Needed where
+    # fsGroup does not apply (hostPath, some NFS exports); harmless elsewhere.
+    prepare:
+      enabled: false
+  # Mount a separate claim at /projects (the repositories) instead of the shared claim's
+  # `projects` subPath. It must be ReadWriteMany too: workers check out there.
+  projects:
+    existingClaim: ""
+
+# The controller's secrets (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY, GH_TOKEN or the
+# GitHub App variables, WORCA_BROKER_SECRET when the broker is on, ...), as envFrom.
+# These are the controller's: workers get worker.credentialsSecret, never this Secret.
+secrets:
+  existingSecret: ""   # an existing Secret's name
+  create: false        # or let the chart create <fullname>-secrets from `values`
+  values: {}
+  #  CLAUDE_CODE_OAUTH_TOKEN: "..."
+  #  GH_TOKEN: "..."
+
+worker:
+  image:
+    registry: ghcr.io
+    repository: sinishadjukic/worca-worker
+    # WORCA_K8S_WORKER_IMAGE: the backend fills {version} (image.tag), {engine} (claude, codex,
+    # ...) and {variant} ("" or -full) when it picks an image for a run's engine.
+    tagPattern: "{version}-{engine}{variant}"
+  # slim | full; empty = image.variant (WORCA_K8S_WORKER_VARIANT).
+  variant: ""
+  # Per-engine overrides, passed to the backend as WORCA_K8S_ENGINES (JSON) when set:
+  # a fixed image instead of the pattern, a different variant, different resources.
+  engines: {}
+  #  claude:
+  #    image: ""
+  #    variant: full
+  #    resources:
+  #      limits: { memory: 8Gi }
+  # WORCA_K8S_RESOURCES: the worker container's resources, also written into the pod template.
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      memory: 4Gi
+  # WORCA_K8S_ACTIVE_DEADLINE_S: a worker pod older than this is killed by Kubernetes.
+  activeDeadlineSeconds: 86400
+  # WORCA_K8S_PENDING_TIMEOUT_MS: give up on a worker that stays Pending (no node, no image).
+  pendingTimeoutSeconds: 300
+  # WORCA_WORKER_CHAT_IDLE_MS: a chat worker with nothing to do leaves after this long.
+  idleTimeoutSeconds: 900
+  # WORCA_WORKER_MAX: workers at once; a run past this waits for a free slot.
+  maxWorkers: 20
+  # A Secret the worker pods take as envFrom (optional): the credentials agents may hold, e.g.
+  # CLAUDE_CODE_OAUTH_TOKEN when the broker is off. Keep GitHub tokens out of it.
+  credentialsSecret: ""
+  # name: value environment for every worker (the backend appends its own: controller URL,
+  # token, scope, id).
+  env: {}
+  # Extra envFrom sources for the workers.
+  envFrom: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  priorityClassName: ""
+  # emptyDir limits: /tmp (checkouts' build output, npm caches) and /dev/shm (browsers).
+  tmpSizeLimit: 2Gi
+  shmSizeLimit: 256Mi
+  terminationGracePeriodSeconds: 30
+  readOnlyRootFilesystem: false
+  podAnnotations: {}
+  podLabels: {}
+
+# The credential broker (docs/credential-broker.md): model keys live in this second service,
+# never in the controller or the workers. A Deployment from the controller image with
+# `args: [worca, broker]`, its own ReadWriteOnce claim at /data, a Service on 8080 (private,
+# what WORCA_BROKER_URL points at) and 8081 (the key page, optionally behind keyPage.ingress).
+broker:
+  enabled: false
+  mode: single           # WORCA_BROKER_MODE: single | multi
+  host: 0.0.0.0          # WORCA_BROKER_HOST (`::` needs an IPv6-capable pod network)
+  # The broker's Secret as envFrom: WORCA_BROKER_SECRET (also in secrets.* for the controller),
+  # WORCA_BROKER_KEY_ANTHROPIC (single mode), WORCA_BROKER_VAULT_KEY (multi mode), ...
+  existingSecret: ""
+  env: {}
+  #  WORCA_BROKER_PUBLIC_URL: https://worca-keys.example.com
+  #  WORCA_CF_ACCESS_TEAM_DOMAIN: acme.cloudflareaccess.com
+  #  WORCA_CF_ACCESS_AUD: "<the key page's aud tag>"
+  storage:
+    storageClassName: ""
+    size: 1Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  keyPage:
+    ingress:
+      enabled: false
+      className: ""
+      annotations: {}
+      hosts: []
+      #  - host: worca-keys.example.com
+      #    paths:
+      #      - path: /
+      #        pathType: Prefix
+      tls: []
+
+service:
+  type: ClusterIP
+  port: 4317
+  annotations: {}
+
+# The UI only. The workers' port is never exposed here. With the Ingress on, set the Access
+# variables in controller.env (see NOTES after install, and docs/kubernetes.md).
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: worca.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: worca-tls
+  #    hosts: [worca.example.com]
+
+rbac:
+  create: true
+  # pods/log get: the controller reads a worker's log when it fails to connect.
+  podLogs: true
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Workers: no ingress at all; egress only to the controller's worker port, the broker (when
+# on), cluster DNS and the public internet (workerEgressCidrs minus workerEgressExceptCidrs:
+# RFC 1918 and the cloud metadata address by default). Needs a CNI that enforces
+# NetworkPolicy (Calico, Cilium, ...; kind's default does not).
+networkPolicy:
+  enabled: false
+  workerEgressCidrs:
+    - 0.0.0.0/0
+  workerEgressExceptCidrs:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 169.254.169.254/32
+
+# Off by default: with one replica, minAvailable 1 blocks every node drain until someone
+# deletes the pod by hand. A drain's eviction is a SIGTERM, and the controller's drain
+# (pause the runs, auto-resume on the next start) is the real protection.
+pdb:
+  enabled: false

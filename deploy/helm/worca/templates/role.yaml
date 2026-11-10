@@ -1,0 +1,21 @@
+{{- if .Values.rbac.create }}
+# What the kubernetes executor backend needs, in this namespace only: it creates one Pod per
+# run or chat thread, watches it, deletes it afterwards, and sweeps the orphans of a previous
+# controller at boot (list). pods/log: a failed worker's log in the run's error message.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "worca.fullname" . }}-workers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "worca.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  {{- if .Values.rbac.podLogs }}
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  {{- end }}
+{{- end }}

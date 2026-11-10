@@ -1,0 +1,21 @@
+apiVersion: v2
+name: worca
+description: >-
+  Worca on Kubernetes: one always-on controller (orchestrator, scheduler, SQLite, web UI)
+  that starts an ephemeral worker pod per run and per chat thread, sharing files through
+  an RWX volume. See docs/kubernetes.md in the Worca repository.
+type: application
+version: 0.1.0
+# The @worca/app version this chart deploys by default (package.json "version"). The controller
+# image tag and the worker image tag default to it; `image.tag` overrides both.
+appVersion: "1.19.0-rc.1"
+home: https://docs.worca.dev
+sources:
+  - https://github.com/SinishaDjukic/worca-cc
+keywords:
+  - worca
+  - agents
+  - claude-code
+maintainers:
+  - name: Sinisha Djukic
+    url: https://github.com/SinishaDjukic

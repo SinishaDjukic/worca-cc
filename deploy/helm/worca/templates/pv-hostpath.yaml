@@ -1,0 +1,33 @@
+{{- if and .Values.storage.shared.hostPath.enabled (not .Values.storage.shared.existingClaim) }}
+# kind / minikube only: a directory on the (single) node stands in for a ReadWriteMany class.
+# Every pod lands on that node, so "many writers" is one kernel and the sharing is real. On a
+# multi-node cluster set storage.shared.hostPath.nodeName, or use an RWX storage class.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "worca.fullname" . }}-shared
+  labels:
+    {{- include "worca.labels" . | nindent 4 }}
+spec:
+  capacity:
+    storage: {{ .Values.storage.shared.size }}
+  accessModes:
+    {{- toYaml .Values.storage.shared.accessModes | nindent 4 }}
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  claimRef:
+    namespace: {{ .Release.Namespace }}
+    name: {{ include "worca.sharedClaimName" . }}
+  hostPath:
+    path: {{ .Values.storage.shared.hostPath.path | quote }}
+    type: DirectoryOrCreate
+  {{- with .Values.storage.shared.hostPath.nodeName }}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: [{{ . | quote }}]
+  {{- end }}
+{{- end }}
