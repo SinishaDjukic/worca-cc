@@ -171,7 +171,7 @@ test('Test a version knows when the person\'s plugins are off (D70, D78)', () =>
   assert.equal(connectorNotes({ engines: ['claude'], mode: 'pretend' }).personalOff, true);
   assert.equal(connectorNotes({ engines: ['claude'], mode: 'real' }).personalOff, false);
   assert.equal(connectorNotes({ engines: ['codex'], mode: 'pretend' }).personalOff, false);
-  assert.deepEqual(connectorNotes({ engines: ['claude', 'codex'], mode: 'pretend' }).engines, ['Codex']);
+  assert.deepEqual(connectorNotes({ engines: ['claude', 'codex'], mode: 'pretend' }).engines, ['OpenAI Codex']);   // the catalog's name
 });
 
 test('the before phase gives back the copy it held (U-T1): nothing stays busy after the test', async () => {

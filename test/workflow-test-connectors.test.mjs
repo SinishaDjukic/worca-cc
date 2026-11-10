@@ -91,7 +91,7 @@ test('the dialog notes: a project-file server has its own reason; steps on anoth
   const n = connectorNotes({ copies: [{ name: 'slack_team', untested: false }], fileServers: ['files_srv', 'slack_team'],
     engines: ['codex', 'claude', 'codex', 'goose'] });
   assert.deepEqual(n.off, [{ name: 'files_srv', reason: 'file-server' }], 'a registry copy of the same name is not a file server');
-  assert.deepEqual(n.engines, ['Codex', 'Goose']);
+  assert.deepEqual(n.engines, ['OpenAI Codex', 'Goose']);   // the engine catalog's own names (dev renamed Codex)
   assert.equal(fileServerOffLine('files_srv'), "files_srv is switched off: Worca can't pretend for servers from a project file.");
   assert.equal(engineNoteLine('Codex'), "Steps on Codex can still use connectors from Codex's own settings. Pretend can't stop those.");
   // One engine per run (workflows.mjs resolveGraph `engine`): the agent steps run on the run's engine; scripts and flow
