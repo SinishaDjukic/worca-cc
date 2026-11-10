@@ -42,7 +42,7 @@ marked interrupted and nothing starts again by itself.
 ## Models
 
 A build has two kinds of agent: the **lead**, which plans the sections and puts them together, and the **builders**,
-one per section. Two model pickers in the composer and in the chat pick their models, and they work as the Chat
+one per section. Two model pickers pick their models (the gear in the composer and in the chat opens them), and they work as the Chat
 model picker: **Lead** `Opus 5.5` `high` and **Builders** `Sonnet 5.5` `medium`. Each opens a menu with **Default**,
 the models the design's engine runs (**More models** for the rest), and **Effort**.
 
@@ -60,7 +60,7 @@ dialog moves the design to Claude, its picks are dropped and Default applies.
 
 ## Build fast
 
-**Build fast** is a switch in the composer and in the chat. It sets how many agents build sections at once:
+**Build fast** is a switch behind the gear in the composer and in the chat, under the model pickers. It sets how many agents build sections at once:
 
 - **Off:** at most 3. The chat's label reads `up to 3`.
 - **On:** at most 12, and the label reads `up to 12`. On a [hosted](#hosted) worca it is at most 6, and the label

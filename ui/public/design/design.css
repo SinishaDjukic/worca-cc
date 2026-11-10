@@ -141,8 +141,18 @@ body.view-design .main{display:flex;flex-direction:column;overflow:hidden;paddin
 .dz-models{display:inline-flex;align-items:center;gap:2px;min-width:0;}
 .dz-model-btn{flex:none;white-space:nowrap;}
 .ask-pop.dz-model-pop{position:fixed;right:auto;bottom:auto;z-index:6;max-height:min(420px,70vh);}
-.dsc-models{display:flex;min-width:0;padding:0 0 4px;}
-.dsc-models .dz-models{flex-wrap:wrap;}
+/* The composer's settings popup (composer-settings.mjs): the two pickers as rows, then Build fast. The flyout writes its
+   viewport left and top, so it is fixed; a picker's menu opens beside it as its submenu. */
+.dz-set{display:inline-flex;}
+.dz-set-pop{position:fixed;width:264px;z-index:6;}
+.dz-set-pop .dz-models{display:flex;flex-direction:column;align-items:stretch;gap:0;}
+.dz-set-pop .dz-model-btn{justify-content:flex-start;width:100%;height:32px;padding:0 9px;border-radius:var(--r-sm);font-size:inherit;}
+.dz-set-pop .dz-model-btn .ask-model-btn-engine{flex:none;min-width:58px;text-align:left;color:var(--ink);}
+.dz-set-pop .dz-model-btn .ask-model-btn-label{min-width:0;overflow:hidden;text-overflow:ellipsis;font-weight:400;}
+.dz-set-pop .dz-model-btn > :last-child{flex:none;margin-left:auto;transform:rotate(-90deg);color:var(--ink-3);}
+.dz-set-pop .dz-fast{display:flex;width:100%;height:32px;padding:0 9px;font-size:inherit;cursor:pointer;}
+.dz-set-pop .dz-fast-n{font-size:var(--fs-meta);}
+.dz-set-pop .dz-fast .switch{order:2;margin-left:auto;}
 .dsc-user{align-items:flex-end;}
 .dsc-sent-pins{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;max-width:100%;}
 .dsc-sent-pin{padding-right:8px;}

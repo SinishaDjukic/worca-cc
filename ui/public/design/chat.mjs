@@ -14,6 +14,7 @@ import { createDotOrbs, turnPhase } from '../dot-orb.mjs';
 import { ATTACH_ACCEPT, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
 import { DESIGN_FAST_LABEL } from '../../../src/shared/design-names.mjs';
 import { createModelPills } from './model-pills.mjs';
+import { createComposerSettings } from './composer-settings.mjs';
 import { createBuildNarration, nameList } from './narration.mjs';
 import { currentLevel, levelShows } from '../ui-level.mjs';
 import { renderAskForm } from '../ask/form-renderer.mjs';
@@ -451,9 +452,11 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   stopBtn.hidden = true;
   const sendBtn = iconBtn('btn btn-primary btn-icon ask-send dsc-send', 'Send', 'arrow-up');
   const row = h('div', 'ask-composer-row dsc-row');
-  row.append(attachBtn, fileInput, pointBtn, sw.row, h('span', 'dz-spacer'), stopBtn, sendBtn);
+  // The models and Build fast sit in one popup behind a gear, so the row keeps to Attach, Point, the gear and Send.
+  const settings = createComposerSettings({ doc, win, mode: 'up' });
+  row.append(attachBtn, fileInput, pointBtn, settings.el, h('span', 'dz-spacer'), stopBtn, sendBtn);
   // The lead's and the builders' models, remembered on the design (PATCH): a change applies from the next round.
-  const pills = createModelPills({ doc, win, fetch: fetchFn, mode: 'up', url: () => (designId ? `/api/design/${enc(designId)}/models` : null),
+  const pills = createModelPills({ doc, win, fetch: fetchFn, mode: 'beside', parent: settings.panel, url: () => (designId ? `/api/design/${enc(designId)}/models` : null),
     save: async (role, pick) => {
       setNote('');
       try {
@@ -467,10 +470,9 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
         return 'The model was not saved.';
       }
     } });
-  const modelRow = h('div', 'dsc-models');
-  modelRow.append(pills.el);
+  settings.fill(pills.el, settings.divider(), sw.row);
   const box = h('div', 'ask-composer-box');
-  box.append(pinRow, fileRow, input, modelRow, row);
+  box.append(pinRow, fileRow, input, row);
   const composer = h('div', 'ask-composer dsc-composer');
   composer.append(liveEl, noteEl, box);
   const dropEl = h('div', 'dsc-drop');
@@ -1260,6 +1262,7 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
       destroyed = true;
       orbs.destroy();
       pills.destroy();
+      settings.destroy();
       root.remove();
     },
   };
