@@ -1,3 +1,6 @@
+> [!NOTE]
+> This project will soon move to a new organization: [github.com/worca-org](https://github.com/worca-org).
+
 # Worca
 
 [![npm](https://img.shields.io/npm/v/@worca/app)](https://www.npmjs.com/package/@worca/app)
