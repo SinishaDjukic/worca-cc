@@ -80,10 +80,11 @@ test('the whole flow in mock mode, with frames', async () => {
     assert.equal(typeof row.ready, 'number');
     assert.equal(row.latestRun, null);
     assert.ok(listed.lookCostUsd === null || typeof listed.lookCostUsd === 'number');
-    assert.match(listed.interview.model, /^claude-opus-/);
-    assert.ok(listed.interview.label && listed.interview.label.length > 0);
-    assert.equal(listed.interview.effort, 'medium');
-    assert.equal(listed.interview.source, 'default');
+    assert.equal(listed.interview.default.engine, 'claude');
+    assert.match(listed.interview.default.model, /^claude-opus-/);
+    assert.ok(listed.interview.default.label && listed.interview.default.label.length > 0);
+    assert.equal(listed.interview.default.effort, 'medium');
+    assert.equal(listed.interview.fallbackReason, null);
     assert.equal(typeof listed.spend.windowUsd, 'number');
     assert.ok('totalLimitUsd' in listed.spend);
     assert.deepEqual(listed.briefs, [], 'A7 §5: no scope has a brief row yet');
@@ -299,7 +300,7 @@ test('the list: interview is null (and the list still answers) when the intervie
 
 test('the list: a stubbed interview model shows its label (the id when the catalog has none) and effort', async () => {
   const r = await listWith({ interviewModel: async () => ({ model: 'my-unlisted-model', effort: 'high', source: 'settings' }) });
-  assert.deepEqual(r.json.interview, { model: 'my-unlisted-model', label: 'my-unlisted-model', effort: 'high', source: 'settings' });
+  assert.deepEqual(r.json.interview, { default: { engine: 'claude', model: 'my-unlisted-model', label: 'my-unlisted-model', effort: 'high' }, fallbackReason: null });
 });
 
 test('the list: lookCostUsd is the median of the current model own looks, never another model', async () => {
