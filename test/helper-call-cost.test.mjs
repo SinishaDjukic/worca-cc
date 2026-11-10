@@ -16,8 +16,14 @@ test('costOfResult: an override price wins over the reported cost and stays bill
   assert.deepEqual(r, { costUsd: 0.5, costKind: 'billed', inputTokens: 1000000, outputTokens: 0 });
 });
 
-test('costOfResult: a NaN billed cost is unknown, 0', () => {
-  const r = costOfResult({ engine: 'codex', model: 'm', event: { costUsd: 1, usage: null }, rates: null },
+test('costOfResult: an override that cannot price the usage keeps the finite CLI cost (billed)', () => {
+  const r = costOfResult({ engine: 'claude', model: 'm', event: { costUsd: 0.07, usage: null }, rates: null },
+    { resolveModelCost: () => NaN });
+  assert.deepEqual(r, { costUsd: 0.07, costKind: 'billed', inputTokens: null, outputTokens: null });
+});
+
+test('costOfResult: a non-finite CLI cost with no price is unknown, 0', () => {
+  const r = costOfResult({ engine: 'codex', model: 'm', event: { costUsd: 'abc', usage: null }, rates: null },
     { resolveModelCost: () => NaN });
   assert.deepEqual(r, { costUsd: 0, costKind: 'unknown', inputTokens: null, outputTokens: null });
 });
@@ -41,7 +47,9 @@ test('addCost: billed + estimated = estimated; unknown parts', () => {
   const b = (n) => ({ costUsd: n, costKind: 'billed' });
   const e = (n) => ({ costUsd: n, costKind: 'estimated' });
   const u = { costUsd: 0, costKind: 'unknown' };
-  assert.deepEqual(addCost(b(0.1), b(0.2)), { costUsd: 0.30000000000000004, costKind: 'billed' });
+  const sum = addCost(b(0.1), b(0.2));
+  assert.equal(sum.costKind, 'billed');
+  assert.ok(Math.abs(sum.costUsd - 0.3) < 1e-9);
   assert.equal(addCost(b(0.1), e(0.2)).costKind, 'estimated');
   assert.equal(addCost(e(0.1), e(0.2)).costKind, 'estimated');
   assert.deepEqual(addCost(u, u), { costUsd: 0, costKind: 'unknown' });

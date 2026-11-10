@@ -36,9 +36,12 @@ export function costOfResult({ engine, model, event, rates }, deps = {}) {
   const usage = ev.usage ?? null;
   const tokens = { inputTokens: tokenOf(usage, 'input_tokens', 'input'), outputTokens: tokenOf(usage, 'output_tokens', 'output') };
   if (ev.costUsd != null) {
-    const cost = resolve(model, Number(ev.costUsd), usage);
-    if (!Number.isFinite(cost)) return { costUsd: 0, costKind: 'unknown', ...tokens };
-    return { costUsd: cost, costKind: 'billed', ...tokens };
+    const raw = Number(ev.costUsd);
+    const cost = resolve(model, raw, usage);
+    if (Number.isFinite(cost)) return { costUsd: cost, costKind: 'billed', ...tokens };
+    // a price that cannot be applied (override without priceable usage) keeps the CLI's own figure, as today's Claude booking does
+    if (Number.isFinite(raw)) return { costUsd: raw, costKind: 'billed', ...tokens };
+    return { costUsd: 0, costKind: 'unknown', ...tokens };
   }
   if (rates && priceable(usage)) return { costUsd: estimate(usage, rates), costKind: 'estimated', ...tokens };
   return { costUsd: 0, costKind: 'unknown', ...tokens };
@@ -70,5 +73,5 @@ export function stepEstimate({ engine, model, step }, deps = {}) {
   if (input == null || output == null) return { usd: null, reason: 'no-estimate' };
   const priced = rates(engine, model);
   if (!priced) return { usd: null, reason: 'no-price' };
-  return { usd: round4(config.estimateCost({ input_tokens: input, output_tokens: output }, priced)), kind: 'priced' };
+  return { usd: round4((deps.estimateCost || config.estimateCost)({ input_tokens: input, output_tokens: output }, priced)), kind: 'priced' };
 }
