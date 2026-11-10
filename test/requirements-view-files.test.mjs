@@ -129,14 +129,14 @@ test('board 15: dropped files become chips (name, kind · size, ×); a refused o
 test('board 15: with files the cost words say each file is read once before round 1, about $X a file; "$0.05–0.20" without estimates', async () => {
   const { host, zone } = await openNew({ ...LIST, lookCostUsd: 0.25, readEstimates: { text: 0.05, image: null, binary: 0.12 } });
   const cost = () => host.querySelector('.req-new-cost').textContent;
-  assert.equal(cost(), 'Worca interviews with Opus 5.5 at medium effort · about $0.25 for the code look, then cents per round');
+  assert.equal(cost(), 'About $0.25 for the code look, then cents per round.');
   drop(zone, [mkFile('a.md', 'a')]);
-  assert.equal(cost(), 'Worca interviews with Opus 5.5 at medium effort · about $0.25 for the code look, reads each file once before round 1, about $0.05 a file, then cents per round');
+  assert.equal(cost(), 'About $0.25 for the code look, reads each file once before round 1, about $0.05 a file, then cents per round.');
   drop(zone, [mkFile('b.pdf', '%PDF-1.7', 'application/pdf')]);
-  assert.match(cost(), / · about \$0\.25 for the code look, reads each file once before round 1, about \$0\.05–0\.12 a file, then cents per round$/);
+  assert.match(cost(), /^About \$0\.25 for the code look, reads each file once before round 1, about \$0\.05–0\.12 a file, then cents per round\.$/);
   const none = await openNew({ ...LIST, readEstimates: { text: null, image: null, binary: null } });
   drop(none.zone, [mkFile('c.png', 'png', 'image/png')]);
-  assert.equal(none.host.querySelector('.req-new-cost').textContent, 'Worca interviews with Opus 5.5 at medium effort · reads each file once before round 1, about $0.05–0.20 a file, then cents per round');
+  assert.equal(none.host.querySelector('.req-new-cost').textContent, 'Reads each file once before round 1, about $0.05–0.20 a file, then cents per round.');
   const a2 = await openNew({ ...LIST, interview: null, lookCostUsd: null });
   assert.equal(a2.host.querySelector('.req-new-cost'), null, "A2's page without a look estimate has no cost line");
   drop(a2.zone, [mkFile('d.md', 'd')]);

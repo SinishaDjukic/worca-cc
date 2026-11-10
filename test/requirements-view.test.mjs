@@ -429,24 +429,20 @@ test('new feature: back link, heading, field blocks, the For select with its gro
   assert.doesNotMatch(host.textContent, /null|false|undefined/);
 });
 
-test('new feature: the hint says who interviews, then the cost (lane 2 replaces only the part after the dot)', async () => {
+test('new feature: the cost line carries the code look (9c: who interviews is the selects now, the old sentence is gone)', async () => {
   const hint = async (extra) => {
     fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([], extra) });
     const { host, view } = make();
     await view.show('new');
     assert.doesNotMatch(host.textContent, /null|false|undefined/);
+    assert.doesNotMatch(host.textContent, /Worca interviews with/);
+    assert.equal(host.querySelector('.req-new-model'), null);
     return host.querySelector('.req-new-cost');
   };
-  let el = await hint({ lookCostUsd: 0.25, interview: { model: 'claude-opus-5-5', label: 'Opus 5.5', effort: 'medium' } });
-  assert.equal(el.textContent, 'Worca interviews with Opus 5.5 at medium effort · about $0.25 for the code look, then cents per round');
-  assert.equal(el.querySelector('.req-new-model').textContent, 'Worca interviews with Opus 5.5 at medium effort');
+  let el = await hint({ lookCostUsd: 0.25, interview: { default: { engine: 'claude', model: 'claude-opus-5-5', label: 'Opus 5.5', effort: 'medium' }, fallbackReason: null } });
+  assert.equal(el.textContent, 'About $0.25 for the code look, then cents per round.');
   assert.ok(el.classList.contains('hint'));
-  el = await hint({ lookCostUsd: null, interview: { model: 'claude-opus-5-5', label: 'Opus 5.5', effort: 'medium' } });
-  assert.equal(el.textContent, 'Worca interviews with Opus 5.5 at medium effort · cents per round');
-  el = await hint({ lookCostUsd: 0.25, interview: { model: 'claude-sonnet-5', label: 'Sonnet 5', effort: null } });
-  assert.equal(el.querySelector('.req-new-model').textContent, 'Worca interviews with Sonnet 5');
-  el = await hint({ lookCostUsd: null, interview: { model: 'claude-sonnet-5', effort: null } });
-  assert.equal(el.textContent, 'Worca interviews with claude-sonnet-5 · cents per round', 'no label: the model id');
+  assert.equal(await hint({ lookCostUsd: null, interview: { model: 'claude-opus-5-5', label: 'Opus 5.5', effort: 'medium' } }), null);
   el = await hint({ lookCostUsd: 0.25, interview: null });
   assert.equal(el.textContent, 'About $0.25 for the code look, then cents per round.', "no interview info: today's hint");
   assert.equal(await hint({ lookCostUsd: null, interview: null }), null);
@@ -2669,7 +2665,7 @@ test('new feature: without a lookCost and with a brief nothing about the cost sh
   assert.equal(host.querySelector('.req-new-cost'), null);
 });
 
-test('new feature with a brief (A1.1 merged): the model part stays; only the words after the dot become "cents per round"', async () => {
+test('new feature with a brief (A1.1 merged): only the words after the dot become "cents per round"', async () => {
   const interview = { model: 'claude-opus-5-5', label: 'Opus 5.5', effort: 'high' };
   fakeApi({ ...NEW_TARGETS, 'GET /api/requirements': listOf([], { lookCostUsd: 0.25, interview, briefs: [usableBrief()] }) });
   const { host, view } = make();
@@ -2677,15 +2673,14 @@ test('new feature with a brief (A1.1 merged): the model part stays; only the wor
   const select = forField(host).querySelector('select');
   const cost = () => host.querySelector('.req-new-cost');
   assert.equal(select.value, 'project:shop-1');
-  assert.equal(cost().textContent, 'Worca interviews with Opus 5.5 at high effort · cents per round', 'board 13');
-  assert.equal(cost().querySelector('.req-new-model').textContent, 'Worca interviews with Opus 5.5 at high effort');
-  assert.equal(cost().hidden, false);
+  assert.equal(cost().hidden, true, 'board 13: with a brief there is no code look and nothing else to say');
   select.value = 'project:blog';   // no usable brief: A1.1's line as is
   select.dispatchEvent(new window.Event('change'));
-  assert.equal(cost().textContent, 'Worca interviews with Opus 5.5 at high effort · about $0.25 for the code look, then cents per round');
+  assert.equal(cost().textContent, 'About $0.25 for the code look, then cents per round.');
+  assert.equal(cost().hidden, false);
   select.value = 'project:shop-1';
   select.dispatchEvent(new window.Event('change'));
-  assert.equal(cost().textContent, 'Worca interviews with Opus 5.5 at high effort · cents per round');
+  assert.equal(cost().hidden, true);
   assert.equal(host.querySelectorAll('.req-new-cost').length, 1);
   assert.doesNotMatch(host.textContent, /null|undefined/);
 });
@@ -2943,7 +2938,7 @@ test('git missing: New feature says there is no look and costs cents per round; 
     const { host, view } = make();
     await view.show('new');
     assert.equal(text(host.querySelector('.req-new-look')), 'Worca does not look at the code: git is not installed on this machine. It starts asking right away.');
-    assert.equal(text(host.querySelector('.req-new-cost')), 'Worca interviews with Opus 5.5 at medium effort · cents per round');
+    assert.equal(host.querySelector('.req-new-cost').hidden, true, 'no look, no files: nothing to say');
     view.destroy();
     const f = await openKnows(feature({ orientation: { summary: '', files: [], skipped: 'no-git' } }));
     assert.equal(f.host.querySelector('details.req-orient p').textContent, 'Worca did not look at the code: git is not installed on this machine.');

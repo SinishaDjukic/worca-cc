@@ -14,6 +14,8 @@ import { gitOn, onGitChange, GIT_MISSING_TEXT } from './git-gate.mjs';
 import { makeSwitch } from './switch.mjs';
 import { icon as sharedIcon } from './icons.mjs';
 import { openRunSetupOverlay } from './run-setup-overlay.mjs';
+import { engineLabel } from '../../src/shared/engine-switch.mjs';
+import { whoInterviews, recommendationNote, defaultLine, fallbackLine, harnessLine, otherHarnessPrivacy } from './requirements-model.mjs';
 import {
   ATTACH_BINARY, ATTACH_TEXT_EXT, extOf, checkAttachment, bytesToBase64, carriesFiles, pastedFiles, createPasteNamer, REQ_ATTACH, reqLimits,
 } from './attach-files.mjs';
@@ -180,9 +182,15 @@ function readRange(kinds, estimates) {
   const hi = Math.max(...known);
   return lo === hi ? usd(lo) : `${usd(lo)}–${usd(hi).slice(1)}`;
 }
-/** D15: the privacy note, naming the interview model. */
-const privacyNote = (interview, id = null) => h('p', { class: 'hint req-files-privacy', id }, icon(ICONS.info, { size: 14 }),
-  h('span', { text: `Worca sends each file to ${(interview && (interview.label || interview.model)) || 'the interview model'} to read it. Text is checked for keys and passwords first; images and PDFs go as they are.` }));
+/** D15: the privacy note, naming the interview model. Claude keeps its exact words; another harness (9c) says who gets the files and
+ *  what is skipped. `interview` is a feature's { label, model, engine? } or the list's { default: { engine, label, model } }. */
+const privacyNote = (interview, id = null) => {
+  const i = interview && interview.default ? interview.default : interview;
+  const name = (i && (i.label || i.model)) || 'the interview model';
+  const words = i && i.engine && i.engine !== 'claude' ? otherHarnessPrivacy(name, engineLabel(i.engine))
+    : `Worca sends each file to ${name} to read it. Text is checked for keys and passwords first; images and PDFs go as they are.`;
+  return h('p', { class: 'hint req-files-privacy', id }, icon(ICONS.info, { size: 14 }), h('span', { text: words }));
+};
 /** A refusal line of the files' amber alert, the file's name in bold (board 15). */
 function refusalLine(message) {
   const m = /^(.+?) (was not added: .*)$/.exec(message);
@@ -467,7 +475,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         });
         // already here (the usual case): the form is drawn whole; else drawn bare and filled in below
         const first = settled ? take(listVal) : take(null);
-        const fill = paintNew(first.look, first.interview, first.briefs, first.estimates);
+        const fill = paintNew(first.look, first.interview, first.briefs, first.estimates, settled);
         paintedKey = key;
         if (!settled) {
           const late = take(await listP);
@@ -635,37 +643,31 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
   const briefLink = (to) => h('a', { class: 'req-brief-link', href: `#requirements/${to}`, onclick: (e) => { e.preventDefault(); route(to); } }, 'product brief');
 
-  // The line under the form: who interviews (A1.1), then what it costs. With a usable brief for the chosen target (or
-  // without git) there is no code look (A7 D10), so only the cost words after the dot change; the model part never does.
-  // A8 (board 15): with files picked, the words say each file is read once before round 1. Without interview info:
-  // A2's sentence; with nothing to say (no look estimate, no files) there is no line at all, as in A2.
-  function costHint(lookCost, interview, estimates = {}) {
+  // The line under the form: what the files cost. With a usable brief for the chosen target (or without git) there is no code look
+  // (A7 D10), so only the cost words change. A8 (board 15): with files picked, the words say each file is read once before round 1.
+  // The model and the code look's cost are the note's (9c D8, recommendationNote); this line carries the code look's cost only while
+  // there is no note (the models could not be loaded: A2's sentence). With nothing to say there is no line at all, as in A2.
+  function costHint(lookCost, estimates = {}) {
     let noLook = false;
+    let noted = false;
     let kinds = [];
-    const lookPart = () => (lookCost != null && !noLook ? `about ${usd(lookCost)} for the code look, ` : '');
+    const lookPart = () => (lookCost != null && !noLook && !noted ? `about ${usd(lookCost)} for the code look, ` : '');
     const words = () => (kinds.length
       ? `${lookPart()}reads each file once before round 1, about ${readRange(kinds, estimates)} a file, then cents per round`
       : lookPart() ? `${lookPart()}then cents per round` : 'cents per round');
-    if (!interview) {
-      let el = lookCost != null ? h('span', { class: 'hint req-new-cost' }) : null;
-      const sync = () => {
-        if (!el && kinds.length) el = h('span', { class: 'hint req-new-cost' });
-        if (!el) return;
-        const w = words();
-        el.textContent = `${w[0].toUpperCase()}${w.slice(1)}.`;
-        el.hidden = !lookPart() && !kinds.length;
-      };
-      sync();
-      return { get el() { return el; }, brief: (on) => { noLook = on; sync(); }, files: (k) => { kinds = k; sync(); } };
-    }
-    const name = interview.label || interview.model;
-    const who = `Worca interviews with ${name}${interview.effort ? ` at ${interview.effort} effort` : ''}`;
-    const tail = document.createTextNode(` · ${words()}`);
-    const el = h('span', { class: 'hint req-new-cost' }, h('span', { class: 'req-new-model', text: who }), tail);
-    return { el, brief: (on) => { noLook = on; tail.data = ` · ${words()}`; }, files: (k) => { kinds = k; tail.data = ` · ${words()}`; } };
+    let el = lookCost != null ? h('span', { class: 'hint req-new-cost' }) : null;
+    const sync = () => {
+      if (!el && kinds.length) el = h('span', { class: 'hint req-new-cost' });
+      if (!el) return;
+      const w = words();
+      el.textContent = `${w[0].toUpperCase()}${w.slice(1)}.`;
+      el.hidden = !lookPart() && !kinds.length;
+    };
+    sync();
+    return { get el() { return el; }, brief: (on) => { noLook = on; sync(); }, files: (k) => { kinds = k; sync(); }, note: (on) => { noted = on; sync(); } };
   }
 
-  function paintNew(lookCost, interview = null, briefs = [], estimates = {}) {
+  function paintNew(lookCost, interview = null, briefs = [], estimates = {}, listKnown = true) {
     const select = h('select', { id: 'req-new-target' },
       targets.projects.length ? h('optgroup', { label: 'Projects' }, targets.projects.map((p) => h('option', { value: `project:${p.key}`, text: p.name }))) : null,
       targets.workspaces.length ? h('optgroup', { label: 'Workspaces' }, targets.workspaces.map((w) => h('option', { value: `workspace:${w.id}`, text: w.name }))) : null);
@@ -801,10 +803,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // A brief is usable once made (D10), also while it is being refreshed.
     const usableOf = (list) => new Map(list.filter((b) => b && b.scopeType && b.scopeKey && b.madeAt).map((b) => [scopeId(b), b]));
     let usable = usableOf(briefs);
-    let cost = costHint(lookCost, interview, estimates);
+    let cost = costHint(lookCost, estimates);
     let noLookNow = false;   // what sayLook last told the cost line, and the file kinds sync last told it: carried to a rebuilt line
     let kindsNow = [];
     let lookHint = h('span', { class: 'hint req-new-look' });
+    let refreshNote = () => {};   // redraws Who interviews' note once it exists (the code look is left out with a brief or without git)
     const sayLook = () => {
       const [scopeType, ...rest] = select.value.split(':');
       const s = { scopeType, scopeKey: rest.join(':') };
@@ -822,10 +825,73 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       // with a brief, or without git, the code look's cost is not said: only the words after the dot change (A7 §6 / §9)
       noLookNow = !!b || !git;
       cost.brief(noLookNow);
+      refreshNote();
     };
     select.addEventListener('change', sayLook);
     sayLook();
     relook = sayLook;
+    // 9c boards 1, 2, 7: Who interviews. The harness list, models and estimates load once the form is open; the default and the
+    // fallback reason come from the list call. The group is drawn when both are known; without the models the form works as before.
+    const whoBox = h('div', { class: 'req-who-box', hidden: true });
+    const slots = { fallback: h('div'), def: h('div'), hint: h('div'), note: h('div') };
+    whoBox.append(slots.fallback, slots.def, slots.hint, slots.note);
+    let catalog = null;
+    let listInterview = interview;
+    let listIn = listKnown;
+    let who = null;
+    let lastEst = null;
+    let estNo = 0;
+    const modelLabel = (id) => { const m = catalog && catalog.models.find((x) => x && x.id === id); return (m && (m.label || m.id)) || id; };
+    const harnessOf = (e) => catalog.harnesses.find((x) => x.engine === e) || {};
+    const defaultOf = () => {
+      const d = listInterview && listInterview.default;
+      if (d && d.model) return { engine: d.engine || 'claude', model: d.model, effort: d.effort || null };
+      const c = catalog.defaults.claude || {};
+      return { engine: 'claude', model: c.model, effort: c.effort || null };
+    };
+    const drawFallback = () => {
+      const line = fallbackLine(document, listInterview && listInterview.fallbackReason);
+      slots.fallback.replaceChildren(...(line ? [line] : []));
+    };
+    function drawNote() {
+      const c = who.value();
+      const rec = (catalog.recommended && catalog.recommended[c.engine]) || null;
+      const line = recommendationNote(document, { picked: c.model, recommended: rec, estimates: lastEst, repo: harnessOf(c.engine).repo !== false && !noLookNow,
+        labels: { harness: engineLabel(c.engine), picked: modelLabel(c.model), recommended: rec ? modelLabel(rec) : '' },
+        onUse: () => { who.set({ engine: c.engine, model: rec, effort: '' }); onPick(); } });
+      slots.note.replaceChildren(line);
+    }
+    // everything that follows the pick: the hint, "Your default", the privacy note, and the estimates behind the note
+    function onPick() {
+      const c = who.value();
+      const hint = harnessLine(c.engine, harnessOf(c.engine));
+      slots.hint.replaceChildren(...(hint ? [h('p', { class: 'hint req-new-harness', text: hint })] : []));
+      const d = defaultOf();
+      const dl = defaultLine(document, { choice: c, defaultChoice: d, labels: { model: modelLabel(d.model), harness: engineLabel(d.engine) },
+        onUse: () => { who.set(d); onPick(); } });
+      slots.def.replaceChildren(...(dl ? [dl] : []));
+      const privacy = host.querySelector('#req-new-files-privacy');
+      if (privacy) privacy.replaceWith(privacyNote({ label: modelLabel(c.model), engine: c.engine }, 'req-new-files-privacy'));
+      const mine = ++estNo;
+      const qs = `engine=${encodeURIComponent(c.engine)}&model=${encodeURIComponent(c.model)}`;
+      api('GET', `/api/requirements/estimates?${qs}`).then((e) => e, () => null).then((e) => {
+        if (mine !== estNo || !host.contains(whoBox)) return;
+        lastEst = e;
+        drawNote();
+      });
+    }
+    refreshNote = () => { if (who && lastEst) drawNote(); };
+    function buildWho() {
+      if (who || !catalog || !listIn || !host.contains(whoBox)) return;
+      who = whoInterviews(document, { models: catalog.models, harnesses: catalog.harnesses, choice: defaultOf(), defaults: catalog.defaults, onChange: onPick });
+      whoBox.prepend(who.el);
+      whoBox.hidden = false;
+      cost.note(true);
+      drawFallback();
+      onPick();
+    }
+    api('GET', '/api/requirements/models').then((c) => (c && Array.isArray(c.harnesses) && c.harnesses.length && Array.isArray(c.models) ? c : null), () => null)
+      .then((c) => { catalog = c; buildWho(); });
     // A8 (board 15): the Files field. Picks are checked here (D7: 10 files, 25 MB each, 100 MB in all on this form);
     // a refused one is named in the amber alert and not added; a chip per accepted file.
     let picked = [];
@@ -908,7 +974,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           const fromTicket = imp ? { ...imp.conn, key: imp.key, criteria: imp.criteria, comments: imp.comments.map((c) => c.id),
             attachments: imp.attachments.map((a) => a.id), descriptionFile: !!imp.descriptionFile } : undefined;
           const data = await api('POST', '/api/requirements', { scopeType, scopeKey: rest.join(':'), title: title.value, description: desc.value,
-            ...(attachments ? { attachments } : {}), ...(fromTicket ? { fromTicket } : {}) });
+            ...(attachments ? { attachments } : {}), ...(fromTicket ? { fromTicket } : {}), ...(who ? { model: who.value() } : {}) });
           // A file the server could not store, and what the ticket no longer has, are named on the feature page (the feature stays).
           const lines = (Array.isArray(data.filesNotStored) ? data.filesNotStored : []).map((n) => `${n} was not added: Worca could not store it. Add it on the feature page.`);
           lines.push(...notOnTicketLines(data.notOnTicket, sent));
@@ -948,21 +1014,28 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           h('label', { for: 'req-new-files-input' }, 'Files ', h('span', { class: 'opt', id: 'req-new-files-opt', text: 'optional: emails, a spec, screenshots, a mockup' })),
           input, zone, privacyNote(interview, 'req-new-files-privacy'), ticketChips, chips, ticketNote, refused),
         field('req-new-target', ['For'], h('div', { class: 'select-wrap' }, select), lookHint),
+        whoBox,
         createFail,
         actions),
       note));
     // What the feature list tells (drawn bare, the list arrived after the form): the interview line and its cost, the privacy note's
     // model and the briefs. Only these change; what was typed or picked stays.
-    return ({ look, interview: who, briefs: bs, estimates: est }) => {
+    return ({ look, interview: listed, briefs: bs, estimates: est }) => {
       const prev = cost;
-      const next = costHint(look, who, est);
+      const next = costHint(look, est);
       next.brief(noLookNow);
       next.files(kindsNow);
+      next.note(!!who);
       if (prev.el && prev.el.parentNode === actions) { if (next.el) prev.el.replaceWith(next.el); else prev.el.remove(); }
       else if (next.el) actions.prepend(next.el);
       cost = next;
-      const privacy = host.querySelector('#req-new-files-privacy');
-      if (privacy) privacy.replaceWith(privacyNote(who, 'req-new-files-privacy'));
+      listInterview = listed;
+      listIn = true;
+      if (who) { drawFallback(); onPick(); } else {
+        const privacy = host.querySelector('#req-new-files-privacy');
+        if (privacy) privacy.replaceWith(privacyNote(listed, 'req-new-files-privacy'));
+        buildWho();
+      }
       usable = usableOf(bs);
       sayLook();
     };

@@ -842,3 +842,19 @@ span.req-file-name{color:var(--ink)}
 .req-runsetup-cycles{width:72px;box-sizing:border-box}
 .req-runsetup-msg:empty{display:none}
 @media (max-width:600px){.req-runsetup-row{grid-template-columns:1fr}}
+/* 9c boards 1, 2, 7, 8: Who interviews on New feature. Tokens only, so the dark board follows the theme. */
+.req-who{border:0;margin:0 0 12px;padding:0;min-width:0}
+.req-who legend{padding:0;margin:0 0 8px;font-weight:600;color:var(--ink)}
+.req-who{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.req-who legend{grid-column:1/-1}
+.req-who-field{min-width:0}
+.req-who-field[hidden]{display:none}
+.req-who-field > label{display:block;margin:0 0 4px;font-size:var(--fs-meta);color:var(--ink-2)}
+.req-who-field select{width:100%;box-sizing:border-box}
+.req-who-box[hidden]{display:none}
+.req-who-box > div:empty{display:none}
+.req-new-note{display:flex;align-items:flex-start;gap:8px;margin:8px 0 0}
+.req-new-note > svg{flex:none;margin-top:2px}
+.req-new-note .req-new-use,.req-new-default .req-new-use{margin-left:4px}
+.req-new-fallback,.req-new-default,.req-new-harness{margin:8px 0 0}
+@media (max-width:600px){.req-who{grid-template-columns:1fr}}
