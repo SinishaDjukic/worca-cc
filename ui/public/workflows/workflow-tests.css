@@ -264,6 +264,16 @@
 .wft-sent-foot{margin:0;padding:10px 18px 14px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);line-height:1.45;}
 .wft-sent-head + .wft-sent-foot{border-top:0;padding-top:0;}
 .wft-sent-real{padding:14px 18px;}
+/* U-T12 (F23, board 47): what Worca asked in a try, after Would have sent. Long questions wrap, never cut. */
+.wft-qs-card{padding:0;overflow:hidden;}
+.wft-qs-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 12px;padding:14px 18px 10px;}
+.wft-qs-head h2{margin:0;font-size:var(--fs-section);}
+.wft-qs-head .hint{margin:0;}
+.wft-qs{list-style:none;margin:0;padding:0;}
+.wft-qs li{padding:10px 18px;border-top:1px solid var(--line);font-size:var(--fs-body);line-height:1.5;color:var(--ink);overflow-wrap:anywhere;}
+.wft-q-ans{color:var(--ink-2);}
+.wft-q-failed{color:var(--red-ink-strong);font-weight:600;}
+.wft-qs-none{margin:0;padding:0 18px 14px;font-size:var(--fs-meta);color:var(--ink-2);line-height:1.45;}
 @media (max-width:700px){.wft-outs{grid-template-columns:minmax(0,1fr);}.wft-tiles{grid-template-columns:repeat(2,minmax(0,1fr));}.wft-call-full{margin-left:18px;}}
 /* A phone (browser check H1, H2): By example and What was checked stack; each version's cell is a line named by its column */
 @media (max-width:700px){.wft-crows2,.wft-crows,.wft-crows.is-one{min-width:0;}.wft-crow2{grid-template-columns:minmax(0,1fr) auto;}.wft-crow2.is-head,.wft-crow.is-head{display:none;}.wft-crow2 > .wft-ex-open{grid-column:1;grid-row:1;}.wft-crow2 > .wft-crow2-res{grid-column:2;grid-row:1;}.wft-crow2 > [data-label]{grid-column:1 / -1;}.wft-crow,.wft-crow.is-one{grid-template-columns:minmax(0,1fr);gap:4px;}.wft-crow2 [data-label],.wft-crow [data-label]{flex-wrap:wrap;}.wft-crow2 [data-label]::before{content:attr(data-label);flex:0 0 45%;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}.wft-crow [data-label]::before{content:attr(data-label);flex:0 0 45%;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}}

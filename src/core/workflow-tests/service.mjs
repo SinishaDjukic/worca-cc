@@ -826,6 +826,8 @@ export async function sideBySide(workflowId, runId, exampleId, { forgeFor = null
     return { tryId: t.id, status: t.status, verdict: t.verdict, name: m.name,
       text: text && text.length > PREVIEW_MAX ? text.slice(0, PREVIEW_MAX) : text, truncated: !!text && text.length > PREVIEW_MAX,
       connectors: t.connectors, wouldHaveSent: sent.sent, answeredReads: sent.reads,
+      // U-T12 (F23, board 47): what Worca asked in this try; null for an older try that never kept it.
+      asked: t.verdict && t.verdict.facts && Array.isArray(t.verdict.facts.asked) ? t.verdict.facts.asked : null,
       project: t.startCommit || t.changes ? { changes: t.changes, setup: t.setup ? { cmd: t.setup.cmd, ms: t.setup.ms } : null } : null };
   };
   const out = [];

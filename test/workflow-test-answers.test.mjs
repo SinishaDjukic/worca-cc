@@ -18,7 +18,8 @@ test('questions match whatever the case, spacing and punctuation', () => {
   assert.equal(findAnswer('who is allowed to export', example.answers), 'Finance admins');
   assert.equal(findAnswer('Who may export?', example.answers), null);
   const p = planAnswer({ kind: 'questions', questions: [{ id: 'q1', question: 'which file formats should the export have', options: [], allowFreeText: true }] }, example);
-  assert.deepEqual(p, { kind: 'answer', payload: { answers: [{ id: 'q1', choice: 'PDF and CSV, in one ZIP file.' }] }, help: [] });
+  assert.deepEqual(p, { kind: 'answer', payload: { answers: [{ id: 'q1', choice: 'PDF and CSV, in one ZIP file.' }] }, help: [],
+    asked: [{ question: 'which file formats should the export have', answer: 'PDF and CSV, in one ZIP file.', how: 'example' }] });
 });
 
 test('an answer equal to an option picks the option; free text only where it is allowed', () => {
@@ -27,19 +28,22 @@ test('an answer equal to an option picks the option; free text only where it is 
   const noFree = { kind: 'questions', questions: [{ id: 'q3', question: 'Which file formats should the export have?', options: ['PDF', 'CSV'], allowFreeText: false, recommended: 'CSV' }] };
   assert.deepEqual(planAnswer(noFree, example), {
     kind: 'answer', payload: { answers: [{ id: 'q3', choice: 'CSV' }] }, help: [{ question: 'Which file formats should the export have?' }],
+    asked: [{ question: 'Which file formats should the export have?', answer: 'CSV', how: 'picked' }],
   });
 });
 
 test('nothing matches: Worca picks a sensible answer and it counts as help, or the try counts as failed', () => {
   const q = { kind: 'questions', questions: [{ id: 'q9', question: 'Which screens come first?', options: ['Settings', 'Home'] }] };
-  assert.deepEqual(planAnswer(q, example), { kind: 'answer', payload: { answers: [{ id: 'q9', choice: 'Settings' }] }, help: [{ question: 'Which screens come first?' }] });
+  assert.deepEqual(planAnswer(q, example), { kind: 'answer', payload: { answers: [{ id: 'q9', choice: 'Settings' }] }, help: [{ question: 'Which screens come first?' }],
+    asked: [{ question: 'Which screens come first?', answer: 'Settings', how: 'picked' }] });
   assert.deepEqual(planAnswer(q, { ...example, otherwise: 'fail' }), {
     kind: 'fail', reason: 'Worca asked "Which screens come first?", and this example has no answer for it.', help: [{ question: 'Which screens come first?' }],
+    asked: [{ question: 'Which screens come first?', answer: null, how: 'none' }],
   });
 });
 
 test('gates continue; a recovery prompt or a plan approval stops the try; a form follows the rule', () => {
-  assert.deepEqual(planAnswer({ kind: 'gate', id: 'g' }, example), { kind: 'answer', payload: { decision: 'continue' }, help: [] });
+  assert.deepEqual(planAnswer({ kind: 'gate', id: 'g' }, example), { kind: 'answer', payload: { decision: 'continue' }, help: [], asked: [] });
   const rec = planAnswer({ kind: 'recovery', recovery: { message: 'claude exited 1\nstack…' } }, example);
   assert.deepEqual([rec.kind, rec.reason, rec.help], ['fail', 'The try hit a problem it could not get past: claude exited 1', [{ question: 'How to go on after a problem' }]]);
   assert.equal(planAnswer({ kind: 'plan' }, example).reason, 'Worca asked a person to approve a plan.');
@@ -117,4 +121,56 @@ test('U-T2: the answerer\'s own failures say { worca: true }; the workflow\'s ow
     ['Worca could not answer a question: bad payload', { worca: true }],
     ['The try hit a problem it could not get past: boom', undefined],
   ]);
+});
+
+// U-T12 (F23, board 47): what Worca asked in a try, in the order asked, with how it was answered.
+test('U-T12: every question the workflow asked is listed in order, with the example\'s answer, Worca\'s pick, or none', () => {
+  const long = `Should the brief also cover what happens when one flatmate moves out halfway through the month?${' And then?'.repeat(20)}`;
+  const q = { kind: 'clarify', questions: [
+    { id: 'q1', question: 'Who is allowed to export?', options: [] },
+    { id: 'q2', question: long, options: ['Yes, add a short section on moving out.', 'No'] },
+  ] };
+  assert.deepEqual(planAnswer(q, example).asked, [
+    { question: 'Who is allowed to export?', answer: 'Finance admins', how: 'example' },
+    { question: long, answer: 'Yes, add a short section on moving out.', how: 'picked' },
+  ], 'the example\'s own words, Worca\'s pick, and a long question whole');
+  const strict = { kind: 'questions', questions: [
+    { id: 'q1', question: 'Who is allowed to export?', options: [] },
+    { id: 'q2', question: 'Who pays for the app?', options: ['Us'] },
+    { id: 'q3', question: 'Never reached?', options: ['A'] },
+  ] };
+  assert.deepEqual(planAnswer(strict, { ...example, otherwise: 'fail' }).asked, [
+    { question: 'Who is allowed to export?', answer: 'Finance admins', how: 'example' },
+    { question: 'Who pays for the app?', answer: null, how: 'none' },
+  ], 'the try stops at the question it had no answer for');
+});
+
+test('U-T12: a form is the workflow asking too; a gate, a recovery prompt and a plan approval are not questions to list', () => {
+  const form = { kind: 'form', form: 'release', title: 'Release details', autoValues: { tag: 'v1', notes: 'First cut' } };
+  assert.deepEqual(planAnswer(form, example).asked, [{ question: 'Release details', answer: 'tag: v1, notes: First cut', how: 'picked' }]);
+  assert.deepEqual(planAnswer(form, { ...example, otherwise: 'fail' }).asked, [{ question: 'Release details', answer: null, how: 'none' }]);
+  assert.deepEqual(planAnswer({ kind: 'gate', id: 'g', nodeId: 'n', deliveryNo: 3 }, example).asked, []);
+  assert.deepEqual(planAnswer({ kind: 'recovery', recovery: { message: 'boom' } }, example).asked, []);
+  assert.deepEqual(planAnswer({ kind: 'plan' }, example).asked, []);
+  assert.deepEqual(planAnswer({ kind: 'cost-cap', id: 'cost-cap-run' }, example).asked, []);
+});
+
+test('U-T12: attachAnswerer reports each asked question through onAsked, in order, before a fail; never a gate', async () => {
+  const orch = new EventEmitter(); const asked = []; const order = [];
+  attachAnswerer(orch, { ...example, otherwise: 'fail' }, { answer: () => true, onAsked: (a) => { asked.push(a); order.push('asked'); },
+    onFail: () => order.push('fail') });
+  orch.emit('question', { id: 'a1', kind: 'questions', questions: [{ id: 'q1', question: 'Who is allowed to export?', options: [] }] });
+  orch.emit('question', { id: 'gate-w1-2', kind: 'gate', nodeId: 'n', deliveryNo: 2 });
+  orch.emit('question', { id: 'a2', kind: 'questions', questions: [{ id: 'q1', question: 'Who pays for the app?', options: ['Us'] }] });
+  await tick();
+  assert.deepEqual(asked, [
+    { question: 'Who is allowed to export?', answer: 'Finance admins', how: 'example' },
+    { question: 'Who pays for the app?', answer: null, how: 'none' },
+  ]);
+  assert.deepEqual(order, ['asked', 'asked', 'fail'], 'the failing question is listed before the try stops');
+  const quiet = new EventEmitter(); const fails = [];
+  attachAnswerer(quiet, example, { answer: () => true, onAsked: () => { throw new Error('a note'); }, onFail: (r) => fails.push(r) });
+  quiet.emit('question', { id: 'a3', kind: 'questions', questions: [{ id: 'q1', question: 'Who is allowed to export?', options: [] }] });
+  await tick();
+  assert.deepEqual(fails, [], 'a failing note never stops the try');
 });

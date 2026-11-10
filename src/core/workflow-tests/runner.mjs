@@ -379,7 +379,7 @@ export function createTestRunner(deps) {
 
   async function runTry(run, st, t) {
     // phase 'preparing' from the start: until its run starts, Worca is getting the try ready (its checks, the copy).
-    const rec = { runKey: null, pipelineId: null, help: [], failReason: null, loopLimit: null, detach: null, outcome: null, project: null,
+    const rec = { runKey: null, pipelineId: null, help: [], asked: [], failReason: null, loopLimit: null, detach: null, outcome: null, project: null,
       phase: 'preparing', checking: null, startedMs: Date.now() };
     const detach = () => { const d = rec.detach; rec.detach = null; if (d) d(); };
     // The try row's pipeline id: written once, the first time it is known (never overwritten with null).
@@ -433,7 +433,9 @@ export function createTestRunner(deps) {
           onOrch: (orch, { runKey }) => {
             rec.runKey = runKey;
             const off = attachAnswerer(orch, example, { answer: (id, payload) => deps.answer(runKey, id, payload), onHelp: (x) => rec.help.push(x), onFail: fail,
-              onLoopLimit: (l) => { if (!rec.loopLimit) rec.loopLimit = l; } });
+              onLoopLimit: (l) => { if (!rec.loopLimit) rec.loopLimit = l; },
+              // U-T12 (F23): what the workflow asked, for the side by side; nothing after the try failed (it is being stopped).
+              onAsked: (a) => { if (!rec.failReason) rec.asked.push(a); } });
             // The pipeline id goes on the row as soon as the run has one (its state names it), so a crash mid-try still
             // leaves it there for the boot recovery and the cleanup sweep (3a Task 8 review).
             const onState = (p) => notePipelineId((p && typeof p.id === 'string' && p.id) || (deps.liveRun(runKey) || {}).pipelineId || null);
@@ -458,7 +460,8 @@ export function createTestRunner(deps) {
       if (s.pause && s.pause.fail && !rec.failReason) rec.failReason = sentence(s.pause.detail);
       const unfinished = !!(s.pause && s.pause.stop);
       detach();
-      rec.outcome = await deps.outcomeOf(s.pipelineId, { help: rec.help, failReason: rec.failReason, loopLimit: rec.loopLimit, durationMs: Date.now() - t0 });
+      rec.outcome = await deps.outcomeOf(s.pipelineId, { help: rec.help, failReason: rec.failReason, loopLimit: rec.loopLimit, asked: rec.asked,
+        durationMs: Date.now() - t0 });
       const outcome = rec.outcome;
       const facts = outcome.project ? projectFacts(rec, outcome) : {};
       // D55: a setup that failed is the test's problem, not the workflow's: the test stops and this try is not judged.

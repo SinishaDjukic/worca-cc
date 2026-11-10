@@ -495,7 +495,8 @@ export function judgeTry(example, facts, checkResults = [], result = {}) {
     basics,
     checks,
     facts: { status: f.status || null, costUsd: Number(f.costUsd || 0), durationMs: f.durationMs ?? null,
-      sentBack: Number(f.sentBack || 0), help, failReason: f.failReason || null, ...(loopLimit ? { loopLimit } : {}) },
+      sentBack: Number(f.sentBack || 0), help, failReason: f.failReason || null, ...(loopLimit ? { loopLimit } : {}),
+      ...(Array.isArray(f.asked) ? { asked: f.asked } : {}) },   // U-T12 (F23): an older try has none: unknown, not "nothing"
     result: { name: result.name ?? null, source: result.source ?? null, words: result.words ?? null },
   };
 }

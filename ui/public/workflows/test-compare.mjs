@@ -137,6 +137,30 @@ function sentCard(doc, v, key, { project = false } = {}) {
   return c;
 }
 
+/** U-T12 (F23, board 47): what Worca asked in one try, in the order asked, and how each was answered. Questions and
+ *  answers are the workflow's and the example's text: set as text, never markup; long ones wrap, never cut. */
+function questionsCard(doc, asked, key) {
+  const c = el(doc, 'section', 'card wft-qs-card');
+  const head = el(doc, 'div', 'wft-qs-head');
+  const h = el(doc, 'h2', '', 'Questions');
+  h.id = `wft-qs-${key}`;
+  c.setAttribute('aria-labelledby', h.id);
+  head.append(h);
+  c.append(head);
+  if (!asked.length) { c.append(el(doc, 'p', 'wft-qs-none', 'Worca asked nothing in this try.')); return c; }
+  head.append(el(doc, 'span', 'hint', asked.length === 1 ? '1 question' : `${asked.length} questions`));
+  const ul = el(doc, 'ul', 'wft-qs');
+  for (const a of asked) {
+    const li = el(doc, 'li', '', `Worca asked "${a && a.question}" `);
+    li.append(a && a.how === 'example' ? el(doc, 'span', 'wft-q-ans', `· your answer: "${a.answer}"`)
+      : a && a.how === 'picked' ? el(doc, 'span', 'wft-q-ans', `· not in the example: Worca picked "${a.answer}"`)
+        : el(doc, 'span', 'wft-q-failed', '· not in the example: the try counts as failed'));
+    ul.append(li);
+  }
+  c.append(ul);
+  return c;
+}
+
 function passed(doc, r) {
   const span = el(doc, 'span', 'wft-res');
   if (!r || !r.total) { span.classList.add('is-none'); span.textContent = 'Not tried'; return span; }
@@ -501,7 +525,11 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
     return c;
   };
   // Board 31: each column is what that version wrote, then what it would have sent. Boards 36, 37: a project try's column
-  // is what it changed, then what it wrote (only when it left a result, P7), then what it would have sent.
+  // is what it changed, then what it wrote (only when it left a result, P7), then what it would have sent. Board 47
+  // (U-T12): then what Worca asked; when neither version asked anything there is no Questions block, and a try older
+  // than the list (no `asked`) has none, as we do not know.
+  const knows = (v) => !!v && Array.isArray(v.asked);
+  const anyAsked = [once ? null : cur.a, cur.b].some((v) => knows(v) && v.asked.length > 0);
   const column = (label, v, key) => {
     const col = el(doc, 'div', 'wft-outcol');
     const project = !!(v && v.project);
@@ -509,6 +537,7 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
     if (!project || v.text) col.append(out(label, v, key));
     const sent = sentCard(doc, v, key, { project: !!s.nothingPushed });
     if (sent) col.append(sent);
+    if (anyAsked && knows(v)) col.append(questionsCard(doc, v.asked, key));
     return col;
   };
   if (!once) outs.append(column(s.labels.a, cur.a, 'a'));

@@ -66,9 +66,10 @@ function harness({ plan = () => ({ status: 'done', cost: 0.5 }), refuse = null }
     liveRun: (k) => entries.get(k) || null,
     stopRun: async (k) => { stopped.push(k); entries.get(k)?.end('stopped'); },
     answer: (k, id, payload) => entries.get(k).orch.answer(id, payload),
-    outcomeOf: async (pipelineId, { help = [], failReason = null, durationMs = null, loopLimit = null } = {}) => {
+    outcomeOf: async (pipelineId, { help = [], failReason = null, durationMs = null, loopLimit = null, asked = null } = {}) => {
       const e = [...entries.values()].find((x) => x.pipelineId === pipelineId);
-      return { pipelineId, facts: { status: e.status, costUsd: e.orch.state.totalCostUsd, durationMs, sentBack: 0, help, failReason, ...(loopLimit ? { loopLimit } : {}) },
+      return { pipelineId, facts: { status: e.status, costUsd: e.orch.state.totalCostUsd, durationMs, sentBack: 0, help, failReason, ...(loopLimit ? { loopLimit } : {}),
+        ...(Array.isArray(asked) ? { asked } : {}) },
         text: e.text, name: 'result.md', source: 'work', files: ['work/result.md'] };
     },
     judge: (example, outcome) => checkTry(example, outcome),
@@ -373,6 +374,20 @@ test('a fail that fires twice stops the try once and keeps the first reason', as
   const [t] = store.triesOfRun(run.id);
   assert.equal(t.status, 'failed');
   assert.equal(t.verdict.basics[0].detail, 'Worca asked "First?", and this example has no answer for it.');
+  assert.deepEqual(t.verdict.facts.asked, [{ question: 'First?', answer: null, how: 'none' }], 'U-T12: nothing asked after the try failed is listed');
+});
+
+test('U-T12: what Worca asked goes in the verdict (facts.asked); a try that asked nothing says so with an empty list', async () => {
+  const ask = { id: 'q-1', kind: 'questions', questions: [{ id: 'q1', question: 'Which screens come first?', options: ['Home', 'Settings'] }] };
+  const h = harness({ plan: (_b, _u, n) => (n === 1 ? { status: 'done', cost: 0.2, ask } : { status: 'done', cost: 0.2 }) });
+  const runner = createTestRunner(h.deps);
+  const ex = example({ otherwise: 'pick', tries: 1, answers: [] });
+  const r1 = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await runner.idle(r1.id);
+  assert.deepEqual(store.triesOfRun(r1.id)[0].verdict.facts.asked, [{ question: 'Which screens come first?', answer: 'Home', how: 'picked' }]);
+  const r2 = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await runner.idle(r2.id);
+  assert.deepEqual(store.triesOfRun(r2.id)[0].verdict.facts.asked, []);
 });
 
 test('a review loop that runs out of rounds fails "Finishes without an error", with the rounds in the sentence', async () => {

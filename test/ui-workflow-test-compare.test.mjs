@@ -8,6 +8,7 @@ import { renderCompare, renderSideBySide, openWholeResult, sentCount } from '../
 import { serverName } from '../src/shared/workflow-tests/connector-name.mjs';
 import { plainClaudeAiName } from '../src/core/workflow-tests/connectors.mjs';
 import { compareModel } from '../src/shared/workflow-tests/compare.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const click = (el) => el.dispatchEvent(new el.ownerDocument.defaultView.MouseEvent('click', { bubbles: true }));
 const texts = (root, sel) => [...root.querySelectorAll(sel)].map((n) => n.textContent);
@@ -346,6 +347,76 @@ test('board 31: pretend at the top, what each try would have sent, nothing, the 
   assert.equal(real.root.querySelector('.wft-page > .wft-mode'), null, 'no pretend note');
   assert.equal(real.root.querySelectorAll('.wft-sent').length, 0);
   assert.deepEqual(texts(real.root, '.wft-sent-real'), ['Connectors: real. This try used your real connectors.', 'Connectors: real. This try used your real connectors.']);
+});
+
+// U-T12 (F23, board 47): what Worca asked, per version, after Would have sent and before the table.
+const ASK1 = { question: 'Which countries should the first release cover?', answer: 'Germany and Austria only.', how: 'example' };
+const LONG_Q = 'Should the brief also cover what happens when one flatmate moves out halfway through the month, and the costs already paid have to be split again between the people who stay?';
+const asking = (a, b, over = {}) => {
+  const s = side(over);
+  s.tries = s.tries.map((t) => ({ ...t, a: t.a && a !== undefined ? { ...t.a, asked: a } : t.a, b: b !== undefined ? { ...t.b, asked: b } : t.b }));
+  return s;
+};
+const qLines = (card) => [...card.querySelectorAll('.wft-qs li')].map((li) => li.textContent);
+
+test('U-T12 (board 47): a Questions block per version after Would have sent, one line per question in the order asked, with a count', () => {
+  const s = asking([ASK1], [ASK1, { question: LONG_Q, answer: 'Yes, add a short section on moving out.', how: 'picked' }]);
+  const { root } = boot(renderSideBySide, s, { tryIndex: 0 });
+  const cols = [...root.querySelectorAll('.wft-outs > .wft-outcol')];
+  assert.deepEqual(cols.map((c) => [...c.children].map((x) => x.querySelector('h2').textContent)),
+    [['What v4 wrote', 'Would have sent', 'Questions'], ['What v5 draft wrote', 'Would have sent', 'Questions']]);
+  assert.ok(root.querySelector('.wft-outs').nextElementSibling.classList.contains('wft-checked'), 'then the What was checked table');
+  const cards = [...root.querySelectorAll('.wft-qs-card')];
+  assert.deepEqual(cards.map((c) => c.querySelector('.wft-qs-head .hint').textContent), ['1 question', '2 questions']);
+  assert.deepEqual(qLines(cards[0]), ['Worca asked "Which countries should the first release cover?" · your answer: "Germany and Austria only."']);
+  assert.deepEqual(qLines(cards[1]), ['Worca asked "Which countries should the first release cover?" · your answer: "Germany and Austria only."',
+    `Worca asked "${LONG_Q}" · not in the example: Worca picked "Yes, add a short section on moving out."`], 'a long question whole, never cut');
+  assert.deepEqual(texts(cards[1], '.wft-q-ans'), ['· your answer: "Germany and Austria only."', '· not in the example: Worca picked "Yes, add a short section on moving out."']);
+  for (const c of cards) assert.equal(c.getAttribute('aria-labelledby'), c.querySelector('h2').id);
+  assert.notEqual(cards[0].querySelector('h2').id, cards[1].querySelector('h2').id);
+});
+
+test('U-T12: "the try counts as failed" is the red part; a version that asked nothing keeps the block with one grey line and no count', () => {
+  const s = asking([], [ASK1, { question: 'Who pays for the app?', answer: null, how: 'none' }]);
+  const { root } = boot(renderSideBySide, s, { tryIndex: 0 });
+  const cards = [...root.querySelectorAll('.wft-qs-card')];
+  assert.equal(cards.length, 2, 'the columns stay aligned');
+  assert.equal(cards[0].querySelector('.wft-qs-head .hint'), null, 'no count');
+  assert.equal(cards[0].querySelector('.wft-qs'), null);
+  assert.deepEqual(texts(cards[0], '.wft-qs-none'), ['Worca asked nothing in this try.']);
+  assert.deepEqual(qLines(cards[1])[1], 'Worca asked "Who pays for the app?" · not in the example: the try counts as failed');
+  assert.deepEqual(texts(cards[1], '.wft-q-failed'), ['· not in the example: the try counts as failed']);
+  assert.equal(cards[1].querySelectorAll('.wft-q-ans').length, 1);
+});
+
+test('U-T12: no Questions block when neither version asked anything, or when a try is older than the list', () => {
+  const blocks = (s, o = {}) => boot(renderSideBySide, s, { tryIndex: 0, ...o }).root.querySelectorAll('.wft-qs-card').length;
+  assert.equal(blocks(asking([], [])), 0, 'neither asked: no Questions row at all');
+  assert.equal(blocks(side()), 0, 'older tries: we do not know what was asked');
+  assert.equal(blocks(asking([], undefined)), 0, 'one asked nothing, the other is older: nothing to show');
+  const oldA = boot(renderSideBySide, asking(undefined, [ASK1]), { tryIndex: 0 }).root;
+  assert.deepEqual([...oldA.querySelectorAll('.wft-outcol')].map((c) => c.querySelectorAll('.wft-qs-card').length), [0, 1],
+    'never "asked nothing" for a try that does not say');
+  const once = { run: { id: 8, kind: 'once' }, labels: { a: null, b: 'Your draft' }, row: { a: { passed: 0, total: 0 }, b: { passed: 1, total: 1 }, result: null } };
+  assert.equal(blocks({ ...asking(undefined, [ASK1], once), tries: [{ n: 1, a: null, b: { ...tv(21, true), asked: [ASK1] } }] }), 1);
+  assert.equal(blocks({ ...asking(undefined, [], once), tries: [{ n: 1, a: null, b: { ...tv(21, true), asked: [] } }] }), 0);
+});
+
+test('U-T12: a question and its answer are text, never markup', () => {
+  const evil = '<img src=x onerror="window.hit=1">';
+  const { root } = boot(renderSideBySide, asking([{ question: evil, answer: evil, how: 'example' }], []), { tryIndex: 0 });
+  assert.equal(root.querySelector('.wft-qs img'), null);
+  assert.deepEqual(qLines(root.querySelector('.wft-qs-card')), [`Worca asked "${evil}" · your answer: "${evil}"`]);
+});
+
+test('U-T12 styles: the Questions block is in workflow-tests.css; long lines wrap, the answer is grey, a failed try red', () => {
+  const css = readStyleCss();
+  for (const sel of ['.wft-qs-card{', '.wft-qs-head{', '.wft-qs{', '.wft-qs li{', '.wft-q-ans{', '.wft-q-failed{', '.wft-qs-none{']) assert.ok(css.includes(sel), `${sel} has a rule`);
+  assert.match(css, /\.wft-qs li\{[^}]*overflow-wrap:anywhere/);
+  assert.match(css, /\.wft-q-ans\{[^}]*color:var\(--ink-2\)/);
+  assert.match(css, /\.wft-q-failed\{[^}]*color:var\(--red-ink-strong\)/);
+  const own = readFileSync(new URL('../ui/public/workflows/workflow-tests.css', import.meta.url), 'utf8');
+  assert.ok(own.includes('.wft-qs li{'), 'in workflow-tests.css');
 });
 
 test('a connector by its plain name (one shared helper): no claude.ai prefix, no underscores, a capital first letter', () => {
