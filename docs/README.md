@@ -62,6 +62,8 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 ## Deployment
 
 - [Worca in a container](docker.md) — Worca and every `claude` it spawns in a disposable Linux container
+- [Worker containers](workers.md) — one controller, and a container of its own for every run and chat thread
+- [Worca on Kubernetes](kubernetes.md) — the Helm chart: a controller pod and a worker pod per run and chat thread
 - [Deploy on Railway](deploy-railway.md) — the container as a hosted service behind Cloudflare Access
 - [Remote access](remote-access.md) — opt-in, behind Cloudflare Access, with Worca checking the token
 - [Credential broker](credential-broker.md) — model keys stay out of Worca's container behind short-lived tokens

@@ -26,6 +26,9 @@ your own.
 - **No public domain on worca.** `cloudflared` runs as its own service and dials out, so the
   tunnel is the only way in. As a separate service it also never counts as an in-container caller.
 - **One replica.** Worca's run registry and WebSocket replay buffers are in memory.
+- **One process.** Railway stays the single-process executor (`WORCA_EXECUTOR=local`, the
+  default): agents run inside the worca container. The controller-plus-worker-pods topology is
+  the Kubernetes chart's ([kubernetes.md](kubernetes.md)).
 - **Agents under their own user.** Agents and workflow scripts run as `worca-agent`. They share
   the projects and run checkouts with worca, but cannot read its settings, database, `HOME` or
   environment, and never get a GitHub token. Pushes and pull requests are worca's own calls. If

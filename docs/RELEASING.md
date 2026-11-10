@@ -383,7 +383,9 @@ previously working pipeline breaks.
 
 `release-npm-app.yml` also publishes `ghcr.io/sinishadjukic/worca` from the
 same tag, **after** the npm publish succeeds, through the reusable
-`docker-image.yml`: it checks the tag out, runs `npm pack` (the bytes npm just
+`docker-image.yml` (the controller image and, under `ghcr.io/sinishadjukic/worca-worker`,
+one worker image per engine, tagged `<tag>-<engine>[-full]`; its `engines` input narrows a
+manual run): it checks the tag out, runs `npm pack` (the bytes npm just
 shipped), builds `slim` and `full` for `linux/amd64` and `linux/arm64` on native
 runners, pushes by digest, stitches the manifests, tags them like the npm
 dist-tag (`1.3.0`, `1.3`, `1`, `latest` / `1.3.0-rc.1`, `rc`, each with a

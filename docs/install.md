@@ -86,13 +86,23 @@ worca container login     # log Claude Code in, once
 ```
 
 `worca container help` lists the rest: `down`, `logs`, `pull`, `shell`, `run -- <worca args>`, and overlays via
-`--with egress,ssh,teams,clonein`.
+`--with egress,ssh,teams,clonein,workers,broker`.
+
+With `--with workers` the box becomes a controller: every run and every chat thread gets a worker container of its
+own, from a per-engine image, created when needed and removed afterwards. See [Worker containers](workers.md).
 
 Without npm, download `docker/compose.yml`, set `WORCA_PROJECTS` in a `.env` beside it and run
 `docker compose up -d`.
 
 See [Worca in a container](docker.md) for login options, git credentials, the egress allowlist, clone-in mode and
 Windows (WSL2).
+
+## On Kubernetes
+
+On a cluster, Worca runs as one always-on controller pod and a worker pod per run and per chat thread, created and
+removed by the controller, with the files shared on a ReadWriteMany volume. The Helm chart is
+[`deploy/helm/worca`](../deploy/helm/worca/README.md). Storage classes, the kind quickstart, upgrades and
+troubleshooting: [Worca on Kubernetes](kubernetes.md).
 
 ## Hosted, behind Cloudflare Access
 
