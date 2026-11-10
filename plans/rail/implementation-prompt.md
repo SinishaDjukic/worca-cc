@@ -93,6 +93,8 @@ Failing, fix these first:
 
 Each slice: `npm test` and every page gate in `docs/rail/gate.md`, with no raising of the ratchet baseline. Then the validation below, fixes, re-test of what was fixed.
 
+**Check against the prototype, each slice:** open every page the slice touched in the real app with Stillhet on and in the prototype (`plans/rail/prototype/index.html`), same route, mode, theme and widths (360, 420, 1280), side by side. List each difference in layout, components, words, icons and colours in `plans/rail/dev-vs-prototype.md`, then fix it or give the reason it stays. The slice is not done while an unexplained difference remains.
+
 **Validation, each round:** agents split evenly across every page, one area each, real mouse clicks, every control and every option of every dropdown, all three modes, Cancel, Esc, double click, Back, empty and long input, both themes, narrow widths.
 Judge the outcome, not that something happened: what was picked is what arrived, counts follow, nothing leaves its bounds. Check consistency of icons, colours and themes each round and propose improvements. Report design findings tied to usability and a Rail rule.
 
