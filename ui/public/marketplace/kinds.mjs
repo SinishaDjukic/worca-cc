@@ -1,6 +1,7 @@
 // ui/public/marketplace/kinds.mjs — the eight contribution kinds, the plugin icon rule (U7) and the kind / status
 // tones of the Marketplace (CONTRACT §3.1, SM18, SM19). Pure: no fetch, no state; DOM only through the `doc` handed in.
 import { icon, iconSvg } from '../icons.mjs';
+import { brandMark, hasBrandMark } from '../brand-marks.mjs';
 
 export const KIND_ORDER = Object.freeze(['taskSources', 'chatChannels', 'mcpServers', 'models', 'agents', 'scripts', 'skills', 'workflows']);
 
@@ -71,6 +72,17 @@ export function glyphTile(doc, glyph, tone, { size = 'md' } = {}) {
 export function kindTile(doc, iconKind, opts = {}) {
   const d = KINDS[iconKind] ?? { mix: MIX, mkt: MKT }[iconKind] ?? NONE;
   return glyphTile(doc, d.glyph, d.tone, opts);
+}
+
+/** A plugin's tile: the cleared mark its manifest `icon` names, on the neutral tone, else its kind tile. */
+export function pluginTile(doc, { icon: brand = null, iconKind = 'none' } = {}, opts = {}) {
+  if (!hasBrandMark(brand)) return kindTile(doc, iconKind, opts);
+  const size = opts.size ?? 'md';
+  const span = doc.createElement('span');
+  span.className = `mk-mt mk-mt-${size} mk-t-none`;
+  span.setAttribute('aria-hidden', 'true');
+  span.append(brandMark(doc, brand, { size: GLYPH_PX[size] }));
+  return span;
 }
 
 /** The one .badge chip (SM19): span.badge.mk-chip.mk-chip-<tone>, an optional 12px glyph first, then the text. */

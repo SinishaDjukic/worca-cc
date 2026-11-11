@@ -4,7 +4,7 @@
 import { isAzureHost, parseAzurePath, parseAzurePrUrl } from '../shared/azure-remote.mjs';
 import { parseBitbucketPrUrl } from '../shared/bitbucket-remote.mjs';
 
-export const FORGE_LABEL = Object.freeze({ github: 'GitHub', azure: 'Azure DevOps', bitbucket: 'Bitbucket' });
+export { FORGE_LABEL, forgeOfPrUrl } from '../shared/pr-forge.mjs';
 
 export function parseGithubPrUrl(value) {
   if (typeof value !== 'string') return null;
@@ -89,13 +89,6 @@ export function forgeOf(parsed) {
   if (parsed.host === 'dev.azure.com' && parsed.org) return 'azure';
   if (parsed.host === 'bitbucket.org') return 'bitbucket';
   return null;
-}
-
-/** The forge of a persisted pr_url. */
-export function forgeOfPrUrl(url) {
-  if (/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/i.test(String(url || ''))) return 'github';
-  if (parseAzurePrUrl(url)) return 'azure';
-  return parseBitbucketPrUrl(url) ? 'bitbucket' : null;
 }
 
 /** PR number from a GitHub (/pull/N), Azure DevOps (/pullrequest/N) or Bitbucket (/pull-requests/N) URL, else null. */

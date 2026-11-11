@@ -177,6 +177,7 @@ async function syncEntry(entry, { exec, onProgress = () => {} } = {}) {
         subdir: d.subdir,
         description: d.manifest.description ?? '',
         version: d.manifest.version ?? null,
+        ...(d.manifest.icon ? { icon: d.manifest.icon } : {}),
         inventory: await inventoryFromCache(found.repoUrl, found.sha, d.subdir, ...(exec ? [{ exec }] : [])),
         notes: d.warnings || [],
       });

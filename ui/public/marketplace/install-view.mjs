@@ -1,7 +1,7 @@
 // ui/public/marketplace/install-view.mjs — P4: the install sheet's pure renderers (boards 1.2–1.4): the step indicator,
 // the sheet head, Review facts from the snapshot inventory, the Set up step and the Done step. Pure: every function
 // takes `doc` and returns detached DOM; no fetch, no state, no listeners.
-import { KIND_ORDER, KINDS, kindTile, chip, landing } from './kinds.mjs';
+import { KIND_ORDER, KINDS, kindTile, pluginTile, chip, landing } from './kinds.mjs';
 import { icon } from '../icons.mjs';
 import { renderNeedsGit, channelBadge } from '../plugins-view.mjs';
 import { engineLabel } from '../../../src/shared/engine-switch.mjs';
@@ -113,7 +113,7 @@ export function renderSheetHead(doc, item, { step = 0 } = {}) {
   }
   meta.append(make(doc, 'span', null, item.marketplace?.name ?? ''));
   main.append(title, meta);
-  id.append(kindTile(doc, item.iconKind, { size: 'lg' }), main);
+  id.append(pluginTile(doc, item, { size: 'lg' }), main);
   frag.append(id, renderSteps(doc, step));
   return frag;
 }

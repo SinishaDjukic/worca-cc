@@ -7,6 +7,7 @@
 // books a cost — resolveModelCost stays the one that does.
 import { listPriceFor, CODEX_PRICES, LONG_PROMPT_PRICING } from './list-prices.mjs';
 import { harnessesOf } from '../shared/connections.mjs';
+import { vendorOf } from '../shared/model-vendor.mjs';
 
 /** Who makes a model, in picking order: Anthropic first, then OpenAI, then everyone else. */
 export const VENDORS = Object.freeze(['anthropic', 'openai', 'other']);
@@ -31,23 +32,6 @@ const ONE_M_BUILTINS = new Set(['claude-fable-5-1', 'claude-opus-5-5', 'claude-s
 /** How to pick a model per agent step — ONE text for the Ask rules (prompt.mjs rule 18) and the Auto classifier's
  *  tuning guide. Stages by display name only: the Ask rules may not name an agent key. */
 export const MODEL_PICK_POLICY = 'Judgement steps (Plan, Plan Review, Refine Plan, Review Implementation, Bug Root Cause, Deck Review) take the top tier (never the premium tier) at high effort; producers that design (Implementation, Bug Fix, Deck Builder) the strong tier at medium or high effort by the size of the task; mechanical producers (Decompose, Manual Tests Checklist, Bug Report Analysis, Deck Export, Bug Triage Report) the cheapest capable tier at medium effort; tool-driven verifiers (Manual web UI testing, visual checks) the mid tier, with tool calls and vision; any other step (Clarify included) the strong tier at medium effort. Within a tier take the cheapest capable model. Never pick a premium-tier model unless the user names that model. Scale the tiers down with the weight of the task: a one-file fix never needs the top tier on Implementation. Prefer Anthropic models, then OpenAI, then others, only among the models the run\'s engine runs. A free model only on a low-risk producer step, only when it is ready, has tool calls and at least a 64k context, and never on a judgement step or as the only Implementation step. A 1M-context twin only when the context demands it. A model without a tier (no token price: a Copilot import, an unpriced provider entry) ranks as the model it serves, judged by its name.';
-
-// The maker, from a model NAME (the upstream id when the entry has one, else the catalog id): a family word as its own token.
-const ANTHROPIC_RE = /(^|[^a-z0-9])(anthropic|claude|opus|sonnet|haiku|fable)(?![a-z])/;
-const OPENAI_RE = /(^|[^a-z0-9])(openai|chatgpt|gpt|codex|o[1-9])(?![a-z])/;
-
-function vendorOf(row) {
-  // An upstream id alone decides (a gateway alias like "sonnet-fast" may serve GLM): no family word there is `other`.
-  const up = typeof row.upstreamModel === 'string' ? row.upstreamModel.trim().toLowerCase() : '';
-  const name = up || row.id.toLowerCase();
-  if (ANTHROPIC_RE.test(name)) return 'anthropic';
-  if (OPENAI_RE.test(name)) return 'openai';
-  if (up) return 'other';
-  // No family word: a harness's own sign-in names its maker (a raw id the claude CLI runs on its login is Claude's).
-  const c = row.connection && typeof row.connection === 'object' ? row.connection : null;
-  if (c && c.kind === 'signin') return c.engine === 'claude' ? 'anthropic' : c.engine === 'codex' ? 'openai' : 'other';
-  return 'other';
-}
 
 // A GitHub Copilot entry bills premium requests, not tokens: an import pins it Free only so recorded spend reads $0
 // (docs/models.md "Cost and quota"). It is neither a free model nor an economy one — it has no per-token price.

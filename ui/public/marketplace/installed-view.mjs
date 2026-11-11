@@ -1,6 +1,6 @@
 // ui/public/marketplace/installed-view.mjs — Pure DOM for the Installed tab (board 3.1). Returns detached elements;
 // ui/public/marketplace/installed.mjs wires them.
-import { kindTile, glyphTile, kindCounts, pluginIconKind, chip } from './kinds.mjs';
+import { kindTile, pluginTile, glyphTile, kindCounts, pluginIconKind, chip } from './kinds.mjs';
 import { noteText } from './catalog.mjs';
 import { icon } from '../icons.mjs';
 import { channelBadge } from '../plugins-view.mjs';
@@ -24,7 +24,7 @@ function button(doc, cls, text) {
 }
 
 // The plugin icon of an installed row (U7): P3's kindCounts subtracts the row's ignored files.
-const tileFor = (doc, row, size = 'sm') => kindTile(doc, pluginIconKind(kindCounts(row || {})), { size });
+const tileFor = (doc, row, size = 'sm') => pluginTile(doc, { icon: row?.icon, iconKind: pluginIconKind(kindCounts(row || {})) }, { size });
 
 // div.mk-sec-head > h2.section-title#<id> + span.mk-count
 function secHead(doc, title, n, id) {
@@ -102,7 +102,7 @@ export function renderPolicyCard(doc, items, { plugins = [], catalog = [] } = {}
     const p = POLICY[item.state];
     const row = installed.get(item.name);
     const hit = row ? null : findCatalogItem(catalog, item.name, item.marketplace);
-    const tile = row ? tileFor(doc, row) : kindTile(doc, hit?.iconKind || 'none', { size: 'sm' });
+    const tile = row ? tileFor(doc, row) : pluginTile(doc, { icon: hit?.icon, iconKind: hit?.iconKind || 'none' }, { size: 'sm' });
     const { li, line } = rowShell(doc, tile);
     li.classList.add('mk-policy-row');
     li.dataset.name = item.name;

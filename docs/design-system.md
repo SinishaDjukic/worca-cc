@@ -880,6 +880,10 @@ catalogue structure that was approved, drawn with this system's tokens:
   and as the rail's small kind dots. The update chip ("Update 0.3.0", "2 updates") is the page's blue status chip.
   Status chips there use `.badge.mk-chip-*` on the `-ink-strong` shades (4.5:1 or more); the global `.badge` tones do not change.
 
+### Brand marks
+
+A third-party product's mark comes from `brandMark`, `engineMark` or `modelMark` in `ui/public/brand-marks.mjs`, beside the product's name, in neutral ink. Rules and clearance status: `docs/brand-marks.md`. Native `<select>` options cannot hold a mark, so those stay text.
+
 ## Do and don't
 | Do | Don't | Why |
 |---|---|---|

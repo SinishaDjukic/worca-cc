@@ -196,6 +196,7 @@ import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, SYNC_EXECUTION_ID } from '.
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
+import { brandMark, engineMark } from './brand-marks.mjs';
 import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, SESSION_SUBAGENTS_VERIFIED } from '../../src/shared/engine-switch.mjs';
 import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS } from '../../src/shared/connections.mjs';
 import {
@@ -24592,7 +24593,10 @@ function crossRepoHint(remotes, pushName, baseName, branch, baseBranch) {
 function paintShipItRemotesHint(modal, remotes, record) {
   const base = remotes.find((r) => r.name === modal.querySelector('.shipit-base-remote').value);
   const label = modal.querySelector('#shipit-into-label');
-  if (label) label.textContent = base && base.prHost ? `Into (${base.prHost})` : 'Into';
+  if (label) {
+    label.textContent = base && base.prHost ? `Into (${base.prHost})` : 'Into';
+    if (base && base.prHost && base.forge) label.prepend(brandMark(document, base.forge));
+  }
   modal.querySelector('.shipit-remotes-hint').textContent = crossRepoHint(remotes,
     modal.querySelector('.shipit-push-remote').value, modal.querySelector('.shipit-base-remote').value,
     record.branch, shipItChosenBase(modal, record));
@@ -26629,7 +26633,7 @@ function paintHdHeaderMeta(screen, record, data) {
   meta.appendChild(hdDot());
   const eng = document.createElement('span');
   eng.className = 'hd-engine';
-  eng.textContent = engineLabel(engine);
+  eng.append(engineMark(document, engine), engineLabel(engine));
   eng.title = `Engine: ${engineLabel(engine)}${isBetaEngine(engine) ? ' (beta)' : ''} runs this run's agents`;
   meta.appendChild(eng);
   const { day, clock } = splitDateStamp(st.startedAt || record.startedAt || record.mtime);

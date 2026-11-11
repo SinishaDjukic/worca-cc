@@ -21,18 +21,18 @@ function installFixture(name, manifest, lock = {}) {
 }
 
 test('rows carry description, ref and the installed manifest\'s notes, worded like the snapshot\'s (no host path)', () => {
-  installFixture('noted-plugin', { version: '0.1.0', description: 'Tools for acme', icon: 'x',
+  installFixture('noted-plugin', { version: '0.1.0', description: 'Tools for acme', shinyField: 'x',
     models: [{ id: 'nm', env: { ANTHROPIC_MODEL: 'nm', CLAUDE_CODE_SUBAGENT_MODEL: 'nm' } }] }, { ref: 'dev' });
   installFixture('bare-plugin', { version: '0.1.0' });
-  installFixture('root-plugin', { version: '0.1.0', icon: 'x' }, { subdir: '' });
-  installFixture('broken-plugin', { version: '0.1.0', icon: 'x', taskSources: [{ id: 'bad' }] });
+  installFixture('root-plugin', { version: '0.1.0', shinyField: 'x' }, { subdir: '' });
+  installFixture('broken-plugin', { version: '0.1.0', shinyField: 'x', taskSources: [{ id: 'bad' }] });
   const rows = Object.fromEntries(listInstalledPlugins().map((r) => [r.name, r]));
   assert.deepEqual([rows['noted-plugin'].description, rows['noted-plugin'].ref], ['Tools for acme', 'dev']);
   assert.deepEqual(rows['noted-plugin'].notes, [
-    'plugins/noted-plugin/worca-cc-plugin.json: unknown field "icon" ignored',
+    'plugins/noted-plugin/worca-cc-plugin.json: unknown field "shinyField" ignored',
     'plugins/noted-plugin/worca-cc-plugin.json: models[0] ("nm"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored',
   ]);
-  assert.deepEqual(rows['root-plugin'].notes, ['./worca-cc-plugin.json: unknown field "icon" ignored'], 'a plugin at the repo root: discovery\'s "<subdir|.>"');
+  assert.deepEqual(rows['root-plugin'].notes, ['./worca-cc-plugin.json: unknown field "shinyField" ignored'], 'a plugin at the repo root: discovery\'s "<subdir|.>"');
   const b = rows['bare-plugin'];
   assert.deepEqual([b.description, b.ref, b.notes, b.latest], [null, null, [], null]);
   assert.deepEqual([rows['broken-plugin'].notes, rows['broken-plugin'].setup], [[], { ok: true, missing: [], noProfiles: [] }],

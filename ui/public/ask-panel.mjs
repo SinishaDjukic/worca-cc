@@ -20,6 +20,7 @@ import { commandRuns } from './ask-command-group.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
 import { buildNodeConfigRows, buildRoleRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
+import { engineMark, modelMark } from './brand-marks.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
 import { PR_OPEN, PR_OPEN_LABELS, prSourceText } from '../../src/shared/pr-auto.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
@@ -2328,7 +2329,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // engine (the extension's button says the same).
     const eng = pickerEngine();
     const engName = pickerEngineName(st.catalog ? st.catalog.models : [], eng);
-    el.modelBtnEngine.textContent = engName;
+    el.modelBtnEngine.replaceChildren(...(engName ? [engineMark(doc, eng, { size: 12 }), engName] : []));
     el.modelBtnEngine.hidden = !engName;
     const btn = el.modelBtnLabel.parentNode;
     if (btn) { btn.dataset.engine = eng; btn.title = `${engineLabel(eng)} · ${entry ? entry.label : st.picker.model}`; }
@@ -2596,7 +2597,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // The row carries NO provenance: a plugin name is arbitrary text and an origin
       // badge starved the label in a 292px panel. Where a model comes from is the
       // Models view's job; here the name is the thing being picked.
-      item.appendChild(make('span', 'ask-model-name', m.label || m.id));
+      item.append(modelMark(doc, m), make('span', 'ask-model-name', m.label || m.id));
       // The two STATUS badges stay (models-view.mjs:116,120-123) — they are warnings, not provenance.
       if (m.costUnreliable) {
         item.appendChild(tag('⚠cost', 'is-warn',
@@ -2703,7 +2704,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         for (const o of others) {
           const engineRow = menuItem('ask-engine-row', () => renderPane(`engine:${o.engine}`));
           engineRow.setAttribute('data-ask-engine-group', o.engine);
-          engineRow.appendChild(make('span', null, o.label));
+          const engineName = make('span', null, o.label);
+          engineName.prepend(engineMark(doc, o.engine));
+          engineRow.appendChild(engineName);
           engineRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
           panel.appendChild(engineRow);
         }

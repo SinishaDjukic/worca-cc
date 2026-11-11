@@ -124,7 +124,7 @@ For contributors, a new type is two entries:
    preview opens it, and optionally how to draw its inline tile. `preview` must be one of the viewer's preview kinds;
    `html` is not one, so no renderer can frame a file the chat shows.
 
-There is no plugin hook for file kinds yet. Worca plugins ship no browser code, and the plugin manifest has no UI
-key. A later version may add a data-only `fileKinds` manifest block that maps extra sniff rules to an existing
+There is no plugin hook for file kinds yet. Worca plugins ship no browser code, and the plugin manifest's only UI
+key is `icon`, a brand id the host draws itself. A later version may add a data-only `fileKinds` manifest block that maps extra sniff rules to an existing
 renderer, for example a `.ipynb` file shown as JSON. A renderer with its own drawing code would first need a render
 seam in the viewer and a separate decision on letting plugin code run in the page.

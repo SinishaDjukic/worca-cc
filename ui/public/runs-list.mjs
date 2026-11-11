@@ -21,6 +21,8 @@
 // none of them (D1).
 import { icon } from './icons.mjs';
 import { originMark } from './chat-origin.mjs';
+import { brandMark } from './brand-marks.mjs';
+import { forgeOfPrUrl, FORGE_LABEL } from '../../src/shared/pr-forge.mjs';
 import { glanceCopy } from './run-glance.mjs';
 import { splitShown, matchesLabels } from '../../src/shared/run-labels.mjs';
 import { labelChip } from './label-picker.mjs';
@@ -861,7 +863,8 @@ function textEl(doc, tag, cls, text) {
 
 /** The PR chip (spec §2.1a): icon + word, the title in the tooltip. Shared with run-status-card.mjs (slice 4, D1).
  *  `link`: a member row's chip is its own link to the PR (QA 7), above the row's stretched title link.
- *  `number`: the run page's PR bar names its PR inside the chip, between the git-state icon and the word (run 3, D11). */
+ *  `number`: the run page's PR bar names its PR inside the chip, between the git-state icon and the word (run 3, D11),
+ *  and its host beside the host's mark. A dense chip has no room for the name: a cleared mark only, named by its tooltip. */
 export function prChip(doc, pr, { link = false, number = false } = {}) {
   const asLink = link && !!pr.url;
   const s = doc.createElement(asLink ? 'a' : 'span');
@@ -869,6 +872,9 @@ export function prChip(doc, pr, { link = false, number = false } = {}) {
   s.title = pr.title;
   if (asLink) { s.setAttribute('href', pr.url); s.setAttribute('target', '_blank'); s.setAttribute('rel', 'noopener'); }
   s.append(icon(doc, pr.icon, 14));
+  const forge = forgeOfPrUrl(pr.url);
+  if (number && forge) s.append(brandMark(doc, forge), textEl(doc, 'span', 'runs-pr-host', FORGE_LABEL[forge]));
+  else if (forge) { const mark = brandMark(doc, forge, { fallback: false, label: FORGE_LABEL[forge] }); if (mark) s.append(mark); }
   if (number && pr.number != null) s.append(textEl(doc, 'span', 'runs-pr-num', `PR #${pr.number}`));
   s.append(textEl(doc, 'span', 'runs-pr-word', pr.word));
   return s;

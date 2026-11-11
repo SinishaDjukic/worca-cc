@@ -28,7 +28,7 @@ const FIELD_TYPES = new Set(['text', 'select']);
 const INPUT_TYPES = new Set(['text', 'select', 'remote-select', 'task-browser']);
 // `worca` is a free-form tool-metadata block (the workflow exporter records
 // `worca.exports` there — issue #421); the loader never reads it.
-const KNOWN_TOP = new Set(['name', 'version', 'description', 'author', 'homepage', 'license', 'engines', 'taskSources', 'chatChannels', 'setup', 'models', 'modelSecrets', 'mcpServers', 'worca']);
+const KNOWN_TOP = new Set(['name', 'version', 'description', 'author', 'homepage', 'license', 'icon', 'engines', 'taskSources', 'chatChannels', 'setup', 'models', 'modelSecrets', 'mcpServers', 'worca']);
 
 /** The built-in agent layer (repo agents/). Same URL math as agent-registry's
  *  DEFAULT_AGENTS_DIR, duplicated because agent-registry imports THIS module
@@ -344,6 +344,10 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
     errors.push(`${where}: "name" must be kebab-case (e.g. "github-source"), got "${name}"`);
   }
 
+  // A brand id the host may draw (ui/public/brand-marks.mjs), never artwork or a path: plugins ship no browser code.
+  const icon = typeof raw.icon === 'string' && raw.icon.length <= 64 && PLUGIN_NAME_RE.test(raw.icon) ? raw.icon : null;
+  if (raw.icon != null && !icon) warnings.push(`${where}: "icon" must be a kebab-case brand id, ignored`);
+
   const version = str(raw.version) || null; // absent -> null: pinned SHA is the version (§4.1)
 
   const enginesRaw = raw.engines && typeof raw.engines === 'object' ? raw.engines : {};
@@ -637,7 +641,7 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
     manifest: {
       name, version,
       description: str(raw.description), author: str(raw.author),
-      homepage: str(raw.homepage), license: str(raw.license),
+      homepage: str(raw.homepage), license: str(raw.license), icon,
       engines: { worcaApi }, setup, taskSources, chatChannels, models, modelSecrets, mcpServers,
     },
   };

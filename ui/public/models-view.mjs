@@ -12,6 +12,7 @@ import { credentialBadge } from './credential-badges.mjs';
 import { icon } from './icons.mjs';
 import { copyButton } from './copy-button.mjs';
 import { makeSwitch } from './switch.mjs';
+import { engineMark, modelMark } from './brand-marks.mjs';
 import { engineLabel, engineChoiceLabel, isBetaEngine, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES, CHAT_ENGINE_NAMES, engineReportsCost } from '../../src/shared/engine-switch.mjs';
 import { harnessesOf, runsOn, suggestModelHandle, HARNESS_EFFORTS } from '../../src/shared/connections.mjs';
 
@@ -123,7 +124,8 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
   const engineBadge = (m) => {
     const hs = harnessesOf(m);
     if (hs.length === 1 && hs[0] === 'claude') return null;
-    const b = h(doc, 'span', 'badge blue mv-engine', hs.map(engineLabel).join(' · '));
+    const b = h(doc, 'span', 'badge blue mv-engine');
+    hs.forEach((e, i) => b.append(...(i ? [' · '] : []), engineMark(doc, e, { size: 12 }), engineLabel(e)));
     b.title = `Runs on ${hs.map(engineLabel).join(' and ')}`;
     return b;
   };
@@ -223,7 +225,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
     card.dataset.id = m.id;
     const body = h(doc, 'div', 'mv-body');
     const head = h(doc, 'div', 'mv-head');
-    head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
+    head.append(modelMark(doc, m), h(doc, 'b', 'mv-name', m.label || m.id));
     keyBadge(head, m, doc);
     const eb = engineBadge(m); if (eb) head.appendChild(eb);
     if (predefLc.has(m.id.toLowerCase()) || (m.engine === 'codex' && codexLc.has(m.id.toLowerCase()))) head.appendChild(h(doc, 'span', 'badge slate mv-shadow', 'overrides built-in'));
@@ -278,7 +280,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
       card.dataset.id = m.id;
       const body = h(doc, 'div', 'mv-body');
       const head = h(doc, 'div', 'mv-head');
-      head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
+      head.append(modelMark(doc, m), h(doc, 'b', 'mv-name', m.label || m.id));
     keyBadge(head, m, doc);
       head.appendChild(h(doc, 'span', 'badge waiting mv-origin', 'project (legacy)'));
       body.appendChild(head);
@@ -303,7 +305,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
       card.dataset.plugin = m.plugin;
       const body = h(doc, 'div', 'mv-body');
       const head = h(doc, 'div', 'mv-head');
-      head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
+      head.append(modelMark(doc, m), h(doc, 'b', 'mv-name', m.label || m.id));
     keyBadge(head, m, doc);
       const peb = engineBadge(m); if (peb) head.appendChild(peb);
       head.appendChild(h(doc, 'span', 'badge waiting mv-origin', `plugin: ${m.plugin}`));
@@ -354,7 +356,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
       card.dataset.id = m.id;
       const body = h(doc, 'div', 'mv-body');
       const head = h(doc, 'div', 'mv-head');
-      head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
+      head.append(modelMark(doc, m), h(doc, 'b', 'mv-name', m.label || m.id));
     keyBadge(head, m, doc);
     const teb = engineBadge(m); if (teb) head.appendChild(teb);
       const badge = h(doc, 'span', 'badge slate mv-origin', 'policy');
@@ -384,7 +386,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
   for (const m of (hideBuiltin ? [] : predefined).filter((x) => keep(x, 'builtin'))) {
     const row = h(doc, 'div', 'mv-builtin');
     row.dataset.id = m.id;
-    row.appendChild(h(doc, 'b', 'mv-name', m.label));
+    row.append(modelMark(doc, m), h(doc, 'b', 'mv-name', m.label));
     keyBadge(row, m, doc);
     if (globalLc.has(m.id.toLowerCase()) || pluginLc.has(m.id.toLowerCase())) {
       row.appendChild(h(doc, 'span', 'badge slate mv-shadowed', 'overridden'));
@@ -404,7 +406,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
     for (const m of list.filter((x) => keep(x, engine))) {
       const row = h(doc, 'div', `mv-builtin mv-${engine}`);
       row.dataset.id = m.id;
-      row.appendChild(h(doc, 'b', 'mv-name', m.label));
+      row.append(modelMark(doc, m), h(doc, 'b', 'mv-name', m.label));
       if (ownedLc.has(m.id.toLowerCase())) row.appendChild(h(doc, 'span', 'badge slate mv-shadowed', 'overridden'));
       row.appendChild(h(doc, 'small', 'mv-summary hint', `${m.id}: ${effortsSummary(m.efforts, engineEfforts)}`));
       sec.appendChild(row);

@@ -78,3 +78,13 @@ The minified browser build is vendored as `ui/public/c4/dagre.min.js` and loaded
 through `scripts/c4-dagre.mjs`, by the C4 render card.
 
 - MIT: `@dagrejs/dagre`, `@dagrejs/graphlib`
+
+## Brand marks
+
+`ui/public/brand-marks.mjs` carries unaltered product marks. Their licences cover the artwork files only; the
+names and logos stay their owners' trademarks and imply no endorsement. `docs/brand-marks.md` records each mark's
+status and source.
+
+- GitHub mark and GitHub Copilot icon: [Primer Octicons](https://github.com/primer/octicons), MIT, Copyright (c) 2026
+  GitHub Inc. GitHub's [logo rules](https://brand.github.com/foundations/logo) apply.
+- Goose glyph: [aaif-goose/goose](https://github.com/aaif-goose/goose), Apache-2.0.

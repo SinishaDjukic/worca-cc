@@ -1,6 +1,6 @@
 // ui/public/marketplace/update-view.mjs — the Update review sheet's pure renderers (marketplace P6, board 3.2): one card
 // per update and the footer. Pure: every function takes `doc` and returns detached DOM; no fetch, no state, no listeners.
-import { kindCounts, pluginIconKind, kindTile, chip } from './kinds.mjs';
+import { kindCounts, pluginIconKind, pluginTile, chip } from './kinds.mjs';
 import { icon } from '../icons.mjs';
 import { renderNeedsGit } from '../plugins-view.mjs';
 import { errorWash } from './install-view.mjs';
@@ -93,7 +93,7 @@ export function renderUpdateCard(doc, card) {
   el.dataset.state = card.state;
   el.setAttribute('aria-label', `${card.name} update`);
   const top = make(doc, 'div', 'mk-upd-top');
-  top.append(kindTile(doc, pluginIconKind(kindCounts(card.row)), { size: 'sm' }), make(doc, 'span', 'mk-upd-name', card.name),
+  top.append(pluginTile(doc, { icon: card.row?.icon, iconKind: pluginIconKind(kindCounts(card.row)) }, { size: 'sm' }), make(doc, 'span', 'mk-upd-name', card.name),
     make(doc, 'span', 'mk-ver mk-upd-ver', versionRange(card)), ...stateChips(doc, card));
   if (card.state === 'review' && !needsTick(card)) {
     const label = make(doc, 'label', 'mk-incl');

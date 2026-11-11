@@ -72,7 +72,7 @@ test('renderEngineSection: the Cursor card has step rows, no helper rows, its ow
   assert.ok(copilot.querySelector('[data-setting="models.copilot.steps.planner"]'), 'Copilot has step rows');
   assert.match(copilot.querySelector('.engine-helpers .engine-slot-rest').textContent, /^Copilot runs its helper jobs .* on its own default model\.$/);
   const card = host.querySelector('.engine-card[data-engine="cursor"]');
-  assert.equal(card.querySelector('h3').firstChild.textContent, 'Cursor');
+  assert.equal([...card.querySelector('h3').childNodes].find((n) => n.nodeType === 3).textContent, 'Cursor');
   assert.equal(card.querySelector('h3 .beta-badge')?.textContent, 'Beta');
   const plan = card.querySelector('[data-setting="models.cursor.steps.planner"] .inherit-model');
   assert.deepEqual([...plan.options].map((o) => o.value), ['', 'my-cursor-m']);
@@ -91,7 +91,7 @@ for (const [engine, label] of [['gemini', 'Gemini CLI'], ['qwen', 'Qwen Code']])
     const host = doc.getElementById('h');
     renderEngineSection(host, { level: 'user', roles: STEPS, catalog: [...CATALOG, { id: 'm1', label: 'm1', engine, efforts: [], custom: 'global' }], fields: {} });
     const card = host.querySelector(`.engine-card[data-engine="${engine}"]`);
-    assert.equal(card.querySelector('h3').firstChild.textContent, label);
+    assert.equal([...card.querySelector('h3').childNodes].find((n) => n.nodeType === 3).textContent, label);
     assert.equal(card.querySelector('h3 .beta-badge')?.textContent, 'Beta');
     const plan = card.querySelector(`[data-setting="models.${engine}.steps.planner"] .inherit-model`);
     assert.deepEqual([...plan.options].map((o) => o.value), ['', 'm1']);

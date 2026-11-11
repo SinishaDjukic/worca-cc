@@ -1,7 +1,7 @@
 // ui/public/marketplace/manage-view.mjs — P6: the installed plugin sheet's pure renderers (board 3.3): the head with the
 // Enabled switch and the update row, Health (Doctor), Adds, Source, the Remove row and a Test connection result. Pure:
 // every function takes `doc` and returns detached DOM; no fetch, no state, no listeners.
-import { KINDS, kindCounts, pluginIconKind, kindTile, chip, landing } from './kinds.mjs';
+import { KINDS, kindCounts, pluginIconKind, kindTile, pluginTile, chip, landing } from './kinds.mjs';
 import { icon } from '../icons.mjs';
 import { addsRows } from './install-view.mjs';
 
@@ -46,7 +46,7 @@ export function renderManageHead(doc, row) {
   input.setAttribute('role', 'switch');
   input.checked = row.enabled !== false;
   sw.append(make(doc, 'span', null, 'Enabled'), input, make(doc, 'span', 'switch'));
-  id.append(kindTile(doc, pluginIconKind(kindCounts(row)), { size: 'lg' }), main, sw);
+  id.append(pluginTile(doc, { icon: row.icon, iconKind: pluginIconKind(kindCounts(row)) }, { size: 'lg' }), main, sw);
   head.append(id);
   const upd = renderUpdateRow(doc, row);
   if (upd) head.append(upd);
