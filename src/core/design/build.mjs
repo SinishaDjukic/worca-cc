@@ -39,8 +39,9 @@ import { classifyDraftPath, countLayers, createDraftStore } from './draft.mjs';
 import { designEngineFor, designEngineRow } from './engines.mjs';
 import { createFrameEmitter } from './frames.mjs';
 import { boundedParser, scanShellSlots } from './html-scan.mjs';
-import { isBoardKind } from './kinds.mjs';
-import { stageDesignKit } from './kit.mjs';
+import { isBoardKind, isDocKind, stagesKitEachDrive } from './kinds.mjs';
+import { stageDesignKit, stageWorcaLook } from './kit.mjs';
+import { readLookSource } from './look-source.mjs';
 import { designCaps } from './limits.mjs';
 import { CAPTURE_KIT, LOOK_KIT, crewFile, designWorkDir, ensureDesignFolders, kitDir, realSectionDir, removeSectionDir, sectionDir } from './paths.mjs';
 import { validateIntegration, validatePlan, validateRound } from './plan.mjs';
@@ -59,6 +60,8 @@ import {
 } from './store.mjs';
 import { createWorkWatcher } from './watch.mjs';
 
+/** The most errors one plan gate hands the lead, as `validatePlan` caps its own. */
+const MAX_PLAN_ERRORS = 20;
 /** A `--resume` whose session the CLI no longer has (the text of session-host.mjs `VANISHED_RE`, copied to keep this
  *  module off the session host). */
 const LOST_SESSION_RE = /No conversation found/i;
@@ -315,6 +318,7 @@ function withDefaults(deps = {}) {
     readCaps: readDesignCaps,
     isListPriced,
     stageKit: stageDesignKit,
+    stageLook: stageWorcaLook,
     createWorkWatcher,
     mock: undefined,
   };
@@ -697,7 +701,7 @@ export class DesignBuild extends EventEmitter {
    * earlier round is removed. `selection` (a Continue's section ids) limits the builder stage; the verdicts still
    * judge every section. A halt or a throw from the integrate pass through its rework cycle removes integration.json,
    * so a Continue integrates again rather than losing the `rework` list. worca's per-run cap is read once, here, and a
-   * deck's or a video's kit is staged on every drive.
+   * deck's, a video's or a document's kit is staged on every drive.
    * A change round sends `design-plan` right after its first `design-build` (carried statuses, the selection
    * `planned`); its lead stage is the `change` stage (`_leadStageDue`), a stale round.json goes at `run()`, and its
    * builder stage and verdicts take only the sections with a `todo`. A lead stage that applied a round lifts the
@@ -715,9 +719,10 @@ export class DesignBuild extends EventEmitter {
       this._watcher.start();
     }
     // L7.12: a deck or a video inlines its runtime from work/.kit/, so every drive stages it, a Continue too: a round
-    // whose staging threw, or one paused before P7, has no kit, and its end would fail every time (a web page keeps
-    // P5's chat staging alone). A throw is the round's `engine-error` through `_guarded`.
-    if (isBoardKind(this._design.kind)) await this._deps.stageKit({ kind: this._design.kind, workDir: designWorkDir(this.designId) });
+    // whose staging threw, or one paused before P7, has no kit, and its end would fail every time. A document's lead
+    // reads its contract and worca's look there, however the round started. A web page keeps P5's chat staging alone.
+    // A throw is the round's `engine-error` through `_guarded`.
+    if (stagesKitEachDrive(this._design.kind)) await this._deps.stageKit({ kind: this._design.kind, workDir: designWorkDir(this.designId) });
     if (fresh) {
       this._dropIntegration();
       if (this.kind === 'change') this._dropRound();
@@ -807,14 +812,16 @@ export class DesignBuild extends EventEmitter {
     return 'plan-invalid';
   }
 
-  /** The lead writes the shared files and plan.json; an invalid plan gets one resume with its errors.
+  /** The lead writes the shared files and plan.json; an invalid plan (a document's brand.md too) gets one resume with
+   *  its errors. A document whose look is worca's gets the fonts before any builder starts.
    *  @returns {Promise<null|'lead-failed'|'plan-invalid'>} null once a valid plan is held */
   async _leadPass() {
     const r = await this._leadStage({
-      stage: 'plan', firstPrompt: (a) => this._leadPlanPrompt(a), read: () => this._readPlan(), fixPrompt: planFixPrompt,
+      stage: 'plan', firstPrompt: (a) => this._leadPlanPrompt(a), read: () => this._readLeadPlan(), fixPrompt: planFixPrompt,
     });
     if (r.failed) return r.failed;
     if (!r.check.ok) return this._leadInvalid(r.agent, `plan.json is not valid: ${r.check.errors.join('; ')}`);
+    await this._stageLookIfWorca();
     this._takePlan(r.check.plan);
     this._endAgent(r.agent, 'done');
     return null;
@@ -833,6 +840,10 @@ export class DesignBuild extends EventEmitter {
     const errors = this._applyRound(r.check.round);
     if (errors) return this._leadInvalid(r.agent, `the plan after round.json is not valid: ${errors.join('; ')}`);
     this._endAgent(r.agent, 'done');
+    // A change of look to worca's needs the fonts before the builders: lint would flag them missing otherwise. Staged
+    // only once the lead row is `done`: a throw here is the round's `engine-error`, and its Continue builds the
+    // applied round's sections (`_finish` stages again) rather than re-running a round `validateRound` now refuses.
+    await this._stageLookIfWorca();
     return null;
   }
 
@@ -1056,6 +1067,30 @@ export class DesignBuild extends EventEmitter {
     const text = this._readWork('plan.json');
     if (text === null) return { ok: false, errors: ['plan.json was not written'], plan: null };
     return validatePlan(text, { kind: this._design.kind });
+  }
+
+  /**
+   * The lead's plan gate (`_leadPass` only; `_restore` keeps `_readPlan`): plan.json, and for a document the
+   * `Look source:` line of brand.md too, read even when plan.json failed, so one fix resume carries both lists.
+   * `project` passes only when the lead was given a Project line (the rule of `leadProjectLines`).
+   * @returns {{ ok: boolean, errors: string[], plan: object|null }}
+   */
+  _readLeadPlan() {
+    const check = this._readPlan();
+    if (!isDocKind(this._design.kind)) return check;
+    const hasProject = Boolean(this._projectDir) && this._engineRow?.readsOutsideCwd !== false;
+    const look = readLookSource(this._readWork('brand.md'), { hasProject });
+    if (check.ok && look.ok) return check;
+    return { ok: false, errors: [...(check.errors ?? []), ...(look.errors ?? [])].slice(0, MAX_PLAN_ERRORS), plan: null };
+  }
+
+  /** A document whose brand.md says `Look source: worca` gets worca's fonts in `assets/worca/` (`deps.stageLook`); any
+   *  other look, or kind, nothing. A throw after the plan or the round is the round's `engine-error` through
+   *  `_guarded`; `_finish` only logs one. */
+  async _stageLookIfWorca() {
+    if (!isDocKind(this._design.kind)) return;
+    if (readLookSource(this._readWork('brand.md')).source !== 'worca') return;
+    await this._deps.stageLook({ workDir: this._workDir });
   }
 
   /** A valid plan: every section `planned`, persisted, listed in `.crew.json` and sent as `design-plan`. */
@@ -1360,6 +1395,14 @@ export class DesignBuild extends EventEmitter {
       this._closeWatcher();
     }
     if (this._offHook() && isBoardKind(this._design.kind)) await this._deps.stageKit({ kind: this._design.kind, workDir: this._workDir });
+    // Any agent can write over assets/worca/ (Bash is open to every engine), so worca's fonts are put back before dist.
+    // Best-effort: every section is done and integration.json written, so a throw here would leave a round no Continue
+    // picks up and no dist; the fonts staged after the plan or the round are still there in the normal case.
+    try {
+      await this._stageLookIfWorca();
+    } catch (err) {
+      console.error(`[design] build ${this.id}: worca's look not staged again: ${messageOf(err)}`);
+    }
     try {
       assembleDesign({ workDir: this._workDir, plan: this._plan, mode: 'dist' });
     } catch (err) {

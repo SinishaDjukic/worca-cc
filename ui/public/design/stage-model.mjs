@@ -31,11 +31,13 @@ export const LEAD_TOKEN = '--ink';
 
 /**
  * What one plan section is called on each kind of stage, and which stage controls a kind has (M9). A `board` kind
- * builds as a grid of 1920×1080 tiles at scale 1 (kind-view.mjs), with no camera and no viewport switch.
+ * builds as a grid of 1920×1080 tiles at scale 1 (kind-view.mjs), with no camera and no viewport switch. A document
+ * is staged as a web page is.
  */
-export const KIND_NOUN = Object.freeze({ web: 'section', presentation: 'slide', pitch: 'slide', video: 'scene' });
+export const KIND_NOUN = Object.freeze({ web: 'section', presentation: 'slide', pitch: 'slide', video: 'scene', document: 'section' });
 export const KIND_STAGE = Object.freeze({
   web: Object.freeze({ viewport: true, camera: true, board: false }),
+  document: Object.freeze({ viewport: true, camera: true, board: false }),
   presentation: Object.freeze({ viewport: false, camera: false, board: true }),
   pitch: Object.freeze({ viewport: false, camera: false, board: true }),
   video: Object.freeze({ viewport: false, camera: false, board: true }),
@@ -1424,7 +1426,7 @@ export function selectHud(state) {
   return { ...hud, text: [by, cost, ...(stopped > 0 ? [`${stopped} stopped`] : [])].join(SEP) };
 }
 
-const KIND_THING = Object.freeze({ web: 'page', presentation: 'deck', pitch: 'deck', video: 'video' });
+const KIND_THING = Object.freeze({ web: 'page', presentation: 'deck', pitch: 'deck', video: 'video', document: 'document' });
 const STANDBY_HALT = Object.freeze({ paused: 'Paused before the plan', stopped: 'Stopped before the plan', error: 'The build failed before the plan', interrupted: 'Interrupted before the plan' });
 
 /**

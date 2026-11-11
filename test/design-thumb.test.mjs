@@ -241,6 +241,7 @@ test('needsThumb and thumbUrl: nothing to draw without a dist, and a bad id is j
 });
 test('thumbViewport: a web canvas is its width at 16:10', () => {
   assert.deepEqual(thumbViewport({ canvas: { w: 1440 } }), { width: 1440, height: 900 });
+  assert.deepEqual(thumbViewport({ kind: 'document', canvas: { w: 794 } }), { width: 794, height: 496 }, 'a document: its printed column');
   assert.deepEqual(thumbViewport({ canvas: { w: 1001 } }), { width: 1001, height: 626 });
 });
 test('the route: the PNG bytes, a bad or unknown id is the design 404, a missing file is a 404 with words', async () => {

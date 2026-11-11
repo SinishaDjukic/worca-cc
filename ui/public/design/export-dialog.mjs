@@ -1,6 +1,6 @@
 // ui/public/design/export-dialog.mjs — Design P6 (L6.4, L6.5, BRIEF C4): the stage head's Export menu and the dialogs
-// behind it. The menu is the mockup's (board 6a): Standalone HTML, Zip of the folder, PDF (decks only, and no row at all
-// on a video), then Copy into a project. A download opens a dialog only when it has something to say: still running
+// behind it. The menu is the mockup's (board 6a): Standalone HTML, Zip of the folder, PDF (decks and documents only,
+// and no row at all on a video), then Copy into a project. A download opens a dialog only when it has something to say: still running
 // after `showAfterMs`, a refusal, or what was left out of the file (the X-Worca-Export-Problems header). Copy into a
 // project is a dialog of its own, with the collision choice inside it. Every server string reaches the page as text.
 
@@ -8,7 +8,7 @@ import { createFlyout } from '../side-flyout.mjs';
 import { layoutDialog } from '../dialog-layout.mjs';
 import { guardModal } from '../modal-guard.mjs';
 import { icon } from '../icons.mjs';
-import { DECK_KINDS, exportStem } from '../../../src/shared/design-names.mjs';
+import { PDF_KINDS, exportStem } from '../../../src/shared/design-names.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 // The mockup's own icons (canvas build.mjs:114), drawn at 16px with its 1.75 stroke.
@@ -35,14 +35,15 @@ const isObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v)
 const errorOf = (body, fallback) => (isObject(body) && typeof body.error === 'string' && body.error ? body.error : fallback);
 
 /**
- * The menu's rows for a design kind: PDF is a row on every kind but video, enabled only for a deck.
+ * The menu's rows for a design kind: PDF is a row on every kind but video, enabled only for a deck or a document
+ * (`PDF_KINDS`, the list the server's PDF dispatcher reads).
  * @param {string} kind
  * @returns {Array<{id: string, label: string, disabled?: boolean, note?: string} | {sep: true}>}
  */
 export function exportMenuItems(kind) {
   const items = [{ id: 'html', label: LABELS.html }, { id: 'zip', label: LABELS.zip }];
   if (kind !== 'video') {
-    items.push(DECK_KINDS.includes(kind) ? { id: 'pdf', label: LABELS.pdf } : { id: 'pdf', label: LABELS.pdf, disabled: true, note: 'Decks only' });
+    items.push(PDF_KINDS.includes(kind) ? { id: 'pdf', label: LABELS.pdf } : { id: 'pdf', label: LABELS.pdf, disabled: true, note: 'Decks and documents only' });
   }
   items.push({ sep: true }, { id: 'project', label: LABELS.project });
   return items;

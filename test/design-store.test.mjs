@@ -26,8 +26,10 @@ test('createDesign: row, folders and defaults; bad input leaves nothing', () => 
   assert.ok(statSync(join(designWorkDir(d.id), 'sections')).isDirectory());
   const before = readdirSync(designRoot()).length;
   assert.throws(() => createDesign({ kind: 'film' }), bad('BAD_REQUEST'));
+  assert.throws(() => createDesign({ kind: 'nope' }), bad('BAD_REQUEST'));
   assert.throws(() => createDesign({ kind: 'web', title: 'x'.repeat(121) }), bad('BAD_REQUEST'));
   assert.equal(readdirSync(designRoot()).length, before);
+  assert.equal(createDesign({ kind: 'document', title: 'Q3 report' }).kind, 'document', 'a document is a design kind');
   const p = createDesign({ kind: 'pitch', title: '  Line\none  ', fast: false });
   assert.deepEqual([p.title, p.fast], ['Line one', false], 'Build fast is on unless the caller turns it off');
   assert.equal(createDesign({ kind: 'web', title: ' \n\t ' }).title, 'Untitled design', 'blank falls back');

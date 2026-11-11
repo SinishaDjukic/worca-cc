@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { DECK_KINDS, isBoardKind, isDeckKind, isFilmKind, kitFolder, kitScriptNames, BOARD_SCALE, boardCss } from '../src/core/design/kinds.mjs';
+import { DECK_KINDS, isBoardKind, isDeckKind, isFilmKind, isDocKind, usesSlots, stagesKitEachDrive, kitFolder, kitScriptNames, thumbStillCss, BOARD_SCALE, boardCss } from '../src/core/design/kinds.mjs';
 
 test('kinds', () => {
   assert.deepEqual(DECK_KINDS, ['presentation', 'pitch']);
@@ -21,6 +21,17 @@ test('kinds', () => {
   assert.deepEqual(kitScriptNames('constructor'), []);
   const names = kitScriptNames('video'); names.push('x');
   assert.deepEqual(kitScriptNames('video'), ['gsap.min.js', 'film.js']);
+});
+
+test('a document: its own kit folder, no scripts, not a board, no slots, the kit staged on every drive', () => {
+  const all = ['web', 'presentation', 'pitch', 'video', 'document', 'nope', undefined];
+  assert.equal(kitFolder('document'), 'document');
+  assert.deepEqual(kitScriptNames('document'), []);
+  assert.equal(thumbStillCss('document'), '');
+  assert.deepEqual(all.map(isDocKind), [false, false, false, false, true, false, false]);
+  assert.deepEqual(all.map(isBoardKind), [false, true, true, true, false, false, false]);
+  assert.deepEqual(all.map(usesSlots), [true, false, false, false, false, false, false]);
+  assert.deepEqual(all.map(stagesKitEachDrive), [false, true, true, true, true, false, false]);
 });
 
 test('boardCss: fixed tracks, the slide box kept, every step and reveal shown, both scales', () => {

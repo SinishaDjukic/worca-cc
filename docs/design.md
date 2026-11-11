@@ -1,7 +1,7 @@
 # Design
 
-Describe a web page, a presentation, a pitch deck or an HTML and JavaScript video in its own chat, and real
-agents build it in front of you. On by default (beta); `WORCA_FLAGS=-design` turns it off, and so does the
+Describe a web page, a document (a report, an analysis or an architecture document), a presentation, a pitch deck or
+an HTML and JavaScript video in its own chat, and real agents build it in front of you. On by default (beta); `WORCA_FLAGS=-design` turns it off, and so does the
 **Design** switch in Settings › Labs (the `design` flag). With the flag off the page is hidden and every
 `/api/design` route answers 404; what Design already spent stays in Statistics.
 
@@ -12,13 +12,14 @@ agents build it in front of you. On by default (beta); `WORCA_FLAGS=-design` tur
    changed or what it is doing (**Building**, **Paused**, **Stopped**, **Failed**, **Interrupted**), and what it
    cost.
 2. **Describe it** in the composer (*What should we design?*) and pick a kind: **Web page** (the default),
-   **Presentation**, **Pitch deck** or **Video**.
+   **Presentation**, **Pitch deck**, **Video** or **Document**.
 3. **Pick a project, if you like.** The lead agent reads the project's brand and code and passes the brand on to
    the agents that build the sections (not on every engine: see [Engines](#engines)). Nothing is written to the
    project. The lead also brings the project's own logo and screens into the design: see
    [What the agents can use](#what-the-agents-can-use). With **No project** the design stands on its own:
    unless what you wrote or attached shows a look, the lead picks one plain direction (one accent, system fonts,
-   no decoration) and writes it down for the builders.
+   no decoration) and writes it down for the builders. A document takes worca's own look instead: see
+   [Documents](#documents).
 4. **Attach files** with the button, by pasting or by dropping them: pictures, a logo, notes. A file worca does not
    take is named under the composer.
 5. **Send.** The design opens in its own chat. Its title is the first line of what you wrote (the first sentence,
@@ -176,6 +177,30 @@ finishes, the stage shows the film with play, pause and a scrub bar. The **Stand
 offline: it starts by itself unless the system asks for reduced motion, Space plays and pauses, and the arrow keys
 step one second.
 
+## Documents
+
+**Document.** A long read to look at on screen and to print: a research report, an analysis, an architecture
+document. What you write decides which. One section is one part of the document, with its own heading, in reading
+order. A part can hold tables, callouts (info, note, warning, risk), and charts and diagrams drawn as plain SVG in the
+page: no script runs in a document, so nothing is drawn by code.
+
+- **Page size.** A4, unless what you wrote asks for US Letter. The page on the stage is as wide as the printed page.
+- **Contents.** worca makes the contents list itself from the parts' headings, in plan order, and puts it after the
+  title block, with a link to each heading. The lead can number the headings (`1`, `1.2`); the contents list then
+  shows the same numbers.
+- **The look.** The look comes from the first place that names one: what you wrote or attached (a style, a brand, a
+  reference), then a design or brand skill the agent has or the project you picked (its CLAUDE.md, rules, memory, or
+  its own design system), and otherwise worca's own look: Poppins and JetBrains Mono on worca's warm neutrals, with
+  the fonts in the design's `assets/worca/` folder (both under the SIL Open Font License, whose text sits beside
+  them). The lead writes which one it followed, and why, as the first line of the design's `brand.md`:
+  `Look source: worca — nothing in the brief or the project names a style`. worca checks that line before any part
+  is built. Without it, or with `project` when no project was picked, the lead gets one try to fix it, and then the
+  round fails.
+- **Print.** The page size and margins, a page number in the corner and the title at the top of every page after
+  the first come from worca. A heading stays with what follows it, and a table row, a figure or a callout is never
+  cut across two pages. A dark-mode browser still prints on white. Page numbers need Chrome 131 or later; older
+  versions print the pages without them. The contents list has no page numbers.
+
 ## Changing it
 
 Ask for a change in the same chat: once the design has a round, the message box reads *Ask for a change*, and
@@ -215,14 +240,14 @@ change the design.
 |---|---|
 | **Standalone HTML** | One `.html` file. The page's own files, pictures included, are put inside it, so it opens without the design folder. Addresses on the web stay links. A file over 25 MiB, or one past 100 MiB in all, is left out. |
 | **Zip of the folder** | The finished folder as a `.zip`, inside one top folder named after the design, so unzipping does not scatter files. |
-| **PDF** | Decks only: **Presentation** and **Pitch deck**, one page per slide. On a web page the item is disabled and reads `Decks only`; a video has no PDF item. Needs Chrome or Edge on the machine, or `WORCA_CHROME` set to one. |
+| **PDF** | Decks and documents: **Presentation** and **Pitch deck**, one page per slide; a **Document** on A4 or Letter pages, with page numbers. On a web page the item is disabled and reads `Decks and documents only`; a video has no PDF item. Needs Chrome or Edge on the machine, or `WORCA_CHROME` set to one. |
 | **Copy into a project** | The finished folder, copied into a folder of a project you pick (by default `design/<name>`). |
 
 Files are named after the design's title, in lower case: "Q4 roadmap review" exports as `q4-roadmap-review.zip`.
 
 **PDF.** Only worca's own slide script runs while printing, never the code the agents wrote, so anything a slide
 draws with JavaScript is missing from the PDF. If the PDF's page count does not match the slides, nothing is saved
-and the dialog says so.
+and the dialog says so. A document prints with no script at all, as many pages as it needs.
 
 **Copy into a project:**
 

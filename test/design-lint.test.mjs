@@ -556,3 +556,48 @@ test('missing-file: a loaded reference to a file that is not in work/, in a sect
   // No work/ folder at all says nothing about files: every part is already missing.
   assert.ok(!rules(lintDesign({ workDir: join(tmpdir(), 'no-such-design-work'), plan: plan() })).includes('missing-file'));
 });
+
+test('a document: the Look source line of brand.md, heading ids and order, no global.js, no slots', () => {
+  const doc = (ids = ['intro']) => ({ v: 1, kind: 'document', title: 'T', canvas: { w: 794 }, page: 'A4', toc: true, numbered: false, notes: '',
+    sections: ids.map((id) => ({ id, job: id, brief: 'b', parts: ['html', 'css'], estHeight: 100 })) });
+  const good = '<section data-section="intro"><h2 id="intro-title">Intro</h2><h3 id="intro-scope">Scope</h3></section>';
+  const css = '[data-section="intro"] h2{margin:0}';
+  const files = (over = {}) => ({ 'shell.html': SHELL, 'brand.md': 'Look source: worca — the brief names no style\n', 'sections/intro/index.html': good, 'sections/intro/style.css': css, ...over });
+  const run = (over, p = doc()) => lintDesign({ workDir: world(files(over)), plan: p });
+  assert.deepEqual(run().findings, [], 'a clean document lints ok');
+
+  const noBrand = files(); delete noBrand['brand.md'];
+  const missing = lintDesign({ workDir: world(noBrand), plan: doc() });
+  assert.deepEqual(missing.findings, [{ rule: 'look-source', severity: 'error', section: null, file: 'brand.md', message: 'brand.md was not written: its first line is "Look source: <brief|project|skill|worca> — <why>"' }]);
+  assert.equal(missing.ok, false);
+  assert.deepEqual(run({ 'brand.md': 'Look source: mine — x' }).findings.map((f) => [f.rule, f.severity, f.message]),
+    [['look-source', 'error', 'brand.md: Look source must be brief, project, skill or worca, found "mine"']]);
+  assert.deepEqual(rules(run({ 'brand.md': 'Look source: project — CLAUDE.md' })), [], 'lint cannot know the project: the plan gate owns that rule');
+
+  const badId = run({ 'sections/intro/index.html': '<section data-section="intro"><h2 id="title">Intro</h2><h3>Scope</h3></section>' });
+  assert.deepEqual(badId.findings.map((f) => [f.rule, f.severity, f.section, f.message]), [
+    ['doc-heading-id', 'warn', 'intro', '<h2> "Intro" has no id that starts with "intro-": the contents list cannot link to it'],
+    ['doc-heading-id', 'warn', 'intro', '<h3> "Scope" has no id that starts with "intro-": the contents list cannot link to it'],
+  ]);
+  assert.equal(badId.ok, true, 'warns only');
+  assert.deepEqual(run({ 'sections/intro/index.html': '<section data-section="intro"><p>x</p></section>' }).findings.map((f) => [f.rule, f.message]),
+    [['doc-no-heading', 'section intro has no <h2>, so the contents list leaves it out']]);
+  assert.deepEqual(rules(run({ 'sections/intro/index.html': '<section data-section="intro"><h3 id="intro-a">A</h3><h2 id="intro-b">B</h2></section>' })), ['doc-heading-order']);
+  const script = run({ 'global.js': 'window.x=1' });
+  assert.deepEqual(script.findings.map((f) => [f.rule, f.severity, f.file, f.message]), [['doc-script', 'warn', 'global.js', 'a document runs no script: the PDF and the thumbnail never run global.js']]);
+
+  const slotted = run({ 'shell.html': SHELL.replace('<main>', '<main><div data-worca-slot="intro"></div>') });
+  assert.deepEqual(slotted.findings.map((f) => [f.rule, f.message]),
+    [['shell-slot-kind', 'slot "intro": a document takes no slots, every section goes to <!--worca:sections--> in plan order, so take the slot out']]);
+  const noMarker = run({ 'shell.html': SHELL.replace('<!--worca:sections-->', '<div data-worca-slot="intro"></div>') });
+  assert.ok(noMarker.findings.some((f) => f.rule === 'shell-marker' && /exactly once, found 0/.test(f.message)), 'a document needs the marker');
+
+  // Plan order, then global files (look-source with them), then the shell.
+  const order = run({ 'brand.md': '', 'global.js': 'x', 'sections/intro/index.html': '<section data-section="intro"><p>x</p></section>', 'shell.html': SHELL.replace('<main>', '<main><div data-worca-slot="intro"></div>') });
+  assert.deepEqual(rules(order), ['doc-no-heading', 'look-source', 'doc-script', 'shell-slot-kind']);
+});
+
+test('a web design gets none of the document rules', () => {
+  const r = lint('<section data-section="hero"><h3>x</h3><h2 id="nope">y</h2></section>', OK_CSS, { 'global.js': 'x', 'brand.md': 'no line' });
+  assert.deepEqual(r.findings, []);
+});

@@ -265,3 +265,28 @@ test('a Write streams like the CLI: an empty first delta, then 37-character slic
     if (saved === undefined) delete process.env.WORCA_MOCK_DESIGN_MS; else process.env.WORCA_MOCK_DESIGN_MS = saved;
   }
 });
+
+test('a document lead writes brand.md with a Look source line, a page and a toc, and worca\'s font in tokens.css', async () => {
+  const { readLookSource } = await import('../src/core/design/look-source.mjs');
+  const w = mkdtemp();
+  await run('design-lead', w, 'Kind: document\nMOCK_SECTIONS=2');
+  const brand = readFileSync(join(w, 'brand.md'), 'utf8');
+  assert.equal(brand.split('\n')[0], 'Look source: worca — mock');
+  assert.deepEqual(readLookSource(brand), { ok: true, source: 'worca', why: 'mock' });
+  const v = validatePlan(readFileSync(join(w, 'plan.json'), 'utf8'), { kind: 'document' });
+  assert.equal(v.ok, true, v.errors.join());
+  assert.deepEqual([v.plan.page, v.plan.toc], ['A4', true]);
+  assert.ok(readFileSync(join(w, 'tokens.css'), 'utf8').includes('url(assets/worca/poppins-latin-400-normal.woff2)'));
+  const s = join(w, 'sections', 'hero'); mkdirSync(s, { recursive: true });
+  await run('design-builder', s, 'Section: hero');
+  assert.match(readFileSync(join(s, 'index.html'), 'utf8'), /^<section data-section="hero"><h2 id="hero-title"/);
+  const brief = mkdtemp();
+  await run('design-lead', brief, 'Kind: document\nMOCK_LOOK=brief');
+  assert.equal(readLookSource(readFileSync(join(brief, 'brand.md'), 'utf8')).source, 'brief');
+  const bad = mkdtemp();
+  await run('design-lead', bad, 'Kind: document\nMOCK_BAD_BRAND');
+  assert.equal(readLookSource(readFileSync(join(bad, 'brand.md'), 'utf8')).ok, false);
+  const web = mkdtemp();
+  await run('design-lead', web, 'MOCK_SECTIONS=1');
+  assert.equal(existsSync(join(web, 'brand.md')), false, 'a web lead writes no brand.md');
+});

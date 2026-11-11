@@ -218,6 +218,10 @@ test('the list and the chat follow', async () => {
   assert.equal(bob.body.some((x) => x.id === D.id), false, "Bob's list does not");
   assert.equal(bob.text.includes(TITLE), false);
   assert.ok(bob.body.some((x) => x.id === OLD.id), 'the ownerless design is listed for everyone');
+  const report = (await call('POST', '/api/design', { kind: 'document', title: 'Ada report' }, as(ADA))).body.design;
+  assert.equal(report.kind, 'document');
+  assert.ok((await call('GET', '/api/design', undefined, as(ADA))).body.some((x) => x.id === report.id), "Ada's document is in her list");
+  assert.equal((await call('GET', '/api/design', undefined, as(BOB))).body.some((x) => x.id === report.id), false, "and not in Bob's");
 
   assert.ok(D.threadId, 'D was made with its chat');
   const thread = await call('GET', `/api/ask/threads/${D.threadId}`, undefined, as(BOB));
