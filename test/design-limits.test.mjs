@@ -313,7 +313,8 @@ function mountLibrary(answer, { hold = false } = {}) {
   };
   made.push(createLibrary({ doc, win, host: doc.getElementById('h'), fetch, navigate() {} }));
   const cap = () => doc.querySelector('.dz-fast-cap');
-  const on = () => doc.querySelector('.dz-fast [role=switch]').click();
+  // Build fast starts on: a click is needed only when a test turned it off.
+  const on = () => { const sw = doc.querySelector('.dz-fast [role=switch]'); if (!sw.checked) sw.click(); };
   return { urls, cap, on, release: () => release() };
 }
 

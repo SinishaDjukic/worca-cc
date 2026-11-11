@@ -10,6 +10,7 @@ import {
   DesignError, DESIGN_KINDS, DESIGN_ID_RE, BUILD_ID_RE, newDesignId, newBuildId, newAgentId, sectionIdProblem,
 } from './ids.mjs';
 import { designDir, ensureDesignFolders } from './paths.mjs';
+import { DESIGN_FAST_DEFAULT } from '../../shared/design-names.mjs';
 
 /** C-5 `design-build.status`. */
 export const BUILD_STATUSES = Object.freeze(['planning', 'building', 'integrating', 'paused', 'done', 'stopped', 'error', 'interrupted']);
@@ -107,8 +108,9 @@ function cleanKind(v) {
   return v;
 }
 
+/** Build fast as a boolean; absent means the default of a new design (DESIGN_FAST_DEFAULT: on). */
 function cleanFast(v) {
-  if (v === undefined) return false;
+  if (v === undefined) return DESIGN_FAST_DEFAULT;
   if (typeof v !== 'boolean') throw new DesignError('BAD_REQUEST', 'fast must be true or false');
   return v;
 }

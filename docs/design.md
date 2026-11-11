@@ -28,7 +28,7 @@ agents build it in front of you. On by default (beta); `WORCA_FLAGS=-design` tur
 Then the build:
 
 - **The lead plans** the page and writes the shared files.
-- **One agent per section** builds it. A web page gets 4 to 8 sections (16 to 32 with Build fast), a deck one
+- **One agent per section** builds it. A web page gets 16 to 32 sections (4 to 8 with Build fast off), a deck one
   section per slide and a video one per scene, at most 40.
 - **The lead goes over the result** once more, fixes what does not fit together, and sends a section back to
   its agent when it breaks a craft rule.
@@ -71,13 +71,15 @@ dialog moves the design to Claude, its picks are dropped and Default applies.
 
 ## Build fast
 
-**Build fast** is a switch behind the gear in the composer and in the chat, under the model pickers. It sets how many agents build sections at once:
+**Build fast** is a switch behind the gear in the composer and in the chat, under the model pickers. A new design
+starts with it on; turn it off there, before the first message or at any time after. It sets how many agents build
+sections at once:
 
-- **Off:** at most 3. The chat's label reads `up to 3`.
 - **On:** at most 12, and the label reads `up to 12`. On a [hosted](#hosted) worca it is at most 6, and the label
   reads `up to 6`.
+- **Off:** at most 3. The chat's label reads `up to 3`.
 
-On a web page it also lets the lead plan more sections (16 to 32 instead of 4 to 8).
+On a web page it also sets how many sections the lead plans: 16 to 32 on, 4 to 8 off.
 
 It can change in the middle of a build. The new number applies to the next agent that starts; it never stops a
 running agent. `WORCA_DESIGN_MAX_BUILDERS` sets the number for Build fast on: a whole number from 1 to 40, and a

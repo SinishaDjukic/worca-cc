@@ -477,10 +477,10 @@ test('composer matches the mockup', async () => {
   assert.equal(host.querySelector('.ask-scope-btn .ask-scope-label').textContent, 'No project');
   assert.equal(host.querySelector('.ask-scope-btn').getAttribute('aria-label'), 'Project: none');
   const sw = host.querySelector('.dz-fast input[role=switch]');   // makeSwitch, as the dock's
-  assert.equal(sw.checked, false);
-  assert.equal(host.querySelector('.dz-fast-cap.dz-fast-n').hidden, true);
+  assert.equal(sw.checked, true, 'Build fast starts on');
+  assert.deepEqual([host.querySelector('.dz-fast-cap.dz-fast-n').hidden, host.querySelector('.dz-fast-cap').textContent], [false, 'up to 12']);
   sw.click();
-  assert.equal(host.querySelector('.dz-fast-cap').textContent, 'up to 12');
+  assert.deepEqual([sw.checked, host.querySelector('.dz-fast-cap').hidden], [false, true], 'and can be turned off');
   host.querySelectorAll('.dz-kind-btn')[1].click();
   assert.deepEqual([...host.querySelectorAll('.dz-kind-btn')].map((b) => [b.getAttribute('aria-pressed'), b.classList.contains('is-on')]), [['false', false], ['true', true], ['false', false], ['false', false]]);
   assert.equal(host.querySelector('.ask-send').tagName, 'BUTTON');
@@ -495,7 +495,6 @@ test('send: creates the design with its choices, hands the message over, opens i
   const { lib, host, tick, posts, navs, setText, pick } = rig({ rows: [], projects: [{ key: 'p1', name: 'One', exists: true }], created: { design: { id: 'd_000000000009' }, threadId: 'ask_00000001' } });
   await lib.open(); await tick();
   host.querySelectorAll('.dz-kind-btn')[2].click();
-  host.querySelector('.dz-fast [role=switch]').click();
   await pick('One');
   setText('A seed deck. Twelve slides, dark.');
   host.querySelector('.ask-send').click(); await tick();
@@ -514,18 +513,19 @@ test('keys: Enter sends, Shift+Enter is a new line, IME composing does nothing',
   assert.ok(host);
 });
 test('a refused create stays in the composer with everything kept: text, kind, Build fast, project, files; Send works again', async () => {
-  const { lib, host, win, tick, navs, setText, pick, addFiles } = rig({ rows: [], projects: [{ key: 'p1', name: 'One', exists: true }], createStatus: 400, createError: 'There is no project "p1"' });
+  const { lib, host, win, tick, posts, navs, setText, pick, addFiles } = rig({ rows: [], projects: [{ key: 'p1', name: 'One', exists: true }], createStatus: 400, createError: 'There is no project "p1"' });
   await lib.open(); await tick();
   host.querySelectorAll('.dz-kind-btn')[2].click();
-  host.querySelector('.dz-fast [role=switch]').click();
+  host.querySelector('.dz-fast [role=switch]').click();   // off: the choice that is not the default
   await pick('One');
   await addFiles([new win.File(['x'], 'logo.png', { type: 'image/png' })]);
   setText('A page');
   host.querySelector('.ask-send').click(); await tick();
+  assert.equal(posts.at(-1).body.fast, false, 'Build fast off is sent as off');
   assert.equal(host.querySelector('.dz-start-err').textContent, 'There is no project "p1"');
   assert.equal(host.querySelector('textarea.dz-input').value, 'A page');
   assert.equal(host.querySelector('.dz-kind-btn.is-on').textContent, 'Pitch deck');
-  assert.deepEqual([host.querySelector('.dz-fast [role=switch]').checked, host.querySelector('.dz-fast-cap').hidden], [true, false]);
+  assert.deepEqual([host.querySelector('.dz-fast [role=switch]').checked, host.querySelector('.dz-fast-cap').hidden], [false, true]);
   assert.equal(host.querySelector('.ask-scope-label').textContent, 'One');
   assert.deepEqual([...host.querySelectorAll('.dz-start-file > span:first-child')].map((s) => s.textContent), ['logo.png']);
   assert.equal(host.querySelector('.ask-send').disabled, false, 'Send is ready again without typing');
@@ -599,7 +599,7 @@ test('the composer: Send follows the text; a 201 resets it but the kind stays; d
   send.click(); await tick();
   assert.deepEqual([host.querySelector('textarea.dz-input').value, send.disabled], ['', true]);
   assert.equal(host.querySelector('.dz-kind-btn.is-on').textContent, 'Video', 'the kind stays');
-  assert.deepEqual([host.querySelector('.dz-fast [role=switch]').checked, host.querySelector('.dz-fast-cap').hidden, host.querySelector('.ask-scope-label').textContent], [false, true, 'No project']);
+  assert.deepEqual([host.querySelector('.dz-fast [role=switch]').checked, host.querySelector('.dz-fast-cap').hidden, host.querySelector('.ask-scope-label').textContent], [true, false, 'No project'], 'Build fast goes back on');
   assert.ok(takeStart('d_00000000000c'));
   made.splice(made.indexOf(lib), 1);
   lib.destroy();

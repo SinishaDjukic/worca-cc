@@ -78,7 +78,7 @@ function rig(replies) {
   return { lib, host, doc, win, tick, posts, navs, setText, keydown, input, dialog, buttons, press };
 }
 
-const FIRST = { kind: 'web', fast: false, title: 'A landing page' };
+const FIRST = { kind: 'web', fast: true, title: 'A landing page' };
 
 test('gated: one dialog names the engine and its reasons; Allow unguarded re-posts that engine with the consent, then opens the design', async () => {
   const r = rig([gated(), created('d_000000000009')]);

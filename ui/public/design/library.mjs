@@ -11,7 +11,7 @@ import { createFlyout } from '../side-flyout.mjs';
 import { icon } from '../icons.mjs';
 import { makeSwitch } from '../switch.mjs';
 import { bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
-import { DESIGN_FAST_LABEL, DESIGN_KIND_LABELS } from '../../../src/shared/design-names.mjs';
+import { DESIGN_FAST_DEFAULT, DESIGN_FAST_LABEL, DESIGN_KIND_LABELS } from '../../../src/shared/design-names.mjs';
 import { openEngineGateDialog } from './engine-gate-dialog.mjs';
 import { createModelPills } from './model-pills.mjs';
 import { createComposerSettings } from './composer-settings.mjs';
@@ -424,7 +424,7 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
 
   let destroyed = false;
   let kind = KINDS[0];
-  let fast = false;
+  let fast = DESIGN_FAST_DEFAULT;   // on for a new design; the switch turns it off
   let projects = [];           // the projects there, from the last load; null when it failed
   let projectSeq = 0;
   let busy = false;            // the create is on its way (and the files it waits for, and the engine gate's dialog)
@@ -643,7 +643,7 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
     input.value = '';
     pendingFiles = [];
     renderFiles();
-    fast = false;
+    fast = DESIGN_FAST_DEFAULT;
     paintFast();
     const hadProject = project !== null;
     project = null;

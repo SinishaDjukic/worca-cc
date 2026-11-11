@@ -6,6 +6,8 @@ export const DESIGN_KIND_LABELS = Object.freeze({ web: 'Web page', presentation:
 export const DECK_KINDS = Object.freeze(['presentation', 'pitch']);
 // M6: the Build fast label when the switch is on.
 export const DESIGN_FAST_LABEL = 'up to 12';
+// Build fast on a new design: on, until the person turns it off (the start composer's switch and the store agree).
+export const DESIGN_FAST_DEFAULT = true;
 // The engines Design builds on (core/design/engines.mjs DESIGN_ENGINES, gate not `refused`, the mock left out): the
 // Models page lists a Design lead and Design builders row for each.
 export const DESIGN_ENGINE_NAMES = Object.freeze(['claude', 'codex', 'copilot', 'cursor', 'gemini', 'opencode', 'qwen']);

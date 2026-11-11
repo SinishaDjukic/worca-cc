@@ -21,15 +21,15 @@ test('createDesign: row, folders and defaults; bad input leaves nothing', () => 
   assert.match(d.id, DESIGN_ID_RE);
   const { title, kind, fast, status, version, createdBy, costUsd, projectKey, currentBuild } = d;
   assert.deepEqual({ title, kind, fast, status, version, createdBy, costUsd, projectKey, currentBuild },
-    { title: 'Untitled design', kind: 'web', fast: false, status: 'empty', version: 0, createdBy: 'alice', costUsd: 0, projectKey: null, currentBuild: null });
+    { title: 'Untitled design', kind: 'web', fast: true, status: 'empty', version: 0, createdBy: 'alice', costUsd: 0, projectKey: null, currentBuild: null });
   assert.equal(Object.keys(d).some((k) => /budget/i.test(k)), false, 'M13: a design has no spending limit of its own');
   assert.ok(statSync(join(designWorkDir(d.id), 'sections')).isDirectory());
   const before = readdirSync(designRoot()).length;
   assert.throws(() => createDesign({ kind: 'film' }), bad('BAD_REQUEST'));
   assert.throws(() => createDesign({ kind: 'web', title: 'x'.repeat(121) }), bad('BAD_REQUEST'));
   assert.equal(readdirSync(designRoot()).length, before);
-  const p = createDesign({ kind: 'pitch', title: '  Line\none  ', fast: true });
-  assert.deepEqual([p.title, p.fast], ['Line one', true]);
+  const p = createDesign({ kind: 'pitch', title: '  Line\none  ', fast: false });
+  assert.deepEqual([p.title, p.fast], ['Line one', false], 'Build fast is on unless the caller turns it off');
   assert.equal(createDesign({ kind: 'web', title: ' \n\t ' }).title, 'Untitled design', 'blank falls back');
 });
 

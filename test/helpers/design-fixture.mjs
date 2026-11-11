@@ -36,9 +36,9 @@ export function useDesignEnv(after) {
   return home;
 }
 
-/** A design row: web, titled `T`, engine `claude`, made by `createdBy`. */
+/** A design row: web, titled `T`, engine `claude`, Build fast off (the product's default is on), made by `createdBy`. */
 export function newDesign({ createdBy = 'local', ...fields } = {}) {
-  return createDesign({ kind: 'web', title: 'T', engine: 'claude', ...fields }, { by: createdBy });
+  return createDesign({ kind: 'web', title: 'T', engine: 'claude', fast: false, ...fields }, { by: createdBy });
 }
 
 /**

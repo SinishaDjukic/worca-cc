@@ -111,11 +111,11 @@ test('flag off: every route answers the flag gate 404', async () => {
 });
 
 test('create, read, list, patch', async () => {
-  const c = await call('POST', '/api/design', { kind: 'web', title: 'Ship', fast: true });
+  const c = await call('POST', '/api/design', { kind: 'web', title: 'Ship' });
   assert.equal(c.status, 201);
   assert.match(c.json.threadId, /^ask_/);
   assert.match(c.json.design.id, /^d_[0-9a-f]{12}$/);
-  assert.deepEqual([c.json.design.title, c.json.design.fast, c.json.design.engine, c.json.design.createdBy], ['Ship', true, 'claude', 'local']);
+  assert.deepEqual([c.json.design.title, c.json.design.fast, c.json.design.engine, c.json.design.createdBy], ['Ship', true, 'claude', 'local'], 'Build fast is on by default');
   const g = await call('GET', `/api/design/${c.json.design.id}`);
   assert.deepEqual(Object.keys(g.json).sort(), ['build', 'design', 'plan', 'sections', 'versions']);
   assert.deepEqual([g.json.plan, g.json.build, g.json.sections, g.json.versions], [null, null, [], []]);
@@ -159,12 +159,12 @@ test('M7: PATCH {fast} during a build reaches build.setFast and kills nothing', 
   const t = await call('PATCH', `/api/design/${d.id}`, { title: 'Only a title' });
   assert.equal(t.status, 200);
   assert.deepEqual(seen, [], 'a PATCH without fast leaves the build alone');
-  const r = await call('PATCH', `/api/design/${d.id}`, { fast: true });
-  assert.equal(r.json.fast, true);
-  assert.deepEqual(seen, [true]);
+  const r = await call('PATCH', `/api/design/${d.id}`, { fast: false });
+  assert.equal(r.json.fast, false);
+  assert.deepEqual(seen, [false]);
   assert.equal(designBuilds.get(buildId).status, 'building');
   await call('POST', `/api/design/${d.id}/builds/${buildId}/stop`, {}); await designBuilds.settled();
-  assert.equal(getDesign(d.id).fast, true, 'remembered per design');
+  assert.equal(getDesign(d.id).fast, false, 'remembered per design');
 });
 
 test('bad bodies are 400; a bad project is 400', async () => {
@@ -180,7 +180,7 @@ test('bad bodies are 400; a bad project is 400', async () => {
   for (const b of [{ fast: 'yes' }, { title: 5 }, { title: 'x'.repeat(121) }, { projectKey: 7 }, { projectKey: 'nope' }]) {
     assert.equal((await call('PATCH', `/api/design/${d.id}`, b)).status, 400, JSON.stringify(b));
   }
-  assert.deepEqual([getDesign(d.id).title, getDesign(d.id).fast], ['Untitled design', false]);
+  assert.deepEqual([getDesign(d.id).title, getDesign(d.id).fast], ['Untitled design', true]);
 });
 
 test('bad ids and other people answer 404, on every route', async () => {
