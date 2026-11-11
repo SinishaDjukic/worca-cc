@@ -143,7 +143,7 @@
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${strip}${exp}${body}</div></div><div class="convo-dock" id="wf-dock"></div></div>`;
   }
 
-  // ---- Expert: the canvas (dev's graph, Rail's skin) ----
+  // ---- Expert: the canvas (dev's graph, drawn in the Rail look) ----
   const snap = () => ({ wf: structuredClone(ed.wf), g: ed.g && { ...ed.g, tpl: structuredClone(ed.g.tpl) }, picked: ed.picked, laid: ed.laid });   // a copy of the layout: Auto-align writes the live one
   function edHtml() {
     const w = ed.wf, i = ed.picked.startsWith('n') && ed.picked !== 'n_task' && ed.picked !== 'n_end' ? +ed.picked.slice(1) : -1, st = w.steps[i];

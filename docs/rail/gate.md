@@ -26,7 +26,8 @@ The one table: each check, its command, when it runs and the widths it owes. Fro
 | `run-page-sweep` | `node G/run-page-sweep.mjs file://$PWD/plans/rail/prototype/run-page.html` | A change to the run or group page | 900, 375 |
 | `pulse-sweep` | `node G/pulse-sweep.mjs file://$PWD/plans/rail/prototype/pulse.html` | A change to Pulse or Settings | 900, 375 |
 | `click-check` | `node G/click-check.mjs --small` inside a run; without `--small` once per page | A change to a control | 1280, and 375 without `--small` |
-| Prototype-vs-app comparison | Wave 1 builds it, small (`plans/rail/wave-1.md`) | Once per page, after it is built; never inside a run; only pages in `plans/rail/compare-pages.json` | wide, narrow |
+| Prototype-vs-app comparison | Built in slice 2 by `npm run stillhet:compare`, every route, no list; the parts first: `npm run stillhet:compare -- --parts invitation,design-switch` | Once per slice, after it is built; never inside a fix round | 1280 both themes, 360 light |
+| Flag-off style diff | `npm run stillhet:style-diff -- --dev DEV_BASE` (the dev commit merged in first, one seed, a frozen clock) | Once per slice | 1280 both themes, 360 light |
 | The audit by looking | No command: open every control and judge the page as a person would | Once per page, after it is built, before review | wide, narrow |
 | A person's review | The step a gate cannot do: nothing pushes or merges without it | After the audit by looking | wide, narrow |
 
@@ -36,8 +37,9 @@ click, the top bar one row, one way back at a time (`‹ Settings` only while th
 something. `ds-check`: everything on the page comes from the design system. `align-check`, on a settings tab: one left edge
 for every head, name and divider, one right edge where every row's end stops (a quiet button by its text), and each row's
 name, sentence and end on one baseline. The alignment is SettingsRow's and SettingsSection's, never a page's;
-`align-proof.mjs` shows the check catches each fault. These run on the prototype, and on the app from Wave 1's first step
-(`plans/rail/wave-1.md`).
+`align-proof.mjs` shows the check catches each fault. These run on the prototype, and on the app from slice 2 (`plans/rail/implementation-prompt.md`).
+
+**Mode.** A comparison names its mode, set on the prototype's own `file://` origin with `worca-rail.mode`. Expert is the default; Simple and Advanced only when a change touches what that mode shows. Modes run one after another, never in parallel.
 
 ## New code
 

@@ -7,7 +7,7 @@ Three rules for fixing: a toast says only what happened; a control acts, or is d
 rule covers gets its rule (docs, catalog, component, test, gallery).
 
 Mock limits: nothing real exists behind GitHub, files, the terminal or the clipboard. A control that would open one may say
-what it would do ("Would open #1180 on GitHub"), never that it did. Reload losing mock state is accepted.
+what it would do ("Would open #1180 on GitHub"), never that it did. "Would…" lives only in the prototype's demo adapter, never in the app: the app does the real action. Reload losing mock state is accepted.
 
 ## Shared and shell
 
@@ -33,7 +33,7 @@ what it would do ("Would open #1180 on GitHub"), never that it did. Reload losin
 - C2 c7 Workspace card Remove throws toLowerCase (conversation.js:718, workspaces.js:100)
 - C3 ⋯ Ask about it puts plain text, no chip (c0,c5,c6,c7,c9,c10,c12; conversation.js:388,581)
 - C4 Long unbroken text runs off the window (message bubble; a 150-char label pushes the chat head past 1440)
-- C5 Send with empty box: no reason shown
+- C5 Send with empty box: no reason shown In the app (not a toast): the real action.
 - C6 + Ticket or Shape in Schedule mode silently switches to Task
 - C7 Pin toasts Pinned, row neither moves nor marks
 - C8 Voice: Mic only toasts; Hands-free item reads as state
@@ -112,7 +112,7 @@ Tasks about 110 states and Retry, Stop, viewers, tabs; Marketplace Expert; Setti
 
 # Click sweep, round 2 (9 Nov)
 
-Round 1's lines were re-tested; those not repeated below held. Same rules as above. "Would…" for anything real behind it.
+Round 1's lines were re-tested; those not repeated below held. Same rules as above. "Would…" only in the prototype's demo adapter, never in the app.
 
 ## Shared and shell (A)
 
@@ -147,7 +147,7 @@ Round 1's lines were re-tested; those not repeated below held. Same rules as abo
 - C2 Resume at…: button says "Cancel 14:00" after 17:45; accepts anything
 - C3 Save as preset names another task; "A new task with the same task"; "Start a new task" vs "Start a new run"
 - C4 task and run mixed on one surface and flips after an action (small.names; add the rule if missing)
-- C5 Toasts: Terminal opened, Checked out, Install running, Downloading, Saved, Copied → "Would…"; Try it first leaves the dialog open
+- C5 Toasts: Terminal opened, Checked out, Install running, Downloading, Saved, Copied → "Would…"; Try it first leaves the dialog open In the app (not a toast): the real action.
 - C6 `#run/auto` Answer it in the card dead; delete of a group or feature no toast; Approve 3 runs changes the title; breadcrumb tooltip says Runs
 - C7 Group-by counts mix units (sections vs tasks)
 - C8 Tasks narrowed with no tasks says "Nothing here with these words", no way on
@@ -155,7 +155,7 @@ Round 1's lines were re-tested; those not repeated below held. Same rules as abo
 
 ## Workflows, Marketplace, Requirements (D)
 
-- D1 Export's format picker closes the form (workflows.js:110, toggle ~:248); Export toasts → "Would export"
+- D1 Export's format picker closes the form (workflows.js:110, toggle ~:248); Export toasts → "Would export" In the app (not a toast): the real action.
 - D2 Copy keeps 41 tasks, 92% merged; canvas adds a same-named step; empty name reverts silently
 - D3 Bad addresses in Workflows and Requirements still show another page (S14)
 - D4 Canvas Fit is only 100%; zoom pushes nodes past the inspector; starts at 54%
@@ -172,7 +172,7 @@ Round 1's lines were re-tested; those not repeated below held. Same rules as abo
 - E4 Drag-narrow lost on click-through; bars say Nov 1 but Tasks opens a bucket (insights.js:131)
 - E5 Headline "Up 28% … period before" under "with no comparison"
 - E6 Automations Approve starts nothing; Labels rename accepts empty and duplicates
-- E7 General folders, Hourly rate, Budget per-run accept bad values; toasts → "Would…" (changelog, repo, bug, guide, test notification, test Telegram, copied)
+- E7 General folders, Hourly rate, Budget per-run accept bad values; toasts → "Would…" (changelog, repo, bug, guide, test notification, test Telegram, copied) In the app (not a toast): the real action.
 - E8 "…until you act on it once you open it"; "1 task … finished runs"; Delete Strict and Frontend do not say what follows (act.confirm); Simple shows Proxy and per harness
 
 ## Still owed after these
@@ -217,12 +217,12 @@ All of round 2 not repeated here passed with real clicks. Accepted: Expert's fac
 
 ## Projects, Insights, Settings (J)
 
-- J1 Headlines still compare under "with no comparison" on 14 pages (insights.js `sub.why`); Copy a link → "Would copy"; Showing lists AI spend twice
+- J1 Headlines still compare under "with no comparison" on 14 pages (insights.js `sub.why`); Copy a link → "Would copy"; Showing lists AI spend twice In the app (not a toast): the real action.
 - J2 Project counts on Insights equal the Tasks list (billing-api 18 vs 12, worca-cc 9 vs 22, docs-site 3 vs 1); Needs you counts one unit; worca-cc "1 needs you" vs 2
 - J3 by name doesn't sort; workspace Change in a chat: chip and sentence disagree on the project; removing a project leaves its questions; map node loses the workspace you came from
 - J4 Connectors: deleting a set leaves its references; Duplicate twice gives two same names
 - J5 Required fields checked at one moment everywhere (add the rule to forms.md); format checks where a hint promises one; emptied URLs; Save toasts with no change; Folders accepts `/`
-- J6 "$1000 an hour" vs "$1,000"; per-run bounds; "2 jobs back to its role" (settings-model.js:194); picker toasts repeat the sentence; Test "answered in 1.1s" → Would
+- J6 "$1000 an hour" vs "$1,000"; per-run bounds; "2 jobs back to its role" (settings-model.js:194); picker toasts repeat the sentence; Test "answered in 1.1s" → Would In the app (not a toast): the real action.
 
 # Click sweep, round 4 (9 Nov), full round
 
@@ -245,7 +245,7 @@ Same rules. Shared items first, since several places reported them.
 
 - L1 Sidebar Archive, Delete, Stop leave the center stale (centers.js:236); Counts don't follow: `starting` Pause, `failed` Restart Build, `scheduled` Start now, `stopped` Start a new task. One state change drives bar, Pulse and In view
 - L2 In view underlines the wrong tab; `question`, `working`, `ready` carry another task's branch and plan (act.this-thing): each page its own seeded title, branch, plan
-- L3 Task composer Enter does nothing (goes in step 2 anyway); group crumb only toasts; Open the whole diff → Would open; words: "Merged runs", "Removed run", "cut into runs", "3 runs", "from its run", "Mock run"; Working… flash on non-work actions; viewer has x and Close
+- L3 Task composer Enter does nothing (goes in step 2 anyway); group crumb only toasts; Open the whole diff → Would open; words: "Merged runs", "Removed run", "cut into runs", "3 runs", "from its run", "Mock run"; Working… flash on non-work actions; viewer has x and Close In the app (not a toast): the real action.
 - L4 Title without a limit; quiet fold repeats its row; tints end at different widths; validation line beside Schedule…; Simple's Archive tooltip jargon; Simple cards offer Run now on a schedule
 - L5 Project filter on the Tasks page body: page ignores it, still shows every project's card
 

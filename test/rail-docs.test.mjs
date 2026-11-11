@@ -67,7 +67,7 @@ test('contributors and agents are pointed at the design system', () => {
 
 test('the plans point at what exists, and the one names stay', () => {
   for (const f of readdirSync(join(ROOT, 'plans/rail'))) if (f.endsWith('.md')) assert.doesNotMatch(read(`plans/rail/${f}`), /rail-restart-handoff/, f);
-  assert.match(read('plans/rail/wave-1.md'), /Base branch: `docs\/rail-agreed`/);
+  assert.match(read('plans/rail/implementation-prompt.md'), /`docs\/rail-agreed`/);
   for (const f of ['CLAUDE.md', 'AGENTS.md', 'docs/rail/README.md']) assert.match(read(f), /Building Rail now/, f);
   for (const f of [...chapters().map((c) => `${RAIL}/${c}`), 'docs/design-system-catalog.json']) assert.doesNotMatch(read(f), /account menu/i, `${f}: the name is the profile menu`);
 });

@@ -43,6 +43,7 @@ No run is ever blocked by a policy. The two Chat web fields are the exception to
 | Required MCP servers (`mcp.required`) | servers each developer turns on with consent; they form the **Team** set ([below](#mcp-servers-the-team-set)); never in `workspaceRuns` | soft |
 | Required skills (`skills.required`) | plugin skills each developer turns on with consent; they join the **Team** set ([below](#skills-required-plugin-skills)); never in `workspaceRuns` | soft |
 | Default workflow, human in the loop | when the project has no active workflow / switch of its own | default |
+| Away mode defaults (`night.*`) | the [Away mode](away-mode.md) settings (which runs, away hours, method, thresholds, spend cap and limits) when you have not set your own | default |
 | Create a PR when a run finishes (`pr.open`) | `none` / `draft` / `ready`: what a run does when it finishes with work committed, until the project (or, for a workspace run, the workspace) sets its own; a run can still choose on the New run form. `workspaceRuns` may set it separately | default |
 | Shaper features: pull requests (`pr.slices`) | `each` (a stacked PR per slice) or `one` (one PR when the feature is done), until the project sets its own; never in `workspaceRuns` (a workspace run is never sliced) | default |
 | Record runs to team metrics, minimum Worca version | a hint when "Include my runs" is off; a banner on an older client | soft |
@@ -219,7 +220,7 @@ any project or workspace that resolves a policy from the cached branch reads
 
 ## The Team policy page
 
-The page separates what the team publishes from what your machine makes of it.
+The page is **Manage › Team policy** in the sidebar (Expert level). It separates what the team publishes from what your machine makes of it.
 
 - The **top right** carries the sync chip that Team metrics uses: how fresh this machine's copy
   is, and **Refresh**. Nothing about the document itself.

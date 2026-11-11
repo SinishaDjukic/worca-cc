@@ -1,3 +1,5 @@
+History. Superseded by implementation-prompt.md; do not build from it.
+
 # Rail: the gameplan
 
 Emil, 8 Nov. One order, from where we are to Rail in the product. `wave-3.md` keeps the history; this says what is next.

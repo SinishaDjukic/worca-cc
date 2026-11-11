@@ -939,7 +939,7 @@ test('a v2 run page: progress reads numerically, .rd-step names what runs (no st
     { name: 'each distinct run warning shows once: a pick drop repeated, and quiescence with a dead-end line', run: async () => {
       const window = await bootApp();
       const np = window.__np;
-      const DROP = "Plan: claude-opus-5-5 is not on Codex, runs Codex's default model";
+      const DROP = "Plan: claude-opus-5-5 is not on OpenAI Codex, runs OpenAI Codex's default model";
       const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
       np.onState(r, { status: 'running', stepper: MANIFEST, active: [], warnings: [DROP, DROP], steps: [] });
       const banners = window.document.createElement('div');

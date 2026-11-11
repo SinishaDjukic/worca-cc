@@ -45,14 +45,15 @@ function stackOf(doc) {
  *  mode 'up'    : left = trigger.left; top = trigger.top - menu height - gap (opens upward)
  *  mode 'beside': left = parent.right + 4, or parent.left - width - 4 when there is no room; top = trigger.top - 5
  *  mode 'down'  : left = trigger.right - menu width (right edges aligned); top = trigger.bottom + gap (opens downward)
+ *  mode 'below' : 'down' left-aligned (left = trigger.left), with `fit` always on
  *  Writes menu.style.left/top in px; un-hides the menu first so it can be measured.
- *  `fit` (opt-in, 'down' only) never lets the popup cover its trigger: it opens below when it fits, else above when there
+ *  `fit` (opt-in for 'down', always for 'below') never lets the popup cover its trigger: it opens below when it fits, else above when there
  *  is more room above (trigger.top - gap - margin) than below, else below. Where it goes it is capped to that room with
  *  menu.style.maxHeight (cleared before measuring, so a repaint measures its own height again) and scrolls. Without `fit`
  *  the vertical clamp may slide a tall popup up over its trigger (the pickers that open without it keep that). */
 export function placeFlyout(menu, trigger, { mode = 'side', parent = null, win = globalThis.window, gap = 6, margin = 8, fit = false } = {}) {
   menu.hidden = false;
-  const fits = fit && mode === 'down';
+  const fits = (fit && mode === 'down') || mode === 'below';
   if (fits) menu.style.maxHeight = '';
   const w = menu.offsetWidth;
   const h = menu.offsetHeight;
@@ -66,6 +67,9 @@ export function placeFlyout(menu, trigger, { mode = 'side', parent = null, win =
     top = t.top - h - gap;
   } else if (mode === 'down') {
     left = t.right - w;
+    top = t.bottom + gap;
+  } else if (mode === 'below') {
+    left = t.left;
     top = t.bottom + gap;
   } else if (mode === 'beside') {
     const p = (parent || trigger).getBoundingClientRect();

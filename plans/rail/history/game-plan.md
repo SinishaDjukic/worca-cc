@@ -1,3 +1,5 @@
+History. Superseded by implementation-prompt.md; do not build from it.
+
 # Worca Rail: the game plan
 
 Bundled 5 Nov 2026. The goal: the library, the tokens and the design system lead, and Worca is built from them. This

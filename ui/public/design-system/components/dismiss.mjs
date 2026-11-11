@@ -66,7 +66,13 @@ export function watchStrips(doc) {
     if (e.key !== 'Escape' || e.defaultPrevented || doc.querySelector('.keys-modal')) return;
     const strip = [...doc.querySelectorAll('.rc-confirm, [data-strip]')].filter((x) => x.getClientRects().length).pop(), no = strip?.querySelector('[data-confirm="no"], [data-strip-no]');   // data-strip: a question laid out as a row, its Cancel marked data-strip-no
     if (!no || [...strip.querySelectorAll('input:not([type="checkbox"]):not([type="radio"]), textarea')].some((f) => f.value !== f.defaultValue)) return;
-    e.preventDefault(); e.stopImmediatePropagation(); no.click();
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (strip.dataset.esc === 'back') {   // a quiet side that is itself an answer: Esc takes the strip back, answering nothing
+      const working = strip.getAttribute('aria-busy') === 'true' || [...strip.querySelectorAll('button')].every((b) => b.disabled);
+      if (!working) strip.dispatchEvent(new strip.ownerDocument.defaultView.CustomEvent('strip:back', { bubbles: true }));
+      return;
+    }
+    no.click();
   });
 }
 

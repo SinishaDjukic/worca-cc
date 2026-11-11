@@ -6,7 +6,7 @@
 | `keys.not-typing` | No key fires while you type in a field | Typing stays typing | design-system-logic |
 | `keys.reserved` | No shortcut uses a combo the browser owns | It could never reach the page | design-system-logic |
 | `keys.sheet` | `?` opens the Keyboard shortcuts sheet, drawn from the table | It is how keys are found | design-system-components |
-| `keys.esc-strip` | Esc takes back the confirm strip or short form that shows, once nothing lies over it: `watchStrips` presses its Cancel; a form with something typed stays, as a Dialog does | A question you did not mean goes the way it came | design-system-components |
+| `keys.esc-strip` | Esc takes back the confirm strip or short form that shows, once nothing lies over it: `watchStrips` presses its Cancel; a form with something typed stays, as a Dialog does. A strip whose quiet side is an answer (`data-esc="back"`) is taken back without one: `watchStrips` sends `strip:back`, and its owner closes it | A question you did not mean goes the way it came | design-system-components |
 | `keys.focus` | Focus is visible, and a redraw leaves it on the same row, or the one beside a row that left | You keep your place | by hand |
 
 The table is `SHORTCUTS` in `shortcuts.mjs`. A page names where the focus is, and the table answers:

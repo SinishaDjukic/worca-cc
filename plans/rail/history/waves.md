@@ -1,3 +1,5 @@
+History. Superseded by implementation-prompt.md; do not build from it.
+
 # Worca Rail: the waves after Wave 1
 
 Shaped 5 Nov 2026. The goal: the library, the tokens and the design system lead, and every page of

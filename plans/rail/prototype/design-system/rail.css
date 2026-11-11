@@ -437,13 +437,8 @@ html,body{height:auto;overflow:visible;margin:0;}
 .dc-body{display:flex;flex-direction:column;gap:2px;min-width:0;}
 .dc-body p{margin:0;}
 .dc-a{font-size:var(--fs-body);color:var(--ink);}
-.dc-link{padding:0;border:0;background:none;font:inherit;color:var(--ink);text-decoration:underline;text-underline-offset:3px;cursor:pointer;}
 
 /* Prototype feedback: a confirm strip for actions that cannot be taken back, a toast for what an action did. */
-.rc-confirm{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--panel);font-size:var(--fs-body);}
-.pz-page > .rc-confirm{position:sticky;top:8px;z-index:6;}   /* a page with no shell: the strip stays on screen too */
-.rc-confirm-t{color:var(--ink);font-weight:500;}
-.rc-confirm-acts{display:flex;gap:8px;}
 .rc-toast{position:fixed;left:50%;bottom:24px;z-index:50;transform:translate(-50%,0);display:flex;align-items:baseline;gap:10px;width:max-content;max-width:min(480px,calc(100vw - 32px));padding:8px 14px;border-radius:var(--r-md);
   background:var(--ink);color:var(--bg);font-size:var(--fs-meta);box-shadow:var(--shadow-pop);opacity:0;pointer-events:none;transition:opacity var(--motion-change) var(--ease);}   /* out over change */
 .rc-toast.is-on{opacity:1;transform:translate(-50%,0);transition-duration:var(--motion-quick);}   /* in over quick */
@@ -465,11 +460,6 @@ html,body{height:auto;overflow:visible;margin:0;}
 .menu-sep[data-narrow]{display:none;}
 @container (max-width: 520px){ .menu-sep[data-narrow]{display:block;} }
 /* The strip as a form: the label, the fields, then the buttons, wrapping on phones. */
-.rc-confirm.is-form{justify-content:flex-start;}
-.rc-confirm.is-form .rc-confirm-t{flex:1 0 100%;}
-.rc-confirm.is-form .input{flex:1 1 220px;min-width:0;}
-.rc-confirm.is-form .select{flex:0 0 auto;width:auto;}
-.rc-confirm.is-form .rc-confirm-acts{margin-left:auto;}
 .rc-check{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink);}
 .rc-check input{margin:0;accent-color:var(--ink);}
 /* The cost breakdown under its figure. */
@@ -724,8 +714,6 @@ html,body{height:auto;overflow:visible;margin:0;}
 .pd-retry:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
 .pd-alert{display:flex;flex-direction:column;gap:2px;padding:8px 12px;border:1px solid color-mix(in srgb,var(--red-ink) 35%,transparent);border-radius:var(--r-sm);background:var(--red-bg);font-size:var(--fs-meta);color:var(--ink);}
 .pd-alert b{color:var(--red-ink-strong);font-weight:600;}
-.rc-confirm-t.is-err{display:flex;flex-direction:column;gap:2px;color:var(--red-ink);}
-.rc-confirm-why{color:var(--ink-2);font-weight:400;font-size:var(--fs-meta);}
 /* A group's next run, under the run it follows, on the step text edge. */
 .sc-then{grid-column:1 / -1;display:flex;align-items:center;gap:6px;min-width:0;padding:10px 0 0 32px;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
 .sc-then b{min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--ink);font-weight:500;}
@@ -1657,8 +1645,6 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .center-also{display:flex;align-items:center;gap:12px;margin:12px 0 0;padding-top:12px;border-top:1px solid var(--line);font-size:var(--fs-body);color:var(--ink-2);}
 .center-also b{font-weight:500;color:var(--ink);}
 .center-flat{margin-top:14px;}
-.dc-link[data-c-filter]{color:inherit;text-decoration:none;}
-.dc-link[data-c-filter]:hover{text-decoration:underline;text-underline-offset:2px;}
 /* The Legacy approach's forms (form.dialog) */
 .viewer-modal .card.rl-dialog.cc-dlg{width:min(640px,100%);max-height:calc(100vh - 48px);}
 .cc-dlg .dlg-body{display:flex;flex-direction:column;gap:16px;}
@@ -1757,7 +1743,7 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
 .wf-sent{display:flex;gap:6px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);margin:14px 0 8px;}
 .wf-who{color:var(--ink-2);font-size:var(--fs-meta);} .wf-acts{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 0;}
 .wf-well{position:relative;box-sizing:border-box;width:min(940px,calc(100% - 32px));margin:6px auto 10px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);overflow:hidden;}
-/* dev's graph in Rail's skin: on the view, plain words (no port types, no await rows, no conditions); on the canvas, ports show */
+/* dev's graph drawn in the Rail look: on the view, plain words (no port types, no await rows, no conditions); on the canvas, ports show */
 .gv-skin .prow .pt,.gv-skin.is-view .prow.gate,.gv-skin.is-view .cond{display:none;}
 .gv-skin .node.is-picked{outline:2px solid var(--ink-2);outline-offset:3px;border-radius:var(--r-sm);}
 .gv-skin.is-edit .node{cursor:pointer;}
@@ -1927,8 +1913,6 @@ button.fr-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .bar-quick>.menu{position:static;}
 
 /* a form's field stacks under its label: the row basis must not become its height */
-.rc-confirm.is-form .fld{flex-direction:column;align-items:stretch;}
-.rc-confirm.is-form .fld>.input{flex:0 0 auto;}
 /* look.alert-ladder: the state word on a card wears its level's colour; a list keeps it on the mark */
 .tp-kicker:has(> .kind-mark.is-fail) > span:not(.kind-mark):not(.tp-menu){color:var(--red);}
 .tp-kicker:has(> .kind-mark:is(.is-ask,.is-act)) > span:not(.kind-mark):not(.tp-menu){color:var(--amber);}

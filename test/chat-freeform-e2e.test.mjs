@@ -1169,7 +1169,7 @@ test('20. credential broker engine gate', async () => {
     say('hi', { chatId: 'TH4' });
     await waitFor(() => newPostsIn('TH4').length > n);
     const t = textOf(newPostsIn('TH4').at(-1));
-    assert.ok(t.startsWith('This chat runs on Codex:'), t);
+    assert.ok(t.startsWith('This chat runs on OpenAI Codex:'), t);
     assert.ok(t.includes('Open in worca'), t);
     await settle();
     assert.equal(userRowCount(b4.askThreadId), u);

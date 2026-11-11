@@ -59,7 +59,7 @@ nothing to read, keeps it full.
 5. The background fades into every reading column, from one shared mask.
 6. Rules, catalog, tests, gallery examples; the sweeps walk each card and each link to its card.
 
-## Parity: every flow, every card, every action (from dev, 7 Nov)
+## Every flow, every card, every action (from dev, 7 Nov)
 
 Two read-only audits of dev's code (ask-panel.mjs, chat/*, shape/*, run-state.mjs, home*.mjs) listed every starter's flow and
 every action. Rail reproduces each flow in its card shape; a box is ticked when the prototype has it and a sweep walks it.
@@ -161,7 +161,7 @@ every action. Rail reproduces each flow in its card shape; a box is ticked when 
 ### Settings proposals, per kind
 - [x] Web access (Allow in chat, Always allow, Deny); proxy; actions; a setting's revert scope (This run only, Your settings).
 
-### Still open (7 Nov, after the parity build)
+### Still open (7 Nov, after the build)
 - ~~Dialogs an action opens~~: done in review 2, as small forms under the card (Create PR, Switch model, Resume at, Raise
   the cap, Report, Save as preset, Run after, Move to group).
 - Shaper with requirements first (the `shapeRequirements` flag): the lead role sentence and the Requirements card with
@@ -176,7 +176,7 @@ every action. Rail reproduces each flow in its card shape; a box is ticked when 
 - [ ] Shaper: the route card (`shape/route-card.mjs`), the requirements step (`shape/step-card.mjs:38`), the
       requirements-first proposal (`shape/proposal.mjs:24-109`), the direction chip to a live run (`chat/direction.mjs`).
 - [ ] Questions: form widgets (text, slider, rank, table-select; `ask/widgets-*.mjs`) and arrow keys.
-- [ ] Workflow proposal at parity: rounds, name edit, model per node, loops, Save & propose, Open in Workflows.
+- [ ] Workflow proposal with every dev flow in the prototype's shape: rounds, name edit, model per node, loops, Save & propose, Open in Workflows.
 - [ ] Settings proposals with no card: Metrics or Policy, Proxy, Clone, Actions; Sets · N (MCP servers and skills).
 - [ ] The full schedule dialog (`schedule-sheet.mjs`): time zone, end date or run count, overlap, failure and missed-start
       policies, After a run with its options; the schedule change card's From/To and error reason.

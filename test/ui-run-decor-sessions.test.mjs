@@ -22,17 +22,17 @@ const S = (over) => decorFromState({ stepper: STEPPER, status: 'running', runEng
 test('the nine states', async () => {
   await checkRows([
     { name: '1 active', run: () => { const s = S({ steps: [row('n_impl', 'running', 2)], active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }] });
-      assert.deepEqual([s.status, s.text], ['active', 'One session · Claude · Implementation · cycle 2']); } },
+      assert.deepEqual([s.status, s.text], ['active', 'One session · Claude Code · Implementation · cycle 2']); } },
     { name: '2 paused (usage limit)', run: () => { const s = S({ status: 'paused', pauseReason: 'usage_limit', limitResetAt: '2026-10-28T14:00:00', steps: [row('n_impl', 'paused')] });
-      assert.match(s.text, /^One session · Claude · Paused · usage limit · resets \d\d:\d\d$/); } },
-    { name: '3 error', run: () => assert.equal(S({ status: 'error', steps: [row('n_impl', 'error')] }).text, 'One session · Claude · Failed in Implementation') },
+      assert.match(s.text, /^One session · Claude Code · Paused · usage limit · resets \d\d:\d\d$/); } },
+    { name: '3 error', run: () => assert.equal(S({ status: 'error', steps: [row('n_impl', 'error')] }).text, 'One session · Claude Code · Failed in Implementation') },
     { name: '4 stopped', run: () => assert.equal(S({ status: 'stopped', steps: [row('n_impl', 'stopped')] }).status, 'stopped') },
-    { name: '5 interrupted', run: () => assert.equal(S({ status: 'interrupted', steps: [row('n_impl', 'running')] }).text, 'One session · Claude · Interrupted · resume continues this session') },
-    { name: '6 done', run: () => assert.equal(S({ status: 'done', steps: [row('n_impl', 'done'), row('n_review', 'done')] }).text, 'One session · Claude · Done · 2 sub-agents · 5 turns') },
+    { name: '5 interrupted', run: () => assert.equal(S({ status: 'interrupted', steps: [row('n_impl', 'running')] }).text, 'One session · Claude Code · Interrupted · resume continues this session') },
+    { name: '6 done', run: () => assert.equal(S({ status: 'done', steps: [row('n_impl', 'done'), row('n_review', 'done')] }).text, 'One session · Claude Code · Done · 2 sub-agents · 5 turns') },
     { name: '7 skipped', run: () => assert.equal(S({ status: 'done', steps: [] }).status, 'skipped') },   // a done run that never reached them (ledger rows are never 'skipped')
     { name: '8 waiting for an outside step', run: () => { const s = S({ steps: [row('n_impl', 'done'), row('n_plan', 'running', 2)], active: [{ nodeId: 'n_plan', executionId: 'x:n_plan:2' }] });
-      assert.deepEqual([s.status, s.text], ['waiting', 'One session · Claude · waiting for Plan']); } },
-    { name: '9 pending', run: () => assert.equal(S({ sessionHosts: undefined }).text, 'One session · Claude · 2 sub-agents') },
+      assert.deepEqual([s.status, s.text], ['waiting', 'One session · Claude Code · waiting for Plan']); } },
+    { name: '9 pending', run: () => assert.equal(S({ sessionHosts: undefined }).text, 'One session · Claude Code · 2 sub-agents') },
   ]);
 });
 
@@ -46,7 +46,7 @@ test('fallback, right side, unpriced engines, tooltip', () => {
   // Task 66: one conversation has no main agent, so its tooltip names no hand-off (its summary's overhead is a booked 0).
   const shared = S({ status: 'done', steps: [row('n_impl', 'done', 1, { costUsd: 1.70 }), row('n_review', 'done', 1, { costUsd: 0.71 })],
     sessionHosts: host({ mode: 'shared', hostOverheadUsd: 0 }) });
-  assert.match(shared.title, /^One Claude conversation$/m);
+  assert.match(shared.title, /^One Claude Code conversation$/m);
   assert.match(shared.title, /\$2\.41$/m);
   assert.doesNotMatch(shared.title, /hand-off|main agent/);
 });
@@ -82,7 +82,7 @@ test('v2 — interrupted wins live and frozen; a usage-limit reset is a local 24
   await checkRows([
     { name: 'interrupted, frozen (History reads the row as stopped)', run: () => {
       const d = decorFromState({ stepper: STEPPER, status: 'interrupted', runEngine: 'claude', steps: [row('n_impl', 'running')], active: [], sessionHosts: host() }, { live: false, now: 0, sessionVerified: OPEN });
-      assert.deepEqual([d.sessions[SID].status, d.sessions[SID].text], ['interrupted', 'One session · Claude · Interrupted · resume continues this session']);
+      assert.deepEqual([d.sessions[SID].status, d.sessions[SID].text], ['interrupted', 'One session · Claude Code · Interrupted · resume continues this session']);
     } },
     { name: 'interrupted part-done (an outside step was running), frozen', run: () => {
       const d = decorFromState({ stepper: STEPPER, status: 'interrupted', runEngine: 'claude', steps: [row('n_impl', 'done'), row('n_plan', 'running', 2)], active: [], sessionHosts: host() }, { live: false, now: 0, sessionVerified: OPEN });
@@ -92,12 +92,12 @@ test('v2 — interrupted wins live and frozen; a usage-limit reset is a local 24
       const d = decorFromState({ stepper: STEPPER, status: 'interrupted', runEngine: 'claude', steps: [row('n_impl', 'done'), row('n_review', 'done')], active: [], sessionHosts: host() }, { live: false, now: 0, sessionVerified: OPEN });
       assert.equal(d.sessions[SID].status, 'done');
     } },
-    { name: 'usage limit', run: () => assert.equal(S({ status: 'paused', pauseReason: 'usage_limit', limitResetAt: at, steps: [row('n_impl', 'paused')] }).text, 'One session · Claude · Paused · usage limit · resets 14:05') },
-    { name: 'a plain pause', run: () => assert.equal(S({ status: 'paused', steps: [row('n_impl', 'paused')] }).text, 'One session · Claude · Paused · resumes in this session') },
+    { name: 'usage limit', run: () => assert.equal(S({ status: 'paused', pauseReason: 'usage_limit', limitResetAt: at, steps: [row('n_impl', 'paused')] }).text, 'One session · Claude Code · Paused · usage limit · resets 14:05') },
+    { name: 'a plain pause', run: () => assert.equal(S({ status: 'paused', steps: [row('n_impl', 'paused')] }).text, 'One session · Claude Code · Paused · resumes in this session') },
     { name: '×N slices of a member', run: () => {
       const slice = row('n_impl', 'running', 1, { kind: 'task', executionId: 'x:n_impl:1:t1', key: 'x:n_impl:1:t1', parentExecutionId: 'x:n_impl:1', title: 'Add schema' });
       const s = S({ steps: [slice], active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }] });
-      assert.deepEqual([s.status, s.text], ['waiting', "One session · Claude · waiting · Implementation's tasks run on their own"]);
+      assert.deepEqual([s.status, s.text], ['waiting', "One session · Claude Code · waiting · Implementation's tasks run on their own"]);
     } },
   ]);
 });
@@ -107,21 +107,21 @@ test('v2 — the cases no row of the table names: paused elsewhere, stopped part
     { name: 'the run paused at an outside step with the session part-done', run: () => assert.equal(S({ status: 'paused', steps: [row('n_impl', 'done'), row('n_plan', 'paused', 2)] }).status, 'paused') },
     { name: 'the run stopped with the session part-done', run: () => {
       const d = decorFromState({ stepper: STEPPER, status: 'stopped', runEngine: 'claude', steps: [row('n_impl', 'done')], active: [], sessionHosts: host() }, { live: false, now: 0, sessionVerified: OPEN });
-      assert.deepEqual([d.sessions[SID].status, d.sessions[SID].text], ['stopped', 'One session · Claude · Stopped']);
+      assert.deepEqual([d.sessions[SID].status, d.sessions[SID].text], ['stopped', 'One session · Claude Code · Stopped']);
     } },
     { name: 'done, the second member skipped', run: () => {
       const d = decorFromState({ stepper: STEPPER, status: 'done', runEngine: 'claude', steps: [row('n_impl', 'done')], active: [], sessionHosts: host() }, { live: false, now: 0, sessionVerified: OPEN });
-      assert.equal(d.sessions[SID].text, 'One session · Claude · Done · 1 sub-agent · 5 turns');
+      assert.equal(d.sessions[SID].text, 'One session · Claude Code · Done · 1 sub-agent · 5 turns');
     } },
-    { name: 'waiting with nothing active', run: () => assert.equal(S({ steps: [row('n_impl', 'done')] }).text, 'One session · Claude · waiting') },
+    { name: 'waiting with nothing active', run: () => assert.equal(S({ steps: [row('n_impl', 'done')] }).text, 'One session · Claude Code · waiting') },
   ]);
 });
 
 test('v2 — no summary yet: the shipped gate, a finished run that never opened it, one step', () => {
   const d = decorFromState({ stepper: STEPPER, status: 'running', runEngine: 'claude', steps: [], active: [] }, { live: true, now: 0 });
-  assert.deepEqual([d.sessions[SID].fallback, d.sessions[SID].text], [true, 'One session · Claude · Separate sessions · sub-agents are not available on Claude yet'], 'the default reads SESSION_SUBAGENTS_VERIFIED');
+  assert.deepEqual([d.sessions[SID].fallback, d.sessions[SID].text], [true, 'One session · Claude Code · Separate sessions · sub-agents are not available on Claude Code yet'], 'the default reads SESSION_SUBAGENTS_VERIFIED');
   const k = decorFromState({ stepper: STEPPER, status: 'done', runEngine: 'claude', steps: [row('n_impl', 'done'), row('n_review', 'done')], active: [] }, { live: false, now: 0, sessionVerified: OPEN });
-  assert.deepEqual([k.sessions[SID].fallback, k.sessions[SID].text], [true, 'One session · Claude · Separate sessions'], 'the kill switch writes no trace');
+  assert.deepEqual([k.sessions[SID].fallback, k.sessions[SID].text], [true, 'One session · Claude Code · Separate sessions'], 'the kill switch writes no trace');
   const undecided = decorFromState({ stepper: STEPPER, status: 'running', runEngine: 'claude', steps: [row('n_plan', 'running')], active: [] }, { live: true, now: 0, sessionVerified: OPEN });
   assert.equal(undecided.sessions[SID].fallback, null, 'gate open, nothing ran yet: the Labs flag decides, not the decor');
   const calls = [];
@@ -131,7 +131,7 @@ test('v2 — no summary yet: the shipped gate, a finished run that never opened 
   assert.equal(ranPlain.sessions[SID].fallback, true, 'a member ran and no host opened: the kill switch');
   const lone = { ...STEPPER, graph: { ...STEPPER.graph, nodes: STEPPER.graph.nodes.map((n) => (n.id === 'n_review' ? { ...n, config: {} } : n)) } };
   const l = decorFromState({ stepper: lone, status: 'running', runEngine: 'claude', steps: [], active: [] }, { live: true, now: 0, sessionVerified: OPEN });
-  assert.equal(l.sessions[SID].text, 'One session · Claude · Separate sessions · one step');
+  assert.equal(l.sessions[SID].text, 'One session · Claude Code · Separate sessions · one step');
 });
 
 test('v2 — aria, the queued member is never "current", no cost without a figure, a session-free run is untouched', () => {
@@ -161,11 +161,11 @@ test('v3 — not "Done" while the run can come back: a fix loop between its memb
   await checkRows([
     { name: 'Implementation is a cycle ahead of Review', run: () => {
       const s = S({ steps: [row('n_impl', 'done'), row('n_review', 'done'), row('n_impl', 'done', 2)] });
-      assert.deepEqual([s.status, s.text], ['waiting', 'One session · Claude · waiting']);
+      assert.deepEqual([s.status, s.text], ['waiting', 'One session · Claude Code · waiting']);
     } },
     { name: 'a loop gate holds on Review for a person', run: () => {
       const s = S({ steps: [row('n_impl', 'done'), row('n_review', 'done')], gate });
-      assert.deepEqual([s.status, s.text], ['waiting', 'One session · Claude · waiting for an answer']);
+      assert.deepEqual([s.status, s.text], ['waiting', 'One session · Claude Code · waiting for an answer']);
     } },
     { name: 'the same rows once the run is done', run: () => assert.equal(S({ status: 'done', steps: [row('n_impl', 'done'), row('n_review', 'done'), row('n_impl', 'done', 2)], gate }).status, 'done') },
     { name: 'both members in the same cycle, no gate: done', run: () => assert.equal(S({ steps: [row('n_impl', 'done', 2), row('n_review', 'done', 2)] }).status, 'done') },
@@ -184,7 +184,7 @@ test('v3 — the session cost is its members\' totals; a pause before the hosts 
   const frozenPre = decorFromState({ stepper: STEPPER, status: 'paused', runEngine: 'claude', steps: [], active: [] }, { live: false, now: 0, sessionVerified: OPEN });
   assert.equal(frozenPre.sessions[SID].fallback, null, 'and on History');
   const f = S({ status: 'error', steps: [row('n_impl', 'error')] });
-  assert.equal(f.title.split('\n')[0], 'One session · Claude · Failed in Implementation', 'hosts that show only the dot');
+  assert.equal(f.title.split('\n')[0], 'One session · Claude Code · Failed in Implementation', 'hosts that show only the dot');
   const k = decorFromState({ stepper: STEPPER, status: 'done', runEngine: 'claude', steps: [row('n_impl', 'done'), row('n_review', 'done')], active: [] }, { live: false, now: 0, sessionVerified: OPEN });
   assert.doesNotMatch(k.sessions[SID].right, /turn/, 'no summary: no host turn');
   assert.match(k.sessions[SID].title, /^runs: Implementation ×1, Review ×1$/m);
@@ -192,9 +192,9 @@ test('v3 — the session cost is its members\' totals; a pause before the hosts 
 
 test('v3 — pending with a summary (the hosts opened, nothing ran); the flag reason in UI words', () => {
   const p = S({});
-  assert.deepEqual([p.status, p.text, p.fallback], ['pending', 'One session · Claude · 2 sub-agents', false]);
+  assert.deepEqual([p.status, p.text, p.fallback], ['pending', 'One session · Claude Code · 2 sub-agents', false]);
   const off = S({ sessionHosts: host({ mode: 'separate', modeReason: 'the Labs flag sessionGroups is off' }) });
-  assert.equal(off.text, 'One session · Claude · Separate sessions · the One session Labs flag is off');
+  assert.equal(off.text, 'One session · Claude Code · Separate sessions · the One session Labs flag is off');
   assert.doesNotMatch(`${off.text}\n${off.title}\n${off.aria}`, /group/i, 'never "group" (Global Constraints)');
 });
 
@@ -208,7 +208,7 @@ test('v4 — members that ran a different number of times with no loop between t
     { name: 'a member\'s own loop (Refine\'s revise loop): the session is done once the other member ran', run: () => {
       const s = at(withWires([wire('w1', 'n_plan', 'n_impl'), wire('w2', 'n_impl', 'n_review'), wire('w_self', 'n_impl', 'n_impl', true, 'fix')]),
         { steps: [row('n_plan', 'done'), row('n_impl', 'done'), row('n_impl', 'done', 2), row('n_review', 'done')] });
-      assert.deepEqual([s.status, s.text], ['done', 'One session · Claude · Done · 2 sub-agents · 5 turns']);
+      assert.deepEqual([s.status, s.text], ['done', 'One session · Claude Code · Done · 2 sub-agents · 5 turns']);
     } },
     { name: 'no loop wire at all: done', run: () => assert.equal(at(withWires([wire('w1', 'n_plan', 'n_impl'), wire('w2', 'n_impl', 'n_review')]),
       { steps: [row('n_impl', 'done'), row('n_review', 'done'), row('n_impl', 'done', 2)] }).status, 'done') },
@@ -219,11 +219,11 @@ test('v4 — members that ran a different number of times with no loop between t
     } },
     { name: 'an outside flow card running is never the step it waits for', run: () => {
       const s = at(withWires([...STEPPER.graph.wires], [orNode]), { steps: [row('n_impl', 'done')], active: [{ nodeId: 'n_or', executionId: 'x:n_or:1' }] });
-      assert.deepEqual([s.status, s.text], ['waiting', 'One session · Claude · waiting']);
+      assert.deepEqual([s.status, s.text], ['waiting', 'One session · Claude Code · waiting']);
     } },
     { name: 'a loop gate held on a member while the other has not run: waiting for an answer', run: () => {
       const s = at(STEPPER, { steps: [row('n_impl', 'done')], gate: { wireId: 'w_x', fromNode: 'n_impl', toNode: 'n_plan', askId: 'gate-w_x-1' } });
-      assert.deepEqual([s.status, s.text], ['waiting', 'One session · Claude · waiting for an answer']);
+      assert.deepEqual([s.status, s.text], ['waiting', 'One session · Claude Code · waiting for an answer']);
     } },
   ]);
 });
@@ -232,9 +232,9 @@ test('v4 — a run paused or interrupted in the middle of a fix loop is not "Don
   const mid = [row('n_impl', 'done'), row('n_review', 'done'), row('n_impl', 'done', 2)];
   const at = (status, live, over = {}) => decorFromState({ stepper: STEPPER, status, runEngine: 'claude', steps: mid, active: [], sessionHosts: host(), ...over }, { live, now: 0, sessionVerified: OPEN }).sessions[SID];
   await checkRows([
-    { name: 'paused, live', run: () => assert.deepEqual([at('paused', true).status, at('paused', true).text], ['paused', 'One session · Claude · Paused · resumes in this session']) },
+    { name: 'paused, live', run: () => assert.deepEqual([at('paused', true).status, at('paused', true).text], ['paused', 'One session · Claude Code · Paused · resumes in this session']) },
     { name: 'paused, frozen (History)', run: () => assert.equal(at('paused', false).status, 'paused') },
-    { name: 'interrupted, frozen', run: () => assert.deepEqual([at('interrupted', false).status, at('interrupted', false).text], ['interrupted', 'One session · Claude · Interrupted · resume continues this session']) },
+    { name: 'interrupted, frozen', run: () => assert.deepEqual([at('interrupted', false).status, at('interrupted', false).text], ['interrupted', 'One session · Claude Code · Interrupted · resume continues this session']) },
     { name: 'done: done', run: () => assert.equal(at('done', false).status, 'done') },
     { name: 'interrupted before the hosts opened: undecided (its resume opens them)', run: () => {
       const d = decorFromState({ stepper: STEPPER, status: 'interrupted', runEngine: 'claude', steps: [], active: [] }, { live: false, now: 0, sessionVerified: OPEN });
@@ -245,7 +245,7 @@ test('v4 — a run paused or interrupted in the middle of a fix loop is not "Don
 
 // ── v5: the review's rows (branches no row held: a held gate on a paused run, a loop into a member from outside the
 // session, Copilot with priced rows, a ×N member's runs, an interrupted run that never reached the session) ──
-test('v5 — a held gate keeps a paused run paused; a loop into a member from outside is no fix loop; Copilot, ×N and interrupted pins', async () => {
+test('v5 — a held gate keeps a paused run paused; a loop into a member from outside is no fix loop; GitHub Copilot, ×N and interrupted pins', async () => {
   const wire = (id, from, to, loop = false, port = 'task') => ({ id, from: { node: from, port: 'out' }, to: { node: to, port }, loop });
   const gate = { wireId: 'w_back', fromNode: 'n_review', toNode: 'n_impl', askId: 'gate-w_back-1' };
   const outsideLoop = { ...STEPPER, graph: { nodes: [...STEPPER.graph.nodes, node('n_check', 'Check')],
@@ -253,14 +253,14 @@ test('v5 — a held gate keeps a paused run paused; a loop into a member from ou
   await checkRows([
     { name: 'paused while a loop gate holds on a member (live): paused, not done', run: () => {
       const s = S({ status: 'paused', steps: [row('n_impl', 'done'), row('n_review', 'done')], gate });
-      assert.deepEqual([s.status, s.text], ['paused', 'One session · Claude · Paused · resumes in this session']);
+      assert.deepEqual([s.status, s.text], ['paused', 'One session · Claude Code · Paused · resumes in this session']);
     } },
     { name: 'a loop wire into a member from outside the session (Check → Implementation): done once both members ran', run: () => {
       const s = decorFromState({ stepper: outsideLoop, status: 'running', runEngine: 'claude', active: [], sessionHosts: host(),
         steps: [row('n_plan', 'done'), row('n_impl', 'done'), row('n_review', 'done')] }, { live: true, now: 0, sessionVerified: OPEN }).sessions[SID];
       assert.equal(s.status, 'done');
     } },
-    { name: 'Copilot with priced rows: no figure on the tray or in its tooltip', run: () => {
+    { name: 'GitHub Copilot with priced rows: no figure on the tray or in its tooltip', run: () => {
       const s = S({ runEngine: 'copilot', status: 'done', steps: [row('n_impl', 'done'), row('n_review', 'done')] });
       assert.deepEqual([s.cost, /\$/.test(s.right), /\$/.test(s.title)], ['', false, false]);
     } },

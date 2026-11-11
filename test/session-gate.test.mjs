@@ -41,7 +41,7 @@ test('mock claude, flag on: sub-agents, with the tool-union and after-the-fact l
   const o = gateFor();
   const lines = await o._sessionGate();
   assert.deepEqual(o._sessionDecisions.get(SID), { mode: 'subagents', requested: 'subagents', reason: 'ok', firstMemberModel: null });
-  assert.equal(lines[0], `session ${SID}: sub-agents on Claude (2 steps: Implementation, Review Implementation; main agent the first step's model)`);
+  assert.equal(lines[0], `session ${SID}: sub-agents on Claude Code (2 steps: Implementation, Review Implementation; main agent the first step's model)`);
   // v3 — compared to the spike-gated constants Task 53 sets (each side is pinned by the _sessionConstsForTest rows below).
   assert.equal(lines.includes(`session ${SID}: the main agent holds the union of its steps' tool grants`), HOST_TOOLS_MODE === 'union');
   assert.equal(lines.includes(`session ${SID}: the main agent's own tool calls are stopped after the fact, not refused`),
@@ -66,7 +66,7 @@ test('flag off and a no-sub-agent engine degrade with their reason; the kill swi
   assert.deepEqual(await gateFor({ engine: 'gemini' })._sessionGate(), [`session ${SID}: separate sessions — Gemini CLI has no sub-agents`]);
 });
 
-test('M-11 — a real Claude CLI without --forward-subagent-text runs separate, by probe', async () => {
+test('M-11 — a real Claude Code CLI without --forward-subagent-text runs separate, by probe', async () => {
   const o = gateFor({ mock: false });
   const { SESSION_SUBAGENTS_VERIFIED } = await import('../src/shared/engine-switch.mjs');
   o._claudeCaps = async () => ({ version: '2.1.294', forwardSubagentText: false, mcpConfig: true, pluginDir: true });
@@ -77,7 +77,7 @@ test('M-11 — a real Claude CLI without --forward-subagent-text runs separate, 
 test('shared opt-in', async () => {
   // v4 — compared to SESSION_SHARED_RUNTIME, which Task 65 turns on with the shared runtime (both sides pinned below).
   assert.deepEqual(await gateFor({ mode: 'shared' })._sessionGate(), [SESSION_SHARED_RUNTIME
-    ? `session ${SID}: one conversation on Claude (2 steps: Implementation, Review Implementation)`
+    ? `session ${SID}: one conversation on Claude Code (2 steps: Implementation, Review Implementation)`
     : `session ${SID}: separate sessions — one conversation is not available yet`]);
 });
 
@@ -96,7 +96,7 @@ test('v4 — shared before its runtime exists runs separate, on every engine and
   }
   const on = await gate({}, { sharedRuntime: true });
   assert.deepEqual(on.d, { mode: 'shared', requested: 'shared', reason: 'chosen in the session settings', firstMemberModel: null });
-  assert.deepEqual(on.lines, [`session ${SID}: one conversation on Claude (2 steps: Implementation, Review Implementation)`]);
+  assert.deepEqual(on.lines, [`session ${SID}: one conversation on Claude Code (2 steps: Implementation, Review Implementation)`]);
 });
 
 test('the one pin of SESSION_SHARED_RUNTIME: Task 65 built the shared runtime and turned it on, and this pin with it', () => {
@@ -121,7 +121,7 @@ test('v2 — C26: the first member\'s own model is the main agent\'s default; a 
     ...(CHILD_INHERITS_PARENT.model ? [`session ${SID}: Review Implementation has no model of its own, so it runs on the main agent's model (claude-haiku-4-5)`] : []),
     ...(CHILD_INHERITS_PARENT.effort ? [`session ${SID}: Review Implementation has no effort of its own, so it runs at the main agent's effort (low)`] : []),
   ]);
-  assert.equal(lines[0], `session ${SID}: sub-agents on Claude (2 steps: Implementation, Review Implementation; main agent claude-haiku-4-5)`);
+  assert.equal(lines[0], `session ${SID}: sub-agents on Claude Code (2 steps: Implementation, Review Implementation; main agent claude-haiku-4-5)`);
   const p = gateFor({ pins: { n_impl: { model: 'claude-sonnet-4-6' } } });
   await p._sessionGate();
   assert.equal(p._sessionDecisions.get(SID).firstMemberModel, 'claude-sonnet-4-6');
@@ -140,14 +140,14 @@ test('v2 — the specs the gate resolved are what _engineRun consumes; every lin
   assert.deepEqual(k._sessionSpecs.map((x) => x.sid), [SID], 'the kill switch keeps the specs (C42 reads them), builds nothing');
 });
 
-test('v2 — a real Claude run reads the shipped gate (compared to the constant: Tasks 53 and 69 flip it)', async () => {
+test('v2 — a real Claude Code run reads the shipped gate (compared to the constant: Tasks 53 and 69 flip it)', async () => {
   const { SESSION_SUBAGENTS_VERIFIED } = await import('../src/shared/engine-switch.mjs');
   const o = gateFor({ mock: false });
   o._claudeCaps = async () => ({ version: '2.1.308', forwardSubagentText: true });
   const [line] = await o._sessionGate();
   assert.equal(line, SESSION_SUBAGENTS_VERIFIED.claude
-    ? `session ${SID}: sub-agents on Claude (2 steps: Implementation, Review Implementation; main agent the first step's model)`
-    : `session ${SID}: separate sessions — sub-agents are not available on Claude yet`);
+    ? `session ${SID}: sub-agents on Claude Code (2 steps: Implementation, Review Implementation; main agent the first step's model)`
+    : `session ${SID}: separate sessions — sub-agents are not available on Claude Code yet`);
 });
 
 test('v2 — the CLI floor and an unknown version, by probe', async () => {
@@ -163,7 +163,7 @@ test('v2 — the CLI floor and an unknown version, by probe', async () => {
   const ok = gateFor({ mock: false });
   ok._claudeCaps = async () => ({ version: '2.1.281', forwardSubagentText: true });
   ok._sessionVerifiedForTest = { ...SESSION_SUBAGENTS_VERIFIED, claude: true };
-  assert.match((await ok._sessionGate())[0], /: sub-agents on Claude \(/);
+  assert.match((await ok._sessionGate())[0], /: sub-agents on Claude Code \(/);
 });
 
 test('v2 — the kill switch with no session says nothing', async () => {
@@ -186,7 +186,7 @@ test('v2 — a fresh run audits the gate\'s lines (the call beside the engine ga
   assert.equal((await o.run()).status, 'done');
   const audit = (await readPipeline(o.projectDir, o.state.id)).auditMarkdown;
   // v4 — exactly once: a non-Auto fresh run calls the gate beside the engine gate only (the Auto call needs an adopted graph).
-  assert.equal(audit.split(`session ${SID}: sub-agents on Claude (2 steps: Implementation, Review Implementation; main agent the first step's model)`).length - 1, 1, audit);
+  assert.equal(audit.split(`session ${SID}: sub-agents on Claude Code (2 steps: Implementation, Review Implementation; main agent the first step's model)`).length - 1, 1, audit);
 });
 
 test('v2 — C34: a main agent on another endpoint than its steps runs separate (the host\'s env is compared too, untagged)', async () => {
@@ -194,7 +194,7 @@ test('v2 — C34: a main agent on another endpoint than its steps runs separate 
   assert.deepEqual(await gateFor({ settings: { hostModel: 'gw-host-model' } })._sessionGate(),
     [`session ${SID}: separate sessions — the steps use different model endpoints`]);
   const both = gateFor({ settings: { hostModel: 'gw-host-model' }, pins: { n_impl: { model: 'gw-host-model' }, n_review: { model: 'gw-host-model' } } });
-  assert.match((await both._sessionGate())[0], /: sub-agents on Claude \(/, 'one endpoint for all: sub-agents');
+  assert.match((await both._sessionGate())[0], /: sub-agents on Claude Code \(/, 'one endpoint for all: sub-agents');
 });
 
 test('v3 — C40: the after-the-fact line is gone only when the host guard is on AND has a proven field (Task 53 sets both)', async () => {
@@ -242,6 +242,6 @@ test('v3 — a fresh Auto run that reuses a workflow with a session resolves it 
   assert.equal(auto.workflowId, 'wf_sess_auto');
   assert.deepEqual(o._sessionSpecs.map((s) => s.sid), [SID], 'the gate saw the adopted graph, not the empty bootstrap');
   const audit = (await readPipeline(o.projectDir, o.state.id)).auditMarkdown;
-  const line = `session ${SID}: sub-agents on Claude (2 steps: Plan, Review Implementation; main agent the first step's model)`;
+  const line = `session ${SID}: sub-agents on Claude Code (2 steps: Plan, Review Implementation; main agent the first step's model)`;
   assert.equal(audit.split(line).length - 1, 1, audit);   // audited once: the bootstrap call resolved nothing
 });

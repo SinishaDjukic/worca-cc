@@ -1,3 +1,5 @@
+History. Superseded by implementation-prompt.md; do not build from it.
+
 # Wave 3: everything left, redesigned with Rail
 
 Rail grew up during Wave 2: chat leads, one store, one card shape, folds as the foot, forms in the chat, commands as

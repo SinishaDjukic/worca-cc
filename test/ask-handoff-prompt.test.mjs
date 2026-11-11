@@ -19,9 +19,9 @@ const HISTORY = [
 test('text plus one bracketed line per tool, card and attachment — never a tool\'s input or output', () => {
   const { prompt, droppedTurns, totalTurns } = buildHandoffPrompt(HISTORY, 'NEXT', { to: 'codex' });
   assert.deepEqual([totalTurns, droppedTurns], [1, 0]);
-  assert.match(prompt, /^Conversation so far in this chat\. You start a fresh Codex session: this transcript is your context/);
-  assert.match(prompt, /User: What failed in run 42\?\n {2}\[attachment att_00000001 trace\.pdf — Codex cannot view it; only its name is here\]/);
-  assert.match(prompt, /Assistant \(Claude, claude-opus-5-5\): The deploy step timed out\.\n {2}\[tool get_run — done\]/);
+  assert.match(prompt, /^Conversation so far in this chat\. You start a fresh OpenAI Codex session: this transcript is your context/);
+  assert.match(prompt, /User: What failed in run 42\?\n {2}\[attachment att_00000001 trace\.pdf — OpenAI Codex cannot view it; only its name is here\]/);
+  assert.match(prompt, /Assistant \(Claude Code, claude-opus-5-5\): The deploy step timed out\.\n {2}\[tool get_run — done\]/);
   assert.match(prompt, /\[proposed run "Fix the deploy timeout" — started\]/);
   assert.match(prompt, /\[schedule card "Every night at 02:00" — applied\]/);
   assert.match(prompt, /System: Switched from Claude to Codex/);

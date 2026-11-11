@@ -19,9 +19,9 @@ test('runs each preflight once per TTL; claude is always ready; a refusal is not
     qwen: async () => { calls++; return { refusal: 'qwen is not signed in' }; } };
   const a = await engineReadiness({ preflights, now: 1000, mock: false });
   assert.deepEqual(a, [
-    { name: 'claude', label: 'Claude', ready: true, reason: null },
-    { name: 'codex', label: 'Codex', ready: true, reason: null },
-    { name: 'copilot', label: 'Copilot', ready: false, reason: 'cannot run copilot' },
+    { name: 'claude', label: 'Claude Code', ready: true, reason: null },
+    { name: 'codex', label: 'OpenAI Codex', ready: true, reason: null },
+    { name: 'copilot', label: 'GitHub Copilot', ready: false, reason: 'cannot run copilot' },
     { name: 'cursor', label: 'Cursor', ready: false, reason: 'cursor-agent is not signed in' },
     { name: 'gemini', label: 'Gemini CLI', ready: true, reason: null },
     { name: 'goose', label: 'Goose', ready: true, reason: 'could not check goose' },

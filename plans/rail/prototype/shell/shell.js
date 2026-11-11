@@ -14,7 +14,7 @@
 (function () {
   const T = window.Today;
   const R = window.RailUI;
-  // places Rail redesigns in Wave 3 (plans/rail/wave-3.md): until then, what each will hold, said plainly
+  // places Rail redesigns (plans/rail/implementation-prompt.md): until then, what each will hold, said plainly
   const SOON = {
     workflows: ['Workflows: being redesigned with Rail', 'Your workflows, agents and scripts as one list beside the chat; building one happens in Chat today (Build workflow).'],
     projects: ['Projects: being redesigned with Rail', 'Your projects as one list, each with its settings and memory; add one from Chat today (Add project).'],
@@ -70,6 +70,7 @@
     top.querySelector('#activity-pop')?.remove();
     const act = top.querySelector('#topnav-activity');
     if (act) act.replaceWith(el('<span id="rail-pulse-slot"></span>'));
+    top.querySelector('#rail-pulse-slot')?.insertAdjacentHTML('afterend', R.designSwitch({ on: false }));   /* nav.design-switch: drawn on every route; here it flips its own state only */
     top.querySelector('#topnav-ask')?.insertAdjacentHTML('beforebegin', '<span id="in-view-slot"></span>');
     top.querySelector('#topnav-new')?.remove();   // starting anything is the composer's now
     top.querySelector('#side-toggle')?.insertAdjacentHTML('afterend', R.button({ label: 'Show the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 16), cls: 'bar-show', attrs: { id: 'bar-show' } }));
@@ -176,6 +177,7 @@
 
   // ---- the bar: what it holds now; the house opens the places over it ----
   const BAR_TITLE = { home: 'Worca', chat: 'Chat', tasks: 'Tasks', schedules: 'Schedules', settings: 'Settings' };
+  let inviteBack = false;   // Esc took the Invitation back: closed for this load, asked again on the next
   let quickNav = false;   // nav.quick: the ▾ beside a bar's name
   const quickItems = () => [...document.querySelectorAll('#side-rail nav.nav [data-nav]')].filter((b) => !b.hidden && !b.closest('[hidden]') && b.style.display !== 'none').map((b) => ({ id: `bar-go|${b.dataset.nav}`, text: b.querySelector('.nav-label, span')?.textContent.trim() || b.textContent.trim(), checked: b.dataset.nav === routed.view, hint: b.dataset.flag ? 'Labs' : undefined, mark: R.icon(`nav-${b.dataset.nav}`, 14) }));   /* nav.labs: the word follows the row */
   let barMenu = false;   // the + as a menu, where a place makes things more than one way (list.bar-model)
@@ -480,6 +482,9 @@
   document.getElementById('person')?.addEventListener('change', (e) => window.RailPulse?.person(e.target.value));
 
   window.RailShell = {
+    // nav.stillhet-ask: the Invitation under the top bar while the address says ?invite=stillhet and the demo has not answered
+    inviteStrip: () => (new URLSearchParams(location.search).get('invite') === 'stillhet' && !store.get('worca-rail.stillhetAsked') && !inviteBack ? R.stillhetInvitation({ bugsUrl: 'https://github.com/' }) : ''),
+    answerInvite: (answer) => { if (answer === 'yes' || answer === 'no') store.set('worca-rail.stillhetAsked', '1'); else inviteBack = true; },
     // which script answers a click or a key: the run page owns #card and its tools; Pulse owns the rest of the Rail pieces
     owns: (who, target) => {
       if (!target?.isConnected) return false;   // a list page already answered it, and drew again

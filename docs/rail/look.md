@@ -37,8 +37,7 @@ over the items it names. `ds-check` compares every head with its items.
 
 ## The Rail look
 Calm and state-first: the look refines the current one and never adds a character of its own (no display faces, no
-drawn rails, no new hues). Mocks: `plans/rail/mocks/visual-language-refined-*.png`. The prototype and the app keep
-today's look until the Rail ships; these values replace it then. The Pulse prototype (`pulse.html`) already shows
+drawn rails, no new hues). Mocks: `plans/rail/mocks/visual-language-refined-*.png`. With Stillhet on, these values are the look; with it off, today's look stays. The Pulse prototype (`pulse.html`) already shows
 the Rail look, so it can be judged in use.
 - **Type:** Inter, bundled (400, 500, 600), in place of Poppins, at graduation, one switch for everyone (`look.inter-at-graduation`); JetBrains Mono stays for code, branches and ids. No
   700: titles and the state word are 600 with −0.02em tracking, buttons 500.
