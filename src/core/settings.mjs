@@ -74,6 +74,8 @@ import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_M
 import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
 import { normalizePins, storedPins } from '../shared/home-pins.mjs';
 import { DEFAULT_PATTERN, DEFAULT_TYPES, TYPE_RE, patternProblem } from '../shared/naming/pattern.mjs';
+import { IMAGE_SERVICES, IMAGE_SHAPES, originOf } from '../shared/image-services.mjs';
+export { IMAGE_SERVICES, IMAGE_SHAPES };
 
 /**
  * The real OS home base, honoring HOME/USERPROFILE so tests can sandbox it.
@@ -2487,6 +2489,7 @@ export async function removeGlobalModel(id) {
 //     openai:    { baseUrl?, apiKey?, maxConcurrent? },
 //     anthropic: { baseUrl?, apiKey?, maxConcurrent? },
 //     speech:    { stt: {...}, tts: {...} },   // voice mode, NOT an upstream — see the Speech block below
+//     images:    { service?, baseUrl?, model?, apiKey?, price? },   // Design pictures, NOT an upstream — see the Images block below
 //   }
 //   (An older Worca also stored copilot.acknowledgedTerms / termsVersion; readers ignore them.)
 // ---------------------------------------------------------------------------
@@ -2727,6 +2730,100 @@ export async function updateSpeech(patch = {}) {
   if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
   await persistSettings(settings);
   return speechConfig();
+}
+
+// ── Images (Design pictures: the lead of a Design round can have a picture made) ──
+//   providers: { …, images: { service?, baseUrl?, model?, apiKey?, price? } }
+// service picks a preset of IMAGE_SERVICES (src/shared/image-services.mjs), which fills the
+// address and the model under the stored block. The price has no default: a save must name
+// one (0 for a free server). NOT a model-bridge upstream: it never joins UPSTREAM_PROVIDERS,
+// PROVIDER_SECRET_KEYS, allProviders() or the catalog. The key is literal or a whole-value
+// ${VAR}, resolved at use time by resolveProviderSecret, and only ever goes to the saved
+// address's origin: a save that moves the address to another origin drops the stored key.
+const IMAGES_FIELDS = Object.freeze(['service', 'baseUrl', 'model', 'apiKey', 'price']);
+const IMAGES_PRICE_MISSING = 'Enter a price; 0 for a free server';
+const IMAGES_QUIET = Object.freeze({ quiet: true });
+
+/** Why `v` is not a valid value for images field `k`, or null when it is. */
+function imagesFieldError(k, v) {
+  if (k === 'service') return typeof v === 'string' && Object.hasOwn(IMAGE_SERVICES, v.trim().toLowerCase()) ? null : `unknown image service "${v}" (openai, xai, openrouter or other)`;
+  if (k === 'baseUrl') return isUpstreamBaseUrl(v) ? null : 'baseUrl must be an http(s) URL with no query or fragment';
+  if (k === 'apiKey') return typeof v === 'string' && v.trim() ? null : 'apiKey must be a non-empty string';
+  if (k === 'price') {
+    const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN;
+    return Number.isFinite(n) && n >= 0 ? null : IMAGES_PRICE_MISSING;
+  }
+  return typeof v === 'string' && SPEECH_ID_RE.test(v.trim()) ? null : `${k} must be an id (letters, digits and . _ - : / @ +)`;
+}
+
+function normImagesField(k, v) {
+  if (k === 'baseUrl') return v.trim().replace(/\/+$/, '');
+  if (k === 'price') return Number(v);
+  if (k === 'service') return v.trim().toLowerCase();
+  return v.trim();
+}
+
+/** Stored images block → only the valid fields (never throws; like sanitizeSpeech). `quiet` skips the warnings. */
+function sanitizeImages(raw, { quiet = false } = {}) {
+  const r = isObj(raw) ? raw : {};
+  const out = {};
+  for (const k of IMAGES_FIELDS) {
+    if (r[k] === undefined) continue;
+    const why = imagesFieldError(k, r[k]);
+    if (!why) out[k] = normImagesField(k, r[k]);
+    else if (!quiet) console.warn(`[worca] providers.images.${k}: ${why} — ignored`);
+  }
+  return out;
+}
+
+/** A stored block → the effective config: the checked service's preset under the valid fields. */
+function effectiveImages(block, opts) {
+  const s = sanitizeImages(block, opts);
+  const service = s.service || 'openai';
+  const preset = IMAGE_SERVICES[service];
+  return { service, baseUrl: preset.baseUrl, model: preset.model, apiKey: '', price: null, ...s };
+}
+
+/** Effective images config: the preset under the stored block. The key stays raw (literal or ${VAR}). */
+export function imagesConfig() {
+  if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) return effectiveImages(undefined);
+  const all = readSettings().providers;
+  return effectiveImages(isObj(all) ? all.images : undefined);
+}
+
+/**
+ * Patch { service?, baseUrl?, model?, apiKey?, price? }; '' / null clears a field. Validates the
+ * whole patch before writing; a block left without a price is refused (D9), and a block
+ * with nothing valid left is removed.
+ * @returns {Promise<object>} the effective config
+ * @throws {Error}
+ */
+export async function updateImages(patch = {}) {
+  assertTestSettingsAccess();
+  if (!isObj(patch)) throw new Error('images patch must be an object');
+  for (const [k, v] of Object.entries(patch)) {
+    if (!IMAGES_FIELDS.includes(k)) throw new Error(`unknown images field ${JSON.stringify(k)}`);
+    if (isClearInput(v)) continue;
+    const why = imagesFieldError(k, v);
+    if (why) throw new Error(why);
+  }
+  const settings = readSettings();
+  const all = isObj(settings.providers) ? settings.providers : {};
+  const stored = isObj(all.images) ? all.images : {};
+  const next = { ...stored };
+  for (const [k, v] of Object.entries(patch)) {
+    if (isClearInput(v)) delete next[k]; else next[k] = normImagesField(k, v);
+  }
+  // The origin rule: a stored key never follows the address to another origin.
+  if (!Object.hasOwn(patch, 'apiKey')
+    && originOf(effectiveImages(next, IMAGES_QUIET).baseUrl) !== originOf(effectiveImages(stored, IMAGES_QUIET).baseUrl)) delete next.apiKey;
+  // The price rule (D9): what survives must name a price, else nothing is written.
+  const kept = sanitizeImages(next, IMAGES_QUIET);
+  if (Object.keys(kept).length && kept.price === undefined) throw new Error(IMAGES_PRICE_MISSING);
+  if (Object.keys(kept).length) all.images = next; else delete all.images;
+  if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
+  await persistSettings(settings);
+  return imagesConfig();
 }
 
 /** Forget the Copilot sign-in (token + login). */

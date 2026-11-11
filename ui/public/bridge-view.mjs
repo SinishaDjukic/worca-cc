@@ -12,6 +12,7 @@ import { copyButton, copyFromButton } from './copy-button.mjs';
 import { makeSwitch } from './switch.mjs';
 import { codexReaches, runsOnText } from '../../src/shared/connections.mjs';
 import { SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { IMAGE_SERVICES, originOf, pictureSeconds } from '../../src/shared/image-services.mjs';
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -285,6 +286,95 @@ function renderSpeechRow(doc, sp) {
   return row;
 }
 
+function imagesBadge(doc, im) {
+  if (im.keyMissing) return h(doc, 'span', 'badge red', 'key missing');
+  if (im.configured) return h(doc, 'span', 'badge green', 'ready');
+  return h(doc, 'span', 'badge grey', 'not set up');
+}
+
+function imagesField(doc, field, label, ctl, cls = '') {
+  const wrap = h(doc, 'label', `mv-field${cls ? ` ${cls}` : ''}`);
+  wrap.appendChild(h(doc, 'span', 'mv-field-label', label));
+  ctl.dataset.field = field;
+  wrap.appendChild(ctl);
+  return wrap;
+}
+
+function imagesInput(doc, field, value) {
+  const inp = h(doc, 'input', `input mv-im-field${field === 'apiKey' ? ' mv-pv-key' : ''}`);
+  inp.type = 'text';
+  inp.value = value;
+  return inp;
+}
+
+/**
+ * The Image generation row (Design pictures): the service a Design lead's pictures are made by. Never a model
+ * upstream. What it renders with is kept on the row (data-stored-*), so a re-pick of the saved service brings
+ * the saved values back and a switch to another address never carries the stored key along.
+ */
+function renderImagesRow(doc, im) {
+  const service = im.service || 'openai';
+  const preset = IMAGE_SERVICES[service] || {};
+  const baseUrl = String(im.baseUrl ?? preset.baseUrl ?? '');
+  const model = String(im.model ?? preset.model ?? '');
+  const price = String(im.price ?? preset.price ?? '');
+  const row = h(doc, 'div', 'mv-pv-row mv-im-row');
+  row.dataset.provider = 'images';
+  row.dataset.storedOrigin = originOf(im.baseUrl);
+  row.dataset.storedService = service;
+  row.dataset.storedBaseUrl = baseUrl;
+  row.dataset.storedModel = model;
+  row.dataset.storedPrice = price;
+  const main = h(doc, 'div', 'mv-pv-main');
+  const head = h(doc, 'div', 'mv-head');
+  head.appendChild(h(doc, 'b', 'mv-name', 'Image generation (Design)'));
+  head.appendChild(imagesBadge(doc, im));
+  main.appendChild(head);
+  main.appendChild(h(doc, 'small', 'hint', 'Lets a Design lead have a picture made when no real one fits. The key stays on this machine.'));
+  main.appendChild(h(doc, 'small', 'hint mv-pv-msg'));
+  // The Test picture's answer: the picture whole, and how long it took, or the reason it failed.
+  const result = h(doc, 'div', 'mv-im-result');
+  result.hidden = true;
+  result.setAttribute('role', 'status');
+  const shot = h(doc, 'img', 'mv-im-shot');
+  shot.alt = 'Test picture';
+  result.appendChild(shot);
+  result.appendChild(h(doc, 'small', 'hint mv-im-made'));
+  main.appendChild(result);
+  row.appendChild(main);
+
+  const ctl = h(doc, 'div', 'mv-pv-ctl');
+  const sel = h(doc, 'select', 'input mv-im-field mv-im-service');
+  for (const s of Object.values(IMAGE_SERVICES)) {
+    const o = h(doc, 'option', '', s.label);
+    o.value = s.id;
+    sel.appendChild(o);
+  }
+  sel.value = service;
+  ctl.appendChild(imagesField(doc, 'service', 'Service', sel));
+  ctl.appendChild(imagesField(doc, 'baseUrl', 'Base URL', imagesInput(doc, 'baseUrl', baseUrl)));
+  ctl.appendChild(imagesField(doc, 'model', 'Model', imagesInput(doc, 'model', model)));
+  const key = imagesInput(doc, 'apiKey', im.keyRef || im.keyMasked || '');
+  if (key.value) key.dataset.original = key.value;
+  key.placeholder = 'sk-…, or ${VAR} to read your shell env';
+  ctl.appendChild(imagesField(doc, 'apiKey', 'API key', key, 'mv-im-key'));
+  const priceIn = imagesInput(doc, 'price', price);
+  priceIn.setAttribute('inputmode', 'decimal');
+  ctl.appendChild(imagesField(doc, 'price', 'Price per picture ($)', priceIn, 'mv-im-price'));
+  row.appendChild(ctl);
+
+  const btns = h(doc, 'div', 'mv-pv-btns');
+  btns.dataset.cardActions = '';
+  const test = h(doc, 'button', 'btn mv-im-test', 'Test picture');
+  test.type = 'button';
+  btns.appendChild(test);
+  const save = h(doc, 'button', 'btn btn-primary mv-im-save', 'Save');
+  save.type = 'button';
+  btns.appendChild(save);
+  row.appendChild(btns);
+  return row;
+}
+
 /**
  * The Providers card. `providers` is GET /api/providers' payload (never a
  * token). `signIn` is an in-flight device-flow {userCode, verificationUri,
@@ -454,6 +544,7 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
     place(row);
   }
   place(renderSpeechRow(doc, p.speech || {}));
+  place(renderImagesRow(doc, p.images || {}));
   return root;
 }
 
@@ -511,6 +602,86 @@ export function collectSpeechRow(rootEl) {
     body[kind][field] = (field === 'speed' || field === 'pause') && v !== '' ? Number(v) : v;
   }
   return body;
+}
+
+const imagesRowOf = (rootEl) => rootEl.querySelector('.mv-pv-row[data-provider="images"]');
+
+/**
+ * Pick a service on the Image generation row: its Base URL, Model and Price fill in (a preset with no price
+ * leaves Price empty). The key stays only when the preset's address has the stored key's origin; the saved
+ * service brings back what was saved, key included. Nothing is saved. False for an unknown service.
+ */
+export function applyImagesPreset(rootEl, id) {
+  const row = imagesRowOf(rootEl);
+  if (!row || !Object.hasOwn(IMAGE_SERVICES, id)) return false;
+  const f = (k) => row.querySelector(`.mv-im-field[data-field="${k}"]`);
+  const ds = row.dataset;
+  const original = f('apiKey').dataset.original || '';
+  f('service').value = id;
+  if (id === ds.storedService) {
+    f('baseUrl').value = ds.storedBaseUrl || '';
+    f('model').value = ds.storedModel || '';
+    f('price').value = ds.storedPrice || '';
+    f('apiKey').value = original;
+    return true;
+  }
+  const preset = IMAGE_SERVICES[id];
+  const origin = originOf(preset.baseUrl);
+  f('baseUrl').value = preset.baseUrl;
+  f('model').value = preset.model;
+  f('price').value = preset.price == null ? '' : String(preset.price);
+  f('apiKey').value = origin && origin === ds.storedOrigin ? original : '';
+  return true;
+}
+
+/** Collect the Image generation row into PATCH /api/providers/images' body (masked/unchanged key omitted). */
+export function collectImagesRow(rootEl) {
+  const row = imagesRowOf(rootEl);
+  if (!row) return null;
+  const body = {};
+  for (const inp of row.querySelectorAll('.mv-im-field')) {
+    const { field } = inp.dataset;
+    const v = inp.value.trim();
+    if (field === 'apiKey') { if (v !== (inp.dataset.original || '')) body.apiKey = v; continue; }
+    if (field === 'price') {
+      // A number goes as one; anything else as typed, which the server refuses in its own words.
+      const n = Number(v);
+      body.price = v === '' ? '' : Number.isFinite(n) ? n : v;
+      continue;
+    }
+    body[field] = v;
+  }
+  return body;
+}
+
+/** The Test picture's answer, in the row: the picture and "Made in n s · w×h", or the reason in red. */
+export function showImagesTest(rootEl, r) {
+  const row = imagesRowOf(rootEl);
+  if (!row) return;
+  const shot = row.querySelector('.mv-im-shot');
+  const line = row.querySelector('.mv-im-made');
+  row.querySelector('.mv-im-result').hidden = false;
+  if (r && r.ok) {
+    shot.src = r.dataUrl;
+    shot.hidden = false;
+    line.className = 'hint mv-im-made';
+    line.textContent = `Made in ${pictureSeconds(r.ms)} s · ${r.w}×${r.h}`;
+    return;
+  }
+  shot.hidden = true;
+  shot.removeAttribute('src');
+  line.className = 'hint err mv-im-made';
+  line.textContent = (r && r.message) || '';
+}
+
+/** A refused Save of the Image generation row, in the row's own line and announced (not the card's alert). */
+export function showImagesSaveError(rootEl, message) {
+  const row = imagesRowOf(rootEl);
+  const line = row && row.querySelector('.mv-pv-msg');
+  if (!line) return;
+  line.textContent = message;
+  line.className = 'hint err mv-pv-msg';
+  line.setAttribute('role', 'alert');
 }
 
 /** The code is its own copy button (copy-button.mjs: the code as the label, then a green tick and "Copied"), the one

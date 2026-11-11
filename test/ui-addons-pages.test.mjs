@@ -154,6 +154,33 @@ test('Providers is a page of its own: its loader, its title, its level banner, a
       assert.equal(doc.getElementById('level-banner-text').textContent, 'Providers is part of Expert mode, so it is not in your menu.');
       assert.equal(doc.getElementById('level-banner-pill').dataset.lv, 'expert');
     } },
+    { name: 'the Image generation row is wired: a refused Save in its own line, Test picture in the row, a service fills its preset', run: async () => {
+      const routes = {
+        '/api/providers/images': () => ({ ok: false, status: 400, json: async () => ({ error: 'Enter a price; 0 for a free server' }) }),
+        '/api/images/test': { ok: true, w: 256, h: 256, ms: 900, dataUrl: 'data:image/png;base64,AAAA' },
+      };
+      const { window, doc } = await boot({ routes });
+      await go(window, 'providers');
+      const row = () => doc.querySelector('#providers-list .mv-pv-row[data-provider="images"]');
+      row().querySelector('.mv-im-save').click();
+      await settle();
+      const line = row().querySelector('.mv-pv-msg');
+      assert.deepEqual([line.textContent, line.classList.contains('err')], ['Enter a price; 0 for a free server', true]);
+      assert.equal(doc.querySelector('#providers-list .card-alert'), null, 'the row\'s own line, not the card\'s alert');
+      row().querySelector('.mv-im-test').click();
+      await settle();
+      assert.deepEqual([line.textContent, line.getAttribute('role')], ['', null], 'the Test clears the refused Save, its alert role too');
+      assert.equal(row().querySelector('.mv-im-made').textContent, 'Made in 1 s · 256×256');
+      const service = row().querySelector('.mv-im-service');
+      service.value = 'xai';
+      service.dispatchEvent(new window.Event('change', { bubbles: true }));
+      assert.equal(row().querySelector('.mv-im-field[data-field="baseUrl"]').value, 'https://api.x.ai/v1');
+      // A Save that goes through repaints the card: the new row's own Save takes the "Saved" state.
+      routes['/api/providers/images'] = {};
+      row().querySelector('.mv-im-save').click();
+      await settle();
+      assert.equal(row().querySelector('.mv-im-save').dataset.fbState, 'done');
+    } },
   ]);
 });
 

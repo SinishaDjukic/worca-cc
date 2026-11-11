@@ -48,7 +48,7 @@ test('providers card: not connected / connected states; sign-in block replaces t
   const errBox = renderCopilotSignIn({ userCode: 'X', error: 'denied' }, { doc });
   assert.ok(errBox.querySelector('.mv-cp-status').classList.contains('err'));
   assert.equal(errBox.querySelector('.mv-cp-cancel').textContent, 'Dismiss');
-  assert.equal(renderProvidersCard(null, { doc }).querySelectorAll('.mv-pv-row').length, 4);   // copilot, openai, anthropic + the Speech row (docs/speech.md)
+  assert.equal(renderProvidersCard(null, { doc }).querySelectorAll('.mv-pv-row').length, 5);   // copilot, openai, anthropic + Speech + Image generation
 });
 
 test('collectProviderRow: unchanged masked key is omitted (keep); a new key, base URL and cap are sent', () => {
