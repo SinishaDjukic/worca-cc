@@ -13,7 +13,7 @@ export class DesignError extends Error {
   }
 }
 
-export const DESIGN_KINDS = Object.freeze(['web', 'presentation', 'pitch', 'video']);
+export const DESIGN_KINDS = Object.freeze(['web', 'presentation', 'pitch', 'video', 'document']);
 export const DESIGN_ID_RE = /^d_[0-9a-f]{12}$/;
 export const BUILD_ID_RE = /^b_[0-9a-f]{12}$/;
 export const AGENT_ID_RE = /^a_[0-9a-f]{8}$/;

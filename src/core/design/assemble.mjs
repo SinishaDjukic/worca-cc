@@ -12,7 +12,9 @@ import {
   boundedParser, classifyRef, divergenceWatch, escapeActive, HTML_MAX_DEPTH, HTML_MAX_SCAN_LENGTH, reservedTextCount, RESOURCE_ATTRS, scanCss, scanCssUrls, scanHtml, scanShellSlots,
   scanTags, srcsetUrls, stripActive,
 } from './html-scan.mjs';
-import { boardCss, filmPlanScript, isBoardKind, isDeckKind, isFilmKind, kindHead, kitScriptNames, wrapFills } from './kinds.mjs';
+import { boardCss, filmPlanScript, isBoardKind, isDeckKind, isDocKind, isFilmKind, kindHead, kitFolder, kitScriptNames, usesSlots, wrapFills } from './kinds.mjs';
+import { scanHeadings, tocHtml } from './doc-kind.mjs';
+import { readLookSource } from './look-source.mjs';
 
 /** The attribute that marks the bridge `<script>` (C-7, M10). `dist` and `standalone` never carry it. */
 export const BRIDGE_MARKER = 'data-worca-bridge';
@@ -129,10 +131,14 @@ function shellMap(shell) {
   return { markers, head, slots, misplaced, joined, unread: watch.unread() ?? stopped };
 }
 
+/** Whether `kind`'s shell takes no slots: every design kind but the web. Anything that is not a design kind is read
+ *  as the web, as it always was. */
+const slotless = (kind) => kitFolder(kind) !== null && !usesSlots(kind);
+
 /**
  * Why a mapped shell cannot be assembled: a shell not read to its end first, then markers (head, foot, sections),
- * then each malformed slot. A board kind (deck, video) puts every slide or scene at `<!--worca:sections-->`, so its
- * shell needs that marker exactly once, whatever slots it holds (L7.4).
+ * then each malformed slot. Every kind but the web (a deck, a video, a document) puts every section at
+ * `<!--worca:sections-->` in plan order, so its shell needs that marker exactly once, whatever slots it holds (L7.4).
  * @param {ReturnType<typeof shellMap>} map
  * @param {string[]} planIds
  * @param {boolean} needHead a bridge goes in right after the first `head` open tag
@@ -157,7 +163,7 @@ function shellFaults({ markers, head, slots, misplaced, joined, unread }, planId
   if (markers.foot.length !== 1) faults.push({ marker: 'foot', message: once('foot') });
   const slotted = new Set(slots.filter((s) => s.ok).map((s) => s.id));
   const homeless = planIds.filter((id) => !slotted.has(id));
-  if (isBoardKind(kind)) {
+  if (slotless(kind)) {
     if (markers.sections.length !== 1) faults.push({ marker: 'sections', message: once('sections') });
   } else if (markers.sections.length > 1) {
     faults.push({ marker: 'sections', message: `<!--worca:sections--> may appear once, found ${markers.sections.length}` });
@@ -614,6 +620,7 @@ export function assembleDesign({ workDir, plan, mode, bridge = null, inline = fa
     throw new DesignError('BAD_REQUEST', 'script files are for a deck\'s standalone page only');
   }
   const board = isBoardKind(designKind);
+  const noSlots = slotless(designKind);
   // The sections lintDesign judges, no others: a section lint never read must not reach the page.
   const ids = Array.isArray(plan?.sections) ? plan.sections.filter((s) => typeof s?.id === 'string').map((s) => s.id) : [];
   const { shell, map } = pickShell(workDir, mode, ids, bridge !== null, designKind);
@@ -624,9 +631,10 @@ export function assembleDesign({ workDir, plan, mode, bridge = null, inline = fa
 
   const edits = [];
   const slotted = new Set();
-  // On a board a slot is no place: one left in a build doc would be the bridge's place for its section, off the board.
-  for (const slot of board ? map.slots.filter((s) => s.ok) : []) edits.push({ start: slot.start, end: slot.end, text: '' });
-  for (const slot of plan && !board ? map.slots : []) {
+  // Only the web takes slots. On a board a slot is no place: one left in a build doc would be the bridge's place for
+  // its section, off the board; a document's sections keep plan order, which its contents list and numbering follow.
+  for (const slot of noSlots ? map.slots.filter((s) => s.ok) : []) edits.push({ start: slot.start, end: slot.end, text: '' });
+  for (const slot of plan && !noSlots ? map.slots : []) {
     if (fills.has(slot.id)) {
       edits.push({ start: slot.start, end: slot.end, text: slotted.has(slot.id) ? '' : fills.get(slot.id) });
       slotted.add(slot.id);
@@ -637,9 +645,13 @@ export function assembleDesign({ workDir, plan, mode, bridge = null, inline = fa
   const fillMarker = (name, text) => { for (const at of map.markers[name]) edits.push({ ...at, text }); };
   // A board's style goes last, so it wins over every section's own sizing on its tiles.
   const boardStyle = build && board ? `<style data-worca-board-css>${boardCss()}</style>` : '';
-  fillMarker('head', [kindHead({ kind: designKind, mode }), headText(workDir, included, live), boardStyle].filter(Boolean).join('\n'));
+  fillMarker('head', [kindHead({ kind: designKind, mode, plan }), headText(workDir, included, live), boardStyle].filter(Boolean).join('\n'));
   const sectionFills = parts.filter((p) => !slotted.has(p.id) && p.fill).map((p) => p.fill).join('\n');
-  fillMarker('sections', wrapFills({ kind: designKind, mode, fills: sectionFills }));
+  // A document's contents list, made from its included sections' headings in plan order, outside build.
+  const toc = isDocKind(designKind) && !build && plan?.toc !== false
+    ? tocHtml({ sections: included.map((p) => ({ id: p.id, html: p.fill })), numbered: plan?.numbered === true })
+    : '';
+  fillMarker('sections', wrapFills({ kind: designKind, mode, fills: sectionFills, toc }));
   const scripts = build ? [] : footScripts(workDir, included, { kind: designKind, plan, mode });
   fillMarker('foot', footText(scripts, files));
   let html = splice(shell, edits);
@@ -879,15 +891,17 @@ function filmFindings(id, text) {
 
 /**
  * The shell's findings, markers, slots, a board's stage, reserved attributes, then URLs, and the ids it holds. A
- * missing shell reads as ''. On a board kind every slot is a `shell-slot-kind` error, and a `deck-stage` or
- * `data-film` element is one `shell-stage` error: the assembler writes the stage itself (L7.4).
+ * missing shell reads as ''. On every kind but the web (a board, a document) every slot is a `shell-slot-kind`
+ * error, and on a board a `deck-stage` or `data-film` element is one `shell-stage` error: the assembler writes the
+ * stage itself (L7.4).
  */
 function lintShell(workDir, planIds, kind, onDisk = null) {
   const shell = readConfined(workDir, SHELL_FILE) ?? '';
   const map = shellMap(shell);
   const faults = shellFaults(map, planIds, true, kind);
   const board = isBoardKind(kind);
-  const pieces = isDeckKind(kind) ? 'slide' : 'scene';
+  const noSlots = slotless(kind);
+  const pieces = isDeckKind(kind) ? 'slide' : isDocKind(kind) ? 'section' : 'scene';
   const findings = [];
   const add = (rule, severity, section, message) => findings.push(finding(rule, severity, section, SHELL_FILE, message));
   for (const fault of faults) if (fault.marker) add('shell-marker', 'error', null, fault.message);
@@ -901,7 +915,7 @@ function lintShell(workDir, planIds, kind, onDisk = null) {
       add('shell-slot-malformed', 'error', section, malformed.get(slot) ?? `slot ${shown} is malformed`);
       continue;
     }
-    if (board) {
+    if (noSlots) {
       add('shell-slot-kind', 'error', section, `slot ${shown}: a ${kind} takes no slots, every ${pieces} goes to <!--worca:sections--> in plan order, so take the slot out`);
       continue;
     }
@@ -928,9 +942,35 @@ function lintShell(workDir, planIds, kind, onDisk = null) {
 }
 
 /**
+ * A document section's heading warns: each `<h2>`/`<h3>` whose id the contents list cannot link to, no `<h2>` at all,
+ * and an `<h3>` before the first `<h2>`. Nothing when index.html is missing (`missing-part` says so).
+ * @param {string} workDir
+ * @param {string} id
+ */
+function docHeadingFindings(workDir, id) {
+  const file = `sections/${id}/index.html`;
+  const html = readConfined(workDir, file);
+  if (html === null) return [];
+  const heads = scanHeadings(html, id);
+  const out = [];
+  for (const { level, text, id: headId } of heads) {
+    if (headId === null) {
+      out.push(finding('doc-heading-id', 'warn', id, file, `<h${level}> ${JSON.stringify(text)} has no id that starts with "${id}-": the contents list cannot link to it`));
+    }
+  }
+  const firstH2 = heads.findIndex((h) => h.level === 2);
+  if (firstH2 < 0) out.push(finding('doc-no-heading', 'warn', id, file, `section ${id} has no <h2>, so the contents list leaves it out`));
+  if (heads.some((h, i) => h.level === 3 && (firstH2 < 0 || i < firstH2))) {
+    out.push(finding('doc-heading-order', 'warn', id, file, `section ${id} has an <h3> before its first <h2>, so the contents list leaves that <h3> out`));
+  }
+  return out;
+}
+
+/**
  * Lints a design's work/ folder against its plan: section roots per kind, CSS scope, references (a file they load
  * that is not in work/ too), reserved attributes, a film's determinism (its tokens.css and global.css too), the
- * shell's markers and slots. Never throws.
+ * shell's markers and slots; a document's brand.md `Look source:` line, its headings and a stray global.js. Never
+ * throws.
  * Findings follow plan order, then tokens.css and global.css, the shell last; a `duplicate-id` goes last in its
  * first holder's group. `ok` means no error. At most 200 findings are listed, then one `truncated` warn; `counts`
  * counts every finding, the `truncated` line aside.
@@ -950,6 +990,15 @@ export function lintDesign({ workDir, plan } = {}) {
     const film = isFilmKind(kind) ? [...new Set(filmCssTokens(css))].map((token) => filmFinding(null, file, token)) : [];
     return [...refFindings(scanCss(css).urls.map((value) => ({ value, nav: false })), null, file, [], onDisk), ...film];
   });
+  if (isDocKind(kind)) {
+    for (const group of groups) group.findings.push(...docHeadingFindings(workDir, group.section));
+    // Lint cannot know whether the lead had a project, so `project` passes here: the plan gate owns that rule.
+    const look = readLookSource(readConfined(workDir, 'brand.md'), { hasProject: true });
+    for (const message of look.errors ?? []) globals.push(finding('look-source', 'error', null, 'brand.md', message));
+    if (readConfined(workDir, 'global.js') !== null) {
+      globals.push(finding('doc-script', 'warn', null, 'global.js', 'a document runs no script: the PDF and the thumbnail never run global.js'));
+    }
+  }
   const shell = { name: SHELL_FILE, section: null, file: SHELL_FILE, ...lintShell(workDir, planIds, kind, onDisk) };
 
   const holders = new Map();

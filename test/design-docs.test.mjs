@@ -8,7 +8,8 @@ import { flagByKey } from '../src/shared/flags/registry.mjs';
 const text = readFileSync(new URL('../docs/design.md', import.meta.url), 'utf8');
 test('the flag points at the page', () => assert.equal(flagByKey('design').docs, 'docs/design.md'));
 test('the page says what is true, and nothing worca lacks', () => {
-  for (const yes of ['WORCA_FLAGS=-design', 'Build fast', 'Decks only', 'WORCA_CHROME', 'cost unknown', 'Statistics', '.git', 'MP4']) assert.ok(text.includes(yes), yes);
+  for (const yes of ['WORCA_FLAGS=-design', 'Build fast', 'Decks and documents only', 'WORCA_CHROME', 'cost unknown', 'Statistics', '.git', 'MP4', 'Look source:', 'A4']) assert.ok(text.includes(yes), yes);
+  assert.equal(text.includes('reads `Decks only`'), false, 'the old note is gone');
   for (const no of [/worca-cc/, /Replay/, /publish to the web/i, /team invite/i, /paid plan/i]) assert.doesNotMatch(text, no);
   assert.match(readFileSync(new URL('../docs/feature-flags.md', import.meta.url), 'utf8'), /\(\[docs\]\(design\.md\)\)/);   // as docs-sessions.test.mjs:73
 });

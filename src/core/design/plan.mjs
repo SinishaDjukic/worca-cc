@@ -5,6 +5,7 @@
 // known keys and is null whenever there is an error.
 
 import { DESIGN_KINDS, MAX_SECTIONS, sectionIdProblem } from './ids.mjs';
+import { PAGE_SIZES, pageWidth } from './doc-kind.mjs';
 
 /** Placeholder height (px) of a section a web round adds without one (L1.10): a small fine section, not a page band. */
 export const DEFAULT_EST_HEIGHT = 240;
@@ -28,7 +29,7 @@ const MULTI_LINE = /[\r\n]/;
 
 /**
  * @typedef {{ id: string, job: string, brief: string, parts: string[], estHeight?: number, duration?: number, band?: string }} DesignSection
- * @typedef {{ v: 1, kind: string, title: string, canvas: { w: number, h?: number, fps?: number }, notes: string, sections: DesignSection[] }} DesignPlan
+ * @typedef {{ v: 1, kind: string, title: string, canvas: { w: number, h?: number, fps?: number }, page?: 'A4'|'Letter', toc?: boolean, numbered?: boolean, notes: string, sections: DesignSection[] }} DesignPlan
  * @typedef {DesignSection & { after?: string }} DesignRoundAdd
  * @typedef {{ v: 1, summary: string, touch: { id: string, brief: string }[], add: DesignRoundAdd[], remove: string[] }} DesignRound
  * @typedef {{ v: 1, done?: boolean, rework: { id: string, why: string }[] }} DesignIntegration
@@ -114,13 +115,13 @@ function checkParts(parts, label, fail) {
 }
 
 /**
- * The fields a plan section and a round `add` share. `estHeight` is read on web only and `duration` on
- * video only. `band` is kept, trimmed, only when given (null reads as absent); no other rule reads it.
+ * The fields a plan section and a round `add` share. `estHeight` is read on web and document only and `duration`
+ * on video only; a document's parts hold no `js`. `band` is kept, trimmed, only when given (null reads as absent); no other rule reads it.
  * @param {object} raw
  * @param {unknown} kind the plan's kind
  * @param {string} label names the section in messages
  * @param {Fail} fail
- * @param {number} [estHeightDefault] used on web when `estHeight` is absent; without it `estHeight` is required
+ * @param {number} [estHeightDefault] used on web or a document when `estHeight` is absent; without it `estHeight` is required
  */
 function readFields(raw, kind, label, fail, estHeightDefault) {
   const out = { job: raw.job, brief: raw.brief, parts: Array.isArray(raw.parts) ? [...raw.parts] : raw.parts };
@@ -128,7 +129,10 @@ function readFields(raw, kind, label, fail, estHeightDefault) {
   else if (MULTI_LINE.test(raw.job)) fail(`${label}: job must be on one line`);
   if (!isText(raw.brief, MAX_BRIEF)) fail(`${label}: brief must be a string of 1 to ${MAX_BRIEF} characters`);
   checkParts(raw.parts, label, fail);
-  if (kind === 'web') {
+  if (kind === 'document' && Array.isArray(raw.parts) && raw.parts.includes('js')) {
+    fail(`${label}: a document runs no script, so parts are html and css`);
+  }
+  if (kind === 'web' || kind === 'document') {
     const h = raw.estHeight == null && estHeightDefault !== undefined ? estHeightDefault : raw.estHeight;
     if (!Number.isFinite(h) || h <= 0 || h > MAX_EST_HEIGHT) {
       fail(`${label}: estHeight must be a number of px above 0 and at most ${MAX_EST_HEIGHT}`);
@@ -155,7 +159,9 @@ function readFields(raw, kind, label, fail, estHeightDefault) {
   return out;
 }
 
-function readCanvas(canvas, kind, fail) {
+/** The plan's canvas. A document's is worca's, from its page: any canvas the lead wrote is ignored. */
+function readCanvas(canvas, kind, fail, page) {
+  if (kind === 'document') return { w: pageWidth(page) };
   const c = isRecord(canvas) ? canvas : {};
   if (kind === 'web') {
     if (!Number.isInteger(c.w) || c.w < WEB_MIN_W || c.w > WEB_MAX_W) {
@@ -193,6 +199,14 @@ function readSections(list, kind, fail) {
   });
 }
 
+/** A document's own plan keys: `page` is required, `toc` defaults to true and `numbered` to false. */
+function readDocFields(raw, fail) {
+  if (typeof raw.page !== 'string' || !Object.hasOwn(PAGE_SIZES, raw.page)) fail('page must be "A4" or "Letter"');
+  if (raw.toc != null && typeof raw.toc !== 'boolean') fail('toc must be true or false');
+  if (raw.numbered != null && typeof raw.numbered !== 'boolean') fail('numbered must be true or false');
+  return { page: raw.page, toc: raw.toc !== false, numbered: raw.numbered === true };
+}
+
 /**
  * Checks a lead's plan.json.
  * @param {string|object} json the file's text (a leading BOM is dropped) or the parsed object
@@ -212,9 +226,10 @@ export function validatePlan(json, opts) {
     if (typeof notes !== 'string' || notes.length > MAX_NOTES) {
       fail(`notes must be a string of at most ${MAX_NOTES} characters`);
     }
-    const canvas = known ? readCanvas(raw.canvas, kind, fail) : null;
+    const canvas = known ? readCanvas(raw.canvas, kind, fail, raw.page) : null;
+    const doc = kind === 'document' ? readDocFields(raw, fail) : null;
     const sections = readSections(raw.sections, known ? kind : null, fail);
-    return { v: 1, kind, title: raw.title, canvas, notes, sections };
+    return doc ? { v: 1, kind, title: raw.title, canvas, ...doc, notes, sections } : { v: 1, kind, title: raw.title, canvas, notes, sections };
   });
   return { ok, errors, plan: value };
 }
@@ -223,7 +238,7 @@ export function validatePlan(json, opts) {
  * Checks a lead's round.json (change mode) against the current plan.
  * `touch` and `remove` name plan sections, never both for one id. An `add` id is new (not even an id this
  * round removes) and unique; its `after` names a plan section that stays, or one added earlier in `add`.
- * On web an `add` may leave out `estHeight` (DEFAULT_EST_HEIGHT); on video it needs `duration`.
+ * On web or a document an `add` may leave out `estHeight` (DEFAULT_EST_HEIGHT); on video it needs `duration`.
  * The plan must still have 1 to MAX_SECTIONS sections after the round.
  * @param {string|object} json the file's text or the parsed object
  * @param {{ plan: object }} opts `plan`: the current plan.json object

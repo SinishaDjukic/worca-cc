@@ -14,7 +14,7 @@ import { pipeline } from 'node:stream/promises';
 import { attachmentDisposition } from '../download-filename.mjs';
 import { exportStem } from '../../shared/design-names.mjs';
 import {
-  copyDistToProject, encodeProblems, EXPORT_FORMATS, exportHtml, ExportRefusal, printDeckPdf, readExportPlan,
+  copyDistToProject, encodeProblems, EXPORT_FORMATS, exportHtml, ExportRefusal, printDesignPdf, readExportPlan,
   requireExportable, snapshotDist, zipDist,
 } from './export.mjs';
 import { distDir, thumbFile } from './paths.mjs';
@@ -44,13 +44,13 @@ function abortError() {
  *   listProjects: () => Promise<Array<{ key: string, name: string, path: string, exists: boolean }>>,
  *   held?: (designId: string) => string | null,
  *   chrome?: () => string | null, queue?: { run: (fn: () => unknown, opts?: { front?: boolean }) => Promise<any> },
- *   zip?: typeof zipDist, print?: typeof printDeckPdf }} opts
+ *   zip?: typeof zipDist, print?: typeof printDesignPdf }} opts
  *   `designFor` answers 404 itself for an unknown or someone else's design; `held` names what holds the design now
  *   (a restore, a hand-off staging a round), else null
  */
 export function registerDesignExportRoutes(app, {
   flagGate, designFor, listProjects, held = () => null, chrome = designChrome, queue = renderQueue, zip = zipDist,
-  print = printDeckPdf,
+  print = printDesignPdf,
 }) {
   /** A finished round that nothing holds now; else the refusal. */
   function requireReady(design) {
@@ -94,9 +94,9 @@ export function registerDesignExportRoutes(app, {
   }
 
   /**
-   * The deck PDF: printed at the queue's front (a person is waiting), sent, then its temp folder goes. The wait can be
-   * long (a thumbnail, another print), so the turn checks the round again and hands the print what it finds, in the
-   * same tick as the print's own reads of work/.
+   * The PDF of a deck or a document: printed at the queue's front (a person is waiting), sent, then its temp folder
+   * goes. The wait can be long (a thumbnail, another print), so the turn checks the round again and hands the print
+   * what it finds, in the same tick as the print's own reads of work/.
    */
   async function sendPdf(res, design, signal) {
     readExportPlan(design);

@@ -77,3 +77,23 @@ test('a change round on a deck goes back to the board, and the run doc after', a
   assert.ok(build.includes('data-worca-board')); assert.equal(stageOf(build).hasAttribute('data-worca-board'), true);
   assert.equal(stageOf(await (await fetchRaw(`${base}/run/`)).text()).hasAttribute('no-rail'), true);
 });
+
+// Only the real route proves the chat hand-off's staging and the preview gate's serving together: the run doc loads
+// worca's fonts from assets/worca/ (same origin), never from `.kit/`.
+test('a document: no board, a TOC in the run doc, worca\'s fonts, a PDF-ready export', async () => {
+  const { d, frames, base } = await buildKind('document');
+  const plan = frames.filter((f) => f.type === 'design-plan').at(-1);
+  assert.deepEqual([plan.canvas.w, plan.sections.length, plan.sections[0].estHeight], [794, 3, 600]);
+  const build = await (await fetchRaw(`${base}/build/`)).text();
+  const buildDoc = new JSDOM(build).window.document;   // the bridge script's own text names the board, so the DOM is read
+  assert.equal(buildDoc.querySelector('deck-stage, [data-worca-board], [data-film], style[data-worca-board-css]'), null);
+  const run = await (await fetchRaw(`${base}/run/`)).text();
+  assert.ok(run.includes('data-worca-toc') && run.includes('@page{size:A4'));
+  const font = await fetchRaw(`${base}/run/assets/worca/poppins-latin-400-normal.woff2`);
+  assert.deepEqual([font.status, font.headers.get('content-type')], [200, 'font/woff2']);
+  assert.deepEqual(Buffer.from(await font.arrayBuffer()), readFileSync(new URL('../ui/public/fonts/poppins-latin-400-normal.woff2', import.meta.url)));
+  assert.equal((await fetchRaw(`${base}/run/.kit/CONTRACT.md`)).status, 404);
+  assert.ok(readFileSync(join(distDir(d.design.id), 'assets', 'worca', 'poppins-latin-400-normal.woff2')).length > 0);
+  const out = String((await call('POST', `/api/design/${d.design.id}/export`, { format: 'html' })).body);
+  assert.ok(out.includes('data:font/woff2;base64,') && out.includes('data-worca-toc'));
+});

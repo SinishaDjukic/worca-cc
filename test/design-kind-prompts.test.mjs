@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import {
   builderChangePrompt, builderPrompt, builderSystemPrompt, leadChangePrompt, leadPlanPrompt, leadSystemPrompt,
 } from '../src/core/design/prompts.mjs';
-import { boardShellRule, builderKindBlock, builderKindLines, leadKindBlock, leadKindLines } from '../src/core/design/kind-prompts.mjs';
+import { boardShellRule, builderKindBlock, builderKindLines, docPlanShape, docShellRule, leadKindBlock, leadKindLines } from '../src/core/design/kind-prompts.mjs';
 
 /** What every kind's builder reads before its own last block: the web prompt up to its `A web page:` block. */
 function sharedBuilderText() {
@@ -123,4 +123,41 @@ test('review M11: each board kind\'s copy word for word, and the lead and builde
     assert.ok(s.includes(`\n6. plan.json last, in the plan shape below.\n\n${shell}\n\n${lead}\n\nThe plan shape (`), kind);
     assert.equal(builderSystemPrompt({ kind }), `${sharedBuilderText()}\n\n${builder}`, kind);
   }
+});
+
+test('a document: its lead block, builder block, kind lines and shell rule; part and page in the user prompt', () => {
+  const lead = leadKindBlock('document');
+  for (const s of ['One section is one part of the document: an <h2> and what it covers, listed in reading order.',
+    'shell.html holds the title block (title, subtitle, date, authors) above <!--worca:sections-->, and no slots: worca places the sections in plan order and, with "toc", puts the contents list it makes from their headings first.',
+    '"page" is "A4" or "Letter": the size the brief names, else "A4".',
+    'Parts are html and css: a document runs no script, and there is no global.js.',
+    '`estHeight` in px on every section. Write no `canvas`: worca sets it from "page".',
+    'Read CONTRACT.md in the kit, and its worca-look/ files when the look is worca\'s.']) assert.ok(lead.includes(s), s);
+  const builder = builderKindBlock('document');
+  for (const s of ['Root element: <section data-section="<id>">.',
+    'Every <h2> and <h3> has an id that starts with your section id and a hyphen: worca\'s contents list links to it.',
+    'Charts and diagrams are static inline <svg> with a viewBox and real text labels, coloured from the chart tokens: no script, no canvas, no picture of a chart.',
+    'A figure, a table row and a callout never break across a printed page.',
+    'Real content: plausible names, numbers and sources, never lorem ipsum. Numbers in a table or a chart label get font-variant-numeric: tabular-nums.',
+    'Read CONTRACT.md in the kit, and its worca-look/ files when the look is worca\'s.']) assert.ok(builder.includes(s), s);
+  assert.deepEqual(leadKindLines('document'), ['This design is a document: a report, an analysis, an architecture document or what the brief asks for. It is read on screen and printed.']);
+  const shell = docShellRule();
+  for (const s of ['exactly one `<!--worca:head-->` inside `<head>`, one `<!--worca:sections-->` in `<body>` and one `<!--worca:foot-->` at the end of `<body>`', 'No slots', '(BAD_SHELL)']) assert.ok(shell.includes(s), s);
+  assert.equal(docPlanShape(), '{"v":1,"kind":"document","title":"…","page":"A4","toc":true,"numbered":false,"notes":"…","sections":[{"id":"summary","job":"Summary","brief":"…","parts":["html","css"],"estHeight":900}]}');
+  assert.deepEqual([boardShellRule('document'), boardShellRule('web')], ['', '']);
+
+  const s = leadSystemPrompt({ kind: 'document' });
+  assert.deepEqual(s.split('\n').filter((l) => l.startsWith('Shell rules:')), [shell], 'one shell rule, the document\'s');
+  assert.ok(s.includes(`\n5. plan.json last, in the plan shape below.\n\n${shell}\n\n${lead}\n\nThe plan shape (`));
+  assert.ok(s.includes(docPlanShape()));
+  for (const no of [/data-worca-slot/, /hero-copy/, /\bband\b/i]) assert.doesNotMatch(s, no);
+
+  const PLAN = { page: 'Letter', sections: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] };
+  assert.deepEqual(builderKindLines({ kind: 'document', plan: PLAN, section: { id: 'b' } }), ['Part 2 of 3.', 'Printed page: Letter.']);
+  assert.deepEqual(builderKindLines({ kind: 'document', plan: PLAN, section: { id: 'ghost' } }), []);
+  const p = builderPrompt({ section: { id: 'b', job: 'B', parts: ['html', 'css'], brief: 'Brief' }, notes: 'N', sectionDir: '/s', tokensCss: '/t', globalCss: '/g', crewJson: '/c', questionFile: '/q', kind: 'document', plan: PLAN });
+  assert.ok(p.includes('Plan notes: N\nPart 2 of 3.\nPrinted page: Letter.\n\nBrief:\nBrief'));
+  // One cacheable builder prefix per kind: the plan never reaches the system prompt.
+  assert.equal(builderSystemPrompt({ kind: 'document' }), builderSystemPrompt({ kind: 'document', plan: PLAN }));
+  assert.ok(builderSystemPrompt({ kind: 'document' }).endsWith(builder));
 });

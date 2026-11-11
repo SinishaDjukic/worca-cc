@@ -100,8 +100,9 @@ test('the head button: Export and the chevron, a menu trigger; a round going aga
 test('exportMenuItems: the PDF rule', () => {
   const ids = (k) => exportMenuItems(k).map((i) => i.sep ? '-' : i.id);
   assert.deepEqual(ids('web'), ['html', 'zip', 'pdf', '-', 'project']);
-  assert.deepEqual(exportMenuItems('web')[2], { id: 'pdf', label: 'PDF', disabled: true, note: 'Decks only' });
-  for (const k of ['presentation', 'pitch']) assert.deepEqual(exportMenuItems(k)[2], { id: 'pdf', label: 'PDF' });
+  assert.deepEqual(exportMenuItems('web')[2], { id: 'pdf', label: 'PDF', disabled: true, note: 'Decks and documents only' });
+  for (const k of ['presentation', 'pitch', 'document']) assert.deepEqual(exportMenuItems(k)[2], { id: 'pdf', label: 'PDF' }, k);
+  assert.deepEqual(ids('document'), ['html', 'zip', 'pdf', '-', 'project']);
   assert.deepEqual(ids('video'), ['html', 'zip', '-', 'project']);
 });
 test('menu matches the mockup; a disabled PDF does nothing', async () => {
@@ -110,8 +111,8 @@ test('menu matches the mockup; a disabled PDF does nothing', async () => {
   const items = [...doc.querySelectorAll('.menu.dz-export .menu-item')];
   assert.deepEqual(items.map((b) => b.querySelector('span').textContent), ['Standalone HTML', 'Zip of the folder', 'PDF', 'Copy into a project']);
   assert.equal(items[2].getAttribute('aria-disabled'), 'true');
-  assert.equal(items[2].getAttribute('title'), 'Decks only');
-  assert.equal(items[2].querySelector('small').textContent, 'Decks only');
+  assert.equal(items[2].getAttribute('title'), 'Decks and documents only');
+  assert.equal(items[2].querySelector('small').textContent, 'Decks and documents only');
   items[2].click(); await tick();
   assert.equal(posts.length, 0);
 });

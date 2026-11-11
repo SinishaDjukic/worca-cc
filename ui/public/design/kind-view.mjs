@@ -38,7 +38,7 @@ const FILM_FIT_TOP = 14;
 const TILE_R = 8;
 const BOARD_BG = '#101217';
 
-const NOUNS = Object.freeze({ web: 'section', presentation: 'slide', pitch: 'slide', video: 'scene' });
+const NOUNS = Object.freeze({ web: 'section', presentation: 'slide', pitch: 'slide', video: 'scene', document: 'section' });
 
 /** Whether `kind` is a slide deck (`presentation` or `pitch`). */
 export function isDeckKind(kind) {

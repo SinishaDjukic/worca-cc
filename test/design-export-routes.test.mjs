@@ -352,3 +352,17 @@ test('html: a deck whose kit is gone is a 422 kit with words, not a download', a
   assert.deepEqual([r.status, await r.json(), r.headers.get('content-disposition')],
     [422, { error: 'The kit file deck-stage.js is missing. Start a new round to stage it again.', code: 'kit' }, null]);
 });
+
+test('the route prints through printDesignPdf: a document gets its PDF, a web page the pdf-kinds refusal', { skip: process.platform === 'win32' ? 'a shebang fake Chrome' : false }, async () => {
+  // A fake Chrome: it writes a two-page PDF where --print-to-pdf points, as the real one does.
+  const bin = join(mkdtempSync(join(home, 'chrome-')), 'chrome');
+  writeFileSync(bin, `#!${process.execPath}\nconst a = process.argv.find((x) => x.startsWith('--print-to-pdf='));\nrequire('node:fs').writeFileSync(a.slice(15), '%PDF-1.7\\n<< /Type /Page >>\\n<< /Type /Page >>\\n');\n`, { mode: 0o755 });
+  const doc = seedDone({ 'sections/hero/index.html': '<section data-section="hero"><h2 id="hero-title">Hero</h2></section>' }, { kind: 'document' });
+  const { port } = await listen({ chrome: () => bin });
+  const r = await postTo(port, doc.id, { format: 'pdf' });
+  assert.equal(r.status, 200, r.buf.toString());
+  assert.equal(r.headers.get('content-type'), 'application/pdf');
+  assert.ok(r.buf.toString().startsWith('%PDF'));
+  const web = await postTo(port, seedDone().id, { format: 'pdf' });
+  assert.deepEqual([web.status, web.json?.code, web.json?.error], [422, 'pdf-kinds', 'PDF is for decks and documents.']);
+});

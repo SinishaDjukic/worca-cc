@@ -10,7 +10,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { createDesign, updateDesign } from '../src/core/design/store.mjs';
 import { designWorkDir } from '../src/core/design/paths.mjs';
 import { BRIDGE_MARKER } from '../src/core/design/assemble.mjs';
-import { countPdfPages, liveSlides, printDeckPdf, ExportRefusal } from '../src/core/design/export.mjs';
+import { countPdfPages, liveSlides, printDeckPdf, printDesignPdf, printDocumentPdf, ExportRefusal } from '../src/core/design/export.mjs';
 
 useTempHome(after);
 const PDF = (n) => Buffer.from(`%PDF-1.7\n<< /Type /Pages /Count ${n} >>\n` + '<< /Type /Page /Parent 1 0 R >>\n'.repeat(n));
@@ -79,4 +79,57 @@ test('liveSlides: a missing section file and a file with no tag print nothing; a
   mkdirSync(join(w, 'sections/s5'), { recursive: true }); writeFileSync(join(w, 'sections/s5/index.html'), 'just text');
   const plan = { ...DECK, sections: [...DECK.sections, { id: 'gone' }, { id: 's4' }, { id: 's5' }] };
   assert.equal(liveSlides({ workDir: w, plan }), 3);
+});
+
+const DOCPLAN = { v: 1, kind: 'document', title: 'Q3 review', canvas: { w: 794 }, page: 'A4', toc: true, numbered: false, notes: '',
+  sections: [{ id: 'summary', job: 'Summary', brief: 'b', parts: ['html', 'css'], estHeight: 600 }, { id: 'risks', job: 'Risks', brief: 'b', parts: ['html', 'css'], estHeight: 600 }] };
+function document() {
+  const d = createDesign({ kind: 'document', title: 'Q3 review' }, { by: 'local' }); const w = designWorkDir(d.id);
+  const put = (rel, t) => { mkdirSync(dirname(join(w, rel)), { recursive: true }); writeFileSync(join(w, rel), t); };
+  put('plan.json', JSON.stringify(DOCPLAN)); put('shell.html', '<!doctype html><html><head><!--worca:head--></head><body><main><!--worca:sections--></main><!--worca:foot--></body></html>');
+  put('global.js', 'MODELJS()');
+  put('sections/summary/index.html', '<section data-section="summary"><h2 id="summary-title">Summary</h2></section>');
+  put('sections/risks/index.html', '<section data-section="risks"><h2 id="risks-title">Risks</h2></section>');
+  return { d: updateDesign(d.id, { status: 'done' }), w };
+}
+
+test('a document prints its standalone doc with no script at all, on its own page size, any page count', async () => {
+  const { d } = document(); const seen = {};
+  const r = await printDocumentPdf({ design: d, plan: DOCPLAN, chrome: '/c', run: writes(5, seen) });
+  assert.deepEqual([r.pages, r.name, seen.timeoutMs, 'slides' in r], [5, 'q3-review.pdf', 180000, false]);
+  assert.equal(/<script/i.test(seen.doc), false, 'no kit, no model JS');
+  assert.equal(seen.doc.includes('MODELJS'), false);
+  assert.ok(seen.doc.includes('@page{size:A4'));
+  assert.ok(seen.doc.includes('data-worca-toc'));
+  assert.match(seen.doc, /^<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'/);
+  assert.ok(existsSync(r.file)); const dir = dirname(r.file); r.cleanup(); assert.equal(existsSync(dir), false);
+});
+
+test('a document PDF\'s refusals leave no temp folder', async () => {
+  const { d } = document(); const made = [];
+  const rec = (run) => async (c, a, o) => { made.push(dirname(o.outFile)); return run(c, a, o); };
+  const refused = (c) => (e) => e instanceof ExportRefusal && e.code === c && e.status === 422;
+  for (const kind of ['web', 'pitch', 'video']) await assert.rejects(printDocumentPdf({ design: { ...d, kind }, plan: DOCPLAN, chrome: '/c', run: rec(writes(2)) }), refused('pdf-kinds'), kind);
+  await assert.rejects(printDocumentPdf({ design: d, plan: DOCPLAN, chrome: null, run: rec(writes(2)) }), (e) => refused('no-chrome')(e) && e.message === 'PDF needs Chrome or Edge on this machine. Install one, or set WORCA_CHROME.');
+  await assert.rejects(printDocumentPdf({ design: d, plan: DOCPLAN, chrome: '/c', run: rec(async () => ({ ok: false, reason: 'timed out' })) }), (e) => refused('no-pdf')(e) && e.message === 'Chrome produced no PDF: timed out.');
+  await assert.rejects(printDocumentPdf({ design: d, plan: DOCPLAN, chrome: '/c', run: rec(writes(0)) }), refused('no-pdf'));
+  assert.equal(made.length, 2, 'the kind and Chrome checks come before any folder');
+  assert.ok(made.every((dir) => !existsSync(dir)));
+});
+
+test('printDesignPdf: a deck takes the deck path, a document the document path, anything else is refused', async () => {
+  const deckSeen = {}; const docSeen = {};
+  const { d: pitch } = deck();
+  const a = await printDesignPdf({ design: pitch, plan: DECK, chrome: '/c', run: writes(2, deckSeen) });
+  assert.equal(a.slides, 2); a.cleanup();
+  assert.ok(deckSeen.doc.includes('customElements.define'));
+  await assert.rejects(printDesignPdf({ design: pitch, plan: DECK, chrome: '/c', run: writes(3) }), (e) => e.code === 'page-count', 'the deck\'s page rule still applies');
+  const { d: doc } = document();
+  const b = await printDesignPdf({ design: doc, plan: DOCPLAN, chrome: '/c', run: writes(3, docSeen) });
+  assert.equal(b.pages, 3); b.cleanup();
+  assert.equal(/<script/i.test(docSeen.doc), false);
+  for (const kind of ['web', 'video', undefined]) {
+    await assert.rejects(printDesignPdf({ design: { ...doc, kind }, plan: DOCPLAN, chrome: '/c', run: writes(2) }),
+      (e) => e instanceof ExportRefusal && e.status === 422 && e.code === 'pdf-kinds' && e.message === 'PDF is for decks and documents.', String(kind));
+  }
 });

@@ -7,7 +7,8 @@
 // (C-8) writes `dist/` into a folder inside the project's real path, never into `.git`, never through a link, and
 // refuses every collision before it writes anything. The deck PDF (L6.1) prints the standalone page through
 // `staticDoc` with worca's own `deck-stage.js` as the one nonced script, and keeps it only when the page count equals
-// the live slides, the deck kit's own rule.
+// the live slides, the deck kit's own rule. A document's PDF prints its standalone page with no script at all, on the
+// page size its own print CSS sets.
 import { createHash, randomBytes } from 'node:crypto';
 import {
   closeSync, constants as fsc, copyFileSync, createReadStream, fstatSync, ftruncateSync, linkSync, lstatSync, mkdirSync,
@@ -28,7 +29,8 @@ import { DesignError } from './ids.mjs';
 import { RENDER_TIMEOUTS, runChrome, staticDoc } from './render.mjs';
 import { designWorkDir, distDir } from './paths.mjs';
 import { validatePlan } from './plan.mjs';
-import { exportStem } from '../../shared/design-names.mjs';
+import { exportStem, PDF_KINDS } from '../../shared/design-names.mjs';
+import { isDeckKind, isDocKind } from './kinds.mjs';
 
 /** A refusal the route answers as `{error, code, ...data}` with `status`. */
 export class ExportRefusal extends Error {
@@ -639,8 +641,10 @@ export async function copyDistToProject({
   return { target: checked.rel || '.', files: files.length };
 }
 
-/** The kinds a PDF is for. */
+/** The kinds a deck PDF is for. */
 const DECK_KINDS = new Set(['presentation', 'pitch']);
+/** The refusal of a kind that prints no PDF. */
+const PDF_KINDS_MESSAGE = 'PDF is for decks and documents.';
 /** worca's own deck kit: a classic IIFE with no fetches, the only script the PDF runs. */
 const DECK_KIT = fileURLToPath(new URL('../../../assets/deck-kit/deck-stage.js', import.meta.url));
 const FIRST_START_TAG = /<[a-z][^>]*>/i;
@@ -719,4 +723,64 @@ export async function printDeckPdf({ design, plan, chrome, signal = null, run = 
     cleanup();
     throw e;
   }
+}
+
+/**
+ * Prints a document to a PDF in a temp folder of its own: `staticDoc` of the standalone page, so no script runs (no
+ * kit, no nonce), and its page size, margins and page numbers come from worca's print CSS in its head. Any page count
+ * above 0 is kept: a document has no slide count to match. The kind and Chrome are checked before anything is made;
+ * any failure removes the folder before it throws; on success the caller sends `file` and then calls `cleanup()`.
+ * @param {{ design: { id: string, kind: string, title: string }, plan: object, chrome: string | null,
+ *   signal?: AbortSignal | null, run?: typeof runChrome }} opts
+ * @returns {Promise<{ file: string, name: string, pages: number, problems: Array<{ ref: string, why: string }>,
+ *   cleanup: () => void }>}
+ * @throws {ExportRefusal} `pdf-kinds`, `no-chrome` or `no-pdf`, all 422
+ */
+export async function printDocumentPdf({ design, plan, chrome, signal = null, run = runChrome }) {
+  if (!isDocKind(design?.kind)) throw new ExportRefusal(422, 'pdf-kinds', PDF_KINDS_MESSAGE);
+  if (!chrome) throw new ExportRefusal(422, 'no-chrome', 'PDF needs Chrome or Edge on this machine. Install one, or set WORCA_CHROME.');
+  const workDir = designWorkDir(design.id);
+  let assembled;
+  try {
+    assembled = assembleDesign({ workDir, plan, mode: 'standalone' });
+  } catch (e) {
+    throw kitRefusal(e) ?? e;
+  }
+  const { html, problems } = assembled;
+  const doc = staticDoc(html);
+
+  const dir = mkdtempSync(join(tmpdir(), 'worca-design-pdf-'));
+  const cleanup = () => rmSync(dir, RM_RETRY);
+  try {
+    const htmlPath = join(dir, 'doc.html');
+    const pdfPath = join(dir, 'document.pdf');
+    writeFileSync(htmlPath, doc);
+    const r = await run(chrome, pdfArgs({ htmlPath, pdfPath, noSandbox: chromeNoSandbox() }), {
+      outFile: pdfPath,
+      timeoutMs: RENDER_TIMEOUTS.pdfMs,
+      signal,
+    });
+    if (!r.ok) throw new ExportRefusal(422, 'no-pdf', `Chrome produced no PDF: ${r.reason}.`);
+    const pages = countPdfPages(readFileSync(pdfPath));
+    if (pages === 0) throw new ExportRefusal(422, 'no-pdf', 'Chrome produced a PDF with no pages.');
+    return { file: pdfPath, name: `${exportStem(design.title)}.pdf`, pages, problems, cleanup };
+  } catch (e) {
+    cleanup();
+    throw e;
+  }
+}
+
+/**
+ * The export route's PDF: a deck prints on the deck path (`printDeckPdf`, its page-count rule kept), a document on
+ * its own (`printDocumentPdf`); any other kind is refused before anything is made. `PDF_KINDS` is the list the
+ * export menu reads too.
+ * @param {Parameters<typeof printDeckPdf>[0]} opts
+ * @returns {Promise<{ file: string, name: string, pages: number, problems: Array<{ ref: string, why: string }>,
+ *   cleanup: () => void }>}
+ * @throws {ExportRefusal} `pdf-kinds` (422), or the path's own refusal
+ */
+export async function printDesignPdf(opts) {
+  const kind = opts?.design?.kind;
+  if (!PDF_KINDS.includes(kind)) throw new ExportRefusal(422, 'pdf-kinds', PDF_KINDS_MESSAGE);
+  return isDeckKind(kind) ? printDeckPdf(opts) : printDocumentPdf(opts);
 }
