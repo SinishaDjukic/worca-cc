@@ -6,6 +6,11 @@
 
 - Settings has a display currency: USD, BRL, EUR, GBP, CAD, AUD, JPY, MXN, INR or CHF. Costs are still stored and computed in USD, and budget and limit inputs still take USD; only the display changes. Worca fetches the rate only when you pick a currency (from `api.frankfurter.dev`, falling back to `open.er-api.com`, no key), never at start or in the background. If no rate can be fetched, the previous currency stays. See `docs/display-currency.md`.
 
+### Instance contract for hosting platforms
+
+- New [Instance contract](docs/instance-contract.md) page: what a hosted Worca instance is made of (the `worca`, `broker` and `cloudflared` containers, their start commands, ports and volumes) and everything a management interface sets or expects: every variable per container, the identity token, the heartbeat and what a receiver should do with it, stopping and draining, rotation and versions. For running Worca for others without a hosting platform, or for building a management interface of your own.
+- `docker/compose.instance.yml`: the same shape in Docker on top of `compose.yml` and `compose.broker.yml`, with `cloudflared` under the `tunnel` profile and the hosted-mode variables commented.
+
 ### Agents left running by a killed server are stopped at the next start (#1144)
 
 - On Linux, macOS and WSL, a Claude, Codex or Copilot process (and anything it started) no longer keeps running after the Worca server or a CLI run is killed with SIGKILL, for example by the out-of-memory killer under WSL2. Each process records its agent process groups in `<worca home>/agent-groups/`, and the next server start stops the ones whose owner is gone, so they no longer hold memory and make the next kill more likely. A PID that another process has taken since (after a reboot or `wsl --shutdown`, or in a restarted container, whose PIDs start again from 1) is never touched: each group is recorded with its boot id and start time.
