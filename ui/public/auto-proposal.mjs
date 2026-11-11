@@ -8,6 +8,7 @@ import { mountStaticGraph } from './graph/view.mjs';
 import { mountProposalGraph } from './graph/proposal-host.mjs';
 import { manifestPortsFn, manifestTemplate, manifestAgents } from './graph/run-decor.mjs';
 import { FLOW_SCALE } from './graph/model.mjs';
+import { fmtCost } from './money.mjs';
 
 export const AUTO_PROPOSAL_ORDER_CARD = Object.freeze(['name', 'reason', 'signals', 'fp', 'graph', 'loops', 'match', 'warnings', 'meta']);
 export const AUTO_PROPOSAL_ORDER_QPANEL = Object.freeze(['reason', 'signals', 'fp', 'name', 'graph', 'loops', 'match', 'warnings', 'meta']);
@@ -20,7 +21,8 @@ const ICO = {
 };
 function h(doc, tag, cls, text) { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
 function icon(doc, inner, cls) { const s = doc.createElementNS(SVG_NS, 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('aria-hidden', 'true'); if (cls) s.setAttribute('class', cls); s.innerHTML = inner; return s; }
-const fmtUsd = (v) => `$${(Number(v) || 0).toFixed(2)}`;
+/** The classifier's cost in the display currency (money.mjs); USD as it always printed. */
+const fmtUsd = (v) => fmtCost(Number(v) || 0, () => `$${(Number(v) || 0).toFixed(2)}`);
 
 /** Loop lines from the manifest: every loop wire with a budget, ONE hop through an `or` valve (A20). */
 export function proposalLoops(manifest) {

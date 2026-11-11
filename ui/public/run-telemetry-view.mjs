@@ -5,6 +5,7 @@
 // is cached per run and refetched at most every LIVE_TTL_MS; paint fills the slots it finds.
 import { flagOn, chip } from './flags.mjs';
 import { ctxLevel, ctxTrigger, fmtWindow, kTok } from './ask-meter.mjs';
+import { fmtCost } from './money.mjs';
 
 const LIVE_TTL_MS = 5000;
 const MISSING_TTL_MS = 30_000;   // a live run that recorded nothing (flag off when it started): ask rarely
@@ -54,7 +55,7 @@ export function stepFigures(st) {
     out.push({ text: `session input ${kTok(st.sessionInput)}`,
       title: 'This engine reports usage only at the end of a session: the input of every call added up, not a context size.' });
   }
-  const totals = [st.wallMs ? `wall ${fmtMs(st.wallMs)}` : '', Number.isFinite(st.costUsd) && st.costUsd > 0 ? `$${st.costUsd.toFixed(2)}` : ''].filter(Boolean);
+  const totals = [st.wallMs ? `wall ${fmtMs(st.wallMs)}` : '', Number.isFinite(st.costUsd) && st.costUsd > 0 ? fmtCost(st.costUsd, () => `$${st.costUsd.toFixed(2)}`) : ''].filter(Boolean);
   if (totals.length) out.push({ text: totals.join(' · '), title: 'Wall: the time the step ran, paused stretches left out. Cost: what the engine reported for the step, sub-agents included.' });
   if (st.perCall) out.push({ text: plural(st.calls, 'call') });
   if (st.sessions > 1) out.push({ text: plural(st.sessions, 'session'), title: 'Retries, resumes and question rounds each run a session.' });

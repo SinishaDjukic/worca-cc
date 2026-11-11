@@ -12,6 +12,7 @@
 import { flagOn } from './flags.mjs';
 import { renderTeamCapPauseBanner, POLICY_PAUSE_REASONS } from './team-policy-view.mjs';
 import { rowsToCsv } from '../../src/shared/csv.mjs';
+import { fmtCost, fmtMoney, fmtMoneyExact, fmtMoneyAxis, usdNote } from './money.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -25,9 +26,10 @@ const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'
 const USD_2DP = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
 const USD_4DP = { minimumFractionDigits: 4, maximumFractionDigits: 4 };
 
+// Cost figures print in the display currency (money.mjs); with USD each one is byte for byte the text it always was.
 export const DEFAULT_FMT = {
-  usd: (n) => `$${(Math.round(((n || 0) + Number.EPSILON) * 100) / 100).toLocaleString('en-US', USD_2DP)}`,
-  usd4: (n) => `$${(n || 0).toLocaleString('en-US', USD_4DP)}`,
+  usd: (n) => fmtCost(n || 0, () => `$${(Math.round(((n || 0) + Number.EPSILON) * 100) / 100).toLocaleString('en-US', USD_2DP)}`),
+  usd4: (n) => fmtCost(n || 0, () => `$${(n || 0).toLocaleString('en-US', USD_4DP)}`, fmtMoneyExact),
   duration: (ms) => {
     const s = Math.floor((ms || 0) / 1000);
     if (s < 60) return `${s}s`;
@@ -39,7 +41,7 @@ export const DEFAULT_FMT = {
     const v = Math.round(((h || 0) + Number.EPSILON) * 10) / 10;
     return `${v.toLocaleString('en-US', { maximumFractionDigits: 1 })} h`;
   },
-  estTitle: (n) => `Estimated cost $${(n || 0).toLocaleString('en-US', USD_4DP)}. Claude Code client-side estimate (total_cost_usd), not authoritative billing`,
+  estTitle: (n) => `Estimated cost ${fmtCost(n || 0, () => `$${(n || 0).toLocaleString('en-US', USD_4DP)}`, fmtMoneyExact)}${usdNote(n || 0)}. Claude Code client-side estimate (total_cost_usd), not authoritative billing`,
 };
 
 function h(doc, tag, cls, text) {
@@ -242,8 +244,9 @@ export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_F
   // Smart run naming (Labs): spend with no run behind it, its own line and never part of the spend above.
   const naming = model.utility?.naming;
   if (naming && naming.usd > 0) {
-    const cents = naming.usd < 0.01 ? naming.usd.toFixed(4) : naming.usd.toFixed(2);
-    chatTile.appendChild(subEl(doc, `Naming $${cents} · ${naming.count} suggestion${naming.count === 1 ? '' : 's'}`));
+    const cents = fmtCost(naming.usd, () => `$${naming.usd < 0.01 ? naming.usd.toFixed(4) : naming.usd.toFixed(2)}`,
+      (u) => (fmtMoney(u).startsWith('<') ? fmtMoneyExact(u) : fmtMoney(u)));
+    chatTile.appendChild(subEl(doc, `Naming ${cents} · ${naming.count} suggestion${naming.count === 1 ? '' : 's'}`));
   }
   row.appendChild(chatTile);
 
@@ -418,10 +421,9 @@ function tipDate(ms, bucket) {
     : `${WD[d.getDay()]} ${MO[d.getMonth()]} ${d.getDate()}`;
 }
 
+/** A chart axis tick in the display currency (money.mjs fmtMoneyAxis): `$1.2k`, `$42`, else the chart's own fmt.usd. */
 function compactUsd(fmt, v) {
-  if (v >= 1000) return `$${(v / 1000).toFixed(1)}k`;
-  if (v >= 10) return `$${Math.round(v)}`;
-  return fmt.usd(v);
+  return fmtMoneyAxis(v, (u) => fmt.usd(u));
 }
 
 // The Cost report (cost-report.mjs, cost-area-chart.mjs) reuses these private helpers.

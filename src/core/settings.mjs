@@ -67,6 +67,7 @@ import {
   isUpstreamBaseUrl, REASONING_EFFORT_LEVELS,
 } from './model-env.mjs';
 import { MODEL_ROLES } from '../shared/model-roles.mjs';
+import { CURRENCY_CODES, DEFAULT_CURRENCY, isSupportedCurrency, isValidRate } from '../shared/currencies.mjs';
 import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
@@ -1634,6 +1635,79 @@ export async function setTheme(input) {
   else settings.theme = input;
   await persistSettings(settings);
   return { theme: theme() };
+}
+
+// ── Display currency (docs/display-currency.md) ─────────────────────────────
+// Costs are stored and computed in USD everywhere; this only says how to SHOW them. One object
+// under `displayCurrency`, written in one persistSettings, so a currency never lands without its
+// rate. USD is the absent key. Changed only by POST /api/settings/display-currency (it fetches the
+// rate); POST /api/settings refuses the key and it is NOT in SETTINGS_POST_KEYS.
+export const DISPLAY_CURRENCY_SOURCES = Object.freeze(['fixed', 'frankfurter', 'open-er-api']);
+/** @typedef {{ currency: string, rate: number, rateDate: string|null, rateAt: string|null, source: string }} DisplayCurrency */
+/** @type {Readonly<DisplayCurrency>} */
+export const DEFAULT_DISPLAY_CURRENCY = Object.freeze({ currency: DEFAULT_CURRENCY, rate: 1, rateDate: null, rateAt: null, source: 'fixed' });
+const RATE_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const isIsoTime = (v) => typeof v === 'string' && v.length <= 40 && !Number.isNaN(Date.parse(v));
+const warnedDisplayCurrency = new Set();
+
+/** Why a display currency object is not storable, or null when it is. USD must be exactly the default. */
+function displayCurrencyProblem(v) {
+  if (!isObj(v)) return 'displayCurrency must be an object';
+  if (!isSupportedCurrency(v.currency)) return `currency must be one of ${CURRENCY_CODES.join(', ')}`;
+  if (v.currency === DEFAULT_CURRENCY) return v.rate === 1 && v.source === 'fixed' ? null : 'USD is always rate 1 from source fixed';
+  if (!isValidRate(v.rate)) return 'rate must be a number above 0 and at most 1000000';
+  if (!DISPLAY_CURRENCY_SOURCES.includes(v.source) || v.source === 'fixed') return 'source must be frankfurter or open-er-api';
+  if (v.rateDate != null && !(typeof v.rateDate === 'string' && RATE_DATE_RE.test(v.rateDate))) return 'rateDate must be YYYY-MM-DD or null';
+  if (!isIsoTime(v.rateAt)) return 'rateAt must be an ISO time';
+  return null;
+}
+
+/**
+ * The STORED display currency. Sync and never throws: an absent key is USD, and ANY bad field
+ * makes the whole value USD (never BRL at rate 1), warned once per distinct value because the
+ * shell render reads this on every page load.
+ * @param {Record<string, unknown>} [settings]
+ * @returns {DisplayCurrency}
+ */
+export function displayCurrency(settings = readSettings()) {
+  const v = settings && typeof settings === 'object' ? settings.displayCurrency : undefined;
+  if (v === undefined) return { ...DEFAULT_DISPLAY_CURRENCY };
+  const problem = displayCurrencyProblem(v);
+  if (!problem) {
+    if (v.currency === DEFAULT_CURRENCY) return { ...DEFAULT_DISPLAY_CURRENCY };
+    return { currency: v.currency, rate: v.rate, rateDate: v.rateDate ?? null, rateAt: v.rateAt, source: v.source };
+  }
+  let id;
+  try { id = JSON.stringify(v); } catch { id = String(v); }
+  if (!warnedDisplayCurrency.has(id)) {
+    warnedDisplayCurrency.add(id);
+    console.warn(`[worca] invalid displayCurrency (${problem}) — showing costs in USD`);
+  }
+  return { ...DEFAULT_DISPLAY_CURRENCY };
+}
+
+/**
+ * @param {unknown} input  a whole DisplayCurrency (the route builds it from the fetched quote)
+ * @throws {Error} code BAD_CURRENCY when it is not storable
+ */
+export function assertDisplayCurrencyInput(input) {
+  const problem = displayCurrencyProblem(input);
+  if (problem) throw Object.assign(new Error(problem), { code: 'BAD_CURRENCY' });
+}
+
+/**
+ * Persist the display currency in one write: USD deletes the key, anything else stores the whole
+ * object. Revalidates first, so nothing half-valid is ever written.
+ * @param {DisplayCurrency} input
+ * @returns {Promise<DisplayCurrency>} what a read returns now
+ */
+export async function setDisplayCurrency(input) {
+  assertDisplayCurrencyInput(input);
+  const settings = readSettings();
+  if (input.currency === DEFAULT_CURRENCY) delete settings.displayCurrency;
+  else settings.displayCurrency = { currency: input.currency, rate: input.rate, rateDate: input.rateDate ?? null, rateAt: input.rateAt, source: input.source };
+  await persistSettings(settings);
+  return displayCurrency();
 }
 
 // ── Auto workflow classifier model (auto-workflow spec D14) ─────────────────

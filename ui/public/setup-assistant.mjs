@@ -14,6 +14,7 @@ import { LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { ROLE_LABELS, MODEL_ROLES, ROLE_HARNESSES } from '../../src/shared/model-roles.mjs';
 import { CHAT_ENGINE_NAMES, engineLabel } from '../../src/shared/engine-switch.mjs';
 import { UPSTREAM_TIMEOUTS } from '../../src/shared/proxy-timeouts.mjs';
+import { usdSetting } from './money.mjs';
 
 export const SETUP_STEPS = Object.freeze([
   { id: 'check', label: 'Check this machine' },
@@ -223,7 +224,7 @@ export function diffRows(saved, answers, { detect = null } = {}) {
   const sources = [a.claude && (claudeOff ? 'Claude Code (not signed in)' : 'Claude Code'), a.copilot && 'GitHub Copilot', a.openai && 'OpenAI-compatible', a.anthropic && 'Anthropic-compatible'].filter(Boolean);
   const roles = answers.models.modelRoles[w.runEngine || 'claude'] || {};
   const chatLine = { role: 'Chat', model: answers.models.askModel?.model || null, fallback: chatFallback(askEngineOf(saved.settings)) };
-  const money = (v) => (v == null ? 'none' : `$${v}`);
+  const money = (v) => (v == null ? 'none' : usdSetting(`$${v}`));   // a limit: stays USD (money.mjs)
   // Whether the team filled a key of this group (the Team chip); network and access never: D12.
   const teamIn = (group) => (answers.found?.team || []).some((k) => k.startsWith(`${group}.`));
   return [

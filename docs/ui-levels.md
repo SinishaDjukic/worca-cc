@@ -325,6 +325,7 @@ inside the view.
 | Element | Level |
 |---|---|
 | General: Appearance, Alerts, Interface mode, Getting started, About | S |
+| General › Appearance: Currency row (`#currency-row`: the currency AI costs show in, its rate line and Update rate). Simple: every level shows costs, so every level picks how they read | S |
 | Runs tab: Budget & cost limits (incl. Resume runs automatically when a usage limit resets) | S |
 | Runs tab: Pull requests (Draft the PR description with AI automatically) | S |
 | Runs tab: the filter box above its cards | S |

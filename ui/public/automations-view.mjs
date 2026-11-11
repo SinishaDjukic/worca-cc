@@ -8,6 +8,7 @@ import { makeSwitch } from './switch.mjs';
 import { icon } from './icons.mjs';
 import { toggleMenu } from './workflows/menu.mjs';
 import { VIEW_PR_LABEL, VIEW_PRS_LABEL } from './ship-words.mjs';
+import { fmtCost, usdSetting } from './money.mjs';
 
 export const AUTOMATIONS_EMPTY_RULES = 'No rules of your own yet. The switches above need none; add a rule for anything else.';
 export const AUTOMATIONS_EMPTY_EVENTS = 'Nothing yet. New issues and pull requests show here with what Worca did.';
@@ -73,10 +74,10 @@ function limitsRow(doc, limits, onEdit) {
 
 const AUTO_HANDLE_KEY = Object.freeze({ 'issue.opened:propose': 'propose', 'issue.opened:fix': 'fix', 'pr.opened:review': 'review' });
 export const autoHandleKey = (r) => AUTO_HANDLE_KEY[`${r.event}:${r.action}`] || null;
-/** "Max 10 runs/day · $5 per run · 1 at a time" */
+/** "Max 10 runs/day · $5 per run · 1 at a time" (the per-run cap is a setting: it stays USD, money.mjs usdSetting) */
 export function limitsLine(l) {
   if (!l) return '';
-  return `Max ${l.dailyRuns} run${l.dailyRuns === 1 ? '' : 's'}/day · $${l.maxCostUsd} per run · ${l.maxConcurrent} at a time`;
+  return `Max ${l.dailyRuns} run${l.dailyRuns === 1 ? '' : 's'}/day · ${usdSetting(`$${l.maxCostUsd}`)} per run · ${l.maxConcurrent} at a time`;
 }
 
 /** One status badge word + colour, and the reason in words. */
@@ -99,7 +100,7 @@ function eventRow(doc, e, cb, { projectName = null } = {}) {
   row.append(top);
   const triage = e.action === 'propose' && TRIAGE_WORDS[e.phase] ? `triaged as ${TRIAGE_WORDS[e.phase]}` : '';
   const meta = [e.author ? `by @${e.author}` : '', ACTION_WORDS[e.phase === 'fix' ? 'fix' : e.action] || '', triage, st.reason,
-    e.costUsd ? `$${Number(e.costUsd).toFixed(2)}` : '', e.via === 'webhook' ? 'webhook' : ''].filter(Boolean).join(' · ');
+    e.costUsd ? fmtCost(Number(e.costUsd), () => `$${Number(e.costUsd).toFixed(2)}`) : '', e.via === 'webhook' ? 'webhook' : ''].filter(Boolean).join(' · ');
   row.append(h(doc, 'small', 'hint', meta));
   const acts = h(doc, 'div', 'pl-actions');
   if (e.status === 'awaiting-approval' && cb.onApprove) acts.append(btn(doc, 'Approve', 'btn btn-primary btn-sm', () => cb.onApprove(e)));

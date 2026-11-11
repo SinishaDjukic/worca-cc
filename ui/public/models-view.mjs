@@ -14,6 +14,7 @@ import { copyButton } from './copy-button.mjs';
 import { makeSwitch } from './switch.mjs';
 import { engineLabel, engineChoiceLabel, isBetaEngine, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES, CHAT_ENGINE_NAMES, engineReportsCost } from '../../src/shared/engine-switch.mjs';
 import { harnessesOf, runsOn, suggestModelHandle, HARNESS_EFFORTS } from '../../src/shared/connections.mjs';
+import { usdSetting } from './money.mjs';
 
 /** Each model engine's effort list: Claude's, Codex's, Copilot's, Goose's and OpenCode's as given, Gemini CLI's and Qwen
  *  Code's their harness's (src/shared/connections.mjs); Cursor has no effort flag. */
@@ -77,7 +78,8 @@ export function costSummary(cost) {
   if (!p || typeof p !== 'object') return '';
   const set = COST_RATES.filter(([k]) => p[k] != null);
   if (!set.length) return '';
-  return `${set.map(([k, lab]) => `${lab.toLowerCase()} $${p[k]}`).join(' · ')} /Mtok`;
+  // A model's price table stays USD whatever the display currency (money.mjs usdSetting labels it then).
+  return usdSetting(`${set.map(([k, lab]) => `${lab.toLowerCase()} $${p[k]}`).join(' · ')} /Mtok`);
 }
 
 /**

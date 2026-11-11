@@ -3,9 +3,11 @@ import { renderEngineSection, utilityId } from './engine-settings-view.mjs';
 import { notify, cardAlert } from './feedback.mjs';
 import { ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 import { PR_OPEN_LABELS, PR_SLICES_LABELS } from '../../src/shared/pr-auto.mjs';
+import { usdSetting } from './money.mjs';
 
-// A USD field's inherited value as the placeholder shows it: "$5.00", or "no cap" when unset.
-const usd = (value) => (value == null ? 'no cap' : `$${Number(value).toFixed(2)}`);
+// A USD field's inherited value as the placeholder shows it: "$5.00", or "no cap" when unset. A cap stays USD
+// whatever the display currency (money.mjs usdSetting labels it then).
+const usd = (value) => (value == null ? 'no cap' : usdSetting(`$${Number(value).toFixed(2)}`));
 // "fix, feat chore" → ['fix', 'feat', 'chore'] (the server validates each word).
 const typesOf = (text) => String(text).toLowerCase().split(/[\s,]+/).filter(Boolean);
 const labelled = (labels) => Object.entries(labels).map(([value, label]) => ({ value, label }));

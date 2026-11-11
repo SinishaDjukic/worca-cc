@@ -9,6 +9,8 @@ What a run costs, where you see the spend, and the limits that stop a run before
 The run page shows each run's estimated cost as it goes. In Expert mode, the workflow graph also shows the cost of
 each step. These figures are Claude Code's client-side estimates, not your bill.
 
+By default they read in US dollars. Settings › General › Appearance can show them in another currency instead; budgets and limits still take USD. See [Display currency](display-currency.md).
+
 ### Statistics
 
 **Statistics** (Advanced) sums up spend over a range: Today, This week, This month, Last month, All time or a

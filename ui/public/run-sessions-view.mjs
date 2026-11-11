@@ -9,6 +9,7 @@ import { engineLabel, engineReportsCost } from '../../src/shared/engine-switch.m
 import { manifestTemplate, manifestPortsFn } from '../../src/shared/graph/manifest.mjs';
 import { sessionsOf } from '../../src/shared/graph/sessions.mjs';
 import { copyButton } from './copy-button.mjs';
+import { fmtCost, fmtMoney, fmtMoneyExact } from './money.mjs';
 import { BOOKEND_EXECUTION_IDS, KEYED_KINDS } from '../../src/shared/graph/constants.mjs';
 
 export { sessionRowLine };
@@ -57,7 +58,7 @@ function hhmm(iso) {
 const usdOr = (v, known = true) => (known && finite(v) ? fmtUsd(v) : '—');
 /** Two figures that differ only past the cent print with four decimals, so a failed check never reads "$0.65 vs $0.65". */
 function usdPair(a, b) {
-  const f = (x, d) => (finite(x) ? `$${x.toFixed(d)}` : 'unknown');
+  const f = (x, d) => (finite(x) ? fmtCost(x, () => `$${x.toFixed(d)}`, d > 2 ? fmtMoneyExact : fmtMoney) : 'unknown');
   return f(a, 2) === f(b, 2) && finite(a) && finite(b) && a !== b ? [f(a, 4), f(b, 4)] : [f(a, 2), f(b, 2)];
 }
 const shortId = (id) => (id.length > 16 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id);

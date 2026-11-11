@@ -46,7 +46,8 @@
                 <div class="label-row">
                   <h2>Appearance</h2>
                   <button type="button" class="info-tip" aria-label="About appearance">i<span class="tip-content hidden">
-                    System follows your operating system. The choice applies to every browser that opens this Worca.
+                    System follows your operating system. Costs are kept in US dollars; the currency only changes how they read,
+                    using the rate fetched when you pick it or press Update rate. Both choices apply to every browser that opens this Worca.
                   </span></button>
                 </div>
               </div>
@@ -60,6 +61,13 @@
                       <button type="button" data-theme-mode="dark" aria-pressed="false">Dark</button>
                     </div>
                   </div>
+                </div>
+                <!-- Display currency (currency-settings.mjs, docs/display-currency.md): the sentence and the rate are painted by the module. -->
+                <div class="drow currency-drow" id="currency-row" data-min-level="simple">
+                  <span class="drow-label" id="currencyLabel">Currency</span>
+                  <span class="drow-help" id="currencySentence">AI costs show in US dollar (USD).</span>
+                  <small class="hint drow-help" id="currencyRate" hidden></small>
+                  <div class="drow-control" id="currencyActions"></div>
                 </div>
               </div>
             </section>

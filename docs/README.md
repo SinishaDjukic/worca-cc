@@ -52,6 +52,7 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 
 - [Guardrails](guardrails.md) — per-run policy sets (Permissive, Normal, Strict), enforcement, honest limitations
 - [Costs and budgets](costs.md) — cost per run, hard limits and cost tags
+- [Display currency](display-currency.md) — show AI costs in BRL, EUR and 7 more currencies; the rate, when Worca fetches it, and the API
 - [Statistics](statistics.md) — spend and outcomes by range, person and tag, CSV export and the API
 - [Team metrics](team-metrics.md) — git-backed, team-wide records of finished runs on a `worca-metrics` branch ([record format](team-metrics-record-v1.md))
 - [Team policy](team-policy.md) — team-set cost caps, allowed models, required plugins, guardrail defaults and MCP servers from a `worca-policy` branch

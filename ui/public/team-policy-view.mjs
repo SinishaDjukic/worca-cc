@@ -11,6 +11,7 @@ import { makeSwitch } from './switch.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
 import { normaliseDimension } from '../../src/shared/tag-dimensions.mjs';
 import { MODEL_ROLES, TEAM_ROLE_HARNESSES, ROLE_LABELS } from '../../src/shared/model-roles.mjs';
+import { usdSetting } from './money.mjs';
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const POLICY_PAUSE_REASONS = Object.freeze(['cost_pipeline_policy', 'cost_total_policy']);
 export const PROTECT_HINT = 'Protect worca-policy on your git host so only maintainers can push. Worca reads it for everyone and writes it only from the Team policy page.';
@@ -34,7 +35,8 @@ function withRef(doc, text, name) {
   return frag;
 }
 function btn(doc, cls, text, primary = false) { const b = h(doc, 'button', `${primary ? 'btn btn-primary btn-sm' : 'btn btn-sm'} ${cls}`, text); b.type = 'button'; return b; }
-const usd = (n) => `$${(Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+/** A team cap: a setting, so it stays USD whatever the display currency (money.mjs usdSetting adds ` USD` then). */
+const usd = (n) => usdSetting(`$${(Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 export function relTime(iso, now = Date.now()) {
   const ms = now - Date.parse(iso);
   if (!Number.isFinite(ms)) return null;
@@ -1460,7 +1462,8 @@ export function renderTeamCapPauseBanner(rec, { doc = globalThis.document, budge
   // The harness detail carries the numbers and the home: "team cost cap reached ($11.40 >= $10.00, acme/gateway)"
   // or "team total cap reached ($160.00 >= $150.00 this month, acme/gateway)".
   const m = /\(\$([\d.,]+) >= \$([\d.,]+)(?: this (week|month))?, ([^)]+)\)/.exec(String(rec.pauseDetail || ''));
-  const mono = (v) => h(doc, 'span', 'mono', `$${v}`);
+  // Spend against a cap, both from the harness's USD text: kept in USD and labelled so (money.mjs usdSetting).
+  const mono = (v) => h(doc, 'span', 'mono', usdSetting(`$${v}`));
   const b = budget || {};
   if (m) {
     const [, spent, cap, period, home] = m;

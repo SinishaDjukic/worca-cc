@@ -14,6 +14,7 @@ import { gitOn, onGitChange, GIT_MISSING_TEXT } from './git-gate.mjs';
 import { makeSwitch } from './switch.mjs';
 import { icon as sharedIcon } from './icons.mjs';
 import { openRunSetupOverlay } from './run-setup-overlay.mjs';
+import { fmtCost, fmtMoneyRange } from './money.mjs';
 import {
   ATTACH_BINARY, ATTACH_TEXT_EXT, extOf, checkAttachment, bytesToBase64, carriesFiles, pastedFiles, createPasteNamer, REQ_ATTACH, reqLimits,
 } from './attach-files.mjs';
@@ -117,7 +118,8 @@ async function api(method, url, body) {
   return data;
 }
 
-const usd = (n) => `$${(Number(n) || 0).toFixed(2)}`;
+/** A cost in the display currency (money.mjs); USD as it always printed (`$0.42`). */
+const usd = (n) => fmtCost(Number(n) || 0, () => `$${(Number(n) || 0).toFixed(2)}`);
 /** How old `iso` is, in words (A7 §6): "today", "yesterday", "<n> days", "<n> weeks" (up to 8), "<n> months";
  *  by calendar day in local time; '' for something that is not a date. */
 export function age(iso, now = Date.now()) {
@@ -175,10 +177,10 @@ const encodeFile = async (file) => ({ name: file.name, dataBase64: bytesToBase64
 /** "$0.05", "$0.05–0.12", or READ_RANGE while none of the kinds has an estimate (board 15). */
 function readRange(kinds, estimates) {
   const known = [...new Set(kinds)].map((k) => estimates && estimates[k]).filter((x) => typeof x === 'number');
-  if (!known.length) return READ_RANGE;
+  if (!known.length) return fmtMoneyRange(0.05, 0.2, READ_RANGE);
   const lo = Math.min(...known);
   const hi = Math.max(...known);
-  return lo === hi ? usd(lo) : `${usd(lo)}–${usd(hi).slice(1)}`;
+  return fmtMoneyRange(lo, hi, () => (lo === hi ? usd(lo) : `${usd(lo)}–${usd(hi).slice(1)}`));
 }
 /** D15: the privacy note, naming the interview model. */
 const privacyNote = (interview, id = null) => h('p', { class: 'hint req-files-privacy', id }, icon(ICONS.info, { size: 14 }),
@@ -2439,7 +2441,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     return h('div', { class: 'req-file-askpanel' },
       h('label', { for: id, text: 'What should Worca look for?' }), input,
       h('div', { class: 'req-file-askfoot' },
-        h('span', { class: 'hint', text: `One more read of this file · about ${typeof a.estimateUsd === 'number' ? usd(a.estimateUsd) : ASK_RANGE}` }),
+        h('span', { class: 'hint', text: `One more read of this file · about ${typeof a.estimateUsd === 'number' ? usd(a.estimateUsd) : fmtMoneyRange(0.05, 0.15, ASK_RANGE)}` }),
         h('button', { type: 'button', class: 'btn btn-sm', onclick: close }, 'Cancel'), go),
       n.askMsg);
   }
@@ -2883,10 +2885,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   const helpLabel = (p) => (p.target === 'criterion' ? 'Acceptance criteria' : p.target === 'assumption' ? 'Assumptions' : sectionTitle(p.target));
   /** D13: "$L–H" from the last helper calls (one value when they agree); "$0.05" before any. */
   function helpRange(est) {
-    if (!est || typeof est.low !== 'number' || typeof est.high !== 'number') return '$0.05';
+    if (!est || typeof est.low !== 'number' || typeof est.high !== 'number') return fmtCost(0.05, '$0.05');
     const lo = est.low.toFixed(2);
     const hi = est.high.toFixed(2);
-    return lo === hi ? `$${lo}` : `$${lo}–${hi}`;
+    return fmtMoneyRange(est.low, est.high, () => (lo === hi ? `$${lo}` : `$${lo}–${hi}`));
   }
   const helpChat = (f) => helperData || { messages: [], answering: !!(f.helper && f.helper.answering), estimate: null };
   /** A chat read from the server. A reply that started, or rows that are new since the last one, mean the cause of a spent

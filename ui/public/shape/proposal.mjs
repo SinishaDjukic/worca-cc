@@ -13,8 +13,10 @@ import { toggleMenu } from '../workflows/menu.mjs';
 import { iconSvg } from '../icons.mjs';
 import { sentencePicker } from '../design-system/components/settings-row.mjs';
 import { toElement } from '../design-system/components/html.mjs';
+import { fmtCost, fmtMoneyAxis } from '../money.mjs';
 
-const usd = (n) => `$${Number(n || 0).toFixed(2)}`;
+/** An estimate in the display currency (money.mjs); USD as it always printed (`$0.42`). */
+const usd = (n) => fmtCost(Number(n || 0), () => `$${Number(n || 0).toFixed(2)}`);
 /** One choice's estimate, planning and build apart (D28); the history-only medians, or "no estimate yet". A card stored
  *  before the split (no planningUsd) keeps its single figure rather than reading "Planning ≈ $0.00". */
 const money = (e) => (!e ? 'no estimate yet'
@@ -25,7 +27,7 @@ const money = (e) => (!e ? 'no estimate yet'
 function factsLine(n) {
   const e = n.estimates && n.estimates.shaped;
   const task = n.size ? `${n.size[0].toUpperCase()}${n.size.slice(1)} task` : 'This task';
-  return `${task} · ${e ? `≈ $${Math.round(e.costUsd)} · ~${e.minutes} min` : 'no estimate yet'}`;
+  return `${task} · ${e ? `≈ ${fmtCost(e.costUsd, () => `$${Math.round(e.costUsd)}`, (u) => fmtMoneyAxis(u))} · ~${e.minutes} min` : 'no estimate yet'}`;
 }
 const bodyOf = (card, perspectives, extra = {}) => ({ workflowId: 'wf_shape', shape: {
   ...extra, perspectives,

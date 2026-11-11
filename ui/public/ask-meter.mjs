@@ -1,5 +1,7 @@
 // ui/public/ask-meter.mjs — the Ask composer's context-window and cost figures. Pure; shared by the Chat page
 // (ask-panel.mjs re-exports them) and the browser extension's sidebar composer.
+import { fmtCost } from './money.mjs';
+
 export function fmtTokens(n) {
   if (!Number.isFinite(n) || n <= 0) return null;
   return n < 1000 ? `${n} tok` : `${(n / 1000).toFixed(1)}k tok`;
@@ -67,6 +69,7 @@ export function ctxBreakdown(ctx, w) {
     pct: ctxPercent(ctx, w), level: ctxLevel(ctx, w),
   };
 }
+/** A cost in the display currency (money.mjs); USD prints as it always did (`$0.42`). Non-finite -> null. */
 export function fmtUsd(x) {
-  return Number.isFinite(x) ? `$${x.toFixed(2)}` : null;
+  return Number.isFinite(x) ? fmtCost(x, () => `$${x.toFixed(2)}`) : null;
 }

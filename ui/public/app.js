@@ -295,6 +295,9 @@ import { createRunPrFields, mountWorkspacePrSetting, paintRunPrAuto } from './pr
 import { createRequirementsView } from './requirements-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, currentFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
+import { fmtMoney, fmtMoneyExact, fmtCost, usdNote, setDisplayCurrency, readDisplayCurrency } from './money.mjs';
+import { createCurrencySettings } from './currency-settings.mjs';
+import { CURRENCIES } from '../../src/shared/currencies.mjs';
 import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
 import { PROBE_DEBOUNCE_MS, defaultAddMode, detectModel } from './project-add.mjs';
 import { presetMenuGroups, presetHiddenItems, presetNodePick, renderBrokenCard, resetItem, saveDialogError, configWithPreset } from './run-presets-picker.mjs';
@@ -1894,6 +1897,8 @@ function handleServerMessage(msg) {
   // Another tab saved a Settings card: repaint ours from the server so a stale
   // checkbox/field cannot be "saved" back over the change.
   if (msg.type === 'settings-changed') {
+    // The display currency may be what changed (another tab saved it): re-read it (GET only), mirror it on <html>.
+    void currencySettings.refresh();
     // Settings › Memory's defragment pair may be what changed: an open Memory tab repaints the card
     // and reloads the scope (the health hint names the model), and the Memory defragment workflow's
     // memo is dropped so its agent rows re-read the pinned pair — at once when New pipeline is
@@ -2600,39 +2605,35 @@ function escapeHtml(s) {
 }
 
 
-// en-US grouping ($10,456.12), the same shape Team metrics prints (TM_FMT.usd).
-const USD_2DP = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const USD_4DP = new Intl.NumberFormat('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
-
-// Format a USD amount. null/NaN -> '' (caller decides the default). A positive
-// sub-cent value -> '<$0.01' so genuine spend is never hidden as a flat $0.00.
-// 0 -> '$0.00' (a truthful mock zero, never blanked).
 /** " · N requests" when any step went through the model bridge, else ''. Pure. */
 function bridgeRequestsSuffix(steps) {
   const n = (Array.isArray(steps) ? steps : []).reduce((sum, s) => sum + (Number.isFinite(s?.bridgeCalls) ? s.bridgeCalls : 0), 0);
   return n > 0 ? ` · ${n} request${n === 1 ? '' : 's'}` : '';
 }
 
+// Format a USD amount in the display currency (money.mjs; USD prints `$10,456.12` as always). null/NaN -> ''
+// (caller decides the default). A positive amount under the smallest unit -> '<$0.01' so genuine spend is never
+// hidden as a flat $0.00. 0 -> '$0.00' (a truthful mock zero, never blanked).
 function fmtUsd(n) {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return '';
-  if (v > 0 && v < 0.01) return '<$0.01';
-  return '$' + USD_2DP.format(v);
+  return fmtMoney(n);
 }
+// Boot: the server rendered the display currency on <html data-currency data-currency-rate> (src/core/index-html.mjs),
+// so the first paint is already in it: no fetch, no USD flash.
+setDisplayCurrency(readDisplayCurrency(document));
 
-// Exact tenth-of-a-cent dollar string for tooltips (the backend tracks 4 dp,
-// the visible chip is rounded to 2). '' for non-finite input.
+// Exact figure for tooltips: two more digits than the currency's own (USD: tenth of a cent, as the backend
+// tracks 4 dp and the visible chip is rounded to 2). '' for non-finite input.
 function fmtUsd4(n) {
-  const v = Number(n);
-  return Number.isFinite(v) ? '$' + USD_4DP.format(v) : '';
+  return fmtMoneyExact(n);
 }
 
 // Tooltip text for any cost figure: marks it as Claude Code's client-side
-// estimate (not a bill) and reveals the exact value. '' when there's no number.
+// estimate (not a bill) and reveals the exact value (and the stored USD one in another currency).
+// '' when there's no number.
 function estTitle(n) {
   const exact = fmtUsd4(n);
   return exact
-    ? `Estimated cost ${exact}: Claude Code client-side estimate (total_cost_usd), not authoritative billing`
+    ? `Estimated cost ${exact}${usdNote(n)}: Claude Code client-side estimate (total_cost_usd), not authoritative billing`
     : '';
 }
 
@@ -6381,7 +6382,7 @@ function renderWorkflowBody(r, panel, pq) {
   const looks = [w.taskKind, w.size, ...(w.signals || []).filter((x) => !/^fingerprint:/i.test(x) && !/cards? read$/i.test(x))].filter(Boolean);
   if (looks.length) fact('Classified as', looks.join(' \u00b7 '));
   fact('Saved as', handle.parts.match);
-  fact('Classifier cost', `\u2248 $${(Number(costUsd) || 0).toFixed(2)}${w.round > 1 ? ` \u00b7 ${w.round} rounds` : ''}`);
+  fact('Classifier cost', `\u2248 ${fmtCost(Number(costUsd) || 0, () => `$${(Number(costUsd) || 0).toFixed(2)}`)}${w.round > 1 ? ` \u00b7 ${w.round} rounds` : ''}`);
   const table = buildTunablesTable(w, wf, handle);
   const discs = [
     tagLevel(disclose('Customize agents', [table], { open: agentCount > 1 }), 'expert'),   // accept-as-proposed is the simple path
@@ -16976,6 +16977,11 @@ try {
 // permission prompt is raised only by the switch's own click.
 mountAlertsCard({ doc: document, alerts });
 
+// ---- Display currency (Settings › General › Appearance) ----
+// Painted at boot from <html data-currency> (no fetch). The exchange-rate service is reached only through a pick or
+// Update rate; a save reloads this tab, other tabs re-read on settings-changed (docs/display-currency.md).
+const currencySettings = createCurrencySettings({ doc: document, currencies: CURRENCIES, notify });
+
 // ---- Away mode (Settings › Runs) ----
 // Settings › Away mode: the user layer (night-mode-form.mjs), its live summary and the status strip.
 /** A GET /api/away-mode body, or null. Other UI tests' fetch stubs answer unknown URLs with
@@ -17366,7 +17372,7 @@ async function snPaintCost(naming) {
   if (flagOn('smartRunNaming')) {
     const c = naming || await safeJson(await fetch('/api/naming/config').catch(() => null));
     const model = c?.picked?.model ? `${c.picked.model}${c.picked.source === 'auto' ? ' (cheapest ready)' : ''}. ` : '';
-    if (c && typeof c.estimatedUsd === 'number') out.textContent = `${model}About 300 tokens in, 30 out: ≈ $${c.estimatedUsd.toFixed(5)} per suggestion. ${base}`;
+    if (c && typeof c.estimatedUsd === 'number') out.textContent = `${model}About 300 tokens in, 30 out: ≈ ${fmtCost(c.estimatedUsd, () => `$${c.estimatedUsd.toFixed(5)}`, (u) => fmtMoneyExact(u, 3))} per suggestion. ${base}`;
     else if (model) out.textContent = `${model}${base}`;
   }
   settingsCardPainted('smartNamingSave');

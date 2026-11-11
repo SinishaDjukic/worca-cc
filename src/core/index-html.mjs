@@ -5,6 +5,7 @@
 // (settings.mjs#theme guarantees it), so no escaping question arises.
 import { FLAGS } from '../shared/flags/registry.mjs';
 import { flagsAttr, flagGateCss } from '../shared/flags/resolve.mjs';
+import { isSupportedCurrency, isValidRate } from '../shared/currencies.mjs';
 
 export const INDEX_THEME_ANCHOR = '<html lang="en" data-theme="system">';
 // Feature flags (docs/feature-flags.md, D5): the server fills this empty sheet with one rule per
@@ -15,6 +16,14 @@ export const FLAG_GATES_ANCHOR = '<style id="flag-gates"></style>';
 // it), so an injected <script> or onerror= never runs. 'wasm-unsafe-eval' lets voice mode's
 // onnxruntime compile its WebAssembly; it allows no JS eval. base-uri stops an injected <base>
 // from re-pointing the relative module URLs. Styles stay open: the flag gates are an inline sheet.
+// The code is checked against the shared list and the rate is a plain finite number, so neither
+// can carry a quote into the attribute; anything else falls back to USD rather than throwing.
+function currencyAttrs(c) {
+  if (!c) return '';
+  const ok = isSupportedCurrency(c.currency) && isValidRate(c.rate);
+  return ok ? ` data-currency="${c.currency}" data-currency-rate="${c.rate}"` : ' data-currency="USD" data-currency-rate="1"';
+}
+
 export const SHELL_CSP = "script-src 'self' 'wasm-unsafe-eval'; base-uri 'none'; frame-ancestors 'none'";
 
 /**
@@ -22,17 +31,20 @@ export const SHELL_CSP = "script-src 'self' 'wasm-unsafe-eval'; base-uri 'none';
  * @param {'system'|'light'|'dark'} theme
  * @param {'simple'|'advanced'|'expert'} [level]  always one of UI_LEVELS (the server resolves it)
  * @param {Record<string, boolean>} [flags]  resolved { key: on } (src/core/flags.mjs#allFlags)
- * @param {{ git?: boolean }} [opts]  git: is git usable (src/core/git-available.mjs#gitAvailable)
+ * @param {{ git?: boolean, currency?: { currency: string, rate: number } }} [opts]  git: is git usable
+ *   (src/core/git-available.mjs#gitAvailable); currency: the stored display currency
+ *   (settings.mjs#displayCurrency), written as data-currency / data-currency-rate so costs paint in
+ *   it from the first frame with no GET (docs/display-currency.md). Omitted => no attributes.
  * @returns {string}
  * @throws {Error} when an anchor is not present (index.html drifted)
  */
-export function renderIndexHtml(html, theme, level, flags, { git } = {}) {
+export function renderIndexHtml(html, theme, level, flags, { git, currency } = {}) {
   if (!html.includes(INDEX_THEME_ANCHOR)) throw new Error('index.html theme anchor missing');
   // `level` (docs/ui-levels.md) rides the same anchor so the first paint already hides what the
   // interface mode hides. Omitted ⇒ no attribute, and the stylesheet then gates nothing.
   const lvl = level ? ` data-level="${level}"` : '';
   // CONTRACT §0: data-git="on|off" lets the first paint hide git-only surfaces. Omitted ⇒ no attribute.
-  const gitAttr = typeof git === 'boolean' ? ` data-git="${git ? 'on' : 'off'}"` : '';
+  const gitAttr = (typeof git === 'boolean' ? ` data-git="${git ? 'on' : 'off'}"` : '') + currencyAttrs(currency);
   if (!flags) return html.replace(INDEX_THEME_ANCHOR, `<html lang="en" data-theme="${theme}"${lvl}${gitAttr}>`);
   if (!html.includes(FLAG_GATES_ANCHOR)) throw new Error('index.html flag-gates anchor missing');
   return html

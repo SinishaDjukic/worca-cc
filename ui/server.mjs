@@ -91,7 +91,7 @@ import {
   updateCheckEnabled, assertUpdateCheckInput, setUpdateCheck,
   titleModel as storedTitleModel, setTitleModel, assertTitleModelInput,
   hideBuiltinModels, setHideBuiltinModels, assertHideBuiltinModelsInput,
-  theme as storedTheme, setTheme, assertThemeInput,
+  theme as storedTheme, setTheme, assertThemeInput, displayCurrency,
   uiLevel as storedUiLevel, setUiLevel, assertUiLevelInput, defaultUiLevel,
   autoWorkflowModel as storedAutoWorkflowModel, setAutoWorkflowModel, assertAutoWorkflowModelInput,
   prDescriptionModel as storedPrDescriptionModel, setPrDescriptionModel, assertPrDescriptionModelInput,
@@ -513,6 +513,7 @@ import { parseIdList } from '../src/core/chat/allowlist.mjs';
 import { createChatContext } from '../src/core/chat/chat-context.mjs';
 import { createNotifier } from '../src/core/chat/notifier.mjs';
 import { TokenBucket } from '../src/core/chat/rate-limiter.mjs';
+import { fxTesting } from '../src/core/display-currency-fx.mjs';
 import { renderTest } from '../src/core/chat/renderers.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { normalizeManifest, validatePluginDir, PLUGIN_NAME_RE as MANIFEST_PLUGIN_NAME_RE } from '../src/core/plugin-manifest.mjs';
@@ -2183,7 +2184,7 @@ async function pinUiLevel() {
 }
 function sendIndex(res) {
   let html;
-  try { html = renderIndexHtml(readIndexHtml(PUBLIC_DIR), storedTheme(), effectiveUiLevel(), allFlags(), { git: gitAvailable() }); }
+  try { html = renderIndexHtml(readIndexHtml(PUBLIC_DIR), storedTheme(), effectiveUiLevel(), allFlags(), { git: gitAvailable(), currency: displayCurrency() }); }
   catch (err) { return res.status(500).json({ error: err && err.message ? err.message : 'shell unavailable' }); }
   res.set('Content-Type', 'text/html; charset=utf-8');
   res.set('Cache-Control', 'no-store');
@@ -7967,6 +7968,7 @@ async function checkModelRolesPatch(patch, { pending = [] } = {}) {
  */
 async function applySettingsPatch(body, { person = null } = {}) {
   const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+  if (has('displayCurrency')) throw Object.assign(new Error('The display currency has its own save. Pick it in Settings, which fetches the exchange rate.'), { settingsCtx: 'displayCurrency' });   // docs/display-currency.md; not in SETTINGS_POST_KEYS
   const hasBudgetKey = has('pipelineCostLimitUsd') || has('totalCostLimitUsd') || has('costLimitResetPeriod');
   const hasHumanRateKey = has('humanRateUsdPerHour');
   const hasAskKey = has('askMaxTurns') || has('askMaxBudgetUsd');
@@ -10427,6 +10429,7 @@ export const _testing = {
   setSetupDeps: (o) => { setupDepsOverride = o || {}; },
   setSetupProbes: (p) => { setupProbesOverride = p || null; },
   resetSetup: () => { setupDepsOverride = {}; setupProbesOverride = null; setupRunning = null; SETUP_JOBS.clear(); },
+  ...fxTesting,
   setUpdateFetcher: (fn) => { updateFetcherOverride = typeof fn === 'function' ? fn : null; updateChecker.clear(); },
   setSourceBuild: (v) => { sourceBuildOverride = typeof v === 'boolean' ? v : null; updateChecker.clear(); },
   setVersionsFetcher: (fn) => { versionsFetcherOverride = typeof fn === 'function' ? fn : null; versionLister.clear(); },

@@ -8,6 +8,7 @@ import { parseWindow } from '../../src/shared/away-mode/activation.mjs';
 import { describeAwayMode } from '../../src/shared/away-mode/describe.mjs';
 import { inheritText, dropInheritedTwin } from './inherit-field.mjs';
 import { modelGroups, modelSourceSuffix } from '../../src/shared/connections.mjs';
+import { isUsd } from './money.mjs';
 
 export const NIGHT_KINDS = ['clarify', 'questions', 'form', 'gate', 'workflow', 'recovery'];
 export const CRITERIA = ['matchesMemory', 'reversible', 'smallestScope', 'codebaseConventions', 'cost'];
@@ -297,7 +298,8 @@ export function renderNightForm(root, { level, values = {}, effective = {}, sour
     inp.value = values.spendCapUsd == null ? '' : String(values.spendCapUsd);
     inp.placeholder = placeholderFor(level, inh.spendCapUsd, inhSrc.spendCapUsd);
     const row = el(doc, 'div', 'drow-control away-input-row');
-    row.append(doc.createTextNode('$'), inp, doc.createTextNode(' spent while away'));
+    // The cap is a setting: always USD, and says so when costs show in another currency (money.mjs).
+    row.append(doc.createTextNode(isUsd() ? '$' : 'USD $'), inp, doc.createTextNode(' spent while away'));
     cap.append(row);
     sourceHint(doc, cap, values, inhSrc, 'spendCapUsd');
     offBox(doc, cap, 'night-spend-cap-off', 'No cap', values.spendCapUsd === null, [inp]);

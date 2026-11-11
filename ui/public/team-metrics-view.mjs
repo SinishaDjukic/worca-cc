@@ -5,6 +5,7 @@
 import { niceScale, roundedTopBar, savedMultChip } from './stats-view.mjs';
 import { safeHttpUrl, recordTags } from '../../src/shared/team-metrics/aggregate.mjs';
 import { dimensionLabel } from '../../src/shared/tag-dimensions.mjs';
+import { fmtCost, fmtMoney, fmtMoneyAxis } from './money.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -19,7 +20,8 @@ const RESULT_STACKS = [
 const PREV_WORD = { 'this-month': 'month', 'last-month': 'month', quarter: 'quarter', year: 'year', custom: 'period' };
 
 export const TM_FMT = {
-  usd: (n) => `$${(Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+  // Display currency (money.mjs); USD prints as it always did. The records and their CSV stay in USD.
+  usd: (n) => fmtCost(Number(n) || 0, () => `$${(Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`),
   duration: (ms) => {
     if (ms == null) return '—';
     const s = Math.round(ms / 1000);
@@ -641,7 +643,7 @@ export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Da
   const stacks = agg.series.stackKeys.map((st, i) => ({ ...st, color: SERIES_COLORS[Math.min(i, SERIES_COLORS.length - 1)] }));
   charts.append(renderStackedWeekChart({
     title: 'Spend per week', weeks: agg.series.spend, stacks, valueOf: (pt, key) => pt.stacks[key],
-    yFmt: (v) => (v >= 1000 ? `$${(v / 1000).toFixed(1)}k` : `$${Math.round(v)}`), tipFmt: TM_FMT.usd, legendValue: (st) => TM_FMT.usd(st.totalUsd),
+    yFmt: (v) => fmtMoneyAxis(v, (u) => fmtCost(u, `$${Math.round(u)}`, fmtMoney)), tipFmt: TM_FMT.usd, legendValue: (st) => TM_FMT.usd(st.totalUsd),
     headExtra: renderGroupBySelect(agg.groupBy, scopeKind, { doc, tagKeys, dims: tagDims }),
   }, { doc }));
   const runTotals = Object.fromEntries(RESULT_STACKS.map((r) => [r.key, agg.series.runs.reduce((a, p) => a + (p[r.key] || 0), 0)]));

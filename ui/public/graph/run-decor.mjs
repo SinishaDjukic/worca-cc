@@ -8,6 +8,7 @@
 // execution ledger (state.steps[], one row per execution, key === executionId),
 // colours read the manifest node. History renders with the registry absent.
 import { levelAtLeast } from '../ui-level.mjs';
+import { fmtCost } from '../money.mjs';
 import { manifestPortsFn, manifestTemplate } from '../../../src/shared/graph/manifest.mjs';
 import { BOOKEND_EXECUTION_IDS, DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../../../src/shared/graph/constants.mjs';
 import { fanLines } from '../../../src/shared/graph/geometry.mjs';
@@ -49,12 +50,11 @@ export function fmtDur(ms) {
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-/** `$0.42`, with a `<$0.01` floor so a real-but-tiny spend never reads as free. */
+/** `$0.42` in the display currency (money.mjs), with a `<$0.01` floor so a real-but-tiny spend never reads as free.
+ *  Non-finite reads as zero. USD prints as it always did (`$1234.56`, no grouping). */
 export function fmtUsd(n) {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return '$0.00';
-  if (v > 0 && v < 0.01) return '<$0.01';
-  return `$${v.toFixed(2)}`;
+  const v = Number.isFinite(Number(n)) ? Number(n) : 0;
+  return fmtCost(v, () => (v > 0 && v < 0.01 ? '<$0.01' : `$${v.toFixed(2)}`));
 }
 
 // ── manifest readers ────────────────────────────────────────────────────────

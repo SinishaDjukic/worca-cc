@@ -71,13 +71,13 @@ test('GET /, /index, /index.html (any case) and an SPA path serve the shell in t
     // 'wasm-unsafe-eval' lets voice mode's onnxruntime compile its WebAssembly; it allows no JS eval.
     assert.equal(r.headers.get('content-security-policy'), "script-src 'self' 'wasm-unsafe-eval'; base-uri 'none'; frame-ancestors 'none'", p);
     assert.equal(r.headers.get('x-frame-options'), 'DENY', p);
-    assert.match(await r.text(), /<html lang="en" data-theme="system"( data-level="(simple|advanced|expert)")?( data-flags="[^"]*")?( data-git="(on|off)")?>/, p);   // + the interface mode (docs/ui-levels.md)
+    assert.match(await r.text(), /<html lang="en" data-theme="system"( data-level="(simple|advanced|expert)")?( data-flags="[^"]*")?( data-git="(on|off)")? data-currency="[A-Z]{3}" data-currency-rate="[0-9.]+">/, p);   // + the interface mode (docs/ui-levels.md)
   }
   try {
     assert.equal((await postJson({ theme: 'dark' })).status, 200);
     for (const p of ['/', '/index.html', '/composer']) {
       const html = await (await fetch(`${base}${p}`)).text();
-      assert.match(html, /<html lang="en" data-theme="dark"( data-level="(simple|advanced|expert)")?( data-flags="[^"]*")?( data-git="(on|off)")?>/, p);
+      assert.match(html, /<html lang="en" data-theme="dark"( data-level="(simple|advanced|expert)")?( data-flags="[^"]*")?( data-git="(on|off)")? data-currency="[A-Z]{3}" data-currency-rate="[0-9.]+">/, p);
       assert.equal(html.split('data-theme=').length - 1, 1, 'one attribute');
     }
   } finally { await postJson({ theme: 'system' }); }

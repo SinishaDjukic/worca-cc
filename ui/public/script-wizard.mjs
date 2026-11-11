@@ -16,6 +16,7 @@ import { SCRIPT_ICONS, SCRIPT_GLYPH, iconNameOf, iconSvgOf } from '../../src/sha
 import { SCRIPT_COLORS, SCRIPT_RUNTIMES, SCRIPT_KEY_RE } from '../../src/shared/graph/script-meta.mjs';
 import { RUNTIME_DEFAULTS } from '../../src/shared/graph/script-templates.mjs';
 import { WHEN_LABEL, CHIP_PARAM_TYPES, interfaceToMeta } from '../../src/shared/graph/script-infer.mjs';
+import { fmtCost, fmtMoneyAxis } from './money.mjs';
 
 export const EDITOR_LANGUAGE = Object.freeze({ node: 'javascript', shell: 'bash', python: 'python' });
 export const RUNTIME_LABEL = Object.freeze({ node: 'Node.js', python: 'Python', shell: 'Shell' });
@@ -165,7 +166,7 @@ export function renderTile({ doc = globalThis.document, name = '', key = '', run
   const txt = h(doc, 'div', 'wz-tile-text');
   txt.appendChild(h(doc, 'div', `pv-name${name ? '' : ' muted'}`, name || 'Untitled script'));
   const line = h(doc, 'div', 'wz-tile-line');
-  line.append(h(doc, 'span', 'pv-key mono', key || 'key'), chip(doc, `chip-rt chip-${runtime}`, RUNTIME_LABEL[runtime] || runtime), chip(doc, 'chip-muted', '$0 per run'));
+  line.append(h(doc, 'span', 'pv-key mono', key || 'key'), chip(doc, `chip-rt chip-${runtime}`, RUNTIME_LABEL[runtime] || runtime), chip(doc, 'chip-muted', `${fmtCost(0, '$0', fmtMoneyAxis)} per run`));
   txt.appendChild(line);
   tile.appendChild(txt);
   return tile;
