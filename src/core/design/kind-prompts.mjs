@@ -1,7 +1,7 @@
 // src/core/design/kind-prompts.mjs
 // Design P7 (Task 7): the prompt copy a deck (`presentation`, `pitch`) or a video adds to P2's prompts. On these board
 // kinds one section is one slide or one scene on a fixed 1920×1080 canvas (M5, M9), shell slots do not apply (L7.4),
-// and worca wraps the sections in the stage. A web page adds nothing here: its text stays P2's, byte for byte.
+// and worca wraps the sections in the stage. A web page adds nothing here: its own copy stays in prompts.mjs.
 // prompts.mjs composes these into the system and user prompts; this module imports nothing from it, so no ESM cycle
 // can read its top-level constants before they exist.
 

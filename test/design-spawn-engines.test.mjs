@@ -79,13 +79,7 @@ test('non-Claude: its own engine, a cwd, no guard', () => {
     assert.ok(o.systemPrompt.includes(join(sectionDir(D.id, 'hero'), '.ctx')), `${engine}: the system prompt names the read bundle`);
     const deny = o.permissionRules.deny;
     assert.ok(deny.includes('Read(//**/.env*)'), `${engine}: the design's own rules stay`);
-    if (engine === 'codex') {
-      assert.ok(deny.includes('WebSearch'));
-      assert.equal(deny.includes('Bash'), false, 'codex reads files through its shell (L8.27)');
-      assert.equal(deny.includes('WebFetch'), false);
-    } else {
-      for (const r of ['Bash', 'WebSearch', 'WebFetch']) assert.ok(deny.includes(r), `${engine}: ${r}`);
-    }
+    for (const r of ['Bash', 'WebSearch', 'WebFetch']) assert.equal(deny.includes(r), false, `${engine}: ${r} is not denied`);
     const lead = designSpawnOptions(base({ engine, role: 'lead', stage: 'plan', sectionId: null, projectDir: '/proj' }));
     assert.equal(lead.systemPrompt.includes('.ctx'), false, `${engine}: a lead has no read bundle`);
     assert.equal(lead.cwd, designWorkDir(D.id));
@@ -442,7 +436,7 @@ test('prompts name the copies', () => {
   assert.match(s, /read-only copies/);
   assert.match(s, /never link to them or `@import` them/);
   assert.equal(builderSystemPrompt().includes('.ctx'), false, 'the hook row keeps the shared prompt');
-  assert.ok(builderSystemPrompt({ kind: 'pitch', readRoot }).startsWith(s), 'a deck adds its block after the same text');
+  assert.ok(builderSystemPrompt({ kind: 'pitch', readRoot }).startsWith(s.slice(0, s.lastIndexOf('\n\nA web page:\n') + 2)), 'a deck adds its block after the same text');
 });
 
 test('asks inside the cwd where that is all the engine can write', () => {
@@ -519,7 +513,7 @@ test('off the hook row, a deck stages its kit again before assembly, so a lead e
     // The lead edits the kit's runtime during its plan pass, as an engine with no write hook can.
     const lead = async (o) => {
       const r = await mockRun(o);
-      if (o.maxTurns === 40) {
+      if (o.maxTurns === 80) {
         const runtime = join(kitDir(d.id), 'deck-stage.js');
         assert.ok(existsSync(runtime), 'the drive staged the deck runtime');
         writeFileSync(runtime, 'window.LEAD_EDIT = 1;');

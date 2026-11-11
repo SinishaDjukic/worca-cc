@@ -2,7 +2,7 @@
 // Plan Task 12: lintDesign over sections, scope and references, and its scanHtml and scanCss helpers.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { assembleDesign, lintDesign } from '../src/core/design/assemble.mjs';
@@ -20,7 +20,8 @@ function world(files) {
 
 const plan = (kind = 'web', ids = ['hero']) => ({ v: 1, kind, title: 'T', canvas: { w: 1440 }, notes: '', sections: ids.map((id) => ({ id, job: id, brief: 'b', parts: ['html', 'css'], estHeight: 100 })) });
 const OK_HTML = '<section data-section="hero"><h1>x</h1></section>'; const OK_CSS = '[data-section="hero"] h1{color:red}';
-const lint = (html = OK_HTML, css = OK_CSS, extra = {}, p = plan()) => lintDesign({ workDir: world({ 'shell.html': SHELL, 'sections/hero/index.html': html, 'sections/hero/style.css': css, ...extra }), plan: p });
+// The two files the reference rows point at are on disk, so only `missing-file` rows name one that is not.
+const lint = (html = OK_HTML, css = OK_CSS, extra = {}, p = plan()) => lintDesign({ workDir: world({ 'shell.html': SHELL, 'sections/hero/index.html': html, 'sections/hero/style.css': css, 'assets/a.png': 'png', 'assets/x.woff2': 'font', ...extra }), plan: p });
 const rules = (r) => r.findings.map((f) => f.rule);
 
 test('a clean web design lints ok', () => { const r = lint(); assert.equal(r.ok, true); assert.deepEqual(r.findings, []); });
@@ -40,6 +41,13 @@ test('HTML rules', async () => {
     ['<section data-section="hero"><img srcset="assets/a.png 1x, https://x.dev/b.png 2x"></section>', ['external-url']],
     ['<section data-section="hero"><img src="../../x.png"></section>', ['escapes-work']],
     ['<section data-section="hero"><img src="assets/a.png"></section>', []],
+    ['<section data-section="hero"><img src="assets/att/clarify.png"></section>', ['missing-file']],
+    ['<section data-section="hero"><img src="assets/a.png" srcset="assets/a.png 1x, assets/b.png 2x"></section>', ['missing-file']],
+    ['<section data-section="hero"><img src="assets/b.png"><img src="assets/b.png?v=2"><img src="./assets/b.png#x"></section>', ['missing-file']],
+    ['<section data-section="hero"><img src="assets"></section>', ['missing-file']],
+    ['<section data-section="hero"><a href="assets/b.png">x</a><form action="send"></form></section>', []],
+    ['<section data-section="hero"><svg><use href="#mark"/></svg><img src="data:image/png;base64,AAAA"></section>', []],
+    ['<section data-section="hero"><div style="background:url(assets/b.png)"></div></section>', ['missing-file']],
     ['<section data-section="hero"><a href="https://worca.dev">x</a></section>', []],
     ['<section data-section="hero"><a href="../../x">x</a></section>', ['escapes-work']],
     ['<section data-section="hero"><iframe src="https://x.dev/"></iframe></section>', ['external-url']],
@@ -65,6 +73,8 @@ test('CSS rules', async () => {
     ['[data-section="hero"] a{background:url(https://x.dev/a.png)}', ['external-url']],
     ['@import url(../x.css);', ['escapes-work']],
     ['@font-face{font-family:x;src:url(assets/x.woff2)}', []],
+    ['@font-face{font-family:x;src:url(assets/y.woff2)}', ['missing-file']],
+    ['[data-section="hero"] a{background:url(assets/b.png)}[data-section="hero"] b{background:url("assets/b.png")}', ['missing-file']],
     ['[data-section="hero"] a[href="a,b"]{top:0}', []],
     ['[data-section="hero"] :is(a,b){top:0}', []],
     ['@-webkit-keyframes spin{from{top:0}to{top:1px}}', ['keyframes-prefix']],
@@ -163,6 +173,7 @@ test('each error rule is an error and fails the lint (only unplanned-part, shell
   await checkRows([
     ['escapes-work', 'escapes-work', () => lint('<section data-section="hero"><img src="../../x.png"></section>')],
     ['external-url', 'external-url', () => lint('<section data-section="hero"><img src="https://x.dev/a.png"></section>')],
+    ['missing-file', 'missing-file', () => lint('<section data-section="hero"><img src="assets/nope.png"></section>')],
     ['section-root', 'section-root', () => lint('<section></section>')],
     ['reserved-attr in a section', 'reserved-attr', () => lint('<section data-section="hero"><b data-worca-bridge></b></section>')],
     ['reserved-attr in the shell', 'reserved-attr', () => lint(OK_HTML, OK_CSS, { 'shell.html': SHELL.replace('<main>', '<main data-worca-css="x">') })],
@@ -458,7 +469,8 @@ test('nesting past HTML_MAX_DEPTH fails the file, and agent-written files cost l
   const urls = lint(`<section data-section="hero"><img src="${spaced}"></section>`, `[data-section="hero"]{background:url("${spaced}")}`);
   const spent = process.cpuUsage(before);
   assert.ok(spent.user + spent.system < 1e6, `200k spaces in two URLs took ${Math.round((spent.user + spent.system) / 1000)} ms of CPU`);
-  assert.deepEqual(rules(urls), []);
+  assert.deepEqual(rules(urls), ['missing-file', 'missing-file'], 'a name too long for a disk is not on it');
+  assert.ok(urls.findings.every((f) => f.message.length < 400), 'and its finding does not carry it whole');
 });
 
 test('scanHtml: the shapes P7 reads; a nested form the parser drops reaches no rule', () => {
@@ -518,8 +530,29 @@ test('big and broken input: no stack overflow, a linear vh test, bad strings and
   await checkRows([
     ['[data-section="hero"] a{content:"x\n}h1{top:0}', ['css-scope']],
     ['[data-section="hero"] a{content:"x\n}[data-section="hero"]{height:100vh}', ['section-vh']],
-    ['[data-section="hero"] a{background:url(assets/x/*.png)}h1{top:0}', ['css-scope']],
+    ['[data-section="hero"] a{background:url(assets/x/*.png)}h1{top:0}', ['css-scope', 'missing-file']],
     ['[data-section="hero"] a{background:url(assets/a\'b.png)}h1{top:0}@keyframes spin{}', ['css-scope', 'keyframes-prefix']],
-    ['[data-section="hero"] a{background:URL( assets/{x}.png )}h1{top:0}', ['css-scope']],
+    ['[data-section="hero"] a{background:URL( assets/{x}.png )}h1{top:0}', ['css-scope', 'missing-file']],
   ].map(([c, want]) => ({ name: c, run: () => assert.deepEqual(rules(lint(OK_HTML, c)), want) })));
+});
+
+test('missing-file: a loaded reference to a file that is not in work/, in a section, a global file or the shell', () => {
+  const one = lint('<section data-section="hero"><img src="assets/att/clarify.png" alt="x"></section>');
+  assert.equal(one.ok, false);
+  assert.deepEqual(one.findings.map((f) => [f.rule, f.severity, f.section, f.file]), [['missing-file', 'error', 'hero', 'sections/hero/index.html']]);
+  assert.match(one.findings[0].message, /^"assets\/att\/clarify\.png" is not a file in this design/);
+  // The file on disk clears it, wherever in work/ it is; a folder or a link out of work/ does not.
+  assert.deepEqual(rules(lint('<section data-section="hero"><img src="assets/att/clarify.png"></section>', OK_CSS, { 'assets/att/clarify.png': 'png' })), []);
+  assert.deepEqual(rules(lint('<section data-section="hero"><img src="assets/project/logo.svg"><img src="assets/web/a.jpg"></section>', OK_CSS, { 'assets/project/logo.svg': '<svg/>', 'assets/web/a.jpg': 'jpg' })), []);
+  const linked = world({ 'shell.html': SHELL, 'sections/hero/index.html': '<section data-section="hero"><img src="assets/out.png"></section>', 'sections/hero/style.css': OK_CSS });
+  writeFileSync(join(linked, '..', 'out.png'), 'png');
+  mkdirSync(join(linked, 'assets'));
+  symlinkSync(join(linked, '..', 'out.png'), join(linked, 'assets', 'out.png'));
+  assert.deepEqual(rules(lintDesign({ workDir: linked, plan: plan() })), ['missing-file'], 'a link out of work/ loads nothing in an export');
+  // Global files and the shell are the lead's own, and are checked the same way.
+  assert.deepEqual(lint(OK_HTML, OK_CSS, { 'global.css': 'body{background:url(assets/bg.png)}' }).findings.map((f) => [f.rule, f.section, f.file]), [['missing-file', null, 'global.css']]);
+  assert.deepEqual(lint(OK_HTML, OK_CSS, { 'shell.html': SHELL.replace('<main>', '<main><img src="assets/project/logo.svg">') }).findings.map((f) => [f.rule, f.section, f.file]), [['missing-file', null, 'shell.html']]);
+  assert.deepEqual(rules(lint(OK_HTML, OK_CSS, { 'shell.html': SHELL.replace('</head>', '<link rel="stylesheet" href="tokens.css"></head>'), 'tokens.css': ':root{--a:1}' })), []);
+  // No work/ folder at all says nothing about files: every part is already missing.
+  assert.ok(!rules(lintDesign({ workDir: join(tmpdir(), 'no-such-design-work'), plan: plan() })).includes('missing-file'));
 });

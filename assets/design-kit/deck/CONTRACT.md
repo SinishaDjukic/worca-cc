@@ -6,7 +6,7 @@ The deck runs on OpenDeck's `deck-stage`. worca adds it when the round ends. Whi
 
 ## Lead
 
-Write in this order, in the source folder: `tokens.css`, `global.css`, `shell.html`, `brand.md` when a project is given, and `plan.json` last.
+Write in this order, in the source folder: `tokens.css`, `global.css`, `shell.html`, `brand.md`, and `plan.json` last.
 
 `shell.html` is a whole document with these three markers, each once: `<!--worca:head-->` in the head, `<!--worca:sections-->` in the body, `<!--worca:foot-->` before the end of the body. worca wraps the slides in the stage. Never write `deck-stage` or a slide into the shell.
 
@@ -30,14 +30,16 @@ You own one folder: `sections/<id>/`. You may read everything else, including `t
 1. Write `index.html` in one `Write`, top-down in visual order, with exactly one root element: `<section data-section="<id>" data-label="<job>">`.
 2. Then `style.css`.
 3. Then `script.js` if the plan asks. Its body runs with `(root)`, the slide's root element. worca wraps it; never touch globals.
-4. Asset URLs are relative to the source folder: `assets/x.png`. Attachments are in `assets/att/`.
-5. No external URLs: no CDNs, no web fonts by link, no remote images. Draw with CSS and SVG, or use an attachment.
+4. Asset URLs are relative to the source folder: `assets/x.png`. Attachments are in `assets/att/`, pictures the lead copied from the project in `assets/project/`, screens it shot in `assets/shots/`. Point only at a file that is there: a missing picture shows as an empty frame.
+5. No external URLs: no CDNs, no web fonts by link, no remote images, and no picture taken from the web. Draw with CSS and SVG, or use an attachment or a picture your brief names.
 6. End with one line saying what you built. People read it.
 
 ## The slide
 
 - The canvas is 1920×1080, fixed. The root fills it. Author in px, never `vw`, `vh` or a percent of the window.
 - Nothing reaches past the canvas. A shape that bleeds off an edge sits in a wrapper with `position:absolute`, `inset:0` and `overflow:hidden`, so the slide itself never grows: worca reports a slide wider or taller than the canvas as overflow.
+- A screenshot, or any other picture of the product, is shown whole. Its box has the picture's own proportions (`aspect-ratio` from its pixel size) and the picture fits inside it: `object-fit: contain`, never `cover`. No frame, mask, zoom or `overflow: hidden` cuts into it, and none of it lies outside its box. Where a picture moves, it comes to rest whole. To point at one part, ring it on the whole picture, or show a picture of that part alone.
+- A picture has room: clear space on every side between it, or the frame drawn around it, and the edges of its card, section or slide. It never touches an edge and never runs past one.
 - Body text at least 36px, slide title at least 56px, an icon beside text at least 44px, nothing under 20px.
 - Text contrast at least 4.5:1, or 3:1 at 48px and up. At most 30 words on a live slide.
 - Reveals: `data-step="1"`, `data-step="2"`… step with the arrow keys. A read-alone deck uses none.

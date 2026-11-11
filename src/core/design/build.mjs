@@ -42,7 +42,7 @@ import { boundedParser, scanShellSlots } from './html-scan.mjs';
 import { isBoardKind } from './kinds.mjs';
 import { stageDesignKit } from './kit.mjs';
 import { designCaps } from './limits.mjs';
-import { crewFile, designWorkDir, ensureDesignFolders, kitDir, realSectionDir, removeSectionDir, sectionDir } from './paths.mjs';
+import { CAPTURE_KIT, LOOK_KIT, crewFile, designWorkDir, ensureDesignFolders, kitDir, realSectionDir, removeSectionDir, sectionDir } from './paths.mjs';
 import { validateIntegration, validatePlan, validateRound } from './plan.mjs';
 import {
   answersPrompt, builderChangePrompt, builderPrompt, continuePrompt, integratePrompt, leadChangePrompt, leadPlanPrompt,
@@ -58,7 +58,6 @@ import {
   updateBuild,
 } from './store.mjs';
 import { createWorkWatcher } from './watch.mjs';
-import { stageDesignWeb } from './web-access.mjs';
 
 /** A `--resume` whose session the CLI no longer has (the text of session-host.mjs `VANISHED_RE`, copied to keep this
  *  module off the session host). */
@@ -316,7 +315,6 @@ function withDefaults(deps = {}) {
     readCaps: readDesignCaps,
     isListPriced,
     stageKit: stageDesignKit,
-    stageWeb: stageDesignWeb,
     createWorkWatcher,
     mock: undefined,
   };
@@ -403,8 +401,6 @@ export class DesignBuild extends EventEmitter {
     this._realWorkDir = undefined;
     this._projectDir = null;
     this._denyRules = [];
-    /** The lead's web access for this drive (web-access.mjs): `{ mcpConfigPath }`, or null when it is off. */
-    this._web = null;
     /** Every agent of the round, in creation order. */
     this._agents = [];
     /** Agents whose process runs now. */
@@ -729,9 +725,6 @@ export class DesignBuild extends EventEmitter {
     this._realWorkDir = realDir(this._workDir);
     this._projectDir = await projectDirFor(this._design.projectKey);
     this._denyRules = await designDenyRules({ projectDir: this._projectDir });
-    // Settings › Design "Let the lead use the web", read at every drive. A config that cannot be written leaves the
-    // lead without the web rather than failing the round.
-    try { this._web = (await this._deps.stageWeb({ designId: this.designId })) || null; } catch { this._web = null; }
     const caps = await this._deps.readCaps({ projectDir: this._projectDir });
     this._cap = Number.isFinite(caps?.perRunCapUsd) ? caps.perRunCapUsd : null;
     let pick = selection;
@@ -939,6 +932,7 @@ export class DesignBuild extends EventEmitter {
       kind: this._design.kind,
       fast: this._row.fast,
       projectDir: this._projectDir,
+      captureKit: CAPTURE_KIT,
       kitContract: this._kitContract(),
       questionFile: this._questionFile(agent),
       planFile: this._planFile(),
@@ -959,10 +953,13 @@ export class DesignBuild extends EventEmitter {
       instruction: this._row.brief,
       kind: this._design.kind,
       sections: this._start.named,
+      projectDir: this._projectDir,
+      captureKit: CAPTURE_KIT,
       kitContract: this._kitContract(),
       questionFile: this._questionFile(agent),
       roundFile: this._roundFile(),
       pinBlock: this._start.pinBlock,
+      row: this._engineRow,
     });
   }
 
@@ -984,6 +981,8 @@ export class DesignBuild extends EventEmitter {
         pinBlock: this._start.named?.includes(section.id) ? this._start.pinBlock : '',
         kind: this._design.kind,
         plan: this._plan,
+        projectDir: this._projectDir,
+        row: this._engineRow,
       });
     }
     return builderPrompt({
@@ -998,6 +997,8 @@ export class DesignBuild extends EventEmitter {
       kind: this._design.kind,
       plan: this._plan,
       readRoot: this._readRoot(agent),
+      projectDir: this._projectDir,
+      row: this._engineRow,
     });
   }
 
@@ -1310,7 +1311,9 @@ export class DesignBuild extends EventEmitter {
     if (!lead) return [];
     this._setStatus('integrating');
     const { findings } = lintDesign({ workDir: this._workDir, plan: this._plan });
-    const prompt = integratePrompt({ findings, integrationFile: this._integrationFile() });
+    // The Look kit lives where worca is installed: only an engine that reads outside its folder can run it (P8 L8.9).
+    const lookKit = this._engineRow?.readsOutsideCwd === false ? null : LOOK_KIT;
+    const prompt = integratePrompt({ findings, integrationFile: this._integrationFile(), lookKit });
     // A question file means no process runs until the answer (U3): the lead re-enters `waiting`.
     this._reopenAgent(lead, 'Integrate', this._readAsk(lead) ? 'waiting' : 'starting');
     const outcome = await this._runAgentLoop(lead, prompt, { stage: 'integrate', restart: prompt });
@@ -1745,8 +1748,6 @@ export class DesignBuild extends EventEmitter {
       resumeSessionId: agent.sessionId,
       maxBudgetUsd,
       denyRules: this._denyRules,
-      web: !!this._web,
-      webMcpConfigPath: this._web?.mcpConfigPath ?? null,
       signal,
       onEvent: (evt) => {
         if (receive && evt?.parentId == null && (evt?.type === 'session' || (evt?.type === 'usage' && evt.phase === 'start'))) receive();

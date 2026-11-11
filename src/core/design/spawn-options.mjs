@@ -3,7 +3,9 @@
 // effort, and its deny rules (the builder caps are limits.mjs's, P8). Design has no spending limit of its own (M13): `maxBudgetUsd` is
 // whatever the caller computed from worca's limits, or null. P8: the design's engine, by its `DESIGN_ENGINES` row. Off
 // the hook row there is no write guard, extra folder, budget flag, tool list or partial stream (C-3, L8.26): the cwd
-// holds the writes, git stays off, and the shell and web tools are denied (L8.27); a builder reads its `.ctx` copies.
+// holds the writes and git stays off; a builder reads its `.ctx` copies. A Design agent has what a workflow agent
+// has, the shell included, plus the web: it reads the picked project, copies its pictures, and the lead starts the
+// product to shoot its screens. Nothing is denied but the build's own rules (the read denies, a project's guardrails).
 // Import cycle (spawn-options → engines → build → spawn-options): imports are read inside functions only, and
 // read-bundle.mjs is never imported here (it would pull the assembler into the cycle).
 
@@ -18,20 +20,14 @@ import { withRole } from '../model-roles.mjs';
 import { designEngineRow } from './engines.mjs';
 import { builderWriteDirs, designRoot, designWorkDir, leadWriteDirs, sectionDir } from './paths.mjs';
 import { builderSystemPrompt, leadSystemPrompt } from './prompts.mjs';
-import { DESIGN_WEB_GRANT } from './web-mcp.mjs';
 
-/** Builder and lead tools: no Bash, web, MCP, skills or Agent. A lead with web access adds DESIGN_WEB_TOOLS. */
-export const DESIGN_TOOLS = Object.freeze(['Read', 'Write', 'Edit', 'Glob', 'Grep']);
-/** What a lead adds when "Let the lead use the web" is on (docs/design.md "Web access"): the engine's own web search
- *  and page fetch. Its pictures come through worca's `save_image` (web-mcp.mjs). Never a builder's. */
-export const DESIGN_WEB_TOOLS = Object.freeze(['WebSearch', 'WebFetch']);
-/** What a process off the hook row denies by rule, since its tool list cannot be held (SPEC L13, L8.27). */
-export const DESIGN_OFF_RULES = Object.freeze(['Bash', 'WebSearch', 'WebFetch']);
-/** Codex reads files through its shell, so it keeps it and denies web search only (L8.27). */
-const CODEX_OFF_RULES = Object.freeze(['WebSearch']);
+/** Lead and builder tools: files, the shell and the web (docs/design.md "What the agents can use"). No MCP, skills
+ *  or Agent. */
+export const DESIGN_TOOLS = Object.freeze(['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'WebSearch', 'WebFetch']);
 /** `maxTurns` per `<role>:<stage>` (C-3). A rework or a retry of a section runs as its section's stage: `builder:first`,
- *  or `builder:change` in a change round. */
-export const DESIGN_MAX_TURNS = Object.freeze({ 'lead:plan': 40, 'builder:first': 25, 'lead:integrate': 15, 'lead:change': 20, 'builder:change': 15 });
+ *  or `builder:change` in a change round. The plan stage leaves the lead room to look through the project, copy its
+ *  pictures, and start the product and shoot its screens. */
+export const DESIGN_MAX_TURNS = Object.freeze({ 'lead:plan': 80, 'builder:first': 25, 'lead:integrate': 40, 'lead:change': 20, 'builder:change': 15 });
 
 const DEFAULT_EFFORT = Object.freeze({ lead: 'high', builder: 'medium' });
 
@@ -51,9 +47,6 @@ function mockRole(role, stage) {
 export function designSpawnOptions(ctx) {
   const { role, stage, engine = 'claude', kind, agentId, buildId, designId, sectionId, projectDir, prompt, model, effort,
     resumeSessionId, maxBudgetUsd, denyRules, signal, onEvent, mock } = ctx;
-  // Web access is the lead's alone, and only with the build's MCP config in hand (`save_image`'s server).
-  const web = ctx.web === true && role === 'lead';
-  const webMcp = web && typeof ctx.webMcpConfigPath === 'string' && ctx.webMcpConfigPath ? ctx.webMcpConfigPath : null;
   const row = ctx.row ?? designEngineRow(engine);
   if (row.gate === 'refused') throw new Error(`design: engine ${engine} does not run Design`);
   const maxTurns = DESIGN_MAX_TURNS[`${role}:${stage}`];
@@ -64,10 +57,8 @@ export function designSpawnOptions(ctx) {
   const cwd = builder ? sectionDir(designId, sectionId) : work;
   // The design's kind (`web` when absent) picks the system prompt: a deck or a video swaps P2's bands for its own block.
   // A builder off the hook row reads its `.ctx` copies (L8.7), staged by the build before each process.
-  const system = builder ? builderSystemPrompt({ kind, readRoot: hooked ? undefined : join(cwd, '.ctx') }) : leadSystemPrompt({ kind, web });
-  const offAll = hooked ? [] : (engine === 'codex' ? CODEX_OFF_RULES : DESIGN_OFF_RULES);
-  const off = web ? offAll.filter((r) => !DESIGN_WEB_TOOLS.includes(r)) : offAll;
-  const tools = web ? [...DESIGN_TOOLS, ...DESIGN_WEB_TOOLS] : [...DESIGN_TOOLS];
+  const system = builder ? builderSystemPrompt({ kind, readRoot: hooked ? undefined : join(cwd, '.ctx') }) : leadSystemPrompt({ kind });
+  const tools = [...DESIGN_TOOLS];
   const excluded = ctx.bridgedInfo?.excludeTools;
   return {
     engine,
@@ -81,8 +72,6 @@ export function designSpawnOptions(ctx) {
     permissionMode: 'acceptEdits',
     ...(hooked ? { tools: [...tools] } : {}),
     allowedTools: [...tools],
-    // `save_image`: the build's own MCP config and, for Claude, the grant that lets its tool run under acceptEdits.
-    ...(webMcp ? { mcpConfigPath: webMcp, mcpServerGrants: [DESIGN_WEB_GRANT] } : {}),
     ...(Array.isArray(excluded) && excluded.length ? { disallowedTools: [...excluded] } : {}),
     strictMcpConfig: true,
     settingSources: ['project'],
@@ -98,10 +87,10 @@ export function designSpawnOptions(ctx) {
       maxBudgetUsd: maxBudgetUsd ?? null,
       writeGuard: { allowedDirs: builder ? builderWriteDirs(designId, sectionId) : leadWriteDirs(designId) },
     } : { noGit: true }),
-    permissionRules: { deny: [...new Set([...(denyRules || []), ...off])] },
+    permissionRules: { deny: [...new Set(denyRules || [])] },
     envScrub: true,
     envAllowlist: [],
-    ...(hooked ? { addDirs: !builder && projectDir ? [work, projectDir] : [work] } : {}),
+    ...(hooked ? { addDirs: projectDir ? [work, projectDir] : [work] } : {}),
     asAgent: true,
     spawnKind: 'phase',
     runId: buildId,

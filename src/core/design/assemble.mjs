@@ -3,7 +3,7 @@
 // offline. Only the shell is parsed for markers and slots; section text is copied verbatim, so a marker or
 // slot written inside a section is never expanded.
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants as fsc, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, constants as fsc, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { Parser } from 'htmlparser2';
 import { DesignError } from './ids.mjs';
@@ -682,13 +682,58 @@ function unparsedReserved(text, parsed, section, file) {
     `${file} holds "data-worca-" ${extra} more time${extra === 1 ? '' : 's'} than in attributes lint could read: worca reserves data-worca-* attributes, and a browser can read such text as one, so take it out`);
 }
 
-/** Pushes onto `out` a finding per reference that escapes work/, and per one that loads from another site unless it only navigates (L1.15). */
-function refFindings(refs, section, file, out = []) {
+/** The most of a missing file's name a `missing-file` finding shows. */
+const MISSING_NAME_MAX = 200;
+
+/**
+ * Whether a `local` rel of classifyRef is a plain file whose real path is inside work/, asked of the disk once per
+ * rel; null when work/ itself is not there, so nothing is said about its files. A folder, a dangling link, a link
+ * out of work/ and a name no disk can hold are all absent: none of them loads in an export (`embedder`'s `missing`
+ * and `escaped`).
+ * @param {string} workDir
+ * @returns {((rel: string) => boolean)|null}
+ */
+function filesOnDisk(workDir) {
+  let root;
+  try {
+    root = realpathSync(workDir);
+  } catch {
+    return null;
+  }
+  const known = new Map();
+  const isFile = (rel) => {
+    const abs = resolve(root, rel);
+    if (Buffer.byteLength(abs) >= PATH_MAX_BYTES) return false;
+    try {
+      const real = realpathSync(abs);
+      return inside(root, real) && statSync(real).isFile();
+    } catch {
+      return false;
+    }
+  };
+  return (rel) => {
+    if (!known.has(rel)) known.set(rel, isFile(rel));
+    return known.get(rel);
+  };
+}
+
+/**
+ * Pushes onto `out` a finding per reference that escapes work/, per one that loads from another site unless it only
+ * navigates (L1.15), and, with `onDisk` (`filesOnDisk`), one `missing-file` per file that a reference loads and that
+ * is not in work/: an `<img>` to a picture nobody put there shows an empty frame.
+ */
+function refFindings(refs, section, file, out = [], onDisk = null) {
+  const absent = new Set();
   for (const { value, nav } of refs) {
-    const { type } = classifyRef(value);
+    const ref = classifyRef(value);
     const shown = JSON.stringify(String(value).trim());
-    if (type === 'escaped') out.push(finding('escapes-work', 'error', section, file, `${shown} points outside the design's work folder`));
-    else if (type === 'remote' && !nav) out.push(finding('external-url', 'error', section, file, `${shown} loads from another site: put the file in assets/ and point at it there`));
+    if (ref.type === 'escaped') out.push(finding('escapes-work', 'error', section, file, `${shown} points outside the design's work folder`));
+    else if (ref.type === 'remote' && !nav) out.push(finding('external-url', 'error', section, file, `${shown} loads from another site: put the file in assets/ and point at it there`));
+    else if (ref.type === 'local' && !nav && onDisk && !absent.has(ref.rel) && !onDisk(ref.rel)) {
+      absent.add(ref.rel);
+      const name = ref.rel.length > MISSING_NAME_MAX ? `${ref.rel.slice(0, MISSING_NAME_MAX)}…` : ref.rel;
+      out.push(finding('missing-file', 'error', section, file, `${JSON.stringify(name)} is not a file in this design, so nothing loads there: bring the file into assets/ and point at where it landed, or take the reference out`));
+    }
   }
   return out;
 }
@@ -708,7 +753,7 @@ function rootFault({ roots, strayText, unread }, id, kind) {
 }
 
 /** One section's own findings, in rule order, and the ids its index.html holds. */
-function lintSection(workDir, { id, parts }, kind) {
+function lintSection(workDir, { id, parts }, kind, onDisk = null) {
   const planned = Array.isArray(parts) ? parts : [];
   const findings = [];
   const text = {};
@@ -731,7 +776,7 @@ function lintSection(workDir, { id, parts }, kind) {
     for (const attr of html.reserved) findings.push(finding('reserved-attr', 'error', id, file, reservedMessage(attr)));
     const unparsed = unparsedReserved(text.html, html.reserved.length, id, file);
     if (unparsed) findings.push(unparsed);
-    refFindings(html.refs, id, file, findings);
+    refFindings(html.refs, id, file, findings, onDisk);
   }
   if (text.css !== null) {
     const file = `sections/${id}/style.css`;
@@ -744,7 +789,7 @@ function lintSection(workDir, { id, parts }, kind) {
     for (const name of css.keyframes) {
       if (name !== id && !name.startsWith(`${id}-`)) findings.push(finding('keyframes-prefix', 'error', id, file, `@keyframes ${JSON.stringify(name)} must be named ${id} or start with ${id}-`));
     }
-    refFindings(css.urls.map((value) => ({ value, nav: false })), id, file, findings);
+    refFindings(css.urls.map((value) => ({ value, nav: false })), id, file, findings, onDisk);
     if (kind === 'web' && css.vh) {
       findings.push(finding('section-vh', 'warn', id, file, `${file} uses a vh unit, which changes as the stage zooms: give heights in px or clamp() without vh`));
     }
@@ -837,7 +882,7 @@ function filmFindings(id, text) {
  * missing shell reads as ''. On a board kind every slot is a `shell-slot-kind` error, and a `deck-stage` or
  * `data-film` element is one `shell-stage` error: the assembler writes the stage itself (L7.4).
  */
-function lintShell(workDir, planIds, kind) {
+function lintShell(workDir, planIds, kind, onDisk = null) {
   const shell = readConfined(workDir, SHELL_FILE) ?? '';
   const map = shellMap(shell);
   const faults = shellFaults(map, planIds, true, kind);
@@ -878,13 +923,14 @@ function lintShell(workDir, planIds, kind) {
   for (const attr of html.reserved) if (attr.name !== 'data-worca-slot') add('reserved-attr', 'error', null, reservedMessage(attr));
   const unparsed = unparsedReserved(shell, html.reserved.length, null, SHELL_FILE);
   if (unparsed) findings.push(unparsed);
-  refFindings(html.refs, null, SHELL_FILE, findings);
+  refFindings(html.refs, null, SHELL_FILE, findings, onDisk);
   return { findings, ids: html.ids };
 }
 
 /**
- * Lints a design's work/ folder against its plan: section roots per kind, CSS scope, references, reserved
- * attributes, a film's determinism (its tokens.css and global.css too), the shell's markers and slots. Never throws.
+ * Lints a design's work/ folder against its plan: section roots per kind, CSS scope, references (a file they load
+ * that is not in work/ too), reserved attributes, a film's determinism (its tokens.css and global.css too), the
+ * shell's markers and slots. Never throws.
  * Findings follow plan order, then tokens.css and global.css, the shell last; a `duplicate-id` goes last in its
  * first holder's group. `ok` means no error. At most 200 findings are listed, then one `truncated` warn; `counts`
  * counts every finding, the `truncated` line aside.
@@ -895,15 +941,16 @@ export function lintDesign({ workDir, plan } = {}) {
   const kind = plan?.kind;
   const sections = Array.isArray(plan?.sections) ? plan.sections.filter((s) => typeof s?.id === 'string') : [];
   const planIds = sections.map((s) => s.id);
-  const groups = sections.map((s) => ({ name: s.id, section: s.id, file: `sections/${s.id}/index.html`, ...lintSection(workDir, s, kind) }));
+  const onDisk = filesOnDisk(workDir);
+  const groups = sections.map((s) => ({ name: s.id, section: s.id, file: `sections/${s.id}/index.html`, ...lintSection(workDir, s, kind, onDisk) }));
   // A video's tokens.css and global.css style every scene, so the film's CSS rule holds there too (p8t1 live proof).
   const globals = GLOBAL_CSS.flatMap((file) => {
     const css = readConfined(workDir, file);
     if (css === null) return [];
     const film = isFilmKind(kind) ? [...new Set(filmCssTokens(css))].map((token) => filmFinding(null, file, token)) : [];
-    return [...refFindings(scanCss(css).urls.map((value) => ({ value, nav: false })), null, file), ...film];
+    return [...refFindings(scanCss(css).urls.map((value) => ({ value, nav: false })), null, file, [], onDisk), ...film];
   });
-  const shell = { name: SHELL_FILE, section: null, file: SHELL_FILE, ...lintShell(workDir, planIds, kind) };
+  const shell = { name: SHELL_FILE, section: null, file: SHELL_FILE, ...lintShell(workDir, planIds, kind, onDisk) };
 
   const holders = new Map();
   for (const group of [...groups, shell]) {

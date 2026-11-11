@@ -1,12 +1,21 @@
 // test/design-kind-prompts.test.mjs — Design P7 Task 7: the lead and builder prompts per kind (src/core/design/kind-prompts.mjs,
-// src/core/design/prompts.mjs). Web stays P2's text byte for byte; decks and video swap the band and slot rules for a
-// slide or scene block, and a builder's user prompt names its slide or its scene's window. SPEC C-2, C-3, M5, M9.
+// src/core/design/prompts.mjs). Web keeps P2's bands and slots; decks and video swap them for a slide or scene block,
+// and a builder's user prompt names its slide or its scene's window. Every kind's builder shares the text up to its
+// last block: a web page ends with its Craft block, a deck or a video with its slide or scene block. SPEC C-2, C-3, M5, M9.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   builderChangePrompt, builderPrompt, builderSystemPrompt, leadChangePrompt, leadPlanPrompt, leadSystemPrompt,
 } from '../src/core/design/prompts.mjs';
 import { boardShellRule, builderKindBlock, builderKindLines, leadKindBlock, leadKindLines } from '../src/core/design/kind-prompts.mjs';
+
+/** What every kind's builder reads before its own last block: the web prompt up to its `A web page:` block. */
+function sharedBuilderText() {
+  const web = builderSystemPrompt();
+  const at = web.lastIndexOf('\n\nA web page:\n');
+  assert.ok(at > 0, 'a web builder ends with its own block');
+  return web.slice(0, at);
+}
 
 test('web is the default kind, and adds no kind lines', () => {   // P2's web text stays pinned by test/design-spawn-options.test.mjs:107, :186-190, :244-250
   assert.equal(leadSystemPrompt({ kind: 'web' }), leadSystemPrompt());
@@ -58,7 +67,7 @@ test('builders share one system prompt per kind; the section is in the user prom
   assert.match(film, /<div data-section="<id>" data-scene>/);
   assert.match(film, /composed state/); assert.match(film, /\(root, S\)/);
   for (const t of ['setTimeout', 'requestAnimationFrame', 'Math.random', 'gsap.from', 'S.tl']) assert.ok(film.includes(t), t);
-  assert.ok(deck.startsWith(`${builderSystemPrompt()}\n\n`) && film.startsWith(`${builderSystemPrompt()}\n\n`));
+  assert.ok(deck.startsWith(`${sharedBuilderText()}\n\n`) && film.startsWith(`${sharedBuilderText()}\n\n`));
   const S = (id, duration) => ({ id, job: id, duration });
   const FILM = { sections: [S('a', 6), S('b', 10), S('c', 4)] };
   assert.deepEqual(builderKindLines({ kind: 'video', plan: FILM, section: FILM.sections[1] }), ['Scene 2 of 3: 6s to 16s of a 20s film.', 'S.dur is 10.']);
@@ -112,6 +121,6 @@ test('review M11: each board kind\'s copy word for word, and the lead and builde
     // The board's shell rule in the web rule's place, never both: the mutant leadSystem(WEB_SHELL_RULE, …) reads the same otherwise.
     assert.deepEqual(s.split('\n').filter((l) => l.startsWith('Shell rules:')), [shell], `${kind}: one shell rule, the board's`);
     assert.ok(s.includes(`\n6. plan.json last, in the plan shape below.\n\n${shell}\n\n${lead}\n\nThe plan shape (`), kind);
-    assert.equal(builderSystemPrompt({ kind }), `${builderSystemPrompt()}\n\n${builder}`, kind);
+    assert.equal(builderSystemPrompt({ kind }), `${sharedBuilderText()}\n\n${builder}`, kind);
   }
 });

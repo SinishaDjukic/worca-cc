@@ -19,7 +19,7 @@ test('a full round: lead, builders in plan order, integrate, dist, end stats', a
   assert.deepEqual(await build.run(), { status: 'done', reason: null });
   assert.deepEqual(calls.map((c) => c.cwd.split(sep).at(-1)), ['work', 'hero', 'features', 'pricing', 'work']);
   assert.equal(calls.at(-1).resumeSessionId, listAgents(build.id).find((a) => a.role === 'lead').sessionId);
-  assert.equal(calls.at(-1).maxTurns, 15);
+  assert.equal(calls.at(-1).maxTurns, 40);
   assert.deepEqual([...new Set(framesOf(frames, 'design-build').map((f) => f.status))], ['planning', 'building', 'integrating', 'done']);
   const end = framesOf(frames, 'design-build').at(-1).stats;
   assert.deepEqual([end.agentsNow, end.agentsTotal, end.sectionsDone, end.sectionsPlanned, end.failed, end.layers], [0, 4, 3, 3, 0, 15]);
@@ -133,7 +133,7 @@ test('M8: one failed section leaves the rest; nothing running, then paused, fail
   const d = newDesign(); const { build, frames, calls } = newBuild(d, { brief: 'MOCK_SECTIONS=3 MOCK_FAIL_SECTION=features' });
   assert.deepEqual(await build.run(), { status: 'paused', reason: 'failed' });
   assert.deepEqual(getBuild(build.id).sections.map((s) => s.status), ['done', 'failed', 'done']);
-  assert.equal(calls.filter((c) => c.maxTurns === 15).length, 0);
+  assert.equal(calls.filter((c) => c.maxTurns === 40).length, 0);
   assert.equal(existsSync(join(distDir(d.id), 'index.html')), false);
   const end = framesOf(frames, 'design-build').at(-1);
   assert.deepEqual([end.status, end.reason, end.stats.failed, end.stats.agentsNow], ['paused', 'failed', 1, 0]);
@@ -154,7 +154,7 @@ test('a section with no index.html is failed, though the process exited 0', asyn
   } } });
   assert.deepEqual(await build.run(), { status: 'paused', reason: 'failed' });
   assert.deepEqual(getBuild(build.id).sections.map((s) => s.status), ['failed', 'failed']);
-  assert.equal(calls.filter((c) => c.maxTurns === 15).length, 0, 'no integrate');
+  assert.equal(calls.filter((c) => c.maxTurns === 40).length, 0, 'no integrate');
   for (const id of ['hero', 'features']) {
     const last = framesOf(frames, 'design-agent').filter((f) => f.sectionId === id).at(-1);
     assert.equal(last.status, 'error', id);
@@ -203,13 +203,13 @@ test('M10: rework is read from rework, not done: one Edit on that section, one c
   const hero = calls.filter((c) => c.cwd.endsWith('hero'));
   assert.equal(hero.length, 2, 'integration.json said done:true with a non-empty rework');
   assert.match(hero[1].prompt, /^Rework: /);
-  assert.equal(calls.filter((c) => c.maxTurns === 15).length, 1, 'no second integrate');
+  assert.equal(calls.filter((c) => c.maxTurns === 40).length, 1, 'no second integrate');
   assert.ok(framesOf(frames, 'design-delta').some((f) => f.sectionId === 'hero' && f.splice.del > 0), 'R17: the Edit draws as a deleting splice');
 });
 
 /** An integrate pass that only writes `text` to integration.json; every other process is the mock. */
 const integrateWrites = (d, text) => async (o) => {
-  if (o.maxTurns !== 15) return mockRun(o);
+  if (o.maxTurns !== 40) return mockRun(o);
   writeFileSync(join(designWorkDir(d.id), 'integration.json'), text);
   return { text: 'Integrated.', exitCode: 0 };
 };
@@ -218,7 +218,7 @@ test('done:false with an empty rework runs no cycle and does not loop', async ()
   const d = newDesign();
   const { build, calls } = newBuild(d, { brief: 'MOCK_SECTIONS=2', deps: { runClaude: integrateWrites(d, '{"v":1,"done":false,"rework":[]}') } });
   assert.deepEqual(await build.run(), { status: 'done', reason: null });
-  assert.equal(calls.filter((c) => c.maxTurns === 15).length, 1, 'one integrate');
+  assert.equal(calls.filter((c) => c.maxTurns === 40).length, 1, 'one integrate');
   assert.equal(calls.filter(isSection).length, 2, 'no rework');
   assert.ok(existsSync(join(distDir(d.id), 'index.html')));
 });
@@ -409,7 +409,7 @@ test('a failed rework pauses the round as failed; a halt in rework settles on th
   const a = newBuild(d, { brief: 'MOCK_SECTIONS=2 MOCK_REWORK=hero', deps: { snapshotVersion: async () => { snaps++; }, runClaude: reworkRuns(() => new Error('rework crashed')) } });
   assert.deepEqual(await a.build.run(), { status: 'paused', reason: 'failed' });
   assert.deepEqual(getBuild(a.build.id).sections.map((s) => s.status), ['failed', 'done']);
-  assert.equal(a.calls.filter((c) => c.maxTurns === 15).length, 1, 'no second integrate');
+  assert.equal(a.calls.filter((c) => c.maxTurns === 40).length, 1, 'no second integrate');
   assert.equal(existsSync(join(distDir(d.id), 'index.html')), false);
   assert.equal(snaps, 0);
   assert.match(a.calls.find((c) => /^Rework: /.test(c.prompt)).prompt, /^Rework: Mock rework$/m, 'the why of integration.json');
@@ -438,18 +438,18 @@ test('a builder\'s first prompt names its plan brief, the plan notes and the kit
   assert.ok(hero.includes(`Plan notes: ${plan.notes}`), hero);
   assert.ok(hero.includes(`Kit contract: ${contract}`), hero);
   assert.ok(hero.includes(`Crew status: ${crewFile(d.id)}`), hero);
-  const integrate = calls.find((c) => c.maxTurns === 15).prompt;
+  const integrate = calls.find((c) => c.maxTurns === 40).prompt;
   assert.match(integrate, /^- \[error\] css-scope \(section hero\) sections\/hero\/style\.css: /m);
 });
 
 test('integrate: a lost session starts the lead fresh from the integrate prompt; a failed pass still finishes', async () => {
   let lost = false;
   const a = newBuild(newDesign(), { brief: 'MOCK_SECTIONS=1', deps: { runClaude: (o) => {
-    if (o.maxTurns === 15 && !lost) { lost = true; return Promise.reject(new Error('claude exited with code 1: No conversation found with session ID: x')); }
+    if (o.maxTurns === 40 && !lost) { lost = true; return Promise.reject(new Error('claude exited with code 1: No conversation found with session ID: x')); }
     return mockRun(o);
   } } });
   assert.deepEqual(await a.build.run(), { status: 'done', reason: null });
-  const integ = a.calls.filter((c) => c.maxTurns === 15);
+  const integ = a.calls.filter((c) => c.maxTurns === 40);
   assert.equal(integ.length, 2);
   assert.ok(integ[0].resumeSessionId);
   assert.equal(integ[1].resumeSessionId, undefined);
@@ -457,7 +457,7 @@ test('integrate: a lost session starts the lead fresh from the integrate prompt;
   assert.match(integ[1].prompt, /^The builders are done/);
 
   const d = newDesign();
-  const b = newBuild(d, { brief: 'MOCK_SECTIONS=1 MOCK_REWORK=hero', deps: { runClaude: (o) => (o.maxTurns === 15 ? Promise.reject(new Error('lead crashed')) : mockRun(o)) } });
+  const b = newBuild(d, { brief: 'MOCK_SECTIONS=1 MOCK_REWORK=hero', deps: { runClaude: (o) => (o.maxTurns === 40 ? Promise.reject(new Error('lead crashed')) : mockRun(o)) } });
   assert.deepEqual(await b.build.run(), { status: 'done', reason: null }, 'L2.10: integration is a check');
   assert.equal(b.calls.filter(isSection).length, 1, 'no rework without an integration file');
   assert.ok(existsSync(join(distDir(d.id), 'index.html')));
@@ -467,7 +467,7 @@ test('integrate: a lost session starts the lead fresh from the integrate prompt;
 
   const e = newDesign();
   const limit = () => Promise.reject(Object.assign(new Error('mock usage limit'), { errorClass: 'usage_limit' }));
-  const c = newBuild(e, { brief: 'MOCK_SECTIONS=1', deps: { runClaude: (o) => (o.maxTurns === 15 ? limit() : mockRun(o)) } });
+  const c = newBuild(e, { brief: 'MOCK_SECTIONS=1', deps: { runClaude: (o) => (o.maxTurns === 40 ? limit() : mockRun(o)) } });
   assert.deepEqual(await c.build.run(), { status: 'paused', reason: 'usage_limit' }, 'a halt in integrate wins over the finish');
   assert.equal(existsSync(join(distDir(e.id), 'index.html')), false);
 });
@@ -478,7 +478,7 @@ test('a shell the assembler refuses ends error, assemble-failed, and takes no sn
     snapshotVersion: async () => { snaps++; },
     runClaude: async (o) => {
       const r = await mockRun(o);
-      if (o.maxTurns === 15) writeFileSync(join(designWorkDir(d.id), 'shell.html'), '<!doctype html><html><head></head><body></body></html>');
+      if (o.maxTurns === 40) writeFileSync(join(designWorkDir(d.id), 'shell.html'), '<!doctype html><html><head></head><body></body></html>');
       return r;
     },
   } });

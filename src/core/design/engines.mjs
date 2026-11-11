@@ -11,7 +11,6 @@ import { brokerEngineRefusal } from '../broker-client.mjs';
 import { bridgedModelInfo } from '../config.mjs';
 import { getEngine, selectRunEngine } from '../engines/index.mjs';
 import { OPENCODE_DEFAULT_MODEL_OPT_IN } from '../engines/opencode.mjs';
-import { designWebOn } from '../settings.mjs';
 import { resolveRunEngine } from '../settings-cascade.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { DesignRefusal } from './build.mjs';
@@ -46,9 +45,10 @@ const HOOKED = new Set(['claude', 'mock']);
 const GOOSE_REFUSAL = 'Goose cannot be held to one folder or kept from running commands, so Design does not run on it.';
 const OPENCODE_NO_MODEL = 'OpenCode needs a model set in Settings before Design can run on it.';
 const unknownRefusal = (engine) => `${engineLabel(engine)} has not been checked for Design, so it does not run here.`;
-const sandboxReason = (label) => `${label} cannot be kept from running shell commands. Its sandbox holds writes to the folder, but its agents can read anything on this machine.`;
-const shellReason = (label) => `${label} cannot be kept from running shell commands, so its agents can read and change files outside this design.`;
-const toolsReason = (label, web) => `${label} runs with its shell${web ? '' : ' and web tools'} off here, but cannot be limited to the tools Design allows.`;
+// Every Design agent has the shell and the web, on every engine. What differs is what holds it: on Claude worca's
+// guardrails and write guard do; an engine that cannot take a tool list takes neither.
+const sandboxReason = (label) => `${label} runs in its own sandbox, not under worca's guardrails: the sandbox holds writes to the design's folder, and worca cannot stop a command its agents run.`;
+const unguardedReason = (label) => `${label} cannot be held to worca's guardrails: worca cannot stop a command its agents run, or a file they change outside this design.`;
 const costReason = (label) => `${label} reports no cost, so worca's spend limits cannot stop it.`;
 const rulesReason = (label, list) => `${label} cannot fully hold these rules: ${list.join(', ')}.`;
 const projectNote = (label) => `${label} cannot read the picked project.`;
@@ -87,8 +87,7 @@ function looseRules(adapter, rules) {
  * @param {{ engine: string, models?: string[], rules?: { deny?: string[] }|null, allowed?: boolean, project?: boolean,
  *   design?: { models?: object|null }|null,
  *   adapterOf?: (engine: string) => object, broker?: (engine: string, env: object) => string|null,
- *   bridged?: (modelId: string) => object|null, modelFor?: (role: 'lead'|'builder') => string|null, env?: object,
- *   web?: boolean }} opts `web`: the lead's web access (Settings › Design), which the tools reason then leaves out
+ *   bridged?: (modelId: string) => object|null, modelFor?: (role: 'lead'|'builder') => string|null, env?: object }} opts
  * @returns {{ ok: true, row: object, notes: string[] }
  *   | { ok: false, overridable: boolean, code: 'engine-gated'|'engine-refused', error: string, reasons: string[],
  *     notes: string[], row: object }}
@@ -97,7 +96,7 @@ export function designEngineGate({
   engine, models = [], rules = null, allowed = false, project = false, adapterOf = getEngine,
   design = null, broker = brokerEngineRefusal, bridged = bridgedModelInfo,
   modelFor = (role) => resolveDesignModel(role, { engine, design }).model,
-  env = process.env, web = designWebOn(),
+  env = process.env,
 } = {}) {
   let row = designEngineRow(engine, { models, bridged });
   let adapter = null;
@@ -116,12 +115,7 @@ export function designEngineGate({
   const label = engineLabel(engine);
   const caps = adapter.capabilities ?? {};
   const reasons = [];
-  if (caps.allowedTools === false) {
-    const bash = { deny: ['Bash'] };
-    const shellHeld = !looseRules(adapter, bash).includes('Bash');
-    if (row.confine === 'sandbox') reasons.push(sandboxReason(label));
-    else reasons.push(shellHeld ? toolsReason(label, web === true) : shellReason(label));
-  }
+  if (caps.allowedTools === false) reasons.push(row.confine === 'sandbox' ? sandboxReason(label) : unguardedReason(label));
   if (caps.cost === false) reasons.push(costReason(label));
   if (!HOOKED.has(engine)) {
     const loose = looseRules(adapter, rules);

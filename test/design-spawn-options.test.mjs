@@ -32,7 +32,7 @@ const base = { engine: 'claude', agentId: 'a_11111111', buildId: 'b_111111111111
 test('a builder gets the C-3 recipe, all paths absolute', () => {
   const o = designSpawnOptions({ ...base, role: 'builder', stage: 'first', sectionId: 'hero' });
   assert.equal(o.cwd, sectionDir(D, 'hero'));
-  assert.deepEqual(o.tools, ['Read', 'Write', 'Edit', 'Glob', 'Grep']);
+  assert.deepEqual(o.tools, ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'WebSearch', 'WebFetch']);
   assert.deepEqual(o.allowedTools, o.tools);
   assert.deepEqual(o.writeGuard, { allowedDirs: builderWriteDirs(D, 'hero') });
   assert.ok(o.writeGuard.allowedDirs.every(isAbsolute) && isAbsolute(o.cwd));
@@ -65,15 +65,17 @@ test('C1: no CLAUDE.md under the design library loads into any agent, inline and
     rmSync(dir, { recursive: true, force: true });
   }
 });
-test('only the lead gets the project; it may write all of work/', () => {
+test('every agent may read the project; only the lead may write all of work/', () => {
   const o = designSpawnOptions({ ...base, role: 'lead', stage: 'plan', projectDir: '/proj' });
   assert.equal(o.cwd, W());
   assert.deepEqual(o.addDirs, [W(), '/proj']);
   assert.deepEqual(o.writeGuard, { allowedDirs: leadWriteDirs(D) });
-  assert.equal(designSpawnOptions({ ...base, role: 'builder', stage: 'first', sectionId: 'hero', projectDir: '/proj' }).addDirs.includes('/proj'), false);
+  const b = designSpawnOptions({ ...base, role: 'builder', stage: 'first', sectionId: 'hero', projectDir: '/proj' });
+  assert.deepEqual(b.addDirs, [W(), '/proj']);
+  assert.deepEqual(b.writeGuard, { allowedDirs: builderWriteDirs(D, 'hero') }, 'its Write and Edit stay in its own folder');
 });
 test('maxTurns follows C-3', () => {
-  assert.deepEqual(DESIGN_MAX_TURNS, { 'lead:plan': 40, 'builder:first': 25, 'lead:integrate': 15, 'lead:change': 20, 'builder:change': 15 });
+  assert.deepEqual(DESIGN_MAX_TURNS, { 'lead:plan': 80, 'builder:first': 25, 'lead:integrate': 40, 'lead:change': 20, 'builder:change': 15 });
 });
 test('an engine Design refuses is refused at the spawn too', () => {
   assert.throws(() => designSpawnOptions({ ...base, engine: 'goose', role: 'lead', stage: 'plan' }), /engine goose/);
@@ -151,18 +153,18 @@ test('the spawn passes engine claude, the model pair and the session; a null res
   assert.equal(r.resumeSessionId, 'sess-1');
   assert.equal(r.mock, true);
   assert.equal(r.cwd, W());
-  assert.equal(r.maxTurns, 15);
+  assert.equal(r.maxTurns, 40);
 });
 test('maxTurns per role and stage, and an unknown pair is refused', () => {
   const turns = (role, stage) => designSpawnOptions({ ...base, role, stage, sectionId: 'hero' }).maxTurns;
-  assert.deepEqual([turns('lead', 'plan'), turns('lead', 'change'), turns('builder', 'change')], [40, 20, 15]);
+  assert.deepEqual([turns('lead', 'plan'), turns('lead', 'change'), turns('builder', 'change')], [80, 20, 15]);
   assert.throws(() => designSpawnOptions({ ...base, role: 'builder', stage: 'plan', sectionId: 'hero' }), /builder:plan/);
   assert.throws(() => designSpawnOptions({ ...base, role: 'lead', stage: 'first' }), /lead:first/);
 });
 test('the tool list is a copy, and no budget means no budget flag value', () => {
   const o = designSpawnOptions({ ...base, role: 'builder', stage: 'first', sectionId: 'hero', maxBudgetUsd: null, denyRules: [] });
-  o.tools.push('Bash');
-  assert.deepEqual(DESIGN_TOOLS, ['Read', 'Write', 'Edit', 'Glob', 'Grep']);
+  o.tools.push('Skill');
+  assert.deepEqual(DESIGN_TOOLS, ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'WebSearch', 'WebFetch']);
   assert.notEqual(o.tools, o.allowedTools);
   assert.equal(o.maxBudgetUsd, null);
   assert.deepEqual(o.permissionRules, { deny: [] });

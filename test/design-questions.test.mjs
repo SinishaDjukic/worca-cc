@@ -209,7 +209,7 @@ test('a lead whose integrate question is pending re-enters integrate written wai
   const d = newDesign();
   let asked = false;
   const askOnIntegrate = (o) => {
-    if (o.maxTurns !== 15 || asked) return mockRun(o);
+    if (o.maxTurns !== 40 || asked) return mockRun(o);
     asked = true;
     const lead = listAgents(build.id).find((a) => a.role === 'lead');
     writeFileSync(askFileOf(d.id, lead.id), JSON.stringify({ questions: [Q] }));
@@ -231,7 +231,7 @@ test('a lead whose integrate question is pending re-enters integrate written wai
   assert.deepEqual(before.map((f) => f.status), ['waiting'], 'no process runs, so never starting');
   again.answer(q.askId, [{ id: 'q1', value: 'a' }]);
   assert.deepEqual(await within(c), { status: 'done', reason: null });
-  assert.equal(calls[0].maxTurns, 15, 'the answer resumes the integrate pass');
+  assert.equal(calls[0].maxTurns, 40, 'the answer resumes the integrate pass');
 });
 
 test('M1 with M7: a halt at any microtask after the answer keeps the question until a process shows it received the answers', async () => {

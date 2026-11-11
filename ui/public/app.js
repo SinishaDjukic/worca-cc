@@ -185,7 +185,7 @@ import {
   channelBadge, renderNeedsGit,
 } from './plugins-view.mjs';
 import { mountMarketplace, tabFromParam, targetFromParam } from './marketplace/index.mjs';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderDesignWebToggle, collectDesignWebToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
@@ -17445,8 +17445,6 @@ function paintAskSettings(data) {
   const summariesHost = document.getElementById('ask-summaries-host');
   if (summariesHost) summariesHost.replaceChildren(renderSummariesToggle({ prefs: data.chat || {} }, { doc: document }));
   setChatSummariesPref(data.chat);
-  const designWebHost = document.getElementById('design-web-host');
-  if (designWebHost) designWebHost.replaceChildren(renderDesignWebToggle({ prefs: data.chat || {} }, { doc: document }));
   // Web access: repainted from every GET and save response, which also resets its dirty flag.
   const webHost = document.getElementById('ask-web-host');
   if (webHost) webHost.replaceChildren(renderAskWebFields({ askWeb: data.askWeb }, { doc: document }));
@@ -17498,12 +17496,10 @@ function saveAskLimits(e) {
   const askWebBody = webHost ? collectAskWebFields(webHost) : null;   // null = the web fields were not touched
   const suggestHost = document.getElementById('ask-suggestions-host');
   const summariesHost = document.getElementById('ask-summaries-host');
-  const designWebHost = document.getElementById('design-web-host');
   const chat = {
     ...(scriptHost ? collectScriptToolsToggle(scriptHost) : {}),
     ...(suggestHost ? collectSuggestionsToggle(suggestHost) : {}),
     ...(summariesHost ? collectSummariesToggle(summariesHost) : {}),
-    ...(designWebHost ? collectDesignWebToggle(designWebHost) : {}),
   };
   postAskLimits({ askMaxTurns, askMaxBudgetUsd,
     ...(Object.keys(chat).length ? { chat } : {}),

@@ -141,7 +141,7 @@ test('a lead round: lead, the touched builder, then integrate on the same sessio
   const d = await firstBuild();
   const { build, calls, frames } = newBuild(d, { kind: 'change', brief: 'Warmer colours', sections: [], needsLead: true });
   assert.deepEqual(await build.run(), { status: 'done', reason: null });
-  assert.deepEqual(calls.map((c) => c.maxTurns), [20, 15, 15]);
+  assert.deepEqual(calls.map((c) => c.maxTurns), [20, 15, 40]);
   assert.match(calls[0].prompt, /^Change round: Warmer colours/);
   assert.match(calls[0].prompt, new RegExp(`^Round file: ${join(designWorkDir(d.id), 'round.json').replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}$`, 'm'));
   assert.match(calls[1].prompt, /^Change: Warmer colours/);
@@ -252,7 +252,7 @@ test('M8 in a change round; Continue does not apply the round twice', async () =
   assert.deepEqual(await c.b.continue(), { status: 'done', reason: null });
   assert.deepEqual(planIds(d.id), ['hero', 'faq', 'features'], 'faq once');
   assert.equal(c.calls.some((o) => o.maxTurns === 20), false, 'the change stage does not run again');
-  assert.deepEqual(c.calls.map((o) => [isBuilder(o) ? o.cwd.split(sep).at(-1) : 'lead', o.maxTurns]), [['faq', 25], ['lead', 15]]);
+  assert.deepEqual(c.calls.map((o) => [isBuilder(o) ? o.cwd.split(sep).at(-1) : 'lead', o.maxTurns]), [['faq', 25], ['lead', 40]]);
   assert.ok(framesOf(c.frames, 'design-plan').every((f) => f.planRev === 2), 'planRev not bumped on Continue');
   assert.equal(listAgents(build.id).filter((a) => a.sectionId === 'faq').length, 1, 'M5: the same faq agent');
 });
@@ -264,12 +264,12 @@ test('L2.38: an integrate pass that wrote no integration.json still ran: Continu
   await first.build.stop('user');
   const d = getDesign(d0.id);
   // L2.10: an integrate pass may write no file.
-  const noFile = (o) => (o.maxTurns === 15 ? Promise.resolve({ text: '', exitCode: 0 }) : mockRun(o));
+  const noFile = (o) => (o.maxTurns === 40 ? Promise.resolve({ text: '', exitCode: 0 }) : mockRun(o));
   let snapshots = 0;
   const snapshotVersion = async () => { snapshots += 1; };
   const { build, calls } = newBuild(d, { kind: 'change', brief: 'Warmer colours', sections: [], needsLead: true, deps: { runClaude: noFile, snapshotVersion } });
   assert.deepEqual(await build.run(), { status: 'done', reason: 'partial' }, 'done but for the carried features');
-  assert.deepEqual(calls.map((o) => o.maxTurns), [20, 15, 15], 'the change stage, the touched hero, integrate');
+  assert.deepEqual(calls.map((o) => o.maxTurns), [20, 15, 40], 'the change stage, the touched hero, integrate');
   assert.equal(existsSync(join(designWorkDir(d.id), 'integration.json')), false);
   assert.equal(snapshots, 1);
   const c = again(build.id, { runClaude: noFile, snapshotVersion });
@@ -560,7 +560,7 @@ test('integrate may send back a section with no agent in this round: a new build
   const { build, calls } = newBuild(d, { kind: 'change', brief: 'Warmer colours', sections: [], needsLead: true, deps: {
     acquireGlobal: async () => { if (integrated) { blocked = true; await gate; } },
     runClaude: async (o) => {
-      if (o.maxTurns !== 15 || isBuilder(o)) return mockRun(o);
+      if (o.maxTurns !== 40 || isBuilder(o)) return mockRun(o);
       writeFileSync(join(designWorkDir(d.id), 'integration.json'), JSON.stringify({ v: 1, rework: [{ id: 'features', why: 'Align the grid' }] }));
       integrated = true;
       return { text: 'Integrated.', exitCode: 0 };
@@ -619,7 +619,7 @@ test('Continue after a pause during integrate does not re-run the change stage',
   const d = await firstBuild('MOCK_SECTIONS=2');
   let integrating = false;
   const { build } = newBuild(d, { kind: 'change', brief: 'MOCK_ROUND_ADD=faq:hero', sections: [], needsLead: true, deps: {
-    runClaude: (o) => { if (o.maxTurns !== 15 || isBuilder(o)) return mockRun(o); integrating = true; return hangUntilAbort(o); },
+    runClaude: (o) => { if (o.maxTurns !== 40 || isBuilder(o)) return mockRun(o); integrating = true; return hangUntilAbort(o); },
   } });
   const p = build.run();
   await waitUntil(() => integrating);
@@ -628,7 +628,7 @@ test('Continue after a pause during integrate does not re-run the change stage',
   const c = again(build.id);
   assert.deepEqual(await c.b.continue(), { status: 'done', reason: null });
   assert.equal(c.calls.some((o) => o.maxTurns === 20), false);
-  assert.deepEqual(c.calls.map((o) => [isBuilder(o), o.maxTurns]), [[false, 15]], 'integrate only');
+  assert.deepEqual(c.calls.map((o) => [isBuilder(o), o.maxTurns]), [[false, 40]], 'integrate only');
   assert.deepEqual(planIds(d.id), ['hero', 'faq', 'features'], 'faq once');
 });
 

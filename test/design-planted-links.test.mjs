@@ -253,7 +253,7 @@ test('C-1: a section link planted during the lead stage: the builder starts in a
     runClaude: async (o) => {
       if (inSection(o, 'hero')) cwds.push(realpathSync(o.cwd));
       const r = await mockRun(o);
-      if (o.maxTurns === 40) {
+      if (o.maxTurns === 80) {
         rmSync(hero, { recursive: true, force: true });
         symlinkSync(out, hero, 'dir');
       }
@@ -275,7 +275,7 @@ test('C2: a plan.json linked to another design\'s valid plan is not this design\
   const plan = join(designWorkDir(d.id), 'plan.json');
   const { build, frames, calls } = newBuild(d, { brief: 'MOCK_SECTIONS=2', deps: {
     runClaude: async (o) => {
-      if (o.maxTurns !== 40) return mockRun(o);
+      if (o.maxTurns !== 80) return mockRun(o);
       if (!isLink(plan)) symlinkSync(otherPlan, plan);
       return { text: 'Planned.', exitCode: 0 };
     },
@@ -317,7 +317,7 @@ test('C2: a round.json or integration.json linked out of work/ is never applied'
   const integration = join(designWorkDir(e.id), 'integration.json');
   const i = newBuild(e, { brief: 'MOCK_SECTIONS=2', deps: {
     runClaude: async (o) => {
-      if (o.maxTurns !== 15) return mockRun(o);
+      if (o.maxTurns !== 40) return mockRun(o);
       if (!isLink(integration)) symlinkSync(work, integration);
       return { text: 'Integrated.', exitCode: 0 };
     },

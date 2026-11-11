@@ -38,7 +38,7 @@ test('open, consent, refused', async () => {
   for (const engine of ['claude', 'mock']) assert.deepEqual(gate({ engine }).ok, true, engine);
   const codex = gate({ engine: 'codex' });
   assert.deepEqual(verdict(codex), [false, true, 'engine-gated']);
-  assert.match(codex.reasons[0], /^OpenAI Codex cannot be kept from running shell commands\. Its sandbox holds writes/);
+  assert.match(codex.reasons[0], /^OpenAI Codex runs in its own sandbox, not under worca's guardrails/);
   assert.equal(codex.error, codex.reasons[0]);
   assert.equal(gate({ engine: 'codex', allowed: true }).ok, true);
   await checkRows(['gemini', 'qwen', 'cursor', 'opencode'].map((engine) => ({
@@ -46,9 +46,7 @@ test('open, consent, refused', async () => {
     run: () => {
       const r = gate({ engine, modelFor: () => 'm' });
       assert.deepEqual(verdict(r), [false, true, 'engine-gated']);
-      assert.match(r.reasons[0], engine === 'cursor'
-        ? /^Cursor cannot be kept from running shell commands, so its agents/
-        : /runs with its shell and web tools off here/);
+      assert.match(r.reasons[0], /cannot be held to worca's guardrails/);
       assert.equal(gate({ engine, modelFor: () => 'm', allowed: true }).ok, true);
     },
   })));

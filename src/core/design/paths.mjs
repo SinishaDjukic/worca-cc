@@ -14,6 +14,7 @@ import {
   renameSync, rmdirSync, rmSync, statSync, writeSync,
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { worcaHome } from '../projects.mjs';
 import { DesignError, DESIGN_ID_RE, sectionIdProblem } from './ids.mjs';
 
@@ -85,6 +86,14 @@ export function sectionDir(id, sectionId) {
 export function asksDir(id) { return join(designWorkDir(id), '.asks'); }
 /** `work/.kit/`: the engine-staged kit; creates nothing. */
 export function kitDir(id) { return join(designWorkDir(id), '.kit'); }
+/** The capture kit a lead starts the picked project's product with, to shoot its real screens (`startApp`, `open`):
+ *  the one the promo video workflow uses, run where worca is installed, so its playwright-core is found. */
+export const CAPTURE_KIT = fileURLToPath(new URL('../../../assets/promo-kit/capture/lib.mjs', import.meta.url));
+
+/** The Look kit, by absolute path: the command a lead runs before it judges a build, to see every section as it
+ *  stands and which pictures their frames cut. Run where worca is installed, like the capture kit it drives. */
+export const LOOK_KIT = fileURLToPath(new URL('../../../assets/design-kit/look.mjs', import.meta.url));
+
 /** `work/assets/att/`: the person's attachments. */
 export function attDir(id) { return join(designWorkDir(id), 'assets', 'att'); }
 /** `work/.crew.json`: the engine's `[{id, status, summary}]`. */

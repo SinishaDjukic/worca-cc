@@ -183,7 +183,7 @@ test('Continue before a plan held re-runs the lead on its own row, resuming its 
   let cut = false;
   const haltLead = async (o) => {
     const r = await runClaude({ ...o, mock: true });
-    if (!cut && o.maxTurns === 40) { cut = true; throw Object.assign(new Error('claude exited with code 1: mock usage limit'), { errorClass: 'usage_limit' }); }
+    if (!cut && o.maxTurns === 80) { cut = true; throw Object.assign(new Error('claude exited with code 1: mock usage limit'), { errorClass: 'usage_limit' }); }
     return r;
   };
   const first = newBuild(newDesign(), { brief: 'MOCK_SECTIONS=1', deps: { runClaude: haltLead } });
@@ -469,7 +469,7 @@ test('a halt during integrate, after the lead wrote integration.json, integrates
   const d = newDesign();
   let held = null;
   const hangIntegrate = (o) => {
-    if (o.maxTurns !== 15 || held) return runClaude({ ...o, mock: true });
+    if (o.maxTurns !== 40 || held) return runClaude({ ...o, mock: true });
     writeFileSync(integrationFile(d.id), '{"v":1,"done":true,"rework":[]}\n');
     held = new Promise((resolve, reject) => {
       const t = setTimeout(() => reject(new Error('hung')), 10000);

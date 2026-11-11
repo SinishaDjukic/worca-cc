@@ -96,10 +96,10 @@ test('stopping the lead while it plans stops the build; while it integrates only
   await waitForFrame(a.frames, (f) => f.type === 'design-agent' && f.status !== 'starting');
   a.build.stopAgent(framesOf(a.frames, 'design-agent')[0].agentId);
   assert.deepEqual(await pa, { status: 'stopped', reason: 'user' });
-  // integrate case: deps.runClaude hangs on maxTurns 15 until aborted; stopAgent(lead) -> result { status:'done', reason:null }, dist exists
+  // integrate case: deps.runClaude hangs on maxTurns 40 until aborted; stopAgent(lead) -> result { status:'done', reason:null }, dist exists
   const d = newDesign(); let leadAtSnapshot = null; let bid = null;
   const b = newBuild(d, { brief: 'MOCK_SECTIONS=2', deps: {
-    runClaude: (o) => (o.maxTurns === 15 ? hangUntilAbort(o) : mockRun(o)),
+    runClaude: (o) => (o.maxTurns === 40 ? hangUntilAbort(o) : mockRun(o)),
     snapshotVersion: async () => { leadAtSnapshot = listAgents(bid).find((x) => x.role === 'lead').status; },
   } });
   bid = b.build.id;
@@ -109,7 +109,7 @@ test('stopping the lead while it plans stops the build; while it integrates only
   assert.equal(b.build.stopAgent(lead.id), true);
   assert.deepEqual(await pb, { status: 'done', reason: null });
   assert.ok(existsSync(join(distDir(d.id), 'index.html')));
-  assert.equal(b.calls.filter((c) => c.maxTurns === 15).length, 1, 'no second integrate');
+  assert.equal(b.calls.filter((c) => c.maxTurns === 40).length, 1, 'no second integrate');
   assert.equal(listAgents(b.build.id).find((x) => x.role === 'lead').status, 'stopped');
   assert.equal(leadAtSnapshot, 'stopped', 'the lead ends when stopped, before the finish runs');
   assert.deepEqual(getBuild(b.build.id).sections.map((s) => s.status), ['done', 'done']);
@@ -315,7 +315,7 @@ test('stop one reaches an agent with no process: a builder in its retry wait end
 test('a stopped section is stopped at once: the integrate pass and .crew.json already see it', async () => {
   let seen = null; let built = null;
   const { build, frames } = hung('MOCK_SECTIONS=2 MOCK_HANG_SECTION=hero', { runClaude: (o) => {
-    if (o.maxTurns === 15) seen = getBuild(built.id).sections.map((s) => s.status);
+    if (o.maxTurns === 40) seen = getBuild(built.id).sections.map((s) => s.status);
     return mockRun(o);
   } });
   built = build;

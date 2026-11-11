@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { framesOf, newBuild, newDesign, useDesignEnv, waitForFrame } from './helpers/design-fixture.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
-import { crewFile, designDir, designWorkDir, kitDir } from '../src/core/design/paths.mjs';
+import { CAPTURE_KIT, crewFile, designDir, designWorkDir, kitDir } from '../src/core/design/paths.mjs';
+import { DESIGN_TOOLS } from '../src/core/design/spawn-options.mjs';
 import { getBuild, getDesign, listAgents } from '../src/core/design/store.mjs';
 import { addProject, listProjects } from '../src/core/projects.mjs';
 import { createSemaphore } from '../src/core/design/semaphore.mjs';
@@ -74,7 +75,7 @@ test('a bad plan gets one resume with the errors, then passes', async () => {
   const { build, calls } = newBuild(newDesign(), { brief: 'MOCK_BAD_PLAN' });
   assert.equal((await build.run()).status, 'done');
   assert.equal(calls.length, 6, 'the lead, its one resume, the three default sections, the integrate pass');
-  assert.equal(calls.filter((c) => c.cwd === calls[0].cwd && c.maxTurns === 40).length, 2, 'one plan resume only');
+  assert.equal(calls.filter((c) => c.cwd === calls[0].cwd && c.maxTurns === 80).length, 2, 'one plan resume only');
   assert.ok(calls[1].resumeSessionId);
   assert.match(calls[1].prompt, /plan\.json/);
 });
@@ -152,6 +153,32 @@ test("a registered project is named to the lead and added to its dirs", async ()
   await build.run();
   assert.ok(calls[0].prompt.includes(`Project: ${p.path} `), calls[0].prompt);
   assert.ok(calls[0].addDirs.includes(p.path));
+});
+
+test('a picked project: every agent may read it, the lead is told how to shoot its screens, and no MCP server is staged', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-design-pics-'));
+  after(() => rmSync(dir, { recursive: true, force: true }));
+  await addProject({ name: 'picsite', path: dir });
+  const p = (await listProjects()).find((x) => x.name === 'picsite');
+  const d = newDesign({ projectKey: p.key });
+  const { build, calls } = newBuild(d, { brief: 'MOCK_SECTIONS=1' });
+  assert.deepEqual(await build.run(), { status: 'done', reason: null });
+  const [lead, builder, integrate] = calls;
+  for (const o of calls) {
+    assert.deepEqual(o.tools, [...DESIGN_TOOLS]);
+    assert.ok(o.tools.includes('Bash') && o.tools.includes('WebSearch'));
+    assert.ok(o.addDirs.includes(p.path), o.cwd);
+    assert.equal(o.mcpConfigPath, undefined);
+  }
+  assert.ok(lead.prompt.split('\n').includes(`Capture kit: ${CAPTURE_KIT}`));
+  assert.ok(builder.prompt.split('\n').includes(`Project: ${p.path} (read only)`));
+  assert.doesNotMatch(builder.prompt, /^Capture kit:/m);
+  assert.doesNotMatch(integrate.prompt, /^Capture kit:/m);
+  assert.deepEqual(readdirSync(designDir(d.id)).filter((f) => f.endsWith('.json')), [], 'nothing is staged beside work/');
+  const bare = newBuild(newDesign(), { brief: 'MOCK_SECTIONS=1' });
+  await bare.build.run();
+  assert.doesNotMatch(bare.calls[0].prompt, /^Project:|^Capture kit:/m);
+  assert.doesNotMatch(bare.calls[1].prompt, /^Project:/m);
 });
 
 test('M8: every process of a real build carries the read denies, and the guardrail set once a project is attached', async () => {

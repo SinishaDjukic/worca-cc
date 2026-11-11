@@ -6,7 +6,7 @@ A film is HTML and JavaScript at 1920×1080, 60 fps, with no sound. Each scene i
 
 ## Lead
 
-Write in this order, in the source folder: `tokens.css`, `global.css`, `shell.html`, `brand.md` when a project is given, and `plan.json` last.
+Write in this order, in the source folder: `tokens.css`, `global.css`, `shell.html`, `brand.md`, and `plan.json` last.
 
 `shell.html` is a whole document with these three markers, each once: `<!--worca:head-->` in the head, `<!--worca:sections-->` in the body, `<!--worca:foot-->` before the end of the body. worca wraps the scenes in the stage. Never write a scene into the shell.
 
@@ -26,8 +26,8 @@ You own one folder: `sections/<id>/`. You may read everything else, including `t
 1. Write `index.html` in one `Write`, top-down, with exactly one root element: `<div data-section="<id>" data-scene>`. It is the scene's composed state: every element present and in place, as the best frame of the scene looks. People watch it while you work.
 2. Then `style.css`.
 3. Then `script.js`. Its body runs once with `(root, S)`. Set initial states there, so the composed state stays what `index.html` shows.
-4. Asset URLs are relative to the source folder: `assets/x.png`. Attachments are in `assets/att/`.
-5. No external URLs: no CDNs, no web fonts by link, no remote images. Draw with CSS and SVG, or use an attachment.
+4. Asset URLs are relative to the source folder: `assets/x.png`. Attachments are in `assets/att/`, pictures the lead copied from the project in `assets/project/`, screens it shot in `assets/shots/`. Point only at a file that is there: a missing picture shows as an empty frame.
+5. No external URLs: no CDNs, no web fonts by link, no remote images, and no picture taken from the web. Draw with CSS and SVG, or use an attachment or a picture your brief names.
 6. End with one line saying what you built. People read it.
 
 ## S
@@ -46,6 +46,8 @@ The player seeks frames in any order, so everything on screen is a pure function
 - A function value (`x: () => …`) runs more than once as the film starts: it may read the page, never change anything.
 - CSS has no `@keyframes`, `animation`, `transition` or `will-change`, in `tokens.css` and `global.css` too. A `will-change` layer is drawn from its history, so a frame sought out of order paints differently.
 - Things arrive with `back.out` or `power3.out` in 0.25 to 0.5 s and leave faster. Something changes about every 2 s, with no frozen hold over 1.2 s. Each scene owns its entrance and exit, at most 0.45 s at its edges, and a hand-off frame is never blank.
+- A screenshot, or any other picture of the product, is shown whole. Its box has the picture's own proportions (`aspect-ratio` from its pixel size) and the picture fits inside it: `object-fit: contain`, never `cover`. No frame, mask, zoom or `overflow: hidden` cuts into it, and none of it lies outside its box. Where a picture moves, it comes to rest whole. To point at one part, ring it on the whole picture, or show a picture of that part alone.
+- A picture has room: clear space on every side between it, or the frame drawn around it, and the edges of its card, section or slide. It never touches an edge and never runs past one.
 
 ## Scoping
 

@@ -15,7 +15,10 @@ agents build it in front of you. On by default (beta); `WORCA_FLAGS=-design` tur
    **Presentation**, **Pitch deck** or **Video**.
 3. **Pick a project, if you like.** The lead agent reads the project's brand and code and passes the brand on to
    the agents that build the sections (not on every engine: see [Engines](#engines)). Nothing is written to the
-   project. With **No project** the design stands on its own.
+   project. The lead also brings the project's own logo and screens into the design: see
+   [What the agents can use](#what-the-agents-can-use). With **No project** the design stands on its own:
+   unless what you wrote or attached shows a look, the lead picks one plain direction (one accent, system fonts,
+   no decoration) and writes it down for the builders.
 4. **Attach files** with the button, by pasting or by dropping them: pictures, a logo, notes. A file worca does not
    take is named under the composer.
 5. **Send.** The design opens in its own chat. Its title is the first line of what you wrote (the first sentence,
@@ -27,12 +30,20 @@ Then the build:
 - **The lead plans** the page and writes the shared files.
 - **One agent per section** builds it. A web page gets 4 to 8 sections (16 to 32 with Build fast), a deck one
   section per slide and a video one per scene, at most 40.
-- **The lead goes over the result** once more and fixes what does not fit together.
+- **The lead goes over the result** once more, fixes what does not fit together, and sends a section back to
+  its agent when it breaks a craft rule.
+
+Every agent holds to the same craft rules, whatever the brief: the design's own tokens and shared pieces and no
+other values, no filler badges or labels, the real product shown large enough to read, a specific headline, few
+words, no italics for emphasis, monospace only for code, readable contrast, even paddings, one icon family, and
+`inner radius = outer radius − padding` for nested corners. On a web page only what answers you moves: a press,
+a hover, a state that changed.
 
 Every cursor on the page is a real running agent, and the agents panel lists each one with what it is doing and
-what it has cost. On Claude, agents only read and write files: no shell commands and no web, unless you give the
-lead the web (see [Web access](#web-access)). The lead writes only inside the design's own folder, and each
-section's agent only inside its section. Other engines cannot be held to all of this: see [Engines](#engines).
+what it has cost. Agents work with files, the shell and the web, as the agents of a run do (see
+[What the agents can use](#what-the-agents-can-use)). On Claude the lead's file edits stay inside the design's own
+folder, and each section's agent's inside its section. Other engines cannot be held to worca's rules: see
+[Engines](#engines).
 
 When an agent needs an answer from you, the HUD reads **Needs you**. A usage limit, a sign-in, a quota or a model
 error pauses the whole build; **Resume** on the HUD picks it up. A build that is running shows in Activity; a
@@ -85,11 +96,10 @@ because it cannot be held to worca's rules. When you send, a dialog names the en
 **Allow unguarded** creates the design on that engine anyway, **Use Claude** creates it on Claude, and **Cancel**
 creates nothing.
 
-- **Codex** keeps its shell, which it reads files with, so its agents can read anything on this machine. Its sandbox
-  holds their writes to their own folder.
-- **Cursor** cannot fully turn its shell off.
-- **Gemini CLI**, **Qwen Code** and **OpenCode** run with their shell and web tools off, but cannot be limited to
-  Design's tools. With [Web access](#web-access) on, the lead's web tools stay on.
+- **Codex** runs in its own sandbox, not under worca's guardrails. The sandbox holds its agents' writes to their
+  own folder.
+- **Cursor**, **Gemini CLI**, **Qwen Code** and **OpenCode** cannot be held to worca's guardrails: worca cannot
+  stop a command their agents run, or a file they change outside the design.
 - **Copilot** reports no cost and cannot fully hold the rules.
 - **OpenCode** needs a model set first: a lead and a builders model for OpenCode (the design's pickers, the
   Models page's Design rows or the roles, see [Models](#models)), or `WORCA_OPENCODE_ALLOW_DEFAULT_MODEL=1` to let it
@@ -106,29 +116,50 @@ between their processes. Copilot, Gemini CLI, Qwen Code and Cursor show `cost un
 cannot stop them. Copilot, Gemini CLI, Qwen Code and OpenCode cannot read the picked project: their lead is not given
 its path, and the dialog says so.
 
-## Web access
+## What the agents can use
 
-Off by default. **Settings**, the Ask Worca card, **Design: let the lead use the web** turns it on for every
-design, on every engine; a build reads the switch each time it starts or resumes.
+A Design agent has what the agents of a run have, and the web:
 
-With it on, the **lead**, and only the lead, can:
+- **Files.** It reads and writes the design. With a project picked, the lead and every section agent can read the
+  project too (not on every engine: see [Engines](#engines)). Nothing in the project is changed.
+- **The shell.** It runs commands, under the guardrail set your runs use by default once a project is picked.
+- **The web.** It searches and reads pages for facts and references, with its engine's own web tools. An engine or
+  model without web tools gets none from worca.
 
-- **search the web and read pages** with its engine's own web tools (Claude's web search and fetch, Gemini's,
-  Codex's web search, and so on). An engine or model without web tools gets none from worca: a Claude model served
-  through a translated bridge has no search or fetch.
-- **save pictures** with `save_image`, a tool worca gives it on every engine. worca downloads the file, not the
-  agent: https only, never an address on a private or local network, PNG, JPEG, GIF, WebP, AVIF or SVG by the
-  file's own bytes, at most 8 MB each and 64 MB and 120 files per design. A picture lands in `work/assets/web/`
-  as a new file, and the page points at it as `assets/web/<name>`.
+What the lead does with them, when a project is picked:
 
-Section agents stay offline: the lead tells each one which saved pictures to use. A finished design still loads
-nothing from another site, so every export works offline as before. Each download, refused ones too, is one line
-in `<worca home>/logs/design-web.jsonl`.
+- **It uses the project's real pictures.** It looks for the logo and for screenshots (the README's, `docs/`) before
+  it plans a drawn stand-in, copies the ones it uses into `work/assets/project/`, and uses a logo it finds as it
+  is. A design loads only its own files, so a picture is always copied in first.
+- **It starts the product and shoots its screens** when the project has no picture of a screen the design needs,
+  or only an old one. It runs the product on a free port with an empty home folder, brings it to a state worth
+  showing, saves the shots into `work/assets/shots/`, and stops it again. It uses the capture kit worca ships,
+  which needs Chrome or Edge on the machine (see [Mac, Linux, Windows](#mac-linux-windows)).
 
-What it costs you in safety: the lead can read the picked project and reach the internet in the same session. A
-web page it reads could talk it into putting project content into a search or an address. The files Design never
-reads (keys, `.env` files) stay unreadable, but ordinary source is not protected. Leave the switch off for a
-project whose code must not leave the machine. worca cannot check that you may use a picture: that stays with you.
+Section agents use the pictures the lead names; they do not start the product.
+
+**A picture is shown whole.** The lead makes each picture one whole thing, a whole screen or one whole part of it
+with a little space around it, never a cut through text or a card, and looks at each one before it plans around it.
+In the design a screenshot sits whole inside its frame, in a box of its own shape, with room between it and the
+edges of its card, section or slide. It is never left zoomed in or cut off by its frame. To point at one part, the
+agents ring it on the whole picture or use a picture of that part alone.
+
+**The lead looks before it judges.** When the sections are built, the lead runs worca's Look kit: one command that
+saves a picture of every section as it stands and lists each picture that its frame cuts. It reads those pictures,
+then sends back a section that breaks a rule. The Look kit needs Chrome or Edge, like the capture kit; without one
+the lead judges from the files alone.
+
+**No picture comes from the web.** Agents are told never to download, copy or link one: pictures come from the
+project, from what you attach, or are drawn. A finished design loads nothing from another site, so every export
+works offline, and a link to another site's file is reported to the lead as an error.
+
+When the lead goes over the result, worca names every picture, font or other file that a section points at and
+that is not in the design, so the lead can bring the file in or send the section back instead of leaving an empty
+frame.
+
+What this means for safety: an agent can read the picked project, run commands and reach the internet in the same
+session, as the agents of a run can. A page it reads could talk it into sending project content somewhere. Use a
+stricter guardrail set, or no project, for code that must not leave the machine.
 
 ## Decks and video
 
@@ -231,7 +262,7 @@ database and store (see [Storage](storage.md)). No git is needed.
 
 | Inside | What it holds |
 |---|---|
-| `work/` | What the agents write: the sections, the shared files, your attachments and the pictures the lead saved from the web (`assets/web/`) |
+| `work/` | What the agents write: the sections, the shared files, your attachments, the pictures the lead copied from the project (`assets/project/`) and the screens it shot (`assets/shots/`) |
 | `dist/` | The finished page; exports read it |
 | `versions/` | The state after each finished round, the last 20, for **Back to before this** |
 | `thumb.png` | The Library picture; never exported, and agents cannot write it |
