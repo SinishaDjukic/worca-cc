@@ -1,3 +1,6 @@
+> [!NOTE]
+> This project will soon move to a new organization: [github.com/worca-org](https://github.com/worca-org).
+
 # Contributing to Worca
 
 Thanks for your interest in contributing! This document covers developing Worca
@@ -8,7 +11,7 @@ Everyone taking part in this project is expected to follow the
 [conduct@worca.dev](mailto:conduct@worca.dev).
 
 > Just want to **use** Worca? You don't need this repo at all — install it from
-> npm as described in the [README](README.md#install).
+> npm as described in the [install guide](docs/install.md).
 
 ## The two branch lines
 
@@ -170,8 +173,9 @@ pipeline agent behavior belong in `agents/`.
 
 UI work starts at [docs/rail/README.md](docs/rail/README.md): the rules, one concern per file. Pages are built from
 the library in `ui/public/design-system/components/` (components and shared logic), and
-`docs/design-system-catalog.json` says which one meets which need. The working design is the prototype in
-`plans/rail/prototype/`; `npm run rail` builds it and opens it in your browser.
+`docs/design-system-catalog.json` says which one meets which need. The prototype in
+`plans/rail/prototype/` is the design and wins; `npm run rail` builds it and opens it in your browser. The plan is
+`plans/rail/implementation-prompt.md`.
 
 `npm test` fails new UI code that writes a component's markup or a state's words by hand (`test/rail-gate.test.mjs`). Old
 pages are frozen by a ratchet that can only shrink: after moving a page to the library, run

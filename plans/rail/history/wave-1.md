@@ -1,3 +1,5 @@
+History. Superseded by implementation-prompt.md; do not build from it.
+
 # Worca Rail: Wave 1, what Worca builds
 
 **Building Rail now starts here.** The design is `docs/rail/` and the prototype (`plans/rail/prototype/`). This file never
@@ -63,7 +65,7 @@ One each, only after the person has reviewed the one before. Worca does not cont
 
 - **Feature 2: Pulse.** `docs/rail/`, `plans/rail/pulse.md`, the prototype's `pulse/`. Needs: **usage feed**.
 - **Feature 3: the run and group pages.** `docs/rail/thing-page.md`, the prototype's `runs/`. Needs: **Merge**, **Fix checks**,
-  **Re-run checks**, **Restart Build**. Each gap ships after its surface, with a clear stand-in until then. The other
+  **Re-run checks**, **Restart Build**. Each gap ships after its surface; no stand-in is ever shipped in the app (the prototype's demo adapter only). The other
   new actions are `PROPOSED` in `runs/run-page-model.js`.
 
 **Not in Wave 1: the Runs list and the Chats column.** They are in the prototype as reference for Wave 2. Today's design stays.

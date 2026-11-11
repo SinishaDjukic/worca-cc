@@ -41,8 +41,6 @@
 @media (max-width: 760px){ .tsearch-field .menu.rl-search-res{width:100%;max-width:none;} }
 
 /* A confirm under the top bar (the search's hand-off), and the one line of a page above the mode. */
-#rail-strip:empty{display:none;}
-#rail-strip{flex:none;padding:0 16px;}
 .rail-locked{padding:24px 32px;}
 
 /* Ask worca: 761 to 1080px it covers the page's right side at its own width, with its grip; push and window as the app.

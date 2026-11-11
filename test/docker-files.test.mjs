@@ -318,6 +318,19 @@ test('compose.broker.yml: worca gets the broker address and no key; the broker p
   assert.match(broker, /\/healthz/, 'its own healthcheck (the image\'s targets worca\'s port)');
 });
 
+test('compose.instance.yml: cloudflared only under the tunnel profile, in its own container, nothing published', () => {
+  const c = read('docker/compose.instance.yml');
+  const cf = c.slice(c.indexOf('\n  cloudflared:'));
+  assert.match(cf, /profiles: \["tunnel"\]/, 'the tunnel is opt-in');
+  assert.match(cf, /command: \["tunnel", "run"\]/, 'the image entrypoint adds --no-autoupdate; tunnel run reads TUNNEL_TOKEN');
+  assert.match(cf, /TUNNEL_TOKEN: \$\{TUNNEL_TOKEN:-\}/, 'no :? check, which would fail every compose call without the profile');
+  assert.doesNotMatch(c, /network_mode:/, 'never worca\'s namespace: its requests would look local');
+  assert.doesNotMatch(c, /^\s+ports:/m, 'the tunnel is the only way in');
+  assert.match(cf, /cap_drop:\s*\n\s*- ALL/);
+  assert.match(c, /stop_grace_period: 60s/, 'longer than the 20 s drain');
+  assert.match(read('docs/instance-contract.md'), /compose\.instance\.yml/, 'the contract page points at it');
+});
+
 test('compose.isolation.yml: one volume, root only to prepare it, sudo to agents without no-new-privileges, the capabilities it needs', () => {
   const c = read('docker/compose.isolation.yml');
   assert.match(c, /user: "0:0"/);

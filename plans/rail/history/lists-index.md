@@ -1,3 +1,5 @@
+History. Superseded by implementation-prompt.md; do not build from it.
+
 # The Runs list and the Chats column: what dev has, and where it goes in Rail
 
 **Reference only.** These lists are in the prototype so Wave 2 starts from everything dev has; their design is decided in Wave 2 Shaping, not here.

@@ -345,3 +345,16 @@ test('bindFlagSwitch (a single flag\'s switch outside Labs, here a whole <button
     } },
   ]);
 });
+
+test('createFlagsView keep: the Stillhet Labs row follows stillhetLabsRow; no keep shows every row', async () => {
+  const { stillhetLabsRow } = await import('../ui/public/stillhet.mjs');
+  const { flagRowsHtml } = await import('../ui/public/flags-view.mjs');
+  const rows = [{ key: 'rail', title: 'Stillhet', description: 'd', stage: 'experimental', on: false, locked: false }, { key: 'runLabels', title: 'Labels', description: 'd', stage: 'experimental', on: false, locked: false }];
+  const shown = (keep) => (flagRowsHtml(rows.filter(keep)).match(/data-flag-row="(\w+)"/g) || []).length;
+  assert.equal(shown(() => true), 2);
+  assert.equal(shown(stillhetLabsRow({ stillhetAsk: false })), 1);
+  assert.equal(shown(stillhetLabsRow({ stillhetAsk: true })), 2);
+  assert.equal(shown(stillhetLabsRow({ stillhetAsk: false })), 1);
+  rows[0].on = true;
+  assert.equal(shown(stillhetLabsRow({ stillhetAsk: false })), 2);
+});

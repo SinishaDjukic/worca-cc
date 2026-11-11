@@ -74,3 +74,5 @@ If the prompt says **graphify** is available, use graphify to ground your review
 ## UI work
 
 A change to Worca's interface follows the design system: `docs/rail/README.md` leads, and pages call `ui/public/design-system/components/` instead of writing its markup or words. `npm test` fails UI code that skips it.
+
+Under `rail`, the prototype's screen is the spec: dev contributes data, APIs and logic, never its screens or markup; read `plans/rail/implementation-prompt.md` first.

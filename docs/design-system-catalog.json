@@ -221,10 +221,30 @@
         "opens on the safe choice",
         "names what goes",
         "Esc takes it back (keys.esc-strip, `watchStrips`)",
-        "a provider at or past the warning line: a step that starts agent work adds the limit note in one line"
+        "a provider at or past the warning line: a step that starts agent work adds the limit note in one line",
+        "one text link after the sentence, opening outside the app (`link`)",
+        "a quiet side that is an answer has its own working label, and both buttons wait (`noBusy`)",
+        "Esc takes back a strip whose quiet side is an answer without one (`back`, keys.esc-strip)"
       ],
       "example": "Merge #959 into dev?",
       "notFor": "a step that needs fields (Dialog); a step that can be undone (act, then Undo in a Toast)"
+    },
+    {
+      "name": "Invitation",
+      "code": "ui/public/design-system/components/invitation.mjs#stillhetInvitation",
+      "kind": "acting",
+      "needs": [
+        "asking once, for the whole install, whether to try Stillhet"
+      ],
+      "place": "ConfirmStrip under the top bar",
+      "rules": [
+        "a ConfirmStrip with Stillhet's words",
+        "opens on No thanks",
+        "Esc asks again on the next load",
+        "No thanks is never asked again"
+      ],
+      "example": "Stillhet is an evolution of Worca's design system, in beta…",
+      "notFor": "any other question (ConfirmStrip)"
     },
     {
       "name": "ListSentence",
@@ -445,6 +465,22 @@
         "a failed change flips back and a Toast says why"
       ],
       "example": "Watch on a PR"
+    },
+    {
+      "name": "DesignSwitch",
+      "code": "ui/public/design-system/components/design-switch.mjs#designSwitch",
+      "kind": "choosing",
+      "needs": [
+        "turning Stillhet on or off from the top bar"
+      ],
+      "rules": [
+        "a Switch labelled Stillhet UI with a beta chip; only the switch at phone width",
+        "takes effect at once, then the page reloads once",
+        "locked by WORCA_FLAGS, it is disabled and says why",
+        "a failed change flips back and a Toast says why"
+      ],
+      "example": "Stillhet UI",
+      "notFor": "any other setting (Switch)"
     },
     {
       "name": "Checkbox",
@@ -1642,7 +1678,9 @@
     {
       "name": "Is this the second of a double click, on something else",
       "code": "ui/public/design-system/components/click-guard.mjs#secondClickIgnored",
-      "needs": ["whether a click lands within 400 ms where another button just was (comp.click-guard)"],
+      "needs": [
+        "whether a click lands within 400 ms where another button just was (comp.click-guard)"
+      ],
       "example": "secondClickIgnored(first, now)"
     },
     {

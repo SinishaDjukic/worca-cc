@@ -651,7 +651,7 @@ function renderInShell() {
   document.getElementById('rail-pulse-slot').innerHTML = pulseButton();
   document.querySelector('#topnav-new')?.setAttribute('aria-expanded', String(!!ui.nr));
   document.getElementById('side-foot').innerHTML = sideFoot();
-  document.getElementById('rail-strip').innerHTML = unlockStrip() || settingsStrip() || labsBack();
+  document.getElementById('rail-strip').innerHTML = window.RailShell?.inviteStrip?.() || unlockStrip() || settingsStrip() || labsBack();
   // a reply in a chat you left: the dot on the Chat row and on Ask worca, until you open Chat
   const chatDot = !!C().chatUnread && !ui.chatSeen;
   for (const id of ['nav-chat-unread', 'topnav-ask-dot']) { const d = document.getElementById(id); if (d) { d.hidden = !chatDot; d.title = 'A reply in a chat you left'; } }
@@ -859,6 +859,7 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-custom]'))) { ui.custom = ui.custom === el.dataset.custom ? '' : el.dataset.custom; render(); return; }
   if ((el = tg('[data-backgroup]'))) { ui.s.groups[el.dataset.backgroup].ex = {}; toast('Every event follows the group again'); render(); return; }
   if ((el = tg('[data-reset]'))) { ui.confirm = 'reset'; render(); return; }
+  if ((el = tg('[data-confirm]')) && window.RailShell?.inviteStrip?.()) { window.RailShell.answerInvite(el.dataset.confirm); render(); return; }   /* the demo's answers close the strip and remember it */
   if ((el = tg('[data-confirm]')) && !settingsStrip() && labsBack()) { if (el.dataset.confirm === 'yes') { ui.unlock = null; history.back(); } else ui.unlock.stay = true; render(); return; }
   if ((el = tg('[data-confirm]')) && ui.unlock?.strip) { if (el.dataset.confirm === 'yes') R.prefs.setMode(ui.unlock.strip); else { ui.unlock = null; render(); } return; }
   if ((el = tg('[data-confirm]')) && ui.sv.__confirm) { const say = SV.confirm(ui.sv, el.dataset.confirm === 'yes'); if (say) toast(say); render(); return; }
@@ -907,6 +908,7 @@ function panelKey(act, e) {
   const { pick, to } = R.selectStep(ui.pick, act, { from: act === 'toggle' ? e.target.closest(ROW).dataset.open : from, shown: shownIds() });
   ui.pick = pick; render(); if (to) rowEl(to)?.focus();
 }
+document.addEventListener('strip:back', () => { window.RailShell?.answerInvite?.('back'); render(); });   /* Esc on the Invitation: closed for this load, no answer */
 document.addEventListener('keydown', (e) => {
   const inPanel = ui.pop && !ui.menu && !ui.acct && !ui.nr && !ui.sub && !somethingUp();
   const scopes = [...(inPanel ? (ui.popTab === 'updates' ? ['selecting', 'list'] : ['list']) : []), 'anywhere'];

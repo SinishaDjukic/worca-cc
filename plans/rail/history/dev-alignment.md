@@ -1,3 +1,5 @@
+History. Superseded by implementation-prompt.md; do not build from it.
+
 # Worca Rail: aligning with dev after the #919 split (4 Nov 2026)
 
 What landed on dev since `c5c3fee69` (about 40 UI changes), checked against `docs/rail/. The

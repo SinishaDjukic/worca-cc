@@ -4,11 +4,11 @@ Worca Rail is the redesign of every Worca page, one page at a time. A page is sp
 the prototype (`plans/rail/prototype/`), and built from the library (`ui/public/design-system/components/`). Until a page
 ships, the app's current page keeps the rules in `docs/design-system.md`.
 
-**Building Rail now:** start at [plans/rail/wave-1.md](../../plans/rail/wave-1.md).
+**Building Rail now:** start at [plans/rail/implementation-prompt.md](../../plans/rail/implementation-prompt.md).
 
 **When the app and Rail differ** (the app ships something Rail does not have, or does it another way), one rule
 decides, never case by case: 1. Rail is preferred. 2. If the app's way meets a real need, find how Rail takes it in.
-3. The result is Rail, upgraded where needed, written here. `plans/rail/dev-alignment.md` records each case.
+3. The result is Rail, upgraded where needed, written here. A dev way is adopted only once it is written into the prototype and `docs/rail`.
 
 ## Where each concern lives
 

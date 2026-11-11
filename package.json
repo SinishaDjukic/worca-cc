@@ -3,7 +3,10 @@
   "version": "1.19.0-rc.1",
   "description": "Worca turns a task into reviewed, merge-ready work. A deterministic multi-agent pipeline that plans, implements and reviews in isolated git worktrees, with quality gates, budgets and a human in the loop. Web UI, CLI and chat.",
   "license": "MIT",
-  "author": "Sinisha Djukic",
+  "author": "Bosch Digital EOOD, Atanas Atanasov, Emil Angelov",
+  "contributors": [
+    "Worca Contributors (https://github.com/SinishaDjukic/worca-cc/graphs/contributors)"
+  ],
   "type": "module",
   "engines": {
     "node": ">=22.19.0"
@@ -81,6 +84,8 @@
     "verify:scripts": "node --disable-warning=ExperimentalWarning tools/verify-scripts-cdp.mjs",
     "verify:ask-forms": "node --disable-warning=ExperimentalWarning tools/verify-ask-forms-cdp.mjs",
     "verify:workspace-map": "node --disable-warning=ExperimentalWarning tools/verify-workspace-map-cdp.mjs",
+    "stillhet:compare": "node tools/stillhet-compare.mjs",
+    "stillhet:style-diff": "node tools/stillhet-style-diff.mjs",
     "verify:flags": "node --disable-warning=ExperimentalWarning tools/verify-flags-cdp.mjs",
     "verify:feature-page": "node --disable-warning=ExperimentalWarning tools/verify-feature-page-cdp.mjs",
     "verify:runs-list": "node --disable-warning=ExperimentalWarning tools/verify-runs-list-cdp.mjs",

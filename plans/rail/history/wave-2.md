@@ -1,3 +1,5 @@
+History. Superseded by implementation-prompt.md; do not build from it.
+
 # Worca Rail: Wave 2, the game plan
 
 **Shaping, not decided.** Written 7 Nov 2026 on `docs/rail-shaping`. It says what gets shaped, in what order and how. Nothing

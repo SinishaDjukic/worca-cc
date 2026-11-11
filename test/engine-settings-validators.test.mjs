@@ -42,7 +42,7 @@ test('a Codex id in a Claude utility setting is a 400 naming it; nothing is writ
     assert.equal(r.status, 400, key);
     const body = await r.json();
     // #555: the error names the setting by its visible label, and `field` by its key.
-    assert.match(body.error, new RegExp(`^“[^”]+”: "${id.replace(/\./g, '\\.')}" runs on Codex\\. This setting picks a model Claude Code can run\\.$`), key);
+    assert.match(body.error, new RegExp(`^“[^”]+”: "${id.replace(/\./g, '\\.')}" runs on OpenAI Codex\\. This setting picks a model Claude Code can run\\.$`), key);
     assert.equal(body.field.split('.')[0], key);
   }
   const s = await get();

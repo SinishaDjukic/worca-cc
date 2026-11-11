@@ -76,6 +76,9 @@ import { chatSelfTest } from './chat-selftest.mjs';
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const opencodeDefaultBin = () => process.env.WORCA_OPENCODE_BIN || 'opencode';
 export const OPENCODE_SESSION_PREFIX = 'opencode:';
+/** The checkout's instruction files a run gives OpenCode: worca names both as `instructions` (instructionFiles below), so
+ *  both load, not only OpenCode's own AGENTS.md-else-CLAUDE.md pick (docs.opencode.ai/docs/rules/). */
+export const OPENCODE_INSTRUCTION_FILES = Object.freeze(['AGENTS.md', 'CLAUDE.md']);
 /** The only env names besides the base set that survive scrub on OpenCode: provider keys need the allowlist. */
 const OPENCODE_ENV_PREFIXES = ['OPENCODE_'];
 /** The opt-in that lets a spawn without a model run on OpenCode's own default (possibly a free OpenCode Zen model). */
@@ -466,7 +469,7 @@ const isBenignStderr = (line) => /message="share subscriber failed"/.test(line);
 const FREE_TIER_NOTE = 'OpenCode Zen\'s free models refuse a run without the shell tool — the guardrail set denies the whole shell (a bare Bash rule); pick a model of another provider, or a set without it';
 
 /** The checkout's own instruction files, by absolute path (OPENCODE_DISABLE_PROJECT_CONFIG turns their discovery off). */
-const instructionFiles = (cwd) => ['AGENTS.md', 'CLAUDE.md'].map((f) => join(cwd, f)).filter((p) => existsSync(p));
+const instructionFiles = (cwd) => OPENCODE_INSTRUCTION_FILES.map((f) => join(cwd, f)).filter((p) => existsSync(p));
 
 /**
  * Run one OpenCode turn. Same resolved value and rejection contract as the Claude adapter: {text, exitCode}; an

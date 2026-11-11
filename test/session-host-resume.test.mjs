@@ -287,7 +287,7 @@ test('v2 — C19: a resumed run resolves its sessions again (the gate\'s line is
   const o2 = resumeOf(orch, id);
   assert.equal((await o2.resume()).status, 'done');
   const audit = (await readPipeline(o2.projectDir, id)).auditMarkdown;
-  assert.equal(audit.split(`session ${SID}: sub-agents on Claude (3 steps: Plan, Implementation, Review Implementation; main agent the first step's model)`).length - 1, 2, audit);
+  assert.equal(audit.split(`session ${SID}: sub-agents on Claude Code (3 steps: Plan, Implementation, Review Implementation; main agent the first step's model)`).length - 1, 2, audit);
   const k = await pauseMidTurn({ workflowId: 'wf_sess_resume', nodeId: 'n_review' });
   process.env.WORCA_SESSIONS_DISABLE = '1';
   const before = readPipelineStateById(k.id).sessionHosts[SID];

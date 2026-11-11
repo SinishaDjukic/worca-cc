@@ -5,28 +5,25 @@ The redesign of Worca, one page at a time. The rules every Rail page follows liv
 
 The prototype's code here is the source. The **Worca Rail** page is generated from the branch by
 `node tools/rail-artifact.mjs` (the rules, the catalog, the library's gallery) and never edited by hand. The old
-**Prototype** artifact is retired as a source: never build from it or edit it.
+**Prototype** artifact is retired as a source: never build from it or edit it. `prototype/today/` is a capture of the old app: never built from or compared against.
 
 | Page | Spec | Status |
 |---|---|---|
-| Run and group page | `spec.md` (review `review.md`; `enrollment.md` is the old shipping plan, replaced by `wave-1.md`) | In the prototype |
+| Run and group page | `spec.md` (review `review.md`; `enrollment.md` is the old shipping plan, replaced by `implementation-prompt.md`) | In the prototype |
 | Pulse: the notification hub, usage rings, limit notifications and what a start does near a limit | `pulse.md` | Concept, in the prototype (`pulse.html`) |
-| Runs list and Chats column: dev's functions adapted to Rail, **for reference only**. Their real design is decided in Wave 2 Shaping | `lists-index.md`, `agreed/chat-and-runs-decisions.md` | In the prototype, as reference |
+| Runs list and Chats column: dev's functions adapted to Rail, **for reference only**. Their real design is decided in Wave 2 Shaping | `history/lists-index.md`, `agreed/chat-and-runs-decisions.md` | In the prototype, as reference |
 | Settings: from the profile menu, the sidebar becomes its menu (five groups), one row per decision, records as Lists, search | `docs/rail/settings.md, mocks `mocks/settings-menu-*.png` | In the prototype (`pulse.html` › Settings; `settings/`) |
 
-Wave 2 is being shaped: `wave-2.md`, on `docs/rail-shaping`. Wave 1 (the run and group pages, Pulse, Settings, the shell) is `wave-1.md`; the waves after it, and the design
-system's own consistency work between them, are `waves.md`.
-Where it all stands, Accepted and Shaping, and the open decisions: `game-plan.md`.
+Old wave and game plans are in `history/`: history, superseded by `implementation-prompt.md`, the one plan to build from.
 
 To look at it, `npm run rail` builds the prototype's generated files and opens `prototype/index.html`. What to check by
 eye before accepting it: `review-agreed.md`.
 
 - `prototype/`: the clickable prototype, laid out like the app's files.
   - `index.html` is **the one Worca**: today's shell and pages (`today/`, captured from the app in mock mode by
-    `gates/capture-today.mjs`) with Wave 1 in them, joined by `shell/` (the router and the decisions on today's
+    `gates/capture-today.mjs`) with the Rail pages in them, joined by `shell/` (the router and the decisions on today's
     sidebar and top bar): a run row opens the Rail run page as a full page, Pulse sits in Activity's place, the profile
-    menu opens Settings, and every other page keeps today's design in the Rail colours, apart from the Runs list and the
-    Chats column, which are there as reference for Wave 2. The prototype's own controls fold
+    menu opens Settings, and the pages not yet drawn stay as the capture shows them; the Runs list and the Chats column are there as reference. The prototype's own controls fold
     into its Prototype corner.
   - `run-page.html` and `pulse.html` explore the run page's and Pulse's cases; `components.html` is the gallery.
   - Each feature in its folder: `runs/`, `pulse/`, `settings/`, `design-system/` (the Rail look and the components'

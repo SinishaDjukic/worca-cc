@@ -112,3 +112,4 @@ Building from it:
 - A spec names the need and the component (`the step's primary in the strip, destructive`), never a size or a colour.
 - When no row fits, stop and propose the addition here (a row, then its gallery example) before building it.
 - A choice is never a full-width toggle or radio cards, and a yes or no never covers the page.
+- A ConfirmStrip may carry one text link after its sentence, to read more outside the app; a quiet side that is itself an answer (No thanks) has its own working label, and Esc then takes the strip back without an answer.

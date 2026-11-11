@@ -466,8 +466,8 @@
   const INSTANCE_HELP = { 'worca-api #212': 'Merged into main', 'worca-web #88': 'Checks running', 'worca-docs #31': 'Conflicts with main' };
   const HELP_OF = (t, ctx) => INSTANCE_HELP[t] || R.actionHelp(t, ctx || CTX);
 
-  // Actions this design proposes that today's app does not have (parity audit, 26 Oct): listed with why in the
-  // prototype's intro, never marked on the buttons themselves.
+  // Actions this design introduces that today's app does not have (audit, 26 Oct): each is built for real in the app
+  // (stillhet-wiring.md: new, build it); listed with why in the prototype's intro, never marked on the buttons themselves.
   const PROPOSED = [
     ['Send answer', 'A question is answered under its step in the card; today the answer panel sits apart, above the steps.'],
     ['Pause after this step', 'Lets the current step finish before pausing; today Pause stops at once.'],

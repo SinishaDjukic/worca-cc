@@ -1552,3 +1552,12 @@ test('finished is a plain check, ready a check in a ring, merged the branch; a p
   assert.equal(R.kindMark({ kind: 'project', tone: 'fail' }), R.kindMark({ kind: 'project', tone: 'fail', icon: 'alert' }));
   assert.match(R.kindMark({ kind: 'chat', tone: 'fail', outline: true }), /is-outline/);
 });
+
+test('stillhetInvitation and designSwitch render their roles and hooks', () => {
+  const inv = dom(C.stillhetInvitation({ bugsUrl: 'https://github.com/o/r/issues' }));
+  assert.equal(inv.getAttribute('role'), 'alertdialog');
+  assert.equal(inv.dataset.stillhet, 'invitation');
+  const sw = dom(C.designSwitch({ on: true }));
+  assert.equal(sw.dataset.stillhet, 'design-switch');
+  assert.equal(sw.querySelector('[role="switch"]').getAttribute('aria-checked'), 'true');
+});

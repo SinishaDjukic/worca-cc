@@ -379,6 +379,7 @@ import { parseReleaseChoice } from '../src/shared/release-version.mjs';
 import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, sourcePushRemote, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
+import { getReadiness, reevaluateReadiness, reevaluateAllReadiness, evaluateAddedProject, watchReadiness, readinessAfterSettingsPatch } from '../src/core/repo-readiness/projects.mjs';
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, prBaseBranch, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips, tipsRelation,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
@@ -1250,6 +1251,7 @@ function emitPluginsChanged(action) { emitChanged('plugins-changed', action); }
 metricsEvents.on('changed', (e) => emitChanged('team-metrics-changed', e && e.action ? e.action : null));
 policyEvents.on('changed', (e) => emitChanged('team-policy-changed', e && e.action ? e.action : null));
 projectSyncEvents.on('changed', (e) => emitChanged('project-sync-changed', e && e.projectKey ? e.projectKey : null));
+watchReadiness({ projectSyncEvents, policyEvents, emitChanged, broadcast });
 // D6: every open tab rewrites <html data-flags> and #flag-gates, without a reload.
 flagEvents.on('changed', (flags) => broadcast({ type: 'flags', flags }));
 
@@ -1486,6 +1488,8 @@ function wireRun(entry) {
       }
       if (name === 'done') {
         entry.status = (payload && payload.status) || 'done';
+        // A finished run adds to the project's run history, a readiness signal (used.mjs).
+        if (entry.projectDir && !entry.workspaceId) void reevaluateReadiness(projectKey(entry.projectDir));
         // Remember the pause reason for summarizeRuns (hello). Reset on every
         // done so a later reasonless finish cannot leave a stale cost banner.
         entry.pauseReason = (payload && payload.reason) || null;
@@ -5885,6 +5889,7 @@ async function applyProjectSettingsPatch(project, patch) {
   else write();
   if (teamSwitch && isTeamMemoryOn(project.key) !== wasOn) void teamMemorySettingChanged(project.key, project.path).catch(teamWarn);   // on: fetch now · off: drop the queue
   emitChanged('settings-changed');
+  readinessAfterSettingsPatch(project, patch);
   return projectSettingsState(project.path);
 }
 const commentIdParam = (res, value) => {
@@ -7068,6 +7073,7 @@ async function startCloneJob(req) {
         .then(() => emitChanged('team-metrics-changed', 'discovered'))
         .catch(() => { /* offline or not a git repo: discovery retries hourly */ });
       discoverPolicy(project.path, { force: true }).catch(() => { /* offline: the background discovery retries */ });
+      void evaluateAddedProject(project.path);
       detectTeamMemorySoon(project.path);
     } catch (err) {
       Object.assign(job, { state: 'error', code: err instanceof CloneError ? err.code : 'failed', error: err && err.message ? err.message : String(err) });
@@ -8154,6 +8160,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasCommandSummaryModelKey) await setCommandSummaryModel(body.commandSummaryModel, { models: csModels }); if (secondOpinionModels) await setSecondOpinionModel(body.secondOpinionModel, { models: secondOpinionModels });
     if (hasWorkspaceScanKey) await setWorkspaceScanModels(body.workspaceScan, { models: wsScanModels });
     if (hasRunEngineKey) await asSettingsField('runEngine', () => setRunEngineSetting(body.runEngine));
+    if (hasRunEngineKey) void reevaluateAllReadiness();   // which tool each project judges follows run.engine
     if (hasStepModelsKey) await asSettingsField('stepModels', () => setStepModels(body.stepModels));
     if (hasModelRolesKey) await asSettingsField('modelRoles', () => setModelRoles(modelRolesPatch));
     if (hasUtilityModelsKey) await asSettingsField('utilityModels', () => setUtilityModels(body.utilityModels));
