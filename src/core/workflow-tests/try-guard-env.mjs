@@ -169,7 +169,9 @@ const pathKeyOf = (env) => Object.keys(env).find((k) => k.toUpperCase() === 'PAT
  * Set-Alias or a git alias configured in an earlier, separate command; tokens a WSL profile sets (GH_TOKEN in
  * ~/.bashrc, /etc/environment); tokens in files (~/.npmrc, ~/.docker/config.json, gh / glab config inside WSL, and
  * ~/.netrc, which git's HTTP sends: probe askpass);
- * git http.extraheader / url.insteadOf tokens; image pushes beyond docker / podman / nerdctl push, image / manifest /
+ * git http.extraheader / url.insteadOf tokens; git's http.cookieFile (such as ~/.gitcookies) and client certificates
+ * (http.sslCert / http.sslKey) in the person's git config; VS Code's git IPC socket or pipe, which a program can still
+ * find without the env keys this guard drops; image pushes beyond docker / podman / nerdctl push, image / manifest /
  * compose push, build --push, buildah push, skopeo copy to docker://, crane push / copy and helm push (e.g. oras, ko,
  * jib, kaniko, or an image tool run through a package runner: `pnpm dlx <image tool> push`); other credential env vars
  * than those listed above; `curl -K` config files; a PowerShell -Method given as a variable; Send-MailMessage and .NET web calls

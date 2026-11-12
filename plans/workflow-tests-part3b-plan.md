@@ -4729,7 +4729,7 @@ From `.superpowers/sdd/final-review-engine.md` (2026-11-12); its must-fix E1 and
 - Row 19: run warnings of a hidden try are never shown (every security warning lands there); surface them before the Labs flag graduates.
 - Row 20: `carryLine` spoofing: CLI stderr starting with the carry prefix adds or swallows a hidden run warning; use a non-stderr event for Worca's own lines.
 - Row 25: the frontmatter reader and the C1 sandbox schema mirror CLI 2.1.318; add a mechanical per-version check and a run-log note for a newer CLI.
-- Row 26: a failed rewrite, crash or kill leaves the raw `connector-calls.ndjson`, shown unredacted after a restart; quarantine or redact it at boot, or state it.
+- Row 26: a failed rewrite, crash or kill leaves the raw `connector-calls.ndjson`, shown unredacted after a restart; now stated in the changelog; quarantine or redact it at boot later.
 - Row 27: owner-file cleanup untested (T9 m2).
 - Row 29: a failed heartbeat or cache write is swallowed (T9 m4; see O8).
 - Row 30: `keep` temp files never swept (disk only).
@@ -4739,10 +4739,10 @@ From `.superpowers/sdd/final-review-engine.md` (2026-11-12); its must-fix E1 and
 - Row 34: docs say the copy's filters run "only under the try guard" (sync note wording).
 - O1: the nested `.claude` match is case-sensitive; compare case-insensitively on win32 and darwin (`.Claude`).
 - O2: a linked folder below the checkout that holds `.claude/skills` is never entered; name it as a limit or remove such links.
-- O3: registry set skills (`--plugin-dir`) keep their frontmatter hooks in Pretend; stripping them in Worca's plugin copy needs a user decision.
+- O3: DONE (user decision, `5c212d5fa`): registry set skills loaded through `--plugin-dir` lose their frontmatter hooks in Worca's plugin copy in a Pretend try.
 - O4: D72 / L6 wording was too strong after the M10 probe (softened in the changelog and D72); or re-run the strip before each step.
 - O5: `ANTHROPIC_CUSTOM_HEADERS` is redacted only as a whole value; add each header line's value (8+ chars) to the redact list.
-- O6: changelog limits: L2-L5 and M11's payload-only proof are now in; still missing the M13 restart case and the canary as the sandbox schema's only backstop (and M11 in the PR's test plan).
+- O6: changelog limits: L2-L5, M11's payload-only proof, `~/.netrc` and the M13 crash/restart case are now in; still missing the canary as the sandbox schema's only backstop (and M11 in the PR's test plan).
 - O8: `sweepBeforeRuns` removes owner files without a liveness check; a second UI can remove a clone mid-run.
 - O9: `SSH_AUTH_SOCK` is inherited by tries (direct `ssh` / `scp` only; git over ssh is blocked); dropping it is defence in depth.
 

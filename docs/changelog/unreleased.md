@@ -97,6 +97,10 @@ Pull requests (add each number when it opens):
     a normal run would. The try's log says how many of your deny rules it follows.
   - Worca turns off `autoAllowBashIfSandboxed` in a try that does not load your settings. This is checked in the settings
     Worca hands Claude Code, not yet in a run on Linux or macOS.
+  - git still sends a login kept in `~/.netrc` (`_netrc` on Windows) when a try pushes in a way Worca does not stop, such as
+    from a script. No setting Worca can give git turns this off, so do not keep forge logins there while you test.
+  - A try cut short by a crash, a kill or a restart of Worca can show its connector calls without hiding the secrets in
+    them.
   - Steps on other engines keep their own plugins and settings.
   - Pretend tries made before this part can still be reused.
   - Test names are read only from TAP, node:test spec, pytest (`-rA` or `-v`), Jest verbose and Vitest verbose output, and
