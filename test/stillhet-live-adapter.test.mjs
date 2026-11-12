@@ -6,9 +6,9 @@ import { startLive, SOURCES as URLS } from '../ui/public/stillhet/live/live-adap
 import { SOURCES, NOW } from './helpers/stillhet-live-fixture.mjs';
 const ANSWER = { [URLS.history]: SOURCES.history, [URLS.threads]: SOURCES.threads, [URLS.groups]: SOURCES.groups, [URLS.schedules]: SOURCES.schedules, [URLS.projects]: SOURCES.projects, [URLS.sync]: SOURCES.sync, [URLS.budget]: SOURCES.budget, [URLS.actions]: SOURCES.actions, [URLS.notifications]: SOURCES.notifications, [URLS.away]: SOURCES.away, [URLS.settings]: SOURCES.settings };
 
-function rig({ status = () => 200 } = {}) {
+function rig({ status = () => 200, answer = (u) => ANSWER[u] ?? {}, hold = () => null } = {}) {
   const calls = [], sockets = [], timers = [];
-  const fetch = async (u, o = {}) => { calls.push({ u, method: o.method || 'GET' }); const s = status(u); return { ok: s < 300, status: s, json: async () => ANSWER[u] ?? {} }; };
+  const fetch = async (u, o = {}) => { calls.push({ u, method: o.method || 'GET' }); const h = hold(u); if (h) await h; const s = status(u); const a = answer(u); return { ok: s < 300, status: s, json: async () => a }; };
   class FakeSocket { constructor(url) { this.url = url; sockets.push(this); } close() { this.closed = true; } send() {} }
   const tick = async (ms = 0) => { for (const t of timers.filter((x) => !x.done && x.ms <= ms)) { t.done = true; t.fn(); } for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
   const st = { list: 'loading', conn: '' }, log = [], rows = new Map();
@@ -121,6 +121,10 @@ test('close: offline; reopen clears it only after the re-fetch; a failed re-fetc
   await r.tick();
   assert.equal(r.st.conn, '');
   assert.equal(r.st.list, 'refresh');
+  down = false;
+  r.frame(r.sockets[2], { type: 'pipelines-changed' });
+  await r.tick(250);
+  assert.equal(r.st.list, 'refresh', 'one good refetch does not clear the look while the other sources are still out of date');
   r.sockets[2].onclose({ code: 4001 });
   assert.equal(r.st.conn, 'session');
   await r.tick(60000);
@@ -144,5 +148,95 @@ test('ask-done for a chat that is not open lights its dot through a threads refe
   r.frame(r.sockets[0], { type: 'ask-done', threadId: 'ask_2', messageId: 'm', seq: 1 });
   await r.tick(250);
   assert.deepEqual(r.calls.slice(n).map((c) => c.u), [URLS.threads]);
-  assert.deepEqual(r.log.filter((x) => x[0] === 'load').at(-1)[1], ['chats']);
+  assert.deepEqual(r.log.filter((x) => x[0] === 'load').at(-1)[1], ['chats', 'chatsNeeds']);
+});
+
+test('a socket that closes before its hello: the reconnect hello is the first load; frames apply and *-changed refetches', async () => {
+  const r = rig();
+  await r.tick();
+  r.frame(r.sockets[0], { type: 'title', runId: 'run-b', seq: 1, title: 'Queued' });
+  r.sockets[0].onclose({ code: 1006 });
+  await r.tick(1000);
+  assert.equal(r.sockets.length, 2);
+  r.frame(r.sockets[1], hello);
+  await r.tick();
+  assert.equal(r.st.list, '');
+  assert.equal(r.rows.get('run-b').title, 'Queued', 'the queue is applied');
+  r.frame(r.sockets[1], { type: 'title', runId: 'run-b', seq: 2, title: 'Live' });
+  assert.equal(r.rows.get('run-b').title, 'Live');
+  const n = r.calls.length;
+  r.frame(r.sockets[1], { type: 'pipelines-changed' });
+  await r.tick(250);
+  assert.deepEqual(r.calls.slice(n).map((c) => c.u), [URLS.history]);
+});
+
+test('Try again during a reconnect wait opens one socket, and the wait opens no second', async () => {
+  const r = rig();
+  await r.tick();
+  r.frame(r.sockets[0], hello);
+  r.sockets[0].onclose({ code: 1006 });
+  await r.live.retry(); await r.tick();
+  assert.equal(r.sockets.length, 2, 'retry opens it now');
+  await r.tick(60000);
+  assert.equal(r.sockets.length, 2, 'the pending reconnect was dropped');
+  await r.live.retry(); await r.tick(60000);
+  assert.equal(r.sockets.length, 2, 'retry with a socket open opens none');
+});
+
+test('a full fetch that lands after a newer single-source answer does not overwrite it', async () => {
+  let release, held = false;
+  const gate = new Promise((res) => { release = res; });
+  let fresh = false;
+  const newer = { pipelines: [...SOURCES.history.pipelines, { id: 'h9', title: 'Newer', status: 'paused', projectName: 'api', startedAt: SOURCES.history.pipelines[1].startedAt }] };
+  const r = rig({ hold: (u) => (held && u === URLS.history ? gate : null), answer: (u) => (u === URLS.history && fresh ? newer : ANSWER[u] ?? {}) });
+  await r.tick();
+  r.frame(r.sockets[0], hello);
+  r.sockets[0].onclose({ code: 1006 });
+  await r.tick(1000);
+  held = true;
+  r.frame(r.sockets[1], hello);          // the reconnect's full fetch: its history answer (the older one) is held
+  await r.tick();
+  held = false; fresh = true;
+  r.frame(r.sockets[1], { type: 'pipelines-changed' });
+  await r.tick(250);
+  assert.ok(r.rows.get('h9'), 'the newer answer is drawn');
+  fresh = false; release(); await r.tick();
+  assert.ok(r.rows.get('h9'), 'the older full-fetch answer did not replace it');
+});
+
+test('opening a failed task the run left unread: it leaves Needs you, and stays out after a refetch', async () => {
+  const r = rig();
+  await r.tick();
+  r.frame(r.sockets[0], hello);
+  r.frame(r.sockets[0], { type: 'done', runId: 'run-b', seq: 1, status: 'error' });
+  assert.equal(r.rows.get('run-b').case, 'failed');
+  r.live.seenRun('run-b');
+  assert.equal(r.rows.get('run-b').case, 'stopped');
+  assert.equal(r.log.at(-1)[0], 'onMove', 'through the store\'s move');
+  r.frame(r.sockets[0], { type: 'pipelines-changed' });
+  await r.tick(250);
+  assert.equal(r.rows.get('run-b').case, 'stopped', 'still calm after the runs are read again');
+});
+
+test('a resumed run that names a saved pipeline keeps it once, live; an agent generation gets no task', async () => {
+  const r = rig();
+  await r.tick();
+  r.frame(r.sockets[0], hello);
+  assert.ok(r.rows.get('h1'), 'the saved pause');
+  r.frame(r.sockets[0], { type: 'run-created', runId: 'run-r', title: 'Old pause', status: 'starting', projectDir: '/src/api' });
+  r.frame(r.sockets[0], { type: 'state', runId: 'run-r', id: 'h1', status: 'running' });
+  assert.ok(!r.rows.get('h1'), 'its saved row goes');
+  assert.equal(r.rows.get('run-r').case, 'working');
+  r.frame(r.sockets[0], { type: 'run-created', runId: 'gen-1', kind: 'agentgen', status: 'running', title: 'An agent' });
+  assert.ok(!r.rows.get('gen-1'));
+});
+
+test('a reconnect hello passes its flags to the host (rail turned off while offline)', async () => {
+  const r = rig();
+  await r.tick();
+  r.frame(r.sockets[0], hello);
+  r.sockets[0].onclose({ code: 1006 });
+  await r.tick(1000);
+  r.frame(r.sockets[1], { ...hello, flags: { rail: false } });
+  assert.deepEqual(r.host.flags, [{ rail: false }]);
 });

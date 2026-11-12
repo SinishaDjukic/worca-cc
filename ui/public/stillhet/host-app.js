@@ -27,7 +27,8 @@
   document.addEventListener('visibilitychange', attempt);
   var host = {
     name: 'app',
-    flagsChanged: function (flags) { if (!flags || flags.rail !== false) return; waiting = true; attempt(); },
+    // rail back on before the reload happened: nothing to wait for any more (dev's watchRailReload resets the same way)
+    flagsChanged: function (flags) { if (!flags) return; if (flags.rail !== false) { waiting = false; toasted = false; return; } waiting = true; attempt(); },
     stillhetOn: function () { return true; },
     // locked by WORCA_FLAGS (the shell's stamp, src/core/stillhet-shell.mjs): the switch is drawn disabled and says why
     railLocked: function () { var h = document.documentElement; return !!h && h.getAttribute('data-rail-locked') === 'true'; },

@@ -4,7 +4,7 @@
 // Add project card), so the bar's + arms it there.
 (function () {
   const R = window.RailUI;
-  const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const esc = R.esc;   // the library's: it escapes the double quote too
   const say = (t, undo) => window.RailPulse?.say(t, undo);
   // dev's origin states (branch-sync), each with its words, how it stands and its one way on
   const ORIGIN = {
@@ -19,6 +19,9 @@
   };
   // the live kind (D9): the store's projects, read on every read; the demo's seed otherwise
   const W = window.RailWorld;
+  const nameOf = (p) => p.name || p.id;   // live: dev's name (the id is its key); the demo's id is its name
+  // the live kind (D8): a project's own actions are the Projects slice's; until then they write nothing and say so
+  const notLive = (p, what) => { if (!W?.live) return false; say(`${p ? `${nameOf(p)}: ` : ''}${what} is not in Stillhet yet. It is on the wiring list.`); return true; };
   let seeded;
   const data = { get projects() { return W?.live ? W.part('projects') : seeded; }, set projects(v) { seeded = v; } };
   data.projects = [
@@ -64,13 +67,13 @@
   const toneOfTask = (t) => R.markTone(R.runState(window.RunCardModel.stateOf(t.case)));
   const inTasksNeeds = (id, t) => (window.RailWorld?.tops() || []).some((x) => !x.archived && x.section === 'needs' && x.project === id && x.title === t.title);
   const waitingOn = (id, t) => ['ask', 'act'].includes(toneOfTask(t)) || inTasksNeeds(id, t);   // the same rows as Tasks' Needs you: an approved task ready to merge waits on you too
-  const asking = (p) => tasksOf(p.id).filter(({ t }) => waitingOn(p.id, t)).sort((a, b) => R.alertLevel(toneOfTask(b.t)) - R.alertLevel(toneOfTask(a.t)));   // the tasks here waiting on you, highest level first (look.alert-ladder)
+  const asking = (p) => tasksOf(nameOf(p)).filter(({ t }) => waitingOn(nameOf(p), t)).sort((a, b) => R.alertLevel(toneOfTask(b.t)) - R.alertLevel(toneOfTask(a.t)));   // the tasks here waiting on you, highest level first (look.alert-ladder)
   // ---- how a project stands: one answer for its card, its bar row and the bell (panel.center-shelf) ----
   const C = () => window.RailCenters, List = () => window.RailRunsList, Sch = () => window.RailSchedules;
   const link = (label, hook, tip) => R.textLink({ label, attrs: { ...hook, title: tip || null } });
   const inCenter = () => !!(C() && List()?.rows && Sch()?.all);
   function standing(p) {
-    const rows = inCenter() ? List().rows().filter((t) => t.project === p.id) : [], c = (sec) => rows.filter((t) => t.section === sec), scheds = inCenter() ? Sch().all().filter((s) => s.project === p.id) : [];
+    const rows = inCenter() ? List().rows().filter((t) => t.project === nameOf(p)) : [], c = (sec) => rows.filter((t) => t.section === sec), scheds = inCenter() ? Sch().all().filter((s) => s.project === nameOf(p)) : [];
     const tasks = c('needs').map(C()?.taskOf || (() => null)).filter(Boolean).sort((a, b) => R.taskRank(C().stateOf(a)) - R.taskRank(C().stateOf(b)));
     const missed = scheds.filter((s) => s.section === 'needs'), running = c('running'), waiting = c('scheduled'), live = scheds.filter((s) => Sch().running(s.id));
     const top = tasks[0], stopped = o(p).tone === 'fail', split = p.origin === 'diverged';
@@ -85,7 +88,7 @@
     if (p.origin === 'behind') return { ...base, word: wordOf(p), tone: 'idle', kind: 'project', rank: 4, what: 'New tasks start from origin; syncing touches nothing of yours', action: originBtn('quiet') };
     return { ...base, word: '', tone: 'idle', kind: 'project', rank: 9, what: 'Nothing is going on here.', action: openBtn(p), quiet: true };
   }
-  const openBtn = (p) => R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-pj-go': p.id, title: `Opens ${p.id}` } });
+  const openBtn = (p) => R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-pj-go': p.id, title: `Opens ${nameOf(p)}` } });
   const litTone = (t) => ['fail', 'ask', 'act'].includes(t) || t === 'ok';   // Advisory counts under Needs you too (look.alert-ladder)
   const standsOut = (s) => litTone(s.tone);
   const markOf = (s, size) => R.kindMark({ kind: s.kind, tone: s.tone, advisory: s.tone === 'ok', breathe: standsOut(s), size, title: s.word || undefined });
@@ -95,7 +98,7 @@
   const stateIdOf = (t) => window.RunCardModel.stateOf(t.case);
   const markTone = (p) => (o(p).tone === 'fail' || !asking(p).length ? o(p).tone : ['ask', 'act'].includes(toneOfTask(asking(p)[0].t)) ? 'ask' : toneOfTask(asking(p)[0].t));
   const mark = (p, size) => R.kindMark({ kind: 'project', tone: markTone(p), advisory: markTone(p) === 'ok', size, title: wordOf(p) });
-  const rowOf = (p) => ({ key: `proj:${p.id}`, _p: p, title: p.id, mark: standsOut(standing(p)) ? markOf(standing(p)) : mark(p), end: endOf(p), current: p.id === pid() && !(adv() && window.RailSpaces?.member(p.id)), tip: `${p.id}\n${p.kind} · ${p.path}\n${wordOf(p)}`,
+  const rowOf = (p) => ({ key: `proj:${p.id}`, _p: p, title: nameOf(p), mark: standsOut(standing(p)) ? markOf(standing(p)) : mark(p), end: endOf(p), current: p.id === pid() && !(adv() && window.RailSpaces?.member(p.id)), tip: `${nameOf(p)}\n${p.kind} · ${p.path}\n${wordOf(p)}`,
     menu: [...actItem(p), newTaskItem(p), { id: 'tasks', text: 'Show its tasks', help: 'Tasks, from this project' }, fetchItem(p), { sep: true }, { id: 'remove', text: 'Remove…', danger: true, help: 'Worca forgets it; its folder and tasks stay' }] });
   function actItem(p) { return o(p).act ? [{ id: 'act', text: o(p).act, help: o(p).why }] : []; }
   // what there is to fetch from: why not, when there is nothing
@@ -106,14 +109,15 @@
   function act(id, rows) {
     const p = rows[0]?._p; if (!p) return;
     if (id === 'act') return originAct(p);
-    if (id === 'task') { window.RailConversation?.handOver({ mode: 'task', project: p.id, about: { kind: 'Project', name: p.id } }); return; }
-    if (id === 'tasks') { window.RailRunsList.filter({ project: p.id }); return; }
-    if (id === 'fetch') { p.checked = 'just now'; draw(); say(`Checked ${p.base || p.id}`); return; }
-    if (id === 'remove') { current = p.id; confirm = { what: 'remove', p }; window.RailShell.go(`projects/${p.id}`); }
+    if (id === 'task') { window.RailConversation?.handOver({ mode: 'task', project: p.id, about: { kind: 'Project', name: nameOf(p) } }); return; }
+    if (id === 'tasks') { window.RailRunsList.filter({ project: nameOf(p) }); return; }
+    if (id === 'fetch') { if (notLive(p, 'Check origin now')) return; p.checked = 'just now'; draw(); say(`Checked ${p.base || p.id}`); return; }
+    if (id === 'remove') { if (notLive(p, 'Remove')) return; current = p.id; confirm = { what: 'remove', p }; window.RailShell.go(`projects/${p.id}`); }
   }
   function originAct(p) {
+    if (p.origin !== 'diverged' && notLive(p, (o(p).act || '').replace(/…$/, ''))) return;   // diverged hands over to a chat: nothing written
     if (p.origin === 'behind') { const n = p.behind; Object.assign(p, { origin: 'ok', behind: 0, checked: 'just now' }); draw(); say(`Synced ${p.id}: ${n} ${n === 1 ? 'commit' : 'commits'} from ${p.base}`); return; }
-    if (p.origin === 'diverged') { window.RailConversation?.handOver({ project: p.id, about: { kind: 'Project', name: p.id }, text: `It has diverged from ${p.base}: ${p.ahead} ahead, ${p.behind} behind. How should we bring them together?` }); return; }
+    if (p.origin === 'diverged') { window.RailConversation?.handOver({ project: p.id, about: { kind: 'Project', name: nameOf(p) }, text: `It has diverged from ${p.base}: ${p.ahead} ahead, ${p.behind} behind. How should we bring them together?` }); return; }
     if (p.origin === 'local') { p.origin = 'ok'; p.base = 'origin/main'; draw(); say('Linked origin; nothing was pushed'); return; }
     if (p.origin === 'offline') { p.origin = 'ok'; p.checked = 'just now'; draw(); say(`Reached ${p.base}`); return; }
     if (p.origin === 'folder') { Object.assign(p, { kind: 'Git', origin: 'local', branch: 'main' }); draw(); say(`${p.id} uses git now; the first task commits what is there`); return; }
@@ -138,24 +142,24 @@
     const via = current.split('@')[1] || firstHome(p.id), homes = adv() ? window.RailSpaces?.list().filter((w) => w.projects.some(([x]) => x === p.id)) || [] : [], here2 = homes.find((w) => w.id === via), also = homes.filter((w) => w !== here2);
     const crumb = '';   // the trail in the head holds it (nav.center-home)
     const waits = asking(p), first = waits[0];   // a question waiting leads; how the project stands comes after it
-    const head = R.placeHead({ center: { label: 'Projects', to: 'projects', via: adv() && here2 ? [{ label: here2.title, attrs: { 'data-pj-go': `ws:${here2.id}` } }] : [] }, title: p.id, facts: esc([also.length ? `Also in ${also.map((w) => w.title).join(', ')}` : '', p.kind, p.path, p.branch].filter(Boolean).join(' · ')), mark: mark(p), word: first ? (waits.length === 1 ? '1 task needs you' : `${waits.length} tasks need you`) : wordOf(p), why: first ? (p.origin === 'ok' ? '' : wordOf(p)) : o(p).why2 ? o(p).why2(p) : p.checked ? `Checked ${p.checked}` : p.files ? `${p.files} files` : '',
+    const head = R.placeHead({ center: { label: 'Projects', to: 'projects', via: adv() && here2 ? [{ label: here2.title, attrs: { 'data-pj-go': `ws:${here2.id}` } }] : [] }, title: nameOf(p), facts: esc([also.length ? `Also in ${also.map((w) => w.title).join(', ')}` : '', p.kind, p.path, p.branch].filter(Boolean).join(' · ')), mark: mark(p), word: first ? (waits.length === 1 ? '1 task needs you' : `${waits.length} tasks need you`) : wordOf(p), why: first ? (p.origin === 'ok' ? '' : wordOf(p)) : o(p).why2 ? o(p).why2(p) : p.checked ? `Checked ${p.checked}` : p.files ? `${p.files} files` : '',
       action: first ? R.button({ label: R.cardAction(stateIdOf(first.t)).label, kind: toneOfTask(first.t) === 'fail' ? 'primary' : '', attrs: { 'data-pj-open': `${first.c.id}|${first.t.title}`, title: `Opens ${first.t.title} in its chat` } }) : o(p).act ? R.button({ label: o(p).act, kind: o(p).quiet ? 'quiet' : '', attrs: { 'data-pj-act': p.id, title: o(p).why } }) : '',
-      menu: R.moreMenu({ id: 'pj-more', label: `More for ${p.id}`, icon: R.icon('more', 16), open: menu === 'pj-more', items: [...(first ? actItem(p) : []), newTaskItem(p), { id: 'tasks', text: 'Show its tasks', help: 'Tasks, from this project' }, fetchItem(p), ...(p.kind === 'Git' && p.origin === 'local' ? [{ id: 'remote', text: 'Link a remote…', help: 'Adds the repository as origin; nothing is pushed' }] : []), { sep: true }, { id: 'remove', text: 'Remove…', danger: true, help: 'Worca forgets it; its folder and tasks stay' }] }) });
-    const strip = confirm && confirm.p === p ? R.confirmStrip({ text: `Remove ${p.id}? Worca forgets it; its folder and its tasks stay, and its schedules stop.`, yes: 'Remove', danger: true }) : '';
-    const tone = toneOfTask, list = tasksOf(p.id).filter(({ t }) => !['ok', 'merged', 'idle'].includes(tone(t)) || waitingOn(p.id, t));   // what is on it now
-    const counts = ['run', 'ask', 'fail', 'ok', 'merged'].map((k) => [k, list.filter(({ t }) => (k === 'ask' ? waitingOn(p.id, t) : tone(t) === k && !waitingOn(p.id, t))).length]).filter(([, n]) => n);
+      menu: R.moreMenu({ id: 'pj-more', label: `More for ${nameOf(p)}`, icon: R.icon('more', 16), open: menu === 'pj-more', items: [...(first ? actItem(p) : []), newTaskItem(p), { id: 'tasks', text: 'Show its tasks', help: 'Tasks, from this project' }, fetchItem(p), ...(p.kind === 'Git' && p.origin === 'local' ? [{ id: 'remote', text: 'Link a remote…', help: 'Adds the repository as origin; nothing is pushed' }] : []), { sep: true }, { id: 'remove', text: 'Remove…', danger: true, help: 'Worca forgets it; its folder and tasks stay' }] }) });
+    const strip = confirm && confirm.p === p ? R.confirmStrip({ text: `Remove ${nameOf(p)}? Worca forgets it; its folder and its tasks stay, and its schedules stop.`, yes: 'Remove', danger: true }) : '';
+    const tone = toneOfTask, list = tasksOf(nameOf(p)).filter(({ t }) => !['ok', 'merged', 'idle'].includes(tone(t)) || waitingOn(nameOf(p), t));   // what is on it now
+    const counts = ['run', 'ask', 'fail', 'ok', 'merged'].map((k) => [k, list.filter(({ t }) => (k === 'ask' ? waitingOn(nameOf(p), t) : tone(t) === k && !waitingOn(nameOf(p), t))).length]).filter(([, n]) => n);
     const WORD = { run: 'working', ask: 'need you', fail: 'failed', ok: 'ready', merged: 'merged' };
     const tasks = list.length ? R.list({ groups: [{ rows: list.map(({ t, c }) => R.listRow({ title: t.title, meta: t.detail || '', mark: R.kindMark({ kind: 'task', tone: tone(t), stage: t.stage, title: t.detail }), open: { 'data-pj-open': `${c.id}|${t.title}`, title: `Opens ${t.title} in its chat` } })) }] })
       : R.emptyState({ title: p.origin === 'missing' ? 'Nothing can start here until its folder is back.' : 'Nothing is on it now.', actions: p.origin === 'missing' ? '' : R.button({ label: 'Start a task', kind: 'quiet', attrs: { 'data-pj-menu': 'task' } }) });
-    const locate = form === 'locate' && locating === p.id ? `<div class="card-form">${R.confirmForm({ form: 'hand', id: 'pj-hand-t', text: `Where is ${p.id} now?`, body: R.field({ id: 'pj-hand-v', label: 'Its folder', placeholder: '~/src/your-project', value: formTyped, error: formErr, attrs: { maxlength: 200 } }) + R.confirmActions({ yes: 'Use this folder' }) })}</div>` : '';
-    const done = tasksOf(p.id).filter(({ t }) => ['ok', 'merged'].includes(tone(t)) && !waitingOn(p.id, t)).slice(0, 5);
+    const locate = form === 'locate' && locating === p.id ? `<div class="card-form">${R.confirmForm({ form: 'hand', id: 'pj-hand-t', text: `Where is ${nameOf(p)} now?`, body: R.field({ id: 'pj-hand-v', label: 'Its folder', placeholder: '~/src/your-project', value: formTyped, error: formErr, attrs: { maxlength: 200 } }) + R.confirmActions({ yes: 'Use this folder' }) })}</div>` : '';
+    const done = tasksOf(nameOf(p)).filter(({ t }) => ['ok', 'merged'].includes(tone(t)) && !waitingOn(nameOf(p), t)).slice(0, 5);
     const lately = done.length ? R.list({ groups: [{ title: 'Lately', rows: done.map(({ t, c }) => R.listRow({ title: t.title, meta: t.detail || '', mark: R.kindMark({ kind: 'task', tone: tone(t), stage: t.stage, title: t.detail }), open: { 'data-pj-open': `${c.id}|${t.title}`, title: `Opens ${t.title} in its chat` } })) }] }) : '';
     const sets = R.settingsSection({ title: 'How its tasks run', meta: 'Yours from Settings until you change them here.', rows: SETS.filter((x) => adv() || !ADVANCED_SETS.includes(x.id)).map((x) => { const def = defOf(p, x), v = p.sets?.[x.id] || def;
       return R.settingsRow({ name: x.name, sentence: `${esc(x.words)} ${pick(`pjs-${x.id}`, v, x.items, x.name, x.id === 'memory' && !p.teamMemory ? TEAM_NOTES : [])}`, changed: v !== def ? [{ name: x.name, was: def }] : false, end: v !== def ? R.button({ label: 'Use yours', kind: 'quiet', attrs: { 'data-pj-reset': x.id, title: `Back to your ${def}` } }) : '' }); }).join('') });
     const setsNow = adv() || setsOpen ? sets : ''; const setsTog = adv() ? '' : `<div class="wf-acts open-line">${R.button({ label: setsOpen ? 'Hide how its tasks run' : 'How its tasks run', kind: 'quiet', icon: R.icon(setsOpen ? 'chevron' : 'chevR', 12), attrs: { 'data-pj-sets': '', 'aria-expanded': String(setsOpen), 'data-folds': '.pj-sets' } })}</div>`;
     const team = R.shows('expert') ? R.settingsSection({ title: 'Team', rows: R.settingsRow({ name: 'Team memory', sentence: p.teamMemory ? 'The team\'s notes for this project are on its worca-memory branch' : 'No team notes yet', end: R.switchButton({ on: !!p.teamMemory, label: 'Team memory', attrs: { 'data-pj-team': p.id } }) }) }) : '';
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${crumb}${head}${strip}${locate}
-      <p class="convo-head">${list.length ? (counts.length === 1 && counts[0][0] === 'ask' ? '' : `On it now: ${counts.map(([k, n]) => `${n} ${k === 'ask' && n === 1 ? 'needs you' : WORD[k]}`).join(', ')}`) : ''}</p>${tasks}${SPEND[p.id] ? R.factsLine([{ n: `$${SPEND[p.id][0]}`, word: 'this month', ...(adv() ? { attrs: { 'data-pj-spend': '', title: `Opens Insights › Spend, of ${p.id}` } } : {}) }, { n: String(taskCount(p.id)), word: taskCount(p.id) === 1 ? 'task' : 'tasks', attrs: { 'data-pj-menu': 'tasks', title: 'Opens Tasks, from this project' } }]) : ''}${lately}${p.origin === 'missing' ? '' /* nothing can start here: what its tasks would get applies once the folder is back */ : `${defaults(p, homes)}${setsTog}${setsNow ? `<div class="pj-sets">${setsNow}</div>` : ''}${team}`}
+      <p class="convo-head">${list.length ? (counts.length === 1 && counts[0][0] === 'ask' ? '' : `On it now: ${counts.map(([k, n]) => `${n} ${k === 'ask' && n === 1 ? 'needs you' : WORD[k]}`).join(', ')}`) : ''}</p>${tasks}${SPEND[p.id] ? R.factsLine([{ n: `$${SPEND[p.id][0]}`, word: 'this month', ...(adv() ? { attrs: { 'data-pj-spend': '', title: `Opens Insights › Spend, of ${p.id}` } } : {}) }, { n: String(taskCount(nameOf(p))), word: taskCount(nameOf(p)) === 1 ? 'task' : 'tasks', attrs: { 'data-pj-menu': 'tasks', title: 'Opens Tasks, from this project' } }]) : ''}${lately}${p.origin === 'missing' ? '' /* nothing can start here: what its tasks would get applies once the folder is back */ : `${defaults(p, homes)}${setsTog}${setsNow ? `<div class="pj-sets">${setsNow}</div>` : ''}${team}`}
     </div></div><div class="convo-dock" id="pj-dock"></div></div>`;
   }
 
@@ -169,7 +173,7 @@
   // what needs you beyond tasks and missed times, each once: the bell and Pulse's Needs you read this list (small-rules)
   function needItems() {
     // live: a missing folder or out of sync (D22); workspace link questions have no live source in this slice
-    if (W?.live) return data.projects.filter((p) => p.needs).map((p) => ({ key: `p:${p.id}`, title: p.id, meta: wordOf(p), kind: 'project', tone: o(p).tone === 'fail' ? 'fail' : 'ask', go: `projects/${p.id}`, project: p.id, tip: `Opens ${p.id}` }));
+    if (W?.live) return data.projects.filter((p) => p.needs).map((p) => ({ key: `p:${p.id}`, title: nameOf(p), meta: wordOf(p), kind: 'project', tone: o(p).tone === 'fail' ? 'fail' : 'ask', go: `projects/${p.id}`, project: p.id, tip: `Opens ${nameOf(p)}` }));
     return [...data.projects.filter((p) => o(p).tone === 'fail' || p.origin === 'diverged').map((p) => ({ key: `p:${p.id}`, title: p.id, meta: wordOf(p), kind: 'project', tone: o(p).tone === 'fail' ? 'fail' : 'ask', go: `projects/${p.id}`, project: p.id, tip: `Opens ${p.id}` })),
       ...spaces().flatMap((w) => window.RailSpaces.questions(w).map((l) => ({ key: `q:${w.id}:${l.from}:${l.to}`, title: w.title, meta: `Does ${l.from} ${l.how.replace(/s\b/, '')} ${l.to}?`, kind: 'workspace', tone: 'ask', go: `projects/ws:${w.id}`, project: '', tip: `Opens ${w.title} at its question` })))];
   }
@@ -181,13 +185,13 @@
   const count = (label, f, tip) => link(label, { 'data-c-filter': JSON.stringify(f) }, tip);
   function factsOf(s, extra = []) {
     const p = s.p, nums = [];
-    if (s.running.length && !s.sentenceRuns) nums.push(count(`${s.running.length} running`, { project: p.id, show: 'running' }, `Opens what runs in ${p.id}`));
-    if (s.waiting.length) nums.push(count(`${s.waiting.length} waiting`, { project: p.id, show: 'waiting' }, `Opens what waits in ${p.id}`));
+    if (s.running.length && !s.sentenceRuns) nums.push(count(`${s.running.length} running`, { project: nameOf(p), show: 'running' }, `Opens what runs in ${nameOf(p)}`));
+    if (s.waiting.length) nums.push(count(`${s.waiting.length} waiting`, { project: nameOf(p), show: 'waiting' }, `Opens what waits in ${nameOf(p)}`));
     return [...nums, ...extra.map(esc)].join(' · ');
   }
   function cardOf(s, extra = []) {
     const p = s.p;
-    return R.pluginCard({ mark: s.quiet ? R.kindMark({ kind: 'project' }) : markOf(s), word: s.word, tone: s.tone === 'idle' ? '' : s.tone, title: p.id, whatHtml: s.what, factsHtml: factsOf(s, extra), factsTip: '', action: s.action, attrs: { 'data-pc-card': p.id, title: SYNC_TIP(p) || null } });
+    return R.pluginCard({ mark: s.quiet ? R.kindMark({ kind: 'project' }) : markOf(s), word: s.word, tone: s.tone === 'idle' ? '' : s.tone, title: nameOf(p), whatHtml: s.what, factsHtml: factsOf(s, extra), factsTip: '', action: s.action, attrs: { 'data-pc-card': p.id, title: SYNC_TIP(p) || null } });
   }
   // "most urgent" and A–Z, for cards and shelves alike
   const RANKED = { 'most urgent': (a, b) => (!!a.loose - !!b.loose) || a.rank - b.rank, 'A–Z': (a, b) => (!!a.loose - !!b.loose) || a.name.localeCompare(b.name) };   // ties keep the projects' own order; On their own is always the last group
@@ -254,7 +258,7 @@
     const p = data.projects.find((x) => x.id === pid());
     if (!p) { page.innerHTML = homeHtml(); keep(); return; }
     page.innerHTML = pageHtml(p);
-    window.RailConversation?.dock(document.getElementById('pj-dock'), { kind: 'project', title: p.id, chat: '' });
+    window.RailConversation?.dock(document.getElementById('pj-dock'), { kind: 'project', title: nameOf(p), chat: '' });
     keep();
   }
   // panel.dismiss: focus returns to what opened it: Locate on the page, the bar's + otherwise
@@ -297,15 +301,18 @@
       if (form === 'locate' && (hit = on('[data-confirm]'))) { const v = page.querySelector('#pj-hand-v')?.value.trim() || '', p = data.projects.find((x) => x.id === locating); if (hit.dataset.confirm !== 'yes' || !p) { closeForm(); return; } if (!v || v === p.path) { formTyped = v; formErr = v ? 'That is where it was: give where it is now' : 'It needs a folder'; draw(); page.querySelector('#pj-hand-v')?.focus(); return; } if (pathWrong(v)) { formTyped = v; formErr = pathWrong(v); draw(); page.querySelector('#pj-hand-v')?.focus(); return; } form = ''; formTyped = ''; formErr = ''; Object.assign(p, { path: v, origin: 'ok', checked: 'just now' }); draw(); say(`${p.id} now uses ${v}`); return; }
       if (form && (hit = on('[data-confirm]'))) { const v = page.querySelector('#pj-hand-v')?.value.trim() || '', kind = form; if (hit.dataset.confirm !== 'yes') { closeForm(); return; } const id = kind === 'project' ? (v.split(/[/:]/).filter(Boolean).pop() || '').replace(/\.git$/, '') : '', wrong = !v || (kind === 'project' && !id) ? (kind === 'project' ? 'It needs a folder or a repository' : 'It needs a name') : kind === 'project' ? (pathWrong(v, true) || (id.length > NAME_MAX ? `A project's name holds ${NAME_MAX} characters; this folder's has ${id.length}` : data.projects.some((x) => x.id === id) ? `${id} is already a project` : '')) : (window.RailSpaces.named(v) ? `${window.RailSpaces.named(v).title} already exists` : ''); if (wrong) { formTyped = v; formErr = wrong; draw(); page.querySelector('#pj-hand-v')?.focus(); return; } form = ''; formTyped = ''; formErr = ''; if (kind === 'project') { window.RailProjects.add({ id, path: v, kind: 'Git', origin: 'local', branch: 'main' }); say(`Added ${id}`); window.RailShell.go(`projects/${id}`); return; } const wsId = window.RailSpaces.add({ title: v, fresh: true }); window.RailShell.go(`projects/ws:${wsId}`); return; }
       const p = data.projects.find((x) => x.id === pid()); if (!p || !page.querySelector('#pj-dock')) return;
+      if (on('[data-def-edit]') && notLive(p, 'Cost tags and labels')) return;
       if (defaultsClick(e, p, draw)) return;      if (on('[data-pj-spend]')) { window.RailPlaces.insights.spendOf(p.id); return; }
       if (on('[data-pj-sets]')) { setsOpen = !setsOpen; draw(); return; }
       if ((hit = on('[data-pj-act]'))) { originAct(p); return; }
+      if ((hit = on('[data-pj-reset], [data-pj-team]')) && notLive(p, hit.matches('[data-pj-team]') ? 'Team memory' : 'How its tasks run')) return;
       if ((hit = on('[data-pj-reset]'))) { delete p.sets[hit.dataset.pjReset]; draw(); say('Back to yours'); return; }
       if ((hit = on('[data-pj-team]'))) { p.teamMemory = !p.teamMemory; if (p.sets) delete p.sets.memory; draw(); say(p.teamMemory ? 'Team memory on' : 'Team memory off'); return; }
       if ((hit = on('[data-confirm]'))) { if (hit.dataset.confirm === 'yes') { const i = data.projects.indexOf(p), back = window.RailSpaces?.forget(p.id); data.projects.splice(i, 1); confirm = null; current = ''; say(`Removed ${p.id}`, { tip: 'Puts it back', run: () => { data.projects.splice(i, 0, p); back?.(); draw(); } }); window.RailShell.go('projects'); } else { confirm = null; draw(); } return; }
       if ((hit = on('[data-pj-menu]'))) { act(hit.dataset.pjMenu, [{ _p: p }]); return; }
       if ((hit = on('[data-menu-pick]'))) {
         const [id, v] = hit.dataset.menuPick.split('|'); menu = '';
+        if ((id === 'pj-more' && v === 'remote') || id.startsWith('pj-pay-') || id.startsWith('pjs-')) { if (notLive(p, id === 'pj-more' ? 'Link a remote' : id.startsWith('pjs-') ? 'How its tasks run' : 'Who pays')) { draw(); return; } }
         if (id === 'pj-more') { if (v === 'remote') { p.origin = 'ok'; p.base = 'origin/main'; draw(); say('Linked origin; nothing was pushed'); } else act(v, [{ _p: p }]); return; }
         if (id.startsWith('pj-pay-')) { if (v !== 'ask') { const was = p.tags || []; p.tags = [...was, v]; draw(); say(`New tasks here charge ${v}`, () => { p.tags = was; draw(); }); } else draw(); return; }
         if (id.startsWith('pjs-')) { const x = SETS.find((s) => s.id === id.slice(4)); if ((p.sets?.[x.id] || defOf(p, x)) === v) { draw(); return; } p.sets = p.sets || {}; p.sets[id.slice(4)] = v; draw(); say(`${SETS.find((x) => x.id === id.slice(4)).name} for ${p.id}: ${v}`); return; }
@@ -323,10 +330,10 @@
   }
   // a half-typed cost tag or label does not wait for you on another page
   window.addEventListener('hashchange', () => { [...data.projects, ...(window.RailSpaces?.list() || [])].forEach((x) => { delete x.editing; delete x.defErr; delete x.defTyped; }); });
-  window.RailProjects = { needItems, all: () => data.projects, editTags: (id) => { window.RailShell.go(`projects/${id}`); setTimeout(() => { const p = data.projects.find((x) => x.id === id); if (!p) return; p.editing = 'tags'; draw(); document.getElementById('def-tags')?.focus(); }, 80); }, sync: (id) => { const p = data.projects.find((x) => x.id === id); if (p?.origin === 'behind') Object.assign(p, { origin: 'ok', behind: 0, checked: 'just now' }); }, spend: (id) => SPEND[id]?.[0] || 0, hint: (id) => { const p = data.projects.find((x) => x.id === id); return p ? (p.origin === 'behind' ? `${p.behind} behind` : shortOf(p) || '') : ''; }, list: () => data.projects, add: (p) => { if (!data.projects.some((x) => x.id === p.id)) data.projects.push({ kind: 'Git', origin: 'local', branch: 'main', ...p }); ctl?.paint(); } };
+  window.RailProjects = { needItems, all: () => data.projects, editTags: (id) => { if (notLive(null, 'Cost tags')) return; window.RailShell.go(`projects/${id}`); setTimeout(() => { const p = data.projects.find((x) => x.id === id); if (!p) return; p.editing = 'tags'; draw(); document.getElementById('def-tags')?.focus(); }, 80); }, sync: (id) => { if (W?.live) return; const p = data.projects.find((x) => x.id === id); if (p?.origin === 'behind') Object.assign(p, { origin: 'ok', behind: 0, checked: 'just now' }); }, spend: (id) => SPEND[id]?.[0] || 0, hint: (id) => { const p = data.projects.find((x) => x.id === id); return p ? (p.origin === 'behind' ? `${p.behind} behind` : shortOf(p) || '') : ''; }, list: () => data.projects, add: (p) => { if (notLive(null, 'Adding a project')) return; if (!data.projects.some((x) => x.id === p.id)) data.projects.push({ kind: 'Git', origin: 'local', branch: 'main', ...p }); ctl?.paint(); } };
   if (window.RailFirstRun) data.projects = [];   // the first run: nothing added yet
   window.RailPlaces = window.RailPlaces || {};
-  window.RailPlaces.projects = { has: (a) => (a.startsWith('ws:') ? (window.RailSpaces?.list() || []).some((w) => w.id === a.slice(3)) : data.projects.some((p) => p.id === a.split('@')[0])), defaults: defaultsRows, defaultsClick, defaultsKey, redraw: () => draw(), get newMenu() { return adv() ? newMenuItems : null; }, get newAct() { return adv() ? () => window.RailConversation?.starter('project') : null; }, get newLabel() { return adv() ? 'Add project' : ''; }, newPick: (id) => { if (id === 'project' || id === 'workspace') { window.RailConversation?.starter(id); return; } form = id === 'hand-project' ? 'project' : 'space'; if (current) window.RailShell.go('projects'); setTimeout(() => { draw(); page?.querySelector('#pj-hand-v')?.focus(); }, 60); }, search: (q) => [...data.projects.filter((p) => `${p.id} ${p.path}`.toLowerCase().includes(q)).map((p) => ({ label: p.id, where: wordOf(p), hash: `projects/${p.id}` })), ...spaces().filter((w) => w.title.toLowerCase().includes(q)).map((w) => ({ label: w.title, where: 'Workspace', hash: `projects/ws:${w.id}` }))], sample: 'billing-api',
+  window.RailPlaces.projects = { has: (a) => (a.startsWith('ws:') ? (window.RailSpaces?.list() || []).some((w) => w.id === a.slice(3)) : data.projects.some((p) => p.id === a.split('@')[0])), defaults: defaultsRows, defaultsClick, defaultsKey, redraw: () => draw(), get newMenu() { return adv() ? newMenuItems : null; }, get newAct() { return adv() ? () => window.RailConversation?.starter('project') : null; }, get newLabel() { return adv() ? 'Add project' : ''; }, newPick: (id) => { if (id === 'project' || id === 'workspace') { window.RailConversation?.starter(id); return; } if (id === 'hand-project' && notLive(null, 'Adding a project by hand')) return; form = id === 'hand-project' ? 'project' : 'space'; if (current) window.RailShell.go('projects'); setTimeout(() => { draw(); page?.querySelector('#pj-hand-v')?.focus(); }, 60); }, search: (q) => [...data.projects.filter((p) => `${nameOf(p)} ${p.path}`.toLowerCase().includes(q)).map((p) => ({ label: nameOf(p), where: wordOf(p), hash: `projects/${p.id}` })), ...spaces().filter((w) => w.title.toLowerCase().includes(q)).map((w) => ({ label: w.title, where: 'Workspace', hash: `projects/ws:${w.id}` }))], sample: 'billing-api',
     show: ({ bar: b, page: pg, arg }) => { window.RailCenters?.wire(); if (b !== bar) wire(b, pg); if (current !== arg) { menu = ''; if (confirm?.p?.id !== arg) confirm = null; if (form === 'locate' && (arg || '').split('@')[0] !== locating) { form = ''; formTyped = ''; formErr = ''; } } current = arg || ''; draw(); } };
   const newMenuItems = () => [{ header: 'Ask in chat' }, { id: 'bar-new|project', text: 'Add a project' }, ...(adv() ? [{ id: 'bar-new|workspace', text: 'Make a workspace' }] : []), { sep: true }, { header: 'Legacy approach' }, { id: 'bar-new|hand-project', text: 'Add a project…' }, ...(adv() ? [{ id: 'bar-new|hand-space', text: 'Make a workspace…' }] : [])];
 })();

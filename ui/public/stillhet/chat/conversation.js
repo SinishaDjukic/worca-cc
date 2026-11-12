@@ -35,6 +35,8 @@
   const nameOf = (core) => { if (core.length <= 56) return core; const m = core.slice(0, 57).match(/^(.{16,}?)\s+(?:that|which|with|so|so that|because|returning|using|where|when|to make|for)\b/i); return (m ? m[1] : core.slice(0, 56).replace(/\s+\S*$/, '')).replace(/[\s,;:]+(?:and|or|the|a|an|to|of|in|on)?$/i, ''); };
   const clip = (t, n = 64) => (t.length <= n ? t : `${t.slice(0, n).replace(/\s+\S*$/, '')}…`);
   // every change to a task goes to the store (shell/world.js), which tells every surface; a new task is linked into it first
+  // R-arch-10: the live kind does not wire Chat yet (slice 4); a send goes through the adapter, which refuses, and nothing is written
+  const refused = (what) => !!window.RailAdapter?.refuse?.(`chat.${what}`);
   const put = (c, t) => { if (!t || t.kind === 'schedule') return; M.link(c || { project: '' }, t); window.RailWorld.move(t.run, t.case, t.detail, { stage: t.stage, title: t.title }); };
   // a task that starts sets up its worktree, then plans: Starting gives way to Plan by itself
   const settleStart = (c, t) => {
@@ -591,6 +593,7 @@
   const saidName = (text) => { const t = text.replace(/[?.!]+$/, '').replace(/\s+(?:every|each|daily|nightly|weekly|hourly|tonight|tomorrow|once|on weekdays|at \d)\b.*$/i, '').trim() || text; return clip(t.charAt(0).toUpperCase() + t.slice(1)); };   // a schedule's name is the what; the when is its own field
   function send() {
     const had = root.querySelector('[data-composer-t]'); const text = (had?.value || comp.text).trim();
+    if (text && refused('send')) return;   // R-arch-10: the live kind's composer is the Chat slice's; until then nothing is sent or written
     if (comp.busy && text) { comp.queue = [...(comp.queue || []), text]; comp.text = ''; if (had) had.value = ''; paint(false); say('Queued: it goes when this reply is done'); return; }   // while Worca replies, sending queues
     if (!text) { had?.focus(); say(comp.mode === 'ask' ? 'Write something first' : 'Say what it should do first'); return; }
     const c = ensureChat(comp.mode === 'schedule' ? saidName(text) : text);
@@ -966,6 +969,7 @@
     const go = () => {
       const t = host.querySelector('[data-composer-t]'), text = t.value.trim();
       if (!text) { t.focus(); say('Say what to ask first'); return; }
+      if (refused('ask')) return;
       let id = linked;
       if (!id) { id = window.RailChats.newChat(`About ${title}`, ''); threads.set(id, []); }
       const c = data().chats.find((x) => x.id === id);

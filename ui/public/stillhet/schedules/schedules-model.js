@@ -2,7 +2,8 @@
 // run-page case), by the library's day sections.
 (function () {
   // The prototype's today (the Tasks and Schedules centers): every "Next up" and "Started" reads from it.
-  const TODAY = new Date(2026, 10, 12);
+  // The live kind counts from the real today.
+  const DEMO_TODAY = new Date(2026, 10, 12), today = () => { if (!window.RailWorld?.live) return DEMO_TODAY; const d = new Date(Date.now()); d.setHours(0, 0, 0, 0); return d; };   // live: local midnight on each read, so a page left open past midnight moves on
   const ok = (day, date, time, meta, title) => ({ day, date, time, title, case: 'merged', stage: 4, git: 'merged', meta });
   // the live kind (D9): the store's schedules, read again on every call
   const seed = () => (window.RailWorld?.live ? { schedules: window.RailWorld.part('schedules').map((s) => ({ ...s })) } : window.RailFirstRun ? { schedules: [] } : { schedules: [
@@ -14,5 +15,5 @@
     { id: 's3', title: 'Docs sync', project: 'docs-site', chat: '', every: 'every Tuesday', at: '06:00', next: 'Missed Tuesday: Worca was off', day: 'today', state: 'diverged', time: 'Tue', section: 'needs', labels: [], what: 'Keeps the docs in step with the code.', cost: 0.3, started: 'Oct 20', missed: 'Nov 10', missedWhy: 'Worca was off', runs: [] },
     { id: 's4', title: 'Cost report', project: '', chat: '', every: 'every Friday', at: '17:00', next: 'Paused by you', state: 'paused', time: 'Fri', section: 'paused', labels: [], what: "Sums the week's AI spend.", cost: 0.15, started: 'Sep 4', runs: [] },
   ] });
-  window.SchedulesModel = { seed, TODAY };
+  window.SchedulesModel = { seed, get TODAY() { return today(); } };
 })();

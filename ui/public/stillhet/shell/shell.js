@@ -178,7 +178,7 @@
     const seenRows = visited.filter((v) => !pinRows.some((p) => p.hash === v.hash)).slice(0, 1);
     const PINS = 5, morePins = pinRows.length - PINS;
     if (!pinsAll && morePins > 0) pinRows.length = PINS;
-    const rows = [...pinRows, ...seenRows].map((x) => R.listRow({ title: x.title, meta: x.meta, mark: x.mark, end: x.end ? `<span class="lr-fig" title="${x.tip}">${x.end}</span>` : '', endText: x.end ? '' : x.when || '', open: { 'data-back-to': x.hash, title: `Opens ${x.title}` } }));
+    const rows = [...pinRows, ...seenRows].map((x) => R.listRow({ title: x.title, meta: x.meta, mark: x.mark, end: x.end ? `<span class="lr-fig" title="${R.esc(x.tip)}">${x.end}</span>` : '', endText: x.end ? '' : x.when || '', open: { 'data-back-to': x.hash, title: `Opens ${x.title}` } }));
     drawMini();
     drawInView();
     document.getElementById('bar-back').innerHTML = R.list({ groups: [...(rows.length ? [{ title: pinRows.length ? 'Pinned and recent' : 'Recent', rows, more: !pinsAll && morePins > 0 ? { n: morePins, attrs: { 'data-pins-all': '' } } : null }] : [])] });
@@ -491,7 +491,7 @@
     locked: (view) => !!lockOf(view),
     go: (hash) => { if (location.hash.slice(1) === hash) { openedAgain = true; route(); } else location.hash = hash; },
     // a run opened from Pulse or the search carries its own title
-    openRun: (hash, title, run) => (LIVE ? window.RailShell.openTaskPage(hash.split('/')[1], '', title) : window.RailShell.openTask(hash.split('/')[1], '', title, run)),   // Pulse and search: its card in its chat
+    openRun: (hash, title, run) => window.RailShell.openTask(hash.split('/')[1], '', title, run),   // Pulse and search: its card in its chat
     closeSearch: () => searchFold(false),
     // D21: a mode a person picks is dev's uiLevel, posted first; a refusal stays on the level the server last confirmed
     pickMode: (to) => window.RailAdapter.post('/api/settings', { uiLevel: to }).then((r) => {
@@ -505,7 +505,7 @@
     // Everything leads to its card in its chat (plans/rail/chat-cards.md): a task's link opens its chat at its card; a task with no
     // chat gets one, named after it. The page stays as openTaskPage, only until the card holds everything it does.
     openTask: (cs, chat, title, run) => {
-      if (LIVE) { window.RailShell.openTaskPage(cs, chat, title); return; }   // the live kind: no chat made up around it (D23)
+      if (LIVE) { if (run) window.RailAdapter.seenRun(run); window.RailShell.openTaskPage(cs, chat, title); return; }   // the live kind: no chat made up around it (D23); opening it acknowledges it, as dev's acknowledgeRun does from any path
       if (RM && title) RM.titles[cs] = title;
       const w = run && window.RailWorld?.find(run);
       // the chat a row names wins; else the chat that holds this very task (by its run, else its name); a case alone is shared by many

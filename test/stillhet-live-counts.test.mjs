@@ -93,6 +93,7 @@ test('the strip, Pulse\'s tabs and sections equal their rows, and each opens wha
   const mini = (p) => d.querySelector(`[data-mini="${p}"]`).getAttribute('aria-label');
   assert.match(mini('runs'), new RegExp(`· ${TASK_NEEDS + MISSED} need you`), 'Tasks: the tasks and the missed time that need you');
   assert.match(mini('chat'), new RegExp(`· ${SOURCES.threads.counts.needs} need`), 'Chats: counts.needs of the threads');
+  assert.equal(mini('schedules'), 'Schedules: 3 open · 1 need you', 'Schedules: tk1, tk2 and sr1 open (sr2 is paused); tk1 missed');
   d.querySelector('[data-mini="runs"]').click(); await settle();
   assert.equal(w.location.hash, '#runs');
   d.querySelector('[data-mini="chat"]').click(); await settle();
@@ -144,6 +145,119 @@ test('only the adapter writes: set, remove and taskGone change nothing; the Task
   row.dispatchEvent(new w.MouseEvent('click', { bubbles: true, metaKey: true, ctrlKey: true }));
   await settle();
   assert.equal(d.querySelector('#bar-tasks [data-bulk], #bar-tasks .sel-bar, #bar-tasks .selection-bar'), null);
+  // D25: the row's ⋯ menu and the list's tools offer nothing that would act on a task without dev (no faked Stop)
+  const picks = (menu) => { d.querySelector(`#bar-tasks [data-menu="${menu}"]`)?.click(); const ids = [...d.querySelectorAll('#bar-tasks [data-menu-pick]')].map((x) => x.dataset.menuPick.split('|').pop()); d.querySelector(`#bar-tasks [data-menu="${menu}"]`)?.click(); return ids; };
+  const rowMenu = picks(`row:${row.dataset.open}`);
+  for (const id of ['toggle', 'stop', 'archive', 'delete', 'add-to-group', 'view-pr']) assert.ok(!rowMenu.includes(id), `no ${id} in the live row menu`);
+  assert.ok(rowMenu.includes('in-view'), 'Keep in view stays');
+  const tools = picks('tools');
+  assert.ok(tools.length > 0 && !tools.includes('select'), 'no Select in the live tools');
+});
+
+test('Projects: titled by dev\'s name, no seeded workspaces; Schedules: the next date is the server\'s', async () => {
+  const s = clone(SOURCES);
+  s.schedules.tickets.push({ id: 'tk3', kind: 'once', title: 'Sunday ticket', status: 'scheduled', runAt: new Date(2026, 10, 15, 14, 44).toISOString(), createdAt: SOURCES.schedules.tickets[0].createdAt });
+  const { w, d, hello } = await liveHost({ sources: s, level: 'advanced' });
+  await hello();
+  assert.deepEqual([...w.RailProjects.needItems().map((x) => x.title)].sort(), ['api', 'gone']);
+  assert.equal(w.RailSpaces.list().length, 0);
+  w.location.hash = '#projects'; await settle();
+  const text = d.body.textContent;
+  for (const n of ['Web shop', 'IoT SP Platform', 'Legacy billing', 'gone-3', 'api-2']) assert.ok(!text.includes(n), `no ${n}`);
+  assert.ok(text.includes('gone'));
+  assert.equal(w.RailSchedules.nextLine(w.RailSchedules.find('tk3')), 'Nov 15, 14:44');
+  assert.equal(w.RailSchedules.nextLine(w.RailSchedules.find('sr1')), 'Nov 13, 02:00');
+  const day = (t) => w.RailSchedules.TODAY.getTime() === new Date(t).setHours(0, 0, 0, 0);
+  assert.ok(day(NOW), 'today is the local day of now');
+  w.Date.now = () => NOW + 86400000;
+  assert.ok(day(NOW + 86400000), 'past midnight, today moves on without a reload');
+  w.Date.now = () => NOW;
+});
+
+test('Projects: a project whose key is not its name joins its tasks by name (api-2 is api)', async () => {
+  const { w, d, hello } = await liveHost({ hash: '#projects' });
+  await hello(); await settle();
+  // api's tasks by dev's rule: run-c (paused at a limit) and h1 (paused); its sync state alone would say "Out of sync"
+  assert.match(d.getElementById('bar-place').textContent, /api2 tasks need you/, 'its waiting tasks are counted');
+  w.location.hash = '#projects/api-2'; await settle();
+  d.querySelector('#route-place [data-menu="pj-more"]').click();
+  d.querySelector('#route-place [data-menu-pick="pj-more|tasks"]').click(); await settle();
+  const titles = [...d.querySelectorAll('#bar-tasks [data-open]')].map((x) => x.textContent);
+  assert.ok(titles.some((t) => t.includes('At a limit')), 'Show its tasks lists its task');
+  assert.ok(!titles.some((t) => t.includes('Busy')), 'and not another project\'s');
+});
+
+test('Projects in the live kind: its actions write nothing to the store and say they are not in Stillhet yet', async () => {
+  const { w, d, hello } = await liveHost({ hash: '#projects' });
+  await hello();
+  w.location.hash = '#projects/api-2'; await settle();
+  const was = store(w);
+  const page = () => d.getElementById('route-place');
+  const tried = [];
+  const clickIf = (q, label) => { const b = page().querySelector(q); if (b) { b.click(); tried.push(label); } };
+  const pick = (v) => { page().querySelector('[data-menu="pj-more"]')?.click(); const b = page().querySelector(`[data-menu-pick="pj-more|${v}"]`); if (b) { b.click(); tried.push(v); } };
+  pick('fetch'); pick('remove');
+  assert.equal(page().querySelector('[data-confirm="yes"]'), null, 'Remove asks nothing it cannot do');
+  clickIf('[data-pj-team]', 'team memory');
+  page().querySelector('[data-menu="pjs-pr"]')?.click(); clickIf('[data-menu-pick="pjs-pr|open no PR"]', 'a setting');
+  clickIf('[data-def-edit="tags"]', 'tags edit');
+  const f = d.getElementById('def-tags'); if (f) f.value = 'team: web';
+  clickIf('[data-def-edit="tags"]', 'tags done');
+  w.RailProjects.sync('api-2');
+  clickIf('[data-pj-act]', 'origin act');   // diverged: Bring together hands over to a chat, writing nothing
+  await settle();
+  for (const x of ['origin act', 'fetch', 'remove', 'team memory', 'a setting', 'tags done']) assert.ok(tried.includes(x), `reached ${x}`);
+  assert.deepEqual(store(w), was, 'no store write outside load');
+  assert.equal(w.RailProjects.list().find((p) => p.id === 'api-2').teamMemory, undefined);
+  w.location.hash = '#projects/gone-3'; await settle();
+  page().querySelector('[data-pj-act]').click(); await settle();
+  assert.equal(page().querySelector('#pj-hand-v'), null, 'Locate folder opens no form that would fake a move');
+  assert.match(toastText(d), /not in Stillhet yet/);
+  assert.deepEqual(store(w), was);
+});
+
+test('R-arch-10: every action of an area this slice does not wire goes through the adapter, refuses and changes nothing', async () => {
+  const { w, d, posts, hello } = await liveHost({ level: 'expert' });
+  await hello();
+  const acts = [];
+  const act = w.RailAdapter.act; w.RailAdapter.act = (id, args) => { const r = act(id, args); acts.push(`${id}: ${r.ok ? 'done' : r.text}`); return r; };
+  const html = (id) => d.getElementById(id)?.innerHTML ?? '';
+  const pickIn = (root, menu, v) => { d.querySelector(`${root} [data-menu="${menu}"]`).click(); const b = d.querySelector(`${root} [data-menu-pick="${menu}|${v}"]`); assert.ok(b, `${menu}|${v} is offered`); b.click(); };
+  const sched = async () => { w.location.hash = '#chat'; await settle(); w.location.hash = '#schedule/sr1'; await settle(); };
+  const cases = [
+    // Schedules (slice 6): the page's Run now, its ⋯ menu and its time pickers; the API other pages call
+    ['schedules.run', sched, () => d.querySelector('#route-schedule [data-sched-now]').click(), 'route-schedule'],
+    ...['pause', 'skip', 'delete'].map((v) => [`schedules.${v}`, sched, () => pickIn('#route-schedule', 'sc-more', v), 'route-schedule']),
+    ['schedules.sc-at', sched, () => { d.querySelector('#route-schedule [data-menu="sc-at"]').click(); [...d.querySelectorAll('#route-schedule [data-menu-pick^="sc-at|"]')].find((b) => !b.dataset.menuPick.endsWith('|02:00')).click(); }, 'route-schedule'],
+    ['schedules.ask', sched, () => { const t = d.querySelector('#sched-dock [data-composer-t]'); t.value = 'why?'; d.querySelector('#sched-dock [data-dock-send]').click(); }, 'route-schedule'],
+    ['schedules.add', null, () => w.RailSchedules.add({ id: 'x1', title: 'Made up', every: 'every day', at: '03:00', runs: [] }), 'bar-schedules'],
+    // the Tasks center's Run now on a missed schedule (the reviewer's path to RailWorld.add)
+    ['schedules.run', async () => { w.location.hash = '#runs'; await settle(); }, () => d.querySelector('[data-c-sact="run|tk1"]').click(), 'app'],
+    // the Tasks center's New task… form (its legacy approach): Start task keeps the form as it was
+    ['tasks.new-task', async () => { w.location.hash = '#runs'; await settle(); w.RailCenters.maker('tasks').newPick('form'); await settle(); const t = d.querySelector('#cc-text'); t.value = 'Fix the login test'; t.dispatchEvent(new w.Event('input', { bubbles: true })); }, () => d.querySelector('#center-dlg [data-dialog="yes"]').click(), 'center-dlg'],
+    // Chat (slice 4): the composer, the dock under a schedule, the chat list's row menu
+    ['chat.send', async () => { w.location.hash = '#chat'; await settle(400); }, () => { const t = d.querySelector('#route-chat [data-composer-t]'); t.value = 'Fix the login test'; t.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); }, 'route-chat'],
+    ['chats.pin', async () => { w.location.hash = '#chat'; await settle(400); }, () => pickIn('#bar-chat', 'row:chat:ask_1', 'pin'), 'bar-chat'],
+    // Projects' workspaces (the Projects slice)
+    ['workspaces.add', null, () => assert.equal(w.RailSpaces.add({ title: 'Made up' }), ''), 'app'],
+    // Settings: a switch and an edit that would say "saved"
+    ['settings.sync', async () => { w.location.hash = '#settings'; await settle(); }, () => d.querySelector('[data-svsw="sync"]').click(), 'app'],
+    ['settings.save', async () => { w.location.hash = '#settings'; await settle(); }, () => { d.querySelector('[data-svdo="runs/Spending/Budget/Change…"]').click(); const f = d.querySelector('dialog input, .dlg input'); f.value = '5'; f.dispatchEvent(new w.Event('input', { bubbles: true })); d.querySelector('[data-dialog="yes"]').click(); }, 'app'],
+  ];
+  for (const [id, go, run, root] of cases) {
+    if (go) await go();
+    const before = store(w), page = html(root), schedules = clone(w.RailSchedules.all()), chats = clone(w.RailChats.data()), n = acts.length, p = posts.length;
+    run(); await settle();
+    assert.deepEqual(acts.slice(n), [`${id}: ${w.RailAdapter.NOT_CONNECTED}`], `${id}: one refusal, through RailAdapter.act`);
+    if (!n) assert.equal(w.RailHost.toastEl.textContent, w.RailAdapter.NOT_CONNECTED, 'the app host\'s toast says so (once in 3 s, adapter.js)');
+    assert.deepEqual(store(w), before, `${id}: the store is unchanged`);
+    assert.deepEqual(clone(w.RailSchedules.all()), schedules, `${id}: the schedules are unchanged`);
+    assert.deepEqual(clone(w.RailChats.data()), chats, `${id}: the chats are unchanged`);
+    assert.equal(html(root), page, `${id}: the page is unchanged`);
+    assert.equal(posts.length, p, `${id}: nothing sent to Worca`);
+    w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  }
+  assert.equal(w.RailSpaces.list().length, 0);
 });
 
 const REFUSE = { error: 'not now' };
@@ -252,4 +366,52 @@ test('the mode: the stamp wins over localStorage, nothing posted at start; a pic
   assert.equal(w.RailUI.prefs.mode(), 'advanced');
   assert.equal(toastText(d), 'Could not change the interface mode: uiLevel is locked by your team');
   assert.equal(w.localStorage.getItem('worca-rail.mode'), 'simple', 'the live kind never writes the demo\'s mode');
+});
+
+test('the Chats needs number is counts.needs over every thread, not the waiting rows of the first page', async () => {
+  const sources = { ...SOURCES, threads: { ...SOURCES.threads, counts: { ...SOURCES.threads.counts, needs: 7 } } };
+  const { d, hello } = await liveHost({ sources });
+  await hello();
+  const label = d.querySelector('[data-mini="chat"]').getAttribute('aria-label');
+  assert.match(label, /· 7 need you/);
+  assert.match(label, /Chats: 8 open/, 'the 6 waiting chats past the page count as open too');
+});
+
+test('opening a failed task the run left unread drops it from the bell, and a pipelines-changed refetch keeps it out', async () => {
+  const { w, d, sockets, hello } = await liveHost();
+  await hello();
+  const frame = async (f) => { sockets.at(-1).onmessage({ data: JSON.stringify(f) }); await settle(); };
+  await frame({ type: 'done', runId: 'run-b', seq: 1, status: 'error' });
+  assert.equal(bellN(d), BELL + 1, 'failed while watched: it needs you');
+  w.RailAdapter.seenRun('run-b'); await settle();
+  assert.equal(bellN(d), BELL);
+  await frame({ type: 'pipelines-changed' }); await settle(300);
+  assert.equal(bellN(d), BELL, 'still out after the runs are read again');
+});
+
+test('opening the failed task from the bell\'s own Needs-you row acknowledges it: the bell drops by one', async () => {
+  const { w, d, sockets, hello } = await liveHost();
+  await hello();
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'done', runId: 'run-b', seq: 1, status: 'error' }) }); await settle();
+  assert.equal(bellN(d), BELL + 1);
+  d.querySelector('[data-pop]').click();
+  d.querySelector('#app .pz-popover [data-open="r:run-b"]').click(); await settle();
+  assert.match(w.location.hash, /^#run\//, 'the row opens its task');
+  assert.equal(bellN(d), BELL, 'opened from Pulse, it no longer needs you');
+});
+
+test('the Tasks center in the live kind: a card\'s step writes nothing to the store, and Open acknowledges through the adapter', async () => {
+  const { w, d, sockets, hello } = await liveHost({ hash: '#runs' });
+  await hello();
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'done', runId: 'run-b', seq: 1, status: 'error' }) }); await settle();
+  const steps = [...d.querySelectorAll('[data-c-act]')].filter((b) => !/^(open|answer)\|/.test(b.dataset.cAct));
+  assert.ok(steps.length, 'the center draws a card step');
+  const was = store(w);
+  for (const b of steps) b.click();
+  await settle();
+  assert.deepEqual(store(w), was, 'no store write outside load and run frames');
+  assert.equal(bellN(d), BELL + 1);
+  assert.match(toastText(d), new RegExp(`: ${steps.at(-1).textContent.trim()} is not in Stillhet yet`), 'the refused step names itself');
+  d.querySelector('[data-c-open="run-b"], [data-c-act="open|run-b"], [data-c-act="answer|run-b"]').click(); await settle();
+  assert.equal(bellN(d), BELL, 'Open acknowledges it through the adapter');
 });

@@ -673,7 +673,7 @@ function renderInShell() {
   if (sideNow) document.getElementById('route-settings').innerHTML = `<div class="pz-page">${settingsPage()}</div>`;
   const res = document.querySelector('[data-search-res]'); if (res) res.innerHTML = searchResults();
   document.getElementById('app').innerHTML = `${popover()}${newRun()}${acctMenu()}${sessionDialog()}`;
-  const t = toastEl(); t.innerHTML = ui.toast ? R.toastText(ui.toast, undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
+  paintToast();
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
   const pb = document.querySelector('.panel-body'); if (pb && !opening) pb.scrollTop = keepP;
   fitMenus();
@@ -726,16 +726,16 @@ setInterval(() => { if (!awayEl && R.awayShows({ away: isAway(), keepAwake: ui.k
 // ---- render ----
 let sideWas = null, swapCls = '';   // the sidebar's content fades only when it changes between Worca's and Settings'
 function render() { stale = false; holdFocus(SHELL ? renderInShell : paintAlone); }
-W.onMove?.(() => render());
+W.onMove?.(() => render());   // a task moved anywhere: the badge, Vitals and Updates read the store again
 // the live kind: a load or a list state changed the store (D20): Keep awake and Away are dev's, and the rows read it again
-if (LIVE) W.onChange(() => { ui.keep = !!W.part('keep'); ui.awayStatus = W.part('away').status; render(); });   // a task moved anywhere: the badge, Vitals and Updates read the store again
+if (LIVE) W.onChange(() => { ui.keep = !!W.part('keep'); ui.awayStatus = W.part('away').status; render(); });
 function paintAlone() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   const pageEl = document.querySelector('main.main'); const keepMain = pageEl?.scrollTop || 0;   // the page scrolls in main in the one Worca
   const keepP = document.querySelector('.panel-body')?.scrollTop || 0;
   document.getElementById('app').innerHTML = `<div class="pz-app">${sidebar()}<div class="pz-main">${topbar()}<main class="pz-page">${unlockStrip() || settingsStrip()}${ui.page === 'settings' ? settingsPage() : runsPage()}</main></div>${popover()}${newRun()}${acctMenu()}</div>`;
-  const t = toastEl(); t.innerHTML = ui.toast ? R.toastText(ui.toast, undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
+  paintToast();
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
   const pb = document.querySelector('.panel-body'); if (pb && !opening) pb.scrollTop = keepP;
   fitMenus();
@@ -751,8 +751,14 @@ function fitMenus() {
 }
 const toastEl = () => document.querySelector('body > .rc-toast');   // the page's own: the run page's sits in a route that may be hidden
 let toastTimer = 0, undo = null;   // { tip, run }: what the toast's Undo does
+let toastSaid = 0, toastPainted = 0;   // a repaint writes the toast only when Pulse said something new: a toast another page said (the adapter's refusal) stays
+function paintToast() {
+  if (toastPainted === toastSaid) return;
+  toastPainted = toastSaid;
+  const t = toastEl(); t.innerHTML = ui.toast ? R.toastText(ui.toast, undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
+}
 function toast(text, canUndo) {
-  ui.toast = text; undo = typeof canUndo === 'function' ? { tip: 'Undo', run: canUndo } : canUndo || null; clearTimeout(toastTimer);   // a place's Undo is a function, or { tip, run }
+  toastSaid++; ui.toast = text; undo = typeof canUndo === 'function' ? { tip: 'Undo', run: canUndo } : canUndo || null; clearTimeout(toastTimer);   // a place's Undo is a function, or { tip, run }
   toastTimer = setTimeout(() => { ui.toast = ''; undo = null; const el = toastEl(); if (el) { el.classList.remove('is-on'); el.textContent = ''; } }, 5000);
 }
 
@@ -870,15 +876,15 @@ document.addEventListener('click', (e) => {
       if (u.go === 'usage') { openUsage(u.e.startsWith('budget') ? '' : u.title); return; }
       if (u.land) { const [sset, label] = u.land.split('|'); land({ sset, label, head: true }); return; }
       const ofRun = u.run && u.go === 'run' ? W.find(u.run) : null;
-      if (ofRun) openTarget('run/' + ofRun.case, ofRun.title, `Opens ${u.to}`);
+      if (ofRun) openTarget('run/' + ofRun.case, ofRun.title, `Opens ${u.to}`, ofRun.id);
       else openTarget(u.go, u.title.split(' · ')[1] || u.title, `Opens ${u.to}`);
     }
     else if (key.startsWith('lim')) { const l = limitsNow()[+key.slice(3)]; openUsage(l.p ? pname(l.p) : ''); return; }
     else if (key.startsWith('np:')) { ui.pop = null; window.RailShell.go(key.slice(3)); }
-    else if (key.startsWith('act:')) { const a = C().actions.find((x) => x.id === key.slice(4)), r = a.runId && W.find(a.runId); if (r) openTarget('run/' + r.case, r.title, `Opens ${r.title}`); else toast(`${a.run} is gone; ${a.label} can still be stopped`); }
+    else if (key.startsWith('act:')) { const a = C().actions.find((x) => x.id === key.slice(4)), r = a.runId && W.find(a.runId); if (r) openTarget('run/' + r.case, r.title, `Opens ${r.title}`, r.id); else toast(`${a.run} is gone; ${a.label} can still be stopped`); }
     else {
       const id = key.slice(2), r = W.tops().find((x) => x.id === id);
-      openTarget('run/' + r.case, r.title, el.title.split('\n').pop());
+      openTarget('run/' + r.case, r.title, el.title.split('\n').pop(), r.id);
     }
     render(); return;
   }
@@ -939,10 +945,11 @@ function openUsage(name) {
 }
 const pickRow = (action, id) => { ui.pick = R.selectApply(ui.pick, action, { id, shown: shownIds() }); render(); };
 // Opens what a Pulse row names: a page in the one Worca; on pulse.html a Toast says where it goes.
-function openTarget(go, title, say) {
+// run: the row's run id; the live kind acknowledges it on opening, as dev does from any path (the demo opens as before)
+function openTarget(go, title, say, run) {
   ui.pop = false;
   if (!SHELL) { ui.pop = true; toast(window.RailWould(say.replace(/^Opens\b/, 'open'))); return; }
-  if (go.startsWith('run/')) SHELL.openRun(go, title); else SHELL.go(go);
+  if (go.startsWith('run/')) SHELL.openRun(go, title, LIVE ? run : undefined); else SHELL.go(go);
 }
 // The keys come from the library's table (docs/rail/keyboard.md); this owns what they do here. The panel's lists take
 // them wherever the focus is: Updates all of them, Vitals moving and opening only.
@@ -1012,9 +1019,9 @@ document.querySelectorAll('[data-theme-pick]').forEach((b) => b.addEventListener
 try { const look = localStorage.getItem(KEY_LOOK); if (['system', 'light', 'dark'].includes(look)) applyAppearance(look); } catch { /* remembering is a nicety */ }
 if (SHELL) { ui.bg = readBg(); setBg(ui.bg); setBreathe(readBreathe()); }
 window.RailPulse = {
-  refresh: () => render(),
+  refresh: () => render(),   // a task moved elsewhere (a card in a chat): the badge and the lists read it again
   // opens the popover on a tab ('now' or 'updates'): the bell, and #activity (shell/old-addresses.js)
-  open: (tab = 'now') => { ui.pop = true; ui.acct = false; ui.nr = null; ui.popTab = tab === 'updates' ? 'updates' : 'vitals'; opening = 'pop'; render(); },   // a task moved elsewhere (a card in a chat): the badge and the lists read it again
+  open: (tab = 'now') => { ui.pop = true; ui.acct = false; ui.nr = null; ui.popTab = tab === 'updates' ? 'updates' : 'vitals'; opening = 'pop'; render(); },
   // The note a start near a limit shows, in the composer: what it means, and the ways out.
   startNote: () => { const c = startable(), first = c.usage.find((u) => M.PROVIDER[u.p].runs)?.p; if (!first) return { say: 'Nothing that can run is signed in. Only mock tasks work until you sign in.', blocked: true }; if (budgetGone()) return { say: 'The budget is used up until it resets.', blocked: true }; if (connOffline()) return { say: 'Offline: Worca cannot start a task until the connection is back.', blocked: true }; const lim = M.near(c, first, ui.s.warnAt); if (!lim) return null; const rm = M.room(c, ui.s.warnAt, first); return { say: `${lim.name}'s ${lim.what} is at ${lim.pct}% and resets ${lim.resets}. This task may pause.`, use: rm.length ? pname(rm[0]) : '', at: lim.resets }; },
   show: (page, sset, view) => {

@@ -31,6 +31,7 @@ import { engineLabel } from '../../src/shared/engine-switch.mjs';
 import { runModel, groupModel, WATCH_WHY } from '../../src/shared/run-model.mjs';
 import { kindChip } from './run-kind.mjs';
 import { FAILED, FIXING_ROUND, LIVE_ROUND, stampMs, prNeedsOf, memberPrsOf, roundMarkerOf, prUrlsOf, dedupeByPr, needsYou, needsYouItems } from '../../src/shared/needs-you.mjs';
+import { DAY_BUCKETS, dayBucket } from '../../src/shared/day-buckets.mjs';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -174,6 +175,7 @@ export function schedRowState(t) {
 }
 
 export { memberPrsOf, roundMarkerOf, prUrlsOf, dedupeByPr, needsYou, needsYouItems, countNeedsYou } from '../../src/shared/needs-you.mjs';
+export { DAY_BUCKETS, dayBucket } from '../../src/shared/day-buckets.mjs';
 
 function baseRow(kind, st, fields, when, now) {
   return {
@@ -245,25 +247,8 @@ export function schedRow(t, now = Date.now()) {
   }, t.after ? { at: now, time: '' } : { at: t.runAt }, now);   // an after-ticket's runAt is a far-future sentinel
 }
 
-/** The day sections both lists share (Runs and Chats Group by Date), top to bottom: Today, Yesterday, 2–7 days ago,
- *  8–30 days ago, then the rest. The boundaries are local midnights, stepped with setDate so a DST day is still one day. */
-export const DAY_BUCKETS = Object.freeze([
-  ['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Previous 7 days'], ['month', 'Previous 30 days'], ['older', 'Older'],
-]);
 /** The View menu's Date segment title, for both lists. */
 export const DATE_GROUP_TITLE = DAY_BUCKETS.map(([, name]) => name).join(' · ');
-export function dayBucket(t, now = Date.now()) {
-  if (!Number.isFinite(t)) return 'older';
-  const day = new Date(now);
-  day.setHours(0, 0, 0, 0);
-  if (t >= day.getTime()) return 'today';
-  day.setDate(day.getDate() - 1);
-  if (t >= day.getTime()) return 'yesterday';
-  day.setDate(day.getDate() - 6);
-  if (t >= day.getTime()) return 'week';
-  day.setDate(day.getDate() - 23);
-  return t >= day.getTime() ? 'month' : 'older';
-}
 /** Older starts folded in both lists. `collapsed` (the person's record) holds the sections whose fold differs from
  *  their default, so a fold read or set goes through these two. */
 const FOLDED_FIRST = new Set(['date:older']);

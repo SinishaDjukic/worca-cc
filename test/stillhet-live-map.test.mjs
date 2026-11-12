@@ -4,7 +4,8 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { shapeErrors, SHAPES } from '../ui/public/stillhet/live/model-shape.mjs';
-import { caseOf, taskOfLive, taskOfSaved, chatOf, unreadOf, scheduleOf, projectOf, costsOf, updateOf, updateOfOutcome, snapshotOf, partOf } from '../ui/public/stillhet/live/live-map.mjs';
+import { caseOf, taskOfLive, taskOfSaved, chatOf, unreadOf, scheduleOf, projectOf, costsOf, updateOf, updateOfOutcome, snapshotOf, partOf, dayOf } from '../ui/public/stillhet/live/live-map.mjs';
+import { dayBucket } from '../ui/public/runs-list.mjs';
 import { needsYouItems } from '../src/shared/needs-you.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
 import { stillhetHost } from './helpers/stillhet-host.mjs';
@@ -71,6 +72,9 @@ test('projectOf: needs for a missing folder and for an out-of-sync project, not 
   assert.equal(projectOf({ key: 'a', exists: true, vcs: 'git' }, { state: 'behind', behind: 2, base: 'main' }).needs, true);
   assert.equal(projectOf({ key: 'a', exists: true, vcs: 'git' }, { state: 'up-to-date', base: 'main' }).needs, false);
   assert.equal(projectOf({ key: 'a', exists: true, vcs: 'git' }, { state: 'up-to-date', base: 'main' }).origin, 'ok');
+  assert.equal(projectOf({ key: 'gone2-9428', name: 'gone2', exists: false }).name, 'gone2', 'its name, not its key, is what the pages show');
+  assert.equal(projectOf({ key: 'gone2-9428', name: 'gone2', exists: false }).id, 'gone2-9428', 'the id stays dev\'s key (#projects/KEY)');
+  assert.equal(projectOf({ key: 'k' }).name, 'k', 'no name: the key');
 });
 
 test('unreadOf mirrors dev\'s ask-done rule: a hidden page lights, the open chat does not, opening clears', () => {
@@ -96,4 +100,41 @@ test('live-map.mjs and model-shape.mjs load in Node with no DOM; no file under l
   assert.equal(typeof m.snapshotOf, 'function');
   const dir = new URL('../ui/public/stillhet/live/', import.meta.url);
   for (const f of readdirSync(dir)) assert.doesNotMatch(readFileSync(new URL(f, dir), 'utf8'), /location\.search/, f);
+});
+
+test('the live task set is dev\'s Needs-you input: a settled hello run gives way to its saved row, no agent generation', () => {
+  const failing = { url: 'https://x/pr/9', number: 9, state: 'OPEN', checks: { state: 'failing', total: 3, failed: 1, pending: 0 } };
+  const src = { ...SOURCES,
+    hello: { runs: [...SOURCES.hello.runs,
+      { runId: 'run-d', pipelineId: 'pd', title: 'Shipped live', status: 'done', startedAt: SOURCES.hello.runs[0].startedAt },
+      { runId: 'gen-1', kind: 'agentgen', title: 'An agent', status: 'running' },
+      { runId: 'sb-1', kind: 'scriptbench', title: 'A script', status: 'running' }] },
+    history: { pipelines: [...SOURCES.history.pipelines, { id: 'pd', title: 'Shipped live', status: 'done', pr: failing, projectName: 'web', mtime: NOW - 60000 }] } };
+  const s = snapshotOf(src, { now: NOW });
+  assert.ok(!s.runs.some((r) => ['run-d', 'gen-1', 'sb-1'].includes(r.id)), 'over, or not a pipeline run');
+  assert.equal(s.runs.find((r) => r.id === 'pd').case, 'failing', 'its saved row carries the PR that needs you');
+  // dev's count over dev's inputs (app.js runsNeedsInput: overviewRuns, the History rows)
+  const devLive = src.hello.runs.filter((r) => ['run-a', 'run-b', 'run-c'].includes(r.runId)).map((r) => ({ runId: r.runId, pipelineId: r.pipelineId, status: r.status, ask: r.pendingQuestion != null, unread: false }));
+  const dev = needsYouItems({ live: devLive, history: src.history.pipelines.filter((p) => !p.archived) });
+  const NEEDS = new Set(['question', 'paused-restart', 'paused-limit', 'capped', 'failed', 'failing']);
+  assert.equal(s.runs.filter((r) => !r.id.startsWith('sched:') && NEEDS.has(r.case)).length, dev.live.length + dev.history.length);
+});
+
+test('dayOf is dev\'s dayBucket: 7 days ago is Previous 7 days, and a DST day is one day', () => {
+  const now = new Date(2026, 10, 12, 10).getTime();
+  for (let h = 0; h < 24 * 40; h += 5) { const t = now - h * 3600000; assert.equal(dayOf(t, now), dayBucket(t, now), `${h} h ago`); }
+  assert.equal(dayOf(new Date(2026, 10, 5, 10).getTime(), now), 'week');
+  const tz = process.env.TZ;
+  try {
+    process.env.TZ = 'Europe/Sofia';
+    assert.equal(dayOf(new Date(2026, 2, 29, 10).getTime(), new Date(2026, 2, 30, 10).getTime()), 'yesterday', 'across the spring change');
+  } finally { if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz; }
+});
+
+test('scheduleOf: nextAt is the server\'s next time; null when missed or unknown', () => {
+  const t = new Date(2026, 10, 15, 14, 44).getTime();
+  assert.equal(scheduleOf({ id: 't', kind: 'once', status: 'scheduled', runAt: new Date(t).toISOString() }, { now: NOW }).nextAt, t);
+  assert.equal(scheduleOf({ id: 's', kind: 'recurring', status: 'active', nextRunAt: t }, { now: NOW }).nextAt, t);
+  assert.equal(scheduleOf({ id: 'm', kind: 'once', status: 'missed', runAt: new Date(t).toISOString() }, { now: NOW }).nextAt, null);
+  assert.equal(scheduleOf({ id: 'p', kind: 'recurring', status: 'paused', nextRunAt: null }, { now: NOW }).nextAt, null);
 });

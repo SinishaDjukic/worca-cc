@@ -3,6 +3,7 @@
 // only the fields the shapes list (D12): a thread's context and session, a History row's folder, every setting but
 // keepAwake never reach the store. live-adapter.mjs does the I/O and applies what this returns.
 import { needsYou, needsYouItems, prNeedsOf, FAILED } from '../../../../src/shared/needs-you.mjs';
+import { dayBucket } from '../../../../src/shared/day-buckets.mjs';
 import { pick } from './model-shape.mjs';
 
 const lc = (v) => String(v || '').toLowerCase();
@@ -13,17 +14,13 @@ const pad = (n) => String(n).padStart(2, '0');
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DAY = 86400000;
-const midnight = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+// a local midnight `n` days from `t`'s, stepped with setDate as dayBucket steps, so a DST day is still one day
+const midnight = (t, n = 0) => { const d = new Date(t); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + n); return d.getTime(); };
 const clock = (t) => { const d = new Date(t); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 const dateWord = (t) => { const d = new Date(t); return `${MONTHS[d.getMonth()]} ${d.getDate()}`; };
 
-/** The list's day section (DAY_SECTIONS) of a past moment. */
-export function dayOf(at, now) {
-  const t = ms(at);
-  if (!Number.isFinite(t)) return 'older';
-  const days = Math.floor((midnight(now) - midnight(t)) / DAY);
-  return days <= 0 ? 'today' : days === 1 ? 'yesterday' : days < 7 ? 'week' : days < 31 ? 'month' : 'older';
-}
+/** The list's day section of a past moment: dev's own (src/shared/day-buckets.mjs dayBucket), so both lists agree. */
+export const dayOf = (at, now) => dayBucket(ms(at), now);
 /** A row's time, as the seeds write it: 14:32 today, Yesterday, Mon this week, else Oct 20. */
 export function timeOf(at, now) {
   const t = ms(at);
@@ -32,7 +29,7 @@ export function timeOf(at, now) {
   return day === 'today' ? clock(t) : day === 'yesterday' ? 'Yesterday' : day === 'week' ? WEEKDAYS[new Date(t).getDay()] : dateWord(t);
 }
 // what is still to come: Pulse's Scheduled groups (pulse-model.js SCHED)
-const whenOf = (at, now) => { const t = ms(at); if (!Number.isFinite(t)) return 'later'; const days = Math.floor((midnight(t) - midnight(now)) / DAY); return days <= 0 ? 'today' : days === 1 ? 'tomorrow' : days < 7 ? 'week' : 'later'; };
+const whenOf = (at, now) => { const t = ms(at); if (!Number.isFinite(t)) return 'later'; return t < midnight(now, 1) ? 'today' : t < midnight(now, 2) ? 'tomorrow' : t < midnight(now, 7) ? 'week' : 'later'; };
 const nextWord = (at, now) => { const t = ms(at); if (!Number.isFinite(t)) return ''; const w = whenOf(t, now); return w === 'today' ? clock(t) : w === 'tomorrow' ? `Tomorrow ${clock(t)}` : w === 'week' ? `${WEEKDAYS[new Date(t).getDay()]} ${clock(t)}` : dateWord(t); };
 const baseName = (dir) => str(dir).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
 const projectName = (dir, projects = []) => (dir ? (projects.find((p) => p && p.path === dir)?.name || baseName(dir)) : '');
@@ -100,7 +97,7 @@ export function scheduleOf(item = {}, { now = 0, projects = [] } = {}) {
   const once = item.kind === 'once', missed = once && item.status === 'missed', paused = !once && item.status === 'paused';
   const at = once ? item.runAt || item.scheduledFor : item.nextRunAt;
   const name = projects.find((p) => p && (p.key === item.projectKey || p.path === item.projectDir))?.name || baseName(item.projectDir);
-  return pick('schedule', { id: str(item.id), title: str(item.title) || 'A schedule', project: name, chat: str(item.askThreadId), every: once ? 'Once' : str(item.sentence), at: Number.isFinite(ms(at)) ? clock(ms(at)) : '', next: missed ? `Missed ${timeOf(at, now)}` : paused ? 'Paused' : at ? `Next ${nextWord(at, now)}` : '', ...(missed || paused ? {} : { day: whenOf(at, now) }), state: missed ? 'diverged' : paused ? 'paused' : 'scheduled', time: missed ? timeOf(at, now) : nextWord(at, now), section: missed ? 'needs' : paused ? 'paused' : 'next', labels: [], what: str(item.summary), cost: null, started: Number.isFinite(ms(item.createdAt)) ? dateWord(ms(item.createdAt)) : '', runs: [], ...(missed ? { missed: dateWord(ms(at)), missedWhy: str(item.failReason) || 'Worca was not running' } : {}) });
+  return pick('schedule', { id: str(item.id), title: str(item.title) || 'A schedule', project: name, chat: str(item.askThreadId), every: once ? 'Once' : str(item.sentence), at: Number.isFinite(ms(at)) ? clock(ms(at)) : '', next: missed ? `Missed ${timeOf(at, now)}` : paused ? 'Paused' : at ? `Next ${nextWord(at, now)}` : '', ...(missed || paused ? {} : { day: whenOf(at, now) }), state: missed ? 'diverged' : paused ? 'paused' : 'scheduled', time: missed ? timeOf(at, now) : nextWord(at, now), section: missed ? 'needs' : paused ? 'paused' : 'next', labels: [], what: str(item.summary), cost: null, started: Number.isFinite(ms(item.createdAt)) ? dateWord(ms(item.createdAt)) : '', runs: [], ...(missed ? { missed: dateWord(ms(at)), missedWhy: str(item.failReason) || 'Worca was not running' } : {}), nextAt: missed || !Number.isFinite(ms(at)) ? null : ms(at) });
 }
 // A ticket or series still to come, and a missed one, are rows of the store too (world.js `when`, `missed`): Pulse's
 // Scheduled and Needs you read them there, as the demo's waiting rows.
@@ -118,7 +115,7 @@ export function projectOf(project = {}, sync = null) {
   const git = project.vcs ? project.vcs === 'git' : project.workMode !== 'folder';
   const s = sync && typeof sync === 'object' ? sync : null, state = lc(s?.state);
   const origin = project.exists === false ? 'missing' : !git ? 'folder' : s?.fetchError ? 'offline' : ORIGIN_OF[state] || 'ok';
-  return pick('project', { id: str(project.key), kind: git ? 'Git' : 'Folder', path: str(project.displayPath) || str(project.path), ...(s?.base ? { branch: str(s.base), base: `${str(s.remote) || 'origin'}/${str(s.base)}` } : {}), origin, ...(s ? { ahead: num(s.ahead), behind: num(s.behind) } : {}), ...(s?.fetchedAt ? { checked: timeOf(s.fetchedAt, Date.parse(s.fetchedAt)) } : {}), needs: project.exists === false || state === 'behind' || state === 'diverged' });
+  return pick('project', { id: str(project.key), name: str(project.name) || str(project.key), kind: git ? 'Git' : 'Folder', path: str(project.displayPath) || str(project.path), ...(s?.base ? { branch: str(s.base), base: `${str(s.remote) || 'origin'}/${str(s.base)}` } : {}), origin, ...(s ? { ahead: num(s.ahead), behind: num(s.behind) } : {}), ...(s?.fetchedAt ? { checked: timeOf(s.fetchedAt, Date.parse(s.fetchedAt)) } : {}), needs: project.exists === false || state === 'behind' || state === 'diverged' });
 }
 
 // ---- costs ----
@@ -174,10 +171,21 @@ function awayOf(away = {}) {
 // ---- the snapshot ----
 const OUTCOME_DAYS = 7, OUTCOMES_MAX = 50;
 const arr = (v) => (Array.isArray(v) ? v : []);
+// Dev's Needs-you inputs (app.js overviewRuns): a pipeline run (isPipelineRun: no scriptbench, no agentgen) that is live
+// (isLive: not over, and starting, running, pausing or asking), paused, or lingering (failed while watched, not yet opened:
+// `unread`). A run opened here (`opened`) keeps its row, calm. Any other hello run is over: its History row stands for it.
+const OVER = new Set(['done', 'error', 'stopped', 'aborted', 'failed', 'complete', 'completed', 'interrupted']);
+const PIPELINE_KINDS = new Set(['run', 'workspace-run', undefined, null]);
+export function inPlay(r) {
+  if (!r || !PIPELINE_KINDS.has(r.kind)) return false;
+  const s = lc(r.status);
+  const live = !OVER.has(s) && (['starting', 'running', 'pausing'].includes(s) || r.pendingQuestion != null);
+  return live || s === 'paused' || !!r.unread || !!r.opened;
+}
 /** Every source's answer into the store's parts. Archived rows go; a pipeline both live and saved is kept once, live. */
 export function snapshotOf(src = {}, { now = 0, unread = [] } = {}) {
   const projectsRaw = arr(src.projects?.projects), syncs = src.sync?.projects || {};
-  const liveRuns = arr(src.hello?.runs).filter((r) => r && r.kind !== 'scriptbench');
+  const liveRuns = arr(src.hello?.runs).filter(inPlay);
   const saved = arr(src.history?.pipelines).filter((r) => r && !r.archived);
   const livePids = new Set(liveRuns.map((r) => r.pipelineId).filter(Boolean));
   const savedOnly = saved.filter((r) => !livePids.has(r.id));
@@ -196,6 +204,8 @@ export function snapshotOf(src = {}, { now = 0, unread = [] } = {}) {
   const away = src.away || {};
   return {
     runs, groups: [], userGroups: [],
+    // the Chats Needs-you number: the server's count over every thread, not the first page's rows
+    chatsNeeds: num(src.threads?.counts?.needs),
     chats: arr(src.threads?.threads).filter((t) => t && !t.archivedAt && !t.archived).map((t) => chatOf(t, { now, unread })),
     chatGroups: arr(src.groups?.groups).map((g) => ({ id: str(g.id), name: str(g.name), total: num(g.count) ?? 0 })),
     schedules: items.filter((x) => x.kind === 'recurring' ? x.status !== 'ended' : ['missed', 'scheduled', 'firing'].includes(x.status)).map((x) => scheduleOf(x, { now, projects: projectsRaw })),
@@ -204,13 +214,13 @@ export function snapshotOf(src = {}, { now = 0, unread = [] } = {}) {
     updates: [...notes, ...outcomes],
     actions: arr(src.actions).filter((a) => ['starting', 'running', 'ready'].includes(a?.status)).map((a) => ({ id: str(a.instanceId), runId: str(a.runId), run: str(a.runTitle) || 'A removed run', label: str(a.label), go: a.runId ? 'run' : '' })),
     away: awayOf(away),
-    keep: src.settings?.keepAwake === true,
+    keep: src.settings?.keepAwake !== false,   // dev's rule: on unless turned off
   };
 }
 
 // What each source feeds: a refetch of one source replaces only these parts (D11).
 export const SOURCE_PARTS = Object.freeze({
-  hello: ['runs', 'costs'], history: ['runs', 'updates'], threads: ['chats'], groups: ['chatGroups'], schedules: ['schedules', 'runs'],
+  hello: ['runs', 'costs'], history: ['runs', 'updates'], threads: ['chats', 'chatsNeeds'], groups: ['chatGroups'], schedules: ['schedules', 'runs'],
   projects: ['projects', 'runs'], sync: ['projects'], budget: ['costs'], actions: ['actions'], notifications: ['updates'], away: ['away'], settings: ['keep'],
 });
 /** The parts a single-source refetch replaces: `answer` stands for `source` among the last answers `sources`. */

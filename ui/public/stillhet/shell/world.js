@@ -120,7 +120,7 @@
   };
   let current = 'afternoon', data = null;
   // the live kind's other parts, each read through part(name) on every read (D9)
-  const parts = { chats: [], chatGroups: [], schedules: [], projects: [], costs: { budget: null, usage: [] }, updates: [], actions: [], away: { status: 'no-hours', hours: null }, keep: false };
+  const parts = { chats: [], chatsNeeds: null, chatGroups: [], schedules: [], projects: [], costs: { budget: null, usage: [] }, updates: [], actions: [], away: { status: 'no-hours', hours: null }, keep: false };
   const OWN = ['runs', 'groups', 'userGroups'];
   const listeners = [], moved = [];
   // One store: every task lives here once. A page that acts on a task moves it here, and every surface (a chat's card and
@@ -187,7 +187,7 @@
     part: (name) => (OWN.includes(name) ? data[name] : parts[name]),
     onChange: (fn) => listeners.push(fn),
     data: () => data,
-    replace: (d) => { data = d; },   // the Runs list's Undo puts back what it kept
+    replace: (d) => { if (LIVE) return; data = d; },   // the Runs list's Undo puts back what it kept; the live kind has no Undo (D25), only the adapter writes
     rows: () => data.runs,
     find: (id) => data.runs.find((r) => r.id === id),
     has: (caseId, id) => LIVE || id in CASES[caseId].runs || ENDED.includes(id) || (CASES[caseId].groups || []).some((g) => MEMBERS[g].includes(id)),

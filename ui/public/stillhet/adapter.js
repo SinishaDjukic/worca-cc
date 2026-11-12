@@ -1,5 +1,5 @@
 // ui/public/stillhet/adapter.js — the data adapter seam. One global, window.RailAdapter:
-// { kind: 'demo' | 'live', host, act(id, args), world(), model(area), ready, retry(), post(url, body) }.
+// { kind: 'demo' | 'live', host, act(id, args), refuse(id, args), world(), model(area), ready, retry(), post(url, body) }.
 // The server picks the kind, never the address (D2): the app host is live when its shell carries data-adapter="live"
 // (src/core/stillhet-shell.mjs), demo otherwise; the prototype host is always demo. The live kind loads
 // live/live-adapter.mjs once the pages have loaded (D1). `act` answers { ok, text }. In the app host nothing is connected yet, so it refuses with NOT_CONNECTED; in the
@@ -28,6 +28,8 @@
     ready: new Promise(function (r) { readyDone = r; }),
     // Try again (the lists' and Pulse's): the live kind fetches every source again; the demo kind has nothing to fetch
     retry: function () { return live ? live.retry() : undefined; },
+    // a task opened in the live kind: the adapter clears what dev clears on opening it (the failed run's unread mark)
+    seenRun: function (id) { if (live) live.seenRun(id); },
     // dev's own route and body (D13): { ok, status, data, error }; a refusal names dev's reason
     post: function (url, body) {
       return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
@@ -48,6 +50,9 @@
       if (!announced) { announced = true; toast(NOT_CONNECTED); setTimeout(function () { announced = false; }, 3000); }
       return { ok: false, text: NOT_CONNECTED };
     },
+    // An action of an area this slice does not wire (R-arch-10): in the live kind it goes through act, which refuses with
+    // NOT_CONNECTED, and the caller returns before it writes anything; in the demo kind it answers false and the page acts.
+    refuse: function (id, args) { if (kind !== 'live') return false; adapter.act(id, args); return true; },
     world: function () { return window.RailWorld; },
     model: function (area) { return window['Rail' + area[0].toUpperCase() + area.slice(1) + 'Model']; }
   };
@@ -59,7 +64,7 @@
       live = m.startLive({
         fetch: window.fetch.bind(window), WebSocket: window.WebSocket, location: location, world: W, host: window.RailHost || {},
         setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window), now: Date.now,
-        openChat: function () { var h = location.hash.match(/^#chat\/([^/]+)/); return h ? decodeURIComponent(h[1]) : ''; },
+        openChat: function () { var h = location.hash.match(/^#chat\/([^/]+)/); if (!h) return ''; try { return decodeURIComponent(h[1]); } catch (e) { return h[1]; } },
         hidden: function () { return document.hidden; }
       });
       window.addEventListener('hashchange', function () { live.seen(); });
