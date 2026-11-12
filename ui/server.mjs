@@ -4136,12 +4136,10 @@ export async function schedulerTick({ now = Date.now() } = {}) {
       now,
       start: fireTicket,
       isLive: liveProbe,
-      staggerMs: SCHEDULER_STAGGER_MS,
-      hold: featureHoldsTicket,          // Shaper's "Ask me before each run": the ticket waits for Start now
+      staggerMs: SCHEDULER_STAGGER_MS, hold: featureHoldsTicket, // hold: "Ask me before each run" waits for Start now
     });
     for (const id of [...out.failed, ...out.missed, ...out.skipped]) releaseAskCard(getTicket(id));
-    // A held run's card repaints once, when it becomes held, not on every tick it stays held.
-    const newlyHeld = out.held.filter((id) => !_schedulerHeld.has(id));
+    const newlyHeld = out.held.filter((id) => !_schedulerHeld.has(id)); // a held card repaints once, when it becomes held
     _schedulerHeld = new Set(out.held);
     broadcastFeaturesOf(() => featuresOfTickets([...out.fired, ...out.missed, ...out.failed, ...out.skipped, ...newlyHeld]));
     if (out.fired.length || out.missed.length || out.skipped.length || out.failed.length || out.retried.length) {
