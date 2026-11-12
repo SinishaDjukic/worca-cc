@@ -25,14 +25,14 @@ const wftBase = (id) => `/api/workflows/${encodeURIComponent(id)}/tests`;
 const wftDate = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); };
 
 /**
- * The Tests page controller. deps: { doc, win, fetch, safeJson, composer: () => gvComposer, els: wfvEls, api: gvApi,
+ * The Tests page controller. deps: { doc, win, fetch, safeJson, composer: () => gvComposer, api: gvApi,
  * versions: () => the versions-app.mjs controller, currentView, confirmModal, openNewPipeline, hdMarkdown,
  * mock: () => serverMock.on, runPageShows: (pipelineId) => whether that run's saved page is still open }.
  */
 export function createWorkflowTests(deps) {
   const { doc, win, safeJson, api: gvApi, currentView, confirmModal, openNewPipeline, hdMarkdown } = deps;
   const composer = () => deps.composer();
-  const wfvEls = () => deps.els();
+  const wfvEls = () => ({ tests: doc.getElementById('wfv-tests') });   // the Tests page (workflows.html)
   const wfvShowPage = (page) => deps.versions().showPage(page);
   const mock = () => deps.mock();
   let wft = { ...WFT_EMPTY };

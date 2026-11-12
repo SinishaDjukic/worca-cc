@@ -59,13 +59,18 @@ export async function keepPicksForVersionInUse(repaint) {
 }
 
 /**
- * The versions controller. deps: { doc, win, composer: () => gvComposer, els: wfvEls, api: gvApi,
+ * The versions controller. deps: { doc, win, composer: () => gvComposer, api: gvApi,
  * confirmModal, tests: () => the tests-app.mjs controller }.
  */
 export function createWorkflowVersions(deps) {
   const { doc, win, api: gvApi, confirmModal } = deps;
   const composer = () => deps.composer();
-  const wfvEls = () => deps.els();
+  // The Workflows view's parts this controller paints (workflows.html): the page switch, the status line, Save version
+  // and the two pages.
+  const wfvEls = () => {
+    const g = (id) => doc.getElementById(id);
+    return { pages: g('wfv-pages'), vstatus: g('wfv-vstatus'), saveVersion: g('wfv-saveversion'), versions: g('wfv-versions'), tests: g('wfv-tests') };
+  };
   const tests = () => deps.tests();
   let wfvVersionsOverview = null;
   let wfvVersionsError = null;     // {status, error} of the last failed read (status 0: no answer, 400: cannot have versions)

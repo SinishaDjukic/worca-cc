@@ -3385,8 +3385,6 @@ function wfvEls() {
     autolayout: g('wfv-autolayout'), zoom: g('wfv-zoom'), zoomLabel: g('wfv-zoom-label'), overlay: g('wfv-overlay'),
     library: g('wfv-library'), sheet: g('wfv-sheet'), sheetTitle: g('wfv-sheet-title'), sheetClose: g('wfv-sheet-close'),
     dialogHost: g('wfv-dialog-host'), chat: g('wfc'),
-    pages: g('wfv-pages'), vstatus: g('wfv-vstatus'), saveVersion: g('wfv-saveversion'), versions: g('wfv-versions'),
-    tests: g('wfv-tests'),
   };
 }
 
@@ -3527,10 +3525,10 @@ function wfvSetLibraryOpen(open) {
 }
 
 // Workflow versions and tests (plans/workflow-tests-plan.md, part2): the Versions and Tests pages' controllers.
-const wfvVersions = createWorkflowVersions({ doc: document, win: window, composer: () => gvComposer, els: wfvEls, api: gvApi,
+const wfvVersions = createWorkflowVersions({ doc: document, win: window, composer: () => gvComposer, api: gvApi,
   confirmModal, tests: () => wfvTests });
 const wfvTests = createWorkflowTests({ doc: document, win: window, fetch: (...a) => fetch(...a), safeJson, composer: () => gvComposer,
-  els: wfvEls, api: gvApi, versions: () => wfvVersions, currentView, confirmModal, openNewPipeline, hdMarkdown,
+  api: gvApi, versions: () => wfvVersions, currentView, confirmModal, openNewPipeline, hdMarkdown,
   mock: () => serverMock.on, runPageShows: (pid) => !!histDetailState && histDetailState.id === pid });
 
 function wfvShellActions() {
