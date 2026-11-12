@@ -6,8 +6,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
-  initialStage, selectLayout, selectMarks, selectCursors, selectBoard, selectKindChrome, KIND_STAGE,
+  initialStage, selectLayout, selectMarks, selectCursors, selectBoard, selectKindChrome, selectStandby, KIND_NOUN, KIND_STAGE,
 } from '../ui/public/design/stage-model.mjs';
+import { createBuildNarration } from '../ui/public/design/narration.mjs';
 import { BOARD_CANVAS, stageRegions, boardPost } from '../ui/public/design/kind-view.mjs';
 import { createOverlay } from '../ui/public/design/overlay.mjs';
 import { validFrameMessage } from '../ui/public/design/frame-host.mjs';
@@ -264,7 +265,8 @@ test('beyond the plan: selectKindChrome is the view of the non-removed sections,
   assert.deepEqual(v.regions, stageRegions({ kind: 'video', docMode: 'build', cw: 1096, ch: 900 }));
   assert.deepEqual(v.board, boardPost({ kind: 'video', docMode: 'build', n: 2, cw: 1096, ch: 900 }));
   assert.equal(selectKindChrome(run(st, [build('stopped')]).state).live, false);
-  assert.deepEqual(['web', 'presentation', 'pitch', 'video'].map((k) => KIND_STAGE[k].board), [false, true, true, true]);
+  assert.deepEqual(['web', 'presentation', 'pitch', 'video', 'document'].map((k) => KIND_STAGE[k].board), [false, true, true, true, false]);
+  assert.deepEqual(KIND_STAGE.document, KIND_STAGE.web, 'a document is staged as a web page');
   const unmeasured = S('pitch', [build(), deck(THREE)]);
   assert.equal(selectLayout(unmeasured).s > 0, false, 'an unmeasured board stage is not painted');
   assert.equal(selectBoard(unmeasured), null);
@@ -339,4 +341,13 @@ test('beyond the plan: the frame host reads `time {at, playing, dur}`, the film 
   for (const bad of [{ at: -1, playing: true, dur: 32 }, { at: 1, playing: true, dur: 0 }, { at: 1, playing: true, dur: 24001 }, { at: 1, playing: 'yes', dur: 32 }, { at: Infinity, playing: true, dur: 32 }, { at: '1', playing: true, dur: 32 }, { playing: true, dur: 32 }]) {
     assert.equal(env(bad), null, JSON.stringify(bad));
   }
+});
+
+test('a document\'s nouns: its sections are sections, and the whole is a document', () => {
+  assert.equal(KIND_NOUN.document, 'section');
+  const st = run(initialStage({ designId: DID, kind: 'document', canvas: { w: 794 } }), [build('planning')]).state;
+  assert.equal(selectStandby(st).title, 'Planning the document');
+  const n = createBuildNarration({ designId: DID, kind: 'document' });
+  n.push(build('building')); n.push(build('integrating'));
+  assert.ok(n.view().lines.some((l) => l.text === 'Every section is in. Putting the document together.'), JSON.stringify(n.view().lines));
 });

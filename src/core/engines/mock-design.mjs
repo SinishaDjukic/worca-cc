@@ -16,7 +16,7 @@ import { execFile } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
-import { isBoardKind, isDeckKind, isFilmKind } from '../design/kinds.mjs';
+import { isBoardKind, isDeckKind, isDocKind, isFilmKind } from '../design/kinds.mjs';
 
 const SECTION_IDS = ['hero', 'features', 'pricing', 'faq', 'team', 'contact', 'cta', 'footer'];
 const MAX_SECTIONS = 40;
@@ -38,6 +38,8 @@ const PICTURE_WAIT_MAX = 100000;
 const PICTURE_DELAY_RE = /\bMOCK_PICTURE_DELAY_MS=(\d{1,5})\b/;
 /** The name-alone runs after a `3` (still in the making), at most. */
 const PICTURE_WAITS = 20;
+/** `MOCK_LOOK=<word>`: the source a document lead writes on brand.md's `Look source:` line (default `worca`). */
+const LOOK_RE = /\bMOCK_LOOK=([a-z]+)/;
 const TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep'];
 /** Partial-JSON slice width: odd on purpose, so an escape like `\"` is split across two deltas. */
 const SLICE = 37;
@@ -327,8 +329,10 @@ function lostSession(sessionId, emit, signal) {
 }
 
 /** What a builder writes: 5 layers, one root carrying `data-section`; a slide's root is a labelled `<section>`, a
- *  scene's a `<div data-scene>` (the board lint's `rootFault`). */
+ *  scene's a `<div data-scene>` (the board lint's `rootFault`); a document's heading has the id its contents list
+ *  links to. */
 function sectionHtml(id, job, kind = 'web') {
+  if (isDocKind(kind)) return `<section data-section="${id}"><h2 id="${id}-title" class="t">${job}</h2><p>Mock ${id}.</p><div class="grid"><div></div></div></section>`;
   const inner = `<h2 class="t">${job}</h2><p>Mock ${id}.</p><div class="grid"><div></div></div>`;
   if (isFilmKind(kind)) return `<div data-section="${id}" data-scene>${inner}</div>`;
   if (isDeckKind(kind)) return `<section data-section="${id}" data-label="${job}">${inner}</section>`;
@@ -341,11 +345,12 @@ const SCENE_JS = 'S.tl.set(root,{opacity:0},0).to(root,{opacity:1,duration:0.4},
 /** The seconds every mock scene lasts. */
 const SCENE_SECONDS = 4;
 
-/** The kind-specific fields of a mock plan section or round add: `estHeight` on a web page; on a video, a `duration`
- *  and a script; a deck neither. */
+/** The kind-specific fields of a mock plan section or round add: `estHeight` on a web page or a document; on a video,
+ *  a `duration` and a script; a deck neither. */
 function kindFields(kind) {
   if (isFilmKind(kind)) return { parts: ['html', 'css', 'js'], duration: SCENE_SECONDS };
   if (isBoardKind(kind)) return { parts: ['html', 'css'] };
+  if (isDocKind(kind)) return { parts: ['html', 'css'], estHeight: 600 };
   return { parts: ['html', 'css'], estHeight: 600 };
 }
 
@@ -358,6 +363,14 @@ function kindCanvas(kind) {
 
 const TOKENS_CSS = ':root{--ink:#111;--paper:#fff;--accent:#2563eb}\n';
 const GLOBAL_CSS = 'body{margin:0;color:var(--ink);background:var(--paper);font-family:system-ui,sans-serif}.grid{display:grid;gap:16px}\n';
+/** A document's tokens: worca's look loads its font from assets/worca/, where worca stages it. */
+const TOKENS_DOC_CSS = "@font-face{font-family:'Poppins';font-weight:400;src:url(assets/worca/poppins-latin-400-normal.woff2) format('woff2')}\n:root{--ink:#111;--paper:#fff;--accent:#2563eb}\nbody{font-family:'Poppins',system-ui,sans-serif}\n";
+
+/** A document's brand.md: the `Look source:` line first (the `MOCK_LOOK=` word, else `worca`), unless `bad`. */
+function brandMd(text, bad) {
+  const body = 'Calm and plain. Short paragraphs, real numbers.\n';
+  return bad ? `# Brand\n\n${body}` : `Look source: ${(LOOK_RE.exec(text) || [])[1] ?? 'worca'} — mock\n\n${body}`;
+}
 
 function shellHtml(slotIds) {
   const slots = slotIds.map((id) => `<div data-worca-slot="${id}"></div>`).join('');
@@ -382,7 +395,8 @@ function leadPlan(text, kind) {
     const brief = [`Mock ${job} section.`, ...(perSection.get(id) || []), ...cost].join(' ');
     sections.push({ id, job, brief, ...kindFields(kind), ...(bands && i < 2 ? { band: 'Top' } : {}) });
   }
-  return { v: 1, kind, title: 'Mock', canvas: kindCanvas(kind), notes: ['Mock plan.', ...cost, ...rework].join(' '), sections };
+  const doc = isDocKind(kind) ? { page: 'A4', toc: true } : {};
+  return { v: 1, kind, title: 'Mock', canvas: kindCanvas(kind), ...doc, notes: ['Mock plan.', ...cost, ...rework].join(' '), sections };
 }
 
 /** The lead's `round.json`: the default touches the first section that stays, with brief `Mock touch`. An add is
@@ -477,15 +491,22 @@ async function runLead({ cwd, prompt, sessionId, session, emit, signal }) {
     reply = 'Asked a question.';
   } else if (memo.change) {
     const plan = await readJson(planPath);
+    // A document round that names a look rewrites brand.md's Look source line, as the change prompt asks.
+    if (isDocKind(memo.kind) && LOOK_RE.test(text)) await proc.write(resolve(cwd, 'brand.md'), brandMd(text, false));
     await proc.write(memo.roundFile ?? resolve(cwd, 'round.json'), `${JSON.stringify(leadRound(text, plan, memo.kind), null, 2)}\n`);
     reply = 'Planned the change round.';
   } else {
     const plan = leadPlan(text, memo.kind);
     // A deck or a video has no shell slots (L7.4): worca wraps its sections in the stage.
     const slots = has(text, 'MOCK_SHELL_SLOTS') && !isBoardKind(memo.kind) ? plan.sections.map((s) => s.id) : [];
-    await proc.write(resolve(cwd, 'tokens.css'), TOKENS_CSS);
+    const doc = isDocKind(memo.kind);
+    await proc.write(resolve(cwd, 'tokens.css'), doc ? TOKENS_DOC_CSS : TOKENS_CSS);
     await proc.write(resolve(cwd, 'global.css'), GLOBAL_CSS);
     await proc.write(resolve(cwd, 'shell.html'), shellHtml(slots));
+    if (doc) {
+      const badBrand = has(text, 'MOCK_BAD_BRAND_ALWAYS') || (has(text, 'MOCK_BAD_BRAND') && firstTime(cwd, 'MOCK_BAD_BRAND'));
+      await proc.write(resolve(cwd, 'brand.md'), brandMd(text, badBrand));
+    }
     const bad = has(text, 'MOCK_BAD_PLAN_ALWAYS') || (has(text, 'MOCK_BAD_PLAN') && firstTime(cwd, 'MOCK_BAD_PLAN'));
     await proc.write(planPath, `${JSON.stringify(bad ? { ...plan, sections: [] } : plan, null, 2)}\n`);
     reply = `Planned ${plan.sections.length} sections.`;

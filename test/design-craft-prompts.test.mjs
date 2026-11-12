@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { builderSystemPrompt, integratePrompt, leadSystemPrompt } from '../src/core/design/prompts.mjs';
+import { builderSystemPrompt, integratePrompt, leadChangePrompt, leadSystemPrompt, leadTarget, planFixPrompt } from '../src/core/design/prompts.mjs';
 
 const KINDS = ['web', 'presentation', 'pitch', 'video'];
 const kit = (kind) => readFileSync(new URL(`../assets/design-kit/${kind}/CONTRACT.md`, import.meta.url), 'utf8');
@@ -81,5 +81,43 @@ test('the web kit CONTRACT states the same rules, and no kit ties brand.md to a 
   }
   for (const must of ['A product, a screen or a result is shown as it is and large enough to read, text in it at least 12px', 'Animate only what answers the person',
     '`--ease-out: cubic-bezier(0.23, 1, 0.32, 1)`', 'choose one quiet direction', 'Never a wall of equal cards.']) assert.ok(web.includes(must), must);
-  for (const kind of ['web', 'deck', 'video']) assert.doesNotMatch(kit(kind), /when a project is given/, kind);
+  for (const kind of ['web', 'deck', 'video', 'document']) assert.doesNotMatch(kit(kind), /when a project is given/, kind);
+});
+
+test('a document\'s lead and builders read each Craft rule once, and worca\'s look by default', () => {
+  const lead = leadSystemPrompt({ kind: 'document' }); const builder = builderSystemPrompt({ kind: 'document' });
+  for (const [who, s] of [['lead', lead], ['builder', builder]]) {
+    assert.equal(s.split('\n').filter((l) => l === 'Craft:').length, 1, `${who}: one Craft block`);
+    for (const [rule, line] of Object.entries(RULES)) assert.equal(s.split(line).length, 2, `${who}: ${rule}`);
+    assert.match(s, /Body text is plain, complete prose in short paragraphs, as long as the point needs and no longer\./, who);
+    assert.doesNotMatch(s, /Body text is one or two short sentences\./, who);
+  }
+  for (const bullet of [
+    '- The look comes from the first source that names one, in this order: 1. the brief or its attachments, when the person asks for a style, a brand or a reference; 2. a skill or the project, when a design or brand skill you have, the project\'s CLAUDE.md, rules or memory, or its own design system or brand files set one (when both do, follow the project\'s own and say so); 3. otherwise worca\'s own look. Never choose a look of your own.',
+    '- worca\'s look is in the kit, beside CONTRACT.md: Read `worca-look/tokens.css` and `worca-look/global.css`, and Write them whole as `tokens.css` and `global.css`. Add only what the document needs, from those tokens. worca puts the fonts they load in `assets/worca/` once your plan is valid.',
+    '- Another look keeps `worca-look/global.css` and the token names of `worca-look/tokens.css`: write `tokens.css` with those names in that look.',
+    '- The first line of `brand.md` is `Look source: <brief|project|skill|worca> — <why>`: the words of the brief, the file or the skill that set the look, or that none did. worca refuses a plan without it, and `project` when your task has no Project line.',
+    '- Each `brief` names the section\'s one point',
+  ]) assert.ok(lead.includes(bullet), bullet);
+  assert.match(lead, /^4\. `brand\.md`: the `Look source:` line first/m);
+  assert.doesNotMatch(lead, /^\d\. `global\.js`/m, 'no global.js item');
+  assert.ok(lead.indexOf('\nDesign:\n') < lead.indexOf('\nCraft:\n') && lead.indexOf('\nCraft:\n') < lead.indexOf('\nFiles:\n'));
+  for (const no of ['the system font stack', 'choose one direction', '`css` and `js` when the section needs them']) assert.equal(lead.includes(no), false, no);
+  // The web keeps its own default.
+  assert.match(leadSystemPrompt({ kind: 'web' }), /choose one direction and keep to it/);
+});
+
+test('a document\'s fix prompt names brand.md, its change round the look, and its section target', () => {
+  const today = planFixPrompt({ errors: ['x'] });
+  assert.equal(today, 'plan.json is not valid:\n- x\nFix these and write plan.json again, whole, at the Plan file path. Change nothing else.');
+  const brand = planFixPrompt({ errors: ['sections must be an array of at least one section', 'brand.md has no "Look source:" line: write it'] }).split('\n');
+  assert.equal(brand[0], 'plan.json or brand.md is not valid:');
+  assert.equal(brand.at(-1), 'Fix these: write plan.json again, whole, at the Plan file path, and Edit the `Look source:` line of brand.md beside it. Change nothing else.');
+  assert.equal(brand.length, 4);
+  const change = leadChangePrompt({ kind: 'document', instruction: 'x', roundFile: '/r', questionFile: '/q' });
+  assert.ok(change.includes('A change that asks for another look rewrites `tokens.css` and the `Look source:` line of `brand.md`.'));
+  assert.doesNotMatch(change, /place the slot/);
+  assert.doesNotMatch(leadChangePrompt({ kind: 'web', instruction: 'x', roundFile: '/r', questionFile: '/q' }), /Look source/);
+  assert.equal(leadTarget({ kind: 'document', fast: true }), '6 to 20 sections, one per part');
+  assert.equal(leadTarget({ kind: 'document', fast: false }), '3 to 8 sections, one per part');
 });

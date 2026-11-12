@@ -193,7 +193,7 @@ test('tileMeta: a row with no costKnown (before the server sends it) reads its c
     [{ kind: 'zine', status: 'done', updatedAt: 'x', costUsd: 0 }, 'Design'],
     [{ kind: 'web', status: 'done', updatedAt: 'x', costUsd: 2, costKnown: false }, 'Web page · cost unknown'],
   ].map(([r, want]) => ({ name: want, run: () => assert.equal(tileMeta(r, NOW), want) })));
-  assert.deepEqual(['web', 'presentation', 'pitch', 'video', 'nope', 7].map(kindWord), ['Web page', 'Presentation', 'Pitch deck', 'Video', 'Design', 'Design']);
+  assert.deepEqual(['web', 'presentation', 'pitch', 'video', 'document', 'nope', 7].map(kindWord), ['Web page', 'Presentation', 'Pitch deck', 'Video', 'Document', 'Design', 'Design']);
 });
 const ROWS = [{ id: 'd_000000000001', title: 'Apsida landing page', kind: 'web', status: 'done', updatedAt: at(10, 5, 12, 0), costUsd: 4.2, costKnown: true, thumb: '/api/design/d_000000000001/thumb?v=1' },
   { id: 'd_000000000002', title: 'Seed deck', kind: 'pitch', status: 'building', updatedAt: at(10, 5, 13, 0), costUsd: 0, costKnown: true, thumb: null }];
@@ -482,9 +482,9 @@ test('titleFromBrief: first line, first sentence, at most 60 chars at a word', a
 test('composer matches the mockup', async () => {
   const { lib, host, tick } = rig({ rows: [] }); await lib.open(); await tick();
   assert.equal(host.querySelector('.dz-hero h1').textContent, 'What should we design?');
-  assert.equal(host.querySelector('textarea.dz-input').getAttribute('placeholder'), 'A landing page, a deck, a pitch, a film');
+  assert.equal(host.querySelector('textarea.dz-input').getAttribute('placeholder'), 'A landing page, a report, a deck, a pitch, a film');
   assert.deepEqual([...host.querySelectorAll('.dz-kinds .dz-kind-btn')].map((b) => [b.textContent, b.getAttribute('aria-pressed')]),
-    [['Web page', 'true'], ['Presentation', 'false'], ['Pitch deck', 'false'], ['Video', 'false']]);
+    [['Web page', 'true'], ['Presentation', 'false'], ['Pitch deck', 'false'], ['Video', 'false'], ['Document', 'false']]);
   assert.equal(host.querySelector('.ask-scope-btn .ask-scope-label').textContent, 'No project');
   assert.equal(host.querySelector('.ask-scope-btn').getAttribute('aria-label'), 'Project: none');
   const sw = host.querySelector('.dz-fast input[role=switch]');   // makeSwitch, as the dock's
@@ -493,7 +493,7 @@ test('composer matches the mockup', async () => {
   sw.click();
   assert.deepEqual([sw.checked, host.querySelector('.dz-fast-cap').hidden], [false, true], 'and can be turned off');
   host.querySelectorAll('.dz-kind-btn')[1].click();
-  assert.deepEqual([...host.querySelectorAll('.dz-kind-btn')].map((b) => [b.getAttribute('aria-pressed'), b.classList.contains('is-on')]), [['false', false], ['true', true], ['false', false], ['false', false]]);
+  assert.deepEqual([...host.querySelectorAll('.dz-kind-btn')].map((b) => [b.getAttribute('aria-pressed'), b.classList.contains('is-on')]), [['false', false], ['true', true], ['false', false], ['false', false], ['false', false]]);
   assert.equal(host.querySelector('.ask-send').tagName, 'BUTTON');
   assert.equal(host.querySelector('.ask-send').disabled, true, 'empty');
 });
@@ -675,4 +675,26 @@ test('the Pictures row paints only the newest answer and says when what it shows
   assert.equal(await fourth, false, 'the same answer changes nothing');
   const model = pics.el.querySelector('.dz-pics-model');
   assert.deepEqual([pics.ready(), model.textContent, model.title], [true, 'gpt-image-2.6-flare', 'gpt-image-2.6-flare']);
+});
+test('a Document chip: its icon, and a send creates a document', async () => {
+  const { lib, host, tick, posts, setText } = rig({ rows: [], created: { design: { id: 'd_00000000000d' } } });
+  await lib.open(); await tick();
+  const chip = host.querySelector('.dz-kind-btn[data-kind="document"]');
+  assert.equal(chip.textContent, 'Document');
+  assert.ok(chip.querySelector('svg'));
+  chip.click();
+  assert.equal(chip.getAttribute('aria-pressed'), 'true');
+  setText('A Q3 platform review for the board.');
+  host.querySelector('.ask-send').click(); await tick();
+  assert.equal(posts[0].url, '/api/design');
+  assert.equal(posts[0].body.kind, 'document');
+});
+test('a document tile with no picture shows the document icon', async () => {
+  const rows = [{ id: 'd_00000000000e', title: 'Q3 review', kind: 'document', status: 'done', updatedAt: at(10, 5, 12, 0), costUsd: 1, costKnown: true, thumb: null },
+    { id: 'd_00000000000f', title: 'Site', kind: 'web', status: 'done', updatedAt: at(10, 5, 12, 0), costUsd: 1, costKnown: true, thumb: null }];
+  const { lib, host, tick } = rig({ rows }); await lib.open(); await tick();
+  const [doc, web] = [...host.querySelectorAll('a.dz-tile .dz-thumb-none')].map((n) => n.innerHTML);
+  assert.ok(doc.includes('<svg'));
+  assert.notEqual(doc, web, 'its own icon, not the web page\'s');
+  assert.equal(doc, host.querySelector('.dz-kind-btn[data-kind="document"]').innerHTML.slice(0, doc.length));
 });

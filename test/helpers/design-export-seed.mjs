@@ -17,18 +17,21 @@ export const PLAN = { v: 1, kind: 'web', title: 'T', canvas: { w: 1440 }, notes:
 
 /**
  * A web design titled `Ship Radar` whose round has finished: one hero section with a local and a remote image, an
- * accented asset name, `over`'s extra work/ files (`{rel: text}`), `dist/` assembled and `status: 'done'`.
+ * accented asset name, `over`'s extra work/ files (`{rel: text}`), `dist/` assembled and `status: 'done'`. `kind:
+ * 'document'` makes it a document instead, its plan on an A4 page with a contents list.
  * @param {Record<string, string>} [over]
+ * @param {{ kind?: 'web' | 'document' }} [opts]
  * @returns {object} the design row
  */
-export function seedDone(over = {}) {
-  const d = createDesign({ kind: 'web', title: 'Ship Radar' }, { by: 'local' }); const w = designWorkDir(d.id);
+export function seedDone(over = {}, { kind = 'web' } = {}) {
+  const plan = kind === 'document' ? { ...PLAN, kind, canvas: { w: 794 }, page: 'A4', toc: true, numbered: false } : PLAN;
+  const d = createDesign({ kind, title: 'Ship Radar' }, { by: 'local' }); const w = designWorkDir(d.id);
   const put = (rel, text) => { mkdirSync(dirname(join(w, rel)), { recursive: true }); writeFileSync(join(w, rel), text); };
-  put('plan.json', JSON.stringify(PLAN)); put('shell.html', SHELL);
+  put('plan.json', JSON.stringify(plan)); put('shell.html', SHELL);
   put('sections/hero/index.html', '<section data-section="hero"><img src="assets/logo.png"><img src="https://x.dev/a.png"></section>');
   put('assets/logo.png', 'PNG'); put('sections/hero/assets/é a.svg', '<svg/>');
   for (const [k, v] of Object.entries(over)) put(k, v);
-  assembleDesign({ workDir: w, plan: PLAN, mode: 'dist' });
+  assembleDesign({ workDir: w, plan, mode: 'dist' });
   return updateDesign(d.id, { status: 'done' });
 }
 

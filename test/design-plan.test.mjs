@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
 import { validatePlan, validateRound, validateIntegration, DEFAULT_EST_HEIGHT } from '../src/core/design/plan.mjs';
+import { applyRound } from '../src/core/design/build.mjs';
 
 const sec = (id, extra = {}) => ({ id, job: id[0].toUpperCase() + id.slice(1), brief: 'b', parts: ['html', 'css'], estHeight: 600, ...extra });
 const WEB = { v: 1, kind: 'web', title: 'ShipRadar', canvas: { w: 1440 }, notes: 'Shared contract in two lines', sections: [sec('hero', { parts: ['html', 'css', 'js'], estHeight: 820 }), sec('pricing')] };
@@ -163,4 +164,48 @@ test('pinned limits and output shapes the rows above leave open', () => {
     assert.equal(validateRound({ v: 1, summary: 's' }, opts).ok, false, 'no plan to check against');
     assert.equal(validateIntegration({ v: 1 }, opts).ok, false, 'no plan to check against');
   }
+});
+
+const DOC = { v: 1, kind: 'document', title: 'Q3 platform review', page: 'A4', notes: 'n', sections: [sec('summary', { estHeight: 900 }), sec('findings')] };
+
+test('a document plan: worca sets the canvas from the page, toc and numbered default, the other kinds keep their keys', () => {
+  const a4 = validatePlan(DOC, { kind: 'document' });
+  assert.equal(a4.ok, true, a4.errors.join());
+  assert.deepEqual(a4.plan.canvas, { w: 794 });
+  assert.deepEqual([a4.plan.page, a4.plan.toc, a4.plan.numbered], ['A4', true, false]);
+  assert.deepEqual(Object.keys(a4.plan), ['v', 'kind', 'title', 'canvas', 'page', 'toc', 'numbered', 'notes', 'sections']);
+  assert.deepEqual(a4.plan.sections.map((s) => s.estHeight), [900, 600]);
+  const letter = validatePlan({ ...DOC, page: 'Letter', toc: false, numbered: true });
+  assert.deepEqual([letter.plan.canvas, letter.plan.toc, letter.plan.numbered], [{ w: 816 }, false, true]);
+  assert.deepEqual(validatePlan({ ...DOC, canvas: { w: 1920, h: 1080 } }).plan.canvas, { w: 794 }, 'a canvas the lead writes is ignored');
+  assert.deepEqual(Object.keys(validatePlan(WEB).plan), ['v', 'kind', 'title', 'canvas', 'notes', 'sections']);
+  assert.deepEqual(Object.keys(validatePlan(DECK).plan), ['v', 'kind', 'title', 'canvas', 'notes', 'sections']);
+  assert.equal('page' in validatePlan({ ...WEB, page: 'A4', toc: true }).plan, false, 'a web plan drops the document keys');
+});
+
+test('a document plan: page, toc, numbered, parts and estHeight each give their exact error', () => {
+  const errs = (p) => validatePlan(p).errors;
+  const { page: _page, ...noPage } = DOC;
+  assert.deepEqual(errs(noPage), ['page must be "A4" or "Letter"']);
+  for (const page of ['a4', 'Legal', 4, null]) assert.deepEqual(errs({ ...DOC, page }), ['page must be "A4" or "Letter"'], String(page));
+  assert.deepEqual(errs({ ...DOC, toc: 'yes' }), ['toc must be true or false']);
+  assert.deepEqual(errs({ ...DOC, numbered: 1 }), ['numbered must be true or false']);
+  assert.deepEqual(errs({ ...DOC, sections: [sec('intro', { parts: ['html', 'css', 'js'] })] }),
+    ['section "intro": a document runs no script, so parts are html and css']);
+  assert.match(errs({ ...DOC, sections: [sec('intro', { estHeight: undefined })] }).join(), /^section "intro": estHeight must be/);
+});
+
+test('a document round: an add defaults estHeight, refuses js, and the applied plan keeps page, toc and numbered', () => {
+  const plan = validatePlan({ ...DOC, numbered: true }).plan;
+  const add = { id: 'risks', job: 'Risks', brief: 'b', parts: ['html', 'css'], after: 'summary' };
+  const r = validateRound({ v: 1, summary: 's', add: [add] }, { plan });
+  assert.equal(r.ok, true, r.errors.join());
+  assert.equal(r.round.add[0].estHeight, DEFAULT_EST_HEIGHT);
+  assert.deepEqual(validateRound({ v: 1, summary: 's', add: [{ ...add, parts: ['html', 'js'] }] }, { plan }).errors,
+    ['add "risks": a document runs no script, so parts are html and css']);
+  const applied = applyRound({ plan, round: r.round, shellHtml: '<main><!--worca:sections--></main>' });
+  const again = validatePlan(applied.plan, { kind: 'document' });
+  assert.equal(again.ok, true, again.errors.join());
+  assert.deepEqual([again.plan.page, again.plan.toc, again.plan.numbered, again.plan.canvas], ['A4', true, true, { w: 794 }]);
+  assert.deepEqual(again.plan.sections.map((s) => s.id), ['summary', 'risks', 'findings']);
 });

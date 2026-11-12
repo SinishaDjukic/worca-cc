@@ -25,7 +25,7 @@ const DAY_MS = 86_400_000;
 const TITLE_MAX = 60;
 /** What a Delete loses, said on every Delete confirm (a re-opened one too). */
 const DELETE_LOSS = 'Its files and chat go. What it cost stays in Statistics.';
-const KINDS = Object.freeze(['web', 'presentation', 'pitch', 'video']);
+const KINDS = Object.freeze(['web', 'presentation', 'pitch', 'video', 'document']);
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -41,14 +41,15 @@ const ROUND_ENDS = Object.freeze(['done', 'stopped', 'error', 'interrupted']);
 /** The codes of POST /api/design's 409 that open the engine gate's dialog; any other 409 is the line under the box. */
 const GATE_CODES = Object.freeze(['engine-gated', 'engine-refused']);
 
-// The four kind icons (canvas build.mjs:346-349), drawn with the mockup's 1.75 stroke: a tile with no picture, and
-// the start composer's kind chips.
+// The kind icons (canvas build.mjs:346-349, and a document's page with a folded corner and three lines), drawn with
+// the mockup's 1.75 stroke: a tile with no picture, and the start composer's kind chips.
 const SVG_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
 const KIND_ICONS = Object.freeze({
   web: `${SVG_OPEN}<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9h17"/></svg>`,
   presentation: `${SVG_OPEN}<rect x="3.5" y="5" width="17" height="11" rx="2"/><path d="M9 20h6M12 16v4"/></svg>`,
   pitch: `${SVG_OPEN}<path d="M4 20h16M7 16v-4M12 16V7M17 16v-6"/></svg>`,
   video: `${SVG_OPEN}<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M10.5 9.5v5l4-2.5z"/></svg>`,
+  document: `${SVG_OPEN}<path d="M6 3.5h8.5L19 8v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 19V5a1.5 1.5 0 0 1 1-1.5z"/><path d="M14.5 3.5V8H19M8.5 12h7M8.5 15h7M8.5 18h4"/></svg>`,
 });
 // The composer's project button, as the mockup draws it (canvas build.mjs:112): a 13px folder and a 12px chevron.
 const SCOPE_FOLDER = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"/></svg>';
@@ -363,7 +364,7 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
   fileRow.hidden = true;
   const input = make('textarea', 'dz-input');
   input.rows = 2;
-  input.placeholder = 'A landing page, a deck, a pitch, a film';
+  input.placeholder = 'A landing page, a report, a deck, a pitch, a film';
   input.setAttribute('aria-label', 'What should we design?');
   const attachBtn = iconBtn('btn btn-quiet btn-icon', 'Attach files', 'plus');
   const fileInput = make('input');

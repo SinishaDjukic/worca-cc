@@ -12,7 +12,7 @@ import { designSpawnOptions } from '../src/core/design/spawn-options.mjs';
 useTempHome(after);
 const D = 'd_0123456789ab';
 const base = { engine: 'claude', agentId: 'a_11111111', buildId: 'b_111111111111', designId: D, prompt: 'P', model: 'claude-sonnet-5-5', effort: 'medium', maxBudgetUsd: 3, denyRules: ['Read(//**/.env*)'], signal: new AbortController().signal, onEvent: () => {} };
-const KINDS = ['web', 'presentation', 'pitch', 'video'];
+const KINDS = ['web', 'presentation', 'pitch', 'video', 'document'];
 
 const BLOCK = `Made pictures (only when your task names a \`Picture kit\`):
 - A picture that is not a screen of the product (a scene, a mood, a texture, an illustration, a background) can be made for you when nothing in the project or the brief's attachments fits. Run \`node <Picture kit> <name> <wide|tall|square> "<what it shows>"\` in work/, the description inside double quotes: it saves the picture under \`assets/made/\` and prints its path and pixel size. The name is short: lower-case letters, digits and hyphens.

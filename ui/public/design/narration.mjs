@@ -6,7 +6,7 @@
 // section records.
 import { KIND_NOUN, LIVE_BUILD, ON_STAGE, agentAction } from './stage-model.mjs';
 
-const KIND_THING = Object.freeze({ web: 'page', presentation: 'deck', pitch: 'deck', video: 'video' });
+const KIND_THING = Object.freeze({ web: 'page', presentation: 'deck', pitch: 'deck', video: 'video', document: 'document' });
 const NAMES_MAX = 3;
 const PICTURE_STATES = Object.freeze(['making', 'made', 'failed']);
 const isObject = (v) => typeof v === 'object' && v !== null;

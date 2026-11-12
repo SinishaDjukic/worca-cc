@@ -188,3 +188,18 @@ test('the lead\'s last pass is told to look first, with the kit\'s path, and has
   assert.doesNotMatch(bare, /Look kit|First look at what was built/, 'no kit, no line');
   assert.equal(DESIGN_MAX_TURNS['lead:integrate'], 40);
 });
+
+test('lookDoc: a document is shot as a page at its printed width, with no board', () => {
+  const work = join(mkdtempSync(join(tmpdir(), 'worca-look-')), 'work');
+  try {
+    mkdirSync(join(work, 'sections', 'intro'), { recursive: true });
+    writeFileSync(join(work, 'shell.html'), SHELL);
+    writeFileSync(join(work, '.crew.json'), JSON.stringify([{ id: 'intro', status: 'done' }]));
+    writeFileSync(join(work, 'sections', 'intro', 'index.html'), '<section data-section="intro"><h2 id="intro-title">Intro</h2></section>');
+    const plan = { v: 1, kind: 'document', title: 'T', canvas: { w: 794 }, page: 'A4', toc: true, numbered: false, notes: '', sections: [{ id: 'intro', job: 'Intro', brief: 'b', parts: ['html'], estHeight: 600 }] };
+    const d = lookDoc({ workDir: work, plan });
+    assert.equal(d.board, false);
+    assert.deepEqual(d.size, { w: 794, h: 900 });
+    assert.doesNotMatch(d.html, /--worca-board/);
+  } finally { rmSync(join(work, '..'), { recursive: true, force: true }); }
+});

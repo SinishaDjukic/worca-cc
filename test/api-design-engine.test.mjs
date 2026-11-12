@@ -35,6 +35,9 @@ test('a gated engine is refused until a person allows it; the choice is stored',
   for (const body of [{ engine: 'nope' }, { engine: 'mock' }, { engine: null }, { engine: 7 }, { allowUnguarded: 'yes' }, { allowUnguarded: true }, { engine: '  ', allowUnguarded: true }]) {
     assert.equal((await post({ kind: 'web', ...body })).status, 400, JSON.stringify(body));
   }
+  const doc = await post({ kind: 'document', engine: 'codex' });
+  assert.deepEqual([doc.status, doc.body.code], [409, 'engine-gated'], 'a document is gated the same way');
+  assert.equal((await post({ kind: 'document', engine: 'goose', allowUnguarded: true })).body.code, 'engine-refused');
   const plain = await post({ kind: 'web' });
   assert.equal(plain.status, 201);
   assert.equal(plain.body.design.engine, 'claude');

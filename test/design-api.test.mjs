@@ -118,6 +118,8 @@ test('create, read, list, patch', async () => {
   assert.match(c.json.threadId, /^ask_/);
   assert.match(c.json.design.id, /^d_[0-9a-f]{12}$/);
   assert.deepEqual([c.json.design.title, c.json.design.fast, c.json.design.engine, c.json.design.createdBy], ['Ship', true, 'claude', 'local'], 'Build fast is on by default');
+  const doc = await call('POST', '/api/design', { kind: 'document', title: 'Q3 review' });
+  assert.deepEqual([doc.status, doc.json.design.kind], [201, 'document'], 'a document is created like any kind');
   const g = await call('GET', `/api/design/${c.json.design.id}`);
   assert.deepEqual(Object.keys(g.json).sort(), ['build', 'design', 'plan', 'sections', 'versions']);
   assert.deepEqual([g.json.plan, g.json.build, g.json.sections, g.json.versions], [null, null, [], []]);

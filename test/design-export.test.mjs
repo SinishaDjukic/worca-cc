@@ -51,6 +51,17 @@ test('standalone: no bridge, the page stands alone, problems come back', async (
   assert.ok(r.html.includes('src="data:image/png;base64,'));
   assert.deepEqual(r.problems, [{ ref: 'https://x.dev/a.png', why: 'remote' }]);
 });
+test('a document\'s HTML export holds its contents list and worca\'s fonts inline', async () => {
+  const d = seedDone({
+    'sections/hero/index.html': '<section data-section="hero"><h2 id="hero-title">Hero</h2></section>',
+    'tokens.css': "@font-face{font-family:'Poppins';src:url(assets/worca/poppins-latin-400-normal.woff2) format('woff2')}",
+    'assets/worca/poppins-latin-400-normal.woff2': 'wOF2',
+  }, { kind: 'document' });
+  const r = await exportHtml(d);
+  assert.ok(r.html.includes('data:font/woff2;base64,'));
+  assert.ok(r.html.includes('data-worca-toc'));
+  assert.ok(r.html.includes('@page{size:A4'));
+});
 const unzip = async (d) => { const chunks = []; await zipDist({ dist: distDir(d.id), root: 'ship-radar', write: (c) => { chunks.push(Buffer.from(c)); } }); return unzipSync(new Uint8Array(Buffer.concat(chunks))); };
 test('zip: forward slashes under one folder, every dist file, UTF-8 names, no bridge', async () => {
   const files = await unzip(seedDone());

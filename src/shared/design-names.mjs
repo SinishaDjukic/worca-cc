@@ -2,8 +2,10 @@
 // Design P6 (L6.9, L6.12): the names the browser and the server share. It loads nothing, so the export dialog shows
 // the very file name the server sends, and the Library uses the same kind labels.
 
-export const DESIGN_KIND_LABELS = Object.freeze({ web: 'Web page', presentation: 'Presentation', pitch: 'Pitch deck', video: 'Video' });
+export const DESIGN_KIND_LABELS = Object.freeze({ web: 'Web page', presentation: 'Presentation', pitch: 'Pitch deck', video: 'Video', document: 'Document' });
 export const DECK_KINDS = Object.freeze(['presentation', 'pitch']);
+// The kinds that print to PDF: the export menu and the server's PDF dispatcher both read this one list.
+export const PDF_KINDS = Object.freeze(['presentation', 'pitch', 'document']);
 // M6: the Build fast label when the switch is on.
 export const DESIGN_FAST_LABEL = 'up to 12';
 // Build fast on a new design: on, until the person turns it off (the start composer's switch and the store agree).

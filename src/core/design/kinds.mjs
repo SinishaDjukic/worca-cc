@@ -4,11 +4,12 @@
 // the kinds from here. The board's colours are frame data, not stage CSS, so they stay literal.
 
 import { DECK_KINDS } from '../../shared/design-names.mjs';
+import { documentCss } from './doc-kind.mjs';
 
 export { DECK_KINDS };
 
 // A Map, so an inherited name such as `constructor` never resolves to a folder.
-const KIT_FOLDERS = new Map([['web', 'web'], ['presentation', 'deck'], ['pitch', 'deck'], ['video', 'video']]);
+const KIT_FOLDERS = new Map([['web', 'web'], ['presentation', 'deck'], ['pitch', 'deck'], ['video', 'video'], ['document', 'document']]);
 // The kit scripts a kind's doc inlines from `work/.kit/`, in the order they run.
 const KIT_SCRIPTS = new Map([
   ['deck', Object.freeze(['deck-stage.js', 'deck-pipeline.js', 'deck-enhance.js'])],
@@ -30,10 +31,26 @@ export function isBoardKind(kind) {
   return isDeckKind(kind) || isFilmKind(kind);
 }
 
+/** Whether `kind` is a long-form document (`document`): it flows like a web page but takes no shell slots. */
+export function isDocKind(kind) {
+  return kind === 'document';
+}
+
+/** Whether the shell places `kind`'s sections in named slots: the web only. Every other kind's sections go to
+ *  `<!--worca:sections-->` in plan order. */
+export function usesSlots(kind) {
+  return kind === 'web';
+}
+
+/** Whether the engine stages `kind`'s kit on every drive: a board or a document (the web's comes from the chat). */
+export function stagesKitEachDrive(kind) {
+  return isBoardKind(kind) || isDocKind(kind);
+}
+
 /**
  * The `assets/design-kit/` folder a kind stages, or null for anything that is not a design kind.
  * @param {unknown} kind
- * @returns {'web' | 'deck' | 'video' | null}
+ * @returns {'web' | 'deck' | 'video' | 'document' | null}
  */
 export function kitFolder(kind) {
   return KIT_FOLDERS.get(kind) ?? null;
@@ -64,14 +81,17 @@ export const FILM_BASE_CSS = 'html,body{margin:0;height:100%;overflow:hidden;bac
 
 /**
  * What a kind's doc puts first in the `<!--worca:head-->` block outside `build`: a deck hides its stage until it is
- * defined, a film takes FILM_BASE_CSS; the web, and every `build` doc, put nothing there.
- * @param {{ kind: unknown, mode: 'build' | 'run' | 'dist' | 'standalone' }} opts
+ * defined, a film takes FILM_BASE_CSS, a document takes worca's print CSS for its plan's page, title and numbering
+ * (first, so the design's own CSS wins at equal specificity); the web, and every `build` doc, put nothing there.
+ * Only a document reads `plan`.
+ * @param {{ kind: unknown, mode: 'build' | 'run' | 'dist' | 'standalone', plan?: { page?: unknown, numbered?: unknown, title?: unknown }|null }} opts
  * @returns {string}
  */
-export function kindHead({ kind, mode } = {}) {
+export function kindHead({ kind, mode, plan } = {}) {
   if (mode === 'build') return '';
   if (isDeckKind(kind)) return DECK_HEAD;
   if (isFilmKind(kind)) return `<style>${FILM_BASE_CSS}</style>`;
+  if (isDocKind(kind)) return `<style data-worca-doc>${documentCss({ page: plan?.page, numbered: plan?.numbered === true, title: plan?.title })}</style>`;
   return '';
 }
 
@@ -93,19 +113,23 @@ export function thumbStillCss(kind) {
  * `run`, where worca's chrome is the only chrome, and kept in `dist` and `standalone`, which open with no worca
  * around them; a film's scenes as the direct children of `[data-film]`, where film.js finds them. In `build` a deck or
  * a film is the board (M9): the same wrapper marked `data-worca-board`, upgraded by no script, holding the sections
- * comment after the fills, so the bridge's `plan` puts each missing slot on the board (P3's sections anchor). The
- * web's sections take the fills unchanged.
- * @param {{ kind: unknown, mode: 'build' | 'run' | 'dist' | 'standalone', fills: string }} opts
+ * comment after the fills, so the bridge's `plan` puts each missing slot on the board (P3's sections anchor). A
+ * document's sections follow its contents list `toc` outside `build`; in `build` they keep the sections comment after
+ * them, as a board's do, so a round's new slot lands in the shell's sections container in plan order. The web's
+ * sections take the fills unchanged. Only a document reads `toc`.
+ * @param {{ kind: unknown, mode: 'build' | 'run' | 'dist' | 'standalone', fills: string, toc?: string }} opts
  * @returns {string}
  */
-export function wrapFills({ kind, mode, fills } = {}) {
+export function wrapFills({ kind, mode, fills, toc = '' } = {}) {
   if (mode === 'build') {
     if (isDeckKind(kind)) return `<deck-stage data-worca-board width="1920" height="1080">${fills}<!--worca:sections--></deck-stage>`;
     if (isFilmKind(kind)) return `<div data-film data-worca-board>${fills}<!--worca:sections--></div>`;
+    if (isDocKind(kind)) return `${fills}<!--worca:sections-->`;
     return fills;
   }
   if (isDeckKind(kind)) return `<deck-stage width="1920" height="1080"${mode === 'run' ? ' no-rail' : ''}>\n${fills}\n</deck-stage>`;
   if (isFilmKind(kind)) return `<div data-film>\n${fills}\n</div>`;
+  if (isDocKind(kind)) return `${toc}${fills}`;
   return fills;
 }
 

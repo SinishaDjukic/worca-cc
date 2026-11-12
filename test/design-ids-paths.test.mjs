@@ -20,7 +20,7 @@ const ID = 'd_0123456789ab';
 test('ids: shapes and the Windows reserved names', () => {
   assert.match(newDesignId(), DESIGN_ID_RE); assert.match(newBuildId(), BUILD_ID_RE); assert.match(newAgentId(), AGENT_ID_RE);
   assert.notEqual(newDesignId(), newDesignId());
-  assert.deepEqual([...DESIGN_KINDS], ['web', 'presentation', 'pitch', 'video']);
+  assert.deepEqual([...DESIGN_KINDS], ['web', 'presentation', 'pitch', 'video', 'document']);
   assert.equal(MAX_SECTIONS, 40);
   for (const ok of ['hero', 'a', 'pricing-2', 'con-tact', 'console', 'com10', 'lpt10', 'null', 'a'.repeat(32)]) assert.equal(sectionIdProblem(ok), null, ok);
   const reserved = ['con', 'prn', 'aux', 'nul', ...[...Array(10).keys()].flatMap((n) => [`com${n}`, `lpt${n}`]), 'tokens', 'global'];

@@ -1,6 +1,6 @@
 // src/core/design/kit.mjs
 // The kit a design kind ships (P5 Task 11, P7 Task 3): `assets/design-kit/<folder>/` holds the CONTRACT.md its agents
-// follow, where the folder is the kind's (`kitFolder`: `web`, `deck` for presentation and pitch, `video`). Staging
+// follow, where the folder is the kind's (`kitFolder`: `web`, `deck` for presentation and pitch, `video`, `document`). Staging
 // copies that folder into the design's source folder as `work/.kit/`, where `_kitContract()` reads it and the write
 // guard keeps agents out, plus the runtime a deck or a film inlines from there: OpenDeck's three scripts from
 // `assets/deck-kit/`, byte for byte, and gsap. Nothing else of the deck kit is staged: its bundler only ever runs
@@ -20,6 +20,16 @@ import { inFolder, inWorkFolder, PICTURE_KIT, removeWorkEntry, setAside } from '
 export const KIT_ROOT = fileURLToPath(new URL('../../../assets/design-kit/', import.meta.url));
 
 const DECK_KIT = fileURLToPath(new URL('../../../assets/deck-kit/', import.meta.url));
+/** The shipped UI's own fonts: worca's look stages them from here, so the repo holds each binary once. */
+const UI_FONTS = fileURLToPath(new URL('../../../ui/public/fonts/', import.meta.url));
+const WORCA_LOOK = join(KIT_ROOT, 'document', 'worca-look');
+
+/** The fonts worca's document look loads from `assets/worca/` (its `tokens.css`). */
+export const WORCA_FONTS = Object.freeze([
+  'poppins-latin-400-normal.woff2', 'poppins-latin-500-normal.woff2', 'poppins-latin-600-normal.woff2',
+  'poppins-latin-700-normal.woff2', 'jetbrains-mono-latin-400-normal.woff2',
+]);
+const WORCA_LICENCES = Object.freeze(['LICENSE-poppins.txt', 'LICENSE-jetbrains-mono.txt']);
 
 /** Puts the kit file `src` at `<to>/<name>`, `to` held (stageTree): copied under a temp name and renamed over, so a
  *  file once staged is never missing, not even while another staging runs, and a link there is replaced, never written
@@ -110,4 +120,22 @@ export function unstagePictureKit({ designId }) {
       console.warn(`[worca-design] ${[...parts, name].join('/')} of ${designId} could not be removed (${err.code ?? err.message})`);
     }
   }
+}
+
+/**
+ * Puts worca's look's fonts, and their licences, in `<workDir>/assets/worca/`, where a document's `tokens.css` loads
+ * them: a folder the preview, dist and the inlined exports all reach, unlike `.kit/`. Reached through folders held
+ * open (inFolder), so a link, a file or another user's folder at `assets` or `assets/worca` is replaced, never written
+ * through. Nothing is removed: a later switch to another look leaves the fonts unreferenced.
+ * @param {{ workDir: string }} opts
+ * @returns {Promise<string[]>} the staged names, sorted
+ * @throws when a source file is missing
+ */
+export async function stageWorcaLook({ workDir } = {}) {
+  const files = [...WORCA_FONTS.map((name) => [join(UI_FONTS, name), name]), ...WORCA_LICENCES.map((name) => [join(WORCA_LOOK, name), name])];
+  for (const [src] of files) await stat(src);
+  inFolder(workDir, ['assets', 'worca'], { create: true }, (to) => {
+    for (const [src, name] of files) stageFile(src, to, name);
+  });
+  return files.map(([, name]) => name).sort();
 }

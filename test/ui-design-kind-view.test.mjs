@@ -11,14 +11,14 @@ import { isBoardKind as serverIsBoardKind, isDeckKind as serverIsDeckKind } from
 
 const close = (a, b, d = 0.01) => assert.ok(Math.abs(a - b) <= d, `${a} vs ${b}`);
 const C = { w: 1920, h: 1080 };
-const KINDS = ['web', 'presentation', 'pitch', 'video', 'constructor', undefined];
+const KINDS = ['web', 'presentation', 'pitch', 'video', 'document', 'constructor', undefined];
 
 test('the kinds and nouns match the server', () => {
-  assert.deepEqual(['web', 'presentation', 'pitch', 'video'].map(isBoardKind), ['web', 'presentation', 'pitch', 'video'].map(serverIsBoardKind));
+  assert.deepEqual(['web', 'presentation', 'pitch', 'video', 'document'].map(isBoardKind), ['web', 'presentation', 'pitch', 'video', 'document'].map(serverIsBoardKind));
   assert.deepEqual(KINDS.map(isBoardKind), KINDS.map(serverIsBoardKind));
   assert.deepEqual(KINDS.map(isDeckKind), KINDS.map(serverIsDeckKind));
   assert.deepEqual(BOARD_CANVAS, C);
-  assert.deepEqual([unitNoun('web', 2), unitNoun('web', 1), unitNoun('pitch', 12), unitNoun('presentation', 1), unitNoun('video', 8), unitNoun('video', 1)], ['sections', 'section', 'slides', 'slide', 'scenes', 'scene']);
+  assert.deepEqual([unitNoun('web', 2), unitNoun('web', 1), unitNoun('pitch', 12), unitNoun('presentation', 1), unitNoun('video', 8), unitNoun('video', 1), unitNoun('document', 3), unitNoun('document', 1)], ['sections', 'section', 'slides', 'slide', 'scenes', 'scene', 'sections', 'section']);
 });
 test('boardLayout takes the cols that give the biggest tile, as the mockup does', () => {
   const d = boardLayout({ n: 12, cw: 1096, availH: 808, canvas: C });
