@@ -211,7 +211,9 @@ test('G6 (3a, D65): a finished single-project git run offers Use as test example
   await settle(ctx.window, 6);
   assert.equal(reads.length, 1);
   assert.equal(doc.querySelector('#mk-dialog .wft-fr-intro').textContent, 'Worca keeps the request and where the run started, so every new version of Fix a bug from a ticket can be tried on exactly the same thing.');
-  assert.match(doc.querySelector('#mk-dialog .wft-startbox').textContent, /^Where it startsStarts from where this run started: feat\/log-ux at abc1234 · /);
+  // U-T14 (F26): a start point reads "{branch} · {date}"; the commit id is for developers only.
+  assert.match(doc.querySelector('#mk-dialog .wft-startbox').textContent, /^Where it startsStarts from where this run started: feat\/log-ux · Aug 17/);
+  assert.doesNotMatch(doc.querySelector('#mk-dialog .wft-startbox').textContent, /abc1234/);
   assert.equal(doc.querySelector('#wft-fr-setup').value, 'npm ci');
   [...doc.querySelectorAll('#mk-dialog button')].find((b) => b.textContent === 'Cancel').click();
   await settle(ctx.window);
