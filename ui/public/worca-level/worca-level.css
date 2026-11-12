@@ -1,7 +1,7 @@
 /* ---------- Worca level ---------- */
 /* The hover card beside the account corner, the account-menu level card, the welcome / celebration dialogs,
    the Profile level page and the Getting started line. Display only. Colour comes from the theme tokens, so
-   dark mode needs nothing of its own: the --wl-* names below are local aliases on these rules, never :root.
+   dark mode needs nothing of its own: the --wl-* names below are local aliases on these rules, never global tokens.
    The section marker above is mapped to the worca-levels feature in tools/split-by-feature/feature-map.json. */
 
 /* A level's tint: the account-corner initials, the celebration art and the dialog art read --wl-hue. */
