@@ -34,8 +34,56 @@ export function isTestable(text) {
   return !(VAGUE_RE.test(t) && !MEASURABLE_RE.test(t.replace(VAGUE_RE, '')));
 }
 const UNDECIDED_RE = /^(?:tbd|maybe|consider)\b/i;
-// `<…>` placeholders, but not Markdown autolinks (`<https://…>`, `<mailto:…>`)
-const PLACEHOLDER_RES = [/\bTODO\b/, /\bTBD\b/, /\blorem\b/i, /\[(?:…|\.\.\.)\]/, /<(?:…|\.\.\.|(?!https?:|mailto:)[A-Za-z][^<>\n]*)>/];
+// `<…>` placeholders, but not Markdown autolinks (`<https://…>`, `<mailto:…>`) nor generics (`Array<string>`: D16)
+// Word placeholders are checked on the text with only code spans removed (a `{ items: TODO }` in prose still fails);
+// `[...]` and `<…>` (not Markdown autolinks `<https://…>`, `<mailto:…>`, nor generics `Array<string>`: D16) also skip
+// brace groups.
+const WORD_PLACEHOLDER_RES = [/\bTODO\b/, /\bTBD\b/, /\blorem\b/i];
+const SHORTHAND_PLACEHOLDER_RES = [/\[(?:…|\.\.\.)\]/, /(?<![\w$])<(?:…|\.\.\.|(?!https?:|mailto:)[A-Za-z][^<>\n]*)>/];
+// D16: code shorthand in a note is not a placeholder. Both passes are linear (security: a plan is user text): code
+// spans pair a run of backticks with the next run of the same length on the line; brace groups drop from a `{` to
+// its matching `}` on the line, innermost first (`{ items: [...] }`, `Map<id, {...}>`), and an unmatched `{` stays.
+function codeSpansBlanked(line) {
+  const runs = [];
+  for (let i = 0; i < line.length;) {
+    if (line[i] !== '`') { i++; continue; }
+    let j = i; while (j < line.length && line[j] === '`') j++;
+    runs.push([i, j]); i = j;
+  }
+  const next = new Array(runs.length).fill(-1);
+  const lastOf = new Map();
+  for (let k = runs.length - 1; k >= 0; k--) {
+    const len = runs[k][1] - runs[k][0];
+    if (lastOf.has(len)) next[k] = lastOf.get(len);
+    lastOf.set(len, k);
+  }
+  let out = ''; let at = 0;
+  for (let k = 0; k < runs.length;) {
+    if (next[k] < 0) { k++; continue; }
+    out += line.slice(at, runs[k][0]); at = runs[next[k]][1]; k = next[k] + 1;
+  }
+  return out + line.slice(at);
+}
+function bracesBlanked(line) {
+  const out = []; const open = [];
+  for (const ch of line) {
+    if (ch === '{') { open.push(out.length); out.push(ch); }
+    else if (ch === '}' && open.length) out.length = open.pop();
+    else out.push(ch);
+  }
+  return out.join('');
+}
+const perLine = (text, fn) => String(text).split('\n').map(fn).join('\n');
+/** The first placeholder in `text`, or null. */
+function placeholderIn(text) {
+  const prose = perLine(text, codeSpansBlanked);
+  const shorthand = perLine(prose, bracesBlanked);
+  for (const [t, res] of [[prose, WORD_PLACEHOLDER_RES], [shorthand, SHORTHAND_PLACEHOLDER_RES]]) {
+    const re = res.find((r) => r.test(t));
+    if (re) return re.exec(t)[0];
+  }
+  return null;
+}
 const TEST_PATH_RE = /^test\/|\.test\.|\.spec\./;
 const CODE_PATH_RE = /\.(?:mjs|cjs|js|jsx|ts|tsx)$/;
 
@@ -121,13 +169,12 @@ export function checkShape(markdown, opts = {}) {
   add('tests', testPaths.length > 0 && !uncovered,
     !testPaths.length ? 'Testing names no test file' : `No test entry covers \`${uncovered?.path}\``, 'testing');
 
-  // placeholders: anywhere but Open questions; inline code ignored
+  // placeholders: anywhere but Open questions; inline code and one-line brace groups ignored (D16)
   let hit = null;
   for (const s of secs) {
     if (s.key === 'openQuestions' || hit) continue;
-    const text = s.text.replace(/`[^`\n]*`/g, '');
-    const re = PLACEHOLDER_RES.find((r) => r.test(text));
-    if (re) hit = { section: s.key, what: re.exec(text)[0] };
+    const what = placeholderIn(s.text);
+    if (what) hit = { section: s.key, what };
   }
   add('placeholders', !hit, hit ? `Placeholder "${hit.what}" left in the plan` : '', hit?.section);
 

@@ -33,6 +33,28 @@ test('the marker and the phrase write the outline and no plan', async () => {
   assert.ok(events.some((e) => e.type === 'tool_use' && e.raw?.file === slices));
 });
 
+test('a revise prompt edits the existing outline: why carries the feedback, slices unchanged', async () => {
+  const { outlineFeedbackBlock } = await import('../src/shared/shape/slices.mjs');
+  const dir = await tmp();
+  const out = join(dir, 'plan.md');
+  const slices = join(dir, 'slices.json');
+  const run = (extra = '') => runMock({ cwd: dir, systemPrompt: '', onEvent: () => {},
+    prompt: `${markers({ MOCK_ROLE: 'planner-plan', MOCK_BASE: 'demo', MOCK_OUT: out, MOCK_SLICES: slices })}\nPlan this in slices.\n\n${extra}` });
+  await run();
+  const first = await readFile(slices, 'utf8');
+  await run(outlineFeedbackBlock('Merge the first two.'));
+  const edited = JSON.parse(await readFile(slices, 'utf8'));
+  assert.notEqual(await readFile(slices, 'utf8'), first, 'the bytes changed');
+  assert.deepEqual(edited.slices, MOCK_OUTLINE.slices);
+  assert.ok(edited.why.startsWith(MOCK_OUTLINE.why));
+  assert.ok(edited.why.includes('Merge the first two.'));
+  assert.equal(await exists(out), false, 'still no plan');
+  // a missing outline file is still written in full
+  await rm(slices);
+  await run(outlineFeedbackBlock('Again.'));
+  assert.deepEqual(JSON.parse(await readFile(slices, 'utf8')), MOCK_OUTLINE);
+});
+
 test('without the phrase, or without the marker, the plan is written as today and no outline', async () => {
   const dir = await tmp();
   const out = join(dir, 'plan.md');

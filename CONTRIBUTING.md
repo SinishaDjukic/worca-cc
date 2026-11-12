@@ -1,3 +1,6 @@
+> [!NOTE]
+> This project will soon move to a new organization: [github.com/worca-org](https://github.com/worca-org).
+
 # Contributing to Worca
 
 Thanks for your interest in contributing! This document covers developing Worca

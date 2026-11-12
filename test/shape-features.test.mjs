@@ -11,12 +11,12 @@ import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { writeReview, writeClarify, appendAuditById } from '../src/core/artifacts.mjs';
 import { createThread, linkRun } from '../src/core/ask/store.mjs';
-import { getTicket, runDueTickets, updateTicket } from '../src/core/scheduler.mjs';
+import { getTicket, runDueTickets, updateTicket, createTicket, requestRunNow } from '../src/core/scheduler.mjs';
 import { insertRunTags } from '../src/core/run-tags-store.mjs';
 import { editRunLabels } from '../src/core/run-labels-store.mjs';
 import {
   createSliceFeature, retireFeaturesOf, sliceRequest, sliceTitle, featureView, currentFeatureId, featureOfPipeline,
-  earlierSliceChanges, cancelRest, resumeFeature, rechainWaiting, replanRest, setApproveEach, featureApprovesEach,
+  earlierSliceChanges, cancelRest, resumeFeature, rechainWaiting, replanRest, setApproveEach, featureHoldsTicket, ticketHeld,
   stackedPrBase, recordShapePlan, listShapePlans, featuresOfTickets, featureClarify, chainFeature, sliceOfPipeline, slicePrPreamble,
   recordShip, clearShip, recordSliceDraft, featureShipSuggestion, featureShipInput, ONE_PR_MAX_LINES,
   liveSliceFrom, shaperCard, featureThread, featureRootSource,
@@ -186,14 +186,111 @@ test('slicePrPreamble: "Part of" line and the other slices\' PRs', () => {
   assert.equal(slicePrPreamble('p-plain'), '');
 });
 
-test('featureApprovesEach / setApproveEach', () => {
+test('setApproveEach stores the switch', () => {
   const a = mk(2, { approveEach: true });
-  assert.equal(featureApprovesEach(a.id), true);
+  assert.equal(featureView(a.id).approveEach, true);
   assert.equal(setApproveEach(a.id, false), true);
-  assert.equal(featureApprovesEach(a.id), false);
   assert.equal(featureView(a.id).approveEach, false);
   assert.equal(setApproveEach('missing', true), false);
-  assert.equal(featureApprovesEach('missing'), true);
+});
+
+// "Ask me before each run": a fired-and-done slice 1 and a slice 2 ticket that would fire on this tick.
+const fireCount = () => { const ids = []; return { ids, start: async (t) => { ids.push(t.id); return { ok: true }; } }; };
+const tick = (start) => runDueTickets({ start, hold: featureHoldsTicket });
+
+test('approve each on: slice 2\'s ticket is held when slice 1 is done; featureView reads held', async () => {
+  const a = mk(3, { pipelineId: pipe('done'), approveEach: true });
+  const [, r2, r3] = tickets(a.id);
+  const f = fireCount();
+  const out = await tick(f.start);
+  assert.deepEqual(out.held, [r2.ticket_id]);
+  assert.deepEqual(f.ids, []);
+  const t = getTicket(r2.ticket_id);
+  assert.equal(t.status, 'scheduled');
+  assert.equal(ticketHeld(t), true);
+  assert.equal(ticketHeld(getTicket(r3.ticket_id)), false, 'slice 3 still waits for slice 2');
+  const v = featureView(a.id);
+  assert.deepEqual(v.slices.map((s) => s.state), ['done', 'held', 'planned']);
+  assert.deepEqual(v.held, { index: 2, ticketId: r2.ticket_id });
+  assert.equal(v.open, true);
+  assert.equal(v.halted, null);
+  // Start now is Run now: forced skips the hold.
+  requestRunNow(r2.ticket_id);
+  assert.equal(ticketHeld(getTicket(r2.ticket_id)), false);
+  assert.deepEqual((await tick(f.start)).fired, [r2.ticket_id]);
+});
+
+test('approve each turned on after the outline holds; turned off releases on the next tick', async () => {
+  const a = mk(2, { pipelineId: pipe('done'), approveEach: false });
+  const [, r2] = tickets(a.id);
+  setApproveEach(a.id, true);
+  const f = fireCount();
+  assert.deepEqual((await tick(f.start)).held, [r2.ticket_id]);
+  assert.equal(featureView(a.id).held.index, 2);
+  setApproveEach(a.id, false);
+  assert.equal(featureView(a.id).held, null);
+  assert.deepEqual((await tick(f.start)).fired, [r2.ticket_id]);
+});
+
+test('a non-slice after-ticket and a ticket whose feature row is missing are never held', async () => {
+  const p = pipe('done');
+  const plain = createTicket({ projectDir: root, title: 'Plain', request: { projectDir: root, prompt: 'x' }, after: { kind: 'pipeline', id: p } });
+  assert.equal(featureHoldsTicket(getTicket(plain.id)), false);
+  const a = mk(2, { pipelineId: pipe('done'), approveEach: true });
+  const [, r2] = tickets(a.id);
+  assert.equal(featureHoldsTicket(getTicket(r2.ticket_id)), true);
+  getDb().prepare('PRAGMA foreign_keys = OFF').run();
+  try { getDb().prepare('DELETE FROM shape_features WHERE id = ?').run(a.id); } finally { getDb().prepare('PRAGMA foreign_keys = ON').run(); }
+  assert.equal(featureHoldsTicket(getTicket(r2.ticket_id)), false);
+  assert.equal(featureHoldsTicket(null), false);
+  const f = fireCount();
+  const out = await tick(f.start);
+  assert.deepEqual(out.held, []);
+  assert.ok(f.ids.includes(plain.id) && f.ids.includes(r2.ticket_id));
+});
+
+test('Resume of a stopped slice 2 with the switch on starts it (forced), and slice 3 is held once slice 2 is done', async () => {
+  const a = mk(3, { pipelineId: pipe('done'), approveEach: true });
+  const [, r2, r3] = tickets(a.id);
+  const p2 = pipe('stopped');
+  setTicket(r2.ticket_id, 'fired', { pipelineId: p2 });
+  setTicket(r3.ticket_id, 'missed');
+  const res = resumeFeature(a.id, { by: 'ann' });
+  assert.equal(res.action, 'restart');
+  assert.equal(getTicket(res.ticketId).forced, true, 'Resume is the owner\'s OK');
+  const f = fireCount();
+  const out = await tick(f.start);
+  assert.deepEqual(out.fired, [res.ticketId]);
+  const p2b = pipe('done');
+  setTicket(res.ticketId, 'fired', { pipelineId: p2b });
+  assert.deepEqual((await tick(f.start)).held, [r3.ticket_id]);
+  assert.equal(featureView(a.id).held.index, 3);
+});
+
+test('Resume of a stopped slice 2 with the switch off is not forced: nothing holds it', () => {
+  const a = mk(2, { pipelineId: pipe('done'), approveEach: false });
+  const [, r2] = tickets(a.id);
+  setTicket(r2.ticket_id, 'fired', { pipelineId: pipe('stopped') });
+  const res = resumeFeature(a.id, { by: 'ann' });
+  assert.equal(res.action, 'restart');
+  assert.equal(getTicket(res.ticketId).forced, false);
+});
+
+test('guard: Cancel the rest cancels a held ticket', async () => {
+  const a = mk(2, { pipelineId: pipe('done'), approveEach: true });
+  const [, r2] = tickets(a.id);
+  await tick(fireCount().start);
+  assert.equal(featureView(a.id).held.index, 2);
+  assert.deepEqual(cancelRest(a.id), { canceled: 1 });
+  assert.equal(getTicket(r2.ticket_id).status, 'canceled');
+});
+
+test('guard: Re-plan the rest is not refused by a held slice', async () => {
+  const a = mk(2, { pipelineId: pipe('done'), approveEach: true });
+  await tick(fireCount().start);
+  assert.equal(featureView(a.id).held.index, 2);
+  const res = replanRest(a.id);
+  assert.ok(res.ticketId);
 });
 
 test('featureView slice states from a ticket', () => {

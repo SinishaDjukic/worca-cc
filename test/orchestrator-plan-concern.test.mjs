@@ -161,7 +161,7 @@ test('Away approves a plan concern, keeps the plan and flags it', async () => {
 test('Away approves a requirement concern, keeps it and flags it', async () => {
   process.env.WORCA_MOCK_ROLE_REVIEW = JSON.stringify({ qa: { 1: { severity: 'major', requirement: 'R-po-1' } } });
   try {
-    const req = resolveShapeRequest({ shape: { size: 'large', lead: 'security' } }, { requirementsOn: true, internal: false });
+    const req = resolveShapeRequest({ shape: { size: 'large', lead: 'security' } }, { internal: false });
     const h = start({ workflowId: req.workflowId, shape: req.shape }, (q, orch) => { if (q.plan?.criteria) approve(q, orch); });
     h.orch._planCheck = async () => ({ ok: true, passed: 8, total: 8, items: [] });
     h.orch.setNightOverride('on');

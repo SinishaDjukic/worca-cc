@@ -74,6 +74,12 @@ Pull requests (add each number when it opens):
 
 - Shaper keeps going while you're away
 
+## Ask me before each run asks before each run
+
+**Ask me before each run** on a slice outline now means what it says: with it on, each later run waits, not started, and the feature card shows *Needs you · Run 2 waits for you to start* with **Start now**. A later slice's plan continues by itself when its checks pass, either way. Away mode keeps a held run held.
+
+Read it: [Shape it first](../shape-it-first.md)
+
 ## A lighter Requirements card
 
 **The Shaper's Requirements card now says what each persona wants, and why.**
@@ -152,15 +158,15 @@ Pull requests (add each number when it opens):
 - Ticket updates (#1072)
 - Ticket updates: Azure Boards and GitHub Issues (#1133)
 
-## Shaper: requirements first, the three cards (experimental)
+## Shaper: requirements first, the three cards
 
 **Agree the requirements before the plan, in cards that read like a conversation.**
 
-With Labs › Requirements first on, a medium or large Shaper task opens with one sentence, `You lead as Product, supported by QA and Security`, and a primary **Shape requirements**. The Requirements card lists what the perspectives agreed, then asks only what they could not settle: Worca's pick is already chosen and marked `recommended`, worded for the role you lead as. **Agree and plan** is the one primary; **Ask for changes** sends your words and your picks back. The plan card gains a **Requirements 7/8** fold that names any requirement no step delivers, and **Fix all** takes the primary until every one is covered. The Chat run card shows the same count while the run plans. A card proposed directly as Shaper now gets the same sentence and **Shape requirements** when medium or large. For a Product or Design lead, a code term with no plain wording now reads in words: `project:read` becomes `read access`, so a decision no longer loses half a sentence.
+A medium or large Shaper task opens with one sentence, `You lead as Product, supported by QA and Security`, and a primary **Shape requirements**. The Requirements card lists what the perspectives agreed, then asks only what they could not settle: Worca's pick is already chosen and marked `recommended`, worded for the role you lead as. **Agree and plan** is the one primary; **Ask for changes** sends your words and your picks back. The plan card gains a **Requirements 7/8** fold that names any requirement no step delivers, and **Fix all** takes the primary until every one is covered. The Chat run card shows the same count while the run plans. A card proposed directly as Shaper now gets the same sentence and **Shape requirements** when medium or large. For a Product or Design lead, a code term with no plain wording now reads in words: `project:read` becomes `read access`, so a decision no longer loses half a sentence.
 
 Chips: Shape requirements · lead role · supporters · Requirements card · recommended picks · Requirements fold · Fix all · experimental: turn it on in Settings › Labs
 
-Read it: [Requirements first](../shape-it-first.md#requirements-first-labs)
+Read it: [Requirements first](../shape-it-first.md#requirements-first)
 
 Pull requests (add each number when it opens):
 
