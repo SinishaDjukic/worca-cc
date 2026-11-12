@@ -196,6 +196,8 @@ export function metWhyText(w) {
     case 'more-skipped': return ` more tests are skipped now: ${w.before} before, ${w.after} now.`;
     case 'broke-exit': return ' it passed before the change and fails now.';
     case 'no-before': return ' Worca could not run it before the change, so it cannot tell what broke.';
+    // Final review M3: board 36's "Failed:" line below names the tests it read.
+    case 'no-counts': return ' Worca read which tests failed, but not how many passed, so it cannot tell whether the change broke something.';
     case 'timed-out': return COMMAND_TIMED_OUT;
     case 'failed': return COMMAND_ENDED;
     default: return ' the command ended with an error, and Worca could not read which tests failed, so it cannot tell whether the change broke something.';

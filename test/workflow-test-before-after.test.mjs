@@ -107,7 +107,9 @@ test('D82: "breaks nothing that passed before", judged at each level on the evid
   assert.deepEqual(BN(false, fails()), { met: true, why: 'nothing-broke' });
   assert.deepEqual(BN(false, fails({ failingNow: { n: 1, names: ['x'] } })), { met: false, why: 'failing-now', n: 1 });
   assert.deepEqual(BN(false, fails({ counts: counts(212, 209) })), { met: false, why: 'fewer-pass', before: 212, after: 209 });
-  assert.deepEqual(BN(false, fails({ counts: { before: null, after: null } })), { met: false, why: 'cannot-tell' });
+  // Final review M3: the failing names were read, the pass counts were not: its own reason (and sentence).
+  assert.deepEqual(BN(false, fails({ counts: { before: null, after: null } })), { met: false, why: 'no-counts' });
+  assert.deepEqual(BN(false, fails({ counts: { before: counts(1, 1).before, after: null } })), { met: false, why: 'no-counts' });
   const exit = (beforeOk) => ({ ran: true, level: 'exit', beforeOk, beforeTimedOut: false, afterOk: false });
   assert.deepEqual(BN(false, exit(true)), { met: false, why: 'broke-exit' });
   assert.deepEqual(BN(false, exit(false)), { met: false, why: 'cannot-tell' }, 'failing before too is no evidence that the same tests fail');

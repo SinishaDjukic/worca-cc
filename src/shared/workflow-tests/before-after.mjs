@@ -70,7 +70,8 @@ export function commandMet({ metWhen = 'passes', afterOk = false, afterTimedOut 
     if (ba.failingNow && ba.failingNow.n) return { met: false, why: 'failing-now', n: ba.failingNow.n };
     const b = ba.counts && ba.counts.before;
     const a = ba.counts && ba.counts.after;
-    if (!b || !a) return { met: false, why: 'cannot-tell' };
+    // Final review M3: the failing names were read, the pass counts were not: its own reason (and sentence).
+    if (!b || !a) return { met: false, why: 'no-counts' };
     if (a.passed < b.passed) return { met: false, why: 'fewer-pass', before: b.passed, after: a.passed };
     return moreSkipped(ba) || { met: true, why: 'nothing-broke' };
   }

@@ -190,3 +190,16 @@ test('U4 styles: the Met when block and the neutral note are in workflow-tests.c
   assert.match(css, /\.wft-ck-metwhen-hint\{[^}]*margin:0/);
   assert.match(css, /\.wft-met-note\{[^}]*grid-column:1 \/ -1[^}]*background:var\(--field\)/);
 });
+
+// Final review M3: the failing tests were read (board 36's "Failed:" line names them), only the pass counts were not: the
+// sentence above that line must not say Worca could not read which tests failed.
+test('M3: failing names read but no pass counts: its own true sentence above the Failed line', () => {
+  const words = ' Worca read which tests failed, but not how many passed, so it cannot tell whether the change broke something.';
+  assert.equal(metWhyText({ why: 'no-counts' }), words);
+  const root = side(cmdCheck({ met: true, value: '213 passed' }), cmdCheck({ met: false, value: 'Ended with an error', failed: ['test_x.py::test_b'], failedCount: 1,
+    metWhy: { why: 'no-counts' } }));
+  const row = rowOf(root);
+  assert.equal(row.querySelector('.wft-why-cmd .wft-why-col').textContent.startsWith(`Not met for v3 draft:${words}`), true,
+    row.querySelector('.wft-why-cmd .wft-why-col').textContent);
+  assert.match(row.textContent, /Failed: test_x\.py/);
+});
