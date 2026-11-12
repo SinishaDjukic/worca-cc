@@ -7,8 +7,8 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import * as R from '../ui/public/design-system/components/index.mjs';
 
-const window = { RailUI: R };
-vm.runInNewContext(readFileSync(new URL('../plans/rail/prototype/runs/run-page-model.js', import.meta.url), 'utf8'), { window, console, Math, Object, String, Set, JSON, parseFloat, Error });
+const window = { RailUI: R, RailWould: (p) => 'Would ' + p };
+vm.runInNewContext(readFileSync(new URL('../ui/public/stillhet/runs/run-page-model.js', import.meta.url), 'utf8'), { window, console, Math, Object, String, Set, JSON, parseFloat, Error });
 const M = window.RunCardModel;
 const ids = M.cases.map((c) => c.id);
 const figure = (v, k) => (v.figs.find((f) => f.k === k) || {}).v;

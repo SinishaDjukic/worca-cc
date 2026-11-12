@@ -72,7 +72,7 @@ test('the strip CSS exists once, in the app part', () => {
   assert.ok(parts.includes('design-system/confirm-strip.css'));
   const mine = readFileSync('ui/public/design-system/confirm-strip.css', 'utf8');
   for (const n of ['.rc-confirm{', '.dc-link{', '#rail-strip{']) assert.ok(mine.includes(n), n);
-  const rail = readFileSync('plans/rail/prototype/design-system/rail.css', 'utf8'), shell = readFileSync('plans/rail/prototype/shell/shell.css', 'utf8');
+  const rail = readFileSync('ui/public/stillhet/css/rail.css', 'utf8'), shell = readFileSync('ui/public/stillhet/shell/shell.css', 'utf8');
   for (const n of ['.rc-confirm{', '.dc-link{']) assert.ok(!rail.includes(n), n);
   assert.ok(!shell.includes('#rail-strip{'));
 });

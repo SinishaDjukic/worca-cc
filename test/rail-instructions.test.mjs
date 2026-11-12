@@ -18,7 +18,7 @@ function walk(dir, ok) {
   const out = [];
   for (const n of readdirSync(join(ROOT, dir))) {
     const rel = `${dir}/${n}`;
-    if (rel === 'plans/rail/history' || rel === 'plans/rail/prototype/today') continue;
+    if (rel === 'plans/rail/history') continue;
     if (statSync(join(ROOT, rel)).isDirectory()) out.push(...walk(rel, ok)); else if (ok(rel)) out.push(rel);
   }
   return out;

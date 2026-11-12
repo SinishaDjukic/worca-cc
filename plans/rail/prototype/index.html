@@ -4,14 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Worca Rail · Prototype</title>
-<!-- The one Worca: today's shell and pages (today/, captured from the app) with the Rail pages in them (today/ is a capture of the old app, never built from or compared against): the Rail run and group
-     page, Pulse, the profile menu, New run and Settings. The app's own CSS, then the Rail layer, then each feature's. -->
-<link rel="stylesheet" href="app.css">
-<link rel="stylesheet" href="design-system/rail-look.css">
-<link rel="stylesheet" href="design-system/rail.css">
-<link rel="stylesheet" href="pulse/pulse.css">
-<link rel="stylesheet" href="shell/shell.css">
-<link rel="stylesheet" href="../../../ui/public/workflows/node-graph.css">
+<!-- The prototype host: the page code is ui/public/stillhet/, loaded by boot.js (the app loads the same file). This page keeps only the tools panel below. -->
 </head>
 <body>
 <div class="app" id="worca"></div>
@@ -39,33 +32,6 @@
   </div>
 </details>
 
-<script>(function () { const dark = matchMedia('(prefers-color-scheme: dark)').matches; document.querySelectorAll('[data-theme-pick]').forEach((b) => b.setAttribute('aria-pressed', String((b.dataset.themePick === 'dark') === dark))); })();</script>
-<script src="components.js"></script>
-<script src="graph.js"></script>
-<script>(function () { const s = window.RailStamp; if (!s) return; const when = new Date(s.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); document.getElementById('mk-stamp').textContent = `· ${s.branch} · ${when}`; document.querySelector('.mk-tools > summary').title = `Prototype · ${s.branch} · ${when}`; const rev = document.getElementById('mk-rev'); rev.textContent = `Last update ${when} · ${s.branch} at ${s.sha}${s.dirty ? ', with uncommitted work' : ''}`; })();</script>
-<script src="today.js"></script>
-<script src="runs/run-page-model.js"></script>
-<script src="shell/world.js"></script>
-<script src="pulse/pulse-model.js"></script>
-<script src="runs/runs-model.js"></script>
-<script src="chat/chats-model.js"></script>
-<script src="schedules/schedules-model.js"></script>
-<script src="settings/settings-model.js"></script>
-<script src="settings/settings.js"></script>
-<script src="shell/shell.js"></script>
-<script src="runs/runs-list.js"></script>
-<script src="chat/chats-column.js"></script>
-<script src="chat/conversation.js"></script>
-<script src="schedules/schedules.js"></script>
-<script src="centers/centers.js"></script>
-<script src="projects/projects.js"></script>
-<script src="workflows/workflows.js"></script>
-<script src="requirements/requirements.js"></script>
-<script src="marketplace/marketplace.js"></script>
-<script src="insights/insights-model.js"></script>
-<script src="insights/insights.js"></script>
-<script src="workspaces/workspaces.js"></script>
-<script src="runs/run-page.js"></script>
-<script src="pulse/pulse.js"></script>
+<script src="../../../ui/public/stillhet/boot.js" data-host="prototype"></script>
 </body>
 </html>

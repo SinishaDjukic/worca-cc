@@ -26,9 +26,11 @@ eye before accepting it: `review-agreed.md`.
     menu opens Settings, and the pages not yet drawn stay as the capture shows them; the Runs list and the Chats column are there as reference. The prototype's own controls fold
     into its Prototype corner.
   - `run-page.html` and `pulse.html` explore the run page's and Pulse's cases; `components.html` is the gallery.
-  - Each feature in its folder: `runs/`, `pulse/`, `settings/`, `design-system/` (the Rail look and the components'
-    CSS), `shell/`; `gates/` holds the checks and the builds (`app.css`, `components.js` and `today.js` are built, not
-    committed).
+  - The page code is shared with the app and lives in `ui/public/stillhet/` (one loader, `boot.js`; each feature in its
+    folder: `runs/`, `pulse/`, `settings/`, `shell/`, `css/` for the Rail look and the components' CSS). `index.html` here
+    keeps only the Prototype corner and loads that code with `data-host="prototype"`; the app's `shell.html` loads the
+    same file with `data-host="app"`. `gates/` holds the checks; `npm run stillhet:build` writes `app.css`, `components.js`,
+    `graph.js` and `today.js` into `ui/public/stillhet/` (built, not committed).
 - The gates: `docs/rail/gate.md` holds the one table of commands, when they run and their widths.
 - `mocks/`: PNG mocks of decisions, named by page.
 

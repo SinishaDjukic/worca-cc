@@ -61,6 +61,102 @@
       "example": "Runs, Chats, Schedules"
     },
     {
+      "name": "BrandRow",
+      "code": "ui/public/design-system/components/shell-frame.mjs#brandRow",
+      "kind": "acting",
+      "needs": [
+        "the sidebar's head: the wordmark, the mark, and the phone's Close menu"
+      ],
+      "rules": [
+        "the wordmark and the mark open Chat; Close menu shows on a phone only"
+      ],
+      "example": "Worca"
+    },
+    {
+      "name": "NavSection",
+      "code": "ui/public/design-system/components/shell-frame.mjs#navSection",
+      "kind": "acting",
+      "needs": [
+        "the group head above a run of places"
+      ],
+      "rules": [
+        "a group with no place left goes, with its head"
+      ],
+      "example": "Work, Build, Manage"
+    },
+    {
+      "name": "BarGrip",
+      "code": "ui/public/design-system/components/shell-frame.mjs#barGrip",
+      "kind": "acting",
+      "needs": [
+        "the handle that resizes the bar"
+      ],
+      "rules": [
+        "a separator with the width limits; past the edge it hides; a double-click restores the default"
+      ],
+      "example": "Resize the bar"
+    },
+    {
+      "name": "SidebarFrame",
+      "code": "ui/public/design-system/components/shell-frame.mjs#sidebarFrame",
+      "kind": "acting",
+      "needs": [
+        "the aside and its one scrolling band, with named slots"
+      ],
+      "rules": [
+        "each slot is drawn once; the band is the only scroller"
+      ],
+      "example": "The bar"
+    },
+    {
+      "name": "SideToggle",
+      "code": "ui/public/design-system/components/shell-frame.mjs#sideToggle",
+      "kind": "acting",
+      "needs": [
+        "collapse and expand the bar on a wide screen"
+      ],
+      "rules": [
+        "aria-expanded and the label follow the state"
+      ],
+      "example": "Collapse menu"
+    },
+    {
+      "name": "MenuButton",
+      "code": "ui/public/design-system/components/shell-frame.mjs#menuButton",
+      "kind": "acting",
+      "needs": [
+        "the phone's hamburger that opens the bar as a drawer"
+      ],
+      "rules": [
+        "aria-expanded and aria-controls point at the bar"
+      ],
+      "example": "Menu"
+    },
+    {
+      "name": "TopBarFrame",
+      "code": "ui/public/design-system/components/shell-frame.mjs#topBarFrame",
+      "kind": "acting",
+      "needs": [
+        "the header with its three regions and the page title"
+      ],
+      "rules": [
+        "the title is the page's one h1"
+      ],
+      "example": "Tasks"
+    },
+    {
+      "name": "AskButton",
+      "code": "ui/public/design-system/components/shell-frame.mjs#askButton",
+      "kind": "acting",
+      "needs": [
+        "the top bar's door to the Ask worca column"
+      ],
+      "rules": [
+        "its mark shows whether Worca is answering or the column is open; aria-expanded names the state"
+      ],
+      "example": "Ask worca"
+    },
+    {
       "name": "AccountButton",
       "code": "ui/public/design-system/components/shell-parts.mjs#accountButton",
       "kind": "acting",

@@ -5,12 +5,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { writeAppCss } from '../plans/rail/prototype/gates/app-css.mjs';
-import { railStamp, writeComponentsJs } from '../plans/rail/prototype/gates/components-js.mjs';
-import { writeTodayJs } from '../plans/rail/prototype/gates/today-js.mjs';
+import vm from 'node:vm';
+import { railStamp } from '../plans/rail/prototype/gates/components-js.mjs';
+import { buildStillhet } from './stillhet-build.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const DIR = join(ROOT, 'plans/rail/prototype');
+const APP_PUBLIC = '../../../' + 'ui' + '/public/';   // where the generated app.css's relative urls land, from plans/rail/prototype/
+const STILLHET = join(ROOT, 'ui/public/stillhet');
+const bootList = (() => { const sb = { module: { exports: {} } }; vm.runInNewContext(readFileSync(join(STILLHET, 'boot.js'), 'utf8'), sb); return sb.module.exports.list('prototype'); })();   // the one load order, shared with the page
 const MIME = { woff2: 'font/woff2', woff: 'font/woff', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', svg: 'image/svg+xml', webp: 'image/webp', gif: 'image/gif' };
 const asData = (file) => { const type = MIME[file.split('.').pop().toLowerCase()]; return type && existsSync(file) ? `data:${type};base64,${readFileSync(file).toString('base64')}` : ''; };
 // What the page loads by its path goes in as data; what is missing loads nothing.
@@ -18,16 +21,20 @@ const inlineAssets = (text) => text.replace(/\.\.\/\.\.\/\.\.\/ui\/public\/[^"')
 
 /** The whole page. */
 export function buildPrototypePage() {
-  let html = readFileSync(join(DIR, 'index.html'), 'utf8');
-  html = html.replace(/<link rel="stylesheet" href="([^"]+)">/g, (_, f) => `<style>${inlineAssets(readFileSync(join(DIR, f), 'utf8'))}</style>`);
-  html = html.replace(/<script src="([^"]+)"><\/script>/g, (_, f) => `<script>${inlineAssets(readFileSync(join(DIR, f), 'utf8')).replace(/<\/script/g, '<\\/script')}</script>`);
+  const page = join(DIR, 'index.html');
+  let html = readFileSync(page, 'utf8');
+  // boot.js adds the stylesheets and scripts at run time; the one file carries them in the same order instead
+  const fromStillhet = (f) => inlineAssets(readFileSync(join(STILLHET, f), 'utf8').replace(/url\((['"]?)\.\.\//g, `url($1${APP_PUBLIC}`));
+  const styles = bootList.styles.map((f) => `<style>${fromStillhet(f)}</style>`).join('\n');
+  const scripts = bootList.scripts.map((f) => `<script>${fromStillhet(f).replace(/<\/script/g, '<\\/script')}</script>`).join('\n');
+  html = html.replace('</head>', `${styles}\n</head>`).replace(/<script src="[^"]*boot\.js"[^>]*><\/script>/, () => scripts);
   // Agreed and Shaping publish as two pages: the name says which
   if (railStamp().branch === 'docs/rail-shaping') html = html.replace('<title>Worca Rail · Prototype</title>', '<title>Worca Rail · Shaping</title>');
   return inlineAssets(html);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  writeAppCss(); writeComponentsJs(); writeTodayJs();
+  await buildStillhet();
   const out = process.argv[2] || join(ROOT, 'plans/rail/generated/worca-rail-prototype.html');
   const html = buildPrototypePage();
   mkdirSync(dirname(out), { recursive: true }); writeFileSync(out, html);

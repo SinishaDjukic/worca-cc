@@ -21,7 +21,7 @@ test('the Settings tab and the assistant\'s prompt say Chat', () => {
 });
 
 test('no user-visible "Ask Worca", "Ask Chat" or "Ask on <engine>" is left in the UI, the server, src or the extension (comments aside)', () => {
-  const files = [INDEX_HTML, SERVER_MJS, ...walk('ui/public'), ...walk('src'), ...walk('extension/src')];
+  const files = [INDEX_HTML, SERVER_MJS, ...walk('ui/public').filter((f) => !f.startsWith('ui/public/stillhet/')), ...walk('src'), ...walk('extension/src')];
   assert.ok(files.length > 100, `${files.length} files`);
   // Same comment stripper as test/ui-new-run-copy.test.mjs (a comment starts a line or follows code and a space),
   // plus the SQL ` -- ` comments in db.mjs's schema text (elsewhere ` -- ` can sit inside a string).

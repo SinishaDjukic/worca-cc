@@ -66,6 +66,9 @@ const DUMP = () => {
   return out;
 };
 
+/** Git-ignored build output in this checkout that a `git worktree add` of dev lacks; linked into the dev copy when present. */
+export const LOCAL_BUILDS = ['extension/dist'];
+
 export async function main(argv = process.argv.slice(2)) {
   const i = argv.indexOf('--dev');
   if (i < 0 || !argv[i + 1]) { console.error(USAGE); return 2; }
@@ -78,6 +81,8 @@ export async function main(argv = process.argv.slice(2)) {
   let servers = [], browser;
   try {
     await symlink(join(ROOT, 'node_modules'), join(wt, 'node_modules'));
+    // git-ignored builds the server serves (Settings › Browser extension reads extension/dist): the same on both sides
+    for (const built of LOCAL_BUILDS) if (existsSync(join(ROOT, built))) await symlink(join(ROOT, built), join(wt, built));
     const seed = join(tmp, 'seed'); await mkdir(join(seed, 'proj'), { recursive: true });
     await mkdir(join(seed, '.worca-cc'), { recursive: true });
     await writeFile(join(seed, '.worca-cc', 'settings.json'), JSON.stringify({ onboarding: { welcomeSeen: true } }));

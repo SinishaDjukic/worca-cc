@@ -35,6 +35,7 @@ export { workingWord, confirmOf, failureOf, stepFlow } from './step-flow.mjs';
 export { foldMiddle, workParts, workPhrase, workPlace } from './work-place.mjs';
 export { MODES, atLevel, RUN_PAGE_LEVELS, runPartShows, prefs, shows } from './levels.mjs';
 export { copyButton, copied, COPIED_MS } from './copy-button.mjs';
+export { brandRow, navSection, barGrip, sidebarFrame, sideToggle, menuButton, topBarFrame, askButton } from './shell-frame.mjs';
 export { offlineLine, sideColumn, awayScreen, awayShows, AWAY_IDLE_MS, navItem, accountButton, topBarAction, countBadge, barStrip, inView, askWorcaMark, intentChip, panelFrame } from './shell-parts.mjs';
 export { accountItem, navFlyout, themeChoice, cardTitleLink } from './account-menu.mjs';
 export { workflowGraph } from './workflow-graph.mjs';

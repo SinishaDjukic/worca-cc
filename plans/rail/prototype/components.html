@@ -4,10 +4,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Worca Rail · Components</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<link rel="stylesheet" href="app.css">
-<link rel="stylesheet" href="design-system/rail-look.css">
-<link rel="stylesheet" href="design-system/rail.css">
-<link rel="stylesheet" href="pulse/pulse.css">
+<link rel="stylesheet" href="../../../ui/public/stillhet/app.css">
+<link rel="stylesheet" href="../../../ui/public/stillhet/css/rail-look.css">
+<link rel="stylesheet" href="../../../ui/public/stillhet/css/rail.css">
+<link rel="stylesheet" href="../../../ui/public/stillhet/pulse/pulse.css">
 <style>
   @font-face{font-family:'JetBrains Mono';font-weight:400;src:url('../../../ui/public/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');}
   @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){color-scheme:dark;}}
@@ -44,7 +44,7 @@
   <p class="mk-intro">Every Worca Rail component built in code, drawn by the code itself (<code>ui/public/design-system/components/</code>) in its states, with what the catalog says it is for. The rules: <code>docs/rail/</code>. The pages built from them: <a href="run-page.html" style="color:var(--ink)">the run page</a>.</p>
 </div>
 </div>
-<script src="components.js"></script>
+<script src="../../../ui/public/stillhet/components.js"></script>
 <script>(function () { const s = window.RailStamp, el = document.getElementById('ds-stamp'); if (!s || !el) return; const when = new Date(s.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); el.innerHTML = `Built from <b>${s.branch}</b> at ${s.sha}${s.dirty ? ' with changes not yet committed' : ''}, last updated ${when}.`; el.hidden = false; })();</script>
 <script>
   // Each component's examples: what the code draws for each of its states.
@@ -138,6 +138,14 @@
       ['Long text stops at two lines (comp.toast-clamp)', R.toast({ text: 'Archived “Rebuild the search index for every project in the docs site and keep the old one around until the new one has answered for a full day”, with its branch and its worktree' })],
       ['A break nobody planned for, counted', R.errorToast({ title: 'Something went wrong', text: 'Worca hit an error it did not expect. Your runs keep going.', icon: P('M12 6.8v6.6M12 17.6h.01'), count: 2, actions: R.button({ label: 'Reload' }) + R.button({ label: 'Copy details', kind: 'quiet' }), close: R.button({ label: 'Close', kind: 'quiet', iconOnly: true, title: false, icon: X }) })]],
     NavItem: [['A Labs feature', R.navItem({ label: 'Requirements', icon: R.icon('nav-requirements', 14), lab: true })], ['Current, a place, one that is off', `<nav class="pz-nav" style="width:200px">${R.navItem({ label: 'Runs', icon: R.icon('runs', 16), current: true }) + R.navItem({ label: 'Chats', icon: R.icon('chat', 16) }) + R.navItem({ label: 'Schedules', icon: R.icon('clock', 16), off: true, title: 'Schedules is not in this prototype' })}</nav>`]],
+    BrandRow: [['Wordmark, mark, Close menu', `<div style="width:200px">${R.brandRow()}</div>`]],
+    NavSection: [['A group head', R.navSection({ label: 'Work' })]],
+    BarGrip: [['The resize handle', `<div style="position:relative;height:40px">${R.barGrip()}</div>`]],
+    SideToggle: [['Open, and collapsed', R.sideToggle() + R.sideToggle({ expanded: false })]],
+    MenuButton: [['Closed', R.menuButton()]],
+    SidebarFrame: [['Its slots', `<div style="height:140px;position:relative">${R.sidebarFrame({ brand: R.brandRow(), nav: R.navSection({ label: 'Work' }) + R.navItem({ label: 'Chat', icon: R.icon('nav-chat', 14), current: true }) })}</div>`]],
+    AskButton: [['Closed', R.askButton({ mark: R.askWorcaMark() })]],
+    TopBarFrame: [['Title and regions', R.topBarFrame({ title: 'Tasks', left: R.sideToggle() })]],
     AccountButton: [['The sidebar\'s foot', `<div style="width:200px">${R.accountButton({ name: 'Emil Angelov', avatar: '<span class="pz-ava-wrap"><span class="pz-ava">EA</span></span>', chevron: R.icon('updown', 14), label: 'Account and usage' })}</div>`]],
     AccountItem: [['A value and a side menu; a plain row', `<div class="menu nav-fly acct-menu" style="position:static;width:260px"><div class="msect">${R.accountItem({ label: 'Interface mode', mark: R.icon('sliders', 16, { cls: 'mi-ic' }), value: 'Expert', chev: R.icon('chevR', 14, { cls: 'mi-chev' }) }) + R.accountItem({ label: 'Settings', mark: R.icon('gear', 16, { cls: 'mi-ic' }) })}</div></div>`]],
     TopBarAction: [['With its count; primary', R.topBarAction({ label: 'Pulse', icon: R.icon('signal', 16), labelCls: 'pz-pulse-l', kind: 'quiet', cls: 'topnav-act', badge: { n: 3, tone: 'need' } }) + R.topBarAction({ label: 'New run', icon: R.icon('plus', 14), labelCls: 'pz-new-l', kind: 'primary' })]],

@@ -5,7 +5,8 @@ import { createRequire } from 'node:module';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const { chromium } = createRequire(import.meta.url)('playwright-core');
-const URL_ = new URL('../index.html', import.meta.url).href;
+import { indexUrl } from './target.mjs';
+const URL_ = indexUrl();
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const bad = [];
 for (const dir of readdirSync(ROOT, { withFileTypes: true }).filter((d) => d.isDirectory() && !['chat', 'gates', 'node_modules'].includes(d.name))) {

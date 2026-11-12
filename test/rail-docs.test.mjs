@@ -73,7 +73,7 @@ test('the plans point at what exists, and the one names stay', () => {
 });
 
 test('the motion timings are the ones the catalog names', () => {
-  const look = read('plans/rail/prototype/design-system/rail-look.css'), t = catalog().motion.timings;
+  const look = read('ui/public/stillhet/css/rail-look.css'), t = catalog().motion.timings;
   assert.match(look, /--motion-quick:150ms/); assert.match(t['--motion-quick'], /^150ms/);
   assert.match(look, /--motion-change:200ms/); assert.match(t['--motion-change'], /^200ms/);
   assert.match(look, /--motion-flash:1\.2s/);

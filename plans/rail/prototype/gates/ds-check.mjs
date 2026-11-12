@@ -6,17 +6,17 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { APP_CSS, writeAppCss } from './app-css.mjs';
-import { writeComponentsJs } from './components-js.mjs';
+import { indexUrl, pageUrl, buildBundles } from './target.mjs';
+import { APP_CSS } from './app-css.mjs';
 import { ALIGN } from './align-check.mjs';
 import { scanText } from '../../../../tools/rail-gate.mjs';
-writeAppCss();   // the app's CSS, assembled from its parts
-writeComponentsJs();   // the Rail components, bundled for file://
+buildBundles();   // the app's CSS and the Rail components for file:// (target.mjs)
 const here = (f) => fileURLToPath(new URL('../' + f, import.meta.url));   // the prototype's root
-const SHEETS = ['design-system/rail-look.css', 'design-system/rail.css', 'pulse/pulse.css'];
-const ALL = [APP_CSS, ...SHEETS.map(here), here('shell/shell.css'), ...readdirSync(here('.')).filter((f) => f.endsWith('.html')).map(here)];
+const shared = (f) => fileURLToPath(new URL('../../../../ui/public/stillhet/' + f, import.meta.url));   // the shared Stillhet code
+const SHEETS = ['css/rail-look.css', 'css/rail.css', 'pulse/pulse.css'];
+const ALL = [APP_CSS, ...SHEETS.map(shared), shared('shell/shell.css'), ...readdirSync(here('.')).filter((f) => f.endsWith('.html')).map(here)];
 const FOLDERS = ['runs', 'pulse', 'settings', 'shell', 'chat', 'schedules', 'projects', 'workflows', 'requirements', 'marketplace', 'insights', 'workspaces'];
-const SCRIPTS = FOLDERS.flatMap((d) => readdirSync(here(d)).filter((f) => f.endsWith('.js')).map((f) => here(`${d}/${f}`)));
+const SCRIPTS = FOLDERS.flatMap((d) => readdirSync(shared(d)).filter((f) => f.endsWith('.js')).map((f) => shared(`${d}/${f}`)));
 const issues = new Map(); const add = (k, where) => { if (!issues.has(k)) issues.set(k, new Set()); issues.get(k).add(where); };
 
 // Every control a page may draw, by the design-system component it belongs to (docs/rail/components.md).
@@ -57,7 +57,7 @@ for (const f of ALL) {
 for (const f of SCRIPTS) for (const m of readFileSync(f, 'utf8').matchAll(/(--[a-z][a-z0-9-]*)\s*:/g)) tokens.add(m[1]);   // set inline from data
 const SCALE = new Set([11, 12, 13, 15, 18, 22, 32]);
 for (const name of SHEETS) {
-  readFileSync(here(name), 'utf8').split('\n').forEach((line, i) => {
+  readFileSync(shared(name), 'utf8').split('\n').forEach((line, i) => {
     if (/ds-ok:/.test(line)) return;
     const at = `${name}:${i + 1}`;
     const code = line.replace(/\/\*.*?\*\//g, '').replace(/url\([^)]*\)/g, '');
@@ -76,8 +76,8 @@ for (const name of SHEETS) {
 // --- the components ---
 // Every page writes none of their markup by hand: the component brings it, so a fix or an upgrade reaches every page.
 // The list reads itself: every script of every feature folder, by the same scan as npm test (tools/rail-gate.mjs).
-const PAGES_JS = FOLDERS.flatMap((d) => readdirSync(here(d)).filter((f) => f.endsWith('.js')).map((f) => `${d}/${f}`));
-for (const name of PAGES_JS) for (const [c, n] of Object.entries(scanText(readFileSync(here(name), 'utf8')))) add('markup or logic the library owns, written by hand (use the library)', `${name} ${c} × ${n}`);
+const PAGES_JS = FOLDERS.flatMap((d) => readdirSync(shared(d)).filter((f) => f.endsWith('.js')).map((f) => `${d}/${f}`));
+for (const name of PAGES_JS) for (const [c, n] of Object.entries(scanText(readFileSync(shared(name), 'utf8')))) add('markup or logic the library owns, written by hand (use the library)', `${name} ${c} × ${n}`);
 
 // --- names: a page, a menu item, a section head, a settings row (docs/rail/small-rules.md) ---
 const NAMES = () => {
@@ -130,7 +130,7 @@ for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f
   const p = await b.newPage({ viewport: { width: 900, height: 900 } });
   await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });   // the gates walk every place: Expert
   p.on('pageerror', (e) => add('script error', String(e)));
-  await p.goto('file://' + here(page));
+  await p.goto(pageUrl(page, here(page)));
   const cases = page === 'index.html' ? [] : await p.evaluate(() => [...document.querySelectorAll('#case option')].map((o) => o.value));   // the one Worca's pages are read by route, below
   for (const c of cases) for (const o of [null, ...OPEN]) {
     await p.selectOption('#case', cases[(cases.indexOf(c) + 1) % cases.length]); await p.selectOption('#case', c);
@@ -145,7 +145,7 @@ for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f
   }
   // the one Worca's own lists, in the states a click opens: read like a case
   if (page === 'index.html') for (const [route, root] of [['runs', '#runs-root'], ['chat', '#chats-root']]) {
-    await p.goto(`file://${here(page)}#${route}`); await p.waitForTimeout(80);
+    await p.goto(indexUrl('#' + route)); await p.waitForTimeout(80);
     for (const o of ['', '[data-menu="show"]', '[data-menu="tools"]', '[data-menu^="row:"]', '[data-fold]', '[data-rounds]', '[data-pick="tools|select"]']) {
       if (o) await p.evaluate((s) => document.querySelector(s)?.click(), `${root} ${o}`);
       const found = await p.evaluate(READ, [CONTROL_SEL, [...classes]]);

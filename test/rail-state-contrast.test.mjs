@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const css = readFileSync(new URL('../plans/rail/prototype/design-system/rail-look.css', import.meta.url), 'utf8');
+const css = readFileSync(new URL('../ui/public/stillhet/css/rail-look.css', import.meta.url), 'utf8');
 const pair = (name) => {
   const m = new RegExp(`--${name}:light-dark\\((#[0-9A-Fa-f]{6}),\\s*(#[0-9A-Fa-f]{6})\\)`).exec(css);
   assert.ok(m, `--${name} is a light-dark pair in the Rail look`);

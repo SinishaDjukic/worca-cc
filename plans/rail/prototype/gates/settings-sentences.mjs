@@ -3,14 +3,14 @@
 // every switch flipped, and the money and notes cases below. It fails on what a wrong fill leaves behind: literal
 // markup, an unfilled {key}, `1 runs`, and phrasing that only fits the default (`after never`, `at no limit`).
 // Run: node plans/rail/prototype/gates/settings-sentences.mjs
-global.window = {};
+global.window = { RailWould: (p) => 'Would ' + p };   // the prototype host's demo sentence (ui/public/stillhet/demo/demo-actions.js)
 const noop = () => {};
 global.document = { addEventListener: noop, querySelector: () => null };
 global.window.RailUI = { ...(await import('../../../../ui/public/design-system/components/index.mjs')) };
 const R = global.window.RailUI;
-await import('../settings/settings-model.js');
-await import('../settings/settings.js');
-await import('../shell/world.js'); await import('../pulse/pulse-model.js');
+await import('../../../../ui/public/stillhet/settings/settings-model.js');
+await import('../../../../ui/public/stillhet/settings/settings.js');
+await import('../../../../ui/public/stillhet/shell/world.js'); await import('../../../../ui/public/stillhet/pulse/pulse-model.js');
 const SM = global.window.SettingsModel, SV = global.window.SettingsView, M = global.window.PulseModel;
 for (const f of SM.FLAGS) R.prefs.setFlag(f.key, true);
 

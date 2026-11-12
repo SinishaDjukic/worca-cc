@@ -10,7 +10,7 @@ const b = await chromium.launch({ channel: 'chrome' });
 const issues = new Map(); const add = (k, where) => { if (!issues.has(k)) issues.set(k, []); if (issues.get(k).length < 4) issues.get(k).push(where); };
 const click = (p, sel) => p.evaluate((s) => document.querySelector(s)?.click(), sel);
 // every Settings section the model holds (but Notifications, swept above): read from settings-model.js, never listed by hand
-global.window = {}; await import('../settings/settings-model.js');
+global.window = {}; await import('../../../../ui/public/stillhet/settings/settings-model.js');
 const SECTION_IDS = window.SettingsModel.GROUPS.flatMap((g) => g.items).filter((id) => id !== 'notifications');
 const VIEWS = {
   now: async () => {},

@@ -606,7 +606,8 @@ Object.assign(HELP, {
 });
 
 // Where each action leads (docs/rail/actions.md). `to` moves this task to another state; `say` is what happened, and the
-// toast's words; `confirm` asks in the strip, `no` names its safe side; `dialog` opens a form; `commands` opens the panel
+// toast's words; `would` is an action the library cannot take itself: a bare phrase ("open #1 on GitHub") that
+// actionFlow turns into the `say` through the host's `ctx.would` (the prototype host's demo sentence, the app's refusal); `confirm` asks in the strip, `no` names its safe side; `dialog` opens a form; `commands` opens the panel
 // with a copy button; `step` says what happens to the task's own steps when the state alone does not (`restart:build`, the
 // stage it starts again from; `advance:build`, the stage it goes on to; `fresh`, a new run; `land`, its work is on the
 // remote). `next` and `event` are what happens from outside. test/design-system-logic.test.mjs holds act.confirm and act.flow.
@@ -627,8 +628,8 @@ const CANCEL_REST = { say: 'The tasks that had not started are cancelled; a runn
 const RESUME_MEMBER = { member: 'slice', say: 'Resumed; task {k} goes on' };
 const OPEN_MEMBER = { openMember: true, say: 'Opens task {k}' };
 const DELETE_RUN = { to: 'ticket-canceled', confirm: 'Delete this waiting task? It never starts.', no: 'Keep', say: 'Deleted; it will not start' };
-const VIEW = { say: 'Would open {pr} on GitHub' };
-const COPY_LINK = { say: 'Would copy the link to {pr}' };
+const VIEW = { would: 'open {pr} on GitHub' };
+const COPY_LINK = { would: 'copy the link to {pr}' };
 const WATCH = { say: 'Worca watches {pr} and fixes failing checks' };
 const OPEN_PR = { [VIEW_PR_LABEL]: VIEW, 'Copy PR link': COPY_LINK, Watch: WATCH };
 const CREATE = (to, say) => ({ to, say, dialog: 'pr' });
@@ -638,8 +639,8 @@ const STACK3 = CREATE('chain', 'Created {pr}, {pr2} and {pr3}, each into the one
 const PUBLISH = { fix: 'published', confirm: 'Push {branch} to origin? No PR opens.', say: 'Pushed the branch to origin; no PR' };
 const HOW_TO_MERGE = { commands: 'git switch {base}\ngit merge {branch}' };
 const COMMIT_BY_HAND = { commands: 'cd {worktree}\ngit add -A\ngit commit --no-verify' };
-const PATCH = { say: 'Would download the patch' };
-const OPEN_COPY = { say: 'Would open the copy in a terminal' };
+const PATCH = { would: 'download the patch' };
+const OPEN_COPY = { would: 'open the copy in a terminal' };
 const FIX_CHECKS = { to: 'fixing-checks', confirm: 'Fix the 2 failing checks on {pr}? Worca pushes the fix to the PR.', say: 'A short task is fixing the checks' };
 const FIX_CONFLICTS = { to: 'fixing-conflicts', confirm: 'Merge {base} into {pr} and fix the 2 conflicts? Worca pushes the fix to the PR.', say: 'A short task is fixing the conflicts' };
 const APPLY_FOLDER = (why) => ({ to: 'applied', confirm: `Write 5 files into {folder}?${why}`, say: 'Wrote 5 files into {folder}' });
@@ -661,17 +662,17 @@ const FLOW = {
   'paused-limit': { 'Resume at 14:00': { to: 'paused', say: 'Resumes at 14:00, when the limit has reset' }, ...LIMITED },
   'paused-reset': { ...LIMITED },
   'paused-missed': { ...LIMITED },
-  'paused-budget': { 'Open Settings': { say: 'Would open Settings › Tasks › Budget; Resume opens once there is room' }, 'Resume now': RESUMED },
-  'paused-team': { 'Continue past team cap': { dialog: 'team-cap', to: 'working', say: 'Going on past the team cap; your reason is recorded' }, 'Open Team policy': { say: 'Would open Settings › Team › Policy' } },
+  'paused-budget': { 'Open Settings': { would: 'open Settings › Tasks › Budget; Resume opens once there is room' }, 'Resume now': RESUMED },
+  'paused-team': { 'Continue past team cap': { dialog: 'team-cap', to: 'working', say: 'Going on past the team cap; your reason is recorded' }, 'Open Team policy': { would: 'open Settings › Team › Policy' } },
   'paused-reason': { 'Resume now': RESUMED, 'Switch model…': SWITCH, 'Resume at…': RESUME_AT },
   interrupted: { 'Resume now': RESUMED, Archive: ARCHIVE },
   'interrupted-dead': { 'Start a new task': NEW_RUN },
-  capped: { 'Raise the cap': { dialog: 'cap', to: 'working', say: 'Cap raised to {value}; the task goes on' }, 'Continue without cap': { to: 'working', confirm: 'Go on with no cost cap for this task?', say: 'Going on with no cost cap' }, 'Open budget settings': { say: 'Would open Settings › Tasks › Budget' }, 'Resume at…': { say: 'A cost cap does not lift with time' } },
+  capped: { 'Raise the cap': { dialog: 'cap', to: 'working', say: 'Cap raised to {value}; the task goes on' }, 'Continue without cap': { to: 'working', confirm: 'Go on with no cost cap for this task?', say: 'Going on with no cost cap' }, 'Open budget settings': { would: 'open Settings › Tasks › Budget' }, 'Resume at…': { say: 'A cost cap does not lift with time' } },
   scheduled: WAITING,
   'waiting-interrupted': WAITING,
   'ticket-missed': WAITING,
   'ticket-firing': { next: 'starting', event: 'The schedule fired; the task starts' },
-  'ticket-failed': { 'Open project': { say: 'Would open Settings › Projects; point it at the folder, then Start now' }, 'Start now': { to: 'starting', say: 'Started now' } },
+  'ticket-failed': { 'Open project': { would: 'open Settings › Projects; point it at the folder, then Start now' }, 'Start now': { to: 'starting', say: 'Started now' } },
   'ticket-ended': { 'Start a new task': NEW_RUN },
   cancelled: { 'Start a new task': NEW_RUN },
   gate: { 'Accept as is': { to: 'working', say: 'Review accepted; manual tests start' }, 'Run another cycle': RESTART('One more Build and Review round'), Stop: STOP },
@@ -689,9 +690,9 @@ const FLOW = {
   'auto-failed': { 'Sign in': { to: 'ready', say: 'Signed in to GitHub; Create PR is next' }, 'How to merge': HOW_TO_MERGE, Discard: DISCARD },
   checks: { ...OPEN_PR, next: 'failing' },
   failing: { 'Fix checks': FIX_CHECKS, 'Re-run checks': { to: 'checks', say: 'Checks on {pr} run again' }, [VIEW_PR_LABEL]: VIEW, 'Copy PR link': COPY_LINK, next: 'conflicts' },
-  conflicts: { 'Fix conflicts': FIX_CONFLICTS, 'Resolve in a terminal': { say: 'Would open a terminal in the worktree' }, 'Re-check': { say: 'Still 2 conflicts with {base}' }, [VIEW_PR_LABEL]: VIEW, 'Copy PR link': COPY_LINK, next: 'approved' },
+  conflicts: { 'Fix conflicts': FIX_CONFLICTS, 'Resolve in a terminal': { would: 'open a terminal in the worktree' }, 'Re-check': { say: 'Still 2 conflicts with {base}' }, [VIEW_PR_LABEL]: VIEW, 'Copy PR link': COPY_LINK, next: 'approved' },
   approved: { 'Merge PR': { to: 'merged', confirm: 'Merge {pr} into {base}?', say: 'Merged {pr} into {base}' }, [VIEW_PR_LABEL]: VIEW, Watch: { say: 'Worca watches {pr}' }, 'Copy PR link': COPY_LINK },
-  merged: { [VIEW_PR_LABEL]: { say: 'Would open the merged {pr} on GitHub' } },
+  merged: { [VIEW_PR_LABEL]: { would: 'open the merged {pr} on GitHub' } },
   stopped: { 'Start a new task': NEW_RUN, 'Restart Build': RESTART('Build runs again from where it stopped') },
   discarded: { 'Start a new task': NEW_RUN },
   push: { 'Push main': { to: 'pushed', step: 'land', confirm: 'Push the commits straight to origin/main? No PR opens.', say: 'Pushed to origin/main' }, 'Create PR instead': CREATE_ONE, Discard: DISCARD },
@@ -699,28 +700,28 @@ const FLOW = {
   'source-unmerged': { 'How to merge': { commands: 'git switch {source}\ngit merge {hidden}' }, 'Create PR instead': CREATE('checks', 'Created {pr} into {source}'), Discard: DISCARD },
   diverged: { 'Re-check': { to: 'source-ready', say: 'In step with the remote again; Push is back' }, Push: { to: 'pushed', step: 'land', confirm: 'Push {source} to origin? No PR opens.', say: 'Pushed to origin/{source}' }, 'How to pull': { commands: 'git switch {source}\ngit pull --rebase origin {source}' }, Discard: DISCARD },
   folder: { 'Apply to folder': APPLY_FOLDER(''), 'Open the copy': OPEN_COPY, Discard: DISCARD },
-  applied: { 'Open the folder': { say: 'Would open {folder}' } },
-  workspace: { 'Fix conflicts': { to: 'workspace-fixing', confirm: 'Fix the conflicts on worca-docs #31? Worca pushes the fix to the PR.', say: 'A short task is fixing worca-docs #31' }, 'Copy PR links': { say: 'Would copy 3 PR links' } },
-  'workspace-fixing': { [VIEW_PRS_LABEL]: { say: 'Would open worca-api #212, worca-web #88 and worca-docs #31 on GitHub' }, 'View fix task': { say: 'Would open the fix task under this task’s rounds' }, 'Copy PR links': { say: 'Would copy 3 PR links' } },
-  'workspace-partly': { [CREATE_PR_LABEL]: CREATE('workspace', 'Opened worca-docs #31 into main'), [VIEW_PRS_LABEL]: { say: 'Would open worca-api #212 on GitHub' }, 'Copy PR links': { say: 'Would copy 1 PR link' } },
+  applied: { 'Open the folder': { would: 'open {folder}' } },
+  workspace: { 'Fix conflicts': { to: 'workspace-fixing', confirm: 'Fix the conflicts on worca-docs #31? Worca pushes the fix to the PR.', say: 'A short task is fixing worca-docs #31' }, 'Copy PR links': { would: 'copy 3 PR links' } },
+  'workspace-fixing': { [VIEW_PRS_LABEL]: { would: 'open worca-api #212, worca-web #88 and worca-docs #31 on GitHub' }, 'View fix task': { would: 'open the fix task under this task’s rounds' }, 'Copy PR links': { would: 'copy 3 PR links' } },
+  'workspace-partly': { [CREATE_PR_LABEL]: CREATE('workspace', 'Opened worca-docs #31 into main'), [VIEW_PRS_LABEL]: { would: 'open worca-api #212 on GitHub' }, 'Copy PR links': { would: 'copy 1 PR link' } },
   clarify: { 'Next question': { nextQuestion: true }, 'Send answer': { to: 'plan', say: 'Answers sent; the planner writes the plan' }, 'Use defaults': { to: 'plan', say: 'Defaults used; the planner writes the plan' } },
   requirements: { 'Agree and plan': { to: 'plan', say: 'Requirements agreed; the planner writes the plan' }, 'Ask for changes': { say: 'Sent; the requirements come back' } },
-  auto: { Accept: { to: 'starting', say: 'Workflow accepted; the task starts' }, 'Review the workflow': { say: 'Would open the workflow' }, Revise: { say: 'Sent; Worca proposes again' } },
-  plan: { 'Approve and build': { to: 'working', step: 'advance:build', say: 'Plan approved; Build starts' }, 'Ask for changes': { say: 'Sent to the planner; it plans again' }, 'Full plan': { say: 'Would open plan.md' }, 'Fix all': { to: 'plan-fixing', say: 'Worca is fixing the 2 open issues' }, 'Save to plans/': { say: 'Would save plans/unified-page-navigation.md' }, 'Open in New run': { say: 'Would open a new task with this plan in it' }, Stop: STOP },
+  auto: { Accept: { to: 'starting', say: 'Workflow accepted; the task starts' }, 'Review the workflow': { would: 'open the workflow' }, Revise: { say: 'Sent; Worca proposes again' } },
+  plan: { 'Approve and build': { to: 'working', step: 'advance:build', say: 'Plan approved; Build starts' }, 'Ask for changes': { say: 'Sent to the planner; it plans again' }, 'Full plan': { would: 'open plan.md' }, 'Fix all': { to: 'plan-fixing', say: 'Worca is fixing the 2 open issues' }, 'Save to plans/': { would: 'save plans/unified-page-navigation.md' }, 'Open in New run': { would: 'open a new task with this plan in it' }, Stop: STOP },
   'plan-fixing': { next: 'plan', fixed: 'plan', event: 'The 2 open issues are fixed' },
   outline: { 'Approve {n} tasks': { to: 'feature', say: 'The feature has {n} tasks; task 1 starts' }, 'Ask me before each task': { say: 'Worca asks before each later task starts' }, 'Don’t split': { to: 'plan', say: 'One task, one PR' }, 'Ask for changes': { say: 'Sent to the planner; it splits again' }, 'Fix all': { to: 'outline-fixing', say: 'Worca is fixing the 1 open issue' }, Stop: STOP },
   'outline-fixing': { next: 'outline', fixed: 'outline', event: 'The 1 open issue is fixed' },
   feature: { next: 'featureready' },
-  featureready: { 'Create {n} PRs': STACK3, [CREATE_PR_LABEL]: GROUP_ONE('all 3 tasks'), 'Check out the whole feature': { say: 'Would copy: git switch {groupBranch}' }, 'Not now': { to: 'ship-declined', say: 'Not shipped yet; ship it from here when you want' }, 'Ask for changes': { say: 'Sent; a task takes on what you asked' }, Discard: DISCARD_ALL('all 3 tasks') },
-  featureone: { [CREATE_PR_LABEL]: GROUP_ONE('both tasks'), 'Create 2 PRs': CREATE('group-shipped', 'Created {pr} and {pr2}'), 'Check out the whole feature': { say: 'Would copy: git switch {groupBranch}' }, Discard: DISCARD_ALL('both tasks') },
-  featureblocked: { 'Create {n} PRs': STACK3, [CREATE_PR_LABEL]: GROUP_ONE('all 3 tasks'), 'Check out the whole feature': { say: 'Would copy: git switch {groupBranch}' }, Discard: DISCARD_ALL('all 3 tasks') },
-  chain: { 'Fix checks on {pr3}': { say: 'A short task is fixing {pr3}’s checks', confirm: 'Fix the failing checks on {pr3}? Worca pushes the fix to the PR.' }, 'Merge {pr}': { say: 'Merged {pr} into {base}; {pr2} now points at {base}', confirm: 'Merge {pr} into {base}?' }, [VIEW_PRS_LABEL]: { say: 'Would open {pr}, {pr2} and {pr3} on GitHub' }, 'Watch PRs': { say: 'Worca watches all three PRs' }, 'Copy PR links': { say: 'Would copy 3 PR links' } },
+  featureready: { 'Create {n} PRs': STACK3, [CREATE_PR_LABEL]: GROUP_ONE('all 3 tasks'), 'Check out the whole feature': { would: 'copy: git switch {groupBranch}' }, 'Not now': { to: 'ship-declined', say: 'Not shipped yet; ship it from here when you want' }, 'Ask for changes': { say: 'Sent; a task takes on what you asked' }, Discard: DISCARD_ALL('all 3 tasks') },
+  featureone: { [CREATE_PR_LABEL]: GROUP_ONE('both tasks'), 'Create 2 PRs': CREATE('group-shipped', 'Created {pr} and {pr2}'), 'Check out the whole feature': { would: 'copy: git switch {groupBranch}' }, Discard: DISCARD_ALL('both tasks') },
+  featureblocked: { 'Create {n} PRs': STACK3, [CREATE_PR_LABEL]: GROUP_ONE('all 3 tasks'), 'Check out the whole feature': { would: 'copy: git switch {groupBranch}' }, Discard: DISCARD_ALL('all 3 tasks') },
+  chain: { 'Fix checks on {pr3}': { say: 'A short task is fixing {pr3}’s checks', confirm: 'Fix the failing checks on {pr3}? Worca pushes the fix to the PR.' }, 'Merge {pr}': { say: 'Merged {pr} into {base}; {pr2} now points at {base}', confirm: 'Merge {pr} into {base}?' }, [VIEW_PRS_LABEL]: { would: 'open {pr}, {pr2} and {pr3} on GitHub' }, 'Watch PRs': { say: 'Worca watches all three PRs' }, 'Copy PR links': { would: 'copy 3 PR links' } },
   network: { next: 'working', event: 'The network is back; the step retries' },
   recovery: { Retry: { to: 'working', say: 'Retrying {step}' }, Pause: { to: 'paused-you', say: 'Paused; Resume tries {step} again' }, Stop: STOP },
   'pr-draft': { 'Mark ready for review': { to: 'checks', confirm: 'Mark {pr} ready for review? Reviewers are asked.', say: '{pr} is ready for review' }, ...OPEN_PR },
   'pr-changes': { 'Fix requested changes': { to: 'fixing-changes', confirm: 'Fix what the reviewer asked on {pr}? Worca pushes the fix to the PR.', say: 'A short task is fixing what was asked' }, ...OPEN_PR },
-  'pr-fixing': { ...OPEN_PR, 'View fix task': { say: 'Would open the fix task under this task’s rounds' }, next: 'checks', event: 'The fix is pushed; checks run again' },
-  'pr-closed': { 'Create PR again': CREATE_ONE, [VIEW_PR_LABEL]: { say: 'Would open the closed {pr} on GitHub' }, Discard: DISCARD },
+  'pr-fixing': { ...OPEN_PR, 'View fix task': { would: 'open the fix task under this task’s rounds' }, next: 'checks', event: 'The fix is pushed; checks run again' },
+  'pr-closed': { 'Create PR again': CREATE_ONE, [VIEW_PR_LABEL]: { would: 'open the closed {pr} on GitHub' }, Discard: DISCARD },
   'pr-behind': { 'Update branch': { to: 'checks', confirm: 'Merge {base} into {pr}? Checks run again.', say: '{base} merged in; checks run again' }, ...OPEN_PR },
   'pr-blocked': { ...OPEN_PR },
   'watch-stopped': { 'Fix conflicts': FIX_CONFLICTS, 'Ask for changes': { say: 'Ask for changes from the task’s chat' }, [VIEW_PR_LABEL]: VIEW, 'Copy PR link': COPY_LINK },
@@ -730,7 +731,7 @@ const FLOW = {
   'group-needs': { 'Open task {k}': OPEN_MEMBER, ...REST },
   'group-stopped': { 'Restart task {k}': { member: 'slice', step: 'restart:build', say: 'Task {k} runs its Build again' }, ...REST },
   'group-asks': { 'Start task {k}': { to: 'feature', startsRun: true, say: 'Task {k} starts' }, ...REST },
-  'ship-declined': { 'Create {n} PRs': STACK3, [CREATE_PR_LABEL]: GROUP_ONE('all 3 tasks'), 'Check out the whole feature': { say: 'Would copy: git switch {groupBranch}' }, Discard: DISCARD_ALL('all 3 tasks') },
+  'ship-declined': { 'Create {n} PRs': STACK3, [CREATE_PR_LABEL]: GROUP_ONE('all 3 tasks'), 'Check out the whole feature': { would: 'copy: git switch {groupBranch}' }, Discard: DISCARD_ALL('all 3 tasks') },
   'ship-applied': { [VIEW_PR_LABEL]: VIEW, 'Ask for changes': { say: 'Sent; a task takes on what you asked' }, 'Copy PR link': COPY_LINK },
 };
 
@@ -742,7 +743,11 @@ const RUN_FLOW = {
   report: REPORT,
   archive: { ...ARCHIVE, confirm: 'Archive this task? The local branch, worktree and logs are removed; the remote branch and any PR stay.' },
 };
-const filled = (v, ctx) => Object.fromEntries(Object.entries(v).map(([a, b]) => [a, typeof b === 'string' ? fill(b, ctx) : b]));
+const filled = (v, ctx) => {
+  const o = Object.fromEntries(Object.entries(v).map(([a, b]) => [a, typeof b === 'string' ? fill(b, ctx) : b]));
+  if (o.would) o.say = typeof ctx.would === 'function' ? ctx.would(o.would) : o.would;
+  return o;
+};
 
 /** Every state's id. */
 export const stateIds = () => Object.keys(STATES);
@@ -768,7 +773,8 @@ export function actionHelp(label, ctx = {}) {
   return '';
 }
 
-/** Where a state's actions lead: { label: { to, say, confirm, dialog } }, and `next` for what happens from outside. */
+/** Where a state's actions lead: { label: { to, say, confirm, dialog, would } }, and `next` for what happens from outside.
+ * `ctx.would(phrase)` gives the sentence for an action the library cannot take (a `would` phrase). */
 export function actionFlow(id, ctx = {}) {
   const out = {};
   for (const [k, v] of Object.entries(FLOW[id] || {})) out[fill(k, ctx)] = typeof v === 'object' && v ? filled(v, ctx) : v;

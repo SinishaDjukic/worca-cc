@@ -75,7 +75,7 @@ test('the one button: 32px default, 28px small, 40px large, 40px minimum under a
   }
 });
 
-const SKIP_DIRS = new Set(['node_modules', 'vendor', 'fonts', 'assets']);
+const SKIP_DIRS = new Set(['node_modules', 'vendor', 'fonts', 'assets', 'stillhet']);   // stillhet: the prototype's code, moved from plans/rail/prototype/ (never read by this scan); it has its own gates (docs/rail/gate.md)
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
     if (SKIP_DIRS.has(name)) continue;

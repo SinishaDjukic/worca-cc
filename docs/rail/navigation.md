@@ -54,3 +54,9 @@ a link that leaves Worca says so (`View PR ↗`). A page changes at once (Motion
 with its note (`Switch to Advanced`, `Turn on Labs`); a pick hands you over: a mode asks in the ConfirmStrip under the top
 bar, a flag goes to its row in Settings › Labs, and once nothing locks it you land on the result. A deep link gets
 EmptyState's one line and its one way on (`Schedules needs Advanced` · Switch to Advanced), never a banner.
+
+## The frame's parts
+
+| Rule | What | Why | Held by |
+|---|---|---|---|
+| `nav.frame` | The sidebar and the top bar are drawn from the library's frame parts (`shell-frame.mjs`: BrandRow, NavSection, BarGrip, SidebarFrame, SideToggle, MenuButton, TopBarFrame), never from a copy of dev's markup | A page names the slots it fills; the ids and classes the stylesheets address are defined once | design-system-shell-frame |

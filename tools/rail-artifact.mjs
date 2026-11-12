@@ -54,7 +54,7 @@ export function tilesHtml(cat = JSON.parse(read('docs/design-system-catalog.json
 
 // A font the CSS loads by its path goes in as data, so the one file stands alone.
 function selfContained(css) {
-  return css.replace(/url\((['"]?)\.\.\/\.\.\/\.\.\/ui\/public\/([^)'"]+)\1\)/g, (m, q, path) => {
+  return css.replace(/url\((['"]?)\.\.\/([^)'"]+)\1\)/g, (m, q, path) => {
     const f = join(ROOT, 'ui/public', path);
     if (!/\.woff2$/.test(path) || !existsSync(f)) return 'url(data:,)';
     return `url(data:font/woff2;base64,${readFileSync(f).toString('base64')})`;
@@ -77,8 +77,8 @@ function cover(sha, stamp = null) {
 /** The whole page. Needs the prototype's generated files (the gates write them). */
 export function buildPage({ sha = '', stamp = null } = {}) {
   const ch = chapters(); const g = gallery();
-  const css = selfContained([read('plans/rail/prototype/app.css'), read('plans/rail/prototype/design-system/rail-look.css'), read('plans/rail/prototype/design-system/rail.css')].join('\n'));
-  const lib = read('plans/rail/prototype/components.js').replace(/<\/script>/g, '<\\/script>');
+  const css = selfContained([read('ui/public/stillhet/app.css'), read('ui/public/stillhet/css/rail-look.css'), read('ui/public/stillhet/css/rail.css')].join('\n'));
+  const lib = read('ui/public/stillhet/components.js').replace(/<\/script>/g, '<\\/script>');
   const nav = [[ch[0].id, ch[0].title], ['gallery-sec', 'Components'], ...ch.slice(1).map((c) => [c.id, c.title]), ['catalog', 'Patterns and logic']];
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -138,9 +138,8 @@ ${ch.slice(1).map((c) => `<section class="ra-doc" id="${c.id}">${c.html}</sectio
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const out = process.argv[2] || join(ROOT, 'plans/rail/generated/worca-rail.html');
-  const { writeAppCss } = await import('../plans/rail/prototype/gates/app-css.mjs');
-  const { writeComponentsJs, railStamp } = await import('../plans/rail/prototype/gates/components-js.mjs');
-  writeAppCss(); writeComponentsJs();
+  const { railStamp } = await import('../plans/rail/prototype/gates/components-js.mjs');
+  await (await import('./stillhet-build.mjs')).buildStillhet();
   const stamp = railStamp();   // the branch, the commit and when, as the prototype's corner has them
   const html = buildPage({ sha: stamp.sha, stamp });
   mkdirSync(dirname(out), { recursive: true }); writeFileSync(out, html);
