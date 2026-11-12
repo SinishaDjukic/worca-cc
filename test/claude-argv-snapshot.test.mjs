@@ -205,8 +205,9 @@ function envDelta(childEnv, scrub, secrets = []) {
 function snapshotOf(rec, { prompt, systemPrompt, addon = null, secrets = [] }) {
   const replacements = [];
   if (systemPrompt) replacements.push([systemPrompt, '<SYSTEM_PROMPT>']);
-  // A model add-on (model-addons.mjs) rides after the agent body: the assembled prompt scrubs to one marker naming its family.
-  if (systemPrompt && addon) replacements.push([appendAddon(systemPrompt, addon), `<SYSTEM_PROMPT>+ADDON:${addon.family}`]);
+  // A prompt add-on (model-addons.mjs) rides after the agent body: the assembled prompt scrubs to one marker naming its
+  // harness and family (whichever it has, so a harness-only add-on never prints `null`).
+  if (systemPrompt && addon) replacements.push([appendAddon(systemPrompt, addon), `<SYSTEM_PROMPT>+ADDON:${[addon.harness, addon.family].filter(Boolean).join('+')}`]);
   if (prompt) replacements.push([prompt, '<PROMPT>']);
   const scrub = scrubber(replacements);
   return {

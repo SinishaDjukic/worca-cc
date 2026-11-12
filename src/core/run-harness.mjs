@@ -1198,14 +1198,15 @@ export class RunHarness extends EventEmitter {
     this.state.networkWait = null;           // the run page's "waiting for network…" banner (_publishNetworkWait)
   }
 
-  /** @returns {object} a deep-ish snapshot of current state. A step's model add-on goes without its text (up to ~6 KB a
-   *  step, in every buffered frame); _persist writes this.state, so the DB keeps the text a resume sends. */
+  /** @returns {object} a deep-ish snapshot of current state. A step's prompt add-on goes without its text (up to
+   *  ~12 KB a step, in every buffered frame) and keeps every other key (v2: engine, harness); _persist writes this.state,
+   *  so the DB keeps the text a resume sends. */
   getState() {
     const snap = JSON.parse(JSON.stringify(this.state));
     for (const st of Array.isArray(snap.steps) ? snap.steps : []) {
       if (st?.addon && typeof st.addon === 'object') {
-        const { v, family, mode, files, sha256 } = st.addon;
-        st.addon = { v, family, mode, files, sha256 };
+        const { text, ...rest } = st.addon;
+        st.addon = rest;
       }
     }
     return snap;

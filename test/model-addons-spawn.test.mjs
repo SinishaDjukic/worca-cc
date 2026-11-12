@@ -1,6 +1,6 @@
-// test/model-addons-spawn.test.mjs — the model add-on at spawn time: assembled in executor.mjs prepare(), reaching the
-// claude engine and copilot on a claude-* wire model only, split by mode, forwarded on the `session` event, pinned on
-// the step and sent unchanged on every resume.
+// test/model-addons-spawn.test.mjs — the prompt add-on at spawn time: assembled in executor.mjs prepare() (harness layer,
+// then model layer), reaching every known engine, split by mode, forwarded on the `session` event, pinned on the step
+// and sent unchanged on every resume on the same engine.
 import { test, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync } from 'node:fs';
@@ -10,6 +10,8 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { fakeCopilot } from './helpers/fake-copilot.mjs';
 import { allocateOutputs, runAgentExecution, runClarifierExecution, _testing } from '../src/core/graph/executor.mjs';
 import { ADDONS_DIR, resolveAddon, isPinnedAddon, _testing as addonT } from '../src/core/model-addons.mjs';
+import { ENGINE_NAMES } from '../src/shared/engine-switch.mjs';
+import { createHash } from 'node:crypto';
 import { runCopilotProcess } from '../src/core/engines/copilot.mjs';
 import { EXEC_MANIFEST_FILE } from '../src/core/graph/exec-manifest.mjs';
 import { readPipelineForResume } from '../src/core/artifacts.mjs';
@@ -71,7 +73,18 @@ async function spawnWith(over = {}, { clarifier = false } = {}) {
   } finally { _testing.runClaude = null; }
 }
 
-const shipped = (model, mode = 'unattended', agentKey = 'implementer') => resolveAddon({ model, agentKey, mode, dir: ADDONS_DIR }).addon;
+const shipped = (model, mode = 'unattended', agentKey = 'implementer', engine = undefined) => resolveAddon({ model, engine, agentKey, mode, dir: ADDONS_DIR }).addon;
+const sha = (s) => createHash('sha256').update(s, 'utf8').digest('hex');
+/** A pin as runs stored it before the harness layer (v1). */
+const v1Pin = (text) => ({ v: 1, family: 'opus-5-5', mode: 'unattended', files: ['opus-5-5.unattended.md'], text, sha256: sha(text) });
+/** A temp add-on folder: `harness/<engine>.md` = `H-<engine>` for every engine, and `opus-5-5.md` = `M`. */
+function layersDir() {
+  const d = tmp('worca-addon-layers-');
+  mkdirSync(join(d, 'harness'));
+  for (const engine of ENGINE_NAMES) writeFileSync(join(d, 'harness', `${engine}.md`), `H-${engine}`, 'utf8');
+  writeFileSync(join(d, 'opus-5-5.md'), 'M', 'utf8');
+  return d;
+}
 const fileText = (name) => readFileSync(join(ADDONS_DIR, name), 'utf8').trim();
 
 async function plainPrompt(over) {
@@ -94,21 +107,37 @@ test('no engine named resolves as claude', async () => {
   assert.ok(seen[0].systemPrompt.endsWith(`\n\n${fileText('opus-5-5.unattended.md')}`));
 });
 
-test('copilot on copilot/claude-opus-5.5: the same add-on', async () => {
+test('copilot on copilot/claude-opus-5.5: the copilot harness notes, then the opus-5-5 add-on', async () => {
   const { seen } = await spawnWith({ engine: 'copilot', model: 'copilot/claude-opus-5.5' });
-  assert.ok(seen[0].systemPrompt.endsWith(`You are the implementer.\n\n${fileText('opus-5-5.unattended.md')}`));
+  assert.ok(seen[0].systemPrompt.endsWith(`You are the implementer.\n\n${fileText('harness/copilot.md')}\n\n${fileText('opus-5-5.unattended.md')}`));
 });
 
-test('copilot on copilot/gpt-5.5, codex on claude-opus-5-5 and the opus alias: no add-on, the plain prompt', async () => {
-  for (const over of [
-    { engine: 'copilot', model: 'copilot/gpt-5.5' },
-    { engine: 'codex', model: 'claude-opus-5-5' },
-    { engine: 'claude', model: 'opus' },
-  ]) {
-    const { seen } = await spawnWith(over);
-    assert.equal(seen[0].systemPrompt, await plainPrompt(over), JSON.stringify(over));
-    assert.ok(seen[0].systemPrompt.endsWith('You are the implementer.'), JSON.stringify(over));
-  }
+for (const engine of ENGINE_NAMES) {
+  test(`fresh spawn on ${engine}: the harness layer, then the model layer, after the body`, async () => {
+    const dir = layersDir();
+    addonT.dir = dir;
+    const { seen } = await spawnWith({ engine, model: 'claude-opus-5-5' });
+    assert.ok(seen[0].systemPrompt.endsWith(`You are the implementer.\n\nH-${engine}\n\nM`), engine);
+  });
+}
+
+test('an unknown engine name gets the plain prompt', async () => {
+  const over = { engine: 'claude2', model: 'claude-opus-5-5' };
+  const plain = await plainPrompt(over);
+  addonT.dir = layersDir();
+  const { seen } = await spawnWith(over);
+  assert.equal(seen[0].systemPrompt, plain);
+});
+
+test('codex on claude-opus-5-5, copilot on copilot/gpt-5.5 (harness only) and the opus alias (the plain prompt)', async () => {
+  const codex = await spawnWith({ engine: 'codex', model: 'claude-opus-5-5' });
+  assert.ok(codex.seen[0].systemPrompt.endsWith(`You are the implementer.\n\n${fileText('harness/codex.md')}\n\n${fileText('opus-5-5.unattended.md')}`));
+  const copilot = await spawnWith({ engine: 'copilot', model: 'copilot/gpt-5.5' });
+  assert.ok(copilot.seen[0].systemPrompt.endsWith(`You are the implementer.\n\n${fileText('harness/copilot.md')}`), 'gpt-5.5 has no family');
+  const over = { engine: 'claude', model: 'opus' };
+  const alias = await spawnWith(over);
+  assert.equal(alias.seen[0].systemPrompt, await plainPrompt(over));
+  assert.ok(alias.seen[0].systemPrompt.endsWith('You are the implementer.'));
 });
 
 test('a clarifier on claude-fable-5-2 gets the family file, never the unattended file', async () => {
@@ -130,8 +159,10 @@ test('the forwarded session event carries the add-on; without one it has no addo
   const on = await spawnWith({ engine: 'claude', model: 'claude-opus-5-5' });
   const session = on.events.find((e) => e.type === 'session');
   assert.equal(isPinnedAddon(session.addon), true);
-  assert.deepEqual(session.addon, shipped('claude-opus-5-5'));
-  const off = await spawnWith({ engine: 'copilot', model: 'copilot/gpt-5.5' });
+  assert.deepEqual(session.addon, shipped('claude-opus-5-5', 'unattended', 'implementer', 'claude'));
+  assert.equal(session.addon.v, 2);
+  assert.equal(session.addon.engine, 'claude');
+  const off = await spawnWith({ engine: 'claude', model: 'opus' });
   assert.equal('addon' in off.events.find((e) => e.type === 'session'), false);
 });
 
@@ -143,8 +174,11 @@ test('a fake copilot receives the add-on as the end of its .agent.md body', { sk
     usageDir: join(dir, 'usage'), scratchBase: join(dir, 'scratch'), onEvent: () => {} });
   const rec = f.record();
   const text = fileText('opus-5-5.unattended.md');
+  const harnessText = fileText('harness/copilot.md');
   assert.ok(rec.agentFile.endsWith(`${text}\n`));
-  assert.ok(rec.agentFile.indexOf('You are the implementer.') < rec.agentFile.indexOf(text), 'the body comes before the add-on');
+  const body = rec.agentFile.indexOf('You are the implementer.');
+  assert.ok(body >= 0 && body < rec.agentFile.indexOf(harnessText), 'the body comes before the harness notes');
+  assert.ok(rec.agentFile.indexOf(harnessText) < rec.agentFile.indexOf(text), 'the harness notes come before the model notes');
 });
 
 // ── Step 5: pin and resume ───────────────────────────────────────────────────
@@ -180,16 +214,39 @@ test('resume row 3: a forged pin (sha256 does not match its text) is refused', a
   assert.equal(seen[0].systemPrompt, plain);
 });
 
-test('resume row 3b: a valid pin is not sent when the resume runs on an engine add-ons do not cover', async () => {
+test('resume row 3b: a v2 pin is sent only on its own engine', async () => {
   const pinned = shipped('claude-opus-5-5');
-  for (const over of [{ engine: 'codex', model: 'claude-opus-5-5' }, { engine: 'copilot', model: 'copilot/gpt-5.5' }]) {
+  assert.equal(pinned.engine, 'claude');
+  for (const over of [{ engine: 'codex', model: 'claude-opus-5-5' }, { engine: 'copilot', model: 'copilot/claude-opus-5.5' }]) {
     const plain = await plainPrompt(over);
     const { seen, events } = await spawnWith({ ...over, resumeSessionId: 's1', pinnedAddon: pinned });
     assert.equal(seen[0].systemPrompt, plain, JSON.stringify(over));
     assert.equal('addon' in events.find((e) => e.type === 'session'), false, JSON.stringify(over));
   }
-  const kept = await spawnWith({ engine: 'copilot', model: 'copilot/claude-opus-5.5', resumeSessionId: 's1', pinnedAddon: pinned });
-  assert.ok(kept.seen[0].systemPrompt.endsWith(`\n\n${pinned.text}`), 'copilot on a claude-* wire model keeps the pin');
+  // A codex pin resumed on codex is sent, even after the files changed on disk.
+  const dir = tmp('worca-addon-codex-');
+  mkdirSync(join(dir, 'harness'));
+  writeFileSync(join(dir, 'harness', 'codex.md'), 'A', 'utf8');
+  addonT.dir = dir;
+  const first = await spawnWith({ engine: 'codex', model: 'gpt-5.5' });
+  const codexPin = first.events.find((e) => e.type === 'session').addon;
+  assert.deepEqual([codexPin.v, codexPin.engine, codexPin.harness, codexPin.family], [2, 'codex', 'codex', null]);
+  writeFileSync(join(dir, 'harness', 'codex.md'), 'B', 'utf8');
+  addonT.dir = dir;
+  const again = await spawnWith({ engine: 'codex', model: 'gpt-5.5', resumeSessionId: 's1', pinnedAddon: codexPin });
+  assert.ok(again.seen[0].systemPrompt.endsWith('You are the implementer.\n\nA'));
+  assert.deepEqual(again.events.find((e) => e.type === 'session').addon, codexPin);
+});
+
+test('resume row 3c: a v1 pin (stored before the harness layer) resumes under the legacy rule', async () => {
+  const pin = v1Pin(fileText('opus-5-5.unattended.md'));
+  const kept = await spawnWith({ engine: 'claude', model: 'claude-opus-5-5', resumeSessionId: 's1', pinnedAddon: pin });
+  assert.ok(kept.seen[0].systemPrompt.endsWith(`You are the implementer.\n\n${pin.text}`));
+  const over = { engine: 'codex', model: 'claude-opus-5-5' };
+  const plain = await plainPrompt(over);
+  const dropped = await spawnWith({ ...over, resumeSessionId: 's1', pinnedAddon: pin });
+  assert.equal(dropped.seen[0].systemPrompt, plain);
+  assert.equal('addon' in dropped.events.find((e) => e.type === 'session'), false);
 });
 
 test('resume row 4: step.addon round-trips through writeState and readPipelineForResume, text included', async () => {
@@ -215,8 +272,13 @@ test('resume row 5: the session event stamps step.addon; state frames carry it w
   assert.equal(step.sessionId, 's1');
   assert.deepEqual(step.addon, addon);
   const frame = orch.getState().steps[0].addon;
-  assert.deepEqual(frame, { v: 1, family: addon.family, mode: addon.mode, files: addon.files, sha256: addon.sha256 });
+  assert.deepEqual(frame, { v: 2, engine: addon.engine, harness: addon.harness, family: addon.family, mode: addon.mode, files: addon.files, sha256: addon.sha256 });
   assert.equal('text' in frame, false);
+  // A v1 pin's frame is the v1 record without its text.
+  const v1 = v1Pin('OLD');
+  orch.state.steps.push({ key: 'x:n_v1:1', executionId: 'x:n_v1:1', nodeId: 'n_v1', status: 'running', sessionId: 's0', addon: v1 });
+  assert.deepEqual(orch.getState().steps.at(-1).addon, { v: 1, family: v1.family, mode: v1.mode, files: v1.files, sha256: v1.sha256 });
+  orch.state.steps.pop();
   assert.equal(orch.state.steps[0].addon.text, addon.text, 'the live state (what _persist writes) keeps the text');
   // A record that fails the shape check is never stamped.
   orch.state.steps.push({ key: 'x:n_j:1', executionId: 'x:n_j:1', nodeId: 'n_j', status: 'running' });
@@ -296,7 +358,11 @@ test('resume row 11: the manifest line carries the add-on\'s sha256 and no text'
   const lines = readFileSync(join(pipelineDir, EXEC_MANIFEST_FILE), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   const last = lines.at(-1);
   const addon = shipped('claude-opus-5-5');
-  assert.deepEqual(last.addon, { family: addon.family, mode: addon.mode, files: addon.files, sha256: addon.sha256 });
+  assert.deepEqual(last.addon, { engine: 'claude', harness: null, family: addon.family, mode: addon.mode, files: addon.files, sha256: addon.sha256 });
+  const pin = v1Pin('OLD');
+  await spawnWith({ model: 'claude-opus-5-5', resumeSessionId: 's1', pinnedAddon: pin });
+  const v1 = readFileSync(join(pipelineDir, EXEC_MANIFEST_FILE), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).at(-1);
+  assert.deepEqual(v1.addon, { engine: null, harness: null, family: 'opus-5-5', mode: 'unattended', files: pin.files, sha256: pin.sha256 });
   await spawnWith({ model: 'gpt-5.5' });
   const none = readFileSync(join(pipelineDir, EXEC_MANIFEST_FILE), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).at(-1);
   assert.equal(none.addon, null);

@@ -110,6 +110,15 @@ test('no family, no effort', () => {
   assert.equal(intentEffort(), null, 'never throws');
 });
 
+test('ids only the add-on resolver knows fill no effort (effort keeps its legacy family rule)', () => {
+  for (const [model, engine] of [
+    ['copilot/claude-opus-4.8-fast', 'copilot'], ['anthropic/claude-opus-4-8', 'opencode'], ['claude-opus-4-8', 'cursor'],
+    ['gpt-6.1-sol', 'codex'], ['gemini-3.8-flash', 'gemini'], ['claude-opus-4-6', 'claude'],
+  ]) {
+    assert.equal(intentEffort({ intent: 'deep', model, engine, efforts: EFFORTS }), null, `${model} on ${engine}`);
+  }
+});
+
 test('sweep: every filled effort is one the model lists (Claude and Copilot rows)', () => {
   for (const family of Object.keys(TABLE)) {
     for (const intent of EFFORT_INTENTS) {

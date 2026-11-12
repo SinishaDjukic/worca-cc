@@ -154,8 +154,10 @@ export async function writeExecManifest(ctx, { opts = {}, prompt, systemPrompt, 
         extraSettings: opts.extraSettings ?? null, disallowedTools: opts.disallowedTools ?? null, settingSources: opts.settingSources ?? null })),
     },
     memory: memoryRecord(ctx),
-    // The model add-on the spawn carried (model-addons.mjs), without its text: the sha256 names it.
-    addon: addon ? { family: addon.family, mode: addon.mode, files: addon.files, sha256: addon.sha256 } : null,
+    // The prompt add-on the spawn carried (model-addons.mjs), without its text: the sha256 names it. A v1 pin (stored
+    // before the harness layer) has no engine or harness: both are recorded as null.
+    addon: addon ? { engine: addon.engine ?? null, harness: addon.harness ?? null, family: addon.family, mode: addon.mode,
+      files: addon.files, sha256: addon.sha256 } : null,
     outside,
     outcome, ...(error ? { error: String(error?.code || error?.message || error).slice(0, 300) } : {}),
   };

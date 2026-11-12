@@ -628,37 +628,90 @@ because the CLI is signed out, worca says so instead of showing the bare error.
 
 ### Model add-ons
 
-Every pipeline agent gets the same system prompt whatever model runs it. Anthropic's per-model prompting guides ask
-for different corrections per model family, so worca appends a short **model add-on** after the agent's prompt when the
-step runs on a covered family. The texts are starting points taken from the guides; their effect is not measured yet.
+Every pipeline agent gets the same system prompt whatever engine and model run it. The vendors' prompting guides ask
+for different corrections per model family, and some engines name their tools differently, so worca appends a short
+**prompt add-on** after the agent's prompt. It has two layers: **harness notes** for the engine, then **model notes**
+for the model family. The texts are starting points taken from the sources below; their effect is not measured yet.
 
-- **Families.** `fable-5-2`, `fable-5-1`, `fable-5`, `opus-5-5`, `opus-5`, `opus-4-8`, `sonnet-5-5`, `sonnet-5` and
-  `haiku-5-5`, read from the full model id (`claude-opus-5-5`, `claude-opus-4-8[1m]`, a dated id such as
-  `claude-sonnet-5-20261001`). Bare aliases (`opus`, `sonnet`, …) and older families get none: the version an alias
-  names changes with the CLI.
-- **Engines.** Claude Code, and GitHub Copilot CLI when its model is a `claude-*` model (`copilot/claude-opus-5.5`).
-  Codex, Cursor, OpenCode, Gemini CLI, Qwen Code and Goose get none. Chats get none yet either.
-- **Lookup order.** The files live in `agents/addons/`. worca reads `<family>.md` (every step), then
-  `<family>.unattended.md` (unattended steps only), then `<family>.<agentKey>.md` (that agent only, for example
-  `opus-5.implementer.md`). The files that exist are joined by a blank line. A family with no files gets no add-on,
-  and its prompt is byte-for-byte the prompt without the feature.
+- **Engines.** All eight: Claude Code, Codex, GitHub Copilot CLI, Cursor, Gemini CLI, Goose, OpenCode and Qwen Code.
+  The harness layer applies whatever the model is, even with no model or an unknown one (Cursor's account default).
+  The model layer follows the model, not the engine: `claude-opus-5-5` gets the same model notes on Claude Code and
+  on Copilot. Engines that have no system-prompt channel (Cursor, Gemini CLI, and long prompts on Codex, Qwen Code
+  and Goose) carry the add-on as the last text of the folded `=== SYSTEM ===` block. Chats get none yet.
+- **Lookup order.** The files live in `agents/addons/`. worca reads the harness layer from `agents/addons/harness/`:
+  `<engine>.md` (every step), `<engine>.unattended.md` (unattended steps only), `<engine>.<agentKey>.md` (that agent
+  only). Then the model layer: `<family>.md`, `<family>.unattended.md`, `<family>.<agentKey>.md` (for example
+  `opus-5.implementer.md`). The files that exist are joined by a blank line, so model notes come last. When no file
+  exists, the prompt is byte-for-byte the prompt without the feature.
+- **Model ids.** worca lower-cases the id, drops a trailing `[1m]` and keeps the text after its last `/`, so
+  `copilot/claude-opus-4.8`, `anthropic/claude-opus-4-8` and `openrouter/openai/gpt-6.1-sol` resolve like the bare id.
+  A `claude-*` id resolves by its version (a dated id such as `claude-sonnet-5-20261001` and Copilot's `-fast`
+  variants too: `copilot/claude-opus-4.8-fast` is `opus-4-8`). Any other id resolves only through an explicit table,
+  one family per vendor guide. Bare aliases (`opus`, `sonnet`, …) get none: the version an alias names changes with
+  the CLI. Effort intents do not use this rule (see Effort intents).
+- **Families.**
+
+  | Family | Ids | Source | Files |
+  |---|---|---|---|
+  | `fable-5-2`, `fable-5-1`, `fable-5`, `opus-5-5`, `opus-5`, `opus-4-8`, `sonnet-5-5`, `sonnet-5`, `haiku-5-5` | `claude-<family>` | [Anthropic prompting best practices](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices) | as shipped in `agents/addons/` |
+  | `opus-4-6` | `claude-opus-4-6` | Anthropic, "Overeagerness", "Subagent orchestration", "Overthinking and excessive thoroughness", "Balancing autonomy and safety" | `opus-4-6.md` |
+  | `sonnet-4-6`, `haiku-4-5` | `claude-sonnet-4-6`, `claude-haiku-4-5` (also `copilot/claude-sonnet-4.6`, `copilot/claude-haiku-4.5`) | Anthropic, "Context awareness and multiwindow workflows" (names Sonnet 5, Sonnet 4.6 and Haiku 4.5) | `sonnet-4-6.unattended.md`, `haiku-4-5.unattended.md` (identical to `sonnet-5.unattended.md`) |
+  | `gpt-6` | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna` | [OpenAI "Using GPT-6"](https://developers.openai.com/api/docs/guides/latest-model) | `gpt-6.md`, `gpt-6.unattended.md` |
+  | `gpt-5-codex` | `gpt-5.3-codex` | [OpenAI Codex prompting guide](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide) | `gpt-5-codex.unattended.md` |
+  | `gemini-3` | `gemini-3-pro-preview`, `gemini-3.1-pro-preview`, `gemini-3-flash-preview`, `gemini-3.5-flash`, `gemini-3.6-flash`, `gemini-3.7-flash`, `gemini-3.8-flash` | [Google "Prompt design strategies"](https://aistudio.google.com/docs/prompting-strategies), section "Gemini 3" | `gemini-3.unattended.md` |
+  | `kimi-k3` | `kimi-k3` | [Kimi "How to fix repeated tool calls"](https://platform.kimi.ai/docs/guide/tool-call-repeat) | `kimi-k3.md` |
+
+  The Gemini 3 section names no model ids ("Gemini 3 models"), and the Kimi page is written for the Kimi API, not one
+  model: both id lists are worca's mapping.
+- **No guidance found.** These ids get no model file:
+  - `claude-opus-4-7`: Anthropic's page names it only in model lists, with no behaviour guidance.
+  - `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5-mini`: no OpenAI guide
+    names these versions. The GPT-5, 5.1 and 5.2 guides name only those models, and their habits disagree with each
+    other, so none can be carried over.
+  - `gpt-5.3-codex-spark`: the Codex guide names only `gpt-5.3-codex`.
+  - `gemini-4-argon`: the "Gemini 3" section does not cover Gemini 4, and the Argon page gives API and thinking-level
+    guidance only (effort, not prompt habits).
+  - `grok-4.7`, `grok-4.6`, `grok-4.5`: xAI documents sampling, `reasoning_effort` and reasoning items only, which are
+    API parameters, not prompt habits.
+  - `mai-code-1.1-flash`: Microsoft publishes no prompting guide for it.
+- **Harness files.** The agent prompts name Claude Code's tools (Read, Write, Edit, Bash, Grep, Glob). An engine whose
+  tools have other names gets one line that maps them, taken from worca's own adapter maps:
+  - Codex (`harness/codex.md`): the shell tool and `apply_patch` (`src/core/engines/codex.mjs:596-600`, the `command_execution` and `file_change` items).
+    It also says that uncommitted changes from earlier pipeline steps are expected, because the
+    [Codex prompting guide](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide)'s base prompt
+    tells the model to stop and ask about changes it did not make.
+  - GitHub Copilot CLI (`harness/copilot.md`): `TOOL_NAMES` in `src/core/engines/copilot.mjs:380`.
+  - Gemini CLI (`harness/gemini.md`) and Qwen Code (`harness/qwen.md`): `TOOL_NAMES` in
+    `src/core/engines/gemini-family.mjs:34` and `QWEN_BUILTIN_TOOLS` in `src/core/engines/qwen.mjs:74`.
+  - Goose (`harness/goose.md`): `TOOL_NAMES` in `src/core/engines/goose.mjs:214`.
+  - Claude Code, Cursor and OpenCode: no difference found (Cursor and OpenCode use the same names in lower case), so
+    no file.
 - **Modes.** A Clarify step, or a step that may stop to ask you questions, is *interactive*: it never gets the
-  `.unattended.md` text (keep going, don't ask). Every other step is *unattended*.
-- **Resume.** The add-on is chosen once, when a step's session starts, and saved on the step. A resumed step (after a
-  pause, a restart, answered questions or a plan concern) sends exactly that text again, even if the files changed
-  since. A step started before this feature resumes with none. A session that starts fresh (a fix cycle, or a resume
-  that fell back to a new session) chooses again. The run's `executions.ndjson` records the family, mode, files and
-  sha256 of the add-on each spawn carried.
+  `.unattended.md` text of either layer (keep going, don't ask). Every other step is *unattended*.
+- **Resume.** The add-on is chosen once, when a step's session starts, and saved on the step with its engine. A resumed
+  step (after a pause, a restart, answered questions or a plan concern) sends exactly that text again, even if the
+  files changed since, but only on the same engine. A step resumed on another engine starts a fresh session there, and
+  that session gets no add-on (a known gap). A step saved before the harness layer resumes as before: its add-on only
+  on Claude Code, or Copilot on a `claude-*` model. A step started before add-ons resumes with none. A session that
+  starts fresh (a fix cycle, or a resume that fell back to a new session) chooses again. The run's
+  `executions.ndjson` records the engine, harness, family, mode, files and sha256 of the add-on each spawn carried.
+  A saved add-on holds at most 12800 characters (six files of 2048 bytes).
 - **Adding a file.** Plain markdown, no frontmatter, at most 15 lines and 2048 bytes, starting with `## Model notes`
-  (`## Model notes for this step` for a per-agent file). State each prohibition's reason and scope, and put keep-going
-  text only in `.unattended.md` files. The `sonnet-5-5` and `haiku-5-5` files are identical on purpose (a test pins
-  the pairs equal): edit both together. A file that is a symlink, not a regular file or over the size limit is skipped
-  with a warning on the run log. Update the snapshots with
+  (`## Model notes for this step` for a per-agent file) or, in `harness/`, `## Harness notes` (`## Harness notes for
+  this step`). Cite the source in the table above. State each prohibition's reason and scope, and put keep-going text
+  only in `.unattended.md` files. Every `.unattended.md` file carries this line, so keep-going text never turns a
+  refusal into a workaround: `- A refused tool call, a permission denial or a host-guard block is not an obstacle: do
+  not retry it by another tool or route; report it.` The `sonnet-5-5` and `haiku-5-5` files are identical on purpose,
+  and so are `sonnet-5.unattended.md`, `sonnet-4-6.unattended.md` and `haiku-4-5.unattended.md` (tests pin them equal):
+  edit them together. A file that is a symlink, not a regular file or over the size limit is skipped with a warning
+  on the run log, and so is a `harness` folder that is a symlink or a file. Update the snapshots with
   `UPDATE_ADDON_SNAPSHOTS=1 node tools/test.mjs test/model-addons.test.mjs`.
 - **Session groups.** In `shared` mode the member's system prompt moves into the user turn, and its add-on moves with
   it. The session host's own prompt has none.
-- **Known gap.** A resumed step reloads its agent `.md` from disk, so an edited agent file still changes a resumed
-  step's system prompt. Fable 5.2 can reject such a resume.
+- **Known gaps.** A resumed step reloads its agent `.md` from disk, so an edited agent file still changes a resumed
+  step's system prompt. Fable 5.2 can reject such a resume. A bridged Claude handle (`copilot-<id>`) does not resolve
+  through its upstream id, investigator sub-agents get no add-on, and an id shape an engine invents (for example a
+  Cursor `-thinking` id) gets no model file until a table row names it.
 
 ### Effort intents
 
@@ -848,7 +901,7 @@ Engine & models.
 **How a node runs.**
 
 - The prompt goes on stdin.
-- The system prompt goes in a custom agent that worca writes for each call to a scratch folder handed over with `--add-dir`. It reaches the model as the agent's instructions. On a claude-* model the prompt ends with the model add-on (see Model add-ons).
+- The system prompt goes in a custom agent that worca writes for each call to a scratch folder handed over with `--add-dir`. It reaches the model as the agent's instructions. The prompt ends with the add-on (harness notes, then model notes; see Model add-ons).
 - Files can be read and written in the run checkout, the memory folder and the node's output folders. Copilot refuses any other path, and in a non-interactive run nothing can approve one.
 - Copilot's built-in GitHub MCP server is turned off, so it never acts with your GitHub identity. So are the servers in your own `~/.copilot/mcp-config.json`, which worca's guardrails never saw.
 - Copilot also reads the checkout's `AGENTS.md`, `CLAUDE.md` and `.github/copilot-instructions.md`, as Claude Code reads `CLAUDE.md`.

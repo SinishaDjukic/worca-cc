@@ -7,6 +7,7 @@
 - Per-model-family prompt add-ons: Role reviews: no blocking findings.
 - Per-step effort intents mapped per model family: Role reviews: no blocking findings.
 - Refusal stop reason surfaces as a clear step error: Role reviews: no blocking findings.
+- Prompt add-ons for every engine: a harness layer (`agents/addons/harness/<engine>.md`, the tool names of Codex, Copilot, Gemini CLI, Goose and Qwen Code, and Codex's earlier-steps worktree note) before the model notes, and new model files for Opus 4.6, Sonnet 4.6, Haiku 4.5, GPT-6, GPT-5.3 Codex, Gemini 3 and Kimi K3, each from its vendor's prompting guide ([Model add-ons](docs/models.md#model-add-ons)). Every unattended file now says that a refused tool call, a permission denial or a host-guard block is reported, never worked around. Shared agent prompts name the sub-agent tool generically. Effort intents are unchanged.
 
 ### Instance contract for hosting platforms
 

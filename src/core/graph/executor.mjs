@@ -445,7 +445,7 @@ export function resolveMockRole({ meta, expandsPort = null }) {
 
 import { readVerdict, checkVerdict, clearAllocated, assertOutputsWritten, publishable } from './exec-io.mjs';
 import { createScopeWatch, outsideWarning, writeExecManifest } from './exec-manifest.mjs';
-import { addonMode, appendAddon, engineTakesAddon, isPinnedAddon, resolveAddon } from '../model-addons.mjs';
+import { addonMode, appendAddon, pinFitsSpawn, resolveAddon } from '../model-addons.mjs';
 export { readVerdict, publishable };
 
 // ── prompt assembly ───────────────────────────────────────────────────────────
@@ -721,15 +721,15 @@ async function prepare(ctx) {
   if (!String(body || '').trim()) {
     console.warn(`[executor] node "${node?.id}": no agent .md body resolved — running with an empty system prompt`);
   }
-  // The model add-on (model-addons.mjs), resolved ONCE per spawn session and appended last. A resume never re-resolves:
-  // it sends the add-on its first turn pinned (ctx.pinnedAddon, checked), or none, so the session's prompt stays stable.
-  // A pin is sent only on an engine add-ons cover: a claude step resumed on codex starts a fresh codex session.
+  // The prompt add-on (model-addons.mjs: harness notes, then model notes), resolved ONCE per spawn session and appended
+  // last. A resume never re-resolves: it sends the add-on its first turn pinned (ctx.pinnedAddon, checked), or none, so
+  // the session's prompt stays stable. A pin is sent only on the engine it was chosen for (pinFitsSpawn): a claude step
+  // resumed on codex starts a fresh codex session, which gets no add-on.
   const mode = addonMode({ runnerType: meta?.runnerType, questionsEnabled: ctx.questionsEnabled });
   let addon = null;
   let addonWarnings = [];
   if (ctx.resumeSessionId) {
-    addon = isPinnedAddon(ctx.pinnedAddon) && engineTakesAddon({ engine: ctx.claudeOpts?.engine, model: ctx.claudeOpts?.model })
-      ? ctx.pinnedAddon : null;
+    addon = pinFitsSpawn(ctx.pinnedAddon, { engine: ctx.claudeOpts?.engine, model: ctx.claudeOpts?.model }) ? ctx.pinnedAddon : null;
   }
   else ({ addon, warnings: addonWarnings } = resolveAddon({ model: ctx.claudeOpts?.model, engine: ctx.claudeOpts?.engine, agentKey: node?.key, mode }));
   const systemPrompt = appendAddon(buildSystemPrompt(ctx.toolInstruction, body, role, ctx.workspace, ctx.memoryBlock), addon);

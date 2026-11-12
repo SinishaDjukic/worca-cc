@@ -212,6 +212,7 @@ export function buildGooseArgs({ model, systemPrompt, sessionName, resume = fals
 const str = (v) => (typeof v === 'string' ? v : '');
 const num = (v) => (Number.isFinite(v) ? v : 0);
 const TOOL_NAMES = Object.freeze({ shell: 'Bash', write: 'Write', edit: 'Edit', tree: 'LS', read_image: 'Read' });
+export { TOOL_NAMES as GOOSE_TOOL_NAMES };
 export const GOOSE_ERROR_PREFIX = 'Ran into this error:';
 const MAX_TURNS_TEXT = "I've reached the maximum number of actions";
 const NO_COMPLETE = 'goose ended without a completion event';

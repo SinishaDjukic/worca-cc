@@ -383,6 +383,7 @@ const TOOL_NAMES = Object.freeze({
   apply_patch: 'Edit', edit: 'Edit', str_replace: 'Edit', str_replace_editor: 'Edit', create: 'Write', write: 'Write',
   web_fetch: 'WebFetch', web_search: 'WebSearch',
 });
+export { TOOL_NAMES as COPILOT_TOOL_NAMES };
 
 function toolCall(d) {
   const name = text(d.toolName);
