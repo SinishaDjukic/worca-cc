@@ -3,7 +3,9 @@
 // with `rail` on, each gate opens it through STILLHET_TARGET (plans/rail/prototype/gates/target.mjs), and what a gate reports is
 // compared with test/fixtures/stillhet-gate-baselines.json. The baseline can only shrink: a finding outside it fails, and an
 // entry the gate no longer reports also fails (delete it), so it cannot go stale or be raised without a visible edit.
-//   npm run stillhet:gates [-- --only ds-check,click-check]
+//   npm run stillhet:gates [-- --only ds-check,click-check] [--workers N] [--units-json FILE]
+// --workers and --units-json reach click-check only (the other gates run as today): click-check is split across parallel workers
+// by default (the CPU count less one, at most 4); `--workers 1` gives the single walk. An invalid --workers stops before the build.
 // Needs a Chromium that playwright can launch. NOT part of `npm test`.
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -37,26 +39,34 @@ export function checkBaseline(found, baseline) {
 /** The line that says a gate could not start (no browser, a missing module), or null when it ran. */
 export const launchFailure = (output) => output.split('\n').find((l) => /Executable doesn't exist|Failed to launch|Cannot find (package|module)/.test(l))?.trim() || null;
 
-const runGate = (gate, env) => new Promise((resolve) => {
+const runGate = (gate, env, args = []) => new Promise((resolve) => {
   let out = '';
-  const c = spawn(process.execPath, [join(ROOT, 'plans/rail/prototype/gates', gate + '.mjs')], { cwd: ROOT, env: { ...process.env, ...env, FORCE_COLOR: '0' } });
+  const c = spawn(process.execPath, [join(ROOT, 'plans/rail/prototype/gates', gate + '.mjs'), ...args], { cwd: ROOT, env: { ...process.env, ...env, FORCE_COLOR: '0' } });
   c.stdout.on('data', (d) => { out += d; }); c.stderr.on('data', (d) => { out += d; });
   c.on('close', (code) => resolve({ code, out }));
 });
 
-export async function main(argv = process.argv.slice(2)) {
+/** The runner. `deps` (tests): build, startApp, runGate. Returns the exit code. */
+export async function main(argv = process.argv.slice(2), deps = {}) {
+  const { startApp, launchOptions, parseWorkers } = await import('./stillhet-compare.mjs');
+  const clickArgs = [];
+  if (argv.some((a) => a === '--workers' || a.startsWith('--workers='))) {
+    try { clickArgs.push('--workers', String(parseWorkers(argv))); } catch (e) { console.error(e.message); return 2; }
+  }
+  const ui = argv.indexOf('--units-json');
+  if (ui >= 0) clickArgs.push('--units-json', argv[ui + 1]);
   const oi = argv.indexOf('--only');
   const gates = oi >= 0 ? argv[oi + 1].split(',') : GATES;
   const baselines = JSON.parse(await readFile(BASELINES, 'utf8'));
-  const { startApp, launchOptions } = await import('./stillhet-compare.mjs');
-  await (await import('./stillhet-build.mjs')).buildStillhet();   // once, before any gate: against the app a gate never rebuilds them (target.mjs buildBundles)
+  // once, before any gate: against the app a gate never rebuilds them (target.mjs buildBundles)
+  await (deps.build || (async () => (await import('./stillhet-build.mjs')).buildStillhet()))();
   const chrome = launchOptions().executablePath;   // the compare's Chrome; colour-check and handover-check read CHROME, the rest launch channel 'chrome'
   const home = await mkdtemp(join(tmpdir(), 'stillhet-gates-'));
-  const app = await startApp(home, { WORCA_STILLHET_DEMO: '1' }, { lockRail: true });   // demo data (D3); locked, so no gate's click turns it off
+  const app = await (deps.startApp || startApp)(home, { WORCA_STILLHET_DEMO: '1' }, { lockRail: true });   // demo data (D3); locked, so no gate's click turns it off
   let code = 0;
   try {
     for (const gate of gates) {
-      const { code: exit, out } = await runGate(gate, { STILLHET_TARGET: app.base, ...(chrome ? { CHROME: chrome } : {}) });
+      const { code: exit, out } = await (deps.runGate || runGate)(gate, { STILLHET_TARGET: app.base, ...(chrome ? { CHROME: chrome } : {}) }, gate === 'click-check' ? clickArgs : []);
       const failed = launchFailure(out);
       if (failed) { code = 1; console.log(`FAIL ${gate}: could not start: ${failed}`); continue; }   // the other gates still run
       const { added, stale } = checkBaseline(exit === 0 ? [] : findingsOf(out), baselines[gate] || []);
@@ -66,7 +76,7 @@ export async function main(argv = process.argv.slice(2)) {
       for (const a of added) console.log('  new:   ' + a);
       for (const s of stale) console.log('  stale: ' + s);
     }
-  } finally { app.stop(); await rm(home, { recursive: true, force: true }); }
+  } finally { await app.stop(); await rm(home, { recursive: true, force: true }); }
   return code;
 }
 

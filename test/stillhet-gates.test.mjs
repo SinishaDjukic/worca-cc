@@ -49,3 +49,36 @@ test('against the app (STILLHET_TARGET) a gate does not rebuild the shared bundl
   try { buildBundles(); } finally { if (was === undefined) delete process.env.STILLHET_TARGET; else process.env.STILLHET_TARGET = was; }
   assert.equal(has(css) ? statSync(css).mtimeMs : null, before);
 });
+
+test('main: an invalid --workers returns 2 before reading baselines, building or starting the app', async () => {
+  const { main } = await import('../tools/stillhet-gates.mjs');
+  let built = 0, started = 0;
+  const code = await main(['--workers', '0'], { build: async () => { built++; }, startApp: async () => { started++; } });
+  assert.equal(code, 2);
+  assert.equal(built + started, 0);
+});
+
+test('main: --workers and --units-json reach the click-check gate only; without them it gets no arguments', async () => {
+  const { main } = await import('../tools/stillhet-gates.mjs');
+  const seen = async (argv) => {
+    const calls = {};
+    const was = console.log; console.log = () => {};
+    try {
+      await main(argv, { build: async () => {}, startApp: async () => ({ base: 'http://127.0.0.1:1', stop: async () => {} }), runGate: async (gate, _env, args) => { calls[gate] = args; return { code: 0, out: '' }; } });
+    } finally { console.log = was; }
+    return calls;
+  };
+  const split = await seen(['--workers', '3', '--units-json', 'u.json']);
+  assert.deepEqual(split['click-check'], ['--workers', '3', '--units-json', 'u.json']);
+  for (const g of GATES.filter((x) => x !== 'click-check')) assert.deepEqual(split[g], [], g);
+  assert.deepEqual((await seen(['--only', 'click-check', '--workers=2']))['click-check'], ['--workers', '2']);
+  const plain = await seen([]);
+  for (const g of GATES) assert.deepEqual(plain[g], [], g);
+});
+
+test('findingsOf: a merged split click-check report gives the same findings as the single walk', () => {
+  const single = '512 clicks · \na dead control (2)\n   index.html 1280 #runs: Open\n   pulse.html 375 now: Mark';
+  const merged = ['512 clicks · ', 'a dead control (2)', '   index.html 1280 #runs: Open', '   pulse.html 375 now: Mark'].join('\n');
+  assert.deepEqual(findingsOf(merged), findingsOf(single));
+  assert.deepEqual(findingsOf(single), ['a dead control (2)', 'index.html 1280 #runs: Open', 'pulse.html 375 now: Mark']);
+});

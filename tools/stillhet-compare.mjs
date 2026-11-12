@@ -5,12 +5,17 @@
 // so is every deep route the prototype has (deepRoutes: each task case, chat, schedule, Settings section and place item).
 // A console error or a page error in either page fails the cell. --pages opens the three standalone prototype pages
 // (components.html, run-page.html, pulse.html), built from the shared code, and fails on a console or page error in them.
-//   npm run stillhet:compare [-- --parts invitation,design-switch,route-chat] [-- --pages]
+//   npm run stillhet:compare [-- --parts invitation,design-switch,route-chat] [-- --pages] [-- --workers N]
+// --workers N splits the walk across N workers, each with its own sandbox app, browser and temp home, and prints the very same
+// report: default the CPU count less one, at most 4, at least 1; any whole number of 1 or more; never more than the number of
+// cells; `--workers 1` is the single walk. It splits one mode's walk (Expert), not modes. With --pages it is validated, then
+// ignored. A cell with no result after 300 s fails the run. click-check (plans/rail/prototype/gates/click-check.mjs) uses the
+// same worker pool (runPool).
 // Needs the prototype's built files (`npm run rail`) and a Chromium that playwright can launch. NOT part of `npm test`.
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { availableParallelism, tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -77,6 +82,107 @@ export function report(cells) {
   return { code, lines };
 }
 
+// ---- the worker pool: one walk split across N workers, merged back in the units' own order (click-check uses it too)
+
+/** A unit with no result after this long counts as a crash of its worker (the compare: one cell). */
+export const UNIT_TIMEOUT_MS = 300000;
+
+/** The worker count: `--workers N` or `--workers=N` (a whole number of 1 or more), else the CPU count less one, 1 to 4. */
+export function parseWorkers(argv, cpus = availableParallelism()) {
+  let raw;
+  for (let i = 0; i < argv.length && raw === undefined; i++) {
+    if (argv[i] === '--workers') raw = argv[i + 1] ?? null;
+    else if (argv[i].startsWith('--workers=')) raw = argv[i].slice('--workers='.length);
+  }
+  if (raw === undefined) return Math.min(4, Math.max(1, cpus - 1));
+  if (raw !== null && /^\d+$/.test(raw) && Number(raw) >= 1) return Number(raw);
+  throw new Error(`--workers must be a whole number of 1 or more, got "${raw ?? 'nothing'}"`);
+}
+
+/** Never more workers than units, never fewer than one. */
+export const clampWorkers = (n, unitCount) => Math.max(1, Math.min(n, unitCount));
+
+const firstLine = (e) => String(e?.message ?? e).split('\n')[0];
+const seconds = (ms) => `${ms / 1000} s`;
+
+/**
+ * Runs `units` on `workers` workers that take the next unit from one shared queue. Workers start one after another (`start`
+ * awaited before the next: two sandbox apps never start at once). `results[index]` holds what `run` resolved for units[index],
+ * so a report built from it is in the units' order whatever order they finished in. A `run` that rejects or takes longer than
+ * `timeoutMs` stops its worker and lists its unit as unfinished (no retry); the queue goes on on the others. `stop` is awaited
+ * once for every started worker. `live` (optional Set) holds the started, not yet stopped workers, for installStopHandlers.
+ * @returns {Promise<{ results: Array, unfinished: Array<{ worker: number, reason: string, units: Array, tail: string[] }> }>}
+ */
+export async function runPool({ units, workers, start, run, stop, timeoutMs = UNIT_TIMEOUT_MS, live = new Set() }) {
+  const results = new Array(units.length);
+  const unfinished = [];
+  const started = [];
+  const stopped = new Set();
+  let next = 0;
+  const halt = async (w) => { if (stopped.has(w)) return; stopped.add(w); live.delete(w); try { await stop(w); } catch { /* already gone */ } };
+  const loop = async (n, w) => {
+    while (next < units.length) {
+      const index = next++;
+      let timer;
+      const work = Promise.resolve().then(() => run(w, units[index], index));
+      work.catch(() => {});   // a unit that times out may still settle after its worker stopped
+      try {
+        results[index] = await Promise.race([work, new Promise((_, no) => { timer = setTimeout(() => no(new Error(`timed out after ${seconds(timeoutMs)}`)), timeoutMs); })]);
+      } catch (e) {
+        await halt(w);
+        unfinished.push({ worker: n, reason: firstLine(e), units: [units[index]], tail: Array.isArray(w?.tail) ? [...w.tail] : [] });
+        return;
+      } finally { clearTimeout(timer); }
+    }
+  };
+  const loops = [];
+  try {
+    for (let i = 0; i < workers; i++) {
+      let w;
+      try { w = await start(i); } catch (e) { unfinished.push({ worker: i + 1, reason: firstLine(e), units: [], tail: [] }); continue; }
+      started.push(w); live.add(w);
+      loops.push(loop(i + 1, w));
+    }
+    await Promise.all(loops);
+    if (next < units.length && unfinished.length) unfinished.at(-1).units.push(...units.slice(next));   // every worker crashed
+  } finally { for (const w of started) await halt(w); }
+  return { results, unfinished };
+}
+
+/** One line per stopped worker naming its unfinished units (`label(unit)`), then the stderr tail it kept. */
+export const unfinishedLines = (unfinished, label) => unfinished.flatMap((e) => [`worker ${e.worker} stopped (${e.reason}); unfinished: ${e.units.map(label).join(', ')}`, ...(e.tail || []).map((l) => `     ${l}`)]);
+
+/** The report with the unfinished workers appended: any unfinished entry fails the run. */
+export const finishRun = ({ lines, code }, unfinished, label) => (unfinished.length ? { lines: [...lines, ...unfinishedLines(unfinished, label)], code: 1 } : { lines, code });
+
+/** On SIGINT or SIGTERM: `cleanup` once (a second signal does not rerun it), then exit 130 or 143. Returns the uninstaller. */
+export function installStopHandlers(cleanup, proc = process) {
+  let ran = false;
+  const on = (code) => async () => {
+    if (ran) return;
+    ran = true;
+    try { await cleanup(); } catch { /* exit anyway */ }
+    proc.exit(code);
+  };
+  const int = on(130), term = on(143);
+  proc.on('SIGINT', int); proc.on('SIGTERM', term);
+  return () => { proc.off('SIGINT', int); proc.off('SIGTERM', term); };
+}
+
+/** Throws unless the app at `base` is this worker's: its child still runs, its log has no "already in use", and its project
+ *  list is empty before the POST (`phase` 'ready') or exactly this home's `proj` after it (`phase` 'added'). */
+export async function verifyApp({ base, proj, child, log, phase }) {
+  const refuse = (why) => { throw new Error(`the sandbox app on port ${new URL(base).port} is not this worker's (${why})`); };
+  if (child.exitCode !== null || child.signalCode !== null) refuse(`it exited with ${child.signalCode || `code ${child.exitCode}`}`);
+  if (/already in use/.test(log)) refuse('its log says the port is already in use');
+  let projects;
+  try { ({ projects } = await (await fetch(`${base}/api/projects`)).json()); } catch (e) { refuse(`no project list: ${firstLine(e)}`); }
+  if (!Array.isArray(projects)) refuse('no project list');
+  if (phase === 'ready') { if (projects.length) refuse(`it already lists ${projects.length} projects`); return; }
+  const real = join(await realpath(dirname(proj)).catch(() => dirname(proj)), basename(proj));   // macOS: /var → /private/var
+  if (projects.length !== 1 || ![proj, real].includes(projects[0].path)) refuse(`it lists ${projects.map((p) => p.path).join(', ') || 'no project'}, not ${proj}`);
+}
+
 // What is hidden around the part, so both shells paint the same blank page behind it.
 // The page typeface is the one thing the two shells do not share until slice 2 serves Stillhet (the app is Poppins, the prototype Inter),
 // so both are pinned to one family here: what is compared is structure, spacing and colour.
@@ -88,6 +194,14 @@ async function playwright() {
   try { return await import('playwright'); } catch { return import('playwright-core'); }
 }
 
+/** The browser library and one launched browser, before any build, app or worker: a missing library or browser stops the run
+ *  at once (exit 2). The message keeps the original "Cannot find package" text, which the gates' launchFailure reads. */
+async function preflight() {
+  let pw;
+  try { pw = await playwright(); } catch (e) { throw new Error(`cannot load the browser library "playwright": ${e.message}`); }
+  return { chromium: pw.chromium, browser: await pw.chromium.launch(launchOptions()) };
+}
+
 export async function freePort() {
   const net = await import('node:net');
   return new Promise((res) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
@@ -95,20 +209,34 @@ export async function freePort() {
 
 /** `lockRail`: turn `rail` on with WORCA_FLAGS (the gates: a click on the switch then changes nothing); else stored, as a
  *  person turns it on (the comparison: the switch is drawn as the prototype draws it). */
-export async function startApp(home, env, { lockRail = false } = {}) {
+export async function startApp(home, env, { lockRail = false, serverArgs = ['ui/server.mjs'] } = {}) {
   const port = await freePort();
   await mkdir(join(home, '.worca-cc'), { recursive: true });
   // a locked flag draws the top-bar switch disabled (nav.design-switch), which the prototype's switch is not
   await writeFile(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ onboarding: { welcomeSeen: true }, ...(lockRail ? {} : { flags: { rail: true } }) }));
   let log = '';
-  const child = spawn(process.execPath, ['ui/server.mjs'], { cwd: ROOT, env: { ...process.env, ...env, WORCA_FLAGS: lockRail ? 'rail' : '', WORCA_STILLHET_DEMO: '1', PORT: String(port), HOME: home, USERPROFILE: home, WORCA_HOME: join(home, 'worca-home'), WORCA_MOCK: '1', WORCA_TEST_ALLOW_HOME_FALLBACK: '1', FORCE_COLOR: '0' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, serverArgs, { cwd: ROOT, env: { ...process.env, ...env, WORCA_FLAGS: lockRail ? 'rail' : '', WORCA_STILLHET_DEMO: '1', PORT: String(port), HOME: home, USERPROFILE: home, WORCA_HOME: join(home, 'worca-home'), WORCA_MOCK: '1', WORCA_TEST_ALLOW_HOME_FALLBACK: '1', FORCE_COLOR: '0' }, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout.on('data', (d) => { log += d; }); child.stderr.on('data', (d) => { log += d; });
+  const exited = new Promise((r) => child.once('exit', r));
+  const stop = async () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    child.kill('SIGTERM');
+    const killer = setTimeout(() => child.kill('SIGKILL'), 3000);
+    await exited; clearTimeout(killer);
+  };
   const base = `http://127.0.0.1:${port}`;
-  for (let i = 0; i < 100; i++) { try { if ((await fetch(`${base}/api/projects`)).ok) break; } catch { /* not up yet */ } await new Promise((r) => setTimeout(r, 200)); }
-  if (/already in use/.test(log)) throw new Error('the sandbox port is already in use');
-  const proj = join(home, 'proj'); await mkdir(proj, { recursive: true });
-  await fetch(`${base}/api/projects`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'proj', path: proj }) });
-  return { base, stop: () => child.kill('SIGTERM') };
+  const proj = join(home, 'proj');
+  try {
+    for (let i = 0; i < 100 && child.exitCode === null && child.signalCode === null; i++) {
+      try { if ((await fetch(`${base}/api/projects`)).ok) break; } catch { /* not up yet */ }
+      await Promise.race([exited, new Promise((r) => setTimeout(r, 200))]);
+    }
+    await verifyApp({ base, proj, child, log, phase: 'ready' });
+    await mkdir(proj, { recursive: true });
+    await fetch(`${base}/api/projects`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'proj', path: proj }) });
+    await verifyApp({ base, proj, child, log, phase: 'added' });
+  } catch (e) { await stop(); throw e; }
+  return { base, stop };
 }
 
 // Collects console errors and page errors of a page into `into`, labelled with `who`.
@@ -163,9 +291,8 @@ async function shoot(page, id, outFile, route) {
   return { box: { w: Math.round(box.width), h: Math.round(box.height) }, rgba: new Uint8ClampedArray(Buffer.from(rgba.b64, 'base64')), w: rgba.w, h: rgba.h };
 }
 
-// The prototype is opened once, in Expert, to read its deep routes.
-async function listDeep(chromium) {
-  const browser = await chromium.launch(launchOptions());
+// The prototype is opened once, in Expert, to read its deep routes: in the preflight browser, which is closed when it returns.
+async function listDeep(browser) {
   try {
     const p = await browser.newPage();
     await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });
@@ -196,55 +323,87 @@ async function pagesMain() {
   return code;
 }
 
-export async function main(argv = process.argv.slice(2)) {
-  // the prototype's generated files (app.css, components.js) are built, not committed
-  await (await import('./stillhet-build.mjs')).buildStillhet();
-  if (argv.includes('--pages')) return pagesMain();
-  const { chromium } = await playwright();
-  const all = [...PARTS, ...(await listDeep(chromium)).map(deepPart)];
-  const pi = argv.indexOf('--parts');
-  const ids = pi >= 0 ? argv[pi + 1].split(',') : all.map((p) => p.id);
-  const parts = all.filter((p) => ids.includes(p.id));
-  const outRoot = join(ROOT, 'out/stillhet-compare');
-  await mkdir(join(outRoot, 'deep'), { recursive: true });
-  const home = await mkdtemp(join(tmpdir(), 'stillhet-compare-'));
-  const app = await startApp(home, ASK);
-  const browser = await chromium.launch(launchOptions());
-  const cells = [];
+/** One cell: the app and the prototype shot in one fresh context of `browser`. A cell that cannot be shot (a part that never
+ *  shows, a page that hangs) fails alone; the rest still run. */
+export async function shootCell(browser, app, part, theme, width, outRoot) {
+  const out = join(outRoot, part.dir || '');
+  const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme, reducedMotion: 'reduce' });
+  const errors = [];
+  let cell;
   try {
-    for (const part of parts) {
-      for (const [theme, width] of CELLS) {
-        const out = join(outRoot, part.dir || '');
-        const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme, reducedMotion: 'reduce' });
-        const errors = [];
+    const a = await ctx.newPage();
+    watch(a, 'app', errors);
+    if (part.route) { await freezeClock(a); await a.addInitScript(setLook, theme); }
+    await a.goto(app.base + '/' + part.app.route);
+    await a.evaluate((t) => { document.documentElement.dataset.theme = t; }, theme);
+    const A = await shoot(a, part.id, join(out, `${part.id}-${theme}-${width}-app.png`), part.route);
+    const p = await ctx.newPage();
+    watch(p, 'prototype', errors);
+    if (part.route) { await freezeClock(p); await p.addInitScript(setLook, theme); }
+    const protoUrl = pathToFileURL(join(ROOT, 'plans/rail/prototype/index.html')).href;
+    // a route opens once, on its own address (a first visit to Chat would mark its unread dot seen); a part is seeded, then moved
+    if (!part.route) await p.goto(protoUrl);
+    if (!part.route) await p.evaluate((t) => { localStorage.setItem('worca-rail.mode', 'expert'); localStorage.setItem('worca-rail.appearance', t); localStorage.removeItem('worca-rail.stillhetAsked'); }, theme);
+    await p.goto(protoUrl.replace(/index\.html.*$/, 'index.html') + part.proto.route);
+    const P = await shoot(p, part.id, join(out, `${part.id}-${theme}-${width}-proto.png`), part.route);
+    const diff = A.box.w === P.box.w && A.box.h === P.box.h ? countDiffPixels(A.rgba, P.rgba, A.w, A.h) : A.w * A.h;
+    cell = { part: part.id, theme, width, appBox: A.box, protoBox: P.box, diff, errors };
+  } catch (e) {
+    cell = { part: part.id, theme, width, appBox: { w: 0, h: 0 }, protoBox: { w: 0, h: 0 }, diff: 0, errors: [...errors, `not shot: ${String(e.message || e).split('\n')[0]}`] };
+  }
+  await ctx.close();
+  return cell;
+}
+
+const cellLabel = (u) => `${u.part.id} ${u.theme} ${u.width}`;
+
+/** The comparison. `deps` (tests): build, preflight, startApp, shoot, timeoutMs. Returns the exit code. */
+export async function main(argv = process.argv.slice(2), deps = {}) {
+  let workers;
+  try { workers = parseWorkers(argv); } catch (e) { console.error(e.message); return 2; }
+  // the prototype's generated files (app.css, components.js) are built, not committed
+  const build = deps.build || (async () => (await import('./stillhet-build.mjs')).buildStillhet());
+  if (argv.includes('--pages')) { await build(); return pagesMain(); }
+  const live = new Set();
+  let pre = null;
+  const off = installStopHandlers(async () => {
+    await pre?.browser?.close().catch(() => {});
+    await Promise.all([...live].map((w) => w.stop()));
+  });
+  try {
+    try { pre = await (deps.preflight || preflight)(); } catch (e) { console.error(e.message); return 2; }
+    await build();
+    const all = [...PARTS, ...(await listDeep(pre.browser)).map(deepPart)];
+    const pi = argv.indexOf('--parts');
+    const ids = pi >= 0 ? argv[pi + 1].split(',') : all.map((p) => p.id);
+    const parts = all.filter((p) => ids.includes(p.id));
+    const outRoot = join(ROOT, 'out/stillhet-compare');
+    await mkdir(join(outRoot, 'deep'), { recursive: true });
+    const units = parts.flatMap((part) => CELLS.map(([theme, width]) => ({ part, theme, width })));
+    const shootOne = deps.shoot || shootCell;
+    const { results, unfinished } = await runPool({
+      units, workers: clampWorkers(workers, units.length), timeoutMs: deps.timeoutMs ?? UNIT_TIMEOUT_MS, live,
+      start: async () => {
+        const home = await mkdtemp(join(tmpdir(), 'stillhet-compare-'));
+        let app = null, browser = null;
+        const w = { app: null, browser: null, stop: async () => {
+          await browser?.close().catch(() => {});
+          await app?.stop();
+          await rm(home, { recursive: true, force: true });
+        } };
         try {
-          const a = await ctx.newPage();
-          watch(a, 'app', errors);
-          if (part.route) { await freezeClock(a); await a.addInitScript(setLook, theme); }
-          await a.goto(app.base + '/' + part.app.route);
-          await a.evaluate((t) => { document.documentElement.dataset.theme = t; }, theme);
-          const A = await shoot(a, part.id, join(out, `${part.id}-${theme}-${width}-app.png`), part.route);
-          const p = await ctx.newPage();
-          watch(p, 'prototype', errors);
-          if (part.route) { await freezeClock(p); await p.addInitScript(setLook, theme); }
-          const protoUrl = pathToFileURL(join(ROOT, 'plans/rail/prototype/index.html')).href;
-          // a route opens once, on its own address (a first visit to Chat would mark its unread dot seen); a part is seeded, then moved
-          if (!part.route) await p.goto(protoUrl);
-          if (!part.route) await p.evaluate((t) => { localStorage.setItem('worca-rail.mode', 'expert'); localStorage.setItem('worca-rail.appearance', t); localStorage.removeItem('worca-rail.stillhetAsked'); }, theme);
-          await p.goto(protoUrl.replace(/index\.html.*$/, 'index.html') + part.proto.route);
-          const P = await shoot(p, part.id, join(out, `${part.id}-${theme}-${width}-proto.png`), part.route);
-          const diff = A.box.w === P.box.w && A.box.h === P.box.h ? countDiffPixels(A.rgba, P.rgba, A.w, A.h) : A.w * A.h;
-          cells.push({ part: part.id, theme, width, appBox: A.box, protoBox: P.box, diff, errors });
-        } catch (e) {   // a cell that cannot be shot (a part that never shows, a page that hangs) fails alone; the rest still run
-          cells.push({ part: part.id, theme, width, appBox: { w: 0, h: 0 }, protoBox: { w: 0, h: 0 }, diff: 0, errors: [...errors, `not shot: ${String(e.message || e).split('\n')[0]}`] });
-        }
-        await ctx.close();
-      }
-    }
-  } finally { await browser.close(); app.stop(); await rm(home, { recursive: true, force: true }); }
-  const { code, lines } = report(cells);
-  console.log(lines.join('\n'));
-  return code;
+          app = w.app = await (deps.startApp || startApp)(home, ASK);
+          browser = w.browser = await pre.chromium.launch(launchOptions());
+        } catch (e) { await w.stop(); throw e; }
+        return w;
+      },
+      run: (w, u) => shootOne(w.browser, w.app, u.part, u.theme, u.width, outRoot),
+      stop: (w) => w.stop(),
+    });
+    const { code, lines } = finishRun(report(results.filter(Boolean)), unfinished, cellLabel);
+    console.log(lines.join('\n'));
+    return code;
+  } finally { off(); }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main().then((c) => process.exit(c), (e) => { console.error(e); process.exit(2); });
