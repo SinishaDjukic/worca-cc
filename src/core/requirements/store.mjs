@@ -257,6 +257,15 @@ export function featureCostRows(seq) {
   }));
 }
 
+/** 9c: how many of a feature's ledger rows have no known cost (cost_kind 'unknown') and how many are estimated: the list row's
+ *  cost words, counted as featureCostRows would. */
+export function featureCostKindCounts(seq) {
+  getDb();
+  const r = prepare(`SELECT SUM(CASE WHEN cost_kind = 'unknown' THEN 1 ELSE 0 END) AS unknown,
+      SUM(CASE WHEN cost_kind = 'estimated' THEN 1 ELSE 0 END) AS estimated FROM req_cost_ledger WHERE feature_seq = ?`).get(Number(seq));
+  return { unknown: Number(r && r.unknown) || 0, estimated: Number(r && r.estimated) || 0 };
+}
+
 /** 9c: how many Requirements calls since `fromMs` had no cost to book (cost_kind 'unknown'). */
 export function unknownCostCount(fromMs = 0) {
   getDb();

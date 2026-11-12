@@ -15,7 +15,7 @@ import { RequirementsError, parseFeatureSeq, SCOPE_TYPES } from './spec.mjs';
 import {
   createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature, setEarlyStartReason, listStarts, latestStart,
   getBrief, usableBrief, listBriefs, setBriefSections, deleteBrief, briefUsers, listAttachments, countHelperMessages,
-  unknownCostCount, featureCostRows,
+  unknownCostCount, featureCostRows, featureCostKindCounts,
 } from './store.mjs';
 import {
   sendMessage, retryMessage, stopHelper, acceptProposal, rejectProposal, askAgain, clearChat, isAnswering, helperView,
@@ -305,7 +305,9 @@ async function summary(f, targetOf, runSummary) {
   const pending = f.status === 'your_turn' ? pendingRound(turns) : null;
   const ready = readiness({ ...f, pending }, { turns, target: await targetOf(f), files: listAttachments('feature', f.seq) });
   const latest = latestStart(f.seq);
+  const kinds = featureCostKindCounts(f.seq);   // 9c: the row's cost words, as the feature view's chip says them
   return { ...rest, busy, state: displayState({ ...f, busy }, { ready, starts: latest ? [latest] : [] }), ready: ready.passed,
+    unknownSteps: kinds.unknown, anyEstimated: kinds.estimated > 0,
     pendingCount: pending && Array.isArray(pending.questions) ? pending.questions.length : 0,
     openAssumptions: ((spec && spec.assumptions) || []).filter((a) => a.status === 'open').length,
     latestRun: latest ? (await startView(latest, runSummary)).run : null };

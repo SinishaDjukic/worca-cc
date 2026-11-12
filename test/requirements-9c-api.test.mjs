@@ -331,3 +331,20 @@ test('the brief: a choice on a harness that cannot read the repo is 400; the pag
   const made = (await call('GET', `${P}/brief/project/${projKey}`)).json;
   assert.deepEqual(made.madeWith, { engine: 'codex', model: 'gpt-everyday', label: 'GPT Everyday' });
 });
+
+test('the list (B1): each row carries its unknown steps and whether any cost is estimated, as the feature view does', async () => {
+  const f = featureOn('copilot', 'cop-1');
+  const look = appendTurn(f.seq, { kind: 'orientation', payload: {} });
+  const round = appendTurn(f.seq, { kind: 'round', payload: {} });
+  for (const [turnId, step] of [[look, 'look'], [round, 'round']]) {
+    recordRequirementsCostDelta({ featureSeq: f.seq, turnId, amountUsd: 0, model: 'cop-1', engine: 'copilot', step, costKind: 'unknown' });
+  }
+  const g = featureOn('codex', 'gpt-everyday');
+  recordRequirementsCostDelta({ featureSeq: g.seq, turnId: null, amountUsd: 0.04, model: 'gpt-everyday', engine: 'codex', step: 'round', costKind: 'estimated' });
+  const rows = (await call('GET', P)).json.features;
+  const row = (x) => rows.find((r) => r.seq === x.seq);
+  assert.deepEqual([row(f).costUsd, row(f).unknownSteps, row(f).anyEstimated], [0, 2, false]);
+  assert.deepEqual([row(g).unknownSteps, row(g).anyEstimated], [0, true]);
+  const v = (await call('GET', `${P}/${f.seq}`)).json.feature;
+  assert.equal(v.unknownSteps, row(f).unknownSteps);
+});

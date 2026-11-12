@@ -16,7 +16,7 @@ import { icon as sharedIcon } from './icons.mjs';
 import { openRunSetupOverlay } from './run-setup-overlay.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
 import { whoInterviews, recommendationNote, defaultLine, fallbackLine, harnessLine, otherHarnessPrivacy, modelChip, modelDialog, switchConfirm, choiceBox,
-  briefRefreshDialog, stepMeta, stepNotices, costDialog } from './requirements-model.mjs';
+  briefRefreshDialog, stepMeta, stepNotices, costDialog, costWord, totalCostWord } from './requirements-model.mjs';
 import {
   ATTACH_BINARY, ATTACH_TEXT_EXT, extOf, checkAttachment, bytesToBase64, carriesFiles, pastedFiles, createPasteNamer, REQ_ATTACH, reqLimits,
 } from './attach-files.mjs';
@@ -602,7 +602,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('span', { class: 'req-title', text: f.title }),
         meta ? h('span', { class: `hint req-row-meta${meta.need ? ' need' : ''}`, text: meta.text }) : null),
       stateMark(f),
-      h('span', { class: 'req-cost', text: usd(f.costUsd) }));
+      h('span', { class: 'req-cost', text: totalCostWord(f.costUsd, f) }));
   }
 
   // A group header's brief (board 11, A7 §6 "Elsewhere"): none yet (no row, or an `empty` one) with Create,
@@ -2003,6 +2003,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const changed = (f.changedSinceStart || []).length > 0;
     const build = starts.reduce((sum, s) => sum + (Number(s.run && s.run.costUsd) || 0), 0);
     const req = Number(f.costUsd) || 0;
+    const reqWord = totalCostWord(req, f);   // 9c: "cost unknown" when every requirements step is
     const row = (s) => {
       const early = Array.isArray(s.failing) && s.failing.length > 0;
       const label = h('span', { class: 'req-run-label', title: early && s.reason ? s.reason : null,
@@ -2022,8 +2023,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           onclick: (e) => startFlow(f, { trigger: e.currentTarget }) }, `Start again with v${nextVersion(f)}`)),
       h('div', { class: 'req-run-rows' }, ...starts.map(row)),
       reportRow(f, 'runs'),   // A6 D15: Start again reports back too
-      h('p', { class: 'hint req-run-total' }, `Total for ${f.id} so far: `, h('code', { text: usd(req + build) }),
-        ` (requirements ${usd(req)} + build ${usd(build)})`));
+      h('p', { class: 'hint req-run-total' }, `Total for ${f.id} so far: `, h('code', { text: `${f.anyEstimated && req > 0 ? '≈' : ''}${usd(req + build)}` }),
+        ` (requirements ${reqWord} + build ${usd(build)})`));
   }
 
   const sectionTitle = (key) => (SECTIONS.find(([k]) => k === key) || [key, sentence(key)])[1];
@@ -2960,7 +2961,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // The code looks this feature made (A2: the orientation turns not skipped), and what they cost.
   function looksOf(turns) {
     const looks = turns.filter((t) => t.kind === 'orientation' && !(t.payload && t.payload.skipped));
-    return { looks, cost: looks.reduce((sum, t) => sum + (Number(t.costUsd) || 0), 0) };
+    const cost = looks.reduce((sum, t) => sum + (Number(t.costUsd) || 0), 0);
+    // 9c: the looks' cost in the cost words (each turn says its cost kind)
+    const word = totalCostWord(cost, { unknownSteps: looks.filter((t) => t.costKind === 'unknown').length, anyEstimated: looks.some((t) => t.costKind === 'estimated') });
+    return { looks, cost, word };
   }
   const postLook = (f) => act(async () => { await api('POST', `/api/requirements/${f.seq}/look`, {}); await paint(); });
 
@@ -2977,10 +2981,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
               : o.skipped === 'engine' ? (lastLook && lastLook.notices && lastLook.notices[0]) || 'Worca did not do a code look: the harness cannot read the repo.'
                 : o.skipped === 'failed' ? 'Worca could not do the code look this time; the interview runs without it.'
                   : o.summary || 'Nothing relevant found.';
-    const { looks, cost } = looksOf(turns);
+    const { looks, cost, word } = looksOf(turns);
     const times = looks.length === 1 ? 'looked once' : looks.length === 2 ? 'looked twice' : `looked ${looks.length} times`;
     const nFiles = ((o && o.files) || []).length;
-    const meta = looks.length ? [times, nFiles ? plural(nFiles, 'file') : null, cost > 0 ? usd(cost) : null].filter(Boolean).join(' · ') : null;
+    const meta = looks.length ? [times, nFiles ? plural(nFiles, 'file') : null, cost > 0 || word === 'cost unknown' ? word : null].filter(Boolean).join(' · ') : null;
     return h('details', { class: 'card req-orient', open: ui.orientOpen }, // `open: false` is skipped by h()
       h('summary', {}, 'Code look: what Worca found', meta ? h('span', { class: 'hint req-orient-meta', text: meta }) : null),
       h('p', { text }),
@@ -3022,9 +3026,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
             `Look closer${typeof f.lookCostUsd === 'number' ? ` · about ${usd(f.lookCostUsd)}` : ''}`)];
       }
     } else {
-      const { cost } = looksOf(turns);
+      const { word } = looksOf(turns);
       const nFiles = (Array.isArray(o.files) ? o.files : []).length;
-      meta = [['brief + a code look', nFiles ? plural(nFiles, 'file') : null, usd(cost)].filter(Boolean).join(' · ')];
+      meta = [['brief + a code look', nFiles ? plural(nFiles, 'file') : null, word].filter(Boolean).join(' · ')];
       // The link goes once added: the focus moves to Look again (else to this card) and the message line names the area.
       const add = () => act(async () => {
         await api('POST', `/api/requirements/${f.seq}/brief-addition`, {});

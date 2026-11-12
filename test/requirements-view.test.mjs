@@ -3086,3 +3086,39 @@ test('Add this to the brief without git: Look again is hidden, so the focus goes
     } finally { a.host.remove(); a.view.destroy(); }
   });
 });
+
+// ---- 9c fix B1: a feature's or a look's cost in the cost words everywhere (never $0.00 when every step is cost unknown) ----
+test('B1: the list row says "cost unknown" when every step is unknown, ≈ when a part is estimated, the billed money otherwise', async () => {
+  fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([
+    row({ seq: 1, id: 'FEAT-1', costUsd: 0, unknownSteps: 3, anyEstimated: false }),
+    row({ seq: 2, id: 'FEAT-2', costUsd: 0.04, unknownSteps: 5, anyEstimated: false }),
+    row({ seq: 3, id: 'FEAT-3', costUsd: 0.04, unknownSteps: 0, anyEstimated: true }),
+    row({ seq: 4, id: 'FEAT-4', costUsd: 0.42 }),
+  ]) });
+  const { host, view } = make();
+  await view.show('');
+  const cost = (seq) => rowOf(host, seq).querySelector('.req-cost').textContent;
+  assert.deepEqual([cost(1), cost(2), cost(3), cost(4)], ['cost unknown', '$0.04', '≈$0.04', '$0.42']);
+});
+
+test('B1: What Worca knows and the Code look box say "cost unknown" for a look whose cost is unknown', async () => {
+  const LOOKED = { summary: 'Found it.', files: ['a.js', 'b.js', 'c.js'], skipped: null, area: 'Orders', scopeType: 'project', scopeKey: 'shop-1', briefId: 3 };
+  const turns = [{ id: 7, kind: 'orientation', costUsd: 0, costKind: 'unknown', engine: 'copilot', payload: { ...LOOKED } }];
+  const { host } = await openKnows(knowsFeature({ orientation: LOOKED }), turns);
+  assert.equal(text(knows(host).querySelector('.req-knows-meta')), 'brief + a code look · 3 files · cost unknown');
+  const est = await openKnows(knowsFeature({ orientation: LOOKED }), [{ ...turns[0], costUsd: 0.04, costKind: 'estimated' }]);
+  assert.equal(text(knows(est.host).querySelector('.req-knows-meta')), 'brief + a code look · 3 files · ≈$0.04');
+  fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: feature({ orientation: { summary: 'x', files: ['src/o.js'], skipped: null } }),
+    turns: [{ id: 2, kind: 'orientation', costUsd: 0, costKind: 'unknown', payload: { summary: 'x', files: ['src/o.js'], skipped: null } }] }) });
+  const m = make();
+  await m.view.show('feature/4');
+  assert.equal(m.host.querySelector('.req-left > details.req-orient .req-orient-meta').textContent, 'looked once · 1 file · cost unknown');
+});
+
+test('B1: the runs card names the requirements cost in the cost words', async () => {
+  fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: twoStarts({ costUsd: 0, unknownSteps: 4 }), turns: [] }) });
+  const { host, view } = make();
+  await view.show('feature/4');
+  assert.equal(host.querySelector('.req-left .req-runs .req-run-total').textContent,
+    'Total for FEAT-4 so far: $2.84 (requirements cost unknown + build $2.84)');
+});

@@ -390,6 +390,14 @@ export function costWord(kind, amount, nothing = false) {
   return `${kind === 'estimated' ? '≈' : ''}${usd(amount)}`;
 }
 
+/** The cost of several steps (a feature, its code looks) in the same words: "cost unknown" when no money is booked and some step's
+ *  cost is unknown, "≈$0.04" when any part is estimated, else the money ("$0.00" only when nothing was booked at all). Money beside
+ *  unknown steps is said as it is, as the page chip does. */
+export function totalCostWord(amount, { unknownSteps = 0, anyEstimated = false } = {}) {
+  if (!(Number(amount) > 0) && Number(unknownSteps) > 0) return 'cost unknown';
+  return `${anyEstimated && Number(amount) > 0 ? '≈' : ''}${usd(amount)}`;
+}
+
 /** "<model label> on <Harness> · <cost>" for a turn or a Feature chat reply ({ engine, model, modelLabel, costUsd, costKind }); a
  *  model with no harness named ran on Claude (a step from before 9c). null when nothing is known. */
 export function stepMeta(item, { error = false } = {}) {
