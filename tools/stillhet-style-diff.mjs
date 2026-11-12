@@ -16,6 +16,11 @@ const launchOptions = () => { const exe = process.env.CHROME_BIN || CHROME_PATHS
 
 export const ROUTES = ['#chat/new', '#runs', '#schedules', '#workflows', '#marketplace', '#projects', '#stats', '#team-metrics', '#requirements', '#settings', '#settings/experimental'];
 export const CELLS = [['dark', 1280], ['light', 1280], ['light', 360]];
+/** The flag-off differences from dev the owner accepts, each with the owner's reason: taken off this tree's page before its
+ *  dump, so the rest of the page is still compared. Nothing else may differ. */
+export const ACCEPTED = Object.freeze([
+  { route: '#settings/experimental', selector: '[data-flag-row="rail"]', reason: 'Settings › Labs shows the Stillhet row in every level until the end of feature 3. The owner, in writing: "before enrolling everything I would recommend to be de-activated, labs is reasonable."' },
+]);
 
 /** dump: { "route|theme|width": { domPath: { prop: value } } } → one row per difference. */
 export function diffStyles(devDump, sliceDump) {
@@ -102,6 +107,7 @@ export async function main(argv = process.argv.slice(2)) {
           await page.goto(s.base + '/' + route);
           await page.addStyleTag({ content: '*{animation:none!important;transition:none!important;caret-color:transparent!important}' });
           await page.waitForTimeout(1500);
+          if (n === 1) await page.evaluate((sels) => { for (const s of sels) for (const e of document.querySelectorAll(s)) e.remove(); }, ACCEPTED.filter((a) => a.route === route).map((a) => a.selector));
           dumps[n][`${route}|${theme}|${width}`] = await page.evaluate(DUMP);
           await ctx.close();
         }
@@ -109,6 +115,7 @@ export async function main(argv = process.argv.slice(2)) {
       }
     }
     for (const r of rows) console.log(`${r.route} ${r.theme} ${r.width} ${r.path} ${r.prop}: dev ${r.dev} | slice ${r.slice}`);
+    for (const a of ACCEPTED) console.log(`accepted: ${a.route} ${a.selector}: ${a.reason}`);
     console.log(`${rows.length} computed-style differences`);
     return rows.length ? 1 : 0;
   } finally {

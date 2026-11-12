@@ -18816,7 +18816,7 @@ function loadFlagsTab(sub = '') {
   if (!flagsTabCtl) {
     flagsTabCtl = createFlagsView({ host: el.flagsHost, msgEl: el.flagsMsg, resetBtn: el.flagsReset,
       api: (method, body) => mcpApi(method, '/api/flags', body), confirm: confirmModal,
-      keep: (f) => stillhetLabsRow(gs.status)(f) });
+      keep: stillhetLabsRow() });
   }
   void flagsTabCtl.load(sub ? safeDecode(sub) : '');
 }

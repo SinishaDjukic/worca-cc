@@ -2184,7 +2184,7 @@ async function pinUiLevel() {
 }
 async function sendIndex(res) {   // with `rail` on: Stillhet's shell (src/core/stillhet-shell.mjs)
   let html;
-  try { html = allFlags().rail ? await stillhetShellHtml(PUBLIC_DIR, storedTheme(), effectiveUiLevel(), gitAvailable()) : renderIndexHtml(readIndexHtml(PUBLIC_DIR), storedTheme(), effectiveUiLevel(), allFlags(), { git: gitAvailable() }); }
+  try { html = allFlags().rail ? await stillhetShellHtml(PUBLIC_DIR, storedTheme(), effectiveUiLevel(), gitAvailable(), { railLocked: !!listFlags().find((f) => f.key === 'rail')?.locked }) : renderIndexHtml(readIndexHtml(PUBLIC_DIR), storedTheme(), effectiveUiLevel(), allFlags(), { git: gitAvailable() }); }
   catch (err) { return res.status(500).json({ error: err && err.message ? err.message : 'shell unavailable' }); }
   res.set('Content-Type', 'text/html; charset=utf-8');
   res.set('Cache-Control', 'no-store');

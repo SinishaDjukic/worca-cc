@@ -221,7 +221,7 @@
       else if (act === 'prev-chat' || act === 'next-chat') { const id = neighbour(act === 'next-chat' ? 1 : -1); if (id) openChat(id); }
     },
     say, active: () => (location.hash.startsWith('#chat') || !location.hash) && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #app .nav-fly'),
-    retry: () => setCase('full'), emptyAct: () => window.RailConversation?.start('ask'),
+    retry: () => { if (window.RailWorld.live) window.RailAdapter.retry(); else setCase('full'); }, emptyAct: () => window.RailConversation?.start('ask'),
   } });
   function setCase(c) {
     listCase = c === 'shared' || c === 'refresh' ? 'full' : c; data = c === 'empty' ? { groups: [], chats: [] } : M.seed(); ctl.clear(); ctl.state.waited = false;
@@ -231,7 +231,7 @@
   }
   document.getElementById('list-case')?.addEventListener('change', (e) => setCase(e.target.value));
   if (window.RailDemoState?.list) setCase(window.RailDemoState.list);   // ?state=NAME (world.js)
-  window.RailWorld.onChange(() => setCase(listCase));   // another Pulse case: what waits on you follows it
+  window.RailWorld.onChange(() => setCase(window.RailWorld.live ? window.RailDemoState.list || 'full' : listCase));   // another Pulse case, or (live) a load or a list state (D20)
   window.RailWorld.onMove(() => { data.chats.forEach(M.sync); ctl?.paint(); });   // a task moved anywhere: its row and its chat's place in Needs you follow
   R.prefs.onChange(() => ctl.paint());
   let toTop = false;

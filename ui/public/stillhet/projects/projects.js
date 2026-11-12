@@ -17,7 +17,11 @@
     folder: { word: 'No git', tone: 'idle', short: '', act: 'Use git', why: 'Runs git init; the first task commits what is there' },
     missing: { word: 'Folder missing', tone: 'fail', short: 'Folder missing', act: 'Locate folder…', why: 'Tell Worca where it moved; or remove it from the menu' },
   };
-  const data = { projects: [
+  // the live kind (D9): the store's projects, read on every read; the demo's seed otherwise
+  const W = window.RailWorld;
+  let seeded;
+  const data = { get projects() { return W?.live ? W.part('projects') : seeded; }, set projects(v) { seeded = v; } };
+  data.projects = [
     { id: 'billing-api', tags: ['cost-center: 4410'], labels: ['payments'], kind: 'Git', path: '~/src/billing-api', branch: 'main', base: 'origin/main', origin: 'behind', behind: 3, checked: '1 min ago', teamMemory: true },
     { id: 'worca-cc', kind: 'Git', path: '~/src/worca-cc', branch: 'dev', base: 'origin/dev', origin: 'ok', checked: '1 min ago' },
     { id: 'web-app', kind: 'Git', path: '~/src/web-app', branch: 'develop', base: 'origin/develop', origin: 'diverged', ahead: 2, behind: 3, checked: '1 min ago' },
@@ -31,7 +35,7 @@
     { id: 'ops-dashboard', kind: 'Git', path: '~/src/ops-dashboard', branch: 'main', base: 'origin/main', origin: 'ok', checked: '1 min ago' },
     { id: 'firmware-sdk', kind: 'Git', path: '~/src/firmware-sdk', branch: 'main', base: 'origin/main', origin: 'ok', checked: '1 min ago' },
     { id: 'legacy-billing', kind: 'Git', path: '~/old/legacy-billing', branch: 'main', base: 'origin/main', origin: 'missing', checked: '3 days ago' },
-  ] };
+  ];
   // its own settings: each a sentence whose value is yours (Settings) until the project changes it
   const SETS = [
     { id: 'pr', name: 'Pull requests', words: 'When a task finishes', items: ['create a PR ready for review', 'create a draft PR', 'open no PR'], def: 'create a PR ready for review' },
@@ -164,6 +168,8 @@
   const needCount = () => data.projects.filter(needs).length + loneSpaces().length;
   // what needs you beyond tasks and missed times, each once: the bell and Pulse's Needs you read this list (small-rules)
   function needItems() {
+    // live: a missing folder or out of sync (D22); workspace link questions have no live source in this slice
+    if (W?.live) return data.projects.filter((p) => p.needs).map((p) => ({ key: `p:${p.id}`, title: p.id, meta: wordOf(p), kind: 'project', tone: o(p).tone === 'fail' ? 'fail' : 'ask', go: `projects/${p.id}`, project: p.id, tip: `Opens ${p.id}` }));
     return [...data.projects.filter((p) => o(p).tone === 'fail' || p.origin === 'diverged').map((p) => ({ key: `p:${p.id}`, title: p.id, meta: wordOf(p), kind: 'project', tone: o(p).tone === 'fail' ? 'fail' : 'ask', go: `projects/${p.id}`, project: p.id, tip: `Opens ${p.id}` })),
       ...spaces().flatMap((w) => window.RailSpaces.questions(w).map((l) => ({ key: `q:${w.id}:${l.from}:${l.to}`, title: w.title, meta: `Does ${l.from} ${l.how.replace(/s\b/, '')} ${l.to}?`, kind: 'workspace', tone: 'ask', go: `projects/ws:${w.id}`, project: '', tip: `Opens ${w.title} at its question` })))];
   }
@@ -317,7 +323,7 @@
   }
   // a half-typed cost tag or label does not wait for you on another page
   window.addEventListener('hashchange', () => { [...data.projects, ...(window.RailSpaces?.list() || [])].forEach((x) => { delete x.editing; delete x.defErr; delete x.defTyped; }); });
-  window.RailProjects = { needItems, editTags: (id) => { window.RailShell.go(`projects/${id}`); setTimeout(() => { const p = data.projects.find((x) => x.id === id); if (!p) return; p.editing = 'tags'; draw(); document.getElementById('def-tags')?.focus(); }, 80); }, sync: (id) => { const p = data.projects.find((x) => x.id === id); if (p?.origin === 'behind') Object.assign(p, { origin: 'ok', behind: 0, checked: 'just now' }); }, spend: (id) => SPEND[id]?.[0] || 0, hint: (id) => { const p = data.projects.find((x) => x.id === id); return p ? (p.origin === 'behind' ? `${p.behind} behind` : shortOf(p) || '') : ''; }, list: () => data.projects, add: (p) => { if (!data.projects.some((x) => x.id === p.id)) data.projects.push({ kind: 'Git', origin: 'local', branch: 'main', ...p }); ctl?.paint(); } };
+  window.RailProjects = { needItems, all: () => data.projects, editTags: (id) => { window.RailShell.go(`projects/${id}`); setTimeout(() => { const p = data.projects.find((x) => x.id === id); if (!p) return; p.editing = 'tags'; draw(); document.getElementById('def-tags')?.focus(); }, 80); }, sync: (id) => { const p = data.projects.find((x) => x.id === id); if (p?.origin === 'behind') Object.assign(p, { origin: 'ok', behind: 0, checked: 'just now' }); }, spend: (id) => SPEND[id]?.[0] || 0, hint: (id) => { const p = data.projects.find((x) => x.id === id); return p ? (p.origin === 'behind' ? `${p.behind} behind` : shortOf(p) || '') : ''; }, list: () => data.projects, add: (p) => { if (!data.projects.some((x) => x.id === p.id)) data.projects.push({ kind: 'Git', origin: 'local', branch: 'main', ...p }); ctl?.paint(); } };
   if (window.RailFirstRun) data.projects = [];   // the first run: nothing added yet
   window.RailPlaces = window.RailPlaces || {};
   window.RailPlaces.projects = { has: (a) => (a.startsWith('ws:') ? (window.RailSpaces?.list() || []).some((w) => w.id === a.slice(3)) : data.projects.some((p) => p.id === a.split('@')[0])), defaults: defaultsRows, defaultsClick, defaultsKey, redraw: () => draw(), get newMenu() { return adv() ? newMenuItems : null; }, get newAct() { return adv() ? () => window.RailConversation?.starter('project') : null; }, get newLabel() { return adv() ? 'Add project' : ''; }, newPick: (id) => { if (id === 'project' || id === 'workspace') { window.RailConversation?.starter(id); return; } form = id === 'hand-project' ? 'project' : 'space'; if (current) window.RailShell.go('projects'); setTimeout(() => { draw(); page?.querySelector('#pj-hand-v')?.focus(); }, 60); }, search: (q) => [...data.projects.filter((p) => `${p.id} ${p.path}`.toLowerCase().includes(q)).map((p) => ({ label: p.id, where: wordOf(p), hash: `projects/${p.id}` })), ...spaces().filter((w) => w.title.toLowerCase().includes(q)).map((w) => ({ label: w.title, where: 'Workspace', hash: `projects/ws:${w.id}` }))], sample: 'billing-api',

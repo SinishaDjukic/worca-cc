@@ -229,8 +229,9 @@
     tool: (v) => { if (v === 'reset') { view = { ...FRESH }; store.set(view); centers(); say('View reset'); } },
     view: () => ({ state: listCase === 'loading' ? (ctl?.state.waited ? 'loading' : 'waiting') : ['offline', 'failed'].includes(listCase) ? listCase : 'ready', parts: parts(), tools: [{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick tasks to act on several at once' }, R.resetViewTool({ changed: !(view.show === FRESH.show && view.from === FRESH.from && !view.day && !view.range && !view.person && view.by === FRESH.by && !view.labels.length && !view.workflow && !view.schedule), to: 'all tasks, from all projects, by date' }), { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
       sections: sections(), empty: listCase === 'empty' ? { text: 'No tasks yet.', action: 'Start a task' } : { text: view.from !== 'all' || view.day || view.range || view.person || view.labels.length || view.workflow || view.schedule ? 'No tasks in this view.' : EMPTY[view.show] || 'No tasks yet.', action: 'Show all tasks' } }),
-    can: () => ['menu', 'fold', 'stop', 'archive', ...(has('advanced') ? ['group', 'delete'] : [])],
-    bulk: bulkActions, act, open: openThing,
+    // D25: in the live kind stop, archive, group, delete and their Undo are the Tasks slice's: no selection, rows still open
+    can: () => (W.live ? ['fold'] : ['menu', 'fold', 'stop', 'archive', ...(has('advanced') ? ['group', 'delete'] : [])]),
+    bulk: (rows) => (W.live ? [] : bulkActions(rows)), act, open: openThing,
     openRound: (row, n2) => { const rd = row._x.r.rounds.list.find((x) => x.n === n2); window.RailShell.openRun(`run/${rd.case}`, `${row._x.r.title} · Round ${n2}`); },
     word: (id, v) => {
       if (id === 'labels') { if (!v) { view.labels = []; return false; } view.labels = view.labels.includes(v) ? view.labels.filter((l) => l !== v) : [...view.labels, v]; store.set(view); return view.labels.length > 0; }
@@ -238,7 +239,7 @@
       view = { ...view, [id]: v }; store.set(view); centers(); return false;
     },
     say, active: () => !root.closest('[hidden]') && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #app .nav-fly'),
-    retry: () => setCase('full'), emptyAct: () => { if (listCase === 'empty') return; view = { ...FRESH }; store.set(view); ctl.clear(); ctl.paint(); centers(); },
+    retry: () => { if (W.live) window.RailAdapter.retry(); else setCase('full'); }, emptyAct: () => { if (listCase === 'empty') return; view = { ...FRESH }; store.set(view); ctl.clear(); ctl.paint(); centers(); },
   } });
 
   function setCase(c) {
@@ -250,7 +251,7 @@
   }
   document.getElementById('list-case')?.addEventListener('change', (e) => setCase(e.target.value));
   if (window.RailDemoState?.list) setCase(window.RailDemoState.list);   // ?state=NAME (world.js)
-  W.onChange(() => setCase(listCase));   // another Pulse case: another mock of who is running what
+  W.onChange(() => setCase(W.live ? window.RailDemoState.list || 'full' : listCase));   // another Pulse case, or (live) a load or a list state (D20)
   W.onMove?.(() => { data = W.data(); ctl.paint(); });   // a task moved or started anywhere (a chat, Pulse): the list reads the store again
   R.prefs.onChange(() => ctl.paint());
   window.RailRunsList = {

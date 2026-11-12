@@ -3,11 +3,14 @@
 // written once, in `table`, and a case picks its runs; a page that acts on a run changes it here.
 (function () {
   const R = window.RailUI, RM = window.RunCardModel;
-  const FIRST = window.RailFirstRun = typeof location !== 'undefined' && /[?&]first\b/.test(location.search);   // the first run: a newcomer's empty Worca
+  // The live kind (adapter.js, D8): the store starts empty and loading, and takes only what live/live-adapter.mjs loads;
+  // the address never picks its data, so ?state and ?first are the demo's alone.
+  const LIVE = window.RailAdapter?.kind === 'live';
+  const FIRST = window.RailFirstRun = !LIVE && typeof location !== 'undefined' && /[?&]first\b/.test(location.search);   // the first run: a newcomer's empty Worca
   // A non-default state asked for by the address (?state=NAME), so both hosts can open it cold: what the lists show (the
   // tools panel's Lists) and what the connection does (its Connection). A demo-adapter input only; a live adapter ignores it.
-  const STATE = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('state') || '' : '';
-  window.RailDemoState = { list: { loading: 'loading', empty: 'empty', offline: 'offline', failed: 'failed', 'refresh-failed': 'refresh' }[STATE] || '', conn: { 'connection-lost': 'offline', 'session-expired': 'session' }[STATE] || '' };
+  const STATE = !LIVE && typeof location !== 'undefined' ? new URLSearchParams(location.search).get('state') || '' : '';
+  window.RailDemoState = LIVE ? { list: 'loading', conn: '' } : { list: { loading: 'loading', empty: 'empty', offline: 'offline', failed: 'failed', 'refresh-failed': 'refresh' }[STATE] || '', conn: { 'connection-lost': 'offline', 'session-expired': 'session' }[STATE] || '' };
   const WORKFLOW_OF = { r2: 'Security-first review', r9: 'Security-first review', r5: 'Quick Fix', r7: 'Quick Fix', r12: 'Full', m1: 'API rewrite', m2: 'API rewrite', m3: 'API rewrite' };   // the Tasks center's by workflow
   const run = (id, kase, title, project, detail, time, day, o = {}) => ({ id, case: kase, title, project, detail, time, day, labels: [], cost: null, archived: false, unread: false, pr: '', group: '', kind: 'Git', by: 'Emil Angelov', workflow: WORKFLOW_OF[id] || 'Default', ...o });
   // not started yet: `when` is its group in Vitals › Scheduled
@@ -116,12 +119,16 @@
       usage: [CLAUDE_MAX(86, 52), CODEX('14:24', 20, 44), COPILOT, { p: 'gemini', plan: 'CLI', asOf: '13:02', win: [] }], budget: month(92, 100), chats: { needs: ['c2', 'c3', 'c5', 'c9'], unread: ['c2'] } },
   };
   let current = 'afternoon', data = null;
+  // the live kind's other parts, each read through part(name) on every read (D9)
+  const parts = { chats: [], chatGroups: [], schedules: [], projects: [], costs: { budget: null, usage: [] }, updates: [], actions: [], away: { status: 'no-hours', hours: null }, keep: false };
+  const OWN = ['runs', 'groups', 'userGroups'];
   const listeners = [], moved = [];
   // One store: every task lives here once. A page that acts on a task moves it here, and every surface (a chat's card and
   // row, Pulse, Tasks, Schedules) hears it and reads it again; nothing keeps its own copy of a task's state.
   const tell = (id) => moved.forEach((fn) => { try { fn(id); } catch (e) { console.error(e); } });
   // A case starts fresh: what the pages did to its runs goes.
   function build(id) {
+    if (LIVE) { data = { groups: [], runs: [], userGroups: [] }; titles(); return; }
     const c = CASES[id], t = table();
     const groups = (c.groups || []);
     const ids = [...Object.keys(c.runs), ...groups.flatMap((g) => MEMBERS[g]), ...ENDED];
@@ -167,21 +174,31 @@
   build(current);
   window.RailWorld = {
     current: () => current,
-    set: (id) => { current = id; build(id); listeners.forEach((fn) => fn()); },
+    set: (id) => { if (LIVE) return; current = id; build(id); listeners.forEach((fn) => fn()); },   // the demo's case picker; nothing in the live kind
+    live: LIVE,
+    // The live kind's writers (D8). load: the named parts (a snapshot, or what one refetched source feeds) and the list and
+    // connection, in one step: one onChange. setState: the list and the connection only, one onChange.
+    load: (next = {}, state) => {
+      for (const k of Object.keys(next)) { if (OWN.includes(k)) data[k] = next[k]; else if (k in parts) parts[k] = next[k]; }
+      if (state) Object.assign(window.RailDemoState, state);
+      titles(); listeners.forEach((fn) => fn());
+    },
+    setState: (state = {}) => { Object.assign(window.RailDemoState, state); listeners.forEach((fn) => fn()); },
+    part: (name) => (OWN.includes(name) ? data[name] : parts[name]),
     onChange: (fn) => listeners.push(fn),
     data: () => data,
     replace: (d) => { data = d; },   // the Runs list's Undo puts back what it kept
     rows: () => data.runs,
     find: (id) => data.runs.find((r) => r.id === id),
-    has: (caseId, id) => id in CASES[caseId].runs || ENDED.includes(id) || (CASES[caseId].groups || []).some((g) => MEMBERS[g].includes(id)),
+    has: (caseId, id) => LIVE || id in CASES[caseId].runs || ENDED.includes(id) || (CASES[caseId].groups || []).some((g) => MEMBERS[g].includes(id)),
     title: (id) => data.runs.find((r) => r.id === id)?.title ?? table()[id]?.title,
     project: (id) => data.runs.find((r) => r.id === id)?.project ?? table()[id]?.project,
     // a task started this session (in a chat, by a schedule): into the store, heard everywhere
     add: (o) => { const r = { ...run(o.id, o.case || 'starting', o.title, o.project || '', o.detail || '', o.time || 'now', o.day || 'today'), ...o }; data.runs.unshift(r); titles(); tell(r.id); return r; },
-    remove: (id) => { data.runs = data.runs.filter((x) => x.id !== id); titles(); tell(id); },   // a deleted schedule's waiting row
+    remove: (id) => { if (LIVE) return; data.runs = data.runs.filter((x) => x.id !== id); titles(); tell(id); },   // a deleted schedule's waiting row
     onMove: (fn) => moved.push(fn),
     touch: () => { titles(); tell(); },   // the Tasks list changed the store itself (archive, delete, Undo): everything reads it again
-    facts: (caseId = current) => ({ ...CASES[caseId], actions: CASES[caseId].actions.map(([aid, r, label, gone]) => ({ id: aid, runId: r, run: gone || table()[r].title, label })) }),
+    facts: (caseId = current) => (LIVE ? { usage: parts.costs.usage, budget: parts.costs.budget, actions: parts.actions, chats: {} } : { ...CASES[caseId], actions: CASES[caseId].actions.map(([aid, r, label, gone]) => ({ id: aid, runId: r, run: gone || table()[r].title, label })) }),
     // A step taken on a run from elsewhere (Pulse's Try again, Resume): the run moves, and every list reads it.
     move: (id, kase, detail, o = {}) => { const r = data.runs.find((x) => x.id === id); if (!r) return; Object.assign(r, { case: kase, detail, time: 'now', day: kase === 'scheduled' ? r.day : 'today', when: kase === 'scheduled' ? r.when : undefined, resumes: false, unread: false }, o); titles(); tell(id); },
     section, raises, groupSection, tops, membersOf,

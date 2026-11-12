@@ -10,7 +10,7 @@
   // each started run is a task in the one store, in its project (panel.task-truth); a time not started is a ticket: Pulse lists it, Tasks does not, and a missed one needs you
   const missedWords = (s) => `Missed ${s.missed} · ${s.missedWhy}`;
   const ticketOf = (s) => (s.section === 'needs' ? { case: 'ticket-missed', detail: missedWords(s), missed: true } : { case: 'scheduled', detail: R.scheduleWords(s).says, missed: false });
-  const toStore = () => { const W = window.RailWorld; if (!W) return; for (const s of data.schedules) {
+  const toStore = () => { const W = window.RailWorld; if (!W || W.live) return;   /* the live kind's store already holds them (live/live-map.mjs) */ for (const s of data.schedules) {
     if (s.state !== 'paused' && !W.find(`sch-${s.id}`)) W.add({ id: `sch-${s.id}`, ...ticketOf(s), ticket: s.id, title: s.title, project: s.project || '', time: s.at, day: 'upcoming', when: whenOf(s) });
     s.runs.forEach((r, i) => { r.wid ||= `sr-${s.id}-${i}`; if (!W.find(r.wid)) W.add({ id: r.wid, case: r.case, title: r.title, project: s.project || '', detail: r.meta, time: r.time || 'now', day: r.day, schedule: s.id, cost: s.cost, over: !!r.over, workflow: s.workflow || 'Default' }); }); } };
   toStore(); window.RailWorld?.onChange(toStore);
@@ -163,5 +163,6 @@
   R.dismissOnOutside(document, { open: () => !!menu, inside: '#route-schedule .spick, #route-schedule .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
   R.prefs.onChange(() => { if (!page.hidden) draw(); });
   window.RailWorld?.onMove(() => { if (!bar.hidden) ctl.paint(); });
+  if (window.RailWorld?.live) window.RailWorld.onChange(() => { data = M.seed(); ctl.paint(); if (!page.hidden) draw(); });   // the live kind: a load replaced them (D9)
   window.RailSchedules = { all: () => data.schedules, showing: () => view.show, TODAY: M.TODAY, nextDates, nextLine, dateWord, runningRun, openRun, find: (id) => data.schedules.find((s) => s.id === id), add: (s) => { const w = R.scheduleWords(s); Object.assign(s, { day: w.day, time: w.time }); data.schedules.unshift(s); toStore(); ctl.paint(); } /* in the one store: Pulse's Scheduled lists it */, act: (id, v) => { const s = data.schedules.find((x) => x.id === id); if (s && v) more(s, v); }, running: (id) => { const s = data.schedules.find((x) => x.id === id); return !!s && isRunning(s); }, skipItem: (id) => { const s = data.schedules.find((x) => x.id === id); return s ? skipItem(s) : { text: 'Skip next time' }; }, show: (id) => { current = id || ''; draw(); }, summary: () => ({ n: data.schedules.filter((s) => s.state !== 'paused').length, needs: data.schedules.filter((s) => s.section === 'needs').length }) };
 })();

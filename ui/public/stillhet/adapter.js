@@ -1,10 +1,15 @@
 // ui/public/stillhet/adapter.js — the data adapter seam. One global, window.RailAdapter:
-// { kind: 'demo' | 'live', host, act(id, args), world(), model(area) }. Slice 2 ships only the demo kind.
-// `act` answers { ok, text }. In the app host nothing is connected yet, so it refuses with NOT_CONNECTED; in the
+// { kind: 'demo' | 'live', host, act(id, args), world(), model(area), ready, retry(), post(url, body) }.
+// The server picks the kind, never the address (D2): the app host is live when its shell carries data-adapter="live"
+// (src/core/stillhet-shell.mjs), demo otherwise; the prototype host is always demo. The live kind loads
+// live/live-adapter.mjs once the pages have loaded (D1). `act` answers { ok, text }. In the app host nothing is connected yet, so it refuses with NOT_CONNECTED; in the
 // prototype host the sentence comes from demo-actions.js (window.RailDemoActions), keyed by action id.
 (function () {
   var NOT_CONNECTED = 'Not connected to Worca yet.';
   var host = window.RailHost ? window.RailHost.name : 'prototype';
+  var root = typeof document !== 'undefined' ? document.documentElement : null;
+  var kind = host === 'app' && root && root.getAttribute('data-adapter') === 'live' ? 'live' : 'demo';
+  var live = null, readyDone = null;
   var announced = false;
   var toastTimer = null;   // one hide timer: a later toast gets its full 3 s
 
@@ -19,7 +24,17 @@
   }
 
   var adapter = {
-    kind: 'demo',
+    kind: kind,
+    ready: new Promise(function (r) { readyDone = r; }),
+    // Try again (the lists' and Pulse's): the live kind fetches every source again; the demo kind has nothing to fetch
+    retry: function () { return live ? live.retry() : undefined; },
+    // dev's own route and body (D13): { ok, status, data, error }; a refusal names dev's reason
+    post: function (url, body) {
+      return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { return { ok: r.ok, status: r.status, data: d, error: r.ok ? '' : (d && (d.error || d.message)) || 'HTTP ' + r.status }; }); })
+        .catch(function () { return { ok: false, status: 0, data: {}, error: 'the server did not answer' }; });
+    },
+    importLive: function () { return import('/stillhet/live/live-adapter.mjs'); },
     host: host,
     NOT_CONNECTED: NOT_CONNECTED,
     toast: toast,   // shows a sentence in the library's live toast for 3 s (host-app.js says a failed opt-out with it)
@@ -37,6 +52,23 @@
     model: function (area) { return window['Rail' + area[0].toUpperCase() + area.slice(1) + 'Model']; }
   };
   window.RailAdapter = adapter;
+  // The live kind starts once every page has loaded (boot.js injects them in order); a failed import fails the first load.
+  function startLive() {
+    var W = window.RailWorld;
+    adapter.importLive().then(function (m) {
+      live = m.startLive({
+        fetch: window.fetch.bind(window), WebSocket: window.WebSocket, location: location, world: W, host: window.RailHost || {},
+        setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window), now: Date.now,
+        openChat: function () { var h = location.hash.match(/^#chat\/([^/]+)/); return h ? decodeURIComponent(h[1]) : ''; },
+        hidden: function () { return document.hidden; }
+      });
+      window.addEventListener('hashchange', function () { live.seen(); });
+      readyDone(live);
+    }, function () { if (W) W.setState({ list: 'failed' }); readyDone(null); });
+  }
+  if (kind === 'live') {
+    if (document.readyState === 'complete') setTimeout(startLive, 0); else if (window.addEventListener) window.addEventListener('load', startLive);
+  } else readyDone(null);
   // The sentence for an action a page cannot do yet: the demo sentence in the prototype host, the one refusal in the app host.
   window.RailWould = function (phrase) {
     var demo = window.RailDemoActions;

@@ -5,6 +5,7 @@
 | `fail.one-place` | An unplanned error has one place and one calm sentence | A crash in the page never stops a run | run-page-sweep |
 | `fail.no-raw` | The raw error sits behind Details or Copy details | Readable, and ready to paste into an issue | by hand |
 | `fail.offline` | A lost connection is a quiet state, not an error | Nothing typed is lost, nothing runs twice | run-page-sweep |
+| `fail.pulse-list` | Pulse's popover says its list state as the bar's lists do: ListState loading until the first data, ListState could not load with Try again when it failed; the bell shows no number meanwhile | One look for one state, wherever the list is | stillhet-compare |
 
 An error nobody planned for still has one place and one calm sentence. A crash in the interface never stops a run:
 runs execute on their own, and the words say so.
