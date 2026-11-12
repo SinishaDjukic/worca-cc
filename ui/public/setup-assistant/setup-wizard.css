@@ -92,8 +92,9 @@
 .setup-card.dlg > .dlg-head{padding-bottom:16px;}
 .setup-card.dlg > .dlg-foot{padding-top:16px;}
 .setup-card .dlg-foot .confirm-actions{flex-wrap:wrap;}
-/* Wizard foot: the way back or out (Back, Cancel / Set up later, Close, Share) sits on the left; Skip and the
-   primary action stay on the right, the primary last. paintFoot always appends the left one first. */
+/* Wizard foot: the way out (Cancel / Set up later, Close, Share; Back after a failed network apply) sits on the
+   left; Skip / Discard changes, Back and the primary action stay on the right, Back and the primary side by side,
+   the primary last. paintFoot always appends the left one first. */
 .setup-card .dlg-foot .confirm-actions > :first-child:not(:last-child){margin-right:auto;}
 .setup-card .sa-status{min-width:0;overflow-wrap:anywhere;}
 .setup-card .hint{color:var(--ink-2);}

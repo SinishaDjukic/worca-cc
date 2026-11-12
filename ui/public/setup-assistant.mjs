@@ -4,7 +4,7 @@
 // start), diffs every answer against them, and sends only what changed. Pure DOM; `doc`, `fetchJson` and
 // `timers` are injected for jsdom.
 import { layoutDialog } from './dialog-layout.mjs';
-import { guardModal } from './modal-guard.mjs';
+import { guardModal, askDiscard } from './modal-guard.mjs';
 import { makeSwitch } from './switch.mjs';
 import { renderCopilotSignIn } from './bridge-view.mjs';
 import { renderRolesSection, ENGINE_EFFORTS } from './engine-settings-view.mjs';
@@ -399,9 +399,14 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     if (opener?.isConnected) opener.focus?.();
     onClose(how, { applied });
   }
-  const guard = guardModal(modal, { kind: 'form', close: () => teardown('later'), busy: () => S.netJob,
-    // Apply (and a login Retry after it) is past the point of discarding: its writes are done (architect-1-2).
-    isDirty: () => S.step !== 'apply' && !S.retryLogin && !!S.answers && !!S.opened && JSON.stringify(S.answers) !== S.opened });
+  // Apply (and a login Retry after it) is past the point of discarding: its writes are done (architect-1-2).
+  const isDirty = () => S.step !== 'apply' && !S.retryLogin && !!S.answers && !!S.opened && JSON.stringify(S.answers) !== S.opened;
+  const guard = guardModal(modal, { kind: 'form', close: () => teardown('later'), busy: () => S.netJob, isDirty });
+  // Cancel / Set up later asks "Discard changes?" once an answer changed, like Escape; untouched it closes at once.
+  async function cancel() {
+    if (isDirty() && !(await askDiscard(doc))) return;      // Keep editing
+    if (!closed) guard.cancel();
+  }
 
   const idx = () => SETUP_STEPS.findIndex((s) => s.id === S.step);
   // First start only: a re-run opened from Settings is there to change things.
@@ -915,11 +920,13 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       status.className = `hint sa-status${S.error ? ' err' : ''}`; status.textContent = S.error || 'Type the proxy password again to retry';
       return;
     }
-    actions.append(first ? btn(entry === 'first' ? 'Set up later' : 'Cancel', 'btn btn-quiet sa-later', () => guard.cancel())
-      : btn('Back', 'btn sa-back', () => goTo(stepBefore())));
+    // Every step before Apply can leave the dialog, not only the first. Order: Cancel, then Skip / Discard changes,
+    // then Back and Next side by side (the workspace guide's foot).
+    actions.append(btn(entry === 'first' ? 'Set up later' : 'Cancel', 'btn btn-quiet sa-later', () => { void cancel(); }));
     const gate = S.answers ? nextGate(S.step, S.answers, { saved: S.saved, tested: S.tested, now: now(), detect: S.detect, entry, netSaved: S.netSaved }) : { ok: false, reason: '' };
     const skipLabel = S.answers && idx() >= 1 && idx() <= 4 ? skipLabelFor(gate) : null;
     if (skipLabel) actions.append(btn(skipLabel, 'btn btn-quiet sa-skip', () => { void skip(); }));
+    if (!first) actions.append(btn('Back', 'btn sa-back', () => goTo(stepBefore())));
     const label = S.step === 'check' ? 'Start' : S.step === 'review' ? (gate.finish ? 'Finish' : 'Apply') : 'Next';
     const onNext = () => (S.step === 'network' ? nextFromNetwork() : S.step !== 'review' ? goTo(stepAfter()) : gate.finish ? teardown('done', { applied: !!S.netSaved }) : startApply(null));
     const next = btn(label, 'btn btn-primary sa-next', onNext);
