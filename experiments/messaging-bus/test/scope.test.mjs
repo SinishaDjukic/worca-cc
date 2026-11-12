@@ -1,7 +1,9 @@
 // T-scope: the spike touches only docs/design/messaging-bus.md and experiments/messaging-bus/**,
 // imports only node:* and relative modules, and never spawns a model CLI.
-// Pinned to the run checkpoint (BUS_SCOPE_BASE); it skips once that commit is gone or not an
-// ancestor of HEAD (after a merge). `npm test` never runs it (its discovery is test/*.mjs).
+// The folder check runs only with BUS_SCOPE_BASE set (the spike's checkpoint was
+// 70ae23e5b8fb20c28342944a6ca251e1b9ad02b0); it skips when that commit is gone or not an ancestor of HEAD.
+// On a merged branch the check is expected to fail (Part A is in the diff). `npm test` never runs it
+// (its discovery is test/*.mjs).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -12,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 const EXP = fileURLToPath(new URL('..', import.meta.url));
 const REPO = fileURLToPath(new URL('../../..', import.meta.url));
 const SELF = fileURLToPath(import.meta.url);
-const BASE = process.env.BUS_SCOPE_BASE || '70ae23e5b8fb20c28342944a6ca251e1b9ad02b0';
+const BASE = process.env.BUS_SCOPE_BASE || '';
 const git = (...args) => spawnSync('git', ['-C', REPO, ...args], { encoding: 'utf8' });
 
 function walk(dir) {
@@ -25,9 +27,12 @@ function walk(dir) {
   return out;
 }
 
-const baseOk = git('cat-file', '-e', `${BASE}^{commit}`).status === 0 && git('merge-base', '--is-ancestor', BASE, 'HEAD').status === 0;
+const baseOk = BASE !== '' && git('cat-file', '-e', `${BASE}^{commit}`).status === 0 && git('merge-base', '--is-ancestor', BASE, 'HEAD').status === 0;
+const skip = BASE === ''
+  ? 'set BUS_SCOPE_BASE=<the spike checkpoint sha> to check the scope'
+  : baseOk ? false : `base ${BASE} is absent or not an ancestor of HEAD`;
 
-test('only the two folders change', { skip: baseOk ? false : `base ${BASE} is absent or not an ancestor of HEAD` }, () => {
+test('only the two folders change', { skip }, () => {
   const changed = git('diff', '--name-only', BASE).stdout.split('\n').filter(Boolean);
   const untracked = git('ls-files', '-o', '--exclude-standard').stdout.split('\n').filter(Boolean);
   const files = [...new Set([...changed, ...untracked])];

@@ -145,7 +145,7 @@ export function renderCrossChatToggle({ prefs } = {}, { doc = globalThis.documen
   const wrap = h(doc, 'div', 'ask-cross-chat');
   const { row, input } = makeSwitch(doc, { label: 'Messages between chats', checked: prefs?.crossChat !== false, inputClass: 'ask-cross-chat' });
   input.id = 'askCrossChat';
-  wrap.append(row, h(doc, 'small', 'hint drow-help', "Lets your chats' assistants send messages to each other. Incoming messages are shown as untrusted and never run tools on their own."));
+  wrap.append(row, h(doc, 'small', 'hint drow-help', "Lets your chats' assistants send messages to each other. Incoming messages are read as data, not instructions, and never run tools on their own."));
   return wrap;
 }
 

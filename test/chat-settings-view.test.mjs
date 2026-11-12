@@ -80,7 +80,8 @@ test('chat settings render and round-trip, including the Chat script toggle', as
       assert.ok(off.querySelector('label.switch-row input.sw-input.ask-cross-chat'), 'a switch row holding the input');
       assert.ok(off.querySelector('small.hint.drow-help'), 'the hint line under the switch');
       assert.match(off.textContent, /Messages between chats/);
-      assert.match(off.textContent, /Lets your chats' assistants send messages to each other\. Incoming messages are shown as untrusted and never run tools on their own\./);
+      assert.match(off.textContent, /Lets your chats' assistants send messages to each other\. Incoming messages are read as data, not instructions, and never run tools on their own\./);
+      assert.doesNotMatch(off.textContent, /untrusted/i);
       assert.deepEqual(collectCrossChatToggle(off), { crossChat: false });
       cb.checked = true;
       assert.deepEqual(collectCrossChatToggle(off), { crossChat: true });

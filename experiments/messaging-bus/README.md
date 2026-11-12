@@ -76,7 +76,14 @@ env -u WORCA_HOST_PID node tools/test.mjs \
   experiments/messaging-bus/test/replay-fixture.test.mjs
 ```
 
-`test/scope.test.mjs` checks that only `docs/design/messaging-bus.md` and this folder differ from the run
-checkpoint `70ae23e5b8fb20c28342944a6ca251e1b9ad02b0` (override with `BUS_SCOPE_BASE`). It goes stale once this
-branch merges: it then skips when that commit is missing or not an ancestor of HEAD. That is harmless, because
-`npm test` never runs it.
+`test/scope.test.mjs` checks that only `docs/design/messaging-bus.md` and this folder differ from a base commit.
+That check runs only when `BUS_SCOPE_BASE` is set; without it the check is skipped and the file's other two tests
+still run. It also skips when the commit is missing or not an ancestor of HEAD. The spike's checkpoint was
+`70ae23e5b8fb20c28342944a6ca251e1b9ad02b0`:
+
+```
+BUS_SCOPE_BASE=70ae23e5b8fb20c28342944a6ca251e1b9ad02b0 env -u WORCA_HOST_PID node tools/test.mjs experiments/messaging-bus/test/scope.test.mjs
+```
+
+The check is meaningful only on the spike branch. On the merged cross-chat branch it fails by design, because
+cross-chat messaging is in the same diff. `npm test` never runs it.
