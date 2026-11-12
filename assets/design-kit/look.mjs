@@ -5,6 +5,8 @@
 // Shoots every built section of the design in <work folder> into <out folder>/<id>.png and prints where, then lists
 // each picture that its frame cuts (a screenshot zoomed past its box, or cropped by `object-fit: cover`). The lead of
 // a Design build runs it before it judges the sections: a section is what it looks like, not what its files say.
+// A picture worca made (under `assets/made/`) that only `object-fit: cover` cuts fills its box on purpose: it is
+// listed as cropped, not cut, and needs nothing done.
 //
 // What is shot is the build page (`assembleDesign`, mode `build`): every finished section in its finished state, with
 // no script of the design running. A deck or a video is laid out as its board, one slide or scene per row at two
@@ -16,6 +18,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { assembleDesign } from '../../src/core/design/assemble.mjs';
+import { classifyRef } from '../../src/core/design/html-scan.mjs';
 import { isBoardKind } from '../../src/core/design/kinds.mjs';
 import { open } from '../promo-kit/capture/lib.mjs';
 
@@ -96,6 +99,21 @@ export function cutLine({ src, natural, shown: share, by }) {
   return `cut: ${src} (${natural.w}×${natural.h}) shows ${Math.round(share * 100)}% of itself: ${by ? `${by} cuts it` : '`object-fit: cover` cuts it'}`;
 }
 
+/**
+ * One made picture that fills its box, as a line that tells the lead it is meant to be so.
+ * @param {{ src: string, natural: { w: number, h: number }, shown: number }} crop
+ * @returns {string}
+ */
+export function cropLine({ src, natural, shown: share }) {
+  return `cropped: ${src} (${natural.w}×${natural.h}) fills its box and shows ${Math.round(share * 100)}% of itself`;
+}
+
+/** A picture worca made (`assets/made/`) that only `object-fit: cover` cuts: its clipping boxes leave it whole. */
+function filled(m) {
+  const ref = classifyRef(m.src);
+  return ref.type === 'local' && ref.rel.startsWith('assets/made/') && m.fit === 'cover' && shown({ ...m, fit: 'fill' }) >= WHOLE;
+}
+
 /** In the page: load every picture now, lazy ones too, and wait for them (or for `ms`). */
 function loadPictures(ms) {
   const imgs = [...document.images];
@@ -136,7 +154,9 @@ function collect(ids) {
  * @param {{ workDir: string, outDir: string, ids?: string[] | null, chrome?: string }} opts `ids` names the sections
  *   to shoot (all the built ones when empty); `chrome` a browser binary, else the first one found
  * @returns {Promise<{ shots: { id: string, file: string }[], cuts: { section: string, src: string,
- *   natural: { w: number, h: number }, shown: number, by: string | null }[], waiting: string[], page: string }>}
+ *   natural: { w: number, h: number }, shown: number, by: string | null }[], crops: { section: string, src: string,
+ *   natural: { w: number, h: number }, shown: number }[], waiting: string[], page: string }>} `crops` are the made
+ *   pictures that only `object-fit: cover` cuts; they are never in `cuts`
  * @throws when plan.json does not read, the page cannot be assembled, or no Chrome-family browser is found
  */
 export async function look({ workDir, outDir, ids = null, chrome } = {}) {
@@ -156,11 +176,15 @@ export async function look({ workDir, outDir, ids = null, chrome } = {}) {
       shots.push({ id, file });
     }
     const cuts = [];
+    const crops = [];
     for (const m of await page.evaluate(collect, want)) {
       const share = shown(m);
-      if (share !== null && share < WHOLE) cuts.push({ section: m.section, src: m.src, natural: m.natural, shown: share, by: cutBy(m) });
+      if (share !== null && share < WHOLE) {
+        if (filled(m)) crops.push({ section: m.section, src: m.src, natural: m.natural, shown: share });
+        else cuts.push({ section: m.section, src: m.src, natural: m.natural, shown: share, by: cutBy(m) });
+      }
     }
-    return { shots, cuts, waiting: doc.waiting, page: pageFile };
+    return { shots, cuts, crops, waiting: doc.waiting, page: pageFile };
   } finally {
     await close();
   }
@@ -168,7 +192,8 @@ export async function look({ workDir, outDir, ids = null, chrome } = {}) {
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-/** The command: prints one line per section, its cut pictures under it, then the count. Returns the exit code. */
+/** The command: prints one line per section, its cut then its cropped pictures under it, then the count. Returns the
+ *  exit code. */
 async function main(argv) {
   const [work, out, ...ids] = argv;
   if (!work || !out) {
@@ -185,9 +210,11 @@ async function main(argv) {
   for (const shot of result.shots) {
     console.log(`${shot.id}  ${shot.file}`);
     for (const cut of result.cuts.filter((c) => c.section === shot.id)) console.log(`  ${cutLine(cut)}`);
+    for (const crop of result.crops.filter((c) => c.section === shot.id)) console.log(`  ${cropLine(crop)}`);
   }
   for (const id of result.waiting) console.log(`${id}  not built yet`);
-  console.log(`${plural(result.shots.length, 'section')} shot, ${plural(result.cuts.length, 'picture')} cut.`);
+  const cropped = result.crops.length > 0 ? `, ${result.crops.length} cropped` : '';
+  console.log(`${plural(result.shots.length, 'section')} shot, ${plural(result.cuts.length, 'picture')} cut${cropped}.`);
   return 0;
 }
 

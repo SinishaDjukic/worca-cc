@@ -65,7 +65,7 @@ test('Marketplace: Installed is one card of divided rows, a marketplace is one c
   assert.equal(page.querySelector('[data-view="marketplace"] .page-intro'), null, 'the tabs are the header (docs/design-system.md › Marketplace exceptions)');
 });
 
-test('Providers: one intro line, four divided rows, shared buttons', () => {
+test('Providers: one intro line, five divided rows, shared buttons', () => {
   const pv = page.querySelector('[data-view="providers"] .page-intro');
   assert.ok(pv && ONE_SENTENCE(pv.textContent), 'one sentence');
   assert.equal(page.querySelectorAll('[data-view="providers"] .page-intro').length, 1, 'the two intros are one');
@@ -73,7 +73,7 @@ test('Providers: one intro line, four divided rows, shared buttons', () => {
   assert.equal(card.querySelector('.mv-providers-hint'), null, 'the in-card intro merged into the page intro');
   assert.ok(card.classList.contains('drows'));
   const rows = [...card.querySelectorAll('.mv-pv-card')];
-  assert.equal(rows.length, 4);
+  assert.equal(rows.length, 5);
   for (const r of rows) assert.ok(r.classList.contains('drow') && r.classList.contains('drow-stack') && !r.classList.contains('card'));
   assert.deepEqual(rules('.mv-pv-card'), [], '.drow.drow-stack sets the gap');
   // The three-column field grid stacks under 560px like every other .drows row.

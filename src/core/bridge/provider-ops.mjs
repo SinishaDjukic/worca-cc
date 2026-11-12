@@ -9,9 +9,10 @@
 import {
   providerConfig, allProviders, updateProvider, resolveProviderSecret, providerSecretSet,
   clearCopilotSignIn,
-  listGlobalModels, addGlobalModel, updateGlobalModel, updateSpeech,
+  listGlobalModels, addGlobalModel, updateGlobalModel, updateSpeech, updateImages,
 } from '../settings.mjs';
 import { speechState } from '../speech.mjs';
+import { imagesState } from '../images.mjs';
 import { speechAssetStore } from '../speech-assets.mjs';
 import { modelEnvRef, maskModelEnvValue, UPSTREAM_PROVIDERS, isUpstreamBaseUrl, EFFORTS } from '../model-env.mjs';
 import {
@@ -161,7 +162,7 @@ export async function providersState({ quota = false, fetch: f, person = resolve
   // With the credential broker on, keys and the Copilot sign-in are per person on its key page:
   // each provider's state is the viewer's own slot there, not worca's (empty) settings.
   const broker = brokerEnabled() ? await brokerProviders(all, person) : { enabled: false };
-  return { copilot, openai: keyed('openai'), anthropic: keyed('anthropic'), speech: { ...speechState(), cacheBytes: speechCacheBytes() }, broker };
+  return { copilot, openai: keyed('openai'), anthropic: keyed('anthropic'), speech: { ...speechState(), cacheBytes: speechCacheBytes() }, images: imagesState(), broker };
 }
 
 /**
@@ -225,6 +226,16 @@ export async function patchSpeech(patch = {}) {
   // Credential broker: worca stores no keys at all (same rule as patchProvider).
   if (brokerEnabled() && Object.values(p).some((s) => s && typeof s.apiKey === 'string' && s.apiKey.trim())) refuseWithBroker('store a speech key');
   return updateSpeech(p);
+}
+
+/** Patch the images block from the UI (Design pictures): masked key echoes are dropped ("keep"). */
+export async function patchImages(patch = {}) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return updateImages(patch);
+  const p = { ...patch };
+  if (typeof p.apiKey === 'string' && p.apiKey.startsWith('••')) delete p.apiKey;
+  // Credential broker: worca stores no keys at all (same rule as patchSpeech).
+  if (brokerEnabled() && typeof p.apiKey === 'string' && p.apiKey.trim()) refuseWithBroker('store an image service key');
+  return updateImages(p);
 }
 
 // ── Copilot models: list for import, import ─────────────────────────────────

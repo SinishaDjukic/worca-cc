@@ -11,10 +11,10 @@ import { createFlyout } from '../side-flyout.mjs';
 import { icon } from '../icons.mjs';
 import { makeSwitch } from '../switch.mjs';
 import { bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
-import { DESIGN_FAST_DEFAULT, DESIGN_FAST_LABEL, DESIGN_KIND_LABELS } from '../../../src/shared/design-names.mjs';
+import { DESIGN_FAST_DEFAULT, DESIGN_FAST_LABEL, DESIGN_KIND_LABELS, DESIGN_PICTURES_DEFAULT } from '../../../src/shared/design-names.mjs';
 import { openEngineGateDialog } from './engine-gate-dialog.mjs';
 import { createModelPills } from './model-pills.mjs';
-import { createComposerSettings } from './composer-settings.mjs';
+import { createComposerSettings, createPicturesRow } from './composer-settings.mjs';
 
 const LOADING_DELAY_MS = 300;
 const REFETCH_MS = 200;
@@ -395,12 +395,16 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
   // The lead's and the builders' models, on the engine a design made now would build on (the project's or the user's
   // Default engine): a project pick may move it, so the choices load again.
   let project = null;          // {key, name} of the picked project, or none
+  // Pictures under Build fast: the image service's state is asked for when the composer is made and at each open of
+  // the gear, so a service set up in another tab shows without a reload.
+  const pics = createPicturesRow({ doc, fetch: fetchFn });
+  const loadPics = () => pics.load().then((c) => { if (c) settings.reposition(); });
   // The models and Build fast sit in one popup behind a gear, so the row keeps to Attach, the project, the gear and Send.
-  const settings = createComposerSettings({ doc, win, mode: 'down' });
+  const settings = createComposerSettings({ doc, win, mode: 'down', onOpen: () => { void loadPics(); } });
   const pills = createModelPills({ doc, win, fetch: fetchFn, mode: 'beside', parent: settings.panel,
     url: () => `${LIST_URL}/models${project ? `?projectKey=${encodeURIComponent(project.key)}` : ''}` });
   const row = make('div', 'ask-composer-row');
-  settings.fill(pills.el, settings.divider(), sw.row);
+  settings.fill(pills.el, settings.divider(), sw.row, pics.el);
   row.append(attachBtn, fileInput, scopeBtn, menu, make('span', 'dz-spacer'), settings.el, sendBtn);
   const box = make('div', 'ask-composer-box');
   box.append(fileRow, input, row);
@@ -576,10 +580,11 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
     await adding;                                       // a file still being read rides this message
     if (destroyed) return;
     const files = pendingFiles.slice();
-    // `fast` is always a boolean: the store answers 400 on anything else.
+    // `fast` is always a boolean: the store answers 400 on anything else. `pictures` only while its switch shows; else
+    // the store's default applies, so a design started before the service was set up has pictures once it is.
     const models = pills.picks();
     const body = { kind, fast, title: titleFromBrief(text), ...(project ? { projectKey: project.key } : {}),
-      ...(Object.keys(models).length ? { models } : {}) };
+      ...(Object.keys(models).length ? { models } : {}), ...(pics.ready() ? { pictures: pics.input.checked } : {}) };
     await create(body, { text, files }, true);
   }
   /** One POST /api/design: `{ok, status, answer}`; a request that never got an answer is status 0. */
@@ -646,6 +651,7 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
     renderFiles();
     fast = DESIGN_FAST_DEFAULT;
     paintFast();
+    pics.input.checked = DESIGN_PICTURES_DEFAULT;
     const hadProject = project !== null;
     project = null;
     paintScope();
@@ -717,6 +723,7 @@ function createStart({ doc, win, hero, fetch: fetchFn, navigate }) {
   paintMenu();
   paintSend();
   void loadLimits();
+  void loadPics();
   void pills.load();
   return {
     destroy() {

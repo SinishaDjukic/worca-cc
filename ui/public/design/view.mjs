@@ -9,6 +9,7 @@ import { createStage } from './stage.mjs';
 import { createPlanList } from './plan-list.mjs';
 import { createLibrary, designMoreMenu, kindWord, takeStart } from './library.mjs';
 import { createDesignExport } from './export-dialog.mjs';
+import { createPictureLog } from './pictures.mjs';
 import { icon } from '../icons.mjs';
 
 /** A design id as P2 mints it; anything else on `#design/…` goes back to the library. */
@@ -60,9 +61,10 @@ let current = null;   // { view, live } of the one mounted view
 /**
  * Mount the page into `deps.host`. `fetch` reaches C-8's routes, `sendWs` the socket, `route(id)` moves the hash
  * (`''` is the library). `createChat` is P5's seam: when given, the studio's chat is made with
- * `{doc, host, design, fetch, sendWs, renderMarkdown, confirm, setPick, onRestored, planList, unpin, initial}` (`host` is
- * the chat column's `.dz-chat-slot`; `initial` is the Library composer's first message for this design, once, else
- * null); without it the Plan list sits in that slot. `renderMarkdown` and `confirm` pass
+ * `{doc, host, design, fetch, sendWs, renderMarkdown, confirm, setPick, onRestored, planList, unpin, initial, pictures}`
+ * (`host` is the chat column's `.dz-chat-slot`; `initial` is the Library composer's first message for this design, once,
+ * else null; `pictures` is the design's picture log, which the stage gets too); without it the Plan list sits in that
+ * slot. `renderMarkdown` and `confirm` pass
  * through unchanged. The mount also sets `win.__design` (the proof hook, as `window.__wfv`).
  * @param {{doc: Document, win?: Window, host?: HTMLElement, fetch?: Function, sendWs?: (msg: object) => void,
  *   route?: (id: string) => void, prompt?: Function, renderMarkdown?: Function, confirm?: Function,
@@ -75,7 +77,7 @@ export function mountDesignView(deps = {}) {
   let shown = false;
   let gen = 0;          // every show and leave moves it: a slow GET of an older show paints nothing
   let lib = null;       // the library, while `#design` shows it
-  let studio = null;    // { id, stage, planList, chat, exp, more, status } of the open design
+  let studio = null;    // { id, stage, planList, chat, exp, more, status, pictures } of the open design
 
   const make = (tag, cls, text) => {
     const n = doc.createElement(tag);
@@ -130,6 +132,21 @@ export function mountDesignView(deps = {}) {
     host?.replaceChildren(page);
   }
 
+  /** The design's finished asks into its picture log, only while that studio is open (`openStudio` calls it once the
+   *  studio is set, and hello again). A refusal or an odd answer loads nothing. */
+  async function loadPictures(s) {
+    if (studio !== s) return;
+    let rows = null;
+    try {
+      const res = await fetchFn(`/api/design/${encodeURIComponent(s.id)}/pictures`);
+      rows = res.ok ? await res.json() : null;
+    } catch {
+      rows = null;
+    }
+    if (studio !== s || !Array.isArray(rows)) return;
+    s.pictures.load(rows);
+  }
+
   async function openLibrary() {
     if (studio || !lib) {
       close();
@@ -180,6 +197,8 @@ export function mountDesignView(deps = {}) {
     let stage = null;
     let chat = null;
     let exp = null;
+    // The pictures its rounds asked for: the rows at open and after hello, the frames as they come (pushFrame).
+    const pictures = createPictureLog({ designId: id });
     const planList = createPlanList({
       doc,
       // The list keeps its button disabled until the call settles, and shows a refusal in the row or card.
@@ -187,7 +206,7 @@ export function mountDesignView(deps = {}) {
       onDetails: (agentId) => { stage?.showAgent(agentId); },
     });
     stage = createStage({
-      doc, win, host: stageEl, design, fetch: fetchFn, sendWs: send,
+      doc, win, host: stageEl, design, fetch: fetchFn, sendWs: send, pictures,
       // The chip and the box read the same tag.
       onPicked: (p) => { chat?.addPin?.({ ...p, label: pinLabel(stage.model(), p) }); },
       onPlan: (rows) => { planList.paint(rows); },
@@ -208,12 +227,13 @@ export function mountDesignView(deps = {}) {
         onBusy: (on) => stage.setChatBusy(on),
         // The Library's first message goes through the dock's own send, once (P6 Task 9).
         initial: takeStart(design.id),
+        pictures,
       });
     } else {
       slot.append(planList.el);
     }
     // The design's status mirrors its current build (L1.20); design-build frames move it.
-    const st = { id, stage, planList, chat, exp, more: null, status: typeof design.status === 'string' ? design.status : '' };
+    const st = { id, stage, planList, chat, exp, more: null, status: typeof design.status === 'string' ? design.status : '', pictures };
     st.more = designMoreMenu({
       doc, win, button: moreBtn, getDesign: () => design, fetch: fetchFn, confirm, prompt, navigate,
       buildLive: () => OPEN_BUILD.includes(st.status),
@@ -226,6 +246,8 @@ export function mountDesignView(deps = {}) {
       },
     });
     studio = st;
+    // Asked for once the studio is set (an answer for a studio that is not open is dropped), alongside the stage's open.
+    void loadPictures(st);
     await stage.open(detail);
   }
 
@@ -261,6 +283,8 @@ export function mountDesignView(deps = {}) {
       lib?.pushFrame(f);
       if (!studio || !isObject(f) || f.designId !== studio.id) return;
       const { stage, chat, exp } = studio;
+      // A picture lands in the log before the stage and the chat hear its frame, so both read it already counted.
+      if (f.type === 'design-picture') studio.pictures.push(f);
       stage.pushFrame(f);
       chat?.pushDesignFrame?.(f);
       // A snapshot (a reconnect, or a round ending between the detail GET and the subscribe) carries the build's
@@ -285,6 +309,12 @@ export function mountDesignView(deps = {}) {
       paint();
       studio?.stage.onHello(opts);
       studio?.chat?.onHello?.();
+      if (studio) {
+        // A gap may have missed a finished frame: the quiet tiles start over (a making frame after this hello stays),
+        // and the rows say what finished meanwhile.
+        studio.pictures.gap();
+        void loadPictures(studio);
+      }
     },
     /** The open stage, or null. */
     stage() { return studio ? studio.stage : null; },

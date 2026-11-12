@@ -5,8 +5,9 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { createDesignChat } from '../ui/public/design/chat.mjs';
+import { createDesignChat, stepsSentence } from '../ui/public/design/chat.mjs';
 import { cssRules } from './helpers/css-rules.mjs';
+import { createPictureLog } from '../ui/public/design/pictures.mjs';
 
 const doms = [];
 const docks = [];
@@ -30,11 +31,14 @@ const assistantWith = (...blocks) => {
  * The dock on a design row of `{id: DID, threadId: 'ask_00000001', kind: 'web', fast: false, status: 'done', version: 2,
  * ...o.design}`, its thread serving `o.messages`. Records `setPicks`, `unpins`, `confirms` (answering yes) and `restored`;
  * `posts` holds `{url, body}` per POST and `{url, method, body}` per other write, `gets` each GET's url. `o.restoreStatus`/`o.restoreError`
- * refuse the restore, `o.patchError` the Build fast PATCH; `o.confirm(opts)` answers the confirm instead of yes;
+ * refuse the restore, `o.patchError` every PATCH of the design (409 with those words), `o.patchStatus` with that status
+ * and a null body, `o.patchThrow` by rejecting; `o.images` is the 200 body of
+ * GET /api/images (absent: 404), and `imagesGets()` counts those GETs; `o.confirm(opts)` answers the confirm instead of yes;
  * `o.withPlanList` passes a planList of `{ el: <div class="dz-plan-wrap"> }`. `send(text, {refuse})` types and presses
  * Send; `refuse` answers that message 409 with those words, and `o.refuse` every message from the start. `o.initial` is
  * the dock's `initial` (the Library's first message); `o.destroyNow` destroys the dock before its thread loads.
- * `o.renderMarkdown` draws a reply (default: its text); `md.calls` counts the draws.
+ * `o.renderMarkdown` draws a reply (default: its text); `md.calls` counts the draws. `o.pictures` is the dock's picture
+ * log (absent: none).
  */
 async function rigDock(o = {}) {
   const { doc, win } = rig();
@@ -58,6 +62,7 @@ async function rigDock(o = {}) {
     else if (method !== 'GET') posts.push({ url, method, body });
     else gets.push(url);
     if (method === 'GET' && url === '/api/ask/models') return reply(200, { default: { model: 'm', effort: 'e' }, models: [] });
+    if (method === 'GET' && url === '/api/images' && o.images !== undefined) return reply(200, o.images);
     if (method === 'GET' && url === `/api/ask/threads/${design.threadId}`) {
       return reply(200, { thread: { id: design.threadId, mode: 'design', title: 'Landing page', designId: DID }, messages: o.messages || [], attachments: [], runLinks: [], inFlight: null });
     }
@@ -72,7 +77,11 @@ async function rigDock(o = {}) {
       const status = o.restoreStatus || 200;
       return reply(status, status < 300 ? { ok: true, version: 3, restoredFrom: 1 } : { error: o.restoreError });
     }
-    if (method === 'PATCH' && url === `/api/design/${DID}`) return o.patchError ? reply(409, { error: o.patchError }) : reply(200, { design: { ...design, ...body } });
+    if (method === 'PATCH' && url === `/api/design/${DID}`) {
+      if (o.patchThrow) throw new TypeError('Failed to fetch');
+      if (o.patchStatus) return reply(o.patchStatus, null);
+      return o.patchError ? reply(409, { error: o.patchError }) : reply(200, { design: { ...design, ...body } });
+    }
     return reply(404, { error: 'no route' });
   };
   const md = { calls: 0 };
@@ -86,6 +95,7 @@ async function rigDock(o = {}) {
     planList,
     unpin: (id, path) => { unpins.push([id, path]); },
     initial: o.initial,
+    pictures: o.pictures ?? null,
   });
   docks.push(dock);
   if (o.destroyNow) dock.destroy();
@@ -99,7 +109,8 @@ async function rigDock(o = {}) {
     await settle();
     refuse = null;
   }
-  return { dock, host, doc, win, posts, gets, setPicks, unpins, confirms, restored, md, send, tick: () => settle() };
+  return { dock, host, doc, win, posts, gets, setPicks, unpins, confirms, restored, md, send, tick: () => settle(),
+    imagesGets: () => gets.filter((u) => u === '/api/images').length };
 }
 
 test('a chat question renders with the real ask-card grammar and answers through the card route', async () => {
@@ -386,6 +397,7 @@ test('in the real app: a design with no thread GETs nothing for it, odd answers 
   await settle();
   assert.equal(urls.some((u) => /\/api\/ask\/threads\/null/.test(u)), false);
   assert.equal(host.querySelector('.dsc-note').hidden, false, 'the refusal shows in the dock');
+  assert.equal(host.querySelector('.dz-pics').hidden, true);
   assert.deepEqual(errors, []);
 });
 test('thread cards survive frames that change nothing they show; a design-delta repaints nothing; hello reloads the thread', async () => {
@@ -581,8 +593,10 @@ const linkMd = (text, el) => {
 };
 const LINKED = [{ id: 'msg_u0000001', role: 'user', text: 'A page', blocks: [], status: 'done' },
   { id: 'msg_a0000901', role: 'assistant', text: 'Read [the brief](https://example.com/b) first.', blocks: [], status: 'done', costUsd: 0.02 }];
-test('M5: build frames that change nothing the dock shows leave the thread, a reply\'s markdown and the focus in it alone', async () => {
-  const { dock, host, doc, win, md, tick } = await rigDock({ renderMarkdown: linkMd, design: { status: 'building', currentBuild: 'b_1' }, messages: LINKED });
+/** M5's frames on a building design change nothing the dock shows: the thread, the reply's markdown and the focus in it
+ *  stay as they are. `extra` adds to the dock's options. */
+async function m5Untouched(extra = {}) {
+  const { dock, host, doc, win, md, tick } = await rigDock({ renderMarkdown: linkMd, design: { status: 'building', currentBuild: 'b_1' }, messages: LINKED, ...extra });
   const reply = host.querySelector('.dsc-reply');
   const link = reply.querySelector('a');
   link.focus();
@@ -602,7 +616,9 @@ test('M5: build frames that change nothing the dock shows leave the thread, a re
   assert.equal(host.querySelector('.dsc-reply'), reply);
   assert.equal(doc.activeElement, link, 'the focus stays on the link');
   assert.equal(md.calls, calls, 'no markdown redone');
-});
+}
+test('M5: build frames that change nothing the dock shows leave the thread, a reply\'s markdown and the focus in it alone', () => m5Untouched());
+test('M5 with a picture log: an empty log adds no repaint to the same frames', () => m5Untouched({ pictures: createPictureLog({ designId: DID }) }));
 test('M5: a repaint keeps an unchanged reply (node, markdown, selection, focus); a changed reply and loaded markdown draw it again', async () => {
   const { dock, host, doc, md, tick } = await rigDock({ renderMarkdown: linkMd, messages: LINKED });
   const reply = host.querySelector('.dsc-reply');
@@ -753,4 +769,181 @@ test('an answered fields card stays with what was given, read-only, no footer; a
   assert.equal(done.querySelector('[data-qpanel-submit]'), null);
   assert.equal(done.querySelector('input').value, 'Worca');
   assert.equal(closed.querySelector('.chat-rc-receipt').textContent, 'Not answered');
+});
+
+test('Pictures in the dock: asked for when the dock is made and at each open, read from the design row, a change is remembered on the design, a refusal flips back and says why', async () => {
+  const images = { configured: true, settable: true, keyMissing: false, model: 'gpt-image-2.6-flare' };
+  const { host, posts, tick, imagesGets } = await rigDock({ design: { pictures: true }, images });
+  await tick();
+  assert.deepEqual([host.querySelector('.dz-pics').hidden, host.querySelector('.dz-pics-on').hidden, imagesGets()], [false, false, 1]);
+  host.querySelector('.dz-set-btn').click(); await tick();
+  assert.equal(imagesGets(), 2);
+  const sw = host.querySelector('.dz-pics-on input[role=switch]');
+  assert.equal(sw.checked, true);
+  sw.click(); sw.click();                                // the second press finds the switch held: no second PATCH
+  assert.equal(sw.disabled, true, 'held while the PATCH is out');
+  await tick();
+  assert.deepEqual(posts.filter((p) => p.method === 'PATCH'), [{ url: `/api/design/${DID}`, method: 'PATCH', body: { pictures: false } }]);
+  assert.deepEqual([sw.checked, sw.disabled, host.querySelector('.dsc-note').hidden], [false, false, true], 'a saved change stays and frees the switch');
+  // A refusal flips back, says why and frees the switch: the route's own words (routes.mjs ≈96), the status when the
+  // body has none, and a request that never got an answer.
+  for (const [o, words] of [[{ patchError: 'design not found' }, 'design not found'], [{ patchStatus: 502 }, 'The Pictures switch was not saved (HTTP 502).'],
+    [{ patchThrow: true }, 'The Pictures switch was not saved.']]) {
+    const r = await rigDock({ design: { pictures: false }, images, ...o });
+    const sw2 = r.host.querySelector('.dz-pics-on input[role=switch]');
+    sw2.click();
+    assert.equal(sw2.disabled, true, `${words}: held while the PATCH is out`);
+    await r.tick();
+    assert.deepEqual([sw2.checked, sw2.disabled, r.host.querySelector('.dsc-note').textContent], [false, false, words]);
+  }
+});
+
+test('while a round runs its pictures land at the end of the thread: a quiet tile first, the picture once it lands', async () => {
+  const pictures = createPictureLog({ designId: DID });
+  const { host, dock, tick } = await rigDock({ design: { status: 'planning', currentBuild: 'b_1' }, messages: [], pictures });
+  const f = { designId: DID, buildId: 'b_1' };
+  const feed = (fr) => { pictures.push(fr); dock.pushDesignFrame(fr); };   // the view's order (pushFrame)
+  dock.pushDesignFrame({ ...f, type: 'design-build', status: 'planning', round: 1, kind: 'first', waiting: 0 });
+  const making = { ...f, type: 'design-picture', round: 1, name: 'hero-studio', shape: 'wide', state: 'making', prompt: 'p' };
+  feed(making); await tick();
+  assert.equal(host.querySelector('.dsc-act-l').textContent, 'Making a picture: hero-studio…');
+  assert.ok(host.querySelector('.dsc-build .dsc-pics .dsc-pic.is-wide.is-making'));
+  feed({ ...making, id: 1, state: 'made', file: 'assets/made/hero-studio.png', w: 384, h: 256, model: 'gpt-image-2.6-flare', costUsd: 0.04, ms: 5 }); await tick();
+  assert.equal(host.querySelector('.dsc-build .dsc-pic.is-making'), null);
+  assert.equal(host.querySelector('.dsc-build button.dsc-pic img').getAttribute('src'), `/api/design/${DID}/pictures/1`);
+  feed({ ...making, id: 2, state: 'made', file: 'assets/made/hero-studio.png', w: 384, h: 256, model: 'gpt-image-2.6-flare', costUsd: 0.04, ms: 6 }); await tick();
+  assert.match(host.querySelector('.dsc-build button.dsc-pic img').getAttribute('src'), /\/pictures\/2$/, 'a remake in a live round repaints the tile');
+});
+test('a round that goes live or pauses moves its pictures with no line and no picture frame', async () => {
+  const pictures = createPictureLog({ designId: DID });
+  pictures.load([{ id: 1, buildId: 'b_1', round: 1, name: 'hero-studio', shape: 'wide', state: 'made', prompt: 'p', file: 'assets/made/hero-studio.png',
+    w: 384, h: 256, model: 'gpt-image-2.6-flare', costUsd: 0.04, ms: 5, reason: null, createdAt: '2026-11-11T10:00:01.000Z' }]);
+  const { host, dock, tick } = await rigDock({ design: { status: 'building', currentBuild: 'b_1' }, messages: [], pictures });
+  assert.equal(host.querySelector('.dsc-build'), null, 'no round is live yet');
+  const f = { designId: DID, buildId: 'b_1', type: 'design-build', round: 1, kind: 'first', waiting: 0 };
+  dock.pushDesignFrame({ ...f, status: 'building' }); await tick();
+  assert.equal(host.querySelectorAll('.dsc-build .dsc-pic').length, 1, 'the live round shows its picture at the end of the thread');
+  dock.pushDesignFrame({ ...f, status: 'paused' }); await tick();
+  assert.equal(host.querySelector('.dsc-build'), null, 'a paused round takes its pictures out of the feed');
+});
+test('a live tile opens the viewer, one at a time; Escape gives the focus to the tile painted in its place; the dock going away closes it and moves no focus', async () => {
+  const pictures = createPictureLog({ designId: DID });
+  let unsubs = 0;
+  const subscribe = pictures.subscribe;
+  pictures.subscribe = (fn) => { const off = subscribe(fn); return () => { unsubs += 1; off(); }; };
+  const { host, doc, win, dock, tick } = await rigDock({ design: { status: 'building', currentBuild: 'b_1' }, messages: [], pictures });
+  const f = { designId: DID, buildId: 'b_1' };
+  const feed = (fr) => { pictures.push(fr); dock.pushDesignFrame(fr); };
+  dock.pushDesignFrame({ ...f, type: 'design-build', status: 'building', round: 1, kind: 'first', waiting: 0 });
+  const made = { ...f, type: 'design-picture', round: 1, id: 1, name: 'hero-studio', shape: 'wide', state: 'made', prompt: 'p',
+    file: 'assets/made/hero-studio.png', w: 384, h: 256, model: 'gpt-image-2.6-flare', costUsd: 0.04, ms: 5 };
+  feed(made); await tick();
+  const tile = host.querySelector('.dsc-build button.dsc-pic');
+  tile.click();
+  tile.click();
+  assert.equal(doc.querySelectorAll('.dz-pic-modal').length, 1, 'one viewer at a time');
+  feed({ ...made, id: 2, ms: 6 }); await tick();
+  const twin = host.querySelector('.dsc-build button.dsc-pic');
+  assert.notEqual(twin, tile, 'the remake painted the tile again');
+  doc.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.deepEqual([doc.querySelector('.dz-pic-modal'), doc.activeElement], [null, twin]);
+  twin.click();
+  let focused = 0;
+  twin.addEventListener('focus', () => { focused += 1; });
+  dock.destroy();
+  assert.deepEqual([doc.querySelector('.dz-pic-modal'), focused, unsubs], [null, 0, 1]);
+});
+
+test('the step line counts pictures as the last item of its one list, with one "and"', () => {
+  const t = (name) => ({ kind: 'tool', name, status: 'done' });
+  assert.equal(stepsSentence([t('Read'), t('Grep')], { made: 3 }), 'Looked at 2 files and made 3 pictures');
+  assert.equal(stepsSentence([t('mcp__worca__list_projects'), t('Read'), t('Read'), t('Glob')], { made: 1 }), 'Looked at your projects, 3 files and made 1 picture');
+  assert.equal(stepsSentence(['mcp__worca__get_design', 'mcp__worca__list_projects', 'mcp__worca__read_attachment', 'Read', 'WebSearch'].map(t), { made: 2 }),
+    'Looked at the design, your projects, an attachment, a file, 1 more and made 2 pictures', 'past four the rest fold, the pictures stay');
+  assert.equal(stepsSentence([t('Read'), t('Read')], { made: 2, failed: 1 }), 'Looked at 2 files and made 2 pictures · 1 picture failed');
+  assert.equal(stepsSentence([t('Read'), t('Read')]), 'Looked at 2 files', 'no picture: today\'s line');
+});
+const ROUND = { kind: 'card', id: 'card_1', state: 'done', card: { type: 'design-round', round: 1, kind: 'first', baseVersion: 0, agents: 4, elapsedMs: 220000, costUsd: 1.37, costKnown: true } };
+const rowOf = (name, shape, id, o = {}) => ({ id, buildId: 'b_1', round: 1, name, shape, state: 'made', prompt: `${name} scene`, file: `assets/made/${name}.png`,
+  w: 384, h: 256, model: 'gpt-image-2.6-flare', costUsd: 0.04, ms: 5, reason: null, createdAt: `2026-11-11T10:00:0${id}.000Z`, ...o });
+const loaded = (...rows) => { const p = createPictureLog({ designId: DID }); p.load(rows); return p; };
+const THREE = [rowOf('hero-studio', 'wide', 1), rowOf('team-mood', 'square', 2),
+  rowOf('odd-one', 'square', 3, { state: 'failed', file: null, w: null, h: null, costUsd: null, reason: 'the image service refused this description: mock' })];
+
+test('after the round: the step line counts its pictures, the strip sits under it, opened it lists each ask', async () => {
+  const { host, doc, dock, tick } = await rigDock({ pictures: loaded(...THREE), messages: [{ ...assistantWith(
+    { kind: 'tool', id: 't1', name: 'mcp__worca__get_design', input: {}, status: 'done' }, ROUND), text: 'Built.' }] });
+  assert.deepEqual([...host.querySelector('.dsc-reply').children].map((n) => n.className),
+    ['dsc-steps dz-reply-meta', 'dsc-pics', 'dsc-round dz-reply dz-reply-meta', 'dsc-text dz-reply']);
+  assert.equal(host.querySelector('.dsc-steps-text').textContent, 'Looked at the design and made 2 pictures · 1 picture failed');
+  assert.deepEqual([...host.querySelectorAll('.dsc-pics .dsc-pic')].map((n) => n.textContent), ['hero-studio', 'team-mood']);
+  doc.documentElement.dataset.level = 'advanced'; dock.repaint(); await tick();
+  host.querySelector('button.dsc-steps-head').click(); await tick();
+  assert.deepEqual([...host.querySelectorAll('.dsc-steps-body > *')].map((n) => n.textContent),
+    ['get design', 'Made hero-studio · wide · $0.04', 'Made team-mood · square · $0.04', 'odd-one: the image service refused this description: mock']);
+  assert.ok(host.querySelector('.dsc-steps-body .dsc-pic-line.is-error'));
+});
+test('a round with pictures and no other step gets the line by itself', async () => {
+  const { host } = await rigDock({ pictures: loaded(rowOf('hero-studio', 'wide', 1)), messages: [{ ...assistantWith(
+    { kind: 'tool', id: 't1', name: 'mcp__worca__start_design_build', input: { brief: 'b' }, status: 'done' }, ROUND), text: 'x' }] });
+  assert.deepEqual([...host.querySelector('.dsc-reply').children].map((n) => n.className).slice(0, 3), ['dsc-steps dz-reply-meta', 'dsc-pics', 'dsc-round dz-reply dz-reply-meta']);
+  assert.equal(host.querySelector('.dsc-steps-text').textContent, 'Made 1 picture');
+});
+test('a live round keeps its pictures in the feed; when it ends they move under its step line', async () => {
+  const pictures = loaded(rowOf('hero-studio', 'wide', 1));
+  const { host, dock, tick } = await rigDock({ design: { status: 'building', currentBuild: 'b_1' }, pictures, messages: [{ ...assistantWith({ ...ROUND, state: 'running' }), text: 'x' }] });
+  const f = { designId: DID, buildId: 'b_1', type: 'design-build', round: 1, kind: 'first', waiting: 0 };
+  dock.pushDesignFrame({ ...f, status: 'building' }); await tick();
+  assert.deepEqual([host.querySelectorAll('.dsc-reply .dsc-pic').length, host.querySelectorAll('.dsc-build .dsc-pic').length], [0, 1]);
+  dock.pushDesignFrame({ ...f, status: 'done' }); await tick();
+  assert.deepEqual([host.querySelectorAll('.dsc-reply .dsc-pic').length, host.querySelector('.dsc-build')], [1, null]);
+});
+test('a tile opens the viewer; Escape gives the focus back to the tile, also when a repaint replaced it', async () => {
+  const { host, doc, win, dock, tick } = await rigDock({ pictures: loaded(rowOf('hero-studio', 'wide', 1)), messages: [{ ...assistantWith(ROUND), text: 'x' }] });
+  const old = host.querySelector('button.dsc-pic');
+  old.click();
+  assert.equal(doc.querySelector('.dz-pic-modal h2').textContent, 'hero-studio');
+  dock.repaint(); await tick();
+  doc.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.deepEqual([doc.querySelector('.dz-pic-modal'), doc.activeElement.dataset.pic, doc.activeElement === old], [null, '1|hero-studio', false]);
+});
+test('a row that lands after the round draws its reply again; opened, an unknown cost and a missing reason read plainly', async () => {
+  const pictures = loaded();
+  const { host, doc, dock, tick } = await rigDock({ pictures, messages: [{ ...assistantWith(ROUND), text: 'x' }] });
+  assert.equal(host.querySelector('.dsc-reply .dsc-steps'), null, 'no picture yet: no step line');
+  pictures.load([rowOf('hero-studio', 'wide', 1, { costUsd: null }), rowOf('odd-one', 'tall', 2, { state: 'failed', file: null, w: null, h: null, costUsd: null })]);
+  await tick();
+  assert.deepEqual([host.querySelector('.dsc-steps-text').textContent, host.querySelectorAll('.dsc-reply .dsc-pic').length], ['Made 1 picture · 1 picture failed', 1]);
+  doc.documentElement.dataset.level = 'advanced'; dock.repaint(); await tick();
+  host.querySelector('button.dsc-steps-head').click(); await tick();
+  assert.deepEqual([...host.querySelectorAll('.dsc-steps-body > *')].map((n) => n.textContent), ['Made hero-studio · wide', 'odd-one failed.']);
+});
+test('while round 2 runs, round 1\'s reply keeps its tiles and its step line', async () => {
+  const pictures = loaded(rowOf('hero-studio', 'wide', 1));
+  const { host, dock, tick } = await rigDock({ design: { status: 'building', currentBuild: 'b_2' }, pictures,
+    messages: [{ ...assistantWith(ROUND), text: 'x' }, { ...assistantWith({ ...ROUND_2, state: 'running' }), text: 'y' }] });
+  const f = { designId: DID, buildId: 'b_2' };
+  dock.pushDesignFrame({ ...f, type: 'design-build', status: 'building', round: 2, kind: 'change', waiting: 0 });
+  const making = { ...f, type: 'design-picture', round: 2, name: 'team-mood', shape: 'square', state: 'making', prompt: 'p' };
+  pictures.push(making); dock.pushDesignFrame(making); await tick();
+  assert.ok(host.querySelector('.dsc-build .dsc-pic.is-making'), 'round 2 is live: its quiet tile is in the feed');
+  const first = host.querySelectorAll('.dsc-reply')[0];
+  assert.deepEqual([first.querySelectorAll('.dsc-pic').length, first.querySelector('.dsc-steps-text')?.textContent], [1, 'Made 1 picture']);
+});
+test('a reply whose only tool is quiet and whose round\'s asks all failed still gets the line by itself', async () => {
+  const { host } = await rigDock({ pictures: loaded(THREE[2]), messages: [{ ...assistantWith(
+    { kind: 'tool', id: 't1', name: 'mcp__worca__start_design_build', input: { brief: 'b' }, status: 'done' }, ROUND), text: 'x' }] });
+  assert.deepEqual([...host.querySelector('.dsc-reply').children].map((n) => n.className).slice(0, 2), ['dsc-steps dz-reply-meta', 'dsc-round dz-reply dz-reply-meta']);
+  assert.equal(host.querySelector('.dsc-steps-text')?.textContent, '1 picture failed');
+  assert.equal(host.querySelector('.dsc-reply .dsc-pics'), null, 'a failed ask has no tile');
+});
+test('a live round whose only asks failed: the pause alone moves them under its reply', async () => {
+  const pictures = loaded();
+  const { host, dock, tick } = await rigDock({ design: { status: 'building', currentBuild: 'b_1' }, pictures, messages: [{ ...assistantWith({ ...ROUND, state: 'running' }), text: 'x' }] });
+  const f = { designId: DID, buildId: 'b_1', type: 'design-build', round: 1, kind: 'first', waiting: 0 };
+  dock.pushDesignFrame({ ...f, status: 'building' }); await tick();
+  pictures.load([THREE[2]]); await tick();   // the round's rows, read again: no frame, no line, no tile
+  assert.deepEqual([host.querySelector('.dsc-reply .dsc-steps'), host.querySelector('.dsc-build')], [null, null], 'a live round\'s asks are not in its reply yet');
+  dock.pushDesignFrame({ ...f, status: 'paused' }); await tick();
+  assert.equal(host.querySelector('.dsc-reply .dsc-steps-text')?.textContent, '1 picture failed');
 });

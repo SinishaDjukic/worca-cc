@@ -1,6 +1,7 @@
 // The Design stage's Agents popover and the HUD dot's tip (ui/public/design/agents-panel.mjs), per the mock's
 // `popover()` and `tip()` (canvas/build.mjs). Both paint the plain rows `selectAgentRows` gives:
-// `{running, rows:[{agentId, name, crew, status, statusClass, action, cost, costTitle, gone, canStop}]}`.
+// `{running, rows:[{agentId, name, crew, status, statusClass, action, cost, costTitle, gone, canStop}]}`; the popover's
+// model also carries `pictures: {made, failed, usd} | null`, the round's pictures, shown as one last row while any was made.
 // Every string reaches the DOM through `textContent`; a dot's colour is only ever `var(<crew token>)`.
 // Pure: DOM only through `doc`, nothing at import time.
 import { icon } from '../icons.mjs';
@@ -71,6 +72,26 @@ export function createAgentsPanel({ doc, host, onStopAgent, onClose }) {
   const pending = new Set();
   /** agentId -> {message, status}: a refused Stop, shown until the agent's status moves on */
   const refused = new Map();
+
+  // The round's pictures: one row in a finished row's ink, no dot colour, no status, no Stop; its own cells only.
+  const pics = {
+    row: make(doc, 'div', 'dz-arow is-gone dz-arow-pics'),
+    act: make(doc, 'span', 'dz-aact'),
+    cost: make(doc, 'span', 'dz-acost'),
+  };
+  pics.row.append(make(doc, 'i', 'dz-adot'), make(doc, 'span', 'dz-aname', 'Pictures'), make(doc, 'span', 'dz-astat'),
+    pics.act, pics.cost);
+
+  /** Last in the list while the round made a picture (moved only when it is not last already), else gone. A round
+   *  whose only asks failed shows no row: those dollars are in the round's total only. */
+  function renderPictures() {
+    const p = last?.pictures;
+    const made = Number.isSafeInteger(p?.made) && p.made > 0 ? p.made : 0;
+    if (made === 0) { pics.row.remove(); return; }
+    pics.act.textContent = `${made} made`;
+    pics.cost.textContent = typeof p.usd === 'number' && Number.isFinite(p.usd) && p.usd >= 0 ? `$${p.usd.toFixed(2)}` : '';
+    if (list.lastElementChild !== pics.row) list.append(pics.row);
+  }
 
   function makeEntry(agentId) {
     const e = {
@@ -197,6 +218,7 @@ export function createAgentsPanel({ doc, host, onStopAgent, onClose }) {
       models.delete(id);
       refused.delete(id);
     }
+    renderPictures();
     scrollPicked();
   }
 

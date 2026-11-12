@@ -21,6 +21,19 @@
 @container drows (max-width:560px){
   .mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-ctl{grid-template-columns:minmax(0,1fr);}
 }
+/* Image generation (Design pictures): Service · Base URL · Model, then API key over two columns · Price. After the
+   block above, so its own grid wins over the field grid at the same weight. The Test picture is shown whole. */
+.mv-im-result{display:flex;gap:12px;align-items:center;}
+.mv-im-result[hidden],.mv-im-shot[hidden]{display:none;}
+.mv-im-shot{flex:none;width:96px;height:96px;object-fit:contain;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);}
+.mv-pv-card .mv-pv-row.mv-im-row .mv-pv-ctl{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 14px;align-items:start;}
+.mv-im-row .mv-im-key{grid-column:span 2;}
+.mv-im-row .mv-im-price{max-width:190px;}
+.mv-im-row .mv-im-price .input{max-width:120px;}
+@container drows (max-width:560px){
+  .mv-pv-card .mv-pv-row.mv-im-row .mv-pv-ctl{grid-template-columns:minmax(0,1fr);}
+  .mv-im-row .mv-im-key{grid-column:auto;}
+}
 /* New surface, new contrast: the house `.hint` / placeholder grey (--ink-3) sits at
    2.8:1 on a white card and is only tolerated where the light baseline predates the
    dark theme (test/fixtures/contrast-baseline-light.json — shrink, never grow). The

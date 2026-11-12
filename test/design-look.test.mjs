@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { cutLine, look, lookDoc, shown } from '../assets/design-kit/look.mjs';
+import { cropLine, cutLine, look, lookDoc, shown } from '../assets/design-kit/look.mjs';
 import { decodePNG, encodePNG } from '../assets/promo-kit/tools/analyze.mjs';
 import { findChrome } from '../assets/promo-kit/tools/find-tools.mjs';
 import { LOOK_KIT } from '../src/core/design/paths.mjs';
@@ -18,23 +18,43 @@ import { DESIGN_MAX_TURNS } from '../src/core/design/spawn-options.mjs';
 const noChrome = findChrome() ? false : 'no Chrome-family browser on this host (set WORCA_CHROME)';
 const SHELL = '<!doctype html><html><head><meta charset="utf-8"><!--worca:head--></head><body><!--worca:sections--><!--worca:foot--></body></html>';
 
-/** A two-slide deck in a temp work folder: `whole` fits its 200×100 picture in a box; `zoomed` shows 2/9 of it. */
-function deck() {
+/** A two-slide deck in a temp work folder: `whole` fits its 200×100 picture in a box; `zoomed` shows 2/9 of it.
+ *  `extra` adds four slides of a 200×100 picture with `object-fit: cover`: `fill` (made, in a 400×400 box, so cover
+ *  alone cuts it), `plain` (the same under assets/), `framed` (made, its 300×150 box past a 100×100 frame) and
+ *  `exact` (made, in a box of its own shape, so nothing cuts it). */
+function deck({ extra = false } = {}) {
+  const more = extra ? ['fill', 'plain', 'framed', 'exact'] : [];
   const work = join(mkdtempSync(join(tmpdir(), 'worca-look-')), 'work');
   const put = (rel, text) => { mkdirSync(join(work, rel, '..'), { recursive: true }); writeFileSync(join(work, rel), text); };
   const plan = { v: 1, kind: 'presentation', title: 'T', canvas: { w: 1920, h: 1080 }, notes: 'n',
-    sections: ['whole', 'zoomed', 'later'].map((id) => ({ id, job: id, brief: 'b', parts: ['html', 'css'] })) };
+    sections: ['whole', 'zoomed', 'later', ...more].map((id) => ({ id, job: id, brief: 'b', parts: ['html', 'css'] })) };
   put('plan.json', JSON.stringify(plan));
   put('shell.html', SHELL);
   put('tokens.css', ':root{--bg:#fff}');
   put('global.css', 'body{background:var(--bg)}');
-  put('.crew.json', JSON.stringify([{ id: 'whole', status: 'done' }, { id: 'zoomed', status: 'done' }, { id: 'later', status: 'working' }]));
+  put('.crew.json', JSON.stringify([{ id: 'whole', status: 'done' }, { id: 'zoomed', status: 'done' }, { id: 'later', status: 'working' }, ...more.map((id) => ({ id, status: 'done' }))]));
   put('assets/shot.png', Buffer.from(encodePNG(200, 100, new Uint8Array(200 * 100 * 3).fill(120))));
   put('sections/whole/index.html', '<section data-section="whole" data-label="Whole"><div class="box"><img src="assets/shot.png" width="200" height="100" alt="The run"></div></section>');
   put('sections/whole/style.css', '[data-section="whole"] .box{position:absolute;left:160px;top:140px;width:1600px;height:800px;overflow:hidden}\n[data-section="whole"] img{display:block;width:100%;height:100%;object-fit:contain}');
   put('sections/zoomed/index.html', '<section data-section="zoomed" data-label="Zoomed"><div class="win"><img src="assets/shot.png" width="200" height="100" alt="The run"></div></section>');
   put('sections/zoomed/style.css', '[data-section="zoomed"] .win{position:absolute;left:160px;top:140px;width:400px;height:400px;overflow:hidden}\n[data-section="zoomed"] img{position:absolute;left:-400px;top:0;width:1200px;height:600px;max-width:none}');
   put('sections/later/index.html', '<section data-section="later" data-label="Later"></section>');
+  if (extra) {
+    const bg = Buffer.from(encodePNG(200, 100, new Uint8Array(200 * 100 * 3).fill(60)));
+    put('assets/made/bg.png', bg);
+    put('assets/bg.png', bg);
+    const slide = (id, html, css) => {
+      put(`sections/${id}/index.html`, `<section data-section="${id}" data-label="${id}">${html}</section>`);
+      put(`sections/${id}/style.css`, css);
+    };
+    const img = (src) => `<img src="${src}" width="200" height="100" alt="A field">`;
+    const at = (id, w, h) => `[data-section="${id}"] img{position:absolute;left:160px;top:140px;width:${w}px;height:${h}px;max-width:none;object-fit:cover}`;
+    slide('fill', img('assets/made/bg.png'), at('fill', 400, 400));
+    slide('plain', img('assets/bg.png'), at('plain', 400, 400));
+    slide('framed', `<div class="frame">${img('assets/made/bg.png')}</div>`,
+      '[data-section="framed"] .frame{position:absolute;left:160px;top:140px;width:100px;height:100px;overflow:hidden}\n[data-section="framed"] img{display:block;width:300px;height:150px;max-width:none;object-fit:cover}');
+    slide('exact', img('assets/made/bg.png'), at('exact', 200, 100));
+  }
   return { work, plan };
 }
 
@@ -120,6 +140,36 @@ test('the command prints where each picture is and what is cut, and writes nothi
   }
 });
 
+test('cropLine: one plain line for a made picture that fills its box', () => {
+  assert.equal(cropLine({ src: 'assets/made/bg.png', natural: { w: 200, h: 100 }, shown: 0.5 }), 'cropped: assets/made/bg.png (200×100) fills its box and shows 50% of itself');
+});
+test('look: a made picture that only cover cuts is cropped; the same under assets/ or inside a cutting frame is cut', { skip: noChrome }, async () => {
+  const { work } = deck({ extra: true });   // deck() gains sections `fill` (assets/made/bg.png 200×100 in a 400×400 box, object-fit: cover),
+  // `plain` (the same picture as assets/bg.png), `framed` (assets/made/bg.png inside a 100×100 overflow:hidden frame) and `exact` (cover in its own 200×100 shape)
+  const out = mkdtempSync(join(tmpdir(), 'worca-look-out-'));
+  try {
+    const r = await look({ workDir: work, outDir: out });
+    assert.deepEqual(r.crops.map((c) => [c.section, c.src]), [['fill', 'assets/made/bg.png']]);
+    assert.ok(Math.abs(r.crops[0].shown - 0.5) < 0.02);
+    assert.deepEqual(r.cuts.map((c) => c.section).sort(), ['framed', 'plain', 'zoomed']);
+    const cmd = spawnSync(process.execPath, [LOOK_KIT, work, out], { encoding: 'utf8', timeout: 120000 });
+    assert.match(cmd.stdout, /^ {2}cropped: assets\/made\/bg\.png \(200×100\) fills its box and shows 50% of itself$/m);
+    assert.match(cmd.stdout, /^6 sections shot, 3 pictures cut, 1 cropped\.$/m);
+  } finally { rmSync(join(work, '..'), { recursive: true, force: true }); rmSync(out, { recursive: true, force: true }); }
+});
+
+test('look: a made picture is known by where its src lands however it is written; an inline picture keeps the cut rule', { skip: noChrome }, async () => {
+  const { work } = deck({ extra: true });
+  const dot = Buffer.from(encodePNG(2, 1, new Uint8Array(2 * 3).fill(90))).toString('base64');
+  writeFileSync(join(work, 'sections/exact/index.html'), `<section data-section="exact" data-label="exact"><img class="a" src="./assets/made/bg.png" alt="A field"><img class="b" src="data:image/png;base64,${dot}" alt="A dot"></section>`);
+  writeFileSync(join(work, 'sections/exact/style.css'), '[data-section="exact"] img{position:absolute;top:140px;width:400px;height:400px;max-width:none;object-fit:cover}\n[data-section="exact"] .a{left:160px}\n[data-section="exact"] .b{left:700px}');
+  const out = mkdtempSync(join(tmpdir(), 'worca-look-out-'));
+  try {
+    const r = await look({ workDir: work, outDir: out, ids: ['exact'] });
+    assert.deepEqual(r.crops.map((c) => c.src), ['./assets/made/bg.png'], 'the path as classifyRef reads it, not as written');
+    assert.deepEqual(r.cuts.map((c) => c.src.slice(0, 15)), ['data:image/png;'], 'a picture that is no file of work/ is cut, and does not stop the kit');
+  } finally { rmSync(join(work, '..'), { recursive: true, force: true }); rmSync(out, { recursive: true, force: true }); }
+});
 test('the command says how to call it when the work folder or the out folder is missing', () => {
   const r = spawnSync(process.execPath, [LOOK_KIT], { encoding: 'utf8', timeout: 30000 });
   assert.equal(r.status, 2);

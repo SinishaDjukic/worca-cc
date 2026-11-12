@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gsapPath } from '../../../assets/promo-kit/tools/init-film.mjs';
 import { kitFolder, kitScriptNames } from './kinds.mjs';
-import { inFolder, setAside } from './paths.mjs';
+import { inFolder, inWorkFolder, PICTURE_KIT, removeWorkEntry, setAside } from './paths.mjs';
 
 export const KIT_ROOT = fileURLToPath(new URL('../../../assets/design-kit/', import.meta.url));
 
@@ -90,6 +90,36 @@ export async function stageDesignKit({ kind, workDir } = {}) {
   try { await stat(from); } catch { return false; }
   stageTree(from, workDir, ['.kit'], runtimeFiles(folder, kind));
   return true;
+}
+
+/**
+ * Put the picture kit command into `<workDir>/.kit/picture.mjs`, for any kind: a round with pictures on has it, one
+ * without has it removed (unstagePictureKit). It sits at the root of `assets/design-kit/`, outside every kind's folder,
+ * so stageDesignKit never copies it. `.kit` is reached as stageTree reaches it (inFolder) and the file put there as a
+ * kit file is (stageFile): a link or a file at `.kit`, or a link at the name, is replaced, never written through.
+ * @param {{ workDir: string }} opts
+ * @returns {true}
+ */
+export function stagePictureKit({ workDir }) {
+  inFolder(workDir, ['.kit'], { create: true }, (to) => stageFile(PICTURE_KIT, to, 'picture.mjs'));
+  return true;
+}
+
+/**
+ * Take the picture kit out of design `designId`'s work/ (a round with pictures off): `.kit/picture.mjs` and the
+ * `.pictures/` folder with what it holds, each reached through the folder above it (inWorkFolder: a level that is not
+ * there is nothing to remove) and removed, or set aside when it cannot be (removeWorkEntry). A removal that fails
+ * all the same (a swap seen, a failed set-aside) is logged, never thrown, and never stops the other one.
+ * @param {{ designId: string }} opts
+ */
+export function unstagePictureKit({ designId }) {
+  for (const [parts, name] of [[['.kit'], 'picture.mjs'], [[], '.pictures']]) {
+    try {
+      inWorkFolder(designId, parts, {}, (base) => removeWorkEntry(designId, base, name, { aside: true }));
+    } catch (err) {
+      console.warn(`[worca-design] ${[...parts, name].join('/')} of ${designId} could not be removed (${err.code ?? err.message})`);
+    }
+  }
 }
 
 /**

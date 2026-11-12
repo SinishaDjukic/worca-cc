@@ -27,6 +27,7 @@ import { bridgedModelInfo } from '../config.mjs';
 import { budgetStatus, recordDesignCostDelta } from '../cost-budget.mjs';
 import { chatDescriptor } from '../engines/chat.mjs';
 import { teamRunDiscover } from '../git-free/team-repo.mjs';
+import { generatePicture, imagesReady } from '../images.mjs';
 import { writeJsonAtomic } from '../json-atomic.mjs';
 import { checkTeamTotalGate } from '../policy/gate.mjs';
 import { listProjects } from '../projects.mjs';
@@ -40,10 +41,11 @@ import { designEngineFor, designEngineRow } from './engines.mjs';
 import { createFrameEmitter } from './frames.mjs';
 import { boundedParser, scanShellSlots } from './html-scan.mjs';
 import { isBoardKind, isDocKind, stagesKitEachDrive } from './kinds.mjs';
-import { stageDesignKit, stageWorcaLook } from './kit.mjs';
+import { stageDesignKit, stagePictureKit, stageWorcaLook, unstagePictureKit } from './kit.mjs';
 import { readLookSource } from './look-source.mjs';
 import { designCaps } from './limits.mjs';
 import { CAPTURE_KIT, LOOK_KIT, crewFile, designWorkDir, ensureDesignFolders, kitDir, realSectionDir, removeSectionDir, sectionDir } from './paths.mjs';
+import { PICTURE_CALL_MS, createPictureDesk, keepPicture, savePicture } from './pictures.mjs';
 import { validateIntegration, validatePlan, validateRound } from './plan.mjs';
 import {
   answersPrompt, builderChangePrompt, builderPrompt, continuePrompt, integratePrompt, leadChangePrompt, leadPlanPrompt,
@@ -55,8 +57,8 @@ import { closeBuildRow } from './recover.mjs';
 import { createSemaphore } from './semaphore.mjs';
 import { designDenyRules, designSpawnOptions, resolveDesignModel } from './spawn-options.mjs';
 import {
-  OPEN_BUILD_STATUSES, createAgent, createBuild, getBuild, getDesign, latestBuild, listAgents, requireDesign, updateAgent,
-  updateBuild,
+  OPEN_BUILD_STATUSES, addPicture, createAgent, createBuild, getBuild, getDesign, latestBuild, listAgents, listPictures,
+  requireDesign, updateAgent, updateBuild,
 } from './store.mjs';
 import { createWorkWatcher } from './watch.mjs';
 
@@ -78,6 +80,14 @@ const CONTINUABLE = new Set(['paused', 'interrupted', 'stopped', 'error']);
 /** Section statuses a Continue with no `sections` field selects again. */
 const UNFINISHED = new Set(['writing', 'stopped', 'failed', 'planned']);
 const ERROR_MAX = 300;
+/** The relative kit line the lead is given while the round's picture desk is open: the command lives in work/.kit/. */
+const PICTURE_KIT_LINE = '.kit/picture.mjs';
+
+/** What the picture desk's `generate` throws when the round halted or a spend limit is reached before the call: the
+ *  desk answers the ask `the round stopped` and books nothing. */
+function abortError() {
+  return Object.assign(new Error('a spend limit is reached'), { name: 'AbortError' });
+}
 
 /** A refused request: `status` is the HTTP status a route answers with (M10). */
 export class DesignRefusal extends Error {
@@ -320,6 +330,10 @@ function withDefaults(deps = {}) {
     stageKit: stageDesignKit,
     stageLook: stageWorcaLook,
     createWorkWatcher,
+    imagesReady,
+    generatePicture,
+    createPictureDesk,
+    stagePictureKit,
     mock: undefined,
   };
   for (const [k, v] of Object.entries(deps || {})) if (v !== undefined) out[k] = v;
@@ -427,6 +441,10 @@ export class DesignBuild extends EventEmitter {
     this._end = null;
     this._settled = false;
     this._endedMs = null;
+    /** The round's picture desk while a drive runs with pictures on (`_openDesk` to `_closeDesk`), else null. */
+    this._desk = null;
+    /** The last desk's close; resolved while none closes, and it never rejects. */
+    this._deskClosed = Promise.resolve();
     /** Aborts every queue and slot wait of this build. */
     this._haltCtl = new AbortController();
     /** The build slots: builders on stage at once (M6), a waiting one included (L2.28). Sized by the design's Build
@@ -657,14 +675,19 @@ export class DesignBuild extends EventEmitter {
     };
   }
 
+  /** Runs one drive; a throw ends the round `error`, `engine-error`. Either way the round answers only once its picture
+   *  desk's close resolved: a throw closes the desk (`_abortAll`) and settles after that close, so its terminal frame
+   *  follows the desk's last frame and the row closes with no desk still writing. */
   async _guarded(drive) {
     try {
       await drive();
     } catch (err) {
       console.error(`[design] build ${this.id} failed: ${messageOf(err)}`);
       this._abortAll();
+      await this._deskClosed;
       if (!this._settled) this._settleSafely('error', 'engine-error');
     }
+    await this._deskClosed;
     return { status: this._status, reason: this._reason };
   }
 
@@ -675,6 +698,7 @@ export class DesignBuild extends EventEmitter {
    * Delete until the next restart.
    */
   _settleSafely(status, reason) {
+    this._closeDesk();
     try {
       this._settle(status, reason);
       return;
@@ -732,28 +756,37 @@ export class DesignBuild extends EventEmitter {
     this._denyRules = await designDenyRules({ projectDir: this._projectDir });
     const caps = await this._deps.readCaps({ projectDir: this._projectDir });
     this._cap = Number.isFinite(caps?.perRunCapUsd) ? caps.perRunCapUsd : null;
+    await this._openDesk();
     let pick = selection;
     if (this._leadStageDue(fresh)) {
       const failed = this.kind === 'change' ? await this._leadChange() : await this._leadPass();
-      if (this._end) return this._settleHalt();
-      if (failed) return this._settle('error', failed);
+      if (this._end) { await this._shutDesk(); return this._settleHalt(); }
+      if (failed) {
+        await this._shutDesk();
+        if (this._end) return this._settleHalt();
+        return this._settle('error', failed);
+      }
       pick = null;
     }
     this._setStatus('building');
     const queued = this._sections.filter((s) => s.status === 'planned' && (!pick || pick.has(s.id)) && this._inRound(s));
     await this._runBuilders(queued.map((section) => ({ section, prompt: null })));
-    if (this._end) return this._settleHalt();
+    if (this._end) { await this._shutDesk(); return this._settleHalt(); }
     const open = this._afterBuilders();
-    if (open) return this._settle('paused', open);
+    if (open) {
+      await this._shutDesk();
+      if (this._end) return this._settleHalt();
+      return this._settle('paused', open);
+    }
     if (!existsSync(this._integrationFile())) {
       let rework;
       try {
         rework = await this._integrate();
-        if (this._end) { this._dropIntegration(); return this._settleHalt(); }
+        if (this._end) { this._dropIntegration(); await this._shutDesk(); return this._settleHalt(); }
         if (rework.length) {
           this._setStatus('building');
           await this._runBuilders(rework);
-          if (this._end) { this._dropIntegration(); return this._settleHalt(); }
+          if (this._end) { this._dropIntegration(); await this._shutDesk(); return this._settleHalt(); }
         }
       } catch (err) {
         this._dropIntegration();
@@ -761,10 +794,97 @@ export class DesignBuild extends EventEmitter {
       }
       if (rework.length) {
         const again = this._afterBuilders();
-        if (again) return this._settle('paused', again);
+        if (again) {
+          await this._shutDesk();
+          if (this._end) return this._settleHalt();
+          return this._settle('paused', again);
+        }
       }
     }
     return this._finish();
+  }
+
+  /**
+   * Opens the round's picture desk (SPEC §5, D8) once the drive read worca's caps, after the last desk's close
+   * resolved, so a Continue right after a Stop never meets the old desk still writing. On while the design's switch is
+   * on and the image service is ready: the kit command is staged in work/.kit/ (every kind) and the desk polls
+   * work/.pictures/, its round's 40 counted from this build's `made` rows. Off: the command and work/.pictures/ go, so
+   * no prompt names a kit. A halt that landed during the drive's awaits opens nothing. Never throws: a kit or desk
+   * that fails to open is logged and the round runs with pictures off.
+   */
+  async _openDesk() {
+    await this._deskClosed;
+    if (this._end) return;
+    const designId = this.designId;
+    const allowed = () => getDesign(designId)?.pictures !== false && Boolean(this._deps.imagesReady());
+    let on = false;
+    try {
+      on = allowed();
+    } catch (err) {
+      console.error(`[design] build ${this.id}: pictures off for this round: ${messageOf(err)}`);
+    }
+    if (!on) {
+      unstagePictureKit({ designId });
+      return;
+    }
+    let desk = null;
+    try {
+      this._deps.stagePictureKit({ workDir: this._workDir });
+      const madeBefore = listPictures(designId).filter((p) => p.buildId === this.id && p.state === 'made').length;
+      desk = this._deps.createPictureDesk({
+        designId,
+        buildId: this.id,
+        madeBefore,
+        allowed,
+        generate: async (o) => {
+          const open = await this._spendOpen();
+          if (o.signal.aborted) throw abortError();
+          if (!open) {
+            this._halt('paused', 'total-limit');
+            throw abortError();
+          }
+          return this._deps.generatePicture({ ...o, timeoutMs: PICTURE_CALL_MS, mock: this._deps.mock });
+        },
+        save: (o) => savePicture({ designId, ...o }),
+        keep: (o) => keepPicture({ designId, ...o }),
+        record: (r) => addPicture({ ...r, designId, buildId: this.id, round: this.round }),
+        emit: (f) => this._frames.send('design-picture', { round: this.round, ...f }),
+        book: (o) => this._bookPicture(o),
+      });
+      this._desk = desk;
+      desk.start();
+    } catch (err) {
+      console.error(`[design] build ${this.id}: pictures off for this round: ${messageOf(err)}`);
+      if (desk) await this._shutDesk();
+      unstagePictureKit({ designId });
+    }
+  }
+
+  /** Closes the picture desk, if one is open, without waiting: it stops looking and aborts its calls at once, and
+   *  `_deskClosed` resolves once its last answer, row and frame are out. Idempotent and never throws, so a halt may
+   *  call it from inside a desk handler. */
+  _closeDesk() {
+    const d = this._desk;
+    if (!d) return;
+    this._desk = null;
+    try {
+      this._deskClosed = d.close().catch((err) => {
+        console.error(`[design] build ${this.id}: picture desk not closed: ${messageOf(err)}`);
+      });
+    } catch (err) {
+      console.error(`[design] build ${this.id}: picture desk not closed: ${messageOf(err)}`);
+    }
+  }
+
+  /** Closes the picture desk and waits for it: every way the drive settles runs this first. */
+  async _shutDesk() {
+    this._closeDesk();
+    await this._deskClosed;
+  }
+
+  /** The kit line the lead is given: while the round's desk is open, else null (no prompt names a kit). */
+  _pictureKit() {
+    return this._desk ? PICTURE_KIT_LINE : null;
   }
 
   _dropIntegration() { rmSync(this._integrationFile(), { force: true, maxRetries: 10, retryDelay: 100 }); }
@@ -945,6 +1065,7 @@ export class DesignBuild extends EventEmitter {
       projectDir: this._projectDir,
       captureKit: CAPTURE_KIT,
       kitContract: this._kitContract(),
+      pictureKit: this._pictureKit(),
       questionFile: this._questionFile(agent),
       planFile: this._planFile(),
       row: this._engineRow,
@@ -967,6 +1088,7 @@ export class DesignBuild extends EventEmitter {
       projectDir: this._projectDir,
       captureKit: CAPTURE_KIT,
       kitContract: this._kitContract(),
+      pictureKit: this._pictureKit(),
       questionFile: this._questionFile(agent),
       roundFile: this._roundFile(),
       pinBlock: this._start.pinBlock,
@@ -1348,7 +1470,8 @@ export class DesignBuild extends EventEmitter {
     const { findings } = lintDesign({ workDir: this._workDir, plan: this._plan });
     // The Look kit lives where worca is installed: only an engine that reads outside its folder can run it (P8 L8.9).
     const lookKit = this._engineRow?.readsOutsideCwd === false ? null : LOOK_KIT;
-    const prompt = integratePrompt({ findings, integrationFile: this._integrationFile(), lookKit });
+    // The picture kit lives in work/.kit/: every engine can run it, one that reads only its own folder too.
+    const prompt = integratePrompt({ findings, integrationFile: this._integrationFile(), lookKit, pictureKit: this._pictureKit() });
     // A question file means no process runs until the answer (U3): the lead re-enters `waiting`.
     this._reopenAgent(lead, 'Integrate', this._readAsk(lead) ? 'waiting' : 'starting');
     const outcome = await this._runAgentLoop(lead, prompt, { stage: 'integrate', restart: prompt });
@@ -1394,6 +1517,8 @@ export class DesignBuild extends EventEmitter {
       await this._watcher.rescan();
       this._closeWatcher();
     }
+    // No picture lands after dist: the desk closes and its last answer is out before the assembler reads work/.
+    await this._shutDesk();
     if (this._offHook() && isBoardKind(this._design.kind)) await this._deps.stageKit({ kind: this._design.kind, workDir: this._workDir });
     // Any agent can write over assets/worca/ (Bash is open to every engine), so worca's fonts are put back before dist.
     // Best-effort: every section is done and integration.json written, so a throw here would leave a round no Continue
@@ -1780,6 +1905,7 @@ export class DesignBuild extends EventEmitter {
       row: this._engineRow,
       bridgedInfo: bridgedModelInfo(agent.model),
       kind: this._design.kind,
+      pictures: agent.role === 'lead' && Boolean(this._desk),
       agentId: agent.id,
       buildId: this.id,
       designId: this.designId,
@@ -1824,6 +1950,21 @@ export class DesignBuild extends EventEmitter {
       updateBuild(this.id, { costUsd: this._costUsd });
     }
     this._afterCost(agent);
+  }
+
+  /** Books one made picture, once, from the desk's handler (browser open or not): above $0 one ledger row with no
+   *  agent (a picture counts in its round's cost and the design's total, D9, D14) and the build row's total. Then, as
+   *  `_afterCost`, the build's fresh figures and the per-run cap. */
+  _bookPicture({ costUsd, model } = {}) {
+    if (typeof costUsd === 'number' && costUsd > 0) {
+      this._costUsd += costUsd;
+      recordDesignCostDelta({
+        designId: this.designId, buildId: this.id, agentId: null, amountUsd: costUsd, model: model ?? null, tsMs: this._deps.now(),
+      });
+      updateBuild(this.id, { costUsd: this._costUsd });
+    }
+    this._emitBuild();
+    if (this._capReached()) this._halt('paused', 'total-limit');
   }
 
   /**
@@ -2039,10 +2180,13 @@ export class DesignBuild extends EventEmitter {
     this._abortAll();
   }
 
+  /** Every halt (Stop, pause, drain, limit) and a thrown drive: the picture desk closes too, never awaited here, since
+   *  a halt can come from inside a desk handler; the drive's settle awaits it. */
   _abortAll() {
     this._haltCtl.abort();
     for (const a of this._running) a.controller?.abort();
     for (const a of this._agents) this._wake(a, null);
+    this._closeDesk();
   }
 
   /**
@@ -2081,8 +2225,10 @@ export class DesignBuild extends EventEmitter {
    * so does a section still `writing`; a queued section stays `planned`. Under a `paused` settle a waiting agent
    * stays `waiting`, its section `writing` and its ask file kept (M12, L2.29): a Continue asks again. A watch row's
    * watcher closes first: on Windows each watch holds a folder handle, and restore and delete refuse an open build.
+   * The picture desk closes first too, only as a fallback: every way the drive settles closed it and waited already.
    */
   _settle(status, reason) {
+    this._closeDesk();
     this._closeWatcher();
     const endedMs = this._deps.now();
     const kept = new Set();

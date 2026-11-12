@@ -10,6 +10,11 @@ export const PDF_KINDS = Object.freeze(['presentation', 'pitch', 'document']);
 export const DESIGN_FAST_LABEL = 'up to 12';
 // Build fast on a new design: on, until the person turns it off (the start composer's switch and the store agree).
 export const DESIGN_FAST_DEFAULT = true;
+// Pictures on a new design (SPEC D7): on, until the person turns the switch off; it takes effect once the image
+// service is set up (the gear's switch and the store agree).
+export const DESIGN_PICTURES_DEFAULT = true;
+// A made picture's name (SPEC D8): the kit command, the desk and the store check it alike; it names the file too.
+export const DESIGN_PICTURE_NAME_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 // The engines Design builds on (core/design/engines.mjs DESIGN_ENGINES, gate not `refused`, the mock left out): the
 // Models page lists a Design lead and Design builders row for each.
 export const DESIGN_ENGINE_NAMES = Object.freeze(['claude', 'codex', 'copilot', 'cursor', 'gemini', 'opencode', 'qwen']);

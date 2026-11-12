@@ -11,7 +11,8 @@
 // `brief` in `<cwd>/../../plan.json` (its section id is `basename(cwd)`, never a prompt line, because a resume, rework
 // or change prompt names no section); the lead and integrate read cost and rework tokens from their prompt, else from
 // `<cwd>/plan.json` `notes`. A once token fires in the first process of its folder only (L2.30), a fresh start after a
-// lost session included.
+// lost session included. The lead's picture tokens run the real picture kit its prompt names, as a lead's shell would.
+import { execFile } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
@@ -26,6 +27,17 @@ const COST_RE = /\bMOCK_COST=(\d+(?:\.\d+)?)/;
 const REWORK_RE = /\bMOCK_REWORK=([a-z][a-z0-9-]*)/g;
 const ROUND_ADD_RE = /\bMOCK_ROUND_ADD=([a-z][a-z0-9-]*):([a-z][a-z0-9-]*)/g;
 const ROUND_REMOVE_RE = /\bMOCK_ROUND_REMOVE=([a-z][a-z0-9-]*)/g;
+/** The lead's picture asks: `MOCK_PICTURE=<name>:<shape>` is made, `MOCK_PICTURE_FAIL=` is refused (`MOCK_REFUSE` in its
+ *  description). `\bMOCK_PICTURE=` never matches the longer tokens. */
+const PICTURE_RE = /\bMOCK_PICTURE=([a-z0-9][a-z0-9-]{0,39}):(wide|tall|square)\b/g;
+const PICTURE_FAIL_RE = /\bMOCK_PICTURE_FAIL=([a-z0-9][a-z0-9-]{0,39}):(wide|tall|square)\b/g;
+/** `--wait-ms <n>` for every run of the kit, inside the command's own range (else ignored, so a typo never ends it 2). */
+const PICTURE_WAIT_RE = /\bMOCK_PICTURE_WAIT_MS=(\d{1,6})\b/;
+const PICTURE_WAIT_MAX = 100000;
+/** ` MOCK_DELAY_MS=<n>` in every description: the mock image service waits that long. */
+const PICTURE_DELAY_RE = /\bMOCK_PICTURE_DELAY_MS=(\d{1,5})\b/;
+/** The name-alone runs after a `3` (still in the making), at most. */
+const PICTURE_WAITS = 20;
 /** `MOCK_LOOK=<word>`: the source a document lead writes on brand.md's `Look source:` line (default `worca`). */
 const LOOK_RE = /\bMOCK_LOOK=([a-z]+)/;
 const TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep'];
@@ -419,6 +431,47 @@ function leadMemo(prompt, cwd, session) {
   return memo;
 }
 
+/** One run of the picture kit, each field one argument: resolves to its exit code (a signal or spawn error's name when
+ *  it has none). A run the round's signal ended rejects as the abort, never as a code. */
+function runPictureKit(args, cwd, signal) {
+  return new Promise((done, fail) => {
+    execFile(process.execPath, args, { cwd, signal }, (err) => {
+      if (!err) return done(0);
+      if (err.name === 'AbortError' || err.code === 'ABORT_ERR') return fail(abortError());
+      return done(err.code ?? err.signal);
+    });
+  });
+}
+
+/**
+ * The lead's pictures (`MOCK_PICTURE`, `MOCK_PICTURE_FAIL`), only when the raw prompt names a `Picture kit:` (a plan or
+ * change prompt; never a fix, answer or continue). Each name runs once per session, in brief order: the whole ask, then
+ * the name alone while the command ends `3`, at most PICTURE_WAITS times. `ok` is false once a picture's last code is
+ * neither 0 nor 1, and the pictures after it are not asked.
+ * @returns {Promise<{ tail: string, ok: boolean }>} `tail` is ` Pictures: <name> <codes>.` per picture asked.
+ */
+async function leadPictures({ cwd, prompt, text, sessionId, signal }) {
+  const kit = linePath(prompt, 'Picture kit', cwd);
+  if (!kit) return { tail: '', ok: true };
+  const w = Number((PICTURE_WAIT_RE.exec(text) || [])[1]);
+  const wait = w >= 1 && w <= PICTURE_WAIT_MAX ? ['--wait-ms', String(w)] : [];
+  const delay = PICTURE_DELAY_RE.exec(text);
+  const asks = [
+    ...[...text.matchAll(PICTURE_RE)].map((m) => ({ at: m.index, name: m[1], shape: m[2], refuse: false })),
+    ...[...text.matchAll(PICTURE_FAIL_RE)].map((m) => ({ at: m.index, name: m[1], shape: m[2], refuse: true })),
+  ].sort((a, b) => a.at - b.at);
+  let tail = '';
+  for (const { name, shape, refuse } of asks) {
+    if (!firstTime(cwd, `MOCK_PICTURE=${name}@${sessionId}`)) continue;
+    const desc = [`Mock picture of ${name}, no text`, ...(delay ? [`MOCK_DELAY_MS=${Number(delay[1])}`] : []), ...(refuse ? ['MOCK_REFUSE'] : [])].join(' ');
+    const codes = [await runPictureKit([kit, ...wait, name, shape, desc], cwd, signal)];
+    for (let i = 0; codes.at(-1) === 3 && i < PICTURE_WAITS; i += 1) codes.push(await runPictureKit([kit, ...wait, name], cwd, signal));
+    tail += ` Pictures: ${name} ${codes.join(',')}.`;
+    if (codes.at(-1) !== 0 && codes.at(-1) !== 1) return { tail, ok: false };
+  }
+  return { tail, ok: true };
+}
+
 async function runLead({ cwd, prompt, sessionId, session, emit, signal }) {
   const memo = leadMemo(prompt, cwd, session);
   const text = memo.text;
@@ -429,6 +482,9 @@ async function runLead({ cwd, prompt, sessionId, session, emit, signal }) {
   await proc.init();
   if (has(text, 'MOCK_FAIL_LEAD')) return proc.fail(bookCost(session, cost));
   if (has(text, 'MOCK_HANG_LEAD')) return proc.hang(resolve(cwd, 'tokens.css'), TOKENS_CSS);
+  // After the session event (the build sees the lead before the long command) and before any file is written.
+  const pictures = await leadPictures({ cwd, prompt, text, sessionId, signal });
+  if (!pictures.ok) return proc.fail(bookCost(session, cost));
   let reply;
   if (has(text, 'MOCK_ASK_LEAD') && memo.questionFile && firstTime(cwd, 'MOCK_ASK_LEAD')) {
     await proc.write(memo.questionFile, JSON.stringify(QUESTIONS));
@@ -455,6 +511,7 @@ async function runLead({ cwd, prompt, sessionId, session, emit, signal }) {
     await proc.write(planPath, `${JSON.stringify(bad ? { ...plan, sections: [] } : plan, null, 2)}\n`);
     reply = `Planned ${plan.sections.length} sections.`;
   }
+  reply += pictures.tail;
   await proc.say(reply);
   await proc.finish(reply, bookCost(session, cost));
   return { text: reply, exitCode: 0 };

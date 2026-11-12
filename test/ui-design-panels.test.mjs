@@ -257,3 +257,16 @@ test('a repaint that drops, moves or disables the focused Stop keeps the focus i
   doc.activeElement.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal(panel.isOpen(), false, 'and Esc closes it');
 });
+
+test('the Pictures row: last, `{n} made` and their dollars, a finished row\'s ink, no dot, no status, no Stop; none made, no row', () => {
+  const { panel, el } = rigPanel(); panel.open();
+  panel.paint({ ...ROWS, pictures: { made: 2, failed: 1, usd: 0.08 } });
+  const last = el.querySelector('.dz-pop-list').lastElementChild;
+  const cell = (c) => last.querySelector(c).textContent;
+  assert.deepEqual([last.className, cell('.dz-aname'), cell('.dz-astat'), cell('.dz-aact'), cell('.dz-acost'), last.querySelector('button'), last.querySelector('.dz-adot').style.background],
+    ['dz-arow is-gone dz-arow-pics', 'Pictures', '', '2 made', '$0.08', null, '']);
+  panel.paint({ ...ROWS, pictures: { made: 1, failed: 0, usd: 0.04 } });
+  assert.equal(el.querySelector('.dz-arow-pics .dz-aact').textContent, '1 made');
+  panel.paint({ ...ROWS, pictures: { made: 0, failed: 1, usd: 0 } });
+  assert.equal(el.querySelector('.dz-arow-pics'), null);
+});

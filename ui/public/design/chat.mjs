@@ -12,10 +12,11 @@ import { makeSwitch } from '../switch.mjs';
 import { buildChatQuestion, buildChatReceipt } from '../chat/question.mjs';
 import { createDotOrbs, turnPhase } from '../dot-orb.mjs';
 import { bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
-import { DESIGN_FAST_LABEL } from '../../../src/shared/design-names.mjs';
+import { DESIGN_FAST_LABEL, DESIGN_PICTURES_DEFAULT } from '../../../src/shared/design-names.mjs';
 import { createModelPills } from './model-pills.mjs';
-import { createComposerSettings } from './composer-settings.mjs';
+import { createComposerSettings, createPicturesRow } from './composer-settings.mjs';
 import { createBuildNarration, nameList } from './narration.mjs';
+import { createPictureStrip, openPictureViewer, madeWords, failedWords } from './pictures.mjs';
 import { currentLevel, levelShows } from '../ui-level.mjs';
 import { renderAskForm } from '../ask/form-renderer.mjs';
 
@@ -319,10 +320,13 @@ const WEB_TOOLS = Object.freeze(['WebSearch', 'WebFetch', 'web_search', 'web_fet
 const plural = (n, one, many) => (n === 1 ? one : `${n} ${many}`);
 /**
  * What a reply's tool calls did, as one sentence (the folded row's words): `Looked at the design, 4 attachments and
- * 5 files`, `Looking at…` while one still runs, the failures counted after it.
+ * 5 files`, `Looking at…` while one still runs, the failures counted after it. Its rounds' pictures are the last item
+ * of the same list (`Looked at your projects, 3 files and made 1 picture`; past four the looked-at items fold, the
+ * pictures stay), `Made 1 picture` with no tool, and the failed ones close the line (`· 1 picture failed`).
  * @param {object[]} tools the reply's step blocks
+ * @param {{made?: number, failed?: number}} [pics] the finished asks of the reply's rounds
  */
-export function stepsSentence(tools) {
+export function stepsSentence(tools, { made = 0, failed = 0 } = {}) {
   const names = tools.map(shortTool);
   const n = (list) => names.filter((x) => list.includes(x)).length;
   const parts = [];
@@ -337,8 +341,13 @@ export function stepsSentence(tools) {
   const other = names.filter((x) => !known.includes(x)).length;
   if (other) parts.push(plural(other, parts.length ? 'one more thing' : 'one thing', parts.length ? 'more things' : 'things'));
   const running = tools.some((b) => (b.status || 'running') === 'running');
-  const failed = tools.filter((b) => b.status === 'error').length;
-  return `${running ? 'Looking at' : 'Looked at'} ${nameList(parts, 4)}${failed ? ` · ${failed} failed` : ''}`;
+  const broke = tools.filter((b) => b.status === 'error').length;
+  // nameList's fold, kept as items so the pictures join the same list with its one `and`.
+  const looked = parts.length > 4 ? [...parts.slice(0, 4), `${parts.length - 4} more`] : parts;
+  const items = made > 0 ? [...looked, madeWords(made)] : looked;
+  const list = nameList(items, items.length);
+  const lead = parts.length ? `${running ? 'Looking at' : 'Looked at'} ${list}` : list.replace(/^m/, 'M');
+  return [lead, broke ? `${broke} failed` : '', failed > 0 ? failedWords(failed) : ''].filter(Boolean).join(SEP);
 }
 /** How many of a build's milestone lines the thread shows before `Show all`. */
 const LINES_SHOWN = 4;
@@ -355,14 +364,17 @@ const PIN_PATH = 'M12 17v5M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.2V16a1
  * @param {{doc: Document, host: HTMLElement, design: object, fetch: Function, sendWs?: Function,
  *   renderMarkdown?: Function|null, confirm?: Function|null, setPick?: (on: boolean) => void,
  *   onRestored?: (r: {version: number, restoredFrom: number}) => void, planList?: {el: HTMLElement}|null,
- *   unpin?: (id: string, path: string) => void, initial?: {text: string, files: object[]}|null}} o  `confirm` is app.js's
+ *   unpin?: (id: string, path: string) => void, initial?: {text: string, files: object[]}|null,
+ *   pictures?: object|null}} o  `confirm` is app.js's
  *   confirmModal (absent = go ahead, a throw = no). `initial` is the Library's first message (P6 takeStart): once the
  *   thread has loaded it goes through the dock's own send, files included, so a refusal stays in the input with its note.
+ *   `pictures` is the design's picture log (pictures.mjs `createPictureLog`; the view feeds it): a live round's
+ *   pictures sit after the feed's lines, a finished or paused round's under its reply's step line.
  * @returns {{client: object, pushAskFrame: Function, pushDesignFrame: Function, addPin: Function, onHello: Function,
  *   repaint: Function, destroy: Function}}
  */
 export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = () => {}, renderMarkdown = null, confirm: confirmFn = null,
-  setPick = () => {}, onRestored = () => {}, planList = null, unpin = () => {}, initial = null, onBusy = () => {} }) {
+  setPick = () => {}, onRestored = () => {}, planList = null, unpin = () => {}, initial = null, onBusy = () => {}, pictures = null }) {
   const win = doc.defaultView || globalThis;
   const row0 = design && typeof design === 'object' ? design : {};
   const designId = typeof row0.id === 'string' ? row0.id : '';
@@ -402,6 +414,9 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   const restoreErr = new Map(); // round card id -> the refusal shown in its row
   const questions = createQuestionState({ designId });
   const narration = createBuildNarration({ designId, kind: row0.kind });
+  // A frame or a row that changes what the log shows repaints the thread (its tiles), whatever reached the dock.
+  const unsubscribe = pictures ? pictures.subscribe(() => schedule()) : () => {};
+  let viewer = null;            // the open picture viewer
   const openSteps = new Set();  // reply ids whose folded tool rows are open
   let allLines = false;         // the build's milestone lines: every one, or the last few
   let buildEl = null;
@@ -451,8 +466,12 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   stopBtn.hidden = true;
   const sendBtn = iconBtn('btn btn-primary btn-icon ask-send dsc-send', 'Send', 'arrow-up');
   const row = h('div', 'ask-composer-row dsc-row');
+  // Pictures under Build fast, read from the design row; the image service's state is asked for when the dock is made
+  // and at each open of the gear. The popup opens upward, so a row that appears while it is open places it again.
+  const pics = createPicturesRow({ doc, fetch: fetchFn, checked: typeof row0.pictures === 'boolean' ? row0.pictures : DESIGN_PICTURES_DEFAULT });
+  const loadPics = () => pics.load().then((c) => { if (c) settings.reposition(); });
   // The models and Build fast sit in one popup behind a gear, so the row keeps to Attach, Point, the gear and Send.
-  const settings = createComposerSettings({ doc, win, mode: 'up' });
+  const settings = createComposerSettings({ doc, win, mode: 'up', onOpen: () => { void loadPics(); } });
   row.append(attachBtn, fileInput, pointBtn, settings.el, h('span', 'dz-spacer'), stopBtn, sendBtn);
   // The lead's and the builders' models, remembered on the design (PATCH): a change applies from the next round.
   const pills = createModelPills({ doc, win, fetch: fetchFn, mode: 'beside', parent: settings.panel, url: () => (designId ? `/api/design/${enc(designId)}/models` : null),
@@ -469,7 +488,7 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
         return 'The model was not saved.';
       }
     } });
-  settings.fill(pills.el, settings.divider(), sw.row);
+  settings.fill(pills.el, settings.divider(), sw.row, pics.el);
   const box = h('div', 'ask-composer-box');
   box.append(pinRow, fileRow, input, row);
   const composer = h('div', 'ask-composer dsc-composer');
@@ -590,10 +609,31 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   }
   /** What a C-5 frame can change in the thread (M5): the mid-build questions (their cards, the `sr` line) and whether a
    *  build is open (each receipt row's Back). A new round's chips and Point repaint in onBuildFrame. */
-  const frameShown = () => JSON.stringify([buildLive, questions.list().map((q) => [q.askId, q.state, q.buildId, q.heading, q.questions]),
-    feedShown()]);
-  /** The build's milestone lines the thread shows now: none while no build runs. */
-  function feedShown() { const v = narration.view(); return v.live && v.lines.length ? v.lines : null; }
+  const frameShown = () => {
+    const v = narration.view();
+    return JSON.stringify([buildLive, questions.list().map((q) => [q.askId, q.state, q.buildId, q.heading, q.questions]),
+      feedShown(v), liveDone(v)]);
+  };
+  /** The live round's tiles (a quiet one per picture in the making, else the last made one of its name). */
+  const livePics = (v) => (v.live && pictures && Number.isSafeInteger(v.round) ? pictures.shown(v.round, { live: true }) : []);
+  /** The build's milestone lines and live tiles the thread shows now: none while no build runs, or it has neither. */
+  function feedShown(v = narration.view()) {
+    const pics = livePics(v);
+    return v.live && (v.lines.length || pics.length) ? [v.lines, pics.map((p) => [p.name, p.state, p.id])] : null;
+  }
+  /** The live round while it has finished asks: a round that pauses or ends moves them into its reply (a failed one
+   *  too, which shows no tile), so a frame that only ends the round still repaints. Never the round alone: a round
+   *  going live with nothing to show must not touch the thread (M5). */
+  const liveDone = (v) => (pictures && v.live && Number.isSafeInteger(v.round) && pictures.ofRound(v.round).length ? v.round : null);
+  /** A reply's round receipts, and the rounds they name (each once). */
+  const roundCards = (msg) => blocksOf(msg).filter((b) => b.kind === 'card' && typeof b.id === 'string' && b.card && b.card.type === 'design-round');
+  const roundNos = (msg) => [...new Set(roundCards(msg).map((b) => b.card.round).filter(Number.isSafeInteger))];
+  /** A round that is not live now: its pictures sit under its reply's step line (a live one's are in the feed, a paused
+   *  one is not live). */
+  const settled = (r) => { const v = narration.view(); return !(v.live && v.round === r); };
+  /** A reply's pictures: every finished ask of its settled rounds, and the tiles they show (the last made one per name). */
+  const picsOf = (msg) => (pictures ? roundNos(msg).filter((r) => settled(r)).flatMap((r) => pictures.ofRound(r)) : []);
+  const tilesOf = (msg) => (pictures ? roundNos(msg).filter((r) => settled(r)).flatMap((r) => pictures.shown(r, { live: false })) : []);
 
   // ── Build fast (L5.10): remembered on the design ─────────────────────────────────────────────────────────────
   function paintFast() {
@@ -618,6 +658,27 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
     if (error) {
       fast = !want;
       paintFast();
+      setNote(error);
+    }
+  });
+
+  // ── Pictures (SPEC D7): remembered on the design, as Build fast. A round already running takes off at its next ask
+  // (the build asks the switch before each one) and on from the next round (its picture desk opens as a round starts).
+  pics.input.addEventListener('change', async () => {
+    const want = pics.input.checked;
+    setNote('');
+    pics.input.disabled = true;
+    let error = '';
+    try {
+      const r = await fetchFn(`/api/design/${enc(designId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pictures: want }) });
+      if (!r.ok) error = errorOf(await readJson(r), `The Pictures switch was not saved (HTTP ${r.status}).`);
+    } catch {
+      error = 'The Pictures switch was not saved.';
+    }
+    if (destroyed) return;
+    pics.input.disabled = false;
+    if (error) {
+      pics.input.checked = !want;
       setNote(error);
     }
   });
@@ -941,14 +1002,28 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
     if (status === 'error' && typeof b.error === 'string' && b.error) el.title = b.error;
     return el;
   }
-  /** A reply's tool calls as ONE row: a sentence saying what they looked at, closed until asked. Its rows show from
-   *  Advanced on (as Ask's): a Simple dock gets the sentence alone, with nothing to open. */
-  function stepsRow(msgId, tools) {
+  /** One finished ask in an opened step line (board Failed): what it made and what it cost when known, or why it
+   *  failed in the feed's words. */
+  function picLine(p) {
+    const reason = typeof p.reason === 'string' ? p.reason.trim() : '';
+    const words = p.state === 'made'
+      ? `Made ${p.name}${SEP}${p.shape}${p.costUsd != null ? `${SEP}$${p.costUsd.toFixed(2)}` : ''}`
+      : (reason ? `${p.name}: ${reason}` : `${p.name} failed.`);
+    const el = h('div', `dsc-tool dsc-pic-line dz-reply-meta${p.state === 'made' ? '' : ' is-error'}`, words);
+    el.dataset.minLevel = 'advanced';                    // as the tool lines beside it
+    return el;
+  }
+  /** A reply's tool calls as ONE row: a sentence saying what they looked at, and the pictures its rounds made, closed
+   *  until asked. Its rows show from Advanced on (as Ask's): a Simple dock gets the sentence alone, with nothing to
+   *  open. Opened, the tool lines come first, then each finished ask in its round's order. */
+  function stepsRow(msgId, tools, pics = []) {
     const canOpen = levelShows(currentLevel(doc), 'advanced');
     const open = canOpen && openSteps.has(msgId);
     const wrap = h('div', 'dsc-steps dz-reply-meta');
     const head = h(canOpen ? 'button' : 'div', 'dsc-steps-head');
-    head.append(h('span', 'dsc-steps-text', stepsSentence(tools)));
+    const made = pics.filter((p) => p.state === 'made').length;
+    const failed = pics.filter((p) => p.state === 'failed').length;
+    head.append(h('span', 'dsc-steps-text', stepsSentence(tools, { made, failed })));
     if (canOpen) {
       head.type = 'button';
       head.setAttribute('aria-expanded', String(open));
@@ -964,16 +1039,19 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
     if (open) {
       const body = h('div', 'dsc-steps-body');
       for (const b of tools) body.append(toolLine(b));
+      for (const p of pics) body.append(picLine(p));
       wrap.append(body);
     }
     return wrap;
   }
-  /** The running build in sentences (narration.mjs): its milestones so far, the last few unless asked for all. What it
-   *  does right now is the composer's live line. Null when no build runs. */
+  /** The running build in sentences (narration.mjs): its milestones so far, the last few unless asked for all, then
+   *  the round's pictures so far (boards BuildMaking, DeckDone). What it does right now is the composer's live line.
+   *  Null when no build runs, or it has neither a line nor a picture to show. */
   function buildFeed() {
     const v = narration.view();
-    if (!v.live || !v.lines.length) { buildEl = null; buildSig = ''; return null; }
-    const sig = JSON.stringify([v.lines, allLines]);
+    const shown = feedShown(v);
+    if (!shown) { buildEl = null; buildSig = ''; return null; }
+    const sig = JSON.stringify([shown, allLines]);
     if (buildEl && sig === buildSig) return buildEl;
     const el = h('div', 'dsc-build dz-reply');
     const hiddenN = allLines ? 0 : Math.max(0, v.lines.length - LINES_SHOWN);
@@ -984,9 +1062,24 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
       el.append(more);
     }
     for (const l of v.lines.slice(hiddenN)) el.append(h('p', l.tone === 'fail' ? 'dsc-build-line is-fail' : 'dsc-build-line', l.text));
+    const pics = livePics(v);
+    if (pics.length) el.append(createPictureStrip({ doc, designId, pictures: pics, onOpen: openViewer }));
     buildEl = el;
     buildSig = sig;
     return el;
+  }
+  /** A made picture's viewer (one at a time). Its close hands the focus back to the tile, or to the tile painted in
+   *  its place (found by its round and name, never by a selector built from the name), else to the input. */
+  function openViewer(p, tile) {
+    if (viewer) viewer.close({ restore: false });
+    const key = `${p.round}|${p.name}`;
+    const refocus = () => {
+      for (const b of thread.querySelectorAll('button.dsc-pic')) {
+        if (b.dataset.pic === key) { b.focus(); return; }
+      }
+      input.focus();
+    };
+    viewer = openPictureViewer({ doc, designId, picture: p, opener: tile, refocus });
   }
   function answer(text) {
     const div = h('div', 'dsc-text dz-reply');
@@ -1047,10 +1140,12 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   function assistantRow(msg, live, seen, seenReplies) {
     if ((live && live.messageId === msg.id) || typeof msg.id !== 'string') return replyRow(msg, live, seen);
     const blocks = blocksOf(msg);
-    const rounds = blocks.filter((b) => b.kind === 'card' && typeof b.id === 'string' && b.card && b.card.type === 'design-round');
-    // Its fields and blocks, and each receipt row's own signature (its Back reads more than the block).
+    const rounds = roundCards(msg);
+    // Its fields and blocks, and each receipt row's own signature (its Back reads more than the block). With a picture
+    // log, each round's pictures once it is no longer live: the reply draws again when its round ends or a row lands.
+    const pics = pictures ? roundNos(msg).map((r) => [r, settled(r), settled(r) ? pictures.sig(r) : '']) : null;
     const sig = JSON.stringify([msg.role, msg.status, msg.text, msg.costUsd, msg.errorMessage, msg.reason, blocks, rounds.map(roundSig),
-      openSteps.has(msg.id), currentLevel(doc)]);
+      openSteps.has(msg.id), currentLevel(doc), pics]);
     for (const b of blocks) if (b.kind === 'card' && typeof b.id === 'string') seen.add(b.id);   // a reused row keeps its cards
     return cached(replyEls, msg.id, sig, () => replyRow(msg, null, seen), seenReplies);
   }
@@ -1058,17 +1153,27 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
     const isLive = Boolean(live && live.messageId === msg.id);
     const wrap = h('div', 'ask-msg dsc-reply');
     const steps = stepBlocks(blocksOf(msg));
+    const pics = picsOf(msg);
     let stepsPlaced = false;
+    // The folded row, then its rounds' pictures as tiles (after its opened body).
+    const placeSteps = () => {
+      stepsPlaced = true;
+      wrap.append(stepsRow(msg.id, steps, pics));
+      const tiles = tilesOf(msg);
+      if (tiles.length) wrap.append(createPictureStrip({ doc, designId, pictures: tiles, onOpen: openViewer }));
+    };
     for (const b of blocksOf(msg)) {
       if (b.kind === 'tool') {
         // Every call of the reply sits in one folded row, where the first one happened.
-        if (!stepsPlaced && steps.includes(b)) { wrap.append(stepsRow(msg.id, steps)); stepsPlaced = true; }
+        if (!stepsPlaced && steps.includes(b)) placeSteps();
       }
       else if (b.kind === 'notice' && typeof b.text === 'string' && b.text) wrap.append(h('p', 'dsc-notice dz-reply dz-reply-meta', b.text));
       else if (b.kind === 'card' && typeof b.id === 'string' && b.card && typeof b.card === 'object') {
         if (b.card.type === 'design-questions') {
           wrap.append(cached(cardEls, b.id, JSON.stringify([b.state, b.card]), () => clarifyCard(b), seen));
         } else if (b.card.type === 'design-round') {
+          // A reply with pictures and no step of its own gets the row by itself, just before its first round.
+          if (!stepsPlaced && !steps.length && pics.length) placeSteps();
           wrap.append(cached(cardEls, b.id, roundSig(b), () => roundRow(b), seen));
         }
       }
@@ -1212,6 +1317,7 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   paintPins();
   render();
   void pills.load();
+  void loadPics();
   (async () => {
     let body = null;
     try {
@@ -1259,6 +1365,9 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      // No focus goes into a dock being taken down.
+      if (viewer) viewer.close({ restore: false });
+      unsubscribe();
       orbs.destroy();
       pills.destroy();
       settings.destroy();

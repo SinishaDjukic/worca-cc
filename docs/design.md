@@ -150,11 +150,20 @@ agents ring it on the whole picture or use a picture of that part alone.
 **The lead looks before it judges.** When the sections are built, the lead runs worca's Look kit: one command that
 saves a picture of every section as it stands and lists each picture that its frame cuts. It reads those pictures,
 then sends back a section that breaks a rule. The Look kit needs Chrome or Edge, like the capture kit; without one
-the lead judges from the files alone.
+the lead judges from the files alone. A made picture that fills its box is listed as cropped, not cut.
 
 **No picture comes from the web.** Agents are told never to download, copy or link one: pictures come from the
-project, from what you attach, or are drawn. A finished design loads nothing from another site, so every export
-works offline, and a link to another site's file is reported to the lead as an error.
+project, from what you attach, are made by the image service you set up, or are drawn. A finished design loads
+nothing from another site, so every export works offline, and a link to another site's file is reported to the lead
+as an error.
+
+**Made pictures.** When an image service is set up (see [Image generation](image-generation.md)) and the design's
+**Pictures** switch is on, the lead can have a picture made that no file gives: a scene, a mood, a texture, an
+illustration. It runs one command in the design's folder; worca makes the call with the key, which never reaches an
+agent, and the picture lands in `work/assets/made/`. Only the lead asks, while it plans, changes and integrates;
+section agents place the pictures it names. A made picture never shows the product's screens, its logo or its name,
+a real person or another company's brand, and holds no words. With no service set up, or the switch off, the lead
+works as before.
 
 When the lead goes over the result, worca names every picture, font or other file that a section points at and
 that is not in the design, so the lead can bring the file in or send the section back instead of leaving an empty
@@ -221,6 +230,9 @@ worca builds the change as a new round over the current page.
   in Settings › Runs › Budget & cost limits (for Design, the per-pipeline limit applies to each round), and toward
   a team policy's caps. A build that reaches one pauses: raise the limit there and press **Resume**. Resuming
   while the total limit is still reached is refused.
+- **Pictures:** each made picture books what the service's answer says it cost, else the **Price per picture** you
+  set, to its round. It counts toward the same limits, and a round that reaches one pauses. A picture that is not
+  made costs nothing.
 - **Statistics:** Design spend is part of **Spent**, in Statistics and in the account menu, with its own **Design**
   row in Group by and in the Cost report. It stays there after a design is deleted and after the flag is turned
   off.
@@ -289,10 +301,14 @@ database and store (see [Storage](storage.md)). No git is needed.
 
 | Inside | What it holds |
 |---|---|
-| `work/` | What the agents write: the sections, the shared files, your attachments, the pictures the lead copied from the project (`assets/project/`) and the screens it shot (`assets/shots/`) |
+| `work/` | What the agents write: the sections, the shared files, your attachments, the pictures the lead copied from the project (`assets/project/`), the screens it shot (`assets/shots/`) and the pictures the image service made (`assets/made/`) |
 | `dist/` | The finished page; exports read it |
 | `versions/` | The state after each finished round, the last 20, for **Back to before this** |
+| `made/` | A copy of each made picture by its ask, so the chat shows what each ask made; never exported, and agents cannot open it |
 | `thumb.png` | The Library picture; never exported, and agents cannot write it |
+
+While a round runs, `work/.pictures/` holds the lead's asks and worca's answers; like the other dot folders it never
+reaches a version or an export.
 
 ## Mac, Linux, Windows
 
@@ -323,8 +339,9 @@ numbers of one machine.
   `WORCA_DESIGN_MAX_BUILDERS` and `WORCA_DESIGN_MAX_AGENTS` change these numbers there too.
 - **Each person sees only their own designs.** Each design's folder is shared with its owner's agent only (with
   [agent users per person](credential-broker.md#agent-users-per-person)), which can change the design's files in
-  `work/` but not the folder around them, and cannot open `dist/` or `versions/`.
+  `work/` but not the folder around them, and cannot open `dist/`, `versions/` or `made/`.
 - **Each agent is billed to the person** who started its round or pressed **Resume**.
+- **Made pictures** use the server's one image service key; each picture counts in its round's cost.
 - **The preview embeds its files.** Behind an identity proxy the page carries its CSS, fonts and images inside it
   (`WORCA_DESIGN_PREVIEW_INLINE`), so the frame asks the proxy for nothing else. A file too large to embed stays a
   link, and an image that lands during a build shows at the round's end. `WORCA_DESIGN_PREVIEW_INLINE=0` turns this

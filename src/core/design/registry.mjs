@@ -16,7 +16,7 @@ import { designEngineFor, designEngineGate } from './engines.mjs';
 import { DesignError } from './ids.mjs';
 import { readConfined } from './assemble.mjs';
 import { designCaps } from './limits.mjs';
-import { closeToWorca, designDir, designWorkDir, distDir, versionsDir } from './paths.mjs';
+import { closeToWorca, designDir, designWorkDir, distDir, madeKeptDir, versionsDir } from './paths.mjs';
 import { validatePlan } from './plan.mjs';
 import { pinsBlock } from './prompts.mjs';
 import { createSemaphore } from './semaphore.mjs';
@@ -254,12 +254,13 @@ class DesignBuilds {
 
   /**
    * Gives `designId`'s folders to `owner`'s agent (P8, L8.13, L8.28): the design folder 2750 (its agent reads and
-   * traverses, and can never rename `work/`, `versions/`, `dist/` or `thumb.png`), then `work/` 2770, which also makes
-   * the design folder sticky. Both in the owner's own group, or the shared agent group when there is no pool
+   * traverses, and can never rename `work/`, `versions/`, `dist/`, `made/` or `thumb.png`), then `work/` 2770, which
+   * also makes the design folder sticky. Both in the owner's own group, or the shared agent group when there is no pool
    * (`sharedFallback`, which claimRunDir honours only then). Both claims are no-ops without agent isolation.
-   * Then `dist/` and `versions/` are closed to worca (0700, `closeToWorca`, on every install): restore and assembly
-   * copy through them, so no agent may plant a link there, and none reads them. Called at creation, at every start
-   * and Continue, and at every Design chat turn.
+   * Then `dist/`, `versions/` and `made/` are closed to worca (0700, `closeToWorca`, on every install): restore and
+   * assembly copy through the first two, `made/` holds the made pictures' kept copies (SPEC D10a), so no agent may
+   * plant a link there, and none reads them. Called at creation, at every start and Continue, and at every Design chat
+   * turn.
    * @param {string} designId
    * @param {{ owner?: string|null }} [opts]
    * @throws {DesignRefusal} 500 with the failure's code only: the error's own message can carry server paths
@@ -270,6 +271,7 @@ class DesignBuilds {
       this._claimDir(designWorkDir(designId), { owner, sharedFallback: true });
       closeToWorca(distDir(designId));
       closeToWorca(versionsDir(designId));
+      closeToWorca(madeKeptDir(designId));
     } catch (err) {
       throw new DesignRefusal(500, `Could not prepare this design's folder (${shareFailureReason(err)})`);
     }

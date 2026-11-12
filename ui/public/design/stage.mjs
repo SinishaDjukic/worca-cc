@@ -97,11 +97,15 @@ export function detailToFrames(detail, now = Date.now()) {
  * Agents popover and the HUD. `fetch` reaches C-8's routes, `sendWs` the socket. `onPicked(pin)` gets each element the
  * person pins, `onPlan(rows)` the Plan list's rows at every paint, `onExport` the HUD's Export (disabled without it),
  * `onFrameLost({mode})` a frame that could not come back. `prompt` is never called: Resume asks nothing (M13).
+ * `pictures` is the design's picture log (pictures.mjs): the Agents popover ends with the round's pictures, and a
+ * change in the log repaints it.
  * @param {{doc: Document, win: Window, host: HTMLElement, design: {id: string, kind: string, version?: number},
  *   fetch: Function, sendWs: (msg: object) => void, prompt?: Function, onPicked?: (pin: object) => void,
- *   onExport?: () => void, onPlan?: (rows: object) => void, onFrameLost?: (lost: {mode: string}) => void}} deps
+ *   onExport?: () => void, onPlan?: (rows: object) => void, onFrameLost?: (lost: {mode: string}) => void,
+ *   pictures?: {tally: (round: number) => {made: number, failed: number, usd: number},
+ *     subscribe: (fn: () => void) => () => void} | null}} deps
  */
-export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, onPicked, onExport, onPlan, onFrameLost }) {
+export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, onPicked, onExport, onPlan, onFrameLost, pictures = null }) {
   const designId = design.id;
   const kind = design.kind;
   const reduced = win.matchMedia?.(REDUCED_QUERY)?.matches === true;
@@ -442,6 +446,10 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
     frame.send('scroll', { y: e.y, behavior: ms ? 'smooth' : 'auto', ...(ms ? { ms } : {}) });
   }
 
+  /** The Agents popover's model: the round's agent rows, then its pictures. */
+  const panelModel = () => ({ ...selectAgentRows(state), pictures: pictures ? pictures.tally(state.round) : null });
+  const unsubscribe = pictures ? pictures.subscribe(() => schedulePaint()) : () => {};
+
   function schedulePaint() {
     if (destroyed || paintId !== null) return;
     paintId = reduced ? win.setTimeout(paint, REDUCED_PAINT_MS) : win.requestAnimationFrame(paint);
@@ -469,7 +477,7 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
     }
     const model = selectHud(state);
     hud.paint(model, { hidden });
-    if (panel.isOpen()) panel.paint(selectAgentRows(state));
+    if (panel.isOpen()) panel.paint(panelModel());
     onPlan?.(selectPlanRows(state));
     stateEl.className = model.wordClass ? `dz-state ${model.wordClass}` : 'dz-state';
     if (stateWord.data !== model.word) stateWord.data = model.word;
@@ -532,7 +540,7 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
   function showAgent(agentId) {
     if (destroyed) return;
     hud.closeConfirm();
-    panel.paint(selectAgentRows(state));
+    panel.paint(panelModel());
     panel.open(agentId);
   }
   function setViewport(name) { dispatch(reduceUser, { type: 'viewport', name }); }
@@ -587,6 +595,7 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      unsubscribe();
       cancelPaint();
       cancelSettle();
       wrap.removeEventListener('wheel', onWheel, { passive: false });

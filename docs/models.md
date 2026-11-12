@@ -268,6 +268,12 @@ through the OpenAI audio API. It is not a model
 provider — nothing on it joins the catalog, the bridge or `/api/models`. See
 [docs/speech.md](speech.md).
 
+**Image generation (Design).** The same Providers page has an **Image
+generation (Design)** row: the image service a Design lead can have a picture made with
+(OpenAI, xAI, OpenRouter or any OpenAI-compatible server), its key and a price
+per picture. It is not a model provider — nothing on it joins the catalog, the
+bridge or `/api/models`. See [docs/image-generation.md](image-generation.md).
+
 ## What the bridge does
 
 - **Claude models on Copilot** use Copilot's native Anthropic endpoint. The

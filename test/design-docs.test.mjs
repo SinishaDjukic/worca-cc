@@ -26,3 +26,13 @@ test('the page describes the gate and hosted truthfully', () => {
   assert.doesNotMatch(text, /In Labs/);
   assert.doesNotMatch(text, /Builds run on Claude for now/);
 });
+// Design pictures: made pictures in What the agents can use, Cost, Where files live and Hosted, each whole.
+test('the page describes made pictures', () => {
+  const flat = text.replace(/\s+/g, ' ');
+  for (const sentence of [
+    "**Made pictures.** When an image service is set up (see [Image generation](image-generation.md)) and the design's **Pictures** switch is on, the lead can have a picture made that no file gives: a scene, a mood, a texture, an illustration.",
+    "- **Pictures:** each made picture books what the service's answer says it cost, else the **Price per picture** you set, to its round. It counts toward the same limits, and a round that reaches one pauses. A picture that is not made costs nothing.",
+    '| `made/` | A copy of each made picture by its ask, so the chat shows what each ask made; never exported, and agents cannot open it |',
+    "- **Made pictures** use the server's one image service key; each picture counts in its round's cost.",
+  ]) assert.ok(flat.includes(sentence), sentence);
+});

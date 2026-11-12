@@ -1,8 +1,8 @@
 // src/core/design/paths.mjs
 // The Design library layout (SPEC C-1, with M1: no builds/ folder) under <WORCA_HOME>/.worca-cc/design.
 // Every helper validates its ids first, so a bad id never reaches the disk. Only ensureDesignFolders, inFolder,
-// inWorkFolder, realSectionDir, setAside, removeWorkEntry, placeWorkFile, removeSectionDir, copyTreeOut and
-// closeToWorca write: work/ is the owner's agents' to write (P8), so what they make, remove or read there never goes
+// inWorkFolder, realSectionDir, setAside, removeWorkEntry, placeWorkFile, placeWorkBytes, removeSectionDir, copyTreeOut
+// and closeToWorca write: work/ is the owner's agents' to write (P8), so what they make, remove or read there never goes
 // through a link an agent planted, nor through a folder an agent renames or swaps for a link after it was checked.
 // `fs.rm`, `fs/promises` `rm` and `cp` (and `rmSync` on Node 22) must never touch work/: they are JS walks that resolve
 // every level by path again. Names read from work/ or a version are an agent's: on POSIX a backslash is a plain name
@@ -31,9 +31,13 @@ const SKIPPED = new Set(['EACCES', 'EPERM', 'ENAMETOOLONG']);
 /** One buffer for every copy (writeCopy): the copies are synchronous, so it is never shared by two at once. */
 const COPY_BUF = Buffer.allocUnsafe(1 << 18);
 /** How many times a name an agent fills or changes again meanwhile (a process that outlived its build) is looked at,
- *  cleared and tried once more (realFolder, placeWorkFile's rename): past this the step fails instead of chasing it
+ *  cleared and tried once more (realFolder, placeVia's rename): past this the step fails instead of chasing it
  *  forever. */
 const TRIES = 5;
+/** What a Windows rename over a file another program holds open (a browser, a builder) fails with, and how long
+ *  placeVia waits before it tries again. */
+const RENAME_HELD = new Set(['EPERM', 'EBUSY', 'EACCES']);
+const RENAME_WAIT_MS = 50;
 /** Linux, the only place agent isolation runs, reaches each level of work/ through the one above it held open
  *  (`/proc/self/fd/<fd>/<name>`, as attachments.mjs and claimExtrasDir do). */
 const VIA_FD = process.platform === 'linux';
@@ -62,6 +66,9 @@ export function designWorkDir(id) { return join(designDir(id), 'work'); }
 export function distDir(id) { return join(designDir(id), 'dist'); }
 /** `versions/`: restore-only copies of work/ (M2). */
 export function versionsDir(id) { return join(designDir(id), 'versions'); }
+/** `made/`: worca's own copy of every made picture by its row id (`<id>.<ext>`, SPEC D10a). Beside versions/ and
+ *  outside work/, so it is never exported, snapshotted or open to an agent; deleting the design removes it. */
+export function madeKeptDir(id) { return join(designDir(id), 'made'); }
 /** `thumb.png`: the Library's picture (P6), outside dist/ and work/, so it is never exported or agent-writable. */
 export function thumbFile(id) { return join(designDir(id), 'thumb.png'); }
 
@@ -86,6 +93,9 @@ export function sectionDir(id, sectionId) {
 export function asksDir(id) { return join(designWorkDir(id), '.asks'); }
 /** `work/.kit/`: the engine-staged kit; creates nothing. */
 export function kitDir(id) { return join(designWorkDir(id), '.kit'); }
+/** `work/.pictures/`: the picture kit's asks and the desk's answers (`<name>.ask.json`, `<name>.done.json`); creates
+ *  nothing. */
+export function picturesDir(id) { return join(designWorkDir(id), '.pictures'); }
 /** The capture kit a lead starts the picked project's product with, to shoot its real screens (`startApp`, `open`):
  *  the one the promo video workflow uses, run where worca is installed, so its playwright-core is found. */
 export const CAPTURE_KIT = fileURLToPath(new URL('../../../assets/promo-kit/capture/lib.mjs', import.meta.url));
@@ -94,8 +104,14 @@ export const CAPTURE_KIT = fileURLToPath(new URL('../../../assets/promo-kit/capt
  *  stands and which pictures their frames cut. Run where worca is installed, like the capture kit it drives. */
 export const LOOK_KIT = fileURLToPath(new URL('../../../assets/design-kit/look.mjs', import.meta.url));
 
+/** The picture kit, by absolute path: the command a lead runs to have a picture made, copied into `work/.kit/` as
+ *  `picture.mjs` (kit.mjs stagePictureKit), where it finds work/ from its own place. */
+export const PICTURE_KIT = fileURLToPath(new URL('../../../assets/design-kit/picture.mjs', import.meta.url));
+
 /** `work/assets/att/`: the person's attachments. */
 export function attDir(id) { return join(designWorkDir(id), 'assets', 'att'); }
+/** `work/assets/made/`: the pictures made for the design; creates nothing. */
+export function madeDir(id) { return join(designWorkDir(id), 'assets', 'made'); }
 /** `work/.crew.json`: the engine's `[{id, status, summary}]`. */
 export function crewFile(id) { return join(designWorkDir(id), '.crew.json'); }
 
@@ -170,8 +186,9 @@ function realFolder(p, { create, uid = null }) {
 /**
  * Make the library folders of one design and return its folder. Idempotent; keeps what is there.
  * `design/` keeps the default mode on purpose (L1.19: a shared install grants it through a group and setgid), but a
- * new design's own folder is worca's alone (0700) until `registry.claim` gives it to its owner's agent, and `dist/`
- * and `versions/` stay worca's (P8): restore and assembly copy through them, and no agent reads them. In work/ a
+ * new design's own folder is worca's alone (0700) until `registry.claim` gives it to its owner's agent, and `dist/`,
+ * `versions/` and `made/` stay worca's (P8): restore and assembly copy through the first two, the chat reads its made
+ * pictures' kept copies from `made/` (madeKeptDir), and no agent reads them. In work/ a
  * `sections`, `assets`, `assets/att` or `.asks` that is not a real folder of worca's own (a link an agent planted, a
  * folder it made) is replaced, each level reached through the one above it (inWorkFolder).
  * @param {string} id
@@ -188,7 +205,7 @@ export function ensureDesignFolders(id, { uid = worcaUid() } = {}) {
   }
   mkdirSync(designWorkDir(id), { recursive: true });
   for (const parts of [['sections'], ['assets', 'att'], ['.asks']]) inWorkFolder(id, parts, { create: true, uid });
-  for (const p of [distDir(id), versionsDir(id)]) mkdirSync(p, { recursive: true, mode: 0o700 });
+  for (const p of [distDir(id), versionsDir(id), madeKeptDir(id)]) mkdirSync(p, { recursive: true, mode: 0o700 });
   return dir;
 }
 
@@ -297,6 +314,18 @@ function writeCopy(fd, size, dest, mode) {
   }
 }
 
+/** Writes `bytes` into `dest`, a new file opened as writeCopy opens its copy (O_EXCL, never through a link), of mode
+ *  `mode` exactly. */
+function writeBytes(dest, bytes, mode) {
+  const out = openSync(dest, fsc.O_WRONLY | fsc.O_CREAT | fsc.O_EXCL | (fsc.O_NOFOLLOW ?? 0), mode);
+  try {
+    fchmodSync(out, mode);
+    for (let off = 0; off < bytes.length;) off += writeSync(out, bytes, off, bytes.length - off);
+  } finally {
+    closeSync(out);
+  }
+}
+
 /** Copies the regular file `src` (in a held folder) to the new file `dest`, mode 0600 (writeCopy: the copy is in
  *  `dist/` or `versions/`, worca's alone): opened without following a link or waiting on a FIFO, copied only when it is
  *  a regular file, from its open descriptor. */
@@ -398,38 +427,40 @@ export function removeWorkEntry(id, base, name, { aside = false } = {}) {
 }
 
 /**
- * Puts a copy of `src`, a regular file of worca's own (a version's), at `<base>/<name>`, `base` from inWorkFolder (P8):
- * written as a new dot temp in `base` (writeCopy: never through a link, mode 0660 for the owner's agent's group, never
- * the source's), then renamed over the name. A file or a link an agent makes at the name meanwhile is replaced, never
- * written through, and never stops the copy. A rename that fails looks at the name again, whatever stands there by
- * then (an agent's process that outlived its build can change it between the rename and the look): a folder is removed
- * or set aside (removeWorkEntry), and the rename is tried again, up to TRIES renames; anything else there is left to the
- * rename, which replaces it on POSIX (on Windows a read-only or held file fails each try the same way). So does the
- * temp: work/ is the agent's group's to write and not sticky, so one an agent removed or replaced meanwhile (no longer a
- * regular file) is written again from the source, under a new name, before the next try.
- * The source is opened without following a link or waiting on a FIFO.
- * @throws {Error} a failed read, write or removal, or the last of TRIES failed renames (the temp is removed first);
- *   `EINVAL` for a source that is not a file
+ * Puts a new file at `<base>/<name>`, `base` from inWorkFolder (P8): `writeTemp(tmp)` writes it as a new dot temp
+ * `.<12 hex>.tmp` in `base` (never through a link, mode 0660 for the owner's agent's group), then it is renamed over
+ * the name, so a file there is replaced whole (a new inode: a reader that has it open keeps the old bytes), never
+ * truncated or written through. A file or a link an agent makes at the name meanwhile is replaced the same way and
+ * never stops the write. A rename that fails looks at the name again, whatever stands there by then (an agent's process
+ * that outlived its build can change it between the rename and the look): a folder is removed or set aside
+ * (removeWorkEntry), and the rename is tried again, up to TRIES renames; anything else there is left to the rename,
+ * which replaces it on POSIX. So does the temp: work/ is the agent's group's to write and not sticky, so one an agent
+ * removed or replaced meanwhile (no longer a regular file) is written again, under a new name, before the next try.
+ * On Windows a rename over a file another program holds open (a browser, a builder) is refused with EPERM, EBUSY or
+ * EACCES: each such try waits RENAME_WAIT_MS before the next (a read-only file fails each try the same way).
+ * @param {string} id
+ * @param {string} base
+ * @param {string} name checked already (checkPart)
+ * @param {(tmp: string) => void} writeTemp makes `tmp` a new file (O_EXCL)
+ * @throws {Error} a failed write or removal, or the last of TRIES failed renames (the temp is removed first)
  */
-export function placeWorkFile(id, base, name, src) {
-  checkPart(name);
+function placeVia(id, base, name, writeTemp) {
   const to = join(base, name);
   let tmp = null;
-  let fd = null;
   try {
-    fd = openSync(src, OPEN_FILE);
-    const st = fstatSync(fd);
-    if (!st.isFile()) throw Object.assign(new Error(`${name} is not a regular file`), { code: 'EINVAL' });
     for (let tries = 1; ; tries += 1) {
       if (!tmp) {
         tmp = join(base, `.${randomBytes(6).toString('hex')}.tmp`);
-        writeCopy(fd, st.size, tmp, 0o660);
+        writeTemp(tmp);
       }
       try {
         renameSync(tmp, to);
         break;
       } catch (err) {
         if (tries >= TRIES) throw err;
+        if (!POSIX && RENAME_HELD.has(err.code)) {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, RENAME_WAIT_MS);
+        }
         if (lstatSync(to, { throwIfNoEntry: false })?.isDirectory()) removeWorkEntry(id, base, name, { aside: true });
         if (!lstatSync(tmp, { throwIfNoEntry: false })?.isFile()) tmp = null;
       }
@@ -437,9 +468,40 @@ export function placeWorkFile(id, base, name, src) {
   } catch (err) {
     if (tmp) rmSync(tmp, { force: true });
     throw err;
-  } finally {
-    if (fd != null) closeSync(fd);
   }
+}
+
+/**
+ * Puts a copy of `src`, a regular file of worca's own (a version's), at `<base>/<name>`, `base` from inWorkFolder (P8),
+ * through placeVia: the temp is a copy of the source (writeCopy: mode 0660, never the source's). The source is opened
+ * without following a link or waiting on a FIFO.
+ * @throws {Error} a failed read, write or removal, or the last of TRIES failed renames (the temp is removed first);
+ *   `EINVAL` for a source that is not a file
+ */
+export function placeWorkFile(id, base, name, src) {
+  checkPart(name);
+  const fd = openSync(src, OPEN_FILE);
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) throw Object.assign(new Error(`${name} is not a regular file`), { code: 'EINVAL' });
+    placeVia(id, base, name, (tmp) => writeCopy(fd, st.size, tmp, 0o660));
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * placeWorkFile with `bytes` for a source (a made picture): `<base>/<name>` is replaced whole by `bytes`, through
+ * placeVia (a new temp of mode 0660 renamed over the name; never truncated or written through a link).
+ * @param {string} id
+ * @param {string} base from inWorkFolder
+ * @param {string} name one file name
+ * @param {Uint8Array} bytes
+ * @throws {Error} a failed write or removal, or the last of TRIES failed renames (the temp is removed first)
+ */
+export function placeWorkBytes(id, base, name, bytes) {
+  checkPart(name);
+  placeVia(id, base, name, (tmp) => writeBytes(tmp, bytes, 0o660));
 }
 
 /** removeWorkEntry's removal itself (no `aside`). */
@@ -500,8 +562,8 @@ export function removeSectionDir(id, sectionId) {
 }
 
 /** Closes `dir`, a folder of worca's own, to worca: mode 0700 through a descriptor opened without following a link
- *  (`registry.claim` on `dist/` and `versions/`, P8). A folder that is not there passes; a link or another user's
- *  folder throws. No-op on Windows (no mode bits). */
+ *  (`registry.claim` on `dist/`, `versions/` and `made/`, P8). A folder that is not there passes; a link or another
+ *  user's folder throws. No-op on Windows (no mode bits). */
 export function closeToWorca(dir, { uid = process.getuid?.() ?? null } = {}) {
   if (process.platform === 'win32') return;
   let fd;
