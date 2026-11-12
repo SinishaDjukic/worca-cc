@@ -31,7 +31,7 @@ import { listModels } from '../config.mjs';
 import { stepEstimate } from '../helper-call/cost.mjs';
 import { capabilities, notReadyWords, companyOf } from '../helper-call/profiles.mjs';
 import { engineLabel, engineChoiceLabel } from '../../shared/engine-switch.mjs';
-import { dd, featureModel, scopeOf, defaultChoice, briefDefault, recommendedModel, checkChoice, engineDefault } from './feature-model.mjs';
+import { dd, featureModel, scopeOf, defaultChoice, briefDefault, recommendedModel, checkChoice, engineDefault, claudeReach } from './feature-model.mjs';
 import { setFeatureModel } from './model-choice.mjs';
 import { pendingRound } from './round.mjs';
 import {
@@ -403,21 +403,28 @@ async function modelsView(d) {
   let ready = [];
   try { ready = (await x.readiness()) || []; } catch { ready = []; }
   const cat = await x.catalog();
+  // B4: Claude not signed in still runs the models that sign in by themselves (a company model profile), or every model when the
+  // user's Claude settings sign it in; only those models are offered
+  const claude = engines.includes('claude') ? await claudeReach(ready, x, cat) : null;
   const harnesses = engines.map((engine) => {
     const r = ready.find((e) => e.name === engine);
     const broker = !!(r && r.broker);
-    const isReady = !r || (r.ready && !broker);
+    const isReady = engine === 'claude' ? claude.ready : !r || (r.ready && !broker);
     const named = companyOf(engine, { id: '' });
     const { repo, files, keepsCopy, reportsCost } = capabilities(engine);
     return { engine, label: engineLabel(engine), choiceLabel: engineChoiceLabel(engine), ready: isReady,
       short: isReady ? null : notReadyWords(engine, r.reason, { broker }).short, reason: isReady ? null : (r.reason || null), broker,
-      repo, files, keepsCopy, reportsCost, company: named.startsWith('the provider of') ? null : named };
+      repo, files, keepsCopy, reportsCost, company: named.startsWith('the provider of') ? null : named,
+      ...(engine === 'claude' && claude.only ? { onlyModels: claude.only } : {}) };
   });
   const defaults = {};
   const recommended = {};
   for (const engine of engines) {
     let pick = { model: null, effort: null };
     try { pick = await engineDefault(engine, x); } catch { /* none */ }
+    if (engine === 'claude' && claude.only && !claude.only.some((id) => id.toLowerCase() === String(pick.model || '').toLowerCase())) {
+      pick = { model: claude.only[0], effort: null };   // B4: the default is one that can run
+    }
     defaults[engine] = { model: pick.model ?? null, effort: pick.effort ?? null };
     recommended[engine] = recommendedModel(engine, d);
   }

@@ -8,6 +8,8 @@ import { requirementsEngines, notReadyWords, noRepoStartsOn, capabilities } from
 import { runsOn, effortsOn } from '../../shared/connections.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { interviewModel } from './interview-model.mjs';
+import { userClaudeSignIn } from '../claude-user-settings.mjs';
+import { claudeModelRunsSignedOut } from '../claude-auth.mjs';
 
 const real = createAskModels();
 export const DEFAULTS = Object.freeze({
@@ -19,6 +21,9 @@ export const DEFAULTS = Object.freeze({
   catalog: () => real.askCatalog({ withSecrets: false }),
   validate: (model, effort, o) => real.validateModelEffort(model, effort, o),
   interviewModel,
+  // B4: the user's own Claude settings sign the CLI in (as the interview reads them, A1.1 D6), and a model that runs signed out
+  userSignIn: () => userClaudeSignIn(),
+  runsSignedOut: (id) => claudeModelRunsSignedOut(id),
 });
 export const dd = (d) => ({ ...DEFAULTS, ...d });
 
@@ -58,30 +63,71 @@ export async function featureModel(f, d = {}) {
   return { ...def, notice: `${model} is no longer available, so this step used the default.` };
 }
 
+const readinessOf = async (x) => { try { return (await x.readiness()) || []; } catch { return []; } };
+
+/**
+ * Can Claude run Requirements (B4)? Signed in (its readiness), or not signed in but the user's Claude settings sign it in, or some of
+ * its models run without the sign-in (a model profile env, an endpoint: claudeModelRunsSignedOut). `only` lists those models when
+ * only they can run (null: every model); `ready` is false only when none can. `entry` is Claude's readiness row (null: none, ready).
+ * `cat` is the catalog when the caller has it already.
+ */
+export async function claudeReach(list, x, cat = undefined) {
+  const r = (Array.isArray(list) ? list : []).find((e) => e && e.name === 'claude') || null;
+  if (!r || (r.ready && !r.broker)) return { ready: true, only: null, entry: r };
+  if (r.broker || !/not signed in/i.test(String(r.reason || ''))) return { ready: false, only: null, entry: r };
+  try { if (x.userSignIn()) return { ready: true, only: null, entry: r }; } catch { /* not known: the models decide */ }
+  let c = cat;
+  if (c === undefined) { try { c = await x.catalog(); } catch { c = null; } }
+  const ok = (id) => { try { return !!x.runsSignedOut(id); } catch { return false; } };
+  const only = ((c && c.models) || []).filter((m) => m && typeof m.id === 'string' && !m.needsSignIn && runsOn(m, 'claude') && ok(m.id)).map((m) => m.id);
+  return only.length ? { ready: true, only, entry: r } : { ready: false, only: null, entry: r };
+}
+
+/** Claude's pick for the form: the interview pair, moved to the first model that can run when only some can (B4). */
+async function claudeChoice(x, reach) {
+  const pair = await claudePair(x);
+  if (reach && reach.only && !reach.only.some((id) => id.toLowerCase() === String(pair.model || '').toLowerCase())) {
+    return { engine: 'claude', model: reach.only[0], effort: null };
+  }
+  return pair;
+}
+
 /** The scope a feature's settings read at: a project key, or the workspace layer. */
 export function scopeOf(f) {
   return f.scopeType === 'workspace' ? { workspace: true } : { projectKey: f.scopeKey };
 }
 
 /** Why the default engine cannot start a feature (null when it can), as the D4 sentence. */
-async function unreadyReason(engine, x) {
+async function unreadyReason(engine, x, list) {
   if (!x.engines().includes(engine)) {
     return engine === 'cursor' ? notReadyWords('cursor', '').startsOn : `${engineLabel(engine)} can't run Requirements, so this starts on Claude.`;
   }
   if (engine === 'claude') return null;
-  let list = [];
-  try { list = (await x.readiness()) || []; } catch { list = []; }
-  const r = list.find((e) => e.name === engine);
+  const r = (await list()).find((e) => e.name === engine);
   if (r && (r.broker || !r.ready)) return notReadyWords(engine, r.reason, { broker: !!r.broker }).startsOn;
   return null;
 }
+
+/** The fallback to Claude (D4, B4): its pick, and the line. When Claude can't run either the line is Claude's own sign-in sentence
+ *  ("Claude Code isn't signed in. Sign in, or change the model."), never "this starts on Claude". */
+async function onClaude(x, list, reason) {
+  const reach = await claudeReach(await list(), x);
+  const choice = await claudeChoice(x, reach);
+  if (reach.ready) return { choice, fallbackReason: reason };
+  const r = reach.entry || {};
+  return { choice, fallbackReason: notReadyWords('claude', r.reason, { broker: !!r.broker }).sentence };
+}
+
+/** The readiness list, read at most once per pick (only when a step of the pick needs it). */
+const lazyReadiness = (x) => { let p = null; return () => (p ||= readinessOf(x)); };
 
 /** D4: the New feature form's pick: the project's/workspace's Default engine, or Claude with the reason why. */
 export async function defaultChoice(scope, d = {}) {
   const x = dd(d);
   const { engine } = x.resolveEngine(scope);
-  const reason = await unreadyReason(engine, x);
-  if (reason) return { choice: await claudePair(x), fallbackReason: reason };
+  const list = lazyReadiness(x);
+  const reason = await unreadyReason(engine, x, list);
+  if (reason) return onClaude(x, list, reason);
   return { choice: await engineDefault(engine, x), fallbackReason: null };
 }
 
@@ -89,9 +135,10 @@ export async function defaultChoice(scope, d = {}) {
 export async function briefDefault(scope, d = {}) {
   const x = dd(d);
   const { engine } = x.resolveEngine(scope);
-  const reason = await unreadyReason(engine, x);
-  if (reason) return { choice: await claudePair(x), fallbackReason: reason };
-  if (!capabilities(engine).repo) return { choice: await claudePair(x), fallbackReason: noRepoStartsOn(engine) };
+  const list = lazyReadiness(x);
+  const reason = await unreadyReason(engine, x, list);
+  if (reason) return onClaude(x, list, reason);
+  if (!capabilities(engine).repo) return onClaude(x, list, noRepoStartsOn(engine));
   return { choice: await engineDefault(engine, x), fallbackReason: null };
 }
 

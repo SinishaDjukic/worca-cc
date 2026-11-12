@@ -94,7 +94,9 @@ export function whoInterviews(doc, { models = [], harnesses = [], choice, defaul
   const entryOf = (id) => models.find((m) => m && m.id === id);
   function fillModel(engine, pick) {
     model.replaceChildren();
-    appendModelGroups(model, models.filter((m) => runsOn(m, engine)), { engine });
+    // B4: a harness that runs only some models (Claude not signed in, models with their own sign-in) offers only those
+    const only = of(engine) && Array.isArray(of(engine).onlyModels) ? of(engine).onlyModels : null;
+    appendModelGroups(model, models.filter((m) => runsOn(m, engine) && (!only || only.includes(m.id))), { engine });
     const ids = [...model.options].map((o) => o.value);
     model.value = pick && ids.includes(pick) ? pick : (ids[0] || '');
   }
