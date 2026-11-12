@@ -1,3 +1,6 @@
+> [!NOTE]
+> This project will soon move to a new organization: [github.com/worca-org](https://github.com/worca-org).
+
 # Contributing to Worca
 
 Thanks for your interest in contributing! This document covers developing Worca
@@ -8,7 +11,7 @@ Everyone taking part in this project is expected to follow the
 [conduct@worca.dev](mailto:conduct@worca.dev).
 
 > Just want to **use** Worca? You don't need this repo at all — install it from
-> npm as described in the [README](README.md#install).
+> npm as described in the [install guide](docs/install.md).
 
 ## The two branch lines
 

@@ -107,6 +107,7 @@ export function chatRow(t, { scopeName = () => '', now = Date.now() } = {}) {
     needs: state === 'needs-you', busy, pinned: !!t.pinnedAt, isArchived: !!(t.archived || t.archivedAt),
     activityMs, createdMs: timeMs(t.createdAt, now), cost, groupKey, groupName, projectKey: (scope && scope.projectKey) || '',
     labels: [], model: { ...chatDot(state, chatKind(t)), line },
+    origin: t.origin || null,   // the chat integration that opened it (drawn as its platform's mark), null = an app chat
   };
 }
 

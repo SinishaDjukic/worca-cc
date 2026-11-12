@@ -84,15 +84,16 @@ pipeline, or another one-off scheduled run — and can start on that run's featu
 Chain three and you have a train: refactor → tests → docs, each on the branch the previous
 one left.
 
-- **Predecessor.** A pipeline (any run in History or Running) or a one-off scheduled run.
+- **Predecessor.** A pipeline (any run in **Runs**) or a one-off scheduled run.
   Never a repeating schedule: give one of its runs instead. Both must target the same project
   or the same workspace.
 - **Gate.** By default the dependent starts only when the predecessor finishes `done`.
   *Start even if it fails or is stopped* (`afterPolicy: any`) also accepts `error`, `stopped`
-  and `interrupted`. A predecessor that ends any other way — or is canceled, missed, skipped
-  or archived — leaves the dependent **missed** with the reason, and *Run now* still starts it.
-  A paused predecessor keeps the dependent waiting; there is no grace and no missed-slot
-  policy on an after-run.
+  and an `interrupted` run that can no longer be resumed. A predecessor that ends any other way —
+  or is canceled, missed, skipped or archived — leaves the dependent **missed** with the reason,
+  and *Run now* still starts it. A paused predecessor, and an interrupted one that can still be
+  resumed, keep the dependent waiting under either policy until they really end; there is no grace
+  and no missed-slot policy on an after-run.
 - **Source branch from the run before it.** Pick *Branch of the run before it* in New
   pipeline (or `sourceFromPrevious: true`): when the ticket fires, the predecessor's feature
   branch — per member project for a workspace — becomes this run's source branch. Feature
@@ -104,9 +105,9 @@ one left.
   a run ending in the UI server nudges an extra tick. The ticket's time becomes the moment
   the gate opened; from there the usual retry rules apply.
 - **Edit.** *Change…* on the card switches between a time and a predecessor. Canceling a
-  predecessor, or archiving its pipeline (History's delete keeps the row but removes its
-  branch), names the runs that wait for it; they are marked missed on the next tick. A run cannot wait for itself, directly or through a chain.
-- **Entry points.** *Schedule a run after this* on a Running card and in a History detail;
+  predecessor, or archiving its pipeline (**Archive** on Runs or the run's page keeps the row but removes its
+  local branch), names the runs that wait for it; they are marked missed on the next tick. A run cannot wait for itself, directly or through a chain.
+- **Entry points.** **Run after** (*Schedule a run after this*) on a run's page;
   *Schedule next…* on a scheduled run's card; the **After a run** side of the schedule sheet's kind switch.
   All open New pipeline with the pick made (`#new/after/<id>`).
 
@@ -230,6 +231,8 @@ the caller's zone — and so is a time in the past.
 
 ## UI
 
+![Schedules view on the Repeating tab: three active repeating schedules (a monthly flaky-test sweep, a weekly broken-link sweep and a nightly dependency audit) for demo projects, each with its rule, project, next start time, pause switch and Run now, Skip next, Edit and Delete buttons](screenshots/schedules.png)
+
 - **New pipeline** and the **Ask run card**: *Start run* is a split button;
   *Schedule…* opens the schedule sheet at once — before the prompt is typed — and the
   pick waits on the form while *Start run* reads as **Schedule**. The sheet builds a
@@ -249,8 +252,9 @@ the caller's zone — and so is a time in the past.
   Problems (missed, failed, paused itself, run error) count towards the amber unread
   badge and resolve themselves when you act on them; completed, late and skipped
   items arrive read. Notifications are purged after 90 days, ended tickets after 30.
-- **Running** shows what is due within 24 hours. **History** marks a run *Started by
-  schedule*. **Settings › Runs › Scheduled runs** holds the defaults a new
+- **Runs** lists upcoming and missed runs beside live and finished ones. A run's page
+  header says *Started by schedule* (or *Started by a repeating schedule*), linking to
+  Schedules. **Settings › Runs › Scheduled runs** holds the defaults a new
   schedule inherits.
 - Removing a project or workspace cancels its schedules; the confirmation names them.
 - **Interface mode** ([ui-levels.md](ui-levels.md)): the Schedules entry, *Start run*'s

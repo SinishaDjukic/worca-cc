@@ -89,6 +89,23 @@ test('the Plans tab and the group page render the same card with the same ⋯ it
   assert.deepEqual(menuA, ['Re-plan the rest', 'Cancel the rest', 'Ask before each run', 'Open the plan']);
 });
 
+test('Plans tab and group page draw the same held row, once', () => {
+  const f = feature({ slices: [slice(1, 'done', { pipelineId: 'p1' }), slice(2, 'held', { ticketId: 't2' }), slice(3, 'planned')],
+    held: { index: 2, ticketId: 't2' }, originPipelineId: 'p0', log: [], ask: null });
+  const row = (el) => {
+    const r = el.querySelectorAll('.shape-feature-held');
+    assert.equal(r.length, 1);
+    return { text: r[0].textContent, start: el.querySelectorAll('[data-act="feature-start"]').length,
+      needs: el.textContent.split('Needs you').length - 1, why: el.textContent.split('for you to start').length - 1 };
+  };
+  const { el: plans } = mount(f, PLANS());
+  const a = row(plans);
+  assert.deepEqual(a, { text: 'Needs youRun 2 waits for you to startStart now', start: 1, needs: 1, why: 1 });
+  const { el: page } = mount(f, GROUP({ inGroup: true, omit: ['start-now', 'cancel'] }));
+  assert.deepEqual(row(page), a);
+  assert.equal(page.querySelector('[data-act="feature-more"]'), null, 'the group page header owns ⋯');
+});
+
 test('group page: the open step (server pointer) mounts in the card; the Plans tab mounts none', () => {
   mounted.length = 0;
   const f = feature({ slices: [slice(1, 'done'), slice(2, 'approval', { pipelineId: 'p2' })], originPipelineId: 'p0', log: [],
@@ -147,6 +164,22 @@ test('the Ship card: the waiting line until every run is done, no buttons; the r
   assert.deepEqual(opened, [done.id]);
   assert.equal(d.acts.length, acts, 'the card posts nothing: the dialog does');
   setShipDialogOpener(null);
+});
+
+test('Shaper requirements s3: the feature page\'s ledger saves its marks through saveAcceptance (PUT acceptance)', async () => {
+  const acceptance = { agreed: [{ id: 'R-po-1', text: 'Export' }], entries: [], covered: [] };
+  const done = { ...PAGE(), status: 'done', done: 3, slices: PAGE().slices.map((s) => ({ ...s, state: 'done' })),
+    ship: { ready: true, mode: null, suggested: 'one', linesAdded: 1, linesRemoved: 0, files: 1, prUrl: null, hint: null, result: null, acceptance } };
+  const calls = [];
+  const was = globalThis.fetch;
+  globalThis.fetch = async (url, o) => { calls.push([url, o.method, JSON.parse(o.body)]); return { ok: true, status: 200, json: async () => ({ acceptance: { ...acceptance, entries: [{ id: 'R-po-1', mark: 'met' }] } }) }; };
+  try {
+    const { el } = mount(done, PLANS());
+    assert.equal(el.querySelector('[data-act="ship-create"]').disabled, true);
+    el.querySelector('[data-act="ship-mark-R-po-1-met"]').click(); await flush(); await flush();
+    assert.deepEqual(calls, [[`/api/shape/features/${done.id}/acceptance`, 'PUT', { entries: [{ id: 'R-po-1', mark: 'met' }] }]]);
+    assert.equal(el.querySelector('[data-act="ship-create"]').disabled, false);
+  } finally { globalThis.fetch = was; }
 });
 
 test('the Ship card once shipped: As stacked PRs with View PR on the last run\'s PR', () => {

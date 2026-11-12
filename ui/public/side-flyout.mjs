@@ -45,9 +45,16 @@ function stackOf(doc) {
  *  mode 'up'    : left = trigger.left; top = trigger.top - menu height - gap (opens upward)
  *  mode 'beside': left = parent.right + 4, or parent.left - width - 4 when there is no room; top = trigger.top - 5
  *  mode 'down'  : left = trigger.right - menu width (right edges aligned); top = trigger.bottom + gap (opens downward)
- *  Writes menu.style.left/top in px; un-hides the menu first so it can be measured. */
-export function placeFlyout(menu, trigger, { mode = 'side', parent = null, win = globalThis.window, gap = 6, margin = 8 } = {}) {
+ *  mode 'below' : 'down' left-aligned (left = trigger.left), with `fit` always on
+ *  Writes menu.style.left/top in px; un-hides the menu first so it can be measured.
+ *  `fit` (opt-in for 'down', always for 'below') never lets the popup cover its trigger: it opens below when it fits, else above when there
+ *  is more room above (trigger.top - gap - margin) than below, else below. Where it goes it is capped to that room with
+ *  menu.style.maxHeight (cleared before measuring, so a repaint measures its own height again) and scrolls. Without `fit`
+ *  the vertical clamp may slide a tall popup up over its trigger (the pickers that open without it keep that). */
+export function placeFlyout(menu, trigger, { mode = 'side', parent = null, win = globalThis.window, gap = 6, margin = 8, fit = false } = {}) {
   menu.hidden = false;
+  const fits = (fit && mode === 'down') || mode === 'below';
+  if (fits) menu.style.maxHeight = '';
   const w = menu.offsetWidth;
   const h = menu.offsetHeight;
   const vw = win.innerWidth;
@@ -61,6 +68,9 @@ export function placeFlyout(menu, trigger, { mode = 'side', parent = null, win =
   } else if (mode === 'down') {
     left = t.right - w;
     top = t.bottom + gap;
+  } else if (mode === 'below') {
+    left = t.left;
+    top = t.bottom + gap;
   } else if (mode === 'beside') {
     const p = (parent || trigger).getBoundingClientRect();
     left = p.right + 4;
@@ -72,7 +82,14 @@ export function placeFlyout(menu, trigger, { mode = 'side', parent = null, win =
     top = t.top - 30;                                     // the popup's own heading sits beside the row above
   }
   left = Math.max(margin, Math.min(left, vw - w - margin));
-  top = Math.max(margin, Math.min(top, vh - h - margin));
+  if (fits) {
+    const below = Math.max(0, vh - t.bottom - gap - margin);
+    const above = Math.max(0, t.top - gap - margin);
+    if (h > below && above > below) {                     // flip above, capped to the room there
+      if (h > above) menu.style.maxHeight = `${above}px`;
+      top = t.top - gap - Math.min(h, above);
+    } else if (h > below) menu.style.maxHeight = `${below}px`;   // stays below and scrolls
+  } else top = Math.max(margin, Math.min(top, vh - h - margin));
   menu.style.left = `${left}px`;
   menu.style.top = `${top}px`;
 }

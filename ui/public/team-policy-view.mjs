@@ -10,7 +10,7 @@ import { icon } from './icons.mjs';
 import { makeSwitch } from './switch.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
 import { normaliseDimension } from '../../src/shared/tag-dimensions.mjs';
-import { MODEL_ROLES, ROLE_HARNESSES, ROLE_LABELS } from '../../src/shared/model-roles.mjs';
+import { MODEL_ROLES, TEAM_ROLE_HARNESSES, ROLE_LABELS } from '../../src/shared/model-roles.mjs';
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const POLICY_PAUSE_REASONS = Object.freeze(['cost_pipeline_policy', 'cost_total_policy']);
 export const PROTECT_HINT = 'Protect worca-policy on your git host so only maintainers can push. Worca reads it for everyone and writes it only from the Team policy page.';
@@ -556,7 +556,7 @@ export function renderPolicyEmptyState({ doc = globalThis.document } = {}) {
   };
   grid.append(
     card('01 · PROJECT', 'Set up team policy on a project',
-      ['Creates a ', { code: 'worca-policy' }, " branch on the project's origin holding one document: cost caps, expected plugins, model and guardrail defaults. Every teammate's Worca reads it; nothing is added to your code branches."], '#projects', 'Go to Projects', true),
+      ['Creates a ', { code: 'worca-policy' }, " branch on the project's origin holding one document: cost caps, expected plugins, model and guardrail defaults. The project needs a git remote. Every teammate's Worca reads it; nothing is added to your code branches."], '#projects', 'Go to Projects', true),
     card('02 · WORKSPACE', 'Pick a policy home for a workspace',
       ['Workspace runs use the policy of one member you choose, with the values that document sets for workspace runs. The choice lives on this machine and can be changed on the workspace card.'], '#workspaces', 'Go to Workspaces', false),
   );
@@ -773,7 +773,7 @@ function valueControl(doc, meta, entry, row) {
     }
     case 'roles': {
       // models.roles (team setup D13): six fixed rows, harness × role, each an upstream model id and an effort.
-      for (const hn of ROLE_HARNESSES) for (const r of MODEL_ROLES) {
+      for (const hn of TEAM_ROLE_HARNESSES) for (const r of MODEL_ROLES) {
         const line = h(doc, 'div', 'path-row tp-role-row'); line.dataset.harness = hn; line.dataset.role = r;
         const name = `${engineLabel(hn)} · ${ROLE_LABELS[r]}`;
         const model = h(doc, 'input', 'input tp-role-model'); model.type = 'text'; model.placeholder = 'upstream model id (claude-opus-5-5)';

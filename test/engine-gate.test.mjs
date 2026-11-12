@@ -181,7 +181,7 @@ test('a Claude model routed to a custom endpoint is dropped on codex like any Cl
     await addGlobalModel({ id: 'gate-onprem', env: { ANTHROPIC_BASE_URL: 'https://p' } });
     const o = withNodes(orch({ engine: 'codex' }), { n1: { key: 'planner', tools: [], model: 'gate-onprem' } });
     const lines = o._engineGate();
-    assert.ok(lines.some((l) => /model "gate-onprem" runs on Claude — the nodes that name it run on codex's default model/.test(l)), lines.join('\n'));
+    assert.ok(lines.some((l) => /model "gate-onprem" runs on Claude Code — the nodes that name it run on codex's default model/.test(l)), lines.join('\n'));
     assert.equal(o._engineModel('gate-onprem'), undefined);
   } finally {
     process.env.HOME = prev.HOME;
@@ -257,7 +257,7 @@ test('a Claude model runs on codex\'s default model: dropped from the spawn, nam
     n2: { key: 'implementer', tools: [], model: 'gpt-5.6-sol' },
     n3: { key: 'reviewer', tools: [], model: 'sonnet' },
   });
-  const dropped = o._engineGate().filter((l) => / runs on Claude /.test(l));
+  const dropped = o._engineGate().filter((l) => / runs on Claude Code /.test(l));
   assert.deepEqual(dropped.map((l) => l.match(/model "([^"]+)"/)[1]), ['claude-opus-5-5', 'claude-sonnet-5', 'sonnet']);
   assert.equal(o._engineModel('claude-sonnet-5'), undefined);
   assert.equal(o._engineModel('sonnet'), undefined);
@@ -686,7 +686,7 @@ test('a codex catalog id is not a Claude model: kept on codex, dropped on Claude
   assert.equal(orch()._engineModel('gpt-5.6-sol'), undefined, 'Claude never gets a codex id');
   assert.equal(orch({ model: 'gpt-5.6-sol' })._claudeCallModel(), null);
   const lines = withNodes(orch({ engine: 'codex', model: 'gpt-5.6-sol' }), { n1: { key: 'planner', tools: [], model: 'gpt-5.5' } })._engineGate();
-  assert.equal(lines.filter((l) => / runs on Claude /.test(l)).length, 0, 'codex ids are not named as Claude models');
+  assert.equal(lines.filter((l) => / runs on Claude Code /.test(l)).length, 0, 'codex ids are not named as Claude models');
 });
 
 test('a node keeps its model only on the engine that owns it; a dropped model takes its effort along', () => {
@@ -1169,4 +1169,22 @@ test('a resume that switched a Gemini CLI run to Claude still registers the earl
   writeFileSync(join(wt, '.gemini', 'settings.json'), '{"agent":true}\n');
   assert.deepEqual(switched._injectedFor('pk', wt), [], 'the agent\'s file survives teardown');
   assert.deepEqual(await switched._engineConfigState(wt), { owned: [], forced: ['.gemini/settings.json'] });
+});
+
+test('a project that ignores .claude/ still commits and stages: the memory exclude under it is dropped, not refused by git add', async () => {
+  const { wt, base } = linkedWorktree({ ignore: '.claude/\n' });
+  const o = harnessOn(wt, { engine: 'claude', base });
+  o.injectedPaths = { pk: [{ path: '.claude/rules/worca', kind: 'memory', source: null }] };
+  mkdirSync(join(wt, '.claude', 'rules', 'worca'), { recursive: true });
+  writeFileSync(join(wt, '.claude', 'rules', 'worca', 'rule.md'), 'memory\n');
+  writeFileSync(join(wt, 'a.txt'), 'agent work\n');
+  const warns = [];
+  o.on('log', (l) => { if (l.level === 'warn') warns.push(String(l.text)); });
+  await o._stageWorkingTree({ ignoreAbort: true });
+  assert.equal(git(wt, ['diff', '--name-status', base]).trim(), 'A\ta.txt', 'the reviewer sees the new file');
+  assert.deepEqual(warns, []);
+  const commit = await o._commitWork({ worktreeDir: wt, branch: 'feat/cursor' }, null, { excludePathspecs: o._excludePathspecs('pk') });
+  assert.equal(commit.ok, true, JSON.stringify(commit));
+  assert.equal(commit.committed, true);
+  assert.deepEqual(tree(wt, 'HEAD'), ['.gitignore', 'a.txt', 'seed.txt']);
 });

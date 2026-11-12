@@ -88,7 +88,7 @@ test('detectModel (#693): a nested folder offers Add <root> or Open <name>; a wo
     refused: false, useGit: false, note: 'HINT', action: { kind: 'add-root', path: '/x/r', label: 'Add r' } });
 });
 
-test('Add project opens on New (canvas AddNew) — Name, Location from the dry run, Use git off; Create project posts {name}', async () => {
+test('Add project opens on New (canvas AddNew) — Name, Location from the dry run, Use git on; Create project posts {name, useGit}', async () => {
   const R = '/Users/me/.worca-cc/projects';
   const made = { key: 'site-00000001', name: 'site', path: `${R}/site`, displayPath: '~/.worca-cc/projects/site', exists: true, vcs: 'none' };
   const { window, doc, calls } = await boot({ create: (b, { setProjects }) => {
@@ -111,12 +111,12 @@ test('Add project opens on New (canvas AddNew) — Name, Location from the dry r
   assert.equal($(doc, '#proj-add-save').disabled, false);
   assert.equal($(doc, '#proj-add-git-row').hidden, false);
   assert.ok($(doc, '#proj-add-git-row').hasAttribute('data-needs-git'));
-  assert.equal($(doc, '#proj-add-git').checked, false, 'Use git is off by default (U11)');
+  assert.equal($(doc, '#proj-add-git').checked, true, 'a new project starts with git, so its runs get branches and PRs');
   type(window, $(doc, '#proj-add-name'), 'site'); await settle();
   assert.equal($(doc, '#proj-add-location').value, '~/.worca-cc/projects/site');
   assert.equal($(doc, '#proj-add-location').title, `${R}/site`, 'the absolute path on hover');
   click(window, $(doc, '#proj-add-save')); await tick(); await tick();
-  assert.deepEqual(calls.filter((c) => c.u.endsWith('/api/projects/create') && !c.body.dryRun).map((c) => c.body), [{ name: 'site' }]);
+  assert.deepEqual(calls.filter((c) => c.u.endsWith('/api/projects/create') && !c.body.dryRun).map((c) => c.body), [{ name: 'site', useGit: true }]);
   assert.equal($(doc, '#project-add-modal').classList.contains('hidden'), true);
   assert.ok([...doc.querySelectorAll('#projects-list .pl-item')].some((n) => n.dataset.name === 'site'));
 });
@@ -337,7 +337,7 @@ test('Enter while a save is in flight sends one request, and the save drops the 
   enter(); await tick(); enter(); await tick();
   await settle();
   const creates = calls.filter((c) => c.u.endsWith('/api/projects/create'));
-  assert.deepEqual(creates.filter((c) => !c.body.dryRun).map((c) => c.body), [{ name: 'site' }], 'one create');
+  assert.deepEqual(creates.filter((c) => !c.body.dryRun).map((c) => c.body), [{ name: 'site', useGit: true }], 'one create');
   assert.equal(creates.filter((c) => c.body.dryRun && c.body.name === 'site').length, 0, 'the save dropped the pending dry run');
   release(); await tick(); await tick();
   assert.equal($(doc, '#project-add-modal').classList.contains('hidden'), true);
@@ -553,6 +553,8 @@ test('Folder: a probe that fails during Add\'s wait leaves Save usable after "Na
   await openAdd(window, doc);
   click(window, $(doc, '#proj-add-tab-folder'));
   type(window, $(doc, '#proj-add-path'), '/x/tax');
+  assert.equal($(doc, '#proj-add-name').value, 'tax', 'the folder proposes the name');
+  type(window, $(doc, '#proj-add-name'), '');
   click(window, $(doc, '#proj-add-save')); await tick(); await tick(); await settle();
   assert.equal($(doc, '#proj-add-msg').textContent, 'Name is required.');
   assert.equal($(doc, '#proj-add-save').disabled, false, 'nothing refused: Save stays usable');

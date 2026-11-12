@@ -61,6 +61,13 @@ test('a revise note adds the outline feedback block after the slicing block', ()
   assert.ok(prompt.includes('merge s1 and s2'));
 });
 
+test('the revise prompt still carries MOCK_SLICES and tells the planner to edit the outline file', () => {
+  const prompt = buildAgentPrompt({ ...ctxFor('planner'), shapeSlicing: { file: FILE, baseline: { sha: 'a', planSha: null } },
+    shapeOutlineNote: { decision: 'revise', feedback: 'merge s1 and s2' } });
+  assert.ok(prompt.includes(`MOCK_SLICES: ${FILE}`));
+  assert.ok(prompt.includes('The outline you wrote is still in the outline file. Edit it'));
+});
+
 test('a flat note (no shapeSlicing) contains only the Do not slice block', () => {
   const prompt = buildAgentPrompt({ ...ctxFor('planner'), shapeOutlineNote: { decision: 'flat' } });
   assert.ok(prompt.includes('## Do not slice'));
@@ -130,4 +137,32 @@ test('byte identity: the planner and refiner without the fields are unchanged', 
       key,
     );
   }
+});
+
+test('the slicing block asks for requirements and leftOut only when requirements is set', () => {
+  const plain = buildAgentPrompt({ ...ctxFor('planner'), shapeSlicing: { file: FILE } });
+  const req = buildAgentPrompt({ ...ctxFor('planner'), shapeSlicing: { file: FILE, requirements: true } });
+  assert.equal(plain.includes('"leftOut"'), false);
+  assert.equal(plain.includes('"requirements": ["R-po-1"]'), false);
+  assert.ok(req.includes('"requirements": ["R-po-1"]'));
+  assert.ok(req.includes('"leftOut": [{"id": "R-ops-1", "reason": "…"}]'));
+  assert.ok(req.includes('Cut the slices by the agreed requirements in your requirements input'));
+  assert.equal(buildAgentPrompt({ ...ctxFor('planner'), shapeSlicing: { file: FILE, requirements: false } }), plain);
+});
+
+test('a slice 2 planner prompt lists slice 1\'s and slice 3\'s agreed ids', async () => {
+  const { createOrchestrator } = await import('../src/core/orchestrator.mjs');
+  const { gitDir } = await import('./helpers/git-dir.mjs');
+  // The orchestrator's ids for a slice run: every agreed id of the feature, not only this slice's.
+  const agreed = [{ id: 'R-po-1', text: 'a' }, { id: 'R-qa-2', text: 'b' }, { id: 'R-arch-3', text: 'c' }];
+  const outline = { ...OUTLINE, agreed, slices: [
+    { ...OUTLINE.slices[0], requirements: ['R-po-1'] }, { ...OUTLINE.slices[1], requirements: ['R-qa-2'] },
+    { ...OUTLINE.slices[1], id: 's3', requirements: ['R-arch-3'] }] };
+  const orch = createOrchestrator({ projectDir: gitDir('slice-agreed'), workflowId: 'wf_shape', prompt: 'demo', claude: { mock: true },
+    shape: { perspectives: ['product', 'architect', 'qa'], slices: 'off', slice: { feature: 'f', index: 2, total: 3, outline } } });
+  const ids = await orch._shapeAgreedIds({ bindings: {} });
+  assert.deepEqual(ids, ['R-po-1', 'R-qa-2', 'R-arch-3']);
+  const prompt = buildAgentPrompt({ ...ctxFor('planner'), shape: { perspectives: ['product', 'architect', 'qa'] }, shapeAgreedIds: ids });
+  for (const id of ids) assert.ok(prompt.includes(`\`${id}\``), id);
+  assert.match(prompt, /start at `R-po-2`, `R-qa-3`, `R-arch-4`/);
 });

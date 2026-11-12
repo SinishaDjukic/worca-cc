@@ -132,8 +132,8 @@ missing details stay deviations, as before.
   the run goes on. It cannot raise a second concern in that step.
 - Under `--yes` no one is asked: the concern is overridden, and the audit log reads
   "Plan concern overridden automatically (--yes)".
-- Away mode waits for you: a concern is a plan approval, and Away mode never decides one.
-- A concern stops the run even when "Approve each slice's plan" is off.
+- In Away mode the concern is approved for you: the plan is built as written, and the answer is flagged *please check*.
+- A concern stops a later slice's plan even when its checks pass.
 - Only workflows with a plan approval stop offer a concern. Default's implementer is never offered one.
 
 ## Plan in slices
@@ -180,15 +180,34 @@ own slice. The PR dialog proposes the previous slice's branch as the base until 
 slice's PR is merged. Turn on "Automatically delete head branches" in the GitHub
 repository so that GitHub retargets the next PR when one merges.
 
+**Pull requests when a run finishes.** The `pr.slices` setting (Settings › Project › Pull requests, or
+the team policy's default) says what a sliced feature does when its runs finish; it works together with
+`pr.open` ("Don't create a PR", "Create a draft PR", "Create a PR ready for review"). The values are saved on the feature
+when you approve the outline, and every slice reads them from there:
+
+- **A PR per slice, stacked** (`each`): each slice that finishes with work committed opens its own PR on the
+  previous slice's branch, as a draft or ready for review.
+- **One PR for the whole feature** (`one`): a slice opens nothing. When the last run is done, Worca opens one PR from
+  the last slice's branch into the feature's base, with the feature's changelog entry, like **Ship as one PR**. A
+  follow-up run (it starts from the base, so the last branch does not hold every run's work) stops it: Worca tells you
+  in the thread and you ship from the Ship card. With **Requirements** on, it waits until every agreed requirement is
+  marked, tells you once, and opens the PR when the last one is marked.
+
+A re-planned feature keeps the setting it had. A person's own Create PR and Ship as are unchanged. Each PR is opened as the
+person who started the run, and a run that errored or stopped opens nothing (its log says why; a resume that ends done
+decides again). The setting also applies to runs that are not sliced; see
+[Pull requests when a run finishes](#pull-requests-when-a-run-finishes).
+
 **Plan once.** Slices 2 and later skip Clarify: they use the answers you gave for
 slice 1. Their planner still writes a plan for its own slice.
 
-**Ask before each run** (on the outline card: **Ask me before each run**). Off by default: a later slice's plan stops for you
-only when its shape check fails or the planner says the slice can't be built as
-outlined (it then tells you why on the plan card). Turn it on to review every
-slice's plan. Either way an audit line records what happened, and in Away mode a
-plan always waits for a person. Only a person can change the switch; a proposal
-from Ask cannot.
+**Ask before each run** (on the outline card: **Ask me before each run**). Off by default: each run starts when the
+one before it is done, as before. On: each later run waits, not started, and the feature card shows **Needs you**,
+"Run 2 waits for you to start" and **Start now**. It starts when you press **Start now**, press **Resume**, or turn the
+switch off. Either way a later slice's plan stops for you only when its shape check fails or the planner says the
+slice can't be built as outlined (it then tells you why on the plan card); a plan whose checks pass continues by
+itself. An audit line records what happened. Only a person can change the switch; a proposal from Ask cannot. Away
+mode approves the outline with the switch as shown, and never presses **Start now**.
 
 **The feature card.** The planning run's card in Chat becomes the card for the whole
 feature, in the thread that started it. Its head reads `Shaping` until the outline is
@@ -215,6 +234,8 @@ every host. Beside the ⋯ button:
 
 - while a run of the feature is running: **Pause** and **Stop**, which act on that
   run (Pause reads **Pausing…** until the pause lands);
+- while a run waits for you (**Ask me before each run** on): **Needs you** ·
+  "Run 2 waits for you to start" · **Start now**;
 - once the feature halts (`Failed · Run 2 · Review`, `Paused · Run 2 · Build`):
   **Resume**, which resumes a paused run and restarts a stopped one as a new run, then
   re-chains the runs after it, and **Re-plan the rest**. The runs that wait read
@@ -292,6 +313,94 @@ and is not retried.
 with their state. A sliced feature's row opens its card underneath. The tab shows
 only while Shaper is on.
 
+### Slices and code reviews carry the requirements
+
+When a sliced run agreed its requirements first (the
+`R-po-1`, `R-ux-1`, … criteria), the outline cuts the runs by them:
+
+- **Satisfies.** Each run on the Split card lists the ids it delivers under its goal
+  (`Satisfies: R-po-1, R-ux-1`). The same line opens the run's task and its PR body,
+  under `Part of …`, and the one PR's body lists it under each run.
+- **Left out.** An id the Planner moved out of this feature shows on a `Left out:` line
+  with its reason. An id no run took fails the outline check's last row,
+  **Every agreed requirement is in one run or left out with a reason**. Approving anyway
+  is allowed: the id is then recorded as left out, "Not placed in a slice when the
+  outline was approved".
+- **The code review checks them.** The code review gains a **Requirements** role that
+  checks only that run's ids against the diff. An id the diff does not deliver is a
+  major finding (`R-ops-1 · not covered by the diff`), so the run goes back to the
+  implementer before you are asked to ship it. Once a run is reviewed, its row on the
+  feature card unfolds **Requirements 2/3 · 1 to fix**.
+
+### Requirement concerns
+
+Agreed requirements stay agreed. A plan reviewer that thinks one of them is itself wrong or cannot be met names it in
+its finding (`"requirement": "R-po-1"`). That finding does not send the plan back to the planner: no extra refine round
+runs for it. It rides the plan approval card as one note, **A reviewer says an agreed requirement is wrong or cannot be
+met:**, with one line per id and the role that raised it.
+
+- **Approve** keeps the requirement as agreed and builds the plan. The audit log reads
+  "Requirement concern overridden: R-po-1 kept as agreed."
+- **Ask for changes** sends your answer, with the concern, to the planner.
+- The concern stops a later slice's plan even when its checks pass. Away mode approves it, keeps the requirement
+  and flags the answer *please check*, as long as the plan's check passed. Under `--yes` the plan approval waits for a person.
+- Only a review of the plan raises a concern. A code review's or a requirements review's finding that names an id
+  blocks as before. Any workflow with a role review, a requirements input and a plan approval stop gets the same card.
+
+### Mark the requirements before the PR
+
+The Ship card lists every agreed requirement under **Requirements 3/4 · 1 to fix**, each with a **Met**, **Not met**
+and **Dropped** picker. Not met asks where it moved, Dropped asks why; a row counts as marked once its text is saved
+(Enter, or leaving the field). Nothing is marked for you: a row whose code review covered it says "covered by the
+diff". The chat card and the feature page save the same marks.
+
+While a row is unmarked, **Create PR** is not the main button and is disabled, and the card reads "Mark every
+requirement before you create the PR · 1 left". Worca checks the marks again when the PR is created, so a stale card
+is refused too. Once shipped, the card shows each requirement with its mark in words. A re-plan starts a new feature,
+and its marks start empty.
+
+### Changes after ship
+
+On a shipped feature with agreed requirements, **Ask for changes** updates the requirements first. The Changes card
+says so: "Requirements first: the 4 agreed requirements are updated before the plan." After Start, the run's first
+card is the requirements hold, with the agreed requirements and how each was marked; the plan approval comes after it.
+This holds for a round on the same PR and for a follow-up run after the PR merged.
+
+## Away mode on a Shaper run
+
+A person answers what to build. Away mode handles how to build it. While Away is active on a Shaper run:
+
+| Stop | What happens |
+|---|---|
+| Clarify | Waits for you. A normal run's Clarify is still answered |
+| Requirements hold (first run, or a requirements-first Changes run) | Waits for you |
+| Agents' questions, review gates, failed steps | Away answers, as on any run |
+| Slice outline whose check passed | Away approves it, with **Ask me before each run** as shown. If it leaves an agreed requirement out of every slice, Away flags it *please check* and names the requirement |
+| Plan approval whose checks passed, slice 1 included | Away approves it |
+| Later slice's plan | Continues by itself when its check passed |
+| Later run held by **Ask me before each run** | Stays held; the card shows Needs you and Start now until you press it |
+| Requirement concern or plan concern | Away approves it, keeps the requirement or plan as written, and flags it *please check* |
+| A failed check: shape, outline, coverage, or a check that errored | Waits for you |
+| The planner's outline change, or notes from the chat | Waits for you |
+| A card showing an error | Waits for you |
+
+Reviewer conflicts left open do not stop Away: it approves with no picks, as you may, and flags the answer.
+
+Away's usual rules apply to every approval: which runs, away hours, delay and limits. Each one is a rule, so it costs
+nothing and appears in *Answered for you*; the feature's log says `by Away mode`. A question that waits shows no countdown
+and does not count against the limits.
+
+**Which runs.** Marking a run reaches its later slices, as long as you mark it before the outline is approved: a slice
+already planned to start keeps what it was given, and waits for you. *Never on this run* stays on that one run, because
+a later slice is a new run. If you want the whole feature to wait, set it on each run, or pause Away mode. Settings, away
+hours and the "I'm away" switch are read fresh by every run.
+
+**Set a spend cap.** With Away active, a feature can be built from start to finish with no plan seen by anyone. A spend
+cap in **Settings › Runs › Away mode** is the way to bound what that costs. Approving a concern also runs the implementer
+once more, which the limits cover but the answer's own cost does not show.
+
+`--yes` is different and unchanged: it never approves a plan, so a plan approval pauses or waits for a person.
+
 ## Iterate in the chat (s5)
 
 Iterating is one action: say it in the chat. Every finished run card, finished feature card, Ship card (ready or
@@ -317,6 +426,16 @@ set in-process only, never from an HTTP body. A later group-membership record ca
 `{member, of: roundOf.pipelineId, role: 'round', n: roundOf.round}`. A round's number is taken when it starts.
 Rounds run the project's default workflow: a round never re-shapes a decided run. They carry the origin's tags.
 While a round of a feature's run is live, Ship waits (`a round of run 3 is still going`).
+
+**Rounds in the Runs list.** A round is never a row of its own. Watch PR fix runs, Resolve and Ask for changes all
+stack under the run that opened the PR, or under its member row inside a feature group. The row's line is the newest
+round's (`Round 8 · merge dev in · pushed 3e4f5a6 · Thu`), and the `7 rounds` toggle at the line's end opens the trail: the
+newest 5, then `+2 earlier`. Each line opens that round's page. While a round runs, the row takes its state
+(`Running · Round 9 · merge dev in`, chip `Fixing`), and it lists under Running, not Needs you. One open PR raises at
+most one Needs-you item: a round never needs you through its PR (only through its own question, pause or unread
+failure), and of two runs on the same open PR only the newest counts. The badge, Activity and the Needs-you section
+count the same way. A round whose run is gone or filtered out heads its own stack (`… · Round 8`). The rounds of an
+archived run leave the active list with it.
 
 **Pushing a round.** Nothing is pushed by itself. A plain run's round updates its PR through the run's Push action
 (`POST /api/push`); a feature's goes out with Ship.
@@ -356,10 +475,72 @@ card is posted per fix run. When the watch gives up, the run card says so under 
 card the watch is only the PR link's tooltip (`PR #781 · watched`). With Shaper off, each fix run still gets its own
 `PR fix run` card.
 
+## Requirements first
+
+A medium or large Shaper task agrees its requirements before the plan is written. The
+Shaper's Requirements step is a hold, like the plan approval, and it has its own card. Three cards change:
+
+- **The Shaper card.** One facts line (`Large task · ≈ $31 · ~84 min`), then one sentence: `You lead as [Product ▾],
+  supported by [QA and Security ▾].` Each picker opens a menu: the lead is one of Product, Engineering, Design, QA,
+  Security and DevOps, and the supporters are switches (Product always reviews and is not listed). The first time, the
+  lead reads `pick a role` and **Shape requirements** stays off until you pick one; your pick is remembered for next
+  time. **Shape requirements** is the primary button and **Run as is** steps back. A small task keeps **Shaper** and
+  **Run as is**, with the facts line and the perspective chips. A card proposed directly as Shaper gets the same
+  sentence and **Shape requirements** when medium or large, and it has no **Run as is**; a small or unsized one keeps
+  its fields and **Start planning**, with the facts line.
+- **The Requirements card.** `3 decisions need you · as Product`, then the decisions the perspectives could not settle,
+  then the agreed requirements folded away, then the foot. Each decision is one question with its answers stacked under
+  it, Worca's pick already chosen and marked `recommended`; change any of them. An answer a perspective asked for says who
+  wants it and why, for example `Security: emails are personal data, and exports get forwarded`; an answer nobody asked for
+  stays one line. Questions, answers and reasons are worded for the lead you picked: a Product or Design lead never sees
+  code terms such as `project:read`; a scope token with no plain wording reads `read access`. The fold reads
+  `8 agreed · Product 2 · Engineering 1 · Design 1 · QA 1 · Security 2 · DevOps 1` and opens to the requirements grouped
+  by perspective, your own first; a requirement's id is in its tooltip and read out by screen readers. A prefix Worca does
+  not know goes under `Other`. **Agree and plan** is the only primary.
+  **Ask for changes** opens a field that sends your words and your picks back; the foot steps aside while it is open, so
+  **Send changes** is the only primary, and Cancel brings the foot back. When a requirement fails its check the fold reads
+  `7 agreed · 1 to fix · …` and opens by itself with the failing row first and its problem beside it, **Ask for changes**
+  becomes the primary, and **Agree and plan** is a plain, blocked button. If the requirements cannot be changed any more,
+  there is no primary and the foot says `1 to fix`. Agree and plan is also off, with the reason beside it, when no
+  requirement was written. If the requirements could not be loaded the card says so and **Try again** is the primary.
+- **The plan card.** A **Requirements 7/8 · 1 to fix** fold sits above **Shape** and opens when a requirement has no
+  step that delivers it; the row reads `R-ops-1 · <the requirement>` and `not covered by any step`. While any row fails,
+  **Fix all** is the primary and **Approve and build** is a plain button; when everything is covered, **Approve and
+  build** is the primary again. The Chat run card says `Requirements 7/8 · 1 to fix · Plan ✓ · Refine ✓ while planning`
+  in place of `Clarify ✓` for such a run.
+
+## Pull requests when a run finishes
+
+`pr.open` decides whether a finished run opens a PR: **Don't create a PR** (the default), **Create a draft PR** or **Open a PR
+ready for review**. A run takes the first value it finds, in this order:
+
+1. the run's own choice (the **Pull request when done** field in New run's Advanced section, or a Chat card or preset
+   that sets it; only a value you changed is saved as the run's);
+2. the project's setting, or the workspace's (Settings › Project › Pull requests; the Workspace page);
+3. the team policy (`fields`, or `workspaceRuns` for a workspace run);
+4. **Don't create a PR**.
+
+The value is decided once, when the run starts, and saved with it: a later change to a setting never changes a run that
+has started. The run's page shows it under **Pull request**, with where it came from and what happened. A run opens a PR
+only when it ended done with its work committed and has no live PR yet. An error or a stop, uncommitted work, no commits
+and a failed push are all written to the run's log. Runs of the Git automation, Watch PR fixes, rounds, conflict
+resolutions, scans, memory runs, runs on the source branch and runs with no project never open one this way. A run
+started from the CLI (`worca run`) does not either: there is no server to do it.
+
+When this deployment sends PRs as the person who started the run (`WORCA_GH_AS_PERSON`), a starter with no connected
+GitHub account opens nothing: the outcome says why and you get a notification. Worca's own credential is never used for it.
+
+API: `pr: { open?, slices? }` in the `POST /api/run` body (a bad value is a 400 and starts nothing), `pr` in
+`GET /api/run-defaults` (the setting with its source; `?workspaceId=` for a workspace), `GET /api/pipelines/:id/pr-auto`
+(the run's saved value and outcome, read-only) and `GET`/`PATCH /api/workspaces/:id/settings` (`{ "pr.open": value | null }`).
+
 ## Limits
 
 - Workspace runs are not sliced, and their checklists are not merged: a shaped
   workspace run gets a plain plan.
+- A workspace run's `pr.open` applies to every member whose branch has commits; `pr.slices` does not apply.
+- A manual **Ship as one PR** of a re-planned feature still starts from the last run's base; only the automatic one
+  uses the feature's first base.
 - Worca does not retarget a stacked PR when an earlier one merges. Use
   "Automatically delete head branches" on GitHub; automatic retargeting is a
   follow-up.

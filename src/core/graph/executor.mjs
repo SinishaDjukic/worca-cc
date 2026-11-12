@@ -56,7 +56,9 @@ import { perspectivesBlock } from '../../shared/shape/perspectives.mjs';
 import { roleChecklistOf, genericRoleBrief, roleTargetOf } from '../../shared/graph/role-review-step.mjs';
 import { reviewChecklistBlock } from '../../shared/shape/review-checklist.mjs';
 import { slicingBlock, outlineFeedbackBlock, FLAT_NOTE, sliceScopeBlock } from '../../shared/shape/slices.mjs';
-import { planConcernBlock, planConcernOverrideBlock } from '../../shared/review/plan-concern.mjs';
+import { planConcernBlock, planConcernOverrideBlock, requirementConcernBlock } from '../../shared/review/plan-concern.mjs';
+import { criterionIds } from '../../shared/review/coverage.mjs';
+import { outlineFileState, planOutputOf } from '../shape/outline-file.mjs';
 import { runScriptExecution } from './script-runner.mjs';
 // Skills registry §4.1: the CLI's refusal of `--plugin-dir` under managed `disableSideloadFlags` (P3's one regex).
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
@@ -505,7 +507,7 @@ export const SLICE_SCOPE_AGENT_KEYS = PERSPECTIVE_AGENT_KEYS;
 function slicingPromptBlock(ctx) {
   if (ctx.shapeOutlineNote?.decision === 'flat') return FLAT_NOTE;
   if (!ctx.shapeSlicing) return '';
-  return slicingBlock({ file: ctx.shapeSlicing.file, size: ctx.shapeSlicing.size || null })
+  return slicingBlock({ file: ctx.shapeSlicing.file, size: ctx.shapeSlicing.size || null, requirements: ctx.shapeSlicing.requirements === true })
     + (ctx.shapeOutlineNote?.decision === 'revise' ? outlineFeedbackBlock(ctx.shapeOutlineNote.feedback) : '')
     + mockMarkers({ MOCK_SLICES: ctx.shapeSlicing.file }) + '\n\n';
 }
@@ -530,7 +532,7 @@ function decompositionContractBlock(expandsPort, runCtx) {
 /** The MOCK marker set for this execution, per the resolution chain. Only markers
  *  `runMock` reads are emitted (MOCK_ROLE, MOCK_CYCLE, MOCK_BASE, MOCK_OUT, MOCK_JSON,
  *  MOCK_IN, MOCK_PRIOR, MOCK_TASKS_DIR). */
-function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, expandsPort, priorCount, perspective, planText, roleSpec, planConcernFile }) {
+function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, expandsPort, priorCount, perspective, planText, requirementsText, roleSpec, planConcernFile }) {
   const markers = { MOCK_ROLE: role, MOCK_CYCLE: ordinal, MOCK_BASE: runCtx.baseName };
   if (role === MOCK_ROLE_CLARIFY) {
     markers.MOCK_OUT = outputs[answersPortOf(ports)?.id]?.path;
@@ -543,7 +545,7 @@ function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, 
     markers.MOCK_OUT = paths[0];
     // The generic producer's further outputs (E8 requires each fired output to exist): '' for a
     // single-output node, which mockMarkers skips, so those prompts stay byte-identical.
-    if (role === 'generic-producer') markers.MOCK_OUTS = paths.slice(1).join('|');
+    if (role === 'generic-producer' || role === 'requirements-refine') markers.MOCK_OUTS = paths.slice(1).join('|');
   }
   if (verdict?.path) markers.MOCK_JSON = verdict.path;
   const primaryIn = (ports?.inputs || [])
@@ -554,19 +556,24 @@ function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, 
   // Role reviews (spec §3): the reviewer's role and its plan items; the refiner's merged findings. Empty values are
   // skipped by mockMarkers, so every other prompt is unchanged.
   markers.MOCK_PERSPECTIVE = perspective || '';
-  markers.MOCK_CHECKLIST = perspective ? (roleChecklistOf(roleSpec)?.items(perspective, planText || '') || []).join(',') : '';
+  markers.MOCK_CHECKLIST = perspective ? (roleChecklistOf(roleSpec)?.items(perspective, planText || '', requirementsText || '') || []).join(',') : '';
   markers.MOCK_FINDINGS = bindings.findings?.path || '';
+  // An agreed requirements file (an extra `requirements` input): the mock planner writes a delivery line per criterion.
+  markers.MOCK_REQUIREMENTS = bindings.requirements?.path || '';
   // #990 s5: the implementer's plan-concern file, only when one is offered, so every other prompt is unchanged.
   if (planConcernFile) markers.MOCK_PLAN_CONCERN = planConcernFile;
   return markers;
 }
 
-/** The brief of one role slice: its checklist provider's, else the generic one. */
+/** The brief of one role slice: its checklist provider's, else the generic one. A plan review with a requirements
+ *  input also gets the requirement-concern block (Shaper requirements s3, D6), in any workflow. */
 function roleBriefFor(ctx) {
   const spec = ctx.roleSpec;
   const provider = roleChecklistOf(spec);
-  if (provider) return provider.brief(ctx.role, ctx.rolePlanText || '', { houseBrief: ctx.houseBrief });
-  return genericRoleBrief(spec.roles.find((r) => r.key === ctx.role) || { key: ctx.role, label: ctx.role }, spec.target);
+  const concerns = ctx.bindings?.requirements && roleTargetOf(spec).requirementConcerns
+    ? requirementConcernBlock(criterionIds(ctx.roleRequirementsText || '')) : '';
+  if (provider) return provider.brief(ctx.role, ctx.rolePlanText || '', { houseBrief: ctx.houseBrief, shape: ctx.roleShape || null }) + concerns;
+  return genericRoleBrief(spec.roles.find((r) => r.key === ctx.role) || { key: ctx.role, label: ctx.role }, spec.target) + concerns;
 }
 
 /**
@@ -600,7 +607,7 @@ export function buildAgentPrompt(ctx) {
   const routed = ctxEndpointRouted(ctx);
   const hints = substituteHints(joinHints(meta.promptHints, node?.config?.promptHints), ctx);
   const perspectives = PERSPECTIVE_AGENT_KEYS.has(node?.key) && Array.isArray(ctx.shape?.perspectives)
-    ? perspectivesBlock(ctx.shape.perspectives, { refiner: node.key === 'refiner' })
+    ? perspectivesBlock(ctx.shape.perspectives, { refiner: node.key === 'refiner', agreedIds: ctx.shapeAgreedIds || [] })
     : '';
   const slicing = node?.key === SLICE_PLANNER_KEY ? slicingPromptBlock(ctx) : '';
   const sliceScope = SLICE_SCOPE_AGENT_KEYS.has(node?.key) && ctx.shapeSliceScope
@@ -647,7 +654,7 @@ export function buildAgentPrompt(ctx) {
       ordinal, runCtx, outputs, verdict, bindings, ports,
       expandsPort,
       priorCount: (ctx.priorAnswers || []).length,
-      perspective: ctx.role || null, planText: ctx.rolePlanText, roleSpec: ctx.role ? ctx.roleSpec : null,
+      perspective: ctx.role || null, planText: ctx.rolePlanText, requirementsText: ctx.roleRequirementsText, roleSpec: ctx.role ? ctx.roleSpec : null,
       planConcernFile: concernFile,
     }))
   );
@@ -872,8 +879,12 @@ export async function runAgentExecution(ctx) {
   // An agent that stopped to ask (the questions loop resumes it with the answers), or a slicing Planner
   // that stopped at its slice outline (the outline loop resumes it), has not finished: its outputs and
   // verdict come on the resumed spawn, which is checked like any other.
+  // D10: the outline file's state is classified once, here; the orchestrator's outline loop reads `outlineState`.
+  const outlineState = typeof ctx.shapeSlicing?.file === 'string'
+    ? await outlineFileState(ctx.shapeSlicing.file, { baseline: ctx.shapeSlicing.baseline || null, planFile: planOutputOf(outputs) })
+    : null;
   const asked = (ctx.questionsFile ? (await readAskFile(ctx.questionsFile)).kind !== 'none' : false)
-    || (typeof ctx.shapeSlicing?.file === 'string' && existsSync(ctx.shapeSlicing.file));
+    || (outlineState != null && outlineState !== 'flat');
   if (!asked) {
     checkVerdict(ctx, verdict?.path, review, warnings);          // E1: a missing verdict throws
     await assertOutputsWritten(ctx, ports, outputs, review);      // E8: so does an unwritten output
@@ -887,6 +898,7 @@ export async function runAgentExecution(ctx) {
     sessionId,
     prompt,
     systemPrompt,
+    ...(outlineState ? { outlineState } : {}),
   };
 }
 

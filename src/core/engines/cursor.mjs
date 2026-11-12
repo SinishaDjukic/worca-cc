@@ -33,7 +33,8 @@
 //   hooks, a skills folder, a turn or spend cap, and any switch that turns the shell or file tools off — so an Ask
 //   chat (CURSOR_ASK_LOCKDOWN) and a read-only spawn refuse.
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { execCli, cliRefusal } from './exec-cli.mjs';
+import { CURSOR_CLI } from './cli-specs.mjs';
 import { join } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
@@ -72,6 +73,12 @@ export const CURSOR_RULE_TERMS = Object.freeze({
 
 /** The project files Cursor reads from its cwd, relative to it. */
 export const CURSOR_PROJECT_FILES = ENGINE_PROJECT_FILES.cursor;
+
+/** The instruction files the Cursor CLI reads at the project root, alongside its rules
+ *  (cursor.com/docs/cli/using#rules). */
+export const CURSOR_INSTRUCTION_FILES = Object.freeze(['AGENTS.md', 'CLAUDE.md']);
+/** Project rules: `.mdc` files only; Cursor ignores a plain `.md` there (cursor.com/docs/rules). */
+export const CURSOR_INSTRUCTION_GLOBS = Object.freeze(['.cursor/rules/**/*.mdc']);
 
 // ── permission rules ─────────────────────────────────────────────────────────
 
@@ -292,10 +299,10 @@ export const CURSOR_SIGNED_OUT_HINT = 'run `cursor-agent login`, or set CURSOR_A
  *  in worca's environment stands in for the login; the binary must still run. */
 export function cursorPreflight({ bin = cursorDefaultBin(), timeoutMs = 10000, env = process.env } = {}) {
   return new Promise((resolve) => {
-    execFile(bin, ['status'], { timeout: timeoutMs, env: { ...process.env, ...env } }, (err, stdout, stderr) => {
+    execCli(CURSOR_CLI, bin, ['status'], { timeout: timeoutMs, env: { ...process.env, ...env } }, (err, stdout, stderr) => {
       if (err && typeof err.code !== 'number') {
         resolve(/^(ENOENT|EACCES|EINVAL)$/.test(String(err.code))
-          ? { refusal: `cannot run ${bin} (${err.code}) — install the Cursor CLI (cursor-agent), or point WORCA_CURSOR_BIN at it` }
+          ? { refusal: cliRefusal({ bin, err, install: 'install the Cursor CLI (cursor-agent), or point WORCA_CURSOR_BIN at it' }) }
           : { warning: `could not check the Cursor sign-in (${err.message})` });
         return;
       }
@@ -392,6 +399,7 @@ export async function runCursorProcess({
     let res;
     try {
       res = await superviseSpawn({
+        cli: CURSOR_CLI,
         file: bin, args, displayBin: bin, cwd, env, stdin: null, signal: spawnSignal, asAgent, stagedDir, onEvent,
         cleanup: () => {},
         stdoutErrorDetail: () => normalizer.finish().error || '',

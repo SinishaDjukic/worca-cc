@@ -9,7 +9,8 @@ import { readWorkspace as realReadWorkspace, isGitRepo as realIsGitRepo, memberW
 import { readWorkflow as realReadWorkflow, assertRunnableWorkflow as realAssertRunnableWorkflow, GRAPH_MEMORY_DEFRAG_WORKFLOW } from '../workflows.mjs';
 import { readGuardrailSet as realReadGuardrailSet } from '../guardrail-store.mjs';
 import { validateMemoryScope } from '../memory-sync.mjs';
-import { isWorkspaceScanWorkflow, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, AUTO_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
+import { checkRunPrBody } from '../pr-auto.mjs';
+import { isWorkspaceScanWorkflow, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, GRAPH_SHAPE_REQ_WORKFLOW, GRAPH_SHAPE_UX_REQ_WORKFLOW, AUTO_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
 import { sanitizeBranchName } from '../worktree.mjs';
 import { deriveBranchName } from '../naming.mjs';
 import { flagEnabled } from '../flags.mjs';
@@ -41,6 +42,7 @@ import { listPriceFor } from '../list-prices.mjs';
 const OPUS_LIST_OUTPUT = (listPriceFor('claude-opus-5-5') || {}).output || 20;
 import { resolveShapeRequest, isShapeWorkflowId } from '../shape/run.mjs';
 import { nudgeFor } from '../shape/nudge.mjs';
+import { shapeRequirementsEligible } from '../../shared/shape/requirements.mjs';
 import { estimateChoices } from '../shape/estimate.mjs';
 import { DEFAULT_PERSPECTIVES, withProjectFit } from '../../shared/shape/perspectives.mjs';
 import { NO_PROJECT_ERRORS } from '../../shared/no-project.mjs';
@@ -364,7 +366,7 @@ export function createProposalValidator({
         && (shapeIn === undefined || (shapeIn && typeof shapeIn === 'object' && !Array.isArray(shapeIn) && !('perspectives' in shapeIn)))) {
         shapeIn = { ...(shapeIn || {}), perspectives: [...DEFAULT_PERSPECTIVES, 'ux'] };
       }
-      const r = resolveShapeRequest({ shape: shapeIn, workflowId: inp.workflowId });
+      const r = resolveShapeRequest({ shape: shapeIn, workflowId: inp.workflowId }, { proposal: true });
       if (!r.ok) errors.push(r.error);
       else { shape = { ...r.shape, perspectives: withProjectFit(r.shape.perspectives, await briefOn()) }; shapedWorkflowId = r.workflowId; }
       // L7: a run without a project is never planned in slices (POST /api/run refuses 'auto' the same); its shaped run
@@ -405,6 +407,14 @@ export function createProposalValidator({
       if (typeof inp.guardrailsId !== 'string') { errors.push(PROPOSAL_ERRORS.guardrailsType); guardrailsId = null; }
       else guardrailsId = inp.guardrailsId.trim() || 'normal';
     }
+    // ── pr (open a PR when the run finishes): the check POST /api/run makes; slices means nothing to a workspace or a no-project run ──
+    let cardPr = null;
+    if (inp.pr !== undefined && inp.pr !== null) {
+      const checked = checkRunPrBody(inp.pr);
+      if (!checked.ok) errors.push(checked.error);
+      else if (checked.pr && target.target !== 'none') cardPr = target.target === 'workspace' && checked.pr.slices ? (checked.pr.open ? { open: checked.pr.open } : null) : checked.pr;
+    }
+
     if (guardrailsId === 'permissive') errors.push(PROPOSAL_ERRORS.permissive);
     else if (guardrailsId && !(await readGuardrailSet(guardrailsId))) errors.push(PROPOSAL_ERRORS.unknownGuardrails(guardrailsId));
 
@@ -543,7 +553,10 @@ export function createProposalValidator({
     if (nudgeBase && !errors.length) {
       let estimates = { asIs: null, shaped: null };
       // The shaped run would be wf_shape_ux when the nudge picks UX (resolveShapeRequest); it has the manual-test agents.
-      const shapedWf = nudgeBase.perspectives.includes('ux') ? GRAPH_SHAPE_UX_WORKFLOW : GRAPH_SHAPE_WORKFLOW;
+      // A medium or large task runs its requirements variant: its estimate counts those agents.
+      const req = shapeRequirementsEligible({ size: nudgeBase.size });
+      const ux = nudgeBase.perspectives.includes('ux');
+      const shapedWf = req ? (ux ? GRAPH_SHAPE_UX_REQ_WORKFLOW : GRAPH_SHAPE_REQ_WORKFLOW) : (ux ? GRAPH_SHAPE_UX_WORKFLOW : GRAPH_SHAPE_WORKFLOW);
       if (typeof estimate === 'function') {
         try { estimates = (await estimate({ asIs: wf, shaped: shapedWf })) || estimates; } catch { /* no history here (MCP child): no numbers */ }
       }
@@ -574,6 +587,8 @@ export function createProposalValidator({
         ...(sourceWarning ? { sourceWarning } : {}),
         // Only a proposal that names an engine: the card otherwise starts on the default, like New pipeline.
         ...(engine ? { engine } : {}),
+        // Only a proposal that asks for a PR when the run finishes.
+        ...(cardPr ? { pr: cardPr } : {}),
         // Only when the source is remote-only, behind its remote or unverifiable (offline).
         ...(sourceRef ? { sourceRef } : {}),
         // Only a proposal with per-agent picks: { nodeId: { model, effort, subagentModel?, reason?, facts? } } and the

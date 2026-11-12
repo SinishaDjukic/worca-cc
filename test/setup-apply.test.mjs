@@ -216,7 +216,7 @@ test('AC-3.3 full order: every side-effect kind, roles labelled with their engin
   assert.deepEqual(calls, ['proxy-swap', 'proxy-login', 'copilot-signin', 'copilot-import', 'openai-import', 'test:claude-sonnet-5-5', 'test:gpt-5.5-mini']);
   assert.equal(out.results[0].line, SAVED_TEXT);
   assert.equal(out.results[4].line, 'Imported 1 model from http://127.0.0.1:8080/v1.');
-  assert.deepEqual(out.results.slice(-2).map((r) => r.label), ['Everyday coding · Claude', 'Quick jobs · Codex']);
+  assert.deepEqual(out.results.slice(-2).map((r) => r.label), ['Everyday coding · Claude Code', 'Quick jobs · OpenAI Codex']);
 });
 
 test('proxy-swap lines are the card\'s sentences', async () => {
@@ -311,7 +311,7 @@ test('a pending Copilot model on a Codex role is refused: Copilot imports run on
   await assert.rejects(planSetupApply({
     access: { copilot: { importModels: ['claude-opus-5.5'] } },
     models: { modelRoles: { codex: { deep: { model: 'copilot-claude-opus-5.5' } } } },
-  }, deps), (err) => err.field.startsWith('models.modelRoles') && /runs on Claude — this slot picks a model Codex can run/.test(err.message));
+  }, deps), (err) => err.field.startsWith('models.modelRoles') && /runs on Claude Code — this slot picks a model OpenAI Codex can run/.test(err.message));
 });
 
 test('a failed import marks its role tests not run and offers Retry from the import', async () => {
@@ -588,6 +588,25 @@ test('AC-3.6 broker: anthropic, whitespace and non-string keys; a refused sign-i
   assert.equal(s.pipelineCostLimitUsd, 4);
   // A non-string key is a validation error, not a refusal.
   await assert.rejects(planSetupApply({ access: { openai: { apiKey: 42 } } }, deps), (e) => e.field === 'access.openai.apiKey');
+});
+
+test('broker: an importModels-only Copilot block imports, plans pending ids and refuses nothing', async () => {
+  seed({});
+  const { calls, deps } = fakeDeps({
+    brokerRefusal: brokerOn,
+    checkModelRoles: realRoleCheck,
+    importCopilot: async (ids) => { calls.push('copilot-import'); return { created: ids.map((id) => `copilot-${id}`), updated: [], skipped: [] }; },
+  });
+  const { plan, out } = await applyAll({
+    access: { copilot: { importModels: ['claude-opus-5.5'] } },
+    models: { modelRoles: { claude: { deep: { model: 'copilot-claude-opus-5.5' } } }, testRoles: true },
+  }, deps);
+  assert.deepEqual(plan.refused, []);
+  assert.deepEqual(plan.steps.map((s) => s.id), ['copilot-import', 'role-test.claude.deep']);
+  assert.equal(plan.steps[0].skip, undefined);
+  assert.equal(plan.steps[1].importedBy, 'copilot-import');
+  assert.deepEqual(calls, ['copilot-import', 'test:copilot-claude-opus-5.5']);
+  assert.equal(out.ok, true);
 });
 
 test('sameValue ignores key order; a reordered role block writes nothing', async () => {

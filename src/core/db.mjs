@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 84;
+export const SCHEMA_VERSION = 88;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -841,8 +841,11 @@ ${STEP_QUESTIONS_DDL}
  */
 const INCREMENTAL_COLUMNS = {
   req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13)
+  req_features:           { early_start_reason: 'TEXT' },   // v85: the reason given for starting a feature before Ready, kept until a run starts; NULL = none
   req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
   run_groups:             { name_source: "TEXT NOT NULL DEFAULT 'user'" },   // v79: 'suggested' | 'user' (Smart naming), as ask_chat_groups
+  req_export_links:       { origin: "TEXT NOT NULL DEFAULT 'export'" },   // v88: where the link came from, 'export' | 'import' (A6.1 D11, D13)
+  req_attachments:        { fetch_json: 'TEXT' },   // v88: the tracker file a row comes from (A6.1 D10, D13); NULL for an upload
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
@@ -863,7 +866,8 @@ const INCREMENTAL_COLUMNS = {
                             release_target: 'TEXT',   // v66: the branch the tag points at (the PR's base)
                             release_at: 'TEXT',       // v66: when the draft release was claimed (set once; never cleared)
                             release_url: 'TEXT',      // v66: the draft release's URL
-                            release_error: 'TEXT' },  // v66: why creating it failed (not retried)
+                            release_error: 'TEXT',    // v66: why creating it failed (not retried)
+                            pr_auto: 'TEXT' },        // v87: the run's PR-when-done decision and its outcome (JSON, src/core/pr-auto.mjs); NULL = before v87 or a CLI start
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
@@ -882,6 +886,7 @@ const INCREMENTAL_COLUMNS = {
                             // fallback once a run's worktree is gone; NULL = out folder, worktree or an older row
                             source_run_id: 'TEXT', source_project_key: 'TEXT', source_rel: 'TEXT' },
   ask_messages:           { engine: 'TEXT' },        // v83 (#943): the engine a reply ran on; NULL = a user/system row or before v83
+  chat_conversations:     { header_new_off: 'INTEGER NOT NULL DEFAULT 0' },   // v86: 1 = a scope pick retired the header's New conversation for good
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE',  // v29: reply threads; NULL = thread root
                             author_name: 'TEXT' },   // v37: who wrote it (identity.mjs actor); NULL = before attribution / Ask
@@ -903,7 +908,11 @@ const INCREMENTAL_COLUMNS = {
                             release_target: 'TEXT',   // v66: the branch the tag points at (the feature's base)
                             release_at: 'TEXT',       // v66: when the draft release was claimed (set once; never cleared)
                             release_url: 'TEXT',      // v66: the draft release's URL
-                            release_error: 'TEXT' },  // v66: why creating it failed (not retried)
+                            release_error: 'TEXT',    // v66: why creating it failed (not retried)
+                            pr_open: 'TEXT',          // v87: the feature's PR-when-done choice, saved at outline approval; NULL = before v87 (reads as none)
+                            pr_slices: 'TEXT',        // v87: 'each' | 'one'
+                            pr_source: 'TEXT',        // v87: JSON { open, slices } — where the values came from
+                            pr_outcome: 'TEXT' },     // v87: JSON outcome of the automatic one-PR attempt; NULL = none yet
   shape_feature_slices:   { draft_pr_url: 'TEXT',      // v58 (D24): the PR openSliceDraft opened as a draft
                             kind: 'TEXT' },            // v67 (Shaper s5): 'extra' | 'follow-up' (appendFeatureRun); NULL = from the outline
   pipeline_events:        { actor: 'TEXT' },         // v38: who did it (identity.mjs actor); NULL = the run itself / before attribution
@@ -913,7 +922,8 @@ const INCREMENTAL_COLUMNS = {
                             map_overrides_json: 'TEXT', // v40: confirm / reject / manual edge overrides; NULL = none
                             description_origin: 'TEXT',     // v40: 'generated' | 'edited'; NULL = before v40
                             actions_json: 'TEXT',           // v47: stack actions { stacks:[…] } (issue #529); NULL = none
-                            scan_models_json: 'TEXT' },     // v57: the scan pick captured at creation { scanModel, scanEffort, agentModel, agentEffort }; NULL = none
+                            scan_models_json: 'TEXT',       // v57: the scan pick captured at creation { scanModel, scanEffort, agentModel, agentEffort }; NULL = none
+                            settings_json: 'TEXT' },        // v87: the workspace's own settings { "pr.open"?: … } (src/core/workspace-settings.mjs); NULL = none
   schedules:              { ask_thread_id: 'TEXT', ask_card_id: 'TEXT',   // v31: the Ask Worca card a series came from
                             created_by: 'TEXT', updated_by: 'TEXT',   // v39: who made / last changed it (identity.mjs actor)
                             preset_id: 'TEXT' },   // v63: the run preset the series follows (read at fire time); NULL = none
@@ -1082,6 +1092,60 @@ CREATE TABLE IF NOT EXISTS pr_watch_runs (
 // v82 (#711): Git event automations. A rule starts a run when an issue or PR event in its project or workspace matches;
 // one automation_events row per (rule, subject) is the "never twice" guarantee and the Activity log; cursors hold
 // each project's poll position; deliveries drop webhook repeats. src/core/automations.mjs owns all four.
+// v85 freeform chat (Discord first): one row per platform thread bound to an Ask thread, the opaque control refs it
+// was sent, every delivered message part, and the platform event ids already handled (dedup across reconnects).
+const CHAT_CONVERSATIONS_DDL = `
+CREATE TABLE IF NOT EXISTS chat_conversations (
+  id             TEXT PRIMARY KEY,
+  plugin         TEXT NOT NULL,
+  channel_id     TEXT NOT NULL,
+  platform       TEXT NOT NULL,
+  guild_id       TEXT,
+  parent_chat_id TEXT NOT NULL,
+  chat_id        TEXT NOT NULL,
+  owner_user_id  TEXT NOT NULL,
+  worca_identity TEXT NOT NULL,
+  ask_thread_id  TEXT NOT NULL REFERENCES ask_threads(id) ON DELETE CASCADE,
+  header_message_id TEXT,
+  header_new_off INTEGER NOT NULL DEFAULT 0,
+  status         TEXT NOT NULL DEFAULT 'active',
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL,
+  UNIQUE (plugin, channel_id, chat_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_conversations_thread ON chat_conversations(ask_thread_id);
+CREATE TABLE IF NOT EXISTS chat_controls (
+  ref             TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+  card_id         TEXT,
+  action          TEXT NOT NULL,
+  issued_state    TEXT,
+  owner_user_id   TEXT NOT NULL,
+  single_use      INTEGER NOT NULL DEFAULT 1,
+  expires_at      TEXT NOT NULL,
+  used_at         TEXT,
+  created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_controls_card ON chat_controls(conversation_id, card_id);
+CREATE TABLE IF NOT EXISTS chat_deliveries (
+  conversation_id     TEXT NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+  ask_message_id      TEXT NOT NULL,
+  part                TEXT NOT NULL,
+  platform_message_id TEXT,
+  shown_state         TEXT,
+  delivered_at        TEXT NOT NULL,
+  PRIMARY KEY (conversation_id, ask_message_id, part)
+);
+CREATE TABLE IF NOT EXISTS chat_inbound_seen (
+  plugin     TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  event_id   TEXT NOT NULL,
+  seen_at    TEXT NOT NULL,
+  PRIMARY KEY (plugin, channel_id, event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_inbound_seen_at ON chat_inbound_seen(seen_at);
+`;
+
 const AUTOMATIONS_DDL = `
 CREATE TABLE IF NOT EXISTS automation_rules (
   id            TEXT PRIMARY KEY,
@@ -1541,6 +1605,10 @@ const INCREMENTAL_TABLES = {
   run_group_members: RUN_GROUPS_DDL,
   ask_chat_groups:   ASK_CHAT_GROUPS_DDL,      // v76 (#948 s3)
   night_decisions:   NIGHT_DECISIONS_DDL,
+  chat_conversations: CHAT_CONVERSATIONS_DDL,
+  chat_controls: CHAT_CONVERSATIONS_DDL,
+  chat_deliveries: CHAT_CONVERSATIONS_DDL,
+  chat_inbound_seen: CHAT_CONVERSATIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
   terminal_audit:     TERMINAL_DDL,
@@ -1717,7 +1785,7 @@ function applySchemaV12(db) {
 /**
  * Incremental v12 -> v13 migration (plugin task-sources, spec 2026-07-12 §10):
  *   pipelines.source_type TEXT DEFAULT 'prompt'  -- 'prompt' | 'markdown' | 'plugin'
- *   pipelines.source_ref  TEXT                   -- JSON {plugin,sourceId,taskId,profile,inputs,url,title}; NULL unless plugin
+ *   pipelines.source_ref  TEXT                   -- JSON {plugin,sourceId,taskId,profile,inputs,url,title,project?}; NULL unless plugin
  *   workflows.origin      TEXT                   -- 'plugin:<name>' provenance; NULL = user-created
  * Implemented as a CONDITIONAL repair (same shape as applySchemaV12), NOT a plain
  * DDL string: the three columns live in INCREMENTAL_COLUMNS (hard rule above), so
@@ -2730,6 +2798,18 @@ export function migrate(db) {
     if (current < 82) db.exec(AUTOMATIONS_DDL);   // v82 Git event automations (#711), project and workspace rules
     // v83 (#943): ask_messages.engine — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     // v84 (#990): config_workflow_nodes.roles — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v85 had two meanings: dev's req_features.early_start_reason (INCREMENTAL_COLUMNS) and this branch's chat tables.
+    // Both heal on either v85 DB: the hoisted repairSchemaGaps adds the missing column, and chat_conversations is in
+    // INCREMENTAL_TABLES, so a dev-v85 DB (which skips the step below) gets its chat tables there too.
+    if (current < 85) db.exec(CHAT_CONVERSATIONS_DDL);   // v85 freeform chat conversations (first written as v84; dev took 84)
+    // v86: chat_conversations.header_new_off — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps (a v85 DB) or
+    // by the v85 DDL above (an older DB)
+    // v87: pipelines.pr_auto, workspaces.settings_json, shape_features.pr_* — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v88 requirements A6.1: req_export_links.origin + req_attachments.fetch_json (INCREMENTAL_COLUMNS; first written as v80, then v81,
+    // v82, v84, v85, v86, then v87: A6 took 80, security #854 took 81, dev's automations #711 took 82, #943 took 83, #990 took 84, #1145 and
+    // freeform chat #1142 took 85, #1142 took 86 and PR-when-done #1156 took 87). The repair runs here, after the v77 and v80 rungs created
+    // those tables on a DB coming from below them.
+    if (current < 88) repairSchemaGaps(db, schemaGaps(db));
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

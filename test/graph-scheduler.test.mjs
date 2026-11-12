@@ -1524,3 +1524,45 @@ test('4.1: a sibling that never settles does not hold the run past the grace', {
   assert.equal(await sched.run(), 'error');
   assert.ok(Date.now() - t < 2000, 'bounded by the grace');
 });
+
+// Shaper's requirements stage (wf_shape_req): the two holds' Ask for changes, over the real sidecars' ports.
+test('wf_shape_req: Ask for changes on n_reqrefine re-runs the drafter n_req; on n_refine it still re-runs n_plan', { timeout: 10000 }, async () => {
+  const { realPortsFn } = await import('./helpers/graph-ports.mjs');
+  const { GRAPH_SHAPE_REQ_WORKFLOW } = await import('../src/core/graph/builtin-workflows.mjs');
+  const calls = [];
+  const asks = [];
+  const roleFinish = (port) => (a) => (a.composite === 'expand' ? { phases: [] }
+    : { outputs: { findings: { path: `/p/${a.node.id}-f${a.ordinal}.md` }, [port]: { path: (a.bindings.revise || a.bindings[port])?.path || null } } });
+  const script = {
+    n_req: (a) => ({ outputs: { requirements: { path: `/p/req${a.ordinal}.md` } } }),
+    n_reqroles: roleFinish('requirements'),
+    n_reqrefine: (a) => ({ verdict: { issues: [] }, outputs: { requirements: { path: `/p/agreed${a.ordinal}.md` }, decisions: { path: '/p/d.json' } } }),
+    n_plan: (a) => ({ outputs: { plan: { path: `/p/plan${a.ordinal}.md` } } }),
+    n_roles: roleFinish('plan'),
+    n_refine: (a) => ({ verdict: { issues: [] }, outputs: { plan: { path: `/p/refined${a.ordinal}.md` } } }),
+    n_impl: () => ({ outputs: {} }),
+    n_review: (a) => (a.composite === 'expand' ? { phases: [] } : { verdict: { issues: [] }, outputs: {} }),
+  };
+  const scheduler = createScheduler({
+    template: GRAPH_SHAPE_REQ_WORKFLOW, portsFn: realPortsFn(), approvalStops: true,
+    execute: (args) => { calls.push({ nodeId: args.node.id, bindings: args.bindings, composite: args.composite }); return Promise.resolve(script[args.node.id]?.(args) || {}); },
+    onAsk: async (a) => {
+      if (a.kind !== 'plan') return 'continue';
+      asks.push([a.nodeId, a.plan.round, a.plan.revisable]);
+      if (a.plan.round === 1) return { decision: 'revise', path: `/fb-${a.nodeId}.md` };
+      return 'approve';
+    },
+  });
+  await scheduler.run();
+  assert.deepEqual(asks, [['n_reqrefine', 1, true], ['n_reqrefine', 2, true], ['n_refine', 1, true], ['n_refine', 2, true]]);
+  const req = calls.filter((c) => c.nodeId === 'n_req');
+  assert.equal(req.length, 2);
+  assert.equal(req[1].bindings.revise?.path, '/fb-n_reqrefine.md', 'the requirements feedback lands on the drafter');
+  assert.equal(calls.filter((c) => c.nodeId === 'n_reqrefine').some((c) => c.bindings.revise?.path?.startsWith('/fb-')), false);
+  const plan = calls.filter((c) => c.nodeId === 'n_plan');
+  assert.equal(plan.length, 2);
+  assert.equal(plan[1].bindings.revise?.path, '/fb-n_refine.md', 'the plan feedback lands on the Planner, not the extra input\'s source');
+  assert.equal(plan[1].bindings.requirements?.path, '/p/agreed2.md', 'the agreed requirements are bound on the extra input');
+  assert.equal(calls.filter((c) => c.nodeId === 'n_reqrefine').length, 2, 'the refiner fires once per round, its task fired once');
+  assert.equal(calls.filter((c) => c.nodeId === 'n_refine').length, 2, 'Refine re-fires though its extra input is not fresh');
+});

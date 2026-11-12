@@ -56,10 +56,14 @@ import {
 } from './gemini-family.mjs';
 import { makeChatDescriptor } from './chat-descriptor.mjs';
 import { chatSelfTest, SELF_TEST_MODEL } from './chat-selftest.mjs';
+import { GEMINI_CLI } from './cli-specs.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const geminiDefaultBin = () => process.env.WORCA_GEMINI_BIN || 'gemini';
 export const GEMINI_SESSION_PREFIX = 'gemini:';
+/** The instruction file Gemini CLI reads from its cwd: its default context file name, which worca does not change
+ *  (geminicli.com/docs/cli/gemini-md/; AGENTS.md only when `context.fileName` names it). */
+export const GEMINI_INSTRUCTION_FILES = Object.freeze(['GEMINI.md']);
 
 const GEMINI_FALSE = new Set(['systemPromptFlag', 'allowedTools', 'cost', 'subagents', 'hookTelemetry', 'skills', 'subagentSystemPrompt', 'turnBudget']);
 
@@ -294,7 +298,7 @@ export function geminiSignedIn(given = process.env) {
 
 /** The run-start check (engines/index.mjs `preflight`). Never rejects: {refusal} | {warning} | {}. */
 export function geminiPreflight({ bin = geminiDefaultBin(), timeoutMs = 10000, env = process.env } = {}) {
-  return familyPreflight({ bin, env, timeoutMs, label: 'Gemini CLI (npm i -g @google/gemini-cli)', binEnv: 'WORCA_GEMINI_BIN',
+  return familyPreflight({ bin, cli: GEMINI_CLI, env, timeoutMs, label: 'Gemini CLI (npm i -g @google/gemini-cli)', binEnv: 'WORCA_GEMINI_BIN',
     signedIn: geminiSignedIn, signInHint: GEMINI_SIGNED_OUT_HINT });
 }
 
@@ -335,6 +339,7 @@ function prepareAsk({ cwd, bin, sys, prompt, model, effort, servers, scratchDir,
 }
 
 const GEMINI_SPEC = Object.freeze({
+  cli: GEMINI_CLI,
   name: 'gemini', label: 'Gemini CLI', prefix: GEMINI_SESSION_PREFIX, envPrefixes: ['GEMINI_', 'GOOGLE_'],
   classify: classifyGeminiError, resumeNotFoundRe: GEMINI_RESUME_NOT_FOUND_RE,
   fatalStderrRe: GEMINI_POLICY_ERROR_RE, fatalMessage: 'Gemini CLI could not load worca\'s policy file, so the guardrail rules would not hold — stopped',
@@ -374,7 +379,7 @@ export function runGeminiProcess(opts = {}) {
 /** Can this gemini be locked down for a chat? Every flag in GEMINI_ASK_FLAGS, the version the lockdown was verified on,
  *  and no system policy file (which would make Gemini skip worca's admin policy). Never rejects: {refusal} or {}. */
 export function geminiAskSupport({ bin = geminiDefaultBin(), timeoutMs = 15000 } = {}) {
-  return familyAskSupport({ bin, timeoutMs, flags: GEMINI_ASK_FLAGS, minVersion: GEMINI_ASK_MIN_VERSION, label: 'Gemini CLI', install: 'npm i -g @google/gemini-cli', binEnv: 'WORCA_GEMINI_BIN',
+  return familyAskSupport({ bin, cli: GEMINI_CLI, timeoutMs, flags: GEMINI_ASK_FLAGS, minVersion: GEMINI_ASK_MIN_VERSION, label: 'Gemini CLI', install: 'npm i -g @google/gemini-cli', binEnv: 'WORCA_GEMINI_BIN',
     extra: () => (systemPolicyPresent() ? `the system policy folder (${systemPolicyDir()}) holds policy files, so Gemini CLI would skip worca's chat lockdown` : null) });
 }
 

@@ -6,9 +6,11 @@ import { resetWorkspaceGuideIfNoWorkspaces } from '../../../src/core/onboarding.
 import { WORKSPACE_RESYNTH_WORKFLOW_ID } from '../../../src/core/graph/builtin-workflows.mjs';
 import { cancelForTarget } from '../../../src/core/scheduler.mjs';
 import { assertWorkspaceScanInput } from '../../../src/core/settings.mjs';
-import { createWorkspaceWithHomes } from '../../../src/core/workspace-scan-run.mjs';
+import { createWorkspaceWithHomes, scanSignInMessage } from '../../../src/core/workspace-scan-run.mjs';
 import { RESCAN_CHOICES, WORKSPACE_KEY_RE, addWorkspaceManualEdge, addWorkspaceMembers, checkNewWorkspace, deleteWorkspace, listWorkspaces, memoGitProbe, readWorkspace, readWorkspaceMap, readWorkspaceStacks, regenerateWorkspaceDescription, removeWorkspaceManualEdge, removeWorkspaceMember, scanMemberProblems, setWorkspaceEdgeState, setWorkspaceScanPick, updateWorkspace, updateWorkspaceStacks, workspaceMembers } from '../../../src/core/workspaces.mjs';
 import { effectiveEdges } from '../../../src/shared/workspace-map/overrides.mjs';
+import { workspacePrView } from '../../../src/core/pr-auto.mjs';
+import { writeWorkspaceSettings } from '../../../src/core/workspace-settings.mjs';
 import { afterMembersChanged, agentMayBeCaller, badRequest, emitChanged, liveAutoRescan, ownsWorkspaceTarget, primaryMemberOf, prunedNote, refuseAgentCaller, refuseSignedOutClaude, removeRecommendation, resolveProjectDir, runs, scanModelsFor, scanRequest, workspaceMembersBusy } from '../../server.mjs';
 import { personOf } from '../../../src/core/worca-levels/service.mjs';
 import { worcaLevelService } from '../worca-levels/worca-level.mjs';
@@ -73,6 +75,26 @@ app.put('/api/workspaces/:id/actions', async (req, res) => {
     res.status(500).json({ error: e?.message || String(e) });
   }
 });
+// The workspace's own settings (one today: pr.open, the workspace layer of "open a PR when a run finishes").
+app.get('/api/workspaces/:id/settings', async (req, res) => {
+  const view = WORKSPACE_KEY_RE.test(req.params.id) ? await workspacePrView(req.params.id) : null;
+  if (!view) return res.status(404).json({ error: 'workspace not found', code: 'NOT_FOUND' });
+  res.json(view);
+});
+
+app.patch('/api/workspaces/:id/settings', async (req, res) => {
+  if (agentMayBeCaller(req)) return refuseAgentCaller(res);
+  const id = req.params.id;
+  try {
+    if (!WORKSPACE_KEY_RE.test(id)) return res.status(404).json({ error: 'workspace not found', code: 'NOT_FOUND' });
+    writeWorkspaceSettings(id, req.body);
+    emitChanged('workspaces-changed', 'settings');
+    res.json(await workspacePrView(id));
+  } catch (err) {
+    res.status(err?.status || 500).json({ error: err?.message || String(err), ...(err?.status === 404 ? { code: 'NOT_FOUND' } : {}) });
+  }
+});
+
 function liveRescanOf(id) {
   const r = liveAutoRescan(id);
   if (!r) return null;
@@ -335,7 +357,7 @@ app.post('/api/workspaces/:id/map/render', async (req, res) => {
  */
 async function refuseSignedOutScan(res, models) {
   if (models && modelHasBaseUrlRouting(models.scanModel)) return false;
-  return refuseSignedOutClaude(res);
+  return refuseSignedOutClaude(res, scanSignInMessage(models));
 }
 
 // POST /api/workspaces/scan (first scan): validated exactly as the save will be (D4).

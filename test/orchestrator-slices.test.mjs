@@ -4,7 +4,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -15,6 +16,8 @@ import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { createSliceFeature } from '../src/core/shape/features.mjs';
 import { MOCK_OUTLINE } from '../src/core/engines/mock.mjs';
+import { getTicket } from '../src/core/scheduler.mjs';
+import { readNightDecisions } from '../src/core/night/store.mjs';
 
 useTempHome(after);
 
@@ -45,7 +48,7 @@ const isOutline = (q) => q.kind === 'plan' && q.plan?.outline;
 
 /** Start a mock run in slicing mode. Outline asks go to `onOutline(q, orch)`, other plan asks to `onPlan`. */
 function start(opts = {}, onOutline = () => {}, onPlan = (q, orch) => orch.answer(q.id, { decision: 'approve' })) {
-  const { afterSpawn, ...rest } = opts;
+  const { afterSpawn, beforeSpawn, ...rest } = opts;
   opts = rest;
   const dir = opts.projectDir || gitDir('slices');
   const orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_shape', prompt: PROMPT, claude: { mock: true }, shape: SHAPE, ...opts });
@@ -56,7 +59,10 @@ function start(opts = {}, onOutline = () => {}, onPlan = (q, orch) => orch.answe
   const real = orch._runNodeAttempts.bind(orch);
   orch._runNodeAttempts = async (nc, ctx) => {
     spawns.push({ key: nc.key, slicing: Boolean(ctx.shapeSlicing), note: ctx.shapeOutlineNote?.decision || null,
-      feedback: ctx.shapeOutlineNote?.feedback || null, resume: Boolean(ctx.resumeSessionId), scope: Boolean(ctx.shapeSliceScope) });
+      feedback: ctx.shapeOutlineNote?.feedback || null, resume: Boolean(ctx.resumeSessionId), scope: Boolean(ctx.shapeSliceScope),
+      // the outline file as the spawn starts: its sha, or null when it is missing
+      outlineSha: ctx.shapeSlicing ? shaOf(ctx.shapeSlicing.file) : undefined });
+    if (beforeSpawn) await beforeSpawn(nc, ctx, spawns.length, orch);
     const r = await real(nc, ctx);
     if (afterSpawn) await afterSpawn(nc, ctx, spawns.length);
     return r;
@@ -69,6 +75,9 @@ function start(opts = {}, onOutline = () => {}, onPlan = (q, orch) => orch.answe
   });
   const done = opts.resume ? orch.resume() : orch.run();
   return { orch, outlines, plans, execs, spawns, done, dir };
+}
+function shaOf(file) {
+  try { return createHash('sha256').update(readFileSync(file)).digest('hex'); } catch { return null; }
 }
 const ran = (execs, nodeId) => execs.filter((e) => e.nodeId === nodeId);
 const audit = (orch) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(orch.getState().id).map((r) => r.text);
@@ -149,6 +158,74 @@ test('revise: round 2 is asked; at round 3 the outline is no longer revisable', 
   assert.deepEqual(h.outlines.map((q) => q.id), ['plan-outline-n_plan-1', 'plan-outline-n_plan-2', 'plan-outline-n_plan-3']);
   assert.deepEqual(h.outlines.map((q) => q.plan.revisable), [true, true, false]);
   assert.ok(h.spawns.some((s) => s.note === 'revise' && s.feedback === 'change 1'));
+});
+
+test('revise keeps slices.json: the revise spawn starts with round 1\'s bytes and round 2 reads the edited outline', async () => {
+  let n = 0;
+  const h = start({}, (q, orch) => {
+    n += 1;
+    if (n === 1) orch.answer(q.id, { decision: 'revise', feedback: 'Merge the first two.' });
+    else orch.answer(q.id, { decision: 'stop' });
+  });
+  assert.equal((await h.done).status, 'stopped');
+  const rounds = h.orch.state.shaping.outline.rounds;
+  assert.equal(rounds.length, 2);
+  assert.match(rounds[0].sha, /^[0-9a-f]{64}$/);
+  const revise = h.spawns.find((s) => s.note === 'revise');
+  assert.equal(revise.outlineSha, rounds[0].sha, 'byte-equal to the asked round at the revise spawn\'s start');
+  assert.ok(h.outlines[1].plan.outline.why.includes('Merge the first two.'), 'round 2 reads the edited outline');
+  assert.notEqual(rounds[1].sha, rounds[0].sha);
+});
+
+test('pause during the revise spawn, resume: the file still has round 1\'s sha at the resumed spawn\'s start, and round 2 is asked, not flat', async () => {
+  const dir = gitDir('slices-revise-pause');
+  let paused = false;
+  const h = start({ projectDir: dir, beforeSpawn: async (nc, ctx, i, orch) => {
+    if (!paused && ctx.shapeOutlineNote?.decision === 'revise') { paused = true; orch.pause(); }
+  } }, (q, orch) => orch.answer(q.id, { decision: 'revise', feedback: 'Merge the first two.' }));
+  assert.equal((await h.done).status, 'paused');
+  const saved = readPipelineForResume(h.orch.getState().id);
+  const r1 = saved.resumePoint.shaping.outline.rounds[0];
+  assert.equal(r1.decision, 'revise');
+  let n = 0;
+  const h2 = start({ projectDir: dir, resume: saved, shape: undefined }, (q, orch) => { n += 1; orch.answer(q.id, { decision: 'stop' }); });
+  assert.equal((await h2.done).status, 'stopped');
+  const spawn = h2.spawns.find((s) => s.key === 'planner' && s.slicing);
+  assert.equal(spawn.outlineSha, r1.sha, 'round 1\'s bytes at the resumed spawn\'s start');
+  assert.equal(spawn.note, 'revise');
+  assert.equal(n, 1);
+  assert.equal(h2.outlines[0].id, 'plan-outline-n_plan-2', 'round 2 is asked');
+  assert.notEqual(h2.orch.state.shaping.outline.decided, 'flat');
+});
+
+test('a revise answered with a plan (outline untouched) goes flat, with no round 2', async () => {
+  // A Planner that answers the revise with the plan: the outline stays as asked (the mock, given no feedback block,
+  // rewrites round 1's bytes) and a plan lands in the plan output during the spawn.
+  const h = start({ beforeSpawn: async (nc, ctx) => {
+    if (nc.key !== 'planner' || ctx.shapeOutlineNote?.decision !== 'revise') return;
+    ctx.shapeOutlineNote = null;
+    const out = Object.values(ctx.outputs || {}).map((o) => o?.path).find(Boolean);
+    await writeFile(out, '# Plan\n\nThe whole task.\n');
+  } }, (q, orch) => orch.answer(q.id, { decision: 'revise', feedback: 'Do not slice it.' }));
+  await h.done;
+  assert.equal(h.outlines.length, 1, 'no round 2');
+  assert.equal(h.orch.state.shaping.outline.decided, 'flat');
+  assert.ok(existsSync(join(h.orch.pipeline.dir, 'slices.json')), 'the outline file is never deleted');
+});
+
+test('a revise that leaves the outline unchanged and writes no plan re-asks it as round 2 with the audit line', async () => {
+  let n = 0;
+  // A Planner that leaves the outline as it was: the mock, given no feedback block, rewrites round 1's bytes.
+  const h = start({ beforeSpawn: async (nc, ctx) => {
+    if (nc.key === 'planner' && ctx.shapeOutlineNote?.decision === 'revise') ctx.shapeOutlineNote = null;
+  } }, (q, orch) => {
+    n += 1;
+    if (n === 1) orch.answer(q.id, { decision: 'revise', feedback: 'Anything.' });
+    else orch.answer(q.id, { decision: 'stop' });
+  });
+  assert.equal((await h.done).status, 'stopped');
+  assert.deepEqual(h.outlines.map((q) => q.id), ['plan-outline-n_plan-1', 'plan-outline-n_plan-2']);
+  assert.ok(audit(h.orch).some((x) => x.includes('The planner left the outline unchanged')));
 });
 
 test('stop on the outline ends the run stopped and starts no feature', async () => {
@@ -261,18 +338,18 @@ test('audit: pendingQuestion keeps plan {outline, round} for an outline ask only
   assert.deepEqual(seen, { outline: true, round: 1 });
 });
 
-// D19: a later slice's plan stops only on a failing check or outline-change.md (or Approve each / Away mode). The mock
-// plan fails the shape check, so a passing one is stubbed.
+// D19: a later slice's plan stops only on a failing check or outline-change.md (or Approve each). Away mode changes who
+// answers the stop, not whether it is raised. The mock plan fails the shape check, so a passing one is stubbed.
 const PASS = { ok: true, passed: 8, total: 8, items: [] };
 const FAIL = { ok: false, passed: 3, total: 8, items: [] };
-const d19 = ({ each = false, check = PASS, change = false, away = false, afterSpawn } = {}) => {
+const d19 = ({ each = false, check = PASS, change = false, away = false, afterSpawn, onPlan } = {}) => {
   const pid = `p${Date.now()}${Math.random().toString(36).slice(2, 6)}`;   // the feature's origin id
   const f = createSliceFeature({ pipelineId: pid, projectDir: gitDir(`d19-${pid}`), title: 'T',
     outline: MOCK_OUTLINE, perspectives: SHAPE.perspectives, workflowId: 'wf_shape', approveEach: each });
   const slice = { feature: f.id, index: 2, total: 2, outline: MOCK_OUTLINE };
-  const h = start({ prompt: 'demo', shape: { ...SHAPE, slices: 'off', slice }, ...(afterSpawn ? { afterSpawn } : {}) });
+  const h = start({ prompt: 'demo', shape: { ...SHAPE, slices: 'off', slice }, ...(afterSpawn ? { afterSpawn } : {}) }, undefined, onPlan);
   h.orch._planCheck = async () => check;
-  if (away) h.orch._nightActiveNow = () => true;
+  if (away) h.orch.setNightOverride('on');
   if (change) h.orch._outlineChangeText = async () => 'Slice 1 did not add the tags table.';
   return h;
 };
@@ -281,7 +358,7 @@ test('D19: a passing check and no outline-change.md → approved without an ask'
   const h = d19();
   assert.equal((await h.done).status, 'done');
   assert.equal(h.plans.length, 0);
-  assert.ok(audit(h.orch).some((x) => x.includes("Plan approval **approve** (Approve each slice's plan is off)")));
+  assert.ok(audit(h.orch).some((x) => x.includes('Plan approval **approve** (the plan passed its checks)')));
   assert.ok(h.orch.state.shaping.approved);
 });
 test('D19: a failing check → a plan ask', async () => {
@@ -324,15 +401,154 @@ test('D19: a stale outline-change.md is removed before the Planner\'s first spaw
   assert.equal(seen, false);
   assert.equal(h.plans.length, 0);
 });
-test('D19: Approve each on → always a plan ask', async () => {
+test('D19: Ask me before each run on → a clean later plan continues by itself (the switch only holds the start)', async () => {
   const h = d19({ each: true });
+  assert.equal((await h.done).status, 'done');
+  assert.equal(h.plans.length, 0);
+  assert.ok(audit(h.orch).some((x) => x.includes('Plan approval **approve** (the plan passed its checks)')));
+});
+test('D19: Ask me before each run on and a failing check → a plan ask', async () => {
+  const h = d19({ each: true, check: FAIL });
   await h.done;
   assert.equal(h.plans.length, 1);
 });
-test('D19: Away mode → a plan ask', async () => {
+test('D19: Away active → continues like Away off', async () => {
   const h = d19({ away: true });
   assert.equal((await h.done).status, 'done');
-  assert.equal(h.plans.length, 1);
+  assert.equal(h.plans.length, 0);
+  assert.ok(audit(h.orch).some((x) => x.includes('Plan approval **approve** (the plan passed its checks)')));
+});
+
+const LEAVE = () => {};                                     // nobody answers: only Away could
+const settled = () => new Promise((r) => setTimeout(r, 300));
+
+test('D19: Ask me before each run on, Away active → a clean later plan continues by itself', async () => {
+  const h = d19({ each: true, away: true, onPlan: LEAVE });
+  assert.equal((await h.done).status, 'done');
+  assert.equal(h.plans.length, 0, 'a clean later plan raises no ask for Away to answer');
+  assert.ok(audit(h.orch).some((x) => x.includes('Plan approval **approve** (the plan passed its checks)')));
+});
+
+for (const [name, opts, line] of [
+  ['a failing check', { check: FAIL }, 'the shape check did not pass'],
+  ['a null check', { check: null }, 'the shape check did not pass'],
+  ['outline-change.md', { change: true }, 'the planner says this slice cannot be built as outlined'],
+]) {
+  test(`D19: ${name} with Away active waits for a person`, async () => {
+    const h = d19({ ...opts, away: true, onPlan: LEAVE });
+    await waitFor(() => h.plans.length === 1);
+    await settled();
+    assert.equal(h.orch.pendingQuestion?.id, h.plans[0].id, 'still open');
+    assert.equal(h.orch.state.night.openedAt, null, 'no countdown');
+    assert.ok(audit(h.orch).some((x) => x.includes(`Plan approval held: ${line}`)));
+    h.orch.answer(h.plans[0].id, { decision: 'approve' });
+    assert.equal((await h.done).status, 'done');
+  });
+}
+
+test('slice 1 and its outline run to the end with Away on', async () => {
+  const h = start({}, LEAVE, LEAVE);
+  h.orch._planCheck = async () => PASS;
+  h.orch.setNightOverride('on');
+  assert.equal((await h.done).status, 'done');
+  assert.equal(h.orch.answeredBy('plan-outline-n_plan-1'), 'night-mode');
+  assert.equal(h.orch.answeredBy('plan-n_refine-1'), 'night-mode');
+  const [f] = featuresOf(h.orch.getState().id);
+  assert.equal(f.approve_each, 0, 'the switch stays as shown');
+  const texts = audit(h.orch);
+  assert.ok(texts.some((x) => x.startsWith('Slice outline **approve** (round 1) by night-mode.')));
+  assert.ok(texts.some((x) => x.startsWith('Plan approval **approve** by night-mode.')));
+  assert.ok(ran(h.execs, 'n_impl').length > 0, 'the plan was built');
+  const plans = readNightDecisions(h.orch.getState().id).filter((d) => d.kind === 'plan');
+  assert.deepEqual(plans.map((d) => [d.questionId, d.choice, d.strategy]),
+    [['plan-outline-n_plan-1', 'approve', 'rule'], ['plan-n_refine-1', 'approve', 'rule']], 'one stored record each');
+});
+
+// The window: Away's answer() has cleared the ask, the approval has not settled, and a pause lands. The seeded review
+// makes the approval's own awaits real: a requirement concern and an open conflict, the asks Away flags.
+const flaggedRun = (dir) => {
+  const pid = `p${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+  const f = createSliceFeature({ pipelineId: pid, projectDir: dir, title: 'T',
+    outline: MOCK_OUTLINE, perspectives: SHAPE.perspectives, workflowId: 'wf_shape', approveEach: true });
+  const shape = { ...SHAPE, slices: 'off', slice: { feature: f.id, index: 2, total: 2, outline: MOCK_OUTLINE } };
+  const h = start({ projectDir: dir, prompt: 'demo', shape }, undefined, LEAVE);
+  h.orch._planCheck = async () => PASS;
+  h.orch.setNightOverride('on');
+  const planAsk = h.orch._planAsk.bind(h.orch);
+  h.orch._planAsk = (q) => {
+    h.orch.state.roleReviews = { rounds: [{ node: 'n_roles', target: 'plan', pass: 1, round: 1, conflicts: [{ id: 'conflict-1' }],
+      roles: [{ key: 'qa', label: 'QA', findings: [{ requirement: 'R-po-1', title: 'R-po-1: add it', severity: 'major', fix: 'Add it.' }] }] }] };
+    return planAsk(q);
+  };
+  const answer = h.orch.answer.bind(h.orch);
+  h.orch.answer = (id, payload, by) => { const ok = answer(id, payload, by); if (by === 'night-mode') h.orch.pause(); return ok; };
+  return h;
+};
+const resumeOf = (h, dir, { pauseDuringReplay = false } = {}) => {
+  const h2 = start({ projectDir: dir, resume: readPipelineForResume(h.orch.getState().id), shape: undefined }, undefined, LEAVE);
+  h2.orch._planCheck = async () => PASS;
+  if (pauseDuringReplay) {
+    const planAsk = h2.orch._planAsk.bind(h2.orch);
+    h2.orch._planAsk = (q) => { const out = planAsk(q); h2.orch.pause(); return out; };
+  }
+  return h2;
+};
+const once = (texts, line) => assert.equal(texts.filter((x) => x.startsWith(line)).length, 1, line);
+
+test('Away approve then pause: the resume replays it, one record, one log line, no second ask', async () => {
+  const dir = gitDir(`d19-pause-${Date.now()}`);
+  const h = flaggedRun(dir);
+  assert.equal((await h.done).status, 'paused');
+  const id = h.plans[0].id;
+  assert.deepEqual(readPipelineForResume(h.orch.getState().id).resumePoint.planAwayApproved, { id });
+  assert.equal(readPipelineForResume(h.orch.getState().id).resumePoint.night.override, 'on');
+
+  const h2 = resumeOf(h, dir);
+  assert.equal((await h2.done).status, 'done');
+  assert.deepEqual(h2.plans, [], 'not raised again, so Away cannot decide it twice or hit its limit');
+  assert.equal(h2.orch.answeredBy(id), 'night-mode');
+  assert.ok(h2.orch.state.shaping.approved, 'the run card still reads approved');
+  assert.deepEqual(readNightDecisions(h.orch.getState().id).filter((d) => d.kind === 'plan').map((d) => d.questionId), [id], 'one stored record');
+  const texts = audit(h2.orch);
+  once(texts, 'Plan concern **overridden** by night-mode.');
+  once(texts, 'conflict-1 left undecided at approval');
+  once(texts, 'Requirement concern overridden: R-po-1 kept as agreed.');
+  assert.equal(ran(h2.execs, 'n_impl').filter((e) => e.status === 'start' && e.executionId === 'x:n_impl:1').length, 1, 'built once');
+});
+
+test('Away approve then pause: a second pause during the replay keeps it', async () => {
+  const dir = gitDir(`d19-pause-twice-${Date.now()}`);
+  const h = flaggedRun(dir);
+  assert.equal((await h.done).status, 'paused');
+  const h2 = resumeOf(h, dir, { pauseDuringReplay: true });
+  assert.equal((await h2.done).status, 'paused');
+  assert.deepEqual(h2.plans, []);
+  const h3 = resumeOf(h2, dir);
+  assert.equal((await h3.done).status, 'done');
+  assert.deepEqual(h3.plans, []);
+  assert.equal(readNightDecisions(h.orch.getState().id).filter((d) => d.kind === 'plan').length, 1);
+});
+
+test("a stale Away approve is dropped, and a person's approve is not stashed", async () => {
+  const h = d19({ check: FAIL, onPlan: (q, orch) => { orch.answer(q.id, { decision: 'approve' }, 'ann'); } });   // a failing check asks
+  h.orch._planAwayApproved = { id: 'plan-n_other-9' };
+  assert.equal((await h.done).status, 'done');
+  assert.equal(h.plans.length, 1, 'a different id is asked as usual');
+  assert.equal(h.orch._planAwayApproved, null);
+});
+
+test("the run's mark reaches the slice tickets", async () => {
+  const h = start({ nightMode: true }, (q, orch) => orch.answer(q.id, { decision: 'approve' }));
+  assert.equal((await h.done).status, 'done');
+  const [f] = featuresOf(h.orch.getState().id);
+  assert.equal(getTicket(sliceRows(f.id)[1].ticket_id, { withRequest: true }).request.nightMode, true);
+});
+
+test("an unmarked run's tickets carry no nightMode", async () => {
+  const h = start({}, (q, orch) => orch.answer(q.id, { decision: 'approve' }));
+  assert.equal((await h.done).status, 'done');
+  const [f] = featuresOf(h.orch.getState().id);
+  assert.equal('nightMode' in getTicket(sliceRows(f.id)[1].ticket_id, { withRequest: true }).request, false);
 });
 
 test('D19: slice 2 asks no Clarify question and its Planner gets slice 1\'s answers', async () => {
@@ -390,4 +606,17 @@ test('starter after a resume: the feature and its ticket carry the original star
   assert.equal(JSON.parse(t.request).internal.startedBy, 'ann');
   h2.orch.stop();
   await h2.done;
+});
+
+test('outline approval saves the run\'s pr_auto on the feature; a run with none leaves the feature columns NULL', async () => {
+  const prAuto = { open: 'draft', slices: 'one', scope: 'project', source: { open: 'project', slices: 'team' } };
+  const withPr = start({ prAuto }, (q, orch) => orch.answer(q.id, { decision: 'approve' }));
+  assert.equal((await withPr.done).status, 'done');
+  const [f] = featuresOf(withPr.orch.getState().id);
+  assert.deepEqual([f.pr_open, f.pr_slices, JSON.parse(f.pr_source)], ['draft', 'one', { open: 'project', slices: 'team' }]);
+  assert.equal(JSON.parse(getDb().prepare('SELECT pr_auto FROM pipelines WHERE id = ?').get(withPr.orch.getState().id).pr_auto).open, 'draft');
+  const plain = start({}, (q, orch) => orch.answer(q.id, { decision: 'approve' }));
+  assert.equal((await plain.done).status, 'done');
+  const [g] = featuresOf(plain.orch.getState().id);
+  assert.deepEqual([g.pr_open, g.pr_slices, g.pr_source], [null, null, null]);
 });

@@ -43,7 +43,8 @@
 import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { execFile } from 'node:child_process';
+import { execCli, cliRefusal } from './exec-cli.mjs';
+import { COPILOT_CLI } from './cli-specs.mjs';
 import { join, dirname, resolve } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
@@ -57,6 +58,14 @@ import { makeChatDescriptor } from './chat-descriptor.mjs';
 import { copilotWireModel, COPILOT_EFFORTS as MODEL_ENV_COPILOT_EFFORTS } from '../model-env.mjs';
 
 export const COPILOT_DEFAULT_BIN = process.env.WORCA_COPILOT_BIN || 'copilot';
+
+/** The instruction files the Copilot CLI reads from the repository root and its cwd, all combined
+ *  (docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions). */
+export const COPILOT_INSTRUCTION_FILES = Object.freeze([
+  '.github/copilot-instructions.md', 'AGENTS.md', 'CLAUDE.md', '.claude/CLAUDE.md', 'GEMINI.md',
+]);
+/** Path-specific instructions: each one applies only to files matching its `applyTo` frontmatter. */
+export const COPILOT_INSTRUCTION_GLOBS = Object.freeze(['.github/instructions/**/*.instructions.md']);
 
 /** Stored session ids are engine-qualified so a resume never hands a Copilot session to
  *  another engine (or another engine's session to Copilot). */
@@ -522,10 +531,10 @@ export function copilotResumeNotFound(err) { return COPILOT_RESUME_NOT_FOUND_RE.
  */
 export function copilotPreflight({ bin = COPILOT_DEFAULT_BIN, timeoutMs = 15000 } = {}) {
   return new Promise((resolve) => {
-    execFile(bin, ['--version', '--no-auto-update'], { timeout: timeoutMs, env: { ...process.env, COPILOT_AUTO_UPDATE: 'false' } }, (err, stdout) => {
+    execCli(COPILOT_CLI, bin, ['--version', '--no-auto-update'], { timeout: timeoutMs, env: { ...process.env, COPILOT_AUTO_UPDATE: 'false' } }, (err, stdout) => {
       if (err && typeof err.code !== 'number') {
         resolve(/^(ENOENT|EACCES|EINVAL)$/.test(String(err.code))
-          ? { refusal: `cannot run ${bin} (${err.code}) — install the GitHub Copilot CLI (npm i -g @github/copilot), or point WORCA_COPILOT_BIN at it` }
+          ? { refusal: cliRefusal({ bin, err, install: 'install the GitHub Copilot CLI (npm i -g @github/copilot), or point WORCA_COPILOT_BIN at it' }) }
           : { warning: `could not check ${bin} (${err.message})` });
         return;
       }
@@ -561,10 +570,10 @@ export const COPILOT_ASK_LOCKDOWN = true;
  */
 export function copilotAskSupport({ bin = COPILOT_DEFAULT_BIN, timeoutMs = 15000 } = {}) {
   return new Promise((resolve) => {
-    execFile(bin, ['--help'], { timeout: timeoutMs, env: { ...process.env, COPILOT_AUTO_UPDATE: 'false' }, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+    execCli(COPILOT_CLI, bin, ['--help'], { timeout: timeoutMs, env: { ...process.env, COPILOT_AUTO_UPDATE: 'false' }, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
       if (err && typeof err.code !== 'number') {
         resolve({ refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(err.code))
-          ? `cannot run ${bin} (${err.code}) — install the GitHub Copilot CLI (npm i -g @github/copilot), or point WORCA_COPILOT_BIN at it`
+          ? cliRefusal({ bin, err, install: 'install the GitHub Copilot CLI (npm i -g @github/copilot), or point WORCA_COPILOT_BIN at it' })
           : `could not ask ${bin} which flags it has (${err.message})` });
         return;
       }
@@ -705,6 +714,7 @@ export async function runCopilotProcess({
     return total ? diffUsage(total, priorUsage) : null;
   };
   const res = await superviseSpawn({
+    cli: COPILOT_CLI,
     file: bin, args, displayBin: bin, cwd, env, stdin: String(prompt ?? ''), signal: spawnSignal, asAgent,
     // Copilot writes its usage file into the scratch folder, so an agent user gets it writable.
     stagedDir: asAgent ? { dir: scratch, writable: true } : null, onEvent,
@@ -761,7 +771,7 @@ export const copilotChat = makeChatDescriptor({
   preflight: (_ctx, impl = copilotPreflight) => impl(),
   resumeNotFound: copilotResumeNotFound,
   docsAnchor: 'github-copilot-cli',
-  shellTrippedMessage: 'Copilot tried to run a shell command although it was given none — worca stopped the turn.',
+  shellTrippedMessage: 'GitHub Copilot tried to run a shell command although it was given none — worca stopped the turn.',
   titles: true,
   // GPT-5 Mini is one of Copilot's included models (0× premium requests on a paid plan): a suggestion after every reply
   // costs no premium request there (one on the free plan).

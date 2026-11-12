@@ -134,7 +134,7 @@ test('isMemberDispatch and the engine notes', () => {
   assert.deepEqual(notes[0], { level: 'info', code: 'engine-none', text: 'Cursor has no sub-agents: these steps run as separate sessions there.' });
   const off = sessionNotes(spec, { engine: 'claude', verified: { claude: false }, members: [], labelOf: (id) => id });
   assert.equal(off[0].code, 'gate-off');
-  assert.equal(off[0].text, 'Sub-agents are not available on Claude yet: these steps run as separate sessions.');
+  assert.equal(off[0].text, 'Sub-agents are not available on Claude Code yet: these steps run as separate sessions.');
   assert.deepEqual(sessionNotes(spec), sessionNotes(spec, { engine: 'claude', verified: SESSION_SUBAGENTS_VERIFIED, members: [] }), 'defaults: Claude and the shipped gate');
 });
 

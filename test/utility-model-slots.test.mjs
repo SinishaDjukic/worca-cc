@@ -163,3 +163,25 @@ test('requirementsInterview: assertRequirementsInterviewInput and the codex job 
   assert.equal(reply.error, 'The requirements interview runs on Claude: set it on the Claude tab.');
   assert.equal(reply.field, 'utilityModels');
 });
+
+test('secondOpinion: Claude reads secondOpinionModel, Codex its utilityModels job; user-only; no model role', async () => {
+  const { settingEntry, assertProjectSettingsPatch } = await import('../src/core/settings-cascade.mjs');
+  const { roleOf, roleOfSettingId, roleOfJob } = await import('../src/shared/model-roles.mjs');
+  const projectDir = mkdtempSync(join(tmpdir(), 'worca-util-2nd-'));
+  assert.deepEqual(utilityModelFor('claude', 'secondOpinion'), { model: null, effort: null, source: 'default' });
+  writeUser({ secondOpinionModel: { model: 'claude-haiku-4-5', effort: 'high' }, utilityModels: { codex: { secondOpinion: { model: 'gpt-5.5', effort: 'low' } } } });
+  assert.deepEqual(utilityModelFor('claude', 'secondOpinion'), { model: 'claude-haiku-4-5', effort: 'high', source: 'user' });
+  assert.deepEqual(utilityModelFor('codex', 'secondOpinion'), { model: 'gpt-5.5', effort: 'low', source: 'user' });
+  mkdirSync(join(projectDir, '.worca-cc'), { recursive: true });
+  writeFileSync(join(projectDir, '.worca-cc', 'settings.json'), JSON.stringify({ utilityModels: { codex: { secondOpinion: { model: 'gpt-5.6-luna' } } } }));
+  assert.deepEqual(utilityModelFor('codex', 'secondOpinion', { projectDir }), { model: 'gpt-5.5', effort: 'low', source: 'user' }, 'a project layer is ignored');
+  assert.equal(settingEntry('models.claude.secondOpinion').userOnly, true);
+  assert.equal(settingEntry('models.codex.secondOpinion').userOnly, true);
+  assert.throws(() => assertProjectSettingsPatch({ 'models.codex.secondOpinion': { model: 'gpt-5.5' } }), /is set per user/);
+  assert.equal(roleOf('secondOpinionModel'), null);
+  assert.equal(roleOf('utilityModels.secondOpinion'), null);
+  assert.equal(roleOfSettingId('models.claude.secondOpinion'), null);
+  assert.equal(roleOfSettingId('models.codex.secondOpinion'), null);
+  assert.equal(roleOfJob('codex', 'secondOpinion'), null);
+  rmSync(projectDir, { recursive: true, force: true });
+});

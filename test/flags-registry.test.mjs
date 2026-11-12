@@ -69,3 +69,4 @@ test('commandSummaries is a beta flag, on by default (#911)', () => {
   assert.deepEqual([f.stage, f.default], ['beta', true]);
   assert.equal(f.docs, 'docs/feature-flags.md');
 });
+

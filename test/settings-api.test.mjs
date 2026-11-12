@@ -301,6 +301,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       requirementsInterview: null,
       agentGenModel: null,
       namingModel: null,
+      secondOpinionModel: null,
       commandSummaryModel: null,
       workspaceScan: null,
       schedule: {},

@@ -86,11 +86,10 @@ test('role reviews (spec §3): both shape graphs fan the plan out to n_roles and
     assert.equal(roles.key, 'planReviewer', wf.id);
     assert.deepEqual(roles.config, {
       roleReview: {
-        roles: PERSPECTIVES.map(({ key, label }) => (key === 'product' ? { key, label, model: 'claude-opus-5-5', effort: 'medium' } : { key, label })),
-        source: 'picked', target: 'plan', checklist: 'perspectives', sink: 'refiner',
+        roles: PERSPECTIVES.map(({ key, label }) => ({ key, label })),
+        source: 'picked', target: 'plan', checklist: 'perspectives', sink: 'refiner', secondOpinion: 'product',
       },
-      model: 'claude-sonnet-5-5', effort: 'medium',
-    }, wf.id);
+    }, wf.id, 'no model pins: the models are Models page homes (factory-models.mjs)');
     assert.equal(wf.nodes.find((n) => n.id === 'n_refine').config.awaitAll, true, wf.id);
     assert.ok(!wf.wires.some((w) => edge(w) === 'n_refine.revise->n_refine.revise'), `${wf.id}: no refiner self-loop`);
     const w5 = wf.wires.find((w) => w.id === 'w5');
@@ -187,6 +186,15 @@ test('validatePlanAnswer: approve and stop are always ok', () => {
   assert.equal(PLAN_ASK_KIND, 'plan');
   assert.deepEqual(validatePlanAnswer({ decision: 'approve' }), { ok: true, payload: { decision: 'approve' } });
   assert.deepEqual(validatePlanAnswer({ decision: 'stop', feedback: 'ignored' }), { ok: true, payload: { decision: 'stop' } });
+});
+
+test('validatePlanAnswer: a failing criteria check refuses approve and admits revise and stop', () => {
+  const criteria = { ok: false, passed: 6, total: 8 };
+  assert.deepEqual(validatePlanAnswer({ decision: 'approve' }, { criteria, decisions: [] }),
+    { ok: false, errors: [{ path: 'decision', code: 'invalid', message: 'the requirements check has 2 to fix: ask for changes' }] });
+  assert.equal(validatePlanAnswer({ decision: 'stop' }, { criteria, decisions: [] }).ok, true);
+  assert.equal(validatePlanAnswer({ decision: 'revise', feedback: 'x' }, { revisable: true, criteria, decisions: [] }).ok, true);
+  assert.equal(validatePlanAnswer({ decision: 'approve' }, { criteria: { ok: true, passed: 8, total: 8 }, decisions: [] }).ok, true);
 });
 
 test('validatePlanAnswer: revise needs feedback and a revisable plan', () => {

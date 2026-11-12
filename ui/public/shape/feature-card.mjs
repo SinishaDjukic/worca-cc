@@ -10,11 +10,11 @@ import { icon } from '../icons.mjs';
 export const SLICE_STATE_LABELS = Object.freeze({
   planned: 'Planned', starting: 'Starting', shaping: 'Planning', questions: 'Waiting for your answers', approval: 'Waiting for your plan approval',
   running: 'Building', paused: 'Paused', done: 'Done', stopped: 'Stopped', error: 'Stopped with an error',
-  failed: 'Could not start', missed: 'Waiting', canceled: 'Canceled',
+  failed: 'Could not start', missed: 'Waiting', canceled: 'Canceled', held: 'Waiting',
 });
 
 export const ICON_WORD = Object.freeze({ ask: 'Needs you', fail: 'Failed', stop: 'Stopped', paused: 'Paused', run: 'Running', start: 'Running', scheduled: 'Waiting', done: 'Done' });
-const CURRENT = new Set(['approval', 'questions', 'running', 'shaping', 'starting', 'paused']);
+const CURRENT = new Set(['approval', 'questions', 'running', 'shaping', 'starting', 'paused', 'held']);
 
 const isLive = (m) => !!m && m.source === 'live' && !m.terminal;
 const asks = (m) => isLive(m) && !!m.pendingQuestion;
@@ -29,6 +29,7 @@ function controlsOf(view, cur, m) {
   return {
     featureId: view.id, active, halted: active && !!view.halted, rest: active && !!(view.open || view.halted),
     approveEach: view.approveEach !== false, planPipelineId: view.originPipelineId || null,
+    held: view.held ? { index: view.held.index } : null,
     target: cur ? { index: cur.index, runId: (m && m.runId) || cur.runId || null, pipelineId: cur.pipelineId || null,
       status: m ? String(m.status || '') : TARGET_STATUS[cur.state] || null,
       // A run waiting at a question still reports `running`: it asks (Pause is off) while this tab sees its ask or the
@@ -47,6 +48,7 @@ function shapingModel(own, log) {
  * @returns {{phase: 'shaping'|'feature', log: object[],
  *   step: {index: number|null, runId: string|null, pipelineId: string|null, kind: string, id: string|null, snap: object|null}|null,
  *   controls: {featureId: string, active: boolean, halted: boolean, rest: boolean, approveEach: boolean, planPipelineId: string|null,
+ *     held: {index: number}|null,
  *     target: {index: number, runId: string|null, pipelineId: string|null, status: string|null, asks: boolean}|null}|null,
  *   notesLine: string|null, watch: {text: string, prUrl: string|null}|null}}
  */
@@ -70,8 +72,11 @@ export function featureCardModel({ own = null, card = null, snapOf = () => null 
   const watched = slices.find((s) => s.watch);
   const lastFix = watched ? [...(watched.rounds || [])].reverse().find((r) => r.by === 'watch') : null;
   const wText = watched ? watchStoppedText(watched.watch, lastFix ? lastFix.kinds : []) : null;
+  // The slice rows' Requirements folds: each reviewed slice's check, keyed as renderMemberRows keys a member.
+  const requirementChecks = Object.fromEntries(slices.filter((s) => s.requirements && s.requirements.check && (s.pipelineId || s.ticketId))
+    .map((s) => [s.pipelineId || s.ticketId, s.requirements.check]));
   return { phase: 'feature',
-    log: view.log || [], step, controls: controlsOf(view, cur, m),
+    log: view.log || [], step, controls: controlsOf(view, cur, m), requirementChecks,
     notesLine: ideas ? `${ideas} ${ideas === 1 ? 'idea' : 'ideas'} saved for the next checkpoint` : null,
     watch: wText ? { text: wText, prUrl: watched.watch.prUrl || null } : null };
 }

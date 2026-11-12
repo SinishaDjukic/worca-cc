@@ -121,6 +121,51 @@ test('placeFlyout: side / up / beside / down, each clamped to the viewport; un-h
   ]);
 });
 
+test('placeFlyout fit (down): below when it fits, above when only above has room, else below capped; never over the trigger', async () => {
+  /** A menu of height `h` for a 32 px trigger at `top` in a 1280×800 viewport (gap 4, margin 8): where it went. */
+  const place = (top, h, { fit = true, stale = '' } = {}) => {
+    const { window, $ } = setup();
+    viewport(window, 1280, 800);
+    box($('out'), { left: 1000, top, width: 100, height: 32 });
+    box($('menu'), { width: 300, height: h });
+    $('menu').style.maxHeight = stale;
+    placeFlyout($('menu'), $('out'), { mode: 'down', gap: 4, margin: 8, fit, win: window });
+    const y = parseFloat($('menu').style.top);
+    const cap = $('menu').style.maxHeight;
+    const shown = cap ? Math.min(h, parseFloat(cap)) : h;
+    return { top: $('menu').style.top, cap, overlaps: y < top + 32 && y + shown > top, inside: y >= 8 && y + shown <= 792 };
+  };
+  await checkRows([
+    { name: 'fits below: under the trigger, no cap', run: () => {
+      assert.deepEqual(place(100, 300), { top: '136px', cap: '', overlaps: false, inside: true });
+    } },
+    { name: 'a cap left by an earlier placement is cleared before measuring', run: () => {
+      assert.deepEqual(place(100, 300, { stale: '40px' }), { top: '136px', cap: '', overlaps: false, inside: true });
+    } },
+    { name: 'no room below, room above: flips above, its bottom the gap over the trigger', run: () => {
+      assert.deepEqual(place(600, 300), { top: '296px', cap: '', overlaps: false, inside: true });
+    } },
+    { name: 'flipped above but taller than the room there: capped to the room above', run: () => {
+      assert.deepEqual(place(600, 700), { top: '8px', cap: '588px', overlaps: false, inside: true });
+    } },
+    { name: 'no room either way, more below: stays below, capped to the room below, and scrolls', run: () => {
+      assert.deepEqual(place(300, 700), { top: '336px', cap: '456px', overlaps: false, inside: true });
+    } },
+    { name: 'without fit the clamp slides a tall popup up over its trigger (the pickers keep that)', run: () => {
+      assert.deepEqual(place(600, 300, { fit: false }), { top: '492px', cap: '', overlaps: true, inside: true });
+    } },
+    { name: 'fit is for down only: side keeps its clamp and never sets maxHeight', run: () => {
+      const { window, $ } = setup();
+      viewport(window, 1280, 800);
+      box($('aside'), { left: 0, top: 0, width: 220, height: 800 });
+      box($('trig'), { left: 10, top: 300, width: 200, height: 29 });
+      box($('menu'), { width: 172, height: 100 });
+      placeFlyout($('menu'), $('trig'), { fit: true, win: window });
+      assert.deepEqual([$('menu').style.left, $('menu').style.top, $('menu').style.maxHeight], ['226px', '270px', '']);
+    } },
+  ]);
+});
+
 test('createFlyout: a click opens, a second closes; aria-expanded and the hooks follow', () => {
   const { $, fly, calls, click } = setup();
   assert.equal(fly.isOpen(), false);
@@ -491,4 +536,42 @@ test('createFlyout: a right-click on the popup (its context menu takes the mouse
   $('a').focus();
   $('out').focus();
   assert.equal(fly.isOpen(), false, 'focus leaving after a right-click still closes it');
+});
+
+// 'below' is 'down' with `fit` always on, left-aligned to its trigger (the readiness chip sits at the left of a row).
+const belowSetup = (rect) => {
+  const { window } = new JSDOM('<button id="t"></button><div id="m"></div>');
+  const doc = window.document;
+  const trigger = doc.getElementById('t');
+  const menu = doc.getElementById('m');
+  trigger.getBoundingClientRect = () => rect;
+  Object.defineProperty(menu, 'offsetWidth', { value: 460 });
+  Object.defineProperty(menu, 'offsetHeight', { value: 560, configurable: true });
+  return { trigger, menu, win: { innerWidth: 1200, innerHeight: 900 } };
+};
+
+test('placeFlyout below: under the trigger and left-aligned when it fits; shifted left near the right edge', () => {
+  const { trigger, menu, win } = belowSetup({ left: 300, right: 420, top: 100, bottom: 122, width: 120, height: 22 });
+  placeFlyout(menu, trigger, { mode: 'below', win });
+  assert.equal(menu.style.left, '300px');
+  assert.equal(menu.style.top, '128px');
+  assert.equal(menu.style.maxHeight, '');
+  trigger.getBoundingClientRect = () => ({ left: 1000, right: 1120, top: 100, bottom: 122, width: 120, height: 22 });
+  placeFlyout(menu, trigger, { mode: 'below', win });
+  assert.equal(menu.style.left, '732px');        // 1200 - 460 - 8
+  assert.equal(menu.style.top, '128px');
+});
+
+test('placeFlyout below: a low trigger opens above, never over it; with no room either way it is capped and scrolls', () => {
+  const { trigger, menu, win } = belowSetup({ left: 300, right: 420, top: 760, bottom: 782, width: 120, height: 22 });
+  placeFlyout(menu, trigger, { mode: 'below', win });
+  // room below: 900 - 782 - 6 - 8 = 104; room above: 760 - 6 - 8 = 746, which holds all 560px
+  assert.equal(menu.style.top, '194px');         // 760 - 6 - 560: its bottom edge sits gap px over the trigger
+  assert.equal(menu.style.maxHeight, '');
+  trigger.getBoundingClientRect = () => ({ left: 300, right: 420, top: 400, bottom: 422, width: 120, height: 22 });
+  Object.defineProperty(menu, 'offsetHeight', { value: 800 });
+  placeFlyout(menu, trigger, { mode: 'below', win });
+  // room below 464, above 386: stays below, capped to the room there
+  assert.equal(menu.style.top, '428px');
+  assert.equal(menu.style.maxHeight, '464px');
 });

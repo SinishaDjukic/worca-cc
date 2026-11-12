@@ -15,6 +15,7 @@ import { fetchCandidate } from '../../../src/core/plugin-repo.mjs';
 import { COMMIT_SHA_RE, doctorPlugin, installPlugin, installedInventory, linkPlugin, listInstalledPlugins, listOrphanPluginData, pluginReferences, purgePluginData, pythonNoticeFor, setPluginEnabled, uninstallPlugin, updatePlugin } from '../../../src/core/plugin-store.mjs';
 import { readPluginsLock } from '../../../src/core/plugins-lock.mjs';
 import { clearBindingsForProfile } from '../../../src/core/source-bindings.mjs';
+import { registerTicketUpdatesRoutes } from '../../../src/core/ticket-updates-routes.mjs';
 import { githubWebUrl } from '../../../src/shared/plugin-access.mjs';
 import { randomBytes } from 'node:crypto';
 import { MARKETPLACE_ID_RE, MARKET_JOBS, PLUGIN_NAME_RE, badRequest, broadcast, channelHost, emitPluginsChanged, isTruthy, marketJobFailure, pruneMarketJobs, readInstalledManifest, resolveProjectDir } from '../../server.mjs';
@@ -614,6 +615,10 @@ app.put('/api/plugins/:name/config', (req, res) => {
     sendPluginError(res, err);
   }
 });
+
+// Ticket updates (plans/ticket-updates-design.md §5, D8): the projects you work on and the rules for a finished run, beside the
+// config routes, behind the `ticketUpdates` flag. Tracker ops run here through callSource, never from the browser.
+registerTicketUpdatesRoutes(app, { requirePlugin, readManifest: readInstalledManifest, onChanged: () => emitPluginsChanged('config') });
 
 // GET /api/plugins/:name/model-env?id=<modelId> — the RAW manifest env of one
 // plugin model, for the Models view "Edit a copy" prefill (design §9.6).

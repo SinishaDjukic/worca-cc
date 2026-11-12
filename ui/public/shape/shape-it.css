@@ -58,6 +58,35 @@
 .plan-check-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;padding:3px 0;color:var(--ink);}
 .plan-check-mark{flex:none;width:1em;font-weight:700;color:var(--ink-3);}
 .plan-check-row:not(.ok) .plan-check-mark{color:var(--ink);}
+.shape-reqs .plan-check-row{flex-wrap:nowrap;}   /* a requirement is a sentence: its mark stays on its first line */
+.shape-reqs .plan-check-label{min-width:0;font-weight:400;}
+.shape-reqs .plan-check-detail{flex:0 1 auto;}
+/* The Requirements card's decisions: one stacked list, no boxes, on every host. The (0,4,0) prefix is the point: this file
+   loads before chat-run-card and card-nesting, and `.chat-q.chat-rc-q .qopts{grid-column:2}` inside @container chat-q is
+   (0,3,0), so a plain `.shape-reqs .qopts` un-stacks the card on any wide host. */
+.shape-reqs .chat-q.chat-rc-q .qpanel{gap:0;margin:0;padding:0;background:none;border:0;}
+.shape-reqs .chat-q.chat-rc-q .qblock{grid-template-columns:minmax(0,1fr);grid-template-rows:auto;column-gap:0;padding:16px 0;background:none;border:0;border-radius:0;}
+.shape-reqs .chat-q.chat-rc-q .qblock + .qblock{border-top:1px solid var(--line);}
+.shape-reqs .chat-q.chat-rc-q .qtext{grid-row:auto;font-size:var(--fs-body);font-weight:500;}
+.shape-reqs .chat-q.chat-rc-q .qopts{grid-column:1;}
+/* Every decision here always has a pick, so no Answered pill; the :has form is required, the original rule is (0,6,1). */
+.shape-reqs .chat-q.chat-rc-q .qblock:has(.qopt.sel:not([data-preset])) .qtext::after{content:none;}
+.shape-reqs .chat-q-opt-sub{font-family:var(--sans);}
+.shape-reqs .qopt{align-items:flex-start;}
+.shape-reqs .qopt .qrec{flex:none;margin-left:auto;}
+.shape-reqs .qanswered{font:400 var(--fs-meta) var(--sans);color:var(--ink-2);}
+.shape-reqs .qpanel-foot{margin-top:24px;padding-top:20px;border-top:1px solid var(--line);}
+.shape-reqs .plan-check-line{box-sizing:border-box;max-width:100%;padding-right:8px;text-align:left;white-space:normal;}   /* the persona counts wrap on a narrow card; the padding is the turned chevron's room */
+.shape-reqs-decisions:empty{display:none;}
+.shape-reqs-agreed{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 24px;margin:0;}
+.shape-reqs-agreed dt{padding:3px 0;font-size:var(--fs-meta);color:var(--ink-2);}
+.shape-reqs-agreed dd{container:shape-reqs-rows / inline-size;margin:0;}
+.shape-reqs-agreed :is(.plan-check-label,.plan-check-detail){overflow-wrap:anywhere;}
+/* Too narrow for a failing row's words side by side: its detail goes under its label. */
+@container shape-reqs-rows (max-width:320px){
+  .shape-reqs .plan-check-row:has(.plan-check-detail){display:grid;grid-template-columns:1em minmax(0,1fr);}
+  .shape-reqs .plan-check-row .plan-check-detail{grid-column:2;}
+}
 .plan-fix-all{align-self:flex-start;margin-top:4px;}
 /* Slice 4: role review rows: Show unfolds the findings; a 2px severity chip (D14) */
 .plan-check-show{margin-left:auto;}
@@ -202,6 +231,10 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .shape-feature-actions[hidden]{display:none;}
 .shape-feature-err{flex-basis:100%;padding:6px 8px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink);overflow-wrap:anywhere;}
 .shape-feature-err[hidden]{display:none;}
+/* A run held by "Ask me before each run": the Needs you dot and word, the reason, then Start now, on one line. */
+.shape-feature-held{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
+.shape-feature-held-word{font-weight:600;}
+.shape-feature-held-why{color:var(--ink-2);}
 /* Run 3 (D1): the group page's host in the Runs pane (#group-detail); .gpage pads itself like the run page. Its loading,
    gone and error lines sit under the bar's Back with the run page's gutter. */
 .feature-page{padding:0;}

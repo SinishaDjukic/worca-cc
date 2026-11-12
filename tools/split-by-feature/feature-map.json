@@ -1,7 +1,6 @@
 {
   "version": 1,
   "docless": {
-    "runs": "the Runs list and live run page have no docs page yet",
     "history": "History has no docs page yet",
     "settings": "Settings has no docs page yet",
     "new-run": "the New run page has no docs page yet",
@@ -659,10 +658,25 @@
         "selectors": [
           ".pd-settings",
           ".card.house-brief",
-          ".house-brief"
+          ".house-brief",
+          ".readiness-settings-card",
+          ".rs-"
         ],
         "feature": "projects",
         "name": "project-settings"
+      },
+      {
+        "section": "^Projects two-screen shell",
+        "selectors": [
+          ".pl-rd",
+          ".rd-",
+          ".readiness-pop",
+          ".rp-",
+          ".pd-rd-slot",
+          ".pd-row1"
+        ],
+        "feature": "projects",
+        "name": "readiness"
       },
       {
         "section": "^Actions",
@@ -730,6 +744,7 @@
         "selectors": [
           ".req-",
           "a.req-",
+          "span.req-",
           ".viewer-modal.req-dlg-wrap",
           ":root:not([data-git=\"off\"]) .req-",
           ".form-msg.req-msg-warn",
@@ -950,7 +965,7 @@
     },
     {
       "name": "chat",
-      "doc": "docs/chat-home.md",
+      "doc": "docs/chat.md",
       "routes": [
         "/api/ask",
         "/api/chat",
@@ -997,7 +1012,7 @@
     },
     {
       "name": "runs",
-      "doc": null,
+      "doc": "docs/runs.md",
       "routes": [
         "/api/run",
         "/api/runs",
@@ -1102,7 +1117,7 @@
     },
     {
       "name": "workflows",
-      "doc": null,
+      "doc": "docs/workflows.md",
       "routes": [
         "/api/workflows",
         "/api/agents"
@@ -1180,7 +1195,8 @@
       "css": [
         "^Plugins view",
         "^Plugin provenance",
-        "^marketplace P"
+        "^marketplace P",
+        "^marketplace ticket updates"
       ],
       "html": [
         "<!-- ===== VIEW: MARKETPLACE",

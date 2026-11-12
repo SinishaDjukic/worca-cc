@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
-import { SEND_FAILED, stepChip, stepTitle, stepKind, isStepCard, stepSender, stepHead, renderGateCard, renderRecoveryCard, questionFocusTarget }
+import { SEND_FAILED, stepChip, stepTitle, stepKind, isStepCard, isRequirementsAsk, stepSender, stepHead, renderGateCard, renderRecoveryCard, questionFocusTarget }
   from '../ui/public/shape/step-card.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -218,4 +218,19 @@ test('run 4 D4: a waiting card takes the focus on its primary, never on a row â‹
   assert.equal(questionFocusTarget(null), null);
   const m = new JSDOM('<div id="m"><div class="qpanel"><button aria-haspopup="menu" tabindex="0">â‹¯</button><div tabindex="0" id="t">row</div></div></div>').window.document;
   assert.equal(questionFocusTarget(m.getElementById('m')).id, 't', 'a menu trigger with a tabindex is skipped too');
+});
+
+test('U10: a requirements ask (plan.criteria or plan.error) is titled "Your turn: agree the requirements", chipped Requirements, and still a plan kind', () => {
+  const REQ = { id: 'r1', kind: 'plan', plan: { round: 1, criteria: { ok: true, passed: 1, total: 1, items: [], criteria: [] }, decisions: [] } };
+  const ERR = { id: 'r2', kind: 'plan', plan: { round: 1, error: { message: 'boom' } } };
+  for (const pq of [REQ, ERR]) {
+    assert.equal(isRequirementsAsk(pq), true);
+    assert.equal(stepKind(pq), 'plan');
+    assert.equal(stepTitle(pq), 'Your turn: agree the requirements');
+    assert.equal(stepChip(pq, { shaping: { feature: { id: 'f', index: 2, total: 3 } } }), 'Requirements');
+    assert.equal(isStepCard(pq, null, false), true);
+  }
+  for (const pq of [PLAN, SPLIT, GATE, CLARIFY, null]) assert.equal(isRequirementsAsk(pq), false);
+  assert.equal(stepTitle(PLAN), 'Your turn: approve the plan');
+  assert.equal(stepChip(PLAN, SHAPING), 'Plan');
 });

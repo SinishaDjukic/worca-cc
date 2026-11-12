@@ -706,6 +706,7 @@ test('chat run card helpers: progressIdent, runRefOf, autoChip, resultWord, answ
       assert.equal(answerReceipt({ id: 'q', payload: { decision: 'approve' } }, { id: 'q', planAsk: true, roleReviews: RECORDED, step: 'Plan' }),
         'Plan approved · 5 roles reviewed · 1 open issue accepted');
       assert.equal(answerReceipt({ id: 'q', payload: { decision: 'approve' } }, { id: 'q', planAsk: false, step: 'Plan' }), 'Answer sent · Plan');
+      assert.equal(answerReceipt({ id: 'q', payload: { decision: 'approve' } }, { id: 'q', planAsk: true, reqAsk: true, step: 'Requirements' }), 'Requirements agreed');
       assert.equal(midTrunc('abcdefghij', 5), 'ab…ij');
       assert.equal(midTrunc('short.md'), 'short.md');
     } },
@@ -1355,6 +1356,18 @@ test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · 
   ]);
 });
 
+test('chat run card, requirements first: a round with coverage replaces "Clarify ✓" with the Requirements count; the last such round wins', () => {
+  const SH = (rounds) => ({ perspectives: ['ux'], rounds, approved: { round: 2, file: 'docs/plans/2026-10-14-login.md' }, savedTo: null });
+  const { card, $ } = mk();
+  card.update(live({ shaping: SH([{ round: 1, coverage: { ok: false, passed: 6, total: 8 } }, { round: 2, coverage: { ok: false, passed: 7, total: 8 } }]) }));
+  assert.equal($('.chat-rc-shaped-stages').textContent, 'Requirements 7/8 · 1 to fix · Plan ✓ · Refine ✓ while planning');
+  card.update(live({ shaping: SH([{ round: 1, coverage: { ok: true, passed: 8, total: 8 } }, { round: 2 }]) }));
+  assert.equal($('.chat-rc-shaped-stages').textContent, 'Requirements 8/8 · Plan ✓ · Refine ✓ while planning', 'a later round without counts does not hide the last known ones');
+  card.update(live({ shaping: SH([{ round: 1 }, { round: 2 }]) }));
+  assert.equal($('.chat-rc-shaped-stages').textContent, 'Clarify ✓ · Plan ✓ · Refine ✓ while planning', 'no coverage: today\'s line');
+  assert.equal(card.el.querySelectorAll('.chat-rc-shaped-stages').length, 1);
+});
+
 const PQ_PLAN = { id: 'plan-n_refine-1', kind: 'plan', plan: { round: 1 } };
 const SL = (i, state, over = {}) => ({ index: i, title: `Part ${i}`, state, runId: null, pipelineId: null, ticketId: `t${i}`, pr: null, ...over });
 const VIEW3 = (slices, over = {}) => ({ id: 'feat-1', title: 'Charts', status: 'active', total: 3, done: slices.filter((s) => s.state === 'done').length,
@@ -1418,6 +1431,47 @@ test('feature card: Shaping, then the group row\'s chip, one status line and its
     assert.deepEqual([...li.querySelector('.run-member-main').children].map((c) => c.className), ['run-member-title', 'run-member-line']);
   }
   assert.equal($$('.chat-rc-fstatus, .chat-rc-chain, ol.chat-rc-members, .ask-rc-pill').length, 0, 'no Shaper duplicate');
+});
+
+test('feature card: a reviewed slice\'s member row draws its Requirements fold, and an opened fold stays open across repaints', () => {
+  const row = featureRow([DONE_RUN, WAITING, WAITING]);
+  row.members[0].pipelineId = 'p1';
+  const check = { passed: 2, total: 3, items: [
+    { id: 'R-po-1', label: 'R-po-1 · covered by the diff', pass: true, detail: 'People see the chart' },
+    { id: 'R-ux-1', label: 'R-ux-1 · covered by the diff', pass: true, detail: 'It reads well' },
+    { id: 'R-ops-1', label: 'R-ops-1 · not covered by the diff', pass: false, detail: 'It rolls back' }] };
+  const { card, $$ } = mk({ controls: { memoFor: () => ({}), groupOf: () => row } });
+  const paint = () => card.update(shaped({ pipelineId: 'abcd1234', log: [],
+    feature: VIEW3([SL(1, 'done', { pipelineId: 'p1', requirements: { check } }), SL(2, 'planned'), SL(3, 'planned')]) }));
+  paint();
+  const lineOf = () => $$('.chat-rc-members .run-member').find((li) => li.dataset.key === 'p1').querySelector('.plan-check-line');
+  assert.equal($$('.chat-rc-members .plan-check-line').length, 1, 'only the reviewed slice\'s row');
+  assert.equal(lineOf().textContent.replace('›', '').trim(), 'Requirements 2/3 · 1 to fix');
+  assert.equal(lineOf().getAttribute('aria-expanded'), 'false');
+  lineOf().click();
+  assert.equal(lineOf().getAttribute('aria-expanded'), 'true');
+  paint();
+  assert.equal(lineOf().getAttribute('aria-expanded'), 'true', 'still open after a repaint');
+  assert.equal(lineOf().nextElementSibling.hidden, false);
+  paint();
+  assert.equal(lineOf().getAttribute('aria-expanded'), 'true', 'a second repaint does not toggle it shut');
+});
+
+test('feature card: a held run shows Needs you and Start now once, the member row reads Waiting, and "for you to start" occurs once in the card text', () => {
+  const HELD_RUN = { ticket: { status: 'scheduled', after: { index: 1 }, held: true } };
+  const row = featureRow([DONE_RUN, HELD_RUN, WAITING]);
+  row.members[0].pipelineId = 'p1';
+  const { card, $$, el = card.el } = mk({ controls: { memoFor: () => ({}), groupOf: () => row } });
+  card.update(shaped({ pipelineId: 'abcd1234', log: [],
+    feature: VIEW3([SL(1, 'done', { pipelineId: 'p1' }), SL(2, 'held'), SL(3, 'planned')], { open: true, held: { index: 2, ticketId: 't2' } }) }));
+  const text = el.textContent;
+  assert.equal(text.split('for you to start').length - 1, 1);
+  assert.equal($$('.shape-feature-held').length, 1);
+  assert.equal(text.split('Needs you').length - 1, 1, 'Needs you once in the card');
+  assert.equal($$('button').filter((b) => b.textContent === 'Start now' && !b.hidden).length, 1, 'one start action');
+  const member = $$('.chat-rc-members .run-member').find((li) => li.querySelector('.run-member-title').textContent === 'Part 2');
+  assert.equal(member.querySelector('.run-member-line').textContent, 'Waiting');
+  assert.doesNotMatch(member.textContent, /starts after/);
 });
 
 test('feature card: the step log shows Clarify · 2 answers, Plan approved, Split into 3 runs; Show unfolds in place', () => {
@@ -2238,4 +2292,30 @@ test('run labels (slice 1): read-only chips after the status line; none for an e
   const off = mk();
   off.card.update(live({ labels: ['hotfix'] }));
   assert.equal(off.$$('.label-chip').length, 0);
+});
+
+// Shaper requirements s3 (R-qa-5): a Changes run of a shipped feature asks the requirements hold first. The card draws
+// that hold (step n_reqrefine, plan.port 'requirements') and no plan approval card until it is answered.
+test('a Changes run of a shipped feature: the requirements hold\'s card first, the plan approval card only after it', async () => {
+  const hold = { id: 'plan-n_reqrefine-1', kind: 'plan', nodeId: 'n_reqrefine', plan: { nodeId: 'n_reqrefine', port: 'requirements', round: 1,
+    revisable: true, file: 'requirements.md', check: null, perspectives: ['product'], decisions: [],
+    criteria: { ok: true, passed: 1, total: 1, items: [{ id: 'R-po-1', label: 'R-po-1 · Export the report', pass: true }] } } };
+  const planAsk = { id: 'plan-n_refine-1', kind: 'plan', nodeId: 'n_refine', plan: { nodeId: 'n_refine', port: 'plan', round: 1, revisable: true,
+    file: 'plans/p.md', check: null, perspectives: ['product'] } };
+  const q = stepStub(hold, renderPlanBody);
+  const { card, $ } = mk({ controls: { ...q, answer: async () => true } });
+  card.update(live({ pendingQuestion: hold }));
+  assert.equal($('.chat-rc-q').hidden, false);
+  assert.equal($('.chat-rc-q .qpanel').dataset.qid, 'plan-n_reqrefine-1', 'the hold is the card\'s ask');
+  assert.equal(card.el.querySelectorAll('.chat-rc-q .qpanel').length, 1, 'one ask on the card');
+  assert.equal(card.el.querySelector('[data-qid="plan-n_refine-1"]'), null, 'no plan approval card yet');
+  $('.chat-rc-q .plan-approve').click();
+  await settle();
+  assert.equal(q.log.posts.length, 1);
+  assert.equal(q.log.posts[0].decision, 'approve');
+  const next = stepStub(planAsk, renderPlanBody);
+  const after = mk({ controls: { ...next, answer: async () => true } });
+  after.card.update(live({ pendingQuestion: planAsk }));
+  assert.equal(after.$('.chat-rc-q .qpanel').dataset.qid, 'plan-n_refine-1', 'the plan approval comes after the hold');
+  forgetAnswer('run-uuid-1', hold.id);
 });

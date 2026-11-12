@@ -20,7 +20,7 @@ after(() => { process.env.HOME = REAL_HOME; });
 const { claudeReady, onboardingStatus } = await import('../src/core/onboarding.mjs');
 const { onboardingPrefs, setOnboardingPrefs, assertOnboardingPrefsInput } = await import('../src/core/settings.mjs');
 const { addProject } = await import('../src/core/projects.mjs');
-const { createThread } = await import('../src/core/ask/store.mjs');
+const { createThread, appendMessage, finishMessage } = await import('../src/core/ask/store.mjs');
 const { setActiveWorkflow, writeTeamPolicyPrefs } = await import('../src/core/config.mjs');
 const { projectKey } = await import('../src/core/store.mjs');
 
@@ -58,6 +58,18 @@ test('claudeReady (Windows): a .cmd shim alone is not ready (hint); a real claud
       assert.equal(r.ready, true);
       assert.equal(r.hint, null);
     } },
+    { name: 'claudeReady: Windows — the npm shim with the native claude.exe next to it is ready, at that path', run: () => {
+      const exists = (p) => /claude\.cmd$/.test(p) || /claude-code[\\/]bin[\\/]claude\.exe$/.test(p);
+      const r = claudeReady('claude', { platform: 'win32', pathEnv: 'C:\\npm', exists, isNativeExe: () => true });
+      assert.equal(r.ready, true);
+      assert.match(r.bin, /claude\.exe$/);
+      assert.equal(r.hint, null);
+    } },
+    { name: 'claudeReady: Windows — an explicit .cmd path resolves next to itself', run: () => {
+      const exists = (p) => /claude\.cmd$/.test(p) || /claude-code[\\/]bin[\\/]claude\.exe$/.test(p);
+      const r = claudeReady('C:\\npm\\claude.cmd', { platform: 'win32', pathEnv: '', exists, isNativeExe: () => true });
+      assert.equal(r.ready, true);
+    } },
   ]);
 });
 
@@ -82,11 +94,16 @@ test('derived ticks: project, run, realRun, ask, workflows, teamPolicy (one stor
       s = await onboardingStatus();
       assert.equal(s.steps.realRun, true, 'any spend is a real run, whatever its outcome');
     } },
-    { name: 'an Ask thread ticks "ask"; a picked workflow (the persisted picker choice) ticks "workflows"', run: async () => {
+    { name: 'an answer in a chat ticks "ask", a failed turn does not; a picked workflow (the persisted picker choice) ticks "workflows"', run: async () => {
       let s = await onboardingStatus();
       assert.equal(s.steps.ask, false);
       assert.equal(s.steps.workflows, false, 'nothing picked yet');
-      createThread({ title: 'hello' });
+      const thread = createThread({ title: 'hello' });
+      const failed = appendMessage(thread.id, { role: 'assistant', status: 'streaming' });
+      finishMessage(failed.id, { status: 'error' });
+      assert.equal((await onboardingStatus()).steps.ask, false, 'a turn that failed showed nothing');
+      const ok = appendMessage(thread.id, { role: 'assistant', status: 'streaming' });
+      finishMessage(ok.id, { status: 'done' });
       await setActiveWorkflow(join(home, 'proj'), 'wf_auto');
       s = await onboardingStatus();
       assert.equal(s.steps.ask, true);

@@ -97,6 +97,7 @@ export function summarizeRequest(req) {
     mock: !!r.mock,
     extras: Array.isArray(r.internal?.extrasPaths) ? r.internal.extrasPaths.length : 0,
     ...(r.sameAsSource === true ? { sameAsSource: true } : {}),
+    ...(r.pr && typeof r.pr === 'object' ? { pr: { open: r.pr.open ?? null, slices: r.pr.slices ?? null } } : {}),
   };
 }
 
@@ -414,7 +415,30 @@ export function releaseTicket(id, { now = Date.now() } = {}) {
 }
 
 function markFired(id, pipelineId, now) {
+  const t = getTicket(id);   // before the update: `forced` is cleared by it
   touchTicket(id, "status = 'fired', pipeline_id = COALESCE(?, pipeline_id), forced = 0, queued = 0, retry_at = NULL", [pipelineId || null], now);
+  if (t) noteStartedAfterMiss(t, now);
+}
+
+/**
+ * A ticket that starts after it was reported missed (or failed) — Run now, a new time, a new wait on a
+ * predecessor that then finished — says so in the feed: the resolved problem row alone reads as if the run
+ * never started. (Each of those actions already resolved the problem.) An info `started` entry tells what
+ * happened next; setTicketPipeline links it, and the old row, to the run. A ticket with no such row (the
+ * normal path) writes nothing here.
+ */
+function noteStartedAfterMiss(t, now) {
+  const missed = getDb().prepare("SELECT 1 FROM notifications WHERE ticket_id = ? AND severity = 'problem' AND kind IN ('missed', 'failed') LIMIT 1").get(t.id);
+  if (!missed) return;
+  let when = '';
+  if (t.after && !t.forced) {
+    const p = predecessorState(t.after, { policy: t.after.policy, now });
+    when = `, when ‘${p.title || 'the run before it'}’ ${p.status === 'done' ? 'finished' : 'ended'}`;
+  }
+  addNotification({
+    kind: 'started', severity: 'info', scheduleId: t.scheduleId, ticketId: t.id,
+    projectDir: t.projectDir, title: t.title, message: `started after all${when}.`, now: new Date(now),
+  });
 }
 
 /**
@@ -426,6 +450,8 @@ export function setTicketPipeline(id, pipelineId, { now = Date.now() } = {}) {
   const t = getTicket(id);
   if (!t) return;
   if (t.pipelineId !== pipelineId) touchTicket(id, 'pipeline_id = ?', [pipelineId], now);
+  // The ticket's feed rows written before its run existed (a resolved miss, the started entry) link to it.
+  getDb().prepare('UPDATE notifications SET pipeline_id = ? WHERE ticket_id = ? AND pipeline_id IS NULL').run(pipelineId, String(id));
   try {
     getDb().prepare('UPDATE pipelines SET scheduled_for = ?, schedule_id = ? WHERE id = ? AND scheduled_for IS NULL')
       .run(t.runAt, t.scheduleId || null, pipelineId);
@@ -436,9 +462,15 @@ export function setTicketPipeline(id, pipelineId, { now = Date.now() } = {}) {
 
 /** Pipeline statuses that mean "still going" for a predecessor (LIVE_PIPELINE + a parked run). */
 const OPEN_PIPELINE = [...LIVE_PIPELINE, 'paused'];
-const PIPELINE_REF_SQL = 'SELECT id, title, status, target, project_key, workspace_key, branch, workspace_meta, updated_at, archived_at FROM pipelines WHERE id = ?';
+// `resumable` = the row still has a resume point (see resumableInterrupted).
+const PIPELINE_REF_SQL = 'SELECT id, title, status, target, project_key, workspace_key, branch, workspace_meta, updated_at, archived_at, resume_point IS NOT NULL AS resumable FROM pipelines WHERE id = ?';
 const BAD_TICKET_REASON = { canceled: 'was canceled', missed: 'was missed', failed: 'could not start', skipped: 'was skipped' };
 const BAD_PIPELINE_REASON = { error: 'ended with an error', stopped: 'was stopped', interrupted: 'was interrupted' };
+/** An interrupted run that kept its resume point is parked, not ended: a Resume (by hand, at boot, or a resume
+ *  ticket) takes it on, so it counts as still going — like `paused`, under either policy. Without a point
+ *  (sweepV1Runs, a restored archive, a crash before the first snapshot) it can never resume: it ended, and
+ *  BAD_PIPELINE_REASON answers for it. Read off PIPELINE_REF_SQL / CHAIN_PIPELINE_SQL's `resumable` column. */
+const resumableInterrupted = (row) => row.status === 'interrupted' && !!row.resumable;
 
 function pipelineRefRow(id) {
   return getDb().prepare(PIPELINE_REF_SQL).get(String(id)) || null;
@@ -452,7 +484,9 @@ export function afterRefOf(id) {
   const p = pipelineRefRow(id);
   if (!p) return null;
   return { kind: 'pipeline', id: p.id, title: p.title, status: p.status, pipelineId: p.id,
-    projectKey: p.target === 'project' ? p.project_key : null, workspaceId: p.workspace_key || null, scheduleId: null };
+    projectKey: p.target === 'project' ? p.project_key : null, workspaceId: p.workspace_key || null, scheduleId: null,
+    // Only an interrupted run needs it (Ask's schedule spec, the #new/after deep link): every other shape stays as it was.
+    ...(p.status === 'interrupted' ? { resumable: !!p.resumable } : {}) };
 }
 
 // Run on the source branch (branch.sameAsSource): the work lands on the source in teardown, AFTER the row
@@ -482,7 +516,7 @@ function pipelineGate(row, { policy, isLive, now = Date.now() }) {
   // a `done` row whose branch is gone must strand its dependents as missed (the pinned Archive note), not
   // start them — or fail them on a vanished ref. Archive refuses a live run, so this sits above isLive.
   if (row.archived_at) return { state: 'gone', reason: 'was archived', ...base };
-  if ((isLive && isLive({ id: row.id, pipelineId: row.id })) || OPEN_PIPELINE.includes(row.status)) return { state: 'waiting', ...base };
+  if ((isLive && isLive({ id: row.id, pipelineId: row.id })) || OPEN_PIPELINE.includes(row.status) || resumableInterrupted(row)) return { state: 'waiting', ...base };
   // A run on its source branch is not finished until its merge back is: a dependent started now would
   // branch off the source before that run's work lands on it.
   if (mergeBackPending(row, now)) return { state: 'waiting', ...base };
@@ -680,7 +714,7 @@ export function stackedPrBaseOf(pipelineId, chain) {
 // ── run progress: chains (spec 2026-10-14 run-progress P8) ───────────────────
 
 const CHAIN_TICKET_SQL = 'SELECT id, title, status, after_kind, after_id, pipeline_id, resume_pipeline_id, source_from_previous, project_key, project_dir, workspace_id, created_at FROM scheduled_runs';
-const CHAIN_PIPELINE_SQL = 'SELECT id, title, status, target, project_key, workspace_key, branch, pr_url, pr_state, archived_at, started_at, updated_at FROM pipelines WHERE id = ?';
+const CHAIN_PIPELINE_SQL = 'SELECT id, title, status, target, project_key, workspace_key, branch, pr_url, pr_state, archived_at, started_at, updated_at, resume_point IS NOT NULL AS resumable FROM pipelines WHERE id = ?';
 const WAITING_TICKET = new Set(['scheduled', 'firing']);
 const PR_URL_RE = /^https:\/\/\S+$/i;   // the expander makes it a link: never a javascript:/data: href
 
@@ -705,9 +739,10 @@ function chainStillShipping(members, now) {
  * `after` links (a ticket waits on a ticket or a pipeline; a fired ticket IS its pipeline), read in
  * pre-order with siblings by creation time: a plain line reads in its own order, a fork lists each
  * branch whole. A link whose predecessor ticket was purged starts its own chain; a hand-made cycle
- * has no root and is never listed. Read-only.
+ * has no root and is never listed. Only a link that starts on the previous run's branch (source_from_previous) joins
+ * a chain (#1096): a timing-only wait starts its own chain, and that root member says what it waits for. Read-only.
  * Member: { ticketId, pipelineId, title, state: done|current|waiting|failed, prUrl, prState, archived, historyKey, projectKey,
- * workspaceId, projectDir }.
+ * workspaceId, projectDir, after }; the root also has waitsFor: { title } | null.
  * `keepDone: 'all'` keeps every all-done chain (the ship route's lookup; its own checks say what is left to ship).
  * @param {{isLive?: (q:{id:string, pipelineId:string|null}) => boolean, keepDone?: boolean|'all', now?: number}} [opts]
  * @returns {Array<{id:string, title:string|null, members:object[]}>}
@@ -731,6 +766,9 @@ export function runChains({ isLive = null, keepDone = false, now = Date.now() } 
   for (const t of linked) {
     const self = node(keyOf(t));
     self.ticket = t;
+    // #1096: only a run that starts on the previous run's branch builds on it. A timing-only wait (no
+    // source_from_previous, a resume included) roots its own chain; its member names the run it waits for.
+    if (!t.source_from_previous) continue;
     let parentKey;
     if (t.after_kind === 'ticket') {
       const pt = ticketRow(t.after_id);
@@ -744,6 +782,16 @@ export function runChains({ isLive = null, keepDone = false, now = Date.now() } 
     node(parentKey).children.push(self.key);
   }
   const created = (n) => (n.ticket && n.ticket.created_at) || '';
+  // The title of the run a timing-only root waits for; null when it waits for nothing or the run is gone.
+  const waitsForOf = (n) => {
+    const t = n.ticket;
+    if (!t || !t.after_id || t.source_from_previous) return null;
+    const pt = t.after_kind === 'ticket' ? ticketRow(t.after_id) : null;
+    const pid = t.after_kind === 'ticket' ? (pt && (pt.pipeline_id || pt.resume_pipeline_id)) : t.after_id;
+    const row = pid ? db.prepare('SELECT title FROM pipelines WHERE id = ?').get(String(pid)) : null;
+    const title = (pt && pt.title) || (row && row.title) || null;
+    return title ? { title } : null;
+  };
   const member = (n) => {
     const t = n.ticket;
     const row = n.pipelineId ? db.prepare(CHAIN_PIPELINE_SQL).get(n.pipelineId) || null : null;
@@ -753,7 +801,7 @@ export function runChains({ isLive = null, keepDone = false, now = Date.now() } 
     if (t && t.resume_pipeline_id && t.status !== 'fired' && t.status !== 'skipped') state = WAITING_TICKET.has(t.status) ? 'waiting' : 'failed';
     else if (n.pipelineId) {
       if (!row) state = 'failed';
-      else if ((isLive && isLive({ id: t ? t.id : row.id, pipelineId: row.id })) || OPEN_PIPELINE.includes(row.status)) state = 'current';
+      else if ((isLive && isLive({ id: t ? t.id : row.id, pipelineId: row.id })) || OPEN_PIPELINE.includes(row.status) || resumableInterrupted(row)) state = 'current';
       else if (row.status === 'done') state = 'done';
       else if (BAD_PIPELINE_REASON[row.status]) state = 'failed';
       else state = 'current';                      // an unknown status: still going (pipelineGate's reading)
@@ -792,6 +840,8 @@ export function runChains({ isLive = null, keepDone = false, now = Date.now() } 
     const members = order.map(member);
     // D29: the 1-based position of the member this one runs after (null for the root), for "starts after run N".
     order.forEach((n, i) => { const j = n.parent ? order.findIndex((x) => x.key === n.parent) : -1; members[i].after = j >= 0 ? j + 1 : null; });
+    // #1096: a root that only waits for another run (outside this chain) names it, for "starts after <title>".
+    members[0].waitsFor = waitsForOf(root);
     const live = members.some((m) => m.state === 'current' || m.state === 'waiting');
     // One ship flow (D8): an all-done chain stays listed (asked for by GET /api/schedules) until it is shipped and its
     // PRs end, or a run is archived; so it can read Ready to ship, then In review.
@@ -803,7 +853,8 @@ export function runChains({ isLive = null, keepDone = false, now = Date.now() } 
 
 /**
  * The ONE validator for a predecessor reference (server, CLI, Ask parent — spec §3.4).
- * `after.kind` is advisory: the row decides. Accepts a predecessor that is waiting or done.
+ * `after.kind` is advisory: the row decides. Accepts a predecessor that is waiting (live, paused, or
+ * interrupted with a resume point) or done.
  */
 export function resolveAfterRef(after, { projectDir = null, workspaceId = null, policy = 'done', selfId = null, isLive = null } = {}) {
   const id = after && typeof after === 'object' && typeof after.id === 'string' ? after.id.trim() : '';
@@ -1145,11 +1196,16 @@ export function skipTicket(t, reason, { now = Date.now(), schedule = t.scheduleI
   else removeStage(t.id);
 }
 
+/** A hold predicate that throws never holds: a broken lookup must not strand a run. */
+function safeHold(hold, t) {
+  try { return hold(t) === true; } catch { return false; }
+}
+
 export async function runDueTickets({
   now = Date.now(), start, isLive = null, pid = process.pid, host = hostname(), pidAlive = defaultPidAlive,
-  onlyOwned = false, staggerMs = 0, sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  onlyOwned = false, staggerMs = 0, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), hold = null,
 } = {}) {
-  const out = { fired: [], missed: [], skipped: [], failed: [], retried: [], waiting: [] };
+  const out = { fired: [], missed: [], skipped: [], failed: [], retried: [], waiting: [], held: [] };
   let startedAny = false;
   for (const t of dueTickets({ now })) {
     const mine = t.ownerPid === pid && t.ownerHost === host;
@@ -1170,6 +1226,8 @@ export async function runDueTickets({
       if (!t.forced) {
         if (p.state === 'waiting') { out.waiting.push(t.id); continue; }
         if (p.state !== 'ok') { missAfter(t, now, p); out.missed.push(t.id); continue; }
+        // A caller's hold (Shaper's "Ask me before each run"): the ticket stays scheduled and unwritten, asked again each tick.
+        if (hold && safeHold(hold, t)) { out.held.push(t.id); continue; }
       }
       // D11: due from now — the late / retry maths below start here, never at the sentinel.
       if (t.attempts === 0) { touchTicket(t.id, 'run_at = ?', [iso(now)], now); t.runAt = iso(now); }

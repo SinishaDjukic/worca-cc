@@ -60,8 +60,9 @@ test('create with two files: stored, read before round 1, round 1 names the firs
     ['notes.md', 'text', 'done', '[mock] What Worca took from notes.md: two rules, one number and an open point.'],
     ['tickets.pdf', 'binary', 'done', '[mock] What Worca took from tickets.pdf: two rules, one number and an open point.']]);
   const a = f.attachments[0];
-  assert.deepEqual(Object.keys(a).sort(), ['asking', 'asks', 'bytes', 'costUsd', 'error', 'estimateUsd', 'history', 'href', 'id', 'kind', 'mentions', 'mime',
-    'name', 'readAt', 'readModel', 'sendWithRun', 'sendable', 'status', 'summary', 'summaryEdited'].sort());
+  assert.deepEqual(Object.keys(a).sort(), ['asking', 'asks', 'bytes', 'costUsd', 'error', 'estimateUsd', 'fetched', 'from', 'history', 'href', 'id', 'kind',
+    'mentions', 'mime', 'name', 'readAt', 'readModel', 'sendWithRun', 'sendable', 'status', 'summary', 'summaryEdited'].sort());
+  assert.deepEqual([a.from, a.fetched], [null, false], 'A6.1 D14: an upload names no ticket and was not downloaded');
   assert.equal(a.sendable, true);
   assert.equal(a.href, `/api/requirements/${seq}/attachments/${a.id}`);
   assert.equal(f.spec.criteria[0].source, 'notes.md');
@@ -94,7 +95,6 @@ test('add, download, edit, switch, remove; the refusals of D7 and D9', async () 
   assert.deepEqual([edited.summary, edited.summaryEdited, edited.sendWithRun], ['Mine.', true, true]);
   assert.equal((await call('PATCH', md.href, { sendWithRun: 'yes' })).status, 400);
   const no = async (attachments) => { const r = await call('POST', `/api/requirements/${seq}/attachments`, { attachments }); return [r.status, r.json.error]; };
-  assert.deepEqual(await no([up('plan.docx', 'x')]), [400, 'plan.docx was not added: Worca reads text, images and PDF. Save it as PDF to attach it here.']);
   assert.deepEqual(await no([up('again.pdf', PDF)]), [400, 'again.pdf is already attached as t.pdf.']);
   assert.deepEqual(await no(Array.from({ length: 9 }, (_, i) => up(`n${i}.md`, `n${i}`))), [400, 'n8.md was not added: a feature takes up to 10 files.']);
   assert.equal((await call('GET', `/api/requirements/${seq}/attachments/ratt_000000000000`)).status, 404);
@@ -316,4 +316,23 @@ test('at most two uploads in flight: a third answers 409; a slot frees on an abo
     const refused = await call('POST', '/api/requirements/999999/attachments', { attachments: [] });
     assert.equal(refused.status, 404, 'a route refusal frees its slot');
   }
+});
+
+test('a .zip and a .docx are accepted as generic files: no model read, a download not inline; a .py is text', async () => {
+  const zip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 1, 2]);
+  const c = await create([{ name: 'a.zip', dataBase64: zip.toString('base64') }, up('plan.docx', Buffer.concat([zip, Buffer.from([9])])), up('tool.py', 'print(1)')], 'Generic files');
+  assert.equal(c.status, 201, JSON.stringify(c.json));
+  const seq = c.json.feature.seq;
+  await waitFor(async () => (await view(seq)).status === 'your_turn');
+  const f = await view(seq);
+  assert.deepEqual(f.attachments.map((a) => [a.name, a.kind, a.mime, a.estimateUsd]),
+    [['a.zip', 'binary', 'application/octet-stream', 0], ['plan.docx', 'binary', 'application/octet-stream', 0], ['tool.py', 'text', 'text/plain', f.attachments[2].estimateUsd]]);
+  assert.match(f.attachments[1].summary, /can't read this kind of file.*Save it as PDF/);
+  const dl = await call('GET', f.attachments[0].href);
+  assert.equal(dl.headers.get('content-type'), 'application/octet-stream');
+  assert.match(dl.headers.get('content-disposition'), /^attachment;/);
+  assert.equal(dl.headers.get('x-content-type-options'), 'nosniff');
+  assert.deepEqual(dl.buf, zip);
+  const ask = await call('POST', `${f.attachments[0].href}/ask`, { question: 'what is in it' });
+  assert.equal(ask.status, 409);
 });

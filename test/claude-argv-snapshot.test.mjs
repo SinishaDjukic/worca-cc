@@ -87,6 +87,7 @@ chmodSync(SHIM, 0o755);
 // machine, whatever the developer's shell exports.
 const ENV_KEYS = [
   'WORCA_MOCK', 'ORCH_MOCK', 'WORCA_SUBAGENT_HOOKS', 'WORCA_HOST_GUARD', 'WORCA_EFFORT_FLAG', 'WORCA_DEBUG_SPAWN', 'WORCA_AGENT_USER',
+  'WORCA_TEST_CONCURRENCY',   // an agent shell inherits it; the runner then sets its own value, which envAdded must record
   'ENABLE_TOOL_SEARCH', ...STREAM_TIMEOUT_ENV_KEYS,   // API_TIMEOUT_MS & co. are set only when the shell has not (Claude Code exports one)
   ...Object.keys(process.env).filter((k) => k.startsWith('ANTHROPIC_') || k.startsWith('CLAUDE_')),
 ];
@@ -242,13 +243,13 @@ async function spawnNode(key, opts = {}) {
 
 // ── the cases ────────────────────────────────────────────────────────────────
 
-test('the pin covers exactly the 32 shipped builtins', () => {
+test('the pin covers exactly the 35 shipped builtins', () => {
   assert.deepEqual(BUILTIN_KEYS, [
     'architect', 'architectSetup', 'clarify', 'deckAudit', 'deckBuilder', 'deckClarify', 'deckExport', 'deckNarrative', 'deckOutputs',
     'deckReviewer', 'deckSystem', 'decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting',
     'memoryDefragmenter', 'planReviewer', 'planner',
     'promoCapture', 'promoExplorer', 'promoMascot', 'promoReview', 'promoScenes', 'promoSetup', 'promoVoice', 'promoWriter',
-    'refiner', 'reviewer', 'workspaceReviewer', 'workspaceScanner',
+    'refiner', 'requirementsDrafter', 'requirementsRefiner', 'requirementsReviewer', 'reviewer', 'workspaceReviewer', 'workspaceScanner',
     'workspaceSynthesizer', 'workspaceUsageMapper',
   ]);
 });

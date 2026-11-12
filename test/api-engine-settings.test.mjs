@@ -56,7 +56,7 @@ test('a model of the other engine, or an effort the engine lacks, is refused nam
   const wrong = await post('/api/settings', { stepModels: { codex: { reviewer: { model: 'claude-opus-5-5' } } } });
   assert.equal(wrong.status, 400);
   // #555: the error names the visible label; `field` keeps the slot.
-  assert.equal(wrong.body.error, '“Step models”: "claude-opus-5-5" runs on Claude — this slot picks a model Codex can run.');
+  assert.equal(wrong.body.error, '“Step models”: "claude-opus-5-5" runs on Claude Code — this slot picks a model OpenAI Codex can run.');
   assert.equal(wrong.body.field, 'stepModels.codex.reviewer');
   const effort = await post('/api/settings', { stepModels: { codex: { reviewer: { effort: 'max' } } } });
   assert.equal(effort.status, 400);
@@ -76,7 +76,7 @@ test('POST /api/settings utilityModels: Codex helper slots; Claude ones are toda
   assert.equal(claude.body.error, 'Claude’s helper models are set in Title generation model, Auto workflow model, PR description model and Defragment model.');
   assert.equal(claude.body.field, 'utilityModels.claude');
   const wrong = await post('/api/settings', { utilityModels: { codex: { overview: { model: 'claude-opus-5-5' } } } });
-  assert.equal(wrong.body.error, '“Helper models”: "claude-opus-5-5" runs on Claude — this slot picks a model Codex can run.');
+  assert.equal(wrong.body.error, '“Helper models”: "claude-opus-5-5" runs on Claude Code — this slot picks a model OpenAI Codex can run.');
   assert.equal(wrong.body.field, 'utilityModels.codex.overview');
   const job = await post('/api/settings', { utilityModels: { codex: { summary: { model: 'gpt-5.5' } } } });
   assert.equal(job.status, 400);
@@ -163,4 +163,31 @@ test('POST /api/settings requirementsInterview: a change emits a settings-change
     ws.close();
     await post('/api/settings', { requirementsInterview: null });
   }
+});
+
+test('secondOpinionModel: GET carries it and the factory defaults; POST saves, clears and refuses', async () => {
+  const { readFileSync } = await import('node:fs');
+  const stored = () => JSON.parse(readFileSync(join(sandboxHome, '.worca-cc', 'settings.json'), 'utf8')).secondOpinionModel;
+  const g = await get('/api/settings');
+  assert.equal(g.body.secondOpinionModel, null);
+  assert.deepEqual(g.body.factoryModels.claude.helpers.secondOpinion, { model: 'claude-opus-5-5', effort: 'medium' });
+  assert.deepEqual(g.body.factoryModels.claude.helpers.memoryDefrag, { model: 'claude-sonnet-5' });
+  assert.deepEqual(g.body.factoryModels.claude.steps.planReviewer, { model: 'claude-sonnet-5-5', effort: 'medium' });
+  const r = await post('/api/settings', { secondOpinionModel: { model: 'claude-sonnet-5', effort: 'high' } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(r.body.secondOpinionModel, { model: 'claude-sonnet-5', effort: 'high' });
+  assert.deepEqual((await get('/api/settings')).body.secondOpinionModel, { model: 'claude-sonnet-5', effort: 'high' });
+  const bad = await post('/api/settings', { secondOpinionModel: { model: 'no-such-model-xyz' } });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.body.field, 'secondOpinionModel');
+  assert.match(bad.body.error, /no-such-model-xyz.*not in the catalog/);
+  assert.deepEqual(stored(), { model: 'claude-sonnet-5', effort: 'high' }, 'a refused value writes nothing');
+  const c = await post('/api/settings', { secondOpinionModel: null });
+  assert.equal(c.status, 200);
+  assert.equal(c.body.secondOpinionModel, null);
+  assert.equal(stored(), undefined);
+  const cx = await post('/api/settings', { utilityModels: { codex: { secondOpinion: { model: 'gpt-5.5', effort: 'low' } } } });
+  assert.equal(cx.status, 200, JSON.stringify(cx.body));
+  assert.deepEqual(cx.body.utilityModels.codex.secondOpinion, { model: 'gpt-5.5', effort: 'low' });
+  await post('/api/settings', { utilityModels: { codex: { secondOpinion: null } } });
 });

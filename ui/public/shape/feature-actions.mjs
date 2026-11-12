@@ -1,9 +1,12 @@
 // ui/public/shape/feature-actions.mjs — Shaper s3: the feature card's controls. One painter for the Chat feature card and
 // the one feature card (Plans tab, group page): Pause · Stop on the run in flight, Resume · Re-plan the rest once the
 // feature halted, and the ⋯ menu (Re-plan the rest · Cancel the rest · Ask before each run · Open the plan).
-// Ask before each run is the approve-each switch (shape_features.approve_each).
+// Ask before each run is the approve-each switch (shape_features.approve_each); a run it holds shows one Needs you row with
+// Start now (Run now on the held ticket).
 import { toggleMenu } from '../workflows/menu.mjs';
 import { icon } from '../icons.mjs';
+import { paintStatusDot } from '../status-dot.mjs';
+import { ACTION_LABEL, RUN_STATES } from '../../../src/shared/run-model.mjs';
 
 const LIVE = new Set(['starting', 'running', 'pausing']);
 export const FAILED = 'That did not work. Try again.';
@@ -16,6 +19,7 @@ export const CANCEL_CONFIRM = Object.freeze({ title: 'Cancel the rest', confirmL
 export function featureButtons(c) {
   if (!c || !c.active) return [];
   if (c.halted) return [{ key: 'resume', label: 'Resume', primary: true }, ...(c.rest ? [{ key: 'replan', label: 'Re-plan the rest' }] : [])];
+  if (c.held) return [{ key: 'start', label: ACTION_LABEL['start-now'], primary: true }];
   const t = c.target;
   if (!t || !LIVE.has(t.status)) return [];
   const out = [];
@@ -44,10 +48,12 @@ export function featureFocusOf(doc, host) {
   return noted ? noted.dataset.focus : null;
 }
 
-/** Focus `act` in `host` when it is there and enabled, else ⋯ (a Pause that became Pausing…, a Resume that is gone). */
-export function focusFeatureControl(host, act) {
+/** Focus `act` in `host` when it is there and enabled, else ⋯ (a Pause that became Pausing…, a Resume that is gone),
+ *  else `fallback` (the group page draws no ⋯ in the controls: its header's ⋯ takes the focus). */
+export function focusFeatureControl(host, act, fallback = null) {
   if (!act) return;
-  const el = [`[data-act="${act}"]`, '[data-act="feature-more"]'].map((q) => host.querySelector(q)).find((b) => b && !b.disabled);
+  const el = [`[data-act="${act}"]`, '[data-act="feature-more"]'].map((q) => host.querySelector(q)).find((b) => b && !b.disabled)
+    || (fallback && fallback.isConnected && !fallback.disabled ? fallback : null);
   if (el) el.focus();
 }
 
@@ -55,17 +61,21 @@ export function focusFeatureControl(host, act) {
  * Paint the controls into `host`. It is rebuilt only when what it shows changes, so an open ⋯ menu survives the chat
  * card's once-a-second repaint.
  * deps: { act(action, body, {focus}) → Promise<{ok, error?}>, confirm(opts) → Promise<boolean>, openPlan(c),
- *         pause?(target, btn) → Promise<string|void> (a reason when refused), stop?(target), error?: string }
- * omit: the button keys the host's run-model footer already shows (pause / stop / resume), so none shows twice.
+ *         pause?(target, btn) → Promise<string|void> (a reason when refused), stop?(target), error?: string,
+ *         focusFallback?() → Element|null (where the focus goes when the control it was on and ⋯ are both gone) }
+ * omit: the button keys the host's run-model footer already shows (pause / stop / resume), so none shows twice. It never
+ * drops Start now: no footer shows a held run's start.
  */
 export function paintFeatureActions(doc, host, c, deps, { omit = [], menu: withMenu = true } = {}) {
-  const buttons = featureButtons(c).filter((b) => !omit.includes(b.key)
+  const buttons = featureButtons(c).filter((b) => (b.key === 'start' || !omit.includes(b.key))
     && (b.key === 'pause' ? !!deps.pause : b.key === 'stop' ? !!deps.stop : true));
+  const held = c && c.active && !c.halted && c.held ? c.held : null;
   const menu = withMenu ? featureMenu(c) : [];
   // Set before the signature check: a host hidden by the caller (run-card.mjs, a non-feature paint) must reappear
   // even when the controls it shows did not change. An error (a Ship as failure on a finished feature) shows on its own.
   host.hidden = !buttons.length && !menu.length && !deps.error;
-  const sig = JSON.stringify([buttons, menu, deps.error || null]);
+  // The held run's number is in the sig: run 3 held after run 2 started repaints with the same buttons.
+  const sig = JSON.stringify([buttons, menu, held, deps.error || null]);
   if (host.dataset.sig === sig) return;          // the handlers keep the deps of the last rebuild: hosts pass stable deps
   host.dataset.sig = sig;
   const had = featureFocusOf(doc, host);
@@ -104,6 +114,7 @@ export function paintFeatureActions(doc, host, c, deps, { omit = [], menu: withM
   };
   const pick = {
     resume: (b) => run('resume', null, b),
+    start: (b) => run('start', null, b),
     replan: (b) => confirmed(REPLAN_CONFIRM, 'replan', b),
     cancel: (b) => confirmed(CANCEL_CONFIRM, 'cancel', b),
     'approve-each': (b) => run('approve-each', { on: !c.approveEach }, b),
@@ -124,11 +135,23 @@ export function paintFeatureActions(doc, host, c, deps, { omit = [], menu: withM
     b.dataset.act = `feature-${key}`;
     return b;
   };
+  // A run "Ask me before each run" holds: Needs you, the reason once, then its Start now.
+  let row = null;
+  if (held) {
+    row = doc.createElement('div'); row.className = 'shape-feature-held';
+    const dot = doc.createElement('span');                        // paintStatusDot owns its className
+    // QA 6: the "?" is only for while Worca asks; a held run waits on you, so a plain amber dot
+    paintStatusDot(dot, { ...RUN_STATES['needs-you'], state: 'needs-you', symbol: null });
+    const word = doc.createElement('span'); word.className = 'shape-feature-held-word'; word.textContent = RUN_STATES['needs-you'].word;
+    const why = doc.createElement('span'); why.className = 'shape-feature-held-why'; why.textContent = `Run ${held.index} waits for you to start`;
+    row.append(dot, word, why);
+    host.appendChild(row);
+  }
   for (const x of buttons) {
     const b = btn(x.key, x.label, x.primary);
     b.disabled = !!x.disabled;
     b.addEventListener('click', (e) => { if (e.detail > 1) return; pick[x.key](b); });
-    host.appendChild(b);
+    (x.key === 'start' && row ? row : host).appendChild(b);
   }
   if (menu.length) {
     const more = btn('more', null);
@@ -143,7 +166,7 @@ export function paintFeatureActions(doc, host, c, deps, { omit = [], menu: withM
     host.appendChild(more);
   }
   host.appendChild(err);
-  focusFeatureControl(host, had);
+  focusFeatureControl(host, had, typeof deps.focusFallback === 'function' ? deps.focusFallback() : null);
 }
 
 /** Run 4 (D18): the ⋯ items as entries for a menu outside the controls host (the group page's header ⋯), with the same

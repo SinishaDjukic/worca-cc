@@ -59,7 +59,8 @@
 //   user's own MCP servers still start (their tools are denied); their instructions files still reach the prompt.
 // - OpenCode Zen's free models (`opencode/…`) refuse a request without the shell, so a chat never runs on them.
 import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, realpathSync } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { execCli, cliRefusal } from './exec-cli.mjs';
+import { OPENCODE_CLI } from './cli-specs.mjs';
 import { homedir } from 'node:os';
 import { join, relative } from 'node:path';
 import { worcaHome } from '../projects.mjs';
@@ -75,6 +76,9 @@ import { chatSelfTest } from './chat-selftest.mjs';
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const opencodeDefaultBin = () => process.env.WORCA_OPENCODE_BIN || 'opencode';
 export const OPENCODE_SESSION_PREFIX = 'opencode:';
+/** The checkout's instruction files a run gives OpenCode: worca names both as `instructions` (instructionFiles below), so
+ *  both load, not only OpenCode's own AGENTS.md-else-CLAUDE.md pick (docs.opencode.ai/docs/rules/). */
+export const OPENCODE_INSTRUCTION_FILES = Object.freeze(['AGENTS.md', 'CLAUDE.md']);
 /** The only env names besides the base set that survive scrub on OpenCode: provider keys need the allowlist. */
 const OPENCODE_ENV_PREFIXES = ['OPENCODE_'];
 /** The opt-in that lets a spawn without a model run on OpenCode's own default (possibly a free OpenCode Zen model). */
@@ -429,13 +433,13 @@ export function opencodePreflight({ bin = opencodeDefaultBin(), timeoutMs = 1500
   const allowed = defaultModelAllowed();
   const { env } = composeSpawnEnv({ envScrub, envAllowlist, prefixes: OPENCODE_ENV_PREFIXES });
   const run = (args) => new Promise((resolve) => {
-    execFile(bin, args, { timeout: timeoutMs, env: { ...env, OPENCODE_DISABLE_AUTOUPDATE: '1' } }, (err, stdout, stderr) => resolve({ err, stdout, stderr }));
+    execCli(OPENCODE_CLI, bin, args, { timeout: timeoutMs, env: { ...env, OPENCODE_DISABLE_AUTOUPDATE: '1' } }, (err, stdout, stderr) => resolve({ err, stdout, stderr }));
   });
   return (async () => {
     const v = await run(['--version']);
     if (v.err) {
       return /^(ENOENT|EACCES|EINVAL)$/.test(String(v.err.code)) || typeof v.err.code === 'number'
-        ? { refusal: `cannot run ${bin} (${v.err.code}) — install OpenCode (opencode.ai), or point WORCA_OPENCODE_BIN at it` }
+        ? { refusal: cliRefusal({ bin, err: v.err, install: 'install OpenCode (opencode.ai), or point WORCA_OPENCODE_BIN at it' }) }
         : { warning: `could not check ${bin} (${v.err.message})` };
     }
     // OpenCode 2 (npm @opencode/cli, Homebrew's opencode) breaks this adapter: `run` attaches to a shared background
@@ -465,7 +469,7 @@ const isBenignStderr = (line) => /message="share subscriber failed"/.test(line);
 const FREE_TIER_NOTE = 'OpenCode Zen\'s free models refuse a run without the shell tool — the guardrail set denies the whole shell (a bare Bash rule); pick a model of another provider, or a set without it';
 
 /** The checkout's own instruction files, by absolute path (OPENCODE_DISABLE_PROJECT_CONFIG turns their discovery off). */
-const instructionFiles = (cwd) => ['AGENTS.md', 'CLAUDE.md'].map((f) => join(cwd, f)).filter((p) => existsSync(p));
+const instructionFiles = (cwd) => OPENCODE_INSTRUCTION_FILES.map((f) => join(cwd, f)).filter((p) => existsSync(p));
 
 /**
  * Run one OpenCode turn. Same resolved value and rejection contract as the Claude adapter: {text, exitCode}; an
@@ -590,6 +594,7 @@ export async function runOpencodeProcess({
     const spawnSignal = cap ? (signal ? AbortSignal.any([signal, capCtrl.signal]) : capCtrl.signal) : signal;
     const args = buildOpencodeArgs({ agent: nodeAgent, model, effort, sessionId });
     const res = await superviseSpawn({
+      cli: OPENCODE_CLI,
       file: bin, args, displayBin: bin, cwd, env, stdin: String(prompt ?? ''), signal: spawnSignal, asAgent, stagedDir: asAgent ? scratch : null, onEvent,
       cleanup: () => {},
       isBenignStderr,
@@ -631,7 +636,7 @@ export async function runOpencodeProcess({
     let costUsd = 0; let usage = { ...ZERO_USAGE }; const missed = [];
     for (const { sessionId: id, toolUseId } of subs) {
       const text = await new Promise((resolve) => {
-        execFile(bin, ['export', id], { cwd, env, timeout: 20000, maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => resolve(err ? null : stdout));
+        execCli(OPENCODE_CLI, bin, ['export', id], { cwd, env, timeout: 20000, maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => resolve(err ? null : stdout));
       });
       const s = text == null ? null : readSubsession(text, { parentId: toolUseId, mcpServers: Object.keys(mcp || {}) });
       if (!s) { missed.push(id); continue; }
@@ -677,8 +682,8 @@ export const OPENCODE_ASK_MIN_VERSION = '1.19.4';
 /** Can this opencode be locked down for a chat? OpenCode 1.x at least OPENCODE_ASK_MIN_VERSION. Never rejects. */
 export function opencodeAskSupport({ bin = opencodeDefaultBin(), timeoutMs = 15000 } = {}) {
   return new Promise((resolve) => {
-    execFile(bin, ['--version'], { timeout: timeoutMs, env: { ...process.env, OPENCODE_DISABLE_AUTOUPDATE: '1' } }, (err, stdout) => {
-      if (err) { resolve({ refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(err.code)) ? `cannot run ${bin} (${err.code}) — install OpenCode 1.x (npm i -g opencode-ai), or point WORCA_OPENCODE_BIN at it` : `could not ask ${bin} its version (${err.message})` }); return; }
+    execCli(OPENCODE_CLI, bin, ['--version'], { timeout: timeoutMs, env: { ...process.env, OPENCODE_DISABLE_AUTOUPDATE: '1' } }, (err, stdout) => {
+      if (err) { resolve({ refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(err.code)) ? cliRefusal({ bin, err, install: 'install OpenCode 1.x (npm i -g opencode-ai), or point WORCA_OPENCODE_BIN at it' }) : `could not ask ${bin} its version (${err.message})` }); return; }
       const v = /(\d+)\.(\d+)\.(\d+)/.exec(String(stdout));
       const n = v ? v.slice(1).map(Number) : null;
       const min = OPENCODE_ASK_MIN_VERSION.split('.').map(Number);

@@ -51,7 +51,7 @@ beforeEach(() => gitInfo.reset());
 
 /** A fake git and gh. Each repository's name comes from its directory; `ahead` is how many commits the run made
  *  there (docs: none, the planner left it alone). Every call lands in `seen` with its directory. */
-function stub(seen, { failPushIn = null, ahead = { api: 2, web: 1, docs: 0 } } = {}) {
+function stub(seen, { failPushIn = null, ahead = { api: 2, web: 1, docs: 0 }, refuseDraftIn = [] } = {}) {
   const nameOf = (cwd) => Object.keys(dirs).find((k) => dirs[k] === cwd) || 'api';
   const bodies = {};
   gitInfo.setRunner((cmd, args, opts = {}) => {
@@ -65,6 +65,7 @@ function stub(seen, { failPushIn = null, ahead = { api: 2, web: 1, docs: 0 } } =
     if (cmd === 'git' && args[0] === 'rev-list' && args[1] === '--count') return ok(`${ahead[repo]}\n`);
     if (cmd === 'git' && args[0] === 'push') return opts.cwd === failPushIn ? Promise.resolve({ ok: false, stdout: '', stderr: 'denied', code: 1 }) : ok();
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'create') {
+      if (args.includes('--draft') && refuseDraftIn.includes(repo)) return Promise.resolve({ ok: false, stdout: '', stderr: 'draft pull requests are not supported in this repository', code: 1 });
       const url = `https://github.com/o/${repo}/pull/${repo === 'web' ? 12 : 11}`;
       const i = args.indexOf('--body');
       bodies[url] = i >= 0 ? args[i + 1] : '';
@@ -127,4 +128,34 @@ test('a member whose push fails is reported, the others still open; nothing chan
   stub([], { ahead: { api: 0, web: 0, docs: 0 } });
   const empty = await server.automationDraftPr(runId);
   assert.deepEqual(empty, { ok: false, error: 'the run changed no repository' });
+});
+
+test('draft:false opens ready PRs attributed to the actor (Watch enabledBy and the cross-link audit)', async () => {
+  getDb().exec('DELETE FROM pipeline_member_prs; DELETE FROM pr_watches');
+  const seen = [];
+  stub(seen);
+  const out = await server.automationDraftPr(runId, { draft: false, actor: 'ann@acme.test' });
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.equal(out.fellBack, false);
+  const creates = seen.filter((c) => c.argv[0] === 'gh' && c.argv[2] === 'create');
+  assert.equal(creates.length, 2);
+  for (const c of creates) assert.ok(!c.argv.includes('--draft'), `${c.repo} is ready for review`);
+  const by = getDb().prepare('SELECT enabled_by FROM pr_watches').all().map((r) => r.enabled_by);
+  assert.deepEqual(by, ['ann@acme.test', 'ann@acme.test']);
+  const audit = getDb().prepare('SELECT text, actor FROM pipeline_events WHERE pipeline_id = ?').all(runId).map((r) => ({ ...r }));
+  assert.ok(audit.some((e) => e.text === 'Cross-linked 2 pull requests to their siblings (ann@acme.test).' && e.actor === 'ann@acme.test'), JSON.stringify(audit));
+});
+
+test('a refused draft retries ready and calls onDraftFallback per member', async () => {
+  getDb().exec('DELETE FROM pipeline_member_prs; DELETE FROM pr_watches');
+  const seen = [];
+  stub(seen, { refuseDraftIn: ['web'] });
+  const fell = [];
+  const out = await server.automationDraftPr(runId, { draft: true, actor: 'ann@acme.test', onDraftFallback: (e) => fell.push(e) });
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.deepEqual(fell.map((e) => [e.memberKey, e.name, /draft/i.test(e.error)]), [['web-00000002', 'web', true]]);
+  assert.equal(out.fellBack, true);
+  assert.deepEqual(out.prs.map((p) => [p.name, p.draft, p.fellBack]), [['api', true, false], ['web', false, true]]);
+  const webCreates = seen.filter((c) => c.argv[2] === 'create' && c.repo === 'web');
+  assert.deepEqual(webCreates.map((c) => c.argv.includes('--draft')), [true, false], 'a draft first, then ready');
 });

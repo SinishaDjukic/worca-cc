@@ -7,7 +7,8 @@
 // ({url, number, state, draft? | isDraft?, mergeable?, reviewDecision?}), `ticket` ({status, runAt, after:{index, group, title}}) for a run that has not
 // started, and `resumable`. Shared code: no imports from core/ or ui/.
 // Optional: `round` ({n, request, by}) or the raw marker `branch.roundOf` ({round, request, by}), a round of the same
-// run (spec §3.6); `watch` ({status, reason, fixRuns}), the run's Watch PR (§3.6a, statuses of src/core/pr-watch.mjs).
+// run (spec §3.6); `prDeduped` (true: another run on the same open PR raises it, so this one reads In review, D8);
+// `watch` ({status, reason, fixRuns}), the run's Watch PR (§3.6a, statuses of src/core/pr-watch.mjs).
 // `memberPrs` ([pr]), a workspace run's member PRs (#784): the PR chip rolls them up (memberPrState).
 // Projects, any way: `workMode` ('folder' | 'none', else read off `branch.workMode`; anything else is a git run),
 // `changes` ({state, counts}, a Folder run's; else `branch.changes`) and `gitChrome` (false: a git run while git is
@@ -178,6 +179,9 @@ function singleLine(state, run, prog, pr, opts) {
       return join(where, 'paused', s === 'interrupted' ? 'interrupted' : PAUSE_WORD[run.pauseReason] || '');
     }
     case 'waiting': {
+      // A run "Ask me before each run" holds: the run before it is done, so "starts after" would be stale. The feature's
+      // controls say why it waits, once (D18).
+      if (run.ticket && run.ticket.held) return 'Waiting';
       const at = run.ticket && run.ticket.runAt ? clock(run.ticket.runAt, opts) : '';
       // D11: what it waits for. A slice of a group names the group and the run; a member names its run; a plain
       // after-ticket names the run before it.
@@ -197,7 +201,8 @@ function singleLine(state, run, prog, pr, opts) {
 // Watch PR (src/core/pr-watch.mjs): a fix round owns the PR's branch while starting, fixing or publishing (watchActive);
 // it stopped for a person at needs-person, its reason saying why (`cap`: MAX_FIX_RUNS fix runs, checks still failing).
 const WATCH_LIVE = new Set(['starting', 'fixing', 'publishing']);
-const WATCH_WHY = Object.freeze({
+/** Why a Watch PR stopped (or a fix round pushed nothing), in words; runs-list.mjs roundLine reads it too. */
+export const WATCH_WHY = Object.freeze({
   cap: 'checks still failing', 'fix-failed': 'the last fix run failed', 'fix-interrupted': 'the last fix run was interrupted',
   'no-change': 'the last fix changed nothing', 'conflict-markers': 'conflicts remain', 'base-not-merged': 'conflicts remain',
   'push-refused': 'the push was refused', 'remote-moved': 'the branch moved',
@@ -240,6 +245,9 @@ const prOf = (r, watch) => {
  *  as runModel's own watchNeeds does. */
 export function finishedNeedsYou(run) {
   const r = run || {};
+  // pr-fix-rounds-stacking D8: a PR's state belongs to the run that opened it; a round only reports its outcome.
+  // `prDeduped`: another run on the same open PR already raises it (D8, runs-list.mjs dedupeRows).
+  if (roundOf(r) || r.prDeduped) return false;
   const watch = watchOf(r.watch);
   const pr = prOf(r, watch);
   if (pr && (pr.id === 'merged' || pr.id === 'closed')) return false;
@@ -292,22 +300,27 @@ export function runModel(run, opts = {}) {
   const r = run || {};
   const watch = watchOf(r.watch);
   const pr = prOf(r, watch);
+  const round = roundOf(r);
   // D23: a Watch PR that stopped for a person raises a finished run to Needs you; a merged or closed PR has ended it.
-  const watchNeeds = !!(watch && watch.stopped) && String(r.status || '') === 'done' && r.pendingQuestion == null
+  // A round never does, through its watch or its PR (finishedNeedsYou, D8): its page reads In review, its chip stays.
+  // Nor does a run whose PR another run on it already raises (`prDeduped`, set by the Runs list's D8 dedupe).
+  const quiet = !!round || !!r.prDeduped;
+  const watchNeeds = !quiet && !!(watch && watch.stopped) && String(r.status || '') === 'done' && r.pendingQuestion == null
     && !(pr && (pr.id === 'merged' || pr.id === 'closed'));
-  const state = watchNeeds ? 'needs-you' : stateOf(r, pr);
+  const state = watchNeeds ? 'needs-you' : stateOf(r, quiet && pr && pr.needsYou ? { ...pr, needsYou: false } : pr);
   const mode = workModeOf(r);
   const fin = state === 'ready' ? finishedWords(r, mode) : null;
   const prog = r.status ? runProgress(r, opts.memo || null) : null;
   const meta = RUN_STATES[state];
   // A PR-driven Needs you has no question to answer; its line is the chip's reason (QA 3) and its action View PR (D31).
-  const prNeeds = state === 'needs-you' && r.pendingQuestion == null && (watchNeeds || !!(pr && pr.needsYou));
+  const prNeeds = !quiet && state === 'needs-you' && r.pendingQuestion == null && (watchNeeds || !!(pr && pr.needsYou));
   const actions = fin ? [] : watchNeeds ? ['open-pr', 'ask-changes'] : prNeeds ? ['open-pr']
     // An interrupted run is never stopped: it archives, and resumes too unless it never can (no resume point, its project gone).
-    : r.status === 'interrupted' ? (r.resumable === false ? ['archive'] : ['resume', 'archive']) : ACTIONS[state];
+    : r.status === 'interrupted' ? (r.resumable === false ? ['archive'] : ['resume', 'archive'])
+    // D18: a held run's start is the feature's one Start now, so its member row offers none of its own.
+    : r.ticket && r.ticket.held ? ACTIONS[state].filter((a) => a !== 'start-now') : ACTIONS[state];
   const base = fin ? fin.line : state === 'starting' && mode === 'folder' ? 'Copying the folder'
     : watchNeeds ? watch.line : prNeeds ? prReasonLine(pr) : singleLine(state, r, prog, pr, opts);
-  const round = roundOf(r);
   const { line, lineSaysState } = roundLine(state, round, base, prog, prNeeds);
   // Beside a bar that names the stages (paintRunStatus), the line names only the step: "Working · Refine Plan".
   // '' when the step is the stage itself; null where the bar names no stage or the line is a round's own.
@@ -315,7 +328,7 @@ export function runModel(run, opts = {}) {
   // Review A12: the live role-review rows (or the Refine line) under the status line; null when there are none.
   // QA 6: "?" means Worca is asking. A run in Needs you through its PR (or a stopped Watch PR) is a plain amber dot.
   return { state, ...meta, ...(fin ? { word: fin.word } : {}), symbol: prNeeds ? null : meta.symbol, line, lineSaysState, barLine, actions: [...actions], pr, prNeeds,
-    round, progress: prog, roles: liveRoleRows(r, { stage: prog ? prog.stage : null }) };
+    round, progress: prog, roles: liveRoleRows(r, { stage: prog ? prog.stage : null }), ...(r.ticket && r.ticket.held ? { held: true } : {}) };
 }
 
 // The PR states that are still open (a group is In review while each of its runs has one).
@@ -367,7 +380,8 @@ export function groupModel(group, opts = {}) {
       case 'needs-you': return `${where} · needs you`;
       case 'paused': return `${where} · paused`;
       case 'failed': return `${where} · failed`;
-      case 'waiting': return idx > 0 ? `${where} · waiting for run ${idx}` : join(where, current.line.replace(/^Waiting · /, '').replace(/^Waiting$/, 'waiting'));
+      // D18: a held run's predecessor is done, so "waiting for run N" would be stale; the feature's row says why.
+      case 'waiting': return current.held ? `${where} · waiting` : idx > 0 ?`${where} · waiting for run ${idx}` : join(where, current.line.replace(/^Waiting · /, '').replace(/^Waiting$/, 'waiting'));
       case 'stopped': return `Stopped at ${where === 'Planning' ? 'planning' : `run ${idx + 1} of ${total}`}`;
       case 'ready': return `Ready to ship · ${done} of ${total} done`;
       case 'in-review': {
@@ -398,6 +412,8 @@ export function groupModel(group, opts = {}) {
     if (!seen.has(k)) { seen.add(k); prCount += 1; }
   }
   const prUrl = prCount === 1 ? prList[0].url || null : null;
-  return { kind: g.kind || 'chain', title: g.title || '', state, ...meta, symbol, line: tail(), actions: prNeedsCurrent ? [...current.actions] : [...ACTIONS[state]],
+  return { kind: g.kind || 'chain', title: g.title || '', state, ...meta, symbol, line: tail(), actions: prNeedsCurrent ? [...current.actions]
+      // D18: a held current run's start is the feature's one Start now: the group row offers none either.
+      : current && current.held ? ACTIONS[state].filter((a) => a !== 'start-now') : [...ACTIONS[state]],
     prNeeds: prNeedsCurrent && all.every(doneLike), pr, prCount, prUrl, count: { done, total, text: `${done}/${total}` }, progress, current, members, planning };
 }

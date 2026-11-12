@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Instance contract for hosting platforms
+
+- New [Instance contract](docs/instance-contract.md) page: what a hosted Worca instance is made of (the `worca`, `broker` and `cloudflared` containers, their start commands, ports and volumes) and everything a management interface sets or expects: every variable per container, the identity token, the heartbeat and what a receiver should do with it, stopping and draining, rotation and versions. For running Worca for others without a hosting platform, or for building a management interface of your own.
+- `docker/compose.instance.yml`: the same shape in Docker on top of `compose.yml` and `compose.broker.yml`, with `cloudflared` under the `tunnel` profile and the hosted-mode variables commented.
+
+### Agents left running by a killed server are stopped at the next start (#1144)
+
+- On Linux, macOS and WSL, a Claude, Codex or Copilot process (and anything it started) no longer keeps running after the Worca server or a CLI run is killed with SIGKILL, for example by the out-of-memory killer under WSL2. Each process records its agent process groups in `<worca home>/agent-groups/`, and the next server start stops the ones whose owner is gone, so they no longer hold memory and make the next kill more likely. A PID that another process has taken since (after a reboot or `wsl --shutdown`, or in a restarted container, whose PIDs start again from 1) is never touched: each group is recorded with its boot id and start time.
+
+### Shaper: shape the requirements first
+
+- Requirements stage and plan coverage (3-card UX, behind a Labs flag): Unchanged since cycle 2: fix cycle 2 edited no file (newest edit 10:43, before the cycle 2 review at 10:46; DEVIATIONS 14).
+- Build by requirements: slices and code reviews carry the R-*: Cycle 4: the cycle-3 blocker (R-qa-6) is fixed.
+- Close the loop: requirement concerns, acceptance and changes after ship: Cycle 4 fixes both web UI review majors.
+- Cleanup: drop dead paths after the requirements stage settles: The slice is verification-only, as the v3 plan says.
+
 ### Independent review gates, engine-first (#990)
 
 - Engine role-review step, model per role, Shaper plan review moved onto it: Both cycle-1 blockers are fixed and tested.

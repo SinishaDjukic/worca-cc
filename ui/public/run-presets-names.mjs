@@ -28,7 +28,7 @@ export function presetWorkflowName(workflowId, names) {
   return names ? { text: WORKFLOW_REMOVED_LABEL, removed: true } : null;
 }
 
-/** The engine's catalog label ("Claude", "Codex"…); an id outside the catalog is never shown. */
+/** The engine's catalog label ("Claude Code", "OpenAI Codex"…); an id outside the catalog is never shown. */
 export function presetEngineName(engine) {
   const e = engine || 'claude';
   return Object.hasOwn(ENGINES, e) ? ENGINES[e].label : UNKNOWN_ENGINE_LABEL;
