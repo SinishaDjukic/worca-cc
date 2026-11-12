@@ -52,6 +52,7 @@
     "assets/promo-kit/",
     "tools/install.mjs",
     "docker/compose*.yml",
+    "docker/oauth2-proxy.yaml",
     "docker/.env.example",
     "npm-shrinkwrap.json",
     "README.md"

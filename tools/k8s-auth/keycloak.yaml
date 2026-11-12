@@ -1,0 +1,59 @@
+# tools/k8s-auth/keycloak.yaml — a throwaway Keycloak for `node tools/k8s-smoke.mjs --auth`.
+# Dev mode (in-memory database), HTTPS with a certificate the smoke signs with its own CA (the
+# keycloak-tls Secret), the `worca` realm imported from the keycloak-realm ConfigMap. Not for
+# production: see docs/auth.md for a real provider. __NAMESPACE__ is filled by the smoke.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  labels: { app: keycloak }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: keycloak }
+  template:
+    metadata:
+      labels: { app: keycloak }
+    spec:
+      containers:
+        - name: keycloak
+          image: __KEYCLOAK_IMAGE__
+          args:
+            - start-dev
+            - --import-realm
+            - --hostname=https://keycloak.__NAMESPACE__.svc:8443
+            - --https-port=8443
+            - --http-enabled=false
+            - --https-certificate-file=/etc/keycloak-tls/tls.crt
+            - --https-certificate-key-file=/etc/keycloak-tls/tls.key
+            - --health-enabled=true
+          env:
+            - { name: KC_BOOTSTRAP_ADMIN_USERNAME, value: admin }
+            - { name: KC_BOOTSTRAP_ADMIN_PASSWORD, value: admin-e2e-only }
+          ports:
+            - { name: https, containerPort: 8443 }
+            - { name: management, containerPort: 9000 }
+          readinessProbe:
+            httpGet: { path: /health/ready, port: management, scheme: HTTPS }
+            periodSeconds: 5
+            failureThreshold: 60
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits: { memory: 1536Mi }
+          volumeMounts:
+            - { name: tls, mountPath: /etc/keycloak-tls, readOnly: true }
+            - { name: realm, mountPath: /opt/keycloak/data/import, readOnly: true }
+      volumes:
+        - name: tls
+          secret: { secretName: keycloak-tls, defaultMode: 0444 }
+        - name: realm
+          configMap: { name: keycloak-realm }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+spec:
+  selector: { app: keycloak }
+  ports:
+    - { name: https, port: 8443, targetPort: https }

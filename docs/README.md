@@ -66,6 +66,7 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 - [Worca on Kubernetes](kubernetes.md) — the Helm chart: a controller pod and a worker pod per run and chat thread
 - [Deploy on Railway](deploy-railway.md) — the container as a hosted service behind Cloudflare Access
 - [Remote access](remote-access.md) — opt-in, behind Cloudflare Access, with Worca checking the token
+- [Sign-in with your own identity provider](auth.md) — oauth2-proxy in front, Entra ID, Keycloak, Okta or Google; access by group or role; Helm and Compose
 - [Credential broker](credential-broker.md) — model keys stay out of Worca's container behind short-lived tokens
 - [Network proxy](network-proxy.md) — Worca behind a corporate proxy that asks for a login
 - [Setup assistant](setup-assistant.md) — the server API behind the machine check and setup dialog

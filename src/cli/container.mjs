@@ -27,7 +27,7 @@ import { resolveUpstream, upstreamLabel } from '../core/upstream-proxy.mjs';
 
 /** The compose files shipped in the package (package.json `files`). */
 export const COMPOSE_SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docker');
-export const OVERLAYS = Object.freeze(['egress', 'ssh', 'teams', 'clonein', 'workers', 'broker']);
+export const OVERLAYS = Object.freeze(['egress', 'ssh', 'teams', 'clonein', 'workers', 'broker', 'auth']);
 /** The label every worker container the controller starts carries (src/core/executor/backends/docker.mjs). */
 export const WORKER_INSTANCE_LABEL = INSTANCE_LABEL;      // …and which installation it belongs to: the Compose project
 
@@ -76,7 +76,7 @@ export const CONTAINER_HELP = `worca container — run Worca in a container (doc
   worca container init [--projects <dir>]        Write the compose files and a .env into the container dir
   worca container up [--with <overlays>] [--tag <t>]
                                                  Start the box in the background and print the URL.
-                                                 --with: comma-separated egress,ssh,teams,clonein,workers,broker (remembered)
+                                                 --with: comma-separated egress,ssh,teams,clonein,workers,broker,auth (remembered)
                                                  --tag: the image tag, e.g. local (remembered, like --with)
                                                  workers: agents in their own containers (docs/workers.md)
   worca container down                           Stop and remove the containers (volumes are kept)
@@ -196,7 +196,8 @@ function parseWith(s) {
 export async function initDir(dir, { projects, exec, srcDir = COMPOSE_SRC_DIR, env = process.env } = {}) {
   mkdirSync(dir, { recursive: true });
   for (const f of readdirSync(srcDir)) {
-    if (/^compose(\.[a-z]+)?\.yml$/.test(f)) copyFileSync(join(srcDir, f), join(dir, f));
+    // oauth2-proxy.yaml: the auth overlay's proxy configuration, mounted from next to the compose files.
+    if (/^compose(\.[a-z]+)?\.yml$/.test(f) || f === 'oauth2-proxy.yaml') copyFileSync(join(srcDir, f), join(dir, f));
   }
   const envPath = join(dir, '.env');
   let envCreated = false;

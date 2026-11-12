@@ -67,8 +67,9 @@ spec:
               - 169.254.169.254/32
 ---
 # Source: worca/templates/networkpolicy.yaml
-# The controller: the UI port from anywhere (the Ingress controller, port-forward); the workers
-# port from worker pods of this instance only.
+# The controller: the UI port from anywhere (the Ingress controller, port-forward), or with
+# auth.enabled from the oauth2-proxy pods only; the workers port from worker pods of this
+# instance only.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -920,8 +921,9 @@ spec:
 ---
 # Source: worca/templates/ingress.yaml
 # The UI only. The hosts here become WORCA_ALLOWED_HOSTS (unless controller.env sets it), and
-# a non-loopback host needs an identity check: WORCA_CF_ACCESS_TEAM_DOMAIN + WORCA_CF_ACCESS_AUD
-# (Cloudflare Access) or WORCA_IDENTITY_ISSUER in controller.env, or the server refuses to start.
+# a non-loopback host needs an identity check: auth.enabled (oauth2-proxy, and the Ingress routes
+# to it), or WORCA_CF_ACCESS_TEAM_DOMAIN + WORCA_CF_ACCESS_AUD (Cloudflare Access) or
+# WORCA_IDENTITY_ISSUER in controller.env, or the server refuses to start.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

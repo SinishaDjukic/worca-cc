@@ -1,0 +1,44 @@
+{
+  "realm": "worca",
+  "enabled": true,
+  "accessTokenLifespan": 300,
+  "roles": { "realm": [{ "name": "team-a" }, { "name": "team-b" }] },
+  "users": [
+    {
+      "username": "alice", "enabled": true, "email": "alice@example.com", "emailVerified": true,
+      "firstName": "Alice", "lastName": "Example",
+      "credentials": [{ "type": "password", "value": "alice-e2e-pw", "temporary": false }],
+      "realmRoles": ["team-a"]
+    },
+    {
+      "username": "bob", "enabled": true, "email": "bob@example.com", "emailVerified": true,
+      "firstName": "Bob", "lastName": "Example",
+      "credentials": [{ "type": "password", "value": "bob-e2e-pw", "temporary": false }],
+      "realmRoles": []
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "worca",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "worca-e2e-client-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["__REDIRECT_URI__"],
+      "webOrigins": ["+"],
+      "attributes": { "pkce.code.challenge.method": "S256" },
+      "protocolMappers": [
+        {
+          "name": "realm roles as roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "roles", "multivalued": "true", "jsonType.label": "String",
+            "id.token.claim": "true", "access.token.claim": "true", "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ]
+}

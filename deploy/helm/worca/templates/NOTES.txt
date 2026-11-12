@@ -7,6 +7,10 @@ Worca {{ include "worca.imageTag" . }} is installing in namespace {{ .Release.Na
 {{- if .Values.broker.enabled }}
   broker      Deployment {{ include "worca.brokerServiceName" . }} ({{ .Values.broker.mode }} mode), Service :8080 private, :8081 key page
 {{- end }}
+{{- if .Values.auth.enabled }}
+  sign-in     Deployment {{ include "worca.authName" . }} (oauth2-proxy), Service :{{ .Values.auth.port }}; OIDC issuer {{ .Values.auth.oidc.issuerUrl }}
+              callback {{ include "worca.authRedirectUrl" . }} (register it with the provider)
+{{- end }}
 
 Watch it come up:
 
@@ -19,10 +23,16 @@ The UI is on the Ingress:
 {{- range .Values.ingress.hosts }}
   https://{{ .host }}
 {{- end }}
-WORCA_ALLOWED_HOSTS is set to those hosts{{ if hasKey .Values.controller.env "WORCA_ALLOWED_HOSTS" }} (from controller.env){{ end }}. A host besides
-localhost needs an identity check, or the server refuses to start: set WORCA_CF_ACCESS_TEAM_DOMAIN
-and WORCA_CF_ACCESS_AUD (Cloudflare Access) or WORCA_IDENTITY_ISSUER in controller.env.
-{{- if not (or (hasKey .Values.controller.env "WORCA_CF_ACCESS_TEAM_DOMAIN") (hasKey .Values.controller.env "WORCA_IDENTITY_ISSUER") (hasKey .Values.controller.env "WORCA_INSECURE_NO_IDENTITY_CHECK")) }}
+WORCA_ALLOWED_HOSTS is set to those hosts{{ if hasKey .Values.controller.env "WORCA_ALLOWED_HOSTS" }} (from controller.env){{ end }}.
+{{- if .Values.auth.enabled }}
+Sign-in: the Ingress routes to oauth2-proxy; worca verifies the provider's ID token
+(WORCA_IDENTITY_* set from auth.oidc). Admitted: {{ if .Values.auth.allowedGroups }}{{ join ", " .Values.auth.allowedGroups }} in claim {{ .Values.auth.oidc.teamsClaim }}{{ else }}everyone the provider signs in{{ end }}.
+{{- else }} A host besides
+localhost needs an identity check, or the server refuses to start: turn on `auth` (docs/auth.md),
+or set WORCA_CF_ACCESS_TEAM_DOMAIN and WORCA_CF_ACCESS_AUD (Cloudflare Access) or
+WORCA_IDENTITY_ISSUER in controller.env.
+{{- end }}
+{{- if not (or .Values.auth.enabled (hasKey .Values.controller.env "WORCA_CF_ACCESS_TEAM_DOMAIN") (hasKey .Values.controller.env "WORCA_IDENTITY_ISSUER") (hasKey .Values.controller.env "WORCA_INSECURE_NO_IDENTITY_CHECK")) }}
 
   WARNING: controller.env has neither WORCA_CF_ACCESS_TEAM_DOMAIN nor WORCA_IDENTITY_ISSUER.
   The controller will log the reason and exit until one is set.

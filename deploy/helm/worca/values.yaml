@@ -226,8 +226,9 @@ service:
   port: 4317
   annotations: {}
 
-# The UI only. The workers' port is never exposed here. With the Ingress on, set the Access
-# variables in controller.env (see NOTES after install, and docs/kubernetes.md).
+# The UI only. The workers' port is never exposed here. With the Ingress on, either turn on
+# `auth` (the Ingress then routes to oauth2-proxy) or set the Access variables in
+# controller.env (see NOTES after install, and docs/kubernetes.md).
 ingress:
   enabled: false
   className: ""
@@ -240,6 +241,74 @@ ingress:
   tls: []
   #  - secretName: worca-tls
   #    hosts: [worca.example.com]
+
+# Sign-in through your own OpenID Connect provider (Entra ID, Keycloak, Okta, Google, Authentik,
+# ...), no Cloudflare: an oauth2-proxy Deployment in front of the controller signs people in,
+# admits only allowedGroups, and hands worca the ID token in X-Worca-Identity, which worca
+# verifies itself (WORCA_IDENTITY_*, set from this block). The Ingress then routes to the proxy,
+# never to the controller. docs/auth.md has the per-provider values.
+auth:
+  enabled: false
+  oidc:
+    # The provider's issuer, exactly as its tokens say it (`iss`). Required.
+    #   Entra ID:  https://login.microsoftonline.com/<tenant id>/v2.0
+    #   Keycloak:  https://keycloak.example.com/realms/<realm>
+    issuerUrl: ""
+    # Where worca loads the issuer's signing keys. Required: providers differ.
+    #   Entra ID:  https://login.microsoftonline.com/<tenant id>/discovery/v2.0/keys
+    #   Keycloak:  https://keycloak.example.com/realms/<realm>/protocol/openid-connect/certs
+    jwksUrl: ""
+    clientId: ""         # also the `aud` worca accepts
+    # Entra ID: add offline_access, or sessions cannot refresh and end at the first ID token expiry.
+    scope: "openid email profile"
+    # The claim holding the person's email (WORCA_IDENTITY_EMAIL_CLAIM). Entra ID:
+    # preferred_username (its `email` is optional and often empty).
+    emailClaim: email
+    # The claim holding the groups or roles that decide access and become worca's teams
+    # (oauth2-proxy's groupsClaim and WORCA_IDENTITY_TEAMS_CLAIM). Entra ID: roles (app roles;
+    # `groups` carries object ids and is dropped past ~200 groups). A dotted path reaches into
+    # objects (realm_access.roles).
+    teamsClaim: groups
+  # Only people holding one of these (in teamsClaim) get in. Empty = everyone the provider signs in.
+  allowedGroups: []
+  # The client secret (`client-secret`) and the cookie secret (`cookie-secret`: 32 random bytes,
+  # e.g. `openssl rand -base64 32 | tr -- '+/' '-_'`). Prefer existingSecret; otherwise the
+  # chart creates <fullname>-auth from these two.
+  existingSecret: ""
+  clientSecret: ""
+  cookieSecret: ""
+  # The callback the provider redirects to. Empty = https://<first ingress host>/oauth2/callback.
+  redirectUrl: ""
+  cookie:
+    secure: true
+    expire: 12h
+    # Refresh the session (and the ID token worca sees) once it is older than this: keep it
+    # below the provider's ID token lifetime (Keycloak's default is 5m, Entra ID's ~1h).
+    refresh: 4m
+  # A Secret with `ca.crt`: a private CA the provider's certificate chains to. Trusted by the
+  # proxy (login, token refresh) and by the controller (loading the keys).
+  caSecret: ""
+  # Sessions in Redis instead of cookies (large ID tokens, e.g. Entra ID with many groups).
+  redisUrl: ""
+  replicas: 1
+  image:
+    registry: quay.io
+    repository: oauth2-proxy/oauth2-proxy
+    tag: v7.15.6
+    pullPolicy: IfNotPresent
+  port: 4180
+  # Plain name: value environment for the proxy (OAUTH2_PROXY_*), overriding the chart's.
+  env: {}
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
 
 rbac:
   create: true

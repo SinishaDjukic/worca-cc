@@ -167,6 +167,17 @@ top (it wins on a shared name; NO_PROXY is the chart's). Rendered sorted by name
 {{- range .Values.ingress.hosts -}}{{- if .host -}}{{- $hosts = append $hosts .host -}}{{- end -}}{{- end -}}
 {{- if $hosts -}}{{- $_ := set $env "WORCA_ALLOWED_HOSTS" (join "," $hosts) -}}{{- end -}}
 {{- end -}}
+{{- if .Values.auth.enabled -}}
+{{- include "worca.authCheck" . -}}
+{{- $_ := set $env "WORCA_IDENTITY_ISSUER" .Values.auth.oidc.issuerUrl -}}
+{{- $_ := set $env "WORCA_IDENTITY_JWKS_URL" .Values.auth.oidc.jwksUrl -}}
+{{- $_ := set $env "WORCA_IDENTITY_AUDIENCE" .Values.auth.oidc.clientId -}}
+{{- $_ := set $env "WORCA_IDENTITY_EMAIL_CLAIM" .Values.auth.oidc.emailClaim -}}
+{{- $_ := set $env "WORCA_IDENTITY_TEAMS_CLAIM" .Values.auth.oidc.teamsClaim -}}
+{{- if .Values.auth.caSecret -}}
+{{- $_ := set $env "NODE_EXTRA_CA_CERTS" "/etc/worca-auth-ca/ca.crt" -}}
+{{- end -}}
+{{- end -}}
 {{- range $k, $v := .Values.controller.env -}}
 {{- $_ := set $env $k (toString $v) -}}
 {{- end -}}
@@ -333,4 +344,50 @@ get 403 until the pod is restarted forever. From inside, the peer is loopback on
 exec:
   command: ["curl", "-fsS", "--max-time", "4", "-H", "Host: localhost", "http://127.0.0.1:{{ .Values.controller.port }}/api/health"]
 timeoutSeconds: 5
+{{- end -}}
+
+{{/* oauth2-proxy (auth.enabled): its name, its secret, the callback URL. */}}
+{{- define "worca.authName" -}}
+{{- printf "%s-auth" (include "worca.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "worca.authSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "worca.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: auth
+{{- end -}}
+
+{{- define "worca.authSecretName" -}}
+{{- default (include "worca.authName" .) .Values.auth.existingSecret -}}
+{{- end -}}
+
+{{- define "worca.authImage" -}}
+{{- printf "%s/%s:%s" .Values.auth.image.registry .Values.auth.image.repository .Values.auth.image.tag -}}
+{{- end -}}
+
+{{- define "worca.authRedirectUrl" -}}
+{{- if .Values.auth.redirectUrl -}}
+{{- .Values.auth.redirectUrl -}}
+{{- else -}}
+{{- $host := "" -}}
+{{- if .Values.ingress.enabled -}}
+{{- range .Values.ingress.hosts -}}{{- if and .host (not $host) -}}{{- $host = .host -}}{{- end -}}{{- end -}}
+{{- end -}}
+{{- if not $host -}}{{- fail "auth.enabled: set auth.redirectUrl, or turn on the Ingress with a host (the callback is https://<host>/oauth2/callback)" -}}{{- end -}}
+{{- printf "https://%s/oauth2/callback" $host -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Fail the render on an auth block worca or the proxy would refuse at start. */}}
+{{- define "worca.authCheck" -}}
+{{- if not .Values.auth.oidc.issuerUrl -}}{{- fail "auth.enabled: auth.oidc.issuerUrl is required" -}}{{- end -}}
+{{- if not .Values.auth.oidc.jwksUrl -}}{{- fail "auth.enabled: auth.oidc.jwksUrl is required (providers publish their keys at different paths; see docs/auth.md)" -}}{{- end -}}
+{{- if not .Values.auth.oidc.clientId -}}{{- fail "auth.enabled: auth.oidc.clientId is required" -}}{{- end -}}
+{{- if not .Values.auth.existingSecret -}}
+{{- if not .Values.auth.clientSecret -}}{{- fail "auth.enabled: set auth.existingSecret (keys client-secret, cookie-secret) or auth.clientSecret" -}}{{- end -}}
+{{- if not .Values.auth.cookieSecret -}}{{- fail "auth.enabled: auth.cookieSecret is required with auth.clientSecret (32 random bytes: openssl rand -base64 32 | tr -- '+/' '-_')" -}}{{- end -}}
+{{- end -}}
+{{- range $k, $_ := .Values.controller.env -}}
+{{- if hasPrefix "WORCA_CF_ACCESS_" $k -}}{{- fail (printf "auth.enabled and controller.env.%s: use one identity check, not two" $k) -}}{{- end -}}
+{{- end -}}
 {{- end -}}

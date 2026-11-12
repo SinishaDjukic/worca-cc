@@ -248,20 +248,26 @@ holds `WORCA_BROKER_SECRET` too. Leave `worker.credentialsSecret` empty: the con
 to start while a model key is within agents' reach. With `networkPolicy.enabled`, workers may
 reach the broker's 8080 and nothing else in the cluster.
 
-## Ingress, allowed hosts and Cloudflare Access
+## Ingress, allowed hosts and sign-in
 
 The Ingress (`ingress.enabled`) exposes the UI Service only; the workers' port never leaves the
 cluster. Worca's server accepts a request only when its `Host` is loopback or listed in
 `WORCA_ALLOWED_HOSTS`; the chart sets that from `ingress.hosts` unless `controller.env` does.
 
 A host besides localhost needs an identity check, or worca refuses to start — it won't run
-unprotected. The supported one is Cloudflare Access with worca verifying the Access token on
+unprotected. Two are supported:
+
+- **Your own OIDC provider** (Entra ID, Keycloak, Okta, ...): `auth.enabled` adds oauth2-proxy
+  in front, routes the Ingress to it, and sets worca's token check from the same values.
+  Everything is in [auth.md](auth.md).
+- **Cloudflare Access** with worca verifying the Access token on
 every request itself: set `WORCA_CF_ACCESS_TEAM_DOMAIN` (`acme.cloudflareaccess.com`) and
 `WORCA_CF_ACCESS_AUD` (the Access application's AUD tag) in `controller.env`. The Cloudflare
 side is in [remote-access.md](remote-access.md); the shape is the same as on Railway
 ([deploy-railway.md](deploy-railway.md)) with the Ingress controller or a cloudflared Deployment
-in the tunnel's place. `WORCA_IDENTITY_ISSUER` (an OIDC proxy) is the alternative;
-`WORCA_INSECURE_NO_IDENTITY_CHECK=1` says a proxy you trust is the only way in.
+in the tunnel's place.
+
+`WORCA_INSECURE_NO_IDENTITY_CHECK=1` says a proxy you trust is the only way in; prefer `auth`.
 
 The probes run inside the controller pod (`exec`: `curl` on loopback with `Host: localhost`), so they
 pass on every network plugin: an `httpGet` probe comes from the kubelet, which the server would treat
@@ -294,7 +300,7 @@ Egress allowlist](docker.md#egress-allowlist)), not a replacement for it.
 | The controller exits **78**, `/worca is not writable` | The shared volume's `worca` directory is root-owned (NFS without fsGroup, hostPath) | Make the export writable by uid 1000 (see [Storage](#storage)) or set `storage.shared.prepare.enabled=true` |
 | Probes fail; the pod restarts | The probes were changed to `httpGet` (the kubelet is an unknown peer on most network plugins: 403), or `WORCA_ALLOWED_HOSTS` was set without an identity check (the server then exits) | Keep the chart's `exec` probes; set the Access variables |
 | Controller logs *removed N orphan worker(s) from a previous controller* at boot | Normal after an upgrade or a crash: the old controller's workers cannot be reused (their tokens died with it) | Nothing; the drained runs auto-resume |
-| Controller logs *WORCA_ALLOWED_HOSTS is set but no identity check is configured* and exits | The Ingress is on, `controller.env` has neither `WORCA_CF_ACCESS_*` nor `WORCA_IDENTITY_ISSUER` | Set them ([Ingress](#ingress-allowed-hosts-and-cloudflare-access)) |
+| Controller logs *WORCA_ALLOWED_HOSTS is set but no identity check is configured* and exits | The Ingress is on, `controller.env` has neither `WORCA_CF_ACCESS_*` nor `WORCA_IDENTITY_ISSUER` | Turn on `auth` or set them ([Ingress](#ingress-allowed-hosts-and-sign-in)) |
 | `helm upgrade --wait` times out and `worca-0` keeps its **old** spec (`Init:ErrImageNeverPull`, `ImagePullBackOff`, …) | A StatefulSet does not replace a pod that never became ready, so a fix to the image values does not reach it | `kubectl -n worca delete pod worca-0`; the StatefulSet recreates it from the new spec |
 | `helm upgrade` hangs on the StatefulSet | A PodDisruptionBudget with `minAvailable: 1` (`pdb.enabled`) or a drain longer than the grace period | Turn the PDB off; raise `controller.drainTimeoutMs` (the grace period follows) |
 | `kubectl drain <node>` never finishes | `pdb.enabled=true` on a single replica | That is why it is off by default; delete the pod by hand |
@@ -309,7 +315,17 @@ uses a cluster you already have instead), loads the images, installs the chart w
 `values-kind.yaml`, and runs a mock workflow whose shell script node executes on a worker pod the
 controller creates — asserting the run ends `done`, the controller log names the pod, the script's
 output carries the pod's hostname, no worker pod is left, and `helm test` passes. `--keep` leaves
-the cluster and the release for a look. In CI it is the on-demand *Kubernetes end to end (kind)*
+the cluster and the release for a look. `--auth` also deploys a throwaway Keycloak (HTTPS with a CA
+the smoke makes) and turns on the chart's `auth` block. It checks:
+
+- the redirect to sign-in without a session;
+- sign-in as a user holding the allowed role, and worca naming them;
+- that a forged `X-Worca-Identity` is replaced by the proxy, and refused past it;
+- the refusal of a user without the role;
+- the WebSocket through the proxy;
+- that the run records who started it.
+
+See [auth.md](auth.md). In CI it is the on-demand *Kubernetes end to end (kind)*
 job (Actions → CI → Run workflow).
 
 ## Check it

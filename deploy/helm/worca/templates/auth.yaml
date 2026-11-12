@@ -1,0 +1,215 @@
+{{- if .Values.auth.enabled }}
+{{- include "worca.authCheck" . }}
+# oauth2-proxy in front of the controller (docs/auth.md): signs people in with the OIDC
+# provider, admits only auth.allowedGroups, and forwards to the controller with the session's ID
+# token in X-Worca-Identity (a value a client sends there is stripped). Worca verifies that
+# token itself against auth.oidc.jwksUrl: the proxy is not trusted on its word.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "worca.authName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "worca.labels" . | nindent 4 }}
+    app.kubernetes.io/component: auth
+data:
+  oauth2-proxy.yaml: |
+    server:
+      bindAddress: "0.0.0.0:{{ .Values.auth.port }}"
+    upstreamConfig:
+      upstreams:
+        - id: worca
+          path: /
+          uri: http://{{ include "worca.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+          passHostHeader: true
+          proxyWebSockets: true
+    injectRequestHeaders:
+      - name: X-Worca-Identity
+        values:
+          - claimSource:
+              claim: id_token
+    providers:
+      - id: oidc
+        provider: oidc
+        name: Worca
+        clientID: {{ .Values.auth.oidc.clientId | quote }}
+        clientSecretFile: /etc/oauth2-proxy/secret/client-secret
+        scope: {{ .Values.auth.oidc.scope | quote }}
+        code_challenge_method: S256
+        allowedGroups: {{ toJson .Values.auth.allowedGroups }}
+        {{- if .Values.auth.caSecret }}
+        caFiles: ["/etc/oauth2-proxy/ca/ca.crt"]
+        useSystemTrustStore: true
+        {{- end }}
+        oidcConfig:
+          issuerURL: {{ .Values.auth.oidc.issuerUrl | quote }}
+          jwksURL: {{ .Values.auth.oidc.jwksUrl | quote }}
+          emailClaim: {{ .Values.auth.oidc.emailClaim | quote }}
+          groupsClaim: {{ .Values.auth.oidc.teamsClaim | quote }}
+          audienceClaims: ["aud"]
+          insecureSkipNonce: false
+{{- if not .Values.auth.existingSecret }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "worca.authName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "worca.labels" . | nindent 4 }}
+    app.kubernetes.io/component: auth
+type: Opaque
+stringData:
+  client-secret: {{ .Values.auth.clientSecret | quote }}
+  cookie-secret: {{ .Values.auth.cookieSecret | quote }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "worca.authName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "worca.labels" . | nindent 4 }}
+    app.kubernetes.io/component: auth
+spec:
+  replicas: {{ .Values.auth.replicas }}
+  selector:
+    matchLabels:
+      {{- include "worca.authSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "worca.labels" . | nindent 8 }}
+        app.kubernetes.io/component: auth
+      annotations:
+        checksum/config: {{ printf "%v%v%v%v" .Values.auth.oidc .Values.auth.allowedGroups .Values.auth.caSecret .Values.auth.port | sha256sum | trunc 16 }}
+        {{- with .Values.auth.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: oauth2-proxy
+          image: {{ include "worca.authImage" . }}
+          imagePullPolicy: {{ .Values.auth.image.pullPolicy }}
+          args:
+            - --alpha-config=/etc/oauth2-proxy/oauth2-proxy.yaml
+          {{- $env := dict
+                "OAUTH2_PROXY_REDIRECT_URL" (include "worca.authRedirectUrl" .)
+                "OAUTH2_PROXY_EMAIL_DOMAINS" "*"
+                "OAUTH2_PROXY_REVERSE_PROXY" "true"
+                "OAUTH2_PROXY_SKIP_PROVIDER_BUTTON" "true"
+                "OAUTH2_PROXY_COOKIE_NAME" "_worca_auth"
+                "OAUTH2_PROXY_COOKIE_SECURE" (toString .Values.auth.cookie.secure)
+                "OAUTH2_PROXY_COOKIE_EXPIRE" .Values.auth.cookie.expire
+                "OAUTH2_PROXY_COOKIE_REFRESH" .Values.auth.cookie.refresh
+                "OAUTH2_PROXY_SILENCE_PING_LOGGING" "true" }}
+          {{- if .Values.auth.redisUrl }}
+          {{- $_ := set $env "OAUTH2_PROXY_SESSION_STORE_TYPE" "redis" }}
+          {{- $_ := set $env "OAUTH2_PROXY_REDIS_CONNECTION_URL" .Values.auth.redisUrl }}
+          {{- end }}
+          {{- range $k, $v := .Values.auth.env }}
+          {{- $_ := set $env $k (toString $v) }}
+          {{- end }}
+          env:
+            {{- range $k := keys $env | sortAlpha }}
+            - name: {{ $k }}
+              value: {{ index $env $k | quote }}
+            {{- end }}
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worca.authSecretName" . }}
+                  key: cookie-secret
+          ports:
+            - name: http
+              containerPort: {{ .Values.auth.port }}
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.auth.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/oauth2-proxy/oauth2-proxy.yaml
+              subPath: oauth2-proxy.yaml
+              readOnly: true
+            - name: secret
+              mountPath: /etc/oauth2-proxy/secret
+              readOnly: true
+            {{- if .Values.auth.caSecret }}
+            - name: ca
+              mountPath: /etc/oauth2-proxy/ca
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "worca.authName" . }}
+        - name: secret
+          secret:
+            secretName: {{ include "worca.authSecretName" . }}
+            items:
+              - key: client-secret
+                path: client-secret
+        {{- if .Values.auth.caSecret }}
+        - name: ca
+          secret:
+            secretName: {{ .Values.auth.caSecret }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+      {{- with .Values.auth.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.auth.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.auth.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "worca.authName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "worca.labels" . | nindent 4 }}
+    app.kubernetes.io/component: auth
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.auth.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "worca.authSelectorLabels" . | nindent 4 }}
+{{- end }}

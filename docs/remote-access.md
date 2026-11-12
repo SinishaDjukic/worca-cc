@@ -277,6 +277,11 @@ startup error. A deployment with only the `WORCA_CF_ACCESS_*` settings is unaffe
 | `WORCA_IDENTITY_ISSUER` | `https://app.example.com` | The token's `iss`. Turns on the issuer check. https only (http for localhost). |
 | `WORCA_IDENTITY_JWKS_URL` | `https://app.example.com/.well-known/jwks.json` | Where the public keys are. Default: the issuer + `/.well-known/jwks.json`. Cached 10 min, refetched on an unknown key id. |
 | `WORCA_IDENTITY_AUDIENCE` | `k7m2qz9xwp.example.run` | The `aud` worca accepts, comma-separated. Default: the exact hosts in `WORCA_ALLOWED_HOSTS`. |
+| `WORCA_IDENTITY_EMAIL_CLAIM` | `preferred_username` | The claim holding the person's email. Default `email`. |
+| `WORCA_IDENTITY_TEAMS_CLAIM` | `roles` | The claim holding their team ids, groups or roles: an exact name first, else a dotted path (`realm_access.roles`). Default `teams`. |
+
+A plain OpenID Connect provider's ID token works too, with oauth2-proxy as the gate:
+[auth.md](auth.md) sets that up with the Helm chart or Docker Compose.
 
 Differences from Access:
 
@@ -289,7 +294,7 @@ Differences from Access:
 - **WebSockets end with the token.** A socket closes (code 4001) when the token it opened with
   expires; the UI reconnects at once through the gate, which checks the session again. Access
   sockets are not closed.
-- The credential broker's key page accepts the same three variables, with its own host as the
+- The credential broker's key page accepts the same variables, with its own host as the
   audience (default: the host of `WORCA_BROKER_PUBLIC_URL`).
 
 ## Heartbeat to a control plane (optional)

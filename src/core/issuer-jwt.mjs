@@ -23,14 +23,48 @@ export function normalizeIssuer(value) {
 }
 
 const str = (v, max = 200) => (typeof v === 'string' && v.length <= max ? v : null);
-const ids = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.length <= 128).slice(0, 100) : []);
+// A single string is a one-entry list: some providers send one group or role that way.
+const ids = (v) => (Array.isArray(v) ? v : typeof v === 'string' ? [v] : []).filter((x) => typeof x === 'string' && x && x.length <= 128).slice(0, 100);
+
+/** The claims worca reads the person from, unless the deployment names others. */
+export const DEFAULT_CLAIMS = Object.freeze({ email: 'email', teams: 'teams' });
+const CLAIM_NAME_RE = /^[^\s]{1,200}$/;
 
 /**
+ * A claim name from the environment: trimmed, `fallback` when empty, null when it can't be one
+ * (whitespace inside, too long). The caller turns null into a startup error.
+ */
+export function parseClaimName(value, fallback) {
+  const v = String(value ?? '').trim();
+  if (!v) return fallback;
+  return CLAIM_NAME_RE.test(v) ? v : null;
+}
+
+/**
+ * A claim's value: the exact key first (namespaced claims such as `https://example.com/roles`
+ * contain dots), else a dotted path into nested objects (`realm_access.roles`). Own properties only.
+ */
+export function readClaim(payload, name) {
+  const own = (o, k) => o && typeof o === 'object' && !Array.isArray(o) && Object.prototype.hasOwnProperty.call(o, k);
+  if (own(payload, name)) return payload[name];
+  let cur = payload;
+  for (const part of name.split('.')) {
+    if (!part || !own(cur, part)) return undefined;
+    cur = cur[part];
+  }
+  return cur;
+}
+
+/**
+ * `claims` names where the email and the team ids are (DEFAULT_CLAIMS; e.g. Entra ID:
+ * `{ email: 'preferred_username', teams: 'roles' }`, Keycloak: `{ teams: 'realm_access.roles' }`).
+ *
  * @returns {(token: string) => Promise<{ email, sub, name, org, inst, teams: string[], exp: number } | null>}
  *   the identity for a valid token, null for any invalid one; rejects only when the keys cannot be
  *   loaded (the caller answers 503, not 401).
  */
-export function createIssuerVerifier({ issuer, jwksUrl, audience, fetchImpl = fetch, now = () => Date.now() }) {
+export function createIssuerVerifier({ issuer, jwksUrl, audience, claims, fetchImpl = fetch, now = () => Date.now() }) {
+  const claimNames = { ...DEFAULT_CLAIMS, ...Object.fromEntries(Object.entries(claims || {}).filter(([, v]) => v)) };
   const iss = normalizeIssuer(issuer);
   if (!iss) throw new Error('createIssuerVerifier: issuer is required');
   if (!jwksUrl) throw new Error('createIssuerVerifier: jwksUrl is required');
@@ -99,7 +133,7 @@ export function createIssuerVerifier({ issuer, jwksUrl, audience, fetchImpl = fe
     if (typeof payload.nbf === 'number' && payload.nbf > t + CLOCK_SKEW_S) return null;
     // Both required: worca attributes by email (identity.mjs), and a verified identity without one
     // would fall back to "local".
-    const email = str(payload.email);
+    const email = str(readClaim(payload, claimNames.email));
     const sub = str(payload.sub, 128);
     if (!email || !email.includes('@') || !sub) return null;
     return {
@@ -108,7 +142,7 @@ export function createIssuerVerifier({ issuer, jwksUrl, audience, fetchImpl = fe
       name: str(payload.name),
       org: str(payload.org, 128),
       inst: str(payload.inst, 128),
-      teams: ids(payload.teams),
+      teams: ids(readClaim(payload, claimNames.teams)),
       exp: payload.exp,
     };
   };
