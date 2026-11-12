@@ -2850,7 +2850,7 @@ const startRunHandler = async (req, res) => {
     // plan at run start; here we only normalize + reject an unknown id up front
     // so the client gets a clean 400 instead of a mid-run error event.
     // Shape it first (spec D9/D12): `shape` and the shape workflows.
-    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { internal: !!internal, requirementsOn: flagEnabled('shapeRequirements') });
+    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { internal: !!internal });
     if (!shapeReq.ok) return badRequest(res, shapeReq.error);
     const { shape: askedShape } = shapeReq;
     // L7: a sliced Shape-it-first run chains tickets per slice, and a run without a project cannot be scheduled. So with
@@ -4996,7 +4996,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
   }
   if (!view.ship.ready) return { status: 409, body: { code: 'NOT_READY', error: 'every slice must be done before the feature ships' } };
   // Shaper requirements s3 (D8): every agreed requirement is marked before any PR, changelog, push or forge call.
-  const unmarked = flagEnabled('shapeRequirements') && acceptanceRefusal(view);
+  const unmarked = acceptanceRefusal(view);
   if (unmarked) return { status: 409, body: unmarked };
   SHIPPING.add(id);
   try {
@@ -5180,7 +5180,7 @@ async function offerShipCard(pipelineId) {
   const ctx = shipCtxOf(view);
   const release = ctx.error ? null : await releaseVersionHint(ctx.target.repoDir);
   const card = { type: 'ship', featureId: fid, title: view.title, runs: view.total, files: stats.files,
-    added: stats.linesAdded, deleted: stats.linesRemoved, suggested: stats.suggested, release, ...(flagEnabled('shapeRequirements') && view.ship.acceptance ? { acceptance: view.ship.acceptance } : {}) };
+    added: stats.linesAdded, deleted: stats.linesRemoved, suggested: stats.suggested, release, ...(view.ship.acceptance ? { acceptance: view.ship.acceptance } : {}) };
   const message = askAppendMessage(th.threadId, { role: 'assistant', text: '', status: 'done',
     blocks: [{ kind: 'card', id: newAskId('card'), state: 'proposed', card }] });
   broadcast({ type: 'ask-message', threadId: th.threadId, message });
@@ -5204,7 +5204,7 @@ function syncShipCard(featureId) {
     const view = featureView(featureId, { live: liveSliceOf });
     const th = view && view.ship.result ? featureThread(featureId) : null;
     const found = th ? findShipCardIn(th.threadId, featureId) : null;
-    if (found) flipCard(th.threadId, found.block.id, { state: 'applied', card: { result: view.ship.result, ...(flagEnabled('shapeRequirements') && view.ship.acceptance ? { acceptance: view.ship.acceptance } : {}) } });
+    if (found) flipCard(th.threadId, found.block.id, { state: 'applied', card: { result: view.ship.result, ...(view.ship.acceptance ? { acceptance: view.ship.acceptance } : {}) } });
   } catch (err) { console.error(`[worca-ui] ship card sync failed: ${err?.message || err}`); }
 }
 
@@ -9391,7 +9391,7 @@ function askGroupFor(req, res) {
 const factDeps = { readPrState, findPipelineRowById, readRunTags, readRunLabels, featureView: (fid) => featureView(fid, { live: liveSliceOf }) };
 /** Shaper (ordinary stays ordinary, D6): propose_changes / route_message, applied in the parent. Re-checked NOW with the
  *  live runs overlay (an open step the classic MCP child cannot see, D7); a refusal is a notice in the reply. */
-const shapeToolFactDeps = { live: (id) => liveSliceOf(id), readPrState, findPipelineRowById, readRunTags, readRunLabels, requirementsOn: () => flagEnabled('shapeRequirements') };
+const shapeToolFactDeps = { live: (id) => liveSliceOf(id), readPrState, findPipelineRowById, readRunTags, readRunLabels };
 function askShapeAction(req, threadId) {
   if (!threadId) return { ok: false, notice: 'Not applied: no chat to post to' };
   let r;

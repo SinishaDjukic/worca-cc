@@ -61,7 +61,7 @@ test('requirements first: the line under the quote, plural and singular; the pri
   const d = new JSDOM('<!doctype html><body></body>').window.document;
   for (const [agreed, line] of [[AGREED, 'Requirements first: the 4 agreed requirements are updated before the plan.'],
     [AGREED.slice(0, 1), 'Requirements first: the 1 agreed requirement is updated before the plan.']]) {
-    const card = changesCard({ text: 'make it blue', facts: SHIPPED(agreed), requirementsOn: true });
+    const card = changesCard({ text: 'make it blue', facts: SHIPPED(agreed) });
     assert.equal(card.requirementsFirst.count, agreed.length);
     const el = renderChangesCard(d, { state: 'proposed', card }, { onStart: async () => {}, onNotNow: async () => {} });
     assert.equal(el.querySelector('.ask-changescard-first').textContent, line);
@@ -69,12 +69,12 @@ test('requirements first: the line under the quote, plural and singular; the pri
   }
 });
 
-test('requirements first is off: flag off, not shipped, or no agreed requirements draw today\'s card', () => {
+test('requirements first does not apply: not shipped, or no agreed requirements draw today\'s card', () => {
   const d = new JSDOM('<!doctype html><body></body>').window.document;
   const render = (card) => renderChangesCard(d, { state: 'proposed', card }, { onStart: async () => {}, onNotNow: async () => {} }).outerHTML;
-  const today = render(changesCard({ text: 'make it blue', facts: SHIPPED(AGREED) }));
-  for (const [facts, on] of [[SHIPPED(AGREED), false], [SHIPPED(AGREED, { shipped: false }), true], [SHIPPED([]), true]]) {
-    const card = changesCard({ text: 'make it blue', facts, requirementsOn: on });
+  const today = render(changesCard({ text: 'make it blue', facts: SHIPPED([]) }));
+  for (const facts of [SHIPPED(AGREED, { shipped: false }), SHIPPED([])]) {
+    const card = changesCard({ text: 'make it blue', facts });
     assert.equal('requirementsFirst' in card, false);
     if (facts.feature.shipped) assert.equal(render(card), today);
   }
