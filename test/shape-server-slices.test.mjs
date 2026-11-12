@@ -4,25 +4,30 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
+import { JSDOM } from 'jsdom';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createThread, linkRun as askLinkRun, listMessages } from '../src/core/ask/store.mjs';
-import { createSliceFeature, recordShapePlan, retireFeaturesOf } from '../src/core/shape/features.mjs';
+import { createSliceFeature, featureView, recordShapePlan, retireFeaturesOf } from '../src/core/shape/features.mjs';
+import { getTicket } from '../src/core/scheduler.mjs';
+import { nightModeToggle } from '../src/core/settings.mjs';
 import { writeStoreMeta } from '../src/core/artifacts.mjs';
+import { featureCardModel } from '../ui/public/shape/feature-card.mjs';
+import { paintFeatureActions } from '../ui/public/shape/feature-actions.mjs';
 import { withEnv as withEnvVars } from './helpers/with-env.mjs';
 import { NO_ADO, REMOTES_V, okRun, failRun, argOf, ghCalls, git, stubShip, shipKit } from './helpers/ship-world.mjs';
 
 useTempHome(after, 'worca-shape-server-slices-');
 
-let srv, base, wsBase, runs, testing, project;
+let srv, base, wsBase, runs, testing, project, schedulerTick;
 const JSONH = { 'Content-Type': 'application/json' };
 const post = (p, b) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(b) });
 const get = (p) => fetch(`${base}${p}`);
@@ -32,7 +37,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 before(async () => {
   process.env.WORCA_MOCK = '1';
   const mod = await import('../ui/server.mjs');
-  ({ runs } = mod);
+  ({ runs, schedulerTick } = mod);
   testing = mod._testing;
   srv = mod.server;
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -190,6 +195,93 @@ test('cancel cancels the open tickets, answers the view and broadcasts shape-fea
     assert.equal((await post(`/api/shape/features/${f.id}/cancel`, {})).status, 409, 'a canceled feature refuses a second cancel');
     assert.equal((await post('/api/shape/features/feat_nope/cancel', {})).status, 404);
   } finally { c.close(); }
+});
+
+// "Ask me before each run": slice 1 done, slice 2's ticket held by the scheduler until Start now (or the switch goes off).
+const heldFeature = async () => {
+  const f = mk(2, 'done', { approveEach: true });
+  await schedulerTick();
+  const v = featureView(f.id);
+  assert.ok(v.held, 'slice 2 is held after a tick');
+  return { f, ticketId: v.held.ticketId };
+};
+const ticketRow = (id) => ({ ...getDb().prepare('SELECT status, forced, run_at, fail_reason FROM scheduled_runs WHERE id = ?').get(id) });
+
+test('start: 404 unknown, 409 when no run is held; a held run starts and its ticket is fired', async () => {
+  assert.equal((await post('/api/shape/features/feat_nope/start', {})).status, 404);
+  const quiet = mk(2, 'running', { approveEach: true });
+  let r = await post(`/api/shape/features/${quiet.id}/start`, {});
+  assert.equal(r.status, 409);
+  assert.equal((await r.json()).error, 'no run is waiting for you to start');
+  const { f, ticketId } = await heldFeature();
+  r = await post(`/api/shape/features/${f.id}/start`, {});
+  const body = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(body));
+  assert.equal(body.runId, ticketId);
+  assert.notEqual(getTicket(ticketId).status, 'scheduled', 'Run now fired it');
+  assert.equal(featureView(f.id).held, null);
+});
+
+test('start: a run-now refusal passes through and changes no ticket', async () => {
+  const { f, ticketId } = await heldFeature();
+  const before = ticketRow(ticketId);
+  // the run before is still merging its work back: Run now refuses
+  const pid = f.pid;
+  const row = getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(pid);
+  getDb().prepare('UPDATE pipelines SET branch = NULL WHERE id = ?').run(pid);
+  try {
+    const r = await post(`/api/shape/features/${f.id}/start`, {});
+    assert.equal(r.status, 409);
+    assert.match((await r.json()).error, /first, or change its source branch/);
+    assert.deepEqual(ticketRow(ticketId), before);
+  } finally { getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(row.branch, pid); }
+});
+
+test('start: a canceled feature answers 409', async () => {
+  const { f } = await heldFeature();
+  getDb().prepare("UPDATE shape_features SET status = 'canceled' WHERE id = ?").run(f.id);
+  const r = await post(`/api/shape/features/${f.id}/start`, {});
+  assert.equal(r.status, 409);
+  assert.equal((await r.json()).error, 'this feature is canceled');
+});
+
+test('approve-each off releases a held run', async () => {
+  const { f, ticketId } = await heldFeature();
+  const r = await post(`/api/shape/features/${f.id}/approve-each`, { on: false });
+  assert.deepEqual(await r.json(), { ok: true, approveEach: false });
+  await schedulerTick();                                   // best effort: a busy tick leaves it to the next one
+  assert.notEqual(getTicket(ticketId).status, 'scheduled');
+  assert.equal(featureView(f.id).held, null);
+});
+
+test('Away on: a tick keeps the run held and featureView(id).held stays set', async () => {
+  const keys = ['HOME', 'USERPROFILE', 'WORCA_TEST_ALLOW_HOME_FALLBACK'];
+  const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  const home = mkdtempSync(join(tmpdir(), 'worca-shape-away-home-'));
+  process.env.HOME = home; process.env.USERPROFILE = home; process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
+  try {
+    mkdirSync(join(home, '.worca-cc'), { recursive: true });
+    writeFileSync(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ nightModeToggle: 'on' }));
+    assert.equal(nightModeToggle(), 'on');
+    const { f, ticketId } = await heldFeature();
+    await schedulerTick();
+    assert.equal(getTicket(ticketId).status, 'scheduled');
+    assert.deepEqual(featureView(f.id).held, { index: 2, ticketId });
+    // the card Away leaves: the feature route's view through the shared painter shows the held row once
+    const feature = await view(f.id);
+    const { controls } = featureCardModel({ card: { pipelineId: feature.originPipelineId, feature, log: [] } });
+    const dom = new JSDOM('<!doctype html><body></body>');
+    const host = dom.window.document.createElement('div');
+    paintFeatureActions(dom.window.document, host, controls, {}, { menu: false });
+    const rows = host.querySelectorAll('.shape-feature-held');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].textContent, 'Needs youRun 2 waits for you to startStart now');
+    assert.equal(host.textContent.split('waits for you to start').length - 1, 1);
+    dom.window.close();
+  } finally {
+    for (const k of keys) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('approve-each validates its body, stores the switch and 404s an unknown feature', async () => {
@@ -786,6 +878,7 @@ shipT('refresh keeps one Satisfies line', async () => {
     return okRun('');
   });
   const w = reqShipWorld();
+  assert.equal((await putMarks(w.f.id, [{ id: 'R-po-1', mark: 'met' }, { id: 'R-ux-1', mark: 'met' }])).status, 200);
   const r = await ship(w.f.id, 'stacked');
   assert.equal(r.status, 200, await r.clone().text());
   const edit = ghCalls(seen, 'edit').find((a) => a[3] === 'https://github.com/me/repo/pull/1');
@@ -796,8 +889,7 @@ shipT('refresh keeps one Satisfies line', async () => {
 });
 
 // ── Shaper requirements s3 (D8, D9): the acceptance ledger gates the ship ─────────────────────────────────────────
-const REQ_ON = { ...NO_ADO, WORCA_FLAGS: 'shapeRequirements' };
-const reqShipT = (name, fn, env = REQ_ON) => test(name, () => withEnvVars(env, async () => {
+const reqShipT = (name, fn, env = NO_ADO) => test(name, () => withEnvVars(env, async () => {
   ({ _testing: gitInfo } = await import('../src/core/git-info.mjs'));
   try { await fn(); } finally { gitInfo.reset(); }
 }));
@@ -873,17 +965,6 @@ reqShipT('PUT acceptance while the feature is shipping answers 409', async () =>
   await (await shipping).text();
   assert.deepEqual(storedMarks(w.f.id), ALL_MARKED);
 });
-
-reqShipT('flag off: an unmarked feature with agreed requirements ships as today; no ledger in the view, and PUT answers 404', async () => {
-  const seen = []; stubShip(seen);
-  const w = shipWorld();
-  withAgreed(w.f.id);
-  assert.equal('acceptance' in (await view(w.f.id)).ship, false);
-  assert.equal((await putMarks(w.f.id, ALL_MARKED)).status, 404);
-  assert.equal(storedMarks(w.f.id), undefined, 'nothing stored');
-  const r = await ship(w.f.id, 'one');
-  assert.equal(r.status, 200, await r.clone().text());
-}, { ...NO_ADO, WORCA_FLAGS: '-shapeRequirements' });
 
 reqShipT('the chat Ship card carries the ledger: offered unmarked, updated by each PUT, and final once shipped', async () => {
   const seen = []; stubShip(seen);

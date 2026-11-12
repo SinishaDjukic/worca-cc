@@ -5504,7 +5504,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         setLabel(startBtn, 'Start planning');            // a shaped card is never scheduled
       } else {
         if (shapeUi.requirements) {
-          // Medium or large with shapeRequirements on: Shape requirements is the one primary, Run as is steps back. Until a
+          // Medium or large: Shape requirements is the one primary, Run as is steps back. Until a
           // lead is picked it stays in the tab order, aria-disabled, described by "You lead as".
           shapeBtn = toElement(doc, railButton({ label: 'Shape requirements', kind: 'primary', attrs: { 'data-ask-card-shape': '' } }));
           if (!card.shape) startBtn.classList.replace('btn-primary', 'btn-quiet');

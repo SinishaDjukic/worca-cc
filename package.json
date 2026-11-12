@@ -3,7 +3,10 @@
   "version": "1.19.0-rc.1",
   "description": "Worca turns a task into reviewed, merge-ready work. A deterministic multi-agent pipeline that plans, implements and reviews in isolated git worktrees, with quality gates, budgets and a human in the loop. Web UI, CLI and chat.",
   "license": "MIT",
-  "author": "Sinisha Djukic",
+  "author": "Bosch Digital EOOD, Atanas Atanasov, Emil Angelov",
+  "contributors": [
+    "Worca Contributors (https://github.com/SinishaDjukic/worca-cc/graphs/contributors)"
+  ],
   "type": "module",
   "engines": {
     "node": ">=22.19.0"

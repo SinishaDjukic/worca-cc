@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 import { createProposalValidator, isSyntacticRef, PROPOSAL_ERRORS, pickCardAttachments } from '../src/core/ask/proposal.mjs';
-import { GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
+import { GRAPH_SHAPE_REQ_WORKFLOW, GRAPH_SHAPE_UX_REQ_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
 
 const dirA = mkdtempSync(join(tmpdir(), 'worca-ask-prop-a-'));
 const dirB = mkdtempSync(join(tmpdir(), 'worca-ask-prop-b-'));
@@ -338,13 +338,13 @@ test('Shape it first: shape / slices / schedule refusal, and the assess nudge wi
       const thrown = ok(await on({ estimate: async () => { throw new Error('no history'); } })({ ...base, assess: large }));
       assert.deepEqual(thrown.nudge.estimates, { asIs: null, shaped: null });
     } },
-    { name: 'assess.perspectives with ux → the estimate is asked for GRAPH_SHAPE_UX_WORKFLOW; otherwise GRAPH_SHAPE_WORKFLOW', run: async () => {
+    { name: 'assess.perspectives with ux → the estimate is asked for GRAPH_SHAPE_UX_REQ_WORKFLOW; otherwise GRAPH_SHAPE_REQ_WORKFLOW', run: async () => {
       const seen = [];
       const v = on({ estimate: async (wfs) => { seen.push(wfs); return null; } });
       ok(await v({ ...base, assess: { ...large, perspectives: ['product', 'ux'] } }));
       ok(await v({ ...base, assess: large }));
-      assert.equal(seen[0].shaped, GRAPH_SHAPE_UX_WORKFLOW);
-      assert.equal(seen[1].shaped, GRAPH_SHAPE_WORKFLOW);
+      assert.equal(seen[0].shaped, GRAPH_SHAPE_UX_REQ_WORKFLOW);
+      assert.equal(seen[1].shaped, GRAPH_SHAPE_REQ_WORKFLOW);
       assert.equal(seen[1].asIs.id, 'wf_default');
     } },
     { name: 'no nudge for a scheduled card, nor for a failing one', run: async () => {

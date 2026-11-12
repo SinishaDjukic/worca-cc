@@ -4,7 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { getDb, tx } from './db.mjs';
 import { getTicket } from './scheduler.mjs';
-import { featureOfPipeline } from './shape/features.mjs';
+import { featureOfPipeline, ticketHeld } from './shape/features.mjs';
 import { spendOfPipelines } from './stats.mjs';
 
 export class RunGroupError extends Error {
@@ -22,7 +22,8 @@ const prOf = (r) => {
   return { url: r.pr_url || null, number: r.pr_number ?? null, state: r.pr_state || null, ...(v && typeof v === 'object' ? v : {}) };
 };
 // An after-ticket's run_at is a far-future sentinel (scheduler.mjs AFTER_RUN_AT): never a start time.
-const ticketOf = (t) => (t ? { id: t.id, status: t.status, runAt: t.after ? null : (t.runAt || null), after: !!t.after } : null);
+// `held`: "Ask me before each run" keeps it from starting until the owner's Start now (features.mjs ticketHeld).
+const ticketOf = (t) => (t ? { id: t.id, status: t.status, runAt: t.after ? null : (t.runAt || null), after: !!t.after, held: ticketHeld(t) } : null);
 
 function pipelineRows(ids) {
   if (!ids.length) return new Map();

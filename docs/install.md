@@ -35,6 +35,29 @@ Pipelines never load it, mock or real.
 
 `protobufjs`'s script only prints a version warning. See [Without node-pty](terminal.md#without-node-pty).
 
+## Gentoo Linux
+
+Worca is available in the [officially listed](https://overlays.gentoo.org/#local-ai) portage overlay [local-ai](https://git.ipnmod.org/packages/local-ai-overlay).
+
+To enable the overlay you need `eselect-repository`:
+
+```bash
+emerge --ask app-eselect/eselect-repository
+eselect repository enable local-ai
+emerge --sync local-ai
+```
+
+To install worca:
+
+```bash
+emerge --ask dev-util/worca
+```
+
+You may also want to install:
+
+- `dev-util/claude-code` - available in official portage repo
+- `dev-util/opencode:1` - available in [local-ai](https://git.ipnmod.org/packages/local-ai-overlay)
+
 ## Requirements
 
 ### Node.js 22.19.0 or newer

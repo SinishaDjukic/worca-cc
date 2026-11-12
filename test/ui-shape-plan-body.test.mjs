@@ -662,7 +662,17 @@ test('U11: Fix all asks for the shape rows, then the raw uncovered rows', () => 
   const { $, calls } = setup({ pq: ask({ coverage: COVERAGE }) });
   $('.plan-fix-primary').click();
   assert.deepEqual(calls.submit, [{ decision: 'revise', feedback: 'The shape check fails "Paths are real": 1 path not found. Fix the plan so this check passes.\n'
-    + 'The agreed requirement R-ops-1: Turning the flag off removes the export is not covered by any step. Fix the plan so a step delivers it.' }]);
+    + 'The agreed requirement R-ops-1: Turning the flag off removes the export is not covered by any step. Fix the plan so a step delivers it and names it on a `Covers:` line.' }]);
+});
+
+test('coverage after an id reuse: the fold reads Requirements 8/9 · 1 to fix and lists R-ops-2', async () => {
+  const { coverageOf } = await import('../src/shared/review/coverage.mjs');
+  const { COVERS_AGREED, COVERS_PLAN } = await import('./helpers/covers-plan.mjs');
+  const coverage = coverageOf(Object.keys(COVERS_AGREED), COVERS_PLAN, { texts: COVERS_AGREED });
+  const { $$ } = setup({ pq: ask({ coverage }) });
+  assert.equal($$('.plan-check-line')[0].querySelector('.plan-fold-text').textContent, 'Requirements 8/9 · 1 to fix');
+  const bad = $$('.plan-check-row').filter((r) => r.querySelector('.plan-check-detail')?.textContent === 'not covered by any step');
+  assert.deepEqual(bad.map((r) => r.querySelector('.plan-check-label').textContent), ['R-ops-2 · The held run shows on the dashboard']);
 });
 
 test('R-ux-5: a failing shape row alone (coverage all covered) also makes Fix all the primary', () => {
