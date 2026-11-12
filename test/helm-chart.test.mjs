@@ -353,6 +353,100 @@ test('controller.executor=local (agents inside the controller pod, no RBAC) rend
   assert.equal(byKind(local, 'Role'), undefined);
 });
 
+const AUTH_VALUES = join(FIXTURES, 'values-auth.yaml');
+
+test('auth.enabled: oauth2-proxy in front, the Ingress routes to it, worca verifies its ID token', { skip }, () => {
+  ok(run('helm', ['lint', CHART, '-f', AUTH_VALUES]), 'helm lint (auth)');
+  const rendered = render([AUTH_VALUES]);
+  const all = docs(rendered);
+  const auth = `${RELEASE}-auth`;
+
+  // The controller: identity from the auth block, the private CA trusted for the key fetch.
+  const sts = byKind(all, 'StatefulSet', RELEASE);
+  const ctl = sts.spec.template.spec.containers.find((c) => c.name === 'controller');
+  const env = envOf(ctl);
+  const base = 'https://login.microsoftonline.com/00000000-0000-0000-0000-000000000001';
+  assert.equal(env.WORCA_IDENTITY_ISSUER, `${base}/v2.0`);
+  assert.equal(env.WORCA_IDENTITY_JWKS_URL, `${base}/discovery/v2.0/keys`);
+  assert.equal(env.WORCA_IDENTITY_AUDIENCE, '11111111-2222-3333-4444-555555555555', 'the ID token\'s aud is the client id');
+  assert.equal(env.WORCA_IDENTITY_EMAIL_CLAIM, 'preferred_username');
+  assert.equal(env.WORCA_IDENTITY_TEAMS_CLAIM, 'roles');
+  assert.equal(env.WORCA_ALLOWED_HOSTS, 'worca.example.com');
+  assert.equal(env.NODE_EXTRA_CA_CERTS, '/etc/worca-auth-ca/ca.crt');
+  assert.equal(env.WORCA_CF_ACCESS_TEAM_DOMAIN, undefined);
+  assert.ok(ctl.volumeMounts.some((m) => m.name === 'auth-ca' && m.mountPath === '/etc/worca-auth-ca'));
+  assert.equal(sts.spec.template.spec.volumes.find((v) => v.name === 'auth-ca').secret.secretName, 'corp-ca');
+
+  // The Ingress reaches the proxy, never the controller.
+  const ing = byKind(all, 'Ingress', RELEASE);
+  for (const rule of ing.spec.rules) for (const p of rule.http.paths) assert.equal(p.backend.service.name, auth);
+
+  // The proxy's config: one upstream (the controller Service, Host passed, WebSockets), the ID
+  // token injected as X-Worca-Identity, the same claim deciding access as worca's teams.
+  const cfg = YAML.parse(byKind(all, 'ConfigMap', auth).data['oauth2-proxy.yaml']);
+  assert.deepEqual(cfg.upstreamConfig.upstreams, [{ id: 'worca', path: '/', uri: `http://${RELEASE}.${NAMESPACE}.svc:4317`, passHostHeader: true, proxyWebSockets: true }]);
+  assert.deepEqual(cfg.injectRequestHeaders, [{ name: 'X-Worca-Identity', values: [{ claimSource: { claim: 'id_token' } }] }]);
+  const [prov] = cfg.providers;
+  assert.equal(prov.provider, 'oidc');
+  assert.equal(prov.clientID, '11111111-2222-3333-4444-555555555555');
+  assert.deepEqual(prov.allowedGroups, ['worca.team-a', 'worca.team-b']);
+  assert.equal(prov.oidcConfig.groupsClaim, env.WORCA_IDENTITY_TEAMS_CLAIM);
+  assert.equal(prov.oidcConfig.emailClaim, env.WORCA_IDENTITY_EMAIL_CLAIM);
+  assert.equal(prov.oidcConfig.issuerURL, env.WORCA_IDENTITY_ISSUER);
+  assert.equal(prov.oidcConfig.insecureSkipNonce, false);
+  assert.deepEqual(prov.caFiles, ['/etc/oauth2-proxy/ca/ca.crt']);
+  assert.equal(prov.clientSecret, undefined, 'the secret comes from a file, never the ConfigMap');
+
+  // The proxy's Deployment and Service.
+  const dep = byKind(all, 'Deployment', auth);
+  const px = dep.spec.template.spec.containers[0];
+  const penv = envOf(px);
+  assert.equal(px.image, 'quay.io/oauth2-proxy/oauth2-proxy:v7.15.6');
+  assert.deepEqual(px.args, ['--alpha-config=/etc/oauth2-proxy/oauth2-proxy.yaml']);
+  assert.equal(penv.OAUTH2_PROXY_REDIRECT_URL, 'https://worca.example.com/oauth2/callback', 'from the first Ingress host');
+  assert.equal(penv.OAUTH2_PROXY_COOKIE_REFRESH, '4m');
+  assert.equal(penv.OAUTH2_PROXY_COOKIE_EXPIRE, '8h', 'auth.env overrides the chart');
+  assert.deepEqual(penv.OAUTH2_PROXY_COOKIE_SECRET, { secretKeyRef: { name: auth, key: 'cookie-secret' } });
+  for (const k of Object.keys(penv)) assert.ok(!/^OAUTH2_PROXY_(CLIENT_(ID|SECRET|SECRET_FILE)|PROVIDER(_DISPLAY_NAME|_CA_FILES)?|SCOPE|ALLOWED_(GROUPS|ROLES)|UPSTREAMS|PASS_\w+|SET_\w+|OIDC_\w+)$/.test(k), `${k} is refused next to --alpha-config`);
+  assert.equal(byKind(all, 'Service', auth).spec.ports[0].port, 4180);
+  assert.equal(byKind(all, 'Secret', auth).stringData['client-secret'], 'test-client-secret');
+
+  // Only the proxy reaches the controller's UI port.
+  const np = byKind(all, 'NetworkPolicy', `${RELEASE}-controller`);
+  const uiRule = np.spec.ingress.find((r) => r.ports.some((p) => p.port === 4317));
+  assert.deepEqual(uiRule.from, [{ podSelector: { matchLabels: { 'app.kubernetes.io/name': 'worca', 'app.kubernetes.io/instance': RELEASE, 'app.kubernetes.io/component': 'auth' } } }]);
+  assert.deepEqual(dep.spec.selector.matchLabels, uiRule.from[0].podSelector.matchLabels);
+
+  compareGolden('auth', rendered);
+  if (KUBECONFORM) kubeconform(rendered, 'auth');
+});
+
+test('auth.existingSecret: no chart-made Secret; the proxy reads the named one', { skip }, () => {
+  const r = run('helm', ['template', RELEASE, CHART, '--namespace', NAMESPACE, '-f', AUTH_VALUES, '--set', 'auth.existingSecret=my-auth', '--set', 'auth.clientSecret=', '--set', 'auth.cookieSecret=']);
+  ok(r, 'helm template (auth.existingSecret)');
+  const all = docs(r.stdout);
+  assert.equal(byKind(all, 'Secret', `${RELEASE}-auth`), undefined);
+  const dep = byKind(all, 'Deployment', `${RELEASE}-auth`);
+  assert.equal(dep.spec.template.spec.volumes.find((v) => v.name === 'secret').secret.secretName, 'my-auth');
+});
+
+test('auth: an incomplete or conflicting block fails the render with what to set', { skip }, () => {
+  const fails = (sets, re) => {
+    const r = run('helm', ['template', RELEASE, CHART, '--namespace', NAMESPACE, '-f', AUTH_VALUES, ...sets.flatMap((x) => ['--set', x])]);
+    assert.notEqual(r.status, 0, `expected a failure for ${sets.join(' ')}`);
+    assert.match(r.stderr, re);
+  };
+  fails(['auth.oidc.issuerUrl='], /auth\.oidc\.issuerUrl is required/);
+  fails(['auth.oidc.jwksUrl='], /auth\.oidc\.jwksUrl is required/);
+  fails(['auth.oidc.clientId='], /auth\.oidc\.clientId is required/);
+  fails(['auth.clientSecret='], /auth\.existingSecret .* or auth\.clientSecret/);
+  fails(['auth.cookieSecret='], /auth\.cookieSecret is required/);
+  fails(['ingress.enabled=false'], /set auth\.redirectUrl/);
+  fails(['controller.env.WORCA_CF_ACCESS_AUD=x'], /one identity check, not two/);
+  // An explicit callback needs no Ingress (port-forward, an external gateway).
+  ok(run('helm', ['template', RELEASE, CHART, '--namespace', NAMESPACE, '-f', AUTH_VALUES, '--set', 'ingress.enabled=false', '--set', 'auth.redirectUrl=https://gw.example.com/oauth2/callback']), 'auth.redirectUrl without an Ingress');
+});
+
 test('helm template writes to a fresh temp dir cleanly (no leftover files in the chart)', { skip }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'worca-helm-'));
   try {

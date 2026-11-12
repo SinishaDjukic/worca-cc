@@ -58,8 +58,9 @@ spec:
         {{- end }}
     {{- end }}
 ---
-# The controller: the UI port from anywhere (the Ingress controller, port-forward); the workers
-# port from worker pods of this instance only.
+# The controller: the UI port from anywhere (the Ingress controller, port-forward), or with
+# auth.enabled from the oauth2-proxy pods only; the workers port from worker pods of this
+# instance only.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -73,9 +74,19 @@ spec:
       {{- include "worca.selectorLabels" . | nindent 6 }}
   policyTypes: ["Ingress"]
   ingress:
+    {{- if .Values.auth.enabled }}
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "worca.authSelectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.controller.port }}
+          protocol: TCP
+    {{- else }}
     - ports:
         - port: {{ .Values.controller.port }}
           protocol: TCP
+    {{- end }}
     - from:
         - podSelector:
             matchLabels:

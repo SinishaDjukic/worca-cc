@@ -158,6 +158,11 @@ spec:
             - name: worker-pod
               mountPath: /etc/worca
               readOnly: true
+            {{- if and .Values.auth.enabled .Values.auth.caSecret }}
+            - name: auth-ca
+              mountPath: /etc/worca-auth-ca
+              readOnly: true
+            {{- end }}
       volumes:
         - name: shared
           persistentVolumeClaim:
@@ -172,6 +177,14 @@ spec:
         - name: worker-pod
           configMap:
             name: {{ include "worca.fullname" . }}-worker-pod
+        {{- if and .Values.auth.enabled .Values.auth.caSecret }}
+        - name: auth-ca
+          secret:
+            secretName: {{ .Values.auth.caSecret }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
   volumeClaimTemplates:
     - metadata:
         name: db

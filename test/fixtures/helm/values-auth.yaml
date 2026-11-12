@@ -1,0 +1,30 @@
+# test/helm-chart.test.mjs: auth.enabled (oauth2-proxy in front, Entra ID-style claims), the
+# Ingress and the NetworkPolicy on, a private CA, the chart-made Secret.
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: worca.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: worca-tls
+      hosts: [worca.example.com]
+networkPolicy:
+  enabled: true
+auth:
+  enabled: true
+  oidc:
+    issuerUrl: https://login.microsoftonline.com/00000000-0000-0000-0000-000000000001/v2.0
+    jwksUrl: https://login.microsoftonline.com/00000000-0000-0000-0000-000000000001/discovery/v2.0/keys
+    clientId: 11111111-2222-3333-4444-555555555555
+    scope: openid email profile offline_access
+    emailClaim: preferred_username
+    teamsClaim: roles
+  allowedGroups: [worca.team-a, worca.team-b]
+  clientSecret: test-client-secret
+  cookieSecret: 0123456789abcdef0123456789abcdef
+  caSecret: corp-ca
+  env:
+    OAUTH2_PROXY_COOKIE_EXPIRE: 8h

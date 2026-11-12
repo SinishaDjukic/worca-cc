@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { createIssuerVerifier, normalizeIssuer } from '../src/core/issuer-jwt.mjs';
+import { createIssuerVerifier, normalizeIssuer, readClaim, parseClaimName } from '../src/core/issuer-jwt.mjs';
 import { ISSUER, JWKS_URL, INSTANCE_HOST, makeIssuerKey, signIssuerJwt, jwksFetch } from './helpers/issuer-jwt.mjs';
 
 const key = makeIssuerKey();
@@ -101,4 +101,38 @@ test('audience matching is case-insensitive and accepts a list', async () => {
   const verify = createIssuerVerifier({ issuer: `${ISSUER}/`, jwksUrl: JWKS_URL, audience: ['A.example.run', INSTANCE_HOST.toUpperCase()], fetchImpl });
   assert.ok(await verify(signIssuerJwt(key)));
   assert.ok(await verify(signIssuerJwt(key, { aud: ['x', 'a.example.run'] })));
+});
+
+test('readClaim: exact key first (namespaced claims), then a dotted path; own properties only', () => {
+  const p = { 'https://example.com/roles': ['a'], realm_access: { roles: ['r1'] }, 'a.b': 1, a: { b: 2 } };
+  assert.deepEqual(readClaim(p, 'https://example.com/roles'), ['a']);
+  assert.deepEqual(readClaim(p, 'realm_access.roles'), ['r1']);
+  assert.equal(readClaim(p, 'a.b'), 1, 'the exact key wins over the path');
+  assert.equal(readClaim(p, 'realm_access.nope'), undefined);
+  assert.equal(readClaim(p, 'constructor'), undefined);
+  assert.equal(readClaim(p, 'realm_access.roles.length'), undefined, 'no walking into arrays');
+});
+
+test('parseClaimName: trimmed, fallback when empty, null when unusable', () => {
+  assert.equal(parseClaimName(' roles ', 'teams'), 'roles');
+  assert.equal(parseClaimName('', 'teams'), 'teams');
+  assert.equal(parseClaimName(undefined, 'email'), 'email');
+  assert.equal(parseClaimName('a b', 'teams'), null);
+  assert.equal(parseClaimName('x'.repeat(201), 'teams'), null);
+});
+
+test('configured claims: email from preferred_username, teams from a nested roles list', async () => {
+  const { verify } = make(undefined, { claims: { email: 'preferred_username', teams: 'realm_access.roles' } });
+  const who = await verify(signIssuerJwt(key, { email: undefined, teams: undefined, preferred_username: 'ada@example.com', realm_access: { roles: ['team-a', 'team-b'] } }));
+  assert.equal(who.email, 'ada@example.com');
+  assert.deepEqual(who.teams, ['team-a', 'team-b']);
+  // The configured claim is the only source: the default `email` is not a fallback.
+  assert.equal(await verify(signIssuerJwt(key, { preferred_username: undefined })), null);
+});
+
+test('teams: a single string is a one-entry list; non-strings and empties are dropped; absent is []', async () => {
+  const { verify } = make(undefined, { claims: { teams: 'groups' } });
+  assert.deepEqual((await verify(signIssuerJwt(key, { groups: 'team-a' }))).teams, ['team-a']);
+  assert.deepEqual((await verify(signIssuerJwt(key, { groups: ['a', 1, '', null, 'b'] }))).teams, ['a', 'b']);
+  assert.deepEqual((await verify(signIssuerJwt(key, { groups: undefined }))).teams, []);
 });

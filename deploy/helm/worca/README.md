@@ -47,7 +47,7 @@ dependencies and no CRDs.
 | `image.tag` | `""` = `Chart.appVersion` | also the workers' `{version}` (`WORCA_K8S_WORKER_TAG`) |
 | `image.variant` | `slim` | `slim` or `full` (tag suffix `-full`); workers follow it unless `worker.variant` |
 | `image.pullPolicy` | `IfNotPresent` | controller, broker and worker pods |
-| `imagePullSecrets` | `[]` | controller, broker and worker pods |
+| `imagePullSecrets` | `[]` | controller, broker, worker and oauth2-proxy pods |
 | `instanceId` | `""` = release name | `WORCA_INSTANCE_ID`; the `worca.dev/instance` label on worker pods |
 | `nameOverride`, `fullnameOverride` | `""` | |
 

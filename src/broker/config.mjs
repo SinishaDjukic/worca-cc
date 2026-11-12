@@ -6,7 +6,7 @@
 import { readFileSync } from 'node:fs';
 import { parseAddressList } from '../core/trusted-proxies.mjs';
 import { normalizeTeamDomain } from '../core/cf-access.mjs';
-import { normalizeIssuer } from '../core/issuer-jwt.mjs';
+import { normalizeIssuer, parseClaimName, DEFAULT_CLAIMS } from '../core/issuer-jwt.mjs';
 import { upstreamIssue } from './slots.mjs';
 import { unpricedRates } from './usage.mjs';
 
@@ -164,7 +164,15 @@ export function readBrokerConfig(env = process.env, { readFile = readFileSync } 
     if (!secure(issuer)) errors.push('WORCA_IDENTITY_ISSUER must be an https URL (http only for localhost)');
     else if (!secure(jwksUrl)) errors.push('WORCA_IDENTITY_JWKS_URL must be an https URL (http only for localhost)');
     else if (!audience.length) errors.push('WORCA_IDENTITY_ISSUER needs an audience: set WORCA_IDENTITY_AUDIENCE or WORCA_BROKER_PUBLIC_URL');
-    else identity = { kind: 'issuer', issuer, jwksUrl, audience };
+    else {
+      const claims = {
+        email: parseClaimName(env.WORCA_IDENTITY_EMAIL_CLAIM, DEFAULT_CLAIMS.email),
+        teams: parseClaimName(env.WORCA_IDENTITY_TEAMS_CLAIM, DEFAULT_CLAIMS.teams),
+      };
+      if (!claims.email) errors.push('WORCA_IDENTITY_EMAIL_CLAIM must be a claim name (no spaces, at most 200 characters)');
+      else if (!claims.teams) errors.push('WORCA_IDENTITY_TEAMS_CLAIM must be a claim name (no spaces, at most 200 characters)');
+      else identity = { kind: 'issuer', issuer, jwksUrl, audience, claims };
+    }
   } else if (identityHeader) {
     if (!HEADER_NAME_RE.test(identityHeader)) errors.push('WORCA_IDENTITY_HEADER is not a valid header name');
     else {

@@ -1,0 +1,39 @@
+# docker/oauth2-proxy.yaml — oauth2-proxy's configuration for compose.auth.yml (docs/auth.md).
+#
+# oauth2-proxy fills the ${…} values from its own environment (compose.auth.yml passes them from
+# .env); nothing here is edited per installation. The Helm chart renders the same configuration
+# from its `auth` values (deploy/helm/worca/templates/auth.yaml): keep the two in step.
+server:
+  bindAddress: "0.0.0.0:4180"
+upstreamConfig:
+  upstreams:
+    - id: worca
+      path: /
+      uri: http://worca:4317
+      # Worca checks the Host against WORCA_ALLOWED_HOSTS: the browser's, not "worca".
+      passHostHeader: true
+      proxyWebSockets: true
+# The session's ID token, signed by the provider, is what worca verifies (WORCA_IDENTITY_*). A
+# value a client sends in this header is stripped first.
+injectRequestHeaders:
+  - name: X-Worca-Identity
+    values:
+      - claimSource:
+          claim: id_token
+providers:
+  - id: oidc
+    provider: oidc
+    name: Worca
+    clientID: "${WORCA_OIDC_CLIENT_ID}"
+    clientSecret: "${WORCA_OIDC_CLIENT_SECRET}"
+    scope: "${WORCA_OIDC_SCOPE}"
+    code_challenge_method: S256
+    # Comma-separated in WORCA_AUTH_ALLOWED_GROUPS; empty admits everyone the provider signs in.
+    allowedGroups: [${WORCA_AUTH_ALLOWED_GROUPS}]
+    oidcConfig:
+      issuerURL: "${WORCA_OIDC_ISSUER_URL}"
+      jwksURL: "${WORCA_OIDC_JWKS_URL}"
+      emailClaim: "${WORCA_OIDC_EMAIL_CLAIM}"
+      groupsClaim: "${WORCA_OIDC_TEAMS_CLAIM}"
+      audienceClaims: ["aud"]
+      insecureSkipNonce: false

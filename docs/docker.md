@@ -503,6 +503,21 @@ an unwritable volume; `143` after SIGTERM is what the process returns, which `ti
 
 Hacking on Worca inside the box: [CONTRIBUTING.md](../CONTRIBUTING.md#in-a-container).
 
+## Sign-in with your own identity provider
+
+With the `auth` overlay, oauth2-proxy signs people in through your OpenID Connect provider (Entra
+ID, Keycloak, Okta, Google, ...), admits only the groups or roles you list, and forwards to worca
+with the ID token, which worca verifies itself. Set the `WORCA_AUTH_*` and `WORCA_OIDC_*` values
+in `.env` (see `.env.example`) and put a TLS reverse proxy in front of `127.0.0.1:4180`:
+
+```sh
+worca container up --with auth
+# or, with oauth2-proxy.yaml next to the compose files
+docker compose -f compose.yml -f compose.auth.yml up -d
+```
+
+[auth.md](auth.md) has the provider settings, team policy and troubleshooting.
+
 ## Workers: agents in their own containers
 
 With the `workers` overlay the `worca` service becomes a **controller** — it keeps the scheduler,
