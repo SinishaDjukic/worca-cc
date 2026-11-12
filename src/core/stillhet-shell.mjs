@@ -6,6 +6,9 @@ import path from 'node:path';
 import { INDEX_THEME_ANCHOR } from './index-html.mjs';
 
 export const STILLHET_SHELL = 'ui/public/stillhet/shell.html';
+// The shell is a template: every spelling static maps to it (a path relative to ui/public) is served only through
+// sendIndex, with its page and headers, flag on or off.
+export const isStillhetShellRel = (rel) => /^stillhet\/shell(\.html)?$/i.test(rel ?? '');
 
 /**
  * @param {string} html  the on-disk ui/public/stillhet/shell.html

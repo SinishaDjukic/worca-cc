@@ -67,7 +67,6 @@ import { listProjects, runOnboarded, addProject, addProjects, removeProject, nor
   getProjectByName, ownsProjectFolder, removeProjectAndFolder, enclosingRepoOf, nestedInRepoMessage, worcaNestedRepoOf, worcaNestedRepoHint } from '../src/core/projects.mjs';
 import { effectiveWorkMode, workModeOfRow, workModeForStart, samePath } from '../src/core/project-kind.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR, SHELL_CSP } from '../src/core/index-html.mjs';
-import { stillhetShellHtml } from '../src/core/stillhet-shell.mjs';
 import { gitState, gitAvailable, currentGitState, onGitChange, GIT_MISSING } from '../src/core/git-available.mjs';
 import { teamOverHttps, teamRepoState, setTypedTeamRepo } from '../src/core/git-free/team-repo.mjs';
 import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError, requireFlag } from '../src/core/flags.mjs';
@@ -2200,11 +2199,9 @@ async function sendIndex(res) {   // with `rail` on: Stillhet's shell (src/core/
 // file system would otherwise reach the raw file: route every spelling here.
 app.use((req, res, next) => {
   if (req.method !== 'GET') return next();
-  if (req.path === '/' || /^\/index(\.html)?$/i.test(req.path) || isStillhetShellPath(req.path)) return sendIndex(res);
+  if (req.path === '/' || /^\/index(\.html)?$/i.test(req.path) || isStillhetShellRel(publicRelPath(req.path))) return sendIndex(res);
   return next();
 });
-// ui/public/stillhet/shell.html is a template: every spelling static maps to it gets sendIndex's page and headers, flag on or off.
-const isStillhetShellPath = (p) => /^stillhet\/shell(\.html)?$/i.test(publicRelPath(p) ?? '');
 
 // /style.css is assembled from its parts (#919). It matches every spelling express.static served it under
 // (//style.css, /%73tyle.css, and any case on a case-insensitive file system), and nothing else.
@@ -2232,7 +2229,7 @@ app.use(function servePublic(req, res, next) {
   let part = false;
   // A broken parts.json must not take every static file down with it: log once and serve static.
   try { part = isPublicPart(req.path, PUBLIC_DIR); } catch (err) { warnAssetOnce('ui/public/parts.json', err); }
-  return part || isStillhetShellPath(req.path) ? next() : serveStatic(req, res, next);   // the shell template only through sendIndex
+  return part || isStillhetShellRel(publicRelPath(req.path)) ? next() : serveStatic(req, res, next);   // the shell template only through sendIndex
 });
 
 function badRequest(res, message) {
@@ -3546,7 +3543,7 @@ import * as runSkillPolicy from '../src/core/policy/effective.mjs';
 import { ROUTE_SEGMENTS } from './routes/index.mjs';
 import { askCardRoute } from './routes/chat/thread-cards.mjs';
 import { isPublicPart, publicRelPath } from '../src/core/public-assets.mjs';
-import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readIndexHtml, stillhetShellHtml, isStillhetShellRel } from '../src/core/read-index-html.mjs';
 import { readStyleCssEntry } from '../src/core/read-style-css.mjs';
 
 /** `mcpOptOut` (D16): at most 100 '<setId>|<serverId>' or '<setId>|<skillId>' entries (the membership
