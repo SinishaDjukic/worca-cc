@@ -1337,8 +1337,8 @@ if (!ONLY_A6 && !ONLY_A61) {
   const codexNow = await A.evalJs(`document.querySelector('${WHO} .req-who-model').value`);
   check('9c board 2: changing the harness to Codex refills Model with Codex models (no Claude one) and picks its default',
     codexModels.length > 0 && codexModels.join() !== claudeModels.join() && codexModels.every((m) => !m.startsWith('claude-')) && codexNow === 'gpt-6.1-sol', JSON.stringify({ codexNow, codexModels }));
-  check('9c board 2: a line says what Codex can do ("Codex reads the repo read-only. Files go to it as text.")',
-    await until(() => A.evalJs(`(document.querySelector('${WHO} .req-new-harness')?.textContent || '') === 'Codex reads the repo read-only. Files go to it as text.'`), 4000));
+  check('9c board 2: a line says what Codex can do ("OpenAI Codex reads the repo read-only. Files go to it as text.")',
+    await until(() => A.evalJs(`(document.querySelector('${WHO} .req-new-harness')?.textContent || '') === 'OpenAI Codex reads the repo read-only. Files go to it as text.'`), 4000));
   await setSel(`${WHO} .req-who-harness`, 'claude');
   check('9c board 2: back to Claude refills Model with Claude models', (await opts(`${WHO} .req-who-model`)).join() === claudeModels.join());
   await setSel(`${WHO} .req-who-harness`, 'codex');
