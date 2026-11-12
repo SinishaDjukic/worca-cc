@@ -889,8 +889,7 @@ shipT('refresh keeps one Satisfies line', async () => {
 });
 
 // ── Shaper requirements s3 (D8, D9): the acceptance ledger gates the ship ─────────────────────────────────────────
-const REQ_ON = NO_ADO;
-const reqShipT = (name, fn, env = REQ_ON) => test(name, () => withEnvVars(env, async () => {
+const reqShipT = (name, fn, env = NO_ADO) => test(name, () => withEnvVars(env, async () => {
   ({ _testing: gitInfo } = await import('../src/core/git-info.mjs'));
   try { await fn(); } finally { gitInfo.reset(); }
 }));
