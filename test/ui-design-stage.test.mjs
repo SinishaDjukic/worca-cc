@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { detailToFrames } from '../ui/public/design/stage.mjs';
 import { rig } from './helpers/design-stage-rig.mjs';
+import { createPictureLog } from '../ui/public/design/pictures.mjs';
 import { DID, BID, A1, A2, LEAD as LEAD_ID, build, plan, agent, section, delta, file } from './helpers/design-stage-frames.mjs';
 const ROW = { id: BID, designId: DID, round: 1, kind: 'first', status: 'building', brief: 'b', fast: false, reason: null, agentsTotal: 1, layers: 0, costUsd: 0, costKnown: true, startedAt: '2026-11-05T10:00:00Z', endedAt: null, createdBy: null };
 const LIVE = { design: { id: DID, kind: 'web', title: 'T', version: 0, threadId: null }, plan: null, build: ROW, sections: [], versions: [] };
@@ -531,4 +532,33 @@ test('standby: the frame is out of sight until a plan lands; the well says who i
   assert.equal(d.q('.dz-wrap').classList.contains('is-blank'), false);
   d.stage.pushFrame(build('planning', { buildId: 'b_000000000002', round: 2, kind: 'change' })); d.paint();
   assert.equal(d.q('.dz-wrap').classList.contains('is-blank'), false, 'a change round keeps the page in view');
+});
+
+test('the Agents popover ends with the round\'s pictures as they land', async () => {
+  const pictures = createPictureLog({ designId: DID });
+  const { stage, paint, q } = await rig(LIVE, { pictures });
+  stage.pushFrame(build()); stage.pushFrame(plan(['hero'])); stage.pushFrame(agent(A1, 'writing')); paint();
+  const made = (id) => ({ type: 'design-picture', designId: DID, buildId: BID, round: 1, id, name: `p${id}`, shape: 'wide', state: 'made', prompt: 'p',
+    file: `assets/made/p${id}.png`, w: 384, h: 256, model: 'gpt-image-2.6-flare', costUsd: 0.04, ms: 3 });
+  pictures.push(made(1));
+  stage.showAgent(A1);   // no paint(): showAgent's own panel model carries the row
+  assert.deepEqual([q('.dz-arow-pics .dz-aact').textContent, q('.dz-arow-pics .dz-acost').textContent], ['1 made', '$0.04']);
+  pictures.push(made(2));
+  paint();   // runs the frame the log's subscriber queued (without the subscription none is queued: '1 made')
+  assert.deepEqual([q('.dz-arow-pics .dz-aact').textContent, q('.dz-arow-pics .dz-acost').textContent], ['2 made', '$0.08']);
+});
+test('a new round\'s Agents popover counts that round\'s pictures only', async () => {
+  const pictures = createPictureLog({ designId: DID });
+  const { stage, paint, q } = await rig(LIVE, { pictures });
+  const made = (buildId, round, id) => ({ type: 'design-picture', designId: DID, buildId, round, id, name: `p${id}`, shape: 'wide', state: 'made', prompt: 'p',
+    file: `assets/made/p${id}.png`, w: 384, h: 256, model: 'gpt-image-2.6-flare', costUsd: 0.04, ms: 3 });
+  stage.pushFrame(build()); stage.pushFrame(plan(['hero'])); stage.pushFrame(agent(A1, 'writing')); paint();
+  pictures.push(made(BID, 1, 1)); pictures.push(made(BID, 1, 2));
+  stage.showAgent(A1);
+  assert.equal(q('.dz-arow-pics .dz-aact').textContent, '2 made');
+  stage.pushFrame(build('building', { buildId: B2, round: 2, kind: 'change' })); stage.pushFrame(plan(['hero'], { buildId: B2 }));
+  stage.pushFrame(agent(A1, 'writing', { buildId: B2 })); paint();
+  assert.equal(q('.dz-arow-pics'), null, 'round 2 made none yet: no row');
+  pictures.push(made(B2, 2, 3)); paint();
+  assert.deepEqual([q('.dz-arow-pics .dz-aact').textContent, q('.dz-arow-pics .dz-acost').textContent], ['1 made', '$0.04']);
 });

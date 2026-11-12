@@ -74,3 +74,22 @@ test('the guide names the exceptions, and no stage rule has an accent edge', () 
   assert.match(g, /The named exceptions are the away screensaver .* and the Design stage/);
   for (const r of ALL.filter((x) => /\.dz-|\.overlay-doc|\.frame-box/.test(x.sel))) assert.doesNotMatch(r.body, /border-left/, r.sel);
 });
+
+test('made pictures: tiles of their shape on one baseline, a still dashed tile, the boards\' viewer and Set up, no accent edge', () => {
+  assert.match(body('.dsc-pics'), /display:flex;flex-wrap:wrap;align-items:flex-end;gap:7px/, 'the boards\' strip: the chat\'s own attachment row gap (.extras-pills)');
+  assert.match(body('.dsc-pic'), /font-size:var\(--fs-meta\);line-height:1\.4/, 'the boards\' name line: 12px/1.4');
+  // The chat's own attachment thumb box (.ask-attachment-thumb, ask-worca-beside.css ≈86: 180 wide, 130 tall at most).
+  for (const [s, w, h] of [['wide', 180, 120], ['tall', 87, 130], ['square', 130, 130]]) {
+    assert.match(body(`.dsc-pic.is-${s}`), new RegExp(`width:${w}px`), s);
+    assert.match(body(`.dsc-pic.is-${s} .dsc-pic-box`), new RegExp(`height:${h}px`), s);
+  }
+  assert.match(body('.dsc-pic.is-making .dsc-pic-box'), /border-style:dashed;border-color:var\(--line-2\)/, 'board BuildMaking: the dashed edge in --line-2, as the chat\'s own drop box (.dsc-drop)');
+  assert.match(body('.dz-pics-off .dz-pics-setup'), /text-decoration:none/, 'board GearPicturesNotSetUp: Set up is not underlined');
+  assert.match(body('.dz-pic-modal .dz-pic-card'), /width:min\(770px,100%\)/, 'board PictureViewer: a 720 px picture inside the 1 px border and 24 px padding');
+  assert.match(body('.dz-pic-full'), /max-width:100%;max-height:60vh;margin:0 auto 16px/, 'the gap above What it shows sits on the picture');
+  assert.match(body('.dz-pic-h'), /margin:0 0 4px/);
+  for (const r of ALL.filter((x) => /\.dsc-pic|\.dz-pic/.test(x.sel))) {
+    assert.doesNotMatch(r.body, /border-left/, r.sel);
+    assert.doesNotMatch(r.body, /animation/, `${r.sel}: the quiet tile is still (board BuildMaking)`);
+  }
+});

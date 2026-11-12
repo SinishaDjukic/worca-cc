@@ -25,12 +25,13 @@ function reply(status, body) {
 /**
  * @param {object} detail `GET /api/design/:id`'s answer
  * @param {{size?: number[], reduced?: boolean, files?: Record<string, string>,
- *   answers?: Record<string, [number, object]>, epoch?: number}} [o] `size` is the `.dz-wrap`'s
+ *   answers?: Record<string, [number, object]>, epoch?: number, pictures?: object|null}} [o] `size` is the `.dz-wrap`'s
  *   `[clientWidth, clientHeight]`; `files` maps GET paths to the text served there; `answers` maps a POST path to the
  *   status and body it gets instead of its route's success; `epoch` is the page's `performance.timeOrigin`, so the
- *   mint's `expiresAt` is epoch ms as P3's is
+ *   mint's `expiresAt` is epoch ms as P3's is; `pictures` is the design's picture log (`createPictureLog`), handed to
+ *   the stage as is
  */
-export async function rig(detail, { size = [1096, 900], reduced = false, files = {}, answers = {}, epoch = 0 } = {}) {
+export async function rig(detail, { size = [1096, 900], reduced = false, files = {}, answers = {}, epoch = 0, pictures = null } = {}) {
   const clock = fakeClock();
   const dom = new JSDOM('<!doctype html><html><body><section class="dz-stage"></section></body></html>', { url: 'http://localhost/' });
   const win = dom.window;
@@ -81,6 +82,7 @@ export async function rig(detail, { size = [1096, 900], reduced = false, files =
     prompt: (o) => { prompts.push(o); return Promise.resolve(null); },
     onPicked: (p) => { picks.push(p); },
     onPlan: (rows) => { plans.push(rows); },
+    pictures,
   });
   const wrap = doc.querySelector('.dz-wrap');
   Object.defineProperty(wrap, 'clientWidth', { configurable: true, get: () => size[0] });

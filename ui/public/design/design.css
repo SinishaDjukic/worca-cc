@@ -180,6 +180,36 @@ button.dsc-steps-head:hover{color:var(--ink);}
 .dsc-note{margin:0 0 6px;padding:0 4px;color:var(--ink-2);font-size:var(--fs-meta);}
 .dsc-point[aria-pressed="true"]{background:var(--slate-bg);color:var(--slate-ink);}
 .dsc-drop{position:absolute;inset:8px;z-index:2;display:flex;align-items:center;justify-content:center;border:1px dashed var(--line-2);border-radius:var(--r-md);background:var(--panel);color:var(--ink-2);font-size:var(--fs-body);pointer-events:none;}
+/* Made pictures (pictures.mjs) */
+.dsc-pics{display:flex;flex-wrap:wrap;align-items:flex-end;gap:7px;}
+.dsc-pic{display:flex;flex-direction:column;gap:4px;min-width:0;padding:0;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:inherit;font-size:var(--fs-meta);line-height:1.4;text-align:left;}
+button.dsc-pic{cursor:pointer;}
+button.dsc-pic:hover{color:var(--ink);}
+button.dsc-pic:hover .dsc-pic-box{border-color:var(--hover-outline);}
+.dsc-pic:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.dsc-pic.is-wide{width:180px;}
+.dsc-pic.is-tall{width:87px;}
+.dsc-pic.is-square{width:130px;}
+.dsc-pic-box{display:block;width:100%;overflow:hidden;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);}
+.dsc-pic.is-wide .dsc-pic-box{height:120px;}
+.dsc-pic.is-tall .dsc-pic-box{height:130px;}
+.dsc-pic.is-square .dsc-pic-box{height:130px;}
+.dsc-pic-box > img{display:block;width:100%;height:100%;object-fit:cover;}
+.dsc-pic.is-missing .dsc-pic-box > img{visibility:hidden;}
+.dsc-pic-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dsc-pic.is-making .dsc-pic-box{border-style:dashed;border-color:var(--line-2);}
+.dsc-pic-line.is-error{white-space:normal;overflow-wrap:anywhere;}
+.dz-pics-model{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.dz-set-pop .dz-pics-off{cursor:default;}
+.dz-pics-off .dz-pics-setup{margin-left:auto;color:var(--blue-ink-strong);font-weight:500;text-decoration:none;}
+.dz-pic-modal .dz-pic-card{width:min(770px,100%);}
+.dz-pic-card.dlg > .dlg-head::after{opacity:1;}
+.dz-pic-head{display:flex;align-items:center;gap:8px;}
+.dz-pic-head h2{flex:1;min-width:0;margin:0;font-size:var(--fs-body);font-weight:600;overflow-wrap:anywhere;}
+.dz-pic-full{display:block;max-width:100%;max-height:60vh;margin:0 auto 16px;border-radius:var(--r-sm);background:var(--field);object-fit:contain;}
+.dz-pic-h{margin:0 0 4px;font-size:var(--fs-body);font-weight:600;}
+.dz-pic-desc{margin:0;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;}
+.dz-pic-facts{margin:8px 0 0;color:var(--ink-2);font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}
 
 /* The page, the frame and the overlay */
 .dz-studio{flex:1;min-width:0;min-height:0;display:flex;background:var(--panel);}

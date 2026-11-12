@@ -1,23 +1,33 @@
 // ui/public/design/composer-settings.mjs
 // The one settings button of a Design composer (the start composer and the chat dock): a quiet cog (the account menu's Settings icon) that opens a small
-// popup holding the Lead and Builders model pickers (model-pills.mjs) and the Build fast switch, so the composer row
-// keeps to Attach, the project or Point, this button and Send. The popup is a side-flyout popup; each picker's menu
-// opens beside it as its submenu (create the pickers with `parent: settings.panel`). No state of its own: the pickers
-// and the switch stay the caller's.
+// popup holding the Lead and Builders model pickers (model-pills.mjs), the Build fast switch and the Pictures row, so the
+// composer row keeps to Attach, the project or Point, this button and Send. The popup is a side-flyout popup; each
+// picker's menu opens beside it as its submenu (create the pickers with `parent: settings.panel`). No state of its own:
+// the pickers and the switches stay the caller's. The Pictures row (createPicturesRow) keeps one state, the last good
+// answer of GET /api/images.
 import { createFlyout } from '../side-flyout.mjs';
 import { icon } from '../icons.mjs';
+import { makeSwitch } from '../switch.mjs';
+import { DESIGN_PICTURES_DEFAULT } from '../../../src/shared/design-names.mjs';
 
 export const SETTINGS_LABEL = 'Models and Build fast';
+
+/** The image service's state (Part A's `imagesState`): `configured` is false unless it can make a picture. */
+const IMAGES_URL = '/api/images';
+/** The Providers page's Image generation row. */
+const SETUP_HREF = '#providers/images';
 
 let seq = 0;
 
 /**
- * @param {{doc: Document, win?: Window, mode?: 'up'|'down'}} o  `mode`: where the popup opens from the button.
+ * @param {{doc: Document, win?: Window, mode?: 'up'|'down', onOpen?: () => void}} o  `mode`: where the popup opens from
+ *   the button; `onOpen`: called once per open, after the popup is placed.
  * @returns {{el: HTMLElement, btn: HTMLButtonElement, panel: HTMLElement, fill: (...rows: Node[]) => void,
- *   divider: () => HTMLElement, close: () => void, destroy: () => void}}
- *   `el` goes in the composer row; `fill` puts the rows in the popup.
+ *   divider: () => HTMLElement, close: () => void, reposition: () => void, destroy: () => void}}
+ *   `el` goes in the composer row; `fill` puts the rows in the popup; `reposition` places an open popup again after
+ *   its rows changed.
  */
-export function createComposerSettings({ doc, win = doc.defaultView || globalThis, mode = 'up' }) {
+export function createComposerSettings({ doc, win = doc.defaultView || globalThis, mode = 'up', onOpen = () => {} }) {
   const el = doc.createElement('span');
   el.className = 'dz-set';
   const btn = doc.createElement('button');
@@ -36,7 +46,7 @@ export function createComposerSettings({ doc, win = doc.defaultView || globalThi
   panel.hidden = true;
   btn.setAttribute('aria-controls', panel.id);
   el.append(btn, panel);
-  const fly = createFlyout({ doc, win, trigger: btn, menu: panel, mode });
+  const fly = createFlyout({ doc, win, trigger: btn, menu: panel, mode, onOpen });
   return {
     el, btn, panel,
     fill: (...rows) => panel.replaceChildren(...rows),
@@ -46,6 +56,78 @@ export function createComposerSettings({ doc, win = doc.defaultView || globalThi
       return d;
     },
     close: () => { if (fly.isOpen()) fly.close(); },
+    reposition: () => fly.reposition(),
     destroy() { fly.destroy(); el.remove(); },
   };
+}
+
+/**
+ * Reads a GET /api/images answer: null unless `configured` is a boolean (no answer, or not one). `ready` is
+ * `configured`, which is already false when the key does not resolve, so a missing key reads Set up.
+ * @param {unknown} body
+ * @returns {{ready: boolean, model: string} | null}
+ */
+export function readImages(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.configured !== 'boolean') return null;
+  return { ready: body.configured, model: typeof body.model === 'string' ? body.model : '' };
+}
+
+/**
+ * The gear's Pictures row (SPEC D7): `Pictures`, the model's id and a switch while the image service is ready, else
+ * `Pictures` and `Set up`, which leads to the Providers row. Hidden until GET /api/images gives a good answer. The
+ * caller owns what the switch means (a new design's field, or the design's PATCH) and calls `load()` when the composer
+ * is made and at each open of the gear.
+ * @param {{doc: Document, fetch: Function, checked?: boolean}} o
+ * @returns {{el: HTMLElement, input: HTMLInputElement, ready: () => boolean, load: () => Promise<boolean>}}
+ *   `ready()`: the switch is shown. `load()` asks again and resolves true exactly when what the row shows changed.
+ */
+export function createPicturesRow({ doc, fetch: fetchFn, checked = DESIGN_PICTURES_DEFAULT }) {
+  const el = doc.createElement('div');
+  el.className = 'dz-pics';
+  el.hidden = true;
+  const sw = makeSwitch(doc, { label: 'Pictures', ariaLabel: 'Pictures', checked, rowClass: 'dz-fast dz-pics-on', inputClass: 'dz-pics-input' });
+  const modelEl = doc.createElement('span');
+  modelEl.className = 'dz-fast-n dz-pics-model';
+  sw.row.append(modelEl);
+  const off = doc.createElement('div');
+  off.className = 'dz-fast dz-pics-off';
+  const offLabel = doc.createElement('span');
+  offLabel.className = 'switch-label';
+  offLabel.textContent = 'Pictures';
+  const setup = doc.createElement('a');
+  setup.className = 'dz-pics-setup';
+  setup.setAttribute('href', SETUP_HREF);
+  setup.setAttribute('data-nav', '');                  // a click closes the gear's popup on its way to the page
+  setup.textContent = 'Set up';
+  off.append(offLabel, setup);
+  el.append(sw.row, off);
+
+  let shown = null;    // the last good answer, as painted: {ready, model}
+  let asked = 0;       // numbers the asks: only the newest answer is painted
+
+  function paint() {
+    el.hidden = !shown;
+    sw.row.hidden = !shown || !shown.ready;
+    off.hidden = !shown || shown.ready;
+    modelEl.textContent = shown && shown.ready ? shown.model : '';
+    modelEl.title = modelEl.textContent;
+  }
+  async function load() {
+    const my = ++asked;
+    let got = null;
+    try {
+      const res = await fetchFn(IMAGES_URL);
+      got = res.ok ? readImages(await res.json()) : null;
+    } catch {
+      got = null;
+    }
+    if (my !== asked || !got) return false;
+    const changed = !shown || shown.ready !== got.ready || (got.ready && shown.model !== got.model);
+    shown = got;
+    if (changed) paint();
+    return changed;
+  }
+
+  paint();
+  return { el, input: sw.input, ready: () => !!shown && shown.ready, load };
 }

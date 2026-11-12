@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { fakeClock } from './helpers/design-clock.mjs';
-import { DID, BID, build, plan, snapshot } from './helpers/design-stage-frames.mjs';
+import { DID, BID, A1, build, plan, agent, snapshot } from './helpers/design-stage-frames.mjs';
 import { mountDesignView } from '../ui/public/design/view.mjs';
 
 const trackDom = useDomRelease(afterEach);
@@ -25,13 +25,14 @@ function reply(status, body) {
 
 /**
  * @param {{detail?: object, detailStatus?: number, createChat?: Function, createAnswer?: [number, object],
- *   promptAnswers?: Array<object|null>, confirmAnswers?: boolean[]}} [o]
- *   `detail` answers `GET /api/design/:id`, `detailStatus` answers it with that error instead; `createAnswer` is what
+ *   promptAnswers?: Array<object|null>, confirmAnswers?: boolean[], pictures?: object[]}} [o]
+ *   `detail` answers `GET /api/design/:id`, `detailStatus` answers it with that error instead; `pictures` answers
+ *   `GET /api/design/<DID>/pictures` (absent: 404); `createAnswer` is what
  *   `POST /api/design` gets instead of its 201. `hold(url)` keeps the next GET of `url` until the returned release
  *   runs; that GET answers what was set when it was asked. The page's prompt resolves `promptAnswers` in order, then
  *   null; with `confirmAnswers` the page has a confirm that resolves them in order. PATCH and DELETE land in `sent`.
  */
-function rig({ detail, detailStatus, createChat, createAnswer, promptAnswers = [], confirmAnswers } = {}) {
+function rig({ detail, detailStatus, createChat, createAnswer, promptAnswers = [], confirmAnswers, pictures } = {}) {
   const clock = fakeClock();
   const dom = trackDom(new JSDOM(`<!doctype html><html><body>
     <nav class="nav"><button type="button" data-nav="design">Design<span class="nav-count n-grey" id="nav-design-count" hidden></span></button></nav>
@@ -85,6 +86,7 @@ function rig({ detail, detailStatus, createChat, createAnswer, promptAnswers = [
       if (detailStatus) return reply(detailStatus, { error: 'Design not found' });
       return reply(200, detail);
     }
+    if (url === `/api/design/${DID}/pictures` && pictures !== undefined) return reply(200, pictures);
     return reply(404, { error: 'not found' });
   }
   const route = [];
@@ -401,4 +403,45 @@ test('the Library\'s first message reaches the new design\'s chat once, as its i
   view.leave();
   await view.show(NEW_ID); await tick();
   assert.equal(made[1].initial, null, 'a second open sends nothing again');
+});
+
+test('pictures: one GET at open and one at hello; a design-picture frame is in the log before the chat hears it', async () => {
+  const seen = [];
+  const createChat = (o) => ({ pushDesignFrame: (fr) => seen.push([fr.type, o.pictures.tally(1).made]), destroy() {} });
+  const row = { id: 1, buildId: BID, round: 1, name: 'a', shape: 'wide', state: 'made', prompt: 'p', file: 'assets/made/a.png', w: 384, h: 256, model: 'm', costUsd: 0.04, ms: 1, reason: null, createdAt: '2026-11-11T10:00:01.000Z' };
+  const { view, tick, gets } = rig({ detail: DETAIL, createChat, pictures: [row] });   // GET …/pictures answers [row]
+  await view.show(DID); await tick();
+  const n = () => gets.filter((u) => u === `/api/design/${DID}/pictures`).length;
+  assert.equal(n(), 1);
+  const { createdAt, ...fields } = row;
+  view.pushFrame({ ...fields, type: 'design-picture', designId: DID, id: 2, name: 'b', file: 'assets/made/b.png' });
+  assert.deepEqual(seen.at(-1), ['design-picture', 2]);
+  view.onHello([], { rebooted: false }); await tick();
+  assert.equal(n(), 2);
+});
+test('pictures: a hello starts the quiet tiles over; a making frame after it stays', async () => {
+  let log = null;
+  const createChat = (o) => { log = o.pictures; return { destroy() {} }; };
+  const { view, tick } = rig({ detail: DETAIL, createChat, pictures: [] });
+  await view.show(DID); await tick();
+  const making = { type: 'design-picture', designId: DID, buildId: BID, round: 1, name: 'a', shape: 'wide', state: 'making', prompt: 'p' };
+  view.pushFrame(making);
+  assert.deepEqual(log.shown(1, { live: true }).map((p) => p.state), ['making']);
+  view.onHello([], { rebooted: false });
+  assert.deepEqual(log.shown(1, { live: true }), [], 'a gap may have missed its finished frame');
+  view.pushFrame({ ...making, name: 'b' }); await tick();
+  assert.deepEqual(log.shown(1, { live: true }).map((p) => p.name), ['b']);
+});
+test('pictures, in the real app: the stage gets the same log, so the Agents popover ends with the round\'s pictures (a row at open, a frame after)', async () => {
+  const row = { id: 1, buildId: BID, round: 1, name: 'a', shape: 'wide', state: 'made', prompt: 'p', file: 'assets/made/a.png', w: 384, h: 256, model: 'm', costUsd: 0.04, ms: 1, reason: null, createdAt: '2026-11-11T10:00:01.000Z' };
+  const { view, q, tick, paint } = rig({ detail: { ...DETAIL, build: ROW }, pictures: [row] });   // no createChat: only the stage reads the log here
+  await view.show(DID); await tick();
+  view.pushFrame(build('building')); view.pushFrame(plan(['hero'])); view.pushFrame(agent(A1, 'writing')); paint();
+  const { createdAt, ...fields } = row;
+  view.pushFrame({ ...fields, type: 'design-picture', designId: DID, id: 2, name: 'b', file: 'assets/made/b.png' });
+  view.stage().showAgent(A1);
+  assert.deepEqual([q('.dz-arow-pics .dz-aact')?.textContent, q('.dz-arow-pics .dz-acost')?.textContent], ['2 made', '$0.08'],
+    'view.mjs hands its picture log to createStage, not only to the chat');
+  view.pushFrame(build('building', { buildId: 'b_000000000002', round: 2, kind: 'change' })); paint();
+  assert.equal(q('.dz-arow-pics .dz-aact')?.textContent, undefined, 'the open popover counts the round on the stage: round 2 made none yet');
 });

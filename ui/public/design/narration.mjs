@@ -1,12 +1,14 @@
 // ui/public/design/narration.mjs — what a build is doing, in sentences, for the Design chat (the stage shows it in
-// pictures). Pure: C-5 frames in, `{live, phase, lines}` out. `phase` is the one sentence for right now (the composer's
-// live line); `lines` are the round's milestones in the order they happened: the plan, each finished or failed section
-// with the summary its agent wrote, the hand-over to integration. Nothing here is stored: a late joiner's
-// `design-snapshot` rebuilds the lines from the section records.
+// pictures). Pure: C-5 frames in, `{live, round, phase, lines}` out. `phase` is the one sentence for right now (the
+// composer's live line, which names the picture being made); `lines` are the round's milestones in the order they
+// happened: the plan, each finished or failed section with the summary its agent wrote, a picture that failed, the
+// hand-over to integration. Nothing here is stored: a late joiner's `design-snapshot` rebuilds the lines from the
+// section records.
 import { KIND_NOUN, LIVE_BUILD, ON_STAGE, agentAction } from './stage-model.mjs';
 
 const KIND_THING = Object.freeze({ web: 'page', presentation: 'deck', pitch: 'deck', video: 'video' });
 const NAMES_MAX = 3;
+const PICTURE_STATES = Object.freeze(['making', 'made', 'failed']);
 const isObject = (v) => typeof v === 'object' && v !== null;
 const text = (v) => (typeof v === 'string' ? v.trim() : '');
 
@@ -23,16 +25,18 @@ const sentence = (s) => (/[.!?…]$/.test(s) ? s : `${s}.`);
 
 /**
  * @param {{designId: string, kind?: string}} o
- * @returns {{push: (frame: object) => void, view: () => {buildId: string|null, live: boolean, phase: string,
- *   lines: {key: string, text: string, tone: ''|'fail'}[]}}}
+ * @returns {{push: (frame: object) => void, view: () => {buildId: string|null, live: boolean, round: number|null,
+ *   phase: string, lines: {key: string, text: string, tone: ''|'fail'}[]}}}
  */
 export function createBuildNarration({ designId, kind = 'web' } = {}) {
   const thing = KIND_THING[kind] ?? 'page';
   const noun = KIND_NOUN[kind] ?? 'section';
   let buildId = null;
   let status = null;
+  let round = null;               // the build's round number, once a frame has said it
   let buildKind = 'first';
   let waiting = 0;
+  let making = new Set();         // the pictures in the making, by name, in the order the asks came (the last is the live line's)
   let order = [];                 // plan section ids, in plan order
   let jobs = new Map();           // section id -> its job (the name the Plan list shows)
   let secs = new Map();           // section id -> {status, summary}
@@ -42,7 +46,9 @@ export function createBuildNarration({ designId, kind = 'web' } = {}) {
   function reset(id) {
     buildId = id;
     status = null;
+    round = null;
     waiting = 0;
+    making = new Set();
     order = [];
     jobs = new Map();
     secs = new Map();
@@ -89,6 +95,7 @@ export function createBuildNarration({ designId, kind = 'web' } = {}) {
     if (f.type === 'design-build') {
       if (f.buildId !== buildId) reset(f.buildId);
       if (typeof f.kind === 'string') buildKind = f.kind;
+      if (Number.isSafeInteger(f.round)) round = f.round;
       if (f.status === 'integrating' && status !== 'integrating') setLine('integrate', `Every ${noun} is in. Putting the ${thing} together.`);
       status = typeof f.status === 'string' ? f.status : status;
       waiting = Number.isSafeInteger(f.waiting) ? f.waiting : 0;
@@ -98,6 +105,7 @@ export function createBuildNarration({ designId, kind = 'web' } = {}) {
       reset(f.buildId);
       if (isObject(f.build)) {
         status = typeof f.build.status === 'string' ? f.build.status : null;
+        round = Number.isSafeInteger(f.build.round) ? f.build.round : null;
         if (typeof f.build.kind === 'string') buildKind = f.build.kind;
         waiting = Number.isSafeInteger(f.build.waiting) ? f.build.waiting : 0;
       }
@@ -117,11 +125,20 @@ export function createBuildNarration({ designId, kind = 'web' } = {}) {
       return;
     }
     if (f.type === 'design-agent' && typeof f.agentId === 'string') agents.set(f.agentId, f);
+    if (f.type === 'design-picture' && typeof f.name === 'string' && f.name && PICTURE_STATES.includes(f.state)) {
+      // A finished ask leaves the live line, with or without its row; a new ask under a name already in the making
+      // becomes the last one. A failure is a line of the round in its own words; a picture made under that name ends it.
+      making.delete(f.name);
+      if (f.state === 'making') making.add(f.name);
+      else if (f.state === 'failed') setLine(`pic:${f.name}`, text(f.reason) ? `${f.name}: ${text(f.reason)}` : `${f.name} failed.`, 'fail');
+      else dropLine(`pic:${f.name}`);
+    }
   }
 
   function phase() {
     if (!LIVE_BUILD.includes(status)) return '';
     if (waiting > 0) return 'The crew is waiting for your answer';
+    if (making.size) return `Making a picture: ${[...making].at(-1)}`;
     const crew = [...agents.values()].filter((a) => ON_STAGE.includes(a.status));
     if (status === 'integrating') return `Putting the ${thing} together`;
     const builders = crew.filter((a) => a.role === 'builder' && a.status !== 'waiting');
@@ -141,6 +158,6 @@ export function createBuildNarration({ designId, kind = 'web' } = {}) {
 
   return {
     push,
-    view: () => ({ buildId, live: LIVE_BUILD.includes(status), phase: phase(), lines: lines.map((l) => ({ ...l })) }),
+    view: () => ({ buildId, live: LIVE_BUILD.includes(status), round, phase: phase(), lines: lines.map((l) => ({ ...l })) }),
   };
 }

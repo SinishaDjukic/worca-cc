@@ -11,6 +11,7 @@ import { checkRows } from './helpers/rows.mjs';
 import { cssRules } from './helpers/css-rules.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 import { tileTime, tileMeta, createLibrary, designMoreMenu, kindWord, titleFromBrief, takeStart } from '../ui/public/design/library.mjs';
+import { createPicturesRow } from '../ui/public/design/composer-settings.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const made = [];
@@ -29,7 +30,9 @@ function reply(status, body) {
 // tick = async () => { clock.tick(250); await flush(); }, so the 200 ms refetch timer fires inside one tick.
 // rows: null makes GET /api/design answer 500, and projects: null GET /api/projects. `created` is the 201 body of POST
 // /api/design; `createError` makes it answer `createStatus` (400 by default) with that error instead.
-function rig({ rows = [], projects = [], created = null, createStatus, createError } = {}) {
+// `images` is the 200 body of GET /api/images (absent: 404; null: 500), read per call: setImages(next) swaps it, and
+// imagesGets() counts those GETs.
+function rig({ rows = [], projects = [], created = null, createStatus, createError, images } = {}) {
   const clock = fakeClock();
   const dom = trackDom(new JSDOM(`<!doctype html><html><body>
     <main class="main"><section class="view" data-view="design"><div id="design-host"></div></section></main>
@@ -39,6 +42,8 @@ function rig({ rows = [], projects = [], created = null, createStatus, createErr
   Object.assign(win, { setTimeout: clock.set, clearTimeout: clock.clear });
   const host = doc.getElementById('design-host');
   let listed = 0;
+  let imagesNow = images;
+  let imagesAsked = 0;
   const posts = [];
   const navs = [];
   async function fetch(url, init = {}) {
@@ -57,6 +62,11 @@ function rig({ rows = [], projects = [], created = null, createStatus, createErr
       return rows === null ? reply(500, { error: 'boom' }) : reply(200, rows);
     }
     if (url === '/api/projects') return projects === null ? reply(500, { error: 'boom' }) : reply(200, { projects });
+    if (url === '/api/images') {
+      imagesAsked += 1;
+      if (imagesNow === null) return reply(500, { error: 'boom' });
+      if (imagesNow !== undefined) return reply(200, imagesNow);
+    }
     return reply(404, { error: 'not found' });
   }
   const lib = createLibrary({ doc, win, host, fetch, navigate: (hash) => { navs.push(hash); }, now: () => NOW });
@@ -84,7 +94,8 @@ function rig({ rows = [], projects = [], created = null, createStatus, createErr
     for (let i = 0; i < 5; i += 1) await flush();
   };
   const tick = async () => { clock.tick(250); await flush(); };
-  return { lib, host, win, doc, clock, tick, gets: () => listed, posts, navs, setText, keydown, pick, addFiles };
+  return { lib, host, win, doc, clock, tick, gets: () => listed, posts, navs, setText, keydown, pick, addFiles,
+    imagesGets: () => imagesAsked, setImages: (next) => { imagesNow = next; } };
 }
 
 const DESIGN = { id: 'd_000000000001', title: 'Apsida landing page', kind: 'web', status: 'done' };
@@ -604,4 +615,64 @@ test('the composer: Send follows the text; a 201 resets it but the kind stays; d
   made.splice(made.indexOf(lib), 1);
   lib.destroy();
   assert.equal(doc.querySelector('.dz-start-menu'), null);
+});
+
+test('Pictures in the gear: the model and a switch when the service is ready; off is sent as off; the next design starts on', async () => {
+  const { host, setText, posts, tick, imagesGets, setImages } = rig({ images: { configured: true, settable: true, keyMissing: false, model: 'gpt-image-2.6-flare' } });
+  await tick();
+  const row = host.querySelector('.dz-set-pop .dz-pics');
+  assert.deepEqual([row.hidden, row.querySelector('.dz-pics-on').hidden, row.querySelector('.dz-pics-off').hidden], [false, false, true]);
+  assert.deepEqual([row.querySelector('.dz-pics-on .switch-label').textContent, row.querySelector('.dz-pics-model').textContent], ['Pictures', 'gpt-image-2.6-flare']);
+  const sw = row.querySelector('.dz-pics-on input[role=switch]');
+  assert.equal(sw.checked, true);
+  sw.click();
+  setText('A pottery studio page'); host.querySelector('.ask-send').click(); await tick();
+  assert.equal(posts.at(-1).body.pictures, false);
+  assert.equal(sw.checked, true, 'reset for the next design');
+  assert.equal(imagesGets(), 1);
+  setImages(null);
+  host.querySelector('.dz-set-btn').click(); await tick();
+  assert.equal(imagesGets(), 2, 'asked again at each open');
+  assert.equal(row.querySelector('.dz-pics-on').hidden, false, 'a 500 keeps the last good answer');
+  const on = rig({ images: { configured: true, settable: true, keyMissing: false, model: 'gpt-image-2.6-flare' } });
+  await on.tick();
+  on.setText('A tea shop page'); on.host.querySelector('.ask-send').click(); await on.tick();
+  assert.equal(on.posts.at(-1).body.pictures, true, 'on is sent as on');
+});
+test('not set up, its key missing, or under the broker: Pictures · Set up leads to the Providers row, no switch, nothing sent', async () => {
+  for (const images of [{ configured: false, settable: true, model: '' }, { configured: false, settable: true, keyMissing: true, model: 'gpt-image-2.6-flare' },
+    { configured: false, settable: false, model: '' }]) {
+    const { host, setText, posts, tick } = rig({ images });
+    await tick();
+    const off = host.querySelector('.dz-pics-off');
+    const a = off.querySelector('a.dz-pics-setup');
+    assert.deepEqual([off.hidden, host.querySelector('.dz-pics-on').hidden, off.querySelector('.switch-label').textContent, a.textContent, a.getAttribute('href'), a.hasAttribute('data-nav')],
+      [false, true, 'Pictures', 'Set up', '#providers/images', true]);
+    setText('A page'); host.querySelector('.ask-send').click(); await tick();
+    assert.equal('pictures' in posts.at(-1).body, false);
+  }
+  const none = rig();
+  await none.tick();
+  assert.equal(none.host.querySelector('.dz-pics').hidden, true, 'no answer: no row');
+});
+test('the Pictures row paints only the newest answer and says when what it shows changed', async () => {
+  const doc = trackDom(new JSDOM('<!doctype html><html><body></body></html>')).window.document;
+  const answers = [];
+  const pics = createPicturesRow({ doc, fetch: () => new Promise((resolve) => { answers.push(resolve); }) });
+  const ready = reply(200, { configured: true, model: 'gpt-image-2.6-flare' });
+  const first = pics.load();
+  const second = pics.load();
+  answers[1](reply(200, { configured: false, model: '' }));
+  assert.equal(await second, true);
+  answers[0](ready);
+  assert.equal(await first, false, 'an answer that is not the newest is dropped');
+  assert.deepEqual([pics.el.hidden, pics.ready(), pics.el.querySelector('.dz-pics-off').hidden], [false, false, false]);
+  const third = pics.load();
+  answers[2](ready);
+  assert.equal(await third, true);
+  const fourth = pics.load();
+  answers[3](ready);
+  assert.equal(await fourth, false, 'the same answer changes nothing');
+  const model = pics.el.querySelector('.dz-pics-model');
+  assert.deepEqual([pics.ready(), model.textContent, model.title], [true, 'gpt-image-2.6-flare', 'gpt-image-2.6-flare']);
 });
