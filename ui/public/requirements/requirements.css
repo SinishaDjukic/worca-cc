@@ -869,7 +869,7 @@ span.req-file-name{color:var(--ink)}
 @media (max-width:600px){.req-who{grid-template-columns:1fr}}
 /* 9c boards 5, 6: what each step ran on, its notices, the code look as a step, a step that could not start, the cost list. */
 .req-step-meta{margin:0 0 0 auto;font-size:12px;color:var(--ink-2);text-align:right}
-.qpanel-head .req-step-meta{flex:1}
+.req-step-meta-head{flex:1}
 .req-step{display:flex;flex-direction:column;gap:6px}
 .req-rounds > :is(.req-round,.req-step) + :is(.req-round,.req-step){margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
 .req-step-look .req-round-n{color:var(--ink);font-size:13px}

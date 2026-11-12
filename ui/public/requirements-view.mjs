@@ -1588,7 +1588,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('button', { type: 'button', class: 'btn btn-primary', onclick: () => post({}) }, 'Submit')];
     const panel = h('div', { class: `qpanel req-q${revise ? ' req-revise' : ''}` },
       h('div', { class: 'qpanel-head' }, h('b', { text: revise ? `Change round ${round.n}` : 'Your turn' }),
-        h('span', { class: 'qcount', text: plural(round.questions.length, 'question') }), stepMetaEl(round.turn)),
+        h('span', { class: 'qcount', text: plural(round.questions.length, 'question') }), stepMetaEl(round.turn, undefined, ' req-step-meta-head')),
       stepNotices(document, round.turn && round.turn.notices),
       round.note ? h('p', { class: 'hint req-q-note', text: round.note }) : null,
       ...round.questions.map((q, i) => {
@@ -1638,9 +1638,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // Earlier rounds: one card, each answered question with its latest answer, a Change per round (D12).
   // The round waiting for answers is the question card instead.
   /** The right-aligned "<model label> on <Harness> · <cost>" of a step; null when nothing is known of it. */
-  function stepMetaEl(item, opts) {
+  function stepMetaEl(item, opts, extra = '') {
     const words = stepMeta(item, opts);
-    return words ? h('span', { class: 'hint req-step-meta', text: words }) : null;
+    return words ? h('span', { class: `hint req-step-meta${extra}`, text: words }) : null;
   }
   /** A look that shows as a row (9c D17): every orientation turn but the ones skipped for the brief, the switch, no git or no repo. */
   const looksAsRow = (t) => t.kind === 'orientation' && !['brief', 'off', 'no-git', 'no-repo'].includes(t.payload && t.payload.skipped);
