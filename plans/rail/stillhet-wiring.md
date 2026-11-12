@@ -237,7 +237,7 @@ Wired in slice 1, each row real:
 |---|---|---|
 | The `rail` flag | `src/shared/flags/registry.mjs` | One experimental flag, off by default; `WORCA_FLAGS=rail` locks it. |
 | The asked-once answer | `onboarding.stillhetAsked` in `settings.json` | Stored when the flag is turned on or No thanks is chosen; undone by setting it false. |
-| The ask switch | `src/core/stillhet.mjs` | Hides the question, the switch and the Labs row until slice 4 turns it on. |
+| The ask switch | `src/core/stillhet.mjs` | Hides the question, the switch and the Labs row until the last slice of feature 3 turns it on, once every area runs on live data. |
 | The Invitation | `ui/public/design-system/components/invitation.mjs` | A ConfirmStrip under the top bar; Try Stillhet sets the flag, No thanks is never asked again. |
 | The Stillhet UI switch | `ui/public/design-system/components/design-switch.mjs` | The top-bar switch, the same setting as Settings › Labs. |
 | The reload | `ui/public/stillhet.mjs` | A change of the flag reloads each open page once, never while text is typed. |

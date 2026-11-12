@@ -1,6 +1,6 @@
 // Stillhet (flag `rail`): the ask switch and the asked-once answer.
 
-/** The internal ask switch. While false, nothing asks about Stillhet. Slice 4 sets it to true. */
+/** The internal ask switch. While false, nothing asks about Stillhet. The last slice of feature 3 sets it to true, once every area runs on live data. */
 export const STILLHET_ASK_ON = false;
 
 /** True when the Stillhet question, the top-bar switch and the Labs row may show. */
