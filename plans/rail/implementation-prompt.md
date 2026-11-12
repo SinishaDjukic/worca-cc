@@ -31,7 +31,7 @@ The concept below, then `docs/rail/`, then the prototype's code. The prototype s
 
 - The public name is Stillhet, behind the flag, opt-in and opt-out. One flag, `rail`, under Labs; every path only sets that flag.
 - On reload from dev, ask an existing user once, in plain words: an evolution of Worca's design system; calm, only what needs you is lit, Chat first; an invitation to test it and report bugs on GitHub (the issues page). Accepting turns the flag on; declining changes nothing and never asks again. New users are asked in onboarding (slice 13).
-- A small switch in the top bar, "Stillhet UI" with a beta chip, is the same setting as Settings › Labs. The question, the switch and the Labs row stay hidden behind an internal ask switch until Chat works (slice 4 turns it on).
+- A small switch in the top bar, "Stillhet UI" with a beta chip, is the same setting as Settings › Labs. The question, the switch and the Labs row stay hidden behind an internal ask switch until every area runs on live data: the last slice of feature 3 turns it on. Until then a person who turns Stillhet on would meet demo figures and "Not connected to Worca yet." in the areas not yet built, so nobody is invited before that.
 - Off means today's app: same behaviour, same data, no migration that cannot be undone. Test both states.
 
 ## The slices
