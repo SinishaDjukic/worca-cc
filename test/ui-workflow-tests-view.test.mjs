@@ -354,3 +354,8 @@ test('U-T14 (F35): testsAddress names the Tests page that shows, and falls back 
   assert.equal(testsAddress({ workflowId: 'wf_g', shown: false, view: 'list' }), '#workflows');
   assert.equal(testsAddress({ workflowId: null, shown: true, view: 'list' }), '#workflows', 'an unsaved canvas');
 });
+
+test('final review UI 3: a running test of one try says "0 of 1 try done", as the progress pill does', () => {
+  const { root } = boot(overview({ running: { runId: 9, title: 'Trying once: Ticket 482', done: 0, total: 1 } }));
+  assert.equal(root.querySelector('.wft-running .wft-latest-title').textContent, 'Trying once: Ticket 482 · 0 of 1 try done');
+});

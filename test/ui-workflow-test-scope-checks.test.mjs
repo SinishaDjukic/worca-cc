@@ -105,7 +105,7 @@ test('board 36: the scope rows with folders and patterns in code; the command\'s
   assert.equal(under.firstChild.textContent, 'Changes only files under src/ and test/');
   assert.deepEqual(texts(byLabel('Leaves these files unchanged'), '.wft-res'), ['Met', 'Met']);
   assert.deepEqual(texts(byLabel('Leaves these files unchanged').firstChild, '.code'), ['test/fixtures/**']);
-  assert.deepEqual(texts(byLabel('Changes at most 6 files'), '.wft-res'), ['3 files', '4 files']);
+  assert.deepEqual(texts(byLabel('Changes at most 6 files'), '.wft-res'), ['3 files · met', '4 files · met']);   // final review UI 7: hidden words
   const why = root.querySelector('.wft-why-cmd');
   assert.equal(why.querySelector('span').textContent.startsWith('Not met for v3 draft: the command ended with an error.'), true);
   const failed = why.querySelector('.wft-failed-line');

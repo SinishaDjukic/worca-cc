@@ -108,7 +108,7 @@ test('U4, board 44: the row reads the choice; met with an error: green dot, its 
     cmdCheck({ met: false, value: '211 passed, 2 failed', metWhy: { why: 'broke', n: 1 } }));
   const row = rowOf(root);
   assert.deepEqual(texts(row.firstChild, '.code'), ['npm test']);
-  assert.deepEqual(texts(row, '.wft-res'), ['212 passed, 1 failed', '211 passed, 2 failed']);
+  assert.deepEqual(texts(row, '.wft-res'), ['212 passed, 1 failed · met', '211 passed, 2 failed · not met']);   // final review UI 7: hidden words
   const [ca, cb] = row.querySelectorAll('.wft-res');
   assert.ok(!ca.classList.contains('is-bad'), 'met: not red, though a test fails');
   assert.ok(ca.querySelector('.wft-dot.ok'), 'met: the green dot');
@@ -202,4 +202,17 @@ test('M3: failing names read but no pass counts: its own true sentence above the
   assert.equal(row.querySelector('.wft-why-cmd .wft-why-col').textContent.startsWith(`Not met for v3 draft:${words}`), true,
     row.querySelector('.wft-why-cmd .wft-why-col').textContent);
   assert.match(row.textContent, /Failed: test_x\.py/);
+});
+
+// Final review UI 7: in "What was checked", met or not met is never shown by colour alone: each cell says it in hidden words.
+test('UI 7: every checked cell says met or not met in words a screen reader reads (the dot is hidden, red is colour)', () => {
+  const root = side(cmdCheck({ met: true, value: '212 passed, 1 failed', metWhy: { why: 'nothing-broke' } }),
+    cmdCheck({ met: false, value: '211 passed, 2 failed', metWhy: { why: 'broke', n: 1 } }));
+  const [ca, cb] = rowOf(root).querySelectorAll('.wft-res');
+  assert.deepEqual([ca.querySelector('.sr-only').textContent, cb.querySelector('.sr-only').textContent], [' · met', ' · not met']);
+  assert.deepEqual([ca.textContent, cb.textContent], ['212 passed, 1 failed · met', '211 passed, 2 failed · not met']);
+  // A value that already says it ("Met", "Not met") needs no second word.
+  const said = side(cmdCheck({ met: true, value: 'Met' }), cmdCheck({ met: false, value: 'Not met' }));
+  const cells = [...rowOf(said).querySelectorAll('.wft-res')];
+  assert.deepEqual(cells.map((c) => [c.textContent, c.querySelector('.sr-only')]), [['Met', null], ['Not met', null]]);
 });

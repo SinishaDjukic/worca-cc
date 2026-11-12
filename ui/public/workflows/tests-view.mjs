@@ -192,7 +192,7 @@ function list(doc, page, o, actions, { root, storage, dateText, now, mock }) {
   if (o.running) {
     const r = btn(doc, null, () => actions.openRun(o.running.runId), 'card wft-latest wft-running');
     const main = el(doc, 'span', 'wft-latest-main');
-    main.append(el(doc, 'span', 'wft-latest-title', `${o.running.title} · ${o.running.done} of ${o.running.total} tries done`),
+    main.append(el(doc, 'span', 'wft-latest-title', `${o.running.title} · ${o.running.done} of ${o.running.total} ${o.running.total === 1 ? 'try' : 'tries'} done`),
       el(doc, 'span', 'hint', 'Worca tells you when the results are ready.'));
     const dot = el(doc, 'span', 'wft-run-dot');   // peach = running (board 26); round: `-dot`
     dot.setAttribute('aria-hidden', 'true');

@@ -285,7 +285,8 @@ export function renderCompare(root, c, actions, { doc, now = Date.now(), mock = 
     row.append(act(doc, root, runId, r.name, () => actions.open(r.id), 'wft-ex-open', `wft-cmp-ex-${r.id}`), pa, pb, cell);
     if (r.luck) {
       const why = el(doc, 'span', 'wft-why');
-      const luck = `Might be luck: only ${Math.max(r.a.total, r.b.total)} tries.`;
+      const most = Math.max(r.a.total, r.b.total);
+      const luck = `Might be luck: only ${most} ${most === 1 ? 'try' : 'tries'}.`;   // final review UI 4: one try each is common
       if (c.run.tries >= MAX_TRIES) why.textContent = luck;   // the most a test tries: the note stays, the button goes
       else {
         why.append(doc.createTextNode(`${luck} `),
@@ -578,6 +579,9 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
     const d = el(doc, 'span', `wft-dot ${it.met ? 'ok' : 'no'}`);
     d.setAttribute('aria-hidden', 'true');
     span.append(d, doc.createTextNode(it.value));
+    // Final review UI 7: met or not met never by colour alone (the dot is hidden, red is colour): hidden words, unless the
+    // value says it already ("Met", "Not met").
+    if (!/^(not )?met\b/i.test(String(it.value ?? ''))) span.append(el(doc, 'span', 'sr-only', it.met ? ' · met' : ' · not met'));
     return span;
   };
   for (const [title, key] of [['Basics', 'basics'], ['Automatic checks', 'checks']]) {

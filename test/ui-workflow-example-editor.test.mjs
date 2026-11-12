@@ -512,3 +512,8 @@ test('F23: the answers dialog tells where to copy the question from and what hap
   assert.equal(doc.querySelector('.mk-dialog-body > .hint').textContent,
     "Copy the question from a past run of this workflow. Case, spacing and punctuation do not matter. If Worca asks something else, the example's choice below decides.");
 });
+
+test('final review UI 6: with no version yet the draft is "your draft" inside the estimate, not "Your draft"', () => {
+  const { root } = boot(example(), { ctx: { draftLabel: 'Your draft' } });
+  assert.equal(root.querySelector('.wft-estimate').textContent, 'About $0.55 a try with your draft, so about $1.65 for this example.');
+});

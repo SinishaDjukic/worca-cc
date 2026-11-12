@@ -232,7 +232,7 @@ test('U3 (board 42): before any try, "What happens in each try" sits under "Befo
   assert.deepEqual([...card.querySelectorAll('.wft-ph')].map((li) => li.className), ['wft-ph', 'wft-ph', 'wft-ph', 'wft-ph'], 'no step done or current');
   assert.equal(card.querySelector('[aria-current]'), null);
   assert.equal(card.querySelectorAll('.sr-only').length, 0, 'nothing said done');
-  assert.equal(card.querySelector(':scope > .hint').textContent, 'Three tries run at once, each in its own copy of the project.');
+  assert.equal(card.querySelector(':scope > .hint').textContent, 'Up to three tries run at once, each in its own copy of the project.');
   // No setup command: no setup step, as in a try.
   const noSetup = paintProgress({ ...p, project: { phases: { ...BEFORE_PHASES, setupCmd: null }, disk: null, setupStop: null } });
   assert.deepEqual(texts(noSetup, '.wft-ph b'), ['Preparing a copy of the project', 'Working', 'Checking']);
@@ -260,7 +260,7 @@ test('U1: a cut test list never makes "no longer run" red, and says it was cut',
   assert.equal(cut.classList.contains('is-bad'), false);
   assert.equal(cut.querySelectorAll('.wft-before-broke').length, 0);
   assert.equal(texts(cut, '.wft-before-row').some((t) => t.startsWith('Tests that no longer run')), false, 'not counted: not said');
-  assert.equal(cut.querySelector(':scope > .hint').textContent, 'Worca read only the first 20,000 tests, so tests that no longer run are not counted.');
+  assert.equal(cut.querySelector(':scope > .hint').textContent, 'There were more than 20,000 tests, so Worca kept only some of their names; tests that no longer run are not counted.');
   const whole = sbs(null, { ...ok, gone: { n: 2, names: ['x', 'y'] }, lostPass: { n: 2 } }).querySelector('.wft-before');
   assert.ok(whole.classList.contains('is-bad'));
   assert.equal(whole.querySelector(':scope > .hint'), null);

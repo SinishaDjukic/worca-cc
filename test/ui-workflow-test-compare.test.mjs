@@ -218,8 +218,9 @@ test('board 6: the example, Try 1–3, what each version wrote, what was checked
   assert.deepEqual(texts(table, '.wft-crow.is-head > span'), ['What was checked', 'v4 · try 2', 'v5 draft · try 2']);
   assert.deepEqual(texts(table, '.wft-crow-grp'), ['Basics', 'Automatic checks']);
   assert.deepEqual([...table.querySelectorAll('.wft-crow:not(.is-head)')].map((r) => [...r.children].map((c) => c.textContent)), [
-    ['Finishes without an error', 'Met', 'Met'], ['Costs at most $1.50', '$0.86', '$0.49'],
-    ['Length is 400 to 900 words', '742 words', '518 words'], [SECTIONS, 'Met', 'Missing Risks']]);
+    // Final review UI 7: a value that does not say met or not met gets hidden words (a screen reader reads them).
+    ['Finishes without an error', 'Met', 'Met'], ['Costs at most $1.50', '$0.86 · met', '$0.49 · met'],
+    ['Length is 400 to 900 words', '742 words · met', '518 words · met'], [SECTIONS, 'Met', 'Missing Risks · not met']]);
   click([...root.querySelectorAll('[role="tab"]')][0]);
   click([...root.querySelectorAll('.wft-outs button')].find((b, i) => i === 1));
   click(root.querySelector('.wft-crumb'));
@@ -601,4 +602,11 @@ test('U-T14 (F52, board UfMockNote): in mock mode the comparison and one example
     assert.ok(notes[0].previousElementSibling.classList.contains('wft-pg-head'), 'right under the title');
     assert.equal(boot(render, data).root.querySelector('.wft-mock-note'), null);
   }
+});
+
+test('final review UI 4: one try on each side that disagree: "Might be luck: only 1 try."', () => {
+  const list = [...tries('a', 1, 'F', 0.5, 1000), ...tries('b', 1, 'P', 0.5, 1000)];
+  const one = boot(renderCompare, compare({ examples: 1, run: { ...compare().run, tries: 1 },
+    model: compareModel({ examples: [{ id: 1, name: 'X' }], a: { label: 'v4' }, b: { label: 'v5 draft' }, tries: list }) }));
+  assert.equal(one.root.querySelector('.wft-why').textContent, 'Might be luck: only 1 try. Try 3 more');
 });

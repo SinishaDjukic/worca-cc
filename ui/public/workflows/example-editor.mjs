@@ -19,7 +19,7 @@ import {
   NOT_ON_BRANCH_TEXT, changesMovesText, FILE_NAME_NEEDED, NO_BRANCHES_TEXT, startNowText, startWillBeText, PICK_BRANCH_FIRST, BRANCHES_UNREAD_TEXT,
   START_NOT_MOVED_TEXT, LATEST_BUSY_TEXT, FILE_IN_PROJECT_LABEL, DISK_TITLE, DISK_KEY, diskRow, FOLDERS_LABEL, FOLDERS_HINT, FILES_LABEL, FILES_HINT_LEAD,
   FILES_HINT_CODE, FILES_HINT_REST, MOST_FILES_LABEL, MOST_FILES_HINT, MET_WHEN_LEGEND, MET_WHEN_PASSES, MET_WHEN_PASSES_SUB, MET_WHEN_NOTHING,
-  MET_WHEN_NOTHING_SUB, MET_WHEN_HINT,
+  MET_WHEN_NOTHING_SUB, MET_WHEN_HINT, inSentence,
 } from '../../../src/shared/workflow-tests/project-text.mjs';
 
 export const BLANK_EXAMPLE = Object.freeze({
@@ -704,7 +704,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   const known = typeof perTryUsd === 'number' && Number.isFinite(perTryUsd);
   const paintEst = () => {
     est.textContent = known
-      ? `About ${fmtUsd(perTryUsd)} a try with ${draftLabel}, so about ${fmtUsd(perTryUsd * draft.tries)} for this example.`
+      ? `About ${fmtUsd(perTryUsd)} a try with ${inSentence(draftLabel)}, so about ${fmtUsd(perTryUsd * draft.tries)} for this example.`   // final review UI 6: "your draft" mid-sentence
       : 'Worca does not know the cost of a try yet: it learns it from the first tries.';   // C12
   };
   const c4 = card(doc, '3. How many tries', 'wft-c4-h', 'AI can answer differently each time. More tries give a surer result, and cost more.', 'wft-c4');

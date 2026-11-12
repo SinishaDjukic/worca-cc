@@ -297,7 +297,8 @@ export const FAILURES_ONLY_NOTE = 'This test tool names only the tests that fail
 export const EXIT_ONLY_NOTE = "Worca could not read test names in this command's output, so it compares only whether the command passed.";
 export const passedCountsText = (b, a) => `Passed: ${b} before, ${a} now`;
 export const skippedCountsText = (b, a) => `Skipped: ${b} before, ${a} now`;   // red when more are skipped now ('more-skipped')
-export const TESTS_CUT_NOTE = 'Worca read only the first 20,000 tests, so tests that no longer run are not counted.';   // MAX_TESTS, test-output.mjs
+// MAX_TESTS, test-output.mjs: past it, a failure takes a kept pass or skip's place, so the kept names are not the first ones.
+export const TESTS_CUT_NOTE = 'There were more than 20,000 tests, so Worca kept only some of their names; tests that no longer run are not counted.';
 export const addedRest = (failing) => (failing ? `, ${failing} failing` : '');   // U1: after the bold count
 export const addedText = (n, failing) => `${n}${addedRest(failing)}`;
 export const moreNamesText = (n) => `and ${n} more`;
@@ -314,7 +315,8 @@ export const BEFORE_NOW_TITLE = 'Before the tries';
 export const BEFORE_NOW_LEAD = 'Running ';
 export const beforeNowRest = (b) => ` on the start point of ${b.exampleName} · ${b.n} of ${b.of}`;
 export const BEFORE_PHASE = Object.freeze({ copy: 'Preparing a copy of the project', setup: 'Running setup', command: 'Running the command' });
-export const PHASES_BEFORE_HINT = 'Three tries run at once, each in its own copy of the project.';   // board 42: the steps, before any try
+// Board 42: the steps, before any try. Final review UI 5: "Up to", true for a test of one or two tries and as P29 says it.
+export const PHASES_BEFORE_HINT = 'Up to three tries run at once, each in its own copy of the project.';
 export const BEFORE_NOW_WHY = 'Worca runs the tests once on the project as it was, so it can tell later which tests a version fixed or broke. This uses no AI.';
 // P45: board 36's "Failed: <file> · "<test>"" line.
 export const FAILED_LEAD = 'Failed: ';
