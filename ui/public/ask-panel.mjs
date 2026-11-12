@@ -36,6 +36,7 @@ import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
 import { keepFocus } from './chat/keep-focus.mjs';
+import { buildChatMessage, repaintRunQuestion } from './chat/chat-message.mjs';
 import { flagOn } from './flags.mjs';
 import { mountChatsColumn } from './chats-column.mjs';
 import { CHATS_PAGE } from './chats-list.mjs';
@@ -207,7 +208,7 @@ const HISTORY_KEY = 'worca-cc.chat.history';
 const HISTORY_OPEN_MIN_W = 1600;
 const HISTORY_OVERLAY_BELOW = 1100;
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null, paintRunQuestion = null }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
   const st = {
     open: false,
@@ -287,6 +288,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     voiceSwallowClick: false, // the click that ends a long-press must not also start dictation
     lastAnswerRender: 0,
     rowEls: null,
+    chatRecEls: null,   // cross-chat slice 2: a run question record by block id, kept while the block is unchanged
     seenRows: new Set(),      // #959: message ids this page has shown, in ANY chat (ids are unique): only a row never shown rises — see renderTranscript
     cardEls: null,
     cardOptions: null,
@@ -2153,6 +2155,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       onRename: (r) => { void renameThread(r); }, onDelete: (r) => { void deleteThread({ id: r.id, title: r.title }); },
       onHelp: (opener) => openChatKeys(opener),
       flagOn: (k) => flagOn(k, doc), confirm: (o) => confirm(o), requestRefresh: () => scheduleThreadsRefresh(),
+      canCopyId: () => st.host !== 'dock',          // D21: the Chat page only, not the side column
       // #948 s3: Delete group removed these chats; the open one goes home, as a deleted chat does (deleteThread).
       onChatsGone: (ids) => {
         for (const id of ids) { if (readStoredThread() === id) storeThread(null); st.askedIn.delete(id); st.queues.delete(id); }
@@ -3532,6 +3535,28 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const pill = make('span', 'extra-pill ask-attachment-pill');
     pill.appendChild(make('span', 'extra-pill-name', b.name || '(attachment)'));
     return pill;
+  }
+
+  /** Cross-chat messaging: one chat-message record. Its chat id goes to the ref chips as plain text, as an answer's
+   *  bare ask_ id does: a chat this person can open becomes its chip showing its current title (its id while
+   *  untitled); an unknown or deleted chat keeps the id. */
+  function buildChatRecord(b) {
+    // Slice 2: a run question's record holds the Runs page's answer form. It is kept while the block is unchanged (in
+    // practice: while question.state is), so a row rebuild never drops a half-typed free-text answer.
+    const runQ = b.from?.kind === 'run' && b.question && typeof b.question === 'object';
+    const key = runQ ? shownKeyOf(b) : null;
+    if (!st.chatRecEls) st.chatRecEls = new Map();
+    const hit = runQ ? st.chatRecEls.get(b.id) : null;
+    if (hit && hit.key === key) return hit.el;
+    const rec = buildChatMessage(doc, b, { paintRunQuestion });
+    const head = rec.querySelector('.ask-chat-msg-head');
+    const chip = head && head.querySelector('a.ask-chat-msg-chip');
+    if (chip && chip.textContent) {
+      chip.replaceWith(doc.createTextNode(chip.textContent));
+      refChips.decorate(head, { live: false, chatIdLabel: true });
+    }
+    if (runQ) st.chatRecEls.set(b.id, { el: rec, key });
+    return rec;
   }
 
   function buildNotice(b) {
@@ -6523,9 +6548,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       else if (t >= entry.nextHydrateAt) hydrateProgress(entry);                            // a run this tab gets no frames for
     }
   }
+  /** Slice 2: run question records still showing "Open run" retry the form (their question frame came after them). */
+  function repaintRunQuestions() {
+    if (!paintRunQuestion || !st.chatRecEls || !st.chatRecEls.size) return;
+    for (const { el: rec } of st.chatRecEls.values()) if (rec.isConnected) repaintRunQuestion(rec, paintRunQuestion);
+  }
   if (runStore && typeof runStore.subscribe === 'function') {
     st.runUnsub = runStore.subscribe((runId, type) => {
-      if (st.destroyed || type === 'log' || !st.progress || !st.progress.size) return;
+      if (st.destroyed || type === 'log') return;
+      repaintRunQuestions();
+      if (!st.progress || !st.progress.size) return;
       st.runPoked = true;
       if (st.open) scheduleFlush();
     });
@@ -6952,8 +6984,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       }
     } else if (row.role === 'system') {
       // Notices and dividers — and a card worca posted out of turn (a PR fix run's progress card, ui/server.mjs askPrFixRun).
-      const shown = (row.blocks || []).filter((b) => b && (b.kind === 'notice' || b.kind === 'divider' || b.kind === 'card'));
-      if (shown.length) for (const b of shown) wrap.appendChild(b.kind === 'card' ? buildCard(b) : b.kind === 'divider' ? buildDivider(b) : buildNotice(b));
+      // Cross-chat messaging: a message from or to another chat is its own record (never the row's body-free text).
+      const shown = (row.blocks || []).filter((b) => b && (b.kind === 'notice' || b.kind === 'divider' || b.kind === 'card' || b.kind === 'chat-message'));
+      if (shown.length) for (const b of shown) wrap.appendChild(b.kind === 'chat-message' ? buildChatRecord(b) : b.kind === 'card' ? buildCard(b) : b.kind === 'divider' ? buildDivider(b) : buildNotice(b));
       else wrap.appendChild(buildNotice({ text: row.text }));
     } else {
       const activity = buildActivity(row);
@@ -7134,6 +7167,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const keep = new Set();
     if (st.model) for (const row of st.model.messages()) for (const b of row.blocks || []) if (b && b.kind === 'card' && b.id != null) keep.add(b.id);
     pruneCardEls(keep);
+    if (st.chatRecEls) {
+      const recs = new Set();
+      if (st.model) for (const row of st.model.messages()) for (const b of row.blocks || []) if (b && b.kind === 'chat-message') recs.add(b.id);
+      for (const id of [...st.chatRecEls.keys()]) if (!recs.has(id)) st.chatRecEls.delete(id);
+    }
     const prev = st.rowEls || new Map();
     st.rowEls = new Map();
     const col = el.transcriptCol;
@@ -7366,6 +7404,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function pushServerFrame(frame) {
     if (st.destroyed || !frame) return;
     if (chatsCol) chatsCol.onFrame(frame);   // #948 s2: before the ask-command branch below returns
+    // A chat's title changed (a rename, a first auto-title) or chats were removed: chat chips naming them ask again.
+    if (frame.type === 'ask-title' && typeof frame.threadId === 'string') refChips.refresh([`chat:${frame.threadId}`]);
+    if (frame.type === 'ask-history-cleared') refChips.refresh(Array.isArray(frame.threadIds) ? frame.threadIds.map((id) => `chat:${id}`) : null);
     if (frame.type === 'ask-history-cleared') {
       // The chats it removed (every one when it names none) leave the "asked in" set, and a Chat row dot lit for one
       // of them goes out: the Chat row never routes to a deleted chat.

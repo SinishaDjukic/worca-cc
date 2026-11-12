@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields } from '../ui/public/chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, renderCrossChatToggle, collectCrossChatToggle } from '../ui/public/chat-settings-view.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
@@ -71,6 +71,22 @@ test('chat settings render and round-trip, including the Chat script toggle', as
       off.querySelector('input#askScriptTools').checked = true;
       assert.deepEqual(collectScriptToolsToggle(off), { scriptTools: true });
       assert.deepEqual(collectScriptToolsToggle(doc.createElement('div')), { scriptTools: true }, 'a host with no control means ON');
+    } },
+    { name: 'cross chat switch renders on by default and collects a boolean', run: () => {
+      const off = renderCrossChatToggle({ prefs: { crossChat: false } }, { doc });
+      const cb = off.querySelector('input#askCrossChat');
+      assert.equal(cb.checked, false, 'a stored false is OFF');
+      assert.equal(renderCrossChatToggle({ prefs: {} }, { doc }).querySelector('input#askCrossChat').checked, true, 'an absent pref is ON (slice 3 D14)');
+      assert.ok(off.querySelector('label.switch-row input.sw-input.ask-cross-chat'), 'a switch row holding the input');
+      assert.ok(off.querySelector('small.hint.drow-help'), 'the hint line under the switch');
+      assert.match(off.textContent, /Messages between chats/);
+      assert.match(off.textContent, /Lets your chats' assistants send messages to each other\. Incoming messages are shown as untrusted and never run tools on their own\./);
+      assert.deepEqual(collectCrossChatToggle(off), { crossChat: false });
+      cb.checked = true;
+      assert.deepEqual(collectCrossChatToggle(off), { crossChat: true });
+      const on = renderCrossChatToggle({ prefs: { crossChat: true } }, { doc });
+      assert.equal(on.querySelector('input#askCrossChat').checked, true);
+      assert.deepEqual(collectCrossChatToggle(doc.createElement('div')), {}, 'a host with no control sends nothing');
     } },
     { name: 'the Chat suggestions toggle: default on, explicit off honored, round-trips', run: () => {
       const on = renderSuggestionsToggle({ prefs: {} }, { doc });

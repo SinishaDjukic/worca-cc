@@ -85,6 +85,7 @@ test('check: every refusal is the Settings page\'s own words, or names why the c
     ['theme neon', { id: 'theme', value: 'neon' }, /theme must be system, light or dark/],
     ['root is excluded', { id: 'root', value: '/x' }, /root is not changed from the chat: folders widen what can be browsed/],
     ['askWeb is the chat\'s own power', { id: 'askWeb.enabled', value: true }, /not changed from the chat: the chat's own powers are only the user's to grant/],
+    ['chat.crossChat is excluded', { id: 'chat.crossChat', value: true }, /not changed from the chat: the chat's own powers are only the user's to grant/],
     ['unknown id', { id: 'bogus', value: 1 }, /unknown setting "bogus"/],
     ['project scope needs a project', { id: 'askMaxTurns', scope: 'project', value: 5 }, /scope "project" needs projectKey/],
     ['unknown project', { id: 'askMaxTurns', scope: 'project', projectKey: 'nope-00000000', value: 5 }, /unknown project "nope-00000000"/],

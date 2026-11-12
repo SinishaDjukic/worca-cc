@@ -155,6 +155,37 @@ test('PATCH title: renames within 120 chars; empty, unknown and a PATCH naming n
   ]);
 });
 
+test('PATCH title broadcasts ask-title with the thread id; a model-only PATCH and a refused PATCH broadcast none', async () => {
+  const msgs = [];
+  const ws = new WebSocket(wsBase, { headers: { host: '127.0.0.1', origin: 'http://127.0.0.1' } });
+  ws.on('message', (d) => { try { msgs.push(JSON.parse(String(d))); } catch { /* ignore */ } });
+  await new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); });
+  try {
+    const { thread } = await (await post('/api/ask/threads', {})).json();
+    const r400 = await patch(`/api/ask/threads/${thread.id}`, { title: '' });
+    assert.equal(r400.status, 400);
+    await r400.json();
+    const rMode = await patch(`/api/ask/threads/${thread.id}`, { agentMode: false });
+    assert.equal(rMode.status, 200);
+    await rMode.json();
+    const r404 = await patch('/api/ask/threads/ask_fffffff0', { title: 'Ghost' });
+    assert.equal(r404.status, 404);
+    await r404.json();
+    const ok = await patch(`/api/ask/threads/${thread.id}`, { title: '  Renamed ' });
+    assert.equal(ok.status, 200);
+    assert.equal((await ok.json()).thread.title, 'Renamed', 'the response is unchanged');
+    const isTitle = (m) => m.type === 'ask-title' && m.threadId === thread.id;
+    const deadline = Date.now() + 5000;
+    while (!msgs.some(isTitle) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+    const frames = msgs.filter(isTitle);
+    assert.equal(frames.length, 1, 'only the title PATCH broadcast, once');
+    assert.deepEqual({ type: frames[0].type, threadId: frames[0].threadId, title: frames[0].title }, { type: 'ask-title', threadId: thread.id, title: 'Renamed' });
+    assert.ok(!msgs.some((m) => m.type === 'ask-title' && m.threadId === 'ask_fffffff0'), 'an unknown id broadcasts nothing');
+  } finally {
+    ws.close();
+  }
+});
+
 test('#397 scope: PATCH pins/clears, a message inherits the pin per field, and both drop projectSource with the target keys', async () => {
   await checkRows([
     { name: '#397 PATCH scope: pin project/workspace, No project clears the target, invalid shapes rejected', run: async () => {

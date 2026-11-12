@@ -1,0 +1,2736 @@
+{
+  "experiment": "e2",
+  "quick": false,
+  "env": {
+    "node": "v26.0.0",
+    "os": "darwin 24.6.0",
+    "cpu": "Apple M3 Pro",
+    "cpus": 12
+  },
+  "method": "tokens = ceil(utf8 bytes / 4) of the exact injected text; mcp-poll also counts the request JSON",
+  "durationMs": 10731,
+  "summary": {
+    "e2.calls": 40,
+    "e2.bodyChars": 200,
+    "e2.none.hook.totalBytes": 0,
+    "e2.none.hook.totalTokens": 0,
+    "e2.none.mcp-poll.totalBytes": 2160,
+    "e2.none.mcp-poll.totalTokens": 560,
+    "e2.none.step-start.totalBytes": 0,
+    "e2.none.step-start.totalTokens": 0,
+    "e2.one.hook.totalBytes": 345,
+    "e2.one.hook.totalTokens": 87,
+    "e2.one.hook.headerOverheadTokens": 37,
+    "e2.one.hook.maxDelayCalls": 0,
+    "e2.one.mcp-poll.totalBytes": 2485,
+    "e2.one.mcp-poll.totalTokens": 642,
+    "e2.one.step-start.totalBytes": 345,
+    "e2.one.step-start.totalTokens": 87,
+    "e2.one.step-start.maxDelayCalls": 31,
+    "e2.burst.hook.totalBytes": 2967,
+    "e2.burst.hook.totalTokens": 743,
+    "e2.burst.hook.headerOverheadTokens": 24.3,
+    "e2.burst.hook.maxDelayCalls": 1,
+    "e2.burst.mcp-poll.totalBytes": 5005,
+    "e2.burst.mcp-poll.totalTokens": 1272,
+    "e2.burst.step-start.totalBytes": 2865,
+    "e2.burst.step-start.totalTokens": 717,
+    "e2.burst.step-start.maxDelayCalls": 21,
+    "e2.steady.hook.totalBytes": 2760,
+    "e2.steady.hook.totalTokens": 696,
+    "e2.steady.hook.headerOverheadTokens": 37,
+    "e2.steady.hook.maxDelayCalls": 0,
+    "e2.steady.mcp-poll.totalBytes": 4760,
+    "e2.steady.mcp-poll.totalTokens": 1216,
+    "e2.steady.step-start.totalBytes": 2305,
+    "e2.steady.step-start.totalTokens": 577,
+    "e2.steady.step-start.maxDelayCalls": 36,
+    "e2.none.hook.maxBytesPerCall": 0,
+    "e2.burst.hook.idsPublished": 10,
+    "e2.burst.hook.idsDelivered": 10,
+    "e2.burst.hook.allDelivered": true,
+    "e2.burst.hook.maxShowsPerId": 1,
+    "e2.hook.p50Ms": 64.39,
+    "e2.hook.p99Ms": 72.41
+  },
+  "runs": [
+    {
+      "schedule": "none",
+      "mode": "hook",
+      "calls": 40,
+      "messages": 0,
+      "totalBytes": 0,
+      "totalChars": 0,
+      "totalTokens": 0,
+      "maxBytesPerCall": 0,
+      "headerOverheadTokens": null,
+      "idsPublished": 0,
+      "idsDelivered": 0,
+      "maxShowsPerId": 0,
+      "maxDelayCalls": 0,
+      "perCall": [
+        {
+          "call": 1,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 2,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 3,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 4,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 5,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 6,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 7,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 8,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 9,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 10,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 11,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 12,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 13,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 14,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 15,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 16,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 17,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 18,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 19,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 20,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 21,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 22,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 23,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 24,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 25,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 26,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 27,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 28,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 29,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 30,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 31,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 32,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 33,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 34,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 35,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 36,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 37,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 38,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 39,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 40,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        }
+      ],
+      "hookMsP50": 62.516357421875
+    },
+    {
+      "schedule": "none",
+      "mode": "mcp-poll",
+      "calls": 40,
+      "messages": 0,
+      "totalBytes": 2160,
+      "totalChars": 800,
+      "totalTokens": 560,
+      "maxBytesPerCall": 54,
+      "headerOverheadTokens": null,
+      "idsPublished": 0,
+      "idsDelivered": 0,
+      "maxShowsPerId": 0,
+      "maxDelayCalls": 0,
+      "perCall": [
+        {
+          "call": 1,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 2,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 3,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 4,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 5,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 6,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 7,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 8,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 9,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 10,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 11,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 12,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 13,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 14,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 15,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 16,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 17,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 18,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 19,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 20,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 21,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 22,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 23,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 24,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 25,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 26,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 27,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 28,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 29,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 30,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 31,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 32,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 33,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 34,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 35,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 36,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 37,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 38,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 39,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 40,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        }
+      ],
+      "hookMsP50": null
+    },
+    {
+      "schedule": "none",
+      "mode": "step-start",
+      "calls": 2,
+      "messages": 0,
+      "totalBytes": 0,
+      "totalChars": 0,
+      "totalTokens": 0,
+      "maxBytesPerCall": 0,
+      "headerOverheadTokens": null,
+      "idsPublished": 0,
+      "idsDelivered": 0,
+      "maxShowsPerId": 0,
+      "maxDelayCalls": 0,
+      "perCall": [
+        {
+          "call": 0,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 41,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        }
+      ],
+      "hookMsP50": null
+    },
+    {
+      "schedule": "one",
+      "mode": "hook",
+      "calls": 40,
+      "messages": 1,
+      "totalBytes": 345,
+      "totalChars": 345,
+      "totalTokens": 87,
+      "maxBytesPerCall": 345,
+      "headerOverheadTokens": 37,
+      "idsPublished": 1,
+      "idsDelivered": 1,
+      "maxShowsPerId": 1,
+      "maxDelayCalls": 0,
+      "perCall": [
+        {
+          "call": 1,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 2,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 3,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 4,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 5,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 6,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 7,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 8,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 9,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 10,
+          "bytes": 345,
+          "chars": 345,
+          "tokens": 87,
+          "ids": 1
+        },
+        {
+          "call": 11,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 12,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 13,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 14,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 15,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 16,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 17,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 18,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 19,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 20,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 21,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 22,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 23,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 24,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 25,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 26,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 27,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 28,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 29,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 30,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 31,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 32,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 33,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 34,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 35,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 36,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 37,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 38,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 39,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 40,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        }
+      ],
+      "hookMsP50": 63.54638671875
+    },
+    {
+      "schedule": "one",
+      "mode": "mcp-poll",
+      "calls": 40,
+      "messages": 1,
+      "totalBytes": 2485,
+      "totalChars": 1125,
+      "totalTokens": 642,
+      "maxBytesPerCall": 379,
+      "headerOverheadTokens": null,
+      "idsPublished": 1,
+      "idsDelivered": 1,
+      "maxShowsPerId": 1,
+      "maxDelayCalls": 0,
+      "perCall": [
+        {
+          "call": 1,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 2,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 3,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 4,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 5,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 6,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 7,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 8,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 9,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 10,
+          "bytes": 379,
+          "chars": 345,
+          "tokens": 96,
+          "ids": 1
+        },
+        {
+          "call": 11,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 12,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 13,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 14,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 15,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 16,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 17,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 18,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 19,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 20,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 21,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 22,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 23,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 24,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 25,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 26,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 27,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 28,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 29,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 30,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 31,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 32,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 33,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 34,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 35,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 36,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 37,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 38,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 39,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 40,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        }
+      ],
+      "hookMsP50": null
+    },
+    {
+      "schedule": "one",
+      "mode": "step-start",
+      "calls": 2,
+      "messages": 1,
+      "totalBytes": 345,
+      "totalChars": 345,
+      "totalTokens": 87,
+      "maxBytesPerCall": 345,
+      "headerOverheadTokens": 37,
+      "idsPublished": 1,
+      "idsDelivered": 1,
+      "maxShowsPerId": 1,
+      "maxDelayCalls": 31,
+      "perCall": [
+        {
+          "call": 0,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 41,
+          "bytes": 345,
+          "chars": 345,
+          "tokens": 87,
+          "ids": 1
+        }
+      ],
+      "hookMsP50": null
+    },
+    {
+      "schedule": "burst",
+      "mode": "hook",
+      "calls": 40,
+      "messages": 10,
+      "totalBytes": 2967,
+      "totalChars": 2967,
+      "totalTokens": 743,
+      "maxBytesPerCall": 1782,
+      "headerOverheadTokens": 24.3,
+      "idsPublished": 10,
+      "idsDelivered": 10,
+      "maxShowsPerId": 1,
+      "maxDelayCalls": 1,
+      "perCall": [
+        {
+          "call": 1,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 2,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 3,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 4,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 5,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 6,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 7,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 8,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 9,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 10,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 11,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 12,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 13,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 14,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 15,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 16,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 17,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 18,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 19,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 20,
+          "bytes": 1782,
+          "chars": 1782,
+          "tokens": 446,
+          "ids": 6
+        },
+        {
+          "call": 21,
+          "bytes": 1185,
+          "chars": 1185,
+          "tokens": 297,
+          "ids": 4
+        },
+        {
+          "call": 22,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 23,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 24,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 25,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 26,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 27,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 28,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 29,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 30,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 31,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 32,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 33,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 34,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 35,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 36,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 37,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 38,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 39,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 40,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        }
+      ],
+      "hookMsP50": 65.9833984375
+    },
+    {
+      "schedule": "burst",
+      "mode": "mcp-poll",
+      "calls": 40,
+      "messages": 10,
+      "totalBytes": 5005,
+      "totalChars": 3645,
+      "totalTokens": 1272,
+      "maxBytesPerCall": 2899,
+      "headerOverheadTokens": null,
+      "idsPublished": 10,
+      "idsDelivered": 10,
+      "maxShowsPerId": 1,
+      "maxDelayCalls": 0,
+      "perCall": [
+        {
+          "call": 1,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 2,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 3,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 4,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 5,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 6,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 7,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 8,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 9,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 10,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 11,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 12,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 13,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 14,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 15,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 16,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 17,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 18,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 19,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 20,
+          "bytes": 2899,
+          "chars": 2865,
+          "tokens": 726,
+          "ids": 10
+        },
+        {
+          "call": 21,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 22,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 23,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 24,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 25,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 26,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 27,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 28,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 29,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 30,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 31,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 32,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 33,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 34,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 35,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 36,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 37,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 38,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 39,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 40,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        }
+      ],
+      "hookMsP50": null
+    },
+    {
+      "schedule": "burst",
+      "mode": "step-start",
+      "calls": 2,
+      "messages": 10,
+      "totalBytes": 2865,
+      "totalChars": 2865,
+      "totalTokens": 717,
+      "maxBytesPerCall": 2865,
+      "headerOverheadTokens": 21.7,
+      "idsPublished": 10,
+      "idsDelivered": 10,
+      "maxShowsPerId": 1,
+      "maxDelayCalls": 21,
+      "perCall": [
+        {
+          "call": 0,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 41,
+          "bytes": 2865,
+          "chars": 2865,
+          "tokens": 717,
+          "ids": 10
+        }
+      ],
+      "hookMsP50": null
+    },
+    {
+      "schedule": "steady",
+      "mode": "hook",
+      "calls": 40,
+      "messages": 8,
+      "totalBytes": 2760,
+      "totalChars": 2760,
+      "totalTokens": 696,
+      "maxBytesPerCall": 345,
+      "headerOverheadTokens": 37,
+      "idsPublished": 8,
+      "idsDelivered": 8,
+      "maxShowsPerId": 1,
+      "maxDelayCalls": 0,
+      "perCall": [
+        {
+          "call": 1,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 2,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 3,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 4,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 5,
+          "bytes": 345,
+          "chars": 345,
+          "tokens": 87,
+          "ids": 1
+        },
+        {
+          "call": 6,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 7,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 8,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 9,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 10,
+          "bytes": 345,
+          "chars": 345,
+          "tokens": 87,
+          "ids": 1
+        },
+        {
+          "call": 11,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 12,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 13,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 14,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 15,
+          "bytes": 345,
+          "chars": 345,
+          "tokens": 87,
+          "ids": 1
+        },
+        {
+          "call": 16,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 17,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 18,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 19,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 20,
+          "bytes": 345,
+          "chars": 345,
+          "tokens": 87,
+          "ids": 1
+        },
+        {
+          "call": 21,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 22,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 23,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 24,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 25,
+          "bytes": 345,
+          "chars": 345,
+          "tokens": 87,
+          "ids": 1
+        },
+        {
+          "call": 26,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 27,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 28,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 29,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 30,
+          "bytes": 345,
+          "chars": 345,
+          "tokens": 87,
+          "ids": 1
+        },
+        {
+          "call": 31,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 32,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 33,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 34,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 35,
+          "bytes": 345,
+          "chars": 345,
+          "tokens": 87,
+          "ids": 1
+        },
+        {
+          "call": 36,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 37,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 38,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 39,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 40,
+          "bytes": 345,
+          "chars": 345,
+          "tokens": 87,
+          "ids": 1
+        }
+      ],
+      "hookMsP50": 67.625732421875
+    },
+    {
+      "schedule": "steady",
+      "mode": "mcp-poll",
+      "calls": 40,
+      "messages": 8,
+      "totalBytes": 4760,
+      "totalChars": 3400,
+      "totalTokens": 1216,
+      "maxBytesPerCall": 379,
+      "headerOverheadTokens": null,
+      "idsPublished": 8,
+      "idsDelivered": 8,
+      "maxShowsPerId": 1,
+      "maxDelayCalls": 0,
+      "perCall": [
+        {
+          "call": 1,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 2,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 3,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 4,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 5,
+          "bytes": 379,
+          "chars": 345,
+          "tokens": 96,
+          "ids": 1
+        },
+        {
+          "call": 6,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 7,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 8,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 9,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 10,
+          "bytes": 379,
+          "chars": 345,
+          "tokens": 96,
+          "ids": 1
+        },
+        {
+          "call": 11,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 12,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 13,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 14,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 15,
+          "bytes": 379,
+          "chars": 345,
+          "tokens": 96,
+          "ids": 1
+        },
+        {
+          "call": 16,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 17,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 18,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 19,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 20,
+          "bytes": 379,
+          "chars": 345,
+          "tokens": 96,
+          "ids": 1
+        },
+        {
+          "call": 21,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 22,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 23,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 24,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 25,
+          "bytes": 379,
+          "chars": 345,
+          "tokens": 96,
+          "ids": 1
+        },
+        {
+          "call": 26,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 27,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 28,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 29,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 30,
+          "bytes": 379,
+          "chars": 345,
+          "tokens": 96,
+          "ids": 1
+        },
+        {
+          "call": 31,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 32,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 33,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 34,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 35,
+          "bytes": 379,
+          "chars": 345,
+          "tokens": 96,
+          "ids": 1
+        },
+        {
+          "call": 36,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 37,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 38,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 39,
+          "bytes": 54,
+          "chars": 20,
+          "tokens": 14,
+          "ids": 0
+        },
+        {
+          "call": 40,
+          "bytes": 379,
+          "chars": 345,
+          "tokens": 96,
+          "ids": 1
+        }
+      ],
+      "hookMsP50": null
+    },
+    {
+      "schedule": "steady",
+      "mode": "step-start",
+      "calls": 2,
+      "messages": 8,
+      "totalBytes": 2305,
+      "totalChars": 2305,
+      "totalTokens": 577,
+      "maxBytesPerCall": 2305,
+      "headerOverheadTokens": 22.125,
+      "idsPublished": 8,
+      "idsDelivered": 8,
+      "maxShowsPerId": 1,
+      "maxDelayCalls": 36,
+      "perCall": [
+        {
+          "call": 0,
+          "bytes": 0,
+          "chars": 0,
+          "tokens": 0,
+          "ids": 0
+        },
+        {
+          "call": 41,
+          "bytes": 2305,
+          "chars": 2305,
+          "tokens": 577,
+          "ids": 8
+        }
+      ],
+      "hookMsP50": null
+    }
+  ],
+  "pids": [
+    62746,
+    62748,
+    62751,
+    62752,
+    62753,
+    62754,
+    62755,
+    62756,
+    62757,
+    62758,
+    62759,
+    62760,
+    62761,
+    62762,
+    62763,
+    62764,
+    62765,
+    62766,
+    62767,
+    62768,
+    62771,
+    62772,
+    62773,
+    62774,
+    62775,
+    62776,
+    62777,
+    62778,
+    62780,
+    62782,
+    62783,
+    62784,
+    62785,
+    62786,
+    62788,
+    62789,
+    62790,
+    62791,
+    62792,
+    62793,
+    62794,
+    62795,
+    62796,
+    62797,
+    62798,
+    62799,
+    62800,
+    62802,
+    62812,
+    62814,
+    62815,
+    62816,
+    62817,
+    62818,
+    62819,
+    62822,
+    62823,
+    62824,
+    62825,
+    62826,
+    62828,
+    62830,
+    62831,
+    62832,
+    62833,
+    62834,
+    62835,
+    62839,
+    62841,
+    62842,
+    62843,
+    62844,
+    62845,
+    62846,
+    62847,
+    62848,
+    62849,
+    62850,
+    62851,
+    62852,
+    62853,
+    62854,
+    62855,
+    62856,
+    62857,
+    62858,
+    62859,
+    62860,
+    62861,
+    62862,
+    62863,
+    62864,
+    62865,
+    62866,
+    62868,
+    62869,
+    62871,
+    62872,
+    62873,
+    62875,
+    62876,
+    62877,
+    62878,
+    62879,
+    62880,
+    62882,
+    62883,
+    62884,
+    62885,
+    62886,
+    62887,
+    62888,
+    62889,
+    62890,
+    62891,
+    62893,
+    62894,
+    62895,
+    62896,
+    62897,
+    62898,
+    62899,
+    62900,
+    62901,
+    62902,
+    62903,
+    62904,
+    62905,
+    62909,
+    62910,
+    62911,
+    62912,
+    62913,
+    62914,
+    62915,
+    62916,
+    62917,
+    62920,
+    62924,
+    62925,
+    62926,
+    62927,
+    62928,
+    62929,
+    62930,
+    62931,
+    62932,
+    62933,
+    62934,
+    62935,
+    62936,
+    62937,
+    62938,
+    62939,
+    62940,
+    62941,
+    62943,
+    62944,
+    62945,
+    62946,
+    62947,
+    62948,
+    62949,
+    62950
+  ]
+}

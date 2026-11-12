@@ -1938,6 +1938,58 @@ test('agent mode off, or relay mode: the bridge is never asked and the mcp json 
   }
 });
 
+// ── Cross-chat messaging (slice 1, Q34) ──────────────────────────────────────────────────────────────
+test('Q34 the chat message bridge: asked once, URL in the mcp json, token only in spawnEnv, disposed at the end; never in relay or composer turns; toolset reaches the child and the relay', async () => {
+  const fail = () => { throw Object.assign(new Error('claude exited with code 1: boom'), { errorClass: 'api' }); };
+  {
+    const s = seed();
+    let raw = null; let spawnEnv = null; const asked = []; let disposed = 0;
+    const { turn } = makeTurn(s, {}, {
+      chatMessageBridge: (o) => { asked.push(o); return { url: 'http://127.0.0.1:4317/api/ask/chat-messages', token: 'TOKEN-CXM', dispose: () => { disposed += 1; } }; },
+      runClaudeImpl: async (opts) => { raw = readFileSync(opts.mcpConfigPath, 'utf8'); spawnEnv = opts.spawnEnv; fail(); },
+    });
+    await turn.run();
+    assert.deepEqual(asked, [{ threadId: s.thread.id }]);
+    const env = JSON.parse(raw).mcpServers.worca.env;
+    assert.equal(JSON.parse(env.WORCA_ASK_MESSAGES).url, 'http://127.0.0.1:4317/api/ask/chat-messages');
+    assert.ok(!raw.includes('TOKEN-CXM'), 'the token never lands on disk');
+    assert.equal(spawnEnv.ASK_MESSAGE_TOKEN, 'TOKEN-CXM');
+    assert.equal(env.WORCA_ASK_TOOLSET, undefined, 'an ordinary turn has the full toolset');
+    assert.equal(disposed, 1);
+  }
+  for (const [over, deps] of [[{ composer: { sessionId: 'sess', docToken: 'doc' } }, {}],
+    [{}, { agentRelay: () => ({ url: 'http://127.0.0.1:1/api/ask/relay', token: 'r', dispose() {} }) }]]) {
+    const s = seed();
+    let called = 0; let cfg = null;
+    const { turn } = makeTurn(s, over, {
+      ...deps,
+      chatMessageBridge: () => { called += 1; return { url: 'u', token: 't', dispose() {} }; },
+      runClaudeImpl: async (opts) => { cfg = JSON.parse(readFileSync(opts.mcpConfigPath, 'utf8')); fail(); },
+    });
+    await turn.run();
+    assert.equal(called, 0, JSON.stringify(over));
+    assert.ok(!('WORCA_ASK_MESSAGES' in cfg.mcpServers.worca.env));
+  }
+  {
+    const s = seed();
+    let cfg = null;
+    const { turn } = makeTurn(s, { toolset: 'chat-message' }, {
+      runClaudeImpl: async (opts) => { cfg = JSON.parse(readFileSync(opts.mcpConfigPath, 'utf8')); fail(); },
+    });
+    await turn.run();
+    assert.equal(turn.toolset, 'chat-message');
+    assert.equal(cfg.mcpServers.worca.env.WORCA_ASK_TOOLSET, 'chat-message');
+    const relaySeen = [];
+    const s2 = seed();
+    const { turn: t2 } = makeTurn(s2, { toolset: 'chat-message' }, {
+      agentRelay: (o) => { relaySeen.push(o); return { url: 'http://127.0.0.1:1/api/ask/relay', token: 'r', dispose() {} }; },
+      runClaudeImpl: async () => fail(),
+    });
+    await t2.run();
+    assert.equal(relaySeen[0].toolset, 'chat-message');
+  }
+});
+
 test('run_command result mints one command card; an error result mints nothing', async () => {
   const s = seed();
   const runner = (frames) => async (opts) => {

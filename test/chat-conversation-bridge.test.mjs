@@ -728,3 +728,212 @@ test('SAY.notOwner: a mention where the platform renders <@id> (Discord, Slack),
     assert.equal(SAY.notOwner('u-1', platform), 'Only the person who started this conversation can act on it.', platform);
   }
 });
+
+// ── slice 3: chat-message posts with reply / answer controls (cmsg:*) ────────────────────────────────────────────
+const CM_RUN = (over = {}, q = {}) => ({ kind: 'chat-message', id: 'cmsg_000000a1', direction: 'in', intent: 'question', text: 'Which way?',
+  conversationId: 'cxm_000000a1', hop: 1, maxHops: 6, replyTo: null, repliedWith: null,
+  from: { kind: 'run', runId: 'aaaaaaaa', liveRunId: null, title: 'Fix', scope: { kind: 'none', key: null, label: 'No project' }, owner: null },
+  to: { chatId: 'ask_00000001', title: null }, sentAt: 't',
+  question: { askId: 'questions-x-r1', kind: 'questions', questions: [{ id: 'q1', question: 'Ship?', options: ['Yes', 'No'], allowFreeText: false }], state: 'open', answer: null, ...q },
+  ...over });
+const CM_CHAT = (over = {}) => ({ kind: 'chat-message', id: 'cmsg_000000b1', direction: 'in', intent: 'question', text: 'status?',
+  conversationId: 'cxm_000000b1', hop: 1, maxHops: 6, replyTo: null, repliedWith: null,
+  from: { kind: 'chat', chatId: 'ask_0000000c', title: 'Other', scope: { kind: 'none', key: null, label: 'No project' }, owner: 'local' },
+  to: { chatId: 'ask_00000001', title: null }, sentAt: 't', ...over });
+const cmRow = (block, id = 'S1') => ({ id, role: 'system', text: 'Message', blocks: [block], createdAt: new Date(Date.now() + 60_000).toISOString() });
+
+async function cmsgBridge({ interactive = true, ask = {}, host = {} } = {}) {
+  const msgs = [];
+  const answers = [];
+  const replies = [];
+  const ephemerals = [];
+  const s = stubBridge({
+    listMessages: () => msgs.map((m) => structuredClone(m)),
+    findChatMessage: (threadId, id) => { for (const m of msgs) for (const b of m.blocks) if (b.kind === 'chat-message' && b.direction === 'in' && b.id === id) return structuredClone(b); return null; },
+    answerRunQuestion: async (a) => { answers.push(a); return { status: 200, body: { ok: true } }; },
+    replyToChatMessage: async (a) => { replies.push(a); return { status: 200, body: { ok: true } }; },
+    ...ask,
+  }, { host: { replyInteraction: async (a) => { ephemerals.push(a.text); }, ...host }, deps: { interactive: () => interactive } });
+  await s.say('<@BOT1>');
+  const th = s.threads[0];
+  const c = C.findConversation({ plugin: 'stub-chat', channelId: 'main', chatId: th });
+  const press = async (ref, { userId = 'U1', kind = 'button', values, fields, meta = { username: 'ada' } } = {}) => {
+    await s.bridge.handleInteraction({ plugin: 'stub-chat', channelId: 'main', evt: { id: `ci${++stubSeq}`, chatId: th, userId, ref, kind,
+      ...(values ? { values } : {}), ...(fields ? { fields } : {}), meta } });
+  };
+  const cmPosts = () => s.posts.filter((p) => p.chatId === th && /Message from/.test(p.message.body?.[0]?.value || ''));
+  const refIn = (post, pick) => post.message.controls.find(pick).ref;
+  return { ...s, msgs, answers, replies, ephemerals, th, c, press, cmPosts, refIn };
+}
+
+test('non-interactive: degrade text, no control, no edit', async () => {
+  const B = await cmsgBridge({ interactive: false });
+  B.msgs.push(cmRow(CM_RUN()));
+  await B.bridge.reconcile(B.c);
+  const [post] = B.cmPosts();
+  assert.equal(post.message.body[0].value.split('\n').at(-1), '_Reply in worca to answer._');
+  assert.equal(post.message.controls, undefined);
+  const n = B.posts.length;
+  B.msgs[0].blocks[0].question = { ...B.msgs[0].blocks[0].question, state: 'answered', answer: { actedBy: { kind: 'person', label: 'ada via Discord' }, answers: [], at: 't' } };
+  await B.bridge.reconcile(B.c);
+  assert.equal(B.posts.length, n, 'nothing posted and nothing edited after the answer');
+});
+
+test('cmsg control: a non-owner press changes nothing', async () => {
+  const B = await cmsgBridge();
+  B.msgs.push(cmRow(CM_RUN()));
+  await B.bridge.reconcile(B.c);
+  const [post] = B.cmPosts();
+  assert.equal(B.c.ownerUserId, 'U1');
+  await B.press(B.refIn(post, (x) => x.kind === 'select'), { userId: 'U2', kind: 'select', values: ['0'] });
+  assert.deepEqual(B.ephemerals, [SAY.notOwner('U1', 'discord')]);
+  assert.equal(B.answers.length, 0);
+});
+
+test('stale state refuses: a ref issued while open, pressed after the answer; a used ref stays used', async () => {
+  const B = await cmsgBridge();
+  B.msgs.push(cmRow(CM_RUN()));
+  await B.bridge.reconcile(B.c);
+  const ref = B.refIn(B.cmPosts()[0], (x) => x.kind === 'select');
+  const open = B.msgs[0].blocks[0].question;
+  B.msgs[0].blocks[0].question = { ...open, state: 'answered', answer: { actedBy: { kind: 'away', label: 'Away' }, answers: [], at: 't' } };
+  await B.press(ref, { kind: 'select', values: ['0'] });
+  assert.deepEqual(B.ephemerals, [SAY.stale]);
+  assert.equal(B.answers.length, 0);
+  assert.ok(B.posts.some((p) => p.options?.edit && /Answered by Away mode\./.test(p.message.body[0].value)), 'the stale press brought the post up to date');
+  // Back to open (a fresh post edits in new refs): a success, then the same ref again.
+  B.msgs[0].blocks[0].question = open;
+  const C2 = await cmsgBridge();
+  C2.msgs.push(cmRow(CM_CHAT()));
+  await C2.bridge.reconcile(C2.c);
+  const reply = C2.refIn(C2.cmPosts()[0], (x) => x.label === 'Reply');
+  await C2.press(reply, { kind: 'modal', fields: { text: 'fine' } });
+  await C2.press(reply, { kind: 'modal', fields: { text: 'fine again' } });
+  assert.deepEqual(C2.ephemerals, [SAY.done, SAY.stale]);
+  assert.equal(C2.replies.length, 1);
+});
+
+test('throwing answer dep releases the ref', async () => {
+  const B = await cmsgBridge({ ask: { answerRunQuestion: async () => { throw new Error('answer exploded'); } } });
+  B.msgs.push(cmRow(CM_RUN()));
+  await B.bridge.reconcile(B.c);
+  const ref = B.refIn(B.cmPosts()[0], (x) => x.kind === 'select');
+  await B.press(ref, { kind: 'select', values: ['1'] });
+  assert.deepEqual(B.ephemerals, [SAY.failed('answer exploded')]);
+  assert.equal(C.getControl(ref).usedAt, null);
+  const R = await cmsgBridge({ ask: { answerRunQuestion: async () => ({ status: 409, body: { code: 'CHAT_QUESTION_CLOSED', error: 'The run is no longer waiting for this answer.' } }) } });
+  R.msgs.push(cmRow(CM_RUN()));
+  await R.bridge.reconcile(R.c);
+  const r2 = R.refIn(R.cmPosts()[0], (x) => x.kind === 'select');
+  await R.press(r2, { kind: 'select', values: ['0'] });
+  assert.deepEqual(R.ephemerals, [SAY.failed('The run is no longer waiting for this answer.')]);
+  assert.equal(C.getControl(r2).usedAt, null, 'a refusal leaves the single-use ref usable');
+});
+
+test('an answer press passes the choice and the channel actor; success edits the post on the next state change', async () => {
+  const B = await cmsgBridge();
+  B.msgs.push(cmRow(CM_RUN()));
+  await B.bridge.reconcile(B.c);
+  const post = B.cmPosts()[0];
+  const id = B.posts.indexOf(post);
+  await B.press(B.refIn(post, (x) => x.kind === 'select'), { kind: 'select', values: ['1'] });
+  assert.deepEqual(B.answers, [{ threadId: B.c.askThreadId, messageId: 'cmsg_000000a1', choices: [{ index: 0, value: '1' }], by: 'ada via Discord' }]);
+  assert.deepEqual(B.ephemerals, [SAY.done]);
+  B.msgs[0].blocks[0].question = { ...B.msgs[0].blocks[0].question, state: 'answered', answer: { actedBy: { kind: 'person', label: 'ada via Discord' }, answers: [], at: 't' } };
+  await B.bridge.reconcile(B.c);
+  const edit = B.posts.slice(id + 1).find((p) => p.options?.edit && /Answered by/.test(p.message.body[0].value));
+  assert.ok(edit, 'the same message is edited');
+  assert.equal(edit.message.body[0].value.split('\n').at(-1), 'Answered by ada via Discord.');
+  assert.equal((edit.message.controls || []).filter((x) => x.kind !== 'link').length, 0);
+  const T = await cmsgBridge();
+  T.msgs.push(cmRow(CM_RUN({}, { questions: [{ id: 'q1', question: 'Why?', options: [], allowFreeText: true }] })));
+  await T.bridge.reconcile(T.c);
+  await T.press(T.refIn(T.cmPosts()[0], (x) => x.label === 'Answer'), { kind: 'modal', fields: { text: 'because' }, meta: {} });
+  assert.deepEqual(T.answers[0].choices, [{ index: 0, text: 'because' }]);
+  assert.equal(T.answers[0].by, 'U1 via Discord', 'no name from the platform: the user id');
+});
+
+test('reply passes the channel actor and the trimmed text; an empty reply is refused before the dep', async () => {
+  const B = await cmsgBridge();
+  B.msgs.push(cmRow(CM_CHAT()));
+  await B.bridge.reconcile(B.c);
+  const ref = B.refIn(B.cmPosts()[0], (x) => x.label === 'Reply');
+  await B.press(ref, { kind: 'modal', fields: { text: '   ' } });
+  assert.deepEqual(B.ephemerals, [SAY.failed('empty reply')]);
+  assert.equal(B.replies.length, 0);
+  await B.press(ref, { kind: 'modal', fields: { text: '  all good  ' } });
+  assert.deepEqual(B.replies, [{ threadId: B.c.askThreadId, messageId: 'cmsg_000000b1', text: 'all good', by: 'ada via Discord' }]);
+});
+
+const cmHead = (p) => p.message.body[0].value.split('\n')[0];
+const titleMap = (titles) => (id) => (Object.hasOwn(titles, id) ? { id, title: titles[id], mode: 'ask' } : null);
+
+test('a chat-message post names the other chat by its current stored title; a state edit uses the title of that moment; a rename alone edits nothing', async () => {
+  const titles = { ask_0000000c: 'Release notes' };
+  const B = await cmsgBridge({ ask: { getThread: titleMap(titles) } });
+  B.msgs.push(cmRow(CM_CHAT()));
+  await B.bridge.reconcile(B.c);
+  assert.match(cmHead(B.cmPosts()[0]), /^\*\*Message from Release notes\*\* \(/);
+  assert.ok(!B.cmPosts()[0].message.body[0].value.includes('Other'), "never the block's send-time title");
+  const n = B.posts.length;
+  titles.ask_0000000c = 'Renamed';
+  await B.bridge.reconcile(B.c);
+  assert.equal(B.posts.length, n, 'a rename alone posts and edits nothing');
+  B.msgs[0].blocks[0].repliedWith = 'cmsg_000000b2';
+  await B.bridge.reconcile(B.c);
+  const edit = B.posts.slice(n).find((p) => p.options?.edit);
+  assert.ok(edit, 'the replied state edits the post');
+  assert.match(cmHead(edit), /^\*\*Message from Renamed\*\* \(/);
+  for (const getThread of [() => null, () => ({ id: 'ask_0000000c', title: 'Workflow chat', mode: 'composer' })]) {
+    const G = await cmsgBridge({ ask: { getThread } });
+    G.msgs.push(cmRow(CM_CHAT()));
+    await G.bridge.reconcile(G.c);
+    assert.match(cmHead(G.cmPosts()[0]), /^\*\*Message from ask_0000000c\*\* \(/);
+  }
+});
+
+test('a chat-message post whose edit finds the message deleted is posted again under the current title', async () => {
+  const titles = { ask_0000000c: 'Release notes' };
+  const B = await cmsgBridge({ ask: { getThread: titleMap(titles) } });
+  B.msgs.push(cmRow(CM_CHAT()));
+  await B.bridge.reconcile(B.c);
+  const cmId = `SM${stubSeq}`;
+  assert.match(cmHead(B.cmPosts()[0]), /^\*\*Message from Release notes\*\* \(/);
+  const s2 = stubBridge({ listMessages: () => B.msgs.map((m) => structuredClone(m)), getThread: titleMap(titles) }, {
+    host: { sendMessage: async ({ chatId, message, options }) => {
+      if (options?.edit?.messageId === cmId) throw Object.assign(new Error('Unknown Message: not found'), { permanent: true });
+      B.posts.push({ chatId, message, options: options || null });
+      return { ok: true, detail: { messageIds: [`SM${++stubSeq}`] } };
+    } },
+    deps: { interactive: () => true } });
+  titles.ask_0000000c = 'Renamed';
+  B.msgs[0].blocks[0].repliedWith = 'cmsg_000000b2';
+  const n = B.posts.length;
+  await s2.bridge.reconcile(B.c);
+  const repost = B.posts.slice(n).find((p) => p.chatId === B.th && !p.options?.edit && /Message from/.test(p.message.body[0].value));
+  assert.ok(repost, 'posted again as a new message');
+  assert.match(cmHead(repost), /^\*\*Message from Renamed\*\* \(/);
+});
+
+test('a later message still arrives after a permanent edit failure of a cmsg part', async () => {
+  let refuse = false;
+  const B = await cmsgBridge({ host: {} });
+  B.msgs.push(cmRow(CM_CHAT()));
+  await B.bridge.reconcile(B.c);
+  const cmId = `SM${stubSeq}`;
+  // Every edit of the chat-message post is now refused for good (403); a later assistant row must still be posted.
+  const s2 = stubBridge({ listMessages: () => B.msgs.map((m) => structuredClone(m)) }, {
+    host: { sendMessage: async ({ chatId, message, options }) => {
+      if (refuse && options?.edit?.messageId === cmId) throw Object.assign(new Error('missing access'), { permanent: true });
+      B.posts.push({ chatId, message, options: options || null });
+      return { ok: true, detail: { messageIds: [`SM${++stubSeq}`] } };
+    } },
+    deps: { interactive: () => true } });
+  refuse = true;
+  B.msgs[0].blocks[0].repliedWith = 'cmsg_000000b2';
+  B.msgs.push({ id: 'A9', role: 'assistant', status: 'done', text: 'later answer', blocks: [], createdAt: new Date(Date.now() + 120_000).toISOString() });
+  await s2.bridge.reconcile(B.c);
+  assert.ok(B.posts.some((p) => p.chatId === B.th && p.message.body[0].value === 'later answer'), 'the later row is posted');
+  await s2.bridge.reconcile(B.c);
+  assert.equal(B.posts.filter((p) => p.message.body[0].value === 'later answer').length, 1, 'the refused part is not retried on every pass');
+});

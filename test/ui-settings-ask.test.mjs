@@ -133,7 +133,7 @@ test('ui-settings-ask: Save posts exactly the two ask keys', async () => {
   $('#askLimitsSave').click();
   await settle(tick);
   assert.equal(posts.length, 1, 'exactly one POST');
-  assert.deepEqual(posts[0], { askMaxTurns: 55, askMaxBudgetUsd: 3.5, chat: { scriptTools: true, suggestions: true, summariseCommands: true } });
+  assert.deepEqual(posts[0], { askMaxTurns: 55, askMaxBudgetUsd: 3.5, chat: { scriptTools: true, suggestions: true, summariseCommands: true, crossChat: true } });
   assert.equal($('#askLimitsSave').textContent, 'Saved');
   assert.ok($('#askLimitsSave').classList.contains('is-done'));
   assert.equal($('#askNoCap').checked, false, 'an amount turns the guard on');
@@ -149,7 +149,7 @@ test('clearing ask limits: No cap ticked posts null and disables the field, unti
       untickNoCap($);
       $('#askLimitsSave').click();
       await tick();
-      assert.deepEqual(posts[0], { askMaxTurns: 400, askMaxBudgetUsd: '', chat: { scriptTools: true, suggestions: true, summariseCommands: true } });
+      assert.deepEqual(posts[0], { askMaxTurns: 400, askMaxBudgetUsd: '', chat: { scriptTools: true, suggestions: true, summariseCommands: true, crossChat: true } });
       assert.equal($('#askNoCap').checked, true, 'an empty amount is the default: no cap');
       assert.equal($('#askMaxBudgetUsd').disabled, true);
     } },
@@ -165,7 +165,7 @@ test('clearing ask limits: No cap ticked posts null and disables the field, unti
       edit(window, $('#askMaxTurns'), '55');
       $('#askLimitsSave').click();
       await tick();
-      assert.deepEqual(posts[0], { askMaxTurns: 55, askMaxBudgetUsd: null, chat: { scriptTools: true, suggestions: true, summariseCommands: true } });
+      assert.deepEqual(posts[0], { askMaxTurns: 55, askMaxBudgetUsd: null, chat: { scriptTools: true, suggestions: true, summariseCommands: true, crossChat: true } });
     } },
     { name: 'ui-settings-ask: Use defaults posts empty strings (the clear-to-default wire value)', run: async () => {
       const { $, posts, tick, openSettings } = await boot();
@@ -319,7 +319,22 @@ test('ui-settings-ask: the script toggle paints from chat prefs and rides the ca
   edit(window, cb, false);
   $('#askLimitsSave').click();
   await tick();
-  assert.deepEqual(posts[0].chat, { scriptTools: false, suggestions: true, summariseCommands: true });
+  assert.deepEqual(posts[0].chat, { scriptTools: false, suggestions: true, summariseCommands: true, crossChat: true });
+});
+
+test('ui-settings-ask: the Messages between chats switch is on on a fresh home and rides the card\'s Save', async () => {
+  const { window, $, posts, tick, openSettings } = await boot();
+  await openSettings();
+  const cb = $('#askCrossChat');
+  assert.ok(cb, 'the switch is mounted in the Ask Worca card, next to Create and run scripts');
+  assert.equal(cb.checked, true, 'an absent pref is ON (slice 3 D14)');
+  assert.equal($('#ask-script-tools-host').nextElementSibling, $('#ask-cross-chat-host'));
+  assert.match($('#ask-cross-chat-host').textContent, /Messages between chats/);
+  edit(window, cb, false);
+  $('#askLimitsSave').click();
+  await tick();
+  await tick();
+  assert.deepEqual(posts[0].chat, { scriptTools: true, crossChat: false, suggestions: true, summariseCommands: true });
 });
 
 test('ui-settings-ask: the suggestions toggle paints from chat prefs and rides the card\'s Save', async () => {
@@ -332,7 +347,7 @@ test('ui-settings-ask: the suggestions toggle paints from chat prefs and rides t
   edit(window, cb, false);
   $('#askLimitsSave').click();
   await tick();
-  assert.deepEqual(posts[0].chat, { scriptTools: true, suggestions: false, summariseCommands: true });
+  assert.deepEqual(posts[0].chat, { scriptTools: true, suggestions: false, summariseCommands: true, crossChat: true });
 });
 
 test('the web section posts askWeb only when touched (trimmed, blank lines dropped)', async () => {

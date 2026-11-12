@@ -71,3 +71,62 @@ back. Workflows has its own chat and no button.
   takes this chat to the Chat page, and **Hide chat** closes the column. Open or hidden is
   remembered across pages and reloads. A dot on the **Ask worca** button means a new reply: the
   button opens that chat, as the Chat row does.
+
+## Messages between chats
+
+One chat's assistant can send a note, a question or a hand-off to another of your chats. It is on by default; an
+existing install turns it on at upgrade, unless its box was turned off before (a stored off stays off). So every
+chat's assistant can message your other chats unless you turn it off: **Settings › Chat › Messages between
+chats**. A chat can never turn it on itself.
+
+- **Naming a chat.** You can just say which chat: the assistant looks it up by name with `list_chats`. That lists
+  your other chats only (never the one you are in), newest first, archived ones only when asked, each with its title,
+  scope, last activity and the first 120 characters of its first message. It works whenever messages between chats
+  are on, also while the assistant answers a chat message, and costs nothing (no model call). The assistant then
+  names the chat in full (`ask_` and 8 hex characters). You can still give the id yourself: copy it from the chat's
+  ⋯ menu in the Chats list, **Copy chat id**, or from the `#chat/ask_…` address. The side column has no Copy chat id
+  yet.
+- **What you see.** The sending chat shows a "Sent to" record. The other chat shows "Message from" with the sender's
+  chip, its scope and the intent (Note, Question, Hand-off). The chip shows that chat's current name, as the Chats
+  list does: its `ask_` id while it has no title, or once it is gone. Another chat's assistant wrote the message; when
+  a person replied from the sender chat's channel thread, the record says so ("Written by ada in another chat.").
+  That chat then answers it in one turn, at most once. The answer comes back as a message of its own, marked "Reply
+  to your message".
+- **What the answering turn may do.** Only read tools, plus sending a reply: no commands, no web pages, no cards or
+  changes. Your next message in that chat has every tool again.
+- **Scope is never borrowed.** Messages may cross scopes (project, workspace, No project), but each chat keeps its
+  own scope and tools.
+- **Limits.** A conversation ends after 6 messages. A chat can send 6 messages a minute (30 a minute for the whole
+  install), and a chat already holding 3 waiting messages refuses more. A refused message is not sent.
+- **Chat channels.** A chat mirrored to a channel thread (Discord) posts an incoming message there with a **Reply**
+  button. The post names the other chat by its title at the time it is posted or updated (a later rename does not
+  change posts already sent). The button's form sends your reply back to the sender chat, exactly as the assistant's
+  reply would, recorded as written by you ("ada via Discord"; the other chat's assistant still reads it as data, not
+  instructions). A run's
+  question shows a **Pick one** menu (plus **Type an answer** when free text is allowed) or an **Answer** button, only
+  for a round of one question; a larger round is answered in worca. Only the thread's owner, mapped in Chat members,
+  can press them; the run records the answer as theirs, and the post then reads "Answered by …" with no controls left.
+  If a channel cannot show buttons, the post ends in _Reply in worca to answer._ (or _Reply in worca._) and is not
+  updated after an answer. Posts mirrored before this change gain the controls once, while they are still open.
+
+### Runs
+
+A run started from worca (not from the `worca` CLI) can post into a chat too, while the setting is on. Its agents
+see a "Posting to a chat" section in their prompt only then.
+
+- **Updates.** An agent step writes `{"posts":[{"chatId":"ask_…","text":"…"}]}` to its chat-posts file. The posts go
+  out when that step's agent finishes, not live while it works. The chat shows "Message from" with the run's chip and
+  **Update**, and wakes for one read-only turn.
+- **Questions.** An agent that may ask questions adds `"chat":"ask_…"` to its questions JSON. That round is then also
+  posted as a **Question** record. It is the run's own question: the record shows the Runs page's answer form while
+  the run is live in this tab, otherwise "Answer it on the run page" with an **Open run** link. You can also answer
+  on the Runs page or from the chat's channel thread, and Away mode can answer it. The record then reads "Answered by" and who answered (Away mode for
+  Away), taken from the chat record's `actedBy`; the run keeps its own `answeredBy`. A question that ends unanswered
+  (the run stopped, paused, failed or finished) reads "No longer waiting". Only plain questions are posted, never
+  forms.
+- **No replies.** A run takes no reply: a chat's assistant cannot answer it with send_to_chat, and the chat's own turn
+  never answers a run's question.
+- **Limits.** At most 5 posts per step. A run can post 6 messages a minute, within the same 30 a minute for the whole
+  install, and a chat holding 3 waiting messages refuses more. A refused post (an unknown chat, the limit, the setting
+  off) never stops the run: it shows as one line in the run's activity view naming the code (for example
+  `CHAT_MESSAGE_NOT_FOUND`), and a refused question is still asked on the Runs page.
