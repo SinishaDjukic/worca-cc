@@ -167,7 +167,8 @@ const pathKeyOf = (env) => Object.keys(env).find((k) => k.toUpperCase() === 'PAT
  * Stated limits (not covered, no network block yet): a web call with a token typed into the command; `npm publish` run
  * from inside a script (npm run …, make, a test); web calls from `node -e` / `python -c` / any program; shell aliases,
  * Set-Alias or a git alias configured in an earlier, separate command; tokens a WSL profile sets (GH_TOKEN in
- * ~/.bashrc, /etc/environment); tokens in files (~/.npmrc, ~/.docker/config.json, gh / glab config inside WSL);
+ * ~/.bashrc, /etc/environment); tokens in files (~/.npmrc, ~/.docker/config.json, gh / glab config inside WSL, and
+ * ~/.netrc, which git's HTTP sends: probe askpass);
  * git http.extraheader / url.insteadOf tokens; image pushes beyond docker / podman / nerdctl push, image / manifest /
  * compose push, build --push, buildah push, skopeo copy to docker://, crane push / copy and helm push (e.g. oras, ko,
  * jib, kaniko, or an image tool run through a package runner: `pnpm dlx <image tool> push`); other credential env vars
@@ -188,6 +189,12 @@ export function withTryGuardEnv(env, tryGuard, { home = worcaHome(), platform = 
   out[key] = cur.split(sep).includes(dir) ? cur : cur ? `${dir}${sep}${cur}` : dir;
   for (const k of Object.keys(out)) if (k !== key && k.toUpperCase() === 'PATH') delete out[k];
   out[TRY_GUARD_LOG_ENV] = tryGuard.logFile;
+  // Final review E1: git asks GIT_ASKPASS, then core.askPass, then SSH_ASKPASS before its terminal; VS Code's terminal sets
+  // GIT_ASKPASS and the keys its askpass uses (an inherited one signed in: probe askpass). An empty GIT_ASKPASS also beats a
+  // core.askPass in the person's config. Every spelling goes first (Windows env names ignore case).
+  for (const k of Object.keys(out)) if (isAskpassKey(k)) delete out[k];
+  out.GIT_ASKPASS = '';
+  out.SSH_ASKPASS = '';
   out.GIT_TERMINAL_PROMPT = '0';
   out.GCM_INTERACTIVE = 'never';
   out.GIT_SSH_COMMAND = 'exit 1 #';
@@ -198,6 +205,10 @@ export function withTryGuardEnv(env, tryGuard, { home = worcaHome(), platform = 
   out[`GIT_CONFIG_KEY_${n}`] = 'credential.helper';
   out[`GIT_CONFIG_VALUE_${n}`] = '';
   out.GIT_CONFIG_COUNT = String(n + 1);
+  // E1 (probe askpass, Linux git 2.43): git reads GIT_CONFIG_PARAMETERS (what `git -c` hands its children) AFTER the
+  // GIT_CONFIG_COUNT pairs, so a helper an inherited one names came back after the reset: it gets the reset last too.
+  const cp = Object.keys(out).find((k) => k.toUpperCase() === 'GIT_CONFIG_PARAMETERS');
+  if (cp && out[cp]) out[cp] = `${out[cp]} 'credential.helper='`;
   // The hook's structured deny only for a CLI known to read it (the harness probed it); else the hook uses exit 2.
   for (const k of Object.keys(out)) if (k.toUpperCase() === TRY_GUARD_JSON_ENV) delete out[k];
   if (tryGuard.structuredDeny === true) out[TRY_GUARD_JSON_ENV] = '1';
@@ -206,7 +217,7 @@ export function withTryGuardEnv(env, tryGuard, { home = worcaHome(), platform = 
     // git settings as they are, the sign-in folders as WSL paths (/p). Other entries are kept; an entry for one of these
     // names is replaced, so its flags are always the guard's (GH_CONFIG_DIR/p, never a bare Windows path).
     const wk = Object.keys(out).find((k) => k.toUpperCase() === 'WSLENV') || 'WSLENV';
-    const add = ['GIT_TERMINAL_PROMPT', 'GCM_INTERACTIVE', 'GIT_SSH_COMMAND', 'GH_CONFIG_DIR/p', 'GLAB_CONFIG_DIR/p', 'AZURE_CONFIG_DIR/p', 'GIT_CONFIG_COUNT',
+    const add = ['GIT_TERMINAL_PROMPT', 'GCM_INTERACTIVE', 'GIT_SSH_COMMAND', 'GIT_ASKPASS', 'SSH_ASKPASS', 'GH_CONFIG_DIR/p', 'GLAB_CONFIG_DIR/p', 'AZURE_CONFIG_DIR/p', 'GIT_CONFIG_COUNT',
       ...Array.from({ length: n + 1 }, (_, i) => [`GIT_CONFIG_KEY_${i}`, `GIT_CONFIG_VALUE_${i}`]).flat()];
     const ours = new Set(add.map((e) => e.split('/')[0].toUpperCase()));
     const prev = String(out[wk] || '').split(':').filter((e) => e && !ours.has(e.split('/')[0].toUpperCase()) && !isTryStrippedKey(e.split('/')[0], strip));
@@ -239,6 +250,12 @@ const isInstallAuthKey = (k) => INSTALL.has(String(k).toUpperCase()) || INSTALL_
  *  `keepRegistryAuth` (the setup step). */
 export const isTryStrippedKey = (k, { keepRegistryAuth = false } = {}) => ALWAYS.has(String(k).toUpperCase()) || PUBLISH_TOKEN_RE.test(String(k))
   || (!keepRegistryAuth && isInstallAuthKey(k));
+/** Final review E1: the askpass keys a try never inherits (any spelling): git's and ssh's askpass programs, and VS Code's
+ *  askpass keys and IPC handle (through which any program can ask VS Code for its git sign-in). */
+export const isAskpassKey = (k) => {
+  const u = String(k).toUpperCase();
+  return u === 'GIT_ASKPASS' || u === 'SSH_ASKPASS' || u === 'VSCODE_GIT_IPC_HANDLE' || u.startsWith('VSCODE_GIT_ASKPASS_');
+};
 
 /** The PreToolUse hook entry buildSettingsPayload adds for a try, beside the host guard: on Bash, and on the PowerShell
  *  tool Claude Code has on Windows. */

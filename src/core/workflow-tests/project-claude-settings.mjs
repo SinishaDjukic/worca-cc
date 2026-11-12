@@ -10,7 +10,7 @@ import { randomBytes } from 'node:crypto';
 import { lstat, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseDocument, stringify } from 'yaml';
-import { isTryStrippedKey } from './try-guard-env.mjs';
+import { isAskpassKey, isTryStrippedKey } from './try-guard-env.mjs';
 
 export const PROJECT_SETTINGS_FILES = Object.freeze(['.claude/settings.json', '.claude/settings.local.json']);
 export const STRIPPED_SETTINGS_KEYS = Object.freeze(['hooks', 'enabledPlugins', 'extraKnownMarketplaces']);
@@ -23,12 +23,14 @@ export const PLUGINS_OFF_STAGE = 'Switching off the project\'s hooks and plugins
 // Task 5 fix review (concern 3): NODE_OPTIONS and NODE_PATH, which the CLI also hands to Worca's own `node` hooks (the try
 // guard) and could load the checkout's code into them (probe nodeopts-318: a project `--require` ran inside the hook).
 // The dynamic loader's keys (LD_*, DYLD_*) do the same to any hook process, so they go too (controller decision, 2026-11-06).
+// Final review E1: the askpass keys (isAskpassKey) too: a project env that sets GIT_ASKPASS would let git sign in again.
 const TRY_GUARD_ENV_KEYS = new Set(['PATH', 'GIT_SSH_COMMAND', 'GH_CONFIG_DIR', 'GLAB_CONFIG_DIR', 'AZURE_CONFIG_DIR', 'GIT_TERMINAL_PROMPT',
   'GCM_INTERACTIVE', 'WSLENV', 'NODE_OPTIONS', 'NODE_PATH']);
 /** M10: a settings `env` key that would undo the try guard for the agent's tools (any spelling: Windows env names ignore case). */
 export const isTryGuardEnvKey = (k) => {
   const u = String(k).toUpperCase();
-  return TRY_GUARD_ENV_KEYS.has(u) || u.startsWith('LD_') || u.startsWith('DYLD_') || u.startsWith('GIT_CONFIG') || u.startsWith('WORCA_') || isTryStrippedKey(k);
+  return TRY_GUARD_ENV_KEYS.has(u) || u.startsWith('LD_') || u.startsWith('DYLD_') || u.startsWith('GIT_CONFIG') || u.startsWith('WORCA_') || isTryStrippedKey(k)
+    || isAskpassKey(k);   // final review E1: git's, ssh's and VS Code's askpass, and VS Code's IPC handle
 };
 
 /** The settings text without STRIPPED_SETTINGS_KEYS and the try guard's env keys (2-space JSON and a final newline), or null

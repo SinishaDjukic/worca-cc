@@ -851,13 +851,13 @@ test('withTryGuardEnv: null returns the env itself; on Windows PATH goes to the 
   assert.ok(!tryGuardHookEntry().hooks[0].command.includes('\\'), 'forward slashes, as the host guard');
   assert.equal(env0.GIT_TERMINAL_PROMPT, undefined, 'the input env is not changed');
   // Task 5b: WSL's own git and gh get the git settings and the empty sign-in folders (as WSL paths) through WSLENV.
-  assert.equal(env.WSLENV, ['GIT_TERMINAL_PROMPT', 'GCM_INTERACTIVE', 'GIT_SSH_COMMAND', 'GH_CONFIG_DIR/p', 'GLAB_CONFIG_DIR/p', 'AZURE_CONFIG_DIR/p',
-    'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'].join(':'));
+  assert.equal(env.WSLENV, ['GIT_TERMINAL_PROMPT', 'GCM_INTERACTIVE', 'GIT_SSH_COMMAND', 'GIT_ASKPASS', 'SSH_ASKPASS', 'GH_CONFIG_DIR/p', 'GLAB_CONFIG_DIR/p',
+    'AZURE_CONFIG_DIR/p', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'].join(':'));
   const kept = withTryGuardEnv({ Path: 'C:\\a', WslEnv: 'FOO/u:GH_CONFIG_DIR', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'a.b', GIT_CONFIG_VALUE_0: 'c' }, { logFile: 'f' }, { home, platform: 'win32' });
   assert.equal(kept.WSLENV, undefined, 'the env\'s own spelling');
   // Fix 2: other entries kept; an entry for one of the guard's names is replaced, so GH_CONFIG_DIR always goes with /p.
-  assert.equal(kept.WslEnv, ['FOO/u', 'GIT_TERMINAL_PROMPT', 'GCM_INTERACTIVE', 'GIT_SSH_COMMAND', 'GH_CONFIG_DIR/p', 'GLAB_CONFIG_DIR/p', 'AZURE_CONFIG_DIR/p',
-    'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1'].join(':'), 'kept, then every git config pair');
+  assert.equal(kept.WslEnv, ['FOO/u', 'GIT_TERMINAL_PROMPT', 'GCM_INTERACTIVE', 'GIT_SSH_COMMAND', 'GIT_ASKPASS', 'SSH_ASKPASS', 'GH_CONFIG_DIR/p', 'GLAB_CONFIG_DIR/p',
+    'AZURE_CONFIG_DIR/p', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1'].join(':'), 'kept, then every git config pair');
   assert.equal(withTryGuardEnv({ Path: 'C:\\a', WSLENV: 'GH_CONFIG_DIR/u:GIT_SSH_COMMAND/l' }, { logFile: 'f' }, { home, platform: 'win32' }).WSLENV.split(':').filter((e) => /^(GH_CONFIG_DIR|GIT_SSH_COMMAND)/.test(e)).join(':'),
     'GIT_SSH_COMMAND:GH_CONFIG_DIR/p', 'a flag on the guard\'s own names is replaced');
   assert.equal(withTryGuardEnv({ PATH: '/usr/bin' }, { logFile: 'f' }, { home, platform: 'linux' }).WSLENV, undefined, 'no WSLENV off Windows');
