@@ -1,0 +1,25 @@
+FAIL jest/a.test.js
+  ● outer a › fails a
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 2
+    Received: 1
+
+       8 |     test('another a', () => {});
+       9 |   });
+    > 10 |   test('fails a', () => { expect(1).toBe(2); });
+         |                                     ^
+      11 | });
+      12 | test('top level a', () => {});
+      13 |
+
+      at Object.toBe (a.test.js:10:37)
+
+PASS jest/b.test.js
+
+Test Suites: 1 failed, 1 passed, 2 total
+Tests:       1 failed, 2 skipped, 8 passed, 11 total
+Snapshots:   0 total
+Time:        0.356 s, estimated 1 s
+Ran all test suites.
