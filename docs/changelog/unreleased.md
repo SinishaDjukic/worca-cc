@@ -17,6 +17,12 @@ Pull requests (add each number when it opens):
 
 - Shaper keeps going while you're away
 
+## Ask me before each run asks before each run
+
+**Ask me before each run** on a slice outline now means what it says: with it on, each later run waits, not started, and the feature card shows *Needs you · Run 2 waits for you to start* with **Start now**. A later slice's plan continues by itself when its checks pass, either way. Away mode keeps a held run held.
+
+Read it: [Shape it first](../shape-it-first.md)
+
 ## A lighter Requirements card
 
 **The Shaper's Requirements card now says what each persona wants, and why.**

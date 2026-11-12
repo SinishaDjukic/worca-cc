@@ -3,7 +3,7 @@
 // every route that reaches it is gated (ui/server.mjs).
 import { randomUUID } from 'node:crypto';
 import { getDb, tx } from '../db.mjs';                  // node:sqlite: tx(fn), never db.transaction (F23)
-import { createTicket, getTicket, cancelTicket, updateTicket, previousBranchesOf, stackedPrBaseOf } from '../scheduler.mjs';
+import { createTicket, getTicket, cancelTicket, updateTicket, previousBranchesOf, stackedPrBaseOf, predecessorState, requestRunNow } from '../scheduler.mjs';
 import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow } from '../artifacts.mjs';
 import { projectKey } from '../store.mjs';
 import { sliceBrief, replanBrief } from '../../shared/shape/slices.mjs';
@@ -126,9 +126,23 @@ export function featureClarify(featureId) {
   return row && (row.questions || row.answers) ? row : null;
 }
 
-export function featureApprovesEach(id) {
-  try { const r = getDb().prepare('SELECT approve_each FROM shape_features WHERE id = ?').get(String(id)); return !r || r.approve_each !== 0; }
-  catch { return true; }
+/** D2: the scheduler's hold for "Ask me before each run". True only for a slice ticket of an active feature with the
+ *  switch on; a non-slice ticket, a missing feature row or a DB error never holds (a broken lookup must not strand a run). */
+export function featureHoldsTicket(ticket) {
+  if (!ticket || !ticket.id) return false;
+  try {
+    const r = getDb().prepare(`SELECT f.status, f.approve_each FROM shape_feature_slices s JOIN shape_features f ON f.id = s.feature_id
+      WHERE s.ticket_id = ? LIMIT 1`).get(String(ticket.id));
+    return !!r && r.status === 'active' && r.approve_each === 1;
+  } catch { return false; }
+}
+
+/** D3: the one display rule — a slice ticket the hold keeps from firing now that the run before it finished.
+ *  Derived per read; the ticket's stored status stays `scheduled`. */
+export function ticketHeld(ticket) {
+  if (!ticket || ticket.status !== 'scheduled' || ticket.forced || !ticket.after) return false;
+  if (!featureHoldsTicket(ticket)) return false;
+  try { return predecessorState(ticket.after, { policy: ticket.after.policy }).state === 'ok'; } catch { return false; }
 }
 
 export function setApproveEach(id, on, { now = Date.now() } = {}) {
@@ -195,7 +209,7 @@ const STUCK = new Set(['missed', 'canceled']);
 /** L8. `live(pipelineId)` → {runId, status, waiting:boolean, asking:boolean, approved:boolean} | null — the
  *  server's runs map. `waiting` is a pending `plan` ask; `asking` any other pending ask (Clarify's questions). */
 function sliceState(row, live) {
-  if (!row.pipelineId) return row.ticket ? (TICKET_STATE[row.ticket.status] || 'planned') : 'planned';
+  if (!row.pipelineId) return row.ticket ? (ticketHeld(row.ticket) ? 'held' : TICKET_STATE[row.ticket.status] || 'planned') : 'planned';
   const l = live(row.pipelineId);
   if (l) return l.waiting ? 'approval' : l.asking ? 'questions' : l.status === 'paused' ? 'paused' : l.approved ? 'running' : 'shaping';
   const p = getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(row.pipelineId);
@@ -269,6 +283,8 @@ export function featureView(id, { live = () => null } = {}) {
   const h = slices.find((s, i) => HALTS.has(s.state) || (i > 0 && STUCK.has(s.state) && slices[i - 1].state === 'done'));
   const waiting = h ? slices.filter((s) => s.index > h.index && (s.state === 'planned' || s.state === 'missed')).map((s) => s.index) : [];
   const status = f.status === 'active' && done === slices.length ? 'done' : f.status;
+  // D3: the run that waits for the owner's Start now ("Ask me before each run"); never persisted.
+  const held = slices.find((s) => s.state === 'held') || null;
   // D24: Ship as once every slice is done, on a feature that is still active and not shipped. The suggestion is
   // async (featureShipSuggestion); the GET route merges it.
   const lastPrUrl = slices.length ? (slices[slices.length - 1].pr?.url || null) : null;
@@ -295,7 +311,8 @@ export function featureView(id, { live = () => null } = {}) {
     id: f.id, title: f.title, projectKey: projectKey(f.project_dir),   // a History link needs it (F28)
     status, approveEach: f.approve_each !== 0, total: slices.length, done,
     halted: h ? { index: h.index, state: h.state, waiting } : null,
-    open: slices.some((s) => ['planned', 'missed'].includes(s.state)),
+    open: slices.some((s) => ['planned', 'missed', 'held'].includes(s.state)),
+    held: held ? { index: held.index, ticketId: held.ticketId } : null,
     replacedBy: f.replaced_by || null, replan, slices, ship,
     originPipelineId: f.origin_pipeline_id, ask, log: featureLog(f, slices), notes: { ideas },
   };
@@ -656,6 +673,9 @@ export function resumeFeature(id, { live = () => null, by = null, now = Date.now
       after = { kind: 'ticket', id: r.ticketId };
     }
   });
+  // D8: Resume is the owner's own OK, so "Ask me before each run" must not hold the restart: fire it like Run now.
+  // With the switch off nothing holds it, so the ticket keeps its own timing.
+  if (featureHoldsTicket(getTicket(ticketId))) requestRunNow(ticketId, { now, by: by || undefined });
   return { action: 'restart', ticketId };
 }
 

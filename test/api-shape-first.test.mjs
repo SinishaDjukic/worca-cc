@@ -292,7 +292,7 @@ test('GET /api/runs/:id returns state.shapeStats for a shaped run and no shapeSt
 });
 
 test('Ask before each run from the card persists, and run 2\'s plan ask opens as a "Plan · run 2" step card', async () => {
-  const { createSliceFeature, featureApprovesEach } = await import('../src/core/shape/features.mjs');
+  const { createSliceFeature } = await import('../src/core/shape/features.mjs');
   const { seedPipelineRow } = await import('./helpers/db-seed.mjs');
   const { getDb } = await import('../src/core/db.mjs');
   const { projectKey } = await import('../src/core/store.mjs');
@@ -306,8 +306,7 @@ test('Ask before each run from the card persists, and run 2\'s plan ask opens as
   const r = await post(`/api/shape/features/${f.id}/approve-each`, { on: true });
   assert.equal(r.status, 200);
   assert.equal((await (await fetch(`${base}/api/shape/features/${f.id}`)).json()).approveEach, true);
-  assert.equal(featureApprovesEach(f.id), true);
-  // Run 2 raises its plan ask (orchestrator-slices.test.mjs:327 proves "Approve each on → always a plan ask").
+  // Run 2 raises its plan ask (a failing check or an outline change stops a later plan; orchestrator-slices.test.mjs).
   const p2 = 'asf00000002';
   seedPipelineRow({ id: p2, projectKey: projectKey(dir), status: 'running', title: p2, branch: { source: 'feat/a', feature: 'feat/b' } });
   getDb().prepare('UPDATE shape_feature_slices SET pipeline_id = ? WHERE feature_id = ? AND idx = 2').run(p2, f.id);
