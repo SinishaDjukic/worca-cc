@@ -5,7 +5,8 @@
 // entry the gate no longer reports also fails (delete it), so it cannot go stale or be raised without a visible edit.
 //   npm run stillhet:gates [-- --only ds-check,click-check] [--workers N] [--units-json FILE]
 // --workers and --units-json reach click-check only (the other gates run as today): click-check is split across parallel workers
-// by default (the CPU count less one, at most 4); `--workers 1` gives the single walk. An invalid --workers stops before the build.
+// by default (the CPU count less one, at most 4); `--workers 1` gives the single walk. It splits one mode's walk (Expert), not
+// modes. An invalid --workers, or --units-json without a file name, stops before the build.
 // Needs a Chromium that playwright can launch. NOT part of `npm test`.
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -48,13 +49,14 @@ const runGate = (gate, env, args = []) => new Promise((resolve) => {
 
 /** The runner. `deps` (tests): build, startApp, runGate. Returns the exit code. */
 export async function main(argv = process.argv.slice(2), deps = {}) {
-  const { startApp, launchOptions, parseWorkers } = await import('./stillhet-compare.mjs');
+  const { startApp, launchOptions, parseWorkers, parseUnitsJson } = await import('./stillhet-compare.mjs');
   const clickArgs = [];
   if (argv.some((a) => a === '--workers' || a.startsWith('--workers='))) {
     try { clickArgs.push('--workers', String(parseWorkers(argv))); } catch (e) { console.error(e.message); return 2; }
   }
-  const ui = argv.indexOf('--units-json');
-  if (ui >= 0) clickArgs.push('--units-json', argv[ui + 1]);
+  let unitsFile;
+  try { unitsFile = parseUnitsJson(argv); } catch (e) { console.error(e.message); return 2; }
+  if (unitsFile) clickArgs.push('--units-json', unitsFile);
   const oi = argv.indexOf('--only');
   const gates = oi >= 0 ? argv[oi + 1].split(',') : GATES;
   const baselines = JSON.parse(await readFile(BASELINES, 'utf8'));

@@ -191,6 +191,7 @@ test('finishRun: an unfinished entry gives code 1 and a line naming the worker, 
   assert.ok(out.lines.includes('     boom'));
   assert.equal(out.lines[0], rep.lines[0]);
   assert.deepEqual(unfinishedLines([], label), []);
+  assert.deepEqual(unfinishedLines([{ worker: 3, reason: 'no Chrome', units: [], tail: [] }], label), ['worker 3 did not start (no Chrome)']);
 });
 
 test('installStopHandlers: two SIGINTs run cleanup once and exit 130; SIGTERM exits 143; uninstall removes both listeners', async () => {
@@ -277,6 +278,32 @@ test('main: a cell with no result after the timeout fails the run, names the cel
   assert.match(out, /ok {3}route-chat dark 1280/);
   assert.match(out, /worker \d stopped \(timed out after 0\.05 s\); unfinished: route-chat light 360/);
   assert.equal(stopped.length, 2);
+});
+
+test('runPool: a signal while a worker is still starting stops that worker once it is up, and no later worker starts', async () => {
+  const live = new Set();
+  const started = [], stopped = [];
+  let release;
+  const slow = new Promise((r) => { release = r; });
+  const pool = runPool({
+    units: cellUnits(4), workers: 3, live,
+    start: async (i) => { started.push(i); if (i === 1) await slow; return { i }; },
+    stop: async (w) => { stopped.push(w.i); },
+    run: async (_w, u) => { await new Promise((r) => setTimeout(r, 5)); return fakeCell(u); },
+  });
+  await new Promise((r) => setTimeout(r, 1));
+  assert.deepEqual(started, [0, 1]);
+  const signal = Promise.all([...live].map((halt) => halt()));
+  let settled = false;
+  signal.then(() => { settled = true; });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(settled, false, 'the signal path must wait for the worker still starting');
+  release();
+  await signal;
+  assert.deepEqual(stopped.sort(), [0, 1], 'the worker that was starting is stopped too');
+  await pool;
+  assert.deepEqual(started, [0, 1], 'no worker starts after the signal');
+  assert.deepEqual(stopped.sort(), [0, 1]);
 });
 
 test('runPool: a signal stopping the live workers while a crash stops the same one runs its stop once, and both wait for it', async () => {

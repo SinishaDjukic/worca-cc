@@ -103,6 +103,15 @@ export function parseWorkers(argv, cpus = availableParallelism()) {
   throw new Error(`--workers must be a whole number of 1 or more, got "${raw ?? 'nothing'}"`);
 }
 
+/** The --units-json file name, or null without the flag. Throws when the flag has no file name after it. */
+export function parseUnitsJson(argv) {
+  const i = argv.indexOf('--units-json');
+  if (i < 0) return null;
+  const file = argv[i + 1];
+  if (!file || file.startsWith('--')) throw new Error('--units-json needs a file name');
+  return file;
+}
+
 /** Never more workers than units, never fewer than one. */
 export const clampWorkers = (n, unitCount) => Math.max(1, Math.min(n, unitCount));
 
@@ -145,10 +154,16 @@ export async function runPool({ units, workers, start, run, stop, timeoutMs = UN
     }
   };
   const loops = [];
+  let closed = false;   // a signal stopped the pool: no further worker starts
   try {
-    for (let i = 0; i < workers; i++) {
+    for (let i = 0; i < workers && !closed; i++) {
+      // a worker still inside start() is live too: a signal waits for it to come up, then stops it
+      const pending = Promise.resolve().then(() => start(i));
+      const early = async () => { closed = true; live.delete(early); const w = await pending.catch(() => null); if (w) await halt(w); };
+      live.add(early);
       let w;
-      try { w = await start(i); } catch (e) { unfinished.push({ worker: i + 1, reason: firstLine(e), units: [], tail: [] }); continue; }
+      try { w = await pending; } catch (e) { unfinished.push({ worker: i + 1, reason: firstLine(e), units: [], tail: [] }); continue; } finally { live.delete(early); }
+      if (closed) { await halt(w); break; }
       started.push(w);
       const own = () => { live.delete(own); return halt(w); };
       stopper.set(w, own); live.add(own);
@@ -161,7 +176,7 @@ export async function runPool({ units, workers, start, run, stop, timeoutMs = UN
 }
 
 /** One line per stopped worker naming its unfinished units (`label(unit)`), then the stderr tail it kept. */
-export const unfinishedLines = (unfinished, label) => unfinished.flatMap((e) => [`worker ${e.worker} stopped (${e.reason}); unfinished: ${e.units.map(label).join(', ')}`, ...(e.tail || []).map((l) => `     ${l}`)]);
+export const unfinishedLines = (unfinished, label) => unfinished.flatMap((e) => [e.units.length ? `worker ${e.worker} stopped (${e.reason}); unfinished: ${e.units.map(label).join(', ')}` : `worker ${e.worker} did not start (${e.reason})`, ...(e.tail || []).map((l) => `     ${l}`)]);
 
 /** The report with the unfinished workers appended: any unfinished entry fails the run. */
 export const finishRun = ({ lines, code }, unfinished, label) => (unfinished.length ? { lines: [...lines, ...unfinishedLines(unfinished, label)], code: 1 } : { lines, code });
@@ -226,7 +241,7 @@ export async function startApp(home, env, { lockRail = false, serverArgs = ['ui/
   // a locked flag draws the top-bar switch disabled (nav.design-switch), which the prototype's switch is not
   await writeFile(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ onboarding: { welcomeSeen: true }, ...(lockRail ? {} : { flags: { rail: true } }) }));
   let log = '';
-  const child = spawn(process.execPath, serverArgs, { cwd: ROOT, env: { ...process.env, ...env, WORCA_FLAGS: lockRail ? 'rail' : '', WORCA_STILLHET_DEMO: '1', PORT: String(port), HOME: home, USERPROFILE: home, WORCA_HOME: join(home, 'worca-home'), WORCA_MOCK: '1', WORCA_TEST_ALLOW_HOME_FALLBACK: '1', FORCE_COLOR: '0' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, serverArgs, { cwd: ROOT, env: { ...process.env, ...env, WORCA_FLAGS: lockRail ? 'rail' : '', WORCA_STILLHET_DEMO: '1', PORT: String(port), HOME: home, USERPROFILE: home, WORCA_HOME: join(home, 'worca-home'), WORCA_MOCK: '1', WORCA_TEST_ALLOW_HOME_FALLBACK: '1', FORCE_COLOR: '0', WORCA_HOST: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout.on('data', (d) => { log += d; }); child.stderr.on('data', (d) => { log += d; });
   const exited = new Promise((r) => child.once('exit', r));
   const stop = async () => {

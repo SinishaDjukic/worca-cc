@@ -50,11 +50,16 @@ test('against the app (STILLHET_TARGET) a gate does not rebuild the shared bundl
   assert.equal(has(css) ? statSync(css).mtimeMs : null, before);
 });
 
-test('main: an invalid --workers returns 2 before reading baselines, building or starting the app', async () => {
+test('main: an invalid --workers, or --units-json without a file name, returns 2 before reading baselines, building or starting the app', async () => {
   const { main } = await import('../tools/stillhet-gates.mjs');
   let built = 0, started = 0;
-  const code = await main(['--workers', '0'], { build: async () => { built++; }, startApp: async () => { started++; } });
-  assert.equal(code, 2);
+  const was = console.error; console.error = () => {};
+  try {
+    for (const argv of [['--workers', '0'], ['--units-json'], ['--units-json', '--only']]) {
+      const code = await main(argv, { build: async () => { built++; }, startApp: async () => { started++; } });
+      assert.equal(code, 2, argv.join(' '));
+    }
+  } finally { console.error = was; }
   assert.equal(built + started, 0);
 });
 

@@ -3,7 +3,8 @@
 // visible control, and each control a click opens (a menu's items), and fails one that changes nothing: not the page, the
 // address, a field, the focus or the clipboard. A disabled control must say why in its tooltip. It finds pages, cases, tabs
 // and sections by itself, so a new one is read without touching this file. --small: one width, every fifth case.
-// The walk is split into units (one case of a page, or one route of index.html, at one width), each started in a fresh
+// It splits one mode's walk (Expert), not modes. The walk is split into units (one case of a page, or one route of
+// index.html, at one width), each started in a fresh
 // browser context at every worker count. --workers N runs them on N worker processes and prints the very same report:
 // default the CPU count less one, at most 4, at least 1; any whole number of 1 or more; never more than the number of units;
 // `--workers 1` walks in this process. Against the app (STILLHET_TARGET) each worker above 1 gets its own sandbox app. A unit
@@ -16,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseWorkers, clampWorkers, runPool, finishRun, installStopHandlers, startApp, OWN_SIGNALS } from '../../../../tools/stillhet-compare.mjs';
+import { parseWorkers, parseUnitsJson, clampWorkers, runPool, finishRun, installStopHandlers, startApp, OWN_SIGNALS } from '../../../../tools/stillhet-compare.mjs';
 
 const dir = fileURLToPath(new URL('..', import.meta.url));
 const THIS = fileURLToPath(import.meta.url);
@@ -262,11 +263,9 @@ async function workerMain() {
 
 /** The walk. `deps` (tests): build, preflight, timeoutMs. Prints the report and returns the exit code. */
 export async function main(argv = process.argv.slice(2), deps = {}) {
-  let workers;
-  try { workers = parseWorkers(argv); } catch (e) { console.error(e.message); return 2; }
+  let workers, unitsFile;
+  try { workers = parseWorkers(argv); unitsFile = parseUnitsJson(argv); } catch (e) { console.error(e.message); return 2; }
   const small = argv.includes('--small');
-  const ui = argv.indexOf('--units-json');
-  const unitsFile = ui >= 0 ? argv[ui + 1] : null;
   const live = new Set();
   let pre = null;
   const off = installStopHandlers(async () => {

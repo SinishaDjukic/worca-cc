@@ -134,11 +134,15 @@ test('a hung worker child times out, fails the run naming its unit, and is no lo
   assert.ok(kids[0].exitCode !== null || kids[0].signalCode !== null);
 });
 
-test('main: an invalid --workers returns 2 with no build and no browser', async () => {
+test('main: an invalid --workers, or --units-json without a file name, returns 2 with no build and no browser', async () => {
   let built = 0, launched = 0;
   const was = console.error; console.error = () => {};
   let code;
-  try { code = await cc.main(['--workers', 'x'], { build: () => { built++; }, preflight: async () => { launched++; } }); } finally { console.error = was; }
-  assert.equal(code, 2);
+  try {
+    for (const argv of [['--workers', 'x'], ['--units-json'], ['--units-json', '--small']]) {
+      code = await cc.main(argv, { build: () => { built++; }, preflight: async () => { launched++; } });
+      assert.equal(code, 2, argv.join(' '));
+    }
+  } finally { console.error = was; }
   assert.equal(built + launched, 0);
 });
