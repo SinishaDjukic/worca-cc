@@ -1,6 +1,6 @@
 # Workflow tests, Part 3b: plugins off in Pretend, file-scope checks, the command before and after — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** A Pretend try runs without the person's own Claude Code plugins, skills, agents and hooks (and without the project's hooks and plugins), still signed in and still under the person's own deny rules and sandbox; an example can check which files a try changed; and "The command passes" also runs once on the start commit, so the result says which tests the change made pass, which still pass, and which it broke, and the check can be met when the change breaks nothing that passed before.
 
@@ -234,7 +234,7 @@ The user decided every open item on 2026-11-02; each is now a decision: O1 → D
 
 ## Task 0: Baseline (no commit)
 
-- [ ] **Step 1: Wait for 3a's dev merge, then make the worktree**
+- [x] **Step 1: Wait for 3a's dev merge, then make the worktree**
 
 The controller confirms the `dev` merge on `feat/workflow-tests-part3` is committed and its agent is done. Then run (PowerShell):
 ```powershell
@@ -254,7 +254,7 @@ Expected:
 
 Record the base commit: `git -C C:\Users\BRT1BG\worca-cc\worca-cc-tests3b log -1 --format=%H` → write it to `C:\Users\BRT1BG\worca-cc\worca-cc-tests3b\.superpowers\sdd\base-3b.txt`. Every later "since the base" uses it.
 
-- [ ] **Step 2: Re-find every cited place**
+- [x] **Step 2: Re-find every cited place**
 
 This plan cites `758e9943b`. Run, from the new worktree:
 ```powershell
@@ -267,7 +267,7 @@ Select-String -Path src\core\orchestrator.mjs -Pattern "mcpStrict: this._testCon
 ```
 Expected: each pattern found once (the `fanOutDirective(ctxFanOut` pattern also in `src/core/graph/executor.mjs`). Write the new line numbers into `.superpowers\sdd\base-3b.txt`. If a cited function changed shape (not only moved), tell the controller before Task 1.
 
-- [ ] **Step 3: Record the full-suite baseline** (about 45–60 minutes; run it in the background)
+- [x] **Step 3: Record the full-suite baseline** (about 45–60 minutes; run it in the background)
 
 Run:
 ```powershell
@@ -275,7 +275,7 @@ node C:\Users\BRT1BG\worca-cc\worca-cc-dev\.superpowers\keep\run-files.mjs C:\Us
 ```
 Expected: about 170–190 failing tests in a few dozen files (the known Windows failures). Write the failing file names, one per line, to `C:\Users\BRT1BG\worca-cc\worca-cc-tests3b\.superpowers\sdd\baseline-3b-failing.txt`. A file that fails later and is not on it is checked with `node tools/test.mjs <file>` on the base and on the branch, back to back, under the same load.
 
-- [ ] **Step 4: Record a quick baseline of the files this part touches**
+- [x] **Step 4: Record a quick baseline of the files this part touches**
 
 Run:
 ```powershell
@@ -299,7 +299,7 @@ Expected: all pass, except the known `ui-design-language` failures and the `spaw
   - `userSettingsFile({ env?, home? }): string`;
   - `readUserSignIn({ env?, home?, read? }): { state: 'none'|'found'|'unreadable', env: Record<string,string>, settings: Record<string,string> }`. Never throws.
 
-- [ ] **Step 1: Write the failing test.** Create `test/claude-sign-in.test.mjs`:
+- [x] **Step 1: Write the failing test.** Create `test/claude-sign-in.test.mjs`:
 
 ```js
 // test/claude-sign-in.test.mjs — workflow tests 3b, Task 1 (D71): the sign-in kept in the person's own Claude Code settings,
@@ -379,12 +379,12 @@ test('the key rule moved here unchanged; the interview still uses it', () => {
 });
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `node tools/test.mjs test/claude-sign-in.test.mjs`
 Expected: FAIL, "Cannot find module '…/src/core/engines/claude-sign-in.mjs'".
 
-- [ ] **Step 3: Write the module.** Create `src/core/engines/claude-sign-in.mjs`:
+- [x] **Step 3: Write the module.** Create `src/core/engines/claude-sign-in.mjs`:
 
 ```js
 // src/core/engines/claude-sign-in.mjs
@@ -447,19 +447,19 @@ export function readUserSignIn({ env = process.env, home, read = (p) => readFile
 }
 ```
 
-- [ ] **Step 4: Move the key rule out of the interview.** In `src/core/requirements/interview.mjs`, delete `:44-50` (the comment "Keys of the user settings' `env` block…", `SIGN_IN_ENV_KEYS` and `isSignInEnvKey`) and add to the imports at the top:
+- [x] **Step 4: Move the key rule out of the interview.** In `src/core/requirements/interview.mjs`, delete `:44-50` (the comment "Keys of the user settings' `env` block…", `SIGN_IN_ENV_KEYS` and `isSignInEnvKey`) and add to the imports at the top:
 
 ```js
 import { isSignInEnvKey } from '../engines/claude-sign-in.mjs';
 ```
 `userClaudeSignIn` and everything else stay as they are.
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `node tools/test.mjs test/claude-sign-in.test.mjs test/requirements-interview.test.mjs`
 Expected: PASS (the interview's own sign-in tests, `test/requirements-interview.test.mjs:1072-1117`, pass unchanged).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/core/engines/claude-sign-in.mjs src/core/requirements/interview.mjs test/claude-sign-in.test.mjs
@@ -494,7 +494,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - Step 9 (D81): `readUserSafety({ env?, home?, read? }): { deny: string[], sandbox: object|null }`, `SAFETY_DENY_MAX = 500` (claude-sign-in.mjs); `buildSettingsPayload(rules, { …, safetySettings })`, `buildClaudeArgs({ …, safetySettings })`, `planClaudeInvocation` (file only, as the helpers);
   - `fanOutDirective(fanOut, { …, personalOff })`; `taskHeader` reads `ctx.pluginsOff`.
 
-- [ ] **Step 1: Write the failing test.** Create `test/workflow-test-plugins-off.test.mjs`:
+- [x] **Step 1: Write the failing test.** Create `test/workflow-test-plugins-off.test.mjs`:
 
 ```js
 // test/workflow-test-plugins-off.test.mjs — workflow tests 3b, Task 2 (D70, D71): a Pretend try's spawns load no user settings,
@@ -637,12 +637,12 @@ test('runClaude forwards pluginsOff: --setting-sources project,local, the helper
 });
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `node tools/test.mjs test/workflow-test-plugins-off.test.mjs`
 Expected: FAIL: `signInCarry` and `PLUGINS_OFF_SOURCES` are not exported.
 
-- [ ] **Step 3: The settings payload and the argv (engines/claude.mjs)**
+- [x] **Step 3: The settings payload and the argv (engines/claude.mjs)**
 
 Add to the imports:
 ```js
@@ -731,7 +731,7 @@ export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limi
 ```
 (`stageClaudeInvocation` needs no change: it writes every planned file and hands the folder back for cleanup.)
 
-- [ ] **Step 4: What is carried (engines/claude.mjs).** Add, above `runClaudeProcess`:
+- [x] **Step 4: What is carried (engines/claude.mjs).** Add, above `runClaudeProcess`:
 
 ```js
 /**
@@ -782,7 +782,7 @@ In its `composeSpawnEnv({ … })` call, add after `tryGuard: tryGuard || null,`:
       signInEnv: carry && Object.keys(carry.env).length ? carry.env : null,
 ```
 
-- [ ] **Step 5: The env tier (engines/spawn.mjs).** Replace `composeSpawnEnv` (:101-115); add to its doc comment "…the person's carried sign-in (workflow tests 3b, D71) over the run env and under the overlay…":
+- [x] **Step 5: The env tier (engines/spawn.mjs).** Replace `composeSpawnEnv` (:101-115); add to its doc comment "…the person's carried sign-in (workflow tests 3b, D71) over the run env and under the overlay…":
 
 ```js
 export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, overlay, hostPid, tryGuard = null, signInEnv = null } = {}) {
@@ -804,12 +804,12 @@ export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, over
 }
 ```
 
-- [ ] **Step 6: The gate (claude-runner.mjs).** `runClaude` names every field twice (its comment at :132-136). Add `pluginsOff,` after `tryGuard,` in the destructure (:163) and after `tryGuard,` in the `engine.run({ … })` call (:276). Add to the JSDoc after the `tryGuard` line (:101):
+- [x] **Step 6: The gate (claude-runner.mjs).** `runClaude` names every field twice (its comment at :132-136). Add `pluginsOff,` after `tryGuard,` in the destructure (:163) and after `tryGuard,` in the `engine.run({ … })` call (:276). Add to the JSDoc after the `tryGuard` line (:101):
 ```js
  * @param {boolean} [o.pluginsOff]           workflow tests 3b: a Pretend try's spawn: carry the person's sign-in only (D71)
 ```
 
-- [ ] **Step 7: runOpts, the prompts and the node context**
+- [x] **Step 7: runOpts, the prompts and the node context**
 
 In `src/core/phases.mjs`, above `runOpts`, add:
 ```js
@@ -880,12 +880,12 @@ In `src/core/orchestrator.mjs:1888`, replace the workflow-tests line with:
         ...(this._testConnectors() === 'pretend' ? { pluginsOff: true } : {}) } : {}),
 ```
 
-- [ ] **Step 8: Run the tests**
+- [x] **Step 8: Run the tests**
 
 Run: `node tools/test.mjs test/workflow-test-plugins-off.test.mjs test/spawn-args.test.mjs test/agent-user.test.mjs test/claude-mcpjson-guard.test.mjs test/directions-prompt.test.mjs test/engine-cost.test.mjs test/engine-gate.test.mjs test/requirements-interview.test.mjs`
 Expected: PASS (the POSIX-shim tests skip on Windows, as in the baseline). Find every other test that pins prompt text with `Select-String -Path test\*.test.mjs -Pattern "fanOutDirective|taskHeader" -List` and run each listed file too; they pass unchanged (only the `personalOff` branches are new).
 
-- [ ] **Step 9: The person's own guards ride along (D81)**
+- [x] **Step 9: The person's own guards ride along (D81)**
 
 With `--setting-sources project,local` the person's user-level `permissions.deny` and `sandbox` would no longer apply. They only ever block, so they are carried, in every case.
 
@@ -1022,7 +1022,7 @@ Step 1's broker and agent-user tests still hold: under `tools/test.mjs` the home
 
 Run Step 8's command again, with `test/claude-sign-in.test.mjs` added. Expected: PASS.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add src/core/engines/claude.mjs src/core/engines/spawn.mjs src/core/claude-runner.mjs src/core/phases.mjs src/core/graph/executor.mjs src/core/orchestrator.mjs src/core/engines/claude-sign-in.mjs test/workflow-test-plugins-off.test.mjs test/claude-sign-in.test.mjs
@@ -1048,7 +1048,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `stripProjectClaudeSettings(checkoutDir): Promise<{ changed: string[], links: string[] }>`;
   - the harness's `_tryPluginPaths: string[]` (tracked paths Worca changed or removed), part of `_excludePathspecs`.
 
-- [ ] **Step 1: Write the failing unit test.** Create `test/workflow-test-project-claude-settings.test.mjs`:
+- [x] **Step 1: Write the failing unit test.** Create `test/workflow-test-project-claude-settings.test.mjs`:
 
 ```js
 // test/workflow-test-project-claude-settings.test.mjs — workflow tests 3b, Task 3 (D72): the project's own Claude Code hooks and
@@ -1119,12 +1119,12 @@ test('a .claude folder that is a link (a junction on Windows) is removed, the li
 });
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `node tools/test.mjs test/workflow-test-project-claude-settings.test.mjs`
 Expected: FAIL, "Cannot find module '…/project-claude-settings.mjs'".
 
-- [ ] **Step 3: Write the module.** Create `src/core/workflow-tests/project-claude-settings.mjs`:
+- [x] **Step 3: Write the module.** Create `src/core/workflow-tests/project-claude-settings.mjs`:
 
 ```js
 // src/core/workflow-tests/project-claude-settings.mjs — workflow tests 3b (D72): in a Pretend project try's checkout, the
@@ -1182,12 +1182,12 @@ export async function stripProjectClaudeSettings(checkoutDir) {
 }
 ```
 
-- [ ] **Step 4: Run the unit test**
+- [x] **Step 4: Run the unit test**
 
 Run: `node tools/test.mjs test/workflow-test-project-claude-settings.test.mjs`
 Expected: PASS (the file-link test skips on this laptop with its reason; the junction test runs).
 
-- [ ] **Step 5: Write the failing API test.** Create `test/api-workflow-test-plugins-off.test.mjs`:
+- [x] **Step 5: Write the failing API test.** Create `test/api-workflow-test-plugins-off.test.mjs`:
 
 ```js
 // test/api-workflow-test-plugins-off.test.mjs — workflow tests 3b, Task 3 (D70, D72): through the run handler (mock engine). A
@@ -1318,12 +1318,12 @@ test('a Pretend try without a project: its spawns load no user settings either',
 ```
 If the no-project body is refused because `wf_poff` needs a project (D62 lets the server start it; the runner is what refuses), give the third test a workflow with a `producer` agent instead, as `test/api-workflow-test-try.test.mjs` does. Correct the test, not product code.
 
-- [ ] **Step 6: Run it to see it fail**
+- [x] **Step 6: Run it to see it fail**
 
 Run: `node tools/test.mjs test/api-workflow-test-plugins-off.test.mjs`
 Expected: the first test FAILS at the checkout's `.claude/settings.json` still holding `hooks` (the spawn assertions already pass after Task 2).
 
-- [ ] **Step 7: The harness.** In `src/core/run-harness.mjs`, add to the imports:
+- [x] **Step 7: The harness.** In `src/core/run-harness.mjs`, add to the imports:
 
 ```js
 import { stripProjectClaudeSettings } from './workflow-tests/project-claude-settings.mjs';
@@ -1376,12 +1376,12 @@ Replace `_excludePathspecs` (:7212-7222):
   }
 ```
 
-- [ ] **Step 8: Run the tests**
+- [x] **Step 8: Run the tests**
 
 Run: `node tools/test.mjs test/workflow-test-project-claude-settings.test.mjs test/api-workflow-test-plugins-off.test.mjs test/api-workflow-test-project-try.test.mjs test/api-workflow-test-try.test.mjs test/workflow-test-isolation.test.mjs`
 Expected: PASS. 3a's project-try test still shows a normal run unchanged and its setup output out of the diff.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src/core/workflow-tests/project-claude-settings.mjs src/core/run-harness.mjs test/workflow-test-project-claude-settings.test.mjs test/api-workflow-test-plugins-off.test.mjs
@@ -1407,7 +1407,7 @@ The brief's §6 plugins-off proofs.
 - Consumes: `runClaude` (claude-runner.mjs), `stripProjectClaudeSettings` (Task 3), `PLUGINS_OFF_SOURCES` (Task 2).
 - Produces: the proof's JSON and markdown records. No product code changes unless Step 4's rule fires.
 
-- [ ] **Step 1: Write the free proof.** Create `.superpowers/sdd/proofs/plugins-off-real-cli.mjs`:
+- [x] **Step 1: Write the free proof.** Create `.superpowers/sdd/proofs/plugins-off-real-cli.mjs`:
 
 ```js
 // .superpowers/sdd/proofs/plugins-off-real-cli.mjs — workflow tests 3b, Task 4 (free: no model is called). The real Claude Code
@@ -1609,7 +1609,7 @@ process.exit(p.noMarker && p.toolCalled && p.carriedKeyReachedApi && p.noUserSki
   && out.helper.keyReachedApi && out.none.processKeyUsed ? 0 : 1);
 ```
 
-- [ ] **Step 2: Run the free proof**
+- [x] **Step 2: Run the free proof**
 
 Run (PowerShell, from the worktree root):
 ```powershell
@@ -1625,7 +1625,7 @@ If the CLI refuses the key or the base URL, read `plugins-off-real-cli.json` and
 
 **Stop rule:** if `pretend.noMarker` is `false`, or a personal skill, agent or plugin is listed in the Pretend variant, stop and report to the controller with `plugins-off-real-cli.json`: D70's mechanism does not hold on this CLI, and Tasks 11–14 must not claim it.
 
-- [ ] **Step 3: Record it.** Create `.superpowers/sdd/real-call-proof-3b.md` with a "Free proof (real CLI, fake model)" section: the CLI version, the JSON summary, and one line per claim:
+- [x] **Step 3: Record it.** Create `.superpowers/sdd/real-call-proof-3b.md` with a "Free proof (real CLI, fake model)" section: the CLI version, the JSON summary, and one line per claim:
   1. A user SessionStart, UserPromptSubmit and PreToolUse hook does not fire in a Pretend try (and does in a normal run, where it did).
   2. A plugin's hook does not fire, and its skill is not listed.
   3. The project's own hook does not fire after the strip; its skill and agent are listed; its CLAUDE.md reaches the model (`projectMemoryLoaded`).
@@ -1634,7 +1634,7 @@ If the CLI refuses the key or the base URL, read `plugins-off-real-cli.json` and
   6. The carried env key and a carried `apiKeyHelper` reach the API; with no sign-in in the user settings, the process env's key is used.
   7. Facts, no claim: `settingsEnvWins` (whether the CLI lets user settings env win over the process env in a normal run; D71 puts the model env over the carried env either way), `userMemoryLoaded` (whether `~/.claude/CLAUDE.md` loads under `project,local`), `cliReadsJsonc`.
 
-- [ ] **Step 4: The JSONC rule (D71)**
+- [x] **Step 4: The JSONC rule (D71)**
 
 If `cliReadsJsonc` is `true`, the CLI reads a `settings.json` with comments, so a sign-in kept in one works in a normal run and must be carried too. Then, in `src/core/engines/claude-sign-in.mjs`, when `JSON.parse` fails, try once more on the text with comments and trailing commas removed by a scanner that skips string contents:
 ```js
@@ -1671,7 +1671,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 If `false`, change nothing and note "the CLI does not read comments: an unparsable file carries nothing".
 
-- [ ] **Step 5: Commit the free proof**
+- [x] **Step 5: Commit the free proof**
 
 ```bash
 git add .superpowers/sdd/proofs/plugins-off-real-cli.mjs .superpowers/sdd/proofs/plugins-off-real-cli.json .superpowers/sdd/real-call-proof-3b.md
@@ -1681,7 +1681,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 (If `.superpowers/` is git-ignored in this worktree, skip the commit and say so in the report: the files stay on disk for the reviewer.)
 
-- [ ] **Step 6: The paid proof. CONTROLLER ONLY, after the user's explicit OK for this run, capped at $3.**
+- [x] **Step 6: The paid proof. CONTROLLER ONLY, after the user's explicit OK for this run, capped at $3.**
 
 Do not dispatch this step to an implementer. Do it in this order and stop at the first surprise.
 
@@ -1719,7 +1719,7 @@ The brief (§7) asks for a security review of the carry-over: it touches credent
 - Modify: only what a finding needs, each with a test.
 - Modify: `.superpowers/sdd/real-call-proof-3b.md` (a "Security review" section).
 
-- [ ] **Step 1: Dispatch the review.** Invoke the `security-review` skill on the branch diff since the base in `.superpowers\sdd\base-3b.txt` (or dispatch a general-purpose reviewer with this list). The reviewer reads `src/core/engines/claude-sign-in.mjs` (`readUserSignIn`, `readUserSafety`), `src/core/engines/claude.mjs` (`signInCarry`, `secretValuesOf`, `safetySettingsOf`, `buildSettingsPayload`, `buildSettingsArgs`, `planClaudeInvocation`, `runClaudeProcess`), `src/core/engines/spawn.mjs` (`composeSpawnEnv`), `src/core/workflow-tests/project-claude-settings.mjs`, the harness's `_pluginsOffInCheckout`, and Task 4's two proofs. Questions, each answered with file:line evidence:
+- [x] **Step 1: Dispatch the review.** Invoke the `security-review` skill on the branch diff since the base in `.superpowers\sdd\base-3b.txt` (or dispatch a general-purpose reviewer with this list). The reviewer reads `src/core/engines/claude-sign-in.mjs` (`readUserSignIn`, `readUserSafety`), `src/core/engines/claude.mjs` (`signInCarry`, `secretValuesOf`, `safetySettingsOf`, `buildSettingsPayload`, `buildSettingsArgs`, `planClaudeInvocation`, `runClaudeProcess`), `src/core/engines/spawn.mjs` (`composeSpawnEnv`), `src/core/workflow-tests/project-claude-settings.mjs`, the harness's `_pluginsOffInCheckout`, and Task 4's two proofs. Questions, each answered with file:line evidence:
   1. Do only `isSignInEnvKey` env entries and the three helper strings ever leave the person's settings file? Is there any path where hooks, permissions, plugins or other env are copied?
   2. Can a carried value reach the command line, a log (the spawn-debug line, the run stream, `live-log.ndjson`, the audit), run state (`run.json`, the DB, `results.json`), an error message or the UI? Is every secret-looking value redacted?
   3. The settings file: its folder is `mkdtemp` under the OS temp folder (on Windows: the user's `%TEMP%` ACL); is it removed on every end (`cleanupStaged`), including a spawn that fails to start? Can the agent read it while it runs, and is that more than a normal run exposes (where the helper sits in `~/.claude/settings.json`)?
@@ -1732,9 +1732,9 @@ The brief (§7) asks for a security review of the carry-over: it touches credent
   10. The proofs: does anything copy, print or keep the person's `.credentials.json` or a sign-in value?
   11. D81, the person's own guards: is only `permissions.deny` and `sandbox` carried (never `allow` or `ask`)? Can their merge weaken Worca's own rules or the try guard's (order, deduplication, a `sandbox` object that turns something off that Worca relies on, a deny rule that blocks a tool Worca itself needs so a try fails in a way that looks like the workflow's)? Is carrying them with the broker on and into an agent user's spawn safe? Do they ever reach argv or a log?
 
-- [ ] **Step 2: Fix each finding with a test.** For each finding the controller accepts as a defect: a failing test in the task's test file (`test/workflow-test-plugins-off.test.mjs`, `test/claude-sign-in.test.mjs` or `test/workflow-test-project-claude-settings.test.mjs`), the fix, the test passing. A finding the controller accepts as a stated limit goes into `real-call-proof-3b.md` and Task 15's changelog "limits" line.
+- [x] **Step 2: Fix each finding with a test.** For each finding the controller accepts as a defect: a failing test in the task's test file (`test/workflow-test-plugins-off.test.mjs`, `test/claude-sign-in.test.mjs` or `test/workflow-test-project-claude-settings.test.mjs`), the fix, the test passing. A finding the controller accepts as a stated limit goes into `real-call-proof-3b.md` and Task 15's changelog "limits" line.
 
-- [ ] **Step 3: Record and commit.** Add the "Security review" section to `real-call-proof-3b.md`: the reviewer, each question's answer, the findings, the fixes (commit ids), the accepted limits. Then:
+- [x] **Step 3: Record and commit.** Add the "Security review" section to `real-call-proof-3b.md`: the reviewer, each question's answer, the findings, the fixes (commit ids), the accepted limits. Then:
 
 ```bash
 git add <the files the fixes touched> .superpowers/sdd/real-call-proof-3b.md
@@ -1763,7 +1763,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `projectChanges(...)` adds `touched: string[]` (every path, a rename's old one too, sorted, uncapped);
   - a scope check's result in the verdict: `{ id, label, met, value, kind, dirs | patterns | max }`.
 
-- [ ] **Step 1: Write the failing test.** Create `test/workflow-test-scope-checks.test.mjs`:
+- [x] **Step 1: Write the failing test.** Create `test/workflow-test-scope-checks.test.mjs`:
 
 ```js
 // test/workflow-test-scope-checks.test.mjs — workflow tests 3b, Task 6 (Q10, D73): "Changes only files under …", "Leaves these
@@ -1880,12 +1880,12 @@ test('checkTry: scope checks read the try\'s change list, whatever the try did, 
 });
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `node tools/test.mjs test/workflow-test-scope-checks.test.mjs`
 Expected: FAIL: `pathMatches` and `SCOPE_KINDS` are not exported.
 
-- [ ] **Step 3: The kinds (checks.mjs).** Replace `:6-9` and add the labels:
+- [x] **Step 3: The kinds (checks.mjs).** Replace `:6-9` and add the labels:
 
 ```js
 export const CHECK_KINDS = Object.freeze(['words', 'sections', 'mentions', 'not-mentions', 'file', 'script', 'command', 'under', 'unchanged', 'max-files']);
@@ -1916,7 +1916,7 @@ function insidePath(raw) {
 }
 ```
 
-- [ ] **Step 4: Normalise and label (checks.mjs).** In `normaliseCheck`, insert before the script part (`const key = typeof raw.key …`, :214):
+- [x] **Step 4: Normalise and label (checks.mjs).** In `normaliseCheck`, insert before the script part (`const key = typeof raw.key …`, :214):
 
 ```js
   if (kind === 'under') {
@@ -1956,7 +1956,7 @@ In `checkLabel`, after the `command` line add:
   if (c.kind === 'max-files') return `Changes at most ${c.max} ${c.max === 1 ? 'file' : 'files'}`;
 ```
 
-- [ ] **Step 5: The matcher and the values (checks.mjs).** Below `fileMatches` (:250), add:
+- [x] **Step 5: The matcher and the values (checks.mjs).** Below `fileMatches` (:250), add:
 
 ```js
 /** One name against one pattern segment: `*` any characters, `?` one. Greedy with one backtrack point, no regex (a try's
@@ -2034,7 +2034,7 @@ In `runCheck`, change the signature to `export function runCheck(check, { text =
   }
 ```
 
-- [ ] **Step 6: The change list and checkTry (result.mjs).** In `projectChanges` (:42-55), add `touched` to the returned object, right after `paths`:
+- [x] **Step 6: The change list and checkTry (result.mjs).** In `projectChanges` (:42-55), add `touched` to the returned object, right after `paths`:
 
 ```js
     // 3b (D73): every path the try touched, a rename's old path too (a copy's source is unchanged), for the scope checks.
@@ -2050,7 +2050,7 @@ In `checkTry`'s first loop, replace the two lines that run a pure check:
 ```
 and import `SCOPE_KINDS` from `../../shared/workflow-tests/checks.mjs`. (The scope fields travel with the result so the side by side can set folders and patterns in code, as Round 2 M5 did for the command.)
 
-- [ ] **Step 7: The refusal (store.mjs:77-80).** Replace:
+- [x] **Step 7: The refusal (store.mjs:77-80).** Replace:
 
 ```js
       if (raw && PROJECT_KINDS.includes(raw.kind) && !hasProject) {   // 3a D57, 3b D73: it reads or runs in the copy of the project
@@ -2060,12 +2060,12 @@ and import `SCOPE_KINDS` from `../../shared/workflow-tests/checks.mjs`. (The sco
       }
 ```
 
-- [ ] **Step 8: Run the tests**
+- [x] **Step 8: Run the tests**
 
 Run: `node tools/test.mjs test/workflow-test-scope-checks.test.mjs test/workflow-test-checks.test.mjs test/workflow-test-project-checks.test.mjs test/workflow-test-project-store.test.mjs test/workflow-test-store.test.mjs`
 Expected: PASS. If `test/workflow-test-project-checks.test.mjs` deep-compares `projectChanges`' whole answer, or `test/workflow-test-checks.test.mjs` pins `CHECK_KINDS`, add `touched` / the three kinds to their expected values (a pinned list grows; nothing else changes).
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src/shared/workflow-tests/checks.mjs src/core/workflow-tests/result.mjs src/core/workflow-tests/store.mjs test/workflow-test-scope-checks.test.mjs
@@ -2091,7 +2091,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `TestOutput = { format: 'tap'|'node-spec'|'pytest'|'jest'|'vitest'|null, pass: string[], fail: string[], skip: string[], passListed: boolean, counts: { passed, failed, skipped } | null, truncated: boolean }` (names sorted);
   - `TEST_FORMATS`, `MAX_TESTS = 20000`, `NAME_MAX = 300`.
 
-- [ ] **Step 1: Write the failing test.** Create `test/workflow-test-test-output.test.mjs`:
+- [x] **Step 1: Write the failing test.** Create `test/workflow-test-test-output.test.mjs`:
 
 ```js
 // test/workflow-test-test-output.test.mjs — workflow tests 3b, Task 7 (D74): the test names in a command's output. The fixtures
@@ -2302,12 +2302,12 @@ test('a huge run keeps at most MAX_TESTS names and says so; a long name is cut',
 });
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `node tools/test.mjs test/workflow-test-test-output.test.mjs`
 Expected: FAIL, "Cannot find module '…/test-output.mjs'".
 
-- [ ] **Step 3: Write the parser.** Create `src/core/workflow-tests/test-output.mjs`:
+- [x] **Step 3: Write the parser.** Create `src/core/workflow-tests/test-output.mjs`:
 
 ```js
 // src/core/workflow-tests/test-output.mjs — workflow tests 3b (D74): the test names in a command's output, for "The command
@@ -2514,12 +2514,12 @@ export function parseTestOutput(text) {
 }
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `node tools/test.mjs test/workflow-test-test-output.test.mjs`
 Expected: PASS. If a fixture fails, fix the parser, not the fixture: the fixtures are the tools' shapes.
 
-- [ ] **Step 5: Check the fixtures against real tools on this laptop**
+- [x] **Step 5: Check the fixtures against real tools on this laptop**
 
 In a scratch folder (not the worktree), make a tiny suite with one passing, one failing and one skipped test in a `describe`, and capture the output of each tool that is installed:
 ```powershell
@@ -2534,7 +2534,7 @@ python -m pytest -rA > pytest-ra.txt; python -m pytest > pytest-default.txt
 ```
 (Skip a tool that is not installed and cannot be fetched; say so.) For each captured file, run `node -e "import('./src/core/workflow-tests/test-output.mjs').then(m=>console.log(JSON.stringify(m.parseTestOutput(require('fs').readFileSync(process.argv[1],'utf8')),null,1)))" <file>` from the worktree and check the names and counts. Where a real output differs from its fixture in a way the parser misses, add the real shape as a second fixture to the test (trimmed to a few lines, no paths of this machine), fix the parser, and run Step 4 again. Record which tools were checked, with their versions, in `.superpowers/sdd/real-call-proof-3b.md` ("Test output formats").
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/core/workflow-tests/test-output.mjs test/workflow-test-test-output.test.mjs
@@ -2563,7 +2563,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - checks.mjs: `COMMAND_MET_WHEN = ['passes', 'breaks-nothing']`; a command check `{ cmd, timeoutMin, metWhen? }` where `metWhen: 'breaks-nothing'` is stored only when chosen; its label "The command <cmd> breaks nothing that passed before";
   - project-text.mjs: `BEFORE_HEADING`, `beforeExitText(r)`, `beforeNotRunText(r)`, `BEFORE_GROUPS`, `FAILURES_ONLY_NOTE`, `EXIT_ONLY_NOTE`, `passedCountsText(b, a)`, `addedText(n, failing)`, `moreNamesText(n)`, `BEFORE_KEPT_TEXT`, `splitTestName(name)`, `FAILED_LEAD`.
 
-- [ ] **Step 1: Write the failing test.** Create `test/workflow-test-before-after.test.mjs`:
+- [x] **Step 1: Write the failing test.** Create `test/workflow-test-before-after.test.mjs`:
 
 ```js
 // test/workflow-test-before-after.test.mjs — workflow tests 3b, Task 8 (D76): the command before and after the change,
@@ -2691,12 +2691,12 @@ test('a test name split for board 36\'s Failed line: the test file, then the tes
 });
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `node tools/test.mjs test/workflow-test-before-after.test.mjs`
 Expected: FAIL, "Cannot find module '…/before-after.mjs'".
 
-- [ ] **Step 3: Write the classifier.** Create `src/shared/workflow-tests/before-after.mjs`:
+- [x] **Step 3: Write the classifier.** Create `src/shared/workflow-tests/before-after.mjs`:
 
 ```js
 // src/shared/workflow-tests/before-after.mjs — workflow tests 3b (D76): "The command passes" before and after the change
@@ -2792,7 +2792,7 @@ In `checkLabel`, replace the command line with:
   if (c.kind === 'command') return c.metWhen === 'breaks-nothing' ? `The command ${c.cmd} breaks nothing that passed before` : `The command ${c.cmd} passes`;
 ```
 
-- [ ] **Step 4: The words.** Append to `src/shared/workflow-tests/project-text.mjs`:
+- [x] **Step 4: The words.** Append to `src/shared/workflow-tests/project-text.mjs`:
 
 ```js
 // ── 3b: the command before and after the change (U1; this plan's proposals until the mock is approved) ─────────────────────
@@ -2831,12 +2831,12 @@ export function splitTestName(name) {
 }
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `node tools/test.mjs test/workflow-test-before-after.test.mjs test/workflow-test-project-text.test.mjs test/workflow-test-project-checks.test.mjs test/workflow-test-checks.test.mjs test/workflow-test-store.test.mjs`
 Expected: PASS (3a's command-check tests still see `{ kind, cmd, timeoutMin }`: the default is not stored).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/shared/workflow-tests/before-after.mjs src/shared/workflow-tests/project-text.mjs src/shared/workflow-tests/checks.mjs test/workflow-test-before-after.test.mjs
@@ -2864,7 +2864,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - before-run.mjs: `BEFORE_VERSION`, `BEFORE_MAX_AGE_MS`, `BEFORE_STALE_MS`, `HEARTBEAT_MS`, `beforeSpecOf(example, check, startCommit?)`, `beforeHash(spec)`, `readBefore(spec, { now?, stamp? })`, `beforeRun(spec, { signal?, onPhase?, run?, clone? })` → `{ ran: true, v, key, startCommit, setupCmd, cmd, timeoutMin, stamp, at, ok, exitCode, timedOut, ms, summary, tail, tests, cached }` | `{ ran: false, reason: 'setup'|'stopped'|'error', text? }`, `sweepBeforeRuns({ log?, now?, alive? }): { runs, kept }`;
   - result.mjs: `runCommandCheck` answers `{ met, value, output, exitCode, ms, tests, timedOut? }`; `checkTry(example, outcome, { …, beforeOf })` where `beforeOf(check)` returns a before record or null. A command result's `met` is `commandMet`'s (Task 8; the exit code for the default); a `'breaks-nothing'` check's result also carries `metWhen` and `metWhy: { why, n?, before?, after? }`.
 
-- [ ] **Step 1: Write the failing test.** Create `test/workflow-test-before-run.test.mjs`:
+- [x] **Step 1: Write the failing test.** Create `test/workflow-test-before-run.test.mjs`:
 
 ```js
 // test/workflow-test-before-run.test.mjs — workflow tests 3b, Task 9 (D74, D75): the command on the start commit, in its own clone
@@ -3036,12 +3036,12 @@ test('checkTry: "breaks nothing that passed before" is met on the before run\'s 
 });
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `node tools/test.mjs test/workflow-test-before-run.test.mjs`
 Expected: FAIL, "Cannot find module '…/before-run.mjs'".
 
-- [ ] **Step 3: The line tap (shell-step.mjs).** In `runShellStep`, add `onLine: tap = null` to its options and replace its `onLine` handler:
+- [x] **Step 3: The line tap (shell-step.mjs).** In `runShellStep`, add `onLine: tap = null` to its options and replace its `onLine` handler:
 
 ```js
 export async function runShellStep({ command, cwd, env, timeoutMs = SETUP_TIMEOUT_MS, signal = null, spawnImpl = null, onLine: tap = null } = {}) {
@@ -3059,7 +3059,7 @@ export async function runShellStep({ command, cwd, env, timeoutMs = SETUP_TIMEOU
 ```
 Add to its doc comment: "`onLine(line)`: every output line as it comes (workflow tests 3b)."
 
-- [ ] **Step 4: The copy's stamp and the before clone (project-copy.mjs).** Add `randomBytes` to the imports (`import { randomBytes } from 'node:crypto';`). Below `COPY_SETTINGS` (:70), add:
+- [x] **Step 4: The copy's stamp and the before clone (project-copy.mjs).** Add `randomBytes` to the imports (`import { randomBytes } from 'node:crypto';`). Below `COPY_SETTINGS` (:70), add:
 
 ```js
 /** 3b (D75): the copy's stamp, written whenever the copy is made (also when it is made again): a before run kept for another
@@ -3113,7 +3113,7 @@ export async function cloneForBefore({ key, startCommit, dir }) {
 }
 ```
 
-- [ ] **Step 5: The before run.** Create `src/core/workflow-tests/before-run.mjs`:
+- [x] **Step 5: The before run.** Create `src/core/workflow-tests/before-run.mjs`:
 
 ```js
 // src/core/workflow-tests/before-run.mjs — workflow tests 3b (D75): "The command passes" run once on the start commit, before
@@ -3272,7 +3272,7 @@ export async function sweepBeforeRuns({ log = () => {}, now = Date.now(), alive 
 ```
 Check `processAlive(pid)` at `src/core/ui-instance.mjs:210` is a plain `(pid) => boolean`; if its module pulls in the server, copy its three lines here instead (`try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }`; Node's signal 0 only tests on Windows too).
 
-- [ ] **Step 6: The try's command run and checkTry (result.mjs).** Add the imports:
+- [x] **Step 6: The try's command run and checkTry (result.mjs).** Add the imports:
 
 ```js
 import { createTestOutputParser } from './test-output.mjs';
@@ -3307,12 +3307,12 @@ In `checkTry`, add `beforeOf = () => null` to its options (and to its JSDoc: "`b
         ...(fails ? { failed: fails.slice(0, 3), failedCount: fails.length } : {}), ...byRule, ...(ba ? { before: ba } : {}) };
 ```
 
-- [ ] **Step 7: Run the tests**
+- [x] **Step 7: Run the tests**
 
 Run: `node tools/test.mjs test/workflow-test-before-run.test.mjs test/workflow-test-shell-step.test.mjs test/workflow-test-project-checks.test.mjs test/workflow-test-project-copy.test.mjs test/workflow-test-result.test.mjs`
 Expected: PASS. If `test/workflow-test-project-checks.test.mjs` deep-compares `runCommandCheck`'s whole answer, add the new `exitCode`, `ms` and `tests` there (compare `ms` by type). `test/workflow-test-project-copy.test.mjs` still passes: the stamp is one more file in the copy's `.git`, and the copy reset keeps unknown files there (as it keeps `worca-repack-failed`).
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/core/workflow-tests/before-run.mjs src/core/workflow-tests/project-copy.mjs src/core/workflow-tests/shell-step.mjs src/core/workflow-tests/result.mjs test/workflow-test-before-run.test.mjs
@@ -3344,7 +3344,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `store.lastCommandMs(exampleId, checkId): number|null`;
   - `connectorNotes(…)` adds `personalOff: boolean` (Pretend and a step on Claude Code).
 
-- [ ] **Step 1: Write the failing test.** Create `test/workflow-test-before-runner.test.mjs`:
+- [x] **Step 1: Write the failing test.** Create `test/workflow-test-before-runner.test.mjs`:
 
 ```js
 // test/workflow-test-before-runner.test.mjs — workflow tests 3b, Task 10 (D75, D78): in a test, each project example's command
@@ -3506,12 +3506,12 @@ test('Test a version knows when the person\'s plugins are off (D70, D78)', () =>
 ```
 (Check `engineLabel('codex')` reads "Codex" in `src/shared/engine-switch.mjs`; use its value if it differs.)
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `node tools/test.mjs test/workflow-test-before-runner.test.mjs`
 Expected: FAIL: `beforePlanOf` is not exported.
 
-- [ ] **Step 3: The runner (runner.mjs).** Add near the top of `createTestRunner`:
+- [x] **Step 3: The runner (runner.mjs).** Add near the top of `createTestRunner`:
 
 ```js
   /** 3b (D75): a before run's key in a test: one example's one command check. */
@@ -3586,7 +3586,7 @@ Below `diskOf`, add:
 ```
 and return it: `return { start, stop, continueRun, recover, idle, costOf, phaseOf, diskOf, beforeNowOf };`.
 
-- [ ] **Step 4: The store, the notes, the plan and the progress**
+- [x] **Step 4: The store, the notes, the plan and the progress**
 
 `src/core/workflow-tests/store.mjs`, below `avgSetupMs`:
 ```js
@@ -3651,7 +3651,7 @@ In `testPlan`, add `before: await beforePlanOf(projEx),` to the `project` object
 
 In `progressOf`, add `beforeNowOf = null` to its options and `before: beforeNowOf ? beforeNowOf(run.id) : null,` to the returned object (after `quick: run.quick,`).
 
-- [ ] **Step 5: The wiring (routes.mjs, server.mjs)**
+- [x] **Step 5: The wiring (routes.mjs, server.mjs)**
 
 `src/core/workflow-tests/routes.mjs`: add `import { beforeRun } from './before-run.mjs';`. In `createTestRunner({ … })`:
 ```js
@@ -3674,12 +3674,12 @@ In the progress route (:160):
   }
 ```
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Run: `node tools/test.mjs test/workflow-test-before-runner.test.mjs test/workflow-test-project-runner.test.mjs test/workflow-test-runner.test.mjs test/workflow-test-connectors.test.mjs test/api-workflow-tests-projects.test.mjs test/api-workflow-tests.test.mjs test/api-workflow-tests-flag-off.test.mjs test/workflow-test-routes.test.mjs`
 Expected: PASS. If a 3a test deep-compares `progressOf`'s or `testPlan`'s whole answer, or `connectorNotes`', add `before: null` / `project.before` / `personalOff` there (an answer grows; nothing else changes). 3a's runner tests pass `judge` without `beforeOf`: `checkTry`'s default `beforeOf` keeps them as they were, and their harness has no `beforeRun`, so no before phase runs.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/core/workflow-tests/runner.mjs src/core/workflow-tests/service.mjs src/core/workflow-tests/store.mjs src/core/workflow-tests/connectors.mjs src/core/workflow-tests/routes.mjs ui/server.mjs test/workflow-test-before-runner.test.mjs
@@ -3716,7 +3716,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: Task 6's kinds and results (`kind`, `dirs`, `patterns`, `max`), Task 9's `failed` / `failedCount`, Task 8's `splitTestName`, `FAILED_LEAD`, `moreNamesText`; `PROJECT_KINDS`.
 - Produces: `checkWords` for `under` and `unchanged`; the side by side's `.wft-why-col` and `.wft-failed-line`.
 
-- [ ] **Step 1: Write the failing test.** Create `test/ui-workflow-test-scope-checks.test.mjs`:
+- [x] **Step 1: Write the failing test.** Create `test/ui-workflow-test-scope-checks.test.mjs`:
 
 ```js
 // test/ui-workflow-test-scope-checks.test.mjs — workflow tests 3b, Task 11: the project checks in the check dialog (board 33) and
@@ -3835,12 +3835,12 @@ test('board 36: the scope rows with folders and patterns in code; the command\'s
 });
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `node tools/test.mjs test/ui-workflow-test-scope-checks.test.mjs`
 Expected: FAIL: "The project" group lists only "The command passes".
 
-- [ ] **Step 3: The words.** Append to `src/shared/workflow-tests/project-text.mjs`, in the board 33 section:
+- [x] **Step 3: The words.** Append to `src/shared/workflow-tests/project-text.mjs`, in the board 33 section:
 
 ```js
 // 3b, board 33: the file-scope checks' fields.
@@ -3854,7 +3854,7 @@ export const MOST_FILES_LABEL = 'Most files';
 export const MOST_FILES_HINT = 'Added, changed and removed files all count.';
 ```
 
-- [ ] **Step 4: The dialog (example-editor.mjs).** Import `PROJECT_KINDS` from checks.mjs and the eight new words from project-text.mjs. In `openCheckDialog`, replace the kinds part (:97-108):
+- [x] **Step 4: The dialog (example-editor.mjs).** Import `PROJECT_KINDS` from checks.mjs and the eight new words from project-text.mjs. In `openCheckDialog`, replace the kinds part (:97-108):
 
 ```js
   // An edited script check keeps its kind, also when the Library lists none. The project checks (3a D57, 3b D73) are their own group.
@@ -3889,7 +3889,7 @@ In `paintFields`, add before the final `else` (the script branch):
 ```
 (The branches sit between the `command` branch and the script `else`, in the same `if … else if` chain.)
 
-- [ ] **Step 5: The check's words (test-ui.mjs).** Replace `checkWords`:
+- [x] **Step 5: The check's words (test-ui.mjs).** Replace `checkWords`:
 
 ```js
 /** A check as the editor, the dialog's preview and the side by side write it: the command, folders and patterns in code
@@ -3909,7 +3909,7 @@ export function checkWords(doc, c, label) {
 }
 ```
 
-- [ ] **Step 6: The side by side (test-compare.mjs).** Import `FAILED_LEAD`, `splitTestName`, `moreNamesText` from project-text.mjs. Replace the `check` lookup (:528-529):
+- [x] **Step 6: The side by side (test-compare.mjs).** Import `FAILED_LEAD`, `splitTestName`, `moreNamesText` from project-text.mjs. Replace the `check` lookup (:528-529):
 
 ```js
       // Final review M5: a check is set in code, as the editor writes it (checkWords), from the kind and the values its result
@@ -3944,7 +3944,7 @@ function failedLine(doc, it) {
 }
 ```
 
-- [ ] **Step 7: Styles.** In `ui/public/style.css`, after 3a's last `.wft-*` rule (before `.wfv-bar .btn`):
+- [x] **Step 7: Styles.** In `ui/public/style.css`, after 3a's last `.wft-*` rule (before `.wfv-bar .btn`):
 
 ```css
 /* Workflow tests 3b: board 33's "Most files" box; board 36's Failed line under a command not met. */
@@ -3953,13 +3953,13 @@ function failedLine(doc, it) {
 .wft-failed-line { overflow-wrap: anywhere; }
 ```
 
-- [ ] **Step 8: Run the tests and the guards**
+- [x] **Step 8: Run the tests and the guards**
 
 Run: `node tools/test.mjs test/ui-workflow-test-scope-checks.test.mjs test/ui-workflow-example-project.test.mjs test/ui-workflow-example-editor.test.mjs test/ui-workflow-test-project-compare.test.mjs test/ui-workflow-test-compare.test.mjs`
 Expected: PASS (3a's `.wft-why-cmd` test reads its first `span`, which is now `.wft-why-col` with the same text when no names were read).
 Then the design guards and the style.css slicing tests (Global Constraints). Expected: no new failure.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add ui/public/workflows/example-editor.mjs ui/public/workflows/test-ui.mjs ui/public/workflows/test-compare.mjs src/shared/workflow-tests/project-text.mjs ui/public/style.css test/ui-workflow-test-scope-checks.test.mjs
@@ -3992,7 +3992,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: the plan's `connectors.personalOff` and `connectors.engines` (Task 10), `projectChosen()` (test-dialogs.mjs).
 - Produces: `PLUGINS_OFF_PERSONAL`, `PLUGINS_OFF_PROJECT`, `pluginsEngineNoteLine(label)` (project-text.mjs); the `off` icon.
 
-- [ ] **Step 1: Write the failing test.** Create `test/ui-workflow-test-plugins-off-dialog.test.mjs`:
+- [x] **Step 1: Write the failing test.** Create `test/ui-workflow-test-plugins-off-dialog.test.mjs`:
 
 ```js
 // test/ui-workflow-test-plugins-off-dialog.test.mjs — workflow tests 3b, Task 12 (board 34, P43, P44): Test a version says what
@@ -4058,12 +4058,12 @@ test('board 34: Pretend, but no step on Claude Code: no personal line', async ()
 });
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `node tools/test.mjs test/ui-workflow-test-plugins-off-dialog.test.mjs`
 Expected: FAIL: `PLUGINS_OFF_PERSONAL` is not exported.
 
-- [ ] **Step 3: The words and the icon.** Append to `src/shared/workflow-tests/project-text.mjs`, in the board 34 section:
+- [x] **Step 3: The words and the icon.** Append to `src/shared/workflow-tests/project-text.mjs`, in the board 34 section:
 
 ```js
 // 3b, board 34 (P43, P44): what Pretend switches off.
@@ -4079,7 +4079,7 @@ In `ui/public/icons.mjs`, add beside `none` (:69):
 ```
 If an icons test lists every icon (`Select-String -Path test\*.test.mjs -Pattern "icons.mjs" -List`), add `off` to its list.
 
-- [ ] **Step 4: The lines (test-dialogs.mjs).** Import `PLUGINS_OFF_PERSONAL`, `PLUGINS_OFF_PROJECT`, `pluginsEngineNoteLine` from project-text.mjs. In `paintConnectors`, replace the last line inside `if (c && mode === 'pretend') { … }` (:437, the engines loop) with:
+- [x] **Step 4: The lines (test-dialogs.mjs).** Import `PLUGINS_OFF_PERSONAL`, `PLUGINS_OFF_PROJECT`, `pluginsEngineNoteLine` from project-text.mjs. In `paintConnectors`, replace the last line inside `if (c && mode === 'pretend') { … }` (:437, the engines loop) with:
 
 ```js
       // 3b (D70, P44): what Pretend switches off in Claude Code, then each other engine's own setup (P43).
@@ -4090,13 +4090,13 @@ If an icons test lists every icon (`Select-String -Path test\*.test.mjs -Pattern
       for (const label of c.engines || []) { line('alert', [engineNoteLine(label)]); line('alert', [pluginsEngineNoteLine(label)]); }
 ```
 
-- [ ] **Step 5: Run the tests and the guards**
+- [x] **Step 5: Run the tests and the guards**
 
 Run: `node tools/test.mjs test/ui-workflow-test-plugins-off-dialog.test.mjs test/ui-workflow-test-dialogs.test.mjs test/ui-workflow-test-project-run.test.mjs`
 Expected: PASS. If a 3a dialog test pins the whole list of notes for a plan without `personalOff`, it is unchanged (the flag is absent there); if its plan fixture sets engines, the new plugins line follows each engine line: add it to that expectation.
 Then the design guards and the style.css slicing tests. Expected: no new failure.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ui/public/icons.mjs ui/public/workflows/test-dialogs.mjs src/shared/workflow-tests/project-text.mjs src/core/workflow-tests/connectors.mjs test/ui-workflow-test-plugins-off-dialog.test.mjs
@@ -4123,7 +4123,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: the command result's `before` (Tasks 8, 9), the plan's `project.before` (Task 10), the progress's `before` (Task 10), Task 8's words.
 - Produces: `.wft-before` blocks, the dev card's before fact, the Time row's before clause, `.wft-before-now`.
 
-- [ ] **Step 1: Write the failing test.** Create `test/ui-workflow-test-before-after.test.mjs`:
+- [x] **Step 1: Write the failing test.** Create `test/ui-workflow-test-before-after.test.mjs`:
 
 ```js
 // test/ui-workflow-test-before-after.test.mjs — workflow tests 3b, Task 13 (U1–U3): the command before and after the change, side
@@ -4214,12 +4214,12 @@ test('U3: while the test runs, the before phase card', () => {
 });
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `node tools/test.mjs test/ui-workflow-test-before-after.test.mjs`
 Expected: FAIL: no `.wft-before` block.
 
-- [ ] **Step 3: The words.** Append to `src/shared/workflow-tests/project-text.mjs`'s 3b section:
+- [x] **Step 3: The words.** Append to `src/shared/workflow-tests/project-text.mjs`'s 3b section:
 
 ```js
 // U1's "For developers" fact.
@@ -4236,7 +4236,7 @@ export const beforeNowRest = (b) => ` on the start point of ${b.exampleName} · 
 export const BEFORE_PHASE = Object.freeze({ copy: 'Preparing a copy of the project', setup: 'Running setup', command: 'Running the command' });
 ```
 
-- [ ] **Step 4: Side by side (test-compare.mjs).** Import `BEFORE_HEADING`, `beforeExitText`, `beforeNotRunText`, `BEFORE_GROUPS`, `FAILURES_ONLY_NOTE`, `EXIT_ONLY_NOTE`, `passedCountsText`, `addedText`, `moreNamesText`, `DEV_BEFORE_LEAD`, `devBeforeRest` from project-text.mjs. Above `renderSideBySide`, add:
+- [x] **Step 4: Side by side (test-compare.mjs).** Import `BEFORE_HEADING`, `beforeExitText`, `beforeNotRunText`, `BEFORE_GROUPS`, `FAILURES_ONLY_NOTE`, `EXIT_ONLY_NOTE`, `passedCountsText`, `addedText`, `moreNamesText`, `DEV_BEFORE_LEAD`, `devBeforeRest` from project-text.mjs. Above `renderSideBySide`, add:
 
 ```js
 /** U1: the command before and after the change, for one version's try (Task 8's classification). */
@@ -4294,7 +4294,7 @@ In `devCard`, after the setup fact, add:
 ```
 (`facts` is the `.wft-dev-facts` element `devCard` builds at `test-compare.mjs:300`; add the fact before `c.append(h, …, facts)`.)
 
-- [ ] **Step 5: The Time row (test-dialogs.mjs).** Import `BEFORE_RUNS_LEAD`, `BEFORE_RUNS_SEVERAL`, `beforeRunsRest`. In `paint`, replace the Time row's value line and its setup clause:
+- [x] **Step 5: The Time row (test-dialogs.mjs).** Import `BEFORE_RUNS_LEAD`, `BEFORE_RUNS_SEVERAL`, `beforeRunsRest`. In `paint`, replace the Time row's value line and its setup clause:
 
 ```js
         const beforeMs = pj.before && pj.before.ms ? pj.before.ms : 0;
@@ -4307,7 +4307,7 @@ In `devCard`, after the setup fact, add:
         }
 ```
 
-- [ ] **Step 6: The before phase (test-progress.mjs).** Import `BEFORE_NOW_TITLE`, `BEFORE_NOW_LEAD`, `beforeNowRest`, `BEFORE_PHASE`. Above `renderTestProgress`, add:
+- [x] **Step 6: The before phase (test-progress.mjs).** Import `BEFORE_NOW_TITLE`, `BEFORE_NOW_LEAD`, `beforeNowRest`, `BEFORE_PHASE`. Above `renderTestProgress`, add:
 
 ```js
 /** U3: the before phase (D75): which command runs on which start point, and what it is doing. */
@@ -4326,7 +4326,7 @@ and, right before the phases card line (:267):
   if (st === 'running' && p.before) page.append(beforeNowCard(doc, p.before));   // U3
 ```
 
-- [ ] **Step 7: Styles.** After Task 11's rules in `ui/public/style.css`:
+- [x] **Step 7: Styles.** After Task 11's rules in `ui/public/style.css`:
 
 ```css
 /* Workflow tests 3b, U1 and U3: the command before and after; the before phase. */
@@ -4340,13 +4340,13 @@ and, right before the phases card line (:267):
 ```
 Check `--field` and `--red-bg` exist (`Select-String -Path ui\public\style.css -Pattern "--red-bg:|--field:"`); if one does not, use the token `.wft-why-cmd` uses for its background.
 
-- [ ] **Step 8: Run the tests and the guards**
+- [x] **Step 8: Run the tests and the guards**
 
 Run: `node tools/test.mjs test/ui-workflow-test-before-after.test.mjs test/ui-workflow-test-project-compare.test.mjs test/ui-workflow-test-project-run.test.mjs test/ui-workflow-test-progress.test.mjs test/ui-workflow-test-dialogs.test.mjs`
 Expected: PASS (3a's Time row test has no `before`, so its text is unchanged).
 Then the design guards and the style.css slicing tests. Expected: no new failure.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add ui/public/workflows/test-compare.mjs ui/public/workflows/test-dialogs.mjs ui/public/workflows/test-progress.mjs src/shared/workflow-tests/project-text.mjs ui/public/style.css test/ui-workflow-test-before-after.test.mjs
@@ -4373,7 +4373,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: the command check's `metWhen` and its result's `metWhy` (Tasks 8, 9); `COMMAND_TIMED_OUT`, `notMetFor`, `inSentence` (3a's project-text.mjs).
 - Produces: `MET_WHEN_LEGEND`, `MET_WHEN_PASSES`, `MET_WHEN_PASSES_SUB`, `MET_WHEN_NOTHING`, `MET_WHEN_NOTHING_SUB`, `MET_WHEN_HINT`, `metFor(label)`, `MET_DESPITE_TEXT`, `metWhyText(metWhy)` (project-text.mjs); `.wft-ck-metwhen`, `.wft-ck-metwhen-hint`, `.wft-met-note`.
 
-- [ ] **Step 1: Write the failing test.** Create `test/ui-workflow-test-met-when.test.mjs`:
+- [x] **Step 1: Write the failing test.** Create `test/ui-workflow-test-met-when.test.mjs`:
 
 ```js
 // test/ui-workflow-test-met-when.test.mjs — workflow tests 3b, Task 14 (U4, D82): "Met when" on the command check (board 33's
@@ -4465,12 +4465,12 @@ test('U4: every not-met reason has its sentence', () => {
 });
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
 Run: `node tools/test.mjs test/ui-workflow-test-met-when.test.mjs`
 Expected: FAIL: `metWhyText` is not exported.
 
-- [ ] **Step 3: The words.** Append to `src/shared/workflow-tests/project-text.mjs` (after 3a's `COMMAND_TIMED_OUT`, which it uses):
+- [x] **Step 3: The words.** Append to `src/shared/workflow-tests/project-text.mjs` (after 3a's `COMMAND_TIMED_OUT`, which it uses):
 
 ```js
 // ── 3b, U4 (D82): "Met when it breaks nothing that passed before" (this plan's proposals until the mock is approved) ───────────
@@ -4499,7 +4499,7 @@ export function metWhyText(w) {
 }
 ```
 
-- [ ] **Step 4: The dialog (example-editor.mjs).** Import the six `MET_WHEN_*` words. In `paintFields`' command branch, replace its `fields.append(…)` and `read = …` lines with:
+- [x] **Step 4: The dialog (example-editor.mjs).** Import the six `MET_WHEN_*` words. In `paintFields`' command branch, replace its `fields.append(…)` and `read = …` lines with:
 
 ```js
       // U4 (D82): when the check is met. Radios, as "Read from" (3a P17); the default is not stored (normaliseCheck).
@@ -4521,14 +4521,14 @@ export function metWhyText(w) {
       read = () => ({ kind: 'command', cmd: cmd.value, timeoutMin: Number(time.value), metWhen: (mw.querySelector('input:checked') || {}).value || 'passes' });
 ```
 
-- [ ] **Step 5: The line (test-ui.mjs).** In `checkWords`, replace the command line with:
+- [x] **Step 5: The line (test-ui.mjs).** In `checkWords`, replace the command line with:
 
 ```js
   if (c && c.kind === 'command') s.append(doc.createTextNode('The command '), el(doc, 'span', 'code', c.cmd),
     doc.createTextNode(c.metWhen === 'breaks-nothing' ? ' breaks nothing that passed before' : ' passes'));   // D82, U4
 ```
 
-- [ ] **Step 6: The rows (test-compare.mjs).** Import `metFor`, `MET_DESPITE_TEXT`, `metWhyText`. In the not-met loop (Task 11's version), replace the loop's first lines up to the `words.append(…)` line with:
+- [x] **Step 6: The rows (test-compare.mjs).** Import `metFor`, `MET_DESPITE_TEXT`, `metWhyText`. In the not-met loop (Task 11's version), replace the loop's first lines up to the `words.append(…)` line with:
 
 ```js
         for (const [side, vl, v] of [['a', s.labels.a, once ? null : cur.a], ['b', s.labels.b, cur.b]]) {
@@ -4550,7 +4550,7 @@ export function metWhyText(w) {
 ```
 (The rest of the loop, Task 11's `.wft-why-col`, the Failed line and "See the command output", stays.)
 
-- [ ] **Step 7: Styles.** After Task 13's rules:
+- [x] **Step 7: Styles.** After Task 13's rules:
 
 ```css
 /* Workflow tests 3b, U4: Met when; a row met although the command ended with an error. */
@@ -4558,13 +4558,13 @@ export function metWhyText(w) {
 .wft-met-note { grid-column: 1 / -1; padding: 10px 12px; border-radius: var(--r-sm); background: var(--field); font-size: var(--fs-meta); }
 ```
 
-- [ ] **Step 8: Run the tests and the guards**
+- [x] **Step 8: Run the tests and the guards**
 
 Run: `node tools/test.mjs test/ui-workflow-test-met-when.test.mjs test/ui-workflow-test-scope-checks.test.mjs test/ui-workflow-example-project.test.mjs test/ui-workflow-test-project-compare.test.mjs test/ui-workflow-test-before-after.test.mjs`
 Expected: PASS (3a's command-check tests save `{ kind, cmd, timeoutMin }` as before: "It passes" is not stored).
 Then the design guards and the style.css slicing tests. Expected: no new failure.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add ui/public/workflows/example-editor.mjs ui/public/workflows/test-ui.mjs ui/public/workflows/test-compare.mjs src/shared/workflow-tests/project-text.mjs ui/public/style.css test/ui-workflow-test-met-when.test.mjs
@@ -4572,6 +4572,27 @@ git commit -m "Workflow tests 3b: Met when it breaks nothing that passed before,
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
+
+---
+
+## Built after the plan
+
+Tasks 0–14 are done as written, with these changes made after the plan. Task 15's Step 4 (the final verification) is still open.
+
+**Usefulness fixes** (from the two 2026-11-02 tests; T1–T15 of the usefulness fix plan, built on the way to this part):
+
+- Worca stops writing the shared `.git/config` while tries run; "Worca could not run this try" is never counted against a version; no false "needs git"; a first past run for a Simple-mode person.
+- Compare: an honest "In short", rows and tiles. A difference shows only at cost at least 20 % and $0.01 a try, time at least 20 % and 10 s, sent back at least 0.5 a try, and at least 2 finished tries on each side; else no delta. Questions are shown per try.
+- "Try N more" asks first; an identical draft is not a new version; the test page says what it is doing; the example editor keeps the person's note and asks before stopping a test ("Save and stop the test?"); "Run it once"; the example note; a mock-mode note.
+- A Library script check counts only with a verdict script; a review loop that runs out of rounds fails "Finishes without an error"; the change list says what changed; the smaller words.
+
+**User decisions after the plan:**
+
+- A skipped, deleted or fewer-passing test counts as broken for "It breaks nothing that passed before", even when the command passes (2026-11-09).
+- A question Worca answered with its own pick meets "Finishes without needing help" (supersedes Part 2 D24).
+- No size cap is raised: code moved out of `ui/server.mjs` into `src/core/workflow-tests/start.mjs` and `src/core/sync-before-run.mjs`, and out of `ui/public/app.js` into `ui/public/workflows/tests-app.mjs`, `versions-app.mjs` and `export-use.mjs`; `claude.mjs`, `try-guard.mjs` and `workflows.mjs` were split.
+- Schema: none from 3b. After the dev merges the rungs are v89–v91 (dev is at v88).
+- Limits kept: `onExhausted: 'clean'` loops are not detected; the frontmatter reader follows Claude Code 2.1.318.
 
 ---
 

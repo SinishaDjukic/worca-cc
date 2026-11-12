@@ -2160,7 +2160,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - Add from a past run, without AI-suggested criteria
   - Test a version, while it runs, Compare (by example), and one example side by side
 
-### Part 3 — Project workflows: the detailed plans are [workflow-tests-part3a-plan.md](workflow-tests-part3a-plan.md) (3a: git projects, Worca's copy, the outward guard, the command check) and the 3b plan to come (plugins off in Pretend, the file-scope checks, the before-and-after command run)
+### Part 3 — Project workflows: the detailed plans are [workflow-tests-part3a-plan.md](workflow-tests-part3a-plan.md) (3a: git projects, Worca's copy, the outward guard, the command check) and [workflow-tests-part3b-plan.md](workflow-tests-part3b-plan.md) (3b: plugins off in Pretend, the file-scope checks, the command before and after)
 
 ### Part 4 — Your criteria, checked by Worca (boards 2, 10–13)
 

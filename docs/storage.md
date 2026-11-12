@@ -315,6 +315,27 @@ Behind the flag `workflowTests`, like v90. FK-free like the v90 tables.
   `<worcaHome>/workflow-tests/no-auth/{gh,glab,az}`: empty config folders, so those CLIs have no sign-in in a try.
   `<worcaHome>/workflow-tests/no-hooks`: the empty `core.hooksPath` of Worca's own git in a try's copy.
 
+**Part 3b (no schema change: the schema stays at v91).**
+
+- `<worcaHome>/workflow-tests/before/`: "The command passes" run once on an example's start point, before the workflow
+  changed anything.
+  - `cache/<projectKey>/<hash>.json`: one kept result per project, start commit, setup command, command and time limit (its
+    exit code, its summary line, the end of its output and the test names Worca could read), with the stamp of Worca's copy
+    it ran in. Used for 7 days, and not at all once the copy is made again; removed at boot after 7 days.
+  - `run-<id>/` and `run-<id>.owner.json`: the clone of Worca's copy one run works in, and who runs it (pid and a heartbeat).
+    Removed when the run ends; at boot, when its owner is gone.
+- Each copy of a project (`workflow-tests/repos/<projectKey>`) has `.git/worca-copy-made`, written when the copy is made.
+- A try's `verdict` (in `wf_test_tries`) gains, on a command check: `ms`, the first failing test names (`failed`,
+  `failedCount`) and `before` (what passed and failed before and after the change), and, on a check met when it breaks
+  nothing that passed before, `metWhen` and `metWhy` (why it was or was not met); on a file-scope check: its kind and
+  folders, patterns or most files.
+- "It breaks nothing that passed before" counts a test that was skipped or deleted since, and fewer passing tests, as
+  broken, even when the command itself passes.
+- A Pretend try loads none of your personal Claude Code plugins, skills, agents or hooks, and none of the project's own
+  hooks or plugins. Your sign-in and your own deny rules and sandbox are carried into a settings file Worca stages for the
+  try in the per-user temp folder; Worca removes it when the try ends, and at the next start it removes any a crash left
+  that is older than a day.
+
 ### Run groups (v65)
 
 The Runs list's groups (runs redesign §3.3) are the one new named state of the runs redesign:
