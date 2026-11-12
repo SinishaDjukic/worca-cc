@@ -71,6 +71,28 @@ test('parseArgs: a flag that needs a value refuses a missing one (a bare --shard
   assert.equal(parseArgs(['--shard', '1/3', 'test/a.test.mjs'], {}).shard, '1/3');
 });
 
+test('parseArgs takes the worker cap from WORCA_TEST_CONCURRENCY', () => {
+  assert.equal(parseArgs([], { WORCA_TEST_CONCURRENCY: '6' }).concurrency, 6);
+});
+
+test('--concurrency beats WORCA_TEST_CONCURRENCY; a bad value is ignored', () => {
+  assert.equal(parseArgs([], { WORCA_TEST_CONCURRENCY: '4' }).concurrency, 4);
+  assert.equal(parseArgs(['--concurrency', '2'], { WORCA_TEST_CONCURRENCY: '6' }).concurrency, 2);
+  for (const v of ['', '0', 'x', '2.5']) assert.equal(parseArgs([], { WORCA_TEST_CONCURRENCY: v }).concurrency, null, `"${v}"`);
+});
+
+test('a test file never inherits WORCA_TEST_CONCURRENCY (the worker cap travels in files.json)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-runner-cap-'));
+  try {
+    const file = join(dir, 'scope.test.mjs');
+    writeFileSync(file, "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('no cap', () => { assert.equal(process.env.WORCA_TEST_CONCURRENCY, undefined); });\n");
+    const r = spawnSync(process.execPath, [join(TOOLS, 'test.mjs'), file],
+      { encoding: 'utf8', env: { ...process.env, NODE_TEST_CONTEXT: undefined, WORCA_TEST_CONCURRENCY: '6' } });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /pass 1\b/);
+  } finally { rmSync(dir, rmOpts); }
+});
+
 test('a file subset runs in its own WORCA_HOME (never the shared .worca-cc-test a full run may be using), ignores WORCA_TEST_SHARD and never inherits CLAUDE_CONFIG_DIR, exports WORCA_GIT=1 unless set', () => {
   const dir = mkdtempSync(join(tmpdir(), 'worca-cc-runner-scope-'));
   try {

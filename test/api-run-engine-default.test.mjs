@@ -7,7 +7,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
+import { stopAndSettle } from './helpers/stop-and-settle.mjs';
 
+// after hooks run FIFO: every run's launch (preflight's pip3 probes write into the sandbox HOME) settles
+// before useTempHome swaps WORCA_HOME and before the file's own after() deletes HOME.
+after(() => runs && stopAndSettle(runs));
 useTempHome(after);
 let sandboxHome, srv, base, runs, projectDir, writeProjectSettings;
 const prevEnv = {};
@@ -47,7 +51,7 @@ after(async () => {
     new Promise((r) => { const t = setTimeout(r, 500); t.unref?.(); }),
   ]);
   for (const k of Object.keys(prevEnv)) { if (prevEnv[k] === undefined) delete process.env[k]; else process.env[k] = prevEnv[k]; }
-  await rm(sandboxHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }).catch(() => {});
+  await rm(sandboxHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 test('a body without an engine starts on the project default (codex refuses this set at once)', async () => {
