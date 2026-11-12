@@ -1,0 +1,89 @@
+{
+  "experiment": "e4",
+  "quick": false,
+  "splitCursor": false,
+  "env": {
+    "node": "v26.0.0",
+    "os": "darwin 24.6.0",
+    "cpu": "Apple M3 Pro",
+    "cpus": 12
+  },
+  "durationMs": 9214,
+  "summary": {
+    "e4.steady.n": 1000,
+    "e4.steady.lagP50Ms": 2,
+    "e4.steady.lagP99Ms": 4,
+    "e4.partition.backlog": 5000,
+    "e4.partition.catchUpMs": 91,
+    "e4.partition.loss": 0,
+    "e4.partition.rePulled": 0,
+    "e4.partition.orderViolations": 0,
+    "e4.crash.backlog": 5000,
+    "e4.crash.rowsAtKill": 200,
+    "e4.crash.recoverMs": 219,
+    "e4.crash.loss": 0,
+    "e4.crash.rePulled": 0,
+    "e4.auth.requests": 32,
+    "e4.auth.refused": 32,
+    "e4.auth.rowsChanged": 0,
+    "e4.total.loss": 0,
+    "e4.total.rePulled": 0,
+    "e4.total.orderViolations": 0
+  },
+  "steady": {
+    "n": 1000,
+    "rate": 200,
+    "p50": 2,
+    "p99": 4,
+    "samples": 2000,
+    "rePulled": 0
+  },
+  "partition": {
+    "backlog": 5000,
+    "behindAtResume": 5000,
+    "catchUpMs": 91,
+    "rePulled": 0,
+    "published": 6000,
+    "received": 6000,
+    "loss": 0,
+    "orderViolations": 0
+  },
+  "crash": {
+    "backlog": 5000,
+    "crashPage": 3,
+    "splitCursor": false,
+    "killedBySeam": true,
+    "rowsAtKill": 200,
+    "recoverMs": 219,
+    "rePulled": 0,
+    "published": 11000,
+    "received": 11000,
+    "loss": 0,
+    "orderViolations": 0
+  },
+  "auth": {
+    "requests": 32,
+    "refused": 32,
+    "rowsChanged": 0
+  },
+  "totals": {
+    "aToB": {
+      "published": 11000,
+      "received": 11000,
+      "loss": 0,
+      "orderViolations": 0
+    },
+    "bToA": {
+      "published": 1000,
+      "received": 1000,
+      "loss": 0,
+      "orderViolations": 0
+    }
+  },
+  "pids": [
+    73052,
+    73053,
+    73072,
+    73073
+  ]
+}
