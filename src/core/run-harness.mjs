@@ -142,7 +142,7 @@ import { loadCatalog } from './mcp/catalog.mjs';
 import { pretendServers, pretendLayer, noteSeenServers, CONNECTOR_CALLS_FILE } from './workflow-tests/connectors.mjs';
 import { runShellStep, tryShellEnv, writeTrySetup, TRY_SETUP_STAGE } from './workflow-tests/shell-step.mjs';
 import { claudeReadsStructuredDeny, tryGitEnv, withSafeGitArgs } from './workflow-tests/try-guard-env.mjs';
-import { stripProjectClaudeSettings, PLUGINS_OFF_STAGE } from './workflow-tests/project-claude-settings.mjs';
+import { stripProjectClaudeSettings, stripMountedSkillHooks, PLUGINS_OFF_STAGE } from './workflow-tests/project-claude-settings.mjs';
 import { setupFailedText } from '../shared/workflow-tests/project-text.mjs';
 import { MCP_STARTUP_MS } from './mcp/timeouts.mjs';
 import { keepListNames } from './mcp/keep-list.mjs';
@@ -4061,6 +4061,7 @@ export class RunHarness extends EventEmitter {
       registry: async (taken) => (reg = await this._resolveMcp(taken)),
       ...(this._testConnectors() === 'pretend' ? { mcpStandIn: async (layer) => (standIn = await pretendServers(layer, { pipelineDir: this.pipeline.dir })) } : {}),
       ...(this._tryGitEnv() ? { gitEnv: this._tryGitEnv() } : {}),
+      ...(this._testConnectors() === 'pretend' ? { copyMount: true } : {}),   // 3b E2: copies, whose hooks are stripped below
     });
     this.runContext = rc;
     if (rc?.projectPermissions) {
@@ -4162,6 +4163,8 @@ export class RunHarness extends EventEmitter {
     // Skills registry (§4.3): after the capability probe and after the assembly rewrote
     // run.json.warnings; before the audit line, which closes with the layer's clause.
     await this._resolveSkills({ reported: alreadyReported, plan: skillPlan, mountedAs: rc.skillMountDir ? rc.setSkillNames : null });
+    // Workflow tests 3b (final review E2): a Pretend try's mounted skills lose their frontmatter hooks (D72a), project or not.
+    if (this._testConnectors() === 'pretend') await stripMountedSkillHooks(rc, { warn: (t) => this._recordRunWarning(t), runRoot: this.runRoot });
     await appendAudit(this.pipeline.dir, renderContextAudit(rc, this.skillLayer)).catch(() => {});
     return rc;
   }

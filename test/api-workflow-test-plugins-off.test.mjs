@@ -1,11 +1,13 @@
 // test/api-workflow-test-plugins-off.test.mjs — workflow tests 3b, Task 3 (D70, D70a, D72): through the run handler (mock
 // engine). A Pretend try's spawns load no user settings; in a project try the project's own hooks and plugins are off in the
 // checkout, its other settings, agents and CLAUDE.md stay, and none of it is in what the try changed. A Real try keeps both.
+// Final review E2: a skill Worca mounts after that (here the projects root's) loses its frontmatter hooks in a Pretend try,
+// project or not, and keeps them in a Real try and a normal run.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,6 +20,11 @@ useTempHome(after);
 let homeDir, prevHome, prevEnv, srv, base, runs, _testing, artifacts, real, key, pin, copyDir, settled, executor, realRunClaude, stopRun;
 const extra = [];
 const spawns = [];
+// E2: the projects root's skill, with a frontmatter hook, and what each spawn found mounted in its working folder.
+const ROOT_SKILL = '---\nname: hooky\ndescription: d\nhooks:\n  Stop:\n    - hooks:\n        - type: command\n          command: echo hi\n---\nbody\n';
+const ROOT_SKILL_OFF = '---\nname: hooky\ndescription: d\n---\nbody\n';
+const mountedSkill = new Map();
+let prevRoot, rootDir;
 const JSONH = { 'Content-Type': 'application/json' };
 const post = (p, b) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(b || {}) });
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -44,7 +51,17 @@ before(async () => {
   process.env.WORCA_FLAGS = 'workflowTests';
   executor = await import('../src/core/graph/executor.mjs');
   ({ runClaude: realRunClaude } = await import('../src/core/claude-runner.mjs'));
-  executor._testing.runClaude = async (o) => { spawns.push(o); return realRunClaude(o); };   // every agent spawn's options
+  rootDir = await mkdtemp(join(tmpdir(), 'worca-cc-wftpoff-root-'));
+  mkdirSync(join(rootDir, '.claude', 'skills', 'hooky'), { recursive: true });
+  writeFileSync(join(rootDir, '.claude', 'skills', 'hooky', 'SKILL.md'), ROOT_SKILL);
+  prevRoot = process.env.WORCA_PROJECTS_ROOT;
+  process.env.WORCA_PROJECTS_ROOT = rootDir;
+  executor._testing.runClaude = async (o) => {   // every agent spawn's options, and the root skill it found mounted
+    spawns.push(o);
+    const f = join(String(o.cwd || ''), '.claude', 'skills', 'hooky', 'SKILL.md');
+    mountedSkill.set(o, existsSync(f) ? readFileSync(f, 'utf8') : null);
+    return realRunClaude(o);
+  };
   const mod = await import('../ui/server.mjs');
   ({ runs, _testing, stopRun } = mod);
   settled = runSettled({ runs, answerRun: _testing.answerRun });
@@ -67,6 +84,8 @@ after(async () => {
   if (executor) executor._testing.runClaude = null;
   if (srv) await new Promise((r) => srv.close(r));
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
+  if (prevRoot === undefined) delete process.env.WORCA_PROJECTS_ROOT; else process.env.WORCA_PROJECTS_ROOT = prevRoot;
+  if (rootDir) extra.push(rootDir);
   for (const [k, v] of Object.entries(prevEnv || {})) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   delete process.env.WORCA_MOCK; delete process.env.WORCA_FLAGS;
   for (const d of [homeDir, ...extra]) await rm(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
@@ -116,6 +135,13 @@ test('a Pretend project try: no user settings on any spawn; the project\'s hooks
   assert.deepEqual(runCheck({ kind: 'max-files', max: 1 }, { changes }), { met: false, value: '2 files' });
   assert.equal(git(copyDir, 'show', `${br.feature}:.claude/settings.json`), JSON.stringify(PROJECT_SETTINGS, null, 2), 'nor is it committed');
   assert.equal(repoSnapshot(real), was, 'nothing in the person\'s repository changed');
+  // E2: the projects root's skill, mounted after the switch-off, is a copy without its hooks; the person's file keeps them.
+  for (const o of mine) assert.equal(mountedSkill.get(o), ROOT_SKILL_OFF);
+  assert.equal(readFileSync(join(rootDir, '.claude', 'skills', 'hooky', 'SKILL.md'), 'utf8'), ROOT_SKILL);
+  assert.ok(!paths.some((p) => p.startsWith('.claude/skills/hooky')), 'the mount is not a change of the try');
+  const { readRunManifest } = await import('../src/core/run-manifest.mjs');
+  const warnings = (await readRunManifest(entry.orch.runRoot))?.warnings || [];
+  assert.ok(!warnings.some((w) => /modified mounted skill `hooky`/.test(w)), `Worca's own strip is not an agent's edit: ${JSON.stringify(warnings)}`);
 });
 
 test('a Real project try keeps them: user settings as a normal run loads them, and the project file is untouched', { timeout: 240000 }, async () => {
@@ -125,6 +151,7 @@ test('a Real project try keeps them: user settings as a normal run loads them, a
   // #943: a normal run is project-only here too; a Real try is a normal run's spawn (no pluginsOff, no carry).
   for (const o of mine) { assert.deepEqual(o.settingSources, RUN_SOURCES); assert.equal('pluginsOff' in o, false); }
   assert.deepEqual(JSON.parse(readFileSync(join(br.worktreeDir, '.claude', 'settings.json'), 'utf8')), PROJECT_SETTINGS);
+  for (const o of mine) assert.equal(mountedSkill.get(o), ROOT_SKILL, 'E2: a Real try mounts the root skill as a normal run does');
 });
 
 test('a Pretend try without a project: its spawns load no user settings either', { timeout: 240000 }, async () => {
@@ -137,6 +164,17 @@ test('a Pretend try without a project: its spawns load no user settings either',
   const mine = spawns.slice(from);
   assert.ok(mine.length > 0);
   for (const o of mine) { assert.deepEqual(o.settingSources, RUN_SOURCES); assert.equal(o.pluginsOff, true); }
+  for (const o of mine) assert.equal(mountedSkill.get(o), ROOT_SKILL_OFF, 'E2: never stripped before, the same mount loses its hooks too');
+});
+
+test('E2: a normal run mounts the root skill as it is, hooks and all', { timeout: 240000 }, async () => {
+  const from = spawns.length;
+  const out = await _testing.invokeStartRun({ projectDir: real, prompt: 'Add a feature', title: 'Normal run', workflowId: 'wf_poff' }, null, {});
+  assert.equal(out.status, 200, JSON.stringify(out.body));
+  await settled(out.body.runId);
+  const mine = spawns.slice(from);
+  assert.ok(mine.length > 0);
+  for (const o of mine) { assert.equal('pluginsOff' in o, false); assert.equal(mountedSkill.get(o), ROOT_SKILL); }
 });
 
 test('a switch-off Worca cannot write: no step runs, and the try is Worca\'s problem (copy), not the workflow\'s (U-T2)',

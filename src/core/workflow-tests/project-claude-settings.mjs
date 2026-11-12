@@ -6,11 +6,12 @@
 // too. (M10): so do `extraKnownMarketplaces` and the settings `env` keys that would undo the try guard (Claude Code applies
 // settings env to its tools: probe m10env). (M6): every file is replaced through a temp file and a rename, so a hardlink's
 // other name (possibly outside the checkout) keeps its content.
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { lstat, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseDocument, stringify } from 'yaml';
 import { isAskpassKey, isTryStrippedKey } from './try-guard-env.mjs';
+import { updateRunManifest } from '../run-manifest.mjs';
 
 export const PROJECT_SETTINGS_FILES = Object.freeze(['.claude/settings.json', '.claude/settings.local.json']);
 export const STRIPPED_SETTINGS_KEYS = Object.freeze(['hooks', 'enabledPlugins', 'extraKnownMarketplaces']);
@@ -247,7 +248,8 @@ function strippedFrontmatterBytes(buf) {
 }
 
 /** D72a: the trees (in a `.claude` folder) whose markdown files Claude Code reads frontmatter hooks from, and which files. */
-const FRONTMATTER_TREES = Object.freeze([['skills', (n) => /^skill\.md$/i.test(n)], ['agents', (n) => /\.md$/i.test(n)],
+const isSkillFile = (n) => /^skill\.md$/i.test(n);
+const FRONTMATTER_TREES = Object.freeze([['skills', isSkillFile], ['agents', (n) => /\.md$/i.test(n)],
   ['commands', (n) => /\.md$/i.test(n)]]);
 const abs = (dir, rel) => join(dir, ...rel.split('/'));
 /** How deep a walk goes; a folder below it is named in `unparsed` (not checked), never passed over silently (review m13). */
@@ -316,27 +318,66 @@ async function nestedClaudeDirs(dir, rel, out, depth = 0) {
 /** D72a in one `.claude` folder (`claudeRel`): its skills, agents and commands lose their frontmatter hooks; links in those
  *  trees are removed; files Worca is not sure it fully stripped (written anyway), files not in UTF-8 (stripped too, re-review
  *  3 I1) and folders too deep to walk are named. */
-async function stripFrontmatterTrees(checkoutDir, claudeRel, { changed, links, unparsed }) {
-  for (const [name, match] of FRONTMATTER_TREES) {
-    const tree = `${claudeRel}/${name}`;
-    let tst = null;
-    try { tst = await lstat(abs(checkoutDir, tree)); } catch { continue; }
-    if (tst.isSymbolicLink()) { await rm(abs(checkoutDir, tree), { force: true }); links.push(tree); continue; }
-    if (!tst.isDirectory()) continue;
-    const found = [];
-    const treeLinks = [];
-    const deep = [];
-    await walkTree(checkoutDir, tree, match, found, treeLinks, deep);
-    for (const l of treeLinks) { await rm(abs(checkoutDir, l), { force: true }); links.push(l); }
-    for (const rel of found) {
-      const r = strippedFrontmatterBytes(await readFile(abs(checkoutDir, rel)));
-      if (r === null) continue;
-      await replaceFile(abs(checkoutDir, rel), r.bytes);   // N-I1: written even when unsure (as far as Worca could strip it)
-      changed.push(rel);
-      if (r.unsafe) unparsed.push(rel);
-    }
-    unparsed.push(...deep);
+async function stripFrontmatterTrees(checkoutDir, claudeRel, out) {
+  for (const [name, match] of FRONTMATTER_TREES) await stripTree(checkoutDir, `${claudeRel}/${name}`, match, out);
+}
+
+/** D72a in one tree (`tree`, relative to `dir`): a tree that is a link is removed, else its matching files lose their
+ *  frontmatter hooks and the links in it are removed (never followed); unsure files and folders too deep are named. */
+async function stripTree(dir, tree, match, { changed, links, unparsed }, wrote = null) {
+  let tst = null;
+  try { tst = await lstat(abs(dir, tree)); } catch { return; }
+  if (tst.isSymbolicLink()) { await rm(abs(dir, tree), { force: true }); links.push(tree); return; }
+  if (!tst.isDirectory()) return;
+  const found = [];
+  const treeLinks = [];
+  const deep = [];
+  await walkTree(dir, tree, match, found, treeLinks, deep);
+  for (const l of treeLinks) { await rm(abs(dir, l), { force: true }); links.push(l); }
+  for (const rel of found) {
+    const r = strippedFrontmatterBytes(await readFile(abs(dir, rel)));
+    if (r === null) continue;
+    await replaceFile(abs(dir, rel), r.bytes);   // N-I1: written even when unsure (as far as Worca could strip it)
+    changed.push(rel);
+    if (r.unsafe) unparsed.push(rel);
+    if (wrote) wrote.set(rel, createHash('sha256').update(r.bytes).digest('hex'));
   }
+  unparsed.push(...deep);
+}
+
+/**
+ * Final review E2: in a Pretend try (project or not), the skills Worca mounts after the D72 strip (`rc`, the run context of
+ * run-context.mjs assembleRunContext: the projects root's skills, a workflow's `requiresSkills` from a bundle or a plugin, a
+ * project's untracked ones) lose their frontmatter hooks by the same D72a rules: a link is removed, never followed; a file
+ * Worca is not sure it fully stripped is written as far as it could and named in one run warning (`warn`). The harness mounts
+ * them as copies in a Pretend try (`copyMount`), so this never edits the person's or a plugin's real files. Only the entries
+ * Worca mounted (`rc.injectedSkillNames`); the project's tracked ones were stripped before. Paths are relative to the mount
+ * folder. A file that cannot be read or written throws TRY_PLUGINS_OFF_FAILED: the promise of Pretend would not hold.
+ * What Worca wrote is recorded on the mount's record (`worcaWrote`, a sha256 per file, also in run.json when `runRoot` is
+ * given), so the teardown's rescue (run-manifest.mjs) does not take it for an agent's edit of the mount.
+ * @returns {Promise<{changed: string[], links: string[], unparsed: string[]}>}
+ */
+export async function stripMountedSkillHooks(rc, { warn, runRoot = null }) {
+  const out = { changed: [], links: [], unparsed: [] };
+  const dir = rc && rc.skillMountDir;
+  if (!dir) return out;
+  const records = Object.values(rc.injectedPaths || {}).flat().filter((r) => r && r.kind === 'skill' && typeof r.path === 'string');
+  try {
+    for (const name of rc.injectedSkillNames || []) {
+      const wrote = new Map();
+      await stripTree(dir, name, isSkillFile, out, wrote);
+      const rec = records.find((r) => r.path.split(/[\\/]/).pop() === name);
+      if (rec && wrote.size) rec.worcaWrote = Object.fromEntries([...wrote].map(([rel, h]) => [rel.slice(name.length + 1), h]));
+    }
+    if (runRoot && out.changed.length) await updateRunManifest(runRoot, { injectedPaths: rc.injectedPaths });
+  } catch (e) {
+    throw Object.assign(new Error(`Worca could not switch off the hooks of the skills it mounted for this try: ${e && e.message ? e.message : e}`),
+      { code: 'TRY_PLUGINS_OFF_FAILED' });
+  }
+  const skill = (p) => p.split('/')[0];
+  for (const p of out.unparsed) await warn(`Worca could not be sure it removed every hook from the skill ${skill(p)} it mounted, so a hook in it may still run in this try.`);
+  for (const p of out.links) await warn(`The skill ${p} Worca mounted is a link, so Worca left it out of this try.`);
+  return out;
 }
 
 /**

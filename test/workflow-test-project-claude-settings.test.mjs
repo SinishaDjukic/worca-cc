@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { strippedSettingsText, strippedFrontmatterText, isTryGuardEnvKey, stripProjectClaudeSettings, PROJECT_SETTINGS_FILES, STRIPPED_SETTINGS_KEYS,
-  _testing as pcsTesting } from '../src/core/workflow-tests/project-claude-settings.mjs';
+  stripMountedSkillHooks, _testing as pcsTesting } from '../src/core/workflow-tests/project-claude-settings.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
 
 const dirs = [];
@@ -398,4 +398,50 @@ test('D72a: the harness names an unsafe frontmatter in one run warning and keeps
   assert.deepEqual(h._tryPluginPaths, ['.claude/skills/s/SKILL.md']);
   assert.deepEqual(warnings, ['Worca could not be sure it removed every hook from the project\'s .claude/agents/a.md, so a hook in it may still run in this try.']);
   assert.equal(readFileSync(join(d, '.claude', 'agents', 'a.md'), 'utf8'), '---\n---\nbody\n', 'written as far as Worca could strip it');
+});
+
+// ── Final review E2: the skills Worca mounts after the D72 strip (projects root, requiresSkills, untracked project skills) ──
+test('E2: only the skill entries Worca mounted lose their frontmatter hooks, at any depth; unsafe ones and links are named', async () => {
+  const d = tmp();
+  const mount = join(d, '.claude', 'skills');
+  const w = (rel, text) => { mkdirSync(join(mount, ...rel.split('/').slice(0, -1)), { recursive: true }); writeFileSync(join(mount, ...rel.split('/')), text); };
+  w('hooky/SKILL.md', FM(BLOCK));
+  w('hooky/deep/SKILL.md', FM(BLOCK));
+  w('hooky/notes.md', FM(BLOCK));
+  w('unsure/SKILL.md', UNSURE);
+  w('plain/SKILL.md', FM(''));
+  w('tracked/SKILL.md', FM(BLOCK));   // the project's own (D72 strips it before the mount): not this call's
+  const outside = tmp();
+  mkdirSync(join(outside, 'evil'));
+  writeFileSync(join(outside, 'evil', 'SKILL.md'), FM(BLOCK));
+  symlinkSync(join(outside, 'evil'), join(mount, 'evil'), 'junction');
+  const warned = [];
+  const rc = { skillMountDir: mount, injectedSkillNames: ['hooky', 'unsure', 'plain', 'evil', 'gone'] };
+  const r = await stripMountedSkillHooks(rc, { warn: async (t) => { warned.push(t); } });
+  assert.deepEqual(r, { changed: ['hooky/SKILL.md', 'hooky/deep/SKILL.md', 'unsure/SKILL.md'], links: ['evil'], unparsed: ['unsure/SKILL.md'] });
+  assert.equal(readFileSync(join(mount, 'hooky', 'SKILL.md'), 'utf8'), FM(''));
+  assert.equal(readFileSync(join(mount, 'hooky', 'deep', 'SKILL.md'), 'utf8'), FM(''));
+  assert.equal(readFileSync(join(mount, 'hooky', 'notes.md'), 'utf8'), FM(BLOCK), 'not a SKILL.md');
+  assert.equal(readFileSync(join(mount, 'tracked', 'SKILL.md'), 'utf8'), FM(BLOCK), 'an entry Worca did not mount is left to D72');
+  assert.equal(existsSync(join(mount, 'evil')), false, 'a mounted link is removed, never followed');
+  assert.equal(readFileSync(join(outside, 'evil', 'SKILL.md'), 'utf8'), FM(BLOCK), 'its target is untouched');
+  assert.deepEqual(warned, [
+    'Worca could not be sure it removed every hook from the skill unsure it mounted, so a hook in it may still run in this try.',
+    'The skill evil Worca mounted is a link, so Worca left it out of this try.']);
+  assert.deepEqual(await stripMountedSkillHooks({ skillMountDir: null, injectedSkillNames: [] }, { warn: async () => {} }), { changed: [], links: [], unparsed: [] });
+  assert.deepEqual(await stripMountedSkillHooks(rc, { warn: async () => {} }), { changed: [], links: [], unparsed: [] }, 'a second pass: nothing left');
+});
+
+test('E2: a mounted skill Worca cannot rewrite ends the try as Worca\'s own failure, named', { skip: process.platform === 'win32' || (process.getuid && process.getuid() === 0)
+  ? 'a read-only folder refuses a new file only on POSIX, and not for root' : false }, async () => {
+  const d = tmp();
+  const mount = join(d, 'skills');
+  mkdirSync(join(mount, 'hooky'), { recursive: true });
+  writeFileSync(join(mount, 'hooky', 'SKILL.md'), FM(BLOCK));
+  const { chmodSync } = await import('node:fs');
+  chmodSync(join(mount, 'hooky'), 0o555);
+  try {
+    await assert.rejects(stripMountedSkillHooks({ skillMountDir: mount, injectedSkillNames: ['hooky'] }, { warn: async () => {} }),
+      (e) => e.code === 'TRY_PLUGINS_OFF_FAILED' && /^Worca could not switch off the hooks of the skills it mounted for this try: .*EACCES/.test(e.message));
+  } finally { chmodSync(join(mount, 'hooky'), 0o755); }
 });

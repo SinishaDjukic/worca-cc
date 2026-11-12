@@ -1295,6 +1295,7 @@ export async function assembleRunContext({
   setSkills = [],
   mcpStandIn = null,
   gitEnv = null,   // workflow tests 3a (final review I2): a try's git env (no hook or fsmonitor of the copy, the guard)
+  copyMount = false,   // workflow tests 3b (final review E2): a Pretend try mounts every skill as a copy (its hooks are stripped)
 }) {
   const warnings = [];
   // ENOENT/ENOTDIR stay silent (absence is normal, §8.20); every OTHER fs error on a
@@ -1306,7 +1307,7 @@ export async function assembleRunContext({
   // read, so a per-source read would print the same warning N times (Phase 2 note).
   const maxBytesPerFile = contextMaxBytesPerFile(settingsScope);
   const maxBytesTotal = contextMaxBytesTotal(settingsScope);
-  const mount = skillMount(settingsScope);
+  const mount = copyMount ? 'copy' : skillMount(settingsScope);
 
   const sorted = [...members].sort(byProjectKey);
   await mkdir(runRoot, { recursive: true });
@@ -1386,7 +1387,7 @@ export async function assembleRunContext({
   // and `~/.claude/skills` is never a writable root. Copies stay where a link would not serve: an engine without that
   // sandbox (Copilot's file tools would write through the link), agents under their own user (they cannot read the
   // server's home), and Windows (its links need a privilege, and its codex sandbox is not relied on).
-  const linkUserSkills = engine === 'codex' && !agentIsolated && platform !== 'win32';
+  const linkUserSkills = !copyMount && engine === 'codex' && !agentIsolated && platform !== 'win32';
   if (isWorkspace) {
     skillMountDir = join(runRoot, skillsRel);
     skillsOut = await assembleSkills({

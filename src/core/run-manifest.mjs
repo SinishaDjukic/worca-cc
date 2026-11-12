@@ -17,6 +17,7 @@
 import { mkdir, readFile, writeFile, rm, rename, readdir, stat, cp, lstat, realpath, readlink, symlink } from 'node:fs/promises';
 import { join, resolve, sep, basename, dirname, relative, isAbsolute } from 'node:path';
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 
 export const RUN_MANIFEST_FILE = 'run.json';
 
@@ -152,6 +153,17 @@ async function readMaybe(p) {
   try { return await readFile(p); } catch { return null; }
 }
 
+/** Workflow tests 3b (final review E2): whether the mount's file `rel` still holds what Worca itself wrote there (a Pretend
+ *  try's skill hooks strip records `e.worcaWrote`: forward-slash path → sha256 hex), so it is not an agent's edit. */
+async function stillWorcas(e, mounted, rel) {
+  const want = e.worcaWrote && typeof e.worcaWrote === 'object' ? e.worcaWrote[rel.split(sep).join('/')] : undefined;
+  if (typeof want !== 'string') return false;
+  const p = rel ? join(mounted, rel) : mounted;
+  const st = await lstat(p).catch(() => null);
+  const b = st && st.isFile() ? await readMaybe(p) : null;
+  return !!b && createHash('sha256').update(b).digest('hex') === want;
+}
+
 // The modified-mount rescue copies what an agent changed, not the whole mount: a mounted skill can carry a
 // node_modules and compiled binaries (one rescue copied 1.2 GB, perf audit §4.3). Dependency and VCS trees
 // are never compared or copied, nor is a single file over the cap (named in the warning instead).
@@ -283,7 +295,8 @@ export async function rescueModifiedMounts({ baseDir, entries, pipelineDir, scop
         );
         continue;
       }
-      const changed = await changedFiles(mounted, e.source || '');
+      const changed = [];
+      for (const rel of await changedFiles(mounted, e.source || '')) if (!(await stillWorcas(e, mounted, rel))) changed.push(rel);
       if (!changed.length) continue;
       const dest = pipelineDir ? join(pipelineDir, 'stray', scope || 'runRoot', e.path) : null;
       const skipped = [];
