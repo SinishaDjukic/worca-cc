@@ -660,6 +660,47 @@ step runs on a covered family. The texts are starting points taken from the guid
 - **Known gap.** A resumed step reloads its agent `.md` from disk, so an edited agent file still changes a resumed
   step's system prompt. Fable 5.2 can reject such a resume.
 
+### Effort intents
+
+Every agent step carries an **effort intent**: `light`, `standard` or `deep`. When a step has no effort of its own,
+worca turns its intent into the effort its model family runs that kind of work best at. The values are starting values
+taken from Anthropic's per-model prompting guides, to be measured.
+
+- **Steps.** Judgement steps (Plan, Plan Review, Refine Plan, Review Implementation, the deck and requirements
+  reviews, Architect) are `deep`. Producers (Implementation, Clarify, Deck Builder, the Workspace scan, …) are
+  `standard`. Mechanical steps (Decompose, Manual Tests Checklist, Deck Export, Memory defragment) are `light`. A
+  plugin or user agent is matched by its display name (Bug Root Cause is `deep`; Bug Report Analysis and Bug Triage
+  Report are `light`); any other step is `standard`.
+- **Families.**
+
+  | family | light | standard | deep |
+  |---|---|---|---|
+  | `fable-5-2` | low | medium | high |
+  | `opus-5-5` | low | medium | high |
+  | `sonnet-5-5` | low | medium | high |
+  | `opus-4-8` | medium | high | xhigh |
+  | `haiku-5-5` | low | medium | high |
+
+  Any other family, an alias (`opus`, `sonnet`, …), a model with no family and every non-Anthropic model get no
+  intent effort: the step runs at the model's own default, as before.
+- **Clamp.** The mapped effort is used only when the model lists it; otherwise worca takes the nearest effort the model
+  lists (a tie goes to the lower one). So `light` runs at `medium` on Claude Code, because pipeline steps are not
+  offered `low` there (#422). On Copilot, whose Claude models list low/medium/high, `light` runs at `low` and
+  Opus 4.8's `deep` at `high`.
+- **Engines.** Claude Code (`--effort`), and GitHub Copilot CLI when its model is a `claude-*` model
+  (`--reasoning-effort`). Codex, Cursor, OpenCode, Gemini CLI, Qwen Code and Goose are not covered.
+- **Precedence.** An effort that anything names always wins: the template, the project's step picks, a role, a team
+  default, the run's own picks, or a helper job's model and effort (Memory defragment, Workspace scan). The intent fills
+  only an effort left empty. It is filled when a run starts, recorded on the run, and a resume runs the same effort. A
+  saved run setup and an exported workflow keep the effort empty.
+- **Behaviour change.** A step whose effort is **Model default** now means "the step's intent for this model family,
+  else the model's default". A step on a mapped family that was left on Model default now runs at its intent effort,
+  not at the CLI's own default.
+- **Cost.** On Opus 4.8 a Model default step now runs at `high` (producers) or `xhigh` (judgement), which uses more
+  tokens per step than the CLI's default.
+- **Known gaps.** A role-review step's role that names its own model and no effort, and a run resumed with another
+  model for every step, keep their old effort (none filled).
+
 ## Codex
 
 worca can run pipelines and chats on OpenAI's Codex CLI.
@@ -1096,12 +1137,14 @@ When Chat proposes a run of a saved workflow it can also pick a model and effort
 agent step (`propose_run` `nodes`), from the models the run's engine runs:
 
 - **The picking policy** — judgement steps (Plan, Plan Review, Refine Plan, Review
-  Implementation, Bug Root Cause, Deck Review) take the top price tier at high effort, never the
-  premium tier; producers that design (Implementation, Bug Fix, Deck Builder) the strong tier at
-  medium or high effort; mechanical producers (Decompose, Manual Tests Checklist, Bug Report
-  Analysis, Deck Export, Bug Triage Report) the cheapest capable tier at medium effort;
-  tool-driven checks (Manual web UI testing, visual checks) the mid tier with tool calls and
-  vision; any other step (Clarify included) the strong tier at medium effort. Within a tier the
+  Implementation, Bug Root Cause, Deck Review) take the top price tier at the deep intent, never
+  the premium tier; producers that design (Implementation, Bug Fix, Deck Builder) the strong tier
+  at the standard intent, with a higher effort named only for a large task; mechanical producers
+  (Decompose, Manual Tests Checklist, Bug Report Analysis, Deck Export, Bug Triage Report) the
+  cheapest capable tier at the light intent; tool-driven checks (Manual web UI testing, visual
+  checks) the mid tier at the standard intent, with tool calls and vision; any other step (Clarify
+  included) the strong tier at the standard intent. The effort is left empty so each step's
+  intent applies (see Effort intents); an effort is named only to depart from it. Within a tier the
   cheapest capable model is picked. A premium-tier model (Fable 5.1 today) is picked only when
   you name that model: it does the work of the top tier at about 2.5× Opus 5.5's list price. A
   small task scales the tiers down. Anthropic

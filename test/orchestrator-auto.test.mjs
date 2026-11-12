@@ -123,6 +123,17 @@ test('accept: the proposal carries the manifest, the dispatch order and editable
   assert.ok(st.steps.find((s) => s.key === 'x:preflight:1').costUsd >= 0.02, 'the classifier spend lands on the preflight row');
 });
 
+test('effort intents: an accepted proposal with a model and no effort runs at the step\'s intent effort', { timeout: 120000 }, async () => {
+  const { classify } = scripted([QUICK]);
+  const orch = orchFor({ classify });
+  answerer(orch, () => ({ decision: 'accept', nodes: { n_planner: { model: 'claude-opus-4-8' } } }));
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  const plan = orch.getState().stepper.graph.nodes.find((n) => n.id === 'n_planner');
+  assert.equal(plan.model, 'claude-opus-4-8');
+  assert.equal(plan.effort, 'xhigh', 'Plan is deep: xhigh on Opus 4.8');
+});
+
 test('revise twice: feedback threads through, the final shape wins, one classifier row per round', { timeout: 120000 }, async () => {
   const { classify, calls } = scripted([PLAN_PARTIAL, QUICK, QUICK]);
   const orch = orchFor({ classify });

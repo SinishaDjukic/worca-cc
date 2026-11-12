@@ -216,7 +216,7 @@ export class GraphOrchestrator extends RunHarness {
     const hasWires = Object.keys(overlayWires).length > 0;
     const overlay = hasNodes || hasWires ? { ...(hasNodes ? { nodes: overlayNodes } : {}), ...(hasWires ? { wires: overlayWires } : {}) } : null;
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
-      engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(overlay ? { overlay } : {}), ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
+      engine: this.claude.engine || 'claude', runModel: this.claude.model || null, fillIntents: true, isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(overlay ? { overlay } : {}), ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
       ...(scan ? { agentPair: scan.agentPair, subagentPin: scan.subagentPin } : {}), claudeAuth: this._resolveClaudeAuth(),
     });
     this._adoptResolvedGraph(resolved);
@@ -646,7 +646,7 @@ export class GraphOrchestrator extends RunHarness {
     for (const [nodeId, sel] of Object.entries(tunables || {})) overlayNodes[nodeId] = { ...sel };
     for (const [nodeId, sel] of Object.entries(answer.nodes || {})) overlayNodes[nodeId] = { ...(overlayNodes[nodeId] || {}), ...sel };
     const resolved = await resolveGraph(this.projectDir, workflowId, registry, this.agentsDir, {
-      engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
+      engine: this.claude.engine || 'claude', runModel: this.claude.model || null, fillIntents: true, isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
       claudeAuth: this._resolveClaudeAuth(),
     });
     if (!this.humanInLoop) {
