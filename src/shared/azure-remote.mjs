@@ -61,3 +61,28 @@ export function parseAzurePrUrl(url) {
   const id = parseAzurePath(m[1], m[2].split('/'));
   return id ? { ...id, number: Number(m[3]) } : null;
 }
+
+/**
+ * A work item web URL → { host:'dev.azure.com', org, project, number } | null. It names no repository, only the org and
+ * project: "https://dev.azure.com/o/p/_workitems/edit/12" or "https://o.visualstudio.com[/DefaultCollection]/p/_workitems/edit/12",
+ * with an optional `/`, query or hash after the id. Names are percent-decoded.
+ */
+export function parseAzureWorkItemUrl(url) {
+  if (typeof url !== 'string') return null;
+  const m = /^https:\/\/([^/@:?#]+)\/([^?#]+?)\/_workitems\/edit\/([1-9]\d*)\/?(?:[?#].*)?$/i.exec(url.trim());
+  if (!m) return null;
+  const h = m[1].toLowerCase();
+  let segs = m[2].split('/');
+  let org;
+  if (h === AZURE_HOST) { org = segs[0]; segs = segs.slice(1); } else {
+    const vs = VS_RE.exec(h);
+    if (!vs) return null;
+    org = vs[1];
+    if (segs[0]?.toLowerCase() === 'defaultcollection') segs = segs.slice(1);
+  }
+  if (segs.length !== 1) return null;
+  const [o, p] = [org, segs[0]].map((x) => (typeof x === 'string' ? dec(x).trim() : ''));
+  const number = Number(m[3]);
+  if (!o || !p || !Number.isSafeInteger(number)) return null;
+  return { host: AZURE_HOST, org: o, project: p, number };
+}
