@@ -315,7 +315,7 @@ only while Shaper is on.
 
 ### Slices and code reviews carry the requirements
 
-Labs flag `shapeRequirements`. When a sliced run agreed its requirements first (the
+When a sliced run agreed its requirements first (the
 `R-po-1`, `R-ux-1`, … criteria), the outline cuts the runs by them:
 
 - **Satisfies.** Each run on the Split card lists the ids it delivers under its goal
@@ -331,9 +331,6 @@ Labs flag `shapeRequirements`. When a sliced run agreed its requirements first (
   major finding (`R-ops-1 · not covered by the diff`), so the run goes back to the
   implementer before you are asked to ship it. Once a run is reviewed, its row on the
   feature card unfolds **Requirements 2/3 · 1 to fix**.
-
-Rollback: turn the flag off. Later runs of a feature then fire as plain Shaper runs;
-the Satisfies text in their task is only prose.
 
 ### Requirement concerns
 
@@ -368,9 +365,6 @@ On a shipped feature with agreed requirements, **Ask for changes** updates the r
 says so: "Requirements first: the 4 agreed requirements are updated before the plan." After Start, the run's first
 card is the requirements hold, with the agreed requirements and how each was marked; the plan approval comes after it.
 This holds for a round on the same PR and for a follow-up run after the PR merged.
-
-Rollback for all three: turn the flag off. Findings then block as before, the Ship card has no ledger and ships
-unmarked, and a Changes request runs as a plain round or follow-up. Saved marks stay stored, unread.
 
 ## Away mode on a Shaper run
 
@@ -481,9 +475,9 @@ card is posted per fix run. When the watch gives up, the run card says so under 
 card the watch is only the PR link's tooltip (`PR #781 · watched`). With Shaper off, each fix run still gets its own
 `PR fix run` card.
 
-## Requirements first (Labs)
+## Requirements first
 
-Labs flag `shapeRequirements`. A medium or large Shaper task agrees its requirements before the plan is written. The
+A medium or large Shaper task agrees its requirements before the plan is written. The
 Shaper's Requirements step is a hold, like the plan approval, and it has its own card. Three cards change:
 
 - **The Shaper card.** One facts line (`Large task · ≈ $31 · ~84 min`), then one sentence: `You lead as [Product ▾],
@@ -514,9 +508,6 @@ Shaper's Requirements step is a hold, like the plan approval, and it has its own
   **Fix all** is the primary and **Approve and build** is a plain button; when everything is covered, **Approve and
   build** is the primary again. The Chat run card says `Requirements 7/8 · 1 to fix · Plan ✓ · Refine ✓ while planning`
   in place of `Clarify ✓` for such a run.
-
-Rollback: turn the flag off. New runs ask the old questions and show the old cards. A run already held at its
-requirements keeps asking, and its card stays answerable until it finishes.
 
 ## Pull requests when a run finishes
 
