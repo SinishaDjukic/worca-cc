@@ -117,7 +117,7 @@ test('GET /models: the offered harnesses (never Cursor), a broker-locked one mar
   assert.equal(r.status, 200);
   assert.deepEqual(r.json.harnesses.map((h) => h.engine), ['claude', 'codex', 'copilot']);
   const [claude, codex, copilot] = r.json.harnesses;
-  assert.deepEqual([claude.label, claude.choiceLabel, claude.ready, claude.broker, claude.repo, claude.files, claude.company], ['Claude', 'Claude', true, false, true, true, 'Anthropic']);
+  assert.deepEqual([claude.label, claude.choiceLabel, claude.ready, claude.broker, claude.repo, claude.files, claude.company], ['Claude Code', 'Claude Code', true, false, true, true, 'Anthropic']);
   assert.deepEqual([codex.ready, codex.broker, codex.short, codex.repo, codex.files, codex.company], [false, true, 'Off while the credential broker is on', true, false, 'OpenAI']);
   assert.deepEqual([copilot.ready, copilot.broker, copilot.short, copilot.keepsCopy], [false, false, 'Not signed in', true]);
   assert.ok(r.json.models.some((m) => m.id === 'gpt-everyday'));
@@ -156,7 +156,7 @@ test('POST: Cursor and a model that is not on the harness are refused (400) befo
   assert.deepEqual([cur.status, cur.json.error], [400, "Cursor can't run Requirements."]);
   const off = await call('POST', P, { ...body, model: { engine: 'claude', model: 'gpt-everyday', effort: null } });
   assert.equal(off.status, 400);
-  assert.match(off.json.error, /doesn't run on Claude/);
+  assert.match(off.json.error, /doesn't run on Claude Code/);
   assert.equal((await call('POST', P, { ...body, model: { engine: 'codex', model: 'nope', effort: null } })).status, 400);
   assert.equal((await call('POST', P, { ...body, model: 'codex' })).status, 400);
   const tk = await call('POST', P, { ...body, model: { engine: 'cursor', model: 'm', effort: null }, fromTicket: { key: 'X-1' } });
@@ -166,7 +166,7 @@ test('POST: Cursor and a model that is not on the harness are refused (400) befo
   assert.equal(ok.status, 201);
   await settled(ok.json.feature.seq);
   assert.deepEqual(ok.json.feature.model, CODEX);
-  assert.equal(ok.json.feature.modelLabel, 'GPT Everyday on Codex');
+  assert.equal(ok.json.feature.modelLabel, 'GPT Everyday on OpenAI Codex');
   assert.deepEqual(getFeature(ok.json.feature.seq).model, CODEX);
   assert.equal(calls.at(-1).engine, 'codex');
 });
@@ -176,7 +176,7 @@ test('POST without a model stores the default choice (an API client keeps workin
   assert.equal(r.status, 201);
   await settled(r.json.feature.seq);
   assert.deepEqual(r.json.feature.model, { engine: 'claude', model: 'claude-opus-x', effort: 'medium' });
-  assert.equal(r.json.feature.modelLabel, 'Opus X on Claude');
+  assert.equal(r.json.feature.modelLabel, 'Opus X on Claude Code');
   state.engine = 'codex';
   try {
     const c = await call('POST', P, { scopeType: 'project', scopeKey: projKey, title: 'Default codex', description: 'd' });
@@ -202,7 +202,7 @@ test('the feature view: a pre-9c feature shows the resolved Claude pair as legac
   appendTurn(f.seq, { kind: 'round', payload: { questions: [] }, engine: 'codex', notices: ['n1'] });
   const v = (await call('GET', `${P}/${f.seq}`)).json;
   assert.deepEqual(v.feature.model, { engine: 'claude', model: 'claude-opus-x', effort: 'medium', legacy: true });
-  assert.equal(v.feature.modelLabel, 'Opus X on Claude');
+  assert.equal(v.feature.modelLabel, 'Opus X on Claude Code');
   assert.equal(v.feature.anyEstimated, false);
   assert.equal(v.feature.interview.label, 'Opus X');
   const t = v.turns.find((x) => x.kind === 'round');
@@ -215,7 +215,7 @@ test('PUT /:seq/model: stores the choice, appends a model turn with from, answer
   const r = await call('PUT', url, CODEX);
   assert.equal(r.status, 200);
   assert.deepEqual(r.json.feature.model, CODEX);
-  assert.equal(r.json.feature.modelLabel, 'GPT Everyday on Codex');
+  assert.equal(r.json.feature.modelLabel, 'GPT Everyday on OpenAI Codex');
   const turn = listTurns(f.seq).filter((t) => t.kind === 'model').at(-1);
   assert.deepEqual(turn.payload, { ...CODEX, from: { engine: 'claude', model: 'claude-opus-x', effort: null } });
   assert.equal((await call('PUT', url, { engine: 'cursor', model: 'gpt-everyday', effort: null })).json.error, "Cursor can't run Requirements.");
@@ -262,10 +262,10 @@ test('GET /:seq/costs: rows with labels and ran-on, billed, estimated and unknow
   const r = await call('GET', `${P}/${f.seq}/costs`);
   assert.equal(r.status, 200);
   assert.deepEqual(r.json.rows.map((x) => [x.step, x.label, x.ranOn, x.usd, x.kind]), [
-    ['look', 'Code look', 'GPT Everyday on Codex', 0.03, 'billed'],
-    ['round', 'Round 1', 'GPT Everyday on Codex', 0.04, 'estimated'],
-    ['round', 'Round 2', 'GPT Everyday on Codex', null, 'unknown'],
-    ['chat', 'Feature chat', 'GPT Everyday on Codex', 0.01, 'billed'],
+    ['look', 'Code look', 'GPT Everyday on OpenAI Codex', 0.03, 'billed'],
+    ['round', 'Round 1', 'GPT Everyday on OpenAI Codex', 0.04, 'estimated'],
+    ['round', 'Round 2', 'GPT Everyday on OpenAI Codex', null, 'unknown'],
+    ['chat', 'Feature chat', 'GPT Everyday on OpenAI Codex', 0.01, 'billed'],
   ]);
   assert.deepEqual([r.json.billedUsd, r.json.estimatedUsd, r.json.unknownSteps, r.json.totalUsd, r.json.anyEstimated], [0.04, 0.04, 1, 0.08, true]);
   assert.equal((await call('GET', `${P}/${f.seq}`)).json.feature.anyEstimated, true);
@@ -282,10 +282,10 @@ test('GET /:seq/helper: each reply carries its engine, notices, model label and 
   appendTurn(f.seq, { kind: 'round', payload: {}, model: 'gpt-everyday', engine: 'codex' });
   await call('GET', `${P}/${f.seq}`);   // a feature view remembers the labels of the models its turns ran on
   const { id } = insertHelperMessage({ featureSeq: f.seq, role: 'worca', text: 'Hi', costUsd: 0.04, model: 'gpt-everyday', engine: 'codex',
-    notices: ['Cost estimated: Codex reports none.'] });
+    notices: ['Cost estimated: OpenAI Codex reports none.'] });
   recordRequirementsCostDelta({ featureSeq: f.seq, turnId: null, helperMessageId: id, amountUsd: 0.04, model: 'gpt-everyday', engine: 'codex', step: 'chat', costKind: 'estimated' });
   const m = (await call('GET', `${P}/${f.seq}/helper`)).json.messages[0];
-  assert.deepEqual([m.engine, m.notices, m.modelLabel, m.costKind], ['codex', ['Cost estimated: Codex reports none.'], 'GPT Everyday', 'estimated']);
+  assert.deepEqual([m.engine, m.notices, m.modelLabel, m.costKind], ['codex', ['Cost estimated: OpenAI Codex reports none.'], 'GPT Everyday', 'estimated']);
 });
 
 test('feature view: a model turn carries the label of the model it switched to; unknownSteps counts unknown costs', async () => {
@@ -306,7 +306,7 @@ test('GET /:seq/costs: a file read is "File read · <name>"', async () => {
   recordRequirementsCostDelta({ featureSeq: f.seq, turnId: null, attachmentId: row.id, amountUsd: 0.02, model: 'claude-opus-x', engine: 'claude', step: 'read', costKind: 'billed' });
   const r = (await call('GET', `${P}/${f.seq}/costs`)).json;
   const read = r.rows.filter((x) => x.step === 'read').at(-1);
-  assert.deepEqual([read.label, read.ranOn, read.usd], ['File read · screen.png', 'Opus X on Claude', 0.02]);
+  assert.deepEqual([read.label, read.ranOn, read.usd], ['File read · screen.png', 'Opus X on Claude Code', 0.02]);
 });
 
 test('lookCostUsd follows the feature model', async () => {

@@ -1747,7 +1747,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
    *  Change the model, Try again and the harness's sign-in page; any other error keeps its text and Try again. */
   function errorBlock(f, turns, rounds) {
     const retry = h('button', { type: 'button', class: 'btn btn-sm req-retry', onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/retry`, {}); await paint(); }) }, 'Try again');
-    const last = turns.filter((t) => t.kind !== 'file' && t.kind !== 'export' && t.kind !== 'import').at(-1);
+    const last = turns.filter((t) => !/^(file|export|import)$/.test(t.kind)).at(-1);
     if (!last || last.kind !== 'error' || !last.payload || last.payload.code !== 'NOT_READY') {
       return h('div', { class: 'req-error form-msg err' }, f.lastError, ' ', retry);
     }

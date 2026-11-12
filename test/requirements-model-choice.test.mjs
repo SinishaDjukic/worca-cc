@@ -56,11 +56,11 @@ test('defaultChoice: claude -> interviewModel pair; cursor -> Claude + the Curso
 
 test('defaultChoice: not signed in and broker fall back to Claude with the verbatim sentences', async () => {
   const off = await defaultChoice({ projectKey: 'k' }, deps('codex', { readiness: async () => [{ name: 'codex', ready: false, reason: 'not signed in' }] }));
-  assert.deepEqual(off, { choice: claude, fallbackReason: "Codex isn't signed in, so this starts on Claude." });
+  assert.deepEqual(off, { choice: claude, fallbackReason: "OpenAI Codex isn't signed in, so this starts on Claude." });
   const br = await defaultChoice({ projectKey: 'k' }, deps('codex', { readiness: async () => [{ name: 'codex', ready: false, reason: 'broker', broker: true }] }));
-  assert.deepEqual(br, { choice: claude, fallbackReason: 'Codex is off while the credential broker is on, so this starts on Claude.' });
+  assert.deepEqual(br, { choice: claude, fallbackReason: 'OpenAI Codex is off while the credential broker is on, so this starts on Claude.' });
   const cop = await defaultChoice({ projectKey: 'k' }, deps('copilot', { readiness: async () => [{ name: 'copilot', ready: false, reason: 'not installed' }] }));
-  assert.equal(cop.fallbackReason, "Copilot isn't installed, so this starts on Claude.");
+  assert.equal(cop.fallbackReason, "GitHub Copilot isn't installed, so this starts on Claude.");
 });
 
 test('briefDefault (D18): a repo-reading engine stays; gemini-like (no repo) falls to Claude with the no-repo line', async () => {
@@ -73,7 +73,7 @@ test('briefDefault (D18): a repo-reading engine stays; gemini-like (no repo) fal
   assert.equal((await briefDefault({ projectKey: 'k' }, deps('cursor'))).fallbackReason,
     "Your default engine is Cursor, which can't run Requirements, so this starts on Claude.");
   const off = await briefDefault({ projectKey: 'k' }, deps('codex', { readiness: async () => [{ name: 'codex', ready: false, reason: 'not signed in' }] }));
-  assert.equal(off.fallbackReason, "Codex isn't signed in, so this starts on Claude.");
+  assert.equal(off.fallbackReason, "OpenAI Codex isn't signed in, so this starts on Claude.");
 });
 
 test('recommendedModel: the deep role model of the engine, or null', () => {

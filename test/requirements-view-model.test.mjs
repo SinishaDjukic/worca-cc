@@ -19,9 +19,9 @@ const text = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : null);
 const H = (engine, choiceLabel, over = {}) => ({ engine, label: choiceLabel.replace(/ \(beta\)/, ''), choiceLabel, ready: true, short: null, reason: null, broker: false,
   repo: true, files: false, keepsCopy: false, reportsCost: true, company: null, ...over });
 const HARNESSES = [
-  H('claude', 'Claude', { files: true }),
-  H('codex', 'Codex (beta)'),
-  H('copilot', 'Copilot (beta)', { ready: false, short: 'Not installed', reason: 'cannot run copilot (ENOENT)' }),
+  H('claude', 'Claude Code', { files: true }),
+  H('codex', 'OpenAI Codex (beta)'),
+  H('copilot', 'GitHub Copilot (beta)', { ready: false, short: 'Not installed', reason: 'cannot run copilot (ENOENT)' }),
   H('gemini', 'Gemini CLI (beta)', { repo: false }),
   H('qwen', 'Qwen Code (beta)', { repo: false, ready: false, short: 'Not signed in', reason: 'not signed in' }),
 ];
@@ -93,9 +93,9 @@ test('whoInterviews: the harness list has no Cursor and carries the option texts
   const w = whoInterviews(document, { models: MODELS, harnesses: HARNESSES, choice: { engine: 'claude', model: 'claude-sonnet-5-5' }, defaults: DEFAULTS });
   const opts = [...w.el.querySelector('.req-who-harness').options].map((o) => [o.value, o.textContent, o.disabled]);
   assert.deepEqual(opts, [
-    ['claude', 'Claude', false],
-    ['codex', 'Codex (beta)', false],
-    ['copilot', 'Copilot (beta) · Not installed', true],
+    ['claude', 'Claude Code', false],
+    ['codex', 'OpenAI Codex (beta)', false],
+    ['copilot', 'GitHub Copilot (beta) · Not installed', true],
     ['gemini', "Gemini CLI (beta) · Can't read the repo", false],
     ['qwen', "Qwen Code (beta) · Can't read the repo · Not signed in", true],
   ]);
@@ -107,7 +107,7 @@ test("whoInterviews: a broker lock greys the harness with lockEngineOptions' suf
   const hs = HARNESSES.map((x) => (x.engine === 'codex' ? { ...x, ready: false, broker: true, short: 'Off while the credential broker is on' } : x));
   const w = whoInterviews(document, { models: MODELS, harnesses: hs, choice: { engine: 'claude', model: 'claude-sonnet-5-5' }, defaults: DEFAULTS });
   const o = [...w.el.querySelector('.req-who-harness').options].find((x) => x.value === 'codex');
-  assert.equal(o.textContent, 'Codex (beta): off while the credential broker is on');
+  assert.equal(o.textContent, 'OpenAI Codex (beta): off while the credential broker is on');
   assert.equal(o.disabled, true);
   setEngineLocks([]);
 });
@@ -141,18 +141,18 @@ test('whoInterviews: changing the harness fills Model with that harness default 
 
 test('recommendationNote: another model picked, the recommended one picked, and no recommendation', () => {
   let used = 0;
-  const labels = { harness: 'Claude', picked: 'Sonnet 5.5', recommended: 'Opus 5.5' };
+  const labels = { harness: 'Claude Code', picked: 'Sonnet 5.5', recommended: 'Opus 5.5' };
   const other = recommendationNote(document, { picked: 'claude-sonnet-5-5', recommended: 'claude-opus-5-5', estimates: ESTIMATES['claude-sonnet-5-5'], labels, onUse: () => { used += 1; } });
   assert.ok(other.classList.contains('hint'));
   assert.ok(other.querySelector('svg'), 'the info icon');
-  assert.equal(text(other), 'Requirements work best with a strong model, like Opus 5.5 on Claude: about $0.16 for a code look, about $0.03 a round. '
+  assert.equal(text(other), 'Requirements work best with a strong model, like Opus 5.5 on Claude Code: about $0.16 for a code look, about $0.03 a round. '
     + 'You picked Sonnet 5.5: about $0.09 for a code look, about $0.02 a round. Use Opus 5.5');
   const use = other.querySelector('button');
   assert.equal(use.textContent, 'Use Opus 5.5');
   use.click();
   assert.equal(used, 1);
   const same = recommendationNote(document, { picked: 'claude-opus-5-5', recommended: 'claude-opus-5-5', estimates: ESTIMATES['claude-opus-5-5'], labels: { ...labels, picked: 'Opus 5.5' } });
-  assert.equal(text(same), 'Requirements work best with a strong model, like Opus 5.5 on Claude: about $0.16 for a code look, about $0.03 a round.');
+  assert.equal(text(same), 'Requirements work best with a strong model, like Opus 5.5 on Claude Code: about $0.16 for a code look, about $0.03 a round.');
   assert.equal(same.querySelector('button'), null);
   const none = recommendationNote(document, { picked: 'gem-flash', recommended: null, estimates: est(0.05, 0.01, null), labels: { harness: 'Gemini CLI', picked: 'Gemini Flash' } });
   assert.equal(text(none), 'About $0.05 for a code look, about $0.01 a round.');
@@ -176,11 +176,11 @@ test('recommendationNote: no repo leaves the code look out; missing parts say "n
 
 test('defaultLine: only when the choice differs from the default; fallbackLine: the grey D4 line', () => {
   const dc = { engine: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' };
-  const labels = { model: 'Sonnet 5.5', harness: 'Claude' };
+  const labels = { model: 'Sonnet 5.5', harness: 'Claude Code' };
   assert.equal(defaultLine(document, { choice: dc, defaultChoice: dc, labels }), null);
   let used = 0;
   const l = defaultLine(document, { choice: { engine: 'codex', model: 'gpt-sol', effort: null }, defaultChoice: dc, labels, onUse: () => { used += 1; } });
-  assert.equal(text(l), 'Your default: Sonnet 5.5 on Claude. Use the default');
+  assert.equal(text(l), 'Your default: Sonnet 5.5 on Claude Code. Use the default');
   l.querySelector('button').click();
   assert.equal(used, 1);
   const f = fallbackLine(document, "Your default engine is Cursor, which can't run Requirements, so this starts on Claude.");
@@ -206,14 +206,14 @@ test('New feature: Who interviews is filled from the default; the sentence "Worc
 
 test('New feature: the note follows the pick, refetches estimates on each change, and Use <rec> sets the model', async () => {
   const { host, calls } = await openNew();
-  assert.equal(text(host.querySelector('.req-new-note')), 'Requirements work best with a strong model, like Opus 5.5 on Claude: about $0.16 for a code look, about $0.03 a round. '
+  assert.equal(text(host.querySelector('.req-new-note')), 'Requirements work best with a strong model, like Opus 5.5 on Claude Code: about $0.16 for a code look, about $0.03 a round. '
     + 'You picked Sonnet 5.5: about $0.09 for a code look, about $0.02 a round. Use Opus 5.5');
   assert.ok(calls.some((c) => c.url === '/api/requirements/estimates?engine=claude&model=claude-sonnet-5-5'));
   host.querySelector('.req-new-use').click();
   await settle();
   assert.equal(sel(host, 'model').value, 'claude-opus-5-5');
   assert.ok(calls.some((c) => c.url === '/api/requirements/estimates?engine=claude&model=claude-opus-5-5'));
-  assert.equal(text(host.querySelector('.req-new-note')), 'Requirements work best with a strong model, like Opus 5.5 on Claude: about $0.16 for a code look, about $0.03 a round.');
+  assert.equal(text(host.querySelector('.req-new-note')), 'Requirements work best with a strong model, like Opus 5.5 on Claude Code: about $0.16 for a code look, about $0.03 a round.');
   assert.equal(host.querySelector('.req-new-note .req-new-use'), null);
 });
 
@@ -223,10 +223,10 @@ test('New feature: choosing another harness refills Model, shows Your default an
   await pickValue(sel(host, 'harness'), 'codex');
   assert.equal(sel(host, 'model').value, 'gpt-lite');
   assert.equal(sel(host, 'effort').value, '');
-  assert.equal(text(host.querySelector('.req-new-default')), 'Your default: Sonnet 5.5 on Claude. Use the default');
-  assert.equal(text(host.querySelector('.req-new-harness')), 'Codex reads the repo read-only. Files go to it as text.');
+  assert.equal(text(host.querySelector('.req-new-default')), 'Your default: Sonnet 5.5 on Claude Code. Use the default');
+  assert.equal(text(host.querySelector('.req-new-harness')), 'OpenAI Codex reads the repo read-only. Files go to it as text.');
   await pickValue(sel(host, 'model'), 'gpt-sol');
-  assert.equal(text(host.querySelector('.req-new-note')), 'Requirements work best with a strong model, like GPT-5.6 Sol on Codex: about $0.12 for a code look, about $0.02 a round.');
+  assert.equal(text(host.querySelector('.req-new-note')), 'Requirements work best with a strong model, like GPT-5.6 Sol on OpenAI Codex: about $0.12 for a code look, about $0.02 a round.');
   host.querySelector('.req-new-default .req-new-use').click();
   await settle();
   assert.equal(sel(host, 'harness').value, 'claude');
@@ -241,7 +241,7 @@ test('New feature: a harness that cannot read the repo drops the code look from 
   assert.doesNotMatch(text(host.querySelector('.req-new-note')), /code look/);
 });
 
-test('New feature (board 7): a fallback reason shows the grey line and the form sits on Claude', async () => {
+test('New feature (board 7): a fallback reason shows the grey line and the form sits on Claude Code', async () => {
   const reason = "Your default engine is Cursor, which can't run Requirements, so this starts on Claude.";
   const { host } = await openNew(ROUTES({ 'GET /api/requirements': LIST({ interview: { ...INTERVIEW, fallbackReason: reason } }) }));
   assert.equal(text(host.querySelector('.req-new-fallback')), reason);
@@ -257,7 +257,7 @@ test('New feature: the privacy note keeps today\'s exact Claude text and follows
   await pickValue(sel(host, 'harness'), 'codex');
   await pickValue(sel(host, 'model'), 'gpt-sol');
   assert.equal(host.querySelector('#req-new-files-privacy').textContent,
-    'Worca sends each file to GPT-5.6 Sol on Codex to read it. Text is checked for keys and passwords first. Codex gets files as text: PDFs and images are skipped.');
+    'Worca sends each file to GPT-5.6 Sol on OpenAI Codex to read it. Text is checked for keys and passwords first. OpenAI Codex gets files as text: PDFs and images are skipped.');
   await pickValue(sel(host, 'harness'), 'claude');
   assert.equal(host.querySelector('#req-new-files-privacy').textContent.replace('Sonnet 5.5', 'X'), today.replace('Sonnet 5.5', 'X'));
 });
@@ -305,8 +305,8 @@ test('styles: the new rules sit inside the Requirements block and use tokens onl
 // ── 9c boards 3, 4, 9: the feature's model chip and dialog, the switch confirm, the brief's box and Refresh dialog ──
 
 const H9 = [
-  H('claude', 'Claude', { files: true, company: 'Anthropic' }),
-  H('codex', 'Codex (beta)', { company: 'OpenAI' }),
+  H('claude', 'Claude Code', { files: true, company: 'Anthropic' }),
+  H('codex', 'OpenAI Codex (beta)', { company: 'OpenAI' }),
   H('gemini', 'Gemini CLI (beta)', { repo: false, keepsCopy: true, reportsCost: false, company: 'Google' }),
   H('goose', 'Goose (beta)', { repo: false, keepsCopy: true, company: null }),
 ];
@@ -320,12 +320,12 @@ const FILES = [{ name: 'notes.txt', kind: 'text', bytes: 900 }, { name: 'spec.pd
 
 test('modelChip: a button.chip with aria-haspopup=dialog, the label and a chevron', () => {
   let opened = 0;
-  const b = modelChip(document, { modelLabel: 'GPT-5.6 Sol on Codex' }, () => { opened += 1; });
+  const b = modelChip(document, { modelLabel: 'GPT-5.6 Sol on OpenAI Codex' }, () => { opened += 1; });
   assert.equal(b.tagName, 'BUTTON');
   assert.equal(b.type, 'button');
   assert.ok(b.classList.contains('chip'));
   assert.equal(b.getAttribute('aria-haspopup'), 'dialog');
-  assert.equal(text(b), 'GPT-5.6 Sol on Codex');
+  assert.equal(text(b), 'GPT-5.6 Sol on OpenAI Codex');
   assert.equal(b.querySelector('svg').getAttribute('aria-hidden'), 'true');
   b.click();
   assert.equal(opened, 1);
@@ -373,7 +373,7 @@ test('switchConfirm: files are listed when the new harness takes text only and s
 test('switchConfirm: Codex to Claude with nothing lost asks only about the company; Claude to Claude and Codex to Codex ask nothing', () => {
   const toClaude = sw({ engine: 'codex', model: 'gpt-sol' }, { engine: 'claude', model: 'claude-opus-5-5' });
   assert.equal(toClaude.message.split('What changes:\n')[1], "• Your feature's description, answers and attachments are sent to Anthropic.");
-  assert.equal(toClaude.confirmLabel, 'Switch to Claude');
+  assert.equal(toClaude.confirmLabel, 'Switch to Claude Code');
   assert.equal(sw({ engine: 'claude', model: 'claude-sonnet-5-5' }, { engine: 'claude', model: 'claude-opus-5-5' }), null);
   assert.equal(sw({ engine: 'codex', model: 'gpt-lite' }, { engine: 'codex', model: 'gpt-sol' }), null);
 });
@@ -387,19 +387,19 @@ test('switchConfirm: Goose says "the provider of <model>"; an own-endpoint model
 });
 
 test('recommendationNote (brief): the brief wording, the cost words and Use <rec>', () => {
-  const labels = { harness: 'Claude', picked: 'Sonnet 5.5', recommended: 'Opus 5.5' };
+  const labels = { harness: 'Claude Code', picked: 'Sonnet 5.5', recommended: 'Opus 5.5' };
   let used = 0;
   const n = recommendationNote(document, { kind: 'brief', picked: 'claude-sonnet-5-5', recommended: 'claude-opus-5-5', labels, onUse: () => { used += 1; },
     estimates: BRIEF_EST(0.24, { model: 'claude-opus-5-5', brief: { usd: 0.42 } }) });
-  assert.equal(text(n), 'A brief works best with a strong model, like Opus 5.5 on Claude: about $0.42. You picked Sonnet 5.5: about $0.24. Counts toward your limit. Use Opus 5.5');
+  assert.equal(text(n), 'A brief works best with a strong model, like Opus 5.5 on Claude Code: about $0.42. You picked Sonnet 5.5: about $0.24. Counts toward your limit. Use Opus 5.5');
   assert.equal(n.getAttribute('aria-live'), null);
   n.querySelector('button').click();
   assert.equal(used, 1);
   const same = recommendationNote(document, { kind: 'brief', picked: 'x', recommended: 'x', labels, estimates: BRIEF_EST(0.42, { model: 'x', brief: { usd: 0.42 } }) });
-  assert.equal(text(same), 'A brief works best with a strong model, like Opus 5.5 on Claude: about $0.42. Counts toward your limit.');
-  const missing = recommendationNote(document, { kind: 'brief', picked: 'x', recommended: 'x', labels: { ...labels, harness: 'Codex', recommended: 'GPT-5.6 Sol' },
+  assert.equal(text(same), 'A brief works best with a strong model, like Opus 5.5 on Claude Code: about $0.42. Counts toward your limit.');
+  const missing = recommendationNote(document, { kind: 'brief', picked: 'x', recommended: 'x', labels: { ...labels, harness: 'OpenAI Codex', recommended: 'GPT-5.6 Sol' },
     estimates: BRIEF_EST(null, { model: 'x', brief: { usd: null, reason: 'no-estimate' } }) });
-  assert.equal(text(missing), 'A brief works best with a strong model, like GPT-5.6 Sol on Codex: no estimate yet. Counts toward your limit.');
+  assert.equal(text(missing), 'A brief works best with a strong model, like GPT-5.6 Sol on OpenAI Codex: no estimate yet. Counts toward your limit.');
   const unk = recommendationNote(document, { kind: 'brief', picked: 'y', recommended: 'x', labels, estimates: BRIEF_EST({ usd: null, reason: 'no-price' }, null) });
   assert.match(text(unk), /You picked Sonnet 5\.5: cost unknown\./);
   const none = recommendationNote(document, { kind: 'brief', picked: 'y', recommended: null, labels, estimates: { brief: { usd: null, reason: 'no-price' } } });
@@ -410,18 +410,18 @@ test('whoInterviews: repoOnly greys the harnesses that cannot read the repo and 
   const w = whoInterviews(document, { models: MODELS9, harnesses: H9, choice: { engine: 'gemini', model: 'gem-flash' }, defaults: CATALOG9.defaults, legend: 'Who makes it', repoOnly: true });
   assert.equal(text(w.el.querySelector('legend')), 'Who makes it');
   const opts = [...w.el.querySelector('.req-who-harness').options].map((o) => [o.value, o.textContent, o.disabled]);
-  assert.deepEqual(opts, [['claude', 'Claude', false], ['codex', 'Codex (beta)', false], ['gemini', "Gemini CLI (beta) · Can't read the repo", true],
+  assert.deepEqual(opts, [['claude', 'Claude Code', false], ['codex', 'OpenAI Codex (beta)', false], ['gemini', "Gemini CLI (beta) · Can't read the repo", true],
     ['goose', "Goose (beta) · Can't read the repo", true]]);
   assert.equal(w.value().engine, 'claude', 'a harness that cannot make a brief is not where the box starts');
 });
 
 test('defaultLine: a lead ("Last made with …") first; alone when the pick is the default', () => {
   const dc = { engine: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' };
-  const labels = { model: 'Sonnet 5.5', harness: 'Claude' };
-  const lead = 'Last made with Opus 5.5 on Claude. ';
+  const labels = { model: 'Sonnet 5.5', harness: 'Claude Code' };
+  const lead = 'Last made with Opus 5.5 on Claude Code. ';
   assert.equal(text(defaultLine(document, { choice: { engine: 'claude', model: 'claude-opus-5-5' }, defaultChoice: dc, labels, lead })),
-    'Last made with Opus 5.5 on Claude. Your default: Sonnet 5.5 on Claude. Use the default');
-  assert.equal(text(defaultLine(document, { choice: dc, defaultChoice: dc, labels, lead })), 'Last made with Opus 5.5 on Claude.');
+    'Last made with Opus 5.5 on Claude Code. Your default: Sonnet 5.5 on Claude Code. Use the default');
+  assert.equal(text(defaultLine(document, { choice: dc, defaultChoice: dc, labels, lead })), 'Last made with Opus 5.5 on Claude Code.');
   assert.equal(defaultLine(document, { choice: dc, defaultChoice: dc, labels }), null);
 });
 
@@ -432,7 +432,7 @@ const F9 = (over = {}) => ({
   orientation: { summary: '', files: [], skipped: null },
   spec: { goal: { text: 'Cancel', measure: '' }, actors: [], flow: [], edgeCases: [], rules: [], outOfScope: [], criteria: [], assumptions: [], openQuestions: [], edited: {} },
   pending: null, lastError: null, readiness: { ok: false, passed: 0, total: 6, checks: [], overridable: false }, starts: [], unaskedRejections: [], changedSinceStart: [],
-  model: { engine: 'codex', model: 'gpt-sol', effort: 'high' }, modelLabel: 'GPT-5.6 Sol on Codex', anyEstimated: false, attachments: FILES, ...over,
+  model: { engine: 'codex', model: 'gpt-sol', effort: 'high' }, modelLabel: 'GPT-5.6 Sol on OpenAI Codex', anyEstimated: false, attachments: FILES, ...over,
 });
 const openFeature = async ({ f = F9(), confirm, extra = {}, turns = [] } = {}) => {
   let cur = f;
@@ -470,7 +470,7 @@ test('feature page: the model chip follows the cost chip, names the model and ha
   const chip = chips[at + 1];
   assert.equal(chip.tagName, 'BUTTON');
   assert.equal(chip.getAttribute('aria-haspopup'), 'dialog');
-  assert.equal(text(chip), 'GPT-5.6 Sol on Codex');
+  assert.equal(text(chip), 'GPT-5.6 Sol on OpenAI Codex');
   const est = await openFeature({ f: F9({ anyEstimated: true }) });
   assert.equal(text(chipsOf(est.host).find((c) => /so far/.test(c.textContent))), '≈$0.21 so far');
   const none = await openFeature({ f: F9({ modelLabel: null, model: null }) });
@@ -490,12 +490,12 @@ test('feature page: the chip opens "Model for this feature" with its parts; Canc
   assert.equal(text(d.querySelector('.req-dlg-lead')), 'Interviews, code looks, file reads and Feature chat use it.');
   const v = (n) => d.querySelector(`.req-who-${n}`).value;
   assert.deepEqual([v('harness'), v('model'), v('effort')], ['codex', 'gpt-sol', 'high'], "starts on the feature's own pick");
-  assert.equal(text(d.querySelector('.req-new-harness')), 'Codex reads the repo read-only. Files go to it as text.');
+  assert.equal(text(d.querySelector('.req-new-harness')), 'OpenAI Codex reads the repo read-only. Files go to it as text.');
   assert.equal(text(d.querySelector('.req-model-applies')), 'Applies from the next step. Steps already done keep the model that ran them.');
-  assert.equal(text(d.querySelector('.req-new-default')), 'Your default: Sonnet 5.5 on Claude. Use the default');
+  assert.equal(text(d.querySelector('.req-new-default')), 'Your default: Sonnet 5.5 on Claude Code. Use the default');
   assert.ok(calls.some((c) => /\/estimates\?engine=codex&model=gpt-sol$/.test(c.url)));
   assert.equal(text(d.querySelector('[aria-live="polite"]')),
-    'Requirements work best with a strong model, like GPT-5.6 Sol on Codex: about $0.12 for a code look, about $0.02 a round.');
+    'Requirements work best with a strong model, like GPT-5.6 Sol on OpenAI Codex: about $0.12 for a code look, about $0.02 a round.');
   assert.equal(d.querySelectorAll('[aria-live]').length, 1, 'one persistent live slot');
   assert.deepEqual([...d.querySelectorAll('.req-dlg-btns button')].map((b) => b.textContent), ['Cancel', 'Save']);
   d.querySelector('[data-ui="model-cancel"]').click();
@@ -542,7 +542,7 @@ test('feature page: Save to Gemini asks the switch confirm first; Cancel on it s
 });
 
 test('feature page: Claude to Gemini lists the skipped files in the confirm', async () => {
-  const { host, asked } = await openFeature({ f: F9({ model: { engine: 'claude', model: 'claude-opus-5-5', effort: null }, modelLabel: 'Opus 5.5 on Claude' }) });
+  const { host, asked } = await openFeature({ f: F9({ model: { engine: 'claude', model: 'claude-opus-5-5', effort: null }, modelLabel: 'Opus 5.5 on Claude Code' }) });
   host.querySelector('[data-ui="model-chip"]').click();
   await settle();
   await pickValue(dialogEl().querySelector('.req-who-harness'), 'gemini');
@@ -553,7 +553,7 @@ test('feature page: Claude to Gemini lists the skipped files in the confirm', as
 });
 
 test('feature page: Claude to another Claude model asks nothing and saves; the same pick just closes', async () => {
-  const { host, calls, asked } = await openFeature({ f: F9({ model: { engine: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' }, modelLabel: 'Sonnet 5.5 on Claude' }) });
+  const { host, calls, asked } = await openFeature({ f: F9({ model: { engine: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' }, modelLabel: 'Sonnet 5.5 on Claude Code' }) });
   host.querySelector('[data-ui="model-chip"]').click();
   await settle();
   dialogEl().querySelector('[data-ui="model-save"]').click();
@@ -614,12 +614,12 @@ test('brief page (board 9): the box picks who makes it, Gemini is greyed with "C
   assert.equal(text(box.querySelector('.req-who legend')), 'Who makes it');
   assert.equal(box.querySelector('.req-brief-model'), null, 'the old line is gone');
   const opts = [...box.querySelector('.req-who-harness').options].map((o) => [o.value, o.textContent, o.disabled]);
-  assert.deepEqual(opts, [['claude', 'Claude', false], ['codex', 'Codex (beta)', false], ['gemini', "Gemini CLI (beta) · Can't read the repo", true],
+  assert.deepEqual(opts, [['claude', 'Claude Code', false], ['codex', 'OpenAI Codex (beta)', false], ['gemini', "Gemini CLI (beta) · Can't read the repo", true],
     ['goose', "Goose (beta) · Can't read the repo", true]]);
   assert.equal(box.querySelector('.req-who-model').value, 'claude-sonnet-5-5');
   assert.ok(calls.some((c) => c.url === '/api/requirements/estimates?engine=claude&model=claude-sonnet-5-5&step=brief'));
   assert.equal(text(box.querySelector('[aria-live="polite"]')),
-    'A brief works best with a strong model, like Opus 5.5 on Claude: about $0.42. You picked Sonnet 5.5: about $0.24. Counts toward your limit. Use Opus 5.5');
+    'A brief works best with a strong model, like Opus 5.5 on Claude Code: about $0.42. You picked Sonnet 5.5: about $0.24. Counts toward your limit. Use Opus 5.5');
   assert.equal(text(box.querySelector('.req-brief-facts')), 'Branch main · 3 to 5 minutes', 'the cost lives in the note now');
   box.querySelector('.req-new-use').click();
   await settle();
@@ -653,10 +653,10 @@ test("brief page: without the models the box is A7's line and Create posts no ch
   assert.deepEqual(calls.find((c) => c.method === 'POST').body, {});
 });
 
-test('brief page, made: the chip names what made it ("Opus 5.5 on Claude · $0.42")', async () => {
+test('brief page, made: the chip names what made it ("Opus 5.5 on Claude Code · $0.42")', async () => {
   const { host } = await openBrief9(briefBody9({ brief: madeBrief9(), madeWith: { engine: 'claude', model: 'claude-opus-5-5', label: 'Opus 5.5' } }));
   const chips = [...host.querySelectorAll('.req-brief-chips > *')].map(text);
-  assert.ok(chips.includes('Opus 5.5 on Claude · $0.42'), chips.join(' | '));
+  assert.ok(chips.includes('Opus 5.5 on Claude Code · $0.42'), chips.join(' | '));
 });
 
 test('brief page, made: Refresh opens its dialog from the model that made it, shows both lines and the note, and posts the choice', async () => {
@@ -670,8 +670,8 @@ test('brief page, made: Refresh opens its dialog from the model that made it, sh
   assert.equal(text(document.getElementById(d.getAttribute('aria-labelledby'))), 'Refresh the brief');
   assert.equal(text(d.querySelector('.req-dlg-lead')), 'One look at main, read-only, 3 to 5 minutes. Your edits are kept.');
   assert.deepEqual([d.querySelector('.req-who-harness').value, d.querySelector('.req-who-model').value], ['claude', 'claude-opus-5-5']);
-  assert.equal(text(d.querySelector('.req-new-default')), 'Last made with Opus 5.5 on Claude. Your default: Sonnet 5.5 on Claude. Use the default');
-  assert.equal(text(d.querySelector('[aria-live="polite"]')), 'A brief works best with a strong model, like Opus 5.5 on Claude: about $0.42. Counts toward your limit.');
+  assert.equal(text(d.querySelector('.req-new-default')), 'Last made with Opus 5.5 on Claude Code. Your default: Sonnet 5.5 on Claude Code. Use the default');
+  assert.equal(text(d.querySelector('[aria-live="polite"]')), 'A brief works best with a strong model, like Opus 5.5 on Claude Code: about $0.42. Counts toward your limit.');
   assert.equal([...d.querySelector('.req-who-harness').options].find((o) => o.value === 'gemini').disabled, true);
   d.querySelector('[data-ui="brief-refresh-go"]').click();
   await settle();
@@ -738,7 +738,7 @@ test('thread: each round says what it ran on and its cost, right-aligned, with i
       notices: ["Repo not read: Gemini CLI can't read the repo.", 'Cost estimated: Gemini CLI reports none.'] })] });
   const r1 = host.querySelector('.req-round[data-round="2"]');
   assert.equal(text(r1.querySelector('.req-round-n')), 'Round 1');
-  assert.equal(text(r1.querySelector('.req-step-meta')), 'GPT-5.6 Sol on Codex · $0.03');
+  assert.equal(text(r1.querySelector('.req-step-meta')), 'GPT-5.6 Sol on OpenAI Codex · $0.03');
   assert.deepEqual(noticeLines(r1), [STEP_NOTICE]);
   assert.ok(!r1.querySelector('.amber'), 'notices are never amber');
   assert.ok(r1.querySelector('ul[aria-label] li svg'), 'with the info icon');
@@ -751,8 +751,8 @@ test('thread: an unknown cost says "cost unknown", never $0.00; a Claude round w
   const { host } = await openFeature({ f: F9({ status: 'done', state: 'done' }), turns: [
     roundTurn(2, { costUsd: null, costKind: 'unknown' }), answersTurn(3, 2),
     roundTurn(4, { model: 'claude-opus-5-5', modelLabel: 'Opus 5.5', engine: 'claude', costUsd: null, costKind: null }), answersTurn(5, 4)] });
-  assert.equal(text(host.querySelector('.req-round[data-round="2"] .req-step-meta')), 'GPT-5.6 Sol on Codex · cost unknown');
-  assert.equal(text(host.querySelector('.req-round[data-round="4"] .req-step-meta')), 'Opus 5.5 on Claude');
+  assert.equal(text(host.querySelector('.req-round[data-round="2"] .req-step-meta')), 'GPT-5.6 Sol on OpenAI Codex · cost unknown');
+  assert.equal(text(host.querySelector('.req-round[data-round="4"] .req-step-meta')), 'Opus 5.5 on Claude Code');
   assert.ok(!/\$0\.00/.test(host.querySelector('.req-left').textContent));
 });
 
@@ -765,7 +765,7 @@ test('thread: the code look is a step row in turn order: "Code look · 3 files",
   assert.deepEqual(rows.map((r) => r.className.includes('req-step-look')), [true, false], 'the look first, then Round 1');
   const row = rows[0];
   assert.equal(text(row.querySelector('.req-round-n')), 'Code look · 3 files');
-  assert.equal(text(row.querySelector('.req-step-meta')), 'Opus 5.5 on Claude · $0.19');
+  assert.equal(text(row.querySelector('.req-step-meta')), 'Opus 5.5 on Claude Code · $0.19');
   assert.equal(text(row.querySelector('.req-step-first')), 'Products already bring in downloadable documents during import and show them on product pages.');
   const btn = row.querySelector('button[data-ui="look-show"]');
   assert.equal(text(btn), 'Show what it found');
@@ -807,18 +807,18 @@ test('thread: a model turn is one plain row "You switched this feature to <model
 });
 
 const readyError = (job = 'look', o = {}) => turn(9, 'error', { engine: 'codex', model: 'gpt-sol', modelLabel: 'GPT-5.6 Sol', costUsd: null, costKind: null,
-  payload: { code: 'NOT_READY', message: "Codex isn't signed in. Sign in, or change the model.", job, docsUrl: 'https://docs.example.org/codex-login' }, ...o });
+  payload: { code: 'NOT_READY', message: "OpenAI Codex isn't signed in. Sign in, or change the model.", job, docsUrl: 'https://docs.example.org/codex-login' }, ...o });
 
 test('errors: a NOT_READY look stops with the D13 sentence, Change the model, Try again and the docs link', async () => {
-  const { host, calls } = await openFeature({ f: F9({ lastError: "Codex isn't signed in. Sign in, or change the model." }),
+  const { host, calls } = await openFeature({ f: F9({ lastError: "OpenAI Codex isn't signed in. Sign in, or change the model." }),
     turns: [readyError('look')], extra: { 'POST /api/requirements/4/retry': { feature: F9(), turns: [] } } });
   const box = host.querySelector('.req-error');
   assert.equal(box.getAttribute('role'), 'status', 'a repaint does not announce it again');
   assert.equal(text(box.querySelector('.req-error-title')), 'Code look stopped');
-  assert.equal(text(box.querySelector('.req-step-meta')), 'GPT-5.6 Sol on Codex · nothing spent');
-  assert.equal(text(box.querySelector('.req-error-text')), "Codex isn't signed in. Sign in, or change the model.");
+  assert.equal(text(box.querySelector('.req-step-meta')), 'GPT-5.6 Sol on OpenAI Codex · nothing spent');
+  assert.equal(text(box.querySelector('.req-error-text')), "OpenAI Codex isn't signed in. Sign in, or change the model.");
   const docs = box.querySelector('a.req-error-docs');
-  assert.equal(text(docs), 'How to sign in to Codex');
+  assert.equal(text(docs), 'How to sign in to OpenAI Codex');
   assert.equal(docs.getAttribute('href'), 'https://docs.example.org/codex-login');
   assert.deepEqual([...box.querySelectorAll('button')].map((b) => text(b)), ['Change the model', 'Try again']);
   box.querySelector('[data-ui="error-change-model"]').click();
@@ -832,8 +832,8 @@ test('errors: a NOT_READY look stops with the D13 sentence, Change the model, Tr
 });
 
 test('errors: a NOT_READY round is "Round N stopped" (N: the round that did not run); other errors keep their text and Try again', async () => {
-  const { host } = await openFeature({ f: F9({ lastError: "Codex isn't signed in. Sign in, or change the model." }),
-    turns: [roundTurn(2), answersTurn(3, 2), readyError('round', { payload: { code: 'NOT_READY', message: "Codex isn't signed in. Sign in, or change the model.", job: 'round' } })] });
+  const { host } = await openFeature({ f: F9({ lastError: "OpenAI Codex isn't signed in. Sign in, or change the model." }),
+    turns: [roundTurn(2), answersTurn(3, 2), readyError('round', { payload: { code: 'NOT_READY', message: "OpenAI Codex isn't signed in. Sign in, or change the model.", job: 'round' } })] });
   assert.equal(text(host.querySelector('.req-error-title')), 'Round 2 stopped');
   assert.equal(host.querySelector('a.req-error-docs'), null, 'no docs link without a docsUrl');
   const limit = await openFeature({ f: F9({ lastError: 'Limit reached. Try later.' }), turns: [turn(9, 'error', { payload: { code: 'RATE_LIMIT', message: 'Limit reached. Try later.', job: 'round' } })] });
@@ -857,9 +857,9 @@ test('files: a SKIPPED_ENGINE file is a grey line (not an alert) with Read again
 });
 
 const COSTS = (o = {}) => ({ rows: [
-  { step: 'look', label: 'Code look', ranOn: 'Opus 5.5 on Claude', usd: 0.16, kind: 'billed' },
-  { step: 'round', label: 'Round 1', ranOn: 'GPT-5.6 Sol on Codex', usd: 0.03, kind: 'billed' },
-  { step: 'round', label: 'Round 2', ranOn: 'GPT-5.6 Sol on Codex', usd: 0.02, kind: 'billed' },
+  { step: 'look', label: 'Code look', ranOn: 'Opus 5.5 on Claude Code', usd: 0.16, kind: 'billed' },
+  { step: 'round', label: 'Round 1', ranOn: 'GPT-5.6 Sol on OpenAI Codex', usd: 0.03, kind: 'billed' },
+  { step: 'round', label: 'Round 2', ranOn: 'GPT-5.6 Sol on OpenAI Codex', usd: 0.02, kind: 'billed' },
   { step: 'round', label: 'Round 3', ranOn: 'gemini-3-pro on Gemini CLI', usd: 0.04, kind: 'estimated' },
   { step: 'read', label: 'File read · notes.txt', ranOn: 'qwen3-coder-plus on Qwen Code', usd: null, kind: 'unknown' }],
 billedUsd: 0.21, estimatedUsd: 0.04, unknownSteps: 1, totalUsd: 0.25, anyEstimated: true, limitUsd: 5, resetPeriod: 'monthly', ...o });
@@ -877,7 +877,7 @@ test('cost chip: a button that opens "Cost of this feature" with the table, the 
   assert.equal(text(document.getElementById(d.getAttribute('aria-labelledby'))), 'Cost of this feature');
   assert.deepEqual([...d.querySelectorAll('thead th')].map((t) => text(t)), ['Step', 'Ran on', 'Cost']);
   assert.deepEqual([...d.querySelectorAll('tbody tr')].map((r) => [...r.children].map((c) => text(c))), [
-    ['Code look', 'Opus 5.5 on Claude', '$0.16'], ['Round 1', 'GPT-5.6 Sol on Codex', '$0.03'], ['Round 2', 'GPT-5.6 Sol on Codex', '$0.02'],
+    ['Code look', 'Opus 5.5 on Claude Code', '$0.16'], ['Round 1', 'GPT-5.6 Sol on OpenAI Codex', '$0.03'], ['Round 2', 'GPT-5.6 Sol on OpenAI Codex', '$0.02'],
     ['Round 3', 'gemini-3-pro on Gemini CLI', '≈$0.04'], ['File read · notes.txt', 'qwen3-coder-plus on Qwen Code', 'cost unknown'], ['So far', '≈$0.25']]);
   assert.equal(text(d.querySelector('.req-cost-sentence')),
     '$0.21 billed and ≈$0.04 estimated, plus 1 step with cost unknown. The Requirements budget counts ≈$0.25 of $5.00 this month; the step with cost unknown is not counted.');
@@ -949,7 +949,7 @@ test('cost chip: "Cost unknown so far" when every step is unknown; money with un
 });
 
 test('cost dialog: "So far" says "cost unknown" when the total is 0 and steps are unknown', async () => {
-  const data = COSTS({ rows: [{ step: 'round', label: 'Round 1', ranOn: 'GPT-5.6 Sol on Codex', usd: null, kind: 'unknown' }], billedUsd: 0, estimatedUsd: 0, unknownSteps: 1, totalUsd: 0, anyEstimated: false });
+  const data = COSTS({ rows: [{ step: 'round', label: 'Round 1', ranOn: 'GPT-5.6 Sol on OpenAI Codex', usd: null, kind: 'unknown' }], billedUsd: 0, estimatedUsd: 0, unknownSteps: 1, totalUsd: 0, anyEstimated: false });
   const { host } = await openFeature({ f: F9({ costUsd: 0, unknownSteps: 1 }), extra: { 'GET /api/requirements/4/costs': data } });
   host.querySelector('[data-ui="cost-chip"]').click();
   await settle();

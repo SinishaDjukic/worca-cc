@@ -81,12 +81,12 @@ test('stepNotices: verbatim, in order', () => {
 
 test('notReadyWords: four shapes and Cursor', () => {
   assert.deepEqual(notReadyWords('codex', 'codex is not signed in - run codex login'), {
-    short: 'Not signed in', sentence: "Codex isn't signed in. Sign in, or change the model.", startsOn: "Codex isn't signed in, so this starts on Claude." });
+    short: 'Not signed in', sentence: "OpenAI Codex isn't signed in. Sign in, or change the model.", startsOn: "OpenAI Codex isn't signed in, so this starts on Claude." });
   assert.deepEqual(notReadyWords('copilot', 'cannot run copilot (ENOENT) - x'), {
-    short: 'Not installed', sentence: "Copilot isn't installed. Install it, or change the model.", startsOn: "Copilot isn't installed, so this starts on Claude." });
+    short: 'Not installed', sentence: "GitHub Copilot isn't installed. Install it, or change the model.", startsOn: "GitHub Copilot isn't installed, so this starts on Claude." });
   const b = notReadyWords('codex', 'whatever', { broker: true });
-  assert.equal(b.sentence, 'Codex is off while the credential broker is on. Change the model.');
-  assert.equal(b.startsOn, 'Codex is off while the credential broker is on, so this starts on Claude.');
+  assert.equal(b.sentence, 'OpenAI Codex is off while the credential broker is on. Change the model.');
+  assert.equal(b.startsOn, 'OpenAI Codex is off while the credential broker is on, so this starts on Claude.');
   const o = notReadyWords('qwen', 'boom');
   assert.equal(o.short, 'Not ready');
   assert.equal(o.sentence, "Qwen Code can't run this step: boom. Change the model, or try again.");
@@ -111,7 +111,7 @@ test('companyOf and sameCompany', () => {
 
 test('harnessLine and noRepoStartsOn', () => {
   assert.equal(harnessLine('claude'), null);
-  assert.equal(harnessLine('codex'), 'Codex reads the repo read-only. Files go to it as text.');
+  assert.equal(harnessLine('codex'), 'OpenAI Codex reads the repo read-only. Files go to it as text.');
   assert.equal(harnessLine('gemini'), "Gemini CLI can't read the repo. Files go to it as text.");
   assert.equal(noRepoStartsOn('gemini'), "Your default engine is Gemini CLI, which can't read the repo, so this brief is made on Claude.");
 });

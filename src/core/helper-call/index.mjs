@@ -26,7 +26,7 @@ export class HelperCallError extends Error {
 }
 
 const defaultScratch = () => join(worcaHome(), 'tmp', 'requirements');
-const CODEX_KEEPS_COPY = 'Codex keeps its own copy of this step in its history on this computer.';
+const CODEX_KEEPS_COPY = `${engineLabel('codex')} keeps its own copy of this step in its history on this computer.`;
 
 /**
  * One helper call. `claudeOptions` (interviewCallOptions) is required for engine 'claude'.

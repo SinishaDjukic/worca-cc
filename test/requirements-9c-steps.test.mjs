@@ -120,7 +120,7 @@ test('a Codex feature that is not signed in: a NOT_READY error turn, nothing cha
   assert.equal(r.calls.length, 0);
   const err = listTurns(f.seq).find((t) => t.kind === 'error');
   assert.equal(err.payload.code, 'NOT_READY');
-  assert.equal(err.payload.message, "Codex isn't signed in. Sign in, or change the model.");
+  assert.equal(err.payload.message, "OpenAI Codex isn't signed in. Sign in, or change the model.");
   assert.equal(err.payload.job, 'round');
   assert.ok(err.payload.docsUrl === null || typeof err.payload.docsUrl === 'string');
   assert.equal(getFeature(f.seq).status, 'your_turn');
@@ -173,7 +173,7 @@ test('a billed attempt then a pre-result failure stays billed in the ledger', as
   assert.ok(rows[0].amount_usd > 0);
 });
 
-test('a NULL-model feature runs on Claude with today\'s options', async () => {
+test('a NULL-model feature runs on Claude Code with today\'s options', async () => {
   const f = createFeature({ scopeType: 'project', scopeKey: 'shop-1234abcd', title: 'Cancel order', description: 'x' });
   const r = fakeRunner([LOOK, ROUND1]);
   startOrientation(f.seq, {}, deps(r));
@@ -192,7 +192,7 @@ const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3
 const pngFile = (name = 'screen.png') => ({ name, kind: 'image', mime: 'image/png', data: PNG, bytes: PNG.length, sha256: sha(PNG) });
 const own = (f) => ({ type: 'feature', id: f.seq });
 
-test('Feature chat on Codex is locked down and stores its engine', async () => {
+test('Feature chat on OpenAI Codex is locked down and stores its engine', async () => {
   const f = featureOn('codex');
   const r = fakeRunner([CHAT]);
   await sendMessage(f.seq, { text: 'Who may cancel?' }, { by: 'po' }, deps(r));
@@ -221,7 +221,7 @@ test('Feature chat on a harness that is not signed in: NOT_READY row, no call, n
   assert.equal(r.calls.length, 0);
   const row = listHelperMessages(f.seq).at(-1);
   assert.equal(row.error.code, 'NOT_READY');
-  assert.equal(row.error.message, "Codex isn't signed in. Sign in, or change the model.");
+  assert.equal(row.error.message, "OpenAI Codex isn't signed in. Sign in, or change the model.");
   assert.equal(prepare('SELECT count(*) AS n FROM req_cost_ledger WHERE feature_seq = ?').get(f.seq).n, 0);
 });
 
@@ -243,8 +243,8 @@ test('a PNG on a Codex feature is not sent anywhere; a 30 KB text says too large
   const png = rows.find((x) => x.name === 'screen.png');
   assert.equal(png.status, 'failed');
   assert.equal(png.error.code, 'SKIPPED_ENGINE');
-  assert.equal(png.error.message, 'screen.png skipped: Codex gets files as text only.');
-  assert.equal(rows.find((x) => x.name === 'big.txt').error.message, 'big.txt skipped: it is too large for Codex.');
+  assert.equal(png.error.message, 'screen.png skipped: OpenAI Codex gets files as text only.');
+  assert.equal(rows.find((x) => x.name === 'big.txt').error.message, 'big.txt skipped: it is too large for OpenAI Codex.');
 
   const g = featureOn('gemini');
   const r2 = fakeRunner([{ summary: 'Refunds within 14 days.' }]);
@@ -376,7 +376,7 @@ test('mock mode skips a PNG on a Codex feature with the same words, and the fail
   const row = listAttachments('feature', f.seq)[0];
   assert.equal(row.status, 'failed');
   assert.equal(row.error.code, 'SKIPPED_ENGINE');
-  assert.equal(row.error.message, 'screen.png skipped: Codex gets files as text only.');
+  assert.equal(row.error.message, 'screen.png skipped: OpenAI Codex gets files as text only.');
   assert.equal(listTurns(f.seq).filter((t) => t.kind === 'file').at(-1).engine, 'codex');
 });
 
@@ -396,7 +396,7 @@ test('an ask about a skipped PNG on a Codex feature makes no call', async () => 
   const after = listAttachments('feature', f.seq)[0];
   assert.equal(after.error.code, 'SKIPPED_ENGINE');
   assert.equal(after.error.job, 'ask');
-  assert.equal(after.error.message, 'screen.png skipped: Codex gets files as text only.');
+  assert.equal(after.error.message, 'screen.png skipped: OpenAI Codex gets files as text only.');
 });
 
 test('a brief whose harness is not signed in fails with the NOT_READY sentence: no call, nothing booked', async () => {
@@ -415,7 +415,7 @@ test('a brief whose harness is not signed in fails with the NOT_READY sentence: 
   assert.equal(r.calls.length, 0);
   const b = getBrief('project', KEY);
   assert.equal(b.error.code, 'NOT_READY');
-  assert.equal(b.error.message, "Codex isn't signed in. Sign in, or change the model.");
+  assert.equal(b.error.message, "OpenAI Codex isn't signed in. Sign in, or change the model.");
   assert.equal(prepare('SELECT count(*) AS n FROM req_cost_ledger WHERE brief_id = ?').get(brief.id).n, 0);
 });
 
@@ -565,9 +565,9 @@ import express from 'express';
 import { registerRequirementsRoutes } from '../src/core/requirements/routes.mjs';
 
 const WHOLE = {
-  codex: { label: 'Codex', model: 'gpt-x', repo: true, keeps: false, estimated: false, files: 'Codex gets files as text only.' },
+  codex: { label: 'OpenAI Codex', model: 'gpt-x', repo: true, keeps: false, estimated: false, files: 'OpenAI Codex gets files as text only.' },
   gemini: { label: 'Gemini CLI', model: 'gem-x', repo: false, keeps: true, estimated: true },
-  copilot: { label: 'Copilot', model: 'cop-x', repo: true, keeps: true, estimated: false },
+  copilot: { label: 'GitHub Copilot', model: 'cop-x', repo: true, keeps: true, estimated: false },
 };
 for (const [engine, w] of Object.entries(WHOLE)) {
   test(`a whole ${w.label} feature: create with a model, code look, round, file read, Feature chat, then its costs`, async () => {

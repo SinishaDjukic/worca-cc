@@ -51,7 +51,7 @@ test('a gate refusal is NOT_READY in the D13 words, with the docs link and no sp
   const gate = async () => ({ message: 'codex is not signed in — run `codex login`', notReady: true });
   await assert.rejects(helperCall({ ...base, engine: 'codex', profile: 'none' }, { run, gate }), (e) => {
     assert.equal(e.code, 'NOT_READY');
-    assert.equal(e.message, "Codex isn't signed in. Sign in, or change the model.");
+    assert.equal(e.message, "OpenAI Codex isn't signed in. Sign in, or change the model.");
     assert.match(e.docsUrl, /codex/);
     return true;
   });
@@ -165,14 +165,14 @@ test('a retried codex call with one rollout missing keeps the notice', async () 
     writeFileSync(b, '{}');
     const r = await helperCall({ ...base, engine: 'codex', profile: 'none' }, { run: retriedCodex(), gate: ok, removeCodexThread: remove, retryEnv: RETRY });
     assert.equal(existsSync(b), false);
-    assert.ok(r.notices.includes('Codex keeps its own copy of this step in its history on this computer.'));
+    assert.ok(r.notices.includes('OpenAI Codex keeps its own copy of this step in its history on this computer.'));
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
 test('a failed codex call carries the notices on the error', async () => {
   const run = async (o) => { o.onEvent({ type: 'session', sessionId: 'codex:thr-F' }); throw new Error('boom'); };
   await assert.rejects(helperCall({ ...base, engine: 'codex', profile: 'none' }, { run, gate: ok, removeCodexThread: () => false }),
-    (e) => e.notices.includes('Codex keeps its own copy of this step in its history on this computer.'));
+    (e) => e.notices.includes('OpenAI Codex keeps its own copy of this step in its history on this computer.'));
 });
 
 test('the files server config is deleted after the call', async () => {
@@ -211,7 +211,7 @@ test('no result event at all is an unknown cost', async () => {
 test('a codex call that finds no file keeps the keeps-copy notice', async () => {
   const run = async (o) => { o.onEvent({ type: 'session', sessionId: 'codex:thr-9' }); return { text: 'x' }; };
   const r = await helperCall({ ...base, engine: 'codex', profile: 'none' }, { run, gate: ok, removeCodexThread: () => false });
-  assert.ok(r.notices.includes('Codex keeps its own copy of this step in its history on this computer.'));
+  assert.ok(r.notices.includes('OpenAI Codex keeps its own copy of this step in its history on this computer.'));
 });
 
 test('the session is removed on failure too', async () => {

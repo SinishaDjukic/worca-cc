@@ -460,7 +460,7 @@ test('list: state, ready, latestRun; lookCostUsd and spend', async () => {
   const other = r.json.features.find((x) => x.seq === g.seq);
   assert.deepEqual([other.state, other.ready, other.latestRun], ['decide', 3, null]);
   assert.equal(r.json.lookCostUsd, null);
-  assert.deepEqual(Object.keys(r.json.spend).sort(), ['resetPeriod', 'totalLimitUsd', 'windowUsd']);
+  assert.deepEqual(Object.keys(r.json.spend).sort(), ['resetPeriod', 'totalLimitUsd', 'unknownSteps', 'windowUsd']);
   assert.equal(r.json.spend.resetPeriod, 'monthly', 'the budget period (the default)');
   assert.equal(r.json.spend.totalLimitUsd, null);
   const w0 = r.json.spend.windowUsd;
