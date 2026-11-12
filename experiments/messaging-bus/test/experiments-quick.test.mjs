@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { gunzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -124,3 +125,58 @@ test('e4 --quick --split-cursor: a cursor outside the ingest transaction re-pull
   assert.equal(s['e4.crash.loss'], 0);
   assertDead(r.pids);
 });
+
+test('e5 --quick: detector precision/recall numbers, 0 leaks, the behaviour cases', { timeout: 180_000 }, async () => {
+  const r = await runScript('e5-detector', 180_000);
+  const s = r.summary;
+  for (const k of ['e5.cases.contract', 'e5.cases.ordinary', 'e5.precision', 'e5.recall', 'e5.falsePositiveRate', 'e5.maxBodyChars',
+    'e5.maxDataBytes', 'e5.addedMs.edit.p50', 'e5.addedMs.edit.p99', 'e5.addedMs.bash.p50', 'e5.addedMs.bash.p99', 'e5.inProcessMs.p99']) {
+    assert.equal(typeof s[k], 'number', k);
+  }
+  assert.equal(s['e5.secretLeaks'], 0);
+  assert.equal(s['e5.dedup.publishes'], 1);
+  assert.equal(s['e5.revert.publishes'], 2);
+  assert.equal(s['e5.revert.lastReverted'], true);
+  assert.equal(s['e5.debounce.messages'], 2);
+  assert.equal(s['e5.stateMatchesFinal'], true);
+  assert.ok(s['e5.loop.maxHop'] <= 2);
+  assert.ok(s['e5.maxBodyChars'] <= 600);
+  assert.ok(s['e5.maxDataBytes'] <= 1024);
+});
+
+test('e6 --quick: the detector-triggered E3 grid equals the scripted one, with no false publishes', { timeout: 180_000 }, async () => {
+  const r = await runScript('e6-detector-e3', 180_000);
+  const s = r.summary;
+  assert.equal(s['e6.cases'], 12);
+  assert.equal(s['e6.equalsScripted'], true);
+  assert.equal(s['e6.falsePublishes'], 0);
+  assert.equal(s['e6.selfShows'], 0);
+  assert.equal(s['e6.allCorrect'], true);
+  assert.ok(s['e6.busAct.maxLeadTime'] <= 1);
+  assert.equal(s['e6.autoPublishes.perCase'], 1);
+  assert.equal(typeof s['e6.meanBodyTokens'], 'number');
+});
+
+// E7 seeds its tree from this repository's history; a shallow clone or a copy without it cannot run it.
+const REPLAY = JSON.parse(gunzipSync(readFileSync(join(ROOT, 'test', 'fixtures', 'replay-decompose.json.gz'))).toString('utf8'));
+const firstBase = REPLAY.files.find((f) => f.baseBlob)?.baseBlob;
+const basesHere = spawnSync('git', ['-C', ROOT, 'cat-file', '-e', firstBase]).status === 0;
+
+test('e7 --quick: phase 2 replayed on the real base blobs: a valid replay, no leaks, no lifecycle shown to its own step',
+  { timeout: 180_000, skip: basesHere ? false : `base blob ${firstBase} is not in this repository (shallow clone?)` }, async () => {
+    const r = await runScript('e7-noise', 180_000);
+    const s = r.summary;
+    assert.equal(s['e7.lifecycleShownToOwnStep'], 0);
+    assert.equal(s['e7.secretLeaks'], 0);
+    assert.equal(s['e7.detectErrors'], 0);
+    assert.ok(Object.hasOwn(s, 'e7.replay.unapplied'));
+    assert.equal(s['e7.replay.unapplied'], 0);
+    assert.equal(s['e7.replay.baseMissing'], 0);
+    assert.equal(s['e7.replay.finalMismatch'], 0);
+    assert.equal(s['e7.replay.degraded'], false);
+    assert.ok(s['e7.replay.armedCalls'] > 0);
+    for (const k of ['e7.layer1.messages', 'e7.layer2.messages', 'e7.perReader.meanTokens', 'e7.perReader.maxTokens', 'e7.headerTokensPerMessage', 'e7.layer3.promptTokens']) {
+      assert.equal(typeof s[k], 'number', k);
+    }
+    assert.ok(Array.isArray(r.layer2));
+  });

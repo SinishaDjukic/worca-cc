@@ -285,3 +285,20 @@ test('sqlite: wake fires for another process and correctness holds without it', 
   assert.equal(bus.read('p:s:main', ['run.r1.*']).length, 1);
   bus.close();
 });
+
+test('sqlite: transaction(fn) commits all or nothing; a publish inside joins it; outside it is unchanged', () => {
+  const bus = makers.sqlite();
+  const r = bus.transaction(() => { pub(bus, 'run.r1.siblings', 'a'); pub(bus, 'run.r1.siblings', 'b'); return 'done'; });
+  assert.equal(r, 'done');
+  assert.equal(bus.countRows(), 2);
+  assert.throws(() => bus.transaction(() => {
+    pub(bus, 'run.r1.siblings', 'c');
+    bus.db.exec("INSERT INTO bus_meta (key, value) VALUES ('probe', 'x')");
+    throw new Error('boom');
+  }), /boom/);
+  assert.equal(bus.countRows(), 2);
+  assert.equal(bus.db.prepare("SELECT COUNT(*) AS n FROM bus_meta WHERE key = 'probe'").get().n, 0);
+  // the seq counter rolled back with the row: the next publish takes seq 3
+  assert.equal(pub(bus, 'run.r1.siblings', 'd').seq, 3);
+  bus.close();
+});

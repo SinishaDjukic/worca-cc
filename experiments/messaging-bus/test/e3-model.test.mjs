@@ -77,3 +77,14 @@ test('measured: sub-agents B, C and the late joiner D each see the change once, 
   assert.equal(r.cursorsUnmovedByA, true);
   assert.deepEqual([r.d, r.rework, r.correct], [0, 5, true]);
 });
+
+test('detector trigger: a spread k=5 decompose bus-act case equals its scripted twin, 0 false publishes', async () => {
+  const base = { variant: 'spread', k: 5, topology: 'decompose', arm: 'bus-act' };
+  const scripted = await runCase(base);
+  const det = await runCase({ ...base, trigger: 'detector' });
+  for (const key of ['rework', 'leadTime', 'makespan', 'correct', 'd', 'reviewCycles']) assert.equal(det[key], scripted[key], key);
+  assert.equal(det.falsePublishes, 0);
+  assert.equal(det.autoPublishes, 1);
+  assert.equal(det.selfShows, 0);
+  assert.equal(scripted.trigger, undefined, 'the scripted output is unchanged');
+});

@@ -4,7 +4,7 @@
 // review loop. Agents are scripted; the numbers come from an explicit STEP MODEL, but the delivery
 // delay d is MEASURED from the real hook output, and each arm's final code is truth-checked by
 // running it.  node e3-contract-change.mjs [--quick] [--out <path>]
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync} from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import { tmpdir, cpus, platform, release } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -48,8 +48,19 @@ function truthCheck(dir) {
   return spawnSync(process.execPath, ['--input-type=module', '-e', script]).status === 0;
 }
 
-/** One case; `hookCmd` is the seam the lagging-hook test uses (plan §4.3). */
-export async function runCase({ variant, k, topology, arm, hookCmd = [process.execPath, HOOK] }) {
+/** The read of a bus arm's announcement: the first contract.changed row whose `from` is A. */
+function firstFromA(bus, fromA) {
+  const rows = bus.db.prepare("SELECT env_json FROM bus_messages WHERE kind = 'contract.changed' ORDER BY seq").all().map((r) => JSON.parse(r.env_json));
+  return rows.filter((e) => e.from?.kind === fromA.kind && e.from.id === fromA.id && e.from.sub === fromA.sub);
+}
+
+/**
+ * One case; `hookCmd` is the seam the lagging-hook test uses (plan §4.3). `trigger` (E6, plan §4.10):
+ * 'scripted' publishes the announcement from the script at tick k; 'detector' gives A a hook with
+ * --detect and makes A edit lib.mjs every tick (a comment tweak, the signature at tick k), so the
+ * announcement is the hook's auto-publish. Inside a tick A's call and A's hook run before B's.
+ */
+export async function runCase({ variant, k, topology, arm, hookCmd = [process.execPath, HOOK], trigger = 'scripted' }) {
   const writes = S_B[variant];
   if (!writes) throw new Error(`unknown variant ${variant}`);
   const dir = mkdtempSync(join(tmpdir(), 'bus-e3-'));
@@ -61,22 +72,30 @@ export async function runCase({ variant, k, topology, arm, hookCmd = [process.ex
     const isBus = arm !== 'review';
     const sub = topology === 'subagents';
     const topic = sub ? 'run.r_e3.team.impl' : 'run.r_e3.siblings';
+    const auto = trigger === 'detector' && isBus;
     bus.mark(START_MARK);
-    writeFileSync(join(work, 'lib.mjs'), LIB_V1);
+    writeFileSync(join(work, 'lib.mjs'), auto ? `// rev 0\n${LIB_V1}` : LIB_V1);
+    const taskMap = join(dir, 'task-map.json');
+    if (auto) {
+      writeFileSync(taskMap, JSON.stringify({ v: 1, tasks: {
+        a: { title: 'A', file: 'tasks/a.md', files: ['lib.mjs'], parsed: true },
+        b: { title: 'B', file: 'tasks/b.md', files: ['cart.mjs'], parsed: true },
+      } }));
+    }
     const lines = [];
     const writeCart = () => writeFileSync(join(work, 'cart.mjs'), cartText(lines));
     writeCart();
 
     const payloads = sub
       ? { A: { session_id: 's', agent_id: 'a' }, B: { session_id: 's', agent_id: 'b' }, C: { session_id: 's', agent_id: 'c' }, D: { session_id: 's', agent_id: 'd' } }
-      : { B: { session_id: 'b' } };
+      : { B: { session_id: 'b' }, ...(auto ? { A: { session_id: 'a' } } : {}) };
     const fromA = sub ? { kind: 'agent', id: 's', sub: 'a' } : { kind: 'agent', id: 'a', sub: 'main' };
     const flags = ['--db', db, '--consumer-prefix', PREFIX, '--topics', topic, '--start-mark', START_MARK];
     let call = 0;
-    const hook = (who) => {
+    const hook = (who, extra = null) => {
       call += 1;
-      const r = spawnSync(hookCmd[0], [...hookCmd.slice(1), ...flags], {
-        input: JSON.stringify({ ...payloads[who], tool_name: 'Edit', tool_use_id: `tu_${call}` }),
+      const r = spawnSync(hookCmd[0], [...hookCmd.slice(1), ...flags, ...(extra?.args ?? [])], {
+        input: JSON.stringify({ ...payloads[who], tool_name: 'Edit', tool_use_id: `tu_${call}`, ...(extra?.payload ?? {}) }),
         encoding: 'utf8',
         env: process.env,
       });
@@ -97,10 +116,42 @@ export async function runCase({ variant, k, topology, arm, hookCmd = [process.ex
     let lateJoinerFirstCall = null;
     let lateJoinerFirstCallTokens = null;
     const shows = (text) => !!msgId && text.includes(msgId);
+    let rev = 0;
+    let autoPublishes = 0;
+    let falsePublishes = 0;
+    let selfShows = 0;
+    let bodyTokens = 0;
+    /** E6: A's Edit of lib.mjs, then A's --detect hook; returns A's hook output. */
+    const editA = (oldS, newS) => {
+      const p = join(work, 'lib.mjs');
+      writeFileSync(p, readFileSync(p, 'utf8').replace(oldS, () => newS));
+      const before = firstFromA(bus, fromA).length;
+      const text = hook('A', {
+        args: ['--detect', '--publish-topic', topic, '--task-map', taskMap, '--task-id', 'a', '--root', work],
+        payload: { hook_event_name: 'PostToolUse', cwd: work, tool_input: { file_path: p, old_string: oldS, new_string: newS } },
+      });
+      const rows = firstFromA(bus, fromA);
+      if (rows.length > before) {
+        autoPublishes += rows.length - before;
+        if (msgId === null) { msgId = rows[0].id; bodyTokens = estimateTokens(rows[0].body.text); }
+      }
+      return { text, added: rows.length - before };
+    };
 
     for (let t = 1; t <= N; t++) {
+      if (auto) {
+        // A's tool call every tick: the signature at tick k, a body-only comment tweak otherwise
+        const cursorsBefore = sub ? cursorsOf(['b', 'c']) : null;
+        const r = t === k
+          ? editA('export function price(item) {\n  return item.cost;', LIB_V2.slice(0, LIB_V2.indexOf('\n  return item.cost;') + '\n  return item.cost;'.length))
+          : editA(`// rev ${rev}`, `// rev ${rev + 1}`);
+        if (t !== k) rev += 1;
+        if (t !== k) falsePublishes += r.added;
+        if (shows(r.text)) { selfShows += 1; if (sub) deliveries.A += 1; }
+        if (sub && cursorsOf(['b', 'c']) !== cursorsBefore) cursorsUnmovedByA = false;
+      }
       // A's tool call: the change (and, in the bus arms, its announcement)
-      if (t === k) {
+      if (t === k && !auto) {
         writeFileSync(join(work, 'lib.mjs'), LIB_V2);
         if (isBus) {
           msgId = bus.publish({
@@ -109,7 +160,7 @@ export async function runCase({ variant, k, topology, arm, hookCmd = [process.ex
           }, { from: fromA }).id;
         }
       }
-      if (sub && isBus) {
+      if (sub && isBus && !auto) {
         const before = cursorsOf(['b', 'c']);
         if (shows(hook('A'))) deliveries.A += 1;
         if (cursorsOf(['b', 'c']) !== before) cursorsUnmovedByA = false;
@@ -171,6 +222,9 @@ export async function runCase({ variant, k, topology, arm, hookCmd = [process.ex
       out.cursorsUnmovedByA = cursorsUnmovedByA;
       out.lateJoinerFirstCall = lateJoinerFirstCall;
       out.lateJoinerFirstCallTokens = lateJoinerFirstCallTokens;
+    }
+    if (trigger === 'detector') {
+      Object.assign(out, { trigger, autoPublishes, falsePublishes, selfShows, bodyTokens });
     }
     return out;
   } finally {

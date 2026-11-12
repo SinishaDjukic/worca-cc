@@ -38,12 +38,17 @@ export function createSqliteBus({ path, origin, pollMs = 50 } = {}) {
   const stoppers = new Set();
   const bus = { db, path, _faultAfterRender: false };
 
+  let inTx = false;
+
+  /** One BEGIN IMMEDIATE transaction; a call made while one is open joins it (no nesting). */
   function tx(fn) {
+    if (inTx) return fn();
     try {
       db.exec('BEGIN IMMEDIATE');
     } catch (e) {
       throw isBusy(e) ? new BusError('BUS_BUSY', String(e.message)) : e;
     }
+    inTx = true;
     try {
       const r = fn();
       db.exec('COMMIT');
@@ -51,6 +56,8 @@ export function createSqliteBus({ path, origin, pollMs = 50 } = {}) {
     } catch (e) {
       try { db.exec('ROLLBACK'); } catch { /* already rolled back */ }
       throw isBusy(e) ? new BusError('BUS_BUSY', String(e.message)) : e;
+    } finally {
+      inTx = false;
     }
   }
 
@@ -137,6 +144,13 @@ export function createSqliteBus({ path, origin, pollMs = 50 } = {}) {
     const r = tx(() => insertDraft(draft, f));
     if (!r.duplicate) local.emit('write');
     return r;
+  };
+
+  /** Runs `fn` inside one BEGIN IMMEDIATE transaction; a `publish` called inside it joins it (plan §4.6). */
+  bus.transaction = (fn) => {
+    open();
+    if (typeof fn !== 'function') throw new BusError('BUS_BAD_ENVELOPE', 'transaction needs a function');
+    return tx(fn);
   };
 
   /** E1's batched publish: many drafts in ONE transaction (all or nothing). */
