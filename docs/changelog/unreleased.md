@@ -84,7 +84,19 @@ Pull requests (add each number when it opens):
   version does not make a new version; Try N more asks first; a note on what an example needs to say; "Save and stop the
   test?" and "Run it once" say what they do; in mock mode the page says so.
 - Not covered yet:
-  - Hooks an agent writes into the project's settings during a try load in its later steps.
+  - Hooks and env values an agent writes into the project's settings during a try apply in its later steps. Such env values
+    can undo parts of Worca's guard for those steps.
+  - While a try runs, an agent can read the settings file Worca hands Claude Code for it (your sign-in helpers, deny rules
+    and sandbox), as it can read your own Claude Code settings in a normal run.
+  - The project's own sign-in and telemetry helpers (`apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`,
+    `otelHeadersHelper`) and its other settings, env included, stay on in Pretend, as in a normal run. Telemetry they turn
+    on is not stopped by Worca's guard.
+  - A model profile that sets `CLAUDE_CONFIG_DIR` changes which Claude Code settings Worca reads your sign-in and guards
+    from, as it does for Claude Code itself.
+  - One of your own deny rules can block a tool the workflow needs, a Pretend stand-in included, and the try then fails, as
+    a normal run would. The try's log says how many of your deny rules it follows.
+  - Worca turns off `autoAllowBashIfSandboxed` in a try that does not load your settings. This is checked in the settings
+    Worca hands Claude Code, not yet in a run on Linux or macOS.
   - Steps on other engines keep their own plugins and settings.
   - Pretend tries made before this part can still be reused.
   - Test names are read only from TAP, node:test spec, pytest (`-rA` or `-v`), Jest verbose and Vitest verbose output, and
