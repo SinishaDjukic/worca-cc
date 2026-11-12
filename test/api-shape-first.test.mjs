@@ -58,6 +58,22 @@ function hello() {
   });
 }
 
+// A live socket that keeps every `state` frame of one run. It resolves once its hello arrives, so no later frame is
+// missed: the run's buffer cannot be asked afterwards, since settleRunEntry drops state frames when the run is done.
+function collectStateFrames(runId) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsBase);
+    const frames = [];
+    const t = setTimeout(() => { ws.terminate(); reject(new Error('no hello')); }, 3000);
+    ws.on('message', (data) => {
+      const msg = JSON.parse(String(data));
+      if (msg.type === 'hello') { clearTimeout(t); resolve({ frames, close: () => ws.close() }); }
+      else if (msg.type === 'state' && msg.runId === runId) frames.push(msg);
+    });
+    ws.on('error', (e) => { clearTimeout(t); reject(e); });
+  });
+}
+
 const settled = new Set(['done', 'stopped', 'error', 'paused', 'interrupted']);
 async function untilSettled(runId, ms = 90000) {
   const t0 = Date.now();
@@ -217,11 +233,16 @@ test('a shaped run serves its plan text, saves it to plans/, revises with perspe
   const pq2 = await untilPlanAsk(runId, pq.id);
   assert.deepEqual(pq2.plan.perspectives, ['product', 'qa', 'security']);
 
-  a = await post(`/api/runs/${runId}/answer`, { id: pq2.id, decision: 'approve' });
-  assert.equal(a.status, 200, await a.text());
-  const done = await untilSettled(runId);
-  assert.equal(done.status, 'done', JSON.stringify({ status: done.status, reason: done.pauseReason, detail: done.pauseDetail }));
-  assert.ok(entry.events.some((e) => e.type === 'state' && e.shaping?.approved?.file === pq2.plan.file), 'a state frame carries shaping.approved');
+  const live = await collectStateFrames(runId);
+  try {
+    a = await post(`/api/runs/${runId}/answer`, { id: pq2.id, decision: 'approve' });
+    assert.equal(a.status, 200, await a.text());
+    const done = await untilSettled(runId);
+    assert.equal(done.status, 'done', JSON.stringify({ status: done.status, reason: done.pauseReason, detail: done.pauseDetail }));
+  } finally {
+    live.close();
+  }
+  assert.ok(live.frames.some((e) => e.shaping?.approved?.file === pq2.plan.file), 'a state frame carries shaping.approved');
   const after = (await hello()).runs.find((x) => x.runId === runId);
   assert.equal(after.shaping.approved.file, pq2.plan.file);
 });
@@ -271,7 +292,7 @@ test('GET /api/runs/:id returns state.shapeStats for a shaped run and no shapeSt
 });
 
 test('Ask before each run from the card persists, and run 2\'s plan ask opens as a "Plan · run 2" step card', async () => {
-  const { createSliceFeature, featureApprovesEach } = await import('../src/core/shape/features.mjs');
+  const { createSliceFeature } = await import('../src/core/shape/features.mjs');
   const { seedPipelineRow } = await import('./helpers/db-seed.mjs');
   const { getDb } = await import('../src/core/db.mjs');
   const { projectKey } = await import('../src/core/store.mjs');
@@ -285,8 +306,7 @@ test('Ask before each run from the card persists, and run 2\'s plan ask opens as
   const r = await post(`/api/shape/features/${f.id}/approve-each`, { on: true });
   assert.equal(r.status, 200);
   assert.equal((await (await fetch(`${base}/api/shape/features/${f.id}`)).json()).approveEach, true);
-  assert.equal(featureApprovesEach(f.id), true);
-  // Run 2 raises its plan ask (orchestrator-slices.test.mjs:327 proves "Approve each on → always a plan ask").
+  // Run 2 raises its plan ask (a failing check or an outline change stops a later plan; orchestrator-slices.test.mjs).
   const p2 = 'asf00000002';
   seedPipelineRow({ id: p2, projectKey: projectKey(dir), status: 'running', title: p2, branch: { source: 'feat/a', feature: 'feat/b' } });
   getDb().prepare('UPDATE shape_feature_slices SET pipeline_id = ? WHERE feature_id = ? AND idx = 2').run(p2, f.id);

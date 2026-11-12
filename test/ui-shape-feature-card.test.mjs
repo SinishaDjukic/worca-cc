@@ -169,8 +169,18 @@ test('controls: the current run is the target; halted names Resume', () => {
     { halted: { index: 2, state: 'error', waiting: [3, 4] }, open: true, approveEach: false, originPipelineId: 'p0' });
   const m = featureCardModel({ own: snap('p0'), card: card(v),
     snapOf: (pid) => (pid === 'p2' ? snap('p2', { status: 'failed', source: 'rest', terminal: true, stageProgress: { label: 'Review', text: 'Review' } }) : null) });
-  assert.deepEqual(m.controls, { featureId: v.id, active: true, halted: true, rest: true, approveEach: false, planPipelineId: 'p0',
+  assert.deepEqual(m.controls, { featureId: v.id, active: true, halted: true, rest: true, approveEach: false, planPipelineId: 'p0', held: null,
     target: { index: 2, runId: 'run-p2', pipelineId: 'p2', status: 'failed', asks: false } });   // snap() defaults runId to `run-${pid}`
+});
+
+test('controls carry held and the held slice is current', () => {
+  const v = VIEW([SL(1, 'done', { pipelineId: 'p1' }), SL(2, 'held'), SL(3, 'planned')], { open: true, held: { index: 2, ticketId: 't2' }, originPipelineId: 'p0' });
+  const m = featureCardModel({ own: snap('p0'), card: card(v) });
+  assert.deepEqual(m.controls.held, { index: 2 });
+  assert.equal(m.controls.target.index, 2);
+  assert.equal(m.controls.rest, true);
+  const plain = VIEW([SL(1, 'done', { pipelineId: 'p1' }), SL(2, 'planned')], { open: true, originPipelineId: 'p0' });
+  assert.equal(featureCardModel({ own: snap('p0'), card: card(plain) }).controls.held, null);
 });
 
 test('controls: a current run that asks (plan approval) is a target that asks, live or from the slice state alone', () => {

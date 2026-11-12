@@ -231,6 +231,10 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .shape-feature-actions[hidden]{display:none;}
 .shape-feature-err{flex-basis:100%;padding:6px 8px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink);overflow-wrap:anywhere;}
 .shape-feature-err[hidden]{display:none;}
+/* A run held by "Ask me before each run": the Needs you dot and word, the reason, then Start now, on one line. */
+.shape-feature-held{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
+.shape-feature-held-word{font-weight:600;}
+.shape-feature-held-why{color:var(--ink-2);}
 /* Run 3 (D1): the group page's host in the Runs pane (#group-detail); .gpage pads itself like the run page. Its loading,
    gone and error lines sit under the bar's Back with the run page's gutter. */
 .feature-page{padding:0;}

@@ -89,6 +89,7 @@ chmodSync(SHIM, 0o755);
 // machine, whatever the developer's shell exports.
 const ENV_KEYS = [
   'WORCA_MOCK', 'ORCH_MOCK', 'WORCA_SUBAGENT_HOOKS', 'WORCA_HOST_GUARD', 'WORCA_EFFORT_FLAG', 'WORCA_DEBUG_SPAWN', 'WORCA_AGENT_USER',
+  'WORCA_TEST_CONCURRENCY',   // an agent shell inherits it; the runner then sets its own value, which envAdded must record
   'ENABLE_TOOL_SEARCH', ...STREAM_TIMEOUT_ENV_KEYS,   // API_TIMEOUT_MS & co. are set only when the shell has not (Claude Code exports one)
   ...Object.keys(process.env).filter((k) => k.startsWith('ANTHROPIC_') || k.startsWith('CLAUDE_')),
 ];

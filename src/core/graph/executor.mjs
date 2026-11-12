@@ -58,6 +58,7 @@ import { reviewChecklistBlock } from '../../shared/shape/review-checklist.mjs';
 import { slicingBlock, outlineFeedbackBlock, FLAT_NOTE, sliceScopeBlock } from '../../shared/shape/slices.mjs';
 import { planConcernBlock, planConcernOverrideBlock, requirementConcernBlock } from '../../shared/review/plan-concern.mjs';
 import { criterionIds } from '../../shared/review/coverage.mjs';
+import { outlineFileState, planOutputOf } from '../shape/outline-file.mjs';
 import { runScriptExecution } from './script-runner.mjs';
 // Skills registry §4.1: the CLI's refusal of `--plugin-dir` under managed `disableSideloadFlags` (P3's one regex).
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
@@ -607,7 +608,7 @@ export function buildAgentPrompt(ctx) {
   const routed = ctxEndpointRouted(ctx);
   const hints = substituteHints(joinHints(meta.promptHints, node?.config?.promptHints), ctx);
   const perspectives = PERSPECTIVE_AGENT_KEYS.has(node?.key) && Array.isArray(ctx.shape?.perspectives)
-    ? perspectivesBlock(ctx.shape.perspectives, { refiner: node.key === 'refiner' })
+    ? perspectivesBlock(ctx.shape.perspectives, { refiner: node.key === 'refiner', agreedIds: ctx.shapeAgreedIds || [] })
     : '';
   const slicing = node?.key === SLICE_PLANNER_KEY ? slicingPromptBlock(ctx) : '';
   const sliceScope = SLICE_SCOPE_AGENT_KEYS.has(node?.key) && ctx.shapeSliceScope
@@ -891,8 +892,12 @@ export async function runAgentExecution(ctx) {
   // An agent that stopped to ask (the questions loop resumes it with the answers), or a slicing Planner
   // that stopped at its slice outline (the outline loop resumes it), has not finished: its outputs and
   // verdict come on the resumed spawn, which is checked like any other.
+  // D10: the outline file's state is classified once, here; the orchestrator's outline loop reads `outlineState`.
+  const outlineState = typeof ctx.shapeSlicing?.file === 'string'
+    ? await outlineFileState(ctx.shapeSlicing.file, { baseline: ctx.shapeSlicing.baseline || null, planFile: planOutputOf(outputs) })
+    : null;
   const asked = (ctx.questionsFile ? (await readAskFile(ctx.questionsFile)).kind !== 'none' : false)
-    || (typeof ctx.shapeSlicing?.file === 'string' && existsSync(ctx.shapeSlicing.file));
+    || (outlineState != null && outlineState !== 'flat');
   if (!asked) {
     checkVerdict(ctx, verdict?.path, review, warnings);          // E1: a missing verdict throws
     await assertOutputsWritten(ctx, ports, outputs, review);      // E8: so does an unwritten output
@@ -906,6 +911,7 @@ export async function runAgentExecution(ctx) {
     sessionId,
     prompt,
     systemPrompt,
+    ...(outlineState ? { outlineState } : {}),
   };
 }
 
