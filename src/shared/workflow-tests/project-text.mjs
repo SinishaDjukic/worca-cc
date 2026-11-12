@@ -263,6 +263,13 @@ export const worcaProblemText = (kind) => WORCA_PROBLEM_TEXT[kind] || WORCA_PROB
 export const worcaTryText = (kind) => `Worca could not run this try: ${worcaProblemText(kind)}.`;
 /** The progress page's stopped line (stopReason 'worca'); `reason` is the stored stopDetail. */
 export const worcaStoppedText = (reason) => `Stopped: Worca could not run a try, twice: ${reason || WORCA_PROBLEM_TEXT.start}. Nothing in your workflow failed, and these tries are not counted. Choose Finish the rest to try again.`;
+/** Final review M1 (user, 2026-11-12): the progress page's stopped line (stopReason 'worca-before'): Worca could not make the
+ *  run before the change (its clone failed, its own step threw), so the test stopped before any try. `detail` is the stored
+ *  first line of the error; `triedBefore` is true when tries were done before this stop (a Finish the rest). */
+export const worcaBeforeStoppedText = (detail, triedBefore = false) => {
+  const line = String(detail ?? '').trim().replace(/[.\s]+$/, '');
+  return `Worca could not run the command before the change${line ? `: ${line}` : ''}. ${triedBefore ? 'No more tries were made.' : 'No tries were made.'}`;
+};
 /** The progress hint and the compare page's fair-comparison line. */
 export const madeAgainText = (n) => (n === 1
   ? '1 try was made again after a problem in Worca. It is not counted.'

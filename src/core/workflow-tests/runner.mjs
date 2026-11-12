@@ -303,7 +303,8 @@ export function createTestRunner(deps) {
   /**
    * 3b (D75): the command checks of the examples that still have tries to make, one at a time, on their start points. The
    * results stay in `st.before` for the judge (beforeOf, a synchronous lookup). A project that cannot be used stops the test
-   * as a try would; a before run that fails is recorded as not run and the tries go on (their own setup decides, D55).
+   * as a try would; a before run whose setup fails is recorded as not run and the tries go on (their own setup decides, D55);
+   * one Worca itself could not make stops the test as 'worca-before' (final review M1).
    * prepareProject holds the copy (U-T1) and has left the key lock when it returns: the before run's clone takes that lock
    * itself, and the hold is released once the before run has ended.
    */
@@ -342,6 +343,13 @@ export function createTestRunner(deps) {
           if (project) releaseCopy(ex.project.key);
         }
         st.before.set(beforeKey(ex.id, check.id), rec);
+        // Final review M1 (user, 2026-11-12): a before run Worca itself could not make (its clone failed, its own step threw)
+        // is Worca's problem, never a version's: the test stops before any try, so nothing is judged or spent. The person's
+        // setup failing ('setup') stays theirs: the tries go on and their own setup decides (D55).
+        if (rec && rec.ran === false && rec.reason === 'error') {
+          requestStop(st, 'worca-before', firstLine(String(rec.text || '')) || null);
+          return;
+        }
       }
     } finally {
       st.beforeNow = null;

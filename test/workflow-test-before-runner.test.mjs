@@ -185,3 +185,35 @@ test('the before phase gives back the copy it held (U-T1): nothing stays busy af
   assert.equal(h.befores.length, 1);
   assert.equal(_testing.copyBusy(pin.key), false, 'the before phase and the try each released their hold');
 });
+
+// Final review M1 (user, 2026-11-12): a before run Worca itself could not make (its clone failed, its own step threw) is a
+// Worca problem: the test stops before any try, nothing is judged and nothing is spent. The person's setup failing is not.
+test('a before run Worca could not make stops the test as a Worca problem before any try (M1)', async () => {
+  for (const [what, beforeRun, detail] of [
+    ['the clone failed', async () => ({ ran: false, reason: 'error', text: "fatal: Unable to create '/w/.git/index.lock': File exists." }),
+      "fatal: Unable to create '/w/.git/index.lock': File exists."],
+    ['its step threw', async () => { throw new Error('EBUSY: resource busy\n    at rm (node:fs)'); }, 'EBUSY: resource busy'],
+  ]) {
+    const ex = example([{ kind: 'command', cmd: 'npm test', metWhen: 'breaks-nothing' }]);
+    const h = harness({ beforeRun });
+    const runner = createTestRunner(h.deps);
+    const run = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 3 });
+    await runner.idle(run.id);
+    const r = store.readTestRun(run.id);
+    assert.deepEqual([r.status, r.stopReason, r.stopDetail], ['stopped', 'worca-before', detail], what);
+    assert.deepEqual(h.started, [], `${what}: no try started`);
+    const tries = store.triesOfRun(run.id);
+    assert.equal(tries.filter((t) => t.verdict || t.status !== 'waiting').length, 0, `${what}: nothing judged, every try still waiting`);
+  }
+});
+
+test('the person\'s own setup failing in the before run stays theirs: the tries go on and the check says no-before (M1)', async () => {
+  const ex = example([{ kind: 'command', cmd: 'npm test', metWhen: 'breaks-nothing' }]);
+  const h = harness({ beforeRun: async () => ({ ran: false, reason: 'setup' }) });
+  const runner = createTestRunner(h.deps);
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await runner.idle(run.id);
+  assert.equal(store.readTestRun(run.id).status, 'done');
+  const [t] = store.triesOfRun(run.id);
+  assert.deepEqual([t.verdict.checks[0].met, t.verdict.checks[0].metWhy], [false, { why: 'no-before' }]);
+});

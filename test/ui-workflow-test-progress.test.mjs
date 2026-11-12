@@ -360,3 +360,35 @@ test('U-T14 (F52, board UfMockNote): the progress page has the mock-mode note un
   assert.equal(root.querySelectorAll('.wft-mock-note').length, 1);
   assert.equal(boot(progress()).root.querySelector('.wft-mock-note'), null);
 });
+
+test('final review UI 1: the once-a-minute repaint keeps the mock-mode note', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const NOTE = 'Mock mode: the results are canned answers, not a real verdict.';
+  const { window } = new JSDOM('<!doctype html><body><section id="root" tabindex="-1"></section></body>');
+  const root = window.document.getElementById('root');
+  const working = progress({ rows: [{ exampleId: 1, name: 'Ticket 482', label: null, dots: ['running'], summary: 'Trying 1 of 1',
+    now: { tryNo: 1, phase: 'working', checking: null, setupCmd: null, startedMs: Date.now() - 60000 } }] });
+  renderTestProgress(root, working, { back() {}, stop() {}, continue() {}, open() {} }, { doc: window.document, mock: true });
+  const page = root.querySelector('.wft-progress');
+  t.mock.timers.tick(60000);
+  assert.notEqual(root.querySelector('.wft-progress'), page, 'the tick repainted the page');
+  assert.equal(root.querySelector('.wft-mock-note').textContent, NOTE);
+});
+
+test('final review UI 2: a test stopped as changed never says "You can finish the rest later…"', () => {
+  const ch = boot(progress({}, { status: 'stopped', stopReason: 'changed', stopDetail: 'Your draft changed since this test started: start a new test.' }));
+  assert.equal(ch.root.querySelector('.wft-page > .hint'), null);
+  const many = boot(progress({ madeAgain: 2 }, { status: 'stopped', stopReason: 'changed', stopDetail: 'Your draft changed since this test started: start a new test.' }));
+  assert.equal(many.root.querySelector('.wft-page > .hint').textContent, '2 tries were made again after a problem in Worca. They are not counted.');
+});
+
+test('final review M1: stopped because Worca could not run the command before the change; Finish the rest is offered', () => {
+  const none = boot(progress({ done: 0 }, { status: 'stopped', stopReason: 'worca-before', stopDetail: "fatal: Unable to create '/w/.git/index.lock': File exists." }));
+  assert.equal(none.root.querySelector('.wft-stopped').textContent,
+    "Worca could not run the command before the change: fatal: Unable to create '/w/.git/index.lock': File exists. No tries were made.");
+  assert.ok([...none.root.querySelectorAll('.wft-acts button')].some((b) => b.textContent === 'Finish the rest'));
+  // Finish the rest after some tries were done: the before run is made again first, so no more tries were made.
+  assert.equal(stoppedLine('worca-before', 'EBUSY: resource busy'), 'Worca could not run the command before the change: EBUSY: resource busy. No more tries were made.');
+  assert.equal(boot(progress({ done: 0 }, { status: 'stopped', stopReason: 'worca-before', stopDetail: null })).root.querySelector('.wft-stopped').textContent,
+    'Worca could not run the command before the change. No tries were made.');
+});

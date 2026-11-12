@@ -7,7 +7,7 @@ import { aboutUsd, fmtDuration } from '../../../src/shared/workflow-tests/compar
 import { icon } from '../icons.mjs';
 import { DISK_IN_USE, diskInUseSub, fmtGb, PHASES, PHASE_SUB, PHASES_TITLE, phasesShownFor, nowText, forMinutes, RUNNING_LEAD, FROM_LEAD,
   SETUP_STOP_REST, SETUP_STOP_HINT, SEE_SETUP_OUTPUT, setupWhere, SETUP_FIX_HINT, SETUP_EDITED_HINT, START_NEW_TEST, SETUP_NO_OUTPUT, EDIT_EXAMPLE, TRY_AGAIN,
-  worcaStoppedText, madeAgainText, BEFORE_NOW_TITLE, BEFORE_NOW_LEAD, beforeNowRest, BEFORE_PHASE, BEFORE_NOW_WHY, PHASES_BEFORE_HINT } from '../../../src/shared/workflow-tests/project-text.mjs';
+  worcaStoppedText, worcaBeforeStoppedText, madeAgainText, BEFORE_NOW_TITLE, BEFORE_NOW_LEAD, beforeNowRest, BEFORE_PHASE, BEFORE_NOW_WHY, PHASES_BEFORE_HINT } from '../../../src/shared/workflow-tests/project-text.mjs';
 
 const DOT = { passed: 'ok', failed: 'no', running: 'run' };
 /** A stored detail is one line with no full stop (runner.mjs pauseVerdict, quickCheck); a server refusal may have one. */
@@ -25,6 +25,7 @@ const STOPPED = {
   error: (p) => `Stopped: ${full(p.run.stopDetail || 'something went wrong')}`,
   setup: (p) => full(p.run.stopDetail || 'the setup step failed'),   // D55, board 35 (the box below says more)
   worca: (p) => worcaStoppedText(p.run.stopDetail),   // U-T2: the same try failed in Worca twice; Finish the rest makes it again
+  'worca-before': (p) => worcaBeforeStoppedText(p.run.stopDetail, p.done > 0),   // final review M1: before any try; Finish the rest
 };
 const stoppedText = (p) => (STOPPED[p.run.stopReason] || STOPPED.error)(p);
 
@@ -339,7 +340,8 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s,
   // after a problem in Worca, in the same hint (its own once the test is done).
   const hints = [];
   // U-T8 (F24): one try has no rest to finish.
-  if (st !== 'done' && p.run.stopReason !== 'setup' && p.run.kind !== 'once') hints.push('Stop testing keeps the tries that are done. You can finish the rest later without paying for them twice.');
+  // Final review UI 2: nor after a change, where only Start a new test is offered (Finish the rest would be refused).
+  if (st !== 'done' && p.run.stopReason !== 'setup' && p.run.stopReason !== 'changed' && p.run.kind !== 'once') hints.push('Stop testing keeps the tries that are done. You can finish the rest later without paying for them twice.');
   if (p.madeAgain > 0) hints.push(madeAgainText(p.madeAgain));
   if (hints.length) page.append(el(doc, 'p', 'hint', hints.join(' ')));
   root.append(page, live);
@@ -351,7 +353,7 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s,
   if (!over && p.rows.some((r) => r.now && r.now.phase === 'working' && r.now.startedMs)) {
     const t = setTimeout(() => {
       TICK.delete(root);
-      if (page.isConnected && root.contains(page)) renderTestProgress(root, p, actions, { doc, dateText });
+      if (page.isConnected && root.contains(page)) renderTestProgress(root, p, actions, { doc, dateText, mock });   // final review UI 1: keeps the mock note
     }, TICK_MS);
     if (t && typeof t.unref === 'function') t.unref();   // never keeps a test process alive
     TICK.set(root, t);
