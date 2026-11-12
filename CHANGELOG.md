@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Per-model prompt add-ons and effort intents
+
+- Per-model-family prompt add-ons: Role reviews: no blocking findings.
+- Per-step effort intents mapped per model family: Role reviews: no blocking findings.
+- Refusal stop reason surfaces as a clear step error: Role reviews: no blocking findings.
+
 ### Instance contract for hosting platforms
 
 - New [Instance contract](docs/instance-contract.md) page: what a hosted Worca instance is made of (the `worca`, `broker` and `cloudflared` containers, their start commands, ports and volumes) and everything a management interface sets or expects: every variable per container, the identity token, the heartbeat and what a receiver should do with it, stopping and draining, rotation and versions. For running Worca for others without a hosting platform, or for building a management interface of your own.
