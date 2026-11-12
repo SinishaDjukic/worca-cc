@@ -22,12 +22,13 @@ import { designEngineFor, designEngineGate, resolveDesignEngine } from './engine
 import { registerDesignExportRoutes } from './export-routes.mjs';
 import { AGENT_ID_RE, BUILD_ID_RE, DESIGN_ID_RE, DesignError } from './ids.mjs';
 import { designWorkDir } from './paths.mjs';
+import { PICTURE_TYPES, readKeptPicture } from './pictures.mjs';
 import { validatePlan } from './plan.mjs';
 import { createDesignBuilds, RESTORE_RUNNING, ROUND_STARTING } from './registry.mjs';
 import { designDenyRules, designModelPick } from './spawn-options.mjs';
 import {
-  createDesign, deleteDesign, DESIGN_MODEL_ROLES, designsWithUnknownCost, getBuild, getDesign, latestBuild, listAgents,
-  listDesigns, updateDesign,
+  createDesign, deleteDesign, DESIGN_MODEL_ROLES, designsWithUnknownCost, getBuild, getDesign, getPicture, latestBuild,
+  listAgents, listDesigns, listPictures, updateDesign,
 } from './store.mjs';
 import { thumbUrl } from './thumb.mjs';
 
@@ -40,6 +41,7 @@ const BUILD = `${ONE}/builds/:bid`;
 export const DESIGN_ROUTES = Object.freeze([
   ['GET', P], ['POST', P], ['GET', `${P}/limits`], ['GET', `${P}/models`],
   ['GET', ONE], ['PATCH', ONE], ['DELETE', ONE], ['GET', `${ONE}/models`],
+  ['GET', `${ONE}/pictures`], ['GET', `${ONE}/pictures/:pictureId`],
   ['POST', `${BUILD}/stop`], ['POST', `${BUILD}/agents/:aid/stop`], ['POST', `${BUILD}/answer`], ['POST', `${BUILD}/continue`],
   ['POST', `${ONE}/versions/:n/restore`],
 ].map(([method, path]) => Object.freeze({ method, path })));
@@ -48,6 +50,9 @@ export const DESIGN_ROUTES = Object.freeze([
 const STORE_STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, CONFLICT: 409 });
 const VERSION_RE = /^[1-9]\d*$/;
 const VERSION_GONE = 'That version is no longer kept';
+/** A picture row id: at most 15 digits, so always a safe integer. */
+const PICTURE_ID_RE = /^[1-9]\d{0,14}$/;
+const NO_PICTURE = 'picture not found';
 
 const messageOf = (err) => (err && typeof err.message === 'string' ? err.message : String(err));
 
@@ -122,6 +127,10 @@ function patchOf(body) {
   if (body.fast !== undefined) {
     if (typeof body.fast !== 'boolean') throw new DesignRefusal(400, 'fast must be true or false');
     patch.fast = body.fast;
+  }
+  if (body.pictures !== undefined) {
+    if (typeof body.pictures !== 'boolean') throw new DesignRefusal(400, 'pictures must be true or false');
+    patch.pictures = body.pictures;
   }
   if (body.projectKey !== undefined) patch.projectKey = body.projectKey;
   return patch;
@@ -259,7 +268,7 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
         return;
       }
       const design = createDesign(
-        { kind: body.kind, title: body.title, fast: body.fast, projectKey: body.projectKey, engine, models },
+        { kind: body.kind, title: body.title, fast: body.fast, pictures: body.pictures, projectKey: body.projectKey, engine, models },
         { by: actorOf(req) },
       );
       // The design owns its titled thread from the start (P5): no title call can fire on its first message.
@@ -290,6 +299,31 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
       const design = designFor(req, res);
       if (!design) return;
       res.json(await modelOptions(designEngineFor(design).engine, design, listModels));
+    },
+
+    // SPEC §5: the design's picture rows, oldest first. A row is written when its ask ends; "making" is only a frame.
+    [`GET ${ONE}/pictures`]: async (req, res) => {
+      const design = designFor(req, res);
+      if (!design) return;
+      res.json(listPictures(design.id).map(({ designId, ...row }) => row));
+    },
+
+    // D10a: the bytes of a made picture's kept copy, by its row id. The path comes from the row (its id and its file's
+    // type), nothing from the URL; the copy never changes, so it is cached privately for good, as the thumbnail is.
+    [`GET ${ONE}/pictures/:pictureId`]: async (req, res) => {
+      const design = designFor(req, res);
+      if (!design) return;
+      const id = req.params.pictureId;
+      const row = typeof id === 'string' && PICTURE_ID_RE.test(id) ? getPicture(design.id, Number(id)) : null;
+      const ext = row?.state === 'made' && typeof row.file === 'string' ? /\.([a-z]+)$/.exec(row.file)?.[1] : undefined;
+      const bytes = ext && Object.hasOwn(PICTURE_TYPES, ext) ? readKeptPicture(design.id, { id: row.id, ext }) : null;
+      if (!bytes) throw new DesignRefusal(404, NO_PICTURE);
+      res.set({
+        'Content-Type': PICTURE_TYPES[ext],
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'private, max-age=31536000, immutable',
+      });
+      res.send(bytes);
     },
 
     [`GET ${ONE}`]: async (req, res) => {

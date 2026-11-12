@@ -40,9 +40,10 @@ function mockRole(role, stage) {
 /**
  * The runClaude options for one Design process; `ctx.kind` is the design's kind (default `web`), `ctx.row` the
  * engine's `DESIGN_ENGINES` row (default `designEngineRow(ctx.engine)`), `ctx.bridgedInfo` a bridged model's
- * `bridgedModelInfo`, whose `excludeTools` become `disallowedTools`. Throws for an engine Design refuses, for an
- * unknown role and stage, for a bad design or section id, and (through `resolveModelEnv`, `errorClass:'auth'`) for a
- * bridged model whose provider is not ready.
+ * `bridgedModelInfo`, whose `excludeTools` become `disallowedTools`, `ctx.pictures` (a lead only) whether its round can
+ * have pictures made: it changes the lead's system prompt and nothing else (no env, no setting). Throws for an engine
+ * Design refuses, for an unknown role and stage, for a bad design or section id, and (through `resolveModelEnv`,
+ * `errorClass:'auth'`) for a bridged model whose provider is not ready.
  */
 export function designSpawnOptions(ctx) {
   const { role, stage, engine = 'claude', kind, agentId, buildId, designId, sectionId, projectDir, prompt, model, effort,
@@ -56,8 +57,11 @@ export function designSpawnOptions(ctx) {
   const work = designWorkDir(designId);
   const cwd = builder ? sectionDir(designId, sectionId) : work;
   // The design's kind (`web` when absent) picks the system prompt: a deck or a video swaps P2's bands for its own block.
-  // A builder off the hook row reads its `.ctx` copies (L8.7), staged by the build before each process.
-  const system = builder ? builderSystemPrompt({ kind, readRoot: hooked ? undefined : join(cwd, '.ctx') }) : leadSystemPrompt({ kind });
+  // A builder off the hook row reads its `.ctx` copies (L8.7), staged by the build before each process. A lead whose
+  // round can have pictures made (`ctx.pictures`) reads the Made pictures rules last; a builder never does.
+  const system = builder
+    ? builderSystemPrompt({ kind, readRoot: hooked ? undefined : join(cwd, '.ctx') })
+    : leadSystemPrompt({ kind, pictures: Boolean(ctx.pictures) });
   const tools = [...DESIGN_TOOLS];
   const excluded = ctx.bridgedInfo?.excludeTools;
   return {

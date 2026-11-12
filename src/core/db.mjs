@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 90;
+export const SCHEMA_VERSION = 91;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -840,7 +840,7 @@ ${STEP_QUESTIONS_DDL}
  * against the live schema so the gap can be healed regardless of the stamp.
  */
 const INCREMENTAL_COLUMNS = {
-  designs:                { models_json: 'TEXT' },   // v90: the design's own lead and builder picks ({lead?, builder?}); NULL = the Models page's
+  designs:                { models_json: 'TEXT', pictures: 'INTEGER NOT NULL DEFAULT 1' },   // v90: the design's own lead and builder picks ({lead?, builder?}); NULL = the Models page's; v91: the design's Pictures switch, 1 = on
   req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13)
   req_features:           { early_start_reason: 'TEXT' },   // v85: the reason given for starting a feature before Ready, kept until a run starts; NULL = none
   req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
@@ -1574,7 +1574,8 @@ CREATE TABLE IF NOT EXISTS designs (
   id TEXT PRIMARY KEY, title TEXT NOT NULL, kind TEXT NOT NULL, fast INTEGER NOT NULL DEFAULT 0,
   project_key TEXT, thread_id TEXT, engine TEXT, status TEXT NOT NULL DEFAULT 'empty',
   current_build TEXT, version INTEGER NOT NULL DEFAULT 0,
-  created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, models_json TEXT);
+  created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, models_json TEXT,
+  pictures INTEGER NOT NULL DEFAULT 1);
 CREATE INDEX IF NOT EXISTS designs_updated ON designs(updated_at);
 CREATE TABLE IF NOT EXISTS design_builds (
   id TEXT PRIMARY KEY, design_id TEXT NOT NULL, round INTEGER NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
@@ -1592,6 +1593,17 @@ CREATE TABLE IF NOT EXISTS design_cost_ledger (
   id INTEGER PRIMARY KEY AUTOINCREMENT, design_id TEXT NOT NULL, build_id TEXT, agent_id TEXT,
   amount_usd REAL NOT NULL, model TEXT, ts INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS design_cost_ledger_ts ON design_cost_ledger(ts);
+`;
+
+// v91 Design pictures (D10): one row per picture ask, written once when the ask ends (`made` or `failed`; "making" is a
+// frame only). A remake under the same name adds a row. Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES; no foreign
+// keys. designs.pictures (the design's Pictures switch) comes from INCREMENTAL_COLUMNS.
+const DESIGN_PICTURES_DDL = `
+CREATE TABLE IF NOT EXISTS design_pictures (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, design_id TEXT NOT NULL, build_id TEXT NOT NULL, round INTEGER NOT NULL,
+  name TEXT NOT NULL, shape TEXT NOT NULL, prompt TEXT NOT NULL, model TEXT, state TEXT NOT NULL,
+  file TEXT, w INTEGER, h INTEGER, cost_usd REAL, ms INTEGER, reason TEXT, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS design_pictures_design ON design_pictures(design_id, round, id);
 `;
 
 const INCREMENTAL_TABLES = {
@@ -1656,6 +1668,7 @@ const INCREMENTAL_TABLES = {
   design_builds:      DESIGN_DDL,  // v89
   design_agents:      DESIGN_DDL,  // v89
   design_cost_ledger: DESIGN_DDL,  // v89
+  design_pictures:    DESIGN_PICTURES_DDL,  // v91
 };
 
 /**
@@ -2848,6 +2861,8 @@ export function migrate(db) {
     if (current < 89) db.exec(DESIGN_DDL);
     // v90: designs.models_json — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps (a v89 DB) or by the v89 DDL
     // above (an older DB). First written as v88.
+    // v91 Design pictures: one row per ask (D10); designs.pictures comes from INCREMENTAL_COLUMNS
+    if (current < 91) db.exec(DESIGN_PICTURES_DDL);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

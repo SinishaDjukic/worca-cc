@@ -75,11 +75,11 @@ before(async () => {
 after(() => { if (projDir) rmSync(projDir, { recursive: true, force: true }); });
 
 const fill = (path) => path.replace(':id', 'd_000000000000').replace(':bid', 'b_000000000000')
-  .replace(':aid', 'a_00000000').replace(':n', '1');
+  .replace(':aid', 'a_00000000').replace(':n', '1').replace(':pictureId', '1');
 const make = async (body = { kind: 'web' }) => (await call('POST', '/api/design', body)).json.design;
 const designFolders = () => readdirSync(dirname(designDir('d_000000000000')));
 
-test('DESIGN_ROUTES: the thirteen routes, frozen, in registration order', () => {
+test('DESIGN_ROUTES: the fifteen routes, frozen, in registration order', () => {
   assert.ok(Object.isFrozen(DESIGN_ROUTES));
   assert.ok(DESIGN_ROUTES.every((r) => Object.isFrozen(r)));
   assert.deepEqual(DESIGN_ROUTES.map((r) => `${r.method} ${r.path}`), [
@@ -91,6 +91,8 @@ test('DESIGN_ROUTES: the thirteen routes, frozen, in registration order', () => 
     'PATCH /api/design/:id',
     'DELETE /api/design/:id',
     'GET /api/design/:id/models',
+    'GET /api/design/:id/pictures',
+    'GET /api/design/:id/pictures/:pictureId',
     'POST /api/design/:id/builds/:bid/stop',
     'POST /api/design/:id/builds/:bid/agents/:aid/stop',
     'POST /api/design/:id/builds/:bid/answer',
@@ -120,6 +122,10 @@ test('create, read, list, patch', async () => {
   assert.deepEqual(Object.keys(g.json).sort(), ['build', 'design', 'plan', 'sections', 'versions']);
   assert.deepEqual([g.json.plan, g.json.build, g.json.sections, g.json.versions], [null, null, [], []]);
   assert.equal(g.json.design.id, c.json.design.id);
+  assert.equal(c.json.design.pictures, true, 'POST without the field: the store default');
+  assert.equal(g.json.design.pictures, true);
+  assert.equal((await call('PATCH', `/api/design/${c.json.design.id}`, { pictures: false })).json.pictures, false);
+  assert.equal((await call('GET', `/api/design/${c.json.design.id}`)).json.design.pictures, false);
   const l = await call('GET', '/api/design');
   const item = l.json.find((x) => x.id === c.json.design.id);
   assert.deepEqual(Object.keys(item).sort(), ['costKnown', 'costUsd', 'id', 'kind', 'status', 'thumb', 'title', 'updatedAt']);
@@ -176,10 +182,12 @@ test('bad bodies are 400; a bad project is 400', async () => {
   assert.equal((await call('PATCH', `/api/design/${d.id}`, { status: 'done', currentBuild: 'b_000000000000', engine: 'codex', threadId: 't_x', version: 4 })).status, 200);
   const row = getDesign(d.id);
   assert.deepEqual([row.status, row.currentBuild, row.engine, row.threadId, row.version], ['empty', null, 'claude', d.threadId, 0],
-    'only title, fast and projectKey reach updateDesign, which accepts more');
+    'only title, fast, pictures and projectKey reach updateDesign, which accepts more');
   for (const b of [{ fast: 'yes' }, { title: 5 }, { title: 'x'.repeat(121) }, { projectKey: 7 }, { projectKey: 'nope' }]) {
     assert.equal((await call('PATCH', `/api/design/${d.id}`, b)).status, 400, JSON.stringify(b));
   }
+  assert.equal((await call('POST', '/api/design', { kind: 'web', pictures: 'yes' })).status, 400);
+  assert.equal((await call('PATCH', `/api/design/${d.id}`, { pictures: 'yes' })).status, 400);
   assert.deepEqual([getDesign(d.id).title, getDesign(d.id).fast], ['Untitled design', true]);
 });
 
@@ -227,6 +235,9 @@ test('bad ids and other people answer 404, on every route', async () => {
       ['POST', `${AB}/answer`, {}],
       ['POST', `${AB}/continue`, { sections: 'x' }],
       ['POST', `/api/design/${a.id}/versions/abc/restore`, {}],
+      // The pictures: the list would answer 200 [], a picture its own 'picture not found'.
+      ['GET', `/api/design/${a.id}/pictures`],
+      ['GET', `/api/design/${a.id}/pictures/1`],
       // P6's two routes, outside DESIGN_ROUTES: the export of Alice's finished design would answer 200, and the
       // thumbnail its own 404 words; the loop asserts the owner check's 'design not found' body.
       ['POST', `/api/design/${a.id}/export`, { format: 'html' }],

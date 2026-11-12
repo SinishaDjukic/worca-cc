@@ -10,7 +10,8 @@ import {
   DesignError, DESIGN_KINDS, DESIGN_ID_RE, BUILD_ID_RE, newDesignId, newBuildId, newAgentId, sectionIdProblem,
 } from './ids.mjs';
 import { designDir, ensureDesignFolders } from './paths.mjs';
-import { DESIGN_FAST_DEFAULT } from '../../shared/design-names.mjs';
+import { DESIGN_FAST_DEFAULT, DESIGN_PICTURES_DEFAULT, DESIGN_PICTURE_NAME_RE } from '../../shared/design-names.mjs';
+import { IMAGE_SHAPES, IMAGES_MAX_PROMPT } from '../../shared/image-services.mjs';
 
 /** C-5 `design-build.status`. */
 export const BUILD_STATUSES = Object.freeze(['planning', 'building', 'integrating', 'paused', 'done', 'stopped', 'error', 'interrupted']);
@@ -50,6 +51,7 @@ function toDesign(r) {
     threadId: r.thread_id ?? null, engine: r.engine ?? null, status: r.status, currentBuild: r.current_build ?? null,
     version: Number(r.version), createdBy: r.created_by ?? null, createdAt: r.created_at, updatedAt: r.updated_at,
     costUsd: roundUsd(Number(r.spend) || 0), models: readModels(r.models_json),
+    pictures: r.pictures == null ? DESIGN_PICTURES_DEFAULT : !!r.pictures,
   };
 }
 
@@ -115,6 +117,13 @@ function cleanFast(v) {
   return v;
 }
 
+/** The Pictures switch as a boolean; absent means the default of a new design (DESIGN_PICTURES_DEFAULT: on, D7). */
+function cleanPictures(v) {
+  if (v === undefined) return DESIGN_PICTURES_DEFAULT;
+  if (typeof v !== 'boolean') throw new DesignError('BAD_REQUEST', 'pictures must be true or false');
+  return v;
+}
+
 /** An optional reference (project key, chat thread, engine name): trimmed text, or null when absent or blank. */
 function cleanRef(v, field) {
   if (v == null) return null;
@@ -151,11 +160,12 @@ function freshDesignId() {
   throw new DesignError('IO', 'could not pick a free design id');
 }
 
-export function createDesign({ kind, title, fast, projectKey, threadId, engine, models } = {}, { by = null } = {}) {
+export function createDesign({ kind, title, fast, pictures, projectKey, threadId, engine, models } = {}, { by = null } = {}) {
   const k = cleanKind(kind);
   const m = cleanModels(models);
   const t = cleanTitle(title);
   const f = cleanFast(fast);
+  const pi = cleanPictures(pictures);
   const pk = cleanRef(projectKey, 'projectKey');
   const th = cleanRef(threadId, 'threadId');
   const en = cleanRef(engine, 'engine');
@@ -165,8 +175,8 @@ export function createDesign({ kind, title, fast, projectKey, threadId, engine, 
   try {
     ensureDesignFolders(id);
     prepare(`INSERT INTO designs (id, title, kind, fast, project_key, thread_id, engine, status, current_build, version,
-        created_by, created_at, updated_at, models_json) VALUES (?, ?, ?, ?, ?, ?, ?, 'empty', NULL, 0, ?, ?, ?, ?)`)
-      .run(id, t, k, f ? 1 : 0, pk, th, en, by ?? null, ts, ts, m);
+        created_by, created_at, updated_at, models_json, pictures) VALUES (?, ?, ?, ?, ?, ?, ?, 'empty', NULL, 0, ?, ?, ?, ?, ?)`)
+      .run(id, t, k, f ? 1 : 0, pk, th, en, by ?? null, ts, ts, m, pi ? 1 : 0);
   } catch (err) {
     try { rmSync(designDir(id), RM_OPTS); } catch { /* the original error is the one worth reporting */ }
     throw err;
@@ -196,6 +206,7 @@ export function listDesigns({ visibleTo = null } = {}) {
 const PATCH = Object.freeze({
   title: ['title', cleanTitle],
   fast: ['fast', (v) => (cleanFast(v) ? 1 : 0)],
+  pictures: ['pictures', (v) => (cleanPictures(v) ? 1 : 0)],
   projectKey: ['project_key', (v) => cleanRef(v, 'projectKey')],
   threadId: ['thread_id', (v) => cleanRef(v, 'threadId')],
   engine: ['engine', (v) => cleanRef(v, 'engine')],
@@ -220,9 +231,9 @@ export function updateDesign(id, patch = {}) {
 }
 
 /**
- * Remove a design's folder, then its rows (agents, builds, design) in one transaction. The folder goes first: when it
- * cannot be removed the rows stay, so a retry works. A link inside the folder is removed, never followed. The cost
- * ledger is never touched. An unknown (or malformed) id returns false. A design with an open build (`paused`
+ * Remove a design's folder, then its rows (agents, builds, picture rows, design) in one transaction. The folder goes
+ * first: when it cannot be removed the rows stay, so a retry works. A link inside the folder is removed, never followed.
+ * The cost ledger is never touched. An unknown (or malformed) id returns false. A design with an open build (`paused`
  * included) is refused with `CONFLICT` before the folder is touched (L1.18).
  */
 export function deleteDesign(id) {
@@ -238,6 +249,7 @@ export function deleteDesign(id) {
   return tx(() => {
     prepare('DELETE FROM design_agents WHERE build_id IN (SELECT id FROM design_builds WHERE design_id = ?)').run(id);
     prepare('DELETE FROM design_builds WHERE design_id = ?').run(id);
+    prepare('DELETE FROM design_pictures WHERE design_id = ?').run(id);
     return Number(prepare('DELETE FROM designs WHERE id = ?').run(id).changes) > 0;
   });
 }
@@ -540,4 +552,82 @@ export function updateAgent(id, patch = {}) {
 export function designsWithUnknownCost() {
   return new Set(prepare(`SELECT DISTINCT b.design_id FROM design_agents a JOIN design_builds b ON a.build_id = b.id
     WHERE a.cost_known = 0`).all().map((r) => r.design_id));
+}
+
+// Pictures (D10 design_pictures): one row per picture ask, written once when the ask ends. A remake under the same name
+// adds a row; the rows go with the design.
+
+/** A row's state: `making` is a frame only, never a row. */
+export const PICTURE_STATES = Object.freeze(['made', 'failed']);
+const PICTURE_REASON_MAX = 300;
+/** A made picture's file in the design's `work/`: forward slashes on every system, its own name, one of three types. */
+const MADE_FILE_RE = /^assets\/made\/(.+)\.(?:png|jpg|webp)$/;
+
+const wholeFrom = (v, min) => Number.isSafeInteger(v) && v >= min;
+
+function toPicture(r) {
+  if (!r) return null;
+  const num = (v) => (v == null ? null : Number(v));
+  return {
+    id: Number(r.id), designId: r.design_id, buildId: r.build_id, round: Number(r.round), name: r.name,
+    shape: r.shape, prompt: r.prompt, model: r.model ?? null, state: r.state, file: r.file ?? null,
+    w: num(r.w), h: num(r.h), costUsd: num(r.cost_usd), ms: num(r.ms), reason: r.reason ?? null, createdAt: r.created_at,
+  };
+}
+
+function cleanPictureSide(v, field) {
+  if (v === null) return null;
+  if (!wholeFrom(v, 1)) throw new DesignError('BAD_REQUEST', `${field} must be a whole number from 1 or null`);
+  return v;
+}
+
+/**
+ * Record one picture ask as it ended. Every field is checked, and nothing is written when one is refused
+ * (`BAD_REQUEST`): a `made` row carries its file (`assets/made/<name>.<png|jpg|webp>`, its own name), `w` and `h`; a
+ * `failed` row has no file. A failed row may still carry what the service answered and cost.
+ */
+export function addPicture({
+  designId, buildId, round, name, shape, prompt, model = null, state, file = null, w = null, h = null, costUsd = null,
+  ms = null, reason = null,
+} = {}) {
+  if (typeof designId !== 'string' || !DESIGN_ID_RE.test(designId)) throw new DesignError('BAD_REQUEST', 'designId is not a design id');
+  if (typeof buildId !== 'string' || !BUILD_ID_RE.test(buildId)) throw new DesignError('BAD_REQUEST', 'buildId is not a build id');
+  if (!wholeFrom(round, 1)) throw new DesignError('BAD_REQUEST', 'round must be a whole number from 1');
+  if (typeof name !== 'string' || !DESIGN_PICTURE_NAME_RE.test(name)) {
+    throw new DesignError('BAD_REQUEST', 'name must be 1 to 40 lowercase letters, digits or hyphens, starting with a letter or digit');
+  }
+  const sh = cleanOneOf(shape, IMAGE_SHAPES, 'shape');
+  if (typeof prompt !== 'string') throw new DesignError('BAD_REQUEST', 'prompt must be text');
+  if (prompt.length > IMAGES_MAX_PROMPT) throw new DesignError('BAD_REQUEST', `prompt is longer than ${IMAGES_MAX_PROMPT} characters`);
+  const mo = cleanRef(model, 'model');
+  const st = cleanOneOf(state, PICTURE_STATES, 'state');
+  if (file !== null && (typeof file !== 'string' || MADE_FILE_RE.exec(file)?.[1] !== name)) {
+    throw new DesignError('BAD_REQUEST', `file must be assets/made/${name}.png, .jpg or .webp, or null`);
+  }
+  const pw = cleanPictureSide(w, 'w');
+  const ph = cleanPictureSide(h, 'h');
+  if (st === 'made' && (file === null || pw === null || ph === null)) throw new DesignError('BAD_REQUEST', 'a made picture needs its file, w and h');
+  if (st === 'failed' && file !== null) throw new DesignError('BAD_REQUEST', 'a failed picture has no file');
+  const cost = costUsd === null ? null : cleanUsd(costUsd, 'costUsd');
+  if (ms !== null && !wholeFrom(ms, 0)) throw new DesignError('BAD_REQUEST', 'ms must be a whole number from 0 or null');
+  if (reason !== null && (typeof reason !== 'string' || reason.length > PICTURE_REASON_MAX)) {
+    throw new DesignError('BAD_REQUEST', `reason must be text of at most ${PICTURE_REASON_MAX} characters or null`);
+  }
+  const { lastInsertRowid } = prepare(`INSERT INTO design_pictures (design_id, build_id, round, name, shape, prompt, model,
+      state, file, w, h, cost_usd, ms, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(designId, buildId, round, name, sh, prompt, mo, st, file, pw, ph, cost, ms, reason, iso());
+  return getPicture(designId, Number(lastInsertRowid));
+}
+
+/** A design's picture rows, oldest first (by round, then as written); `[]` for a bad id. */
+export function listPictures(designId) {
+  if (typeof designId !== 'string' || !DESIGN_ID_RE.test(designId)) return [];
+  return prepare('SELECT * FROM design_pictures WHERE design_id = ? ORDER BY round, id').all(designId).map(toPicture);
+}
+
+/** One of the design's picture rows; null for a bad design id, an id that is not a whole number from 1, or another
+ *  design's row. */
+export function getPicture(designId, id) {
+  if (typeof designId !== 'string' || !DESIGN_ID_RE.test(designId) || !wholeFrom(id, 1)) return null;
+  return toPicture(prepare('SELECT * FROM design_pictures WHERE design_id = ? AND id = ?').get(designId, id));
 }
