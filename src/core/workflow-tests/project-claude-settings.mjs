@@ -8,7 +8,7 @@
 // other name (possibly outside the checkout) keeps its content.
 import { createHash, randomBytes } from 'node:crypto';
 import { lstat, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { parseDocument, stringify } from 'yaml';
 import { isAskpassKey, isTryStrippedKey } from './try-guard-env.mjs';
 import { updateRunManifest } from '../run-manifest.mjs';
@@ -377,6 +377,33 @@ export async function stripMountedSkillHooks(rc, { warn, runRoot = null }) {
   const skill = (p) => p.split('/')[0];
   for (const p of out.unparsed) await warn(`Worca could not be sure it removed every hook from the skill ${skill(p)} it mounted, so a hook in it may still run in this try.`);
   for (const p of out.links) await warn(`The skill ${p} Worca mounted is a link, so Worca left it out of this try.`);
+  return out;
+}
+
+/**
+ * Final review O3 (user decision, 2026-11-12): in a Pretend try (project or not), the person's registry set skills that
+ * Worca loads through `--plugin-dir` (`layer`, the harness's skillLayer) lose their frontmatter hooks by the same D72a rules.
+ * Only Worca's own generated copy is touched: a plugin folder right under `layer.base` (skills-registry/mount.mjs copies each
+ * skill there, dereferenced, regular files only, rebuilt on every assembly), never the Skills library or a plugin's real
+ * files. A link found there anyway is removed, never followed; an unsure file is written as far as Worca could strip it
+ * and named in one run warning (`warn`); a read or write failure throws TRY_PLUGINS_OFF_FAILED. Paths are relative to
+ * `layer.base` (`<plugin>/skills/<skill>/SKILL.md`). Another engine gets no plugin folders (its copies are mounted in the
+ * checkout, where stripMountedSkillHooks strips them).
+ * @returns {Promise<{changed: string[], links: string[], unparsed: string[]}>}
+ */
+export async function stripSetSkillHooks(layer, { warn }) {
+  const out = { changed: [], links: [], unparsed: [] };
+  const base = layer && typeof layer.base === 'string' ? layer.base : null;
+  const plugins = base && Array.isArray(layer.pluginDirs) ? layer.pluginDirs.filter((d) => typeof d === 'string' && dirname(d) === base) : [];
+  try {
+    for (const d of plugins) await stripTree(base, `${basename(d)}/skills`, isSkillFile, out);
+  } catch (e) {
+    throw Object.assign(new Error(`Worca could not switch off the hooks of the skills from your sets for this try: ${e && e.message ? e.message : e}`),
+      { code: 'TRY_PLUGINS_OFF_FAILED' });
+  }
+  const named = (p) => { const [plugin, , skill] = p.split('/'); return skill ? `${plugin}:${skill}` : plugin; };
+  for (const p of out.unparsed) await warn(`Worca could not be sure it removed every hook from the set skill ${named(p)}, so a hook in it may still run in this try.`);
+  for (const p of out.links) await warn(`The set skill ${named(p)} Worca copied is a link, so Worca left it out of this try.`);
   return out;
 }
 

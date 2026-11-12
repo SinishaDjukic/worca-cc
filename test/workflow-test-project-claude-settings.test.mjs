@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { strippedSettingsText, strippedFrontmatterText, isTryGuardEnvKey, stripProjectClaudeSettings, PROJECT_SETTINGS_FILES, STRIPPED_SETTINGS_KEYS,
-  stripMountedSkillHooks, _testing as pcsTesting } from '../src/core/workflow-tests/project-claude-settings.mjs';
+  stripMountedSkillHooks, stripSetSkillHooks, _testing as pcsTesting } from '../src/core/workflow-tests/project-claude-settings.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
 
 const dirs = [];
@@ -444,4 +444,56 @@ test('E2: a mounted skill Worca cannot rewrite ends the try as Worca\'s own fail
     await assert.rejects(stripMountedSkillHooks({ skillMountDir: mount, injectedSkillNames: ['hooky'] }, { warn: async () => {} }),
       (e) => e.code === 'TRY_PLUGINS_OFF_FAILED' && /^Worca could not switch off the hooks of the skills it mounted for this try: .*EACCES/.test(e.message));
   } finally { chmodSync(join(mount, 'hooky'), 0o755); }
+});
+
+// ── Final review O3 (user decision): the registry set skills Worca loads through --plugin-dir ─────────────────────────
+test('O3: the set skills in Worca\'s generated plugin copies lose their frontmatter hooks; unsure ones named; nothing outside its base', async () => {
+  const base = join(tmp(), 'skills');
+  const w = (rel, text) => { mkdirSync(join(base, ...rel.split('/').slice(0, -1)), { recursive: true }); writeFileSync(join(base, ...rel.split('/')), text); };
+  w('billing/.claude-plugin/plugin.json', '{"name":"billing"}\n');
+  w('billing/skills/deploy/SKILL.md', FM(BLOCK));
+  w('billing/skills/deploy/notes.md', FM(BLOCK));
+  w('billing/skills/unsure/SKILL.md', UNSURE);
+  w('general/skills/plain/SKILL.md', FM(''));
+  const elsewhere = join(tmp(), 'billing');   // not under the layer's base: never Worca's copy, never touched
+  mkdirSync(join(elsewhere, 'skills', 'x'), { recursive: true });
+  writeFileSync(join(elsewhere, 'skills', 'x', 'SKILL.md'), FM(BLOCK));
+  const warned = [];
+  const layer = { base, pluginDirs: [join(base, 'billing'), join(base, 'general'), elsewhere] };
+  const r = await stripSetSkillHooks(layer, { warn: async (t) => { warned.push(t); } });
+  assert.deepEqual(r, { changed: ['billing/skills/deploy/SKILL.md', 'billing/skills/unsure/SKILL.md'], links: [], unparsed: ['billing/skills/unsure/SKILL.md'] });
+  assert.equal(readFileSync(join(base, 'billing', 'skills', 'deploy', 'SKILL.md'), 'utf8'), FM(''));
+  assert.equal(readFileSync(join(base, 'billing', 'skills', 'deploy', 'notes.md'), 'utf8'), FM(BLOCK), 'not a SKILL.md');
+  assert.equal(readFileSync(join(elsewhere, 'skills', 'x', 'SKILL.md'), 'utf8'), FM(BLOCK));
+  assert.deepEqual(warned, ['Worca could not be sure it removed every hook from the set skill billing:unsure, so a hook in it may still run in this try.']);
+  for (const l of [null, {}, { base, pluginDirs: [] }]) assert.deepEqual(await stripSetSkillHooks(l, { warn: async () => {} }), { changed: [], links: [], unparsed: [] });
+  assert.deepEqual(await stripSetSkillHooks(layer, { warn: async () => {} }), { changed: [], links: [], unparsed: [] }, 'a second pass: nothing left');
+});
+
+test('O3: a link in a set skill copy is removed, never followed', async () => {
+  const base = join(tmp(), 'skills');
+  mkdirSync(join(base, 'billing', 'skills'), { recursive: true });
+  const outside = tmp();
+  mkdirSync(join(outside, 'evil'));
+  writeFileSync(join(outside, 'evil', 'SKILL.md'), FM(BLOCK));
+  symlinkSync(join(outside, 'evil'), join(base, 'billing', 'skills', 'evil'), 'junction');
+  const warned = [];
+  const r = await stripSetSkillHooks({ base, pluginDirs: [join(base, 'billing')] }, { warn: async (t) => { warned.push(t); } });
+  assert.deepEqual(r.links, ['billing/skills/evil']);
+  assert.equal(existsSync(join(base, 'billing', 'skills', 'evil')), false);
+  assert.equal(readFileSync(join(outside, 'evil', 'SKILL.md'), 'utf8'), FM(BLOCK), 'its target is untouched');
+  assert.deepEqual(warned, ['The set skill billing:evil Worca copied is a link, so Worca left it out of this try.']);
+});
+
+test('O3: a set skill copy Worca cannot rewrite ends the try as Worca\'s own failure, named', { skip: process.platform === 'win32' || (process.getuid && process.getuid() === 0)
+  ? 'a read-only folder refuses a new file only on POSIX, and not for root' : false }, async () => {
+  const base = join(tmp(), 'skills');
+  mkdirSync(join(base, 'billing', 'skills', 'deploy'), { recursive: true });
+  writeFileSync(join(base, 'billing', 'skills', 'deploy', 'SKILL.md'), FM(BLOCK));
+  const { chmodSync } = await import('node:fs');
+  chmodSync(join(base, 'billing', 'skills', 'deploy'), 0o555);
+  try {
+    await assert.rejects(stripSetSkillHooks({ base, pluginDirs: [join(base, 'billing')] }, { warn: async () => {} }),
+      (e) => e.code === 'TRY_PLUGINS_OFF_FAILED' && /^Worca could not switch off the hooks of the skills from your sets for this try: .*EACCES/.test(e.message));
+  } finally { chmodSync(join(base, 'billing', 'skills', 'deploy'), 0o755); }
 });

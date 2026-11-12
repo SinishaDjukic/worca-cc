@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { templateRepo } from './helpers/git-dir.mjs';
 import { repoSnapshot } from './helpers/repo-snapshot.mjs';
@@ -24,7 +24,18 @@ const spawns = [];
 const ROOT_SKILL = '---\nname: hooky\ndescription: d\nhooks:\n  Stop:\n    - hooks:\n        - type: command\n          command: echo hi\n---\nbody\n';
 const ROOT_SKILL_OFF = '---\nname: hooky\ndescription: d\n---\nbody\n';
 const mountedSkill = new Map();
-let prevRoot, rootDir;
+let prevRoot, rootDir, prevManaged, libSkillFile;
+// Final review O3: a skill with a frontmatter hook in the person's General set, and what each spawn's --plugin-dir held.
+const SET_SKILL = '---\nname: hookyset\ndescription: d\nhooks:\n  Stop:\n    - hooks:\n        - type: command\n          command: echo hi\n---\nbody\n';
+const SET_SKILL_OFF = '---\nname: hookyset\ndescription: d\n---\nbody\n';
+const setSkill = new Map();
+const setSkillOf = (o) => {
+  for (const d of Array.isArray(o.pluginDirs) ? o.pluginDirs : []) {
+    const f = join(d, 'skills', 'hookyset', 'SKILL.md');
+    if (existsSync(f)) return readFileSync(f, 'utf8');
+  }
+  return null;
+};
 const JSONH = { 'Content-Type': 'application/json' };
 const post = (p, b) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(b || {}) });
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -60,8 +71,26 @@ before(async () => {
     spawns.push(o);
     const f = join(String(o.cwd || ''), '.claude', 'skills', 'hooky', 'SKILL.md');
     mountedSkill.set(o, existsSync(f) ? readFileSync(f, 'utf8') : null);
+    setSkill.set(o, setSkillOf(o));
     return realRunClaude(o);
   };
+  // O3: the library skill through the real import, in General (every target's set unless left out).
+  prevManaged = process.env.WORCA_CLAUDE_MANAGED_SETTINGS;
+  process.env.WORCA_CLAUDE_MANAGED_SETTINGS = join(homeDir, 'no-managed.json');   // sideloading allowed whatever this machine says
+  const setSrc = join(await mkdtemp(join(tmpdir(), 'worca-cc-wftpoff-set-')), 'hookyset');
+  extra.push(dirname(setSrc));
+  mkdirSync(setSrc);
+  writeFileSync(join(setSrc, 'SKILL.md'), SET_SKILL);
+  const { stageImport } = await import('../src/core/skills-registry/import.mjs');
+  const { commitImport } = await import('../src/core/skills-registry/library.mjs');
+  const { loadSkillCatalog } = await import('../src/core/skills-registry/catalog.mjs');
+  const { putSkillMember } = await import('../src/core/mcp/store.mjs');
+  const st = await stageImport({ kind: 'dir', path: setSrc }, {});
+  await commitImport(st.dir, st.name);
+  const entry = (await loadSkillCatalog()).find((e) => e.id === 'skill:library:hookyset');
+  await putSkillMember('general', entry.id, { enabled: true }, { entry, siblingNames: [] });
+  libSkillFile = join(entry.dir, 'SKILL.md');
+  assert.equal(readFileSync(libSkillFile, 'utf8'), SET_SKILL, 'the library holds the skill with its hook');
   const mod = await import('../ui/server.mjs');
   ({ runs, _testing, stopRun } = mod);
   settled = runSettled({ runs, answerRun: _testing.answerRun });
@@ -85,6 +114,7 @@ after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
   if (prevRoot === undefined) delete process.env.WORCA_PROJECTS_ROOT; else process.env.WORCA_PROJECTS_ROOT = prevRoot;
+  if (prevManaged === undefined) delete process.env.WORCA_CLAUDE_MANAGED_SETTINGS; else process.env.WORCA_CLAUDE_MANAGED_SETTINGS = prevManaged;
   if (rootDir) extra.push(rootDir);
   for (const [k, v] of Object.entries(prevEnv || {})) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   delete process.env.WORCA_MOCK; delete process.env.WORCA_FLAGS;
@@ -142,6 +172,9 @@ test('a Pretend project try: no user settings on any spawn; the project\'s hooks
   const { readRunManifest } = await import('../src/core/run-manifest.mjs');
   const warnings = (await readRunManifest(entry.orch.runRoot))?.warnings || [];
   assert.ok(!warnings.some((w) => /modified mounted skill `hooky`/.test(w)), `Worca's own strip is not an agent's edit: ${JSON.stringify(warnings)}`);
+  // O3: the General set's skill reaches the spawn through --plugin-dir without its hooks; the library keeps them.
+  for (const o of mine) assert.equal(setSkill.get(o), SET_SKILL_OFF);
+  assert.equal(readFileSync(libSkillFile, 'utf8'), SET_SKILL);
 });
 
 test('a Real project try keeps them: user settings as a normal run loads them, and the project file is untouched', { timeout: 240000 }, async () => {
@@ -152,6 +185,7 @@ test('a Real project try keeps them: user settings as a normal run loads them, a
   for (const o of mine) { assert.deepEqual(o.settingSources, RUN_SOURCES); assert.equal('pluginsOff' in o, false); }
   assert.deepEqual(JSON.parse(readFileSync(join(br.worktreeDir, '.claude', 'settings.json'), 'utf8')), PROJECT_SETTINGS);
   for (const o of mine) assert.equal(mountedSkill.get(o), ROOT_SKILL, 'E2: a Real try mounts the root skill as a normal run does');
+  for (const o of mine) assert.equal(setSkill.get(o), SET_SKILL, 'O3: and the set skill with its hooks');
 });
 
 test('a Pretend try without a project: its spawns load no user settings either', { timeout: 240000 }, async () => {
@@ -160,11 +194,16 @@ test('a Pretend try without a project: its spawns load no user settings either',
   const out = await _testing.invokeStartRun({ ...tryRunBody({ name: 'Brief', request: 'Write it.' }, [], { workflowId: 'wf_poff', tryNo: 1 }),
     title: 'Test: Brief · try 1' }, null, { workflowTest: { use: 'draft' } });
   assert.equal(out.status, 200, JSON.stringify(out.body));
-  await settled(out.body.runId);
+  const entry = await settled(out.body.runId);
   const mine = spawns.slice(from);
   assert.ok(mine.length > 0);
   for (const o of mine) { assert.deepEqual(o.settingSources, RUN_SOURCES); assert.equal(o.pluginsOff, true); }
   for (const o of mine) assert.equal(mountedSkill.get(o), ROOT_SKILL_OFF, 'E2: never stripped before, the same mount loses its hooks too');
+  for (const o of mine) assert.equal(setSkill.get(o), SET_SKILL_OFF, 'O3: so does the set skill');
+  const { readRunManifest } = await import('../src/core/run-manifest.mjs');
+  assert.ok(entry.orch.runRoot, 'a try is a detached run');
+  const warnings = (await readRunManifest(entry.orch.runRoot))?.warnings || [];
+  assert.ok(!warnings.some((w) => /modified mounted skill/.test(w)), `review m5: no rescue warning here either: ${JSON.stringify(warnings)}`);
 });
 
 test('E2: a normal run mounts the root skill as it is, hooks and all', { timeout: 240000 }, async () => {
@@ -175,6 +214,7 @@ test('E2: a normal run mounts the root skill as it is, hooks and all', { timeout
   const mine = spawns.slice(from);
   assert.ok(mine.length > 0);
   for (const o of mine) { assert.equal('pluginsOff' in o, false); assert.equal(mountedSkill.get(o), ROOT_SKILL); }
+  for (const o of mine) assert.equal(setSkill.get(o), SET_SKILL, 'O3: a normal run loads the set skill as it is');
 });
 
 test('a switch-off Worca cannot write: no step runs, and the try is Worca\'s problem (copy), not the workflow\'s (U-T2)',
