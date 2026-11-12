@@ -84,6 +84,10 @@ export function report(cells) {
 
 // ---- the worker pool: one walk split across N workers, merged back in the units' own order (click-check uses it too)
 
+/** Launch options for a browser the pool's parent or worker stops itself: playwright's own SIGINT/SIGTERM handler would
+ *  close every browser and exit 130 before installStopHandlers has stopped the apps and removed the temp homes. */
+export const OWN_SIGNALS = { handleSIGINT: false, handleSIGTERM: false };
+
 /** A unit with no result after this long counts as a crash of its worker (the compare: one cell). */
 export const UNIT_TIMEOUT_MS = 300000;
 
@@ -110,16 +114,21 @@ const seconds = (ms) => `${ms / 1000} s`;
  * awaited before the next: two sandbox apps never start at once). `results[index]` holds what `run` resolved for units[index],
  * so a report built from it is in the units' order whatever order they finished in. A `run` that rejects or takes longer than
  * `timeoutMs` stops its worker and lists its unit as unfinished (no retry); the queue goes on on the others. `stop` is awaited
- * once for every started worker. `live` (optional Set) holds the started, not yet stopped workers, for installStopHandlers.
+ * once for every started worker. `live` (optional Set) holds a stopper per started, not yet stopped worker, for
+ * installStopHandlers: calling it shares the one stop of that worker, so a signal and a crash never stop it twice.
  * @returns {Promise<{ results: Array, unfinished: Array<{ worker: number, reason: string, units: Array, tail: string[] }> }>}
  */
 export async function runPool({ units, workers, start, run, stop, timeoutMs = UNIT_TIMEOUT_MS, live = new Set() }) {
   const results = new Array(units.length);
   const unfinished = [];
   const started = [];
-  const stopped = new Set();
+  const stopping = new Map();
   let next = 0;
-  const halt = async (w) => { if (stopped.has(w)) return; stopped.add(w); live.delete(w); try { await stop(w); } catch { /* already gone */ } };
+  const halt = (w) => {
+    if (!stopping.has(w)) stopping.set(w, Promise.resolve().then(() => stop(w)).catch(() => { /* already gone */ }));
+    return stopping.get(w);
+  };
+  const stopper = new Map();
   const loop = async (n, w) => {
     while (next < units.length) {
       const index = next++;
@@ -129,7 +138,7 @@ export async function runPool({ units, workers, start, run, stop, timeoutMs = UN
       try {
         results[index] = await Promise.race([work, new Promise((_, no) => { timer = setTimeout(() => no(new Error(`timed out after ${seconds(timeoutMs)}`)), timeoutMs); })]);
       } catch (e) {
-        await halt(w);
+        await stopper.get(w)();
         unfinished.push({ worker: n, reason: firstLine(e), units: [units[index]], tail: Array.isArray(w?.tail) ? [...w.tail] : [] });
         return;
       } finally { clearTimeout(timer); }
@@ -140,12 +149,14 @@ export async function runPool({ units, workers, start, run, stop, timeoutMs = UN
     for (let i = 0; i < workers; i++) {
       let w;
       try { w = await start(i); } catch (e) { unfinished.push({ worker: i + 1, reason: firstLine(e), units: [], tail: [] }); continue; }
-      started.push(w); live.add(w);
+      started.push(w);
+      const own = () => { live.delete(own); return halt(w); };
+      stopper.set(w, own); live.add(own);
       loops.push(loop(i + 1, w));
     }
     await Promise.all(loops);
     if (next < units.length && unfinished.length) unfinished.at(-1).units.push(...units.slice(next));   // every worker crashed
-  } finally { for (const w of started) await halt(w); }
+  } finally { for (const w of started) await stopper.get(w)(); }
   return { results, unfinished };
 }
 
@@ -199,7 +210,7 @@ async function playwright() {
 async function preflight() {
   let pw;
   try { pw = await playwright(); } catch (e) { throw new Error(`cannot load the browser library "playwright": ${e.message}`); }
-  return { chromium: pw.chromium, browser: await pw.chromium.launch(launchOptions()) };
+  return { chromium: pw.chromium, browser: await pw.chromium.launch({ ...launchOptions(), ...OWN_SIGNALS }) };
 }
 
 export async function freePort() {
@@ -368,7 +379,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   let pre = null;
   const off = installStopHandlers(async () => {
     await pre?.browser?.close().catch(() => {});
-    await Promise.all([...live].map((w) => w.stop()));
+    await Promise.allSettled([...live].map((halt) => halt()));
   });
   try {
     try { pre = await (deps.preflight || preflight)(); } catch (e) { console.error(e.message); return 2; }
@@ -393,7 +404,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
         } };
         try {
           app = w.app = await (deps.startApp || startApp)(home, ASK);
-          browser = w.browser = await pre.chromium.launch(launchOptions());
+          browser = w.browser = await pre.chromium.launch({ ...launchOptions(), ...OWN_SIGNALS });
         } catch (e) { await w.stop(); throw e; }
         return w;
       },

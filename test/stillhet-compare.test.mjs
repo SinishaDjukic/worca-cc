@@ -278,3 +278,35 @@ test('main: a cell with no result after the timeout fails the run, names the cel
   assert.match(out, /worker \d stopped \(timed out after 0\.05 s\); unfinished: route-chat light 360/);
   assert.equal(stopped.length, 2);
 });
+
+test('runPool: a signal stopping the live workers while a crash stops the same one runs its stop once, and both wait for it', async () => {
+  const live = new Set();
+  let stops = 0, release;
+  const gate = new Promise((r) => { release = r; });
+  const pool = runPool({
+    units: cellUnits(2), workers: 1, live, start: async () => ({}),
+    stop: async () => { stops++; await gate; },
+    run: async () => { await new Promise((r) => setTimeout(r, 5)); throw new Error('browser closed'); },
+  });
+  await new Promise((r) => setTimeout(r, 1));
+  const signal = Promise.all([...live].map((halt) => halt()));
+  await new Promise((r) => setTimeout(r, 20));   // the crash path reaches the same stop meanwhile
+  let settled = false;
+  signal.then(() => { settled = true; });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(settled, false, 'the signal path must wait for the stop already running');
+  release();
+  await signal; await pool;
+  assert.equal(stops, 1);
+});
+
+test('the pool owns SIGINT and SIGTERM: every browser the compare and click-check launch leaves them to installStopHandlers', async () => {
+  // playwright's own handler otherwise closes the browsers and exits 130 before the apps are stopped and the homes removed
+  assert.deepEqual(pool.OWN_SIGNALS, { handleSIGINT: false, handleSIGTERM: false });
+  const { readFileSync } = await import('node:fs');
+  for (const f of ['../tools/stillhet-compare.mjs', '../plans/rail/prototype/gates/click-check.mjs']) {
+    const launches = readFileSync(new URL(f, import.meta.url), 'utf8').match(/chromium\.launch\([^\n]*/g);
+    // --pages (pagesMain) keeps today's single path and playwright's own handlers: it starts no app and no temp home
+    for (const l of launches.filter((x) => x !== 'chromium.launch(launchOptions());')) assert.match(l, /OWN_SIGNALS/, `${f}: ${l}`);
+  }
+});

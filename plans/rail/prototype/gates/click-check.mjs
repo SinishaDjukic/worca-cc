@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseWorkers, clampWorkers, runPool, finishRun, installStopHandlers, startApp } from '../../../../tools/stillhet-compare.mjs';
+import { parseWorkers, clampWorkers, runPool, finishRun, installStopHandlers, startApp, OWN_SIGNALS } from '../../../../tools/stillhet-compare.mjs';
 
 const dir = fileURLToPath(new URL('..', import.meta.url));
 const THIS = fileURLToPath(import.meta.url);
@@ -191,12 +191,12 @@ async function discover(browser, small) {
 async function preflight() {
   let pw;
   try { pw = await import('playwright'); } catch (e) { throw new Error(`cannot load the browser library "playwright": ${e.message}`); }
-  return { chromium: pw.chromium, browser: await pw.chromium.launch({ channel: 'chrome' }) };
+  return { chromium: pw.chromium, browser: await pw.chromium.launch({ channel: 'chrome', ...OWN_SIGNALS }) };
 }
 
 // --workers 1: the units run here, in one browser, against this process's target.
 const inProcess = (chromium) => ({
-  start: async () => { const browser = await chromium.launch({ channel: 'chrome' }); return { browser, stop: () => browser.close().catch(() => {}) }; },
+  start: async () => { const browser = await chromium.launch({ channel: 'chrome', ...OWN_SIGNALS }); return { browser, stop: () => browser.close().catch(() => {}) }; },
   run: (w, unit) => runUnit(w.browser, unit),
   stop: (w) => w.stop(),
 });
@@ -250,7 +250,7 @@ export function childWorkers({ args = [THIS, '--worker'], target = process.env.S
 // --worker: one child of the walk. Its own browser; never builds (the parent built once before it started).
 async function workerMain() {
   const { chromium } = await import('playwright');
-  const browser = chromium.launch({ channel: 'chrome' });
+  const browser = chromium.launch({ channel: 'chrome', ...OWN_SIGNALS });
   browser.catch(() => {});   // a failed launch answers every unit with its error
   let quitting = false;
   const quit = async () => { if (quitting) return; quitting = true; await (await browser.catch(() => null))?.close().catch(() => {}); process.exit(0); };
@@ -271,7 +271,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   let pre = null;
   const off = installStopHandlers(async () => {
     await pre?.browser?.close().catch(() => {});
-    await Promise.all([...live].map((w) => w.stop()));
+    await Promise.allSettled([...live].map((halt) => halt()));
   });
   try {
     try { pre = await (deps.preflight || preflight)(); } catch (e) { console.error(e.message); return 2; }
