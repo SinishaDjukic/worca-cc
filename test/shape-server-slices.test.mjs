@@ -878,6 +878,7 @@ shipT('refresh keeps one Satisfies line', async () => {
     return okRun('');
   });
   const w = reqShipWorld();
+  assert.equal((await putMarks(w.f.id, [{ id: 'R-po-1', mark: 'met' }, { id: 'R-ux-1', mark: 'met' }])).status, 200);
   const r = await ship(w.f.id, 'stacked');
   assert.equal(r.status, 200, await r.clone().text());
   const edit = ghCalls(seen, 'edit').find((a) => a[3] === 'https://github.com/me/repo/pull/1');
@@ -888,8 +889,7 @@ shipT('refresh keeps one Satisfies line', async () => {
 });
 
 // ── Shaper requirements s3 (D8, D9): the acceptance ledger gates the ship ─────────────────────────────────────────
-const REQ_ON = { ...NO_ADO, WORCA_FLAGS: 'shapeRequirements' };
-const reqShipT = (name, fn, env = REQ_ON) => test(name, () => withEnvVars(env, async () => {
+const reqShipT = (name, fn, env = NO_ADO) => test(name, () => withEnvVars(env, async () => {
   ({ _testing: gitInfo } = await import('../src/core/git-info.mjs'));
   try { await fn(); } finally { gitInfo.reset(); }
 }));
@@ -965,17 +965,6 @@ reqShipT('PUT acceptance while the feature is shipping answers 409', async () =>
   await (await shipping).text();
   assert.deepEqual(storedMarks(w.f.id), ALL_MARKED);
 });
-
-reqShipT('flag off: an unmarked feature with agreed requirements ships as today; no ledger in the view, and PUT answers 404', async () => {
-  const seen = []; stubShip(seen);
-  const w = shipWorld();
-  withAgreed(w.f.id);
-  assert.equal('acceptance' in (await view(w.f.id)).ship, false);
-  assert.equal((await putMarks(w.f.id, ALL_MARKED)).status, 404);
-  assert.equal(storedMarks(w.f.id), undefined, 'nothing stored');
-  const r = await ship(w.f.id, 'one');
-  assert.equal(r.status, 200, await r.clone().text());
-}, { ...NO_ADO, WORCA_FLAGS: '-shapeRequirements' });
 
 reqShipT('the chat Ship card carries the ledger: offered unmarked, updated by each PUT, and final once shipped', async () => {
   const seen = []; stubShip(seen);

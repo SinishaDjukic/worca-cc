@@ -21,9 +21,9 @@ const planNote = (featureId, text, deps) => {
 };
 
 /** The `changes` card (state 'proposed'). `run` is the start body for a round or a plain follow-up (D3, D18).
- *  Shaper requirements s3 (D12): with `requirementsOn`, a shipped feature with agreed requirements updates them first:
+ *  Shaper requirements s3 (D12): a shipped feature with agreed requirements updates them first:
  *  the card says so (`requirementsFirst`), a round runs shaped and its prompt lists the agreed requirements. */
-export function changesCard({ text, facts, requirementsOn = false }) {
+export function changesCard({ text, facts }) {
   const landing = landingFor(facts);
   if (!landing) return null;
   const req = clip(text);
@@ -33,7 +33,7 @@ export function changesCard({ text, facts, requirementsOn = false }) {
   const tags = (f && f.tags) || (r && r.tags) || [];          // D19: the origin's tags, so enforced tag rules pass
   const labels = (f && f.labels) || (r && r.labels) || [];    // s2: and its labels
   const withTags = (b) => ({ ...b, ...(tags.length ? { tags } : {}), ...(labels.length ? { labels } : {}) });
-  const first = requirementsOn === true && !!f && f.shipped === true && Array.isArray(f.agreed) && f.agreed.length > 0
+  const first = !!f && f.shipped === true && Array.isArray(f.agreed) && f.agreed.length > 0
     && (landing.kind === 'round' || landing.kind === 'follow-up');
   const run = landing.kind === 'round' && first
     ? withTags({ prompt: `${req}\n\n${changesRequirementsBlock(f.agreed, f.acceptance)}`, projectDir, sourceBranch: landing.target.sourceBranch,
@@ -180,9 +180,8 @@ export function linksOfWork(links, pipelineId) {
 
 /** D5: the thread rule both tools obey (what the removed thread reply decided), plus the ids and the card.
  *  kind 'changes': input { pipelineId, request }; kind 'route': input { featureId, text, guess, reason }.
- *  → { ok: true, card } | { ok: false, error } — the error is what the model reads. Pure over `work`.
- *  `requirementsOn` (the parent's Labs flag shapeRequirements) mints a requirements-first card (s3, D12). */
-export function shapeToolFit(kind, input, work, { requirementsOn = false } = {}) {
+ *  → { ok: true, card } | { ok: false, error } — the error is what the model reads. Pure over `work`. */
+export function shapeToolFit(kind, input, work) {
   const no = (error) => ({ ok: false, error });
   const raw = String((kind === 'changes' ? input.request : input.text) || '').trim();
   const field = kind === 'changes' ? 'request' : 'text';
@@ -215,7 +214,7 @@ export function shapeToolFit(kind, input, work, { requirementsOn = false } = {})
     if (halted) return no(`Run ${halted.index} stopped: resume or re-plan it first`);
   } else if (!work.run) return no('this run has no single branch to change');
   else if (work.run.finished === false) return no('the run is still going');
-  const card = changesCard({ text: raw, facts: work.facts, requirementsOn });
+  const card = changesCard({ text: raw, facts: work.facts });
   return card ? { ok: true, card } : no('this run has no single branch to change');
 }
 
@@ -226,7 +225,7 @@ export function shapeToolCheck(kind, input, links, deps) {
   const pid = String(input.pipelineId || '');
   const mine = pid ? linksOfWork(links, pid) : [];
   if (!mine.length) return { ok: false, error: `this chat does not follow run ${pid || '(none)'}` };
-  return shapeToolFit(kind, input, threadWork(mine, deps), { requirementsOn: typeof deps.requirementsOn === 'function' && deps.requirementsOn() === true });
+  return shapeToolFit(kind, input, threadWork(mine, deps));
 }
 
 /** D9: the read-only facts Ask Worca gets in the turn context, or null. */

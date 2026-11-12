@@ -1,4 +1,4 @@
-// test/workflows-shape-requirements.test.mjs — Shaper's requirements stage as workflows (Labs flag shapeRequirements):
+// test/workflows-shape-requirements.test.mjs — Shaper's requirements stage as workflows :
 // the two variant graphs, the unchanged base graphs, which id a request gets (or why it is refused), and the reserved,
 // never-listed ids. The server is booted in-process for GET /api/workflows only.
 import { test, before, after } from 'node:test';
@@ -83,22 +83,12 @@ test('the base graphs are unchanged: wf_shape and wf_shape_ux deepEqual their ca
   assert.doesNotMatch(JSON.stringify(fixture), /"model"/, 'the built-in graphs pin no model (factory-models.mjs)');
 });
 
-test('flag off picks today\'s ids for every shape it accepts', () => {
-  for (const shape of [{}, { size: 'large' }, { size: 'medium' }, { size: 'small' }, { perspectives: ['ux'], size: 'large' }]) {
-    const r = resolveShapeRequest({ shape, workflowId: 'wf_shape' });
-    assert.equal(r.ok, true, JSON.stringify(shape));
-    assert.equal(r.workflowId, shape.perspectives ? 'wf_shape_ux' : 'wf_shape');
-    assert.deepEqual(resolveShapeRequest({ shape, workflowId: 'wf_shape' }, { requirementsOn: false }), r);
-  }
-});
-
-test('flag on: the requirements id only for a medium or large task that is not a slice ticket', () => {
-  const on = { requirementsOn: true };
-  assert.equal(resolveShapeRequest({ shape: { size: 'large' } }, on).workflowId, 'wf_shape_req');
-  assert.equal(resolveShapeRequest({ shape: { size: 'medium' } }, on).workflowId, 'wf_shape_req');
-  assert.equal(resolveShapeRequest({ shape: { size: 'large', perspectives: ['ux'] } }, on).workflowId, 'wf_shape_ux_req');
-  assert.equal(resolveShapeRequest({ shape: { size: 'small' } }, on).workflowId, 'wf_shape');
-  assert.equal(resolveShapeRequest({ shape: {} }, on).workflowId, 'wf_shape');
+test('the requirements id only for a medium or large task that is not a slice ticket', () => {
+  assert.equal(resolveShapeRequest({ shape: { size: 'large' } }).workflowId, 'wf_shape_req');
+  assert.equal(resolveShapeRequest({ shape: { size: 'medium' } }).workflowId, 'wf_shape_req');
+  assert.equal(resolveShapeRequest({ shape: { size: 'large', perspectives: ['ux'] } }).workflowId, 'wf_shape_ux_req');
+  assert.equal(resolveShapeRequest({ shape: { size: 'small' } }).workflowId, 'wf_shape');
+  assert.equal(resolveShapeRequest({ shape: {} }).workflowId, 'wf_shape');
 });
 
 const SLICE = { feature: 'f1', index: 1, total: 2, outline: { slices: [
@@ -106,18 +96,16 @@ const SLICE = { feature: 'f1', index: 1, total: 2, outline: { slices: [
   { id: 's2', title: 'Two', goal: 'g', inScope: [], outOfScope: [], acceptance: ['a'], dependsOn: ['s1'], estimate: 'small' },
 ] } };
 
-test('a named requirements id is refused with the flag off, on a slice ticket, and for a small or absent size', () => {
+test('a named requirements id is refused on a slice ticket, and for a small or absent size', () => {
   for (const workflowId of SHAPE_REQ_WORKFLOW_IDS) {
-    assert.deepEqual(resolveShapeRequest({ shape: { size: 'large' }, workflowId }),
-      { ok: false, error: 'the requirements stage is off (Labs flag shapeRequirements)' });
-    const slice = resolveShapeRequest({ shape: { size: 'large', slice: SLICE }, workflowId }, { internal: true, requirementsOn: true });
+    const slice = resolveShapeRequest({ shape: { size: 'large', slice: SLICE }, workflowId }, { internal: true });
     assert.deepEqual(slice, { ok: false, error: 'a slice ticket runs the Shaper workflow (wf_shape)' });
     for (const shape of [{ size: 'small' }, {}]) {
-      assert.deepEqual(resolveShapeRequest({ shape, workflowId }, { requirementsOn: true }),
+      assert.deepEqual(resolveShapeRequest({ shape, workflowId }),
         { ok: false, error: 'the requirements stage needs a medium or large task' });
     }
   }
-  const ticket = resolveShapeRequest({ shape: { size: 'large', slice: SLICE } }, { internal: true, requirementsOn: true });
+  const ticket = resolveShapeRequest({ shape: { size: 'large', slice: SLICE } }, { internal: true });
   assert.equal(ticket.ok, true, ticket.error);
   assert.equal(ticket.workflowId, 'wf_shape', 'a slice ticket with the flag on runs wf_shape');
 });
@@ -125,7 +113,7 @@ test('a named requirements id is refused with the flag off, on a slice ticket, a
 test('shape.lead: validated, kept, and added to the perspectives', () => {
   assert.deepEqual(resolveShapeRequest({ shape: { lead: 'boss' } }),
     { ok: false, error: 'shape.lead must be one of product, architect, ux, qa, security, devops' });
-  const r = resolveShapeRequest({ shape: { lead: 'security', perspectives: ['qa'], size: 'large' } }, { requirementsOn: true });
+  const r = resolveShapeRequest({ shape: { lead: 'security', perspectives: ['qa'], size: 'large' } });
   assert.deepEqual(r.shape, { perspectives: ['product', 'qa', 'security'], size: 'large', lead: 'security' });
 });
 
@@ -138,7 +126,7 @@ test('reserved apart: core and composer refuse both ids; the pinned lists keep t
   }
 });
 
-test('readWorkflow resolves both ids with the flag off; save and delete refuse them; never listed, never an Auto candidate', async () => {
+test('readWorkflow resolves both ids; save and delete refuse them; never listed, never an Auto candidate', async () => {
   assert.equal(await readWorkflow('wf_shape_req'), GRAPH_SHAPE_REQ_WORKFLOW);
   assert.equal(await readWorkflow('wf_shape_ux_req'), GRAPH_SHAPE_UX_REQ_WORKFLOW);
   for (const id of SHAPE_REQ_WORKFLOW_IDS) {
@@ -175,19 +163,17 @@ test('slice variants: `n_task.task` feeds four takers via ws1–ws4 and validate
 const REQ_SLICE = { ...SLICE, outline: { ...SLICE.outline, slices: SLICE.outline.slices.map((s, i) => ({ ...s, requirements: i ? ['R-qa-1'] : ['R-po-1'] })),
   agreed: [{ id: 'R-po-1', text: 'a' }, { id: 'R-qa-1', text: 'b' }], leftOut: [] } };
 
-test('slice ticket resolution: flag on + ids → wf_shape_slice_req (ux → wf_shape_ux_slice_req); flag off + ids → wf_shape (ux → wf_shape_ux); a named slice variant without a slice returns the error', () => {
-  const fire = (shape, requirementsOn, workflowId = 'wf_shape') => resolveShapeRequest({ shape, workflowId }, { internal: true, requirementsOn });
-  assert.equal(fire({ size: 'large', slice: REQ_SLICE }, true).workflowId, 'wf_shape_slice_req');
-  assert.equal(fire({ size: 'large', slice: REQ_SLICE, perspectives: ['ux'] }, true).workflowId, 'wf_shape_ux_slice_req');
-  assert.equal(fire({ size: 'large', slice: REQ_SLICE }, false).workflowId, 'wf_shape');
-  assert.equal(fire({ size: 'large', slice: REQ_SLICE, perspectives: ['ux'] }, false).workflowId, 'wf_shape_ux');
-  assert.equal(fire({ size: 'large', slice: SLICE }, true).workflowId, 'wf_shape', 'a slice without ids runs wf_shape');
-  assert.deepEqual(fire({ size: 'large', slice: REQ_SLICE }, true).shape.slice.outline.agreed, REQ_SLICE.outline.agreed);
+test('slice ticket resolution: ids → wf_shape_slice_req (ux → wf_shape_ux_slice_req); a named slice variant without a slice returns the error', () => {
+  const fire = (shape, workflowId = 'wf_shape') => resolveShapeRequest({ shape, workflowId }, { internal: true });
+  assert.equal(fire({ size: 'large', slice: REQ_SLICE }).workflowId, 'wf_shape_slice_req');
+  assert.equal(fire({ size: 'large', slice: REQ_SLICE, perspectives: ['ux'] }).workflowId, 'wf_shape_ux_slice_req');
+  assert.equal(fire({ size: 'large', slice: SLICE }).workflowId, 'wf_shape', 'a slice without ids runs wf_shape');
+  assert.deepEqual(fire({ size: 'large', slice: REQ_SLICE }).shape.slice.outline.agreed, REQ_SLICE.outline.agreed);
   for (const id of SHAPE_SLICE_REQ_WORKFLOW_IDS) {
-    assert.deepEqual(fire({ size: 'large' }, true, id), { ok: false, error: `${id} runs only as a slice of a feature with agreed requirements` });
-    assert.deepEqual(fire({ size: 'large', slice: SLICE }, true, id), { ok: false, error: `${id} runs only as a slice of a feature with agreed requirements` });
+    assert.deepEqual(fire({ size: 'large' }, id), { ok: false, error: `${id} runs only as a slice of a feature with agreed requirements` });
+    assert.deepEqual(fire({ size: 'large', slice: SLICE }, id), { ok: false, error: `${id} runs only as a slice of a feature with agreed requirements` });
   }
-  assert.equal(fire({ size: 'large', slice: REQ_SLICE }, true, 'wf_shape_slice_req').workflowId, 'wf_shape_slice_req');
+  assert.equal(fire({ size: 'large', slice: REQ_SLICE }, 'wf_shape_slice_req').workflowId, 'wf_shape_slice_req');
 });
 
 test('slice variants are reserved: readWorkflow returns them with the flag off, deleteWorkflow refuses them, listWorkflows hides them', async () => {
