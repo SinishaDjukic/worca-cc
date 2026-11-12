@@ -68,6 +68,7 @@ Removing dead code and deprecated routes is a separate final PR after every slic
 
 - Two tiers. A fix round runs only the tests of changed files, the design-system gates and the flag-off checks. The real-browser walk runs once per slice, at the end, in Expert (another level only when the change touches what that level shows); levels run one after another.
 - Grid: both themes at 1280, light at 360; 420 only when the change is about layout. A fix round re-walks only the cells of the pages it touched.
+- The full gates and the full pixel comparison run once per slice, at the end, before the PR. A fix or review round reruns only the gates and compare cells whose files changed, and reuses the last result for the rest. Every long job runs in the background and reports a status line at least every 5 minutes.
 - Test both flag states. Nothing is rerun on an identical tree.
 - Live data, from slice 3 on: the end-of-slice walk also opens the slice's pages on live data in their empty, long-content and failed states, at the same grid. The pixel comparison runs on demo data only, so these states are where a layout can still break. Their screenshots go in the PR next to the pairs.
 - The full suite runs once per slice, before the PR, and once on the slice's base commit. A slice is clean when it adds no failure; the PR lists the failures that are also red on the base, by test file.
