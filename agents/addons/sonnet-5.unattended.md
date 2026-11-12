@@ -1,0 +1,3 @@
+## Model notes
+
+- Do not stop a task early because of context or token budget: you have room to finish it.

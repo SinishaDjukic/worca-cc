@@ -183,6 +183,7 @@ import { shapeRecordFrom, buildShapeStats } from './shape/stats.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
 import { guardedGitEnv } from './git-guard.mjs';
 import { stripHostCredentials } from './host-credentials.mjs';
+import { isPinnedAddon } from './model-addons.mjs';
 
 // worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
 // latter is `/C:/…` on Windows and %-encoded everywhere (see DEFAULT_AGENTS_DIR
@@ -1197,9 +1198,17 @@ export class RunHarness extends EventEmitter {
     this.state.networkWait = null;           // the run page's "waiting for network…" banner (_publishNetworkWait)
   }
 
-  /** @returns {object} a deep-ish snapshot of current state. */
+  /** @returns {object} a deep-ish snapshot of current state. A step's model add-on goes without its text (up to ~6 KB a
+   *  step, in every buffered frame); _persist writes this.state, so the DB keeps the text a resume sends. */
   getState() {
-    return JSON.parse(JSON.stringify(this.state));
+    const snap = JSON.parse(JSON.stringify(this.state));
+    for (const st of Array.isArray(snap.steps) ? snap.steps : []) {
+      if (st?.addon && typeof st.addon === 'object') {
+        const { v, family, mode, files, sha256 } = st.addon;
+        st.addon = { v, family, mode, files, sha256 };
+      }
+    }
+    return snap;
   }
 
   /** Save to plans/ (server): the saved checkout path rides state.shaping so the run card can show it. */
@@ -7994,10 +8003,16 @@ export class RunHarness extends EventEmitter {
     const step = key ? this.state.steps.find((s) => s.key === key) : null;
     // The runner reports the session id on its own `session` event; the init
     // event's copy is for Ask Worca, which reads raw captures that lack it.
+    // The model add-on the spawn carried (executor.mjs spawnAgent) is pinned beside the session id, in the same
+    // persist: a pause mid-step resumes this session, and the resume sends exactly this text (orchestrator.mjs).
+    const addon = !e.init && step && isPinnedAddon(e.addon) && step.addon?.sha256 !== e.addon.sha256 ? e.addon : null;
+    if (addon) step.addon = addon;
     if (!e.init && typeof e.sessionId === 'string' && step && step.sessionId !== e.sessionId) {
       step.sessionId = e.sessionId;
+      // A fresh session that carried no add-on drops the old pin: a later resume of it must send none.
+      if (step.addon && !isPinnedAddon(e.addon)) delete step.addon;
       this._persist().catch(() => {});
-    }
+    } else if (addon) this._persist().catch(() => {});
     if (!e.init) return;
     this._log(role, 'debug', `[init] model=${e.model || '?'}`, attr);
     // §4.7: stamp the session's ACTUAL model on the step (mirrors the

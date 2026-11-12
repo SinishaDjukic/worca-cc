@@ -626,6 +626,40 @@ work. For an npm install worca runs the package's native `claude.exe` next to np
 or the Bedrock / Vertex switch in worca's environment counts as signed in. When a chat turn or a model test fails
 because the CLI is signed out, worca says so instead of showing the bare error.
 
+### Model add-ons
+
+Every pipeline agent gets the same system prompt whatever model runs it. Anthropic's per-model prompting guides ask
+for different corrections per model family, so worca appends a short **model add-on** after the agent's prompt when the
+step runs on a covered family. The texts are starting points taken from the guides; their effect is not measured yet.
+
+- **Families.** `fable-5-2`, `fable-5-1`, `fable-5`, `opus-5-5`, `opus-5`, `opus-4-8`, `sonnet-5-5`, `sonnet-5` and
+  `haiku-5-5`, read from the full model id (`claude-opus-5-5`, `claude-opus-4-8[1m]`, a dated id such as
+  `claude-sonnet-5-20261001`). Bare aliases (`opus`, `sonnet`, …) and older families get none: the version an alias
+  names changes with the CLI.
+- **Engines.** Claude Code, and GitHub Copilot CLI when its model is a `claude-*` model (`copilot/claude-opus-5.5`).
+  Codex, Cursor, OpenCode, Gemini CLI, Qwen Code and Goose get none. Chats get none yet either.
+- **Lookup order.** The files live in `agents/addons/`. worca reads `<family>.md` (every step), then
+  `<family>.unattended.md` (unattended steps only), then `<family>.<agentKey>.md` (that agent only, for example
+  `opus-5.implementer.md`). The files that exist are joined by a blank line. A family with no files gets no add-on,
+  and its prompt is byte-for-byte the prompt without the feature.
+- **Modes.** A Clarify step, or a step that may stop to ask you questions, is *interactive*: it never gets the
+  `.unattended.md` text (keep going, don't ask). Every other step is *unattended*.
+- **Resume.** The add-on is chosen once, when a step's session starts, and saved on the step. A resumed step (after a
+  pause, a restart, answered questions or a plan concern) sends exactly that text again, even if the files changed
+  since. A step started before this feature resumes with none. A session that starts fresh (a fix cycle, or a resume
+  that fell back to a new session) chooses again. The run's `executions.ndjson` records the family, mode, files and
+  sha256 of the add-on each spawn carried.
+- **Adding a file.** Plain markdown, no frontmatter, at most 15 lines and 2048 bytes, starting with `## Model notes`
+  (`## Model notes for this step` for a per-agent file). State each prohibition's reason and scope, and put keep-going
+  text only in `.unattended.md` files. The `sonnet-5-5` and `haiku-5-5` files are identical on purpose (a test pins
+  the pairs equal): edit both together. A file that is a symlink, not a regular file or over the size limit is skipped
+  with a warning on the run log. Update the snapshots with
+  `UPDATE_ADDON_SNAPSHOTS=1 node tools/test.mjs test/model-addons.test.mjs`.
+- **Session groups.** In `shared` mode the member's system prompt moves into the user turn, and its add-on moves with
+  it. The session host's own prompt has none.
+- **Known gap.** A resumed step reloads its agent `.md` from disk, so an edited agent file still changes a resumed
+  step's system prompt. Fable 5.2 can reject such a resume.
+
 ## Codex
 
 worca can run pipelines and chats on OpenAI's Codex CLI.
@@ -733,7 +767,7 @@ Engine & models.
 **How a node runs.**
 
 - The prompt goes on stdin.
-- The system prompt goes in a custom agent that worca writes for each call to a scratch folder handed over with `--add-dir`. It reaches the model as the agent's instructions.
+- The system prompt goes in a custom agent that worca writes for each call to a scratch folder handed over with `--add-dir`. It reaches the model as the agent's instructions. On a claude-* model the prompt ends with the model add-on (see Model add-ons).
 - Files can be read and written in the run checkout, the memory folder and the node's output folders. Copilot refuses any other path, and in a non-interactive run nothing can approve one.
 - Copilot's built-in GitHub MCP server is turned off, so it never acts with your GitHub identity. So are the servers in your own `~/.copilot/mcp-config.json`, which worca's guardrails never saw.
 - Copilot also reads the checkout's `AGENTS.md`, `CLAUDE.md` and `.github/copilot-instructions.md`, as Claude Code reads `CLAUDE.md`.

@@ -1513,7 +1513,7 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       // the readers below reproduce today's exact shape for a v1 pipeline.
       const hasMeta = st.taskId != null || st.parentExecutionId != null || st.title != null || st.phaseOrdinal != null
         || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null || st.auxCosts != null || st.stoppedTurns != null || st.sessionCosts != null || st.memory != null
-        || st.session != null;
+        || st.session != null || st.addon != null;
       const meta = hasMeta
         ? s({ taskId: st.taskId ?? null, parentExecutionId: st.parentExecutionId ?? null,
               title: st.title ?? null, phaseOrdinal: st.phaseOrdinal ?? null,
@@ -1532,7 +1532,9 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
               // The memory the step loaded (#943): { mode: 'frozen', set, files, roleNotes? } | { mode: 'off' }.
               ...(st.memory ? { memory: st.memory } : {}),
               // Session groups (C7): the turn, dispatch and host session a member step ran in — only on member rows.
-              ...(st.session ? { session: st.session } : {}) })
+              ...(st.session ? { session: st.session } : {}),
+              // The model add-on the step's session was started with (model-addons.mjs), text included: a resume sends it.
+              ...(st.addon ? { addon: st.addon } : {}) })
         : null;
       ins.run(
         id, st.key, st.nodeId ?? null, st.phase ?? null,
@@ -2867,6 +2869,7 @@ function stepRowToStep(r) {
     if (em.sessionCosts && typeof em.sessionCosts === 'object') step.sessionCosts = em.sessionCosts;
     if (em.memory && typeof em.memory === 'object') step.memory = em.memory;
     if (em.session && typeof em.session === 'object') step.session = em.session;
+    if (em.addon && typeof em.addon === 'object') step.addon = em.addon;
   }
   return step;
 }

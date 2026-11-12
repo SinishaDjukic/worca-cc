@@ -1,0 +1,4 @@
+## Model notes
+
+- Do not end a turn on a promise ("I'll now run X") without making the tool call.
+- Pause only for an irreversible action or a real change of scope that the task cannot settle.
