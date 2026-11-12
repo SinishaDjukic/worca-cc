@@ -11,7 +11,7 @@ export const ROOT = fileURLToPath(new URL('..', import.meta.url));
 export const BASELINE = join(ROOT, 'test/fixtures/rail-gate-baseline.json');
 const EXT = /\.(mjs|js|html)$/;
 // Not UI code a person writes here: the library itself, and what is built or vendored.
-const SKIP = [/^ui\/public\/design-system\//, /^ui\/public\/browser-extension\//, /^ui\/public\/assets\//, /^ui\/public\/vendor\//, /\.min\.js$/, /(^|\/)style\.css$/];
+const SKIP = [/^ui\/public\/design-system\//, /^ui\/public\/browser-extension\//, /^ui\/public\/assets\//, /^ui\/public\/vendor\//, /\.min\.js$/, /(^|\/)style\.css$/, /^ui\/public\/stillhet\/(components|graph|today)\.js$/];   // Stillhet's generated bundles (tools/stillhet-build.mjs)
 
 // What the library owns. A hit in a page is that thing rebuilt by hand.
 const classes = (...names) => new RegExp(`(?:class|className)\\s*[=:]\\s*["'\`][^"'\`\\n]*(?<![\\w-])(?:${names.join('|')})(?![\\w-])|classList\\.add\\(\\s*["'\`](?:${names.join('|')})["'\`]`, 'g');

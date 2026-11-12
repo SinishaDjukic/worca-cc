@@ -35,3 +35,7 @@ prototype does both at 375px.
   The short name beside it (`dev`, the PR number) never shortens.
 - **Touch:** a list shows its marks by default, since state comes first; tick boxes take the mark's place only while
   selecting, started by a long-press or the list's `Select`. What needs a pointer moves to its editor (a tag's ×).
+
+| Rule | What | Why | Held by |
+|---|---|---|---|
+| `narrow.frame-toggles` | MenuButton (the phone's hamburger) and SideToggle (the wide screen's collapse) both carry `aria-expanded` and `aria-controls` for the bar; SideToggle hides from 1080px down, MenuButton shows at 760px and below | One bar, three widths, a button for each way in | design-system-shell-frame |

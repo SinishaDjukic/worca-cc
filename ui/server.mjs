@@ -67,6 +67,7 @@ import { listProjects, runOnboarded, addProject, addProjects, removeProject, nor
   getProjectByName, ownsProjectFolder, removeProjectAndFolder, enclosingRepoOf, nestedInRepoMessage, worcaNestedRepoOf, worcaNestedRepoHint } from '../src/core/projects.mjs';
 import { effectiveWorkMode, workModeOfRow, workModeForStart, samePath } from '../src/core/project-kind.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR, SHELL_CSP } from '../src/core/index-html.mjs';
+import { stillhetShellHtml } from '../src/core/stillhet-shell.mjs';
 import { gitState, gitAvailable, currentGitState, onGitChange, GIT_MISSING } from '../src/core/git-available.mjs';
 import { teamOverHttps, teamRepoState, setTypedTeamRepo } from '../src/core/git-free/team-repo.mjs';
 import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError, requireFlag } from '../src/core/flags.mjs';
@@ -2181,9 +2182,9 @@ async function pinUiLevel() {
   if (!shell.includes(INDEX_THEME_ANCHOR)) throw new Error(`ui/public/index.html lost its theme anchor ${INDEX_THEME_ANCHOR}`);
   if (!shell.includes(FLAG_GATES_ANCHOR)) throw new Error(`ui/public/index.html lost its flag-gates anchor ${FLAG_GATES_ANCHOR}`);
 }
-function sendIndex(res) {
+async function sendIndex(res) {   // with `rail` on: Stillhet's shell (src/core/stillhet-shell.mjs)
   let html;
-  try { html = renderIndexHtml(readIndexHtml(PUBLIC_DIR), storedTheme(), effectiveUiLevel(), allFlags(), { git: gitAvailable() }); }
+  try { html = allFlags().rail ? await stillhetShellHtml(PUBLIC_DIR, storedTheme(), effectiveUiLevel(), gitAvailable()) : renderIndexHtml(readIndexHtml(PUBLIC_DIR), storedTheme(), effectiveUiLevel(), allFlags(), { git: gitAvailable() }); }
   catch (err) { return res.status(500).json({ error: err && err.message ? err.message : 'shell unavailable' }); }
   res.set('Content-Type', 'text/html; charset=utf-8');
   res.set('Cache-Control', 'no-store');
@@ -2199,9 +2200,11 @@ function sendIndex(res) {
 // file system would otherwise reach the raw file: route every spelling here.
 app.use((req, res, next) => {
   if (req.method !== 'GET') return next();
-  if (req.path === '/' || /^\/index(\.html)?$/i.test(req.path)) return sendIndex(res);
+  if (req.path === '/' || /^\/index(\.html)?$/i.test(req.path) || isStillhetShellPath(req.path)) return sendIndex(res);
   return next();
 });
+// ui/public/stillhet/shell.html is a template: every spelling static maps to it gets sendIndex's page and headers, flag on or off.
+const isStillhetShellPath = (p) => /^stillhet\/shell(\.html)?$/i.test(publicRelPath(p) ?? '');
 
 // /style.css is assembled from its parts (#919). It matches every spelling express.static served it under
 // (//style.css, /%73tyle.css, and any case on a case-insensitive file system), and nothing else.
@@ -2229,7 +2232,7 @@ app.use(function servePublic(req, res, next) {
   let part = false;
   // A broken parts.json must not take every static file down with it: log once and serve static.
   try { part = isPublicPart(req.path, PUBLIC_DIR); } catch (err) { warnAssetOnce('ui/public/parts.json', err); }
-  return part ? next() : serveStatic(req, res, next);
+  return part || isStillhetShellPath(req.path) ? next() : serveStatic(req, res, next);   // the shell template only through sendIndex
 });
 
 function badRequest(res, message) {

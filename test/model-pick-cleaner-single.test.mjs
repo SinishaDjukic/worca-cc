@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { posix } from './helpers/posix-path.mjs';
 
 const ROOTS = ['src', 'ui'];
-const SKIP_DIRS = new Set(['node_modules', '.git', 'vendor']);
+const SKIP_DIRS = new Set(['node_modules', '.git', 'vendor', 'stillhet']);   // stillhet: the prototype's code (moved from plans/rail/prototype/, which these dev scans never read); it has its own gates (docs/rail/gate.md)
 const OWNER = 'src/shared/graph/role-slots.mjs';
 
 function files() {

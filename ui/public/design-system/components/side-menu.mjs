@@ -29,8 +29,10 @@ export function sideMenu({ label, back = null, groups, list = false, chevron = '
  * @param {string} [o.placeholder]
  * @param {string} [o.label]        aria-label
  * @param {string} [o.results]      searchResults markup (its items may carry `area` and `mark`; `areas` orders the heads)
+ * @param {object} [o.bar]          the top bar's search: { kbd } the shortcut chip's text; a phone folds it into the open button and shows the field as a row with its close button
  */
-export function search({ value = '', placeholder = 'Search or ask', label = 'Search', results = '' }) {
+export function search({ value = '', placeholder = 'Search or ask', label = 'Search', results = '', bar = null }) {
+  if (bar) return barSearch({ placeholder, label, results, ...bar });
   return `<div class="rl-search rc-pop"><input class="input input-sm" type="search" data-search autocomplete="off"${attrs({ value, placeholder, 'aria-label': label, 'data-key': 'search' })}><div data-search-res>${results}</div></div>`;
 }
 
@@ -56,4 +58,10 @@ export function searchResults(items, empty = 'Nothing matches', { areas = [], ta
  */
 export function backLink({ label, icon = '', attrs: a = {} }) {
   return `<button type="button" class="rl-back"${attrs(a)}>${icon}${esc(label)}</button>`;
+}
+
+const GLASS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>';
+function barSearch({ placeholder, label, results, kbd = '' }) {
+  const ic = (c) => GLASS.replace('<svg ', `<svg${c} `);
+  return `<div class="tsearch"><button type="button" class="btn btn-quiet btn-icon tsearch-open" id="tsearch-open" data-min-level="simple" aria-label="Search" title="Search">${GLASS}</button><div class="tsearch-field">${ic(' class="tsearch-ic"')}<input type="search" class="tsearch-input" id="tsearch-input" data-search placeholder="${esc(placeholder)}" aria-label="${esc(label)}" aria-autocomplete="list" aria-expanded="false" aria-controls="tsearch-pop" aria-keyshortcuts="Meta+K Control+K" autocomplete="off" spellcheck="false"><kbd class="tsearch-kbd" aria-hidden="true">${esc(kbd)}</kbd><button type="button" class="btn btn-quiet btn-icon tsearch-close" id="tsearch-close" data-min-level="simple" aria-label="Close search" title="Close search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg></button><div data-search-res>${results}</div></div></div>`;
 }

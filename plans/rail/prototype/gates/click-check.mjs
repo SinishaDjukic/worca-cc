@@ -4,25 +4,26 @@
 // address, a field, the focus or the clipboard. A disabled control must say why in its tooltip. It finds pages, cases, tabs
 // and sections by itself, so a new one is read without touching this file. --small: one width, every fifth case.
 import { chromium } from 'playwright';
+import { indexUrl, pageUrl, buildBundles } from './target.mjs';
 import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { writeAppCss } from './app-css.mjs';
-import { writeComponentsJs } from './components-js.mjs';
-import { writeTodayJs } from './today-js.mjs';
 
-writeAppCss(); writeComponentsJs(); writeTodayJs();
+buildBundles();   // the app's CSS and the Rail components for file:// (target.mjs)
 const SMALL = process.argv.includes('--small');
 const dir = fileURLToPath(new URL('..', import.meta.url));
 const WIDTHS = SMALL ? [1280] : [1280, 375];
 const issues = new Map(); let clicks = 0;
 const add = (k, w) => { if (!issues.has(k)) issues.set(k, new Set()); issues.get(k).add(w); };
 
-// Every control in the page's own area: the prototype's corner and captured pages are not the design.
+// Every control in the page's own area: the prototype's corner and captured pages are not the design. Against the app
+// (STILLHET_TARGET) the Stillhet UI switch is left out: it turns `rail` off on the server and reloads into dev's app, which
+// would end the walk (test/stillhet-app-host.test.mjs pins what it does).
+const APP_SKIP = process.env.STILLHET_TARGET ? ', [data-design-switch]' : '';
 const CONTROLS = `(() => {
   const SEL = 'button, a[href], [role="tab"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="radio"], [role="switch"], input[type="checkbox"], input[type="radio"], select, summary';
   const out = []; const seen = new Set();
   for (const e of document.querySelectorAll(SEL)) {
-    if (e.closest('.mk-bar, .mk-intro, .mk-proposed, #route-today, .rail-capture, [data-capture]')) continue;
+    if (e.closest('.mk-bar, .mk-intro, .mk-proposed, #route-today, .rail-capture, [data-capture]${APP_SKIP}')) continue;
     if (!e.getClientRects().length || getComputedStyle(e).visibility === 'hidden') continue;
     const box = e.getBoundingClientRect(); if (box.right <= 0 || box.left >= innerWidth) continue;   // off the screen: a closed drawer
     const k = e.dataset.key || [...e.attributes].filter((a) => a.name.startsWith('data-') || a.name === 'id').map((a) => a.name + '=' + a.value).join('&') || (e.tagName + ':' + (e.getAttribute('aria-label') || e.textContent.trim().slice(0, 40)));
@@ -34,7 +35,7 @@ const CONTROLS = `(() => {
   return out;
 })()`;
 const signature = `(() => { const fields = [...document.querySelectorAll('input, select, textarea')].map((x) => x.type === 'checkbox' || x.type === 'radio' ? x.checked : x.value).join('|');
-  return document.body.innerHTML.length + '#' + document.body.textContent + '#' + [...document.querySelectorAll('[aria-expanded],[aria-checked],[aria-selected],[aria-pressed],[class]')].map((x) => (x.getAttribute('aria-expanded') || '') + (x.getAttribute('aria-checked') || '') + (x.getAttribute('aria-selected') || '') + (x.getAttribute('aria-pressed') || '') + x.className).join() + '#' + location.hash + '#' + fields + '#' + (document.activeElement?.dataset?.key || document.activeElement?.id || ''); })()`;
+  return document.body.innerHTML.length + '#' + document.body.textContent + '#' + [...document.querySelectorAll('[aria-expanded],[aria-checked],[aria-selected],[aria-pressed],[class]')].map((x) => (x.getAttribute('aria-expanded') || '') + (x.getAttribute('aria-checked') || '') + (x.getAttribute('aria-selected') || '') + (x.getAttribute('aria-pressed') || '') + x.className).join() + '#' + location.hash + '#' + fields + '#' + (document.activeElement?.dataset?.key || document.activeElement?.id || document.activeElement?.tagName || ''); })()`;   // a field with no id (the composer) still counts as a focus move
 const clickKey = (k) => `(() => { const SEL = 'button, a[href], [role="tab"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="radio"], [role="switch"], input[type="checkbox"], input[type="radio"], select, summary';
   for (const e of document.querySelectorAll(SEL)) { if (!e.getClientRects().length) continue;
     const k = e.dataset.key || [...e.attributes].filter((a) => a.name.startsWith('data-') || a.name === 'id').map((a) => a.name + '=' + a.value).join('&') || (e.tagName + ':' + (e.getAttribute('aria-label') || e.textContent.trim().slice(0, 40)));
@@ -72,7 +73,7 @@ for (const w of WIDTHS) {
     const p = await b.newPage({ viewport: { width: w, height: 900 }, reducedMotion: 'reduce', permissions: [] });
     await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });   // the gates walk every place: Expert
     p.on('pageerror', (e) => add('script error', `${page} ${w}: ${e.message}`));
-    const url = 'file://' + dir + page;
+    const url = pageUrl(page, dir + page);
     await p.goto(url); await p.waitForTimeout(50);
     const cases = page === 'index.html' ? [] : await p.evaluate(() => [...document.querySelectorAll('#case option')].map((o) => o.value));   // the one Worca is read by route
     if (cases.length) {

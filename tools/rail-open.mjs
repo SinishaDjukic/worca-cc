@@ -1,13 +1,9 @@
 // npm run rail: builds the prototype's generated files and opens it in the browser.
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { writeAppCss } from '../plans/rail/prototype/gates/app-css.mjs';
-import { writeComponentsJs } from '../plans/rail/prototype/gates/components-js.mjs';
-import { writeTodayJs } from '../plans/rail/prototype/gates/today-js.mjs';
+import { buildStillhet } from './stillhet-build.mjs';
 
-writeAppCss();
-writeComponentsJs();
-writeTodayJs();
+await buildStillhet();
 
 const page = fileURLToPath(new URL('../plans/rail/prototype/index.html', import.meta.url));
 const [cmd, ...args] = process.platform === 'darwin' ? ['open'] : process.platform === 'win32' ? ['cmd', '/c', 'start', ''] : ['xdg-open'];

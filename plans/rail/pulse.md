@@ -71,7 +71,7 @@ two lists twice). On a narrow screen the panel is the window's width.
   limit or the budget Usage and costs, lit on what it named, a schedule Schedules, a chat that chat, a project Projects.
   The whole row is the target. A row's step goes further only by saying so (`Raise budget` opens Settings › Runs › Budget);
   one that cannot work is not offered. A run paused at a limit that resumes by itself waits on nobody: it sorts under
-  Scheduled, After a reset, and stays out of the badge. Every count reads `plans/rail/prototype/shell/world.js`. A desktop or
+  Scheduled, After a reset, and stays out of the badge. Every count reads `ui/public/stillhet/shell/world.js`. A desktop or
   chat notice opens the panel at its row.
 
 ### 3.3 Settings › Notifications

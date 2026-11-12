@@ -1178,7 +1178,7 @@ test('watchMenus: a menu with no room under it opens above; menuUp says when', a
 });
 
 test('pluginCard: its actions end the card, so they line up across a row (panel.plugin-card)', () => {
-  const css = readFileSync('plans/rail/prototype/design-system/rail.css', 'utf8');
+  const css = readFileSync('ui/public/stillhet/css/rail.css', 'utf8');
   assert.match(css, /\.pg-card\{grid-template-rows:repeat\(5,auto\) 1fr;\}/);
   assert.match(css, /\.pg-a\{[^}]*grid-row:6;align-self:end;/);
 });
@@ -1232,7 +1232,7 @@ test('scheduleDates and scheduleButton: the next times and the named step', () =
 });
 
 test('menus keep one edge only for check marks: a switch item (the account menu) keeps its own layout', () => {
-  const css = readFileSync('plans/rail/prototype/design-system/rail.css', 'utf8');
+  const css = readFileSync('ui/public/stillhet/css/rail.css', 'utf8');
   const lines = css.split('\n').filter((l) => l.includes('.menu:has(.menu-item:is([role="menuitemradio"]'));
   assert.ok(lines.length > 0);
   for (const l of lines) assert.match(l, /:not\(\.sw-item\)/, 'a switch never turns its menu into the check-mark grid');
@@ -1288,7 +1288,7 @@ test('commands: dev\'s group head, rows with no mark, Copy on the command and it
 });
 
 test('the Rail stylesheets close every rule: one open brace would swallow all that follows', () => {
-  for (const f of ['plans/rail/prototype/design-system/rail.css', 'plans/rail/prototype/design-system/rail-look.css', 'plans/rail/prototype/shell/shell.css', 'plans/rail/prototype/pulse/pulse.css']) {
+  for (const f of ['ui/public/stillhet/css/rail.css', 'ui/public/stillhet/css/rail-look.css', 'ui/public/stillhet/shell/shell.css', 'ui/public/stillhet/pulse/pulse.css']) {
     const css = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
     assert.equal((css.match(/\{/g) || []).length, (css.match(/\}/g) || []).length, f);
   }
@@ -1560,4 +1560,12 @@ test('stillhetInvitation and designSwitch render their roles and hooks', () => {
   const sw = dom(C.designSwitch({ on: true }));
   assert.equal(sw.dataset.stillhet, 'design-switch');
   assert.equal(sw.querySelector('[role="switch"]').getAttribute('aria-checked'), 'true');
+});
+
+test('frame parts (brandRow, navSection, barGrip, sidebarFrame, sideToggle, menuButton, topBarFrame, askButton): the sidebar and top bar landmarks', () => {
+  const side = dom(C.sidebarFrame({ brand: C.brandRow(), nav: C.navSection({ label: 'Work' }), grip: C.barGrip() }));
+  assert.equal(side.tagName, 'ASIDE'); assert.equal(side.id, 'side-rail');
+  assert.ok(side.querySelector('.bar-grip[role="separator"]'));
+  const top = dom(C.topBarFrame({ title: 'Tasks', left: C.menuButton() + C.sideToggle() }));
+  assert.equal(top.tagName, 'HEADER'); assert.equal(top.querySelectorAll('#mbar-menu[aria-expanded="false"], #side-toggle[aria-expanded="true"]').length, 2);
 });

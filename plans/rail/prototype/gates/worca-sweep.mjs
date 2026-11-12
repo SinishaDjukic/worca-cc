@@ -6,17 +6,16 @@
 // sidebar's three widths (narrow.nav), the side column's three tiers (panel.side-column), and a deep link above the mode.
 // The run page and Pulse keep their own gates (run-page-sweep, pulse-sweep, ds-check); this one checks how they join.
 import { chromium } from 'playwright';
+import { indexUrl, pageUrl, buildBundles } from './target.mjs';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
-import { writeAppCss } from './app-css.mjs';
-import { writeComponentsJs } from './components-js.mjs';
-import { writeTodayJs } from './today-js.mjs';
-writeAppCss(); writeComponentsJs(); writeTodayJs();
-const URL_ = 'file://' + fileURLToPath(new URL('../index.html', import.meta.url));
-global.window = {}; await import('../settings/settings-model.js');
+buildBundles();   // the app's CSS and the Rail components for file:// (target.mjs)
+const URL_ = indexUrl();
+global.window = { RailWould: (p) => 'Would ' + p };   // the prototype host's demo sentence (ui/public/stillhet/demo/demo-actions.js); the model calls it at load
+await import('../../../../ui/public/stillhet/settings/settings-model.js');
 const SECTIONS = window.SettingsModel.GROUPS.flatMap((g) => g.items);
 // Every route, read from the pages themselves: a new capture, run case or Settings section is checked without touching this file.
-const TODAY = Object.keys(JSON.parse(readFileSync(fileURLToPath(new URL('../today/pages.json', import.meta.url)), 'utf8')));
+const TODAY = ['chat', 'schedules', 'stats', 'team-metrics', 'workflows', 'requirements', 'projects', 'workspaces', 'marketplace'];   // the views the shell routes; the ones Rail built register in RailPlaces, the rest draw a true page
 const issues = new Map(); const add = (k, w) => { if (!issues.has(k)) issues.set(k, []); if (issues.get(k).length < 12) issues.get(k).push(w); };
 const b = await chromium.launch({ channel: 'chrome' });
 const scout = await b.newPage(); await scout.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } }); await scout.goto(URL_);
@@ -60,7 +59,8 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     if (got.list !== got.badge) add('the badge and the Runs list disagree', `${pc}: ${JSON.stringify(got)}`);
     checks++;
   }
-  await p.evaluate(() => { const s = document.getElementById('pulse-case'); s.value = 'afternoon'; s.dispatchEvent(new Event('change', { bubbles: true })); });
+  await p.evaluate(() => { const s = document.getElementById('pulse-case'); if (!s) return; s.value = 'afternoon';   // the prototype's demo tools only: the app has none
+    s.dispatchEvent(new Event('change', { bubbles: true })); });
   // the journeys
   const step = async (name, fn, expect) => { const ok = await p.evaluate(fn); await p.waitForTimeout(120); const got = await p.evaluate(expect); if (!got) add('a journey breaks', `${scheme}/${w}: ${name}`); checks++; };
   await p.goto(`${URL_}#runs`); await p.evaluate(() => localStorage.removeItem('worca-rail.runs.view')); await p.reload(); await p.waitForTimeout(100);

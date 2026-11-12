@@ -44,7 +44,7 @@ const decls = (body, prop) => [...body.matchAll(new RegExp(`(?:^|;)\\s*(${prop})
 const where = (r, v) => `style.css:${r.line} ${r.sel.slice(0, 80)} → ${v}`;
 const bodyOf = (sel) => ALL.filter((r) => splitTop(r.sel).includes(sel)).map((r) => r.body).join(';');
 const lastCompound = (s) => s.split(/\s*[>+~]\s*|\s+/).at(-1);
-const SKIP = new Set(['node_modules', 'vendor', 'fonts', 'assets']);
+const SKIP = new Set(['node_modules', 'vendor', 'fonts', 'assets', 'stillhet']);   // stillhet: the prototype's code, moved from plans/rail/prototype/ (never read by this scan); it has its own gates (docs/rail/gate.md)
 const walk = (dir, out = []) => { for (const n of readdirSync(dir)) { if (SKIP.has(n)) continue; const f = join(dir, n);
   if (statSync(f).isDirectory()) walk(f, out); else if (/\.(mjs|js)$/.test(n)) out.push(f); } return out; };
 const JS = walk(join(ROOT, 'ui/public'));

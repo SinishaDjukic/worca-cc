@@ -8,7 +8,8 @@
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 const { chromium } = createRequire(import.meta.url)('playwright-core');
-const URL_ = new URL('../index.html', import.meta.url).href;
+import { indexUrl } from './target.mjs';
+const URL_ = indexUrl();
 const PLACES = ['chat', 'chat/c1', 'chat/c2', 'chat/c5', 'chat/c6', 'chat/c17', 'runs', 'schedules', 'schedule/s1', 'projects', 'projects/billing-api', 'projects/web-app', 'projects/ws:web-shop', 'workflows', 'workflows/workflow:default', 'workflows/agent:security', 'requirements/FEAT-2', 'marketplace', 'marketplace/jira-source', 'insights', 'insights/spend', 'insights/team', 'workspaces/iot', 'run/working', 'run/failed', 'run/merged', 'settings/runs', 'settings/models'];
 const list = process.argv.includes('--list');
 
