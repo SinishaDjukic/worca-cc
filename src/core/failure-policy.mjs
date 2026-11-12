@@ -93,6 +93,8 @@ export const FAILURE_POLICY = Object.freeze({
     // The model id itself was refused — retrying the same id is futile. The
     // run parks as an error; resume retries the node once the model is fixed.
     model:       both(pause(REASON.ERROR)),
+    // The model declined the request (MODEL_REFUSAL): not time-fixable, so it parks as an error until the prompt or model changes.
+    refusal:     both(pause(REASON.ERROR)),
     // A node past its wall-clock or idle limit (graph/executor.mjs nodeTimeLimits). Never retried:
     // a hung node would hang again; the person looks, then resumes.
     time_limit:  both(pause(REASON.TIME_LIMIT)),

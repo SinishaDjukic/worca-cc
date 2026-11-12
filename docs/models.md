@@ -701,6 +701,46 @@ taken from Anthropic's per-model prompting guides, to be measured.
 - **Known gaps.** A role-review step's role that names its own model and no effort, and a run resumed with another
   model for every step, keep their old effort (none filled).
 
+### Refusals and thinking blocks
+
+**Refusals.** When the model declines a request, Claude Code ends the turn with `stop_reason: "refusal"`.
+
+- **A pipeline step** fails with `Model refusal (MODEL_REFUSAL): The model declined this request. Change the prompt or
+  pick another model.`, plus the first line of the model's own decline text (redacted, up to 200 characters). The run log
+  shows `execution failed: Model refusal (MODEL_REFUSAL): …` and the run pauses as an error. It is never retried: the
+  same prompt would be refused again. Change the prompt or the step's model, then resume.
+- **A chat (Ask) turn** ends with the notice "The model declined this request. Change the prompt or pick another model."
+  and the full message under Details, not with an empty answer.
+- Only the main agent's stop reason counts. A sub-agent's refusal goes back to the main agent as a tool result. When
+  the turn's final result names another stop reason (for example `end_turn`), the step finishes normally.
+- **Known gaps (follow-ups).** GitHub Copilot CLI reports no stop reason in its JSON output, so a refusal there still
+  looks like a short answer. Members of a session group (`src/core/session-host.mjs`) are not covered yet: their
+  demuxed frames would need the same `claudeStopReason` check.
+
+**Thinking blocks (findings, no behaviour change).** A lead said the live log goes silent because status notes arrive
+as empty thinking blocks. What we found:
+
+1. Claude Code streams thinking as `assistant` content blocks `{type:'thinking', thinking, signature}` and, with
+   `--include-partial-messages`, as `content_block_start` (`thinking: ""`) plus `thinking_delta` events. The captures
+   in `test/fixtures/ask/` (`plain-text`, `max-turns`, `max-budget`; CLI 2.1.239, claude-haiku-4-5) carry real
+   thinking text, not empty blocks.
+2. worca's normalizer drops every thinking block and delta: `assistant()` keeps only `tool_use` and `text`, and
+   `streamEvent()` keeps only `text_delta` (`src/core/engines/claude-events.mjs`). So a status note the model writes as
+   thinking never reaches the live log, whatever the CLI sends.
+3. Pipeline steps do not pass `--include-partial-messages` (only chats and pinpoint do), so a step sees only whole
+   `assistant` frames.
+4. CLI 2.1.322 (`claude --version`, 2026-11-12) has no thinking-display flag. Its help lists only `--effort`,
+   `--include-partial-messages` and `--forward-subagent-text` ("Forward subagent text and thinking"). worca sends no
+   thinking setting (`buildClaudeArgs` in `src/core/engines/claude.mjs`; no `MAX_THINKING_TOKENS`).
+5. What the CLI asks the API for, captured once against a local stub (`ANTHROPIC_BASE_URL` pointed at a server that
+   logs the request body and answers 400, scratch `HOME`, dummy key; no billed call): `claude --model claude-opus-5-5
+   -p ping` on 2.1.322 sends `"thinking": {"type": "adaptive", "display": "omitted"}`. A retry sent
+   `{"type": "adaptive"}`. So on 5.x models the CLI asks for omitted thinking: the thinking block arrives with an empty
+   `thinking` and only a signature. Those are the "empty thinking blocks" of the lead.
+
+Conclusion: the silence has two causes. The CLI asks for omitted thinking on 5.x models (5), and worca's normalizer
+drops thinking anyway (2). Changing either is a follow-up.
+
 ## Codex
 
 worca can run pipelines and chats on OpenAI's Codex CLI.

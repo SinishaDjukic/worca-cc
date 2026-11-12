@@ -243,6 +243,31 @@ test('a NON-recoverable throw pauses the run with reason error + detail (was: st
   assert.ok(!saved.resumePoint.snapshot.execs.some((e) => e.status === 'error'), 'the scheduler never saw the error');
 });
 
+test('a model refusal (MODEL_REFUSAL) pauses the run as an error, once, and logs the refusal', async () => {
+  const dir = gitDir();
+  let calls = 0;
+  const logs = [];
+  const msg = 'Model refusal (MODEL_REFUSAL): The model declined this request. Change the prompt or pick another model. — I cannot help.';
+  const orch = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    runners: {
+      producer: async () => {
+        calls += 1;
+        throw Object.assign(new Error(msg), { code: 'MODEL_REFUSAL', errorClass: 'refusal', stopReason: 'refusal' });
+      },
+      verifier: okVerifier,
+    },
+  });
+  orch.on('log', (l) => logs.push(l));
+  const res = await orch.run();
+  assert.equal(res.status, 'paused', JSON.stringify(res));
+  assert.equal(res.reason, 'error');
+  assert.equal(calls, 1, 'a refusal is never retried');
+  assert.ok(logs.some((l) => l.level === 'error' && /execution failed: Model refusal \(MODEL_REFUSAL\)/.test(l.text)),
+    JSON.stringify(logs.filter((l) => l.level === 'error')));
+  assert.match(res.detail, /MODEL_REFUSAL/);
+});
+
 test('resume after an error-pause re-invokes the paused execution WITH its session and completes', async () => {
   const dir = gitDir();
   let boom = true;

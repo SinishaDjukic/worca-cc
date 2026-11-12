@@ -13,7 +13,7 @@ import { addProject, displayPath } from '../src/core/projects.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { createAskTurn, humanErrorText } from '../src/core/ask/turn.mjs';
-import { normalizingOnEvent } from '../src/core/engines/claude-events.mjs';
+import { normalizingOnEvent, REFUSAL_TEXT } from '../src/core/engines/claude-events.mjs';
 import {
   createThread, appendMessage, getMessage, getThread,
   updateThread, setThreadTitle, deleteThread, addAttachment,
@@ -637,6 +637,32 @@ test('a failure on a signed-out CLI ends the turn with ask-error code claude-sig
   assert.equal(last.message, message, 'the raw message still travels');
   assert.equal(last.code, 'claude-signed-out');
   assert.deepEqual(asked, [{ message, model: 'claude-opus-5-5' }]);
+});
+
+test('a model refusal (MODEL_REFUSAL) ends the chat turn with the shared refusal notice', async () => {
+  await checkRows([
+    { name: 'humanErrorText(refusal) is the shared REFUSAL_TEXT', run: async () => {
+      assert.notEqual(humanErrorText('refusal'), null);
+      assert.equal(humanErrorText('refusal'), REFUSAL_TEXT);
+    } },
+    { name: 'a refused turn: ask-error with errorClass refusal and a persisted notice block', run: async () => {
+      const s = seed();
+      const raw = `Model refusal (MODEL_REFUSAL): ${REFUSAL_TEXT} — I can't help with that request.`;
+      const { turn, frames } = makeTurn(s, {}, {
+        runClaudeImpl: async () => {
+          throw Object.assign(new Error(raw), { code: 'MODEL_REFUSAL', errorClass: 'refusal', stopReason: 'refusal' });
+        },
+      });
+      await turn.run();
+      const last = frames.at(-1);
+      assert.equal(last.type, 'ask-error');
+      assert.equal(last.errorClass, 'refusal');
+      const notice = getMessage(s.asst.id).blocks.find((b) => b && b.kind === 'notice' && b.errorClass === 'refusal');
+      assert.ok(notice, 'the refusal notice block is persisted');
+      assert.equal(notice.text, REFUSAL_TEXT);
+      assert.match(notice.detail, /MODEL_REFUSAL/);
+    } },
+  ]);
 });
 
 test('a classified error persists a human notice (errorClass + detail, on the ask-error frame too); an unclassified one persists none', async () => {
