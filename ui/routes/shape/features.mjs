@@ -8,7 +8,7 @@ import { flagEnabled } from '../../../src/core/flags.mjs';
 import { prAutoFinisher } from '../../../src/core/pr-auto-finish.mjs';
 import { engineRefusalFor } from '../../../src/shared/engine-switch.mjs';
 import { parseReleaseChoice } from '../../../src/shared/release-version.mjs';
-import { ResumeError, badRequest, broadcastFeature, emitChanged, featureShipping, findShipCardIn, flipCard, liveRunEntry, liveSliceOf, resumeRun, schedulerTick, shipCtxOf, shipFeatureNow } from '../../server.mjs';
+import { ResumeError, badRequest, broadcastFeature, emitChanged, featureShipping, findShipCardIn, flipCard, liveRunEntry, liveSliceOf, resumeRun, scheduleVerb, schedulerTick, shipCtxOf, shipFeatureNow } from '../../server.mjs';
 
 export function register(app) {
 /** F29: an async handler never lets a throw escape (Express 4, no unhandledRejection handler). /api/resume's mapping. */
@@ -108,11 +108,29 @@ app.post('/api/shape/features/:id/replan', async (req, res) => {
   } catch (err) { shapeRouteError(res, err); }
 });
 
-app.post('/api/shape/features/:id/approve-each', (req, res) => {
+// "Ask me before each run": Start now on the run the switch holds. A thin pass-through to Run now (forced skips the hold).
+app.post('/api/shape/features/:id/start', async (req, res) => {
+  try {
+    const view = featureView(req.params.id, { live: liveSliceOf });
+    if (!view) return res.status(404).json({ error: 'unknown feature' });
+    if (view.status !== 'active') return res.status(409).json({ error: `this feature is ${view.status}` });
+    if (!view.held) return res.status(409).json({ error: 'no run is waiting for you to start' });
+    const r = await scheduleVerb('run-now', view.held.ticketId, {}, { by: actorOf(req) });
+    broadcastFeature(req.params.id);
+    res.status(r.status).json(r.body);
+  } catch (err) { shapeRouteError(res, err); }
+});
+
+app.post('/api/shape/features/:id/approve-each', async (req, res) => {
   try {
     const on = req.body && req.body.on;
     if (typeof on !== 'boolean') return badRequest(res, 'on must be true or false');
     if (!setApproveEach(req.params.id, on)) return res.status(404).json({ error: 'unknown feature' });
+    if (!on) {
+      // Off releases a held run. Best effort: a busy tick answers null, and the next tick starts it.
+      await schedulerTick();
+      emitChanged('schedules-changed', 'updated');
+    }
     broadcastFeature(req.params.id);
     res.json({ ok: true, approveEach: on });
   } catch (err) { shapeRouteError(res, err); }

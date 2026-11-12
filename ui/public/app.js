@@ -550,9 +550,10 @@ async function paintShapeFeature(host) {
     },
     runsOpen: !!opts.runsOpen,
     ...(opts.ask ? { mountAsk: (slot, step) => featureMountAsk(host, slot, step) } : {}),
+    ...(host.__shapeFallback ? { focusFallback: host.__shapeFallback } : {}),
   }));
   host.dataset.painted = id;
-  focusFeatureControl(host, act);
+  focusFeatureControl(host, act, host.__shapeFallback ? host.__shapeFallback() : null);
 }
 /** Mount (or re-point) a host. F41: the run card calls it on every repaint (once a second), so it fetches only when
  *  the host is pointed at a new id. A pending or failed fetch is not retried from here: `shape-feature`,
@@ -563,6 +564,8 @@ function mountShapeFeature(host, id, opts = {}) {
   if (host.__shapeWant === id && was && was.ask === o.ask && was.runsOpen === o.runsOpen && was.loading === o.loading
     && was.inGroup === o.inGroup) return;
   host.__shapeWant = id; host.__shapeOpts = o;
+  // Where the focus goes when the control it was on and the view's ⋯ are both gone (the group page's header ⋯).
+  host.__shapeFallback = typeof opts.focusFallback === 'function' ? opts.focusFallback : null;
   SHAPE_FEATURE_HOSTS.set(host, id);
   host.__shapeErr = null;
   paintShapeFeature(host);
@@ -34114,7 +34117,8 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
     const run = r ? withChainPr(rdModelRun(r), m) : (m.pipelineId ? memberRun(m)
       : { ticket: { status: m.ticket ? m.ticket.status : 'scheduled', runAt: m.ticket && !m.ticket.after ? m.ticket.runAt : null,
         // #1096: a chain root that only waits for another run names that run ("starts after <title>").
-        after: m.after ? { index: m.after } : m.waitsFor && m.waitsFor.title ? { title: m.waitsFor.title } : null } });
+        after: m.after ? { index: m.after } : m.waitsFor && m.waitsFor.title ? { title: m.waitsFor.title } : null,
+        held: !!(m.ticket && m.ticket.held) } });
     const pk = m.historyKey || m.projectKey || histPk(m.pipelineId);
     const href = r ? `#running/${r.runId}` : m.pipelineId && pk ? `#history/${pk}/${m.pipelineId}`
       : groupKind === 'feature' ? `#feature/${encodeURIComponent(id)}` : m.ticketId ? '#schedules/once' : '#runs';
@@ -34307,7 +34311,8 @@ function paintGroupPageNow() {
       const omit = (row.model && Array.isArray(row.model.actions)) ? row.model.actions.slice() : [];
       const changed = String(h.__groupOmit || '') !== String(omit);
       h.__groupOmit = omit;
-      if (h.__shapeWant !== row.groupId || !(h.__shapeOpts && h.__shapeOpts.inGroup)) mountShapeFeature(h, row.groupId, { loading: true, inGroup: true });
+      if (h.__shapeWant !== row.groupId || !(h.__shapeOpts && h.__shapeOpts.inGroup)) mountShapeFeature(h, row.groupId, { loading: true, inGroup: true,
+        focusFallback: () => (host.__gp ? host.__gp.querySelector('.gpage-more') : null) });   // openGroupMoreMenu's anchor
       else if (GROUP_PAGE.reentered || changed) paintShapeFeature(h);   // away: the hidden page skipped frames
       GROUP_PAGE.reentered = false;
     },

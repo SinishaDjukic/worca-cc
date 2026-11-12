@@ -31,12 +31,14 @@ The concept below, then `docs/rail/`, then the prototype's code. The prototype s
 
 - The public name is Stillhet, behind the flag, opt-in and opt-out. One flag, `rail`, under Labs; every path only sets that flag.
 - On reload from dev, ask an existing user once, in plain words: an evolution of Worca's design system; calm, only what needs you is lit, Chat first; an invitation to test it and report bugs on GitHub (the issues page). Accepting turns the flag on; declining changes nothing and never asks again. New users are asked in onboarding (slice 13).
-- A small switch in the top bar, "Stillhet UI" with a beta chip, is the same setting as Settings › Labs. The question, the switch and the Labs row stay hidden behind an internal ask switch until Chat works (slice 4 turns it on).
+- A small switch in the top bar, "Stillhet UI" with a beta chip, is the same setting as Settings › Labs. The question, the switch and the Labs row stay hidden behind an internal ask switch until every area runs on live data: the last slice of feature 3 turns it on. Until then a person who turns Stillhet on would meet demo figures and "Not connected to Worca yet." in the areas not yet built, so nobody is invited before that.
 - Off means today's app: same behaviour, same data, no migration that cannot be undone. Test both states.
 
 ## The slices
 
-Each is its own PR into `dev`, from the latest `dev` (slice 1 from `docs/rail-agreed`).
+Each is its own run and its own PR into `docs/rail-agreed`, from its latest state with the latest `dev` merged in first. The slices run as three features: slices 1–5, then 6–10, then 11–13.
+
+At the end of each feature, `docs/rail-agreed` goes to `dev` in one PR. With the flag off it equals dev, so it is safe to land, and the next feature starts from the result. Dev never falls more than one feature behind.
 
 1. Instructions cleanup plus the flag, opt-in and opt-out
 2. The prototype served under the flag
@@ -66,7 +68,11 @@ Removing dead code and deprecated routes is a separate final PR after every slic
 
 - Two tiers. A fix round runs only the tests of changed files, the design-system gates and the flag-off checks. The real-browser walk runs once per slice, at the end, in Expert (another level only when the change touches what that level shows); levels run one after another.
 - Grid: both themes at 1280, light at 360; 420 only when the change is about layout. A fix round re-walks only the cells of the pages it touched.
+- The full gates and the full pixel comparison run once per slice, at the end, before the PR. A fix or review round reruns only the gates and compare cells whose files changed, and reuses the last result for the rest; a change to a shared file (the library, a stylesheet, `boot.js`, the shell or a gate tool) reruns everything. Every long job runs in the background and reports a status line at least every 5 minutes.
 - Test both flag states. Nothing is rerun on an identical tree.
+- Live data, from slice 3 on: the end-of-slice walk also opens the slice's pages on live data in their empty, long-content and failed states, at the same grid. The pixel comparison runs on demo data only, so these states are where a layout can still break. Their screenshots go in the PR next to the pairs.
+- The full suite runs once per slice, before the PR, and once on the slice's base commit. A slice is clean when it adds no failure; the PR lists the failures that are also red on the base, by test file.
+- At the end of each feature, before the next one starts, a fidelity audit scores every shipped area against the prototype side by side (same route, mode, theme and width). An area below 9 of 10 gets a fix slice with its own PR.
 
 ## Rules
 

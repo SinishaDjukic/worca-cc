@@ -115,6 +115,13 @@ test('spec §2.1, group: the current member decides; finished groups use their o
   } })));
 });
 
+test('group: a held current member reads "Run 3 of 3 · waiting", never the stale "waiting for run 2" (D18)', () => {
+  const g = groupModel({ kind: 'feature', members: [DONE, DONE, { ticket: { status: 'scheduled', after: { index: 2 }, held: { index: 3 } } }] }, OPTS);
+  assert.equal(g.state, 'waiting');
+  assert.equal(g.line, 'Run 3 of 3 · waiting');
+  assert.ok(!g.actions.includes('start-now'));
+});
+
 test('group: shipped as one PR reads "In review · 1 PR"; count "2/3" leaves Planning out; the bar counts Planning', () => {
   const one = groupModel({ kind: 'feature', members: [DONE, DONE, DONE], pr: PR }, OPTS);
   assert.equal(one.line, 'In review · 1 PR');
