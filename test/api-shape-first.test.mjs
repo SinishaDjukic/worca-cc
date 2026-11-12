@@ -416,14 +416,14 @@ const postTurn = async (threadId, text) => {
   }
 };
 /** A two-run feature whose run 1 is the origin pipeline `p1`, and a thread that follows it. */
-async function seedFeature(tag, p1) {
+async function seedFeature(tag, p1, base = {}) {
   const { createSliceFeature } = await import('../src/core/shape/features.mjs');
   const { seedPipelineRow } = await import('./helpers/db-seed.mjs');
   const { projectKey } = await import('../src/core/store.mjs');
   const dir = gitDir(tag);
   sh('git branch dev', { cwd: dir });
   seedPipelineRow({ id: p1, projectKey: projectKey(dir), status: 'done', title: p1, branch: { source: 'dev', feature: 'feat/a' } });
-  const f = createSliceFeature({ pipelineId: p1, projectDir: dir, title: 'Charts', perspectives: ['product'], workflowId: 'wf_shape',
+  const f = createSliceFeature({ pipelineId: p1, projectDir: dir, title: 'Charts', perspectives: ['product'], workflowId: 'wf_shape', base,
     outline: { why: 'w', slices: [1, 2].map((i) => ({ id: `s${i}`, title: `Part ${i}`, goal: 'g', inScope: [], outOfScope: [], acceptance: [], dependsOn: [], estimate: 'M' })) } });
   const thread = createThread();
   askLinkRun(thread.id, { runId: `run-${p1}`, pipelineId: p1, cardId: 'card_5f000001' });
@@ -577,4 +577,167 @@ test('s5: a Watch PR fix run started through prWatcherDeps is stored as round 2 
   const got = await (await fetch(`${base}/api/ask/runs/${id}`)).json();
   assert.deepEqual(got.extras.rounds.map((x) => [x.round, x.pipelineId, x.by]), [[2, pid, 'watch']]);
   assert.equal(blocksOf(thread.id).length, before);
+});
+
+// ── Guardrails of card-started runs: inherited from the run they change; a Chat card never lands on Permissive by default ──
+const { prepare: dbPrepare, GUARDRAILS_DEFAULT_META_KEY } = await import('../src/core/db.mjs');
+/** Run `fn` on an install whose default set is Permissive (a pre-v81 install). */
+async function onPermissiveDefault(fn) {
+  dbPrepare('INSERT OR REPLACE INTO store_meta (key, kind, data) VALUES (?, ?, ?)').run(GUARDRAILS_DEFAULT_META_KEY, 'setting', JSON.stringify('permissive'));
+  try { return await fn(); } finally { dbPrepare('DELETE FROM store_meta WHERE key = ?').run(GUARDRAILS_DEFAULT_META_KEY); }
+}
+const setGuardrails = (pid, id) => getDb().prepare('UPDATE pipelines SET guardrails_id = ? WHERE id = ?').run(id, pid);
+/** The set the started run's orchestrator holds, and the note it got about a refused Permissive default; then stop it. */
+async function startedGuardrails(runId) {
+  const e = runs.get(runId);
+  const got = { id: e.orch.guardrailsId, note: e.orch._guardrailsNote || null };
+  await branchThenStop(runId);
+  return got;
+}
+const startCard = async (threadId, cardId, body) => {
+  const r = await post(`/api/ask/threads/${threadId}/cards/${cardId}`, body);
+  assert.equal(r.status, 200, await r.clone().text());
+  return (await r.json()).block.card.result.runId;
+};
+
+test('guardrails: on a Permissive-default install a round inherits Normal from the Normal run it changes', async () => {
+  await onPermissiveDefault(async () => {
+    const { id, thread } = await doneRunWithPr('gr-round');
+    setGuardrails(id, 'normal');
+    await post(`/api/ask/threads/${thread.id}/changes`, { pipelineId: id, text: 'make it blue' });
+    const card = blocksOf(thread.id).at(-1);
+    assert.equal(card.card.run.guardrailsId, 'normal');
+    assert.deepEqual(await startedGuardrails(await startCard(thread.id, card.id, { verb: 'start' })), { id: 'normal', note: null });
+  });
+});
+
+test('guardrails: a follow-up from a Changes card (merged PR) inherits the changed run\'s set', async () => {
+  const { persistPrState } = await import('../src/core/artifacts.mjs');
+  await onPermissiveDefault(async () => {
+    const { id, thread } = await doneRunWithPr('gr-follow');
+    persistPrState(id, { url: 'https://github.com/o/r/pull/41', number: 41, state: 'MERGED' });
+    setGuardrails(id, 'secure');
+    await post(`/api/ask/threads/${thread.id}/changes`, { pipelineId: id, text: 'add a legend' });
+    const card = blocksOf(thread.id).at(-1);
+    assert.equal(card.card.landing.kind, 'follow-up');
+    assert.deepEqual(await startedGuardrails(await startCard(thread.id, card.id, { verb: 'start' })), { id: 'secure', note: null });
+  });
+});
+
+test('guardrails: Own run now starts on the feature\'s set; Add to the feature queues a run on it', async () => {
+  const { _testing: t } = await import('../ui/server.mjs');
+  const { getTicket } = await import('../src/core/scheduler.mjs');
+  await onPermissiveDefault(async () => {
+    const { f, thread } = await seedFeature('gr-route', 'agr5t0001', { guardrailsId: 'secure' });
+    const own = t.askShapeAction({ kind: 'route', featureId: f.id, text: 'hotfix: login', guess: 'own', reason: 'cannot wait' }, thread.id);
+    const m1 = askAppendMessage(thread.id, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id: 'card_9e000001', ...own.block }] });
+    assert.deepEqual(await startedGuardrails(await startCard(thread.id, m1.blocks[0].id, { verb: 'own' })), { id: 'secure', note: null });
+    const add = t.askShapeAction({ kind: 'route', featureId: f.id, text: 'also a PNG', guess: 'add', reason: 'fits' }, thread.id);
+    const m2 = askAppendMessage(thread.id, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id: 'card_9e000002', ...add.block }] });
+    const r = await post(`/api/ask/threads/${thread.id}/cards/${m2.blocks[0].id}`, { verb: 'add', where: 'extra' });
+    assert.equal(r.status, 200, await r.clone().text());
+    const { featureView } = await import('../src/core/shape/features.mjs');
+    const slice = featureView(f.id).slices.at(-1);
+    assert.equal(getTicket(slice.ticketId, { withRequest: true }).request.guardrailsId, 'secure');
+  });
+});
+
+test('guardrails: a Changes round from a run with no stored set lands on Normal, not the Permissive default, and says so', async () => {
+  await onPermissiveDefault(async () => {
+    const { id, thread } = await doneRunWithPr('gr-legacy');
+    await post(`/api/ask/threads/${thread.id}/changes`, { pipelineId: id, text: 'make it blue' });
+    const card = blocksOf(thread.id).at(-1);
+    assert.equal(Object.hasOwn(card.card.run, 'guardrailsId'), false);
+    const runId = await startCard(thread.id, card.id, { verb: 'start' });
+    const e = runs.get(runId);
+    await waitFor(() => e.events.some((ev) => ev.type === 'log' && /Guardrails: Normal/.test(ev.text || '')), 60000);
+    const pid = await pipelineOfRun(runId);
+    const audit = () => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(pid).map((r) => r.text);
+    await waitFor(() => audit().some((t) => /Guardrails: Normal, not Permissive/.test(t)), 60000);
+    const got = await startedGuardrails(runId);
+    assert.equal(got.id, 'normal');
+    assert.match(got.note, /Guardrails: Normal, not Permissive — the install default is Permissive/);
+  });
+});
+
+test('guardrails: a Changes round from a run stored on Permissive starts on Normal and says why', async () => {
+  const { id, thread } = await doneRunWithPr('gr-perm');
+  setGuardrails(id, 'permissive');
+  await post(`/api/ask/threads/${thread.id}/changes`, { pipelineId: id, text: 'make it blue' });
+  const card = blocksOf(thread.id).at(-1);
+  assert.equal(card.card.run.guardrailsId, 'permissive');
+  const got = await startedGuardrails(await startCard(thread.id, card.id, { verb: 'start' }));
+  assert.equal(got.id, 'normal');
+  assert.match(got.note, /the run it changes is on Permissive/);
+});
+
+test('guardrails: a feature\'s landing facts read each slice\'s stored set from its run', async () => {
+  const { featureView } = await import('../src/core/shape/features.mjs');
+  const { readPrState } = await import('../src/core/artifacts.mjs');
+  const { landingFactsOfFeature } = await import('../src/core/shape/changes.mjs');
+  const { f } = await seedFeature('gr-slice', 'agr5s0001', { guardrailsId: 'normal' });
+  setGuardrails('agr5s0001', 'secure');
+  const facts = landingFactsOfFeature(f.id, { featureView, readPrState, findPipelineRowById: () => null, readRunTags, readRunLabels });
+  assert.equal(facts.feature.guardrailsId, 'normal');
+  assert.equal(facts.feature.slices[0].pipelineId, 'agr5s0001');
+  assert.equal(facts.feature.slices[0].guardrailsId, 'secure');
+});
+
+test('guardrails: a workspace Chat-card start with no set and a Permissive default lands on Normal and its run says so', { timeout: 120000 }, async () => {
+  const { addProject } = await import('../src/core/projects.mjs');
+  const { createWorkspace } = await import('../src/core/workspaces.mjs');
+  await onPermissiveDefault(async () => {
+    const dirs = [gitDir('gr-ws-a'), gitDir('gr-ws-b')];
+    for (const [i, d] of dirs.entries()) await addProject({ name: `grws${i}`, path: d });
+    const ws = await createWorkspace({ name: 'gr ws', projectPaths: dirs });
+    const thread = createThread();
+    const cardId = askAppendMessage(thread.id, { role: 'assistant', text: '', status: 'done',
+      blocks: [{ kind: 'card', id: 'card_9d000001', state: 'proposed', card: { workspaceId: ws.id, brief: 'x', workflowId: 'wf_default', guardrailsId: 'normal' } }] }).blocks[0].id;
+    const r = await post('/api/run', { prompt: 'x', workspaceId: ws.id, askThreadId: thread.id, askCardId: cardId });
+    assert.equal(r.status, 200, await r.clone().text());
+    const { runId } = await r.json();
+    const e = runs.get(runId);
+    try {
+      assert.equal(e.orch.guardrailsId, 'normal');
+      assert.match(e.orch._guardrailsNote || '', /Guardrails: Normal, not Permissive/);
+    } finally {
+      await post('/api/stop', { runId });
+      await untilSettled(runId);
+    }
+  });
+});
+
+test('guardrails: a Chat-card start moved to Normal on an engine other than Claude is refused up front with the way out', async () => {
+  await onPermissiveDefault(async () => {
+    const dir = gitDir('gr-engine');
+    const thread = createThread();
+    const cardId = askAppendMessage(thread.id, { role: 'assistant', text: '', status: 'done',
+      blocks: [{ kind: 'card', id: 'card_9b000001', state: 'proposed', card: { projectDir: dir, brief: 'x', workflowId: 'wf_default', guardrailsId: 'normal' } }] }).blocks[0].id;
+    const r = await post('/api/run', { prompt: 'x', projectDir: dir, engine: 'codex', askThreadId: thread.id, askCardId: cardId });
+    const j = await r.json();
+    assert.equal(r.status, 409, JSON.stringify(j));
+    assert.equal(j.code, 'GUARDRAILS_CARD_ENGINE');
+    assert.match(j.error, /Normal guardrail set, which codex cannot enforce — start it from New run and pick a guardrail set/);
+    assert.equal(blocksOf(thread.id).find((b) => b.id === cardId).state, 'proposed', 'the card stays answerable');
+  });
+});
+
+test('guardrails: a run proposal card with no set picked lands on Normal; an explicit pick (Permissive too) is kept; no card keeps the default', async () => {
+  await onPermissiveDefault(async () => {
+    const dir = gitDir('gr-card');
+    const thread = createThread();
+    const card = (n) => askAppendMessage(thread.id, { role: 'assistant', text: '', status: 'done',
+      blocks: [{ kind: 'card', id: `card_9c00000${n}`, state: 'proposed', card: { projectDir: dir, brief: 'x', workflowId: 'wf_default', guardrailsId: 'normal' } }] }).blocks[0].id;
+    const start = async (extra) => {
+      const r = await post('/api/run', { prompt: 'x', projectDir: dir, ...extra });
+      assert.equal(r.status, 200, await r.clone().text());
+      return startedGuardrails((await r.json()).runId);
+    };
+    const none = await start({ askThreadId: thread.id, askCardId: card(1) });
+    assert.equal(none.id, 'normal');
+    assert.match(none.note, /Guardrails: Normal, not Permissive/);
+    assert.deepEqual(await start({ askThreadId: thread.id, askCardId: card(2), guardrailsId: 'permissive' }), { id: 'permissive', note: null });
+    assert.deepEqual(await start({ askThreadId: thread.id, askCardId: card(3), guardrailsId: 'secure' }), { id: 'secure', note: null });
+    assert.deepEqual(await start({}), { id: 'permissive', note: null }, 'a start from no card keeps the install default');
+  });
 });

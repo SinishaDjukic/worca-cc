@@ -461,6 +461,9 @@ feature's runs, its next run and its open step, and it has two tools it calls wh
   feature (into the next run's plan, or as an extra run), Own run now (from the base, its own PR), or Save for later.
   The preselected choice and its one-line reason are Chat's guess; you can pick another.
 
+A run either card starts (a round, a follow-up, an added run, Own run now) uses the guardrail set of the run or feature
+it changes, never the install's default; one that would land on Permissive starts on Normal and says so in its log.
+
 worca refuses a call that does not fit the chat (the wrong tool for the feature's state, a run that is still going,
 an open step), and Chat answers in words instead. A Plan, Split, Clarify or Gate step is answered on its step
 card only, never from a chat message.

@@ -972,6 +972,8 @@ export class RunHarness extends EventEmitter {
     // option (the CLI, API bodies without one) get the install's default: Normal
     // on a fresh install, Permissive (the empty policy) on one from before v81.
     this.guardrailsId = this.opts.guardrailsId || defaultGuardrailSetId();
+    // POST /api/run's note when a Chat-card start was moved off a Permissive it did not pick: a run line + audit at start.
+    this._guardrailsNote = typeof this.opts.guardrailsNote === 'string' && this.opts.guardrailsNote ? this.opts.guardrailsNote : null;
     // MCP registry (design §6.2, D16): the run's per-membership opt-out ('<setId>|<serverId>'),
     // validated by POST /api/run; rides the resume point, restored beside guardrailsId.
     this.mcpOptOut = Array.isArray(this.opts.mcpOptOut) ? this.opts.mcpOptOut : [];
@@ -1547,6 +1549,10 @@ export class RunHarness extends EventEmitter {
       // NOW, naming what's missing, instead of pausing mid-run at the first node that needs it.
       await this._brokerPreflight(topology.manifest, stepModels);
       await this._resolveGuardrails();
+      if (this._guardrailsNote) {
+        this._log('orchestrator', 'warn', this._guardrailsNote);
+        this._pendingAudits.push(`${this._guardrailsNote}.`);
+      }
       await this._resolvePolicy();
       this._noteLocalTagDimensions();
       // The engine's own run-start check (binary, sign-in) and the project deny rules
