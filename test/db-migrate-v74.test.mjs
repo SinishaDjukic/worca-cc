@@ -6,7 +6,7 @@ import { migrate, SCHEMA_VERSION } from '../src/core/db.mjs';
 
 const cols = (db, t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
 const COLS = ['id', 'scope_type', 'scope_key', 'status', 'sections_json', 'edited_json', 'sources_json', 'files_json',
-  'seed_json', 'model', 'cost_usd', 'error_json', 'made_by', 'made_at', 'created_by', 'created_at', 'updated_by', 'updated_at', 'engine'];   // engine: v89
+  'seed_json', 'model', 'cost_usd', 'error_json', 'made_by', 'made_at', 'created_by', 'created_at', 'updated_by', 'updated_at', 'engine', 'made_cost_usd', 'made_cost_kind'];   // engine, made_cost_*: v89
 const version = (db) => db.prepare('PRAGMA user_version').get().user_version;
 const hasIndex = (db, name) => db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='index' AND name=?").get(name).n === 1;
 /** Every table, column and index the requirements lanes (v72-v74) and their neighbours own. */

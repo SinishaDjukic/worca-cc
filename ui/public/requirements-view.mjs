@@ -289,7 +289,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // the notes as last painted and their unsaved text, and each feature's scope as the page has seen it
   // (seq -> '<type>:<key>'), so a feature's frame repaints the brief page of its scope only.
   let briefShown = null;     // { scopeType, scopeKey } | null
-  let briefCatalogAsked = false;
+  let briefCatalogLoading = false;   // a models load in flight; a load that failed or came back empty is asked again at the next paint
   let briefCatalog = null;   // 9c board 9: the harnesses and models the brief's box picks from; null until loaded or when they cannot be
   let briefBoxRef = null;    // the head-start box's choice, read by Create
   let briefPick = null;      // { id, value }: that choice kept across repaints of the page
@@ -1102,9 +1102,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     }
     briefData = data;
     const s = briefShown;
-    if (!briefCatalog && !briefCatalogAsked) {
-      briefCatalogAsked = true;
-      void loadCatalog().then((c) => { briefCatalog = c; if (c) redrawBrief(); });
+    if (!briefCatalog && !briefCatalogLoading) {
+      briefCatalogLoading = true;
+      void loadCatalog().then((c) => { briefCatalogLoading = false; if (c) { briefCatalog = c; redrawBrief(); } });
     }
     for (const u of data.usedBy || []) if (u && u.seq != null) seqScope.set(Number(u.seq), scopeId(s));
     const kept = captureBrief();
@@ -1211,7 +1211,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('div', { class: 'req-brief-cost', 'data-needs-git': true },
         h('span', { class: 'req-brief-look', text: 'One look, read-only' }),
         h('span', { class: 'req-brief-facts' }, ...facts),
-        picker ? briefBoxRef.el : est.model && est.model.label ? h('span', { class: 'hint req-brief-model', text: `${est.model.label} · counts toward your limit` }) : null,
+        // a 9c page (it names the brief's default pick) waits for the models, never A7's line; a page without the pick keeps that line
+        picker ? briefBoxRef.el : !data.briefDefault && est.model && est.model.label ? h('span', { class: 'hint req-brief-model', text: `${est.model.label} · counts toward your limit` }) : null,
         slow ? h('span', { class: 'hint req-brief-slow', text: `Worca could not read ${joinAnd(t.slow)} in time; Create tries again.` }) : null,
         leftOut ? h('span', { class: 'hint req-brief-left-out',
           text: `Worca reads at most 8 projects of a workspace: ${joinAnd(leftOut)} ${leftOut.length === 1 ? 'is' : 'are'} left out.` }) : null,
@@ -1290,9 +1291,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const used = (data.usedBy || []).length;
     const docs = docsOf(data).length;
     const seed = b.seed && b.seed.kind === 'workspace-map' ? b.seed : null;
+    // 9c D18: the cost of the make that made it ("cost unknown" for a harness that reports none); a brief with no booked make cost
+    // (made before 9c, a mock make) says what it cost in all, as before
+    const madeCost = b.madeCostKind ? costWord(b.madeCostKind, b.madeCostUsd) : usd(b.costUsd);
     return [
       h('span', { class: 'chip' }, ...from, when ? (srcs.length ? ` · ${when}` : ` ${when}`) : ''),
-      h('span', { class: 'chip', text: data.madeWith && data.madeWith.model ? `${data.madeWith.label || data.madeWith.model} on ${engineLabel(data.madeWith.engine)} · ${usd(b.costUsd)}` : usd(b.costUsd) }),
+      h('span', { class: 'chip', text: data.madeWith && data.madeWith.model ? `${data.madeWith.label || data.madeWith.model} on ${engineLabel(data.madeWith.engine)}${madeCost ? ` · ${madeCost}` : ''}` : usd(b.costUsd) }),
       h('span', { class: 'chip', text: `Used by ${plural(used, 'feature')}` }),
       docs ? h('span', { class: 'chip', text: plural(docs, 'document') }) : null,   // A8 board 19
       seed ? h('span', { class: 'chip', text: `Built from the workspace map${seed.scannedAt ? `, scanned ${String(seed.scannedAt).slice(0, 10)}` : ''}` }) : null,

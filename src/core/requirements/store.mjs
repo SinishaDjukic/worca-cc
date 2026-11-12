@@ -283,6 +283,8 @@ function toBrief(r) {
     sections: { ...emptySections(), ...json(r.sections_json, {}) }, edited: json(r.edited_json, {}),
     sources: json(r.sources_json, []), files: json(r.files_json, []), seed: json(r.seed_json, null),
     model: r.model || null, engine: r.engine || null, costUsd: Math.round((Number(r.cost_usd) || 0) * 1e4) / 1e4,
+    // 9c: the cost of the last make alone and its kind (null: not booked); costUsd stays what the brief cost in all (A7)
+    madeCostUsd: r.made_cost_usd == null ? null : Math.round(Number(r.made_cost_usd) * 1e4) / 1e4, madeCostKind: r.made_cost_kind || null,
     error: json(r.error_json, null), madeBy: r.made_by || null, madeAt: r.made_at || null,
     createdBy: r.created_by || null, createdAt: r.created_at, updatedBy: r.updated_by || null, updatedAt: r.updated_at,
   };
@@ -331,7 +333,7 @@ export function saveBriefResult(id, { sections, edited, sources, files, seed, mo
   getDb();
   const ts = iso();
   prepare(`UPDATE req_briefs SET status = 'ready', sections_json = ?, edited_json = ?, sources_json = ?, files_json = ?,
-      seed_json = ?, model = ?, engine = ?, error_json = NULL, made_by = ?, made_at = ?, updated_by = ?, updated_at = ? WHERE id = ?`)
+      seed_json = ?, model = ?, engine = ?, made_cost_usd = NULL, made_cost_kind = NULL, error_json = NULL, made_by = ?, made_at = ?, updated_by = ?, updated_at = ? WHERE id = ?`)
     .run(JSON.stringify(sections || emptySections()), JSON.stringify(edited || {}), JSON.stringify(sources || []),
       JSON.stringify(files || []), seed ? JSON.stringify(seed) : null, model || null, engine || null, by, ts, by, ts, Number(id));
   return briefById(id);
@@ -351,6 +353,13 @@ export function setBriefSections(id, { sections, edited } = {}, { by = null } = 
   prepare('UPDATE req_briefs SET sections_json = ?, edited_json = ?, updated_by = ?, updated_at = ? WHERE id = ?')
     .run(JSON.stringify(sections || emptySections()), JSON.stringify(edited || {}), by, iso(), Number(id));
   return briefById(id);
+}
+
+/** 9c: the cost of the make just saved and its kind ('billed' | 'estimated' | 'unknown'), replacing the previous make's. */
+export function setBriefMadeCost(id, { costUsd, costKind } = {}) {
+  getDb();
+  prepare('UPDATE req_briefs SET made_cost_usd = ?, made_cost_kind = ? WHERE id = ?')
+    .run(costKind === 'unknown' ? 0 : Number(costUsd) || 0, costKind || null, Number(id));
 }
 
 export function addBriefCost(id, usd) {

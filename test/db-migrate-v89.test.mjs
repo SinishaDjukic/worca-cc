@@ -1,5 +1,5 @@
 // test/db-migrate-v89.test.mjs — the harness and cost kind of every Requirements step (plans/requirements-9c, Task 2).
-// Twelve additive nullable columns (INCREMENTAL_COLUMNS): req_features.model_json, req_briefs.engine, req_cost_ledger.{engine, step,
+// Fourteen additive nullable columns (INCREMENTAL_COLUMNS): req_features.model_json, req_briefs.{engine, made_cost_usd, made_cost_kind}, req_cost_ledger.{engine, step,
 // cost_kind, input_tokens, output_tokens}, req_turns.{engine, notices_json}, req_helper_messages.{engine, notices_json} and
 // req_attachments.read_engine. A fresh DB has them, one at 88 gets them, one stamped past this version without them is repaired.
 import { test } from 'node:test';
@@ -19,7 +19,7 @@ function shape(db) {
 const FRESH = (() => { const db = new DatabaseSync(':memory:'); migrate(db); return shape(db); })();
 const NEW = {
   req_features: ['model_json'],
-  req_briefs: ['engine'],
+  req_briefs: ['engine', 'made_cost_usd', 'made_cost_kind'],
   req_cost_ledger: ['engine', 'step', 'cost_kind', 'input_tokens', 'output_tokens'],
   req_turns: ['engine', 'notices_json'],
   req_helper_messages: ['engine', 'notices_json'],
@@ -30,7 +30,7 @@ function assertComplete(db) {
   assert.equal(version(db), SCHEMA_VERSION);
   let n = 0;
   for (const [t, cs] of Object.entries(NEW)) for (const c of cs) { n += 1; assert.ok(cols(db, t).includes(c), `${t}.${c}`); }
-  assert.equal(n, 12);
+  assert.equal(n, 14);
   assert.deepEqual(shape(db), FRESH, 'every table, column and index a fresh DB has');
 }
 const fromStamp = (sql, stamp) => {

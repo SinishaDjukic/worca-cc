@@ -25,7 +25,7 @@ import { RoundError } from './round.mjs';
 import { REQUIREMENTS_READ_DENY_RULES } from '../ask/deny-rules.mjs';
 import { callModel, interviewModel, foldCall, bookable, ledgerExtra } from './interview.mjs';
 import {
-  getContext, getBrief, beginBrief, saveBriefResult, failBrief, addBriefCost, listMakingBriefs, recentBriefCosts, listAttachments,
+  getContext, getBrief, beginBrief, saveBriefResult, failBrief, addBriefCost, setBriefMadeCost, listMakingBriefs, recentBriefCosts, listAttachments,
 } from './store.mjs';
 import { renderDocumentsForPrompt } from './attachments.mjs';
 import {
@@ -173,12 +173,14 @@ function failureOf(err) {
   return { code: (err && typeof err.code === 'string' && err.code) || 'FAILED', message: message(err) };
 }
 
-/** The look's cost on the brief row and its ledger row, in one transaction: both or neither. */
-function book(id, costUsd, model, extra = null) {
+/** The look's cost on the brief row and its ledger row, in one transaction: both or neither. A look that `made` the brief also
+ *  stores its own cost and kind on the row (9c), replacing the previous make's: the chip names that make's cost. */
+function book(id, costUsd, model, extra = null, made = false) {
   if (!bookable(costUsd, extra)) return;
   try {
     tx(() => {
       if (costUsd > 0) addBriefCost(id, costUsd);
+      if (made && extra && extra.costKind) setBriefMadeCost(id, { costUsd, costKind: extra.costKind });
       recordRequirementsCostDelta({ briefId: id, amountUsd: costUsd, model: model || null, ...ledgerExtra(extra) });
     });
   } catch (e) { console.error('requirements: could not book a brief look:', message(e)); }
@@ -216,6 +218,7 @@ function runJob(row, target, scopeType, scopeKey, by, d, choice = null) {
     let engine = null;
     let cost = 0;
     let spent = null;   // 9c D14: the look's cost kind and tokens
+    let made = false;   // the brief was saved from this look: its cost is the make's
     try {
       let fresh;
       let sources;
@@ -259,11 +262,12 @@ function runJob(row, target, scopeType, scopeKey, by, d, choice = null) {
       // The row as it is now: the product owner may have edited it while the look ran (D6).
       const merged = mergeBrief(getBrief(scopeType, scopeKey), fresh);
       saveBriefResult(row.id, { sections: merged.sections, edited: merged.edited, sources, files: fresh.files, seed: target.seed || null, model, engine }, { by });
+      made = true;
     } catch (err) {
       try { failBrief(row.id, failureOf(err)); } catch (e) { console.error('requirements: could not record a failed brief:', message(e)); }
     } finally {
       clearTimeout(timer);
-      book(row.id, cost, model, spent && spent.costKind && engine ? { engine, step: 'brief', costKind: spent.costKind, inputTokens: spent.inputTokens, outputTokens: spent.outputTokens } : null);
+      book(row.id, cost, model, spent && spent.costKind && engine ? { engine, step: 'brief', costKind: spent.costKind, inputTokens: spent.inputTokens, outputTokens: spent.outputTokens } : null, made);
       if (look) { try { await look.close(); } catch (e) { console.error('requirements: could not close a brief look:', message(e)); } }
       if (jobs.get(key) === self) jobs.delete(key);
       notify(d, scopeType, scopeKey);

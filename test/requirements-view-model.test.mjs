@@ -637,7 +637,7 @@ test('brief page: the Claude fallback line when the Default engine cannot read t
   assert.deepEqual(calls.find((c) => c.method === 'POST').body, { choice: { engine: 'claude', model: 'claude-opus-5-5', effort: 'medium' } });
 });
 
-test("brief page: without the models the box is A7's line and Create posts no choice", async () => {
+test('brief page: without the models there is no box and no pre-9c model line (B3); Create posts no choice', async () => {
   const routes = { ...ROUTES(), [`GET ${BRIEF9}`]: briefBody9(), [`POST ${BRIEF9}`]: { brief: madeBrief9({ status: 'making' }) } };
   delete routes['GET /api/requirements/models'];
   const calls = fakeApi(routes);
@@ -647,7 +647,7 @@ test("brief page: without the models the box is A7's line and Create posts no ch
   await view.show('brief/project/shop-1');
   await settle();
   assert.equal(host.querySelector('.req-who'), null);
-  assert.equal(text(host.querySelector('.req-brief-model')), 'Sonnet 5.5 · counts toward your limit');
+  assert.equal(host.querySelector('.req-brief-model'), null, 'a 9c page never falls back to the pre-9c line');
   host.querySelector('[data-ui="brief-create"]').click();
   await settle();
   assert.deepEqual(calls.find((c) => c.method === 'POST').body, {});
@@ -956,4 +956,74 @@ test('cost dialog: "So far" says "cost unknown" when the total is 0 and steps ar
   const last = [...dialogEl().querySelectorAll('tbody tr')].at(-1);
   assert.deepEqual([...last.children].map((c) => text(c)), ['So far', 'cost unknown']);
   assert.ok(!/$0.00/.test(dialogEl().textContent));
+});
+
+// ---- 9c fix B2: the brief chip names the cost of the make that made it, in the cost words ----
+test('B2: the brief chip says the last make\'s cost: "cost unknown" for a Copilot make, never the old Claude cost or $0.00', async () => {
+  const chip = async (brief, madeWith) => {
+    const { host } = await openBrief9(briefBody9({ brief: madeBrief9(brief), madeWith }));
+    return [...host.querySelectorAll('.req-brief-chips > *')].map(text);
+  };
+  const cop = { engine: 'copilot', model: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' };
+  // refreshed on Copilot after a $0.09 Claude make: the brief cost $0.09 in all, this make's cost is unknown
+  let chips = await chip({ engine: 'copilot', model: 'claude-sonnet-5-5', costUsd: 0.0946, madeCostUsd: 0, madeCostKind: 'unknown' }, cop);
+  assert.ok(chips.includes('Claude Sonnet 5.5 on GitHub Copilot · cost unknown'), chips.join(' | '));
+  chips = await chip({ engine: 'copilot', model: 'claude-sonnet-5-5', costUsd: 0, madeCostUsd: 0, madeCostKind: 'unknown' }, cop);
+  assert.ok(chips.includes('Claude Sonnet 5.5 on GitHub Copilot · cost unknown'), chips.join(' | '));
+  chips = await chip({ engine: 'codex', model: 'gpt-sol', costUsd: 0.5, madeCostUsd: 0.04, madeCostKind: 'estimated' }, { engine: 'codex', model: 'gpt-sol', label: 'GPT-5.6 Sol' });
+  assert.ok(chips.includes('GPT-5.6 Sol on OpenAI Codex · ≈$0.04'), chips.join(' | '));
+  chips = await chip({ costUsd: 0.5, madeCostUsd: 0.0946, madeCostKind: 'billed' }, { engine: 'claude', model: 'claude-opus-5-5', label: 'Opus 5.5' });
+  assert.ok(chips.includes('Opus 5.5 on Claude Code · $0.09'), chips.join(' | '));
+  // a pre-9c brief (engine NULL, no make cost booked) shows as today
+  chips = await chip({ engine: null, costUsd: 0.42, madeCostUsd: null, madeCostKind: null }, { engine: 'claude', model: 'claude-opus-5-5', label: 'Opus 5.5' });
+  assert.ok(chips.includes('Opus 5.5 on Claude Code · $0.42'), chips.join(' | '));
+});
+
+// ---- 9c fix B3: a catalog that could not be loaded is asked again; a 9c page never shows the pre-9c model line ----
+test('B3: the brief box: a failed first models load is asked again on the next visit, and the pre-9c line never shows meanwhile', async () => {
+  let fail = true;
+  const routes = { ...ROUTES(), 'GET /api/requirements/estimates': BRIEF_ESTIMATES, [`GET ${BRIEF9}`]: briefBody9(),
+    'GET /api/requirements/models': () => (fail ? { __fail: true } : CATALOG9) };
+  const calls = [];
+  globalThis.fetch = async (url, opts = {}) => {
+    const method = opts.method || 'GET';
+    const [path] = url.split('?');
+    calls.push({ method, url });
+    const hit = routes[`${method} ${path}`];
+    const body = typeof hit === 'function' ? hit(Object.fromEntries(new URLSearchParams(url.split('?')[1] || '')), opts) : hit;
+    const status = body === undefined ? 404 : body && body.__fail ? 503 : 200;
+    return { ok: status < 400, status, json: async () => (status === 200 ? body : { error: 'not ready' }), text: async () => '' };
+  };
+  const host = document.createElement('div');
+  document.body.replaceChildren(host);
+  const view = createRequirementsView({ host, subEl: document.createElement('div'), msgEl: document.createElement('p'), deps: { route: () => {} } });
+  await view.show('brief/project/shop-1');
+  await settle();
+  assert.equal(host.querySelector('.req-brief-cost .req-who'), null, 'no models yet');
+  assert.equal(host.querySelector('.req-brief-model'), null, 'never the pre-9c "<model> · counts toward your limit" line on a 9c page');
+  fail = false;
+  await view.show('');
+  await settle();
+  await view.show('brief/project/shop-1');
+  await settle();
+  assert.ok(host.querySelector('.req-brief-cost .req-who-harness'), 'the box is there on the next visit');
+  assert.equal(calls.filter((c) => c.url === '/api/requirements/models').length, 2);
+});
+
+test('B3: the New feature form: a failed models load is asked again on the next visit', async () => {
+  let fail = true;
+  const routes = ROUTES({ 'GET /api/requirements/models': () => (fail ? undefined : CATALOG) });
+  const host = document.createElement('div');
+  document.body.replaceChildren(host);
+  fakeApi(routes);
+  const view = createRequirementsView({ host, subEl: document.createElement('div'), msgEl: document.createElement('p'), deps: { route: () => {} } });
+  await view.show('new');
+  await settle();
+  assert.equal(host.querySelector('.req-who-harness'), null);
+  fail = false;
+  await view.show('');
+  await settle();
+  await view.show('new');
+  await settle();
+  assert.ok(host.querySelector('.req-who-harness'), 'Who interviews is there on the next visit');
 });

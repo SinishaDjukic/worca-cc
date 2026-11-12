@@ -463,7 +463,7 @@ function resetPeriod() {
 }
 
 const BRIEF_FIELDS = ['id', 'scopeType', 'scopeKey', 'status', 'sections', 'edited', 'sources', 'files', 'seed', 'model', 'engine',
-  'costUsd', 'error', 'madeBy', 'madeAt', 'updatedAt'];
+  'costUsd', 'madeCostUsd', 'madeCostKind', 'error', 'madeBy', 'madeAt', 'updatedAt'];
 const briefFields = (b) => (b ? Object.fromEntries(BRIEF_FIELDS.map((k) => [k, b[k]])) : null);
 
 /**

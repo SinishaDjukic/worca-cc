@@ -348,3 +348,14 @@ test('the list (B1): each row carries its unknown steps and whether any cost is 
   const v = (await call('GET', `${P}/${f.seq}`)).json.feature;
   assert.equal(v.unknownSteps, row(f).unknownSteps);
 });
+
+test('the brief page (B2): the brief carries the cost of its last make and its kind', async () => {
+  const KEY = 'b2-api-key';
+  const b = beginBrief('project', projKey, { by: 'po' });
+  saveBriefResult(b.id, { sections: { product: 'p', users: [], terms: [], areas: [] }, sources: [], model: 'cop-1', engine: 'copilot' });
+  recordRequirementsCostDelta({ briefId: b.id, amountUsd: 0, model: 'cop-1', engine: 'copilot', step: 'brief', costKind: 'unknown' });
+  const { setBriefMadeCost } = await import('../src/core/requirements/store.mjs');
+  setBriefMadeCost(b.id, { costUsd: 0, costKind: 'unknown' });
+  const g = (await call('GET', `${P}/brief/project/${projKey}`)).json;
+  assert.deepEqual([g.brief.madeCostUsd, g.brief.madeCostKind], [0, 'unknown'], KEY);
+});

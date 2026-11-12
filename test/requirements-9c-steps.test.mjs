@@ -651,3 +651,47 @@ for (const [engine, w] of Object.entries(WHOLE)) {
     }
   });
 }
+
+// ---- 9c fix B2: the brief keeps the cost of its own make (and whether it was unknown); a refresh replaces it ----
+test('B2: a brief stores the cost of its last make: a Copilot refresh of a Claude brief is "unknown", never the Claude cost', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'req-9c-brief-b2-'));
+  const g = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf8' });
+  g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't'); g('config', 'commit.gpgsign', 'false');
+  writeFileSync(join(repo, 'README.md'), 'hi'); g('add', '.'); g('commit', '-q', '-m', 'init');
+  const lookDir = mkdtempSync(join(tmpdir(), 'req-9c-lookdir-b2-'));
+  const text = JSON.stringify({ product: 'A shop.', users: [], terms: [], areas: [], files: [] });
+  const costs = [0.0946, null, null];   // Claude bills; Copilot reports nothing
+  const calls = [];
+  const runClaudeImpl = async (opts) => {
+    calls.push(opts);
+    const c = costs.shift();
+    opts.onEvent?.({ type: 'result', raw: { type: 'result', ...(c == null ? {} : { total_cost_usd: c }), result: text }, ...(c == null ? {} : { costUsd: c }) });
+    return { text };
+  };
+  const bd = (key) => deps({ runClaudeImpl }, { listProjects: async () => [{ key, name: 'Shop', path: repo, exists: true }],
+    openLook: async () => ({ cwd: lookDir, commit: 'abc', close: async () => {} }), budget: () => ({ blocked: false }), ratesFor: () => null,
+    catalog: async () => ({ models: [{ id: 'claude-opus-5-5', efforts: [] }, { id: 'cop-1', harnesses: ['copilot'], efforts: [] }] }) });
+  const KEY = 'brief-9c00b2';
+  setContext('project', KEY, { lookAtCode: true });
+  await (await makeBrief('project', KEY, { by: 'po', choice: { engine: 'claude', model: 'claude-opus-5-5', effort: null } }, bd(KEY))).job;
+  await briefSettled('project', KEY);
+  let b = getBrief('project', KEY);
+  assert.deepEqual([b.engine, b.madeCostUsd, b.madeCostKind], ['claude', 0.0946, 'billed']);
+  await (await makeBrief('project', KEY, { by: 'po', choice: { engine: 'copilot', model: 'cop-1', effort: null } }, bd(KEY))).job;
+  await briefSettled('project', KEY);
+  b = getBrief('project', KEY);
+  assert.equal(calls.at(-1).engine, 'copilot');
+  assert.deepEqual([b.engine, b.model, b.madeCostUsd, b.madeCostKind], ['copilot', 'cop-1', 0, 'unknown'], 'the refresh replaced the Claude cost');
+  assert.equal(b.costUsd, 0.0946, 'what the brief cost in all is kept (A7)');
+  // a fresh brief made on Copilot: unknown from the start
+  const KEY2 = 'brief-9c00b3';
+  setContext('project', KEY2, { lookAtCode: true });
+  await (await makeBrief('project', KEY2, { by: 'po', choice: { engine: 'copilot', model: 'cop-1', effort: null } }, bd(KEY2))).job;
+  await briefSettled('project', KEY2);
+  b = getBrief('project', KEY2);
+  assert.deepEqual([b.engine, b.madeCostUsd, b.madeCostKind], ['copilot', 0, 'unknown']);
+  // a brief saved without a booked make (a pre-9c brief, a mock make) has none
+  const pre = beginBrief('project', 'brief-9c00b4', { by: 'po' });
+  saveBriefResult(pre.id, { model: 'claude-opus-5-5' }, { by: 'po' });
+  assert.deepEqual([getBrief('project', 'brief-9c00b4').madeCostUsd, getBrief('project', 'brief-9c00b4').madeCostKind], [null, null]);
+});
