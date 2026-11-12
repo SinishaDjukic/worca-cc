@@ -34,6 +34,13 @@
   .mv-pv-card .mv-pv-row.mv-im-row .mv-pv-ctl{grid-template-columns:minmax(0,1fr);}
   .mv-im-row .mv-im-key{grid-column:auto;}
 }
+/* Sound (Design): one key field, as wide as the Image generation key above it, then the buttons. The Test's line
+   is a .hint (display:block), which beats the UA hidden rule, so it hides by its own. */
+.mv-so-result[hidden]{display:none;}
+.mv-pv-card .mv-pv-row.mv-so-row .mv-pv-ctl{grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:10px 14px;align-items:start;}
+@container drows (max-width:560px){
+  .mv-pv-card .mv-pv-row.mv-so-row .mv-pv-ctl{grid-template-columns:minmax(0,1fr);}
+}
 /* New surface, new contrast: the house `.hint` / placeholder grey (--ink-3) sits at
    2.8:1 on a white card and is only tolerated where the light baseline predates the
    dark theme (test/fixtures/contrast-baseline-light.json — shrink, never grow). The

@@ -375,6 +375,58 @@ function renderImagesRow(doc, im) {
   return row;
 }
 
+function soundBadge(doc, so) {
+  if (!so.keySet) return h(doc, 'span', 'badge grey', 'not set up');
+  if (so.keyMissing) return h(doc, 'span', 'badge red', 'key missing');
+  return h(doc, 'span', 'badge green', 'ready');
+}
+
+/**
+ * The Sound row (Design sound): the ElevenLabs key a Design video's voice and music are made with. One field;
+ * its original value is kept even when empty, so an untouched field never collects as a cleared key.
+ */
+function renderSoundRow(doc, so) {
+  const row = h(doc, 'div', 'mv-pv-row mv-so-row');
+  row.dataset.provider = 'sound';
+  const main = h(doc, 'div', 'mv-pv-main');
+  const head = h(doc, 'div', 'mv-head');
+  head.appendChild(h(doc, 'b', 'mv-name', 'Sound (Design)'));
+  head.appendChild(soundBadge(doc, so));
+  main.appendChild(head);
+  main.appendChild(h(doc, 'small', 'hint', 'Gives a Design video a voice and music through ElevenLabs. The key stays on this machine.'));
+  main.appendChild(h(doc, 'small', 'hint mv-pv-msg'));
+  // The Test's answer: how many voices the key reaches, or the reason it failed.
+  const result = h(doc, 'small', 'hint mv-so-result');
+  result.hidden = true;
+  result.setAttribute('role', 'status');
+  main.appendChild(result);
+  row.appendChild(main);
+
+  const ctl = h(doc, 'div', 'mv-pv-ctl');
+  const field = h(doc, 'label', 'mv-field mv-so-key');
+  field.appendChild(h(doc, 'span', 'mv-field-label', 'ElevenLabs API key'));
+  const key = h(doc, 'input', 'input mv-pv-key');
+  key.type = 'password';
+  key.setAttribute('autocomplete', 'off');
+  key.placeholder = 'sk_…';
+  key.value = so.keyRef || so.keyMasked || '';
+  key.dataset.original = key.value;
+  field.appendChild(key);
+  ctl.appendChild(field);
+  row.appendChild(ctl);
+
+  const btns = h(doc, 'div', 'mv-pv-btns');
+  btns.dataset.cardActions = '';
+  const test = h(doc, 'button', 'btn mv-so-test', 'Test');
+  test.type = 'button';
+  btns.appendChild(test);
+  const save = h(doc, 'button', 'btn btn-primary mv-so-save', 'Save');
+  save.type = 'button';
+  btns.appendChild(save);
+  row.appendChild(btns);
+  return row;
+}
+
 /**
  * The Providers card. `providers` is GET /api/providers' payload (never a
  * token). `signIn` is an in-flight device-flow {userCode, verificationUri,
@@ -545,6 +597,7 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
   }
   place(renderSpeechRow(doc, p.speech || {}));
   place(renderImagesRow(doc, p.images || {}));
+  place(renderSoundRow(doc, p.sound || {}));
   return root;
 }
 
@@ -652,6 +705,16 @@ export function collectImagesRow(rootEl) {
     body[field] = v;
   }
   return body;
+}
+
+/** Collect the Sound row into PATCH /api/providers/sound's body: {} while the key is untouched, else { apiKey }
+ *  ('' for a cleared field). */
+export function collectSoundRow(rootEl) {
+  const row = rootEl.querySelector('.mv-pv-row[data-provider="sound"]');
+  if (!row) return null;
+  const key = row.querySelector('.mv-pv-key');
+  const v = key.value.trim();
+  return v === key.dataset.original ? {} : { apiKey: v };
 }
 
 /** The Test picture's answer, in the row: the picture and "Made in n s · w×h", or the reason in red. */

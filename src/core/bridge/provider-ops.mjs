@@ -9,10 +9,11 @@
 import {
   providerConfig, allProviders, updateProvider, resolveProviderSecret, providerSecretSet,
   clearCopilotSignIn,
-  listGlobalModels, addGlobalModel, updateGlobalModel, updateSpeech, updateImages,
+  listGlobalModels, addGlobalModel, updateGlobalModel, updateSpeech, updateImages, updateSound,
 } from '../settings.mjs';
 import { speechState } from '../speech.mjs';
 import { imagesState } from '../images.mjs';
+import { soundState } from '../sound.mjs';
 import { speechAssetStore } from '../speech-assets.mjs';
 import { modelEnvRef, maskModelEnvValue, UPSTREAM_PROVIDERS, isUpstreamBaseUrl, EFFORTS } from '../model-env.mjs';
 import {
@@ -162,7 +163,7 @@ export async function providersState({ quota = false, fetch: f, person = resolve
   // With the credential broker on, keys and the Copilot sign-in are per person on its key page:
   // each provider's state is the viewer's own slot there, not worca's (empty) settings.
   const broker = brokerEnabled() ? await brokerProviders(all, person) : { enabled: false };
-  return { copilot, openai: keyed('openai'), anthropic: keyed('anthropic'), speech: { ...speechState(), cacheBytes: speechCacheBytes() }, images: imagesState(), broker };
+  return { copilot, openai: keyed('openai'), anthropic: keyed('anthropic'), speech: { ...speechState(), cacheBytes: speechCacheBytes() }, images: imagesState(), sound: soundState(), broker };
 }
 
 /**
@@ -236,6 +237,16 @@ export async function patchImages(patch = {}) {
   // Credential broker: worca stores no keys at all (same rule as patchSpeech).
   if (brokerEnabled() && typeof p.apiKey === 'string' && p.apiKey.trim()) refuseWithBroker('store an image service key');
   return updateImages(p);
+}
+
+/** Patch the sound block from the UI (Design sound): masked key echoes are dropped ("keep"). */
+export async function patchSound(patch = {}) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return updateSound(patch);
+  const p = { ...patch };
+  if (typeof p.apiKey === 'string' && p.apiKey.startsWith('••')) delete p.apiKey;
+  // Credential broker: worca stores no keys at all (same rule as patchImages).
+  if (brokerEnabled() && typeof p.apiKey === 'string' && p.apiKey.trim()) refuseWithBroker('store a sound key');
+  return updateSound(p);
 }
 
 // ── Copilot models: list for import, import ─────────────────────────────────
