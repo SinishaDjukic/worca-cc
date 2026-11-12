@@ -206,16 +206,18 @@ export function compareModel({ examples = [], a = null, b, tries = [] }) {
   const ids = new Set(comparedRows.map((r) => r.id));
   const nothing = !!a && comparedRows.length > 0 && comparedRows.every((r) => r.failsBoth)
     ? { ...(missedMost(done.filter((t) => ids.has(t.exampleId))) || {}), n: done.filter((t) => ids.has(t.exampleId)).length } : null;
+  // Final review M2: the examples both versions fail most tries of are counted as 'same' (F8) but said apart in "In short".
+  const failsBoth = comparedRows.filter((r) => r.failsBoth).length;
   return {
     examples: rows, tiles, counts,
     // D38: with no example tried on both sides there is nothing to say ("gives the same results" would be untrue).
-    inShort: a && counts.better + counts.worse + counts.same > 0 ? inShortSentences({ a, b, tiles, counts, worst, allCompared, nothing }) : [],
+    inShort: a && counts.better + counts.worse + counts.same > 0 ? inShortSentences({ a, b, tiles, counts, worst, allCompared, nothing, failsBoth }) : [],
     look: a && top ? { exampleId: top.id, name: top.name, before: 'Look at ', after: `${alike > 0 ? ` (and ${alike} more like it)` : ''} before you share ${b.label}.` } : null,
   };
 }
 
 /** C2 (approved 2026-10-26, its three extra sentences included) with D5: the fixed sentences, each only when it applies and the rule of `differs` says so. */
-function inShortSentences({ a, b, tiles, counts, worst, allCompared, nothing }) {
+function inShortSentences({ a, b, tiles, counts, worst, allCompared, nothing, failsBoth = 0 }) {
   const out = [];
   const { diff } = tiles;
   const adj = [];
@@ -224,15 +226,16 @@ function inShortSentences({ a, b, tiles, counts, worst, allCompared, nothing }) 
   const exs = (n) => (n === 1 ? '1 example' : `${n} examples`);
   const is = adj.length ? `is ${adj.join(' and ')}` : '';
   let first = true;   // an earlier sentence names the version: later ones say "It", otherwise the version label
-  if (nothing) {   // F7: no example passes on either side
-    out.push('Neither version passes any example yet.');
+  if (nothing) {   // F7: no example passes most tries on either side (final review M2: a few passed tries may)
+    out.push('Neither version passes most tries of any example yet.');
     if (nothing.label) out.push(`Most often missed: "${nothing.label}" (${nothing.k} of ${nothing.n} ${triesWord(nothing.n)}).`);
     if (is) out.push(`${b.label} ${is} than ${a.label}.`);
     else first = false;   // nothing has named the version yet
   } else if (counts.better) out.push(is ? `${b.label} ${is}, and better on ${exs(counts.better)}.` : `${b.label} is better on ${exs(counts.better)}.`);
   else if (!counts.worse) {
-    const same = allCompared ? 'on every example' : 'on the examples both versions finished';
-    out.push(is ? `${b.label} ${is}, and gives the same results as ${a.label}.` : `${b.label} gives the same results as ${a.label} ${same}.`);
+    // Final review M2: with examples that fail on both, "the same results" counts only the others (there is one: not `nothing`).
+    const same = failsBoth ? `on ${exs(counts.same - failsBoth)}` : allCompared ? 'on every example' : 'on the examples both versions finished';
+    out.push(is ? `${b.label} ${is}, and gives the same results as ${a.label}${failsBoth ? ` ${same}` : ''}.` : `${b.label} gives the same results as ${a.label} ${same}.`);
   } else if (is) out.push(`${b.label} ${is}.`);
   else first = false;
   const subject = first ? 'It' : b.label;
@@ -250,6 +253,11 @@ function inShortSentences({ a, b, tiles, counts, worst, allCompared, nothing }) 
   // F11: steadier only counts examples that passed every try; "vary more" only examples with mixed results.
   if (tiles.b.mixed > tiles.a.mixed) out.push(`${named ? 'Its' : `${b.label}'s`} results also vary more from try to try.`);
   else if (tiles.b.steady.n > tiles.a.steady.n) out.push(`${named ? 'Its' : `${b.label}'s`} results are also steadier from try to try.`);
+  // Final review M2: last, so no "It" above can be read as the example.
+  if (!nothing && failsBoth) {
+    const one = failsBoth === 1;
+    out.push(`On ${exs(failsBoth)} both fail most tries: look at ${one ? 'it' : 'them'} or ${one ? 'its' : 'their'} checks.`);
+  }
   return out;
 }
 

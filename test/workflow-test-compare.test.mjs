@@ -213,7 +213,7 @@ test('Fix 3: $0 baseline decides on the absolute part; too few tries is cannot-t
 
 test('Fix 2: no dangling It / Its when no earlier sentence names the version', () => {
   const sent = cmp2([[1, 'X', sd('FFF', { sent: 2 }), sd('FFF', { sent: 1 })]]);
-  assert.equal(sent.inShort.join(' '), `Neither version passes any example yet. Most often missed: "${SECTIONS}" (6 of 6 tries). v5 draft is sent back for fixes less often: 1 time a try, against 2.`);
+  assert.equal(sent.inShort.join(' '), `Neither version passes most tries of any example yet. Most often missed: "${SECTIONS}" (6 of 6 tries). v5 draft is sent back for fixes less often: 1 time a try, against 2.`);
   const vary = cmp2([[1, 'X', sd('FFF'), sd('FFF')], [2, 'Y', sd('PPP'), sd('PPP')]]);
   assert.ok(!/\bIts?\b/.test(vary.inShort.join(' ')), vary.inShort.join(' '));
 });
@@ -244,9 +244,9 @@ test('U-T5 F6: 40 s against 44 s is not "slower"; a real gap still is', () => {
 
 test('U-T5 F7: nothing passes on either side', () => {
   const none = cmp2([[1, 'X', sd('FFF', { cost: 1 }), sd('FFF', { cost: 0.4 })], [2, 'Y', sd('FFF', { cost: 1 }), sd('FFF', { cost: 0.4 })]]);
-  assert.equal(none.inShort.join(' '), `Neither version passes any example yet. Most often missed: "${SECTIONS}" (12 of 12 tries). v5 draft is cheaper than v4.`);
+  assert.equal(none.inShort.join(' '), `Neither version passes most tries of any example yet. Most often missed: "${SECTIONS}" (12 of 12 tries). v5 draft is cheaper than v4.`);
   const flat = cmp2([[1, 'X', sd('FFF'), sd('FFF')]]);
-  assert.equal(flat.inShort.join(' '), `Neither version passes any example yet. Most often missed: "${SECTIONS}" (6 of 6 tries).`);
+  assert.equal(flat.inShort.join(' '), `Neither version passes most tries of any example yet. Most often missed: "${SECTIONS}" (6 of 6 tries).`);
   assert.equal(flat.look, null);
 });
 
@@ -311,4 +311,26 @@ test('U-T5 money: under $0.10 three significant digits, from $0.10 two decimals'
 
 test('U-T8 fix round: a time under one second reads "under 1 s", not "0 s"', () => {
   assert.deepEqual([fmtDuration(0), fmtDuration(120), fmtDuration(499), fmtDuration(500), fmtDuration(1400)], ['under 1 s', 'under 1 s', 'under 1 s', '1 s', '1 s']);
+});
+
+// Final review M2 (user, 2026-11-12): an example both versions fail most tries of is counted apart in "In short", so
+// "gives the same results" covers only the examples with the same result, and "Neither version passes …" says "most tries".
+test('M2: the reviewer\'s two cases, and "fails on both" counted apart with its grammar for any count', () => {
+  const mixed = cmp2([[1, 'E1', sd('PPFFF'), sd('FFFFF')], [2, 'E2', sd('PPP'), sd('PPP')]]);
+  assert.deepEqual(mixed.inShort, ['v5 draft gives the same results as v4 on 1 example.', 'On 1 example both fail most tries: look at it or its checks.']);
+  const alone = cmp2([[1, 'E1', sd('PPFFF'), sd('FFFFF')]]);
+  assert.equal(alone.inShort.join(' '), `Neither version passes most tries of any example yet. Most often missed: "${SECTIONS}" (8 of 10 tries).`);
+  const many = cmp2([[1, 'E1', sd('FFF'), sd('FFF')], [2, 'E2', sd('PFF'), sd('FFF')], [3, 'E3', sd('PPP'), sd('PPP')], [4, 'E4', sd('PPP'), sd('PPP')]]);
+  assert.deepEqual(many.inShort, ['v5 draft gives the same results as v4 on 2 examples.', 'On 2 examples both fail most tries: look at them or their checks.']);
+  const cheaper = cmp2([[1, 'E1', sd('FFF', { cost: 1 }), sd('FFF', { cost: 0.4 })], [2, 'E2', sd('PPP', { cost: 1 }), sd('PPP', { cost: 0.4 })]]);
+  assert.deepEqual(cheaper.inShort, ['v5 draft is cheaper, and gives the same results as v4 on 1 example.', 'On 1 example both fail most tries: look at it or its checks.']);
+  // With better or worse examples too, the ones failing on both are still named apart (last, so an earlier "It" stays the version).
+  const better = cmp2([[1, 'E1', sd('FFF'), sd('FFF')], [2, 'E2', sd('FFF'), sd('PPP')]]);
+  assert.deepEqual(better.inShort, ['v5 draft is better on 1 example.', 'Its results are also steadier from try to try.',
+    'On 1 example both fail most tries: look at it or its checks.']);
+  const worse = cmp2([[1, 'E1', sd('FFF'), sd('FFF')], [2, 'E2', sd('PPP'), sd('FFF')], [3, 'E3', sd('PPP'), sd('PPP')]]);
+  assert.deepEqual(worse.inShort, [`v5 draft is worse on 1 example, E2: it missed "${SECTIONS}" (3 of 3 tries).`,
+    'On 1 example both fail most tries: look at it or its checks.']);
+  // With none failing on both, the sentence still says "gives the same results … on every example" when none fail on both.
+  assert.deepEqual(cmp2([[1, 'E1', sd('PPP'), sd('PPP')]]).inShort, ['v5 draft gives the same results as v4 on every example.']);
 });
