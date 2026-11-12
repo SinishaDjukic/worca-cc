@@ -4,7 +4,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -47,7 +48,7 @@ const isOutline = (q) => q.kind === 'plan' && q.plan?.outline;
 
 /** Start a mock run in slicing mode. Outline asks go to `onOutline(q, orch)`, other plan asks to `onPlan`. */
 function start(opts = {}, onOutline = () => {}, onPlan = (q, orch) => orch.answer(q.id, { decision: 'approve' })) {
-  const { afterSpawn, ...rest } = opts;
+  const { afterSpawn, beforeSpawn, ...rest } = opts;
   opts = rest;
   const dir = opts.projectDir || gitDir('slices');
   const orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_shape', prompt: PROMPT, claude: { mock: true }, shape: SHAPE, ...opts });
@@ -58,7 +59,10 @@ function start(opts = {}, onOutline = () => {}, onPlan = (q, orch) => orch.answe
   const real = orch._runNodeAttempts.bind(orch);
   orch._runNodeAttempts = async (nc, ctx) => {
     spawns.push({ key: nc.key, slicing: Boolean(ctx.shapeSlicing), note: ctx.shapeOutlineNote?.decision || null,
-      feedback: ctx.shapeOutlineNote?.feedback || null, resume: Boolean(ctx.resumeSessionId), scope: Boolean(ctx.shapeSliceScope) });
+      feedback: ctx.shapeOutlineNote?.feedback || null, resume: Boolean(ctx.resumeSessionId), scope: Boolean(ctx.shapeSliceScope),
+      // the outline file as the spawn starts: its sha, or null when it is missing
+      outlineSha: ctx.shapeSlicing ? shaOf(ctx.shapeSlicing.file) : undefined });
+    if (beforeSpawn) await beforeSpawn(nc, ctx, spawns.length, orch);
     const r = await real(nc, ctx);
     if (afterSpawn) await afterSpawn(nc, ctx, spawns.length);
     return r;
@@ -71,6 +75,9 @@ function start(opts = {}, onOutline = () => {}, onPlan = (q, orch) => orch.answe
   });
   const done = opts.resume ? orch.resume() : orch.run();
   return { orch, outlines, plans, execs, spawns, done, dir };
+}
+function shaOf(file) {
+  try { return createHash('sha256').update(readFileSync(file)).digest('hex'); } catch { return null; }
 }
 const ran = (execs, nodeId) => execs.filter((e) => e.nodeId === nodeId);
 const audit = (orch) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(orch.getState().id).map((r) => r.text);
@@ -151,6 +158,74 @@ test('revise: round 2 is asked; at round 3 the outline is no longer revisable', 
   assert.deepEqual(h.outlines.map((q) => q.id), ['plan-outline-n_plan-1', 'plan-outline-n_plan-2', 'plan-outline-n_plan-3']);
   assert.deepEqual(h.outlines.map((q) => q.plan.revisable), [true, true, false]);
   assert.ok(h.spawns.some((s) => s.note === 'revise' && s.feedback === 'change 1'));
+});
+
+test('revise keeps slices.json: the revise spawn starts with round 1\'s bytes and round 2 reads the edited outline', async () => {
+  let n = 0;
+  const h = start({}, (q, orch) => {
+    n += 1;
+    if (n === 1) orch.answer(q.id, { decision: 'revise', feedback: 'Merge the first two.' });
+    else orch.answer(q.id, { decision: 'stop' });
+  });
+  assert.equal((await h.done).status, 'stopped');
+  const rounds = h.orch.state.shaping.outline.rounds;
+  assert.equal(rounds.length, 2);
+  assert.match(rounds[0].sha, /^[0-9a-f]{64}$/);
+  const revise = h.spawns.find((s) => s.note === 'revise');
+  assert.equal(revise.outlineSha, rounds[0].sha, 'byte-equal to the asked round at the revise spawn\'s start');
+  assert.ok(h.outlines[1].plan.outline.why.includes('Merge the first two.'), 'round 2 reads the edited outline');
+  assert.notEqual(rounds[1].sha, rounds[0].sha);
+});
+
+test('pause during the revise spawn, resume: the file still has round 1\'s sha at the resumed spawn\'s start, and round 2 is asked, not flat', async () => {
+  const dir = gitDir('slices-revise-pause');
+  let paused = false;
+  const h = start({ projectDir: dir, beforeSpawn: async (nc, ctx, i, orch) => {
+    if (!paused && ctx.shapeOutlineNote?.decision === 'revise') { paused = true; orch.pause(); }
+  } }, (q, orch) => orch.answer(q.id, { decision: 'revise', feedback: 'Merge the first two.' }));
+  assert.equal((await h.done).status, 'paused');
+  const saved = readPipelineForResume(h.orch.getState().id);
+  const r1 = saved.resumePoint.shaping.outline.rounds[0];
+  assert.equal(r1.decision, 'revise');
+  let n = 0;
+  const h2 = start({ projectDir: dir, resume: saved, shape: undefined }, (q, orch) => { n += 1; orch.answer(q.id, { decision: 'stop' }); });
+  assert.equal((await h2.done).status, 'stopped');
+  const spawn = h2.spawns.find((s) => s.key === 'planner' && s.slicing);
+  assert.equal(spawn.outlineSha, r1.sha, 'round 1\'s bytes at the resumed spawn\'s start');
+  assert.equal(spawn.note, 'revise');
+  assert.equal(n, 1);
+  assert.equal(h2.outlines[0].id, 'plan-outline-n_plan-2', 'round 2 is asked');
+  assert.notEqual(h2.orch.state.shaping.outline.decided, 'flat');
+});
+
+test('a revise answered with a plan (outline untouched) goes flat, with no round 2', async () => {
+  // A Planner that answers the revise with the plan: the outline stays as asked (the mock, given no feedback block,
+  // rewrites round 1's bytes) and a plan lands in the plan output during the spawn.
+  const h = start({ beforeSpawn: async (nc, ctx) => {
+    if (nc.key !== 'planner' || ctx.shapeOutlineNote?.decision !== 'revise') return;
+    ctx.shapeOutlineNote = null;
+    const out = Object.values(ctx.outputs || {}).map((o) => o?.path).find(Boolean);
+    await writeFile(out, '# Plan\n\nThe whole task.\n');
+  } }, (q, orch) => orch.answer(q.id, { decision: 'revise', feedback: 'Do not slice it.' }));
+  await h.done;
+  assert.equal(h.outlines.length, 1, 'no round 2');
+  assert.equal(h.orch.state.shaping.outline.decided, 'flat');
+  assert.ok(existsSync(join(h.orch.pipeline.dir, 'slices.json')), 'the outline file is never deleted');
+});
+
+test('a revise that leaves the outline unchanged and writes no plan re-asks it as round 2 with the audit line', async () => {
+  let n = 0;
+  // A Planner that leaves the outline as it was: the mock, given no feedback block, rewrites round 1's bytes.
+  const h = start({ beforeSpawn: async (nc, ctx) => {
+    if (nc.key === 'planner' && ctx.shapeOutlineNote?.decision === 'revise') ctx.shapeOutlineNote = null;
+  } }, (q, orch) => {
+    n += 1;
+    if (n === 1) orch.answer(q.id, { decision: 'revise', feedback: 'Anything.' });
+    else orch.answer(q.id, { decision: 'stop' });
+  });
+  assert.equal((await h.done).status, 'stopped');
+  assert.deepEqual(h.outlines.map((q) => q.id), ['plan-outline-n_plan-1', 'plan-outline-n_plan-2']);
+  assert.ok(audit(h.orch).some((x) => x.includes('The planner left the outline unchanged')));
 });
 
 test('stop on the outline ends the run stopped and starts no feature', async () => {
@@ -283,7 +358,7 @@ test('D19: a passing check and no outline-change.md → approved without an ask'
   const h = d19();
   assert.equal((await h.done).status, 'done');
   assert.equal(h.plans.length, 0);
-  assert.ok(audit(h.orch).some((x) => x.includes("Plan approval **approve** (Approve each slice's plan is off)")));
+  assert.ok(audit(h.orch).some((x) => x.includes('Plan approval **approve** (the plan passed its checks)')));
   assert.ok(h.orch.state.shaping.approved);
 });
 test('D19: a failing check → a plan ask', async () => {
@@ -326,8 +401,14 @@ test('D19: a stale outline-change.md is removed before the Planner\'s first spaw
   assert.equal(seen, false);
   assert.equal(h.plans.length, 0);
 });
-test('D19: Approve each on → always a plan ask', async () => {
+test('D19: Ask me before each run on → a clean later plan continues by itself (the switch only holds the start)', async () => {
   const h = d19({ each: true });
+  assert.equal((await h.done).status, 'done');
+  assert.equal(h.plans.length, 0);
+  assert.ok(audit(h.orch).some((x) => x.includes('Plan approval **approve** (the plan passed its checks)')));
+});
+test('D19: Ask me before each run on and a failing check → a plan ask', async () => {
+  const h = d19({ each: true, check: FAIL });
   await h.done;
   assert.equal(h.plans.length, 1);
 });
@@ -335,18 +416,17 @@ test('D19: Away active → continues like Away off', async () => {
   const h = d19({ away: true });
   assert.equal((await h.done).status, 'done');
   assert.equal(h.plans.length, 0);
-  assert.ok(audit(h.orch).some((x) => x.includes("Plan approval **approve** (Approve each slice's plan is off)")));
+  assert.ok(audit(h.orch).some((x) => x.includes('Plan approval **approve** (the plan passed its checks)')));
 });
 
 const LEAVE = () => {};                                     // nobody answers: only Away could
 const settled = () => new Promise((r) => setTimeout(r, 300));
 
-test('D19: Ask me before each run on, Away active → Away approves', async () => {
+test('D19: Ask me before each run on, Away active → a clean later plan continues by itself', async () => {
   const h = d19({ each: true, away: true, onPlan: LEAVE });
   assert.equal((await h.done).status, 'done');
-  assert.equal(h.plans.length, 1);
-  assert.equal(h.orch.answeredBy(h.plans[0].id), 'night-mode');
-  assert.ok(audit(h.orch).some((x) => x.startsWith('Plan approval **approve** by night-mode.')));
+  assert.equal(h.plans.length, 0, 'a clean later plan raises no ask for Away to answer');
+  assert.ok(audit(h.orch).some((x) => x.includes('Plan approval **approve** (the plan passed its checks)')));
 });
 
 for (const [name, opts, line] of [
@@ -450,7 +530,7 @@ test('Away approve then pause: a second pause during the replay keeps it', async
 });
 
 test("a stale Away approve is dropped, and a person's approve is not stashed", async () => {
-  const h = d19({ each: true, onPlan: (q, orch) => { orch.answer(q.id, { decision: 'approve' }, 'ann'); } });
+  const h = d19({ check: FAIL, onPlan: (q, orch) => { orch.answer(q.id, { decision: 'approve' }, 'ann'); } });   // a failing check asks
   h.orch._planAwayApproved = { id: 'plan-n_other-9' };
   assert.equal((await h.done).status, 'done');
   assert.equal(h.plans.length, 1, 'a different id is asked as usual');
