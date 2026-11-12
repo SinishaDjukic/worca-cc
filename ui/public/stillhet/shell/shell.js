@@ -26,6 +26,10 @@
   // { title, min, newLabel, newAct(), show({ bar, page, arg }) } — the shell owns the routing, the bar and the frame.
   window.RailPlaces = window.RailPlaces || {};
   const placeMod = (v) => window.RailPlaces[v];
+  // The live kind (D23): a place not yet on live data draws its empty look, never seeded rows, until its slice wires it.
+  const LIVE = !!window.RailWorld?.live;
+  const NOT_LIVE = { insights: 'insights', workflows: 'workflows', marketplace: 'plugins', requirements: 'requirements' };
+  let liveTask = { title: '' };   // the live task a row opened: its page shows its title and no task details yet
   const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 
   // ---- the sidebar: places only (a setting or a place, docs/rail/settings.md) ----
@@ -174,7 +178,7 @@
     const seenRows = visited.filter((v) => !pinRows.some((p) => p.hash === v.hash)).slice(0, 1);
     const PINS = 5, morePins = pinRows.length - PINS;
     if (!pinsAll && morePins > 0) pinRows.length = PINS;
-    const rows = [...pinRows, ...seenRows].map((x) => R.listRow({ title: x.title, meta: x.meta, mark: x.mark, end: x.end ? `<span class="lr-fig" title="${x.tip}">${x.end}</span>` : '', endText: x.end ? '' : x.when || '', open: { 'data-back-to': x.hash, title: `Opens ${x.title}` } }));
+    const rows = [...pinRows, ...seenRows].map((x) => R.listRow({ title: x.title, meta: x.meta, mark: x.mark, end: x.end ? `<span class="lr-fig" title="${R.esc(x.tip)}">${x.end}</span>` : '', endText: x.end ? '' : x.when || '', open: { 'data-back-to': x.hash, title: `Opens ${x.title}` } }));
     drawMini();
     drawInView();
     document.getElementById('bar-back').innerHTML = R.list({ groups: [...(rows.length ? [{ title: pinRows.length ? 'Pinned and recent' : 'Recent', rows, more: !pinsAll && morePins > 0 ? { n: morePins, attrs: { 'data-pins-all': '' } } : null }] : [])] });
@@ -185,7 +189,7 @@
   const inViewMax = () => (innerWidth <= 760 ? 1 : 5);   // five at most, named like tabs above 1100px; one on a phone
   let inViewMenu = false, inViewCur = '';
   addEventListener('resize', () => drawInView());
-  let inViewList = window.RailFirstRun ? [] : [{ type: 'task', id: 't4', chat: 'c4', title: 'Fix flaky login test' }];
+  let inViewList = window.RailFirstRun || LIVE ? [] : [{ type: 'task', id: 't4', chat: 'c4', title: 'Fix flaky login test' }];
   const allTasksOf = (c) => { const out = []; const walk = (t) => { out.push(t); (t.after || []).forEach(walk); }; (c?.tasks || []).forEach(walk); return out; };
   function inViewNow(x) {
     const chats = window.RailChats?.data().chats || [];
@@ -265,9 +269,9 @@
     const has = placeMod(kind)?.has; return !has || has(arg) ? null : { what: arg.startsWith('ws:') ? 'workspace' : NOUNS[kind] || 'page', name: arg.replace(/^[a-z]+:/, ''), back: TITLES[kind], to: kind };
   }
   function route() {
-    const OLD = { stats: 'insights/spend', 'team-metrics': 'insights/team' };   /* Statistics and Team metrics are Insights now: an old link lands there */
-    if (OLD[location.hash.slice(1)]) { location.replace(`#${OLD[location.hash.slice(1)]}`); return; }
-    if (/^#workspaces(\/|$)/.test(location.hash)) { const w = location.hash.split('/')[1]; location.replace(w ? `#projects/ws:${w}` : '#projects'); return; }   // workspaces live in Projects now: an old link lands there
+    // dev's old addresses land on their places (old-addresses.js); in place, so Back does not loop
+    const moved = window.RailOldAddresses?.resolve(location.hash);
+    if (moved) { location.replace(moved.hash); if (moved.pulse) window.RailPulse?.open(moved.pulse); return; }
     const [kind, arg0] = (location.hash.slice(1) || 'chat').split('/');
     const gone = goneOf(kind, arg0), arg = gone ? '' : arg0;
     const view = gone?.lost ? 'lost' : TITLES[kind] ? kind : kind === 'run' || kind === 'settings' || kind === 'schedule' ? kind : 'chat';
@@ -275,9 +279,10 @@
     homeOpen = homeNext; homeNext = false;
     const pane = { today: document.getElementById('route-today'), chat: document.getElementById('route-chat'), schedule: document.getElementById('route-schedule'), place: document.getElementById('route-place'), run: document.getElementById('route-run'), settings: document.getElementById('route-settings'), runs: document.getElementById('route-runs') };
     const lock = !gone && (view === 'schedule' || !!TITLES[view] && view !== 'chat') && lockHere(view, arg);   // nav.locked: every place, by the bar's own data
-    const ownPage = !!placeMod(view) || view === 'run' || view === 'settings' || view === 'runs' || view === 'chat' || view === 'schedules' || view === 'schedule';
-    pane.today.hidden = ownPage && !lock; pane.run.hidden = view !== 'run'; pane.settings.hidden = view !== 'settings';
-    pane.runs.hidden = view !== 'runs' || !!lock; pane.chat.hidden = view !== 'chat'; pane.schedule.hidden = !(view === 'schedule' || view === 'schedules') || !!lock; pane.place.hidden = !placeMod(view) || !!lock;
+    const notLive = LIVE && !gone && !lock && (!!NOT_LIVE[view] || view === 'run');
+    const ownPage = !notLive && (!!placeMod(view) || view === 'run' || view === 'settings' || view === 'runs' || view === 'chat' || view === 'schedules' || view === 'schedule');
+    pane.today.hidden = ownPage && !lock; pane.run.hidden = view !== 'run' || notLive; pane.settings.hidden = view !== 'settings';
+    pane.runs.hidden = view !== 'runs' || !!lock; pane.chat.hidden = view !== 'chat'; pane.schedule.hidden = !(view === 'schedule' || view === 'schedules') || !!lock; pane.place.hidden = !placeMod(view) || !!lock || notLive;
     document.body.className = view === 'run' ? 'view-run' : view === 'settings' ? 'view-settings' : view === 'runs' ? 'view-runs' : view === 'chat' ? 'view-rail-chat' : view === 'schedule' || view === 'schedules' || placeMod(view) ? 'view-rail-chat' : '';
     if (gone) { for (const p of Object.values(pane)) p.hidden = p !== pane.today; document.body.className = ''; }
     if (view !== 'run') taskChat = view === 'chat' ? taskChat : '';
@@ -294,6 +299,11 @@
       const name = lock.name || TITLES[view] || 'Schedules', need = lock.min ? lock.min[0].toUpperCase() + lock.min.slice(1) : '';
       pane.today.innerHTML = `<div class="rail-locked">${R.emptyState({ title: lock.min ? `${name} needs ${need}` : `${name} is in Labs`, actions: R.button({ label: lock.min ? `Switch to ${need}` : 'Turn on Labs', kind: 'quiet', attrs: { 'data-unlock': lock.min ? 'mode:' + lock.min : 'flag:' + lock.flag, 'data-to': view } }) })}</div>`;
       scrollTo(0, 0);
+    } else if (notLive) {   // D23: its existing empty look; a task opened from a row keeps its live title
+      document.body.className = 'view-place';
+      const title = view === 'run' ? liveTask.title || 'Task' : TITLES[view];
+      pane.today.innerHTML = `<div class="rail-locked">${R.placeHead({ title })}${R.listState({ state: 'empty', noun: view === 'run' ? 'task details' : NOT_LIVE[view] })}</div>`;
+      scrollTo(0, 0);
     } else if (!pane.today.hidden && SOON[view]) {   // nav.locked: a place not yet in Rail draws a true page, never a blank one, and the bar stays
       document.body.className = 'view-place';
       pane.today.innerHTML = `<div class="rail-locked">${R.emptyState({ title: SOON[view][0], text: SOON[view][1], actions: R.button({ label: 'Back to Chat', kind: 'quiet', attrs: { 'data-nav': 'chat' } }) })}</div>`;
@@ -309,9 +319,9 @@
     }
     if (view === 'runs') { window.RailRunsList?.show(); window.RailCenters?.tasks(pane.runs); }
     if (view === 'schedules' || view === 'schedule') window.RailSchedules?.show(view === 'schedule' ? arg : '');
-    if (placeMod(view) && !lock) { const again = openedAgain && lastPlace === location.hash; placeMod(view).show({ bar: document.getElementById('bar-place'), page: pane.place, arg: decodeURIComponent(arg || '') }); if (again) R.land(pane.place.querySelector('.place-head')); }   /* the row you are on, opened again by you: its page's head lands; a flag or a redraw on the same address never flashes */
+    if (placeMod(view) && !lock && !notLive) { const again = openedAgain && lastPlace === location.hash; placeMod(view).show({ bar: document.getElementById('bar-place'), page: pane.place, arg: decodeURIComponent(arg || '') }); if (again) R.land(pane.place.querySelector('.place-head')); }   /* the row you are on, opened again by you: its page's head lands; a flag or a redraw on the same address never flashes */
     lastPlace = placeMod(view) && !lock ? location.hash : ''; openedAgain = false;
-    if (view === 'run') {
+    if (view === 'run' && !notLive) {
       window.RailShell.unembedRun();
       const pick = window.RailRunPage?.pick;
       if (pick && arg && (pick.value !== arg || reopen)) { reopen = false; pick.value = arg; pick.dispatchEvent(new Event('change', { bubbles: true })); }
@@ -483,12 +493,19 @@
     // a run opened from Pulse or the search carries its own title
     openRun: (hash, title, run) => window.RailShell.openTask(hash.split('/')[1], '', title, run),   // Pulse and search: its card in its chat
     closeSearch: () => searchFold(false),
+    // D21: a mode a person picks is dev's uiLevel, posted first; a refusal stays on the level the server last confirmed
+    pickMode: (to) => window.RailAdapter.post('/api/settings', { uiLevel: to }).then((r) => {
+      if (r.ok) confirmedMode = R.MODES.includes(r.data?.uiLevel) ? r.data.uiLevel : to;
+      R.prefs.setMode(confirmedMode);
+      return r;
+    }),
     connReset: () => { const sel = document.getElementById('conn'); if (sel) sel.value = 'ok'; conn = 'ok'; document.getElementById('rail-conn').innerHTML = ''; },
     closeDrawer: () => drawer(false),
     inView: { toggle: toggleInView, has: isInView, draw: () => drawInView() },
     // Everything leads to its card in its chat (plans/rail/chat-cards.md): a task's link opens its chat at its card; a task with no
     // chat gets one, named after it. The page stays as openTaskPage, only until the card holds everything it does.
     openTask: (cs, chat, title, run) => {
+      if (LIVE) { if (run) window.RailAdapter.seenRun(run); window.RailShell.openTaskPage(cs, chat, title); return; }   // the live kind: no chat made up around it (D23); opening it acknowledges it, as dev's acknowledgeRun does from any path
       if (RM && title) RM.titles[cs] = title;
       const w = run && window.RailWorld?.find(run);
       // the chat a row names wins; else the chat that holds this very task (by its run, else its name); a case alone is shared by many
@@ -513,7 +530,7 @@
       slot.append(card); card.classList.add('is-lent');
     },
     unembedRun: (from) => { const card = document.getElementById('card'); if (card && runAnchor && (!from || from.contains(card))) { runAnchor.after(card); card.classList.remove('is-lent'); } },
-    openTaskPage: (cs, chat, title) => { const t = title && findTask(title); if (RM && t?.branch) { RM.branches = RM.branches || {}; RM.branches[cs] = t.branch; } if (RM && t) { RM.asks = RM.asks || {}; RM.asks[cs] = t.ask || t.title; RM.whys = RM.whys || {}; RM.whys[cs] = t.why || null; }   /* the page says what this task was asked and what broke in it, never its mock's */ taskChat = chat || ''; if (RM && title) RM.titles[cs] = title; reopen = true; window.RailShell.go(`run/${cs}`); },
+    openTaskPage: (cs, chat, title) => { liveTask = { title: title || '' }; const t = title && findTask(title); if (RM && t?.branch) { RM.branches = RM.branches || {}; RM.branches[cs] = t.branch; } if (RM && t) { RM.asks = RM.asks || {}; RM.asks[cs] = t.ask || t.title; RM.whys = RM.whys || {}; RM.whys[cs] = t.why || null; }   /* the page says what this task was asked and what broke in it, never its mock's */ taskChat = chat || ''; if (RM && title) RM.titles[cs] = title; reopen = true; window.RailShell.go(`run/${cs}`); },
     openSchedule: (sid) => {
       const s = window.RailSchedules?.find?.(sid), cid = s?.chat || '';
       if (!cid) { window.RailShell.go(`schedule/${sid}`); return; }
@@ -541,10 +558,13 @@
   setAskW(askW); setBarW(barW);
   for (const t of ['pointerenter', 'pointerleave']) document.getElementById('side-rail').addEventListener(t, barInert);
   R.watchClickGuard(document); R.watchOrbs(document); R.watchTooltips(document); R.watchMenus(document); R.watchStrips(document); R.watchScrollFades(document); R.watchFolds(document); R.watchStageAdvance(document);
-  // a new person starts in Simple; the mode they pick is remembered (docs/ui-levels.md)
-  try { const m = localStorage.getItem('worca-rail.mode'); R.prefs.setMode(R.MODES.includes(m) ? m : 'simple'); } catch { R.prefs.setMode('simple'); }
+  // The live kind: dev's uiLevel, as the server stamped it (data-level), and nothing posted at start (D21). The demo: a new
+  // person starts in Simple; the mode they pick is remembered (docs/ui-levels.md)
+  let confirmedMode = '';
+  if (LIVE) { const m = document.documentElement.dataset.level; confirmedMode = R.MODES.includes(m) ? m : 'simple'; R.prefs.setMode(confirmedMode); }
+  else try { const m = localStorage.getItem('worca-rail.mode'); R.prefs.setMode(R.MODES.includes(m) ? m : 'simple'); } catch { R.prefs.setMode('simple'); }
   applyPrefs(); drawMini();   /* the sidebar drew before the mode was read: it shows only the places this mode has */
-  R.prefs.onChange(() => { try { localStorage.setItem('worca-rail.mode', R.prefs.mode()); } catch { /* remembering is a nicety */ } });
+  if (!LIVE) R.prefs.onChange(() => { try { localStorage.setItem('worca-rail.mode', R.prefs.mode()); } catch { /* remembering is a nicety */ } });
   let wasStrip = isStrip();
   addEventListener('resize', () => { syncRail(); if (isStrip() !== wasStrip) { wasStrip = isStrip(); drawMini(); drawBar(); } });
   // A change of mode or a Labs flag: the sidebar follows, and the page if that changes whether it is locked.
@@ -553,6 +573,13 @@
   document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') { e.preventDefault(); if (routed.view === 'chat') { document.querySelector('#route-chat [data-composer-t]')?.focus(); return; } askOpen = !askOpen; syncAsk(routed.view); if (askOpen) setTimeout(() => document.querySelector('#ask-side [data-composer-t]')?.focus(), 50); } });   // ⌘J: Ask worca beside this page
   // another Pulse case: the run page in view takes its title from it
   window.RailWorld.onChange(() => { drawInView(); if (routed.view === 'run') { reopen = true; route(); } });
+  // the live kind (D20): the connection and the strip follow every load and list change; a task frame repaints the strip
+  if (LIVE) {
+    // after the lists have read the store again (they listen later): the strip counts their rows
+    const later = (fn) => setTimeout(fn, 0);
+    window.RailWorld.onChange(() => { setConn(window.RailDemoState?.conn || 'ok'); later(() => { if (routed.view) drawBar(); else drawMini(); }); });
+    window.RailWorld.onMove(() => later(drawMini));
+  }
   // a step taken on a task's page moves the task everywhere: its row, the bar's and Pulse's counts, In view
   document.addEventListener('rail:task-moved', (e) => {
     const { from, to, title } = e.detail || {}; if (!title) return;

@@ -10,9 +10,22 @@ const html = readFileSync(new URL('../ui/public/stillhet/shell.html', import.met
 test('renderStillhetShell fills the theme, level and git anchor and throws without it', () => {
   assert.equal(html.split(INDEX_THEME_ANCHOR).length - 1, 1);
   const out = renderStillhetShell(html, 'dark', 'expert', { git: false });
-  assert.match(out, /<html lang="en" data-theme="dark" data-level="expert" data-git="off">/);
-  assert.equal(renderStillhetShell(html, 'light'), html.replace(INDEX_THEME_ANCHOR, '<html lang="en" data-theme="light">'));
+  assert.match(out, /<html lang="en" data-theme="dark" data-level="expert" data-git="off" data-adapter="live">/);
+  assert.equal(renderStillhetShell(html, 'light'), html.replace(INDEX_THEME_ANCHOR, '<html lang="en" data-theme="light" data-adapter="live">'));
   assert.throws(() => renderStillhetShell('<html lang="en">', 'dark'), /stillhet shell anchor missing/);
+});
+
+test('the stamp picks the data: data-adapter="live" by default, "demo" only when asked (WORCA_STILLHET_DEMO=1)', () => {
+  assert.match(renderStillhetShell(html, 'dark', 'simple'), / data-adapter="live">/);
+  assert.match(renderStillhetShell(html, 'dark', 'simple', { adapter: 'demo' }), / data-adapter="demo">/);
+  assert.match(renderStillhetShell(html, 'dark', 'simple', { adapter: '?state=empty' }), / data-adapter="live">/, 'nothing else picks demo');
+  const src = readFileSync(new URL('../src/core/stillhet-shell.mjs', import.meta.url), 'utf8');
+  assert.match(src, /process\.env\.WORCA_STILLHET_DEMO === '1' \? 'demo' : 'live'/);
+});
+
+test('the stamp says when rail is locked by WORCA_FLAGS, so the switch is drawn disabled (nav.design-switch)', () => {
+  assert.match(renderStillhetShell(html, 'dark', 'simple', { railLocked: true }), / data-adapter="live" data-rail-locked="true">/);
+  assert.doesNotMatch(renderStillhetShell(html, 'dark', 'simple'), /data-rail-locked/);
 });
 
 test('the shell runs no inline script and holds no handler attribute (the shell CSP allows only same-origin scripts)', () => {

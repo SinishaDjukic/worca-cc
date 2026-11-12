@@ -29,10 +29,14 @@
   // a proposal's line never restates its title: only the words the title had to cut
   const whyOf = (text) => (text.length <= 64 ? '' : `From this chat: ${text}`);
   // a task's name from what was asked: the clause before its details ("… that returns", "… with a test"), never cut mid-phrase
-  let lastProject = window.RailFirstRun ? 'No project' : 'billing-api';   // the first run has no project yet
+  // the first run has no project yet; the live kind names no seeded one either (its composer is the Chat slice's)
+  const NO_SEED = window.RailFirstRun || !!window.RailWorld?.live;
+  let lastProject = NO_SEED ? 'No project' : 'billing-api';
   const nameOf = (core) => { if (core.length <= 56) return core; const m = core.slice(0, 57).match(/^(.{16,}?)\s+(?:that|which|with|so|so that|because|returning|using|where|when|to make|for)\b/i); return (m ? m[1] : core.slice(0, 56).replace(/\s+\S*$/, '')).replace(/[\s,;:]+(?:and|or|the|a|an|to|of|in|on)?$/i, ''); };
   const clip = (t, n = 64) => (t.length <= n ? t : `${t.slice(0, n).replace(/\s+\S*$/, '')}…`);
   // every change to a task goes to the store (shell/world.js), which tells every surface; a new task is linked into it first
+  // R-arch-10: the live kind does not wire Chat yet (slice 4); a send goes through the adapter, which refuses, and nothing is written
+  const refused = (what) => !!window.RailAdapter?.refuse?.(`chat.${what}`);
   const put = (c, t) => { if (!t || t.kind === 'schedule') return; M.link(c || { project: '' }, t); window.RailWorld.move(t.run, t.case, t.detail, { stage: t.stage, title: t.title }); };
   // a task that starts sets up its worktree, then plans: Starting gives way to Plan by itself
   const settleStart = (c, t) => {
@@ -44,7 +48,7 @@
   const chatOfT = (t) => data().chats.find((c) => (c.tasks || []).some(function w(y) { return y === t || (y.after || []).some(w); }));
   const slug = (t, n = 40) => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, n + 1).replace(/-[^-]*$/, '') || 'task';
   const data = () => window.RailChats.data();
-  const fresh = (mode = 'ask') => ({ files: [], mode, text: '', project: 'billing-api', workflow: 'Default', engine: 'Opus 5.5', from: 'origin · latest', then: 'open a PR', every: 'every day', at: '02:00', preset: '', more: false, startAt: '', busy: false });
+  const fresh = (mode = 'ask') => ({ files: [], mode, text: '', project: NO_SEED ? 'No project' : 'billing-api', workflow: 'Default', engine: 'Opus 5.5', from: 'origin · latest', then: 'open a PR', every: 'every day', at: '02:00', preset: '', more: false, startAt: '', busy: false });
   // Thinking: what it does now, in plain words, one step every 0.6s; its seconds; the row is updated in place, never redrawn
   const THINKING = ['Reading the chat', 'Looking through the project', 'Searching the code', 'Writing the answer'];
   const THOUGHT = ['Read the chat', 'Looked through the project', 'Searched the code', 'Wrote the answer'];   // the same steps, done
@@ -67,7 +71,7 @@
   const W = (t) => `<span>${t}</span>`;
   const WP = (t, picker) => `<span class="cw-pair">${W(t)}${picker}</span>`;   // a sentence's word never stays behind at a line's end
   const MODES = [{ id: 'Ask', text: 'Ask', help: 'A question or a chat. Nothing starts by itself' }, { id: 'Task', text: 'Task', help: 'Starts work: a plan, a build, a review, a pull request' }, { id: 'Schedule', text: 'Schedule', help: 'Runs a task at its times' }];
-  const PROJECTS = window.RailFirstRun ? ['No project'] : ['billing-api', 'web-app', 'worca-cc', 'docs-site', 'No project'];   // the first run lists only what you add
+  const PROJECTS = NO_SEED ? ['No project'] : ['billing-api', 'web-app', 'worca-cc', 'docs-site', 'No project'];   // the first run lists only what you add
   // engine first, then its model: each engine's models under its name (Codex has its own)
   const ENGINE_MODELS = [['Claude Code', ['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']], ['Codex', ['Codex 5', 'Codex mini']], ['Gemini CLI', ['Gemini Pro', 'Gemini Flash']]];
   const ENGINES = ENGINE_MODELS.flatMap(([, ms]) => ms);
@@ -589,6 +593,7 @@
   const saidName = (text) => { const t = text.replace(/[?.!]+$/, '').replace(/\s+(?:every|each|daily|nightly|weekly|hourly|tonight|tomorrow|once|on weekdays|at \d)\b.*$/i, '').trim() || text; return clip(t.charAt(0).toUpperCase() + t.slice(1)); };   // a schedule's name is the what; the when is its own field
   function send() {
     const had = root.querySelector('[data-composer-t]'); const text = (had?.value || comp.text).trim();
+    if (text && refused('send')) return;   // R-arch-10: the live kind's composer is the Chat slice's; until then nothing is sent or written
     if (comp.busy && text) { comp.queue = [...(comp.queue || []), text]; comp.text = ''; if (had) had.value = ''; paint(false); say('Queued: it goes when this reply is done'); return; }   // while Worca replies, sending queues
     if (!text) { had?.focus(); say(comp.mode === 'ask' ? 'Write something first' : 'Say what it should do first'); return; }
     const c = ensureChat(comp.mode === 'schedule' ? saidName(text) : text);
@@ -964,6 +969,7 @@
     const go = () => {
       const t = host.querySelector('[data-composer-t]'), text = t.value.trim();
       if (!text) { t.focus(); say('Say what to ask first'); return; }
+      if (refused('ask')) return;
       let id = linked;
       if (!id) { id = window.RailChats.newChat(`About ${title}`, ''); threads.set(id, []); }
       const c = data().chats.find((x) => x.id === id);

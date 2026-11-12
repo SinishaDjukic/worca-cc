@@ -20,9 +20,17 @@ function freshSettings(c) {
 // Settings › Tasks › Budget reads the case's figures too.
 const budgetSv = (b) => (b ? { spentNow: b.spent, total: String(b.limit), period: 'month' } : { spentNow: 0 });
 const fresh = (caseId) => ({ caseId, page: 'runs', pop: false, popTab: 'vitals', acct: false, sub: '', nr: null, menu: '', show: 'unread', from: 'all', vitalsShow: 'all', vitalsFrom: 'all',
-  pick: R.selectClear(), rowKey: '', read: [], cleared: [], fixed: [], custom: '', confirm: '', toast: '', flash: '', awayStatus: caseOf(caseId).away.status, keep: true, s: freshSettings(caseOf(caseId)), sset: '', sv: { ...SV.fresh(), ...budgetSv(caseOf(caseId).budget), gemQuota: caseOf(caseId).gemQuota || '', ...(caseOf(caseId).newVersion ? { latest: caseOf(caseId).newVersion, upd: 'available' } : {}) },
+  pick: R.selectClear(), rowKey: '', read: [], cleared: [], fixed: [], custom: '', confirm: '', toast: '', flash: '', awayStatus: caseOf(caseId).away.status, keep: W.live ? !!W.part('keep') : true, s: freshSettings(caseOf(caseId)), sset: '', sv: { ...SV.fresh(), ...budgetSv(caseOf(caseId).budget), gemQuota: caseOf(caseId).gemQuota || '', ...(caseOf(caseId).newVersion ? { latest: caseOf(caseId).newVersion, upd: 'available' } : {}) },
   added: [], soundAt: null, stopped: [], teamSeen: false, chatSeen: false, unlock: null, session: false, person: 0, people: {} });
-let ui = fresh('afternoon');
+let ui = fresh(M.CASES[0].id);   // the demo's first case, or the live kind's one case (pulse-model.js)
+// The live kind: dev's own routes for every action (D13). A refusal names what failed and changes nothing.
+const LIVE = !!W.live, A = window.RailAdapter;
+const refused = (what, r) => { toast(`Could not ${what}: ${r.error}`); render(); };
+// a resume dev answers with a confirm (team cap, base moved, a cost override, an engine) opens the task: the confirm is the task page's
+const asksConfirm = (r) => !!(r.data && (r.data.needsPolicyAck || r.data.needsPolicyOverride || r.data.needsOverride || ['base-moved', 'base-missing', 'engine-refused', 'reason_required'].includes(r.data.code)));
+// Pulse's own list states (failures.md): before the first snapshot and when it failed, the popover says so, as the bar's lists do
+const listNow = () => { const l = window.RailDemoState?.list; return l === 'loading' || l === 'failed' ? l : ''; };
+const pulseState = () => R.listState({ state: listNow(), noun: 'updates', retry: { 'data-pulse-retry': '' } });
 // What opened with this click: only that fades in (a repaint of what was already open does not fade again).
 let opening = '';
 const inCls = (k) => (opening === k ? ' is-in' : '');
@@ -41,7 +49,7 @@ function applyAppearance(m) {
 const startable = () => { const c = C(); return c.usage.some((u) => M.PROVIDER[u.p].runs) ? c : caseOf(ui.caseId); };
 const C = () => { const c = M.refreshed(M.withQuota(caseOf(ui.caseId), ui.sv.gemQuota, ui.sv.gemUsed), ui.usageTicks || 0, ui.usageClock || ''); return { ...c, runs: W.rows(), budget: liveBudget(c.budget), usage: R.connectedUsage(c.usage, R.prefs.connected) }; };
 // Raising the budget in Settings is what Usage and costs and New run read.
-const liveBudget = (b) => (b && ui.sv.total && ui.sv.period === 'month' ? { ...b, limit: +ui.sv.total, spent: ui.sv.spentNow } : b);
+const liveBudget = (b) => (!W.live && b && ui.sv.total && ui.sv.period === 'month' ? { ...b, limit: +ui.sv.total, spent: ui.sv.spentNow } : b);
 const budgetGone = () => M.budgetGone(C().budget);
 // A row's read state is the person's own on a shared sign-in; a problem clears when it is acted on; info rows arrive read.
 const isFixed = (u) => ui.fixed.includes(u.id);
@@ -203,7 +211,7 @@ function popover() {
     { id: 'clearread', text: 'Clear read', help: 'Moves every read update to Cleared, in any view; what still waits for you stays' },
     { id: 'select', text: 'Select', help: 'Tick updates to mark read or clear several at once' }, { sep: true },
     { id: 'settings', text: 'Notification settings', help: 'Settings › Notifications: what reaches you' }], 'right')}</span>`;
-  return R.panelFrame({ label: 'Pulse', cls: `pz-popover${inCls('pop')}`, head: `${R.tabs({ cls: 'pz-ptabs', items: [{ id: 'vitals', label: 'Now', count: vitalsCount(), selected: ui.popTab === 'vitals', tip: 'What is true right now: it changes by itself and cannot be cleared' }, { id: 'updates', label: 'Updates', count: shown().length, selected: ui.popTab === 'updates', tip: `What happened: read, select and clear, like runs. The count follows the sentence below. Kept for 90 days${C().identity ? '. Read and cleared are yours; others on this sign-in keep their own' : ''}` }], hooks: (t) => ({ 'data-ptab': t.id, title: t.tip }) })}${more}`, body: ui.popTab === 'vitals' ? vitalsSections() : updatesPanel() });
+  return R.panelFrame({ label: 'Pulse', cls: `pz-popover${inCls('pop')}`, head: `${R.tabs({ cls: 'pz-ptabs', items: [{ id: 'vitals', label: 'Now', count: vitalsCount(), selected: ui.popTab === 'vitals', tip: 'What is true right now: it changes by itself and cannot be cleared' }, { id: 'updates', label: 'Updates', count: shown().length, selected: ui.popTab === 'updates', tip: `What happened: read, select and clear, like runs. The count follows the sentence below. Kept for 90 days${C().identity ? '. Read and cleared are yours; others on this sign-in keep their own' : ''}` }], hooks: (t) => ({ 'data-ptab': t.id, title: t.tip }) })}${more}`, body: listNow() ? pulseState() : ui.popTab === 'vitals' ? vitalsSections() : updatesPanel() });
 }
 
 // ---- the profile menu: Worca's own menu (index.html #acct-menu); its spend card is now Usage and costs, the last row ----
@@ -665,7 +673,7 @@ function renderInShell() {
   if (sideNow) document.getElementById('route-settings').innerHTML = `<div class="pz-page">${settingsPage()}</div>`;
   const res = document.querySelector('[data-search-res]'); if (res) res.innerHTML = searchResults();
   document.getElementById('app').innerHTML = `${popover()}${newRun()}${acctMenu()}${sessionDialog()}`;
-  const t = toastEl(); t.innerHTML = ui.toast ? R.toastText(ui.toast, undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
+  paintToast();
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
   const pb = document.querySelector('.panel-body'); if (pb && !opening) pb.scrollTop = keepP;
   fitMenus();
@@ -719,13 +727,15 @@ setInterval(() => { if (!awayEl && R.awayShows({ away: isAway(), keepAwake: ui.k
 let sideWas = null, swapCls = '';   // the sidebar's content fades only when it changes between Worca's and Settings'
 function render() { stale = false; holdFocus(SHELL ? renderInShell : paintAlone); }
 W.onMove?.(() => render());   // a task moved anywhere: the badge, Vitals and Updates read the store again
+// the live kind: a load or a list state changed the store (D20): Keep awake and Away are dev's, and the rows read it again
+if (LIVE) W.onChange(() => { ui.keep = !!W.part('keep'); ui.awayStatus = W.part('away').status; render(); });
 function paintAlone() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   const pageEl = document.querySelector('main.main'); const keepMain = pageEl?.scrollTop || 0;   // the page scrolls in main in the one Worca
   const keepP = document.querySelector('.panel-body')?.scrollTop || 0;
   document.getElementById('app').innerHTML = `<div class="pz-app">${sidebar()}<div class="pz-main">${topbar()}<main class="pz-page">${unlockStrip() || settingsStrip()}${ui.page === 'settings' ? settingsPage() : runsPage()}</main></div>${popover()}${newRun()}${acctMenu()}</div>`;
-  const t = toastEl(); t.innerHTML = ui.toast ? R.toastText(ui.toast, undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
+  paintToast();
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
   const pb = document.querySelector('.panel-body'); if (pb && !opening) pb.scrollTop = keepP;
   fitMenus();
@@ -741,8 +751,14 @@ function fitMenus() {
 }
 const toastEl = () => document.querySelector('body > .rc-toast');   // the page's own: the run page's sits in a route that may be hidden
 let toastTimer = 0, undo = null;   // { tip, run }: what the toast's Undo does
+let toastSaid = 0, toastPainted = 0;   // a repaint writes the toast only when Pulse said something new: a toast another page said (the adapter's refusal) stays
+function paintToast() {
+  if (toastPainted === toastSaid) return;
+  toastPainted = toastSaid;
+  const t = toastEl(); t.innerHTML = ui.toast ? R.toastText(ui.toast, undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
+}
 function toast(text, canUndo) {
-  ui.toast = text; undo = typeof canUndo === 'function' ? { tip: 'Undo', run: canUndo } : canUndo || null; clearTimeout(toastTimer);   // a place's Undo is a function, or { tip, run }
+  toastSaid++; ui.toast = text; undo = typeof canUndo === 'function' ? { tip: 'Undo', run: canUndo } : canUndo || null; clearTimeout(toastTimer);   // a place's Undo is a function, or { tip, run }
   toastTimer = setTimeout(() => { ui.toast = ''; undo = null; const el = toastEl(); if (el) { el.classList.remove('is-on'); el.textContent = ''; } }, 5000);
 }
 
@@ -755,6 +771,7 @@ function pick(id, v) {
   else if (id === 'more') {
     if (v === 'settings') { ui.pop = false; if (SHELL) { SHELL.go('settings/notifications'); return; } ui.page = 'settings'; ui.sset = 'notifications'; }
     else if (v === 'select') ui.pick = R.selectStart(ui.pick);
+    else if (v === 'allread' && LIVE) { const ids = unread().map((u) => u.id); A.post('/api/notifications/read-all', { scope: 'schedule' }).then((r) => { if (!r.ok) { refused('mark all read', r); return; } ui.read = ui.read.concat(ids); toast(ids.length ? `Marked ${plural(ids.length, 'update')} read` : 'Nothing is unread'); render(); }); }
     else if (v === 'allread') { const n = unread().length; const was = ui.read; ui.read = ui.read.concat(unread().map((u) => u.id)); toast(n ? `Marked ${plural(n, 'update')} read` : 'Nothing is unread', n ? { tip: 'Marks them unread again', run: () => { ui.read = was; toast('Unread again'); } } : null); }
     else { const read = live().filter((u) => !isUnread(u)), waits = read.filter((u) => u.sev === 'needs' && u.open && !u.resolved && !isFixed(u)), ids = read.filter((u) => !waits.includes(u)).map((u) => u.id); ui.cleared = ui.cleared.concat(ids); ui.pick = R.selectPrune(ui.pick, []); toast(ids.length ? `Cleared ${plural(ids.length, 'read update')}${waits.length ? `; ${waits.length} still ${waits.length === 1 ? 'waits' : 'wait'} for you` : ''}` : waits.length ? `Nothing to clear: ${waits.length} read still ${waits.length === 1 ? 'waits' : 'wait'} for you` : 'Nothing read to clear', ids.length ? undoClear(ids) : null); }
   }
@@ -789,7 +806,12 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-svsw]'))) { const say = SV.toggle(ui.sv, el.dataset.svsw); if (say) toast(say); render(); return; }
   if ((el = tg('[data-svdo]'))) { const say = SV.act(ui.sv, el.dataset.svdo); if (say) toast(say); render(); return; }
   if ((el = tg('[data-menu]'))) { ui.menu = ui.menu === el.dataset.menu ? '' : el.dataset.menu; if (ui.menu) opening = 'menu'; render(); return; }
-  if ((el = tg('[data-act-stop]'))) { const a = C().actions.find((x) => x.id === el.dataset.actStop); ui.stopped = ui.stopped.concat(a.id); toast(`Stopped ${a.label}`); render(); return; }
+  if ((el = tg('[data-act-stop]'))) {
+    const a = C().actions.find((x) => x.id === el.dataset.actStop);
+    if (LIVE) { A.post(`/api/actions/instances/${encodeURIComponent(a.id)}/stop`).then((r) => { if (!r.ok) { refused(`stop ${a.label}`, r); return; } ui.stopped = ui.stopped.concat(a.id); toast(`Stopped ${a.label}`); render(); }); return; }
+    ui.stopped = ui.stopped.concat(a.id); toast(`Stopped ${a.label}`); render(); return;
+  }
+  if ((el = tg('[data-pulse-retry]'))) { if (LIVE) A.retry(); else { window.RailDemoState.list = ''; render(); } return; }
   if ((el = tg('[data-land]'))) { e.preventDefault(); const [sset, label, list] = el.dataset.land.split('|'); land({ sset, label, list: !!list }); return; }
   if ((el = tg('[data-unlock]'))) { window.RailPulse.unlock(el.dataset.unlock); return; }
   if ((el = tg('[data-fix]'))) { takeStep(C().updates.find((x) => x.id === el.dataset.fix)); return; }
@@ -799,14 +821,24 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-sub]'))) { const v = el.dataset.sub; ui.sub = v && ui.sub !== v ? v : ''; if (ui.sub) opening = 'sub'; render(); return; }
   if ((el = tg('[data-desk]'))) { ui.s.desktop = ui.s.desktop === 'on' ? 'off' : 'on'; render(); return; }
   // the mode menu's items only: the app host's <html> carries dev's data-level (src/core/index-html.mjs), which closest() would match on every click
-  if ((el = tg('[data-level]:not(:root)'))) { ui.sub = ''; if (el.dataset.level !== R.prefs.mode()) toast(`Interface mode: ${cap(el.dataset.level)}`); R.prefs.setMode(el.dataset.level); return; }
+  if ((el = tg('[data-level]:not(:root)'))) {
+    ui.sub = ''; const to = el.dataset.level;
+    // D21: the person's pick is the only write of dev's uiLevel; a refusal goes back to the level the server last confirmed
+    if (LIVE && SHELL?.pickMode) { if (to !== R.prefs.mode()) SHELL.pickMode(to).then((r) => { if (r.ok) toast(`Interface mode: ${cap(to)}`); else toast(`Could not change the interface mode: ${r.error}`); render(); }); else render(); return; }
+    if (to !== R.prefs.mode()) toast(`Interface mode: ${cap(to)}`); R.prefs.setMode(to); return;
+  }
   if ((el = tg('[data-sw="away"]'))) {
-    const back = isAway(); ui.awayStatus = back ? (C().away.hours ? 'here' : 'no-hours') : 'away-now';
+    const back = isAway();
+    // dev's Away switch: here when away, else on (app.js awayRow's nightModeToggle)
+    if (LIVE) { A.post('/api/settings', { nightModeToggle: back ? 'here' : 'on' }).then((r) => { if (!r.ok) { refused('change Away', r); return; } ui.awayStatus = back ? (C().away.hours ? 'here' : 'no-hours') : 'away-now'; toast(back ? 'Back: what Worca did while you were away is in Pulse › Updates' : 'Away: Worca answers waiting task questions for you'); render(); }); return; } ui.awayStatus = back ? (C().away.hours ? 'here' : 'no-hours') : 'away-now';
     // coming back brings back what Worca did meanwhile: one update at the top of Updates, unread
     if (back) { const did = window.RailConversation?.awayAnswer?.() || []; ui.added = [{ ...M.tryEvent('info', ui.added.length), id: `away-${Date.now()}`, title: 'While you were away', meta: did.length ? `Worca answered ${did.length === 1 ? 'a question' : `${did.length} questions`} with its pick: ${did.join(' · ')}` : 'Nothing waited on you', time: 'now', day: 'Today', unread: true }, ...ui.added]; }
     toast(back ? 'Back: what Worca did while you were away is in Pulse › Updates' : 'Away: Worca answers waiting task questions for you'); render(); return;
   }
-  if ((el = tg('[data-sw="keep"]'))) { ui.keep = !ui.keep; render(); return; }
+  if ((el = tg('[data-sw="keep"]'))) {
+    if (LIVE) { const to = !ui.keep; A.post('/api/settings', { keepAwake: to }).then((r) => { if (!r.ok) { refused('change Keep awake', r); return; } ui.keep = to; render(); }); return; }
+    ui.keep = !ui.keep; render(); return;
+  }
   if ((el = tg('[data-appearance]'))) { applyAppearance(el.dataset.appearance); render(); return; }
   if ((el = tg('[data-details]'))) { ui.acct = false; ui.sub = ''; if (SHELL) { SHELL.closeDrawer(); SHELL.go('insights/spend'); } else toast(window.RailWould('open Statistics')); render(); return; }
   if (SHELL && (el = tg('[data-newrun]'))) { window.RailConversation?.start('task'); return; }
@@ -840,19 +872,19 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-open]'))) {
     const key = el.dataset.open, u = C().updates.find((x) => x.id === key);
     if (u) {
-      if (!ui.read.includes(u.id)) ui.read = ui.read.concat(u.id);
+      if (!ui.read.includes(u.id)) { if (LIVE && /^n\d+$/.test(u.id)) A.post(`/api/notifications/${u.id.slice(1)}/read`).then((r) => { if (r.ok) { ui.read = ui.read.concat(u.id); render(); } else refused('mark it read', r); }); else ui.read = ui.read.concat(u.id); }
       if (u.go === 'usage') { openUsage(u.e.startsWith('budget') ? '' : u.title); return; }
       if (u.land) { const [sset, label] = u.land.split('|'); land({ sset, label, head: true }); return; }
       const ofRun = u.run && u.go === 'run' ? W.find(u.run) : null;
-      if (ofRun) openTarget('run/' + ofRun.case, ofRun.title, `Opens ${u.to}`);
+      if (ofRun) openTarget('run/' + ofRun.case, ofRun.title, `Opens ${u.to}`, ofRun.id);
       else openTarget(u.go, u.title.split(' · ')[1] || u.title, `Opens ${u.to}`);
     }
     else if (key.startsWith('lim')) { const l = limitsNow()[+key.slice(3)]; openUsage(l.p ? pname(l.p) : ''); return; }
     else if (key.startsWith('np:')) { ui.pop = null; window.RailShell.go(key.slice(3)); }
-    else if (key.startsWith('act:')) { const a = C().actions.find((x) => x.id === key.slice(4)), r = a.runId && W.find(a.runId); if (r) openTarget('run/' + r.case, r.title, `Opens ${r.title}`); else toast(`${a.run} is gone; ${a.label} can still be stopped`); }
+    else if (key.startsWith('act:')) { const a = C().actions.find((x) => x.id === key.slice(4)), r = a.runId && W.find(a.runId); if (r) openTarget('run/' + r.case, r.title, `Opens ${r.title}`, r.id); else toast(`${a.run} is gone; ${a.label} can still be stopped`); }
     else {
       const id = key.slice(2), r = W.tops().find((x) => x.id === id);
-      openTarget('run/' + r.case, r.title, el.title.split('\n').pop());
+      openTarget('run/' + r.case, r.title, el.title.split('\n').pop(), r.id);
     }
     render(); return;
   }
@@ -861,17 +893,44 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-reset]'))) { ui.confirm = 'reset'; render(); return; }
   if ((el = tg('[data-confirm]')) && window.RailShell?.inviteStrip?.()) { window.RailShell.answerInvite(el.dataset.confirm); render(); return; }   /* the demo's answers close the strip and remember it */
   if ((el = tg('[data-confirm]')) && !settingsStrip() && labsBack()) { if (el.dataset.confirm === 'yes') { ui.unlock = null; history.back(); } else ui.unlock.stay = true; render(); return; }
-  if ((el = tg('[data-confirm]')) && ui.unlock?.strip) { if (el.dataset.confirm === 'yes') R.prefs.setMode(ui.unlock.strip); else { ui.unlock = null; render(); } return; }
+  if ((el = tg('[data-confirm]')) && ui.unlock?.strip) { if (el.dataset.confirm === 'yes') modeByPerson(ui.unlock.strip); else { ui.unlock = null; render(); } return; }
   if ((el = tg('[data-confirm]')) && ui.sv.__confirm) { const say = SV.confirm(ui.sv, el.dataset.confirm === 'yes'); if (say) toast(say); render(); return; }
   if ((el = tg('[data-confirm]'))) { if (el.dataset.confirm === 'yes') { const d = ui.s.desktop; ui.s = freshSettings(C()); ui.s.desktop = d; ui.custom = ''; toast('Every group is back to its defaults'); } ui.confirm = ''; render(); return; }
-  if ((el = tg('[data-test]'))) { toast(window.RailWould('send a test notification')); render(); return; }
+  if ((el = tg('[data-test]'))) { if (SHELL) sendTest(); else { toast(window.RailWould('send a test notification')); render(); } return; }
   if ((el = tg('[data-how]'))) { toast(el.title); render(); return; }
 });
 const isUpdate = (id) => C().updates.some((u) => u.id === id);
 const undoClear = (ids, read) => ({ tip: 'Puts them back in the list', run: () => { ui.cleared = ui.cleared.filter((x) => !ids.includes(x)); if (read) ui.read = read; toast('Back in the list'); } });
 // A row's step: it does what it says on the mock's run, so every list reads the same.
 const STEP_MOVES = { 'Restart Build': ['working', 'Build runs again'], 'Try again': ['working', 'Tried again · back at work'], Resume: ['working', 'Resumed · back at work'], 'Run now': ['starting', 'Started by you'] };
+// D16: the browser's own notification, after permission, as dev's Desktop row sends it
+function sendTest() {
+  const N = window.Notification;
+  if (!N) { toast('This browser has no notifications'); render(); return; }
+  Promise.resolve(N.permission === 'granted' ? 'granted' : N.requestPermission()).then((p) => {
+    if (p !== 'granted') { toast('Notifications are blocked for Worca in this browser'); render(); return; }
+    try { new N('Worca', { body: 'A test notification from Pulse' }); toast('Test notification sent'); } catch { toast('Could not send a test notification: the browser refused it'); }
+    render();
+  });
+}
+// D13: Resume, Try again and Restart Build resume the run; Run now starts a missed ticket. A confirm opens the task instead.
+function liveStep(u) {
+  const r = u.run && W.find(u.run), ticket = /^sched:/.test(u.run || '') ? u.run.slice(6) : '';
+  const done = (res) => {
+    if (res.ok) { ui.fixed = ui.fixed.concat(u.id); toast(`${u.fix}: ${r ? r.title : 'done'}`); render(); return; }
+    if (!ticket && asksConfirm(res) && r) { ui.pop = false; SHELL?.openRun(`run/${r.case}`, r.title, r.id); render(); return; }
+    refused(u.fix.toLowerCase(), res);
+  };
+  if (ticket) A.post(`/api/schedules/${encodeURIComponent(ticket)}/run-now`).then(done);
+  else A.post('/api/resume', { pipelineId: u.run, baseCheck: true }).then(done);
+}
+// A mode a person picks: in the live kind it is dev's uiLevel, written first (D21)
+function modeByPerson(m) {
+  if (!(LIVE && SHELL?.pickMode)) { R.prefs.setMode(m); return; }
+  SHELL.pickMode(m).then((r) => { if (!r.ok) toast(`Could not change the interface mode: ${r.error}`); render(); });
+}
 function takeStep(u) {
+  if (LIVE) { liveStep(u); return; }
   ui.fixed = ui.fixed.concat(u.id);
   const move = STEP_MOVES[u.fix], r = u.run && W.find(u.run);
   if (move && r) { W.move(r.id, ...move); window.RailRunsList?.show(); }
@@ -886,10 +945,11 @@ function openUsage(name) {
 }
 const pickRow = (action, id) => { ui.pick = R.selectApply(ui.pick, action, { id, shown: shownIds() }); render(); };
 // Opens what a Pulse row names: a page in the one Worca; on pulse.html a Toast says where it goes.
-function openTarget(go, title, say) {
+// run: the row's run id; the live kind acknowledges it on opening, as dev does from any path (the demo opens as before)
+function openTarget(go, title, say, run) {
   ui.pop = false;
   if (!SHELL) { ui.pop = true; toast(window.RailWould(say.replace(/^Opens\b/, 'open'))); return; }
-  if (go.startsWith('run/')) SHELL.openRun(go, title); else SHELL.go(go);
+  if (go.startsWith('run/')) SHELL.openRun(go, title, LIVE ? run : undefined); else SHELL.go(go);
 }
 // The keys come from the library's table (docs/rail/keyboard.md); this owns what they do here. The panel's lists take
 // them wherever the focus is: Updates all of them, Vitals moving and opening only.
@@ -951,7 +1011,7 @@ layer({ rank: 2, open: () => !!(ui.q || '').trim(), inside: '.rl-search, .tsearc
 R.prefs.onChange(() => { stepUnlock(); render(); });
 // Usage refreshes every minute; offline, the last figures stay with their time until the connection is back.
 setInterval(() => {
-  if (document.getElementById('conn')?.value === 'offline') return;
+  if (LIVE || document.getElementById('conn')?.value === 'offline') return;   // the live kind's figures are dev's, not a ticking mock
   const d = new Date(); ui.usageTicks = (ui.usageTicks || 0) + 1; ui.usageClock = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   render();
 }, R.USAGE_REFRESH_MS);
@@ -960,6 +1020,8 @@ try { const look = localStorage.getItem(KEY_LOOK); if (['system', 'light', 'dark
 if (SHELL) { ui.bg = readBg(); setBg(ui.bg); setBreathe(readBreathe()); }
 window.RailPulse = {
   refresh: () => render(),   // a task moved elsewhere (a card in a chat): the badge and the lists read it again
+  // opens the popover on a tab ('now' or 'updates'): the bell, and #activity (shell/old-addresses.js)
+  open: (tab = 'now') => { ui.pop = true; ui.acct = false; ui.nr = null; ui.popTab = tab === 'updates' ? 'updates' : 'vitals'; opening = 'pop'; render(); },
   // The note a start near a limit shows, in the composer: what it means, and the ways out.
   startNote: () => { const c = startable(), first = c.usage.find((u) => M.PROVIDER[u.p].runs)?.p; if (!first) return { say: 'Nothing that can run is signed in. Only mock tasks work until you sign in.', blocked: true }; if (budgetGone()) return { say: 'The budget is used up until it resets.', blocked: true }; if (connOffline()) return { say: 'Offline: Worca cannot start a task until the connection is back.', blocked: true }; const lim = M.near(c, first, ui.s.warnAt); if (!lim) return null; const rm = M.room(c, ui.s.warnAt, first); return { say: `${lim.name}'s ${lim.what} is at ${lim.pct}% and resets ${lim.resets}. This task may pause.`, use: rm.length ? pname(rm[0]) : '', at: lim.resets }; },
   show: (page, sset, view) => {
@@ -975,7 +1037,7 @@ window.RailPulse = {
   // A place or a section above the mode or behind Labs: its one way on (the page's EmptyState).
   unlock: (lock, to) => {
     const [kind, v] = lock.split(':');
-    if (kind === 'mode') { R.prefs.setMode(v); return; }
+    if (kind === 'mode') { modeByPerson(v); return; }
     ui.unlock = { e: { go: to || 'runs', label: flagName(v), flag: v, kind: 'place' } }; stepUnlock(); render();
   },
   session: (on) => { ui.session = on; render(); },

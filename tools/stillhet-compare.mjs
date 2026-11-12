@@ -43,6 +43,10 @@ for (const r of ROUTES) PARTS.push({ id: `route-${r}`, route: true, app: { route
 // states on Tasks, the connection's and the newcomer's on Chat.
 export const STATES = [['loading', 'runs'], ['empty', 'runs'], ['offline', 'runs'], ['failed', 'runs'], ['refresh-failed', 'runs'], ['connection-lost', 'chat'], ['session-expired', 'chat'], ['first-run', 'chat']];
 for (const [s, r] of STATES) { const q = s === 'first-run' ? `?first#${r}` : `?state=${s}#${r}`; PARTS.push({ id: `state-${s}`, route: true, app: { route: q }, proto: { route: q } }); }
+// Pulse's own list states (docs/rail/failures.md, fail.pulse-list): the popover opened by the old Activity address, which lands
+// on Chat with Pulse open on Now (shell/old-addresses.js), over the same ?state= in both hosts.
+export const PULSE_STATES = [['loading-pulse', 'loading'], ['failed-pulse', 'failed']];
+for (const [id, s] of PULSE_STATES) PARTS.push({ id: `state-${id}`, route: true, app: { route: `?state=${s}#activity` }, proto: { route: `?state=${s}#activity` } });
 export const PAGES = ['components.html', 'run-page.html', 'pulse.html'];
 // The deep routes, read from the prototype's own route list once it has drawn (it runs inside the page): RailShell.routes()
 // (ui/public/stillhet/shell/shell.js) less the top-level places, which ROUTES compares as whole pages.
@@ -89,12 +93,15 @@ export async function freePort() {
   return new Promise((res) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
 }
 
-export async function startApp(home, env) {
+/** `lockRail`: turn `rail` on with WORCA_FLAGS (the gates: a click on the switch then changes nothing); else stored, as a
+ *  person turns it on (the comparison: the switch is drawn as the prototype draws it). */
+export async function startApp(home, env, { lockRail = false } = {}) {
   const port = await freePort();
   await mkdir(join(home, '.worca-cc'), { recursive: true });
-  await writeFile(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ onboarding: { welcomeSeen: true } }));
+  // a locked flag draws the top-bar switch disabled (nav.design-switch), which the prototype's switch is not
+  await writeFile(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ onboarding: { welcomeSeen: true }, ...(lockRail ? {} : { flags: { rail: true } }) }));
   let log = '';
-  const child = spawn(process.execPath, ['ui/server.mjs'], { cwd: ROOT, env: { ...process.env, ...env, WORCA_FLAGS: 'rail', PORT: String(port), HOME: home, USERPROFILE: home, WORCA_HOME: join(home, 'worca-home'), WORCA_MOCK: '1', WORCA_TEST_ALLOW_HOME_FALLBACK: '1', FORCE_COLOR: '0' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['ui/server.mjs'], { cwd: ROOT, env: { ...process.env, ...env, WORCA_FLAGS: lockRail ? 'rail' : '', WORCA_STILLHET_DEMO: '1', PORT: String(port), HOME: home, USERPROFILE: home, WORCA_HOME: join(home, 'worca-home'), WORCA_MOCK: '1', WORCA_TEST_ALLOW_HOME_FALLBACK: '1', FORCE_COLOR: '0' }, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout.on('data', (d) => { log += d; }); child.stderr.on('data', (d) => { log += d; });
   const base = `http://127.0.0.1:${port}`;
   for (let i = 0; i < 100; i++) { try { if ((await fetch(`${base}/api/projects`)).ok) break; } catch { /* not up yet */ } await new Promise((r) => setTimeout(r, 200)); }

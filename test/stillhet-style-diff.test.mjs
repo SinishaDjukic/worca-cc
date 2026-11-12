@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { diffStyles, ROUTES } from '../tools/stillhet-style-diff.mjs';
+import { diffStyles, ROUTES, ACCEPTED } from '../tools/stillhet-style-diff.mjs';
 
 const dump = (color = 'red') => ({ 'r|dark|1280': { 'div:0': { color, width: '10px' }, 'p:1': { color: 'blue' } } });
 
@@ -20,4 +20,9 @@ test('ROUTES includes Labs; the CLI without --dev exits 2', () => {
   const r = spawnSync(process.execPath, ['tools/stillhet-style-diff.mjs'], { encoding: 'utf8' });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /--dev SHA/);
+});
+
+test('ACCEPTED: one flag-off difference, the Labs row for Stillhet, with the owner\'s words as its reason', () => {
+  assert.deepEqual(ACCEPTED.map((a) => [a.route, a.selector]), [['#settings/experimental', '[data-flag-row="rail"]']]);
+  assert.match(ACCEPTED[0].reason, /before enrolling everything I would recommend to be de-activated, labs is reasonable/);
 });

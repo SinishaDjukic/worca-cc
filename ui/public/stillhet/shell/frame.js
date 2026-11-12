@@ -30,7 +30,7 @@
       title: 'Runs',
       left: R.menuButton() + R.sideToggle() + R.button({ label: 'Show the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 16), cls: 'bar-show', attrs: { id: 'bar-show' } }),
       centre: R.search({ label: 'Search or ask', bar: { kbd: R.keyHint(['mod', 'K'], R.isMac(window)) } }),
-      right: `<span id="in-view-slot"></span>${R.askButton({ mark: R.askWorcaMark() })}<span id="rail-pulse-slot"></span>${R.designSwitch({ on: window.RailHost ? window.RailHost.stillhetOn() : false })}<span id="rail-conn"></span>`,
+      right: `<span id="in-view-slot"></span>${R.askButton({ mark: R.askWorcaMark() })}<span id="rail-pulse-slot"></span>${R.designSwitch({ on: window.RailHost ? window.RailHost.stillhetOn() : false, locked: !!(window.RailHost && window.RailHost.railLocked && window.RailHost.railLocked()) })}<span id="rail-conn"></span>`,
     }));
   }
 

@@ -486,6 +486,7 @@
   "POST /api/shape/features/:id/replan": {"class": "probe", "reason": "replanRest refuses an unknown feature before any ticket; try/catch"},
   "POST /api/shape/features/:id/resume": {"class": "probe", "reason": "resumeFeature refuses an unknown feature before resumeRun; try/catch"},
   "POST /api/shape/features/:id/ship": {"class": "probe", "reason": "shipFeatureNow refuses missing mode / unknown feature; try/catch"},
+  "POST /api/shape/features/:id/start": {"class": "probe", "reason": "featureView 404 for an unknown feature, 409 when no run is held; try/catch"},
   "POST /api/shutdown": {"class": "skip", "reason": "mandated skip: shuts the server down (ui/server.mjs:12086)"},
   "POST /api/skills/:id/update": {"class": "probe", "reason": "librarySkillName answers 400 invalid skill id"},
   "POST /api/skills/:id/update/preview": {"class": "probe", "reason": "librarySkillName answers 400 before any git fetch"},

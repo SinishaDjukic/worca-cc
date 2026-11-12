@@ -191,7 +191,12 @@
   ];
   // Newest first within a day, and each case with the world's usage, spend and running actions. An update's run must be
   // in its case: a row can never name a run the lists do not have.
-  for (const c of CASES) {
+  // The live kind (D9): one case whose figures are the store's parts, read on every read; the demo's cases go.
+  const LIVE_CASE = { id: 'live', label: 'Live', desktop: 'off', task: { title: '' },
+    get away() { return W.part('away'); }, get updates() { return W.part('updates'); }, get usage() { return W.part('costs').usage; },
+    get budget() { return W.part('costs').budget; }, get actions() { return W.part('actions'); }, get chatUnread() { return W.part('chats').some((c) => c.unread); } };
+  if (W.live) CASES.splice(0, CASES.length, LIVE_CASE);
+  for (const c of W.live ? [] : CASES) {
     const { usage, budget, actions } = W.facts(c.id);
     Object.assign(c, { usage, budget, actions });
     const dayOrder = [...new Set(c.updates.map((u) => u.day))];
@@ -221,6 +226,11 @@
   // What the top bar's search finds beyond Settings (pulse.js adds those). `min` and `flag`: what must be on for it to
   // show, the search's lock note. `go`: where it lands; a captured page just opens.
   const F = (kind, label, where, go, o) => ({ kind, label, where, go, ...o });
+  const PLACE_FINDS = () => FINDS.filter((f) => f.kind === 'place');
+  // what the search finds in the live kind: the places, then the store's projects, schedules and chats (no seeded name)
+  const liveFinds = () => [...PLACE_FINDS(), ...W.part('projects').map((p) => F('project', p.id, 'Project', `projects/${p.id}`)),
+    ...W.part('schedules').map((x) => F('schedule', x.title, `Schedule · ${x.every}`, 'schedules', { min: 'advanced' })), ...W.part('chats').map((c) => F('chat', c.title, `Chat · ${c.time}`, `chat/${c.id}`))];
+  const finds = () => (W.live ? liveFinds() : FINDS);
   const FINDS = [
     F('place', 'Tasks', 'Place', 'runs', { words: 'runs' }), F('place', 'Chats', 'Place', 'chat'), F('place', 'Schedules', 'Place', 'schedules', { min: 'advanced' }), F('place', 'Insights', 'Place', 'insights', { min: 'advanced', words: 'statistics spend cost' }), F('place', 'Team metrics', 'Place', 'team-metrics', { min: 'expert' }),
     F('place', 'Workflows', 'Place', 'workflows'), F('place', 'Requirements', 'Place', 'requirements', { flag: 'requirements' }), F('place', 'Marketplace', 'Place', 'marketplace', { min: 'advanced' }), F('place', 'Projects', 'Place', 'projects'), F('place', 'Workspaces', 'Place', 'workspaces', { min: 'advanced' }),
@@ -241,8 +251,8 @@
   function find(q) {
     const raw = q.trim().toLowerCase();
     const m = raw.match(/^label:\s*(.*)$/), runs = runFinds();
-    if (m) return [...FINDS.filter((f) => f.kind === 'label' && f.label.includes(m[1])), ...runs.filter((f) => (f.labels || []).some((l) => l.includes(m[1]))).map((f) => ({ ...f, flag: 'runLabels' }))];
-    return [...FINDS, ...runs].filter((f) => f.label.toLowerCase().includes(raw) || f.kind.startsWith(raw) || f.words?.includes(raw));
+    if (m) return [...finds().filter((f) => f.kind === 'label' && f.label.includes(m[1])), ...runs.filter((f) => (f.labels || []).some((l) => l.includes(m[1]))).map((f) => ({ ...f, flag: 'runLabels' }))];
+    return [...finds(), ...runs].filter((f) => f.label.toLowerCase().includes(raw) || f.kind.startsWith(raw) || f.words?.includes(raw));
   }
 
   // The tone of a share: '' under the warning line, warn at or over it, over when used up.
@@ -251,6 +261,7 @@
 
   const usd = (n) => '$' + n.toLocaleString('en', { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 });
   const BUDGET_RESETS = 'Dec 1';
+  const resetsNow = () => (W.live ? W.part('costs').budget?.resets || '' : BUDGET_RESETS);   // when the live budget resets, from GET /api/budget
   // A used-up budget stops every run and every start; it wins over any window.
   const budgetGone = (b) => !!b?.limit && b.spent >= b.limit;
   const spendPct = (b) => (b && b.limit ? Math.round((b.spent / b.limit) * 100) : null);
@@ -283,8 +294,8 @@
     }
     const sp = spendPct(c.budget);
     if (sp != null && sp >= warnAt) out.push(sp >= 100
-      ? { tone: 'over', title: `Budget of ${usd(c.budget.limit)} used up`, detail: 'Runs stay paused until it resets or you raise it', time: `resets ${BUDGET_RESETS}`, tip: 'The budget resets on 1 December' }
-      : { tone: 'warn', title: `Budget at ${sp}% of ${usd(c.budget.limit)}`, detail: 'Runs stop at the budget', time: `resets ${BUDGET_RESETS}`, tip: 'The budget resets on 1 December' });
+      ? { tone: 'over', title: `Budget of ${usd(c.budget.limit)} used up`, detail: 'Runs stay paused until it resets or you raise it', time: resetsNow() ? `resets ${resetsNow()}` : '', tip: W.live ? (resetsNow() ? `The budget resets on ${resetsNow()}` : 'The budget') : 'The budget resets on 1 December' }
+      : { tone: 'warn', title: `Budget at ${sp}% of ${usd(c.budget.limit)}`, detail: 'Runs stop at the budget', time: resetsNow() ? `resets ${resetsNow()}` : '', tip: W.live ? (resetsNow() ? `The budget resets on ${resetsNow()}` : 'The budget') : 'The budget resets on 1 December' });
     return out;
   }
 
@@ -323,5 +334,5 @@
   // The Prototype corner's new event, one per severity, so the sound can be tried. Each is a fresh update.
   const TRY = { needs: ['run.questions', 'Rename settings keys', 'worca-cc · 1 question', 'run/question'], problem: ['run.failed', 'Fix the flaky e2e test', 'worca-cc · it stopped at Review', 'run/failed'], info: ['run.done', 'Update the changelog', 'docs-site · ready', 'run/ready'] };
   const tryEvent = (sev, n) => { const [e, about, meta, go] = TRY[sev]; return up('try-' + n, e, about, meta, 'now', 'Today', { go }); };
-  window.PulseModel = { BUDGET_RESETS, budgetGone, tryEvent, refreshed, withQuota, vitalsRuns, awayRow, awayLine, FINDS, FLAG_ROW, find, EVENT, BADGE, chatWords, SCHED, GROUPS, LEVELS, WHERE, PROVIDER, CASES, WHAT, qualifies, tone, rings, limits, near, room, winWord, fig, usd, spendPct };
+  window.PulseModel = { get BUDGET_RESETS() { return resetsNow(); }, get FINDS() { return finds(); }, budgetGone, tryEvent, refreshed, withQuota, vitalsRuns, awayRow, awayLine, FLAG_ROW, find, EVENT, BADGE, chatWords, SCHED, GROUPS, LEVELS, WHERE, PROVIDER, CASES, WHAT, qualifies, tone, rings, limits, near, room, winWord, fig, usd, spendPct };
 })();

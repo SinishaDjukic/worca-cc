@@ -18,9 +18,11 @@ export function shouldAskStillhet({ ask, asked, fresh, flagKnown, on, locked, we
   return !!ask && !asked && !fresh && !!flagKnown && !on && !locked && !welcomeThisLoad && !setupOpen && !dialogOpen;
 }
 
-/** Settings › Labs keeps the `rail` row only while Stillhet asks or is on; every other row stays. */
-export function stillhetLabsRow(status) {
-  return (flag) => flag.key !== 'rail' || status?.stillhetAsk === true || flag.on === true;
+/** Settings › Labs keeps every row, the `rail` row (Stillhet) in every level and whatever the ask switch says: until the end
+ *  of feature 3 it is the one way into Stillhet and back (plans/rail/implementation-prompt.md, Opt-in and opt-out; the owner,
+ *  in writing: "before enrolling everything I would recommend to be de-activated, labs is reasonable"). */
+export function stillhetLabsRow() {
+  return () => true;
 }
 
 /** True when a visible text field holds something its default does not. */

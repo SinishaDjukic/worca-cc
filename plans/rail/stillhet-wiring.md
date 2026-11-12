@@ -6,16 +6,18 @@ One map, from the prototype's own code (the places list in `shell/shell.js`, the
 
 | Dev feature | New name and place | Dev data or module reused | Old address |
 |---|---|---|---|
-| Statistics | Insights (a center) | the statistics API and aggregation in `src/shared/` | `#stats` |
-| Team metrics | Insights (a center) | the team metrics API and `src/shared/team-metrics/` | `#team-metrics` |
-| Runs | Tasks | the runs API and live run frames | `#runs`, `#history` |
-| Pipelines | Tasks | the pipelines API and the run page's data | `#pipelines`, `#running` |
-| Activity | Pulse | the activity feed and the notification frames | the Activity button |
-| Connectors | Settings | the connectors routes | `#settings/connectors` |
-| Models | Settings | the models and engines routes | `#settings/models` |
-| Providers | Settings | the providers routes | `#settings/providers` |
-| Team policy | Settings | the team policy routes | `#settings/team-policy` |
-| Workspaces | Projects (by workspace from Advanced) | the workspaces routes | `#workspaces` |
+| Statistics | Insights (a center) | the statistics API and aggregation in `src/shared/` | `#stats`, `#stats/…`, `#statistics` |
+| Team metrics | Insights (a center) | the team metrics API and `src/shared/team-metrics/` | `#team-metrics`, `#team-metrics/…` |
+| Runs | Tasks | the runs API and live run frames | `#runs` (Tasks at its own address), `#history`, `#history/…` |
+| Pipelines | Tasks | the pipelines API and the run page's data | `#pipelines`, `#running/…`, `#feature/…`, `#group/…` |
+| Activity | Pulse | the activity feed and the notification frames | `#activity` (Chat, with Pulse open on Now) |
+| Connectors | Settings | the connectors routes | `#connectors`, `#settings/mcp` |
+| Models | Settings | the models and engines routes | `#models` (`#settings/models` is Stillhet's own) |
+| Providers | Settings | the providers routes | `#providers`, `#settings/providers` |
+| Team policy | Settings | the team policy routes | `#team-policy`, `#team-policy/…` |
+| Workspaces | Projects (by workspace from Advanced) | the workspaces routes | `#workspaces`, `#workspaces/…`, `#workspace-create` |
+
+With Stillhet on, every old address lands through one table, `ui/public/stillhet/shell/old-addresses.js` (`docs/rail/navigation.md` `nav.old-address`), in place; with it off they stay dev's.
 
 Dev data the design lacks (add to the design first: rule, catalog entry, component, test, gallery):
 - add to the design first: the person filter on Insights.
@@ -39,7 +41,7 @@ Every action the prototype answers with a "Would…" sentence is `window.RailWou
 | `ui/public/stillhet/runs/run-page-model.js` | the try-it command, instance links | wire to | the run's place and instance data from the runs API |
 | `ui/public/stillhet/settings/settings-model.js` | open a Settings link in a new tab, send a test to a model, report a bug, suggest an improvement, copy the policy for a PR, the Labs guide | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
 | `ui/public/stillhet/settings/settings.js` | copy a setting's value | wire to | the clipboard and the settings routes |
-| `ui/public/stillhet/pulse/pulse.js` | ask Chat from a page, send a test notification; on pulse.html only (no shell): open a search result, open Statistics, open what a Pulse row names, a place that is off, New run's start and schedule | wire to | Chat hand-over (`RailConversation.handOver`), the notification settings routes; in the shell these go through `RailShell.go`, and New run is Chat's `RailConversation.start('task')` (`POST /api/run`, the schedules API) |
+| `ui/public/stillhet/pulse/pulse.js` | ask Chat from a page, send a test notification; on pulse.html only (no shell): open a search result, open Statistics, open what a Pulse row names, a place that is off, New run's start and schedule | wired | dev's routes with dev's bodies: `POST /api/resume` (Resume, Try again, Restart Build; a confirm opens the task), `POST /api/schedules/:id/run-now`, `POST /api/actions/instances/:instanceId/stop`, `POST /api/notifications/:id/read` and `/read-all`, `POST /api/settings` (`uiLevel`, `keepAwake`, `nightModeToggle`); a refusal toasts `Could not ACTION: REASON` and changes nothing |
 | `ui/public/stillhet/workflows/workflows.js` | import a workflow, export a workflow, run the saved cases | wire to | the workflows routes and `src/shared/` graph export |
 | `ui/public/stillhet/requirements/requirements.js` | copy a requirement as Markdown, save specs | wire to | the requirements routes |
 | `ui/public/stillhet/marketplace/marketplace.js` | open a plugin's source, open a market on GitHub | wire to | the Marketplace routes |
@@ -53,11 +55,11 @@ Each model file seeds figures the live adapter replaces. One row per file here; 
 
 | Model file | Figures it seeds | Status | Wire to |
 |---|---|---|---|
-| `ui/public/stillhet/shell/world.js` | the tasks, chats, projects and times every page shares | wire to | the runs, chats and projects APIs and the live WebSocket frames |
+| `ui/public/stillhet/shell/world.js` | the tasks, chats, projects and times every page shares | wired | `ui/public/stillhet/live/live-adapter.mjs`: `GET /api/history`, `hello.runs` and the run frames, through `RailWorld.load` / `move` / `add` |
 | `ui/public/stillhet/runs/runs-model.js` | the Tasks list rows | wire to | the runs API |
 | `ui/public/stillhet/runs/run-page-model.js` | a run's stages, times, cost, loops and PR | wire to | the run page's data and live frames |
 | `ui/public/stillhet/chat/chats-model.js` | the chats and their turns | wire to | the chat threads API |
-| `ui/public/stillhet/pulse/pulse-model.js` | the Pulse updates, away and budget figures | wire to | the activity feed and notification frames |
+| `ui/public/stillhet/pulse/pulse-model.js` | the Pulse updates, away and budget figures | wired | `ui/public/stillhet/live/live-adapter.mjs`: `GET /api/notifications` and run outcomes (updates), `GET /api/budget` (spend), limit pauses (usage), `GET /api/actions/running`, `GET /api/away-mode` |
 | `ui/public/stillhet/schedules/schedules-model.js` | the schedules and their next times | wire to | the schedules API |
 | `ui/public/stillhet/settings/settings-model.js` | every Settings value and model list | wire to | the settings, models and providers routes |
 | `ui/public/stillhet/insights/insights-model.js` | spend, runs and team figures | wire to | the statistics and team-metrics APIs; the person filter, Shaper spend, Quarter and Year ranges and the team heat grid are "add to the design first" |
@@ -118,13 +120,13 @@ One row per action: `npm run stillhet:wiring` lists every `window.RailWould(...)
 | `insights/insights.js › copy a link to this page` | new: build it | page links with the new Insights addresses |
 | `marketplace/marketplace.js › open it on GitHub` | wire to | the Marketplace routes |
 | `marketplace/marketplace.js › open … at … on GitHub` | wire to | the Marketplace routes |
-| `pulse/pulse.js › (a phrase built from data)` | wire to | Chat hand-over (`RailConversation.handOver`), the notification settings routes; in the shell these go through `RailShell.go`, and New run is Chat's `RailConversation.start('task')` (`POST /api/run`, the schedules API) |
-| `pulse/pulse.js › ask Chat: …` | wire to | Chat hand-over (`RailConversation.handOver`), the notification settings routes; in the shell these go through `RailShell.go`, and New run is Chat's `RailConversation.start('task')` (`POST /api/run`, the schedules API) |
-| `pulse/pulse.js › open Statistics` | wire to | Chat hand-over (`RailConversation.handOver`), the notification settings routes; in the shell these go through `RailShell.go`, and New run is Chat's `RailConversation.start('task')` (`POST /api/run`, the schedules API) |
-| `pulse/pulse.js › open …` | wire to | Chat hand-over (`RailConversation.handOver`), the notification settings routes; in the shell these go through `RailShell.go`, and New run is Chat's `RailConversation.start('task')` (`POST /api/run`, the schedules API) |
-| `pulse/pulse.js › open … · …` | wire to | Chat hand-over (`RailConversation.handOver`), the notification settings routes; in the shell these go through `RailShell.go`, and New run is Chat's `RailConversation.start('task')` (`POST /api/run`, the schedules API) |
-| `pulse/pulse.js › schedule it: …` | wire to | Chat hand-over (`RailConversation.handOver`), the notification settings routes; in the shell these go through `RailShell.go`, and New run is Chat's `RailConversation.start('task')` (`POST /api/run`, the schedules API) |
-| `pulse/pulse.js › send a test notification` | wire to | Chat hand-over (`RailConversation.handOver`), the notification settings routes; in the shell these go through `RailShell.go`, and New run is Chat's `RailConversation.start('task')` (`POST /api/run`, the schedules API) |
+| `pulse/pulse.js › (a phrase built from data)` | wired | in the app host each reaches its real target: Chat hand-over (`RailConversation.handOver`), `RailShell.go` / `openRun` / `openSchedule` (`insights/spend` for Statistics), New run is Chat's `RailConversation.start('task')`, and Send test is the browser `Notification` API after permission (D16); the demo sentences stay on the standalone `pulse.html` only |
+| `pulse/pulse.js › ask Chat: …` | wired | in the app host each reaches its real target: Chat hand-over (`RailConversation.handOver`), `RailShell.go` / `openRun` / `openSchedule` (`insights/spend` for Statistics), New run is Chat's `RailConversation.start('task')`, and Send test is the browser `Notification` API after permission (D16); the demo sentences stay on the standalone `pulse.html` only |
+| `pulse/pulse.js › open Statistics` | wired | in the app host each reaches its real target: Chat hand-over (`RailConversation.handOver`), `RailShell.go` / `openRun` / `openSchedule` (`insights/spend` for Statistics), New run is Chat's `RailConversation.start('task')`, and Send test is the browser `Notification` API after permission (D16); the demo sentences stay on the standalone `pulse.html` only |
+| `pulse/pulse.js › open …` | wired | in the app host each reaches its real target: Chat hand-over (`RailConversation.handOver`), `RailShell.go` / `openRun` / `openSchedule` (`insights/spend` for Statistics), New run is Chat's `RailConversation.start('task')`, and Send test is the browser `Notification` API after permission (D16); the demo sentences stay on the standalone `pulse.html` only |
+| `pulse/pulse.js › open … · …` | wired | in the app host each reaches its real target: Chat hand-over (`RailConversation.handOver`), `RailShell.go` / `openRun` / `openSchedule` (`insights/spend` for Statistics), New run is Chat's `RailConversation.start('task')`, and Send test is the browser `Notification` API after permission (D16); the demo sentences stay on the standalone `pulse.html` only |
+| `pulse/pulse.js › schedule it: …` | wired | in the app host each reaches its real target: Chat hand-over (`RailConversation.handOver`), `RailShell.go` / `openRun` / `openSchedule` (`insights/spend` for Statistics), New run is Chat's `RailConversation.start('task')`, and Send test is the browser `Notification` API after permission (D16); the demo sentences stay on the standalone `pulse.html` only |
+| `pulse/pulse.js › send a test notification` | wired | in the app host each reaches its real target: Chat hand-over (`RailConversation.handOver`), `RailShell.go` / `openRun` / `openSchedule` (`insights/spend` for Statistics), New run is Chat's `RailConversation.start('task')`, and Send test is the browser `Notification` API after permission (D16); the demo sentences stay on the standalone `pulse.html` only |
 | `requirements/requirements.js › copy … as Markdown` | wire to | the requirements routes |
 | `requirements/requirements.js › save specs/….md in …` | wire to | the requirements routes |
 | `runs/run-page-model.js › (a phrase built from data)` | wire to | the run's place and instance data from the runs API |
@@ -181,22 +183,22 @@ One row per seeded figure: each data key and seed getter of the globals a model 
 | `runs/run-page-model.js › RunCardModel.runFlow` | wire to | the run's place and instance data from the runs API |
 | `runs/run-page-model.js › RunCardModel.cases` | wire to | the run's place and instance data from the runs API |
 | `runs/run-page-model.js › RunCardModel.add` | wire to | the run's place and instance data from the runs API |
-| `shell/world.js › RailFirstRun` | wire to | nothing to wire: the demo's `?state=` and `?first` from the address; the live adapter (slice 3) ignores them and reads the real state from the APIs |
-| `shell/world.js › RailDemoState.list` | wire to | nothing to wire: the demo's `?state=` and `?first` from the address; the live adapter (slice 3) ignores them and reads the real state from the APIs |
-| `shell/world.js › RailDemoState.conn` | wire to | nothing to wire: the demo's `?state=` and `?first` from the address; the live adapter (slice 3) ignores them and reads the real state from the APIs |
-| `shell/world.js › RailWorld.data` | wire to | the runs, chats and projects APIs and the live WebSocket frames |
-| `pulse/pulse-model.js › PulseModel.BUDGET_RESETS` | wire to | the activity feed and notification frames |
-| `pulse/pulse-model.js › PulseModel.FINDS` | wire to | the activity feed and notification frames |
-| `pulse/pulse-model.js › PulseModel.FLAG_ROW` | wire to | the activity feed and notification frames |
-| `pulse/pulse-model.js › PulseModel.EVENT` | wire to | the activity feed and notification frames |
-| `pulse/pulse-model.js › PulseModel.BADGE` | wire to | the activity feed and notification frames |
-| `pulse/pulse-model.js › PulseModel.SCHED` | wire to | the activity feed and notification frames |
-| `pulse/pulse-model.js › PulseModel.GROUPS` | wire to | the activity feed and notification frames |
-| `pulse/pulse-model.js › PulseModel.LEVELS` | wire to | the activity feed and notification frames |
-| `pulse/pulse-model.js › PulseModel.WHERE` | wire to | the activity feed and notification frames |
-| `pulse/pulse-model.js › PulseModel.PROVIDER` | wire to | the activity feed and notification frames |
-| `pulse/pulse-model.js › PulseModel.CASES` | wire to | the activity feed and notification frames |
-| `pulse/pulse-model.js › PulseModel.WHAT` | wire to | the activity feed and notification frames |
+| `shell/world.js › RailFirstRun` | wired | the demo's `?first` only: the live kind never reads the address (`data-adapter="live"`, D2, D3) |
+| `shell/world.js › RailDemoState.list` | wired | `ui/public/stillhet/live/live-adapter.mjs`: `list` is loading until the first snapshot, failed, or refresh after a failed refetch; `conn` is offline while the socket is down and session on a 401 or close code 4001, through `RailWorld.setState` / `load` (D8, D20) |
+| `shell/world.js › RailDemoState.conn` | wired | `ui/public/stillhet/live/live-adapter.mjs`: `list` is loading until the first snapshot, failed, or refresh after a failed refetch; `conn` is offline while the socket is down and session on a 401 or close code 4001, through `RailWorld.setState` / `load` (D8, D20) |
+| `shell/world.js › RailWorld.data` | wired | `ui/public/stillhet/live/live-adapter.mjs`: `GET /api/history`, `hello.runs` and the run frames (`run-created`, `state`, `question`, `question-resolved`, `done`, `error`, `title`), mapped by `live/live-map.mjs`; Needs you is dev's rule (`src/shared/needs-you.mjs`) |
+| `pulse/pulse-model.js › PulseModel.BUDGET_RESETS` | wired | `GET /api/budget` `windowEndMs`, through `RailWorld.part('costs')` |
+| `pulse/pulse-model.js › PulseModel.FINDS` | wired | the places, then the store's projects, schedules and chats (`GET /api/projects`, `GET /api/schedules`, `GET /api/ask/threads?show=all`) |
+| `pulse/pulse-model.js › PulseModel.FLAG_ROW` | wired | the design's catalogue; the live adapter maps dev's notification kinds and run outcomes onto it |
+| `pulse/pulse-model.js › PulseModel.EVENT` | wired | the design's catalogue; the live adapter maps dev's notification kinds and run outcomes onto it |
+| `pulse/pulse-model.js › PulseModel.BADGE` | wired | the design's catalogue; the live adapter maps dev's notification kinds and run outcomes onto it |
+| `pulse/pulse-model.js › PulseModel.SCHED` | wired | the design's catalogue; the live adapter maps dev's notification kinds and run outcomes onto it |
+| `pulse/pulse-model.js › PulseModel.GROUPS` | wired | the design's catalogue; the live adapter maps dev's notification kinds and run outcomes onto it |
+| `pulse/pulse-model.js › PulseModel.LEVELS` | wired | the design's catalogue; the live adapter maps dev's notification kinds and run outcomes onto it |
+| `pulse/pulse-model.js › PulseModel.WHERE` | wired | the design's catalogue; the live adapter maps dev's notification kinds and run outcomes onto it |
+| `pulse/pulse-model.js › PulseModel.PROVIDER` | wired | the design's catalogue; the live adapter maps dev's notification kinds and run outcomes onto it |
+| `pulse/pulse-model.js › PulseModel.CASES` | wired | one live case whose updates, usage, budget, actions and Away are the store's parts (`GET /api/notifications`, run outcomes of `GET /api/history`, `GET /api/budget`, `GET /api/actions/running`, `GET /api/away-mode`) |
+| `pulse/pulse-model.js › PulseModel.WHAT` | wired | the design's catalogue; the live adapter maps dev's notification kinds and run outcomes onto it |
 | `runs/runs-model.js › RunsListModel.seed` | wire to | the runs API |
 | `runs/runs-model.js › RunsListModel.PEOPLE` | wire to | the runs API |
 | `runs/runs-model.js › RunsListModel.DAYS` | wire to | the runs API |
@@ -221,13 +223,19 @@ One row per seeded figure: each data key and seed getter of the globals a model 
 | `insights/insights-model.js › RailInsightsModel.TIME` | wire to | the statistics and team-metrics APIs; the person filter, Shaper spend, Quarter and Year ranges and the team heat grid are "add to the design first" |
 | `insights/insights-model.js › RailInsightsModel.FILTERS` | wire to | the statistics and team-metrics APIs; the person filter, Shaper spend, Quarter and Year ranges and the team heat grid are "add to the design first" |
 | `insights/insights-model.js › RailInsightsModel.WHEN` | wire to | the statistics and team-metrics APIs; the person filter, Shaper spend, Quarter and Year ranges and the team heat grid are "add to the design first" |
-| `bar › Pulse badge: the Needs you count` | wire to | the run states that wait on you (live run frames, `ui/public/ws.mjs`) and the activity feed |
-| `bar › Pulse: the unread updates` | wire to | the activity feed and the notification frames |
-| `bar › Pulse: the running tasks` | wire to | the runs API and the live run frames |
-| `bell › the Needs you rows` | wire to | the run states that wait on you, missed schedules (the schedules API) and project questions |
-| `sidebar › Chat: the unread reply dot` | wire to | the chat threads API (a reply in a thread not open) |
-| `profile › the usage rings per harness` | wire to | the usage limits each harness reports (the engines and providers routes) |
-| `profile › spend and the budget left` | wire to | the statistics API (spend) and the budget in Settings |
+| `bar › Pulse badge: the Needs you count` | wired | the Needs you rows of the store: `countNeedsYou` over `hello.runs` and `GET /api/history`, plus `counts.missed` of `GET /api/schedules`, plus the projects that need you (D22) |
+| `bar › Pulse: the unread updates` | wired | `GET /api/notifications` (unread problems) and the failed and paused run outcomes of `GET /api/history`, session read state |
+| `bar › Pulse: the running tasks` | wired | `hello.runs` and the run frames |
+| `bell › the Needs you rows` | wired (partial) | tasks (dev's Needs-you rule), missed schedules (`GET /api/schedules`) and projects with a missing folder or out of sync (`GET /api/projects`, `GET /api/sync/projects`); workspace link questions count 0 until Projects is live |
+| `sidebar › Chat: the unread reply dot` | wired | `ask-done` / `ask-error` frames for a chat not open or while the page is hidden (dev's ask-panel rule, copied in `live/live-map.mjs` `unreadOf`); opening the chat clears it; session only |
+| `profile › the usage rings per harness` | wired (partial) | limit pauses only, all dev reports: a paused run's `limitEngine` and `limitResetAt` draw that harness's ring full (D15) |
+| `profile › spend and the budget left` | wired | `GET /api/budget`: `windowSpendUsd`, `totalLimitUsd`, `resetPeriod`, `windowEndMs`; Details goes to `insights/spend` |
+| `shell/world.js › RailWorld.live` | wired | the shell's `data-adapter` stamp (`src/core/stillhet-shell.mjs`), read once by `adapter.js` |
+| `live/live-adapter.mjs › every source and frame` | wired | the D10 GET routes, the `/ws` frames, a `*-changed` frame re-fetching its own source (250 ms debounce), reconnect with backoff |
+| `live/live-map.mjs › the shapes` | wired | pure mapping onto `live/model-shape.mjs` `SHAPES`; no field outside them reaches the store |
+| `profile › the interface mode` | wired | dev's `uiLevel`: the `data-level` stamp at start, `POST /api/settings {uiLevel}` on a person's pick only |
+| `profile › Keep awake` | wired | `keepAwake` of `GET /api/settings`; `POST /api/settings {keepAwake}` |
+| `profile › Away` | wired | `GET /api/away-mode`; `POST /api/settings {nightModeToggle}` with dev's Away switch body |
 
 ## Opt-in
 
@@ -237,7 +245,8 @@ Wired in slice 1, each row real:
 |---|---|---|
 | The `rail` flag | `src/shared/flags/registry.mjs` | One experimental flag, off by default; `WORCA_FLAGS=rail` locks it. |
 | The asked-once answer | `onboarding.stillhetAsked` in `settings.json` | Stored when the flag is turned on or No thanks is chosen; undone by setting it false. |
-| The ask switch | `src/core/stillhet.mjs` | Hides the question, the switch and the Labs row until the last slice of feature 3 turns it on, once every area runs on live data. |
+| The ask switch | `src/core/stillhet.mjs` | Hides the question, and the top-bar switch while Stillhet is off, until the last slice of feature 3 turns it on, once every area runs on live data. |
+| The Labs row | `ui/public/stillhet.mjs` `stillhetLabsRow` | Settings › Labs shows the `rail` row (Stillhet, experimental) in every level, whatever the ask switch says: until the end of feature 3 the one way in and out. The one flag-off difference from dev the owner accepts (`tools/stillhet-style-diff.mjs` `ACCEPTED`). |
 | The Invitation | `ui/public/design-system/components/invitation.mjs` | A ConfirmStrip under the top bar; Try Stillhet sets the flag, No thanks is never asked again. |
 | The Stillhet UI switch | `ui/public/design-system/components/design-switch.mjs` | The top-bar switch, the same setting as Settings › Labs. |
 | The reload | `ui/public/stillhet.mjs` | A change of the flag reloads each open page once, never while text is typed. |

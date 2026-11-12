@@ -124,18 +124,6 @@ export const FLAGS = Object.freeze([
     docs: 'docs/ticket-updates.md',
   }),
   entry({
-    key: 'shapeRequirements',
-    title: 'Requirements first',
-    description: 'A medium or large Shaper task agrees keyed requirements with its perspectives before the plan, and the plan approval shows which step covers each one.',
-    stage: 'experimental',
-    default: false,
-    owner: 'e-angelov',
-    since: '1.18.0',
-    added: '2026-11-05',
-    reviewBy: '2027-02-01',
-    docs: 'docs/shape-it-first.md',
-  }),
-  entry({
     key: 'rail',
     title: 'Stillhet',
     description: 'Stillhet, the calmer Worca: an evolution of the design system, opt-in while it is shaped.',

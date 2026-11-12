@@ -144,6 +144,7 @@
   function act(id, rows0, { bulk, viaKey } = {}) {
     const rows = rows0.map((r) => r._x), x = rows[0], snap = snapshot(), pick = ctl.state.pick;
     if (id === 'in-view' && x) { if (x.t) window.RailShell.inView.toggle({ type: x.t.kind === 'schedule' ? 'schedule' : 'task', id: x.t.id, chat: x.c.id, title: x.t.title, case: x.t.case }); else if (x.c) window.RailShell.inView.toggle({ type: 'chat', id: x.c.id, title: x.c.title }); ctl.paint(); return; }
+    if (id !== 'open-task' && window.RailAdapter?.refuse?.(`chats.${id}`)) { ctl.paint(x ? { focus: `[data-open="${CSS.escape(x.key)}"]` } : {}); return; }   // R-arch-10: the live kind's chat list writes nothing until the Chat slice wires it
     if (x?.t && !bulk && id !== 'add-to-group') {
       const t = x.t;
       if (id === 'open-task') { if (t.kind === 'schedule') window.RailShell.openSchedule(t.id); else window.RailShell.openTask(t.case, x.c.id, t.title); return; }
@@ -221,7 +222,7 @@
       else if (act === 'prev-chat' || act === 'next-chat') { const id = neighbour(act === 'next-chat' ? 1 : -1); if (id) openChat(id); }
     },
     say, active: () => (location.hash.startsWith('#chat') || !location.hash) && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #app .nav-fly'),
-    retry: () => setCase('full'), emptyAct: () => window.RailConversation?.start('ask'),
+    retry: () => { if (window.RailWorld.live) window.RailAdapter.retry(); else setCase('full'); }, emptyAct: () => window.RailConversation?.start('ask'),
   } });
   function setCase(c) {
     listCase = c === 'shared' || c === 'refresh' ? 'full' : c; data = c === 'empty' ? { groups: [], chats: [] } : M.seed(); ctl.clear(); ctl.state.waited = false;
@@ -231,7 +232,7 @@
   }
   document.getElementById('list-case')?.addEventListener('change', (e) => setCase(e.target.value));
   if (window.RailDemoState?.list) setCase(window.RailDemoState.list);   // ?state=NAME (world.js)
-  window.RailWorld.onChange(() => setCase(listCase));   // another Pulse case: what waits on you follows it
+  window.RailWorld.onChange(() => setCase(window.RailWorld.live ? window.RailDemoState.list || 'full' : listCase));   // another Pulse case, or (live) a load or a list state (D20)
   window.RailWorld.onMove(() => { data.chats.forEach(M.sync); ctl?.paint(); });   // a task moved anywhere: its row and its chat's place in Needs you follow
   R.prefs.onChange(() => ctl.paint());
   let toTop = false;
@@ -243,7 +244,11 @@
     toggle,
     newChat,
     data: () => data,
-    summary: () => { const chats = data.chats.filter((c) => !c.archived), needs = chats.filter((c) => sectionOfChat(c) === 'needs').length; return { n: chats.filter((c) => c.state !== 'idle' || sectionOfChat(c) === 'needs').length, needs }; },   // the list's own Needs you
+    summary: () => {   // the list's own Needs you; the live kind's number is the server's count over every thread (counts.needs)
+      const chats = data.chats.filter((c) => !c.archived), mine = chats.filter((c) => sectionOfChat(c) === 'needs').length;
+      const all = window.RailWorld.live ? window.RailWorld.part('chatsNeeds') : null, needs = Number.isFinite(all) ? all : mine;
+      return { n: chats.filter((c) => c.state !== 'idle' || sectionOfChat(c) === 'needs').length + Math.max(0, needs - mine), needs };
+    },
     refresh: () => { ctl.paint(); window.RailShell?.inView.draw(); },
   };
   ctl.paint();

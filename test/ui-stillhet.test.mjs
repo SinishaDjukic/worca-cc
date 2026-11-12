@@ -30,11 +30,8 @@ test('shouldAskStillhet: false for each condition alone, true when all pass', ()
   }
 });
 
-test('stillhetLabsRow keeps rail only while Stillhet asks or is on', () => {
-  assert.equal(S.stillhetLabsRow({ stillhetAsk: false })({ key: 'rail', on: false }), false);
-  assert.equal(S.stillhetLabsRow({ stillhetAsk: false })({ key: 'rail', on: true }), true);
-  assert.equal(S.stillhetLabsRow({ stillhetAsk: true })({ key: 'rail', on: false }), true);
-  assert.equal(S.stillhetLabsRow(null)({ key: 'runLabels', on: false }), true);
+test('stillhetLabsRow keeps the rail row in every case, until the end of feature 3 the one way in and out', () => {
+  for (const flag of [{ key: 'rail', on: false }, { key: 'rail', on: true }, { key: 'runLabels', on: false }]) assert.equal(S.stillhetLabsRow()(flag), true, JSON.stringify(flag));
 });
 
 test('mounting twice leaves one node of each kind; the strip follows #topnav and takes the focus on No thanks', () => {

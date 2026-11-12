@@ -239,13 +239,15 @@
 
   // ---- what a click means ----
   const runRec = (sv, a) => a.rec(a.it, tools(sv, a.it, a.where)) || '';
+  // R-arch-10: the live kind does not wire Settings yet; a change goes through the adapter, which refuses, and nothing is written
+  const refused = (what) => !!window.RailAdapter?.refuse?.(`settings.${what}`);
   function pick(sv, id, v) {
     if (id.startsWith('svm:')) {
-      const a = REG.get(id.slice(4) + '/' + v); if (!a) return '';
+      const a = REG.get(id.slice(4) + '/' + v); if (!a || refused(id.slice(4) + '/' + v)) return '';
       return runRec(sv, a);
     }
     const key = id.slice(3), [, p] = findPick(sv, key);
-    if (!p || sv[key] === v || optsOf(p, sv).find((o) => o[0] === v)?.[3]) return '';   // no change, no toast; an off choice does nothing
+    if (!p || sv[key] === v || optsOf(p, sv).find((o) => o[0] === v)?.[3] || refused(key)) return '';   // no change, no toast; an off choice does nothing
     sv[key] = v;
     const also = p.then ? p.then(sv) : '';
     return also || '';   // the sentence has changed before your eyes; a toast says only what else happened
@@ -257,6 +259,7 @@
       const hidden = R.prefs.flag(k) && f.min && !R.shows(f.min, R.prefs.mode());   // on, but this mode does not draw what it adds: the toast says so
       return `${f.name}: ${R.prefs.flag(k) ? 'on' : 'off'}${hidden ? `. It shows in ${f.min[0].toUpperCase()}${f.min.slice(1)}; you are in ${R.prefs.mode()[0].toUpperCase()}${R.prefs.mode().slice(1)}` : ''}`;
     }
+    if (refused(key)) return '';
     sv[key] = !sv[key];
     const r = rowsOf().find((x) => x.sw && x.sw.key === key) || listsOf().find((x) => x.sw && x.sw.key === key);
     return `${r ? r.name || r.title : key}: ${sv[key] ? 'on' : 'off'}`;
@@ -274,6 +277,7 @@
     if (d && say.startsWith('dlgbtn:')) { const k = say.slice(7), f = (d.steps ? d.steps[d.at] : d).fields.find((x) => x.key === k); d.status = f.do(d.vals) || ''; return ''; }
     const a = REG.get(say);
     if (!a) throw new Error('settings: no action ' + say);
+    if ((a.rec && !say.endsWith('/open')) || a.do) { if (refused(say)) return ''; }   // a row's open only shows it; what it then saves is the Dialog's
     if (a.rec) return runRec(sv, a);
     if (a.edit) { openDialog(sv, typeof a.edit === 'function' ? a.edit(sv) : a.edit); return ''; }
     if (a.confirm) { sv.__confirm = typeof a.confirm === 'function' ? a.confirm(sv) : a.confirm; return ''; }
@@ -296,11 +300,13 @@
     sv.__dialog = null;
     if (d.view && !d.then) return '';
     if (['Save', 'Add to changes'].includes(d.yes || 'Save') && Object.keys(d.vals).length && Object.keys(d.vals).every((k) => same(d.vals[k], d.start[k]))) return '';   // Save with nothing changed: no toast
+    if (refused('save')) return '';
     const said = d.then ? d.then(d.vals, sv) : (Object.assign(sv, d.vals), undefined);
     return said === '' ? '' : said || d.done || `${d.title}: saved`;   // a then that returns '' changed nothing
   }
   function confirm(sv, yes) {
     const c = sv.__confirm; sv.__confirm = null;
+    if (yes && c && refused('confirm')) return '';
     return yes && c ? c.then(sv) || '' : '';
   }
   window.SettingsView = { fresh, section, strip, sentenceText, changesOf, rowsOf, pick, toggle, act: doAct, dialog, confirm };

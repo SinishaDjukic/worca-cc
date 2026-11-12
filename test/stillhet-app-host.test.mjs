@@ -6,7 +6,7 @@ import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 
 const DIR = new URL('../ui/public/stillhet/', import.meta.url);
-const load = (file, { fetchImpl, search = '', host } = {}) => {
+const load = (file, { fetchImpl, search = '', host, adapter = '', fields = [] } = {}) => {
   const calls = [], cls = new Set(), toast = { textContent: '', cls, classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c) } }, listeners = [];
   const win = { RailHost: host };
   const ctx = {
@@ -15,7 +15,8 @@ const load = (file, { fetchImpl, search = '', host } = {}) => {
     matchMedia: () => ({ matches: false }),
     document: {
       activeElement: null,
-      querySelector: (s) => (s === '.rc-toast' ? toast : null), querySelectorAll: () => [], getElementById: () => null,
+      querySelector: (s) => (s === '.rc-toast' ? toast : null), querySelectorAll: () => fields, getElementById: () => null,
+      documentElement: { getAttribute: (k) => (k === 'data-adapter' ? adapter || null : null) },
       addEventListener: (type, fn) => listeners.push({ type, fn }),
     },
   };
@@ -170,4 +171,56 @@ test('jsdom: a failed opt-out (fetch rejected, or locked) shows its sentence in 
     assert.equal(d.activeElement, sw, `${name}: focus stays on the switch`);
     w.close();
   }
+});
+
+test('adapter: the shell\'s stamp picks the kind, never the address: live with data-adapter="live" even with ?state=empty', () => {
+  assert.equal(load('adapter.js', { host: { name: 'app' }, adapter: 'live', search: '?state=empty' }).win.RailAdapter.kind, 'live');
+  assert.equal(load('adapter.js', { host: { name: 'app' }, adapter: 'demo' }).win.RailAdapter.kind, 'demo');
+  assert.equal(load('adapter.js', { host: { name: 'prototype' }, adapter: 'live' }).win.RailAdapter.kind, 'demo', 'the prototype is always demo');
+});
+
+test('one reload owner: the switch and a flags frame with rail off reload exactly once; the only write is PATCH /api/flags', async () => {
+  const { win, calls, click } = load('host-app.js', { fetchImpl: reply(true, { flags: [] }) });
+  click(switchStub().target);
+  win.RailHost.flagsChanged({ rail: false });
+  await settle();
+  win.RailHost.flagsChanged({ rail: false });
+  assert.deepEqual(calls.filter((c) => c === 'reload'), ['reload']);
+  const writes = calls.filter((c) => c !== 'reload' && c.o && c.o.method && c.o.method !== 'GET');
+  assert.deepEqual(writes.map((c) => [c.o.method, c.u]), [['PATCH', '/api/flags']]);
+  win.RailHost.flagsChanged({ rail: true });
+  assert.equal(calls.filter((c) => c === 'reload').length, 1);
+});
+
+test('a flags frame with rail off waits while text is typed, says so once, and reloads once the text is gone', () => {
+  const field = { value: 'half a sentence', defaultValue: '', getAttribute: () => null, closest: () => null };
+  const { win, calls, toast } = load(['host-app.js', 'adapter.js'], { fetchImpl: reply(true, {}), fields: [field] });
+  win.RailHost.flagsChanged({ rail: false });
+  win.RailHost.flagsChanged({ rail: false });
+  assert.equal(calls.includes('reload'), false);
+  assert.equal(toast.textContent, 'Stillhet is off.');
+  toast.textContent = '';
+  win.RailHost.flagsChanged({ rail: false });
+  assert.equal(toast.textContent, '', 'said once');
+  field.value = '';
+  win.RailHost.flagsChanged({ rail: false });
+  assert.deepEqual(calls, ['reload']);
+});
+
+test('jsdom: rail locked by WORCA_FLAGS draws the switch disabled, saying why; a click sends nothing and shows no toast', async () => {
+  const { stillhetHost } = await import('./helpers/stillhet-host.mjs');
+  const { after } = await import('node:test');
+  const calls = [];
+  const w = stillhetHost({ railLocked: true, after, fetch: async (u, o = {}) => { calls.push([o.method || 'GET', String(u)]); return { ok: false, status: 500, json: async () => ({}) }; } });
+  const d = w.document, sw = d.querySelector('[data-design-switch]');
+  assert.ok(sw, 'the switch is drawn');
+  assert.equal(sw.disabled, true);
+  assert.equal(sw.getAttribute('aria-checked'), 'true', 'it still says Stillhet is on');
+  assert.equal(d.getElementById(sw.getAttribute('aria-describedby')).textContent, 'Locked by WORCA_FLAGS');
+  assert.match(sw.closest('[data-stillhet="design-switch"]').outerHTML, /Locked by WORCA_FLAGS/);
+  sw.click();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(calls.filter(([m]) => m !== 'GET'), [], 'no PATCH /api/flags');
+  assert.equal(d.querySelector('body > .rc-toast').textContent, '', 'no toast: nothing failed');
+  assert.equal(w.RailHost.railLocked(), true);
 });

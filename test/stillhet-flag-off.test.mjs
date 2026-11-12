@@ -1,5 +1,5 @@
 // test/stillhet-flag-off.test.mjs — with `rail` off (stored or locked) GET / is dev's page, byte for byte; with it on the
-// server sends the Stillhet shell. The golden was taken from the merged dev commit 0124ba31f with its own code:
+// server sends the Stillhet shell. The golden was taken from the merged base 3a86860b8 (dev 01d80e338) with its own code:
 // `git archive` of that commit, a fresh HOME (welcomeSeen only), WORCA_FLAGS unset, git usable, mock mode; the body
 // hashed as served. Re-merging dev recaptures it from dev's own files, before this slice's changes.
 import { test } from 'node:test';
@@ -36,7 +36,7 @@ test('rail locked on serves the Stillhet shell with the same security headers', 
     const html = b.buf.toString();
     assert.match(html, /<script src="\/stillhet\/boot\.js" data-host="app"><\/script>/);
     assert.doesNotMatch(html, /\/app\.js/);
-    assert.match(html, /<html lang="en" data-theme="system" data-level="(simple|advanced|expert)" data-git="(on|off)">/);
+    assert.match(html, /<html lang="en" data-theme="system" data-level="(simple|advanced|expert)" data-git="(on|off)" data-adapter="live" data-rail-locked="true">/);   // live data (D2); WORCA_FLAGS=rail locks the switch
     for (const h of HEADERS) assert.equal(b.r.headers.get(h), a.r.headers.get(h), h);
     assert.equal((await fetch(on.base + '/stillhet/boot.js')).status, 200);
     assert.equal((await fetch(on.base + '/stillhet/css/rail.css')).status, 200);

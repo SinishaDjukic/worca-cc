@@ -65,6 +65,8 @@
     (c.tasks || []).forEach(walk);
   };
   const seed = () => {
+    // the live kind (D9): the store's chats and topic groups, read again on every call; never a seeded chat
+    if (window.RailWorld.live) return { groups: window.RailWorld.part('chatGroups').map((g) => ({ ...g })), chats: window.RailWorld.part('chats').map((c) => ({ ...c })) };
     const d = base(), f = window.RailWorld.facts().chats;
     if (window.RailFirstRun) { d.groups = []; d.chats = d.chats.filter((c) => c.id === 'c0'); }   // the first run: Getting started alone
     for (const c of d.chats) {

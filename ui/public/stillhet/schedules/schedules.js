@@ -10,19 +10,22 @@
   // each started run is a task in the one store, in its project (panel.task-truth); a time not started is a ticket: Pulse lists it, Tasks does not, and a missed one needs you
   const missedWords = (s) => `Missed ${s.missed} · ${s.missedWhy}`;
   const ticketOf = (s) => (s.section === 'needs' ? { case: 'ticket-missed', detail: missedWords(s), missed: true } : { case: 'scheduled', detail: R.scheduleWords(s).says, missed: false });
-  const toStore = () => { const W = window.RailWorld; if (!W) return; for (const s of data.schedules) {
+  const toStore = () => { const W = window.RailWorld; if (!W || W.live) return;   /* the live kind's store already holds them (live/live-map.mjs) */ for (const s of data.schedules) {
     if (s.state !== 'paused' && !W.find(`sch-${s.id}`)) W.add({ id: `sch-${s.id}`, ...ticketOf(s), ticket: s.id, title: s.title, project: s.project || '', time: s.at, day: 'upcoming', when: whenOf(s) });
     s.runs.forEach((r, i) => { r.wid ||= `sr-${s.id}-${i}`; if (!W.find(r.wid)) W.add({ id: r.wid, case: r.case, title: r.title, project: s.project || '', detail: r.meta, time: r.time || 'now', day: r.day, schedule: s.id, cost: s.cost, over: !!r.over, workflow: s.workflow || 'Default' }); }); } };
   toStore(); window.RailWorld?.onChange(toStore);
   let current = '', view = { show: 'all', by: R.BY_DEFAULT }, ctl = null, menu = '';
   const say = (t, undo) => window.RailPulse?.say(t, undo);
+  // R-arch-10: the live kind does not wire Schedules yet (slice 6); every change goes through the adapter, which refuses, and nothing is written
+  const refused = (what) => !!window.RailAdapter?.refuse?.(`schedules.${what}`);
   const st = (s) => R.runState(s.state), toneOf = (s) => (isRunning(s) ? 'run' : s.state === 'scheduled' ? 'idle' : R.markTone(st(s)));
   // one word for where a schedule stands, on its page, its card and its row
   const wordOf = (s) => (isRunning(s) ? R.runState('working').word : s.section === 'needs' ? 'Missed' : s.state === 'paused' ? R.runState('paused').word : 'Next up');
   const SECTIONS = [['needs', R.runState('question').word], ['running', 'Running'], ['next', 'Next up'], ['paused', R.runState('paused').word]];
   const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], dateWord = (d) => `${MON[d.getMonth()]} ${d.getDate()}`;
-  const nextDates = (s, n = 1) => R.scheduleDates({ every: s.every, at: s.at, from: M.TODAY, n });
-  const nextDate = (s) => nextDates(s, 2)[s.skip ? 1 : 0];   // a skipped time moves it to the one after
+  // live: the server's next time first (nextAt, live-map.mjs); a once-ticket has no time after it
+  const nextDates = (s, n = 1) => { if (!Number.isFinite(s.nextAt)) return R.scheduleDates({ every: s.every, at: s.at, from: M.TODAY, n }); const first = new Date(s.nextAt), after = new Date(first); after.setDate(after.getDate() + 1); return [first, ...(s.every === 'Once' ? [] : R.scheduleDates({ every: s.every, at: s.at, from: after, n: n - 1, nowAt: '' }))]; };
+  const nextDate = (s) => { const d = nextDates(s, 2); return d[s.skip ? 1 : 0] || d[0]; };   // a skipped time moves it to the one after
   const nextWord = (s) => (s.every === 'every hour' ? 'Within the hour' : dateWord(nextDate(s)));
   // when it next runs, in dates: its card and its page's head say the same
   const nextLine = (s) => { const [d1, d2] = nextDates(s, 2).map(dateWord); return s.every === 'every hour' ? (s.skip ? 'skips the next one' : 'within the hour') : s.skip ? `skips ${d1}, then ${d2}, ${s.at}` : `${d1}, ${s.at}`; };
@@ -34,6 +37,7 @@
   function runningRun(s) { const W = window.RailWorld; return s.runs.find((r) => { const w = r.wid && W?.find(r.wid); return w && W.section(w) === 'running'; }); }
   function isRunning(s) { return !!runningRun(s); }
   function runNow(s) {
+    if (refused('run')) return;
     if (isRunning(s)) { say(`${s.title} is already running`); return; }
     const k = Date.now().toString(36), wid = `sr-${s.id}-${k}`;
     s.runs.unshift({ day: 'today', title: s.title, case: 'working', stage: 0, git: 'branch', meta: liveWord, wid });
@@ -47,6 +51,7 @@
   function act(id, rows) {
     const s = rows[0]?._s; if (!s) return;
     if (id === 'in-view') { window.RailShell.inView.toggle({ type: 'schedule', id: s.id, title: s.title }); draw(); return; }
+    if (refused(id)) return;
     if (id === 'run') { runNow(s); return; }
     if (id === 'skip' || id === 'delete') { more(s, id); return; }
     if (id === 'pause') { const W = window.RailWorld, wid = `sch-${s.id}`; if (W?.find(wid)) W.move(wid, s.state === 'paused' ? 'scheduled' : 'stopped', s.state === 'paused' ? R.scheduleWords(s).next : 'Paused by you', { missed: false });   // Pulse hears it: a paused time no longer needs you
@@ -93,6 +98,7 @@
     const send = () => {
       const box = host.querySelector('[data-composer-t]'), text = box.value.trim();
       if (!text) { box.focus(); say('Say what to ask first'); return; }
+      if (refused('ask')) return;
       const id = s.chat || window.RailChats.newChat(`About ${s.title}`, s.project || ''), c = window.RailChats.data().chats.find((x) => x.id === id), k = Date.now().toString(36);
       window.RailConversation.join(c, { t: 'you', id: `y${k}`, text, when: 'now', refs: [], files: [`Schedule · ${s.title}`] });
       window.RailConversation.join(c, { t: 'words', html: `Looking at <b>${esc(s.title)}</b>.` });
@@ -126,6 +132,7 @@
     ctl.paint();
   }
   function more(s, v) {
+    if (refused(v)) { draw(); return; }   // its menu closes; nothing else changes
     if (v === 'pause') act('pause', [{ _s: s }]);
     if (v === 'run') { runNow(s); return; }
     if (v === 'stop') { const r = runningRun(s); if (!r) return; r.case = 'stopped'; r.meta = 'Stopped by you'; window.RailWorld?.move(r.wid, 'stopped', 'Stopped by you'); draw(); say(`Stopped ${s.title}; the schedule keeps its times`); return; }
@@ -152,7 +159,7 @@
       const [id, v] = hit.dataset.menuPick.split('|'); if (!id.startsWith('sc-')) return;   // the composer's picks are the composer's
       const s = data.schedules.find((x) => x.id === current); menu = '';
       if (id === 'sc-more') { more(s, v); return; }
-      if ((id === 'sc-every' ? s.every : s.at) === v) { draw(); return; }   // the same value again: nothing changed, nothing to say
+      if ((id === 'sc-every' ? s.every : s.at) === v || refused(id)) { draw(); return; }   // the same value again: nothing changed, nothing to say
       if (id === 'sc-every') s.every = v; if (id === 'sc-at') s.at = v;
       const w = R.scheduleWords(s); Object.assign(s, { time: w.time, day: w.day });
       if (s.section === 'next') { if (s.skip) s.skip = w.next; else s.next = w.next; }   // a paused one and a missed one keep what they say
@@ -163,5 +170,6 @@
   R.dismissOnOutside(document, { open: () => !!menu, inside: '#route-schedule .spick, #route-schedule .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
   R.prefs.onChange(() => { if (!page.hidden) draw(); });
   window.RailWorld?.onMove(() => { if (!bar.hidden) ctl.paint(); });
-  window.RailSchedules = { all: () => data.schedules, showing: () => view.show, TODAY: M.TODAY, nextDates, nextLine, dateWord, runningRun, openRun, find: (id) => data.schedules.find((s) => s.id === id), add: (s) => { const w = R.scheduleWords(s); Object.assign(s, { day: w.day, time: w.time }); data.schedules.unshift(s); toStore(); ctl.paint(); } /* in the one store: Pulse's Scheduled lists it */, act: (id, v) => { const s = data.schedules.find((x) => x.id === id); if (s && v) more(s, v); }, running: (id) => { const s = data.schedules.find((x) => x.id === id); return !!s && isRunning(s); }, skipItem: (id) => { const s = data.schedules.find((x) => x.id === id); return s ? skipItem(s) : { text: 'Skip next time' }; }, show: (id) => { current = id || ''; draw(); }, summary: () => ({ n: data.schedules.filter((s) => s.state !== 'paused').length, needs: data.schedules.filter((s) => s.section === 'needs').length }) };
+  if (window.RailWorld?.live) window.RailWorld.onChange(() => { data = M.seed(); ctl.paint(); if (!page.hidden) draw(); });   // the live kind: a load replaced them (D9)
+  window.RailSchedules = { all: () => data.schedules, showing: () => view.show, get TODAY() { return M.TODAY; }, nextDates, nextLine, dateWord, runningRun, openRun, find: (id) => data.schedules.find((s) => s.id === id), add: (s) => { if (refused('add')) return; const w = R.scheduleWords(s); Object.assign(s, { day: w.day, time: w.time }); data.schedules.unshift(s); toStore(); ctl.paint(); } /* in the one store: Pulse's Scheduled lists it */, act: (id, v) => { const s = data.schedules.find((x) => x.id === id); if (s && v) more(s, v); }, running: (id) => { const s = data.schedules.find((x) => x.id === id); return !!s && isRunning(s); }, skipItem: (id) => { const s = data.schedules.find((x) => x.id === id); return s ? skipItem(s) : { text: 'Skip next time' }; }, show: (id) => { current = id || ''; draw(); }, summary: () => ({ n: data.schedules.filter((s) => s.state !== 'paused').length, needs: data.schedules.filter((s) => s.section === 'needs').length }) };
 })();

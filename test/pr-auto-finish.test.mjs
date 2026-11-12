@@ -371,13 +371,6 @@ test('one: requirements unmarked → held, one notice; onAcceptanceChanged ships
   assert.equal(w.ships.length, 1, 'an opened feature is not shipped again');
 });
 
-test('one: the requirements gate is off without the flag', async () => {
-  const w = sliceWorld(feature({ acceptance: () => ({ ready: false, items: [{ id: 'a', pass: false }] }) }));
-  w.flag = false;
-  await w.fin.afterSettled(slice('s2'));
-  assert.equal(w.ships.length, 1);
-});
-
 test('one: 409 already shipping is a no-op; a 409 ACCEPTANCE_INCOMPLETE is held; any other 409 is blocked', async () => {
   const w = sliceWorld(feature());
   w.shipResult = () => ({ status: 409, body: { code: 'SHIPPING', error: 'this feature is already shipping' } });

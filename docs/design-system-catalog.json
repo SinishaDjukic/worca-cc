@@ -401,7 +401,8 @@
       "code": "ui/public/design-system/components/list-parts.mjs#listState",
       "kind": "telling",
       "needs": [
-        "a list with no rows"
+        "a list with no rows",
+        "the Pulse popover before its first data, or when it could not load"
       ],
       "rules": [
         "loading, offline, could not load, empty",

@@ -1,7 +1,7 @@
 // test/stillhet-compare.test.mjs — the pure parts of tools/stillhet-compare.mjs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { countDiffPixels, PARTS, ROUTES, STATES, PAGES, report, deepRoutes, deepPart, settledShot, launchOptions } from '../tools/stillhet-compare.mjs';
+import { countDiffPixels, PARTS, ROUTES, STATES, PULSE_STATES, PAGES, report, deepRoutes, deepPart, settledShot, launchOptions } from '../tools/stillhet-compare.mjs';
 
 test('countDiffPixels: 0 for equal buffers, 1 for one changed channel, w*h for a size mismatch', () => {
   const a = new Uint8ClampedArray(2 * 2 * 4).fill(7), b = new Uint8ClampedArray(a);
@@ -12,7 +12,7 @@ test('countDiffPixels: 0 for equal buffers, 1 for one changed channel, w*h for a
 });
 
 test('PARTS lists the invitation, the design switch, one whole-page cell per shell route and one per non-default state', () => {
-  assert.deepEqual(PARTS.map((p) => p.id), ['invitation', 'design-switch', ...ROUTES.map((r) => `route-${r}`), ...STATES.map(([s]) => `state-${s}`)]);
+  assert.deepEqual(PARTS.map((p) => p.id), ['invitation', 'design-switch', ...ROUTES.map((r) => `route-${r}`), ...STATES.map(([s]) => `state-${s}`), ...PULSE_STATES.map(([s]) => `state-${s}`)]);
   assert.deepEqual(PAGES, ['components.html', 'run-page.html', 'pulse.html']);
 });
 
@@ -73,4 +73,26 @@ test('settledShot: shoots until two frames in a row are the same, and gives up a
 
 test('launchOptions: the browser rasters on the CPU, whole tiles, so a loaded machine draws the same edges', () => {
   for (const a of ['--disable-gpu', '--disable-partial-raster']) assert.ok(launchOptions().args.includes(a), a);
+});
+
+test('the Pulse state parts open the popover on the loading and failed looks, by the same address in both hosts', () => {
+  assert.deepEqual(PULSE_STATES.map(([id]) => `state-${id}`), ['state-loading-pulse', 'state-failed-pulse']);
+  for (const [id, s] of PULSE_STATES) {
+    const p = PARTS.find((x) => x.id === `state-${id}`);
+    assert.equal(p.app.route, `?state=${s}#activity`);
+    assert.equal(p.app.route, p.proto.route);
+  }
+});
+
+test('the compare and the gates start the app on demo data (WORCA_STILLHET_DEMO=1)', async () => {
+  const { readFileSync } = await import('node:fs');
+  for (const f of ['stillhet-compare.mjs', 'stillhet-gates.mjs']) assert.match(readFileSync(new URL(`../tools/${f}`, import.meta.url), 'utf8'), /WORCA_STILLHET_DEMO: '1'/, f);
+});
+
+test('the comparison stores rail as a person does; the gates lock it with WORCA_FLAGS', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../tools/stillhet-compare.mjs', import.meta.url), 'utf8');
+  assert.match(src, /lockRail \? \{\} : \{ flags: \{ rail: true \} \}/);
+  assert.match(src, /WORCA_FLAGS: lockRail \? 'rail' : ''/);
+  assert.match(readFileSync(new URL('../tools/stillhet-gates.mjs', import.meta.url), 'utf8'), /\{ lockRail: true \}/);
 });

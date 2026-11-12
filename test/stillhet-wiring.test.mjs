@@ -12,7 +12,7 @@ const walk = (d) => readdirSync(d).flatMap((n) => { const p = path.join(d, n); r
 const sources = walk(SRC).map((p) => path.relative(ROOT, p)).filter((p) => p.endsWith('.js') && !/\/(components|graph)\.js$/.test(p));
 const rows = doc.split('\n').filter((l) => l.startsWith('|') && /`ui\/public\/stillhet\//.test(l));
 const rowFor = (file) => rows.find((r) => r.includes('`' + file + '`'));
-const STATUS = /\|\s*(wire to|new: build it|add to the design first)\s*\|/;
+const STATUS = /\|\s*(wire to|wired|wired \(partial\)|new: build it|add to the design first)\s*\|/;
 
 test('every module that calls RailWould has an action row with a known status', () => {
   const missing = sources.filter((f) => /RailWould\(/.test(readFileSync(path.join(ROOT, f), 'utf8')) && !/(adapter|demo-actions)\.js$/.test(f)).filter((f) => !rowFor(f));
@@ -24,7 +24,7 @@ test('every model file and the world have a figure row with a known status', () 
   assert.deepEqual(missing, []);
 });
 
-test('every row of the actions and figures tables carries one of the three statuses', () => {
+test('every row of the actions and figures tables carries a known status', () => {
   for (const r of rows) assert.match(r, STATUS, r.slice(0, 80));
 });
 
@@ -56,4 +56,21 @@ test('actionIds: every `would` action of the library\'s run-state flow is an act
   assert.equal(lib.length, new Set([...src.matchAll(/\bwould: '([^']*)'/g)].map((m) => m[1])).size);
   assert.ok(lib.includes('design-system/components/run-state.mjs › open {pr} on GitHub'));
   assert.ok(lib.includes('design-system/components/run-state.mjs › open Settings › Tasks › Budget'));
+});
+
+test('the bar, the bell, the sidebar, the profile menu, Pulse and the world are wired, with no "Would"; partial only on the two named rows', () => {
+  const live = doc.split('\n').filter((l) => /^\| `(bar|bell|sidebar|profile|pulse\/pulse\.js|pulse\/pulse-model\.js|shell\/world\.js) › /.test(l));
+  assert.ok(live.length >= 30, 'the rows are read');
+  for (const r of live) {
+    assert.match(r, /^\| `[^`]+` \| wired( \(partial\))? \|/, r.slice(0, 90));
+    assert.doesNotMatch(r, /Would/, r.slice(0, 90));
+  }
+  const partial = live.filter((r) => /\| wired \(partial\) \|/.test(r)).map((r) => r.match(/^\| `([^`]+)`/)[1]);
+  assert.deepEqual(partial.sort(), ['bell › the Needs you rows', 'profile › the usage rings per harness']);
+  for (const id of ['live/live-adapter.mjs › every source and frame', 'live/live-map.mjs › the shapes', 'profile › the interface mode', 'profile › Keep awake', 'profile › Away']) assert.ok(doc.includes('| `' + id + '` | wired |'), id);
+});
+
+test('the wiring tool accepts wired and wired (partial)', () => {
+  const doc = '# x\n\n## Action rows\n\n| `a › open` | wired | y |\n\n## Figure rows\n\n| `m › F.x` | wired (partial) | y |\n';
+  assert.deepEqual(W.check(doc, ['a › open'], ['m › F.x']), { actions: [], figures: [], badStatus: [] });
 });

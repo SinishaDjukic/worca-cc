@@ -142,9 +142,10 @@
   const paint = () => { paintTasks(); paintSched(); window.RailPlaces?.projects?.redraw?.(); };
 
   // ---- a card's action, on the thing itself ----
-  function act(does, id) {
+  function act(does, id, label = '') {
     const r = W.find(id); if (!r) return;
-    if (does === 'open' || does === 'answer') { r.unread = false; window.RailShell.openRun(`run/${r.case}`, r.title, r.id); return; }
+    if (does === 'open' || does === 'answer') { if (!W.live) r.unread = false; window.RailShell.openRun(`run/${r.case}`, r.title, r.id); return; }   // the live kind: the shell acknowledges it through the adapter
+    if (W.live) { say(`${r.title}: ${label.trim() || 'this step'} is not in Stillhet yet. It is on the wiring list.`); return; }   // D8, D23: no store write and no made-up success until the Tasks slice wires it
     const was = { case: r.case, detail: r.detail, time: r.time, day: r.day };
     const back = () => { W.move(id, was.case, was.detail, { time: was.time, day: was.day }); };
     if (does === 'retry') { W.move(id, 'starting', 'Plan is under way'); say(`Retrying ${r.title}`, back); }
@@ -157,7 +158,7 @@
     if ((hit = on('[data-c-figs]'))) { figs[hit.dataset.cFigs] = !figs[hit.dataset.cFigs]; paint(); return; }
     if ((hit = on('[data-c-filter]'))) { List().filter(JSON.parse(hit.dataset.cFilter)); return; }
     if ((hit = on('[data-c-open]'))) { act('open', hit.dataset.cOpen); return; }
-    if ((hit = on('[data-c-act]'))) { const [d, id] = hit.dataset.cAct.split('|'); act(d, id); return; }
+    if ((hit = on('[data-c-act]'))) { const [d, id] = hit.dataset.cAct.split('|'); act(d, id, hit.textContent); return; }
     if ((hit = on('[data-c-sact]'))) { const [d, id] = hit.dataset.cSact.split('|'); Sch().act(id, d); paint(); return; }
     if ((hit = on('[data-c-sched]'))) { window.RailShell.openSchedule(hit.dataset.cSched); return; }
     if ((hit = on('[data-c-srun]'))) { const [id, i] = hit.dataset.cSrun.split('|'), s = Sch().find(id); Sch().openRun(s, s.runs[+i]); return; }
@@ -229,6 +230,7 @@
   }
   function save() {
     const bad = check(); if (bad) { form.err = bad[0]; form.errAt = bad[1]; paintForm(bad[1]); return; }
+    if (window.RailAdapter?.refuse?.(`tasks.new-${form.kind}`)) return;   // R-arch-10: the live kind starts and schedules nothing until the Tasks and Schedules slices; the form stays as it was
     const words = (form.src === 'write' ? form.text : `Follow ${form.path}`).trim(), project = form.project === 'No project' ? '' : form.project, k = Date.now().toString(36);
     if (form.kind === 'task') {
       const title = form.title.trim() || (words.length > 56 ? `${words.slice(0, 54).trim()}…` : words);

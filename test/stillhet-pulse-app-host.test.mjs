@@ -37,3 +37,22 @@ test('app host: the profile menu\'s Settings item goes to #settings/ although <h
   item.click();
   assert.deepEqual(went, ['settings/']);
 });
+
+test('a repaint keeps a toast another page said (a refused Settings change says Not connected through the adapter)', () => {
+  const { w } = appHost();
+  w.RailAdapter.toast(w.RailAdapter.NOT_CONNECTED);
+  w.RailPulse.open('now');   // Pulse repaints, with no toast of its own
+  const t = w.document.querySelector('body > .rc-toast');
+  assert.match(t.textContent, /Not connected to Worca yet\./);
+  assert.ok(t.classList.contains('is-on'));
+});
+
+test('RailPulse.open(tab) shows the popover on that tab (the bell and #activity use it)', () => {
+  const { w } = appHost();
+  w.RailPulse.open('now');
+  const pop = w.document.querySelector('#app .pz-popover');
+  assert.ok(pop, 'the popover is open');
+  assert.equal(pop.querySelector('[data-ptab="vitals"]').getAttribute('aria-selected'), 'true');
+  w.RailPulse.open('updates');
+  assert.equal(w.document.querySelector('#app .pz-popover [data-ptab="updates"]').getAttribute('aria-selected'), 'true');
+});

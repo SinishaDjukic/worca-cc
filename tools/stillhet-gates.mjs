@@ -52,7 +52,7 @@ export async function main(argv = process.argv.slice(2)) {
   await (await import('./stillhet-build.mjs')).buildStillhet();   // once, before any gate: against the app a gate never rebuilds them (target.mjs buildBundles)
   const chrome = launchOptions().executablePath;   // the compare's Chrome; colour-check and handover-check read CHROME, the rest launch channel 'chrome'
   const home = await mkdtemp(join(tmpdir(), 'stillhet-gates-'));
-  const app = await startApp(home, {});
+  const app = await startApp(home, { WORCA_STILLHET_DEMO: '1' }, { lockRail: true });   // demo data (D3); locked, so no gate's click turns it off
   let code = 0;
   try {
     for (const gate of gates) {

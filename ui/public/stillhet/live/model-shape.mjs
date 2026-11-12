@@ -1,0 +1,44 @@
+// ui/public/stillhet/live/model-shape.mjs — the one shape both adapters meet (D5). Per kind, the fields the pages read,
+// taken from the demo seeds: shell/world.js run() and GROUPS, chat/chats-model.js chat(), schedules/schedules-model.js,
+// projects/projects.js data.projects, pulse/pulse-model.js up(), and world.facts() budget and usage. A type ending in `?`
+// may be absent (a seed that has no such field). live-map.mjs copies no field outside these lists. Two optional fields
+// have no seed: a project's `name` (the demo's id is its name; live, the id is dev's key) and a schedule's `nextAt` (the
+// demo counts from its fixed today; live, the server's next time in ms).
+export const SHAPES = Object.freeze({
+  task: { id: 'string', case: 'string', title: 'string', project: 'string', detail: 'string', time: 'string', day: 'string', labels: 'array', cost: 'number|null', archived: 'boolean', unread: 'boolean', pr: 'string', group: 'string', kind: 'string', by: 'string', workflow: 'string', when: 'string?', missed: 'boolean?' },
+  group: { id: 'string', kind: 'string', case: 'string', title: 'string', project: 'string', time: 'string', day: 'string', cost: 'number|null' },
+  chat: { id: 'string', title: 'string', state: 'string', kind: 'string', project: 'string', time: 'string', day: 'string', cost: 'number|null', pinned: 'boolean', archived: 'boolean', unread: 'boolean', group: 'string', origin: 'object|null', rank: 'number|null', labels: 'array', tasks: 'array' },
+  schedule: { id: 'string', title: 'string', project: 'string', chat: 'string', every: 'string', at: 'string', next: 'string', day: 'string?', state: 'string', time: 'string', section: 'string', labels: 'array', what: 'string', cost: 'number|null', started: 'string', runs: 'array', missed: 'string?', missedWhy: 'string?', nextAt: 'number|null?' },
+  project: { id: 'string', name: 'string?', kind: 'string', path: 'string', branch: 'string?', base: 'string?', origin: 'string', ahead: 'number|null?', behind: 'number|null?', checked: 'string?', needs: 'boolean?' },
+  costs: { budget: 'object|null', usage: 'array' },
+  update: { id: 'string', e: 'string', g: 'string', sev: 'string', title: 'string', meta: 'string', time: 'string', day: 'string', unread: 'boolean', go: 'string', to: 'string', run: 'string?', fix: 'string?' },
+});
+
+const is = {
+  string: (v) => typeof v === 'string',
+  'number|null': (v) => v === null || (typeof v === 'number' && Number.isFinite(v)),
+  boolean: (v) => typeof v === 'boolean',
+  array: (v) => Array.isArray(v),
+  'object|null': (v) => v === null || (typeof v === 'object' && !Array.isArray(v)),
+};
+
+/** [] when `item` has every field of `kind` with its type, else one line per wrong field ("task.cost: expected number|null"). */
+export function shapeErrors(kind, item) {
+  const shape = SHAPES[kind];
+  if (!shape) return [`${kind}: unknown kind`];
+  if (!item || typeof item !== 'object') return [`${kind}: expected an object`];
+  const out = [];
+  for (const [k, t0] of Object.entries(shape)) {
+    const optional = t0.endsWith('?'), t = optional ? t0.slice(0, -1) : t0;
+    if (optional && item[k] === undefined) continue;
+    if (!is[t](item[k])) out.push(`${kind}.${k}: expected ${t}`);
+  }
+  return out;
+}
+
+/** The fields of `kind` that `item` carries: what live-map.mjs keeps (D12). */
+export function pick(kind, item) {
+  const out = {};
+  for (const k of Object.keys(SHAPES[kind])) if (k in item) out[k] = item[k];
+  return out;
+}
