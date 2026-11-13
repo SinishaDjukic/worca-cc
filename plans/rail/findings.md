@@ -35,6 +35,7 @@ Columns: **From** (the slice and where it was found), **Area**, **Finding** (one
 | slice 5 web UI | Tasks | The center card's second action is clipped at 360 px | Tasks center | minor | open |
 | slice 5 web UI | Tasks | The group page head has no state word and lists members as "Task 1 / Task 2" | `#group/ID` | minor | open |
 | slice 5 web UI | Tasks | "What broke" shows on a passing PR | task page | minor | open |
+| slice 5 r12 | Design | Design first: the Tasks center card's Merge confirm and its new live actions exist only in the live kind; add them to the prototype (demo kind) and the `docs/rail` panel.center rule | `centers/centers.js`, `docs/rail/panels.md` | deferred | open |
 | controller | Worca | The feature page's plan card shows the first draft's text and "v1" after a re-plan to v4 | `#feature/ID` | follow-up | open |
 | controller | Worca | The feature page has no Start now for a held run (start it via `POST /api/shape/features/:id/start`) | `#feature/ID` | follow-up | open |
 | owner | Shell | The top-bar Stillhet switch becomes a 20px icon beside Ask worca and Pulse, design loop first (planned before the end of feature 3) | top bar | deferred | open |
