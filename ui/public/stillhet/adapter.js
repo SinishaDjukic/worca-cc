@@ -72,6 +72,7 @@
         go: function (h) { if (window.RailShell) window.RailShell.go(h); }
       });
       window.RailChatLive = live.chat;   // the live chat's reads and actions (D5): chat/conversation.js and chats-column.js
+      window.RailTaskLive = live.task;   // the live Tasks reads and actions (Tasks D4): the task page, the list, the center, the card
       window.addEventListener('hashchange', function () { live.seen(); });
       readyDone(live);
     }, function () { if (W) W.setState({ list: 'failed' }); readyDone(null); });

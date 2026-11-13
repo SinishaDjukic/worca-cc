@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img">
+<defs>
+<radialGradient id="promoShine-runner" cx="38%" cy="30%" r="70%"><stop offset="0" stop-color="#fff" stop-opacity=".38"></stop><stop offset=".55" stop-color="#fff" stop-opacity="0"></stop><stop offset="1" stop-color="#000" stop-opacity=".18"></stop></radialGradient>
+<linearGradient id="promoNose-runner" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".28"></stop><stop offset="1" stop-color="#000" stop-opacity=".12"></stop></linearGradient>
+</defs>
+<circle cx="50" cy="50" r="50" fill="oklch(0.92 0.04 195)"></circle>
+<g transform="translate(4.599999999999999 8.799999999999997) scale(0.9)">
+<ellipse cx="46" cy="88" rx="20" ry="2.6" fill="#000" opacity=".12"></ellipse>
+<rect x="37" y="70" width="7" height="17" rx="3.5" fill="#D99128"></rect>
+<rect x="48" y="70" width="7" height="17" rx="3.5" fill="#D99128"></rect>
+<path d="M39 36 C37 28 36 22 33 17 M53 35 C54 27 55 21 58 16" fill="none" stroke="#C0583A" stroke-width="2.6" stroke-linecap="round"></path>
+<circle cx="46" cy="54" r="24" fill="#F0A93A"></circle>
+<circle cx="46" cy="54" r="24" fill="url(#promoShine-runner)"></circle>
+<circle cx="60" cy="46" r="6.5" fill="#fff" stroke="#1B1E24" stroke-width=".7"></circle>
+<circle cx="61.6" cy="46.6" r="3.4" fill="#1B1E24"></circle>
+<circle cx="62.7" cy="45.3" r="1" fill="#fff"></circle>
+<g><path d="M23.5 42 C30 34 62 34 68.5 42 L67.5 46.5 C60 39.5 32 39.5 24.5 46.5 Z" fill="#2F6FD6"></path><circle cx="46" cy="38.6" r="4.4" fill="#fff"></circle><text x="46" y="40.8" text-anchor="middle" font-family="Poppins, sans-serif" font-size="5.9" font-weight="700" fill="#2F6FD6">W</text></g>
+<g fill="none" stroke="#1B1E24" stroke-width="1.6"><circle cx="60" cy="46" r="8"></circle><path d="M52 45 L30 41"></path></g>
+<rect x="56" y="54" width="34" height="10" rx="5" fill="#F0A93A"></rect>
+<rect x="56" y="54" width="34" height="10" rx="5" fill="url(#promoNose-runner)"></rect>
+<g><rect x="24" y="68" width="24" height="7" rx="3" fill="#2F6FD6" transform="rotate(-10 36 71)"></rect><path d="M28 68.5 V75 M33 67.6 V74.2 M38 66.8 V73.4 M43 66 V72.6 M25 71.6 L47 67.7" stroke="#9EC2F5" stroke-width=".7" transform="rotate(-10 36 71)"></path></g>
+</g>
+</svg>

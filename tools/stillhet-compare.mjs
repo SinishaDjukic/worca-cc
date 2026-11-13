@@ -57,6 +57,11 @@ for (const [id, s] of PULSE_STATES) PARTS.push({ id: `state-${id}`, route: true,
 // terminal of a demo chat with commands.
 export const CHAT_STATES = [['thread-loading-chat', '?state=thread-loading#chat/c1'], ['thread-failed-chat', '?state=thread-failed#chat/c1'], ['thread-gone-chat', '?state=thread-gone#chat/c1'], ['loading-chat', '?state=loading#chat'], ['empty-chat', '?state=empty#chat'], ['failed-chat', '?state=failed#chat']];
 for (const [id, q] of CHAT_STATES) PARTS.push({ id: `state-${id}`, route: true, app: { route: q }, proto: { route: q } });
+// The task page's own states (docs/rail/failures.md, fail.task-page): loading, could not load, gone; and a confirmed action
+// that failed, its line in the strip (fail.task-action), seeded by pressing the approved task's Merge PR and confirming it.
+export const TASK_STATES = [['task-loading-run', '?state=task-loading#run/working'], ['task-failed-run', '?state=task-failed#run/working'], ['task-gone-run', '?state=task-gone#run/working']];
+for (const [id, q] of TASK_STATES) PARTS.push({ id: `state-${id}`, route: true, app: { route: q }, proto: { route: q } });
+PARTS.push({ id: 'action-failed-run', route: true, seed: ['#card [data-key="act-main"]', '#card [data-confirm="yes"]'], wait: 1400, app: { route: '?state=action-failed#run/approved' }, proto: { route: '?state=action-failed#run/approved' } });
 PARTS.push({ id: 'terminal-chat', route: true, seed: '#route-chat [data-terminal]', app: { route: '#chat/c2' }, proto: { route: '#chat/c2' } });   // c2: its failed command opens itself, so Show in terminal is in view
 export const PAGES = ['components.html', 'run-page.html', 'pulse.html'];
 // The deep routes, read from the prototype's own route list once it has drawn (it runs inside the page): RailShell.routes()
@@ -66,9 +71,20 @@ export function deepRoutes() {
 }
 // One deep route of each kind keeps its pairs beside the other cells, for the PR; the rest go to out/stillhet-compare/deep/
 // (git-ignored: about 230 routes in three cells would weigh ~100 MB). Every cell is compared and reported either way.
-export const SHOWN = ['run/ready', 'run/question', 'run/failed', 'chat/c1', 'schedule/s1', 'settings/runs', 'workflows/workflow:default', 'projects/billing-api', 'requirements/FEAT-2', 'marketplace/slack-chat', 'insights/spend'];
+export const SHOWN = ['run/ready', 'run/question', 'run/failed', 'run/approved', 'chat/c17', 'chat/c18', 'chat/c1', 'schedule/s1', 'settings/runs', 'workflows/workflow:default', 'projects/billing-api', 'requirements/FEAT-2', 'marketplace/slack-chat', 'insights/spend'];
 /** The whole-page cell of one deep route (#run/ready → route-run-ready). */
 export const deepPart = (hash) => ({ id: `route-${hash.replace(/[^\w@.-]+/g, '-')}`, route: true, dir: SHOWN.includes(hash) ? '' : 'deep', app: { route: `#${hash}` }, proto: { route: `#${hash}` } });
+// Every Tasks cell (the PR's pair table and test/stillhet-compare.test.mjs): the Tasks center and its list states, every task
+// page route, the task page's own states, the failed action and the chat TaskCards c17 and c18.
+export const TASKS_CELL_IDS = Object.freeze(['route-runs', ...STATES.filter(([s, r]) => r === 'runs').map(([s]) => `state-${s}`),
+  ...TASK_STATES.map(([id]) => `state-${id}`), 'action-failed-run', 'route-chat-c17', 'route-chat-c18', 'route-run-failed', 'route-run-approved']);
+/** The Tasks cells a run's cells lack: one line per id, theme and width of CELLS that has no compared cell. */
+export function tasksCoverage(cells, ids = TASKS_CELL_IDS) {
+  const have = new Set(cells.map((c) => `${c.part}|${c.theme}|${c.width}`));
+  return ids.flatMap((id) => CELLS.filter(([t, w]) => !have.has(`${id}|${t}|${w}`)).map(([t, w]) => `${id} ${t} ${w}`));
+}
+/** A Tasks cell: one of TASKS_CELL_IDS, or any task page deep route (route-run-…). */
+export const isTasksCell = (id) => TASKS_CELL_IDS.includes(id) || /^route-run-/.test(id);
 export const CELLS = [['dark', 1280], ['light', 1280], ['light', 360]];
 const FIXED_CLOCK = Date.UTC(2026, 10, 11, 9, 0, 0);
 const ROUTE_STYLE = '.mk-tools{display:none!important}*{font-family:Arial,Helvetica,sans-serif!important;animation:none!important;transition:none!important;caret-color:transparent!important}';
@@ -368,7 +384,7 @@ export async function shootCell(browser, app, part, theme, width, outRoot) {
     if (part.route) { await freezeClock(a); await a.addInitScript(setLook, theme); }
     await a.goto(app.base + '/' + part.app.route);
     await a.evaluate((t) => { document.documentElement.dataset.theme = t; }, theme);
-    if (part.seed) { await a.locator(part.seed).first().click(); await a.waitForTimeout(300); }   // a part opened by a click (terminal-chat)
+    for (const sel of [].concat(part.seed || [])) { await a.locator(sel).first().click(); await a.waitForTimeout(part.wait || 300); }   // a part opened by a click (terminal-chat)
     const A = await shoot(a, part.id, join(out, `${part.id}-${theme}-${width}-app.png`), part.route);
     const p = await ctx.newPage();
     watch(p, 'prototype', errors);
@@ -378,7 +394,7 @@ export async function shootCell(browser, app, part, theme, width, outRoot) {
     if (!part.route) await p.goto(protoUrl);
     if (!part.route) await p.evaluate((t) => { localStorage.setItem('worca-rail.mode', 'expert'); localStorage.setItem('worca-rail.appearance', t); localStorage.removeItem('worca-rail.stillhetAsked'); }, theme);
     await p.goto(protoUrl.replace(/index\.html.*$/, 'index.html') + part.proto.route);
-    if (part.seed) { await p.locator(part.seed).first().click(); await p.waitForTimeout(300); }
+    for (const sel of [].concat(part.seed || [])) { await p.locator(sel).first().click(); await p.waitForTimeout(part.wait || 300); }
     const P = await shoot(p, part.id, join(out, `${part.id}-${theme}-${width}-proto.png`), part.route);
     const diff = A.box.w === P.box.w && A.box.h === P.box.h ? countDiffPixels(A.rgba, P.rgba, A.w, A.h) : A.w * A.h;
     cell = { part: part.id, theme, width, appBox: A.box, protoBox: P.box, diff, errors };

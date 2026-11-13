@@ -5,7 +5,7 @@
 // have no seed: a project's `name` (the demo's id is its name; live, the id is dev's key) and a schedule's `nextAt` (the
 // demo counts from its fixed today; live, the server's next time in ms).
 export const SHAPES = Object.freeze({
-  task: { id: 'string', case: 'string', title: 'string', project: 'string', detail: 'string', time: 'string', day: 'string', labels: 'array', cost: 'number|null', archived: 'boolean', unread: 'boolean', pr: 'string', group: 'string', kind: 'string', by: 'string', workflow: 'string', when: 'string?', missed: 'boolean?', over: 'boolean?' },
+  task: { id: 'string', case: 'string', title: 'string', project: 'string', detail: 'string', time: 'string', day: 'string', labels: 'array', cost: 'number|null', archived: 'boolean', unread: 'boolean', pr: 'string', group: 'string', kind: 'string', by: 'string', workflow: 'string', when: 'string?', missed: 'boolean?', over: 'boolean?', rounds: 'object|null?', roundOf: 'string?' },
   group: { id: 'string', kind: 'string', case: 'string', title: 'string', project: 'string', time: 'string', day: 'string', cost: 'number|null' },
   chat: { id: 'string', title: 'string', state: 'string', kind: 'string', project: 'string', time: 'string', day: 'string', cost: 'number|null', pinned: 'boolean', archived: 'boolean', unread: 'boolean', group: 'string', origin: 'object|null', rank: 'number|null', labels: 'array', tasks: 'array' },
   schedule: { id: 'string', title: 'string', project: 'string', chat: 'string', every: 'string', at: 'string', next: 'string', day: 'string?', state: 'string', time: 'string', section: 'string', labels: 'array', what: 'string', cost: 'number|null', started: 'string', runs: 'array', missed: 'string?', missedWhy: 'string?', nextAt: 'number|null?' },
@@ -88,4 +88,18 @@ export function turnErrors(turn) {
     if (!(t === 'number' ? isNum(turn[k]) : is[t](turn[k]))) out.push(`turn.${turn.t}.${k}: expected ${t}`);
   }
   return out;
+}
+
+/** The task page's live view (task-page.mjs taskPageOf): the instance facts run-page-model.js liveRun hands to view(),
+ *  which draws them over the prototype's case (not the full head/stages/tabs view plan D3 names: view() builds those).
+ *  Unlike D3's "left absent", a fact dev cannot fill is empty ('' / [] / null), never absent, so the page hides its part. */
+export const TASK_PAGE_SHAPE = Object.freeze({
+  id: 'string', case: 'string', title: 'string', branch: 'string', base: 'string', pr: 'string', prUrl: 'string', detail: 'string', why: 'array', git: 'string',
+  cost: 'number|null', cap: 'number|null', mins: 'number|null', startedAgo: 'number|null', startedAt: 'string', project: 'string', labels: 'array', tags: 'array',
+  prompt: 'string', stages: 'array', pauseAfterStep: 'boolean',
+});
+/** [] when `page` has every TASK_PAGE_SHAPE field with its type, else one line per wrong field ("taskPage.cost: expected number|null"). */
+export function taskPageErrors(page) {
+  if (!page || typeof page !== 'object') return ['taskPage: expected an object'];
+  return Object.entries(TASK_PAGE_SHAPE).filter(([k, t]) => !is[t](page[k])).map(([k, t]) => `taskPage.${k}: expected ${t}`);
 }

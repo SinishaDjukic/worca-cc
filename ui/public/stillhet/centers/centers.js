@@ -16,15 +16,21 @@
   const count = (label, hook, tip) => link(label, hook, tip);   // a number that opens what it counts (quiet until hovered: rail.css)
   const filterHook = (f) => ({ 'data-c-filter': JSON.stringify(f) });
   let menu = '', tasksHost = null, schedHost = null, quietOpen = false;
+  let asking = null;   // a card's step that asks first (act.confirm), in a ConfirmStrip under the head: { does, id, label, f, busy }
   let view = { sort: 'most urgent', by: 'project', sSort: 'most urgent', from: '' }, figs = { tasks: false, sched: false };
 
   // ---- what a task is on a card ----
   const costOf = (t) => (t.run ? t.run.cost || 0 : W.membersOf(t.group).reduce((a, m) => a + (m.cost || 0), 0));
-  const taskOf = (t) => t.run || (t.group ? W.membersOf(t.group).find(W.raises) || W.membersOf(t.group)[0] : null);
+  // a group's task: one that waits on you, else the one the group reads as (its next unmerged task), else its first
+  const taskOf = (t) => t.run || (t.group ? W.membersOf(t.group).find(W.raises) || W.membersOf(t.group).find((m) => m.case === t.group.case) || W.membersOf(t.group)[0] : null);
   const stateOf = (r) => RM.stateOf(r.case);
   const RANK = R.taskRank;
   const stepOf = (detail) => (detail || '').split(' · ')[0];
-  const clause = (r) => R.taskClause({ state: stateOf(r), name: link(r.title, { 'data-c-open': r.id }, `Opens ${r.title} in its chat`), detail: r.detail || '' });
+  // live: what the task page says of it (its reason, else its first ✗ item: '2 of 5 checks failing'), never the row's bare 'Finished'
+  // the page's reason, else its first ✗ item, else its PR mark's word (gitMark: Conflicts, Checks failing)
+  const GIT_SAYS = { conflict: 'Conflicts', fail: 'Checks failing' };
+  const liveSays = (r) => { const v = W.live ? window.RailTaskLive?.detail?.(r.id) : null; if (!v) return ''; const why = (v.why || []).find((x) => /^✗/.test(x)); return v.detail || (why ? why.replace(/^✗\s*/, '') : '') || GIT_SAYS[v.git] || ''; };
+  const clause = (r) => R.taskClause({ state: stateOf(r), name: link(r.title, { 'data-c-open': r.id }, `Opens ${r.title} in its chat`), detail: liveSays(r) || r.detail || '' });
   const actionsOf = (rs) => R.taskActions(rs.map((t) => ({ id: t.id, title: t.title, short: t.short, state: stateOf(t) })));
   const schedLink = (s) => (advanced() ? link(s.title, { 'data-c-sched': s.id }, `Opens ${s.title}`) : esc(s.title));   // Simple: Schedules is locked, so no links lead there
 
@@ -84,6 +90,9 @@
   }
   const picker = (id, text, items, tip) => R.sentencePicker({ id, text, tip, items: items.map((v) => ({ id: v, text: v, checked: v === text })), open: menu === id, chevron: chev });
   function tasksHtml() {
+    // the list's own first-load looks (D15): never "No tasks yet." while the first load is out
+    const ls = window.RailDemoState?.list || '';
+    if (ls === 'loading' || ls === 'failed') return wrap(`${R.placeHead({ title: 'Your tasks', facts: 'New work starts in Chat' })}${R.listState({ state: ls, noun: 'tasks', retry: ls === 'failed' ? { 'data-c-retry': '', 'data-key': 'c-retry' } : null })}`);
     const rows = fromRows(), all = groups().sort(SORTS[view.sort]);
     if (!rows.length) return wrap(`${R.placeHead({ title: 'Your tasks', facts: 'New work starts in Chat' })}${R.emptyState({ title: 'No tasks yet.', actions: R.button({ label: 'Go to Chat', kind: 'quiet', attrs: { 'data-c-chat': '' } }) })}`);
     const cost = rows.filter(inWeek).reduce((a, t) => a + costOf(t), 0);
@@ -95,7 +104,9 @@
     const noun = view.by === 'workflow' ? 'workflow' : 'project';
     const quietFacts = (() => { return quiet.map((g) => g.name).join(', '); })();
     const quietRow = quiet.length ? `${R.quietLine({ n: quiet.length, noun, names: quietFacts, open: quietOpen, hook: { 'data-c-quiet': '' } })}${quietOpen ? `<div class="pg-grid">${quiet.map(cardOf).join('')}</div>` : ''}` : '';
-    return wrap(`${R.placeHead({ title: 'Your tasks', say: calm ? 'Nothing needs you' : '' })}${sent}${way}<div class="pg-grid">${shown.map(cardOf).join('')}</div>${quietRow}`);
+    if (asking && !W.find(asking.id)) asking = null;
+    const askHtml = asking ? R.confirmStrip({ ...R.confirmOf(asking.f, asking.label), busy: asking.busy ? R.workingWord(asking.label) : '', id: 'c-confirm-t' }) : '';
+    return wrap(`${R.placeHead({ title: 'Your tasks', say: calm ? 'Nothing needs you' : '' })}${askHtml}${sent}${way}<div class="pg-grid">${shown.map(cardOf).join('')}</div>${quietRow}`);
   }
   const wrap = (body) => `<div class="convo"><div class="convo-scroll"><div class="convo-col is-center">${body}</div></div></div>`;
 
@@ -145,16 +156,48 @@
   function act(does, id, label = '') {
     const r = W.find(id); if (!r) return;
     if (does === 'open' || does === 'answer') { if (!W.live) r.unread = false; window.RailShell.openRun(`run/${r.case}`, r.title, r.id); return; }   // the live kind: the shell acknowledges it through the adapter
-    if (W.live) { say(`${r.title}: ${label.trim() || 'this step'} is not in Stillhet yet. It is on the wiring list.`); return; }   // D8, D23: no store write and no made-up success until the Tasks slice wires it
+    if (W.live) { liveAct(does, r); return; }   // Tasks D17: dev's route through RailTaskLive; the store moves only when dev's frames say so
     const was = { case: r.case, detail: r.detail, time: r.time, day: r.day };
     const back = () => { W.move(id, was.case, was.detail, { time: was.time, day: was.day }); };
     if (does === 'retry') { W.move(id, 'starting', 'Plan is under way'); say(`Retrying ${r.title}`, back); }
     if (does === 'resume') { W.move(id, 'working', 'Picked up where it stopped'); say(`Resumed ${r.title}`, back); }
     if (does === 'approve') { W.move(id, 'approved', 'Approved · checks pass'); say(`Approved ${r.title}`, back); }
     if (does === 'merge') { W.move(id, 'merged', 'Merged'); say(`Merged ${r.title}`, back); }
+    if (does === 'fix-checks') { W.move(id, 'fixing-checks', 'Fixing the failing checks'); say(`A short task is fixing ${r.title}\u2019s checks`, back); }
+  }
+  // The live kind (Tasks, Step 8): a card's action is the same RailTaskLive id the task page runs; nothing moves here before
+  // its route answers ok, and a refusal is the shell's one `Could not ACTION: REASON`.
+  const LIVE_LABEL = { retry: 'Retry', resume: 'Resume', approve: 'Approve and build', merge: 'Merge PR', pr: 'Create PR', 'fix-checks': 'Fix checks' };
+  const LIVE_SAY = { retry: (t) => `Retrying ${t}`, resume: (t) => `Resumed ${t}`, approve: (t) => `Approved ${t}`, merge: (t) => `Merged ${t}`, pr: (t) => `Created a PR for ${t}`, 'fix-checks': (t) => `A short task is fixing ${t}\u2019s checks` };
+  // A step the task page confirms first (its state's flow in the library's table: Merge PR, Fix checks) asks here too, in
+  // the same words, filled with the task's own PR, base and failing count (run-page-model.js liveFacts).
+  function liveAsk(does, r) {
+    const v = window.RailTaskLive?.detail?.(r.id), label = LIVE_LABEL[does];
+    // the base: the page's (once its detail is in), else the PR's own from its checks entry
+    const f = v ? R.actionFlow(stateOf(r), RM.liveFacts({ ...v, base: v.base || window.RailTaskLive.checks?.(r.id)?.base || '' }))[label] : null;
+    return f && f.confirm ? { does, id: r.id, label, f, busy: false } : null;
+  }
+  function liveAct(does, r, confirmed = false) {
+    const T = window.RailTaskLive;
+    if (!T || !LIVE_LABEL[does]) return;
+    const asks = !confirmed && liveAsk(does, r);
+    if (asks) { asking = asks; paint(); tasksHost?.querySelector('.rc-confirm [data-confirm="yes"]')?.focus({ preventScroll: true }); return; }
+    const was = confirmed ? asking : null;
+    if (was) { was.busy = true; paint(); }
+    Promise.resolve(T.flow(LIVE_LABEL[does], { taskId: r.id, pr: r.pr, title: r.title })).then((res) => {
+      if (was && asking === was) { asking = null; paint(); tasksHost?.querySelector(`[data-c-act="${does}|${r.id}"]`)?.focus({ preventScroll: true }); }   // a refusal is the shell's one line; the card still offers it
+      if (res && res.ok) say(res.say || LIVE_SAY[does](r.title));
+    });
+  }
+  function answerAsk(yes) {
+    const a = asking; if (!a) return;
+    if (yes) { const r = W.find(a.id); if (r) { liveAct(a.does, r, true); return; } }
+    asking = null; paint(); tasksHost?.querySelector(`[data-c-act="${a.does}|${a.id}"]`)?.focus({ preventScroll: true });
   }
   function onClick(e) {
     const on = (q) => e.target.closest(q); let hit;
+    if ((hit = on('#route-runs .rc-confirm [data-confirm]'))) { if (!hit.disabled) answerAsk(hit.dataset.confirm === 'yes'); return; }
+    if ((hit = on('[data-c-retry]'))) { window.RailAdapter?.retry?.(); return; }
     if ((hit = on('[data-c-figs]'))) { figs[hit.dataset.cFigs] = !figs[hit.dataset.cFigs]; paint(); return; }
     if ((hit = on('[data-c-filter]'))) { List().filter(JSON.parse(hit.dataset.cFilter)); return; }
     if ((hit = on('[data-c-open]'))) { act('open', hit.dataset.cOpen); return; }
@@ -176,6 +219,7 @@
   function wire() {
     if (wired) return; wired = true;
     document.getElementById('route-runs').addEventListener('click', onClick);
+    document.getElementById('route-runs').addEventListener('keydown', (e) => { if (e.key === 'Escape' && asking && !asking.busy) { e.stopPropagation(); answerAsk(false); } });   // Esc is the strip's safe side
     document.getElementById('route-schedule').addEventListener('click', onClick);
     document.getElementById('route-place').addEventListener('click', (e) => { if (e.target.closest('[data-c-filter], [data-c-open], [data-c-act], [data-c-sact], [data-c-sched]')) onClick(e); });   // the Projects center's cards act the same way
     W.onMove(paint); W.onChange(paint); R.prefs.onChange(paint);
@@ -187,12 +231,50 @@
   const NAME_MAX = 80;   // form.name-limit
   const THEN = { 'open a PR': 'opens a PR', 'leave it on the branch': 'leaves it on the branch', 'merge when checks pass': 'merges when checks pass' };
   const VERB = { Plan: 'plans', Build: 'builds', Review: 'reviews', Clarify: 'asks first', 'Run tests': 'runs the tests', 'Security check': 'checks security', 'Diff gate': 'checks the size' };
-  const flows = () => window.RailPlaces.workflows.names();
+  // the live kind picks from dev's own workflows (GET /api/workflows, read through Chat's catalog) and sends their wf_ ids;
+  // the base defaults to the project's own branch, as dev's New run does when none is named
+  let liveFlows = null, liveBranches = { project: '', list: [] };
+  const LIVE_BASE = 'its default branch';
+  // the live kind's Agent: the project's own default engine (no engine sent, as dev's New run does until one is picked), or one
+  // of dev's run engines; 'then' is dev's pr.open and 'source' its syncBeforeStart, each sent only when picked (else the
+  // project's own setting holds, as dev's New run); Cost cap is the run's own cap (costCapUsd, pipelines.cost_cap_usd).
+  // Agents is dev's per-run agent pick (POST /api/run `overlay.nodes`, checked by checkRunOverlay): one model for every agent
+  // node of the picked workflow, from dev's models for the run's engine; Auto decides its agents at start, so it offers none.
+  // dev has no auto-merge at start, so the live form draws no 'merge when checks pass' (plans/rail/stillhet-wiring.md).
+  const LIVE_AGENT = 'the project\'s default';
+  const LIVE_SETUP = 'as the project is set up';
+  const LIVE_THEN = { 'open a PR': 'ready', 'leave it on the branch': 'none' };
+  const LIVE_SOURCE = { 'the latest version from origin': true, 'my local copy': false };
+  const capUsd = (t) => { const m = /\$(\d+(?:\.\d+)?)/.exec(t); return m ? parseFloat(m[1]) : null; };
+  const engines = () => window.RailTaskLive?.engines?.() || [];
+  function loadBranches() {
+    if (!W.live || !form || liveBranches.project === form.project) return;
+    const project = form.project; liveBranches = { project, list: [] };
+    window.RailTaskLive?.branches?.(window.RailTaskLive.projectDirOf(project) || '').then((list) => {
+      if (liveBranches.project !== project || !list) return;
+      liveBranches = { project, list }; if (form) paintForm();
+    });
+  }
+  const flows = () => (W.live ? liveFlows || [{ id: '', title: 'Default', steps: [], agents: [] }] : window.RailPlaces.workflows.names());
+  let liveModels = [];
+  function loadFlows() {
+    if (!W.live) return;
+    if (!liveFlows) window.RailChatLive?.catalog('workflows').then((r) => { if (!r?.ok) return; liveFlows = (r.data?.workflows || []).map((x) => ({ id: x.id, title: x.name || x.id, steps: [], auto: x.auto === true || x.id === 'wf_auto', agents: (Array.isArray(x.nodes) ? x.nodes : []).filter((n) => n && n.kind === 'agent' && n.id).map((n) => n.id) })); if (form) paintForm(); });
+    if (!liveModels.length) window.RailChatLive?.catalog('models').then((r) => { if (!r?.ok) return; liveModels = (r.data?.models || []).filter((m) => m && m.id).map((m) => ({ id: m.id, label: m.label || m.id, engine: m.engine || 'claude' })); if (form) paintForm(); });
+  }
+  const AGENTS_OWN = 'the workflow\'s own';
+  // the picked workflow (an unpicked Default is dev's wf_default) and the models its agents can each run, as `LABEL for every step`
+  const liveFlow = () => flows().find((x) => x.title === form.workflow && x.id) || (liveFlows || []).find((x) => x.id === 'wf_default') || null;
+  function liveAgentPicks() {
+    const w = liveFlow(); if (!w || w.auto || !w.agents.length) return [];
+    const engine = engines().find((e) => e.label === form.agent)?.id || 'claude';
+    return liveModels.filter((m) => m.engine === engine).map((m) => ({ text: `${m.label} for every step`, model: m.id }));
+  }
   const projects = () => [...new Set(W.rows().map((r) => r.project).filter(Boolean)), 'No project'];
-  const LISTS = () => ({ project: projects(), workflow: flows().map((w) => w.title), agent: ['Claude', 'Codex', 'Gemini'], base: ['main', 'dev'], source: ['the latest version from origin', 'my local copy'], then: Object.keys(THEN), every: R.REPEATS.filter((x) => x !== 'once' && x !== 'every hour').map((x) => x.replace(/^every /, '')), at: R.TIMES_OF_DAY, tz: ['Europe/Sofia', 'UTC', 'Europe/Berlin', 'America/New_York'], ends: ['no end date', 'after 10 runs', 'after 30 days'], overlap: ['skip if still going', 'queue if still going'], fails: ['pause after 3 failures', 'pause after 5 failures', 'never pause'], cap: ['the workflow\'s own', 'at $5', 'at $20'], agents: ['the workflow\'s own', 'Sonnet for every step', 'Opus for every step'] });
-  const blank = (kind, keep = {}) => ({ kind, project: projects().includes('billing-api') ? 'billing-api' : projects()[0], workflow: 'Default', agent: 'Claude', base: 'main', source: 'the latest version from origin', then: 'open a PR', text: '', path: '', src: 'write', name: '', more: false, title: '', branch: '', tags: '', agents: 'the workflow\'s own', cap: 'the workflow\'s own', every: 'weekday', at: '09:00', tz: 'Europe/Sofia', ends: 'no end date', overlap: 'skip if still going', fails: 'pause after 3 failures', err: '', ...keep });
+  const LISTS = () => ({ project: projects(), workflow: flows().map((w) => w.title), agent: W.live ? [LIVE_AGENT, ...engines().map((e) => e.label)] : ['Claude', 'Codex', 'Gemini'], base: W.live ? [LIVE_BASE, ...liveBranches.list] : ['main', 'dev'], source: W.live ? [LIVE_SETUP, ...Object.keys(LIVE_SOURCE)] : ['the latest version from origin', 'my local copy'], then: W.live ? [LIVE_SETUP, ...Object.keys(LIVE_THEN)] : Object.keys(THEN), every: R.REPEATS.filter((x) => x !== 'once' && x !== 'every hour').map((x) => x.replace(/^every /, '')), at: R.TIMES_OF_DAY, tz: ['Europe/Sofia', 'UTC', 'Europe/Berlin', 'America/New_York'], ends: ['no end date', 'after 10 runs', 'after 30 days'], overlap: ['skip if still going', 'queue if still going'], fails: ['pause after 3 failures', 'pause after 5 failures', 'never pause'], cap: ['the workflow\'s own', 'at $5', 'at $20'], agents: W.live ? [AGENTS_OWN, ...liveAgentPicks().map((x) => x.text)] : [AGENTS_OWN, 'Sonnet for every step', 'Opus for every step'] });
+  const blank = (kind, keep = {}) => ({ kind, project: projects().includes('billing-api') ? 'billing-api' : projects()[0], workflow: 'Default', agent: W.live ? LIVE_AGENT : 'Claude', base: W.live ? LIVE_BASE : 'main', source: W.live ? LIVE_SETUP : 'the latest version from origin', then: W.live ? LIVE_SETUP : 'open a PR', text: '', path: '', src: 'write', name: '', more: false, title: '', branch: '', tags: '', files: [], agents: 'the workflow\'s own', cap: 'the workflow\'s own', every: 'weekday', at: '09:00', tz: 'Europe/Sofia', ends: 'no end date', overlap: 'skip if still going', fails: 'pause after 3 failures', err: '', ...keep });
   const fPick = (k, tip) => R.sentencePicker({ id: `f-${k}`, text: form[k], tip, items: LISTS()[k].map((v) => ({ id: v, text: v, checked: v === form[k] })), open: menu === `f-${k}`, chevron: chev });
-  const proof = () => { const w = flows().find((x) => x.title === form.workflow), s = (w?.steps || []).map((x) => VERB[x] || x.toLowerCase()), last = s.pop(); return `${form.workflow} ${[s.join(', '), last].filter(Boolean).join(' and ')}, then ${THEN[form.then]}.`.replace(' and , ', ' '); };
+  const proof = () => { const w = flows().find((x) => x.title === form.workflow), s = (w?.steps || []).map((x) => VERB[x] || x.toLowerCase()), last = s.pop(); return `${form.workflow} ${[s.join(', '), last].filter(Boolean).join(' and ')}, then ${THEN[form.then] || 'does what the project is set up to do'}.`.replace(' and , ', ' ').replace(' , ', ', '); };
   const errOf = (at) => (form.errAt === at ? form.err : '');   // the line sits under the field it is about
   function formHtml() {
     const sched = form.kind === 'schedule';
@@ -206,8 +288,9 @@
         ${fold('If something gets in the way', `${cap(form.ends)}; ${form.overlap}; ${form.fails}`)}${form.more ? `<div class="cc-more"><span>It ends with ${fPick('ends')}</span><span>A run still going means ${fPick('overlap')}</span><span>When runs fail, ${fPick('fails')}</span></div>` : ''}`;
       return R.dialog({ title: 'New schedule', body, yes: R.scheduleButton({ every: `every ${form.every}`, at: form.at }), close: R.icon('x', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
     }
-    const body = `${frame}${what}${fold('More options', 'Title, branch, cost tags, agents, guardrails, files')}${form.more ? `<div class="cc-more">${R.field({ id: 'cc-title', label: 'Title', value: form.title, placeholder: 'Worca names it from what it should do', attrs: { 'data-f': 'title', maxlength: NAME_MAX } })}${R.field({ id: 'cc-branch', label: 'Branch', value: form.branch, placeholder: 'Worca makes one', attrs: { 'data-f': 'branch' } })}${R.field({ id: 'cc-tags', label: 'Cost tags', value: form.tags, placeholder: 'Comma separated', attrs: { 'data-f': 'tags' } })}<span>Agents: ${fPick('agents')}</span><span>Cost cap: ${fPick('cap')}</span><span>${R.button({ label: 'Add files…', kind: 'quiet', attrs: { 'data-c-files': '', title: 'Attaches files to the task' } })}</span></div>` : ''}`;
-    return R.dialog({ title: 'New task', body, yes: 'Start task', status: `${R.button({ label: 'Schedule…', kind: 'quiet', attrs: { 'data-c-tosched': '', title: 'The same task, at a time' } })}`, close: R.icon('x', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
+    const perStep = W.live && LISTS().agents.length < 2 ? `<span>Cost cap: ${fPick('cap')}</span>` : `<span>Agents: ${fPick('agents')}</span><span>Cost cap: ${fPick('cap')}</span>`;
+    const body = `${frame}${what}${fold('More options', W.live ? 'Title, branch, cost tags, agents, cost cap, files' : 'Title, branch, cost tags, agents, guardrails, files')}${form.more ? `<div class="cc-more">${R.field({ id: 'cc-title', label: 'Title', value: form.title, placeholder: 'Worca names it from what it should do', attrs: { 'data-f': 'title', maxlength: NAME_MAX } })}${R.field({ id: 'cc-branch', label: 'Branch', value: form.branch, placeholder: 'Worca makes one', attrs: { 'data-f': 'branch' } })}${R.field({ id: 'cc-tags', label: 'Cost tags', value: form.tags, placeholder: 'Comma separated', attrs: { 'data-f': 'tags' } })}${perStep}<span>${R.button({ label: 'Add files…', kind: 'quiet', attrs: { 'data-c-files': '', title: 'Attaches files to the task' } })}${form.files.length ? ` ${esc(form.files.map((x) => x.name).join(', '))}` : ''}</span></div>` : ''}`;
+    return R.dialog({ title: 'New task', body, yes: 'Start task', busy: !!form.busy, busyLabel: 'Starting…', status: `${R.button({ label: 'Schedule…', kind: 'quiet', attrs: { 'data-c-tosched': '', title: 'The same task, at a time' } })}`, close: R.icon('x', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
   }
   const hooksOf = () => ({ close: {}, cancel: {}, yes: {} });
   const cap = (t) => t[0].toUpperCase() + t.slice(1);
@@ -219,7 +302,7 @@
     const b = h.querySelector('.dlg-body'); if (b) b.scrollTop = scroll;
     (focus ? h.querySelector(focus) : null)?.focus();
   }
-  function openForm(kind, keep) { menu = ''; opener = document.activeElement; form = blank(kind, keep); paintForm(kind === 'schedule' ? '#cc-name' : '#cc-text'); }
+  function openForm(kind, keep) { menu = ''; opener = document.activeElement; form = blank(kind, keep); loadFlows(); loadBranches(); paintForm(kind === 'schedule' ? '#cc-name' : '#cc-text'); }
   function closeForm() { form = null; menu = ''; paintForm(); (opener?.isConnected && opener !== document.body ? opener : document.querySelector('#bar-head [data-bar-new]'))?.focus(); }   // a menu's item is gone by now: back to its +
   function check() {
     const words = form.src === 'write' ? form.text.trim() : form.path.trim();
@@ -230,7 +313,8 @@
   }
   function save() {
     const bad = check(); if (bad) { form.err = bad[0]; form.errAt = bad[1]; paintForm(bad[1]); return; }
-    if (window.RailAdapter?.refuse?.(`tasks.new-${form.kind}`)) return;   // R-arch-10: the live kind starts and schedules nothing until the Tasks and Schedules slices; the form stays as it was
+    if (W.live && form.kind === 'task') { liveStart(); return; }   // D12b: dev's POST /api/run
+    if (window.RailAdapter?.refuse?.(`tasks.new-${form.kind}`)) return;   // R-arch-10: the live kind schedules nothing until the Schedules slice; the form stays as it was
     const words = (form.src === 'write' ? form.text : `Follow ${form.path}`).trim(), project = form.project === 'No project' ? '' : form.project, k = Date.now().toString(36);
     if (form.kind === 'task') {
       const title = form.title.trim() || (words.length > 56 ? `${words.slice(0, 54).trim()}…` : words);
@@ -241,16 +325,57 @@
     const every = `every ${form.every}`, w = R.scheduleWords({ every, at: form.at }), s = { id: `n${k}`, title: form.name.trim(), project, chat: '', every, at: form.at, tz: form.tz, next: w.next, day: w.day, state: 'scheduled', time: w.time, section: 'next', labels: [], what: words.endsWith('.') ? words : `${words}.`, cost: 0, started: Sch().dateWord(Sch().TODAY), workflow: form.workflow, agent: form.agent, base: form.base, then: form.then, ends: form.ends, overlap: form.overlap, fails: form.fails, runs: [] };
     closeForm(); Sch().add(s); say(`Scheduled ${s.title}: ${R.scheduleWords(s).runs}`); paint();
   }
+  // New task… in the live kind (D12b): POST /api/run { projectDir | noProject, prompt, workflowId?, engine?, sourceBranch?, syncBeforeStart?, pr?,
+  // costCapUsd?, overlay? }; on ok the task's page opens, a refusal stays in the form with what was typed. One start at a time.
+  async function liveStart() {
+    if (form.busy) return;
+    const words = (form.src === 'write' ? form.text : `Follow ${form.path}`).trim();
+    const none = form.project === 'No project', dir = none ? '' : window.RailTaskLive?.projectDirOf(form.project) || '';
+    const usd = form.cap === LISTS().cap[0] ? null : capUsd(form.cap);
+    const tags = form.tags.split(',').map((x) => x.trim()).filter(Boolean);
+    const wf = flows().find((x) => x.title === form.workflow)?.id || '';
+    const engine = engines().find((e) => e.label === form.agent)?.id || '';
+    const every = liveAgentPicks().find((x) => x.text === form.agents)?.model || '';   // one model for each agent node: dev's overlay.nodes
+    const overlay = every ? { nodes: Object.fromEntries(liveFlow().agents.map((id) => [id, { model: every }])) } : null;
+    // No project has no git: its base, sync, PR and branch name are not sent
+    const git = none ? {} : { ...(form.base && form.base !== LIVE_BASE ? { sourceBranch: form.base } : {}),
+      ...(form.source in LIVE_SOURCE ? { syncBeforeStart: LIVE_SOURCE[form.source] } : {}), ...(LIVE_THEN[form.then] ? { pr: { open: LIVE_THEN[form.then] } } : {}),
+      ...(form.branch.trim() ? { featureBranch: form.branch.trim() } : {}) };
+    const body = { ...(none ? { noProject: true } : dir ? { projectDir: dir } : {}), prompt: words, ...(wf ? { workflowId: wf } : {}), ...(engine ? { engine } : {}),
+      ...git, ...(usd ? { costCapUsd: usd } : {}), ...(overlay ? { overlay } : {}),
+      ...(form.title.trim() ? { title: form.title.trim() } : {}),
+      ...(tags.length ? { tags } : {}), ...(form.files.length ? { extras: form.files.map(({ name, dataBase64 }) => ({ name, dataBase64 })) } : {}) };
+    const f = form; f.busy = true; paintForm();
+    const res = await window.RailTaskLive?.act('new-task', { body, quiet: true, key: 'new-task:form' });
+    f.busy = false;
+    if (form !== f) return;
+    if (!res?.ok) { form.err = `Could not start the task: ${res?.error || 'no answer'}`; form.errAt = form.src === 'write' ? '#cc-text' : '#cc-path'; paintForm(form.errAt); return; }
+    closeForm(); say(`Started ${f.title.trim() || words}`);
+    if (res.data?.runId) window.RailShell?.go(`run/${res.data.runId}`);
+  }
   function dlgClick(e) {
     const on = (q) => e.target.closest(q); let hit;
-    if ((hit = on('[data-menu-pick^="f-"]'))) { const [id, v] = hit.dataset.menuPick.split('|'); form[id.slice(2)] = v; menu = ''; paintForm(`[data-menu="${id}"]`); return; }
+    if ((hit = on('[data-menu-pick^="f-"]'))) { const [id, v] = hit.dataset.menuPick.split('|'); form[id.slice(2)] = v; menu = ''; if (id === 'f-project') { form.base = W.live ? LIVE_BASE : form.base; loadBranches(); } if (!LISTS().agents.includes(form.agents)) form.agents = AGENTS_OWN; paintForm(`[data-menu="${id}"]`); return; }
     if ((hit = on('[data-menu^="f-"]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; paintForm(`[data-menu="${hit.dataset.menu}"]`); return; }
     if (menu) { menu = ''; paintForm(); }
     if ((hit = on('[data-c-src]'))) { form.src = hit.dataset.cSrc; paintForm(form.src === 'write' ? '#cc-text' : '#cc-path'); return; }
     if (on('[data-c-more]')) { form.more = !form.more; paintForm('[data-c-more]'); return; }
     if (on('[data-c-tosched]')) { form = blank('schedule', { project: form.project, workflow: form.workflow, agent: form.agent, base: form.base, source: form.source, then: form.then, text: form.text, path: form.path, src: form.src, name: form.title }); paintForm('#cc-name'); return; }
-    if (on('[data-c-files]')) { say(window.RailWould('ask for the files to attach')); return; }
+    if (on('[data-c-files]')) { pickFiles(); return; }
     if ((hit = on('[data-dialog]'))) { if (hit.dataset.dialog === 'yes') save(); else closeForm(); }
+  }
+  // Add files…: the files go with the task as dev's New run sends them (POST /api/run `extras`, [{ name, dataBase64 }]).
+  function pickFiles() {
+    const f = form, input = document.createElement('input');
+    input.type = 'file'; input.multiple = true;
+    input.addEventListener('change', async () => {
+      const read = (file) => new Promise((ok) => { const r = new FileReader(); r.onload = () => ok({ name: file.name, dataBase64: String(r.result).replace(/^data:[^,]*,/, '') }); r.onerror = () => ok(null); r.readAsDataURL(file); });
+      const got = (await Promise.all([...(input.files || [])].map(read))).filter(Boolean);
+      if (form !== f || !got.length) return;
+      form.files = [...form.files.filter((x) => !got.some((g) => g.name === x.name)), ...got];
+      paintForm('[data-c-files]');
+    });
+    input.click();
   }
   function dlgInput(e) {
     const k = e.target.dataset?.f; if (!k) return; form[k] = e.target.value;
@@ -266,7 +391,7 @@
   const maker = (noun, chatWord, formWord) => ({ newLabel: `New ${noun}`, newMenu: () => [{ header: 'Ask in chat' }, { id: 'bar-new|chat', text: chatWord }, { sep: true }, { header: 'Legacy approach' }, { id: 'bar-new|form', text: formWord }], newPick: (id) => { if (id === 'form') openForm(noun); else ask(noun); } });
   const MAKERS = { tasks: maker('task', 'Start a task', 'New task…'), schedules: maker('schedule', 'Schedule a task', 'New schedule…') };
   window.RailCenters = {
-    tasks: (el) => { wire(); tasksHost = el; menu = ''; paint(); },
+    tasks: (el) => { wire(); tasksHost = el; menu = ''; asking = null; paint(); },
     schedules: (el) => { wire(); schedHost = el; menu = ''; if (/^#schedules/.test(location.hash)) el.innerHTML = schedulesHtml(); },
     maker: (which) => (advanced() ? MAKERS[which] : null),
     paint, wire, taskOf, stateOf, clause, actionsOf, schedLink, link, inWeek,

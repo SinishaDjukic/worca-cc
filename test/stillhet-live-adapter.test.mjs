@@ -64,15 +64,17 @@ test('a state frame moves one task: 1 onMove, 0 onChange; a frame before hello a
   assert.equal(r.rows.get('run-z').case, 'starting');
 });
 
-test('failed on a 500; retry() says loading, fetches again and loads', async () => {
+test('failed on a 500 (a task page too); retry() says loading, fetches again and loads', async () => {
   let fail = true;
   const r = rig({ status: (u) => (fail && u === URLS.budget ? 500 : 200) });
   await r.tick();
   assert.equal(r.st.list, 'failed');
   assert.equal(r.sockets.length, 0);
+  assert.equal(r.live.task.state('run-a'), 'failed', 'a cold task page waiting on the list reads failed, not loading for ever');
   fail = false;
   const n = r.calls.length;
   const p = r.live.retry();
+  assert.equal(r.live.task.state('run-a'), 'loading', 'Try again: loading again');
   assert.deepEqual(r.log.filter((x) => x[0] === 'setState').at(-1)[1], { list: 'loading' });
   await p; await r.tick();
   assert.ok(r.calls.length > n);
@@ -98,7 +100,20 @@ test('pipelines-changed refetches /api/history and the run links only, once each
   assert.deepEqual(gets(r.calls.slice(n)), [URLS.history, URLS.runLinks]);
   const l = r.log.filter((x) => x[0] === 'load');
   assert.equal(l.length, loads + 2);
-  assert.deepEqual(l.slice(-2).map((x) => x[1]), [['chats', 'runs', 'updates'], ['chats']]);
+  assert.deepEqual(l.slice(-2).map((x) => x[1]), [['chats', 'groups', 'runs', 'updates'], ['chats']]);
+});
+
+test('pipelines-changed with removedRunIds: an archived or deleted paused run leaves the list at once and stays gone after the refetch (code review r9)', async () => {
+  const r = rig();
+  await r.tick();
+  r.frame(r.sockets[0], hello);
+  r.frame(r.sockets[0], { type: 'state', runId: 'run-b', seq: 4, status: 'paused', pauseReason: 'paused by you' });
+  assert.ok(r.rows.get('run-b'), 'the paused run is a row');
+  r.frame(r.sockets[0], { type: 'pipelines-changed', action: 'bulk-archive', removedRunIds: ['run-b'] });
+  assert.equal(r.rows.get('run-b'), undefined, 'gone before the refetch answers');
+  await r.tick(250);
+  assert.equal(r.rows.get('run-b'), undefined, 'and stays gone: it left the live runs');
+  assert.ok(r.rows.get('run-a'), 'the other rows stay');
 });
 
 test('the run links (Stillhet Chat, D7) refetch on ask-run-status and on a thread frame, and fill each chat\'s tasks', async () => {
@@ -203,6 +218,46 @@ test('a finished run with an open PR: each history load asks dev\'s PR lookup, i
   await r.tick(250);
   assert.equal(r.rows.get('hpr').case, 'checks', 'the new skeleton carries the PR until the next lookup answers');
   assert.equal(posts().length, 2, 'the refetch asks again');
+});
+
+test('a failed PR lookup is asked again by the task page\'s Try again (open force), and only while it is failed', async () => {
+  let prStatus = 500;
+  const r = rig({ status: (u) => (u === '/api/history/pr' ? prStatus : 200) });
+  await r.tick();
+  r.frame(r.sockets[0], hello);
+  await r.tick();
+  const posts = () => r.calls.filter((c) => c.method === 'POST' && c.u === '/api/history/pr').length;
+  assert.equal(posts(), 1, 'asked once the socket is up, and it failed');
+  prStatus = 200;
+  await r.live.task.open('h3', { force: true }); await r.tick();
+  assert.equal(posts(), 2, 'Try again asks for the PRs again');
+  await r.live.task.open('h3', { force: true }); await r.tick();
+  assert.equal(posts(), 2, 'an answered lookup is not asked again by every forced read');
+});
+
+test('a Restart Build round on its live frames: its stages follow the workflow the frames carry (no Plan), and its end re-reads the page', async () => {
+  let saved = false;   // the round's saved run is there once it ended
+  const r = rig({ status: (u) => (/^\/api\/history\/web\/rb1/.test(u) && !saved ? 404 : 200),
+    answer: (u) => (u === '/api/history/web/rb1' ? { state: { status: 'done', totalCostUsd: 0.12, totalActiveMs: 4000, steps: [] } } : ANSWER[u] ?? {}) });
+  await r.tick();
+  r.frame(r.sockets[0], hello);
+  await r.tick();
+  r.frame(r.sockets[0], { type: 'run-created', runId: 'run-r', pipelineId: 'rb1', projectKey: 'web', projectDir: '/src/web', title: 'Restart Build: x', status: 'running', startedAt: new Date(NOW).toISOString() });
+  const nodes = [{ id: 'n_task', kind: 'task' }, { id: 'n_impl', kind: 'agent', key: 'implementer', label: 'Implementation' }, { id: 'n_review', kind: 'agent', key: 'reviewer', label: 'Review' }, { id: 'n_end', kind: 'end' }];
+  r.frame(r.sockets[0], { type: 'state', runId: 'run-r', id: 'rb1', status: 'running', stepper: { version: 2, graph: { nodes } }, steps: [{ nodeId: 'n_impl', agentKey: 'implementer', status: 'start' }], totalCostUsd: 0, totalActiveMs: 0 });
+  await r.live.task.open('run-r'); await r.tick();
+  assert.equal(r.live.task.state('run-r'), 'ready');
+  assert.deepEqual(r.live.task.detail('run-r').stages.map((s) => s.label), ['Build', 'Review'], 'no Plan stage: the round\'s workflow has no planner');
+  const n = r.calls.length;
+  saved = true;
+  r.frame(r.sockets[0], { type: 'done', runId: 'run-r', status: 'done' });
+  await r.tick();
+  const after = gets(r.calls.slice(n));
+  assert.ok(after.includes('/api/history/web/rb1'), 'the ended round\'s saved run is read again');
+  assert.ok(after.includes('/api/history/web/rb1/diff'), 'and its Changes, from the saved diff');
+  const page = r.live.task.detail('run-r');
+  assert.equal(page.cost, 0.12, 'the frames\' $0 never hides the saved cost');
+  assert.equal(page.mins, 0, 'nor its time'); assert.equal(r.live.task.input('run-r').state.totalActiveMs, 4000);
 });
 
 test('Try again during a reconnect wait opens one socket, and the wait opens no second', async () => {

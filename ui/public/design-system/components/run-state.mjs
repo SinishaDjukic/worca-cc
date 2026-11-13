@@ -210,7 +210,7 @@ const STATES = {
       primary: true,
       items: [
         "Download patch",
-        "Commit it yourself",
+        "Commit it by hand",
         "Discard"
       ]
     }
@@ -467,7 +467,7 @@ Object.assign(STATES, {
   pushed: { word: 'Merged', dot: 'is-violet' },
   diverged: { word: 'Needs you', dot: 'is-amber', action: off('Re-check', 'refresh', true, ['Push', 'How to pull', 'Discard'], { Push: 'The branch and its remote have diverged: pull or rebase, then Re-check' }) },
   // A failed or stopped run that still holds work
-  'failed-kept': { word: 'Failed', sym: 'x', action: act('Restart Build', 'refresh', true, ['Apply to branch', 'Download patch', 'Commit it yourself', 'Discard']) },
+  'failed-kept': { word: 'Failed', sym: 'x', action: act('Restart Build', 'refresh', true, ['Apply to branch', 'Download patch', 'Commit it by hand', 'Discard']) },
   'failed-kept-wait': { word: 'Failed', sym: 'x' },
   'failed-folder': { word: 'Failed', sym: 'x', action: act('Apply to folder', 'folder', true, ['Open the copy', 'Discard']) },
   'stopped-folder': { word: 'Stopped', dot: 'is-grey', action: act('Apply to folder', 'folder', true, ['Open the copy', 'Discard']) },
@@ -545,7 +545,7 @@ const HELP = {
   "Switch model…": "Pick another model, then resume",
   "Resume at…": "Pick a time to resume",
   "Publish branch": "Pushes the branch to origin without creating a PR",
-  "How to merge": "Shows the git commands to merge it yourself, with a copy button",
+  "How to merge": "Shows the git commands to merge it by hand, with a copy button",
   "Update branch": "Merges {base} into the branch",
   "Resolve in a terminal": "Opens a terminal in the worktree with the conflicts",
   "Re-check": "Checks again whether the branch is up to date with {base}",
@@ -563,7 +563,7 @@ const HELP = {
   "Open budget settings": "Opens Settings › Tasks › Budget",
   "Apply to branch": "Commits the kept work to the branch, skipping the hook that failed",
   "Download patch": "Saves the kept work as a .patch file",
-  "Commit it yourself": "Shows the commands to commit it by hand, with a copy button",
+  "Commit it by hand": "Shows the commands to commit it by hand, with a copy button",
   [VIEW_PRS_LABEL]: "Shows the PRs on GitHub",
   "Watch PRs": "Worca follows all three PRs",
   "Copy PR links": "Copies every PR’s address",
@@ -641,7 +641,7 @@ const HOW_TO_MERGE = { commands: 'git switch {base}\ngit merge {branch}' };
 const COMMIT_BY_HAND = { commands: 'cd {worktree}\ngit add -A\ngit commit --no-verify' };
 const PATCH = { would: 'download the patch' };
 const OPEN_COPY = { would: 'open the copy in a terminal' };
-const FIX_CHECKS = { to: 'fixing-checks', confirm: 'Fix the 2 failing checks on {pr}? Worca pushes the fix to the PR.', say: 'A short task is fixing the checks' };
+const FIX_CHECKS = { to: 'fixing-checks', confirm: 'Fix the {failedChecks} on {pr}? Worca pushes the fix to the PR.', say: 'A short task is fixing the checks' };
 const FIX_CONFLICTS = { to: 'fixing-conflicts', confirm: 'Merge {base} into {pr} and fix the 2 conflicts? Worca pushes the fix to the PR.', say: 'A short task is fixing the conflicts' };
 const APPLY_FOLDER = (why) => ({ to: 'applied', confirm: `Write 5 files into {folder}?${why}`, say: 'Wrote 5 files into {folder}' });
 const READY_FLOW = { [CREATE_PR_LABEL]: CREATE_ONE, 'Publish branch': PUBLISH, 'How to merge': HOW_TO_MERGE, Discard: DISCARD };
@@ -676,10 +676,10 @@ const FLOW = {
   'ticket-ended': { 'Start a new task': NEW_RUN },
   cancelled: { 'Start a new task': NEW_RUN },
   gate: { 'Accept as is': { to: 'working', say: 'Review accepted; manual tests start' }, 'Run another cycle': RESTART('One more Build and Review round'), Stop: STOP },
-  kept: { 'Apply to branch': { to: 'ready', confirm: 'Commit the kept work to {branch}? It skips the hook that failed.', say: 'Committed to the branch' }, 'Download patch': PATCH, 'Commit it yourself': COMMIT_BY_HAND, Discard: { ...DISCARD, confirm: 'Discard the kept work? A patch is saved first.' } },
+  kept: { 'Apply to branch': { to: 'ready', confirm: 'Commit the kept work to {branch}? It skips the hook that failed.', say: 'Committed to the branch' }, 'Download patch': PATCH, 'Commit it by hand': COMMIT_BY_HAND, Discard: { ...DISCARD, confirm: 'Discard the kept work? A patch is saved first.' } },
   archived: {},
   failed: { 'Restart Build': RESTART('Build runs again with what Plan made'), 'Start a new task': NEW_RUN },
-  'failed-kept': { 'Restart Build': RESTART('Build runs again with what Plan made'), 'Apply to branch': { to: 'failed', confirm: 'Commit the kept work to {branch}? It skips the hook, and the tests still fail.', say: 'Committed to the branch; the failure stays' }, 'Download patch': PATCH, 'Commit it yourself': COMMIT_BY_HAND, Discard: { to: 'failed', confirm: 'Discard the kept work? A patch is saved first.', say: 'The kept work is gone; a patch was saved' } },
+  'failed-kept': { 'Restart Build': RESTART('Build runs again with what Plan made'), 'Apply to branch': { to: 'failed', confirm: 'Commit the kept work to {branch}? It skips the hook, and the tests still fail.', say: 'Committed to the branch; the failure stays' }, 'Download patch': PATCH, 'Commit it by hand': COMMIT_BY_HAND, Discard: { to: 'failed', confirm: 'Discard the kept work? A patch is saved first.', say: 'The kept work is gone; a patch was saved' } },
   'failed-kept-wait': { next: 'failed-kept', event: 'The kept work is saved' },
   'failed-folder': { 'Apply to folder': APPLY_FOLDER(' The task failed, so check them first.'), 'Open the copy': OPEN_COPY, Discard: DISCARD },
   'stopped-folder': { 'Apply to folder': APPLY_FOLDER(' The task stopped early, so check them first.'), 'Open the copy': OPEN_COPY, Discard: DISCARD },
@@ -776,6 +776,7 @@ export function actionHelp(label, ctx = {}) {
 /** Where a state's actions lead: { label: { to, say, confirm, dialog, would } }, and `next` for what happens from outside.
  * `ctx.would(phrase)` gives the sentence for an action the library cannot take (a `would` phrase). */
 export function actionFlow(id, ctx = {}) {
+  ctx = { failedChecks: '2 failing checks', ...ctx };   // the design's sample count; a live task passes its own
   const out = {};
   for (const [k, v] of Object.entries(FLOW[id] || {})) out[fill(k, ctx)] = typeof v === 'object' && v ? filled(v, ctx) : v;
   return out;
@@ -803,13 +804,15 @@ export const sectionOf = (word, id = '') => (PAUSE_NORMAL.has(id) ? 'scheduled' 
  * A center's card action (panel.center): the one step that fits a task's state. `does` is what the page carries out;
  * `open` leads to its card, where the step needs words or a look.
  * @param {string} id  a run state's id
- * @returns {{label:string, does:'retry'|'answer'|'approve'|'merge'|'resume'|'open'}}
+ * @returns {{label:string, does:'retry'|'answer'|'approve'|'pr'|'merge'|'resume'|'open'}}
  */
 export function cardAction(id) {
   if (id === 'failed') return { label: 'Retry', does: 'retry' };
   if (id === 'question') return { label: 'Answer', does: 'answer' };
   if (id === 'gate') return { label: 'Approve', does: 'approve' };
-  if (id === 'ready' || id === 'approved') return { label: 'Merge', does: 'merge' };
+  if (id === 'ready') return { label: CREATE_PR_LABEL, does: 'pr' };   // a ready task has no PR yet: Merge only once it is approved
+  if (id === 'approved') return { label: 'Merge', does: 'merge' };
+  if (id === 'failing') return { label: 'Fix checks', does: 'fix-checks' };   // the task page's own action for failing checks
   if (/^paused/.test(id)) return { label: 'Resume', does: 'resume' };
   return { label: 'Open', does: 'open' };
 }

@@ -29,7 +29,8 @@
   const raises = W.raises, groupSection = W.groupSection;   // where a group sorts is the world's, so Vitals counts it the same
   // what it is in the list: a run, or a group with its runs
   function tops() {
-    const out = data.runs.filter((r) => !r.group && !r.ticket).map((r) => ({ run: r, section: sectionOfRun(r), archived: r.archived, labels: r.labels, project: r.project, by: r.by, day: r.day, word: wordOf(r), workflow: r.workflow, schedule: r.schedule || '' }));   // a schedule's time that has not started is not a task (panel.task-truth)
+    const out = data.runs.filter((r) => !r.group && !r.ticket && !r.roundOf).map(   // a round is a line under its origin (live-map foldRounds)
+      (r) => ({ run: r, section: sectionOfRun(r), archived: r.archived, labels: r.labels, project: r.project, by: r.by, day: r.day, word: wordOf(r), workflow: r.workflow, schedule: r.schedule || '' }));   // a schedule's time that has not started is not a task (panel.task-truth)
     for (const g of data.groups) {
       const ms = membersOf(g); if (!ms.length) continue;
       const archived = ms.every((m) => m.archived);
@@ -70,8 +71,7 @@
   function menuOf(x) {
     const r = x.r, g = x.g;
     const stop = plan('stop', [x]), arch = plan('archive', [x]), del = plan('delete', [x]);
-    // D25: in the live kind Select, Stop, Archive, groups, the PR link and Delete are the Tasks slice's: only what changes no task
-    if (W.live) { const live = [...(r ? [{ id: 'in-view', text: window.RailShell?.inView.has('task', `run:${r.id}`) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }] : []), ...(g?.kind === 'feature' ? [{ id: 'open', text: 'Open feature', help: 'Its plan, its runs, how it ships' }] : [])]; return live.length ? live : null; }
+    // Tasks D17: in the live kind every item is dev's route (liveAct below); the menu is the design's own
     const isArchived = g ? membersOf(g).every((m) => m.archived) : r.archived;
     const items = [{ id: 'toggle', text: 'Select', hint: hint('Space') }, ...(r ? [{ id: 'in-view', text: window.RailShell?.inView.has('task', `run:${r.id}`) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }] : []),
       { id: 'stop', text: 'Stop', hint: hint('S'), off: !n(stop), help: n(stop) ? 'Stops it; the branch and changes stay' : R.skipText(stop) },
@@ -167,9 +167,28 @@
     if (has('advanced')) { const can = rows.filter((x) => x.r && !(x.r.group && !x.r.adhoc)); acts.push({ id: 'add-to-group', label: 'Add to group', n: can.length, tip: can.length < rows.length ? `Skips ${rows.length - can.length}: a feature's runs and groups stay as they are` : 'Find a group, or make a new one', why: 'A feature\'s runs and groups stay as they are' }); }
     return acts;
   }
+  // Tasks D17: the live kind's row menu and bulk bar call dev's routes through RailTaskLive.list; the store moves only when
+  // dev's frames and refetches say so, and a refusal is the one `Could not ACTION: REASON`.
+  const T = () => window.RailTaskLive;
+  const idsOf = (rows) => runRows(rows).map((r) => r.id);
+  async function liveAct(id, rows, names, backTo) {
+    const ids = idsOf(rows);
+    const each = async (what, done) => { let ok = 0; for (const x of ids) if ((await T().list(what, { ids: [x] }))?.ok) ok++; if (ok) say(done(ok)); ctl.clear(); ctl.paint(); };
+    if (id === 'stop') { ctl.confirm({ text: `Stop ${rows.length === 1 ? names : plural(ids.length, 'task')}? Its branch and changes stay.`, yes: `Stop ${ids.length}`, danger: true, back: backTo, run: () => each('stop', (c) => `Stopped ${plural(c, 'task')}`) }); return; }
+    if (id === 'archive') {
+      if (view.show === 'archived' || runRows(rows).every((r) => r.archived)) { each('restore', (c) => `Restored ${plural(c, 'task')}`); return; }
+      const res = await T().list('archive', { ids }); ctl.clear(); ctl.paint();
+      if (res?.ok) say(`Archived ${plural(ids.length, 'task')}`, { tip: 'Puts them back', run: () => each('restore', () => 'Undone') });
+      return;
+    }
+    if (id === 'delete') { ctl.confirm({ text: `Delete ${rows.length === 1 ? names : plural(ids.length, 'task')}? This cannot be taken back.`, yes: `Delete ${ids.length}`, danger: true, back: '', run: () => each('delete', (c) => `Deleted ${plural(c, 'task')}`) }); return; }
+    if (id === 'leave-group') { const r = rows[0].r, g = data.groups.find((x) => x.id === r.group); const res = await T().list('leave-group', { ids: [r.id] }); if (res?.ok) say(`Removed from ${g?.title || 'the group'}`, res.data?.undo ? { tip: 'Puts it back in the group', run: () => T().list('undo-group', { token: res.data.undo }) } : undefined); return; }
+    if (id === 'view-pr') { const r = rows[0].r || membersOf(rows[0].g).find((m) => m.pr); if (r?.pr && window.open(r.pr, '_blank') === null) say('Could not open the PR: the browser blocked the new tab'); return; }
+  }
   function act(id, rows0, { bulk } = {}) {
     const rows = rowsNow(rows0), pick = ctl.state.pick, snap = snapshot(), names = rows.length === 1 ? `“${(rows[0].r || rows[0].g).title}”` : plural(rows.length, 'task');
     const backTo = rows.length === 1 && !bulk ? `[data-open="${CSS.escape(rows[0].key)}"]` : '';
+    if (W.live && T() && ['stop', 'archive', 'delete', 'leave-group', 'view-pr'].includes(id)) { liveAct(id, rows, names, backTo); return; }
     if (id === 'in-view' && rows[0]?.r) { const r = rows[0].r; window.RailShell.inView.toggle({ type: 'task', id: `run:${r.id}`, title: r.title, case: r.case }); ctl.paint(); return; }
     if (id === 'stop') { const p = plan('stop', rows), c = n(p); if (!c) { say(R.skipText(p)); return; } ctl.confirm({ text: `Stop ${rows.length === 1 ? names : plural(c, 'task')}? Its branch and changes stay.${p.skip.length ? ` ${R.skipText(p)}` : ''}`, yes: `Stop ${c}`, danger: true, back: backTo, run: () => { p.apply.forEach((t) => { byId(t.id).case = 'stopped'; }); p.cancel.forEach((t) => { byId(t.id).case = 'ticket-canceled'; }); ctl.clear(); W.touch(); say(`Stopped ${plural(c, 'task')}`); } }); return; }
     if (id === 'archive') {
@@ -190,7 +209,8 @@
     const runs = runRows(rows), snap = snapshot(), pick = ctl.state.pick;
     ctl.picker({ label: 'Labels', placeholder: 'Find or add a label', anchor: '[data-bulk="label"]', hint: 'Enter adds what you typed',
       sections: (q) => { const all = [...new Set(data.runs.flatMap((r) => r.labels))].sort().filter((l) => l.includes(q.trim().toLowerCase())); const add = q.trim() && !all.includes(q.trim().toLowerCase()) ? [{ text: q.trim().toLowerCase(), n: 'New', on: false }] : []; return [{ title: 'Labels', kind: 'label', many: true, rows: [...add, ...all.map((l) => { const c = runs.filter((r) => r.labels.includes(l)).length; return { text: l, n: `${c} of ${runs.length}`, on: c === runs.length }; })] }]; },
-      pick: (k, l) => { const on = runs.every((r) => r.labels.includes(l)); runs.forEach((r) => { r.labels = on ? r.labels.filter((x) => x !== l) : [...new Set([...r.labels, l])]; }); ctl.state.pop.q = ''; const i = root.querySelector('#list-pop-q'); if (i) i.value = ''; ctl.paint(); say(`${on ? 'Removed' : 'Added'} ${l} ${on ? 'from' : 'to'} ${plural(runs.length, 'task')}`, undoTo(snap, pick, 'Puts the labels back')); } });
+      pick: (k, l) => { const on = runs.every((r) => r.labels.includes(l));
+        if (W.live && T()) { T().list('label-bulk', { ids: runs.map((r) => r.id), ...(on ? { remove: [l] } : { add: [l] }) }).then((res) => { if (res?.ok) say(`${on ? 'Removed' : 'Added'} ${l} ${on ? 'from' : 'to'} ${plural(runs.length, 'task')}`); }); return; } runs.forEach((r) => { r.labels = on ? r.labels.filter((x) => x !== l) : [...new Set([...r.labels, l])]; }); ctl.state.pop.q = ''; const i = root.querySelector('#list-pop-q'); if (i) i.value = ''; ctl.paint(); say(`${on ? 'Removed' : 'Added'} ${l} ${on ? 'from' : 'to'} ${plural(runs.length, 'task')}`, undoTo(snap, pick, 'Puts the labels back')); } });
   }
   const userGroups = () => [...data.userGroups, ...data.groups.filter((g) => g.kind === 'user').map((g) => ({ id: g.id, title: g.title }))];
   function openGroups(rows, anchor) {
@@ -211,6 +231,14 @@
   }
   const makeGroup = (title) => { const g = { id: `g-${Date.now().toString(36)}`, title }; data.userGroups.push(g); return g; };
   function place(runs, ug, snap, pick, quiet) {
+    if (W.live && T()) {   // D17: dev's run groups; a group made here is new on the server too
+      const fresh = !data.groups.some((g) => g.id === ug.id) && /^g-/.test(ug.id);
+      data.userGroups = data.userGroups.filter((g) => g.id !== ug.id || !fresh);
+      T().list(fresh ? 'new-group' : 'add-to-group', { ids: runs.map((r) => r.id), groupId: ug.id, title: ug.title }).then((res) => {
+        if (res?.ok) say(`Added ${plural(runs.length, 'task')} to ${ug.title}`, res.data?.undo ? { tip: 'Takes them out again', run: () => T().list('undo-group', { token: res.data.undo }) } : undefined);
+      });
+      ctl.closePicker?.(); return;
+    }
     if (!data.groups.some((g) => g.id === ug.id)) data.groups.push({ id: ug.id, kind: 'user', case: 'group-working', title: ug.title, project: runs[0].project, time: runs[0].time, day: runs[0].day, cost: null });
     data.userGroups = data.userGroups.filter((g) => g.id !== ug.id);
     runs.forEach((r) => { r.group = ug.id; r.adhoc = true; });
@@ -223,18 +251,18 @@
     if (x.m) { if (has('advanced')) window.RailShell.openSchedule(x.m.id.replace(/^sch-/, '')); else filterTo(x.m.project); return; }
     // live: only the adapter writes the store (D8), so opening goes through it
     if (x.r) { if (W.live) window.RailAdapter.seenRun(x.r.id); else x.r.unread = false; openId = x.r.id; }
-    window.RailShell.openRun(`run/${x.g ? x.g.case : openCase(x.r)}`, x.g ? x.g.title : x.r.title, x.g ? window.RailWorld.membersOf(x.g)[0]?.id : x.r.id);   // the task itself, so its own chat opens
+    window.RailShell.openRun(`run/${x.g ? (W.live ? `group:${x.g.id}` : x.g.case) : openCase(x.r)}`, x.g ? x.g.title : x.r.title, x.g ? window.RailWorld.membersOf(x.g)[0]?.id : x.r.id);   // the task itself, so its own chat opens
   }
 
   const centers = () => window.RailCenters?.paint();   // the page beside this list reads the same project
   ctl = R.listController({ root, spec: {
     noun: 'tasks', label: 'Selected tasks',
     tool: (v) => { if (v === 'reset') { view = { ...FRESH }; store.set(view); centers(); say('View reset'); } },
-    view: () => ({ state: listCase === 'loading' ? (ctl?.state.waited ? 'loading' : 'waiting') : ['offline', 'failed'].includes(listCase) ? listCase : 'ready', parts: parts(), tools: [...(W.live ? [] : [{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick tasks to act on several at once' }]), R.resetViewTool({ changed: !(view.show === FRESH.show && view.from === FRESH.from && !view.day && !view.range && !view.person && view.by === FRESH.by && !view.labels.length && !view.workflow && !view.schedule), to: 'all tasks, from all projects, by date' }), { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
-      sections: sections(), empty: listCase === 'empty' ? { text: 'No tasks yet.', action: 'Start a task' } : { text: view.from !== 'all' || view.day || view.range || view.person || view.labels.length || view.workflow || view.schedule ? 'No tasks in this view.' : EMPTY[view.show] || 'No tasks yet.', action: 'Show all tasks' } }),
-    // D25: in the live kind stop, archive, group, delete and their Undo are the Tasks slice's: no selection, rows still open
-    can: () => (W.live ? ['fold'] : ['menu', 'fold', 'stop', 'archive', ...(has('advanced') ? ['group', 'delete'] : [])]),
-    bulk: (rows) => (W.live ? [] : bulkActions(rows)), act, open: openThing,
+    view: () => ({ state: listCase === 'loading' ? (ctl?.state.waited ? 'loading' : 'waiting') : ['offline', 'failed'].includes(listCase) ? listCase : 'ready', parts: parts(), tools: [...([{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick tasks to act on several at once' }]), R.resetViewTool({ changed: !(view.show === FRESH.show && view.from === FRESH.from && !view.day && !view.range && !view.person && view.by === FRESH.by && !view.labels.length && !view.workflow && !view.schedule), to: 'all tasks, from all projects, by date' }), { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
+      sections: sections(), empty: noTasks() ? { text: 'No tasks yet.', action: 'Start a task' } : { text: view.from !== 'all' || view.day || view.range || view.person || view.labels.length || view.workflow || view.schedule ? 'No tasks in this view.' : EMPTY[view.show] || 'No tasks yet.', action: 'Show all tasks' } }),
+    // Tasks D17: the same menu, keys and bulk bar in both kinds; the live kind's act calls dev's routes
+    can: () => ['menu', 'fold', 'stop', 'archive', ...(has('advanced') ? ['group', 'delete'] : [])],
+    bulk: (rows) => bulkActions(rows), act, open: openThing,
     openRound: (row, n2) => { const rd = row._x.r.rounds.list.find((x) => x.n === n2); window.RailShell.openRun(`run/${rd.case}`, `${row._x.r.title} · Round ${n2}`); },
     word: (id, v) => {
       if (id === 'labels') { if (!v) { view.labels = []; return false; } view.labels = view.labels.includes(v) ? view.labels.filter((l) => l !== v) : [...view.labels, v]; store.set(view); return view.labels.length > 0; }
@@ -242,9 +270,11 @@
       view = { ...view, [id]: v }; store.set(view); centers(); return false;
     },
     say, active: () => !root.closest('[hidden]') && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #app .nav-fly'),
-    retry: () => { if (W.live) window.RailAdapter.retry(); else setCase('full'); }, emptyAct: () => { if (listCase === 'empty') return; view = { ...FRESH }; store.set(view); ctl.clear(); ctl.paint(); centers(); },
+    retry: () => { if (W.live) window.RailAdapter.retry(); else setCase('full'); }, emptyAct: () => { if (noTasks()) { if (W.live) window.RailConversation?.start?.('task'); return; }   /* D12c: Start a task hands over to Chat */ view = { ...FRESH }; store.set(view); ctl.clear(); ctl.paint(); centers(); },
   } });
 
+  // no task at all: the demo's ?state=empty, or a live store whose load answered with none (the adapter keeps the list '')
+  const noTasks = () => listCase === 'empty' || (W.live && listCase === 'full' && !data.runs.length);
   function setCase(c) {
     listCase = c; data = c === 'empty' ? { groups: [], runs: [], userGroups: [] } : M.seed(); ctl.clear();
     ctl.state.waited = false;
@@ -274,6 +304,8 @@
     },
     dateOf: dateKey,   // the date a row belongs to: Figures' week counts the real days
     focus: () => ctl.focusRow(),
+    // arriving from another page (a gone task's Tasks button): focus lands in the list, on its empty state's action when it has no row
+    focusList: () => { ctl.focusList(); if (!root.contains(document.activeElement)) root.querySelector('[data-empty]')?.focus(); },
     // from the search: the runs with this label
     label: (l) => { view = { ...view, labels: [l], show: 'all', from: 'all', day: '', person: '' }; store.set(view); ctl.clear(); ctl.paint(); },
     // from another page: opens Tasks narrowed; the sentence says it and you can widen it there. project: a project's name, day: an id of M.DAYS (today, yesterday, week, month, older, upcoming), show: a SHOWS id, range: { from, to, label } as month*100+day

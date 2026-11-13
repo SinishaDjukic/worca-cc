@@ -77,3 +77,34 @@ export const THREAD = {
   runLinks: [{ threadId: 'ask_1', runId: 'run-a', pipelineId: 'pa', cardId: 'card_run' }],
   inFlight: null,
 };
+
+// ---- Stillhet Tasks (slice 5): one dev history detail per task state the page and the card draw. Each is
+// { row: the store's task, state: GET /api/history/:key/:id `state`, checks: GET /api/pr/checks }. Not in SOURCES, so the
+// host tests that serve SOURCES keep their own answers.
+const branch = (feature, source = 'dev') => ({ source, feature, branchKept: true });
+const step = (agentKey, status, extra = {}) => ({ key: agentKey, nodeId: `n_${agentKey}`, agentKey, status, costUsd: 0.5, activeMs: 120000, ...extra });
+const done3 = [step('planner', 'done'), step('implementer', 'done'), step('reviewer', 'done')];
+export const PR_URL = 'https://github.com/acme/web/pull/959';
+export const TASK_DETAILS = {
+  failed: { row: { id: 'h3', case: 'failed', title: 'Broke', detail: 'Failed', cost: 0.4, pr: '' },
+    state: { id: 'h3', title: 'Broke', status: 'error', projectKey: 'web-1', projectDir: '/src/web', branch: branch('chore/node-24'), totalCostUsd: 4.2, totalActiveMs: 31 * 60000,
+      startedAt: at(7), prompt: 'Update Node to 24', stepper: { template: { id: 'wf_default' } }, guardrailsId: 'g1', runEngine: 'claude', labels: ['infra'], tags: [{ key: 'team', value: 'web' }],
+      steps: [step('planner', 'done'), step('implementer', 'error', { error: '3 tests failed\n✗ test/a.test.mjs: timeout\n✗ test/b.test.mjs: expected 2\n✗ test/c.test.mjs: ENOENT' })] } },
+  approved: { row: { id: 'h2', case: 'checks', title: 'Shipped', detail: 'Finished', cost: 1.1, pr: PR_URL },
+    state: { id: 'h2', title: 'Shipped', status: 'done', projectKey: 'api-2', projectDir: '/src/api', branch: branch('feat/audit-log-pager'), totalCostUsd: 1.1, totalActiveMs: 600000, steps: done3,
+      pr: { url: PR_URL, state: 'OPEN' } },
+    checks: { checks: { state: 'passing', total: 12, failed: 0, pending: 0, skipped: 0, inherited: 0 }, mergeable: 'MERGEABLE', base: 'dev',
+      reviews: [{ by: 'maya', state: 'APPROVED' }], status: { tone: 'ok', label: 'Ready to merge', detail: 'All 12 checks passed' }, watch: { watching: false, status: null } } },
+  failing: { row: { id: 'h5', case: 'checks', title: 'Red CI', detail: 'Finished', cost: 0.9, pr: PR_URL },
+    state: { id: 'h5', title: 'Red CI', status: 'done', branch: branch('feat/red'), totalCostUsd: 0.9, totalActiveMs: 300000, steps: done3, pr: { url: PR_URL, state: 'OPEN' } },
+    checks: { checks: { state: 'failing', total: 5, failed: 2, pending: 0, skipped: 0, inherited: 0 }, mergeable: 'MERGEABLE', base: 'dev', reviews: [], watch: { watching: true, status: 'watching' } } },
+  capped: { row: { id: 'h1', case: 'capped', title: 'Old pause', detail: 'Paused', cost: 2.5, pr: '' },
+    state: { id: 'h1', title: 'Old pause', status: 'paused', pauseReason: 'cost_pipeline', branch: branch('feat/big'), totalCostUsd: 2.5, totalActiveMs: 900000, costCapUsd: null, pipelineCapUsd: 2,
+      steps: [step('planner', 'done'), step('implementer', 'paused')] } },
+  plan: { row: { id: 'run-a', case: 'plan', title: 'Ask me', detail: 'Approve the plan', cost: 1, pr: '' },
+    state: { id: 'pa', title: 'Ask me', status: 'running', branch: branch('feat/ask'), totalCostUsd: 1, totalActiveMs: 120000, steps: [step('planner', 'running')],
+      pendingQuestion: { id: 'q-plan', kind: 'plan' } } },
+  stopped: { row: { id: 'h6', case: 'stopped', title: 'Halted', detail: 'Stopped', cost: 0.3, pr: '' },
+    state: { id: 'h6', title: 'Halted', status: 'stopped', branch: branch('feat/halt'), totalCostUsd: 0.3, totalActiveMs: 60000, steps: [step('planner', 'done'), step('implementer', 'stopped')] } },
+};
+export const TASK_GROUP = { id: 'g-nav', name: 'Navigation', members: ['h2', 'h5', 'h3'] };

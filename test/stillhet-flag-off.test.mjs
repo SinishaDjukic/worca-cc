@@ -1,5 +1,5 @@
 // test/stillhet-flag-off.test.mjs — with `rail` off (stored or locked) GET / is dev's page, byte for byte; with it on the
-// server sends the Stillhet shell. The golden was taken from the merged base 3a86860b8 (dev 01d80e338) with its own code:
+// server sends the Stillhet shell. The golden was taken from the merged base (dev 544cdc6a7, Tasks slice) with its own code:
 // `git archive` of that commit, a fresh HOME (welcomeSeen only), WORCA_FLAGS unset, git usable, mock mode; the body
 // hashed as served. Re-merging dev recaptures it from dev's own files, before this slice's changes.
 import { test } from 'node:test';

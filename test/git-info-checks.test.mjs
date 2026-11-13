@@ -34,13 +34,15 @@ test('ghPrChecks: one gh pr view for checks and mergeability; null on gh failure
   gitInfo.setRunner(async (cmd, args, opts) => {
     calls.push({ cmd, args, opts });
     return ok(JSON.stringify({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY', reviewDecision: '', isDraft: false,
-      statusCheckRollup: [run('COMPLETED', 'SUCCESS')] }));
+      statusCheckRollup: [run('COMPLETED', 'SUCCESS')], latestReviews: [{ author: { login: 'maya' }, state: 'APPROVED' }, { state: 'COMMENTED' }],
+      headRefOid: 'abc123' }));
   });
   assert.deepEqual(await ghPrChecks({ projectDir: '/p', prUrl: PR }),
     { checks: { state: 'passing', total: 1, failed: 0, pending: 0, skipped: 0, inherited: 0 }, mergeable: 'CONFLICTING', base: null,
+      reviews: [{ by: 'maya', state: 'APPROVED' }], headSha: 'abc123',
       status: { tone: 'bad', label: 'Merge conflicts', detail: 'Check passed' } });
   const gh = calls.filter((c) => c.cmd === 'gh' && c.args[0] === 'pr');
-  assert.deepEqual(gh.map((c) => c.args), [['pr', 'view', PR, '--json', 'mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup']]);
+  assert.deepEqual(gh.map((c) => c.args), [['pr', 'view', PR, '--json', 'mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,latestReviews,headRefOid']]);
   assert.equal(gh[0].opts.cwd, '/p');
 
   gitInfo.setRunner(async () => ({ ok: false, code: 1, stdout: '', stderr: 'boom' }));

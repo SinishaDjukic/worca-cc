@@ -10,7 +10,7 @@
   // A non-default state asked for by the address (?state=NAME), so both hosts can open it cold: what the lists show (the
   // tools panel's Lists) and what the connection does (its Connection). A demo-adapter input only; a live adapter ignores it.
   const STATE = !LIVE && typeof location !== 'undefined' ? new URLSearchParams(location.search).get('state') || '' : '';
-  window.RailDemoState = LIVE ? { list: 'loading', conn: '' } : { list: { loading: 'loading', empty: 'empty', offline: 'offline', failed: 'failed', 'refresh-failed': 'refresh' }[STATE] || '', conn: { 'connection-lost': 'offline', 'session-expired': 'session' }[STATE] || '', thread: { 'thread-loading': 'loading', 'thread-failed': 'failed', 'thread-gone': 'gone' }[STATE] || '' };   // fail.chat-thread: an open chat's own state
+  window.RailDemoState = LIVE ? { list: 'loading', conn: '' } : { list: { loading: 'loading', empty: 'empty', offline: 'offline', failed: 'failed', 'refresh-failed': 'refresh' }[STATE] || '', conn: { 'connection-lost': 'offline', 'session-expired': 'session' }[STATE] || '', thread: { 'thread-loading': 'loading', 'thread-failed': 'failed', 'thread-gone': 'gone' }[STATE] || '', task: { 'task-loading': 'loading', 'task-failed': 'failed', 'task-gone': 'gone' }[STATE] || '' };   // fail.chat-thread: an open chat's own state; fail.task-page: an open task's
   const WORKFLOW_OF = { r2: 'Security-first review', r9: 'Security-first review', r5: 'Quick Fix', r7: 'Quick Fix', r12: 'Full', m1: 'API rewrite', m2: 'API rewrite', m3: 'API rewrite' };   // the Tasks center's by workflow
   const run = (id, kase, title, project, detail, time, day, o = {}) => ({ id, case: kase, title, project, detail, time, day, labels: [], cost: null, archived: false, unread: false, pr: '', group: '', kind: 'Git', by: 'Emil Angelov', workflow: WORKFLOW_OF[id] || 'Default', ...o });
   // not started yet: `when` is its group in Vitals › Scheduled
@@ -163,7 +163,7 @@
   const groupSection = (g) => (membersOf(g).filter((m) => !m.archived).some(raises) ? 'needs' : R.sectionOf(R.runState(RM.stateOf(g.case)).word, RM.stateOf(g.case)));
   // What the list shows at its top level: a run, or a group as one row. Vitals reads the same rows, so the counts agree.
   function tops() {
-    const out = data.runs.filter((r) => !r.group && !r.archived).map((r) => ({ ...r, state: stateOf(r), section: section(r), when: r.when || (section(r) === 'scheduled' ? 'paused' : undefined) }));   // a paused run with no time of its own: Vitals's Paused, so its count equals its rows
+    const out = data.runs.filter((r) => !r.group && !r.archived && !r.roundOf).map((r) => ({ ...r, state: stateOf(r), section: section(r), when: r.when || (section(r) === 'scheduled' ? 'paused' : undefined) }));   // a paused run with no time of its own: Vitals's Paused, so its count equals its rows
     for (const g of data.groups) {
       const ms = membersOf(g); if (!ms.length || ms.every((m) => m.archived)) continue;
       const sec = groupSection(g), needy = ms.find(raises), own = RM.stateOf(g.case);

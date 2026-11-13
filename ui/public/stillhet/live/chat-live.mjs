@@ -14,9 +14,10 @@ const str = (v) => (typeof v === 'string' ? v : '');
 const arr = (v) => (Array.isArray(v) ? v : []);
 
 /** POST /api/pr's body for a run card's Create PR or Ship (ui/routes/history/pull-requests.mjs reads these keys). The
- *  route needs the run's scope: its store key, else its project folder. */
-export function prBodyOf({ pipelineId, title, body, draft, threadId, cardId, projectKey, projectDir } = {}) {
-  return { id: str(pipelineId), title: str(title), ...(body ? { body: str(body) } : {}), ...(draft ? { draft: true } : {}), ...(threadId && cardId ? { askThreadId: threadId, askCardId: cardId } : {}), ...(str(projectKey) ? { projectKey } : str(projectDir) ? { projectDir } : {}) };
+ *  route needs the run's scope: its store key, else its project folder. The task page's Create PR dialog adds its base
+ *  branch and its Watch box. */
+export function prBodyOf({ pipelineId, title, body, draft, watch, base, threadId, cardId, projectKey, projectDir } = {}) {
+  return { id: str(pipelineId), title: str(title), ...(body ? { body: str(body) } : {}), ...(draft ? { draft: true } : {}), ...(watch ? { watch: true } : {}), ...(str(base) ? { baseBranch: str(base) } : {}), ...(threadId && cardId ? { askThreadId: threadId, askCardId: cardId } : {}), ...(str(projectKey) ? { projectKey } : str(projectDir) ? { projectDir } : {}) };
 }
 /** A run's changes as a patch: a folder run's copy diff (GET …/changes/patch, folder-only), else dev's recovery-patch
  *  (the retained work, else the run's diff) scoped as app.js runActionQuery scopes it. */
@@ -130,15 +131,12 @@ export function openTab(u) {
   return w;
 }
 
-/** `doc`-free: the page's toast and clock come in. `send(msg)` writes a socket message; `tasksOf(threadId)` is the chat's
- *  tasks (live-map.mjs chatOf), so a run card names its store task. */
-export function startChatLive({ fetch, send = () => {}, toast = () => {}, now = Date.now, tasksOf = () => [], clipboard = null, open: openUrl = openTab, go = () => {}, progressOf = () => ({}), askOf = () => null } = {}) {
-  const threads = new Map(), fns = new Set(), pending = new Set();
-  const term = createTerminalLive({ fetch, send, now });   // D14: a command's TerminalPane
-  let spare = '';   // D10: a new chat whose first message was refused and whose cleanup DELETE failed; the retry reuses it
-  const notify = (id) => { for (const fn of fns) { try { fn(id); } catch (e) { console.error(e); } } };
-  const entry = (id) => { if (!threads.has(id)) threads.set(id, { state: '', model: null, buffer: [], loading: null, reloading: false, hidden: new Set() }); return threads.get(id); };
-
+/** D13: the one action path Chat and Tasks share. `request` answers `{ok, data}` or `{ok:false, status?, error, code?}`
+ *  (a network failure too); `refuse(words, res)` says `Could not WORDS: REASON` once, unless the caller says it itself
+ *  (`quiet`); `keyOf` names a control while it is pending; `run(key, words, fn)` refuses a second press and holds the
+ *  key until `fn` settles. Nothing is written by the runner: callers write only after `ok`. */
+export function actionRunner({ fetch, toast = () => {}, notify = () => {} } = {}) {
+  const pending = new Set();
   async function request(method, url, body) {
     let r;
     try { r = await fetch(url, { method, headers: { Accept: 'application/json', ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) }); }
@@ -146,8 +144,29 @@ export function startChatLive({ fetch, send = () => {}, toast = () => {}, now = 
     let data = null; try { data = await r.json(); } catch { data = null; }
     return r.ok ? { ok: true, data } : { ok: false, status: r.status, error: str(data?.error) || `HTTP ${r.status}`, ...(data?.code ? { code: data.code, data } : {}) };
   }
-  // a bulk action says one sentence for all its calls (chats-column.js): `quiet` is that call's own, never shared
   const refuse = (words, res, quiet = false) => { if (!quiet) toast(`Could not ${words}: ${res.error}`); return res; };
+  const keyOf = (id, args = {}) => args.key || `${id}:${args.cardId || args.threadId || args.runId || args.pipelineId || args.sessionId || 'new'}`;
+  async function run(key, words, fn, { quiet = false, scope = '' } = {}) {
+    if (pending.has(key)) return refuse(words, { ok: false, error: 'it is already on its way' }, quiet);
+    pending.add(key); notify(scope);
+    try { return await fn(); } finally { pending.delete(key); notify(scope); }
+  }
+  return { request, refuse, keyOf, run, pending };
+}
+
+/** `doc`-free: the page's toast and clock come in. `send(msg)` writes a socket message; `tasksOf(threadId)` is the chat's
+ *  tasks (live-map.mjs chatOf), so a run card names its store task. */
+export function startChatLive({ fetch, send = () => {}, toast = () => {}, now = Date.now, tasksOf = () => [], clipboard = null, open: openUrl = openTab, go = () => {}, progressOf = () => ({}), askOf = () => null } = {}) {
+  const threads = new Map(), fns = new Set();
+  const term = createTerminalLive({ fetch, send, now });   // D14: a command's TerminalPane
+  let spare = '';   // D10: a new chat whose first message was refused and whose cleanup DELETE failed; the retry reuses it
+  const notify = (id) => { for (const fn of fns) { try { fn(id); } catch (e) { console.error(e); } } };
+  const entry = (id) => { if (!threads.has(id)) threads.set(id, { state: '', model: null, buffer: [], loading: null, reloading: false, hidden: new Set() }); return threads.get(id); };
+
+  // D13: the pending keys, the request and the refusal are the shared runner's (Tasks uses the same one)
+  // a bulk action says one sentence for all its calls (chats-column.js): `quiet` is that call's own, never shared
+  const runner = actionRunner({ fetch, toast, notify: (id) => notify(id) });
+  const { request, refuse, keyOf, pending } = runner;
 
   // `stale`: a reconnect starts a newer read while one is out; each read carries its generation and only the newest one
   // writes the model, the state and `reloading`, and drains the buffer
@@ -299,9 +318,7 @@ export function startChatLive({ fetch, send = () => {}, toast = () => {}, now = 
     return res;
   }
 
-  /** The key a control is pending under: its own, or the action and the card or chat it acts on, so two chats (or the
-   *  dock and the composer) never share one. */
-  const keyOf = (id, args = {}) => args.key || `${id}:${args.cardId || args.threadId || args.runId || args.pipelineId || args.sessionId || 'new'}`;
+  // keyOf (the runner's): the key a control is pending under, its own or the action and the card or chat it acts on.
   /** One Chat action (Step 7): a Promise of `{ok, error?, data?}`. `args.key` names the control while it is pending. */
   async function act(id, args = {}) {
     const key = keyOf(id, args), q = !!args.quiet;

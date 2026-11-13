@@ -265,10 +265,25 @@
     // live: a chat the bar has not listed (just made, or past its first page) is read by the conversation, which says when it is gone
     if (kind === 'chat') return window.RailWorld?.live || (window.RailChats?.data().chats || []).some((c) => c.id === arg) ? null : { what: 'chat', name: arg, back: 'Chat', to: 'chat' };
     if (kind === 'schedule') return window.RailSchedules?.find(arg) ? null : { what: 'schedule', name: arg, back: 'Chat', to: 'chat' };
-    if (kind === 'run') { try { RM.stateOf(arg); return null; } catch { return { lost: true, what: 'task', name: arg, back: 'Chat', to: 'chat' }; } }
+    if (kind === 'run') { if (LIVE) return null; try { RM.stateOf(arg); return null; } catch { return { lost: true, what: 'task', name: arg, back: 'Chat', to: 'chat' }; } }   // live: RailTaskLive says when a task is gone (D15)
     if (kind === 'settings') return window.RailPulse?.hasSection?.(arg) !== false ? null : { lost: true, what: 'setting', name: arg, back: 'Settings', to: 'settings' };
     const has = placeMod(kind)?.has; return !has || has(arg) ? null : { what: arg.startsWith('ws:') ? 'workspace' : NOUNS[kind] || 'page', name: arg.replace(/^[a-z]+:/, ''), back: TITLES[kind], to: kind };
   }
+  // The live task page's look (D15): RailTaskLive's state for the id, opening it the first time it is asked for.
+  let shownTask = '', openedTask = '', taskWired = false, retryFocus = '';   // retryFocus: the task whose Try again was pressed
+  function liveTaskState(id) {
+    const T = window.RailTaskLive;
+    if (!T || !id) return 'loading';
+    if (!taskWired) { taskWired = true; T.onChange((x) => { if (routed.view === 'run' && (!x || x === routed.arg) && T.state(routed.arg) !== taskLook) route(); }); }
+    const st = T.state(id);
+    // opened once per visit, and again while it waits on the list's first load; a failed or gone look stays until Try again
+    // the look is recorded first: a listener told synchronously by open() of the same state does not route again
+    taskLook = st;
+    if (id !== openedTask || st === 'loading') { openedTask = id; T.open(id); }
+    if (st !== 'ready') shownTask = '';
+    return st;
+  }
+  let taskLook = '';
   function route() {
     // dev's old addresses land on their places (old-addresses.js); in place, so Back does not loop
     const moved = window.RailOldAddresses?.resolve(location.hash);
@@ -280,13 +295,16 @@
     homeOpen = homeNext; homeNext = false;
     const pane = { today: document.getElementById('route-today'), chat: document.getElementById('route-chat'), schedule: document.getElementById('route-schedule'), place: document.getElementById('route-place'), run: document.getElementById('route-run'), settings: document.getElementById('route-settings'), runs: document.getElementById('route-runs') };
     const lock = !gone && (view === 'schedule' || !!TITLES[view] && view !== 'chat') && lockHere(view, arg);   // nav.locked: every place, by the bar's own data
-    const notLive = LIVE && !gone && !lock && (!!NOT_LIVE[view] || view === 'run');
+    const notLive = LIVE && !gone && !lock && !!NOT_LIVE[view];
+    // the live task page (D1, D15): loading until the list and the task's detail are in, failed with Try again, gone with Tasks
+    const taskState = view === 'run' && !gone && !lock ? (LIVE ? liveTaskState(arg) : window.RailDemoState?.task || 'ready') : 'ready';   // the prototype's ?state=task-… shows the same looks
     const ownPage = !notLive && (!!placeMod(view) || view === 'run' || view === 'settings' || view === 'runs' || view === 'chat' || view === 'schedules' || view === 'schedule');
-    pane.today.hidden = ownPage && !lock; pane.run.hidden = view !== 'run' || notLive; pane.settings.hidden = view !== 'settings';
+    pane.today.hidden = ownPage && !lock && taskState === 'ready'; pane.run.hidden = view !== 'run' || notLive || taskState !== 'ready'; pane.settings.hidden = view !== 'settings';
     pane.runs.hidden = view !== 'runs' || !!lock; pane.chat.hidden = view !== 'chat'; pane.schedule.hidden = !(view === 'schedule' || view === 'schedules') || !!lock; pane.place.hidden = !placeMod(view) || !!lock || notLive;
     document.body.className = view === 'run' ? 'view-run' : view === 'settings' ? 'view-settings' : view === 'runs' ? 'view-runs' : view === 'chat' ? 'view-rail-chat' : view === 'schedule' || view === 'schedules' || placeMod(view) ? 'view-rail-chat' : '';
     if (gone) { for (const p of Object.values(pane)) p.hidden = p !== pane.today; document.body.className = ''; }
-    if (view !== 'run') taskChat = view === 'chat' ? taskChat : '';
+    if (view !== 'run') { taskChat = view === 'chat' ? taskChat : ''; openedTask = ''; shownTask = ''; }
+    if (view !== 'run' || arg !== retryFocus || taskState === 'gone') retryFocus = '';
     routed = { view, arg, locked: !!lock };
     document.getElementById('topnav-title').textContent = pageTitle(view, arg);
     window.RailPulse?.show(view === 'settings' ? 'settings' : 'page', view === 'settings' ? arg || '' : '', view);   // first: it may give the sidebar back
@@ -299,6 +317,14 @@
       document.body.className = '';
       const name = lock.name || TITLES[view] || 'Schedules', need = lock.min ? lock.min[0].toUpperCase() + lock.min.slice(1) : '';
       pane.today.innerHTML = `<div class="rail-locked">${R.emptyState({ title: lock.min ? `${name} needs ${need}` : `${name} is in Labs`, actions: R.button({ label: lock.min ? `Switch to ${need}` : 'Turn on Labs', kind: 'quiet', attrs: { 'data-unlock': lock.min ? 'mode:' + lock.min : 'flag:' + lock.flag, 'data-to': view } }) })}</div>`;
+      scrollTo(0, 0);
+    } else if (taskState !== 'ready') {   // D15: the task page's loading, failed and gone looks (listState)
+      document.body.className = 'view-place';
+      const look = taskState === 'failed' ? R.listState({ state: 'failed', noun: 'task', title: 'Could not load this task', brief: true, retry: { 'data-task-retry': arg, 'data-key': 'task-retry' } })
+        : taskState === 'gone' ? R.listState({ state: 'empty', noun: 'task', text: 'This task no longer exists', action: R.button({ label: 'Tasks', kind: 'quiet', attrs: { 'data-nav': 'runs', 'data-key': 'task-gone-tasks' } }) })
+        : R.listState({ state: 'loading', noun: 'this task' });
+      pane.today.innerHTML = `<div class="rail-locked">${R.placeHead({ title: liveTask.title || 'Task' })}${look}</div>`;
+      if (retryFocus === arg && taskState === 'failed') pane.today.querySelector('[data-task-retry]')?.focus({ preventScroll: true });   // still failing: the new Try again
       scrollTo(0, 0);
     } else if (notLive) {   // D23: its existing empty look; a task opened from a row keeps its live title
       document.body.className = 'view-place';
@@ -325,9 +351,13 @@
     if (view === 'run' && !notLive) {
       window.RailShell.unembedRun();
       const pick = window.RailRunPage?.pick;
-      if (pick && arg && (pick.value !== arg || reopen)) { reopen = false; pick.value = arg; pick.dispatchEvent(new Event('change', { bubbles: true })); }
+      // live: a store change on the task already shown redraws it keeping its own state (an open dialog, a confirm strip)
+      if (LIVE && arg) { if (taskState === 'ready' && (reopen || shownTask !== arg)) { const same = shownTask === arg; reopen = false; shownTask = arg; window.RailRunPage?.openLive(arg, same); }
+        if (taskState === 'ready' && retryFocus === arg) { retryFocus = ''; document.querySelector('#card [data-title]')?.focus({ preventScroll: true }); } }
+      else if (pick && arg && (pick.value !== arg || reopen)) { reopen = false; pick.value = arg; pick.dispatchEvent(new Event('change', { bubbles: true })); }
       if (taskChat) window.RailChats?.show(taskChat); else window.RailRunsList?.show();
-      window.RailConversation?.dock(document.getElementById('task-dock'), { kind: 'task', title: RM?.titles?.[arg] || 'this task', chat: taskChat, warning: R.alertLevel(R.markTone(R.runState(RM.stateOf(arg)))) === 3 });
+      const caseNow = LIVE ? window.RailTaskLive?.detail(arg)?.case || 'working' : RM.stateOf(arg);
+      window.RailConversation?.dock(document.getElementById('task-dock'), { kind: 'task', title: (LIVE ? window.RailTaskLive?.detail(arg)?.title : RM?.titles?.[arg]) || 'this task', chat: taskChat, warning: R.alertLevel(R.markTone(R.runState(RM.stateOf(caseNow)))) === 3 });
       drawTaskParts();
       scrollTo(0, 0);
     }
@@ -376,6 +406,10 @@
   document.addEventListener('click', (e) => {
     const on = (sel) => e.target.closest(sel);
     let hit;
+    // D15: Try again on a task page that could not load; once it draws, focus goes to its heading
+    if ((hit = on('[data-task-retry]')) && !LIVE) { window.RailDemoState.task = ''; route(); document.querySelector('#card [data-title]')?.focus({ preventScroll: true }); return; }
+    // the page or the failed look may be drawn later, by the task's own change (a list read first): route() places the focus
+    if ((hit = on('[data-task-retry]'))) { const id = hit.dataset.taskRetry; retryFocus = id; window.RailTaskLive?.open(id, { force: true }).then(() => { if (retryFocus === id) route(); }); return; }
     if ((hit = on('[data-in-view-drop]'))) { const [type, id] = hit.dataset.inViewDrop.split(':'), x = inViewList.find((y) => y.type === type && y.id === id); if (x) toggleInView(x); return; }
     if ((hit = on('[data-keep-view]'))) { toggleCaseInView(hit.dataset.keepView, document.querySelector('#card [data-title]')?.textContent); return; }
     if ((hit = on('[data-in-view]'))) { inViewMenu = false; const [type, id] = hit.dataset.inView.split(':'), x = inViewList.find((y) => y.type === type && y.id === id), now = x && inViewNow(x); if (now?.task) window.RailShell.openTask(now.task.cs, now.task.chat, now.task.title); else if (x?.type === 'schedule') window.RailShell.openSchedule(x.id); else if (now) window.RailShell.go(now.hash); return; }
@@ -405,7 +439,12 @@
     if (on('#topnav-ask')) { if (routed.view === 'chat') { document.querySelector('#route-chat [data-composer-t]')?.focus(); return; } askOpen = !askOpen; syncAsk(routed.view); return; }   // on Chat it points to the box that asks
     if (on('[data-ask-close]')) { askOpen = false; syncAsk(routed.view); document.getElementById('topnav-ask')?.focus(); return; }
     // a control on a captured page says where it goes
-    if ((hit = on('#route-today [data-nav]'))) { e.preventDefault(); location.hash = hit.dataset.nav; return; }   // a not-yet place's way on
+    if ((hit = on('#route-today [data-nav]'))) {
+      e.preventDefault();
+      // §3: a gone task's Tasks button lands in the Tasks list (after the route has drawn it; the button itself is gone)
+      if (hit.dataset.key === 'task-gone-tasks') addEventListener('hashchange', () => window.RailRunsList?.focusList(), { once: true });
+      location.hash = hit.dataset.nav; return;
+    }   // a not-yet place's way on
     if ((hit = on('#route-today a[href], #route-today button'))) {
       e.preventDefault();
       const name = (hit.getAttribute('aria-label') || hit.textContent).trim().replace(/\s+/g, ' ').slice(0, 40);

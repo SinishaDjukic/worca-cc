@@ -34,6 +34,11 @@ Set limits in Settings › Runs › Budget & cost limits, or with `worca config`
 A per-pipeline cost limit pauses a runaway run before its next step. To lift it for that run, choose *Continue
 without cap (this pipeline)* or run `worca resume <id> --ignore-cost-cap`.
 
+With Stillhet on, a capped task can also *Raise the cap* for that run alone: `POST /api/resume` with `costCapUsd` (a
+number above what the run has spent). The new cap is stored on the run (`pipelines.cost_cap_usd`), replaces any
+*Continue without cap*, and holds every later resume of that run; the total limit and a team cap still apply. A
+*Restart Build* round keeps its run's raised cap; a checks fix does not.
+
 A total cost limit counts pipeline and Chat spend over a window: weekly from Monday, or monthly from the 1st. Once
 the limit is reached, running pipelines pause at their next step, and new runs, resumes and Ask turns are blocked
 until the window resets or you raise the limit.

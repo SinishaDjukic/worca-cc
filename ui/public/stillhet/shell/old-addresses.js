@@ -5,11 +5,14 @@
 // loops. Dev's own router (app.js MOVED_ROUTES) is untouched; with Stillhet off these addresses stay dev's.
 (function () {
   // [old place, new address, what the tail becomes]. The old place matches itself and anything under it (`old/…`).
-  // tail: 'root' drops it; 'ws' carries it as a workspace in Projects; 'way' carries a Workflows way when it has one.
+  // tail: 'root' drops it; 'ws' carries it as a workspace in Projects; 'way' carries a Workflows way when it has one;
+  // 'task' keeps the task id (the first segment, or History's KEY/PID's PID, before any tab): the task page. A History address without
+  // its PID names no task, so it lands on Tasks. 'group' keeps a feature's or group's id: its group page, #run/group:ID (a
+// re-planned feature follows to its newest there, task-live.mjs group); a Run-after chain lands on its first task or Schedules.
   var TABLE = [
     ['stats', 'insights/spend'], ['statistics', 'insights/spend'],
     ['team-metrics', 'insights/team'],
-    ['pipelines', 'runs'], ['running', 'runs'], ['history', 'runs'], ['feature', 'runs'], ['group', 'runs'],
+    ['pipelines', 'runs'], ['running', 'runs', 'task'], ['history', 'runs', 'task'], ['feature', 'runs', 'group'], ['group', 'runs', 'group'],
     ['activity', 'chat', 'root', 'now'],
     ['connectors', 'settings/connectors'], ['settings/mcp', 'settings/connectors'],
     ['models', 'settings/models'], ['providers', 'settings/models'], ['settings/providers', 'settings/models'],
@@ -20,6 +23,7 @@
     ['guardrails', 'settings/guardrails'],
     ['composer', 'workflows'], ['agents', 'workflows', 'way', '', '~agents'], ['scripts', 'workflows', 'way', '', '~scripts'], ['agent-create', 'workflows', 'way', '', '~agents'],
   ];
+  var dec = function (x) { try { return decodeURIComponent(x); } catch (e) { return x; } };
   var workflowsHas = function (a) { var w = typeof window !== 'undefined' && window.RailPlaces && window.RailPlaces.workflows; return !!(w && w.has && w.has(a)); };
 
   /** null, or { hash: '#…', pulse: '' | 'now' }. `has` asks Workflows whether it has a way (default: the page's own). */
@@ -32,6 +36,10 @@
       if (path !== from && path.indexOf(from + '/') !== 0) continue;
       var tail = path.slice(from.length + 1), to = row[1];
       if (row[2] === 'ws' && tail) to += '/ws:' + tail.split('/')[0];
+      var segs = tail.split('/').filter(Boolean);
+      if (row[2] === 'task' && segs.length && (from !== 'history' || segs.length > 1)) to = 'run/' + (from === 'history' ? segs[1] : segs[0]);
+      // dev's #group/ID is a run group, or a Run-after chain keyed by its first run (p:PID) or its ticket (t:ID)
+      if (row[2] === 'group' && segs.length) { var gid = dec(segs[0]); to = /^p:/.test(gid) ? 'run/' + gid.slice(2) : /^t:/.test(gid) ? 'schedules' : 'run/group:' + gid; }
       if (row[2] === 'way' && has(row[4])) to += '/' + row[4];
       return { hash: '#' + to, pulse: row[3] || '' };
     }

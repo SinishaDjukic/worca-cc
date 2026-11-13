@@ -150,11 +150,13 @@ test('a live card\'s ⋯ offers only what dev can do; Archive asks, then posts d
   await go(w, '#chat/ask_1');
   d.querySelector('#route-chat [data-menu="card:pa"]').click(); await settle(5);
   const items = [...d.querySelectorAll('#route-chat [data-menu-pick^="card:pa|"]')].map((e) => e.dataset.menuPick.split('|')[1]);
-  for (const no of ['Report this task', 'Save as preset', 'Run after…', 'Move to group…']) assert.ok(!items.includes(no), `${no} is not offered live`);
+  for (const no of ['Run after…', 'Move to group…']) assert.ok(!items.includes(no), `${no} is not offered live`);
+  assert.ok(items.includes('Save as preset'), 'Tasks: Save as preset is dev\'s run preset (POST /api/pipelines/:id/preset), offered live');
+  assert.ok(items.includes('Report this task'), 'Tasks D21: Report is dev\'s run report, offered live');
   assert.ok(items.includes('Archive') && items.includes('Label…') && items.includes('Start a follow-up'), items.join(', '));
   d.querySelector('#route-chat [data-menu-pick="card:pa|Archive"]').click(); await settle(10);
   d.querySelector('#route-chat [data-card-yes="pa"]').click(); await settle(40);
-  assert.deepEqual(posts(calls), [['POST', '/api/runs/bulk', { action: 'archive', targets: [{ pipelineId: 'pa' }] }]]);
+  assert.deepEqual(posts(calls).filter(([, u]) => u !== '/api/history/pr'), [['POST', '/api/runs/bulk', { action: 'archive', targets: [{ pipelineId: 'pa' }] }]]);
 });
 
 test('Ask for changes under a live card: dev\'s changes route; refused, one toast and the words stay', async () => {

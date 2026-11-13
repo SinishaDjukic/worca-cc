@@ -171,11 +171,13 @@ export function progressOf(p) {
 }
 /** The progress of a run state as the socket's `state` frame carries it. */
 export const progressOfState = (st) => (st && typeof st === 'object' ? progressOf(runProgress(st)) : {});
-export function taskOfRunCard(snap) {
+/** `card`: the task's TaskCard fields from task-live (task-page.mjs taskCardOf: branch, base, case, failure, PR facts), spread
+ *  in so a state is built once (Tasks D3). */
+export function taskOfRunCard(snap, card = {}) {
   if (!snap) return null;
   const p = snap.stageProgress || (snap.run ? runProgress(snap.run) : null), q = progressOf(p);
   const id = str(snap.runId) || str(snap.pipelineId);
-  return { id, run: id, title: str(snap.title) || 'Untitled task', detail: str(p?.text), ...(q.step ? { step: q.step, stage: q.stage } : {}) };
+  return { id, run: id, title: str(snap.title) || 'Untitled task', detail: str(p?.text), ...(q.step ? { step: q.step, stage: q.stage } : {}), ...card };
 }
 
 /** A Shaper plan approval (`pendingQuestion.kind === 'plan'`) as the live PlanCard draws it (panel.plan-folds): `roles` are

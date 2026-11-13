@@ -2,7 +2,14 @@
 // the body of register() was moved verbatim from ui/server.mjs. Edit it here from now on.
 import { DIRECTION_MAX_CHARS } from '../../../src/core/directions.mjs';
 import { engineLocks } from '../../../src/core/engines/readiness.mjs';
-import { actorOf } from '../../../src/core/identity.mjs';
+import { actorOf, byActor } from '../../../src/core/identity.mjs';
+import { appendAuditById, findPipelineRowById, listArtifacts, resolveIndexedArtifactForRow, runEngineOfRow } from '../../../src/core/artifacts.mjs';
+import { readRunCostCap } from '../../../src/core/cost-budget.mjs';
+import { branchExists } from '../../../src/core/git-info.mjs';
+import { FIX_WORKFLOW_ID } from '../../../src/core/pr-watch.mjs';
+import { readRunLabels } from '../../../src/core/run-labels-store.mjs';
+import { readRunTags } from '../../../src/core/run-tags-store.mjs';
+import { nextRound, roundOrigin } from '../../../src/core/shape/rounds.mjs';
 import { readNightDecisions } from '../../../src/core/night/store.mjs';
 import { PLAN_ASK_KIND, planFileOf } from '../../../src/core/shape/run.mjs';
 import { savePlanToCheckout } from '../../../src/core/shape/save.mjs';
@@ -10,10 +17,84 @@ import { StopPausedError } from '../../../src/core/stop-paused.mjs';
 import { engineRefusalFor } from '../../../src/shared/engine-switch.mjs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { PLAN_TEXT_MAX, ResumeError, SETTLED_RUN, answerRun, badRequest, liveRunEntry, pauseRun, postDirection, resumeRun, runs, startRunHandler, stopPausedPipeline, stopRun } from '../../server.mjs';
+import { PLAN_TEXT_MAX, ResumeError, SETTLED_RUN, answerRun, badRequest, emitChanged, invokeStartRun, liveRunEntry, pauseRun, postDirection, prWatcherDeps, projectDirForKey, resumeRun, runs, startRunHandler, stopPausedPipeline, stopRun } from '../../server.mjs';
+
+/** Restart Build (Stillhet): the brief of a run that builds a stopped or failed task's saved plan on its kept branch. */
+const restartBrief = (plan, feature) => [
+  `Restart the Build of this task from its approved plan below, on its kept branch \`${feature}\`.`,
+  'The branch already holds the earlier attempt\'s commits: keep what is right, finish the rest, and run the tests.',
+  '', plan].join('\n');
+const restartRefusal = (res, status, code, error) => res.status(status).json({ error, code });
+/** Pause after this step (Stillhet): the run keeps going until no step is in flight, then pauses as pauseRun does. */
+function pauseAfterStepRun(runId, by = 'local') {
+  const entry = runs.get(runId);
+  const ok = typeof entry?.orch?.pauseAfterStep === 'function' ? entry.orch.pauseAfterStep(by || 'local') : false;
+  if (ok === 'already') throw Object.assign(new Error('a pause after this step is already on its way'), { code: 'ALREADY_PAUSING' });
+  if (!ok) throw Object.assign(new Error('cannot pause in the current state'), { code: 'CANNOT_PAUSE' });
+  entry.lastAction = { kind: 'pause', by: by || 'local', at: new Date().toISOString() };
+}
+/** Restart Build presses in flight, by round origin: a second press answers RESTART_BUSY until the first has started. */
+const restarting = new Set();
+const mockOfRow = (row) => { try { return JSON.parse(row.resume_point || 'null')?.mock === true; } catch { return false; } };
 
 export function register(app) {
 app.post('/api/run', startRunHandler);
+
+// POST /api/runs/:id/restart-build (id = the pipeline id) -> { runId, pipelineId }: a stopped or failed task's Build again,
+// as a new round on its kept branch (plans/rail/task-engine-additions.md). A paused task resumes instead (POST /api/resume).
+app.post('/api/runs/:id/restart-build', async (req, res) => {
+  let lock = null;
+  try {
+    const row = findPipelineRowById(req.params.id);
+    if (!row || row.archived_at) return res.status(404).json({ error: 'pipeline not found' });
+    if (row.status !== 'stopped' && row.status !== 'error') {
+      return restartRefusal(res, 409, 'NOT_STOPPED', 'Only a stopped or failed task can restart Build; a paused one resumes.');
+    }
+    if (row.target === 'workspace' || row.workspace_key) {
+      return restartRefusal(res, 409, 'WORKSPACE', 'Restart Build is not offered for a workspace task yet.');
+    }
+    // One restart per task at a time: reserved before the first await, released once the run has started (or refused).
+    const origin = roundOrigin(row.id);
+    if (restarting.has(origin)) return restartRefusal(res, 409, 'RESTART_BUSY', 'Build is already restarting for this task.');
+    restarting.add(origin); lock = origin;
+    const planArt = (await listArtifacts(row.id)).filter((a) => a.kind === 'plan').at(-1);
+    const plan = planArt ? await resolveIndexedArtifactForRow(row, planArt.relPath) : null;
+    if (!plan?.text?.trim()) return restartRefusal(res, 409, 'NO_PLAN', 'This task has no saved plan to build from.');
+    let branch = null; try { branch = JSON.parse(row.branch || 'null'); } catch { /* none */ }
+    const projectDir = await projectDirForKey(row.project_key);
+    if (!projectDir || !branch?.feature || !(await branchExists(projectDir, branch.feature))) {
+      return restartRefusal(res, 409, 'NO_BRANCH', 'This task\'s branch is gone, so Build cannot restart on it.');
+    }
+    // A run already on the branch (an earlier restart round, a PR fix run) holds it: a second start would fight over it.
+    if (prWatcherDeps.liveOnBranch({ projectDir, branch: branch.feature })) {   // dev's rule: live, paused, finishing, or a terminal resolve
+      return restartRefusal(res, 409, 'BUSY', 'Another run is working on this task\'s branch; wait for it to finish.');
+    }
+    const tags = readRunTags(row.id); const labels = readRunLabels(row.id);
+    const body = {
+      projectDir,
+      title: `Restart Build: ${row.title || branch.feature}`.slice(0, 200),
+      prompt: restartBrief(plan.text, branch.feature),
+      workflowId: FIX_WORKFLOW_ID,
+      humanInLoop: false,
+      ...(branch.source ? { sourceBranch: branch.source } : {}),
+      featureBranch: branch.feature,
+      syncBeforeStart: false,
+      ...(row.guardrails_id ? { guardrailsId: row.guardrails_id } : {}),
+      engine: runEngineOfRow(row),
+      ...(mockOfRow(row) ? { mock: true } : {}),
+      ...(tags.length ? { tags } : {}),
+      ...(labels.length ? { labels } : {}),
+    };
+    const by = actorOf(req);
+    const out = await invokeStartRun(body, null, { startedBy: by, runCostCapUsd: readRunCostCap(row.id),
+      roundOf: { pipelineId: origin, round: nextRound(origin), request: 'restart Build', by: 'restart' } });
+    if (out.status !== 200 || !out.body?.runId) return res.status(out.status === 200 ? 500 : out.status).json(out.body || { error: 'the run did not start' });
+    appendAuditById(row.id, `Restarted Build on \`${branch.feature}\` as a new round${byActor(by)}.`, { actor: by });
+    emitChanged('pipelines-changed', 'updated');
+    res.json({ runId: out.body.runId, pipelineId: runs.get(out.body.runId)?.pipelineId || null });
+  } catch (err) { if (!res.headersSent) res.status(500).json({ error: err?.message || String(err) }); }
+  finally { if (lock) restarting.delete(lock); }
+});
 
 // ---------------------------------------------------------------------------
 // POST /api/answer  -> resolve a pending question for a run
@@ -166,12 +247,14 @@ app.get('/api/night-decisions', (req, res) => {
 app.get('/api/engine-locks', (req, res) => res.json({ engines: engineLocks() }));
 
 app.post('/api/pause', (req, res) => {
-  const { runId } = req.body || {};
+  const { runId, afterStep } = req.body || {};
   if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
   try {
-    pauseRun(runId, actorOf(req));
+    if (afterStep === true) pauseAfterStepRun(runId, actorOf(req));   // Pause after this step (Stillhet)
+    else pauseRun(runId, actorOf(req));
     res.json({ ok: true });
   } catch (err) {
+    if (err?.code === 'ALREADY_PAUSING') return res.status(409).json({ error: 'A pause after this step is already on its way.', code: 'ALREADY_PAUSING' });
     // `status`: what the run is instead, so a tab whose click lost to another pause keeps its Pausing… quietly.
     if (err?.code === 'CANNOT_PAUSE') return res.status(400).json({ error: err.message, code: 'CANNOT_PAUSE', status: runs.get(runId)?.status || null });
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -197,6 +280,7 @@ app.post('/api/resume', async (req, res) => {
       allowUnguardedEngine: req.body?.allowUnguardedEngine,
       model: req.body?.model,
       effort: req.body?.effort,
+      costCapUsd: req.body?.costCapUsd,
     });
     res.json(out);
   } catch (err) {

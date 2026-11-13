@@ -4,6 +4,7 @@
 // the shapes do not list (live-map.mjs). Every check stays on the server.
 import { snapshotOf, partOf, taskOfLive, unreadOf, inPlay, chatOfRun } from './live-map.mjs';
 import { startChatLive } from './chat-live.mjs';
+import { startTaskLive } from './task-live.mjs';
 import { progressOfState } from './chat-turns.mjs';
 import { workModeOf } from '../../../../src/shared/ask-run-snapshot.mjs';
 
@@ -11,18 +12,19 @@ export const SOURCES = Object.freeze({
   history: '/api/history', threads: '/api/ask/threads?show=all', groups: '/api/ask/groups', schedules: '/api/schedules',
   projects: '/api/projects', sync: '/api/sync/projects', budget: '/api/budget', actions: '/api/actions/running',
   notifications: '/api/notifications', away: '/api/away-mode', settings: '/api/settings', runLinks: '/api/ask/run-links',
+  runGroups: '/api/run-groups',   // Tasks: a group's tasks fold under it in the bar; its page is #run/group:GID
 });
 // A `*-changed` frame re-fetches only its own sources (D11); a chat's turn re-reads the threads.
 const CHANGED = {
   'pipelines-changed': ['history', 'runLinks'], 'ask-run-status': ['runLinks'], 'schedules-changed': ['schedules'], 'notifications-changed': ['notifications'], 'projects-changed': ['projects'],
-  'project-sync-changed': ['sync'], 'budget-changed': ['budget'], 'actions-changed': ['actions'], 'settings-changed': ['settings', 'away'], 'ask-groups-changed': ['groups'], 'ask-labels-changed': ['threads'],
+  'project-sync-changed': ['sync'], 'budget-changed': ['budget'], 'actions-changed': ['actions'], 'settings-changed': ['settings', 'away'], 'ask-groups-changed': ['groups'], 'run-groups-changed': ['runGroups'], 'ask-labels-changed': ['threads'],
   'ask-start': ['threads', 'runLinks'], 'ask-done': ['threads', 'runLinks'], 'ask-error': ['threads'], 'ask-title': ['threads'], 'ask-message': ['threads', 'runLinks'],
 };
 const RUN_FRAMES = new Set(['run-created', 'state', 'question', 'question-resolved', 'done', 'error', 'title']);
 const DEBOUNCE_MS = 250, BACKOFF_MS = 1000, BACKOFF_MAX_MS = 30000, TOKEN_EXPIRED = 4001;
 
 export function startLive({ fetch, WebSocket, location, world, host = {}, setTimeout, clearTimeout = () => {}, now = Date.now, openChat = () => '', hidden = () => false, toast = () => {}, open = undefined, go = () => {} }) {
-  let sources = {}, loaded = false, stopped = false, sock = null, backoff = BACKOFF_MS, reconnect = 0, queue = [], unread = [], asked = 0;
+  let sources = {}, loaded = false, listFailed = false, stopped = false, sock = null, backoff = BACKOFF_MS, reconnect = 0, queue = [], unread = [], asked = 0;
   const live = new Map(), timers = {}, stamp = {}, stale = new Set();
   const progress = new Map();   // R-ux-12: each live run's place among its stages, from its `state` frames (runProgress)
   const projects = () => sources.projects?.projects || [];
@@ -36,6 +38,19 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, setTim
     return { pipelineId: l?.pipelineId || h?.id || id, startedAt: l?.startedAt || h?.startedAt || '', endAt: l ? null : h?.mtime ?? null,
       projectKey: h?.projectKey || l?.projectKey || '', projectDir: h?.projectDir || l?.projectDir || '', folder: workModeOf(h || l) === 'folder' };
   };
+
+  // Tasks (D4): task-live owns every task fetch, the checks cache and the Tasks actions; this adapter only hands it the
+  // runs, the store and the first-load signal, and passes its frames on. It keeps no cache of its own.
+  const str0 = (v) => (typeof v === 'string' ? v : '');
+  const liveRun = (id) => live.get(id) || [...live.values()].find((r) => r.pipelineId === id);
+  const task = startTaskLive({ fetch, now, toast, chat, ...(open ? { open } : {}), runOf: (id) => chat.runOf(id), rowOf: (id) => world.find?.(id) || null,
+    listLoaded: () => loaded, listFailed: () => listFailed, retryList: () => retry(), retryPrs: () => { if (prsFailed) askPrs(); }, projectDirOf: (x) => str0(projects().find((p) => p && (p.key === x || p.name === x))?.path),
+    liveOf: (id) => {
+      const l = liveRun(id); if (!l) return null;
+      return { runId: l.runId, pipelineId: l.pipelineId || '', status: l.status, projectKey: l.projectKey || '', projectDir: l.projectDir || '', pendingQuestion: l.pendingQuestion || null,
+        state: { status: l.status, title: l.title, branch: l.branch || null, steps: l.steps || [], totalCostUsd: l.totalCostUsd, totalActiveMs: l.totalActiveMs, pipelineCapUsd: l.pipelineCapUsd,
+          pauseReason: l.pauseReason, pauseDetail: l.pauseDetail, startedAt: l.startedAt, stepper: l.stepper, ...(l.pauseAfterStep ? { pauseAfterStep: true } : {}) } };
+    } });
 
   async function get(url) {
     const r = await fetch(url, { headers: { Accept: 'application/json' } });
@@ -53,7 +68,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, setTim
   // (app.js requestHistoryPr). Asked once per history load, after the socket is up; a new skeleton carries the PRs
   // already known (app.js carryHistoryPr), so an open PR never reads Ready (Create PR) in between.
   const prs = new Map();
-  let prToken = 0;
+  let prToken = 0, prsFailed = false;   // a failed lookup is asked again by a task page's Try again (retryPrs)
   const prKey = (projectKey, id) => `${projectKey || ''}|${id}`;
   function withPrs(h) {
     if (!h || !Array.isArray(h.pipelines) || !prs.size) return h;
@@ -62,7 +77,8 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, setTim
   function askPrs() {
     if (!sock) return;   // its answer comes as frames: the next hello asks again
     const token = ++prToken;
-    Promise.resolve(fetch('/api/history/pr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) })).catch(() => {});
+    Promise.resolve(fetch('/api/history/pr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) }))
+      .then((r) => { if (token === prToken) prsFailed = !(r && r.ok); }, () => { if (token === prToken) prsFailed = true; });
   }
   function onPrs(f) {
     const items = f.token === prToken && Array.isArray(f.items) ? f.items : [];
@@ -72,13 +88,21 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, setTim
     const h = sources.history;
     if (!h || !Array.isArray(h.pipelines)) return;
     sources = { ...sources, history: { ...h, pipelines: h.pipelines.map((p) => (p && known.has(prKey(p.projectKey, p.id)) ? { ...p, pr: known.get(prKey(p.projectKey, p.id)) } : p)) } };
-    draw(() => partOf('history', sources.history, { ...sources, hello: { runs: [...live.values()] } }, { now: now(), unread }), undefined, { list: 'refresh' });
+    draw(() => partOf('history', sources.history, { ...sources, hello: { runs: [...live.values()] } }, { now: now(), unread, checksOf: task.checks }), undefined, { list: 'refresh' });
   }
   async function fetchAll() {
     const n = ++asked, names = Object.keys(SOURCES), answers = await Promise.all(names.map((x) => get(SOURCES[x])));
     names.forEach((x, i) => keep(x, answers[i], n));
   }
-  const snapshot = () => snapshotOf({ ...sources, hello: { runs: [...live.values()] } }, { now: now(), unread });
+  const snapshot = () => snapshotOf({ ...sources, hello: { runs: [...live.values()] } }, { now: now(), unread, checksOf: task.checks });
+  // A checks entry landed (D5): the rows read their case from it, so the runs part is drawn again (debounced). Only then:
+  // a redraw on every task change would replace the store's parts under a flow that is still on its way.
+  let checksDraw = 0;
+  task.onChecks(() => {
+    if (!loaded || stopped) return;
+    clearTimeout(checksDraw);
+    checksDraw = setTimeout(() => { checksDraw = 0; draw(() => { const x = snapshot(); return { runs: x.runs, groups: x.groups }; }, undefined, { list: 'refresh' }); }, DEBOUNCE_MS);
+  });
   // A load the mapper cannot build fails the list's look (the first load) or marks it out of date (later), never spins.
   function draw(build, state, fail) {
     let parts;
@@ -92,6 +116,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, setTim
     try { await fetchAll(); }
     catch (e) {
       world.setState(e.status === 401 ? { conn: 'session', list: 'failed' } : { list: 'failed' });
+      if (!loaded) { listFailed = true; task.listChanged(); }   // a task page waiting on the first load reads failed (D15)
       return;
     }
     stale.clear();
@@ -122,13 +147,16 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, setTim
     if (!f || typeof f !== 'object') return;
     if (f.type === 'hello') { hello(f); return; }
     if (typeof f.type === 'string' && (f.type.startsWith('ask-') || f.type.startsWith('term-'))) chat.frame(f);
+    task.frame(f);
     if (!loaded) { queue.push(f); return; }
     apply(f);
   }
   let helloSeen = false;
   function firstLoad() {
-    if (!helloSeen || !draw(snapshot, { list: '', conn: '' }, { list: 'failed', conn: '' })) return;
+    if (!helloSeen) return;
+    // loaded before the draw: the world's listeners (a cold #run/ID's route) then open the task on the real path
     loaded = true;
+    if (!draw(snapshot, { list: '', conn: '' }, { list: 'failed', conn: '' })) { loaded = false; return; }
     askPrs();
     const q = queue.map((x, i) => [x, i]).sort((a, b) => ((a[0].seq ?? 0) - (b[0].seq ?? 0)) || a[1] - b[1]).map(([x]) => x);
     queue = [];
@@ -165,9 +193,9 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, setTim
     return gone;
   }
   function place(raw) {
-    if (supersede(raw)) { draw(() => ({ runs: snapshot().runs }), undefined, { list: 'refresh' }); return; }
+    if (supersede(raw)) { draw(() => { const x = snapshot(); return { runs: x.runs, groups: x.groups }; }, undefined, { list: 'refresh' }); return; }
     if (!inPlay(raw) && !world.find(raw.runId)) return;
-    if (raw.pipelineId && raw.pipelineId !== raw.runId && world.find(raw.pipelineId)) { draw(() => ({ runs: snapshot().runs }), undefined, { list: 'refresh' }); return; }
+    if (raw.pipelineId && raw.pipelineId !== raw.runId && world.find(raw.pipelineId)) { draw(() => { const x = snapshot(); return { runs: x.runs, groups: x.groups }; }, undefined, { list: 'refresh' }); return; }
     moveTask(raw);
   }
   function apply(f) {
@@ -176,7 +204,9 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, setTim
       if (f.type === 'run-created') { raw = { ...f, type: undefined }; live.set(f.runId, raw); place(raw); return; }
       if (!raw) return;
       if (f.type === 'state') { const pg = progressOfState(f); if (pg.step) { progress.set(f.runId, pg); if (f.id) progress.set(f.id, pg); } }
-      if (f.type === 'state') Object.assign(raw, { status: f.status ?? raw.status, title: f.title || raw.title, totalCostUsd: f.totalCostUsd ?? raw.totalCostUsd, pauseReason: f.pauseReason ?? null, pauseDetail: f.pauseDetail ?? null, limitEngine: f.limitEngine ?? null, limitResetAt: f.limitResetAt ?? null, pipelineId: f.id || raw.pipelineId });
+      if (f.type === 'state') Object.assign(raw, { status: f.status ?? raw.status, title: f.title || raw.title, totalCostUsd: f.totalCostUsd ?? raw.totalCostUsd, pauseReason: f.pauseReason ?? null, pauseDetail: f.pauseDetail ?? null, limitEngine: f.limitEngine ?? null, limitResetAt: f.limitResetAt ?? null, pipelineId: f.id || raw.pipelineId,
+        branch: f.branch ?? raw.branch, steps: Array.isArray(f.steps) ? f.steps : raw.steps, totalActiveMs: f.totalActiveMs ?? raw.totalActiveMs, pipelineCapUsd: f.pipelineCapUsd ?? raw.pipelineCapUsd, pauseAfterStep: f.pauseAfterStep === true,
+        stepper: f.stepper ?? raw.stepper });   // its workflow's nodes: a round with no planner draws no Plan stage
       else if (f.type === 'question') raw.pendingQuestion = { ...f, type: undefined };
       else if (f.type === 'question-resolved') raw.pendingQuestion = null;
       else if (f.type === 'title') raw.title = f.title || raw.title;
@@ -192,6 +222,12 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, setTim
     if (f.type === 'ask-done' || f.type === 'ask-error') unread = unreadOf(unread, f, { openChat: openChat(), hidden: hidden() });
     if (f.type === 'flags') { host.flagsChanged?.(f.flags || {}); return; }
     if (f.type === 'history-pr') { onPrs(f); return; }
+    // an archived or deleted paused run leaves the live runs (dev's app.js drops the same ids), so its row goes now
+    if (f.type === 'pipelines-changed' && Array.isArray(f.removedRunIds) && f.removedRunIds.length) {
+      let gone = false;
+      for (const id of f.removedRunIds) if (live.delete(id)) { progress.delete(id); gone = true; }
+      if (gone) draw(() => { const x = snapshot(); return { runs: x.runs, groups: x.groups }; }, undefined, { list: 'refresh' });
+    }
     for (const s of CHANGED[f.type] || []) refresh(s);
   }
 
@@ -207,16 +243,17 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, setTim
       if (source === 'history') askPrs();
       // the out-of-date look clears only once every source that failed has been read again
       const was = stale.size; stale.delete(source);
-      if (!draw(() => partOf(source, sources[source], { ...sources, hello: { runs: [...live.values()] } }, { now: now(), unread }), was && !stale.size ? { list: '' } : undefined, { list: 'refresh' })) stale.add(source);   // a mapper throw: the look clears once it maps again
+      if (!draw(() => partOf(source, sources[source], { ...sources, hello: { runs: [...live.values()] } }, { now: now(), unread, checksOf: task.checks }), was && !stale.size ? { list: '' } : undefined, { list: 'refresh' })) stale.add(source);   // a mapper throw: the look clears once it maps again
     }, DEBOUNCE_MS);
   }
 
+  function retry() { listFailed = false; world.setState({ list: 'loading' }); return begin(); }
   begin();
   return {
-    chat,
+    chat, task,
     stop: () => { stopped = true; clearTimeout(reconnect); for (const k of Object.keys(timers)) clearTimeout(timers[k]); sock?.close(); },
     refresh,
-    retry: () => { world.setState({ list: 'loading' }); return begin(); },
+    retry,
     // opening a chat clears its dot (D14)
     seen: () => { const was = unread.length; unread = unreadOf(unread, null, { openChat: openChat(), hidden: hidden() }); if (unread.length !== was && loaded) world.load({ chats: snapshot().chats }); },
     // opening a task a failed run left unread (dev's acknowledge): it leaves Needs you, and stays out after any refetch

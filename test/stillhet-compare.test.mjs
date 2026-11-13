@@ -12,7 +12,8 @@ test('countDiffPixels: 0 for equal buffers, 1 for one changed channel, w*h for a
 });
 
 test('PARTS lists the invitation, the design switch, one whole-page cell per shell route and one per non-default state', () => {
-  assert.deepEqual(PARTS.map((p) => p.id), ['invitation', 'design-switch', ...ROUTES.map((r) => `route-${r}`), ...STATES.map(([s]) => `state-${s}`), ...PULSE_STATES.map(([s]) => `state-${s}`), ...CHAT_STATES.map(([s]) => `state-${s}`), 'terminal-chat']);
+  assert.deepEqual(PARTS.map((p) => p.id), ['invitation', 'design-switch', ...ROUTES.map((r) => `route-${r}`), ...STATES.map(([s]) => `state-${s}`), ...PULSE_STATES.map(([s]) => `state-${s}`), ...CHAT_STATES.map(([s]) => `state-${s}`),
+    'state-task-loading-run', 'state-task-failed-run', 'state-task-gone-run', 'action-failed-run', 'terminal-chat']);
   assert.deepEqual(PAGES, ['components.html', 'run-page.html', 'pulse.html']);
 });
 
@@ -348,4 +349,16 @@ test('the pool owns SIGINT and SIGTERM: every browser the compare and click-chec
     // --pages (pagesMain) keeps today's single path and playwright's own handlers: it starts no app and no temp home
     for (const l of launches.filter((x) => x !== 'chromium.launch(launchOptions());')) assert.match(l, /OWN_SIGNALS/, `${f}: ${l}`);
   }
+});
+
+test('TASKS_CELL_IDS (Stillhet Tasks): every Tasks cell is a part or a shown deep route, opened by the same address in both hosts; a missing one fails', async () => {
+  const { TASKS_CELL_IDS, TASK_STATES, SHOWN, CELLS, tasksCoverage, isTasksCell } = await import('../tools/stillhet-compare.mjs');
+  const ids = new Set([...PARTS.map((p) => p.id), ...SHOWN.map((h) => deepPart(h).id)]);
+  for (const id of TASKS_CELL_IDS) assert.ok(ids.has(id), id);
+  for (const id of ['state-task-loading-run', 'state-task-failed-run', 'state-task-gone-run', 'action-failed-run', 'route-chat-c17', 'route-chat-c18']) assert.ok(TASKS_CELL_IDS.includes(id), id);
+  for (const [id] of TASK_STATES) { const p = PARTS.find((x) => x.id === `state-${id}`); assert.equal(p.app.route, p.proto.route); }
+  assert.ok(isTasksCell('route-run-capped') && !isTasksCell('route-chat-c1'));
+  const all = TASKS_CELL_IDS.flatMap((part) => CELLS.map(([theme, width]) => ({ part, theme, width })));
+  assert.deepEqual(tasksCoverage(all), []);
+  assert.deepEqual(tasksCoverage(all.filter((c) => !(c.part === 'route-chat-c18' && c.width === 360))), ['route-chat-c18 light 360']);
 });

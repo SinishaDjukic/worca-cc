@@ -19,7 +19,7 @@
 | A fact's detail, or going to the place a fact names | The fact itself, as a Figure or Text link (`#959` opens the PR); ⋯ only when no fact on the page names it |
 | A yes or no, or a one-line answer | ConfirmStrip under the top bar, opening on the safe choice |
 | A step that needs fields | Dialog |
-| Commands you run yourself (`How to merge`) | A Dialog without a form, with a CopyButton; never a Toast, which fades |
+| Commands you run by hand (`How to merge`) | A Dialog without a form, with a CopyButton; never a Toast, which fades |
 | Sending something with your words (`Report this run`) | Dialog, with the note |
 | A choice that changes a step | SentencePicker, inside the sentence it changes |
 | A thing's own setting (a schedule's times, a run's budget) | The fact itself, where the page shows it, as a SentencePicker; a setting the page does not show is not added to be editable. Settings that must change together: a Dialog from ⋯ (`Edit schedule…`). Where it belongs (its group): ⋯ |

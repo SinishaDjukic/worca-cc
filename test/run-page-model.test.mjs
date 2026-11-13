@@ -109,3 +109,23 @@ test('a group\'s figures add up from its runs', () => {
   assert.equal(figure(M.view('group-ready', {}), 'Changes'), '+158 −62');
   assert.equal(figure(M.view('featureready', {}), 'Changes'), '+358 −144');
 });
+
+test('Stillhet Tasks words (D15, D16): a ready task offers Create PR, only an approved one Merge; no label, flow key or help says "yourself"', async () => {
+  const R = await import('../ui/public/design-system/components/run-state.mjs');
+  assert.deepEqual(R.cardAction('ready'), { label: 'Create PR', does: 'pr' });
+  assert.deepEqual(R.cardAction('approved'), { label: 'Merge', does: 'merge' });
+  const src = (await import('node:fs')).readFileSync(new URL('../ui/public/design-system/components/run-state.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /yourself/);
+  for (const id of R.stateIds()) {
+    const s = R.runState(id);
+    for (const t of [s.action?.label, ...(s.action?.items || [])].filter(Boolean)) assert.doesNotMatch(t, /yourself/, `${id}: ${t}`);
+    for (const k of Object.keys(R.actionFlow(id, {}))) assert.doesNotMatch(k, /yourself/, `${id} flow ${k}`);
+  }
+  const { workingWord } = await import('../ui/public/design-system/components/step-flow.mjs');
+  assert.equal(workingWord('Pause after this step'), 'Pausing after this step');
+});
+
+test('failureOf: a reason that ends its own sentence gets no second period (web-UI review cycle 2)', () => {
+  assert.equal(R.failureOf('Raise the cap', 'the new cap is below what the task already spent ($0.80).').detail, 'The new cap is below what the task already spent ($0.80). Nothing changed.');
+  assert.equal(R.failureOf('Merge', 'GitHub refused').detail, 'GitHub refused. Nothing changed.');
+});

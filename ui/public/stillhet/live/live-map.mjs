@@ -2,7 +2,7 @@
 // demo model's shapes (model-shape.mjs). No DOM, no fetch, no clock of its own: `now` (epoch ms) is passed in. It keeps
 // only the fields the shapes list (D12): a thread's context and session, a History row's folder, every setting but
 // keepAwake never reach the store. live-adapter.mjs does the I/O and applies what this returns.
-import { needsYou, needsYouItems, prNeedsOf, FAILED } from '../../../../src/shared/needs-you.mjs';
+import { needsYou, needsYouItems, prNeedsOf, FAILED, roundMarkerOf } from '../../../../src/shared/needs-you.mjs';
 import { dayBucket } from '../../../../src/shared/day-buckets.mjs';
 import { pick } from './model-shape.mjs';
 
@@ -44,17 +44,35 @@ const CALM_CASE = { created: 'starting', starting: 'starting', running: 'working
  *  merged }; `needs` (from needsYouItems) wins over the item's own rule when given. */
 // a PR that still stands (open or merged): a closed-unmerged one is gone, its run reads Ready again (Create PR)
 const prUrlOf = (pr) => (pr?.url && lc(pr.state) !== 'closed' ? str(pr.url) : '');
-export function caseOf(item = {}) {
+// a saved row whose PR is still open: the rows the checks cache is read for (D5)
+const openPrOf = (row) => !!prUrlOf(row?.pr) && lc(row.pr.state || 'open') === 'open';
+// D5: an open PR's case from its checks entry (task-live.mjs owns the cache; rows, cards and pages pass the same entry):
+// approved once the checks pass and it merges cleanly, conflicts, failing, else checks (still running). null = no entry.
+export function prCaseOf(checks) {
+  if (!checks || typeof checks !== 'object') return null;
+  if (checks.mergeable === 'CONFLICTING') return 'conflicts';
+  const st = lc(checks.checks?.state);
+  if (st === 'failing') return 'failing';
+  if ((st === 'passing' || st === 'none') && checks.mergeable === 'MERGEABLE') return 'approved';
+  return 'checks';
+}
+export function caseOf(item = {}, { checks = null } = {}) {
   const s = lc(item.status), needs = 'needs' in item ? !!item.needs : needsYou(item);
+  // A question names its own case: Worca's plan waiting for approval, or a step that failed and asks how to go on.
+  if (item.askKind === 'plan' && !FAILED.has(s) && s !== 'paused') return 'plan';
+  if (item.askKind === 'recovery' && !FAILED.has(s) && s !== 'paused') return 'recovery';
+  const open = s === 'done' && !item.merged && prUrlOf(item.pr) && lc(item.pr?.state) !== 'merged';
+  if (open && checks) return prCaseOf(checks);
   if (needs) {
-    if (s === 'paused') return item.limitEngine ? 'paused-limit' : /cost|cap|budget/.test(lc(item.pauseReason)) ? 'capped' : NEEDS_CASE.paused;
+    if (s === 'paused') return item.limitEngine ? 'paused-limit' : /cost|cap|budget/.test(lc(item.pauseReason)) ? 'capped' : /error|fail/.test(lc(item.pauseReason)) ? NEEDS_CASE.failed : NEEDS_CASE.paused;
     if (FAILED.has(s)) return NEEDS_CASE.failed;
-    if (s === 'done') return NEEDS_CASE.done;
+    // no checks entry yet: the PR's own verdict (prNeeds) — merge conflicts, else failing checks
+    if (s === 'done') return item.pr?.mergeable === 'CONFLICTING' ? 'conflicts' : NEEDS_CASE.done;
     return NEEDS_CASE.ask;
   }
   if (s === 'done' && item.merged) return 'merged';
   // a finished run whose PR is open: In review (View PR), never Create PR again
-  if (s === 'done' && prUrlOf(item.pr)) return 'checks';
+  if (open) return 'checks';
   // a finished run whose branch is still there and not in its base yet: Ready, its PR still to make (Create PR)
   if (s === 'done' && item.branch && item.survived) return 'ready';
   return CALM_CASE[s] || (item.kind === 'live' ? 'working' : 'finished-nogit');
@@ -68,17 +86,18 @@ const detailOf = (r, ask) => (ask ? questionOf(r.pendingQuestion) : lc(r.status)
 const labelsOf = (r) => (Array.isArray(r.labels) ? r.labels : []).map((l) => (typeof l === 'string' ? l : str(l?.name))).filter(Boolean);
 const kindOf = (r) => (r.kind === 'workspace-run' || r.target === 'workspace' ? 'Workspace' : r.workMode === 'folder' ? 'Folder' : 'Git');
 const byOf = (r) => str(r.startedBy) || str(r.startedBy?.name);
-const liveItem = (run) => ({ kind: 'live', status: run.status, ask: !!run.pendingQuestion, unread: !!run.unread, limitEngine: run.limitEngine, pauseReason: run.pauseReason, pipelineId: run.pipelineId || null });
-const savedItem = (row) => ({ kind: 'hist', id: row.id, status: row.status, prNeeds: prNeedsOf(row), limitEngine: row.limitEngine, pauseReason: row.pauseReason, merged: lc(row.pr?.state) === 'merged' || row.mergeBack?.merged === true || !!row.inBase, branch: str(row.branch), survived: !!row.survived, pr: row.pr, mtime: row.mtime, startedAt: row.startedAt, roundOf: row.roundOf });
+const liveItem = (run) => ({ kind: 'live', status: run.status, ask: !!run.pendingQuestion, askKind: str(run.pendingQuestion?.kind), unread: !!run.unread, limitEngine: run.limitEngine, pauseReason: run.pauseReason, pipelineId: run.pipelineId || null });
+// a workspace row's own `survived` is its primary project's; each project's is in `members[]` (src/core/artifacts.mjs workspaceMemberFacts)
+const savedItem = (row) => ({ kind: 'hist', id: row.id, status: row.status, prNeeds: prNeedsOf(row), limitEngine: row.limitEngine, pauseReason: row.pauseReason, merged: lc(row.pr?.state) === 'merged' || row.mergeBack?.merged === true || !!row.inBase, branch: str(row.branch), survived: !!row.survived || (Array.isArray(row.members) && row.members.some((m) => m && m.survived)), pr: row.pr, mtime: row.mtime, startedAt: row.startedAt, roundOf: row.roundOf });
 
 /** A live run: a `hello.runs` entry or a `run-created` frame, patched by its frames (live-adapter.mjs). */
-export function taskOfLive(run = {}, { now = 0, projects = [], needs } = {}) {
-  const item = liveItem(run), it = needs === undefined ? item : { ...item, needs }, c = caseOf(it);
+export function taskOfLive(run = {}, { now = 0, projects = [], needs, checks = null } = {}) {
+  const item = liveItem(run), it = needs === undefined ? item : { ...item, needs }, c = caseOf(it, { checks });
   return pick('task', { id: str(run.runId), case: c, ...(overOf(it, c) ? { over: true } : {}), title: str(run.title) || 'Untitled task', project: str(run.projectName) || projectName(run.projectDir, projects), detail: detailOf(run, item.ask), time: timeOf(run.startedAt, now), day: dayOf(run.startedAt, now), labels: labelsOf(run), cost: num(run.totalCostUsd), archived: false, unread: !!run.unread, pr: '', group: '', kind: kindOf(run), by: byOf(run), workflow: '' });
 }
 /** A saved run: a `GET /api/history` row. */
-export function taskOfSaved(row = {}, { now = 0, needs } = {}) {
-  const item = savedItem(row), at = Number.isFinite(ms(row.mtime)) ? row.mtime : row.startedAt, it = needs === undefined ? item : { ...item, needs }, c = caseOf(it);
+export function taskOfSaved(row = {}, { now = 0, needs, checks = null } = {}) {
+  const item = savedItem(row), at = Number.isFinite(ms(row.mtime)) ? row.mtime : row.startedAt, it = needs === undefined ? item : { ...item, needs }, c = caseOf(it, { checks });
   return pick('task', { id: str(row.id), case: c, ...(overOf(it, c) ? { over: true } : {}), title: str(row.title) || 'Untitled task', project: str(row.projectName), detail: lc(row.status) === 'paused' ? str(row.pauseDetail) || str(row.pauseReason) || DETAIL.paused : DETAIL[lc(row.status)] || '', time: timeOf(at, now), day: dayOf(at, now), labels: labelsOf(row), cost: num(row.totalCostUsd), archived: !!row.archived, unread: false, pr: prUrlOf(row.pr), group: '', kind: kindOf(row), by: byOf(row), workflow: '' });
 }
 
@@ -224,8 +243,44 @@ export function inPlay(r) {
   const live = !OVER.has(s) && (['starting', 'running', 'pausing'].includes(s) || r.pendingQuestion != null);
   return live || s === 'paused' || !!r.unread || !!r.opened;
 }
-/** Every source's answer into the store's parts. Archived rows go; a pipeline both live and saved is kept once, live. */
-export function snapshotOf(src = {}, { now = 0, unread = [] } = {}) {
+// ---- rounds (dev's foldRounds, ui/public/runs-list.mjs): a PR-fix or Restart Build round is its origin's, not a task of its own ----
+const ROUND_WORD = { done: 'done', error: 'failed', failed: 'failed', stopped: 'stopped', aborted: 'stopped', interrupted: 'interrupted', paused: 'paused', pausing: 'paused' };
+const roundRequest = (m) => (m.by === 'restart' ? 'restart Build' : str(m.request));
+/** Marks each round task `roundOf: ORIGIN_TASK_ID` (it stays in the store, so its own page opens) and gives its origin the
+ *  design's `rounds: { line, list: [{ n, words, time, case }] }`, newest first. A round whose origin the store lacks stays a row.
+ *  `needs`: the ids of the tasks that need you; an origin whose round is live or needs you takes that round's case (and need). */
+const LIVE_CASES = new Set(['starting', 'working', 'question', 'plan', 'recovery']);
+export function foldRounds(runs, liveRuns = [], saved = [], needs = new Set()) {
+  const markers = new Map();   // pipelineId → { marker, status }
+  for (const r of saved) { const m = roundMarkerOf(r); if (m) markers.set(str(r.id), { m, status: r.status }); }
+  for (const r of liveRuns) { const m = roundMarkerOf(r.branch && typeof r.branch === 'object' ? r.branch : r) || markers.get(str(r.pipelineId))?.m; if (m && r.pipelineId) markers.set(str(r.pipelineId), { m, status: r.status }); }
+  if (!markers.size) return runs;
+  const pidOf = new Map([...saved.map((r) => [str(r.id), str(r.id)]), ...liveRuns.filter((r) => r.pipelineId).map((r) => [str(r.runId), str(r.pipelineId)])]);
+  const byPid = new Map(runs.map((t) => [pidOf.get(t.id) || t.id, t]));
+  const rounds = new Map();   // origin task id → [round]
+  for (const t of runs) {
+    const x = markers.get(pidOf.get(t.id) || t.id), origin = x && byPid.get(str(x.m.pipelineId));
+    if (!origin || origin === t) continue;
+    t.roundOf = origin.id;
+    const words = [roundRequest(x.m), ROUND_WORD[lc(x.status)] || 'running'].filter(Boolean).join(' · ');
+    (rounds.get(origin.id) || rounds.set(origin.id, []).get(origin.id)).push({ n: x.m.round, words, time: t.time, case: t.id, task: t });
+  }
+  for (const t of runs) {
+    const list = rounds.get(t.id); if (!list) continue;
+    list.sort((a, b) => b.n - a.n);
+    // a round that is live or needs you keeps its origin's row lit: the row reads the newest such round's case
+    const lit = list.find((x) => needs.has(x.task.id) || LIVE_CASES.has(x.task.case));
+    if (lit) { t.case = lit.task.case; if (lit.task.over) t.over = true; else delete t.over; }
+    for (const x of list) delete x.task;
+    t.rounds = { line: `Round ${list[0].n} · ${list[0].words}`, list };
+  }
+  return runs;
+}
+
+/** Every source's answer into the store's parts. Archived rows go; a pipeline both live and saved is kept once, live.
+ *  `checksOf(pipelineId)`: task-live.mjs's checks entry (D5), asked only for a row whose PR is open, so a row reads the
+ *  same case as its page and its card (R-arch-11). */
+export function snapshotOf(src = {}, { now = 0, unread = [], checksOf = null } = {}) {
   const projectsRaw = arr(src.projects?.projects), syncs = src.sync?.projects || {};
   const liveRuns = arr(src.hello?.runs).filter(inPlay);
   const saved = arr(src.history?.pipelines).filter((r) => r && !r.archived);
@@ -237,15 +292,19 @@ export function snapshotOf(src = {}, { now = 0, unread = [] } = {}) {
   const sched = src.schedules || {}, items = [...arr(sched.tickets), ...arr(sched.schedules)];
   const runs = [
     ...liveRuns.map((r) => taskOfLive(r, { now, projects: projectsRaw, needs: needLive.has(r.runId) })),
-    ...savedOnly.map((r) => taskOfSaved(r, { now, needs: needSaved.has(r.id) })),
+    ...savedOnly.map((r) => taskOfSaved(r, { now, needs: needSaved.has(r.id), checks: checksOf && openPrOf(r) ? checksOf(str(r.id), { pr: str(r.pr.url), projectKey: str(r.projectKey), projectDir: str(r.projectDir) }) || null : null })),
     ...arr(sched.tickets).filter((t) => ['missed', 'scheduled', 'firing'].includes(t.status)).map((t) => waitingTask(t, now, projectsRaw)),
     ...arr(sched.schedules).filter((x) => x.status === 'active' && x.nextRunAt).map((x) => waitingTask(x, now, projectsRaw)),
   ];
   const outcomes = saved.filter((r) => now - ms(Number.isFinite(ms(r.mtime)) ? r.mtime : r.startedAt) < OUTCOME_DAYS * DAY).slice(0, OUTCOMES_MAX).map((r) => updateOfOutcome(r, { now })).filter(Boolean);
   const notes = arr(src.notifications?.notifications).map((n) => updateOf(n, { now })).filter(Boolean);
   const away = src.away || {};
+  foldRounds(runs, liveRuns, saved, new Set([...needLive, ...needSaved]));
+  const rowIdOf = new Map([...savedOnly.map((r) => [str(r.id), str(r.id)]), ...liveRuns.filter((r) => r.pipelineId).map((r) => [str(r.pipelineId), str(r.runId)])]);
+  const { groups, inGroup } = runGroupsOf(src.runGroups, runs, { now, rowIdOf });
+  for (const r of runs) { const gid = inGroup.get(r.id); if (gid) r.group = gid; }
   return {
-    runs, groups: [], userGroups: [],
+    runs, groups, userGroups: [],
     // the Chats Needs-you number: the server's count over every thread, not the first page's rows
     chatsNeeds: num(src.threads?.counts?.needs),
     chats: arr(src.threads?.threads).filter((t) => t && !t.archivedAt && !t.archived).map((t) => chatOf(t, { now, unread, links: arr(src.runLinks?.links), tasks: runs, projects: projectsRaw, livePids: new Map(liveRuns.filter((r) => r.pipelineId).map((r) => [r.pipelineId, str(r.runId)])) })),
@@ -260,13 +319,38 @@ export function snapshotOf(src = {}, { now = 0, unread = [] } = {}) {
   };
 }
 
+/** dev's run groups (GET /api/run-groups) → the store's groups, and which task each member is (by its pipeline id, or
+ *  the live run of it). A group's case is its tasks' (below); its page is
+ *  #run/group:GID (task-live.mjs). A group none of whose members the store holds is left out. */
+const GROUP_WORKS = new Set(['starting', 'working']);
+export function runGroupsOf(src, runs, { now = 0, rowIdOf = new Map() } = {}) {
+  const inGroup = new Map(), groups = [];
+  const byPid = new Map(runs.map((r) => [r.id, r]));
+  for (const g of arr(src?.groups)) {
+    const held = arr(g.members).map((m) => [m, rowIdOf.get(str(m.pipelineId)) || str(m.pipelineId)]).filter(([, id]) => byPid.has(id));
+    if (!held.length) continue;
+    for (const [, id] of held) inGroup.set(id, str(g.id));
+    const ms = held.map(([, id]) => byPid.get(id));
+    // a member put there by hand (dev's member `adhoc`): the list offers Remove from group (runs-list.js `adhoc`), at dev's position
+    held.forEach(([src, id]) => { const m = byPid.get(id); m.adhoc = !!src.adhoc; m.pos = num(src.position) ?? 0; });
+    const at = arr(g.members).map((m) => m.startedAt).find(Boolean) || '';
+    // the group reads as its tasks: 'feature' (Working) while one starts or works, else its first unmerged one's case in
+    // stack order (an approved task alone in a group is Ready to merge, never Working), 'merged' once all merged
+    const next = held.slice().sort(([a], [b]) => (num(a.position) ?? 0) - (num(b.position) ?? 0)).map(([, id]) => byPid.get(id)).find((m) => m.case !== 'merged');
+    const kase = !next ? 'merged' : ms.some((m) => GROUP_WORKS.has(m.case)) ? 'feature' : next.case;
+    groups.push(pick('group', { id: str(g.id), kind: g.kind === 'feature' ? 'feature' : 'user', case: kase, title: str(g.title) || 'Untitled group',
+      project: str(ms[0].project), time: ms[0].time || timeOf(at, now), day: ms[0].day || dayOf(at, now), cost: num(g.cost?.usd) }));
+  }
+  return { groups, inGroup };
+}
+
 // What each source feeds: a refetch of one source replaces only these parts (D11).
 export const SOURCE_PARTS = Object.freeze({
-  hello: ['runs', 'costs', 'chats'], history: ['runs', 'updates', 'chats'], threads: ['chats', 'chatsNeeds'], runLinks: ['chats'], groups: ['chatGroups'], schedules: ['schedules', 'runs'],
+  hello: ['runs', 'costs', 'chats', 'groups'], history: ['runs', 'updates', 'chats', 'groups'], threads: ['chats', 'chatsNeeds'], runLinks: ['chats'], groups: ['chatGroups'], runGroups: ['groups', 'runs'], schedules: ['schedules', 'runs'],
   projects: ['projects', 'runs'], sync: ['projects'], budget: ['costs'], actions: ['actions'], notifications: ['updates'], away: ['away'], settings: ['keep'],
 });
 /** The parts a single-source refetch replaces: `answer` stands for `source` among the last answers `sources`. */
-export function partOf(source, answer, sources = {}, { now = 0, unread = [] } = {}) {
-  const snap = snapshotOf({ ...sources, [source]: answer }, { now, unread });
+export function partOf(source, answer, sources = {}, { now = 0, unread = [], checksOf = null } = {}) {
+  const snap = snapshotOf({ ...sources, [source]: answer }, { now, unread, checksOf });
   return Object.fromEntries((SOURCE_PARTS[source] || []).map((k) => [k, snap[k]]));
 }

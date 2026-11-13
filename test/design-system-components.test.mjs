@@ -901,6 +901,11 @@ test('listState, originMark, chatKindIcon: a list with no rows; a chat\'s marks 
   assert.match(f.textContent, /Could not load the runs/);
   assert.match(dom(C.listState({ state: 'failed', noun: 'chat', title: 'Could not load this chat' })).textContent, /^Could not load this chat/, 'fail.chat-thread: the rule\'s own title, given, never string-replaced');
   assert.equal(dom(C.listState({ state: 'empty', noun: 'runs', text: 'Nothing needs you.' })).querySelector('.el-t').textContent, 'Nothing needs you.');
+  // fail.task-page: brief says only "Nothing changed." under the failed title, never the server-did-not-answer wording
+  const brief = dom(C.listState({ state: 'failed', noun: 'task', title: 'Could not load this task', brief: true, retry: { 'data-task-retry': 'h3' } })).textContent;
+  assert.match(brief, /^Could not load this task/);
+  assert.match(brief, /Nothing changed\./);
+  assert.doesNotMatch(brief, /did not answer/);
   assert.equal(dom(C.originMark({ platform: 'slack' })).title, 'From Slack');
   assert.equal(dom(C.originMark({ platform: 'x', label: 'Matter' })).title, 'From Matter');
   assert.equal(dom(C.chatKindIcon(C.CHAT_KINDS.started)).title, 'Started a run');
@@ -1206,7 +1211,8 @@ test('center parts: a task said one way, a shelf, the line for a shared project 
   const one = dom(`<div>${C.taskActions([{ id: 'a', title: 'A', state: 'failed' }])}</div>`).querySelector('button');
   assert.equal(one.textContent.trim(), 'Retry'); assert.match(one.className, /primary/);
   const two = [...dom(`<div>${C.taskActions([{ id: 'a', title: 'A', short: 'cron', state: 'gate' }, { id: 'b', title: 'B', short: 'pager', state: 'ready' }])}</div>`).querySelectorAll('button')];
-  assert.deepEqual(two.map((b) => b.textContent.trim()), ['Approve cron', 'Merge pager']); assert.ok(two.every((b) => !/primary/.test(b.className)));
+  assert.deepEqual(two.map((b) => b.textContent.trim()), ['Approve cron', 'Create PR pager']);   // Tasks D16: a ready task has no PR yet
+  assert.ok(two.every((b) => !/primary/.test(b.className)));
   const s = dom(C.centerShelf({ title: 'Web<b', word: 'Failed', tone: 'fail', link: C.textLink({ label: 'Workspace map' }), cards: '<i class="c"></i>', rest: '<i class="r"></i>' }));
   assert.equal(s.querySelector('.pg-shelf-h').firstChild.textContent, 'Web<b'); assert.equal(s.querySelector('.pg-state.is-fail').textContent, 'Failed');
   assert.ok(s.querySelector('.center-shelf-l .dc-link') && s.querySelector('.pg-grid .c') && s.querySelector(':scope > .r'));
@@ -1227,7 +1233,8 @@ test('pluginCard in a center: its state first and in its colour, links in what i
 });
 
 test('cardAction: the step that fits each state; anything else opens (panel.center)', () => {
-  assert.deepEqual(['failed', 'question', 'gate', 'ready', 'approved', 'paused-limit', 'working'].map((s) => C.cardAction(s).label), ['Retry', 'Answer', 'Approve', 'Merge', 'Merge', 'Resume', 'Open']);
+  assert.deepEqual(['failed', 'question', 'gate', 'ready', 'approved', 'paused-limit', 'working'].map((s) => C.cardAction(s).label), ['Retry', 'Answer', 'Approve', 'Create PR', 'Merge', 'Resume', 'Open']);   // Tasks D16: only approved merges
+  assert.deepEqual(C.cardAction('failing'), { label: 'Fix checks', does: 'fix-checks' }, 'failing checks: the task page\'s own action (web-UI review cycle 3)');
 });
 
 test('scheduleDates and scheduleButton: the next times and the named step', () => {
