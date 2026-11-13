@@ -9,6 +9,8 @@ import { PAGE_SIZES, pageWidth } from './doc-kind.mjs';
 
 /** Placeholder height (px) of a section a web round adds without one (L1.10): a small fine section, not a page band. */
 export const DEFAULT_EST_HEIGHT = 240;
+/** Most characters a video scene's words (`say`) may hold, once whitespace is folded (SPEC D7). */
+export const MAX_SAY = 1500;
 
 const MAX_TEXT_BYTES = 1024 * 1024;
 const MAX_ERRORS = 20;
@@ -28,10 +30,10 @@ const VIDEO_FPS = 60;
 const MULTI_LINE = /[\r\n]/;
 
 /**
- * @typedef {{ id: string, job: string, brief: string, parts: string[], estHeight?: number, duration?: number, band?: string }} DesignSection
+ * @typedef {{ id: string, job: string, brief: string, parts: string[], estHeight?: number, duration?: number, band?: string, say?: string }} DesignSection
  * @typedef {{ v: 1, kind: string, title: string, canvas: { w: number, h?: number, fps?: number }, page?: 'A4'|'Letter', toc?: boolean, numbered?: boolean, notes: string, sections: DesignSection[] }} DesignPlan
  * @typedef {DesignSection & { after?: string }} DesignRoundAdd
- * @typedef {{ v: 1, summary: string, touch: { id: string, brief: string }[], add: DesignRoundAdd[], remove: string[] }} DesignRound
+ * @typedef {{ v: 1, summary: string, touch: { id: string, brief: string, say?: string }[], add: DesignRoundAdd[], remove: string[] }} DesignRound
  * @typedef {{ v: 1, done?: boolean, rework: { id: string, why: string }[] }} DesignIntegration
  * @typedef {(message: string) => void} Fail
  */
@@ -115,8 +117,26 @@ function checkParts(parts, label, fail) {
 }
 
 /**
+ * A video scene's words: runs of whitespace (line breaks too) folded to one space, then trimmed. Returns the text,
+ * '' when nothing is left, or null after a failure (not a string, or longer than MAX_SAY once folded).
+ * @param {unknown} value
+ * @param {string} label
+ * @param {Fail} fail
+ * @returns {string|null}
+ */
+function readSay(value, label, fail) {
+  const text = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : null;
+  if (text === null || text.length > MAX_SAY) {
+    fail(`${label}: say must be text of at most ${MAX_SAY} characters`);
+    return null;
+  }
+  return text;
+}
+
+/**
  * The fields a plan section and a round `add` share. `estHeight` is read on web and document only and `duration`
- * on video only; a document's parts hold no `js`. `band` is kept, trimmed, only when given (null reads as absent); no other rule reads it.
+ * and `say` on video only (`say` folded by `readSay`; empty, null or absent leaves no key); a document's parts hold
+ * no `js`. `band` is kept, trimmed, only when given (null reads as absent); no other rule reads it.
  * @param {object} raw
  * @param {unknown} kind the plan's kind
  * @param {string} label names the section in messages
@@ -146,6 +166,10 @@ function readFields(raw, kind, label, fail, estHeightDefault) {
       fail(`${label}: duration must be a number of seconds above 0 and at most ${MAX_DURATION}`);
     } else {
       out.duration = d;
+    }
+    if (raw.say != null) {
+      const say = readSay(raw.say, label, fail);
+      if (say) out.say = say;
     }
   }
   if (raw.band != null) {
@@ -239,6 +263,7 @@ export function validatePlan(json, opts) {
  * `touch` and `remove` name plan sections, never both for one id. An `add` id is new (not even an id this
  * round removes) and unique; its `after` names a plan section that stays, or one added earlier in `add`.
  * On web or a document an `add` may leave out `estHeight` (DEFAULT_EST_HEIGHT); on video it needs `duration`.
+ * On video a `touch` may carry `say`, folded like a section's; `''` stays and removes the words, null or absent keeps them.
  * The plan must still have 1 to MAX_SECTIONS sections after the round.
  * @param {string|object} json the file's text or the parsed object
  * @param {{ plan: object }} opts `plan`: the current plan.json object
@@ -278,7 +303,12 @@ export function validateRound(json, opts) {
         if (removed.has(t.id)) fail(`section ${quote(t.id)} is in both touch and remove`);
       }
       if (!isText(t.brief, MAX_BRIEF)) fail(`${label}: brief must be a string of 1 to ${MAX_BRIEF} characters`);
-      return { id: t.id, brief: t.brief };
+      const item = { id: t.id, brief: t.brief };
+      if (facts.kind === 'video' && t.say != null) {
+        const say = readSay(t.say, label, fail);
+        if (say !== null) item.say = say;
+      }
+      return item;
     });
 
     const added = new Set();

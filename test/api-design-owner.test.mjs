@@ -53,6 +53,9 @@ const ROUTES = [
   { method: 'GET', path: '/api/design/:id/models' },
   { method: 'GET', path: '/api/design/:id/pictures' },
   { method: 'GET', path: '/api/design/:id/pictures/:pictureId' },
+  { method: 'GET', path: '/api/design/:id/sound' },
+  { method: 'GET', path: '/api/design/:id/sound/files/:name' },
+  { method: 'POST', path: '/api/design/:id/sound/ask' },
 ];
 /** Not about one design: the list filters by viewer, a create makes the caller's own, the limits and a new design's
  *  model choices are the same for all. */
@@ -93,7 +96,7 @@ function call(method, url, body, headers = {}) {
   });
 }
 const as = (name) => ({ 'x-test-user': name });
-const fill = (path) => path.replace(':id', D.id).replace(':bid', B).replace(':aid', A).replace(':n', '1').replace(':pictureId', '1');
+const fill = (path) => path.replace(':id', D.id).replace(':bid', B).replace(':aid', A).replace(':name', 'voice-open.wav').replace(':n', '1').replace(':pictureId', '1');
 /** A design of Ada's made through the route, as D was. */
 async function adaDesign(title) {
   const r = await call('POST', '/api/design', { kind: 'web', title }, as(ADA));

@@ -21,6 +21,7 @@ import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { existsSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { musicLabel, musicPrompt } from '../../shared/sound-services.mjs';
 import { bridgeCostFor, forgetBridgeTag } from '../bridge/telemetry.mjs';
 import { runClaude } from '../claude-runner.mjs';
 import { bridgedModelInfo } from '../config.mjs';
@@ -28,6 +29,7 @@ import { budgetStatus, recordDesignCostDelta } from '../cost-budget.mjs';
 import { chatDescriptor } from '../engines/chat.mjs';
 import { teamRunDiscover } from '../git-free/team-repo.mjs';
 import { generatePicture, imagesReady } from '../images.mjs';
+import { compose, soundReady, speak } from '../sound.mjs';
 import { writeJsonAtomic } from '../json-atomic.mjs';
 import { checkTeamTotalGate } from '../policy/gate.mjs';
 import { listProjects } from '../projects.mjs';
@@ -40,7 +42,7 @@ import { classifyDraftPath, countLayers, createDraftStore } from './draft.mjs';
 import { designEngineFor, designEngineRow } from './engines.mjs';
 import { createFrameEmitter } from './frames.mjs';
 import { boundedParser, scanShellSlots } from './html-scan.mjs';
-import { isBoardKind, isDocKind, stagesKitEachDrive } from './kinds.mjs';
+import { isBoardKind, isDocKind, isFilmKind, stagesKitEachDrive } from './kinds.mjs';
 import { stageDesignKit, stagePictureKit, stageWorcaLook, unstagePictureKit } from './kit.mjs';
 import { readLookSource } from './look-source.mjs';
 import { designCaps } from './limits.mjs';
@@ -55,6 +57,7 @@ import { ASK_ROUNDS, asksFileFor, newAskId, readAskFile, removeAskFile, validate
 import { removeReadBundle, stageReadBundle } from './read-bundle.mjs';
 import { closeBuildRow } from './recover.mjs';
 import { createSemaphore } from './semaphore.mjs';
+import { makeSound, readSoundManifest, removeSound } from './sound.mjs';
 import { designDenyRules, designSpawnOptions, resolveDesignModel } from './spawn-options.mjs';
 import {
   OPEN_BUILD_STATUSES, addPicture, createAgent, createBuild, getBuild, getDesign, latestBuild, listAgents, listPictures,
@@ -82,6 +85,33 @@ const UNFINISHED = new Set(['writing', 'stopped', 'failed', 'planned']);
 const ERROR_MAX = 300;
 /** The relative kit line the lead is given while the round's picture desk is open: the command lives in work/.kit/. */
 const PICTURE_KIT_LINE = '.kit/picture.mjs';
+
+/** The sound stage's own reasons (SPEC §7); every other reason is a `SoundError`'s message, from `makeSound`. */
+const SOUND_NOT_SET_UP = 'ElevenLabs is not set up';
+const SOUND_NOT_SAVED = 'the sound could not be saved';
+
+/** SPEC §7: the brief of a built scene that grew so its voice fits (`grown` of `makeSound`, `from` and `to` in seconds). */
+const grownBrief = ({ from, to }) => `This scene is now ${to}s long (it was ${from}s) so its voice fits. Stretch its timeline to the new length and change nothing else.`;
+
+/** The prompt a builder in a session is owed for its scene that grew (`regrow` on its record, `_growScenes`): a built
+ *  scene reworks with SPEC §7's brief; one cut off mid-build finishes its build at the new length. */
+const regrowPrompt = (mark) => (mark.rework
+  ? reworkPrompt({ why: grownBrief(mark) })
+  : [continuePrompt({ role: 'builder' }), grownBrief(mark)].join('\n'));
+
+/** A record's `regrow` while its builder has not received it yet, else null (`_regrowReceived`). */
+const unsent = (rec) => (rec.regrow && !rec.regrow.received ? rec.regrow : null);
+
+/** SPEC §7: the lead's task line for a film with sound. */
+const soundLineOf = (sound) => `Sound: voice "${sound.voice.name}"; music: ${musicLabel(sound.music).toLowerCase()}`;
+
+/** A copy of a `design-sound` frame's fields, so a frame or a snapshot never shares `voice` or `reasons` with them. */
+function copySound(f) {
+  const out = { ...f };
+  if (f.voice) out.voice = { ...f.voice };
+  if (f.reasons) out.reasons = [...f.reasons];
+  return out;
+}
 
 /** What the picture desk's `generate` throws when the round halted or a spend limit is reached before the call: the
  *  desk answers the ask `the round stopped` and books nothing. */
@@ -131,12 +161,13 @@ function sectionRecord(s) {
   return rec;
 }
 
-/** A copy of a section record, so a frame or a snapshot never shares the live object. A change round's `todo` and an
- *  add's `unbuiltAdd` live in the build row only and never leave the engine (L2.35). */
+/** A copy of a section record, so a frame or a snapshot never shares the live object. A change round's `todo`, an
+ *  add's `unbuiltAdd` and a grown scene's `regrow` live in the build row only and never leave the engine (L2.35). */
 function copySection(s) {
   const out = { ...s, parts: [...s.parts] };
   delete out.todo;
   delete out.unbuiltAdd;
+  delete out.regrow;
   return out;
 }
 
@@ -185,7 +216,8 @@ function cutSlots(shell, id) {
 
 /**
  * A valid, normalized round applied to the plan and the shell (Contract issue 1: the one owner of applying
- * round.json). Pure. `touch` changes nothing here: its brief is this round's text only. Each `add` goes right after
+ * round.json). Pure. A `touch` changes nothing here but `say`: its brief is this round's text only, and a `say` it
+ * carries replaces the section's words (`''` removes the key). Each `add` goes right after
  * its `after` (after any add this round already placed there, so two adds naming one `after` keep round order, in the
  * plan and the shell), or at the end without one; it keeps its `band` and drops `after`. Adds go before removes, so a
  * shell whose only slot belongs to a removed section still anchors the add. Each `remove` drops the section and its
@@ -194,7 +226,15 @@ function cutSlots(shell, id) {
  * @returns {{ plan: object, shellHtml: string, removed: string[] }}
  */
 export function applyRound({ plan, round, shellHtml }) {
-  const sections = plan.sections.map((s) => ({ ...s, parts: [...s.parts] }));
+  const says = new Map(round.touch.filter((t) => t.say !== undefined).map((t) => [t.id, t.say]));
+  const sections = plan.sections.map((s) => {
+    const copy = { ...s, parts: [...s.parts] };
+    if (says.has(s.id)) {
+      if (says.get(s.id) === '') delete copy.say;
+      else copy.say = says.get(s.id);
+    }
+    return copy;
+  });
   let shell = String(shellHtml ?? '');
   const marker = hasSectionsMarker(shell);
   /** Anchor id -> the last add this round placed right after it: the next add naming that anchor follows it. */
@@ -236,9 +276,28 @@ function changeStart(design, { sections, pins, needsLead }) {
   return { plan: check.plan, named: [...new Set(named)], needsLead: lead, pinBlock };
 }
 
+/** The stretch (`{from, to}`, in seconds) a record holds for its scene, else null: its change todo's `grown`, else its
+ *  `regrow`, received or not. A record holding both takes the todo's: its `from` is the length the files were last
+ *  built for, and `_growScenes` gives both the same `to`. */
+function stretchOf(rec) {
+  const mark = rec?.todo?.grown ?? rec?.regrow;
+  return mark ? { from: mark.from, to: mark.to } : null;
+}
+
+/** The stretch a previous round's record still owes its scene, else null: one it holds while the scene is not `done`.
+ *  A builder told it and then cut (a Stop, its agent stopped, a drain) still owes it; a scene built at its length
+ *  holds none (`_judgeSection`). */
+function owedStretch(old) {
+  return old && old.status !== 'done' ? stretchOf(old) : null;
+}
+
 /** A change round's section records: one per plan section, keeping its status, summary and agentId from the previous
  *  round's row, and its `unbuiltAdd` while that add still has no builder, never its `todo` (a todo belongs to one
- *  round, L2.37). A lead-less round's named sections are `planned` with `todo:{stage:'change'}`. */
+ *  round, L2.37). A lead-less round's named sections are `planned` with `todo:{stage:'change'}`. A scene still owed a
+ *  stretch (`owedStretch`: a round that grew it closed before it was built at that length) is `planned` too, its change
+ *  todo carrying `grown`, so its builder is told SPEC §7's brief beside any brief the round gives it; only while
+ *  plan.json still holds that length (a restored version puts back the old one; should the scene grow again in this
+ *  round, `_growScenes` gives it the stretch anew). */
 function carriedRecords(plan, prevRecords, { named, needsLead }) {
   const prev = new Map((Array.isArray(prevRecords) ? prevRecords : []).map((r) => [r?.id, r]));
   const selected = new Set(needsLead ? [] : named);
@@ -247,7 +306,9 @@ function carriedRecords(plan, prevRecords, { named, needsLead }) {
     const old = prev.get(s.id);
     if (old) Object.assign(rec, { status: old.status, summary: old.summary ?? '', agentId: old.agentId ?? null });
     if (old?.unbuiltAdd === true) rec.unbuiltAdd = true;
-    if (selected.has(s.id)) Object.assign(rec, { status: 'planned', todo: { stage: 'change' } });
+    const owed = owedStretch(old);
+    const grown = owed && owed.to === s.duration ? owed : null;
+    if (selected.has(s.id) || grown) Object.assign(rec, { status: 'planned', todo: { stage: 'change', ...(grown ? { grown } : {}) } });
     return rec;
   });
 }
@@ -334,6 +395,9 @@ function withDefaults(deps = {}) {
     generatePicture,
     createPictureDesk,
     stagePictureKit,
+    speak,
+    compose,
+    soundReady,
     mock: undefined,
   };
   for (const [k, v] of Object.entries(deps || {})) if (v !== undefined) out[k] = v;
@@ -345,8 +409,9 @@ export class DesignBuild extends EventEmitter {
    * A new round of `design` (a row or an id): `createBuild` assigns `round` and makes it the design's current build.
    * `instruction` is an alias of `brief`. A change round reads the plan on disk and the previous round's section
    * records through `latestBuild` before `createBuild` makes it the latest, then writes them to its own row (which
-   * `createBuild` leaves empty) with every `todo` dropped, and `.crew.json` follows. Either kind, before the row, the
-   * folder of each add the latest round left with no build goes (`clearUnbuiltAdds`). Its draft store runs with
+   * `createBuild` leaves empty) with every `todo` dropped but a stretch still owed (`carriedRecords`), and `.crew.json`
+   * follows. Either kind, before the row, the folder of each add the latest round left with no build goes
+   * (`clearUnbuiltAdds`). Its draft store runs with
    * `landFirst`. Emits nothing, so a listener attached right after misses no frame. Throws the store's `DesignError`,
    * and a `DesignRefusal` before any row: 409 for an add's folder that cannot be cleared, and for a change round 422
    * (`changeStart`). A throw once the row exists closes it `error`, `engine-error` first (M6): no build would hold it,
@@ -445,6 +510,14 @@ export class DesignBuild extends EventEmitter {
     this._desk = null;
     /** The last desk's close; resolved while none closes, and it never rejects. */
     this._deskClosed = Promise.resolve();
+    /** The design's sound choice (`design.sound`) and whether this round's film has sound (SPEC D8), read at each
+     *  drive's start and by `_restore`. */
+    this._sound = null;
+    this._soundOn = false;
+    /** The clips the builders are told, by section id (`_soundStage`, `_loadClips`). */
+    this._clips = new Map();
+    /** The last `design-sound` frame's fields, for `snapshot().sound`; null before any. */
+    this._soundFields = null;
     /** Aborts every queue and slot wait of this build. */
     this._haltCtl = new AbortController();
     /** The build slots: builders on stage at once (M6), a waiting one included (L2.28). Sized by the design's Build
@@ -656,7 +729,8 @@ export class DesignBuild extends EventEmitter {
    * The C-5 `design-snapshot` a late joiner starts from (M1: nothing is replayed). The drafts are taken first, which
    * sends any pending text as deltas, and `seq` is read after: a client drops every frame at or below `seq`, so no
    * text arrives twice. No drafts once the build has settled. `questions` holds every question an agent waits on now,
-   * in agent order; none once settled, since `askId` lives in memory (a paused build's Continue asks again).
+   * in agent order; none once settled, since `askId` lives in memory (a paused build's Continue asks again). `sound`
+   * holds the last `design-sound` frame's fields, or null before any (SPEC §5).
    */
   snapshot() {
     const drafts = this._settled ? [] : this._drafts.snapshot();
@@ -672,6 +746,7 @@ export class DesignBuild extends EventEmitter {
       sections: this._sections.map(copySection),
       questions: this._agents.filter((a) => a.ask).map((a) => this._questionFields(a)),
       drafts,
+      sound: this._soundFields ? copySound(this._soundFields) : null,
     };
   }
 
@@ -729,7 +804,9 @@ export class DesignBuild extends EventEmitter {
    * A change round sends `design-plan` right after its first `design-build` (carried statuses, the selection
    * `planned`); its lead stage is the `change` stage (`_leadStageDue`), a stale round.json goes at `run()`, and its
    * builder stage and verdicts take only the sections with a `todo`. A lead stage that applied a round lifts the
-   * selection: the round's own sections are all owed.
+   * selection: the round's own sections are all owed. A video's round runs its sound stage (`_soundStage`) between the
+   * lead stage and the builders, every drive, and a halt during it settles there; the builders it sends back take its
+   * prompts.
    */
   async _drive({ fresh = false, selection = null } = {}) {
     this._emitBuild();
@@ -756,6 +833,9 @@ export class DesignBuild extends EventEmitter {
     this._denyRules = await designDenyRules({ projectDir: this._projectDir });
     const caps = await this._deps.readCaps({ projectDir: this._projectDir });
     this._cap = Number.isFinite(caps?.perRunCapUsd) ? caps.perRunCapUsd : null;
+    this._readSound();
+    // `snapshot().sound` is this drive's line: none until its stage sends one.
+    this._soundFields = null;
     await this._openDesk();
     let pick = selection;
     if (this._leadStageDue(fresh)) {
@@ -768,9 +848,14 @@ export class DesignBuild extends EventEmitter {
       }
       pick = null;
     }
+    let rework = new Map();
+    if (isFilmKind(this._design.kind) && this._plan) {
+      rework = await this._soundStage(pick);
+      if (this._end) { await this._shutDesk(); return this._settleHalt(); }
+    }
     this._setStatus('building');
     const queued = this._sections.filter((s) => s.status === 'planned' && (!pick || pick.has(s.id)) && this._inRound(s));
-    await this._runBuilders(queued.map((section) => ({ section, prompt: null })));
+    await this._runBuilders(queued.map((section) => ({ section, prompt: rework.get(section.id) ?? null })));
     if (this._end) { await this._shutDesk(); return this._settleHalt(); }
     const open = this._afterBuilders();
     if (open) {
@@ -885,6 +970,164 @@ export class DesignBuild extends EventEmitter {
   /** The kit line the lead is given: while the round's desk is open, else null (no prompt names a kit). */
   _pictureKit() {
     return this._desk ? PICTURE_KIT_LINE : null;
+  }
+
+  /** The design's sound choice now (`design.sound`), and whether this round's film has sound: a video whose choice is
+   *  on. Read at each drive's start and by `_restore`. */
+  _readSound() {
+    this._sound = getDesign(this.designId)?.sound ?? null;
+    this._soundOn = isFilmKind(this._design.kind) && this._sound?.on === true;
+  }
+
+  /** The manifest's clips whose words the plan held now still says, by section id: a builder is never told words its
+   *  scene no longer holds (a clip plays only for the words the plan holds, SPEC §5). */
+  _loadClips() {
+    const sayOf = (id) => this._plan?.sections.find((s) => s.id === id)?.say;
+    return new Map((readSoundManifest(this._workDir)?.clips ?? []).filter((c) => sayOf(c.id) === c.text).map((c) => [c.id, c]));
+  }
+
+  /**
+   * The round's sound stage (SPEC D8, D9, D16, D17; LEAD-CALLS L4, L10, L11): worca's own step, on every drive of a
+   * video round once a plan is held, between the lead stage and the builders. Sound off: `work/assets/sound/` goes (a
+   * removal that fails is only logged) and no builder is told a clip, with no frame. ElevenLabs not ready: one `failed`
+   * line, and the builders are told the clips already made. Otherwise `making`, then `makeSound` with P1's calls behind
+   * worca's spend limits (`_soundCall`) and each answer booked (`_bookSound`); the scenes that grew are written to
+   * plan.json and their records (`_growScenes`) before any builder is told `S.dur`; every builder gets its first prompt
+   * anew; then `made`, or `failed` with each reason once. Nothing here fails the round: an abort
+   * (the halt that caused it set the end state; the drive settles) or any other throw ends the stage with no prompt of
+   * its own, a throw sent as `failed` with `the sound could not be saved` and the builders told the clips already made.
+   * @param {Set<string>|null} pick the drive's selection, if any: every scene that grew joins it
+   * @returns {Promise<Map<string, string>>} the explicit prompt of each builder sent back, by section id
+   */
+  async _soundStage(pick) {
+    if (this._end) return new Map();
+    try {
+      if (!this._soundOn) {
+        this._clips = new Map();
+        // A builder not yet in a session starts on its first prompt again, told no clip.
+        for (const a of this._agents) if (a.role === 'builder' && !a.sessionId) a.firstPrompt = null;
+        try {
+          removeSound(this.designId);
+        } catch (err) {
+          console.error(`[design] build ${this.id}: work/assets/sound not removed: ${messageOf(err)}`);
+        }
+        return new Map();
+      }
+      if (!this._deps.soundReady()) {
+        this._soundFrame({ state: 'failed', reasons: [SOUND_NOT_SET_UP] });
+        this._clips = this._loadClips();
+        return new Map();
+      }
+      this._soundFrame({ state: 'making', music: musicPrompt(this._sound.music) !== null });
+      const r = await makeSound({
+        designId: this.designId,
+        workDir: this._workDir,
+        plan: this._plan,
+        sound: this._sound,
+        speak: this._soundCall('speak'),
+        compose: this._soundCall('compose'),
+        signal: this._haltCtl.signal,
+        book: (usd, model) => this._bookSound(usd, model),
+      });
+      const prompts = r.grown.length ? this._growScenes(r, pick) : new Map();
+      this._clips = r.clips;
+      // Every builder's first prompt is built again by `_runSection`, with this drive's `S.dur` and clip: one with no
+      // session starts on it, and one in a session restarts on it should that session be lost.
+      for (const a of this._agents) if (a.role === 'builder') a.firstPrompt = null;
+      const fields = { voice: { made: r.made.voice, reused: r.made.reused }, music: r.music !== null, grown: r.grown.length };
+      if (!r.failed.length) this._soundFrame({ state: 'made', ...fields });
+      else this._soundFrame({ state: 'failed', ...fields, reasons: [...new Set(r.failed.map((f) => f.reason))] });
+      return prompts;
+    } catch (err) {
+      if (err?.name === 'AbortError') return new Map();
+      console.error(`[design] build ${this.id}: the sound stage failed: ${messageOf(err)}`);
+      this._soundFrame({ state: 'failed', reasons: [SOUND_NOT_SAVED] });
+      this._clips = this._loadClips();
+      return new Map();
+    }
+  }
+
+  /**
+   * The scenes `makeSound` grew (SPEC D9), before any builder is told `S.dur`: each grown record given its new
+   * `duration`, and a scene already built sent back with SPEC §7's brief. Its builder of this build, with a session,
+   * reworks a `done` scene and finishes one it was cut off in at the new length: the record keeps that as `regrow`
+   * (`{from, to, rework}`) until the scene is built at that length (`_judgeSection`), sent until its builder received
+   * it (`_runSection`), so a halt, a restart or a Continue that leaves the scene out loses nothing. `from` is the
+   * length the files were last built for: a stretch the record still holds (a todo's `grown` first, else its `regrow`)
+   * keeps its `from` and takes the new `to`, and a `regrow` keeps its `rework`. With no session, its `done` scene goes
+   * `planned`, and a `regrow` it holds is owed anew at the new length. Every builder of a grown scene starts again,
+   * should it start fresh, on a first prompt with the new `S.dur` (`_runSection` renews it). A scene with no builder in
+   * this build (a change round's carried scene) that is not `planned`, or that no round owns (`_inRound`: `planned` with
+   * no todo, as when a restored version put back a length its owed stretch no longer matched) once a builder worked on
+   * it (`agentId`: never an add or a scene whose first build never started, with no files to change), goes `planned`
+   * with a `change` todo whose `grown` (`{from, to}`) gives it the brief (`_builderFirstPrompt`). A selection gains
+   * every grown scene. The build row is
+   * written before plan.json, so a plan.json write that fails leaves a plan the next drive grows again; the plan and
+   * the records held change only once both are written; then the frames and `.crew.json` follow. A round that closes
+   * before a grown scene was built at its length hands the stretch to the next round (`carriedRecords`).
+   * @param {{ plan: object, grown: { id: string, from: number, to: number }[] }} r what `makeSound` returned
+   * @param {Set<string>|null} pick
+   * @returns {Map<string, string>} the explicit builder prompts, by section id
+   */
+  _growScenes(r, pick) {
+    const grown = new Map(r.grown.map((g) => [g.id, g]));
+    const prompts = new Map();
+    const changed = [];
+    const renew = [];
+    const sections = this._sections.map((s) => {
+      const g = grown.get(s.id);
+      if (!g) return s;
+      const rec = { ...s, parts: [...s.parts], duration: g.to };
+      const from = stretchOf(s)?.from ?? g.from;
+      if (s.todo?.grown) rec.todo = { ...s.todo, grown: { from, to: g.to } };
+      const builder = this._agents.find((a) => a.role === 'builder' && a.sectionId === s.id);
+      if (builder?.sessionId) {
+        const rework = s.regrow?.rework === true || rec.status === 'done';
+        rec.regrow = { from, to: g.to, rework };
+        if (rec.status === 'done') rec.status = 'planned';
+        prompts.set(s.id, regrowPrompt(rec.regrow));
+      } else if (builder) {
+        if (rec.status === 'done') rec.status = 'planned';
+        if (s.regrow) rec.regrow = { from, to: g.to, rework: s.regrow.rework === true };
+      } else if (rec.status !== 'planned' || (!this._inRound(s) && s.agentId)) {
+        Object.assign(rec, { status: 'planned', todo: { stage: 'change', grown: { from, to: g.to } } });
+      }
+      if (builder) renew.push(builder);
+      changed.push(rec);
+      return rec;
+    });
+    updateBuild(this.id, { sections });
+    writeJsonAtomic(this._planFile(), r.plan);
+    this._plan = r.plan;
+    this._sections = sections;
+    for (const b of renew) b.firstPrompt = null;
+    if (pick instanceof Set) for (const id of grown.keys()) pick.add(id);
+    for (const rec of changed) this._sectionFrame(rec);
+    this._emitBuild();
+    this._writeCrew();
+    this._planFrame();
+    return prompts;
+  }
+
+  /** P1's `speak` or `compose` (`name`) behind worca's spend limits, as the picture desk's `generate`: the limits are
+   *  checked before each call (`_spendOpen`), and a halt meanwhile, or a limit reached (which pauses the round with
+   *  `total-limit`), aborts the call before it starts, so it books nothing. */
+  _soundCall(name) {
+    return async (o) => {
+      const open = await this._spendOpen();
+      if (o.signal?.aborted) throw abortError();
+      if (!open) {
+        this._halt('paused', 'total-limit');
+        throw abortError();
+      }
+      return this._deps[name]({ ...o, mock: this._deps.mock });
+    };
+  }
+
+  /** A `design-sound` frame (SPEC §5); its fields are kept for `snapshot().sound`. */
+  _soundFrame(fields) {
+    this._soundFields = copySound(fields);
+    this._frames.send('design-sound', fields);
   }
 
   _dropIntegration() { rmSync(this._integrationFile(), { force: true, maxRetries: 10, retryDelay: 100 }); }
@@ -1003,7 +1246,10 @@ export class DesignBuild extends EventEmitter {
     this._sections = check.plan.sections.map((s) => {
       const rec = before.get(s.id);
       if (!rec) return { ...sectionRecord(s), todo: { stage: 'first' }, unbuiltAdd: true };
-      if (touched.has(s.id)) Object.assign(rec, { status: 'planned', todo: { stage: 'change', brief: touched.get(s.id) } });
+      // A scene still owed a stretch (`carriedRecords`) keeps it beside the touch's brief.
+      if (touched.has(s.id)) {
+        Object.assign(rec, { status: 'planned', todo: { stage: 'change', brief: touched.get(s.id), ...(rec.todo?.grown ? { grown: rec.todo.grown } : {}) } });
+      }
       return rec;
     });
     for (const id of out.removed) this._layers.delete(`sections/${id}/index.html`);
@@ -1056,7 +1302,8 @@ export class DesignBuild extends EventEmitter {
     return agent.role === 'builder' && this._offHook() ? join(agent.cwd, '.ctx') : undefined;
   }
 
-  /** The plan stage's first prompt for the lead `agent`, from the build's brief. */
+  /** The plan stage's first prompt for the lead `agent`, from the build's brief. A film with sound is told so: its kind
+   *  line (with the music or not) and its `Sound:` task line (SPEC §7); without sound neither is passed. */
   _leadPlanPrompt(agent) {
     return leadPlanPrompt({
       brief: this._row.brief,
@@ -1069,6 +1316,7 @@ export class DesignBuild extends EventEmitter {
       questionFile: this._questionFile(agent),
       planFile: this._planFile(),
       row: this._engineRow,
+      ...(this._soundOn ? { sound: { music: musicPrompt(this._sound.music) !== null }, soundLine: soundLineOf(this._sound) } : {}),
     });
   }
 
@@ -1079,7 +1327,8 @@ export class DesignBuild extends EventEmitter {
   }
 
   /** The change stage's first prompt for the lead `agent`: the round's instruction (the build's brief), the named
-   *  sections and the pins block (neither persisted: empty after a rehydrate). */
+   *  sections and the pins block (neither persisted: empty after a rehydrate). A film with sound gets its `Sound:` task
+   *  line (SPEC §7). */
   _leadChangePrompt(agent) {
     return leadChangePrompt({
       instruction: this._row.brief,
@@ -1093,21 +1342,26 @@ export class DesignBuild extends EventEmitter {
       roundFile: this._roundFile(),
       pinBlock: this._start.pinBlock,
       row: this._engineRow,
+      ...(this._soundOn ? { soundLine: soundLineOf(this._sound) } : {}),
     });
   }
 
   /** A builder's first prompt, from its plan section; null while no plan is held. A section whose `todo` is a
-   *  `change` gets the change round's prompt (Read then Edit, its `todo.brief`, the pins when it was named), so a
-   *  rehydrate rebuilds it from the row (L2.35); any other the first-build prompt. */
+   *  `change` gets the change round's prompt (Read then Edit, its `todo.brief` and then the brief of the stretch its
+   *  record holds, `stretchOf`, the pins when it was named), so a rehydrate or a fresh restart rebuilds it from the row
+   *  (L2.35); any other the first-build prompt. A video scene with a clip is told when its voice speaks (`this._clips`). */
   _builderFirstPrompt(agent) {
     const section = this._plan?.sections.find((s) => s.id === agent.sectionId) ?? this._sections.find((s) => s.id === agent.sectionId);
     if (!this._plan || !section) return null;
-    const todo = this._sections.find((s) => s.id === agent.sectionId)?.todo;
+    const rec = this._sections.find((s) => s.id === agent.sectionId);
+    const todo = rec?.todo;
+    const clip = this._clips.get(section.id) ?? null;
     if (todo?.stage === 'change') {
+      const stretch = stretchOf(rec);
       return builderChangePrompt({
         section,
         instruction: this._row.brief,
-        brief: todo.brief,
+        brief: [todo.brief, stretch ? grownBrief(stretch) : null].filter(Boolean).join('\n'),
         notes: this._plan.notes,
         sectionDir: agent.cwd,
         questionFile: this._questionFile(agent),
@@ -1116,6 +1370,7 @@ export class DesignBuild extends EventEmitter {
         plan: this._plan,
         projectDir: this._projectDir,
         row: this._engineRow,
+        clip,
       });
     }
     return builderPrompt({
@@ -1132,6 +1387,7 @@ export class DesignBuild extends EventEmitter {
       readRoot: this._readRoot(agent),
       projectDir: this._projectDir,
       row: this._engineRow,
+      clip,
     });
   }
 
@@ -1139,7 +1395,8 @@ export class DesignBuild extends EventEmitter {
    * `rehydrate`'s second half: the round's state from its rows and the disk. The disk plan is kept only when the
    * row has section records; otherwise the lead stage runs again on the existing lead row. Each agent gets the full
    * `_newAgent` shape, its meter seeded with the row's cost (`priorUsd`) and with its current session's running total
-   * (`sessionUsd`, M3: less than the cost once a lost session was replaced), its known flag kept beside the meter.
+   * (`sessionUsd`, M3: less than the cost once a lost session was replaced), its known flag kept beside the meter. A
+   * film with sound loads its clips first, so a builder's first prompt carries its clip.
    */
   _restore() {
     this._settled = true;
@@ -1157,6 +1414,8 @@ export class DesignBuild extends EventEmitter {
     const applied = this.kind === 'change' && lead && (lead.status === 'done' || lead.job === 'Integrate');
     this._planRev = this._plan ? (applied ? 2 : 1) : 0;
     this._seedLayers();
+    this._readSound();
+    if (this._soundOn) this._clips = this._loadClips();
     for (const r of rows) {
       const isLead = r.role === 'lead';
       const agent = {
@@ -1368,8 +1627,10 @@ export class DesignBuild extends EventEmitter {
         this._setSection(section, 'writing');
         // A rehydrate found no plan for it: the lead's new plan gives it its first prompt (a lost session's restart).
         agent.firstPrompt ??= this._builderFirstPrompt(agent);
-        // A Continue: the session resumes; an agent that never got one starts on its first prompt.
-        if (prompt == null) prompt = agent.sessionId ? continuePrompt({ role: 'builder' }) : agent.firstPrompt;
+        // A Continue: the session resumes, told what a scene that grew is owed unless it already received it; an agent
+        // that never got one starts on its first prompt.
+        const owed = unsent(section);
+        if (prompt == null) prompt = agent.sessionId ? (owed ? regrowPrompt(owed) : continuePrompt({ role: 'builder' })) : agent.firstPrompt;
       } else {
         if (!(await this._globalSlot())) return;
         // A halt that landed while this loop resumed from the slot (M7): no row for a process that never starts.
@@ -1389,7 +1650,9 @@ export class DesignBuild extends EventEmitter {
       }
       // A change round's section runs as its `todo` says: a touch `change`, an add `first`.
       const stage = section.todo?.stage ?? 'first';
-      const outcome = await this._runAgentLoop(agent, prompt ?? agent.firstPrompt, { stage, slotHeld });
+      const mark = unsent(section);
+      const regrow = mark ? { brief: grownBrief(mark), received: () => this._regrowReceived(section) } : null;
+      const outcome = await this._runAgentLoop(agent, prompt ?? agent.firstPrompt, { stage, slotHeld, regrow });
       this._judgeSection(section, agent, outcome);
     } finally {
       this._slots.release();
@@ -1407,14 +1670,32 @@ export class DesignBuild extends EventEmitter {
     return agent;
   }
 
-  /** A section's verdict from its loop: `done` needs a non-empty index.html; an agent the person stopped ends
-   *  `stopped` with its section now, so the rest of the round already sees it; a halted loop leaves the section
-   *  `writing`, and the settle decides; anything else is `failed`. */
+  /** A grown scene's `regrow` is marked `received` once its builder received it, written at once (as `_takeQuestion`
+   *  writes `asks`), so no later drive of its session sends it again; the scene still owes it until it is built. */
+  _regrowReceived(section) {
+    if (!section.regrow || section.regrow.received) return;
+    section.regrow = { ...section.regrow, received: true };
+    updateBuild(this.id, { sections: this._sections });
+  }
+
+  /** A section's verdict from its loop: `done` needs a non-empty index.html, and a scene built at its length then owes
+   *  no stretch (its `regrow` and its todo's `grown` go, and its builder's first prompt is built again without the
+   *  brief, should a later rework restart fresh); an agent the person stopped ends `stopped` with its section now, so
+   *  the rest of the round already sees it; a halted loop leaves the section `writing`, and the settle decides;
+   *  anything else is `failed`. */
   _judgeSection(section, agent, outcome) {
     if (outcome === 'done') {
       const html = this._readWork(`sections/${section.id}/index.html`);
       if (typeof html === 'string' && html.trim()) {
         this._endAgent(agent, 'done');
+        if (stretchOf(section)) {
+          delete section.regrow;
+          if (section.todo?.grown) {
+            section.todo = { ...section.todo };
+            delete section.todo.grown;
+          }
+          agent.firstPrompt = null;
+        }
         this._setSection(section, 'done', { summary: agent.summary || section.summary });
         return;
       }
@@ -1557,11 +1838,15 @@ export class DesignBuild extends EventEmitter {
    * sends its own prompt again. An ask file already there when the loop starts (a Continue) is asked
    * before any spawn. `slotHeld`: the caller already holds the global slot for the first process
    * (a builder's first build takes it before its folder and row exist). Every wait between two processes, the wait on
-   * an answer included, also ends when the person stops this agent (`stopAgent`).
+   * an answer included, also ends when the person stops this agent (`stopAgent`). `regrow`: a builder's scene grew and
+   * `firstPrompt` carries its brief (`_runSection`); every prompt this loop sends carries it until a process received
+   * one (the answers to a question asked first get the brief as their last line, a fresh start's first prompt holds the
+   * new `S.dur`, and a change round's the brief too), and then `regrow.received` runs once.
    * @returns {Promise<'done'|'failed'|'halted'|string>} `agent.stopKind` when the person stopped the agent
    */
-  async _runAgentLoop(agent, firstPrompt, { stage, slotHeld = false, restart = null }) {
+  async _runAgentLoop(agent, firstPrompt, { stage, slotHeld = false, restart = null, regrow = null }) {
     let prompt = firstPrompt;
+    let owed = regrow;
     let held = slotHeld;
     let ask = this._readAsk(agent);
     /** The question `prompt` answers ('answered') or closes ('last'), its file still on disk until a process shows it
@@ -1587,12 +1872,18 @@ export class DesignBuild extends EventEmitter {
           prompt = noMoreQuestionsPrompt();
           taken = 'last';
         }
+        // The prompt that carried a grown scene's brief is never sent: the brief goes with this one.
+        if (owed) prompt = [prompt, owed.brief].join('\n');
         ask = null;
       }
       if (!held && !(await this._globalSlot(agent))) return keepQuestion();
       held = false;
       const pending = taken;
-      const onReceive = pending ? () => { this._takeQuestion(agent, pending); taken = null; } : null;
+      const carried = owed;
+      const onReceive = pending || carried ? () => {
+        if (pending) { this._takeQuestion(agent, pending); taken = null; }
+        if (carried) { owed = null; carried.received(); }
+      } : null;
       const outcome = await this._spawnOnce(agent, prompt, stage, onReceive);
       if (outcome.aborted) return keepQuestion();
       if (outcome.subtype === 'error_max_budget_usd') { this._halt('paused', 'total-limit'); return keepQuestion(); }
@@ -1906,6 +2197,7 @@ export class DesignBuild extends EventEmitter {
       bridgedInfo: bridgedModelInfo(agent.model),
       kind: this._design.kind,
       pictures: agent.role === 'lead' && Boolean(this._desk),
+      sound: agent.role === 'lead' && this._soundOn,
       agentId: agent.id,
       buildId: this.id,
       designId: this.designId,
@@ -1965,6 +2257,13 @@ export class DesignBuild extends EventEmitter {
     }
     this._emitBuild();
     if (this._capReached()) this._halt('paused', 'total-limit');
+  }
+
+  /** Books one ElevenLabs answer when its bytes arrive (SPEC D16) as a made picture is booked (`_bookPicture`): above
+   *  $0 one ledger row with no agent and model `elevenlabs/<model>`, and the build row's total; then the build's
+   *  figures, and the per-run cap reached pauses the round with `total-limit`. */
+  _bookSound(usd, model) {
+    this._bookPicture({ costUsd: usd, model });
   }
 
   /**

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
-import { validatePlan, validateRound, validateIntegration, DEFAULT_EST_HEIGHT } from '../src/core/design/plan.mjs';
+import { validatePlan, validateRound, validateIntegration, DEFAULT_EST_HEIGHT, MAX_SAY } from '../src/core/design/plan.mjs';
 import { applyRound } from '../src/core/design/build.mjs';
 
 const sec = (id, extra = {}) => ({ id, job: id[0].toUpperCase() + id.slice(1), brief: 'b', parts: ['html', 'css'], estHeight: 600, ...extra });
@@ -208,4 +208,47 @@ test('a document round: an add defaults estHeight, refuses js, and the applied p
   assert.equal(again.ok, true, again.errors.join());
   assert.deepEqual([again.plan.page, again.plan.toc, again.plan.numbered, again.plan.canvas], ['A4', true, true, { w: 794 }]);
   assert.deepEqual(again.plan.sections.map((s) => s.id), ['summary', 'risks', 'findings']);
+});
+test('a video section keeps say, folded; other kinds drop it', () => {
+  const video = (say) => ({ v: 1, kind: 'video', title: 'T', canvas: { w: 1920, h: 1080, fps: 60 }, notes: '', sections: [{ id: 'open', job: 'Open', brief: 'b', parts: ['html'], duration: 4, ...(say === undefined ? {} : { say }) }] });
+  assert.equal(validatePlan(video(' Meet\n worca.  ')).plan.sections[0].say, 'Meet worca.');
+  assert.equal('say' in validatePlan(video('   ')).plan.sections[0], false);
+  assert.equal('say' in validatePlan(video(undefined)).plan.sections[0], false);
+  assert.deepEqual(validatePlan(video('x'.repeat(1501))).errors, ['section "open": say must be text of at most 1500 characters']);
+  assert.deepEqual(validatePlan(video(7)).errors, ['section "open": say must be text of at most 1500 characters']);
+  const web = { v: 1, kind: 'web', title: 'T', canvas: { w: 1280 }, notes: '', sections: [{ id: 'hero', job: 'Hero', brief: 'b', parts: ['html'], estHeight: 300, say: 'x' }] };
+  assert.equal('say' in validatePlan(web).plan.sections[0], false);
+});
+test('a round touch may change or remove the words; an add may carry them', () => {
+  const plan = validatePlan({ v: 1, kind: 'video', title: 'T', canvas: { w: 1920, h: 1080, fps: 60 }, notes: '', sections: [
+    { id: 'open', job: 'Open', brief: 'b', parts: ['html'], duration: 4, say: 'A.' }, { id: 'close', job: 'Close', brief: 'b', parts: ['html'], duration: 4 }] }).plan;
+  const r = validateRound({ v: 1, summary: 's', touch: [{ id: 'open', brief: 'b', say: '' }, { id: 'close', brief: 'b', say: ' New  words. ' }],
+    add: [{ id: 'mid', job: 'Mid', brief: 'b', parts: ['html'], duration: 3, say: 'Added.', after: 'open' }], remove: [] }, { plan });
+  assert.deepEqual(r.round.touch, [{ id: 'open', brief: 'b', say: '' }, { id: 'close', brief: 'b', say: 'New words.' }]);
+  assert.equal(r.round.add[0].say, 'Added.');
+  const out = applyRound({ plan, round: r.round, shellHtml: '' }).plan;
+  assert.deepEqual(out.sections.map((s) => [s.id, s.say]), [['open', undefined], ['mid', 'Added.'], ['close', 'New words.']]);
+  const kept = validateRound({ v: 1, summary: 's', touch: [{ id: 'open', brief: 'b' }], add: [], remove: [] }, { plan }).round;
+  assert.deepEqual(kept.touch, [{ id: 'open', brief: 'b' }]);
+  assert.equal(applyRound({ plan, round: kept, shellHtml: '' }).plan.sections[0].say, 'A.');
+});
+test('say: null reads as absent, the bound counts folded text, a touch names itself, other kinds drop a touch\'s say', () => {
+  const plan = validatePlan({ v: 1, kind: 'video', title: 'T', canvas: { w: 1920, h: 1080, fps: 60 }, notes: '', sections: [
+    { id: 'open', job: 'Open', brief: 'b', parts: ['html'], duration: 4, say: null },
+    { id: 'close', job: 'Close', brief: 'b', parts: ['html'], duration: 4, say: `\n${'x'.repeat(MAX_SAY)}  ` }] }).plan;
+  assert.equal('say' in plan.sections[0], false);
+  assert.equal(plan.sections[1].say, 'x'.repeat(MAX_SAY));
+  const frozen = JSON.stringify(plan);
+  const r = validateRound({ v: 1, summary: 's', touch: [{ id: 'open', brief: 'b', say: null }, { id: 'close', brief: 'Wave.', say: 'Bye.' }], add: [], remove: [] }, { plan });
+  assert.deepEqual(r.round.touch, [{ id: 'open', brief: 'b' }, { id: 'close', brief: 'Wave.', say: 'Bye.' }]);
+  assert.deepEqual(applyRound({ plan, round: r.round, shellHtml: '' }).plan.sections[1], { ...plan.sections[1], say: 'Bye.' });
+  assert.equal(JSON.stringify(plan), frozen);
+  const bad = validateRound({ v: 1, summary: 's', touch: [{ id: 'open', brief: 'b', say: 7 }],
+    add: [{ id: 'mid', job: 'Mid', brief: 'b', parts: ['html'], duration: 3, say: 'x'.repeat(MAX_SAY + 1) }], remove: [] }, { plan });
+  assert.deepEqual(bad.errors, ['touch "open": say must be text of at most 1500 characters', 'add "mid": say must be text of at most 1500 characters']);
+  const web = validatePlan({ v: 1, kind: 'web', title: 'T', canvas: { w: 1280 }, notes: '', sections: [{ id: 'hero', job: 'Hero', brief: 'b', parts: ['html'], estHeight: 300 }] }).plan;
+  const w = validateRound({ v: 1, summary: 's', touch: [{ id: 'hero', brief: 'b', say: 7 }], add: [{ id: 'faq', job: 'FAQ', brief: 'b', parts: ['html'], say: 'x' }], remove: [] }, { plan: web });
+  assert.deepEqual(w.errors, []);
+  assert.deepEqual(w.round.touch, [{ id: 'hero', brief: 'b' }]);
+  assert.equal('say' in w.round.add[0], false);
 });

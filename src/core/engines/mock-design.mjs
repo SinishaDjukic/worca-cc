@@ -27,6 +27,13 @@ const COST_RE = /\bMOCK_COST=(\d+(?:\.\d+)?)/;
 const REWORK_RE = /\bMOCK_REWORK=([a-z][a-z0-9-]*)/g;
 const ROUND_ADD_RE = /\bMOCK_ROUND_ADD=([a-z][a-z0-9-]*):([a-z][a-z0-9-]*)/g;
 const ROUND_REMOVE_RE = /\bMOCK_ROUND_REMOVE=([a-z][a-z0-9-]*)/g;
+/** A video's words (`say`): `MOCK_SAY_LONG=<id>` gives that scene the long words; `MOCK_ROUND_SAY=<id>:<slug>` gives the
+ *  round's touch of `<id>` the slug, hyphens as spaces, plus a full stop (an empty slug removes the words). */
+const SAY_LONG_RE = /\bMOCK_SAY_LONG=([a-z][a-z0-9-]*)/g;
+const ROUND_SAY_RE = /\bMOCK_ROUND_SAY=([a-z][a-z0-9-]*):([a-z0-9-]*)/g;
+const SAY_WORDS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+/** 503 characters, 96 words: more than a 4 s scene holds. */
+const LONG_SAY = 'These are many words for one short scene. '.repeat(12).trim();
 /** The lead's picture asks: `MOCK_PICTURE=<name>:<shape>` is made, `MOCK_PICTURE_FAIL=` is refused (`MOCK_REFUSE` in its
  *  description). `\bMOCK_PICTURE=` never matches the longer tokens. */
 const PICTURE_RE = /\bMOCK_PICTURE=([a-z0-9][a-z0-9-]{0,39}):(wide|tall|square)\b/g;
@@ -377,7 +384,11 @@ function shellHtml(slotIds) {
   return `<!doctype html><html><head><!--worca:head--></head><body><main class="grid">${slots}<!--worca:sections--></main><!--worca:foot--></body></html>`;
 }
 
-/** The lead's plan: `MOCK_SECTIONS` sections (default 3), shaped for its kind (`kindFields`, `kindCanvas`). */
+/** A scene's words under `MOCK_SAY`: its position as a word up to ten, as digits after. */
+const sceneSay = (i) => `Scene ${i < SAY_WORDS.length ? SAY_WORDS[i] : i + 1} says this in plain words.`;
+
+/** The lead's plan: `MOCK_SECTIONS` sections (default 3), shaped for its kind (`kindFields`, `kindCanvas`). A video's
+ *  scenes carry `say` under `MOCK_SAY` (every scene) and `MOCK_SAY_LONG=<id>` (that scene, the long words). */
 function leadPlan(text, kind) {
   const n = Math.min(MAX_SECTIONS, Math.max(1, Number((/\bMOCK_SECTIONS=(\d+)/.exec(text) || [])[1] || 3)));
   const perSection = new Map();
@@ -388,19 +399,25 @@ function leadPlan(text, kind) {
   const cost = costTokens(text);
   const rework = [...text.matchAll(REWORK_RE)].map((m) => `MOCK_REWORK=${m[1]}`);
   const bands = has(text, 'MOCK_BANDS');
+  const film = isFilmKind(kind);
+  const sayAll = film && has(text, 'MOCK_SAY');
+  const sayLong = new Set(film ? [...text.matchAll(SAY_LONG_RE)].map((m) => m[1]) : []);
   const sections = [];
   for (let i = 0; i < n; i += 1) {
     const id = sectionIdAt(i);
     const job = capitalise(id);
     const brief = [`Mock ${job} section.`, ...(perSection.get(id) || []), ...cost].join(' ');
-    sections.push({ id, job, brief, ...kindFields(kind), ...(bands && i < 2 ? { band: 'Top' } : {}) });
+    const say = sayLong.has(id) ? LONG_SAY : sayAll ? sceneSay(i) : null;
+    sections.push({ id, job, brief, ...kindFields(kind), ...(bands && i < 2 ? { band: 'Top' } : {}), ...(say ? { say } : {}) });
   }
   const doc = isDocKind(kind) ? { page: 'A4', toc: true } : {};
   return { v: 1, kind, title: 'Mock', canvas: kindCanvas(kind), ...doc, notes: ['Mock plan.', ...cost, ...rework].join(' '), sections };
 }
 
 /** The lead's `round.json`: the default touches the first section that stays, with brief `Mock touch`. An add is
- *  shaped for the `kind` of the round's `Kind:` line (a video add needs its `duration`). */
+ *  shaped for the `kind` of the round's `Kind:` line (a video add needs its `duration`). On a video, each
+ *  `MOCK_ROUND_SAY=<id>:<slug>` gives `<id>`'s touch its `say`, merged into a touch of that id or appended with brief
+ *  `Mock new words.`; an id the round removes or the plan lacks is skipped (validateRound would refuse the round). */
 function leadRound(text, plan, kind) {
   if (has(text, 'MOCK_BAD_ROUND')) return { v: 1, summary: '', touch: [], add: [], remove: [] };
   const ids = Array.isArray(plan?.sections) ? plan.sections.map((s) => s?.id).filter((id) => typeof id === 'string') : [];
@@ -411,7 +428,17 @@ function leadRound(text, plan, kind) {
     return { id, job, brief: [`Mock ${job} section.`, ...cost].join(' '), ...kindFields(kind), after };
   });
   const touched = ids.find((id) => !remove.includes(id));
-  return { v: 1, summary: 'Mock round', touch: touched ? [{ id: touched, brief: 'Mock touch' }] : [], add, remove };
+  const touch = touched ? [{ id: touched, brief: 'Mock touch' }] : [];
+  if (isFilmKind(kind)) {
+    for (const [, id, slug] of text.matchAll(ROUND_SAY_RE)) {
+      if (!ids.includes(id) || remove.includes(id)) continue;
+      const say = slug ? `${slug.replace(/-/g, ' ')}.` : '';
+      const same = touch.find((t) => t.id === id);
+      if (same) same.say = say;
+      else touch.push({ id, brief: 'Mock new words.', say });
+    }
+  }
+  return { v: 1, summary: 'Mock round', touch, add, remove };
 }
 
 /** The lead's memory of its session: a fresh task prompt (a plan or a change round) is read and kept; any other resume

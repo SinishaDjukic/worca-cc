@@ -7,11 +7,31 @@ import { gsapPath } from '../assets/promo-kit/tools/init-film.mjs';
 const GSAP = readFileSync(gsapPath(), 'utf8');
 const FILM = readFileSync(new URL('../assets/design-kit/video/film.js', import.meta.url), 'utf8');
 const plain = (x) => JSON.parse(JSON.stringify(x));   // out of the jsdom realm: deepEqual compares prototypes
+const r6 = (x) => Math.round(x * 1e6) / 1e6;
+// The table soundAt (src/shared/sound-services.mjs) is pinned by too: film.js carries the same rule.
+const cases = JSON.parse(readFileSync(new URL('./fixtures/film-sound-cases.json', import.meta.url), 'utf8'));
 const windows = []; after(() => { for (const w of windows) w.close(); });
-function boot({ scenes = [['a', 2], ['b', 3]], html, css = '', scripts = {}, embedded = true, hash = '', start = true, reduced = false } = {}) {
+// The audio elements the assembler writes into a dist or standalone film, after the stage and before the scripts.
+const audioHtml = ({ clips = [], music = null }) => [
+  ...clips.map((c) => `<audio data-film-clip="${c.id}" data-start="${c.start}" data-seconds="${c.seconds}" preload="auto" src="assets/sound/${c.file}"></audio>`),
+  ...(music ? [`<audio data-film-music data-seconds="${music.seconds}" data-gain="${music.gain}" preload="auto" loop src="assets/sound/${music.file}"></audio>`] : []),
+].join('\n');
+// jsdom plays nothing: its play() and pause() are stubs returning undefined and its paused is a getter, so each element
+// gets its own paused, and a play and a pause that flip it and record the call.
+function playable(el) {
+  Object.defineProperty(el, 'paused', { value: true, writable: true });
+  el.calls = [];
+  el.play = () => { el.paused = false; el.calls.push('play'); return Promise.resolve(); };
+  el.pause = () => { el.paused = true; el.calls.push('pause'); };
+  return el;
+}
+function boot({ scenes = [['a', 2], ['b', 3]], html, css = '', scripts = {}, embedded = true, hash = '', start = true, reduced = false, tracks } = {}) {
   const body = html ?? scenes.map(([id]) => `<div data-section="${id}" data-scene><b id="${id}-b">${id}</b></div>`).join('');
-  const win = new JSDOM(`<!doctype html><html><head><style>${css}</style></head><body><div data-film>${body}</div></body></html>`, { url: `http://localhost/x${hash}`, runScripts: 'outside-only', pretendToBeVisual: true }).window;
+  const sound = tracks ? '\n' + audioHtml(tracks) : '';
+  const win = new JSDOM(`<!doctype html><html><head><style>${css}</style></head><body><div data-film>${body}</div>${sound}</body></html>`, { url: `http://localhost/x${hash}`, runScripts: 'outside-only', pretendToBeVisual: true }).window;
   windows.push(win);
+  const audio = { clips: [...win.document.querySelectorAll('audio[data-film-clip]')].map(playable), music: win.document.querySelector('audio[data-film-music]') };
+  if (audio.music) playable(audio.music);
   const raf = []; let now = 0;
   win.requestAnimationFrame = (f) => raf.push(f); win.cancelAnimationFrame = () => { raf.length = 0; };
   Object.defineProperty(win.performance, 'now', { value: () => now });
@@ -20,7 +40,7 @@ function boot({ scenes = [['a', 2], ['b', 3]], html, css = '', scripts = {}, emb
   win.eval(GSAP); win.eval(FILM);
   for (const [id, js] of Object.entries(scripts)) win.eval(`F.scene(${JSON.stringify(id)},function(root,S){\n${js}\n});`);
   if (start) win.F.start();
-  return { win, doc: win.document, F: win.F, $: (id) => win.document.querySelector(`[data-section="${id}"]`), advance(ms) { now += ms; for (const f of raf.splice(0)) f(now); } };
+  return { win, doc: win.document, F: win.F, audio, $: (id) => win.document.querySelector(`[data-section="${id}"]`), advance(ms) { now += ms; for (const f of raf.splice(0)) f(now); } };
 }
 test('windows come from the plan, in order', () => {
   const { F } = boot();
@@ -233,4 +253,51 @@ test('S.random is seeded; no plate, mascot, camera, sound or caption API exists'
   for (const n of ['plate', 'seq', 'mascot', 'camera', 'cursor', 'sfx', 'vo', 'word', 'caption', 'chapter']) assert.equal(n in win.__S, false, n);
   for (const n of ['plateUrl', 'vo', 'word', 'sfxAt', 'SFX', 'cues', 'D']) assert.equal(n in F, false, n);
   assert.doesNotMatch(FILM, /new Audio|<audio|<video|\.mp4|localStorage|\.kit\/|data-worca-|<script|gsap\.ticker\.add/);   // Task 5 checks the run doc's raw text for the first four
+});
+test('film.js plays by the shared table', () => {
+  const { F, audio } = boot({ embedded: false, scenes: [['a', 5], ['b', 5]], tracks: cases.tracks });   // a 10 s film, as the table's
+  assert.equal(F.playing, false);                                                       // no autoplay with sound
+  F.play();
+  assert.deepEqual(audio.clips[1].calls.slice(0, 2), ['play', 'pause']);                // the unlock: b starts at 5.35, outside the click
+  for (const c of cases.cases.filter((x) => x.t < cases.dur)) {
+    F.seek(c.t);
+    assert.deepEqual(audio.clips.map((a) => !a.paused), c.clips.map(([on]) => on), `clips at ${c.t}`);
+    assert.equal(!audio.music.paused, c.music[0], `music at ${c.t}`);
+    assert.equal(r6(audio.music.volume), c.music[2], `volume at ${c.t}`);
+  }
+  F.seek(1); assert.deepEqual([r6(audio.clips[0].currentTime), r6(audio.music.currentTime)], [0.65, 1]);
+  F.seek(1.5); assert.equal(r6(audio.clips[0].currentTime), 1.15);                       // a playing clip 0.5 s off is set right
+  F.seek(1.6); assert.equal(r6(audio.clips[0].currentTime), 1.15);                       // 0.1 s off is left alone (SOUND_DRIFT)
+  F.pause();
+  assert.deepEqual([...audio.clips, audio.music].map((a) => a.paused), [true, true, true]);
+  F.seek(6);
+  assert.equal(audio.clips[1].paused, true);                                            // a seek while paused starts nothing
+});
+test('the film\'s end stops every element, the looping music too', () => {
+  const { F, audio, advance } = boot({ embedded: false, scenes: [['a', 5], ['b', 5]], tracks: cases.tracks });
+  F.play(); F.seek(9.5);
+  assert.equal(audio.music.paused, false);                                              // red before B7: something to stop
+  advance(1000);
+  assert.equal(F.playing, false);
+  assert.deepEqual([...audio.clips, audio.music].map((a) => a.paused), [true, true, true]);
+});
+test('a silent film opened alone still autoplays', () => {
+  assert.equal(boot({ embedded: false }).F.playing, true);
+});
+test('the unlock is the first play\'s alone; the music loops in place and its volume never passes 1', () => {
+  const tracks = { ...cases.tracks, music: { ...cases.tracks.music, gain: 2 } };
+  const { F, audio } = boot({ embedded: false, scenes: [['a', 5], ['b', 5]], tracks });
+  F.play(); F.pause(); F.play();
+  assert.deepEqual(audio.music.calls, ['play', 'pause', 'play', 'pause', 'play']);      // the unlock, then play, pause, play
+  assert.deepEqual(audio.clips[1].calls, ['play', 'pause']);                            // b is never on before 5.35
+  F.seek(5); assert.equal(audio.music.volume, 1);                                       // a gain of 2, clamped: an audio element refuses past 1
+  F.seek(9); assert.deepEqual([r6(audio.music.currentTime), r6(audio.music.volume)], [1, 1]);   // 9 % 8
+  assert.deepEqual(plain(F.violations), []);
+});
+test('a sound that throws is the sound\'s alone: play goes on, and it is reported once', () => {
+  const tracks = { clips: [], music: { ...cases.tracks.music, seconds: 0 } };            // t % 0 is NaN, which currentTime refuses
+  const { F, advance } = boot({ embedded: false, scenes: [['a', 5], ['b', 5]], tracks });
+  assert.doesNotThrow(() => F.play());
+  advance(1000); assert.deepEqual([F.t, F.playing], [1, true]);
+  assert.equal(F.violations.length, 1); assert.match(F.violations[0], /^sound failed: /);
 });

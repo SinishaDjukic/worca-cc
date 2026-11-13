@@ -12,6 +12,7 @@ import {
 import { designDir, ensureDesignFolders } from './paths.mjs';
 import { DESIGN_FAST_DEFAULT, DESIGN_PICTURES_DEFAULT, DESIGN_PICTURE_NAME_RE } from '../../shared/design-names.mjs';
 import { IMAGE_SHAPES, IMAGES_MAX_PROMPT } from '../../shared/image-services.mjs';
+import { MUSIC_KINDS, SOUND_LIMITS } from '../../shared/sound-services.mjs';
 
 /** C-5 `design-build.status`. */
 export const BUILD_STATUSES = Object.freeze(['planning', 'building', 'integrating', 'paused', 'done', 'stopped', 'error', 'interrupted']);
@@ -51,7 +52,7 @@ function toDesign(r) {
     threadId: r.thread_id ?? null, engine: r.engine ?? null, status: r.status, currentBuild: r.current_build ?? null,
     version: Number(r.version), createdBy: r.created_by ?? null, createdAt: r.created_at, updatedAt: r.updated_at,
     costUsd: roundUsd(Number(r.spend) || 0), models: readModels(r.models_json),
-    pictures: r.pictures == null ? DESIGN_PICTURES_DEFAULT : !!r.pictures,
+    pictures: r.pictures == null ? DESIGN_PICTURES_DEFAULT : !!r.pictures, sound: readSound(r.sound_json),
   };
 }
 
@@ -91,6 +92,42 @@ function cleanModels(v) {
     out[role] = { model, ...(effort ? { effort } : {}) };
   }
   return Object.keys(out).length ? JSON.stringify(out) : null;
+}
+
+/** The twin of P1's VOICE_ID_RE in `ui/routes/sound/sound.mjs`, which src/ does not import from. */
+const VOICE_ID_RE = /^[A-Za-z0-9-]{1,64}$/;
+const VOICE_NAME_MAX = 80;
+
+/** The design's sound choice (D2), checked: `{on: false}` or `{on: true, voice: {id, name}, music: {kind, text?}}`,
+ *  keys in that order. `text` is kept for `custom` only; unknown keys are dropped at every level; a missing or wrong
+ *  value of a known key throws `sound: <what>`. */
+function checkSound(v) {
+  const no = (what) => new DesignError('BAD_REQUEST', `sound: ${what}`);
+  if (!isObj(v)) throw no('must be { on, voice, music } or null');
+  if (typeof v.on !== 'boolean') throw no('on must be true or false');
+  if (!v.on) return { on: false };
+  const { voice, music } = v;
+  if (!isObj(voice)) throw no('voice must be { id, name }');
+  if (typeof voice.id !== 'string' || !VOICE_ID_RE.test(voice.id)) throw no('voice.id is not a voice id');
+  const name = typeof voice.name === 'string' ? voice.name.trim() : '';
+  if (!name || name.length > VOICE_NAME_MAX || /[\r\n]/.test(name)) throw no(`voice.name must be one line of 1 to ${VOICE_NAME_MAX} characters`);
+  if (!isObj(music)) throw no('music must be { kind, text }');
+  if (!MUSIC_KINDS.includes(music.kind)) throw no(`music.kind must be one of ${MUSIC_KINDS.join(', ')}`);
+  if (music.kind !== 'custom') return { on: true, voice: { id: voice.id, name }, music: { kind: music.kind } };
+  const text = typeof music.text === 'string' ? music.text.trim() : '';
+  if (!text || text.length > SOUND_LIMITS.musicText) throw no(`music.text must be 1 to ${SOUND_LIMITS.musicText} characters`);
+  return { on: true, voice: { id: voice.id, name }, music: { kind: 'custom', text } };
+}
+
+/** A stored sound_json as the checked choice; anything unreadable or off the rule is no choice (null), never a throw. */
+function readSound(text) {
+  if (typeof text !== 'string' || !text) return null;
+  try { return checkSound(JSON.parse(text)); } catch { return null; }
+}
+
+/** The sound choice as stored text, or null for none (not asked yet). */
+function cleanSound(v) {
+  return v == null ? null : JSON.stringify(checkSound(v));
 }
 
 /** One line, whitespace collapsed; blank is DEFAULT_TITLE; longer than TITLE_MAX is refused, never truncated. */
@@ -214,6 +251,7 @@ const PATCH = Object.freeze({
   currentBuild: ['current_build', cleanCurrentBuild],
   version: ['version', cleanVersion],
   models: ['models_json', cleanModels],
+  sound: ['sound_json', cleanSound],
 });
 
 export function updateDesign(id, patch = {}) {

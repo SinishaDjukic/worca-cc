@@ -3,7 +3,8 @@
    ({w, h, fps, embedded, scenes: [{id, duration}]}). Scene scripts register with F.scene(id, build), and the doc calls
    F.start() once after them. On document: `filmtime` {t, playing, dur} on every render, `filmscene` {id} when the
    scene under the playhead changes. Embedded in worca the film waits for the parent; opened alone it plays, with
-   keys and a bar. */
+   keys and a bar. A film with sound (the audio elements a dist or standalone export carries) opened alone waits for
+   the first click instead, then plays its voice and music in step with the picture. */
 (function () {
   'use strict';
   const P = window.FILM_PLAN || {};
@@ -165,6 +166,7 @@
     // keep the master exactly the film's length
     F.master.set({}, {}, F.DUR);
     for (const d of defs) if (!windows.some((w) => w.id === d.id)) violation('script for unknown scene ' + d.id);
+    F.sound = soundOf();
     // Prime: render the whole film once forward and back, so every tween records its start values in timeline
     // order now, and a first seek to any time renders exactly what continuous playback would.
     let held = null;
@@ -183,7 +185,8 @@
       // Shown whatever threw on the way: a hidden stage blacks out every good scene with the bad one.
       if (stage) stage.style.visibility = 'visible';
     }
-    if (!embedded && held == null && !reduced()) F.play();
+    // A browser refuses sound without a click, so a film with sound waits for one: the stage click and Space play it.
+    if (!embedded && held == null && !reduced() && !F.sound) F.play();
   };
 
   /* ---------- render + clock ---------- */
@@ -201,6 +204,10 @@
     emit('filmtime', { t, playing: F.playing, dur: F.DUR });
     const s = sceneAt(t);
     if (s && s.id !== last) { last = s.id; emit('filmscene', { id: s.id }); }
+    // Last, in its own try: a sound that throws is the sound's alone, never play's next frame or start's autoplay.
+    if (F.sound) {
+      try { follow(t); } catch (e) { violation('sound failed: ' + ((e && e.message) || e)); }
+    }
   }
 
   // The clock is this file's own requestAnimationFrame loop, anchored at play() and re-anchored by a seek.
@@ -227,6 +234,7 @@
 
   F.play = function () {
     if (!started) return;
+    if (F.sound && !unlocked) { unlocked = true; unlock(); }
     const from = F.t >= F.DUR - 1e-3 ? 0 : F.t;
     F.playing = true; wall0 = performance.now(); t0 = from;
     render(from);
@@ -239,6 +247,68 @@
     if (pending) { cancelAnimationFrame(frame); pending = false; }
     render(F.t);
   };
+
+  /* ---------- sound: a film opened alone plays its own voice and music ---------- */
+  // The twin of soundAt in src/shared/sound-services.mjs (this file cannot import): the same rule and constants, pinned
+  // by the same table of cases. A clip plays from its start up to (not including) start + seconds, at its own time; the
+  // music plays the whole film, looping, at its gain, faded in at the start and out before the end.
+  const MUSIC_FADE_IN = 0.5;    // seconds the music takes to fade in at the film's start
+  const MUSIC_FADE_OUT = 1.5;   // seconds the music takes to fade out before the film's end
+  const SOUND_DRIFT = 0.25;     // seconds a playing element may be off its film time before it is set right
+  const clamp01 = (x) => Math.min(1, Math.max(0, x));
+  function soundAt(tracks, t, dur) {
+    const clips = tracks.clips.map((clip) => {
+      const on = clip.start <= t && t < clip.start + clip.seconds;
+      return { on, local: on ? t - clip.start : 0 };
+    });
+    const music = tracks.music;
+    if (!music) return { clips, music: null };
+    const on = 0 <= t && t < dur;
+    if (!on) return { clips, music: { on, local: 0, volume: 0 } };
+    const fade = Math.min(1, t / MUSIC_FADE_IN, (dur - t) / MUSIC_FADE_OUT);
+    return { clips, music: { on, local: t % music.seconds, volume: music.gain * clamp01(fade) } };
+  }
+
+  /** The audio elements the export wrote, one per clip and one for the music; null when there are none. */
+  function soundOf() {
+    const num = (el, name) => Number(el.getAttribute(name));
+    const clips = [...document.querySelectorAll('audio[data-film-clip]')]
+      .map((el) => ({ el, start: num(el, 'data-start'), seconds: num(el, 'data-seconds') }));
+    const m = document.querySelector('audio[data-film-music]');
+    const music = m ? { el: m, seconds: num(m, 'data-seconds'), gain: num(m, 'data-gain') } : null;
+    return clips.length || music ? { clips, music } : null;
+  }
+  const soundEls = () => F.sound.clips.map((c) => c.el).concat(F.sound.music ? [F.sound.music.el] : []);
+  /** play() answers a promise that rejects when the browser refuses or a pause cuts it short: neither is an error. */
+  function playEl(el) {
+    const p = el.play();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  }
+  // The first play is a click or a key: every element is started and stopped inside it, so a clip that starts later,
+  // from a frame with no gesture, may still play (Safari asks a gesture-started play of each element).
+  let unlocked = false;
+  function unlock() {
+    for (const el of soundEls()) { playEl(el); el.pause(); }
+  }
+  /** One element at its place in the rule: started where it should be, set right past the drift, or stopped. */
+  function keep(el, at) {
+    if (!at.on) { if (!el.paused) el.pause(); return; }
+    if (el.paused) { el.currentTime = at.local; playEl(el); }
+    else if (Math.abs(el.currentTime - at.local) > SOUND_DRIFT) el.currentTime = at.local;
+  }
+  /** The sound at film time t: while playing, what the rule says; otherwise (a pause, the film's end) nothing plays. */
+  function follow(t) {
+    if (!F.playing) {
+      for (const el of soundEls()) if (!el.paused) el.pause();
+      return;
+    }
+    const at = soundAt(F.sound, t, F.DUR);
+    F.sound.clips.forEach((c, i) => keep(c.el, at.clips[i]));
+    if (F.sound.music) {
+      keep(F.sound.music.el, at.music);
+      F.sound.music.el.volume = clamp01(at.music.volume);
+    }
+  }
 
   /* ---------- stage fit ---------- */
   function fit() {

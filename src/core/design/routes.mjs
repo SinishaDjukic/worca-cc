@@ -6,6 +6,8 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { pipeline } from 'node:stream';
+import { openArtifactUnder } from '../artifacts.mjs';
 import { mockEnabled } from '../claude-runner.mjs';
 import { assertSlotModels as realAssertSlotModels, listModels as realListModels } from '../config.mjs';
 import { effortsForEngine } from '../model-env.mjs';
@@ -15,6 +17,7 @@ import { roundUsd } from '../cost-budget.mjs';
 import { requireFlag } from '../flags.mjs';
 import { actorOf, isSharedIdentity, resolveIdentity } from '../identity.mjs';
 import { listProjects } from '../projects.mjs';
+import { soundState } from '../sound.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { DesignRefusal, projectDirFor } from './build.mjs';
 import { chatSpendUsd, createDesignThread, designBuildModels } from './chat-thread.mjs';
@@ -25,6 +28,7 @@ import { designWorkDir } from './paths.mjs';
 import { PICTURE_TYPES, readKeptPicture } from './pictures.mjs';
 import { validatePlan } from './plan.mjs';
 import { createDesignBuilds, RESTORE_RUNNING, ROUND_STARTING } from './registry.mjs';
+import { SOUND_DIR, soundTracks } from './sound.mjs';
 import { designDenyRules, designModelPick } from './spawn-options.mjs';
 import {
   createDesign, deleteDesign, DESIGN_MODEL_ROLES, designsWithUnknownCost, getBuild, getDesign, getPicture, latestBuild,
@@ -42,6 +46,7 @@ export const DESIGN_ROUTES = Object.freeze([
   ['GET', P], ['POST', P], ['GET', `${P}/limits`], ['GET', `${P}/models`],
   ['GET', ONE], ['PATCH', ONE], ['DELETE', ONE], ['GET', `${ONE}/models`],
   ['GET', `${ONE}/pictures`], ['GET', `${ONE}/pictures/:pictureId`],
+  ['GET', `${ONE}/sound`], ['GET', `${ONE}/sound/files/:name`], ['POST', `${ONE}/sound/ask`],
   ['POST', `${BUILD}/stop`], ['POST', `${BUILD}/agents/:aid/stop`], ['POST', `${BUILD}/answer`], ['POST', `${BUILD}/continue`],
   ['POST', `${ONE}/versions/:n/restore`],
 ].map(([method, path]) => Object.freeze({ method, path })));
@@ -53,6 +58,9 @@ const VERSION_GONE = 'That version is no longer kept';
 /** A picture row id: at most 15 digits, so always a safe integer. */
 const PICTURE_ID_RE = /^[1-9]\d{0,14}$/;
 const NO_PICTURE = 'picture not found';
+const NO_SOUND_FILE = 'sound file not found';
+/** A sound file's type by its extension: the only two the sound stage writes. */
+const SOUND_TYPES = Object.freeze({ mp3: 'audio/mpeg', wav: 'audio/wav' });
 
 const messageOf = (err) => (err && typeof err.message === 'string' ? err.message : String(err));
 
@@ -167,11 +175,52 @@ function planOf(design) {
   return check.ok ? check.plan : null;
 }
 
-/** A section record as it leaves the engine: `todo` and `unbuiltAdd` dropped (L2.35). */
+/** `name` when it is one of `tracks`' own file names (a clip's or the music's), else null: the file route builds its
+ *  path from the track's name, never from the URL. */
+function listedSoundFile(tracks, name) {
+  if (!tracks || typeof name !== 'string') return null;
+  const files = [...tracks.clips.map((c) => c.file), ...(tracks.music ? [tracks.music.file] : [])];
+  return files.find((f) => f === name) ?? null;
+}
+
+/** Streams the open sound file `fh` as `type` and closes it: the whole file, one `Range` (206) or an unsatisfiable
+ *  one (416), as `sendPreviewFile` (preview-gate.mjs) does. No ETag or Last-Modified: a remade `music.wav` keeps its
+ *  name, so a validator would hand back old bytes or splice a resumed range; never stored for the same reason. */
+async function sendSoundFile(req, res, fh, type) {
+  let streaming = false;
+  try {
+    const { size } = await fh.stat();
+    res.set({ 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store', 'Accept-Ranges': 'bytes' });
+    const ranges = req.headers.range ? req.range(size, { combine: true }) : null;
+    if (ranges === -1 || (ranges && size === 0)) {
+      res.set('Content-Range', `bytes */${size}`);
+      return res.status(416).end();
+    }
+    let start = 0, end = size - 1, status = 200;
+    if (Array.isArray(ranges) && ranges.type === 'bytes' && ranges.length === 1) {
+      ({ start, end } = ranges[0]);
+      status = 206;
+      res.set('Content-Range', `bytes ${start}-${end}/${size}`);
+    }
+    res.status(status);
+    res.set('Content-Length', String(size ? end - start + 1 : 0));
+    res.set('Content-Type', type);
+    // A zero-byte file never streams: createReadStream({start: 0, end: -1}) throws ERR_OUT_OF_RANGE.
+    if (req.method === 'HEAD' || size === 0) return res.end();
+    const stream = fh.createReadStream({ start, end });
+    streaming = true;
+    pipeline(stream, res, () => {});
+  } finally {
+    if (!streaming) await fh.close().catch(() => {});
+  }
+}
+
+/** A section record as it leaves the engine: `todo`, `unbuiltAdd` and a grown scene's `regrow` dropped (L2.35). */
 function recordOut(s) {
   const out = { ...s };
   delete out.todo;
   delete out.unbuiltAdd;
+  delete out.regrow;
   return out;
 }
 
@@ -184,7 +233,11 @@ function recordOut(s) {
  *   postSystemNotice?: (threadId: string, text: string) => unknown,
  *   dropGrants?: (id: string) => unknown, deleteThread?: (threadId: string) => Promise<unknown>,
  *   brokerStartRefusal?: (req: object, modelIds: string[]) => Promise<string|null>,
- *   thumbs?: { ensure: (design: object) => void } } }} [opts] `thumbs` (`createThumbs`) is handed every listed design
+ *   thumbs?: { ensure: (design: object) => void },
+ *   soundCards?: { available: (design: object) => boolean,
+ *     openFromGear: (opts: { design: object, threadId: string }) => Promise<{ cardId: string }|null> } } }} [opts]
+ *   `thumbs` (`createThumbs`) is handed every listed design; `soundCards` (Part C's) opens the gear's sound card in the
+ *   design's chat, and with none `POST …/sound/ask` answers 409
  */
 export function registerDesignRoutes(app, { broadcast, deps } = {}) {
   const d = deps && typeof deps === 'object' ? deps : {};
@@ -192,6 +245,7 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
   const gate = requireFlag('design');
   const listModels = d.listModels ?? realListModels;
   const assertSlotModels = d.assertSlotModels ?? realAssertSlotModels;
+  const soundCards = d.soundCards ?? null;
 
   /**
    * A `{lead?, builder?}` body for `engine`: each pick null (cleared) or `{model, effort?}` a catalog model `engine`
@@ -324,6 +378,38 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
         'Cache-Control': 'private, max-age=31536000, immutable',
       });
       res.send(bytes);
+    },
+
+    // SPEC §5: whether sound can be made here, the design's choice, and what its film plays (null while it has none).
+    [`GET ${ONE}/sound`]: async (req, res) => {
+      const design = designFor(req, res);
+      if (!design) return;
+      res.json({ available: soundState().available, sound: design.sound, tracks: soundTracks(designWorkDir(design.id), planOf(design)) });
+    },
+
+    // SPEC §5: one file the checked manifest lists, by the track's own name, opened without following a link and
+    // streamed from that handle (`res.send` would answer 304 by itself).
+    [`GET ${ONE}/sound/files/:name`]: async (req, res) => {
+      const design = designFor(req, res);
+      if (!design) return;
+      const workDir = designWorkDir(design.id);
+      const file = listedSoundFile(soundTracks(workDir, planOf(design)), req.params.name);
+      const type = file ? SOUND_TYPES[file.slice(file.lastIndexOf('.') + 1)] : undefined;
+      const fh = type ? await openArtifactUnder(workDir, `${SOUND_DIR}/${file}`) : null;
+      if (!fh) throw new DesignRefusal(404, NO_SOUND_FILE);
+      await sendSoundFile(req, res, fh, type);
+    },
+
+    // The gear's Change (SPEC §5): a sound card in the design's chat, opened by Part C's `soundCards`.
+    [`POST ${ONE}/sound/ask`]: async (req, res) => {
+      const design = designFor(req, res);
+      if (!design) return;
+      if (design.kind !== 'video') throw new DesignRefusal(400, 'Only a video has sound');
+      if (!soundCards || !(await soundCards.available(design))) throw new DesignRefusal(409, 'Sound is not available here');
+      if (!design.threadId) throw new DesignRefusal(409, 'This design has no chat');
+      const opened = await soundCards.openFromGear({ design, threadId: design.threadId });
+      if (!opened) throw new DesignRefusal(409, 'A sound card is already open in the chat.');
+      res.status(201).json({ cardId: opened.cardId });
     },
 
     [`GET ${ONE}`]: async (req, res) => {

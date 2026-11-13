@@ -46,6 +46,36 @@ test('updateDesign patches only its fields; an unknown id is NOT_FOUND', () => {
   assert.throws(() => requireDesign('d_000000000000'), bad('NOT_FOUND'));
 });
 
+test('a design has no sound until one is set; the store keeps only the checked shape', () => {
+  const d = createDesign({ title: 'Film', kind: 'video' });
+  assert.equal(d.sound, null);
+  assert.deepEqual(updateDesign(d.id, { sound: { on: false, extra: 1 } }).sound, { on: false });
+  const on = { on: true, voice: { id: 'mock-voice-1', name: ' Ana ' }, music: { kind: 'custom', text: ' Soft piano ' } };
+  assert.deepEqual(updateDesign(d.id, { sound: on }).sound, { on: true, voice: { id: 'mock-voice-1', name: 'Ana' }, music: { kind: 'custom', text: 'Soft piano' } });
+  assert.deepEqual(updateDesign(d.id, { sound: { ...on, music: { kind: 'calm', text: 'ignored' } } }).sound.music, { kind: 'calm' });
+  for (const wrong of [{ on: true }, { on: true, voice: { id: 'a b', name: 'A' }, music: { kind: 'calm' } }, { on: true, voice: { id: 'mock-voice-1', name: 'A' }, music: { kind: 'jazz' } },
+    { on: true, voice: { id: 'mock-voice-1', name: 'A' }, music: { kind: 'custom' } }, 'yes', { on: 'yes' }]) {
+    assert.throws(() => updateDesign(d.id, { sound: wrong }), (e) => e.code === 'BAD_REQUEST' && /^sound: /.test(e.message), JSON.stringify(wrong));
+  }
+  assert.equal(updateDesign(d.id, { sound: null }).sound, null);
+});
+test('sound: the bounds of the name and the music text; unknown keys go at every level', () => {
+  const d = createDesign({ title: 'Film', kind: 'video' });
+  const voice = { id: 'mock-voice-1', name: 'n'.repeat(80), age: 3 };
+  const got = updateDesign(d.id, { sound: { on: true, voice, music: { kind: 'custom', text: 't'.repeat(300), x: 1 }, y: 2 } }).sound;
+  assert.deepEqual(got, { on: true, voice: { id: 'mock-voice-1', name: 'n'.repeat(80) }, music: { kind: 'custom', text: 't'.repeat(300) } });
+  for (const wrong of [{ ...voice, name: 'n'.repeat(81) }, { ...voice, name: 'Two\nlines' }, { ...voice, name: '   ' }]) {
+    assert.throws(() => updateDesign(d.id, { sound: { on: true, voice: wrong, music: { kind: 'calm' } } }), bad('BAD_REQUEST'), JSON.stringify(wrong));
+  }
+  assert.throws(() => updateDesign(d.id, { sound: { on: true, voice, music: { kind: 'custom', text: 't'.repeat(301) } } }), bad('BAD_REQUEST'));
+  assert.deepEqual(getDesign(d.id).sound, got, 'a refused value leaves the stored one');
+});
+test('a hand-edited sound_json reads as no sound', () => {
+  const d = createDesign({ title: 'Film', kind: 'video' });
+  prepare('UPDATE designs SET sound_json = ? WHERE id = ?').run('{"on":true}', d.id);
+  assert.equal(getDesign(d.id).sound, null);
+});
+
 test('listDesigns: newest first, the owner filter, spend from the ledger', () => {
   prepare('DELETE FROM designs').run();
   const a = createDesign({ kind: 'web', title: 'A' }, { by: 'alice' });

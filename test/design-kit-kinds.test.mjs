@@ -95,7 +95,7 @@ test('the CONTRACTs pin what the assembler, the lint and the player enforce', ()
   }
   for (const must of ['data-label', '<section data-section="<id>" data-label="<job>">', 'data-step', 'data-deck-anim="rise|draw|wipe|pop|count"', 'data-deck-caption', 'data-deck-skip', '36px', '56px', '20px', '4.5:1', '30 words', 'deck-stage', '"kind":"presentation"']) assert.ok(deck.includes(must), must);
   for (const must of ['<div data-section="<id>" data-scene>', 'composed state', '(root, S)', 'S.tl', 'S.dur', 'S.onFrame', 'S.enter', 'S.exit', 'S.random', 'setTimeout', 'requestAnimationFrame', 'Date', 'Math.random', 'gsap.from', '"fps":60', '"duration"', 'pure function of film time']) assert.ok(film.includes(must), must);
-  assert.doesNotMatch(film, /plate|mascot|narrat|voice|mp4|sfx/i);
+  assert.doesNotMatch(film, /plate|mascot|narrat|mp4|sfx/i);
   // Beyond the plan (p8t1 live proof): what the real deck and film broke, now in the rules they read.
   assert.ok(deck.includes('Nothing reaches past the canvas') && deck.includes('`overflow:hidden`'), 'a bleeding shape is clipped inside the slide');
   assert.ok(film.includes('CSS has no `@keyframes`, `animation`, `transition` or `will-change`, in `tokens.css` and `global.css` too'), 'film CSS rules');
@@ -108,4 +108,12 @@ test('the document CONTRACT pins the shared rules, the page, the look and the he
     '"page":"A4"', 'Look source:', 'worca-look/', 'an id that starts with the section id and a hyphen']) assert.ok(doc.includes(must), must);
   assert.doesNotMatch(doc, /worca-cc|replay|https?:\/\/|data-worca-slot"/i);
   assert.doesNotMatch(doc, /choose one quiet direction|when a project is given/);
+});
+test('the video kit says who makes the sound', () => {
+  const md = readFileSync(new URL('../assets/design-kit/video/CONTRACT.md', import.meta.url), 'utf8');
+  assert.match(md, /60 fps\. Scenes make no sound: when a film has a voice or music, worca plays them beside the scenes\. Each scene is one GSAP timeline/);
+  assert.doesNotMatch(md, /with no sound/);
+  assert.match(md, /- `"say"` \(optional\): the words the voice speaks during the scene, when the film has a voice\./);
+  assert.match(md, /6\. When your prompt lists the voice's sentences and their times, time what appears to them\./);
+  assert.match(md, /7\. End with one line saying what you built\./);
 });

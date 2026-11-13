@@ -89,11 +89,12 @@ function tokenCounts(tokens) {
   return counts;
 }
 
-/** A section record as it leaves the engine: a copy, `todo` and `unbuiltAdd` dropped (L2.35). */
+/** A section record as it leaves the engine: a copy, `todo`, `unbuiltAdd` and `regrow` dropped (L2.35). */
 function recordCopy(s) {
   const out = { ...s, parts: Array.isArray(s.parts) ? [...s.parts] : [] };
   delete out.todo;
   delete out.unbuiltAdd;
+  delete out.regrow;
   return out;
 }
 
@@ -156,6 +157,7 @@ function rowSnapshot(row, design) {
     sections: records,
     questions: [],
     drafts: [],
+    sound: null,
   };
 }
 

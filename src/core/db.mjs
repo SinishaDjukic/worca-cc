@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 91;
+export const SCHEMA_VERSION = 92;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -840,7 +840,7 @@ ${STEP_QUESTIONS_DDL}
  * against the live schema so the gap can be healed regardless of the stamp.
  */
 const INCREMENTAL_COLUMNS = {
-  designs:                { models_json: 'TEXT', pictures: 'INTEGER NOT NULL DEFAULT 1' },   // v90: the design's own lead and builder picks ({lead?, builder?}); NULL = the Models page's; v91: the design's Pictures switch, 1 = on
+  designs:                { models_json: 'TEXT', pictures: 'INTEGER NOT NULL DEFAULT 1', sound_json: 'TEXT' },   // v90: the design's own lead and builder picks ({lead?, builder?}); NULL = the Models page's; v91: the design's Pictures switch, 1 = on; v92: the design's sound choice
   req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13)
   req_features:           { early_start_reason: 'TEXT' },   // v85: the reason given for starting a feature before Ready, kept until a run starts; NULL = none
   req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
@@ -1575,7 +1575,7 @@ CREATE TABLE IF NOT EXISTS designs (
   project_key TEXT, thread_id TEXT, engine TEXT, status TEXT NOT NULL DEFAULT 'empty',
   current_build TEXT, version INTEGER NOT NULL DEFAULT 0,
   created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, models_json TEXT,
-  pictures INTEGER NOT NULL DEFAULT 1);
+  pictures INTEGER NOT NULL DEFAULT 1, sound_json TEXT);
 CREATE INDEX IF NOT EXISTS designs_updated ON designs(updated_at);
 CREATE TABLE IF NOT EXISTS design_builds (
   id TEXT PRIMARY KEY, design_id TEXT NOT NULL, round INTEGER NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
@@ -2863,6 +2863,8 @@ export function migrate(db) {
     // above (an older DB). First written as v88.
     // v91 Design pictures: one row per ask (D10); designs.pictures comes from INCREMENTAL_COLUMNS
     if (current < 91) db.exec(DESIGN_PICTURES_DDL);
+    // v92 Design sound: designs.sound_json (the design's sound choice, D2) — INCREMENTAL_COLUMNS, added by the hoisted
+    // repairSchemaGaps (a v89+ DB) or by the v89 DDL above (an older DB).
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

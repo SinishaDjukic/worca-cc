@@ -5,13 +5,17 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { existsSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { useDesignEnv } from './helpers/design-fixture.mjs';
-import { exportApp, PLAN, seedDone } from './helpers/design-export-seed.mjs';
+import { exportApp, PLAN, SHELL, seedDone } from './helpers/design-export-seed.mjs';
 import { assembleDesign } from '../src/core/design/assemble.mjs';
+import { readExportPlan } from '../src/core/design/export.mjs';
+import { stageDesignKit } from '../src/core/design/kit.mjs';
+import { clipKey, musicKey, soundTracks } from '../src/core/design/sound.mjs';
+import { silentWav } from '../src/core/sound.mjs';
 import { patchFs } from './helpers/fs-gate.mjs';
 import { createThumbs, needsThumb, thumbUrl, thumbViewport } from '../src/core/design/thumb.mjs';
 import { designDir, designWorkDir, distDir, thumbFile } from '../src/core/design/paths.mjs';
@@ -269,4 +273,31 @@ test('in the real list: each row has its thumb URL and costKnown, and every row 
   assert.deepEqual([row(known.id).thumb, row(known.id).costKnown], [null, true]);
   assert.deepEqual(ensured.map(([id]) => id).sort(), rows.map((x) => x.id).sort());
   assert.ok(ensured.some(([id, status]) => id === known.id && status === 'done'));
+});
+
+// Design sound (B7): a still never carries the film's sound. The fixture's sound would play (soundTracks), so it is
+// the still's own call (`sound: false`) that keeps `<audio` out of the shot.
+const STILL_SAY = 'Every pot starts as a lump of clay.';
+const STILL_FILM = { v: 1, kind: 'video', title: 'Film', canvas: { w: 1920, h: 1080, fps: 60 }, notes: '',
+  sections: [{ id: 'open', job: 'Open', brief: 'b', parts: ['html'], duration: 4, say: STILL_SAY }] };
+async function seedFilmWithSound() {
+  const d = createDesign({ kind: 'video', title: 'Film' }, { by: 'local' }); const w = designWorkDir(d.id);
+  const voice = { id: 'voice-test', name: 'Test', model: 'eleven_multilingual_v2' };
+  const clip = { id: 'open', file: 'voice-open.wav', key: clipKey({ voiceId: voice.id, model: voice.model, text: STILL_SAY }), at: 0.35, seconds: 2, text: STILL_SAY, cues: [{ t: 0.35, text: STILL_SAY }] };
+  const music = { file: 'music.wav', key: musicKey({ prompt: 'warm piano', model: 'music_v2_5' }), seconds: 4, gain: 0.16, prompt: 'warm piano' };
+  const files = { 'plan.json': JSON.stringify(STILL_FILM), 'shell.html': SHELL, 'sections/open/index.html': '<div data-section="open" data-scene><h1>Open</h1></div>',
+    'assets/sound/sound.json': JSON.stringify({ v: 1, voice, clips: [clip], music }), 'assets/sound/voice-open.wav': silentWav(2), 'assets/sound/music.wav': silentWav(4) };
+  for (const [rel, data] of Object.entries(files)) { mkdirSync(dirname(join(w, rel)), { recursive: true }); writeFileSync(join(w, rel), data); }
+  await stageDesignKit({ kind: 'video', workDir: w });
+  assembleDesign({ workDir: w, plan: STILL_FILM, mode: 'dist' });
+  return updateDesign(d.id, { status: 'done' });
+}
+test('a finished film with sound: its still carries no <audio', async () => {
+  const d = await seedFilmWithSound();
+  assert.notEqual(soundTracks(designWorkDir(d.id), readExportPlan(d)), null, 'the film has sound a still could carry');
+  const { t, calls } = rig();
+  t.ensure(d); await settle();
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].doc.includes('[data-film]{visibility:visible!important}'), 'the film\'s still');
+  assert.doesNotMatch(calls[0].doc, /<audio/);
 });

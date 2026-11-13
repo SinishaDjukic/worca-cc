@@ -290,3 +290,40 @@ test('a document lead writes brand.md with a Look source line, a page and a toc,
   await run('design-lead', web, 'MOCK_SECTIONS=1');
   assert.equal(existsSync(join(web, 'brand.md')), false, 'a web lead writes no brand.md');
 });
+
+test('a video lead writes scenes\' words: MOCK_SAY by position, MOCK_SAY_LONG=<id>, a round\'s MOCK_ROUND_SAY=<id>:<slug>; any other kind writes none', async () => {
+  const w = mkdtemp();
+  await run('design-lead', w, 'MOCK_SECTIONS=2 MOCK_SAY MOCK_SAY_LONG=features\nKind: video');
+  const text = readFileSync(join(w, 'plan.json'), 'utf8');
+  const v = validatePlan(text, { kind: 'video' });
+  assert.equal(v.ok, true, JSON.stringify(v.errors));
+  const long = 'These are many words for one short scene. '.repeat(12).trim();
+  for (const plan of [JSON.parse(text), v.plan]) {
+    assert.equal(plan.sections[0].say, 'Scene one says this in plain words.');
+    assert.equal(plan.sections[1].say.split(' ').length, 96);
+    assert.deepEqual([plan.sections[1].say, plan.sections[1].say.length], [long, 503]);
+  }
+  const many = mkdtemp();
+  await run('design-lead', many, 'MOCK_SECTIONS=11 MOCK_SAY\nKind: video');
+  assert.deepEqual(JSON.parse(readFileSync(join(many, 'plan.json'), 'utf8')).sections.slice(9).map((s) => s.say), ['Scene ten says this in plain words.', 'Scene 11 says this in plain words.']);
+  const longOnly = mkdtemp();
+  await run('design-lead', longOnly, 'MOCK_SECTIONS=2 MOCK_SAY_LONG=features\nKind: video');
+  assert.deepEqual(JSON.parse(readFileSync(join(longOnly, 'plan.json'), 'utf8')).sections.map((s) => s.say), [undefined, long], 'MOCK_SAY never fires inside MOCK_SAY_LONG');
+  const pitch = mkdtemp();
+  await run('design-lead', pitch, 'MOCK_SECTIONS=2 MOCK_SAY MOCK_SAY_LONG=features\nKind: pitch');
+  assert.deepEqual(JSON.parse(readFileSync(join(pitch, 'plan.json'), 'utf8')).sections.map((s) => 'say' in s), [false, false]);
+
+  const rf = join(w, 'round.json');
+  const round = async (tokens, kindLine = '\nKind: video') => {
+    await run('design-lead', w, `Change round: warmer ${tokens}${kindLine}\nRound file: ${rf}`);
+    const json = readFileSync(rf, 'utf8');
+    assert.equal(validateRound(json, { plan: v.plan }).ok, true, json);
+    return JSON.parse(json);
+  };
+  assert.deepEqual((await round('MOCK_ROUND_SAY=hero:new-words-here')).touch, [{ id: 'hero', brief: 'Mock touch', say: 'new words here.' }]);
+  assert.deepEqual((await round('MOCK_ROUND_SAY=hero:')).touch, [{ id: 'hero', brief: 'Mock touch', say: '' }]);
+  assert.deepEqual((await round('MOCK_ROUND_SAY=hero:new-words-here MOCK_ROUND_SAY=features:x')).touch, [{ id: 'hero', brief: 'Mock touch', say: 'new words here.' }, { id: 'features', brief: 'Mock new words.', say: 'x.' }]);
+  const skipped = await round('MOCK_ROUND_REMOVE=features MOCK_ROUND_SAY=features:x MOCK_ROUND_SAY=nope:y');
+  assert.deepEqual([skipped.touch, skipped.remove], [[{ id: 'hero', brief: 'Mock touch' }], ['features']], 'an id the round removes or the plan lacks is skipped');
+  assert.deepEqual((await round('MOCK_ROUND_SAY=hero:new-words-here MOCK_ROUND_SAY=features:x', '')).touch, [{ id: 'hero', brief: 'Mock touch' }], 'a round of another kind writes no words');
+});

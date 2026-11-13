@@ -8,9 +8,11 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { JSDOM, VirtualConsole } from 'jsdom';
-import { assembleDesign, lintDesign } from '../src/core/design/assemble.mjs';
+import { _testing, assembleDesign, lintDesign } from '../src/core/design/assemble.mjs';
 import { FILM_BASE_CSS, filmPlanScript } from '../src/core/design/kinds.mjs';
 import { stageDesignKit } from '../src/core/design/kit.mjs';
+import { clipKey, musicKey } from '../src/core/design/sound.mjs';
+import { silentWav } from '../src/core/sound.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const SHELL = '<!doctype html><html><head><meta charset="utf-8"><!--worca:head--></head><body><!--worca:sections--><!--worca:foot--></body></html>';
@@ -113,4 +115,49 @@ test('a deck is not held to the film rules', async () => {
   const plan = { ...DECK, sections: [{ ...DECK.sections[0], parts: ['html', 'css', 'js'] }, DECK.sections[1]] };
   const w = await world({ ...DECK_FILES, 'sections/s1/script.js': 'setTimeout(f,1)' }, 'pitch');
   assert.equal(lintDesign({ workDir: w, plan }).findings.filter((f) => f.rule === 'film-determinism').length, 0);
+});
+
+// Design sound (B7): a film opened alone carries its voice and music as the foot's `<audio>` elements, which film.js
+// plays. `filmWork` is a video whose open and close scenes speak, with (or without) the round's files in assets/sound/.
+const SAY_OPEN = 'Every pot starts as a lump of clay.';
+const SAY_CLOSE = 'Come and make one.';
+const FILM_SOUND = { ...FILM, sections: [{ ...scene('open', 5.7), say: SAY_OPEN }, scene('mid', 6), { ...scene('close', 3), say: SAY_CLOSE }] };
+const VOICE = { id: 'voice-test', name: 'Test', model: 'eleven_multilingual_v2' };
+const soundClip = (id, text, seconds) => ({ id, file: `voice-${id}.wav`, key: clipKey({ voiceId: VOICE.id, model: VOICE.model, text }), at: 0.35, seconds, text, cues: [{ t: 0.35, text }] });
+async function filmWork({ sound }) {
+  const files = { 'shell.html': SHELL };
+  for (const { id } of FILM_SOUND.sections) files[`sections/${id}/index.html`] = `<div data-section="${id}" data-scene><b>${id}</b></div>`;
+  if (sound) {
+    const music = { file: 'music.wav', key: musicKey({ prompt: 'warm piano', model: 'music_v2_5' }), seconds: 14.7, gain: 0.16, prompt: 'warm piano' };
+    files['assets/sound/sound.json'] = JSON.stringify({ v: 1, voice: VOICE, clips: [soundClip('open', SAY_OPEN, 4.82), soundClip('close', SAY_CLOSE, 2)], music });
+    files['assets/sound/voice-open.wav'] = silentWav(4.82);
+    files['assets/sound/voice-close.wav'] = silentWav(2);
+    files['assets/sound/music.wav'] = silentWav(14.7);
+  }
+  return world(files, 'video');
+}
+test('dist and standalone carry the film\'s sound; run and build do not', async () => {
+  const work = await filmWork({ sound: true });
+  const dist = assembleDesign({ workDir: work, plan: FILM_SOUND, mode: 'dist', kind: 'video' }).html;
+  assert.match(dist, /<audio data-film-clip="open" data-start="0\.35" data-seconds="4\.82" preload="auto" src="assets\/sound\/voice-open\.wav"><\/audio>\n<audio data-film-clip="close" data-start="12\.05" data-seconds="2" preload="auto" src="assets\/sound\/voice-close\.wav"><\/audio>\n<audio data-film-music data-seconds="14\.7" data-gain="0\.16" preload="auto" loop src="assets\/sound\/music\.wav"><\/audio>\n<script>window\.FILM_PLAN=/);
+  for (const mode of ['run', 'build']) assert.doesNotMatch(assembleDesign({ workDir: work, plan: FILM_SOUND, mode, kind: 'video' }).html, /<audio/);
+  const silent = await filmWork({ sound: false });
+  assert.doesNotMatch(assembleDesign({ workDir: silent, plan: FILM_SOUND, mode: 'dist', kind: 'video' }).html, /<audio/);
+});
+test('the single HTML file holds the sound itself; a still never does', async () => {
+  const work = await filmWork({ sound: true });
+  const html = assembleDesign({ workDir: work, plan: FILM_SOUND, mode: 'standalone', kind: 'video' }).html;
+  assert.equal((html.match(/<audio [^>]*src="data:audio\/wav;base64,/g) || []).length, 3);
+  assert.doesNotMatch(html, /src="assets\/sound\//);
+  assert.doesNotMatch(assembleDesign({ workDir: work, plan: FILM_SOUND, mode: 'standalone', kind: 'video', sound: false }).html, /<audio/);
+});
+test('every value a sound line writes is escaped (the manifest is an agent\'s file)', () => {
+  const odd = { clips: [{ id: 'a"b', file: 'x&<y>.wav', start: 1.5, seconds: 2 }], music: { file: "m'.wav", seconds: 3, gain: 0.16 } };
+  assert.equal(_testing.filmAudioText(odd), '<audio data-film-clip="a&quot;b" data-start="1.5" data-seconds="2" preload="auto" src="assets/sound/x&amp;&lt;y&gt;.wav"></audio>\n'
+    + '<audio data-film-music data-seconds="3" data-gain="0.16" preload="auto" loop src="assets/sound/m&#39;.wav"></audio>');
+  assert.equal(_testing.filmAudioText(null), '');
+});
+test('a plan that does not name its kind finds the film\'s sound by the kind passed in', async () => {
+  const html = assembleDesign({ workDir: await filmWork({ sound: true }), plan: { ...FILM_SOUND, kind: undefined }, mode: 'dist', kind: 'video' }).html;
+  assert.match(html, /<audio data-film-clip="open" [^\n]*\n<audio data-film-clip="close" [^\n]*\n<audio data-film-music /);
 });

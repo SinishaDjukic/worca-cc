@@ -13,11 +13,13 @@ import { validateDesignPins, pinsPromptLines } from '../ask/design-payload.mjs';
 import {
   boardPlanShape, boardShellRule, builderKindBlock, builderKindLines, docPlanShape, docShellRule, leadKindBlock, leadKindLines,
 } from './kind-prompts.mjs';
-import { isBoardKind, isDocKind, kitFolder, usesSlots } from './kinds.mjs';
+import { isBoardKind, isDocKind, isFilmKind, kitFolder, usesSlots } from './kinds.mjs';
 
 /** The `.asks/<agentId>.json` shape (C-2, C-5). */
 const ASKS_SHAPE = '{"questions":[{"id":"q1","text":"…","why":"…","options":[{"label":"…","value":"a"}]}]}';
 const ROUND_SHAPE = '{"v":1,"summary":"…","touch":[{"id":"hero","brief":"…"}],"add":[{"id":"faq","job":"FAQ","brief":"…","parts":["html","css"],"after":"pricing"}],"remove":["team"]}';
+/** The round shape a video lead reads when its film has sound: a touch may carry the scene's new words (SPEC §7). */
+const ROUND_SHAPE_SAY = '{"v":1,"summary":"…","touch":[{"id":"hero","brief":"…","say":"…"}],"add":[{"id":"faq","job":"FAQ","brief":"…","parts":["html","css"],"after":"pricing"}],"remove":["team"]}';
 const INTEGRATION_SHAPE = '{"v":1,"done":true,"rework":[{"id":"hero","why":"…"}]}';
 /** The file each plan part is written to, in the order a builder writes them (C-2). */
 const PART_FILES = Object.freeze({ html: 'index.html', css: 'style.css', js: 'script.js' });
@@ -232,6 +234,19 @@ export const MADE_PICTURES = [
   '- A made picture may fill its box edge to edge (`object-fit: cover`) when it is scenery. Say so in that section\'s `brief`, because a builder gives every picture room unless its brief says otherwise. What it shows must stay in view.',
 ].join('\n');
 
+/** The lead's rules for a film's sound (SPEC §7): the last block of a video lead's system prompt, after the picture
+ *  rules, only when its film has sound, so every byte before it is the same as a lead's without. Builders never read it. */
+export const FILM_SOUND_RULES = [
+  'Sound (this video has a voice; worca makes it and plays it beside the scenes):',
+  '- A scene may carry `"say"` in plan.json: the words the voice speaks during that scene, in the brief\'s language, as plain sentences. No stage directions, no markup, no emoji, at most 1500 characters.',
+  '- The voice tells the story and the screen shows it. Never put a spoken sentence on screen as text: show the few words that matter.',
+  '- Size each scene to its words: about 2.5 words a second, plus one second. worca makes a scene longer when its voice needs it, never shorter. Keep the script tight enough that the film still hits the length the brief names.',
+  '- A scene with nothing to say has no `"say"`. The first scene speaks. The last sentence ends before the film\'s last second.',
+  '- In each scene\'s `brief`, say what is on screen as each sentence is spoken.',
+  '- In a change round a `touch` may carry `"say"` to change that scene\'s words; `""` takes its voice away. Leave `"say"` out to keep the words.',
+  '- Scenes never play sound themselves: no `<audio>`, no `<video>`.',
+].join('\n');
+
 /** The numbered files a lead writes, in order. */
 const LEAD_FILES = [
   '1. `tokens.css`: the design tokens, as CSS custom properties.',
@@ -283,13 +298,14 @@ function leadSystem({ shellRule, sectionsBlock, kindCraft = '', design = LEAD_DE
 
 const LEAD_SYSTEM = leadSystem({ shellRule: WEB_SHELL_RULE, sectionsBlock: LEAD_WEB_SECTIONS, kindCraft: LEAD_WEB_CRAFT });
 
-/** A deck's or a video's sections block (L7.4): one section per slide or scene, no bands, no slots, the board shape. */
-function boardSections(kind) {
+/** A deck's or a video's sections block (L7.4): one section per slide or scene, no bands, no slots, the board shape
+ *  (a video's with `say` when its film has sound). */
+function boardSections(kind, { sound = false } = {}) {
   return [
     leadKindBlock(kind),
     '',
     PLAN_SHAPE_HEAD,
-    boardPlanShape(kind),
+    boardPlanShape(kind, { sound }),
     PLAN_JOB_RULE,
     PLAN_IDS_RULE,
     PLAN_PARTS_RULE,
@@ -318,16 +334,20 @@ const LEAD_DOC_SYSTEM = leadSystem({
 /** The lead's system prompt: identical for every lead of a kind, the task goes in the user prompt. A web page keeps
  *  P2's bands and slots; a deck or a video swaps them, and the slot shell rule, for its slide or scene block; a
  *  document for its part block, and its look comes from the brief, a skill or the project, else worca's. With
- *  `pictures` (a round that can have pictures made) MADE_PICTURES comes last, so the text before it is unchanged. */
-export function leadSystemPrompt({ kind = 'web', pictures = false } = {}) {
-  const text = leadSystemText(kind);
-  return pictures ? `${text}\n\n${MADE_PICTURES}` : text;
+ *  `pictures` (a round that can have pictures made) MADE_PICTURES comes last, so the text before it is unchanged. A
+ *  video with `sound` (its film has a voice) shows `say` in its plan shape and reads FILM_SOUND_RULES last of all, after
+ *  the picture rules (SPEC §7); `sound` changes nothing for any other kind. */
+export function leadSystemPrompt({ kind = 'web', pictures = false, sound = false } = {}) {
+  const voiced = sound === true && isFilmKind(kind);
+  const text = leadSystemText(kind, voiced);
+  const withPictures = pictures ? `${text}\n\n${MADE_PICTURES}` : text;
+  return voiced ? `${withPictures}\n\n${FILM_SOUND_RULES}` : withPictures;
 }
 
-/** A kind's lead system prompt before any picture rules. */
-function leadSystemText(kind) {
+/** A kind's lead system prompt before any picture or sound rules; `sound` picks a video's plan shape with `say`. */
+function leadSystemText(kind, sound = false) {
   if (isDocKind(kind)) return LEAD_DOC_SYSTEM;
-  return isBoardKind(kind) ? leadSystem({ shellRule: boardShellRule(kind), sectionsBlock: boardSections(kind) }) : LEAD_SYSTEM;
+  return isBoardKind(kind) ? leadSystem({ shellRule: boardShellRule(kind), sectionsBlock: boardSections(kind, { sound }) }) : LEAD_SYSTEM;
 }
 
 /** The builder's system prompt: identical for every builder of a kind on the hook row, so the prefix can cache (C-3);
@@ -365,14 +385,19 @@ function builderProjectLine({ projectDir, row }) {
   return projectDir && row?.readsOutsideCwd !== false ? `Project: ${projectDir} (read only)` : null;
 }
 
+/** A film's `Sound:` task line (SPEC §7), built by the round, on its own line right after `Kind:`; none when absent. */
+const soundTaskLine = (soundLine) => (typeof soundLine === 'string' && soundLine ? soundLine : null);
+
 /** The lead's first prompt. Attachment names reach the lead inside the brief (P5 L5.5). `pictureKit` (the kit's
- *  path, relative to work/) only when the round can have pictures made. */
-export function leadPlanPrompt({ brief, kind = 'web', fast, projectDir, captureKit, kitContract, pictureKit = null, questionFile, planFile, row }) {
+ *  path, relative to work/) only when the round can have pictures made. A video whose film has sound passes `sound`
+ *  (`{ music }`, for its kind line) and `soundLine`. */
+export function leadPlanPrompt({ brief, kind = 'web', fast, projectDir, captureKit, kitContract, pictureKit = null, questionFile, planFile, row, sound = null, soundLine = null }) {
   return lines([
     'Plan a new design and write its shared files.',
     `Kind: ${kind}`,
+    soundTaskLine(soundLine),
     `Target: ${leadTarget({ kind, fast })}.`,
-    ...leadKindLines(kind),
+    ...leadKindLines(kind, { sound }),
     ...leadProjectLines({ projectDir, captureKit, row }),
     kitContract ? `Kit contract: ${kitContract}` : null,
     pictureKit ? `Picture kit: ${pictureKit}` : null,
@@ -398,13 +423,16 @@ export function planFixPrompt({ errors }) {
 }
 
 /** A change round's lead. The `Kind:` line tells the mock lead a video round from a page. Only a web page has shell
- *  slots (L7.4), so no other kind's lead is told to place one; a document's is told how a change of look is written. */
-export function leadChangePrompt({ instruction, kind = 'web', sections, projectDir, captureKit, kitContract, pictureKit = null, questionFile, roundFile, pinBlock, row }) {
+ *  slots (L7.4), so no other kind's lead is told to place one; a document's is told how a change of look is written.
+ *  A video whose film has sound passes `soundLine`, and its round shape shows a touch carrying `say`. */
+export function leadChangePrompt({ instruction, kind = 'web', sections, projectDir, captureKit, kitContract, pictureKit = null, questionFile, roundFile, pinBlock, row, soundLine = null }) {
   const slot = kitFolder(kind) !== null && !usesSlots(kind) ? '.' : '; you may place the slot of a section you add in `shell.html`.';
   const named = (sections || []).map((s) => (typeof s === 'string' ? s : s?.id)).filter(Boolean);
+  const said = soundTaskLine(soundLine);
   return lines([
     `Change round: ${String(instruction ?? '')}`,
     `Kind: ${kind}`,
+    said,
     `Sections named: ${named.length ? named.join(', ') : 'none'}`,
     ...leadProjectLines({ projectDir, captureKit, row }),
     kitContract ? `Kit contract: ${kitContract}` : null,
@@ -415,7 +443,7 @@ export function leadChangePrompt({ instruction, kind = 'web', sections, projectD
     '',
     isDocKind(kind) ? 'A change that asks for another look rewrites `tokens.css` and the `Look source:` line of `brand.md`.' : null,
     `Read plan.json (beside the Round file) and the files the change needs. Edit the global files yourself when the change needs it${slot} Never edit plan.json or a section's files: worca applies the Round file, and each section's builder changes its own files. Then write the Round file, whole, as JSON:`,
-    ROUND_SHAPE,
+    said ? ROUND_SHAPE_SAY : ROUND_SHAPE,
     '- `touch`: sections whose builder changes them, with a `brief` that says what changes.',
     '- `add`: new sections in the plan shape; `after` names the section each one follows (an earlier add may be named).',
     '- `remove`: the ids of sections to drop.',
@@ -458,8 +486,9 @@ export function integratePrompt({ findings, integrationFile, lookKit, pictureKit
 }
 
 /** A builder's first prompt: one section of the plan; on a deck or a video, its slide or its scene's window too. With
- *  `readRoot` (P8, a builder off the hook row) the shared files are named by their copies there. */
-export function builderPrompt({ section, notes, sectionDir, tokensCss, globalCss, crewJson, questionFile, kitContract, kind, plan, readRoot, projectDir, row }) {
+ *  `readRoot` (P8, a builder off the hook row) the shared files are named by their copies there. A video scene with a
+ *  clip (`clip`) is told when its voice speaks. */
+export function builderPrompt({ section, notes, sectionDir, tokensCss, globalCss, crewJson, questionFile, kitContract, kind, plan, readRoot, projectDir, row, clip = null }) {
   if (readRoot) {
     tokensCss = join(readRoot, 'tokens.css');
     globalCss = join(readRoot, 'global.css');
@@ -479,16 +508,17 @@ export function builderPrompt({ section, notes, sectionDir, tokensCss, globalCss
     kitContract ? `Kit contract: ${kitContract}` : null,
     `Question file: ${questionFile}`,
     `Plan notes: ${String(notes ?? '')}`,
-    ...builderKindLines({ kind, plan, section }),
+    ...builderKindLines({ kind, plan, section, clip }),
     '',
     'Brief:',
     String(section.brief ?? ''),
   ]);
 }
 
-/** A change round's builder: no `Section:` line, its files already exist. A deck's or a video's kind lines come
- *  before the pins and its brief, so they are never read as part of the brief. */
-export function builderChangePrompt({ section, instruction, brief, notes, sectionDir, questionFile, pinBlock, kind, plan, projectDir, row }) {
+/** A change round's builder: no `Section:` line, its files already exist. A deck's or a video's kind lines (with a
+ *  video scene's `clip`, when its voice speaks) come before the pins and its brief, so they are never read as part of
+ *  the brief. */
+export function builderChangePrompt({ section, instruction, brief, notes, sectionDir, questionFile, pinBlock, kind, plan, projectDir, row, clip = null }) {
   return lines([
     `Change: ${String(instruction ?? '')}`,
     `Your section: ${section.id} (${section.job})`,
@@ -497,7 +527,7 @@ export function builderChangePrompt({ section, instruction, brief, notes, sectio
     builderProjectLine({ projectDir, row }),
     `Question file: ${questionFile}`,
     `Plan notes: ${String(notes ?? '')}`,
-    ...builderKindLines({ kind, plan, section }),
+    ...builderKindLines({ kind, plan, section, clip }),
     pinBlock || null,
     brief ? `For this section: ${brief}` : null,
     '',
