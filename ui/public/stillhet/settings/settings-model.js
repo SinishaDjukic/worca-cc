@@ -68,6 +68,29 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   // ---- Plugins and Chat › Channels read one fact from here: what is installed, and whether a channel has its token ----
   const store = () => window.RailPlaces?.marketplace;   // the Marketplace holds what is installed; a plugin it does not list falls back to this page's own
   const installed = (sv, title) => store()?.isInstalled?.(title) ?? !sv.gone[title];
+  // Live: Delete all chats is dev's (app.js deleteAskHistory): fresh counts, the confirm with dev's facts, then the DELETE.
+  // `changed()` repaints Settings once an answer is in.
+  const n = (k, w) => `${k} ${w}${k === 1 ? '' : 's'}`;
+  function liveDeleteAll(sv, changed) {
+    const L = window.RailChatLive;
+    return L.chatHistory().then((r) => {
+      if (!r.ok) return;
+      const c = r.data || {};
+      Object.assign(sv, { chats: c.threads || 0, worktrees: c.worktrees || 0, attach: n(c.attachments || 0, 'attachment') });
+      sv.__confirm = c.threads ? { text: `Delete all ${n(c.threads, 'chat')}, with ${n(c.worktrees || 0, 'worktree')} and ${n(c.attachments || 0, 'attachment')}?${c.inFlight ? ` ${n(c.inFlight, 'chat')} in progress will be stopped.` : ''} Tasks started from them stay. They cannot be brought back.`, yes: 'Delete all', danger: true, live: true, then: (s) => {
+        L.deleteAllChats().then((d) => {
+          if (!d.ok) return;
+          const rm = d.data?.removed || {}, failed = (d.data?.failed || []).length;
+          Object.assign(s, { chats: failed, worktrees: 0, attach: n(0, 'attachment') });
+          window.RailAdapter?.toast?.(`Deleted ${n(rm.threads || 0, 'chat')} and ${n(rm.worktrees || 0, 'worktree')}.${failed ? ` ${n(failed, 'chat')} could not be removed.` : ''}`);
+          window.RailAdapter?.refresh?.('threads');
+          changed();
+        });
+        return '';
+      } } : null;
+      changed();
+    });
+  }
   const uninstall = (title) => (r, x) => x.confirm({ text: `Uninstall ${title}?`, yes: 'Uninstall', danger: true, then: (s) => { s.gone = { ...s.gone, [title]: true }; store()?.setInstalled?.(title, false); return `Uninstalled: ${title}`; } });
   const CHANNELS = [['Telegram', 'chTelegram'], ['Discord', 'chDiscord'], ['Slack', 'chSlack'], ['Teams', 'chTeams']];
   const channelState = (sv, title, key) => (!sv.chToken[title] ? 'Not set up' : sv[key] ? 'Connected' : 'Off');
@@ -594,7 +617,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         { name: 'Speech models', say: '{speechWords}', vals: { speechWords: (sv) =>  (sv.speechModels ? 'Downloaded: 480 MB; the next mic use fetches them again' : 'Not downloaded; the first mic use fetches them, up to 500 MB') }, acts: [{ label: 'Remove', off: (sv) => (sv.speechModels ? '' : 'Nothing is downloaded'), do: (sv) => { sv.speechModels = false; return 'Speech models removed'; } }] },
       ] },
       { title: 'History', meta: 'Delete removes transcripts, attachments and the worktrees checked out for them. Runs started from a chat stay.', actions: [
-        { label: 'Delete all chats', help: 'Asks first', off: (sv) => (sv.chats ? '' : 'No chats to delete'), confirm: (sv) => ({ text: `Delete all ${sv.chats} chats, with ${sv.worktrees} worktrees and ${sv.attach} of attachments? They cannot be brought back.`, yes: 'Delete all', danger: true, then: (s) => { s.chats = 0; s.worktrees = 0; s.attach = '0 MB'; return 'All chats deleted'; } }) },
+        { label: 'Delete all chats', help: 'Asks first', off: (sv) => (window.RailWorld?.live || sv.chats ? '' : 'No chats to delete'),   /* live: dev's counts are read when it is pressed */ confirm: (sv) => ({ text: `Delete all ${sv.chats} chats, with ${sv.worktrees} worktrees and ${sv.attach} of attachments? They cannot be brought back.`, yes: 'Delete all', danger: true, then: (s) => { s.chats = 0; s.worktrees = 0; s.attach = '0 MB'; return 'All chats deleted'; } }), live: liveDeleteAll },
       ], rows: [
         { name: 'Chat history', say: '**{chatsNow}** chats, **{treesNow}** worktrees and **{attachNow}** of attachments on this machine', vals: { chatsNow: (sv) => sv.chats, treesNow: (sv) => sv.worktrees, attachNow: (sv) => sv.attach } },
       ] },

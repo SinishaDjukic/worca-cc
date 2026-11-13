@@ -2,6 +2,7 @@
 // module). Build a page from these: a component brings its look, so a page sets no size, colour, corner or shadow.
 export { esc, attrs, cls, toElement } from './html.mjs';
 export { button, splitButton } from './button.mjs';
+export { terminalPane } from './terminal-pane.mjs';
 export { compactMenu, menuItem } from './compact-menu.mjs';
 export { statusDot, statusDotClass, statusLine } from './status-line.mjs';
 export { confirmStrip, confirmActions, confirmForm } from './confirm-strip.mjs';
@@ -58,7 +59,7 @@ export { selectionBar, selectAllBox, bindLongPress } from './selection-bar.mjs';
 export { barChart, lineChart, mixChart, figureRows, watchChart, diffWords } from './chart.mjs';
 export { sliderPick, rankList, pickRows, factsLine } from './question-forms.mjs';
 export { stageStep } from './kind-mark.mjs';
-export { runOutcomes, handedChip, expandFrame, markTone, alertLevel, kindMark, partsWord, gitMark, timeline, timelineCard, barHead, turnRow, composer, stageBar, cardHead, taskCard, taskProposal, changeProposal, turnDivider, planCard, filesCard, youTurn, stageLine, stagePart, thinkingRow, placeHead, pluginCard } from './kind-mark.mjs';
+export { runOutcomes, handedChip, expandFrame, markTone, alertLevel, kindMark, partsWord, gitMark, timeline, timelineCard, barHead, turnRow, composer, stageBar, cardHead, taskCard, taskProposal, changeProposal, turnDivider, planCard, filesCard, refChip, youTurn, stageLine, stagePart, thinkingRow, placeHead, pluginCard } from './kind-mark.mjs';
 export { tipPlace, watchTooltips } from './tooltip.mjs';
 export { menuUp, menuShift, watchMenus } from './menu-place.mjs';
 export { secondClickIgnored, watchClickGuard } from './click-guard.mjs';

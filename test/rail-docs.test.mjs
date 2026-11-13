@@ -50,6 +50,13 @@ test('a catalog entry with code is a real export, and every library component is
   for (const name of Object.keys(LIB)) assert.ok(coded.has(name) || HELPERS.test(name), `${name} is exported and not in the catalog`);
 });
 
+test('the gallery\'s inline scripts parse: one syntax error blanks every example', () => {
+  const gallery = read('plans/rail/prototype/components.html');
+  const scripts = [...gallery.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  assert.ok(scripts.length >= 2, 'read the gallery scripts');
+  for (const [i, src] of scripts.entries()) assert.doesNotThrow(() => new Function(src), `inline script ${i + 1}`);
+});
+
 test('every component in code is tested and drawn in the gallery', () => {
   const tests = read('test/design-system-components.test.mjs'); const gallery = read('plans/rail/prototype/components.html');
   for (const c of catalog().components) {

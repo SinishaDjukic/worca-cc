@@ -198,10 +198,10 @@
     const t = x.chat ? allTasksOf(chats.find((c) => c.id === x.chat)).find((y) => y.id === x.id) : null, cs = t?.case || x.case;
     if (!cs) return null;
     const st = R.runState(RM.stateOf(cs));
-    return { label: `${x.title}\n${st.word}${t?.detail ? ` · ${t.detail}` : ''}`, mark: R.kindMark({ kind: 'task', tone: R.markTone(st), stage: t?.stage ?? RM.stageOf(cs).stage ?? -1, size: 20 }), hash: `run/${cs}`, task: { cs, chat: x.chat || '', title: x.title } };
+    return { label: `${x.title}\n${st.word}${t?.detail ? ` · ${t.detail}` : ''}`, mark: R.kindMark({ kind: 'task', tone: R.markTone(st), stage: t?.stage ?? RM.stageOf(cs).stage ?? -1, size: 20 }), hash: `run/${cs}`, task: { cs, chat: x.chat || '', title: x.title, run: t?.run || '' } };
   }
   // many tasks share a case: its tab is current on that very task's page (case and name), or in the chat its tab opens
-  const isOnTask = ({ cs, chat, title }) => location.hash === `#run/${cs}` ? RM?.titles?.[cs] === title : location.hash === `#chat/${chat || window.RailConversation?.chatOfTask({ title })}`;
+  const isOnTask = ({ cs, chat, title, run }) => location.hash === `#run/${cs}` ? RM?.titles?.[cs] === title : location.hash === `#chat/${chat || window.RailConversation?.chatOfTask({ run, title })}`;
   function drawInView() {
     const live = inViewList.map((x) => ({ x, now: inViewNow(x) })).filter((y) => y.now);
     const max = inViewMax(), shown = live.slice(0, max), hidden = live.slice(max), key = (x) => `${x.type}:${x.id}`;
@@ -262,7 +262,8 @@
     let arg = arg0 || ''; try { arg = decodeURIComponent(arg); } catch { /* a stray % stays as typed */ }
     if (!TITLES[kind] && !['run', 'settings', 'schedule'].includes(kind)) return { lost: true, what: 'page', name: kind, back: 'Chat', to: 'chat' };
     if (!arg) return null;
-    if (kind === 'chat') return (window.RailChats?.data().chats || []).some((c) => c.id === arg) ? null : { what: 'chat', name: arg, back: 'Chat', to: 'chat' };
+    // live: a chat the bar has not listed (just made, or past its first page) is read by the conversation, which says when it is gone
+    if (kind === 'chat') return window.RailWorld?.live || (window.RailChats?.data().chats || []).some((c) => c.id === arg) ? null : { what: 'chat', name: arg, back: 'Chat', to: 'chat' };
     if (kind === 'schedule') return window.RailSchedules?.find(arg) ? null : { what: 'schedule', name: arg, back: 'Chat', to: 'chat' };
     if (kind === 'run') { try { RM.stateOf(arg); return null; } catch { return { lost: true, what: 'task', name: arg, back: 'Chat', to: 'chat' }; } }
     if (kind === 'settings') return window.RailPulse?.hasSection?.(arg) !== false ? null : { lost: true, what: 'setting', name: arg, back: 'Settings', to: 'settings' };

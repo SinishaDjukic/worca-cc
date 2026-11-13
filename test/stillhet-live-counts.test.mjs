@@ -20,6 +20,8 @@ async function liveHost({ sources = SOURCES, getStatus = () => 200, post = () =>
   const gets = [], posts = [], sockets = [];
   const fetch = async (u, o = {}) => {
     const url = String(u), method = o.method || 'GET';
+    if (url === '/api/ask/mcp-preview') return { ok: true, status: 200, json: async () => ({ sets: [] }) };   // Chat's Sets preview: a read, POST by dev's design
+    if (url === '/api/history/pr') return { ok: true, status: 200, json: async () => ({ ok: true }) };   // History's PR lookup: a read, its answer comes as frames
     if (method !== 'GET') {
       const body = o.body ? JSON.parse(o.body) : null; posts.push({ url, method, body });
       const [status, data] = post(url, body);
@@ -229,15 +231,12 @@ test('R-arch-10: every action of an area this slice does not wire goes through t
     ['schedules.run', sched, () => d.querySelector('#route-schedule [data-sched-now]').click(), 'route-schedule'],
     ...['pause', 'skip', 'delete'].map((v) => [`schedules.${v}`, sched, () => pickIn('#route-schedule', 'sc-more', v), 'route-schedule']),
     ['schedules.sc-at', sched, () => { d.querySelector('#route-schedule [data-menu="sc-at"]').click(); [...d.querySelectorAll('#route-schedule [data-menu-pick^="sc-at|"]')].find((b) => !b.dataset.menuPick.endsWith('|02:00')).click(); }, 'route-schedule'],
-    ['schedules.ask', sched, () => { const t = d.querySelector('#sched-dock [data-composer-t]'); t.value = 'why?'; d.querySelector('#sched-dock [data-dock-send]').click(); }, 'route-schedule'],
     ['schedules.add', null, () => w.RailSchedules.add({ id: 'x1', title: 'Made up', every: 'every day', at: '03:00', runs: [] }), 'bar-schedules'],
     // the Tasks center's Run now on a missed schedule (the reviewer's path to RailWorld.add)
     ['schedules.run', async () => { w.location.hash = '#runs'; await settle(); }, () => d.querySelector('[data-c-sact="run|tk1"]').click(), 'app'],
     // the Tasks center's New task… form (its legacy approach): Start task keeps the form as it was
     ['tasks.new-task', async () => { w.location.hash = '#runs'; await settle(); w.RailCenters.maker('tasks').newPick('form'); await settle(); const t = d.querySelector('#cc-text'); t.value = 'Fix the login test'; t.dispatchEvent(new w.Event('input', { bubbles: true })); }, () => d.querySelector('#center-dlg [data-dialog="yes"]').click(), 'center-dlg'],
     // Chat (slice 4): the composer, the dock under a schedule, the chat list's row menu
-    ['chat.send', async () => { w.location.hash = '#chat'; await settle(400); }, () => { const t = d.querySelector('#route-chat [data-composer-t]'); t.value = 'Fix the login test'; t.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); }, 'route-chat'],
-    ['chats.pin', async () => { w.location.hash = '#chat'; await settle(400); }, () => pickIn('#bar-chat', 'row:chat:ask_1', 'pin'), 'bar-chat'],
     // Projects' workspaces (the Projects slice)
     ['workspaces.add', null, () => assert.equal(w.RailSpaces.add({ title: 'Made up' }), ''), 'app'],
     // Settings: a switch and an edit that would say "saved"

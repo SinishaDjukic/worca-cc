@@ -602,6 +602,12 @@ test('workflowGraph: a lane per stage, a node acts and says its state, a gate ha
   assert.ok(n.querySelector('.wg-pip')); assert.ok(n.querySelector('.wg-loop'));
 });
 
+test('terminalPane: its output is a polite live log, and a closed shell turns its input off (more in design-system-terminal-pane)', () => {
+  const t = dom(C.terminalPane({ title: 'ls', lines: [{ t: '1', text: 'a' }], closed: true, hooks: { send: { 'data-term-input': 's' } } }));
+  assert.equal(t.querySelector('[role="log"]').getAttribute('aria-live'), 'polite');
+  assert.equal(t.querySelector('input').disabled, true);
+});
+
 test('logLines: one line per entry, a problem in its colour, words escaped', () => {
   const l = dom(C.logLines({ label: 'Log', lines: [{ t: '1', from: 'Plan', text: '<b>' }, { t: '2', from: 'Plan', lvl: 'error', text: 'x' }] }));
   assert.equal(l.querySelectorAll('.lg-row').length, 2);
@@ -892,6 +898,8 @@ test('listState, originMark, chatKindIcon: a list with no rows; a chat\'s marks 
   assert.match(dom(C.listState({ state: 'loading', noun: 'runs' })).textContent, /Loading runs/);
   const f = dom(C.listState({ state: 'failed', noun: 'runs', retry: { 'data-retry': '' } }));
   assert.match(f.className, /is-err/); assert.ok(f.querySelector('[data-retry]'));
+  assert.match(f.textContent, /Could not load the runs/);
+  assert.match(dom(C.listState({ state: 'failed', noun: 'chat', title: 'Could not load this chat' })).textContent, /^Could not load this chat/, 'fail.chat-thread: the rule\'s own title, given, never string-replaced');
   assert.equal(dom(C.listState({ state: 'empty', noun: 'runs', text: 'Nothing needs you.' })).querySelector('.el-t').textContent, 'Nothing needs you.');
   assert.equal(dom(C.originMark({ platform: 'slack' })).title, 'From Slack');
   assert.equal(dom(C.originMark({ platform: 'x', label: 'Matter' })).title, 'From Matter');
@@ -1255,6 +1263,13 @@ test('planCard: Read the plan, its foot, folds the plan itself open, to read bef
   assert.doesNotMatch(C.planCard({ title: 'P', version: 'v1', roles: [] }), /Read the plan/, 'no plan to show: no button');
 });
 
+test('planCard (panel.plan-folds): its coverage heads the plan it folds open, one row per requirement; shut, none shows', () => {
+  const coverage = [{ name: 'R-1 · covered by Step 2', ok: true, note: '' }, { name: 'R-2 · <totals>', ok: false, note: 'not covered by any step' }];
+  const open = C.planCard({ title: 'P', version: 'v1', roles: [], full: '<h4>Steps</h4>', fullOpen: true, coverage });
+  assert.match(open, /class="plan-full"><div class="plan-roles" role="group" aria-label="Requirements">[\s\S]*1 of 2 covered[\s\S]*R-2 · &lt;totals&gt;<\/b> not covered by any step[\s\S]*<h4>Steps/);
+  assert.doesNotMatch(C.planCard({ title: 'P', version: 'v1', roles: [], full: '<h4>Steps</h4>', coverage }), /Requirements/, 'folded: no extra chrome on the card');
+});
+
 test('topBarAction: its name is its words even when only its icon and badge show', () => {
   assert.match(C.topBarAction({ label: 'Pulse', icon: '', labelCls: 'x', badge: { n: 3 }, title: 'Pulse: 3 need you' }), /aria-label="Pulse: 3 need you"/);
   assert.match(C.topBarAction({ label: 'Pulse', icon: '', labelCls: 'x' }), /aria-label="Pulse"/);
@@ -1384,9 +1399,19 @@ test('changeProposal: before and after, Apply; applied, a receipt with Revert; d
   const rows = [{ name: 'Away on', before: 'Never', after: 'Weekends' }];
   const h = C.changeProposal({ kind: 'Away', title: 'Quiet', rows });
   assert.match(h, /tp-kicker">[\s\S]*?<span>Away<\/span>/); assert.match(h, /<s>Never<\/s>/); assert.match(h, /<b>Weekends<\/b>/); assert.match(h, />Apply</);
-  assert.match(C.changeProposal({ kind: 'Away', title: 'Quiet', rows, state: 'applied' }), />Revert</);
+  assert.match(C.changeProposal({ kind: 'Away', title: 'Quiet', rows, state: 'applied', hooks: { revert: { 'data-x': '1' } } }), />Revert</);
+  assert.doesNotMatch(C.changeProposal({ kind: 'Away', title: 'Quiet', rows, state: 'applied' }), />Revert</, 'no Revert where the change cannot be undone');
   assert.match(C.changeProposal({ kind: 'Away', title: 'Quiet', rows, state: 'declined' }), /Not changed/);
   assert.match(C.turnDivider({ text: 'Switched to a' }), /role="separator"[^>]*aria-label="Switched to a"/);
+});
+
+test('refChip (panel.answer-refs): a chip that leads to what it names, with its hook and tip; words escaped', () => {
+  const c = dom(C.refChip({ text: '<Fix>', mark: '<i></i>', attrs: { 'data-ref-run': 'pa' } }));
+  assert.equal(c.tagName, 'BUTTON'); assert.equal(c.getAttribute('type'), 'button');
+  assert.equal(c.dataset.refRun, 'pa');
+  assert.equal(c.title, 'Opens <Fix> in its chat');
+  assert.equal(c.textContent, '<Fix>');
+  assert.equal(dom(C.refChip({ text: 'a#1', title: 'Opens the PR' })).title, 'Opens the PR');
 });
 
 test('planCard, filesCard, youTurn: the Shaper plan folds its roles; files as tiles and rows; your words with what came with them', () => {

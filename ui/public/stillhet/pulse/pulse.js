@@ -728,6 +728,7 @@ let sideWas = null, swapCls = '';   // the sidebar's content fades only when it 
 function render() { stale = false; holdFocus(SHELL ? renderInShell : paintAlone); }
 W.onMove?.(() => render());   // a task moved anywhere: the badge, Vitals and Updates read the store again
 // the live kind: a load or a list state changed the store (D20): Keep awake and Away are dev's, and the rows read it again
+window.addEventListener('rail-settings', () => render());   // a live Settings action answered (settings.js)
 if (LIVE) W.onChange(() => { ui.keep = !!W.part('keep'); ui.awayStatus = W.part('away').status; render(); });
 function paintAlone() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;

@@ -109,7 +109,7 @@
   function act(id, rows) {
     const p = rows[0]?._p; if (!p) return;
     if (id === 'act') return originAct(p);
-    if (id === 'task') { window.RailConversation?.handOver({ mode: 'task', project: p.id, about: { kind: 'Project', name: nameOf(p) } }); return; }
+    if (id === 'task') { window.RailConversation?.handOver({ mode: 'task', project: p.id, ref: { pageProjectKey: p.id }, about: { kind: 'Project', name: nameOf(p) } }); return; }
     if (id === 'tasks') { window.RailRunsList.filter({ project: nameOf(p) }); return; }
     if (id === 'fetch') { if (notLive(p, 'Check origin now')) return; p.checked = 'just now'; draw(); say(`Checked ${p.base || p.id}`); return; }
     if (id === 'remove') { if (notLive(p, 'Remove')) return; current = p.id; confirm = { what: 'remove', p }; window.RailShell.go(`projects/${p.id}`); }
@@ -117,7 +117,7 @@
   function originAct(p) {
     if (p.origin !== 'diverged' && notLive(p, (o(p).act || '').replace(/…$/, ''))) return;   // diverged hands over to a chat: nothing written
     if (p.origin === 'behind') { const n = p.behind; Object.assign(p, { origin: 'ok', behind: 0, checked: 'just now' }); draw(); say(`Synced ${p.id}: ${n} ${n === 1 ? 'commit' : 'commits'} from ${p.base}`); return; }
-    if (p.origin === 'diverged') { window.RailConversation?.handOver({ project: p.id, about: { kind: 'Project', name: nameOf(p) }, text: `It has diverged from ${p.base}: ${p.ahead} ahead, ${p.behind} behind. How should we bring them together?` }); return; }
+    if (p.origin === 'diverged') { window.RailConversation?.handOver({ project: p.id, ref: { pageProjectKey: p.id }, about: { kind: 'Project', name: nameOf(p) }, text: `It has diverged from ${p.base}: ${p.ahead} ahead, ${p.behind} behind. How should we bring them together?` }); return; }
     if (p.origin === 'local') { p.origin = 'ok'; p.base = 'origin/main'; draw(); say('Linked origin; nothing was pushed'); return; }
     if (p.origin === 'offline') { p.origin = 'ok'; p.checked = 'just now'; draw(); say(`Reached ${p.base}`); return; }
     if (p.origin === 'folder') { Object.assign(p, { kind: 'Git', origin: 'local', branch: 'main' }); draw(); say(`${p.id} uses git now; the first task commits what is there`); return; }
@@ -258,7 +258,7 @@
     const p = data.projects.find((x) => x.id === pid());
     if (!p) { page.innerHTML = homeHtml(); keep(); return; }
     page.innerHTML = pageHtml(p);
-    window.RailConversation?.dock(document.getElementById('pj-dock'), { kind: 'project', title: nameOf(p), chat: '' });
+    window.RailConversation?.dock(document.getElementById('pj-dock'), { kind: 'project', title: nameOf(p), chat: '', ref: { pageProjectKey: p.id } });   // D16: the page's project, as dev's context
     keep();
   }
   // panel.dismiss: focus returns to what opened it: Locate on the page, the bar's + otherwise

@@ -361,7 +361,7 @@ const KIND_ICON = { Schedule: 'clock', Workflow: 'kind-workflow', 'Web access': 
  */
 export function changeProposal({ kind, title, why = '', rows = [], body = '', state = 'proposed', apply = 'Apply', actions = null, menu = '', hooks = {}, attrs: a = {} }) {
   const btn = (label, k, h, c = '') => button({ label, kind: k, cls: c, attrs: h || {} });
-  if (state === 'applied') return turnRow({ mark: icon('check', 14), text: `<b>${esc(title)}</b> ${esc(rows.map((r) => `${r.name}: ${r.after}`).join(' · ') || kind)}`, end: btn('Revert', 'quiet', hooks.revert), attrs: a });
+  if (state === 'applied') return turnRow({ mark: icon('check', 14), text: `<b>${esc(title)}</b> ${esc(rows.map((r) => `${r.name}: ${r.after}`).join(' · ') || kind)}`, end: hooks.revert ? btn('Revert', 'quiet', hooks.revert) : '', attrs: a });   // no Revert where the change cannot be undone
   if (state !== 'proposed') return turnRow({ mark: kindMark({ kind: 'task', tone: state === 'failed' ? 'fail' : 'idle', size: 16 }), text: `${state === 'failed' ? 'Could not change' : 'Not changed'}: <b>${esc(title)}</b>`, attrs: a });
   const list = rows.length ? `<dl class="cp-rows">${rows.map((r) => `<div class="cp-row"><dt>${esc(r.name)}</dt><dd>${r.before && r.before !== '—' ? `<s>${esc(r.before)}</s><span aria-hidden="true">→</span>` : ''}<b>${esc(r.after)}</b></dd></div>`).join('')}</dl>` : '';
   return `<article class="task-card rc cp"${attrs(a)}>${cardHead({ mark: icon(KIND_ICON[kind] || 'set-general', 14), kicker: kind, title, why, menu })}`
@@ -395,15 +395,20 @@ export function turnDivider({ text }) {
  * @param {string} [o.check]          the shape check's word, on the review line (shape check passed)
  * @param {string} [o.full]           the plan itself (markup: its sections), read before approving; Full plan folds it open here
  * @param {boolean} [o.fullOpen]
+ * @param {{name:string, ok:boolean, note:string}[]} [o.coverage]   panel.plan-folds: its per-requirement coverage, one row
+ *                                    each (covered, or what is still to fix), at the head of the plan it folds open
  * @param {object} [o.attrs]
  */
-export function planCard({ title, summary = '', version, roles, open = false, menu = '', extra = '', check = '', hooks = {}, full = '', fullOpen = false, attrs: a = {} }) {
+export function planCard({ title, summary = '', version, roles, open = false, menu = '', extra = '', check = '', hooks = {}, full = '', fullOpen = false, coverage = [], attrs: a = {} }) {
   const left = roles.filter((r) => !r.ok).length;
-  const rows = roles.map((r) => turnRow({ mark: kindMark({ kind: 'task', tone: r.ok ? 'ok' : 'ask', size: 16, keepType: false }), text: `<b>${esc(r.name)}</b> ${esc(r.note)}` })).join('');
+  const row = (r) => turnRow({ mark: kindMark({ kind: 'task', tone: r.ok ? 'ok' : 'ask', size: 16, keepType: false }), text: `<b>${esc(r.name)}</b> ${esc(r.note)}` });
+  const covered = coverage.filter((r) => r.ok).length;
+  const reqs = coverage.length ? `<div class="plan-roles" role="group" aria-label="Requirements">${turnRow({ mark: icon('list', 14), text: `<b>Requirements</b> ${covered} of ${coverage.length} covered` })}${coverage.map(row).join('')}</div>` : '';
+  const rows = roles.map(row).join('');
   const reviewed = turnRow({ mark: icon(open ? 'chevron' : 'chevR', 14), text: `Reviewed by ${roles.length <= 3 ? esc(roles.map((r) => r.name).join(', ')) : `${roles.length} roles`}${left ? ` · ${left} open` : ''}${check ? ` · ${esc(check)}` : ''}`, body: `<span class="plan-roles">${rows}</span>`, open, attrs: { 'data-fold-turn': '', ...(hooks.roles || {}) } }).replace('class="tr-body"', 'class="tr-body is-steps"');
   return `<article class="task-card rc plan"${attrs(a)}>${cardHead({ mark: kindMark({ kind: 'task', tone: 'ask', size: 16 }), kicker: 'Plan', kickerHtml: `Plan · ${version}`, title, why: summary, menu })}`
     + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Plan: ${title}` })}>${extra}${reviewed}<div class="tp-actions">${button({ label: 'Approve and build', attrs: hooks.approve || {} })}${button({ label: 'Ask for changes', kind: 'quiet', attrs: hooks.changes || {} })}</div></section>`
-    + `${full ? `<div class="tc-foot">${button({ label: fullOpen ? 'Hide the plan' : 'Read the plan', kind: 'quiet', icon: icon(fullOpen ? 'chevron' : 'chevR', 12), attrs: { 'aria-expanded': String(fullOpen), ...(hooks.full || {}) } })}</div>${fullOpen ? `<div class="plan-full">${full}</div>` : ''}` : ''}</article>`;   // the plan itself is the card's foot, as a task's stages are
+    + `${full ? `<div class="tc-foot">${button({ label: fullOpen ? 'Hide the plan' : 'Read the plan', kind: 'quiet', icon: icon(fullOpen ? 'chevron' : 'chevR', 12), attrs: { 'aria-expanded': String(fullOpen), ...(hooks.full || {}) } })}</div>${fullOpen ? `<div class="plan-full">${reqs}${full}</div>` : ''}` : ''}</article>`;   // the plan itself is the card's foot, as a task's stages are
 }
 
 /**
@@ -420,6 +425,19 @@ export function filesCard({ files, label = 'Files' }) {
 }
 
 /**
+ * RefChip (panel.answer-refs): a task, a chat or a PR named in words, as a chip that leads to it. A task's chip opens
+ * its card in its chat, a chat's opens the chat, a PR's opens the PR. YouTurn's task chips and Worca's answers use it.
+ * @param {object} o
+ * @param {string} o.text            what it is called (a task's or a chat's title; a PR's repo#N · title)
+ * @param {string} [o.mark]          its mark (a task's KindMark, an icon)
+ * @param {string} [o.title]         the tip; by default "Opens TEXT in its chat"
+ * @param {object} [o.attrs]         its hook
+ */
+export function refChip({ text, mark = '', title = '', attrs: a = {} }) {
+  return `<button type="button" class="kind-chip you-ref"${attrs({ title: title || `Opens ${text} in its chat`, ...a })}>${mark}${esc(text)}</button>`;
+}
+
+/**
  * YouTurn: what you said, on the right: your words, then what came with them (a quote you answered, files you attached).
  * @param {object} o
  * @param {string} o.text
@@ -429,7 +447,7 @@ export function filesCard({ files, label = 'Files' }) {
  * @param {object} [o.attrs]
  */
 export function youTurn({ text, quote = '', files = [], refs = [], attrs: a = {} }) {
-  const chips = refs.map((r) => `<button type="button" class="kind-chip you-ref"${attrs({ title: `Opens ${r.text} in its chat`, ...(r.attrs || {}) })}>${r.mark || ''}${esc(r.text)}</button>`).join('');
+  const chips = refs.map((r) => refChip(r)).join('');
   return `<div class="convo-you"${attrs(a)}>${quote ? `<blockquote class="you-quote">${esc(quote)}</blockquote>` : ''}${esc(text)}${files.length || chips ? `<span class="you-files">${files.map((f) => `<span class="kind-chip">${icon('file', 12)}${esc(f)}</span>`).join('')}${chips}</span>` : ''}</div>`;
 }
 

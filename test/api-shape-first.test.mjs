@@ -160,11 +160,17 @@ test('the plan route answers the held id and refuses the rest', async () => {
     assert.equal(r.status, 200, await r.text());
     assert.deepEqual(calls[1].payload, { decision: 'revise', feedback: 'f', source: 'check' });
 
+    // the picks of the plan's open choices ride the answer to the run's validator (Stillhet's live PlanCard sends them)
+    fakePlanRun('shape-route-run', answer);
+    r = await post('/api/runs/shape-route-run/answer', { id: 'plan-n_refine-1', decision: 'approve', conflicts: [{ id: 'conflict-1', choice: 'Two PRs' }], decisions: { 'd-1': 'b' } });
+    assert.equal(r.status, 200, await r.text());
+    assert.deepEqual(calls[2].payload, { decision: 'approve', conflicts: [{ id: 'conflict-1', choice: 'Two PRs' }], decisions: { 'd-1': 'b' } });
+
     r = await post('/api/runs/shape-route-run/answer', { id: 'some-other-id', decision: 'approve' });
     assert.equal(r.status, 409);
     r = await post('/api/runs/no-such-run/answer', { id: 'plan-n_refine-1', decision: 'approve' });
     assert.equal(r.status, 404);
-    assert.equal(calls.length, 2, 'refused answers never reached the run');
+    assert.equal(calls.length, 3, 'refused answers never reached the run');
   } finally { runs.delete('shape-route-run'); }
 });
 

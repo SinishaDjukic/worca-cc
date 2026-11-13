@@ -5,6 +5,8 @@
 | `fail.one-place` | An unplanned error has one place and one calm sentence | A crash in the page never stops a run | run-page-sweep |
 | `fail.no-raw` | The raw error sits behind Details or Copy details | Readable, and ready to paste into an issue | by hand |
 | `fail.offline` | A lost connection is a quiet state, not an error | Nothing typed is lost, nothing runs twice | run-page-sweep |
+| `fail.chat-thread` | A conversation that is loading, could not load or is gone shows the list's ListState: loading; "Could not load this chat" (ListState's `title`) with Try again; "This chat no longer exists" with a Chat home link and no Try again | A chat never spins or shows a raw error; the composer keeps what you typed | stillhet-compare |
+| `fail.chat-turn` | A reply that failed is one TurnRow with the failed mark and a calm sentence; the raw error is behind Details; Try again sends your words once more, with no second YouTurn | One place, one sentence; nothing is sent twice | stillhet-compare |
 | `fail.pulse-list` | Pulse's popover says its list state as the bar's lists do: ListState loading until the first data, ListState could not load with Try again when it failed; the bell shows no number meanwhile | One look for one state, wherever the list is | stillhet-compare |
 
 An error nobody planned for still has one place and one calm sentence. A crash in the interface never stops a run:

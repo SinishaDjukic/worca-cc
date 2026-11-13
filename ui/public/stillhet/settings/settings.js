@@ -277,6 +277,7 @@
     if (d && say.startsWith('dlgbtn:')) { const k = say.slice(7), f = (d.steps ? d.steps[d.at] : d).fields.find((x) => x.key === k); d.status = f.do(d.vals) || ''; return ''; }
     const a = REG.get(say);
     if (!a) throw new Error('settings: no action ' + say);
+    if (a.live && window.RailWorld?.live && window.RailChatLive) { a.live(sv, () => window.dispatchEvent(new Event('rail-settings'))); return ''; }   // wired to dev in this slice (stillhet-wiring.md)
     if ((a.rec && !say.endsWith('/open')) || a.do) { if (refused(say)) return ''; }   // a row's open only shows it; what it then saves is the Dialog's
     if (a.rec) return runRec(sv, a);
     if (a.edit) { openDialog(sv, typeof a.edit === 'function' ? a.edit(sv) : a.edit); return ''; }
@@ -306,7 +307,7 @@
   }
   function confirm(sv, yes) {
     const c = sv.__confirm; sv.__confirm = null;
-    if (yes && c && refused('confirm')) return '';
+    if (yes && c && !c.live && refused('confirm')) return '';   // a live confirm (`live: true`) is wired to dev; the rest are not yet
     return yes && c ? c.then(sv) || '' : '';
   }
   window.SettingsView = { fresh, section, strip, sentenceText, changesOf, rowsOf, pick, toggle, act: doAct, dialog, confirm };

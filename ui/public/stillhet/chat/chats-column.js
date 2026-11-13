@@ -144,9 +144,10 @@
   function act(id, rows0, { bulk, viaKey } = {}) {
     const rows = rows0.map((r) => r._x), x = rows[0], snap = snapshot(), pick = ctl.state.pick;
     if (id === 'in-view' && x) { if (x.t) window.RailShell.inView.toggle({ type: x.t.kind === 'schedule' ? 'schedule' : 'task', id: x.t.id, chat: x.c.id, title: x.t.title, case: x.t.case }); else if (x.c) window.RailShell.inView.toggle({ type: 'chat', id: x.c.id, title: x.c.title }); ctl.paint(); return; }
-    if (id !== 'open-task' && window.RailAdapter?.refuse?.(`chats.${id}`)) { ctl.paint(x ? { focus: `[data-open="${CSS.escape(x.key)}"]` } : {}); return; }   // R-arch-10: the live kind's chat list writes nothing until the Chat slice wires it
+    if (window.RailWorld.live && id !== 'open-task') { liveAct(id, rows, x, { bulk }); return; }   // D6: the live kind calls dev's routes
     if (x?.t && !bulk && id !== 'add-to-group') {
       const t = x.t;
+      if (id === 'open-task' && window.RailWorld.live && t.kind !== 'schedule') { window.RailConversation?.openTask(x.c.id, t.id); return; }   // live: the chat it is listed under, its card in view
       if (id === 'open-task') { if (t.kind === 'schedule') window.RailShell.openSchedule(t.id); else window.RailShell.openTask(t.case, x.c.id, t.title); return; }
       if (id === 'watch') { t.watch = t.watch ? '' : 'idle'; ctl.paint(); say(t.watch ? 'Watching: Worca fixes failing checks' : 'Stopped watching', undoTo(snap, pick, 'As it was')); return; }
       if (id === 'label-task') { const focus = `[data-open="${CSS.escape(x.key)}"]`; ctl.dialog({ title: 'Label this task', label: 'Label', value: '', max: 40, yes: 'Add label', back: focus, run: (v) => {
@@ -178,6 +179,62 @@
     if (id === 'ungroup') { data.chats.filter((c) => c.group === x.g.id).forEach((c) => { c.group = ''; }); data.groups = data.groups.filter((g) => g !== x.g); ctl.paint(); say(`Group removed · ${x.g.name}`, undoTo(snap, pick, 'Puts the group back')); return; }
     void viaKey;
   }
+  // ---- the live kind (D6, D9): each action is dev's route through RailChatLive; nothing changes here before it answers
+  // ok, then the threads and groups are read again. A refusal toasts once; a bulk one names how many of how many.
+  const liveRun = (id, a) => window.RailChatLive.act(id, a);
+  const reread = () => { window.RailAdapter.refresh('threads'); window.RailAdapter.refresh('groups'); };
+  // `{done, refused}`: how many dev did and refused. A refusal is the only message (one toast with the count and the
+  // first reason); the success sentence is said only when none was refused.
+  async function liveEach(words, chats, run) {
+    const out = [];
+    for (const c of chats) out.push(await run(c));
+    const bad = out.filter((r) => !r.ok), done = out.length - bad.length, ok = chats.filter((c, i) => out[i].ok);
+    if (bad.length) window.RailAdapter.toast(chats.length === 1 ? `Could not ${words} the chat: ${bad[0].error}` : `Could not ${words} ${bad.length} of ${plural(chats.length, 'chat')}: ${bad[0].error}`);   // D9: one toast, the shell's
+    if (done) { ctl.clear(); reread(); }
+    return { done, refused: bad.length, ok };
+  }
+  // a task row under a chat: its own actions are dev's run routes (PR watch, labels, archive), through RailChatLive
+  function liveTask(id, x, back) {
+    const t = x.t, focus = back ? { focus: back } : {}, reTasks = () => { window.RailAdapter.refresh('history'); window.RailAdapter.refresh('runLinks'); };
+    // Watch toggles from dev's own watch state (GET /api/pr/watch `watching`), read right before the POST
+    if (id === 'watch') { (async () => { const cur = await liveRun('task-watch-state', { pipelineId: t.run }); if (!cur.ok) { ctl.paint(focus); return; } const on = !cur.data?.watching; const r = await liveRun('task-watch', { pipelineId: t.run, watch: on }); if (r.ok) { reTasks(); say(on ? 'Watching: Worca fixes failing checks' : 'Stopped watching'); } ctl.paint(focus); })(); return; }
+    if (id === 'archive') { liveRun('task-archive', { pipelineId: t.run }).then((r) => { if (r.ok) { reTasks(); say(`Archived ${t.title}`); } ctl.paint(focus); }); return; }
+    ctl.dialog({ title: 'Label this task', label: 'Label', value: '', max: 40, yes: 'Add label', back, run: async (v) => {
+      const word = v.toLowerCase(), had = (window.RailWorld.find(t.run) || {}).labels || [];   // the run's labels as they are now, not when the dialog opened
+      if (had.includes(word)) { ctl.paint(focus); return; }   // already on it: nothing happened, nothing to say
+      const r = await liveRun('task-label', { pipelineId: t.run, labels: [...had, word] });
+      if (r.ok) { reTasks(); say(`Labelled ${t.title}: ${word}`); }
+      ctl.paint(focus);
+    } });
+  }
+  function liveAct(id, rows, x, { bulk }) {
+    const back = !bulk && x ? `[data-open="${CSS.escape(x.key)}"]` : '';
+    if (x?.t && !bulk && ['watch', 'label-task', 'archive'].includes(id)) { liveTask(id, x, back); return; }
+    if (id === 'rename') {
+      const name = x.g ? x.g.name : x.c.title;
+      ctl.dialog({ title: x.g ? 'Rename group' : 'Rename chat', label: 'Name', value: name, max: 80, yes: 'Rename', back, run: async (v) => { if (v === name) { ctl.paint({ focus: back }); return; } const r = x.g ? await liveRun('group-rename', { groupId: x.g.id, name: v }) : await liveRun('rename', { threadId: x.c.id, title: v }); if (r.ok) { reread(); say(`Renamed to ${v}`); } ctl.paint({ focus: back }); } }); return;
+    }
+    if (id === 'pin') { const on = !x.c.pinned; liveRun('pin', { threadId: x.c.id, on, key: `pin:${x.c.id}` }).then((r) => { if (r.ok) { reread(); say(on ? 'Pinned' : 'Unpinned', { tip: 'As it was', run: () => liveRun('pin', { threadId: x.c.id, on: !on }).then((u) => { if (u.ok) reread(); }) }); } ctl.paint({ focus: back }); }); return; }
+    if (id === 'archive') {
+      const restoring = view.show === 'archived' || (x.c && x.c.archived && !bulk), all = chatsOf(rows), p = archivePlan(rows), list = restoring ? all : p.apply;
+      if (!list.length) { say(p.title); return; }
+      const each = (words, cs, on) => liveEach(words, cs, (c) => liveRun('archive', { threadId: c.id, on, quiet: true, key: `archive:${c.id}` }));
+      // Undo, as the demo's: the chats dev changed go back the other way, through the same route
+      each(restoring ? 'restore' : 'archive', list, !restoring).then(({ done, refused, ok }) => { if (done && !refused) say(restoring ? `Restored ${plural(done, 'chat')}` : `Archived ${plural(done, 'chat')}${p.title ? ` · ${p.title}` : ''}`, { tip: restoring ? 'Archives them again' : 'Puts them back', run: () => each(restoring ? 'archive' : 'restore', ok, restoring) }); ctl.paint(); });
+      return;
+    }
+    if (id === 'delete') {
+      const all = chatsOf(rows), group = x.g && rows.length === 1 ? x.g : null;
+      const text = group ? `Delete “${group.name}” and its ${plural(all.length, 'chat')}? This cannot be taken back.` : `Delete ${all.length === 1 ? `“${all[0].title}”` : plural(all.length, 'chat')}? This cannot be taken back.`;
+      ctl.confirm({ text, yes: `Delete ${all.length}`, danger: true, run: async () => {
+        if (group) { const r = await liveRun('group-delete', { groupId: group.id, deleteChats: true }); if (r.ok) { ctl.clear(); reread(); say(`Group deleted · ${group.name}`); } }
+        else { const { done, refused } = await liveEach('delete', all, (c) => liveRun('delete', { threadId: c.id, quiet: true, key: `delete:${c.id}` })); if (done && all.some((c) => c.id === current)) goHome(); if (done && !refused) say(`Deleted ${plural(done, 'chat')}`); }
+      } }); return;
+    }
+    if (id === 'add-to-group') { const chats = rows.flatMap((y) => (y.g ? membersOf(y.g) : [y.c])); openGroups(chats, bulk ? '[data-bulk="add-to-group"]' : `[data-menu="row:${CSS.escape(x.key)}"]`); return; }
+    if (id === 'leave-group') { const g = data.groups.find((y) => y.id === x.c.group); liveRun('group-leave', { groupId: g.id, threadId: x.c.id }).then((r) => { if (r.ok) { reread(); say(`Removed from group · ${g.name}`); } ctl.paint(); }); return; }
+    if (id === 'ungroup') { liveRun('group-delete', { groupId: x.g.id }).then((r) => { if (r.ok) { reread(); say(`Group removed · ${x.g.name}`); } ctl.paint(); }); return; }
+  }
   function openGroups(chats, anchor) {
     const own = chats.length === 1 ? chats[0].group : '', snap = snapshot(), pick = ctl.state.pick;
     const nOf = (id) => String(data.chats.filter((c) => c.group === id && !c.archived).length);   // a group's count, as its row says it
@@ -191,8 +248,19 @@
         place(chats, kind === 'create' ? newGroup(text.slice(8, -1).slice(0, 80)) : data.groups.find((g) => g.name === text), snap, pick);
       } });
   }
-  const newGroup = (name) => { const g = { id: `t-${Date.now().toString(36)}`, name }; data.groups.push(g); return g; };
+  const newGroup = (name) => { const g = { id: `t-${Date.now().toString(36)}`, name }; if (!window.RailWorld.live) data.groups.push(g); return g; };   // live: dev makes it (place)
   function place(chats, g, snap, pick) {
+    if (window.RailWorld.live) {   // dev's group routes: a new group is made with its chats in one call; Undo is dev's undo token
+      const threadIds = chats.map((c) => c.id), made = !data.groups.includes(g);   // newGroup() keeps a live group out of the list until dev has made it
+      ctl.closePicker();
+      window.RailChatLive.act(made ? 'group-new' : 'group-add', made ? { name: g.name, threadIds } : { groupId: g.id, threadIds }).then((r) => {
+        if (!r.ok) { ctl.paint(); return; }
+        const token = r.data?.undo?.token;
+        ctl.clear(); window.RailAdapter.refresh('threads'); window.RailAdapter.refresh('groups');
+        say(`Added to ${g.name} · ${chats.length === 1 ? chats[0].title : plural(chats.length, 'chat')}`, token ? { tip: 'Puts them back where they were', run: () => window.RailChatLive.act('group-undo', { token }).then((u) => { if (u.ok) { window.RailAdapter.refresh('threads'); window.RailAdapter.refresh('groups'); } }) } : undefined);
+      });
+      return;
+    }
     chats.forEach((c) => { c.group = g.id; }); recent = [g.id, ...recent.filter((x) => x !== g.id)].slice(0, 8);
     ctl.closePicker(); ctl.clear(); ctl.openGroup(`cgroup:${g.id}`); ctl.paint(); ctl.landOn(`chat:${chats[0].id}`);
     say(`Added to ${g.name} · ${chats.length === 1 ? chats[0].title : plural(chats.length, 'chat')}`, undoTo(snap, pick, 'Puts them back where they were'));
@@ -213,7 +281,7 @@
       sections: sections().map((s) => ({ ...s, count: s.rows.reduce((n, r) => n + (r.members ? (s.id === 'needs' ? Math.max(1, r.members.filter((m) => sectionOfChat(m._x.c) === 'needs').length) : r.members.length) : 1), 0) })) /* one unit: chats, a folded group by its members */, empty: { text: listCase === 'empty' ? 'No chats yet.' : view.show === 'needs' ? 'No chat needs you.' : view.show === 'archived' ? 'No archived chats.' : view.show === 'running' ? 'No chat is running.' : 'No chats yet.', action: listCase === 'empty' ? 'New chat' : '' } }),
     can: () => ['menu', 'fold', 'archive', 'rename', 'pin', ...(has('advanced') ? ['group', 'delete'] : [])],
     bulk: bulkActions, count: (rows) => chatsOf(rows.map((r) => r._x)).length, act,
-    open: (r) => { if (r._x.g) { ctl.toggleGroup(r.key); return; } if (r._x.t) { if (r._x.t.kind === 'schedule') window.RailShell.openSchedule(r._x.t.id); else window.RailShell.openTask(r._x.t.case, r._x.c.id, r._x.t.title); return; } openChat(r._x.c.id); },
+    open: (r) => { if (r._x.g) { ctl.toggleGroup(r.key); return; } if (r._x.t) { if (window.RailWorld.live && r._x.t.kind !== 'schedule') { window.RailConversation?.openTask(r._x.c.id, r._x.t.id); return; } if (r._x.t.kind === 'schedule') window.RailShell.openSchedule(r._x.t.id); else window.RailShell.openTask(r._x.t.case, r._x.c.id, r._x.t.title); return; } openChat(r._x.c.id); },
     word: (id, v) => { view = { ...view, [id]: v }; set(STORE_V, JSON.stringify(view)); return false; },
     tool: (v) => { if (v === 'reset') { view = { ...FRESH }; set(STORE_V, JSON.stringify(view)); say('View reset'); return; } if (v.startsWith('sort:')) { view = { ...view, sort: v.slice(5) }; set(STORE_V, JSON.stringify(view)); } },
     key: (act) => {

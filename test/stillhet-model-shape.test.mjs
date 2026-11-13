@@ -22,3 +22,14 @@ test('a seeded wrong type is named once', () => {
   assert.deepEqual(shapeErrors('task', { id: 'r1', case: 'working', title: 't', project: '', detail: '', time: '', day: 'today', labels: [], cost: '3', archived: false, unread: false, pr: '', group: '', kind: 'Git', by: '', workflow: '' }), ['task.cost: expected number|null']);
   assert.deepEqual(shapeErrors('schedule', { id: 's', title: '', project: '', chat: '', every: '', at: '', next: '', state: '', time: '', section: '', labels: [], what: '', cost: null, started: '', runs: [] }), [], 'day may be absent');
 });
+
+test('every demo turn of every demo chat meets TURN_SHAPES (D18)', async () => {
+  const { turnErrors } = await import('../ui/public/stillhet/live/model-shape.mjs');
+  const w = stillhetHost({ after });
+  const chats = w.ChatsListModel.seed().chats;
+  let n = 0;
+  for (const c of chats) for (const x of w.ChatsListModel.thread(c)) { assert.deepEqual(turnErrors(x), [], `${c.id} ${x.t} ${x.id || ''}`); n++; }
+  assert.ok(n > 50, `${n} demo turns checked`);
+  assert.deepEqual(turnErrors({ t: 'question', id: 'q', text: 'Q', options: 'a' }), ['turn.question.options: expected array']);
+  assert.deepEqual(turnErrors({ t: 'nope' }), ['turn.t: unknown kind "nope"']);
+});

@@ -74,3 +74,39 @@ test('the wiring tool accepts wired and wired (partial)', () => {
   const doc = '# x\n\n## Action rows\n\n| `a › open` | wired | y |\n\n## Figure rows\n\n| `m › F.x` | wired (partial) | y |\n';
   assert.deepEqual(W.check(doc, ['a › open'], ['m › F.x']), { actions: [], figures: [], badStatus: [] });
 });
+
+test('Chat is wired (Step 9): its module rows, its figure row and every chat/… action row, with no "Would"; the capability table is there', () => {
+  const rows = doc.split('\n').filter((l) => /^\| `(chat\/(conversation|chats-model)\.js › |ui\/public\/stillhet\/chat\/(conversation|chats-model)\.js`)/.test(l));
+  assert.ok(rows.length >= 25, `the rows are read (${rows.length})`);
+  for (const r of rows) {
+    assert.match(r, /^\| `[^`]+` \|( [^|]+ \|)? wired \|/, r.slice(0, 90));
+    assert.doesNotMatch(r.split(' | ').slice(2).join(' | '), /\bWould\b/, r.slice(0, 90));
+  }
+  assert.ok(doc.includes('| `chat/conversation.js › (a phrase built from data)` | wired |'));
+  // owner direction d717d0286: no Chat capability row is dropped or deferred; each is wired or says why it is no dev capability
+  const cap = doc.slice(doc.indexOf('## Chat capabilities'), doc.indexOf('\n## ', doc.indexOf('## Chat capabilities') + 5) >>> 0 || undefined);
+  for (const r of cap.split('\n').filter((l) => l.startsWith('| ') && !/^\| (Dev capability|Dev card|Dev function) /.test(l))) {
+    assert.doesNotMatch(r, /\| (dropped|add to the design first|new: build it)[^|]*\|\s*$/, r.slice(0, 90));
+    assert.match(r, /\| (wired|not a dev capability|new: built)[^|]*\|\s*$/, r.slice(0, 90));
+  }
+  assert.match(doc, /\| Side chat beside a page \|[^\n]*\| wired: /);
+  assert.match(doc, /\| Chat labels \|[^\n]*\| new: built: /, 'owner direction dc2f5d474: chat labels are built, not hidden');
+});
+
+test('Chat\'s capability table has no partial row, and every run-state row a chat card reaches (chat-live.mjs FLOW) is wired', async () => {
+  const cap = doc.slice(doc.indexOf('## Chat capabilities'));
+  const rows = cap.split('\n').filter((l) => l.startsWith('| ') && !l.startsWith('| Dev capability') && !l.startsWith('|---'));
+  assert.ok(rows.length >= 25, `${rows.length} capability rows`);
+  for (const r of rows) assert.doesNotMatch(r, /\| wired \(partial\)/, r.slice(0, 80));
+  const { FLOW } = await import('../ui/public/stillhet/live/chat-live.mjs');
+  const { actionFlow } = await import('../ui/public/design-system/components/run-state.mjs');
+  // each `would` phrase whose label FLOW carries out, over every state the library knows
+  const states = [...readFileSync(path.join(ROOT, 'ui/public/design-system/components/run-state.mjs'), 'utf8').matchAll(/^\s*'?([a-z][a-z-]*)'?: \{/gm)].map((m) => m[1]);
+  const phrases = new Set();
+  for (const st of states) { let f; try { f = actionFlow(st, { would: (p) => p }); } catch { continue; } for (const [label, e] of Object.entries(f || {})) if (FLOW[label] && e && typeof e.say === 'string' && e.would !== undefined) phrases.add(e.would); }
+  assert.ok(phrases.size >= 6, `the phrases are read (${[...phrases].join('; ')})`);
+  for (const ph of phrases) {
+    const row = doc.split('\n').find((l) => l.startsWith(`| \`design-system/components/run-state.mjs › ${ph}\``));
+    if (row) assert.match(row, /\| wired \|/, row.slice(0, 100));
+  }
+});
