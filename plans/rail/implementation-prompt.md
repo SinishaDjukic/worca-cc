@@ -74,6 +74,7 @@ Removing dead code and deprecated routes is a separate final PR after every slic
 - Live data, from slice 3 on: the end-of-slice walk also opens the slice's pages on live data in their empty, long-content and failed states, at the same grid. The pixel comparison runs on demo data only, so these states are where a layout can still break. Their screenshots go in the PR next to the pairs.
 - The full suite runs once per slice, before the PR, and once on the slice's base commit. A slice is clean when it adds no failure; the PR lists the failures that are also red on the base, by test file.
 - At the end of each feature, before the next one starts, a fidelity audit scores every shipped area against the prototype side by side (same route, mode, theme and width). An area below 9 of 10 gets a fix slice with its own PR.
+- After the audit and before `docs/rail-agreed` goes to `dev`, a real test outside mock mode (owner, 2026-11-13): a sandbox Worca with real agents on a small test project, Stillhet on, walking the feature's areas end to end (real runs and their cards, Shaper, terminal output, a real PR). What a sandbox cannot drive (voice, which needs a microphone) is listed for the owner. A failure blocks the merge to `dev`.
 
 ## Rules
 
