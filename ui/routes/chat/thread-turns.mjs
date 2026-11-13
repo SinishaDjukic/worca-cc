@@ -30,11 +30,13 @@ import { chatAttachRefusal, chatSwitchChanges, engineLabel } from '../../../src/
 import { askChatEngine, askChatEngineGate, askContextTokens, askCredentialGate, askDeleting, askEngineSwitchText, askIdParam, askInFlight, askRunningCount, askSignedIn, askSwitchTranscript, askTurnEngine, askViewer, badRequest, broadcast, brokerStartRefusal, factDeps, flipCard, liveRunEntry, postDirection, startAskTurn, switchThreadScope } from '../../server.mjs';
 
 /** A message typed in a design chat closes the chat's open clarifying cards (L5.9): every `design-questions` card still
- *  `asking` reads `closed` (Not answered), so a late answer gets 409 instead of starting an event turn on stale context. */
+ *  `asking` reads `closed` (Not answered), so a late answer gets 409 instead of starting an event turn on stale context.
+ *  An open sound card (`design-sound`) closes the same way: the design keeps `{ on: false }`, so the next start is
+ *  silent (Design sound D2). */
 export function closeOpenDesignQuestions(threadId) {
   for (const m of askListMessages(threadId)) {
     for (const b of Array.isArray(m.blocks) ? m.blocks : []) {
-      if (b && b.kind === 'card' && b.state === 'asking' && b.card && b.card.type === 'design-questions') flipCard(threadId, b.id, { state: 'closed' });
+      if (b && b.kind === 'card' && b.state === 'asking' && b.card && (b.card.type === 'design-questions' || b.card.type === 'design-sound')) flipCard(threadId, b.id, { state: 'closed' });
     }
   }
 }

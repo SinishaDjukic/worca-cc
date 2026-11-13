@@ -3,7 +3,8 @@
 // slider keys, all driven by the frame's `time` messages. Film time travels as `at` on the wire (Contract issue 2).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { filmTimeline, fmtClock, seekFromX, sceneAt } from '../ui/public/design/film-transport.mjs';
+import { JSDOM } from 'jsdom';
+import { createFilmBar, filmTimeline, fmtClock, seekFromX, sceneAt } from '../ui/public/design/film-transport.mjs';
 import { rig } from './helpers/design-kind-chrome.mjs';
 import { readFileSync } from 'node:fs';
 import { cssRules } from './helpers/css-rules.mjs';
@@ -131,6 +132,47 @@ test('a live round forgets the film played: a Stop before the build doc is ready
   const btn = doc.querySelector('.dz-transport button');
   assert.equal(btn.getAttribute('aria-label'), 'Play');
   btn.click(); assert.deepEqual([of('play').length, of('pause').length], [1, 1], 'one click plays');
+});
+// SPEC U5: one icon button after the play button, `Mute` / `Unmute`, only when the film has sound. The bar keeps the
+// state, since build mode throws the transport away and run mode makes it again.
+test('the sound button: only with sound, after play, and kept across a build', () => {
+  const doc = new JSDOM('<div class="dz-wrap"></div>').window.document;
+  const mutes = [];
+  const bar = createFilmBar({ doc, host: doc.querySelector('.dz-wrap'), onSeek() {}, onPlay() {}, onPause() {}, onMute: (m) => { mutes.push(m); } });
+  bar.setSections(SCENES.map((s) => ({ ...s, status: 'done' })));
+  bar.setMode('run');
+  const mute = () => doc.querySelector('.dz-transport .dz-mute');
+  const label = () => [mute().title, mute().getAttribute('aria-label'), mute().getAttribute('aria-pressed')];
+  assert.equal(mute(), null, 'no sound, no button');
+  bar.setSound({ on: true, muted: false });
+  assert.deepEqual([...doc.querySelectorAll('.dz-transport > *')].map((el) => el.tagName.toLowerCase() + (el.classList.contains('dz-mute') ? '.dz-mute' : '')), ['button', 'button.dz-mute', 'b', 'span']);
+  assert.equal(doc.querySelector('.dz-transport button').getAttribute('aria-label'), 'Play', 'play stays the first button');
+  assert.deepEqual([mute().className, mute().type], ['btn btn-sm btn-quiet btn-icon dz-mute', 'button']);
+  assert.deepEqual(label(), ['Mute', 'Mute', null]);
+  const before = mute().innerHTML;
+  mute().click();
+  assert.deepEqual(mutes, [true]);
+  assert.equal(mute().title, 'Mute', 'the bar shows what it is told');
+  bar.setSound({ on: true, muted: true });
+  assert.deepEqual(label(), ['Unmute', 'Unmute', null]);
+  assert.notEqual(mute().innerHTML, before, 'its own icon');
+  mute().click();
+  assert.deepEqual(mutes, [true, false]);
+  bar.setMode('build');
+  assert.equal(doc.querySelector('.dz-mute'), null);
+  bar.setMode('run');
+  assert.deepEqual(label(), ['Unmute', 'Unmute', null], 'run mode makes it again, as it was');
+  mute().click();
+  assert.deepEqual(mutes, [true, false, false]);
+  bar.setSound({ on: false, muted: true });
+  assert.equal(doc.querySelector('.dz-mute'), null);
+  bar.setMode('build');
+  bar.setSound({ on: true, muted: false });
+  assert.equal(doc.querySelector('.dz-mute'), null, 'no transport in build mode');
+  bar.setMode('run');
+  assert.deepEqual(label(), ['Mute', 'Mute', null]);
+  bar.destroy();
+  assert.equal(doc.querySelector('.dz-mute'), null);
 });
 test('a failed or missing scene keeps its block; a new plan redraws', () => {
   const r = atRun();

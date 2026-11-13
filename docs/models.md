@@ -274,6 +274,10 @@ generation (Design)** row: the image service a Design lead can have a picture ma
 per picture. It is not a model provider — nothing on it joins the catalog, the
 bridge or `/api/models`. See [docs/image-generation.md](image-generation.md).
 
+**Sound (Design).** The **Sound (Design)** row after it holds the ElevenLabs key
+that gives a Design video a voice and music, and it is not a model provider
+either: see [docs/sound.md](sound.md).
+
 ## What the bridge does
 
 - **Claude models on Copilot** use Copilot's native Anthropic endpoint. The

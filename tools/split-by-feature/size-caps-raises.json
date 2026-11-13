@@ -30,5 +30,7 @@
   { "file": "ui/server.mjs", "from": 10536, "to": 10538, "commit": "cb05722e4",
     "why": "Design P8 Task 6: design caps and personOf in createDesignBuilds; measured with grep -c" },
   { "file": "ui/server.mjs", "from": 10538, "to": 10540, "commit": "cb05722e4",
-    "why": "Design P8 Task 7: frames for a missing design go to no viewer; measured with grep -c" }
+    "why": "Design P8 Task 7: frames for a missing design go to no viewer; measured with grep -c" },
+  { "file": "ui/server.mjs", "from": 10540, "to": 10541, "commit": "157c8d210",
+    "why": "Design sound P3 Task C1: the sound cards' wiring; measured with grep -c" }
 ]

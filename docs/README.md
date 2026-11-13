@@ -44,6 +44,7 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 - [Plugins](plugins.md) — plugins and marketplaces, task sources, and two-way chat channels
 - [Models](models.md) — engines, the catalog, providers (GitHub Copilot, OpenAI-compatible) and the built-in bridge
 - [Image generation](image-generation.md) — the picture service a Design lead can use: presets, price, the key, mock mode
+- [Sound](sound.md) — a voice and music for a Design video through ElevenLabs: the two cards, the key, price, files, mock mode
 - [MCP servers](mcp-servers.md) — Worca's own MCP registry: catalog, sets, copies, secrets, Test
 - [Skills](skills.md) — skills in sets: the library, imports, `/<set>:<skill>` names, Team required skills
 - [Azure DevOps](azure-devops.md) — Ship-it, clone, sync, merge tracking and the Boards source on `dev.azure.com`

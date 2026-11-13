@@ -1,14 +1,16 @@
 // ui/public/design/composer-settings.mjs
 // The one settings button of a Design composer (the start composer and the chat dock): a quiet cog (the account menu's Settings icon) that opens a small
-// popup holding the Lead and Builders model pickers (model-pills.mjs), the Build fast switch and the Pictures row, so the
+// popup holding the Lead and Builders model pickers (model-pills.mjs), the Build fast switch, the Pictures row and, in
+// the chat dock, the Sound row, so the
 // composer row keeps to Attach, the project or Point, this button and Send. The popup is a side-flyout popup; each
 // picker's menu opens beside it as its submenu (create the pickers with `parent: settings.panel`). No state of its own:
 // the pickers and the switches stay the caller's. The Pictures row (createPicturesRow) keeps one state, the last good
-// answer of GET /api/images.
+// answer of GET /api/images; the chat dock's Sound row (createSoundRow) the last good answer of the design's sound.
 import { createFlyout } from '../side-flyout.mjs';
 import { icon } from '../icons.mjs';
 import { makeSwitch } from '../switch.mjs';
 import { DESIGN_PICTURES_DEFAULT } from '../../../src/shared/design-names.mjs';
+import { soundSummary } from '../../../src/shared/sound-services.mjs';
 
 export const SETTINGS_LABEL = 'Models and Build fast';
 
@@ -130,4 +132,87 @@ export function createPicturesRow({ doc, fetch: fetchFn, checked = DESIGN_PICTUR
 
   paint();
   return { el, input: sw.input, ready: () => !!shown && shown.ready, load };
+}
+
+/**
+ * The chat dock's Sound row (SPEC U6, §7): `Sound`, the design's sound in one line (`Off`, or the voice and the music)
+ * and a quiet `Change`, which puts the sound card in the design's chat. Only a video has it, and only once
+ * GET /api/design/:id/sound says sound is available here: until then, for another kind (which asks nothing) and after
+ * an answer saying it is not, the row and its own divider stay hidden. The caller calls `load()` when the dock is made
+ * and at each open of the gear; the newest answer wins and a failed request keeps the last good one. `Change` posts
+ * once, held while out, and hands the caller `{close, note}`: close the popup (the card is in the chat, or one already
+ * is), and what to say in the composer's note ('' for nothing).
+ * @param {{doc: Document, fetch: Function, designId: string, kind?: string,
+ *   onResult?: (r: {close: boolean, note: string}) => void}} o
+ * @returns {{el: HTMLElement, divider: HTMLElement, load: () => Promise<boolean>}}  `load()` resolves true exactly when
+ *   what the row shows changed.
+ */
+export function createSoundRow({ doc, fetch: fetchFn, designId, kind, onResult = () => {} }) {
+  const url = `/api/design/${encodeURIComponent(designId)}/sound`;
+  const divider = doc.createElement('div');
+  divider.className = 'ask-pop-divider';
+  const el = doc.createElement('div');
+  el.className = 'dz-fast dz-sound-row';
+  const label = doc.createElement('span');
+  label.className = 'switch-label';
+  label.textContent = 'Sound';
+  const sum = doc.createElement('span');
+  sum.className = 'dz-sound-sum';
+  const change = doc.createElement('button');
+  change.type = 'button';
+  change.className = 'btn btn-sm btn-quiet dz-sound-change';
+  change.textContent = 'Change';
+  el.append(label, sum, change);
+
+  const own = kind === 'video' && typeof designId === 'string' && designId !== '';
+  let shown = null;    // the last good answer, as painted: {available, summary}
+  let asked = 0;       // numbers the asks: only the newest answer is painted
+  let busy = false;
+
+  function paint() {
+    el.hidden = !shown || !shown.available;
+    divider.hidden = el.hidden;
+    sum.textContent = shown && shown.available ? shown.summary : '';
+    sum.title = sum.textContent;
+  }
+  async function load() {
+    if (!own) return false;
+    const my = ++asked;
+    let got = null;
+    try {
+      const res = await fetchFn(url);
+      const body = res.ok ? await res.json() : null;
+      got = body && typeof body === 'object' && typeof body.available === 'boolean' ? { available: body.available, summary: soundSummary(body.sound) } : null;
+    } catch {
+      got = null;
+    }
+    if (my !== asked || !got) return false;
+    const changed = !shown || shown.available !== got.available || shown.summary !== got.summary;
+    shown = got;
+    if (changed) paint();
+    return changed;
+  }
+  change.addEventListener('click', async () => {
+    if (busy) return;
+    busy = true;
+    change.disabled = true;
+    let status = 0;
+    let body = null;
+    try {
+      const res = await fetchFn(`${url}/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      status = Number.isSafeInteger(res.status) ? res.status : 0;
+      if (status === 409) body = await res.json().catch(() => null);
+    } catch {
+      status = 0;
+    }
+    busy = false;
+    change.disabled = false;
+    const said = body && typeof body.error === 'string' ? body.error.trim() : '';
+    if (status === 201) onResult({ close: true, note: '' });
+    else if (said) onResult({ close: true, note: said });
+    else onResult({ close: status === 409, note: `Sound was not opened (HTTP ${status}).` });
+  });
+
+  paint();
+  return { el, divider, load };
 }

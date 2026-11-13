@@ -1,19 +1,23 @@
 // The deck and video chrome (M9, L5, L7.23): what P4's stage has no place for. P4's model already lays the frame out
 // and draws the tiles, their tags, guides and labels; this holds the `board` message the build doc lays its tiles out
 // by, a finished deck's rail (deck-rail.mjs), and a video's timeline and transport (film-transport.mjs). It reaches the
-// DOM and the frame only through its arguments, and does nothing until `update`.
+// DOM and the frame only through its arguments, and does nothing until `update`. A video given `loadTracks` and
+// `fileUrl` also plays its voice and music here (film-sound.mjs; SPEC D12): the frame may not, the page may.
 
 import { createDeckRail } from './deck-rail.mjs';
 import { createFilmBar } from './film-transport.mjs';
+import { createFilmSound } from './film-sound.mjs';
 
 /**
  * @param {{doc: Document, wrap: HTMLElement, kind: string, post: (t: string, fields: object) => boolean,
- *   openRailFrame?: Function, colorOf?: (agentId: string) => string|null}} deps `post` is the frame host's `send`,
- *   which takes nothing before the doc's `ready`; `wrap` is the stage's `.dz-wrap`
+ *   openRailFrame?: Function, colorOf?: (agentId: string) => string|null,
+ *   loadTracks?: () => Promise<object|null>, fileUrl?: (name: string) => string}} deps `post` is the frame host's
+ *   `send`, which takes nothing before the doc's `ready`; `wrap` is the stage's `.dz-wrap`; `loadTracks` answers the
+ *   design's sound tracks (null for none) and `fileUrl` where a track's file is fetched
  * @returns {{update: (view: object) => void, onFrameMessage: (msg: {t: string}) => void, pause: () => void,
- *   destroy: () => void}}
+ *   silence: () => void, destroy: () => void}}
  */
-export function createKindChrome({ doc, wrap, kind, post, openRailFrame, colorOf }) {
+export function createKindChrome({ doc, wrap, kind, post, openRailFrame, colorOf, loadTracks, fileUrl }) {
   // The last board message, as sent and as JSON, whether or not the frame took it.
   let lastBoard = null;
   let lastJson = '';
@@ -28,6 +32,37 @@ export function createKindChrome({ doc, wrap, kind, post, openRailFrame, colorOf
   // A video's one film bar and its mode: `run` only over the run doc with nothing live (L7.22), `build` otherwise.
   let film = null;
   let filmMode = 'build';
+  // A video's sound: one player for the stage's life, whether the run doc on screen has sound and whether it is muted
+  // (kept here too, since the bar is made later), and the newest doc's load, so an older one lands nowhere.
+  const player = kind === 'video' && typeof loadTracks === 'function' && typeof fileUrl === 'function'
+    ? createFilmSound({ doc, fileUrl })
+    : null;
+  let sound = { on: false, muted: player ? player.isMuted() : false };
+  let loadSeq = 0;
+
+  function setSound(next) {
+    sound = next;
+    film?.setSound(sound);
+  }
+
+  // A run doc's tracks; a newer `ready` since makes them nobody's (a destroyed player loads nothing).
+  async function loadSound(seq) {
+    let tracks = null;
+    try {
+      tracks = await loadTracks();
+    } catch {
+      tracks = null;
+    }
+    if (seq !== loadSeq) return;
+    player.load(tracks);
+    setSound({ on: player.hasSound(), muted: player.isMuted() });
+  }
+
+  // A hidden tab stops the frame's clock, and with no `time` message the looping music would play on.
+  function onVisibility() {
+    if (doc.visibilityState === 'hidden') player.silence();
+  }
+  if (player) doc.addEventListener('visibilitychange', onVisibility);
 
   function postBoard() {
     post('board', { ...lastBoard });
@@ -72,29 +107,49 @@ export function createKindChrome({ doc, wrap, kind, post, openRailFrame, colorOf
     closeRail();
   }
 
-  // A video always has its timeline. A round turning live takes the transport and the scrub away at once (L7.21), and
-  // stops a film the run doc is still playing: the swap to the build doc comes later.
-  function syncFilm() {
-    if (kind !== 'video' || !view?.regions?.timeline) return;
-    film ??= createFilmBar({
+  function makeFilm() {
+    const bar = createFilmBar({
       doc, host: wrap, colorOf,
       onSeek: (t) => post('seek', { at: t }),
-      onPlay: () => post('play', {}),
+      // Inside the click: the sound is unlocked before the frame is told to play.
+      onPlay: () => {
+        player?.unlock();
+        post('play', {});
+      },
       onPause: () => post('pause', {}),
+      onMute: (muted) => {
+        if (!player) return;
+        player.setMuted(muted);
+        setSound({ on: sound.on, muted: player.isMuted() });
+      },
     });
+    bar.setSound(sound);
+    return bar;
+  }
+
+  // A video always has its timeline. A round turning live takes the transport and the scrub away at once (L7.21), and
+  // stops a film the run doc is still playing: the swap to the build doc comes later. Leaving the run doc for any
+  // reason stops its sound at once.
+  function syncFilm() {
+    if (kind !== 'video' || !view?.regions?.timeline) return;
+    film ??= makeFilm();
     film.setSections(view.sections);
     const next = view.docMode === 'run' && !view.live ? 'run' : 'build';
     if (next === filmMode) return;
     if (filmMode === 'run' && view.live) post('pause', {});
+    if (filmMode === 'run') player?.silence();
     filmMode = next;
     film.setMode(next);
   }
 
-  // The run doc's film time and scene reach the bar only while it is `run`; the wire's `at` is the bar's `t`.
+  // The run doc's film time and scene reach the bar only while it is `run`; the wire's `at` is the bar's `t`. The
+  // sound follows the same time once that doc's tracks are in.
   function onFilmMessage(msg) {
     if (!film || filmMode !== 'run') return;
-    if (msg.t === 'time') film.setTime({ t: msg.at, playing: msg.playing, dur: msg.dur });
-    else if (msg.t === 'visible' && typeof msg.id === 'string') film.setVisible(msg.id);
+    if (msg.t === 'time') {
+      film.setTime({ t: msg.at, playing: msg.playing, dur: msg.dur });
+      if (sound.on) player.onTime({ t: msg.at, playing: msg.playing, dur: msg.dur });
+    } else if (msg.t === 'visible' && typeof msg.id === 'string') film.setVisible(msg.id);
   }
 
   function onRunDocMessage(msg) {
@@ -149,16 +204,33 @@ export function createKindChrome({ doc, wrap, kind, post, openRailFrame, colorOf
       // A new doc's film waits at 0, paused, and what it said at boot came before its `ready`: start the bar there.
       film?.setTime({ t: 0, playing: false });
       film?.setVisible(null);
+      // A new doc plays nothing of the last one's sound; a run doc then loads its own tracks.
+      if (player) {
+        loadSeq += 1;
+        player.silence();
+        setSound({ on: false, muted: player.isMuted() });
+        if (msg.mode === 'run') void loadSound(loadSeq);
+      }
       fresh = msg.mode === 'run';
       if (fresh) syncRail();
       else if (msg.mode === 'build' && lastBoard) postBoard();
     },
-    /** The person picks elements: a film playing over the run doc stops. */
+    /** The person picks elements: a film playing over the run doc stops, and its sound at once. */
     pause() {
-      if (!destroyed && film && filmMode === 'run') post('pause', {});
+      if (destroyed) return;
+      player?.silence();
+      if (film && filmMode === 'run') post('pause', {});
+    },
+    /** The stage lost its frame: no more `time` messages come, so the sound stops here. */
+    silence() {
+      if (!destroyed) player?.silence();
     },
     destroy() {
       destroyed = true;
+      if (player) {
+        doc.removeEventListener('visibilitychange', onVisibility);
+        player.destroy();
+      }
       closeRail();
       film?.destroy();
       film = null;

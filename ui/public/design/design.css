@@ -202,6 +202,12 @@ button.dsc-pic:hover .dsc-pic-box{border-color:var(--hover-outline);}
 .dz-pics-model{min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .dz-set-pop .dz-pics-off{cursor:default;}
 .dz-pics-off .dz-pics-setup{margin-left:auto;color:var(--blue-ink-strong);font-weight:500;text-decoration:none;}
+/* The chat dock's Sound row (createSoundRow): no switch, as the Pictures row's Set up. The label lines the summary up
+   with the pickers' model names; the quiet Change sits at the edge, its own padding in place of the row's. */
+.dz-set-pop .dz-sound-row{padding-right:2px;cursor:default;}
+.dz-sound-row .switch-label{flex:none;min-width:58px;}
+.dz-sound-sum{min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--ink-2);font-weight:400;}
+.dz-sound-change{flex:none;margin-left:auto;}
 .dz-pic-modal .dz-pic-card{width:min(770px,100%);}
 .dz-pic-card.dlg > .dlg-head::after{opacity:1;}
 .dz-pic-head{display:flex;align-items:center;gap:8px;}
@@ -210,6 +216,24 @@ button.dsc-pic:hover .dsc-pic-box{border-color:var(--hover-outline);}
 .dz-pic-h{margin:0 0 4px;font-size:var(--fs-body);font-weight:600;}
 .dz-pic-desc{margin:0;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;}
 .dz-pic-facts{margin:8px 0 0;color:var(--ink-2);font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}
+/* The sound cards (sound-card.mjs), the white ask card: a voice tile and its sample button side by side in one row.
+   In rows every tile is a first child and `.qopt.sel + .qopt` never matches, so the dividers are restated. */
+.dsc-sound-voice{display:flex;align-items:center;gap:4px;min-width:0;}
+.dsc-sound-voice > .qopt{flex:1;min-width:0;}
+.dsc-sound-play{flex:none;}
+.dsc-sound-voice + .dsc-sound-voice > .qopt{border-top-color:var(--line);}
+.dsc-sound-voice > .qopt.sel,.dsc-sound-voice:has(> .qopt.sel) + .dsc-sound-voice > .qopt{border-top-color:transparent;}
+/* A field under the tiles (the key, the music's words): the label, the input and the help line in the column of the
+   tiles, with the free-text answer's look (run-detail.css .qblock > .qfree). */
+.dsc-sound-field{grid-column:1;display:flex;flex-direction:column;gap:6px;margin-top:8px;}
+@container chat-q (min-width:640px){.chat-q.chat-rc-q .dsc-sound-field{grid-column:2;}}
+.dsc-sound-label{color:var(--ink);font-size:var(--fs-meta);font-weight:600;}
+input.dsc-sound-key,input.dsc-sound-music{width:100%;height:32px;padding:6px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);color:var(--ink);font-family:inherit;font-size:var(--fs-body);line-height:1.5;transition:border-color .15s,background .15s;}
+input.dsc-sound-key::placeholder,input.dsc-sound-music::placeholder{color:var(--ink-2);}
+input.dsc-sound-key:focus,input.dsc-sound-music:focus{outline:none;border-color:var(--ink);background:var(--field);}
+input.dsc-sound-key:focus-visible,input.dsc-sound-music:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.dsc-sound-help{margin:0;color:var(--ink-2);font-size:var(--fs-meta);line-height:1.5;}
+.dsc-sound-said{margin:0;padding:0 4px;color:var(--ink-2);font-size:var(--fs-meta);line-height:1.5;}
 
 /* The page, the frame and the overlay */
 .dz-studio{flex:1;min-width:0;min-height:0;display:flex;background:var(--panel);}
@@ -303,6 +327,11 @@ button.dsc-pic:hover .dsc-pic-box{border-color:var(--hover-outline);}
 .dz-transport{position:absolute;left:16px;bottom:140px;z-index:4;display:flex;align-items:center;gap:8px;height:36px;padding:0 10px 0 4px;color-scheme:dark;border:1px solid var(--glass-line);border-radius:var(--r-md);background:var(--panel-veil);color:var(--ink);font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}
 .dz-transport .btn svg{width:14px;height:14px;}
 .dz-transport b{font-weight:500;}
+/* A finished film's transport and its end HUD share one row: the scene name stops short, and the HUD moves to the
+   right edge, no wider than the stage less the widest transport (286 px, a film under 100 minutes) and three 16 px
+   gaps. A phone's stage has no room for both: the HUD keeps its line and its buttons (224 px) there. */
+.dz-wrap.is-film .dz-transport b{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dz-wrap.is-film:has(> .dz-transport) .dz-hud{left:auto;right:16px;transform:none;max-width:max(224px,calc(100% - 334px));}
 /* A stage with nothing to show yet: the frame waits out of sight (it still loads and measures), and the well says
    what is going on. It fades in with the plan's first slots. */
 .frame-box{transition:transform var(--cam-ms,0ms) cubic-bezier(.65,0,.35,1),opacity .35s ease;}

@@ -11,8 +11,9 @@ import { tmpdir } from 'node:os';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { safeAttachmentName, copyThreadAttachments } from '../src/core/design/attachments.mjs';
 import { createDesignChatActions } from '../src/core/design/chat-actions.mjs';
+import { createSoundCards } from '../src/core/design/sound-cards.mjs';
 import { createThread, appendMessage, addAttachment, updateThread, attachmentPath } from '../src/core/ask/store.mjs';
-import { createDesign, updateDesign, createBuild, BRIEF_MAX } from '../src/core/design/store.mjs';
+import { createDesign, getDesign, updateDesign, createBuild, BRIEF_MAX } from '../src/core/design/store.mjs';
 import { DESIGN_LIMITS, ATTACH_NOTE_MAX } from '../src/core/ask/design-payload.mjs';
 import { designWorkDir } from '../src/core/design/paths.mjs';
 import { createDesignBuilds } from '../src/core/design/registry.mjs';
@@ -53,7 +54,7 @@ function rig(over = {}) {
   return { a, calls, posted, rows, holds };
 }
 const withPlan = (d) => writeFileSync(join(designWorkDir(d.id), 'plan.json'), JSON.stringify({ v: 1, kind: 'web', title: 'T', canvas: { w: 1440 }, notes: '', sections: [{ id: 'hero', job: 'Hero', brief: 'b', parts: ['html'], estHeight: 600 }] }));   // createDesign made work/; web sections need estHeight
-const made = () => { const d = createDesign({ kind: 'web', title: 'ShipRadar' }, { by: 'local' }); const t = createThread({ mode: 'design', title: d.title }); updateDesign(d.id, { threadId: t.id }); return { d, t }; };
+const made = (kind = 'web') => { const d = createDesign({ kind, title: 'ShipRadar' }, { by: 'local' }); const t = createThread({ mode: 'design', title: d.title }); updateDesign(d.id, { threadId: t.id }); return { d, t }; };
 
 test('a start hands over the brief and returns a running receipt', async () => {
   const { d, t } = made(); const { a, calls, posted } = rig();
@@ -113,6 +114,108 @@ test('a card the finished reply could not take still reaches the chat', async ()
   const r = await a.apply({ kind: 'design-start', brief: 'x' }, { threadId: t.id, by: 'local' });
   r.posted(false);
   assert.deepEqual(rows, [[t.id, r.block]]);
+});
+
+// Design sound P3 Task C1: a video's first start puts worca's sound card in the reply instead of starting the round.
+/** The chat actions with sound cards over an in-memory thread (both store and flip its cards, as the ask store does
+ *  for a design-sound card), a fake service state and the real design store. */
+function soundRig({ state = { available: true, configured: false }, ...over } = {}) {
+  const threads = new Map();
+  const cardsOf = (tid) => { if (!threads.has(tid)) threads.set(tid, []); return threads.get(tid); };
+  const appendCardRow = (tid, block) => { cardsOf(tid).push({ kind: 'card', ...structuredClone(block) }); };
+  const flipCard = (tid, id, patch) => {
+    const b = cardsOf(tid).find((c) => c.id === id);
+    if (!b) return null;
+    if (patch.state) b.state = patch.state;
+    if (patch.card) b.card = { ...b.card, ...patch.card };
+    return structuredClone(b);
+  };
+  let n = 0;
+  const soundCards = createSoundCards({ getDesign, updateDesign, soundState: typeof state === 'function' ? state : () => ({ ...state }),
+    listVoices: async () => [], saveKey: async () => {}, appendCardRow, flipCard,
+    findCard: (tid, id) => structuredClone(cardsOf(tid).find((c) => c.id === id) ?? null), listCards: (tid) => structuredClone(cardsOf(tid)),
+    newCardId: () => `card_${(0x50000000 + (n += 1)).toString(16)}`, start: async () => {}, log: () => {} });
+  let staged = 0;
+  const r = rig({ soundCards, appendCardRow, stageKit: async () => { staged += 1; }, ...over });
+  return { ...r, soundCards, cardsOf, flipCard, staged: () => staged };
+}
+const SOUND_NOTICE = 'The sound card above starts the build when it is answered.';
+
+test('A1: a video\'s first start returns the sound card with the brief; nothing is staged or started, and the design is asked once', async () => {
+  const { d, t } = made('video'); const s = soundRig();
+  const r = await s.a.apply({ kind: 'design-start', brief: ' A film about clay ' }, { threadId: t.id, by: 'local' });
+  assert.deepEqual([r.ok, r.block.state, r.block.card.type, r.block.card.step, r.block.card.keyNeeded, r.block.card.designId], [true, 'asking', 'design-sound', 'ask', true, d.id]);
+  assert.deepEqual(r.block.card.pending, { kind: 'design-start', brief: 'A film about clay' });
+  assert.deepEqual([s.staged(), s.calls.length, s.posted.length], [0, 0, 0]);
+  r.posted(true);
+  assert.deepEqual(s.posted, [], 'no receipt');
+  assert.deepEqual(s.cardsOf(t.id), [], 'the reply took the card');
+  assert.deepEqual(getDesign(d.id).sound, { on: false });
+});
+test('A2: a card the reply could not take is stored; a second start meets it as a notice; once it closes, the next start runs', async () => {
+  const { t } = made('video'); const s = soundRig();
+  const ctx = { threadId: t.id, by: 'local' }; const ask = { kind: 'design-start', brief: 'x' };
+  const r = await s.a.apply(ask, ctx);
+  r.posted(false);
+  assert.deepEqual(s.cardsOf(t.id).map((b) => [b.id, b.card.type, b.state]), [[r.block.id, 'design-sound', 'asking']]);
+  assert.deepEqual(await s.a.apply(ask, ctx), { ok: false, notice: SOUND_NOTICE });
+  assert.deepEqual([s.calls, s.posted], [[], []]);
+  s.flipCard(t.id, r.block.id, { state: 'closed' });
+  const next = await s.a.apply(ask, ctx);
+  assert.deepEqual([next.ok, next.block.card.type, s.calls.length], [true, 'design-round', 1]);
+});
+test('A3: two starts in one reply make one card and one notice, and no round under the card', async () => {
+  const { t } = made('video'); const s = soundRig();
+  const ctx = { threadId: t.id, by: 'local' }; const ask = { kind: 'design-start', brief: 'x' };
+  const pair = await Promise.all([s.a.apply(ask, ctx), s.a.apply(ask, ctx)]);
+  assert.deepEqual(pair.map((r) => (r.ok ? r.block.card.type : r.notice)).sort(), ['design-sound', SOUND_NOTICE].sort());
+  pair.find((r) => r.ok).posted(true);
+  assert.deepEqual([s.calls.length, s.staged()], [0, 0]);
+  assert.equal(s.soundCards.holding(t.id), false, 'the hold ends once the reply took the card');
+});
+test('A4: a web page and a document start as today; with the service unavailable a video starts silently and is never asked', async () => {
+  for (const kind of ['web', 'document']) {
+    const { d, t } = made(kind); const s = soundRig();
+    const r = await s.a.apply({ kind: 'design-start', brief: 'x' }, { threadId: t.id, by: 'local' });
+    assert.deepEqual([r.block.card.type, s.calls.length, getDesign(d.id).sound], ['design-round', 1, null], kind);
+  }
+  const { d, t } = made('video'); const s = soundRig({ state: { available: false, configured: true } });
+  const r = await s.a.apply({ kind: 'design-start', brief: 'x' }, { threadId: t.id, by: 'local' });
+  assert.deepEqual([r.block.card.type, s.calls.length, getDesign(d.id).sound], ['design-round', 1, null]);
+});
+test('A5: a change and a start the card decided never meet the card; without soundCards a video starts as before', async () => {
+  const { d, t } = made('video'); const ctx = { threadId: t.id, by: 'local' };
+  assert.equal((await soundRig().a.apply({ kind: 'design-change', instruction: 'Slower', sections: [] }, ctx)).block.card.type, 'design-round');
+  assert.equal((await soundRig().a.apply({ kind: 'design-start', brief: 'x' }, { ...ctx, soundDecided: true })).block.card.type, 'design-round');
+  assert.equal((await rig().a.apply({ kind: 'design-start', brief: 'x' }, ctx)).block.card.type, 'design-round');
+  assert.equal(getDesign(d.id).sound, null);
+  const { d: d2, t: t2 } = made('video');
+  const chosen = soundRig({ brokerRefusal: async () => { updateDesign(d2.id, { sound: { on: false } }); return null; } });
+  assert.equal((await chosen.a.apply({ kind: 'design-start', brief: 'x' }, { threadId: t2.id, by: 'local' })).block.card.type, 'design-round', 'the design is read again after the broker check');
+});
+test('A6: a start closes an open gear card and asks with the brief; with sound chosen it runs and the gear card stays open', async () => {
+  const ask = { kind: 'design-start', brief: 'x' };
+  const { d, t } = made('video'); const s = soundRig();
+  const gear = await s.soundCards.openFromGear({ design: getDesign(d.id), threadId: t.id });
+  const r = await s.a.apply(ask, { threadId: t.id, by: 'local' });
+  assert.deepEqual([r.block.card.type, r.block.card.pending, s.calls.length], ['design-sound', ask, 0]);
+  assert.equal(s.cardsOf(t.id).find((b) => b.id === gear.cardId).state, 'closed');
+  const { d: d2, t: t2 } = made('video'); const s2 = soundRig();
+  updateDesign(d2.id, { sound: { on: false } });
+  const g2 = await s2.soundCards.openFromGear({ design: getDesign(d2.id), threadId: t2.id });
+  const r2 = await s2.a.apply(ask, { threadId: t2.id, by: 'local' });
+  assert.deepEqual([r2.block.card.type, s2.calls.length], ['design-round', 1]);
+  assert.equal(s2.cardsOf(t2.id).find((b) => b.id === g2.cardId).state, 'asking', 'it changes the next round');
+});
+test('A7: a throw while the card is made leaves no hold: the next start returns a card, not the notice', async () => {
+  const { d, t } = made('video'); const ctx = { threadId: t.id, by: 'local' }; const ask = { kind: 'design-start', brief: 'x' };
+  let broken = true;
+  const s = soundRig({ state: () => (broken ? { available: true, get configured() { throw new TypeError('settings unreadable'); } } : { available: true, configured: true }) });
+  await assert.rejects(s.a.apply(ask, ctx), TypeError);
+  assert.equal(getDesign(d.id).sound, null, 'still unasked');
+  broken = false;
+  const r = await s.a.apply(ask, ctx);
+  assert.deepEqual([r.ok, r.block.card.type, r.block.card.keyNeeded], [true, 'design-sound', false]);
 });
 
 // Rows beyond the plan's: each pins a guard the rows above leave open.

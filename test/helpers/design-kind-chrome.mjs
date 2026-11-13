@@ -8,6 +8,7 @@
 //   chrome.onDesignFrame(frame)     a `design-build` (or a snapshot's build) sets the round's status
 //   chrome.setDocMode(mode)         a newly loaded doc: the view takes `docMode`, then the chrome sees its `ready`
 //   chrome.onFrameMessage(msg)      a C-6 message, passed through
+//   chrome.silence()                the stage lost its frame: the film's sound stops
 import { JSDOM } from 'jsdom';
 import { createKindChrome } from '../../ui/public/design/kind-chrome.mjs';
 import { kindChromeView } from '../../ui/public/design/kind-view.mjs';
@@ -23,9 +24,11 @@ export const SLIDES = Object.freeze([
 const LIVE = Object.freeze(['planning', 'building', 'integrating', 'paused']);
 
 /**
- * @param {{kind?: string, sections?: object[], cw?: number, ch?: number}} [o]
+ * @param {{kind?: string, sections?: object[], cw?: number, ch?: number, loadTracks?: () => Promise<object|null>,
+ *   fileUrl?: (name: string) => string}} [o] `loadTracks` and `fileUrl` go to the chrome as given: a video given both
+ *   plays its sound (stub the page's media first)
  */
-export function rig({ kind = 'pitch', sections = SLIDES, cw = 1096, ch = 900 } = {}) {
+export function rig({ kind = 'pitch', sections = SLIDES, cw = 1096, ch = 900, loadTracks, fileUrl } = {}) {
   const dom = new JSDOM('<!doctype html><html><body><div class="dz-wrap"></div></body></html>', { url: 'http://localhost/' });
   const win = dom.window;
   const doc = win.document;
@@ -46,6 +49,8 @@ export function rig({ kind = 'pitch', sections = SLIDES, cw = 1096, ch = 900 } =
     post: (t, f) => { posts.push([t, f]); return true; },
     openRailFrame,
     colorOf: () => '#86C4E3',
+    loadTracks,
+    fileUrl,
   });
   const state = { status: null, docMode: 'build', sections, stageW: cw, stageH: ch };
   const update = () => real.update(kindChromeView({ ...state, kind, live: LIVE.includes(state.status) }));
@@ -73,6 +78,7 @@ export function rig({ kind = 'pitch', sections = SLIDES, cw = 1096, ch = 900 } =
     },
     onFrameMessage(m) { real.onFrameMessage(m); },
     pause() { real.pause(); },
+    silence() { real.silence(); },
     destroy() { real.destroy(); },
   };
   return { win, doc, wrap, chrome, posts, rails, of: (t) => posts.filter(([x]) => x === t).map(([, f]) => f) };

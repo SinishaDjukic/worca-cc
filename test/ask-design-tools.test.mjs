@@ -91,6 +91,14 @@ test('rule 7 caps the reply after a build tool at two short sentences, on every 
   assert.equal(rule(10), '10. Never write HTML, CSS or JavaScript into the chat: the page shows the work.');
   assert.doesNotMatch(DESIGN_SYSTEM_RULES, /one or two sentences/);
 });
+// Design sound P3 Task C1: the sound card is worca's (SPEC D1), so the model is only told it may come (SPEC §7).
+const RULE_14 = '14. A video can have sound: a voice that tells the story and music under it. worca asks the user about it with its own card when the first build of a video starts, and starts the build when they answer: never ask about sound, a key, a voice or music yourself, and never say the build started. To change the voice or the music later, the user opens the composer\'s settings and presses Change beside Sound. Put what the user said about the voice\'s tone and the script into your brief.';
+const NOTE_ACT = 'worca starts it right after this call and puts a receipt in the chat (for a new video it may first show the user a card about sound, and starts when they answer), or a notice says why not: never say it started or finished. Your reply after this call is at most TWO short sentences, 40 words in all (rule 7).';
+test('rule 14 is the last rule: worca asks about sound itself; the start and change notes say a sound card may come first', async () => {
+  assert.ok(DESIGN_SYSTEM_RULES.endsWith(`\n${RULE_14}`));
+  assert.equal((await tools().call('start_design_build', { brief: 'x' })).note, NOTE_ACT);
+  assert.equal((await tools({ readPlan: () => PLAN }).call('change_design', { instruction: 'x' })).note, NOTE_ACT);
+});
 test('labels', () => {
   assert.equal(labelForTool('mcp__worca__get_design', {}), 'Reading the design');
   assert.equal(labelForTool('mcp__worca__start_design_build', {}), 'Starting the build');
