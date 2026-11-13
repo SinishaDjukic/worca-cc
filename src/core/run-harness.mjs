@@ -7897,8 +7897,9 @@ export class RunHarness extends EventEmitter {
     const fromTitle = title && title !== basename(this.pipeline?.dir || '') ? title : '';
     const source = fromTitle || firstLine(promptText) || 'feature';
     const base = slugify(source).slice(0, 40) || 'feature';
-    // P3: every run without a project shares one store, so its plan and review names carry its own id
-    return this.workMode === 'none' && this.pipeline?.id ? `${base.slice(0, 31)}-${this.pipeline.id}` : base;
+    // P3: every run without a project shares one store, so its plan and review names carry its own id. So does a workflow
+    // test try: tries of one example run at once under one fixed title (two versions, a long name cut before "try N").
+    return (this.workMode === 'none' || this._isTestTry()) && this.pipeline?.id ? `${base.slice(0, 31)}-${this.pipeline.id}` : base;
   }
 
   _checkAbort() {
