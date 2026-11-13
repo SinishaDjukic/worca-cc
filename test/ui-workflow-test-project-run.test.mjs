@@ -37,8 +37,8 @@ test('board 34: one project, disk and time, the lock line in both modes, an exam
   assert.equal(doc.querySelector('.wft-est-row.is-total span').textContent, 'Total');
   const lock = doc.querySelector('.wft-lock');
   assert.equal(lock.hidden, false);
-  assert.equal(lock.querySelector('b').textContent, 'Tests never push, open pull requests or change your project.');
-  assert.equal(lock.textContent, "Tests never push, open pull requests or change your project. Each try works in Worca's own copy of the project, which is deleted after the checks.");
+  assert.equal(lock.querySelector('b').textContent, 'Tests never push, create pull requests or change your project.');
+  assert.equal(lock.textContent, "Tests never push, create pull requests or change your project. Each try works in Worca's own copy of the project, which is deleted after the checks.");
   assert.equal(doc.querySelector('.wft-safe').hidden, true, 'P13: the lock line takes the shield line\'s place');
   doc.querySelector('#wft-tv-conn-real').checked = true;
   doc.querySelector('#wft-tv-conn-real').dispatchEvent(new doc.defaultView.Event('change'));

@@ -35,7 +35,7 @@ test('board 33: the project checks in the dialog', () => {
 });
 
 test('board 34: test a version', () => {
-  assert.equal(t.LOCK_LEAD, 'Tests never push, open pull requests or change your project.');
+  assert.equal(t.LOCK_LEAD, 'Tests never push, create pull requests or change your project.');
   assert.equal(t.LOCK_REST, " Each try works in Worca's own copy of the project, which is deleted after the checks.");
   assert.equal(t.REAL_BLOCKED_HINT, ' Pushes, pull requests and issues stay blocked.');
   assert.equal(t.allOnProject(5, 'worca-cc'), 'All 5 · on worca-cc');

@@ -108,7 +108,7 @@ export const READ_FROM_FILE = 'A file in the project';
 export const ADD_CHECK = 'Add check';
 
 // ── Board 34: Test a version ─────────────────────────────────────────────────
-export const LOCK_LEAD = 'Tests never push, open pull requests or change your project.';   // board 34
+export const LOCK_LEAD = 'Tests never push, create pull requests or change your project.';
 export const LOCK_REST = " Each try works in Worca's own copy of the project, which is deleted after the checks.";
 export const REAL_BLOCKED_HINT = ' Pushes, pull requests and issues stay blocked.';
 export const allOnProject = (n, name) => `All ${n} · on ${name}`;
