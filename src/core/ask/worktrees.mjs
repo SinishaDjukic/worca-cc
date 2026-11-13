@@ -88,6 +88,8 @@ async function resolveTarget({ projectKey, ref, runId }) {
     const row = findPipelineRowById(runId);
     if (!row) throw new AskWorktreeError(`run not found: ${runId}`);
     if (isNoProjectKey(row.project_key)) throw new AskWorktreeError(noProjectRunText(row.id));   // SEAMS S35: no branch to check out
+    // Workflow tests 3a (final review round 2): a try's branch lives only in Worca's copy; never the person's folder.
+    if (row.is_test) throw new AskWorktreeError(`run ${row.id} is a workflow-test try: its branch stays in Worca's copy of the project`);
     const isWs = row.target === 'workspace' || !!row.workspace_key;
     if (isWs) {
       const meta = parse(row.workspace_meta, {}) || {};

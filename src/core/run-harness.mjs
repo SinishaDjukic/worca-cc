@@ -27,7 +27,7 @@ import {
   createPipeline, updatePipelineTitle, appendAudit, writeState, artifactPaths, slugify, today,
   recordArtifact, writeClarify, readPipelineExtras, claimPipelineOwnership, touchHeartbeat,
   clearPipelineOwnership, HEARTBEAT_INTERVAL_MS, upsertSubAgent, newestPlanPath, pipelineRowStamp,
-  claimPausedForStop, claimForResume, findPipelineRowById, readPipelineForResume,
+  claimPausedForStop, claimForResume, findPipelineRowById, readPipelineForResume, isTestPipeline,
 } from './artifacts.mjs';
 import { diffNameStatus, diffNumstat, diffPatch, untrackedFiles, untrackedPatch } from './git-info.mjs';
 import { clearStaleGitLocks, staleGitLockNote } from './git-lock.mjs';
@@ -111,6 +111,8 @@ import { withBillTo, currentBillTo } from './billing.mjs';
 import { claimRunDir, claimRunExtras, shareFailureReason } from './agent-pool.mjs';
 import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots } from './broker-client.mjs';
 import { mockEnabled } from './claude-runner.mjs';
+import { DEFAULT_BIN as CLAUDE_DEFAULT_BIN } from './engines/claude.mjs';
+import { carryLine } from './workflow-tests/try-carry.mjs';
 import { modelSlot, manifestModels, manifestNeedsModel, missingCredentials, describeMissing } from './broker-routing.mjs';
 import { syncPluginSlots } from './plugin-broker-slots.mjs';
 import { recoveryDelayMs, sleepAbortable } from './recovery-backoff.mjs';
@@ -137,6 +139,12 @@ import { signInRefusalText } from './factory-models.mjs';
 import { agentIdentity } from './agent-user.mjs';
 import { resolveRegistry, requiredOf, toolNameLimitFor, skipReasonText, cachedTeamFor } from './mcp/registry.mjs';
 import { loadCatalog } from './mcp/catalog.mjs';
+import { pretendServers, pretendLayer, noteSeenServers, CONNECTOR_CALLS_FILE } from './workflow-tests/connectors.mjs';
+import { runShellStep, tryShellEnv, writeTrySetup, TRY_SETUP_STAGE } from './workflow-tests/shell-step.mjs';
+import { claudeReadsStructuredDeny, tryGitEnv, withSafeGitArgs } from './workflow-tests/try-guard-env.mjs';
+import { stripProjectClaudeSettings, stripMountedSkillHooks, stripSetSkillHooks, PLUGINS_OFF_STAGE } from './workflow-tests/project-claude-settings.mjs';
+import { setupFailedText } from '../shared/workflow-tests/project-text.mjs';
+import { writeTryExcludes, readTryExcludes } from './workflow-tests/try-excludes.mjs';
 import { MCP_STARTUP_MS } from './mcp/timeouts.mjs';
 import { keepListNames } from './mcp/keep-list.mjs';
 import { expandMcpDenyRules } from './mcp/deny.mjs';
@@ -222,6 +230,9 @@ export function findDisabledPluginFor(key, subdir = 'agents') {
  * not raw stderr echoes. Frozen and shared: `_log` only reads from `attr`.
  */
 export const ERR_STREAM = Object.freeze({ stream: 'err' });
+// The setup stage while a git run makes its worktree: defined in a leaf module the workflow-test runner reads, re-exported here.
+import { WORKTREE_STAGE } from './setup-stages.mjs';
+export { WORKTREE_STAGE };
 
 /** The `: <stderr>` suffix for a failed subprocess result, or '' when it said
  *  nothing. runGraphifyUpdate already returns its child's stderr and the log
@@ -1182,7 +1193,8 @@ export class RunHarness extends EventEmitter {
     this._night = {
       // A resume with --night opts in a run that was not; it never drops a saved opt-in.
       optIn: savedNight?.optIn === true || this.opts.nightMode === true,
-      override: NIGHT_TOGGLES.includes(savedNight?.override) ? savedNight.override : 'auto',
+      // Workflow tests (review M5): Away mode never answers a try's question; the example's answers do (D24).
+      override: this.opts.workflowTest === true ? 'off' : NIGHT_TOGGLES.includes(savedNight?.override) ? savedNight.override : 'auto',
       q: null, timer: null, openedAt: null, deciding: false,
       since: Number.isFinite(savedNight?.since) ? savedNight.since : null,   // start of the unattended stretch (spend-cap anchor); a human answer ends it
       decisions: new Map(),                // question id -> decision record (for the answer writers)
@@ -1610,6 +1622,7 @@ export class RunHarness extends EventEmitter {
         labels: this.opts.labels || [],
         runSetup: typeof this.opts.runSetup === 'string' ? this.opts.runSetup : null,
         prAuto: this.opts.prAuto ?? null,
+        ...(this.opts.workflowTest === true ? { isTest: true } : {}),   // D21/D22: a test try, marked once
         ...(this.workMode === 'none' ? { id: this.opts.pipelineId } : {}),
         ...(this.isWorkspace ? {} : { projectKey: this.members[0].projectKey, ...(this.workMode !== 'git' ? { workMode: this.workMode } : {}) }),
         ...(this.isWorkspace ? {
@@ -1711,7 +1724,7 @@ export class RunHarness extends EventEmitter {
       // claude spawns cwd into this.runCwd (the run root on a detached workspace
       // run, else the primary's worktree); per-member fan-out sub-agents work in
       // this.workDirs. Artifacts route via the workspace store.
-      if (this.workMode === 'git') this._setupStage('Creating the worktree');
+      if (this.workMode === 'git') this._setupStage(WORKTREE_STAGE);
       await this._setupRunRoot();
       // The provisional title (firstMeaningfulLine(prompt) or the dir basename) is
       // shown instantly; kick off the real LLM title without blocking run start, now
@@ -1722,6 +1735,11 @@ export class RunHarness extends EventEmitter {
       // site anyway (belt-and-suspenders).
       if (!this.resumeOpts) this._kickoffTitleGeneration();
       this._checkAbort();
+      // Workflow tests 3a (D55): a project try's "Before each try, run", in its checkout, before any step.
+      if (this.opts.trySetup && this.workMode === 'git' && !this.isWorkspace) await this._runTrySetup();
+      // Workflow tests 3b (D72): a Pretend project try runs without the project's own Claude Code hooks and plugins (after its
+      // setup, which may write them; before any step).
+      if (this._testConnectors() === 'pretend' && this.workMode === 'git' && !this.isWorkspace) await this._pluginsOffInCheckout();
 
       // 3b') Auto workflow (spec §5.3): the run row and the run root exist, so the
       // engine may now DECIDE the graph (classifier call, proposal question, reuse
@@ -2264,6 +2282,7 @@ export class RunHarness extends EventEmitter {
    * @returns {Promise<object|null>} the run manifest read on a detached run (resume re-assembles from it)
    */
   async _reattachCheckouts(row, rehydrated, { strict = true } = {}) {
+    await this._loadTryExcludes();   // a test try's kept-out paths, before anything diffs or commits
     // ── run-root mode: read the RECORDED value, never the live flag (§10) ──
     // Single-project rides state.branch.runRootMode (the pipelines.branch JSON
     // column); workspace rides workspace_meta.runRootMode (real only because of the
@@ -2599,7 +2618,9 @@ export class RunHarness extends EventEmitter {
    *  keep failing loudly. */
   async _resolveSingleBranches({ replay = false } = {}) {
     const source = this.branchOpts.source || (await resolveDefaultBranch(this.projectDir));
-    const legacy = this.branchOpts.legacy === true;
+    // P35: a workflow-test try always gets the plain worca-cc/ name (it lives only in Worca's copy, which the boot sweep
+    // cleans by that prefix), so Smart run naming never applies to it.
+    const legacy = this.branchOpts.legacy === true || this.opts.workflowTest === true;
     const derived = !this.branchOpts.feature || this.branchOpts.suggested === true;
     const args = { prompt: this.pipeline.promptText, title: this.opts.title || null, pipelineId: this.pipeline.id };
     let featureRaw = legacy ? suggestBranchName(args)
@@ -2640,6 +2661,11 @@ export class RunHarness extends EventEmitter {
     // P5: a Folder member's copy lives in the run root — never inside the folder it copies.
     if (this.members.some((m) => this._memberWorkMode(m.projectKey) === 'folder') && this.runRootMode !== 'detached') {
       this._log('worktree', 'info', 'folder run: the copy lives in the run root (run-root mode legacy ignored)');
+      this.runRootMode = 'detached';
+    }
+    // Workflow tests 3a (D43): a try's checkout lives in its run root, and only the detached teardown keeps it for the checks.
+    if (this.opts.workflowTest === true && this.runRootMode !== 'detached') {
+      this._log('worktree', 'info', 'test try: the checkout lives in the run root (run-root mode legacy ignored)');
       this.runRootMode = 'detached';
     }
     this.state.runRootMode = this.runRootMode;            // top-level pin → workspace_meta (artifacts.mjs)
@@ -2766,9 +2792,11 @@ export class RunHarness extends EventEmitter {
             ...(reuseBase ? { diffBase: reuseBase.sha, diffBaseFrom: reuseBase.against } : {}),
             ...(syncRecord ? { sync: syncRecord } : {}),
             ...(sameAsSource ? { sameAsSource: true } : {}) };
+          const tryGitEnv_ = this._tryGitEnv();
           const info = await createWorktree({
             projectDir: resolve(m.projectDir),              // the REAL dir: git runs here
             pipelineId: this.pipeline.id,
+            ...(tryGitEnv_ ? { gitEnv: tryGitEnv_ } : {}),   // final review I2: a try's checkout runs no hook of the copy
             // detached ⇒ <runRoot>/repos/<projectKey>, uniqueness from the run root.
             // legacy   ⇒ both omitted, so worktree.mjs falls back to its retained
             //            default <projectDir>/.worca-cc/worktrees/<pipelineId> (§10).
@@ -2906,6 +2934,94 @@ export class RunHarness extends EventEmitter {
     for (const w of folderWarns) await this._recordRunWarning(w);
     await this._persist();
     this._emit('state', this.getState());
+  }
+
+  /** Workflow tests 3a (D55): "Before each try, run", in the try's checkout, before any step. A failure ends the run as an
+   *  error the runner reads as a setup failure (try-setup.json), never as the workflow's. */
+  async _runTrySetup() {
+    const { cmd, timeoutMs } = this.opts.trySetup;
+    // Only ever in the try's own checkout (final review): never a fallback to the copy's main folder.
+    const cwd = this.workDirs.get(this.members[0].projectKey) || null;
+    if (!cwd) {
+      throw markTerminal(Object.assign(new Error('The setup step did not run: the try\'s checkout is not known.'), { code: 'TRY_SETUP_NO_CHECKOUT' }));
+    }
+    this._setupStage(TRY_SETUP_STAGE);
+    // The setup keeps the package-registry tokens (the person's own command, before the agent changed anything); never
+    // a forge token. The checks and the agents get the full strip (D56).
+    const env = tryShellEnv({ logFile: join(this.pipeline.dir, CONNECTOR_CALLS_FILE), keepRegistryAuth: true });
+    const r = await runShellStep({ command: cmd, cwd, env, timeoutMs, signal: this.abort.signal });
+    // A stop during the setup is a stop, not a setup failure: it throws here, before any setup record is written.
+    if (!r.ok) this._checkAbort();
+    if (r.ok) {
+      this._trySetupPaths = await this._untrackedDirs(cwd);
+      await writeTryExcludes(this.pipeline.dir, { setup: this._trySetupPaths, plugins: this._tryPluginPaths ?? null });
+    }
+    await writeTrySetup(this.pipeline.dir, { cmd, ok: r.ok, exitCode: r.exitCode, timedOut: r.timedOut, ms: r.ms, tail: r.tail });
+    await appendAudit(this.pipeline.dir, `Setup \`${cmd}\` ${r.ok ? 'finished' : 'failed'} in ${Math.round(r.ms / 1000)} s.`).catch(() => {});
+    if (r.ok) return;
+    throw markTerminal(Object.assign(new Error(setupFailedText(cmd)), { code: 'TRY_SETUP_FAILED' }));
+  }
+
+  /** Workflow tests (e2e finding 1): a try's kept-out paths (_excludePathspecs), saved in its pipeline folder when they are set
+   *  (try-excludes.mjs), read back by a harness rebuilt from its row (a paused try stopped or resumed): without them that
+   *  harness's diff, results and commit would carry Worca's own edits as the try's changes. */
+  async _loadTryExcludes() {
+    if (!this._isTestTry()) return;
+    const saved = await readTryExcludes(this.pipeline?.dir);
+    if (saved?.setup) this._trySetupPaths = saved.setup;
+    if (saved?.plugins) this._tryPluginPaths = saved.plugins;
+  }
+
+  /** What a try's setup made that git would track (untracked, not ignored), folders collapsed, at most 200 paths. */
+  async _untrackedDirs(cwd) {
+    const r = await this._git(['-c', 'core.quotePath=false', 'ls-files', '--others', '--exclude-standard', '--directory', '-z'], { cwd });
+    if (!r.ok) {
+      this._log('worktree', 'warn', `setup output not listed (git ls-files failed: ${(r.stderr || '').trim() || 'unknown error'}); it may show in the try's changes`);
+      return [];
+    }
+    const all = r.stdout.split('\0').filter(Boolean).map((p) => p.replace(/\/$/, ''));
+    if (all.length > 200) this._log('worktree', 'warn', `the setup made ${all.length} new paths; only the first 200 are kept out of the try's changes`);
+    return all.slice(0, 200);
+  }
+
+  /** Workflow tests 3b (D72): in a Pretend try's checkout, the project's Claude Code settings lose their hooks and enabled
+   *  plugins; links are removed, never followed. The tracked files Worca changed or removed stay out of the try's commit and
+   *  diff (_excludePathspecs). Only tracked ones are named: an ignored path in an exclude pathspec fails `git add`. A failure
+   *  to write ends the try before any step: the promise of Pretend would not hold. It is Worca's own setup failing (U-T2):
+   *  under PLUGINS_OFF_STAGE, never the person's setup stage, and not marked terminal, so the setup site pauses it as an
+   *  error and the test runner sets the try aside as Worca's ('copy') instead of judging the workflow by it. */
+  async _pluginsOffInCheckout() {
+    const cwd = this.workDirs.get(this.members[0].projectKey) || null;
+    if (!cwd) return;
+    this._setupStage(PLUGINS_OFF_STAGE);
+    let r;
+    // Re-review 2 (n4): the harness's git (under the try's guard) lists the gitignored folders the nested search skips.
+    try { r = await stripProjectClaudeSettings(cwd, { git: (args) => this._git(args, { cwd }) }); } catch (e) {
+      throw Object.assign(new Error(`Worca could not switch off the project's Claude Code hooks and plugins for this try: ${e && e.message ? e.message : e}`),
+        { code: 'TRY_PLUGINS_OFF_FAILED' });
+    }
+    // Re-review 2 (n5): the settings env keys left out (they could undo Worca's guards) are named, never their values: a build
+    // that then misses its NODE_OPTIONS or LD_LIBRARY_PATH can be traced to this.
+    if (r.envKeys && r.envKeys.length) {
+      this._log('worktree', 'warn', `Left the project's own settings env keys out of this try (they could undo Worca's guards): ${
+        r.envKeys.map((e) => `${e.file}: ${e.keys.join(', ')}`).join('; ')}.`);
+    }
+    if (r.walkCapped) {   // re-review 3 (m3): a run warning, as a folder too deep to walk is (the effect is the same)
+      await this._recordRunWarning(`Worca stopped looking for the project's nested .claude folders after ${r.walkCapped} folders; a skill, agent or command deeper in the checkout may keep its hooks in this try.`);
+    }
+    // D72a (Task 5, I2): a skill, agent or command Worca is not sure it fully stripped is named, once each (re-review 2 N-I1:
+    // it was still written, as far as Worca could strip it).
+    for (const p of r.unparsed || []) {
+      await this._recordRunWarning(`Worca could not be sure it removed every hook from the project's ${p}, so a hook in it may still run in this try.`);
+    }
+    const touched = [...r.changed, ...r.links];
+    if (!touched.length) return;
+    const ls = await this._git(['-c', 'core.quotePath=false', 'ls-files', '-z', '--', ...touched.map((p) => `:(literal)${p}`)], { cwd });
+    const tracked = new Set(ls.ok ? ls.stdout.split('\0').filter(Boolean) : []);
+    this._tryPluginPaths = touched.filter((p) => tracked.has(p));
+    await writeTryExcludes(this.pipeline?.dir, { setup: this._trySetupPaths ?? null, plugins: this._tryPluginPaths });
+    for (const p of r.links) await this._recordRunWarning(`The project's ${p} is a link, so Worca left it out of this try.`);
+    await appendAudit(this.pipeline.dir, `Switched off the project's Claude Code hooks and plugins for this try (${touched.join(', ')}).`).catch(() => {});
   }
 
   // ── Folder runs (P1, CONTRACT §2), keyed by member (S23). Single project: the member record is state.branch. ──
@@ -3606,7 +3722,7 @@ export class RunHarness extends EventEmitter {
       // The run's team policy is resolved only once it runs: before that, the copies its Team set
       // attaches come from the policy cache, as the previews read them.
       const team = this.policyRun ? undefined : await this._cachedTeam();
-      mcp = this._engineMcpRefusal((await this._resolveMcp(new Set(), { team }))?.result);
+      mcp = this._engineMcpRefusal(await this._mcpLayerToJudge((await this._resolveMcp(new Set(), { team }))?.result));
     } catch (err) {
       // The preflight's refusal (codex missing or signed out): the consent cannot lift it.
       if (err?.engineRefused) return { error: err.message, overridable: false };
@@ -3628,8 +3744,15 @@ export class RunHarness extends EventEmitter {
    * copy (a resume, whose team policy is resolved later).
    */
   async _engineMcpGate() {
-    const why = this._engineMcpRefusal((await this._resolveMcp(new Set()))?.result);
+    const why = this._engineMcpRefusal(await this._mcpLayerToJudge((await this._resolveMcp(new Set()))?.result));
     if (why) throw engineRefusal(this.claude.engine, why);
+  }
+
+  /** The registry layer an early engine check judges (before mcp.json exists): the resolved one, or on a pretend
+   *  workflow-test try (D35) the stand-ins it will load instead — the copies with a recorded tool list, each a stdio
+   *  server (workflow-tests/connectors.mjs pretendLayer, the rule pretendServers applies; no file written). */
+  async _mcpLayerToJudge(layer) {
+    return layer && this._testConnectors() === 'pretend' ? pretendLayer(layer) : layer;
   }
 
   /** What a non-Claude run's agents will not get of the merged MCP servers: a granted server that is not in mcp.json
@@ -3917,6 +4040,7 @@ export class RunHarness extends EventEmitter {
     const prior = this.runRoot ? await readRunManifest(this.runRoot) : null;
     const alreadyReported = new Set(prior?.warnings ?? []);
     let reg = null;                                        // the MCP registry layer's { result, catalog }
+    let standIn = null;                                    // D35: a pretend try's swap ({ servers, off, pretend })
     // Skills registry: another engine reads set skills from `.agents/skills`, so they are planned BEFORE the
     // assembly and mounted by it with every other skill (one owner: renames, records, orphan pruning, teardown).
     // On Claude they load through --plugin-dir and are planned after it, in _resolveSkills.
@@ -3951,6 +4075,9 @@ export class RunHarness extends EventEmitter {
       engine: this.claude.engine || 'claude',
       setSkills: this._setSkillSources(skillPlan),
       registry: async (taken) => (reg = await this._resolveMcp(taken)),
+      ...(this._testConnectors() === 'pretend' ? { mcpStandIn: async (layer) => (standIn = await pretendServers(layer, { pipelineDir: this.pipeline.dir })) } : {}),
+      ...(this._tryGitEnv() ? { gitEnv: this._tryGitEnv() } : {}),
+      ...(this._testConnectors() === 'pretend' ? { copyMount: true } : {}),   // 3b E2: copies, whose hooks are stripped below
     });
     this.runContext = rc;
     if (rc?.projectPermissions) {
@@ -3973,6 +4100,19 @@ export class RunHarness extends EventEmitter {
       copies: reg.result.copies,
       servers: reg.result.servers,
     };
+    // D35: a pretend try's stand-ins take no env, so no registry secret (MCPSECRET_*) reaches its spawn. They are stdio
+    // servers even where the real copy is http, so a scrubbed spawn keeps the launcher's keep-list (§5.5.1). The layer
+    // is narrowed to what was loaded — the copies that got a stand-in, with the stand-in's definition — so the init
+    // check (_recordMcpInit) never calls a switched-off copy "blocked by managed MCP policy", the tool-name 400 warning
+    // never names one, and another engine's attach check (_engineMcpRefusal) judges the stand-ins, not the real servers.
+    if (this.mcpLayer && this._testConnectors() === 'pretend') {
+      const loaded = (standIn && standIn.servers) || {};
+      const copies = this.mcpLayer.copies.filter((c) => Object.hasOwn(loaded, c.name));
+      this.mcpLayer = {
+        ...this.mcpLayer, env: {}, allowlist: keepListNames(), copies,
+        servers: Object.fromEntries(copies.map((c) => [c.name, loaded[c.name]])),
+      };
+    }
     const mcpWhy = this._engineMcpRefusal(this.mcpLayer);
     if (mcpWhy) throw engineRefusal(this.claude.engine, mcpWhy);
     // §11.4: MCP deviations need the resolution, so they land here, after _resolvePolicy (which
@@ -4039,8 +4179,43 @@ export class RunHarness extends EventEmitter {
     // Skills registry (§4.3): after the capability probe and after the assembly rewrote
     // run.json.warnings; before the audit line, which closes with the layer's clause.
     await this._resolveSkills({ reported: alreadyReported, plan: skillPlan, mountedAs: rc.skillMountDir ? rc.setSkillNames : null });
+    // Workflow tests 3b (final review E2, O3): a Pretend try's mounted skills and its set skills' --plugin-dir copies lose their
+    // frontmatter hooks (D72a), project or not.
+    if (this._testConnectors() === 'pretend') {
+      await stripMountedSkillHooks(rc, { warn: (t) => this._recordRunWarning(t), runRoot: this.runRoot });
+      await stripSetSkillHooks(this.skillLayer, { warn: (t) => this._recordRunWarning(t) });
+    }
     await appendAudit(this.pipeline.dir, renderContextAudit(rc, this.skillLayer)).catch(() => {});
     return rc;
+  }
+
+  /** Workflow tests 3a (final review C1): is this harness a test try? Its opts say so on a fresh try; a harness rebuilt from
+   *  the saved row (stopPausedRun stops a paused try with only `resume`) knows it from the row's persisted is_test. */
+  _isTestTry() {
+    if (this.opts?.workflowTest === true) return true;
+    if (this.resumeOpts?.row?.is_test) return true;
+    const id = this.state?.id || this.pipeline?.id || null;
+    if (!id) return false;
+    if (this._testTryOf?.id !== id) {   // one row read per pipeline id: the per-step callers stay cheap
+      let v = false;
+      try { v = isTestPipeline(id); } catch { v = false; }
+      this._testTryOf = { id, v };
+    }
+    return this._testTryOf.v;
+  }
+
+  /** Workflow tests (D35): 'pretend' | 'real' for a test try, null for every other run. */
+  _testConnectors() {
+    if (!this._isTestTry()) return null;
+    return this.opts.testConnectors === 'real' ? 'real' : 'pretend';
+  }
+
+  /** Workflow tests 3a (D56): every try's outward guard writes to its connector-calls.ndjson; null for every other run. */
+  _tryGuard() {
+    if (!this.pipeline?.dir || !this._isTestTry()) return null;
+    // structuredDeny only once the probe saw a CLI that reads it (_recordCapabilities); until then, and for any other
+    // version, the hook blocks with stderr + exit 2.
+    return { logFile: join(this.pipeline.dir, CONNECTOR_CALLS_FILE), ...(this._tryGuardStructured === true ? { structuredDeny: true } : {}) };
   }
 
   /**
@@ -4090,8 +4265,13 @@ export class RunHarness extends EventEmitter {
     try { return skillHostFacts(); } catch { return { installedPluginNames: [], sideloadDisabled: false }; }
   }
 
+  /** The claude binary this run's agent spawns use: the run's own, else claude-runner's default (WORCA_CLAUDE_BIN /
+   *  ORCH_CLAUDE_BIN / `claude`). The capability probe asks this one, so what it learns (the try guard's structured
+   *  deny, --mcp-config, --plugin-dir) is about the CLI that actually runs, never another `claude` on PATH. */
+  _claudeBin() { return this.claude?.bin || CLAUDE_DEFAULT_BIN; }
+
   /** `claude --help` / `--version`, parsed once per run (§8.18 V5; skills §4.1 reads `pluginDir`). */
-  _claudeCaps() { return (this._capsProbe ||= probeClaudeCapabilities(this.claude.bin)); }
+  _claudeCaps() { return (this._capsProbe ||= probeClaudeCapabilities(this._claudeBin())); }
 
   /** Skills registry §4.1: does this run's `claude` advertise --plugin-dir? A mock run spawns none: yes. Asked on
    *  Claude runs only: another engine mounts set skills in `.agents/skills` (_planSkills). */
@@ -4352,6 +4532,10 @@ export class RunHarness extends EventEmitter {
    *  paused/error with setupIncomplete, so a retryable mount failure can resume. */
   async _mountMemory({ resume = false } = {}) {
     if (!this.pipeline?.dir) return;
+    // D19: a test try uses no memory. Nothing is mounted, so this.memory stays null and _syncMemory never writes back.
+    // The row check covers a resumed try (its opts no longer carry workflowTest). A plain run started without memory
+    // (#943 `noMemory`) is not a try: it takes the memoryOff arm below, which writes the audit line once.
+    if (this.opts.workflowTest === true || isTestPipeline(this.pipeline.id)) return;
     if (this.memoryOff) {
       if (!resume) await appendAudit(this.pipeline.dir, 'Memory: off for this run (started without memory).').catch(() => {});
       this._log('memory', 'info', 'Memory: off for this run — its agents load no memory notes and write none');
@@ -5037,11 +5221,13 @@ export class RunHarness extends EventEmitter {
       return;
     }
     const caps = await this._claudeCaps();
+    // Workflow tests 3a (D56): a try's hook answers with a structured deny only on a CLI known to read it.
+    if (this.opts.workflowTest === true) this._tryGuardStructured = claudeReadsStructuredDeny(caps.version);
     if (caps.version === null) {
       // No `claude --version` at all. The first node fails loudly anyway; when the
       // cause is the Windows npm shim, record the actionable reason NOW so the
       // run's warnings carry it instead of only a spawn ENOENT at the first node.
-      const hint = explainUnspawnableClaude(this.claude.bin);
+      const hint = explainUnspawnableClaude(this._claudeBin());
       if (hint) await this._recordRunWarning(hint);
     }
     if (!caps.mcpConfig && this.mcpConfigPath) {
@@ -5263,6 +5449,7 @@ export class RunHarness extends EventEmitter {
       worktreeDir: info.worktreeDir,
       branch: merged ? info.branch : null,
       force: true,
+      ...(this._tryGitEnv() ? { gitEnv: this._tryGitEnv() } : {}),
     });
     for (const s of res.steps.filter((x) => !x.ok)) {
       this._log('worktree', 'warn', `teardown ${s.step} failed: ${s.stderr || 'unknown error'}`, errStreamAttr(s.stderr));
@@ -5318,6 +5505,7 @@ export class RunHarness extends EventEmitter {
         worktreeDir: info.worktreeDir,
         branch: dropBranch ? info.branch : null,
         force: true,
+        ...(this._tryGitEnv() ? { gitEnv: this._tryGitEnv() } : {}),
       });
       for (const s of res.steps.filter((x) => !x.ok)) {
         this._log('worktree', 'warn', `teardown ${projectKey_} ${s.step} failed: ${s.stderr || 'unknown error'}`, errStreamAttr(s.stderr));
@@ -5353,7 +5541,8 @@ export class RunHarness extends EventEmitter {
    * skip its final _persist.
    */
   async _mergeBack(key, info, branchRecord, { retained = false } = {}) {
-    if (!branchRecord || branchRecord.sameAsSource !== true || this._isWorkspaceScan()) return false;
+    // A test try never merges back (it never starts on its source branch; this keeps it so): no fast-forward, no post-merge hook.
+    if (!branchRecord || branchRecord.sameAsSource !== true || this._isWorkspaceScan() || this._isTestTry()) return false;
     const source = branchRecord.source;
     const at = new Date().toISOString();
     const notMerged = async (kind, reason, paths = null) => {
@@ -5436,6 +5625,7 @@ export class RunHarness extends EventEmitter {
     this.branchInfos = new Map();                      // guard against a double teardown
     const retainedMembers = [];
     const at = new Date().toISOString();
+    let keptForChecks = false;   // 3a D43
     for (const m of this.members) {                              // the folder arm, per member (S23)
       if (this._memberWorkMode(m.projectKey) !== 'folder') continue;
       const t = await this._teardownFolderMember(m.projectKey);
@@ -5489,6 +5679,13 @@ export class RunHarness extends EventEmitter {
         this.workDirs.delete(key);
         continue;
       }
+      // Workflow tests 3a (D43): a project try keeps its checkout, and so its run root, until its checks have run; the runner
+      // removes both (project-copy.mjs removeTryCheckout). The commit above is on the try's branch in Worca's copy.
+      if (this.opts.keepCheckout === true) {
+        if (branchRecord) branchRecord.worktreeKept = true;
+        keptForChecks = true;
+        continue;
+      }
       // (5) remove the checkout. The branch is kept — except on a read-only Workspace scan
       // (D5), a workspace member this run never changed ("affected only"), and after a merge
       // back (the source now holds the same commit).
@@ -5499,6 +5696,7 @@ export class RunHarness extends EventEmitter {
         worktreeDir: wt,
         branch: dropBranch ? info.branch : null,
         force: true,
+        ...(this._tryGitEnv() ? { gitEnv: this._tryGitEnv() } : {}),
       });
       for (const s of res.steps.filter((x) => !x.ok)) {
         this._log('worktree', 'warn', `teardown ${key} ${s.step} failed: ${s.stderr || 'unknown error'}`, errStreamAttr(s.stderr));
@@ -5519,7 +5717,7 @@ export class RunHarness extends EventEmitter {
     // Keep the scalar mirror coherent for late observers (never on a retained member).
     // P5: a pending Folder member (folder-apply) is no reason to leave a Git primary's mirror unstamped; a Folder primary has none.
     const commitRetained = retainedMembers.some((r) => (r.reason ?? RETAIN_REASONS.COMMIT_FAILED) === RETAIN_REASONS.COMMIT_FAILED);
-    if (!commitRetained && this.workMode === 'git' && this._memberWorkMode(this.members[0]?.projectKey) === 'git') this._mirrorPrimaryBranchTeardown();
+    if (!commitRetained && !keptForChecks && this.workMode === 'git' && this._memberWorkMode(this.members[0]?.projectKey) === 'git') this._mirrorPrimaryBranchTeardown();
     this.branchInfo = null;
     this.workDir = this.projectDir;
 
@@ -5573,6 +5771,8 @@ export class RunHarness extends EventEmitter {
       } else if (retainedMembers.length) {
         this._log('worktree', 'info',
           `Run root retained at ${this.runRoot} until ${retainedMembers.length} Folder project(s) are applied or discarded.`);
+      } else if (keptForChecks) {
+        this._log('worktree', 'info', `Run root kept at ${this.runRoot} until the test's checks have run.`);
       } else {
         const removal = await rmGuarded(this.runRoot, {
           worcaHome: worcaHome(), pipelineId: this.pipeline?.id,
@@ -5613,7 +5813,8 @@ export class RunHarness extends EventEmitter {
     const pipelineDir = this.pipeline?.dir;
     if (!pipelineDir || !info?.worktreeDir) return;
     const name = retainedWorkPatchName(this.isWorkspace ? key : null);
-    const snap = await snapshotWorktreePatch(info.worktreeDir, join(pipelineDir, name));
+    const tryEnv = this._tryGitEnv();   // final review round 2: a try's snapshot runs the copy's programs only under the guard
+    const snap = await snapshotWorktreePatch(info.worktreeDir, join(pipelineDir, name), tryEnv ? { gitEnv: tryEnv } : {});
     for (const lock of snap.clearedLocks || []) await this._recordRunWarning(staleGitLockNote(lock));
     if (snap.ok && snap.file) {
       recordArtifact(this.pipeline.id, 'retained-work-patch', name);
@@ -5692,6 +5893,9 @@ export class RunHarness extends EventEmitter {
 
   /** Keep policy (issue #529, D10): re-create the checkout the teardown just removed. */
   async _keepCheckoutByPolicy() {
+    // 3a: a try's checkout belongs to its test, and a try never fetches. The persisted fact, not only opts: a stopped paused
+    // try's harness carries no opts.workflowTest (final review C1).
+    if (this._isTestTry()) return;
     if (this.workMode !== 'git') return;
     if (this._isWorkspaceScan() || this.state.status !== 'done' || !this.state.id) return;
     const { keepAfterRun } = await import('./checkout.mjs');   // lazy: no import cycle, no cost when unused
@@ -5719,6 +5923,9 @@ export class RunHarness extends EventEmitter {
 
   /** #620 (D9): after teardown the branch holds the run's final commit; check it against its fetched base. */
   async _checkBaseAfterRun() {
+    // 3a: a try's branch lives in Worca's copy, and a try never fetches. The persisted fact, not only opts: a stopped paused
+    // try's harness carries no opts.workflowTest (final review C1).
+    if (this._isTestTry()) return;
     if (this.workMode !== 'git') return;
     if (this._isWorkspaceScan() || !this.state.id || !['done', 'stopped', 'error'].includes(this.state.status)) return;
     const { afterRunBaseCheck } = await import('./base-conflicts.mjs');   // lazy, like checkout.mjs
@@ -7224,11 +7431,12 @@ export class RunHarness extends EventEmitter {
       const base = this.checkpointRefs[key];
       if (!base) continue;
       const ex = this._excludePathspecs(key);
+      const gitOpts = this._tryGitEnv() ? { env: this._tryGitEnv() } : {};   // final review I2: a try's diff runs no fsmonitor of the copy
       const [ns, num, patch, untracked] = await Promise.all([
-        diffNameStatus(dir, base, undefined, ex),
-        diffNumstat(dir, base, undefined, ex),
-        diffPatch(dir, base, undefined, ex),
-        untrackedFiles(dir, ex),
+        diffNameStatus(dir, base, undefined, ex, gitOpts),
+        diffNumstat(dir, base, undefined, ex, gitOpts),
+        diffPatch(dir, base, undefined, ex, gitOpts),
+        untrackedFiles(dir, ex, gitOpts),
       ]);
       const listed = new Set(ns.map((r) => r.path));
       // An agent's own engine config file that only worca's info/exclude line hides is listed; worca's own never is.
@@ -7237,7 +7445,7 @@ export class RunHarness extends EventEmitter {
       if (fresh.length > maxUntracked) untrackedCapped = true;
       const extra = [];
       for (const p of fresh.slice(0, maxUntracked)) {
-        const u = await untrackedPatch(dir, p);
+        const u = await untrackedPatch(dir, p, gitOpts);
         ns.push({ status: 'A', path: p });
         num.set(p, { added: u.added, removed: 0, binary: u.binary });
         if (u.patch) extra.push(u.patch);
@@ -7296,10 +7504,11 @@ export class RunHarness extends EventEmitter {
         // §8.8: the same exclusion set the commit uses, so results.json and
         // diff.patch agree with what _commitWork actually committed.
         const ex = this._excludePathspecs(key);
+        const gitOpts = this._tryGitEnv() ? { env: this._tryGitEnv() } : {};   // final review I2
         const [ns, num, patch] = await Promise.all([
-          diffNameStatus(dir, base, undefined, ex),
-          diffNumstat(dir, base, undefined, ex),
-          diffPatch(dir, base, undefined, ex),
+          diffNameStatus(dir, base, undefined, ex, gitOpts),
+          diffNumstat(dir, base, undefined, ex, gitOpts),
+          diffPatch(dir, base, undefined, ex, gitOpts),
         ]);
         const results = assembleResults({ nameStatus: ns, numstat: num, reviews });
         members.push({ projectKey: key, results });
@@ -7534,10 +7743,15 @@ export class RunHarness extends EventEmitter {
    */
   _excludePathspecs(projectKey) {
     const entries = this.injectedPaths?.[projectKey] ?? [];
-    if (!Array.isArray(entries) || !entries.length) return [];
-    return entries
+    // Workflow tests 3a (D55): what "Before each try, run" made is not the try's work. Absent on every other run.
+    // `literal`: a `*`, `?` or `[` in a path the setup made is that character, never a pattern.
+    const setup = Array.isArray(this._trySetupPaths) ? this._trySetupPaths.map((p) => `:(exclude,literal)${p}`) : [];
+    // Workflow tests 3b (D72): the project's Claude Code settings Worca switched off (tracked ones only). Absent elsewhere.
+    const plugins = Array.isArray(this._tryPluginPaths) ? this._tryPluginPaths.map((p) => `:(exclude,literal)${p}`) : [];
+    if ((!Array.isArray(entries) || !entries.length) && !setup.length && !plugins.length) return [];
+    return [...(Array.isArray(entries) ? entries : [])
       .filter((e) => e && e.path && e.kind !== 'claudeMdSection' && e.kind !== 'engineConfig')
-      .map((e) => `:(exclude)${e.path}`);
+      .map((e) => `:(exclude)${e.path}`), ...setup, ...plugins];
   }
 
   /** `ex` (`:(exclude)path` pathspecs) minus the paths an ignore rule already covers, which `git add` refuses (withoutIgnored). */
@@ -7577,16 +7791,30 @@ export class RunHarness extends EventEmitter {
    * Repository-local hooks and config commands never run (git-guard.mjs, security G2), except the
    * project's hooks for `hooks: true` (the end-of-run commit), with every host credential stripped.
    */
+  /** Workflow tests 3a (final review I2): the env Worca's own git runs with in a try's copy (its config is written by the
+   *  try's setup and agent): the outward guard (no token, no sign-in) and no hook, fsmonitor or signing program of the copy.
+   *  null for every other run, so their git is unchanged. */
+  _tryGitEnv() {
+    if (!this._isTestTry()) return null;
+    const logFile = this.pipeline?.dir ? join(this.pipeline.dir, CONNECTOR_CALLS_FILE) : null;
+    if (this._tryGitEnvOf?.logFile !== logFile) this._tryGitEnvOf = { logFile, env: tryGitEnv({ logFile }) };
+    return this._tryGitEnvOf.env;
+  }
+
   async _git(args, { cwd, ignoreAbort = false, timeoutMs = HARNESS_GIT_TIMEOUT_MS, hooks = false } = {}) {
     if (!gitAvailable()) return gitMissingResult();
+    const tryEnv = this._tryGitEnv();   // final review I2: a try's git runs none of the copy's hooks, under the guard
+    // Security G2 (dev): the repository's config commands never run; the guard lists config over the try's env when there
+    // is one (its no-hooks settings stay in force even for `hooks: true`), else over process.env.
+    const base = tryEnv || process.env;
     let env;
     try {
-      env = await guardedGitEnv(cwd || this.projectDir, hooks ? { hooks, env: stripHostCredentials(process.env) } : {});
+      env = await guardedGitEnv(cwd || this.projectDir, hooks ? { hooks, env: stripHostCredentials(base) } : (tryEnv ? { env: tryEnv } : {}));
     } catch (err) { return { ok: false, code: -1, stdout: '', stderr: err.message }; }
     return new Promise((resolveP) => {
       let child;
       try {
-        child = spawn('git', args, {
+        child = spawn('git', tryEnv ? withSafeGitArgs(args) : args, {
           cwd: cwd || this.projectDir,
           env,
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -7669,8 +7897,9 @@ export class RunHarness extends EventEmitter {
     const fromTitle = title && title !== basename(this.pipeline?.dir || '') ? title : '';
     const source = fromTitle || firstLine(promptText) || 'feature';
     const base = slugify(source).slice(0, 40) || 'feature';
-    // P3: every run without a project shares one store, so its plan and review names carry its own id
-    return this.workMode === 'none' && this.pipeline?.id ? `${base.slice(0, 31)}-${this.pipeline.id}` : base;
+    // P3: every run without a project shares one store, so its plan and review names carry its own id. So does a workflow
+    // test try: tries of one example run at once under one fixed title (two versions, a long name cut before "try N").
+    return (this.workMode === 'none' || this._isTestTry()) && this.pipeline?.id ? `${base.slice(0, 31)}-${this.pipeline.id}` : base;
   }
 
   _checkAbort() {
@@ -8009,6 +8238,8 @@ export class RunHarness extends EventEmitter {
     }
     // §10: an init without an `mcpServers` list says nothing about the copies (never "absent").
     if (Array.isArray(e.mcpServers) && this.mcpLayer?.copies.length) this._recordMcpInit(e.mcpServers);
+    // N2: the claude.ai connectors this account loads, so the Test a version dialog can name them (a try loads none).
+    if (Array.isArray(e.mcpServers) && this.opts.workflowTest !== true) noteSeenServers(e.mcpServers);
   }
 
   // I1: a turn the CLI never closes with a `result` (pause, stop, a crash, a retried attempt) was
@@ -8031,6 +8262,17 @@ export class RunHarness extends EventEmitter {
   // claude-runner.mjs — and are logged at `error` by the node failure handler.
   _onStderrEvent(role, e, attr) {
     const text = (e.text || '').trim();
+    // Workflow tests 3b, Task 5 (C1, L5): what a Pretend try's carry left out (a run warning) or brought along (a log line),
+    // once per run however many spawns say it.
+    const carried = carryLine(text);
+    if (carried) {
+      this._carrySaid ??= new Set();
+      if (this._carrySaid.has(carried.text)) return;
+      this._carrySaid.add(carried.text);
+      if (carried.kind === 'warning') this._recordRunWarning(carried.text).catch(() => {});
+      else this._log(role, 'info', carried.text, attr);
+      return;
+    }
     if (text) this._log(role, 'warn', text, { ...attr, stream: 'err' });
   }
 
@@ -9095,6 +9337,11 @@ export class RunHarness extends EventEmitter {
       return;
     }
     if (cmd.action === 'pause') {
+      // Workflow tests: a paused try is a failed try (runner.mjs pauseVerdict); `worca pause` refuses one, this is the backstop.
+      if (this.opts?.workflowTest === true) {
+        this._log('orchestrator', 'info', `control: pause requested by ${by} ignored: a test try cannot be paused (stop its test instead)`);
+        return;
+      }
       this._log('orchestrator', 'info', `control: pause requested by ${by} (via the run-control mailbox)`);
       this.pause(by);
       return;
@@ -9276,7 +9523,7 @@ export class RunHarness extends EventEmitter {
     //     (it defaults to projectDir and is never falsy).
     const missing = this.members.some((m) => !this.workDirs.get(m.projectKey));
     if (missing) {
-      if (this.workMode === 'git') this._setupStage('Creating the worktree');
+      if (this.workMode === 'git') this._setupStage(WORKTREE_STAGE);
       await this._setupRunRoot({ replay: true });
     }
     // run() kicks the LLM title off once runCwd exists; a run that paused before

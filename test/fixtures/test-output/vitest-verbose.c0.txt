@@ -1,0 +1,43 @@
+
+ RUN  v5.1.0 /home/tomica/tool-formats/vt
+
+ ✓ b.test.js > outer b > passes b 1ms
+ ✓ b.test.js > outer b > inner b > it's a "quoted" name with spaces b 0ms
+ ↓ b.test.js > outer b > inner b > skipped b
+ ✓ b.test.js > outer b > second inner b > another b 0ms
+ ✓ b.test.js > top level b 0ms
+ ✓ a.test.js > outer a > passes a 1ms
+ ✓ a.test.js > outer a > inner a > it's a "quoted" name with spaces a 0ms
+ ↓ a.test.js > outer a > inner a > skipped a
+ ✓ a.test.js > outer a > second inner a > another a 0ms
+ × a.test.js > outer a > fails a 6ms
+   → expected 1 to be 2 // Object.is equality
+ ✓ a.test.js > top level a 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  a.test.js > outer a > fails a
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ a.test.js:11:37
+      9|     test('another a', () => {});
+     10|   });
+     11|   test('fails a', () => { expect(1).toBe(2); });
+       |                                     ^
+     12| });
+     13| test('top level a', () => {});
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 8 passed | 2 skipped (11)
+   Start at  17:13:12
+   Duration  173ms (transform 49%, import 27%, tests 14%, worker 10%)
+

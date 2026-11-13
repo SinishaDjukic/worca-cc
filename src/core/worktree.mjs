@@ -29,9 +29,15 @@ import {
   removeInjectedPaths,
 } from './run-manifest.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
+import { testCopyKeyOf } from './store.mjs';
+import { tryGitEnv } from './workflow-tests/try-guard-env.mjs';
 import { guardedGitEnv, guardedWorktreeAdd } from './git-guard.mjs';
 import { stripHostCredentials } from './host-credentials.mjs';
 import { ownWorkDir } from './no-project-work.mjs';
+
+/** Round 4: Worca's git in its workflow-test copy of a project always runs under the try env (the guard; no hook, fsmonitor
+ *  or signing program of the copy), whoever calls: a try's teardown, an archive of a try, the boot sweep of a try's run. */
+const copyEnvOr = (projectDir, gitEnv) => gitEnv || (projectDir && testCopyKeyOf(projectDir) ? tryGitEnv() : null);
 
 const WORKTREES_DIRNAME = join('.worca-cc', 'worktrees');
 const BRANCH_PREFIX = 'worca-cc/';
@@ -56,28 +62,34 @@ const BRANCH_STOPWORDS = new Set([
 // 30 s on large repos — give them a longer leash before the SIGKILL deadline.
 const SLOW_GIT_TIMEOUT_MS = 120_000;
 
-/** `git worktree add` through git-guard's guardedWorktreeAdd (G2), with git()'s result shape. */
-export function worktreeAdd(projectDir, dir, commitish, { branch, detach = false, signal } = {}) {
+/** `git worktree add` through git-guard's guardedWorktreeAdd (G2), with git()'s result shape. `env` (workflow tests 3a):
+ *  a try's guarded env as the base env of both git calls (null = process.env). */
+export function worktreeAdd(projectDir, dir, commitish, { branch, detach = false, signal, env = null } = {}) {
   if (!gitAvailable()) return Promise.resolve(gitMissingResult());
-  return guardedWorktreeAdd(projectDir, dir, commitish, { branch, detach, signal, timeout: SLOW_GIT_TIMEOUT_MS });
+  return guardedWorktreeAdd(projectDir, dir, commitish, { branch, detach, signal, timeout: SLOW_GIT_TIMEOUT_MS, ...(env ? { env } : {}) });
 }
 
 /** Run git and resolve to { ok, stdout, stderr, code }. Never throws.
  *  `env` is MERGED OVER process.env (never a replacement): the git binary and the
  *  credential helper need PATH/HOME. Only the Ask Worca callers pass it.
- *  Repository-local hooks and config commands never run (git-guard.mjs, security G2); `hooks: true`
- *  (Apply to branch's commit) keeps the project's hooks, with every host credential stripped. */
-async function git(cwd, args, { signal, timeout = 30_000, env, maxBytes = 0, hooks = false } = {}) {
+ *  `fullEnv` REPLACES process.env instead (a workflow-test try's guarded env, workflow tests 3a: what it dropped must stay dropped).
+ *  Repository-local hooks and config commands never run (git-guard.mjs, security G2): the guard lists config over the
+ *  base env (fullEnv, or process.env + env); `hooks: true` (Apply to branch's commit) keeps the project's hooks, with
+ *  every host credential stripped (a try's env keeps its own no-hooks settings either way). */
+async function git(cwd, args, { signal, timeout = 30_000, env, fullEnv = null, maxBytes = 0, hooks = false } = {}) {
   if (!gitAvailable()) return gitMissingResult();
-  let fullEnv;
+  const base = fullEnv
+    ? (hooks ? stripHostCredentials(fullEnv) : { ...fullEnv })
+    : { ...(hooks ? stripHostCredentials(process.env) : process.env), ...env };
+  let guarded;
   // `timeout` bounds the guard's config listing too, so a slow git gives up within the caller's budget.
   try {
-    fullEnv = await guardedGitEnv(cwd, { hooks, timeout, env: { ...(hooks ? stripHostCredentials(process.env) : process.env), ...env } });
+    guarded = await guardedGitEnv(cwd, { hooks, timeout, env: base });
   } catch (err) { return { ok: false, stdout: '', stderr: err.message, code: -1 }; }
   return new Promise((res) => {
     let child;
     try {
-      child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], signal, env: fullEnv });
+      child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], signal, env: guarded });
     } catch (err) {
       res({ ok: false, stdout: '', stderr: err.message, code: -1 });
       return;
@@ -331,10 +343,11 @@ async function gitCommonDir(projectDir) {
  * @param {string} [args.checkoutName]  checkout dir name (default: pipelineId)
  */
 export async function createWorktree({
-  projectDir, pipelineId, sourceBranch, featureBranch, signal, baseDir, checkoutName,
+  projectDir, pipelineId, sourceBranch, featureBranch, signal, baseDir, checkoutName, gitEnv = null,
 }) {
   if (!projectDir) throw new Error('projectDir required');
   if (!pipelineId) throw new Error('pipelineId required');
+  gitEnv = copyEnvOr(projectDir, gitEnv);
   if (!sourceBranch) throw new Error('sourceBranch required');
   // S2: pipelineId becomes a path segment and is later passed to a recursive
   // remove — reject anything that could escape the worktrees base.
@@ -377,7 +390,7 @@ export async function createWorktree({
     // M2: git forbids checking out one branch in two worktrees at once. Reap
     // stale registrations first; if a *live* worktree still holds it, fail with
     // an actionable message rather than a raw exit-128 mid-pipeline.
-    await git(projectDir, ['worktree', 'prune']);
+    await git(projectDir, ['worktree', 'prune'], { fullEnv: gitEnv });
     const inUse = await worktreePathForBranch(projectDir, branch);
     if (inUse && resolve(inUse) !== resolve(worktreeDir)) {
       throw new Error(`branch "${branch}" is already checked out in worktree ${inUse}`);
@@ -392,7 +405,8 @@ export async function createWorktree({
     }
     add = { commitish: sourceBranch, branch };
   }
-  const r = await worktreeAdd(projectDir, worktreeDir, add.commitish, { branch: add.branch, signal });
+  // gitEnv (workflow tests 3a, final review I2): a try's env, so `worktree add` runs no hook (post-checkout) of the copy.
+  const r = await worktreeAdd(projectDir, worktreeDir, add.commitish, { branch: add.branch, signal, env: gitEnv });
   if (!r.ok) {
     const err = new Error(`git worktree add failed: ${r.stderr.trim() || `exit ${r.code}`}`);
     // The ONE abort path that surfaced as a PLAIN error: on signal abort Node
@@ -417,13 +431,17 @@ export async function createWorktree({
  * leaks. With force:true the dir is also removed directly as a backstop, and
  * the registration is pruned so a later reuse of the branch won't trip M2.
  */
-export async function removeWorktree({ projectDir, worktreeDir, branch, force = false } = {}) {
+export async function removeWorktree({ projectDir, worktreeDir, branch, force = false, gitEnv = null } = {}) {
   const steps = [];
+  gitEnv = copyEnvOr(projectDir, gitEnv);
   if (worktreeDir) {
+    // Round 5: a checkout of Worca's workflow-test copy is unlocked first (a try may lock its checkout), so a forced remove
+    // leaves no locked registration behind. Normal runs are unchanged.
+    if (force && projectDir && testCopyKeyOf(projectDir)) await git(projectDir, ['worktree', 'unlock', worktreeDir], { fullEnv: gitEnv });
     const args = force
       ? ['worktree', 'remove', '--force', worktreeDir]
       : ['worktree', 'remove', worktreeDir];
-    const r = await git(projectDir, args, { timeout: SLOW_GIT_TIMEOUT_MS });
+    const r = await git(projectDir, args, { timeout: SLOW_GIT_TIMEOUT_MS, fullEnv: gitEnv });
     steps.push({ step: 'worktree-remove', ok: r.ok, stderr: r.stderr.trim() });
     // fs backstop whenever the checkout survives the git remove — not only on
     // force. Git for Windows routinely leaves the directory behind (a read-only
@@ -440,10 +458,10 @@ export async function removeWorktree({ projectDir, worktreeDir, branch, force = 
       if (fsRes) steps.push({ step: 'rm-dir', ok: false, stderr: fsRes });
     }
     // Reap the (now-missing) registration so it can't collide on reuse.
-    await git(projectDir, ['worktree', 'prune']);
+    await git(projectDir, ['worktree', 'prune'], { fullEnv: gitEnv });
   }
   if (branch) {
-    const r = await git(projectDir, ['branch', force ? '-D' : '-d', branch]);
+    const r = await git(projectDir, ['branch', force ? '-D' : '-d', branch], { fullEnv: gitEnv });
     steps.push({ step: 'branch-delete', ok: r.ok, stderr: r.stderr.trim() });
   }
   return { ok: steps.every((s) => s.ok), steps };
@@ -701,16 +719,17 @@ export async function indexTracks(dir, rel) {
  * When stale git locks had to be removed first, every result after that carries
  * `clearedLocks: [{ kind, path, ageMs }]` so the caller can leave a trace of each.
  */
-export async function snapshotWorktreePatch(worktreeDir, outFile) {
+// gitEnv (workflow tests 3a, final review round 2): a try's env (the guard, no hook / fsmonitor of the copy) for every git here.
+export async function snapshotWorktreePatch(worktreeDir, outFile, { gitEnv = null } = {}) {
   if (!worktreeDir || !outFile) {
     return { ok: false, step: 'path', message: 'worktreeDir and outFile are required' };
   }
-  let add = await git(worktreeDir, ['add', '-A'], { timeout: SLOW_GIT_TIMEOUT_MS });
+  let add = await git(worktreeDir, ['add', '-A'], { timeout: SLOW_GIT_TIMEOUT_MS, fullEnv: gitEnv });
   // Leftover locks from a killed git are the usual reason a retained run's commit failed;
   // without this, discard and delete could never save the work once they are stale.
   const clearedLocks = add.ok ? [] : await clearStaleGitLocks(worktreeDir);
   if (clearedLocks.length) {
-    add = await git(worktreeDir, ['add', '-A'], { timeout: SLOW_GIT_TIMEOUT_MS });
+    add = await git(worktreeDir, ['add', '-A'], { timeout: SLOW_GIT_TIMEOUT_MS, fullEnv: gitEnv });
   }
   const done = (res) => (clearedLocks.length ? { ...res, clearedLocks } : res);
   if (!add.ok) {
@@ -718,7 +737,7 @@ export async function snapshotWorktreePatch(worktreeDir, outFile) {
   }
   const part = `${outFile}.part`;
   const diff = await git(worktreeDir, ['diff', '--binary', '--no-ext-diff', `--output=${part}`, 'HEAD', '--'],
-    { timeout: SLOW_GIT_TIMEOUT_MS });
+    { timeout: SLOW_GIT_TIMEOUT_MS, fullEnv: gitEnv });
   if (!diff.ok) {
     await rm(part, { force: true }).catch(() => {});
     return done({ ok: false, step: 'diff', message: diff.stderr.trim() || `exit ${diff.code}`, fromStderr: !!diff.stderr.trim() });

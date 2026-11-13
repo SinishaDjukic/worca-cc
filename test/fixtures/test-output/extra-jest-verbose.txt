@@ -1,0 +1,13 @@
+PASS x/jest/s.test.js
+  ✓ slow one (1202 ms)
+  ✎ todo todo item
+  g1
+    ✓ t1
+  g2
+    ✓ t2
+
+Test Suites: 1 passed, 1 total
+Tests:       1 todo, 3 passed, 4 total
+Snapshots:   0 total
+Time:        1.88 s
+Ran all test suites.

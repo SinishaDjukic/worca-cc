@@ -122,6 +122,7 @@
     "models/engine-status.css",
     "runs/step-log-drawer.css",
     "workflows/workflow-canvas.css",
+    "workflows/workflow-tests.css",
     "workflows/composer-chat.css",
     "chat/chat-shell.css",
     "chat/chat-action.css",

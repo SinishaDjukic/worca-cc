@@ -3,6 +3,124 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Workflow versions (Labs)
+
+**Save a workflow as a version, choose which one new runs use, and go back.**
+
+Workflow versions (Labs, flag `workflowTests`): Save version on a workflow, choose which version new runs use, see what changed, and restore any of the last 50 saves. Every save keeps the workflow as it was just before; a version keeps the workflow's steps and settings, and runs today's agent and script text from the Library.
+
+Export can export the version in use or your draft: the Export dialog's Version field picks which, and starts on the version new runs use. An exported skill or plugin keeps the workflow's name, so exporting an older version updates it.
+
+Chips: Save version · Versions · Use for new runs · Restore · experimental: turn it on in Settings › Labs
+
+Read it: [Where Worca keeps its state](../storage.md)
+
+Pull requests (add each number when it opens):
+
+- Workflow versions (#979)
+
+## Workflow tests (Labs)
+
+**Try a new version of a workflow on real examples, and see what got better or worse.**
+
+Workflow tests (Labs, flag `workflowTests`) add a Tests page to a workflow.
+- Keep real requests as examples, with their files and the answers to Worca's questions. Add one from a past run, or write one.
+- Say what a good result needs: the Basics (no error, no help needed, a cost limit, how often it is sent back for fixes) and automatic checks counted exactly, without AI (length, sections, must or must not mention, a file, a Library script).
+- Test a version: Worca tries every example 3 times on it and on the version you compare with, reuses earlier results when nothing changed, and stops at the cost limit you set.
+- Compare shows the tries passed, the cost and time per try, what got better or worse per example, and each example side by side.
+- Connectors: by default a test's tries use stand-ins for your connectors, so nothing is posted or sent, and one example's page shows what would have been sent. Choose Real to use your real connectors.
+- A test of a workflow runs one at a time; while it runs, Test a version and Try it once now wait.
+- Their runs stay out of the Runs list, Statistics and team metrics, but count in the spending limit.
+
+Chips: Tests · Test a version · Compare · experimental: turn it on in Settings › Labs
+
+Read it: [Where Worca keeps its state](../storage.md)
+
+Pull requests (add each number when it opens):
+
+- Workflow tests (#<PR>)
+
+## Workflow tests on a project (Labs, Part 3a)
+
+**Test workflows that change a project's code, without touching your folder.**
+
+- An example can name a Git project and a start point: a commit, kept the same until you change it, so two versions start from exactly the same code. Keep your changes that are not committed yet with it if you want. Worca says when the project has moved on, and Start from the latest moves the example.
+- Each try works in Worca's own copy of the project. Your folder and your branches are never touched, and the copy of each try is deleted after its checks. The list of changes and the full diff stay to look at.
+- Before each try, Worca can run a setup command (filled in from the project's setup, such as `npm ci`). If it fails, the test stops and no try counts as failed.
+- A new automatic check: The command passes (such as `npm test`), with its summary line. Text checks can read a file of the project.
+- Pushes, pull requests and issues are stopped, with any engine; common publish commands are stopped with Claude Code. The attempts Worca sees are listed under Would have sent. It is not a network block yet: a program's own web calls, a publish that signs in with a token kept in a file, a publish run from inside a script, or a push or web call with a token the agent reads from a file or from git's settings are not stopped.
+- Test a version says how much disk and time a test needs, and refuses to start when the disk is too full.
+- Add from a past run takes project runs too: the example starts where the run started.
+
+Chips: Tests · Where it starts · The command passes · experimental: turn it on in Settings › Labs
+
+Read it: [Where Worca keeps its state](../storage.md)
+
+Pull requests (add each number when it opens):
+
+- Workflow tests on a project (#<PR>)
+
+## Workflow tests: plugins off, file checks, before and after (Labs, Part 3b)
+
+**Tests of a workflow are no longer shaped by your own Claude Code setup, and they say what a change did to the project's tests.**
+
+- With Pretend connectors, a try loads none of your personal Claude Code plugins, skills, agents or hooks, and none of the
+  project's own hooks or plugins. The project's instructions (CLAUDE.md, agents, skills) stay on. Your sign-in and your own deny
+  rules and sandbox are carried over, and nothing else from your settings.
+- New automatic checks for a project: Changes only files under …, Leaves these files unchanged (names or patterns such as
+  `test/**`) and Changes at most N files.
+- The command passes now also runs once on the start point, before the change. Side by side shows which tests the change made
+  pass, which passed before and still pass, and which it broke (for TAP, node:test, pytest, Jest and Vitest output; other
+  commands are compared by whether they passed). Results on a start point are kept for a week.
+- The command passes can instead be met when the change breaks nothing that passed before: useful when some tests already
+  fail on the start point. A test that is skipped or deleted now, or fewer passing tests, counts as broken even when the
+  command passes.
+- A question Worca answered with its own pick (the example says "Worca picks a sensible answer") now meets Finishes without
+  needing help. A review loop that runs out of rounds fails Finishes without an error.
+- Compare says in short what changed and shows a difference only when it is big enough to trust: cost at least 20 % and
+  $0.01 a try, time at least 20 % and 10 s, sent back at least 0.5 a try, and at least 2 finished tries on each side.
+  Otherwise it shows no difference. It also shows the questions Worca asked in each try.
+- Smaller changes: a Library script check counts only when the script gives a verdict; saving a draft that is the same as a
+  version does not make a new version; Try N more asks first; a note on what an example needs to say; "Save and stop the
+  test?" and "Run it once" say what they do; in mock mode the page says so.
+- Not covered yet:
+  - Hooks and env values an agent writes into the project's settings during a try apply in its later steps. Such env values
+    can undo parts of Worca's guard for those steps.
+  - While a try runs, an agent can read the settings file Worca hands Claude Code for it (your sign-in helpers, deny rules
+    and sandbox), as it can read your own Claude Code settings in a normal run.
+  - The project's own sign-in and telemetry helpers (`apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`,
+    `otelHeadersHelper`) and its other settings, env included, stay on in Pretend, as in a normal run. Telemetry they turn
+    on is not stopped by Worca's guard.
+  - A model profile that sets `CLAUDE_CONFIG_DIR` changes which Claude Code settings Worca reads your sign-in and guards
+    from, as it does for Claude Code itself.
+  - One of your own deny rules can block a tool the workflow needs, a Pretend stand-in included, and the try then fails, as
+    a normal run would. The try's log says how many of your deny rules it follows.
+  - Worca turns off `autoAllowBashIfSandboxed` in a try that does not load your settings. This is checked in the settings
+    Worca hands Claude Code, not yet in a run on Linux or macOS.
+  - git still sends a login kept in `~/.netrc` (`_netrc` on Windows) when a try pushes in a way Worca does not stop, such as
+    from a script. No setting Worca can give git turns this off, so do not keep forge logins there while you test.
+  - A try cut short by a crash, a kill or a restart of Worca can show its connector calls without hiding the secrets in
+    them.
+  - Steps on other engines keep their own plugins and settings.
+  - Pretend tries made before this part can still be reused.
+  - Test names are read only from TAP, node:test spec, pytest (`-rA` or `-v`), Jest verbose and Vitest verbose output, and
+    failures only from their defaults; any other output is compared by whether the command passed.
+  - A flaky test can show as broken.
+  - A review loop set to carry on with `onExhausted: 'clean'` is not noticed as out of rounds.
+  - Your sign-in setting (for example `ANTHROPIC_BASE_URL`) from your Claude Code settings beats a model profile's own
+    routing, and the sign-in values reach the commands an agent runs, as in a normal run.
+  - A project's `CLAUDE.md` can still import files outside the project, as in a normal run.
+  - A file Worca stages for a try stays in the temp folder until the next start if Worca is killed.
+  - Worca reads project settings the way Claude Code 2.1.318 does; a later Claude Code may read them differently.
+
+Chips: Tests · Pretend · The command passes · experimental: turn it on in Settings › Labs
+
+Read it: [Where Worca keeps its state](../storage.md)
+
+Pull requests (add each number when it opens):
+
+- Workflow tests: plugins off, file checks, before and after (#<PR>)
+
 ## Choose who interviews, per feature
 
 **Pick the harness, model and effort for a feature's Requirements.**

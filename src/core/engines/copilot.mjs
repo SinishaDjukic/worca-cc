@@ -597,7 +597,7 @@ export async function runCopilotProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, effort, onEvent = () => {}, signal,
   bin = COPILOT_DEFAULT_BIN, resumeSessionId, addDirs, writableDirs, sandbox, envScrub, envAllowlist, asAgent, usageDir = defaultUsageDir(),
   mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, askLockdown,
-  permissionRules, allowedTools, agents, appendSubagentSystemPrompt, scratchBase = join(worcaHome(), 'tmp', 'copilot'),
+  permissionRules, allowedTools, agents, appendSubagentSystemPrompt, scratchBase = join(worcaHome(), 'tmp', 'copilot'), tryGuard = null,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
   const secrets = Array.isArray(redactValues) ? redactValues : [];
@@ -648,7 +648,8 @@ export async function runCopilotProcess({
   // ask/spawn.mjs): a local server inherits copilot's env, and the chat has no shell to read it there.
   const askEnv = ask ? cleanRunEnv(runSpawnEnv) : null;
   const runEnv = { ...refEnv, ...(askEnv ?? {}) };
-  const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(runEnv).length ? { runEnv } : {}) });
+  // Workflow tests 3a (D56): a try's outward guard (stand-ins first on PATH, git with no sign-in); absent ⇒ unchanged.
+  const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(runEnv).length ? { runEnv } : {}), ...(tryGuard ? { tryGuard } : {}) });
   // P3-D20: the run env stays out of this child's env (its shell would read the registry secrets), but the git ceiling
   // of a run without a project is no secret and must reach the agent's own git.
   if (typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string') env.GIT_CEILING_DIRECTORIES = runSpawnEnv.GIT_CEILING_DIRECTORIES;

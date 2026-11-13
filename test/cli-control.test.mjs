@@ -185,7 +185,28 @@ test("the owner's control timer picks a command up within one poll interval", { 
   }
 });
 
+test('a test try never pauses through the mailbox: the pause is consumed as a no-op (workflow tests)', () => {
+  insertPipeline({ id: 'ggg10003', title: 'Test: Bulk · try 1', status: 'running' });
+  const owner = { ...fakeOwner('ggg10003'), opts: { workflowTest: true } };
+  enqueuePipelineCommand('ggg10003', 'pause', { by: 'bob' });
+  owner._checkControlSlot();
+  assert.deepEqual(owner.calls, [], 'a paused try would be a failed try');
+  assert.ok(commandsOf('ggg10003')[0].consumed_at, 'consumed, so it cannot pause it later');
+  enqueuePipelineCommand('ggg10003', 'stop', { by: 'bob' });
+  owner._checkControlSlot();
+  assert.deepEqual(owner.calls, [['stop', 'bob']], 'a stop still stops it');
+});
+
 // ── the CLI: the live boundary, the refusals, the dispatch ───────────────────────
+
+test('pause refuses a test try, and enqueues nothing (workflow tests)', async () => {
+  insertPipeline({ id: 'ddd10009', title: 'Test: Bulk · try 1', status: 'running', ownerPid: process.pid, ownerHost: HOST, heartbeatAt: new Date().toISOString() });
+  getDb().prepare('UPDATE pipelines SET is_test = 1 WHERE id = ?').run('ddd10009');
+  const r = await run(['pause', 'ddd10009']);
+  assert.equal(r.code, 1, r.stderr);
+  assert.match(r.stderr, /A test try cannot be paused: stop its test instead\./);
+  assert.equal(commandsOf('ddd10009').length, 0);
+});
 
 test('stop on an already-stopped run succeeds — idempotent, for scripts', async () => {
   insertPipeline({ id: 'ddd10001', title: 'already gone', status: 'stopped' });

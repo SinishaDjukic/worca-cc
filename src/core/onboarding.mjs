@@ -71,8 +71,8 @@ export async function onboardingStatus({ recheck = false } = {}) {
   const steps = {
     claude: claude.connected,
     project: countProjects() > 0,
-    run: count("SELECT COUNT(*) AS n FROM pipelines WHERE status = 'done'") > 0,
-    realRun: count('SELECT COUNT(*) AS n FROM pipelines WHERE total_cost_usd > 0') > 0,
+    run: count("SELECT COUNT(*) AS n FROM pipelines WHERE status = 'done' AND is_test IS NULL") > 0,
+    realRun: count('SELECT COUNT(*) AS n FROM pipelines WHERE total_cost_usd > 0 AND is_test IS NULL') > 0,
     // An answer landed: a thread whose only turn failed (signed out, say) has not shown the step.
     ask: count("SELECT COUNT(*) AS n FROM ask_messages WHERE role = 'assistant' AND status = 'done'") > 0,
     // The New pipeline picker persists a choice per project (PATCH /api/config

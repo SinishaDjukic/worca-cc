@@ -2,6 +2,7 @@
 // the body of register() was moved verbatim from ui/server.mjs. Edit it here from now on.
 import { loadAgentRegistry } from '../../../src/core/agent-registry.mjs';
 import { listModels } from '../../../src/core/config.mjs';
+import { flagEnabled } from '../../../src/core/flags.mjs';
 import { gitAvailable } from '../../../src/core/git-available.mjs';
 import { GRAPH_SHAPE_WORKFLOW, PR_FIX_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_WORKFLOW_ID, SHAPE_REQ_WORKFLOW_IDS, SHAPE_SLICE_REQ_WORKFLOW_IDS } from '../../../src/core/graph/builtin-workflows.mjs';
 import { startedByOf } from '../../../src/core/identity.mjs';
@@ -10,7 +11,7 @@ import { defragWorkflowView, resolveDefragModel } from '../../../src/core/memory
 import { HELPER_ENGINES } from '../../../src/core/model-env.mjs';
 import { defragSlotPair } from '../../../src/core/settings-cascade.mjs';
 import { ON_CONFLICT_MODES, RESOLUTION_CHOICES, exportWorkflow, exportWorkflowPlugin } from '../../../src/core/workflow-export.mjs';
-import { exportGraphJson, importGraphWorkflow, nodeDefaultsError, saveGraphWorkflow, workflowFileSlug } from '../../../src/core/workflow-share.mjs';
+import { exportGraphJson, importGraphWorkflow, isExportUse, nodeDefaultsError, saveGraphWorkflow, workflowFileSlug } from '../../../src/core/workflow-share.mjs';
 import { GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, LEAN_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, assertRunnableWorkflow, deleteWorkflow, graphNeedsRepo, listWorkflows, setWorkflowNodeDefaults, workflowNodeDefaults } from '../../../src/core/workflows.mjs';
 import { runsOn } from '../../../src/shared/connections.mjs';
 import { ENGINE_NAMES } from '../../../src/shared/engine-switch.mjs';
@@ -84,7 +85,11 @@ app.get('/api/workflows/:id', async (req, res) => {
     // this is a READ (the Composer's Open): a template stranded by an agent-port
     // edit must still load, or the user could never repair it. The RUN path keeps
     // the graph check.
-    const wf = await assertRunnableWorkflow(req.params.id, { checkGraph: false });
+    // ?use=live (flag workflowTests; plans/workflow-tests-plan.md D2): what a RUN uses — the version in use — for
+    // the screens before a run (New run, the Ask run card), so they show the graph that will run. The default stays
+    // the draft (the Composer's Open); with the flag off, 'live' is the row anyway.
+    const use = req.query.use === 'live' && flagEnabled('workflowTests') ? 'live' : 'draft';
+    const wf = await assertRunnableWorkflow(req.params.id, { checkGraph: false, use });
     // Settings › Memory: the built-in reads with the pair every defragment run will use, so New
     // pipeline's agent rows and an Ask card's lane show — and lock — it (memory-defrag-model.mjs).
     if (wf && wf.id === MEMORY_DEFRAG_WORKFLOW_ID) {
@@ -154,9 +159,21 @@ app.post('/api/workflows/import-json', async (req, res) => {
   }
 });
 
+// D17 (plans/workflow-tests-plan.md): what an export exports. Missing = 'draft' (today's behaviour). The query form
+// is parsed here (the digits of a positive integer become a number); the rule itself is the core's isExportUse, so
+// 'live' and anything else is a caller error. No flag gate: an explicit version number needs none (runnableOf).
+const EXPORT_USE_ERROR = "use must be 'draft' or a version number (1, 2, …)";
+function exportUseOf(raw, { query = false } = {}) {
+  if (raw === undefined) return { use: 'draft' };
+  const use = query && typeof raw === 'string' && /^[1-9]\d*$/.test(raw) ? Number(raw) : raw;
+  return isExportUse(use) ? { use } : { error: EXPORT_USE_ERROR };
+}
+
 app.get('/api/workflows/:id/json', async (req, res) => {
+  const exportUse = exportUseOf(req.query.use, { query: true });
+  if (exportUse.error) return badRequest(res, exportUse.error);
   try {
-    const payload = await exportGraphJson(req.params.id);
+    const payload = await exportGraphJson(req.params.id, { use: exportUse.use });
     res.setHeader('Content-Disposition', `attachment; filename="${workflowFileSlug(req.params.id)}.json"`);
     res.type('application/json').send(JSON.stringify(payload, null, 2) + '\n');
   } catch (err) {
@@ -228,6 +245,9 @@ app.post('/api/workflows/:id/export', async (req, res) => {
   if (destination !== 'global' && destination !== 'project' && destination !== 'plugin' && destination !== 'marketplace') {
     return badRequest(res, "destination must be 'global', 'project', 'plugin' or 'marketplace'");
   }
+  const exportUse = exportUseOf(body.use);                 // D17: every destination, before anything runs
+  if (exportUse.error) return badRequest(res, exportUse.error);
+  const { use } = exportUse;
   // ── destination 'marketplace' (#717): the plugin goes to a registered marketplace as ONE pull
   //    request on worca/plugin/<name>. dryRun = Preview (clone, build, validate; push nothing).
   if (destination === 'marketplace') {
@@ -245,7 +265,7 @@ app.post('/api/workflows/:id/export', async (req, res) => {
       const result = await exportWorkflowToMarketplace({
         workflowId: req.params.id, marketplaceId: body.marketplaceId,
         pluginName: typeof body.pluginName === 'string' ? body.pluginName : undefined,
-        draft: body.draft === true, dryRun: !!body.dryRun, startedBy: startedByOf(req),
+        draft: body.draft === true, dryRun: !!body.dryRun, startedBy: startedByOf(req), use,
       });
       return res.json(result);
     } catch (err) {
@@ -266,7 +286,7 @@ app.post('/api/workflows/:id/export', async (req, res) => {
       const result = await exportWorkflowPlugin({
         workflowId: req.params.id, targetDir: pluginDir,
         pluginName: typeof body.pluginName === 'string' ? body.pluginName : undefined,
-        keepVersion: !!body.keepVersion, dryRun: !!body.dryRun,
+        keepVersion: !!body.keepVersion, dryRun: !!body.dryRun, use,
       });
       return res.json(result);
     } catch (err) {
@@ -301,7 +321,7 @@ app.post('/api/workflows/:id/export', async (req, res) => {
     const result = await exportWorkflow({
       workflowId: req.params.id, destination, projectDir,
       slug: body.slug, includeAgents: body.includeAgents !== false,
-      dryRun: !!body.dryRun, onConflict: body.onConflict, resolutions: body.resolutions,
+      dryRun: !!body.dryRun, onConflict: body.onConflict, resolutions: body.resolutions, use,
     });
     res.json(result); // Plan {created,noop,updated,conflicts,warnings,orphans} OR Apply {written,skipped,...}
   } catch (err) {

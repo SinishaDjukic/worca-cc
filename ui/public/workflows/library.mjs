@@ -591,6 +591,7 @@ export function createLibrary({ doc, host, actions }) {
         if (v2 && !builtin) items.push({ label: 'Use as template', onSelect: () => act('useAsTemplate', w.id) });
         if (v2) items.push({ label: 'Export…', onSelect: () => act('exportWorkflow', w) });
         items.push({ label: pinned ? 'Unpin from Chat home' : 'Pin to Chat home', onSelect: () => act('togglePin', w) });
+        if (act('versionsEnabled', w) === true) items.push({ label: 'Versions…', onSelect: () => act('openVersions', w.id) });
         // The server refuses DELETE on every reserved id; a plugin's row may go (its plugin's update brings it back).
         if (!isReservedWorkflowId(w.id)) items.push({ sep: true }, { label: 'Delete…', danger: true, onSelect: () => act('deleteWorkflow', w) });
         toggleMenu({ doc, anchor: more, align: 'end', label: `More for ${label}`, items });

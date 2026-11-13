@@ -222,6 +222,9 @@ import { createComposer, isReservedWorkflowId, isBuiltinWorkflow } from './graph
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
 import { createLibrary, folderLabel, folderKeys } from './workflows/library.mjs';
 import { createChatDock } from './workflows/chat-dock.mjs';
+import { createWorkflowVersions, workflowVersionsApi, workflowCanHaveVersions, hasVersionInUse, keepPicksForVersionInUse } from './workflows/versions-app.mjs';
+import { createWorkflowTests } from './workflows/tests-app.mjs';
+import { createExportUse } from './workflows/export-use.mjs';
 import { mintId } from '../../src/shared/graph/template.mjs';
 // mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
 // bare <select> with no preview host on this branch (the v1 read-only mini-graph
@@ -1870,6 +1873,11 @@ function handleServerMessage(msg) {
     if (currentView() === 'requirements') void requirementsView.changed(msg.seq, msg.brief);
     return;
   }
+  // Workflow tests (D33): it carries testRunId, never runId, so it must not reach the run upsert below.
+  if (msg.type === 'workflow-tests-changed') {
+    wfvTests.changed(msg);
+    return;
+  }
   // Scheduled runs: a ticket or a repeating schedule changed (here, in another tab, from the
   // CLI, or because the scheduler tick started/missed/skipped something).
   if (msg.type === 'schedules-changed') {
@@ -3222,7 +3230,8 @@ async function loadConfig(projectDir) {
   // then populate the dropdown + render the chosen workflow's accordion. The
   // Default workflow goes through the SAME renderer as a saved one; only its
   // storage differs (legacy per-role steps, resolved in buildNodeConfigRows).
-  if (state.config.activeWorkflowId) state.workflowId = state.config.activeWorkflowId;
+  if (state.pinWorkflowId) state.workflowId = state.pinWorkflowId;   // U-T4: Run it once keeps its workflow when a project is picked
+  else if (state.config.activeWorkflowId) state.workflowId = state.config.activeWorkflowId;
   await loadWorkflowsInto(state.workflowId);
   if (stale()) return;                     // the newer chain repaints guardrails itself
   await loadGuardrailsInto(state.guardrailsId);
@@ -3342,8 +3351,10 @@ const gvApi = {
     const d = await safeJson(res);
     // 422 = the shared validator's issues, rendered verbatim by the dialog.
     if (!res.ok) return { ok: false, status: res.status, issues: d && (d.issues || d.errors), error: d && d.error, id: d && d.id };
+    setTimeout(() => void wfvVersions.refresh(), 0);
     return { ok: true, workflow: (d && d.workflow) || d };
   },
+  ...workflowVersionsApi({ fetch: (...a) => fetch(...a), safeJson }),   // versionsRead, versions, saveVersion, useVersion, restoreRevision
   // {ok, error} — the refusal string comes from the JSON body, because every
   // delete this API can refuse (the built-in, a 404, a 409) says WHY there and
   // the user has to read it (MAJ-17).
@@ -3464,6 +3475,7 @@ async function initWorkflows() {
   });
   wfvLibrary = createLibrary({ doc: document, host: els.library, actions: wfvLibraryActions() });
   wfvShell = createWorkflowsShell({ doc: document, els: { ...els, inspector: insBody }, composer: gvComposer, actions: wfvShellActions() });
+  wfvVersions.mount();   // the Canvas · Versions · Tests switch, Save version, the version line (versions-app.mjs)
   wfvChat = createChatDock({
     doc: document, host: els.chat, composer: gvComposer, sessionId: WFV_SESSION,
     fetch: (...a) => fetch(...a),
@@ -3523,6 +3535,13 @@ function wfvSetLibraryOpen(open) {
   wfvShell?.paintLibToggle(open);
 }
 
+// Workflow versions and tests (plans/workflow-tests-plan.md, part2): the Versions and Tests pages' controllers.
+const wfvVersions = createWorkflowVersions({ doc: document, win: window, composer: () => gvComposer, api: gvApi,
+  confirmModal, tests: () => wfvTests });
+const wfvTests = createWorkflowTests({ doc: document, win: window, fetch: (...a) => fetch(...a), safeJson, composer: () => gvComposer,
+  api: gvApi, versions: () => wfvVersions, currentView, confirmModal, openNewPipeline, hdMarkdown,
+  mock: () => serverMock.on, runPageShows: (pid) => !!histDetailState && histDetailState.id === pid });
+
 function wfvShellActions() {
   return {
     pinState: () => { const t = gvComposer.template(); return t && t.id ? { id: t.id, pinned: homePinned(t.id) } : null; },
@@ -3541,7 +3560,7 @@ function wfvShellActions() {
     // first and the export follows; a blank canvas has nothing to export — open the saved list instead.
     exportCurrent: () => {
       const t = gvComposer.template();
-      const exportRow = (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id });
+      const exportRow = (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id, versionable: workflowCanHaveVersions(wf) });
       if (t.id && !gvComposer.isDirty()) { exportRow(t); return; }
       if (gvComposer.isPristine()) {
         wfvSetLibraryOpen(true); wfvLibrary?.open('workflows');
@@ -3693,6 +3712,7 @@ async function routeWorkflows(param = '') {
   }
   const opened = await wfvOpenSaved(head);
   if (reveal && opened !== null) await wfvRevealWorkflow(head);   // also when the discard prompt kept the canvas (D2)
+  wfvTests.route(head, sub, opened);   // #workflows/<id>/tests[/<example>|/run/<test>] (tests-app.mjs)
 }
 
 async function enterWorkflowsView(param = '', prevView = '') {
@@ -3703,6 +3723,7 @@ async function enterWorkflowsView(param = '', prevView = '') {
   const first = await initWorkflows();
   if (!first) gvComposer.fit();
   await routeWorkflows(param);
+  void wfvTests.refresh();   // frames skip a Tests page hidden behind another view: a shown one catches up on re-entry
 }
 
 // Where focus goes back when the sheet closes: the opener's id, or a Library control's focus key.
@@ -3859,6 +3880,7 @@ function wfvLibraryActions() {
     // #1127: a row of the user's opens to Edit (Save changes it); Use as template opens any row as a new unsaved copy.
     editWorkflow: (id) => wfvOpenSaved(id),
     useAsTemplate: (id) => wfvOpenSaved(id, { copy: true }),
+    ...wfvVersions.libraryActions(wfvOpenSaved),   // openVersions, versionsEnabled
     deleteWorkflow: async (wf) => {
       const schedNote = await scheduleDependentsNote(`workflowId=${encodeURIComponent(wf.id)}`, 'They will fail to start until you point them at another pipeline.');
       const ok = await confirmModal({ title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
@@ -3878,7 +3900,7 @@ function wfvLibraryActions() {
       if (!r.ok) { notify({ tone: 'err', title: 'Not deleted', detail: r.error }); return; }
       await wfvRefreshWorkflows();
     },
-    exportWorkflow: (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id }),
+    exportWorkflow: (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id, versionable: workflowCanHaveVersions(wf) }),
     newAgent: () => { location.hash = 'workflows/agents/new'; },
     newScript: () => { location.hash = 'workflows/scripts/new'; },
     viewAgent: (key) => { location.hash = `workflows/agents/${key}`; },
@@ -4253,8 +4275,9 @@ async function listWorkflowsApi() {
 async function getWorkflowApi(id) {
   if (state.workflowCache[id]) return state.workflowCache[id];
   try {
-    const q = id === MEMORY_DEFRAG_WORKFLOW_ID ? `?engine=${state.engine}${state.projectDir ? `&projectDir=${encodeURIComponent(state.projectDir)}` : ''}` : '';
-    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}${q}`);
+    // use=live (workflow tests D2): the version a run uses once it has versions, never the draft; flag off: the row, as before.
+    const q = id === MEMORY_DEFRAG_WORKFLOW_ID ? `&engine=${state.engine}${state.projectDir ? `&projectDir=${encodeURIComponent(state.projectDir)}` : ''}` : '';
+    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}?use=live${q}`);
     const data = await safeJson(res);
     // Shape gate, both engines: a v2 graph carries `nodes`, a v1 template
     // `steps`. Demanding `steps` (the pre-P8 guard) rejected every stored row
@@ -4342,6 +4365,7 @@ async function loadWorkflowsInto(selectId) {
   // Fall back to Default if the wanted id is gone (a deleted workflow). Memory defragment holds one
   // project scope, so a workspace target SHOWS Default in its place but never persists it.
   const known = list.some((wf) => wf.id === want);
+  if (!known) state.pinWorkflowId = null;   // U-T9: a pinned workflow that is gone leaves no stale pin
   state.workflowId = !known || (isWorkspace && want === MEMORY_DEFRAG_WORKFLOW_ID) ? 'wf_default' : want;
   sel.value = state.workflowId;
   paintNeedsRepoNote();
@@ -4886,6 +4910,7 @@ function renderFeedbackRows(rows) {
 if (el.workflowSelect) {
   el.workflowSelect.addEventListener('change', async () => {
     state.workflowId = el.workflowSelect.value || 'wf_default';
+    state.pinWorkflowId = null;
     paintNeedsRepoNote();
     saveActiveWorkflow(state.workflowId);
     await renderWorkflowConfig(state.workflowId);
@@ -5442,9 +5467,11 @@ if (el.agentsPromote) {
         appendLog({ source: 'ui', level: 'error', text: `workflow defaults: ${data.error || res.status}`, ts: Date.now() });
         return;
       }
+      const versionInUse = hasVersionInUse(state.workflowCache[workflowId]);   // the defaults went into the draft (versions-app.mjs)
       // The cached template still carries the OLD defaults; drop it so the
       // reset below repaints against what was just persisted.
       delete state.workflowCache[workflowId];
+      if (versionInUse) { await keepPicksForVersionInUse(() => renderWorkflowConfig(workflowId)); return; }
       el.agentsReset.click(); // clearing the now-redundant overrides is the second half
     } catch (err) {
       appendLog({ source: 'ui', level: 'error', text: `workflow defaults error: ${err.message}`, ts: Date.now() });
@@ -24273,7 +24300,8 @@ function openHistDetail(parsed, { instant = false, host: where = 'page' } = {}) 
   screen.querySelector('.hd-to-run').addEventListener('click', toRun);
   // Run 3 (D13): the saved bar is the primary action, Run after, Stop and ⋯; ⋯ drives the controls CSS hides there.
   screen.querySelector('.hd-bar-more')?.addEventListener('click', (e) => {
-    toggleMenu({ doc: document, anchor: e.currentTarget, items: runMoreItems(screen), align: 'end', label: 'More for this run' });
+    const extra = histDetailState ? wfvTests.runMenuItems(histDetailState.record, histDetailState.data) : [];   // G6: Use as test example
+    toggleMenu({ doc: document, anchor: e.currentTarget, items: runMoreItems(screen, { extra }), align: 'end', label: 'More for this run' });
   });
   screen.querySelector('.hd-glance .rd-sheet').addEventListener('click', (e) => {
     const row = e.target.closest && e.target.closest('[data-rd-tab]');
@@ -39710,6 +39738,7 @@ if (typeof window !== 'undefined') {
 let currentSettingsTab = null;
 
 function showView(name, param = '') {
+  if (name !== 'new' || !newPipelinePrefill) state.pinWorkflowId = null;   // U-T4: Run it once's pin lasts only for that New run (a hand-off sets it again)
   // Runs redesign slice 4 (D16): #feature/ID is the group page; a bare #feature goes to Chat.
   if (name === 'feature' && !param) return showView('chat', '');
   if (name === 'group' && !param) return showView('runs', '');
@@ -40643,7 +40672,8 @@ async function applyAskPrefill() {
   const p = newPipelinePrefill;
   if (!p) return;
   newPipelinePrefill = null;
-  setRunTarget(p.target === 'workspace' ? 'workspace' : p.target === 'none' ? 'none' : 'project');
+  state.pinWorkflowId = p.pinWorkflow ? p.workflowId : null;
+  const targetLoad = setRunTarget(p.target === 'workspace' ? 'workspace' : p.target === 'none' ? 'none' : 'project');
   // The card's engine pick (none: the defaults the project change loads decide). Touched, so they keep off it.
   if (p.engine) { state.engineTouched = true; setRunEngine(p.engine); }
   // pick the source from the prefill (a Markdown handoff, else the prompt) — the three-step reset of the segment handler
@@ -40674,7 +40704,7 @@ async function applyAskPrefill() {
     if (idx >= 0) el.projectSelect.selectedIndex = idx + 1; // +1 past the placeholder
     // AWAITED: onProjectChanged → loadConfig → loadWorkflowsInto/loadGuardrailsInto — un-awaited, that tail lands after our own awaits and resets both pickers.
     await onProjectChanged();
-  }
+  } else if (p.pinWorkflow) await targetLoad;   // U-T4: its config tail must land before the chosen workflow is set
   el.prompt.value = src === 'prompt' ? (p.prompt || '') : '';
   if (el.promptMarkdown) el.promptMarkdown.value = src === 'markdown' ? p.promptMarkdown : el.promptMarkdown.value;
   refreshMentionHighlights();
@@ -41941,6 +41971,8 @@ async function exportApply(id, opts) { return exportCall(id, opts); }
 // plan invalidation, close and open; a Preview answer that lands after a bump is for a dialog that no longer exists.
 const exportModalState = { item: null, format: 'json', destination: 'global', pluginDest: 'folder', targets: null, skipped: [], targetsLoad: null, busy: false, conflicts: [], planned: false, seq: 0 };
 const exportModalHidden = () => { const m = document.getElementById('export-modal'); return !m || m.classList.contains('hidden'); };
+const exportUse = createExportUse({ doc: document, readVersions: (id) => gvApi.versionsRead(id), modalHidden: exportModalHidden,   // D17: the Version field
+  guard: () => exportGuard, syncButtons: () => exportSyncMarketplaceButtons() });
 // Set by bindExportModal. A form: a backdrop click never closes it; Escape asks once a choice changed; while
 // a Preview or an Export is out, Cancel and Escape wait for its answer.
 let exportGuard = null;
@@ -41958,6 +41990,7 @@ function openExportModal(item) {
   exportModalState.skipped = [];
   exportModalState.conflicts = [];
   exportModalState.planned = false;
+  exportUse.open(item);
   document.getElementById('export-draft').checked = false;   // draft is opt-in per export, never remembered
   exportSetBusy(false);
   document.getElementById('export-slug').value = '';
@@ -41973,11 +42006,13 @@ function openExportModal(item) {
   exportSyncSlugPreview();
   modal.classList.remove('hidden');
   exportGuard?.opened();
+  exportUse.opened(item.id);
 }
 function closeExportModal() {
   const modal = document.getElementById('export-modal');
   if (modal) modal.classList.add('hidden');
   exportModalState.seq++;                                 // a Preview still in flight has no dialog to land in
+  exportUse.close();
   exportSetDone(false);
 }
 /** Swap the form for the result view (or back). The dialog stays open so the
@@ -42054,6 +42089,7 @@ function exportSyncFormat() {
   const apply = document.getElementById('export-apply-btn');
   apply.textContent = json ? 'Download' : market ? CREATE_PR_LABEL : 'Export';
   apply.disabled = false;
+  exportUse.hold();
   const name = exportModalState.item ? exportModalState.item.name : '';
   document.getElementById('export-subtitle').textContent = json
     ? `Download "${name}" as a JSON file another Worca user can import.`
@@ -42113,9 +42149,10 @@ async function exportFetchTargets() {
   } catch (err) { return { error: err && err.message ? err.message : String(err) }; }
 }
 function exportSyncMarketplaceButtons(n = (exportModalState.targets || []).length) {
-  if (!exportIsMarketplace()) return;
+  if (!exportIsMarketplace()) { exportUse.hold(); return; }
   syncMarketplaceButtons({ plan: document.getElementById('export-plan-btn'), apply: document.getElementById('export-apply-btn') },
     { busy: exportModalState.busy, targets: n });
+  exportUse.hold();
 }
 /** A Preview or an Export starts (`busy`) or ends: Cancel is off while it runs (the guard holds Escape too). For a
  *  marketplace request both action buttons are off as well, then back by the dialog's rule
@@ -42125,7 +42162,7 @@ function exportSyncMarketplaceButtons(n = (exportModalState.targets || []).lengt
 function exportSetBusy(busy) {
   exportModalState.busy = busy;
   document.getElementById('export-cancel').disabled = busy;
-  for (const id of ['export-plugin-name', 'export-marketplace', 'export-draft']) document.getElementById(id).disabled = busy;
+  for (const id of ['export-plugin-name', 'export-marketplace', 'export-draft', 'export-use']) document.getElementById(id).disabled = busy;
   if (busy) {
     if (!exportIsMarketplace()) return;
     document.getElementById('export-plan-btn').disabled = true;
@@ -42162,7 +42199,8 @@ function exportSyncSlugPreview() {
   const el = document.getElementById('export-slug-preview');
   el.textContent = valid ? `Command: ${preview}` : 'Invalid slug (letters, digits, . _ - only)';
 }
-function exportBuildOpts() {
+function exportBuildOpts() { return exportUse.withUse(exportBuildFormatOpts()); }   // + `use` while the Version field shows (D17)
+function exportBuildFormatOpts() {
   const dest = exportModalState.destination;
   if (exportModalState.format === 'plugin') {
     if (exportModalState.pluginDest === 'marketplace') {
@@ -42249,6 +42287,7 @@ function exportUpdateApplyEnabled() {
   const resolutions = exportGatherResolutions();
   const allResolved = exportModalState.conflicts.every((cf) => resolutions[cf.path]);
   document.getElementById('export-apply-btn').disabled = !allResolved;
+  exportUse.hold();
 }
 // A plan is keyed to the slug/destination/include-agents/folder in effect when Plan ran.
 // If any of those change afterward, the shown plan (and its gathered resolutions) no longer
@@ -42286,6 +42325,7 @@ function bindExportModal() {
   document.getElementById('export-plugin-name').addEventListener('input', () => { exportSyncPluginNamePreview(); exportInvalidatePlan(); });
   document.getElementById('export-folder').addEventListener('input', () => { if (exportModalState.format === 'plugin') exportSyncPluginNamePreview(); });
   document.getElementById('export-keep-version').addEventListener('change', exportInvalidatePlan);
+  exportUse.bind(exportInvalidatePlan);   // the Version field (D17)
   // Browse…: the native OS folder dialog (the server opens it — a web page never
   // learns an absolute path from its own file picker), exactly like Add Project;
   // the in-app browser is the fallback when the native one is unsupported.
@@ -42306,6 +42346,7 @@ function bindExportModal() {
   // marketplace, a switched destination, a close) and the inputs still build the body that was sent. A
   // marketplace plan has no `created` list, so rendering it after a switch to Local folder would also throw.
   document.getElementById('export-plan-btn').addEventListener('click', async () => {
+    if (exportUse.loading()) return;                       // a synthetic click reaches a disabled button too
     const market = exportIsMarketplace();
     const nameProblem = market ? marketplaceNameProblem(exportPluginName()) : '';
     if (nameProblem) { exportSay(nameProblem, true); return; }
@@ -42336,10 +42377,11 @@ function bindExportModal() {
   // itself first; a conflict (only the skill format can raise one) stops it and is
   // shown for per-file resolution — nothing is ever written past an unresolved one.
   document.getElementById('export-apply-btn').addEventListener('click', async () => {
+    if (exportUse.loading()) return;                       // the default version is not known yet (D17)
     if (exportModalState.format === 'json') {
       // A plain download of the stored graph — the server sets Content-Disposition.
       const a = document.createElement('a');
-      a.href = `/api/workflows/${encodeURIComponent(exportModalState.item.id)}/json`;
+      a.href = exportUse.jsonUrl(`/api/workflows/${encodeURIComponent(exportModalState.item.id)}/json`);   // or of the version picked (D17)
       a.setAttribute('download', '');
       document.body.appendChild(a);
       a.click();
@@ -42375,17 +42417,17 @@ function bindExportModal() {
     }
     exportSetBusy(true);
     exportSay('Exporting…');
+    const opts = exportBuildOpts();                        // ONE body per click: the dry run and the write agree
     try {
       if (!exportModalState.planned) {
-        const plan = await exportPlan(exportModalState.item.id, exportBuildOpts());
+        const plan = await exportPlan(exportModalState.item.id, opts);
         if ((plan.conflicts || []).length) {
           exportRenderPlan(plan);
           exportSay('Resolve each conflict below, then Export.');
           return;
         }
       }
-      const opts = { ...exportBuildOpts(), resolutions: exportGatherResolutions() };
-      const applied = await exportApply(exportModalState.item.id, opts);
+      const applied = await exportApply(exportModalState.item.id, { ...opts, resolutions: exportGatherResolutions() });
       // A conflict Apply left UNWRITTEN (e.g. a TOCTOU conflict between Plan and Apply that
       // had no resolution and fell to the blanket skip) is a stale partial export — re-render
       // the fresh plan so the user can resolve it, and keep the modal open.

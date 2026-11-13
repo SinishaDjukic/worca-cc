@@ -1,0 +1,456 @@
+/* Workflow tests (plans/workflow-tests-part2-plan.md; canvas boards 1, 19, 26, 29). The Tests page shares .wfv-versions' placement. */
+.wft-page{max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:20px;}
+.wft-head,.wft-crumbs{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px;}
+.wft-head .subtitle{margin:0;color:var(--ink-2);max-width:560px;}
+.wft-acts{display:flex;flex-wrap:wrap;gap:10px;align-items:center;}
+.wft-busy{margin:0;flex:1 1 100%;text-align:right;}
+.wft-crumbs-left{display:flex;flex-wrap:wrap;align-items:center;gap:10px;min-width:0;}
+.wft-crumb{border:0;background:transparent;padding:0;color:var(--blue-ink-strong);font:inherit;cursor:pointer;}
+.wft-crumb:hover{color:var(--ink);}
+.wft-crumb::after{content:'/';margin-left:10px;color:var(--ink-2);}
+.wft-title{margin:0;font-size:var(--fs-subpage);}
+.wft-how{padding:18px 22px;}
+.wft-how-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
+.wft-how h2,.wft-pick h2,.wft-empty h2{margin:0;font-size:var(--fs-section);}
+.wft-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;}
+.wft-step{display:flex;gap:12px;align-items:flex-start;}
+.wft-step-dot{flex:0 0 auto;width:26px;height:26px;border-radius:50%;background:var(--ink);color:var(--on-ink);font-size:var(--fs-meta);font-weight:700;display:inline-flex;align-items:center;justify-content:center;}
+.wft-step b{display:block;font-weight:600;font-size:var(--fs-body);margin-bottom:2px;}
+.wft-step > div > span{font-size:var(--fs-meta);color:var(--ink-2);line-height:1.45;}
+.wft-latest{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:16px 20px;text-align:left;font:inherit;color:var(--ink);cursor:pointer;}
+.wft-latest-main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 320px;}
+.wft-latest-title{font-weight:600;}
+.wft-latest .hint{margin:0;}
+.wft-running{border-color:var(--peach-line);background:var(--peach-wash);}
+.wft-run-dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:var(--peach);animation:pulse 1.3s ease-in-out infinite;}
+.wft-badges{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.wft-link{font-size:var(--fs-body);font-weight:600;color:var(--blue-ink-strong);}
+.wft-table{padding:0;overflow:hidden;}
+.wft-scroll{overflow-x:auto;}
+.wft-row{display:grid;grid-template-columns:minmax(0,1fr) 200px 130px 130px 40px;align-items:center;gap:16px;padding:14px 18px;border-bottom:1px solid var(--line);min-width:760px;box-sizing:border-box;}
+.wft-grid.is-one .wft-row{grid-template-columns:minmax(0,1fr) 200px 130px 40px;min-width:600px;}
+.wft-row:last-child{border-bottom:0;}
+.wft-row-head{padding:10px 18px;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}
+/* A phone (browser check H1): each example stacks, the ⋯ beside its name, each result named by its column (data-label) */
+@media (max-width:700px){.wft-row > .wft-cell{grid-column:1 / -1;}.wft-row{grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;min-width:0;}.wft-grid.is-one .wft-row{grid-template-columns:minmax(0,1fr) auto;min-width:0;}.wft-row-head{display:none;}.wft-row > .wft-ex{grid-column:1;grid-row:1;}.wft-row > .wft-more{grid-column:2;grid-row:1;align-self:start;}.wft-row > .wft-kinds,.wft-row > [data-label]{grid-column:1 / -1;}.wft-row [data-label]{flex-wrap:wrap;}.wft-row [data-label]::before{content:attr(data-label);flex:0 0 45%;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}}
+.wft-ex{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.wft-ex .hint{margin:0;}
+.wft-ex-open{border:0;background:transparent;padding:0;text-align:left;font:inherit;font-weight:500;color:var(--ink);cursor:pointer;}
+.wft-ex-open:hover{text-decoration:underline;}
+.wft-kinds{display:flex;flex-wrap:wrap;gap:6px;}
+.wft-kind{background:var(--field);color:var(--ink-2);font-size:var(--fs-caption);font-weight:600;padding:3px 9px;border-radius:var(--r-xs);white-space:nowrap;}
+.wft-res{display:inline-flex;align-items:center;gap:7px;font-size:var(--fs-meta);color:var(--ink);}
+.wft-res.is-bad{color:var(--red-ink-strong);}
+.wft-dev-commit{display:block;font-size:var(--fs-caption);color:var(--ink-2);}
+.wft-cell{display:flex;flex-direction:column;gap:3px;min-width:0;}
+.wft-ask{font-size:var(--fs-caption);line-height:1.4;color:var(--amber-ink-strong);}
+.wft-mock-note{display:flex;align-items:flex-start;gap:8px;margin:0;font-size:var(--fs-meta);line-height:1.45;color:var(--ink);}
+.wft-mock-note .ic{flex:0 0 auto;margin-top:2px;color:var(--blue-ink-strong);}
+.wft-mock-note b{font-weight:600;}
+.wft-res.is-stale,.wft-res.is-none{color:var(--ink-2);}
+.wft-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;}
+.wft-dot.ok{background:var(--green);}
+.wft-dot.mix{background:var(--seq);}
+.wft-dot.no{background:var(--red);}
+.wft-foot{margin:0;}
+.wft-foot b{font-weight:600;color:var(--ink);}
+.wft-first-head .subtitle{margin:6px 0 0;color:var(--ink-2);max-width:640px;}
+.wft-pick{display:flex;flex-direction:column;gap:6px;}
+.wft-pick-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line);font-size:var(--fs-body);}
+.wft-pick-row input{width:16px;height:16px;accent-color:var(--ink);margin:0;}
+.wft-pick-text{flex:1 1 auto;min-width:0;}
+.wft-pick-text .hint{display:inline;margin:0;}
+.wft-first-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;}
+.wft-first-foot .hint{margin:0;}
+.wft-first-once{display:flex;flex-wrap:wrap;align-items:center;gap:16px;margin-top:12px;}
+.wft-linkbtn{border:0;background:transparent;padding:0;font:inherit;color:var(--blue-ink-strong);cursor:pointer;text-decoration:underline;}
+.wft-empty{display:flex;flex-direction:column;gap:6px;}
+.wft-dlg-error:empty{display:none;}
+/* Edit an example (boards 2, 24) */
+.wft-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;align-items:start;}
+.wft-col{display:flex;flex-direction:column;gap:20px;min-width:0;}
+.wft-card{display:flex;flex-direction:column;gap:10px;min-width:0;}
+.wft-card > h2{margin:0;font-size:var(--fs-section);}
+.wft-card > .hint{margin:0;}
+.wft-grp{font-size:var(--fs-body);font-weight:600;color:var(--ink);margin:0;}
+.wft-grp-hint{font-size:var(--fs-meta);color:var(--ink-2);margin:0;line-height:1.45;}
+.wft-chk{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;font-size:var(--fs-body);padding:4px 0;}
+.wft-chk input[type="checkbox"]:not(.sw-input){width:16px;height:16px;accent-color:var(--ink);margin:0;}
+.wft-num{width:84px;}
+.wft-basic{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:4px 0;}
+.wft-basic > .wft-chk{padding:0;}
+/* Browser check M5: the label stays beside its switch, the box keeps its width, and the box and "times" go together */
+.wft-basic > .wft-chk{flex-wrap:nowrap;flex:0 1 auto;min-width:0;}
+.wft-basic > .wft-chk .switch{flex:0 0 auto;}
+.wft-basic > .wft-chk .switch-label{min-width:0;}
+.wft-basic .wft-num{width:84px;flex:0 0 auto;}
+.wft-basic-val{display:inline-flex;align-items:center;gap:8px;white-space:nowrap;flex:0 0 auto;}
+@media (max-width:700px){.wft-basic{flex-wrap:nowrap;}}
+.wft-basic-after{font-size:var(--fs-body);color:var(--ink);}
+.wft-lines{display:flex;flex-direction:column;gap:8px;align-items:flex-start;}
+.wft-line{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);align-self:stretch;}
+.wft-line-text{display:flex;flex-direction:column;gap:2px;min-width:0;font-size:var(--fs-body);}
+.wft-line-main{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.wft-gone{margin:0;}
+.wft-gone[hidden]{display:none;}
+.wft-sect{border-top:1px solid var(--line);padding-top:16px;margin-top:6px;display:flex;flex-direction:column;gap:8px;}
+.wft-files{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.wft-file{display:inline-flex;align-items:center;gap:6px;background:var(--field);border-radius:var(--r-xs);padding:4px 6px 4px 12px;font-family:var(--mono);font-size:var(--fs-meta);color:var(--ink-2);}
+.wft-file-x{display:inline-flex;align-items:center;border:0;background:transparent;color:var(--ink-2);cursor:pointer;padding:2px;}
+.wft-file-x:hover{color:var(--ink);}
+.wft-error:empty{display:none;}
+.wft-ck-preview{margin:0;padding:10px 12px;border:1px dashed var(--line-2);border-radius:var(--r-sm);background:var(--canvas-2);font-size:var(--fs-body);font-weight:500;color:var(--ink);}
+.wft-ck-preview:empty{display:none;}
+/* Use a past run as a test example (boards 3, 25) */
+.wft-pick-list{border:1px solid var(--line-2);border-radius:var(--r-sm);overflow:auto;max-height:420px;}
+.wft-pick-list .wft-pick-row{padding:9px 12px;border-top:0;border-bottom:1px solid var(--line);cursor:pointer;}
+.wft-pick-list .wft-pick-row:last-child{border-bottom:0;}
+.wft-pick-list .wft-pick-row:has(input:checked){background:var(--field);}
+.wft-pick-list .wft-pick-text b{font-weight:600;}
+.wft-fr-intro{margin:0 0 4px;}
+.wft-keep{display:flex;flex-direction:column;gap:2px;margin-bottom:12px;}
+.wft-keep .wft-chk{flex-wrap:nowrap;align-items:flex-start;}
+.wft-keep .wft-chk input[type="checkbox"]{margin-top:2px;flex:0 0 auto;}
+.wft-keep-text{min-width:0;}
+.wft-keep .wft-chk .hint{display:inline;margin:0;}
+.wft-fr-hint{margin:0;}
+/* Test a version (boards 4, 30) and while the test runs (boards 20, 27, 28) */
+.wft-vs{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 12px;}
+.wft-vs > .field{flex:1 1 200px;margin:0;min-width:0;}
+.wft-vs-second > .label{visibility:hidden;}
+.wft-vs-with{padding-bottom:7px;color:var(--ink-2);font-size:var(--fs-body);}
+.wft-row2{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:flex-end;}
+.wft-row2 > .field{flex:1 1 220px;margin:0;min-width:0;}
+.wft-reuse{display:flex;flex-direction:column;gap:2px;}
+.wft-reuse:empty{display:none;}
+.wft-tv-chk{flex-wrap:nowrap;align-items:flex-start;}
+.wft-tv-chk input[type="checkbox"]{margin-top:2px;flex:0 0 auto;}
+.wft-tv-chk .hint{display:inline;margin:0;}
+.wft-conn{border:0;margin:0;padding:0;min-width:0;display:flex;flex-direction:column;gap:8px;}
+.wft-conn legend{padding:0;margin-bottom:4px;font-weight:600;font-size:var(--fs-body);}
+.wft-conn .radio-card{margin:0;}
+.wft-conn .radio-card-text .hint{margin:0;line-height:1.45;}
+.wft-conn-notes{list-style:none;margin:0;padding:2px 0 4px 26px;display:flex;flex-direction:column;gap:5px;font-size:var(--fs-meta);line-height:1.45;color:var(--ink-2);}
+.wft-conn-notes[hidden]{display:none;}
+.wft-conn-notes li{display:flex;gap:8px;align-items:flex-start;}
+.wft-conn-notes a{color:var(--blue-ink-strong);}
+.wft-conn-notes .ic,.wft-caution .ic{flex:0 0 auto;margin-top:2px;}
+.wft-caution{display:flex;gap:8px;align-items:flex-start;margin:0;padding:10px 12px;border-radius:var(--r-sm);background:var(--amber-wash);border:1px solid var(--amber-line);font-size:var(--fs-meta);line-height:1.45;color:var(--ink);}
+.wft-caution[hidden]{display:none;}
+.wft-caution .ic{color:var(--amber-ink-strong);}
+.wft-caution b{font-weight:600;}
+.wft-safe{display:flex;gap:10px;align-items:flex-start;font-size:var(--fs-body);color:var(--ink-2);margin:0;}
+.wft-safe[hidden]{display:none;}
+.wft-safe .ic{flex:0 0 auto;margin-top:1px;}
+.wft-safe b{color:var(--ink);font-weight:600;}
+.wft-est{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:var(--r-sm);background:var(--field);font-size:var(--fs-body);}
+.wft-est:empty{display:none;}
+.wft-est-row{display:flex;justify-content:space-between;gap:12px;}
+.wft-est-row.is-total{border-top:1px solid var(--line-2);padding-top:6px;font-weight:600;}
+.wft-est-usd{font-family:var(--mono);white-space:nowrap;}
+.wft-cap{width:120px;max-width:100%;}
+.wft-tv-note{margin:0;}
+.wft-tv-note:empty{display:none;}
+.wft-pg-titles{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0;}
+.wft-pg-titles .wft-crumb{font-size:var(--fs-meta);}
+.wft-pg-titles .wft-crumb::after{content:none;}
+.wft-pg-head{align-items:flex-end;}
+.wft-pill{padding:5px 12px;font-size:var(--fs-meta);}
+.wft-pill.is-stopped{background:var(--slate-bg);color:var(--slate-ink);}
+.wft-pill.is-stopped .pdot{background:var(--slate);}
+.wft-pill.is-parked .pdot{animation:none;}
+.wft-cap-label{font-size:var(--fs-body);font-weight:600;color:var(--ink);}
+.wft-acts .wft-cap{width:96px;flex:0 0 auto;}   /* board 27: inline beside Finish the rest (input[type="text"] is 100% wide) */
+.wft-prog{display:flex;flex-direction:column;gap:14px;padding:18px 22px;}
+.wft-prog > .hint{margin:0;}
+.wft-stopped{margin:0;font-size:var(--fs-body);font-weight:600;color:var(--ink);}
+.wft-bar{height:8px;border-radius:var(--r-xs);background:var(--field);overflow:hidden;}
+.wft-bar > span{display:block;height:100%;background:var(--peach);border-radius:var(--r-xs);}
+.wft-bar.is-done > span{background:var(--green);}
+.wft-bar.is-stopped > span{background:var(--seq);}
+.wft-facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;}
+.wft-fact{display:flex;flex-direction:column;gap:4px;font-size:var(--fs-meta);color:var(--ink-2);min-width:0;}
+.wft-fact b{font-family:var(--mono);font-size:var(--fs-subpage);font-weight:600;color:var(--ink);}
+.wft-fact.wft-fact-word b{font-family:inherit;font-size:var(--fs-body);}
+.wft-fact.is-ok b{color:var(--green-ink-strong);}
+.wft-fact.is-bad b{color:var(--red-ink-strong);}
+.wft-prow{display:grid;grid-template-columns:minmax(0,1fr) 150px 190px;align-items:center;gap:14px;padding:12px 18px;border-bottom:1px solid var(--line);font-size:var(--fs-body);}
+.wft-prow:last-child{border-bottom:0;}
+.wft-prow.is-head{padding:10px 18px;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}
+.wft-prow-name{font-weight:500;min-width:0;overflow-wrap:anywhere;}
+.wft-prow-use,.wft-prow-quiet{font-weight:400;color:var(--ink-2);}
+.wft-tries{display:inline-flex;flex-wrap:wrap;gap:5px;}
+.wft-try-dot{width:12px;height:12px;border-radius:50%;border:1.5px solid var(--line-2);box-sizing:border-box;}
+.wft-try-dot.ok{background:var(--green);border-color:var(--green);}
+.wft-try-dot.no{background:var(--red);border-color:var(--red);}
+.wft-try-dot.run{border-color:var(--peach);background:var(--peach-bg);}
+@media (max-width:700px){.wft-facts,.wft-prow{grid-template-columns:minmax(0,1fr);gap:6px;}.wft-prow.is-head{display:none;}}
+/* Compare (board 5) and one example side by side (boards 6, 31; board 28's G2, board 29's empty states) */
+.wft-titles{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0;}
+.wft-titles .wft-crumb{font-size:var(--fs-meta);}
+.wft-titles .wft-crumb::after{content:none;}
+.wft-titles .hint{margin:0;}
+.wft-short{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center;padding:18px 22px;border-radius:var(--r-card);background:var(--blue-wash);border:1px solid var(--blue-line);}
+.wft-short > div{flex:1 1 420px;min-width:0;}
+.wft-short h2{margin:0 0 6px;font-size:var(--fs-section);}
+.wft-short p{margin:0;line-height:1.55;}
+.wft-short b{font-weight:600;}
+.wft-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;}
+.wft-tile{padding:16px 18px;min-width:0;}
+.wft-tile-label{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:var(--fs-meta);font-weight:600;}
+.wft-tile-delta{margin-left:auto;background:var(--field);color:var(--ink-2);font-size:var(--fs-caption);font-weight:600;padding:2px 8px;border-radius:var(--r-xs);white-space:nowrap;}
+.wft-tile-value{font-family:var(--mono);font-size:var(--fs-stat);font-weight:600;color:var(--ink);margin-top:8px;line-height:1.2;}
+.wft-tile-sub,.wft-tile-note{display:block;color:var(--ink-2);font-size:var(--fs-caption);margin-top:6px;}
+.wft-tile-note{margin-top:4px;}
+.wft-cmp-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:18px;align-items:start;}
+.wft-by{display:flex;flex-direction:column;gap:10px;min-width:0;}
+.wft-by-title{margin:0;font-size:var(--fs-section);}
+.wft-crows2{min-width:480px;}
+.wft-crow2{display:grid;grid-template-columns:minmax(0,1fr) 92px 92px 100px;align-items:center;gap:6px 14px;padding:13px 18px;border-bottom:1px solid var(--line);font-size:var(--fs-body);}
+.wft-crow2:last-child{border-bottom:0;}
+.wft-crow2.is-head{padding:10px 18px;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}
+.wft-crow2 .wft-ex-open{min-width:0;overflow-wrap:anywhere;}
+.wft-why{grid-column:1 / -1;font-size:var(--fs-meta);color:var(--ink-2);}
+.wft-why .wft-linkbtn{font-weight:600;text-decoration:none;}
+.wft-why .wft-linkbtn:hover{text-decoration:underline;}
+.wft-linkbtn:disabled{color:var(--ink-2);cursor:default;}
+.wft-changes{display:flex;flex-direction:column;gap:0;padding:20px 22px;min-width:0;}
+.wft-changes h2{margin:0 0 8px;font-size:var(--fs-section);}
+.wft-changes .hint{margin:0;}
+.wft-chg{display:flex;gap:10px;align-items:flex-start;padding:11px 0;font-size:var(--fs-body);line-height:1.45;}
+.wft-chg + .wft-chg{border-top:1px solid var(--line);}
+.wft-chg-ico{flex:0 0 auto;width:22px;height:22px;border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);display:inline-flex;align-items:center;justify-content:center;}
+.wft-changes .wft-fair-head{margin-top:6px;padding-top:12px;border-top:1px solid var(--line);}
+.wft-fair-head b{font-weight:600;color:var(--ink);}
+.wft-fair{display:flex;gap:8px;align-items:flex-start;margin:8px 0 0;font-size:var(--fs-meta);line-height:1.45;color:var(--ink);}
+.wft-fair .ic{flex:0 0 auto;margin-top:2px;color:var(--amber-ink-strong);}
+.wft-detail-name{display:flex;flex-wrap:wrap;align-items:center;gap:10px;}
+.wft-empty-sbs{margin:0;}
+.wft-outs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;align-items:start;}
+.wft-outs.is-one{grid-template-columns:minmax(0,1fr);}
+.wft-outcol{display:flex;flex-direction:column;gap:14px;min-width:0;}
+.wft-out-card{padding:18px 20px;}
+.wft-out-card > .hint{margin:0;}
+.wft-card-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px 12px;}
+.wft-card-head h2{margin:0;font-size:var(--fs-section);}
+.wft-out{font-size:var(--fs-body);line-height:1.55;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;max-height:420px;overflow:auto;}
+.wft-crows{min-width:540px;}
+.wft-crows.is-one{min-width:300px;}
+.wft-crow{display:grid;grid-template-columns:minmax(0,1fr) 130px 130px;align-items:center;gap:14px;padding:11px 18px;border-bottom:1px solid var(--line);font-size:var(--fs-body);}
+.wft-crow:last-child{border-bottom:0;}
+.wft-crow.is-one{grid-template-columns:minmax(0,1fr) 130px;}
+.wft-crow.is-head{padding:9px 18px;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}
+.wft-crow-grp{padding:10px 18px 6px;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);background:var(--canvas-2);border-bottom:1px solid var(--line);}
+.wft-detail-why{margin:0;}
+.wft-whole{white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-body);line-height:1.55;max-height:70vh;overflow:auto;margin:0;}
+/* A result rendered as markdown (board 31's excerpt): ask-md's blocks, the headings at body size as the board draws them */
+.wft-out.ask-md,.wft-whole.ask-md{white-space:normal;}
+.wft-out.ask-md>:first-child,.wft-whole.ask-md>:first-child{margin-top:0;}
+.wft-out.ask-md>:last-child,.wft-whole.ask-md>:last-child{margin-bottom:0;}
+.wft-out.ask-md :is(h1,h2,h3,h4,h5,h6){font-size:var(--fs-body);}
+/* What a try would have sent (board 31, C19) */
+.wft-mode{display:flex;gap:8px;align-items:flex-start;margin:0;font-size:var(--fs-meta);line-height:1.45;color:var(--ink-2);}
+.wft-mode .ic{flex:0 0 auto;margin-top:2px;}
+.wft-sent{padding:0;overflow:hidden;}
+.wft-sent-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 12px;padding:14px 18px 10px;}
+.wft-sent-head h2{margin:0;font-size:var(--fs-section);}
+.wft-sent-head .hint{margin:0;}
+.wft-call{border-top:1px solid var(--line);}
+.wft-call summary{list-style:none;display:grid;grid-template-columns:12px minmax(0,1fr);gap:10px;align-items:start;padding:10px 18px;font-size:var(--fs-meta);line-height:1.45;cursor:pointer;}
+.wft-call summary::-webkit-details-marker{display:none;}
+.wft-call summary:hover{background:var(--hover);}
+.wft-call summary:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.wft-call-chev{margin-top:3px;color:var(--ink-2);transition:transform .15s;}
+.wft-call[open] .wft-call-chev{transform:rotate(90deg);}
+.wft-call-line{display:flex;flex-wrap:wrap;gap:2px 6px;min-width:0;}
+.wft-call-line b{font-weight:600;}
+.wft-call-what{color:var(--ink-2);}
+.wft-call-prev{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 160px;}
+.wft-call-full{margin:0 18px 12px 40px;padding:10px 12px;border-radius:var(--r-sm);background:var(--field);font-size:var(--fs-meta);line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink);}
+.wft-call-cap{display:block;margin-bottom:4px;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}
+.wft-sent-foot{margin:0;padding:10px 18px 14px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);line-height:1.45;}
+.wft-sent-head + .wft-sent-foot{border-top:0;padding-top:0;}
+.wft-sent-real{padding:14px 18px;}
+/* U-T12 (F23, board 47): what Worca asked in a try, after Would have sent. Long questions wrap, never cut. */
+.wft-qs-card{padding:0;overflow:hidden;}
+.wft-qs-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 12px;padding:14px 18px 10px;}
+.wft-qs-head h2{margin:0;font-size:var(--fs-section);}
+.wft-qs-head .hint{margin:0;}
+.wft-qs{list-style:none;margin:0;padding:0;}
+.wft-qs li{padding:10px 18px;border-top:1px solid var(--line);font-size:var(--fs-body);line-height:1.5;color:var(--ink);overflow-wrap:anywhere;}
+.wft-q-ans{color:var(--ink-2);}
+.wft-q-failed{color:var(--red-ink-strong);font-weight:600;}
+.wft-qs-none{margin:0;padding:0 18px 14px;font-size:var(--fs-meta);color:var(--ink-2);line-height:1.45;}
+@media (max-width:700px){.wft-outs{grid-template-columns:minmax(0,1fr);}.wft-tiles{grid-template-columns:repeat(2,minmax(0,1fr));}.wft-call-full{margin-left:18px;}}
+/* A phone (browser check H1, H2): By example and What was checked stack; each version's cell is a line named by its column */
+@media (max-width:700px){.wft-crows2,.wft-crows,.wft-crows.is-one{min-width:0;}.wft-crow2{grid-template-columns:minmax(0,1fr) auto;}.wft-crow2.is-head,.wft-crow.is-head{display:none;}.wft-crow2 > .wft-ex-open{grid-column:1;grid-row:1;}.wft-crow2 > .wft-crow2-res{grid-column:2;grid-row:1;}.wft-crow2 > [data-label]{grid-column:1 / -1;}.wft-crow,.wft-crow.is-one{grid-template-columns:minmax(0,1fr);gap:4px;}.wft-crow2 [data-label],.wft-crow [data-label]{flex-wrap:wrap;}.wft-crow2 [data-label]::before{content:attr(data-label);flex:0 0 45%;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}.wft-crow [data-label]::before{content:attr(data-label);flex:0 0 45%;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}}
+@media (prefers-reduced-motion:reduce){.wft-call-chev{transition:none;}}
+@media (max-width:900px){.wft-steps,.wft-cols{grid-template-columns:minmax(0,1fr);}}
+@media (prefers-reduced-motion:reduce){.wft-run-dot{animation:none;}}
+/* Workflow tests, Part 3a: examples that work on a project (plans/workflow-tests-part3a-plan.md; canvas boards 32–39) */
+.wft-mono,.wft-start .code,.wft-line-text .code,.wft-ck-preview .code,.wft-notice .code,.wft-pick-list .code{font-family:var(--mono);}
+/* Final review M4: the shared field rule (input[type="text"] { font-family:inherit }) is more specific than .wft-mono. */
+input.wft-mono[type="text"],textarea.wft-mono{font-family:var(--mono);}
+.wft-mono{font-size:var(--fs-body);}
+.wft-start-field{margin-bottom:0;}
+.wft-start{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);font-size:var(--fs-body);}
+.wft-start b{font-weight:600;}
+.wft-moved{display:flex;flex-direction:column;gap:10px;margin:10px 0 0;padding:12px 14px;border-radius:var(--r-sm);background:var(--amber-wash);border:1px solid var(--amber-line);font-size:var(--fs-body);line-height:1.45;color:var(--ink);}
+.wft-moved-top{display:flex;gap:8px;align-items:flex-start;}
+.wft-moved-top .ic{flex:0 0 auto;margin-top:2px;color:var(--amber-ink-strong);}
+.wft-moved-act{display:flex;flex-wrap:wrap;align-items:center;gap:10px;}
+.wft-moved-act .hint{margin:0;}
+.wft-uncommitted{display:flex;align-items:center;gap:10px;margin-top:10px;padding:4px 0;font-size:var(--fs-body);cursor:pointer;}
+.wft-uncommitted input{flex:0 0 auto;width:16px;height:16px;accent-color:var(--ink);margin:0;}
+.wft-changes-hint{margin:0 0 0 26px;}
+.wft-dev{margin-top:16px;padding:14px 14px 4px;border:1px dashed var(--line-2);border-radius:var(--r-sm);}
+.wft-dev-cap{display:block;margin:0 0 10px;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}
+.wft-notice{margin:0 0 10px;padding:12px 14px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--canvas-2);}
+.wft-notice-title{margin:0 0 4px;font-size:var(--fs-section);font-weight:600;color:var(--ink);}
+.wft-notice .hint{margin:0;}
+.wft-notice-foot{display:flex;justify-content:flex-end;margin-top:10px;}
+.wft-rads{display:flex;flex-direction:column;gap:8px;min-width:0;margin:0;padding:0;border:0;}
+.wft-rads legend{margin-bottom:6px;padding:0;font-size:var(--fs-body);font-weight:600;}
+.wft-rad{display:grid;grid-template-columns:16px minmax(0,1fr);gap:10px;align-items:start;font-size:var(--fs-body);cursor:pointer;}
+.wft-rad input{width:16px;height:16px;accent-color:var(--ink);margin:2px 0 0;}
+.wft-rad-sub{color:var(--ink-2);}
+.wft-ck-time{max-width:200px;}
+/* A long command, path or branch breaks at a phone's width (Task 10 review) */
+.wft-start .code,.wft-line-text .code,.wft-ck-preview .code,.wft-notice .code{overflow-wrap:anywhere;}
+.wft-start > span{min-width:0;}
+.wft-notice-text{margin:0;font-size:var(--fs-body);line-height:1.45;color:var(--ink);}
+.wft-notice .hint + .hint{margin-top:6px;}
+.wft-start-status{margin:6px 0 0;}
+.wft-start-status:empty{display:none;}
+/* Board 34: Test a version on a project: the lock line (in the shield line's place), the disk and time rows, too little disk */
+.wft-lock{display:flex;gap:10px;align-items:flex-start;margin:0;font-size:var(--fs-body);line-height:1.45;color:var(--ink-2);}
+.wft-lock[hidden]{display:none;}
+.wft-lock .ic{flex:0 0 auto;margin-top:2px;}
+.wft-lock b{font-weight:600;color:var(--ink);}
+.wft-est-row.is-disk,.wft-est-row.is-time{flex-wrap:wrap;gap:4px 12px;}
+.wft-est-k{color:var(--ink-2);}
+.wft-est-row:is(.is-disk,.is-time,.wft-est-sub) + .wft-est-row:not(.is-time):not(.wft-est-sub){border-top:1px solid var(--line-2);padding-top:6px;}
+.wft-est .code,.wft-ph .code,.wft-now .code,.wft-stopbox .code,.wft-setup-hint .code{font-family:var(--mono);overflow-wrap:anywhere;}
+.wft-refuse{display:flex;gap:8px;align-items:flex-start;margin:0;padding:10px 12px;border-radius:var(--r-sm);background:var(--amber-wash);border:1px solid var(--amber-line);font-size:var(--fs-meta);line-height:1.45;color:var(--ink);}
+.wft-refuse[hidden]{display:none;}
+.wft-refuse .ic{flex:0 0 auto;margin-top:2px;color:var(--amber-ink-strong);}
+.wft-tv-left{margin:0;}
+.wft-tv-left[hidden]{display:none;}
+/* Board 35: while a project test runs: the disk fact, what happens in each try, the Now column, a setup that failed */
+.wft-facts.is-four{grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));}
+.wft-phases{padding:18px 22px;display:flex;flex-direction:column;gap:12px;}
+.wft-phases h2{margin:0;font-size:var(--fs-section);}
+.wft-phases > .hint{margin:0;}
+.wft-ph-list{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));gap:12px;}
+.wft-ph{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);font-size:var(--fs-body);color:var(--ink);min-width:0;}
+.wft-ph.is-done{color:var(--ink-2);}
+.wft-ph.is-now{background:var(--peach-wash);border-color:var(--peach-line);}
+.wft-ph-words{min-width:0;}
+.wft-ph b{display:block;font-weight:600;color:var(--ink);}
+.wft-ph .s{display:block;font-size:var(--fs-meta);line-height:1.4;color:var(--ink-2);}
+.wft-ph-dot{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--field);font-size:var(--fs-caption);font-weight:700;color:var(--ink-2);}
+.wft-ph.is-now .wft-ph-dot{background:var(--peach);color:var(--on-signal);}
+.wft-now{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.wft-now .s{font-size:var(--fs-meta);color:var(--ink-2);}
+.wft-setup-stop{padding:18px 22px;display:flex;flex-direction:column;gap:14px;}
+.wft-setup-stop .hint{margin:0;}
+.wft-stopbox{display:flex;gap:10px;align-items:flex-start;margin:0;font-size:var(--fs-body);line-height:1.5;color:var(--ink);}
+.wft-stopbox .ic{flex:0 0 auto;margin-top:2px;color:var(--ink-2);}
+.wft-stopbox b{font-weight:600;}
+.wft-setup-line{display:flex;flex-wrap:wrap;gap:12px;align-items:center;}
+.wft-setup-see{font-size:var(--fs-body);font-weight:600;text-decoration:none;}
+.wft-outlog{margin:0;padding:12px 14px;border-radius:var(--r-sm);background:var(--field);font-family:var(--mono);font-size:var(--fs-meta);line-height:1.6;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;overflow-x:auto;}
+.wft-outlog[hidden]{display:none;}
+/* Boards 36, 37: one example side by side on a project: what changed (the picked file's diff), the command, what the guard
+   stopped, For developers. */
+.wft-modes{display:flex;flex-direction:column;gap:6px;}
+.wft-chgcard{gap:0;padding:18px 20px;}
+.wft-chg-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:6px 12px;margin-bottom:12px;}
+.wft-chg-head h2{margin:0;font-size:var(--fs-section);}
+.wft-chg-head .hint{margin:0;}
+.wft-files-list{list-style:none;margin:0 0 12px;padding:0;border:1px solid var(--line-2);border-radius:var(--r-sm);overflow:hidden;}
+.wft-files-list li + li{border-top:1px solid var(--line);}
+.wft-fbtn{display:grid;grid-template-columns:4.75rem minmax(0,1fr);gap:10px;align-items:center;width:100%;padding:8px 12px;border:0;border-radius:0;background:none;color:var(--ink);text-align:left;font:inherit;font-size:var(--fs-meta);cursor:pointer;}
+.wft-fbtn:hover{background:var(--hover);}
+.wft-fbtn:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.wft-fbtn.is-sel{background:var(--field);font-weight:600;}
+.wft-fbtn .badge{justify-self:start;}
+.wft-fbtn .p{min-width:0;font-family:var(--mono);font-size:var(--fs-meta);overflow-wrap:anywhere;}
+.badge.wft-badge-rm{background:var(--ink-2);color:var(--panel);}
+.wft-chg-more{margin:-4px 0 12px;}
+/* The diff scrolls sideways inside its own box; each line is as wide as the longest, so its colour runs to the end. */
+.wft-diff{display:grid;grid-template-columns:minmax(100%,max-content);margin:0;border:1px solid var(--line-2);border-radius:var(--r-sm);overflow-x:auto;font-family:var(--mono);font-size:var(--fs-meta);line-height:1.6;}
+.wft-diff:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.wft-diff-cap{position:sticky;left:0;padding:6px 12px;border-bottom:1px solid var(--line);background:var(--canvas-2);font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);overflow-wrap:anywhere;}
+.wft-dl{padding:0 12px;white-space:pre;color:var(--ink);}
+.wft-dl.add{background:var(--green-bg);}
+.wft-dl.del{background:var(--red-bg);}
+.wft-dl.ctx{color:var(--ink-2);}
+.wft-dl.is-hunk{border-top:1px dashed var(--line-2);}
+.wft-diff-note{position:sticky;left:0;padding:6px 12px;font-family:var(--sans);color:var(--ink-2);}
+.wft-dl + .wft-diff-note{border-top:1px solid var(--line);}
+.wft-chg-foot{margin-top:12px;}
+.wft-chg-foot .wft-linkbtn{font-weight:600;text-decoration:none;}
+.wft-chg-foot .wft-linkbtn:hover{text-decoration:underline;}
+.wft-sent > .wft-mode{padding:0 18px 10px;}
+.wft-call-cmd{display:block;margin-top:8px;font-family:var(--mono);font-size:var(--fs-meta);white-space:pre-wrap;overflow-wrap:anywhere;}
+.wft-why-cmd{grid-column:1 / -1;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 14px;padding:10px 12px;border-radius:var(--r-sm);background:var(--red-bg);color:var(--ink);font-size:var(--fs-body);line-height:1.45;}
+.wft-why-cmd b{font-weight:600;}
+.wft-why-cmd > span{flex:1 1 240px;min-width:0;}
+/* Workflow tests 3b: board 33's "Most files" box; board 36's Failed line under a command not met. */
+.wft-ck-num{max-width:100px;}
+.wft-why-col{flex:1 1 360px;min-width:0;display:flex;flex-direction:column;gap:6px;}
+.wft-failed-line{overflow-wrap:anywhere;}
+.wft-failed-line .code{font-family:var(--mono);}
+.wft-pg-head .code,.wft-dev-facts .code{font-family:var(--mono);overflow-wrap:anywhere;}
+.wft-dev-card{padding:18px 22px;border-style:dashed;}
+.wft-dev-card h2{margin:0 0 4px;font-size:var(--fs-section);}
+.wft-dev-card > .hint{margin:0 0 10px;}
+.wft-dev-facts{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:var(--fs-body);}
+.wft-dev-facts > span{min-width:0;}
+.wft-ex .hint .code,.wft-startbox .code{font-family:var(--mono);overflow-wrap:anywhere;}
+.wft-moved-line{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;font-size:var(--fs-meta);color:var(--ink-2);}
+.wft-moved-line .badge.amber{color:var(--amber-ink-strong);}
+.wft-moved-line > span:last-child{min-width:0;}
+.wft-left-line{overflow-wrap:anywhere;}
+.wft-foot-start{margin:0;}
+.wft-pick-top{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;}
+.wft-pick-top b{font-weight:600;}
+.wft-pick-sub,.wft-pick-why{display:block;font-size:var(--fs-meta);color:var(--ink-2);}
+.wft-pick-list .wft-pick-row:has(.wft-pick-top),.wft-pick-row:has(.wft-pick-why){align-items:flex-start;}
+.wft-pick-list .wft-pick-row:has(.wft-pick-top) input,.wft-pick-row:has(.wft-pick-why) input{margin-top:2px;}
+.wft-pick-row.is-refused,.wft-pick-list .wft-pick-row.is-refused{cursor:default;}
+.wft-pick-row.is-refused b{color:var(--ink-2);}
+.wft-startbox{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:var(--r-sm);background:var(--field);font-size:var(--fs-body);line-height:1.45;}
+.wft-startbox > *{min-width:0;}
+.wft-startbox .label,.wft-startbox .hint{margin:0;}
+.wft-startbox b{font-weight:600;}
+.mk-dialog-body > .wft-dev{margin-top:0;}
+/* Workflow tests 3b, U1–U3 (boards 40–42): the command before and after the change under its row (red when something broke,
+   in words too); the run before the change on its own grey line under Test a version's Time row; the before phase card. */
+.wft-before{grid-column:1 / -1;display:flex;flex-direction:column;gap:5px;padding:10px 12px;border-radius:var(--r-sm);background:var(--field);color:var(--ink);font-size:var(--fs-body);line-height:1.45;overflow-wrap:anywhere;}
+.wft-before.is-bad{background:var(--red-bg);}
+.wft-before-h{font-weight:600;}
+.wft-before-n{font-weight:700;}
+.wft-before-broke{color:var(--red-ink-strong);font-weight:600;}
+.wft-before > .hint{margin:0;}
+.wft-est-sub{justify-content:flex-end;margin-top:-2px;font-size:var(--fs-meta);color:var(--ink-2);text-align:right;}
+.wft-before-now{padding:18px 22px;display:flex;flex-direction:column;gap:12px;}
+.wft-before-now h2{margin:0;font-size:var(--fs-section);}
+.wft-before-now > .hint{margin:0;}
+.wft-before-now .code{font-family:var(--mono);overflow-wrap:anywhere;}
+.wft-bnow{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--peach-line);border-radius:var(--r-sm);background:var(--peach-wash);font-size:var(--fs-body);}
+.wft-bnow-dot{flex:0 0 auto;width:10px;height:10px;margin-top:4px;border-radius:50%;background:var(--peach);}
+.wft-bnow-words{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.wft-bnow-words .hint{margin:0;font-size:var(--fs-meta);}
+/* Workflow tests 3b, U4 (boards 43, 44): Met when and its hint, together under the time limit; a row met although the command
+   ended with an error says so in a neutral note, where the red "Not met" box would be. */
+.wft-ck-metwhen-wrap{display:flex;flex-direction:column;gap:8px;}
+.wft-ck-metwhen-hint{margin:0;}
+.wft-met-note{grid-column:1 / -1;padding:10px 12px;border-radius:var(--r-sm);background:var(--field);color:var(--ink);font-size:var(--fs-body);line-height:1.45;}
+.wft-met-note b{font-weight:600;}
+/* Workflow tests 3b, mock browser check (boards 36, 40, 44): a check's command, folders and patterns in the code font in the side
+   by side's rows; on a phone a cell's value takes the rest of its dot's line and wraps there, never under the version's name. */
+.wft-crow .code{font-family:var(--mono);overflow-wrap:anywhere;}
+.wft-res-v{min-width:0;overflow-wrap:anywhere;}
+@media (max-width:700px){.wft-crow [data-label] > .wft-res-v{flex:1 1 0;}}

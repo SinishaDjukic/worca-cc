@@ -188,6 +188,154 @@ Everything that used to be a per-run `.json`/`.md` control file —
 plan/review **markdown**, `prompt.md`, and `extras/` remain on disk (their
 existence is indexed in the database).
 
+### Workflow history and versions (v90)
+
+Behind the experimental flag `workflowTests`; the data is kept either way.
+
+- `workflow_revisions` holds two kinds of rows for a user workflow. Every save, step-defaults change, restore and
+  delete keeps the workflow **as it was just before** the change (`version_no` NULL; the last 50 per workflow, older
+  ones pruned). **Save version** keeps a numbered state (`version_no` 1, 2, …); numbered versions are never pruned.
+  The table is append-only and has no foreign keys, so a deleted workflow's history stays.
+- `workflows.live_version_no` is the version new runs use; NULL means the workflow row itself (the draft).
+  `GET /api/workflows/:id` also returns `versionNo` (null = the draft row). Plugin workflows have neither.
+  `GET /api/workflows/:id?use=live` returns what a run uses (the version in use): the New run form and the Ask run
+  card read it, and Auto and Ask match a saved twin on it, so every screen before a run shows the graph that runs.
+  The Composer opens the draft (no `use`).
+- A workflow that is deleted and then saved again under the same name gets the same id, so its old versions and
+  history come back with it (#721's way back after a delete), with no version in use until the next Save version or Use.
+- Save version compares with the latest saved version (the overview carries `sinceLatest`); the Use dialog compares
+  with the version in use (each version carries `changesFromInUse`: graph changes only).
+- A version stores the workflow graph and, for each agent and script it uses, a **content hash**, not their text.
+  A live version therefore runs today's agent and script text from the Library. The draft status and Save version say
+  "changed in the Library" when a hash differs (the next version records the new one); the Use dialog never lists it,
+  since every version runs today's text, and says so once (`libraryEdited`).
+- The hash covers only what defines behaviour, so it is the same on every install: the key, the origin, the agent's
+  markdown text or the script's source, and the sidecar fields that change a run (ports, runner type, fan-out,
+  questions, verdict, timeout, params…; `AGENT_HASH_FIELDS` / `SCRIPT_HASH_FIELDS` in `src/core/workflow-parts.mjs`).
+  Never a path, a display name, a colour, an icon or the order.
+- A loop's limit is part of the graph: the stored wire keeps it in `config.maxCycles` (with `config.onExhausted`).
+
+### Workflow tests (v91)
+
+Behind the experimental flag `workflowTests`; the data is kept either way. No foreign keys, like `workflow_revisions`:
+a deleted workflow keeps its examples, and they come back with a workflow saved again under the same id.
+
+- `wf_test_examples`: one row per example of a user workflow:
+  - the request, the answers to Worca's questions, and what happens when Worca asks something else (`pick` | `fail`);
+  - the Basics and the automatic checks (JSON), and the number of tries (1, 3 or 5);
+  - a note, and the past run it came from with the person's verdict (`from_pipeline`, `from_use`, `from_verdict`).
+- `wf_test_example_files`: an example's files as BLOBs (at most 5 MB each, 8 per example), with their sha256.
+- `wf_test_runs`: one row per test:
+  - what it compares: `a_use`, `b_use` (`draft` or a version number) and their fingerprints;
+  - which examples, how many tries, the quick check, the cost cap, and its connectors mode (`pretend` | `real`);
+  - its status (`running` | `done` | `stopped`) and why it stopped (`changed` when the draft, the Library or an example
+    changed while it ran).
+- `wf_test_tries`: one row per try. It records:
+  - the version it ran, with the workflow fingerprint (graph + today's agent and script hashes) and the example
+    fingerprint (request, files, answers, rule, Basics, checks);
+  - whether it was a mock, and its connectors mode;
+  - its status, its pipeline, its verdict (JSON) and its cost.
+
+  A finished try is reused by a later test when both fingerprints, the mock setting and the connectors mode are equal.
+- `wf_test_run_tries`: the tries a test shows, its own and the ones it reused, each on side `a` or `b`. A stopped try
+  that "Finish the rest" made again leaves this table but keeps its `run_id`, so its cost stays in the test's cost.
+- `pipelines.is_test` = 1 marks a try's run. It is written once, when the row is created. These leave a try out:
+  - the Runs list, `/api/counts` and the hello;
+  - Statistics;
+  - team metrics records;
+  - chat notifications;
+  - auto-resume, and resuming it by hand (409);
+  - the Versions page's run counts, the onboarding ticks and Ask's people.
+
+  Its spend stays in `cost_ledger`, so it counts toward the spending limit. A try never mounts memory.
+- A pretend try (connectors `pretend`) writes, in its pipeline folder:
+  - `connectors/<nn>-<server>.json`: the tools each stand-in offers, from the connector's last passing Test;
+  - `connector-calls.ndjson`: one line per call a stand-in answered (`{ ts, server, tool, arguments, readOnly }`), what
+    the try would have sent.
+- `mcp/tests.json` (MCP registry): a Test now keeps each tool as `{ name, description?, inputSchema?, annotations? }`;
+  results written before keep their names and still load.
+- `workflow-tests/seen-connectors.json` (worcaHome): the claude.ai connector names Worca saw when a run started, so
+  Test a version can name the ones a pretend try switches off.
+
+### Workflow tests on a project (v92)
+
+Behind the flag `workflowTests`, like v91. FK-free like the v91 tables.
+
+- `wf_test_example_projects`: one row per example that works on a project:
+  - the project's key and its name when the start was pinned (`project_name`: shown when the project is no longer
+    registered, never the key), the commit the example starts from (`start_sha`), the branch it was taken from
+    (`start_ref`) and that commit's date;
+  - the person's uncommitted changes at save time, as a binary patch (`changes`, at most 5 MB, with its sha256), when they
+    chose to keep them;
+  - `start_commit`: the commit tries start from. It is `start_sha` itself, or, with changes, Worca's own commit of `start_sha`
+    plus the patch, made in Worca's copy with a fixed identity and date so it is the same every time;
+  - the "Before each try, run" command (`setup_cmd`, one line of at most 4000 characters; NULL = no setup).
+- `wf_test_tries` gains `start_commit`, `disk_bytes` (the checkout's size after its setup, measured once per example and start),
+  `setup` (JSON: the command, ok, exit code, whether it ran out of time, how long it took and the last 40 lines of its output,
+  at most 8 KB) and `changes` (JSON: the first 50 changed files with their status and line counts, and the totals).
+- **Worca's copy of a project** (`<worcaHome>/workflow-tests/repos/<projectKey>`): a `git clone --local --dissociate --no-checkout` of
+  the project with no remote, `core.longpaths` on and automatic gc and maintenance off. Before a try it removes any
+  remote and sets those settings again. Tries running at the same time share the copy's git settings; the copy is reset
+  when no try is running (before a try, when no test try of that project has an unsettled pipelines row or is still
+  being checked). Then every checkout registration goes first: unlocked, and removed with its folder only when that
+  folder is inside Worca's run folders; any other folder is never touched, only its registration goes. Then the reset:
+  its git config rewritten from an allowlist (what
+  `git init` makes on that disk, the object and ref format and those settings), `.git/info` as `git init` makes it, and
+  per-checkout `config.worktree` files, hooks a try installed and replace refs removed. A copy that still borrows objects
+  (alternates, from a project cloned with `--shared` or `--reference`) is repacked first and loses its alternates only
+  when it then holds every object (a repack that fails is tried again at most once a day); a copy whose start commit is
+  no longer whole is made again once no test of the project is running, keeping the pinned start commits that were
+  still whole. Pinning a start point never resets it. A try row left running after a crash holds off the reset until
+  Worca finds its owner gone (the stale-run check: the owner's process or heartbeat, or 30 minutes for a row with no
+  owner, `WORCA_STALE_RUN_MS`); a try another Worca UI on the same home is running is never settled. The copy
+  hard-links the project's objects when both are on the same
+  disk; on another disk git copies them.
+  and Worca's own git in it runs no hook, fsmonitor or signing program of the copy and has the outward guard's env. Start points are pinned as
+  `refs/worca-tests/<sha>`. Each try is a worktree of it under its run folder (`<worcaHome>/runs/<pipelineId>/repos/<projectKey>`),
+  on its own branch, always named `worca-cc/…` (Smart run naming never applies to a try). Worca removes the checkout, the branch and the run folder after the try's checks. At boot,
+  it also removes what a restart left. `projectKey()` answers the real project's key for the copy and its worktrees, so a try
+  reads the real project's settings and its row carries the real key. The person's own repository is only ever read.
+- A try's pipeline folder keeps `results.json` and `diff-patch.patch` (what it changed), `try-setup.json` (its setup run,
+  the same record as the row's `setup`), and in `connector-calls.ndjson` every push, pull request, issue, publish, image push
+  or writing web request the outward guard stopped (`guard: true`), beside a pretend try's connector calls.
+- **The outward guard** (every try, with or without a project, Pretend or Real) lives in each try's environment and
+  settings; it stores nothing beyond the folders below and the calls above:
+  - every engine gets the env layers: the stand-ins first on PATH, git that cannot sign in (no terminal prompt, no SSH, no
+    credential helper), the forge CLIs' config folders pointed at empty ones, and the forge, CI and publish tokens removed
+    from the environment. On Windows, `WSLENV` carries the same into WSL. The setup step alone keeps the install-side
+    registry tokens (`NPM_TOKEN` and the like), never a forge, CI or publish one; the agents and the checks (the command
+    check and Library scripts) get the full strip. A guard whose try's log is not known writes to
+    `<worcaHome>/workflow-tests/unbound-calls.ndjson` instead: it never runs unguarded;
+  - Claude Code also gets a `PreToolUse` hook on its Bash and PowerShell tools and the `TRY_DENY` deny rules for both. The
+    hook answers with a structured deny when the probed Claude Code is 2.1.304 or later, else with exit 2;
+  - it is not a network block yet: a program's own web calls are not stopped, nor, with an engine other than Claude Code, a
+    publish that signs in with a token kept in a file such as `~/.npmrc` (the 3a plan's D56 lists every limit).
+- `<worcaHome>/workflow-tests/bin`: the `gh`, `glab` and `az` stand-ins a try finds first on its PATH (sh and `.cmd`). They
+  write the call down and answer "Not sent: this is a test.".
+  `<worcaHome>/workflow-tests/no-auth/{gh,glab,az}`: empty config folders, so those CLIs have no sign-in in a try.
+  `<worcaHome>/workflow-tests/no-hooks`: the empty `core.hooksPath` of Worca's own git in a try's copy.
+
+**Part 3b (no schema change: the schema stays at v92).**
+
+- `<worcaHome>/workflow-tests/before/`: "The command passes" run once on an example's start point, before the workflow
+  changed anything.
+  - `cache/<projectKey>/<hash>.json`: one kept result per project, start commit, setup command, command and time limit (its
+    exit code, its summary line, the end of its output and the test names Worca could read), with the stamp of Worca's copy
+    it ran in. Used for 7 days, and not at all once the copy is made again; removed at boot after 7 days.
+  - `run-<id>/` and `run-<id>.owner.json`: the clone of Worca's copy one run works in, and who runs it (pid and a heartbeat).
+    Removed when the run ends; at boot, when its owner is gone.
+- Each copy of a project (`workflow-tests/repos/<projectKey>`) has `.git/worca-copy-made`, written when the copy is made.
+- A try's `verdict` (in `wf_test_tries`) gains, on a command check: `ms`, the first failing test names (`failed`,
+  `failedCount`) and `before` (what passed and failed before and after the change), and, on a check met when it breaks
+  nothing that passed before, `metWhen` and `metWhy` (why it was or was not met); on a file-scope check: its kind and
+  folders, patterns or most files.
+- "It breaks nothing that passed before" counts a test that was skipped or deleted since, and fewer passing tests, as
+  broken, even when the command itself passes.
+- A Pretend try loads none of your personal Claude Code plugins, skills, agents or hooks, and none of the project's own
+  hooks or plugins. Your sign-in and your own deny rules and sandbox are carried into a settings file Worca stages for the
+  try in the per-user temp folder; Worca removes it when the try ends, and at the next start it removes any a crash left
+  that is older than a day.
+
 ### Run groups (v65)
 
 The Runs list's groups (runs redesign §3.3) are the one new named state of the runs redesign:

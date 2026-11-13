@@ -1,0 +1,12 @@
+.Fs.....                                                                 [100%]
+=================================== FAILURES ===================================
+________________________________ test_top_fail _________________________________
+
+    def test_top_fail():
+>       assert 1 == 2
+E       assert 1 == 2
+
+test_a.py:7: AssertionError
+=========================== short test summary info ============================
+FAILED test_a.py::test_top_fail - assert 1 == 2
+1 failed, 6 passed, 1 skipped in 0.02s

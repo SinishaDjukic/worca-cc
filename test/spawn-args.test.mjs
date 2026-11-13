@@ -155,6 +155,23 @@ test('runClaude FORWARDS every argv field to runReal: mcpConfigPath, mcpServerGr
   ]);
 });
 
+test('runClaude FORWARDS tryGuard to runReal: the try-guard hook reaches --settings (workflow tests 3a D56)', POSIX_SHIM, async () => {
+  const dir = await tmp();
+  const out = join(dir, 'argv.txt');
+  const bin = await fakeBin(dir, out);
+  const prevMock = process.env.WORCA_MOCK;
+  delete process.env.WORCA_MOCK;
+  try {
+    await runClaude({ cwd: dir, bin, prompt: 'p', allowedTools: ['Bash'], tryGuard: { logFile: join(dir, 'calls.ndjson') } });
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
+  }
+  const argv = (await readFile(out, 'utf8')).split('\0').filter(Boolean);
+  const settings = JSON.parse(argv[argv.indexOf('--settings') + 1]);
+  assert.ok(settings.hooks.PreToolUse.some((h) => h.hooks.some((x) => x.command.includes('try-guard.mjs'))));
+  assert.ok(settings.permissions.deny.includes('Bash(git push:*)'));
+});
+
 // ── runClaude -> runMock forwarding of workspaceWriteTargets (§8.10, Phase 4) ─
 // Same drop-at-runClaude hazard as the MCP fields, on the mock branch: the eight-field
 // runMock call is a GATE, so a field added to runMock/mockImplementer alone would

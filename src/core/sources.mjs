@@ -371,7 +371,7 @@ export async function retryWriteback(pipelineId) {
     let prUrl = null;
     if (branch) {
       try {
-        const meta = readStoreMeta(row.project_key);
+        const meta = row.is_test ? null : readStoreMeta(row.project_key);   // 3a: a try never had a pull request
         if (meta?.path && (await anyPrHost())) {
           // The persisted pr_url (SELECT * above) resolves a cross-repo PR by URL; the
           // branch search stays the fallback for rows that never recorded one.
