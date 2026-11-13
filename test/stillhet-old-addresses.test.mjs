@@ -13,7 +13,9 @@ const { TABLE, resolve } = mod.module.exports;
 const EXPECT = {
   '#stats': '#insights/spend', '#stats/cost': '#insights/spend', '#statistics': '#insights/spend',
   '#team-metrics': '#insights/team', '#team-metrics/q3': '#insights/team',
-  '#pipelines': '#runs', '#pipelines/abc': '#runs', '#running/r1': '#runs', '#history': '#runs', '#history/k/p': '#runs', '#feature/f1': '#runs', '#group/g1': '#runs',
+  '#pipelines': '#runs', '#pipelines/abc': '#runs', '#running': '#runs', '#running/r1': '#run/r1', '#history': '#runs', '#history/k/p': '#run/p', '#history/k/p/details': '#run/p', '#history/k/p/details/logs': '#run/p', '#history/k': '#runs',
+  // a feature's or group's page is not on live data yet: dev's bookmark lands on Tasks, never on "This task no longer exists"
+  '#feature': '#runs', '#feature/f1': '#run/group:f1', '#group': '#runs', '#group/g1': '#run/group:g1', '#group/p%3Ap-77': '#run/p-77', '#group/t:t-5': '#schedules',
   '#activity': '#chat',
   '#connectors': '#settings/connectors', '#settings/mcp': '#settings/connectors',
   '#models': '#settings/models', '#providers': '#settings/models', '#settings/providers': '#settings/models',
@@ -43,6 +45,7 @@ test('resolve never loops: null for every current Stillhet route and for every t
   const routes = [...w.RailShell.routes(), 'chat', 'insights/spend', 'insights/team', 'settings/connectors', 'settings/team', 'projects/ws:w1'];
   for (const r of routes) assert.equal(resolve(`#${r}`), null, r);
   for (const to of new Set(Object.values(EXPECT))) assert.equal(resolve(to), null, to);
+  for (const to of ['#run/r1', '#run/p', '#run/group:g1']) assert.equal(resolve(to), null, to);
   assert.equal(resolve(''), null);
   assert.equal(resolve('#'), null);
 });

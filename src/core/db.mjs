@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 89;
+export const SCHEMA_VERSION = 90;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -849,6 +849,7 @@ const INCREMENTAL_COLUMNS = {
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
+                            cost_cap_usd: 'REAL',   // v90: a cap raised for this run (Stillhet's Raise the cap); NULL = the settings cap
                             pr_url: 'TEXT', pr_number: 'INTEGER', pr_state: 'TEXT', pr_checked_at: 'TEXT',
                             outcome: 'TEXT',
                             scheduled_for: 'TEXT', schedule_id: 'TEXT',   // v31: scheduled-run provenance (NULL = started by hand)
@@ -2812,6 +2813,7 @@ export function migrate(db) {
     // those tables on a DB coming from below them.
     if (current < 88) repairSchemaGaps(db, schemaGaps(db));
     // v89: ask_threads.labels (Stillhet chat labels) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v90: pipelines.cost_cap_usd (Raise the cap) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

@@ -182,3 +182,31 @@ test('list wire rows AND the detail payload (rowToState) expose pauseReason + pa
   const plain = await seedPipeline('/tmp/proj-a', { status: 'paused', resumePoint: { version: 2, kind: 'boundary' } });
   assert.equal((await readPipelineByKey(plain.key, plain.id)).state.pauseDetail, null);
 });
+
+test('Raise the cap: a run with cost_cap_usd is held to it, not the settings cap, and still pauses at the team cap', async () => {
+  const { setRunCostCap, readCostCapOverride } = await import('../src/core/cost-budget.mjs');
+  const { readPipelineForResume } = await import('../src/core/artifacts.mjs');
+  await setPipelineCostLimitUsd(1);
+  try {
+    const { id } = await seedPipeline('/tmp/proj-a', { status: 'paused', totalCostUsd: 2 });
+    setCostCapOverride(id);
+    setRunCostCap(id, 5);
+    assert.equal(readCostCapOverride(id), false, 'the raised cap replaces the override');
+    const orch = createOrchestrator({ projectDir: '/tmp/proj-a', resume: readPipelineForResume(id) });
+    assert.equal(orch.runCostCapUsd, 5);
+    assert.equal(orch.state.pipelineCapUsd, 5);
+    orch.pipeline = { id, dir: '/tmp/proj-a' };
+    Object.assign(orch.state, { id, status: 'running', phase: 'plan', totalCostUsd: 2, steps: [{ key: 'plan', costUsd: 2 }] });
+    assert.doesNotThrow(() => orch._checkCostLimits(), 'past the $1 settings cap, under the raised $5');
+    assert.equal(orch._remainingPipelineBudgetUsd(), 3);
+    orch.state.totalCostUsd = 5;
+    assert.throws(() => orch._checkCostLimits(), (e) => e.name === 'PauseError');
+    assert.equal(orch.pauseReason, 'cost_pipeline');
+
+    const team = createOrchestrator({ projectDir: '/tmp/proj-a', resume: readPipelineForResume(id) });
+    team.pipeline = { id, dir: '/tmp/proj-a' };
+    Object.assign(team.state, { id, status: 'running', phase: 'plan', totalCostUsd: 3, steps: [{ key: 'plan', costUsd: 3 }] });
+    team.policyRun = { home: 'acme/policy', fields: { 'cost.pipelineLimitUsd': { kind: 'soft', value: 2.5 } } };
+    assert.throws(() => team._checkCostLimits(), (e) => e.name === 'PauseError', 'the team cap still pauses');
+  } finally { await setPipelineCostLimitUsd(''); }
+});

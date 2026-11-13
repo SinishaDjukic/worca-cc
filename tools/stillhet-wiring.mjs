@@ -7,7 +7,8 @@
 //   figure  `model file › key`: each data key (not a function) of the globals a model file sets, loaded in a node:vm sandbox, and
 //           its seed getters (`seed`, `data`),
 //           plus NAMED_FIGURES, the counts the bar, Pulse and the bell draw
-// Status: wire to, wired (then its real source), wired (partial), new: build it, add to the design first.
+// Status: wire to, wired (then its real source), wired (partial), new: build it, add to the design first, not offered live (then
+// why the live kind does not draw it, for the controller to decide).
 //   npm run stillhet:wiring            prints the ids with no row; exit 1 when there is one
 //   npm run stillhet:wiring -- --list  prints every id
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -119,7 +120,7 @@ const rowsUnder = (doc, heading) => {
 /** The ids of a table in the wiring file: the backticked first cell of each row under `## heading`. */
 export const rowIds = (doc, heading) => rowsUnder(doc, heading).map((l) => l.slice(3, l.indexOf('`', 3)));
 
-export const STATUS = /\|\s*(wire to|wired|wired \(partial\)|new: build it|add to the design first)\s*\|/;
+export const STATUS = /\|\s*(wire to|wired|wired \(partial\)|new: build it|new: built|add to the design first|not offered live)\s*\|/;
 
 /** What has no row, and the rows of the two tables whose status is not one of the three words. */
 export function check(doc, actions, figures) {

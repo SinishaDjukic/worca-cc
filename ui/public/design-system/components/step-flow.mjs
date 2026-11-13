@@ -5,7 +5,7 @@
 const WORKING = { Pause: 'Pausing…', Resume: 'Resuming…', Restart: 'Restarting…', Fix: 'Fixing…', Merge: 'Merging…', Create: 'Creating…', Stop: 'Stopping…', Discard: 'Discarding…', Archive: 'Archiving…', Cancel: 'Cancelling…', 'Re-plan': 'Re-planning…', Continue: 'Continuing…', Delete: 'Deleting…', Remove: 'Removing…', Reset: 'Resetting…', Push: 'Pushing…', Publish: 'Pushing…', Apply: 'Applying…', Link: 'Linking…', Update: 'Updating…', Report: 'Sending…' };
 
 /** What a step's button says while it works. */
-export const workingWord = (label) => WORKING[String(label).split(' ')[0]] || 'Working…';
+export const workingWord = (label) => (String(label) === 'Pause after this step' ? 'Pausing after this step' : WORKING[String(label).split(' ')[0]] || 'Working…');
 
 const DANGER = /^(Stop|Discard|Cancel|Delete|Remove|Reset)/;
 /** The strip's words for a step that asks first. */
@@ -13,7 +13,7 @@ export const confirmOf = (f, label) => ({ text: f.confirm, yes: label.replace(/ 
 
 /** A failure in the design system's words: Could not …, the reason, Nothing changed. */
 export function failureOf(label, why, { odd = false } = {}) {
-  const reason = odd || !why ? 'something went wrong on Worca’s side' : why;
+  const reason = odd || !why ? 'something went wrong on Worca’s side' : why.replace(/[.\s]+$/, '');   // a reason's own period is the sentence's
   return { title: `Could not ${label.charAt(0).toLowerCase()}${label.slice(1)}`, detail: `${reason[0].toUpperCase()}${reason.slice(1)}. Nothing changed.`, reason, odd };
 }
 

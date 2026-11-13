@@ -316,6 +316,10 @@
   // A case's facts are its own; its state's word, colour and one action are the library's.
   const CTX = { pr: '#959', pr2: '#960', pr3: '#961', base: 'dev', branch: 'feat/unified-page-navigation-one-head-breadcrumb', groupBranch: 'feat/unified-page-navigation', source: SRC, hidden: 'worca/run-7b0bfb1e', folder: '~/src/marketing-site', worktree: '~/.worca-cc/worktrees/run-7b0bfb1e', at: '14:00' };
   const ctxOf = (c) => Object.assign({}, CTX, c.at ? { at: c.at } : {}, c.n ? { n: c.n } : {}, c.k ? { k: c.k } : {}, c.host ? { host: c.host } : {}, c.extraItems ? { extraItems: c.extraItems } : {});
+  // live (D3): the task's own PR, base, branch and failing checks fill the words; the design's sample (#959, dev, its
+  // worktree) never reaches a real task
+  const liveFactsOf = (c) => ({ pr: c.pr || 'the PR', base: c.base || 'its base', branch: c.branch || '', hidden: '', folder: '', worktree: '',
+    failedChecks: c.failedChecks ? c.failedChecks + ' failing check' + (c.failedChecks === 1 ? '' : 's') : 'failing checks' });
   const CASES = CASES0.concat(CASES1).map((c) => Object.assign({}, R.runState(c.state || c.id, ctxOf(c)), c));
 
   // The stack: the PRs of a feature or chain, in merge order, each based on the one above it.
@@ -430,6 +434,8 @@
     worktree: '~/.worca-cc/worktrees/run-7b0bfb1e',
     services: [{ id: 'web', name: 'Web server', port: 3000 }, { id: 'api', name: 'API server', port: 8080 }],
     builtins: ['Install dependencies', 'Run the tests'],
+    // a workspace's stack: its projects' services started together, in order (dev's run Actions stacks)
+    stacks: [{ id: 'api-docs', name: 'API and docs', steps: 2, status: '', step: 0, error: '' }],
     members: [{ name: 'worca-api', files: 12 }, { name: 'worca-docs', files: 3 }],
     noChangeMembers: ['worca-web'],
     comments: { 'ui/public/run-head.mjs': [{ line: 'el.append(breadcrumb(ROUTES.parentOf(run)));', who: 'Review implementation', t: 'parentOf can be null on a saved run' }, { line: 'el.append(titleRow(run), actions(run));', who: 'Review implementation', t: 'One primary only in actions' }], 'ui/public/nav/routes.mjs': [{ line: 'el.append(groupList(run));', who: 'Review implementation', t: 'Group list moves to the trail' }] },
@@ -457,7 +463,7 @@
   const FORMS = {
     model: { title: 'Switch model', yes: 'Resume', text: 'Every remaining step runs on the model you pick; the task resumes from {step}.', options: ['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'], pick: 1 },
     'resume-at': { title: 'Resume at a time', yes: 'Schedule the resume', text: 'The task stays paused until then, and you can cancel it.', field: { label: 'Time', value: '15:30', hint: 'Today, in your time zone', time: true } },
-    report: { title: 'Report this task', yes: 'Send report', text: 'Sends the task’s logs and your note to the Worca team.', field: { label: 'Note', value: '', hint: 'What went wrong, or what you expected', multiline: true } },
+    report: { title: 'Report this task', yes: 'Send report', text: 'Files a GitHub issue with this task’s redacted report and your note.', field: { label: 'Note', value: '', hint: 'What went wrong, or what you expected', multiline: true } },
     cap: { title: 'Raise the cap', yes: 'Raise it and go on', text: 'A new cost cap for this task; it goes on from {step}.', field: { label: 'New cap', value: '$180', hint: 'It is at $120' } },
     'team-cap': { title: 'Continue past team cap', yes: 'Continue past the cap', text: 'Your team’s cap is $200 a run. Going past it is recorded with your reason.', field: { label: 'Reason', value: '', hint: 'Your team’s policy asks for one', required: true } },
     preset: { title: 'Save as preset', yes: 'Save preset', text: 'The next run can start from this task’s setup: its workflow, models and budget.', field: { label: 'Name', value: 'Unified page navigation', required: true } },
@@ -525,6 +531,7 @@
       if (!m) return titles ? Object.assign({}, st, { title: titles[+st.key.slice(3) - 1] }) : st;
       return Object.assign({}, st, { member: m, subs: m.stages.filter((x) => !SHIP.test(x.key)).map((x) => {
         const lv = x.subs.find((y) => LIVE[y.state]);
+        if (c.liveGroup) return s(x.label, subState(x), '', {});   // a live member's stage: its state, never its design case's sample time
         return s(x.label, subState(x), stageMeta(x), { live: lv ? lv.live : '', when: lv ? lv.when : '' });
       }) });
     }) });
@@ -548,7 +555,7 @@
     const planDone = c.stages.some((x) => x.key === 'plan' && x.subs.every(isDone));
     const buildLive = c.stages.some((x) => x.key === 'build' && x.subs.some((y) => LIVE[y.state]));
     const clean = c.stages.filter((x) => !SHIP.test(x.key)).every((x) => x.subs.every(isDone));
-    const ev = c.ev ? c.ev : c.id === 'kept' ? EVIDENCE['review/Manual web UI testing'] : c.id === 'failed' ? EVIDENCE['build/Implementation'] : c.id === 'failing' ? EVIDENCE['pr/Checks'] : /^(conflicts|workspace)$/.test(c.id) ? EVIDENCE['pr/Conflicts with dev'] : null;
+    const ev = c.ev ? c.ev : c.liveId ? (c.why && c.why.length ? { log: 'Open the log' } : null) : c.id === 'kept' ? EVIDENCE['review/Manual web UI testing'] : c.id === 'failed' ? EVIDENCE['build/Implementation'] : c.id === 'failing' ? EVIDENCE['pr/Checks'] : /^(conflicts|workspace)$/.test(c.id) ? EVIDENCE['pr/Conflicts with dev'] : null;
     let focus = null;
     if (c.id === 'plan') focus = { kind: 'plan', items: PLAN_ITEMS.map((t) => ({ t, state: 'next' })), issues: ui && ui.fixed && ui.fixed.plan ? [] : DETAIL.planIssues };
     else if (c.reqsCheck) focus = { kind: 'reqs', items: DETAIL.criteria, left: reqLeft(ui) };
@@ -562,17 +569,32 @@
       const moving = !/^(Paused|Stopped)$/.test(c.word);   // a task held up is not working on its next item
       focus = { kind: 'progress', note: buildLive ? doneN + ' of ' + PLAN_ITEMS.length + ' built' : 'all ' + PLAN_ITEMS.length + ' built · now in Review', items: PLAN_ITEMS.map((t, i) => ({ t, state: i < doneN ? 'done' : i === doneN ? (moving ? 'now' : 'paused') : 'next' })) };
     } else if (built && !c.runCases && !c.mock && !/^(Failed|Merged|Archived|Discarded|Deleted|Applied|Stopped|Finished|Closed|Abandoned|Declined)$/.test(c.word)) focus = { kind: 'check', items: DETAIL.check, title: prOpen(c) ? 'Before you merge' : 'Before you ship' };
-    const areas = {};
-    if (built && !c.noDiff) DETAIL.files.forEach(([f, a, d]) => { const k = f.slice(0, f.lastIndexOf('/') + 1); const x = areas[k] || (areas[k] = { dir: k, n: 0, add: 0, del: 0 }); x.n++; x.add += a; x.del += d; });
-    const max = Math.max(1, ...Object.values(areas).map((x) => x.add + x.del));
+    const areas = areasOf(built && !c.noDiff ? DETAIL.files : []);
     const rounds = DETAIL.rounds['Review implementation'].length;
     const done = built && !live;
     return { focus, checklist: c.shaped || c.id === 'gate' ? DETAIL.checklist : null, outcome: done ? c.outcome || DETAIL.outcome : [], task: seedOf(c)?.ask || c.task || DETAIL.task,   // what it did, once it is done
       // It says it did what you asked only when everything ran, nothing stayed open, and there is a change to show for it.
       ask: done && clean && !c.issues && !c.noDiff && !c.mock && !c.evidence && !/^(Archived|Discarded|Deleted)$/.test(c.word) ? { parts: DETAIL.ask, unasked: DETAIL.unasked } : null,
       evidence: !done || c.mock || (focus && focus.kind === 'broke') ? '' : c.evidence || (clean ? `Tests pass · Review passed on round ${rounds} · Manual test passed` : ''),
-      areas: Object.values(areas).map((x) => Object.assign(x, { pct: Math.round(((x.add + x.del) / max) * 100) })),
+      areas,
       artifacts: DETAIL.artifacts.filter(([, step]) => c.stages.some((x) => x.subs.some((y) => y.name === step && y.state !== 'next'))) };
+  }
+  // The folders a diff touched, largest first in share: what the overview's areas draw.
+  function areasOf(files) {
+    const areas = {};
+    files.forEach(([f, a, d]) => { const k = f.slice(0, f.lastIndexOf('/') + 1); const x = areas[k] || (areas[k] = { dir: k, n: 0, add: 0, del: 0 }); x.n++; x.add += a; x.del += d; });
+    const max = Math.max(1, ...Object.values(areas).map((x) => x.add + x.del));
+    return Object.values(areas).map((x) => Object.assign(x, { pct: Math.round(((x.add + x.del) / max) * 100) }));
+  }
+  // The live kind (D4): a task's Changes, documents, Logs and worktree actions are its own, read by RailTaskLive once its
+  // page is ready (null while a part is still out: the part draws empty, never the design's sample).
+  const livePartsOf = (c) => (c.liveId && window.RailTaskLive?.parts ? window.RailTaskLive.parts(c.liveId) || {} : null);
+  // live: the overview keeps only the task's own facts (what was asked, its areas and documents, what broke); the design's
+  // sample plan, checklist, outcome and evidence are not this task's, so they are left out. A failed task's What broke lists
+  // the same items its card does (taskPageOf `why`).
+  function liveOver(over, LP, files, c) {
+    const broke = over.focus && over.focus.kind === 'broke' && (c.why || []).length ? { kind: 'broke', ev: over.focus.ev, own: c.why } : null;
+    return Object.assign({}, over, { focus: broke, checklist: null, outcome: [], ask: null, evidence: '', task: c.task || '', artifacts: LP.docs || [], areas: over.areas.length ? areasOf(files) : [] });
   }
   // A feature reads from the task that holds it up: failed first, then one that asks, one paused, one stopped.
   const HOLD = [['Failed', 'group-failed', (k, n) => 'Task ' + k + ' of ' + n + ' · failed'], [R.runState('group-needs').word, 'group-needs', (k, n) => 'Task ' + k + ' of ' + n + ' · needs you'],
@@ -753,7 +775,7 @@
     const left = c.reqsCheck ? reqLeft(ui) : 0;
     if (c.reqsCheck && left) c = Object.assign({}, c, { detail: 'Mark every requirement before you create the PR · ' + left + ' left' });
     const heldStep = c.stages.flatMap((x) => (SHIP.test(x.key) ? [] : x.subs)).find((y) => LIVE[y.state]);
-    const liveCtx = Object.assign({}, ctxOf(c), outlineN ? { n: outlineN } : {}, c.k ? { k: c.k } : {}, { step: heldStep ? heldStep.name : 'the next step' });
+    const liveCtx = Object.assign({}, ctxOf(c), c.liveId ? liveFactsOf(c) : {}, outlineN ? { n: outlineN } : {}, c.k ? { k: c.k } : {}, { step: heldStep ? heldStep.name : 'the next step' });
     const chainSt = ui.stackSt || CHAIN_START;
     if (c.id === 'chain') c = chainLive(c, chainSt);
     const now = c.openStage || defaultStage(c);
@@ -775,8 +797,8 @@
       if (src.choice) {
         const n = sh.runs.length;
         rows = pick === 'one'
-          ? [{ num: 'One PR', title: (n === 2 ? 'Both' : 'All ' + n) + ' runs, one branch', state: 'next', word: 'Not opened', sub: 'Into dev' }]
-          : sh.runs.map((t, i) => ({ num: owned[i] || 'PR ' + (i + 1), title: t, state: owned[i] ? 'review' : 'next', word: owned[i] ? 'Opened' : 'Not opened', sub: (i && !sh.separate ? 'Into PR ' + i + '’s branch' : 'Into dev') + (sh.sizes ? ' · ' + sh.sizes[i] : '') }));
+          ? [{ num: 'One PR', title: (n === 2 ? 'Both' : 'All ' + n) + ' runs, one branch', state: 'next', word: 'Not opened', sub: 'Into ' + liveCtx.base }]
+          : sh.runs.map((t, i) => ({ num: owned[i] || 'PR ' + (i + 1), title: t, state: owned[i] ? 'review' : 'next', word: owned[i] ? 'Opened' : 'Not opened', sub: (i && !sh.separate ? 'Into PR ' + i + '’s branch' : 'Into ' + liveCtx.base) + (sh.sizes ? ' · ' + sh.sizes[i] : '') }));
         choice = { note: (pick === sh.rec ? 'Worca suggests ' + shipWord(sh.rec) : 'You picked ' + shipWord(pick) + '; Worca suggests ' + shipWord(sh.rec)) + ': ' + sh.reason };
       }
       rows = rows.map((r) => Object.assign(rowOf({ state: r.state }), r, { rowCls: 'is-' + r.state + (r.isNext ? ' is-next-up' : ''), total: rows.length }));
@@ -798,7 +820,7 @@
       const stopWord = c.stages.some((x) => x.run) && liveRun >= 0 ? 'Stop task ' + (liveRun + 1) : 'Stop the task';
       // ▾ holds each step once: a group's way to ship is the choice above; a menu never repeats the main.
       const items = alt.concat(c.action.items.filter((t) => !(sh && /^Create (PR|\d+ PRs)$/.test(t)) && t !== label && !(t === 'Fix all' && ui.fixed && ui.fixed[c.id]) && R.shows(R.actionLevel(t)))).concat(liveNow && !c.action.items.includes('Stop') && !c.action.items.includes('Abort') ? [stopWord] : []).concat(rest && !c.action.items.includes('Re-plan the rest') ? ['Re-plan the rest'] : []).concat(rest && !c.action.items.includes('Cancel the rest') ? ['Cancel the rest'] : []);
-      const helpOf = (t) => offs[t] || (sh && sh.separate && /^Create \d+ PRs$/.test(t) ? 'Creates one PR per task, each into dev' : '') || HELP_OF(t, liveCtx) || (/^Merge #(\d+)$/.test(t) ? 'Merges ' + t.slice(6) + ' into dev; Worca then moves the next PR onto dev' : /^Fix checks on #/.test(t) ? 'Starts a short task that fixes ' + t.slice(14) + '’s failing checks' : '');
+      const helpOf = (t) => offs[t] || (sh && sh.separate && /^Create \d+ PRs$/.test(t) ? 'Creates one PR per task, each into ' + liveCtx.base : '') || HELP_OF(t, liveCtx) || (/^Merge #(\d+)$/.test(t) ? 'Merges ' + t.slice(6) + ' into ' + liveCtx.base + '; Worca then moves the next PR onto dev' : /^Fix checks on #/.test(t) ? 'Starts a short task that fixes ' + t.slice(14) + '’s failing checks' : '');
       action = Object.assign({}, c.action, { label, isNew: NEW.has(label), help: helpOf(label), items: items.map((t) => ({ text: t, isNew: NEW.has(t), help: sh && / instead$/.test(t) ? (/one PR/.test(t) && sh.oneBlocked ? 'Not possible: ' + sh.oneBlocked.replace(/^Not possible: /, '') : sh.reason) : helpOf(t), off: !!offs[t] || (/one PR instead/.test(t) && sh && !!sh.oneBlocked), checked: t === 'Watch' ? watching : t === 'Pause after this step' ? !!ui.pauseAfter : undefined })), offWhy: offs[label] || '' });
     }
     // The task is live while any work stage (everything before shipping) is unfinished and it has not failed;
@@ -817,7 +839,9 @@
     const hasChanges = !c.noDiff && !runStages.length && buildStarted;
     const groupBuilt = runStages.filter((x) => x.subs.some((y) => y.name === 'Build' && y.state !== 'next')).map((x) => +x.key.slice(3) - 1);
     const logsGone = gone === 'archived' || gone === 'deleted';
-    const files = c.files || DETAIL.files;
+    const LP = livePartsOf(c);
+    const files = LP ? (LP.changes ? LP.changes.files : []) : c.files || DETAIL.files;
+    const over = LP ? liveOver(overview(c, live, ui), LP, files, c) : overview(c, live, ui);
     // Where you are: Runs › the place (project, folder or workspace) › the group. The page itself is never a crumb.
     const place = c.folder ? c.folder.split('/').pop() : c.project === '' ? '' : c.project || 'worca-cc';
     const crumbs = [{ t: 'Tasks' }].concat(place ? [{ t: place }] : [])
@@ -833,7 +857,7 @@
       crumbs, pager: g ? { index: par.index, n: g.stages.filter((x) => x.run).length, prev: sibling(par.index - 1), next: sibling(par.index + 1), group: g.id } : null,
       // The place line: where the code lives and where it goes, the PR once it exists. Each part once on the page.
       place: { branch, copy: !!branch && branch !== 'main', base: c.base || (c.onSource ? 'origin' : branch === 'main' ? 'origin/main' : branch ? 'dev' : ''), onSource: !!c.onSource, hidden: seed ? '' : c.hidden || '',
-        pr: c.pr !== undefined && c.pr !== '' ? c.pr : prOpen(c) ? '#959' : '', folder: c.folder || '', repos: c.repos || [],
+        pr: c.pr !== undefined && c.pr !== '' ? c.pr : prOpen(c) && !c.liveId ? '#959' : '', folder: c.folder || '', repos: c.repos || [],
         merged: c.stages.some((x) => x.key === 'merged' && x.subs.length && x.subs.every((y) => y.state === 'merged')), applied: c.word === 'Applied' },
       chips: (ui.chips || []).filter((x) => x.kind !== 'group'), inGroup: !!g || runStages.length > 0, addedGroup: ((ui.chips || []).find((x) => x.kind === 'group') || {}).text || '',
       alert: R.stateIds().includes(stateId) ? R.runState(stateId).alert : undefined, word: c.word, dot: c.dot || '', sym: c.sym || '', detail: R.fill(c.detail || '', Object.assign({}, liveCtx, { branch })), action, archived: !!c.archived,
@@ -855,32 +879,35 @@
           rows.push(Object.assign(rowOf({ state: pr.state }), { name: pr.num, live: [pr.word, pr.sub].filter(Boolean).join(' · ') }));
         }
         return { key: open, label: st.label, title: st.title || '', isRun: true, rows, stack,
-          meta: st.member ? '$' + totals(resolve(st.member)).cost.toFixed(2) : '', runIndex: i, canOpen: !!st.member };
+          meta: c.liveGroup ? '$' + (c.liveGroup.members[i]?.cost || 0).toFixed(2) : st.member ? '$' + totals(resolve(st.member)).cost.toFixed(2) : '', runIndex: i, canOpen: !!st.member };
       })(),
       // The group's runs, each read from the task itself: the Runs tab, the pager and Open all agree with its page.
       runs: runStages.map((x, i) => {
         const m = x.member;
         return { n: i + 1, title: x.title, word: m ? m.word : 'Waiting', dot: m ? (m.sym === 'q' ? 'is-amber' : m.sym ? 'is-red' : m.dot) : 'is-grey-ring',
-          time: stageMeta(x), cost: m ? '$' + totals(resolve(m)).cost.toFixed(2) : '', pr: (c.runPRs || [])[i] || '', canOpen: !!m };
+          time: c.liveGroup ? '' : stageMeta(x), cost: c.liveGroup ? '$' + (c.liveGroup.members[i]?.cost || 0).toFixed(2) : m ? '$' + totals(resolve(m)).cost.toFixed(2) : '', pr: (c.runPRs || [])[i] || '', canOpen: !!m, pipelineId: c.liveGroup ? c.liveGroup.members[i]?.pipelineId : undefined };
       }),
       figs: c.figs.filter(([k]) => k !== 'Rate').map(([k, v]) => {
-        if (k === 'Time') return { k, v: t.mins ? fmtMin(t.mins) : v, title: started ? 'Started 25 Oct, 08:31' : 'Not started yet' };
+        if (k === 'Time') return { k, v: t.mins ? fmtMin(t.mins) : v, title: started ? c.startedWord || (c.liveId ? '' : 'Started 25 Oct, 08:31') : 'Not started yet' };
         if (k !== 'Cost') return { k, v };
         const cost = t.cost ? '$' + t.cost.toFixed(2) : v;
         const pct = Math.round((money(cost) / budget) * 100);
-        return { k, v: cost, of: 'of $' + budget, warn: pct >= 80, title: pct + '% of the ' + (runStages.length ? c.kind.toLowerCase() : 'run') + '’s budget' };
+        if (c.liveId && !c.budget) return { k, v: cost };   // live with no cap of its own: no "of $…" (never the design's $120)
+        return { k, v: cost, of: 'of $' + (c.liveId ? budget.toFixed(2) : budget), warn: pct >= 80, title: pct + '% of the ' + (runStages.length ? c.kind.toLowerCase() : 'run') + '’s budget' };
       }).concat(gone || c.noDiff || (!buildStarted && !groupBuilt.length) ? [] : [runStages.length ? (() => { const sum = groupBuilt.reduce((a, i) => { const [p, m] = SIZE(sizesOf(c)[i] || '+0 \u22120'); return [a[0] + p, a[1] + m]; }, [0, 0]); return { k: 'Changes', v: '+' + sum[0] + ' \u2212' + sum[1], tab: '' }; })()
         : { k: 'Changes', v: c.diff || '+' + files.reduce((a, x) => a + x[1], 0) + ' \u2212' + files.reduce((a, x) => a + x[2], 0), tab: 'changes' }]),
       // A tab shows only what exists: no diff before Build, no decisions before anything was decided.
-      tabs: (runStages.length ? GROUP_TABS : RUN_TABS).filter(([id]) => (id === 'changes' ? hasChanges : id === 'decisions' ? decisionsOf(c, runStages).length > 0 || !!DETAIL.asks[c.id] : true)).map(([id, l], i, all) => ({ id, l, n: id === 'changes' && !gone ? String(files.length) + (overview(c, live, ui).artifacts.length ? ' · ' + overview(c, live, ui).artifacts.length + ' docs' : '') : id === 'decisions' ? String(decisionsOf(c, runStages).length + (DETAIL.asks[c.id] ? 1 : 0)) : '',
+      tabs: (runStages.length ? GROUP_TABS : RUN_TABS).filter(([id]) => (id === 'changes' ? hasChanges : id === 'decisions' ? decisionsOf(c, runStages).length > 0 || !!DETAIL.asks[c.id] : true)).map(([id, l], i, all) => ({ id, l, n: id === 'changes' && !gone ? String(files.length) + (over.artifacts.length ? ' · ' + over.artifacts.length + ' docs' : '') : id === 'decisions' ? String(decisionsOf(c, runStages).length + (DETAIL.asks[c.id] ? 1 : 0)) : '',
         sel: id === (all.some((x) => x[0] === ui.tab) ? ui.tab : all[0][0]) })),
       activity: c.stages.map((x) => {
-        const cost = x.run ? (x.member ? totals(resolve(x.member)).cost : 0) : x.subs.reduce((a, y) => a + (y.state === 'next' ? 0 : costOf(y)), 0) * (c.scale || 1);
+        // live: the stage's own cost (taskPageOf); its steps keep the design's names, never its sample prices, models or evidence
+        const cost = c.liveId ? (x.run ? (c.liveGroup?.members[+x.key.slice(3) - 1]?.cost || 0) : (c.stageCost || {})[x.key] || 0)
+          : x.run ? (x.member ? totals(resolve(x.member)).cost : 0) : x.subs.reduce((a, y) => a + (y.state === 'next' ? 0 : costOf(y)), 0) * (c.scale || 1);
         return { key: x.key, label: x.label, title: x.title || '', meta: cost ? '$' + cost.toFixed(2) : '',
-          rows: x.subs.map((y, i) => Object.assign(rowOf(y, x.subs[i + 1]), { model: x.run ? '' : MODEL_OF[y.name] || '',
-            cost: x.run || y.state === 'next' || !COST_OF[y.name] ? '' : '$' + (costOf(y) * (c.scale || 1)).toFixed(2) + (/^(now|ask|paused)$/.test(y.state) ? ' so far' : ''),
+          rows: x.subs.map((y, i) => Object.assign(rowOf(y, x.subs[i + 1]), { model: x.run || c.liveId ? '' : MODEL_OF[y.name] || '',
+            cost: x.run || c.liveId || y.state === 'next' || !COST_OF[y.name] ? '' : '$' + (costOf(y) * (c.scale || 1)).toFixed(2) + (/^(now|ask|paused)$/.test(y.state) ? ' so far' : ''),
             // the evidence of this state: what this step says went wrong, not a neighbour's
-            evidence: /^(failed|problem)$/.test(y.state) ? (x.key === 'pr' && y.name === 'Checks' && /^1 failed/.test(y.live) ? EVIDENCE['pr/Checks/one'] : c.ev && x.key !== 'pr' ? c.ev : EVIDENCE[x.key + '/' + y.name] || null) : null,
+            evidence: !c.liveId && /^(failed|problem)$/.test(y.state) ? (x.key === 'pr' && y.name === 'Checks' && /^1 failed/.test(y.live) ? EVIDENCE['pr/Checks/one'] : c.ev && x.key !== 'pr' ? c.ev : EVIDENCE[x.key + '/' + y.name] || null) : null,
             focus: ui.focus === x.key + '/' + y.name, ref: x.key + '/' + y.name })) };
       }),
       tryIt: window.RailWould((() => {
@@ -893,11 +920,15 @@
       // A group's next run, under the task it follows: whether it starts by itself or asks first is set right there.
       then: c.independent || hold ? null : (() => { const k = runStages.findIndex((x) => stageState(x.subs) === 'live'); const nx = k >= 0 && runStages[k + 1]; return nx && nx.subs.every((y) => y.state === 'next') && open === runStages[k].key ? { n: k + 2, title: nx.title } : null; })(),
       planHead: runStages.length > 0 && open === 'plan',
-      runCases: c.runCases || [], parent: par, over: overview(c, live, ui), ask: clarifying ? Object.assign({}, clarifying[qIndex], { n: (qIndex + 1) + ' of ' + clarifying.length }) : (c.id === 'question' && seed?.question) || DETAIL.asks[c.id] || null, under: /^(gate|plan|outline)$/.test(c.id) ? { issues: c.id === 'gate' ? DETAIL.issues : [], roles: DETAIL.roles } : null,
+      runCases: c.runCases || [], parent: par, over, ask: clarifying ? Object.assign({}, clarifying[qIndex], { n: (qIndex + 1) + ' of ' + clarifying.length }) : (c.id === 'question' && seed?.question) || DETAIL.asks[c.id] || null, under: /^(gate|plan|outline)$/.test(c.id) ? { issues: c.id === 'gate' ? DETAIL.issues : [], roles: DETAIL.roles } : null,
       flow: flowOf(c, stateId, liveCtx), state: stateId, event: EVENT_OF(c, stateId, liveCtx), runFlow: R.runFlow(liveCtx), liveRun: runStages.findIndex((x) => stageState(x.subs) === 'live' && x.member && /^(Working|Starting)$/.test(x.member.word)), formCtx: liveCtx,
-      hasSetup: !c.noSetup && !runStages.length, dependents: c.dependents || 0, heldBy: c.heldBy || '', hosted: !!c.hosted, baseMoved: !!c.baseMoved, independent: !!c.independent, reqsLeft: left, reqsCheck: !!c.reqsCheck, holdIndex: c.k ? c.k - 1 : -1,
-      logs: logsGone ? [] : logsOf(c), agents: logsGone ? [] : agentsOf(c), sessions: logsGone ? [] : sessionsOf(c), usage: usageOf(c), graph: graphOf(c, ui), agentsUnknown: !!c.agentsUnknown, isWorkspace: !!(c.repos && c.repos.length), docsHere: !hasChanges, outlineN, outlineRuns: ui.outline || RUNS, rounds: DETAIL.rounds,
-      tabData: Object.assign({}, DETAIL, seed ? { plan: seed.plan, docBody: Object.assign({}, DETAIL.docBody, { 'plan.md': '## The plan\n' + seed.plan.map((t) => '- ' + t).join('\n') }) } : {}, { files, decisions: decisionsOf(c, runStages) }),
+      hasSetup: LP ? !!LP.setup : !c.noSetup && !runStages.length, dependents: c.dependents || 0, heldBy: c.heldBy || '', hosted: LP ? !!(LP.actions && !LP.actions.enabled) : !!c.hosted, baseMoved: !!c.baseMoved, independent: !!c.independent, reqsLeft: left, reqsCheck: !!c.reqsCheck, holdIndex: c.k ? c.k - 1 : -1,
+      // live: the log, agents, sessions and step usage are the task's own (its log, steps, sessions and telemetry)
+      logs: logsGone ? [] : LP ? LP.log || [] : logsOf(c), agents: logsGone ? [] : LP ? LP.agents || [] : agentsOf(c), sessions: logsGone ? [] : LP ? LP.sessions || [] : sessionsOf(c), usage: LP ? LP.usage || [] : usageOf(c), graph: graphOf(c, ui), agentsUnknown: !!c.agentsUnknown, isWorkspace: !!(c.repos && c.repos.length), docsHere: !hasChanges, outlineN, outlineRuns: ui.outline || RUNS, rounds: c.liveId ? {} : DETAIL.rounds,
+      tabData: Object.assign({}, DETAIL, seed ? { plan: seed.plan, docBody: Object.assign({}, DETAIL.docBody, { 'plan.md': '## The plan\n' + seed.plan.map((t) => '- ' + t).join('\n') }) } : {}, { files, decisions: decisionsOf(c, runStages) },
+        LP ? { fileMeta: LP.changes?.fileMeta || {}, hunks: LP.changes?.hunks || {}, comments: LP.comments || {}, artifacts: LP.docs || [], services: LP.actions?.services || [], builtins: LP.actions?.builtins || [], stacks: LP.actions?.stacks || [], members: [], noChangeMembers: [] } : {},
+        // live: what dev does not give the page yet is empty, so its row hides (never the design's skills, memory, worktree or cost lines)
+        c.liveId ? { skills: [], memory: [], worktree: '', tunables: [], costOther: [], costApart: [] } : {}),
     };
   }
 
@@ -923,5 +954,63 @@
   const moveMember = (groupId, i, ui, to, f) => move(memberAt(groupId, i, ui), to, f);
   const restored = (ui) => { const raw = rawOf(ui.caseId, ui); return Object.assign({}, raw.restoreTo || caseFor('merged'), { action: null, detail: 'Restored: its branch, worktree and logs were not brought back' }); };
   const stageOf = (id) => { const c = CASES.find((x) => x.id === id), st = c?.stages; if (!st?.length || !st[0].subs) return {}; const live = st.findIndex((x) => R.stageState(x.subs) === 'live'); let done = -1; st.forEach((x, i) => { if (R.stageState(x.subs) === 'done') done = i; }); return { stage: live >= 0 ? live : done, stages: st.length }; };
-  window.RunCardModel = { stageOf, move: moveIn, memberAt, moveMember, restored, caseGroups: CASE_GROUPS, stateOf: (id) => { const c = CASES.find((x) => x.id === id); if (!c) throw new Error(`no run case ${id}`); return c.state || c.id; }, forms: FORMS, titles: TITLES, chainStart: CHAIN_START, chainPrs: CHAIN_PRS.map((x) => x[0]), proposed: PROPOSED, isNew: (t) => NEW.has(t), flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
+  // The live kind (Stillhet Tasks, D3): a task's page is its case's design with this task's own facts (live/task-page.mjs
+  // taskPageOf), handed to view() as the run it draws (ui.run), so the prototype draws it and nothing is copied.
+  const STAGE_SUB = { done: 'done', now: 'now', failed: 'failed', paused: 'paused', stopped: 'stopped', next: 'next' };
+  function liveRun(page) {
+    const base = caseFor(page.case) || CASES[1];
+    // the design's step names stay; its sample times, notes and rounds never reach a real task
+    // (a step's sample cost too; and the design's landing step goes into the task's own base)
+    const bare = (x) => Object.assign({}, x, { time: '', live: '', when: '', loops: 0, cost: undefined }, /^Into dev$/.test(x.name) ? { name: 'Into ' + (page.base || 'its base') } : {});
+    const WORK = /^(plan|build|review)$/;
+    // a work stage the task's workflow does not have (a Restart Build round has no Plan) is not drawn
+    const stages = (base.stages || []).filter((st0) => !WORK.test(st0.key) || (page.stages || []).some((x) => x.key === st0.key)).map((st0) => {
+      const st = Object.assign({}, st0, { subs: (st0.subs || []).map(bare) });
+      const own = (page.stages || []).find((x) => x.key === st.key);
+      if (!own || st.run || SHIP.test(st.key)) return st;
+      // its steps are the task's workflow's own, named and marked by dev (taskPageOf stages[].steps); a stage whose steps
+      // are not known yet (Auto still deciding) is one step under its own name, in its own state
+      const subs = (own.steps || []).length ? own.steps.map((x) => s(x.name, STAGE_SUB[x.state] || 'next')) : [s(st.label, STAGE_SUB[own.state] || 'next')];
+      return Object.assign({}, st, { subs });
+    });
+    // the task's own facts only: an empty branch, time or cost stays empty, never the design's sample (BRANCH, the case's figures)
+    const at = page.startedAt ? new Date(page.startedAt) : null;
+    const figs = (base.figs || [['Time', ''], ['Cost', '']]).map(([k, v]) => [k, k === 'Time' ? fmtMin(page.mins || 0) : k === 'Cost' ? '$' + (page.cost || 0).toFixed(2) : v]);
+    const going = (page.stages || []).some((x) => x.state === 'now' || x.state === 'paused');
+    return Object.assign({}, base, { id: base.id, title: page.title, project: page.project || '', over: !going, branch: page.branch || '', base: page.base || '', pr: page.pr || '', diff: '', task: page.prompt || '', figs,
+      startedWord: at ? 'Started ' + at.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ', ' + at.toTimeString().slice(0, 5) : '',
+      detail: page.detail || '', why: page.why || [], stages, spent: { mins: page.mins || 0, cost: page.cost || 0 }, budget: page.cap || null, movedFrom: base.id, liveId: page.id,
+      // no live decisions source yet: the design's sample decisions never reach a real task
+      decisions: [], failedChecks: page.failedChecks || 0, stageCost: Object.fromEntries((page.stages || []).map((x) => [x.key, x.costUsd || 0])) });
+  }
+  // The live kind's group page (#run/group:GID, D5): dev's run group (GET /api/run-groups), its members in stack order,
+  // each drawn as its own store task's case. Its one action merges the next PR in order, or fixes the first failing one,
+  // on the members' own PR routes; nothing here is the design's sample.
+  function liveGroup(g) {
+    const ms = g.members;
+    const prSub = (m, i) => (m.pr ? s(m.pr, m.case === 'merged' ? 'done' : m.case === 'failing' || m.case === 'conflicts' ? 'problem' : 'review') : next('#' + (i + 1)));
+    const merged = ms.length && ms.every((m) => m.case === 'merged');
+    const fix = ms.find((m) => m.pr && m.case === 'failing'), up = ms.find((m) => m.pr && m.case !== 'merged');
+    const labels = [fix ? 'Fix checks on ' + fix.pr : '', up && up.case === 'approved' ? 'Merge ' + up.pr : ''].filter(Boolean);
+    // Create PR (dev's Ship it) once every task is ready: a feature's one PR or stacked PRs, a user group's one PR (when
+    // dev's combine check says they combine) or separate PRs
+    const feature = g.kind === 'Feature', owned = {};
+    ms.forEach((m, i) => { if (m.pr) owned[i] = m.pr; });
+    const ready = !labels.length && ms.length && ms.every((m) => m.pr || m.case === 'ready') && ms.some((m) => !m.pr);
+    const oneBlocked = Object.keys(owned).length ? 'A task already has a PR' : feature ? '' : g.combine == null ? 'Checking whether the tasks combine…' : g.combine;
+    const rec = oneBlocked || !feature ? 'stack' : 'one', word = feature ? 'stacked' : 'separate', toOpen = ms.length - Object.keys(owned).length;
+    const ship = ready ? { mode: 'create', separate: !feature, runs: ms.map((m) => m.title), rec, sizes: ms.map(() => ''), owned, oneBlocked,
+      reason: rec === 'one' ? 'one review for the whole feature.' : feature ? 'each task lands on top of the one before.' : 'independent tasks, so each gets its own review.' } : null;
+    const flow = ship ? { 'Create PR': { confirm: 'Create one PR for the ' + ms.length + ' tasks? Their branches combine into one branch for one review.', live: 'Ship group', ship: 'one', say: 'Created the PR' },
+      ['Create ' + toOpen + ' PRs']: { confirm: 'Create ' + toOpen + ' ' + word + ' PRs? ' + (feature ? 'Each goes into the one before.' : 'Each goes into its base.'), live: 'Ship group', ship: word, say: 'Created ' + toOpen + ' PRs' } } : {};
+    return { id: 'group:' + g.id, liveId: 'group:' + g.id, liveGroup: g, project: '', group: 'Groups', label: g.title, kind: g.kind, title: g.title, task: g.title, branch: '', over: true, follows: g.kind === 'Feature', independent: g.kind !== 'Feature',
+      state: merged ? 'merged' : ms.some((m) => m.pr) ? 'ship-applied' : 'feature', decisions: [], noDiff: true,
+      runCases: ms.map((m) => m.case), runTitles: ms.map((m) => m.title), runPRs: ms.map((m) => m.pr), sizes: ms.map(() => ''), tabs: GROUP_TABS,
+      figs: [['Time', '—'], ['Cost', '$' + (g.cost || 0).toFixed(2)]], spent: { mins: 0, cost: g.cost || 0 },
+      detail: merged ? 'Every PR is merged' : fix ? fix.pr + ' checks failing' : up && up.case === 'approved' ? up.pr + ' ready to merge' : '',
+      action: labels.length ? A(labels[0], labels[0].startsWith('Merge') ? 'merge' : 'refresh', true, labels.slice(1)) : ship ? A('Create PR', 'pr', true, []) : null,
+      ...(ship ? { stack: ship, flow } : {}),
+      stages: ms.map((m, i) => member(i + 1, m.title, ['next', 'next', 'next', 'next'])).concat(ms.some((m) => m.pr) || ship ? [{ key: 'pr', label: 'PRs', subs: ms.map(prSub) }] : []) };   // Create PR opens what it will open
+  }
+  window.RunCardModel = { liveRun, liveFacts: liveFactsOf, liveGroup, stageOf, move: moveIn, memberAt, moveMember, restored, caseGroups: CASE_GROUPS, stateOf: (id) => { const c = caseFor(id); if (!c) throw new Error(`no run case ${id}`); return c.state || c.id; }, forms: FORMS, titles: TITLES, chainStart: CHAIN_START, chainPrs: CHAIN_PRS.map((x) => x[0]), proposed: PROPOSED, isNew: (t) => NEW.has(t), flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
 })();

@@ -170,16 +170,18 @@ export function resetViewTool({ changed, to }) {
  * @param {'loading'|'offline'|'failed'|'empty'} o.state
  * @param {string} o.noun      "runs"
  * @param {string} [o.text]    empty: its words ("Nothing needs you.")
+ * @param {boolean} [o.brief]  failed: only "Nothing changed." under the title, the one sentence for a server error and a
+ *                             lost connection alike (fail.task-page)
  * @param {object} [o.retry]   Try again's attrs
  * @param {string} [o.action]  empty: the one way on, a Button
  * @param {string} [o.title]   failed: the rule's own title when the noun's sentence does not fit (fail.chat-thread:
  *                             "Could not load this chat")
  */
-export function listState({ state, noun, text = '', retry = null, action = '', title = '' }) {
+export function listState({ state, noun, text = '', retry = null, action = '', title = '', brief = false }) {
   const again = retry ? button({ label: 'Try again', kind: 'quiet', attrs: retry }) : '';
   if (state === 'loading') return emptyState({ title: `Loading ${noun}…` });
   if (state === 'offline') return emptyState({ title: `The ${noun} show here once Worca's server is reachable again.`, actions: again });
-  if (state === 'failed') return emptyState({ title: title || `Could not load the ${noun}`, text: 'The server did not answer. Nothing changed.', actions: again, error: true });
+  if (state === 'failed') return emptyState({ title: title || `Could not load the ${noun}`, text: brief ? 'Nothing changed.' : 'The server did not answer. Nothing changed.', actions: again, error: true });
   return emptyState({ title: text || `No ${noun} yet.`, actions: action });
 }
 

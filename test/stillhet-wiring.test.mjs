@@ -12,7 +12,7 @@ const walk = (d) => readdirSync(d).flatMap((n) => { const p = path.join(d, n); r
 const sources = walk(SRC).map((p) => path.relative(ROOT, p)).filter((p) => p.endsWith('.js') && !/\/(components|graph)\.js$/.test(p));
 const rows = doc.split('\n').filter((l) => l.startsWith('|') && /`ui\/public\/stillhet\//.test(l));
 const rowFor = (file) => rows.find((r) => r.includes('`' + file + '`'));
-const STATUS = /\|\s*(wire to|wired|wired \(partial\)|new: build it|add to the design first)\s*\|/;
+const STATUS = /\|\s*(wire to|wired|wired \(partial\)|new: build it|new: built|add to the design first|not offered live)\s*\|/;
 
 test('every module that calls RailWould has an action row with a known status', () => {
   const missing = sources.filter((f) => /RailWould\(/.test(readFileSync(path.join(ROOT, f), 'utf8')) && !/(adapter|demo-actions)\.js$/.test(f)).filter((f) => !rowFor(f));
@@ -108,5 +108,35 @@ test('Chat\'s capability table has no partial row, and every run-state row a cha
   for (const ph of phrases) {
     const row = doc.split('\n').find((l) => l.startsWith(`| \`design-system/components/run-state.mjs › ${ph}\``));
     if (row) assert.match(row, /\| wired \|/, row.slice(0, 100));
+  }
+});
+
+test('Tasks (slice 5): the capabilities table, the new sources built, and the rows this slice wired', () => {
+  const at = doc.indexOf('## Tasks capabilities');
+  assert.ok(at > 0, 'the Tasks capabilities table is there');
+  const caps = doc.slice(at).split('\n').filter((l) => /^\| [A-Z]/.test(l) && !l.startsWith('| Capability'));
+  assert.ok(caps.length >= 20, `one row per capability (${caps.length})`);
+  for (const r of caps) assert.match(r, /\| (wired|new: built|not offered live) \|$/, r.slice(0, 80));
+  for (const what of ['Raise the cap', 'Restart Build', 'Pause after this step', 'Merge PR', 'reviewers']) assert.ok(caps.some((r) => r.includes(what) && /new: built \|$/.test(r)), what);
+  for (const id of ['shell/world.js › RailDemoState.task', 'runs/runs-list.js › open PR … on GitHub (it leaves Worca)']) assert.ok(doc.includes('| `' + id + '` | wired |'), id);
+  assert.match(doc, /\| `ui\/public\/stillhet\/runs\/runs-list\.js` \| [^|]+ \| wired \|/);
+});
+
+// R-qa-13 (controller directions d027fd8b6 and d8357b0e2): no Tasks row stays `wire to`, `wired (partial)` or `new: build it`;
+// a row the live kind does not draw says why, for the controller; the controls the direction names are each wired.
+test('Tasks (slice 5): every Tasks row is wired, new: built, or not offered live with its reason; the named controls are wired', () => {
+  const tasks = doc.split('\n').filter((l) => /^\| `(ui\/public\/stillhet\/runs\/|ui\/public\/stillhet\/centers\/|ui\/public\/design-system\/components\/run-state\.mjs`|runs\/|centers\/|design-system\/components\/run-state\.mjs › )/.test(l));
+  assert.ok(tasks.length >= 60, `the Tasks rows are read (${tasks.length})`);
+  for (const r of tasks) {
+    assert.doesNotMatch(r, /\| (wire to|wired \(partial\)|new: build it) \|/, r.slice(0, 100));
+    const m = /\| not offered live \| ([^|]*) \|$/.exec(r);
+    if (m) assert.ok(m[1].trim().length > 40, `a row the live kind leaves out says why: ${r.slice(0, 100)}`);
+  }
+  const named = ['runs/run-page.js › open a terminal in the worktree', 'runs/run-page.js › run …', 'runs/run-page.js › open localhost:…', 'runs/run-page.js › check out on this machine and open a local copy',
+    'runs/run-page.js › open the Sync log', 'runs/run-page.js › open the whole diff of the file', 'runs/run-page.js › download …', 'runs/run-page-model.js › RunCardModel.forms'];
+  for (const id of named) assert.ok(doc.includes('| `' + id + '` | wired |'), id);
+  const cap = doc.slice(doc.indexOf('## Tasks capabilities'));
+  for (const what of ["A group's page", 'Terminal, actions, builtins', 'Presets', 'Switch model and Resume at', 'Move to group', 'The check-out diff and Try it']) {
+    assert.match(cap, new RegExp('\\| ' + what.replace(/[()]/g, '\\$&') + '[^\\n]*\\| wired \\|'), what);
   }
 });

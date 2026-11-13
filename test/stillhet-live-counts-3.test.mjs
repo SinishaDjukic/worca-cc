@@ -91,7 +91,7 @@ test('the Tasks center in the live kind: a card\'s step writes nothing to the st
   await settle();
   assert.deepEqual(store(w), was, 'no store write outside load and run frames');
   assert.equal(bellN(d), BELL + 1);
-  assert.match(toastText(d), new RegExp(`: ${steps.at(-1).textContent.trim()} is not in Stillhet yet`), 'the refused step names itself');
+  assert.doesNotMatch(toastText(d), /is not in Stillhet yet/, 'Tasks D17: a card\'s step is dev\'s route (test/stillhet-tasks-list-host.test.mjs), never the stand-in');
   d.querySelector('[data-c-open="run-b"], [data-c-act="open|run-b"], [data-c-act="answer|run-b"]').click(); await settle();
   assert.equal(bellN(d), BELL, 'Open acknowledges it through the adapter');
 });

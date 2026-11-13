@@ -91,7 +91,7 @@ test('the spend card shows windowSpendUsd; #insights/spend shows its empty look,
   for (const n of DEMO_NAMES) assert.ok(!d.getElementById('route-today').textContent.includes(n), `no seeded ${n}`);
 });
 
-test('only the adapter writes: set, remove and taskGone change nothing; the Tasks list draws no selection bar', async () => {
+test('only the adapter writes: set, remove and taskGone change nothing; the Tasks list\'s menu and selection are dev\'s (Tasks D17)', async () => {
   const { w, d, hello } = await liveHost();
   await hello();
   const before = store(w);
@@ -102,16 +102,15 @@ test('only the adapter writes: set, remove and taskGone change nothing; the Task
   w.location.hash = '#runs'; await settle();
   const row = d.querySelector('#bar-tasks [data-open]');
   assert.ok(row, 'the Tasks list draws its rows');
-  row.dispatchEvent(new w.MouseEvent('click', { bubbles: true, metaKey: true, ctrlKey: true }));
-  await settle();
-  assert.equal(d.querySelector('#bar-tasks [data-bulk], #bar-tasks .sel-bar, #bar-tasks .selection-bar'), null);
-  // D25: the row's ⋯ menu and the list's tools offer nothing that would act on a task without dev (no faked Stop)
+  // Tasks D17: the row's ⋯ menu and the list's tools are the design's own, each item on dev's route
+  // (test/stillhet-tasks-list-host.test.mjs); selecting a row writes nothing to the store
   const picks = (menu) => { d.querySelector(`#bar-tasks [data-menu="${menu}"]`)?.click(); const ids = [...d.querySelectorAll('#bar-tasks [data-menu-pick]')].map((x) => x.dataset.menuPick.split('|').pop()); d.querySelector(`#bar-tasks [data-menu="${menu}"]`)?.click(); return ids; };
   const rowMenu = picks(`row:${row.dataset.open}`);
-  for (const id of ['toggle', 'stop', 'archive', 'delete', 'add-to-group', 'view-pr']) assert.ok(!rowMenu.includes(id), `no ${id} in the live row menu`);
-  assert.ok(rowMenu.includes('in-view'), 'Keep in view stays');
-  const tools = picks('tools');
-  assert.ok(tools.length > 0 && !tools.includes('select'), 'no Select in the live tools');
+  for (const id of ['toggle', 'in-view', 'stop', 'archive']) assert.ok(rowMenu.includes(id), `${id} in the live row menu`);
+  assert.ok(picks('tools').includes('select'), 'Select in the live tools');
+  row.dispatchEvent(new w.MouseEvent('click', { bubbles: true, metaKey: true, ctrlKey: true }));
+  await settle();
+  assert.deepEqual(store(w), before, 'a selection writes nothing');
 });
 
 test('Projects: titled by dev\'s name, no seeded workspaces; Schedules: the next date is the server\'s', async () => {

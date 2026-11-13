@@ -20,14 +20,18 @@ export const LISTS = {
 };
 // each test's window closes when that test ends: the pages keep timers on it, and 48 open windows slow every later test
 export const closers = [];
-export async function liveHost({ sources = SOURCES, thread = () => [200, THREAD], write = () => [200, {}], hash = '#chat', lists = LISTS, beforeScripts = () => {}, hold = () => null } = {}) {
+// `read(url)`: a GET the test answers itself ([status, data], or null for the default): a task's history detail, its checks.
+export async function liveHost({ sources = SOURCES, thread = () => [200, THREAD], write = () => [200, {}], hash = '#chat', lists = LISTS, beforeScripts = () => {}, hold = () => null, read = () => null } = {}) {
   const calls = [], sockets = [];
   const fetch = async (u, o = {}) => {
     const url = String(u), method = o.method || 'GET', body = o.body ? JSON.parse(o.body) : undefined;
     if (url !== '/api/ask/mcp-preview' && url !== '/api/history/pr') calls.push({ url, method, body });   // the Sets preview and History's PR lookup are reads (POST by dev's design)
     await hold(url);   // a source held back: its answer lands when the test says
-    const [status, data] = method !== 'GET' ? await write(url, body, method) : BY_URL[url] ? [200, clone(sources[BY_URL[url]] ?? {})] : lists[url] ? [200, lists[url]] : url.startsWith('/api/ask/threads/') ? await thread(url) : [404, {}];
-    return { ok: status < 300, status, json: async () => clone(data) };
+    const own = method === 'GET' ? await read(url) : null;
+    if (own && own[0] === 0) throw new TypeError('Failed to fetch');   // a network failure
+    // a store source the fixture has no answer for falls back to the test's own lists (GET /api/run-groups is both)
+    const [status, data] = own || (method !== 'GET' ? await write(url, body, method) : BY_URL[url] && (sources[BY_URL[url]] !== undefined || !lists[url]) ? [200, clone(sources[BY_URL[url]] ?? {})] : lists[url] ? [200, lists[url]] : url.startsWith('/api/ask/threads/') ? await thread(url) : [404, {}]);
+    return { ok: status < 300, status, json: async () => clone(data), text: async () => (typeof data === 'string' ? data : JSON.stringify(data ?? {})) };   // a diff or a log is text
   };
   const w = stillhetHost({ adapter: 'live', hash, fetch, after: (fn) => closers.push(fn), beforeScripts: (win) => {
     win.WebSocket = class { constructor(url) { this.url = url; this.readyState = 1; sockets.push(this); } close() {} send() {} };
@@ -38,7 +42,7 @@ export async function liveHost({ sources = SOURCES, thread = () => [200, THREAD]
   } });
   w.RailAdapter.importLive = () => import('../../ui/public/stillhet/live/live-adapter.mjs');
   await settle();
-  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'hello', bootId: 'b', runs: sources.hello.runs }) });
+  sockets.at(-1)?.onmessage({ data: JSON.stringify({ type: 'hello', bootId: 'b', runs: sources.hello.runs }) });   // none yet while a held or failed first load is out
   await settle();
   return { w, d: w.document, calls, sockets };
 }

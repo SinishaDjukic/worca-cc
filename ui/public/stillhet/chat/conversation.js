@@ -95,17 +95,38 @@
   const newHere = () => { const gs = data().chats.find((c) => c.id === 'c0' && !c.archived); if (!gs || threads.get('c0')?.find((y) => y.id === 'g1')?.done) return ''; return `<p class="chat-home-new">New here? ${R.textLink({ label: 'Getting started', attrs: { 'data-back-to': 'chat/c0', title: 'Opens Getting started: sign in, add a project, then your first task' } })} signs you in and adds your first project.</p>`; };
   const turns = () => { const c = chat(); if (!c) return []; if (LIVE()) return liveTurns(c.id); if (!threads.has(c.id)) threads.set(c.id, M.thread(c)); return threads.get(c.id); };
   const allTasks = (c) => { const out = []; const walk = (x) => { out.push(x); (x.after || []).forEach(walk); }; (c?.tasks || []).forEach(walk); return out; };
-  const taskOf = (id) => allTasks(chat()).find((t) => t.id === id);
+  // The live TaskCard (Tasks D3): the card's branch, base, case, failure and PR facts are task-live's taskCardOf, the same
+  // input the task page reads, so the card and the page show one state. Its detail is read once per task.
+  const cardRead = new Set();
+  // task-page.mjs taskCardOf's optional fields the store's task does not carry itself (its `detail` is the store's own)
+  const CARD_FACTS = ['branch', 'base', 'why', 'git', 'watch', 'prUrl', 'failedChecks'];
+  const liveCard = (t) => {
+    const T = window.RailTaskLive, id = t.run || t.id;
+    if (!T) return t;
+    if (!cardRead.has(id)) { cardRead.add(id); T.open(id); }
+    // in place: the card's own state (its confirm, its form) lives on this object; the facts taskCardOf leaves out once
+    // they clear (a Retry that worked: no failure, no failing items) go too, never kept from the last draw
+    for (const k of CARD_FACTS) delete t[k];
+    return Object.assign(t, T.card(id));
+  };
+  const taskOf = (id) => { const t = allTasks(chat()).find((x) => x.id === id); return t && LIVE() ? liveCard(t) : t; };
   const stOf = (t) => R.runState(RM.stateOf(t.case), ctxOf(t));
-  // a live card's facts are the store run's (its PR); a fact the data does not have is left out, never the demo's
+  // a live card's facts are its taskCardOf's (its PR, base, failing checks), as the page reads them; a fact the data does
+  // not have is left out, never the demo's (the failing count then reads 'failing checks', as the page says it)
   const runOfT = (t) => (t?.run && window.RailWorld.find(t.run)) || null;
   const prWord = (url) => { const m = String(url || '').match(/\/pull\/(\d+)/); return m ? `#${m[1]}` : ''; };
-  function ctxOf(t) { if (!LIVE()) return { base: 'dev', pr: '#1180', reset: '17:00' }; const pr = prWord(runOfT(t)?.pr); return pr ? { pr } : {}; }
+  function ctxOf(t) {
+    if (!LIVE()) return { base: 'dev', pr: '#1180', reset: '17:00' };
+    const pr = prWord(t.prUrl || runOfT(t)?.pr), n = t.failedChecks;
+    return { ...(pr ? { pr } : {}), ...(t.base ? { base: t.base } : {}), failedChecks: n ? `${n} failing check${n === 1 ? '' : 's'}` : 'failing checks' };
+  }
   // the run-state flow's args for a live card: dev's ids, the run's PR link and labels (chat-live.mjs FLOW)
-  const flowArgs = (t) => { const r = runOfT(t); return { runId: t.run || t.id, pipelineId: t.pid || t.run || t.id, threadId: chatId, title: t.title, pr: r?.pr || '', labels: r?.labels || [] }; };
+  const flowArgs = (t) => { const r = runOfT(t); return { runId: t.run || t.id, pipelineId: t.pid || t.run || t.id, threadId: chatId, title: t.title, pr: r?.pr || '', labels: r?.labels || [], case: t.case || '' }; };
   // live: what any live card offers beyond its state's flow; the rest of its ⋯ is offered only where FLOW has a target
   const LIVE_ANY = new Set(['Tell Worca how to fix it', 'Ask Worca to fix it', 'Start a follow-up', 'Send a direction', 'Show the log', 'open']);
-  const offers = (t, label) => !LIVE() || LIVE_ANY.has(label) || CL().canFlow(label, flowArgs(t));
+  // Tasks D13: a card offers the Tasks actions (Retry, Restart Build, Merge PR, Fix checks, …) through the same path as the page
+  const taskFlow = (label, t) => !!window.RailTaskLive?.canFlow(label, flowArgs(t)) && !CL().canFlow(label, flowArgs(t));
+  const offers = (t, label) => !LIVE() || LIVE_ANY.has(label) || CL().canFlow(label, flowArgs(t)) || taskFlow(label, t);
   const tidy = (items) => items.filter((it, k, l) => !it?.sep || (k > 0 && k < l.length - 1 && !l[k - 1]?.sep));
 
   // ---- the composer ----
@@ -390,7 +411,7 @@
     // D12: the live kind carries the flow out through dev's routes; the card moves when the run's frame does (one store).
     // It says what was done only once dev has answered ok; a link that opens or a page it goes to says nothing.
     if (LIVE()) {
-      const fl = CL().flow(label, { ...flowArgs(t), value: given.value ?? t.form?.value, ...(given.typed ? { title: given.typed } : {}), ...(given.value === 'a draft' ? { draft: true } : {}) });
+      const fl = (taskFlow(label, t) ? window.RailTaskLive.flow : CL().flow)(label, { taskId: t.run || t.id, ...flowArgs(t), value: given.value ?? t.form?.value, ...(given.typed ? { title: given.typed } : {}), ...(given.value === 'a draft' ? { draft: true } : {}) });
       t.form = null; t.confirm = null; paint();
       busyFor(`[data-card-act="${t.id}|${label}"]`, fl.then((r) => { if (r.ok && !/^(View|Open|Download)/.test(label)) say(label === 'Copy PR link' ? 'Copied the PR link' : (f.say || label).replace('{value}', given.value || '').replace(/\{[a-z]+\}/g, '').trim()); return r; }));
       return;
@@ -683,7 +704,7 @@
     const line = LIVE() ? (pg.detail || (STATE_WORDS.has(t.detail) ? '' : t.detail || '')) : (t.detail || '').replace(/^Ready · /, '');
     // a live task's bar is ink up to its PR; Merged is lit only once it is merged
     const bar = LIVE() && t.case !== 'merged' && ['ok', 'done'].includes(tone) ? { stage: STAGES.indexOf('PR'), tone: 'run' } : { stage, tone };
-    return R.taskCard({ rows: x.open ? '' : why, figures: facts + featFacts + changed, title: t.title, place: `${t.branch ? `<span class="rc-mid"><span class="rc-mid-a">${esc(t.branch)}</span></span>` : ''}${LIVE() ? '' : '<span>into dev</span>'}${gitOf(t)}${t.inGroup ? `<span>in ${esc(t.inGroup)}</span>` : ''}${(t.labels || []).map((l) => R.chip({ text: l })).join('')}`, mark: taskMark(t), word, detail: below ? '' : line, /* rail.one-place: the question below says what it asks */ action: main, menu: more, stages: R.stageBar({ labels: STAGES, stage: bar.stage, tone: bar.tone, step: LIVE() ? pg.step : t.step || R.stageStep(t.detail), key: t.id }), foot: R.button({ label: x.open ? 'Hide its stages' : 'Show its stages', kind: 'quiet', icon: R.icon(x.open ? 'chevron' : 'chevR', 12), attrs: { 'data-open-task': t.id, 'aria-expanded': String(!!x.open), title: x.open ? 'Folds its stages' : 'Opens its stages here, as its page has them' } }) + ((t.facts || ft) && !x.open ? R.figuresToggle({ card: true, open: !!x.figures, attrs: { 'data-figs': x.id } }) : ''), open: !!x.open, stream: own({ ...t, stage }), attrs: { 'data-anchor': x.id } }) + confirm + formHtml(t) + livePlanHtml(x, t) + liveAsksHtml(x, t) + askChanges(x) + directionHtml(x);
+    return R.taskCard({ rows: x.open ? '' : why, figures: facts + featFacts + changed, title: t.title, place: `${t.branch ? `<span class="rc-mid"><span class="rc-mid-a">${esc(t.branch)}</span></span>` : ''}${LIVE() ? (t.branch && t.base ? `<span>into ${esc(t.base)}</span>` : '') : '<span>into dev</span>'}${gitOf(t)}${t.inGroup ? `<span>in ${esc(t.inGroup)}</span>` : ''}${(t.labels || []).map((l) => R.chip({ text: l })).join('')}`, mark: taskMark(t), word, detail: below ? '' : line, /* rail.one-place: the question below says what it asks */ action: main, menu: more, stages: R.stageBar({ labels: STAGES, stage: bar.stage, tone: bar.tone, step: LIVE() ? pg.step : t.step || R.stageStep(t.detail), key: t.id }), foot: R.button({ label: x.open ? 'Hide its stages' : 'Show its stages', kind: 'quiet', icon: R.icon(x.open ? 'chevron' : 'chevR', 12), attrs: { 'data-open-task': t.id, 'aria-expanded': String(!!x.open), title: x.open ? 'Folds its stages' : 'Opens its stages here, as its page has them' } }) + ((t.facts || ft) && !x.open ? R.figuresToggle({ card: true, open: !!x.figures, attrs: { 'data-figs': x.id } }) : ''), open: !!x.open, stream: own({ ...t, stage }), attrs: { 'data-anchor': x.id } }) + confirm + formHtml(t) + livePlanHtml(x, t) + liveAsksHtml(x, t) + askChanges(x) + directionHtml(x);
   }
 
   // ---- the timeline: what is worth finding, where it really is ----
@@ -1423,7 +1444,8 @@
   };
   let pendingTask = null, listening = false;
   // RailChatLive starts after the pages load (adapter.js): the open chat repaints on its changes from the first show on
-  function listen() { if (listening || !window.RailChatLive) return; listening = true; CL().onChange((id) => { if (id && id === chatId) { paint(); landTask(); } }); }
+  function listen() { if (listening || !window.RailChatLive) return; listening = true; CL().onChange((id) => { if (id && id === chatId) { paint(); landTask(); } });
+    window.RailTaskLive?.onChange((id) => { if (chatId && (!id || allTasks(chat()).some((t) => (t.run || t.id) === id))) paint(); }); }
   function landTask() {
     if (!pendingTask || pendingTask.chat !== chatId) return;
     const st = LIVE() ? CL().state(chatId) : 'ready';

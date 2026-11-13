@@ -309,7 +309,8 @@
       "kind": "acting",
       "needs": [
         "a yes or no",
-        "a one-line answer"
+        "a one-line answer",
+        "a task action that failed: its `Could not ACTION` line, in place (fail.task-action)"
       ],
       "place": "under the top bar, in place",
       "rules": [
@@ -403,7 +404,8 @@
       "needs": [
         "a list with no rows",
         "the Pulse popover before its first data, or when it could not load",
-        "a Chat conversation that is loading, could not load, or no longer exists (fail.chat-thread)"
+        "a Chat conversation that is loading, could not load, or no longer exists (fail.chat-thread)",
+        "a task page that is loading, could not load, or no longer exists (fail.task-page); the Tasks center before the list’s first load"
       ],
       "rules": [
         "loading, offline, could not load, empty",

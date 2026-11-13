@@ -33,7 +33,8 @@ const tagGroupHtml = () => R.tagGroup({ items: tagsOf(), open: ui.menu === 'tags
 // One list editor, shared by labels and cost tags and by groups: many choices for tags, one for a group.
 function listEditorHtml({ label, inputId, placeholder, sections, hint }) {
   const on = (k, t) => ui.chips.some((c) => c.kind === k && c.text === t);
-  const rows = (kind) => KNOWN[kind].concat(ui.chips.filter((c) => c.kind === kind && !KNOWN[kind].some(([t]) => t === c.text)).map((c) => [c.text, 1])).map(([text, n]) => ({ text, n, on: on(kind, text) }));
+  const known = (kind) => (!LIVE_PAGE() ? KNOWN[kind] : kind === 'group' ? (window.RailTaskLive.groups?.() || []).map((g) => [g.title, g.members.length]) : []);   // live: no sample labels
+  const rows = (kind) => known(kind).concat(ui.chips.filter((c) => c.kind === kind && !known(kind).some(([t]) => t === c.text)).map((c) => [c.text, 1])).map(([text, n]) => ({ text, n, on: on(kind, text) }));
   return R.listEditor({ label, inputId, placeholder, hint, sections: sections.map((s) => Object.assign({}, s, { rows: rows(s.kind) })) });
 }
 const tagEditorHtml = () => listEditorHtml({ label: 'Labels and cost tags', inputId: 'tag-input', placeholder: 'A label, or key: value for a cost tag',
@@ -103,7 +104,7 @@ function focusHtml(v) {
     return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">${esc(f.title)}</h2>${f.note ? `<p class="rl-note">${esc(f.note)}</p>` : ''}${issuesHtml(f.issues)}${f.roles.length ? rolesHtml(f.roles, 'ov') : ''}</section>`;
   }
   if (f.kind === 'broke') {
-    const own = SHELL && M.whys?.[ui.caseId];   /* a task lent from a chat: what broke in it, the same lines its card shows */
+    const own = f.own || (SHELL && M.whys?.[ui.caseId]);   /* a live task, or one lent from a chat: what broke in it, the same lines its card shows */
     if (own?.length) return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">What broke</h2><div class="rtab-ev"><pre class="rtab-ev-l">${own.map((w) => esc(typeof w === 'string' ? w : w.t || w.text || '')).join('\n')}</pre>${logsShow() && !logsGone ? R.button({ label: f.ev.log, attrs: { 'data-key': 'ov-log', 'data-logstep': 'all' } }) : ''}</div></section>`;
     return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">What broke</h2>
       <div class="rtab-ev"><p class="rtab-ev-t">${esc(f.ev.title)}</p><pre class="rtab-ev-l">${f.ev.lines.map(esc).join('\n')}</pre>${logsShow() && !logsGone ? R.button({ label: f.ev.log, attrs: { 'data-key': 'ov-log', 'data-logstep': 'all' } }) : ''}</div></section>`;
@@ -128,7 +129,9 @@ function summaryPanel(v) {
   const after = ui.after.length ? `<section class="rtab"><h2 class="rtab-h">Runs after this <span class="n">${ui.after.length}</span></h2><ul class="ov-arts">${ui.after.map((x, i) => `<li><span class="ov-after-t" title="${esc(x.task)}">${esc(x.task)}</span><span class="rtab-dim">${esc(x.when)}</span>${R.button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-unafter': i, 'data-key': 'unafter:' + i } })}</li>`).join('')}</ul></section>` : '';
   // Before it is built, the ask is all there is to say about the outcome.
   const evidence = () => (o.evidence ? `<section class="rtab"><ol class="rd-route-list ov-lines">${R.lineRow({ mark: R.stepDot({ dotCls: 'is-done', word: 'Done', icon: 'check' }), text: o.evidence, link: true, attrs: { 'data-tab': 'activity', 'data-key': 'ov-evidence', title: 'Opens Activity: the tests, the review\'s rounds and the manual test' } })}</ol></section>` : '');
-  if (!o.ask) return focusHtml(v) + after + evidence() + `<section class="rtab"><h2 class="rtab-h">What you asked</h2><p class="rtab-p ov-task${ui.taskOpen ? ' is-open' : ''}">${esc(M.asks?.[ui.caseId] || o.task)}</p></section>` + extra;
+  // live: the task's own prompt, else no section (a case's demo ask is never a real task's)
+  const asked = LIVE_PAGE() ? o.task : M.asks?.[ui.caseId] || o.task;
+  if (!o.ask) return focusHtml(v) + after + evidence() + (asked ? `<section class="rtab"><h2 class="rtab-h">What you asked</h2><p class="rtab-p ov-task${ui.taskOpen ? ' is-open' : ''}">${esc(asked)}</p></section>` : '') + extra;
   // What went fine, one line each (What opens): the ask opens its parts in place, its only home; the evidence goes to
   // Activity, where the rounds and the steps live.
   const ok = R.stepDot({ dotCls: 'is-done', word: 'Done', icon: 'check' });
@@ -164,8 +167,9 @@ function checklistHtml(c) {
 function usedHtml(v) {
   if ((!v.over.ask && !v.bar.stop) || !v.has.started) return '';
   const d = v.tabData; const rows = [];
-  if (R.shows('advanced')) rows.push(lineRow('skills', okDot(), d.skills.length + ' skills mounted', `<ul class="ov-issues">${d.skills.map((x) => `<li><span>${esc(x)}</span></li>`).join('')}</ul>`));
-  if (R.shows('expert')) rows.push(...(v.has.changes ? [lineRow('memory', okDot(), d.memory.length + ' memory changes', `<ul class="ov-issues">${d.memory.map((x) => `<li><span>${esc(x)}</span></li>`).join('')}</ul>`)] : []), ...(v.has.worktree ? [lineRow('worktree', okDot(), 'Worktree', `<code>${esc(d.worktree)}</code>`)] : []));
+  // a list it has none of is not drawn (a live task's skills and memory changes are not read yet: never the design's sample)
+  if (R.shows('advanced') && d.skills.length) rows.push(lineRow('skills', okDot(), d.skills.length + ' skills mounted', `<ul class="ov-issues">${d.skills.map((x) => `<li><span>${esc(x)}</span></li>`).join('')}</ul>`));
+  if (R.shows('expert')) rows.push(...(v.has.changes && d.memory.length ? [lineRow('memory', okDot(), d.memory.length + ' memory changes', `<ul class="ov-issues">${d.memory.map((x) => `<li><span>${esc(x)}</span></li>`).join('')}</ul>`)] : []), ...(v.has.worktree && d.worktree ? [lineRow('worktree', okDot(), 'Worktree', `<code>${esc(d.worktree)}</code>`)] : []));
   return rows.length ? `<section class="rtab"><ol class="rd-route-list ov-lines">${rows.join('')}</ol></section>` : '';
 }
 // A task with no Changes tab keeps its documents here.
@@ -178,27 +182,38 @@ function docsSection(v) {
 const HOSTED_WHY = 'Actions run on your own machine; this Worca is hosted, so use your own checkout';
 function actionsHtml(v) {
   if (!R.runPartShows('actions', R.prefs.mode())) return '';
-  const d = v.tabData; const off = v.hosted;
+  const d = v.tabData; const off = v.hosted; const lv = LIVE_PAGE();
+  // live: the services and built-in tools are dev's run Actions (GET /api/runs/:id/actions), started and stopped on its routes
+  const stacks = v.isWorkspace || lv ? d.stacks || [] : [];
+  if (lv && !d.services.length && !d.builtins.length && !stacks.length) return '';
   const hook = (o) => (off ? Object.assign({ disabled: true, title: HOSTED_WHY }, o) : o);
-  const svc = d.services.map((x) => { const on = !!ui.services[x.id];
-    return R.listRow({ title: x.name, meta: on ? 'Running on port ' + x.port : 'Port ' + x.port, end: R.button({ label: ui.svcBusy === x.id ? (on ? 'Stopping…' : 'Starting…') : on ? 'Stop' : 'Start', kind: 'quiet', attrs: ui.svcBusy === x.id ? { disabled: true, title: 'Waiting for the service', 'data-key': 'svc:' + x.id } : hook({ 'data-service': x.id, 'data-key': 'svc:' + x.id }) }) + (on ? R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-say': window.RailWould('open localhost:' + x.port), 'data-key': 'svc-open:' + x.id } }) : '') }); });
-  const tools = d.builtins.map((t, i) => R.button({ label: t, kind: 'quiet', attrs: hook({ 'data-say': window.RailWould('run ' + t + ' in the worktree'), 'data-key': 'builtin:' + i }) })).join('');   // quiet words, no grey boxes; Download patch is the Changes ▾'s (once)
+  // a workspace's stack: its projects' services started together, in order; one row like a service's (dev's Start stack)
+  const stk = stacks.map((x) => { const st = lv ? x.status : ui.services['stack:' + x.id] ? 'running' : ''; const on = /^(starting|running)$/.test(st); const busy = ui.svcBusy === 'stack:' + x.id;
+    const meta = st === 'starting' ? 'Starting · step ' + (x.step + 1) + ' of ' + x.steps : st === 'running' ? 'Running' : st === 'done' ? 'Done' : st === 'failed' ? 'Did not start: ' + (x.error || 'a step failed') : 'Not running · ' + x.steps + ' steps';
+    return R.listRow({ title: 'Stack: ' + x.name, meta, end: R.button({ label: busy ? (on ? 'Stopping…' : 'Starting…') : on ? 'Stop' : 'Start', kind: 'quiet', attrs: busy ? { disabled: true, title: 'Waiting for the stack', 'data-key': 'stack:' + x.id } : hook({ 'data-stack': x.id, 'data-key': 'stack:' + x.id }) }) }); });
+  const svc = d.services.map((x) => { const on = lv ? !!x.running : !!ui.services[x.id]; const sk = lv && x.key ? x.key : x.id;
+    const openBtn = !on ? '' : lv ? (x.url ? R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-svcopen': x.url, 'data-key': 'svc-open:' + x.id } }) : '') : R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-say': window.RailWould('open localhost:' + x.port), 'data-key': 'svc-open:' + x.id } });
+    return R.listRow({ title: x.name, meta: on ? (x.port ? 'Running on port ' + x.port : 'Running') : x.port ? 'Port ' + x.port : 'Not running', end: R.button({ label: ui.svcBusy === sk ? (on ? 'Stopping…' : 'Starting…') : on ? 'Stop' : 'Start', kind: 'quiet', attrs: ui.svcBusy === sk ? { disabled: true, title: 'Waiting for the service', 'data-key': 'svc:' + sk } : hook({ 'data-service': sk, 'data-key': 'svc:' + sk }) }) + openBtn }); });
+  const tools = d.builtins.map((t, i) => (lv ? R.button({ label: t.label, kind: 'quiet', attrs: hook({ 'data-builtin': t.key, 'data-key': 'builtin:' + i }) })
+    : R.button({ label: t, kind: 'quiet', attrs: hook({ 'data-say': window.RailWould('run ' + t + ' in the worktree'), 'data-key': 'builtin:' + i }) }))).join('');   // quiet words, no grey boxes; Download patch is the Changes ▾'s (once)
   let members = '';
   if (v.isWorkspace) {
     const picked = ui.picked || d.members.map((m) => m.name);
     members = `${R.checkbox({ label: 'All changed projects', checked: picked.length === d.members.length, attrs: { 'data-pickall': true, 'data-key': 'pick-all' } })}${d.members.map((m) => R.checkbox({ label: m.name + ' · ' + m.files + ' files', checked: picked.includes(m.name), attrs: { 'data-pick': m.name, 'data-key': 'pick:' + m.name } })).join('')}
-      <div class="rl-tools">${R.button({ label: `Check out ${picked.length} of ${d.members.length}`, attrs: hook(Object.assign({ 'data-say': window.RailWould(`check out ${picked.join(', ') || 'nothing'} on this machine`), 'data-key': 'ws-checkout' }, picked.length ? {} : { disabled: true, title: 'Pick a project first' })) })}<span class="rtab-dim">${d.noChangeMembers.length} project had no changes</span></div>`;
+      <div class="rl-tools">${unlessLive(R.button({ label: `Check out ${picked.length} of ${d.members.length}`, attrs: hook(Object.assign({ 'data-say': window.RailWould(`check out ${picked.join(', ') || 'nothing'} on this machine`), 'data-key': 'ws-checkout' }, picked.length ? {} : { disabled: true, title: 'Pick a project first' })) }))}<span class="rtab-dim">${d.noChangeMembers.length} project had no changes</span></div>`;
   }
   const copy = ui.copy ? `<p class="rl-note">Local copy open · since 18:12</p>` : '';
-  return `<div class="ch-actions"><h3 class="ov-sub">Actions</h3>${off ? `<p class="rl-note">${esc(HOSTED_WHY)}</p>` : ''}${copy}${members}${R.list({ groups: [{ rows: svc }] })}<div class="rl-tools">${tools}</div></div>`;
+  return `<div class="ch-actions"><h3 class="ov-sub">Actions</h3>${off ? `<p class="rl-note">${esc(HOSTED_WHY)}</p>` : ''}${copy}${members}${R.list({ groups: [{ rows: stk.concat(svc) }] })}<div class="rl-tools">${tools}</div></div>`;
 }
 // Comments on a diff: the threads on this file's lines, and your own on a line you pick.
+// a file's changed rows, the ones a comment can sit on; a comment keeps the row's place, so two `}` lines stay apart
+const changedRows = (d, path) => ((d.hunks && d.hunks[path]) || d.hunk).lines.filter(([k]) => k !== ' ');
 const notesOf = (path, d) => ((d.comments[path] || []).length + (ui.comments[path] || []).length);
 function commentsHtml(path, d) {
   const all = (d.comments[path] || []).concat(ui.comments[path] || []);
-  const lines = d.hunk.lines.filter(([k]) => k !== ' ').map(([, t]) => t.trim());
+  const lines = changedRows(d, path).map(([, t]) => t.trim());
   const on = ui.commentOn && ui.commentOn.path === path ? ui.commentOn : null;
-  const pick = on ? R.sentencePicker({ id: 'cmtline', text: on.line, items: lines.map((t) => ({ id: t, text: t, checked: t === on.line })), open: ui.menu === 'cmtline', tip: 'Which line it is on', chevron: svg('chevron', 12) }) : '';
+  const pick = on ? R.sentencePicker({ id: 'cmtline', text: on.line, items: lines.map((t, i) => ({ id: String(i), text: t, checked: i === on.row })), open: ui.menu === 'cmtline', tip: 'Which line it is on', chevron: svg('chevron', 12) }) : '';
   const form = on ? `<div class="ch-comment"><div class="rl-sentence">On ${pick}</div>${R.field({ id: 'cmt-text', label: 'Comment', value: on.text || '', error: on.err || '', multiline: true, attrs: { 'data-key': 'cmt-text' } })}<div class="rl-tools">${R.button({ label: 'Add comment', kind: 'primary', attrs: { 'data-cmt': 'add', 'data-key': 'cmt-add' } })}${R.button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-cmt': 'cancel', 'data-key': 'cmt-cancel' } })}</div></div>`
     : R.button({ label: 'Comment on a line', kind: 'quiet', attrs: { 'data-cmt': 'open', 'data-path': path, 'data-key': 'cmt-open' } });
   return `${all.length ? `<ul class="ch-thread" aria-label="Comments">${all.map((c) => `<li><b>${esc(c.who)}</b> on <code>${esc(c.line)}</code><span class="ov-why">${esc(c.t)}</span></li>`).join('')}</ul>` : ''}${form}`;
@@ -218,19 +233,23 @@ function changesPanel(v) {
   const head = (name, n, a, dl) => `<li class="ch-dir ch-group"><span class="ch-gn">${name}</span><span class="rtab-dim">${n}</span>${a !== undefined ? `<span class="ct"><span class="add">+${a}</span><span class="del">−${dl}</span></span>` : ''}</li>`;
   const rows = kinds.map(([name, xs]) => head(name, `${xs.length} ${xs.length === 1 ? 'file' : 'files'}`, xs.reduce((s, x) => s + x.a, 0), xs.reduce((s, x) => s + x.dl, 0)) + xs.slice().sort((x, y) => (y.a + y.dl) - (x.a + x.dl)).map((r) => {
     const m = d.fileMeta[r.p] || { st: 'M' };
-    const diff = open === r.i ? `<div class="ch-diff"><p class="ch-at">${esc(d.hunk.at)}</p><pre>${d.hunk.lines.map(([k, t]) => `<span class="${k === '+' ? 'add' : k === '-' ? 'del' : ''}">${esc(k + ' ' + t)}</span>`).join('\n')}</pre>${commentsHtml(r.p, d)}${R.button({ label: 'Open the whole diff', attrs: { 'data-key': 'file-full', 'data-say': window.RailWould('open the whole diff of the file') } })}</div>` : '';
+    const hk = (d.hunks && d.hunks[r.p]) || d.hunk;   // live: this file's own diff (its first lines); the demo shows one sample
+    const full = LIVE_PAGE() ? { 'data-key': 'file-full', 'data-fulldiff': r.p } : { 'data-key': 'file-full', 'data-say': window.RailWould('open the whole diff of the file') };
+    const diff = open === r.i ? `<div class="ch-diff"><p class="ch-at">${esc(hk.at)}</p><pre>${hk.lines.map(([k, t]) => `<span class="${k === '+' ? 'add' : k === '-' ? 'del' : ''}">${esc(k + ' ' + t)}</span>`).join('\n')}</pre>${commentsHtml(r.p, d)}${R.button({ label: 'Open the whole diff', attrs: full })}</div>` : '';
     return `<li class="ch-file${open === r.i ? ' is-open' : ''}${ui.land === 'file:' + r.i ? ' is-flash' : ''}">${R.fileRow({ status: m.st, name: r.name, dir: r.dir, path: r.p, notes: notesOf(r.p, d), added: r.a, removed: r.dl, blocks: blocks(r.a, r.dl), open: open === r.i, attrs: { 'data-file': r.i, 'data-key': 'file:' + r.i } })}${diff}</li>`;
   }).join('')).join('');
   // Documents its steps wrote: they stay with the task and are not in the PR. A name opens it; one download at the end.
   const arts = v.over.artifacts;
-  const docs = arts.length ? head('Not in the code', String(arts.length)) + `<li class="ch-gnote">Written by the task’s steps; they stay with the task and are not in the PR</li>` + arts.map(([doc, step], i) => `<li class="ch-file ch-doc${ui.land === 'doc:' + i ? ' is-flash' : ''}"><span class="ch-st" aria-hidden="true"></span><span class="ch-name">${R.documentLink({ name: doc, attrs: { 'data-key': 'art:' + i, 'data-doc': i, title: 'Open ' + doc } })}<span class="ch-path">from ${esc(step)}</span></span>${R.button({ label: 'Download ' + doc, kind: 'quiet', iconOnly: true, icon: svg('download', 14), attrs: { 'data-key': 'dl:' + i, 'data-say': window.RailWould('download ' + doc) } })}</li>`).join('') : '';
+  const docs = arts.length ? head('Not in the code', String(arts.length)) + `<li class="ch-gnote">Written by the task’s steps; they stay with the task and are not in the PR</li>` + arts.map(([doc, step], i) => `<li class="ch-file ch-doc${ui.land === 'doc:' + i ? ' is-flash' : ''}"><span class="ch-st" aria-hidden="true"></span><span class="ch-name">${R.documentLink({ name: doc, attrs: { 'data-key': 'art:' + i, 'data-doc': i, title: 'Open ' + doc } })}<span class="ch-path">from ${esc(step)}</span></span>${R.button({ label: 'Download ' + doc, kind: 'quiet', iconOnly: true, icon: svg('download', 14), attrs: LIVE_PAGE() ? { 'data-key': 'dl:' + i, 'data-dl': i } : { 'data-key': 'dl:' + i, 'data-say': window.RailWould('download ' + doc) } })}</li>`).join('') : '';
   const where = v.place.folder ? `In a copy of ${v.place.folder}; Apply writes them into the folder.` : v.place.branch ? `${v.place.branch} into ${v.place.base || 'dev'}` : '';
   // The code's own actions sit in the Changes head, as the card's action does: Check out, the rest in its ▾.
   const chItems = (v.bar.stop ? [{ id: 'ch:refresh', text: 'Refresh', help: 'Reload the diff from the worktree' }] : [])
     .concat([{ id: 'ch:patch', text: 'Download patch', help: 'Every change as one .patch file' }, { id: 'ch:copy', text: 'Copy git commands', help: 'git fetch and git switch to this branch' }]);
   const coWhy = v.hosted ? HOSTED_WHY : v.heldBy ? `Held by “${v.heldBy}”; it has the branch checked out` : '';
   if (ui.copy) chItems.unshift({ id: 'ch:discard-copy', text: 'Discard the copy', help: 'Removes the local copy; the branch stays' });
-  const tools = v.place.folder ? '' : R.splitButton({ main: { label: ui.copy ? 'Unlink' : 'Check out', title: coWhy || (ui.copy ? 'Lets go of the local copy; the branch stays' : 'Check the branch out on this machine'), attrs: { 'data-key': 'ch:checkout', 'data-checkout': true, disabled: !!coWhy } },
+  // live: Check out is dev's checkout route (idempotent, so it stays Check out), Refresh reads the task again, Download patch
+  // is dev's patch, and the git commands copy for real
+  const tools = v.place.folder || (LIVE_PAGE() && !v.place.branch) ? '' : R.splitButton({ main: { label: ui.copy && !LIVE_PAGE() ? 'Unlink' : 'Check out', title: coWhy || (ui.copy ? 'Lets go of the local copy; the branch stays' : 'Check the branch out on this machine'), attrs: { 'data-key': 'ch:checkout', 'data-checkout': true, disabled: !!coWhy } },
     moreLabel: 'More for these changes', chevron: svg('chevron', 14), open: ui.menu === 'ch', menuHtml: menu('ch', chItems), moreAttrs: { 'data-menu': 'ch', 'data-key': 'menu:ch' }, cls: 'rc-pop is-right ch-act' });
   return `<section class="rtab"><div class="ch-head"><div class="ch-sum"><h2 class="rtab-h">${f.length} ${f.length === 1 ? 'file' : 'files'} <span class="ct"><span class="add">+${add}</span><span class="del">−${del}</span></span></h2><span class="rtab-dim" title="${esc(where)}">${v.place.folder ? esc(where) : R.workPlace({ branch: v.place.branch, base: v.place.base || 'dev' })}</span></div>${tools}</div>
     ${actionsHtml(v)}<ul class="ch-list">${rows}${docs}</ul></section>`;
@@ -273,7 +292,7 @@ function logsHtml(v) {
   const sentence = expert ? `<div class="rl-sentence">Showing ${fs.map((f) => { const cur = L[f.state || f.key]; return R.sentencePicker({ id: f.id, text: cur === 'all' ? f.all : (f.key === 'cycle' ? 'cycle ' + cur : cur), open: ui.menu === f.id, chevron: svg('chevron', 12), items: [{ id: 'all', text: f.all, checked: cur === 'all' }].concat(f.vals.map((x) => ({ id: x, text: f.key === 'cycle' ? 'cycle ' + x : x, checked: cur === x }))) }); }).join(' · ')}</div>` : '';
   const list = lines.length ? R.logLines({ label: 'Log', lines: lines.map((l) => ({ t: l.t, from: l.step, lvl: l.lvl, text: raw ? l.raw : l.sum })) }) : R.emptyState({ title: 'Nothing in the log matches', text: 'Change the filters or the search.' });
   return `<section class="rtab rl-sec" id="act-logs"><h2 class="rtab-h">Logs <span class="n">${lines.length} of ${v.logs.length} lines</span></h2>${sentence}
-    <div class="rl-tools">${R.field({ id: 'log-q', label: 'Search the log', value: L.q, attrs: { 'data-key': 'log-q' } })}${summaries ? R.segmented({ label: 'Show', hook: 'logview', items: [{ id: 'sum', label: 'Summaries', pressed: !L.raw }, { id: 'raw', label: 'Raw', pressed: L.raw }] }) : ''}${v.bar.stop ? R.checkbox({ label: 'Auto-scroll', checked: L.follow, attrs: { id: 'log-follow', 'data-key': 'log-follow' } }) : ''}${R.button({ label: 'Copy', kind: 'quiet', attrs: { 'data-key': 'log-copy', 'data-say': window.RailWould(`copy ${lines.length} log lines`) } })}</div>${list}</section>`;
+    <div class="rl-tools">${R.field({ id: 'log-q', label: 'Search the log', value: L.q, attrs: { 'data-key': 'log-q' } })}${summaries ? R.segmented({ label: 'Show', hook: 'logview', items: [{ id: 'sum', label: 'Summaries', pressed: !L.raw }, { id: 'raw', label: 'Raw', pressed: L.raw }] }) : ''}${v.bar.stop ? R.checkbox({ label: 'Auto-scroll', checked: L.follow, attrs: { id: 'log-follow', 'data-key': 'log-follow' } }) : ''}${R.button({ label: 'Copy', kind: 'quiet', attrs: LIVE_PAGE() ? { 'data-key': 'log-copy', 'data-copy': lines.map((l) => [l.t, l.step, raw ? l.raw : l.sum].filter(Boolean).join(' ')).join('\n') } : { 'data-key': 'log-copy', 'data-say': window.RailWould(`copy ${lines.length} log lines`) } })}</div>${list}</section>`;
 }
 function agentsHtml(v) {
   if (!R.runPartShows('agents', R.prefs.mode()) || !v.agents.length) return '';
@@ -284,7 +303,7 @@ function sessionsHtml(v) {
   const k = Math.min(ui.session, v.sessions.length - 1); const x = v.sessions[k];
   return `<section class="rtab rl-sec"><h2 class="rtab-h">Sessions <span class="n">${v.sessions.length}</span></h2>${R.table({ label: 'Sessions', columns: [{ id: 'name', label: 'Session' }, { id: 'turns', label: 'Turns', num: true, narrow: false }, { id: 'in', label: 'In', num: true, narrow: false }, { id: 'out', label: 'Out', num: true, narrow: false }, { id: 'cache', label: 'Cache', num: true, narrow: false }, { id: 'cost', label: 'Cost', num: true }], rows: v.sessions })}
     <div class="rl-sentence">Session ${R.sentencePicker({ id: 'session', text: x.name, open: ui.menu === 'session', chevron: svg('chevron', 12), items: v.sessions.map((y, i) => ({ id: String(i), text: y.name, checked: i === k })) })}</div>
-    <div class="rl-tools">${R.button({ label: 'Open the transcript', kind: 'quiet', attrs: { 'data-transcript': k, 'data-key': 'session-open' } })}${R.button({ label: 'Copy its id', kind: 'quiet', attrs: { 'data-say': window.RailWould('copy ' + x.id), 'data-key': 'session-copy' } })}</div></section>`;
+    <div class="rl-tools">${R.button({ label: 'Open the transcript', kind: 'quiet', attrs: { 'data-transcript': k, 'data-key': 'session-open' } })}${R.button({ label: 'Copy its id', kind: 'quiet', attrs: LIVE_PAGE() ? { 'data-copy': x.id, 'data-key': 'session-copy' } : { 'data-say': window.RailWould('copy ' + x.id), 'data-key': 'session-copy' } })}</div></section>`;
 }
 function usageHtml(v) {
   if (!R.prefs.flag('runTelemetry') || !v.usage.length) return '';
@@ -297,14 +316,18 @@ function costHtml(v) {
   const usd = (x) => parseFloat(String(x).replace(/[^0-9.]/g, '')) || 0;
   const other = d.costOther.reduce((a, [, c]) => a + usd(c), 0); const total = usd(fig.v); const fits = total > other;
   const rows = [{ name: 'Agents', cost: v.agentsUnknown ? 'cost unknown' : fits ? '$' + (total - other).toFixed(2) : fig.v }].concat(fits || v.agentsUnknown ? d.costOther.map(([name, cost]) => ({ name, cost })) : []).concat(v.agentsUnknown ? [] : [{ name: 'Total', cost: fig.v }]);
-  return `<section class="rtab rl-sec"><h2 class="rtab-h">Cost</h2>${R.table({ label: 'Cost', columns: [{ id: 'name', label: 'Spent on' }, { id: 'cost', label: 'Cost', num: true }], rows })}${v.agentsUnknown ? '<p class="rl-note">This engine reports no cost, so the total is only Worca’s own calls.</p>' : ''}<p class="rl-note">Apart, not in the total: ${d.costApart.map(([a, b]) => esc(a) + ' ' + esc(b)).join(' · ')}</p></section>`;
+  return `<section class="rtab rl-sec"><h2 class="rtab-h">Cost</h2>${R.table({ label: 'Cost', columns: [{ id: 'name', label: 'Spent on' }, { id: 'cost', label: 'Cost', num: true }], rows })}${v.agentsUnknown ? '<p class="rl-note">This engine reports no cost, so the total is only Worca’s own calls.</p>' : ''}${d.costApart.length ? `<p class="rl-note">Apart, not in the total: ${d.costApart.map(([a, b]) => esc(a) + ' ' + esc(b)).join(' · ')}</p>` : ''}</section>`;
 }
 // A view that only shows is a Dialog without a form (docs/rail/forms.md): the graph, a document, a transcript.
 const viewDialog = (title, body, cls) => R.dialog({ title, id: 'vd-h', body, yes: 'Close', view: true, cls, hooks: { yes: { 'data-viewclose': true, 'data-key': 'vd-close' } } });   // a view closes one way: its Close
 function viewDialogHtml(v) {
   if (ui.dialog === 'doc') {
-    const d = ui.doc; return viewDialog(d.name, `<div class="rl-tools">${R.button({ label: 'Download', kind: 'quiet', attrs: { 'data-say': window.RailWould('download ' + d.name), 'data-key': 'doc-dl' } })}</div><div class="doc-view">${md(d.body)}</div>`);
+    const d = ui.doc; return viewDialog(d.name, `<div class="rl-tools">${d.i === undefined && LIVE_PAGE() ? '' : R.button({ label: 'Download', kind: 'quiet', attrs: LIVE_PAGE() ? { 'data-dl': d.i, 'data-key': 'doc-dl' } : { 'data-say': window.RailWould('download ' + d.name), 'data-key': 'doc-dl' } })}</div><div class="doc-view">${md(d.body)}</div>`);
   }
+  // live: one file's whole diff, from the patch the page read (Changes › Open the whole diff)
+  if (ui.dialog === 'diff') return viewDialog(ui.diff.path, `<pre class="rtab-ev-l">${esc(ui.diff.text)}</pre>`);
+  // live: a shell in the task's worktree (dev's POST /api/runs/:id/terminal), drawn by the library's TerminalPane
+  if (ui.dialog === 'terminal' && ui.term) return viewDialog('Terminal', R.terminalPane({ title: M.view(ui.caseId, ui).place.branch || 'the worktree', lines: ui.term.lines, closed: ui.term.closed, hooks: { stop: { 'data-term-stop': '1', 'data-key': 'term-stop' }, close: { 'data-viewclose': true, 'data-key': 'term-close' }, send: { 'data-term-input': '1', 'data-key': 'term-in' } } }));
   // Commands you run yourself stay until you close them, with a copy button: never a toast that fades.
   if (ui.dialog === 'commands') return viewDialog('Git commands', `<p class="pd-hint">${esc(ui.cmd.label)}</p><div class="rl-tools">${R.copyButton({ text: ui.cmd.text, label: 'Copy the commands', attrs: { 'data-key': 'cmd-copy' } })}</div><pre class="rtab-ev-l">${esc(ui.cmd.text)}</pre>`);
   if (ui.dialog !== 'graph') return '';
@@ -321,7 +344,7 @@ function formDialogHtml() {
   const F = ui.form; if (!F || ui.dialog !== F.id) return '';
   const def = F.def;
   const body = (def.text ? `<p class="pd-hint">${esc(R.fill(def.text, F.ctx || {}))}</p>` : '') + (def.options ? R.optionList({ label: def.title, options: def.options, selected: F.pick, recommended: -1, optAttrs: (i) => ({ 'data-fopt': i, 'data-key': 'fopt:' + i }) })
-    : R.field({ id: 'fd-value', label: def.field.label, value: F.value, hint: def.field.hint || '', error: F.fieldErr || '', multiline: !!def.field.multiline, attrs: { 'data-key': 'fd-value' } }))
+    : R.field({ id: 'fd-value', label: def.field.label, value: F.value, hint: F.hint ?? (def.field.hint || ''), error: F.fieldErr || '', multiline: !!def.field.multiline, attrs: { 'data-key': 'fd-value' } }))
     + (F.err ? `<div class="pd-alert" role="alert"><b>${esc(F.err.title)}</b><span>${esc(F.err.detail)}</span></div>` : '');
   return R.dialog({ title: def.title, id: 'fd-h', close: svg('x', 14), body, yes: def.yes, busy: !!ui.busy, busyLabel: 'Working…', hooks: { close: { 'data-fd': 'cancel', 'data-key': 'fd-close' }, cancel: { 'data-fd': 'cancel', 'data-key': 'fd-cancel' }, yes: { 'data-fd': 'ok', 'data-key': 'fd-ok' } } });
 }
@@ -338,7 +361,7 @@ function panelHtml(v) {
   const t = v.tabs.find((x) => x.sel) || v.tabs[0]; const id = t.id;
   // a part that cannot be drawn says so in its own place; the rest of the page keeps working
   if (ui.broken) return R.emptyState({ title: R.failureOf(`Show the ${t.l.toLowerCase()}`).title, text: 'Something went wrong here. The rest of the page still works.', error: true,
-    actions: R.button({ label: 'Reload this part', attrs: { 'data-fixpart': true, 'data-key': 'fix-part' } }) + R.button({ label: 'Details', kind: 'quiet', attrs: { 'data-say': DETAILS, 'data-key': 'part-details' } }) });
+    actions: R.button({ label: 'Reload this part', attrs: { 'data-fixpart': true, 'data-key': 'fix-part' } }) + unlessLive(R.button({ label: 'Details', kind: 'quiet', attrs: { 'data-say': DETAILS, 'data-key': 'part-details' } })) });
   return ({ summary: summaryPanel, changes: changesPanel, activity: activityPanel, decisions: decisionsPanel })[id](v);
 }
 function figHtml(f, v) {
@@ -356,7 +379,7 @@ function render() {
   pendingFocus = '';
   const v = M.view(ui.caseId, ui);
   logsGone = v.has.logsGone;
-  const a = v.action;
+  const a = v.action && LIVE_PAGE() ? liveAction(v, v.action) : v.action;
   // The task's controls sit together on the status line: its one action (with ▾), then ⋯ for everything else.
   const split = a ? R.splitButton({ main: { label: ui.busy && !ui.confirm && !ui.dialog ? R.workingWord(ui.busy.label) : a.label, kind: a.primary && R.alertLevel(R.markTone(v)) === 3 ? 'primary' : '', icon: svg(a.icon, 14), title: a.offWhy || a.help, attrs: { 'data-key': 'act-main', 'data-label': a.label, disabled: !!a.offWhy || !!ui.busy } },
     moreLabel: a.items.length ? 'More actions' : '', chevron: svg('chevron', 14), open: ui.menu === 'act', menuHtml: menu('act', a.items), moreAttrs: { 'data-menu': 'act', 'data-key': 'menu:act' }, cls: 'rc-action rc-pop is-right' }) : '';
@@ -367,8 +390,13 @@ function render() {
   // "branch merged into dev", "main to origin/main", "on source then to origin", "into ~/folder". The branch name copies itself on click and loses
   // its middle, never its end, so sibling runs (-2, -3) stay apart.
   const own = M.branches?.[ui.caseId], pl = own && v.place.branch ? { ...v.place, branch: own, hidden: '' } : v.place;   // this task's own branch, not its case's fixture (act.this-thing)
-  const where = R.workPlace(Object.assign({ finished: v.finished, copyAttrs: pl.branch ? { 'data-say': window.RailWould(`copy ${pl.hidden || pl.branch}`) } : null, prAttrs: pl.pr ? { 'data-say': window.RailWould(`open ${pl.pr} on GitHub`) } : null }, pl));
-  const pr = pl.pr ? `<a class="rc-pr" href="#" data-key="pr" data-say="${esc(window.RailWould(`open ${pl.pr} on GitHub`))}" title="Open ${esc(pl.pr)} on GitHub">${esc(pl.pr)}</a>` : '';
+  // live: the branch copies itself and the PR opens on its host; the demo says what it would do
+  const prUrl = livePrUrl();
+  const where = R.workPlace(Object.assign({ finished: v.finished,
+    copyAttrs: pl.branch ? (LIVE_PAGE() ? { 'data-copy': pl.hidden || pl.branch } : { 'data-say': window.RailWould(`copy ${pl.hidden || pl.branch}`) }) : null,
+    prAttrs: pl.pr ? (prUrl ? { target: '_blank', rel: 'noopener' } : { 'data-say': window.RailWould(`open ${pl.pr} on GitHub`) }) : null }, pl, prUrl ? { prUrl } : {}));
+  const pr = !pl.pr ? '' : prUrl ? `<a class="rc-pr" href="${esc(prUrl)}" target="_blank" rel="noopener" data-key="pr" title="Open ${esc(pl.pr)} on its host">${esc(pl.pr)}</a>`
+    : `<a class="rc-pr" href="#" data-key="pr" data-say="${esc(window.RailWould(`open ${pl.pr} on GitHub`))}" title="Open ${esc(pl.pr)} on GitHub">${esc(pl.pr)}</a>`;
   const repos = pl.repos.length ? `<span>${pl.repos.length} repositories</span>` : '';
   // + stays at the end of the place line; labels and tags, once added, get their own wrapping row under it.
   const kind = v.kind ? R.chip({ text: v.kind }) : '';
@@ -377,7 +405,7 @@ function render() {
   const facts = `<span class="rc-placeset">${placeLine}</span>${placeLine ? '<span class="rc-sep" aria-hidden="true">·</span>' : ''}${tagGroupHtml()}`;
   // Where you are: Runs › place › group, the page itself never a crumb; on a narrow card only the parent, as ‹ Parent.
   const crumbs = R.trail({ items: v.crumbs.map((c, i) => (c.go ? { label: c.t, button: true, attrs: { 'data-crumb': i, 'data-key': 'crumb:' + i } }
-    : { label: c.t, attrs: { 'data-key': 'crumb:' + i, 'data-say': 'Goes to ' + (i ? (c.group ? 'the ' + c.t + ' group' : c.t + ' tasks') : 'the Tasks list') } })) });
+    : { label: c.t, attrs: LIVE_PAGE() ? { 'data-key': 'crumb:' + i, 'data-crumbto': c.t } : { 'data-key': 'crumb:' + i, 'data-say': 'Goes to ' + (i ? (c.group ? 'the ' + c.t + ' group' : c.t + ' tasks') : 'the Tasks list') } })) });
   // A task in a group steps to its siblings; a task that has not started has no page yet.
   const pg = v.pager;
   const left = svg('chevron', 14).replace('M6 9.5l6 6 6-6', 'M14.5 6l-6 6 6 6');
@@ -401,7 +429,7 @@ function render() {
   <div class="rc">
     <div class="rc-bar">${crumbs}${ui.offline ? `<span class="rc-conn" role="status" title="Worca lost its connection to the server; your runs keep going and it reconnects by itself">${R.statusDot({ tone: 'is-grey' })}Offline · retrying</span>` : ''}${pager}</div>
     ${stripHtml(v)}
-    <div class="rc-head"><div class="rc-title-row"><h1 class="rc-heading${ui.titleOpen ? ' is-open' : ''}" title="${esc(v.title)}" data-title>${esc(v.title)}</h1>${SHELL ? R.button({ label: 'Keep in view', kind: 'quiet', iconOnly: true, icon: R.icon('eye', 16), attrs: { 'data-keep-view': ui.caseId, 'aria-pressed': 'false', title: 'Keep in view: its mark stays in the top bar, on every page' } }) : ''}</div>${facts ? `<div class="rc-facts">${facts}</div>` : ''}</div>
+    <div class="rc-head"><div class="rc-title-row"><h1 class="rc-heading${ui.titleOpen ? ' is-open' : ''}" title="${esc(v.title)}" tabindex="-1" data-title>${esc(v.title)}</h1>${SHELL ? R.button({ label: 'Keep in view', kind: 'quiet', iconOnly: true, icon: R.icon('eye', 16), attrs: { 'data-keep-view': ui.caseId, 'aria-pressed': 'false', title: 'Keep in view: its mark stays in the top bar, on every page' } }) : ''}</div>${facts ? `<div class="rc-facts">${facts}</div>` : ''}</div>
     <section class="rc-card" aria-label="Task status">
       ${R.statusLine({ dot: statusDot(v), word: v.word, action, detail: v.detail })}
       <div class="rc-zone"><div class="rc-span">${SHELL ? stageBarOf(v) : R.stepper({ stages: v.stages, deepen: '' })}</div></div>
@@ -413,7 +441,7 @@ function render() {
     ${R.toast({ text: ui.toast || '' })}
     ${SHELL && PART_STAGE[ui.tab] && v.stages.some((st) => st.key === PART_STAGE[ui.tab]) ? '' : `<div class="rtab-panel" role="tabpanel" id="rtab-panel" aria-labelledby="tab-${sel}" tabindex="-1">${panelHtml(v)}</div>`}
     ${ui.crash ? R.errorToast({ title: 'Something went wrong', text: 'Worca hit an error it did not expect. Your runs keep going.', icon: svg('alert', 15), count: ui.crash.n,
-    actions: R.button({ label: 'Reload', attrs: { 'data-crash': 'reload', 'data-key': 'crash-reload' } }) + R.button({ label: 'Copy details', kind: 'quiet', attrs: { 'data-say': DETAILS, 'data-key': 'crash-details' } }),
+    actions: R.button({ label: 'Reload', attrs: { 'data-crash': 'reload', 'data-key': 'crash-reload' } }) + unlessLive(R.button({ label: 'Copy details', kind: 'quiet', attrs: { 'data-say': DETAILS, 'data-key': 'crash-details' } })),
     close: R.button({ label: 'Close', kind: 'quiet', iconOnly: true, title: false, icon: svg('x', 14), attrs: { 'data-crash': 'close', 'data-key': 'crash-close' } }) }) : ''}
   </div>`, { motion: !jump });
   jump = false;
@@ -500,7 +528,59 @@ document.addEventListener('change', (e) => {
 // The intro's note lists what this design proposes beyond today's app, with why; the buttons carry no mark.
 { const n = document.getElementById('proposed'); if (n) n.innerHTML = `<summary>${M.proposed.length} actions are proposed, not in today’s app</summary><ul>${M.proposed.map(([a, why]) => `<li><b>${esc(a)}</b> ${esc(why)}</li>`).join('')}</ul>`; }
 const pick = document.getElementById('case') || document.createElement('select');   // the prototype's tools panel has it; the app host has none
-window.RailRunPage = { pick };   // the shell moves the page to the case its address names through this picker, in both hosts
+// The live kind (Stillhet Tasks): #run/ID is a real task; its page is its case's design drawn with its own facts.
+const LIVE_PAGE = () => !!(SHELL && window.RailWorld?.live && window.RailTaskLive);
+// The live kind draws no control whose only answer would be "Not connected to Worca yet." or "the task page does not offer
+// it" (R-fit-4): each one does its real thing (copy, open the PR) or is left out until it is wired.
+const unlessLive = (html) => (LIVE_PAGE() ? '' : html);
+const livePrUrl = () => (LIVE_PAGE() && ui.taskId ? window.RailTaskLive.detail(ui.taskId)?.prUrl || '' : '');
+const LIVE_MORE = new Set(['away:auto', 'away:on', 'away:off', 'more:archive', 'more:restore', 'more:report', 'more:link', 'more:terminal', 'more:sync', 'more:preset', 'more:group', 'more:try']);
+// Switch model's choices in the live kind: dev's models for this task's engine, read when its page opens
+let liveModels = [];
+/** The action slot in the live kind: only the labels RailTaskLive runs (canFlow); the first one left is the main. */
+function liveAction(v, a) {
+  const T = window.RailTaskLive, pr = livePrUrl();
+  if (ui.run && ui.run.liveGroup) {   // a group's page: its members' Merge #N and Fix checks on #N, and the group's Create PR
+    const own = (label) => typeof label === 'string' && /^(Merge|Fix checks on) #\d+$|^Create (PR|\d+ PRs)$|^Create (one PR|\d+ (separate|stacked) PRs) instead$/.test(label);
+    const items = (a.items || []).filter((it) => it && own(it.text));
+    return own(a.label) ? Object.assign({}, a, { items }) : items.length ? Object.assign({}, a, { label: items[0].text, items: items.slice(1) }) : null;
+  }
+  const ok = (label) => typeof label === 'string' && !(label === 'Switch model…' && !liveModels.length) && (label === 'Full plan' ? livePlanDoc() >= 0 : T.canFlow((((v.flow || {})[label] || {}).live) || LIVE_ACT_LABEL[label] || label, { pr, case: ui.caseId, page: true, taskId: ui.taskId }));
+  // the ▾ items are menu entries ({ text, … }); a separator or a header has no action of its own and goes with them
+  const items = (a.items || []).filter((it) => it && !it.sep && !it.header && ok(it.text));
+  if (ok(a.label)) return Object.assign({}, a, { items });
+  return items.length ? Object.assign({}, a, { label: items[0].text, icon: 'refresh', items: items.slice(1) }) : null;
+}
+// live: the plan document the task's steps wrote (its artifacts), what Full plan opens; -1 when it wrote none
+const livePlanDoc = () => (M.view(ui.caseId, ui).tabData.artifacts || []).findIndex(([name]) => /plan/i.test(name));
+const LIVE_ACT_LABEL = { 'Stop the task': 'Stop', 'Pause now': 'Pause', 'Resume anyway': 'Retry' };
+// a frame or a refetch changed the task on screen: redraw it with the same tab, menu and focus (subscribed on first open:
+// RailTaskLive exists only once the live adapter has started)
+let liveSub = null;
+// a Terminal left open detaches when the page shows another task (dev's term-detach), as its Close does
+function dropTerm() { if (ui.term) { ui.term.close(); ui.term = null; } }
+function livePage(id, keep) {
+  if (!window.RailTaskLive) return;   // a cold deep link routes before the live adapter starts; the shell routes again once it has
+  liveSub ||= window.RailTaskLive.onChange((x) => { if (LIVE_PAGE() && ui.taskId && (!x || x === ui.taskId) && !ui.busy && window.RailTaskLive.state(ui.taskId) === 'ready' && /^#run\//.test(location.hash)) livePage(ui.taskId, true); });
+  const page = window.RailTaskLive.detail(id);
+  // a group's page: dev's run group drawn as the design's group (M.liveGroup), each member its own task
+  if (page.group) {
+    const run = M.liveGroup(page.group);
+    if (!keep || ui.taskId !== id) { dropTerm(); ui = Object.assign(fresh(run.id), { taskId: id }); jump = true; }
+    ui.caseId = run.id; ui.run = run; ui.groupRun = run;
+    if (!keep) ui.tab = partNow(M.view(ui.caseId, ui), 'feature');   // its id is dev's group, not a design case
+    render(); return;
+  }
+  if (!keep || ui.taskId !== id) { dropTerm(); ui = Object.assign(fresh(page.case), { taskId: id }); jump = true; }
+  else ui.caseId = page.case;
+  ui.run = M.liveRun(Object.assign({}, page, { id })); ui.pauseAfter = page.pauseAfterStep;   // its parts are read by the id it opened with
+  ui.chips = (page.labels || []).map((text) => ({ kind: 'label', text })).concat((page.tags || []).map((text) => ({ kind: 'tag', text })));   // dev's, not the design's
+  if (!keep) { liveModels = []; window.RailTaskLive.models?.(id).then((list) => { if (ui.taskId !== id) return; liveModels = list || []; render(); }); }   // another task's late list never lands
+  if (!keep) ui.tab = partNow(M.view(ui.caseId, ui), ui.caseId);
+  render();
+}
+window.RailRunPage = { pick, openLive: (id, keep) => livePage(id, !!keep) };   // the shell moves the page to the case its address names through this picker, in both hosts
+
 const groups = M.caseGroups;   // by what you check
 pick.innerHTML = groups.map((g) => `<optgroup label="${g}">${M.cases.filter((c) => c.group === g).map((c) => `<option value="${c.id}"${c.id === ui.caseId ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</optgroup>`).join('');
 pick.addEventListener('change', () => {
@@ -528,7 +608,7 @@ function moreItems(v) {
     if (v.gone === 'discarded') items.push({ id: 'more:archive', text: 'Archive', help: 'Takes it out of Tasks; the history stays' });
     if (v.gone === 'archived') items.push({ id: 'more:restore', text: 'Restore', help: 'Brings the record back to Tasks; its branch, worktree and logs stay gone' });
     items.push({ id: 'more:link', text: 'Copy link', help: 'Paste it in Chat or an issue' });
-    return items;
+    return LIVE_PAGE() ? liveMore(items) : items;
   }
   if (live && !group) items.push({ header: 'Away mode' }, ...AWAY.map((x) => Object.assign({ checked: (ui.away || 'away:auto') === x.id }, x)), { sep: true });
   if (v.runAfter) items.push({ id: 'more:after', text: v.runAfter.label, help: v.runAfter.help });
@@ -543,13 +623,21 @@ function moreItems(v) {
     else items.push({ id: 'more:try', text: 'Try it', off: !!(v.heldBy || v.hosted), hint: v.heldBy ? 'Held' : '', help: v.hosted ? HOSTED_WHY : v.heldBy ? `Held by “${v.heldBy}”; it has the branch checked out` : 'Checks the branch out locally so you can run it' });
   }
   if (group) { const on = !!ui.askEach; if (v.bar.stop) items.push({ id: 'group:toggle', text: 'Ask before each task', checked: on, help: 'Stops for your OK before each later task starts; takes effect at once' }); }
-  if (v.has.worktree && !group && R.shows(R.actionLevel('Terminal'))) items.push({ id: 'more:terminal', text: 'Terminal', hint: 'Ctrl+`', help: 'A shell in this task’s worktree' });
+  // live, a workspace of several projects: a shell is in one project's worktree, so Terminal names each (dev's member pick)
+  const termIn = LIVE_PAGE() && ui.taskId ? (window.RailTaskLive.members?.(ui.taskId) || []) : [];
+  if (v.has.worktree && !group && R.shows(R.actionLevel('Terminal'))) items.push(...(termIn.length > 1 ? [{ header: 'Terminal' }, ...termIn.map((m) => ({ id: 'more:terminal:' + m.key, text: m.name, help: 'A shell in ' + m.name + '’s worktree' })), { sep: true }] : [{ id: 'more:terminal', text: 'Terminal', hint: 'Ctrl+`', help: 'A shell in this task’s worktree' }]));
   if (!group && v.place.branch && R.shows('advanced')) items.push({ id: 'more:sync', text: 'Sync log', help: 'How its base was brought up to date before it started (dev: the header’s Sync)' });
   items.push({ id: 'more:link', text: 'Copy link', help: 'Paste it in Chat or an issue' });
   if (v.finished && v.has.report) items.push({ id: 'more:report', text: 'Report this ' + noun, help: 'Asks for a note, then sends it with the logs to the Worca team' });
   if (v.finished && !v.archived && v.has.started) items.push({ id: 'more:archive', text: 'Archive', help: v.dependents ? v.dependents + ' runs wait on this one and will start without it. Removes the branch, worktree and logs' : 'Removes the branch, worktree and logs; the remote branch and PR stay' });
   if (group && !v.archived && !live && R.shows('advanced')) items.push({ id: 'more:delete', text: 'Delete', help: 'Removes it and its tasks from Tasks; their PRs stay' });
-  return items;
+  return LIVE_PAGE() ? liveMore(items) : items;
+}
+/** ⋯ in the live kind: only the items that reach dev (LIVE_MORE), without a header or a separator left alone. */
+function liveMore(items) {
+  const own = ui.run && ui.run.liveGroup ? new Set(['more:link']) : LIVE_MORE;   // a group's ⋯: its link (its members carry the rest)
+  const kept = items.filter((x) => x.sep || x.header || own.has(x.id) || (own === LIVE_MORE && /^more:terminal:/.test(x.id || '')));
+  return kept.filter((x, i) => !(x.sep || x.header) || (kept[i + 1] && !kept[i + 1].sep && !kept[i + 1].header));
 }
 const CH_SAY = { 'ch:refresh': () => window.RailWould('refresh the diff from the worktree'), 'ch:patch': () => window.RailWould('download the patch'), 'ch:copy': (v) => window.RailWould('copy: git fetch && git switch ' + v.place.branch) };
 const MORE_SAY = { 'more:terminal': window.RailWould('open a terminal in the worktree'), 'more:sync': window.RailWould('open the Sync log') };
@@ -571,14 +659,19 @@ const follow = R.stepFlow({
   dialogShown: (f) => ui.dialog === f.dialog,
   openDialog(f, label) {
     ui.dialog = f.dialog; ui.dialogLabel = label; ui.dialogF = f; ui.menu = '';
-    if (f.dialog !== 'pr') { const def = M.forms[f.dialog]; ui.form = { id: f.dialog, def, ctx: M.view(ui.caseId, ui).formCtx, pick: def.options ? def.pick : 0, value: def.field ? (f.dialog === 'preset' ? M.view(ui.caseId, ui).title : def.field.value) : '', err: null, fieldErr: '' }; pendingFocus = def.options ? 'fopt:' + def.pick : 'fd-value'; return; }
-    if (f.dialog === 'pr') { const v = M.view(ui.caseId, ui); ui.pr = { title: v.title, desc: '', mode: 'write', gen: false, genTitle: false, titleN: 0, titleSuggested: false, draft: false, watch: true, base: 'dev' }; if (!v.runs.length || !/^Create \d/.test(label)) { generateTitle(); generate(); } else startStack(v); pendingFocus = v.runs.length ? 'pd-ok' : 'pd-close'; }
+    if (f.dialog !== 'pr') { const def = M.forms[f.dialog]; ui.form = { id: f.dialog, def, ctx: M.view(ui.caseId, ui).formCtx, pick: def.options ? def.pick : 0, value: def.field ? (f.dialog === 'preset' ? M.view(ui.caseId, ui).title : def.field.value) : '', err: null, fieldErr: '' };
+      // live, the cap field starts at this task's own cap and its hint says it (never the demo's $180 and $120)
+      if (f.dialog === 'model' && LIVE_PAGE()) { ui.form.def = Object.assign({}, def, { options: liveModels.map((m) => m.label), pick: 0 }); ui.form.pick = 0; ui.form.models = liveModels; }
+      if (f.dialog === 'cap' && LIVE_PAGE()) { const cap = window.RailTaskLive.detail(ui.taskId)?.cap, at = cap == null ? '' : '$' + (cap % 1 ? cap.toFixed(2) : String(cap)); ui.form.value = at; ui.form.hint = at ? 'It is at ' + at : ''; }
+      pendingFocus = def.options ? 'fopt:' + def.pick : 'fd-value'; return; }
+    if (f.dialog === 'pr') { const v = M.view(ui.caseId, ui); ui.pr = { title: v.title, desc: '', mode: 'write', gen: false, genTitle: false, titleN: 0, titleSuggested: false, draft: false, watch: true, base: (LIVE_PAGE() && window.RailTaskLive.detail(ui.taskId)?.base) || 'dev' }; if (!v.runs.length || !/^Create \d/.test(label)) { generateTitle(); generate(); } else startStack(v); pendingFocus = v.runs.length ? 'pd-ok' : 'pd-close'; }
   },
   confirmed: () => !!(ui.confirm && ui.confirm.ok),
   askConfirm(f, label) { ui.dialog = ''; ui.confirm = Object.assign(R.confirmOf(f, label), { f, label }); ui.menu = ''; pendingFocus = 'confirm:yes'; },
   working(label) { ui.busy = { label }; ui.menu = ''; if (ui.confirm) ui.confirm.err = null; if (ui.pr) ui.pr.err = null; if (ui.form) ui.form.err = null; pendingFocus = ui.form && ui.dialog === ui.form.id ? 'fd-ok' : ui.dialog ? 'pd-ok' : ui.confirm ? 'confirm:yes' : pendingFocus; },
   // The mock of the app's call: a step that asked takes its time and can fail; one that did not is quicker. Left behind (Cancel, another case), it never lands.
   perform(f, label) {
+    if (LIVE_PAGE()) return liveDo(f, label);
     const busy = ui.busy, asked = f.confirm || f.dialog || f.fromDialog;
     return new Promise((answer) => setTimeout(() => {
       if (ui.busy !== busy) return;
@@ -590,8 +683,50 @@ const follow = R.stepFlow({
   done(f, label) { done(f, label); render(); },
   failed(label, err) { failed(err); render(); document.querySelector('.pd-alert')?.scrollIntoView({ block: 'nearest' }); },
 });
+// The live kind: the step is dev's route (RailTaskLive.flow); nothing changes here before it answers ok (D13). A refusal
+// is said once where the step started: its strip or its dialog (quiet runner), else the shell's toast.
+const LIVE_LABEL = LIVE_ACT_LABEL;
+let liveSaid = '', liveNext = null, liveFailWords = '';
+async function liveDo(f, label) {
+  const asked = !!(f.confirm || f.dialog || f.fromDialog);
+  const u = ui;   // the page this step started on
+  const m = u.form && u.form.models ? u.form.models[u.form.pick] : null;   // Switch model: the picked model's id and name
+  const res = await window.RailTaskLive.flow(f.live || LIVE_LABEL[label] || label, Object.assign({ taskId: f.taskId || u.taskId, value: u.form ? u.form.value : undefined, baseAck: !!f.baseAck, quiet: asked }, m ? { model: m.id, modelLabel: m.label } : {},
+    f.ship && u.run && u.run.liveGroup ? { ship: f.ship, groupId: u.run.liveGroup.id, groupKind: u.run.liveGroup.kind } : {},
+    // Create PR's dialog: what you wrote and picked goes to dev's POST /api/pr (title, description, draft, watch, base)
+    u.dialog === 'pr' && u.pr && !f.ship ? { title: u.pr.title, body: u.pr.desc, draft: !!u.pr.draft, watch: !!u.pr.watch, base: u.pr.base } : {}));
+  // Left behind (another task opened meanwhile): the reply never lands on the page now shown, as the demo's perform does.
+  if (ui !== u) return new Promise(() => {});
+  ui.busy = null;
+  if (res && res.prompt === 'base') { liveNext = { confirm: res.error, baseAck: true, say: 'Resumed on the moved base' }; return { ok: true }; }
+  liveSaid = (res && res.say) || '';
+  // a new task, a restarted Build or a resume answers the run it started: the page follows it (a resume's new run id is
+  // the same task; its old one is dropped from the live runs)
+  if (res && res.ok && res.data && res.data.runId && res.data.runId !== u.taskId) liveNext = { open: res.data.runId };
+  liveFailWords = (res && !res.ok && res.words) || '';
+  return res && res.ok ? { ok: true } : { ok: false, why: (res && res.error) || '' };
+}
+async function liveDirect(label, say, extra, onOk) {
+  const keep = pendingFocus;
+  ui.busy = { label }; ui.menu = ''; render();
+  const u = ui;
+  const res = await window.RailTaskLive.flow(label, Object.assign({ taskId: u.taskId }, extra));
+  if (ui !== u) return;   // another task is on the page now: this reply is not its
+  ui.busy = null;
+  // a step from a dialog (onOk) keeps its field focused when refused; otherwise the action takes the focus back
+  pendingFocus = onOk && !(res && res.ok) ? keep || 'act-main' : 'act-main';
+  if (res && res.ok) { if (onOk) onOk(); toast(res.say || say || ''); }
+  render();
+}
 function done(f, label) {
   ui.dialog = ''; ui.confirm = null; ui.menu = ''; ui.form = null;
+  if (LIVE_PAGE()) {   // dev's state moves it: read the task again, and say what happened
+    const next = liveNext; liveNext = null;
+    if (next && next.confirm) { follow(next, 'Resume anyway'); return; }
+    toast(liveSaid || f.say || ''); liveSaid = '';
+    if (next && next.open) { SHELL.go('run/' + next.open); return; }
+    window.RailTaskLive.open(ui.taskId, { force: true }); pendingFocus = 'act-main'; return;
+  }
   // Done on a group's page, it happens to the task it names, and the group reads from that run.
   if (f.member !== undefined) { const v = M.view(ui.caseId, ui); const i = f.index !== undefined ? f.index : v.holdIndex; ui.over = Object.assign({}, ui.over, { [ui.caseId + ':' + i]: M.moveMember(ui.caseId, i, ui, f.member, f) }); toast(f.say); pendingFocus = 'act-main'; return; }
   if (f.leave) { if (SHELL) { window.RailShell.taskGone?.(ui.caseId, M.titles?.[ui.caseId]); ui = fresh('starting'); SHELL.go('runs'); window.RailPulse?.say(f.say); } else { goCase('deleted', {}); toast(f.say); } return; }
@@ -607,7 +742,9 @@ function done(f, label) {
 const REASON = { Report: 'the report could not be sent', Link: 'the remote did not answer', Push: 'the remote rejected the push', Publish: 'the remote rejected the push', Fix: 'GitHub did not answer', Update: 'GitHub did not answer', Resume: 'the schedule could not be saved', Raise: 'the budget settings could not be saved', Mark: 'GitHub did not answer', Apply: 'a terminal still has the folder open', Abort: 'the task did not answer; it may have just finished', Delete: 'a terminal still has the worktree open', Merge: 'GitHub says the branch is behind dev; update it and try again', Create: 'git push was rejected: the remote branch moved', Stop: 'the task did not answer; it may have just finished',
   Archive: 'a terminal still has the worktree open', Discard: 'a terminal still has the worktree open', Cancel: 'run 3 had just started', 'Re-plan': 'the planner did not answer in time', Continue: 'the budget settings could not be saved' };
 function failed(err) {
+  if (LIVE_PAGE() && liveFailWords) { err.title = 'Could not ' + liveFailWords; liveFailWords = ''; }   // the action's own words: "Could not merge #959"
   const why = err.reason.replace(/^./, (c) => c.toLowerCase());
+  if (!ui.confirm && !(ui.form && ui.dialog === ui.form.id) && ui.dialog !== 'pr') { pendingFocus = 'act-main'; return; }   // live, unasked: the toast already said it
   if (ui.form && ui.dialog === ui.form.id) { ui.form.err = err; pendingFocus = 'fd-ok'; return; }
   if (ui.dialog === 'pr') {
     // a stack fails part-way: the PRs already opened stay opened, and a retry opens only the rest
@@ -618,7 +755,9 @@ function failed(err) {
   } else { ui.confirm.err = err; ui.confirm.ok = false; pendingFocus = 'confirm:yes'; }
 }
 // The prototype's "Next one fails" switch: the next confirmed step or suggestion fails, to show how a failure reads.
-function takeFail() { const box = document.getElementById('fail-next'); if (!box || !box.checked) return false; box.checked = false; return true; }
+// ?state=action-failed (both hosts, the compare's action-failed-run cell): the first confirmed step fails, as the switch does.
+let failByState = /(?:^|[?&])state=action-failed(?:&|$)/.test(location.search);
+function takeFail() { if (failByState) { failByState = false; return true; } const box = document.getElementById('fail-next'); if (!box || !box.checked) return false; box.checked = false; return true; }
 // The prototype's "Break something" picker: what an error nobody planned for looks like (docs/rail/failures.md: When
 // something breaks unexpectedly). A step waits for the next confirmed step; the others happen at once.
 function takeBreak(kind) { const s = document.getElementById('break'); if (!s || s.value !== kind) return false; s.value = ''; return true; }
@@ -640,14 +779,60 @@ function draft(kind) {
   draftTimer = setTimeout(() => { if (!ui[flag]) return; ui[flag] = false; if (fails) { ui[kind + 'Err'] = true; render(); return; } if (kind === 'answer') { ui.answerOwn = DRAFT.answer; ui.answer = -1; pendingFocus = 'answer-own'; } else { ui.changesText = DRAFT.changes; pendingFocus = 'changes-text'; } render(); }, 1100);
 }
 // A document opens in its viewer: a view only shows, so it is a Dialog without a form.
-function openDoc(i) { const d = M.view(ui.caseId, ui).tabData; const name = d.artifacts[i][0]; ui.doc = { name, body: d.docBody[name] || '' }; ui.dialog = 'doc'; ui.menu = ''; pendingFocus = 'vd-close'; }
+function openDoc(i) {
+  const d = M.view(ui.caseId, ui).tabData; const name = d.artifacts[i][0];
+  // live: the document's own text (GET /api/runs/:id/artifact); the viewer opens once it is read, a refusal is said once
+  if (LIVE_PAGE()) { const u = ui; ui.menu = ''; window.RailTaskLive.docText(u.taskId, d.artifacts[i][2]).then((r) => { if (ui !== u || !r.ok) { render(); return; } ui.doc = { name, body: r.text, i }; ui.dialog = 'doc'; pendingFocus = 'vd-close'; render(); }); return; }
+  ui.doc = { name, body: d.docBody[name] || '' }; ui.dialog = 'doc'; ui.menu = ''; pendingFocus = 'vd-close';
+}
+// live: Terminal opens a shell in the worktree (dev checks it out first when it is not) and attaches to it as Chat does
+async function openTerminal(member) {
+  const u = ui; ui.busy = { label: 'Terminal' }; ui.menu = ''; render();
+  const res = await window.RailTaskLive.act('terminal', Object.assign({ taskId: u.taskId }, member ? { member } : {}));
+  if (ui !== u) return;
+  ui.busy = null;
+  if (!res.ok || !res.session) { pendingFocus = 'act-main'; render(); return; }
+  const s = await window.RailChatLive?.terminal(res.session);
+  if (ui !== u) { s?.close?.(); return; }   // the page changed while it attached: never leave the shell attached behind it
+  if (!s || s.closed) { toast('Could not open a terminal in the worktree: ' + ((s && s.tip) || 'the shell closed')); render(); return; }
+  ui.term = s; s.onChange(() => { if (ui === u && ui.dialog === 'terminal') render(); }); ui.dialog = 'terminal'; pendingFocus = 'term-in'; render();
+}
+// live: a diff line's comment is dev's (POST /api/history/:key/:id/comments), anchored to the line's side and number
+async function liveComment() {
+  const u = ui, c = ui.commentOn, td = M.view(ui.caseId, ui).tabData, hk = (td.hunks || {})[c.path];
+  const row = hk && hk.lines.filter(([k]) => k !== ' ')[c.row];
+  if (!row) { c.err = 'Pick a changed line first'; pendingFocus = 'cmt-text'; render(); return; }
+  const fm = (td.fileMeta || {})[c.path] || {}, member = fm.member;   // a workspace's file names its project and dev's own path
+  const res = await window.RailTaskLive.act('comment', Object.assign({ taskId: u.taskId, path: fm.path || c.path, side: row[2], line: row[3], value: c.text, quiet: true }, member ? { member } : {}));
+  if (ui !== u) return;
+  if (!res.ok) { c.err = 'Could not add the comment: ' + res.error; pendingFocus = 'cmt-text'; render(); return; }
+  ui.commentOn = null; toast(res.say); pendingFocus = 'cmt-open'; render();
+}
+// live: Move to group… adds the task to dev's run group by that name, or makes the group (POST /api/run-groups)
+async function liveGroup(title) {
+  const u = ui, T = window.RailTaskLive; ui.menu = ''; pendingFocus = 'menu:more'; render();
+  const known = await T.loadGroups();   // a typed title of a group dev holds joins it, never makes a second one
+  if (ui !== u) return;
+  if (!known) { toast('Could not move to group: the groups did not load'); return; }   // never a second group of the same name
+  const g = (T.groups?.() || []).find((x) => x.title === title);
+  const res = g ? await T.list('add-to-group', { ids: [u.taskId], groupId: g.id }) : await T.list('new-group', { ids: [u.taskId], title });
+  if (ui !== u || !res?.ok) return;
+  T.loadGroups(true); toast((g ? 'Moved to ' : 'Created and moved to ') + title); render();
+}
+// live: a service's Start or Stop, or a built-in tool, on dev's run Actions; the page reads its parts again after
+async function liveTool(id, args, key) {
+  const u = ui; const res = await window.RailTaskLive.act(id, Object.assign({ taskId: u.taskId }, args));
+  if (ui !== u) return;
+  ui.svcBusy = ''; if (res.ok) toast(res.say || (/-start$/.test(id) ? 'Started ' : /-stop$/.test(id) ? 'Stopped ' : 'Opened ') + (args.name || ''));
+  pendingFocus = key; render();
+}
 function act(label) {
-  if (label === 'Ask for changes' || label === 'Revise') { const v = M.view(ui.caseId, ui); ui.changesFor = label; ui.dialog = 'changes'; ui.changesText = ''; ui.menu = ''; if (v.id === 'plan' || v.id === 'outline') { draft('changes'); pendingFocus = 'draft-stop'; } else pendingFocus = 'changes-text'; return; }
-  if (label === 'Full plan') { openDoc(0); return; }
+  if (label === 'Ask for changes' || label === 'Revise') { const v = M.view(ui.caseId, ui); ui.changesFor = label; ui.dialog = 'changes'; ui.changesText = ''; ui.menu = ''; if (!LIVE_PAGE() && (v.id === 'plan' || v.id === 'outline')) { draft('changes'); pendingFocus = 'draft-stop'; } else pendingFocus = 'changes-text'; return; }
+  if (label === 'Full plan') { openDoc(LIVE_PAGE() ? livePlanDoc() : 0); return; }
   if (label === 'Review the workflow') { ui.dialog = 'graph'; ui.graphNode = null; ui.menu = ''; pendingFocus = 'vd-close'; return; }
   if (label === 'Watch' || label === 'Watch PRs') { const it = M.view(ui.caseId, ui).action.items.find((x) => x.text === label); ui.watched = !(it && it.checked); ui.menu = ''; toast(ui.watched ? (label === 'Watch' ? 'Worca watches the PR and fixes failing checks' : 'Worca watches all three PRs') : 'Worca stopped watching'); pendingFocus = 'act-main'; return; }
   if (label === 'Next question' || label === 'Previous question') { ui.question = (ui.question || 0) + (label === 'Next question' ? 1 : -1); ui.answer = null; ui.answerOwn = ''; ui.menu = ''; pendingFocus = 'act-main'; return; }
-  if (/ (stacked PRs|one PR) instead$/.test(label)) {
+  if (/ ((stacked|separate) PRs|one PR) instead$/.test(label)) {
     const v = M.view(ui.caseId, ui); const it = v.action.items.find((x) => x.text === label);
     if (it && it.off) { toast(it.help); ui.menu = ''; pendingFocus = 'menu:act'; return; }
     ui.ship = /one PR/.test(label) ? 'one' : 'stack'; ui.menu = '';
@@ -657,6 +842,13 @@ function act(label) {
   // What is left: the plan holds only the tasks that have not finished.
   if (label === 'Re-plan the rest') { const left = M.view(ui.caseId, ui).runs.filter((r) => !/^(Ready|Merged)$/.test(r.word)).map((r) => r.title); follow({ to: 'outline', say: 'The waiting tasks are cancelled; Worca planned what is left', confirm: 'Re-plan the rest? The waiting tasks are cancelled and Worca plans what is left from the last finished task.', run: () => { goCase('outline', {}); ui.outline = left.length ? left : null; } }, label); return; }
   // A stack in review merges one PR at a time; merging one moves the next onto dev, where its checks run again.
+  const gm = LIVE_PAGE() && ui.run && ui.run.liveGroup && /^(Merge|Fix checks on) (#\d+)$/.exec(label);
+  if (gm) {   // live: the member's own PR route (POST /api/pr/merge, /api/pr/fix-checks), confirmed first as the design asks
+    const m = ui.run.liveGroup.members.find((x) => x.pr === gm[2]); if (!m) return;
+    if (gm[1] === 'Merge') follow({ confirm: 'Merge ' + gm[2] + '? Worca then moves the next PR onto its base.', live: 'Merge PR', taskId: m.pipelineId, say: 'Merged ' + gm[2] }, label);
+    else follow({ confirm: 'Fix the failing checks on ' + gm[2] + '? Worca pushes the fix to the PR.', live: 'Fix checks', taskId: m.pipelineId, say: 'A short task is fixing ' + gm[2] + '’s checks' }, label);
+    return;
+  }
   const pm = ui.caseId === 'chain' && /^(Merge|Fix checks on) (#\d+)$/.exec(label);
   if (pm) {
     const nums = M.chainPrs; const i = nums.indexOf(pm[2]); const nx = nums[i + 1];
@@ -673,15 +865,18 @@ function act(label) {
   if (run && !flowNow[label]) {
     const vNow = M.view(ui.caseId, ui); const rf = vNow.runFlow[run];
     // Pause after this step changes nothing yet: the task keeps working, and says so until the step ends.
+    if (rf.pauseAfter && LIVE_PAGE()) { liveDirect('Pause after this step', rf.say); return; }
     if (rf.pauseAfter) { ui.pauseAfter = !ui.pauseAfter; ui.menu = ''; toast(ui.pauseAfter ? rf.say : 'It goes on after this step'); pendingFocus = 'act-main'; return; }
     // On a group's page Pause and Stop are the running task's; the group stays where it is and reads from it.
     if (vNow.liveRun >= 0 && run === 'pauseNow') { follow(Object.assign({}, rf, { to: undefined, member: rf.to, index: vNow.liveRun, say: 'Paused run ' + (vNow.liveRun + 1) + '; Resume goes on from where it was' }), 'Pause'); return; }
     follow(rf, label === 'Stop the task' ? 'Stop the task' : 'Pause'); return;
   }
+  if (label === 'Try it' && LIVE_PAGE()) { liveDirect('Try it'); return; }
   if (label === 'Try it' || label === 'Check out the whole feature') { toast(M.view(ui.caseId, ui).tryIt); ui.menu = ''; pendingFocus = 'act-main'; return; }
   const f = flowNow[label];
   if (f && f.openMember) { const v = M.view(ui.caseId, ui); ui.back = { caseId: ui.caseId, open: ui.open, tab: ui.tab }; goMember(ui.caseId, v.holdIndex); return; }
   if (f && f.commands) { ui.cmd = { label, text: f.commands }; ui.dialog = 'commands'; ui.menu = ''; pendingFocus = 'vd-close'; return; }
+  if (LIVE_PAGE() && (!f || (f.say && !f.dialog && !f.confirm && !f.to && !f.run && !f.fix && !f.leave && f.member === undefined))) { liveDirect(label, f && f.say); return; }
   if (f) follow(f, label); else toast(window.RailWould(label.charAt(0).toLowerCase() + label.slice(1)));
 }
 const EVENT = { starting: 'Plan is under way', working: 'Review passed', checks: '2 checks failed', failing: 'dev moved on: 2 files conflict', conflicts: 'Checks green, a reviewer approved', feature: 'Runs 2 and 3 finished', chain: 'The next PR’s checks pass and a reviewer approves' };
@@ -697,7 +892,8 @@ function nextEvent() {
 function underHtml(u) {
   return `<li class="sc-answer">${issuesHtml(u.issues)}${rolesHtml(u.roles, 'step')}</li>`;
 }
-const detailsLink = () => R.failureLink({ label: 'Details', attrs: { 'data-say': DETAILS, 'data-key': 'err-details' } });
+// live: Details copies the error's own words (its title and what dev logged), as the demo's copies its id, message and stack
+const detailsLink = (e) => R.failureLink({ label: 'Details', attrs: LIVE_PAGE() ? { 'data-copy': [e.title, e.detail].filter(Boolean).join('\n'), 'data-key': 'err-details' } : { 'data-say': DETAILS, 'data-key': 'err-details' } });
 function stripHtml(v) {
   const acts = (yes) => R.confirmActions({ yes });
   if (ui.dialog === 'after') {
@@ -706,12 +902,12 @@ function stripHtml(v) {
       ${opts.length > 1 ? `<select class="select input-sm" id="after-when" aria-label="When it starts" data-key="after-when">${opts.map((o) => `<option>${esc(o)}</option>`).join('')}</select>` : `<span class="rtab-dim" id="after-when-t">${esc(opts[0])}</span>`}${acts(v.finished ? 'Start run' : 'Schedule')}` });
   }
   if (ui.dialog === 'changes') {
-    return R.confirmForm({ form: 'changes', text: ui.changesFor === 'Revise' ? 'Tell Worca what to change in the workflow' : v.id === 'plan' || v.id === 'outline' ? 'Tell the planner what to change' : 'Say what to change', body: `${R.suggestionField({ id: 'changes-text', cls: 'pd-wide', value: ui.changesText || '', rows: 3, placeholder: v.id === 'plan' || v.id === 'outline' ? 'What should the plan do differently?' : 'What should change?', writingPlaceholder: 'Drafting from the 2 open issues…', writing: ui.changesDraft, attrs: { 'data-key': 'changes-text' }, act: ui.changesDraft ? R.stopWriting({ attrs: { 'data-stopdraft': 'changes', 'data-key': 'draft-stop', title: null } }) : R.suggestButton({ tip: draftTip('Draft it from the open issues'), label: 'Draft it from the open issues', attrs: { 'data-draft': 'changes', 'data-key': 'draft-changes' } }) })}
+    return R.confirmForm({ form: 'changes', text: ui.changesFor === 'Revise' ? 'Tell Worca what to change in the workflow' : v.id === 'plan' || v.id === 'outline' ? 'Tell the planner what to change' : 'Say what to change', body: `${R.suggestionField({ id: 'changes-text', cls: 'pd-wide', value: ui.changesText || '', rows: 3, placeholder: v.id === 'plan' || v.id === 'outline' ? 'What should the plan do differently?' : 'What should change?', writingPlaceholder: 'Drafting from the 2 open issues…', writing: ui.changesDraft, attrs: { 'data-key': 'changes-text' }, act: LIVE_PAGE() ? '' : ui.changesDraft ? R.stopWriting({ attrs: { 'data-stopdraft': 'changes', 'data-key': 'draft-stop', title: null } }) : R.suggestButton({ tip: draftTip('Draft it from the open issues'), label: 'Draft it from the open issues', attrs: { 'data-draft': 'changes', 'data-key': 'draft-changes' } }) })}
       ${ui.changesErr ? draftFail('changes') : ''}${acts(v.id === 'plan' || v.id === 'outline' ? 'Send to the planner' : 'Send')}` });
   }
   if (ui.confirm) {
     const c = ui.confirm; const busy = !!ui.busy && !ui.dialog;
-    const err = c.err && { title: c.err.title, detail: c.err.detail, extra: c.err.odd ? detailsLink() : '' };
+    const err = c.err && { title: c.err.title, detail: c.err.detail, extra: c.err.odd ? detailsLink(c.err) : '' };
     return R.confirmStrip({ text: c.text, yes: c.yes, no: c.no, danger: c.danger, busy: busy ? R.workingWord(c.label) : '', err });
   }
   return '';
@@ -753,15 +949,15 @@ function prDialogHtml(v) {
     { id: 'ship:stack', text: sh.n + ' ' + sh.word + ' PRs', checked: sh.pick !== 'one', hint: sh.rec !== 'one' ? 'Suggested' : '', help: sh.word === 'separate' ? 'One PR per task, each into dev' : 'One PR per task, each into the one before' },
     { id: 'ship:one', text: 'One PR', checked: sh.pick === 'one', hint: sh.rec === 'one' ? 'Suggested' : '', off: !!sh.oneBlocked, help: sh.oneBlocked || 'Every run in one review' }], 'pd-ship')}<span>from</span>` : '';
   const shipHint = sh ? `<span class="pd-hint">${esc((sh.pick === sh.rec ? 'Worca suggests this: ' : 'Worca suggests ' + (sh.rec === 'one' ? 'one PR' : sh.n + ' ' + sh.word + ' PRs') + ': ') + sh.reason)}</span>` : '';
-  const into = `<div class="pd-f"><div class="pd-into">${shipPick}<code class="pd-br" title="${esc(branch)}">${esc(branch)}</code><span>into</span>${wordPick('pdbase', pr.base, 'Base branch · pushes to origin', ['dev', 'main'].map((x) => ({ id: 'base:' + x, text: x, checked: pr.base === x })))}</div>
-    ${shipHint}${v.baseMoved && pr.base === 'dev' ? '' : `<span class="pd-hint${pr.base === 'main' ? ' is-warn' : ''}">${pr.base === 'main' ? 'main is 41 commits behind dev; the PR would carry them too' : 'dev has 2 new commits since the task started; they merge cleanly'}</span>`}</div>`;
+  const into = `<div class="pd-f"><div class="pd-into">${shipPick}<code class="pd-br" title="${esc(branch)}">${esc(branch)}</code><span>into</span>${wordPick('pdbase', pr.base, 'Base branch · pushes to origin', [...new Set([pr.base, 'dev', 'main'])].map((x) => ({ id: 'base:' + x, text: x, checked: pr.base === x })))}</div>
+    ${shipHint}${LIVE_PAGE() || (v.baseMoved && pr.base === 'dev') ? '' : `<span class="pd-hint${pr.base === 'main' ? ' is-warn' : ''}">${pr.base === 'main' ? 'main is 41 commits behind dev; the PR would carry them too' : 'dev has 2 new commits since the task started; they merge cleanly'}</span>`}</div>`;
   // Where it goes (Advanced): which remote it pushes to and which it opens against; another repository says so.
   const remotes = R.shows('advanced') ? `<div class="pd-f"><div class="pd-into"><span>Push to</span>${wordPick('pdpush', pr.push || 'origin', 'The remote the branch goes to', ['origin', 'fork'].map((x) => ({ id: 'pushr:' + x, text: x, checked: (pr.push || 'origin') === x })))}<span>open on</span>${wordPick('pdremote', pr.remote || 'origin', 'The remote the pull request opens on', ['origin', 'upstream'].map((x) => ({ id: 'baser:' + x, text: x, checked: (pr.remote || 'origin') === x })))}</div>${(pr.remote || 'origin') !== (pr.push || 'origin') ? `<span class="pd-hint">A pull request across repositories: ${esc(pr.push || 'origin')}’s branch into ${esc(pr.remote || 'origin')}’s ${esc(pr.base)}</span>` : ''}</div>` : '';
-  const moved = v.baseMoved && pr.base === 'dev' ? `<span class="pd-hint is-warn">dev moved while the task worked: 12 new commits, 1 file overlaps. Update the branch first, or the PR opens with conflicts.</span>` : '';
+  const moved = !LIVE_PAGE() && v.baseMoved && pr.base === 'dev' ? `<span class="pd-hint is-warn">dev moved while the task worked: 12 new commits, 1 file overlaps. Update the branch first, or the PR opens with conflicts.</span>` : '';
   const release = `<div class="pd-f">${R.checkbox({ label: 'Add a release', checked: !!pr.release, attrs: { id: 'pd-release', 'data-key': 'pd-release' } })}${pr.release ? R.field({ id: 'pd-version', label: 'Version', value: pr.version === undefined ? 'v1.20.0' : pr.version, hint: 'From the latest tag · a draft release after it merges', attrs: { 'data-key': 'pd-version' } }) : ''}</div>`;
-  const tryFirst = R.shows('advanced') && !stacked ? `<div class="pd-f"><div class="rl-tools">${R.button({ label: 'Try it first', kind: 'quiet', attrs: { 'data-pd': 'try', 'data-key': 'pd-try', title: v.heldBy ? `Held by “${v.heldBy}”` : v.hosted ? HOSTED_WHY : 'Checks the branch out locally before the PR opens', disabled: !!(v.heldBy || v.hosted || ui.copy) } })}${ui.copy ? '<span class="pd-hint">Local copy open · since 18:12</span>' : ''}</div></div>` : '';
+  const tryFirst = R.shows('advanced') && !stacked && !LIVE_PAGE() ? `<div class="pd-f"><div class="rl-tools">${R.button({ label: 'Try it first', kind: 'quiet', attrs: { 'data-pd': 'try', 'data-key': 'pd-try', title: v.heldBy ? `Held by “${v.heldBy}”` : v.hosted ? HOSTED_WHY : 'Checks the branch out locally before the PR opens', disabled: !!(v.heldBy || v.hosted || ui.copy) } })}${ui.copy ? '<span class="pd-hint">Local copy open · since 18:12</span>' : ''}</div></div>` : '';
   const opts = `<div class="pd-opts">${R.checkbox({ label: 'Draft', checked: pr.draft, attrs: { id: 'pd-draft', 'data-key': 'pd-draft' } })}${R.checkbox({ label: 'Watch: fix failing checks', checked: pr.watch, attrs: { id: 'pd-watch', 'data-key': 'pd-watch' } })}<span class="pd-hint pd-closes">${stacked ? 'The last PR closes ' : 'Closes '}${esc(v.tabData.issue)}</span></div>`;
-  const alert = pr.err ? `<div class="pd-alert" role="alert"><b>${esc(pr.err.title)}</b><span>${esc(pr.err.detail)}${pr.err.odd ? ' ' + detailsLink() : ''}</span></div>` : '';
+  const alert = pr.err ? `<div class="pd-alert" role="alert"><b>${esc(pr.err.title)}</b><span>${esc(pr.err.detail)}${pr.err.odd ? ' ' + detailsLink(pr.err) : ''}</span></div>` : '';
   const busy = !!ui.busy;
   // The Dialog component: its head (title, Close), the one scrolling body, its foot (Cancel, the step naming what happens).
   return R.dialog({ title: ui.dialogLabel, id: 'pd-h', close: svg('x', 14), body: `${into}${moved}${remotes}${rowsHtml}${title}${opts}${release}${tryFirst}${alert}`,
@@ -783,7 +979,7 @@ function generateTitle(f = ui.pr, i = -1, delay = 700) {
   f.genTitle = true; f.errTitle = false;
   setTimeout(() => { if (!live(f) || !f.genTitle) return; f.genTitle = false;
     if (fails) { f.errTitle = true; render(); return; }
-    f.title = i < 0 ? (ui.pr.titleN++ % 2 ? 'One head for run and group pages, breadcrumb in the top bar' : v.title) : v.runs[i].title; f.titleSuggested = true; render(); }, delay);
+    f.title = i < 0 ? (!LIVE_PAGE() && ui.pr.titleN++ % 2 ? 'One head for run and group pages, breadcrumb in the top bar' : v.title) : v.runs[i].title; f.titleSuggested = true; render(); }, delay);
 }
 // Each stacked PR starts from today's text (the server's template) and Worca writes over it; all rows start closed.
 function startStack(v) {
@@ -817,7 +1013,20 @@ function addChip(text, kind) {
   if (t && !ui.chips.some((c) => c.kind === kind && c.text === t)) ui.chips = ui.chips.concat({ kind, text: t });
 }
 // Typing a word adds a label; typing key: value adds a cost tag. The editor stays open for the next one.
-function addTag(text) { const t = String(text).trim(); if (!t) return; addChip(t, /^[^:]+:\s*\S/.test(t) ? 'tag' : 'label'); pendingFocus = 'tag-input'; }
+function addTag(text) {
+  const t = String(text).trim(); if (!t) return;
+  const kind = /^[^:]+:\s*\S/.test(t) ? 'tag' : 'label';
+  if (LIVE_PAGE()) { if (!ui.chips.some((c) => c.kind === kind && c.text === t)) liveChips(ui.chips.concat({ kind, text: t }), kind, 'Added ' + t); return; }
+  addChip(t, kind); pendingFocus = 'tag-input';
+}
+// live: a label or a cost tag changes on dev's route (PUT /api/runs/:id/labels or /tags); the chips follow its answer
+async function liveChips(next, kind, say) {
+  const u = ui, list = next.filter((c) => c.kind === kind).map((c) => c.text);
+  const res = await window.RailTaskLive.act(kind === 'tag' ? 'tags' : 'labels', Object.assign({ taskId: u.taskId }, kind === 'tag' ? { tags: list } : { labels: list }));
+  if (ui !== u) return;
+  if (res.ok) { ui.chips = next; toast(say); }
+  pendingFocus = 'tag-input'; render();
+}
 
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 document.addEventListener('click', (e) => {
@@ -857,6 +1066,8 @@ document.addEventListener('click', (e) => {
   if (!t && e.target.closest('[data-title]')) { ui.titleOpen = !ui.titleOpen; render(); return; }
   if (!t || !t.closest('#card')) return;
   const d = t.dataset;
+  // the live kind says Copied only once the clipboard took it; a refusal says why (the demo copies and says so at once)
+  if (d.copy && LIVE_PAGE()) { Promise.resolve().then(() => navigator.clipboard.writeText(d.copy)).then(() => R.copied(t), (err) => { toast('Could not copy: ' + ((err && err.message) || 'the browser said no')); render(); }); return; }
   if (d.copy) { try { navigator.clipboard.writeText(d.copy).catch(() => {}); } catch { /* the clipboard is the browser's call */ } R.copied(t); return; }
   if (d.fd) {
     const F = ui.form;
@@ -864,14 +1075,27 @@ document.addEventListener('click', (e) => {
     const val = F.def.options ? F.def.options[F.pick] : String(F.value).trim();
     if (F.def.field && F.def.field.required && !val) { F.fieldErr = F.def.field.label + ' is needed'; pendingFocus = 'fd-value'; render(); return; }
     if (F.def.field?.time && !/^([01]?\d|2[0-3]):[0-5]\d$/.test(val)) { F.fieldErr = 'Write a time of day, like 15:30'; pendingFocus = 'fd-value'; render(); return; }
-    F.fieldErr = ''; const f = ui.dialogF; follow(Object.assign({}, f, { dialog: '', fromDialog: true, value: val, say: String(f.say || '').replace('{value}', val) }), ui.dialogLabel); render(); return;
+    if (F.id === 'cap' && LIVE_PAGE() && !(/^\d+(\.\d+)?$/.test(val.replace(/[$,\s]/g, '')) && parseFloat(val.replace(/[$,\s]/g, '')) > 0)) { F.fieldErr = 'Write the new cap in dollars, like $180'; pendingFocus = 'fd-value'; render(); return; }
+    // live: a dialog's step always waits for its route (a `say`-only step would otherwise end without calling it)
+    F.fieldErr = ''; const f = ui.dialogF; follow(Object.assign({}, f, { dialog: '', fromDialog: true, value: val, say: String(f.say || '').replace('{value}', val) }, LIVE_PAGE() && !f.run ? { run: () => {} } : {}), ui.dialogLabel); render(); return;
   }
   if (d.fopt !== undefined) { ui.form.pick = +d.fopt; pendingFocus = 'fopt:' + d.fopt; render(); return; }
+  if (d.crumbto !== undefined && LIVE_PAGE()) { window.RailRunsList?.filter?.({ project: d.crumbto }); SHELL.go('runs'); return; }
+  if (d.viewclose !== undefined && ui.term) { ui.term.close(); ui.term = null; }
+  if (d.termStop !== undefined && ui.term) { ui.term.stop(); return; }
+  if (d.fulldiff !== undefined && LIVE_PAGE()) { ui.diff = { path: d.fulldiff, text: window.RailTaskLive.wholeDiff(ui.taskId, d.fulldiff) }; ui.dialog = 'diff'; pendingFocus = 'vd-close'; render(); return; }
+  if (d.dl !== undefined && LIVE_PAGE()) { const a = M.view(ui.caseId, ui).tabData.artifacts[+d.dl]; if (a) window.RailTaskLive.download(ui.taskId, a[2]); return; }
+  if (d.svcopen !== undefined) { window.open(d.svcopen, '_blank'); return; }
+  if (d.builtin !== undefined && LIVE_PAGE()) { const b = v0().tabData.builtins.find((x) => x.key === d.builtin); if (b) liveTool('builtin', { builtin: b.id, name: b.label, member: b.member }, t.dataset.key); return; }
+  if (d.service && LIVE_PAGE()) { const x = v0().tabData.services.find((y) => (y.key || y.id) === d.service); if (!x) return; const sk = x.key || x.id; ui.svcBusy = sk; pendingFocus = 'svc:' + sk; render(); liveTool(x.running ? 'service-stop' : 'service-start', { actionId: x.id, name: x.name, member: x.member }, 'svc:' + sk); return; }
+  if (d.stack && LIVE_PAGE()) { const x = (v0().tabData.stacks || []).find((y) => y.id === d.stack); if (!x) return; ui.svcBusy = 'stack:' + x.id; pendingFocus = 'stack:' + x.id; render(); liveTool(/^(starting|running)$/.test(x.status) ? 'stack-stop' : 'stack-start', { stackId: x.id, name: x.name }, 'stack:' + x.id); return; }
+  if (d.stack) { const k = 'stack:' + d.stack; const on = !ui.services[k]; const x = (v0().tabData.stacks || []).find((y) => y.id === d.stack); ui.svcBusy = k; pendingFocus = k; render(); setTimeout(() => { ui.svcBusy = ''; ui.services = Object.assign({}, ui.services, { [k]: on }); toast((on ? 'Started ' : 'Stopped ') + (x ? x.name : 'the stack')); pendingFocus = k; render(); }, 500); return; }
   if (d.viewclose !== undefined) { ui.dialog = ''; ui.doc = null; ui.graphNode = null; pendingFocus = 'act-main'; render(); return; }
   if (d.node !== undefined) { ui.graphNode = ui.graphNode === d.node ? null : d.node; pendingFocus = 'node:' + d.node; render(); document.querySelector('.wg-drawer')?.scrollIntoView({ block: 'nearest' }); return; }
   if (d.zoom) { ui.graphZoom = d.zoom === 'normal' ? '' : d.zoom; pendingFocus = 'zoom:' + d.zoom; render(); return; }
   if (d.graph !== undefined) { ui.dialog = 'graph'; ui.graphNode = null; pendingFocus = 'vd-close'; render(); return; }
   if (d.doc !== undefined) { openDoc(+d.doc); render(); return; }
+  if (d.transcript !== undefined && LIVE_PAGE()) { const x = M.view(ui.caseId, ui).sessions[+d.transcript]; if (x) window.RailTaskLive.transcript(ui.taskId, x.sid); return; }
   if (d.transcript !== undefined) { const x = M.view(ui.caseId, ui).sessions[+d.transcript]; ui.doc = { name: 'Transcript · ' + x.name, body: '## ' + x.name + '\n- You: go on with this step\n- Agent: read 12 files, edited 3\n- Agent: the step is done' }; ui.dialog = 'doc'; pendingFocus = 'vd-close'; render(); return; }
   if (d.logstep !== undefined) { ui.dialog = ''; ui.graphNode = null; ui.tab = 'activity'; ui.log = Object.assign({}, ui.log, { step: d.logstep || 'all', from: 'all', level: 'all', cycle: 'all', session: 'all', q: '' }); render(); document.getElementById('act-logs')?.scrollIntoView({ block: 'nearest', behavior: reduced() ? 'auto' : 'smooth' }); return; }
   if (d.line) { ui.lines = ui.lines.includes(d.line) ? ui.lines.filter((x) => x !== d.line) : ui.lines.concat(d.line); pendingFocus = 'line:' + d.line; render(); return; }
@@ -880,10 +1104,12 @@ document.addEventListener('click', (e) => {
   if (d.mark) { const [id, m] = d.mark.split('|'); ui.marks = Object.assign({}, ui.marks, { [id]: m }); pendingFocus = m === 'met' ? 'mark:' + d.mark : 'mark-' + id; render(); return; }
   if (d.logview) { ui.log = Object.assign({}, ui.log, { raw: d.logview === 'raw' }); pendingFocus = 'logview:' + d.logview; render(); return; }
   if (d.service) { const id = d.service; const on = !ui.services[id]; ui.svcBusy = id; pendingFocus = 'svc:' + id; render(); setTimeout(() => { ui.svcBusy = ''; ui.services = Object.assign({}, ui.services, { [id]: on }); const x = v0().tabData.services.find((y) => y.id === id); toast(window.RailWould((on ? 'start ' : 'stop ') + x.name + ' on localhost:' + x.port)); pendingFocus = 'svc:' + id; render(); }, 500); return; }
+  if (d.checkout !== undefined && LIVE_PAGE()) { liveDirect('Check out'); pendingFocus = 'ch:checkout'; return; }
   if (d.checkout !== undefined) { ui.copy = !ui.copy; toast(ui.copy ? window.RailWould('check out ' + (v0().place.branch || 'the branch') + ' on this machine') : 'Unlinked the local copy; the branch stays'); pendingFocus = 'ch:checkout'; render(); return; }
   if (d.cmt) {
-    if (d.cmt === 'open') { const lines = v0().tabData.hunk.lines.filter(([k]) => k !== ' ').map(([, x]) => x.trim()); ui.commentOn = { path: d.path, line: lines[lines.length - 1], text: '', err: '' }; pendingFocus = 'cmt-text'; }
+    if (d.cmt === 'open') { const lines = changedRows(v0().tabData, d.path).map(([, x]) => x.trim()); ui.commentOn = { path: d.path, row: lines.length - 1, line: lines[lines.length - 1], text: '', err: '' }; pendingFocus = 'cmt-text'; }
     else if (d.cmt === 'cancel') { ui.commentOn = null; pendingFocus = 'cmt-open'; }
+    else if (LIVE_PAGE() && ui.commentOn.text.trim()) { liveComment(); return; }
     else { const c = ui.commentOn; if (!c.text.trim()) { c.err = 'Write the comment first'; pendingFocus = 'cmt-text'; } else { ui.comments = Object.assign({}, ui.comments, { [c.path]: (ui.comments[c.path] || []).concat({ who: 'You', line: c.line, t: c.text.trim() }) }); ui.commentOn = null; toast('Comment added; the review sees it'); pendingFocus = 'cmt-open'; } }
     render(); return;
   }
@@ -897,6 +1123,8 @@ document.addEventListener('click', (e) => {
   else if (d.confirm && ui.dialog === 'changes') {
     if (d.confirm === 'yes') { const txt = (document.getElementById('changes-text')?.value || '').trim(); const f = (v0().flow || {})[ui.changesFor || 'Ask for changes'] || {};
       if (!txt) { toast('Write what to change first'); render(); return; }
+      // live: dev's answer; the dialog and what was typed stay until it says ok, and a refusal is said once in the toast
+      if (LIVE_PAGE()) { ui.changesText = txt; pendingFocus = 'changes-text'; liveDirect(ui.changesFor || 'Ask for changes', f.say || 'Sent to the planner; it plans again', { value: txt }, () => { ui.dialog = ''; ui.changesText = ''; pendingFocus = 'act-main'; }); return; }
       ui.dialog = ''; ui.changesDraft = false; pendingFocus = 'act-main';
       if (f.to) { const was = ui.caseId, title = M.titles?.[was] || ''; goCase(f.to); if (SHELL) document.dispatchEvent(new CustomEvent('rail:task-moved', { detail: { from: was, to: f.to, ask: M.asks?.[was] || '', title } })); } toast(f.say || 'Sent to the planner; it plans again'); }
     else { ui.dialog = ''; ui.changesDraft = false; pendingFocus = 'act-main'; }
@@ -918,7 +1146,7 @@ document.addEventListener('click', (e) => {
     const [pid, pval] = d.menuPick.split('|');
     if (/^log-/.test(pid)) { const k = { 'log-from': 'from', 'log-level': 'level', 'log-step': 'step', 'log-cycle': 'cycle', 'log-session': 'session' }[pid]; ui.log = Object.assign({}, ui.log, { [k]: pval }); ui.menu = ''; pendingFocus = 'pick:' + pid; }
     else if (pid === 'session') { ui.session = +pval; ui.menu = ''; pendingFocus = 'pick:session'; }
-    else if (pid === 'cmtline') { ui.commentOn.line = pval; ui.menu = ''; pendingFocus = 'pick:cmtline'; }
+    else if (pid === 'cmtline') { const r = changedRows(v0().tabData, ui.commentOn.path)[+pval]; if (r) Object.assign(ui.commentOn, { row: +pval, line: r[1].trim() }); ui.menu = ''; pendingFocus = 'pick:cmtline'; }
     else if (pid === 'cut:merge' || pid === 'cut:remove' || pid === 'cut:undo') {
       const runs = (ui.outline || v0().outlineRuns).slice(); const i = +pval; ui.menu = '';
       if (pid === 'cut:undo') { ui.outline = null; ui.outlineEdited = false; toast('Back to the split as Worca wrote it'); }
@@ -928,6 +1156,7 @@ document.addEventListener('click', (e) => {
     }
     else if (d.menuPick.startsWith('pushr:')) { ui.pr.push = d.menuPick.slice(6); ui.menu = ''; pendingFocus = 'menu:pdpush'; }
     else if (d.menuPick.startsWith('baser:')) { ui.pr.remote = d.menuPick.slice(6); ui.menu = ''; pendingFocus = 'menu:pdremote'; }
+    else if (d.menuPick === 'more:try' && LIVE_PAGE()) { pendingFocus = 'menu:more'; liveDirect('Try it'); return; }
     else if (d.menuPick === 'more:try') { const u = ui; u.tryBusy = 'checkout'; u.menu = 'more'; /* the menu stays open: it says each step, then offers the next */ pendingFocus = 'menu:more'; setTimeout(() => { u.tryBusy = 'setup'; if (ui === u) render(); setTimeout(() => { u.tryBusy = ''; u.copy = true; if (ui === u) { toast(window.RailWould('check out on this machine and open a local copy')); render(); } }, 500); }, 500); }
     else if (/^try:(start|stop)$/.test(d.menuPick)) { const x = v0().tabData.services[0]; const on = d.menuPick === 'try:start'; ui.services = Object.assign({}, ui.services, { [x.id]: on }); ui.menu = ''; pendingFocus = 'menu:more'; toast(window.RailWould((on ? 'start ' : 'stop ') + x.name + ' on localhost:' + x.port)); }
     else if (d.menuPick === 'try:open') { ui.menu = ''; pendingFocus = 'menu:more'; toast(window.RailWould('open localhost:' + v0().tabData.services[0].port)); }
@@ -936,6 +1165,8 @@ document.addEventListener('click', (e) => {
     else if (d.menuPick === 'more:preset') { ui.menu = ''; ui.dialogF = { dialog: 'preset', say: 'Saved as preset “{value}”' }; ui.dialogLabel = 'Save as preset'; follow(ui.dialogF, 'Save as preset'); }
     else if (d.menuPick === 'more:delete') { const noun = v0().kind.toLowerCase(); follow({ leave: true, say: 'Deleted the ' + noun + ' and its runs; their PRs stay', confirm: 'Delete this ' + noun + ' and its runs? This cannot be undone; their PRs stay.' }, 'Delete'); }
     else if (d.menuPick === 'more:report') { ui.menu = ''; follow(v0().runFlow.report, 'Report this ' + (v0().kind ? v0().kind.toLowerCase() : 'task')); }
+    else if (d.menuPick === 'more:link' && LIVE_PAGE()) { ui.menu = ''; pendingFocus = 'menu:more'; liveDirect('Copy link', 'Copied the link'); }
+    else if (d.menuPick === 'more:restore' && LIVE_PAGE()) { ui.menu = ''; const u = ui; window.RailTaskLive.list('restore', { ids: [u.taskId] }).then((r) => { if (ui !== u || !r?.ok) return; toast('The record is back in Tasks'); window.RailTaskLive.open(u.taskId, { force: true }); }); }
     else if (d.menuPick === 'more:link') { toast(window.RailWould('copy the link to this ' + (v0().kind ? v0().kind.toLowerCase() : 'task'))); pendingFocus = 'menu:more'; ui.menu = ''; }
     else if (d.menuPick === 'group:toggle') { ui.askEach = !ui.askEach; ui.menu = ''; pendingFocus = 'menu:more'; toast(ui.askEach ? 'Worca asks before each task starts' : 'Each task starts by itself'); }
     else if (d.menuPick.startsWith('base:')) { ui.pr.base = d.menuPick.slice(5); ui.menu = ''; pendingFocus = 'menu:pdbase'; }
@@ -946,26 +1177,38 @@ document.addEventListener('click', (e) => {
         if (want === 'one' && !ui.pr.desc && !ui.pr.gen) { generateTitle(); generate(); }
         if (want === 'stack' && !ui.pr.prs) startStack(nv); }
     }
+    else if (d.menuPick.startsWith('away:') && LIVE_PAGE()) { const id = d.menuPick, u = ui; ui.menu = ''; pendingFocus = 'menu:more'; render();
+      window.RailTaskLive.act('night', { taskId: u.taskId, mode: id.slice(5) }).then((r) => { if (ui !== u || !r.ok) return; ui.away = id; toast('Away mode on this task: ' + AWAY.find((x) => x.id === id).text); render(); }); return; }
     else if (d.menuPick.startsWith('away:')) { ui.away = d.menuPick; ui.menu = ''; pendingFocus = 'menu:more'; toast('Away mode on this task: ' + AWAY.find((x) => x.id === d.menuPick).text); }
     else if (d.menuPick === 'more:after') { ui.dialog = 'after'; ui.menu = ''; pendingFocus = 'after-task'; }
     else if (d.menuPick === 'more:archive') { const vm = v0(); const a = vm.runFlow.archive; follow(Object.assign({}, a, { confirm: (vm.dependents ? vm.dependents + ' runs wait on this one and will start without it. ' : '') + a.confirm.replace('this task', 'this ' + (vm.kind ? vm.kind.toLowerCase() : 'run')) }), 'Archive'); }
     else if (d.menuPick === 'more:restore') { landOn(M.restored(ui)); toast('The record is back in Tasks; its branch, worktree and logs are not'); }
     else if (d.menuPick === 'group:ask' || d.menuPick === 'group:go') { const ask = d.menuPick === 'group:ask'; ui.menu = ''; pendingFocus = 'menu:then';
       toast(ask === ui.askEach ? (ask ? 'Already asks first' : 'Already starts by itself') : ask ? 'Worca asks before each task starts' : 'Each task starts by itself'); ui.askEach = ask; }
+    else if (d.menuPick === 'ch:patch' && LIVE_PAGE()) { pendingFocus = 'menu:ch'; liveDirect('Download patch'); }
+    else if (d.menuPick === 'ch:refresh' && LIVE_PAGE()) { ui.menu = ''; pendingFocus = 'menu:ch'; const u = ui; window.RailTaskLive.open(u.taskId, { force: true }).then((x) => { if (ui === u && x?.state === 'ready') { toast('Read the changes again'); render(); } }); }
+    else if (d.menuPick === 'ch:copy' && LIVE_PAGE()) { ui.menu = ''; pendingFocus = 'menu:ch'; const text = 'git fetch && git switch ' + M.view(ui.caseId, ui).place.branch; Promise.resolve().then(() => navigator.clipboard.writeText(text)).then(() => { toast('Copied the git commands'); render(); }, () => { toast('Could not copy the git commands: the browser said no'); render(); }); }
     else if (CH_SAY[d.menuPick]) { toast(CH_SAY[d.menuPick](M.view(ui.caseId, ui))); pendingFocus = 'menu:ch'; ui.menu = ''; }
+    else if (d.menuPick === 'more:terminal' && LIVE_PAGE()) { openTerminal(); return; }
+    else if (/^more:terminal:/.test(d.menuPick) && LIVE_PAGE()) { openTerminal(d.menuPick.slice('more:terminal:'.length)); return; }
+    else if (d.menuPick === 'more:sync' && LIVE_PAGE()) { ui.menu = ''; ui.tab = 'activity'; ui.log = Object.assign({}, ui.log, { step: 'Sync', from: 'all', level: 'all', cycle: 'all', session: 'all', q: '' }); render(); document.getElementById('act-logs')?.scrollIntoView({ block: 'nearest', behavior: reduced() ? 'auto' : 'smooth' }); return; }
     else if (MORE_SAY[d.menuPick]) { toast(MORE_SAY[d.menuPick]); pendingFocus = 'menu:more'; ui.menu = ''; }
     else if (ui.menu === 'act') act(d.menuPick);
     else if (d.menuPick === 'ungroup') { const g = (ui.chips.find((c) => c.kind === 'group') || {}).text; ui.chips = ui.chips.filter((c) => c.kind !== 'group'); ui.menu = ''; pendingFocus = 'menu:more'; toast('Left ' + g); }
     else if (d.menuPick === 'more:group') { ui.menu = 'groups'; pendingFocus = 'group-input'; }
     else { pendingFocus = 'menu:' + ui.menu; ui.menu = ''; }
   }
+  else if (d.untag && LIVE_PAGE()) { const [k, tx] = d.untag.split('|'); liveChips(ui.chips.filter((c) => !(c.kind === k && c.text === tx)), k, 'Removed ' + tx); return; }
   else if (d.untag) { const [k, tx] = d.untag.split('|'); ui.chips = ui.chips.filter((c) => !(c.kind === k && c.text === tx)); pendingFocus = 'menu:tags'; toast('Removed ' + tx); }
   else if (d.listtoggle) {
     const [k, tx] = d.listtoggle.split('|'); const has = ui.chips.some((c) => c.kind === k && c.text === tx);
+    if (k === 'group' && LIVE_PAGE()) { liveGroup(tx); return; }
     if (k === 'group') { ui.chips = ui.chips.filter((c) => c.kind !== 'group').concat(has ? [] : [{ kind: 'group', text: tx }]); ui.menu = ''; pendingFocus = 'menu:more'; toast(has ? 'Left ' + tx : 'Moved to ' + tx); }
+    else if (LIVE_PAGE()) { liveChips(has ? ui.chips.filter((c) => !(c.kind === k && c.text === tx)) : ui.chips.concat({ kind: k, text: tx }), k, (has ? 'Removed ' : 'Added ') + tx); return; }
     else { ui.chips = has ? ui.chips.filter((c) => !(c.kind === k && c.text === tx)) : ui.chips.concat({ kind: k, text: tx }); pendingFocus = t.dataset.key; }
   }
   else if (d.replan !== undefined) { const n = +d.replan + 1; follow({ say: 'The planner re-cut runs ' + n + ' and on; runs before it stay', confirm: 'Re-plan from run ' + n + '? The planner re-cuts runs ' + n + ' and on; runs 1' + (n > 2 ? '–' + (n - 1) : '') + ' stay as they are.' }, 'Re-plan from here'); }
+  else if (d.openRun !== undefined && LIVE_PAGE() && ui.run && ui.run.liveGroup) { const pid = ui.run.liveGroup.members[+d.openRun]?.pipelineId; if (pid) SHELL.go('run/' + pid); return; }
   else if (d.openRun !== undefined) { ui.back = { caseId: ui.caseId, open: ui.open, tab: ui.tab }; goMember(ui.caseId, +d.openRun); }
   else if (d.sib !== undefined && d.sib !== '') { const v = M.view(ui.caseId, ui); goMember(v.parent.caseId, +d.sib); pendingFocus = t.dataset.key; }
   else if (d.crumb !== undefined) {
@@ -1006,11 +1249,13 @@ document.addEventListener('keydown', (e) => {
   const t = e.target;
   const act = R.shortcutAction(R.keyFacts(e), { scopes: ['run', 'anywhere'] });   // the library's table; here, what each does
   if (act === 'help' && !SHELL && !ui.menu && !ui.dialog) { e.preventDefault(); R.openShortcutsSheet({ doc: document, scopes: ['anywhere', 'run'] }); return; }   // in the one Worca, Pulse opens it
+  if (t.id === 'group-input' && e.key === 'Enter' && LIVE_PAGE()) { e.preventDefault(); const g = t.value.trim(); if (g) liveGroup(g); return; }
+  if (t.matches && t.matches('[data-term-input]') && e.key === 'Enter') { e.preventDefault(); if (ui.term) { ui.term.send(t.value); t.value = ''; } return; }
   if (t.id === 'group-input' && e.key === 'Enter') { e.preventDefault(); const g = t.value.trim(); if (g) { ui.chips = ui.chips.filter((c) => c.kind !== 'group').concat({ kind: 'group', text: g }); ui.menu = ''; pendingFocus = 'menu:more'; toast((KNOWN.group.some(([x]) => x === g) ? 'Moved to ' : 'Created and moved to ') + g); } render(); return; }
   if (t.id === 'tag-input' && e.key === 'Enter') { e.preventDefault(); addTag(t.value); render(); return; }
   if (act === 'labels' && document.querySelector('.rc-tags')) { e.preventDefault(); ui.menu = 'tags'; pendingFocus = 'tag-input'; render(); return; }
-  if ((ui.confirm || ui.dialog) && act === 'close' && !ui.menu) { ui.form = null; ui.doc = null; ui.graphNode = null; if (ui.pr) { ui.pr.gen = false; ui.pr.genTitle = false; (ui.pr.prs || []).forEach((f) => { f.gen = false; f.genTitle = false; }); } ui.confirm = null; ui.dialog = ''; ui.busy = null; pendingFocus = 'act-main'; render(); return; }
-  if (act === 'terminal') { e.preventDefault(); toast(window.RailWould('open a terminal in the worktree')); render(); return; }
+  if ((ui.confirm || ui.dialog) && act === 'close' && !ui.menu) { if (ui.term) { ui.term.close(); ui.term = null; } ui.form = null; ui.doc = null; ui.graphNode = null; if (ui.pr) { ui.pr.gen = false; ui.pr.genTitle = false; (ui.pr.prs || []).forEach((f) => { f.gen = false; f.genTitle = false; }); } ui.confirm = null; ui.dialog = ''; ui.busy = null; pendingFocus = 'act-main'; render(); return; }
+  if (act === 'terminal') { e.preventDefault(); if (LIVE_PAGE()) { if (v0().has.worktree) openTerminal(); return; } toast(window.RailWould('open a terminal in the worktree')); render(); return; }
   if (e.key === 'Enter' && e.target.id === 'after-task') { e.preventDefault(); document.querySelector('[data-confirm="yes"]')?.click(); return; }
   if (ui.menu && (act === 'close' || (e.key === 'Tab' && t.closest && t.closest('.menu')))) {
     pendingFocus = ui.menu === 'groups' ? 'menu:more' : 'menu:' + ui.menu; ui.menu = ''; render(); if (act === 'close') e.preventDefault(); return;

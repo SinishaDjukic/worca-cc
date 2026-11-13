@@ -4,7 +4,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { shapeErrors, SHAPES } from '../ui/public/stillhet/live/model-shape.mjs';
-import { caseOf, overOf, taskOfLive, taskOfSaved, chatOf, unreadOf, scheduleOf, projectOf, costsOf, updateOf, updateOfOutcome, snapshotOf, partOf, dayOf } from '../ui/public/stillhet/live/live-map.mjs';
+import { caseOf, overOf, taskOfLive, taskOfSaved, chatOf, unreadOf, scheduleOf, projectOf, costsOf, updateOf, updateOfOutcome, snapshotOf, partOf, dayOf, runGroupsOf } from '../ui/public/stillhet/live/live-map.mjs';
 import { dayBucket } from '../ui/public/runs-list.mjs';
 import { needsYouItems } from '../src/shared/needs-you.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
@@ -91,7 +91,7 @@ test('partOf replaces only the parts its source feeds', () => {
   const p = partOf('budget', { windowSpendUsd: 3, totalLimitUsd: 10, resetPeriod: 'daily' }, SOURCES, { now: NOW });
   assert.deepEqual(Object.keys(p), ['costs']);
   assert.equal(p.costs.budget.spent, 3);
-  assert.deepEqual(Object.keys(partOf('history', { pipelines: [] }, SOURCES, { now: NOW })).sort(), ['chats', 'runs', 'updates'], 'a chat\'s tasks are rebuilt with the runs they read');
+  assert.deepEqual(Object.keys(partOf('history', { pipelines: [] }, SOURCES, { now: NOW })).sort(), ['chats', 'groups', 'runs', 'updates'], 'a chat\'s tasks are rebuilt with the runs they read');
 });
 
 test('live-map.mjs and model-shape.mjs load in Node with no DOM; no file under live/ reads location.search', async () => {
@@ -202,4 +202,102 @@ test('a chat\'s task keeps its link\'s pipeline id (Resume posts it), whatever i
   const c = chatOf({ id: 't1' }, { links: [{ threadId: 't1', runId: 'r1', pipelineId: 'p1', started: true }], tasks: [{ id: 'r1', title: 'A', case: 'paused-restart', detail: '' }] });
   assert.equal(c.tasks[0].run, 'r1');
   assert.equal(c.tasks[0].pid, 'p1');
+});
+
+test('caseOf (D5): plan, recovery, capped; an open PR from its checks entry (approved, failing, conflicts, checks), else prNeeds', async () => {
+  const { caseOf, prCaseOf } = await import('../ui/public/stillhet/live/live-map.mjs');
+  assert.equal(caseOf({ kind: 'live', status: 'running', ask: true, askKind: 'plan' }), 'plan');
+  assert.equal(caseOf({ kind: 'live', status: 'running', ask: true, askKind: 'recovery' }), 'recovery');
+  assert.equal(caseOf({ kind: 'hist', status: 'paused', pauseReason: 'cost_pipeline' }), 'capped');
+  assert.equal(caseOf({ kind: 'live', status: 'paused', pauseReason: 'error' }), 'failed', 'a step dev\'s failure policy paused is c17\'s failed case: Retry (D10)');
+  assert.equal(caseOf({ kind: 'live', status: 'paused', pauseReason: 'user' }), 'paused-restart');
+  const pr = { url: 'https://github.com/o/r/pull/9', state: 'OPEN' };
+  const done = { kind: 'hist', status: 'done', pr };
+  const entry = (state, mergeable = 'MERGEABLE') => ({ checks: { state }, mergeable });
+  assert.equal(caseOf(done, { checks: entry('passing') }), 'approved');
+  assert.equal(caseOf(done, { checks: entry('failing') }), 'failing');
+  assert.equal(caseOf(done, { checks: entry('passing', 'CONFLICTING') }), 'conflicts');
+  assert.equal(caseOf(done, { checks: entry('pending') }), 'checks');
+  assert.equal(prCaseOf(null), null);
+  // No entry yet: dev's prNeeds is the fallback, else checks.
+  assert.equal(caseOf(done), 'checks');
+  assert.equal(caseOf({ ...done, needs: true }), 'failing');
+  assert.equal(caseOf({ ...done, needs: true, pr: { ...pr, mergeable: 'CONFLICTING' } }), 'conflicts');
+  assert.equal(caseOf({ ...done, merged: true }, { checks: entry('failing') }), 'merged', 'a merged PR is merged whatever its checks');
+});
+
+test('a finished workspace task whose project branches survive is ready: dev reports survived per project (members[])', () => {
+  const ws = { id: 'w1', status: 'done', branch: 'worca/ws0', survived: false, mtime: NOW, members: [{ memberKey: 'api', survived: true }, { memberKey: 'web', survived: false }] };
+  assert.equal(taskOfSaved(ws, { now: NOW, needs: false }).case, 'ready');
+  assert.notEqual(taskOfSaved({ ...ws, members: [{ memberKey: 'api', survived: false }] }, { now: NOW, needs: false }).case, 'ready', 'no project kept its branch');
+});
+
+test('runGroupsOf: dev\'s run groups fold their tasks (by pipeline id, or its live run) under one group row', () => {
+  const runs = [{ id: 'run-a', case: 'working', project: 'web', time: '14:10', day: 'today' }, { id: 'h2', case: 'merged', project: 'web', time: 'Tue', day: 'earlier' }];
+  const { groups, inGroup } = runGroupsOf({ groups: [{ id: 'G', kind: 'user', title: 'Pager', cost: { usd: 2 }, members: [{ pipelineId: 'pa', position: 1, adhoc: true }, { pipelineId: 'h2', position: 2, adhoc: true }] }, { id: 'E', title: 'Empty', members: [{ pipelineId: 'nope' }] }] },
+    runs, { now: NOW, rowIdOf: new Map([['pa', 'run-a']]) });
+  assert.deepEqual(groups, [{ id: 'G', kind: 'user', case: 'feature', title: 'Pager', project: 'web', time: '14:10', day: 'today', cost: 2 }]);
+  assert.deepEqual([...inGroup], [['run-a', 'G'], ['h2', 'G']]);
+  assert.deepEqual(runs.map((r) => [r.adhoc, r.pos]), [[true, 1], [true, 2]], 'a user group\'s members were added by hand: the list offers Remove from group');
+  // a feature's slice is the feature's own; a task added to it by hand is adhoc (dev's member `adhoc`), at its own position
+  const fr = [{ id: 's1', case: 'working', project: 'web' }, { id: 'x9', case: 'working', project: 'web' }];
+  runGroupsOf({ groups: [{ id: 'F', kind: 'feature', title: 'Feat', members: [{ pipelineId: 's1', position: 1, adhoc: false }, { pipelineId: 'gone', position: 2, adhoc: false }, { pipelineId: 'x9', position: 3, adhoc: true }] }] }, fr, { now: NOW });
+  assert.deepEqual(fr.map((r) => [r.adhoc, r.pos]), [[false, 1], [true, 3]], 'adhoc per member, from dev, not by the group\'s kind');
+  assert.deepEqual(shapeErrors('group', groups[0]), []);
+  assert.deepEqual(partOf('runGroups', { groups: [] }, SOURCES, { now: NOW }).groups, [], 'a refetch of the groups rebuilds the groups and the rows');
+});
+
+test('runGroupsOf: a group reads as its members: Working while one works, else its first unmerged member\'s case (web-UI review cycle 2)', () => {
+  const caseOfGroup = (cases) => runGroupsOf({ groups: [{ id: 'G', kind: 'user', title: 'QA', members: cases.map((_, i) => ({ pipelineId: `p${i}`, position: i + 1 })) }] },
+    cases.map((c, i) => ({ id: `p${i}`, case: c, project: 'web' })), { now: NOW }).groups[0].case;
+  assert.equal(caseOfGroup(['approved']), 'approved', 'a done, approved task alone in a group: Ready to merge, never Working');
+  assert.equal(caseOfGroup(['merged', 'failing', 'approved']), 'failing', 'the next one in stack order');
+  assert.equal(caseOfGroup(['approved', 'working']), 'feature', 'one still works: the group works');
+  assert.equal(caseOfGroup(['merged', 'merged']), 'merged');
+  const src = JSON.parse(JSON.stringify(SOURCES));
+  src.runGroups = { groups: [{ id: 'G', kind: 'user', title: 'QA', members: [{ pipelineId: 'h2', position: 1 }] }] };
+  assert.ok(partOf('history', src.history, src, { now: NOW }).groups, 'a history refetch rebuilds the groups its rows feed');
+});
+
+test('a Restart Build or PR-fix round folds under its origin: the origin carries its rounds, the round stays openable (web-UI review cycle 1)', () => {
+  const src = JSON.parse(JSON.stringify(SOURCES));
+  const origin = src.history.pipelines.find((p) => p.id === 'h3');
+  src.history.pipelines.push({ id: 'h3r2', title: 'Restart Build: Broke', status: 'done', projectName: 'web', startedAt: origin.startedAt, mtime: origin.mtime,
+    roundOf: { pipelineId: 'h3', round: 2, request: '', by: 'restart' } });
+  const s = snapshotOf(src, { now: NOW });
+  const round = s.runs.find((r) => r.id === 'h3r2'), top = s.runs.find((r) => r.id === 'h3');
+  assert.equal(round.roundOf, 'h3', 'the round names its origin, and stays in the store for its own page');
+  assert.deepEqual(top.rounds.list.map((x) => [x.n, x.words, x.case]), [[2, 'restart Build · done', 'h3r2']]);
+  assert.equal(top.rounds.line, 'Round 2 · restart Build · done');
+  for (const r of s.runs) assert.deepEqual(shapeErrors('task', r), [], r.id);
+  // a round whose origin is not in the store stays a row of its own
+  src.history.pipelines = src.history.pipelines.filter((p) => p.id !== 'h3');
+  assert.equal(snapshotOf(src, { now: NOW }).runs.find((r) => r.id === 'h3r2').roundOf, undefined);
+});
+
+test('an origin whose round is live or needs you takes that round\'s case, so the row stays lit (code review r9)', () => {
+  const src = JSON.parse(JSON.stringify(SOURCES));
+  const origin = src.history.pipelines.find((p) => p.id === 'h3');
+  const calm = snapshotOf(src, { now: NOW }).runs.find((r) => r.id === 'h3').case;
+  // a paused round that needs you: the origin reads the round's Paused, not its own case
+  src.history.pipelines.push({ id: 'h3r2', title: 'Restart Build: Broke', status: 'paused', projectName: 'web', startedAt: origin.startedAt, mtime: origin.mtime,
+    roundOf: { pipelineId: 'h3', round: 2, request: '', by: 'restart' } });
+  let s = snapshotOf(src, { now: NOW });
+  const round = s.runs.find((r) => r.id === 'h3r2');
+  let top = s.runs.find((r) => r.id === 'h3');
+  assert.notEqual(round.case, calm);
+  assert.equal(top.case, round.case, 'the origin reads its needy round\'s case');
+  assert.equal(!!top.over, !!round.over);
+  // a live round (running now): the origin reads Working
+  src.history.pipelines = src.history.pipelines.filter((p) => p.id !== 'h3r2');
+  src.hello = { runs: [...(src.hello?.runs || []), { runId: 'live-r3', pipelineId: 'h3r3', status: 'running', title: 'Fix: Broke', projectName: 'web', startedAt: origin.startedAt,
+    branch: { roundOf: { pipelineId: 'h3', round: 3, request: 'fix the checks', by: 'pr-fix' } } }] };
+  s = snapshotOf(src, { now: NOW });
+  top = s.runs.find((r) => r.id === 'h3');
+  assert.equal(top.case, 'working');
+  assert.equal(top.over, undefined);
+  // a finished, calm round leaves the origin's own case
+  src.hello.runs = [];
+  src.history.pipelines.push({ id: 'h3r4', title: 'Fix', status: 'stopped', projectName: 'web', startedAt: origin.startedAt, mtime: origin.mtime, roundOf: { pipelineId: 'h3', round: 4, request: '', by: 'restart' } });
+  assert.equal(snapshotOf(src, { now: NOW }).runs.find((r) => r.id === 'h3').case, calm);
 });

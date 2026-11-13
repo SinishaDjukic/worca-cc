@@ -64,8 +64,7 @@ test('R-arch-10: every action of an area this slice does not wire goes through t
     ['schedules.add', null, () => w.RailSchedules.add({ id: 'x1', title: 'Made up', every: 'every day', at: '03:00', runs: [] }), 'bar-schedules'],
     // the Tasks center's Run now on a missed schedule (the reviewer's path to RailWorld.add)
     ['schedules.run', async () => { w.location.hash = '#runs'; await settle(); }, () => d.querySelector('[data-c-sact="run|tk1"]').click(), 'app'],
-    // the Tasks center's New task… form (its legacy approach): Start task keeps the form as it was
-    ['tasks.new-task', async () => { w.location.hash = '#runs'; await settle(); w.RailCenters.maker('tasks').newPick('form'); await settle(); const t = d.querySelector('#cc-text'); t.value = 'Fix the login test'; t.dispatchEvent(new w.Event('input', { bubbles: true })); }, () => d.querySelector('#center-dlg [data-dialog="yes"]').click(), 'center-dlg'],
+    // the Tasks center's New task… form is wired by the Tasks slice (D12b, test/stillhet-tasks-list-host.test.mjs)
     // Chat (slice 4): the composer, the dock under a schedule, the chat list's row menu
     // Projects' workspaces (the Projects slice)
     ['workspaces.add', null, () => assert.equal(w.RailSpaces.add({ title: 'Made up' }), ''), 'app'],
