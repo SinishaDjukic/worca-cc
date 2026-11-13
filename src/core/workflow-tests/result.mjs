@@ -17,7 +17,7 @@ import { CONNECTOR_CALLS_FILE } from './connectors.mjs';
 import { scratchTryLog, isSettingsIgnoredFile } from './try-guard-env.mjs';
 import { runShellStep, readTrySetup, tryShellEnv, firstLine } from './shell-step.mjs';
 import { DEFAULT_TIMEOUT_MS } from '../../shared/graph/script-meta.mjs';
-import { runCheck, judgeTry, wordCount, checkLabel, TEXT_KINDS, SCOPE_KINDS, commandSummary } from '../../shared/workflow-tests/checks.mjs';
+import { runCheck, judgeTry, wordCount, checkLabel, TEXT_KINDS, SCOPE_KINDS, commandSummary, testsSummary } from '../../shared/workflow-tests/checks.mjs';
 import { createTestOutputParser } from './test-output.mjs';
 import { beforeAfter, commandMet } from '../../shared/workflow-tests/before-after.mjs';
 
@@ -224,7 +224,8 @@ export async function runCommandCheck(check, { cwd, logFile = null, run = runShe
   const r = await run({ command: check.cmd, cwd, env: tryShellEnv({ logFile }), timeoutMs: n * 60_000, onLine: (line) => reader.line(line) });
   const more = { output: r.tail, exitCode: r.exitCode ?? null, ms: r.ms ?? null, tests: reader.result() };
   if (r.timedOut) return { met: false, value: `Stopped after ${n} ${n === 1 ? 'minute' : 'minutes'}`, timedOut: true, ...more };
-  return { met: r.ok, value: commandSummary(r.tail) || (r.ok ? 'Met' : 'Ended with an error'), ...more };
+  // Finding 5: the tests Worca read, counted ("2 passed, 1 failed"), before the output's own summary line (TAP's "1..3").
+  return { met: r.ok, value: testsSummary(more.tests) || commandSummary(r.tail) || (r.ok ? 'Met' : 'Ended with an error'), ...more };
 }
 
 /**

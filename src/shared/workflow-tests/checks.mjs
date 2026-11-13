@@ -505,6 +505,21 @@ export function judgeTry(example, facts, checkResults = [], result = {}) {
  * D57: the value of a command check (board 36: "213 passed", "212 passed, 1 failed"). node:test's and TAP's counts become
  * that sentence; otherwise the last line that counts passed or failed tests; otherwise the last line. Colours removed.
  */
+/**
+ * Boards 36, 40, 44 (mock browser check, finding 5): the tests Worca read from a command's output (test-output.mjs's result) as
+ * "2 passed, 1 failed": its counts, else its lists when they name every test. '' when it read nothing it can count.
+ */
+export function testsSummary(tests) {
+  if (!tests || !tests.format) return '';
+  const c = tests.counts;
+  const listed = !c && tests.passListed && !tests.truncated;
+  if (!c && !listed) return '';
+  const pass = c ? Number(c.passed) || 0 : (tests.pass || []).length;
+  const fail = c ? Number(c.failed) || 0 : (tests.fail || []).length;
+  if (!pass && !fail) return '';
+  return fail ? `${pass} passed, ${fail} failed` : `${pass} passed`;
+}
+
 export function commandSummary(text) {
   const lines = String(text ?? '').split(/\r?\n/).map((l) => l.replace(/\u001b\[[0-9;]*m/g, '').trim()).filter(Boolean);
   const last = (re) => { for (let i = lines.length - 1; i >= 0; i -= 1) { const m = re.exec(lines[i]); if (m) return Number(m[1]); } return null; };

@@ -162,3 +162,21 @@ test('the command gets the try guard env and the checkout as its folder', async 
 test('a file path keeps its inner spaces', () => {
   assert.equal(check({ kind: 'mentions', text: 'x', file: ' docs/my  notes.md ' }).file, 'docs/my  notes.md');
 });
+
+// Mock browser check, finding 5 (boards 36, 40, 44): when Worca read the test names or counts, the command's cell says how many
+// passed and failed ("2 passed, 1 failed"), never TAP's plan line ("1..3"); the raw summary line only when nothing was read.
+test('the command\'s value: the tests Worca read as a count; the summary line only when it read none', async () => {
+  const fake = (lines, ok) => async (o) => {
+    for (const l of lines) o.onLine(l);
+    return { ok, exitCode: ok ? 0 : 1, timedOut: false, ms: 5, tail: lines.join('\n') };
+  };
+  const cmd = { kind: 'command', cmd: 'npm test', timeoutMin: 5 };
+  const tap = await runCommandCheck(cmd, { cwd: home, run: fake(['TAP version 13', 'ok 1 - a', 'not ok 2 - b', 'ok 3 - c', '1..3'], false) });
+  assert.deepEqual([tap.met, tap.value], [false, '2 passed, 1 failed']);
+  const all = await runCommandCheck(cmd, { cwd: home, run: fake(['1..2', 'ok 1 - a', 'ok 2 - c'], true) });
+  assert.deepEqual([all.met, all.value], [true, '2 passed']);
+  const jest = await runCommandCheck(cmd, { cwd: home, run: fake(['Tests: 1 failed, 212 passed, 213 total', 'Time: 3 s'], false) });
+  assert.equal(jest.value, '212 passed, 1 failed', 'counts Worca read');
+  const plain = await runCommandCheck(cmd, { cwd: home, run: fake(['building', 'all good'], true) });
+  assert.equal(plain.value, 'all good', 'nothing read: the last line, as before');
+});

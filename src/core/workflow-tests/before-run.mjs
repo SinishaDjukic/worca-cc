@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { beforeRoot, cloneForBefore, copyStamp, removeTree } from './project-copy.mjs';
 import { runShellStep, tryShellEnv, SETUP_TIMEOUT_MS } from './shell-step.mjs';
 import { createTestOutputParser } from './test-output.mjs';
-import { commandSummary } from '../../shared/workflow-tests/checks.mjs';
+import { commandSummary, testsSummary } from '../../shared/workflow-tests/checks.mjs';
 import { processAlive } from '../ui-instance.mjs';
 
 export const BEFORE_VERSION = 1;
@@ -150,7 +150,8 @@ async function runFresh(spec, { signal = null, onPhase = () => {}, run = runShel
     if (stopped()) return { ran: false, reason: 'stopped' };
     const rec = { v: BEFORE_VERSION, key: spec.key, startCommit: spec.startCommit, setupCmd: spec.setupCmd || null, cmd: spec.cmd, timeoutMin: spec.timeoutMin,
       stamp, at: new Date().toISOString(), ok: !!r.ok, exitCode: r.exitCode ?? null, timedOut: !!r.timedOut, ms: r.ms ?? null,
-      summary: commandSummary(r.tail), tail: r.tail || '', tests: reader.result() };
+      summary: '', tail: r.tail || '', tests: reader.result() };
+    rec.summary = testsSummary(rec.tests) || commandSummary(r.tail);   // as the try's command value (finding 5)
     if (!rec.timedOut) await keep(spec, rec).catch(() => {});   // a run its time limit stopped says nothing worth keeping
     return { ...rec, ran: true, cached: false };
   } catch (e) {
