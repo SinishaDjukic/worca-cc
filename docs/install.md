@@ -129,6 +129,14 @@ agents run as their own user, cut off from Worca's settings, database and GitHub
   [Operate your deployment](deploy-railway.md#operate-your-deployment). It uses the
   `tools/railway/worca-railway.mjs` tool and this repository's `/worca-railway` skill for Claude Code.
 
+## Desktop app
+
+An optional desktop build runs the same Worca server in a window and a tray icon
+(Electron, macOS, Windows and Linux). It shares `~/.worca-cc` with a CLI or web
+install, and opens a Worca that is already running instead of starting a second one.
+Build it from a checkout with `npm ci --prefix desktop` and `npm run build:desktop`;
+see [Desktop app](desktop.md).
+
 ## Running the web UI
 
 ```bash

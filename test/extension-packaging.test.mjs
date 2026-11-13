@@ -32,6 +32,20 @@ test('checkPackFiles accepts the three builds and flags everything else', () => 
   assert.match(checkPackFiles(['src/x.mjs'], { requireExtension: true }).join('\n'), /missing extension\/dist\/chrome\/manifest\.json/);
 });
 
+test('desktop build files never ship: check-pack flags desktop/** and tools/build.mjs; no electron in the root manifest', () => {
+  for (const p of ['desktop/main.mjs', 'desktop/src/ports.mjs', 'tools/build.mjs']) {
+    assert.deepEqual(checkPackFiles([p]), [`${p}: desktop build files never ship in the npm package`]);
+  }
+  assert.deepEqual(checkPackFiles(['src/x.mjs']), []);
+  assert.deepEqual(checkPackFiles(['tools/build-extension.mjs', 'docs/desktop.md']), []);
+  assert.ok(!PKG.files.some((f) => f.startsWith('desktop')), 'files has no desktop entry');
+  assert.ok(!PKG.files.includes('tools/build.mjs'));
+  for (const k of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+    const bad = Object.keys(PKG[k] || {}).filter((n) => /^(electron|electron-builder|@electron\/)/.test(n));
+    assert.deepEqual(bad, [], `${k} carries no Electron toolchain`);
+  }
+});
+
 // Hermetic: a throwaway package with this repo's real `files` list and .gitignore, and every kind of extension file.
 // Proves npm itself (not just our checker) packs the three builds despite .gitignore and leaves the rest out.
 const tmp = mkdtempSync(join(tmpdir(), 'worca-pack-'));

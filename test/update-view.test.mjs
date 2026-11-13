@@ -75,3 +75,15 @@ test('updateRowModel: outdated eligible / up to date + rc / ahead / shared / can
   assert.deepEqual([src.choose, src.command], [false, null]);
   assert.equal(updateRowModel({ vs: null, info }).hidden, true);
 });
+
+test('desktop reason: disabled, no npm command, the message as the note; not-supervised still offers the command', () => {
+  const msg = 'This is the Worca desktop app, so it cannot update itself. Download and install a newer build of the app to update.';
+  const desk = { ...info, distTags, canUpdate: false, reason: 'desktop', message: msg };
+  const vsOut = { status: 'outdated', current: '1.13.1', latest: '1.14.0' };
+  const m = updateRowModel({ vs: vsOut, info: desk, chosen: '1.15.0-rc.2' });
+  assert.equal(m.primary.disabled, true); assert.equal(m.command, null); assert.equal(m.note, msg);
+  const a = pickAction(V.find((v) => v.version === '1.14.0'), desk);
+  assert.deepEqual([a.disabled, a.mode, a.text], [true, null, msg]);
+  const ns = updateRowModel({ vs: vsOut, info: { ...desk, reason: 'not-supervised', message: 'x' } });
+  assert.equal(ns.command, manualCommand('1.14.0'));
+});

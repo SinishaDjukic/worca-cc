@@ -32,7 +32,7 @@ import { createUpdateChecker, fetchNpmLatest, isSourceBuild, parseVersion, relea
   createVersionLister, fetchNpmVersions, fakeVersionList, annotateVersions, findListedVersion, canonicalVersion,
   canAutoRestart, compareVersions, AUTO_RESTART_MIN } from '../src/core/update-check.mjs';
 import { UPDATE_EXIT_CODE, supervisorMatches, readUpdateRecord, writeUpdateRecord, startCommand } from '../src/core/ui-update.mjs';
-import { isSharedInstall, updateEligibility, probeNpmGlobal, UPDATE_MESSAGES } from '../src/core/update-eligibility.mjs';
+import { isSharedInstall, updateEligibility, probeNpmGlobal, UPDATE_MESSAGES, ignoreClosedDesktopOutput } from '../src/core/update-eligibility.mjs';
 import { limitResumeDecision } from '../src/core/limit-resume.mjs';
 import { selectRunEngine, reapAgentGroupsAtBoot } from '../src/core/engines/index.mjs';
 import { mockSlowMs } from '../src/core/engines/mock.mjs';
@@ -10182,6 +10182,7 @@ async function settleShutdownSteps(steps, { timeoutMs = SHUTDOWN_STEPS_MS, log =
 // test, skip listening so the test can mount `app` on its own ephemeral port.
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
+  ignoreClosedDesktopOutput();
   // Never serve from a run's own folder: Worca deletes it when the run is discarded or
   // archived, or by the boot sweep below, and the server would lose its own code.
   const hostingRun = runFolderHosting(PROJECT_ROOT, worcaHome());

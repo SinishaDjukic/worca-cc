@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // tools/check-pack.mjs — the @worca/app tarball rule for the browser extension (docs/RELEASING.md §4.4):
 // the three production builds extension/dist/{chrome,edge,firefox}/ and nothing else from extension/ or e2e/
-// (no source, no *-test build, no zip).
+// (no source, no *-test build, no zip). The desktop app's build files (desktop/**, tools/build.mjs) never ship.
 //   npm pack --dry-run --json --ignore-scripts | node tools/check-pack.mjs --require-extension
 import { readFileSync, realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -16,6 +16,7 @@ export function checkPackFiles(paths, { requireExtension = false } = {}) {
     if (p.startsWith('extension/') && !BUILT.test(p)) problems.push(`not a packaged build: ${p}`);
     else if (p.startsWith('e2e/')) problems.push(`E2E suite in the package: ${p}`);
     else if (/\.zip$/i.test(p)) problems.push(`zip in the package: ${p}`);
+    else if (p.startsWith('desktop/') || p === 'tools/build.mjs') problems.push(`${p}: desktop build files never ship in the npm package`);
   }
   if (requireExtension) {
     for (const b of PACKED_BROWSERS) {

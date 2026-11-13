@@ -2,7 +2,7 @@
 // Manual update, About card (issue #841). Pure models + one controller that resolves DOM by id on
 // every call (sibling modules are evaluated once per jsdom test process: never cache a node here).
 // Reasons where nobody here can update: the buttons stay visible but disabled, and no command is offered.
-const SHARED_REASONS = new Set(['shared', 'agent', 'mock']);
+const SHARED_REASONS = new Set(['shared', 'agent', 'mock', 'desktop']);
 export const manualCommand = (v) => `npm install -g @worca/app@${v} && worca ui restart`;
 // The Release notes link in the modal is the static href in index.html (the existing CHANGELOG_URL value):
 // no new link shape, and no src/core import into ui/public.

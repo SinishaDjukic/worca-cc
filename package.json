@@ -104,6 +104,8 @@
     "ext:try": "node tools/try-extension.mjs",
     "demo:extension-video": "node tools/demo/extension-video/record.mjs",
     "prepack": "node tools/build-extension.mjs --pack",
+    "build:web": "node tools/build.mjs --target web",
+    "build:desktop": "node tools/build.mjs --target desktop",
     "ext:lint:firefox": "node tools/build-extension.mjs --browser firefox && web-ext lint --source-dir extension/dist/firefox",
     "e2e:extension": "node tools/build-extension.mjs --test --browser chrome && playwright test -c e2e/extension/playwright.config.mjs",
     "e2e:extension:update-linux": "docker run --rm --platform linux/amd64 -v worca-e2e-node-modules:/nm mcr.microsoft.com/playwright:v1.64.1-noble chown \"$(id -u):$(id -g)\" /nm && docker run --rm --platform linux/amd64 --ipc=host --user \"$(id -u):$(id -g)\" -e HOME=/tmp -v \"$PWD\":/work -v worca-e2e-node-modules:/work/node_modules -w /work mcr.microsoft.com/playwright:v1.64.1-noble bash -lc \"npm ci && npm run e2e:extension -- --update-snapshots\"",
