@@ -506,7 +506,12 @@
     // Everything leads to its card in its chat (plans/rail/chat-cards.md): a task's link opens its chat at its card; a task with no
     // chat gets one, named after it. The page stays as openTaskPage, only until the card holds everything it does.
     openTask: (cs, chat, title, run) => {
-      if (LIVE) { if (run) window.RailAdapter.seenRun(run); window.RailShell.openTaskPage(cs, chat, title); return; }   // the live kind: no chat made up around it (D23); opening it acknowledges it, as dev's acknowledgeRun does from any path
+      if (LIVE) {   // the live kind: no chat made up around it (D23); opening it acknowledges it, as dev's acknowledgeRun does from any path
+        if (run) window.RailAdapter.seenRun(run);
+        const cid = run ? chat || window.RailConversation?.chatOfTask({ run }) : '';   // a task with a starting chat opens there, at its card
+        if (cid) { window.RailConversation.openTask(cid, run); return; }
+        window.RailShell.openTaskPage(cs, chat, title); return;
+      }
       if (RM && title) RM.titles[cs] = title;
       const w = run && window.RailWorld?.find(run);
       // the chat a row names wins; else the chat that holds this very task (by its run, else its name); a case alone is shared by many

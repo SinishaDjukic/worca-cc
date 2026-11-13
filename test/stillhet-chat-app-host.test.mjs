@@ -745,3 +745,26 @@ test('an applied change dev cannot undo has no Revert; a revertible receipt keep
   assert.equal(d.querySelector('#route-chat [data-cp-revert="cm"]'), null);
   assert.ok(d.querySelector('#route-chat [data-cp-revert="cr"]'));
 });
+
+test('Pulse and search open a live task at its card in its starting chat; a task no chat started opens its page', async () => {
+  const { w, d } = await liveHost();
+  w.RailShell.openRun('run/question', 'A task', 'run-a');   // what a Pulse row does: its case, its title, its run id
+  await settle(80);
+  assert.equal(w.location.hash, '#chat/ask_1');
+  assert.ok(d.querySelector('#route-chat [data-anchor="card_run"]'), 'the TaskCard is drawn');
+  w.RailShell.openRun('run/question', 'B task', 'run-b');   // ask_2 only follows run-b: no starting chat
+  await settle(40);
+  assert.equal(w.location.hash, '#run/question');
+});
+
+test('Show its stages opens the live TaskCard in place, and Hide its stages folds it', async () => {
+  const { w, d } = await liveHost();
+  await go(w, '#chat/ask_1', 80);
+  const btn = () => d.querySelector('#route-chat [data-anchor="card_run"] [data-open-task]');
+  assert.equal(btn().getAttribute('aria-expanded'), 'false');
+  btn().click(); await settle(20);
+  assert.equal(btn().getAttribute('aria-expanded'), 'true', 'Show its stages opens it');
+  assert.match(btn().textContent, /Hide its stages/);
+  btn().click(); await settle(20);
+  assert.equal(btn().getAttribute('aria-expanded'), 'false', 'Hide its stages folds it');
+});
