@@ -12,6 +12,7 @@ import { utilityModelFor, scopeForRunKey } from './settings-cascade.mjs';
 import { withRole, jobSlot } from './model-roles.mjs';
 import { safeParseJson } from './protocol.mjs';
 import { helperEngineFor } from './model-env.mjs';
+import { helperEngineHere } from './executor/index.mjs';
 import {
   lookupPipelineRow, runDirForRow, upsertSubAgent, readPipelineExtras, runEngineOfRow,
 } from './artifacts.mjs';
@@ -87,7 +88,7 @@ export async function generateOverview(key, id, { model, signal, force = false, 
   const row = lookupPipelineRow(key, id);
   if (!row) throw new Error('pipeline not found');
   const dir = await runDirForRow(row);
-  const engine = helperEngineFor(runEngineOfRow(row));   // a Cursor run's overview runs on Claude
+  const engine = helperEngineHere(helperEngineFor(runEngineOfRow(row)));   // a Cursor run's overview runs on Claude; with worker containers, every run's does
   const onClaude = engine === 'claude';
   // Model roles (D3): an unset overview slot takes the quick role.
   const slot = withRole(utilityModelFor(engine, 'overview', scopeForRunKey(key)), engine, jobSlot(engine, 'overview'));

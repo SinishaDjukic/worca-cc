@@ -13,6 +13,9 @@ set -euo pipefail
 
 log() { printf 'worca-entrypoint: %s\n' "$*" >&2; }
 
+# shellcheck source=docker/entrypoint-lib.sh
+. /usr/local/lib/worca-entrypoint-lib.sh
+
 # An agent user's ~/.gitconfig: the agent works in repositories worca owns and writes objects both
 # users share. Root never writes through a path the agent controls (audit 1.2): `>` and `chown` as
 # root would follow a link the agent left at ~/.gitconfig to any file on the image (say /usr/bin/id,
@@ -29,6 +32,16 @@ agent_gitconfig() { # <user> <home>
 # from this same image. It needs none of the worca preparation below: only, on a host
 # that gives it one root-owned volume (Railway), that volume made writable by `worca`
 # before dropping to that user.
+# A worker (`worca worker`, docs/workers.md) is its own container too: no volume preparation,
+# no agent users (the container is the isolation), no login report. The controller's backend
+# gave it its assignment in the environment; the shared volume is already laid out.
+if [ "${1:-}" = "worca" ] && [ "${2:-}" = "worker" ]; then
+  # WORCA_WORKER_IMAGE=self: this image as the worker. Its children get THIS container's CA bundle
+  # (the controller's path does not exist here), so it is built before the exec, as in the worker image.
+  worca_corporate_ca
+  exec "$@"
+fi
+
 if [ "${1:-}" = "worca" ] && [ "${2:-}" = "broker" ]; then
   if [ -n "${WORCA_BROKER_DATA_DIR:-}" ] && [ "$(id -u)" = 0 ]; then
     mkdir -p "$WORCA_BROKER_DATA_DIR"
@@ -206,24 +219,9 @@ for d in "${WORCA_HOME:-/worca}" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; do
 done
 mkdir -p "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
-# 1b. A corporate CA (compose.ca.yml mounts it and sets WORCA_CA_CERT_FILE): Node reads it
-# through NODE_EXTRA_CA_CERTS; git, curl, gh and Python read one bundle file, so build the
-# system bundle plus the CA in a fresh mktemp dir (only this uid can write it; the agent
-# users can read it) and point their variables at it. The system trust store itself needs
-# root, which the box does not have.
-if [ -n "${WORCA_CA_CERT_FILE:-}" ]; then
-  if [ -r "$WORCA_CA_CERT_FILE" ] && grep -q 'BEGIN CERTIFICATE' "$WORCA_CA_CERT_FILE"; then
-    cadir="$(mktemp -d /tmp/worca-ca.XXXXXX)"
-    cat /etc/ssl/certs/ca-certificates.crt "$WORCA_CA_CERT_FILE" > "$cadir/bundle.pem"
-    chmod 0755 "$cadir"
-    chmod 0644 "$cadir/bundle.pem"
-    export SSL_CERT_FILE="$cadir/bundle.pem" GIT_SSL_CAINFO="$cadir/bundle.pem" \
-      CURL_CA_BUNDLE="$cadir/bundle.pem" REQUESTS_CA_BUNDLE="$cadir/bundle.pem"
-    log "corporate CA: trusted from $WORCA_CA_CERT_FILE"
-  else
-    log "corporate CA: $WORCA_CA_CERT_FILE is not a readable PEM certificate; TLS through a re-signing proxy will fail"
-  fi
-fi
+# 1b. A corporate CA (compose.ca.yml; WORCA_CA_CERT_FILE): the bundle step lives in
+#     docker/entrypoint-lib.sh, which the worker's entrypoint shares.
+worca_corporate_ca
 
 # 2. GitHub over HTTPS. No global credential helper: worca passes the token for each
 # git/gh call's role in that call's env only (src/core/github-credentials.mjs), and

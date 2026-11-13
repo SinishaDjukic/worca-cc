@@ -1,0 +1,64 @@
+# docker/compose.auth.yml — sign-in through your own OpenID Connect provider (docs/auth.md).
+#
+#   docker compose -f compose.yml -f compose.auth.yml up -d
+#   (with docker/oauth2-proxy.yaml next to it; combines with compose.workers.yml)
+#
+# oauth2-proxy signs people in with the provider (Entra ID, Keycloak, Okta, Google, Authentik,
+# ...), admits only WORCA_AUTH_ALLOWED_GROUPS, and forwards to worca with the session's ID token
+# in X-Worca-Identity. Worca verifies that token itself (WORCA_IDENTITY_*, set here from the same
+# .env values) and records who did what by the token's email and teams. No Cloudflare.
+#
+# The proxy listens on 127.0.0.1:4180 (WORCA_AUTH_BIND / WORCA_AUTH_PORT). Put your TLS reverse
+# proxy (Caddy, Traefik, nginx) in front of it at https://WORCA_AUTH_HOST; worca itself stays
+# unpublished to the network. Required in .env: WORCA_AUTH_HOST, WORCA_OIDC_ISSUER_URL,
+# WORCA_OIDC_JWKS_URL, WORCA_OIDC_CLIENT_ID, WORCA_OIDC_CLIENT_SECRET, WORCA_AUTH_COOKIE_SECRET.
+services:
+  worca:
+    environment:
+      WORCA_ALLOWED_HOSTS: ${WORCA_AUTH_HOST:?set WORCA_AUTH_HOST to the public host name, e.g. worca.example.com}
+      WORCA_IDENTITY_ISSUER: ${WORCA_OIDC_ISSUER_URL:?set WORCA_OIDC_ISSUER_URL (docs/auth.md)}
+      WORCA_IDENTITY_JWKS_URL: ${WORCA_OIDC_JWKS_URL:?set WORCA_OIDC_JWKS_URL (docs/auth.md)}
+      WORCA_IDENTITY_AUDIENCE: ${WORCA_OIDC_CLIENT_ID:?set WORCA_OIDC_CLIENT_ID}
+      WORCA_IDENTITY_EMAIL_CLAIM: ${WORCA_OIDC_EMAIL_CLAIM:-email}
+      WORCA_IDENTITY_TEAMS_CLAIM: ${WORCA_OIDC_TEAMS_CLAIM:-groups}
+
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:${WORCA_OAUTH2_PROXY_TAG:-v7.15.6}
+    command: ["--alpha-config=/etc/oauth2-proxy/oauth2-proxy.yaml"]
+    depends_on:
+      - worca
+    ports:
+      - "${WORCA_AUTH_BIND:-127.0.0.1}:${WORCA_AUTH_PORT:-4180}:4180"
+    volumes:
+      - ./oauth2-proxy.yaml:/etc/oauth2-proxy/oauth2-proxy.yaml:ro
+    environment:
+      # Read by oauth2-proxy.yaml.
+      WORCA_OIDC_ISSUER_URL: ${WORCA_OIDC_ISSUER_URL:?set WORCA_OIDC_ISSUER_URL (docs/auth.md)}
+      WORCA_OIDC_JWKS_URL: ${WORCA_OIDC_JWKS_URL:?set WORCA_OIDC_JWKS_URL (docs/auth.md)}
+      WORCA_OIDC_CLIENT_ID: ${WORCA_OIDC_CLIENT_ID:?set WORCA_OIDC_CLIENT_ID}
+      WORCA_OIDC_CLIENT_SECRET: ${WORCA_OIDC_CLIENT_SECRET:?set WORCA_OIDC_CLIENT_SECRET}
+      WORCA_OIDC_SCOPE: ${WORCA_OIDC_SCOPE:-openid email profile}
+      WORCA_OIDC_EMAIL_CLAIM: ${WORCA_OIDC_EMAIL_CLAIM:-email}
+      WORCA_OIDC_TEAMS_CLAIM: ${WORCA_OIDC_TEAMS_CLAIM:-groups}
+      WORCA_AUTH_ALLOWED_GROUPS: ${WORCA_AUTH_ALLOWED_GROUPS:-}
+      # oauth2-proxy's own settings.
+      OAUTH2_PROXY_COOKIE_SECRET: ${WORCA_AUTH_COOKIE_SECRET:?set WORCA_AUTH_COOKIE_SECRET (openssl rand -base64 32 | tr -- '+/' '-_')}
+      OAUTH2_PROXY_COOKIE_NAME: _worca_auth
+      OAUTH2_PROXY_COOKIE_SECURE: ${WORCA_AUTH_COOKIE_SECURE:-true}
+      OAUTH2_PROXY_COOKIE_EXPIRE: ${WORCA_AUTH_COOKIE_EXPIRE:-12h}
+      # Keep below the provider's ID token lifetime (Keycloak 5m, Entra ID ~1h).
+      OAUTH2_PROXY_COOKIE_REFRESH: ${WORCA_AUTH_COOKIE_REFRESH:-4m}
+      OAUTH2_PROXY_REDIRECT_URL: ${WORCA_AUTH_REDIRECT_URL:-https://${WORCA_AUTH_HOST}/oauth2/callback}
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_REVERSE_PROXY: "true"
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+      OAUTH2_PROXY_SILENCE_PING_LOGGING: "true"
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-127.0.0.1,localhost},worca
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped

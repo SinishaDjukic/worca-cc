@@ -32,6 +32,8 @@ export const ASK_DENY_RULES = Object.freeze([
   'Read(~/.kube/**)',
   'Read(~/.docker/**)',
   'Read(~/.claude/**)',                // Claude Code's own credentials + session transcripts
+  'Read(//seed/**)',                   // on a worker container: the controller's Claude login volume, mounted for the worker to copy its login from
+  'Read(//**/.worca-cc/worker-homes/**)',   // every scope's worker HOME (src/core/executor): engine sessions and a copied login, this chat's own included
   'Read(~/.netrc)',
   'Read(~/.npmrc)',
   'Read(~/.config/gh/**)',
@@ -46,7 +48,8 @@ export const RUN_READ_DENY_RULES = Object.freeze(ASK_DENY_RULES.filter((r) => !/
 // rule syntax has no "all but": `tmp/*` would match requirements/ too under gitignore folder semantics, so the others are
 // named; test/file-read-guard.test.mjs fails when the code makes a tmp folder this list does not name.
 const OTHER_TMP_DIRS = Object.freeze(['agent-gen', 'ask', 'chat-selftest', 'classifier', 'codex-roles', 'copilot', 'cursor-prompts', 'gemini',
-  'goose', 'night', 'opencode', 'pinpoint', 'qwen', 'skills']);
+  'goose', 'night', 'opencode', 'pinpoint', 'qwen', 'skills',
+  'stage']);   // staged prompts and settings for spawns on worker containers (src/core/executor stagingBase)
 
 /** Requirements reads and the product brief's look (plans/requirements-a8-design.md D3, D6, D15): Ask's denies with the
  *  tmp one narrowed to every tmp folder but requirements/ (a read's one-file folder and a look's checkout live there),

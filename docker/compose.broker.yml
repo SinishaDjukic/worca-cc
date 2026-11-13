@@ -22,6 +22,12 @@ services:
   worca:
     depends_on:
       - broker
+    # The broker's own link network, so http://broker:8080 resolves whatever other overlay is on: with the egress
+    # overlay worca sits on `internal` (WORCA_UPLINK_NETWORK, as compose.workers.yml), where a broker on the default
+    # network would be out of reach. Listing networks here drops the implicit default, so the uplink is named too.
+    networks:
+      - ${WORCA_UPLINK_NETWORK:-default}
+      - broker
     environment:
       WORCA_BROKER_URL: http://broker:8080
       # worca's fetch() honors HTTP(S)_PROXY (src/core/env-proxy.mjs): keep the sidecar
@@ -38,9 +44,13 @@ services:
       CLAUDE_CODE_OAUTH_TOKEN: ""
 
   broker:
-    image: ghcr.io/sinishadjukic/worca:${WORCA_TAG:-latest}
+    image: ${WORCA_IMAGE:-ghcr.io/sinishadjukic/worca}:${WORCA_TAG:-latest}
     init: true
     command: ["worca", "broker"]
+    networks:
+      - default   # the provider is reached from here (the box's proxy settings apply)
+      - broker
+      - ${WORCA_UPLINK_NETWORK:-default}   # with the egress overlay: the workers' network too, so they resolve `broker` (compose folds the duplicate)
     environment:
       WORCA_BROKER_MODE: ${WORCA_BROKER_MODE:-single}
       WORCA_BROKER_SECRET: ${WORCA_BROKER_SECRET:?set WORCA_BROKER_SECRET in .env}
@@ -84,3 +94,9 @@ services:
 
 volumes:
   broker-data:
+
+networks:
+  broker:
+    internal: true   # worca <-> broker only (no route out, so an egress-confined controller stays confined); the broker reaches the provider over `default`
+    labels:
+      worca.role: broker-link   # never a worker's network (src/core/executor/backends/docker.mjs pickWorkerNetwork)

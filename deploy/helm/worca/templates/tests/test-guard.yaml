@@ -1,0 +1,51 @@
+# `helm test <release>`: the UI Service answers, and the server refuses a caller it does not know.
+# A test pod is a plain pod peer: in local mode (no Ingress) the server answers only loopback and
+# the node's gateway (kubelet probes), so the right response here is 403 `forbidden`; with the
+# Ingress on, the Service name is not an allowed host, so it is 403 too. A 200 would mean the
+# guard is off. The health body itself is read inside the pod (tools/k8s-smoke.mjs, docs/kubernetes.md).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "worca.fullname" . }}-test-guard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "worca.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  enableServiceLinks: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: curl
+      image: curlimages/curl:8.11.1
+      env:
+        - name: URL
+          value: "http://{{ include "worca.fullname" . }}:{{ .Values.service.port }}/api/health"
+      command: ["sh", "-ec"]
+      args:
+        - |
+          code=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$URL")
+          if [ "$code" != 403 ]; then echo "expected 403 from a pod peer at $URL, got $code"; exit 1; fi
+          body=$(curl -sS --max-time 10 "$URL")
+          case "$body" in *forbidden*) ;; *) echo "403 without worca's forbidden body: $body"; exit 1;; esac
+          echo "ok: $URL answers and refuses an unknown peer ($body)"
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          memory: 64Mi

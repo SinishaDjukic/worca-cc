@@ -14,7 +14,7 @@ import { homedir } from 'node:os';
 import { join, relative, resolve, sep, isAbsolute } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
-import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from './spawn.mjs';
+import { superviseSpawn, guardPid, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsInWorcaHome, versionAtLeast } from './spawn.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 
@@ -193,13 +193,7 @@ export function familyPreflight({ bin, cli, env = process.env, timeoutMs = 10000
 
 // ── chat ─────────────────────────────────────────────────────────────────────
 
-/** `a` is at least `b` (dotted numbers; a pre-release tag ignored). */
-export function versionAtLeast(a, b) {
-  const n = (v) => String(v).replace(/^[^0-9]*/, '').split(/[.-]/).slice(0, 3).map((x) => Number.parseInt(x, 10) || 0);
-  const [x, y] = [n(a), n(b)];
-  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
-  return true;
-}
+export { versionAtLeast };   // the one version compare (spawn.mjs), kept exported here for its callers
 
 /**
  * Can this CLI be locked down for a chat? Its `--help` names every flag the lockdown needs and its `--version` is at
@@ -292,7 +286,7 @@ export const foldSystemPrompt = (sys, prompt) => (sys ? `=== SYSTEM ===\n${sys}\
  *   {argsFor(session, resume), stdin, env}; spec.fatalStderrRe stops the child on a stderr line that means its rules
  *   did not load.
  * @param {object} spec {name, label, prefix, envPrefixes (a list, or a function of worca's env), classify,
- *   resumeNotFoundRe, fatalStderrRe?, fatalMessage?, askLockdown?, createNormalizer({model, mcpNames}), prepare(ctx)};
+ *   resumeNotFoundRe, fatalStderrRe?, fatalMessage?, askLockdown?, askMinVersion?, createNormalizer({model, mcpNames}), prepare(ctx)};
  *   prepare's result may carry cleanup(), run when the spawn is over
  */
 export async function runFamilyProcess(spec, {
@@ -331,7 +325,7 @@ export async function runFamilyProcess(spec, {
   const refNames = ask ? [...new Set([...Object.keys(runEnv || {}), ...(envAllowlist || []).filter((k) => typeof process.env[k] === 'string' && process.env[k] !== '')])] : [];
   const servers = ask ? withEnvRefs(readMcpServers(mcpConfigPath, bin), refNames) : readMcpServers(mcpConfigPath, bin);
   const guardOn = hostGuardEnabled();
-  const sys = guardOn ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n') : String(systemPrompt || '');
+  const sys = guardOn ? [hostGuardSystemPrompt(guardPid()), systemPrompt].filter(Boolean).join('\n\n') : String(systemPrompt || '');
 
   let scratch = null;
   const scratchDir = () => {
@@ -362,6 +356,7 @@ export async function runFamilyProcess(spec, {
       safeEmit(onEvent, { type: 'session', sessionId: prefix + id });
       const res = await superviseSpawn({
         file: bin, cli: spec.cli, args: prepared.argsFor(id, resume), displayBin: bin, cwd, env, stdin: prepared.stdin, signal: spawnSignal, asAgent,
+        ...(ask && spec.askMinVersion ? { workerMinVersion: spec.askMinVersion } : {}),
         stagedDir: asAgent ? [scratch, ...(prepared.agentDirs || [])] : null, onEvent, cleanup: () => {},
         stdoutErrorDetail: () => normalizer.finish().error || '',
         classify: (m) => spec.classify(m),

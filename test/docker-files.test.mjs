@@ -4,6 +4,7 @@
 // proxy enforces its allowlist on a real socket. The image itself is proven by
 // tools/docker-smoke.mjs.
 import { test } from 'node:test';
+import { FULL_VARIANT_ENGINES } from '../src/core/executor/shared.mjs';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
@@ -13,10 +14,22 @@ import net from 'node:net';
 
 import { DEFAULT_ALLOW, parseAllow, isAllowed, createProxy } from '../src/core/egress-proxy.mjs';
 import { uiInstanceFile } from '../src/core/ui-instance.mjs';
+import { ENGINE_CLIS } from '../src/core/engines/cli-specs.mjs';
+import { DEFAULT_BINS } from '../src/worker/capabilities.mjs';
+import { readEnginePins, defaultTag, ENGINES } from '../tools/docker-build.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
+
+/** The Dockerfile's `worker` stage: from its FROM line to the controller's. */
+function workerStage() {
+  const d = read('docker/Dockerfile');
+  const start = d.indexOf(' AS worker\n');
+  const end = d.indexOf(' AS controller\n');
+  assert.ok(start > 0 && end > start, 'the worker stage comes before the controller stage');
+  return d.slice(start, d.lastIndexOf('\nFROM ', end));
+}
 
 test('Dockerfile and .dockerignore: non-root, pinned CLI, tini, healthcheck, tarball-only context', async () => {
   await checkRows([
@@ -68,6 +81,149 @@ test('entrypoint.sh: strict shell, execs the command, never blocks on auth', () 
   assert.match(e, /^exec "\$@"$/m, 'signals must reach the server');
   assert.match(e, /apiKeyHelper/, 'compose-secret API key path');
   assert.doesNotMatch(e, /^\s*exit 1\s*$/m, 'auth state is informational; only an unwritable volume exits (78)');
+});
+
+// The worker image (docs/workers.md): one multi-stage Dockerfile, the controller LAST (an
+// untargeted build — CI's PR job, Railway — still yields it), the worker stage with no second
+// user, no sudo rule and no HEALTHCHECK, and an entrypoint that never escalates.
+test('Dockerfile: controller last; the worker stage runs as worca with no sudo, no agent users, no healthcheck', async () => {
+  await checkRows([
+    { name: 'stage order: os, pkg, engines, worker, controller — the controller is the default target', run: () => {
+      const d = read('docker/Dockerfile');
+      const names = d.split('\n').filter((l) => /^FROM\s/.test(l)).map((l) => / AS (\S+)$/.exec(l)[1]);
+      assert.deepEqual(names, ['os', 'pkg', 'engines', 'worker', 'controller']);
+      assert.match(d, /^FROM os AS pkg$/m);
+      assert.match(d, /^FROM os AS engines$/m);
+      assert.match(d, /^FROM engines AS worker$/m, 'the worker carries the engine CLIs');
+      assert.match(d, /^FROM os AS controller$/m);
+      assert.equal((d.match(/^COPY --from=pkg \/usr\/local\/lib\/node_modules\/@worca\/app /gm) || []).length, 2, 'both targets take the package from the pkg stage');
+      assert.match(d, /^RUN \/usr\/local\/lib\/worca-engines-install\.sh "\$\{ENGINE\}"$/m, 'the engines stage runs install.sh for ENGINE');
+      assert.doesNotMatch(d, /^\s+bzip2 ca-certificates[^\n]*\bsudo\b/m, 'sudo is not in the shared OS layer');
+      assert.match(d, /apt-get install -y --no-install-recommends sudo/, 'the controller installs sudo itself');
+    } },
+    { name: 'worker stage: USER worca, worca worker, WORCA_NO_DB, no sudoers/useradd/HEALTHCHECK', run: () => {
+      const w = workerStage();
+      assert.match(w, /^USER worca$/m);
+      assert.match(w, /^CMD \["worca", "worker"\]$/m);
+      assert.match(w, /^ENTRYPOINT \["tini", "-s", "-e", "143", "--", "worca-worker-entrypoint"\]$/m);
+      assert.match(w, /WORCA_NO_DB=1/, 'a worker never opens the database');
+      assert.match(w, /WORCA_ROLE=worker/);
+      assert.match(w, /WORCA_WORKER_ENGINE=\$\{ENGINE\}/);
+      assert.match(w, /dev\.worca\.engine="\$\{ENGINE\}"/, 'the engine is a label');
+      for (const forbidden of ['sudoers', 'useradd', 'HEALTHCHECK', 'groupadd', 'visudo', 'VOLUME', 'EXPOSE']) {
+        assert.doesNotMatch(w, new RegExp(forbidden), `no ${forbidden} in the worker stage`);
+      }
+      assert.match(w, /COPY --chmod=755 docker\/entrypoint-worker\.sh \/usr\/local\/bin\/worca-worker-entrypoint/);
+    } },
+    { name: 'entrypoint-worker.sh: strict, execs, exits 78 for an incomplete assignment, never setpriv or sudo', run: () => {
+      const e = read('docker/entrypoint-worker.sh');
+      assert.doesNotMatch(e, /--version/, 'the worker probes its engines once, for its hello: the entrypoint does not run them a second time');
+      assert.match(e, /^set -euo pipefail$/m);
+      assert.match(e, /^exec "\$@"$/m, 'SIGTERM must reach the worker');
+      assert.match(e, /exit 78/, 'EX_CONFIG for a missing variable or an unwritable volume');
+      assert.doesNotMatch(e, /setpriv|sudo/, 'a worker never changes user');
+      for (const v of ['WORCA_CONTROLLER_URL', 'WORCA_WORKER_SCOPE', 'WORCA_WORKER_ID', 'WORCA_WORKER_TOKEN_FILE']) assert.match(e, new RegExp(v), `${v} is checked`);
+      assert.match(e, /fsGroup is not applied on NFS volumes: export the share owned by uid 1000 or anonuid=1000/, 'the unwritable-volume hint');
+      assert.doesNotMatch(e, /export HOME=/, 'HOME is the worker process\'s business (src/worker/main.mjs builds it by the controller\'s rule)');
+      assert.match(e, /run:\?\*\|chat:\?\*\) ;;/, 'the scope is checked before anything starts');
+      assert.match(e, /wh="\$\{WORCA_HOME:-\/worca\}\/\.worca-cc"/, 'under the shared worca home (src/worker/main.mjs agrees)');
+      assert.match(e, /npm_config_cache="\$wh\/worker-cache\/npm"/);
+      assert.match(e, /UV_CACHE_DIR="\$wh\/worker-cache\/uv"/);
+      assert.match(e, /PLAYWRIGHT_BROWSERS_PATH="\$wh\/worker-cache\/playwright"/);
+      assert.doesNotMatch(e, /log [^\n]*\$\{?WORCA_WORKER_TOKEN\b/, 'the token is never logged');
+    } },
+    { name: 'both entrypoints source the shared lib; the corporate-CA step lives there once', run: () => {
+      const lib = read('docker/entrypoint-lib.sh');
+      for (const f of ['docker/entrypoint.sh', 'docker/entrypoint-worker.sh']) {
+        const e = read(f);
+        assert.match(e, /^\. \/usr\/local\/lib\/worca-entrypoint-lib\.sh$/m, `${f} sources the lib`);
+        assert.match(e, /^worca_corporate_ca$/m, `${f} applies the CA`);
+        assert.doesNotMatch(e, /mktemp -d \/tmp\/worca-ca/, `${f} holds no copy of the CA step`);
+      }
+      assert.match(lib, /^worca_corporate_ca\(\) \{$/m);
+      assert.doesNotMatch(lib, /^set -|^#!/m, 'sourced, never run');
+      assert.match(read('docker/Dockerfile'), /^COPY --chmod=644 docker\/entrypoint-lib\.sh \/usr\/local\/lib\/worca-entrypoint-lib\.sh$/m, 'installed in the shared os stage');
+    } },
+  ]);
+});
+
+test('engines: engines.env pins every engine but claude, install.sh has an arm per id, the build tool parses the pins', async () => {
+  const ids = Object.keys(ENGINE_CLIS);
+  await checkRows([
+    { name: 'engines.env covers ENGINE_CLIS minus claude (whose pin is docker/CLAUDE_CODE_VERSION)', run: () => {
+      const pins = readEnginePins();
+      const want = { codex: 'CODEX_VERSION', copilot: 'COPILOT_CLI_VERSION', cursor: 'CURSOR_AGENT_VERSION', gemini: 'GEMINI_CLI_VERSION', qwen: 'QWEN_CODE_VERSION', goose: 'GOOSE_VERSION', opencode: 'OPENCODE_VERSION' };
+      assert.deepEqual(Object.keys(want).sort(), ids.filter((i) => i !== 'claude').sort(), 'the test names every engine Worca knows');
+      for (const [id, key] of Object.entries(want)) assert.ok(key in pins, `${key} pins ${id}`);
+      for (const k of ['CODEX_VERSION', 'COPILOT_CLI_VERSION', 'GEMINI_CLI_VERSION', 'QWEN_CODE_VERSION', 'OPENCODE_VERSION', 'GOOSE_VERSION']) assert.match(pins[k], /^\d+\.\d+\.\d+$/, `${k} is an exact version`);
+      assert.match(pins.OPENCODE_VERSION, /^1\./, 'OpenCode stays on 1.x (worca refuses 2)');
+      for (const k of ['GOOSE_SHA256_AMD64', 'GOOSE_SHA256_ARM64']) assert.match(pins[k], /^([0-9a-f]{64})?$/, `${k} is a sha256 or empty (VERIFY)`);
+      assert.ok('RAILWAY_CLI_VERSION' in pins && 'UV_VERSION' in pins, 'the -full extras are pinned too');
+      assert.ok(!('CLAUDE_CODE_VERSION' in pins), 'Claude Code keeps its own file');
+      assert.ok(!readEnginePins('# x\n\nA=1\nB=\n').C, 'comments and blanks are ignored');
+      assert.deepEqual(readEnginePins('# x\n\n A = 1 \nB=\n'), { A: '1', B: '' });
+      assert.throws(() => readEnginePins('nonsense'), /KEY=value/);
+    } },
+    { name: 'install.sh: set -euo pipefail, a case arm per engine id plus all, unknown id exits 2, --version after each install', run: () => {
+      const s = read('docker/engines/install.sh');
+      assert.match(s, /^set -euo pipefail$/m);
+      for (const id of [...ids, 'all']) assert.match(s, new RegExp(`^\\s+${id}\\)\\s`, 'm'), `a case arm for ${id}`);
+      assert.match(s, /\*\)\s+say "unknown engine[^\n]*exit 2/, 'an unknown id exits 2');
+      for (const id of ids) assert.match(s, new RegExp(`\\b${DEFAULT_BINS[id]}\\b`), `${id} installs the binary the adapter spawns (${DEFAULT_BINS[id]})`);
+      assert.match(s, /"\$bin" --version/, 'each binary runs --version (fails the build on a wrong-arch release)');
+      assert.match(s, /\[ -n "\$ver" \] \|\| die/, 'an empty npm pin fails the build');
+      assert.match(s, /dpkg --print-architecture/, 'goose picks its tarball by architecture');
+      assert.match(s, /sha256sum -c/, 'goose checks the tarball');
+      assert.match(s, /WARNING: goose: no sha256 pinned/, 'an empty sha is loud, not silent');
+      assert.match(s, /npm cache clean --force/);
+      assert.deepEqual(ENGINES, [...ids, 'all'], 'the build tool accepts exactly these ids');
+    } },
+    { name: 'Dockerfile engines stage declares every pin as a build arg', run: () => {
+      const d = read('docker/Dockerfile');
+      const stage = d.slice(d.indexOf(' AS engines\n'), d.indexOf(' AS worker\n'));
+      for (const k of Object.keys(readEnginePins()).filter((k) => !['RAILWAY_CLI_VERSION', 'UV_VERSION'].includes(k))) assert.match(stage, new RegExp(`^ARG ${k}=$`, 'm'), `ARG ${k}`);
+      assert.match(stage, /^ARG CLAUDE_CODE_VERSION$/m);
+      assert.match(stage, /^ARG ENGINE=claude$/m);
+    } },
+    { name: 'docker-build default tags: controller unchanged, worker carries its engine', run: () => {
+      assert.equal(defaultTag({ target: 'controller', engine: null, variant: 'slim' }), 'ghcr.io/sinishadjukic/worca:dev');
+      assert.equal(defaultTag({ target: 'controller', engine: null, variant: 'full' }), 'ghcr.io/sinishadjukic/worca:dev-full');
+      assert.equal(defaultTag({ target: 'worker', engine: 'claude', variant: 'slim' }), 'ghcr.io/sinishadjukic/worca-worker:dev-claude');
+      assert.equal(defaultTag({ target: 'worker', engine: 'all', variant: 'full' }), 'ghcr.io/sinishadjukic/worca-worker:dev-all-full');
+    } },
+    { name: 'CI: the release matrix has worker rows and the PR job builds and smokes the claude worker', run: () => {
+      const wf = read('.github/workflows/docker-image.yml');
+      assert.match(wf, /IMAGE_WORKER: ghcr\.io\/sinishadjukic\/worca-worker/);
+      assert.match(wf, /target: \$\{\{ matrix\.target \}\}/);
+      assert.match(wf, /continue-on-error: \$\{\{ matrix\.fragile \}\}/, 'goose and cursor rows do not hold the release');
+      // The workers overlay never forces the open network next to the egress allowlist, and marks the Docker API network.
+      const workers = read('docker/compose.workers.yml');
+      assert.match(workers, /networks:\n(\s+#[^\n]*\n)+\s+- \$\{WORCA_UPLINK_NETWORK:-default\}\n\s+- docker-proxy/);
+      assert.doesNotMatch(workers, /^\s+- default$/m);
+      assert.match(workers, /docker-proxy:\n\s+internal: true\n\s+labels:\n\s+worca\.role: docker-api/);
+      // What the docs offer in .env for workers actually reaches the controller.
+      for (const name of ['WORCA_WORKER_NETWORK', 'WORCA_INSTANCE_ID']) assert.match(workers, new RegExp(`\\n\\s+${name}: \\$\\{${name}:-\\}`), `${name} is forwarded`);
+      // The code's list of engines with a -full worker image is the release workflow's.
+      const fullRow = /if \(([^)]*)\) rows\.push\(\{ target: 'worker', engine: e, variant: 'full' \}\)/.exec(wf)?.[1] || '';
+      assert.deepEqual([...fullRow.matchAll(/e === '(\w+)'/g)].map((m) => m[1]).sort(), [...FULL_VARIANT_ENGINES].sort());
+      // One failed build row does not skip every manifest (each row checks its own digests).
+      assert.match(wf, /needs: \[plan, build\]\n(\s+#[^\n]*\n)+\s+if: \$\{\{ !cancelled\(\) && needs\.plan\.result == 'success' \}\}/);
+      // The worca image run as a worker (WORCA_WORKER_IMAGE=self) builds its CA bundle before it execs.
+      assert.match(read('docker/entrypoint.sh'), /\[ "\$\{2:-\}" = "worker" \]; then\n(\s+#[^\n]*\n)+\s+worca_corporate_ca\n\s+exec "\$@"/);
+      // …but a row that built for one architecture only must not publish a tag the other cannot pull.
+      const archs = (/const archs = \[([^\]]*)\]/.exec(wf)?.[1].match(/arch: '/g) || []).length;
+      assert.equal(archs, 2);
+      assert.equal(Number(/ARCH_COUNT: (\d+)/.exec(wf)?.[1]), archs, 'the manifest step expects as many digests as the plan has architectures');
+      assert.match(wf, /if \[ "\$have" -ne "\$ARCH_COUNT" \]; then\n\s+echo "::error::[^\n]*not publishing a partial manifest"\n\s+exit 1/);
+      assert.ok(wf.indexOf('not publishing a partial manifest') < wf.indexOf('docker buildx imagetools create'), 'checked before anything is pushed');
+      assert.match(wf, /engines:\n\s+description: comma list of worker engines/, 'the engines input');
+      assert.match(wf, /--worker-image "\$IMAGE_WORKER:\$\{\{ needs\.build\.outputs\.version \}\}-claude"/);
+      const ci = read('.github/workflows/ci.yml');
+      assert.match(ci, /target: worker\n\s+load: true\n\s+tags: ghcr\.io\/sinishadjukic\/worca-worker:ci/);
+      assert.match(ci, /ENGINE=claude/);
+      assert.match(ci, /node tools\/docker-smoke\.mjs --image ghcr\.io\/sinishadjukic\/worca:ci --worker-image ghcr\.io\/sinishadjukic\/worca-worker:ci/, 'the PR job smokes the controller and the worker together (the end-to-end step)');
+    } },
+  ]);
 });
 
 test('entrypoint.sh: single-volume mode prepares the volume as root, then drops to worca', () => {
@@ -384,7 +540,9 @@ test('compose.ca.yml mounts the CA read-only and the entrypoint builds the bundl
   assert.match(ca, /NODE_EXTRA_CA_CERTS: \/etc\/worca\/corporate-ca\.pem/);
   assert.match(ca, /WORCA_CA_CERT_FILE: \/etc\/worca\/corporate-ca\.pem/);
   const e = read('docker/entrypoint.sh');
-  const block = e.slice(e.indexOf('# 1b.'), e.indexOf('# 2. GitHub'));
+  // The step itself is docker/entrypoint-lib.sh's worca_corporate_ca (the worker's entrypoint shares it).
+  const lib = read('docker/entrypoint-lib.sh');
+  const block = lib.slice(lib.indexOf('worca_corporate_ca() {'));
   assert.match(block, /mktemp -d \/tmp\/worca-ca\.XXXXXX/, 'a fresh dir an agent uid cannot pre-create or write');
   assert.match(block, /cat \/etc\/ssl\/certs\/ca-certificates\.crt "\$WORCA_CA_CERT_FILE"/, 'system trust plus the CA, not the CA alone');
   for (const v of ['SSL_CERT_FILE', 'GIT_SSL_CAINFO', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE']) assert.match(block, new RegExp(`${v}="\\$cadir/bundle\\.pem"`), v);
@@ -409,4 +567,71 @@ test('V15/V18: docs/docker.md says host networking binds 127.0.0.1, and which ru
   assert.match(doc, /\*\*`network_mode: host`\.\*\*[^]*?LAN router[^]*?`WORCA_HOST=127\.0\.0\.1`/);
   assert.match(doc, /Docker Desktop, rootless Docker and Podman[^]*?tools\/docker-linux-pass\.sh[^]*?answers 403/);
   assert.ok(existsSync(join(ROOT, 'tools/docker-linux-pass.sh')), 'the Linux pass script the doc names');
+});
+
+test('compose.workers.yml: the controller reaches the Engine through a least-privilege socket proxy on an internal network; no worker port is published', () => {
+  const w = read('docker/compose.workers.yml');
+  assert.match(w, /WORCA_EXECUTOR: docker/);
+  assert.match(w, /WORCA_DOCKER_HOST: tcp:\/\/docker-proxy:2375/);
+  assert.match(w, /WORCA_CONTROLLER_URL: ws:\/\/worca:\$\{WORCA_WORKER_PORT:-4319\}/);
+  assert.match(w, /image: tecnativa\/docker-socket-proxy:\d+\.\d+\.\d+/, 'the proxy image is pinned');
+  assert.match(w, /\/var\/run\/docker\.sock:\/var\/run\/docker\.sock:ro/, 'the proxy sees the socket read-only');
+  for (const off of ['IMAGES', 'EXEC', 'BUILD', 'VOLUMES', 'SECRETS', 'SWARM', 'SYSTEM']) assert.match(w, new RegExp(`${off}: 0`), `${off} is off`);
+  for (const on of ['CONTAINERS', 'POST', 'ALLOW_START', 'ALLOW_STOP', 'NETWORKS']) assert.match(w, new RegExp(`${on}: 1`), `${on} is on`);
+  assert.match(w, /docker-proxy:\n    internal: true/, 'the proxy network is internal');
+  assert.doesNotMatch(w, /^\s+ports:/m, 'nothing published');
+  assert.doesNotMatch(read('docker/compose.yml'), /docker\.sock/, 'the base compose still mounts no socket');
+  assert.match(read('docker/.env.example'), /^#WORCA_WORKER_IMAGE=/m);
+});
+
+test('entrypoint.sh: `worca worker` execs at once, before any volume preparation or agent-user setup', () => {
+  const e = read('docker/entrypoint.sh');
+  const start = e.indexOf('if [ "${1:-}" = "worca" ] && [ "${2:-}" = "worker" ]');
+  assert.ok(start > 0, 'the worker branch exists');
+  assert.ok(start < e.indexOf('if [ "${1:-}" = "worca" ] && [ "${2:-}" = "broker" ]'), 'before the broker branch');
+  assert.ok(start < e.indexOf('WORCA_DATA_DIR:-'), 'before the single-volume block');
+  const block = e.slice(start, e.indexOf('\nfi\n', start));
+  assert.match(block, /^\s+exec "\$@"$/m);
+  assert.doesNotMatch(block, /setpriv|sudo|chown/);
+});
+
+import { spawnSync as spawnSyncCompose } from 'node:child_process';
+import { tmpdir as tmpdirCompose } from 'node:os';
+
+test('compose renders the worker settings you set exactly as set (no brace of `{engine}` inside an interpolation)', (t) => {
+  const here = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'docker');
+  // The rule, for every compose file: `{engine}` inside `${…}` ends the interpolation at its brace.
+  for (const f of ['compose.yml', 'compose.workers.yml', 'compose.egress.yml', 'compose.broker.yml', 'compose.dev.yml']) {
+    assert.doesNotMatch(readFileSync(join(here, f), 'utf8'), /\$\{[^}\n]*\{engine\}/, `${f}: a default containing {engine}`);
+  }
+  assert.match(readFileSync(join(here, 'compose.workers.yml'), 'utf8'), /\n\s+WORCA_WORKER_IMAGE: \$\{WORCA_WORKER_IMAGE:-\}\n/);
+  for (const name of ['OPENAI_API_KEY', 'GEMINI_API_KEY', 'COPILOT_GITHUB_TOKEN', 'CURSOR_API_KEY', 'WORCA_WORKER_START_TIMEOUT_MS', 'WORCA_WORKER_USER', 'WORCA_DOCKER_TIMEOUT_MS']) {
+    assert.match(readFileSync(join(here, 'compose.workers.yml'), 'utf8'), new RegExp(`\\n      ${name}:\\n`), `${name} is passed through from .env`);
+  }
+  // And what Docker Compose itself makes of it, where it is installed.
+  const render = (extra) => spawnSyncCompose('docker', ['compose', '-f', 'compose.yml', '-f', 'compose.workers.yml', 'config', '--format', 'json'],
+    { cwd: here, encoding: 'utf8', env: { ...process.env, WORCA_PROJECTS: tmpdirCompose(), ...extra }, timeout: 60000 });
+  const probe = render({});
+  if (probe.error || probe.status !== 0) { t.diagnostic(`docker compose is not usable here (${probe.error?.message || `exit ${probe.status}`}): rendered values not checked`); return; }
+  const image = (r) => JSON.parse(r.stdout).services.worca.environment.WORCA_WORKER_IMAGE;
+  assert.equal(image(probe) ?? '', '', 'unset: empty, and the controller derives the image from its own');
+  assert.equal(image(render({ WORCA_WORKER_IMAGE: 'self' })), 'self');
+  assert.equal(image(render({ WORCA_WORKER_IMAGE: 'registry.example/worker:1-{engine}' })), 'registry.example/worker:1-{engine}');
+  // An engine credential or a worker setting from `.env` reaches the controller (which sends credentials with each
+  // spawn); one that is not set is not defined in the container at all, rather than set to an empty string.
+  const envOfWorca = JSON.parse(render({ OPENAI_API_KEY: 'sk-test', WORCA_WORKER_START_TIMEOUT_MS: '600000' }).stdout).services.worca.environment;
+  assert.equal(envOfWorca.OPENAI_API_KEY, 'sk-test');
+  assert.equal(envOfWorca.WORCA_WORKER_START_TIMEOUT_MS, '600000');
+  assert.equal(envOfWorca.GEMINI_API_KEY ?? null, null);
+});
+
+test('the socket proxy, the one container holding the Docker socket, is pinned by digest; the Engine client is never proxied', () => {
+  const compose = readFileSync(new URL('../docker/compose.workers.yml', import.meta.url), 'utf8');
+  assert.match(compose, /image: tecnativa\/docker-socket-proxy:0\.3\.0@sha256:[0-9a-f]{64}/);
+  const docker = readFileSync(new URL('../src/core/executor/backends/docker.mjs', import.meta.url), 'utf8');
+  assert.match(docker, /const agent = new http\.Agent\(\{ keepAlive: false \}\);/, 'its own agent: an HTTPS_PROXY in the environment never carries Engine calls');
+  const release = readFileSync(new URL('../.github/workflows/docker-image.yml', import.meta.url), 'utf8');
+  assert.match(release, /if \[ "\$BUILD_RESULT" != "success" \] \|\| \[ "\$BUILD_COMPLETE" != "true" \]; then\n\s+echo "::error title=moving tags held::a build row did not deliver its digests/, 'moving tags move together or not at all — also when a fragile row (continue-on-error, so the job still says success) delivered nothing — and the hold is an error annotation plus a summary line, not a warning nobody reads');
+  assert.match(release, /GITHUB_STEP_SUMMARY/);
+  assert.match(release, /pattern: digests-\*\n/, 'every row\'s digests are counted');
 });

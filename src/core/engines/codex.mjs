@@ -25,7 +25,8 @@ import { join, resolve, dirname, relative } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS, describeUnattachableMcp } from './capabilities.mjs';
-import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from './spawn.mjs';
+import { superviseSpawn, guardPid, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from './spawn.mjs';
+import { spawnHomeDir } from '../executor/index.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { ARGV_INLINE_LIMIT } from './claude.mjs';
@@ -245,7 +246,9 @@ function knownCodexHomes() {
   const base = codexHomesBase();
   let managed = [];
   try { managed = readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => join(base, e.name)); } catch { /* none yet */ }
-  return [userCodexHome(), ...managed];
+  // The home a spawn on a worker used (executor/index.mjs spawnHomeDir) holds the threads it started there.
+  const spawnHome = join(spawnHomeDir(), '.codex');
+  return [...new Set([userCodexHome(), ...(spawnHome !== userCodexHome() ? [spawnHome] : []), ...managed])];
 }
 
 /**
@@ -782,7 +785,7 @@ export async function runCodexProcess({
     safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] codex: stored session ${JSON.stringify(String(resumeSessionId).slice(0, 12))}… is not a codex thread — starting a fresh one` });
   }
   const guardOn = hostGuardEnabled();
-  let sys = guardOn ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n') : systemPrompt;
+  let sys = guardOn ? [hostGuardSystemPrompt(guardPid()), systemPrompt].filter(Boolean).join('\n\n') : systemPrompt;
   let stdin = String(prompt ?? '');
   // No system-prompt file flag: a prompt too large for one argv value is folded
   // into stdin behind a delimiter (the systemPromptFlag fallback).
@@ -843,7 +846,9 @@ export async function runCodexProcess({
   if (typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string') env.GIT_CEILING_DIRECTORIES = runSpawnEnv.GIT_CEILING_DIRECTORIES;
   // Command rules live in a worca-managed CODEX_HOME.
   if (plan.prefixes.length) env.CODEX_HOME = guardedCodexHome(codexRulesFile(plan.prefixes));
-  const home = (env.CODEX_HOME && String(env.CODEX_HOME).trim()) || join(homedir(), '.codex');
+  // On a worker codex's HOME is the worker's (executor/index.mjs spawnHomeDir), not this process's: the thread is
+  // brought there and its session file (the usage of a turn that never completed) is read from there.
+  const home = (env.CODEX_HOME && String(env.CODEX_HOME).trim()) || join(spawnHomeDir(), '.codex');
   if (thread) bringCodexThreadHome(home, thread);
   const extra = [];
   if (plan.shellOff && sandbox !== 'read-only' && !askLockdown) extra.push(...CODEX_SHELL_OFF);
@@ -897,6 +902,7 @@ export async function runCodexProcess({
   const res = await superviseSpawn({
     cli: CODEX_CLI,
     file: bin, args, displayBin: bin, cwd, env, stdin, signal: spawnSignal, asAgent, stagedDir: null, onEvent,
+    ...(askLockdown ? { workerMinVersion: CODEX_ASK_MIN_VERSION } : {}),
     cleanup: () => { if (roleFile) rmSync(roleFile, { force: true }); },
     stdoutErrorDetail: () => normalizer.finish().error || '',
     classify: (m) => classifyCodexError(m),

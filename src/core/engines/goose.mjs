@@ -56,7 +56,8 @@ import { agentIdentityFor } from '../agent-pool.mjs';
 import { currentOwner } from '../billing.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
-import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
+import { superviseSpawn, guardPid, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
+import { spawnHomeDir, spawnsRemotely } from '../executor/index.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { scopeLauncherEnv } from '../mcp/launch.mjs';
@@ -405,9 +406,9 @@ export async function runGooseProcess({
   // A relayed chat runs goose as the person's agent user (agent-user.mjs), which cannot write worca's home: its chat home
   // is a worca folder in that user's own home (as a relayed chat on another engine reads that user's own config), which
   // goose creates itself. Otherwise it is worca's (gooseChatHome).
-  const agentId = ask && asAgent ? agentIdentityFor(currentOwner()) : null;
+  const agentId = ask && asAgent && !spawnsRemotely() ? agentIdentityFor(currentOwner()) : null;   // on a worker the container is the isolation: no agent user, no 0700 home of another uid
   const home = chatHome || (agentId ? gooseAgentChatHome(agentId.home) : gooseChatHome());
-  const realHome = agentId ? agentId.home : (process.env.HOME || homedir());
+  const realHome = agentId ? agentId.home : spawnHomeDir();   // on a worker: the worker's, where its MCP servers run
 
   const guardOn = hostGuardEnabled();
   // A chat keeps its model's provider env too (its key in worca's environment): it has no shell to read it.
@@ -458,7 +459,7 @@ export async function runGooseProcess({
     }
   };
 
-  let sys = guardOn ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n') : String(systemPrompt || '');
+  let sys = guardOn ? [hostGuardSystemPrompt(guardPid()), systemPrompt].filter(Boolean).join('\n\n') : String(systemPrompt || '');
   let stdin = String(prompt ?? '');
   // A system prompt too large for one argv value is folded into stdin behind a delimiter.
   if (sys && Buffer.byteLength(sys, 'utf8') > GOOSE_ARGV_LIMIT) { stdin = `=== SYSTEM ===\n${sys}\n=== END SYSTEM ===\n\n${stdin}`; sys = ''; }
@@ -497,6 +498,7 @@ export async function runGooseProcess({
     const res = await superviseSpawn({
       cli: GOOSE_CLI,
       file: bin, args, displayBin: bin, cwd, env, stdin, signal: spawnSignal, asAgent, stagedDir: asAgent ? dir : null, onEvent,
+      ...(ask ? { workerMinVersion: GOOSE_ASK_MIN_VERSION } : {}),
       ...(ask && agentId ? { agentHome: () => home } : {}),
       cleanup: () => {},
       stdoutErrorDetail: () => { const e = normalizer.finish().error; return e && e !== NO_COMPLETE ? e : ''; },

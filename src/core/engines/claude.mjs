@@ -8,13 +8,16 @@ import { effectiveDebugSpawn } from '../settings.mjs';
 import { classifyError } from '../recoverable-error.mjs';
 import { bridgeEvents } from '../bridge/telemetry.mjs';
 import { resolveClaudeBin } from '../preflight.mjs';
+import { CLAUDE_AGENTS_FILE_MIN } from '../session-mode.mjs';
+import { isLoopbackUrl } from '../executor/shared.mjs';   // the one loopback predicate (the worker env scrub uses it too)
 import { CLAUDE_CLI } from './cli-specs.mjs';
 import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { memoryUsageHookEntry } from '../memory-usage.mjs';
 import { readGuardHookEntry, readGuardDecisions } from '../file-read-guard.mjs';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { stagingBase } from '../executor/index.mjs';
 import { agentIdentity } from '../agent-user.mjs';
 import { agentIdentityFor } from '../agent-pool.mjs';
 import { brokerEnabled, brokerInfo, mintSpawnToken, revokeSpawnToken, slotBaseUrl, slotOfBaseUrl } from '../broker-client.mjs';
@@ -23,7 +26,7 @@ import { redactSecrets, redactDeep, createRedactor } from '../redact.mjs';
 import { MODEL_CREDENTIAL_ENV_KEYS } from '../broker-guard.mjs';
 import { modelSlot } from '../broker-routing.mjs';
 import { pluginModelRoute, syncPluginSlots } from '../plugin-broker-slots.mjs';
-import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
+import { superviseSpawn, guardPid, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 
 export const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
@@ -505,7 +508,13 @@ export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limi
  *  spawn, and it keeps the spawn sequence in runClaudeProcess linear. */
 export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_INLINE_LIMIT } = {}) {
   let dir = null;
-  const makeDir = () => (dir ??= mkdtempSync(join(tmpdir(), 'worca-claude-')));
+  // Under a remote executor the dir sits on the shared volume, where the worker's claude reads it.
+  const makeDir = () => {
+    if (dir) return dir;
+    const base = stagingBase();
+    if (base !== tmpdir()) mkdirSync(base, { recursive: true });
+    return (dir = mkdtempSync(join(base, 'worca-claude-')));
+  };
   // A8: a guarded read logs every decision of its guard to a file in this private dir: the server's path, never a
   // caller's, read back when the spawn ends (runClaudeProcess) and removed with the dir.
   const o = opts.readGuard != null ? { ...opts, readGuardLog: join(makeDir(), 'read-guard.jsonl') } : opts;
@@ -599,7 +608,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     // Claude Code's own.
     const guardOn = hostGuardEnabled();
     const guardedSystemPrompt = guardOn
-      ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n')
+      ? [hostGuardSystemPrompt(guardPid()), systemPrompt].filter(Boolean).join('\n\n')
       : systemPrompt;
     let plan;
     try {
@@ -695,6 +704,9 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     superviseSpawn({
       file: bin, cli: CLAUDE_CLI, args, displayBin: bin, cwd, env: spawnEnv, stdin: plan.stdin ?? null,
       signal, asAgent, stagedDir: plan.dir || null, onEvent,
+      // The argv was shaped by THIS machine's claude (preflight caps); on a worker image an older claude would refuse
+      // `--agents <file>`: the floor that flag needs is checked against the worker's version before anything starts.
+      ...(agentsViaFile === true ? { workerMinVersion: CLAUDE_AGENTS_FILE_MIN, workerMinVersionFor: 'a session host spawn (--agents <file>)' } : {}),
       cleanup: () => {
         if (bridgeKey) bridgeEvents.off('failure', onBridgeFailure);
         cleanupStaged();
@@ -819,12 +831,6 @@ function brokerSpawnError(message, errorClass = 'auth') {
   return err;
 }
 
-function isLoopbackUrl(v) {
-  try {
-    const h = new URL(v).hostname.replace(/^\[|\]$/g, '');
-    return h === '127.0.0.1' || h === 'localhost' || h === '::1';
-  } catch { return false; }
-}
 
 /** Which broker slot a spawn's model env routes to: {slot}, {bridge:true}, or {error}. */
 export function brokerRouteFor(modelEnv, env = process.env) {

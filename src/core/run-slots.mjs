@@ -9,9 +9,23 @@ import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 
 import { join } from 'node:path';
 import { worcaHome } from './projects.mjs';
 import { processAlive } from './ui-instance.mjs';
+import { processStartTicks } from './agent-groups.mjs';
 
 const slotDir = () => join(worcaHome(), 'run-slots');
 const POLL_MS = 2000;
+
+/**
+ * Is the process a slot names still the one that claimed it? A live pid alone is not proof: a
+ * restarted container has a fresh pid namespace, so a new process can hold an old slot's pid
+ * while the slot file lives on the volume. A slot that recorded its process's start time is
+ * dead when the pid's start time differs (Linux; elsewhere startTicks is null and the pid rules).
+ */
+export function slotOwnerAlive(s, { alive = processAlive, startTicks = processStartTicks } = {}) {
+  if (!alive(s?.pid)) return false;
+  if (s.startTicks == null) return true;
+  const now = startTicks(s.pid);
+  return now == null || now === s.startTicks;
+}
 
 /** The live slots, oldest claim first. Removes the files of dead processes. */
 export function liveRunSlots() {
@@ -22,7 +36,7 @@ export function liveRunSlots() {
     const file = join(slotDir(), n);
     let s;
     try { s = JSON.parse(readFileSync(file, 'utf8')); } catch { continue; }   // mid-write: counted next poll
-    if (!processAlive(s?.pid)) { try { unlinkSync(file); } catch { /* another process cleared it */ } continue; }
+    if (!slotOwnerAlive(s)) { try { unlinkSync(file); } catch { /* another process cleared it */ } continue; }
     live.push(s);
   }
   return live.sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -50,7 +64,7 @@ export async function acquireRunSlot({ id, max, signal, check, onWait, pollMs = 
     const others = liveRunSlots().filter((s) => s.id !== id);
     if (others.length < max) {
       mkdirSync(slotDir(), { recursive: true });
-      writeFileSync(file, JSON.stringify({ id, pid: process.pid, at: Date.now() }));
+      writeFileSync(file, JSON.stringify({ id, pid: process.pid, at: Date.now(), startTicks: processStartTicks(process.pid) }));
       if (liveRunSlots().findIndex((s) => s.id === id) < max) return { release, waited };
       release();   // lost the race for the last slot
     }

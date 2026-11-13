@@ -5,7 +5,7 @@ import { killTree } from '../graph/script-runner.mjs';
 import { stripHostCredentials } from '../host-credentials.mjs';
 import { withNoGitPath } from '../nogit-stub.mjs';
 
-const STRIPPED = ['WORCA_HOME', 'WORCA_RUN_ROOT', 'WORCA_HOST_PID'];
+const STRIPPED = ['WORCA_HOME', 'WORCA_DB_DIR', 'WORCA_RUN_ROOT', 'WORCA_HOST_PID'];
 const MAX_LINE = 8000;
 
 export function actionBaseEnv(base = process.env) {

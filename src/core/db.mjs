@@ -18,7 +18,7 @@
 
 import { createRequire } from 'node:module';
 import { mkdirSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { worcaHome } from './projects.mjs';
 import { maybeMigrateFromFs } from './migrate-fs-to-db.mjs';
 import { vcsAtUpgrade } from './project-kind.mjs';
@@ -69,9 +69,12 @@ export const SCHEMA_VERSION = 88;
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
 
-/** Absolute path to the database file: <worcaHome>/worca-cc.db. */
+/** Absolute path to the database file: <WORCA_DB_DIR or worcaHome()>/worca-cc.db. WORCA_DB_DIR
+ *  puts the database on a volume of its own where the rest of the home is a shared network
+ *  volume (worker containers; SQLite's WAL needs a local filesystem). */
 export function dbPath() {
-  return join(worcaHome(), 'worca-cc.db');
+  const dir = String(process.env.WORCA_DB_DIR || '').trim();
+  return join(dir ? resolve(dir) : worcaHome(), 'worca-cc.db');
 }
 
 /**
@@ -82,8 +85,12 @@ export function dbPath() {
  */
 export function getDb() {
   if (_db) return _db;
+  // A worker container never opens the database (WORCA_NO_DB=1 in its image): an import path that
+  // reaches here on a worker is a bug, said plainly instead of creating a stray database file.
+  if (/^(1|true|yes|on)$/i.test(String(process.env.WORCA_NO_DB || '').trim())) throw new Error('this process never opens the database (WORCA_NO_DB is set)');
   const home = worcaHome();
   mkdirSync(home, { recursive: true }); // chicken/egg: ensure the dir before open
+  mkdirSync(dirname(dbPath()), { recursive: true });
   const db = _openConfiguredMigrated();  // open + pragmas + migrate, retried on BUSY
   maybeMigrateFromFs(db);    // one-shot fs→db import (other phase; self-guarded)
   reconcileAfterFsImport(db);  // V24: archive v1 templates that import just created

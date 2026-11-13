@@ -139,7 +139,7 @@ Set these where worca runs (for Railway: on the `worca` service).
 | `WORCA_ALLOWED_HOSTS` | `worca.example.com` | Hostnames accepted in `Host` and `Origin` besides loopback. Comma-separated. A leading dot (`.example.com`) matches subdomains, but prefer the exact name. On Railway add `healthcheck.railway.app` (see [deploy-railway.md](deploy-railway.md)). |
 | `WORCA_CF_ACCESS_TEAM_DOMAIN` | `acme.cloudflareaccess.com` | Your team domain. Turns on the token check. |
 | `WORCA_CF_ACCESS_AUD` | `4714c1…` | The application's AUD tag. Tokens issued for any other application are refused. |
-| `WORCA_HOST` | `::` | Listen address. Must be non-loopback so `cloudflared` in another container can reach worca; `::` accepts IPv6 and IPv4. Without `WORCA_ALLOWED_HOSTS` a non-loopback bind still answers only callers on the same machine (a loopback TCP peer, or Docker's gateway in the worca image): a network caller gets a 403 even with `Host: localhost`. |
+| `WORCA_HOST` | `::` | Listen address. Must be non-loopback so `cloudflared` in another container can reach worca; `::` accepts IPv6 and IPv4. Without `WORCA_ALLOWED_HOSTS` a non-loopback bind still answers only callers on the same machine (a loopback TCP peer, or the container network's gateway in the worca image: Docker's bridge, or the pod network's on Kubernetes): a network caller gets a 403 even with `Host: localhost`. |
 | `WORCA_INSECURE_NO_IDENTITY_CHECK` | `1` | Runs with an allowlist but **no** token check, trusting the proxy alone. Never needed with Cloudflare Access; it exists for proxies that sign nothing. |
 
 ### Worca refuses to start if the setup is unsafe
@@ -277,6 +277,11 @@ startup error. A deployment with only the `WORCA_CF_ACCESS_*` settings is unaffe
 | `WORCA_IDENTITY_ISSUER` | `https://app.example.com` | The token's `iss`. Turns on the issuer check. https only (http for localhost). |
 | `WORCA_IDENTITY_JWKS_URL` | `https://app.example.com/.well-known/jwks.json` | Where the public keys are. Default: the issuer + `/.well-known/jwks.json`. Cached 10 min, refetched on an unknown key id. |
 | `WORCA_IDENTITY_AUDIENCE` | `k7m2qz9xwp.example.run` | The `aud` worca accepts, comma-separated. Default: the exact hosts in `WORCA_ALLOWED_HOSTS`. |
+| `WORCA_IDENTITY_EMAIL_CLAIM` | `preferred_username` | The claim holding the person's email. Default `email`. |
+| `WORCA_IDENTITY_TEAMS_CLAIM` | `roles` | The claim holding their team ids, groups or roles: an exact name first, else a dotted path (`realm_access.roles`). Default `teams`. |
+
+A plain OpenID Connect provider's ID token works too, with oauth2-proxy as the gate:
+[auth.md](auth.md) sets that up with the Helm chart or Docker Compose.
 
 Differences from Access:
 
@@ -289,7 +294,7 @@ Differences from Access:
 - **WebSockets end with the token.** A socket closes (code 4001) when the token it opened with
   expires; the UI reconnects at once through the gate, which checks the session again. Access
   sockets are not closed.
-- The credential broker's key page accepts the same three variables, with its own host as the
+- The credential broker's key page accepts the same variables, with its own host as the
   audience (default: the host of `WORCA_BROKER_PUBLIC_URL`).
 
 ## Heartbeat to a control plane (optional)

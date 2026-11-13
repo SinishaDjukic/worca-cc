@@ -18,6 +18,7 @@ import { gitAvailable } from './git-available.mjs';
 import { guardedGitEnvSync } from './git-guard.mjs';
 import { withNoGitPath } from './nogit-stub.mjs';
 import { cmpVersions } from './preflight-node.mjs';
+import { CLAUDE_AGENTS_FILE_MIN } from './session-mode.mjs';
 import { isNativeExe, resolveCliBin, explainUnspawnableCli, _testing as resolverTesting } from './cli-resolve.mjs';
 import { CLAUDE_CLI, NPM_CLAUDE_EXE_SEGMENTS } from './engines/cli-specs.mjs';
 
@@ -431,7 +432,7 @@ export async function probeClaudeCapabilities(bin = 'claude') {
   // accepted by the binary (verify suggestion 9).
   return { mcpConfig: !!help && help.includes('--mcp-config'), pluginDir: !!help && help.includes('--plugin-dir'), version,
     forwardSubagentText: !!help && help.includes('--forward-subagent-text'),
-    agentsFile: !!version && cmpVersions(version, '2.1.281') >= 0 };
+    agentsFile: !!version && cmpVersions(version, CLAUDE_AGENTS_FILE_MIN) >= 0 };   // the floor the worker check (claude.mjs) uses too
 }
 
 // ── Is the Claude Code CLI signed in? ─────────────────────────────────────────

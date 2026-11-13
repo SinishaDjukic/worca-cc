@@ -276,7 +276,8 @@ function buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, 
 // WORCA_PROJECTS_ROOT / WORCA_CLONE_ALLOW: propose_clone_project validates against the same projects
 // folder and allowlist the server clones with (neither is a secret; no credential is ever forwarded).
 // The engines' binary overrides: a locked-down chat's classifier runs its own engine from the child (workflow-deps.mjs).
-export const MCP_FORWARD_ENV = Object.freeze(['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT', 'WORCA_CLONE_ALLOW',
+export const MCP_FORWARD_ENV = Object.freeze(['WORCA_DB_DIR',   // the database's own directory (db.mjs): without it the child opens an empty one under WORCA_HOME
+  'WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT', 'WORCA_CLONE_ALLOW',
   'WORCA_FLAGS',   // a WORCA_FLAGS lock (propose_run's flag checks) reaches the child too
   'WORCA_CODEX_BIN', 'WORCA_COPILOT_BIN', 'WORCA_GEMINI_BIN', 'WORCA_GOOSE_BIN', 'WORCA_OPENCODE_BIN', 'WORCA_QWEN_BIN']);
 /** The parent turn's Claude Code sign-in for the child's propose_run check (proposal.mjs claudeAuth): the child runs

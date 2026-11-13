@@ -16,6 +16,7 @@
 - [ ] Base branch is `dev`
 - [ ] `npm test` passes locally
 - [ ] Docs updated (README, docs/) if behaviour changed
+- [ ] Deployment twins updated if touched: Compose/`.env.example`, Dockerfile/worker images, Helm chart + goldens, `docs/workers.md` (CONTRIBUTING.md → Deployment surfaces move together)
 - [ ] New UI elements are listed in docs/ui-levels.md
 - [ ] New experimental UI is behind a flag (docs/feature-flags.md)
 - [ ] No secrets, keys or tokens in the code, logs or screenshots

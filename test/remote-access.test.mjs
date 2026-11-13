@@ -73,7 +73,7 @@ test('warnings: exposed bind without allowlist, Access without allowlist, redund
   const w = (env, bindHost) => checkRemoteAccessConfig(readRemoteAccessConfig(env), { bindHost }).warnings.join('\n');
   assert.match(w({}, '0.0.0.0'), /only connections from this machine are answered, every other caller gets a 403/);
   assert.match(checkRemoteAccessConfig(readRemoteAccessConfig({}), { bindHost: '0.0.0.0', gateways: ['172.19.0.1'] }).warnings[0],
-    /from this machine or through Docker's gateway \(172\.19\.0\.1\) are answered/);
+    /from this machine or through the container network's gateway \(172\.19\.0\.1\) are answered/);
   assert.equal(w({}, '127.0.0.1'), '');
   assert.match(w({ ...CF }, '127.0.0.1'), /only localhost requests are accepted/);
   assert.match(w({ WORCA_ALLOWED_HOSTS: 'w.example.com', ...CF, WORCA_INSECURE_NO_IDENTITY_CHECK: '1' }, '::'), /is ignored/);

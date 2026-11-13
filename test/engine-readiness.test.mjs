@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { claudeReady } from '../src/core/onboarding.mjs';
 import { engineReadiness } from '../src/core/engines/readiness.mjs';
 import { readyEnginesCached, resetEngineReadiness } from '../src/core/engines/ready-cache.mjs';
+import { installExecutor } from '../src/core/executor/index.mjs';
 
 test('runs each preflight once per TTL; claude is always ready; a refusal is not ready', async () => {
   resetEngineReadiness();
@@ -33,6 +34,24 @@ test('runs each preflight once per TTL; claude is always ready; a refusal is not
   assert.deepEqual(readyEnginesCached(2000), ['claude', 'codex', 'gemini', 'goose', 'opencode']);
   await engineReadiness({ preflights, now: 2000, force: true, mock: false });
   assert.equal(calls, 14);
+});
+
+test('under a remote executor, non-Claude engines run on worker images: ready, marked, no preflight spawned here', async () => {
+  resetEngineReadiness();
+  installExecutor({ kind: 'kubernetes', registry: {} });
+  try {
+    let claudeChecks = 0;
+    const preflights = { claude: async () => { claudeChecks++; return { refusal: 'Claude Code is not signed in' }; },
+      codex: async () => { throw new Error('codex preflight spawned on the controller'); } };
+    const list = await engineReadiness({ preflights, now: 1000, mock: false, force: true });
+    assert.equal(claudeChecks, 1, "Claude's sign-in is still the controller's own check");
+    assert.deepEqual(list.find((e) => e.name === 'claude'), { name: 'claude', label: 'Claude Code', ready: false, reason: 'Claude Code is not signed in' });
+    for (const e of list.filter((e) => e.name !== 'claude')) {
+      assert.equal(e.ready, true, e.name);
+      assert.equal(e.worker, true, e.name);
+      assert.match(e.reason, new RegExp(`runs on the ${e.name} worker image \\(WORCA_EXECUTOR=kubernetes\\) — not checked on the controller`));
+    }
+  } finally { installExecutor(null); resetEngineReadiness(); }
 });
 
 test('mock: every engine ready, nothing spawned', async () => {

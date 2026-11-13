@@ -75,7 +75,7 @@ export function createIdentity(config, { fetchImpl } = {}) {
     };
   }
   if (id?.kind === 'issuer') {
-    const verify = createIssuerVerifier({ issuer: id.issuer, jwksUrl: id.jwksUrl, audience: id.audience, ...(fetchImpl ? { fetchImpl } : {}) });
+    const verify = createIssuerVerifier({ issuer: id.issuer, jwksUrl: id.jwksUrl, audience: id.audience, claims: id.claims, ...(fetchImpl ? { fetchImpl } : {}) });
     return async (req) => {
       const v = req.headers['x-worca-identity'];
       const token = Array.isArray(v) ? v[0] : v;

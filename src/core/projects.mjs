@@ -29,8 +29,8 @@ export { detectVcs, displayPath } from './project-kind.mjs';
  *   3. defaultRoot()                  — the OS home
  * Read fresh every call, so a saved root applies to new operations w/o restart.
  */
-export function worcaHome() {
-  const env = process.env.WORCA_HOME;
+export function worcaHome(environ = process.env) {
+  const env = environ.WORCA_HOME;
   if (!(env && env.trim()) && process.env.NODE_TEST_CONTEXT &&
       !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) {
     // Under the node:test runner the real ~/.worca-cc must be unreachable: a test

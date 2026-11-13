@@ -1,0 +1,20 @@
+{{- if .Values.pdb.enabled }}
+# Off by default, on purpose. The controller is a StatefulSet of one: minAvailable 1 makes
+# every `kubectl drain` wait forever (the eviction is refused until someone deletes the pod by
+# hand), and it buys nothing: with one replica there is no second pod to keep. The protection
+# that matters is the controller's own drain: an eviction is a SIGTERM, active runs pause with
+# the reason 'drain', and the next pod resumes them on boot. Turn this on only when a cluster
+# policy requires a PodDisruptionBudget on every workload and operators know to delete the pod.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "worca.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "worca.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "worca.selectorLabels" . | nindent 6 }}
+{{- end }}

@@ -15,6 +15,7 @@ import { utilityModelFor, scopeForRunKey } from './settings-cascade.mjs';
 import { prDescriptionModel as storedPrDescriptionModel } from './settings.mjs';
 import { roleModelFor, jobSlot } from './model-roles.mjs';
 import { AUX_EFFORT, helperEngineFor } from './model-env.mjs';
+import { helperEngineHere } from './executor/index.mjs';
 import { pickCatalogModel } from './auto/model.mjs';
 import {
   lookupPipelineRow, runDirForRow, upsertSubAgent, readPipelineExtras, runEngineOfRow,
@@ -140,7 +141,7 @@ export async function generatePrDescription(key, id, {
   const row = lookupPipelineRow(key, id);
   if (!row) throw new Error('pipeline not found');
   const dir = await runDirForRow(row);
-  const engine = helperEngineFor(runEngineOfRow(row));   // a Cursor run's PR description runs on Claude
+  const engine = helperEngineHere(helperEngineFor(runEngineOfRow(row)));   // a Cursor run's PR description runs on Claude; with worker containers, every run's does
   const onClaude = engine === 'claude';
 
   const slot = utilityModelFor(engine, 'prDescription', scopeForRunKey(key));
