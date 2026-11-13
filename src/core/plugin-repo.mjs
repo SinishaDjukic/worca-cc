@@ -19,6 +19,7 @@ import { normalizeManifest, findEscapingSymlinks } from './plugin-manifest.mjs';
 import { githubEnv } from './github-credentials.mjs';
 import { withAzureToken, readAzureCredentials } from './azure-credentials.mjs';
 import { withBitbucketToken, readBitbucketCredentials } from './bitbucket-credentials.mjs';
+import { withFamilyReadTokens } from './gitea-family-credentials.mjs';
 import { mcpUpdatePreview } from './mcp/plugin-lifecycle.mjs';
 import { gitAvailable } from './git-available.mjs';
 import { accessChanges } from '../shared/plugin-access.mjs';
@@ -33,7 +34,7 @@ const execFileP = promisify(execFile);
 export async function pluginGitEnv() {
   const { env } = await githubEnv('read');
   const bb = readBitbucketCredentials();
-  return withBitbucketToken(withAzureToken(env, readAzureCredentials().read), bb.read, bb.kind || undefined);
+  return withFamilyReadTokens(withBitbucketToken(withAzureToken(env, readAzureCredentials().read), bb.read, bb.kind || undefined));
 }
 
 const defaultExec = async (cmd, args, opts = {}) => {

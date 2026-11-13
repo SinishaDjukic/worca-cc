@@ -20,6 +20,14 @@ import { parseAzurePrUrl } from '../shared/azure-remote.mjs';
 import * as bitbucketPr from './pr/bitbucket.mjs';
 import { readBitbucketCredentials } from './bitbucket-credentials.mjs';
 import { parseBitbucketPrUrl } from '../shared/bitbucket-remote.mjs';
+import * as giteaPr from './pr/gitea.mjs';
+import * as forgejoPr from './pr/forgejo.mjs';
+import * as codebergPr from './pr/codeberg.mjs';
+import { giteaHosts, giteaConfigured } from './gitea-credentials.mjs';
+import { forgejoHosts, forgejoConfigured } from './forgejo-credentials.mjs';
+import { codebergConfigured } from './codeberg-credentials.mjs';
+import { parseGiteaPrUrl } from '../shared/gitea-remote.mjs';
+import { parseCodebergPrUrl } from '../shared/codeberg-remote.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
 import { guardedGitEnv } from './git-guard.mjs';
 export { parseRemoteUrl, remoteRepoSlug, sameRepo } from './forge.mjs';
@@ -982,11 +990,14 @@ export async function ghItemSummaries({ repo, numbers, timeout = GH_CHIP_TIMEOUT
 
 // ── PR providers (dispatch by forge) ────────────────────────────────────────
 // The GitHub provider is the gh code above (so _testing.setRunner keeps intercepting it); Azure DevOps goes to
-// pr/azure.mjs and Bitbucket Cloud to pr/bitbucket.mjs, which export the same names. Only those two divert — GHE and
-// unknown hosts keep gh (D4).
+// pr/azure.mjs, Bitbucket Cloud to pr/bitbucket.mjs and the Gitea family (Gitea, Forgejo, Codeberg) to its three
+// bindings of pr/gitea-family.mjs, which all export the same names. Only those divert — GHE and unknown hosts keep gh (D4).
 const REST = {
   azure: { pr: azurePr, parse: parseAzurePrUrl, configured: () => readAzureCredentials().mode !== 'none' },
   bitbucket: { pr: bitbucketPr, parse: parseBitbucketPrUrl, configured: () => readBitbucketCredentials().mode !== 'none' },
+  gitea: { pr: giteaPr, parse: (url) => parseGiteaPrUrl(url, giteaHosts()), configured: () => giteaConfigured() },
+  forgejo: { pr: forgejoPr, parse: (url) => parseGiteaPrUrl(url, forgejoHosts()), configured: () => forgejoConfigured() },
+  codeberg: { pr: codebergPr, parse: parseCodebergPrUrl, configured: () => codebergConfigured() },
 };
 const restFor = (forge) => (typeof forge === 'string' && Object.hasOwn(REST, forge) ? REST[forge] : null);
 const restCredential = () => Object.values(REST).some((r) => r.configured());
@@ -996,15 +1007,23 @@ const PROVIDERS = {
     available: async () => ((await hasGh()) ? { ok: true } : { ok: false, reason: 'GitHub CLI (gh) is not available' }) },
   azure: { forge: 'azure', label: FORGE_LABEL.azure, available: () => azurePr.available() },
   bitbucket: { forge: 'bitbucket', label: FORGE_LABEL.bitbucket, available: () => bitbucketPr.available() },
+  // The family's answer is per host (tokens are per host): the remote's host is passed through.
+  gitea: { forge: 'gitea', label: FORGE_LABEL.gitea, available: (remote) => giteaPr.available({ host: remote?.host }) },
+  forgejo: { forge: 'forgejo', label: FORGE_LABEL.forgejo, available: (remote) => forgejoPr.available({ host: remote?.host }) },
+  codeberg: { forge: 'codeberg', label: FORGE_LABEL.codeberg, available: () => codebergPr.available() },
 };
-/** The PR provider for a base remote (a listRemotes entry). Azure DevOps and Bitbucket divert; every other host keeps gh (D4). */
-export const prProviderFor = (remote) => PROVIDERS[restFor(forgeOf(remote)) ? forgeOf(remote) : 'github'];
+/** The PR provider for a base remote (a listRemotes entry), its `available` bound to that remote. The REST forges
+ *  divert; every other host keeps gh (D4). */
+export const prProviderFor = (remote) => {
+  const p = PROVIDERS[restFor(forgeOf(remote)) ? forgeOf(remote) : 'github'];
+  return { ...p, available: () => p.available(remote) };
+};
 
 /** Which PR hosts worca can talk to right now (no network). */
 export async function prHostsAvailable() {
-  return { github: await hasGh(), azure: REST.azure.configured(), bitbucket: REST.bitbucket.configured() };
+  return { github: await hasGh(), ...Object.fromEntries(Object.entries(REST).map(([forge, r]) => [forge, r.configured()])) };
 }
-export async function anyPrHost() { const h = await prHostsAvailable(); return h.github || h.azure || h.bitbucket; }
+export async function anyPrHost() { return Object.values(await prHostsAvailable()).some(Boolean); }
 
 /** The remote a project's PRs target with no stored PR URL: upstream, else origin, else the first (gh's own guess). */
 async function prBaseRemote(projectDir) {

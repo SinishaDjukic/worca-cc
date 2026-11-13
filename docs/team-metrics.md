@@ -212,9 +212,11 @@ It degrades rather than fails:
   period), lead time is hidden, and items read "Done".
 - **gh answers only partly** (rate limit, a repository the viewer cannot read): the note quotes
   GitHub's error; those runs stay unknown and are asked again later.
-- **Not GitHub** (GitLab, Bitbucket, Azure DevOps): merge tracking covers GitHub, Azure DevOps and Bitbucket Cloud
-  repositories (Azure: set `WORCA_ADO_TOKEN`, see [Azure DevOps](azure-devops.md); Bitbucket: set `WORCA_BB_TOKEN`,
-  see [Bitbucket](bitbucket.md)); GitLab and Bitbucket Data Center items show without merge data.
+- **Not GitHub** (GitLab, Bitbucket, Azure DevOps, Gitea): merge tracking covers GitHub, Azure DevOps, Bitbucket
+  Cloud, Gitea, Forgejo and Codeberg repositories (Azure: set `WORCA_ADO_TOKEN`, see [Azure DevOps](azure-devops.md);
+  Bitbucket: set `WORCA_BB_TOKEN`, see [Bitbucket](bitbucket.md); Gitea and Forgejo: list the host and set its token,
+  see [Gitea and Forgejo](gitea.md); Codeberg: set `WORCA_CODEBERG_TOKEN`, see [Codeberg](codeberg.md)). The note
+  names each Gitea or Forgejo host on its own. GitLab, Bitbucket Data Center and unlisted hosts show without merge data.
 
 ## Chat
 

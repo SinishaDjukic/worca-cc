@@ -1,0 +1,949 @@
+{
+ "gitea": {
+  "prOpen": {
+   "number": 3,
+   "state": "open",
+   "merged": false,
+   "merged_at": null,
+   "merge_commit_sha": null,
+   "draft": false,
+   "mergeable": true,
+   "title": "Add a failing workflow",
+   "body": "",
+   "html_url": "https://pgit.ipnmod.org/tests/worca-tests/pulls/3",
+   "created_at": "2026-11-11T10:00:27Z",
+   "updated_at": "2026-11-11T10:00:27Z",
+   "closed_at": null,
+   "user": {
+    "login": "mirinimi"
+   },
+   "head": {
+    "ref": "feat/failing",
+    "sha": "4499f0168ccf95345210b737d614683c9bff3590",
+    "repo": {
+     "full_name": "tests/worca-tests",
+     "private": true
+    }
+   },
+   "base": {
+    "ref": "master",
+    "sha": "3e3ea97f044b9b09d02e50dad8d99498996c80a8",
+    "repo": {
+     "full_name": "tests/worca-tests",
+     "private": true
+    }
+   },
+   "requested_reviewers": []
+  },
+  "prDraft": {
+   "number": 2,
+   "state": "open",
+   "merged": false,
+   "merged_at": null,
+   "merge_commit_sha": null,
+   "draft": true,
+   "mergeable": false,
+   "title": "WIP: Change line A",
+   "body": "Conflicts with master on purpose.",
+   "html_url": "https://pgit.ipnmod.org/tests/worca-tests/pulls/2",
+   "created_at": "2026-11-11T10:00:26Z",
+   "updated_at": "2026-11-11T10:00:26Z",
+   "closed_at": null,
+   "user": {
+    "login": "mirinimi"
+   },
+   "head": {
+    "ref": "feat/conflict",
+    "sha": "a376c413c80cd16109033762534a8de65c47a14d",
+    "repo": {
+     "full_name": "tests/worca-tests",
+     "private": true
+    }
+   },
+   "base": {
+    "ref": "master",
+    "sha": "3e3ea97f044b9b09d02e50dad8d99498996c80a8",
+    "repo": {
+     "full_name": "tests/worca-tests",
+     "private": true
+    }
+   },
+   "requested_reviewers": []
+  },
+  "prMerged": {
+   "number": 1,
+   "state": "closed",
+   "merged": true,
+   "merged_at": "2026-11-11T10:00:31Z",
+   "merge_commit_sha": "9400a39fd6c29a2fb7b7de55ffe9fe22c18acef1",
+   "draft": false,
+   "mergeable": true,
+   "title": "Add clean.txt",
+   "body": "A clean change.\n\nCloses nothing.",
+   "html_url": "https://pgit.ipnmod.org/tests/worca-tests/pulls/1",
+   "created_at": "2026-11-11T10:00:26Z",
+   "updated_at": "2026-11-11T10:00:31Z",
+   "closed_at": "2026-11-11T10:00:31Z",
+   "user": {
+    "login": "mirinimi"
+   },
+   "head": {
+    "ref": "feat/clean",
+    "sha": "6cf91b465675ecd5d55b94ffef87a12a30a6cc94",
+    "repo": {
+     "full_name": "tests/worca-tests",
+     "private": true
+    }
+   },
+   "base": {
+    "ref": "master",
+    "sha": "9400a39fd6c29a2fb7b7de55ffe9fe22c18acef1",
+    "repo": {
+     "full_name": "tests/worca-tests",
+     "private": true
+    }
+   },
+   "requested_reviewers": [
+    {
+     "login": "mirinimi"
+    }
+   ]
+  },
+  "prClosed": {
+   "number": 3,
+   "state": "closed",
+   "merged": false,
+   "merged_at": null,
+   "merge_commit_sha": null,
+   "draft": false,
+   "mergeable": true,
+   "title": "Add a failing workflow",
+   "body": "",
+   "html_url": "https://pgit.ipnmod.org/tests/worca-tests/pulls/3",
+   "created_at": "2026-11-11T10:00:27Z",
+   "updated_at": "2026-11-11T10:00:29Z",
+   "closed_at": "2026-11-11T10:00:29Z",
+   "user": {
+    "login": "mirinimi"
+   },
+   "head": {
+    "ref": "feat/failing",
+    "sha": "4499f0168ccf95345210b737d614683c9bff3590",
+    "repo": {
+     "full_name": "tests/worca-tests",
+     "private": true
+    }
+   },
+   "base": {
+    "ref": "master",
+    "sha": "3e3ea97f044b9b09d02e50dad8d99498996c80a8",
+    "repo": {
+     "full_name": "tests/worca-tests",
+     "private": true
+    }
+   },
+   "requested_reviewers": []
+  },
+  "prList": [
+   {
+    "number": 3,
+    "state": "open",
+    "merged": false,
+    "merged_at": null,
+    "merge_commit_sha": null,
+    "draft": false,
+    "mergeable": true,
+    "title": "Add a failing workflow",
+    "body": "",
+    "html_url": "https://pgit.ipnmod.org/tests/worca-tests/pulls/3",
+    "created_at": "2026-11-11T10:00:27Z",
+    "updated_at": "2026-11-11T10:00:27Z",
+    "closed_at": null,
+    "user": {
+     "login": "mirinimi"
+    },
+    "head": {
+     "ref": "feat/failing",
+     "sha": "4499f0168ccf95345210b737d614683c9bff3590",
+     "repo": {
+      "full_name": "tests/worca-tests",
+      "private": true
+     }
+    },
+    "base": {
+     "ref": "master",
+     "sha": "3e3ea97f044b9b09d02e50dad8d99498996c80a8",
+     "repo": {
+      "full_name": "tests/worca-tests",
+      "private": true
+     }
+    },
+    "requested_reviewers": []
+   },
+   {
+    "number": 2,
+    "state": "open",
+    "merged": false,
+    "merged_at": null,
+    "merge_commit_sha": null,
+    "draft": true,
+    "mergeable": false,
+    "title": "WIP: Change line A",
+    "body": "Conflicts with master on purpose.",
+    "html_url": "https://pgit.ipnmod.org/tests/worca-tests/pulls/2",
+    "created_at": "2026-11-11T10:00:26Z",
+    "updated_at": "2026-11-11T10:00:26Z",
+    "closed_at": null,
+    "user": {
+     "login": "mirinimi"
+    },
+    "head": {
+     "ref": "feat/conflict",
+     "sha": "a376c413c80cd16109033762534a8de65c47a14d",
+     "repo": {
+      "full_name": "tests/worca-tests",
+      "private": true
+     }
+    },
+    "base": {
+     "ref": "master",
+     "sha": "3e3ea97f044b9b09d02e50dad8d99498996c80a8",
+     "repo": {
+      "full_name": "tests/worca-tests",
+      "private": true
+     }
+    },
+    "requested_reviewers": []
+   },
+   {
+    "number": 1,
+    "state": "open",
+    "merged": false,
+    "merged_at": null,
+    "merge_commit_sha": null,
+    "draft": false,
+    "mergeable": true,
+    "title": "Add clean.txt",
+    "body": "A clean change.\n\nCloses nothing.",
+    "html_url": "https://pgit.ipnmod.org/tests/worca-tests/pulls/1",
+    "created_at": "2026-11-11T10:00:26Z",
+    "updated_at": "2026-11-11T10:00:26Z",
+    "closed_at": null,
+    "user": {
+     "login": "mirinimi"
+    },
+    "head": {
+     "ref": "feat/clean",
+     "sha": "6cf91b465675ecd5d55b94ffef87a12a30a6cc94",
+     "repo": {
+      "full_name": "tests/worca-tests",
+      "private": true
+     }
+    },
+    "base": {
+     "ref": "master",
+     "sha": "3e3ea97f044b9b09d02e50dad8d99498996c80a8",
+     "repo": {
+      "full_name": "tests/worca-tests",
+      "private": true
+     }
+    },
+    "requested_reviewers": []
+   }
+  ],
+  "statuses": [
+   {
+    "id": 7,
+    "context": "ci/worca",
+    "status": "success",
+    "target_url": "https://example.org/ci/1"
+   },
+   {
+    "id": 6,
+    "context": "ci/lint",
+    "status": "failure",
+    "target_url": "https://example.org/ci/2"
+   },
+   {
+    "id": 5,
+    "context": "ci/worca",
+    "status": "pending",
+    "target_url": "https://example.org/ci/1"
+   },
+   {
+    "id": 4,
+    "context": "echo / echo (pull_request)",
+    "status": "pending",
+    "target_url": "/tests/worca-tests/actions/runs/1945/jobs/3566"
+   },
+   {
+    "id": 3,
+    "context": "echo / echo (push)",
+    "status": "success",
+    "target_url": "/tests/worca-tests/actions/runs/1940/jobs/3560"
+   },
+   {
+    "id": 2,
+    "context": "echo / echo (push)",
+    "status": "pending",
+    "target_url": "/tests/worca-tests/actions/runs/1940/jobs/3560"
+   },
+   {
+    "id": 1,
+    "context": "echo / echo (push)",
+    "status": "pending",
+    "target_url": "/tests/worca-tests/actions/runs/1940/jobs/3560"
+   }
+  ],
+  "combined": {
+   "state": "failure"
+  },
+  "reviews": [
+   {
+    "id": 4,
+    "state": "COMMENT",
+    "body": "Review with one inline comment.",
+    "dismissed": false,
+    "comments_count": 1,
+    "user": {
+     "login": "mirinimi"
+    }
+   }
+  ],
+  "reviewComments": [
+   {
+    "id": 1721,
+    "path": "clean.txt",
+    "position": 1,
+    "original_position": 0,
+    "body": "Inline: consider a trailing newline check.",
+    "resolver": null,
+    "pull_request_review_id": 4,
+    "user": {
+     "login": "mirinimi"
+    }
+   }
+  ],
+  "oldSideComments": [
+   {
+    "id": 1729,
+    "path": "README.md",
+    "position": 0,
+    "original_position": 5,
+    "body": "On the deleted line.",
+    "resolver": null,
+    "pull_request_review_id": 6,
+    "user": {
+     "login": "mirinimi"
+    }
+   }
+  ],
+  "issueComments": [
+   {
+    "id": 1720,
+    "body": "A plain PR comment from worca (edited).",
+    "user": {
+     "login": "mirinimi"
+    }
+   }
+  ],
+  "errors": {
+   "pr-create-duplicate": {
+    "message": "pull request already exists for these targets [id: 48, issue_id: 1, head_repo_id: 32, base_repo_id: 32, head_branch: feat/clean, base_branch: master]",
+    "url": "https://pgit.ipnmod.org/api/swagger"
+   },
+   "pr-create-missing-head": {
+    "message": "ref \"feat/nope\" does not exist",
+    "url": "https://pgit.ipnmod.org/api/swagger"
+   },
+   "pr-create-same-branch": {
+    "message": "Invalid PullRequest: There are no changes between the head and the base",
+    "url": "https://pgit.ipnmod.org/api/swagger"
+   },
+   "pr-get-missing": {
+    "message": "not found",
+    "url": "https://pgit.ipnmod.org/api/swagger"
+   },
+   "pr-merge-conflict": {
+    "message": "Please try again later",
+    "url": "https://pgit.ipnmod.org/api/swagger"
+   },
+   "auth-bad-token": {
+    "message": "invalid username, password or token",
+    "url": "https://pgit.ipnmod.org/api/swagger"
+   },
+   "review-create-approve": {
+    "message": "approve your own pull is not allowed",
+    "url": "https://pgit.ipnmod.org/api/swagger"
+   }
+  },
+  "runs": [
+   {
+    "id": 1951,
+    "run_number": 12,
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": "9400a39fd6c29a2fb7b7de55ffe9fe22c18acef1",
+    "head_branch": "master",
+    "event": "push"
+   },
+   {
+    "id": 1950,
+    "run_number": 11,
+    "status": "completed",
+    "conclusion": "failure",
+    "head_sha": "4499f0168ccf95345210b737d614683c9bff3590",
+    "event": "pull_request"
+   },
+   {
+    "id": 1949,
+    "run_number": 10,
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": "4499f0168ccf95345210b737d614683c9bff3590",
+    "event": "pull_request"
+   },
+   {
+    "id": 1948,
+    "run_number": 9,
+    "status": "completed",
+    "conclusion": "failure",
+    "head_sha": "4499f0168ccf95345210b737d614683c9bff3590",
+    "event": "pull_request"
+   }
+  ],
+  "failedRunJobs": [
+   {
+    "id": 3571,
+    "name": "fail",
+    "status": "completed",
+    "conclusion": "failure",
+    "steps": [
+     {
+      "name": "Run echo \"this job fails on purpose\" && exit 1",
+      "number": 0,
+      "status": "completed",
+      "conclusion": "failure",
+      "started_at": "2026-11-11T10:00:40Z",
+      "completed_at": "2026-11-11T10:00:40Z"
+     }
+    ]
+   }
+  ],
+  "failedRun": {
+   "id": 1950,
+   "run_number": 11,
+   "status": "completed",
+   "conclusion": "failure",
+   "head_sha": "4499f0168ccf95345210b737d614683c9bff3590",
+   "event": "pull_request"
+  },
+  "jobLog": "2026-11-11T10:00:39.4950887Z 135ba2b2d590(version:v3.3.2)\n2026-11-11T10:00:39.4951109Z ::group::Runner Information\n2026-11-11T10:00:39.4951138Z Runner labels: ubuntu-latest, ubuntu-24.04, ubuntu-22.04, gentoo-latest, gentoo-westmere\n2026-11-11T10:00:39.4951179Z Task: 2943\n2026-11-11T10:00:39.4951204Z Job: fail\n2026-11-11T10:00:39.4951226Z Repository: tests/worca-tests\n2026-11-11T10:00:39.4951269Z Triggered by event: pull_request\n2026-11-11T10:00:39.4951293Z ::endgroup::\n2026-11-11T10:00:39.4951310Z ::group::Operating System\n2026-11-11T10:00:39.4951336Z Alpine Linux v3.24\n2026-11-11T10:00:39.4951358Z linux/amd64\n2026-11-11T10:00:39.4951374Z ::endgroup::\n2026-11-11T10:00:39.4958093Z workflow prepared\n2026-11-11T10:00:39.5128860Z ::group::Starting job container\n2026-11-11T10:00:39.5129859Z image: git.ipnmod.org/mirinimi/gitea-gentoo-runner:westmere-full\n2026-11-11T10:00:39.5130081Z name: GITEA-ACTIONS-TASK-2943-WORKFLOW-fail-JOB-fail-fail-b129debb45112b0d1acc36d41928dbf05a6cfe83ce7ee819750639caca768c00\n2026-11-11T10:00:39.5130470Z network: GITEA-ACTIONS-TASK-2943-WORKFLOW-fail-JOB-fail-fail-b129debb45112b0d1acc36d41928dbf05a6cfe83ce7ee819750639caca768c00-fail-network\n2026-11-11T10:00:39.5132867Z docker pull image=git.ipnmod.org/mirinimi/gitea-gentoo-runner:westmere-full platform= username= forcePull=true\n2026-11-11T10:00:39.5780186Z could not update image 'git.ipnmod.org/mirinimi/gitea-gentoo-runner:westmere-full' (), continuing with the local copy: Error response from daemon: failed to resolve reference \"git.ipnmod.org/mirinimi/gitea-gentoo-runner:westmere-full\": pull access denied, repository does not exist or may require authorization: authorization failed: no basic auth credentials\n2026-11-11T10:00:39.5829240Z Cleaning up network for job fail, and network name is: GITEA-ACTIONS-TASK-2943-WORKFLOW-fail-JOB-fail-fail-b129debb45112b0d1acc36d41928dbf05a6cfe83ce7ee819750639caca768c00-fail-network\n2026-11-11T10:00:39.6415462Z docker create image=git.ipnmod.org/mirinimi/gitea-gentoo-runner:westmere-full platform= entrypoint=[\"/bin/sleep\" \"10800\"] cmd=[] network=\"GITEA-ACTIONS-TASK-2943-WORKFLOW-fail-JOB-fail-fail-b129debb45112b0d1acc36d41928dbf05a6cfe83ce7ee819750639caca768c00-fail-network\"\n2026-11-11T10:00:39.6998624Z docker run image=git.ipnmod.org/mirinimi/gitea-gentoo-runner:westmere-full platform= entrypoint=[\"/bin/sleep\" \"10800\"] cmd=[] network=\"GITEA-ACTIONS-TASK-2943-WORKFLOW-fail-JOB-fail-fail-b129debb45112b0d1acc36d41928dbf05a6cfe83ce7ee819750639caca768c00-fail-network\"\n2026-11-11T10:00:40.1766228Z ::endgroup::\n2026-11-11T10:00:40.1904846Z Complete job name: fail\n2026-11-11T10:00:40.2600147Z docker exec cmd=[sh -c command -v bash >/dev/null 2>&1] user= workdir=\n2026-11-11T10:00:40.3956193Z ::group::Run echo \"this job fails on purpose\" && exit 1\n2026-11-11T10:00:40.3956829Z echo \"this job fails on purpose\" && exit 1\n2026-11-11T10:00:40.3957058Z shell: bash -e {0}\n2026-11-11T10:00:40.3957265Z ::endgroup::\n2026-11-11T10:00:40.4969502Z this job fails on purpose\n2026-11-11T10:00:40.5399878Z ##[error]Process completed with exit code 1.\n2026-11-11T10:00:40.5608473Z Cleaning up container for job fail\n2026-11-11T10:00:40.7725917Z Cleaning up network for job fail, and network name is: GITEA-ACTIONS-TASK-2943-WORKFLOW-fail-JOB-fail-fail-b129debb45112b0d1acc36d41928dbf05a6cfe83ce7ee819750639caca768c00-fail-network\n2026-11-11T10:00:40.9027703Z Job failed\n2026-11-11T10:00:40.9028602Z job 'fail' failed\n",
+  "version": {
+   "version": "28.3.0"
+  }
+ },
+ "forgejo": {
+  "prOpen": {
+   "number": 3,
+   "state": "open",
+   "merged": false,
+   "merged_at": null,
+   "merge_commit_sha": null,
+   "draft": false,
+   "mergeable": true,
+   "title": "Add a failing workflow",
+   "body": "",
+   "html_url": "https://codeberg.org/mirinimi/worca-integration-test-repo/pulls/3",
+   "created_at": "2026-11-11T11:22:56+01:00",
+   "updated_at": "2026-11-11T11:22:57+01:00",
+   "closed_at": null,
+   "user": {
+    "login": "mirinimi"
+   },
+   "head": {
+    "ref": "feat/failing",
+    "sha": "4499f0168ccf95345210b737d614683c9bff3590",
+    "repo": {
+     "full_name": "mirinimi/worca-integration-test-repo",
+     "private": true
+    }
+   },
+   "base": {
+    "ref": "master",
+    "sha": "3e3ea97f044b9b09d02e50dad8d99498996c80a8",
+    "repo": {
+     "full_name": "mirinimi/worca-integration-test-repo",
+     "private": true
+    }
+   },
+   "requested_reviewers": []
+  },
+  "prDraft": {
+   "number": 2,
+   "state": "open",
+   "merged": false,
+   "merged_at": null,
+   "merge_commit_sha": null,
+   "draft": true,
+   "mergeable": false,
+   "title": "WIP: Change line A",
+   "body": "Conflicts with master on purpose.",
+   "html_url": "https://codeberg.org/mirinimi/worca-integration-test-repo/pulls/2",
+   "created_at": "2026-11-11T11:22:54+01:00",
+   "updated_at": "2026-11-11T11:22:54+01:00",
+   "closed_at": null,
+   "user": {
+    "login": "mirinimi"
+   },
+   "head": {
+    "ref": "feat/conflict",
+    "sha": "a376c413c80cd16109033762534a8de65c47a14d",
+    "repo": {
+     "full_name": "mirinimi/worca-integration-test-repo",
+     "private": true
+    }
+   },
+   "base": {
+    "ref": "master",
+    "sha": "3e3ea97f044b9b09d02e50dad8d99498996c80a8",
+    "repo": {
+     "full_name": "mirinimi/worca-integration-test-repo",
+     "private": true
+    }
+   },
+   "requested_reviewers": []
+  },
+  "prMerged": {
+   "number": 1,
+   "state": "closed",
+   "merged": true,
+   "merged_at": "2026-11-11T11:23:15+01:00",
+   "merge_commit_sha": "3730258d2dd21d4d9abe1af26b7d304047409496",
+   "draft": false,
+   "mergeable": true,
+   "title": "Add clean.txt",
+   "body": "A clean change.\n\nCloses nothing.",
+   "html_url": "https://codeberg.org/mirinimi/worca-integration-test-repo/pulls/1",
+   "created_at": "2026-11-11T11:22:51+01:00",
+   "updated_at": "2026-11-11T11:23:15+01:00",
+   "closed_at": "2026-11-11T11:23:15+01:00",
+   "user": {
+    "login": "mirinimi"
+   },
+   "head": {
+    "ref": "feat/clean",
+    "sha": "6cf91b465675ecd5d55b94ffef87a12a30a6cc94",
+    "repo": {
+     "full_name": "mirinimi/worca-integration-test-repo",
+     "private": true
+    }
+   },
+   "base": {
+    "ref": "master",
+    "sha": "3730258d2dd21d4d9abe1af26b7d304047409496",
+    "repo": {
+     "full_name": "mirinimi/worca-integration-test-repo",
+     "private": true
+    }
+   },
+   "requested_reviewers": []
+  },
+  "prClosed": {
+   "number": 3,
+   "state": "closed",
+   "merged": false,
+   "merged_at": null,
+   "merge_commit_sha": null,
+   "draft": false,
+   "mergeable": true,
+   "title": "Add a failing workflow",
+   "body": "",
+   "html_url": "https://codeberg.org/mirinimi/worca-integration-test-repo/pulls/3",
+   "created_at": "2026-11-11T11:22:56+01:00",
+   "updated_at": "2026-11-11T11:23:11+01:00",
+   "closed_at": "2026-11-11T11:23:11+01:00",
+   "user": {
+    "login": "mirinimi"
+   },
+   "head": {
+    "ref": "feat/failing",
+    "sha": "4499f0168ccf95345210b737d614683c9bff3590",
+    "repo": {
+     "full_name": "mirinimi/worca-integration-test-repo",
+     "private": true
+    }
+   },
+   "base": {
+    "ref": "master",
+    "sha": "3e3ea97f044b9b09d02e50dad8d99498996c80a8",
+    "repo": {
+     "full_name": "mirinimi/worca-integration-test-repo",
+     "private": true
+    }
+   },
+   "requested_reviewers": []
+  },
+  "prList": [
+   {
+    "number": 3,
+    "state": "open",
+    "merged": false,
+    "merged_at": null,
+    "merge_commit_sha": null,
+    "draft": false,
+    "mergeable": true,
+    "title": "Add a failing workflow",
+    "body": "",
+    "html_url": "https://codeberg.org/mirinimi/worca-integration-test-repo/pulls/3",
+    "created_at": "2026-11-11T11:22:56+01:00",
+    "updated_at": "2026-11-11T11:22:57+01:00",
+    "closed_at": null,
+    "user": {
+     "login": "mirinimi"
+    },
+    "head": {
+     "ref": "feat/failing",
+     "sha": "4499f0168ccf95345210b737d614683c9bff3590",
+     "repo": {
+      "full_name": "mirinimi/worca-integration-test-repo",
+      "private": true
+     }
+    },
+    "base": {
+     "ref": "master",
+     "sha": "3e3ea97f044b9b09d02e50dad8d99498996c80a8",
+     "repo": {
+      "full_name": "mirinimi/worca-integration-test-repo",
+      "private": true
+     }
+    },
+    "requested_reviewers": []
+   },
+   {
+    "number": 2,
+    "state": "open",
+    "merged": false,
+    "merged_at": null,
+    "merge_commit_sha": null,
+    "draft": true,
+    "mergeable": false,
+    "title": "WIP: Change line A",
+    "body": "Conflicts with master on purpose.",
+    "html_url": "https://codeberg.org/mirinimi/worca-integration-test-repo/pulls/2",
+    "created_at": "2026-11-11T11:22:54+01:00",
+    "updated_at": "2026-11-11T11:22:54+01:00",
+    "closed_at": null,
+    "user": {
+     "login": "mirinimi"
+    },
+    "head": {
+     "ref": "feat/conflict",
+     "sha": "a376c413c80cd16109033762534a8de65c47a14d",
+     "repo": {
+      "full_name": "mirinimi/worca-integration-test-repo",
+      "private": true
+     }
+    },
+    "base": {
+     "ref": "master",
+     "sha": "3e3ea97f044b9b09d02e50dad8d99498996c80a8",
+     "repo": {
+      "full_name": "mirinimi/worca-integration-test-repo",
+      "private": true
+     }
+    },
+    "requested_reviewers": []
+   },
+   {
+    "number": 1,
+    "state": "open",
+    "merged": false,
+    "merged_at": null,
+    "merge_commit_sha": null,
+    "draft": false,
+    "mergeable": true,
+    "title": "Add clean.txt",
+    "body": "A clean change.\n\nCloses nothing.",
+    "html_url": "https://codeberg.org/mirinimi/worca-integration-test-repo/pulls/1",
+    "created_at": "2026-11-11T11:22:51+01:00",
+    "updated_at": "2026-11-11T11:22:51+01:00",
+    "closed_at": null,
+    "user": {
+     "login": "mirinimi"
+    },
+    "head": {
+     "ref": "feat/clean",
+     "sha": "6cf91b465675ecd5d55b94ffef87a12a30a6cc94",
+     "repo": {
+      "full_name": "mirinimi/worca-integration-test-repo",
+      "private": true
+     }
+    },
+    "base": {
+     "ref": "master",
+     "sha": "3e3ea97f044b9b09d02e50dad8d99498996c80a8",
+     "repo": {
+      "full_name": "mirinimi/worca-integration-test-repo",
+      "private": true
+     }
+    },
+    "requested_reviewers": []
+   }
+  ],
+  "statuses": [
+   {
+    "id": 12,
+    "context": "fail / fail (pull_request)",
+    "status": "failure",
+    "target_url": "/mirinimi/worca-integration-test-repo/actions/runs/20/jobs/0"
+   },
+   {
+    "id": 11,
+    "context": "fail / fail (pull_request)",
+    "status": "pending",
+    "target_url": "/mirinimi/worca-integration-test-repo/actions/runs/20/jobs/0"
+   },
+   {
+    "id": 10,
+    "context": "echo / echo (pull_request)",
+    "status": "success",
+    "target_url": "/mirinimi/worca-integration-test-repo/actions/runs/19/jobs/0"
+   },
+   {
+    "id": 9,
+    "context": "echo / echo (pull_request)",
+    "status": "pending",
+    "target_url": "/mirinimi/worca-integration-test-repo/actions/runs/19/jobs/0"
+   },
+   {
+    "id": 8,
+    "context": "fail / fail (push)",
+    "status": "failure",
+    "target_url": "/mirinimi/worca-integration-test-repo/actions/runs/17/jobs/0"
+   },
+   {
+    "id": 7,
+    "context": "fail / fail (push)",
+    "status": "pending",
+    "target_url": "/mirinimi/worca-integration-test-repo/actions/runs/17/jobs/0"
+   },
+   {
+    "id": 6,
+    "context": "echo / echo (push)",
+    "status": "success",
+    "target_url": "/mirinimi/worca-integration-test-repo/actions/runs/16/jobs/0"
+   },
+   {
+    "id": 5,
+    "context": "echo / echo (push)",
+    "status": "pending",
+    "target_url": "/mirinimi/worca-integration-test-repo/actions/runs/16/jobs/0"
+   },
+   {
+    "id": 3,
+    "context": "echo / echo (pull_request)",
+    "status": "pending",
+    "target_url": "/mirinimi/worca-integration-test-repo/actions/runs/19/jobs/0"
+   },
+   {
+    "id": 4,
+    "context": "fail / fail (pull_request)",
+    "status": "pending",
+    "target_url": "/mirinimi/worca-integration-test-repo/actions/runs/20/jobs/0"
+   },
+   {
+    "id": 2,
+    "context": "fail / fail (push)",
+    "status": "pending",
+    "target_url": "/mirinimi/worca-integration-test-repo/actions/runs/17/jobs/0"
+   },
+   {
+    "id": 1,
+    "context": "echo / echo (push)",
+    "status": "pending",
+    "target_url": "/mirinimi/worca-integration-test-repo/actions/runs/16/jobs/0"
+   }
+  ],
+  "combined": {
+   "state": "success"
+  },
+  "reviews": [
+   {
+    "id": 2293236,
+    "state": "COMMENT",
+    "body": "Review with one inline comment.",
+    "dismissed": false,
+    "comments_count": 1,
+    "user": {
+     "login": "mirinimi"
+    }
+   }
+  ],
+  "reviewComments": [
+   {
+    "id": 27615336,
+    "path": "clean.txt",
+    "position": 1,
+    "original_position": 0,
+    "body": "Inline: consider a trailing newline check.",
+    "resolver": null,
+    "pull_request_review_id": 2293236,
+    "user": {
+     "login": "mirinimi"
+    }
+   }
+  ],
+  "oldSideComments": [
+   {
+    "id": 27621279,
+    "path": "README.md",
+    "position": 0,
+    "original_position": 5,
+    "body": "On the deleted line.",
+    "resolver": null,
+    "pull_request_review_id": 2293587,
+    "user": {
+     "login": "mirinimi"
+    }
+   }
+  ],
+  "issueComments": [
+   {
+    "id": 27615333,
+    "body": "A plain PR comment from worca (edited).",
+    "user": {
+     "login": "mirinimi"
+    }
+   }
+  ],
+  "errors": {
+   "pr-create-duplicate": {
+    "message": "pull request already exists for these targets [id: 3625608, issue_id: 1, head_repo_id: 2872653, base_repo_id: 2872653, head_branch: feat/clean, base_branch: master]",
+    "url": "https://codeberg.org/api/swagger"
+   },
+   "pr-create-missing-head": {
+    "message": "The target couldn't be found.",
+    "url": "https://codeberg.org/api/swagger",
+    "errors": [
+     "could not find 'feat/nope' to be a commit, branch or tag in the head repository mirinimi/worca-integration-test-repo"
+    ]
+   },
+   "pr-create-same-branch": {
+    "message": "Invalid PullRequest: There are no changes between the head and the base",
+    "url": "https://codeberg.org/api/swagger"
+   },
+   "pr-get-missing": {
+    "message": "The target couldn't be found.",
+    "url": "https://codeberg.org/api/swagger",
+    "errors": []
+   },
+   "pr-merge-conflict": {
+    "message": "Please try again later",
+    "url": "https://codeberg.org/api/swagger"
+   },
+   "auth-bad-token": {
+    "message": "token is malformed: token contains an invalid number of segments\naccess token does not exist [sha: 0000000000000000000000000000000000000000]\ntoken is malformed: token contains an invalid number of segments\ntask with token \"0000000000000000000000000000000000000000\": resource does not exist\nauthorized integration: parse JWT error: token is malformed: token contains an invalid number of segments",
+    "url": "https://codeberg.org/api/swagger"
+   },
+   "review-create-approve": {
+    "message": "approve your own pull is not allowed",
+    "url": "https://codeberg.org/api/swagger"
+   }
+  },
+  "runs": [
+   {
+    "id": 8509674,
+    "index_in_repo": 20,
+    "status": "failure",
+    "commit_sha": "5b85a064ac2f7179985b61f03607a4a67dc5be78",
+    "prettyref": "#3",
+    "event": "pull_request",
+    "workflow_id": "fail.yml"
+   },
+   {
+    "id": 8509671,
+    "index_in_repo": 19,
+    "status": "success",
+    "commit_sha": "5b85a064ac2f7179985b61f03607a4a67dc5be78",
+    "prettyref": "#3",
+    "event": "pull_request",
+    "workflow_id": "echo.yml"
+   },
+   {
+    "id": 8509668,
+    "index_in_repo": 18,
+    "status": "success",
+    "commit_sha": "b425d7150d004cba56dfb464ce52d9c4704f1ecf",
+    "prettyref": "#2",
+    "event": "pull_request",
+    "workflow_id": "echo.yml"
+   },
+   {
+    "id": 8509665,
+    "index_in_repo": 17,
+    "status": "failure",
+    "commit_sha": "5b85a064ac2f7179985b61f03607a4a67dc5be78",
+    "prettyref": "feat/failing",
+    "event": "push",
+    "workflow_id": "fail.yml"
+   }
+  ],
+  "failedRunJobs": [
+   {
+    "id": 15713853,
+    "name": "fail",
+    "status": "failure",
+    "task_id": 11520255,
+    "runs_on": [
+     "docker"
+    ]
+   }
+  ],
+  "failedRun": {
+   "id": 8509674,
+   "index_in_repo": 20,
+   "status": "failure",
+   "commit_sha": "5b85a064ac2f7179985b61f03607a4a67dc5be78",
+   "prettyref": "#3",
+   "event": "pull_request",
+   "workflow_id": "fail.yml"
+  },
+  "failedJobDetail": {
+   "id": 15713853,
+   "name": "fail",
+   "status": "failure",
+   "task_id": 11520255,
+   "runs_on": [
+    "docker"
+   ],
+   "steps": [
+    {
+     "number": 0,
+     "name": "Set up job",
+     "status": "success",
+     "started": "2026-11-11T12:12:35+01:00",
+     "stopped": "2026-11-11T12:12:37+01:00"
+    },
+    {
+     "number": 1,
+     "name": "echo \"this job fails on purpose\" && exit 1",
+     "status": "failure",
+     "started": "2026-11-11T12:12:37+01:00",
+     "stopped": "2026-11-11T12:12:37+01:00"
+    },
+    {
+     "number": 2,
+     "name": "Complete job",
+     "status": "failure",
+     "started": "2026-11-11T12:12:37+01:00",
+     "stopped": "2026-11-11T12:12:37+01:00"
+    }
+   ]
+  },
+  "jobLog": "2026-11-11T11:12:36.7593026Z Runner a375f6a8-9646-4dd8-bd73-f2e66c090cf9 (version:dev) received task 11520255 of job fail, triggered by event: pull_request\n2026-11-11T11:12:36.7644476Z workflow prepared\n2026-11-11T11:12:36.7865454Z \ud83d\ude80  Start image=node:lts\n2026-11-11T11:12:36.8481872Z Cleaning up network for job fail, and network name is: WORKFLOW-12ea1dc9a37f4dcb8770fd8fafc12417\n2026-11-11T11:12:36.9033346Z   \ud83d\udc33  docker create image=node:lts platform=linux/amd64 entrypoint=[\"tail\" \"-f\" \"/dev/null\"] cmd=[] network=\"WORKFLOW-12ea1dc9a37f4dcb8770fd8fafc12417\"\n2026-11-11T11:12:36.9576846Z   \ud83d\udc33  docker run image=node:lts platform=linux/amd64 entrypoint=[\"tail\" \"-f\" \"/dev/null\"] cmd=[] network=\"WORKFLOW-12ea1dc9a37f4dcb8770fd8fafc12417\"\n2026-11-11T11:12:37.4499378Z \u2b50 Run Main echo \"this job fails on purpose\" && exit 1\n2026-11-11T11:12:37.4644220Z   \ud83d\udc33  docker exec cmd=[sh /var/run/act/d2059acab3fc4860.sh] user= workdir=\n2026-11-11T11:12:37.5815241Z   \ud83d\udc33  docker exec cmd=[bash --noprofile --norc -e -o pipefail /var/run/act/workflow/0.sh] user= workdir=\n2026-11-11T11:12:37.6934022Z this job fails on purpose\n2026-11-11T11:12:37.7254085Z \u2699\ufe0f [runner]: exitcode '1': failure\n2026-11-11T11:12:37.7255996Z \ud83c\udfc1  Job failed\n2026-11-11T11:12:37.9220518Z Job 'fail' failed\n",
+  "version": {
+   "version": "17.0.0-100-2254cb0+gitea-1.22.0"
+  }
+ }
+}

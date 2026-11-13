@@ -7,7 +7,7 @@ import { ASK_ID_RE, findCard as askFindCard, getThread as askGetThread } from '.
 import { failedBecauseSignedOut } from '../../../src/core/claude-auth.mjs';
 import { readPrRemotePrefs, setPrRemotePrefs } from '../../../src/core/config.mjs';
 import { recordRunRelease, releaseVersionHint } from '../../../src/core/draft-release.mjs';
-import { FORGE_LABEL, forgeOfPrUrl, watchablePrUrl } from '../../../src/core/forge.mjs';
+import { FORGE_LABEL, forgeOfPrUrl, watchablePrUrl, isFamilyForge } from '../../../src/core/forge.mjs';
 import { anyPrHost, hasGh, listRemoteBranches, listRemotes, prBaseBranch, prChecks, prMergeable, prProviderFor } from '../../../src/core/git-info.mjs';
 import { INTERACTIVE_TTL_MS, commitsBetween, fetchRemote, isSafeBranchName, isSafeRemoteName } from '../../../src/core/git-sync.mjs';
 import { actorOf, byActor } from '../../../src/core/identity.mjs';
@@ -317,7 +317,7 @@ app.post('/api/pr/describe', async (req, res) => {
   const life = new AbortController();
   res.on('close', () => { if (!res.writableEnded) life.abort(); });
   try {
-    const forge = body.forge === 'azure' || body.forge === 'bitbucket' ? body.forge : 'github';
+    const forge = body.forge === 'azure' || body.forge === 'bitbucket' || isFamilyForge(body.forge) ? body.forge : 'github';
     const text = await generatePrDescription(key, state.id || id, { baseBranch, signal: life.signal, forge });
     res.json({ ok: true, body: text });
   } catch (err) {

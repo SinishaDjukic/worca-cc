@@ -106,7 +106,7 @@ for it, which you review before it runs. More in [Runs](docs/runs.md).
 | | Actions: check out a result and run its dev server or tests; a terminal pane | [Actions](docs/actions.md), [Terminal](docs/terminal.md) |
 | | Agent readiness: whether a project is ready for the coding agents it uses, and how to fix each gap | [Agent readiness](docs/agent-readiness.md) |
 | Chat | Ask Worca about runs and code; changes become cards you confirm; agent mode, memory, voice | [Chat](docs/chat.md), [Voice](docs/speech.md) |
-| Integrations | Plugins and marketplaces, GitHub Issues, Azure Boards, Jira | [Plugins](docs/plugins.md), [Azure DevOps](docs/azure-devops.md), [Bitbucket](docs/bitbucket.md) |
+| Integrations | Plugins and marketplaces, GitHub Issues, Azure Boards, Jira | [Plugins](docs/plugins.md), [Azure DevOps](docs/azure-devops.md), [Bitbucket](docs/bitbucket.md), [Gitea and Forgejo](docs/gitea.md), [Codeberg](docs/codeberg.md) |
 | | Worca's own MCP registry and skill sets | [MCP servers](docs/mcp-servers.md), [Skills](docs/skills.md) |
 | Models | Engines, bring your own models, Copilot and OpenAI-compatible providers | [Models](docs/models.md) |
 | Governance | Guardrail policy sets (Permissive, Normal, Strict) | [Guardrails](docs/guardrails.md) |

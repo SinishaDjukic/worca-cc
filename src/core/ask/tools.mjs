@@ -513,7 +513,7 @@ export function createAskTools(deps) {
     { name: 'list_runs',
       description: 'Find past runs, newest first. Optional filters: projectKey OR workspaceId, status (e.g. done, running, error, stopped), query (title substring), startedBy (the person who started the run, exactly as list_people names them, case-insensitive; "me" = the person signed in to this chat, only on a shared sign-in). Each row carries startedBy (a person, "local" for this machine, null before attribution). limit defaults to 20, max 100. Optional pr: only the runs whose recorded pull request matches (a URL matches that PR exactly; owner/repo#N that repo\'s PR; a bare number the PR with that number in any project of the scope). A row with a PR carries pr {url, number, state}; a workspace run carries prs[], one per member project. A row with fixesPr is a Watch PR fix run on an existing PR, not the run that opened it; with pr, those rows come after the runs that opened it.',
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('project key from list_projects'), workspaceId: SCHEMA.s('workspace id from list_projects'),
-        pr: SCHEMA.s('pull request: a PR URL (GitHub, Azure DevOps, Bitbucket), owner/repo#N, or a number'),
+        pr: SCHEMA.s('pull request: a PR URL (GitHub, Azure DevOps, Bitbucket, Gitea, Forgejo, Codeberg), owner/repo#N, or a number'),
         status: SCHEMA.s('run status to match'), limit: SCHEMA.i('max results (1-100)', 1, L.listRunsMaxLimit), query: SCHEMA.s('case-insensitive title substring'),
         startedBy: SCHEMA.s('who started the run (a name from list_people, or "me")') }) },
     { name: 'list_people',
@@ -893,7 +893,7 @@ export function createAskTools(deps) {
     ] : []),
     ...(deps.clones ? [
       { name: 'propose_clone_project',
-        description: 'Propose adding a project by cloning a repository into worca\'s projects folder, for the user to confirm — it never clones anything itself; the user sees a card with the URL, branch, target folder and how the code host is reached, and applies or declines it. url: an https:// repository URL (https://github.com/owner/repo, https://dev.azure.com/org/project/_git/repo or https://bitbucket.org/workspace/repo), no credentials in it. branch: optional (default: the repository\'s default branch). name: optional folder and project name (default: the repository name). Returns {ok:true, card} or {ok:false, errors} — fix the input and call again.',
+        description: 'Propose adding a project by cloning a repository into worca\'s projects folder, for the user to confirm — it never clones anything itself; the user sees a card with the URL, branch, target folder and how the code host is reached, and applies or declines it. url: an https:// repository URL (https://github.com/owner/repo, https://dev.azure.com/org/project/_git/repo, https://bitbucket.org/workspace/repo or https://codeberg.org/owner/repo), no credentials in it. branch: optional (default: the repository\'s default branch). name: optional folder and project name (default: the repository name). Returns {ok:true, card} or {ok:false, errors} — fix the input and call again.',
         inputSchema: SCHEMA.obj({ url: SCHEMA.s('https:// repository URL, e.g. https://github.com/acme/api or https://dev.azure.com/acme/shop/_git/api'),
           branch: SCHEMA.s('branch to check out (default: the repository default)'),
           name: SCHEMA.s('folder and project name (default: the repository name)'),
@@ -1106,9 +1106,9 @@ export function createAskTools(deps) {
     ? new AskToolError(`${tool}: ${err.message}`) : err);
 
   // One sanitiser for every stored PR URL the model sees: a string without control characters, http(s) only, no
-  // userinfo, on a forge host worca supports (github.com, dev.azure.com, *.visualstudio.com, bitbucket.org), cut to
-  // origin + pathname (no query or fragment). Anything else is null; self-hosted forges are not supported by parsePrRef.
-  const PR_HOSTS = new Set(['github.com', 'www.github.com', 'dev.azure.com', 'bitbucket.org']);
+  // userinfo, on a forge host worca supports (github.com, dev.azure.com, *.visualstudio.com, bitbucket.org, codeberg.org
+  // and the configured Gitea / Forgejo hosts), cut to origin + pathname (no query or fragment). Anything else is null.
+  const PR_HOSTS = new Set(['github.com', 'www.github.com', 'dev.azure.com', 'bitbucket.org', 'codeberg.org', ...(deps.prHosts || [])]);
   function safePrUrl(value) {
     if (value == null) return null;
     // Leading/trailing whitespace and control characters are trimmed; any inside the URL (an injected line) rejects it.
@@ -2010,7 +2010,7 @@ export function createAskTools(deps) {
       if (prText) {
         if (typeof deps.parsePrRef !== 'function' || typeof deps.prRefMatches !== 'function') throw new AskToolError('list_runs: PR lookup is not available');
         ref = deps.parsePrRef(prText);
-        if (!ref) throw new AskToolError('list_runs: pr must be a pull request URL (GitHub, Azure DevOps or Bitbucket), owner/repo#N, or a number');
+        if (!ref) throw new AskToolError('list_runs: pr must be a pull request URL (GitHub, Azure DevOps, Bitbucket, Gitea, Forgejo or Codeberg), owner/repo#N, or a number');
       }
       const index = typeof deps.runPrIndex === 'function' ? deps.runPrIndex() : null;
       // Unkeyed: the newest runsScanLimit rows are enough. Keyed: scan everything — a

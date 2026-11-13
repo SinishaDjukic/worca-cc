@@ -385,7 +385,7 @@ import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, lis
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
   prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge,
   markPrReady, closePr, uncommittedPatch, ghItemSummaries, ghApi, branchExists, commitsAhead } from '../src/core/git-info.mjs';
-import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
+import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL, REST_PR_FORGES } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID, stoppedWatchFact } from '../src/core/pr-watch.mjs';
 import {
   createAutomationEngine, listRules as listAutomationRules, getRule as getAutomationRule, createRule as createAutomationRule,
@@ -398,8 +398,7 @@ import { ensureAutomationTemplate, listAutomationTemplates, TEMPLATE_FOR_ACTION 
 import { createAzureAutomationHost, azureWebhookItems } from '../src/core/automation-azure.mjs';
 import { forkRefusal, workItemIdFromSourceRef, prSummary, workItemSummaries } from '../src/core/pr/azure.mjs';
 import { forkRefusal as bitbucketForkRefusal } from '../src/core/pr/bitbucket.mjs';
-// Forges whose PRs worca opens over REST (pr/azure.mjs, pr/bitbucket.mjs): gh body edits and GitHub "Closes" lines skip them.
-const REST_PR_FORGES = new Set(['azure', 'bitbucket']);
+import { familyForkRefusals, logFamilyCredentialWarnings } from '../src/core/pr/family.mjs';
 import { checkRunPrBody, resolveRunPr } from '../src/core/pr-auto.mjs';
 import { createPrAutoFinisher, setPrAutoFinisher, prAutoFinisher } from '../src/core/pr-auto-finish.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock, openWorkspaceRunPrs, createPrWithDraftRetry } from '../src/core/workspace-prs.mjs';
@@ -5086,7 +5085,7 @@ async function watchShipped(pairs, repoDir, actor) {
 
 // ── One ship flow (slice 2): a Run-after chain ships through Create PR ───────────────────────────────────────────
 const CHAIN_SHIPPING = new Set();   // chain ids with a ship in flight
-const NO_PR_HOST = 'No pull request host is available: install the GitHub CLI (gh), set WORCA_ADO_TOKEN for Azure DevOps, or WORCA_BB_TOKEN for Bitbucket';
+const NO_PR_HOST = 'No pull request host is available: install the GitHub CLI (gh), or set a token: WORCA_ADO_TOKEN (Azure DevOps), WORCA_BB_TOKEN (Bitbucket), WORCA_CODEBERG_TOKEN (Codeberg), WORCA_GITEA_TOKEN_<HOST> or WORCA_FORGEJO_TOKEN_<HOST> for a host listed in WORCA_GITEA_HOSTS or WORCA_FORGEJO_HOSTS';
 const livePr = (pid) => { const pr = readPrState(pid); return !!(pr && pr.url && pr.state !== 'CLOSED'); };
 /** After a chain or group ship, done or stopped part-way: Watch PR on each PR it made (when asked), then repaint. */
 function settleShipped(opened, watch, actor) {
@@ -6746,7 +6745,7 @@ async function pickPrRemotes(body, repoDir) {
 
 // Azure DevOps and Bitbucket (for now) cannot open a PR between forks: the refusal text when the branch would be
 // pushed to another repo than such a base remote, else null. Checked BEFORE anything is pushed.
-const FORK_REFUSALS = { azure: forkRefusal, bitbucket: bitbucketForkRefusal };
+const FORK_REFUSALS = { azure: forkRefusal, bitbucket: bitbucketForkRefusal, ...familyForkRefusals };
 function forkPrRefusal(pushR, baseR) {
   const refuse = FORK_REFUSALS[prProviderFor(baseR).forge];
   return refuse && pushR && !sameRepo(pushR, baseR) ? refuse(baseR) : null;
@@ -10340,6 +10339,7 @@ if (isMain) {
       const who = identityCheck ? `identity: ${id.provider} (${id.provider === 'issuer' ? id.issuer : id.teamDomain})` : 'identity: NOT CHECKED';
       console.log(`[worca-ui] remote access on for ${REMOTE_ACCESS.allowedHosts.join(', ')}; ${who}`);
     }
+    logFamilyCredentialWarnings((w) => console.warn(`[worca-ui] ${w}`));   // a host-less or unlisted-host token, by name
     uiControl.token = UI_TOKEN;   // one per-boot token: shutdown, and API calls from this box (G1)
     uiControl.onShutdown = shutdown;
     uiControl.startedAt = new Date().toISOString();

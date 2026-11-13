@@ -47,6 +47,8 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 - [Skills](skills.md) — skills in sets: the library, imports, `/<set>:<skill>` names, Team required skills
 - [Azure DevOps](azure-devops.md) — Ship-it, clone, sync, merge tracking and the Boards source on `dev.azure.com`
 - [Bitbucket](bitbucket.md) — Ship-it, clone, sync, Watch PR and merge tracking on bitbucket.org
+- [Gitea and Forgejo](gitea.md) — the same on your own Gitea or Forgejo instances, one token per host
+- [Codeberg](codeberg.md) — the same on codeberg.org
 
 ## Governance and costs
 

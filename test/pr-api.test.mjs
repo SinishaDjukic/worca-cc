@@ -1092,10 +1092,10 @@ test('POST /api/pr/mergeable reads an Azure PR URL over REST', () => withEnv(WIT
 test('GET /api/history and /api/runs expose prHosts next to ghAvailable', () => withEnv(WITH_ADO, async () => {
   stubAzureRepo([]);
   const h = await (await fetch(`${base}/api/history`)).json();
-  assert.deepEqual(h.prHosts, { github: true, azure: true, bitbucket: false });
+  assert.deepEqual(h.prHosts, { github: true, azure: true, bitbucket: false, gitea: false, forgejo: false, codeberg: false });
   assert.equal(h.ghAvailable, true);
   const r = await (await fetch(`${base}/api/runs?projectDir=${encodeURIComponent(betaRepo)}`)).json();
-  assert.deepEqual(r.prHosts, { github: true, azure: true, bitbucket: false });
+  assert.deepEqual(r.prHosts, { github: true, azure: true, bitbucket: false, gitea: false, forgejo: false, codeberg: false });
 }));
 
 test('POST /api/pr links the Azure Boards work item a run came from', () => withEnv(WITH_ADO, async () => {

@@ -5,6 +5,10 @@ import { parseRemoteUrl, forgeOf } from './forge.mjs';
 import { githubEnv, stripGithubCredentials, readGithubCredentials, asPersonMode } from './github-credentials.mjs';
 import { azureEnv, stripAzureCredentials, readAzureCredentials } from './azure-credentials.mjs';
 import { bitbucketEnv, stripBitbucketCredentials, readBitbucketCredentials } from './bitbucket-credentials.mjs';
+import { stripFamilyCredentials, familyConfigured } from './gitea-family-credentials.mjs';
+import { giteaEnv } from './gitea-credentials.mjs';
+import { forgejoEnv } from './forgejo-credentials.mjs';
+import { codebergEnv } from './codeberg-credentials.mjs';
 
 /**
  * Tracker tokens worca never hands to a child: the documented {"$env":…} targets of task-source plugin token
@@ -28,7 +32,7 @@ function stripTrackerTokens(env) {
 }
 
 export function stripHostCredentials(env) {
-  return stripTrackerTokens(stripBitbucketCredentials(stripAzureCredentials(stripGithubCredentials(env))));
+  return stripTrackerTokens(stripFamilyCredentials(stripBitbucketCredentials(stripAzureCredentials(stripGithubCredentials(env)))));
 }
 
 /**
@@ -41,6 +45,7 @@ export function hostLookupNeeded({ push = false, env = process.env } = {}) {
   return readGithubCredentials(env).mode === 'app'
     || readAzureCredentials(env).mode !== 'none'
     || readBitbucketCredentials(env).mode !== 'none'
+    || familyConfigured(env)
     || (push && asPersonMode(env) !== null);
 }
 
@@ -56,10 +61,14 @@ export async function gitEnvFor(role, remoteUrl, { base, githubEnvImpl = githubE
   switch (forgeOf(p)) {
     case 'github': {
       const r = await githubEnvImpl(role, { ...githubOpts, ...(base ? { base } : {}), repo: `${p.owner}/${p.repo}` });
-      return { ...r, env: stripTrackerTokens(stripBitbucketCredentials(stripAzureCredentials(r.env))) };
+      return { ...r, env: stripTrackerTokens(stripFamilyCredentials(stripBitbucketCredentials(stripAzureCredentials(r.env)))) };
     }
-    case 'azure': return { env: stripTrackerTokens(stripBitbucketCredentials(azureEnv(role, env0))), error: null };
-    case 'bitbucket': return { env: stripTrackerTokens(bitbucketEnv(role, env0)), error: null };
+    case 'azure': return { env: stripTrackerTokens(stripFamilyCredentials(stripBitbucketCredentials(azureEnv(role, env0)))), error: null };
+    case 'bitbucket': return { env: stripTrackerTokens(stripFamilyCredentials(bitbucketEnv(role, env0))), error: null };
+    // The family's env is per host: the remote's host picks the token.
+    case 'gitea': return { env: stripTrackerTokens(giteaEnv(role, p.host, env0)), error: null };
+    case 'forgejo': return { env: stripTrackerTokens(forgejoEnv(role, p.host, env0)), error: null };
+    case 'codeberg': return { env: stripTrackerTokens(codebergEnv(role, env0)), error: null };
     default: return { env: stripHostCredentials(env0), error: null };
   }
 }
@@ -72,5 +81,5 @@ export async function gitEnvFor(role, remoteUrl, { base, githubEnvImpl = githubE
  */
 export async function githubOnlyEnv(role, opts = {}) {
   const r = await githubEnv(role, opts);
-  return { ...r, env: stripTrackerTokens(stripBitbucketCredentials(stripAzureCredentials(r.env))) };
+  return { ...r, env: stripTrackerTokens(stripFamilyCredentials(stripBitbucketCredentials(stripAzureCredentials(r.env)))) };
 }

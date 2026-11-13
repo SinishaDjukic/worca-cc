@@ -8,6 +8,8 @@
 import { planClone, CloneError } from '../clone-project.mjs';
 import { isAzureHost } from '../../shared/azure-remote.mjs';
 import { isBitbucketHost } from '../../shared/bitbucket-remote.mjs';
+import { FORGE_LABEL } from '../forge.mjs';
+import { familyCredentialsOf } from '../gitea-family-credentials.mjs';
 
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 // eslint-disable-next-line no-control-regex
@@ -25,6 +27,13 @@ export function hostCredentialLabel(mode, { host = 'github.com', appId = null, a
     if (bbMode === 'split') return 'the Bitbucket read token (WORCA_BB_READ_TOKEN)';
     if (bbMode === 'single') return 'the Bitbucket token (WORCA_BB_TOKEN)';
     return 'none (Bitbucket: set WORCA_BB_TOKEN): public repositories only';
+  }
+  const fam = familyCredentialsOf(host);
+  if (fam) {
+    const name = FORGE_LABEL[fam.forge];
+    if (fam.mode === 'split') return `the ${name} read token (${fam.tokenName.replace('_TOKEN', '_READ_TOKEN')})`;
+    if (fam.mode === 'single') return `the ${name} token (${fam.tokenName})`;
+    return `none (${name}: set ${fam.tokenName}): public repositories only`;
   }
   if (host !== 'github.com') return `none (${host} is not GitHub): public repositories only`;
   // "Push as me" (WORCA_GH_AS_PERSON): the person's own GitHub when they connected it on the key page.

@@ -250,6 +250,17 @@ if [ -n "${WORCA_BB_READ_TOKEN:-}${WORCA_BB_WRITE_TOKEN:-}" ]; then
 elif [ -n "${WORCA_BB_TOKEN:-}" ]; then
   log "Bitbucket: one token for clone, push and PRs, per call"
 fi
+if [ -n "${WORCA_GITEA_HOSTS:-}" ]; then
+  log "Gitea: hosts ${WORCA_GITEA_HOSTS}, one token per host (WORCA_GITEA_TOKEN_<HOST>), per call"
+fi
+if [ -n "${WORCA_FORGEJO_HOSTS:-}" ]; then
+  log "Forgejo: hosts ${WORCA_FORGEJO_HOSTS}, one token per host (WORCA_FORGEJO_TOKEN_<HOST>), per call"
+fi
+if [ -n "${WORCA_CODEBERG_READ_TOKEN:-}${WORCA_CODEBERG_WRITE_TOKEN:-}" ]; then
+  log "Codeberg: split read/write tokens, per call"
+elif [ -n "${WORCA_CODEBERG_TOKEN:-}" ]; then
+  log "Codeberg: one token for clone, push and PRs, per call"
+fi
 if [ -z "${GIT_AUTHOR_NAME:-}" ] && ! git config --global user.name >/dev/null 2>&1; then
   log "no git identity: set GIT_AUTHOR_NAME/GIT_AUTHOR_EMAIL in .env or agents cannot commit"
 fi

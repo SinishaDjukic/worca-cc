@@ -14,6 +14,7 @@ export const TL_ZOOMS = Object.freeze(['month', 'week', 'day']);
 export const TL_MODES = Object.freeze(['items', 'people']);
 export const TL_FILTERS = Object.freeze(['shipped', 'review', 'attention']);
 const HOUR = 3_600_000;
+const HOST_LABEL = { gitea: 'Gitea', forgejo: 'Forgejo', codeberg: 'Codeberg' };
 // Minimum widths; a wider panel stretches the calendar to fill it (timelineWindow's `fit`).
 const DAY_PX = 24;          // month: one day
 const WEEKDAY_PX = 110;     // week: one day
@@ -162,7 +163,15 @@ export function prNotice(doc, { status = null, loading = false, prKnown = false 
     if (status.bitbucket === 'missing') parts.push('Merge dates for Bitbucket repositories need a token: set `WORCA_BB_TOKEN` (Pull requests: Read) where worca runs.');
     if (status.bitbucket === 'unauthenticated') parts.push('Bitbucket refused the token in `WORCA_BB_TOKEN`: check that it has not expired and can read pull requests.');
     if (status.bitbucketError) parts.push(`Bitbucket did not answer for some pull requests: ${status.bitbucketError}`);
-    if ((status.unsupportedRepos || []).length) parts.push(`Merge tracking covers GitHub, Azure DevOps and Bitbucket repositories; ${status.unsupportedRepos.join(', ')} show${status.unsupportedRepos.length === 1 ? 's' : ''} without merge data.`);
+    for (const [host, h] of Object.entries(status.hosts || {})) {
+      const name = HOST_LABEL[h.forge] || host;
+      // The token variable of a host: the same suffix rule as the server's hostSuffix.
+      const v = h.forge === 'codeberg' ? 'WORCA_CODEBERG_TOKEN' : `WORCA_${String(h.forge).toUpperCase()}_TOKEN_${host.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
+      if (h.state === 'missing') parts.push(`Merge dates for ${name} repositories on ${host} need a token: set \`${v}\` where worca runs.`);
+      if (h.state === 'unauthenticated') parts.push(`${host} refused the token in \`${v}\`: check that it has not expired and can read pull requests.`);
+      if (h.error) parts.push(`${host} did not answer for some pull requests: ${h.error}`);
+    }
+    if ((status.unsupportedRepos || []).length) parts.push(`Merge tracking covers GitHub, Azure DevOps, Bitbucket, Gitea, Forgejo and Codeberg repositories; ${status.unsupportedRepos.join(', ')} show${status.unsupportedRepos.length === 1 ? 's' : ''} without merge data.`);
   }
   if (!parts.length) return null;
   const n = h(doc, 'div', 'hint tl-note');
