@@ -17,6 +17,7 @@ import { claimForAgent } from '../agent-user.mjs';
 import { currentOwner } from '../billing.mjs';
 import { extensionForAttachment } from './attachment-kind.mjs';
 import { mergeContexts } from './contexts.mjs';
+import { normaliseLabels } from '../../shared/run-labels.mjs';
 
 export const ASK_ID_RE = /^[a-z]+_[0-9a-f]{8}$/;
 const ROLES = new Set(['user', 'assistant', 'system']);
@@ -88,6 +89,8 @@ function rowToThread(r) {
     pinnedAt: r.pinned_at ?? null,
     // #948 s3 (v76): the chat's topic group; null = ungrouped.
     groupId: r.group_id ?? null,
+    // Stillhet chat labels (v89): run labels' rules, in the order added; NULL reads as none.
+    labels: parse(r.labels, null) || [],
     // Workflows view (v54): a composer chat's mode and the canvas its last message carried. Absent on Ask chats.
     ...(r.mode ? { mode: r.mode } : {}),
     ...(r.composer ? { composer: parse(r.composer, null) } : {}),
@@ -299,6 +302,28 @@ export function setPinned(id, on) {
     ? prepare('UPDATE ask_threads SET pinned_at = COALESCE(pinned_at, ?) WHERE id = ?').run(now(), id)
     : prepare('UPDATE ask_threads SET pinned_at = NULL WHERE id = ?').run(id);
   return info.changes ? getThread(id) : null;
+}
+
+/** Stillhet chat labels: replace a chat's set with run labels' rules (src/shared/run-labels.mjs). Throws
+ *  { code: 'BAD_LABELS' } on any invalid entry; never bumps updated_at (pin's rule). → { labels, changed }, or null when
+ *  the chat does not exist. */
+export function setThreadLabels(id, input) {
+  const n = normaliseLabels(input);
+  if (n.errors.length) throw Object.assign(new Error(n.errors[0]), { code: 'BAD_LABELS' });
+  const t = getThread(id);
+  if (!t) return null;
+  if (t.labels.length === n.labels.length && t.labels.every((l, i) => l === n.labels[i])) return { labels: t.labels, changed: false };
+  prepare('UPDATE ask_threads SET labels = ? WHERE id = ?').run(n.labels.length ? JSON.stringify(n.labels) : null, id);
+  return { labels: getThread(id).labels, changed: true };
+}
+
+/** The chat labels in use on chats that are not archived (and the viewer may see): [{ label, count }], most used, then
+ *  A–Z — the chat head's picker list, as labelVocabulary is the runs'. */
+export function chatLabelVocabulary({ visibleTo = null } = {}) {
+  getDb();
+  const w = listWhere(visibleTo, null, 't.', '', { show: 'all' });
+  return prepare(`SELECT j.value AS label, COUNT(*) AS count FROM ask_threads t, json_each(t.labels) j${w.sql}${w.sql ? ' AND' : ' WHERE'} t.labels IS NOT NULL
+    GROUP BY j.value ORDER BY count DESC, j.value`).all(...w.args).map((r) => ({ label: r.label, count: r.count }));
 }
 
 // ── chat topic groups (#948 s3, v76) ─────────────────────────────────────────
@@ -960,6 +985,17 @@ export function runLinkTarget(runId) {
   if (!r) return null;
   const historyKey = r.target === 'workspace' && r.workspace_key ? `workspaces/${r.workspace_key}` : r.project_key || null;
   return historyKey ? { pipelineId: r.id, historyKey } : null;
+}
+
+/** Every run a viewer's chats started or follow (Stillhet's run → chat lookup): `started` when the link carries its card
+ *  (only POST /api/run with askCardId writes one; track_run links without). Every thread mode, archived threads kept;
+ *  the owner filter is the thread list's (listWhere). Oldest first, so the first started row for a run is its chat. */
+export function runLinksForViewer({ visibleTo = null } = {}) {
+  getDb();
+  const { sql, args } = listWhere(visibleTo, 'any', 't.', '');
+  return prepare(`SELECT l.thread_id, l.run_id, l.pipeline_id, l.card_id FROM ask_run_links l
+    JOIN ask_threads t ON t.id = l.thread_id${sql} ORDER BY l.created_at ASC, l.run_id`).all(...args)
+    .map((r) => ({ threadId: r.thread_id, runId: r.run_id, pipelineId: r.pipeline_id ?? null, started: r.card_id != null }));
 }
 
 export function listRunLinks(threadId) {

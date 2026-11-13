@@ -30,6 +30,8 @@
     retry: function () { return live ? live.retry() : undefined; },
     // a task opened in the live kind: the adapter clears what dev clears on opening it (the failed run's unread mark)
     seenRun: function (id) { if (live) live.seenRun(id); },
+    // after a Chat write the server answered ok: its sources are read again (the threads, the groups)
+    refresh: function (source) { if (live) live.refresh(source); },
     // dev's own route and body (D13): { ok, status, data, error }; a refusal names dev's reason
     post: function (url, body) {
       return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
@@ -65,8 +67,11 @@
         fetch: window.fetch.bind(window), WebSocket: window.WebSocket, location: location, world: W, host: window.RailHost || {},
         setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window), now: Date.now,
         openChat: function () { var h = location.hash.match(/^#chat\/([^/]+)/); if (!h) return ''; try { return decodeURIComponent(h[1]); } catch (e) { return h[1]; } },
-        hidden: function () { return document.hidden; }
+        hidden: function () { return document.hidden; },
+        toast: toast,
+        go: function (h) { if (window.RailShell) window.RailShell.go(h); }
       });
+      window.RailChatLive = live.chat;   // the live chat's reads and actions (D5): chat/conversation.js and chats-column.js
       window.addEventListener('hashchange', function () { live.seen(); });
       readyDone(live);
     }, function () { if (W) W.setState({ list: 'failed' }); readyDone(null); });

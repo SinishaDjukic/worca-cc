@@ -402,7 +402,8 @@
       "kind": "telling",
       "needs": [
         "a list with no rows",
-        "the Pulse popover before its first data, or when it could not load"
+        "the Pulse popover before its first data, or when it could not load",
+        "a Chat conversation that is loading, could not load, or no longer exists (fail.chat-thread)"
       ],
       "rules": [
         "loading, offline, could not load, empty",
@@ -680,6 +681,20 @@
         "its filters are a sentence of SentencePickers above it"
       ],
       "example": "Activity's Logs"
+    },
+    {
+      "name": "TerminalPane",
+      "code": "ui/public/design-system/components/terminal-pane.mjs#terminalPane",
+      "kind": "showing",
+      "needs": [
+        "a command's shell, opened under its card in a conversation (Show in terminal)"
+      ],
+      "rules": [
+        "panel.terminal",
+        "its output is LogLines, a polite live log; one input line; Stop and Close",
+        "closed: its last line says Shell closed and the input is off with the reason"
+      ],
+      "example": "npm test · 214 passing"
     },
     {
       "name": "WorkspaceBoxes",
@@ -1260,7 +1275,8 @@
       "code": "ui/public/design-system/components/kind-mark.mjs#turnRow",
       "kind": "showing",
       "needs": [
-        "what Worca did in a conversation, on the rail"
+        "what Worca did in a conversation, on the rail",
+        "a failed reply: the failed mark, one calm sentence, Details and Try again (fail.chat-turn)"
       ],
       "rules": [
         "panel.conversation-rail"
@@ -1573,10 +1589,12 @@
       "code": "ui/public/design-system/components/kind-mark.mjs#planCard",
       "kind": "moving",
       "needs": [
-        "the Shaper's plan when it stops for you: version, the roles' review, Approve and build"
+        "the Shaper's plan when it stops for you: version, the roles' review, Approve and build",
+        "a plan's per-requirement coverage, folded at the head of Read the plan, and its roles' verdicts in Reviewed by (panel.plan-folds)"
       ],
       "rules": [
-        "panel.conversation-cards"
+        "panel.conversation-cards",
+        "panel.plan-folds"
       ]
     },
     {
@@ -1589,6 +1607,20 @@
       "rules": [
         "panel.conversation-cards"
       ]
+    },
+    {
+      "name": "RefChip",
+      "code": "ui/public/design-system/components/kind-mark.mjs#refChip",
+      "kind": "acting",
+      "needs": [
+        "a task, a chat or a PR named in Worca's answer or in what you said, as a chip that leads to it"
+      ],
+      "rules": [
+        "panel.answer-refs",
+        "a task's chip opens its card in its chat; a chat's the chat; a PR's the PR in a new tab",
+        "an unconfirmed name stays plain words"
+      ],
+      "example": "Add a CSV export"
     },
     {
       "name": "YouTurn",

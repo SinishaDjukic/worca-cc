@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stillhetAskOpen, railAnswerHook } from '../src/core/stillhet.mjs';
+import { stillhetAskOpen, railAnswerHook, STILLHET_ASK_ON } from '../src/core/stillhet.mjs';
 import { createFlags } from '../src/core/flags.mjs';
 import { FLAGS } from '../src/shared/flags/registry.mjs';
 
 test('stillhetAskOpen: only WORCA_STILLHET_ASK=1 opens the ask switch', () => {
+  assert.equal(STILLHET_ASK_ON, false, 'the owner, 2026-11-12: no question until the last slice of feature 3');
   assert.equal(stillhetAskOpen({}), false);
   assert.equal(stillhetAskOpen({ WORCA_STILLHET_ASK: '1' }), true);
   assert.equal(stillhetAskOpen({ WORCA_STILLHET_ASK: 'true' }), false);

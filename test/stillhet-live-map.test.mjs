@@ -4,7 +4,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { shapeErrors, SHAPES } from '../ui/public/stillhet/live/model-shape.mjs';
-import { caseOf, taskOfLive, taskOfSaved, chatOf, unreadOf, scheduleOf, projectOf, costsOf, updateOf, updateOfOutcome, snapshotOf, partOf, dayOf } from '../ui/public/stillhet/live/live-map.mjs';
+import { caseOf, overOf, taskOfLive, taskOfSaved, chatOf, unreadOf, scheduleOf, projectOf, costsOf, updateOf, updateOfOutcome, snapshotOf, partOf, dayOf } from '../ui/public/stillhet/live/live-map.mjs';
 import { dayBucket } from '../ui/public/runs-list.mjs';
 import { needsYouItems } from '../src/shared/needs-you.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
@@ -56,10 +56,10 @@ test('caseOf keeps D7 for every status: section is needs exactly when dev\'s nee
     const live = { kind: 'live', status, ask, unread, pipelineId: 'p' };
     const hist = { kind: 'hist', id: 'h', status, pr: prNeeds ? { url: 'https://x/pr/1', state: 'open', checks: 'failing' } : null, mtime: 1 };
     const listed = needsYouItems({ live: [live], history: [] }).live.length === 1;
-    assert.equal(W.section({ case: caseOf(live) }) === 'needs', listed, `live ${status} ask=${ask} unread=${unread}`);
+    assert.equal(W.section({ case: caseOf(live), over: overOf(live) }) === 'needs', listed, `live ${status} ask=${ask} unread=${unread}`);
     const histListed = needsYouItems({ live: [], history: [hist] }).history.length === 1;
-    assert.equal(W.section({ case: caseOf({ ...hist, needs: histListed }) }) === 'needs', histListed, `hist ${status} pr=${prNeeds}`);
-    assert.equal(W.section({ case: taskOfSaved({ ...hist, status }, { now: NOW }).case }) === 'needs', ['paused'].includes(status.toLowerCase()) || (status === 'done' && histListed), `saved ${status}`);
+    assert.equal(W.section({ case: caseOf({ ...hist, needs: histListed }), over: overOf({ ...hist, needs: histListed }) }) === 'needs', histListed, `hist ${status} pr=${prNeeds}`);
+    assert.equal(W.section(taskOfSaved({ ...hist, status }, { now: NOW })) === 'needs', ['paused'].includes(status.toLowerCase()) || (status === 'done' && histListed), `saved ${status}`);
     n++;
   }
   assert.ok(n >= statuses.length * 8);
@@ -91,7 +91,7 @@ test('partOf replaces only the parts its source feeds', () => {
   const p = partOf('budget', { windowSpendUsd: 3, totalLimitUsd: 10, resetPeriod: 'daily' }, SOURCES, { now: NOW });
   assert.deepEqual(Object.keys(p), ['costs']);
   assert.equal(p.costs.budget.spent, 3);
-  assert.deepEqual(Object.keys(partOf('history', { pipelines: [] }, SOURCES, { now: NOW })).sort(), ['runs', 'updates']);
+  assert.deepEqual(Object.keys(partOf('history', { pipelines: [] }, SOURCES, { now: NOW })).sort(), ['chats', 'runs', 'updates'], 'a chat\'s tasks are rebuilt with the runs they read');
 });
 
 test('live-map.mjs and model-shape.mjs load in Node with no DOM; no file under live/ reads location.search', async () => {
@@ -117,7 +117,7 @@ test('the live task set is dev\'s Needs-you input: a settled hello run gives way
   const devLive = src.hello.runs.filter((r) => ['run-a', 'run-b', 'run-c'].includes(r.runId)).map((r) => ({ runId: r.runId, pipelineId: r.pipelineId, status: r.status, ask: r.pendingQuestion != null, unread: false }));
   const dev = needsYouItems({ live: devLive, history: src.history.pipelines.filter((p) => !p.archived) });
   const NEEDS = new Set(['question', 'paused-restart', 'paused-limit', 'capped', 'failed', 'failing']);
-  assert.equal(s.runs.filter((r) => !r.id.startsWith('sched:') && NEEDS.has(r.case)).length, dev.live.length + dev.history.length);
+  assert.equal(s.runs.filter((r) => !r.id.startsWith('sched:') && !r.over && NEEDS.has(r.case)).length, dev.live.length + dev.history.length);
 });
 
 test('dayOf is dev\'s dayBucket: 7 days ago is Previous 7 days, and a DST day is one day', () => {
@@ -137,4 +137,69 @@ test('scheduleOf: nextAt is the server\'s next time; null when missed or unknown
   assert.equal(scheduleOf({ id: 's', kind: 'recurring', status: 'active', nextRunAt: t }, { now: NOW }).nextAt, t);
   assert.equal(scheduleOf({ id: 'm', kind: 'once', status: 'missed', runAt: new Date(t).toISOString() }, { now: NOW }).nextAt, null);
   assert.equal(scheduleOf({ id: 'p', kind: 'recurring', status: 'paused', nextRunAt: null }, { now: NOW }).nextAt, null);
+});
+
+test('chatOf names the chat\'s project from dev\'s thread context (pinned projectKey); unpinned, none, or a non-object context is no project', () => {
+  const projects = [{ key: 'web-1', name: 'web' }];
+  assert.equal(chatOf({ id: 'a', context: { pinned: true, projectKey: 'web-1' } }, { projects }).project, 'web');
+  assert.equal(chatOf({ id: 'a', context: { pinned: true, projectKey: 'gone-9' } }, { projects }).project, 'gone-9', 'a key Worca no longer lists reads as itself');
+  assert.equal(chatOf({ id: 'a', context: { pinned: false, projectKey: 'web-1' } }, { projects }).project, '');
+  assert.equal(chatOf({ id: 'a', context: 'SECRET' }, { projects }).project, '');
+  assert.equal(chatOf({ id: 'a', context: null }, { projects }).project, '');
+});
+
+test('chatOf fills tasks from the run links: started ones as tasks, followed ones marked followed; chatOfRun finds the starting chat', async () => {
+  const { chatOfRun } = await import('../ui/public/stillhet/live/live-map.mjs');
+  const s = snapshotOf(SOURCES, { now: NOW });
+  const c1 = s.chats.find((c) => c.id === 'ask_1'), c2 = s.chats.find((c) => c.id === 'ask_2');
+  assert.deepEqual(c1.tasks.map((t) => [t.run, t.title, !!t.followed]), [['run-a', 'Ask me', false]]);
+  assert.deepEqual(c2.tasks.map((t) => [t.run, t.title, !!t.followed]), [['run-b', 'Busy', true]]);
+  assert.equal(c1.tasks[0].case, s.runs.find((r) => r.id === 'run-a').case, "a task's state is the store's task, one source");
+  for (const c of s.chats) assert.deepEqual(shapeErrors('chat', c), []);
+  const links = [
+    { threadId: 'ask_follow', runId: 'run-r', pipelineId: 'p9', started: false },
+    { threadId: 'ask_old', runId: 'run-r', pipelineId: 'p9', started: true },
+    { threadId: 'ask_new', runId: 'run-r', pipelineId: 'p9', started: true },
+  ];
+  assert.equal(chatOfRun(links, 'run-r'), 'ask_old', 'the first started link, never the follower');
+  assert.equal(chatOfRun(links, 'p9'), 'ask_old', 'by pipeline id too (a resumed run)');
+  assert.equal(chatOfRun(links.slice(0, 1), 'run-r'), '', 'a run a chat only follows has no starting chat');
+  assert.equal(chatOfRun([], 'x'), '');
+  assert.deepEqual(Object.keys(partOf('runLinks', { links: [] }, SOURCES, { now: NOW })), ['chats']);
+  assert.deepEqual(snapshotOf({ ...SOURCES, runLinks: { links: [] } }, { now: NOW }).chats.find((c) => c.id === 'ask_1').tasks, []);
+});
+
+test('a resumed run keeps its chat task: Resume gives it a new run id, the link still holds the old one, the pipeline id joins them', () => {
+  const src = { ...SOURCES, hello: { type: 'hello', runs: [{ runId: 'run-new', pipelineId: 'pa', projectDir: '/src/web', title: 'Ask me', status: 'running', startedAt: SOURCES.hello.runs[0].startedAt }] },
+    runLinks: { links: [{ threadId: 'ask_1', runId: 'run-old', pipelineId: 'pa', started: true }] } };
+  const c = snapshotOf(src, { now: NOW }).chats.find((x) => x.id === 'ask_1');
+  assert.deepEqual(c.tasks.map((t) => [t.id, t.run, t.pid, t.title]), [['run-new', 'run-new', 'pa', 'Ask me']]);
+});
+
+test('a calm failed run reads Failed and a finished run with its branch reads Ready (Create PR); both sort into Recent', () => {
+  const w = stillhetHost({ after });
+  const failed = taskOfSaved({ id: 'pf', status: 'error', mtime: NOW }, { now: NOW, needs: false });
+  assert.equal(failed.case, 'failed', 'never Stopped: Pulse says Task failed');
+  assert.equal(failed.over, true);
+  assert.equal(w.RailWorld.section(failed), 'recent');
+  const ready = taskOfSaved({ id: 'pr', status: 'done', branch: 'feat/x', survived: true, mtime: NOW }, { now: NOW, needs: false });
+  assert.equal(ready.case, 'ready');
+  assert.equal(w.RailWorld.section(ready), 'recent', 'D7: dev\'s Needs you does not list it');
+  assert.equal(taskOfSaved({ id: 'pg', status: 'done', branch: 'feat/x', survived: false, mtime: NOW }, { now: NOW }).case, 'finished-nogit', 'its branch is gone');
+  assert.equal(taskOfSaved({ id: 'pm', status: 'done', branch: 'feat/x', survived: true, inBase: { base: 'dev' }, mtime: NOW }, { now: NOW }).case, 'merged', 'already in its base');
+  assert.deepEqual(shapeErrors('task', ready), []);
+  const open = taskOfSaved({ id: 'po', status: 'done', branch: 'feat/x', survived: true, pr: { url: 'https://github.com/o/r/pull/7', state: 'open' }, mtime: NOW }, { now: NOW, needs: false });
+  assert.equal(open.case, 'checks', 'its PR is open: In review, View PR, never Create PR');
+  assert.equal(open.pr, 'https://github.com/o/r/pull/7');
+  const closedRow = { id: 'pc', status: 'done', branch: 'feat/x', survived: true, pr: { url: 'https://github.com/o/r/pull/8', state: 'CLOSED' }, mtime: NOW };
+  const closed = taskOfSaved(closedRow, { now: NOW, needs: false });
+  assert.equal(closed.case, 'ready', 'its PR was closed unmerged: Ready, Create PR again');
+  const c = chatOf({ id: 't1' }, { links: [{ threadId: 't1', runId: 'pc', started: true }], tasks: [closed] });
+  assert.equal(c.tasks[0].git, undefined, 'a closed PR is not watched as open');
+});
+
+test('a chat\'s task keeps its link\'s pipeline id (Resume posts it), whatever id the store holds', () => {
+  const c = chatOf({ id: 't1' }, { links: [{ threadId: 't1', runId: 'r1', pipelineId: 'p1', started: true }], tasks: [{ id: 'r1', title: 'A', case: 'paused-restart', detail: '' }] });
+  assert.equal(c.tasks[0].run, 'r1');
+  assert.equal(c.tasks[0].pid, 'p1');
 });

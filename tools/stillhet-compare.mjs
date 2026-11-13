@@ -52,6 +52,12 @@ for (const [s, r] of STATES) { const q = s === 'first-run' ? `?first#${r}` : `?s
 // on Chat with Pulse open on Now (shell/old-addresses.js), over the same ?state= in both hosts.
 export const PULSE_STATES = [['loading-pulse', 'loading'], ['failed-pulse', 'failed']];
 for (const [id, s] of PULSE_STATES) PARTS.push({ id: `state-${id}`, route: true, app: { route: `?state=${s}#activity` }, proto: { route: `?state=${s}#activity` } });
+// Chat's own states (docs/rail/failures.md, fail.chat-thread): an open chat that is loading, could not load or is gone, and the
+// bar's chat list loading, empty and failed; then the TerminalPane (panel.terminal), seeded by clicking the first Show in
+// terminal of a demo chat with commands.
+export const CHAT_STATES = [['thread-loading-chat', '?state=thread-loading#chat/c1'], ['thread-failed-chat', '?state=thread-failed#chat/c1'], ['thread-gone-chat', '?state=thread-gone#chat/c1'], ['loading-chat', '?state=loading#chat'], ['empty-chat', '?state=empty#chat'], ['failed-chat', '?state=failed#chat']];
+for (const [id, q] of CHAT_STATES) PARTS.push({ id: `state-${id}`, route: true, app: { route: q }, proto: { route: q } });
+PARTS.push({ id: 'terminal-chat', route: true, seed: '#route-chat [data-terminal]', app: { route: '#chat/c2' }, proto: { route: '#chat/c2' } });   // c2: its failed command opens itself, so Show in terminal is in view
 export const PAGES = ['components.html', 'run-page.html', 'pulse.html'];
 // The deep routes, read from the prototype's own route list once it has drawn (it runs inside the page): RailShell.routes()
 // (ui/public/stillhet/shell/shell.js) less the top-level places, which ROUTES compares as whole pages.
@@ -362,6 +368,7 @@ export async function shootCell(browser, app, part, theme, width, outRoot) {
     if (part.route) { await freezeClock(a); await a.addInitScript(setLook, theme); }
     await a.goto(app.base + '/' + part.app.route);
     await a.evaluate((t) => { document.documentElement.dataset.theme = t; }, theme);
+    if (part.seed) { await a.locator(part.seed).first().click(); await a.waitForTimeout(300); }   // a part opened by a click (terminal-chat)
     const A = await shoot(a, part.id, join(out, `${part.id}-${theme}-${width}-app.png`), part.route);
     const p = await ctx.newPage();
     watch(p, 'prototype', errors);
@@ -371,6 +378,7 @@ export async function shootCell(browser, app, part, theme, width, outRoot) {
     if (!part.route) await p.goto(protoUrl);
     if (!part.route) await p.evaluate((t) => { localStorage.setItem('worca-rail.mode', 'expert'); localStorage.setItem('worca-rail.appearance', t); localStorage.removeItem('worca-rail.stillhetAsked'); }, theme);
     await p.goto(protoUrl.replace(/index\.html.*$/, 'index.html') + part.proto.route);
+    if (part.seed) { await p.locator(part.seed).first().click(); await p.waitForTimeout(300); }
     const P = await shoot(p, part.id, join(out, `${part.id}-${theme}-${width}-proto.png`), part.route);
     const diff = A.box.w === P.box.w && A.box.h === P.box.h ? countDiffPixels(A.rgba, P.rgba, A.w, A.h) : A.w * A.h;
     cell = { part: part.id, theme, width, appBox: A.box, protoBox: P.box, diff, errors };

@@ -38,12 +38,12 @@ app.post('/api/answer', (req, res) => {
 });
 
 // POST /api/runs/:id/answer  -> answer the run's plan approval stop (shape-it-first D2/D10)
-// body: { id, decision: 'approve'|'revise'|'stop', feedback?, source? }.
+// body: { id, decision: 'approve'|'revise'|'stop', feedback?, source?, conflicts?, decisions? } (the picks validatePlanAnswer checks).
 app.post('/api/runs/:id/answer', (req, res) => {
   const runId = req.params.id;
   const entry = runs.get(runId);
   if (!entry) return res.status(404).json({ error: 'unknown run' });
-  const { id, decision, feedback, perspectives, edits, approveEach, source } = req.body || {};
+  const { id, decision, feedback, perspectives, edits, approveEach, source, conflicts, decisions } = req.body || {};
   const pq = entry.pendingQuestion;
   if (!pq || pq.kind !== PLAN_ASK_KIND || !id || pq.id !== id) {
     return res.status(409).json({ error: 'no plan approval with that id is waiting on this run' });
@@ -53,7 +53,9 @@ app.post('/api/runs/:id/answer', (req, res) => {
       ...(perspectives !== undefined ? { perspectives } : {}),
       ...(edits !== undefined ? { edits } : {}),
       ...(approveEach !== undefined ? { approveEach } : {}),
-      ...(source !== undefined ? { source } : {}) }, actorOf(req));
+      ...(source !== undefined ? { source } : {}),
+      ...(conflicts !== undefined ? { conflicts } : {}),
+      ...(decisions !== undefined ? { decisions } : {}) }, actorOf(req));
     res.json({ ok: true });
   } catch (err) {
     if (err && err.code === 'INVALID_ANSWER') {

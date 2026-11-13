@@ -43,7 +43,7 @@
   function act(id, w) {
     if (id === 'sync') { const of = (st) => live(w).projects.filter(([, s]) => s === st).map(([p]) => p), behind = of('behind'), diverged = of('diverged'); behind.forEach((p) => window.RailProjects.sync(p)); redraw(); say(`Synced ${n(behind.length, 'project')} in ${w.title}${diverged.length ? `; ${diverged.join(', ')} ${diverged.length === 1 ? 'has' : 'have'} diverged and ${diverged.length === 1 ? 'was' : 'were'} left alone` : ''}`); return; }
     if (id === 'scan') { if (w.scanning) return; const gone = live(w).projects.filter(([, s]) => s === 'missing').map(([p]) => p); w.scanning = true; redraw(); say(`Reading ${w.title}${gone.length ? `; skips ${gone.join(', ')}, folder missing` : ''}`); setTimeout(() => { w.scanning = false; w.scanned = 'just now'; redraw(); say(`Mapped ${w.title}`); }, 1800); return; }
-    if (id === 'task') { window.RailConversation?.handOver({ mode: 'task', project: w.title, about: { kind: 'Workspace', name: w.title } }); return; }
+    if (id === 'task') { window.RailConversation?.handOver({ mode: 'task', project: w.title, ref: { pageWorkspaceId: w.id }, about: { kind: 'Workspace', name: w.title } }); return; }
     if (id === 'edit') { editing = editing === w.id && here() ? '' : w.id; if (here() && current === w.id) redraw(); else go(w.id); return; }
     if (id === 'delete') { confirm = w; if (current === w.id) redraw(); else go(w.id); }
   }
@@ -82,13 +82,13 @@
     if (current !== id) { menu = ''; if (confirm && confirm.id !== id) confirm = null; }
     current = id; const w = data.spaces.find((x) => x.id === id); if (!w) { go(''); return; }
     el.innerHTML = pageHtml(w);
-    window.RailConversation?.dock(document.getElementById('ws-dock'), { kind: 'workspace', title: w.title, chat: '' });
+    window.RailConversation?.dock(document.getElementById('ws-dock'), { kind: 'workspace', title: w.title, chat: '', ref: { pageWorkspaceId: w.id } });   // D16: the page's workspace, as dev's context
   }
   function wire() {
     page.addEventListener('click', (e) => {
       if (!here()) return;
       const on = (q) => e.target.closest(q); let hit; const w = data.spaces.find((x) => x.id === current); if (!w) return;
-      if ((hit = on('[data-ws]'))) { const v = hit.dataset.ws; if (v === 'chat') window.RailConversation?.handOver({ project: w.title, about: { kind: 'Workspace', name: w.title }, ph: `What should change in ${w.title}?` }); else if (v === 'edit') { editing = editing === w.id ? '' : w.id; redraw(); } else act(v, w); return; }
+      if ((hit = on('[data-ws]'))) { const v = hit.dataset.ws; if (v === 'chat') window.RailConversation?.handOver({ project: w.title, ref: { pageWorkspaceId: w.id }, about: { kind: 'Workspace', name: w.title }, ph: `What should change in ${w.title}?` }); else if (v === 'edit') { editing = editing === w.id ? '' : w.id; redraw(); } else act(v, w); return; }
       if (window.RailPlaces.projects.defaultsClick(e, w, redraw)) return;
       if ((hit = on('[data-ws-at]'))) { say(window.RailWould(`open ${hit.dataset.wsAt} in your editor`)); return; }
       if (on('[data-ws-links]')) { linksOpen = !linksOpen; redraw(); return; }

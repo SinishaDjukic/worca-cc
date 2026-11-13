@@ -66,7 +66,7 @@
   };
   const seed = () => {
     // the live kind (D9): the store's chats and topic groups, read again on every call; never a seeded chat
-    if (window.RailWorld.live) return { groups: window.RailWorld.part('chatGroups').map((g) => ({ ...g })), chats: window.RailWorld.part('chats').map((c) => ({ ...c })) };
+    if (window.RailWorld.live) return { groups: window.RailWorld.part('chatGroups').map((g) => ({ ...g })), chats: window.RailWorld.part('chats').map((c) => { const x = { ...c, tasks: (c.tasks || []).map((t) => ({ ...t })) }; sync(x); return x; }) };   // its tasks read the store's runs now, as every move does
     const d = base(), f = window.RailWorld.facts().chats;
     if (window.RailFirstRun) { d.groups = []; d.chats = d.chats.filter((c) => c.id === 'c0'); }   // the first run: Getting started alone
     for (const c of d.chats) {
@@ -79,6 +79,7 @@
   };
   // A conversation's turns: what a person said, what Worca said, what it did. Work points at its task.
   const thread = (c) => {
+    if (window.RailWorld?.live && window.RailChatLive) return window.RailChatLive.turns(c.id);   // live: dev's thread (live/chat-live.mjs)
     if (c.fromTask) return (c.tasks || []).map((x, i) => ({ t: 'task', id: `b${i}`, task: x.id }));   // opened from Tasks or Pulse: its card, nothing made up
     if (c.id === 'c0') return [   // the first minutes: a chat like any other, so nothing new to learn
       { t: 'words', html: 'Hi, I’m Worca. I run coding tasks for you: you say what to do, I plan it, build it, review it and open a pull request. Two things first, then your first task.' },
@@ -189,6 +190,11 @@
       { t: 'commands', id: 'g3', dir: 'worca-cc', rows: [{ summary: 'Counted the migrations: 84 files', cmd: 'ls migrations | wc -l', end: '0.4s', out: '84' }] },
       { t: 'words', html: '84 migrations; 61 are older than the squash point. Squashing them, first as a dry run:' },
       { t: 'cmd', cmd: 'npm run db:squash -- --dry-run', sum: 'Squashing the migrations (a dry run)', dir: 'worca-cc' },
+    ];
+    // fail.chat-turn: a reply that failed, its raw error behind Details, Try again beside it
+    if (c.id === 'c15') return [
+      { t: 'you', id: 'a1', text: 'Who is on call this weekend?', when: 'Oct 12' },
+      { t: 'failed', id: 'a2', text: 'Worca could not answer this time.', detail: 'The model was overloaded (529). Try again in a minute.' },
     ];
     if (c.id === 'c13') return [
       { t: 'you', id: 'a1', text: 'Compare two queue libraries for the export jobs', when: 'Mon' },

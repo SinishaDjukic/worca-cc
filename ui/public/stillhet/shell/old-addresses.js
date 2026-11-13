@@ -15,7 +15,7 @@
     ['models', 'settings/models'], ['providers', 'settings/models'], ['settings/providers', 'settings/models'],
     ['team-policy', 'settings/team'],
     ['workspaces', 'projects', 'ws'], ['workspace-create', 'projects'],
-    ['new', 'chat'], ['getting-started', 'chat'],
+    ['new', 'chat'], ['getting-started', 'chat'], ['chat/new', 'chat'],
     ['plugins', 'marketplace'],
     ['guardrails', 'settings/guardrails'],
     ['composer', 'workflows'], ['agents', 'workflows', 'way', '', '~agents'], ['scripts', 'workflows', 'way', '', '~scripts'], ['agent-create', 'workflows', 'way', '', '~agents'],

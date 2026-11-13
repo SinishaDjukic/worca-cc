@@ -19,7 +19,7 @@ const EXPECT = {
   '#models': '#settings/models', '#providers': '#settings/models', '#settings/providers': '#settings/models',
   '#team-policy': '#settings/team', '#team-policy/x': '#settings/team',
   '#workspaces': '#projects', '#workspaces/w1': '#projects/ws:w1', '#workspace-create': '#projects',
-  '#new': '#chat', '#getting-started': '#chat',
+  '#new': '#chat', '#getting-started': '#chat', '#chat/new': '#chat',
   '#plugins': '#marketplace', '#guardrails': '#settings/guardrails',
   '#composer': '#workflows', '#agents': '#workflows', '#scripts': '#workflows', '#agent-create': '#workflows',
 };

@@ -1065,6 +1065,11 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .lg-row.is-warn .lg-text{color:var(--amber-ink-strong);}
 .lg-row.is-error .lg-text{color:var(--red-ink-strong,var(--red));}
 @container (max-width: 520px){.lg-row{grid-template-columns:max-content minmax(0,1fr);}.lg-text{grid-column:1 / -1;padding-bottom:4px;}}
+/* TerminalPane (panel.terminal): the log, its one input line, then Stop and Close at its end */
+.tp-term{display:grid;gap:8px;margin:8px 0 0;min-width:0;}
+.tp-term .fld{margin:0;}
+.tp-term .input{font-family:var(--mono);}
+.tp-term-acts{display:flex;gap:8px;justify-content:flex-end;}
 /* The run page's Activity and Changes sections */
 .rl-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;min-width:0;}
 .rl-sentence{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}

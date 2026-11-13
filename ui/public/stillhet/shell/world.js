@@ -10,7 +10,7 @@
   // A non-default state asked for by the address (?state=NAME), so both hosts can open it cold: what the lists show (the
   // tools panel's Lists) and what the connection does (its Connection). A demo-adapter input only; a live adapter ignores it.
   const STATE = !LIVE && typeof location !== 'undefined' ? new URLSearchParams(location.search).get('state') || '' : '';
-  window.RailDemoState = LIVE ? { list: 'loading', conn: '' } : { list: { loading: 'loading', empty: 'empty', offline: 'offline', failed: 'failed', 'refresh-failed': 'refresh' }[STATE] || '', conn: { 'connection-lost': 'offline', 'session-expired': 'session' }[STATE] || '' };
+  window.RailDemoState = LIVE ? { list: 'loading', conn: '' } : { list: { loading: 'loading', empty: 'empty', offline: 'offline', failed: 'failed', 'refresh-failed': 'refresh' }[STATE] || '', conn: { 'connection-lost': 'offline', 'session-expired': 'session' }[STATE] || '', thread: { 'thread-loading': 'loading', 'thread-failed': 'failed', 'thread-gone': 'gone' }[STATE] || '' };   // fail.chat-thread: an open chat's own state
   const WORKFLOW_OF = { r2: 'Security-first review', r9: 'Security-first review', r5: 'Quick Fix', r7: 'Quick Fix', r12: 'Full', m1: 'API rewrite', m2: 'API rewrite', m3: 'API rewrite' };   // the Tasks center's by workflow
   const run = (id, kase, title, project, detail, time, day, o = {}) => ({ id, case: kase, title, project, detail, time, day, labels: [], cost: null, archived: false, unread: false, pr: '', group: '', kind: 'Git', by: 'Emil Angelov', workflow: WORKFLOW_OF[id] || 'Default', ...o });
   // not started yet: `when` is its group in Vitals › Scheduled

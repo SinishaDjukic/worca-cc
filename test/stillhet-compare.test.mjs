@@ -1,7 +1,7 @@
 // test/stillhet-compare.test.mjs — the pure parts of tools/stillhet-compare.mjs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { countDiffPixels, PARTS, ROUTES, STATES, PULSE_STATES, PAGES, report, deepRoutes, deepPart, settledShot, launchOptions } from '../tools/stillhet-compare.mjs';
+import { countDiffPixels, PARTS, ROUTES, STATES, PULSE_STATES, CHAT_STATES, PAGES, report, deepRoutes, deepPart, settledShot, launchOptions } from '../tools/stillhet-compare.mjs';
 
 test('countDiffPixels: 0 for equal buffers, 1 for one changed channel, w*h for a size mismatch', () => {
   const a = new Uint8ClampedArray(2 * 2 * 4).fill(7), b = new Uint8ClampedArray(a);
@@ -12,7 +12,7 @@ test('countDiffPixels: 0 for equal buffers, 1 for one changed channel, w*h for a
 });
 
 test('PARTS lists the invitation, the design switch, one whole-page cell per shell route and one per non-default state', () => {
-  assert.deepEqual(PARTS.map((p) => p.id), ['invitation', 'design-switch', ...ROUTES.map((r) => `route-${r}`), ...STATES.map(([s]) => `state-${s}`), ...PULSE_STATES.map(([s]) => `state-${s}`)]);
+  assert.deepEqual(PARTS.map((p) => p.id), ['invitation', 'design-switch', ...ROUTES.map((r) => `route-${r}`), ...STATES.map(([s]) => `state-${s}`), ...PULSE_STATES.map(([s]) => `state-${s}`), ...CHAT_STATES.map(([s]) => `state-${s}`), 'terminal-chat']);
   assert.deepEqual(PAGES, ['components.html', 'run-page.html', 'pulse.html']);
 });
 
@@ -95,6 +95,18 @@ test('the comparison stores rail as a person does; the gates lock it with WORCA_
   assert.match(src, /lockRail \? \{\} : \{ flags: \{ rail: true \} \}/);
   assert.match(src, /WORCA_FLAGS: lockRail \? 'rail' : ''/);
   assert.match(readFileSync(new URL('../tools/stillhet-gates.mjs', import.meta.url), 'utf8'), /\{ lockRail: true \}/);
+});
+
+test('CHAT_STATES: each Chat cell id of the plan is a whole-page cell, opened by the same address in both hosts; a missing one fails', () => {
+  const ids = ['state-thread-loading-chat', 'state-thread-failed-chat', 'state-thread-gone-chat', 'state-loading-chat', 'state-empty-chat', 'state-failed-chat', 'terminal-chat'];
+  for (const id of ids) {
+    const p = PARTS.find((x) => x.id === id);
+    assert.ok(p, `${id} is a cell`);
+    assert.equal(p.route, true);
+    assert.equal(p.app.route, p.proto.route);
+  }
+  for (const [id, q] of CHAT_STATES) assert.match(q, new RegExp(`^\\?state=${id.replace(/-chat$/, '')}#chat`));
+  assert.equal(PARTS.find((x) => x.id === 'terminal-chat').seed, '#route-chat [data-terminal]');
 });
 
 // ---- the worker pool (parallel walks): parseWorkers, clampWorkers, runPool, finishRun, installStopHandlers, verifyApp, main
