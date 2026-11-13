@@ -90,7 +90,6 @@ before(async () => {
   const entry = (await loadSkillCatalog()).find((e) => e.id === 'skill:library:hookyset');
   await putSkillMember('general', entry.id, { enabled: true }, { entry, siblingNames: [] });
   libSkillFile = join(entry.dir, 'SKILL.md');
-  assert.equal(readFileSync(libSkillFile, 'utf8'), SET_SKILL, 'the library holds the skill with its hook');
   const mod = await import('../ui/server.mjs');
   ({ runs, _testing, stopRun } = mod);
   settled = runSettled({ runs, answerRun: _testing.answerRun });
@@ -98,6 +97,7 @@ before(async () => {
   srv = http.createServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
+  assert.equal(readFileSync(libSkillFile, 'utf8'), SET_SKILL, 'the library holds the skill with its hook');
   real = templateRepo('wftpoff', { branch: 'main', user: true, files: { '.gitignore': 'node_modules/\n.claude/settings.local.json\n', 'README.md': '# hi\n',
     '.claude/settings.json': `${JSON.stringify(PROJECT_SETTINGS, null, 2)}\n`, '.claude/agents/helper.md': '# helper\n', 'CLAUDE.md': '# rules\n' } });
   extra.push(real);
