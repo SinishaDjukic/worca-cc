@@ -294,8 +294,10 @@ test('N2: New feature: Who interviews says it is loading, then that the models c
   let fail = true;
   const pending = new Promise((r) => { release = r; });
   let first = true;
+  let retryPending = null;
   const routes = ROUTES({ 'GET /api/requirements/models': () => {
     if (first) { first = false; return pending; }
+    if (retryPending) return retryPending.p;
     return fail ? undefined : CATALOG;
   } });
   const { host, calls } = await openNew(routes);
@@ -310,16 +312,58 @@ test('N2: New feature: Who interviews says it is loading, then that the models c
   assert.equal(text(status()), 'The models could not be loaded. Try again');
   const retry = status().querySelector('button');
   assert.equal(text(retry), 'Try again');
-  fail = true;
+  // keyboard: the button stays the same element and keeps focus through a retry (a11y, re-review Minor)
+  retry.focus();
+  let r2;
+  retryPending = { p: new Promise((r) => { r2 = r; }) };
   retry.click();
   await settle();
+  assert.equal(text(status()), 'Loading the models…', 'the line says it is loading again');
+  assert.equal(status().querySelector('button'), retry, 'the same button');
+  assert.equal(retry.getAttribute('aria-disabled'), 'true');
+  assert.equal(document.activeElement, retry, 'focus stays on the button while loading');
+  retry.click();   // pressed again while loading: ignored
+  await settle();
+  r2(undefined);
+  retryPending = null;
+  await settle();
   assert.equal(text(status()), 'The models could not be loaded. Try again', 'a failed retry says so again');
+  assert.equal(retry.getAttribute('aria-disabled'), null);
+  assert.equal(document.activeElement, retry, 'focus is still on Try again');
   fail = false;
-  status().querySelector('button').click();
+  retry.click();
   await settle();
   assert.ok(host.querySelector('.req-who .req-who-harness'), 'Try again draws Who interviews');
   assert.equal(status(), null, 'the status line is gone');
-  assert.equal(calls.filter((c) => c.url === '/api/requirements/models').length, 3);
+  assert.equal(document.activeElement, host.querySelector('.req-who .req-who-harness'), 'focus moves to Harness, not to the page');
+  assert.equal(calls.filter((c) => c.url === '/api/requirements/models').length, 3, 'the press while loading asked nothing');
+});
+
+test('N2: New feature: models loaded but the default unknown: no Claude pick in the selects, the failure line, and no model posted', async () => {
+  const CODEX_DEFAULT = { default: { engine: 'codex', model: 'gpt-lite', label: 'GPT Lite', effort: null }, fallbackReason: null };
+  for (const [what, listRoute] of [['the list has no default', LIST({ interview: null })], ['the list call fails', undefined]]) {
+    let listNow = listRoute;
+    const routes = ROUTES({ 'GET /api/requirements': () => listNow, 'POST /api/requirements': { feature: { seq: 9 } } });
+    const { host } = await openNew(routes);
+    assert.equal(host.querySelector('.req-who'), null, `${what}: no selects (they would pick Claude)`);
+    const status = host.querySelector('.req-who-box .req-who-status');
+    assert.equal(text(status), 'The models could not be loaded. Try again', what);
+    // Try again asks the list again: with the default known the selects start on Codex
+    listNow = LIST({ interview: CODEX_DEFAULT });
+    status.querySelector('button').click();
+    await settle();
+    assert.equal(sel(host, 'harness')?.value, 'codex', `${what}: Try again draws the Codex default`);
+    // and before that, Create would have posted no model: checked on a fresh form
+    listNow = listRoute;
+    const again = await openNew(ROUTES({ 'GET /api/requirements': () => listNow, 'POST /api/requirements': { feature: { seq: 9 } } }));
+    again.host.querySelector('#req-new-title').value = 'T';
+    again.host.querySelector('#req-new-desc').value = 'D';
+    [...again.host.querySelectorAll('.req-new .btn-primary')].at(-1).click();
+    await settle();
+    const post = again.calls.find((c) => c.method === 'POST');
+    assert.ok(post, `${what}: Create posts`);
+    assert.equal(post.body.model, undefined, `${what}: no model is posted, so the server stores the default or answers 503`);
+  }
 });
 
 test('styles: the new rules sit inside the Requirements block and use tokens only (board 8, dark)', () => {

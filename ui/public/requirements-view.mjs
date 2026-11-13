@@ -852,10 +852,16 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     relook = sayLook;
     // 9c boards 1, 2, 7: Who interviews. The harness list, models and estimates load once the form is open; the default and the
     // fallback reason come from the list call. The group is drawn when both are known. Until then the box says the models are
-    // loading, or that they could not be loaded with Try again (D5: who interviews is never left unsaid); Create still works
-    // and the server stores the default, or refuses when it cannot tell one.
+    // loading, or that they could not be loaded with Try again (D5: who interviews is never left unsaid). A default that is not
+    // known is never filled in with Claude here (D4 names the only reasons for that): the selects wait, Create posts no model,
+    // and the server stores the default or refuses when it cannot tell one.
     const whoBox = h('div', { class: 'req-who-box' });
-    const whoStatus = h('p', { class: 'hint req-who-status', role: 'status' });
+    const whoMsg = h('span', { class: 'req-who-msg' });
+    const whoStatus = h('p', { class: 'hint req-who-status', role: 'status' }, whoMsg);
+    // One Try again button for the life of the form: a retry never replaces it, so keyboard focus stays on it (aria-disabled
+    // while loading, as a disabled button would drop focus).
+    const whoRetry = h('button', { type: 'button', class: 'link-btn req-who-retry', onclick: () => { if (!whoLoading) loadWho(); } }, 'Try again');
+    let whoLoading = false;
     const slots = { fallback: h('div'), def: h('div'), hint: h('div'), note: h('div', { 'aria-live': 'polite' }) };
     whoBox.append(whoStatus, slots.fallback, slots.def, slots.hint, slots.note);
     let catalog = null;
@@ -866,11 +872,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     let estNo = 0;
     const modelLabel = (id) => { const m = catalog && catalog.models.find((x) => x && x.id === id); return (m && (m.label || m.id)) || id; };
     const harnessOf = (e) => catalog.harnesses.find((x) => x.engine === e) || {};
+    const knownDefault = () => { const d = listInterview && listInterview.default; return !!(d && d.model); };
     const defaultOf = () => {
-      const d = listInterview && listInterview.default;
-      if (d && d.model) return { engine: d.engine || 'claude', model: d.model, effort: d.effort || null };
-      const c = catalog.defaults.claude || {};
-      return { engine: 'claude', model: c.model, effort: c.effort || null };
+      const d = listInterview.default;
+      return { engine: d.engine || 'claude', model: d.model, effort: d.effort || null };
     };
     const drawFallback = () => {
       const line = fallbackLine(document, listInterview && listInterview.fallbackReason);
@@ -904,29 +909,49 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       });
     }
     refreshNote = () => { if (who && lastEst) drawNote(); };
+    const whoFailed = () => {
+      whoMsg.textContent = 'The models could not be loaded. ';
+      whoRetry.removeAttribute('aria-disabled');
+      if (whoRetry.parentNode !== whoStatus) whoStatus.append(whoRetry);
+    };
     function buildWho() {
-      if (who || !catalog || !listIn || !host.contains(whoBox)) return;
+      if (who || whoLoading || !host.contains(whoBox)) return;
+      if (!catalog) { whoFailed(); return; }
+      if (!listIn) return;   // the list is still on its way: fill() calls back
+      if (!knownDefault()) { whoFailed(); return; }
+      const focused = document.activeElement === whoRetry;
       who = whoInterviews(document, { models: catalog.models, harnesses: catalog.harnesses, choice: defaultOf(), defaults: catalog.defaults, onChange: onPick });
       whoStatus.remove();
       whoBox.prepend(who.el);
       cost.note(true);
       drawFallback();
       onPick();
+      if (focused) { const first = who.el.querySelector('select'); if (first) first.focus(); }
     }
-    const loadModels = () => {
-      whoStatus.replaceChildren('Loading the models…');
-      api('GET', '/api/requirements/models').then((c) => (c && Array.isArray(c.harnesses) && c.harnesses.length && Array.isArray(c.models) ? c : null), () => null)
-        .then((c) => {
-          catalog = c;
-          if (!c) {
-            whoStatus.replaceChildren('The models could not be loaded. ',
-              h('button', { type: 'button', class: 'link-btn req-who-retry', onclick: loadModels }, 'Try again'));
-            return;
-          }
-          buildWho();
-        });
-    };
-    loadModels();
+    // Loads what is missing: the models, and (once the list has answered without one) the default from the list call again.
+    function loadWho() {
+      whoLoading = true;
+      if (whoRetry.parentNode === whoStatus) {
+        // the button keeps focus and its place; the line reads "Loading the models…" through the button's own text
+        whoMsg.textContent = '';
+        whoRetry.setAttribute('aria-disabled', 'true');
+        whoRetry.textContent = 'Loading the models…';
+      } else whoMsg.textContent = 'Loading the models…';
+      const models = catalog ? Promise.resolve(catalog)
+        : api('GET', '/api/requirements/models').then((c) => (c && Array.isArray(c.harnesses) && c.harnesses.length && Array.isArray(c.models) ? c : null), () => null);
+      const askList = listIn && !knownDefault();
+      const listed = askList
+        ? api('GET', '/api/requirements').then((d) => (d && d.interview && typeof d.interview === 'object' ? d.interview : null), () => null)
+        : Promise.resolve(null);
+      Promise.all([models, listed]).then(([c, iv]) => {
+        whoLoading = false;
+        whoRetry.textContent = 'Try again';
+        catalog = c;
+        if (askList && iv && !knownDefault()) listInterview = iv;   // never over a default fill() brought meanwhile
+        buildWho();
+      });
+    }
+    loadWho();
     // A8 (board 15): the Files field. Picks are checked here (D7: 10 files, 25 MB each, 100 MB in all on this form);
     // a refused one is named in the amber alert and not added; a chip per accepted file.
     let picked = [];
