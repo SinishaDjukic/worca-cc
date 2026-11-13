@@ -133,7 +133,7 @@ missing details stay deviations, as before.
 - Under `--yes` no one is asked: the concern is overridden, and the audit log reads
   "Plan concern overridden automatically (--yes)".
 - In Away mode the concern is approved for you: the plan is built as written, and the answer is flagged *please check*.
-- A concern stops the run even when "Approve each slice's plan" is off.
+- A concern stops a later slice's plan even when its checks pass.
 - Only workflows with a plan approval stop offer a concern. Default's implementer is never offered one.
 
 ## Plan in slices
@@ -201,11 +201,13 @@ decides again). The setting also applies to runs that are not sliced; see
 **Plan once.** Slices 2 and later skip Clarify: they use the answers you gave for
 slice 1. Their planner still writes a plan for its own slice.
 
-**Ask before each run** (on the outline card: **Ask me before each run**). Off by default: a later slice's plan stops for you
-only when its shape check fails or the planner says the slice can't be built as
-outlined (it then tells you why on the plan card). Turn it on to review every
-slice's plan. Either way an audit line records what happened. Only a person can change the switch; a proposal
-from Ask cannot. Away mode approves the outline with the switch as shown.
+**Ask before each run** (on the outline card: **Ask me before each run**). Off by default: each run starts when the
+one before it is done, as before. On: each later run waits, not started, and the feature card shows **Needs you**,
+"Run 2 waits for you to start" and **Start now**. It starts when you press **Start now**, press **Resume**, or turn the
+switch off. Either way a later slice's plan stops for you only when its shape check fails or the planner says the
+slice can't be built as outlined (it then tells you why on the plan card); a plan whose checks pass continues by
+itself. An audit line records what happened. Only a person can change the switch; a proposal from Ask cannot. Away
+mode approves the outline with the switch as shown, and never presses **Start now**.
 
 **The feature card.** The planning run's card in Chat becomes the card for the whole
 feature, in the thread that started it. Its head reads `Shaping` until the outline is
@@ -232,6 +234,8 @@ every host. Beside the ⋯ button:
 
 - while a run of the feature is running: **Pause** and **Stop**, which act on that
   run (Pause reads **Pausing…** until the pause lands);
+- while a run waits for you (**Ask me before each run** on): **Needs you** ·
+  "Run 2 waits for you to start" · **Start now**;
 - once the feature halts (`Failed · Run 2 · Review`, `Paused · Run 2 · Build`):
   **Resume**, which resumes a paused run and restarts a stopped one as a new run, then
   re-chains the runs after it, and **Re-plan the rest**. The runs that wait read
@@ -311,7 +315,7 @@ only while Shaper is on.
 
 ### Slices and code reviews carry the requirements
 
-Labs flag `shapeRequirements`. When a sliced run agreed its requirements first (the
+When a sliced run agreed its requirements first (the
 `R-po-1`, `R-ux-1`, … criteria), the outline cuts the runs by them:
 
 - **Satisfies.** Each run on the Split card lists the ids it delivers under its goal
@@ -328,9 +332,6 @@ Labs flag `shapeRequirements`. When a sliced run agreed its requirements first (
   implementer before you are asked to ship it. Once a run is reviewed, its row on the
   feature card unfolds **Requirements 2/3 · 1 to fix**.
 
-Rollback: turn the flag off. Later runs of a feature then fire as plain Shaper runs;
-the Satisfies text in their task is only prose.
-
 ### Requirement concerns
 
 Agreed requirements stay agreed. A plan reviewer that thinks one of them is itself wrong or cannot be met names it in
@@ -341,7 +342,7 @@ met:**, with one line per id and the role that raised it.
 - **Approve** keeps the requirement as agreed and builds the plan. The audit log reads
   "Requirement concern overridden: R-po-1 kept as agreed."
 - **Ask for changes** sends your answer, with the concern, to the planner.
-- The concern stops the run even when "Approve each slice's plan" is off. Away mode approves it, keeps the requirement
+- The concern stops a later slice's plan even when its checks pass. Away mode approves it, keeps the requirement
   and flags the answer *please check*, as long as the plan's check passed. Under `--yes` the plan approval waits for a person.
 - Only a review of the plan raises a concern. A code review's or a requirements review's finding that names an id
   blocks as before. Any workflow with a role review, a requirements input and a plan approval stop gets the same card.
@@ -365,9 +366,6 @@ says so: "Requirements first: the 4 agreed requirements are updated before the p
 card is the requirements hold, with the agreed requirements and how each was marked; the plan approval comes after it.
 This holds for a round on the same PR and for a follow-up run after the PR merged.
 
-Rollback for all three: turn the flag off. Findings then block as before, the Ship card has no ledger and ships
-unmarked, and a Changes request runs as a plain round or follow-up. Saved marks stay stored, unread.
-
 ## Away mode on a Shaper run
 
 A person answers what to build. Away mode handles how to build it. While Away is active on a Shaper run:
@@ -379,8 +377,8 @@ A person answers what to build. Away mode handles how to build it. While Away is
 | Agents' questions, review gates, failed steps | Away answers, as on any run |
 | Slice outline whose check passed | Away approves it, with **Ask me before each run** as shown. If it leaves an agreed requirement out of every slice, Away flags it *please check* and names the requirement |
 | Plan approval whose checks passed, slice 1 included | Away approves it |
-| Later slice's plan, **Ask me before each run** off | Continues by itself, the same as when Away is off |
-| Later slice's plan, **Ask me before each run** on | Away approves it |
+| Later slice's plan | Continues by itself when its check passed |
+| Later run held by **Ask me before each run** | Stays held; the card shows Needs you and Start now until you press it |
 | Requirement concern or plan concern | Away approves it, keeps the requirement or plan as written, and flags it *please check* |
 | A failed check: shape, outline, coverage, or a check that errored | Waits for you |
 | The planner's outline change, or notes from the chat | Waits for you |
@@ -477,9 +475,9 @@ card is posted per fix run. When the watch gives up, the run card says so under 
 card the watch is only the PR link's tooltip (`PR #781 · watched`). With Shaper off, each fix run still gets its own
 `PR fix run` card.
 
-## Requirements first (Labs)
+## Requirements first
 
-Labs flag `shapeRequirements`. A medium or large Shaper task agrees its requirements before the plan is written. The
+A medium or large Shaper task agrees its requirements before the plan is written. The
 Shaper's Requirements step is a hold, like the plan approval, and it has its own card. Three cards change:
 
 - **The Shaper card.** One facts line (`Large task · ≈ $31 · ~84 min`), then one sentence: `You lead as [Product ▾],
@@ -510,9 +508,6 @@ Shaper's Requirements step is a hold, like the plan approval, and it has its own
   **Fix all** is the primary and **Approve and build** is a plain button; when everything is covered, **Approve and
   build** is the primary again. The Chat run card says `Requirements 7/8 · 1 to fix · Plan ✓ · Refine ✓ while planning`
   in place of `Clarify ✓` for such a run.
-
-Rollback: turn the flag off. New runs ask the old questions and show the old cards. A run already held at its
-requirements keeps asking, and its card stays answerable until it finishes.
 
 ## Pull requests when a run finishes
 

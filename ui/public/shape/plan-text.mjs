@@ -119,9 +119,9 @@ export function fixAllFeedback(items, requirements = []) {
   // the engine label ("R-ops-1 · not covered by any step") would repeat the sentence: name it by id and criterion
   const name = (it) => (it.detail ? `${it.id}: ${it.detail}` : it.id || it.label);
   const reqPart = req.length === 1
-    ? `The agreed requirement ${name(req[0])} is not covered by any step. Fix the plan so a step delivers it.`
+    ? `The agreed requirement ${name(req[0])} is not covered by any step. Fix the plan so a step delivers it and names it on a \`Covers:\` line.`
     : `${req.length} agreed requirements are not covered by any step:\n${req.map((it) => `- ${name(it)}`).join('\n')}\n`
-      + 'Fix the plan so a step delivers each.';
+      + 'Fix the plan so a step delivers each and names it on a `Covers:` line.';
   return [bad.length ? checkPart() : '', reqPart].filter(Boolean).join('\n');
 }
 

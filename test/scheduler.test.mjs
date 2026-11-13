@@ -654,6 +654,27 @@ test('an after-ticket waits, then starts the tick after its predecessor finishes
   assert.ok(!kinds().includes('late'), 'never late: it was due the instant it started');
 });
 
+test('after-tickets: a hold predicate keeps a due after-ticket scheduled with run_at unchanged; a forced one still fires; a throwing predicate does not hold', async () => {
+  seedPipelineRow({ id: 'g0000011', title: 'Refactor', status: 'done', startedAt: new Date(T0).toISOString() });
+  const held = createTicket({ projectDir: DIR, title: 'Tests', request: REQ, after: { kind: 'pipeline', id: 'g0000011' }, now: T0 });
+  const started = [];
+  const start = async (tk) => { started.push(tk.id); return { ok: true }; };
+  const hold = (tk) => tk.id === held.id;
+  let out = await runDueTickets({ now: T0 + MIN, start, hold });
+  assert.deepEqual(out.held, [held.id]); assert.deepEqual(out.fired, []); assert.deepEqual(started, []);
+  const t = getTicket(held.id);
+  assert.equal(t.status, 'scheduled');
+  assert.equal(t.runAt, AFTER_RUN_AT, 'a held ticket is never written');
+  // Run now sets forced: the hold is never consulted.
+  requestRunNow(held.id, { now: T0 + 2 * MIN });
+  out = await runDueTickets({ now: T0 + 2 * MIN, start, hold });
+  assert.deepEqual(out.fired, [held.id]); assert.deepEqual(out.held, []);
+  // A predicate that throws never holds.
+  const other = createTicket({ projectDir: DIR, title: 'Docs', request: REQ, after: { kind: 'pipeline', id: 'g0000011' }, now: T0 });
+  out = await runDueTickets({ now: T0 + 3 * MIN, start, hold: () => { throw new Error('db gone'); } });
+  assert.deepEqual(out.fired, [other.id]); assert.deepEqual(out.held, []);
+});
+
 test('a predecessor that ends badly, is canceled, removed or archived strands its dependent as missed (any-policy and Run now go through)', async () => {
   await checkRows([
     { name: 'a predecessor that ends badly makes the dependent missed, with the reason; any-policy and Run now go through', run: async () => {
@@ -1366,7 +1387,7 @@ test('a paused usage limit an engine hit says it can continue now on the other e
   recordOutcome(await fire('20'), { status: 'paused', reason: 'usage_limit', detail: 'free requests used up' });
   const msgs = listNotifications().filter((n) => n.kind === 'run_paused' && n.scheduleId === schedule.id).map((n) => n.message).reverse();
   assert.deepEqual(msgs, [
-    "paused (usage limit): You've hit your usage limit — resume on Claude, Copilot, Cursor, Gemini CLI, Goose, OpenCode or Qwen Code to continue now.",
+    "paused (usage limit): You've hit your usage limit — resume on Claude Code, GitHub Copilot, Cursor, Gemini CLI, Goose, OpenCode or Qwen Code to continue now.",
     'paused (usage limit): free requests used up',
   ]);
 });

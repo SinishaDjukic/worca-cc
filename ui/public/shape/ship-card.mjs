@@ -6,7 +6,6 @@ import { renderAskChanges } from '../chat/ask-changes.mjs';
 import { buildCheckFold, buildCheckRows } from './check-row.mjs';
 import { checkLine } from './plan-text.mjs';
 import { ledgerCheck } from '../../../src/shared/shape/acceptance.mjs';
-import { flagOn } from '../flags.mjs';
 
 const MINUS = '\u2212';
 const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -283,8 +282,7 @@ export function buildShipChatCard(block, ctx) {
   const phase = block.state === 'applied' ? 'applied' : block.state === 'declined' ? 'declined' : 'ready';
   const say = (t) => { if (ctx && typeof ctx.announce === 'function') ctx.announce(t); };
   const save = typeof ctx.saveAcceptance === 'function' ? ctx.saveAcceptance : saveAcceptance;
-  // The block keeps the ledger it was offered with: with the Labs flag off the card is today's (no fold, no lock).
-  const ledgerOn = !!c.acceptance && flagOn('shapeRequirements', ctx.doc);
+  const ledgerOn = !!c.acceptance;
   const { root, ledger } = shipCard(ctx.doc, { phase, featureId: c.featureId, title: c.title, runs: c.runs, files: c.files, added: c.added,
     deleted: c.deleted, suggested: c.suggested, result: c.result || null, ...(ledgerOn ? { acceptance: c.acceptance } : {}) }, {
     onNotNow: async () => { await ctx.postCard(block, { verb: 'not-now' }); say('Ship card dismissed'); },

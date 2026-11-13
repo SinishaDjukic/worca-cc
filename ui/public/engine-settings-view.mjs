@@ -162,7 +162,7 @@ export function renderEngineSection(host, options) {
     card.append(slotTable(doc, 'engine-steps', 'Step models', steps, { what: 'step', from, onTest: options.onTest }));
     const jobs = options.jobs?.[engine] || [];
     if (jobs.length) {
-      const helpers = jobs.map((job) => row(utilityId(engine, job), JOB_LABELS[job] || job, options.defaultLabels?.[engine] || (engine === 'codex' ? "Codex's default model (GPT-5.6 Sol)" : 'the default model'), JOB_HINTS[job]));
+      const helpers = jobs.map((job) => row(utilityId(engine, job), JOB_LABELS[job] || job, options.defaultLabels?.[engine] || (engine === 'codex' ? `${engineLabel('codex')}'s default model (GPT-5.6 Sol)` : 'the default model'), JOB_HINTS[job]));
       card.append(slotTable(doc, 'engine-helpers', 'Helper jobs', helpers, { what: 'helper job', from, onTest: options.onTest }));
     } else if (SIGN_IN_ENGINE_NAMES.includes(engine) || engine === 'copilot') {
       const sec = doc.createElement('section'); sec.className = 'engine-slots engine-helpers';
@@ -322,11 +322,11 @@ export function renderAskEngineSection(host, { catalog = [], askEngine, askModel
   const oldVersion = rest.filter((x) => !ENGINES[x].signin);
   if (oldVersion.length === 1) sentences.push(`Chat on ${engineLabel(oldVersion[0])} is unavailable on this ${oldVersion[0]} version.`);
   else if (oldVersion.length > 1) sentences.push(`Chat on ${list(oldVersion.map(engineLabel))} is unavailable on these engine versions.`);
-  if (broker.length || rest.length > needModel.length) sentences.push('New chats start on Claude.');
+  if (broker.length || rest.length > needModel.length) sentences.push(`New chats start on ${engineLabel('claude')}.`);
   const notes = sentences.join(' ');
   host.append(renderInheritField(doc, { id: 'askEngine', label: 'Engine for new chats', kind: 'select', level: 'user',
     hint: `New chats start here. A chat can move to another engine later, from its model picker.${notes ? ` ${notes}` : ''}`,
-    options: [{ value: 'claude', label: 'Claude' }, ...others.map((e) => ({ value: e, label: offered[e] ? engineChoiceLabel(e) : `${engineLabel(e)} (unavailable)` }))],
+    options: [{ value: 'claude', label: engineLabel('claude') }, ...others.map((e) => ({ value: e, label: offered[e] ? engineChoiceLabel(e) : `${engineLabel(e)} (unavailable)` }))],
     own: askEngine ?? undefined, inherited: { value: 'claude', source: 'default' }, format: engineName }));
   applyEngineLocks(host);
   // The chat models: the Engines card's table, one row per engine and always listed (no switch, nothing folded).

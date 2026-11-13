@@ -11,7 +11,6 @@ import { featureOfPipeline, featureView, featureThread, featureRootSource, featu
 import { roundOrigin } from './shape/rounds.mjs';
 import { readPrState, readMemberPrStates, readPipelineStateById } from './artifacts.mjs';
 import { branchExists, commitsAhead } from './git-info.mjs';
-import { flagEnabled } from './flags.mjs';
 import { addNotification } from './notifications.mjs';
 import { withBillTo, normalizeBillTo } from './billing.mjs';
 import { asPersonMode } from './github-credentials.mjs';
@@ -48,7 +47,7 @@ export function prAutoFinisher() { return current; }
 const DEFAULTS = {
   readRunPrAuto, setRunPrOutcome, featurePrSetting, setFeaturePrOutcome, logToRun,
   featureOfPipeline, featureView, featureThread, featureRootSource, featureBase, acceptanceRefusal, roundOrigin,
-  readPrState, readMemberPrStates, readState: readPipelineStateById, branchExists, commitsAhead, flagEnabled, addNotification, withBillTo, accountCheck,
+  readPrState, readMemberPrStates, readState: readPipelineStateById, branchExists, commitsAhead, addNotification, withBillTo, accountCheck,
   now: () => new Date().toISOString(),
   pushRemoteUrls: async () => [], live: () => null, changed: () => {}, postNotice: () => {},
 };
@@ -256,7 +255,7 @@ export function createPrAutoFinisher(deps = {}) {
       const text = `One pull request for "${view.title}" was not opened: run ${followUp.index} is a follow-up that starts from ${d.featureBase(featureId) || 'the base branch'}, so the last run's branch does not hold every run's work. Ship the feature from the Ship card.`;
       return finish(outcome('blocked', true, { reason: text }), text, { problem: text });
     }
-    const refusal = d.flagEnabled('shapeRequirements') ? d.acceptanceRefusal(view) : null;
+    const refusal = d.acceptanceRefusal(view);
     if (refusal) return held(refusal.missing?.length ?? 0);
     const starter = f.createdBy;   // the one PR is pushed as the feature's creator, even when the last requirement was marked by another person
     const account = await d.accountCheck({ startedBy: starter, repoUrls: await d.pushRemoteUrls(f.projectDir ? [f.projectDir] : []) });

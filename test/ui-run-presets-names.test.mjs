@@ -32,21 +32,21 @@ test('an id the list no longer holds reads "Workflow removed", never the id; an 
 });
 
 test('each catalog engine reads its label; an unknown engine never shows its id', () => {
-  assert.deepEqual(Object.keys(ENGINES).map(presetEngineName), ['Claude', 'Codex', 'Copilot', 'Cursor', 'Gemini CLI', 'Goose', 'OpenCode', 'Qwen Code']);
-  assert.equal(presetEngineName(undefined), 'Claude');
+  assert.deepEqual(Object.keys(ENGINES).map(presetEngineName), ['Claude Code', 'OpenAI Codex', 'GitHub Copilot', 'Cursor', 'Gemini CLI', 'Goose', 'OpenCode', 'Qwen Code']);
+  assert.equal(presetEngineName(undefined), 'Claude Code');
   assert.equal(presetEngineName('gemini-x'), UNKNOWN_ENGINE_LABEL);
   assert.equal(UNKNOWN_ENGINE_LABEL, 'Unknown engine');
 });
 
 test('presetSetupSummary: "workflow · engine", the workflow left out while the list is unknown', () => {
-  assert.equal(presetSetupSummary({ workflowId: 'wf_auto', engine: 'codex' }, NAMES).text, 'Auto workflow · Codex');
-  assert.equal(presetSetupSummary({ workflowId: 'wf_gone99' }, NAMES).text, 'Workflow removed · Claude');
-  assert.equal(presetSetupSummary({ workflowId: 'wf_x1', engine: 'copilot' }, null).text, 'Copilot');
-  assert.equal(presetSetupSummary(null, NAMES).text, 'Default · Claude');
+  assert.equal(presetSetupSummary({ workflowId: 'wf_auto', engine: 'codex' }, NAMES).text, 'Auto workflow · OpenAI Codex');
+  assert.equal(presetSetupSummary({ workflowId: 'wf_gone99' }, NAMES).text, 'Workflow removed · Claude Code');
+  assert.equal(presetSetupSummary({ workflowId: 'wf_x1', engine: 'copilot' }, null).text, 'GitHub Copilot');
+  assert.equal(presetSetupSummary(null, NAMES).text, 'Default · Claude Code');
 });
 
 test('presetSavedNote names the workflow (and the project default) and the engine, with no ids', () => {
   const note = presetSavedNote({ workflowId: 'wf_auto', engine: 'claude' }, NAMES, { projectDefault: true });
-  assert.equal(note, "Saved: Auto workflow (this project's default) · Claude, guardrails, agents, loops, branches, Away mark, opt-outs. Never saved: title, prompt, Markdown, extra files, new branch name.");
+  assert.equal(note, "Saved: Auto workflow (this project's default) · Claude Code, guardrails, agents, loops, branches, Away mark, opt-outs. Never saved: title, prompt, Markdown, extra files, new branch name.");
   assert.doesNotMatch(presetSavedNote({ workflowId: 'wf_x1', engine: 'cursor' }, NAMES), /wf_|cursor/);
 });

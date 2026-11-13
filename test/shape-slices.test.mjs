@@ -259,6 +259,8 @@ test('outline feedback text', () => {
   const fb = outlineFeedbackBlock('  Merge the first two.  ');
   assert.ok(fb.startsWith('## Changes asked for the outline'));
   assert.ok(fb.includes('Merge the first two.\n\n'));
+  assert.ok(fb.includes('The outline you wrote is still in the outline file. Edit it to address these changes, keep what they do not touch, and STOP again; do not write the plan yet.'));
+  assert.ok(!fb.includes('Rewrite the outline file'));
   assert.ok(!FLAT_NOTE.includes('The person chose'));
   assert.ok(FLAT_NOTE.startsWith('## Do not slice'));
 });

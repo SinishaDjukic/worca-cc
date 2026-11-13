@@ -11,6 +11,9 @@ const ITEM_RE = /^\s*-\s+(?:\*\*(R-[a-z]{1,8}-\d+)\*\*|\[[ xX]\]\s+(R-[a-z]{1,8}
 const FENCE_RE = /^\s*(```|~~~)/;
 const HEADING_RE = /^(#{1,6})\s+(.*?)\s*#*\s*$/;
 const EXCLUDED_SECTIONS = new Set(['clarifications (q&a)', 'out of scope', 'open questions']);
+// The explicit coverage form (D13): `- Step 2 · Covers: R-po-1, R-arch-2`, a body line, never a heading.
+const COVERS_RE = /\bCovers:\s*(.*)$/;
+const ID_IN_TEXT_RE = /(?<![A-Za-z0-9-])R-[a-z]{1,8}-[1-9]\d*(?![0-9])/g;
 const oneLine = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
 const bareTitle = (t) => oneLine(t).replace(/^\d+(?:\.\d+)*\.?\s+/, '');
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -76,11 +79,15 @@ export function criteriaCheck(markdown, { agreed = [] } = {}) {
 
 /** Which criteria a plan covers. A criterion is covered by the first non-fenced line naming its id, outside every
  *  `### Checklist` block and outside the Clarifications, Out of scope, Risks… and Open questions sections (a mention
- *  there is not delivery). `opts.texts` maps an id to its criterion text, shown on a row that is not covered. */
+ *  there is not delivery). When the plan has at least one `Covers:` line there, only `Covers:` lines count, so a
+ *  checklist or a prose line that reuses an agreed id neither covers it nor hides it. `opts.texts` maps an id to its
+ *  criterion text, shown on a row that is not covered. */
 export function coverageOf(ids, planMarkdown, { texts = {} } = {}) {
   const list = [...new Set((Array.isArray(ids) ? ids : []).filter((id) => typeof id === 'string' && CRITERION_ID_RE.test(id)))];
   if (!list.length) return { ok: true, passed: 0, total: 0, items: [] };
-  const found = new Map();                              // id -> { line, heading }
+  const found = new Map();                              // id -> { line, heading }: first mention
+  const covered = new Map();                            // id -> { line, heading }: first `Covers:` line naming it
+  let anyCovers = false;
   const res = list.map((id) => [id, criterionMention(id)]);
   let heading = '';
   let skipUntil = 0;                                     // skip lines until a heading of this level or higher (0: none)
@@ -96,10 +103,16 @@ export function coverageOf(ids, planMarkdown, { texts = {} } = {}) {
       continue;
     }
     if (skipUntil) continue;
+    const cv = COVERS_RE.exec(line);
+    if (cv) {
+      anyCovers = true;
+      for (const id of cv[1].match(ID_IN_TEXT_RE) || []) if (!covered.has(id)) covered.set(id, { line, heading });
+    }
     for (const [id, re] of res) if (!found.has(id) && re.test(line)) found.set(id, { line, heading });
   }
+  const hits = anyCovers ? covered : found;
   const items = list.map((id) => {
-    const hit = found.get(id);
+    const hit = hits.get(id);
     if (!hit) return { id, label: `${id} · not covered by any step`, pass: false, detail: oneLine(texts[id]) };
     const step = /\bStep (\d+)\b/.exec(hit.line) || /\bStep (\d+)\b/.exec(hit.heading);
     return { id, label: `${id} · covered by ${step ? `Step ${step[1]}` : hit.heading}`, pass: true, section: hit.heading };

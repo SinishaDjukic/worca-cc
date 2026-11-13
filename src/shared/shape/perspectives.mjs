@@ -138,10 +138,13 @@ export function normalizePerspectives(raw) {
 /**
  * The Perspectives block of the Planner/Refine prompt (spec D5). '' for an invalid list, so a malformed
  * resume point can never break a prompt. Every rule here is one the shape check (shape.mjs) enforces.
+ * `agreedIds` (D14): every agreed requirement id of the feature. With some, the planner is told not to reuse them for
+ * checklist items, to number each free-numbered prefix after its highest agreed number, and to name the step that
+ * delivers each on a `Covers:` line. With none, the text is unchanged.
  * @param {string[]} perspectives
- * @param {{refiner?:boolean}} [opts]
+ * @param {{refiner?:boolean, agreedIds?:string[]}} [opts]
  */
-export function perspectivesBlock(perspectives, { refiner = false } = {}) {
+export function perspectivesBlock(perspectives, { refiner = false, agreedIds = [] } = {}) {
   const n = normalizePerspectives(perspectives);
   if (!n.ok) return '';
   const picked = n.perspectives;
@@ -170,6 +173,7 @@ export function perspectivesBlock(perspectives, { refiner = false } = {}) {
         '`- [ ] R-<prefix>-<n> <one verifiable statement>`, numbered from 1 per prefix:\n\n' + lists.join('\n') +
         '\n\nProduct needs no checklist.\n\n'
       : '') +
+    agreedBlock(picked, agreedIds) +
     'Also:\n' +
     '- Every list item under "Problem and goal" and "Testing" states a measurable condition (a number, a named ' +
     'value, or a verb such as returns, shows, rejects, lists).\n' +
@@ -190,4 +194,23 @@ export function perspectivesBlock(perspectives, { refiner = false } = {}) {
         'report it as a minor issue: the person sees the shape check on the plan before approving it.\n'
       : '') +
     '\n';
+}
+
+/** The agreed ids paragraph of perspectivesBlock: '' when there are none. */
+function agreedBlock(picked, agreedIds) {
+  const ids = [...new Set((Array.isArray(agreedIds) ? agreedIds : []).filter((id) => typeof id === 'string' && /^R-[a-z]{1,8}-[1-9]\d*$/.test(id)))];
+  if (!ids.length) return '';
+  const top = new Map();                                    // prefix -> highest agreed number
+  for (const id of ids) {
+    const [, prefix, n] = id.split('-');
+    top.set(prefix, Math.max(top.get(prefix) || 0, Number(n)));
+  }
+  // A fixed-rule prefix (Fit) keeps its own 1..N: its items are given verbatim above.
+  const fixed = new Set(picked.map(perspectiveByKey).filter((p) => p.checklist && p.rules).map((p) => p.checklist));
+  const next = [...top].filter(([prefix]) => !fixed.has(prefix)).map(([prefix, n]) => `\`R-${prefix}-${n + 1}\``);
+  return 'These requirement ids are already agreed for this feature: ' + ids.map((id) => `\`${id}\``).join(', ') + '.\n' +
+    '- Never reuse an agreed id for a checklist item. ' +
+    (next.length ? `Number each checklist after the highest agreed number of its prefix: start at ${next.join(', ')}.\n` : '\n') +
+    '- Name the step that delivers each agreed id on a body line (never a heading) that contains `Covers:` and the ids, ' +
+    'for example `- Step 2 · Covers: R-po-1, R-arch-2`. Only `Covers:` lines count as coverage.\n\n';
 }

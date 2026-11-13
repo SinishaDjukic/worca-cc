@@ -123,7 +123,8 @@ be skipped by forgetting it.
   The guides open that dialog too when a save failed.
 - `ui-level.mjs` paints all three (the menu row and side menu, the Settings card,
   the dialog) from one controller.
-- Stored as `uiLevel` in `settings.json`. Absent means "never chosen".
+- Stored as `uiLevel` in the server's `settings.json`, so a choice applies in every browser that
+  opens this Worca. Absent means "never chosen".
 
 ## Catalogue
 
@@ -146,6 +147,12 @@ be skipped by forgetting it.
 | Add-ons: Models, Providers | E — like every page, the open one keeps its row at a lower mode while the banner names its level |
 | Schedules | A — kept visible at every level while anything is scheduled, missed, repeating or unread; its grey count and amber unread pill each hide at zero |
 | Team metrics, Team policy | E |
+| The level avatar art in the corner (the round art on the account corner and the spend ring's avatar) | all — a level is shown to everyone, whatever the mode |
+| The level tooltip (hover or focus on the corner avatar: the level, its items, a link to Profile) | all |
+| The account-menu level card (above Interface mode) | all |
+| Profile (the level section) | all — it has no sidebar entry; it opens from the menu card, the tooltip and the Getting started level line |
+
+Levels are not Interface modes: no level element carries `data-min-level`; Try next / Open links to higher-mode pages open them with the banner.
 
 ### New pipeline
 
@@ -303,6 +310,8 @@ inside the view.
 | Element | Level |
 |---|---|
 | Projects list, add, project page Overview, remove, Use git (Folder projects) and Link remote (Git projects without origin) | S |
+| Agent readiness chip (Projects row, project page header) and its report, incl. Not used here / Undo and Recheck | S — status of the project a run starts in; its Settings links open the project Settings tab by deep link |
+| Project Settings tab: Agent readiness card (Detect / Used / Not used per tool, skipped checks) | A — the tab's level |
 | Project Memory tab (view and edit files) | A |
 | Project Memory tab › Team view (Local · Team · Both choice, note states, share existing notes, Compare, Undo seeding); project Settings › Team memory | A |
 | Project page Overview › "Your team shares memory for this repository" (Turn on, Not now); the "team memory available" mark in the Projects list and the workspace wizard's import list | A |
@@ -395,6 +404,8 @@ missing (`data-needs-git`), at every level.
 
 | Element | Level |
 |---|---|
+| The level welcome and celebration (the dialogs that open at boot and after a level-up) | all — they wait while a blocking prompt or another dialog is on screen (rule 1) |
+| The Getting started level line (the current level and what is next, linking to Profile) | all |
 | Statistics page | A |
 | Statistics: the Requirements tile (spend, features, a link to the page; behind the `requirements` flag), the Requirements row in the Group by tables and in the Cost report (money already spent there stays listed while the flag is off) | A — with the page |
 | Team metrics page and every surface of it elsewhere | E |
