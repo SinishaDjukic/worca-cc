@@ -77,7 +77,7 @@ export const CARD_TURN = Object.freeze({
     const WORD = { met: 'Met', 'not-met': 'Not met', dropped: 'Dropped' };
     const reqs = a ? a.agreed.map((r) => { const e = marks.get(r.id), mark = WORD[e?.mark] ? e.mark : '', why = str(e?.target) || str(e?.reason); return { id: str(r.id), text: [str(r.id), str(r.text)].filter(Boolean).join(' · '), mark, v: mark ? `${WORD[mark]}${why ? `: ${why}` : ''}` : 'Mark it' }; }) : [];
     const n = Number(c.files) || 0, st = stateOf(b.state);
-    return { t: 'ship', id: str(b.id), card: str(b.id), cardType: 'ship', featureId: str(c.featureId), title: str(c.title) || 'Ship it', files: n, how: c.suggested === 'stacked' ? 'as stacked PRs' : 'as one PR', reqs, state: st,
+    return { t: 'ship', id: str(b.id), card: str(b.id), cardType: 'ship', featureId: str(c.featureId), title: str(c.title) || 'Ship the feature', files: n, how: c.suggested === 'stacked' ? 'as stacked PRs' : 'as one PR', reqs, state: st,
       ...(st === 'proposed' ? {} : { done: c.result?.prUrl ? `Shipped: ${str(c.result.prUrl)}` : b.state === 'applied' ? 'Shipped' : 'Not shipped yet' }) };
   },
   changes: (b) => { const l = b.card.landing || {}; return act(b, `<b>${esc(str(l.title) || 'Changes')}</b> ${esc(str(b.card.text))}`, [[str(l.start) || 'Start', 'primary', 'Started', 'card-verb', { verb: 'start' }], ['Not now', 'quiet', 'Not now', 'card-verb', { verb: 'not-now' }]]); },
