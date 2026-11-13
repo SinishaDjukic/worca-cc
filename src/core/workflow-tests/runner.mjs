@@ -316,7 +316,13 @@ export function createTestRunner(deps) {
     for (const id of ids) {
       const ex = store.readExample(run.workflowId, id);
       if (!ex || !ex.project) continue;
-      for (const c of ex.checks || []) if (c.kind === 'command') jobs.push({ ex, check: c });
+      for (const c of ex.checks || []) {
+        if (c.kind !== 'command') continue;
+        // Mock browser check, finding 3 (board 42): a kept result is used at once, before the copy is prepared: that start
+        // point is skipped, never shown as running and not counted in "n of N".
+        const kept = deps.beforeKept ? await Promise.resolve().then(() => deps.beforeKept(beforeSpecOf(ex, c))).catch(() => null) : null;
+        if (kept) st.before.set(beforeKey(ex.id, c.id), kept); else jobs.push({ ex, check: c });
+      }
     }
     if (!jobs.length) return;
     st.beforeAbort = new AbortController();

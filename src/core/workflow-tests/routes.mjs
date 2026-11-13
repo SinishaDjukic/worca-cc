@@ -10,7 +10,7 @@ import { readTryOutcome, checkTry } from './result.mjs';
 import { useFingerprint } from './uses.mjs';
 import { dirBytes, freeDiskBytes } from './project-copy.mjs';
 import { listProjects } from '../projects.mjs';
-import { beforeRun } from './before-run.mjs';
+import { beforeRun, readBefore } from './before-run.mjs';
 
 const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_VERSIONABLE: 400, NOT_FOUND: 404, BUSY: 409, NOT_READY: 422, NO_DISK: 422 });
 const W = '/api/workflows/:id/tests';
@@ -49,6 +49,8 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
     judge: (example, outcome, o = {}) => checkTry(example, outcome, { scriptName, onCommand: o.onCommand, beforeOf: o.beforeOf }),
     // 3b (D75): the command on each project example's start point, before the tries (a test may pass its own).
     beforeRun: deps.beforeRun || ((spec, o) => beforeRun(spec, o)),
+    // A kept result is looked up first (board 42: skipped, not shown as running); a test that passes its own before run owns it.
+    beforeKept: deps.beforeKept || (deps.beforeRun ? null : (spec) => readBefore(spec)),
     fingerprintOf: (workflowId, use) => useFingerprint(workflowId, use),
     // D62 (replaces D20 and review M9): each example on each version.
     // The runner reads the registry once per start (listProjects) and hands it to both.

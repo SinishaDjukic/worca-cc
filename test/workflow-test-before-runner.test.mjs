@@ -249,3 +249,36 @@ test('an example with a "passes" and a "breaks nothing" check: a failed before r
   assert.deepEqual([r.status, r.stopReason, r.stopDetail], ['stopped', 'worca-before', 'EBUSY: resource busy']);
   assert.deepEqual(h.started, [], 'no try started');
 });
+
+// Mock browser check, finding 3 (board 42): a start point whose before result is kept is skipped, before Worca prepares the
+// copy, and is not counted in "1 of N"; the progress page never says it is running. All kept: nothing shows as running.
+test('a kept before result is used at once: never shown as running, not counted in "n of N", its copy not prepared', async () => {
+  const kept = { ran: true, ok: true, exitCode: 0, timedOut: false, tests: TESTS, at: '2026-10-28T09:00:00.000Z', cached: true, ms: 2000 };
+  const ex1 = example();
+  const ex2 = example(undefined, { ...pin, startCommit: 'b'.repeat(40) });
+  for (const [what, keptFor, want] of [
+    ['one kept', (s) => s.startCommit === SHA, [[ex2.id, 1, 1]]],
+    ['all kept', () => true, []],
+  ]) {
+    let runner = null;
+    const seen = [];
+    const h = harness();
+    h.deps.beforeKept = async (spec) => (keptFor(spec) ? kept : null);
+    h.deps.notify = () => {
+      const st = runner ? runner.beforeNowOf(runId) : null;
+      if (st) seen.push([st.exampleId, st.n, st.of]);
+    };
+    let runId = null;
+    runner = createTestRunner(h.deps);
+    const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex1.id, ex2.id], tries: 1 });
+    runId = run.id;
+    await runner.idle(run.id);
+    assert.deepEqual([...new Map(seen.map((s) => [s.join(), s])).values()], want, `${what}: what the progress page saw`);
+    assert.deepEqual(h.befores.map((s) => s.startCommit), want.length ? ['b'.repeat(40)] : [], `${what}: only the start point not kept runs`);
+    assert.equal(h.prepared.filter((id) => id === ex1.id).length, 1, `${what}: the kept start point's copy is prepared for its try only`);
+    for (const t of store.triesOfRun(run.id).filter((x) => x.exampleId === ex1.id)) {
+      const b = t.verdict.checks[0].before;
+      assert.deepEqual([b.ran, b.cached, b.at, b.level], [true, true, kept.at, 'tests'], `${what}: the judge gets the kept result`);
+    }
+  }
+});
