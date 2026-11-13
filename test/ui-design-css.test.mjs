@@ -93,3 +93,12 @@ test('made pictures: tiles of their shape on one baseline, a still dashed tile, 
     assert.doesNotMatch(r.body, /animation/, `${r.sel}: the quiet tile is still (board BuildMaking)`);
   }
 });
+
+test('the sound cards are the white ask card: no .dsc-sound- rule names an amber, yellow or warn token', () => {
+  const rules = ALL.filter((x) => /\.dsc-sound-/.test(x.sel));
+  assert.ok(rules.length >= 5, 'the voice row, its dividers, the fields and the answered line');
+  for (const r of rules) {
+    assert.doesNotMatch(r.body, /--[\w-]*(?:amber|yellow|warn)/, r.sel);
+    assert.doesNotMatch(r.body, /border-left/, r.sel);
+  }
+});

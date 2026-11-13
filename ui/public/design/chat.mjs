@@ -14,9 +14,10 @@ import { createDotOrbs, turnPhase } from '../dot-orb.mjs';
 import { bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
 import { DESIGN_FAST_LABEL, DESIGN_PICTURES_DEFAULT } from '../../../src/shared/design-names.mjs';
 import { createModelPills } from './model-pills.mjs';
-import { createComposerSettings, createPicturesRow } from './composer-settings.mjs';
+import { createComposerSettings, createPicturesRow, createSoundRow } from './composer-settings.mjs';
 import { createBuildNarration, nameList } from './narration.mjs';
 import { createPictureStrip, openPictureViewer, madeWords, failedWords } from './pictures.mjs';
+import { buildSoundCard } from './sound-card.mjs';
 import { currentLevel, levelShows } from '../ui-level.mjs';
 import { renderAskForm } from '../ask/form-renderer.mjs';
 
@@ -470,8 +471,16 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   // and at each open of the gear. The popup opens upward, so a row that appears while it is open places it again.
   const pics = createPicturesRow({ doc, fetch: fetchFn, checked: typeof row0.pictures === 'boolean' ? row0.pictures : DESIGN_PICTURES_DEFAULT });
   const loadPics = () => pics.load().then((c) => { if (c) settings.reposition(); });
+  // A video's Sound row under Pictures (SPEC U6), asked for at the same times: Change puts the sound card in this chat
+  // and closes the popup, or says in the composer's note why it did not.
+  const sound = createSoundRow({ doc, fetch: fetchFn, designId, kind: row0.kind, onResult: ({ close, note }) => {
+    if (destroyed) return;
+    if (close) settings.close();
+    setNote(note);
+  } });
+  const loadSound = () => sound.load().then((c) => { if (c) settings.reposition(); });
   // The models and Build fast sit in one popup behind a gear, so the row keeps to Attach, Point, the gear and Send.
-  const settings = createComposerSettings({ doc, win, mode: 'up', onOpen: () => { void loadPics(); } });
+  const settings = createComposerSettings({ doc, win, mode: 'up', onOpen: () => { void loadPics(); void loadSound(); } });
   row.append(attachBtn, fileInput, pointBtn, settings.el, h('span', 'dz-spacer'), stopBtn, sendBtn);
   // The lead's and the builders' models, remembered on the design (PATCH): a change applies from the next round.
   const pills = createModelPills({ doc, win, fetch: fetchFn, mode: 'beside', parent: settings.panel, url: () => (designId ? `/api/design/${enc(designId)}/models` : null),
@@ -488,7 +497,7 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
         return 'The model was not saved.';
       }
     } });
-  settings.fill(pills.el, settings.divider(), sw.row, pics.el);
+  settings.fill(pills.el, settings.divider(), sw.row, pics.el, sound.divider, sound.el);
   const box = h('div', 'ask-composer-box');
   box.append(pinRow, fileRow, input, row);
   const composer = h('div', 'ask-composer dsc-composer');
@@ -960,6 +969,10 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
     }
     return buildChatReceipt(doc, 'Not answered');
   }
+  /** A `design-sound` card (sound-card.mjs): answered through the card route, a voice's sample from the sound route. */
+  function soundCard(b) {
+    return buildSoundCard(doc, { block: b, onSubmit: (v) => client.answerForm(b.id, v), sampleUrl: (id) => `/api/sound/voices/${enc(id)}/sample` });
+  }
   function buildQuestion(q) {
     if (q.state === 'closed') return buildChatReceipt(doc, 'Closed: the agent moved on');
     const qs = Array.isArray(q.questions) ? q.questions : [];
@@ -970,11 +983,13 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
       schedule();
     } }).el;
   }
-  /** A card's element, reused while its signature holds (chat-dock.mjs): a frame never swaps a tile under the pointer. */
+  /** A card's element, reused while its signature holds (chat-dock.mjs): a frame never swaps a tile under the pointer.
+   *  An element it replaces is disposed (a sound card's sample stops). */
   function cached(map, key, sig, make, seen) {
     seen.add(key);
     const hit = map.get(key);
     if (hit && hit.sig === sig) return hit.el;
+    if (hit && hit.el && typeof hit.el.__dispose === 'function') hit.el.__dispose();
     const el = make();
     map.set(key, { sig, el });
     return el;
@@ -1175,6 +1190,10 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
           // A reply with pictures and no step of its own gets the row by itself, just before its first round.
           if (!stepsPlaced && !steps.length && pics.length) placeSteps();
           wrap.append(cached(cardEls, b.id, roundSig(b), () => roundRow(b), seen));
+        } else if (b.card.type === 'design-sound') {
+          // Its state and step only: a saved key's refusal flips `keyNeeded` before its 422 lands, and a new element
+          // would lose the pick, the error line and the focus.
+          wrap.append(cached(cardEls, b.id, `${b.state}|${b.card.step}`, () => soundCard(b), seen));
         }
       }
     }
@@ -1318,6 +1337,7 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
   render();
   void pills.load();
   void loadPics();
+  void loadSound();
   (async () => {
     let body = null;
     try {
@@ -1367,6 +1387,8 @@ export function createDesignChat({ doc, host, design, fetch: fetchFn, sendWs = (
       destroyed = true;
       // No focus goes into a dock being taken down.
       if (viewer) viewer.close({ restore: false });
+      // A sound card's sample never outlives its card.
+      for (const { el } of cardEls.values()) if (el && typeof el.__dispose === 'function') el.__dispose();
       unsubscribe();
       orbs.destroy();
       pills.destroy();

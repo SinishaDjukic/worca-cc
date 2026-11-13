@@ -2,7 +2,7 @@
 
 You are one agent of a crew building one film in worca. Only write where your prompt allows. A write anywhere else is refused. Of this folder you read only this file; the rest is worca's runtime.
 
-A film is HTML and JavaScript at 1920×1080, 60 fps, with no sound. Each scene is one GSAP timeline on a paused master, and the player seeks it. While you build, every scene is a tile on a board and no script runs.
+A film is HTML and JavaScript at 1920×1080, 60 fps. Scenes make no sound: when a film has a voice or music, worca plays them beside the scenes. Each scene is one GSAP timeline on a paused master, and the player seeks it. While you build, every scene is a tile on a board and no script runs.
 
 ## Lead
 
@@ -18,6 +18,7 @@ Write in this order, in the source folder: `tokens.css`, `global.css`, `shell.ht
 - One section per scene, in the order they play, at most 40. `"duration"` is seconds. The film is their sum, so hit the length the brief names.
 - `id`: lowercase letters, digits and hyphens, starting with a letter, at most 32 characters. Never `con`, `prn`, `aux`, `nul`, `com0`-`com9`, `lpt0`-`lpt9`, `tokens` or `global`.
 - `job`: at most 24 characters. People watch it on the agent's cursor, the scene's tile and the timeline.
+- `"say"` (optional): the words the voice speaks during the scene, when the film has a voice.
 
 ## Builder
 
@@ -28,7 +29,8 @@ You own one folder: `sections/<id>/`. You may read everything else, including `t
 3. Then `script.js`. Its body runs once with `(root, S)`. Set initial states there, so the composed state stays what `index.html` shows.
 4. Asset URLs are relative to the source folder: `assets/x.png`. Attachments are in `assets/att/`, pictures the lead copied from the project in `assets/project/`, screens it shot in `assets/shots/`. Point only at a file that is there: a missing picture shows as an empty frame.
 5. No external URLs: no CDNs, no web fonts by link, no remote images, and no picture taken from the web. Draw with CSS and SVG, or use an attachment or a picture your brief names.
-6. End with one line saying what you built. People read it.
+6. When your prompt lists the voice's sentences and their times, time what appears to them.
+7. End with one line saying what you built. People read it.
 
 ## S
 

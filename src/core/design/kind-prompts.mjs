@@ -25,6 +25,8 @@ const DOC_SHAPE = '{"v":1,"kind":"document","title":"…","page":"A4","toc":true
 
 const DECK_SHAPE = '{"v":1,"kind":"pitch","title":"…","canvas":{"w":1920,"h":1080},"notes":"…","sections":[{"id":"title","job":"Title","brief":"…","parts":["html","css"]}]}';
 const FILM_SHAPE = '{"v":1,"kind":"video","title":"…","canvas":{"w":1920,"h":1080,"fps":60},"notes":"…","sections":[{"id":"open","job":"Open","brief":"…","parts":["html","css","js"],"duration":6}]}';
+/** A video's plan shape when the film has sound (SPEC §7): each scene may carry the words its voice speaks. */
+const FILM_SHAPE_SAY = FILM_SHAPE.replace('"brief":"…"', () => '"brief":"…","say":"…"');
 
 const LEAD_LINES = new Map([
   ['presentation', Object.freeze(['This design is a presentation. Build the argument the brief asks for, one claim per slide.'])],
@@ -50,13 +52,15 @@ export function boardShellRule(kind) {
 }
 
 /**
- * The C-2 plan shape a board lead writes, one line. '' for a web page (P2's shape stays in prompts.mjs).
+ * The C-2 plan shape a board lead writes, one line. '' for a web page (P2's shape stays in prompts.mjs). A video
+ * whose film has sound shows `"say"` after each scene's brief; `sound` changes nothing for a deck.
  * @param {string} kind
+ * @param {{ sound?: boolean }} [opts]
  * @returns {string}
  */
-export function boardPlanShape(kind) {
+export function boardPlanShape(kind, { sound = false } = {}) {
   if (isDeckKind(kind)) return DECK_SHAPE;
-  if (isFilmKind(kind)) return FILM_SHAPE;
+  if (isFilmKind(kind)) return sound === true ? FILM_SHAPE_SAY : FILM_SHAPE;
   return '';
 }
 
@@ -97,11 +101,16 @@ export function builderKindBlock(kind) {
 
 /**
  * The lead's first-prompt lines for a kind: what a presentation, a pitch, a video or a document is. None for a web
- * page.
+ * page. A video whose film has sound (`sound`, `{ music }`) is told worca adds the voice, and the music when
+ * `sound.music`, in place of the "with no sound" line (SPEC §7); `sound` changes nothing for any other kind.
  * @param {string} kind
+ * @param {{ sound?: { music?: boolean } | null }} [opts]
  * @returns {string[]}
  */
-export function leadKindLines(kind) {
+export function leadKindLines(kind, { sound = null } = {}) {
+  if (isFilmKind(kind) && sound && typeof sound === 'object') {
+    return [`This design is a video made of HTML and JavaScript. worca adds a voice${sound.music === true ? ' and music' : ''}. Aim at the length the brief names.`];
+  }
   return [...(LEAD_LINES.get(kind) ?? [])];
 }
 
@@ -109,11 +118,12 @@ export function leadKindLines(kind) {
  * A builder's user-prompt lines: its slide's place in the deck, its scene's window in the film, or its part's place in
  * the document and the printed page (here, so the builder system prompt stays one prefix per kind). `section` is found
  * in `plan.sections` by id, never by identity (the engine can pass its own section record); an id not in the plan, or
- * a web page, gives none.
- * @param {{ kind: string, plan: { page?: string, sections?: object[] } | null | undefined, section: { id?: string } | null | undefined }} opts
+ * a web page, gives none. A video scene with a clip (`clip`, from the checked sound manifest: `at` and `seconds` in
+ * scene time, one `{ t, text }` cue per sentence) is also told when its voice speaks and each sentence starts (SPEC §7).
+ * @param {{ kind: string, plan: { page?: string, sections?: object[] } | null | undefined, section: { id?: string } | null | undefined, clip?: { at: number, seconds: number, cues: { t: number, text: string }[] } | null }} opts
  * @returns {string[]}
  */
-export function builderKindLines({ kind, plan, section } = {}) {
+export function builderKindLines({ kind, plan, section, clip = null } = {}) {
   if (!(isBoardKind(kind) || isDocKind(kind)) || typeof section?.id !== 'string') return [];
   const list = Array.isArray(plan?.sections) ? plan.sections : [];
   const i = list.findIndex((s) => s?.id === section.id);
@@ -123,8 +133,15 @@ export function builderKindLines({ kind, plan, section } = {}) {
   const start = list.slice(0, i).reduce((t, s) => t + durationOf(s), 0);
   const own = durationOf(list[i]);
   const total = list.reduce((t, s) => t + durationOf(s), 0);
-  return [
+  const timing = [
     `Scene ${i + 1} of ${list.length}: ${seconds(start)}s to ${seconds(start + own)}s of a ${seconds(total)}s film.`,
     `S.dur is ${seconds(own)}.`,
+  ];
+  if (!clip) return timing;
+  return [
+    ...timing,
+    `The voice speaks in this scene from ${seconds(clip.at)}s to ${seconds(clip.at + clip.seconds)}s. Each sentence and when it starts:`,
+    ...(Array.isArray(clip.cues) ? clip.cues : []).map((cue) => `- ${seconds(cue.t)}s "${cue.text}"`),
+    'Time what appears to these sentences. Never show a whole spoken sentence as text.',
   ];
 }

@@ -181,6 +181,43 @@ test('Providers is a page of its own: its loader, its title, its level banner, a
       await settle();
       assert.equal(row().querySelector('.mv-im-save').dataset.fbState, 'done');
     } },
+    { name: 'the Sound row is wired: Test sends the typed key and shows the voices, a refused Save is the card\'s alert, an accepted one is Saved', run: async () => {
+      // Prefix match, first key wins: the Test route before the PATCH route.
+      const routes = {
+        '/api/providers/sound/test': { ok: true, voices: 6 },
+        '/api/providers/sound': () => ({ ok: false, status: 400, json: async () => ({ error: 'unknown sound field "voice"' }) }),
+      };
+      const { window, doc, calls } = await boot({ routes });
+      const bodies = [];
+      const inner = window.fetch;
+      globalThis.fetch = window.fetch = (u, opts = {}) => { if (String(u).startsWith('/api/providers/sound')) bodies.push(`${opts.method || 'GET'} ${u} ${opts.body}`); return inner(u, opts); };
+      await go(window, 'providers');
+      const row = () => doc.querySelector('#providers-list .mv-pv-row[data-provider="sound"]');
+      row().querySelector('.mv-pv-key').value = 'sk_typed_0123';
+      row().querySelector('.mv-so-test').click();
+      await settle();
+      assert.ok(calls.includes('POST /api/providers/sound/test'));
+      assert.deepEqual(bodies, ['POST /api/providers/sound/test {"apiKey":"sk_typed_0123"}']);
+      const result = row().querySelector('.mv-so-result');
+      assert.deepEqual([result.hidden, result.textContent, result.classList.contains('err')], [false, 'Key works · 6 voices', false]);
+      // A failed Test: the reason in the same line, in red.
+      routes['/api/providers/sound/test'] = { ok: false, message: 'ElevenLabs rejected the key' };
+      row().querySelector('.mv-so-test').click();
+      await settle();
+      assert.deepEqual([result.hidden, result.textContent, result.classList.contains('err')], [false, 'ElevenLabs rejected the key', true]);
+      row().querySelector('.mv-so-save').click();
+      await settle();
+      const alert = doc.querySelector('#providers-list .card-alert');
+      assert.ok(alert && alert.closest('.mv-pv-card').contains(row()), 'the Sound row\'s own card');
+      assert.deepEqual([alert.querySelector('.ca-title').textContent, alert.querySelector('.ca-detail').textContent], ['Not saved', 'unknown sound field "voice"']);
+      assert.equal(row().querySelector('.mv-pv-msg').textContent, '', 'the card\'s alert, not the row\'s line');
+      assert.ok(bodies.includes('PATCH /api/providers/sound {"apiKey":"sk_typed_0123"}'));
+      // A Save that goes through repaints the card: the new row's own Save takes the "Saved" state.
+      routes['/api/providers/sound'] = {};
+      row().querySelector('.mv-so-save').click();
+      await settle();
+      assert.equal(row().querySelector('.mv-so-save').dataset.fbState, 'done');
+    } },
   ]);
 });
 

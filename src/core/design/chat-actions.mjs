@@ -12,7 +12,7 @@ import { copyThreadAttachments } from './attachments.mjs';
 import { designBuildModels, designIdForThread } from './chat-thread.mjs';
 import { designWorkDir, ensureDesignFolders } from './paths.mjs';
 import { validatePlan } from './plan.mjs';
-import { getDesign } from './store.mjs';
+import { getDesign, updateDesign } from './store.mjs';
 
 /** P2's refusal for this design's own open build (`registry.mjs` `start`), paused included. */
 const OPEN_BUILD_PREFIX = 'This design already has a build open';
@@ -50,12 +50,14 @@ function refusalNotice(err, what) {
  *   appendCardRow: (threadId: string, block: object) => void,
  *   newCardId: () => string,
  *   stageKit: (opts: { kind: string, workDir: string }) => Promise<unknown>,
- * }} deps
- * @returns {{ apply: (req: object, ctx: { threadId: string, by?: string|null }) => Promise<
+ *   soundCards?: object|null,
+ * }} deps  `soundCards` (Design sound): a video's first start asks about sound first; absent, every start runs as it is.
+ * @returns {{ apply: (req: object, ctx: { threadId: string, by?: string|null, soundDecided?: boolean }) => Promise<
  *   { ok: false, notice: string } | { ok: true, block: object, posted: (added: boolean) => void }> }}
+ *   `soundDecided`: the sound card's own start (`cardStart`), which never meets the card again.
  */
-export function createDesignChatActions({ designBuilds, receipts, flagOn, brokerRefusal, appendCardRow, newCardId, stageKit }) {
-  async function apply(req, { threadId, by } = {}) {
+export function createDesignChatActions({ designBuilds, receipts, flagOn, brokerRefusal, appendCardRow, newCardId, stageKit, soundCards = null }) {
+  async function apply(req, { threadId, by, soundDecided = false } = {}) {
     if (!flagOn()) return notice('Design is switched off.');
     const designId = designIdForThread(threadId);
     const design = designId ? getDesign(designId) : null;
@@ -74,6 +76,31 @@ export function createDesignChatActions({ designBuilds, receipts, flagOn, broker
     }
     const refusal = await brokerRefusal(thread, designBuildModels(design));
     if (refusal) return notice(refusal);
+    if (!change && !soundDecided && soundCards) {
+      if (soundCards.holding(threadId)) return notice('The sound card above starts the build when it is answered.');
+      // Read again after the broker check's await. Asked once per design (D2): showing card 1 writes `{ on: false }`.
+      // No await from here to the return: a second start in the same reply meets the hold, never a second card.
+      const fresh = getDesign(design.id);
+      if (soundCards.available(fresh) && fresh.sound == null) {
+        soundCards.closeGearCards(threadId);
+        const block = soundCards.askBlock({ design: fresh, pending: ask });
+        updateDesign(design.id, { sound: { on: false } });
+        soundCards.hold(threadId);   // last: a throw above leaves no hold
+        return {
+          ok: true,
+          block,
+          /** The card is the reply's, or a row of its own; either way the thread holds it now. No kit is staged, no round
+           *  starts and no receipt follows: answering the card starts the round with the brief it keeps. */
+          posted(added) {
+            try {
+              if (!added) appendCardRow(threadId, block);
+            } finally {
+              soundCards.release(threadId);
+            }
+          },
+        };
+      }
+    }
     const rawText = change ? ask.instruction : ask.brief;
     const pins = Array.isArray(thread.composer?.pins) ? thread.composer.pins : [];
     const what = change ? 'change' : 'build';

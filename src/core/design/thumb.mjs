@@ -105,7 +105,7 @@ export function createThumbs({
     if (!current(id, stamp)) return;
     const design = getDesign(id);
     const plan = readExportPlan(design);
-    const html = staticDoc(assembleDesign({ workDir: designWorkDir(id), plan, mode: 'standalone' }).html, { extraCss: thumbStillCss(design.kind) });
+    const html = staticDoc(assembleDesign({ workDir: designWorkDir(id), plan, mode: 'standalone', sound: false }).html, { extraCss: thumbStillCss(design.kind) });
     const tmp = mkdtempSync(join(tmpdir(), 'worca-design-thumb-'));
     try {
       const htmlPath = join(tmp, 'index.html');

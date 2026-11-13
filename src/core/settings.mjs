@@ -56,7 +56,7 @@ import { isAnswererLead, ANSWERER_LEAD_KEYS } from '../shared/answerer.mjs';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
 import { suggestModelHandle } from '../shared/connections.mjs';
 export { suggestModelHandle };
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir, availableParallelism } from 'node:os';
 import { randomBytes } from 'node:crypto';
@@ -134,13 +134,16 @@ function expandTilde(p) {
  * Callers pass the object they got from readSettings() with their own key
  * added/deleted — that read-modify-write is what makes unknown keys survive
  * (no migration, no key loss; §5.1 storage note).
+ * The body is synchronous on purpose: a setter that awaits nothing between its
+ * readSettings() and this call reads, merges and commits in one run of the event
+ * loop, so two setters saved at the same moment can never drop each other's change.
  */
 async function persistSettings(settings) {
-  await mkdir(join(defaultRoot(), '.worca-cc'), { recursive: true }); // bootstrap dir
+  mkdirSync(join(defaultRoot(), '.worca-cc'), { recursive: true }); // bootstrap dir
   const file = settingsFile();
   const tmp = `${file}.${randomBytes(4).toString('hex')}.tmp`;
-  await writeFile(tmp, JSON.stringify(settings, null, 2) + '\n', 'utf8');
-  await rename(tmp, file);
+  writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n', 'utf8');
+  renameSync(tmp, file);
 }
 
 /** Setup apply (D20): set or delete whole top-level keys in ONE read and ONE persistSettings. `undefined` deletes. */
@@ -2490,6 +2493,7 @@ export async function removeGlobalModel(id) {
 //     anthropic: { baseUrl?, apiKey?, maxConcurrent? },
 //     speech:    { stt: {...}, tts: {...} },   // voice mode, NOT an upstream — see the Speech block below
 //     images:    { service?, baseUrl?, model?, apiKey?, price? },   // Design pictures, NOT an upstream — see the Images block below
+//     sound:     { apiKey? },   // Design sound (ElevenLabs)
 //   }
 //   (An older Worca also stored copilot.acknowledgedTerms / termsVersion; readers ignore them.)
 // ---------------------------------------------------------------------------
@@ -2824,6 +2828,68 @@ export async function updateImages(patch = {}) {
   if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
   await persistSettings(settings);
   return imagesConfig();
+}
+
+// ── Sound (Design sound: a Design video's voice and music, made through ElevenLabs) ──
+//   providers: { …, sound: { apiKey? } }
+// NOT a model-bridge upstream: it never joins UPSTREAM_PROVIDERS, PROVIDER_SECRET_KEYS,
+// allProviders() or the catalog. The key is literal or a whole-value ${VAR}, resolved at use
+// time by resolveProviderSecret, and only ever goes to ElevenLabs.
+const SOUND_FIELDS = Object.freeze(['apiKey']);
+const SOUND_KEY_MAX = 512;
+const SOUND_QUIET = Object.freeze({ quiet: true });
+
+/** Why `v` is not a valid value for sound field `k`, or null when it is. */
+function soundFieldError(k, v) {
+  if (typeof v !== 'string' || !v.trim()) return `${k} must be a non-empty string`;
+  return v.trim().length > SOUND_KEY_MAX ? `${k} must be at most ${SOUND_KEY_MAX} characters` : null;
+}
+
+/** Stored sound block → only the valid fields, trimmed (never throws; like sanitizeImages). `quiet` skips the warnings. */
+function sanitizeSound(raw, { quiet = false } = {}) {
+  const r = isObj(raw) ? raw : {};
+  const out = {};
+  for (const k of SOUND_FIELDS) {
+    if (r[k] === undefined) continue;
+    const why = soundFieldError(k, r[k]);
+    if (!why) out[k] = r[k].trim();
+    else if (!quiet) console.warn(`[worca] providers.sound.${k}: ${why} — ignored`);
+  }
+  return out;
+}
+
+/** Effective sound config: the default under the stored block. The key stays raw (literal or ${VAR}). */
+export function soundConfig() {
+  if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) return { apiKey: '' };
+  const all = readSettings().providers;
+  return { apiKey: '', ...sanitizeSound(isObj(all) ? all.sound : undefined) };
+}
+
+/**
+ * Patch { apiKey? }; '' / null clears it. Validates the whole patch before writing; a block
+ * with nothing valid left is removed, and so is an empty providers.
+ * @returns {Promise<{ apiKey: string }>} the effective config
+ * @throws {Error}
+ */
+export async function updateSound(patch = {}) {
+  assertTestSettingsAccess();
+  if (!isObj(patch)) throw new Error('sound patch must be an object');
+  for (const [k, v] of Object.entries(patch)) {
+    if (!SOUND_FIELDS.includes(k)) throw new Error(`unknown sound field ${JSON.stringify(k)}`);
+    if (isClearInput(v)) continue;
+    const why = soundFieldError(k, v);
+    if (why) throw new Error(why);
+  }
+  const settings = readSettings();
+  const all = isObj(settings.providers) ? settings.providers : {};
+  const next = isObj(all.sound) ? { ...all.sound } : {};
+  for (const [k, v] of Object.entries(patch)) {
+    if (isClearInput(v)) delete next[k]; else next[k] = v.trim();
+  }
+  if (Object.keys(sanitizeSound(next, SOUND_QUIET)).length) all.sound = next; else delete all.sound;
+  if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
+  await persistSettings(settings);
+  return soundConfig();
 }
 
 /** Forget the Copilot sign-in (token + login). */

@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { bootDesignChat } from './helpers/design-chat-boot.mjs';
 import { distDir } from '../src/core/design/paths.mjs';
+import { updateDesign } from '../src/core/design/store.mjs';
 import { BRIDGE_MARKER } from '../src/core/design/assemble.mjs';
 
 const { base: origin, call, openWs, waitFrame, settled } = await bootDesignChat(after);
@@ -19,6 +20,8 @@ const MODEL = { model: 'claude-opus-5-5', effort: 'high' };
 async function buildKind(kind) {
   const frames = []; const ws = await openWs((f) => frames.push(f));
   const d = (await call('POST', '/api/design', { kind, title: kind })).body;
+  // A video's first start asks about sound first (Design sound C1); the API cannot set it, so the store answers it.
+  if (kind === 'video') updateDesign(d.design.id, { sound: { on: false } });
   await call('POST', `/api/ask/threads/${d.threadId}/messages`, { text: `A ${kind}. MOCK_SECTIONS=3`, ...MODEL, design: { designId: d.design.id, pins: [] } });
   await waitFrame(frames, (f) => f.type === 'design-build' && f.designId === d.design.id && f.status === 'done', 60000);
   ws.close();

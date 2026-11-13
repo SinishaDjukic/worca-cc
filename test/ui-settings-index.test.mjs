@@ -86,7 +86,7 @@ test('Add-ons hrefs reach their place: a Marketplace tab, a Connectors view, a M
     if (view === 'marketplace') assert.equal(tabFromParam(param), e.id.split('/')[1], `${e.id}: the tab it names`);
     if (view === 'connectors') assert.equal(parseMcpParam(param).view, { sets: 'sets', servers: 'servers', skills: 'skills' }[e.id.split('/')[1]], e.id);
     if (view === 'models' && param) assert.ok(doc.getElementById(param), `${e.id}: #models/<card id>`);
-    if (view === 'providers') assert.ok([...Object.keys(PROVIDER_LABELS), 'speech', 'images'].includes(param), `${e.id}: a provider row`);
+    if (view === 'providers') assert.ok([...Object.keys(PROVIDER_LABELS), 'speech', 'images', 'sound'].includes(param), `${e.id}: a provider row`);
   }
   const href = (id) => ADDON_ENTRIES.find((e) => e.id === id).href;
   assert.equal(href('addon:providers/openrouter'), '#providers/openai', 'OpenRouter is a preset on the OpenAI-compatible row');

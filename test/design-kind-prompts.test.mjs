@@ -9,6 +9,20 @@ import {
 } from '../src/core/design/prompts.mjs';
 import { boardShellRule, builderKindBlock, builderKindLines, docPlanShape, docShellRule, leadKindBlock, leadKindLines } from '../src/core/design/kind-prompts.mjs';
 
+/** A 3-scene video plan. */
+const PLAN = { kind: 'video', sections: [{ id: 'open', job: 'Open', parts: ['html', 'css', 'js'], duration: 6 }, { id: 'plan', job: 'Plan', parts: ['html', 'css', 'js'], duration: 5 }, { id: 'end', job: 'End', parts: ['html', 'css', 'js'], duration: 4 }] };
+/** SPEC §7's Sound block, word for word: the last block of a video lead's system prompt when its film has sound. */
+const SOUND_BLOCK = [
+  'Sound (this video has a voice; worca makes it and plays it beside the scenes):',
+  '- A scene may carry `"say"` in plan.json: the words the voice speaks during that scene, in the brief\'s language, as plain sentences. No stage directions, no markup, no emoji, at most 1500 characters.',
+  '- The voice tells the story and the screen shows it. Never put a spoken sentence on screen as text: show the few words that matter.',
+  '- Size each scene to its words: about 2.5 words a second, plus one second. worca makes a scene longer when its voice needs it, never shorter. Keep the script tight enough that the film still hits the length the brief names.',
+  '- A scene with nothing to say has no `"say"`. The first scene speaks. The last sentence ends before the film\'s last second.',
+  '- In each scene\'s `brief`, say what is on screen as each sentence is spoken.',
+  '- In a change round a `touch` may carry `"say"` to change that scene\'s words; `""` takes its voice away. Leave `"say"` out to keep the words.',
+  '- Scenes never play sound themselves: no `<audio>`, no `<video>`.',
+].join('\n');
+
 /** What every kind's builder reads before its own last block: the web prompt up to its `A web page:` block. */
 function sharedBuilderText() {
   const web = builderSystemPrompt();
@@ -160,4 +174,53 @@ test('a document: its lead block, builder block, kind lines and shell rule; part
   // One cacheable builder prefix per kind: the plan never reaches the system prompt.
   assert.equal(builderSystemPrompt({ kind: 'document' }), builderSystemPrompt({ kind: 'document', plan: PLAN }));
   assert.ok(builderSystemPrompt({ kind: 'document' }).endsWith(builder));
+});
+
+test('without sound every prompt is what it was', () => {
+  assert.equal(leadSystemPrompt({ kind: 'video', sound: false }), leadSystemPrompt({ kind: 'video' }));
+  for (const kind of ['pitch', 'document', 'web']) assert.equal(leadSystemPrompt({ kind, sound: true }), leadSystemPrompt({ kind }));
+  assert.deepEqual(leadKindLines('video', {}), leadKindLines('video'));
+  assert.match(leadKindLines('video')[0], /with no sound/);
+  const base = { brief: 'b', kind: 'video', questionFile: 'q', planFile: 'p' };
+  assert.equal(leadPlanPrompt({ ...base, soundLine: null }), leadPlanPrompt(base));
+  const ch = { instruction: 'x', kind: 'video', questionFile: 'q', roundFile: 'r' };
+  assert.equal(leadChangePrompt({ ...ch, soundLine: null }), leadChangePrompt(ch));
+  assert.deepEqual(builderKindLines({ kind: 'video', plan: PLAN, section: PLAN.sections[0], clip: null }), builderKindLines({ kind: 'video', plan: PLAN, section: PLAN.sections[0] }));
+  const first = { section: PLAN.sections[1], notes: 'N', sectionDir: '/s', tokensCss: '/t', globalCss: '/g', crewJson: '/c', questionFile: '/q', kind: 'video', plan: PLAN };
+  assert.equal(builderPrompt({ ...first, clip: null }), builderPrompt(first));
+  const change = { section: PLAN.sections[1], instruction: 'I', brief: 'Bolder', notes: 'N', sectionDir: '/s', questionFile: '/q', kind: 'video', plan: PLAN };
+  assert.equal(builderChangePrompt({ ...change, clip: null }), builderChangePrompt(change));
+});
+test('with sound the lead is told how to write the words', () => {
+  const base = leadSystemPrompt({ kind: 'video' });
+  const sys = leadSystemPrompt({ kind: 'video', sound: true });
+  assert.equal(sys.replace('"brief":"…","say":"…"', '"brief":"…"'), `${base}\n\n${SOUND_BLOCK}`);   // only the shape and the last block differ
+  const pics = leadSystemPrompt({ kind: 'video', pictures: true }).slice(base.length);
+  assert.equal(leadSystemPrompt({ kind: 'video', sound: true, pictures: true }), `${sys.slice(0, -(SOUND_BLOCK.length + 2))}${pics}\n\n${SOUND_BLOCK}`);   // Sound is last (SPEC §7)
+  assert.deepEqual(leadKindLines('video', { sound: { music: true } }), ['This design is a video made of HTML and JavaScript. worca adds a voice and music. Aim at the length the brief names.']);
+  assert.deepEqual(leadKindLines('video', { sound: { music: false } }), ['This design is a video made of HTML and JavaScript. worca adds a voice. Aim at the length the brief names.']);
+  const p = leadPlanPrompt({ brief: 'b', kind: 'video', questionFile: 'q', planFile: 'p', sound: { music: true }, soundLine: 'Sound: voice "Ana"; music: calm' });
+  assert.match(p, /^Kind: video\nSound: voice "Ana"; music: calm$/m);
+  assert.doesNotMatch(p, /with no sound/);
+  const c = leadChangePrompt({ instruction: 'x', kind: 'video', questionFile: 'q', roundFile: 'r', soundLine: 'Sound: voice "Ana"; music: no music' });
+  assert.match(c, /^Kind: video\nSound: voice "Ana"; music: no music$/m);
+  assert.match(c, /"touch":\[\{"id":[^\]]*"say":"…"/);
+});
+test('a builder is told the sentences and when they start', () => {
+  const lines = builderKindLines({ kind: 'video', plan: PLAN, section: PLAN.sections[0], clip: { at: 0.35, seconds: 4.82, cues: [{ t: 0.4, text: 'Meet worca.' }, { t: 1.45, text: 'It plans.' }] } });
+  assert.deepEqual(lines.slice(2), ['The voice speaks in this scene from 0.35s to 5.17s. Each sentence and when it starts:', '- 0.4s "Meet worca."', '- 1.45s "It plans."',
+    'Time what appears to these sentences. Never show a whole spoken sentence as text.']);
+});
+test('a soundLine shows the round shape with say; a builder\'s clip reaches both builder prompts; other kinds stay silent', () => {
+  const ch = { instruction: 'x', kind: 'video', questionFile: 'q', roundFile: 'r' };
+  assert.doesNotMatch(leadChangePrompt(ch), /"say"/);
+  assert.ok(leadChangePrompt(ch).includes('"touch":[{"id":"hero","brief":"…"}],"add":'));
+  for (const kind of ['pitch', 'document', 'web']) assert.deepEqual(leadKindLines(kind, { sound: { music: true } }), leadKindLines(kind), kind);
+  const clip = { at: 0.5, seconds: 2, cues: [{ t: 0.5, text: 'Hello.' }] };
+  const said = ['S.dur is 5.', 'The voice speaks in this scene from 0.5s to 2.5s. Each sentence and when it starts:', '- 0.5s "Hello."', 'Time what appears to these sentences. Never show a whole spoken sentence as text.'].join('\n');
+  const first = builderPrompt({ section: PLAN.sections[1], notes: 'N', sectionDir: '/s', tokensCss: '/t', globalCss: '/g', crewJson: '/c', questionFile: '/q', kind: 'video', plan: PLAN, clip });
+  assert.ok(first.includes(`${said}\n\nBrief:\n`), 'builderPrompt passes the clip on');
+  const change = builderChangePrompt({ section: PLAN.sections[1], instruction: 'I', brief: 'Bolder', notes: 'N', sectionDir: '/s', questionFile: '/q', kind: 'video', plan: PLAN, clip });
+  assert.ok(change.includes(`${said}\nFor this section: Bolder`), 'builderChangePrompt passes the clip on');
+  assert.deepEqual(builderKindLines({ kind: 'pitch', plan: PLAN, section: PLAN.sections[1], clip }), ['Slide 2 of 3.']);
 });

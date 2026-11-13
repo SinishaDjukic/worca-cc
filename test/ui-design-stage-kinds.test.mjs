@@ -223,6 +223,41 @@ test('Point over a playing film pauses it before the run doc takes pick', async 
   stage.setPick(true);
   assert.deepEqual(sent().slice(before).map((m) => [m.t, m.on]), [['pause', undefined], ['pick', true]]);
 });
+// SPEC D12: the worca page plays a built film's sound, from the design's own sound route; a lost frame says no more
+// `time`, so the stage stops it.
+test('a built video with sound: Mute after the run ready, files from the design\'s route, a lost frame stops it', async () => {
+  const DONE_FILM = { ...FILM, design: { ...FILM.design, version: 1 }, build: { ...ROW, status: 'done', endedAt: '2026-11-05T10:06:14Z' } };
+  const tracks = { clips: [{ id: 's1', file: 'voice-a.mp3', start: 0.35, seconds: 2 }], music: { file: 'music.mp3', seconds: 8, gain: 0.16 } };
+  const files = { [`/api/design/${DID}/sound`]: { available: true, sound: { on: true }, tracks } };
+  const { stage, win, doc, readyFrame, fireMsg, frames, clock, tick, q, gets } = await rig(DONE_FILM, { files });
+  const P = win.HTMLMediaElement.prototype;
+  const flag = (el, value) => Object.defineProperty(el, 'paused', { value, writable: true, configurable: true });
+  P.play = function play() { flag(this, false); return Promise.resolve(); };
+  P.pause = function pause() { flag(this, true); };
+  P.load = function load() {};
+  const made = [];
+  const create = doc.createElement.bind(doc);
+  doc.createElement = (tag, ...rest) => {
+    const el = create(tag, ...rest);
+    if (String(tag).toLowerCase() === 'audio') made.push(el);
+    return el;
+  };
+  assert.equal(q('.dz-mute'), null);
+  readyFrame('run'); await tick();
+  assert.deepEqual(gets.filter((u) => u.endsWith('/sound')), [`/api/design/${DID}/sound`]);
+  assert.equal(q('.dz-transport .dz-mute').title, 'Mute');
+  assert.equal(made.length, 2);
+  assert.equal(new URL(made[0].src).pathname, `/api/design/${DID}/sound/files/voice-a.mp3`);
+  fireMsg('time', { at: 1, playing: true, dur: 12 });
+  assert.deepEqual(made.map((el) => el.paused), [false, false]);
+  frames()[0].dispatchEvent(new win.Event('load'));
+  frames()[0].dispatchEvent(new win.Event('load'));
+  clock.tick(1500); await tick(); clock.tick(6000); await tick();
+  assert.equal(q('.dz-lost').hidden, false, 'the frame is lost');
+  assert.deepEqual(made.map((el) => el.paused), [true, true]);
+  stage.destroy();
+  assert.deepEqual([clock.pending(), made.map((el) => el.getAttribute('src'))], [0, [null, null]]);
+});
 test('destroy leaves no timer, listener or frame', async () => {
   const { stage, win, readyFrame, frames, clock, tick } = await rig(DONE);
   readyFrame('run'); await tick();

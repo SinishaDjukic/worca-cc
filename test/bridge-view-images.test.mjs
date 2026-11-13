@@ -16,7 +16,7 @@ const row = (card) => card.querySelector('.mv-pv-row[data-provider="images"]');
 const field = (card, k) => row(card).querySelector(`.mv-im-field[data-field="${k}"]`);
 test('the row comes after Speech: name, sentence, badge, labels, services, buttons', () => {
   const card = renderProvidersCard({ images: IM }, { doc, split: true });
-  assert.deepEqual([...card.querySelectorAll('.mv-pv-row')].map((r) => r.dataset.provider), ['copilot', 'openai', 'anthropic', 'speech', 'images']);
+  assert.deepEqual([...card.querySelectorAll('.mv-pv-row')].map((r) => r.dataset.provider), ['copilot', 'openai', 'anthropic', 'speech', 'images', 'sound']);
   const r = row(card);
   assert.equal(r.querySelector('.mv-name').textContent, 'Image generation (Design)');
   assert.equal(r.querySelector('.mv-pv-main > .hint').textContent, 'Lets a Design lead have a picture made when no real one fits. The key stays on this machine.');

@@ -306,7 +306,7 @@ test('snapshot() has the C-5 shape, and seq does not advance', async () => {
   await waitForFrame(frames, (f) => f.type === 'design-delta' && f.sectionId === 'hero');
   const s = build.snapshot();
   assert.equal(s.type, 'design-snapshot');
-  assert.deepEqual(Object.keys(s).sort(), ['agents', 'build', 'buildId', 'designId', 'drafts', 'plan', 'questions', 'sections', 'seq', 'ts', 'type'].sort());
+  assert.deepEqual(Object.keys(s).sort(), ['agents', 'build', 'buildId', 'designId', 'drafts', 'plan', 'questions', 'sections', 'seq', 'sound', 'ts', 'type'].sort());
   assert.equal(s.build.status, 'building');
   assert.deepEqual(s.sections.map((x) => [x.id, x.job, x.status]), [['hero', 'Hero', 'writing']], 'section records keyed id, as P4 reads them');
   assert.deepEqual([s.plan.planRev, s.plan.canvas], [1, { w: 1440 }]);

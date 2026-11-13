@@ -165,6 +165,11 @@ section agents place the pictures it names. A made picture never shows the produ
 a real person or another company's brand, and holds no words. With no service set up, or the switch off, the lead
 works as before.
 
+**Sound.** When a video has sound (see [Sound](sound.md)), the lead writes the words each scene says into the plan.
+worca's server makes the voice and the music with ElevenLabs before the section agents start, with a key that never
+reaches an agent, and tells each section's agent when its sentences are spoken. No agent plays a sound: worca plays
+it beside the scenes.
+
 When the lead goes over the result, worca names every picture, font or other file that a section points at and
 that is not in the design, so the lead can bring the file in or send the section back instead of leaving an empty
 frame.
@@ -183,8 +188,14 @@ with its own slide rail, and the arrow keys, Page Up, Page Down and Space move b
 **Video.** An HTML and JavaScript film. One section is one scene, 1920 by 1080 at 60 frames a second, and each scene
 has its own length in seconds. While a round builds, every scene is a tile, with a timeline of the scenes. When it
 finishes, the stage shows the film with play, pause and a scrub bar. The **Standalone HTML** export plays on its own,
-offline: it starts by itself unless the system asks for reduced motion, Space plays and pauses, and the arrow keys
-step one second.
+offline: it starts by itself unless the system asks for reduced motion or the film has sound, Space plays and pauses,
+and the arrow keys step one second. A film with sound starts when you click it or press Space, because a browser
+plays no sound before one.
+
+**Sound.** A video can have a voice that tells the story scene by scene and music under it, made through ElevenLabs:
+before its first build the chat asks with a card, and the **Sound** row in the composer's settings changes it later
+(see [Sound](sound.md)). The preview plays the sound with the film and adds a **Mute** button after the play button;
+the exports carry it (see [Export](#export)).
 
 ## Documents
 
@@ -233,6 +244,9 @@ worca builds the change as a new round over the current page.
 - **Pictures:** each made picture books what the service's answer says it cost, else the **Price per picture** you
   set, to its round. It counts toward the same limits, and a round that reaches one pauses. A picture that is not
   made costs nothing.
+- **Sound:** a video's voice and music book ElevenLabs' list prices to their round, `$0.08` per 1,000 characters of
+  voice and `$0.15` per minute of music (see [Sound](sound.md)). They count toward the same limits, and a round that
+  reaches one pauses. A call that fails costs nothing.
 - **Statistics:** Design spend is part of **Spent**, in Statistics and in the account menu, with its own **Design**
   row in Group by and in the Cost report. It stays there after a design is deleted and after the flag is turned
   off.
@@ -253,6 +267,7 @@ change the design.
 | **Standalone HTML** | One `.html` file. The page's own files, pictures included, are put inside it, so it opens without the design folder. Addresses on the web stay links. A file over 25 MiB, or one past 100 MiB in all, is left out. |
 | **Zip of the folder** | The finished folder as a `.zip`, inside one top folder named after the design, so unzipping does not scatter files. |
 | **PDF** | Decks and documents: **Presentation** and **Pitch deck**, one page per slide; a **Document** on A4 or Letter pages, with page numbers. On a web page the item is disabled and reads `Decks and documents only`; a video has no PDF item. Needs Chrome or Edge on the machine, or `WORCA_CHROME` set to one. |
+| **Video (MP4)** | A video only: one `.mp4`, 1920 by 1080 at 60 frames a second (H.264 with AAC sound), with the film's voice and music mixed in. Needs Chrome or Edge on the machine (or `WORCA_CHROME`) and ffmpeg (worca brings its own; `WORCA_FFMPEG` names another). |
 | **Copy into a project** | The finished folder, copied into a folder of a project you pick (by default `design/<name>`). |
 
 Files are named after the design's title, in lower case: "Q4 roadmap review" exports as `q4-roadmap-review.zip`.
@@ -260,6 +275,16 @@ Files are named after the design's title, in lower case: "Q4 roadmap review" exp
 **PDF.** Only worca's own slide script runs while printing, never the code the agents wrote, so anything a slide
 draws with JavaScript is missing from the PDF. If the PDF's page count does not match the slides, nothing is saved
 and the dialog says so. A document prints with no script at all, as many pages as it needs.
+
+**Video (MP4).** worca renders the film frame by frame: it opens the film in Chrome without a window, shows every
+frame and shoots it, then encodes the shots and adds the sound. That takes about as long as the film runs, so the
+dialog stays open and shows how far the render is on a bar from 0 to 100 %. **Stop**, or closing the
+dialog, stops the render. One video renders at a time; the next one waits its turn. The finished file is kept with
+the design, so exporting the same round again downloads at once, and a new round renders anew. The sound is mixed
+from the round's voice and music files by the rule the player follows, so the MP4 sounds as the film plays. The
+film's own scripts run in that Chrome, and it is held to the film: it reads no file and reaches no address, and a
+film that tries to open another page is not rendered. A picture or a font on the web is not in the frames; the
+dialog lists it under **Left out of the file**.
 
 **Copy into a project:**
 
@@ -282,7 +307,8 @@ A quick, clean export just downloads. The dialog opens when the file takes more 
 the file** (not found, outside the design, too large, or on the web and left as a link), and the file still
 downloads.
 
-A video exports as HTML and JavaScript, standalone or zipped; MP4 is later.
+A video exports as HTML and JavaScript, standalone or zipped, or as an MP4. A video's sound files sit in
+`assets/sound/`, so the Standalone HTML file, the zip and **Copy into a project** all carry them.
 
 ## Thumbnails
 
@@ -301,11 +327,12 @@ database and store (see [Storage](storage.md)). No git is needed.
 
 | Inside | What it holds |
 |---|---|
-| `work/` | What the agents write: the sections, the shared files, your attachments, the pictures the lead copied from the project (`assets/project/`), the screens it shot (`assets/shots/`) and the pictures the image service made (`assets/made/`) |
+| `work/` | What the agents write: the sections, the shared files, your attachments, the pictures the lead copied from the project (`assets/project/`), the screens it shot (`assets/shots/`), the pictures the image service made (`assets/made/`) and a video's voice and music (`assets/sound/`, written by worca's server) |
 | `dist/` | The finished page; exports read it |
 | `versions/` | The state after each finished round, the last 20, for **Back to before this** |
 | `made/` | A copy of each made picture by its ask, so the chat shows what each ask made; never exported, and agents cannot open it |
 | `thumb.png` | The Library picture; never exported, and agents cannot write it |
+| `export/` | A video's last MP4 and the record of the round it shows; agents cannot write it |
 
 While a round runs, `work/.pictures/` holds the lead's asks and worca's answers; like the other dot folders it never
 reaches a version or an export.
@@ -342,6 +369,9 @@ numbers of one machine.
   `work/` but not the folder around them, and cannot open `dist/`, `versions/` or `made/`.
 - **Each agent is billed to the person** who started its round or pressed **Resume**.
 - **Made pictures** use the server's one image service key; each picture counts in its round's cost.
+- **Sound** uses the server's one ElevenLabs key: whoever starts the first video with no key saved is asked for it.
+  With the [credential broker](credential-broker.md) on, worca stores no sound key, so a video stays silent (see
+  [Sound](sound.md)).
 - **The preview embeds its files.** Behind an identity proxy the page carries its CSS, fonts and images inside it
   (`WORCA_DESIGN_PREVIEW_INLINE`), so the frame asks the proxy for nothing else. A file too large to embed stays a
   link, and an image that lands during a build shows at the round's end. `WORCA_DESIGN_PREVIEW_INLINE=0` turns this

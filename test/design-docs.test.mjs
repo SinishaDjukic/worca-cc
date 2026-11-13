@@ -36,3 +36,18 @@ test('the page describes made pictures', () => {
     "- **Made pictures** use the server's one image service key; each picture counts in its round's cost.",
   ]) assert.ok(flat.includes(sentence), sentence);
 });
+// Design sound: docs/sound.md (at most 60 lines) names the Providers row, the files and the two list prices; the Design
+// page and the docs index link it. It names no assistant model or session (it may name `eleven_multilingual_v2`, so
+// never a bare "model"), and neither page says "with no sound". docs/design.md already names models: pin its click sentence.
+test('docs/sound.md says where the key, the money and the files go, and the Design page links it', () => {
+  const page = readFileSync(new URL('../docs/sound.md', import.meta.url), 'utf8');
+  assert.match(page, /Providers › \**Sound \(Design\)/);
+  for (const yes of ['assets/sound/', '$0.08', '$0.15']) assert.ok(page.includes(yes), yes);
+  assert.ok(page.trimEnd().split('\n').length <= 60, 'at most 60 lines');
+  assert.doesNotMatch(page, /claude|opus|sonnet|haiku|fable|session/i);
+  assert.match(text, /\]\(sound\.md\)/);
+  assert.match(readFileSync(new URL('../docs/README.md', import.meta.url), 'utf8'), /\]\(sound\.md\)/);
+  for (const doc of [page, text]) assert.doesNotMatch(doc, /with no sound/);
+  const sentence = 'A film with sound starts when you click it or press Space, because a browser plays no sound before one.';
+  assert.ok(text.replace(/\s+/g, ' ').includes(sentence), sentence);
+});

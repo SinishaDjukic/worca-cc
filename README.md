@@ -105,7 +105,7 @@ for it, which you review before it runs. More in [Runs](docs/runs.md).
 | Chat | Ask Worca about runs and code; changes become cards you confirm; agent mode, memory, voice | [Chat](docs/chat.md), [Voice](docs/speech.md) |
 | Integrations | Plugins and marketplaces, GitHub Issues, Azure Boards, Jira | [Plugins](docs/plugins.md), [Azure DevOps](docs/azure-devops.md), [Bitbucket](docs/bitbucket.md) |
 | | Worca's own MCP registry and skill sets | [MCP servers](docs/mcp-servers.md), [Skills](docs/skills.md) |
-| Models | Engines, bring your own models, Copilot and OpenAI-compatible providers | [Models](docs/models.md), [Image generation](docs/image-generation.md) |
+| Models | Engines, bring your own models, Copilot and OpenAI-compatible providers | [Models](docs/models.md), [Image generation](docs/image-generation.md), [Sound](docs/sound.md) |
 | Governance | Guardrail policy sets (Permissive, Normal, Strict) | [Guardrails](docs/guardrails.md) |
 | | Cost per run, Statistics, hard limits, cost tags | [Costs](docs/costs.md), [Statistics](docs/statistics.md) |
 | | Team metrics and team policy, shared through git | [Team metrics](docs/team-metrics.md), [Team policy](docs/team-policy.md) |

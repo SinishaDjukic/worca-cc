@@ -2,7 +2,8 @@
 // Rendering a Design with Chrome on the server (P6, L6.1): thumbnails and the deck PDF. No model-written JS ever runs
 // here. Every doc handed to Chrome goes through `staticDoc`, which strips every script, handler and navigation, then
 // puts the CSP meta first: thumbnails run with `script-src 'none'`, and the PDF runs only worca's own kit under a
-// random nonce. `runChrome` is the async counterpart of `assets/deck-preview/chrome.mjs`'s `screenshot`, which uses
+// random nonce. The one exception is `captureDoc`, a video's capture page for the MP4 export (film-mp4.mjs): a film's
+// frames are what its scenes' scripts draw, so they run, in a Chrome of its own that is held to that one page. `runChrome` is the async counterpart of `assets/deck-preview/chrome.mjs`'s `screenshot`, which uses
 // `spawnSync` and would block the server; it reuses only that module's pure parts.
 import { spawn } from 'node:child_process';
 import { existsSync, rmSync, statSync } from 'node:fs';
@@ -81,6 +82,31 @@ export function staticDoc(html, { nonce = null, kitScript = null, extraCss = '' 
     + (kitScript === null ? '' : `<script nonce="${nonce}">${safeInlineScript(kitScript)}</script>`);
   const at = LEADING_DOCTYPE.exec(doc)?.[0].length ?? 0;
   return doc.slice(0, at) + head + doc.slice(at);
+}
+
+/**
+ * The capture CSP: P3's run directive list (`previewCsp`) with no base and without `sandbox`. The page's own inline
+ * scripts and styles run; everything else comes from `data:` or `blob:` or not at all, and nothing connects.
+ * @returns {string}
+ */
+export function captureCsp() {
+  return previewCsp({ mode: 'run', base: null, nonce: '' }).split('; ').filter((d) => !d.startsWith('sandbox')).join('; ');
+}
+
+/**
+ * A video's capture page: `html` (the standalone film) as it is, with `<meta charset>` and the capture CSP right
+ * after a leading doctype (or at byte 0, as `staticDoc` places its own), and `script` as the last script of the page.
+ * Nothing is stripped: this is the one doc whose own scripts run in a Chrome on the server. What holds the page is
+ * around it, not in it: the CSP here, and the Chrome film-mp4-cli.mjs starts (no host resolves, no file is read, and
+ * every request but the page's own is refused).
+ * @param {string} html
+ * @param {{ script: string }} opts worca's own script (the exporter's handle), never model text
+ * @returns {string}
+ */
+export function captureDoc(html, { script }) {
+  const head = `<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${captureCsp()}">`;
+  const at = LEADING_DOCTYPE.exec(html)?.[0].length ?? 0;
+  return `${html.slice(0, at)}${head}${html.slice(at)}\n<script>${safeInlineScript(script)}</script>`;
 }
 
 /** Every Chrome still running, with the `kill` it was started with: killed when the host exits. */

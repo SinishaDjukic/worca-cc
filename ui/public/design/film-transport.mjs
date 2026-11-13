@@ -78,14 +78,16 @@ export function sceneAt(blocks, t) {
 /**
  * The bar, built into `host` (the stage's `.dz-wrap`). It starts in `build`: the blocks only. `run` adds the transport
  * (play or pause, the scene's job, `0:07 / 0:20`), the playhead, and the bar as a slider a press or a key seeks.
- * `onSeek(t)`, `onPlay()` and `onPause()` go to the frame; the bar shows only what the frame's `time` said back.
+ * `onSeek(t)`, `onPlay()` and `onPause()` go to the frame; the bar shows only what the frame's `time` said back. A film
+ * with sound (`setSound`) adds a `Mute` / `Unmute` button after play (SPEC U5); a press asks `onMute(muted)` and the
+ * button shows only what `setSound` says back.
  * @param {{doc: Document, host: HTMLElement, onSeek: (t: number) => void, onPlay: () => void, onPause: () => void,
- *   colorOf?: (agentId: string) => string|null}} deps
+ *   onMute?: (muted: boolean) => void, colorOf?: (agentId: string) => string|null}} deps
  * @returns {{setSections: (sections: object[]) => void, setMode: (mode: 'build'|'run') => void,
  *   setTime: (o: {t: number, playing: boolean, dur?: number}) => void, setVisible: (id: string|null) => void,
- *   destroy: () => void}}
+ *   setSound: (o: {on: boolean, muted: boolean}) => void, destroy: () => void}}
  */
-export function createFilmBar({ doc, host, onSeek, onPlay, onPause, colorOf }) {
+export function createFilmBar({ doc, host, onSeek, onPlay, onPause, onMute, colorOf }) {
   const make = (tag, cls) => {
     const el = doc.createElement(tag);
     el.className = cls;
@@ -121,6 +123,8 @@ export function createFilmBar({ doc, host, onSeek, onPlay, onPause, colorOf }) {
   let pointerId = null;
   let head = null;
   let transport = null;
+  // Whether the film has sound and whether it is muted: kept here, since build mode throws the transport away.
+  let sound = { on: false, muted: false };
 
   const dur = () => heardDur ?? model.dur;
   // The scene in view: the one the frame named, else the one under the playhead.
@@ -194,7 +198,37 @@ export function createFilmBar({ doc, host, onSeek, onPlay, onPause, colorOf }) {
     const meta = make('span', 'dz-meta');
     el.append(button, job, meta);
     host.append(el);
-    return { el, button, job, meta, label: null };
+    return { el, button, job, meta, label: null, mute: null, muteLabel: null };
+  }
+
+  function pressMute() {
+    onMute?.(!sound.muted);
+  }
+
+  // The sound button sits right after play, and only while the film has sound.
+  function paintMute() {
+    if (!transport) return;
+    if (!sound.on) {
+      if (transport.mute) {
+        transport.mute.removeEventListener('click', pressMute);
+        transport.mute.remove();
+        transport.mute = null;
+        transport.muteLabel = null;
+      }
+      return;
+    }
+    if (!transport.mute) {
+      transport.mute = make('button', 'btn btn-sm btn-quiet btn-icon dz-mute');
+      transport.mute.type = 'button';
+      transport.mute.addEventListener('click', pressMute);
+      transport.button.after(transport.mute);
+    }
+    const label = sound.muted ? 'Unmute' : 'Mute';
+    if (transport.muteLabel === label) return;
+    transport.muteLabel = label;
+    transport.mute.setAttribute('aria-label', label);
+    transport.mute.title = label;
+    transport.mute.replaceChildren(icon(doc, sound.muted ? 'volume-off' : 'volume', ICON_PX));
   }
 
   // Over the run doc: the playhead, the transport and the slider's values, each written only when it changed.
@@ -216,6 +250,7 @@ export function createFilmBar({ doc, host, onSeek, onPlay, onPause, colorOf }) {
       transport.button.title = label;
       transport.button.replaceChildren(icon(doc, playing ? 'pause' : 'play', ICON_PX));
     }
+    paintMute();
     setText(transport.job, current()?.job ?? '');
     const clock = `${fmtClock(t)} / ${fmtClock(d)}`;
     setText(transport.meta, clock);
@@ -309,6 +344,7 @@ export function createFilmBar({ doc, host, onSeek, onPlay, onPause, colorOf }) {
     head = null;
     if (transport) {
       transport.button.removeEventListener('click', toggle);
+      transport.mute?.removeEventListener('click', pressMute);
       transport.el.remove();
       transport = null;
     }
@@ -358,6 +394,12 @@ export function createFilmBar({ doc, host, onSeek, onPlay, onPause, colorOf }) {
       if (destroyed) return;
       visibleId = typeof id === 'string' ? id : null;
       paintRun();
+    },
+    /** Whether the film on screen has sound, and whether it is muted: the button follows only this. */
+    setSound({ on, muted } = {}) {
+      if (destroyed) return;
+      sound = { on: on === true, muted: muted === true };
+      paintMute();
     },
     destroy() {
       if (destroyed) return;

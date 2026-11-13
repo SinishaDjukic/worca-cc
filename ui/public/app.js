@@ -210,7 +210,7 @@ import {
 import {
   renderProvidersCard, collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
   applyProviderPreset, endpointRowMatches, ENDPOINT_PRESETS,
-  setModelUpstream, applyImagesPreset, collectImagesRow, showImagesTest, showImagesSaveError,
+  setModelUpstream, applyImagesPreset, collectImagesRow, showImagesTest, showImagesSaveError, collectSoundRow,
 } from './bridge-view.mjs';
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
@@ -20107,7 +20107,7 @@ async function patchProviderFlow(name, body, { btn = null, onError = null } = {}
   }
   // The repaint replaced the clicked button: give its successor the "Saved" state.
   if (btn && !btn.isConnected) {
-    const cls = ['mv-sp-save', 'mv-im-save'].find((c) => btn.classList.contains(c)) || 'mv-pv-save';
+    const cls = ['mv-sp-save', 'mv-im-save', 'mv-so-save'].find((c) => btn.classList.contains(c)) || 'mv-pv-save';
     const next = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"] .${cls}`);
     if (next) await withButton(next, () => undefined, { done: 'Saved' });
   }
@@ -20171,6 +20171,27 @@ async function testImagesFlow(btn) {
   }, { busy: 'Testing…', done: 'Works' });
   if (r.skipped) return;
   showImagesTest(providerRoot(), r);
+}
+
+/** The Sound row's Test: lists the voices the key reaches. An unchanged key is not sent, so the saved one is tested.
+ *  Testing… → Works on the button; "Key works · n voices", or the reason it failed, in the row itself. */
+async function testSoundFlow(btn) {
+  const typed = collectSoundRow(providerRoot()) || {};
+  setProviderMsg('sound', '');
+  const r = await withButton(btn, async () => {
+    try {
+      const res = await fetch('/api/providers/sound/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(typed) });
+      const data = (await safeJson(res)) || {};
+      if (data.ok) return data;
+      return { ok: false, message: data.message || data.error || `The server answered ${res.status}.` };
+    } catch (e) { return { ok: false, message: `worca did not answer (${e.message}).` }; }
+  }, { busy: 'Testing…', done: 'Works' });
+  if (r.skipped) return;
+  const line = providerRoot()?.querySelector('.mv-pv-row[data-provider="sound"] .mv-so-result');
+  if (!line) return;
+  line.hidden = false;
+  line.className = r.ok ? 'hint mv-so-result' : 'hint err mv-so-result';
+  line.textContent = r.ok ? `Key works · ${r.voices} voices` : (r.message || '');
 }
 
 async function testProviderFlow(btn) {
@@ -20614,6 +20635,8 @@ if (el.providersList) {
     } else if (t.classList.contains('mv-sp-test')) testSpeechFlow(t);
     else if (t.classList.contains('mv-im-save')) patchProviderFlow('images', collectImagesRow(providerRoot()), { btn: t, onError: (msg) => showImagesSaveError(providerRoot(), msg) });
     else if (t.classList.contains('mv-im-test')) testImagesFlow(t);
+    else if (t.classList.contains('mv-so-save')) patchProviderFlow('sound', collectSoundRow(providerRoot()), { btn: t });
+    else if (t.classList.contains('mv-so-test')) testSoundFlow(t);
     else if (t.classList.contains('mv-sp-clear')) clearSpeechCacheFlow(t);
     else if (t.classList.contains('mv-pv-preset')) {
       // Fills the fields only; the row's Test / Save do the rest, exactly as for a typed URL.
@@ -40123,7 +40146,7 @@ function revealModelCard(id, param) {
   const card = [...el.modelsList.querySelectorAll('.mv-card[data-id]')].find((n) => n.dataset.id === id);
   if (card) markFound(card, card.querySelector('button'));
 }
-// '#providers/<copilot|openai|anthropic|speech|images>': the provider's row, highlighted, with its sign-in or key field
+// '#providers/<copilot|openai|anthropic|speech|images|sound>': the provider's row, highlighted, with its sign-in or key field
 // focused (focusProviderRow's choice), else its first control.
 function revealProviderRow(param) {
   if (!param || currentView() !== 'providers' || parseHash()[1] !== param || !el.providersList) return;

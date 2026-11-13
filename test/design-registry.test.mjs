@@ -334,12 +334,13 @@ test('snapshotFor from rows: planRev and canvas from a valid plan only, stats fr
   const ch = await r.start({ designId: d.id, instruction: 'Bolder', sections: ['hero'], needsLead: false, by: 'local' });
   r.pauseAll(); await r.settled();
   assert.ok(getBuild(ch.buildId).sections.some((x) => x.todo), 'the row holds a todo');
-  // An add with no build yet is marked `unbuiltAdd` in the row, and that never leaves the engine either.
-  updateBuild(ch.buildId, { sections: getBuild(ch.buildId).sections.map((x) => (x.id === 'hero' ? x : { ...x, unbuiltAdd: true })) });
+  // An add with no build yet is marked `unbuiltAdd` in the row, and a grown scene's `regrow` (sound P2) sits there too:
+  // neither leaves the engine.
+  updateBuild(ch.buildId, { sections: getBuild(ch.buildId).sections.map((x) => (x.id === 'hero' ? { ...x, regrow: { from: 4, to: 12.8, rework: true } } : { ...x, unbuiltAdd: true })) });
   const c = r.snapshotFor(ch.buildId);
   assert.deepEqual([c.build.kind, c.build.status, c.plan.planRev, c.plan.canvas], ['change', 'paused', 1, { w: 1440 }]);
-  const internal = (x) => 'todo' in x || 'unbuiltAdd' in x;
-  assert.ok(!c.sections.some(internal) && !c.plan.sections.some(internal), 'todo and unbuiltAdd never leave the engine');
+  const internal = (x) => 'todo' in x || 'unbuiltAdd' in x || 'regrow' in x;
+  assert.ok(!c.sections.some(internal) && !c.plan.sections.some(internal), 'todo, unbuiltAdd and regrow never leave the engine');
   await r.stopBuild(ch.buildId);
   // A change round whose lead applied its round reads planRev 2 (a finished build takes the row path too).
   const f = newDesign();

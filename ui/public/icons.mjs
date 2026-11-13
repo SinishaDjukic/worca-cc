@@ -74,6 +74,9 @@ export const ICONS = Object.freeze({
   tablet: '<rect x="5.5" y="3" width="13" height="18" rx="2"></rect><path d="M11 18h2"></path>',
   phone: '<rect x="7.5" y="3" width="9" height="18" rx="2"></rect><path d="M11 18h2"></path>',
   'stop-square': '<rect x="6" y="6" width="12" height="12" rx="2"></rect>',
+  // A video's sound in the film's transport: Mute, and Unmute once muted.
+  volume: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M15.5 9a4 4 0 0 1 0 6"></path><path d="M18.5 6.5a7.5 7.5 0 0 1 0 11"></path>',
+  'volume-off': '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M16 9.5l5 5M21 9.5l-5 5"></path>',
 });
 
 const px = (size) => (Number(size) > 0 ? Number(size) : 16);

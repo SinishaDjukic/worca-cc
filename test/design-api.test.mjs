@@ -75,11 +75,11 @@ before(async () => {
 after(() => { if (projDir) rmSync(projDir, { recursive: true, force: true }); });
 
 const fill = (path) => path.replace(':id', 'd_000000000000').replace(':bid', 'b_000000000000')
-  .replace(':aid', 'a_00000000').replace(':n', '1').replace(':pictureId', '1');
+  .replace(':aid', 'a_00000000').replace(':name', 'voice-open.wav').replace(':n', '1').replace(':pictureId', '1');
 const make = async (body = { kind: 'web' }) => (await call('POST', '/api/design', body)).json.design;
 const designFolders = () => readdirSync(dirname(designDir('d_000000000000')));
 
-test('DESIGN_ROUTES: the fifteen routes, frozen, in registration order', () => {
+test('DESIGN_ROUTES: the eighteen routes, frozen, in registration order', () => {
   assert.ok(Object.isFrozen(DESIGN_ROUTES));
   assert.ok(DESIGN_ROUTES.every((r) => Object.isFrozen(r)));
   assert.deepEqual(DESIGN_ROUTES.map((r) => `${r.method} ${r.path}`), [
@@ -93,6 +93,9 @@ test('DESIGN_ROUTES: the fifteen routes, frozen, in registration order', () => {
     'GET /api/design/:id/models',
     'GET /api/design/:id/pictures',
     'GET /api/design/:id/pictures/:pictureId',
+    'GET /api/design/:id/sound',
+    'GET /api/design/:id/sound/files/:name',
+    'POST /api/design/:id/sound/ask',
     'POST /api/design/:id/builds/:bid/stop',
     'POST /api/design/:id/builds/:bid/agents/:aid/stop',
     'POST /api/design/:id/builds/:bid/answer',
@@ -193,6 +196,14 @@ test('bad bodies are 400; a bad project is 400', async () => {
   assert.deepEqual([getDesign(d.id).title, getDesign(d.id).fast], ['Untitled design', true]);
 });
 
+test('PATCH never takes sound: 200 with the bare row, and nothing changes', async () => {
+  const d = await make({ kind: 'video' });
+  const r = await call('PATCH', `/api/design/${d.id}`, { sound: { on: false } });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.sound, null, 'PATCH answers the bare row');
+  assert.equal(getDesign(d.id).sound, null, 'only the sound cards write it');
+});
+
 test('bad ids and other people answer 404, on every route', async () => {
   const d = await make();
   const { buildId } = await designBuilds.start({ designId: d.id, brief: 'MOCK_SECTIONS=1', by: 'local' });
@@ -240,6 +251,10 @@ test('bad ids and other people answer 404, on every route', async () => {
       // The pictures: the list would answer 200 [], a picture its own 'picture not found'.
       ['GET', `/api/design/${a.id}/pictures`],
       ['GET', `/api/design/${a.id}/pictures/1`],
+      // The sound: its state would answer 200, a file its own 'sound file not found', the ask 400 (Alice's is a web design).
+      ['GET', `/api/design/${a.id}/sound`],
+      ['GET', `/api/design/${a.id}/sound/files/voice-open.wav`],
+      ['POST', `/api/design/${a.id}/sound/ask`, {}],
       // P6's two routes, outside DESIGN_ROUTES: the export of Alice's finished design would answer 200, and the
       // thumbnail its own 404 words; the loop asserts the owner check's 'design not found' body.
       ['POST', `/api/design/${a.id}/export`, { format: 'html' }],
@@ -602,12 +617,13 @@ test('GET /:id: build.costKnown is a boolean, false after a MOCK_NO_COST build',
   assert.equal(priced.build.costKnown, true);
   assert.equal(priced.build.id, pb);
 
-  // A section's `todo` and `unbuiltAdd` never leave the engine (L2.35); an invalid plan.json reads as null.
-  updateBuild(pb, { sections: getBuild(pb).sections.map((s) => ({ ...s, todo: { stage: 'touch', brief: 'b' }, unbuiltAdd: true })) });
+  // A section's `todo`, `unbuiltAdd` and a grown scene's `regrow` never leave the engine (L2.35); an invalid plan.json
+  // reads as null.
+  updateBuild(pb, { sections: getBuild(pb).sections.map((s) => ({ ...s, todo: { stage: 'touch', brief: 'b' }, unbuiltAdd: true, regrow: { from: 4, to: 12.8, rework: true } })) });
   writeFileSync(join(designWorkDir(p.id), 'plan.json'), '{"not":"a plan"}');
   const after = (await call('GET', `/api/design/${p.id}`)).json;
   assert.equal(after.sections.length, 1);
-  assert.equal(after.sections.some((s) => 'todo' in s || 'unbuiltAdd' in s), false);
+  assert.equal(after.sections.some((s) => 'todo' in s || 'unbuiltAdd' in s || 'regrow' in s), false);
   assert.equal(after.plan, null);
 
   const listed = await mkApp({ designBuilds, versions: { list: async (id) => [{ n: 1, id }], restore: async () => {} } });

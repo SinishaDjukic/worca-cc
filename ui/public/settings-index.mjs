@@ -98,6 +98,7 @@ export const ADDON_ENTRIES = Object.freeze([
   addon('providers', 'anthropic', 'Anthropic-compatible', '#providers/anthropic', { alts: ['anthropic', 'claude api', 'api key', 'key', 'base url', 'endpoint', 'gateway'] }),
   addon('providers', 'speech', 'Speech (Chat voice)', '#providers/speech', { alts: ['speech', 'voice', 'speech to text', 'text to speech', 'stt', 'tts', 'whisper', 'microphone'] }),
   addon('providers', 'images', 'Image generation (Design)', '#providers/images', { alts: ['image', 'images', 'picture', 'pictures', 'image generation', 'gpt-image', 'grok'] }),
+  addon('providers', 'sound', 'Sound (Design)', '#providers/sound', { alts: ['sound', 'voice', 'music', 'narration', 'audio', 'elevenlabs'] }),
 ]);
 
 const MODEL_SOURCE = Object.freeze({ global: 'Your model', plugin: 'From a plugin', policy: 'Team policy' });

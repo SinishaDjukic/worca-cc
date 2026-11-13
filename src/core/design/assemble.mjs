@@ -15,6 +15,7 @@ import {
 import { boardCss, filmPlanScript, isBoardKind, isDeckKind, isDocKind, isFilmKind, kindHead, kitFolder, kitScriptNames, usesSlots, wrapFills } from './kinds.mjs';
 import { scanHeadings, tocHtml } from './doc-kind.mjs';
 import { readLookSource } from './look-source.mjs';
+import { SOUND_DIR, soundTracks } from './sound.mjs';
 
 /** The attribute that marks the bridge `<script>` (C-7, M10). `dist` and `standalone` never carry it. */
 export const BRIDGE_MARKER = 'data-worca-bridge';
@@ -278,12 +279,12 @@ function readKit(workDir, name) {
  * kit's own name, `global.js`, then `section-<id>.js`.
  * @param {string} workDir
  * @param {{ id: string }[]} included
- * @param {{ kind: string, plan: object|null, mode: 'run'|'dist'|'standalone' }} opts
+ * @param {{ kind: string, plan: object|null, mode: 'run'|'dist'|'standalone', embedded?: boolean }} opts
  * @returns {{ name: string, text: string }[]}
  */
-function footScripts(workDir, included, { kind, plan, mode }) {
+function footScripts(workDir, included, { kind, plan, mode, embedded = false }) {
   const film = isFilmKind(kind);
-  const scripts = film ? [{ name: 'film-plan.js', text: filmPlanScript({ plan, mode }) }] : [];
+  const scripts = film ? [{ name: 'film-plan.js', text: filmPlanScript({ plan, mode, embedded }) }] : [];
   if (isBoardKind(kind)) for (const name of kitScriptNames(kind)) scripts.push({ name, text: escapeScript(readKit(workDir, name)) });
   const global = readConfined(workDir, 'global.js');
   if (global !== null) scripts.push({ name: 'global.js', text: escapeScript(global) });
@@ -304,6 +305,26 @@ function footScripts(workDir, included, { kind, plan, mode }) {
 /** `<!--worca:foot-->`: each script inline, or with `files` a `<script src>` naming its sibling file. */
 function footText(scripts, files) {
   return scripts.map(({ name, text }) => (files ? `<script src="${name}"></script>` : `<script>${text}</script>`)).join('\n');
+}
+
+const HTML_ESC = Object.freeze({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' });
+/** A value for an attribute (doc-kind.mjs's own is not exported); a number is `String(n)`. */
+const escapeHtml = (v) => String(v).replace(/[&<>"']/g, (c) => HTML_ESC[c]);
+
+/**
+ * A film's sound (SPEC §5 Tracks) as the elements film.js plays when the film is opened alone: one `<audio>` per clip
+ * in track order, then the music, each on its own line; '' for no tracks. Every value is escaped, so nothing in a
+ * manifest an agent wrote can reach the page as markup.
+ * @param {{ clips: { id: string, file: string, start: number, seconds: number }[], music: { file: string, seconds: number, gain: number }|null }|null} tracks
+ * @returns {string}
+ */
+function filmAudioText(tracks) {
+  if (!tracks) return '';
+  const src = (file) => escapeHtml(`${SOUND_DIR}/${file}`);
+  const lines = tracks.clips.map((c) => `<audio data-film-clip="${escapeHtml(c.id)}" data-start="${escapeHtml(c.start)}" data-seconds="${escapeHtml(c.seconds)}" preload="auto" src="${src(c.file)}"></audio>`);
+  const m = tracks.music;
+  if (m) lines.push(`<audio data-film-music data-seconds="${escapeHtml(m.seconds)}" data-gain="${escapeHtml(m.gain)}" preload="auto" loop src="${src(m.file)}"></audio>`);
+  return lines.join('\n');
 }
 
 /** Applies non-overlapping `{ start, end, text }` edits to `text` in one pass. */
@@ -599,14 +620,19 @@ function writeDist(workDir, html, ids) {
  * deck's marker is the real `deck-stage` outside build, and its foot inlines the kit scripts from `work/.kit/`, so
  * no doc references `.kit/` by URL (L7.2); a missing kit file is an `IO` error with `kitFile` set. A film outside
  * build puts its scenes in `<div data-film>`, and its foot is FILM_PLAN, the kit, global.js, one `F.scene` per
- * included scene, then `F.start()`.
+ * included scene, then `F.start()`. In `dist` and `standalone`, a film with sound (`soundTracks` of
+ * `work/assets/sound/`, SPEC §5 Tracks) opens its foot with one `<audio data-film-clip>` per clip and the
+ * `<audio data-film-music>`, before the first script, for film.js to play; standalone embeds them as any asset.
+ * `sound: false` leaves them out (a still never carries the sound), and so do `run`, `build` and every other kind.
+ * `embedded: true` makes a film's FILM_PLAN embedded outside `run` too (the MP4 export's capture page: no bar, and
+ * nothing plays by itself).
  * `scriptFiles: true` (a deck's `standalone` only, for its bundler): the foot is one `<script src="<name>"></script>`
  * per script, and `scripts` holds each `{ name, text }` to write beside the page, so no code is in the page itself.
  * The inliner leaves those names as written. Asked for on another mode or kind, it is a `BAD_REQUEST`, before any read.
- * @param {{ workDir: string, plan: { kind?: string, sections?: { id: string }[] }|null, mode: 'build'|'run'|'dist'|'standalone', bridge?: string|null, inline?: boolean, kind?: string|null, scriptFiles?: boolean }} opts
+ * @param {{ workDir: string, plan: { kind?: string, sections?: { id: string }[] }|null, mode: 'build'|'run'|'dist'|'standalone', bridge?: string|null, inline?: boolean, kind?: string|null, scriptFiles?: boolean, sound?: boolean, embedded?: boolean }} opts
  * @returns {{ html: string, mode: string, sections: { id: string, state: 'included'|'slot'|'missing' }[], problems: { ref: string, why: 'missing'|'escaped'|'remote'|'too-large' }[], distDir?: string, files?: string[], scripts?: { name: string, text: string }[] }}
  */
-export function assembleDesign({ workDir, plan, mode, bridge = null, inline = false, kind = null, scriptFiles = false } = {}) {
+export function assembleDesign({ workDir, plan, mode, bridge = null, inline = false, kind = null, scriptFiles = false, sound = true, embedded = false } = {}) {
   if (!MODES.includes(mode)) throw new DesignError('BAD_REQUEST', `unknown assembly mode ${JSON.stringify(String(mode))}`);
   const build = mode === 'build';
   const live = build || mode === 'run';
@@ -652,8 +678,12 @@ export function assembleDesign({ workDir, plan, mode, bridge = null, inline = fa
     ? tocHtml({ sections: included.map((p) => ({ id: p.id, html: p.fill })), numbered: plan?.numbered === true })
     : '';
   fillMarker('sections', wrapFills({ kind: designKind, mode, fills: sectionFills, toc }));
-  const scripts = build ? [] : footScripts(workDir, included, { kind: designKind, plan, mode });
-  fillMarker('foot', footText(scripts, files));
+  const scripts = build ? [] : footScripts(workDir, included, { kind: designKind, plan, mode, embedded });
+  // A film opened alone plays its own sound: the elements go before the first script, which film.js reads at start.
+  const audioText = plan && isFilmKind(designKind) && (mode === 'dist' || mode === 'standalone') && sound !== false
+    ? filmAudioText(soundTracks(workDir, { ...plan, kind: designKind }))
+    : '';
+  fillMarker('foot', [audioText, footText(scripts, files)].filter(Boolean).join('\n'));
   let html = splice(shell, edits);
   // Each piece was stripped alone, so text that is a tag only where two pieces meet (a fill ending `<scr`, the shell
   // going on `ipt>`) is escaped here: build carries no model JS at all. Escaping alone, unbounded, because the joined
@@ -1024,3 +1054,6 @@ export function lintDesign({ workDir, plan } = {}) {
     : all;
   return { ok: counts.error === 0, findings, counts };
 }
+
+/** For tests: the sound lines, whose escaping no manifest that soundTracks passes can reach. */
+export const _testing = Object.freeze({ filmAudioText });

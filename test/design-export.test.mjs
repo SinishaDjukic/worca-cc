@@ -69,6 +69,12 @@ test('zip: forward slashes under one folder, every dist file, UTF-8 names, no br
   assert.equal(strFromU8(files['ship-radar/assets/logo.png']), 'PNG');
   for (const [k, v] of Object.entries(files)) { assert.equal(k.includes('\\'), false, k); assert.equal(strFromU8(v).includes(BRIDGE_MARKER), false, k); }
 });
+test('zip: a film\'s sound in assets/sound/ goes along (the asset copy is kind-blind)', async () => {
+  const files = await unzip(seedDone({ 'assets/sound/voice-open.wav': 'RIFF-open', 'assets/sound/music.wav': 'RIFF-music', 'assets/sound/sound.json': '{"v":1}' }));
+  assert.deepEqual(Object.keys(files).filter((k) => k.startsWith('ship-radar/assets/sound/')).sort(),
+    ['ship-radar/assets/sound/music.wav', 'ship-radar/assets/sound/sound.json', 'ship-radar/assets/sound/voice-open.wav']);
+  assert.deepEqual(['voice-open.wav', 'music.wav', 'sound.json'].map((f) => strFromU8(files[`ship-radar/assets/sound/${f}`])), ['RIFF-open', 'RIFF-music', '{"v":1}']);
+});
 test('zip: waits for the writer and stops on abort', async () => {
   const d = seedDone({ 'assets/big.bin': randomBytes(1024 * 1024).toString('hex') });
   assembleDesign({ workDir: designWorkDir(d.id), plan: PLAN, mode: 'dist' });

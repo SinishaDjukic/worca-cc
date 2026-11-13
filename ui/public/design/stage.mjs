@@ -225,9 +225,11 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
     doc, win, mount: frameMount, mint, now: wallNow,
     onMessage: (msg) => onFrameMessage(msg),
     onSwap: () => { lost.hidden = true; lostMode = null; },
+    // A lost frame sends no more `time`: a film's sound would play on.
     onLost: ({ mode }) => {
       lostMode = mode;
       lost.hidden = false;
+      chrome?.silence();
       onFrameLost?.({ mode });
     },
   });
@@ -266,6 +268,7 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
 
   // A deck or a video (L7.23): the board message the build doc lays its tiles out by, and a finished deck's rail. An
   // agent's colour is its crew token; one with no record (opened from detail frames) has none, and the CSS falls back.
+  // A video's voice and music (SPEC D12) come from the design's sound route; no answer is no sound.
   const chrome = board ? createKindChrome({
     doc, wrap, kind,
     post: (t, f) => frame.send(t, f),
@@ -274,6 +277,8 @@ export function createStage({ doc, win, host, design, fetch: fetchFn, sendWs, on
       const a = typeof agentId === 'string' && Object.hasOwn(state.agents, agentId) ? state.agents[agentId] : null;
       return a ? `var(${crewOf(a)})` : null;
     },
+    loadTracks: () => fetchFn(`${base}/sound`).then((r) => (r.ok ? r.json() : null)).then((b) => b?.tracks ?? null).catch(() => null),
+    fileUrl: (name) => `${base}/sound/files/${enc(name)}`,
   }) : null;
   const tip = createDotTip({ doc, host: wrap });
   const panel = createAgentsPanel({

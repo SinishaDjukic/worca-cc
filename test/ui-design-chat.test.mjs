@@ -38,7 +38,9 @@ const assistantWith = (...blocks) => {
  * Send; `refuse` answers that message 409 with those words, and `o.refuse` every message from the start. `o.initial` is
  * the dock's `initial` (the Library's first message); `o.destroyNow` destroys the dock before its thread loads.
  * `o.renderMarkdown` draws a reply (default: its text); `md.calls` counts the draws. `o.pictures` is the dock's picture
- * log (absent: none).
+ * log (absent: none). `o.sound` answers GET /api/design/:id/sound: a 200 body, or a function of `reply` that answers
+ * (or throws, or holds) itself (absent: 404); `setSound(v)` changes it and `soundGets()` counts those GETs. `o.soundAsk`
+ * is `{status, body}` for POST /api/design/:id/sound/ask (absent: 201 `{cardId}`), or `'throw'`.
  */
 async function rigDock(o = {}) {
   const { doc, win } = rig();
@@ -53,6 +55,7 @@ async function rigDock(o = {}) {
   const confirms = [];
   const restored = [];
   let refuse = o.refuse ?? null;
+  let sound = o.sound;
   let sent = 0;
   const reply = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
   const fetch = async (url, opts = {}) => {
@@ -63,6 +66,11 @@ async function rigDock(o = {}) {
     else gets.push(url);
     if (method === 'GET' && url === '/api/ask/models') return reply(200, { default: { model: 'm', effort: 'e' }, models: [] });
     if (method === 'GET' && url === '/api/images' && o.images !== undefined) return reply(200, o.images);
+    if (method === 'GET' && url === `/api/design/${DID}/sound` && sound !== undefined) return typeof sound === 'function' ? sound(reply) : reply(200, sound);
+    if (method === 'POST' && url === `/api/design/${DID}/sound/ask`) {
+      if (o.soundAsk === 'throw') throw new TypeError('Failed to fetch');
+      return o.soundAsk ? reply(o.soundAsk.status, o.soundAsk.body) : reply(201, { cardId: 'card_00000c09' });
+    }
     if (method === 'GET' && url === `/api/ask/threads/${design.threadId}`) {
       return reply(200, { thread: { id: design.threadId, mode: 'design', title: 'Landing page', designId: DID }, messages: o.messages || [], attachments: [], runLinks: [], inFlight: null });
     }
@@ -110,7 +118,8 @@ async function rigDock(o = {}) {
     refuse = null;
   }
   return { dock, host, doc, win, posts, gets, setPicks, unpins, confirms, restored, md, send, tick: () => settle(),
-    imagesGets: () => gets.filter((u) => u === '/api/images').length };
+    imagesGets: () => gets.filter((u) => u === '/api/images').length,
+    setSound: (v) => { sound = v; }, soundGets: () => gets.filter((u) => u === `/api/design/${DID}/sound`).length };
 }
 
 test('a chat question renders with the real ask-card grammar and answers through the card route', async () => {
@@ -798,6 +807,91 @@ test('Pictures in the dock: asked for when the dock is made and at each open, re
   }
 });
 
+// The gear's Sound row (SPEC U6): after the Pictures row with its own divider, for a video where sound is available.
+const ON_CALM = { on: true, voice: { id: 'mock-voice-1', name: 'Ana' }, music: { kind: 'calm' } };
+const VIDEO = { kind: 'video' };
+const soundBody = (sound) => ({ available: true, sound, tracks: null });
+/** The row as a person sees it: [its divider shown, the row shown, label, summary, button]. */
+function soundSeen(host) {
+  const row = host.querySelector('.dz-sound-row');
+  return [!row.previousElementSibling.hidden, !row.hidden, row.querySelector('.switch-label').textContent,
+    row.querySelector('.dz-sound-sum').textContent, row.querySelector('.dz-sound-change').textContent];
+}
+
+test('the gear\'s Sound row: after the Pictures row with its own divider, the design\'s sound in one line, asked for when the dock is made and at each open', async () => {
+  const { host, tick, soundGets } = await rigDock({ design: VIDEO, sound: soundBody(ON_CALM), images: { configured: true, model: 'gpt-image-2.6-flare' } });
+  const kids = [...host.querySelector('.dz-set-pop').children];
+  const row = host.querySelector('.dz-sound-row');
+  assert.deepEqual([kids.at(-1) === row, kids.at(-2).className, kids.at(-3).classList.contains('dz-pics')], [true, 'ask-pop-divider', true]);
+  assert.deepEqual(soundSeen(host), [true, true, 'Sound', 'Ana · Calm', 'Change']);
+  const change = row.querySelector('.dz-sound-change');
+  assert.deepEqual([change.tagName, change.type, change.classList.contains('btn-quiet')], ['BUTTON', 'button', true]);
+  assert.equal(soundGets(), 1);
+  host.querySelector('.dz-set-btn').click(); await tick();
+  assert.equal(soundGets(), 2);
+});
+test('the Sound row reads Off with no sound; it and its divider stay hidden when sound is not available, on an odd answer, and for another kind, which asks nothing', async () => {
+  const off = await rigDock({ design: VIDEO, sound: soundBody(null) });
+  assert.deepEqual(soundSeen(off.host), [true, true, 'Sound', 'Off', 'Change']);
+  const offToo = await rigDock({ design: VIDEO, sound: soundBody({ ...ON_CALM, on: false }) });
+  assert.equal(offToo.host.querySelector('.dz-sound-sum').textContent, 'Off');
+  for (const body of [{ available: false, sound: ON_CALM, tracks: null }, { config: { projects: [] } }, null]) {
+    const r = await rigDock({ design: VIDEO, sound: body });
+    assert.deepEqual(soundSeen(r.host).slice(0, 2), [false, false], JSON.stringify(body));
+  }
+  const web = await rigDock({ sound: soundBody(ON_CALM) });
+  web.host.querySelector('.dz-set-btn').click(); await web.tick();
+  assert.deepEqual([...soundSeen(web.host).slice(0, 2), web.soundGets()], [false, false, 0]);
+});
+test('the Sound row keeps its last good answer through a failed request, paints only the newest answer, and hides on available: false', async () => {
+  const r = await rigDock({ design: VIDEO, sound: soundBody(ON_CALM) });
+  const gear = r.host.querySelector('.dz-set-btn');
+  const toggle = async () => { gear.click(); await r.tick(); };
+  for (const fail of [(reply) => reply(500, { error: 'boom' }), () => { throw new TypeError('Failed to fetch'); }, (reply) => reply(200, { config: { projects: [] } })]) {
+    r.setSound(fail);
+    await toggle(); await toggle();                      // open (asks), close
+    assert.deepEqual(soundSeen(r.host), [true, true, 'Sound', 'Ana · Calm', 'Change']);
+  }
+  let release = null;
+  r.setSound((reply) => new Promise((res) => { release = () => res(reply(200, soundBody(null))); }));
+  await toggle();                                        // open: the ask is held
+  r.setSound(soundBody({ ...ON_CALM, voice: { id: 'mock-voice-2', name: 'Ben' } }));
+  await toggle(); await toggle();                        // close, open: a newer ask, answered
+  assert.equal(r.host.querySelector('.dz-sound-sum').textContent, 'Ben · Calm');
+  release(); await r.tick();
+  assert.equal(r.host.querySelector('.dz-sound-sum').textContent, 'Ben · Calm', 'the older answer, landing last, is dropped');
+  r.setSound({ available: false, sound: null, tracks: null });
+  await toggle(); await toggle();                        // close, open
+  assert.deepEqual(soundSeen(r.host).slice(0, 2), [false, false]);
+});
+test('Change posts once, held while out: a 201 closes the popover, a 409 closes it with the route\'s words in the note, anything else names the status', async () => {
+  const r = await rigDock({ design: VIDEO, sound: soundBody(ON_CALM) });
+  r.host.querySelector('.dz-set-btn').click(); await r.tick();
+  const pop = r.host.querySelector('.dz-set-pop');
+  assert.equal(pop.hidden, false);
+  const btn = r.host.querySelector('.dz-sound-change');
+  btn.click();
+  btn.dispatchEvent(new r.win.Event('click'));           // a second press while the first is out: a plain Event reaches a disabled button
+  assert.equal(btn.disabled, true, 'held while the POST is out');
+  await r.tick();
+  assert.deepEqual(r.posts.filter((p) => /\/sound\/ask$/.test(p.url)), [{ url: `/api/design/${DID}/sound/ask`, body: {} }]);
+  assert.deepEqual([pop.hidden, btn.disabled, r.host.querySelector('.dsc-note').hidden], [true, false, true]);
+  assert.deepEqual(r.posts.filter((p) => p.method === 'PATCH'), [], 'the Sound row never PATCHes the design');
+  for (const [soundAsk, words, closes] of [
+    [{ status: 409, body: { error: 'A sound card is already open in the chat.' } }, 'A sound card is already open in the chat.', true],
+    [{ status: 409, body: {} }, 'Sound was not opened (HTTP 409).', true],
+    [{ status: 500, body: { error: 'boom' } }, 'Sound was not opened (HTTP 500).', false],
+    ['throw', 'Sound was not opened (HTTP 0).', false],
+  ]) {
+    const x = await rigDock({ design: VIDEO, sound: soundBody(null), soundAsk });
+    x.host.querySelector('.dz-set-btn').click(); await x.tick();
+    x.host.querySelector('.dz-sound-change').click(); await x.tick();
+    const note = x.host.querySelector('.dsc-note');
+    assert.deepEqual([x.host.querySelector('.dz-set-pop').hidden, note.hidden, note.textContent, x.host.querySelector('.dz-sound-change').disabled],
+      [closes, false, words, false], words);
+  }
+});
+
 test('while a round runs its pictures land at the end of the thread: a quiet tile first, the picture once it lands', async () => {
   const pictures = createPictureLog({ designId: DID });
   const { host, dock, tick } = await rigDock({ design: { status: 'planning', currentBuild: 'b_1' }, messages: [], pictures });
@@ -946,4 +1040,70 @@ test('a live round whose only asks failed: the pause alone moves them under its 
   assert.deepEqual([host.querySelector('.dsc-reply .dsc-steps'), host.querySelector('.dsc-build')], [null, null], 'a live round\'s asks are not in its reply yet');
   dock.pushDesignFrame({ ...f, status: 'paused' }); await tick();
   assert.equal(host.querySelector('.dsc-reply .dsc-steps-text')?.textContent, '1 picture failed');
+});
+
+// The sound cards (sound-card.mjs) in the dock: drawn through `cached` by their state and step only, so a frame that
+// changes `keyNeeded` keeps the pick and the typed key; replaced or taken down with the dock, a card stops its sample.
+const SOUND_ASK = { kind: 'card', id: 'card_00000c01', state: 'asking', card: { type: 'design-sound', step: 'ask', designId: DID,
+  heading: 'Sound for this video', summary: 'Sound for this video', keyNeeded: false, pending: { kind: 'design-start', brief: 'A film' } } };
+const SOUND_PICK = { kind: 'card', id: 'card_00000c02', state: 'asking', card: { type: 'design-sound', step: 'pick', designId: DID,
+  heading: 'Voice and music', summary: 'Voice and music', pending: null,
+  voices: [{ id: 'mock-voice-1', name: 'Ana', about: 'Warm' }, { id: 'mock-voice-2', name: 'Ben', about: 'Low' }] } };
+/** jsdom plays nothing: each play and pause gives the element its own `paused`; `played` lists the elements started. */
+function playable(win) {
+  const played = [];
+  const own = (el, paused) => Object.defineProperty(el, 'paused', { value: paused, writable: true, configurable: true });
+  win.HTMLMediaElement.prototype.play = function play() { own(this, false); played.push(this); return Promise.resolve(); };
+  win.HTMLMediaElement.prototype.pause = function pause() { own(this, true); };
+  return played;
+}
+const soundTile = (el, label) => [...el.querySelectorAll('.qopt')].find((t) => t.querySelector('.chat-q-opt-label').textContent === label);
+
+test('a design-sound card renders in the thread and answers through the card route', async () => {
+  const { host, posts, tick } = await rigDock({ design: { kind: 'video' }, messages: [assistantWith(SOUND_ASK)] });
+  const el = host.querySelector('section.chat-rc-q.chat-q');
+  assert.equal(el.querySelector(':scope > h3.chat-rc-q-head').textContent, 'Sound for this video');
+  soundTile(el, 'No').click();
+  el.querySelector('.qpanel-foot > .btn-primary').click();
+  await tick();
+  assert.deepEqual(posts.at(-1), { url: '/api/ask/threads/ask_00000001/cards/card_00000c01', body: { answers: { sound: 'no' } } });
+});
+test('a sound card survives an ask-message that changes only keyNeeded; a new state replaces it and disposes the old one', async () => {
+  const row = assistantWith(SOUND_ASK);
+  const { dock, host, tick } = await rigDock({ design: { kind: 'video' }, messages: [row] });
+  const el = host.querySelector('section.chat-rc-q');
+  soundTile(el, 'Yes').click();
+  const push = async (block) => { dock.pushAskFrame({ type: 'ask-message', threadId: 'ask_00000001', message: { ...row, blocks: [block] } }); await tick(); };
+  await push({ ...SOUND_ASK, card: { ...SOUND_ASK.card, keyNeeded: true } });
+  assert.equal(host.querySelector('section.chat-rc-q'), el, 'the same card element');
+  assert.ok(soundTile(el, 'Yes').classList.contains('sel'), 'the pick stays');
+  let disposed = 0;
+  const own = el.__dispose;
+  el.__dispose = () => { disposed += 1; own(); };
+  await push({ ...SOUND_ASK, state: 'answered', card: { ...SOUND_ASK.card, keyNeeded: true, pending: null, answers: { sound: 'yes' } } });
+  const now = host.querySelector('section.chat-rc-q');
+  assert.notEqual(now, el);
+  assert.ok(now.classList.contains('is-answered'));
+  assert.equal(disposed, 1, 'the replaced card was disposed');
+});
+test('a playing sample stops when its card is answered, and when the dock is destroyed', async () => {
+  const row = assistantWith(SOUND_PICK);
+  const { dock, host, win, tick } = await rigDock({ design: { kind: 'video' }, messages: [row] });
+  const played = playable(win);
+  host.querySelector('.dsc-sound-play').click();
+  const audio = played.at(-1);
+  assert.deepEqual([audio.getAttribute('src'), audio.paused], ['/api/sound/voices/mock-voice-1/sample', false]);
+  dock.pushAskFrame({ type: 'ask-message', threadId: 'ask_00000001', message: { ...row,
+    blocks: [{ ...SOUND_PICK, state: 'answered', card: { ...SOUND_PICK.card, answers: { voiceId: 'mock-voice-1', voiceName: 'Ana', music: { kind: 'calm' } } } }] } });
+  await tick();
+  assert.equal(audio.paused, true, 'the answered block replaced the card');
+  assert.equal(host.querySelector('.dsc-sound-said').textContent, 'Ana · Calm');
+
+  const next = await rigDock({ design: { kind: 'video' }, messages: [assistantWith(SOUND_PICK)] });
+  const playedNext = playable(next.win);
+  next.host.querySelectorAll('.dsc-sound-play')[1].click();
+  const sample = playedNext.at(-1);
+  assert.equal(sample.paused, false);
+  next.dock.destroy();
+  assert.equal(sample.paused, true, 'no sample outlives the dock');
 });
