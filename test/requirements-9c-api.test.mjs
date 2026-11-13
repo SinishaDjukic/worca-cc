@@ -50,12 +50,12 @@ const deps = {
   interviewModel: async () => ({ model: 'claude-opus-x', effort: 'medium' }),
   interviewSlot: () => ({}),
   userSignIn: () => false,
-  resolveEngine: () => ({ engine: state.engine }),
+  resolveEngine: () => { if (state.engineThrows) throw new Error('settings unreadable'); return { engine: state.engine }; },
   engines: () => state.engines,
   readiness: async () => state.readiness,
   roleModel: () => null,
   resolveRole: (engine) => (engine === 'codex' ? { model: 'gpt-everyday' } : null),
-  catalog: ask.askCatalog,
+  catalog: (...a) => (state.catalog || ask.askCatalog)(...a),
   validate: ask.validateModelEffort,
   gate: (...a) => state.gate(...a),
   onChange: () => {},
@@ -183,6 +183,27 @@ test('POST without a model stores the default choice (an API client keeps workin
     await settled(c.json.feature.seq);
     assert.equal(c.json.feature.model.engine, 'codex');
   } finally { state.engine = 'claude'; }
+});
+
+test('N2: POST without a model is refused (503) when the default pick fails, never stored as a silent Claude feature', async () => {
+  const body = { scopeType: 'project', scopeKey: projKey, title: 'No default', description: 'd' };
+  const count = () => call('GET', P).then((r) => r.json.features.length);
+  const n0 = await count();
+  const before = calls.length;
+  state.engineThrows = true;
+  try {
+    const r = await call('POST', P, body);
+    assert.deepEqual([r.status, r.json.error], [503, 'The models could not be loaded. Try again.']);
+  } finally { state.engineThrows = false; }
+  // the Default engine is Codex but no Codex model can be named: refused, not stored as model null (= Claude)
+  state.engine = 'codex';
+  state.catalog = async () => ({ models: [], defaults: {} });
+  try {
+    const r = await call('POST', P, body);
+    assert.deepEqual([r.status, r.json.error], [503, 'The models could not be loaded. Try again.']);
+  } finally { state.engine = 'claude'; state.catalog = null; }
+  assert.equal(await count(), n0, 'nothing created');
+  assert.equal(calls.length, before, 'nothing ran');
 });
 
 test('the list: interview.default and fallbackReason; spend.unknownSteps', async () => {

@@ -289,6 +289,39 @@ test('New feature: when the models cannot be loaded the form still works and sen
   assert.equal(calls.find((c) => c.method === 'POST').body.model, undefined);
 });
 
+test('N2: New feature: Who interviews says it is loading, then that the models could not be loaded, with Try again', async () => {
+  let release;
+  let fail = true;
+  const pending = new Promise((r) => { release = r; });
+  let first = true;
+  const routes = ROUTES({ 'GET /api/requirements/models': () => {
+    if (first) { first = false; return pending; }
+    return fail ? undefined : CATALOG;
+  } });
+  const { host, calls } = await openNew(routes);
+  const status = () => host.querySelector('.req-who-box .req-who-status');
+  const box = host.querySelector('.req-who-box');
+  assert.equal(box.hidden, false, 'the box is there while the models load');
+  assert.equal(text(status()), 'Loading the models…');
+  release(undefined);   // the load fails (no catalog)
+  await settle();
+  assert.equal(host.querySelector('.req-who'), null);
+  assert.equal(box.hidden, false);
+  assert.equal(text(status()), 'The models could not be loaded. Try again');
+  const retry = status().querySelector('button');
+  assert.equal(text(retry), 'Try again');
+  fail = true;
+  retry.click();
+  await settle();
+  assert.equal(text(status()), 'The models could not be loaded. Try again', 'a failed retry says so again');
+  fail = false;
+  status().querySelector('button').click();
+  await settle();
+  assert.ok(host.querySelector('.req-who .req-who-harness'), 'Try again draws Who interviews');
+  assert.equal(status(), null, 'the status line is gone');
+  assert.equal(calls.filter((c) => c.url === '/api/requirements/models').length, 3);
+});
+
 test('styles: the new rules sit inside the Requirements block and use tokens only (board 8, dark)', () => {
   const css = readStyleCss();
   const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');

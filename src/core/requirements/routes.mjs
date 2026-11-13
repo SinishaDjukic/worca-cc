@@ -49,7 +49,7 @@ import { saveSpecToCheckout, specFileName } from './save.mjs';
 import { assertBriefSection, parseSectionValue, renderBriefMarkdown, briefFileName, briefMatches } from './brief.mjs';
 import { makeBrief, isBriefBusy, briefTarget, briefEstimate, briefStaleness } from './brief-job.mjs';
 
-const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, CONFLICT: 409, BUDGET: 409, NOT_READY: 409, TOO_LARGE: 413, TRACKER: 502 });
+const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, CONFLICT: 409, BUDGET: 409, NOT_READY: 409, TOO_LARGE: 413, TRACKER: 502, UNAVAILABLE: 503 });
 const P = '/api/requirements';
 
 /** Every requirements route, in registration order: the one list registerRequirementsRoutes registers from
@@ -159,6 +159,7 @@ const bool = (v, field) => {
 // A file route's failure that is not one of Worca's own refusals (a disk or database error) answers product copy; the
 // raw error, which can name a path, goes to the log only (D15).
 const FILE_ROUTE_FAILED = 'Worca could not finish that. Try again.';
+const MODELS_NOT_LOADED = 'The models could not be loaded. Try again.';
 const STORED_FILE = 'Worca could not open the stored file. Remove it and attach it again.';
 const fileRoute = (fn, copy = FILE_ROUTE_FAILED) => async (req, res) => {
   try { await fn(req, res); } catch (err) {
@@ -775,11 +776,20 @@ export function registerRequirementsRoutes(app, { broadcast, server, deps = {} }
     [`POST ${P}`]: fileRoute(async (req, res) => {
       const b = req.body || {};
       await checkTarget(b.scopeType, b.scopeKey);
-      // 9c D3, D4: the pick is checked before anything is created; absent (an API client), the default for the scope is stored
+      // 9c D3, D4: the pick is checked before anything is created; absent (an API client, or a form whose models did not
+      // load), the default for the scope is stored. D2: a default that cannot be told is refused, never stored as NULL
+      // (= Claude): that would start a feature on Claude when the Default engine is another harness, and nobody told.
+      // A Claude default without a model keeps NULL, which is that same Claude pair (interviewModel) as before 9c.
       let model = null;
       if (b.model !== undefined && b.model !== null) model = await pickOf(b.model, d);
       else {
-        try { const { choice } = await defaultChoice(scopeOf({ scopeType: b.scopeType, scopeKey: b.scopeKey }), d); model = choice && choice.model ? choice : null; } catch { model = null; }
+        let choice = null;
+        try { ({ choice } = await defaultChoice(scopeOf({ scopeType: b.scopeType, scopeKey: b.scopeKey }), d)); } catch (err) {
+          console.error('requirements: the default model for a new feature could not be told:', err && err.message ? err.message : err);
+          throw new RequirementsError('UNAVAILABLE', MODELS_NOT_LOADED);
+        }
+        if (choice && choice.model) model = choice;
+        else if (choice && choice.engine && choice.engine !== 'claude') throw new RequirementsError('UNAVAILABLE', MODELS_NOT_LOADED);
       }
       const uploads = b.attachments === undefined ? [] : uploadsOf(b.attachments, { owner: 'feature', create: true });
       if (b.fromTicket !== undefined) {

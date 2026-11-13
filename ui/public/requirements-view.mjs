@@ -851,10 +851,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     sayLook();
     relook = sayLook;
     // 9c boards 1, 2, 7: Who interviews. The harness list, models and estimates load once the form is open; the default and the
-    // fallback reason come from the list call. The group is drawn when both are known; without the models the form works as before.
-    const whoBox = h('div', { class: 'req-who-box', hidden: true });
+    // fallback reason come from the list call. The group is drawn when both are known. Until then the box says the models are
+    // loading, or that they could not be loaded with Try again (D5: who interviews is never left unsaid); Create still works
+    // and the server stores the default, or refuses when it cannot tell one.
+    const whoBox = h('div', { class: 'req-who-box' });
+    const whoStatus = h('p', { class: 'hint req-who-status', role: 'status' });
     const slots = { fallback: h('div'), def: h('div'), hint: h('div'), note: h('div', { 'aria-live': 'polite' }) };
-    whoBox.append(slots.fallback, slots.def, slots.hint, slots.note);
+    whoBox.append(whoStatus, slots.fallback, slots.def, slots.hint, slots.note);
     let catalog = null;
     let listInterview = interview;
     let listIn = listKnown;
@@ -904,14 +907,26 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     function buildWho() {
       if (who || !catalog || !listIn || !host.contains(whoBox)) return;
       who = whoInterviews(document, { models: catalog.models, harnesses: catalog.harnesses, choice: defaultOf(), defaults: catalog.defaults, onChange: onPick });
+      whoStatus.remove();
       whoBox.prepend(who.el);
-      whoBox.hidden = false;
       cost.note(true);
       drawFallback();
       onPick();
     }
-    api('GET', '/api/requirements/models').then((c) => (c && Array.isArray(c.harnesses) && c.harnesses.length && Array.isArray(c.models) ? c : null), () => null)
-      .then((c) => { catalog = c; buildWho(); });
+    const loadModels = () => {
+      whoStatus.replaceChildren('Loading the models…');
+      api('GET', '/api/requirements/models').then((c) => (c && Array.isArray(c.harnesses) && c.harnesses.length && Array.isArray(c.models) ? c : null), () => null)
+        .then((c) => {
+          catalog = c;
+          if (!c) {
+            whoStatus.replaceChildren('The models could not be loaded. ',
+              h('button', { type: 'button', class: 'link-btn req-who-retry', onclick: loadModels }, 'Try again'));
+            return;
+          }
+          buildWho();
+        });
+    };
+    loadModels();
     // A8 (board 15): the Files field. Picks are checked here (D7: 10 files, 25 MB each, 100 MB in all on this form);
     // a refused one is named in the amber alert and not added; a chip per accepted file.
     let picked = [];
