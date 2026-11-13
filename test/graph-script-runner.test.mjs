@@ -4,7 +4,7 @@
 // blocking, error exit, garbage frame, missing output, `value` fallback, timeout
 // + tree kill, abort, stream order, capture cap, mock. Every thrown error carries
 // errorClass:null (D9) so classifyError can never read "timed out" as network.
-import { test, after } from 'node:test';
+import { test, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,8 +13,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   runScriptExecution, buildEnvelope, envForShell, parseFrame, materializeOutputs, shellReport, envelopeAuditPath, scriptBaseEnv, resolveWiredParams,
-  workspaceEnvelope, MAX_LINE, STREAM_MAX, FRAME_MAX,
+  workspaceEnvelope, MAX_LINE, STREAM_MAX, FRAME_MAX, spawnScript,
 } from '../src/core/graph/script-runner.mjs';
+import { createFakeE2b } from '../src/core/exec-env/e2b-fake.mjs';
+import { E2bExecEnv } from '../src/core/exec-env/e2b-env.mjs';
+import { fixture as e2bFixture, makeEnvOpts as e2bEnvOpts } from './helpers/e2b-fixture.mjs';
 import { classifyError } from '../src/core/recoverable-error.mjs';
 import { stripHostCredentials } from '../src/core/host-credentials.mjs';
 import { withEnv } from './helpers/with-env.mjs';
@@ -41,9 +44,8 @@ const PORTS = {
 };
 
 /** A runner ctx the way _execCtx builds it, over a temp pipeline dir. */
-function ctxFor({ meta, params = {}, file = null, command = null, timeoutMs = 20000, mock = null, ports = PORTS, bindings, signal, claudeOpts = {}, events = [] }) {
-  const pipelineDir = tmp('worca-sr-pipe-');
-  const cwd = tmp('worca-sr-cwd-');
+function ctxFor({ meta, params = {}, file = null, command = null, timeoutMs = 20000, mock = null, ports = PORTS, bindings, signal, claudeOpts = {}, events = [],
+  pipelineDir = tmp('worca-sr-pipe-'), cwd = tmp('worca-sr-cwd-'), execEnv }) {
   const ordinal = 2;
   const outputs = {};
   for (const p of ports.outputs) if (p.filename) outputs[p.id] = { path: join(pipelineDir, p.filename.replace('{cycle}', String(ordinal))), store: 'run' };
@@ -58,6 +60,7 @@ function ctxFor({ meta, params = {}, file = null, command = null, timeoutMs = 20
     trigger: { wireIds: ['w1'], freshPorts: ['done'] },
     script: { meta, runtime: meta.runtime, file, command, params, timeoutMs, mock },
     claudeOpts, signal, onEvent: (e) => events.push(e), events,
+    ...(execEnv ? { execEnv } : {}),
   };
 }
 const nodeMeta = (over = {}) => ({ key: 'runTests', displayName: 'Run tests', runtime: 'node', params: [], verdict: PORTS.verdict, ...over });
@@ -530,6 +533,16 @@ test('a script base env never carries an Azure DevOps or Bitbucket credential, s
   });
 });
 
+test('a local script never gets an E2B credential, scrub on or off: only the worca server holds them', async () => {
+  const E2B_KEYS = ['E2B_API_KEY', 'E2B_API_URL', 'E2B_SANDBOX_URL', 'WORCA_E2B_TEMPLATE'];
+  await withEnv(Object.fromEntries(E2B_KEYS.map((k) => [k, 'x'])), () => {
+    for (const base of [scriptBaseEnv({}), scriptBaseEnv({ envScrub: true, envAllowlist: E2B_KEYS })]) {
+      const env = envForShell(buildEnvelope(ctxFor({ meta: shellMeta() })), base);
+      for (const k of E2B_KEYS) assert.equal(k in env, false, k);
+    }
+  });
+});
+
 test('W12: ctx.bench rides the envelope and WORCA_BENCH the shell env; a pipeline run carries neither', () => {
   const ctx = ctxFor({ meta: nodeMeta() });
   const pipeline = buildEnvelope(ctx);
@@ -844,4 +857,116 @@ test('wired params: nothing bound still enforces a required param V22 deferred t
   assert.deepEqual(JSON.parse(readFileSync(res.envelopePath, 'utf8')).wiredParams, []);
   const honoured = await runScriptExecution(wiredCtx({ seq: 1, type: 'json', value: { ref: 'dev' } }, { claudeOpts: { mock: true } }));
   assert.equal(honoured.outputs.report.value.params.ref, 'dev', 'a VALID payload (an upstream script ran for real) is honoured on a mock run too');
+});
+
+describe('e2b', { skip: process.platform === 'win32' ? 'e2b mode is POSIX-only' : false }, () => {
+  const CHILD = fileURLToPath(new URL('../src/core/graph/script-child.mjs', import.meta.url));
+  const PY_HARNESS = fileURLToPath(new URL('../src/core/graph/worca_script.py', import.meta.url));
+  /** A started E2bExecEnv on the fake; `ctx(o)` builds a runner ctx over its pipeline dir and worktree. */
+  async function e2b(sdkOpts = {}) {
+    const f = e2bFixture(tmp);
+    const sdk = createFakeE2b({ root: tmp('worca-e2b-root-'), ...sdkOpts });
+    const env = new E2bExecEnv(e2bEnvOpts(tmp, sdk, f));
+    await env.start();
+    after(() => env.close('test'));
+    const commands = () => sdk.events.filter((e) => e.type === 'command').map((e) => e.cmd);
+    return { f, sdk, env, commands, ctx: (o) => ctxFor({ ...o, pipelineDir: f.pipelineDir, cwd: f.repo, execEnv: env }) };
+  }
+
+  test('a node script runs in the sandbox as `node <script-child> <file>`; its output is on the host when it returns', async () => {
+    const { ctx, commands } = await e2b();
+    const file = writeProgram(tmp('worca-sr-prog-'), `
+import { writeFileSync } from 'node:fs';
+export default async function ({ outputs }) {
+  writeFileSync(outputs.log.path, '# from the sandbox\\n');
+  return { summary: 'ok', outputs: { report: { value: { passed: 1 } } }, verdict: { issues: [] } };
+}\n`);
+    const c = ctx({ meta: nodeMeta(), file });
+    const res = await runScriptExecution(c);
+    assert.equal(res.summary, 'ok');
+    assert.equal(readFileSync(c.outputs.log.path, 'utf8'), '# from the sandbox\n');
+    assert.deepEqual(res.outputs.report.value, { passed: 1 });
+    const cmd = commands().find((x) => x.includes(CHILD));
+    assert.ok(cmd?.startsWith(`'node' '${CHILD}'`), cmd);
+    assert.ok(!cmd.includes(process.execPath));
+  });
+
+  test('a python script runs as `python3 -u <harness> <file>` with the python env', async (t) => {
+    if (spawnSync('python3', ['--version']).status !== 0) { t.skip('no python3 on this host'); return; }
+    let seen = null;
+    const { ctx } = await e2b({ onCommand: (cmd, o) => { if (cmd.startsWith("'python3'")) seen = { cmd, envs: o.envs }; return null; } });
+    const dir = tmp('worca-sr-py-');
+    const file = join(dir, 'prog.py');
+    writeFileSync(file, 'def main(inputs, outputs, params, ctx, log, execution):\n    return {"summary": "py ok", "outputs": {"report": {"value": {}}}, "verdict": {"issues": []}}\n');
+    const c = ctx({ meta: nodeMeta({ runtime: 'python' }), file, ports: { ...PORTS, outputs: PORTS.outputs.filter((o) => o.id !== 'log' && o.id !== 'fail') } });
+    await runScriptExecution(c).catch(() => {});
+    assert.equal(seen?.cmd.split(' < ')[0], `'python3' '-u' '${PY_HARNESS}' '${file}'`);
+    assert.equal(seen.envs.PYTHONUNBUFFERED, '1');
+    assert.equal(seen.envs.PYTHONIOENCODING, 'utf-8');
+  });
+
+  test('scripts get no model route: neither relay var, nor a model credential', async () => {
+    let envs = null;
+    const { ctx } = await e2b({ onCommand: (cmd, o) => { if (cmd.startsWith("'/bin/sh'")) envs = o.envs; return null; } });
+    const c = ctx({ meta: shellMeta(), params: { command: 'true' }, ports: { ...PORTS, outputs: PORTS.outputs.filter((o) => o.id !== 'report') } });
+    await withEnv({ CLAUDE_CODE_OAUTH_TOKEN: 'oat', ANTHROPIC_API_KEY: 'k', ANTHROPIC_AUTH_TOKEN: 'g', ANTHROPIC_BASE_URL: 'http://127.0.0.1:9',
+      ANTHROPIC_CUSTOM_HEADERS: 'X-A: b' }, () => runScriptExecution(c));
+    assert.ok(envs?.WORCA_ENVELOPE);
+    for (const k of ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_CUSTOM_HEADERS']) assert.equal(k in envs, false, k);
+  });
+
+  test('a sandbox script gets its WORCA_* contract and never a host secret, OTEL_* or E2B_* var', async () => {
+    let envs = null;
+    const { ctx } = await e2b({ onCommand: (cmd, o) => { if (cmd.startsWith("'/bin/sh'")) envs = o.envs; return null; } });
+    const c = ctx({ meta: shellMeta(), params: { command: 'true' }, ports: { ...PORTS, outputs: PORTS.outputs.filter((o) => o.id !== 'report') } });
+    await withEnv({ WORCA_HEARTBEAT_TOKEN: 'hb', OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer x', E2B_API_KEY: 'e2b_k', E2B_API_URL: 'http://localhost:3000' },
+      () => runScriptExecution(c));
+    for (const k of ['WORCA_CWD', 'WORCA_PIPELINE_DIR', 'WORCA_RUN_ID', 'WORCA_OUT_LOG', 'WORCA_PARAM_COMMAND', 'WORCA_ENVELOPE']) assert.ok(envs[k], k);
+    for (const k of ['WORCA_HEARTBEAT_TOKEN', 'OTEL_EXPORTER_OTLP_HEADERS', 'E2B_API_KEY', 'E2B_API_URL']) assert.equal(k in envs, false, k);
+    // the program runs in a Linux sandbox and knows it (promo-kit find-tools toolHints); the VM is Chrome's sandbox
+    assert.equal(envs.WORCA_PLATFORM, 'linux');
+    assert.equal(envs.WORCA_EXEC_ENV, 'e2b');
+    assert.equal(envs.CHROME_NO_SANDBOX, '1');
+    const envelope = JSON.parse(readFileSync(envs.WORCA_ENVELOPE, 'utf8'));
+    assert.equal(envelope.ctx.platform, 'linux');
+    assert.equal(envelope.ctx.execEnv, 'e2b');
+  });
+
+  test('a shell script runs as `/bin/sh -c <command>`, unchanged', async () => {
+    const { ctx, commands } = await e2b();
+    const c = ctx({ meta: shellMeta(), params: { command: 'echo shell-ran' }, ports: { ...PORTS, outputs: PORTS.outputs.filter((o) => o.id !== 'report') } });
+    const res = await runScriptExecution(c);
+    assert.equal(res.exitCode, 0);
+    assert.ok(commands().some((x) => x.startsWith("'/bin/sh' '-c' 'echo shell-ran'")));
+    assert.match(readFileSync(c.outputs.log.path, 'utf8'), /shell-ran/, 'the report was written on the host');
+  });
+
+  test('timeout and abort kill the sandbox command', async () => {
+    const { f, env } = await e2b();
+    const t0 = Date.now();
+    const timed = await spawnScript({ file: '/bin/sh', args: ['-c', 'sleep 5'], cwd: f.repo, env: {}, timeoutMs: 50, onLine: () => {}, stdoutMode: 'capture', execEnv: env });
+    assert.equal(timed.timedOut, true);
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 300);
+    const aborted = await spawnScript({ file: '/bin/sh', args: ['-c', 'sleep 5'], cwd: f.repo, env: {}, timeoutMs: 20000, signal: ac.signal, onLine: () => {}, stdoutMode: 'capture', execEnv: env });
+    assert.equal(aborted.aborted, true);
+    assert.ok(Date.now() - t0 < 8000, 'both sleeps were killed');
+  });
+
+  test("a script's program root is uploaded once per sandbox", async () => {
+    const { ctx, commands } = await e2b();
+    const file = writeProgram(tmp('worca-sr-prog-'), 'export default async () => ({ summary: "x", outputs: { log: { value: "#" }, report: { value: {} } }, verdict: { issues: [] } });\n');
+    await runScriptExecution(ctx({ meta: nodeMeta(), file }));
+    await runScriptExecution(ctx({ meta: nodeMeta(), file }));
+    assert.equal(commands().filter((x) => /tree-\d+\.tgz/.test(x)).length, 1);
+  });
+
+  test('spawnScript with a remote env feeds stdin through a sandbox file', async () => {
+    const { f, env, commands } = await e2b();
+    const lines = [];
+    const r = await spawnScript({ file: 'cat', args: [], cwd: f.repo, env: {}, stdin: 'piped-in\n', timeoutMs: 20000, onLine: (l) => lines.push(l), stdoutMode: 'capture', execEnv: env });
+    assert.equal(r.exitCode, 0);
+    assert.deepEqual(lines, ['piped-in']);
+    assert.ok(commands().some((x) => /^'cat' < '.*stdin-\d+'$/.test(x)));
+  });
 });

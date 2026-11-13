@@ -2061,6 +2061,8 @@ function toPipelineRow(o) {
           ...(typeof o.runEngine === 'string' && o.runEngine && o.runEngine !== 'claude' ? { runEngine: o.runEngine } : {}),
           // Session groups (C6): each session's summary — only on a run that has one, so other rows are unchanged.
           ...(o.sessionHosts && typeof o.sessionHosts === 'object' && Object.keys(o.sessionHosts).length ? { sessionHosts: o.sessionHosts } : {}),
+          // Where it executed (plans/e2b-execution-design.md): written for a remote run only.
+          ...(typeof o.execEnv === 'string' && o.execEnv !== 'local' ? { execEnv: o.execEnv } : {}),
         })
       : null,
   };
@@ -2935,6 +2937,8 @@ function rowToState(row) {
   state.runEngine = runEngineOfRow(row);
   // Shaper D28: only a shaped run carries shapeStats (run_size is write-only: Statistics reads the column)
   if (row.shape_stats) state.shapeStats = j(row.shape_stats, null);
+  const execEnv = execEnvOfRow(row);
+  if (execEnv) state.execEnv = execEnv;
   const outcome = j(row.outcome, null);
   if (outcome) {
     state.engine = 2;
@@ -3015,6 +3019,14 @@ export function runEngineOfRow(row) {
   if (outcome && typeof outcome.runEngine === 'string' && outcome.runEngine) return outcome.runEngine;
   const rp = j(row.resume_point, null);
   return typeof rp?.claude?.engine === 'string' && rp.claude.engine ? rp.claude.engine : 'claude';
+}
+/** Where a run executed: `outcome.execEnv`, else the resume point's `execEnv.kind`, else null (local). */
+export function execEnvOfRow(row) {
+  if (!row) return null;
+  const outcome = j(row.outcome, null);
+  if (outcome && typeof outcome.execEnv === 'string' && outcome.execEnv) return outcome.execEnv;
+  const rp = j(row.resume_point, null);
+  return typeof rp?.execEnv?.kind === 'string' && rp.execEnv.kind ? rp.execEnv.kind : null;
 }
 
 /** How many runs of `projectKey` started on or after `sinceIso` ran on each engine (NULL engine = 'claude').

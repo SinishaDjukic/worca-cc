@@ -22,6 +22,8 @@
 /* #959: ONE form grid for the card's fields: as many 200px+ columns as fit, stacked when narrow. A switch field takes
    a whole row; labels stay on one line. The fields are the shared .input / .select (design-system › Field). */
 .ask-rp-grid.two,.ask-rp-grid.wf-row{margin-top:10px;}
+/* Workflow, Engine, Guardrails, Runs in: the workflow takes a whole row. */
+.ask-rp-grid.wf-row>.ask-rp-field:first-child{grid-column:1/-1;}
 .ask-rp-field{display:flex;flex-direction:column;gap:4px;min-width:0;}
 .ask-rp-field:has(> .switch-row){grid-column:1 / -1;}
 .ask-rp-label{font-weight:600;font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}

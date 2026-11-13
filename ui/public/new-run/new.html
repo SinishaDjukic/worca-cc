@@ -148,11 +148,29 @@
                     </div>
                   </div>
 
+                  <!-- Execution environment (docs/e2b.md): where the run's agent and script steps execute. Local
+                       is the default and adds nothing to the run body; E2B runs them in one sandbox per run while
+                       commits, pushes and PRs stay here. Per run; same level as the engine. -->
+                  <div class="field field-compact" id="exec-env-row" data-min-level="advanced">
+                    <label for="execEnvSelect">Runs in</label>
+                    <!-- The chosen backend's live status (exec-env-status.mjs), hidden on Local. -->
+                    <div class="exec-env-pick">
+                      <div class="select-wrap">
+                        <select id="execEnvSelect" class="select" aria-label="Execution environment">
+                          <option value="local" selected>Local</option>
+                          <option value="e2b">E2B sandbox</option>
+                        </select>
+                      </div>
+                      <span class="exec-env-status" id="exec-env-status" role="status" hidden></span>
+                    </div>
+                  </div>
+
                   <!-- The engine's hints span the row: a 40% cell would wrap them into a tall column. -->
                   <div class="wf-engine-hints">
                     <small class="hint" id="engine-hint" hidden>Codex runs this pipeline, including titles and summaries. Its models: Models › Codex</small>
                     <small class="hint" id="engine-default-hint" hidden></small>
                     <small class="hint warn" id="engine-mcpjson-hint" hidden></small>
+                    <small class="hint" id="exec-env-hint" hidden>Runs locally: the saved E2B default does not apply to this run.</small>
                   </div>
                   <!-- Session groups (Task 62): how each session of the chosen workflow runs on this engine, one line per
                        session (app.js#paintSessionNotes). Advanced and up, beside the Engine dropdown it depends on. -->

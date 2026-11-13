@@ -40,7 +40,7 @@ Always refused:
 - anything outside those folders, after symlinks are resolved. A symlink in the output folder that points outside is
   refused.
 - the system temp folder, network (UNC) paths, and paths with a `..` segment.
-- credential files by name (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `.netrc`, `.npmrc`, `*.tfstate*`,
+- credential files by name (`.env*`, `*.pem`, `*.key`, `id_*`, `.netrc`, `.npmrc`, `*.tfstate*`,
   `*.p12`, `*.kdbx`, `credentials.json`, worca's own database, and the rest of the secure guardrail set's protected
   paths) and anything inside `.ssh/`, `.aws/`, `.gnupg/`, `.kube/`, `.docker/`, `.azure/`, `.git/`, `.worca-cc/`,
   `.config/gh/` or `.config/gcloud/` below the folder the file was found in. Side effect: a Keynote `.key` file and

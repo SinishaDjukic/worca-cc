@@ -203,6 +203,8 @@ export function signalTree(child, sig, { group = true, platform = process.platfo
  *   still streamed, but never classified and never the exit detail while other evidence exists
  * @param {(err:Error, prefix:string) => Error} o.spawnError
  * @param {(code:number) => any} o.onDone
+ * @param {object|null} [o.execEnv]               a remote execution environment (src/core/exec-env/): when set,
+ *   the command runs in its sandbox through a child-like handle (no host pid, stdin as a file); null on local runs
  */
 const notedResolutions = new Set();
 /** Log a shim substitution once per process: the same bin resolves on every spawn. */
@@ -216,7 +218,8 @@ function noteResolved(r) {
 
 export function superviseSpawn(o) {
   const { file, args, cli = GENERIC_CLI, displayBin, cwd, env, stdin, signal, asAgent, stagedDir, agentHome = null, cleanup, onEvent,
-    onStdoutLine, onStderrLine = null, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone } = o;
+    onStdoutLine, onStderrLine = null, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone, execEnv = null } = o;
+  const remote = execEnv?.remote ? execEnv : null;
   return new Promise((resolveP, rejectP) => {
     let childEnv = env;
     // ENOENT/EINVAL on a Windows script shim: say why (the same text the preflight shows).
@@ -228,12 +231,14 @@ export function superviseSpawn(o) {
     };
     // Agent isolation (agent-user.mjs): the same command under the agent's uid, via sudo, in its
     // own process group so a stuck agent can still be SIGKILLed through sudo.
-    const agentId = asAgent ? agentIdentityFor(currentOwner()) : null;   // the owner's pool user (agent-pool.mjs)
-    // E3: our own process group (POSIX). The agent user's sudo spawn already has one (killAgentGroup).
-    const ownGroup = !agentId && process.platform !== 'win32';
+    // Agent isolation applies on THIS host only; inside a sandbox there is no sudo pool.
+    const agentId = asAgent && !remote ? agentIdentityFor(currentOwner()) : null;   // the owner's pool user (agent-pool.mjs)
+    // E3: our own process group (POSIX). The agent user's sudo spawn already has one (killAgentGroup); a sandbox child has no host pid.
+    const ownGroup = !agentId && !remote && process.platform !== 'win32';
     let child;
     try {
-      const cmd = resolveCliCommand(file, args, cli);
+      // A sandbox runs the bare name on its own PATH: no host shim resolution.
+      const cmd = remote ? { file, args, resolved: null } : resolveCliCommand(file, args, cli);
       let exe = cmd.file;
       let argv = cmd.args;
       noteResolved(cmd.resolved);
@@ -243,18 +248,20 @@ export function superviseSpawn(o) {
         for (const d of [stagedDir].flat()) if (d) shareWithAgent(typeof d === 'string' ? d : d.dir, agentId, { stopAt: join(worcaHome(), 'tmp'), writable: typeof d === 'object' && d.writable === true });
         ({ file: exe, args: argv, env: childEnv } = agentSpawn(exe, argv, childEnv, agentId, agentHome ? { home: agentHome(agentId) } : {}));
       }
-      child = spawn(exe, argv, {
-        cwd, stdio: [stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'], ...(childEnv ? { env: childEnv } : {}),
-        ...(agentId || ownGroup ? { detached: true } : {}),
-        windowsHide: true,
-      });
+      child = remote
+        ? remote.spawn(exe, argv, { cwd, env: childEnv, stdin, uploads: [stagedDir].flat().filter(Boolean).map((d) => (typeof d === 'string' ? d : d.dir)) })
+        : spawn(exe, argv, {
+          cwd, stdio: [stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'], ...(childEnv ? { env: childEnv } : {}),
+          ...(agentId || ownGroup ? { detached: true } : {}),
+          windowsHide: true,
+        });
       if (ownGroup && typeof child.pid === 'number') trackGroup(child.pid, displayBin);
     } catch (err) {
       cleanup();
       rejectP(spawnError(withShimHint(err), `Failed to spawn ${displayBin}`));
       return;
     }
-    if (stdin != null) {
+    if (stdin != null && child.stdin) {   // a remote child takes stdin as a file
       // A child that dies before draining stdin (bad flag, ENOENT surfaced
       // late) raises EPIPE here; the 'error'/'close' handlers own the real cause.
       child.stdin.on('error', () => {});
@@ -273,7 +280,9 @@ export function superviseSpawn(o) {
     const terminateChild = () => {
       if (terminationStarted) return;
       terminationStarted = true;
-      signalTree(child, 'SIGTERM', { group: ownGroup });
+      // A sandbox child has no host pid: its handle's kill() reaches the sandbox process.
+      if (remote) { try { child.kill('SIGTERM'); } catch { /* gone */ } }
+      else signalTree(child, 'SIGTERM', { group: ownGroup });
       // Escalate if it ignores SIGTERM. Our own group is killed whole even once the leader exited:
       // a background job that ignored SIGTERM still holds the group id, so `-pid` reaches only it.
       killTimer = setTimeout(() => {
@@ -281,6 +290,7 @@ export function superviseSpawn(o) {
         const stuck = child.exitCode === null && child.signalCode === null;
         if (ownGroup) { signalTree(child, 'SIGKILL'); return; }
         if (!stuck) return;
+        if (remote) { try { child.kill('SIGKILL'); } catch { /* gone */ } return; }
         signalTree(child, 'SIGKILL', { group: false });
         if (agentId && stuck) killAgentGroup(child.pid, agentId);
       }, sigkillGraceMs()).unref?.();

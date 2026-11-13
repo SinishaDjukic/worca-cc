@@ -132,7 +132,9 @@
         "settings": "settings",
         "config": "config",
         "workflow": "config",
-        "models": "config"
+        "models": "config",
+        "exec-envs": "exec-env",
+        "exec-env": "exec-env"
       },
       "shape": {
         "pipelines": "features",
@@ -660,7 +662,10 @@
           ".card.house-brief",
           ".house-brief",
           ".readiness-settings-card",
-          ".rs-"
+          ".rs-",
+          ".exec-env-backend",
+          ".exec-env-spec",
+          ".exec-env-log"
         ],
         "feature": "projects",
         "name": "project-settings"
@@ -816,7 +821,8 @@
           ".wf-engine-",
           ".rs-session-note",
           ".field-grid-2",
-          ".field-compact"
+          ".field-compact",
+          ".exec-env-"
         ],
         "feature": "new-run",
         "name": "field-rows"
@@ -1090,7 +1096,9 @@
         "/api/notifications",
         "/api/memory",
         "/api/credentials",
-        "/api/engines"
+        "/api/engines",
+        "/api/exec-envs",
+        "/api/exec-env"
       ],
       "css": [
         "^Info tooltips \\(settings\\)",

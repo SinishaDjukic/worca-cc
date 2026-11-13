@@ -89,6 +89,7 @@ import { withRecoveryRetry, RETRYABLE_CLASSES, HELPER_RETRY_ATTEMPTS } from './r
 import { resolveFailure, markTerminal, isTerminal } from './failure-policy.mjs';
 import { byActor, actorLabel } from './identity.mjs';
 import { NIGHT_ACTOR } from './night/config.mjs';
+import { isExecEnvFatal } from './exec-env/index.mjs';
 
 /** Max ask-then-resume question rounds per execution (mirrors v1's constant). */
 const MAX_QUESTION_ROUNDS = 3;
@@ -1162,6 +1163,12 @@ export class GraphOrchestrator extends RunHarness {
       ...this._resumePointClaude(),
       // A run started as mock (a per-request `mock: true`) resumes as mock (the harness constructor).
       ...(this.claude.mock ? { mock: true } : {}),
+      // Where the run executes (e2b only; a local point gains no key). Before the sandbox exists (a pause in
+      // setup or in the capacity queue) the kind alone, so the run never resumes as local. A resumed run that
+      // pauses again before it reconnected keeps the saved record (its parked sandbox).
+      ...(this.execEnv ? { execEnv: this.execEnv.resumeRecord() }
+        : this._savedExecEnv ? { execEnv: this._savedExecEnv }
+        : this.execEnvKind && this.execEnvKind !== 'local' ? { execEnv: { kind: this.execEnvKind } } : {}),
       workflowId: this.workflowId,
       // Auto workflow: the decision state while UNDECIDED (spec §5.6); null once
       // the graph is adopted (workflowId is then the real id) and on saved workflows.
@@ -1352,7 +1359,12 @@ export class GraphOrchestrator extends RunHarness {
       },
       (err) => {
         if (isPause(err) || this.pauseRequested) this._scheduler?.pause();
-        else this._scheduler?.abort();
+        else {
+          // Keep the real cause (an Away mode refusal, a lost sandbox): without it the run rethrows the generic
+          // 'a graph execution failed'. A stop keeps its own path (the abort signal names it).
+          if (!isAbort(err)) this._graphError ||= markTerminal(err);
+          this._scheduler?.abort();
+        }
         return new Promise(() => {});   // never settles: the hold survives (see above)
       },
     );
@@ -2376,6 +2388,8 @@ export class GraphOrchestrator extends RunHarness {
       mcpjsonProjectDir: this.isWorkspace ? undefined : this.projectDir,
       runRoot: this.runRoot,
       mcpConfigPath: this.mcpConfigPath,
+      // The run's E2B execution environment (script nodes read it here); undefined on local runs.
+      execEnv: this.execEnv || undefined,
       mcpServerGrants: this.mcpServerGrants,
       mcpConfigServers: this.mcpConfigServers,
       // MCP registry (design §6.1): the copies' secret env, the values to redact and the tools
@@ -2489,6 +2503,7 @@ export class GraphOrchestrator extends RunHarness {
           ? (this.mcpLayer?.allowlist?.length ? [...this.guardrails.envAllowlist, ...this.mcpLayer.allowlist] : this.guardrails.envAllowlist)
           : undefined,
         mock: this.claude.mock,
+        execEnv: this.execEnv || undefined,
       },
     };
   }
@@ -2742,6 +2757,9 @@ export class GraphOrchestrator extends RunHarness {
         if (this.pauseRequested && (isAbort(err) || isPause(err) || this.pauseAbort.signal.aborted)) throw pauseErr();
         if (isAbort(err) || isPause(err)) throw err;
         if (this.abort.signal.aborted || this.state.status === 'stopped') throw err;  // a stop is in flight: _execute marks it 'stopped'
+        // A lost E2B sandbox or a sandbox change that cannot reach the host: no retry, recovery prompt or pause
+        // can fix it, and the Q&A wants a clean failure (plans/e2b-execution-design.md §10). Never on a local run.
+        if (isExecEnvFatal(err)) throw markTerminal(err);
         const cls = classifyError(err);
         const verdict = await this._recover({ node: { key: nc.key || ctx.nodeId }, cls, err, attempt,
           model: nc.kind === 'agent' ? (ctx.claudeOpts?.model ?? null) : null });
@@ -2755,10 +2773,26 @@ export class GraphOrchestrator extends RunHarness {
     }
   }
 
+  /** One invocation of this execution's executor. In e2b mode the sync itself runs inside each spawn
+   *  (RemoteChild / runInProcess); here the node's bound inputs are registered with the sandbox, and a
+   *  fatal exec-env failure replaces whatever the executor threw (spawnFailure rebuilds the error). */
+  async _runOnce(nc, ctx) {
+    const ee = this.execEnv;
+    if (!ee) return this._runOnceLocal(nc, ctx);
+    ee.addInputs(Object.values(ctx.bindings || {}).map((t) => t?.path));   // scheduler tokens (scheduler.mjs)
+    let result;
+    try { result = await this._runOnceLocal(nc, ctx); }
+    catch (err) { const fatal = ee.fatalError(); throw fatal ? markTerminal(fatal) : err; }
+    const fatal = ee.fatalError();
+    if (fatal) throw markTerminal(fatal);
+    return result;
+  }
+
   /** One invocation of this execution's executor (P3's runExecution, with the
    *  injected runners as the seam), plus the vanished-session fresh re-run
-   *  fallback (a dead `--resume` session must not fail the run). */
-  async _runOnce(nc, ctx) {
+   *  fallback (a dead `--resume` session must not fail the run) — never after a
+   *  fatal exec-env failure, which no fresh run can fix. */
+  async _runOnceLocal(nc, ctx) {
     // C29: the fallback re-runs fresh an attempt that --resumed a session that is gone, decided BEFORE it runs: never a hosted
     // one (a host that degrades during the attempt still owned it), and a degraded session's plain run only when it resumes the
     // member's own plain session (C30): a host id it was handed is dropped by the plain run, so nothing was resumed.
@@ -2769,7 +2803,7 @@ export class GraphOrchestrator extends RunHarness {
     } catch (err) {
       // C29 (critique C-1): never for a hosted execution. The SessionHost owns a vanished host (C20); any other failure of
       // a re-dispatch goes to _recover like any failure, keeping resumeSessionId (and so the cold header) for its retry.
-      if (ctx.resumeSessionId && resumes && !isAbort(err) && !isPause(err) && !this.pauseRequested) {
+      if (ctx.resumeSessionId && resumes && !this.execEnv?.fatalError() && !isAbort(err) && !isPause(err) && !this.pauseRequested) {
         this._log(nc.key || ctx.nodeId, 'warn',
           `session resume failed (${err?.message || err}); re-running the execution fresh`,
           { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal, ...(err?.stream ? { stream: err.stream } : {}) });
@@ -2847,7 +2881,11 @@ export class GraphOrchestrator extends RunHarness {
     }
     // Agent memory (§5): sync the mount back after EVERY execution, slices included.
     await this._syncMemory(nc, ctx);
-    if (nc.meta?.sideEffect === 'code' && !ctx.slice) await this._stageWorkingTree();
+    if (nc.meta?.sideEffect === 'code' && !ctx.slice) {
+      await this._stageWorkingTree();
+      // The sandbox's own index in step (same pathspecs): the next node's `git diff` there sees new files.
+      if (this.execEnv) await this.execEnv.stageAll(this._excludePathspecs(this.members[0].projectKey));
+    }
   }
 
   /** Deterministic delivery: read the inbox at step start and hang the pending
@@ -3531,7 +3569,10 @@ export class GraphOrchestrator extends RunHarness {
    * live case, `implementer.done` — that is byte-identical to an ordinary execution.
    */
   async _finishComposite(nc, args) {
-    if (nc.meta?.sideEffect === 'code') await this._stageWorkingTree();
+    if (nc.meta?.sideEffect === 'code') {
+      await this._stageWorkingTree();
+      if (this.execEnv) await this.execEnv.stageAll(this._excludePathspecs(this.members[0].projectKey));
+    }
     const label = nc.meta?.displayName || nc.key || args.node.id;
     const n = Array.isArray(args.phases) ? args.phases.length : 0;
     return { summary: `${label}: composite execution complete (${n} phase(s)).`, outputs: {}, verdict: null };

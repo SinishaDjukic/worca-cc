@@ -364,3 +364,23 @@ test('E10: the Overview line — one sentence, Turn on (primary) and Not now (qu
   const plain = renderTeamCard({ enabled: false, branch: 'worca-memory', seed: { offer: 'pending', last: null }, available: { branchOnOrigin: false } }, { doc });
   assert.ok(!plain.querySelector('.hint').textContent.includes(TEAM_AVAILABLE_TEXT));
 });
+
+test('a held file (written in a sandbox) is badged in the list, and its editor approves it with Save', () => {
+  const list = renderFileList([{ name: 'planted', description: 'push', source: 'sandbox:run-a', held: true, updated: '2026-10-21T10:00:00.000Z', hasFrontmatter: true },
+    { name: 'testing', description: 'suite', source: 'user', held: false }], { doc });
+  const rows = [...list.querySelectorAll('.mem-row')];
+  const badge = rows[0].querySelector('.mem-held');
+  assert.ok(badge, 'the held row carries a badge');
+  assert.equal(badge.textContent, 'Held for review');
+  assert.match(badge.title, /sandbox/);
+  assert.equal(rows[1].querySelector('.mem-held'), null);
+  assert.equal(rows[0].querySelector('[data-run-ref]')?.dataset.runRef, 'run-a', 'the source still names the run');
+  const ed = renderEditor({ name: 'planted', text: '---\nname: planted\n---\nx\n', held: true }, { doc });
+  assert.equal(ed.querySelector('.mem-save').textContent, 'Approve');
+  assert.match(ed.querySelector('.mem-held-hint').textContent, /No agent loads it until you approve it/);
+  const plain = renderEditor({ name: 'testing', text: 'x' }, { doc });
+  assert.equal(plain.querySelector('.mem-save').textContent, 'Save');
+  assert.equal(plain.querySelector('.mem-held-hint'), null);
+  assert.deepEqual(memorySource('sandbox:run-a'), { kind: 'run', ref: 'run-a' });
+  assert.deepEqual(parseSnapshotId('20261021-100000-sandbox-run-a').source, { kind: 'run', ref: 'run-a' });
+});

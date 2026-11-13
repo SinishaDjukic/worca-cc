@@ -2,7 +2,7 @@ import { getDb, prepare, tx } from './db.mjs';
 import { projectKey as keyOfDir } from './store.mjs';
 import {
   readSettings, setProjectLayerReader, nightModeSettings, memoryDefragModel,
-  runEngineSetting, stepModelsSetting, utilityModelsSetting, normalizeModelPair, SETTING_CHECKS,
+  runEngineSetting, execEnvSetting, stepModelsSetting, utilityModelsSetting, normalizeModelPair, SETTING_CHECKS,
   askEngineSetting, askModelsSetting, requirementsInterviewSetting, secondOpinionModelSetting,
   assertAskWebInput, askWebStoreShape, assertSmartNamingInput, SMART_NAMING_DEFAULTS, UTILITY_JOBS,
   DEFAULT_CONTEXT_MAX_BYTES_PER_FILE, DEFAULT_CONTEXT_MAX_BYTES_TOTAL, DEFAULT_SKILL_MOUNT,
@@ -16,6 +16,10 @@ import { fieldsForRun } from './policy/effective.mjs';
 import { MODEL_ENGINES, HELPER_ENGINES, ASK_ENGINES } from './model-env.mjs';
 import { NIGHT_FIELDS, NIGHT_DEFAULTS, fieldError as nightFieldError } from './night/config.mjs';
 import { PR_OPEN, PR_SLICES } from '../shared/pr-auto.mjs';
+import { EXEC_ENVS, selectExecEnv } from './exec-env/index.mjs';
+import { getExecBackend } from './exec-env/registry.mjs';
+import { remoteRefusesDefault } from './exec-env/policy.mjs';
+import { isSecretPathList } from './secret-paths.mjs';
 
 export const LAYERS = Object.freeze(['project', 'user', 'team']);
 const isObj = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -48,6 +52,7 @@ function scalar({ id, path = [id], check, def, teamKey = null, hint, readUser = 
 }
 const SCALARS = [
   scalar({ id: 'run.engine', path: ['runEngine'], check: SETTING_CHECKS.runEngine, def: 'claude', hint: 'must be an engine', readUser: runEngineSetting }),
+  scalar({ id: 'run.execEnv', path: ['execEnv'], check: SETTING_CHECKS.execEnv, def: 'local', hint: `must be ${EXEC_ENVS.join(' or ')}`, readUser: execEnvSetting }),
   scalar({ id: 'pipelineCostLimitUsd', check: SETTING_CHECKS.usdCap, def: null, hint: 'must be a positive number of USD' }),
   scalar({ id: 'humanRateUsdPerHour', check: SETTING_CHECKS.usdCap, def: DEFAULT_HUMAN_RATE_USD, teamKey: 'cost.humanRateUsd', hint: 'must be a positive number of USD' }),
   scalar({ id: 'askMaxTurns', check: SETTING_CHECKS.askMaxTurns, def: DEFAULT_ASK_MAX_TURNS, teamKey: 'ask.maxTurns', hint: 'must be an integer between 1 and 500' }),
@@ -59,6 +64,10 @@ const SCALARS = [
   scalar({ id: 'skillMount', check: SETTING_CHECKS.skillMount, def: DEFAULT_SKILL_MOUNT }),
   scalar({ id: 'watchNewPrs', check: (value) => typeof value === 'boolean', def: false, hint: 'must be true or false' }),
   scalar({ id: 'runUserClaudeSettings', check: (value) => typeof value === 'boolean', def: false, hint: 'must be true or false' }),
+  // Files the project adds to the secret-path list (secret-paths.mjs DEFAULT_SECRET_PATHS): kept out of a sandbox upload.
+  scalar({ id: 'secretPaths', check: isSecretPathList, def: Object.freeze([]), hint: 'must be a list of project-relative file patterns, one line each (dir/** for a folder; no ~/, / or ./ start)' }),
+  // Patterns a project-scoped container box leaves unmasked (`worca container up --project`, src/cli/container-mounts.mjs).
+  scalar({ id: 'secretPathsUnmask', check: isSecretPathList, def: Object.freeze([]), hint: 'must be a list of project-relative file patterns, one line each (dir/** for a folder; no ~/, / or ./ start)' }),
   scalar({ id: 'memory.softBytesPerFile', path: ['memory', 'softBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_SOFT_BYTES_PER_FILE }),
   scalar({ id: 'memory.maxBytesPerFile', path: ['memory', 'maxBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_HARD_BYTES_PER_FILE }),
   // Team memory (phase 1a): project-only opt-in — no user layer (readUser off), no team key.
@@ -265,6 +274,42 @@ export function resolveRunEngine({ explicit = null, projectDir = null, projectKe
   if (typeof explicit === 'string' && explicit.trim()) return { engine: explicit.trim(), source: 'run' };
   const result = resolveSetting('run.engine', { projectDir, projectKey, workspace });
   return { engine: result.value, source: result.source };
+}
+/** Where a run executes (plans/e2b-execution-design.md §12): local | a registered backend. A SAVED remote
+ *  default does not apply to a run no remote backend can take (a workspace run, a Folder project, a run without a
+ *  project, an engine no sandbox runs) or that its backend refuses: that run stays local, and `fallback` says why. Only an explicit per-run
+ *  backend is refused at the start. */
+export function resolveRunExecEnv({ explicit = null, projectDir = null, projectKey = null, workspace = false, engine = null, workMode = 'git' } = {}) {
+  if (typeof explicit === 'string' && explicit.trim()) return { execEnv: explicit.trim(), source: 'run' };
+  const result = resolveSetting('run.execEnv', { projectDir, projectKey, workspace });
+  if (result.value !== 'local') {
+    let backend = null;
+    try { backend = getExecBackend(result.value); } catch { /* a saved name no longer registered: selectExecEnv names it at start */ }
+    const why = backend ? (remoteRefusesDefault({ workspace, engine, workMode }) ?? backend.refusesDefault?.({ workspace, engine, workMode }) ?? null) : null;
+    if (why) return { execEnv: 'local', source: result.source, fallback: `the saved ${backend.title} default does not apply to ${why}; it runs locally` };
+  }
+  return { execEnv: result.value, source: result.source };
+}
+
+/**
+ * The run body's `execEnv` (plans/e2b-execution-design.md §12): where the run's agent and script steps
+ * execute, resolved through the `run.execEnv` cascade. Local adds NOTHING to the run options, so a
+ * default run's options stay exactly as they were. The Watch PR fix and Resolve starts pass their
+ * body through the same handler, so their explicit `execEnv: 'local'` resolves to {} here. A saved e2b
+ * default never reaches a workspace run or a run on an engine no sandbox runs (resolveRunExecEnv's fallback): that run
+ * gets `execEnvFallback`, the reason its log names. Only an explicit per-run e2b is refused with 409 for those.
+ * @returns {{ error: string } | { opts: { execEnv?: string, execEnvFallback?: string } }}
+ */
+export function runExecEnvOpts(body, scope = {}, engine = 'claude') {
+  if (body.execEnv != null && body.execEnv !== '' && typeof body.execEnv !== 'string') return { error: 'execEnv must be a string' };
+  let execEnv; let fallback;
+  try {
+    const resolved = resolveRunExecEnv({ explicit: typeof body.execEnv === 'string' ? body.execEnv : null, ...scope, engine });
+    fallback = resolved.fallback;
+    execEnv = selectExecEnv(resolved.execEnv);
+  } catch (err) { return { error: err.message }; }
+  if (execEnv !== 'local') return { opts: { execEnv } };
+  return { opts: fallback ? { execEnvFallback: fallback } : {} };
 }
 export function resolvedModelPair(engine, family, name, scope = null) {
   return resolveSetting(`models.${engine}.${family}.${name}`, scope).value;

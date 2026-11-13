@@ -4,7 +4,7 @@
 //
 //   findChrome({env, platform, exists, which})              → path | null   (WORCA_CHROME → PATH → app/install paths)
 //   findFfmpeg({env, platform, exists, which, resolveStatic}) → path | null (WORCA_FFMPEG → ffmpeg-static → PATH → usual paths)
-//   toolHints(platform)                                     → { chrome, ffmpeg } install hints
+//   toolHints(platform, {env})                              → { chrome, ffmpeg } install hints (WORCA_EXEC_ENV: a remote sandbox's)
 //   which(name, {env, platform, exists})                    → path | null   (PATH, × PATHEXT on win32)
 //   loadDep(name, {env})                                    → require()d module from worca's own node_modules
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
@@ -102,8 +102,15 @@ export function findFfmpeg({ env = process.env, platform = process.platform, exi
   return candidates.find((c) => exists(c)) || null;
 }
 
-/** One-line install hints for a missing tool on `platform`. */
-export function toolHints(platform = process.platform) {
+/** One-line install hints for a missing tool on `platform`. In a remote execution environment (WORCA_EXEC_ENV, set by
+ *  worca's script runner) the tools come from the project's environment build: the default template ships neither. */
+export function toolHints(platform = process.platform, { env = process.env } = {}) {
+  const remote = envGet(env, platform, 'WORCA_EXEC_ENV');
+  if (remote) {
+    const where = `This step runs in a remote sandbox (${remote}), whose default template has no`;
+    const fix = 'add the apt packages chromium and ffmpeg to the project\'s environment spec, then Build environment and start the run again';
+    return { chrome: `${where} browser: ${fix}.`, ffmpeg: `${where} ffmpeg: ${fix}.` };
+  }
   if (platform === 'win32') return {
     chrome: 'Install Google Chrome or Microsoft Edge, or set WORCA_CHROME to chrome.exe / msedge.exe',
     ffmpeg: 'winget install Gyan.FFmpeg (then open a new terminal), or set WORCA_FFMPEG to ffmpeg.exe',

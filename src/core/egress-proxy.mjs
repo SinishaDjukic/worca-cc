@@ -30,7 +30,9 @@
 
 import http from 'node:http';
 import net from 'node:net';
-import process from 'node:process';
+// The global `process`, never `import process from 'node:process'`: that ESM facade reads every getter, process.stdin
+// too, which turns a piped stdin non-blocking in each process importing this file (the e2b backend does, for the
+// sandbox allow list) — a later readFileSync(0) there then fails with EAGAIN.
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 

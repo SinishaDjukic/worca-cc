@@ -2,7 +2,7 @@
 // MCP child's file tools, the catalog (no effort vocabulary), the prompt, the turn's readiness gate (support check,
 // self-test, preflight), the watchdog, the resume fallback, the title, and the panel's engine rules.
 import { test, after } from 'node:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -192,6 +192,25 @@ for (const E of ENGINES_UNDER_TEST) {
     assert.equal(getMessage(s.asst.id).text, 'Answer');
     assert.equal(getThread(s.thread.id).sessionId, E.session);
     assert.equal(frames.at(-1).type, 'ask-done');
+  });
+
+  test(`a ${E.label} chat stays local where runs default to E2B (no sandbox runs ${E.label} yet): no execution environment, no refusal`, async () => {
+    const home = mkdtempSync(join(tmpdir(), 'worca-qg-e2b-home-'));
+    mkdirSync(join(home, '.worca-cc'), { recursive: true });
+    writeFileSync(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ execEnv: 'e2b' }));
+    const prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    Object.assign(process.env, { HOME: home, USERPROFILE: home });
+    try {
+      const s = seed();
+      const { turn, frames, calls } = makeTurn(E, s, {}, { runClaudeImpl: async (o) => reply(E, o) });
+      await turn.run();
+      assert.equal(calls.length, 1);
+      assert.equal('execEnv' in calls[0], false, 'a chat spawns on this machine');
+      assert.equal(frames.at(-1).type, 'ask-done');
+    } finally {
+      for (const [k, v] of Object.entries(prev)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   test(`a failed ${E.label} self-test: ${E.engine}-not-ready, a notice with the setup link, no spawn, no preflight`, async () => {

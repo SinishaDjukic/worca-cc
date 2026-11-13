@@ -44,6 +44,7 @@ export const CARDS = Object.freeze([
   card('runs', 'pr-settings-card', 'Pull requests', { alts: ['pr', 'merge', 'github', 'review', 'draft'] }),
   card('runs', 'ws-scan-models-card', 'Workspaces', { min: 'advanced', alts: ['scan', 'workspace', 'monorepo'] }),
   card('runs', 'chat-settings-card', 'Chat notifications', { min: 'advanced', alts: ['chat alerts', 'replies', 'notify'] }),
+  card('runs', 'e2b-settings-card', 'Execution environment', { min: 'expert', alts: ['e2b', 'sandbox', 'remote', 'cloud', 'runs in'] }),
   card('ask', 'ask-engine-card', 'Engine & models', { alts: ['engine', 'model', 'claude', 'codex', 'llm'] }),
   card('ask', 'ask-settings-card', 'Limits & access', { alts: ['limits', 'access', 'tools', 'spend', 'read only'] }),
 ]);
