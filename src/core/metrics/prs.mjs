@@ -22,6 +22,13 @@ import { mapWithCap } from '../fanout.mjs';
 import { listPullRequestsForBranches, mergedAt as bitbucketMergedAt } from '../pr/bitbucket.mjs';
 import { readBitbucketCredentials } from '../bitbucket-credentials.mjs';
 import { bitbucketPrUrl, parseBitbucketPrUrl } from '../../shared/bitbucket-remote.mjs';
+import { FAMILY_PR } from '../pr/family.mjs';
+import { familyCredentialsOf } from '../gitea-family-credentials.mjs';
+import { giteaHosts } from '../gitea-credentials.mjs';
+import { forgejoHosts } from '../forgejo-credentials.mjs';
+import { giteaPrUrl, parseGiteaPrUrl } from '../../shared/gitea-remote.mjs';
+import { parseCodebergPrUrl } from '../../shared/codeberg-remote.mjs';
+import { familyForgeOfHost, isFamilyForge } from '../forge.mjs';
 
 export const PR_EVENTS_DIR = 'prs';
 export const MAX_EVENT_FILE_BYTES = 64 * 1024;
@@ -58,8 +65,13 @@ const lower = (s) => String(s || '').toLowerCase();
 export const isGithubSlug = (slug) => typeof slug === 'string' && /^[a-z0-9._-]+\/[a-z0-9._-]+$/i.test(slug);
 export const isAzureSlug = (slug) => typeof slug === 'string' && /^dev\.azure\.com\/[^/]+\/[^/]+\/[^/]+$/i.test(slug);
 export const isBitbucketSlug = (slug) => typeof slug === 'string' && /^bitbucket\.org\/[^/]+\/[^/]+$/i.test(slug);
-/** 'github' | 'azure' | 'bitbucket' | null — which lookup a record slug can use. */
-export const forgeOfSlug = (slug) => (isGithubSlug(slug) ? 'github' : isAzureSlug(slug) ? 'azure' : isBitbucketSlug(slug) ? 'bitbucket' : null);
+const HOST_SLUG_RE = /^([a-z0-9.-]+)\/([^/]+)\/([^/]+)$/i;
+/** A host/owner/repo slug on codeberg.org or a listed Gitea / Forgejo host → its forge, else null. */
+export const familyForgeOfSlug = (slug) => { const m = HOST_SLUG_RE.exec(String(slug || '')); return m ? familyForgeOfHost(m[1]) : null; };
+/** A family metrics slug → repository coordinates (the host is lowercase in a slug already). */
+export const familyCoordsForSlug = (slug) => { const m = HOST_SLUG_RE.exec(String(slug || '')); return m ? { host: m[1].toLowerCase(), owner: m[2], repo: m[3] } : null; };
+/** 'github' | 'azure' | 'bitbucket' | 'gitea' | 'forgejo' | 'codeberg' | null — which lookup a record slug can use. */
+export const forgeOfSlug = (slug) => (isGithubSlug(slug) ? 'github' : isAzureSlug(slug) ? 'azure' : isBitbucketSlug(slug) ? 'bitbucket' : familyForgeOfSlug(slug));
 /** A Bitbucket metrics slug → its repository coordinates (Bitbucket workspace ids and repo slugs are lowercase). */
 export const bitbucketCoordsForSlug = (slug) => {
   const m = /^bitbucket\.org\/([^/]+)\/([^/]+)$/i.exec(String(slug || ''));
@@ -74,6 +86,8 @@ export function parsePrUrl(url) {
   if (az) return { repo: azureMetricsSlug(az), number: az.number };
   const bb = parseBitbucketPrUrl(url);
   if (bb) return { repo: metricsSlugFromUrl(`https://bitbucket.org/${bb.owner}/${bb.repo}.git`), number: bb.number };
+  const fam = parseCodebergPrUrl(url) || parseGiteaPrUrl(url, forgejoHosts()) || parseGiteaPrUrl(url, giteaHosts());
+  if (fam) return { repo: metricsSlugFromUrl(`https://${fam.host}/${fam.owner}/${fam.repo}.git`), number: fam.number };
   return null;
 }
 
@@ -328,10 +342,62 @@ function localPrs(ids) {
   return out;
 }
 
+// ---- Gitea family (Gitea, Forgejo, Codeberg) ----------------------------------------------------
+const familyState = (p) => (p?.merged === true ? 'MERGED' : p?.state === 'open' ? 'OPEN' : p?.state === 'closed' ? 'CLOSED' : null);
+
+function fromFamilyPr(slug, coords, forge, p, merged) {
+  const state = familyState(p);
+  if (!state || !Number.isInteger(p.number)) return null;
+  return { repo: slug, number: p.number, url: giteaPrUrl(coords, p.number), title: p.title || null,
+    head: p.head?.ref || null, base: p.base?.ref || null, state,
+    createdAt: isoOrNull(p.created_at), mergedAt: state === 'MERGED' ? merged : null,
+    closedAt: state === 'OPEN' ? null : isoOrNull(p.closed_at) || merged || isoOrNull(p.updated_at), via: forge };
+}
+
+/**
+ * One paged listing per repository, matched by head branch here (the head filter is Forgejo-only). Tokens are per
+ * host, so the outcome is per host: `hosts` maps each host touched to { forge, state: 'missing'|'unauthenticated'|
+ * 'ok', error }. A host without a token is skipped before any call.
+ * @returns {Promise<{results: Map<string, object[]>, hosts: Object<string, {forge: string, state: string, error: string|null}>}>}
+ */
+export async function lookupBranchesViaFamily(lookups, { coordsFor = familyCoordsForSlug } = {}) {
+  const byRepo = new Map();
+  for (const l of lookups) {
+    const g = byRepo.get(l.repo) || { slug: l.repo, branches: new Set() };
+    g.branches.add(l.branch);
+    byRepo.set(l.repo, g);
+  }
+  const results = new Map();
+  const hosts = {};
+  await mapWithCap([...byRepo.values()], AZURE_CONCURRENCY, async (g) => {
+    const coords = coordsFor(g.slug);
+    const cred = coords && familyCredentialsOf(coords.host);
+    if (!cred) return;                                   // not a family slug: forgeOfSlug would not have sent it
+    const h = (hosts[coords.host] ||= { forge: cred.forge, state: 'ok', error: null });
+    if (cred.mode === 'none') { h.state = 'missing'; return; }
+    try {                                                // everything that can throw stays inside: mapWithCap is Promise.all
+      const api = FAMILY_PR[cred.forge];
+      const listing = await api.listPullRequestsForBranches(coords, [...g.branches]);
+      const merged = new Map();
+      for (const p of listing.prs) if (p?.merged === true && Number.isInteger(p.number)) merged.set(p.number, await api.mergedAt(coords, p));
+      for (const b of g.branches) {
+        const found = listing.prs.filter((p) => p?.head?.ref === b)
+          .map((p) => fromFamilyPr(g.slug, coords, cred.forge, p, merged.get(p.number) ?? null)).filter(Boolean);
+        // A listing cut off by its page cap proves nothing about a branch it did not reach (M2): leave it unknown.
+        if (found.length || listing.complete) results.set(`${lower(g.slug)}#${b}`, found);
+      }
+    } catch (e) {
+      if (e.kind === 'auth') h.state = 'unauthenticated';
+      else h.error ||= String(e.message || e);
+    }
+  });
+  return { results, hosts };
+}
+
 // ---- resolve -------------------------------------------------------------------------------
 
 const RANK = { OPEN: 0, CLOSED: 1, MERGED: 2 };
-const VIA_RANK = { local: 1, gh: 2, azure: 2, bitbucket: 2, action: 3 };
+const VIA_RANK = { local: 1, gh: 2, azure: 2, bitbucket: 2, gitea: 2, forgejo: 2, codeberg: 2, action: 3 };
 /** The better of two answers for one PR: a more final state, then a more trusted source. */
 function better(a, b) {
   if (!a) return b;
@@ -359,16 +425,18 @@ const sinkDir = (sink) => (typeof sink === 'string' ? worktreePath(sink) : reada
  * @param {boolean} [p.useGh]
  * @param {boolean} [p.useAzure]
  * @param {boolean} [p.useBitbucket]
+ * @param {boolean} [p.useFamily]  the Gitea family (Gitea, Forgejo, Codeberg), per host
  * @param {(slug: string) => Promise<{org,project,repo}|null>} [p.coordsFor]  Azure coordinates of a metrics slug.
  * @returns {Promise<{ prs: Object<string, object[]|null>, status: object }>} status: gh/ghDetail/ghError;
  *   azure ('unused'|'missing'|'unauthenticated'|'ok'), azureError, azureTruncated (repos whose listing hit
  *   AZURE_MAX_PAGES and left a branch unknown); bitbucket ('unused'|'missing'|'unauthenticated'|'ok'),
- *   bitbucketError; actionRepos, unsupportedRepos, checked.
+ *   bitbucketError; hosts (the Gitea family, per host: { forge, state: 'missing'|'unauthenticated'|'ok', error });
+ *   actionRepos, unsupportedRepos, checked.
  */
-export async function resolveRunPrs({ runs = [], sinks = [], useGh = true, useAzure = true, useBitbucket = true, coordsFor = azureCoordsForSlug } = {}) {
+export async function resolveRunPrs({ runs = [], sinks = [], useGh = true, useAzure = true, useBitbucket = true, useFamily = true, coordsFor = azureCoordsForSlug } = {}) {
   const now = _now();
   const lookups = runs.map(sanitizeLookup).filter(Boolean).slice(0, MAX_LOOKUPS);
-  const status = { gh: 'unused', ghDetail: null, ghError: null, azure: 'unused', azureError: null, azureTruncated: [], bitbucket: 'unused', bitbucketError: null, actionRepos: [], unsupportedRepos: [], checked: 0 };
+  const status = { gh: 'unused', ghDetail: null, ghError: null, azure: 'unused', azureError: null, azureTruncated: [], bitbucket: 'unused', bitbucketError: null, hosts: {}, actionRepos: [], unsupportedRepos: [], checked: 0 };
 
   // 1. Action events, indexed by repo#branch and repo#number.
   const byBranch = new Map();
@@ -446,6 +514,15 @@ export async function resolveRunPrs({ runs = [], sinks = [], useGh = true, useAz
       for (const [key, prs] of results) cache.entries[key] = { prs, checkedAt: now };
       if (results.size) await saveCache(cache);
     }
+  }
+
+  const famNeed = [...need.values()].filter((n) => isFamilyForge(n.forge));
+  if (useFamily && famNeed.length) {
+    const { results, hosts } = await lookupBranchesViaFamily(famNeed);
+    status.hosts = hosts;
+    status.checked += results.size;
+    for (const [key, prs] of results) cache.entries[key] = { prs, checkedAt: now };
+    if (results.size) await saveCache(cache);
   }
 
   // Join per run — keep the source the cache recorded (Azure, Bitbucket), default gh for older entries (m5).

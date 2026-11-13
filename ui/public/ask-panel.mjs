@@ -4805,7 +4805,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     body.appendChild(sum);
     if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
     const cardUrl = String(card.url || '');
-    const hostLabel = /^https:\/\/dev\.azure\.com\//i.test(cardUrl) ? 'Azure DevOps' : /^https:\/\/bitbucket\.org\//i.test(cardUrl) ? 'Bitbucket' : 'GitHub';
+    // The browser knows no Gitea / Forgejo host list: the credential row's own text names those forges.
+    const family = /^(?:the |none \()(Gitea|Forgejo|Codeberg)\b/.exec(String(card.github || ''));
+    const hostLabel = /^https:\/\/dev\.azure\.com\//i.test(cardUrl) ? 'Azure DevOps' : /^https:\/\/bitbucket\.org\//i.test(cardUrl) ? 'Bitbucket'
+      : family ? family[1] : 'GitHub';
     const rows = [['Repository', card.url], ['Branch', card.branch || 'default branch'], ['Folder', card.dir],
       [hostLabel, card.github]];
     const ul = make('ul', 'ask-mcard-changes');

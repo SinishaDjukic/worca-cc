@@ -159,6 +159,16 @@ own token (`WORCA_ADO_BOARDS_TOKEN`), which `compose.yml` does not pass: add it 
 open pull requests on `bitbucket.org`. `compose.yml` passes these four through. With the egress overlay, add
 `bitbucket.org,api.bitbucket.org` to `WORCA_EGRESS_ALLOW`. Scopes and limits: [Bitbucket](bitbucket.md).
 
+### Gitea and Forgejo
+
+`WORCA_GITEA_HOSTS` and `WORCA_FORGEJO_HOSTS` in `.env` name your instances, and one token per host,
+`WORCA_GITEA_TOKEN_<HOST>` (or a read/write pair), lets Worca clone, fetch, push and open pull requests
+there. `compose.yml` passes the two lists and the Codeberg variables through; the per-host tokens are named
+after the host, so they cannot be listed in `compose.yml` and reach the container through `.env`
+(compose's `env_file`). Codeberg needs `WORCA_CODEBERG_TOKEN` only. With the egress overlay, add every
+listed host (and `codeberg.org`) to `WORCA_EGRESS_ALLOW`. Scopes, the suffix rule and limits:
+[Gitea and Forgejo](gitea.md), [Codeberg](codeberg.md).
+
 ## Projects, paths and worktrees
 
 Worca isolates every run in a `git worktree`, and git records **absolute paths**
@@ -327,6 +337,8 @@ URL from `docker compose logs teams-tunnel`.
 | `GH_TOKEN` | | GitHub over HTTPS |
 | `WORCA_ADO_TOKEN`, `WORCA_ADO_READ_TOKEN`, `WORCA_ADO_WRITE_TOKEN` | | Azure DevOps over HTTPS ([Azure DevOps](#azure-devops)) |
 | `WORCA_BB_TOKEN`, `WORCA_BB_READ_TOKEN`, `WORCA_BB_WRITE_TOKEN`, `WORCA_BB_EMAIL` | | Bitbucket over HTTPS ([Bitbucket](#bitbucket)) |
+| `WORCA_GITEA_HOSTS`, `WORCA_FORGEJO_HOSTS`, `WORCA_GITEA_TOKEN_<HOST>`, `WORCA_FORGEJO_TOKEN_<HOST>` | | Gitea and Forgejo over HTTPS ([Gitea and Forgejo](#gitea-and-forgejo)) |
+| `WORCA_CODEBERG_TOKEN`, `WORCA_CODEBERG_READ_TOKEN`, `WORCA_CODEBERG_WRITE_TOKEN` | | Codeberg over HTTPS ([Codeberg](codeberg.md)) |
 | `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` | | see *Logging in* |
 | `WORCA_UID`, `WORCA_GID` | `1000` | Linux Engine: your ids (`id -u`, `id -g`) when not 1000, so the box can write your bind-mounted repos; the volumes work for any uid |
 | `WORCA_MEM`, `WORCA_CPUS` | `6g`, `4` | resource caps (`pids_limit` 2048 is fixed) |

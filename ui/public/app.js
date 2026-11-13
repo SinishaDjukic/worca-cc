@@ -57,7 +57,7 @@ const state = {
   runGroups: [],     // GET /api/run-groups: Shaper features and user groups for the Runs list (D10)
   runGroupsLoaded: false, // set by loadRunGroups on every outcome: runGroups starts as [], so it cannot say "loaded"
   ghAvailable: false,// gh CLI availability, from the last /api/history load
-  adoAvailable: false,// a REST PR host has a credential: prHosts.azure or prHosts.bitbucket (D10), same source
+  adoAvailable: false,// a REST PR host has a credential: any prHosts key but github (D10), same source
 
   // --- Workspaces ---
   workspaces: [],            // GET /api/workspaces read-model
@@ -22765,6 +22765,8 @@ function mergePrStatus(a, b) {
     azureTruncated: [...new Set([...(a.azureTruncated || []), ...(b.azureTruncated || [])])],
     bitbucket: b.bitbucket && b.bitbucket !== 'unused' ? b.bitbucket : (a.bitbucket ?? b.bitbucket),
     bitbucketError: b.bitbucketError ?? a.bitbucketError ?? null,
+    // Per host (the Gitea family): a later answer for a host replaces the earlier one, hosts only one side saw are kept.
+    hosts: { ...(a.hosts || {}), ...(b.hosts || {}) },
     actionRepos: [...new Set([...(a.actionRepos || []), ...(b.actionRepos || [])])],
     unsupportedRepos: [...new Set([...(a.unsupportedRepos || []), ...(b.unsupportedRepos || [])])],
   };
@@ -23184,7 +23186,7 @@ async function loadHistoryView({ force = false } = {}) {
   state.historyError = '';
   crp.historySeen = true;   // Chat P4: a run panel id still unknown after this is missing, not pending
   state.ghAvailable = !!data.ghAvailable;
-  state.adoAvailable = !!(data.prHosts && (data.prHosts.azure || data.prHosts.bitbucket));
+  state.adoAvailable = !!(data.prHosts && Object.entries(data.prHosts).some(([k, v]) => k !== 'github' && v));
   paintHistory();                                        // fresh skeleton repaint
   rdRepaintOpenGlance();                                 // an open finished run reads its PR from these rows
   pokeAskRuns(null, 'history');                          // Chat P3: a finished run card's Create pull request reads prHostAvailable()
@@ -24582,6 +24584,7 @@ function fillShipItBaseSelect(select, chain, remoteName, remoteBranches, fallbac
 // cross-repo PR), else names the cross-repo head when the two remotes point at different
 // repositories ("me:branch → up/repo main"); empty otherwise. Pure, so the single modal
 // and each workspace row share it.
+const FAMILY_LABEL = { gitea: 'Gitea', forgejo: 'Forgejo', codeberg: 'Codeberg' };
 function crossRepoHint(remotes, pushName, baseName, branch, baseBranch) {
   const push = remotes.find((r) => r.name === pushName);
   const base = remotes.find((r) => r.name === baseName);
@@ -24589,6 +24592,7 @@ function crossRepoHint(remotes, pushName, baseName, branch, baseBranch) {
   if (base && base.prSupported === false) return base.prReason || `${base.prHost || 'This host'} pull requests are not available`;
   if (cross && base.forge === 'azure') return `Azure DevOps pull requests between repositories (forks) are not supported yet. Push to ${base.name}.`;
   if (cross && base.forge === 'bitbucket') return `Bitbucket pull requests between repositories (forks) are not supported yet. Push to ${base.name}.`;
+  if (cross && FAMILY_LABEL[base.forge]) return `${FAMILY_LABEL[base.forge]} pull requests between repositories (forks) are not supported yet. Push to ${base.name}.`;
   return cross ? `Cross-repo: ${push.owner}:${branch || ''} → ${base.slug} ${baseBranch}` : '';
 }
 
@@ -24942,7 +24946,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
     if (!q('.shipit-base-wrap').hidden) payload.baseBranch = q('.shipit-base-branch').value;
     if (!q('.shipit-remotes').hidden) {
       const baseRemote = (modal._remotes || []).find((r) => r.name === q('.shipit-base-remote').value);
-      if (baseRemote && (baseRemote.forge === 'azure' || baseRemote.forge === 'bitbucket')) payload.forge = baseRemote.forge;
+      if (baseRemote && baseRemote.forge && baseRemote.forge !== 'github') payload.forge = baseRemote.forge;
     }
     try {
       const res = await fetch('/api/pr/describe', {
