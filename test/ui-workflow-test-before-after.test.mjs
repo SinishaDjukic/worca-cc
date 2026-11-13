@@ -131,6 +131,10 @@ test('U1: failures only, exit code only (red when it broke), not run', () => {
   assert.equal(box.querySelector(':scope > span:not(.wft-before-h)').textContent, 'Worca could not run it before the change: the setup step failed.');
   assert.equal(box.classList.contains('is-bad'), false);
   assert.equal(texts(notRun, '.wft-dev-facts > span').some((t) => t.startsWith('Before the change')), false, 'not run: no fact under For developers');
+  // M1 follow-up: a "passes" check whose before run Worca could not make is still judged; its block says why.
+  const failedRun = sbs(null, { ran: false, reason: 'error', text: 'EBUSY: resource busy' }).querySelector('.wft-before');
+  assert.equal(failedRun.querySelector(':scope > span:not(.wft-before-h)').textContent, 'Worca could not run it before the change: EBUSY: resource busy.');
+  assert.equal(failedRun.classList.contains('is-bad'), false);
 });
 
 test('U1: a command met shows its block too; a check that is not a command never has one', () => {
