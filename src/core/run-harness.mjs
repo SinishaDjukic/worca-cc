@@ -144,6 +144,7 @@ import { runShellStep, tryShellEnv, writeTrySetup, TRY_SETUP_STAGE } from './wor
 import { claudeReadsStructuredDeny, tryGitEnv, withSafeGitArgs } from './workflow-tests/try-guard-env.mjs';
 import { stripProjectClaudeSettings, stripMountedSkillHooks, stripSetSkillHooks, PLUGINS_OFF_STAGE } from './workflow-tests/project-claude-settings.mjs';
 import { setupFailedText } from '../shared/workflow-tests/project-text.mjs';
+import { writeTryExcludes, readTryExcludes } from './workflow-tests/try-excludes.mjs';
 import { MCP_STARTUP_MS } from './mcp/timeouts.mjs';
 import { keepListNames } from './mcp/keep-list.mjs';
 import { expandMcpDenyRules } from './mcp/deny.mjs';
@@ -2281,6 +2282,7 @@ export class RunHarness extends EventEmitter {
    * @returns {Promise<object|null>} the run manifest read on a detached run (resume re-assembles from it)
    */
   async _reattachCheckouts(row, rehydrated, { strict = true } = {}) {
+    await this._loadTryExcludes();   // a test try's kept-out paths, before anything diffs or commits
     // ── run-root mode: read the RECORDED value, never the live flag (§10) ──
     // Single-project rides state.branch.runRootMode (the pipelines.branch JSON
     // column); workspace rides workspace_meta.runRootMode (real only because of the
@@ -2950,11 +2952,24 @@ export class RunHarness extends EventEmitter {
     const r = await runShellStep({ command: cmd, cwd, env, timeoutMs, signal: this.abort.signal });
     // A stop during the setup is a stop, not a setup failure: it throws here, before any setup record is written.
     if (!r.ok) this._checkAbort();
-    if (r.ok) this._trySetupPaths = await this._untrackedDirs(cwd);
+    if (r.ok) {
+      this._trySetupPaths = await this._untrackedDirs(cwd);
+      await writeTryExcludes(this.pipeline.dir, { setup: this._trySetupPaths, plugins: this._tryPluginPaths ?? null });
+    }
     await writeTrySetup(this.pipeline.dir, { cmd, ok: r.ok, exitCode: r.exitCode, timedOut: r.timedOut, ms: r.ms, tail: r.tail });
     await appendAudit(this.pipeline.dir, `Setup \`${cmd}\` ${r.ok ? 'finished' : 'failed'} in ${Math.round(r.ms / 1000)} s.`).catch(() => {});
     if (r.ok) return;
     throw markTerminal(Object.assign(new Error(setupFailedText(cmd)), { code: 'TRY_SETUP_FAILED' }));
+  }
+
+  /** Workflow tests (e2e finding 1): a try's kept-out paths (_excludePathspecs), saved in its pipeline folder when they are set
+   *  (try-excludes.mjs), read back by a harness rebuilt from its row (a paused try stopped or resumed): without them that
+   *  harness's diff, results and commit would carry Worca's own edits as the try's changes. */
+  async _loadTryExcludes() {
+    if (!this._isTestTry()) return;
+    const saved = await readTryExcludes(this.pipeline?.dir);
+    if (saved?.setup) this._trySetupPaths = saved.setup;
+    if (saved?.plugins) this._tryPluginPaths = saved.plugins;
   }
 
   /** What a try's setup made that git would track (untracked, not ignored), folders collapsed, at most 200 paths. */
@@ -3004,6 +3019,7 @@ export class RunHarness extends EventEmitter {
     const ls = await this._git(['-c', 'core.quotePath=false', 'ls-files', '-z', '--', ...touched.map((p) => `:(literal)${p}`)], { cwd });
     const tracked = new Set(ls.ok ? ls.stdout.split('\0').filter(Boolean) : []);
     this._tryPluginPaths = touched.filter((p) => tracked.has(p));
+    await writeTryExcludes(this.pipeline?.dir, { setup: this._trySetupPaths ?? null, plugins: this._tryPluginPaths });
     for (const p of r.links) await this._recordRunWarning(`The project's ${p} is a link, so Worca left it out of this try.`);
     await appendAudit(this.pipeline.dir, `Switched off the project's Claude Code hooks and plugins for this try (${touched.join(', ')}).`).catch(() => {});
   }

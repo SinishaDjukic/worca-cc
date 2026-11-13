@@ -9,6 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { strippedSettingsText, strippedFrontmatterText, isTryGuardEnvKey, stripProjectClaudeSettings, PROJECT_SETTINGS_FILES, STRIPPED_SETTINGS_KEYS,
   stripMountedSkillHooks, stripSetSkillHooks, _testing as pcsTesting } from '../src/core/workflow-tests/project-claude-settings.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
+import { readTryExcludes } from '../src/core/workflow-tests/try-excludes.mjs';
 
 const dirs = [];
 after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -396,6 +397,8 @@ test('D72a: the harness names an unsafe frontmatter in one run warning and keeps
     _git: async () => ({ ok: true, stdout: '.claude/skills/s/SKILL.md\0' }), _recordRunWarning: async (t) => { warnings.push(t); } };
   await RunHarness.prototype._pluginsOffInCheckout.call(h);
   assert.deepEqual(h._tryPluginPaths, ['.claude/skills/s/SKILL.md']);
+  assert.deepEqual(await readTryExcludes(h.pipeline.dir), { setup: null, plugins: ['.claude/skills/s/SKILL.md'] },
+    'e2e finding 1: saved for a harness rebuilt from the row (a paused try that is stopped)');
   assert.deepEqual(warnings, ['Worca could not be sure it removed every hook from the project\'s .claude/agents/a.md, so a hook in it may still run in this try.']);
   assert.equal(readFileSync(join(d, '.claude', 'agents', 'a.md'), 'utf8'), '---\n---\nbody\n', 'written as far as Worca could strip it');
 });
