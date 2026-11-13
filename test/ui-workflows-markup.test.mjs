@@ -136,5 +136,16 @@ test('style.css closes every block (an unclosed @media turns every later rule in
 test('versions table: the draft row keeps Save version in the actions column; the narrow page clears the second-row Save bar', () => {
   assert.match(css, /\.wfv-vt-draft > \.btn\{grid-column:4;justify-self:end;\}/);
   // At <=760px .wfv-tr drops to top:58px (40px tall), so the page's first line starts below it, with a 16px gutter.
-  assert.match(css, /@media \(max-width:760px\)\{\.wfv-versions\{padding:112px 16px 32px;\}\}/);
+  // Mock browser check, finding 15: the space above the page is its own top border, so what scrolls never passes under the bars.
+  assert.match(css, /\.wfv-versions\{[^}]*overflow:auto;[^}]*border-top:64px solid var\(--bg\);padding:8px 32px 48px;/);
+  assert.match(css, /@media \(max-width:760px\)\{\.wfv-versions\{border-top-width:112px;padding:0 16px 32px;\}\}/);
+});
+
+test('phone width (finding 15): Canvas · Tests · Versions fit in the top-left bar; the document status stays for screen readers', () => {
+  const m = css.match(/@media \(max-width:760px\)\{\.wfv-tl\{.*\}/);
+  assert.match(m[0], /\.wfv-tl \.wfv-pages button\{padding:0 8px;\}/, 'the three buttons are narrower');
+  const p = css.match(/@media \(max-width:480px\)\{\.wfv-tl \.wfv-doc\{[^}]*\}\}/);
+  assert.ok(p, 'a <=480px rule for the document status');
+  assert.match(p[0], /clip/);
+  assert.doesNotMatch(p[0], /display:none/);
 });
