@@ -81,6 +81,7 @@ async function chatTurn(t, fetchImpl, threadId, { ms = 60_000, pollMs = 200 } = 
 export async function seed(t, { fetchImpl = fetch, helloImpl = helloRuns, pollMs } = {}) {
   await call(t, fetchImpl, '/api/settings', { uiLevel: 'expert', theme: 'light' });
   await call(t, fetchImpl, '/api/onboarding', { welcomeSeen: true });
+  await call(t, fetchImpl, '/api/worca-level/ack', { what: 'welcome' });   // the level welcome is a boot-time modal too
   const { projects } = await call(t, fetchImpl, '/api/projects', { name: 'sandbox', path: t.projectPath });
   const project = projects.find((p) => p.name === 'sandbox');   // by name: macOS realpaths /var → /private/var
   const { thread } = await call(t, fetchImpl, '/api/ask/threads', { title: 'parity thread' });

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img">
+<defs>
+<radialGradient id="promoShine-council" cx="38%" cy="30%" r="70%"><stop offset="0" stop-color="#fff" stop-opacity=".38"></stop><stop offset=".55" stop-color="#fff" stop-opacity="0"></stop><stop offset="1" stop-color="#000" stop-opacity=".18"></stop></radialGradient>
+<linearGradient id="promoNose-council" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".28"></stop><stop offset="1" stop-color="#000" stop-opacity=".12"></stop></linearGradient>
+</defs>
+<circle cx="50" cy="50" r="50" fill="oklch(0.92 0.04 150)"></circle>
+<g>
+<path d="M10 52 C9 47 8 44 6 42 M17 51 C18 46 19 44 21 42" fill="none" stroke="#C0583A" stroke-width="1.8" stroke-linecap="round"></path>
+<circle cx="13" cy="62" r="10" fill="#EEA383"></circle><circle cx="13" cy="62" r="10" fill="url(#promoShine-council)"></circle>
+<circle cx="17" cy="59" r="2.8" fill="#fff"></circle><circle cx="17.6" cy="59.2" r="1.5" fill="#1B1E24"></circle>
+<path d="M80 24 C79 19 78 17 76 15 M87 23 C88 18 89 16 91 14" fill="none" stroke="#C0583A" stroke-width="1.8" stroke-linecap="round"></path>
+<circle cx="84" cy="33" r="9" fill="#F0A93A"></circle><circle cx="84" cy="33" r="9" fill="url(#promoShine-council)"></circle>
+<circle cx="80" cy="31" r="2.6" fill="#fff"></circle><circle cx="79.4" cy="31.2" r="1.4" fill="#1B1E24"></circle>
+</g>
+<g transform="translate(11.360000000000001 14.080000000000002) scale(0.84)">
+<ellipse cx="46" cy="88" rx="20" ry="2.6" fill="#000" opacity=".12"></ellipse>
+<rect x="37" y="70" width="7" height="17" rx="3.5" fill="#A65430"></rect>
+<rect x="48" y="70" width="7" height="17" rx="3.5" fill="#A65430"></rect>
+<path d="M39 36 C37 28 36 22 33 17 M53 35 C54 27 55 21 58 16" fill="none" stroke="#C0583A" stroke-width="2.6" stroke-linecap="round"></path>
+<circle cx="46" cy="54" r="24" fill="#C4683F"></circle>
+<circle cx="46" cy="54" r="24" fill="url(#promoShine-council)"></circle>
+<circle cx="60" cy="46" r="6.5" fill="#fff" stroke="#1B1E24" stroke-width=".7"></circle>
+<circle cx="61.6" cy="46.6" r="3.4" fill="#1B1E24"></circle>
+<circle cx="62.7" cy="45.3" r="1" fill="#fff"></circle>
+<rect x="56" y="54" width="34" height="10" rx="5" fill="#C4683F"></rect>
+<rect x="56" y="54" width="34" height="10" rx="5" fill="url(#promoNose-council)"></rect>
+<g><path d="M93 66 L99 72" stroke="#7A5232" stroke-width="2.6" stroke-linecap="round"></path><circle cx="89" cy="61" r="6" fill="#fff" fill-opacity=".35" stroke="#2A2E35" stroke-width="1.8"></circle></g>
+<g><path d="M24 44 C24 34 32 30 46 30 C60 30 68 34 68 44 Z" fill="#1B1E24"></path><path d="M16 31 L46 23 L78 31 L48 39 Z" fill="#26292F"></path><path d="M46 31 L68 31 L70 41" fill="none" stroke="#E7B93A" stroke-width="1.3"></path><path d="M68.5 41 l1.5 0 l1 6 l-4 0 z" fill="#E7B93A"></path><text x="46" y="42.5" text-anchor="middle" font-family="Poppins, sans-serif" font-size="9" font-weight="700" fill="#E7B93A">W</text></g>
+</g>
+</svg>
