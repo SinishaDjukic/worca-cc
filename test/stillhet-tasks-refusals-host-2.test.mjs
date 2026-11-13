@@ -1,4 +1,5 @@
-// test/stillhet-tasks-refusals-host.test.mjs — R-ux-9, R-qa-9: each Tasks action refused with its route's own code says
+// test/stillhet-tasks-refusals-host-2.test.mjs — R-ux-9, R-qa-9: each Tasks action refused with its route's own code says
+// Part 2 of 2: split to stay under CI's 300 s per file.
 // one `Could not ACTION: REASON` where it started, and leaves the store and the task page model deep-equal. A 500 and a
 // network failure read the same way. Live app host (jsdom).
 import { test, afterEach } from 'node:test';
@@ -45,47 +46,12 @@ const CASES = [
   ['run-b', 'Pause after this step', [409, { error: 'A pause after this step is already on its way.', code: 'ALREADY_PAUSING' }], 'Could not pause after this step: A pause after this step is already on its way.'],
   ['h3', 'Report this task', [502, { error: 'GitHub did not answer' }], 'Could not report this task: GitHub did not answer', { value: 'note' }],
 ];
-for (const [id, label, answer, said, args] of CASES) {
+for (const [id, label, answer, said, args] of CASES.slice(Math.ceil(CASES.length / 2))) {   // part 2: the rest of CASES
   test(`${label} refused (${answer[1].code || answer[0]}) says "${said}" once and changes nothing`, async () => {
     const { d } = await refused(id, label, answer, args);
     assert.equal(toastText(d), said);
   });
 }
-
-test('a 500 and a network failure read the same way, and change nothing', async () => {
-  let { d } = await refused('h2', 'Merge PR', [500, { error: 'boom' }]);
-  assert.equal(toastText(d), 'Could not merge #959: boom');
-  const h = await liveHost({ sources: sources(), read, write: () => { throw new TypeError('Failed to fetch'); } });
-  await go(h.w, '#run/h2', 150);
-  const before = clone(h.w.RailTaskLive.detail('h2'));
-  const res = await h.w.RailTaskLive.flow('Merge PR', { taskId: 'h2' });
-  await settle(40);
-  assert.equal(res.ok, false);
-  assert.match(toastText(h.d), /^Could not merge #959: /);
-  assert.deepEqual(clone(h.w.RailTaskLive.detail('h2')), before);
-});
-
-test('on the page: a refused Merge says it in its strip, naming the action, once; a refused cap keeps its typed value in its dialog', async () => {
-  const h = await liveHost({ sources: sources(), read, write: () => [409, { error: 'GitHub reports merge conflicts on this pull request; fix them first.', code: 'CONFLICTS' }] });
-  await go(h.w, '#run/h2', 150);
-  await settle(400);   // the store's rows redraw once the open PRs' checks land (D5)
-  h.d.querySelector('#card [data-key="act-main"]').click(); await settle(40);
-  h.d.querySelector('#card [data-confirm="yes"]').click(); await settle(100);
-  const strip = h.d.querySelector('#card').textContent;
-  assert.match(strip, /Could not merge #959/);
-  assert.match(strip, /GitHub reports merge conflicts on this pull request; fix them first/);
-  assert.equal(toastText(h.d), '', 'said once, in the strip');
-  // a refused cap keeps its typed value in its dialog and names the action
-  const c = await liveHost({ sources: sources(), read, write: () => [400, { error: 'The new cap must be above what this task has spent ($2.50).' }] });
-  await go(c.w, '#run/h1', 150);
-  await settle(400);   // the store's rows redraw once the open PRs' checks land (D5)
-  c.d.querySelector('#card [data-key="act-main"]').click(); await settle(40);
-  const f = c.d.querySelector('#fd-value'); f.value = '2'; f.dispatchEvent(new c.w.Event('input', { bubbles: true }));
-  c.d.querySelector('[data-key="fd-ok"]').click(); await settle(100);
-  assert.equal(c.d.querySelector('#fd-value').value, '2', 'the dialog keeps the typed value');
-  assert.match(c.d.body.textContent, /Could not raise the cap/);
-});
-
 test('Ask for changes on a live plan: no demo draft; a refusal keeps the dialog and what was typed; ok closes it', async () => {
   let answer = [409, { error: 'the run is not waiting on a plan' }];
   const h = await liveHost({ sources: sources(), read, write: () => answer });
