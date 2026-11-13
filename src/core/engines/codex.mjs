@@ -249,6 +249,22 @@ function knownCodexHomes() {
 }
 
 /**
+ * Deletes the session file of that one thread id under every known codex home (9c D12: a helper call leaves no copy of
+ * a step in codex's history). Nothing else is touched. Never throws; true when at least one file was removed.
+ */
+export function removeCodexThread(thread, { homes } = {}) {
+  let removed = false;
+  try {
+    for (const h of homes ?? knownCodexHomes()) {
+      const f = findCodexRollout(h, thread);
+      if (!f) continue;
+      try { rmSync(f, { force: true }); removed = true; } catch { /* kept: the notice says so */ }
+    }
+  } catch { /* never throws */ }
+  return removed;
+}
+
+/**
  * Makes `thread` resumable under `home`. A thread lives in the home of the spawn that started it, and a guarded spawn's
  * home follows its rule set, so a rule change between pause and resume (or a move between guarded and unguarded) moves
  * the home. codex finds a thread by its session file anywhere under the home's sessions/ (checked on codex-cli 0.162),

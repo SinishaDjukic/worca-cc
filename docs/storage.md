@@ -188,7 +188,7 @@ Everything that used to be a per-run `.json`/`.md` control file —
 plan/review **markdown**, `prompt.md`, and `extras/` remain on disk (their
 existence is indexed in the database).
 
-### Workflow history and versions (v89)
+### Workflow history and versions (v90)
 
 Behind the experimental flag `workflowTests`; the data is kept either way.
 
@@ -215,7 +215,7 @@ Behind the experimental flag `workflowTests`; the data is kept either way.
   Never a path, a display name, a colour, an icon or the order.
 - A loop's limit is part of the graph: the stored wire keeps it in `config.maxCycles` (with `config.onExhausted`).
 
-### Workflow tests (v90)
+### Workflow tests (v91)
 
 Behind the experimental flag `workflowTests`; the data is kept either way. No foreign keys, like `workflow_revisions`:
 a deleted workflow keeps its examples, and they come back with a workflow saved again under the same id.
@@ -257,9 +257,9 @@ a deleted workflow keeps its examples, and they come back with a workflow saved 
 - `workflow-tests/seen-connectors.json` (worcaHome): the claude.ai connector names Worca saw when a run started, so
   Test a version can name the ones a pretend try switches off.
 
-### Workflow tests on a project (v91)
+### Workflow tests on a project (v92)
 
-Behind the flag `workflowTests`, like v90. FK-free like the v90 tables.
+Behind the flag `workflowTests`, like v91. FK-free like the v91 tables.
 
 - `wf_test_example_projects`: one row per example that works on a project:
   - the project's key and its name when the start was pinned (`project_name`: shown when the project is no longer
@@ -315,7 +315,7 @@ Behind the flag `workflowTests`, like v90. FK-free like the v90 tables.
   `<worcaHome>/workflow-tests/no-auth/{gh,glab,az}`: empty config folders, so those CLIs have no sign-in in a try.
   `<worcaHome>/workflow-tests/no-hooks`: the empty `core.hooksPath` of Worca's own git in a try's copy.
 
-**Part 3b (no schema change: the schema stays at v91).**
+**Part 3b (no schema change: the schema stays at v92).**
 
 - `<worcaHome>/workflow-tests/before/`: "The command passes" run once on an example's start point, before the workflow
   changed anything.
