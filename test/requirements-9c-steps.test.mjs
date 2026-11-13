@@ -695,3 +695,97 @@ test('B2: a brief stores the cost of its last make: a Copilot refresh of a Claud
   saveBriefResult(pre.id, { model: 'claude-opus-5-5' }, { by: 'po' });
   assert.deepEqual([getBrief('project', 'brief-9c00b4').madeCostUsd, getBrief('project', 'brief-9c00b4').madeCostKind], [null, null]);
 });
+
+// ---------------------------------------------------------------- I1: the credential broker locks every non-Claude step (§4, D13, §9, §8.2)
+
+const BROKER_OFF = 'OpenAI Codex is off while the credential broker is on. Change the model.';
+async function withBroker(fn) {
+  const saved = process.env.WORCA_BROKER_URL;
+  process.env.WORCA_BROKER_URL = 'http://broker:8080';
+  try { return await fn(); } finally { if (saved === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = saved; }
+}
+
+test('broker on: a round on a Codex feature is a NOT_READY error turn in the broker words, no spawn, nothing booked, still Codex', async () => {
+  await withBroker(async () => {
+    const f = featureOn('codex');
+    const r = fakeRunner([ROUND1]);
+    setContext('project', 'shop-1234abcd', { lookAtCode: false });
+    startOrientation(f.seq, {}, deps(r));
+    await settled(f.seq);
+    assert.equal(r.calls.length, 0);
+    const err = listTurns(f.seq).find((t) => t.kind === 'error');
+    assert.equal(err.payload.code, 'NOT_READY');
+    assert.equal(err.payload.message, BROKER_OFF);
+    assert.equal(err.payload.job, 'round');
+    assert.equal(getFeature(f.seq).model.engine, 'codex', 'never switched to Claude');
+    assert.equal(prepare('SELECT count(*) AS n FROM req_cost_ledger WHERE feature_seq = ?').get(f.seq).n, 0);
+  });
+});
+
+test('broker on: a code look on a Codex feature is refused the same way', async () => {
+  await withBroker(async () => {
+    const f = featureOn('codex');
+    const r = fakeRunner([]);
+    startOrientation(f.seq, {}, deps(r));
+    await settled(f.seq);
+    assert.equal(r.calls.length, 0);
+    const err = listTurns(f.seq).find((t) => t.kind === 'error');
+    assert.equal(err.payload.code, 'NOT_READY');
+    assert.equal(err.payload.message, BROKER_OFF);
+    assert.equal(err.payload.job, 'look');
+    assert.equal(prepare('SELECT count(*) AS n FROM req_cost_ledger WHERE feature_seq = ?').get(f.seq).n, 0);
+  });
+});
+
+test('broker on: Feature chat on a Copilot feature is a NOT_READY row, no call', async () => {
+  await withBroker(async () => {
+    const f = featureOn('copilot');
+    const r = fakeRunner([CHAT]);
+    await sendMessage(f.seq, { text: 'Hi' }, { by: 'po' }, deps(r));
+    assert.equal(r.calls.length, 0);
+    const row = listHelperMessages(f.seq).at(-1);
+    assert.equal(row.error.code, 'NOT_READY');
+    assert.equal(row.error.message, 'GitHub Copilot is off while the credential broker is on. Change the model.');
+    assert.equal(prepare('SELECT count(*) AS n FROM req_cost_ledger WHERE feature_seq = ?').get(f.seq).n, 0);
+  });
+});
+
+test("broker on: a document of a brief made on Codex is not read on Codex's own credentials", async () => {
+  await withBroker(async () => {
+    const KEY = 'brief-9c00c1';
+    const b = beginBrief('project', KEY, { by: 'po' });
+    saveBriefResult(b.id, { sections: undefined, model: 'gpt-x', engine: 'codex' }, { by: 'po' });
+    const owner = { type: 'brief', id: b.id, scopeType: 'project', scopeKey: KEY };
+    const r = fakeRunner([{ summary: 'Policy.' }]);
+    addAttachments(owner, [textFile('policy.md', 'Refunds in 14 days.')], { by: 'po' }, deps(r));
+    await readsSettled(owner);
+    assert.equal(r.calls.length, 0);
+    const row = listAttachments('brief', b.id)[0];
+    assert.equal(row.status, 'failed');
+    assert.equal(row.error.code, 'NOT_READY');
+    assert.equal(row.error.message, BROKER_OFF);
+    assert.equal(prepare('SELECT count(*) AS n FROM req_cost_ledger WHERE brief_id = ?').get(b.id).n, 0);
+  });
+});
+
+test('broker on: making a brief on Codex fails with the broker sentence, no call, nothing booked', async () => {
+  await withBroker(async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'req-9c-brief-broker-'));
+    const g = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf8' });
+    g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't'); g('config', 'commit.gpgsign', 'false');
+    writeFileSync(join(repo, 'README.md'), 'hi'); g('add', '.'); g('commit', '-q', '-m', 'init');
+    const KEY = 'brief-9c00c2';
+    setContext('project', KEY, { lookAtCode: true });
+    const r = fakeRunner([]);
+    const d = deps(r, { listProjects: async () => [{ key: KEY, name: 'Shop', path: repo, exists: true }],
+      openLook: async () => ({ cwd: repo, commit: 'abc', close: async () => {} }), budget: () => ({ blocked: false }),
+      catalog: async () => ({ models: [{ id: 'gpt-x', harnesses: ['codex'], efforts: [] }] }) });
+    const { brief, job } = await makeBrief('project', KEY, { by: 'po', choice: { engine: 'codex', model: 'gpt-x', effort: null } }, d);
+    await job; await briefSettled('project', KEY);
+    assert.equal(r.calls.length, 0);
+    const b = getBrief('project', KEY);
+    assert.equal(b.error.code, 'NOT_READY');
+    assert.equal(b.error.message, BROKER_OFF);
+    assert.equal(prepare('SELECT count(*) AS n FROM req_cost_ledger WHERE brief_id = ?').get(brief.id).n, 0);
+  });
+});

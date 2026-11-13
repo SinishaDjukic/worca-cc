@@ -251,3 +251,42 @@ test('a refusal before any spawn carries no cost kind', async () => {
   await assert.rejects(helperCall({ ...base, engine: 'codex', profile: 'none' }, { run: async () => ({ text: '' }), gate }),
     (e) => e.code === 'NOT_READY' && e.costKind === null && e.costUsd === 0);
 });
+
+test('broker lock: with the credential broker on, a non-Claude call is NOT_READY in the broker words, before the gate, with no spawn and no cost', async () => {
+  const saved = process.env.WORCA_BROKER_URL;
+  process.env.WORCA_BROKER_URL = 'http://broker:8080';
+  try {
+    for (const [engine, label] of [['codex', 'OpenAI Codex'], ['copilot', 'GitHub Copilot'], ['gemini', 'Gemini CLI']]) {
+      const { run, calls } = runner([result({ costUsd: 0.1 })]);
+      const gate = spy(ok);
+      await assert.rejects(helperCall({ ...base, engine, profile: 'none' }, { run, gate, removeCodexThread: () => true }), (e) => {
+        assert.ok(e instanceof HelperCallError);
+        assert.equal(e.code, 'NOT_READY');
+        assert.equal(e.message, `${label} is off while the credential broker is on. Change the model.`);
+        assert.equal(e.costKind, null);
+        assert.equal(e.costUsd, 0);
+        return true;
+      });
+      assert.equal(calls.length, 0, `${engine}: no spawn`);
+      assert.equal(gate.calls.length, 0, `${engine}: refused before the readiness check`);
+    }
+    // Claude still runs through the broker, unchanged.
+    const { run, calls } = runner([result({ costUsd: 0.03 })]);
+    const claudeOptions = { cwd: '/w', prompt: 'p', model: 'sonnet', tools: [], spawnKind: 'aux' };
+    const r = await helperCall({ ...base, engine: 'claude', profile: 'none', claudeOptions }, { run, gate: ok, retryEnv: RETRY });
+    assert.equal(calls.length, 1);
+    assert.equal(r.engine, 'claude');
+  } finally {
+    if (saved === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = saved;
+  }
+});
+
+test('broker lock: an injected brokerRefusal is consulted with the engine', async () => {
+  const { run, calls } = runner();
+  const seen = [];
+  const brokerRefusal = (e) => { seen.push(e); return 'the credential broker is on'; };
+  await assert.rejects(helperCall({ ...base, engine: 'copilot', profile: 'repo' }, { run, gate: ok, brokerRefusal }),
+    (e) => e.code === 'NOT_READY' && e.message === 'GitHub Copilot is off while the credential broker is on. Change the model.');
+  assert.deepEqual(seen, ['copilot']);
+  assert.equal(calls.length, 0);
+});

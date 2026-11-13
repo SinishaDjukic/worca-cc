@@ -8,6 +8,7 @@ import { chatDescriptor, chatEngineGate } from '../engines/chat.mjs';
 import { writeFilesMcpConfig as realWriteFilesMcpConfig } from '../engines/codex-files-mcp.mjs';
 import { codexThreadOf, removeCodexThread as realRemoveCodexThread } from '../engines/codex.mjs';
 import { withRecoveryRetry } from '../recovery-backoff.mjs';
+import { brokerEngineRefusal } from '../broker-client.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { worcaHome } from '../projects.mjs';
 import { ratesFor as realRatesFor, costOfResult as realCostOfResult, addCost } from './cost.mjs';
@@ -51,6 +52,10 @@ export async function helperCall(args, deps = {}) {
     if (!descriptor || !(deps.engines || requirementsEngines()).includes(engine)) {
       throw new HelperCallError(`${engineLabel(engine)} can't run Requirements. Change the model.`, { code: 'NOT_OFFERED' });
     }
+    // §4, D13, §9: with the credential broker on only Claude spends; another harness would sign in with its own
+    // credentials, which the broker cannot bill or revoke. Refused before the readiness check, nothing spawned or booked.
+    const broker = (deps.brokerRefusal || brokerEngineRefusal)(engine);
+    if (broker) throw new HelperCallError(notReadyWords(engine, broker, { broker: true }).sentence, { code: 'NOT_READY' });
     const refusal = await gate(descriptor, { model, mock: mock() });
     if (refusal) {
       throw new HelperCallError(notReadyWords(engine, refusal.message).sentence, { code: 'NOT_READY', docsUrl: descriptor.notReady?.docsUrl ?? null });
