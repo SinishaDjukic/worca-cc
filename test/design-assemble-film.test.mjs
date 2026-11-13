@@ -161,3 +161,16 @@ test('a plan that does not name its kind finds the film\'s sound by the kind pas
   const html = assembleDesign({ workDir: await filmWork({ sound: true }), plan: { ...FILM_SOUND, kind: undefined }, mode: 'dist', kind: 'video' }).html;
   assert.match(html, /<audio data-film-clip="open" [^\n]*\n<audio data-film-clip="close" [^\n]*\n<audio data-film-music /);
 });
+
+// MP4 export: the frame capture reads the standalone film held still, so it is assembled `embedded` (film.js then adds
+// no bar and starts nothing by itself). Nothing else about the page changes.
+test('embedded: a standalone film assembles held still for the frame capture, and is otherwise the same page', async () => {
+  const work = await world(BASE, 'video');
+  const alone = assembleDesign({ workDir: work, plan: FILM, mode: 'standalone', kind: 'video' }).html;
+  const held = assembleDesign({ workDir: work, plan: FILM, mode: 'standalone', kind: 'video', embedded: true }).html;
+  assert.match(alone, /"embedded":false/);
+  assert.match(held, /"embedded":true/);
+  assert.equal(held.replace('"embedded":true', '"embedded":false'), alone);
+  assert.match(filmPlanScript({ plan: FILM, mode: 'dist', embedded: true }), /"embedded":true/);
+  assert.match(filmPlanScript({ plan: FILM, mode: 'dist' }), /"embedded":false/);
+});

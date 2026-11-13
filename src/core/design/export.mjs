@@ -49,7 +49,7 @@ export class ExportRefusal extends Error {
   }
 }
 
-export const EXPORT_FORMATS = Object.freeze(['html', 'zip', 'pdf', 'project']);
+export const EXPORT_FORMATS = Object.freeze(['html', 'zip', 'pdf', 'mp4', 'project']);
 
 const notDone = () => new ExportRefusal(409, 'not-done', 'Export is ready when a round has finished.');
 

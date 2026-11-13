@@ -45,7 +45,7 @@ A sound failure never fails a build: the film is built with the sound that exist
 (`<ext>` is `mp3`, or `wav` in mock mode). They travel like every file under `assets/`: versions, the zip and
 **Copy into a project**. The **Standalone HTML** export carries them too. The preview plays them with the film,
 with a **Mute** button after the play button (kept per browser). Opened on its own, a film with sound starts when
-you click it or press Space. There is no MP4 export, and no music without a voice.
+you click it or press Space. The **Video (MP4)** export mixes them into its sound. No music without a voice.
 
 ## Credential broker and hosted
 

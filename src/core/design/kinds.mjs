@@ -139,15 +139,16 @@ const JSON_LT = '\\u003c';
 /**
  * The film's first script: `window.FILM_PLAN`, which film.js reads at load. Every plan scene is listed with its
  * duration, included or not, so a scene with no element keeps its window and the parent's timeline stays true
- * (L7.9). Only the run doc is `embedded`: it waits for the parent, while a film opened alone plays (L7.16).
- * @param {{ plan: { canvas?: { w?: number, h?: number, fps?: number }, sections?: { id: string, duration?: number }[] }|null, mode: 'build' | 'run' | 'dist' | 'standalone' }} opts
+ * (L7.9). Only the run doc is `embedded`: it waits for the parent, while a film opened alone plays (L7.16). `embedded:
+ * true` makes any other doc embedded too: the MP4 export's capture page, which the exporter seeks frame by frame.
+ * @param {{ plan: { canvas?: { w?: number, h?: number, fps?: number }, sections?: { id: string, duration?: number }[] }|null, mode: 'build' | 'run' | 'dist' | 'standalone', embedded?: boolean }} opts
  * @returns {string}
  */
-export function filmPlanScript({ plan, mode } = {}) {
+export function filmPlanScript({ plan, mode, embedded = false } = {}) {
   const canvas = plan?.canvas ?? {};
   const sections = Array.isArray(plan?.sections) ? plan.sections.filter((s) => typeof s?.id === 'string') : [];
   const json = JSON.stringify({
-    w: canvas.w, h: canvas.h, fps: canvas.fps, embedded: mode === 'run',
+    w: canvas.w, h: canvas.h, fps: canvas.fps, embedded: mode === 'run' || embedded === true,
     scenes: sections.map(({ id, duration }) => ({ id, duration })),
   });
   return `window.FILM_PLAN=${json.replace(/</g, () => JSON_LT)};`;

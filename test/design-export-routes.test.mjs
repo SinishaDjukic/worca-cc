@@ -18,6 +18,8 @@ import { designWorkDir, distDir, kitDir, thumbFile } from '../src/core/design/pa
 import { RESTORE_RUNNING, ROUND_STARTING } from '../src/core/design/registry.mjs';
 import { registerDesignRoutes } from '../src/core/design/routes.mjs';
 import { createDesign, deleteDesign, updateDesign } from '../src/core/design/store.mjs';
+import { createFilmExports } from '../src/core/design/film-mp4.mjs';
+import { stageDesignKit } from '../src/core/design/kit.mjs';
 
 const servers = [];
 after(async () => {
@@ -114,14 +116,14 @@ test('bad input: overwrite without the collisions key is a 400 with words, and n
 });
 test('bad input', async () => {
   const d = seedDone();
-  assert.equal((await post(d.id, { format: 'mp4' })).status, 400);
+  assert.equal((await post(d.id, { format: 'gif' })).status, 400);
   assert.equal((await post(d.id, { format: 'project', projectKey: 'p1', overwrite: 'yes' })).status, 400);
   assert.equal((await post('d_000000000000', { format: 'html' })).status, 404);
 });
 test('a stopped round refuses every format', async () => {
   const d = seedDone({}); updateDesign(d.id, { status: 'stopped' });
   writeFileSync(join(designWorkDir(d.id), 'sections/hero/index.html'), '<section data-section="hero">half an edit');
-  for (const format of ['html', 'zip', 'pdf', 'project']) {
+  for (const format of ['html', 'zip', 'pdf', 'mp4', 'project']) {
     const r = await post(d.id, { format, projectKey: 'p1' });
     assert.deepEqual([r.status, r.json.code], [409, 'not-done'], format);
   }
@@ -179,12 +181,12 @@ test('project: an absent folder is no-project with words; a subdir is honoured',
 });
 test('bad input: the 400s say what is wrong; a body-less request is a format 400', async () => {
   const d = seedDone();
-  assert.deepEqual((await post(d.id, { format: 'mp4' })).json, { error: 'format must be html, zip, pdf or project' });
+  assert.deepEqual((await post(d.id, { format: 'gif' })).json, { error: 'format must be html, zip, pdf, mp4 or project' });
   assert.deepEqual((await post(d.id, { format: 'project', projectKey: 'p1', overwrite: 'yes' })).json, { error: 'overwrite must be true or false' });
   assert.equal((await post(d.id, { format: 'html', overwrite: false })).status, 200);
   const port = rig.port;
   const r = await fetch(`http://127.0.0.1:${port}/api/design/${d.id}/export`, { method: 'POST' });
-  assert.deepEqual([r.status, await r.json()], [400, { error: 'format must be html, zip, pdf or project' }]);
+  assert.deepEqual([r.status, await r.json()], [400, { error: 'format must be html, zip, pdf, mp4 or project' }]);
 });
 test('a person leaving ends the zip (a destroyed socket never drains) and is not logged as a failure', async () => {
   const seen = {}; const logged = []; const orig = console.error; console.error = (...a) => { logged.push(a.join(' ')); };
@@ -281,7 +283,7 @@ test('a print whose person left while it waited in the queue never starts', asyn
 test('a restore or a hand-off holding the design refuses every format at once', async () => {
   const d = seedDone(); const seen = [];
   const { port } = await listen({ held: (id) => { seen.push(id); return 'A round is starting: try again in a moment'; } });
-  for (const format of ['html', 'zip', 'pdf', 'project']) {
+  for (const format of ['html', 'zip', 'pdf', 'mp4', 'project']) {
     const r = await postTo(port, d.id, { format, projectKey: 'p1' });
     assert.deepEqual([r.status, r.json], [409, { error: 'A round is starting: try again in a moment', code: 'busy' }], format);
   }
@@ -365,4 +367,114 @@ test('the route prints through printDesignPdf: a document gets its PDF, a web pa
   assert.ok(r.buf.toString().startsWith('%PDF'));
   const web = await postTo(port, seedDone().id, { format: 'pdf' });
   assert.deepEqual([web.status, web.json?.code, web.json?.error], [422, 'pdf-kinds', 'PDF is for decks and documents.']);
+});
+
+// A video exports as an MP4 (film-mp4.mjs): a render takes about as long as the film runs, so the route starts a job
+// and answers its status; the dialog asks again until the file is ready, then fetches it by the round's key.
+const FILM_PLAN = { v: 1, kind: 'video', title: 'F', canvas: { w: 1920, h: 1080, fps: 60 }, notes: '',
+  sections: [{ id: 'a', job: 'a', brief: 'b', parts: ['html', 'css', 'js'], duration: 2 }] };
+/** A finished video titled `Clay Day`: one scene, `dist/` assembled. */
+async function seedFilm() {
+  const d = createDesign({ kind: 'video', title: 'Clay Day' }, { by: 'local' }); const w = designWorkDir(d.id);
+  writeFileSync(join(w, 'plan.json'), JSON.stringify(FILM_PLAN)); writeFileSync(join(w, 'shell.html'), SHELL);
+  mkdirSync(join(w, 'sections/a'), { recursive: true }); writeFileSync(join(w, 'sections/a/index.html'), '<div data-section="a" data-scene><b>A</b></div>');
+  await stageDesignKit({ kind: 'video', workDir: w });
+  assembleDesign({ workDir: w, plan: FILM_PLAN, mode: 'dist' });
+  return updateDesign(d.id, { status: 'done' });
+}
+/** The jobs as the route sees them, recorded: `over` replaces any answer. */
+function fakeFilms(over = {}) {
+  const calls = [];
+  const films = {
+    start: async (design) => { calls.push(['start', design.id]); return { state: 'rendering', done: 0, total: 120, key: 'k1' }; },
+    status: (id) => { calls.push(['status', id]); return { state: 'rendering', done: 60, total: 120, key: 'k1' }; },
+    stop: (id) => { calls.push(['stop', id]); },
+    file: (design, key) => { calls.push(['file', design.id, key]); return null; },
+    ...over,
+  };
+  return { films, calls };
+}
+const mp4Url = (port, id, rest = '') => `http://127.0.0.1:${port}/api/design/${id}/export/mp4${rest}`;
+
+test('mp4: only a video; a web page gets the refusal and no job starts', async () => {
+  const { films, calls } = fakeFilms();
+  const r = await postWith({ films }, seedDone().id, { format: 'mp4' });
+  assert.deepEqual([r.status, r.json], [422, { error: 'Only a video exports as MP4.', code: 'not-video' }]);
+  assert.deepEqual(calls, []);
+});
+test('mp4: the POST starts the job and answers its status: 202 while it renders, 200 when the file is ready', async () => {
+  const d = await seedFilm();
+  const running = fakeFilms();
+  const r = await postWith({ films: running.films }, d.id, { format: 'mp4' });
+  assert.deepEqual([r.status, r.json, r.headers.get('cache-control')], [202, { state: 'rendering', done: 0, total: 120, key: 'k1' }, 'no-store']);
+  assert.deepEqual(running.calls, [['start', d.id]]);
+  const ready = { state: 'ready', key: 'k1', bytes: 9, frames: 120, seconds: 2, problems: { total: 0, shown: [] } };
+  const done = await postWith({ films: fakeFilms({ start: async () => ready }).films }, d.id, { format: 'mp4' });
+  assert.deepEqual([done.status, done.json], [200, ready]);
+});
+test('mp4: a refusal of the job (no ffmpeg) is JSON the dialog can show; any other failure is a 500 with words', async (t) => {
+  const d = await seedFilm();
+  const refuse = fakeFilms({ start: async () => { throw new ExportRefusal(422, 'no-ffmpeg', 'Video needs ffmpeg on this machine. brew install ffmpeg.'); } });
+  const r = await postWith({ films: refuse.films }, d.id, { format: 'mp4' });
+  assert.deepEqual([r.status, r.json], [422, { error: 'Video needs ffmpeg on this machine. brew install ffmpeg.', code: 'no-ffmpeg' }]);
+  const logged = t.mock.method(console, 'error', () => {});
+  const boom = await postWith({ films: fakeFilms({ start: async () => { throw new Error('ENOSPC /Users/x/secret'); } }).films }, d.id, { format: 'mp4' });
+  assert.deepEqual([boom.status, boom.json], [500, { error: 'Could not make the file.' }]);
+  assert.match(String(logged.mock.calls[0].arguments[0]), /ENOSPC/);
+});
+test('mp4: status, stop and the file each go to the design\'s own job', async () => {
+  const d = await seedFilm();
+  const kept = join(mkdtempSync(join(home, 'film-')), 'film.mp4'); writeFileSync(kept, 'MP4 BYTES');
+  const { films, calls } = fakeFilms({ file: (design, key) => { calls.push(['file', design.id, key]); return key === 'k1' ? { path: kept, bytes: 9, name: 'clay-day.mp4' } : null; } });
+  const { port } = await listen({ films });
+  const status = await fetch(mp4Url(port, d.id));
+  assert.deepEqual([status.status, await status.json(), status.headers.get('cache-control')], [200, { state: 'rendering', done: 60, total: 120, key: 'k1' }, 'no-store']);
+  const file = await fetch(mp4Url(port, d.id, '/file?key=k1'));
+  assert.deepEqual([file.status, file.headers.get('content-type'), file.headers.get('content-length'), file.headers.get('x-content-type-options'), file.headers.get('cache-control')],
+    [200, 'video/mp4', '9', 'nosniff', 'no-store']);
+  assert.match(file.headers.get('content-disposition'), /^attachment; filename="clay-day\.mp4"/);
+  assert.equal(await file.text(), 'MP4 BYTES');
+  for (const rest of ['/file?key=other', '/file']) {
+    const gone = await fetch(mp4Url(port, d.id, rest));
+    assert.deepEqual([gone.status, await gone.json()], [404, { error: 'That video is no longer there. Export it again.', code: 'no-film' }], rest);
+  }
+  const stopped = await fetch(mp4Url(port, d.id), { method: 'DELETE' });
+  assert.deepEqual([stopped.status, await stopped.json()], [200, { state: 'none' }]);
+  assert.deepEqual(calls, [['status', d.id], ['file', d.id, 'k1'], ['file', d.id, 'other'], ['file', d.id, undefined], ['stop', d.id]]);
+});
+test('mp4: the new routes sit behind the gate and the design\'s owner check', async () => {
+  const d = await seedFilm(); const { films, calls } = fakeFilms(); const { port } = await listen({ films });
+  const each = [[mp4Url(port, d.id), 'GET'], [mp4Url(port, d.id, '/file?key=k1'), 'GET'], [mp4Url(port, d.id), 'DELETE']];
+  process.env.WORCA_FLAGS = '-design';
+  try {
+    for (const [url, method] of each) { const r = await fetch(url, { method }); assert.deepEqual([r.status, await r.json()], [404, { error: 'not found' }], `${method} ${url}`); }
+  } finally { process.env.WORCA_FLAGS = 'design'; }
+  for (const [url, method] of each) assert.equal((await fetch(url.replace(d.id, 'd_000000000000'), { method })).status, 404, `${method} unknown design`);
+  assert.deepEqual(calls, []);
+});
+test('mp4, end to end over the real jobs: start, ask until ready, fetch the file by its key', async () => {
+  const d = await seedFilm();
+  const render = async ({ dir, onProgress }) => { onProgress({ done: 120, total: 120 }); writeFileSync(join(dir, 'film.mp4'), 'REAL JOB BYTES'); return { frames: 120, seconds: 2, bytes: 14, violations: [] }; };
+  const { port } = await listen({ films: createFilmExports({ render, chrome: () => '/bin/chrome', ffmpeg: () => '/bin/ffmpeg' }) });
+  const started = await postTo(port, d.id, { format: 'mp4' });
+  assert.equal(started.status, 202);
+  let status = started.json;
+  for (let i = 0; i < 400 && status.state !== 'ready'; i++) { await new Promise((r) => setTimeout(r, 10)); status = await (await fetch(mp4Url(port, d.id))).json(); }
+  assert.deepEqual(status, { state: 'ready', key: started.json.key, bytes: 14, frames: 120, seconds: 2, problems: { total: 0, shown: [] } });
+  const file = await fetch(mp4Url(port, d.id, `/file?key=${status.key}`));
+  assert.deepEqual([file.status, await file.text()], [200, 'REAL JOB BYTES']);
+  assert.deepEqual([(await postTo(port, d.id, { format: 'mp4' })).status, existsSync(join(distDir(d.id), 'index.html'))], [200, true], 'the same round again is ready at once');
+});
+test('in the real registration: the MP4 routes and the design\'s delete share the jobs; a delete stops the render before the folder goes', async () => {
+  const d = await seedFilm(); const { films, calls } = fakeFilms();
+  films.forget = async (id) => { calls.push(['forget', id, existsSync(designWorkDir(id))]); };
+  const app = express(); app.use(express.json());
+  registerDesignRoutes(app, { deps: { designBuilds: { restoring: () => false, starting: () => false }, films } });
+  const srv = app.listen(0, '127.0.0.1'); await new Promise((r) => srv.once('listening', r)); servers.push(srv);
+  const port = srv.address().port;
+  assert.equal((await postTo(port, d.id, { format: 'mp4' })).status, 202);
+  const gone = await fetch(`http://127.0.0.1:${port}/api/design/${d.id}`, { method: 'DELETE' });
+  assert.deepEqual([gone.status, await gone.json()], [200, { ok: true }]);
+  assert.deepEqual(calls, [['start', d.id], ['forget', d.id, true]]);
+  assert.equal(existsSync(designWorkDir(d.id)), false);
 });

@@ -3,6 +3,8 @@
 // and no row at all on a video), then Copy into a project. A download opens a dialog only when it has something to say: still running
 // after `showAfterMs`, a refusal, or what was left out of the file (the X-Worca-Export-Problems header). Copy into a
 // project is a dialog of its own, with the collision choice inside it. Every server string reaches the page as text.
+// A video also has Video (MP4): the server renders it as a job (film-mp4.mjs), so its dialog opens at once, asks the
+// job how far it is every `pollMs` (a bar from 0 to 100 %), and saves the file when it is ready. Stop, or closing the dialog, stops the render.
 
 import { createFlyout } from '../side-flyout.mjs';
 import { layoutDialog } from '../dialog-layout.mjs';
@@ -16,14 +18,19 @@ const MENU_ICONS = {
   html: [['path', { d: 'M12 4v11M7 11l5 5 5-5M5 20h14' }]],
   zip: [['rect', { x: '4', y: '3.5', width: '16', height: '17', rx: '2' }], ['path', { d: 'M12 3.5v3M12 8.5v2M12 12.5v2' }]],
   pdf: [['path', { d: 'M8 3.5h6l4 4V20.5H6V5.5a2 2 0 0 1 2-2zM14 3.5v4h4' }]],
+  mp4: [['rect', { x: '3.5', y: '5.5', width: '17', height: '13', rx: '2.5' }], ['path', { d: 'M10.5 9.5v5l4-2.5z' }]],
   project: [['path', { d: 'M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18zM12 11v5M9.5 13.5h5' }]],
 };
 const SVG_ATTRS = {
   viewBox: '0 0 24 24', width: '16', height: '16', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.75',
   'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true',
 };
-const LABELS = { html: 'Standalone HTML', zip: 'Zip of the folder', pdf: 'PDF', project: 'Copy into a project' };
+const LABELS = { html: 'Standalone HTML', zip: 'Zip of the folder', pdf: 'PDF', mp4: 'Video (MP4)', project: 'Copy into a project' };
 const EXT = { html: 'html', zip: 'zip', pdf: 'pdf' };
+const FILM_STARTING = 'Getting the video ready…';
+const FILM_WAITING = 'Waiting for another video to finish…';
+const FILM_SAVING = 'Saving the video…';
+const FILM_RENDERING = 'Rendering the video…';
 const WHY = { missing: 'Not found', escaped: 'Outside the design', remote: 'On the web, left as a link', 'too-large': 'Too large' };
 const BUSY = 'Making the file…';
 const DROPPED = 'Could not finish the file';
@@ -35,14 +42,28 @@ const isObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v)
 const errorOf = (body, fallback) => (isObject(body) && typeof body.error === 'string' && body.error ? body.error : fallback);
 
 /**
+ * How far a video's render is, as the dialog's bar shows it: whole per cent of its frames, rounded down (100 only
+ * when every frame is shot), never under 0 or over 100. Anything that is not a count is 0.
+ * @param {number} done frames shot
+ * @param {number} total frames in the video
+ * @returns {number} 0 to 100
+ */
+export function filmPercent(done, total) {
+  if (typeof done !== 'number' || typeof total !== 'number' || !(done > 0) || !(total > 0)) return 0;
+  return Math.min(100, Math.floor((done / total) * 100));
+}
+
+/**
  * The menu's rows for a design kind: PDF is a row on every kind but video, enabled only for a deck or a document
- * (`PDF_KINDS`, the list the server's PDF dispatcher reads).
+ * (`PDF_KINDS`, the list the server's PDF dispatcher reads). A video has Video (MP4) in its place.
  * @param {string} kind
  * @returns {Array<{id: string, label: string, disabled?: boolean, note?: string} | {sep: true}>}
  */
 export function exportMenuItems(kind) {
   const items = [{ id: 'html', label: LABELS.html }, { id: 'zip', label: LABELS.zip }];
-  if (kind !== 'video') {
+  if (kind === 'video') {
+    items.push({ id: 'mp4', label: LABELS.mp4 });
+  } else {
     items.push(PDF_KINDS.includes(kind) ? { id: 'pdf', label: LABELS.pdf } : { id: 'pdf', label: LABELS.pdf, disabled: true, note: 'Decks and documents only' });
   }
   items.push({ sep: true }, { id: 'project', label: LABELS.project });
@@ -56,11 +77,16 @@ export function exportMenuItems(kind) {
  * @returns {{total: number, shown: Array<{ref: string, why: string}>}}
  */
 export function decodeProblems(header) {
-  const none = { total: 0, shown: [] };
-  if (typeof header !== 'string' || !header) return none;
+  if (typeof header !== 'string' || !header) return readProblems(null);
   let v;
-  try { v = JSON.parse(decodeURIComponent(header)); } catch { return none; }
-  if (!isObject(v) || !Number.isInteger(v.total) || v.total < 0 || !Array.isArray(v.shown)) return none;
+  try { v = JSON.parse(decodeURIComponent(header)); } catch { return readProblems(null); }
+  return readProblems(v);
+}
+
+/** `{total, shown: [{ref, why}]}` as the server sends it (the header's JSON, a video job's `problems`); anything else
+ *  is nothing left out. */
+function readProblems(v) {
+  if (!isObject(v) || !Number.isInteger(v.total) || v.total < 0 || !Array.isArray(v.shown)) return { total: 0, shown: [] };
   const shown = v.shown.filter((p) => isObject(p) && typeof p.ref === 'string')
     .map((p) => ({ ref: p.ref, why: typeof p.why === 'string' ? p.why : '' }));
   return { total: Math.max(v.total, shown.length), shown };
@@ -112,11 +138,12 @@ export function saveBlob(name, blob, doc = globalThis.document) {
  * L6.3), the menu under it, and the dialogs. `getDesign()` is read at each use (`{id, kind, title, projectKey}`).
  * `toggle()` is also the HUD's end-state Export; a click inside `.dz-hud` counts as inside the menu.
  * @param {{doc: Document, win: Window, fetch: Function, getDesign: () => object, anchor: HTMLElement,
- *   showAfterMs?: number, save?: (name: string, blob: Blob, doc?: Document) => void}} deps
+ *   showAfterMs?: number, pollMs?: number, save?: (name: string, blob: Blob, doc?: Document) => void}} deps
+ *   `pollMs` is how often a video's dialog asks its render how far it is
  * @returns {{toggle: () => void, setReady: (on: boolean) => void, run: (format: string) => Promise<void>,
  *   openProject: () => Promise<void>, destroy: () => void}}
  */
-export function createDesignExport({ doc, win, fetch: fetchFn, getDesign, anchor, showAfterMs = 300, save = saveBlob }) {
+export function createDesignExport({ doc, win, fetch: fetchFn, getDesign, anchor, showAfterMs = 300, pollMs = 1000, save = saveBlob }) {
   const Abort = win?.AbortController ?? globalThis.AbortController;
   const make = (tag, cls, text) => {
     const n = doc.createElement(tag);
@@ -141,6 +168,7 @@ export function createDesignExport({ doc, win, fetch: fetchFn, getDesign, anchor
   let ready = false;
   let destroyed = false;
   let job = null;   // the download in flight: { format, ctl, timer }
+  let film = null;  // a video's MP4 in flight: { ctl, timer, base }, from its start until its file is saved
   let dlg = null;   // the open dialog: { type, modal, h, body, status, actions, guard, opener, ... }
 
   // The head's trigger and its menu (canvas build.mjs:164-181).
@@ -175,7 +203,7 @@ export function createDesignExport({ doc, win, fetch: fetchFn, getDesign, anchor
       // The flyout closes by itself only for [data-nav] items.
       fly.close(e.detail === 0 ? {} : { blur: true });
       if (item.id === 'project') void openProject();
-      else void run(item.id);
+      else void run(item.id);   // `mp4` goes on to runFilm
     });
     menu.append(b);
   }
@@ -256,6 +284,36 @@ export function createDesignExport({ doc, win, fetch: fetchFn, getDesign, anchor
     d.actions.replaceChildren(button('btn', 'Close', () => shut()), button('btn btn-primary', 'Try again', () => { void run(format); }));
     focusIn(d);
   }
+  /** The bar of a video's render at `pct` of 100. It is made once per dialog and kept from answer to answer, so its
+   *  fill glides. The bar tells a screen reader its value; the number beside it is for the eye. */
+  function filmBar(d, pct) {
+    let bar = d.body.querySelector('.dsx-bar');
+    if (!bar) {
+      bar = make('div', 'dsx-bar');
+      bar.setAttribute('role', 'progressbar');
+      bar.setAttribute('aria-label', LABELS.mp4);
+      bar.setAttribute('aria-valuemin', '0');
+      bar.setAttribute('aria-valuemax', '100');
+      bar.append(make('i'));
+      const number = make('span', 'dsx-pct');
+      number.setAttribute('aria-hidden', 'true');
+      const row = make('div', 'dsx-progress');
+      row.append(bar, number);
+      d.body.replaceChildren(row);
+    }
+    bar.setAttribute('aria-valuenow', String(pct));
+    bar.firstElementChild.style.width = `${pct}%`;
+    bar.nextElementSibling.textContent = `${pct}%`;
+  }
+  /** A video's render, as its job says it stands: `null` before the job has answered. */
+  function paintFilm(d, status) {
+    d.h.textContent = LABELS.mp4;
+    filmBar(d, status ? filmPercent(status.done, status.total) : 0);
+    const line = !status ? FILM_STARTING : status.state === 'queued' ? FILM_WAITING : FILM_RENDERING;
+    if (d.status.textContent !== line) setStatus(d, line);
+    if (d.actions.firstChild?.textContent !== 'Stop') d.actions.replaceChildren(button('btn', 'Stop', cancel));
+    focusIn(d);
+  }
   function paintProblems(d, problems) {
     d.h.textContent = 'Left out of the file';
     const list = make('ul', 'dsx-list');
@@ -274,16 +332,84 @@ export function createDesignExport({ doc, win, fetch: fetchFn, getDesign, anchor
   }
 
   /** Cancel: the request is aborted and its dialog goes at once; its late answer paints nothing. Its dialog is on
-   *  screen, so its timer has already fired. */
+   *  screen, so its timer has already fired. A video's render is stopped on the server too. */
   function cancel() {
     const j = job;
     job = null;
     j?.ctl.abort();
+    dropFilm({ stop: true });
     shut();
   }
 
+  /** A video's MP4 in flight is let go of: no more asking, its requests aborted. With `stop`, the server's render
+   *  too: the dialog's Stop. Without (the page goes), the render finishes and its file waits for the next export. */
+  function dropFilm({ stop = false } = {}) {
+    const f = film;
+    if (!f) return;
+    film = null;
+    win.clearTimeout(f.timer);
+    f.ctl.abort();
+    if (!stop) return;
+    try {
+      Promise.resolve(fetchFn(`${f.base}/mp4`, { method: 'DELETE' })).catch(() => { /* the render ends by itself */ });
+    } catch { /* the same */ }
+  }
+
+  /** Video (MP4): start the render (or join the one that runs), follow it, save its file. */
+  async function runFilm() {
+    const mine = { ctl: new Abort(), timer: 0, base: `/api/design/${encodeURIComponent(design().id)}/export` };
+    film = mine;
+    const live = () => film === mine;
+    const refuse = (text) => {
+      if (!live()) return;
+      dropFilm();
+      paintRefusal(downloadDialog('mp4'), 'mp4', text);
+    };
+    const bodyOf = async (res) => { try { return await res.json(); } catch { return null; } };
+    /** One answer of the job: go on asking, fetch the file, or say what went wrong. */
+    async function onStatus(res) {
+      const body = await bodyOf(res);
+      if (!live()) return;
+      if (!res.ok) { refuse(errorOf(body, DROPPED)); return; }
+      const state = isObject(body) ? body.state : null;
+      if (state === 'queued' || state === 'rendering') {
+        paintFilm(downloadDialog('mp4'), body);
+        mine.timer = win.setTimeout(async () => {
+          try {
+            const next = await fetchFn(`${mine.base}/mp4`, { signal: mine.ctl.signal });
+            if (live()) await onStatus(next);
+          } catch { refuse(DROPPED); }
+        }, pollMs);
+        return;
+      }
+      if (state !== 'ready' || typeof body.key !== 'string') { refuse(state === 'failed' ? errorOf(body, DROPPED) : DROPPED); return; }
+      const d = downloadDialog('mp4');
+      filmBar(d, 100);
+      setStatus(d, FILM_SAVING);
+      const res2 = await fetchFn(`${mine.base}/mp4/file?key=${encodeURIComponent(body.key)}`, { signal: mine.ctl.signal });
+      if (!live()) return;
+      if (!res2.ok) { refuse(errorOf(await bodyOf(res2), DROPPED)); return; }
+      const blob = await res2.blob();
+      if (!live()) return;
+      dropFilm();
+      save(dispositionName(res2.headers?.get('content-disposition'), `${exportStem(design().title)}.mp4`), blob, doc);
+      const problems = readProblems(body.problems);
+      if (problems.total > 0) paintProblems(downloadDialog('mp4'), problems);
+      else if (dlg?.type === 'download') shut();
+    }
+    // A render always takes a while, so its dialog is there from the start.
+    paintFilm(downloadDialog('mp4'), null);
+    try {
+      await onStatus(await post({ format: 'mp4' }, mine.ctl.signal));
+    } catch {
+      refuse(DROPPED);
+    }
+  }
+
   async function run(format) {
-    if (destroyed || job || !EXT[format]) return;
+    if (destroyed || job || film) return;
+    if (format === 'mp4') { await runFilm(); return; }
+    if (!EXT[format]) return;
     const mine = { format, ctl: new Abort(), timer: 0 };
     job = mine;
     const settle = () => {
@@ -493,6 +619,7 @@ export function createDesignExport({ doc, win, fetch: fetchFn, getDesign, anchor
         win.clearTimeout(j.timer);
         j.ctl.abort();
       }
+      dropFilm();
       shut({ refocus: false });
       fly.destroy();
       trigger.remove();

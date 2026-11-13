@@ -59,6 +59,12 @@ body.view-design .main{display:flex;flex-direction:column;overflow:hidden;paddin
 .dsx-list small{flex:none;margin-left:auto;color:var(--ink-2);white-space:nowrap;}
 .dsx-more{margin:8px 0 0;color:var(--ink-2);font-size:var(--fs-meta);}
 .dsx-list .dsx-more{margin:0;}
+/* A video's render (Video (MP4)): one bar from 0 to 100 %, its number beside it. */
+.dsx-progress{display:flex;align-items:center;gap:12px;}
+.dsx-bar{flex:1 1 auto;min-width:0;height:6px;border-radius:var(--r-xs);background:var(--line-2);overflow:hidden;}
+.dsx-bar i{display:block;width:0;height:100%;border-radius:var(--r-xs);background:var(--ink);transition:width .4s ease;}
+.dsx-pct{flex:none;min-width:4ch;text-align:right;color:var(--ink-2);font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}
+@media (forced-colors:active){.dsx-bar{background:Canvas;border:1px solid CanvasText;}.dsx-bar i{background:CanvasText;}}
 /* The engine gate's dialog (engine-gate-dialog.mjs): Cancel, Use Claude and Allow unguarded do not fit one row on a
    phone, and `.confirm-actions` does not wrap, so the row ran out of the card on the left (390 px, Chrome) */
 .dz-gate-modal .confirm-actions{flex-wrap:wrap;}
@@ -393,7 +399,7 @@ input.dsc-sound-key:focus-visible,input.dsc-sound-music:focus-visible{outline:2p
 @keyframes dz-sweep-v{from{transform:scaleY(0);}to{transform:scaleY(1);}}
 @keyframes dz-sweep-h{from{transform:scaleX(0);}to{transform:scaleX(1);}}
 @media (prefers-reduced-motion:reduce){
-.frame-box,.dz-cursor,.dz-box,.dz-line i,.dz-dots button::after{transition:none;}
+.frame-box,.dz-cursor,.dz-box,.dz-line i,.dz-dots button::after,.dsx-bar i{transition:none;}
 .dz-guide-v,.dz-guide-h,.dz-trail{animation:none;}
 }
 @media (max-width:760px){

@@ -267,6 +267,7 @@ change the design.
 | **Standalone HTML** | One `.html` file. The page's own files, pictures included, are put inside it, so it opens without the design folder. Addresses on the web stay links. A file over 25 MiB, or one past 100 MiB in all, is left out. |
 | **Zip of the folder** | The finished folder as a `.zip`, inside one top folder named after the design, so unzipping does not scatter files. |
 | **PDF** | Decks and documents: **Presentation** and **Pitch deck**, one page per slide; a **Document** on A4 or Letter pages, with page numbers. On a web page the item is disabled and reads `Decks and documents only`; a video has no PDF item. Needs Chrome or Edge on the machine, or `WORCA_CHROME` set to one. |
+| **Video (MP4)** | A video only: one `.mp4`, 1920 by 1080 at 60 frames a second (H.264 with AAC sound), with the film's voice and music mixed in. Needs Chrome or Edge on the machine (or `WORCA_CHROME`) and ffmpeg (worca brings its own; `WORCA_FFMPEG` names another). |
 | **Copy into a project** | The finished folder, copied into a folder of a project you pick (by default `design/<name>`). |
 
 Files are named after the design's title, in lower case: "Q4 roadmap review" exports as `q4-roadmap-review.zip`.
@@ -274,6 +275,16 @@ Files are named after the design's title, in lower case: "Q4 roadmap review" exp
 **PDF.** Only worca's own slide script runs while printing, never the code the agents wrote, so anything a slide
 draws with JavaScript is missing from the PDF. If the PDF's page count does not match the slides, nothing is saved
 and the dialog says so. A document prints with no script at all, as many pages as it needs.
+
+**Video (MP4).** worca renders the film frame by frame: it opens the film in Chrome without a window, shows every
+frame and shoots it, then encodes the shots and adds the sound. That takes about as long as the film runs, so the
+dialog stays open and shows how far the render is on a bar from 0 to 100 %. **Stop**, or closing the
+dialog, stops the render. One video renders at a time; the next one waits its turn. The finished file is kept with
+the design, so exporting the same round again downloads at once, and a new round renders anew. The sound is mixed
+from the round's voice and music files by the rule the player follows, so the MP4 sounds as the film plays. The
+film's own scripts run in that Chrome, and it is held to the film: it reads no file and reaches no address, and a
+film that tries to open another page is not rendered. A picture or a font on the web is not in the frames; the
+dialog lists it under **Left out of the file**.
 
 **Copy into a project:**
 
@@ -296,7 +307,7 @@ A quick, clean export just downloads. The dialog opens when the file takes more 
 the file** (not found, outside the design, too large, or on the web and left as a link), and the file still
 downloads.
 
-A video exports as HTML and JavaScript, standalone or zipped; MP4 is later. A video's sound files sit in
+A video exports as HTML and JavaScript, standalone or zipped, or as an MP4. A video's sound files sit in
 `assets/sound/`, so the Standalone HTML file, the zip and **Copy into a project** all carry them.
 
 ## Thumbnails
@@ -321,6 +332,7 @@ database and store (see [Storage](storage.md)). No git is needed.
 | `versions/` | The state after each finished round, the last 20, for **Back to before this** |
 | `made/` | A copy of each made picture by its ask, so the chat shows what each ask made; never exported, and agents cannot open it |
 | `thumb.png` | The Library picture; never exported, and agents cannot write it |
+| `export/` | A video's last MP4 and the record of the round it shows; agents cannot write it |
 
 While a round runs, `work/.pictures/` holds the lead's asks and worca's answers; like the other dot folders it never
 reaches a version or an export.

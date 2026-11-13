@@ -8,6 +8,11 @@
 // print waiting in the render queue checks the round again when its turn comes. A closed connection aborts the
 // request's signal: the zip stops reading and the print kills its Chrome. Registered by `registerDesignRoutes`, outside
 // DESIGN_ROUTES, so its own test walks its flag gate.
+// A video's `mp4` is a job, not a response body (film-mp4.mjs): a render takes about as long as the film runs, and a
+// proxy in front of a hosted worca cuts a request that long. The POST starts the job (or joins it) and answers its
+// status; `GET …/export/mp4` answers the status again, `GET …/export/mp4/file?key=` is the finished file under the key
+// of the round it shows, and `DELETE …/export/mp4` stops the job. A person leaving does not stop it: the dialog's Stop
+// does.
 import { once } from 'node:events';
 import { createReadStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
@@ -17,11 +22,15 @@ import {
   copyDistToProject, encodeProblems, EXPORT_FORMATS, exportHtml, ExportRefusal, printDesignPdf, readExportPlan,
   requireExportable, snapshotDist, zipDist,
 } from './export.mjs';
+import { filmExports } from './film-mp4.mjs';
+import { isFilmKind } from './kinds.mjs';
 import { distDir, thumbFile } from './paths.mjs';
 import { designChrome, renderQueue } from './render.mjs';
 import { getDesign } from './store.mjs';
 
-const FORMAT_TEXT = 'format must be html, zip, pdf or project';
+const FORMAT_TEXT = 'format must be html, zip, pdf, mp4 or project';
+const NOT_VIDEO = 'Only a video exports as MP4.';
+const NO_FILM = 'That video is no longer there. Export it again.';
 const OVERWRITE_TEXT = 'overwrite must be true or false';
 const KEY_TEXT = 'overwrite needs the collisionsKey of the list it replaces';
 const NO_PROJECT = 'That project is not available.';
@@ -37,20 +46,20 @@ function abortError() {
 }
 
 /**
- * Registers `POST /api/design/:id/export` and `GET /api/design/:id/thumb` on `app`.
+ * Registers `POST /api/design/:id/export`, a video's `…/export/mp4` routes and `GET /api/design/:id/thumb` on `app`.
  * @param {import('express').Express} app
  * @param {{ flagGate: import('express').RequestHandler,
  *   designFor: (req: object, res: object) => object | null,
  *   listProjects: () => Promise<Array<{ key: string, name: string, path: string, exists: boolean }>>,
  *   held?: (designId: string) => string | null,
  *   chrome?: () => string | null, queue?: { run: (fn: () => unknown, opts?: { front?: boolean }) => Promise<any> },
- *   zip?: typeof zipDist, print?: typeof printDesignPdf }} opts
+ *   zip?: typeof zipDist, print?: typeof printDesignPdf, films?: typeof filmExports }} opts
  *   `designFor` answers 404 itself for an unknown or someone else's design; `held` names what holds the design now
- *   (a restore, a hand-off staging a round), else null
+ *   (a restore, a hand-off staging a round), else null; `films` is the videos' MP4 jobs
  */
 export function registerDesignExportRoutes(app, {
   flagGate, designFor, listProjects, held = () => null, chrome = designChrome, queue = renderQueue, zip = zipDist,
-  print = printDesignPdf,
+  print = printDesignPdf, films = filmExports,
 }) {
   /** A finished round that nothing holds now; else the refusal. */
   function requireReady(design) {
@@ -138,6 +147,52 @@ export function registerDesignExportRoutes(app, {
     res.json({ ok: true, target: r.target, files: r.files, projectKey: project.key });
   }
 
+  /** A video's MP4: the job starts (or the one that runs is joined) and its status is the answer. */
+  async function startFilm(res, design) {
+    if (!isFilmKind(design.kind)) throw new ExportRefusal(422, 'not-video', NOT_VIDEO);
+    const status = await films.start(design);
+    res.status(status.state === 'ready' ? 200 : 202).set('Cache-Control', 'no-store').json(status);
+  }
+
+  // The MP4 job of a video: its status, its file, its stop.
+  app.get('/api/design/:id/export/mp4', flagGate, (req, res) => {
+    const design = designFor(req, res);
+    if (!design) return;
+    res.set('Cache-Control', 'no-store').json(films.status(design.id));
+  });
+  app.get('/api/design/:id/export/mp4/file', flagGate, async (req, res) => {
+    const design = designFor(req, res);
+    if (!design) return;
+    const film = films.file(design, typeof req.query?.key === 'string' ? req.query.key : undefined);
+    const file = film ? createReadStream(film.path) : null;
+    try {
+      if (!file) throw new Error('no film');
+      await once(file, 'open');
+    } catch {
+      file?.destroy();
+      res.status(404).json({ error: NO_FILM, code: 'no-film' });
+      return;
+    }
+    res.set({
+      'Content-Type': 'video/mp4',
+      'Content-Length': String(film.bytes),
+      'Content-Disposition': attachmentDisposition(film.name),
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-store',
+    });
+    try {
+      await pipeline(file, res);
+    } catch {
+      res.destroy();
+    }
+  });
+  app.delete('/api/design/:id/export/mp4', flagGate, (req, res) => {
+    const design = designFor(req, res);
+    if (!design) return;
+    films.stop(design.id);
+    res.set('Cache-Control', 'no-store').json({ state: 'none' });
+  });
+
   // The thumbnail (Task 6): its URL carries the file's mtime (`thumbUrl`), so a version is cached for good.
   app.get('/api/design/:id/thumb', flagGate, async (req, res) => {
     const design = designFor(req, res);
@@ -187,6 +242,7 @@ export function registerDesignExportRoutes(app, {
       requireReady(design);
       if (body.format === 'html') await sendHtml(res, design, signal);
       else if (body.format === 'pdf') await sendPdf(res, design, signal);
+      else if (body.format === 'mp4') await startFilm(res, design);
       else {
         // Taken in the checks' tick: what the zip or the copy reads afterwards is this round, whatever comes next.
         snap = snapshotDist(distDir(design.id));

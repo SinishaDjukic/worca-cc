@@ -279,12 +279,12 @@ function readKit(workDir, name) {
  * kit's own name, `global.js`, then `section-<id>.js`.
  * @param {string} workDir
  * @param {{ id: string }[]} included
- * @param {{ kind: string, plan: object|null, mode: 'run'|'dist'|'standalone' }} opts
+ * @param {{ kind: string, plan: object|null, mode: 'run'|'dist'|'standalone', embedded?: boolean }} opts
  * @returns {{ name: string, text: string }[]}
  */
-function footScripts(workDir, included, { kind, plan, mode }) {
+function footScripts(workDir, included, { kind, plan, mode, embedded = false }) {
   const film = isFilmKind(kind);
-  const scripts = film ? [{ name: 'film-plan.js', text: filmPlanScript({ plan, mode }) }] : [];
+  const scripts = film ? [{ name: 'film-plan.js', text: filmPlanScript({ plan, mode, embedded }) }] : [];
   if (isBoardKind(kind)) for (const name of kitScriptNames(kind)) scripts.push({ name, text: escapeScript(readKit(workDir, name)) });
   const global = readConfined(workDir, 'global.js');
   if (global !== null) scripts.push({ name: 'global.js', text: escapeScript(global) });
@@ -624,13 +624,15 @@ function writeDist(workDir, html, ids) {
  * `work/assets/sound/`, SPEC §5 Tracks) opens its foot with one `<audio data-film-clip>` per clip and the
  * `<audio data-film-music>`, before the first script, for film.js to play; standalone embeds them as any asset.
  * `sound: false` leaves them out (a still never carries the sound), and so do `run`, `build` and every other kind.
+ * `embedded: true` makes a film's FILM_PLAN embedded outside `run` too (the MP4 export's capture page: no bar, and
+ * nothing plays by itself).
  * `scriptFiles: true` (a deck's `standalone` only, for its bundler): the foot is one `<script src="<name>"></script>`
  * per script, and `scripts` holds each `{ name, text }` to write beside the page, so no code is in the page itself.
  * The inliner leaves those names as written. Asked for on another mode or kind, it is a `BAD_REQUEST`, before any read.
- * @param {{ workDir: string, plan: { kind?: string, sections?: { id: string }[] }|null, mode: 'build'|'run'|'dist'|'standalone', bridge?: string|null, inline?: boolean, kind?: string|null, scriptFiles?: boolean, sound?: boolean }} opts
+ * @param {{ workDir: string, plan: { kind?: string, sections?: { id: string }[] }|null, mode: 'build'|'run'|'dist'|'standalone', bridge?: string|null, inline?: boolean, kind?: string|null, scriptFiles?: boolean, sound?: boolean, embedded?: boolean }} opts
  * @returns {{ html: string, mode: string, sections: { id: string, state: 'included'|'slot'|'missing' }[], problems: { ref: string, why: 'missing'|'escaped'|'remote'|'too-large' }[], distDir?: string, files?: string[], scripts?: { name: string, text: string }[] }}
  */
-export function assembleDesign({ workDir, plan, mode, bridge = null, inline = false, kind = null, scriptFiles = false, sound = true } = {}) {
+export function assembleDesign({ workDir, plan, mode, bridge = null, inline = false, kind = null, scriptFiles = false, sound = true, embedded = false } = {}) {
   if (!MODES.includes(mode)) throw new DesignError('BAD_REQUEST', `unknown assembly mode ${JSON.stringify(String(mode))}`);
   const build = mode === 'build';
   const live = build || mode === 'run';
@@ -676,7 +678,7 @@ export function assembleDesign({ workDir, plan, mode, bridge = null, inline = fa
     ? tocHtml({ sections: included.map((p) => ({ id: p.id, html: p.fill })), numbered: plan?.numbered === true })
     : '';
   fillMarker('sections', wrapFills({ kind: designKind, mode, fills: sectionFills, toc }));
-  const scripts = build ? [] : footScripts(workDir, included, { kind: designKind, plan, mode });
+  const scripts = build ? [] : footScripts(workDir, included, { kind: designKind, plan, mode, embedded });
   // A film opened alone plays its own sound: the elements go before the first script, which film.js reads at start.
   const audioText = plan && isFilmKind(designKind) && (mode === 'dist' || mode === 'standalone') && sound !== false
     ? filmAudioText(soundTracks(workDir, { ...plan, kind: designKind }))

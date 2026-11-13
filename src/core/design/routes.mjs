@@ -23,6 +23,7 @@ import { DesignRefusal, projectDirFor } from './build.mjs';
 import { chatSpendUsd, createDesignThread, designBuildModels } from './chat-thread.mjs';
 import { designEngineFor, designEngineGate, resolveDesignEngine } from './engines.mjs';
 import { registerDesignExportRoutes } from './export-routes.mjs';
+import { filmExports } from './film-mp4.mjs';
 import { AGENT_ID_RE, BUILD_ID_RE, DESIGN_ID_RE, DesignError } from './ids.mjs';
 import { designWorkDir } from './paths.mjs';
 import { PICTURE_TYPES, readKeptPicture } from './pictures.mjs';
@@ -235,9 +236,11 @@ function recordOut(s) {
  *   brokerStartRefusal?: (req: object, modelIds: string[]) => Promise<string|null>,
  *   thumbs?: { ensure: (design: object) => void },
  *   soundCards?: { available: (design: object) => boolean,
- *     openFromGear: (opts: { design: object, threadId: string }) => Promise<{ cardId: string }|null> } } }} [opts]
+ *     openFromGear: (opts: { design: object, threadId: string }) => Promise<{ cardId: string }|null> },
+ *   films?: object } }} [opts]
  *   `thumbs` (`createThumbs`) is handed every listed design; `soundCards` (Part C's) opens the gear's sound card in the
- *   design's chat, and with none `POST …/sound/ask` answers 409
+ *   design's chat, and with none `POST …/sound/ask` answers 409; `films` (`createFilmExports`) is the videos' MP4 jobs,
+ *   which the export routes and a design's delete share
  */
 export function registerDesignRoutes(app, { broadcast, deps } = {}) {
   const d = deps && typeof deps === 'object' ? deps : {};
@@ -246,6 +249,7 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
   const listModels = d.listModels ?? realListModels;
   const assertSlotModels = d.assertSlotModels ?? realAssertSlotModels;
   const soundCards = d.soundCards ?? null;
+  const films = d.films ?? filmExports;
 
   /**
    * A `{lead?, builder?}` body for `engine`: each pick null (cleared) or `{model, effort?}` a catalog model `engine`
@@ -453,6 +457,8 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
       // gone (P5). Checked in the same tick as the delete: a hand-off that comes later finds no design (404).
       if (designBuilds.restoring(design.id)) throw new DesignRefusal(409, RESTORE_RUNNING);
       if (designBuilds.starting(design.id)) throw new DesignRefusal(409, ROUND_STARTING);
+      // A video's MP4 render writes in the design's folder: it is stopped, and gone, before the folder is.
+      await films.forget(design.id);
       deleteDesign(design.id);
       await d.dropGrants?.(design.id);
       if (design.threadId) await d.deleteThread?.(design.threadId);
@@ -559,5 +565,5 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
     if (designBuilds.restoring?.(id)) return RESTORE_RUNNING;
     return designBuilds.starting?.(id) ? ROUND_STARTING : null;
   };
-  registerDesignExportRoutes(app, { flagGate: gate, designFor, listProjects, held });
+  registerDesignExportRoutes(app, { flagGate: gate, designFor, listProjects, held, films });
 }
