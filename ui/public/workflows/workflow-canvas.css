@@ -153,6 +153,7 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfl-qchip{flex:0 0 auto;height:19px;padding:0 7px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font:500 11px/19px var(--sans);}
 .wfl-qchip.mono{font-family:var(--mono);}
 .wfl-qchip.is-new{background:var(--blue-bg);color:var(--blue-ink);}
+.wfl-qchip.is-review{background:var(--amber-bg);color:var(--amber-ink);}
 .wfl-qchip.is-open{background:var(--green-bg);color:var(--green-ink-strong);}
 .wfl-add{position:absolute;right:8px;top:50%;margin-top:-14px;opacity:0;}
 .wfl-row:hover .wfl-add{opacity:1;}

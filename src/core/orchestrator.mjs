@@ -960,6 +960,7 @@ export class GraphOrchestrator extends RunHarness {
     const resuming = resume != null;
     if (resume?.manifest?.auto?.status === 'deciding') resume = null;
     if (resume) await this._restoreFromResumePoint(resume);   // Task 6 (hook-4 companion)
+    await this._planAgentCaps();                              // FEAT-1: each agent node's plan, from its start-time selection
     // Session groups (C19): a resumed run resolves its sessions here, once its graph is back (the resume site's engine
     // gate runs before the restore); a fresh run did it beside the engine gate. Either way, once.
     if (resuming) for (const line of await this._sessionGate()) await appendAudit(this.pipeline.dir, line);
@@ -2358,6 +2359,8 @@ export class GraphOrchestrator extends RunHarness {
       model: nc.kind === 'script' ? null : (modelPair || this._nodeModelPair(nc)).model,
     };
     const engineOpts = this._engineNodeOpts(nc);
+    const caps = this.agentCaps?.get(node.id);        // FEAT-1: undefined for a node with no plan -> the run-wide values, untouched
+    const layerDirs = this.skillLayer?.pluginDirs;
     // P1 (v3, defence in depth): a Folder run's nodes never start on the REAL folder, whatever reattach path left runCwd unset.
     if (this.workMode === 'folder' && !this.runCwd) throw new Error('a Folder run has no copy to work on');
     const { resumeSessionId, coldRedispatch } = this._reattachFor(executionId, node.id);
@@ -2376,16 +2379,18 @@ export class GraphOrchestrator extends RunHarness {
       mcpjsonProjectDir: this.isWorkspace ? undefined : this.projectDir,
       runRoot: this.runRoot,
       mcpConfigPath: this.mcpConfigPath,
-      mcpServerGrants: this.mcpServerGrants,
+      mcpServerGrants: caps?.grants ?? this.mcpServerGrants,
       mcpConfigServers: this.mcpConfigServers,
       // MCP registry (design §6.1): the copies' secret env, the values to redact and the tools
       // withheld for the run's tool-name limit. Never persisted anywhere.
       mcpEnv: this.mcpLayer?.env,
       mcpRedact: this.mcpLayer?.redact,
-      mcpDisallowed: this.mcpLayer?.disallowed,
+      mcpDisallowed: caps?.disallowed ? [...(this.mcpLayer?.disallowed ?? []), ...caps.disallowed] : this.mcpLayer?.disallowed,
       // Skills registry (design §4.3): one --plugin-dir per set plugin of the run; undefined without
       // set skills, [] once the layer is blocked — runOpts emits nothing for either.
-      skillPluginDirs: this.skillLayer?.pluginDirs,
+      // A blocked layer (set at assembly or by onSkillSideloadRefused) has pluginDirs [] — an agent's own mount must not override it,
+      // or the refused spawn would be re-dispatched with the same --plugin-dir forever.
+      skillPluginDirs: this.skillLayer?.blocked ? layerDirs : (caps?.skillPluginDirs ?? layerDirs),
       onSkillSideloadRefused: () => this.onSkillSideloadRefused(),
       repos: this._reposCtx(),
       pipelineDir: this.pipeline.dir,

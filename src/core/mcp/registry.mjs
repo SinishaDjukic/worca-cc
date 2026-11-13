@@ -301,6 +301,7 @@ export function resolveMcpServers({
       projects: [...s.m.set.projects].sort(), description: s.entry.def.description ?? '',
       renamedFrom: s.name === s.copy ? null : s.copy, provisional: !!(s.entry.provisional || s.m.set.provisional),
       untested: !s.current,
+      tools: s.current ? (s.tools ?? []).map(String) : null,   // FEAT-1: the picker and the per-agent plan need them; null = never tested
     })),
     skipped: skipped.sort(byKeys((x) => x.setId, (x) => x.serverId)),
     skippedTools: skippedTools.sort(byKeys((x) => x.name, (x) => x.tool)),

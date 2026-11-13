@@ -171,6 +171,7 @@ Levels are not Interface modes: no level element carries `data-min-level`; Try n
 | Engine dropdown beside the workflow (greyed-out engines the credential broker refuses) | A — stays visible at every level while a non-Claude engine is picked (rule 2) |
 | Session notice under the Engine dropdown: one line per session of the chosen workflow, how it will run (One session, Labs) | A — stays visible with the Engine dropdown while a non-Claude engine is picked |
 | Advanced disclosure: guardrails, human in the loop, per-agent model and effort | A |
+| Agent capabilities warning line (a chosen MCP server, tool or skill is not available to this run; absent for Auto runs) | A |
 | Per-agent fan-out, sub-agent model, questions; feedback-loop max cycles; "Save as defaults"; memory scope | E |
 
 The **Auto** workflow option is available for both targets — a project and a workspace.
@@ -217,6 +218,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
 | Log filters (source, level, node, cycle) | E |
 | Graph node totals, fan and execution strips, Away mode chips and bands, loop badges | E |
+| Agent capabilities card in the run details, on the run page Overview and in History (the servers, tools and skills each agent got, what was not available, "Enforced via Claude permissions") | A |
 | Agents tab, worktree row, Auto proposal tunables table | E |
 
 ### History
@@ -297,6 +299,7 @@ gated: the view shows the same controls at every level.
 | The Library: its Workflows / Agents / Scripts selector with each registry count, the domain folders that expand in place (Flow; Workflows' Yours, Built-in and Archived), the header search, every row action (Add to canvas, View, Edit, Duplicate, Delete, Open, Use as template, Export), New agent and New script, legacy and archived rows | all |
 | The canvas badge beside the name: Editing / Unsaved copy / Built-in / Not saved | all |
 | The agent sheet: the full agent form (runner type, ports, side effect, mock role, workspace variants) and the agent wizard | all |
+| The agent form's MCP servers and Skills picker, the library's "MCP servers · Skills" line and "new tools to review" chip, and the inspector's "MCP servers · Skills" block | all — the Workflows view is not gated, so these are not tagged (the run details card and the start-dialog warning line are Advanced) |
 | The script sheet: the runtime step, the workspace and the bench under its editor; the Import dialog's command list | all |
 | The composer chat in the dock | all |
 | The save dialog's Domain | all |
