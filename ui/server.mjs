@@ -2893,11 +2893,7 @@ const startRunHandler = async (req, res) => {
     const noMemory = body.noMemory === true;
     if (noMemory && memoryScope) return badRequest(res, 'noMemory cannot be set on a Memory defragment run');
     const prBody = checkRunPrBody(body.pr);   // before any side effect: a refused pr creates no run and no ticket
-    if (!prBody.ok) return badRequest(res, prBody.error);
-    // the run's own cost cap (New task's Cost cap): pipelines.cost_cap_usd, as Raise the cap writes it; the same check
-    const startCap = runCostCapCheck(body.costCapUsd);
-    if (startCap.error) return badRequest(res, startCap.error);
-    if (startCap.cap != null) req._runCostCapUsd = startCap.cap;
+    if (!prBody.ok) return badRequest(res, prBody.error); const startCap = runCostCapCheck(body.costCapUsd); if (startCap.error) return badRequest(res, startCap.error); if (startCap.cap != null) req._runCostCapUsd = startCap.cap;   // New task's Cost cap: pipelines.cost_cap_usd, as Raise the cap writes it; the same check
     // Settings › Memory: a defragment run may name its model/effort PAIR at start — tier 1, above
     // the setting (memory-defrag-model.mjs). Defragment runs only: every other workflow picks its
     // models per node, and a body model there stays ignored exactly as before. The shape here; the
@@ -3098,8 +3094,7 @@ const startRunHandler = async (req, res) => {
         claude: { permissionMode: 'acceptEdits', ...(startPair ? { model: startPair.model, ...(startPair.effort ? { effort: startPair.effort } : {}) } : {}), mock, ...runEngine },
         ...(nightMode ? { nightMode: true } : {}),
         tags,
-        ...(shape ? { shape } : {}),
-        ...(Number(req._runCostCapUsd) > 0 ? { runCostCapUsd: Number(req._runCostCapUsd) } : {}),
+        ...(shape ? { shape } : {}), ...(Number(req._runCostCapUsd) > 0 ? { runCostCapUsd: Number(req._runCostCapUsd) } : {}),
       });
       entry = {
         id: runId, orch, projectDir, projectKey: NO_PROJECT_KEY, workMode: 'none', kind: 'run', pipelineId,
