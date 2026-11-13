@@ -1354,7 +1354,16 @@ if (!ONLY_A6 && !ONLY_A61) {
   await shot('9c-board7-new-phone');
   await A.send('Emulation.setDeviceMetricsOverride', DESKTOP);
 
-  // Start a feature on Codex in the project that has no brief: the mock round asks, the mock code look is a step row
+  // Start a feature on Codex in the project that has no brief: the mock round asks, the mock code look is a step row.
+  // orders9c was added behind the page's back: wait for the For list to offer it, and reload once if it never comes
+  // (CI ran ahead of the project list once).
+  const has9c = () => A.evalJs(`[...(document.getElementById('req-new-target')?.options || [])].some((o) => o.text === 'orders9c')`);
+  if (!(await until(has9c, 5000))) {
+    await A.evalJs('location.reload()');
+    await sleep(1500);
+    await newForm();
+    if (!(await until(has9c, 15000))) throw new Error('9c: the For list never offered orders9c');
+  }
   await A.evalJs(`(() => { const sel = document.getElementById('req-new-target'); const opt = [...sel.options].find((o) => o.text === 'orders9c'); sel.value = opt.value;
     sel.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   await setSel(`${WHO} .req-who-harness`, 'codex');
