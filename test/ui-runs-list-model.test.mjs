@@ -964,3 +964,46 @@ test('rounds (Task 3, D8): two unmarked runs on one open PR — the newest in Ne
   const two = buildRunsModel({ history: [a, histIt('u3', { run: { status: 'done', pr: { ...PR947, url: `${PR947.url}0` } } })], now: NOW });
   assert.equal(two.counts.needs, 2);
 });
+
+// #1200: the row ⋯ menu opens each member PR of a workspace run.
+const wsHist = (id, memberPrs) => histIt(id, { run: { status: 'done', memberPrs } });
+const WSPR = (repo, n) => ({ number: n, url: `https://github.com/acme/${repo}/pull/${n}`, state: 'OPEN' });
+
+test('rowMenuPrs: two member PRs → one entry each, with its repo and url', () => {
+  const m = RL.buildRunsModel({ history: [wsHist('w2', [WSPR('repo-a', 12), WSPR('repo-b', 34)])], now: NOW });
+  const r = rowsOf(m).find((x) => x.pipelineId === 'w2');
+  assert.deepEqual(RL.rowMenuPrs(r), [
+    { number: 12, url: 'https://github.com/acme/repo-a/pull/12', repo: 'repo-a' },
+    { number: 34, url: 'https://github.com/acme/repo-b/pull/34', repo: 'repo-b' },
+  ]);
+});
+
+test('rowMenuPrs: one PR or none → [] (the single View PR stays)', () => {
+  const m = RL.buildRunsModel({ history: [wsHist('w1', [WSPR('repo-a', 12)]), wsHist('w0', [])], now: NOW });
+  for (const id of ['w1', 'w0']) assert.deepEqual(RL.rowMenuPrs(rowsOf(m).find((x) => x.pipelineId === id)), []);
+});
+
+test('prRepoOf: the repo segment for GitHub, GitLab and Azure DevOps urls', () => {
+  assert.equal(RL.prRepoOf('https://github.com/acme/repo-a/pull/1'), 'repo-a');
+  assert.equal(RL.prRepoOf('https://gitlab.com/g/sub/repo-c/-/merge_requests/2'), 'repo-c');
+  assert.equal(RL.prRepoOf('https://dev.azure.com/o/p/_git/repo-d/pullrequest/3'), 'repo-d');
+  assert.equal(RL.prRepoOf('https://bitbucket.org/ws/repo-e/pull-requests/4'), 'repo-e');
+  assert.equal(RL.prRepoOf('not a url'), '');
+});
+
+test('prRepoOf owner: "owner/repo", skipping Azure DevOps\' _git and Bitbucket Server\'s repos', () => {
+  assert.equal(RL.prRepoOf('https://github.com/acme/repo-a/pull/1', { owner: true }), 'acme/repo-a');
+  assert.equal(RL.prRepoOf('https://dev.azure.com/o/p/_git/repo-d/pullrequest/3', { owner: true }), 'p/repo-d');
+  assert.equal(RL.prRepoOf('https://bb.example.com/projects/P/repos/repo-f/pull-requests/5', { owner: true }), 'P/repo-f');
+});
+
+test('rowMenuPrs: two repos with one name are told apart by their owner', () => {
+  const pr = (owner, n) => ({ number: n, url: `https://github.com/${owner}/api/pull/${n}`, state: 'OPEN' });
+  const m = RL.buildRunsModel({ history: [wsHist('w3', [pr('acme', 1), pr('beta', 2), WSPR('repo-b', 3)])], now: NOW });
+  assert.deepEqual(RL.rowMenuPrs(rowsOf(m).find((x) => x.pipelineId === 'w3')).map((p) => p.repo), ['acme/api', 'beta/api', 'repo-b']);
+});
+
+test('rowMenuPrs: a group member row reads its raw run\'s member PRs', () => {
+  const g = RL.groupRow({ id: 'g1', members: [{ run: { status: 'done', memberPrs: [WSPR('repo-a', 12), WSPR('repo-b', 34)] } }] });
+  assert.deepEqual(RL.rowMenuPrs(g.members[0]).map((p) => p.repo), ['repo-a', 'repo-b']);
+});
