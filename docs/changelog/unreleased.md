@@ -15,7 +15,7 @@ Read it: [Requirements](../requirements.md#choosing-the-harness-and-model)
 
 Pull requests (add each number when it opens):
 
-- Requirements: choose the harness and model per feature and per Product brief
+- Requirements: choose the harness and model per feature and per Product brief (#1234)
 
 ## Shaper keeps going while you're away
 
