@@ -454,7 +454,7 @@ function askTotals(fromMs, toMs) {
  *  with a brief_id) count in the spend but not in the feature count. */
 function requirementsTotals(fromMs, toMs) {
   const row = prepare(`
-    SELECT COALESCE(SUM(amount_usd), 0) AS s, COUNT(DISTINCT NULLIF(feature_seq, 0)) AS features
+    SELECT COALESCE(SUM(amount_usd), 0) AS s, COUNT(DISTINCT CASE WHEN amount_usd > 0 THEN NULLIF(feature_seq, 0) END) AS features
     FROM req_cost_ledger WHERE ts >= ? AND ts < ?`).get(fromMs, toMs);
   return { spendUsd: roundUsd(row?.s || 0), features: row?.features || 0 };
 }
