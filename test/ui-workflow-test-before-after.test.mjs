@@ -418,3 +418,25 @@ test('U2 style: the separator sits above the first cost row, not above the befor
   assert.deepEqual(lined, [firstCost], 'only the first cost row has the line');
   assert.ok(firstCost.textContent.startsWith('3 tries of'));
 });
+
+// Mock browser check, finding 8 (board 42): during the before phase the tries' column already reads "Now" (every row "Waiting").
+test('U3 (board 42): the progress table\'s last column reads "Now" during the before phase', () => {
+  const root = paintProgress(progressModel({ exampleId: 1, exampleName: 'Ticket 482', cmd: 'npm test', phase: 'copy', n: 1, of: 1, startedMs: Date.now() }));
+  assert.deepEqual(texts(root, '.wft-prow.is-head > span'), ['Example', 'Tries', 'Now']);
+  assert.equal(paintProgress(progressModel(null)).querySelector('.wft-prow.is-head').lastChild.textContent, 'So far', 'no before phase: as before');
+});
+
+// Mock browser check, findings 9 and 10 (boards 36, 40, 44): a check's command, folders and patterns are set in code in the side by
+// side's rows too; a cell's value is one piece next to its dot, so on a phone it wraps beside the dot, never under the label.
+test('side by side: check names in code; a cell\'s value beside its dot on a phone', () => {
+  const root = sbs(null, null, { met: false, value: 'Changed test/feature.test.mjs' });
+  const row = [...root.querySelectorAll('.wft-crow')].find((r) => r.textContent.startsWith('The command'));
+  assert.deepEqual(texts(row.firstChild, '.code'), ['npm test']);
+  const cell = row.querySelector('.wft-res.is-bad');
+  assert.equal(cell.querySelector('.wft-res-v').textContent, 'Changed test/feature.test.mjs');
+  assert.equal(cell.querySelector('.wft-dot').nextElementSibling, cell.querySelector('.wft-res-v'));
+  const css = readStyleCss();
+  assert.match(css, /\.wft-crow \.code[^{]*\{[^}]*font-family:var\(--mono\)/, 'the code in a check\'s name is set in the code font');
+  const phone = css.split('\n').filter((l) => l.startsWith('@media (max-width:700px)')).join('\n');
+  assert.match(phone, /\.wft-crow \[data-label\] > \.wft-res-v\{[^}]*flex:1 1 0/, 'on a phone the value takes the rest of the dot\'s line');
+});

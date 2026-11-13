@@ -320,7 +320,8 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s,
   const table = el(doc, 'section', 'card wft-table');
   table.setAttribute('aria-label', 'Tries per example');
   const headRow = el(doc, 'div', 'wft-prow is-head');
-  const nowCol = !over && p.rows.some((r) => r.now);   // board 35: what each project try is doing now
+  // Board 35: what each project try is doing now; board 42: during the before phase too (every row "Waiting").
+  const nowCol = !over && (p.rows.some((r) => r.now) || (st === 'running' && !!p.before));
   headRow.append(el(doc, 'span', '', 'Example'), el(doc, 'span', '', 'Tries'), el(doc, 'span', '', st === 'done' ? 'Result' : nowCol ? 'Now' : 'So far'));
   table.append(headRow);
   for (const r of p.rows) {

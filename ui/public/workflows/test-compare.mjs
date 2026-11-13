@@ -578,7 +578,7 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
     if (!it.met) span.classList.add('is-bad');
     const d = el(doc, 'span', `wft-dot ${it.met ? 'ok' : 'no'}`);
     d.setAttribute('aria-hidden', 'true');
-    span.append(d, doc.createTextNode(it.value));
+    span.append(d, el(doc, 'span', 'wft-res-v', it.value));   // one piece beside its dot (on a phone it wraps there, not under the label)
     // Final review UI 7: met or not met never by colour alone (the dot is hidden, red is colour): hidden words, unless the
     // value says it already ("Met", "Not met").
     if (!/^(not )?met\b/i.test(String(it.value ?? ''))) span.append(el(doc, 'span', 'sr-only', it.met ? ' · met' : ' · not met'));

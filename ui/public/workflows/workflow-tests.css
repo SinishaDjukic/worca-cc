@@ -449,3 +449,8 @@ input.wft-mono[type="text"],textarea.wft-mono{font-family:var(--mono);}
 .wft-ck-metwhen-hint{margin:0;}
 .wft-met-note{grid-column:1 / -1;padding:10px 12px;border-radius:var(--r-sm);background:var(--field);color:var(--ink);font-size:var(--fs-body);line-height:1.45;}
 .wft-met-note b{font-weight:600;}
+/* Workflow tests 3b, mock browser check (boards 36, 40, 44): a check's command, folders and patterns in the code font in the side
+   by side's rows; on a phone a cell's value takes the rest of its dot's line and wraps there, never under the version's name. */
+.wft-crow .code{font-family:var(--mono);overflow-wrap:anywhere;}
+.wft-res-v{min-width:0;overflow-wrap:anywhere;}
+@media (max-width:700px){.wft-crow [data-label] > .wft-res-v{flex:1 1 0;}}
