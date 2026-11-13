@@ -28,7 +28,7 @@ Columns: **From** (the slice and where it was found), **Area**, **Finding** (one
 | slice 5 web UI | Tasks | Show the cap refusal on one line and clear it on the next try | task page | minor | open |
 | slice 5 web UI | Tasks | Bulk Label ignores dev's `runLabels` flag | Tasks bar | minor | open |
 | slice 5 web UI | Tests | The seed's stub `gh` does not remember a merge | `tools/stillhet-seed-tasks.mjs` | minor | open |
-| slice 5 web UI | Tasks | Every live task page logs 404s in the console | `#run/ID` | minor | open |
+| slice 5 web UI | Tasks | Every live task page logs 404s in the console (about 2 per load, recheck 4) | `#run/ID` | minor | open |
 | slice 5 web UI | Shell | The account menu stays open on navigation | profile menu | minor | open |
 | slice 5 web UI | Tasks | Double full stop in refusal lines | refusals | minor | open |
 | slice 5 web UI | Tasks | Simple level: the checklist expects a + with only Ask in chat; the design rule draws none (a person decides) | Tasks bar | minor | open |
