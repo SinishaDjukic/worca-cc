@@ -955,7 +955,7 @@ test('cost dialog: "So far" says "cost unknown" when the total is 0 and steps ar
   await settle();
   const last = [...dialogEl().querySelectorAll('tbody tr')].at(-1);
   assert.deepEqual([...last.children].map((c) => text(c)), ['So far', 'cost unknown']);
-  assert.ok(!/$0.00/.test(dialogEl().textContent));
+  assert.ok(!/\$0\.00/.test(dialogEl().textContent), dialogEl().textContent);
 });
 
 // ---- 9c fix B2: the brief chip names the cost of the make that made it, in the cost words ----
