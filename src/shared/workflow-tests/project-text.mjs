@@ -114,6 +114,8 @@ export const REAL_BLOCKED_HINT = ' Pushes, pull requests and issues stay blocked
 export const allOnProject = (n, name) => `All ${n} · on ${name}`;
 export const DISK_KEY = 'Disk';
 export const TIME_KEY = 'Time';
+/** Board 41: the Time row before any try of the workflow has a time (as "cost not known yet"). */
+export const TIME_NOT_KNOWN = 'not known yet';
 /** "about 1 hour 10 minutes", "about 2 minutes": the time row (board 34). */
 export function aboutDuration(ms) {
   const m = Math.max(1, Math.round(Number(ms || 0) / 60000));

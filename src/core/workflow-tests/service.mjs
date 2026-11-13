@@ -657,7 +657,8 @@ export async function testPlan(workflowId, { a = null, b = 'draft', exampleIds =
       short: same ? `your draft (same as v${sameAs})` : useLabel(use, ctx), want: readyEx.length * tries, reusable,
       reusableAt: at, perTryUsd, savesUsd: perTryUsd === null ? null : reusable * perTryUsd };
   };
-  return { a: await side(a), b: await side(b), examples: readyEx.length, tries, perTryMs: perTryMs(workflowId), project,
+  // Mock browser check, finding 4: a mock test's time comes from the mock tries' own times (U-T8, as progressOf's time left).
+  return { a: await side(a), b: await side(b), examples: readyEx.length, tries, perTryMs: perTryMs(workflowId, { mock }), project,
     connectors: { mode: connectors, ...(await connectorsOf(workflowId, [a, b], { connectorsPreview, runEngine, mode: connectors,
       scope: one ? { key: one.key, name: one.name, projectDir: one.path } : null })) } };
 }

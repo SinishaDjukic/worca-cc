@@ -97,7 +97,8 @@ test('examples, a past run as an example, a test of v1 against the draft, reuse,
 
   // Test v1 against the draft on the written example, with the free quick check.
   const plan = (await call('GET', `${WF}/plan?a=1&b=draft&examples=${ex.id}&tries=1`)).body;
-  assert.deepEqual([plan.a.want, plan.a.reusable, plan.b.label], [1, 0, 'Your draft (same as v1)']);   // U-T4: the draft is still the saved v1, so "your changes" would be untrue
+  assert.deepEqual([plan.a.want, plan.a.reusable, plan.b.label], [1, 0, 'Your draft (same as v1)']);
+  assert.equal(plan.perTryMs, null, 'finding 4: mock mode and no mock try yet: not known yet, not the past normal run\'s time');   // U-T4: the draft is still the saved v1, so "your changes" would be untrue
   assert.deepEqual(plan.connectors, { mode: 'pretend', pretend: [], off: [], scripts: [], quickScripts: [], engines: [], personalOff: true },
     "board 30: no connector, no script step, Claude only; 3b (D78): Pretend on Claude Code, so the person's plugins are off");
   const started = await call('POST', `${WF}/runs`, { a: 1, b: 'draft', exampleIds: [ex.id], tries: 1, quickCheck: true, capUsd: 5 });
@@ -128,6 +129,9 @@ test('examples, a past run as an example, a test of v1 against the draft, reuse,
   // D26: v1's try is reused; only the draft is tried again.
   const plan2 = (await call('GET', `${WF}/plan?a=1&b=draft&examples=${ex.id}&tries=1`)).body;
   assert.equal(plan2.a.reusable, 1);
+  // Mock browser check, finding 4: in mock mode the Time row's per-try time comes from the mock tries' own times (U-T8).
+  assert.equal(typeof plan2.perTryMs, 'number', 'the finished mock tries give the estimate its time');
+  assert.equal(plan2.perTryMs, service.perTryMs('wf_api_t', { mock: true }), 'the mock tries\' time, never a normal run\'s');
   const again = await call('POST', `${WF}/runs`, { a: 1, b: 'draft', exampleIds: [ex.id], tries: 1, reuseA: true, capUsd: 5 });
   await finished(again.body.run.id);
   assert.equal(store.triesOfRun(again.body.run.id).filter((t) => t.runId === again.body.run.id).length, 1);

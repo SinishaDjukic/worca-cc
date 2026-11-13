@@ -391,3 +391,30 @@ test('end to end U3: progressOf\'s `before` (the runner\'s beforeNowOf) reaches 
   release();
   await runner.idle(run.id);
 });
+
+// Mock browser check, finding 4 (board 41's "time not known yet"): with no per-try time yet (the first test of a workflow, a
+// mock-only setup), the Time row still shows, says so, and keeps the "First, ... runs once" line under it.
+test('U2: the per-try time not known yet: the Time row says so and the before line stays', async () => {
+  const doc = await tvDialog({ ...tvPlan({ runs: 2, ms: null, cmd: 'npm test' }), perTryMs: null });
+  const time = doc.querySelector('.wft-est-row.is-time');
+  assert.ok(time, 'the Time row is there');
+  assert.equal(time.textContent, 'Timenot known yet · setup npm ci takes about 2 minutes a try');
+  assert.equal(time.nextElementSibling.textContent, 'First, npm test runs once on 2 start points');
+  assert.ok(time.nextElementSibling.classList.contains('wft-est-sub'));
+  assert.equal(doc.querySelector('.wft-est-row.is-total > span').textContent, 'Total', 'the time is in its row, not in Total');
+});
+
+// Mock browser check, finding 7 (board 41): the separator belongs above the first cost row, never between the Time row and
+// its grey "First, ..." line.
+test('U2 style: the separator sits above the first cost row, not above the before line', async () => {
+  const doc = await tvDialog(tvPlan({ runs: 2, ms: 4 * 60000, cmd: 'npm test' }));
+  const css = readStyleCss();
+  const sel = [...css.matchAll(/([^{}]*\.wft-est-row[^{}]*)\{[^}]*border-top:1px solid var\(--line-2\)/g)].map((m) => m[1].trim())
+    .filter((s) => !s.includes('is-total'));
+  assert.equal(sel.length, 1, `one separator rule: ${sel}`);
+  const lined = [...doc.querySelectorAll(sel[0])];
+  const rows = [...doc.querySelectorAll('.wft-est-row')];
+  const firstCost = rows.find((r) => !r.matches('.is-disk, .is-time, .wft-est-sub'));
+  assert.deepEqual(lined, [firstCost], 'only the first cost row has the line');
+  assert.ok(firstCost.textContent.startsWith('3 tries of'));
+});

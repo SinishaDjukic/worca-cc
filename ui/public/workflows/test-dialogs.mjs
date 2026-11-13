@@ -5,7 +5,7 @@ import { icon } from '../icons.mjs';
 import { fmtUsd, andList, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { estimateOf, fmtUsdRange, aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
-import { allOnProject, leftOutText, leftOutBlockedText, NONE_READY_TEXT, LOCK_LEAD, LOCK_REST, REAL_BLOCKED_HINT, DISK_KEY, TIME_KEY, diskRow, aboutDuration, SETUP_TAKES_LEAD, setupTakesRest,
+import { allOnProject, leftOutText, leftOutBlockedText, NONE_READY_TEXT, LOCK_LEAD, LOCK_REST, REAL_BLOCKED_HINT, DISK_KEY, TIME_KEY, TIME_NOT_KNOWN, diskRow, aboutDuration, SETUP_TAKES_LEAD, setupTakesRest,
   pickerNoneText, RUN_IT_ONCE, WRITE_YOURSELF, fromRunIntro, WHERE_TITLE, STARTS_FROM_RUN, pastRunProjectNote, DEV_CAPTION, SETUP_LABEL, SETUP_HINT_PAST,
   PLUGINS_OFF_PERSONAL, PLUGINS_OFF_PROJECT, pluginsEngineNoteLine, BEFORE_RUNS_LEAD, BEFORE_RUNS_SEVERAL, beforeRunsRest }
   from '../../../src/shared/workflow-tests/project-text.mjs';
@@ -388,12 +388,13 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
         r.append(el(doc, 'span', 'wft-est-k', DISK_KEY), el(doc, 'span', '', diskRow(pj.disk.needBytes, pj.disk.freeBytes)));
         est.append(r);
       }
-      timeShown = !!(pj && e.minutes);
+      // Board 41: the row shows whenever there is something to try, its time "not known yet" before any try has one.
+      timeShown = !!(pj && e.total);
       if (timeShown) {
         const r = el(doc, 'div', 'wft-est-row is-time');
         // U2 (board 41): the total holds the command's runs on the start points, said on a grey line of their own (D75).
         const bf = pj.before && pj.before.runs ? pj.before : null;
-        const v = el(doc, 'span', '', aboutDuration(e.minutes * 60000 + (bf && typeof bf.ms === 'number' ? bf.ms : 0)));
+        const v = el(doc, 'span', '', e.minutes ? aboutDuration(e.minutes * 60000 + (bf && typeof bf.ms === 'number' ? bf.ms : 0)) : TIME_NOT_KNOWN);
         if (pj.setupCmd && pj.setupMs) v.append(doc.createTextNode(SETUP_TAKES_LEAD), el(doc, 'span', 'code', pj.setupCmd), doc.createTextNode(setupTakesRest(pj.setupMs)));
         r.append(el(doc, 'span', 'wft-est-k', TIME_KEY), v);
         est.append(r);
