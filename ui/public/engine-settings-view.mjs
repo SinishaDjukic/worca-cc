@@ -23,6 +23,13 @@ export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto wor
 const OWN_RUN_JOBS = new Set(['memoryDefrag', 'workspaceScan', 'requirementsInterview', 'secondOpinion']);
 export const utilityId = (engine, job) => (OWN_RUN_JOBS.has(job) ? `models.${engine}.${job}` : `models.${engine}.utility.${job}`);
 const EMPTY = Object.freeze({ own: undefined, inherited: { value: undefined, source: 'default' } });
+// Design's agents (Engines card › Design): one row each per engine Design builds on.
+export const DESIGN_ROW_LABELS = Object.freeze({ lead: 'Design lead', builder: 'Design builders' });
+export const DESIGN_ROW_HINTS = Object.freeze({
+  lead: 'The main agent of a Design build: plans the sections, then puts them together. A design can pick its own.',
+  builder: 'The agents that build one section each, side by side. A design can pick its own.',
+});
+export const designRowId = (engine, role) => `models.${engine}.design.${role}`;
 // What each helper job does, as the hover hint on its row's name.
 export const JOB_HINTS = Object.freeze({
   title: 'Writes the short title every run and chat gets.',
@@ -170,6 +177,13 @@ export function renderEngineSection(host, options) {
       sec.append(bar, Object.assign(doc.createElement('small'), { className: 'hint engine-slot-rest', textContent: helpersNote(engine) }));
       card.append(sec);
     }
+    // options.designEngines: the engines Design builds on, while the design flag is on. Lead and builders, each
+    // falling back to its role (Deep thinking, Everyday coding) and then the engine's default model.
+    if ((options.designEngines || []).includes(engine)) {
+      const dflt = SIGN_IN_ENGINE_NAMES.includes(engine) || engine === 'copilot' ? `${engineLabel(engine)}'s default model` : (options.defaultLabels?.[engine] || (engine === 'codex' ? "Codex's default model (GPT-5.6 Sol)" : 'the default model'));
+      const rows = ['lead', 'builder'].map((role) => row(designRowId(engine, role), DESIGN_ROW_LABELS[role], dflt, DESIGN_ROW_HINTS[role]));
+      card.append(slotTable(doc, 'engine-design', 'Design', rows, { what: 'Design agent', from, onTest: options.onTest }));
+    }
     host.append(card); cards[engine] = card;
   }
   pick(first);
@@ -285,6 +299,9 @@ export function enginePatchToSettingsBody(patch) {
   for (const [id, value] of Object.entries(patch || {})) {
     if (id === 'run.engine') { body.runEngine = value; continue; }
     let match = new RegExp(`^models\\.(${MODEL_ENGINE_NAMES.join('|')})\\.steps\\.(.+)$`).exec(id); if (match) { ((body.stepModels ||= {})[match[1]] ||= {})[match[2]] = value; continue; }
+    // Design's agents: { designModels: { <engine>: { lead|builder: { model, effort } | null } } }; a pick names a model.
+    match = new RegExp(`^models\\.(${MODEL_ENGINE_NAMES.join('|')})\\.design\\.(lead|builder)$`).exec(id);
+    if (match) { ((body.designModels ||= {})[match[1]] ||= {})[match[2]] = value && value.model ? { model: value.model, ...(value.effort ? { effort: value.effort } : {}) } : null; continue; }
     match = /^models\.(codex)\.(?:utility\.)?(title|classifier|overview|prDescription|memoryDefrag|workspaceScan|secondOpinion)$/.exec(id); if (match) ((body.utilityModels ||= {})[match[1]] ||= {})[match[2]] = value;
     // Claude's helper slots live in their own settings keys: a model id (title, Auto, PR description), and the
     // Memory defragment, Agent generation and Run naming pairs; the Requirements interview pair is its own key.

@@ -3,14 +3,18 @@
 // adapts its runs (runsLiveItem / runsHistItem, plus `live`) and GET /api/schedules into the plain
 // inputs below; nothing here reads the DOM, fetches or keeps state.
 //
-// Needs you is EXACTLY the Runs badge's rule (runs-list.mjs needsYouItems, which countNeedsYou
-// counts), so the amber number on Activity and the one on Runs can never differ; Running is the
-// sidebar's live runs (app.js liveRuns(): workspace scans and agent jobs too) less those.
+// Needs you and Running are the Runs badge's items plus Design builds. For runs, Needs you is EXACTLY
+// the Runs badge's rule (runs-list.mjs needsYouItems, which countNeedsYou counts), and Running is the
+// sidebar's live runs (app.js liveRuns(): workspace scans and agent jobs too) less those. A Design
+// build is listed after the runs: under Needs you while a question waits or it is paused, under
+// Running while it plans, builds or integrates. The Runs badge itself stays runs only (builds are
+// not runs), so Activity's amber number is the Runs badge's plus the builds that need you.
 //
 // Inputs: `live` = the Runs list's live items { runId, pipelineId, title, status, ask, unread, … }
 // (overviewRuns), `history` = History rows { id, projectKey, title, status, … }, `active` = the same
-// item shape for every run liveRuns() holds; tickets and series as GET /api/schedules sends them.
-// Row: { kind: 'run'|'ticket'|'series', key, href, title, time, sub, tone: 'need'|'run'|'idle' }.
+// item shape for every run liveRuns() holds, `designs` = the open Design builds { designId, title,
+// status, waiting } (design/activity.mjs items()); tickets and series as GET /api/schedules sends them.
+// Row: { kind: 'run'|'design'|'ticket'|'series', key, href, title, time, sub, tone: 'need'|'run'|'idle' }.
 import { needsYouItems, liveRow, histRow, cmpNeeds } from './runs-list.mjs';
 import { zonedParts, formatInstant } from '../../src/shared/schedule/recurrence.mjs';
 
@@ -33,11 +37,36 @@ function splitRuns({ live = [], history = [], active = [] } = {}) {
   return { needs, running: active.filter((it) => it && !asking.has(it.runId)) };
 }
 
+const DESIGN_LIVE = ['planning', 'building', 'integrating'];
+
+/** The Design builds' rows (design/activity.mjs items()): a question waiting (named over a pause) or a pause
+ *  needs you, a live build runs, anything else is not listed. */
+function designRows(designs = []) {
+  const needs = [];
+  const running = [];
+  for (const d of designs) {
+    const waiting = Number(d.waiting) > 0 ? Number(d.waiting) : 0;
+    const row = (sub, tone) => ({
+      kind: 'design', key: `design:${d.designId}`, href: `#design/${encodeURIComponent(d.designId)}`,
+      title: String(d.title || 'Design'), time: '', sub: `Design · ${sub}`, tone,
+    });
+    if (waiting > 0) needs.push(row(`${waiting} question${waiting === 1 ? '' : 's'}`, 'need'));
+    else if (d.status === 'paused') needs.push(row('Paused', 'need'));
+    else if (DESIGN_LIVE.includes(d.status)) running.push(row('Building', 'run'));
+  }
+  return { needs, running };
+}
+
 /** The two numbers the badge shows, from the light items app.js builds on every frame
- *  (live: { runId, pipelineId, status, ask, unread }, history: { id, status }, active: { runId }). */
+ *  (live: { runId, pipelineId, status, ask, unread }, history: { id, status }, active: { runId }),
+ *  plus the Design builds (designs: { designId, status, waiting }). */
 export function activityCounts(src = {}) {
   const { needs, running } = splitRuns(src);
-  return { needs: needs.live.length + needs.history.length, running: running.length };
+  const design = designRows(src.designs);
+  return {
+    needs: needs.live.length + needs.history.length + design.needs.length,
+    running: running.length + design.running.length,
+  };
 }
 
 /** The button's badge: amber Needs you, else the running count, else hidden (n 0). */
@@ -136,13 +165,14 @@ function scheduledGroups(tickets, schedules, { now, tz, placeOf }) {
  * scheduled is null until the schedules are loaded.
  */
 export function activityModel({
-  live = [], history = [], active = [], tickets = null, schedules = null, now = Date.now(), tz = undefined,
+  live = [], history = [], active = [], designs = [], tickets = null, schedules = null, now = Date.now(), tz = undefined,
   placeOf = (x) => x.projectKey || '',
 } = {}) {
   const { needs, running } = splitRuns({ live, history, active });
+  const design = designRows(designs);
   const needRows = [...needs.live.map((it) => liveRow(it, now)), ...needs.history.map((p) => histRow(p, now))]
-    .sort(cmpNeeds).map((r) => runRow(r, 'need'));
-  const runRows = running.map((it) => runRow(liveRow(it, now), 'run'));
+    .sort(cmpNeeds).map((r) => runRow(r, 'need')).concat(design.needs);
+  const runRows = running.map((it) => runRow(liveRow(it, now), 'run')).concat(design.running);
   const scheduled = scheduledGroups(tickets, schedules, { now, tz, placeOf });
   return {
     needs: needRows, running: runRows, scheduled,
