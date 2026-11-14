@@ -24,7 +24,7 @@ import { cleanPick } from '../shared/graph/role-slots.mjs';
 import { ROLE_KEY_RE } from '../shared/graph/role-review-step.mjs';
 import { connectionOf, harnessesOf, runsOn, harnessesLabel, effortsOn } from '../shared/connections.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
-import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel, modelRolesSetting } from './settings.mjs';
+import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel, modelRolesSetting, assertDesignModelsInput } from './settings.mjs';
 /** Whether the developer stored the hide-built-ins flag (a team default applies only when not). */
 const readSettingsHideStored = () => { const s = readSettings(); return typeof s.hideBuiltinModels === 'boolean' || s.hideBuiltinModelsChosen === true; };
 import { listPluginModels, allPluginModels, flattenPluginModelEnv } from './plugin-models.mjs';
@@ -846,6 +846,15 @@ export async function assertSlotModels(items, { projectDir = '', pending = [] } 
     // A pending row has no efforts yet; only a catalog row is checked (role efforts never reach here, A7).
     if (value.effort && models.includes(hit) && !effortsOn(hit, engine).includes(value.effort)) throw bad(`${hit.id} does not offer effort "${value.effort}" on ${engineLabel(engine)}`);
   }
+}
+
+/** POST /api/settings `designModels` (Models › Engines › Design): the patch's shape, then every pick against the catalog
+ *  (a model its engine runs, with an effort it takes), before anything is written. */
+export async function assertDesignModelsSlots(input) {
+  const patch = assertDesignModelsInput(input);
+  const items = [];
+  for (const [engine, roles] of Object.entries(patch)) for (const [role, value] of Object.entries(roles)) if (value) items.push({ id: `designModels.${engine}.${role}`, engine, value });
+  await assertSlotModels(items);
 }
 
 /**

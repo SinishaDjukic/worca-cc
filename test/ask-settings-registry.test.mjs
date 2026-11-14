@@ -481,9 +481,9 @@ test('team memory (1a): the project defs leave out the memory.team opt-in and la
   });
   const defs = reg.defsFor('project');
   assert.ok(!defs.some((d) => d.id === 'memory.team'), 'the opt-in is not a project def the chat can write');
-  assert.equal(defs.find((d) => d.id === 'memory.teamMaxFiles')?.label, 'Memory: most team notes loaded');
+  assert.equal(defs.find((d) => d.id === 'memory.teamMaxFiles')?.label, 'Memory: most always-on team notes loaded');
   const rows = (await reg.list({ scope: 'project', projectKey: PROJECT.key, query: 'memory.team' })).settings;
-  assert.deepEqual(rows.map((x) => [x.id, x.label, x.value]), [['memory.teamMaxFiles', 'Memory: most team notes loaded', '50 (inherited)']]);
+  assert.deepEqual(rows.map((x) => [x.id, x.label, x.value]), [['memory.teamMaxFiles', 'Memory: most always-on team notes loaded', '50 (inherited)']]);
   assert.ok((await reg.list({ scope: 'user' })).excluded.includes('Team memory sharing'), 'the exclusion is told to the model');
   for (const scope of [{ scope: 'project', projectKey: PROJECT.key }, { scope: 'user' }]) {
     const refused = await reg.check({ id: 'memory.team', ...scope, value: true });

@@ -182,6 +182,11 @@ pages are frozen by a ratchet that can only shrink: after moving a page to the l
 `node tools/rail-gate.mjs --update`. Something the design system lacks is added there first: the rule, the catalog entry,
 the component, its test and its gallery example; `test/rail-docs.test.mjs` checks they agree.
 
+A PR that changes today's UI must change the Stillhet prototype too, or add a `wire to` row under `## Dev surfaces` in
+`plans/rail/stillhet-wiring.md`, or carry the `no-ui-change` label plus a "No UI change: …" line in its body (CI's
+`prototype` job, `gate.prototype` in [docs/rail/gate.md](docs/rail/gate.md)); re-run that job after a label or body
+edit, and on a fork PR a maintainer applies the label.
+
 ## UI levels
 
 The web UI has an interface mode — **Simple**, **Advanced**, **Expert** — that

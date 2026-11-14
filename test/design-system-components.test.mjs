@@ -678,6 +678,32 @@ test('logLines: one line per entry, a problem in its colour, words escaped', () 
   assert.equal(l.querySelector('.lg-text').textContent, '<b>');
 });
 
+test('moreMenu: ⋯ names what it is for, and danger comes last after one rule', () => {
+  const m = dom(C.moreMenu({ id: 'm', label: 'More for X', icon: '', items: ['Delete', 'Copy link'], open: true }));
+  const b = m.querySelector('button'); assert.equal(b.getAttribute('aria-label'), 'More for X'); assert.equal(b.getAttribute('aria-haspopup'), 'menu');
+  assert.deepEqual([...m.querySelectorAll('[role=menu] > *')].map((x) => x.getAttribute('role')), ['menuitem', 'separator', 'menuitem']);
+  assert.match(m.querySelector('.menu-item.is-danger').dataset.menuPick, /^m\|Delete$/);
+  assert.equal(dom(C.moreMenu({ id: 'm', label: 'More', icon: '', items: ['Copy link'] })).querySelector('[role=menu]'), null, 'closed, no menu');
+});
+
+test('stepDot, stopWriting and suggestedChip: a mark a screen reader hears, a named stop, the Suggested chip', () => {
+  const d = dom(C.stepDot({ dotCls: 'is-done', word: 'Done', icon: 'check' }));
+  assert.equal(d.getAttribute('role'), 'img'); assert.equal(d.getAttribute('aria-label'), 'Done'); assert.match(d.className, /rd-route-dot is-done/);
+  const s = dom(C.stopWriting({})); assert.equal(s.className, 'pd-stop'); assert.equal(s.getAttribute('aria-label'), 'Stop writing');
+  const c = dom(C.suggestedChip()); assert.equal(c.className, 'pd-sug'); assert.equal(c.textContent, 'Suggested');
+});
+
+test('fitTags: what does not fit its line folds into +N; nothing drawn, nothing done', () => {
+  const doc = new JSDOM(`<body><div class="rc-facts">${C.tagGroup({ items: ['a', 'b', 'c'].map((text) => ({ kind: 'label', text })) })}</div></body>`).window.document;
+  const g = doc.querySelector('.rc-tags');
+  for (const c of g.children) c.getBoundingClientRect = () => { const i = [...g.children].filter((x) => !x.hidden).indexOf(c); return { width: i < 0 ? 0 : 40, right: 40 * (i + 1) }; };
+  doc.querySelector('.rc-facts').getBoundingClientRect = () => ({ right: 130 });
+  C.fitTags(doc);
+  assert.deepEqual([...g.querySelectorAll('.rc-tag')].map((t) => t.hidden), [false, true, true]);
+  assert.equal(g.querySelector('.rc-tag-more').textContent, '+2'); assert.equal(g.querySelector('.rc-tag-more').hidden, false);
+  assert.doesNotThrow(() => C.fitTags(new JSDOM('<body></body>').window.document));
+});
+
 test('stackRow: its own actions sit at its end', () => {
   const r = dom(C.stackRow({ num: '1', title: 'A', word: 'Small', sub: 'x', state: 'next', rowCls: 'is-next', dotCls: 'is-future', icon: '', end: '<button id="m"></button>' }));
   assert.ok(r.querySelector('#m'));
@@ -1494,6 +1520,7 @@ test('planCard, filesCard, youTurn: the Shaper plan folds its roles; files as ti
   const y = C.youTurn({ text: 'Same bug?', quote: 'Off by a cent', files: ['x.pdf'] });
   assert.match(y, /you-quote">Off by a cent/); assert.match(y, /x\.pdf/);
   assert.match(C.youTurn({ text: 'Hi', time: C.turnTime({ at: Date.now() }) }), /<time class="turn-time"[^>]*>\d\d:\d\d<\/time><\/div>$/);   // turnTime: its time is the turn's last child
+  assert.equal(C.turnTimeText(Date.now(), Date.now()), C.turnTime({ at: Date.now() }).match(/>([^<]+)<\/time>$/)[1]);   // turnTimeText: the words TurnTime shows
   assert.doesNotMatch(C.changeProposal({ kind: 'Agent', title: 'New', rows: [{ name: 'Reads', before: '', after: 'PRs' }] }), /→/);
 });
 

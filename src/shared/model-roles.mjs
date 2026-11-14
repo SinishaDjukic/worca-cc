@@ -24,8 +24,8 @@ const QUICK_STEP_KEYS = new Set(['memoryDefragmenter']);
 // D4 by setting key. autoWorkflowModel (Claude's Auto classifier) is everyday; utilityModels.<engine>.* is quick, except
 // the workspace scan: its agent surveys every member and writes the cross-project synthesis, so it is everyday.
 export const SLOT_ROLES = Object.freeze({
-  'nightMode.deciderModel': 'deep',
-  askModels: 'everyday', agentGenModel: 'everyday', requirementsInterview: 'everyday', autoWorkflowModel: 'everyday',
+  'nightMode.deciderModel': 'deep', designLead: 'deep',
+  askModels: 'everyday', agentGenModel: 'everyday', requirementsInterview: 'everyday', autoWorkflowModel: 'everyday', designBuilder: 'everyday',
   titleModel: 'quick', namingModel: 'quick', commandSummaryModel: 'quick', prDescriptionModel: 'quick',
   memoryDefrag: 'quick', workspaceScan: 'everyday',
 });
@@ -73,6 +73,9 @@ export function roleOfSettingId(settingId, { name = '' } = {}) {
   const [, engine, rest] = m;
   if (rest.startsWith('roles.')) return null;
   if (rest.startsWith('steps.')) return roleOf(rest, { name });
+  // Design's agents (Engines card › Design): the lead thinks deep, the builders write everyday code.
+  if (rest === 'design.lead') return roleOf('designLead');
+  if (rest === 'design.builder') return roleOf('designBuilder');
   const job = rest.startsWith('utility.') ? rest.slice('utility.'.length) : rest;
   return roleOfJob(engine, job);
 }
