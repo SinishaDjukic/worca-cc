@@ -77,3 +77,119 @@ test('with no usage reading, Usage and costs wears an empty ring glyph and the d
   assert.doesNotMatch(row.textContent, /%/);
   assert.match(row.textContent, /\$/);
 });
+
+// ---- Settings › Notifications › Pulse icon: how long the icon animates (is-news), driven by window timers ----
+const isNews = (w) => w.document.querySelector('#rail-pulse-slot .pz-pulse-b').classList.contains('is-news');
+const pickPulseFor = (w, v) => {
+  w.RailPulse.show('settings', 'notifications');
+  w.document.querySelector('[data-menu="pulseFor"]').click();
+  w.document.querySelector(`[data-menu-pick="pulseFor|${v}"]`).click();
+};
+
+test('Pulse icon 10s: is-news is on at 9 999 ms and off at 10 000 ms of fake time', async (t) => {
+  const { w } = appHost();
+  const { useAppTimers } = await import('./helpers/app-timers.mjs');
+  const clock = useAppTimers(t);
+  pickPulseFor(w, '10s');
+  assert.equal(isNews(w), false, 'no news before an event');
+  w.RailPulse.newEvent('problem');
+  assert.equal(isNews(w), true);
+  await clock.advance(9999);
+  assert.equal(isNews(w), true, 'still on at 9 999 ms');
+  await clock.advance(1);
+  assert.equal(isNews(w), false, 'off at 10 000 ms');
+  // a second event during the news restarts the one timer
+  w.RailPulse.newEvent('problem');
+  await clock.advance(5000);
+  w.RailPulse.newEvent('problem');
+  await clock.advance(9999);
+  assert.equal(isNews(w), true, 'on at 14 999 ms');
+  await clock.advance(1);
+  assert.equal(isNews(w), false, 'off at 15 000 ms');
+});
+
+test('Pulse icon 1m: is-news is off after 60 000 ms', async (t) => {
+  const { w } = appHost();
+  const { useAppTimers } = await import('./helpers/app-timers.mjs');
+  const clock = useAppTimers(t);
+  pickPulseFor(w, '1m');
+  w.RailPulse.newEvent('problem');
+  await clock.advance(59999);
+  assert.equal(isNews(w), true);
+  await clock.advance(1);
+  assert.equal(isNews(w), false);
+});
+
+test('Pulse icon never: a new event never sets is-news', async (t) => {
+  const { w } = appHost();
+  const { useAppTimers } = await import('./helpers/app-timers.mjs');
+  const clock = useAppTimers(t);
+  pickPulseFor(w, 'never');
+  w.RailPulse.newEvent('problem');
+  assert.equal(isNews(w), false, 'right after the event');
+  await clock.advance(60000);
+  w.RailPulse.newEvent('problem');
+  assert.equal(isNews(w), false, 'after a minute and another event');
+});
+
+test('Pulse icon until read: is-news stays after 5 minutes and goes when the new update is marked read', async (t) => {
+  const { w } = appHost();
+  const { useAppTimers } = await import('./helpers/app-timers.mjs');
+  const clock = useAppTimers(t);
+  w.RailPulse.newEvent('problem');
+  assert.equal(isNews(w), true);
+  await clock.advance(150000);
+  w.RailPulse.show('settings', 'notifications'); w.RailPulse.show('runs', '', 'chat');   // a repaint with the same count
+  assert.equal(isNews(w), true, 'a repaint does not end the news');
+  await clock.advance(150000);
+  assert.equal(isNews(w), true, 'still on after 5 minutes');
+  w.RailPulse.open('updates');
+  assert.equal(isNews(w), true, 'opening Pulse alone is not reading');
+  w.document.querySelector('.pz-popover [data-menu="more"]').click();
+  w.document.querySelector('[data-pick="more|allread"]').click();
+  assert.equal(isNews(w), false, 'marked read: the news ends');
+});
+
+test('Settings › Notifications › Pulse icon: picking never removes is-news from the running icon without a reload', () => {
+  const { w } = appHost();
+  w.RailPulse.newEvent('problem');
+  assert.equal(isNews(w), true);
+  pickPulseFor(w, 'never');
+  assert.equal(isNews(w), false);
+});
+
+test('Settings › Notifications › Pulse icon: switching until read to 10s ends the news 10 s after the pick', async (t) => {
+  const { w } = appHost();
+  const { useAppTimers } = await import('./helpers/app-timers.mjs');
+  const clock = useAppTimers(t);
+  w.RailPulse.newEvent('problem');
+  await clock.advance(30000);
+  assert.equal(isNews(w), true);
+  pickPulseFor(w, '10s');
+  await clock.advance(9999);
+  assert.equal(isNews(w), true);
+  await clock.advance(1);
+  assert.equal(isNews(w), false);
+});
+
+test('the Pulse icon row reads a whole sentence for each value', () => {
+  const { w } = appHost();
+  const row = () => [...w.document.querySelectorAll('.set-row')].find((r) => /Pulse icon/.test(r.textContent));
+  w.RailPulse.show('settings', 'notifications');
+  assert.match(row().textContent, /When something new arrives, Pulse's icon\s*shakes until you read or act on it/);
+  assert.equal(row().querySelector('.set-dot'), null, 'no changed dot at the default');
+  w.document.querySelector('[data-menu="pulseFor"]').click();
+  const words = [...w.document.querySelectorAll('[data-menu-pick^="pulseFor|"]')].map((b) => b.textContent.trim());
+  assert.deepEqual(words, ['shakes until you read or act on it', 'shakes for 10 seconds', 'shakes for 1 minute', 'stays still']);
+  w.document.querySelector('[data-menu-pick="pulseFor|1m"]').click();
+  assert.match(row().textContent, /Pulse's icon\s*shakes for 1 minute/);
+  assert.ok(row().querySelector('.set-dot'), 'the changed dot shows off the default');
+});
+
+test('rail.css: the Pulse shake loops only on .pz-pulse-b and stops under reduced motion', () => {
+  const css = read('css/rail.css');
+  assert.match(css, /\.pz-pulse-b\.is-news > svg\{[^}]*animation:tb-shake [^;}]*infinite/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)\{ \.pz-pulse-b\.is-news > svg\{animation:none;\} \}/);
+  assert.doesNotMatch(css, /\.topnav-act\.is-news/);
+  assert.match(css, /\.kind-mark\.is-news \.km-ring circle\[style\]\{animation:km-seg/);
+});

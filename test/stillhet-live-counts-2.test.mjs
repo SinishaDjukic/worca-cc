@@ -3,7 +3,7 @@
 // nothing and says so; the mode is dev's uiLevel. The host is test/helpers/stillhet-live-counts-host.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { REFUSE, clone, liveHost, openAcct, refusalHost, settle, store, toastText, closeHosts } from './helpers/stillhet-live-counts-host.mjs';
+import { REFUSE, SOURCES, clone, liveHost, openAcct, refusalHost, settle, store, toastText, closeHosts } from './helpers/stillhet-live-counts-host.mjs';
 
 afterEach(closeHosts);   // each test's window closes when the test ends
 test('Projects: a project whose key is not its name joins its tasks by name (api-2 is api)', async () => {
@@ -102,19 +102,50 @@ test('every Step 5 action, refused: one toast "Could not ACTION: REASON", the st
     ['Interface mode', () => { openAcct(d); d.querySelector('[data-sub="lvl"]').click(); d.querySelector('#app [data-level="simple"]').click(); }, 'change the interface mode', '/api/settings'],
     ['Keep awake', () => { openAcct(d); d.querySelector('[data-sw="keep"]').click(); }, 'change Keep awake', '/api/settings'],
     ['Away', () => { openAcct(d); d.querySelector('[data-sw="away"]').click(); }, 'change Away', '/api/settings'],
+    ['Pulse icon', async () => { await openPulseFor(w, d); d.querySelector('[data-menu-pick="pulseFor|never"]').click(); }, 'change the Pulse icon', '/api/settings'],
   ];
   for (const [name, act, what, url] of cases) {
     const before = store(w), mode = w.RailUI.prefs.mode(), n = posts.length;
     w.location.hash = '#chat'; await settle();
-    act(); await settle();
+    await act(); await settle();
     assert.equal(posts.length, n + 1, `${name}: one post`);
     assert.equal(posts.at(-1).url, url, name);
     assert.equal(toastText(d), `Could not ${what}: ${REFUSE.error}`, name);
     assert.deepEqual(store(w), before, `${name}: the store is unchanged`);
     assert.equal(w.RailUI.prefs.mode(), mode, `${name}: the mode is unchanged`);
+    if (name === 'Pulse icon') assert.match(pulseForRow(d).textContent, /shakes until you read or act on it/, 'the Pulse icon keeps its value');
     if (name === 'Keep awake') { openAcct(d); assert.equal(d.querySelector('[data-sw="keep"]').getAttribute('aria-checked'), 'true', 'Keep awake stays on'); }
     w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   }
+});
+
+// Settings › Notifications › Pulse icon in the live kind: dev's settings.json pulseFor through /api/settings
+const pulseForRow = (d) => [...d.querySelectorAll('.set-row')].find((r) => /Pulse icon/.test(r.textContent));
+async function openPulseFor(w, d) {
+  w.location.hash = '#settings/notifications'; await settle();
+  d.querySelector('[data-menu="pulseFor"]').click();
+}
+const pulseNews = (d) => d.querySelector('#rail-pulse-slot .pz-pulse-b').classList.contains('is-news');
+
+test('live: picking Pulse icon posts {pulseFor} to /api/settings and keeps the value on ok', async () => {
+  const { w, d, posts, hello } = await liveHost({ post: (url, body) => [200, url === '/api/settings' ? { ...body } : { ok: true }] });
+  await hello();
+  await openPulseFor(w, d);
+  d.querySelector('[data-menu-pick="pulseFor|10s"]').click(); await settle();
+  assert.deepEqual(posts.map((p) => [p.url, p.body]), [['/api/settings', { pulseFor: '10s' }]]);
+  assert.match(pulseForRow(d).textContent, /shakes for 10 seconds/);
+});
+
+test('live: a settings-changed re-fetch with pulseFor \'never\' stops a running icon', async () => {
+  const sources = clone(SOURCES);
+  const { w, d, sockets, hello } = await liveHost({ sources });
+  await hello();
+  w.RailPulse.newEvent('problem'); await settle();
+  assert.equal(pulseNews(d), true, 'the icon has news');
+  sources.settings.pulseFor = 'never';   // another tab saved it
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'settings-changed', action: null }) }); await settle(400);   // the adapter's re-fetch is debounced (250 ms)
+  assert.equal(w.RailWorld.part('pulseFor'), 'never');
+  assert.equal(pulseNews(d), false, 'the running icon stops without a reload');
 });
 
 test('every Step 5 action posts dev\'s route and body; no "Would…" in the app host', async () => {

@@ -14,7 +14,7 @@ const svg = (name, size, cls) => R.icon(name, size, { cls });
 const caseOf = (id) => { const c = M.CASES.find((x) => x.id === id); return window.RailFirstRun && c ? { ...c, updates: [], teamSetup: false, actions: [] } : c; };   // the first run: nothing has happened yet
 const groupOf = (id) => M.GROUPS.find((g) => g.id === id);
 function freshSettings(c) {
-  return { desktop: c.desktop, badge: 'needs', sound: 'needs', attnFor: '3', warnAt: 80, mine: 'suggest', auto: 'move', groups: Object.fromEntries(M.GROUPS.map((g) => [g.id, { level: g.level, where: g.where, ex: {} }])) };
+  return { desktop: c.desktop, badge: 'needs', sound: 'needs', pulseFor: (W.live && W.part('pulseFor')) || 'until-read', attnFor: '3', warnAt: 80, mine: 'suggest', auto: 'move', groups: Object.fromEntries(M.GROUPS.map((g) => [g.id, { level: g.level, where: g.where, ex: {} }])) };
 }
 // a case starts fresh: nothing from the case before it carries over
 // Settings › Tasks › Budget reads the case's figures too.
@@ -409,6 +409,9 @@ const quiet = (label, a) => R.button({ label, kind: 'quiet', attrs: a });
 const startOf = () => freshSettings(C());
 const changedFrom = (key, name, words) => (ui.s[key] !== startOf()[key] ? [{ name, was: words(startOf()[key]) }] : []);
 const ATTN_FOR = [{ id: '1', text: 'for 1 second' }, { id: '3', text: 'for 3 seconds' }, { id: '5', text: 'for 5 seconds' }, { id: 'act', text: 'until you act on it' }];
+// Pulse icon: how long Pulse's icon shakes with news (dev's settings.json pulseFor; until-read is the default)
+const PULSE_FOR = [{ id: 'until-read', text: 'shakes until you read or act on it' }, { id: '10s', text: 'shakes for 10 seconds' }, { id: '1m', text: 'shakes for 1 minute' }, { id: 'never', text: 'stays still' }];
+const PULSE_FOR_MS = { '10s': 10000, '1m': 60000 };
 function notifications() {
   const s = ui.s;
   const BADGE = M.BADGE;
@@ -421,6 +424,7 @@ function notifications() {
   const channels = desk
     + R.settingsRow({ name: 'Badge', changed: changedFrom('badge', 'Badge', (v) => BADGE.find((b) => b.id === v).text), sentence: `The tab title ${sp('badge', BADGE.find((b) => b.id === s.badge).text, BADGE.map((b) => ({ ...b, checked: b.id === s.badge })), 'What the count in the tab title counts')}` })
     + R.settingsRow({ name: 'Sound', changed: changedFrom('sound', 'Sound', (v) => R.SOUND_CHOICES.find((x) => x.id === v).text), sentence: `${sp('sound', R.SOUND_CHOICES.find((x) => x.id === s.sound).text, R.SOUND_CHOICES.map((x) => ({ ...x, checked: x.id === s.sound })), 'What makes a sound as it arrives. Never during away hours; a burst plays once')}` })
+    + R.settingsRow({ name: 'Pulse icon', changed: s.pulseFor !== 'until-read' ? [{ name: 'Pulse icon', was: PULSE_FOR[0].text }] : [], sentence: `When something new arrives, Pulse's icon ${sp('pulseFor', PULSE_FOR.find((x) => x.id === s.pulseFor).text, PULSE_FOR.map((x) => ({ ...x, checked: x.id === s.pulseFor })), 'How long Pulse\'s icon shakes when something new arrives')}` })
     + R.settingsRow({ name: 'Breathing', changed: changedFrom('attnFor', 'Breathing', (v) => ATTN_FOR.find((x) => x.id === v).text), sentence: `What needs you keeps breathing ${sp('attnFor', ATTN_FOR.find((x) => x.id === s.attnFor).text, ATTN_FOR.map((x) => ({ ...x, checked: x.id === s.attnFor })), 'How long it breathes once you open it, before it counts as seen')}${s.attnFor === 'act' ? '' : ' once you open it'}` })
     + R.settingsRow({ name: 'Chat channels', sentence: esc(M.chatWords(SM.workingChannels(ui.sv))), end: R.shows('advanced', R.prefs.mode()) ? quiet('Channels', { 'data-sset': 'ask', title: 'Their switches and allow-lists are in Settings › Chat' }) : '' });
   const groups = groupsShown().map((g) => {
@@ -468,7 +472,7 @@ function settingsPage() {
 // ---- search: runs, projects, workspaces, workflows, schedules, tickets, labels (label:), settings, add-ons, plugins and
 // chats, each with where it lives. What the mode or Labs hides is still found, with its lock note; picking it hands you to
 // the unlock and then on to it. The last row asks Chat. ----
-const NOTIF_ROWS = ['Desktop', 'Badge', 'Sound', 'Breathing', 'Chat', 'Runs', 'Schedules', 'Automations', 'Pull requests', 'Usage', 'Away mode', 'Projects', 'Worca'];
+const NOTIF_ROWS = ['Desktop', 'Badge', 'Sound', 'Pulse icon', 'Breathing', 'Chat', 'Runs', 'Schedules', 'Automations', 'Pull requests', 'Usage', 'Away mode', 'Projects', 'Worca'];
 const RUNS_LIMIT_ROWS = ['Warning line', 'Manual starts', 'Automatic starts'];
 const strict = (...ms) => ms.filter(Boolean).sort((a, b) => R.MODES.indexOf(b) - R.MODES.indexOf(a))[0] || '';
 function settingsFinds() {
@@ -624,9 +628,24 @@ document.addEventListener('input', (e) => { if (e.target.matches?.('[data-search
 function fitSearch() { const m = document.querySelector('.rl-search-res'); if (!m) return; m.style.left = ''; const r = m.getBoundingClientRect(), vw = document.documentElement.clientWidth; if (r.right > vw - 16) m.style.left = `${vw - 16 - r.right}px`; }
 
 // ---- in the one Worca: Pulse in Activity's place, the overlays above the shell, Settings in the page, its menu in the sidebar ----
-// Pulse's icon shakes once when something new arrives: the count it holds grew since it was last drawn.
-let pulseSeen = null, pulseShakeTill = 0;   // a redraw during the shake keeps it going, never starts it again
-const pulseNews = (n) => { if (pulseSeen !== null && n > pulseSeen) pulseShakeTill = Date.now() + 700; pulseSeen = n; return Date.now() < pulseShakeTill; };
+// Pulse's icon has news when the count it holds grew since it was last drawn. The news lasts as Settings › Notifications ›
+// Pulse icon says: until the count falls back to where it was before the news (read or acted on), for 10 s or 1 min (one
+// window timer, restarted by a new event or a change of the setting), or never. A redraw neither starts nor ends it.
+let newsSeen = null, newsFloor = null, newsTimer = 0;
+function endNews() { newsFloor = null; clearTimeout(newsTimer); newsTimer = 0; }
+function armNews() {
+  clearTimeout(newsTimer); newsTimer = 0;
+  if (newsFloor === null) return;
+  if (ui.s.pulseFor === 'never') { endNews(); return; }
+  const ms = PULSE_FOR_MS[ui.s.pulseFor];
+  if (ms) newsTimer = setTimeout(() => { newsTimer = 0; newsFloor = null; render(); }, ms);
+}
+const pulseNews = (n) => {
+  if (newsSeen !== null && n > newsSeen && ui.s.pulseFor !== 'never') { newsFloor ??= newsSeen; armNews(); }
+  if (newsFloor !== null && n <= newsFloor) endNews();
+  newsSeen = n;
+  return newsFloor !== null && ui.s.pulseFor !== 'never';
+};
 // the master light wears the highest level that waits (look.alert-ladder)
 // The bell's one number: the rows of Needs you: tasks and missed times from the store, projects and workspace questions from Projects (small-rules)
 const placeNeeds = () => window.RailProjects?.needItems() || [];
@@ -731,7 +750,11 @@ W.onMove?.(() => render());   // a task moved anywhere: the badge, Vitals and Up
 window.addEventListener('rail-settings', () => render());   // a live Settings action answered (settings.js)
 // the account menu belongs to the page it was opened on: moving on closes it
 window.addEventListener('hashchange', () => { if (!ui.acct && !ui.sub) return; ui.acct = false; ui.sub = ''; render(); });
-if (LIVE) W.onChange(() => { ui.keep = !!W.part('keep'); ui.awayStatus = W.part('away').status; render(); });
+if (LIVE) W.onChange(() => {
+  ui.keep = !!W.part('keep'); ui.awayStatus = W.part('away').status;
+  const pf = W.part('pulseFor') || 'until-read'; if (pf !== ui.s.pulseFor) { ui.s.pulseFor = pf; armNews(); }   // another tab's Pulse icon change
+  render();
+});
 function paintAlone() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
@@ -779,6 +802,8 @@ function pick(id, v) {
     else { const read = live().filter((u) => !isUnread(u)), waits = read.filter((u) => u.sev === 'needs' && u.open && !u.resolved && !isFixed(u)), ids = read.filter((u) => !waits.includes(u)).map((u) => u.id); ui.cleared = ui.cleared.concat(ids); ui.pick = R.selectPrune(ui.pick, []); toast(ids.length ? `Cleared ${plural(ids.length, 'read update')}${waits.length ? `; ${waits.length} still ${waits.length === 1 ? 'waits' : 'wait'} for you` : ''}` : waits.length ? `Nothing to clear: ${waits.length} read still ${waits.length === 1 ? 'waits' : 'wait'} for you` : 'Nothing read to clear', ids.length ? undoClear(ids) : null); }
   }
   else if (id === 'attnFor') { s.attnFor = v; window.RailAttnFor = v; }
+  else if (id === 'pulseFor' && LIVE) A.post('/api/settings', { pulseFor: v }).then((r) => { if (!r.ok) { refused('change the Pulse icon', r); return; } ui.s.pulseFor = v; armNews(); render(); });
+  else if (id === 'pulseFor') { s.pulseFor = v; armNews(); }
   else if (id === 'badge') s.badge = v;   // the sentence has changed before your eyes: no toast repeats it
   else if (id === 'sound') s.sound = v;
   else if (id === 'mine') s.mine = v;

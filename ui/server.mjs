@@ -91,7 +91,7 @@ import {
   updateCheckEnabled, assertUpdateCheckInput, setUpdateCheck,
   titleModel as storedTitleModel, setTitleModel, assertTitleModelInput,
   hideBuiltinModels, setHideBuiltinModels, assertHideBuiltinModelsInput,
-  theme as storedTheme, setTheme, assertThemeInput,
+  theme as storedTheme, setTheme, assertThemeInput, setPulseFor, assertPulseForInput,
   uiLevel as storedUiLevel, setUiLevel, assertUiLevelInput, defaultUiLevel,
   autoWorkflowModel as storedAutoWorkflowModel, setAutoWorkflowModel, assertAutoWorkflowModelInput,
   prDescriptionModel as storedPrDescriptionModel, setPrDescriptionModel, assertPrDescriptionModelInput,
@@ -8041,7 +8041,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasUpdateCheckKey = has('updateCheck');
   const hasTitleModelKey = has('titleModel');
   const hasHideBuiltinKey = has('hideBuiltinModels');
-  const hasThemeKey = has('theme');
+  const hasThemeKey = has('theme'), hasPulseForKey = has('pulseFor');
   const hasUiLevelKey = has('uiLevel');
   const hasFlagsKey = has('flags');
   const hasAutoKey = has('autoWorkflowModel');
@@ -8127,7 +8127,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
       }
     });
     if (hasHideBuiltinKey) asSettingsField('hideBuiltinModels', () => assertHideBuiltinModelsInput(body.hideBuiltinModels));
-    if (hasThemeKey) asSettingsField('theme', () => assertThemeInput(body.theme));
+    if (hasThemeKey) asSettingsField('theme', () => assertThemeInput(body.theme)); if (hasPulseForKey) asSettingsField('pulseFor', () => assertPulseForInput(body.pulseFor));
     if (hasUiLevelKey) asSettingsField('uiLevel', () => assertUiLevelInput(body.uiLevel));
     if (hasAutoKey) asSettingsField('autoWorkflowModel', () => assertAutoWorkflowModelInput(body.autoWorkflowModel ?? '', autoModels));
     if (hasPrDescKey) asSettingsField('prDescriptionModel', () => assertPrDescriptionModelInput(body.prDescriptionModel ?? '', prDescModels));
@@ -8211,7 +8211,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     }
     if (hasTitleModelKey) await setTitleModel(titleModelInput);
     if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
-    if (hasThemeKey) await setTheme(body.theme);
+    if (hasThemeKey) await setTheme(body.theme); if (hasPulseForKey) await setPulseFor(body.pulseFor);
     if (hasUiLevelKey) await setUiLevel(body.uiLevel);
     if (hasFlagsKey) await asSettingsField('flags', () => setFlags(body.flags));   // same path as PATCH /api/flags (it broadcasts `flags`)
     if (hasAutoKey) await setAutoWorkflowModel(body.autoWorkflowModel ?? '', { models: autoModels });
@@ -8244,7 +8244,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasDesignModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasPulseForKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasDesignModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
