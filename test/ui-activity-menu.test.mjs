@@ -340,3 +340,9 @@ test('one popup at a time: Activity and a sidebar popup on the same page close e
   t.btn.dispatchEvent(again);
   assert.equal(again.defaultPrevented, false, 'nothing open: the next Escape is the page\'s');
 });
+
+test('a design row is a link that navigates', () => {
+  const t = setup({ runs: { ...RUNS, designs: [{ designId: 'd1', title: 'T', status: 'building', waiting: 1 }] } });
+  t.click(t.btn); t.click(t.row('design:d1'));
+  assert.deepEqual(t.st.hashes, ['#design/d1']);
+});

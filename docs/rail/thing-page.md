@@ -3,7 +3,7 @@
 | Rule | What | Why | Held by |
 |---|---|---|---|
 | `thing.parts-in-stages` | In the one Worca a task has no tab strip: its stages read down, and each part opens under the stage it belongs to (Decisions under Plan, Changes under Build, Activity under Review); Overview is what shows when no part is open. A part is a StagePart: it says what is inside before it opens (5 files +358 −144 · 2 docs; 3 · 1 open; 6 steps so far). The part that matters now opens by itself: Decisions while Plan waits on you, Changes once the task is ready. The card's Changes figure opens its part, and `#run/<task>/<part>` links to it. A stage with nothing to open is a plain row, never a button that does nothing | One way to move through a task, as through a conversation; you see what a part holds without opening it | by hand |
-| `thing.slots` | Top bar, title, metadata line, StatusLine, progress, Figures, Tabs, in that order | Every thing reads the same | run-page-sweep |
+| `thing.slots` | A task's page: top bar, title, metadata line, StatusLine, progress, Figures, Tabs, in that order | Every task reads the same, as its card does | run-page-sweep |
 | `thing.work-phrase` | Where the work goes is one phrase that follows the run, never a badge | One fact, one place | design-system-logic |
 | `thing.list-home` | A list about a step is Overview's focus; a list about the whole is a tab; never both | One place per list | by hand |
 | `thing.one-telling` | On a thing's page a fact about one of its parts is told in one section: a count or a step's cost is not repeated by a head, a section's note or a row. What can be changed gets its control once, without restating the fact around it | `rail.one-place` for a page's parts: three tellings on one screen read as three facts | by hand |
@@ -12,7 +12,7 @@
 | `thing.tabs-by-level` | Inside the tabs, Logs, the graph, Sessions and Actions are Advanced, Agents and log filters Expert; a mode never removes a tab | The page keeps its shape in every mode | design-system-logic |
 | `thing.follows-state` | Rows, tabs, figures and menus show only what the state makes true: no diff before Build runs, no decisions before anything is decided, and what is gone says gone and has no tools | A page never contradicts itself | run-page-model |
 
-**A thing's page** (a run, a group; the pattern for any page about one thing with a state), top to bottom:
+A thing's page starts with a PlaceHead (`panel.place-head`); **A task's page** (a run, a group) is the one exception, top to bottom:
 | Slot | Holds | Never holds |
 |---|---|---|
 | Top bar | The trail to the parent (the page itself is never a crumb; `‹ Parent` at 760px and below); at its right nothing about the thing: quiet lines about the window (the pager, `Offline · retrying`), and the shell's own search, Pulse and New run | Buttons for the thing |

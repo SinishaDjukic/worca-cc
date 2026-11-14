@@ -27,7 +27,7 @@
 
 **Reference for Wave 2.** The Runs list and Chats below describe the prototype's reference pages, not Wave 1's work: Wave 2 Shaping decides them. A list's sentence, selecting and bulk hold now for what Pulse uses.
 
-**A list page** (Runs, Schedules; reference for Wave 2): the top bar's trail, then the title row with the page's one action at its right
+**A list page** (Runs; reference for Wave 2; never for a new tracked thing, which is A list in its place, `build.default`): the top bar's trail, then the title row with the page's one action at its right
 (`New schedule`), then a list. **A list** (runs, updates, files, PRs): divided ListRows on the rail. A row is its state mark on the rail (a status
 dot, or a tick box while selecting), a title line, a meta line, its time or figure at the right; the whole row opens
 its one target, so a fact in the row is text, never a second link. The row's own actions are a small ⋯ (22px, a 14px mark, centred on its title's line, inside the row) at its right end
