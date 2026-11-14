@@ -246,6 +246,12 @@ test('Q7 owner, self, archived, composer and input shape refusals', async () => 
   assert.equal((await w.m.send(A, { chatId: A, text: 'x' })).code, 'CHAT_MESSAGE_SELF');
   assert.equal((await w.m.send(A, { chatId: B, text: 'x' })).code, 'CHAT_MESSAGE_ARCHIVED');
   assert.equal((await w.m.send(A, { chatId: C, text: 'x' })).code, 'CHAT_MESSAGE_NOT_FOUND', 'a composer thread');
+  const d = world({ threads: { [C]: { mode: 'design' } } });   // a Design chat is a surface of its own, like a composer chat
+  assert.equal((await d.m.send(A, { chatId: C, text: 'x' })).code, 'CHAT_MESSAGE_NOT_FOUND', 'a design thread as the target');
+  assert.equal((await d.m.send(C, { chatId: B, text: 'x' })).code, 'CHAT_MESSAGE_NOT_FOUND', 'a design thread as the sender');
+  assert.equal((await d.m.list(C, {})).code, 'CHAT_MESSAGE_NOT_FOUND', 'a design thread lists no chats');
+  assert.equal((await d.m.postFromRun(RUN(), { chatId: C, text: 'x', intent: 'note' })).code, 'CHAT_MESSAGE_NOT_FOUND', 'a run posts into no design thread');
+  assert.deepEqual([d.appends.length, d.listCalls.length], [0, 0]);
   assert.equal((await w.m.send(A, { chatId: 'ask_ffffffff', text: 'x' })).code, 'CHAT_MESSAGE_NOT_FOUND');
   assert.equal((await w.m.send(A, { chatId: 'ask_zz', text: 'x' })).code, 'CHAT_MESSAGE_BAD_INPUT');
   assert.equal((await w.m.send(A, { chatId: B, text: 'x'.repeat(CHAT_MESSAGE_TEXT_MAX + 1) })).code, 'CHAT_MESSAGE_BAD_INPUT');

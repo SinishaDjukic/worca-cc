@@ -1164,8 +1164,12 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .cw-pair{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;}
 .lr-pin{display:inline-flex;vertical-align:-1px;margin-right:4px;color:var(--ink-3);}
 .convo-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2);}
-.convo-you{align-self:flex-end;max-width:72%;padding:6px 12px;border-radius:var(--r-md);background:var(--field);}
-.convo-words{margin:0 0 0 32px;}
+.convo-you{position:relative;align-self:flex-end;max-width:72%;padding:6px 12px;border-radius:var(--r-md);background:var(--field);}
+.convo-words{position:relative;margin:0 0 0 32px;}
+/* panel.turn-time: a turn's time sits in the column's 14px gap under it, at its right edge; showing it changes only its opacity, so nothing moves */
+.turn-time{position:absolute;top:100%;right:0;line-height:14px;font-size:var(--fs-meta);color:var(--ink-3);white-space:nowrap;user-select:none;-webkit-user-select:none;pointer-events:none;opacity:0;transition:opacity var(--motion-quick) var(--ease);}
+:is(.convo-you,.convo-words):is(:hover,:focus-within,.is-time-shown) .turn-time{opacity:1;}
+@media (prefers-reduced-motion: reduce){.turn-time{transition:none;}}
 .convo-words b{font-weight:600;}
 .convo-words code,.convo-code pre{font-family:var(--mono,'JetBrains Mono',ui-monospace,monospace);font-size:12px;}
 .convo-words code{padding:1px 4px;border-radius:var(--r-xs);background:var(--field);}

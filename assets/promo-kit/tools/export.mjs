@@ -29,12 +29,17 @@ function run(ffmpeg, args) {
 /** concat-demuxer list line for a path on any OS (forward slashes, single quotes escaped). */
 const concatLine = (p) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`;
 
+const abortError = () => { const e = new Error('the export was stopped'); e.name = 'AbortError'; return e; };
+
 /**
- * Render `html` (a film's index.html) to `out`.
+ * Render `html` (a film's index.html) to `out`. An aborted `signal` stops it with an `AbortError`: every browser and
+ * encoder is closed and nothing is left at `out`. A worker that fails stops the others. `chromeOptions` are launch()'s
+ * `fileAccess` and `args`; `onBrowser(browser)` runs on every browser (the probe and each worker) before it opens the
+ * film.
  * @returns {Promise<{frames:number, expectedFrames:number, duration:number, bytes:number, out:string, violations:string[]}>}
  */
 export async function exportFilm({ html, out, audio = null, scale = 2, workers, crf = 14, preset = 'slow', quality = 95, runup = 30,
-  from = 0, to, chrome, ffmpeg, onProgress } = {}) {
+  from = 0, to, chrome, ffmpeg, onProgress, signal = null, chromeOptions = {}, onBrowser = null } = {}) {
   if (!html) throw new Error('exportFilm: html is required');
   if (!out) throw new Error('exportFilm: out is required');
   const FF = ffmpeg || findFfmpeg();
@@ -43,10 +48,25 @@ export async function exportFilm({ html, out, audio = null, scale = 2, workers, 
   out = resolve(out);
   mkdirSync(dirname(out), { recursive: true });
 
-  const probe = await launch({ scale: 0.25, chrome });
+  // One switch for every loop: the caller's signal, or the first worker that fails.
+  const stop = new AbortController();
+  const onOuter = () => stop.abort();
+  if (signal?.aborted) throw abortError();
+  signal?.addEventListener('abort', onOuter, { once: true });
+  const halted = () => { if (stop.signal.aborted) throw abortError(); };
+  const open = async (opts) => {
+    const b = await launch({ ...opts, chrome, ...chromeOptions });
+    try { if (onBrowser) await onBrowser(b); } catch (e) { await b.close(); throw e; }
+    return b;
+  };
+
   let meta;
-  try { await openFilm(probe, html); meta = await probe.evaluate('({dur: __film.dur, fps: __film.fps, violations: __film.violations})'); }
-  finally { await probe.close(); }
+  try {
+    const probe = await open({ scale: 0.25 });
+    try { await openFilm(probe, html); meta = await probe.evaluate('({dur: __film.dur, fps: __film.fps, violations: __film.violations})'); }
+    finally { await probe.close(); }
+    halted();
+  } catch (e) { signal?.removeEventListener('abort', onOuter); throw e; }
   const FPS = meta.fps || 60;
   const end = Math.min(meta.dur, to ?? meta.dur);
   const f0 = Math.round(from * FPS), f1 = Math.round(end * FPS), N = f1 - f0;
@@ -69,11 +89,11 @@ export async function exportFilm({ html, out, audio = null, scale = 2, workers, 
   };
 
   async function worker(k, [a, z]) {
-    const b = await launch({ scale, chrome });
+    const b = await open({ scale });
     let ff = null;
     try {
       const film = await openFilm(b, html);
-      for (let i = Math.max(0, a - runup); i < a; i++) await film.seek(i / FPS);   // run-up: compositor history
+      for (let i = Math.max(0, a - runup); i < a; i++) { halted(); await film.seek(i / FPS); }   // run-up: compositor history
       const part = join(tmp, `part-${k}.mp4`);
       ff = spawn(FF, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'image2pipe', '-framerate', String(FPS), '-c:v', 'mjpeg', '-i', '-',
         '-vf', VF, '-c:v', 'libx264', '-preset', preset, '-crf', String(crf), '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-r', String(FPS),
@@ -83,6 +103,7 @@ export async function exportFilm({ html, out, audio = null, scale = 2, workers, 
       const closed = once(ff, 'close');
       closed.catch(() => { /* spawn error: surfaced by the await below */ });
       for (let i = a; i < z; i++) {
+        halted();
         await film.seek(i / FPS);
         const jpg = await b.capture({ format: 'jpeg', quality });
         if (ff.exitCode !== null) break;                                         // x264 died: report below
@@ -91,6 +112,7 @@ export async function exportFilm({ html, out, audio = null, scale = 2, workers, 
       }
       ff.stdin.end();
       const [code] = await closed;
+      halted();
       if (code !== 0) throw new Error(`ffmpeg worker ${k}: ${err.slice(-400)}`);
       return part;
     } finally {
@@ -100,7 +122,12 @@ export async function exportFilm({ html, out, audio = null, scale = 2, workers, 
   }
 
   try {
-    const parts = await Promise.all(chunks.map((c, k) => worker(k, c)));
+    // Every worker runs to its own end (its browser and encoder closed) before the parts folder goes.
+    const runs = await Promise.allSettled(chunks.map((c, k) => worker(k, c).catch((e) => { stop.abort(); throw e; })));
+    if (signal?.aborted) throw abortError();
+    const failed = runs.filter((r) => r.status === 'rejected').map((r) => r.reason);
+    if (failed.length) throw failed.find((e) => e?.name !== 'AbortError') ?? failed[0];
+    const parts = runs.map((r) => r.value);
     progress(true);
     const list = join(tmp, 'parts.txt');
     writeFileSync(list, parts.map(concatLine).join('\n'));
@@ -115,7 +142,10 @@ export async function exportFilm({ html, out, audio = null, scale = 2, workers, 
     }
     const m = readMP4(out);
     return { frames: m.samples, expectedFrames: N, duration: m.sttsDuration, bytes: statSync(out).size, out, violations: meta.violations };
-  } finally { rmSync(tmp, { recursive: true, force: true }); }
+  } finally {
+    signal?.removeEventListener('abort', onOuter);
+    rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 const isMain = () => { try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } };

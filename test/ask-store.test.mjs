@@ -849,6 +849,7 @@ test('S1 listChatCandidates: newest first, the excluded id and composer chats le
   const newest = createThread({ title: `${tag} newest` });
   const caller = createThread({ title: `${tag} caller` });
   const composer = createThread({ title: `${tag} composer`, mode: 'composer' });
+  const design = createThread({ title: `${tag} design`, mode: 'design' });
   const archived = createThread({ title: `${tag} archived` });
   updateThread(oldest.id, { context: { pinned: true, projectKey: 'demo-0000abcd' } });
   setUpdated(oldest.id, '2026-01-01T00:00:00.000Z');
@@ -869,7 +870,7 @@ test('S1 listChatCandidates: newest first, the excluded id and composer chats le
   const arch = listChatCandidates({ includeArchived: true, query: tag }).find((r) => r.id === archived.id);
   assert.equal(typeof arch.archivedAt, 'string');
   const all = ids(listChatCandidates({ excludeId: caller.id }));
-  assert.ok(!all.includes(caller.id) && !all.includes(composer.id) && !all.includes(archived.id));
+  assert.ok(!all.includes(caller.id) && !all.includes(composer.id) && !all.includes(design.id) && !all.includes(archived.id));
   assert.ok(all.indexOf(newest.id) < all.indexOf(middle.id) && all.indexOf(middle.id) < all.indexOf(oldest.id), 'unfiltered: same relative order');
 });
 

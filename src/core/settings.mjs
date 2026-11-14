@@ -56,7 +56,7 @@ import { isAnswererLead, ANSWERER_LEAD_KEYS } from '../shared/answerer.mjs';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
 import { suggestModelHandle } from '../shared/connections.mjs';
 export { suggestModelHandle };
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir, availableParallelism } from 'node:os';
 import { randomBytes } from 'node:crypto';
@@ -74,6 +74,8 @@ import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_M
 import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
 import { normalizePins, storedPins } from '../shared/home-pins.mjs';
 import { DEFAULT_PATTERN, DEFAULT_TYPES, TYPE_RE, patternProblem } from '../shared/naming/pattern.mjs';
+import { IMAGE_SERVICES, IMAGE_SHAPES, originOf } from '../shared/image-services.mjs';
+export { IMAGE_SERVICES, IMAGE_SHAPES };
 
 /**
  * The real OS home base, honoring HOME/USERPROFILE so tests can sandbox it.
@@ -132,13 +134,16 @@ function expandTilde(p) {
  * Callers pass the object they got from readSettings() with their own key
  * added/deleted — that read-modify-write is what makes unknown keys survive
  * (no migration, no key loss; §5.1 storage note).
+ * The body is synchronous on purpose: a setter that awaits nothing between its
+ * readSettings() and this call reads, merges and commits in one run of the event
+ * loop, so two setters saved at the same moment can never drop each other's change.
  */
 async function persistSettings(settings) {
-  await mkdir(join(defaultRoot(), '.worca-cc'), { recursive: true }); // bootstrap dir
+  mkdirSync(join(defaultRoot(), '.worca-cc'), { recursive: true }); // bootstrap dir
   const file = settingsFile();
   const tmp = `${file}.${randomBytes(4).toString('hex')}.tmp`;
-  await writeFile(tmp, JSON.stringify(settings, null, 2) + '\n', 'utf8');
-  await rename(tmp, file);
+  writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n', 'utf8');
+  renameSync(tmp, file);
 }
 
 /** Setup apply (D20): set or delete whole top-level keys in ONE read and ONE persistSettings. `undefined` deletes. */
@@ -1301,6 +1306,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'modelRoles',                              // Models › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
   'requirementsInterview',                  // Models › Engines › Claude: the requirements interview { model, effort }
   'askEngine', 'askModels',                  // Chat's engine for new chats and its model per engine (user-only, D17)
+  'designModels',                            // Models › Engines › Design: { <engine>: { lead|builder: { model, effort } } }
   'tagDimensions',                           // Settings › Tags › Tag dimensions [{ key, label, values, required, default? }]
   'enforceTags',                             // Settings › Tags › Require mandatory tags to start a run
 ]);
@@ -1393,6 +1399,52 @@ export async function setAskModels(input) {
   if (v === undefined) delete settings.askModels; else settings.askModels = v;
   await persistSettings(settings);
   return { askModels: askModelsSetting() };
+}
+/** Design's agents: the lead (the main agent) and the builders (one per section). */
+export const DESIGN_AGENT_ROLES = Object.freeze(['lead', 'builder']);
+/** The Models page's Design picks, { <engine>: { lead?: {model, effort?}, builder?: {model, effort?} } } (user-only). A
+ *  design's own pick wins over these; an unset one falls back to the Deep thinking (lead) or Everyday coding (builder) role. */
+export function designModelsSetting() {
+  if (homeGuarded()) return {};
+  const value = readSettings().designModels;
+  return isObj(value) ? value : {};
+}
+/** One Design pick: { model, effort? } with a model, or null to clear. `engine` checks the effort. */
+export function normalizeDesignPick(engine, input, label = 'model') {
+  const pair = normalizeModelPair(engine, input, label);
+  if (pair && !pair.model) throw new Error(`${label}.model is required: pick a model, or clear the pick`);
+  return pair;
+}
+export function assertDesignModelsInput(input) {
+  if (!isObj(input)) throw new Error('designModels must be { <engine>: { lead|builder: { model, effort } | null } }');
+  const out = {};
+  for (const [engine, roles] of Object.entries(input)) {
+    if (!MODEL_ENGINES.includes(engine)) throw new Error(`designModels: unknown engine "${engine}"`);
+    if (!isObj(roles)) throw new Error(`designModels.${engine} must be an object of lead|builder → { model, effort } | null`);
+    out[engine] = {};
+    for (const [role, value] of Object.entries(roles)) {
+      if (!DESIGN_AGENT_ROLES.includes(role)) throw new Error(`designModels.${engine}: unknown agent "${role}" (one of ${DESIGN_AGENT_ROLES.join(', ')})`);
+      out[engine][role] = normalizeDesignPick(engine, value, `designModels.${engine}.${role}`);
+    }
+  }
+  return out;
+}
+/** setDesignModels' merge, pure, over an ALREADY asserted patch. undefined = delete. */
+export function nextDesignModels(current, patch) {
+  const all = isObj(current) ? { ...current } : {};
+  for (const [engine, roles] of Object.entries(patch)) {
+    const cur = isObj(all[engine]) ? { ...all[engine] } : {};
+    for (const [role, pair] of Object.entries(roles)) { if (pair === null) delete cur[role]; else cur[role] = pair; }
+    if (Object.keys(cur).length) all[engine] = cur; else delete all[engine];
+  }
+  return Object.keys(all).length ? all : undefined;
+}
+/** Merge a Design pick patch (null clears a pick) and write it. Returns what it wrote, so the answer holds under homeGuarded. */
+export async function setDesignModels(input) {
+  const patch = assertDesignModelsInput(input); const settings = readSettings();
+  const v = nextDesignModels(settings.designModels, patch);
+  if (v === undefined) delete settings.designModels; else settings.designModels = v;
+  await persistSettings(settings); return { designModels: v ?? {} };
 }
 export function assertRunEngineInput(input) {
   if (input === null || input === undefined || input === '') return null;
@@ -2446,6 +2498,8 @@ export async function removeGlobalModel(id) {
 //     openai:    { baseUrl?, apiKey?, maxConcurrent? },
 //     anthropic: { baseUrl?, apiKey?, maxConcurrent? },
 //     speech:    { stt: {...}, tts: {...} },   // voice mode, NOT an upstream — see the Speech block below
+//     images:    { service?, baseUrl?, model?, apiKey?, price? },   // Design pictures, NOT an upstream — see the Images block below
+//     sound:     { apiKey? },   // Design sound (ElevenLabs)
 //   }
 //   (An older Worca also stored copilot.acknowledgedTerms / termsVersion; readers ignore them.)
 // ---------------------------------------------------------------------------
@@ -2686,6 +2740,162 @@ export async function updateSpeech(patch = {}) {
   if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
   await persistSettings(settings);
   return speechConfig();
+}
+
+// ── Images (Design pictures: the lead of a Design round can have a picture made) ──
+//   providers: { …, images: { service?, baseUrl?, model?, apiKey?, price? } }
+// service picks a preset of IMAGE_SERVICES (src/shared/image-services.mjs), which fills the
+// address and the model under the stored block. The price has no default: a save must name
+// one (0 for a free server). NOT a model-bridge upstream: it never joins UPSTREAM_PROVIDERS,
+// PROVIDER_SECRET_KEYS, allProviders() or the catalog. The key is literal or a whole-value
+// ${VAR}, resolved at use time by resolveProviderSecret, and only ever goes to the saved
+// address's origin: a save that moves the address to another origin drops the stored key.
+const IMAGES_FIELDS = Object.freeze(['service', 'baseUrl', 'model', 'apiKey', 'price']);
+const IMAGES_PRICE_MISSING = 'Enter a price; 0 for a free server';
+const IMAGES_QUIET = Object.freeze({ quiet: true });
+
+/** Why `v` is not a valid value for images field `k`, or null when it is. */
+function imagesFieldError(k, v) {
+  if (k === 'service') return typeof v === 'string' && Object.hasOwn(IMAGE_SERVICES, v.trim().toLowerCase()) ? null : `unknown image service "${v}" (openai, xai, openrouter or other)`;
+  if (k === 'baseUrl') return isUpstreamBaseUrl(v) ? null : 'baseUrl must be an http(s) URL with no query or fragment';
+  if (k === 'apiKey') return typeof v === 'string' && v.trim() ? null : 'apiKey must be a non-empty string';
+  if (k === 'price') {
+    const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN;
+    return Number.isFinite(n) && n >= 0 ? null : IMAGES_PRICE_MISSING;
+  }
+  return typeof v === 'string' && SPEECH_ID_RE.test(v.trim()) ? null : `${k} must be an id (letters, digits and . _ - : / @ +)`;
+}
+
+function normImagesField(k, v) {
+  if (k === 'baseUrl') return v.trim().replace(/\/+$/, '');
+  if (k === 'price') return Number(v);
+  if (k === 'service') return v.trim().toLowerCase();
+  return v.trim();
+}
+
+/** Stored images block → only the valid fields (never throws; like sanitizeSpeech). `quiet` skips the warnings. */
+function sanitizeImages(raw, { quiet = false } = {}) {
+  const r = isObj(raw) ? raw : {};
+  const out = {};
+  for (const k of IMAGES_FIELDS) {
+    if (r[k] === undefined) continue;
+    const why = imagesFieldError(k, r[k]);
+    if (!why) out[k] = normImagesField(k, r[k]);
+    else if (!quiet) console.warn(`[worca] providers.images.${k}: ${why} — ignored`);
+  }
+  return out;
+}
+
+/** A stored block → the effective config: the checked service's preset under the valid fields. */
+function effectiveImages(block, opts) {
+  const s = sanitizeImages(block, opts);
+  const service = s.service || 'openai';
+  const preset = IMAGE_SERVICES[service];
+  return { service, baseUrl: preset.baseUrl, model: preset.model, apiKey: '', price: null, ...s };
+}
+
+/** Effective images config: the preset under the stored block. The key stays raw (literal or ${VAR}). */
+export function imagesConfig() {
+  if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) return effectiveImages(undefined);
+  const all = readSettings().providers;
+  return effectiveImages(isObj(all) ? all.images : undefined);
+}
+
+/**
+ * Patch { service?, baseUrl?, model?, apiKey?, price? }; '' / null clears a field. Validates the
+ * whole patch before writing; a block left without a price is refused (D9), and a block
+ * with nothing valid left is removed.
+ * @returns {Promise<object>} the effective config
+ * @throws {Error}
+ */
+export async function updateImages(patch = {}) {
+  assertTestSettingsAccess();
+  if (!isObj(patch)) throw new Error('images patch must be an object');
+  for (const [k, v] of Object.entries(patch)) {
+    if (!IMAGES_FIELDS.includes(k)) throw new Error(`unknown images field ${JSON.stringify(k)}`);
+    if (isClearInput(v)) continue;
+    const why = imagesFieldError(k, v);
+    if (why) throw new Error(why);
+  }
+  const settings = readSettings();
+  const all = isObj(settings.providers) ? settings.providers : {};
+  const stored = isObj(all.images) ? all.images : {};
+  const next = { ...stored };
+  for (const [k, v] of Object.entries(patch)) {
+    if (isClearInput(v)) delete next[k]; else next[k] = normImagesField(k, v);
+  }
+  // The origin rule: a stored key never follows the address to another origin.
+  if (!Object.hasOwn(patch, 'apiKey')
+    && originOf(effectiveImages(next, IMAGES_QUIET).baseUrl) !== originOf(effectiveImages(stored, IMAGES_QUIET).baseUrl)) delete next.apiKey;
+  // The price rule (D9): what survives must name a price, else nothing is written.
+  const kept = sanitizeImages(next, IMAGES_QUIET);
+  if (Object.keys(kept).length && kept.price === undefined) throw new Error(IMAGES_PRICE_MISSING);
+  if (Object.keys(kept).length) all.images = next; else delete all.images;
+  if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
+  await persistSettings(settings);
+  return imagesConfig();
+}
+
+// ── Sound (Design sound: a Design video's voice and music, made through ElevenLabs) ──
+//   providers: { …, sound: { apiKey? } }
+// NOT a model-bridge upstream: it never joins UPSTREAM_PROVIDERS, PROVIDER_SECRET_KEYS,
+// allProviders() or the catalog. The key is literal or a whole-value ${VAR}, resolved at use
+// time by resolveProviderSecret, and only ever goes to ElevenLabs.
+const SOUND_FIELDS = Object.freeze(['apiKey']);
+const SOUND_KEY_MAX = 512;
+const SOUND_QUIET = Object.freeze({ quiet: true });
+
+/** Why `v` is not a valid value for sound field `k`, or null when it is. */
+function soundFieldError(k, v) {
+  if (typeof v !== 'string' || !v.trim()) return `${k} must be a non-empty string`;
+  return v.trim().length > SOUND_KEY_MAX ? `${k} must be at most ${SOUND_KEY_MAX} characters` : null;
+}
+
+/** Stored sound block → only the valid fields, trimmed (never throws; like sanitizeImages). `quiet` skips the warnings. */
+function sanitizeSound(raw, { quiet = false } = {}) {
+  const r = isObj(raw) ? raw : {};
+  const out = {};
+  for (const k of SOUND_FIELDS) {
+    if (r[k] === undefined) continue;
+    const why = soundFieldError(k, r[k]);
+    if (!why) out[k] = r[k].trim();
+    else if (!quiet) console.warn(`[worca] providers.sound.${k}: ${why} — ignored`);
+  }
+  return out;
+}
+
+/** Effective sound config: the default under the stored block. The key stays raw (literal or ${VAR}). */
+export function soundConfig() {
+  if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) return { apiKey: '' };
+  const all = readSettings().providers;
+  return { apiKey: '', ...sanitizeSound(isObj(all) ? all.sound : undefined) };
+}
+
+/**
+ * Patch { apiKey? }; '' / null clears it. Validates the whole patch before writing; a block
+ * with nothing valid left is removed, and so is an empty providers.
+ * @returns {Promise<{ apiKey: string }>} the effective config
+ * @throws {Error}
+ */
+export async function updateSound(patch = {}) {
+  assertTestSettingsAccess();
+  if (!isObj(patch)) throw new Error('sound patch must be an object');
+  for (const [k, v] of Object.entries(patch)) {
+    if (!SOUND_FIELDS.includes(k)) throw new Error(`unknown sound field ${JSON.stringify(k)}`);
+    if (isClearInput(v)) continue;
+    const why = soundFieldError(k, v);
+    if (why) throw new Error(why);
+  }
+  const settings = readSettings();
+  const all = isObj(settings.providers) ? settings.providers : {};
+  const next = isObj(all.sound) ? { ...all.sound } : {};
+  for (const [k, v] of Object.entries(patch)) {
+    if (isClearInput(v)) delete next[k]; else next[k] = v.trim();
+  }
+  if (Object.keys(sanitizeSound(next, SOUND_QUIET)).length) all.sound = next; else delete all.sound;
+  if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
+  await persistSettings(settings);
+  return soundConfig();
 }
 
 /** Forget the Copilot sign-in (token + login). */

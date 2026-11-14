@@ -14,7 +14,7 @@ test('a DB stamped 90 without pipelines.cost_cap_usd gains it, keeps its runs (c
   db.exec('ALTER TABLE pipelines DROP COLUMN cost_cap_usd; PRAGMA user_version = 90');
   seed(db);
   migrate(db);
-  assert.equal(SCHEMA_VERSION, 91);
+  assert.ok(SCHEMA_VERSION >= 91);
   assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
   assert.ok(cols(db, 'pipelines').includes('cost_cap_usd'));
   assert.deepEqual({ ...db.prepare("SELECT status, total_cost_usd, cost_cap_usd FROM pipelines WHERE id = 'p-1'").get() },

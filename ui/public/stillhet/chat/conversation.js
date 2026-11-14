@@ -79,6 +79,7 @@
     let engAsk = null;   // live: an engine switch dev asked to confirm, as it drops the chat's oldest turns
   const where = opts.where || (side ? '#ask-convo' : '#route-chat');
   let chatId = '', comp = fresh(opts.mode), menu = '', hover = null, opened = new Set(), timer = 0;
+  let timeShown = '';   // panel.turn-time: the key of the turn whose time a tap showed (its data-anchor or data-words-turn)
   const drafts = new Map();   // what is typed in each chat's composer, kept while another chat is open
   const sendingIn = new Set();   // the chats ('' is Chat home) whose message is on its way: a send's answer lands only there
   // live: a chat just made by a send is open before the list's refetch brings its row
@@ -365,7 +366,7 @@
   const formPick = (t, items) => R.sentencePicker({ id: `cf-${t.id}`, text: t.form.value, items: items.map((v) => (typeof v === 'string' ? { id: v, text: v, checked: v === t.form.value } : v.id ? { ...v, checked: v.id === t.form.value } : v)), open: menu === `cf-${t.id}`, chevron: R.icon('chevron', 10) });
   const formField = (t, label, o = {}) => R.field({ id: `cf-${t.id}-f`, label, quietLabel: true, value: o.value || '', placeholder: o.placeholder || '', multiline: !!o.multiline, hint: o.max ? `Up to ${o.max} characters` : '', attrs: { 'data-cf-field': t.id, maxlength: o.max || null } });
   const FORMS = {
-    pr: { value: () => 'ready for review', text: (t) => `Open the PR for ${t.title}`, body: (t) => formField(t, 'PR title', { value: t.title }) + `<span class="tp-sentence">as ${formPick(t, ['ready for review', 'a draft'])} into dev</span>`, say: (t, f) => `${f.say}${t.form.value === 'a draft' ? ' as a draft' : ''}` },
+    pr: { value: () => 'ready for review', text: (t) => `Open the PR for ${t.title}`, body: (t) => formField(t, 'PR title', { value: t.title }) + `<span class="tp-sentence">as ${formPick(t, ['ready for review', 'a draft'])} into ${esc(LIVE() ? t.base || 'its base' : 'dev')}</span>`, say: (t, f) => `${f.say}${t.form.value === 'a draft' ? ' as a draft' : ''}` },
     model: { value: () => 'Sonnet 5.5', text: () => 'Resume on another model', body: (t) => `<span class="tp-sentence">Every remaining step runs on ${formPick(t, ENGINE_ITEMS)}</span>` },
     'resume-at': { value: () => '17:00', text: () => 'When it resumes', body: (t) => `<span class="tp-sentence">Resume at ${formPick(t, R.TIMES_OF_DAY)} today</span>` },
     cap: { value: () => '$40', text: () => 'Raise the cost cap', body: (t) => `<span class="tp-sentence">Raise it to ${formPick(t, ['$20', '$40', '$80', '$160'])} for this task</span>` },
@@ -562,7 +563,9 @@
   const termPane = (x, key) => R.terminalPane({ title: x.term.title || x.cmd, lines: x.term.lines, closed: x.term.closed, hooks: { stop: { 'data-term-stop': key }, close: { 'data-terminal': key }, send: { 'data-term-input': key } } });
   function turnHtml(x, i) {
     const fold = () => ({ 'data-fold-turn': String(i), ...(x.id ? { 'data-anchor': x.id } : {}) });
-    if (x.t === 'you') return R.youTurn({ text: x.text, quote: x.quote || '', files: x.files || [], refs: (x.refs || []).map((r) => ({ text: r.title, mark: R.kindMark({ kind: 'task', tone: 'idle', size: 14 }), attrs: { 'data-open-ref': r.case } })), attrs: { 'data-anchor': x.id || '' } });
+    // panel.turn-time: a you or words turn takes the focus and carries its time, shown on hover, focus or a tap; its first
+    // data-* attribute is its key, so focusMark finds it again after a repaint
+    if (x.t === 'you') { const html = R.youTurn({ text: x.text, quote: x.quote || '', files: x.files || [], refs: (x.refs || []).map((r) => ({ text: r.title, mark: R.kindMark({ kind: 'task', tone: 'idle', size: 14 }), attrs: { 'data-open-ref': r.case } })), attrs: { 'data-anchor': x.id || '', tabindex: '0' }, time: R.turnTime({ at: x.at, now: Date.now() }) }); return x.id && timeShown === x.id ? html.replace('class="convo-you"', 'class="convo-you is-time-shown"') : html; }
     // commands are dev's on Rail's rail (CommandRow, CommandGroup): a group folded to its head, a failure opening it and
     // itself; no marks, the words say how each went; one fold opens the command and its output, each with Copy
     const TERMINAL = { 'data-terminal': String(i) };   // panel.terminal: the TerminalPane under the command, in both kinds
@@ -620,7 +623,7 @@
       return askChanges(x) ? R.planCard({ menu: planMenu, extra, check: 'shape check passed', title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-plan-full': x.id } }, full, fullOpen: !!x.fullOpen, attrs: { 'data-anchor': x.id } }) + askChanges(x) : R.planCard({ menu: planMenu, extra, check: 'shape check passed', title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-plan-full': x.id } }, full, fullOpen: !!x.fullOpen, attrs: { 'data-anchor': x.id } });
     }
     if (x.t === 'filesgrid') return R.filesCard({ label: x.label || 'Files', files: x.files.map((f) => ({ ...f, view: doOr(`open ${f.name}`, 'file', { threadId: chatId, attId: f.att }), download: doOr(`download ${f.name}`, 'file', { threadId: chatId, attId: f.att }) })) });
-    if (x.t === 'words') return `<p class="convo-words">${x.parts && LIVE() ? x.parts.map(refPart).join('') : x.html}</p>`;
+    if (x.t === 'words') { const key = x.key || String(i); return `<p class="convo-words${timeShown === key ? ' is-time-shown' : ''}"${R.attrs({ 'data-words-turn': key, tabindex: '0' })}>${x.parts && LIVE() ? x.parts.map(refPart).join('') : x.html}${R.turnTime({ at: x.at, now: Date.now() })}</p>`; }   // no data-anchor: a timeline tick is a you turn or a card, never a paragraph
     if (x.t === 'failed') return R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'fail', size: 16 }), text: `<b>${esc(x.text)}</b>${x.details ? ` ${esc(x.detail)}` : ''}`, end: R.button({ label: x.details ? 'Hide details' : 'Details', kind: 'quiet', attrs: { 'data-failed-details': x.id, 'aria-expanded': String(!!x.details) } }) + R.button({ label: 'Try again', kind: 'quiet', attrs: { 'data-failed-retry': x.id } }), attrs: { 'data-anchor': x.id } });   // fail.no-raw: the raw error behind Details
     if (x.t === 'proposal') return proposalHtml(x);
     if (x.t === 'divider') return R.turnDivider({ text: x.text });
@@ -721,7 +724,7 @@
       const tone = x?.t === 'question' ? 'ask' : x?.t === 'fail' ? 'fail' : t && t.kind !== 'schedule' ? R.markTone(stOf(t)) : '';
       const words = (s) => String(s || '').replace(/<[^>]+>/g, '');   // every tick names its turn: an act's text is markup
       const title = x?.t === 'you' ? x.text : x?.t === 'question' ? x.text : x?.t === 'fail' ? x.cmd : t?.title || x?.title || words(x?.text) || (x?.t === 'commands' ? x.rows[0]?.summary : '') || '';
-      const line = x?.t === 'you' ? `You · ${x.when || ''}` : x?.t === 'question' ? `Waiting for you · ${x.when || ''}` : x?.t === 'fail' ? `Failed · ${x.when || ''}` : t?.detail || (x?.t === 'commands' ? `${x.rows.length} commands` : x?.kind || (x?.t === 'plan' ? 'Plan' : x?.t === 'feature' ? 'Feature' : x?.t === 'ship' ? 'Ship' : x?.t === 'proposal' ? 'Proposed' : ''));
+      const line = x?.t === 'you' ? `You · ${x.when || R.turnTimeText(x.at, Date.now())}` : x?.t === 'question' ? `Waiting for you · ${x.when || ''}` : x?.t === 'fail' ? `Failed · ${x.when || ''}` : t?.detail || (x?.t === 'commands' ? `${x.rows.length} commands` : x?.kind || (x?.t === 'plan' ? 'Plan' : x?.t === 'feature' ? 'Feature' : x?.t === 'ship' ? 'Ship' : x?.t === 'proposal' ? 'Proposed' : ''));
       const mark = x?.t === 'you' ? R.icon('you', 16) : x?.t === 'question' ? R.kindMark({ kind: 'task', tone: 'ask', stage: -1, size: 18 }) : x?.t === 'fail' ? R.kindMark({ kind: 'task', tone: 'fail', stage: -1, size: 18 }) : t ? taskMark(t, 18) : '';
       const top = e.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
       return { id: e.dataset.anchor, at: Math.min(0.98, top / H), kind, tone, title, line, mark };
@@ -1345,7 +1348,19 @@
     if ((hit = on('[data-slice-open]'))) { const [id, k] = hit.dataset.sliceOpen.split('|'), all = turns(), x = all.find((y) => y.id === id); if (x) { const was = x.openSlice === +k; all.forEach((y) => { y.open = false; y.openSlice = -1; }); x.openSlice = was ? -1 : +k; paint(); } return; }   // one thing open at a time: the lent page goes to the slice
     if ((hit = on('[data-open-ref]'))) { window.RailShell.openTask(hit.dataset.openRef, '', hit.textContent.trim()); return; }
     if ((hit = on('[data-say]'))) say(hit.dataset.say);
+    timeTap(e);
   });
+  // panel.turn-time: a tap on a turn's words shows its time (a touch screen has no hover) and hides any other; a second tap
+  // or a tap outside every turn hides it. A control inside the turn, or a click that ends a selection, never toggles it.
+  function timeTap(e) {
+    const turn = e.target.closest('.convo-you, .convo-words');
+    if (turn && (e.target.closest('a, button, [data-open-ref], .kind-chip, input, textarea') || String(window.getSelection?.() || ''))) return;
+    const key = turn ? turn.dataset.anchor ?? turn.dataset.wordsTurn ?? '' : '', next = key && key !== timeShown ? key : '';
+    if (next === timeShown) return;
+    timeShown = next;
+    root.querySelectorAll('.is-time-shown').forEach((el) => el.classList.remove('is-time-shown'));   // only the class: nothing is redrawn, nothing moves
+    if (next) turn.classList.add('is-time-shown');
+  }
   root.addEventListener('submit', (e) => { e.preventDefault(); });
   // A hover only draws its card: the strip under the pointer stays the same elements.
   function paintTimelineHover() {

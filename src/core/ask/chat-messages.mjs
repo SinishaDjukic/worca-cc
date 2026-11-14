@@ -5,6 +5,7 @@
 // the target, one `out` copy in the sender — and the row text never holds the body (only the fenced event row does).
 import { renderUntrustedBlock } from './prompt.mjs';
 import { chatScopeOf } from './scope.mjs';
+import { isSurfaceMode } from './thread-modes.mjs';
 import { redactAskText } from './redact.mjs';
 import { TokenBucket } from '../chat/rate-limiter.mjs';
 import { RUN_QUESTION_OPTIONS_MAX } from '../run-chat-posts.mjs';
@@ -277,7 +278,7 @@ export function createChatMessenger(deps) {
     const rawCause = deps.turnCause(fromThreadId);
     const cause = rawCause && rawCause.kind === 'chat-message' ? rawCause : null;
     if (!sender) return notFound(fromThreadId);
-    if (!target || target.mode === 'composer' || sender.mode === 'composer' || !ownerOk(sender, target)) return notFound(targetId);
+    if (!target || isSurfaceMode(target.mode) || isSurfaceMode(sender.mode) || !ownerOk(sender, target)) return notFound(targetId);
     if (target.id === fromThreadId) return refuse('CHAT_MESSAGE_SELF', 'A chat cannot send a message to itself.');
     if (target.archivedAt) return refuse('CHAT_MESSAGE_ARCHIVED', `${targetId} is archived; restore it before sending.`);
     if (replyTo && !replied) return refuse('CHAT_MESSAGE_REPLY_UNKNOWN', `${replyTo} is not a message this chat received.`);
@@ -357,12 +358,12 @@ export function createChatMessenger(deps) {
     if (text.length > CHAT_MESSAGE_TEXT_MAX) return refuse('CHAT_MESSAGE_BAD_INPUT', `text is longer than ${CHAT_MESSAGE_TEXT_MAX} characters.`);
     const targetId = i.chatId;
     const target0 = deps.getThread(targetId);
-    if (!target0 || target0.mode === 'composer') return notFound(targetId);
+    if (!target0 || isSurfaceMode(target0.mode)) return notFound(targetId);
     const label = String(await deps.scopeLabel(s.context ?? null) ?? '');
 
     // ---- commit section: no await from here to the write ----
     const target = deps.getThread(targetId);
-    if (!target || target.mode === 'composer' || !runOwnerOk(s.owner, target)) return notFound(targetId);
+    if (!target || isSurfaceMode(target.mode) || !runOwnerOk(s.owner, target)) return notFound(targetId);
     if (target.archivedAt) return refuse('CHAT_MESSAGE_ARCHIVED', `${targetId} is archived; restore it before sending.`);
     // The queue cap counts other senders' waiting wakes only: one step's posts (at most 5, and the run bucket) each wake
     // the chat, so counting the run's own would refuse its 5th post to one chat (web UI review, cycle 1).
@@ -465,7 +466,7 @@ export function createChatMessenger(deps) {
     let parsed;
     try { parsed = validateListInput(input); } catch (e) { return refuse(e.code || 'CHAT_MESSAGE_BAD_INPUT', e.message); }
     const sender = deps.getThread(fromThreadId);
-    if (!sender || sender.mode === 'composer') return notFound(fromThreadId);
+    if (!sender || isSurfaceMode(sender.mode)) return notFound(fromThreadId);
     const { limit, offset, query, includeArchived } = parsed;
     let rows;
     try {
