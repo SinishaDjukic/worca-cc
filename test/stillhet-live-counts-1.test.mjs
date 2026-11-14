@@ -79,16 +79,17 @@ test('the strip, Pulse\'s tabs and sections equal their rows, and each opens wha
   for (const n of DEMO_NAMES) assert.ok(!d.getElementById('route-chat').textContent.includes(n), `no seeded ${n}`);
 });
 
-test('the spend card shows windowSpendUsd; #insights/spend shows its empty look, no seeded title', async () => {
+test('the spend card shows windowSpendUsd; #insights/spend draws the live page from dev\'s answer, no seeded title (slice 10 D21)', async () => {
   const { w, d, hello } = await liveHost();
   await hello();
   d.querySelector('[data-acct]').click();
   d.querySelector('[data-sub="usage"]').click();
   assert.match(d.querySelector('.spend-card').textContent, /\$12\.50/);
-  w.location.hash = '#insights/spend'; await settle();
-  assert.equal(d.getElementById('route-place').hidden, true);
-  assert.match(d.getElementById('route-today').textContent, /No insights yet\./);
-  for (const n of DEMO_NAMES) assert.ok(!d.getElementById('route-today').textContent.includes(n), `no seeded ${n}`);
+  w.location.hash = '#insights/spend'; await settle(120);
+  assert.equal(d.getElementById('route-place').hidden, false, 'Insights is live: its own page, not the "insights" list state');
+  assert.doesNotMatch(d.body.textContent, /No insights yet\./);
+  assert.match(d.getElementById('route-place').textContent, /Spend/);
+  for (const n of DEMO_NAMES) assert.ok(!d.getElementById('route-place').textContent.includes(n), `no seeded ${n}`);
 });
 
 test('only the adapter writes: set, remove and taskGone change nothing; the Tasks list\'s menu and selection are dev\'s (Tasks D17)', async () => {

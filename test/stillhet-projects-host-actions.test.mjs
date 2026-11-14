@@ -137,15 +137,34 @@ test('fit: while its settings are still being read (or failed), Change, Who pays
   assert.equal(rowButton(h.d, 'Labels').disabled, false, 'once read, Change is on');
 });
 
-test('live, the page holds no stand-in: no "not in Stillhet yet", no RailWould, no Branch names row and no spend fact', async () => {
-  const h = await projectsHost({ hash: `#projects/${KEYS.ok}` });
+// slice 10 D19: the project page's spend fact is this month's stats answer, its project row by name
+const MONTH = '/api/stats?range=month&report=1';
+const monthAnswer = { bucket: 'day', windowStartMs: 0, windowEndMs: 1, humanRateUsd: 0, totals: { spentUsd: 15.5, runs: 2 }, prev: null, series: [],
+  report: { buckets: [], prevRuns: null, runs: [{ id: 'a', person: null, project: 'seed-ok', workflow: null, status: 'finished', pr: null, tags: {}, usd: 12.4, hours: 0, inCohort: true, startedMs: 1, hourBucket: -1, spend: [] },
+    { id: 'b', person: null, project: 'seed-local', workflow: null, status: 'finished', pr: null, tags: {}, usd: 3.1, hours: 0, inCohort: true, startedMs: 1, hourBucket: -1, spend: [] }] } };
+
+test('live, the page holds no stand-in: no "not in Stillhet yet", no RailWould, no Branch names row; the spend fact is dev\'s (slice 10 D19)', async () => {
+  const h = await projectsHost({ hash: `#projects/${KEYS.ok}`, read: (u) => (u === MONTH ? [200, monthAnswer] : null) });
   noWould(h.w);
   await settle(150);
   const t = page(h.d).textContent;
   assert.ok(!/not in Stillhet yet/.test(t));
-  assert.ok(!/Branch names|this month/.test(t), 'D19: Branch names (slice 12) and the spend fact (slice 10) are not drawn live');
+  assert.ok(!/Branch names/.test(t), 'D19: Branch names (slice 12) is not drawn live');
+  assert.match(t, /\$12\s*this month/, 'the project row of this month\'s stats answer');
   assert.ok(/Pull requests/.test(t), 'its settings are drawn from dev\'s answer');
   assert.deepEqual(h.w.__would, []);
+  assert.ok(h.calls.filter((c) => c.url === MONTH).length >= 1);
+});
+
+test('slice 10 D19: while the month read is held, the project page draws no spend fact; the workspace head sums its members', async () => {
+  const g = gate();
+  const h = await projectsHost({ hash: `#projects/${KEYS.ok}`, hold: (u) => (u === MONTH ? g.p : null), read: (u) => (u === MONTH ? [200, monthAnswer] : null) });
+  await settle(150);
+  assert.ok(!/this month/.test(page(h.d).textContent), 'no spend fact while reading');
+  g.open(); await settle(200);
+  assert.match(page(h.d).textContent, /\$12\s*this month/);
+  await go(h.w, '#projects/ws:wks-seed-shop-8888bbbb', 150); await settle(150);
+  assert.match(page(h.d).textContent, /\$16 this month/, 'seed-ok and seed-local: $12.40 + $3.10');
 });
 
 test('the demo kind sends nothing: Remove, Rename and a setting change only the demo', async () => {
