@@ -6,7 +6,8 @@ The prompt check tells you, while you type a task, what kind of task it is and w
 This page is the one place that describes the assessment. Every surface that shows a kind or a grade reads it.
 
 What ships so far: the engine (the assessment, the free skip rules, the grading call, the route, the browser grader),
-the setting, the chip with its kind picker, and Improve (below). The run card's perspective chips come later.
+the setting, the chip with its kind picker, Improve, and (behind the flag `proposedPerspectives`) the run card's
+proposed perspectives (below).
 
 ## How a prompt is checked
 
@@ -56,7 +57,7 @@ keeps every string as plain text.
 | `grade` | `clear`, `needs-detail` or null | null when the model was not asked or did not answer |
 | `size` | `small`, `medium`, `large`, `very-large` or null | The model's size guess |
 | `openDecisions` | string[] | Up to 6 open questions, each at most 160 characters |
-| `perspectives` | `{id, reason}[]` | Proposed perspectives (always empty for now) |
+| `perspectives` | `{id, reason}[]` | Proposed perspectives, read by the run card's proposal |
 | `continuesRequirement` | boolean or null | false when the latest message starts a new topic |
 | `taskKind` | string or null | The Auto workflow's task kind (table below) |
 | `source` | `model`, `deterministic` or `mock` | Where the assessment came from |
@@ -208,6 +209,48 @@ States of the view (`ui/public/prompt-check/improve-view.mjs`, the library's Rew
 `Undo` restores the exact text `Use this` replaced; `Keep mine` closes the view. Emptying or sending the field, the
 setting turning off, the chip hiding, or a regrade that leaves Needs detail closes a busy or ready view.
 Stillhet's composer has no Improve yet; it waits for the owner, with the chip.
+
+## Perspectives
+
+Behind the Labs flag `proposedPerspectives` (off by default; see [feature flags](feature-flags.md)). With the flag and
+the setting on, each graded brief proposes the run card's perspective chips: Product plus 2 to 4 more, 3 to 5 in total.
+`proposePerspectives` (`src/shared/prompt-check/perspectives.mjs`) is pure and makes no model call.
+
+1. **The kind's start set** (Product first):
+
+   | Kind | Start set |
+   |---|---|
+   | requirement, implementation, plan, run-change | Product, Architect, QA |
+   | bug | Product, QA, Architect |
+   | idea, deliverable | Product, UX, Devil's advocate |
+   | none | Product, Architect, QA |
+
+2. **Content signals**, in this order, on at most the first 8 000 characters of the brief (word-bounded, any case):
+   security (sign-in, tokens, secrets, passwords, permissions, XSS, CSRF, injection, encryption), compliance (personal
+   data, PII, email addresses, consent, GDPR, retention, licences), release (migration, feature flag, rollout,
+   rollback, release), devops (CI, pipelines, Docker, deploy, Kubernetes, Terraform, GitHub Actions, monitoring,
+   alerts), ux (screen, page, button, layout, UI, accessibility, mobile, modal), devil (rewrite, replace, migrate to,
+   new framework, instead of).
+3. **The assessment's own `perspectives`**, after the signals. Project fit is never proposed.
+
+The list stops at 5. Each proposed chip shows a fixed reason as its tooltip and accessible description; a reason never
+quotes the brief. Product stays locked on. The proposal sets the chips only until the person's first click; after it, a
+later grade updates the reasons only. With the setting off, the chips show today's preselection and nothing is proposed.
+
+With the flag on, Compliance (personal data, emails, consent, retention, licences) is a 10th perspective, and the
+chosen set drives the run:
+
+- **Clarify** asks at most one question per chosen perspective and 3 in total; the server keeps the first question per
+  perspective (by the `id` prefix) and the first 3, even when the agent asks more.
+- **The code review** runs one reviewer per chosen perspective (plus Requirements on a run with agreed requirements),
+  in place of the single reviewer, or of Shaper's Correctness, Security and Project fit roles.
+- **The plan role reviews** (Shaper only) gain a Compliance reviewer when Compliance is chosen.
+
+The set is read when the run starts; a pause and resume keep it.
+
+**The stored row.** A started run that had a proposal stores one row in `perspective_choices`: the run id, the surface
+(`run-card`), the kind, and the proposed, chosen, dropped and added perspective ids, with the time. It holds no text.
+Nothing reads it yet.
 
 ## The setting
 

@@ -4,6 +4,7 @@
 // hashed as served. Re-merging dev recaptures it from dev's own files, before this slice's changes.
 // The Design branch took it again when it merged dev d6f6475b8 (dev's own tree still hashes to dev's golden): the page
 // differs from dev's by Design's three additions only, `design` in data-flags, its sidebar entry and its view section.
+// Proposed perspectives took it again on merging dev b2d1e5695: its one addition, the off flag's gate rule.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
