@@ -177,3 +177,17 @@ test('check: a bad Dev surfaces row is not its business (it reads only the Actio
   const doc = '# x\n\n## Action rows\n\n| `a › open` | wire to | y |\n\n## Figure rows\n\n## Dev surfaces\n\n| `route › /api/x` | maybe | |\n';
   assert.deepEqual(W.check(doc, ['a › open'], []).badStatus, []);
 });
+
+test('Marketplace (slice 8): every Marketplace row is wired, except the For you way, which says why it is not offered live', () => {
+  const mk = doc.split('\n').filter((l) => /^\| `(ui\/public\/stillhet\/marketplace\/|marketplace\/)/.test(l));
+  assert.ok(mk.length >= 3, `the Marketplace rows are read (${mk.length})`);
+  for (const r of mk) {
+    if (r.includes('› the For you way`')) {
+      const m = /\| not offered live \| ([^|]*) \|$/.exec(r);
+      assert.ok(m && m[1].trim().length > 40, `the For you way says why: ${r.slice(0, 100)}`);
+      continue;
+    }
+    assert.match(r, /\| wired \|/, r.slice(0, 100));
+  }
+  assert.ok(mk.some((r) => r.includes('› the For you way`')), 'the For you row is there');
+});

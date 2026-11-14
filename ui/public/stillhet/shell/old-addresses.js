@@ -24,6 +24,7 @@
     ['schedules', 'schedules', 'tab'],   // dev's Schedules tabs (#schedules/once, /repeating, /activity): the one Schedules place (D12); bare #schedules is Stillhet's own
     ['composer', 'workflows'], ['agents', 'workflows', 'way', '', '~agents'], ['scripts', 'workflows', 'way', '', '~scripts'], ['agent-create', 'workflows', 'way', '', '~agents'],
     ['workflows', 'workflows', 'dev-workflows'],   // dev's own Workflows forms (app.js routeWorkflows); Stillhet's are never touched
+    ['marketplace', 'marketplace', 'dev-marketplace'],   // dev's own Marketplace forms (app.js enterMarketplace); Stillhet's are never touched
   ];
   // 'dev-workflows' (slice 7 D18): dev's ten forms, to fixed places (it never asks `has`). A bare #workflows, a ~way and a
   // kind:id route are Stillhet's own and stay as they are.
@@ -34,6 +35,15 @@
     if (head === 'agents') return !key || key === 'new' ? 'workflows/~agents' : 'workflows/agent:' + key;
     if (head === 'scripts') return !key || key === 'new' ? 'workflows/~scripts' : 'workflows/script:' + key;
     return 'workflows/workflow:' + head;
+  }
+  // 'dev-marketplace' (slice 8 D16): dev's tabs and its plugin targets, to fixed places (it never asks `has`). A bare
+  // #marketplace, a ~way and a plugin id are Stillhet's own and stay as they are.
+  function devMarketplace(segs) {
+    var head = segs[0];
+    if (head === 'marketplaces') return 'marketplace';
+    if (head === 'installed') return segs[1] ? 'marketplace/' + dec(segs[1]) : 'marketplace/~installed';
+    if (head === 'browse') return segs[2] ? 'marketplace/' + dec(segs[2]) : 'marketplace/~all';
+    return null;
   }
   var dec = function (x) { try { return decodeURIComponent(x); } catch (e) { return x; } };
   var workflowsHas = function (a) { var w = typeof window !== 'undefined' && window.RailPlaces && window.RailPlaces.workflows; return !!(w && w.has && w.has(a)); };
@@ -55,6 +65,7 @@
       if (row[2] === 'group' && segs.length) { var gid = dec(segs[0]); to = /^p:/.test(gid) ? 'run/' + gid.slice(2) : /^t:/.test(gid) ? 'schedules' : 'run/group:' + gid; }
       if (row[2] === 'way' && has(row[4])) to += '/' + row[4];
       if (row[2] === 'dev-workflows') { to = devWorkflows(segs); if (!to) return null; }
+      if (row[2] === 'dev-marketplace') { to = devMarketplace(segs); if (!to) return null; }
       return { hash: '#' + to, pulse: row[3] || '' };
     }
     return null;

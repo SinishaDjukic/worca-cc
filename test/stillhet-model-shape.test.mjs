@@ -18,6 +18,8 @@ test('every demo seed of the 8 kinds meets its shape', () => {
   for (const c of w.PulseModel.CASES) { check('update', c.updates); check('costs', [{ budget: c.budget, usage: c.usage }]); }
   const wf = w.RailPlaces.workflows.records();   // Workflows (slice 7): the place's own demo lists
   check('workflow', wf.workflow); check('agent', wf.agent); check('script', wf.script);
+  const mk = w.RailPlaces.marketplace.records();   // Marketplace (slice 8): the place's own demo lists
+  check('plugin', mk.plugins); check('market', mk.markets);
   for (const [k, n] of Object.entries(seen)) assert.ok(n > 0, `${k}: seeds checked`);
 });
 
@@ -30,6 +32,15 @@ test('the live Workflows records (workflow-map.mjs) meet the same shapes (slice 
   assert.deepEqual(shapeErrors('workflow', workflowOf({ ...SEED_TEMPLATES[0], origin: 'plugin:x' }, { agentsByKey: agents, usage: { wf_full: { tasks: 1, merged: null, running: 1, nodes: {} } } })), []);
   for (const a of Object.values(agents)) assert.deepEqual(shapeErrors('agent', agentOf(a)), [], a.key);
   assert.deepEqual(shapeErrors('script', scriptOf({ key: 'k', runtime: 'python', caseCount: 0 })), []);
+});
+
+test('the live Marketplace records (market-map.mjs) meet the same shapes (slice 8)', async () => {
+  const { marketOf, pluginsOf } = await import('../ui/public/stillhet/live/market-map.mjs');
+  const sha = 'c'.repeat(40), inv = { agents: [], scripts: [], taskSources: [{ id: 'jira', displayName: 'Jira', secrets: ['token'] }], chatChannels: [], models: [], modelSecrets: [], mcpServers: [{ name: 'a' }, { name: 'b' }], skills: [], workflows: [] };
+  const m = { id: 'm', url: 'https://github.com/a/b', name: 'M', ref: 'dev', builtin: true, lastSync: { sha, at: '2026-11-14T00:00:00Z' }, plugins: [{ name: 'p', subdir: 'plugins/p', description: 'd', version: '0.1.0', inventory: inv }, { name: 'q', version: null, inventory: {} }] };
+  const rows = [{ name: 'p', version: '0.1.0', pinnedSha: sha, repo: m.url, subdir: 'plugins/p', marketplace: 'm', setup: { ok: false }, latest: { version: '0.2.0' }, contributions: {} }, { name: 'linked', version: 'abc1234', repo: '/tmp/x', linked: true, marketplace: null, contributions: { skills: 1 } }];
+  assert.deepEqual(shapeErrors('market', marketOf(m)), []);
+  for (const p of pluginsOf([m], rows, {})) assert.deepEqual(shapeErrors('plugin', p), [], p.id);
 });
 
 test('a seeded wrong type is named once', () => {

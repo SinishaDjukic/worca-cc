@@ -16,7 +16,9 @@ test('PARTS lists the invitation, the design switch, one whole-page cell per she
     'state-task-loading-run', 'state-task-failed-run', 'state-task-gone-run', 'action-failed-run', 'terminal-chat',
     'wf-way-agents', 'wf-way-scripts', 'wf-way-drafts-empty', 'wf-way-for-you', 'wf-way-team-empty', 'wf-list-loading', 'wf-list-failed', 'wf-canvas', 'wf-canvas-picked', 'wf-draft',
     'wf-delete-confirm', 'wf-export-form', 'wf-export-plugin', 'wf-import-scripts', 'wf-agent-draft', 'wf-not-found', 'wf-fresh', 'run-graph-open-workflow',
-    'schedules-empty', 'schedules-loading', 'schedules-failed', 'schedule-skipped', 'schedule-draft', 'schedule-deleted-undo']);
+    'schedules-empty', 'schedules-loading', 'schedules-failed', 'schedule-skipped', 'schedule-draft', 'schedule-deleted-undo',
+    'mk-way-updates', 'mk-way-installed', 'mk-way-for-you', 'mk-way-all', 'mk-way-shelf', 'mk-way-shelf-new-empty', 'mk-way-source', 'mk-list-loading', 'mk-list-failed',
+    'mk-install-form', 'mk-remove-confirm', 'mk-setup-form', 'mk-needs-setup', 'mk-update-asks', 'mk-add-error', 'mk-not-found']);
   assert.deepEqual(PAGES, ['components.html', 'run-page.html', 'pulse.html']);
 });
 
@@ -389,6 +391,26 @@ test('Workflows (slice 7): WORKFLOWS_CELL_IDS lists every Workflows state and th
   assert.deepEqual(seedsOf(fresh, 360), ['#mbar-menu', '#bar-head [data-bar-new="place"]', '[data-menu-pick="bar-new|hand"]'], 'narrow: the drawer opens first');
   assert.deepEqual(seedsOf(fresh, 1280), ['#bar-head [data-bar-new="place"]', '[data-menu-pick="bar-new|hand"]']);
   assert.deepEqual(seedsOf(PARTS.find((p) => p.id === 'terminal-chat'), 360), ['#route-chat [data-terminal]'], 'a plain seed is the same at every width');
+});
+
+test('Marketplace (slice 8): its own cells, each the same route on both sides; the deep marketplace/ routes are derived', async () => {
+  const { MARKETPLACE_STATES, MARKETPLACE_CELL_IDS, marketplaceCellIds } = await import('../tools/stillhet-compare.mjs');
+  const want = ['mk-way-updates', 'mk-way-installed', 'mk-way-for-you', 'mk-way-all', 'mk-way-shelf', 'mk-way-shelf-new-empty', 'mk-way-source', 'mk-list-loading', 'mk-list-failed',
+    'mk-install-form', 'mk-remove-confirm', 'mk-setup-form', 'mk-needs-setup', 'mk-update-asks', 'mk-add-error', 'mk-not-found'];
+  assert.deepEqual(MARKETPLACE_STATES.map(([id]) => id), want);
+  assert.deepEqual(MARKETPLACE_CELL_IDS, ['route-marketplace', ...want]);
+  for (const id of MARKETPLACE_CELL_IDS) {
+    const p = PARTS.find((x) => x.id === id);
+    assert.ok(p, id); assert.equal(p.route, true, id); assert.equal(p.app.route, p.proto.route, id);
+  }
+  const ids = PARTS.map((p) => p.id);
+  assert.equal(new Set(ids).size, ids.length, 'no id twice');
+  assert.ok(!MARKETPLACE_CELL_IDS.some((id) => id.startsWith('state-')), 'no Marketplace id collides with a state- id');
+  globalThis.window = { RailShell: { routes: () => ['marketplace', 'marketplace/slack-chat', 'marketplace/~all', 'run/ready', 'workflows/~agents'] } };
+  const deep = deepRoutes();
+  delete globalThis.window;
+  assert.deepEqual(marketplaceCellIds(deep), [...MARKETPLACE_CELL_IDS, 'route-marketplace-slack-chat', 'route-marketplace-all']);
+  assert.match(PARTS.find((p) => p.id === 'mk-update-asks').app.route, /^\?state=update-asks#marketplace\/jira-source$/);
 });
 
 test('SCHEDULES_CELL_IDS (Stillhet Schedules, D14): the six Schedules cells, each opened by the same address (and clicks) in both hosts', async () => {

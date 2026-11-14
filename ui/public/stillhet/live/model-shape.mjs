@@ -22,6 +22,9 @@ export const SHAPES = Object.freeze({
   workflow: { id: 'string', title: 'string', own: 'boolean', domain: 'string', what: 'string', tasks: 'number|null', merged: 'number|null', from: 'string', steps: 'array', loops: 'array', team: 'boolean?', running: 'boolean?', pinned: 'boolean?', plugin: 'string?' },
   agent: { id: 'string', title: 'string', own: 'boolean', domain: 'string', type: 'string', ins: 'string', outs: 'string', model: 'string', effort: 'string', asks: 'boolean', fan: 'boolean', plugin: 'string?' },
   script: { id: 'string', title: 'string', own: 'boolean', domain: 'string', runtime: 'string', what: 'string', param: 'array', timeout: 'string', cases: 'number|null' },
+  // Marketplace (slice 8): marketplace/marketplace.js data, and live/market-map.mjs pluginsOf and marketOf
+  plugin: { id: 'string', name: 'string', ver: 'string', kind: 'string', market: 'string', what: 'string', adds: 'array', asks: 'array', installed: 'boolean', brand: 'string?', update: 'string?', needsSetup: 'boolean?', source: 'object|null?', uses: 'number|null?', why: 'string?', parts: 'array?', gives: 'object|null?', row: 'object|null?' },
+  market: { id: 'string', name: 'string', url: 'string', branch: 'string', sha: 'string', synced: 'string', builtin: 'boolean?', webUrl: 'string|null?', error: 'string?' },
 });
 
 const is = {
@@ -30,6 +33,7 @@ const is = {
   boolean: (v) => typeof v === 'boolean',
   array: (v) => Array.isArray(v),
   'object|null': (v) => v === null || (typeof v === 'object' && !Array.isArray(v)),
+  'string|null': (v) => v === null || typeof v === 'string',
 };
 
 /** [] when `item` has every field of `kind` with its type, else one line per wrong field ("task.cost: expected number|null"). */

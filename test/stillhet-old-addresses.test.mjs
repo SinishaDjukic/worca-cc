@@ -102,6 +102,39 @@ test('Stillhet on: each of dev\'s 10 Workflows forms lands on its place (never a
   assert.equal(resolve('#scripts', { has: () => true }).hash, '#workflows/~scripts');
 });
 
+// dev's Marketplace forms (app.js enterMarketplace: tabFromParam, targetFromParam), slice 8 D16
+const DEV_MARKETPLACE_FORMS = [
+  ['#marketplace/browse', '#marketplace/~all'],
+  ['#marketplace/installed', '#marketplace/~installed'],
+  ['#marketplace/marketplaces', '#marketplace'],
+  ['#marketplace/installed/jira-source', '#marketplace/jira-source'],
+  ['#marketplace/installed/jira-source/settings', '#marketplace/jira-source'],
+  ['#marketplace/browse/worca-official/slack-chat', '#marketplace/slack-chat'],
+];
+
+test('Stillhet on: each of dev\'s 6 Marketplace forms lands on its route (never asking has); Stillhet\'s own Marketplace routes stay', () => {
+  assert.equal(DEV_MARKETPLACE_FORMS.length, 6);
+  const has = () => { throw new Error('the dev-marketplace rule never asks has'); };
+  for (const [from, to] of DEV_MARKETPLACE_FORMS) { const r = resolve(from, { has }); assert.equal(r?.hash, to, from); assert.equal(r.pulse, '', from); }
+  for (const r of ['#marketplace', '#marketplace/~all', '#marketplace/~src-official', '#marketplace/slack-chat']) assert.equal(resolve(r, { has }), null, r);
+  assert.equal(resolve('#plugins').hash, '#marketplace');
+  // dev builds these links with encodeURIComponent (global-search.mjs, settings-index.mjs): the plugin id is decoded
+  assert.equal(resolve('#marketplace/installed/my%20plugin', { has })?.hash, '#marketplace/my plugin');
+  assert.equal(resolve('#marketplace/browse/worca-official/my%20plugin', { has })?.hash, '#marketplace/my plugin');
+});
+
+test('Stillhet off: dev\'s Marketplace forms are dev\'s (MOVED_ROUTES has no marketplace key, so each hash reaches enterMarketplace byte-equal)', () => {
+  const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+  const block = app.slice(app.indexOf('const MOVED_ROUTES'), app.indexOf('});', app.indexOf('const MOVED_ROUTES')));
+  const keys = [...block.matchAll(/^\s*'?([a-z/-]+)'?:\s*'/gm)].map((m) => m[1]);
+  assert.ok(keys.length >= 10);
+  for (const [from] of DEV_MARKETPLACE_FORMS) {
+    const path = from.slice(1);
+    assert.ok(!keys.some((k) => path === k || path.startsWith(`${k}/`)), `${from} is not moved by dev`);
+  }
+  assert.match(app, /function enterMarketplace\(param, prevView\)/, 'dev routes them itself');
+});
+
 test('Stillhet off: dev\'s Workflows forms are dev\'s (MOVED_ROUTES has no workflows key, so each hash reaches routeWorkflows byte-equal)', () => {
   const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
   const block = app.slice(app.indexOf('const MOVED_ROUTES'), app.indexOf('});', app.indexOf('const MOVED_ROUTES')));

@@ -7,6 +7,7 @@ import { startChatLive } from './chat-live.mjs';
 import { startTaskLive } from './task-live.mjs';
 import { startWorkflowLive } from './workflow-live.mjs';
 import { startScheduleLive } from './schedule-live.mjs';
+import { startMarketLive } from './market-live.mjs';
 import { progressOfState } from './chat-turns.mjs';
 import { workModeOf } from '../../../../src/shared/ask-run-snapshot.mjs';
 
@@ -23,13 +24,15 @@ const CHANGED = {
   'pipelines-changed': ['history', 'runLinks'], 'ask-run-status': ['runLinks'], 'schedules-changed': ['schedules'], 'notifications-changed': ['notifications'], 'projects-changed': ['projects'],
   'project-sync-changed': ['sync'], 'budget-changed': ['budget'], 'actions-changed': ['actions'], 'settings-changed': ['settings', 'away'], 'ask-groups-changed': ['groups'], 'run-groups-changed': ['runGroups'], 'usage-limits-changed': ['usageLimits'], 'workspaces-changed': ['workspaces'], 'ask-labels-changed': ['threads'],
   'workflows-changed': ['workflows'], 'scripts-changed': ['scripts'],   // Workflows (slice 7 D20): workflow-live.mjs reads its own lists again
+  'plugins-changed': ['plugins', 'markets', 'workflows', 'scripts'],   // Marketplace (slice 8 D17): a plugin's workflows and agents show in Workflows too
   'ask-start': ['threads', 'runLinks'], 'ask-done': ['threads', 'runLinks'], 'ask-error': ['threads'], 'ask-title': ['threads'], 'ask-message': ['threads', 'runLinks'],
 };
 const WORKFLOW_SOURCES = new Set(['workflows', 'scripts']);
+const MARKET_SOURCES = new Set(['plugins', 'markets']);
 const RUN_FRAMES = new Set(['run-created', 'state', 'question', 'question-resolved', 'done', 'error', 'title']);
 const DEBOUNCE_MS = 250, BACKOFF_MS = 1000, BACKOFF_MAX_MS = 30000, TOKEN_EXPIRED = 4001;
 
-export function startLive({ fetch, WebSocket, location, world, host = {}, prefs = null, setTimeout, clearTimeout = () => {}, now = Date.now, openChat = () => '', hidden = () => false, toast = () => {}, open = undefined, go = () => {}, download = () => {}, workflowsChanged = () => {}, on = () => {} }) {
+export function startLive({ fetch, WebSocket, location, world, host = {}, prefs = null, setTimeout, clearTimeout = () => {}, now = Date.now, openChat = () => '', hidden = () => false, toast = () => {}, open = undefined, go = () => {}, download = () => {}, workflowsChanged = () => {}, marketChanged = () => {}, openSource = undefined, on = () => {} }) {
   let sources = {}, loaded = false, listFailed = false, stopped = false, sock = null, backoff = BACKOFF_MS, reconnect = 0, queue = [], unread = [], asked = 0;
   const live = new Map(), timers = {}, stamp = {}, stale = new Set();
   const progress = new Map();   // R-ux-12: each live run's place among its stages, from its `state` frames (runProgress)
@@ -47,6 +50,8 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
 
   // Workflows (slice 7 D2): workflow-live owns every Workflows request; its lists are read when the place first asks
   const workflow = startWorkflowLive({ fetch, toast, go, download, setTimeout, clearTimeout, on: () => workflowsChanged() });
+  // Marketplace (slice 8 D2): market-live owns every plugin and marketplace request; its lists are read when the place first asks
+  const market = startMarketLive({ fetch, toast, setTimeout, clearTimeout, now, ...(openSource ? { open: openSource } : {}), on: () => marketChanged() });
 
   // Tasks (D4): task-live owns every task fetch, the checks cache and the Tasks actions; this adapter only hands it the
   // runs, the store and the first-load signal, and passes its frames on. It keeps no cache of its own.
@@ -203,6 +208,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
     if (f.flags && typeof f.flags === 'object') host.flagsChanged?.(f.flags);
     chat.reconnect();
     workflow.reconnect();   // a Run all whose frames were lost while the socket was gone answers now (D12)
+    market.refresh();   // a plugin installed meanwhile (its plugins-changed frame was lost) shows now (slice 8)
     fetchAll().then(() => { stale.clear(); draw(snapshot, { list: '', conn: '' }, { conn: '', list: 'refresh' }); askPrs(); }, () => { for (const x of Object.keys(SOURCES)) stale.add(x); world.setState({ conn: '', list: 'refresh' }); });
   }
 
@@ -261,8 +267,15 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
     for (const s of CHANGED[f.type] || []) refresh(s);
   }
 
+  const marketDue = new Set();
+  let marketTimer = 0;
   function refresh(source) {
     if (WORKFLOW_SOURCES.has(source)) { workflow.refresh(source); return; }
+    if (MARKET_SOURCES.has(source)) {   // one frame names both lists: they are read together, once, debounced
+      marketDue.add(source); clearTimeout(marketTimer);
+      marketTimer = setTimeout(() => { const n = [...marketDue]; marketDue.clear(); marketTimer = 0; market.refresh(...n); }, DEBOUNCE_MS);
+      return;
+    }
     if (!SOURCES[source]) return;
     clearTimeout(timers[source]);
     timers[source] = setTimeout(async () => {
@@ -281,7 +294,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   function retry() { listFailed = false; world.setState({ list: 'loading' }); return begin(); }
   begin();
   return {
-    chat, task, workflow, schedule,
+    chat, task, workflow, schedule, market,
     stop: () => { stopped = true; clearTimeout(reconnect); for (const k of Object.keys(timers)) clearTimeout(timers[k]); sock?.close(); },
     refresh,
     retry,
