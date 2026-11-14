@@ -167,13 +167,16 @@ function groupCommands(out) {
 }
 const FAILED_TEXT = 'Worca could not answer this time.';
 const secs = (ms) => Math.max(1, Math.round((Number(ms) || 0) / 1000));
+// panel.turn-time: a turn's time is its message's own createdAt, never a made-up one (an echo has none until dev's row lands)
+const atOf = (m) => { const t = Date.parse(str(m.createdAt)); return Number.isFinite(t) ? { at: t } : {}; };
 function assistantTurns(m, ctx) {
   const out = [], blocks = arr(m.blocks), steps = blocks.filter((b) => b && (b.kind === 'tool' || b.kind === 'agent')).map((b) => str(b.label) || str(b.name)).filter(Boolean);
   if (steps.length && m.status !== 'streaming') out.push({ t: 'think', text: `Thought for ${secs(m.durationMs)}s`, steps });
   const text = str(m.text), cards = blocks.filter((b) => b && b.kind !== 'tool' && b.kind !== 'agent'), tail = [];
   // a card placed mid-answer (`textAt`) sits after the words before it; one without stands after the whole answer
-  let from = 0;
-  const words = (to) => { const w = text.slice(from, to).trim(); if (w) { const parts = m.status === 'streaming' ? null : partsOf(w); out.push({ t: 'words', html: wordsHtml(w), ...(parts ? { parts } : {}) }); } from = to; };   // refs once the answer is done, as dev's chips
+  let from = 0, k = 0;
+  const at = atOf(m);   // each words turn keyed by its message, so a row inserted above it never moves its time or its focus
+  const words = (to) => { const w = text.slice(from, to).trim(); if (w) { const parts = m.status === 'streaming' ? null : partsOf(w); out.push({ t: 'words', html: wordsHtml(w), ...(parts ? { parts } : {}), ...at, key: `${str(m.id)}:${k++}` }); } from = to; };   // refs once the answer is done, as dev's chips
   for (const b of cards) {
     const turn = turnOfBlock(b, ctx);
     if (!Number.isInteger(b.textAt)) { if (turn) tail.push(turn); continue; }
@@ -191,7 +194,7 @@ function userTurn(m) {
   const blocks = arr(m.blocks), synthetic = blocks.find((b) => b && b.kind === 'notice' && b.synthetic);
   if (synthetic) return { t: 'notice', text: str(synthetic.text) };
   const files = blocks.filter((b) => b && b.kind === 'attachment').map((b) => str(b.name)).filter(Boolean);
-  return { t: 'you', id: str(m.id), text: str(m.text), ...(files.length ? { files } : {}) };
+  return { t: 'you', id: str(m.id), text: str(m.text), ...(files.length ? { files } : {}), ...atOf(m) };
 }
 
 /** Every turn of a thread, in order. `thread`: the GET answer's parts (`messages`, `runLinks`, `inFlight`); `ctx.tasks`: the
