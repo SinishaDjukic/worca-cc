@@ -8,11 +8,15 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { checkPackFiles, packJsonPaths } from '../tools/check-pack.mjs';
+import { npmCommand } from '../src/core/npm-command.mjs';
 import { FIREFOX_CI_JOB, CI_ONLY } from '../tools/readiness/e2e.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PKG = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
-const npm = (args, cwd) => spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, { cwd, encoding: 'utf8', shell: process.platform === 'win32' });
+const npm = (args, cwd) => {
+  const c = npmCommand(args);   // never an args array with shell true (Node DEP0190)
+  return spawnSync(c.file, ...(c.args ? [c.args] : []), { cwd, encoding: 'utf8', shell: c.shell });
+};
 
 test('files lists exactly the three built extension folders, never source, e2e, *-test or zips', () => {
   const ext = PKG.files.filter((f) => /^(extension|e2e)\b/.test(f));

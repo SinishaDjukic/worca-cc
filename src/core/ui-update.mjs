@@ -9,6 +9,7 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { worcaHome } from './projects.mjs';
 import { DEFAULT_UI_PORT } from './ui-instance.mjs';
 import { canonicalVersion } from './update-check.mjs';
+import { runNpm } from './npm-command.mjs';
 
 const execFileP = promisify(execFile);
 export const UPDATE_EXIT_CODE = 75;
@@ -65,12 +66,13 @@ export function summarizeNpmFailure(output = '', err = null) {
   return `npm failed${err?.message ? `: ${String(err.message).split('\n')[0]}` : ''}`;
 }
 
-// Windows: npm is npm.cmd, which needs a shell (execFile of a .cmd → EINVAL), same as plugin-store's
-// runSetup. Safe because every argument is a literal or a canonical version (SAFE_VERSION).
-export async function runNpmInstall(version, { exec = execFileP, platform = process.platform, signal, timeoutMs = 10 * 60_000 } = {}) {
+// Windows: npm is npm.cmd, which needs a shell (execFile of a .cmd → EINVAL); runNpm starts npm's
+// npm-cli.js with node instead, or one command line (npm-command.mjs), same as plugin-store's runSetup.
+// Every argument is a literal or a canonical version (SAFE_VERSION).
+export async function runNpmInstall(version, { exec = execFileP, platform = process.platform, signal, timeoutMs = 10 * 60_000, env, execPath, exists } = {}) {
   const args = npmInstallArgs(version);
   try {
-    const r = await exec('npm', args, { shell: platform === 'win32', windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout: timeoutMs, signal });
+    const r = await runNpm(exec, args, { windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout: timeoutMs, signal }, { platform, env, execPath, exists });
     return { ok: true, output: tail(`${r.stdout || ''}${r.stderr || ''}`) };
   } catch (err) {
     const output = tail(`${err.stdout || ''}${err.stderr || ''}`);
