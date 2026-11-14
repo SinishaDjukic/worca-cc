@@ -32,7 +32,7 @@ Columns: **From** (the slice and where it was found), **Area**, **Finding** (one
 
 | From | Area | Finding | Closed by |
 |---|---|---|---|
-| slice 6 | Schedules | A failed ticket's Open project lands on the project page, where pointing it at the folder waits for the Projects slice | slice 9 (#1293): the project page's Locate folder… is wired (`PATCH /api/projects/:key`) |
+| slice 6 | Schedules | A failed ticket's Open project lands on the project page, where pointing it at the folder waited for the Projects slice; slice 9 wires Locate folder… there | #1293 |
 | feature 1 final check | Projects | The live workspace page draws dev's map and its questions only; Delete, Edit by hand, Scan again, Sync what is behind and Start a task across all are not drawn until they are wired | this PR |
 | feature 1 real test | Chat | Right after the first send in a new chat, the composer's project picker reads "No project" while the chat is on its project; a reload shows it right | this PR |
 | feature 1 audit | Pulse | Audit gap (Pulse and bell rows): a live Updates or Needs you row's detail line is dev's raw failure text (each failing test, 3–4 lines) or a raw cost comparison (`$0.80 >= $0.50`); the prototype says one short line naming the step | this PR |
