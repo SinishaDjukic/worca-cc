@@ -10,7 +10,7 @@ export const ASK_CARD_TYPES = Object.freeze([
   // a run: the live run card (server.mjs `progress`), a task proposal (`workflow`, mode task or shape), its stop, PR and ship
   'progress', 'workflow', 'workflow-build', 'run-stop', 'pull-request', 'ship', 'changes', 'route',
   // settings proposals, then the receipt an applied one leaves
-  'scope-switch', 'model', 'schedule', 'away', 'proxy', 'web', 'clone', 'project', 'workspace', 'actions', 'metrics', 'policy',
+  'scope-switch', 'model', 'schedule', 'away', 'proxy', 'web', 'clone', 'project', 'workspace', 'actions', 'mcp', 'metrics', 'policy',
   'receipt',
   // a script to approve, a command Worca ran, files it shows
   'script-approval', 'command', 'files',

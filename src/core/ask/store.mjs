@@ -758,7 +758,7 @@ export function findFixRunCards(runId) {
 const CARD_PATCH_KEYS = ['state', 'runId', 'error', 'workflowId', 'scheduledFor', 'scheduleId', 'sentence', 'after'];
 
 /** Patch ⊆ {state, runId, error, workflowId} on one card block. A WORKFLOW card (card.type === 'workflow') and a
- *  METRICS, POLICY, SCHEDULE or MODEL card (card.type 'metrics' | 'policy' | 'schedule' | 'model', whose `result` lands at Apply),
+ *  METRICS, POLICY, SCHEDULE, MODEL or MCP card (card.type 'metrics' | 'policy' | 'schedule' | 'model' | 'mcp', whose `result` lands at Apply),
  *  a COMMAND card (its helper-job `summary`, #911 slice 2), a QUESTION card (its `choice` / `answerText`), a PR fix-run `progress` card, whose outcome lands later,
  *  and a Design chat card (`design-round`: its build's outcome; `design-questions`: its answers; `design-sound`: its answers, its kept
  *  brief cleared, `keyNeeded`) also take a SHALLOW `card` sub-patch; a run
@@ -774,7 +774,7 @@ export function updateCardBlock(threadId, cardId, patch = {}) {
       if (!(b && b.kind === 'card' && b.id === cardId)) return b;
       const subPatchable = !!(b.card && (b.card.type === 'workflow' || b.card.type === 'metrics'
         || b.card.type === 'policy' || b.card.type === 'schedule' || b.card.type === 'model' || b.card.type === 'clone' || b.card.type === 'web'
-        || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away' || b.card.type === 'proxy'
+        || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'mcp' || b.card.type === 'away' || b.card.type === 'proxy'
         || b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request' || b.card.type === 'ship'
         || b.card.type === 'changes' || b.card.type === 'route'
         || b.card.type === 'canvas-edit' || b.card.type === 'workflow-build' || b.card.type === 'agent-draft' || b.card.type === 'script-draft'

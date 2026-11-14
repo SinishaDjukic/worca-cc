@@ -5,6 +5,8 @@ import { applyActionsChange } from '../../../src/core/ask/actions-deps.mjs';
 import { applyAwayChange } from '../../../src/core/ask/away-deps.mjs';
 import { composerCardPatch, isComposerCard } from '../../../src/core/ask/composer-payload.mjs';
 import { designAnswersEventPrompt, validateDesignAnswers } from '../../../src/core/ask/design-payload.mjs';
+import { applyMcpChange } from '../../../src/core/ask/mcp-deps.mjs';
+import { scrub } from '../../../src/core/ask/mcp-proposal.mjs';
 import { applyMetricsChange } from '../../../src/core/ask/metrics-deps.mjs';
 import { applyModelChange } from '../../../src/core/ask/model-deps.mjs';
 import { chatEngine as askChatEngineOf } from '../../../src/core/ask/models.mjs';
@@ -614,6 +616,36 @@ async function askCardHandler(req, res) {
           const field = err && err.field ? ` (${err.field})` : '';
           result = { ok: false, error: `${err && err.message ? err.message : String(err)}${field}`, code: (err && err.code) || 'ERROR' };
         }
+        block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
+      } finally { askCardBusy.delete(cardId); }
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      const turn = await startMetricsEventTurn(id, block);
+      return res.json({ block, turn });
+    }
+    if (found.block.card && found.block.card.type === 'mcp') {
+      // MCP server card (docs/mcp-servers.md "Chat"): proposed → applied | failed | declined. The registry write happens
+      // HERE, behind the click, through the Settings routes' store calls (each re-validates under the registry lock),
+      // and behind the D4 guard: an isolated agent must not plant a command a person's later click would run.
+      // Applying saves a definition only; it adds the server to no set.
+      if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (body.state === 'applied' && agentMayBeCaller(req)) return refuseAgentCaller(res);
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const turn = await startMetricsEventTurn(id, block);
+        return res.json({ block, turn });
+      }
+      // The card's "applying" state: no registry write while the chat replies — the panel shows "Chat is still
+      // replying. Try again once the answer lands." and the card stays proposed.
+      if (askInFlight(id)) return res.status(409).json({ error: 'turn in flight' });
+      askCardBusy.add(cardId);
+      let block;
+      try {
+        let result;
+        try { result = await applyMcpChange(found.block.card); }
+        catch (err) { result = { ok: false, error: scrub(err && err.message ? err.message : String(err)), code: (err && err.code) || 'ERROR' }; }
         block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
       } finally { askCardBusy.delete(cardId); }
       if (!block) return res.status(409).json({ error: 'card vanished' });

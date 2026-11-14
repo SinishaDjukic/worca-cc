@@ -253,6 +253,14 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 | `ui/public/prompt-check/` | wire to | The browser grader (cheapest-first check); Stillhet's composer uses it from Shaper Tracks slice 2 |
 | `ui/public/settings/settings.html` | wire to | The setting's place in today's Settings page; Stillhet's Settings row is Shaper Tracks slice 2 |
 | `setting › pulseFor` | wired | Settings › Notifications, the Pulse animation row (`pulse.js` reads it through the live map; #1258) |
+| `route › /api/mcp/discover` | wire to | Lists the MCP servers other tools' config files hold (masked); Stillhet's Settings › Connectors (`#settings/mcp`) gets an Import from other tools step, and Chat's `discover_mcp_servers` reads it through the agent, not the page |
+| `route › /api/mcp/import` | wire to | Reviews, then applies, an import of picked servers into `mcp/servers.json`; Stillhet's Settings › Connectors import step calls it once that step is built |
+| `ui/public/mcp-server-import.mjs` | wire to | Today's Connectors › MCP servers › Import from other tools dialog; Stillhet's Settings › Connectors (`#settings/mcp`) gets the same pick-and-review step |
+| `ui/public/mcp-view.mjs` | wire to | Today's MCP servers view opens the import dialog; Stillhet's Settings › Connectors gets the Import entry with that step |
+| `ui/public/mcp-definition-form.mjs` | wire to | A small change to today's server form (imported servers' empty secret fields); Stillhet's Settings › Connectors server form carries it when the import step is built |
+| `ui/public/mcp-servers/` | wire to | Today's styles for the import dialog's rows; Stillhet draws that step from the library, not these styles |
+| `ui/public/ask-panel.mjs` | wire to | The MCP card's import kind (`Import servers`, the `Already in worca` list); Stillhet's conversation shows it as a ChangeProposal with its rows, like the other `thread-cards.mjs` cards |
+| `ui/public/chat/` | wire to | One style line for the MCP import card's `Already in worca` list; Stillhet's ChangeProposal draws it from the library |
 
 ## Opt-in
 

@@ -630,7 +630,9 @@
           ".mcp-def-row",
           ".mcp-def-fill",
           ".mcp-res-",
-          ".mcp-resolution"
+          ".mcp-resolution",
+          "#plugin-modal .card:has(.mcp-imp)",
+          ".mcp-imp"
         ],
         "feature": "mcp-servers",
         "name": "server-fields"

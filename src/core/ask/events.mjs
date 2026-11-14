@@ -218,6 +218,9 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'get_run_checkout': return input?.id ? `Checking the checkout of ${String(input.id).slice(0, 40)}` : 'Checking a run checkout';
     case 'list_running_actions': return 'Looking at running actions';
     case 'propose_actions_change': return 'Proposing an actions change';
+    case 'list_mcp_servers': return 'Looking at MCP servers';
+    case 'discover_mcp_servers': return 'Looking for MCP servers in other tools';
+    case 'propose_mcp_change': return 'Proposing an MCP server change';
     case 'get_network_proxy': return 'Reading the corporate proxy';
     case 'test_network_proxy': return 'Testing the corporate proxy';
     case 'propose_network_proxy_change': return 'Proposing a proxy change';
@@ -316,6 +319,7 @@ export function createTurnReducer({
   onProjectProposal = null,      // propose_project_change RESULT (project card; same split)
   onWorkspaceProposal = null,    // propose_workspace_change RESULT (workspace card; same split)
   onActionsProposal = null,      // propose_actions_change RESULT (actions card; same split)
+  onMcpProposal = null,          // propose_mcp_change RESULT (MCP card; the parent re-validates the input)
   onWebProposal = null,          // propose_web_access RESULT (web card; same split)
   onScopeSwitch = null,          // propose_scope_switch RESULT (P4: the scope ask card; same split)
   onQuestion = null,             // ask_question RESULT (freeform chat D5: the question card; same split)
@@ -835,6 +839,13 @@ export function createTurnReducer({
         // Same split as the workspace card: the parent re-validates the INPUT against the stored config (actions-proposal.mjs).
         try {
           const ret = onActionsProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__propose_mcp_change' && typeof onMcpProposal === 'function') {
+        // Same split as the actions card: the parent re-validates the INPUT against the registry (mcp-proposal.mjs).
+        try {
+          const ret = onMcpProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }

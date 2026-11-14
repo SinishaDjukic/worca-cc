@@ -116,7 +116,7 @@ export const CARD_TURN = Object.freeze({
     return act(b, `<b>Where does this go?</b> ${esc(str(b.card.text))}`, [[routeLabel(choice, ft), 'primary', 'Done', 'card-verb', choice === 'add' ? { verb: 'add', where: g.where === 'extra' || !b.card.hasNext ? 'extra' : 'next' } : { verb: choice }], ...['add', 'own', 'save'].filter((c) => c !== choice).map((c) => [routeLabel(c, ft), 'quiet', 'Done', 'card-verb', c === 'add' ? { verb: 'add', where: b.card.hasNext ? 'next' : 'extra' } : { verb: c }]), ['Not now', 'quiet', 'Not now', 'card-verb', { verb: 'not-now' }]]); },
   'scope-switch': (b, ctx) => change(b, ctx, { title: str(b.card.summary) || str(b.card.reason) || 'Switch the project' }),
   model: change, schedule: change, away: change, proxy: change, web: change, clone: change, project: change, workspace: change,
-  actions: change, metrics: change, policy: change,
+  actions: change, mcp: change, metrics: change, policy: change,
   receipt: (b, ctx) => change(b, ctx, { state: b.state === 'reverted' ? 'declined' : 'applied', revert: !!b.card.revertible && b.state !== 'reverted', rows: [{ name: str(b.card.label) || 'Setting', before: str(b.card.before ?? ''), after: str(b.card.after ?? '') }] }),
   'script-approval': (b) => act(b, `<b>${b.card.kind === 'run' ? 'Run' : 'Save'} ${esc(str(b.card.displayName) || 'the script')}?</b> ${esc(str(b.card.summary))}`, [[b.card.kind === 'run' ? 'Run it' : 'Save it', 'primary', 'Done', 'card-apply'], ['Not now', 'quiet', 'Not now', 'card-later']]),
   // D12 (b): dev keeps a command's end on its terminal block, not the card (GET …/commands/:blockId, ask-command frames):
