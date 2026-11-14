@@ -260,6 +260,7 @@
   "GET /api/terminal/sessions/:id": {"class": "probe", "reason": "terminal gate, 404 for unknown session"},
   "GET /api/terminal/sessions/:id/blocks/:seq": {"class": "probe", "reason": "terminal gate, 404 for unknown block"},
   "GET /api/whoami": {"class": "probe", "reason": "resolves request identity only"},
+  "GET /api/workflow-usage": {"class": "probe", "reason": "per-workflow usage from the local db, try/catch"},
   "GET /api/workflows": {"class": "probe", "reason": "lists workflows locally, try/catch"},
   "GET /api/workflows/:id": {"class": "probe", "reason": "assertRunnableWorkflow 404, try/catch"},
   "GET /api/workflows/:id/json": {"class": "probe", "reason": "exportGraphJson errors caught"},
