@@ -442,3 +442,12 @@ test('card-apply saves a workflow or workflow-build card (dev answers 400 to app
   assert.deepEqual(body({ threadId: 'ask_1', cardId: 'c1', cardType: 'model' }), { state: 'applied' });
   assert.deepEqual(body({ threadId: 'ask_1', cardId: 'c1', cardType: 'model', scope: 'project' }), { state: 'applied', scope: 'project' });
 });
+
+test('a created PR asks for the PR states again (afterPr), so its card reads the open PR without a reload; a refused one does not', async () => {
+  let asked = 0;
+  const mk = (status) => startChatLive({ fetch: async () => ({ ok: status < 300, status, json: async () => (status < 300 ? { url: 'https://github.com/o/r/pull/1' } : { error: 'no remote' }) }), now: () => 0, afterPr: () => { asked++; } });
+  assert.equal((await mk(200).act('pr', { pipelineId: 'p1', projectKey: 'k' })).ok, true);
+  assert.equal(asked, 1);
+  assert.equal((await mk(409).act('pr', { pipelineId: 'p1', projectKey: 'k' })).ok, false);
+  assert.equal(asked, 1);
+});
