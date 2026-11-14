@@ -248,6 +248,10 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 | Surface | Status | Where in Stillhet, or why not yet |
 |---|---|---|
 | `route › /api/prompt-check/grade` | wire to | The prompt check's grade; Stillhet's composer chip that calls it is Shaper Tracks slice 2 (the chip and kind picker), building now |
+| `ui/public/app.js` | wire to | Starts the prompt check's grader in today's UI; Stillhet's composer gets it with the chip in Shaper Tracks slice 2 |
+| `ui/public/chat-settings-view.mjs` | wire to | The "Check how clear a task prompt is" row in today's Settings › Chat; Stillhet's Settings row is built in Shaper Tracks slice 2 (owner approved) |
+| `ui/public/prompt-check/` | wire to | The browser grader (cheapest-first check); Stillhet's composer uses it from Shaper Tracks slice 2 |
+| `ui/public/settings/settings.html` | wire to | The setting's place in today's Settings page; Stillhet's Settings row is Shaper Tracks slice 2 |
 | `setting › pulseFor` | wired | Settings › Notifications, the Pulse animation row (`pulse.js` reads it through the live map; #1258) |
 
 ## Opt-in
