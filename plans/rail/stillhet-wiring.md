@@ -240,6 +240,13 @@ One row per seeded figure: each data key and seed getter of the globals a model 
 | `profile › Keep awake` | wired | `keepAwake` of `GET /api/settings`; `POST /api/settings {keepAwake}` |
 | `profile › Away` | wired | `GET /api/away-mode`; `POST /api/settings {nightModeToggle}` with dev's Away switch body |
 
+## Dev surfaces
+
+One row per surface of today's UI that Stillhet must carry (gate.prototype in `docs/rail/gate.md`). An id is a Settings key (`setting › keepAwake`, a top-level key of `GET /api/settings`), a path today's UI fetches (`route › /api/runs/:param/artifacts`), or a today's-UI file or folder (`ui/public/app.js`, `ui/public/chat/`). The status is one of `wired` (then where in Stillhet), `wire to` or `not offered live` (then why not yet); the third cell is never empty and each id has one row. `npm test` fails a new Settings key or fetched path with no row (`tools/stillhet-surfaces.mjs`); every surface that existed when the gate came in is frozen in `test/fixtures/stillhet-surfaces-baseline.json`, which only shrinks: add a row, then lower it with `npm run stillhet:surfaces -- --update`. In CI, a PR that changes today's UI and no prototype file passes only with a `wire to` row it adds or changes here for each changed file (`tools/prototype-pr-check.mjs`).
+
+| Surface | Status | Where in Stillhet, or why not yet |
+|---|---|---|
+
 ## Opt-in
 
 Wired in slice 1, each row real:
