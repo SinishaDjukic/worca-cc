@@ -27,6 +27,7 @@ const cases = [
   ['actions must be an object', 'actions', 'actions', '“Actions” got a value Worca can’t read. Reload the page and try again.'],
   ['claude-sonnet-4-5 does not offer effort "max"', 'memoryDefrag', 'memoryDefrag', 'claude-sonnet-4-5 does not offer effort "max".'],
   ['theme must be system, light or dark', 'theme', 'theme', '“Theme” must be system, light or dark.'],
+  ['pulseFor must be until-read, 10s, 1m or never', 'pulseFor', 'pulseFor', '“Pulse icon” must be until-read, 10s, 1m or never.'],
   ['uiLevel must be simple, advanced or expert', 'uiLevel', 'uiLevel', '“Interface mode” must be simple, advanced or expert.'],
   ['resumeAfterUsageLimit must be true or false', 'resumeAfterUsageLimit', 'resumeAfterUsageLimit', '“Resume after a usage limit” must be true or false.'],
   ['autoGeneratePrDescription must be true or false', 'autoGeneratePrDescription', 'autoGeneratePrDescription', '“Draft the PR description automatically” must be true or false.'],

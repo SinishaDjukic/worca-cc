@@ -34,7 +34,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | What you keep an eye on | InView: a mark and a short name in the top bar only, like tabs; a card on hover with × for Out of view; +N opens a menu | Fix the flaky login, Working |
 | How many, on the corner of what it counts | CountBadge, `need` when any waits on you | Pulse 3 |
 | The sidebar's foot, the door to the profile menu | AccountButton, then AccountItem rows in its flyout | Interface mode, Away |
-| An action in the top bar | TopBarAction, a 20px icon with its CountBadge; its name in the tooltip; with news (its count grew) the icon shakes once, never under reduced motion | Ask worca, Pulse |
+| An action in the top bar | TopBarAction, a 20px icon with its CountBadge; its name in the tooltip; with news (its count grew) the icon shakes, again every 3.5 s, for as long as Settings › Notifications › Pulse icon says (until you read or act on it by default); never under reduced motion | Ask worca, Pulse |
 | Ask worca in the top bar | AskWorcaMark: a boxy chat bubble with the W for its text; three dots while Worca writes, filled with the W cut out while its column is open; an unread reply is its dot | Ask worca |
 | Starting anything | Composer: the words, then one line with +, the Ask/Task/Schedule sentence, voice and send | Start task |
 | **Choosing** | | |
