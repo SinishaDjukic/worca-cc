@@ -3,7 +3,7 @@
 | Rule | What | Why | Held by |
 |---|---|---|---|
 | `narrow.nothing-dropped` | A narrow page holds everything the wide one does | Things move, they are never dropped | run-page-sweep |
-| `narrow.nav` | At 761–1080px the sidebar is a rail of icons; at 760px and below it is a drawer | A phone keeps its width; a tablet keeps every place one tap away | worca-sweep |
+| `narrow.nav` | At 761–1080px the sidebar is a rail of icons; at 760px and below it is a drawer. The drawer shows each row's icon and name; only the `pulse.html` mock rail is icon-only | A phone keeps its width; a tablet keeps every place one tap away | worca-sweep |
 | `narrow.stack` | At 520px of content (560px for a settings row) side by side stacks on the same text edge | The one rail holds at any width | run-page-sweep |
 | `narrow.state-word` | A state word is never cut; a row's reason wraps; a word stays with its picker | The part you need is the part a cut loses | pulse-sweep |
 | `narrow.branch-fold` | A branch or path loses its middle, never its end | The end tells two apart | design-system-logic |

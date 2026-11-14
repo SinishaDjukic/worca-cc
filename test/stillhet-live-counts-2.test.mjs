@@ -167,6 +167,5 @@ test('a resume that dev answers with a confirm opens the task instead', async ()
   await hello();
   w.RailPulse.open('updates');
   d.querySelector('#app .pz-popover [data-fix="oh1"]').click(); await settle();
-  assert.equal(w.location.hash, '#run/paused-restart');
-  assert.match(d.getElementById('route-today').textContent, /Old pause/);
+  assert.equal(w.location.hash, '#run/h1', 'the task oh1 names (history row h1), by its id, never the case (#1266)');
 });

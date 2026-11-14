@@ -8,6 +8,9 @@ import { taskPageOf, taskCardOf, newTaskBodyOf, NEW_TASK_KEYS, stagesOf, stageOf
 import { taskPageErrors } from '../ui/public/stillhet/live/model-shape.mjs';
 import { TASK_DETAILS, NOW, PR_URL } from './helpers/stillhet-live-fixture.mjs';
 import { shortDetail } from '../ui/public/stillhet/live/live-map.mjs';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import * as R from '../ui/public/design-system/components/index.mjs';
 
 test('taskPageOf meets the page shape for every fixture state', () => {
   for (const [name, input] of Object.entries(TASK_DETAILS)) {
@@ -193,4 +196,13 @@ test('the PR\'s own facts reach the page: its checks entry\'s counts', () => {
 
 test('a plan waiting for approval has no reason line under its word (the prototype\'s plan case), and its row line stays the list\'s', () => {
   assert.equal(taskPageOf({ ...TASK_DETAILS.plan, row: { ...TASK_DETAILS.plan.row, detail: 'Waits for your OK on the plan' } }).detail, '');
+});
+
+test('stageOf returns the case\'s labels: a task with no PR ends at Done, a ready one at Merged (#1266)', () => {
+  const window = { RailUI: R, RailWould: (p) => 'Would ' + p };
+  vm.runInNewContext(readFileSync(new URL('../ui/public/stillhet/runs/run-page-model.js', import.meta.url), 'utf8'), { window, console, Math, Object, String, Set, JSON, parseFloat, Error });
+  const M = window.RunCardModel;
+  assert.deepEqual([...M.stageOf('finished-nogit').labels], ['Plan', 'Build', 'Review', 'Done']);
+  assert.deepEqual([...M.stageOf('ready').labels].slice(-2), ['PR', 'Merged']);
+  assert.deepEqual({ ...M.stageOf('no-such-case') }, {});
 });

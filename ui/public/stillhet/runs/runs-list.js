@@ -197,7 +197,7 @@
     const rows = rowsNow(rows0), pick = ctl.state.pick, snap = snapshot(), names = rows.length === 1 ? `“${(rows[0].r || rows[0].g).title}”` : plural(rows.length, 'task');
     const backTo = rows.length === 1 && !bulk ? `[data-open="${CSS.escape(rows[0].key)}"]` : '';
     if (W.live && T() && ['stop', 'archive', 'delete', 'leave-group', 'view-pr'].includes(id)) { liveAct(id, rows, names, backTo); return; }
-    if (id === 'in-view' && rows[0]?.r) { const r = rows[0].r; window.RailShell.inView.toggle({ type: 'task', id: `run:${r.id}`, title: r.title, case: r.case }); ctl.paint(); return; }
+    if (id === 'in-view' && rows[0]?.r) { const r = rows[0].r; window.RailShell.inView.toggle({ type: 'task', id: `run:${r.id}`, title: r.title, case: r.case, ...(W.live ? { run: r.id } : {}) }); ctl.paint(); return; }
     if (id === 'stop') { const p = plan('stop', rows), c = n(p); if (!c) { say(R.skipText(p)); return; } ctl.confirm({ text: `Stop ${rows.length === 1 ? names : plural(c, 'task')}? Its branch and changes stay.${p.skip.length ? ` ${R.skipText(p)}` : ''}`, yes: `Stop ${c}`, danger: true, back: backTo, run: () => { p.apply.forEach((t) => { byId(t.id).case = 'stopped'; }); p.cancel.forEach((t) => { byId(t.id).case = 'ticket-canceled'; }); ctl.clear(); W.touch(); say(`Stopped ${plural(c, 'task')}`); } }); return; }
     if (id === 'archive') {
       const back = view.show === 'archived' || rows.every((x) => (x.g ? membersOf(x.g).every((m) => m.archived) : x.r.archived));
@@ -271,7 +271,7 @@
     // Tasks D17: the same menu, keys and bulk bar in both kinds; the live kind's act calls dev's routes
     can: () => ['menu', 'fold', 'stop', 'archive', ...(has('advanced') ? ['group', 'delete'] : [])],
     bulk: (rows) => bulkActions(rows), act, open: openThing,
-    openRound: (row, n2) => { const rd = row._x.r.rounds.list.find((x) => x.n === n2); window.RailShell.openRun(`run/${rd.case}`, `${row._x.r.title} · Round ${n2}`); },
+    openRound: (row, n2) => { const rd = row._x.r.rounds.list.find((x) => x.n === n2); window.RailShell.openRun(`run/${rd.case}`, `${row._x.r.title} · Round ${n2}`, W.live ? rd.task?.id || rd.case : undefined); },   // live: a round's case is its task's id
     word: (id, v) => {
       if (id === 'labels') { if (!v) { view.labels = []; return false; } view.labels = view.labels.includes(v) ? view.labels.filter((l) => l !== v) : [...view.labels, v]; store.set(view); return view.labels.length > 0; }
       if (id === 'range') { if (!v) { view = { ...view, range: null }; store.set(view); } return false; }
