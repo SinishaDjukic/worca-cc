@@ -7,6 +7,9 @@
 // `modal` is the Connectors page's #plugin-modal shell (`afterClose`: its header Close runs the step's Cancel; the shell
 // clears that hook on every open). Text goes in with textContent only.
 
+import { checkbox } from './design-system/components/checkbox.mjs';
+import { toElement } from './design-system/components/html.mjs';
+
 export const IMPORT_MAX = 10;
 export const IMPORT_HINT = 'Imported servers join no set: turn them on in a set on Connectors › MCP servers.';
 export const HOME_NOTE = 'This worca does not read the home-folder configs of the machine it runs on. Pick a project to scan its files.';
@@ -83,9 +86,8 @@ export function openMcpImport({ api, modal, doc = globalThis.document, onDone = 
   function serverRow(row) {
     const el = h(doc, 'div', 'mcp-imp-row');
     el.dataset.id = row.id;
-    const cb = h(doc, 'input', 'mcp-imp-pick');
-    cb.type = 'checkbox';
-    cb.setAttribute('aria-label', `Import ${row.name}`);
+    const pick = toElement(doc, checkbox({ attrs: { class: 'mcp-imp-pick', 'aria-label': `Import ${row.name}` } }));
+    const cb = pick.querySelector('input');
     const name = h(doc, 'input', 'input mono mcp-imp-name');
     Object.assign(name, { type: 'text', maxLength: 20, autocomplete: 'off', spellcheck: false });
     name.value = st.names.has(row.id) ? st.names.get(row.id) : (row.suggestedName || '');
@@ -98,7 +100,7 @@ export function openMcpImport({ api, modal, doc = globalThis.document, onDone = 
       syncPicks();
     });
     const head = h(doc, 'div', 'mcp-imp-head');
-    head.append(cb, h(doc, 'b', 'mono', row.name),
+    head.append(pick, h(doc, 'b', 'mono', row.name),
       h(doc, 'span', 'hint', `${row.tool} · ${row.source}${row.scope === 'local' ? ` (local to ${row.project})` : ''}`),
       h(doc, 'span', 'badge', row.transport));
     if (row.inWorca) head.appendChild(h(doc, 'span', 'badge', `Already in worca as ${row.worcaName}`));
