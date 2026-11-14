@@ -8,6 +8,7 @@ import { startTaskLive } from './task-live.mjs';
 import { startWorkflowLive } from './workflow-live.mjs';
 import { startMarketLive } from './market-live.mjs';
 import { startProjectsLive } from './projects-live.mjs';
+import { startInsightsLive } from './insights-live.mjs';
 import { progressOfState } from './chat-turns.mjs';
 import { workModeOf } from '../../../../src/shared/ask-run-snapshot.mjs';
 
@@ -33,7 +34,8 @@ const RUN_FRAMES = new Set(['run-created', 'state', 'question', 'question-resolv
 const DEBOUNCE_MS = 250, BACKOFF_MS = 1000, BACKOFF_MAX_MS = 30000, TOKEN_EXPIRED = 4001;
 
 const PROJECT_FRAMES = new Set(['clone-changed', 'settings-changed', 'projects-changed', 'workspaces-changed']);
-export function startLive({ fetch, WebSocket, location, world, host = {}, prefs = null, setTimeout, clearTimeout = () => {}, now = Date.now, openChat = () => '', hidden = () => false, toast = () => {}, open = undefined, go = () => {}, download = () => {}, workflowsChanged = () => {}, marketChanged = () => {}, projectsChanged = () => {}, openSource = undefined }) {
+const INSIGHTS_FRAMES = new Set(['pipelines-changed', 'ask-done', 'ask-error', 'budget-changed', 'team-metrics-changed']);
+export function startLive({ fetch, WebSocket, location, world, host = {}, prefs = null, setTimeout, clearTimeout = () => {}, now = Date.now, openChat = () => '', hidden = () => false, toast = () => {}, open = undefined, go = () => {}, download = () => {}, workflowsChanged = () => {}, marketChanged = () => {}, projectsChanged = () => {}, insightsChanged = () => {}, insightsModel = () => globalThis.window?.RailInsightsModel, storage = null, openSource = undefined }) {
   let sources = {}, loaded = false, listFailed = false, stopped = false, sock = null, backoff = BACKOFF_MS, reconnect = 0, queue = [], unread = [], asked = 0;
   const live = new Map(), timers = {}, stamp = {}, stale = new Set();
   const progress = new Map();   // R-ux-12: each live run's place among its stages, from its `state` frames (runProgress)
@@ -56,6 +58,8 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   // Projects and Workspaces (slice 9 D3): its writes; the lists stay the store's mapped parts, read again through refresh
   const projectsLive = startProjectsLive({ fetch, toast, go, setTimeout, clearTimeout, on: () => projectsChanged(),
     world: () => ({ projects: world.part?.('projects') || [], spaces: world.part?.('spaces') || [] }), refresh: (...names) => names.forEach((n) => refresh(n)) });
+  // Insights (slice 10 D8): insights-live owns every Insights read (GETs only); the budget is the store's costs part
+  const insights = startInsightsLive({ fetch, now, setTimeout, clearTimeout, on: () => insightsChanged(), world: () => ({ costs: world.part?.('costs') }), model: insightsModel, storage });
 
   // Tasks (D4): task-live owns every task fetch, the checks cache and the Tasks actions; this adapter only hands it the
   // runs, the store and the first-load signal, and passes its frames on. It keeps no cache of its own.
@@ -180,7 +184,8 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
     if (f.type === 'hello') { hello(f); return; }
     if (typeof f.type === 'string' && (f.type.startsWith('ask-') || f.type.startsWith('term-'))) chat.frame(f);
     if (typeof f.type === 'string' && f.type.startsWith('scriptbench-')) workflow.frame(f);   // a script bench's answer (D12)
-    if (PROJECT_FRAMES.has(f.type)) projectsLive.frame(f);   // a clone this tab started, a project page's settings read again (slice 9)
+    if (PROJECT_FRAMES.has(f.type)) projectsLive.frame(f);
+    if (INSIGHTS_FRAMES.has(f.type)) insights.frame(f);   // the open Insights page reads again (slice 10 D8)   // a clone this tab started, a project page's settings read again (slice 9)
     task.frame(f);
     if (!loaded) { queue.push(f); return; }
     apply(f);
@@ -295,8 +300,8 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   function retry() { listFailed = false; world.setState({ list: 'loading' }); return begin(); }
   begin();
   return {
-    chat, task, workflow, market, projects: projectsLive,
-    stop: () => { stopped = true; clearTimeout(reconnect); for (const k of Object.keys(timers)) clearTimeout(timers[k]); sock?.close(); },
+    chat, task, workflow, market, projects: projectsLive, insights,
+    stop: () => { stopped = true; insights.stop(); clearTimeout(reconnect); for (const k of Object.keys(timers)) clearTimeout(timers[k]); sock?.close(); },
     refresh,
     retry,
     // opening a chat clears its dot (D14)

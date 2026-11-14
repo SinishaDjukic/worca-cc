@@ -20,7 +20,21 @@ test('every demo seed of the 8 kinds meets its shape', () => {
   check('workflow', wf.workflow); check('agent', wf.agent); check('script', wf.script);
   const mk = w.RailPlaces.marketplace.records();   // Marketplace (slice 8): the place's own demo lists
   check('plugin', mk.plugins); check('market', mk.markets);
-  for (const [k, n] of Object.entries(seen)) assert.ok(n > 0, `${k}: seeds checked`);
+  for (const [k, n] of Object.entries(seen)) if (k !== 'insight') assert.ok(n > 0, `${k}: seeds checked`);   // insight: live sources only (below)
+});
+
+test('the live Insights sources (insights-map.mjs statsSource and teamSource) meet SHAPES.insight (slice 10)', async () => {
+  const { statsSource, teamSource, shapingSource, untaggedSource } = await import('../ui/public/stillhet/live/insights-map.mjs');
+  const { statsAnswer, RECORDS } = await import('./helpers/stillhet-insights-host.mjs');
+  for (const page of ['spend', 'ends', 'fails', 'shipped', 'throughput']) {
+    assert.deepEqual(shapeErrors('insight', statsSource(statsAnswer(1), { page })), [], page);
+    assert.deepEqual(shapeErrors('insight', statsSource(statsAnswer(1), { page, filter: ['person:Maya'], by: 'project', thenBy: 'client' })), [], `${page} filtered`);
+  }
+  assert.deepEqual(shapeErrors('insight', shapingSource(statsAnswer(1))), []);
+  const team = teamSource(RECORDS, { when: 'this month', now: Date.UTC(2026, 10, 14, 12), page: 'team' });
+  assert.deepEqual(shapeErrors('insight', team), []);
+  assert.deepEqual(shapeErrors('insight', untaggedSource(team.facts, 'client', team)), []);
+  assert.deepEqual(shapeErrors('insight', { ...team, rows: [] }), ['insight.rows: expected object']);
 });
 
 test('the live Workflows records (workflow-map.mjs) meet the same shapes (slice 7)', async () => {

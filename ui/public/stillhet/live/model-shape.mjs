@@ -21,6 +21,8 @@ export const SHAPES = Object.freeze({
   // Marketplace (slice 8): marketplace/marketplace.js data, and live/market-map.mjs pluginsOf and marketOf
   plugin: { id: 'string', name: 'string', ver: 'string', kind: 'string', market: 'string', what: 'string', adds: 'array', asks: 'array', installed: 'boolean', brand: 'string?', update: 'string?', needsSetup: 'boolean?', source: 'object|null?', uses: 'number|null?', why: 'string?', parts: 'array?', gives: 'object|null?', row: 'object|null?' },
   market: { id: 'string', name: 'string', url: 'string', branch: 'string', sha: 'string', synced: 'string', builtin: 'boolean?', webUrl: 'string|null?', error: 'string?' },
+  // Insights (slice 10 D5): a live source, live/insights-map.mjs statsSource and teamSource (the demo's are insights-model.js source())
+  insight: { live: 'boolean', fields: 'array', labels: 'array', series: 'object', totals: 'object', prev: 'object|null', rows: 'object', kids: 'object?' },
 });
 
 const is = {
@@ -30,6 +32,7 @@ const is = {
   array: (v) => Array.isArray(v),
   'object|null': (v) => v === null || (typeof v === 'object' && !Array.isArray(v)),
   'string|null': (v) => v === null || typeof v === 'string',
+  object: (v) => v !== null && typeof v === 'object' && !Array.isArray(v),
 };
 
 /** [] when `item` has every field of `kind` with its type, else one line per wrong field ("task.cost: expected number|null"). */

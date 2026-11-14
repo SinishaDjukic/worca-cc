@@ -436,3 +436,15 @@ test('Projects (slice 9 D3): clone-changed, settings-changed, projects-changed a
   r.frame(r.sockets[0], { type: 'settings-changed' }); await r.tick(300);
   assert.equal(reads(), n + 2, 'settings-changed reads the open page\'s settings and defaults again');
 });
+
+test('Insights (slice 10 D8): pipelines-changed, ask-done, ask-error, budget-changed and team-metrics-changed reach insights.frame; other frames do not', async () => {
+  const r = rig();
+  await r.tick();
+  r.frame(r.sockets[0], hello); await r.tick();
+  const got = [];
+  r.live.insights.frame = (f) => got.push(f.type);
+  for (const type of ['pipelines-changed', 'ask-done', 'ask-error', 'budget-changed', 'team-metrics-changed', 'schedules-changed', 'plugins-changed', 'projects-changed', 'ask-start']) r.frame(r.sockets[0], { type });
+  await r.tick();
+  assert.deepEqual(got, ['pipelines-changed', 'ask-done', 'ask-error', 'budget-changed', 'team-metrics-changed']);
+  assert.ok(!gets(r.calls).some((u) => /^\/api\/(stats|team-metrics|tag-dimensions|policy)/.test(u)), 'no Insights read until a page asks');
+});
