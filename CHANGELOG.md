@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Stillhet: less CPU with long chats and live tasks
+
+- A chat's task cards read only what a card shows (the task and its checks). The page's diff, log, docs, actions, setup, comments, sessions and usage are read when the task's page opens. Opening a chat with 10 tasks drops from about 90 reads and 20 s of main-thread work to 10 reads that settle in a few seconds.
+- A live frame (a task's state, a run list change, a PR lookup) no longer rewrites what did not change. The open chat, the lists and Pulse's slots keep their DOM when their markup is the same, and a PR lookup that matches the rows draws nothing. A message's references are scanned once per text. On a long chat, a task's frames twice a second now take about 14% of a core (was 37%), and a run list change every 2 s about 5% (was 63%).
+- The scroll fades measure only the columns a change can move, once per frame.
+
 ### Instance contract for hosting platforms
 
 - New [Instance contract](docs/instance-contract.md) page: what a hosted Worca instance is made of (the `worca`, `broker` and `cloudflared` containers, their start commands, ports and volumes) and everything a management interface sets or expects: every variable per container, the identity token, the heartbeat and what a receiver should do with it, stopping and draining, rotation and versions. For running Worca for others without a hosting platform, or for building a management interface of your own.

@@ -101,6 +101,8 @@ test('panel.answer-refs: Worca\'s words split into words and dev\'s refs (a run 
   assert.equal(parts.map((p) => p.text).join(''), 'It is like 0a1b2c3d, see ask_0123abcd and acme/web#7 or https://github.com/acme/web/pull/9.', 'nothing is lost or added');
   assert.equal(parts.find((p) => p.ref?.key === 'gh:acme/web#9').ref.url, 'https://github.com/acme/web/pull/9');
   assert.equal(partsOf('No refs here.'), null);
+  const same = 'Again 0a1b2c3d.';
+  assert.equal(partsOf(same), partsOf(same), 'the same words are scanned once: a repaint reads the kept parts');
   const msg = (status) => ({ messages: [{ id: 'm', role: 'assistant', status, text: 'See ask_0123abcd', blocks: [] }] });
   const done = turnsOf(msg('done')).find((x) => x.t === 'words');
   assert.ok(done.parts && turnErrors(done).length === 0);

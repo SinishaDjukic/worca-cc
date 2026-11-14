@@ -745,14 +745,24 @@ function holdFocus(paint) {
   const same = sel && document.querySelector(attr === 'data-pop' ? sel : `.pz-popover ${sel}`);
   (same || rowEl(R.keepFocus(before, rowIds(), row)) || document.querySelector('[data-pop]'))?.focus();
 }
+// Pulse redraws on every store change (each live frame); a slot whose markup is the one it holds is not written again, so
+// the sidebar and the popover keep their DOM, and the page is not restyled for nothing. A slot with a field in it is always
+// written: what was typed there is not in its markup, and a redraw is how a field is put back.
+const written = new WeakMap();
+function put(el, html) {
+  if (!el) return;
+  const w = written.get(el);
+  if (w && w.html === html && w.first === el.firstChild && !el.querySelector('input, textarea, select')) return;
+  el.innerHTML = html; written.set(el, { html, first: el.firstChild });
+}
 function renderInShell() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   const pageEl = document.querySelector('main.main'); const keepMain = pageEl?.scrollTop || 0;   // the page scrolls in main in the one Worca
   const keepP = document.querySelector('.panel-body')?.scrollTop || 0;
-  document.getElementById('rail-pulse-slot').innerHTML = pulseButton();
-  document.getElementById('side-foot').innerHTML = sideFoot();
-  document.getElementById('rail-strip').innerHTML = window.RailShell?.inviteStrip?.() || unlockStrip() || settingsStrip() || labsBack();
+  put(document.getElementById('rail-pulse-slot'), pulseButton());
+  put(document.getElementById('side-foot'), sideFoot());
+  put(document.getElementById('rail-strip'), window.RailShell?.inviteStrip?.() || unlockStrip() || settingsStrip() || labsBack());
   // a reply in a chat you left: the dot on the Chat row and on Ask worca, until you open Chat
   const chatDot = !!C().chatUnread && !ui.chatSeen;
   for (const id of ['nav-chat-unread', 'topnav-ask-dot']) { const d = document.getElementById(id); if (d) { d.hidden = !chatDot; d.title = 'A reply in a chat you left'; } }
@@ -761,12 +771,13 @@ function renderInShell() {
   // sidebar stays Worca's, and Settings opens on its menu as a list in the page)
   const side = document.querySelector('#side-rail'), nav = side.querySelector('nav.nav');
   let sm = side.querySelector('.rail-side-settings');
-  if (sideNow) { if (!sm) { sm = document.createElement('div'); sm.className = 'rail-side-settings'; nav.after(sm); } sm.innerHTML = settingsMenu(); side.classList.add('is-settings'); }
-  else { sm?.remove(); side.classList.remove('is-settings'); }
+  if (sideNow) { if (!sm) { sm = document.createElement('div'); sm.className = 'rail-side-settings'; nav.after(sm); } put(sm, settingsMenu()); }
+  else sm?.remove();
+  side.classList.toggle('is-settings', sideNow);   // toggle with a force writes only a change: a remove() would restyle the bar
   document.querySelector('#side-rail .brand')?.classList.toggle('is-settings', sideNow);
-  if (sideNow) document.getElementById('route-settings').innerHTML = `<div class="pz-page">${settingsPage()}</div>`;
-  const res = document.querySelector('[data-search-res]'); if (res) res.innerHTML = searchResults();
-  document.getElementById('app').innerHTML = `${popover()}${newRun()}${acctMenu()}${sessionDialog()}`;
+  if (sideNow) put(document.getElementById('route-settings'), `<div class="pz-page">${settingsPage()}</div>`);
+  put(document.querySelector('[data-search-res]'), searchResults());
+  put(document.getElementById('app'), `${popover()}${newRun()}${acctMenu()}${sessionDialog()}`);
   paintToast();
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
   const pb = document.querySelector('.panel-body'); if (pb && !opening) pb.scrollTop = keepP;

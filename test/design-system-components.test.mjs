@@ -73,6 +73,23 @@ test('listController: selected counts in the actions\' unit (list.select-bar)', 
   assert.match(root.querySelector('.runs-bulk-n').textContent, /^3 selected/);
 });
 
+test('listController: a repaint with nothing changed writes nothing; a changed row is drawn again', () => {
+  const d = new JSDOM('<body><div id="r"></div></body>', { pretendToBeVisual: true }).window.document, root = d.getElementById('r');
+  let rows = [{ key: 'g', title: 'g', meta: '' }, { key: 'c', title: 'c', meta: '' }];
+  const ctl = C.listController({ root, spec: { noun: `same-${Math.random()}`, label: 'x', can: () => ['menu'], bulk: () => [], act: () => {}, word: () => false, say: () => {}, active: () => true, open: () => {}, view: () => ({ state: 'ready', parts: [], sections: [{ id: 's', title: 'S', rows }] }) } });
+  ctl.paint();
+  const first = root.firstElementChild;
+  let writes = 0; new d.defaultView.MutationObserver((rs) => { writes += rs.length; }).observe(root, { childList: true, subtree: true });
+  ctl.paint(); ctl.paint();
+  return new Promise((done) => setTimeout(() => {
+    assert.equal(writes, 0, 'the same list is not written again');
+    assert.equal(root.firstElementChild, first);
+    rows = [{ key: 'g', title: 'g2', meta: '' }, rows[1]];
+    ctl.paint();
+    setTimeout(() => { assert.ok(writes > 0, 'a changed row is'); assert.match(root.textContent, /g2/); done(); }, 0);
+  }, 0));
+});
+
 test('compactMenu: two columns live inside what scrolls (comp.menu-groups)', () => {
   const m = dom(C.compactMenu({ cls: 'pz-menu is-two-cols', items: [{ header: 'One' }, { text: 'a' }] }));
   assert.ok(m.firstElementChild.matches('.menu-cols') && m.querySelector('.menu-cols > .menu-g'));
@@ -1420,6 +1437,21 @@ test('ScrollFade: an edge fades only while there is more past it', () => {
   const { window } = new JSDOM('<body><div class="convo-scroll"></div></body>');
   C.watchScrollFades(window.document);
   assert.equal(window.document.querySelector('.convo-scroll').hasAttribute('data-more-below'), false, 'nothing past it: no fade');
+  window.close();
+});
+
+test('ScrollFade: a change marks the columns around it, once per frame, and leaves the others alone', async () => {
+  const { window } = new JSDOM('<body><div class="convo-scroll" id="a"><p></p></div><div class="bar-list" id="b"></div></body>', { pretendToBeVisual: true });
+  let frames = 0; const raf = window.requestAnimationFrame.bind(window); window.requestAnimationFrame = (fn) => { frames++; return raf(fn); };
+  C.watchScrollFades(window.document);
+  const tall = (el) => { Object.defineProperty(el, 'scrollHeight', { value: 1000, configurable: true }); Object.defineProperty(el, 'clientHeight', { value: 400, configurable: true }); };
+  const a = window.document.getElementById('a'), b = window.document.getElementById('b');
+  tall(a); tall(b);
+  a.querySelector('p').append('one'); a.querySelector('p').append('two'); a.append(window.document.createElement('p'));
+  await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => raf(() => r()));
+  assert.equal(a.hasAttribute('data-more-below'), true, 'the column that grew fades at its foot');
+  assert.equal(b.hasAttribute('data-more-below'), false, 'a column nothing touched is not measured again');
+  assert.equal(frames, 1, 'many changes, one pass');
   window.close();
 });
 

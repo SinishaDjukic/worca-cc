@@ -454,3 +454,30 @@ test('a merge that succeeded drops the checks entry and reads no checks again', 
   assert.equal(res.ok, true);
   assert.deepEqual(calls.slice(before).filter(([, u]) => /\/api\/pr\/checks/.test(u)), [], 'a merged PR has no checks to read');
 });
+
+test('a chat card reads only the detail and checks; the page that opens the task later loads its parts, once', async () => {
+  const { t, calls } = host({ rows: { h3: failedRow }, routes: { 'GET /api/history/web-1/h3$': [200, { state: TASK_DETAILS.failed.state }] } });
+  const parts = () => calls.filter(([, u]) => /\/(diff|log|comments|artifacts|actions|setup|sessions|telemetry)\b/.test(u)).length;
+  let heard = 0; t.onChange(() => heard++);
+  await t.open('h3', { withParts: false }); await settle(20);
+  assert.equal(t.state('h3'), 'ready');
+  assert.equal(t.parts('h3'), null, 'a card never reads the page\'s parts');
+  assert.equal(parts(), 0);
+  const cardHeard = heard;
+  assert.ok(cardHeard <= 3, `a card is a few changes, not one per part (${cardHeard})`);
+  await t.open('h3'); await settle(20);
+  assert.ok(t.parts('h3'), 'the page reads them when it opens');
+  const once = parts();
+  assert.ok(once >= 5, `the page's parts are read (${once})`);
+  await t.open('h3'); await settle(20);
+  assert.equal(parts(), once, 'opened again, the parts are not read again');
+});
+
+test('a page that opens a task while a card\'s read is on its way gets the parts when that read lands', async () => {
+  const { t } = host({ rows: { h3: failedRow }, routes: { 'GET /api/history/web-1/h3$': async () => { await settle(10); return [200, { state: TASK_DETAILS.failed.state }]; } } });
+  const card = t.open('h3', { withParts: false });
+  const page = t.open('h3');
+  assert.equal(card, page, 'the page joins the card\'s read');
+  await page; await settle(20);
+  assert.ok(t.parts('h3'), 'and its parts are loaded');
+});

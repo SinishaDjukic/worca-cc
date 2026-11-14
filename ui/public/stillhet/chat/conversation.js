@@ -107,7 +107,7 @@
   const liveCard = (t) => {
     const T = window.RailTaskLive, id = t.run || t.id;
     if (!T) return t;
-    if (!cardRead.has(id)) { cardRead.add(id); T.open(id); }
+    if (!cardRead.has(id)) { cardRead.add(id); T.open(id, { withParts: false }); }   // the card's facts only: its page reads its parts when opened
     // in place: the card's own state (its confirm, its form) lives on this object; the facts taskCardOf leaves out once
     // they clear (a Retry that worked: no failure, no failing items) go too, never kept from the last draw
     for (const k of CARD_FACTS) delete t[k];
@@ -821,26 +821,37 @@
     const el = m.sel ? root.querySelector(m.sel) : root.querySelector(`[data-anchor="${CSS.escape(m.anchor)}"]`)?.querySelectorAll(FOCUSABLE)[m.at];
     el?.focus?.();
   }
+  const drawn = { sig: '', first: null };   // what paintOnly wrote last, and the element it wrote
   function paintOnly(keepText = true) {
     const fm = focusMark();
     const had = root.querySelector('[data-composer-t]'), caret = had && document.activeElement === had, y = root.querySelector('.convo-scroll')?.scrollTop;
     if (had && keepText) comp.text = had.value;
     const c = chat();
+    const mine = [...busy].filter(([, c]) => c === (chatId || '')).map(([sel]) => sel);   // another chat's pending control stays its own
+    // A store change repaints the open chat, most often with nothing it shows changed (another task's frame, a list read
+    // again). The same markup is not written again: the DOM, its scroll, focus and caret are already what it would be. Only
+    // a repaint that keeps the typed text may skip (paint(false) puts comp.text in the box), and never with the anchors menu
+    // open (its rows are measured from the page after the write).
+    const same = (html) => { const sig = `${chatId}\u0000${mine.join('\u0001')}\u0000${html}`; if (keepText && menu !== 'anchors' && drawn.sig === sig && drawn.first && drawn.first === root.firstElementChild) return true; drawn.sig = sig; return false; };
     if (!chatId || !c) {
-      root.innerHTML = side ? sideHome() : `<div class="chat-home" data-home><div class="chat-home-in"><h1>${esc(opts.title || 'What\'s next?')}</h1>${composerHtml()}${opts.mode ? '' : startersHtml() + newHere()}</div></div>`;
+      const html = side ? sideHome() : `<div class="chat-home" data-home><div class="chat-home-in"><h1>${esc(opts.title || 'What\'s next?')}</h1>${composerHtml()}${opts.mode ? '' : startersHtml() + newHere()}</div></div>`;
+      if (same(html)) return;
+      root.innerHTML = html;
     } else {
       const labels = (c.labels || []).map((l) => R.chip({ text: l })).join('');
       const st = LIVE() ? CL().state(c.id) : window.RailDemoState?.thread || 'ready', body = st === 'ready' || !st ? calmCards(turns()) : threadState(st);
       // a chat that is gone or did not load has nothing to label or place
       const shown = st === 'ready' || !st, offered = offeredLabels(c), labelPick = shown ? R.sentencePicker({ id: 'cl-label', text: '+ Label', tip: 'Adds or removes a label', body: R.listEditor({ label: 'Labels', inputId: 'cl-label-q', placeholder: 'Find or make a label', sections: [{ title: 'Labels', kind: 'label', many: true, rows: offered.filter((l) => l.includes(labelQ.toLowerCase())).map((l) => ({ text: l, n: '', on: (c.labels || []).includes(l) })) }], hint: labelQ.length >= LABEL_MAX ? `A label holds ${LABEL_MAX} characters at most` : labelQ && !offered.includes(labelQ.toLowerCase()) ? `Enter makes “${labelQ.toLowerCase()}”` : '' }), open: menu === 'cl-label', chevron: '' }) : '';
-      root.innerHTML = `<div class="convo"><div class="convo-scroll"><div class="convo-col"><div class="convo-head">${shown ? `${esc(c.project || 'No project')}${labels ? ` · ${labels}` : ''}` : ''}${labelPick}${worktreesHtml()}<span class="tl-list-btn rc-pop" data-anchor-menu>${R.button({ label: 'Move through this chat', kind: 'quiet', iconOnly: true, icon: R.icon('list', 15), attrs: { 'data-anchor-open': '', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'anchors') } })}</span></div>${wtConfirm()}${engConfirm()}${body}</div></div><div data-timeline></div><div class="convo-dock">${R.button({ label: 'Latest', kind: 'quiet', icon: R.icon('chevron', 12), cls: 'jump-latest', attrs: { 'data-jump-latest': '', title: 'Back to the newest turn' } })}${composerHtml()}</div></div>`;
+      const html = `<div class="convo"><div class="convo-scroll"><div class="convo-col"><div class="convo-head">${shown ? `${esc(c.project || 'No project')}${labels ? ` · ${labels}` : ''}` : ''}${labelPick}${worktreesHtml()}<span class="tl-list-btn rc-pop" data-anchor-menu>${R.button({ label: 'Move through this chat', kind: 'quiet', iconOnly: true, icon: R.icon('list', 15), attrs: { 'data-anchor-open': '', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'anchors') } })}</span></div>${wtConfirm()}${engConfirm()}${body}</div></div><div data-timeline></div><div class="convo-dock">${R.button({ label: 'Latest', kind: 'quiet', icon: R.icon('chevron', 12), cls: 'jump-latest', attrs: { 'data-jump-latest': '', title: 'Back to the newest turn' } })}${composerHtml()}</div></div>`;
+      if (same(html)) return;
+      root.innerHTML = html;
       const box = root.querySelector('.convo-scroll');
       if (y != null) box.scrollTop = y;
       if (menu === 'anchors') root.querySelector('[data-anchor-menu]').insertAdjacentHTML('beforeend', R.compactMenu({ items: ticks().map((t) => ({ id: `tick|${t.id}`, text: t.title, hint: t.line })) }));
       box.addEventListener('scroll', paintTimeline, { passive: true });
       paintTimeline();
     }
-    const mine = [...busy].filter(([, c]) => c === (chatId || '')).map(([sel]) => sel);   // another chat's pending control stays its own
+    drawn.first = root.firstElementChild;
     for (const sel of mine) root.querySelectorAll(sel).forEach((b) => { b.disabled = true; });
     if (!mine.length || !fm?.sel || !mine.includes(fm.sel)) focusBack(fm);
     const t = root.querySelector('[data-composer-t]');

@@ -218,6 +218,11 @@ test('a finished run with an open PR: each history load asks dev\'s PR lookup, i
   await r.tick(250);
   assert.equal(r.rows.get('hpr').case, 'checks', 'the new skeleton carries the PR until the next lookup answers');
   assert.equal(posts().length, 2, 'the refetch asks again');
+  const loads = () => r.log.filter((x) => x[0] === 'load').length, before = loads();
+  r.frame(r.sockets[0], { type: 'history-pr', token: posts()[1].body.token, done: true, items: [{ projectKey: 'web', id: 'hpr', pr: { url: 'https://x/pull/1', state: 'open' } }] });
+  assert.equal(loads(), before, 'the same PRs again draw nothing');
+  r.frame(r.sockets[0], { type: 'history-pr', token: posts()[1].body.token, done: true, items: [{ projectKey: 'web', id: 'hpr', pr: { url: 'https://x/pull/1', state: 'merged' } }] });
+  assert.equal(loads(), before + 1, 'a PR that changed draws once');
 });
 
 test('a failed PR lookup is asked again by the task page\'s Try again (open force), and only while it is failed', async () => {

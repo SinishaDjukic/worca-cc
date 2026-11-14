@@ -17,7 +17,18 @@ const wordsHtml = (t) => esc(t).replace(/\r\n?|\n/g, '<br>');
 // panel.answer-refs: the runs, chats and PRs dev's answer chips find in the words (src/shared/chip-refs.mjs): dev's text
 // refs, and a link written out (Stillhet draws plain words, so a PR's URL is text). `parts` are words and refs in order.
 const URL_RE = /https:\/\/[^\s<>()"'`]+[^\s<>()"'`.,;:!?]/g;
+// A chat repaints on every store change and reads every answer's parts again; the scan is the same for the same words, so
+// it is kept per text (bounded: the oldest goes first). Callers read the parts and never change them.
+const PARTS_MAX = 2000, partsSeen = new Map();
 export function partsOf(text) {
+  const key = String(text);
+  if (partsSeen.has(key)) return partsSeen.get(key);
+  const parts = scanParts(key);
+  if (partsSeen.size >= PARTS_MAX) partsSeen.delete(partsSeen.keys().next().value);
+  partsSeen.set(key, parts);
+  return parts;
+}
+function scanParts(text) {
   const found = [...refsInText(text)];
   for (const m of String(text).matchAll(URL_RE)) { const ref = refFromHref(m[0]); if (ref) found.push({ start: m.index, end: m.index + m[0].length, ref }); }
   found.sort((a, b) => a.start - b.start);

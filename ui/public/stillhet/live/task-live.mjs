@@ -157,12 +157,16 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
   const entry = (id) => { if (!tasks.has(id)) tasks.set(id, { state: 'loading', detail: null, loading: null }); return tasks.get(id); };
 
   /** Load a task page (§3): loading until the store's first load answered and the detail is in; gone when neither the runs
-   *  nor the store hold it, or History answers 404 for a task no run holds; failed on a 5xx or a network failure. */
-  function openTask(id, { force = false } = {}) {
+   *  nor the store hold it, or History answers 404 for a task no run holds; failed on a 5xx or a network failure.
+   *  `withParts: false` (a chat's task card) reads only what the card draws: the detail and the checks. The page's parts
+   *  (diff, log, docs, actions, setup, comments, sessions, usage) are eight more reads, each a repaint, so they wait until a
+   *  page asks for the task; a page that opens a task a card already read loads them then. */
+  function openTask(id, { force = false, withParts = true } = {}) {
     const e = entry(id);
+    if (withParts) e.wantParts = true;   // a read already on its way (a card's) loads the parts too when it lands
     if (force) retryPrs();   // Try again: a PR lookup that failed is asked again, so an open PR never reads Create PR
     if (e.loading) return e.loading;
-    if (e.state === 'ready' && !force) { refreshChecks(id, { force: true }); return Promise.resolve(e); }
+    if (e.state === 'ready' && !force) { refreshChecks(id, { force: true }); if (withParts && !parts.has(id)) loadParts(id); return Promise.resolve(e); }
     // still waiting on the list: says so only on a change (a listener that routes again must not loop)
     // the list's first load failed: the page reads failed (state()); its Try again reads the list again (D15)
     if (!listLoaded() && listFailed() && force && retryList) {
@@ -187,7 +191,7 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
       else e.state = 'failed';
       e.loading = null;
       notify(id);
-      if (e.state === 'ready') { refreshChecks(id, { force: true }); loadParts(id); }
+      if (e.state === 'ready') { refreshChecks(id, { force: true }); if (e.wantParts) loadParts(id); }
       return e;
     })();
     if (!wasReady) notify(id);

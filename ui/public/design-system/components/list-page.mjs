@@ -76,7 +76,7 @@ export function fitMenu(m, vw) {
 const OWNER = new WeakMap();   // root → the controller whose rows it shows
 export function listController({ root, spec }) {
   const doc = root.ownerDocument, win = doc.defaultView;
-  const s = { pick: selectClear(), menu: '', more: new Set(), shut: new Set(), treeShut: new Set(), treeSeen: new Set(), opening: '', seen: new Set(), arrived: new Map(), groups: new Map(), rounds: new Set(), roundsAll: new Set(), confirm: null, pop: null, dialog: null, focus: '', flash: '', order: [], rows: new Map() };
+  const s = { pick: selectClear(), menu: '', more: new Set(), shut: new Set(), treeShut: new Set(), treeSeen: new Set(), opening: '', seen: new Set(), arrived: new Map(), groups: new Map(), rounds: new Set(), roundsAll: new Set(), confirm: null, pop: null, dialog: null, focus: '', flash: '', order: [], rows: new Map(), drawn: '', drawnFirst: null };   // drawn: the last paint's markup and Tab stop, drawnFirst the element it wrote
   const dots = () => icon('more', 16);
   // folded date sections are kept per list, so Older stays folded when you come back
   const FOLD_KEY = `worca-rail.fold.${spec.noun}`;
@@ -163,8 +163,14 @@ export function listController({ root, spec }) {
     const keep = focus || (picked ? `[data-menu="${q(picked)}"]` : ['data-menu', 'data-bulk', 'data-selall', 'data-fold', 'data-rounds'].filter((k) => a?.hasAttribute?.(k)).map((k) => `[${k}${a.getAttribute(k) && a.getAttribute(k) !== 'true' ? `="${q(a.getAttribute(k))}"` : ''}]`)[0]);
     const typed = root.querySelector('#list-pop-q')?.value, name = root.querySelector('[data-dlg-name]')?.value;
     const toneOf = (el) => { const m = el.querySelector(':scope > .lr-rail .kind-mark, :scope > .lr-rail .status-dot'); return m ? `${m.className.replace(/ ?is-(news|still)/g, '')}|${m.querySelectorAll('circle[style]').length}` : ''; };   // its state and how far its ring has filled
+    const markup = html(spec.view());
+    // A store change repaints every list, most often with nothing it shows changed (a live frame for a task in another list).
+    // The same markup, Tab stop, no open menu and no field (what a field holds is not in its markup): the DOM is already
+    // this paint, so nothing is written.
+    const sig = `${markup}\u0000${s.order.includes(s.focus) ? s.focus : s.order[0]}`;
+    if (!focus && !s.opening && sig === s.drawn && root.firstElementChild && root.firstElementChild === s.drawnFirst && !root.querySelector('.pz-menu, .rc-pop > .menu, input, textarea, select')) { for (const k of s.rows.keys()) s.seen.add(k); return; }
     const was = new Map([...root.querySelectorAll('[data-row]')].map((el) => [el.dataset.row, toneOf(el)]));
-    root.innerHTML = html(spec.view());
+    root.innerHTML = markup; s.drawn = sig; s.drawnFirst = root.firstElementChild;
     // a row whose state changed since the last paint says so once: its mark pulses (list.news)
     // a row whose state or stage changed since the last paint says so once: its ring fills to where it is, then it pulses (list.news);
     // a row never seen before drops into its place, briefly tinted (list.arrives); none of it on the first paint

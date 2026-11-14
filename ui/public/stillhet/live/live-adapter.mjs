@@ -94,7 +94,10 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
     const known = new Map(items.filter((it) => it && it.id).map((it) => [prKey(it.projectKey, it.id), it.pr || null]));
     const h = sources.history;
     if (!h || !Array.isArray(h.pipelines)) return;
-    sources = { ...sources, history: { ...h, pipelines: h.pipelines.map((p) => (p && known.has(prKey(p.projectKey, p.id)) ? { ...p, pr: known.get(prKey(p.projectKey, p.id)) } : p)) } };
+    // every History read asks for its PRs again, and the answer is mostly what the rows already hold: drawn only on a change
+    const moved = (p) => p && known.has(prKey(p.projectKey, p.id)) && JSON.stringify(p.pr ?? null) !== JSON.stringify(known.get(prKey(p.projectKey, p.id)));
+    if (!h.pipelines.some(moved)) return;
+    sources = { ...sources, history: { ...h, pipelines: h.pipelines.map((p) => (moved(p) ? { ...p, pr: known.get(prKey(p.projectKey, p.id)) } : p)) } };
     draw(() => partOf('history', sources.history, { ...sources, hello: { runs: [...live.values()] } }, { now: now(), unread, checksOf: task.checks }), undefined, { list: 'refresh' });
   }
   // A source's read: the workspaces list, then every workspace's map in parallel (a failed map read leaves that

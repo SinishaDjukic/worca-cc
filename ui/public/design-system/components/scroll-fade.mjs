@@ -23,5 +23,18 @@ export function watchScrollFades(doc) {
   doc.addEventListener('scroll', (ev) => { if (ev.target.matches?.(SEL)) mark(ev.target); }, { capture: true, passive: true });
   win.addEventListener('resize', all);
   all();
-  if (win.MutationObserver && doc.body) new win.MutationObserver(() => win.requestAnimationFrame(all)).observe(doc.body, { subtree: true, childList: true });
+  // A change marks only the columns it can move: the ones around it (it may have made them taller) and the ones it added.
+  // One pass per frame, however many changes landed in it, since each mark is a layout read.
+  const due = new Set();
+  let queued = false;
+  const flush = () => { queued = false; const els = [...due]; due.clear(); for (const el of els) if (el.isConnected) mark(el); };
+  const changed = (records) => {
+    for (const r of records) {
+      const t = r.target; if (!t || t.nodeType !== 1) continue;
+      for (let up = t.closest(SEL); up; up = up.parentElement?.closest(SEL)) due.add(up);
+      t.querySelectorAll(SEL).forEach((el) => due.add(el));
+    }
+    if (due.size && !queued) { queued = true; win.requestAnimationFrame(flush); }
+  };
+  if (win.MutationObserver && doc.body) new win.MutationObserver(changed).observe(doc.body, { subtree: true, childList: true });
 }
