@@ -310,6 +310,17 @@ test('renderGroupsCard: the Requirements row is muted like the Chat row and has 
   assert.match(readStyleCss(), /\.groups-table tr\.groups-row-requirements td/);
 });
 
+test('renderGroupsCard: the Design row is muted like the Chat row and has no run counts', () => {
+  const rows = [...GROUPS.rows, { kind: 'design', key: null, label: 'Design', spentUsd: 0.5, designs: 2,
+    runs: 0, finished: 0, stopped: 0, failed: 0, paused: 0, running: 0, prsOpened: 0, prsMerged: 0 }];
+  const card = renderGroupsCard({ ...GROUPS, rows }, 'x', { doc, totalUsd: 4.75, totalRuns: 3 });
+  const tr = card.querySelectorAll('tbody tr')[3];
+  assert.ok(tr.classList.contains('groups-row-design'));
+  assert.equal(tr.cells[0].textContent, 'Design');
+  for (const i of [3, 4, 5, 6, 7]) assert.equal(tr.cells[i].textContent, '—');
+  assert.match(readStyleCss(), /\.groups-table tr\.groups-row-design td/);
+});
+
 test('renderKpiRow: the Naming line shows under Chat only when there is naming spend', () => {
   const none = renderKpiRow(MODEL, { doc }).querySelectorAll('.stat-tile')[3];
   assert.match(none.querySelector('.stat-label').textContent, /Chat/);

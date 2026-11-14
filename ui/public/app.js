@@ -210,7 +210,7 @@ import {
 import {
   renderProvidersCard, collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
   applyProviderPreset, endpointRowMatches, ENDPOINT_PRESETS,
-  setModelUpstream,
+  setModelUpstream, applyImagesPreset, collectImagesRow, showImagesTest, showImagesSaveError, collectSoundRow,
 } from './bridge-view.mjs';
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
@@ -251,7 +251,8 @@ import { createArtifactBrowser } from './artifacts/browser.mjs';
 import { baseName as artifactBaseName } from './artifacts/common.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
 import { buildFeedbackRows as ntBuildFeedbackRows } from './loop-rows.mjs';
-import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody, renderRolesSection, readRolesValues, rolesPatchToSettingsBody, paintRoleFallbacks } from './engine-settings-view.mjs';
+import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, designRowId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody, renderRolesSection, readRolesValues, rolesPatchToSettingsBody, paintRoleFallbacks } from './engine-settings-view.mjs';
+import { DESIGN_ENGINE_NAMES } from '../../src/shared/design-names.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
 import { mountHouseBrief } from './house-brief-view.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
@@ -293,6 +294,9 @@ import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/a
 import { createSchedulesView } from './schedules-view.mjs';
 import { createRunPrFields, mountWorkspacePrSetting, paintRunPrAuto } from './pr-auto-view.mjs';
 import { createRequirementsView } from './requirements-view.mjs';
+import { mountDesignView, pushDesignFrame, pushDesignAskFrame, repaintDesignChat, designHello, designNavCount, paintDesignNav } from './design/view.mjs';
+import { createDesignChat } from './design/chat.mjs';
+import { createDesignActivity } from './design/activity.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, currentFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
 import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
@@ -654,6 +658,12 @@ async function featureThreadFor(ref) {
 if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, refresh: refreshShapeFeatures, paintAsk: (ref, host) => chatPaintQuestion(ref, host),
   shaperCard: shaperCardFor, threadForRun: featureThreadFor };   // test seam
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
+// The open Design builds Activity lists (design/activity.mjs), from hello's list and the design-build frames. A build
+// first met in a frame reads "Design" until its title loads (asked once; a 404 or a bad body keeps "Design").
+const designActivity = createDesignActivity({
+  loadTitle: async (id) => (await safeJson(await fetch(`/api/design/${encodeURIComponent(id)}`))).design?.title,
+  onChange: () => updateNavCounts(),
+});
 let awayScreensaver = null;    // the away screensaver easter egg (away-screensaver.mjs) — assigned beside Activity; timerTick uses awayScreensaver?.
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
@@ -1233,12 +1243,13 @@ function applySidebarCollapsed() {
   // `data-rail-title` marks the ones WE wrote, so expanding removes only those.
   // Runs is excluded — updateNavCounts owns its title (the needs-you/live
   // counts). It has not run yet at the boot call below; showView does.
+  // Design is excluded too: paintDesignNav (below) owns its title and live count.
   // `:scope >` mirrors the CSS rule exactly: only the label span is a direct child.
   // The dataset.nav fallback can only fire if a button ever loses its label
   // span; an empty title would otherwise leave the button both tooltip-less and
   // silently "handled".
   // The rail's own squares only (children of .nav).
-  for (const b of $$('.nav > button[data-nav]:not([data-nav="runs"])')) {
+  for (const b of $$('.nav > button[data-nav]:not([data-nav="runs"]):not([data-nav="design"])')) {
     if (collapsed) {
       if (!b.dataset.railTitle) {
         const t = b.querySelector(':scope > span:not(.nav-count):not(.nav-rollup)');
@@ -1250,6 +1261,8 @@ function applySidebarCollapsed() {
       delete b.dataset.railTitle;
     }
   }
+  // One call covers boot, repaintNavMode and the Ask side's onLayout: the rail state just moved.
+  paintDesignNav(document, designNavCount());
 }
 
 /** Everything that renders differently on the rail: one call after the rail state moves
@@ -1782,6 +1795,10 @@ function handleServerMessage(msg) {
     return;
   }
 
+  // Design frames are tagged by designId + buildId (no runId) and reach every socket: the Design view keeps the
+  // nav count and the open stage. Handle them BEFORE the !msg.runId early-return below.
+  if (typeof msg.type === 'string' && msg.type.startsWith('design-')) { pushDesignFrame(msg); if (msg.type === 'design-build' && designActivity.frame(msg)) updateNavCounts(); return; }
+
   // Ask Worca frames are tagged by threadId (job frames also carry messageId +
   // seq) and ride the same broadcast socket. Handle them BEFORE the
   // !msg.runId early-return below.
@@ -1790,6 +1807,7 @@ function handleServerMessage(msg) {
     awayScreensaver?.onAskFrame(msg);   // chat turns and proposals it counts
     askPanel?.pushServerFrame(msg);
     wfvChat?.pushFrame(msg);          // the Workflows chat keeps only its own composer thread's frames
+    pushDesignAskFrame(msg);          // the open design's chat keeps only its own thread's frames
     // D12: a settled chat turn moves the combined spend — repaint the sidebar
     // indicator and, when open, the Statistics view. ask-error included: an
     // error turn that saw a result frame carries recorded spend. refreshBudget
@@ -2319,6 +2337,8 @@ function onHello(msg) {
   pokeAskRuns(null, 'hello');
   askPanel?.onHello(msg.ask);
   wfvChat?.onHello();
+  designHello(msg.design ?? [], { rebooted });   // the live builds (an older server's hello has none)
+  designActivity.hello(msg.design);              // Activity's builds, paused ones too (refreshAllCounts below repaints)
 
   // diff-comments-changed is a plain global broadcast with no per-socket buffer
   // (ui/server.mjs:389-398), so any comment written while the socket was down is
@@ -19819,6 +19839,9 @@ async function paintEngineSettings(data, { force = false } = {}) {
   for (const engine of HELPER_ENGINES.filter((e) => e !== 'claude')) {
     for (const job of CODEX_HELPER_JOBS) fields[utilityId(engine, job)] = { own: data.utilityModels?.[engine]?.[job], inherited: { value: undefined, source: 'default' } };
   }
+  // Design's lead and builders per engine (Engines card › Design), while the design flag is on.
+  const designEngines = flagOn('design') ? DESIGN_ENGINE_NAMES.filter((e) => ENGINE_NAMES.includes(e)) : [];
+  for (const engine of designEngines) for (const role of ['lead', 'builder']) fields[designRowId(engine, role)] = { own: data.designModels?.[engine]?.[role], inherited: { value: undefined, source: 'default' } };
   const claudeOwn = CLAUDE_USER_HELPER_OWN(data || {});
   const claudeJobs = claudeUserHelperJobs();
   for (const job of claudeJobs) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
@@ -19853,7 +19876,7 @@ async function paintEngineSettings(data, { force = false } = {}) {
     renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
       noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
       defaultLabels: { claude: 'the default model' }, stepHints: { claude: claudeStepHints },
-      jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] }, modelRoles: data.modelRoles || {} });
+      jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] }, modelRoles: data.modelRoles || {}, designEngines });
   }
   lastEngineSettingsData = data;
   paintModelRoles(data);
@@ -19902,6 +19925,8 @@ async function paintEngineCardStatus(root) {
 // The flag flips while the Models page is open: the Engines card gains / loses the interview row. Refetched, since
 // GET /api/settings carries the row's stored pair and its default only while the flag is on.
 onFlagChange('requirements', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintHelperModelCards({ force: true }); });
+// The design flag flips while the Models page is open: the Engines card gains / loses its Design rows.
+onFlagChange('design', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintEngineSettings(lastEngineSettingsData, { force: true }); });
 document.getElementById('engineSettingsSave')?.addEventListener('click', async () => {
   const root = document.getElementById('engine-settings-root');
   const body = enginePatchToSettingsBody(readEngineSection(root));
@@ -20009,6 +20034,7 @@ function setProviderMsg(name, text, err, title = 'Something went wrong') {
   if (!row) return;
   row.textContent = text || '';
   row.className = 'hint mv-pv-msg';
+  row.removeAttribute('role');
 }
 
 async function reloadProviders() {
@@ -20079,7 +20105,8 @@ async function copilotSignOutFlow() {
 
 // #555: the row's Save button shows busy → "Saved"; the row's line carries only errors. A change
 // on a select (account type, concurrency) has no button, so its success is the new value itself.
-async function patchProviderFlow(name, body, { btn = null } = {}) {
+// `onError(message)`, when given, shows a refused Save in the row's own place instead of the card's alert.
+async function patchProviderFlow(name, body, { btn = null, onError = null } = {}) {
   setProviderMsg(name, '');
   const r = await withButton(btn, async () => {
     const res = await fetch(`/api/providers/${encodeURIComponent(name)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -20092,10 +20119,14 @@ async function patchProviderFlow(name, body, { btn = null } = {}) {
     return { ok: true };
   }, { done: 'Saved' });
   if (r.skipped) return;
-  if (!r.ok) { setProviderMsg(name, r.error, true, 'Not saved'); return; }
+  if (!r.ok) {
+    if (onError) onError(r.error);
+    else setProviderMsg(name, r.error, true, 'Not saved');
+    return;
+  }
   // The repaint replaced the clicked button: give its successor the "Saved" state.
   if (btn && !btn.isConnected) {
-    const cls = btn.classList.contains('mv-sp-save') ? 'mv-sp-save' : 'mv-pv-save';
+    const cls = ['mv-sp-save', 'mv-im-save', 'mv-so-save'].find((c) => btn.classList.contains(c)) || 'mv-pv-save';
     const next = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"] .${cls}`);
     if (next) await withButton(next, () => undefined, { done: 'Saved' });
   }
@@ -20142,6 +20173,44 @@ async function testSpeechFlow(btn) {
   if (r.skipped) return;
   if (r.ok) notify({ tone: 'ok', key: `speech-test-${kind}`, title: `${what} works`, detail: r.detail ? `${r.detail}.` : '' });
   else setProviderMsg('speech', r.error, true, `${what} test failed`);
+}
+
+/** The Image generation row's Test picture: makes one picture from what is on screen, like testSpeechFlow.
+ *  Testing… → Works on the button; the picture and its time, or the reason it failed, in the row itself. */
+async function testImagesFlow(btn) {
+  const typed = collectImagesRow(providerRoot()) || {};
+  setProviderMsg('images', '');
+  const r = await withButton(btn, async () => {
+    try {
+      const res = await fetch('/api/images/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(typed) });
+      const data = (await safeJson(res)) || {};
+      if (data.ok) return data;
+      return { ok: false, message: data.message || data.error || `The server answered ${res.status}.` };
+    } catch (e) { return { ok: false, message: `worca did not answer (${e.message}).` }; }
+  }, { busy: 'Testing…', done: 'Works' });
+  if (r.skipped) return;
+  showImagesTest(providerRoot(), r);
+}
+
+/** The Sound row's Test: lists the voices the key reaches. An unchanged key is not sent, so the saved one is tested.
+ *  Testing… → Works on the button; "Key works · n voices", or the reason it failed, in the row itself. */
+async function testSoundFlow(btn) {
+  const typed = collectSoundRow(providerRoot()) || {};
+  setProviderMsg('sound', '');
+  const r = await withButton(btn, async () => {
+    try {
+      const res = await fetch('/api/providers/sound/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(typed) });
+      const data = (await safeJson(res)) || {};
+      if (data.ok) return data;
+      return { ok: false, message: data.message || data.error || `The server answered ${res.status}.` };
+    } catch (e) { return { ok: false, message: `worca did not answer (${e.message}).` }; }
+  }, { busy: 'Testing…', done: 'Works' });
+  if (r.skipped) return;
+  const line = providerRoot()?.querySelector('.mv-pv-row[data-provider="sound"] .mv-so-result');
+  if (!line) return;
+  line.hidden = false;
+  line.className = r.ok ? 'hint mv-so-result' : 'hint err mv-so-result';
+  line.textContent = r.ok ? `Key works · ${r.voices} voices` : (r.message || '');
 }
 
 async function testProviderFlow(btn) {
@@ -20583,6 +20652,10 @@ if (el.providersList) {
       const body = collectSpeechRow(providerRoot());
       if (body) patchProviderFlow('speech', body, { btn: t });
     } else if (t.classList.contains('mv-sp-test')) testSpeechFlow(t);
+    else if (t.classList.contains('mv-im-save')) patchProviderFlow('images', collectImagesRow(providerRoot()), { btn: t, onError: (msg) => showImagesSaveError(providerRoot(), msg) });
+    else if (t.classList.contains('mv-im-test')) testImagesFlow(t);
+    else if (t.classList.contains('mv-so-save')) patchProviderFlow('sound', collectSoundRow(providerRoot()), { btn: t });
+    else if (t.classList.contains('mv-so-test')) testSoundFlow(t);
     else if (t.classList.contains('mv-sp-clear')) clearSpeechCacheFlow(t);
     else if (t.classList.contains('mv-pv-preset')) {
       // Fills the fields only; the row's Test / Save do the rest, exactly as for a typed URL.
@@ -20599,6 +20672,7 @@ if (el.providersList) {
     const t = ev.target;
     if (!t || !t.classList) return;
     if (t.classList.contains('mv-cp-account')) patchProviderFlow('copilot', { accountType: t.value });
+    else if (t.classList.contains('mv-im-service')) applyImagesPreset(providerRoot(), t.value);
     else if (t.classList.contains('mv-pv-conc') && t.dataset.provider === 'copilot') patchProviderFlow('copilot', { maxConcurrent: Number(t.value) });
   });
 }
@@ -33971,6 +34045,20 @@ const requirementsView = createRequirementsView({
 // Turning the flag off while the page is open leaves it for Chat (a hidden page must not stay up).
 onFlagChange('requirements', (on) => { if (!on && currentView() === 'requirements') showView('chat', ''); });
 
+// Design (behind the design flag): the page module owns #design-host and the nav row's live count; app.js routes and
+// relays the design-* frames and hello's design list.
+const designView = mountDesignView({ doc: document, win: window, host: $('#design-host'), fetch: (...a) => fetch(...a), sendWs: (obj) => { const s = state.ws; if (s && state.wsReady) { try { s.send(JSON.stringify(obj)); } catch { /* ignore */ } } }, route: (p) => { location.hash = p ? `#design/${p}` : '#design'; }, prompt: (o) => promptModal(o),
+  createChat: createDesignChat, confirm: (o) => confirmModal(o),
+  // As the Workflows chat's: once marked loads, the open design chat paints its replies again.
+  renderMarkdown: (text, mount) => {
+    const out = hdMarkdown.render(text);
+    if (out && out.kind === 'md') { mount.classList.add('ask-md'); mount.replaceChildren(out.frag); return; }
+    mount.textContent = text;
+    if (!hdMarkdown.isReady() && !hdMarkdown.isFailed()) void hdMarkdown.ensure().then((ok) => { if (ok) repaintDesignChat(); });
+  },
+});
+onFlagChange('design', (on) => { if (!on && currentView() === 'design') showView('chat', ''); updateNavCounts(); });
+
 /** The workspace read-model, loaded once: a scheduled run card names "Workspace · <name>", not an id. */
 function withWorkspaces() {
   return (state.workspaces || []).length ? Promise.resolve() : loadWorkspaces();
@@ -38654,14 +38742,18 @@ function renderPipelineTabs() {
 
 // Needs you, counted without building the list (this runs on every WS frame): the same rule
 // as the Runs list's Needs-you group, over the same rows (runs-list.mjs countNeedsYou). The top
-// bar's Activity badge reads the SAME items (activity-model.mjs activityCounts), so its amber
-// number is this one; `active` is every live run: the grey Runs number, Activity's running count.
+// bar's Activity badge reads the SAME items plus the Design builds (activity-model.mjs
+// activityCounts), so its amber number is this one plus the builds that need you, while the Runs
+// badge (countNeedsYou) stays runs only; `active` is every live run: the grey Runs number,
+// Activity's running count. `designs` only while the design flag is on: hello lists the builds
+// either way, and a #design/<id> row would then lead nowhere.
 function runsNeedsInput() {
   return {
     live: overviewRuns().map((r) => ({ runId: r.runId, pipelineId: r.pipelineId || '', status: r.status, ask: r.pendingQuestion != null, unread: isLingering(r),
       roundOf: runsRoundOf(r) })),   // a live fix round: its run is Working, not Needs you (runs-list needsYouItems, D5)
     history: Array.isArray(state.historyAll) ? state.historyAll : [],
     active: liveRuns().map((r) => ({ runId: r.runId })),
+    designs: flagOn('design') ? designActivity.items() : [],
   };
 }
 function runsNeedsCount() {
@@ -39569,7 +39661,7 @@ const navLinks = $$('.nav button[data-nav], #acct-settings');
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
 // (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
 // Settings tabs once, pages of their own now.
-const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'profile', 'feature', 'group'];
+const VIEW_NAMES = ['chat', 'design', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'profile', 'feature', 'group'];
 // One Runs page, five route names: the bare list (#runs), the two run routes every deep link already uses
 // (#running/<id>…, #history/<projectKey>/<id>…) and the group page's two (#feature/<id>…, #group/<id>…, run 3 D1).
 // All five render the `data-view="runs"` section and light the one Runs nav button.
@@ -39609,7 +39701,7 @@ const VIEW_TITLES = Object.freeze({
   guardrails: 'Guardrails', memory: 'Memory', ask: 'Chat', tags: 'Labels & cost tags',
   marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
   schedules: 'Schedules', presets: 'Presets',
-  requirements: 'Requirements',
+  requirements: 'Requirements', design: 'Design',
 });
 function pageMinLevel() {
   if (currentShownView === 'settings') return { key: currentSettingsTab, min: SETTINGS_TAB_MIN_LEVEL[currentSettingsTab] || 'simple' };
@@ -39750,6 +39842,8 @@ function showView(name, param = '') {
   }
   // Requirements is behind its flag (docs/feature-flags.md): a deep link while it is off lands on Chat.
   if (name === 'requirements' && !flagOn('requirements')) return showView('chat', '');
+  // Design too: a deep link while the design flag is off lands on Chat.
+  if (name === 'design' && !flagOn('design')) return showView('chat', '');
   // A bare #running / #history is the Runs list now (both lists merged into it). Replace the
   // entry rather than letting the hash sync below PUSH #runs: Back would land on #history
   // again, normalize again, and never get past it.
@@ -39896,6 +39990,7 @@ function showView(name, param = '') {
   document.body.classList.toggle('view-workspaces', name === 'workspaces');
   document.body.classList.toggle('view-workflows', name === 'workflows');
   document.body.classList.toggle('view-chat', name === 'chat');   // worca Chat: the page fills the column (style.css)
+  document.body.classList.toggle('view-design', name === 'design');   // Design: full-bleed, the stage fills the column
   if (RUNS_VIEWS.has(name)) {
     const entering = !RUNS_VIEWS.has(prevView);
     // The section is visible now (the toggle above): measure before anything opens, so the
@@ -39938,6 +40033,8 @@ function showView(name, param = '') {
   if (name === 'stats') loadStatsView();
   if (name === 'requirements') void requirementsView.show(param);
   else requirementsView.leave();   // the Feature chat phone sheet and an export dialog make the page inert; leaving the view puts it back
+  if (name === 'design') void designView.show(param);
+  else designView.leave();
   if (name === 'schedules') { schedulesView.showTab(param); void withWorkspaces().then(() => schedulesView.load()); }
   if (name === 'team-metrics') {
     // #team-metrics/timeline opens the Timeline tab. Switching tabs inside the page only repaints:
@@ -40097,7 +40194,7 @@ function revealModelCard(id, param) {
   const card = [...el.modelsList.querySelectorAll('.mv-card[data-id]')].find((n) => n.dataset.id === id);
   if (card) markFound(card, card.querySelector('button'));
 }
-// '#providers/<copilot|openai|anthropic|speech>': the provider's row, highlighted, with its sign-in or key field
+// '#providers/<copilot|openai|anthropic|speech|images|sound>': the provider's row, highlighted, with its sign-in or key field
 // focused (focusProviderRow's choice), else its first control.
 function revealProviderRow(param) {
   if (!param || currentView() !== 'providers' || parseHash()[1] !== param || !el.providersList) return;
@@ -40196,9 +40293,11 @@ $('#topnav-new')?.addEventListener('click', () => {
 
 // Activity (#topnav-activity, activity-menu.mjs): what needs you, what is running and what is
 // scheduled, a list with no actions. Its badge repaints with the Runs badge (updateNavCounts),
-// from the same items; the open popover reads the Runs list's full rows (live: the Runs list's
-// live runs, active: every live run, agent-generation jobs too) and fetches the schedules when it
-// opens. A row routes like any page link: the route hides the Chat page when it is the one showing.
+// from the same items plus the Design builds (designActivity, while the design flag is on), so its
+// amber number includes the builds that need you while the Runs badge stays runs only; the open
+// popover reads the Runs list's full rows (live: the Runs list's live runs, active: every live run,
+// agent-generation jobs too) and the builds, and fetches the schedules when it opens. A row routes
+// like any page link: the route hides the Chat page when it is the one showing.
 activityMenu = $('#topnav-activity') ? createActivityMenu({
   button: $('#topnav-activity'), badge: $('#topnav-activity-n'), pop: $('#activity-pop'),
   getCounts: () => activityCounts(runsNeedsInput()),
@@ -40206,6 +40305,7 @@ activityMenu = $('#topnav-activity') ? createActivityMenu({
     live: overviewRuns().map(runsLiveItem),
     history: (Array.isArray(state.historyAll) ? state.historyAll : []).filter(Boolean).map(runsHistItem),
     active: liveRuns().sort(cmpTabRuns).map(runsLiveItem),
+    designs: flagOn('design') ? designActivity.items() : [],
   }),
   loadSchedules: async () => {
     await withWorkspaces();                              // a workspace's ticket names its workspace
@@ -40384,8 +40484,9 @@ function chatRoute(threadId, { replace = false } = {}) {
   location.hash = target;
 }
 /** Ask worca beside the page: which host the ONE chat page has on this route (showView, after the leave-Chat block and
- *  before enterChatView). Chat: the page — the column and its button hide, the person's choice kept. Workflows: no
- *  column (no top bar). Every other page: the button, and the column when the person left it open. */
+ *  before enterChatView). Chat: the page — the column and its button hide, the person's choice kept. Workflows and
+ *  Design: no column (Workflows has no top bar, Design its own chat). Every other page: the button, and the column
+ *  when the person left it open. */
 function syncAskSide(name) {
   if (!askSide || !askPanel) return;
   const btn = $('#topnav-ask');
@@ -40399,8 +40500,9 @@ function syncAskSide(name) {
     return;
   }
   askHistoryOnChat = false;
-  if (btn) btn.hidden = name === 'workflows';
-  askSide.setAvailable(name !== 'workflows');
+  const noColumn = name === 'workflows' || name === 'design';
+  if (btn) btn.hidden = noColumn;
+  askSide.setAvailable(!noColumn);
 }
 /** Below 1081px the side column covers the main column: the page behind it is inert while it shows (with the phone drawer's). */
 function paintAskSideCover() {
@@ -41794,8 +41896,8 @@ askPanel = createAskPanel({
   },
 });
 ($('section.view[data-view="chat"]') || document.body).appendChild(askPanel.root);
-// Ask worca beside the page: the header toggle docks this same panel in aside#ask-side on every page but Chat and
-// Workflows (syncAskSide decides per route). Made here, after the panel and before the boot route below.
+// Ask worca beside the page: the header toggle docks this same panel in aside#ask-side on every page but Chat,
+// Workflows and Design (syncAskSide decides per route). Made here, after the panel and before the boot route below.
 if ($('#ask-side') && $('#topnav-ask')) {
   askSide = createAskSide({
     doc: document,

@@ -150,12 +150,14 @@
     "runs/smart-naming.css",
     "network-proxy/proxy-settings.css",
     "settings/away-screensaver.css",
+    "design/design.css",
     "chat/card-nesting.css"
   ],
   "html": [
     "shell/sidebar.html",
     "shell/main-column.html",
     "chat/chat.html",
+    "design/design.html",
     "new-run/new.html",
     "getting-started/getting-started.html",
     "runs/runs.html",

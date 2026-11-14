@@ -15,22 +15,13 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import {
   readSetup, promoPaths, writeJson, elevenKey, elevenBase, elevenFetch, withRetry, fetchPublic, redactKey, safeId,
 } from './promo-common.mjs';
+import { rankVoices, voiceCandidate } from '../src/core/elevenlabs.mjs';
 
+export { rankVoices } from '../src/core/elevenlabs.mjs';
 export const MAX_VOICES = 6;
-const NARRATION_USE_RE = /narrat|informative|educational|advertis|news|commercial|explainer|promo/i;
 
 const lc = (v) => (typeof v === 'string' ? v.trim().toLowerCase() : '');
 const clip = (v, n) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, n) : '');
-
-/** An account voice (`/v2/voices`) → a candidate. */
-function fromAccount(v) {
-  const labels = v?.labels && typeof v.labels === 'object' ? v.labels : {};
-  return {
-    id: String(v?.voice_id || ''), name: clip(v?.name, 80) || 'Voice', gender: lc(labels.gender), accent: lc(labels.accent),
-    description: clip(labels.description || labels.descriptive || v?.description, 200),
-    useCase: lc(labels.use_case || labels['use case'] || labels.usecase), previewUrl: v?.preview_url || null, source: 'account',
-  };
-}
 
 /** A shared-library voice (`/v1/shared-voices`) → a candidate. */
 function fromLibrary(v) {
@@ -41,32 +32,13 @@ function fromLibrary(v) {
   };
 }
 
-/**
- * Filter by gender (`'either'` keeps all and interleaves female/male for variety) and rank
- * narration-like use cases first; otherwise the API's order stands. Pure.
- */
-export function rankVoices(list, gender = 'either') {
-  const score = (v) => (NARRATION_USE_RE.test(v.useCase || '') ? 0 : 1);
-  const ranked = (xs) => xs.map((v, i) => ({ v, i })).sort((a, b) => score(a.v) - score(b.v) || a.i - b.i).map((x) => x.v);
-  if (gender === 'female' || gender === 'male') return ranked(list.filter((v) => v.gender === gender));
-  const f = ranked(list.filter((v) => v.gender === 'female'));
-  const m = ranked(list.filter((v) => v.gender === 'male'));
-  const rest = ranked(list.filter((v) => v.gender !== 'female' && v.gender !== 'male'));
-  const out = [];
-  for (let i = 0; i < Math.max(f.length, m.length); i += 1) {
-    const pair = [f[i], m[i]].filter(Boolean).sort((a, b) => score(a) - score(b));
-    out.push(...pair);
-  }
-  return [...out, ...rest];
-}
-
 async function listAccount(call) {
   const out = [];
   let token = null;
   for (let page = 0; page < 3; page += 1) {
     const res = await call('/v2/voices', { page_size: 100, ...(token ? { next_page_token: token } : {}) });
     const j = await res.json();
-    for (const v of Array.isArray(j?.voices) ? j.voices : []) out.push(fromAccount(v));
+    for (const v of Array.isArray(j?.voices) ? j.voices : []) out.push(voiceCandidate(v));
     token = j?.has_more && j?.next_page_token ? j.next_page_token : null;
     if (!token) break;
   }

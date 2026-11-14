@@ -888,7 +888,7 @@
         "name": "away-screensaver"
       },
       {
-        "section": "^marketplace P7$",
+        "section": "^Design$",
         "selectors": [
           ":is(.ask-card,.chat-rc,.shape-feature)"
         ],
@@ -1459,6 +1459,17 @@
       ],
       "css": [],
       "html": []
+    },
+    {
+      "name": "design",
+      "doc": "docs/design.md",
+      "routes": [],
+      "css": [
+        "^Design$"
+      ],
+      "html": [
+        "<!-- ===== VIEW: DESIGN"
+      ]
     }
   ]
 }

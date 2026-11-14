@@ -2,6 +2,8 @@
 // server sends the Stillhet shell. The golden was taken from the merged base (dev 544cdc6a7, Tasks slice) with its own code:
 // `git archive` of that commit, a fresh HOME (welcomeSeen only), WORCA_FLAGS unset, git usable, mock mode; the body
 // hashed as served. Re-merging dev recaptures it from dev's own files, before this slice's changes.
+// The Design branch took it again when it merged dev d6f6475b8 (dev's own tree still hashes to dev's golden): the page
+// differs from dev's by Design's three additions only, `design` in data-flags, its sidebar entry and its view section.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -67,7 +69,7 @@ test('the raw Stillhet shell file is never served: every spelling gets the rende
 // The two bundle tests remove the generated files, so they run against a copy of the served tree: the checkout's own
 // ui/public/stillhet/ (shared with every other test and the gates) is never touched.
 const ROOT = new URL('..', import.meta.url).pathname;
-const COPIED = ['ui', 'src', 'tools', 'package.json', 'docs/design-system-catalog.json', 'plans/rail/prototype/gates'];
+const COPIED = ['ui', 'src', 'tools', 'assets', 'package.json', 'docs/design-system-catalog.json', 'plans/rail/prototype/gates'];   // assets: the kit tools src/core/design/ imports at start
 async function treeCopy(t) {
   const root = await mkdtemp(join(tmpdir(), 'stillhet-tree-'));
   t.after(() => rm(root, { recursive: true, force: true }));
