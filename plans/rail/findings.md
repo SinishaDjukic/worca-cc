@@ -20,6 +20,7 @@ Columns: **From** (the slice and where it was found), **Area**, **Finding** (one
 | feature 1 final check | Projects | The live workspace page draws dev's map and its questions only; Delete, Edit by hand, Scan again, Sync what is behind and Start a task across all are not drawn until they are wired | `workspaces/workspaces.js` | deferred | open (owner: Projects slice) |
 | feature 1 audit fix pass | Chat | A live metrics or policy ChangeProposal shows dev's raw kind word as its row ("Change: enable"); the prototype has no pair for these kinds, so the words need a design | `live/chat-turns.mjs` `rowsOf` | follow-up | open (owner: owner decision) |
 | feature 1 audit fix pass | Chat | An answered scope-switch ChangeProposal lists its project's full path as its row; the prototype's c11 says "This chat is on worca-cc now" | `live/chat-turns.mjs` scope-switch | follow-up | open (owner: owner decision) |
+| feature 1 real test | Chat | Right after the first send in a new chat, the composer's project picker reads "No project" while the chat is on its project; a reload shows it right | `#chat/ID` composer | minor | open (owner: feature 2 final check) |
 | #1266 no-project task | Chat | A `done`-tone task's card ⋯ lacks "Start a follow-up", "Report this task" and "Archive": the card's `done` tones list omits `done` | `chat/conversation.js` card ⋯ | minor | open (owner: owner decision) |
 | #1266 no-project task | Shell | The in-view tab's × (`data-in-view-drop`) splits its key on every colon, so a tab kept from Tasks (`task:run:ID`) cannot be dropped from the top bar; its open click was fixed in #1266 | `shell/shell.js` in-view drop | minor | open (owner: owner decision) |
 
@@ -27,7 +28,6 @@ Columns: **From** (the slice and where it was found), **Area**, **Finding** (one
 
 | From | Area | Finding | Closed by |
 |---|---|---|---|
-| feature 1 real test | Chat | Right after the first send in a new chat, the composer's project picker reads "No project" while the chat is on its project; a reload shows it right | this PR |
 | feature 1 audit | Pulse | Audit gap (Pulse and bell rows): a live Updates or Needs you row's detail line is dev's raw failure text (each failing test, 3–4 lines) or a raw cost comparison (`$0.80 >= $0.50`); the prototype says one short line naming the step | this PR |
 | feature 1 audit | Bell | Audit gap (bell head): the live Needs you head shows only its count; the prototype adds the breakdown (tasks, missed schedules, projects, questions) | this PR |
 | feature 1 audit | Profile | Audit gap (profile usage row): with no usage reading, Usage and costs shows the Pulse glyph and a dollar figure; the prototype draws its ring glyph | this PR |

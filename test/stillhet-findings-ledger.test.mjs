@@ -40,7 +40,7 @@ test('no row the final check fixed is still Open', () => {
   const open = rows('Open').map((r) => r[2]).join('\n');
   for (const fixed of ['usage rings', 'Needs you rows', '#959', 'review verdict', 'unapproved plan', 'needy round', 'removed run ids', '{base}', 'Archive toast',
     'Delete\'s confirm', "does: 'pr'", 'cap refusal', 'Bulk Label', '404s', 'account menu', 'Double full stop', 'clipped at 360', 'group page head', 'What broke',
-    'empty live diff', 'state.capUsd', 'stub `gh`', 'Merge confirm and its new live actions', 'Audit a run cost cap', "composer's project picker reads"]) {
+    'empty live diff', 'state.capUsd', 'stub `gh`', 'Merge confirm and its new live actions', 'Audit a run cost cap']) {
     assert.ok(!open.includes(fixed), `still open: ${fixed}`);
   }
 });

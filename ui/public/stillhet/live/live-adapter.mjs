@@ -49,7 +49,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   // task page reads telemetry only with runTelemetry on
   const copyFlags = (flags) => { if (!prefs || !flags || typeof flags !== 'object') return; for (const [k, v] of Object.entries(flags)) if (typeof v === 'boolean' && prefs.flag(k) !== v) prefs.setFlag(k, v); };
   const task = startTaskLive({ fetch, now, toast, chat, flag: (k) => !!prefs?.flag(k), ...(open ? { open } : {}), runOf: (id) => chat.runOf(id), rowOf: (id) => world.find?.(id) || null,
-    listLoaded: () => loaded, listFailed: () => listFailed, retryList: () => retry(), retryPrs: () => { if (prsFailed) askPrs(); }, prLookup: () => ({ token: prToken, ended: prsEnded === prToken || prsFailed }), projectDirOf: (x) => str0(projects().find((p) => p && (p.key === x || p.name === x))?.path),
+    listLoaded: () => loaded, listFailed: () => listFailed, retryList: () => retry(), retryPrs: () => { if (prsFailed) askPrs(); }, projectDirOf: (x) => str0(projects().find((p) => p && (p.key === x || p.name === x))?.path),
     liveOf: (id) => {
       const l = liveRun(id); if (!l) return null;
       return { runId: l.runId, pipelineId: l.pipelineId || '', status: l.status, projectKey: l.projectKey || '', projectDir: l.projectDir || '', pendingQuestion: l.pendingQuestion || null,
@@ -74,7 +74,6 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   // already known (app.js carryHistoryPr), so an open PR never reads Ready (Create PR) in between.
   const prs = new Map();
   let prToken = 0, prsFailed = false;   // a failed lookup is asked again by a task page's Try again (retryPrs)
-  let prsEnded = 0;   // D7: the last lookup whose `done` frame came (the server ends each one with `{token, done: true, items: []}`)
   const prKey = (projectKey, id) => `${projectKey || ''}|${id}`;
   function withPrs(h) {
     if (!h || !Array.isArray(h.pipelines) || !prs.size) return h;
@@ -87,9 +86,8 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
       .then((r) => { if (token === prToken) prsFailed = !(r && r.ok); }, () => { if (token === prToken) prsFailed = true; });
   }
   function onPrs(f) {
-    if (f.token === prToken && f.done === true) prsEnded = f.token;
     const items = f.token === prToken && Array.isArray(f.items) ? f.items : [];
-    if (!items.length) { if (f.token === prToken) task.listChanged(); return; }   // a card waiting on its PR reads that the lookup ended
+    if (!items.length) return;
     for (const it of items) if (it && it.id) { if (it.pr) prs.set(prKey(it.projectKey, it.id), it.pr); else prs.delete(prKey(it.projectKey, it.id)); }
     const known = new Map(items.filter((it) => it && it.id).map((it) => [prKey(it.projectKey, it.id), it.pr || null]));
     const h = sources.history;

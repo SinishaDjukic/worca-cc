@@ -4,7 +4,7 @@
 // drawn through chat-turns.mjs. Every action posts dev's route and body (D9, D11): nothing is written before the server
 // answers ok, and a refusal toasts once, `Could not ACTION: REASON`, and changes nothing.
 import { createThreadModel } from '../../../../src/shared/ask-model.mjs';
-import { turnsOf, planView, planPicks, runWithTurn } from './chat-turns.mjs';
+import { turnsOf, planView, planPicks } from './chat-turns.mjs';
 import { createTerminalLive } from './terminal-live.mjs';
 import { projectKeyOf } from './live-map.mjs';
 
@@ -200,7 +200,6 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
       e.state = 'ready';
       for (const f of q) e.model.apply(f);
       notify(id);
-      checkRunWith(id);
     })();
     e.loading = p;
     return p;
@@ -216,7 +215,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     if (e.state !== 'ready' || !e.model) return;
     const r = e.model.apply(f);
     if (r?.gap) { open(id, { force: true }); return; }
-    if (!r?.dropped) { notify(id); checkRunWith(id); }
+    if (!r?.dropped) notify(id);
   }
   // the lists a Chat control picks from, read once from dev's own GET routes (the person's choices come from these, never
   // from the demo's): a failed read is not kept, so the next look asks again
@@ -279,81 +278,19 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
   function turns(id) {
     const e = threads.get(id);
     if (!e || e.state !== 'ready') return [];
-    const rw = e.runWith, messages = e.model.messages().filter((m) => !e.hidden.has(m.id));
-    const out = turnsOf({ messages, runLinks: linksOf(e.model), inFlight: e.model.inFlight() }, { tasks: tasksOf(id), now: now(), commandOf: (b) => commandOf(id, b) });
-    if (!rw) return out;
-    // D5: while Run with waits, its workflow card stays the one Run with card (saved meanwhile) and the run proposal the
-    // event turn made is folded into it, so the chat shows one card and it is started once
-    const folded = new Set(proposalsFor(e, rw).map((b) => b.id)), wb = cardsOf(e).find((b) => b.id === rw.cardId);
-    return out.filter((x) => !(x.t === 'proposal' && folded.has(x.id))).map((x) => (wb && x.id === rw.cardId && x.t === 'change' ? runWithTurn(wb, 'proposed') : x));
-  }
-
-  // Run with (D4, D5): a one-stage workflow Worca proposed only to run a task. Dev saves the card and its event turn
-  // proposes the run (thread-cards.mjs, prompt rule 12); that proposal is started linked, once, and never drawn twice.
-  // The event turn is the save reply's own message (`turn.assistantMessageId`), else, for a turn dev queued behind the one
-  // running (`turn.deferred`), the first assistant message that was not in the chat when the save went out.
-  const cardsOf = (e) => (e?.model ? e.model.messages().flatMap((m) => arr(m.blocks)).filter((b) => b && b.kind === 'card') : []);
-  function eventMsg(e, rw) {
-    const ms = e?.model ? e.model.messages() : [];
-    if (!rw.msgId) rw.msgId = str(ms.find((m) => m.role === 'assistant' && !rw.before.has(m.id))?.id);
-    return rw.msgId ? ms.find((m) => m.id === rw.msgId) || null : null;
-  }
-  const proposalsFor = (e, rw) => arr(eventMsg(e, rw)?.blocks).filter((b) => b && b.kind === 'card' && b.state === 'proposed' && !b.card?.type && b.card?.workflowId === rw.workflowId);
-  // started for the person only when it runs what they saw on the Run with card: the card's own target, and nothing the
-  // model chose on top (its guardrails, engine, source or branches); otherwise it stays an ordinary proposal with Start
-  const asSaved = (c, rw) => str(c.projectKey) === rw.projectKey && str(c.workspaceId) === rw.workspaceId && (rw.projectKey || rw.workspaceId)
-    && (!c.guardrailsId || c.guardrailsId === 'normal') && !c.engine && !c.source && !c.featureBranch && !c.sourceBranch && !c.sameAsSource
-    && !(c.sourceBranchByKey && Object.keys(c.sourceBranchByKey).length);
-  const RUN_WORDS = 'start the task';
-  async function runWith(a, q) {
-    const e = threads.get(a.threadId);
-    const wc = cardsOf(e).find((b) => b.id === a.cardId)?.card || {};
-    const name = str(wc.name) || 'A workflow';
-    // what the chat held before the save: a later assistant message is the deferred event turn
-    const before = new Set((e?.model ? e.model.messages() : []).map((m) => m.id));
-    const was = e?.model?.inFlight()?.messageId; if (was) before.add(was);
-    const res = await request('POST', `${T(a.threadId)}/cards/${enc(a.cardId)}`, { state: 'saved' });
-    if (!res.ok) return refuse('save the workflow', res, q);
-    const workflowId = str(res.data?.block?.workflowId);
-    if (!workflowId) return refuse('save the workflow', { ok: false, error: 'the workflow was not saved' }, q);
-    const turn = res.data?.turn;
-    if (!turn || turn.error || (!str(turn.assistantMessageId) && turn.deferred !== true)) {   // the save stands: the card reads its saved row
-      open(a.threadId, { force: true });
-      return refuse(RUN_WORDS, { ok: false, error: `Worca saved ${name} but could not propose its task${turn?.error ? `: ${str(turn.error)}` : ''}` }, q);
-    }
-    if (e) e.runWith = { cardId: a.cardId, workflowId, name, projectKey: str(wc.projectKey), workspaceId: str(wc.workspaceId), msgId: str(turn.assistantMessageId), before, startedCardId: '' };
-    return { ok: true, data: { waiting: true, workflowId } };
-  }
-  function checkRunWith(id) {
-    const e = threads.get(id), rw = e?.runWith;
-    if (!rw || rw.startedCardId || e.state !== 'ready' || !e.model) return;
-    const m = eventMsg(e, rw);
-    if (!m) return;   // the event turn has not begun
-    const match = proposalsFor(e, rw)[0];
-    if (match && !asSaved(match.card, rw)) { e.runWith = null; notify(id); return; }
-    if (match) {
-      rw.startedCardId = match.id;
-      act('start', { threadId: id, cardId: match.id, card: match.card, picks: {} }).then(async (r) => {
-        if (r.ok) await open(id, { force: true });   // the proposal reads started before the wait lets it show
-        if (e.runWith === rw) { e.runWith = null; notify(id); }
-      });
-      return;
-    }
-    if (e.model.inFlight()?.messageId === m.id) return;   // the event turn still runs
-    e.runWith = null; notify(id);
-    refuse(RUN_WORDS, { ok: false, error: `Worca saved ${rw.name} but did not propose its task` });
+    const messages = e.model.messages().filter((m) => !e.hidden.has(m.id));
+    return turnsOf({ messages, runLinks: linksOf(e.model), inFlight: e.model.inFlight() }, { tasks: tasksOf(id), now: now(), commandOf: (b) => commandOf(id, b) });
   }
 
   // D10: a send on Chat home makes the thread first; a refused message deletes it again, and a failed delete keeps it
   async function sendMessage(a) {
-    let id = a.threadId, made = '', created = null;
+    let id = a.threadId, made = '';
     if (!id) {
       if (spare) id = spare;
       else {
         const c = await request('POST', '/api/ask/threads', {});
         if (!c.ok) return refuse(SEND_WORDS, c, a.quiet);
         id = made = str(c.data?.thread?.id);
-        created = c.data?.thread;
       }
     }
     // a new chat is subscribed before its first message goes, so no frame of the reply is missed; they wait in its buffer
@@ -380,9 +317,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     const e = entry(id);
     if (fresh) {   // a new chat lands ready with its YouTurn: no loading flash; the frames that came meanwhile follow it
       e.model = createThreadModel({ threadId: id });
-      // D9: the thread dev answered (its PATCH {scope}, else its create), so the chat's project is known with no GET
-      const th = [scoped.data?.thread, created].find((x) => x && typeof x === 'object' && x.id === id) || { id };
-      e.model.load({ thread: th, messages: [], attachments: [], runLinks: [], inFlight: null });
+      e.model.load({ thread: { id }, messages: [], attachments: [], runLinks: [], inFlight: null });
       e.state = 'ready'; e.reloading = false;
     }
     e.model?.noteLocalUserMessage?.({ id: res.data?.userMessageId, text: a.text, attachments: [] });
@@ -416,11 +351,6 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
         if (!u) return refuse(OPENS[id][0], { ok: false, error: 'it has no web address' }, q);
         const w = openUrl(u);
         return w === null ? refuse(OPENS[id][0], { ok: false, error: 'the browser blocked the new tab' }, q) : { ok: true };
-      }
-      if (id === 'run-with') {   // the save; the start waits for the event turn's proposal (checkRunWith)
-        const res = await runWith(args, q);
-        if (res.ok) open(args.threadId, { force: true });
-        return res;
       }
       if (id === 'apply') {   // dev's folder-changes.mjs: read the plan, then apply it (the route reads only memberKey)
         const qs = args.memberKey ? `?memberKey=${enc(args.memberKey)}` : '';
@@ -467,7 +397,6 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     terminal: (sessionId) => term.openSession(sessionId),
     state: (id) => threads.get(id)?.state || '',
     model: (id) => threads.get(id)?.model || null,
-    runWith: (id) => { const rw = threads.get(id)?.runWith; return rw ? { cardId: rw.cardId, workflowId: rw.workflowId } : null; },
     pending: (key) => pending.has(key),
     onChange: (fn) => { fns.add(fn); return () => fns.delete(fn); },
     // a dropped socket came back: the open threads are read again
