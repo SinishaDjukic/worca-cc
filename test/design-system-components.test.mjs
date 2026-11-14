@@ -299,6 +299,15 @@ test('sentencePicker: the words in the sentence, a CompactMenu only when open, e
   assert.deepEqual([...open.querySelectorAll('[data-menu-pick]')].map((x) => x.dataset.menuPick), ['badge|needs', 'badge|none']);
 });
 
+test('sentencePicker: an optional label names the button (aria-label); without it the markup is unchanged', () => {
+  const items = [{ id: 'bug', text: 'Bug report', checked: true }];
+  const plain = C.sentencePicker({ id: 'k', text: 'Bug report', items, tip: 'Pick another' });
+  assert.equal(plain, '<span class="spick"><button type="button" class="spick-b" data-menu="k" data-key="pick:k" aria-haspopup="menu" aria-expanded="false" title="Pick another">Bug report</button></span>');
+  assert.equal(C.sentencePicker({ id: 'k', text: 'Bug report', items, tip: 'Pick another', label: '' }), plain);
+  const named = dom(C.sentencePicker({ id: 'k', text: 'Bug report', items, label: 'Prompt kind: Bug "report"' }));
+  assert.equal(named.querySelector('.spick-b').getAttribute('aria-label'), 'Prompt kind: Bug "report"');
+});
+
 test('switchButton, settingsRow and settingsSection: the row owns its parts, the section its head and action', () => {
   const sw = dom(C.switchButton({ on: true, label: 'Desktop notifications', why: 'On', attrs: { 'data-desk': '' } }));
   assert.equal(sw.getAttribute('role'), 'switch');

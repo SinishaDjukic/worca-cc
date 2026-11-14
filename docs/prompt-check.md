@@ -5,8 +5,8 @@ The prompt check tells you, while you type a task, what kind of task it is and w
 
 This page is the one place that describes the assessment. Every surface that shows a kind or a grade reads it.
 
-What ships so far: the engine (the assessment, the free skip rules, the grading call, the route, the browser grader)
-and the setting. No surface shows a chip yet, so turning the setting on has no visible effect until the chip ships.
+What ships so far: the engine (the assessment, the free skip rules, the grading call, the route, the browser grader),
+the setting and the chip with its kind picker (below). Improve and the run card's perspective chips come later.
 
 ## How a prompt is checked
 
@@ -88,6 +88,9 @@ otherwise. The shape check wants the Shaper's section headings, so a pasted plan
 ```
 
 - `surface.kind` is `chat`, `new-run`, `shaper` or `run-card`. `forceTask` defaults to true for `run-card` and `shaper`.
+- `kind` (optional, one of the seven task kinds) is a person's correction from the chip. It pins the kind, limits the
+  rubric to that kind and makes the text a task on every surface, so no skip rule applies (a person asked). The bucket
+  and the budget still apply. Any other value answers 400 "kind is invalid". The log line then adds only `kind=forced`.
 - A bad request answers `400 {error}`: "requestId is required", "surface is required", "text is required", "text is
   too long" (over 20 000 characters), "window has too many messages" (more than 2), "unknown engine" or "chatModel is
   invalid". A window item over 4 000 characters is clipped.
@@ -109,6 +112,40 @@ Answers, in order:
 `total cost limit reached`. No prompt or reply text is ever logged; the route writes at most one line per request with
 the source, the skip or error code, the surface kind and the duration. The cost is booked as utility spend
 (`prompt-check`).
+
+## The chip
+
+With the setting on, a graded task shows one chip next to its text field: `Bug report ▾  Needs detail`. The kind is a
+SentencePicker (its name reads "Prompt kind: Bug report"); the grade is a Chip, `Clear` or `Needs detail`. It never
+blocks Send or Start and never changes their state.
+
+| Surface | Where | Surface kind |
+|---|---|---|
+| Chat composer | the lead row, after the intent chip | `chat` (the thread id, or `new`) |
+| The Shaper task | the same, while the intent is Shaper; always a task | `shaper` |
+| New run | under the prompt | `new-run` |
+| A proposed run card | the brief's foot, before the character count; always a task | `run-card` (the card id) |
+
+States: nothing shows while the setting is off, before the first result, or for a conversation or a question (Chat
+only). A re-check keeps the last chip, the same node, with no spinner. A failed or model-less check shows the kind with
+no badge. A grade change is said once in a polite live region; focus stays in the text field. Text emptied or sent
+hides the chip. Stillhet's composer has no chip yet (it waits for the owner's answer); its Settings has the switch.
+
+**Correcting the kind.** Picking another kind shows it at once, drops the badge, and checks the text again with that
+`kind` (no debounce). The kind sticks for the rest of the draft. The correction is recorded by ids only:
+
+`POST /api/prompt-check/kind-correction {surface, threadId?, cardId?, runId?, proposedKind, chosenKind}`
+
+- Chat, the Shaper task and a run card send the thread id (a run card adds its card id). New run sends the run id, so
+  its correction is held until `POST /api/run` answers; a new chat's is held until its first send creates the thread. An
+  abandoned form or an unsent new chat records nothing.
+- Answers: `201 {ok: true, at}`; `400 {error}` ("surface is required", "threadId is required" or "runId is required",
+  "id is invalid", "proposedKind is invalid", "chosenKind is invalid", "the kind did not change"), checked before the
+  setting and any write; `409 {error: 'prompt check is off'}`; `429 {error: 'too many corrections, try again in a
+  moment'}` past 60 a minute; `500 {error: 'could not record the kind correction'}`. A refusal writes nothing.
+- The row (`prompt_kind_corrections`, schema v96) holds `surface`, `thread_id`, `card_id`, `run_id`, `proposed_kind`,
+  `chosen_kind` and the server's `at`. No prompt text, ever; any other body key is ignored. It has no foreign key: rows
+  stay after their thread or run is deleted. The route logs one line with the surface and the duration, no id.
 
 ## The setting
 
