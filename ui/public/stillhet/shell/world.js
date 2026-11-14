@@ -120,7 +120,7 @@
   };
   let current = 'afternoon', data = null;
   // the live kind's other parts, each read through part(name) on every read (D9)
-  const parts = { chats: [], chatsNeeds: null, chatGroups: [], schedules: [], projects: [], costs: { budget: null, usage: [] }, updates: [], actions: [], away: { status: 'no-hours', hours: null }, keep: false, spaces: [] };
+  const parts = { chats: [], chatsNeeds: null, chatGroups: [], schedules: [], projects: [], costs: { budget: null, usage: [] }, updates: [], actions: [], away: { status: 'no-hours', hours: null }, keep: false, pulseFor: 'until-read', spaces: [] };
   const OWN = ['runs', 'groups', 'userGroups'];
   const listeners = [], moved = [];
   // One store: every task lives here once. A page that acts on a task moves it here, and every surface (a chat's card and

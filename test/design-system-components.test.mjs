@@ -1441,7 +1441,7 @@ test('askWorcaMark: the bubble and its W at rest, dots while writing, filled whi
   assert.match(C.askWorcaMark({ open: true, answering: true }), /<circle/);
 });
 
-test('topBarAction: with news, it shakes once (a class the look animates)', () => {
+test('topBarAction: with news, it carries is-news; the look animates it', () => {
   assert.match(C.topBarAction({ label: 'Pulse', icon: '<svg></svg>', labelCls: 'x', news: true }), /class="[^"]*is-news/);
   assert.doesNotMatch(C.topBarAction({ label: 'Pulse', icon: '<svg></svg>', labelCls: 'x' }), /is-news/);
 });

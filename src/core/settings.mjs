@@ -1273,7 +1273,8 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'updateCheck',                             // Settings › About: check npm for a newer stable Worca (#841)
   'titleModel', 'hideBuiltinModels',
   'theme',
-  'uiLevel',                                 // interface mode (docs/ui-levels.md)
+  'pulseFor',                                // Stillhet Settings › Notifications › Pulse icon
+  'uiLevel',                                // interface mode (docs/ui-levels.md)
   'flags',                                   // feature flags { key: bool } (docs/feature-flags.md)
   'autoWorkflowModel',                       // auto-workflow spec D14
   'prDescriptionModel',                      // the "Ship it?" modal's Generate with AI
@@ -1634,6 +1635,37 @@ export async function setTheme(input) {
   else settings.theme = input;
   await persistSettings(settings);
   return { theme: theme() };
+}
+
+// ── Pulse icon (Stillhet Settings › Notifications) ───────────────────────────
+// How long Stillhet's Pulse icon animates after a new event: until it is read or
+// acted on (the default, stored as the absent key), 10 seconds, 1 minute, or never.
+export const PULSE_FOR_MODES = Object.freeze(['until-read', '10s', '1m', 'never']);
+export const DEFAULT_PULSE_FOR = 'until-read';
+const isPulseForMode = (v) => PULSE_FOR_MODES.includes(v);
+
+/** STORED Pulse icon mode; an absent key is the default, an invalid value is the default (loudly). */
+export function pulseFor() {
+  const v = readSettings().pulseFor;
+  if (v === undefined) return DEFAULT_PULSE_FOR;
+  if (isPulseForMode(v)) return v;
+  console.warn(`[worca] invalid pulseFor ${JSON.stringify(v)} — using the default (${DEFAULT_PULSE_FOR})`);
+  return DEFAULT_PULSE_FOR;
+}
+
+/** @throws {Error} unless `input` is until-read|10s|1m|never, or empty/null (a clear). */
+export function assertPulseForInput(input) {
+  if (isClearInput(input)) return;
+  if (!isPulseForMode(input)) throw new Error('pulseFor must be until-read, 10s, 1m or never');
+}
+
+export async function setPulseFor(input) {
+  assertPulseForInput(input);
+  const settings = readSettings();
+  if (isClearInput(input) || input === DEFAULT_PULSE_FOR) delete settings.pulseFor;
+  else settings.pulseFor = input;
+  await persistSettings(settings);
+  return { pulseFor: pulseFor() };
 }
 
 // ── Auto workflow classifier model (auto-workflow spec D14) ─────────────────

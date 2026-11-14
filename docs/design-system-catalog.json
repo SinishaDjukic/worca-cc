@@ -220,6 +220,9 @@
       "needs": [
         "an action in the top bar whose words give way on a narrow screen"
       ],
+      "rules": [
+        "with news the icon shakes for as long as Settings › Notifications › Pulse icon says"
+      ],
       "example": "Pulse 3, New run"
     },
     {
