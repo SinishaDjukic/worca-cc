@@ -22,7 +22,6 @@ Columns: **From** (the slice and where it was found), **Area**, **Finding** (one
 | slice 7 review | Workflows | Save re-reads the workflow and refuses a changed base, but a change committed between that read and the POST is still overwritten; closing it needs a conditional save (`baseUpdatedAt` or If-Match, 409 when the row moved) on dev's `POST /api/workflows`, a server change this slice may not make (R-arch-5) (#1267) | `live/workflow-live.mjs` save | follow-up | open (owner: owner decision) |
 | slice 7 | Tasks | The Tasks center's "by workflow" grouping in the live kind needs each history row's workflow id, which `GET /api/history` does not carry; Workflows reads its counts from `GET /api/workflow-usage` instead | `centers/centers.js` | follow-up | open (owner: feature 2 final check) |
 | slice 6 | Workflows | Workflows keeps its inline drafts until slice 7 adopts `RailDrafts` (`shell/drafts.js`), the one drafts store Schedules uses | `workflows/workflows.js` | deferred | open (owner: feature 3) |
-| slice 6 | Schedules | A failed ticket's Open project lands on the project page, where pointing it at the folder waits for the Projects slice | `#projects/KEY` | deferred | open (owner: Projects slice) |
 | slice 6 | Worca | Run now on a series made from a chat card fails at fire with "card is scheduled": the ticket's stored request replays the card link (dev's flag-off page too) | `ui/server.mjs` fireTicket | follow-up | open (owner: dev PR (owner to open the issue)) |
 | #1266 no-project task | Chat | A `done`-tone task's card ⋯ lacks "Start a follow-up", "Report this task" and "Archive": the card's `done` tones list omits `done` | `chat/conversation.js` card ⋯ | minor | open (owner: owner decision) |
 | #1266 no-project task | Shell | The in-view tab's × (`data-in-view-drop`) splits its key on every colon, so a tab kept from Tasks (`task:run:ID`) cannot be dropped from the top bar; its open click was fixed in #1266 | `shell/shell.js` in-view drop | minor | open (owner: owner decision) |
@@ -33,6 +32,7 @@ Columns: **From** (the slice and where it was found), **Area**, **Finding** (one
 
 | From | Area | Finding | Closed by |
 |---|---|---|---|
+| slice 6 | Schedules | A failed ticket's Open project lands on the project page, where pointing it at the folder waits for the Projects slice | slice 9 (#1293): the project page's Locate folder… is wired (`PATCH /api/projects/:key`) |
 | feature 1 final check | Projects | The live workspace page draws dev's map and its questions only; Delete, Edit by hand, Scan again, Sync what is behind and Start a task across all are not drawn until they are wired | this PR |
 | feature 1 real test | Chat | Right after the first send in a new chat, the composer's project picker reads "No project" while the chat is on its project; a reload shows it right | this PR |
 | feature 1 audit | Pulse | Audit gap (Pulse and bell rows): a live Updates or Needs you row's detail line is dev's raw failure text (each failing test, 3–4 lines) or a raw cost comparison (`$0.80 >= $0.50`); the prototype says one short line naming the step | this PR |
