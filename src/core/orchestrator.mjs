@@ -11,6 +11,8 @@
 // state.steps[] IS the execution ledger: one row per execution, key ===
 // executionId. There is no separate executions[] array.
 import { join, isAbsolute, extname, dirname, basename, sep } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { runScratchDir } from './run-manifest.mjs';
 import { rm, readFile, readdir, access, stat, writeFile, mkdir, realpath } from 'node:fs/promises';
 import { readDirections, pendingDirections } from './directions.mjs';
 import { runsOn } from '../shared/connections.mjs';
@@ -2371,6 +2373,9 @@ export class GraphOrchestrator extends RunHarness {
     // P1 (v3, defence in depth): a Folder run's nodes never start on the REAL folder, whatever reattach path left runCwd unset.
     if (this.workMode === 'folder' && !this.runCwd) throw new Error('a Folder run has no copy to work on');
     const { resumeSessionId, coldRedispatch } = this._reattachFor(executionId, node.id);
+    // The agent's TMPDIR points here, and a TMPDIR that does not exist fails every tool that reads it.
+    const scratch = runScratchDir(this.runRoot);
+    if (scratch) mkdirSync(scratch, { recursive: true });
     return {
       // When this execution began. _indexExtraFiles compares it against each
       // candidate's mtime to tell the files this execution WROTE from the ones it
