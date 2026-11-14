@@ -1,0 +1,81 @@
+/* worca's own look for a document: Poppins and JetBrains Mono on the warm neutrals of worca's app. The token NAMES are
+   the API: another look writes this file again with the same names, and global.css keeps working. The fonts load
+   from assets/worca/, where worca puts them once the plan is valid and brand.md says "Look source: worca". */
+
+@font-face{font-family:'Poppins';font-style:normal;font-weight:400;font-display:swap;src:url(assets/worca/poppins-latin-400-normal.woff2) format('woff2');}
+@font-face{font-family:'Poppins';font-style:normal;font-weight:500;font-display:swap;src:url(assets/worca/poppins-latin-500-normal.woff2) format('woff2');}
+@font-face{font-family:'Poppins';font-style:normal;font-weight:600;font-display:swap;src:url(assets/worca/poppins-latin-600-normal.woff2) format('woff2');}
+@font-face{font-family:'Poppins';font-style:normal;font-weight:700;font-display:swap;src:url(assets/worca/poppins-latin-700-normal.woff2) format('woff2');}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400;font-display:swap;src:url(assets/worca/jetbrains-mono-latin-400-normal.woff2) format('woff2');}
+
+:root{
+  color-scheme:light dark;
+
+  /* Grounds, text, lines and the one accent. */
+  --doc-bg:light-dark(#F1F1EF,#161614);
+  --doc-surface:light-dark(#FFFFFF,#222220);
+  --doc-ink:light-dark(#19191B,#ECECE8);
+  --doc-ink-2:light-dark(#5C5C63,#B4B4AE);
+  --doc-line:light-dark(#E3E3E0,#494944);
+  --doc-accent:light-dark(#2B6A8C,#86C4E3);
+
+  /* Type. */
+  --font-sans:'Poppins',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,'SFMono-Regular',Menlo,monospace;
+  --fs-1:13px;
+  --fs-2:14px;
+  --fs-3:16px;
+  --fs-4:19px;
+  --fs-5:24px;
+  --fs-6:32px;
+  --fs-7:44px;
+  --lh-body:1.6;
+  --lh-title:1.2;
+
+  /* Space, radii and the one shadow. */
+  --space-1:4px;
+  --space-2:8px;
+  --space-3:12px;
+  --space-4:16px;
+  --space-5:24px;
+  --space-6:40px;
+  --space-7:64px;
+  --r-1:4px;
+  --r-2:8px;
+  --r-3:12px;
+  --shadow-1:0 1px 2px color-mix(in srgb,var(--doc-ink) 8%,transparent);
+
+  /* Charts: six series colours in a fixed order, and the ink of axes and labels. */
+  --chart-1:light-dark(#5BA6CC,#86C4E3);
+  --chart-2:light-dark(#8C7FD6,#B3A8EE);
+  --chart-3:light-dark(#4FB3A9,#86D3CA);
+  --chart-4:light-dark(#E6962A,#F0B45A);
+  --chart-5:light-dark(#E27BA8,#F0A2C3);
+  --chart-6:light-dark(#5BAE5B,#8FD48F);
+  --chart-ink:light-dark(#5C5C63,#B4B4AE);
+
+  /* Callout tones: a ground and the ink that reads on it. */
+  --tone-info-bg:light-dark(#DEEFF7,#1A2A33);
+  --tone-info-ink:light-dark(#2B6A8C,#86C4E3);
+  --tone-note-bg:light-dark(#EAE6F8,#262336);
+  --tone-note-ink:light-dark(#5B4BB0,#B3A8EE);
+  --tone-warn-bg:light-dark(#FCE8C8,#332715);
+  --tone-warn-ink:light-dark(#8E550B,#F0B45A);
+  --tone-risk-bg:light-dark(#FBE3E0,#34201D);
+  --tone-risk-ink:light-dark(#B23F33,#F08C7E);
+}
+
+/* Print reads smaller and on paper. */
+@media print{
+  :root{
+    --fs-1:8pt;
+    --fs-2:9pt;
+    --fs-3:10.5pt;
+    --fs-4:12pt;
+    --fs-5:15pt;
+    --fs-6:20pt;
+    --fs-7:28pt;
+    --doc-bg:light-dark(#FFFFFF,#FFFFFF);
+    --shadow-1:none;
+  }
+}

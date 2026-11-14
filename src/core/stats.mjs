@@ -3,7 +3,7 @@
 // archive exists so these numbers survive history cleanup (spec §6.9). Pure
 // synchronous DB reads; no gh, no git, offline-correct.
 //
-// Attribution: money = cost_ledger + ask_cost_ledger + req_cost_ledger by event timestamp
+// Attribution: money = cost_ledger + ask_cost_ledger + req_cost_ledger + design_cost_ledger by event timestamp
 // (exact); runs, time, and PRs = cohort by started_at (a run belongs to the
 // bucket its start falls in, with its CURRENT status). 'today' differs: its totals count runs whose
 // lifespan [started_at, updated_at] overlaps the day ("active today"), and its
@@ -11,7 +11,7 @@
 // (updated_at). 'all' money/time use the fallback-aware pipelines sums so
 // pre-ledger history still counts. 'lastMonth' is the previous calendar month and 'custom' a
 // local [from, to] day range; both read money from the ledger like week/month. A filter (tags AND-ed,
-// person) narrows every number and drops Ask Worca and Requirements spend; groupBy splits the window into rows
+// person) narrows every number and drops Ask Worca, Requirements and Design spend; groupBy splits the window into rows
 // (tag value or person) that reconcile exactly with the Spent total.
 
 import { prepare } from './db.mjs';
@@ -21,7 +21,7 @@ import { actorLabel } from './identity.mjs';
 import { readTagsFor } from './run-tags-store.mjs';
 import {
   budgetStatus, costWindowStart, costWindowEnd, allTimeTotals, roundUsd,
-  askWindowedSpendUsd, requirementsWindowedSpendUsd, utilityTotals,
+  askWindowedSpendUsd, requirementsWindowedSpendUsd, designWindowedSpendUsd, utilityTotals,
   REAL_RUN_HOURS,
 } from './cost-budget.mjs';
 import { savedUsd } from '../shared/human-estimate.mjs';
@@ -58,6 +58,8 @@ const NO_FILTER = Object.freeze({ tags: [], person: null });
 const EMPTY_ASK = Object.freeze({ spendUsd: 0, sessions: 0, turns: 0 });
 // Requirements spend (plans/requirements-design.md D9) is per feature, not per run: like Chat, a filter drops it.
 const EMPTY_REQUIREMENTS = Object.freeze({ spendUsd: 0, features: 0 });
+// Design spend (design_cost_ledger) is per design, not per run: like Chat and Requirements, a filter drops it.
+const EMPTY_DESIGN = Object.freeze({ spendUsd: 0, designs: 0 });
 const isFiltered = (f) => f.tags.length > 0 || f.person != null;
 
 /** Request filter → { tags: normalised, deduplicated, person|null }. @throws {RangeError} */
@@ -235,7 +237,7 @@ function peopleInUse() {
 }
 
 const COUNT_KEYS = ['runs', 'finished', 'stopped', 'failed', 'paused', 'running', 'prsOpened', 'prsMerged'];
-const NONE_ORDER = { value: 0, none: 1, ask: 2, requirements: 3 };
+const NONE_ORDER = { value: 0, none: 1, ask: 2, requirements: 3, design: 4 };
 
 /** 'person' | 'tag:<key>' | null → { kind, key } | null. @throws {RangeError} */
 export function parseGroupBy(groupBy) {
@@ -265,10 +267,10 @@ function rowIdentity(g, raw) {
 
 /**
  * Grouped rows over one window: cohort/active counts per group and money per group — ledger by
- * timestamp for a bounded range, the fallback-aware pipelines sums for 'all'. The Ask Worca row and
- * the Requirements row are added unless a filter is active. Rows reconcile to totalUsd exactly (residual on the top row).
+ * timestamp for a bounded range, the fallback-aware pipelines sums for 'all'. The Ask Worca row, the Requirements
+ * row and the Design row are added unless a filter is active. Rows reconcile to totalUsd exactly (residual on the top row).
  */
-function groupedRows(g, { win, fromMs, toMs, filter, allTime, ask, requirements, totalUsd }) {
+function groupedRows(g, { win, fromMs, toMs, filter, allTime, ask, requirements, design, totalUsd }) {
   const { join, col, params: jp } = groupSql(g);
   const f = filterSql(filter);
   const rows = new Map();
@@ -296,6 +298,8 @@ function groupedRows(g, { win, fromMs, toMs, filter, allTime, ask, requirements,
     sessions: ask.sessions, ...Object.fromEntries(COUNT_KEYS.map((c) => [c, 0])) });
   if (requirements) out.push({ kind: 'requirements', key: null, label: 'Requirements', spentUsd: requirements.spendUsd,
     features: requirements.features, ...Object.fromEntries(COUNT_KEYS.map((c) => [c, 0])) });
+  if (design) out.push({ kind: 'design', key: null, label: 'Design', spentUsd: design.spendUsd,
+    designs: design.designs, ...Object.fromEntries(COUNT_KEYS.map((c) => [c, 0])) });
   const kept = out.filter((r) => r.spentUsd !== 0 || r.runs !== 0)
     .sort((a, b) => NONE_ORDER[a.kind] - NONE_ORDER[b.kind] || b.spentUsd - a.spentUsd
       || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
@@ -459,6 +463,14 @@ function requirementsTotals(fromMs, toMs) {
   return { spendUsd: roundUsd(row?.s || 0), features: row?.features || 0 };
 }
 
+/** Design window aggregate: spend, and the DISTINCT designs that spent in the window. */
+function designTotals(fromMs, toMs) {
+  const row = prepare(`
+    SELECT COALESCE(SUM(amount_usd), 0) AS s, COUNT(DISTINCT design_id) AS designs
+    FROM design_cost_ledger WHERE ts >= ? AND ts < ?`).get(fromMs, toMs);
+  return { spendUsd: roundUsd(row?.s || 0), designs: row?.designs || 0 };
+}
+
 /** "Saved this month/week" for the account menu's spend card (money-saved design §10): human
  *  hours × rate − spent over the budget's own reset window. The same cohort (runs STARTED in
  *  [windowStartMs, windowEndMs), archived included), the same rate and the same spend as the
@@ -502,9 +514,10 @@ function buildBuckets(windowStart, now, bucket) {
   return out;
 }
 
-/** GET /api/stats backing (spec §6.9). `requirementsEnabled` defaults to the `requirements` flag. @throws {RangeError} on unknown range. */
+/** GET /api/stats backing (spec §6.9). `requirementsEnabled` defaults to the `requirements` flag and `designEnabled`
+ *  to the `design` flag. @throws {RangeError} on unknown range. */
 export function getStats({ range = 'month', now = new Date(), from = null, to = null, filter: rawFilter = null, groupBy = null, tagKeys = null, report = false,
-  requirementsEnabled = undefined } = {}) {
+  requirementsEnabled = undefined, designEnabled = undefined } = {}) {
   if (!RANGES.includes(range)) throw new RangeError(`unknown stats range: ${range}`);
   const filter = normaliseStatsFilter(rawFilter || {});
   const filtered = isFiltered(filter);
@@ -552,9 +565,10 @@ export function getStats({ range = 'month', now = new Date(), from = null, to = 
     const pipelineSpendUsd = ledgerSpend(fromMs, toMs, filter);
     const ask = filtered ? EMPTY_ASK : askTotals(fromMs, toMs);
     const requirements = filtered ? EMPTY_REQUIREMENTS : requirementsTotals(fromMs, toMs);
-    const spentUsd = roundUsd(pipelineSpendUsd + ask.spendUsd + requirements.spendUsd);
+    const design = filtered ? EMPTY_DESIGN : designTotals(fromMs, toMs);
+    const spentUsd = roundUsd(pipelineSpendUsd + ask.spendUsd + requirements.spendUsd + design.spendUsd);
     return {
-      spentUsd, pipelineSpendUsd, ask, requirements,
+      spentUsd, pipelineSpendUsd, ask, requirements, design,
       humanHours: c.humanHours, savedUsd: savedUsd(c.humanHours, rate, spentUsd),
       workedMs: c.workedMs,
       runs: c.runs, finished: c.finished, stopped: c.stopped, failed: c.failed,
@@ -569,10 +583,11 @@ export function getStats({ range = 'month', now = new Date(), from = null, to = 
     const c = cohortTotals(0, windowEnd.getTime(), filter);
     const ask = filtered ? EMPTY_ASK : askTotals(0, windowEnd.getTime());
     const requirements = filtered ? EMPTY_REQUIREMENTS : requirementsTotals(0, windowEnd.getTime());
-    const spentUsd = roundUsd(at.spendUsd + ask.spendUsd + requirements.spendUsd);
+    const design = filtered ? EMPTY_DESIGN : designTotals(0, windowEnd.getTime());
+    const spentUsd = roundUsd(at.spendUsd + ask.spendUsd + requirements.spendUsd + design.spendUsd);
     totals = {
       spentUsd,
-      pipelineSpendUsd: at.spendUsd, ask, requirements,
+      pipelineSpendUsd: at.spendUsd, ask, requirements, design,
       humanHours: at.humanHours,
       savedUsd: savedUsd(at.humanHours, rate, spentUsd),
       workedMs: at.activeMs,
@@ -600,7 +615,8 @@ export function getStats({ range = 'month', now = new Date(), from = null, to = 
     return {
       bucketStartMs: startMs,
       spentUsd: roundUsd(ledgerSpend(startMs, endMs, filter)
-        + (filtered ? 0 : askWindowedSpendUsd(startMs, endMs) + requirementsWindowedSpendUsd(startMs, endMs))),
+        + (filtered ? 0 : askWindowedSpendUsd(startMs, endMs) + requirementsWindowedSpendUsd(startMs, endMs)
+          + designWindowedSpendUsd(startMs, endMs))),
       finished: c.finished, stopped: c.stopped, failed: c.failed,
     };
   });
@@ -610,7 +626,8 @@ export function getStats({ range = 'month', now = new Date(), from = null, to = 
       : (range === 'today' ? WINDOWS.active : WINDOWS.cohort)(windowStart.getTime(), windowEnd.getTime()),
     fromMs: windowStart.getTime(), toMs: windowEnd.getTime(), filter,
     allTime: range === 'all', ask: filtered ? null : totals.ask,
-    requirements: filtered ? null : totals.requirements, totalUsd: totals.spentUsd,
+    requirements: filtered ? null : totals.requirements, design: filtered ? null : totals.design,
+    totalUsd: totals.spentUsd,
   };
   const groups = group ? {
     by: groupBy,
@@ -646,6 +663,12 @@ export function getStats({ range = 'month', now = new Date(), from = null, to = 
         prevSpentUsd: prev ? prev.requirements.spendUsd : null,
         series: seriesWindows.map((b) => roundUsd(requirementsWindowedSpendUsd(b.startMs, b.endMs))),
       },
+      // Design spend: in Spent, so in the report too; dropped by a filter like Chat's.
+      design: filtered ? null : {
+        spentUsd: totals.design.spendUsd,
+        prevSpentUsd: prev ? prev.design.spendUsd : null,
+        series: seriesWindows.map((b) => roundUsd(designWindowedSpendUsd(b.startMs, b.endMs))),
+      },
     };
   }
   // The requirements flag off: money already spent stays in Spent, its Group by row and the report (so they
@@ -655,6 +678,13 @@ export function getStats({ range = 'month', now = new Date(), from = null, to = 
     if (prev) delete prev.requirements;
     const r = out.report && out.report.requirements;
     if (out.report && !(r && (r.spentUsd || r.prevSpentUsd || r.series.some((x) => x)))) delete out.report.requirements;
+  }
+  // The design flag off: the same rule. prev is null for 'all', hence the guard.
+  if (!(designEnabled ?? flagEnabled('design'))) {
+    delete totals.design;
+    if (prev) delete prev.design;
+    const r = out.report && out.report.design;
+    if (out.report && !(r && (r.spentUsd || r.prevSpentUsd || r.series.some((x) => x)))) delete out.report.design;
   }
   return out;
 }

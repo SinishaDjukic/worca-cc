@@ -218,6 +218,7 @@
     const sec = SM.SECTIONS[id];
     if (!sec) return '';
     cur = sv; REG.clear();
+    syncLive(sv);
     const level = c0.level ?? R.prefs.mode(), c = { ...c0, level, sv };
     if (sec.flag && !R.prefs.flag(sec.flag)) {
       const f = SM.FLAGS.find((x) => x.key === sec.flag);
@@ -252,6 +253,23 @@
     const also = p.then ? p.then(sv) : '';
     return also || '';   // the sentence has changed before your eyes; a toast says only what else happened
   }
+  // A switch with `sw.live` ('chat.promptCheck') is wired in the live kind: it shows the server's value (the store's
+  // chatPrefs, refetched on settings-changed) and a toggle POSTs dev's own body. Every other switch is as before.
+  const liveOn = () => !!window.RailWorld?.live;
+  const liveValue = (path) => { const [area, k] = path.split('.'); return area === 'chat' ? window.RailWorld.part('chatPrefs')?.[k] === true : false; };
+  function syncLive(sv) {
+    if (!liveOn()) return;
+    for (const r of rowsOf()) if (r.sw && r.sw.live) sv[r.sw.key] = liveValue(r.sw.live);
+  }
+  function toggleLive(sv, r) {
+    const A = window.RailAdapter, to = !sv[r.sw.key], [area, k] = r.sw.live.split('.');
+    A.post('/api/settings', { [area]: { [k]: to } }).then((res) => {
+      if (res.ok) { sv[r.sw.key] = to; A.refresh?.('settings'); A.toast(`${r.name}: ${to ? 'on' : 'off'}`); }
+      else A.toast(`Could not change ${r.name}: ${res.error}`);   // the switch keeps the server's value
+      window.dispatchEvent(new Event('rail-settings'));
+    });
+    return '';
+  }
   function toggle(sv, key) {
     if (key.startsWith('flag:')) {
       const k = key.slice(5), f = SM.FLAGS.find((x) => x.key === k);
@@ -259,6 +277,8 @@
       const hidden = R.prefs.flag(k) && f.min && !R.shows(f.min, R.prefs.mode());   // on, but this mode does not draw what it adds: the toast says so
       return `${f.name}: ${R.prefs.flag(k) ? 'on' : 'off'}${hidden ? `. It shows in ${f.min[0].toUpperCase()}${f.min.slice(1)}; you are in ${R.prefs.mode()[0].toUpperCase()}${R.prefs.mode().slice(1)}` : ''}`;
     }
+    const lr = liveOn() && rowsOf().find((x) => x.sw && x.sw.key === key && x.sw.live);
+    if (lr) return toggleLive(sv, lr);
     if (refused(key)) return '';
     sv[key] = !sv[key];
     const r = rowsOf().find((x) => x.sw && x.sw.key === key) || listsOf().find((x) => x.sw && x.sw.key === key);

@@ -247,7 +247,7 @@
   const FLAG_ROW = { requirements: 'Requirements', runLabels: 'Run labels', gitAutomations: 'Git event automations' };
   // `label:ui`: the runs with that label. Otherwise the name, or a word of where it lives, anywhere in the text.
   // The runs are the world's, as they are now.
-  const runFinds = () => W.rows().filter((r) => !r.archived).map((r) => F('run', r.title, `Task · ${r.project || 'No project'}`, `run/${r.case}`, { labels: r.labels }));
+  const runFinds = () => W.rows().filter((r) => !r.archived).map((r) => F('run', r.title, `Task · ${r.project || 'No project'}`, `run/${r.case}`, { labels: r.labels, run: r.id }));
   function find(q) {
     const raw = q.trim().toLowerCase();
     const m = raw.match(/^label:\s*(.*)$/), runs = runFinds();
@@ -334,5 +334,25 @@
   // The Prototype corner's new event, one per severity, so the sound can be tried. Each is a fresh update.
   const TRY = { needs: ['run.questions', 'Rename settings keys', 'worca-cc · 1 question', 'run/question'], problem: ['run.failed', 'Fix the flaky e2e test', 'worca-cc · it stopped at Review', 'run/failed'], info: ['run.done', 'Update the changelog', 'docs-site · ready', 'run/ready'] };
   const tryEvent = (sev, n) => { const [e, about, meta, go] = TRY[sev]; return up('try-' + n, e, about, meta, 'now', 'Today', { go }); };
-  window.PulseModel = { get BUDGET_RESETS() { return resetsNow(); }, get FINDS() { return finds(); }, budgetGone, tryEvent, refreshed, withQuota, vitalsRuns, awayRow, awayLine, FLAG_ROW, find, EVENT, BADGE, chatWords, SCHED, GROUPS, LEVELS, WHERE, PROVIDER, CASES, WHAT, qualifies, tone, rings, limits, near, room, winWord, fig, usd, spendPct };
+
+  // What takes a Now row out of Needs you (docs/rail/panels.md `panel.pulse-read`), keyed by the run state's id, never its
+  // word (one word is shared by states that clear differently: question and recovery; ready and no-remote), or by the row's kind for a missed time
+  // and a place. Its words follow dev's Needs-you rule (src/shared/needs-you.mjs) and each state's action (run-state.mjs).
+  const CLEARS = [
+    [['question', 'clarify', 'workspace'], 'Clears when you answer it'],
+    [['recovery'], 'Clears when you retry or stop it'],
+    [['gate', 'plan', 'outline'], 'Clears when you approve it or ask for changes'],
+    [['paused', 'interrupted', 'capped'], 'Clears when you resume or stop it'],
+    [['failed'], 'Clears once you open it'],   // dev counts a failed run nobody opened yet
+    [['pr-changes', 'failing', 'conflicts', 'checks', 'approved', 'pr-behind', 'pr-blocked'], 'Clears when its pull request no longer needs you'],
+    [['ready', 'no-remote'], 'Clears when you create its pull request or discard it'],
+    [['missed'], 'Clears when you run it or cancel it'],
+    [['project'], 'Clears when the project is fixed'],
+  ];
+  /** The phrase for a state id or row kind; '' for one not in the table (never guessed from its word). */
+  function clearsWhen(key) {
+    const k = String(key || ''), hit = CLEARS.find(([ks]) => ks.includes(k)) || (k.startsWith('paused-') ? CLEARS[3] : null);
+    return hit ? hit[1] : '';
+  }
+  window.PulseModel = { get BUDGET_RESETS() { return resetsNow(); }, get FINDS() { return finds(); }, budgetGone, tryEvent, clearsWhen, refreshed, withQuota, vitalsRuns, awayRow, awayLine, FLAG_ROW, find, EVENT, BADGE, chatWords, SCHED, GROUPS, LEVELS, WHERE, PROVIDER, CASES, WHAT, qualifies, tone, rings, limits, near, room, winWord, fig, usd, spendPct };
 })();

@@ -8,8 +8,9 @@
 //   menu.refresh()            the badge (every updateNavCounts) and, while open, the list
 //   menu.schedulesChanged()   while open, refetch the schedules; closed, forget them (WS schedules-changed)
 //
-// getCounts() → { needs, running } (activityCounts over the light run items: cheap, every frame);
-// getRuns() → { live, history, active } (the full items, read only while open); loadSchedules() → a
+// getCounts() → { needs, running } (activityCounts over the light run items and the Design builds: cheap,
+// every frame); getRuns() → { live, history, active, designs } (the full items and the open Design builds,
+// read only while open); loadSchedules() → a
 // Promise of GET /api/schedules' { schedules, tickets }; navigate(hash) routes.
 import { createFlyout } from './side-flyout.mjs';
 import { activityModel, badgeState, firstTab, ACTIVITY_TABS, TAB_LABELS, TAB_EMPTY } from './activity-model.mjs';

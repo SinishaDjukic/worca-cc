@@ -20,6 +20,8 @@ Columns: **From** (the slice and where it was found), **Area**, **Finding** (one
 | feature 1 final check | Projects | The live workspace page draws dev's map and its questions only; Delete, Edit by hand, Scan again, Sync what is behind and Start a task across all are not drawn until they are wired | `workspaces/workspaces.js` | deferred | open (owner: Projects slice) |
 | feature 1 audit fix pass | Chat | A live metrics or policy ChangeProposal shows dev's raw kind word as its row ("Change: enable"); the prototype has no pair for these kinds, so the words need a design | `live/chat-turns.mjs` `rowsOf` | follow-up | open (owner: owner decision) |
 | feature 1 audit fix pass | Chat | An answered scope-switch ChangeProposal lists its project's full path as its row; the prototype's c11 says "This chat is on worca-cc now" | `live/chat-turns.mjs` scope-switch | follow-up | open (owner: owner decision) |
+| #1266 no-project task | Chat | A `done`-tone task's card ⋯ lacks "Start a follow-up", "Report this task" and "Archive": the card's `done` tones list omits `done` | `chat/conversation.js` card ⋯ | minor | open (owner: owner decision) |
+| #1266 no-project task | Shell | The in-view tab's × (`data-in-view-drop`) splits its key on every colon, so a tab kept from Tasks (`task:run:ID`) cannot be dropped from the top bar; its open click was fixed in #1266 | `shell/shell.js` in-view drop | minor | open (owner: owner decision) |
 
 ## Closed
 

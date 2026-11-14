@@ -1,0 +1,36 @@
+{
+  "scenario": "design-long-write",
+  "prompt": "Use the Write tool once to create page.html in the current folder: a complete landing page of at least 20000 characters with one root element and no external URLs. Then reply with one line.",
+  "model": "claude-sonnet-5-5",
+  "exitCode": 0,
+  "error": null,
+  "stderr": [],
+  "flags": {
+    "maxTurns": 6,
+    "maxBudgetUsd": 2,
+    "resume": null
+  },
+  "captured": "2026-11-06T08:27:46.967Z",
+  "claudeVersion": "2.1.318",
+  "toolInput": {
+    "tools": [
+      {
+        "toolUseId": "toolu_0001",
+        "name": "Write",
+        "chunks": 2316,
+        "bytes": 32679,
+        "blockMs": 79799,
+        "largestGapMs": 778,
+        "spreadRatio": 0.7931177082419579,
+        "firstContentMs": 4516,
+        "verdict": "gradual"
+      }
+    ],
+    "writesPerPath": {
+      "/TMP/worca-design-probe-b1M9O7/page.html": {
+        "write": 1,
+        "edit": 0
+      }
+    }
+  }
+}
