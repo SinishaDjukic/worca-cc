@@ -581,6 +581,7 @@ export async function runOpencodeProcess({
     for (const n of envRefNames(mcp)) if (typeof from[n] === 'string') refEnv[n] = from[n];
   }
   const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(refEnv).length ? { runEnv: refEnv } : {}) });
+  if (typeof runSpawnEnv?.TMPDIR === 'string') env.TMPDIR = runSpawnEnv.TMPDIR;   // the run's scratch folder, no secret
   // OpenCode takes its project folder from PWD, not from its process cwd: an inherited PWD (worca's own) would put the
   // agent in the wrong folder.
   Object.assign(env, { PWD: cwd, OPENCODE_CONFIG_CONTENT: JSON.stringify(config), OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_SHARE: '1' },
