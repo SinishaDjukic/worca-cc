@@ -3,7 +3,8 @@
 export { esc, attrs, cls, toElement } from './html.mjs';
 export { button, splitButton } from './button.mjs';
 export { terminalPane } from './terminal-pane.mjs';
-export { compactMenu, menuItem } from './compact-menu.mjs';
+export { compactMenu, menuItem, menuKeys } from './compact-menu.mjs';
+export { MAKERS, ENGINE_WORDS, makerOf, modelText, modelMakers, makerItems } from './model-makers.mjs';
 export { statusDot, statusDotClass, statusLine } from './status-line.mjs';
 export { confirmStrip, confirmActions, confirmForm } from './confirm-strip.mjs';
 export { tabs } from './tabs.mjs';
@@ -27,7 +28,7 @@ export { stillhetInvitation } from './invitation.mjs';
 export { designSwitch } from './design-switch.mjs';
 export { checkbox } from './checkbox.mjs';
 export { optionList } from './option-list.mjs';
-export { suggestionField, suggestionFail, suggestButton, suggestedChip, stopWriting, failureLink, previewToggle, suggestionPreview } from './suggestion-field.mjs';
+export { suggestionField, suggestionFail, suggestButton, suggestedChip, stopWriting, failureLink, previewToggle, suggestionPreview, gapMark, rewriteFail, rewriteSuggestion } from './suggestion-field.mjs';
 export { tagGroup, fitTags, listEditor } from './tag-group.mjs';
 export { stepper, stepDot, stepRow, stackRow, lineRow, fileRow, stackedPrRow } from './stepper.mjs';
 export { table } from './table.mjs';

@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 95;
+export const SCHEMA_VERSION = 97;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -1477,6 +1477,42 @@ CREATE TABLE IF NOT EXISTS req_briefs (
 );
 `;
 
+// v96 (prompt check s2, docs/prompt-check.md): a person's correction of the prompt check's kind, ids and kinds only —
+// never prompt text. No FK: a row stays after its thread or run is deleted, so deleting one never fails here.
+// Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES.
+const PROMPT_KIND_CORRECTIONS_DDL = `
+CREATE TABLE IF NOT EXISTS prompt_kind_corrections (
+  id            INTEGER PRIMARY KEY,
+  surface       TEXT NOT NULL,
+  thread_id     TEXT,
+  card_id       TEXT,
+  run_id        TEXT,
+  proposed_kind TEXT NOT NULL,
+  chosen_kind   TEXT NOT NULL,
+  at            TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_kind_corrections_thread ON prompt_kind_corrections (thread_id);
+CREATE INDEX IF NOT EXISTS idx_prompt_kind_corrections_run ON prompt_kind_corrections (run_id);
+`;
+
+// v97 (flag proposedPerspectives, docs/prompt-check.md "Perspectives"): one row per started run that had a proposal:
+// the proposed perspective ids and what the person dropped and added (JSON id lists). Ids, kind, surface, run id and
+// time only — never prompt text. No FK, like v96. Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES.
+const PERSPECTIVE_CHOICES_DDL = `
+CREATE TABLE IF NOT EXISTS perspective_choices (
+  id        INTEGER PRIMARY KEY,
+  run_id    TEXT NOT NULL,
+  surface   TEXT NOT NULL,
+  kind      TEXT,
+  proposed  TEXT NOT NULL,
+  chosen    TEXT NOT NULL,
+  dropped   TEXT NOT NULL,
+  added     TEXT NOT NULL,
+  at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_perspective_choices_run ON perspective_choices (run_id);
+`;
+
 // v76 (#948 s3): the Chats column's topic groups. A chat names its group in ask_threads.group_id (one at most); a
 // group is never empty (the store deletes it with its last chat). name_source: 'suggested' | 'user'.
 const ASK_CHAT_GROUPS_DDL = `
@@ -1675,6 +1711,8 @@ const INCREMENTAL_TABLES = {
   design_agents:      DESIGN_DDL,  // v92
   design_cost_ledger: DESIGN_DDL,  // v92
   design_pictures:    DESIGN_PICTURES_DDL,  // v94
+  prompt_kind_corrections: PROMPT_KIND_CORRECTIONS_DDL,  // v96 (prompt check s2)
+  perspective_choices: PERSPECTIVE_CHOICES_DDL,  // v97 (proposedPerspectives)
 };
 
 /**
@@ -2878,6 +2916,8 @@ export function migrate(db) {
     if (current < 94) db.exec(DESIGN_PICTURES_DDL);
     // v95 Design sound: designs.sound_json (the design's sound choice, D2) — INCREMENTAL_COLUMNS, added by the hoisted
     // repairSchemaGaps (a v92+ DB) or by the v92 DDL above (an older DB). First written as v92.
+    if (current < 96) db.exec(PROMPT_KIND_CORRECTIONS_DDL);   // v96 prompt check kind corrections (ids only)
+    if (current < 97) db.exec(PERSPECTIVE_CHOICES_DDL);   // v97 proposed perspectives: drops and adds (ids only)
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

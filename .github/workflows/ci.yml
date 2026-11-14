@@ -125,6 +125,38 @@ jobs:
               - 'tools/split-by-feature.mjs'
               - 'tools/split-by-feature/**'
 
+  # gate.prototype (docs/rail/gate.md): a PR that changes today's UI changes the Stillhet prototype too, adds a
+  # `wire to` row under "## Dev surfaces" in plans/rail/stillhet-wiring.md for each changed file, or carries the
+  # no-ui-change label plus a "No UI change:" line in its body. Labels and body are read live with `gh pr view`, so
+  # "Re-run job" after a label or body edit sees them (the event payload would be stale). The body only reaches the
+  # script through the JSON file, never a shell line. HEAD^1 of GitHub's merge commit is the base tip it merged onto.
+  # node: built-ins only, so no npm ci.
+  prototype:
+    name: UI change reflected in the prototype
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      # The token stays in this step; the next one runs the PR's own code without it.
+      - name: Read the PR's labels and body
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr view "$PR" --json labels,body > "$RUNNER_TEMP/pr.json"
+      - name: Check the prototype reflects the UI change
+        run: node tools/prototype-pr-check.mjs --base HEAD^1 --pr-json "$RUNNER_TEMP/pr.json"
+
   test-fast:
     # tools/test.mjs balances the shards by test/timings.json (longest first); each shard has
     # its own runner, WORCA_HOME and real-claude guard log. Every test file that

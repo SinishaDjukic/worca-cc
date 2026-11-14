@@ -33,6 +33,7 @@ import { classifyLoops } from '../shared/graph/loops.mjs';
 import { KEYED_KINDS } from '../shared/graph/constants.mjs';
 import { pickOrDrop, cleanPick, resolveRolePicks } from '../shared/graph/role-slots.mjs';
 import { roleReviewOf } from '../shared/graph/role-review-step.mjs';
+import { applyPerspectiveSet } from '../shared/shape/perspective-set.mjs';
 import { pickTemplateExtras } from '../shared/graph/template.mjs';
 import { scriptNodeCtx } from '../shared/graph/script-meta.mjs';
 import {
@@ -680,6 +681,12 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   // The RESOLVED template: a private deep copy (the alias row spreads a deep-frozen
   // constant) whose agent nodes carry the RESOLVED key after workspace substitution.
   const tpl = structuredClone(stored);
+  // The run's chosen perspective set (flag proposedPerspectives): its role specs replace the template's here, before
+  // the node loop, so ports, loops, role picks and the manifest all derive from them. Applied at start only.
+  if (Array.isArray(opts.perspectiveSet?.chosen) && Array.isArray(tpl.nodes)) {
+    const configs = applyPerspectiveSet(tpl.nodes, opts.perspectiveSet.chosen);
+    for (const node of tpl.nodes) if (configs.has(node.id)) node.config = configs.get(node.id);
+  }
   const reg = registry && typeof registry === 'object' ? registry : {};
   const scripts = opts.scripts && typeof opts.scripts === 'object' ? opts.scripts : loadScriptRegistry({ agentKeys: Object.keys(reg) });
   const isWorkspace = !!opts.isWorkspace;

@@ -1936,3 +1936,6 @@ button.fr-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .list-row:has(> .lr-rail > :is(.kind-mark.is-ask,.kind-mark.is-act,.kind-mark.is-fail):not(.is-adv)){position:relative;}
 .list-row:has(> .lr-rail > :is(.kind-mark.is-ask,.kind-mark.is-act,.kind-mark.is-fail):not(.is-adv))::before{content:'';position:absolute;grid-column:1 / -1;grid-row:1;inset:1px -4px;-webkit-mask-image:linear-gradient(to right,transparent,#000 10px,#000 calc(100% - 10px),transparent);mask-image:linear-gradient(to right,transparent,#000 10px,#000 calc(100% - 10px),transparent);border-radius:var(--r-md);z-index:-1;pointer-events:none;background:light-dark(color-mix(in srgb,var(--amber) 7%,transparent),color-mix(in srgb,var(--amber) 10%,transparent));}
 .list-row:has(> .lr-rail > .kind-mark.is-fail:not(.is-adv))::before{background:light-dark(color-mix(in srgb,var(--red) 11%,transparent),color-mix(in srgb,var(--red) 17%,transparent));}
+/* comp.menu-sub: a group's opener ends in its ›; the open group's back row holds its ‹ where a choice holds its tick */
+.menu-sub-chev{display:inline-flex;margin-left:auto;padding-left:8px;color:var(--ink-2);}
+.menu-back-i{display:inline-flex;margin-right:4px;vertical-align:-1px;color:var(--ink-2);}

@@ -276,3 +276,14 @@ test('secondOpinion: names a declared role (or a provider role); normalized only
   assert.equal(roleReviewOf({ roleReview: { ...picked, secondOpinion: 'product' } }).secondOpinion, 'product', 'a provider role');
   assert.match(roleReviewIssues({ roleReview: { ...picked, secondOpinion: 'nobody' } })[0], /^roleReview\.secondOpinion "nobody" names no role of this review \(roles: product, /);
 });
+
+test('optInRolesOf: [] for a provider without optInRoles; MAX_ROLES equals the overlay cap', async () => {
+  const { optInRolesOf, MAX_ROLES } = await import('../src/shared/graph/role-review-step.mjs');
+  const { OVERLAY_MAX_ROLES } = await import('../src/core/run-overlay.mjs');
+  assert.deepEqual(optInRolesOf(ROLE_CHECKLISTS.requirements), []);
+  assert.deepEqual(optInRolesOf(ROLE_CHECKLISTS.coverage), []);
+  assert.deepEqual(optInRolesOf(null), []);
+  assert.deepEqual(optInRolesOf(ROLE_CHECKLISTS.perspectives).map((r) => r.key), ['compliance']);
+  assert.equal(MAX_ROLES, 12);
+  assert.equal(MAX_ROLES, OVERLAY_MAX_ROLES);
+});

@@ -103,6 +103,7 @@ import { trailColumns, nowRows, glanceCopy, nodeLabel, preflightOpen, dotState }
 import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, projectKind, kindChip, RUN_KIND_CHIP, folderMembersOf } from './run-kind.mjs';
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
+import { claudeCheckedWhere } from '../../src/shared/claude-sign-in.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
 import { outcomeNote } from './run-outcome.mjs';
 import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, createPrLabel, doneStatusWord } from './ship-words.mjs';
@@ -185,7 +186,7 @@ import {
   channelBadge, renderNeedsGit,
 } from './plugins-view.mjs';
 import { mountMarketplace, tabFromParam, targetFromParam } from './marketplace/index.mjs';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderPromptCheckToggle, collectPromptCheckToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
@@ -323,6 +324,8 @@ import { pageTitle } from './topnav.mjs';
 import { activityCounts } from './activity-model.mjs';
 import { createChatHome, findFollowingThread } from './chat/home.mjs';
 import { installIntentAddon } from './chat/intent.mjs';
+import { installPromptCheckAddon } from './chat/prompt-check.mjs';
+import { mountPromptCheckChip, setPromptCheckPref } from './prompt-check/chip-host.mjs';
 import { needsYouItems as chatNeedsYouItems } from './runs-list.mjs';
 import { createActivityMenu } from './activity-menu.mjs';
 import { createAwayScreensaver } from './away-screensaver.mjs';
@@ -429,6 +432,8 @@ let askHistoryOnChat = false;  // the column's "Open History in Chat": the Chat 
 let askEntryThread = null;     // openChat({ threadId }) on a hidden column: the chat it opens on (askSide onShow), never the stored one first
 let chatSummariesPref = true;    // Settings › Chat › Summarise commands (#911): GET /api/settings chat.summariseCommands
 function setChatSummariesPref(chat) {
+  // The prompt check chip (docs/prompt-check.md) reads the same chat prefs, on every path that brings them.
+  setPromptCheckPref(!!(chat && chat.promptCheck === true));
   const on = !(chat && chat.summariseCommands === false);
   if (on === chatSummariesPref) return;
   chatSummariesPref = on;
@@ -7488,9 +7493,24 @@ function snapshotTask() {
 }
 const sameTask = (a, b) => a.title === b.title && a.prompt === b.prompt && a.markdown === b.markdown
   && a.extras.length === b.extras.length && a.extras.every((f, i) => f === b.extras[i]);
+// The prompt check chip under the New run prompt (docs/prompt-check.md "The chip"). A kind correction is held until
+// POST /api/run answers with the run id; an abandoned form records nothing.
+const newRunCheck = mountPromptCheckChip({
+  doc: document, host: el.promptPane,   // under the prompt (its mention overlay wraps the field later)
+  surface: { kind: 'new-run', id: 'form' }, deferCorrection: true, fetchImpl: (...a) => fetch(...a),
+  timers: window.__worcaTestHooks?.promptCheckTimers,   // tests only: fake timers for the debounce
+  field: {   // Improve writes through the prompt's own input path (the re-check)
+    read: () => el.prompt.value,
+    write: (text) => { el.prompt.value = text; el.prompt.dispatchEvent(new window.Event('input', { bubbles: true })); },
+    focus: () => el.prompt.focus(),
+  },
+  project: () => ({ projectDir: selectedProjectPath() }),
+});
+el.prompt.addEventListener('input', () => newRunCheck.input(el.prompt.value));
 function setTask(t) {
   el.title.value = t.title;
   el.prompt.value = t.prompt;
+  newRunCheck.input(t.prompt);
   el.promptMarkdown.value = t.markdown;
   el.mdFileName.textContent = t.mdFileName;
   el.mdFile.value = '';
@@ -15861,6 +15881,7 @@ el.form.addEventListener('submit', async (e) => {
     return { ok: false };
   };
   const submittedTask = snapshotTask();   // #687: cleared once the server accepts it
+  const heldCorrection = newRunCheck.pendingCorrection();   // the kind correction of THIS draft; a later pick stays held
 
   await withButton(el.startBtn, async () => {
     // Guard the whole in-flight window: applyBudgetToNewView also drives
@@ -15953,6 +15974,8 @@ el.form.addEventListener('submit', async (e) => {
         const picked = pendingSchedule;   // read before the form resets
         const line = `${title || 'Untitled run'} · ${picked ? scheduleWhenText(picked) : 'Starts later'}`;
         setPendingSchedule(null);   // the form is a plain Start run form again
+        void newRunCheck.flushCorrection({ runId: data.runId }, heldCorrection);
+        newRunCheck.sent(submittedTask.prompt);
         resetSyncChoice();
         showEngineRefusal(null);
         clearTask(submittedTask);
@@ -15971,6 +15994,8 @@ el.form.addEventListener('submit', async (e) => {
       // Re-enable the form so more runs can be started concurrently — unless the
       // budget just went over, in which case idleDisabled keeps Start disabled.
       startSubmitInFlight = false;
+      void newRunCheck.flushCorrection({ runId: data.runId }, heldCorrection);   // a held kind correction, now with its run id
+      newRunCheck.sent(submittedTask.prompt);
       resetSyncChoice();
       showEngineRefusal(null);
       clearTask(submittedTask);
@@ -17456,6 +17481,8 @@ function paintAskSettings(data) {
   if (scriptHost) scriptHost.replaceChildren(renderScriptToolsToggle({ prefs: data.chat || {} }, { doc: document }));
   const suggestHost = document.getElementById('ask-suggestions-host');
   if (suggestHost) suggestHost.replaceChildren(renderSuggestionsToggle({ prefs: data.chat || {} }, { doc: document }));
+  const promptCheckHost = document.getElementById('ask-prompt-check-host');
+  if (promptCheckHost) promptCheckHost.replaceChildren(renderPromptCheckToggle({ prefs: data.chat || {} }, { doc: document }));
   const summariesHost = document.getElementById('ask-summaries-host');
   if (summariesHost) summariesHost.replaceChildren(renderSummariesToggle({ prefs: data.chat || {} }, { doc: document }));
   setChatSummariesPref(data.chat);
@@ -17510,10 +17537,12 @@ function saveAskLimits(e) {
   const askWebBody = webHost ? collectAskWebFields(webHost) : null;   // null = the web fields were not touched
   const suggestHost = document.getElementById('ask-suggestions-host');
   const summariesHost = document.getElementById('ask-summaries-host');
+  const promptCheckHost = document.getElementById('ask-prompt-check-host');
   const chat = {
     ...(scriptHost ? collectScriptToolsToggle(scriptHost) : {}),
     ...(suggestHost ? collectSuggestionsToggle(suggestHost) : {}),
     ...(summariesHost ? collectSummariesToggle(summariesHost) : {}),
+    ...(promptCheckHost ? collectPromptCheckToggle(promptCheckHost) : {}),
   };
   postAskLimits({ askMaxTurns, askMaxBudgetUsd,
     ...(Object.keys(chat).length ? { chat } : {}),
@@ -38851,7 +38880,9 @@ function paintScheduleCounts(c) {
 // and PATH — never written here); this block only paints it and runs guides.
 // A guide is transient state: a reload clears it, the shelf re-summons it.
 // ---------------------------------------------------------------------------
-const gs = { status: null, settled: false, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, setupShown: false, refreshTimer: 0, poll: 0, startedRunId: "" };
+const gs = { status: null, settled: false, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, setupShown: false, refreshTimer: 0, poll: 0, startedRunId: "",
+  // Connect Claude Code › Check again: claudeChecking while it asks, claudeChecked the line every press leaves.
+  claudeChecking: false, claudeChecked: '' };
 let gsPillHost = null;
 let gsWelcomeUnbind = null;
 let setupDialog = null;
@@ -38907,21 +38938,23 @@ function gsEnsurePillHost() {
   return gsPillHost;
 }
 
+/** Resolves `{ ok: true }`, or `{ ok: false, error }` when the request failed (Check again says why). */
 async function loadOnboarding({ recheck = false } = {}) {
   let data;
   try {
     const res = await fetch(recheck ? '/api/onboarding?recheck=1' : '/api/onboarding');
     data = await safeJson(res);
-    if (!res.ok) return;
-  } catch { return; }
+    if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+  } catch (e) { return { ok: false, error: e?.message || 'network error' }; }
   // The boot tests stub fetch with one generic payload: anything without a
   // `steps` object is not ours and paints nothing.
-  if (!data || !data.steps || typeof data.steps !== 'object') return;
+  if (!data || !data.steps || typeof data.steps !== 'object') return { ok: true };
   gs.status = data;
   paintOnboarding();
   maybeWelcome();
   void stillhetBoot();
   if (flagsTabCtl) void flagsTabCtl.load();   // the Labs row follows the ask switch
+  return { ok: true };
 }
 
 // Stillhet's opt-in and opt-out (ui/public/stillhet.mjs): idempotent, so a socket reconnect that reruns the boot path adds nothing.
@@ -39058,6 +39091,9 @@ function paintClaudeSetupStatus() {
   if (ok) box.textContent = c.auth === 'signed-in' ? `Found ${bin}, installed and signed in. You're set.` : `Found ${bin}. You're set.`;
   else if (c.auth === 'signed-out') box.textContent = `Found ${bin}, installed but not signed in yet. Run claude in a terminal, type /login, then check again.`;
   else box.textContent = c.hint || `"${bin}" is not on the PATH of the Worca server. Install it, then check again (restart the UI if PATH changed).`;
+  // Signed out: the folder the CLI read. A server with another HOME reads another sign-in than the terminal.
+  if (!ok && c.auth === 'signed-out' && c.configDirectory) box.append(lineEl('ob-claude-where', claudeCheckedWhere(c.configDirectory)));
+  if (gs.claudeChecked) box.append(lineEl('ob-claude-checked', gs.claudeChecked));
   // The wizards' signed-out lines are stale once the CLI checks out.
   if (ok) for (const restore of [...claudeSignedOutHints.values()]) restore();
 }
@@ -39069,13 +39105,25 @@ function openClaudeSetup() {
   claudeSetupGuard?.opened();
   document.getElementById('claude-setup-check')?.focus?.();
   // The page's status may predate a sign-in (or a transient signed-out probe):
-  // ask again on open instead of repeating it.
-  recheckClaudeSetup();
+  // ask again on open instead of repeating it. A fresh open starts with no "Checked just now" line.
+  gs.claudeChecked = '';
+  recheckClaudeSetup({ manual: false });
 }
-async function recheckClaudeSetup() {
+function lineEl(cls, text) { const n = document.createElement('span'); n.className = cls; n.textContent = text; return n; }
+/** Check again: "Checking…" and disabled while it asks; then a line every time (`manual`: the button, not the open). */
+async function recheckClaudeSetup({ manual = true } = {}) {
+  if (gs.claudeChecking) return;
   const btn = document.getElementById('claude-setup-check');
-  if (btn) btn.disabled = true;
-  try { await loadOnboarding({ recheck: true }); } finally { if (btn) btn.disabled = false; }
+  gs.claudeChecking = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  let r = { ok: false, error: 'network error' };
+  try { r = await loadOnboarding({ recheck: true }); } finally {
+    gs.claudeChecking = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Check again'; }
+  }
+  const c = gs.status?.claude || {};
+  if (!r.ok) gs.claudeChecked = `Couldn't check just now: ${r.error}`;
+  else if (manual) gs.claudeChecked = gs.status?.steps?.claude ? 'Checked just now: signed in.' : c.auth ? 'Checked just now: still not signed in.' : 'Checked just now: still not found.';
   paintClaudeSetupStatus();
 }
 function closeClaudeSetup() { document.getElementById('claude-setup-modal')?.classList.add('hidden'); }
@@ -39083,7 +39131,7 @@ function closeClaudeSetup() { document.getElementById('claude-setup-modal')?.cla
 const claudeSetupEl = document.getElementById('claude-setup-modal');
 const claudeSetupGuard = claudeSetupEl ? guardModal(claudeSetupEl, { kind: 'viewer', close: () => closeClaudeSetup() }) : null;
 document.getElementById('claude-setup-close')?.addEventListener('click', closeClaudeSetup);
-document.getElementById('claude-setup-check')?.addEventListener('click', recheckClaudeSetup);
+document.getElementById('claude-setup-check')?.addEventListener('click', () => { void recheckClaudeSetup(); });
 
 // ── Guides ──────────────────────────────────────────────────────────────────
 // Each hop is derived from REAL UI state at the moment it is needed (which view
@@ -41620,6 +41668,7 @@ const chatHomeTimers = {
   clearTimeout: (t) => clearTimeout(t),
 };
 const chatIntent = installIntentAddon({ win: chatHomeTimers, onSend: () => { chatHome?.armFlip(); } });
+installPromptCheckAddon({ intent: chatIntent });   // the prompt check chip, after the intent chip (Chat and the Shaper task)
 
 // ── Chat home (worca Chat P6) ──────────────────────────────────────────────────────────────────────────────
 // The hero, quick actions, Needs you / Running / Recent chats / Workflows and the promos, inside the Chat page's

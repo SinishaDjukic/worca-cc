@@ -21,6 +21,8 @@ review later checks the code against the checklists the plan ended with.
   [Chat home](chat-home.md)). Describe the task; Worca proposes a shaped run on a card.
 - **The nudge.** When Chat judges a task to have open decisions, the run card
   offers **Shaper** next to **Run as is**, with an estimate of each.
+  Its `assess` (size, open decisions, perspectives) is read through the prompt check's shared assessment; see
+  [Prompt check](prompt-check.md) for its fields.
 - **New run.** The New run page links to the same flow.
 
 ## Questions

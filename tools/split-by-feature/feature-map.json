@@ -1329,6 +1329,15 @@
       "html": []
     },
     {
+      "name": "prompt-check",
+      "doc": "docs/prompt-check.md",
+      "routes": [
+        "/api/prompt-check"
+      ],
+      "css": [],
+      "html": []
+    },
+    {
       "name": "worca-levels",
       "doc": "docs/worca-levels.md",
       "routes": [],

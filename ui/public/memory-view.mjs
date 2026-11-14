@@ -362,7 +362,7 @@ export const teamLoadOf = (status) => (!status?.enabled ? 'local' : status.load 
 /** The PATCH value of `memory.team` for a load: null (off), "only" or true. */
 export const teamLoadValue = (load) => (load === 'team' ? 'only' : load === 'both' ? true : null);
 function teamLoadHint(load, status) {
-  if (load === 'team') return `Runs and chats load the team's notes only — your shared notes and teammates', newest ${status?.caps?.teamMaxFiles ?? 50} — not the notes that stay on this machine. Notes written or changed here are shared on the ${status.branch} branch after a secret check.`;
+  if (load === 'team') return `Runs and chats load the team's notes only — your shared notes and teammates' (every note scoped to files, and the newest ${status?.caps?.teamMaxFiles ?? 50} that always load) — not the notes that stay on this machine. Notes written or changed here are shared on the ${status.branch} branch after a secret check.`;
   if (load === 'both') return `Runs and chats load your notes and teammates'. Notes written or changed here are shared on the ${status.branch} branch of this repository after a secret check. Your note wins over the team's of the same name, and changing it replaces the team's version.`;
   return `${status?.available?.branchOnOrigin === true ? `${TEAM_AVAILABLE_TEXT}: its worca-memory branch is on origin. ` : ''}Runs and chats load this machine's notes only. Team or Both shares this project's notes with teammates on a worca-memory branch of its repository, after a secret check; the notes that exist now stay on this machine until you pick which to share.`;
 }

@@ -19,7 +19,11 @@ export function chatCardBuilder(type) {
 }
 
 /** A composer add-on: { id, mount(leadEl, ctx) -> { update(thread), beforeSend(text) -> boolean | Promise<boolean>,
- *  destroy() } }. Ids are unique: registering an id again replaces that add-on where it stood. */
+ *  destroy() } }. Every hook is optional. Three more, also optional: input(text, {answering}) after every edit of the
+ *  composer, typed or programmatic (`answering`: some add-on's holdsSend() is true); sent(text) with the raw draft (never
+ *  the transformSend result) once it is taken: queued, or the message accepted; a refused send never calls it (ctx.madeThread()
+ *  names the thread a new chat's first send created, even when its message was refused); holdsSend() → true while the add-on routes the send elsewhere.
+ *  Ids are unique: registering an id again replaces that add-on where it stood. */
 export function registerComposerAddon(addon) {
   if (!addon || typeof addon !== 'object' || typeof addon.id !== 'string' || !addon.id) {
     throw new TypeError('registerComposerAddon: addon.id must be a non-empty string');

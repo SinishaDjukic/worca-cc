@@ -65,3 +65,16 @@ test('railStamp falls back to a default stamp when git cannot run', async () => 
   process.env.PATH = '/nonexistent';
   try { assert.equal(railStamp().sha, 'unknown'); } finally { process.env.PATH = was; }
 });
+
+test('the 760px rule hides names only in the .pz-side mock rail, never in the app\'s drawer (#1266)', () => {
+  const css = readFileSync(new URL('../ui/public/stillhet/pulse/pulse.css', import.meta.url), 'utf8');
+  const at = css.indexOf('@media (max-width: 760px)'), open = css.indexOf('{', at);
+  assert.ok(at >= 0, 'pulse.css has its 760px block');
+  let depth = 0, end = open;
+  for (; end < css.length; end++) { if (css[end] === '{') depth++; else if (css[end] === '}' && --depth === 0) break; }
+  const block = css.slice(open + 1, end).replace(/\/\*[\s\S]*?\*\//g, '');
+  const sels = [...block.matchAll(/([^{}]+)\{[^{}]*\}/g)].flatMap((m) => m[1].split(',').map((x) => x.trim()));
+  const nav = sels.filter((x) => /\.pz-nav(-i|-l)?\b/.test(x));
+  assert.ok(nav.length >= 3, `the block names the nav rows: ${nav.join(' | ')}`);
+  for (const x of nav) assert.match(x, /^\.pz-side /, x);
+});

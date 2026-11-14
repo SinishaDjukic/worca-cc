@@ -112,7 +112,7 @@ export async function figureIds(src = SRC) {
 }
 
 // The table rows under `## heading` in the wiring file (rows whose first cell is backticked).
-const rowsUnder = (doc, heading) => {
+export const rowsUnder = (doc, heading) => {
   const at = doc.indexOf(`\n## ${heading}\n`);
   return at < 0 ? [] : doc.slice(at + 1).split(/\n## /)[0].split('\n').filter((l) => l.startsWith('| `'));
 };
@@ -121,6 +121,18 @@ const rowsUnder = (doc, heading) => {
 export const rowIds = (doc, heading) => rowsUnder(doc, heading).map((l) => l.slice(3, l.indexOf('`', 3)));
 
 export const STATUS = /\|\s*(wire to|wired|wired \(partial\)|new: build it|new: built|add to the design first|not offered live)\s*\|/;
+
+/** The three statuses of a Dev surfaces row (a Settings key, a path today's UI fetches, a today's-UI file or folder). */
+export const SURFACE_STATUS = /^(wired|wire to|not offered live)$/;
+
+/** The rows under `## Dev surfaces`: { id, status, why, line }, the id read like rowIds, the cells trimmed. */
+export function surfaceRows(doc) {
+  return rowsUnder(doc, 'Dev surfaces').map((line) => {
+    const end = line.indexOf('`', 3);
+    const [status = '', why = ''] = line.slice(end + 1).split('|').slice(1, 3).map((c) => c.trim());
+    return { id: line.slice(3, end), status, why, line };
+  });
+}
 
 /** What has no row, and the rows of the two tables whose status is not one of the three words. */
 export function check(doc, actions, figures) {
