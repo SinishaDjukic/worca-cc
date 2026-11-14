@@ -251,7 +251,6 @@
   "route › /api/run-groups/undo",
   "route › /api/run-links/:param",
   "route › /api/run/night",
-  "route › /api/runs/:id",
   "route › /api/runs/:param",
   "route › /api/runs/:param/:param",
   "route › /api/runs/:param/answer",

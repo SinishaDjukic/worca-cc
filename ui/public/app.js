@@ -86,6 +86,8 @@ import { icon } from './icons.mjs';
 import { subagentAliasLabel, subagentAliasTitle } from '../../src/shared/model-roles.mjs';
 import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
 import { copyButton, copyFromButton, flashCopy, writeClipboard } from './copy-button.mjs';
+import { switchButton } from './design-system/components/settings-row.mjs';
+import { toElement } from './design-system/components/html.mjs';
 import { paintSessionsTab, sessionsTabVisible, sessionsBadge, sessionRowLine, sessionRowEl } from './run-sessions-view.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { readLogView, writeLogView, paintLogMsg, applyLogView, syncLogViewSeg } from './log-view.mjs';
@@ -17727,16 +17729,25 @@ document.getElementById('prSettingsSave')?.addEventListener('click', (e) => post
   { autoGeneratePrDescription: !!document.getElementById('prAutoDescribe')?.checked },
   { card: document.getElementById('pr-settings-card'), paint: paintPrSettings, dirty: settingsCardDirty('prSettingsSave'), button: e.currentTarget }));
 settingsCardDirty('prSettingsSave');
+// The library's Switch (design-system settings-row.mjs): on or off at once, so the card has no Save. A refused save
+// repaints the stored value.
 function paintChatLinksSettings(data) {
-  const cb = document.getElementById('chatLinksInPanel');
   setChatLinksPref(!(data && data.chatLinksInPanel === false));
-  if (!cb) return;
-  cb.checked = chatLinksOn();
-  settingsCardPainted('chatLinksSave');
+  const host = document.getElementById('chatLinksInPanelHost');
+  if (!host) return;
+  host.replaceChildren(toElement(document, switchButton({ on: chatLinksOn(), label: 'Open chat links in the panel',
+    attrs: { id: 'chatLinksInPanel', 'data-setting': 'chatLinksInPanel', 'aria-labelledby': 'chatLinksInPanelLabel' } })));
 }
-document.getElementById('chatLinksSave')?.addEventListener('click', (e) => postSettingsCard({ chatLinksInPanel: !!document.getElementById('chatLinksInPanel')?.checked },
-  { card: document.getElementById('chat-links-card'), paint: paintChatLinksSettings, dirty: settingsCardDirty('chatLinksSave'), button: e.currentTarget }));
-settingsCardDirty('chatLinksSave');
+document.getElementById('chatLinksInPanelHost')?.addEventListener('click', async (e) => {
+  const sw = e.target.closest?.('#chatLinksInPanel');
+  if (!sw || sw.disabled) return;
+  const on = sw.getAttribute('aria-checked') !== 'true';
+  sw.setAttribute('aria-checked', String(on));
+  sw.disabled = true;
+  const r = await postSettingsCard({ chatLinksInPanel: on }, { card: document.getElementById('chat-links-card'), paint: paintChatLinksSettings });
+  if (!r || !r.ok) paintChatLinksSettings({ chatLinksInPanel: chatLinksOn() });
+  else sw.disabled = false;
+});
 
 // ---- Helper models: Claude's title, Auto and PR description slots are rows of the Engines card's Helper jobs
 // (engine-settings-view.mjs). What stays here: the project-less catalog every model picker reads, the Claude-only

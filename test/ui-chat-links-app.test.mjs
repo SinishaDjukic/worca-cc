@@ -266,14 +266,14 @@ test('row 12e: the card\'s PDF Files tab renders the PDF', async () => {
   assert.ok(!panel.textContent.includes(NO_PREVIEW), 'no NO_PREVIEW');
 });
 
-test('row 13: the settings card shows the switch and saves it', async () => {
+test('row 13: the settings card shows the library Switch and saves it at once', async () => {
   const a = await boot();
   a.go('settings/ask'); await a.settle(12);
-  const cb = a.doc.getElementById('chatLinksInPanel');
-  assert.equal(cb.checked, true);
-  cb.checked = false;
-  cb.dispatchEvent(new a.window.Event('change', { bubbles: true }));
-  a.doc.getElementById('chatLinksSave').click();
+  const sw = a.doc.getElementById('chatLinksInPanel');
+  assert.equal(sw.getAttribute('role'), 'switch');
+  assert.equal(sw.getAttribute('aria-checked'), 'true');
+  assert.equal(a.doc.querySelector('#chat-links-card .btn-primary'), null, 'no Save: a Switch acts at once');
+  sw.click();
   await a.settle(12);
   assert.ok(a.rec.settingsPosts.some((b) => b.chatLinksInPanel === false), JSON.stringify(a.rec.settingsPosts));
 });

@@ -865,18 +865,15 @@
               <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="askEngineMsg"></small><button type="button" id="askEngineSave" class="btn btn-primary btn-sm">Save</button></div>
             </section>
 
+            <!-- The switch is the library's Switch (app.js paintChatLinksSettings): it saves at once, so the card has no Save. -->
             <section class="card settings-card" id="chat-links-card" data-min-level="simple">
               <div class="card-head"><div class="label-row"><h2>Links in answers</h2></div></div>
               <div class="drows">
-              <label class="field drow switch-drow" for="chatLinksInPanel">
-                <span class="drow-label">Open chat links in the panel
-                  <button type="button" class="info-tip" aria-label="About opening chat links in the panel">i<span class="tip-content hidden">File paths and web links in the chat's answers open in a tab of the tool panel beside the chat. Off: web links open a new browser tab and file paths stay text.</span></button>
-                </span>
-                <span class="drow-control"><input id="chatLinksInPanel" data-setting="chatLinksInPanel" class="sw-input" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></span>
-              </label>
+              <div class="field drow switch-drow">
+                <span class="drow-label" id="chatLinksInPanelLabel">Open chat links in the panel</span>
+                <small class="hint drow-help">File paths and web links in the chat's answers open in a tab of the tool panel beside the chat. Off: web links open a new browser tab and file paths stay text.</small>
+                <span class="drow-control" id="chatLinksInPanelHost"></span>
               </div>
-              <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="chatLinksSave" class="btn btn-primary btn-sm">Save</button>
               </div>
             </section>
             <!-- Ask Worca (ask-worca-design §6.9): per-turn guards for the
