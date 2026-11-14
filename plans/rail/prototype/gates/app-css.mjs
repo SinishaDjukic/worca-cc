@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { assemble } from '../../../../src/core/public-assets.mjs';
 
 const here = (f) => fileURLToPath(new URL(f, import.meta.url));
-export const APP_CSS = here('../app.css');
+export const APP_CSS = here('../../../../ui/public/stillhet/app.css');
 
 export function writeAppCss() {
   const { text } = assemble('css', 'style.css', here('../../../../ui/public'));
@@ -19,7 +19,7 @@ export function writeAppCss() {
   const out = text.replace(/url\((['"]?)\/(?!\/)([^)'"]+)\1\)/g, (m, q, path) => {
     const ext = path.split('.').pop().toLowerCase();
     if (MIME[ext] && existsSync(pub + path)) return `url(data:${MIME[ext]};base64,${readFileSync(pub + path).toString('base64')})`;
-    return `url(${q}../../../ui/public/${path}${q})`;
+    return `url(${q}../${path}${q})`;
   });
   writeFileSync(APP_CSS, out);
   return out;

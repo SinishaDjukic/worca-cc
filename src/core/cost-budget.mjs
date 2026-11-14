@@ -148,6 +148,29 @@ export function readCostCapOverride(pipelineId) {
   return !!row?.cost_cap_override;
 }
 
+/** The cap raised for one run (Raise the cap), in USD, or null when the settings cap applies. */
+export function readRunCostCap(pipelineId) {
+  const v = prepare('SELECT cost_cap_usd FROM pipelines WHERE id = ?').get(pipelineId)?.cost_cap_usd;
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
+}
+/** Store a run's raised cap; it replaces any "continue without cap" override, so the run is held to the new cap. */
+export function setRunCostCap(pipelineId, usd) {
+  prepare('UPDATE pipelines SET cost_cap_usd = ?, cost_cap_override = 0 WHERE id = ?').run(Number(usd), pipelineId);
+}
+/** The run cap's checks for `POST /api/run` and `POST /api/resume` `costCapUsd`: → { cap: number|null, error?: string }. `spent`: the run's spend. */
+export function runCostCapCheck(costCapUsd, { ignoreCostCap = false, spent = 0 } = {}) {
+  if (costCapUsd === undefined || costCapUsd === null) return { cap: null };
+  if (typeof costCapUsd !== 'number' || !Number.isFinite(costCapUsd) || costCapUsd <= 0) return { cap: null, error: 'costCapUsd must be a number above 0' };
+  if (ignoreCostCap === true) return { cap: null, error: 'costCapUsd and ignoreCostCap cannot be combined' };
+  const s = Number(spent || 0);
+  if (costCapUsd <= s) return { cap: null, error: `The new cap must be above what this task has spent ($${s.toFixed(2)}).` };
+  return { cap: costCapUsd };
+}
+/** Every resume gate passed: store the raised cap (it replaces any override) and hand it to the run's harness, built before. */
+export function raiseRunCostCap(orch, pipelineId, usd) {
+  setRunCostCap(pipelineId, usd);
+  if (orch) { orch.runCostCapUsd = usd; if (orch.state) orch.state.pipelineCapUsd = usd; }
+}
 /** Set the persistent per-pipeline "disregard the cap" flag. */
 export function setCostCapOverride(pipelineId) {
   prepare('UPDATE pipelines SET cost_cap_override = 1 WHERE id = ?').run(pipelineId);

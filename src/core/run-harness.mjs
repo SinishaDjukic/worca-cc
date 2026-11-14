@@ -23,6 +23,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { readFile, writeFile, copyFile, readdir, mkdir, realpath, rename, stat, rm } from 'node:fs/promises';
 
 import { generateTitle } from './title.mjs';
+import { recordUsageLimit } from './usage-limits.mjs';
 import {
   createPipeline, updatePipelineTitle, appendAudit, writeState, artifactPaths, slugify, today,
   recordArtifact, writeClarify, readPipelineExtras, claimPipelineOwnership, touchHeartbeat,
@@ -60,7 +61,7 @@ import { captureProposals } from './memory-proposals.mjs';
 import { createUsageTally, drainMemoryLoads, memoryLoadLogPath, noteOfMemoryRel, recordMemoryUsage, rulesHaveScopedNote } from './memory-usage.mjs';
 import { memoryRoot, listMemory, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief } from './memory-store.mjs';
 import { isTeamMemoryOn, refreshTeamLayerWithin, mountTeamLayer, queueTeamChanges, teamChangesFromSync, teamClientText, memoryLoadPlans, loadFilteredDirs } from './memory-team.mjs';
-import { readCostCapOverride, totalWindowSpendUsd, costWindowStart, recordCostDelta } from './cost-budget.mjs';
+import { readCostCapOverride, readRunCostCap, setRunCostCap, totalWindowSpendUsd, costWindowStart, recordCostDelta } from './cost-budget.mjs';
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
   scanStrayEntries, copyRunManifestTo, removeInjectedPaths, stripClaudeMdFence,
@@ -276,6 +277,7 @@ const validRoundOf = (r) => {
   if (!(r && typeof r === 'object' && typeof r.pipelineId === 'string' && r.pipelineId && Number.isInteger(r.round) && r.round >= 2)) return null;
   const out = { pipelineId: r.pipelineId, round: r.round, request: typeof r.request === 'string' ? r.request.slice(0, 200) : '' };
   if (r.by === 'watch') { out.by = 'watch'; out.kinds = (Array.isArray(r.kinds) ? r.kinds : []).filter((k) => ROUND_KINDS.has(k)); }
+  else if (r.by === 'restart') out.by = 'restart';   // Restart Build (Stillhet): a round that builds the saved plan again
   const o = cleanOutcome(r.outcome);
   if (o) out.outcome = o;
   return out;
@@ -1066,6 +1068,10 @@ export class RunHarness extends EventEmitter {
     this._pauseGate = null;                  // gate context snapshot when paused at a gate
     this._resumeNodeSessions = null;         // nodeId -> sessionId map, set by resume() (Task 5)
     this.resumeOpts = this.opts.resume || null; // { row, resumePoint, steps } from readPipelineForResume
+    // Raise the cap (Stillhet): a cap raised for this run, read once here, wins over the settings cap. A resume reads its
+    // row's; a Restart Build carries its origin's (written on its row once it exists). null = the settings cap.
+    this.runCostCapUsd = this.opts.resume?.row?.id ? readRunCostCap(this.opts.resume.row.id)
+      : (Number(this.opts.runCostCapUsd) > 0 ? Number(this.opts.runCostCapUsd) : null);
     // Agent memory (agent-memory-design.md §7.3): the defragment run option. A resumed run reads
     // it back from its resume point — the resume sites pass no run options (B10). The API and the
     // CLI validated already; this throw is the programming-error backstop (never a 400).
@@ -1137,7 +1143,8 @@ export class RunHarness extends EventEmitter {
       title: this.opts.title || null,
       projectDir: this.projectDir,
       runEngine: this.claude.engine,
-      ...(this._projectPipelineCap() !== undefined ? { pipelineCapUsd: this._projectPipelineCap() } : {}),
+      ...(this.runCostCapUsd != null ? { pipelineCapUsd: this.runCostCapUsd }
+        : this._projectPipelineCap() !== undefined ? { pipelineCapUsd: this._projectPipelineCap() } : {}),
       status: 'idle',
       phase: 'idle',
       cycle: 0,
@@ -1283,6 +1290,67 @@ export class RunHarness extends EventEmitter {
       err.name = 'AbortError';
       pq.reject(err);
     }
+  }
+
+  /**
+   * Pause after this step (Stillhet, plans/rail/task-engine-additions.md): set the in-memory flag `pauseAfterStep`
+   * without aborting anything. No new execution starts while it is set (_awaitStepBoundary); once none is in flight,
+   * dev's pause(by) runs once. Never persisted; cleared by that conversion and by any status other than running.
+   * → true, false (not running: dev's CANNOT_PAUSE) or 'already' (a pause after this step is pending).
+   */
+  pauseAfterStep(by = null) {
+    if (this.state.status !== 'running') return false;
+    if (this.state.pauseAfterStep) return 'already';
+    this._pauseAfterStepBy = by;
+    this.state.pauseAfterStep = true;
+    this.state.updatedAt = new Date().toISOString();
+    this._emit('state', this.getState());
+    if (!this._inFlight) this._convertPauseAfterStep();
+    return true;
+  }
+
+  /** The flag became a pause: dev's pause, once. */
+  _convertPauseAfterStep() {
+    const by = this._pauseAfterStepBy ?? null;
+    this._clearPauseAfterStep();
+    this.pause(by);
+  }
+
+  _clearPauseAfterStep() {
+    this._pauseAfterStepBy = null;
+    this._pauseAfterStepDue = false;
+    if (this.state.pauseAfterStep) delete this.state.pauseAfterStep;
+    const waiters = this._stepWaiters || []; this._stepWaiters = [];
+    for (const w of waiters) w();
+  }
+
+  /** An execution about to start waits here while a pause after this step is pending and another one is in flight. */
+  async _awaitStepBoundary() {
+    while (this.state.pauseAfterStep && this._inFlight > 0) {
+      await new Promise((r) => { (this._stepWaiters ||= []).push(r); });
+    }
+    if (this.state.pauseAfterStep) this._convertPauseAfterStep();   // nothing in flight: the pause lands before this one starts
+    this._inFlight = (this._inFlight || 0) + 1;
+  }
+
+  /**
+   * An execution settled: the last one out marks a pending pause after this step as due. It converts only once the
+   * scheduler has recorded that completion in a snapshot (_stepRecorded), so the resume point holds the finished step
+   * and a resume never runs it again.
+   */
+  _leaveStep() {
+    this._inFlight = Math.max(0, (this._inFlight || 0) - 1);
+    if (this._inFlight || !this.state.pauseAfterStep) return;
+    this._pauseAfterStepDue = true;
+    // An execution already waits at the boundary (a fan-out slice that took the freed agent slot). A slice's
+    // completion is never snapshotted on its own, so _stepRecorded may not come while the phase waits on that slice.
+    // Give the scheduler this turn to record the finished step (a top-level node snapshots in its settle), then convert.
+    if (this._stepWaiters?.length) setImmediate(() => this._stepRecorded());
+  }
+
+  /** The scheduler recorded a completion (its snapshot is the resume point): a due pause after this step lands now. */
+  _stepRecorded() {
+    if (this._pauseAfterStepDue && !this._inFlight && this.state.pauseAfterStep) this._convertPauseAfterStep();
   }
 
   /**
@@ -1626,6 +1694,14 @@ export class RunHarness extends EventEmitter {
       });
       this.state.id = this.pipeline.id;
       this.state.pipelineDir = this.pipeline.dir;
+      if (this.runCostCapUsd != null) {
+        setRunCostCap(this.pipeline.id, this.runCostCapUsd);   // a Restart Build keeps its origin's cap
+        // The cap set at the start is a decision worth an audit line (D12); it shows with `rail` off too.
+        const by = this.opts.startedBy || null;
+        // a Restart Build or PR-fix round inherits its origin's cap: nobody set it for this round, so it says so
+        const kept = validRoundOf(this.opts.branch && this.opts.branch.roundOf);
+        appendAudit(this.pipeline.dir, kept ? `Pipeline cost limit $${this.runCostCapUsd.toFixed(2)} kept from the first round.` : `Pipeline cost limit set to $${this.runCostCapUsd.toFixed(2)} for this run${byActor(by)}.`, { actor: by }).catch(() => {});
+      }
       // Replace the placeholder the client was shown at start with the task's title.
       if (ticketTitle) this._emit('title', { title: ticketTitle, provisional: false, pipelineId: this.pipeline.id });
       this.logWriter.bind(this.pipeline.dir);                  // start persisting (flushes buffered preflight lines)
@@ -3311,7 +3387,7 @@ export class RunHarness extends EventEmitter {
     if (caps.cost === false) {
       // The caps _checkCostLimits enforces, read the same way: neither can see this engine's spend.
       const teamFields = this.policyRun?.fields || {};
-      const pipe = effectiveCap({ local: pipelineCostLimitUsd(this._settingsScope()), team: teamFields['cost.pipelineLimitUsd'] || null });
+      const pipe = effectiveCap({ local: this.runCostCapUsd ?? pipelineCostLimitUsd(this._settingsScope()), team: teamFields['cost.pipelineLimitUsd'] || null });
       if (pipe.cap != null) lines.push(`engine ${name}: the pipeline cost limit cannot count ${name}'s spend (cost unknown)`);
       const tot = effectiveCap({ local: totalCostLimitUsd(), team: teamFields['cost.totalLimitUsd'] || null });
       if (tot.cap != null) lines.push(`engine ${name}: the total cost limit cannot count ${name}'s spend (cost unknown)`);
@@ -6050,7 +6126,7 @@ export class RunHarness extends EventEmitter {
     // Team policy (design §7): the tighter of the developer's cap and a soft team cap applies;
     // a team default only starts the developer off. `binding` says whose number tripped.
     const teamPipe = teamFields['cost.pipelineLimitUsd'] || null;
-    const pipe = effectiveCap({ local: pipelineCostLimitUsd(this._settingsScope()), team: teamPipe });
+    const pipe = effectiveCap({ local: this.runCostCapUsd ?? pipelineCostLimitUsd(this._settingsScope()), team: teamPipe });
     // The developer's own cap (or a team DEFAULT, which is the same thing): the existing
     // pause + the existing per-pipeline override. A team-bound fold has no "own" cap here.
     const ownCap = pipe.binding === 'team' ? null : pipe.cap;
@@ -7763,6 +7839,7 @@ export class RunHarness extends EventEmitter {
 
   _setStatus(status) {
     this.state.status = status;
+    if (status !== 'running' && this.state.pauseAfterStep) this._clearPauseAfterStep();   // pause, stop, error, finish drop the flag
     if (status === 'done' || status === 'stopped' || status === 'error' || status === 'paused') {
       this._clockPauseAll();
       this.state.totalActiveMs = sumStepActive(this.state.steps);
@@ -7964,6 +8041,7 @@ export class RunHarness extends EventEmitter {
       case 'toolResult': this._onToolResultEvent(role, e, attr); return;
       case 'retry': this._onRetryEvent(role, e, attr); return;
       case 'usage': this._onUsageEvent(e, attr); return;
+      case 'limit': recordUsageLimit(this.claude?.engine || 'claude', e); return;   // the usage rings' reading (D7)
       default: return;
     }
   }

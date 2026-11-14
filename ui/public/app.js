@@ -345,6 +345,9 @@ import { openLabelPicker, closeLabelPickerFor, fetchLabels, labelChip } from './
 import { labelStates, applyLabelChange, normaliseLabel } from '../../src/shared/run-labels.mjs';
 import { renderLabelsSection, runCount } from './labels-settings.mjs';
 import { makeSwitch } from './switch.mjs';
+import { watchRailReload, mountDesignSwitch, mountStillhetAsk, shouldAskStillhet, stillhetLabsRow } from './stillhet.mjs';
+// Stillhet: the server-rendered value of `rail`, read before any flags frame or the boot re-read can change it.
+const RAIL_BOOT = flagOn('rail');
 import { createWorcaLevelWiring } from './worca-level/app-wiring.mjs';
 
 // With site data blocked, Chrome throws SecurityError on merely reading `localStorage`. Every bare `localStorage` in
@@ -18820,7 +18823,8 @@ function loadFlagsTab(sub = '') {
   if (!el.flagsHost) return;
   if (!flagsTabCtl) {
     flagsTabCtl = createFlagsView({ host: el.flagsHost, msgEl: el.flagsMsg, resetBtn: el.flagsReset,
-      api: (method, body) => mcpApi(method, '/api/flags', body), confirm: confirmModal });
+      api: (method, body) => mcpApi(method, '/api/flags', body), confirm: confirmModal,
+      keep: stillhetLabsRow() });
   }
   void flagsTabCtl.load(sub ? safeDecode(sub) : '');
 }
@@ -38824,6 +38828,27 @@ async function loadOnboarding({ recheck = false } = {}) {
   gs.status = data;
   paintOnboarding();
   maybeWelcome();
+  void stillhetBoot();
+  if (flagsTabCtl) void flagsTabCtl.load();   // the Labs row follows the ask switch
+}
+
+// Stillhet's opt-in and opt-out (ui/public/stillhet.mjs): idempotent, so a socket reconnect that reruns the boot path adds nothing.
+let railReloadWatch = null;
+async function stillhetBoot() {
+  const status = gs.status;
+  if (!status) return;
+  const toastText = (text) => notify({ tone: 'info', title: text });
+  if (!railReloadWatch) railReloadWatch = watchRailReload({ doc: document, win: window, bootOn: RAIL_BOOT, toast: toastText });
+  if (status.stillhetAsk !== true) return;
+  const r = await mcpApi('GET', '/api/flags');
+  const flag = r.ok && Array.isArray(r.data?.flags) ? r.data.flags.find((f) => f.key === 'rail') : null;
+  if (!flag) return;
+  mountDesignSwitch({ doc: document, status, flag, fetchJson: mcpApi, toast: toastText });
+  const dialogOpen = [...document.querySelectorAll('dialog[open], .viewer-modal:not(.hidden), .keys-modal')].some((d) => d.getClientRects().length > 0);   // a hidden modal keeps its node
+  if (shouldAskStillhet({ ask: true, asked: status.stillhetAsked === true, fresh: status.fresh === true, flagKnown: true, on: flag.on, locked: flag.locked,
+    welcomeThisLoad: gs.welcomeShown, setupOpen: !!setupDialog, dialogOpen })) {
+    mountStillhetAsk({ doc: document, status, fetchJson: mcpApi });
+  }
 }
 /** Coalesce the change broadcasts (a finished run fires several) into one refetch. */
 function scheduleOnboardingRefresh() {

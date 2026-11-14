@@ -45,3 +45,9 @@ After finishing, emit a concise assistant note summarizing: mode, which plan ste
 
 ## Graph tooling
 If the prompt says **graphify** is available, use graphify to understand the codebase before and during implementation, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, exploring the real project with Glob/Grep/Read.
+
+## UI work
+
+A change to Worca's interface follows the design system: `docs/rail/README.md` leads, and pages call `ui/public/design-system/components/` instead of writing its markup or words. `npm test` fails UI code that skips it.
+
+Under `rail`, the prototype's screen is the spec: dev contributes data, APIs and logic, never its screens or markup; read `plans/rail/implementation-prompt.md` first.
