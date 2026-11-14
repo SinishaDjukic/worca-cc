@@ -164,6 +164,21 @@ test('Pulse icon until read: is-news stays after 5 minutes and goes when the new
   assert.equal(isNews(w), false, 'marked read: the news ends');
 });
 
+test('the demo kind keeps read in memory: opening an update writes nothing under worca-rail.pulse-read (#1268 D7)', () => {
+  const { w } = appHost();
+  w.RailPulse.newEvent('problem');
+  w.RailPulse.open('updates');
+  // a seeded unread update (not the newEvent's own row), so the click reaches the read path
+  const unreadRows = () => [...w.document.querySelectorAll('.pz-popover [data-open]:not([data-open^="try-"])')].filter((r) => r.querySelector('.pz-row-t.is-unread'));
+  const row = unreadRows()[0];
+  assert.ok(row, 'a seeded update is unread');
+  const id = row.dataset.open;
+  row.click();
+  w.RailPulse.open('updates');
+  assert.ok(!unreadRows().some((r) => r.dataset.open === id), 'it is read now, in memory');
+  assert.equal(w.localStorage.getItem('worca-rail.pulse-read'), null);
+});
+
 test('Settings › Notifications › Pulse icon: picking never removes is-news from the running icon without a reload', () => {
   const { w } = appHost();
   w.RailPulse.newEvent('problem');

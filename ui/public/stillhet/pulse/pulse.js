@@ -53,7 +53,33 @@ const liveBudget = (b) => (!W.live && b && ui.sv.total && ui.sv.period === 'mont
 const budgetGone = () => M.budgetGone(C().budget);
 // A row's read state is the person's own on a shared sign-in; a problem clears when it is acted on; info rows arrive read.
 const isFixed = (u) => ui.fixed.includes(u.id);
-const isUnread = (u) => u.unread && !isFixed(u) && !ui.read.includes(u.id);
+// Read in the live kind (#1268, docs/rail/panels.md `panel.pulse-read`): a notification's read is the server's, per reader;
+// a run outcome has no record there, so its read lives in this browser under KEY_READ, shared by its tabs and kept across a
+// reload: { v: 1, keys: ['o' + pipeline id + '|' + event + '|' + the run's total active ms, …] }, oldest first, the newest
+// READ_MAX kept: the run's next outcome, even under the same event, never matches an older read (a new attempt works, so its
+// active time grows), while a write that is no attempt (a late title) leaves the key as it was. The demo keeps `ui.read`.
+const KEY_READ = 'worca-rail.pulse-read', READ_MAX = 500;
+const isNote = (u) => /^n\d+$/.test(u.id), isOutcome = (u) => /^o/.test(u.id);
+const outcomeOf = (u) => u.e + (u.work != null ? '|' + u.work : '');   // which outcome of its run: the event and the work behind it
+const readKey = (u) => u.id + '|' + outcomeOf(u);
+let readCache = null;   // read once per repaint: render() and the storage event drop it
+const readHere = new Set();   // keys a refused write keeps for this session
+function readStored() {
+  try { const v = JSON.parse(localStorage.getItem(KEY_READ)); return v && v.v === 1 && Array.isArray(v.keys) ? v.keys.filter((k) => typeof k === 'string') : []; } catch { return []; }
+}
+const storedRead = () => (readCache ??= new Set([...readStored(), ...readHere]));
+function writeRead(keys) {
+  readCache = null;
+  try { localStorage.setItem(KEY_READ, JSON.stringify({ v: 1, keys: keys.slice(-READ_MAX) })); return true; } catch { return false; }
+}
+// read-modify-write over the stored value, so another tab's keys are kept
+function rememberRead(keys) { if (keys.length && !writeRead(readStored().filter((k) => !keys.includes(k)).concat(keys))) keys.forEach((k) => readHere.add(k)); }
+function forgetRead(keys) {
+  keys.forEach((k) => readHere.delete(k));
+  const was = readStored();
+  if (was.some((k) => keys.includes(k))) writeRead(was.filter((k) => !keys.includes(k))); else readCache = null;
+}
+const isUnread = (u) => u.unread && !isFixed(u) && !ui.read.includes(u.id) && !(LIVE && !isNote(u) && storedRead().has(readKey(u)));
 // A group that follows a Labs feature keeps quiet while the feature is off.
 const groupShows = (g) => !g.flag || R.prefs.flag(g.flag);
 const groupsShown = () => M.GROUPS.filter(groupShows);
@@ -62,6 +88,45 @@ const inShownGroup = (u) => groupShows(groupOf(u.g));
 const stillWaits = (u) => { if (u.sev !== 'needs' || !u.run) return u; const r = W.find(u.run); return r && W.section(r) !== 'needs' ? { ...u, open: false, resolved: true } : u; };
 const live = () => [...ui.added, ...C().updates].map(stillWaits).filter((u) => inShownGroup(u) && !ui.cleared.includes(u.id));
 const unread = () => live().filter(isUnread);
+// Every other live update about the same task (D11): an outcome's `run`, a notification's `about`.
+const siblingsOf = (u) => { const k = u.run || u.about; return LIVE && k ? C().updates.filter((x) => x.id !== u.id && (x.run === k || x.about === k)) : []; };
+// Read here, in this repaint: `ui.read`, and a live outcome's key in the store.
+function readNow(list) { ui.read = ui.read.concat(list.map((u) => u.id)); if (LIVE) rememberRead(list.filter(isOutcome).map(readKey)); }
+// The one way to mark read (D6): opening a row, bulk Mark read and its Undo. What is read changes at once (D5); each live
+// notification is posted, and a refusal puts back only its own row and says so.
+function markRead(updates, { undo = false } = {}) {
+  const list = undo ? updates : updates.filter(isUnread);
+  if (!list.length) return;
+  if (undo) { const ids = list.map((u) => u.id); ui.read = ui.read.filter((x) => !ids.includes(x)); if (LIVE) forgetRead(list.filter(isOutcome).map(readKey)); }
+  else readNow(list);
+  if (!LIVE) return;
+  for (const u of list.filter(isNote)) {
+    A.post(`/api/notifications/${u.id.slice(1)}/read`, undo ? { read: false } : undefined).then((r) => {
+      if (r.ok) return;
+      ui.read = undo ? ui.read.concat(u.id) : ui.read.filter((x) => x !== u.id);
+      refused(undo ? 'mark it unread' : 'mark it read', r);
+    });
+  }
+}
+// After each live snapshot (D3): an outcome's read is forgotten on positive evidence that it ended: the snapshot holds its
+// run working with no outcome, or holds another outcome (another event, or more work: a new attempt). A run the snapshot
+// lacks keeps its key.
+const WORKING = ['starting', 'running', 'pausing'];
+function runWorks(pid) {
+  const l = window.RailTaskLive?.resolve?.(pid)?.live;   // the live run of that pipeline, under any run id
+  if (l && (WORKING.includes(String(l.status).toLowerCase()) || l.pendingQuestion)) return true;
+  return ['starting', 'working', 'question'].includes(W.find(pid)?.case);
+}
+function pruneRead() {
+  readCache = null;
+  const ups = C().updates, now = (id) => ups.find((u) => u.id === id), ended = (id) => !now(id) && runWorks(id.slice(1));
+  const gone = [...storedRead()].filter((k) => { const i = k.indexOf('|'), id = k.slice(0, i), u = now(id); return u ? outcomeOf(u) !== k.slice(i + 1) : ended(id); });
+  if (gone.length) forgetRead(gone);
+  // this tab's own marks on that outcome go too (ended, or now another outcome): the next outcome of the run is news
+  const changed = gone.map((k) => k.slice(0, k.indexOf('|'))).filter(now);
+  const back = [...ui.read, ...ui.fixed].filter((id) => /^o/.test(id) && (ended(id) || changed.includes(id)));
+  if (back.length) { ui.read = ui.read.filter((x) => !back.includes(x)); ui.fixed = ui.fixed.filter((x) => !back.includes(x)); }
+}
 const limitsNow = () => M.limits(C(), ui.s.warnAt);
 // Vitals's sections, and what its sentence keeps of them: a run by its project; a limit belongs to a harness, so it ignores
 // the project and goes only with its own choice.
@@ -148,7 +213,11 @@ const dotOf = (u) => (u.sev === 'needs' && u.open ? 'is-amber' : '');
 // A run's mark and word come from the library's state.
 const runMark = (state, stage = -1) => { const st = R.runState(state); return R.kindMark({ kind: 'task', tone: R.markTone(st), stage, size: 16, title: st.word }); };   // the sidebar's own mark: what it is and how it stands
 const metaOf = (r, detail = r.detail) => [r.project, detail].filter(Boolean).join(' · ');
-const runRow = (r, tip) => row({ mark: runMark(r.state, r.stage ?? -1), title: r.title, meta: metaOf(r), time: r.time, key: 'r:' + r.id, tip });
+const runRow = (r, tip, meta = metaOf(r)) => row({ mark: runMark(r.state, r.stage ?? -1), title: r.title, meta, time: r.time, key: 'r:' + r.id, tip });
+// A Now row says on its meta line what clears it (D8): keyed by the run state's id, a missed time or a place's kind.
+// a paused run (on an error too) stays in Needs you until it is resumed or stopped: its status wins over its case
+const clearsKeyOf = (r) => (r.paused || r.interrupted ? 'paused' : window.RunCardModel.stateOf(r.case));
+const clearsMeta = (meta, key) => { const p = M.clearsWhen(key); return p ? [meta, p].filter(Boolean).join(' · ') : meta; };
 function updateRow(u, withCheck) {
   return row({ mark: R.kindMark({ kind: 'event', tone: dotOf(u) ? 'ask' : 'idle', size: 16 }), title: u.title, meta: `${groupOf(u.g).name} · ${u.meta}`, time: u.time, key: u.id, check: withCheck ? ui.pick.ids.includes(u.id) : undefined,
     unreadDot: isUnread(u), resolved: u.resolved || isFixed(u), fix: !isFixed(u) && !ui.pick.on ? u.fix : '', fixLand: u.fixLand, fixTip: u.fixLand ? `${u.fix}: opens Settings › Tasks, on Budget` : `${u.fix} from here; the row then reads Resolved`, flash: ui.flash === u.id, tip: `Opens ${u.to}${isUnread(u) ? ' and marks it read' : ''}` });
@@ -160,7 +229,7 @@ function vitalsSections() {
     { word: 'from', id: 'vitalsFrom', text: ui.vitalsFrom === 'all' ? 'all projects' : ui.vitalsFrom, items: [{ id: 'all', text: 'all projects', checked: ui.vitalsFrom === 'all', hint: String(vitalsN(vitalsShown(ui.vitalsShow, 'all'))) }, { sep: true }].concat(vitalsProjects().map((p) => ({ id: p, text: p, checked: ui.vitalsFrom === p, hint: String(vitalsN(vitalsShown(ui.vitalsShow, p))) }))), tip: 'Which project\'s runs it shows; limits belong to a harness and show for every project' }])}</span></div>`;
   const sec = (h, n, rows, note) => (n ? `<section class="pz-sec"><h3 class="pz-h">${h} <span class="n">${n}${note ? ` · ${note}` : ''}</span></h3><div class="pz-list">${rows}</div></section>` : '');
   const levelOfRun = (r) => (r.missed ? 2 : R.alertLevel(R.markTone(R.runState(window.RunCardModel.stateOf(r.case)))));
-  const needRows = [...c.needs.map((r) => [levelOfRun(r), r.missed ? row({ mark: R.kindMark({ kind: 'schedule', tone: 'act', size: 16 }), title: r.title, meta: metaOf(r, schedWords(r) || undefined), time: r.time, key: 'r:' + r.id, tip: 'A missed time never started: it needs you and is not a task' }) : runRow(r, 'Opens the run page at what it asks')]), ...c.places.map((x) => [R.alertLevel(x.tone), row({ mark: R.kindMark({ kind: x.kind, tone: x.tone, size: 16 }), title: x.title, meta: x.meta, key: `np:${x.go}`, tip: x.tip })])].sort((a, b) => b[0] - a[0]);   // highest level first (look.alert-ladder)
+  const needRows = [...c.needs.map((r) => [levelOfRun(r), r.missed ? row({ mark: R.kindMark({ kind: 'schedule', tone: 'act', size: 16 }), title: r.title, meta: clearsMeta(metaOf(r, schedWords(r) || undefined), 'missed'), time: r.time, key: 'r:' + r.id, tip: 'A missed time never started: it needs you and is not a task' }) : runRow(r, 'Opens the run page at what it asks', clearsMeta(metaOf(r), clearsKeyOf(r)))]), ...c.places.map((x) => [R.alertLevel(x.tone), row({ mark: R.kindMark({ kind: x.kind, tone: x.tone, size: 16 }), title: x.title, meta: clearsMeta(x.meta, x.kind), key: `np:${x.go}`, tip: x.tip })])].sort((a, b) => b[0] - a[0]);   // highest level first (look.alert-ladder)
   const out = sec(R.runState('question').word, needRows.length, needRows.map(([, h]) => h).join(''), needsWords().includes('(') ? needsWords().replace(/^\d+ needs? you \((.*)\)$/, '$1') : '')
     + sec('Limits', lim.length, lim.map((l, i) => row({ mark: R.kindMark({ kind: 'event', tone: l.tone === 'over' ? 'fail' : 'act', size: 16 }), title: l.title, meta: l.detail, time: l.time, key: 'lim' + i, tip: `${l.tip} · opens Usage and costs` })).join(''))
     + sec('Running', c.running.length, c.running.map((r) => runRow(r, 'Opens the live run')).join(''))
@@ -637,19 +706,25 @@ function fitSearch() { const m = document.querySelector('.rl-search-res'); if (!
 // Pulse's icon has news when the count it holds grew since it was last drawn. The news lasts as Settings › Notifications ›
 // Pulse icon says: until the count falls back to where it was before the news (read or acted on), for 10 s or 1 min (one
 // window timer, restarted by a new event or a change of the setting), or never. A redraw neither starts nor ends it.
-let newsSeen = null, newsFloor = null, newsTimer = 0;
-function endNews() { newsFloor = null; clearTimeout(newsTimer); newsTimer = 0; }
+// Reading ends the news it raised (D10): `newsIds` holds the updates that turned unread while the news is on, and once
+// none of them is unread the news ends, even while their task still needs you. News with no update behind it (a question)
+// lasts until the count falls back.
+let newsSeen = null, newsFloor = null, newsTimer = 0, newsIds = new Set(), unreadSeen = null;
+function endNews() { newsFloor = null; newsIds = new Set(); clearTimeout(newsTimer); newsTimer = 0; }
 function armNews() {
   clearTimeout(newsTimer); newsTimer = 0;
   if (newsFloor === null) return;
   if (ui.s.pulseFor === 'never') { endNews(); return; }
   const ms = PULSE_FOR_MS[ui.s.pulseFor];
-  if (ms) newsTimer = setTimeout(() => { newsTimer = 0; newsFloor = null; render(); }, ms);
+  if (ms) newsTimer = setTimeout(() => { endNews(); render(); }, ms);
 }
-const pulseNews = (n) => {
+const pulseNews = (n, unreadIds = []) => {
+  const now = new Set(unreadIds), arming = newsFloor === null;
   if (newsSeen !== null && n > newsSeen && ui.s.pulseFor !== 'never') { newsFloor ??= newsSeen; armNews(); }
-  if (newsFloor !== null && n <= newsFloor) endNews();
-  newsSeen = n;
+  // only the call that raises the news names its updates: one arriving later never ends news a question raised
+  if (arming && newsFloor !== null && unreadSeen) for (const id of now) if (!unreadSeen.has(id)) newsIds.add(id);
+  if (newsFloor !== null && (n <= newsFloor || (newsIds.size && ![...newsIds].some((id) => now.has(id))))) endNews();
+  newsSeen = n; unreadSeen = now;
   return newsFloor !== null && ui.s.pulseFor !== 'never';
 };
 // the master light wears the highest level that waits (look.alert-ladder)
@@ -659,7 +734,7 @@ const needsTotal = () => vitalsRuns().needs.length + placeNeeds().length;
 const needsWords = () => { const l = vitalsRuns().needs, m = l.filter((r) => r.missed).length, t = l.length - m, more = placeNeeds(), q = more.filter((x) => x.kind === 'workspace').length, p = more.length - q, n = l.length + more.length; return n ? `${plural(n, 'needs you', 'need you')}${m || more.length ? ` (${[t && plural(t, 'task'), m && plural(m, 'missed schedule'), p && plural(p, 'project'), q && plural(q, 'question')].filter(Boolean).join(', ')})` : ''}` : ''; };   // panel.task-truth: a missed time needs you, and is not a task
 const masterTone = () => (vitalsRuns().needs.some((r) => R.alertLevel(R.markTone(R.runState(window.RunCardModel.stateOf(r.case)))) === 3) || placeNeeds().some((x) => x.tone === 'fail') ? 'warn' : 'need');
 function pulseButton() {
-  const needs = needsTotal(), un = unread().length, run = vitalsRuns().running.length, news = pulseNews(needs + un);
+  const ul = unread(), needs = needsTotal(), un = ul.length, run = vitalsRuns().running.length, news = pulseNews(needs + un, ul.map((u) => u.id));
   const badge = needs ? { n: needs, tone: masterTone() } : null;   // normal is off (look.alert-ladder): unread waits in Updates, no count at rest
   const words = [needsWords(), un && `${un} unread`, run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
   return R.topBarAction({ label: 'Pulse', icon: svg('signal', 16), labelCls: 'pz-pulse-l', kind: 'quiet', full: true, cls: 'topnav-act pz-pulse-b', badge, news, title: 'Pulse: ' + words, attrs: { 'data-pop': true, 'aria-haspopup': 'dialog', 'aria-expanded': String(!!ui.pop) } });
@@ -750,7 +825,7 @@ setInterval(() => { if (!awayEl && R.awayShows({ away: isAway(), keepAwake: ui.k
 
 // ---- render ----
 let sideWas = null, swapCls = '';   // the sidebar's content fades only when it changes between Worca's and Settings'
-function render() { stale = false; holdFocus(SHELL ? renderInShell : paintAlone); }
+function render() { stale = false; readCache = null; holdFocus(SHELL ? renderInShell : paintAlone); }
 W.onMove?.(() => render());   // a task moved anywhere: the badge, Vitals and Updates read the store again
 // the live kind: a load or a list state changed the store (D20): Keep awake and Away are dev's, and the rows read it again
 window.addEventListener('rail-settings', () => render());   // a live Settings action answered (settings.js)
@@ -759,8 +834,11 @@ window.addEventListener('hashchange', () => { if (!ui.acct && !ui.sub) return; u
 if (LIVE) W.onChange(() => {
   ui.keep = !!W.part('keep'); ui.awayStatus = W.part('away').status;
   const pf = W.part('pulseFor') || 'until-read'; if (pf !== ui.s.pulseFor) { ui.s.pulseFor = pf; armNews(); }   // another tab's Pulse icon change
+  pruneRead();
   render();
 });
+// another tab read a run outcome (or forgot one): this tab draws it the same, with no fetch
+if (LIVE) window.addEventListener('storage', (e) => { if (e.key === KEY_READ) render(); });
 function paintAlone() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
@@ -804,7 +882,7 @@ function pick(id, v) {
   else if (id === 'more') {
     if (v === 'settings') { ui.pop = false; if (SHELL) { SHELL.go('settings/notifications'); return; } ui.page = 'settings'; ui.sset = 'notifications'; }
     else if (v === 'select') ui.pick = R.selectStart(ui.pick);
-    else if (v === 'allread' && LIVE) { const ids = unread().map((u) => u.id); A.post('/api/notifications/read-all', { scope: 'schedule' }).then((r) => { if (!r.ok) { refused('mark all read', r); return; } ui.read = ui.read.concat(ids); toast(ids.length ? `Marked ${plural(ids.length, 'update')} read` : 'Nothing is unread'); render(); }); }
+    else if (v === 'allread' && LIVE) { const list = unread(); A.post('/api/notifications/read-all', { scope: 'schedule' }).then((r) => { if (!r.ok) { refused('mark all read', r); return; } readNow(list); toast(list.length ? `Marked ${plural(list.length, 'update')} read` : 'Nothing is unread'); render(); }); }   // one read-all post; the outcomes' reads are stored (D6)
     else if (v === 'allread') { const n = unread().length; const was = ui.read; ui.read = ui.read.concat(unread().map((u) => u.id)); toast(n ? `Marked ${plural(n, 'update')} read` : 'Nothing is unread', n ? { tip: 'Marks them unread again', run: () => { ui.read = was; toast('Unread again'); } } : null); }
     else { const read = live().filter((u) => !isUnread(u)), waits = read.filter((u) => u.sev === 'needs' && u.open && !u.resolved && !isFixed(u)), ids = read.filter((u) => !waits.includes(u)).map((u) => u.id); ui.cleared = ui.cleared.concat(ids); ui.pick = R.selectPrune(ui.pick, []); toast(ids.length ? `Cleared ${plural(ids.length, 'read update')}${waits.length ? `; ${waits.length} still ${waits.length === 1 ? 'waits' : 'wait'} for you` : ''}` : waits.length ? `Nothing to clear: ${waits.length} read still ${waits.length === 1 ? 'waits' : 'wait'} for you` : 'Nothing read to clear', ids.length ? undoClear(ids) : null); }
   }
@@ -898,7 +976,8 @@ document.addEventListener('click', (e) => {
   }
   if ((el = tg('[data-bulk]'))) {
     const ids = shown().filter((u) => ui.pick.ids.includes(u.id)).map((u) => u.id), a = el.dataset.bulk; ui.pick = R.selectClear();
-    if (a === 'read') { const was = ids.filter((id) => isUnread(C().updates.find((u) => u.id === id))); ui.read = ui.read.concat(ids); toast(`Marked ${plural(was.length, 'update')} read`, { tip: 'Marks them unread again', run: () => { ui.read = ui.read.filter((x) => !was.includes(x)); toast('Unread again'); } }); }
+    if (a === 'read' && LIVE) { const was = C().updates.filter((u) => ids.includes(u.id) && isUnread(u)); markRead(was); toast(`Marked ${plural(was.length, 'update')} read`, { tip: 'Marks them unread again', run: () => { markRead(was, { undo: true }); toast('Unread again'); } }); }
+    else if (a === 'read') { const was = ids.filter((id) => isUnread(C().updates.find((u) => u.id === id))); ui.read = ui.read.concat(ids); toast(`Marked ${plural(was.length, 'update')} read`, { tip: 'Marks them unread again', run: () => { ui.read = ui.read.filter((x) => !was.includes(x)); toast('Unread again'); } }); }
     if (a === 'clear') { const was = ui.read; ui.cleared = ui.cleared.concat(ids); ui.read = ui.read.concat(ids); toast(`Cleared ${plural(ids.length, 'update')}`, undoClear(ids, was)); }
     if (a === 'restore') { ui.cleared = ui.cleared.filter((x) => !ids.includes(x)); toast(`Restored ${plural(ids.length, 'update')}`, { tip: 'Clears them again', run: () => { ui.cleared = ui.cleared.concat(ids); toast('Cleared again'); } }); }
     render(); return;
@@ -907,7 +986,7 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-open]'))) {
     const key = el.dataset.open, u = C().updates.find((x) => x.id === key);
     if (u) {
-      if (!ui.read.includes(u.id)) { if (LIVE && /^n\d+$/.test(u.id)) A.post(`/api/notifications/${u.id.slice(1)}/read`).then((r) => { if (r.ok) { ui.read = ui.read.concat(u.id); render(); } else refused('mark it read', r); }); else ui.read = ui.read.concat(u.id); }
+      markRead([u, ...siblingsOf(u)]);   // read at once, with every update about the same task (D5, D11)
       if (u.go === 'usage') { openUsage(u.e.startsWith('budget') ? '' : u.title); return; }
       if (u.land) { const [sset, label] = u.land.split('|'); land({ sset, label, head: true }); return; }
       const ofRun = u.run && u.go === 'run' ? W.find(u.run) : null;
@@ -950,9 +1029,11 @@ function sendTest() {
 }
 // D13: Resume, Try again and Restart Build resume the run; Run now starts a missed ticket. A confirm opens the task instead.
 function liveStep(u) {
+  // Try again, Resume: once accepted, the run's next outcome is news (D3); a refusal changed nothing, so its read stays
+  const key = isOutcome(u) && storedRead().has(readKey(u)) ? readKey(u) : '';
   const r = u.run && W.find(u.run), ticket = /^sched:/.test(u.run || '') ? u.run.slice(6) : '';
   const done = (res) => {
-    if (res.ok) { ui.fixed = ui.fixed.concat(u.id); toast(`${u.fix}: ${r ? r.title : 'done'}`); render(); return; }
+    if (res.ok) { if (key) forgetRead([key]); ui.fixed = ui.fixed.concat(u.id); toast(`${u.fix}: ${r ? r.title : 'done'}`); render(); return; }
     if (!ticket && asksConfirm(res) && r) { ui.pop = false; SHELL?.openRun(`run/${r.case}`, r.title, r.id); render(); return; }
     refused(u.fix.toLowerCase(), res);
   };

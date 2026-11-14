@@ -1,11 +1,12 @@
 // ui/public/stillhet/live/model-shape.mjs — the one shape both adapters meet (D5). Per kind, the fields the pages read,
 // taken from the demo seeds: shell/world.js run() and GROUPS, chat/chats-model.js chat(), schedules/schedules-model.js,
 // projects/projects.js data.projects, pulse/pulse-model.js up(), and world.facts() budget and usage. A type ending in `?`
-// may be absent (a seed that has no such field). live-map.mjs copies no field outside these lists. Two optional fields
-// have no seed: a project's `name` (the demo's id is its name; live, the id is dev's key) and a schedule's `nextAt` (the
-// demo counts from its fixed today; live, the server's next time in ms).
+// may be absent (a seed that has no such field). live-map.mjs copies no field outside these lists. Three optional fields
+// have no seed: a project's `name` (the demo's id is its name; live, the id is dev's key), a schedule's `nextAt` (the
+// demo counts from its fixed today; live, the server's next time in ms) and an outcome update's `work` (its History row's
+// total active time in ms, which keys Pulse's stored read of that one outcome).
 export const SHAPES = Object.freeze({
-  task: { id: 'string', case: 'string', title: 'string', project: 'string', detail: 'string', time: 'string', day: 'string', labels: 'array', cost: 'number|null', archived: 'boolean', unread: 'boolean', pr: 'string', group: 'string', kind: 'string', by: 'string', workflow: 'string', when: 'string?', missed: 'boolean?', over: 'boolean?', rounds: 'object|null?', roundOf: 'string?', interrupted: 'boolean?' },   // interrupted: dev's status, which reads Paused (the bulk rules ask before archiving it)
+  task: { id: 'string', case: 'string', title: 'string', project: 'string', detail: 'string', time: 'string', day: 'string', labels: 'array', cost: 'number|null', archived: 'boolean', unread: 'boolean', pr: 'string', group: 'string', kind: 'string', by: 'string', workflow: 'string', when: 'string?', missed: 'boolean?', over: 'boolean?', rounds: 'object|null?', roundOf: 'string?', interrupted: 'boolean?', paused: 'boolean?' },   // interrupted: dev's status, which reads Paused (the bulk rules ask before archiving it); paused: dev's status, whatever its case (Pulse's Now says it clears on resume or stop)
   group: { id: 'string', kind: 'string', case: 'string', title: 'string', project: 'string', time: 'string', day: 'string', cost: 'number|null' },
   chat: { id: 'string', title: 'string', state: 'string', kind: 'string', project: 'string', time: 'string', day: 'string', cost: 'number|null', pinned: 'boolean', archived: 'boolean', unread: 'boolean', group: 'string', origin: 'object|null', rank: 'number|null', labels: 'array', tasks: 'array' },
   schedule: { id: 'string', title: 'string', project: 'string', chat: 'string', every: 'string', at: 'string', next: 'string', day: 'string?', state: 'string', time: 'string', section: 'string', labels: 'array', what: 'string', cost: 'number|null', started: 'string', runs: 'array', missed: 'string?', missedWhy: 'string?', nextAt: 'number|null?',
@@ -17,7 +18,7 @@ export const SHAPES = Object.freeze({
   project: { id: 'string', name: 'string?', kind: 'string', path: 'string', branch: 'string?', base: 'string?', origin: 'string', ahead: 'number|null?', behind: 'number|null?', checked: 'string?', needs: 'boolean?' },
   costs: { budget: 'object|null', usage: 'array' },
   space: { id: 'string', title: 'string', home: 'string', runs: 'number|null', scanned: 'string', model: 'string', about: 'string', projects: 'array', links: 'array' },   // a workspace (D10)
-  update: { id: 'string', e: 'string', g: 'string', sev: 'string', title: 'string', meta: 'string', time: 'string', day: 'string', unread: 'boolean', go: 'string', to: 'string', run: 'string?', fix: 'string?' },
+  update: { id: 'string', e: 'string', g: 'string', sev: 'string', title: 'string', meta: 'string', time: 'string', day: 'string', unread: 'boolean', go: 'string', to: 'string', run: 'string?', about: 'string?', fix: 'string?', work: 'number|null?' },
   // Workflows (slice 7): workflows/workflows.js data, and live/workflow-map.mjs workflowOf, agentOf and scriptOf
   workflow: { id: 'string', title: 'string', own: 'boolean', domain: 'string', what: 'string', tasks: 'number|null', merged: 'number|null', from: 'string', steps: 'array', loops: 'array', team: 'boolean?', running: 'boolean?', pinned: 'boolean?', plugin: 'string?' },
   agent: { id: 'string', title: 'string', own: 'boolean', domain: 'string', type: 'string', ins: 'string', outs: 'string', model: 'string', effort: 'string', asks: 'boolean', fan: 'boolean', plugin: 'string?' },
