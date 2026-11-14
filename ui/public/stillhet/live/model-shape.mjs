@@ -48,10 +48,10 @@ export function pick(kind, item) {
 // (chat/chats-model.js thread) and the live mapper (live/chat-turns.mjs) write them. `failed` is a reply that failed
 // (fail.chat-turn): its calm sentence, the raw error behind Details, and Try again.
 export const TURN_SHAPES = Object.freeze({
-  you: { id: 'string', text: 'string', files: 'array?', refs: 'array?', quote: 'string?' },
+  you: { id: 'string', text: 'string', files: 'array?', refs: 'array?', quote: 'string?', at: 'number?' },
   think: { text: 'string', steps: 'array?' },
   working: { at: 'number?', steps: 'array?' },
-  words: { html: 'string', parts: 'array?' },
+  words: { html: 'string', parts: 'array?', at: 'number?', key: 'string?' },
   ship: { id: 'string', title: 'string', reqs: 'array', how: 'string?', featureId: 'string?', done: 'string?' },   // the prototype's Ship card; live adds dev's feature id   // parts: words and the refs in them (panel.answer-refs)
   code: { file: 'string?', text: 'string' },
   commands: { id: 'string', rows: 'array' },
@@ -71,6 +71,7 @@ export const TURN_SHAPES = Object.freeze({
   form: { id: 'string', text: 'string', kind: 'string' },
   change: { id: 'string', kind: 'string', state: 'string', rows: 'array?' },
   proposal: { id: 'string', title: 'string' },
+  runwith: { id: 'string', title: 'string', workflow: 'string' },
   craft: { id: 'string', label: 'string' },
   task: { id: 'string', task: 'string' },
   schedule: { id: 'string', task: 'string' },

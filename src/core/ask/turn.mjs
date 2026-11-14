@@ -155,6 +155,8 @@ class AskTurn extends EventEmitter {
     skills = null,
     agentMode = true,
     composer = null,
+    design = false,
+    designRoots = null,
     suggest = false,
     deps = {},
   } = {}) {
@@ -201,6 +203,12 @@ class AskTurn extends EventEmitter {
     // Next-prompt suggestion (ask-suggestion): the server sets it for a user's message (never an event turn). Off by
     // default, so a turn built without it — every test fixture — never spawns the suggestion call.
     this.suggest = suggest === true;
+    // Design chat (Design P5): its tool results go to deps.designAction (_onDesignAction). surfaceLocked: a page's own chat
+    // (Workflows or Design) — no Ask cards, no sign-in probe, no Task built-in, no suggestion.
+    this.design = design === true;
+    // Design P8 (L8.10): a locked-down Design chat's {workDir, projectDir?}, extra read roots of read_file / grep / glob.
+    this.designRoots = designRoots && typeof designRoots === 'object' && !Array.isArray(designRoots) ? designRoots : null;
+    this.surfaceLocked = !!this.composer || this.design;
     this.suggestionPromise = Promise.resolve();   // stored for test determinism, never awaited by run()
     this._replyText = '';                         // the finished reply's text (set in _complete), the suggestion's input
     this.commands = null;
@@ -278,6 +286,8 @@ class AskTurn extends EventEmitter {
       awaySwitch: deps.awaySwitch ?? null,
       // worca Chat P2: (req, {threadId}) => {ok, block?:{state, card}, notice?} — ui/server.mjs askChatActions.apply. null = none.
       chatAction: deps.chatAction ?? null,
+      // Design P5: (requested, {threadId}) => {ok:true, block:{id, state, card}, posted?(added)} | {ok:false, notice}. null = none.
+      designAction: deps.designAction ?? null,
       // Conversation chips: (refs) → resolved chip entries (ui/server.mjs resolveAskMentions). null = none.
       resolveMentions: deps.resolveMentions ?? null,
       generateTitle: deps.generateTitle ?? generateTitle,
@@ -546,6 +556,41 @@ class AskTurn extends EventEmitter {
       ? this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: r.block.state || 'applied', card: r.block.card })
       : this.reducer.addBlock({ kind: 'notice', text: (r && r.notice) || 'Could not do that: unknown error' });
     if (block) this._persistBlocks();                          // null after finish() — too late for this reply
+  }
+
+  /** Design P5: a Design chat tool's RESULT. The child validated; design_questions becomes an `asking` card here, and
+   *  start_design_build / change_design go to deps.designAction (the design registry), whose card lands on this reply
+   *  — then posted(added) runs after the store write — or whose refusal becomes a notice row. An isError result or a
+   *  child refusal already reached the model as text. */
+  async _onDesignAction(name, text, isError) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    if (!out || out.ok !== true) return;
+    const d = this.deps;
+    if (name === 'design_questions') {
+      const added = this.reducer.addBlock({ kind: 'card', id: d.newAskId('card'), state: 'asking',
+        // `fields` asked: the card carries its compiled form (design-payload.mjs compileDesignFields) instead of questions.
+        card: out.form && typeof out.form === 'object'
+          ? { type: 'design-questions', heading: out.heading, form: out.form, summary: out.heading }
+          : { type: 'design-questions', heading: out.heading, questions: out.questions, summary: out.heading } });
+      if (added) this._persistBlocks();
+      return;
+    }
+    if (typeof d.designAction !== 'function' || !out.requested) return;
+    let r;
+    try { r = await d.designAction(out.requested, { threadId: this.threadId }); }
+    catch (err) { r = { ok: false, notice: `Could not start the build: ${err?.message || err}` }; }
+    if (r && r.ok && r.block) {
+      // Once _complete began (a stop, a limit or CLI-error exit), the reply's next store write is finishMessage, after
+      // this: the card goes in as its own row (posted(false)), so the receipt finds it when posted runs (M4).
+      const added = this._completed ? null
+        : this.reducer.addBlock({ kind: 'card', id: r.block.id, state: r.block.state, card: r.block.card });
+      if (added) this._persistBlocks();                        // null after finish() — too late for this reply
+      if (typeof r.posted === 'function') r.posted(Boolean(added));
+      return;
+    }
+    if (this.reducer.addBlock({ kind: 'notice', text: (r && r.notice) || 'Could not start the build.' })) this._persistBlocks();
   }
 
   /**
@@ -990,15 +1035,15 @@ class AskTurn extends EventEmitter {
       // still reports a hallucinated propose_run as an is_error result — which onProposal re-validates into a
       // "Proposal rejected: …" notice — and a propose_workflow tool_use opens a building card before any result.
       // (onWorkflowResult needs the card onWorkflowStart made, so it stays inert there.)
-      onProposal: this.composer ? null : ({ input, childOk }) => this._onProposal(input, childOk),
-      onWorkflowStart: this.composer ? null : ({ toolUseId, input }) => this._onWorkflowStart(toolUseId, input),
+      onProposal: this.surfaceLocked ? null : ({ input, childOk }) => this._onProposal(input, childOk),
+      onWorkflowStart: this.surfaceLocked ? null : ({ toolUseId, input }) => this._onWorkflowStart(toolUseId, input),
       onWorkflowResult: ({ toolUseId, text, isError }) => this._onWorkflowResult(toolUseId, text, isError),   // the hook's `input` is not needed here: the card is rebuilt from `out`
       onComposerResult: ({ name, text, isError }) => this._onComposerResult(name, text, isError),
-      onTrackRun: this.composer ? null : ({ input, isError }) => this._onTrackRun(input, isError),
+      onTrackRun: this.surfaceLocked ? null : ({ input, isError }) => this._onTrackRun(input, isError),
       onRunCommand: ({ text, isError }) => this._onRunCommand(text, isError),
       onShowFiles: ({ text, isError }) => this._onShowFiles(text, isError),
-      onAwaySwitch: this.composer ? null : ({ text, isError }) => this._onAwaySwitch(text, isError),
-      onChatAction: this.composer ? null : ({ name, text, isError, sub }) => this._onChatAction(name, text, isError, sub === true),
+      onAwaySwitch: this.surfaceLocked ? null : ({ text, isError }) => this._onAwaySwitch(text, isError),
+      onChatAction: this.surfaceLocked ? null : ({ name, text, isError, sub }) => this._onChatAction(name, text, isError, sub === true),
       onMetricsProposal: ({ input, text, isError }) => this._onMetricsProposal(input, text, isError),
       onAwayProposal: ({ input, text, isError }) => this._onAwayProposal(input, text, isError),
       onPolicyProposal: ({ input, text, isError }) => this._onPolicyProposal(input, text, isError),
@@ -1012,8 +1057,9 @@ class AskTurn extends EventEmitter {
       onProxyFlagProposal: ({ input, text, isError }) => this._onProxyProposal('propose_corporate_proxy_on', input, text, isError),
       onWebProposal: ({ input, text, isError }) => this._onWebProposal(input, text, isError),
       onScriptApproval: ({ name, input }) => this._onScriptApproval(name, input),
-      onScopeSwitch: this.composer ? null : ({ input, text, isError }) => this._onScopeSwitch(input, text, isError),
-      onQuestion: this.composer ? null : ({ input, text, isError }) => this._onQuestion(input, text, isError),
+      onScopeSwitch: this.surfaceLocked ? null : ({ input, text, isError }) => this._onScopeSwitch(input, text, isError),
+      onQuestion: this.surfaceLocked ? null : ({ input, text, isError }) => this._onQuestion(input, text, isError),
+      onDesignAction: this.design ? ({ name, text, isError }) => this._onDesignAction(name, text, isError) : null,
       // pause / resume / skip / mark-read in the child → the server's schedules-changed frames.
       onScheduleMutation: (e) => { try { this.deps.onScheduleMutation(e); } catch { /* a broken sink never breaks the turn */ } },
       // The MCP child cannot broadcast; the parent turns its comment writes into
@@ -1388,7 +1434,7 @@ class AskTurn extends EventEmitter {
     let out;
     // propose_run's per-agent picks check Claude Code's sign-in: asked now, so a probe overlaps the mounts below. The
     // Workflows chat proposes no runs and never asks. Never rejects.
-    const authAsk = this.composer ? null : Promise.resolve().then(() => d.claudeAuthState()).catch(() => 'unknown');
+    const authAsk = this.surfaceLocked ? null : Promise.resolve().then(() => d.claudeAuthState()).catch(() => 'unknown');
     try {
       // R-G: ONE scratch dir for all threads, RAW home base (never worcaHome()
       // itself — it already ends in /.worca-cc), per-message config json.
@@ -1421,7 +1467,8 @@ class AskTurn extends EventEmitter {
       mcpConfigPath = join(scratchDir, `mcp-${this.assistantMessageId}.json`);
       // A Codex turn's set skills (#635): this message's mount folder only, read through read_file for this turn only.
       const skillRoot = this.lockedDown && this.skills && this.skillMount ? this._skillBase : null;
-      this.relay = d.agentRelay ? d.agentRelay({ threadId: this.threadId, reader: this.reader || null, web: this.web, ...(this.lockedDown ? { model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}) }) : null;
+      const designRoots = this.lockedDown ? this.designRoots : null;
+      this.relay = d.agentRelay ? d.agentRelay({ threadId: this.threadId, reader: this.reader || null, web: this.web, ...(this.lockedDown ? { model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}), ...(designRoots ? { designRoots } : {}) }) : null;
       // Agent mode never rides the relay: relay mode is agent isolation, where the terminal refuses agent callers.
       this.commands = !this.relay && this.agentMode && d.commandBridge ? d.commandBridge({ threadId: this.threadId }) : null;
       this.proxyBridge = !this.relay && d.proxyBridge ? d.proxyBridge({ threadId: this.threadId }) : null;
@@ -1433,7 +1480,7 @@ class AskTurn extends EventEmitter {
       await d.fs.writeFile(
         mcpConfigPath,
         // MCP registry §9.2: the copies ride after `worca` — refs only (`${MCPSECRET_…}`); the values go in spawnEnv.
-        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, git: d.gitAvailable(), ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.proxyBridge ? { proxy: this.proxyBridge } : {}), ...(this.lockedDown ? { engine: this.engine, model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
+        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, git: d.gitAvailable(), ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.proxyBridge ? { proxy: this.proxyBridge } : {}), ...(this.lockedDown ? { engine: this.engine, model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}), ...(designRoots ? { designRoots } : {}) }), null, 2),
         // Never a key value (webKeyVar: the key rides the process env). A relayed turn runs as
         // the person's agent user (agent-pool.mjs), which reads this file through its group. It
         // carries this turn's relay token: with a pool the file goes to that user's own group (worca
@@ -1544,7 +1591,7 @@ class AskTurn extends EventEmitter {
         commands: this.commands,
         proxy: this.proxyBridge,
         git: d.gitAvailable(),
-        ...(this.composer ? { composer: true } : {}),   // the Workflows chat: no Task built-in (spawn.mjs)
+        ...(this.surfaceLocked ? { composer: true } : {}),   // the Workflows and Design chats: no Task built-in (spawn.mjs)
         // Skills registry §4.4: every attempt too, until the sideload safety net drops the layer.
         skills: this.skills && this.skillMount ? { pluginDirs: this.skillMount.pluginDirs, names: this.skillNames } : null,
       });
@@ -1683,7 +1730,7 @@ class AskTurn extends EventEmitter {
    *  turn on the thread aborts it (run() → cancelSuggestion), and so does its own 30 s timeout. The frame is live-only
    *  and tagged with this reply's id, so the panel drops it once anything newer happened. Its cost is Ask spend. */
   _kickoffSuggestion() {
-    if (!this.suggest || this.status !== 'done' || this.mock || this.composer) return;
+    if (!this.suggest || this.status !== 'done' || this.mock || this.surfaceLocked) return;
     const d = this.deps;
     let model = null;
     try {

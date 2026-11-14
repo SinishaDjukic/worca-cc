@@ -53,6 +53,8 @@ export const ICONS = Object.freeze({
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"></path><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path>',
   shield: '<path d="M12 3l8 3v6c0 4.5-3.4 7.6-8 9-4.6-1.4-8-4.5-8-9V6l8-3z"></path><path d="M9 12l2 2 4-4"></path>',
   pulse: '<path d="M3 12h4l2-5 4 10 2-5h6"></path>',
+  // The account menu's Settings cog (shell/sidebar.html #acct-settings), for a settings button elsewhere.
+  settings: '<path d="M10.06 3.93L10.39 1.22A10.9 10.9 0 0 1 13.61 1.22L13.94 3.93A8.3 8.3 0 0 1 16.34 4.92L18.48 3.24A10.9 10.9 0 0 1 20.76 5.52L19.08 7.66A8.3 8.3 0 0 1 20.07 10.06L22.78 10.39A10.9 10.9 0 0 1 22.78 13.61L20.07 13.94A8.3 8.3 0 0 1 19.08 16.34L20.76 18.48A10.9 10.9 0 0 1 18.48 20.76L16.34 19.08A8.3 8.3 0 0 1 13.94 20.07L13.61 22.78A10.9 10.9 0 0 1 10.39 22.78L10.06 20.07A8.3 8.3 0 0 1 7.66 19.08L5.52 20.76A10.9 10.9 0 0 1 3.24 18.48L4.92 16.34A8.3 8.3 0 0 1 3.93 13.94L1.22 13.61A10.9 10.9 0 0 1 1.22 10.39L3.93 10.06A8.3 8.3 0 0 1 4.92 7.66L3.24 5.52A10.9 10.9 0 0 1 5.52 3.24L7.66 4.92A8.3 8.3 0 0 1 10.06 3.93z"></path><circle cx="12" cy="12" r="3"></circle>',
   gear: '<circle cx="12" cy="12" r="3"></circle><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"></path>',
   trash: '<path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M10 11v6M14 11v6"></path>',
   spinner: '<path d="M12 3a9 9 0 1 0 9 9"></path>',
@@ -65,6 +67,16 @@ export const ICONS = Object.freeze({
   skill: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"></path>',
   layers: '<path d="M12 3l9 4.5-9 4.5-9-4.5z"></path><path d="M3 12l9 4.5 9-4.5"></path><path d="M3 16.5l9 4.5 9-4.5"></path>',
   none: '<rect x="5" y="5" width="14" height="14" rx="3" stroke-dasharray="3 3"></rect>',
+  // The Design stage (ui/public/design/): the hide-cursors toggle, the viewport switch, and an agent's Stop.
+  cursor: '<path d="M5 3.5l5.2 16.5 2.7-6.7 6.6-2.7z"></path>',
+  'cursor-off': '<path d="M5 3.5l5.2 16.5 2.7-6.7 6.6-2.7z"></path><path d="M3.5 3.5l17 17"></path>',
+  desktop: '<rect x="3" y="4.5" width="18" height="12" rx="2"></rect><path d="M9 20h6M12 16.5V20"></path>',
+  tablet: '<rect x="5.5" y="3" width="13" height="18" rx="2"></rect><path d="M11 18h2"></path>',
+  phone: '<rect x="7.5" y="3" width="9" height="18" rx="2"></rect><path d="M11 18h2"></path>',
+  'stop-square': '<rect x="6" y="6" width="12" height="12" rx="2"></rect>',
+  // A video's sound in the film's transport: Mute, and Unmute once muted.
+  volume: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M15.5 9a4 4 0 0 1 0 6"></path><path d="M18.5 6.5a7.5 7.5 0 0 1 0 11"></path>',
+  'volume-off': '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M16 9.5l5 5M21 9.5l-5 5"></path>',
 });
 
 const px = (size) => (Number(size) > 0 ? Number(size) : 16);

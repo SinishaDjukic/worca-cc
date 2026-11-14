@@ -23,7 +23,7 @@ Each rule lives in one file. Every file opens with its rules: an id, one line, w
 | [components.md](components.md) | Which component meets which need |
 | [build.md](build.md) | How to build a page, and how a lesson joins the design system |
 | [logic.md](logic.md) | The shared logic: states, actions, the step flow, where the work goes |
-| [thing-page.md](thing-page.md) | A thing's page: slots, where the work goes, lists on it, what opens |
+| [thing-page.md](thing-page.md) | A thing's page and the task page's exception: slots, where the work goes, lists on it, what opens |
 | [actions.md](actions.md) | Where an action goes, and how a step runs |
 | [lists.md](lists.md) | A list page and a list |
 | [keyboard.md](keyboard.md) | Keyboard shortcuts and their sheet |

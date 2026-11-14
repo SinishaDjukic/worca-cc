@@ -247,7 +247,7 @@
   const FLAG_ROW = { requirements: 'Requirements', runLabels: 'Run labels', gitAutomations: 'Git event automations' };
   // `label:ui`: the runs with that label. Otherwise the name, or a word of where it lives, anywhere in the text.
   // The runs are the world's, as they are now.
-  const runFinds = () => W.rows().filter((r) => !r.archived).map((r) => F('run', r.title, `Task · ${r.project || 'No project'}`, `run/${r.case}`, { labels: r.labels }));
+  const runFinds = () => W.rows().filter((r) => !r.archived).map((r) => F('run', r.title, `Task · ${r.project || 'No project'}`, `run/${r.case}`, { labels: r.labels, run: r.id }));
   function find(q) {
     const raw = q.trim().toLowerCase();
     const m = raw.match(/^label:\s*(.*)$/), runs = runFinds();

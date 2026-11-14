@@ -109,6 +109,8 @@ export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT,
   // Requirements spend: like Chat's. With its flag off the server sends it only for money already spent, which
   // stays in Spent, so the row stays too and the report agrees with Statistics.
   const reqOn = () => !st.filters.length && !!st.data?.report?.requirements;
+  // Design spend (the Design page): the same rule as Requirements, also after its flag is turned off.
+  const designOn = () => !st.filters.length && !!st.data?.report?.design;
 
   function paintKpis(prev) {
     const t = model.total;
@@ -216,7 +218,7 @@ export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT,
     else runsTd.textContent = '—';
     tr.append(nameTd, shareCell(row),
       h(doc, 'td', 'num', fmt.usd(row.spentUsd)),
-      h(doc, 'td', 'num', row.kind === 'ask' || row.kind === 'requirements' ? '—' : fmt.hours(row.humanHours)),
+      h(doc, 'td', 'num', row.kind === 'ask' || row.kind === 'requirements' || row.kind === 'design' ? '—' : fmt.hours(row.humanHours)),
       savedTd,
       h(doc, 'td', 'num', row.usdPerHour == null ? '—' : `${fmt.usd(row.usdPerHour)}/h`),
       runsTd);
@@ -281,9 +283,10 @@ export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT,
     const prevRuns = rep.prevRuns ? rep.prevRuns.filter((r) => matchesFilters(r, st.filters)) : null;
     const rate = st.data.humanRateUsd;
     model = allocate(runs, { by: st.by, thenBy: st.thenBy || null, rate, askUsd: askOn() ? rep.ask.spentUsd : 0,
-      requirementsUsd: reqOn() ? rep.requirements.spentUsd : 0 });
+      requirementsUsd: reqOn() ? rep.requirements.spentUsd : 0, designUsd: designOn() ? rep.design.spentUsd : 0 });
     const prev = prevRuns ? allocate(prevRuns, { by: st.by, rate, askUsd: askOn() ? rep.ask.prevSpentUsd || 0 : 0,
-      requirementsUsd: reqOn() ? rep.requirements.prevSpentUsd || 0 : 0 }).total : null;
+      requirementsUsd: reqOn() ? rep.requirements.prevSpentUsd || 0 : 0,
+      designUsd: designOn() ? rep.design.prevSpentUsd || 0 : 0 }).total : null;
     paintKpis(prev);
     paintBar();
     paintControls();
@@ -302,7 +305,7 @@ export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT,
     const none = model.rows.find((r) => r.kind === 'none');
     chart.update({
       series: allocationSeries(model, runs, { buckets: rep.buckets, metric: st.metric, askSeries: askOn() ? rep.ask.series : null,
-        requirementsSeries: reqOn() ? rep.requirements.series : null }),
+        requirementsSeries: reqOn() ? rep.requirements.series : null, designSeries: designOn() ? rep.design.series : null }),
       buckets: rep.buckets, bucket: st.data.bucket, metric: st.metric,
       unallocated: none && canOpen && st.by.startsWith('tag:') ? { ids: none.runIds } : null,
     });

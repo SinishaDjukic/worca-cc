@@ -41,8 +41,16 @@ test('the composer\'s model picker is dev\'s catalog; a pick in a chat is dev\'s
   } });
   await go(w, '#chat/ask_1');
   d.querySelector('#route-chat [data-menu="cp-engine"]').click(); await settle(5);
-  const labels = [...d.querySelectorAll('#route-chat [data-menu-pick^="cp-engine|"]')].map((e) => e.textContent.trim());
-  assert.ok(labels.some((l) => l.includes('Opus 5.5')) && labels.some((l) => l.includes('Codex 5')), labels.join(', '));
+  const openers = [...d.querySelectorAll('#route-chat .spick [data-menu-sub]')].map((e) => e.textContent.trim());
+  assert.deepEqual(openers, ['Anthropic', 'OpenAI'], 'the makers first (comp.menu-sub)');
+  const labels = () => [...d.querySelectorAll('#route-chat [data-menu-pick^="cp-engine|"]')].map((e) => e.textContent.trim());
+  d.querySelector('#route-chat [data-menu-sub="anthropic"]').click(); await settle(5);
+  assert.ok(labels().includes('Opus 5.5'), labels().join(', '));
+  d.querySelector('#route-chat .menu-back').click(); await settle(5);
+  d.querySelector('#route-chat [data-menu-sub="openai"]').click(); await settle(5);
+  assert.ok(labels().includes('Codex 5'), labels().join(', '));
+  d.querySelector('#route-chat .menu-back').click(); await settle(5);
+  d.querySelector('#route-chat [data-menu-sub="anthropic"]').click(); await settle(5);
   d.querySelector('#route-chat [data-menu-pick="cp-engine|sonnet"]').click(); await settle(40);
   assert.deepEqual(posts(calls), [['PATCH', '/api/ask/threads/ask_1', { model: 'sonnet', effort: 'high' }]]);
   assert.equal(toastText(d), 'Could not switch the model: turn in flight');
@@ -60,6 +68,7 @@ test('an engine switch dev refuses until the dropped turns are confirmed: the co
   const { w, d, calls } = await liveHost({ write: (url, body) => (url.endsWith('/engine') ? (++n === 1 ? [409, { error: 'Codex will not see the 3 oldest turns of this chat: confirm that first', code: 'confirm-dropped-turns', droppedTurns: 3 }] : [200, { ok: true }]) : [200, {}]) });
   await go(w, '#chat/ask_1');
   d.querySelector('#route-chat [data-menu="cp-engine"]').click(); await settle(5);
+  d.querySelector('#route-chat [data-menu-sub="openai"]').click(); await settle(5);
   d.querySelector('#route-chat [data-menu-pick="cp-engine|gpt"]').click(); await settle(40);
   assert.deepEqual(posts(calls), [['POST', '/api/ask/threads/ask_1/engine', { engine: 'codex', model: 'gpt', effort: 'high' }]], 'a chat that replied switches its engine; never a fallback PATCH');
   assert.match(d.getElementById('route-chat').textContent, /Switch to Codex 5\? It will not see the 3 oldest turns of this chat\./);
@@ -74,6 +83,7 @@ test('a chat with no reply yet has no engine: a model on another engine is dev\'
   const { w, d, calls } = await liveHost({ thread: () => [200, one] });
   await go(w, '#chat/ask_1');
   d.querySelector('#route-chat [data-menu="cp-engine"]').click(); await settle(5);
+  d.querySelector('#route-chat [data-menu-sub="openai"]').click(); await settle(5);
   d.querySelector('#route-chat [data-menu-pick="cp-engine|gpt"]').click(); await settle(40);
   assert.deepEqual(posts(calls), [['PATCH', '/api/ask/threads/ask_1', { model: 'gpt', effort: 'high' }]]);
 });

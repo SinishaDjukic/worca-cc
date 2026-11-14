@@ -141,3 +141,25 @@ test('Tasks (slice 5): every Tasks row is wired, new: built, or not offered live
     assert.match(cap, new RegExp('\\| ' + what.replace(/[()]/g, '\\$&') + '[^\\n]*\\| wired \\|'), what);
   }
 });
+
+// The Dev surfaces rows (tools/stillhet-surfaces.mjs and tools/prototype-pr-check.mjs read them through the same parser).
+test('surfaceRows: the id, status and why of each Dev surfaces row, and nothing from another table', () => {
+  const doc = '# x\n\n## Action rows\n\n| `a › open` | wire to | y |\n\n## Dev surfaces\n\n| Surface | Status | Why |\n|---|---|---|\n'
+    + '| `setting › keepAwake` | wired | the profile menu |\n| `ui/public/chat/` |  wire to  |  |\n\n## Opt-in\n\n| `o › x` | wired | z |\n';
+  assert.deepEqual(W.surfaceRows(doc).map(({ id, status, why }) => ({ id, status, why })), [
+    { id: 'setting › keepAwake', status: 'wired', why: 'the profile menu' },
+    { id: 'ui/public/chat/', status: 'wire to', why: '' },
+  ]);
+  assert.equal(W.surfaceRows(doc)[0].line, '| `setting › keepAwake` | wired | the profile menu |');
+  assert.deepEqual(W.surfaceRows('# x\n'), []);
+});
+
+test('SURFACE_STATUS: exactly wired, wire to and not offered live', () => {
+  for (const s of ['wired', 'wire to', 'not offered live']) assert.match(s, W.SURFACE_STATUS);
+  for (const s of ['wired (partial)', 'new: build it', 'wire', '']) assert.doesNotMatch(s, W.SURFACE_STATUS);
+});
+
+test('check: a bad Dev surfaces row is not its business (it reads only the Action and Figure rows)', () => {
+  const doc = '# x\n\n## Action rows\n\n| `a › open` | wire to | y |\n\n## Figure rows\n\n## Dev surfaces\n\n| `route › /api/x` | maybe | |\n';
+  assert.deepEqual(W.check(doc, ['a › open'], []).badStatus, []);
+});
