@@ -8,8 +8,7 @@
 // Flag: --scratch (`npm start --scratch`) = a temp WORCA_HOME and a free port; see scratch-start.mjs
 
 import '../src/core/scratch-start.mjs'; // first: sets env before any module reads it
-import { onUsageLimitsChanged } from '../src/core/usage-limits.mjs';
-import express from 'express';
+import express from 'express'; import { onUsageLimitsChanged } from '../src/core/usage-limits.mjs';   // the profile's usage rings: a reported limit changed
 import { WebSocketServer } from 'ws';
 import http from 'node:http';
 import path from 'node:path';
@@ -1254,8 +1253,7 @@ policyEvents.on('changed', (e) => emitChanged('team-policy-changed', e && e.acti
 projectSyncEvents.on('changed', (e) => emitChanged('project-sync-changed', e && e.projectKey ? e.projectKey : null));
 watchReadiness({ projectSyncEvents, policyEvents, emitChanged, broadcast });
 // D6: every open tab rewrites <html data-flags> and #flag-gates, without a reload.
-flagEvents.on('changed', (flags) => broadcast({ type: 'flags', flags }));
-onUsageLimitsChanged(() => emitChanged('usage-limits-changed'));
+flagEvents.on('changed', (flags) => broadcast({ type: 'flags', flags })); onUsageLimitsChanged(() => emitChanged('usage-limits-changed'));
 
 // Every comment mutation in THIS process (the REST routes below) pokes the open
 // Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no
