@@ -1,0 +1,1861 @@
+{
+  "experiment": "e5",
+  "quick": false,
+  "method": "scripted tool-call traces; the real hook spawned per call with --detect; step-end flush in-process; corpus and detector by the same author",
+  "env": {
+    "node": "v26.0.0",
+    "os": "darwin 24.6.0",
+    "cpu": "Apple M3 Pro",
+    "cpus": 12
+  },
+  "durationMs": 40357,
+  "summary": {
+    "e5.cases.contract": 32,
+    "e5.cases.ordinary": 65,
+    "e5.precision": 1,
+    "e5.recall": 1,
+    "e5.falsePositiveRate": 0,
+    "e5.secretLeaks": 0,
+    "e5.maxBodyChars": 107,
+    "e5.maxDataBytes": 382,
+    "e5.dedup.publishes": 1,
+    "e5.dedup.finalAfter": "price(item, opts)",
+    "e5.revert.publishes": 2,
+    "e5.revert.lastReverted": true,
+    "e5.debounce.messages": 2,
+    "e5.debounce.coalescedNames": 3,
+    "e5.stateMatchesFinal": true,
+    "e5.loop.messages": 2,
+    "e5.loop.maxHop": 2,
+    "e5.detectErrors": 0,
+    "e5.addedMs.edit.p50": 3.1,
+    "e5.addedMs.edit.p99": 37.6,
+    "e5.addedMs.bash.p50": 41.9,
+    "e5.addedMs.bash.p99": 85.5,
+    "e5.hookMs.p99": 99.8,
+    "e5.inProcessMs.p99": 0.85,
+    "e5.recallByReason.config": 1,
+    "e5.recallByReason.export": 1,
+    "e5.recallByReason.json-schema": 1,
+    "e5.recallByReason.outside-task": 1,
+    "e5.recallByReason.sql": 1
+  },
+  "cases": [
+    {
+      "id": "contract.signature.0",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/price0.mjs",
+          "names": [
+            "price0"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/price0.mjs",
+          "text": "src/price0.mjs: price0(item) → price0(item, opts) [signature]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.signature.1",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/price1.mjs",
+          "names": [
+            "price1"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/price1.mjs",
+          "text": "src/price1.mjs: price1(item) → price1(item, token=[redacted] [signature]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.removed.0",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/tax0.mjs",
+          "names": [
+            "tax0"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": false,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/tax0.mjs",
+          "text": "src/tax0.mjs: tax0(x) [removed]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.removed.1",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/tax1.mjs",
+          "names": [
+            "tax1"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": false,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/tax1.mjs",
+          "text": "src/tax1.mjs: tax1(x) [removed]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.rename.0",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/user0.mjs",
+          "names": [
+            "fetchUser0",
+            "loadUser0"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/user0.mjs",
+          "text": "src/user0.mjs: fetchUser0(id) → loadUser0(id) [renamed]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.rename.1",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/user1.mjs",
+          "names": [
+            "fetchUser1",
+            "loadUser1"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/user1.mjs",
+          "text": "src/user1.mjs: fetchUser1(id) → loadUser1(id) [renamed]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.ts-interface.0",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/item0.ts",
+          "names": [
+            "Item0"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/item0.ts",
+          "text": "src/item0.ts: interface Item0 {id:string;cost:number} → interface Item0 {id:string;cost:string} [signature]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.ts-interface.1",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/item1.ts",
+          "names": [
+            "Item1"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/item1.ts",
+          "text": "src/item1.ts: interface Item1 {id:string;cost:number} → interface Item1 {id:string;cost:string} [signature]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.ts-type.0",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/ids0.ts",
+          "names": [
+            "Id0"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/ids0.ts",
+          "text": "src/ids0.ts: type Id0 =string → type Id0 =number [signature]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.ts-type.1",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/ids1.ts",
+          "names": [
+            "Id1"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/ids1.ts",
+          "text": "src/ids1.ts: type Id1 =string → type Id1 =number [signature]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.default.0",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/main0.mjs",
+          "names": [
+            "default"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/main0.mjs",
+          "text": "src/main0.mjs: default function main0(argv) → default function main0(argv, env) [signature]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.default.1",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/main1.mjs",
+          "names": [
+            "default"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/main1.mjs",
+          "text": "src/main1.mjs: default function main1(argv) → default function main1(argv, env) [signature]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.export-list.0",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/index0.mjs",
+          "names": [
+            "b0"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/index0.mjs",
+          "text": "src/index0.mjs: b0 [removed]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.export-list.1",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/index1.mjs",
+          "names": [
+            "b1"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/index1.mjs",
+          "text": "src/index1.mjs: b1 [removed]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.module-exports.0",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/legacy0.cjs",
+          "names": [
+            "module.exports"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/legacy0.cjs",
+          "text": "src/legacy0.cjs: module.exports: {a, b} → {a} [signature]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.module-exports.1",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/legacy1.cjs",
+          "names": [
+            "module.exports"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/legacy1.cjs",
+          "text": "src/legacy1.cjs: module.exports: {a, b} → {a} [signature]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.sql-drop-rename.0",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "sql",
+          "file": "db/000.sql",
+          "names": [
+            "users.age"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "sql",
+          "file": "db/000.sql",
+          "text": "db/000.sql: users.age: INTEGER [removed]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.sql-drop-rename.1",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "sql",
+          "file": "db/001.sql",
+          "names": [
+            "users.age"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "sql",
+          "file": "db/001.sql",
+          "text": "db/001.sql: users.age: INTEGER → users.years INTEGER [renamed]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.sql-not-null.0",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "sql",
+          "file": "db/010.sql",
+          "names": [
+            "orders.ref0"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "sql",
+          "file": "db/010.sql",
+          "text": "db/010.sql: orders.ref0 [required]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.sql-not-null.1",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "sql",
+          "file": "db/011.sql",
+          "names": [
+            "orders.ref1"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "sql",
+          "file": "db/011.sql",
+          "text": "db/011.sql: orders.ref1 [required]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.json-schema.0",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "json-schema",
+          "file": "api/user0.schema.json",
+          "names": [
+            "nick"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "json-schema",
+          "file": "api/user0.schema.json",
+          "text": "api/user0.schema.json: nick: string [removed]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.json-schema.1",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "json-schema",
+          "file": "api/user1.schema.json",
+          "names": [
+            "nick"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "json-schema",
+          "file": "api/user1.schema.json",
+          "text": "api/user1.schema.json: nick [required]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.package-exports.0",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "config",
+          "file": "package.json",
+          "names": [
+            "exports"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "config",
+          "file": "package.json",
+          "text": "package.json: exports: ={\".\":\"./index.mjs\"} → ={\".\":\"./dist/index.mjs\"} [signature]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.package-exports.1",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "config",
+          "file": "packages/p1/package.json",
+          "names": [
+            "exports"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "config",
+          "file": "packages/p1/package.json",
+          "text": "packages/p1/package.json: exports: ={\".\":\"./index.mjs\"} → ={\".\":\"./dist/index.mjs\"} [signature]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.outside-task.0",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "outside-task",
+          "file": "src/shared0.mjs",
+          "names": []
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "outside-task",
+          "file": "src/shared0.mjs",
+          "text": "src/shared0.mjs: src/shared0.mjs [outside]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.outside-task.1",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "outside-task",
+          "file": "src/shared1.mjs",
+          "names": []
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "outside-task",
+          "file": "src/shared1.mjs",
+          "text": "src/shared1.mjs: src/shared1.mjs [outside]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.write-overwrite.0",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/api0.mjs",
+          "names": [
+            "get0"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/api0.mjs",
+          "text": "src/api0.mjs: get0(id) → get0(id, opts) [signature]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.write-overwrite.1",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/api1.mjs",
+          "names": [
+            "get1"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/api1.mjs",
+          "text": "src/api1.mjs: get1(id) → get1(id, opts) [signature]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.bash-sed.0",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/fmt0.mjs",
+          "names": [
+            "format0"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/fmt0.mjs",
+          "text": "src/fmt0.mjs: format0(n) → format0(n, locale) [signature]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.bash-sed.1",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/fmt1.mjs",
+          "names": [
+            "format1"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/fmt1.mjs",
+          "text": "src/fmt1.mjs: format1(n) → format1(n, locale) [signature]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.bash-git-mv.0",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/old0.mjs",
+          "names": [
+            "parse0"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": false,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/old0.mjs",
+          "text": "src/old0.mjs: parse0(s) [removed]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "contract.bash-git-mv.1",
+      "label": "contract",
+      "expect": [
+        {
+          "reason": "export",
+          "file": "src/old1.mjs",
+          "names": [
+            "parse1"
+          ]
+        }
+      ],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": false,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "src/old1.mjs",
+          "text": "src/old1.mjs: parse1(s) [removed]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": [
+        true
+      ]
+    },
+    {
+      "id": "ordinary.body-only.0",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.body-only.1",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.body-only.2",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.body-only.3",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.body-only.4",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.comment.0",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 2,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.comment.1",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 2,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.comment.2",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 2,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.comment.3",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 2,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.comment.4",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 2,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.reformat.0",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.reformat.1",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.reformat.2",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.reformat.3",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.reformat.4",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.private-function.0",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.private-function.1",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.private-function.2",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.private-function.3",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.private-function.4",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.export-added.0",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": false,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.export-added.1",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": false,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.export-added.2",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": false,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.export-added.3",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": false,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.export-added.4",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": false,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.test-file.0",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.test-file.1",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.test-file.2",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.test-file.3",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.test-file.4",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.markdown.0",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.markdown.1",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.markdown.2",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.markdown.3",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.markdown.4",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.json-data.0",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.json-data.1",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.json-data.2",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.json-data.3",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.json-data.4",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.new-own-file.0",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": false,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.new-own-file.1",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": false,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.new-own-file.2",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": false,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.new-own-file.3",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": false,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.new-own-file.4",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": false,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.bash-no-change.0",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 2,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.bash-no-change.1",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 2,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.bash-no-change.2",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 2,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.bash-no-change.3",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 2,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.bash-no-change.4",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 2,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.bash-sibling.0",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.bash-sibling.1",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.bash-sibling.2",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.bash-sibling.3",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.bash-sibling.4",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.env-own.0",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 2,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.env-own.1",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 2,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.env-own.2",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 2,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.env-own.3",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 2,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.env-own.4",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 2,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.secret-outside.0",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.secret-outside.1",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.secret-outside.2",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.secret-outside.3",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "ordinary.secret-outside.4",
+      "label": "ordinary",
+      "expect": [],
+      "expectMessages": null,
+      "calls": 1,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [],
+      "matched": []
+    },
+    {
+      "id": "dedup",
+      "label": "behaviour",
+      "expect": [],
+      "expectMessages": 1,
+      "calls": 3,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "lib.mjs",
+          "text": "lib.mjs: price(item) → price(item, opts) [signature]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": []
+    },
+    {
+      "id": "revert",
+      "label": "behaviour",
+      "expect": [],
+      "expectMessages": 2,
+      "calls": 2,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "lib.mjs",
+          "text": "lib.mjs: price(item) → price(item, opts) [signature]",
+          "coalesced": false,
+          "reverted": false
+        },
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "lib.mjs",
+          "text": "lib.mjs: price(item, opts) → price(item) [signature]",
+          "coalesced": true,
+          "reverted": true
+        }
+      ],
+      "matched": []
+    },
+    {
+      "id": "burst",
+      "label": "behaviour",
+      "expect": [],
+      "expectMessages": 2,
+      "calls": 4,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "lib.mjs",
+          "text": "lib.mjs: f0(a) → f0(a, b) [signature]",
+          "coalesced": false,
+          "reverted": false
+        },
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "lib.mjs",
+          "text": "lib.mjs: f1(a) → f1(a, b) [signature]; f2(a) → f2(a, b) [signature]; f3(a) → f3(a, b) [signature]",
+          "coalesced": true,
+          "reverted": false
+        }
+      ],
+      "matched": []
+    },
+    {
+      "id": "loop",
+      "label": "behaviour",
+      "expect": [],
+      "expectMessages": 2,
+      "calls": 5,
+      "detectErrors": 0,
+      "stateMatchesFinal": true,
+      "published": [
+        {
+          "kind": "contract.changed",
+          "hop": 1,
+          "reason": "export",
+          "file": "lib.mjs",
+          "text": "lib.mjs: price(item) → price(item, opts) [signature]",
+          "coalesced": false,
+          "reverted": false
+        },
+        {
+          "kind": "contract.changed",
+          "hop": 2,
+          "reason": "export",
+          "file": "cart.mjs",
+          "text": "cart.mjs: total(items) → total(items, opts) [signature]",
+          "coalesced": false,
+          "reverted": false
+        }
+      ],
+      "matched": []
+    }
+  ]
+}

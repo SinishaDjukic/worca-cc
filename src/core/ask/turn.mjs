@@ -158,6 +158,7 @@ class AskTurn extends EventEmitter {
     design = false,
     designRoots = null,
     suggest = false,
+    toolset = null,
     deps = {},
   } = {}) {
     super();
@@ -213,6 +214,10 @@ class AskTurn extends EventEmitter {
     this._replyText = '';                         // the finished reply's text (set in _complete), the suggestion's input
     this.commands = null;
     this.proxyBridge = null;
+    // Cross-chat messaging: this turn's message bridge (send_to_chat), and the server-fixed toolset of a turn woken by
+    // another chat's message ('chat-message' = read tools plus send_to_chat, D22); null = the full toolset.
+    this.messageBridge = null;
+    this.toolset = toolset === 'chat-message' ? 'chat-message' : null;
     this.assistantMessageId = assistantMessageId;
     this.userMessageId = userMessageId;
     this.prompt = prompt;
@@ -318,6 +323,9 @@ class AskTurn extends EventEmitter {
       // terminal is enabled (terminalEnabledHere). null = no command tools.
       commandBridge: deps.commandBridge ?? null,
       proxyBridge: deps.proxyBridge ?? null,
+      // Cross-chat messaging: ({threadId}) => {url, token, dispose()} | null. Set by the server; it answers null while
+      // messages between chats are off. Never asked in relay mode (extraDeps carry it) or in a composer turn.
+      chatMessageBridge: deps.chatMessageBridge ?? null,
       serverPath: deps.serverPath ?? ASK_MCP_SERVER_PATH,
       newAskId: deps.newAskId ?? newAskId,
       setPendingCardComments: deps.setPendingCardComments ?? setPendingCardComments,
@@ -1468,10 +1476,11 @@ class AskTurn extends EventEmitter {
       // A Codex turn's set skills (#635): this message's mount folder only, read through read_file for this turn only.
       const skillRoot = this.lockedDown && this.skills && this.skillMount ? this._skillBase : null;
       const designRoots = this.lockedDown ? this.designRoots : null;
-      this.relay = d.agentRelay ? d.agentRelay({ threadId: this.threadId, reader: this.reader || null, web: this.web, ...(this.lockedDown ? { model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}), ...(designRoots ? { designRoots } : {}) }) : null;
+      this.relay = d.agentRelay ? d.agentRelay({ threadId: this.threadId, reader: this.reader || null, web: this.web, ...(this.lockedDown ? { model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}), ...(this.toolset ? { toolset: this.toolset } : {}), ...(designRoots ? { designRoots } : {}) }) : null;
       // Agent mode never rides the relay: relay mode is agent isolation, where the terminal refuses agent callers.
       this.commands = !this.relay && this.agentMode && d.commandBridge ? d.commandBridge({ threadId: this.threadId }) : null;
       this.proxyBridge = !this.relay && d.proxyBridge ? d.proxyBridge({ threadId: this.threadId }) : null;
+      this.messageBridge = !this.relay && !this.composer && d.chatMessageBridge ? d.chatMessageBridge({ threadId: this.threadId }) : null;
       // One sign-in answer per turn: handed to the MCP child (spawn.mjs WORCA_ASK_CLAUDE_AUTH) and used by _onProposal,
       // so the model and the card get one verdict however long the turn runs. A relayed chat runs its tools here, in
       // this process (preflight's cache), so its child gets nothing.
@@ -1480,7 +1489,7 @@ class AskTurn extends EventEmitter {
       await d.fs.writeFile(
         mcpConfigPath,
         // MCP registry §9.2: the copies ride after `worca` — refs only (`${MCPSECRET_…}`); the values go in spawnEnv.
-        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, git: d.gitAvailable(), ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.proxyBridge ? { proxy: this.proxyBridge } : {}), ...(this.lockedDown ? { engine: this.engine, model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}), ...(designRoots ? { designRoots } : {}) }), null, 2),
+        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, git: d.gitAvailable(), ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.proxyBridge ? { proxy: this.proxyBridge } : {}), ...(this.messageBridge ? { messages: this.messageBridge } : {}), ...(this.toolset ? { toolset: this.toolset } : {}), ...(this.lockedDown ? { engine: this.engine, model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}), ...(designRoots ? { designRoots } : {}) }), null, 2),
         // Never a key value (webKeyVar: the key rides the process env). A relayed turn runs as
         // the person's agent user (agent-pool.mjs), which reads this file through its group. It
         // carries this turn's relay token: with a pool the file goes to that user's own group (worca
@@ -1516,6 +1525,7 @@ class AskTurn extends EventEmitter {
       if (this.relay) { try { this.relay.dispose(); } catch { /* already gone */ } this.relay = null; }
       if (this.commands) { try { this.commands.dispose(); } catch { /* already gone */ } this.commands = null; }
       if (this.proxyBridge) { try { this.proxyBridge.dispose(); } catch { /* already gone */ } this.proxyBridge = null; }
+      if (this.messageBridge) { try { this.messageBridge.dispose(); } catch { /* already gone */ } this.messageBridge = null; }
       // Memory usage: ONE merge per turn (an Ask turn is one execution). Best-effort: a failure costs the counts only.
       if (this._memoryReads.size) {
         try { await d.recordMemoryUsage(this._memoryReads.events()); }
@@ -1590,6 +1600,7 @@ class AskTurn extends EventEmitter {
         ...(this.lockedDown ? { engine: this.engine } : {}),
         commands: this.commands,
         proxy: this.proxyBridge,
+        messages: this.messageBridge,
         git: d.gitAvailable(),
         ...(this.surfaceLocked ? { composer: true } : {}),   // the Workflows and Design chats: no Task built-in (spawn.mjs)
         // Skills registry §4.4: every attempt too, until the sideload safety net drops the layer.

@@ -316,6 +316,7 @@
   "POST /api/ask/groups/suggest-name": {"class": "probe", "reason": "400 without threadIds; mock answers without spawning"},
   "POST /api/ask/groups/undo": {"class": "probe", "reason": "410 UNDO_GONE without token"},
   "POST /api/ask/mcp-preview": {"class": "probe", "reason": "read-only preview of MCP/skills config, no spawn"},
+  "POST /api/ask/chat-messages": {"class": "probe", "reason": "403 without x-worca-ask-message bridge header"},
   "POST /api/ask/proxy": {"class": "probe", "reason": "403 without x-worca-ask-proxy bridge header"},
   "POST /api/ask/refs/resolve": {"class": "probe", "reason": "400: refs must be an array"},
   "POST /api/ask/relay": {"class": "probe", "reason": "403 without x-worca-relay header"},

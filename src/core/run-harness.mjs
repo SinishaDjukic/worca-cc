@@ -6542,7 +6542,7 @@ export class RunHarness extends EventEmitter {
    * @returns {Promise<any>} the answer payload
    */
   async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo, workflow, plan,
-    concern, askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate, origin }) {
+    concern, askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate, origin, chat }) {
     this._checkAbort();
     // No interactive prompt may OPEN on a pausing run. pause() rejects only the
     // prompt that is currently open; a queued ask (a parallel sibling's questions
@@ -6576,6 +6576,7 @@ export class RunHarness extends EventEmitter {
       ...(workflow !== undefined ? { workflow } : {}),
       ...(plan !== undefined ? { plan } : {}),
       ...(concern ? { concern } : {}),            // #990 s5: the implementer's plan concern (kind stays 'plan')
+      ...(chat ? { chat } : {}),                  // cross-chat slice 2: the chat record this question was posted to
       // The ask-form envelope (spec §4, ruling X1) rides the EXISTING 'question'
       // frame — no new transport, no new slot. `id` (already emitted above) is the
       // ANSWER token; `askId` is the route-safe file token and they are never

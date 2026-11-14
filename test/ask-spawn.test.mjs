@@ -429,3 +429,21 @@ test('without commands the sub-agent note and the mcp env are unchanged (#574)',
   const o = buildAskSpawnOptions({ thread: { id: 'ask_0000aaaa' }, turn: {}, limits: {}, mcpConfigPath: '/m.json', scratchDir: '/t' });
   assert.equal(o.spawnEnv, undefined);
 });
+
+test('Q24 the cross-chat message bridge alone: the token rides spawnEnv on the default and the locked path, the URL (never the token) the mcp env', () => {
+  const messages = { url: 'http://127.0.0.1:1/api/ask/chat-messages', token: 'MSG-TOKEN-1' };
+  const base = { thread: { id: 'ask_0000aaaa' }, turn: {}, limits: {}, mcpConfigPath: '/m.json', scratchDir: '/t' };
+  for (const engine of ['claude', 'codex', 'copilot']) {
+    assert.deepEqual(buildAskSpawnOptions({ ...base, engine, messages }).spawnEnv, { ASK_MESSAGE_TOKEN: 'MSG-TOKEN-1' }, engine);
+    assert.equal(buildAskSpawnOptions({ ...base, engine, messages: null }).spawnEnv, undefined, engine);
+  }
+  const doc = buildMcpConfig({ homeBase: '/h', threadId: 'ask_0000aaaa', serverPath: '/s.mjs', env: {}, messages });
+  assert.deepEqual(JSON.parse(doc.mcpServers.worca.env.WORCA_ASK_MESSAGES), { url: 'http://127.0.0.1:1/api/ask/chat-messages' });
+  assert.doesNotMatch(JSON.stringify(doc), /MSG-TOKEN-1/);
+  assert.equal(doc.mcpServers.worca.env.WORCA_ASK_TOOLSET, undefined);
+  const plain = buildMcpConfig({ homeBase: '/h', threadId: 'ask_0000aaaa', serverPath: '/s.mjs', env: {} }).mcpServers.worca.env;
+  assert.equal(plain.WORCA_ASK_MESSAGES, undefined);
+  const ev = buildMcpConfig({ homeBase: '/h', threadId: 'ask_0000aaaa', serverPath: '/s.mjs', env: {}, toolset: 'chat-message' }).mcpServers.worca.env;
+  assert.equal(ev.WORCA_ASK_TOOLSET, 'chat-message');
+  assert.equal(buildMcpConfig({ homeBase: '/h', threadId: 'ask_0000aaaa', serverPath: '/s.mjs', env: {}, toolset: 'other' }).mcpServers.worca.env.WORCA_ASK_TOOLSET, undefined);
+});

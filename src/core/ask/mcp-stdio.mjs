@@ -40,6 +40,7 @@ import { defaultProjectDeps } from './project-deps.mjs';
 import { defaultWorkspaceDeps } from './workspace-deps.mjs';
 import { defaultActionsDeps } from './actions-deps.mjs';
 import { defaultProxyDeps } from './proxy-deps.mjs';
+import { defaultChatMessageDeps } from './chat-message-deps.mjs';
 import { defaultWebDeps } from './web-deps.mjs';
 import { defaultFileDeps } from './file-deps.mjs';
 import { defaultCommandDeps } from './command-deps.mjs';
@@ -116,6 +117,10 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       ...defaultChatActionDeps(),
       // Shaper: propose_changes / route_message — only with the gate and a thread (shape-tool-deps.mjs); relay overrides it.
       ...defaultShapeToolDeps({ threadId }),
+      // Cross-chat messaging: send_to_chat over the per-turn message bridge (chat-message-deps.mjs), and a chat-message
+      // event turn's read-only toolset (D22), named by the parent (spawn.mjs buildMcpConfig). Relay sets both via extraDeps.
+      ...defaultChatMessageDeps({ env }),
+      ...(env && env.WORCA_ASK_TOOLSET === 'chat-message' ? { askMode: 'chat-message' } : {}),
       // Readers only the host process can supply (relay mode: ui/server.mjs passes
       // readLiveDiff, which needs the live runs). Absent in the classic child.
       ...extraDeps,

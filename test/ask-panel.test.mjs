@@ -254,3 +254,173 @@ test('ask-panel: New chat clicked while a send is in flight neither throws nor t
     process.off('unhandledRejection', onRej);
   }
 });
+
+// ── cross-chat messaging slice 1 (Q22): a system row holding a chat-message block, in the real panel ─────────────────
+test('Q22 a chat-message system row renders through buildChatMessage; an unknown chat keeps its id; a patched block shows Replied live', async () => {
+  const TID = 'ask_00000001';
+  const BLOCK = { kind: 'chat-message', id: 'cmsg_0000abcd', direction: 'in', intent: 'question', text: 'please look', conversationId: 'cxm_0000abcd',
+    hop: 1, maxHops: 6, replyTo: null, repliedWith: null,
+    from: { kind: 'chat', chatId: 'ask_1234abcd', title: 'Other', scope: { kind: 'none', key: null, label: 'No project' }, owner: 'local' },
+    to: { chatId: TID, title: 'T' }, sentAt: 't' };
+  const row = (b) => ({ id: 'askm_s0000001', threadId: TID, seq: 1, role: 'system', text: 'Message from ask_1234abcd (Question, untrusted)', blocks: [b], status: null, createdAt: 't' });
+  const resolves = [];
+  const ctx = makePanel({ fetchHandler: (url, opts) => {
+    const method = ((opts || {}).method || 'GET').toUpperCase();
+    if (url === `/api/ask/threads/${TID}` && method === 'GET') {
+      return { ok: true, status: 200, json: async () => ({ thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} },
+        messages: [row(BLOCK)], attachments: [], runLinks: [], worktrees: [], inFlight: null }) };
+    }
+    if (url === '/api/ask/refs/resolve') { resolves.push(JSON.parse(opts.body)); return { ok: true, status: 200, json: async () => ({ refs: {} }) }; }
+    return { ok: true, status: 200, json: async () => ({}) };
+  } });
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  ctx.panel.open();
+  for (let i = 0; i < 8; i++) await ctx.tick();
+  ctx.flush();
+  const rec = ctx.doc.querySelector('.ask-msg-system .ask-chat-msg.ask-chat-msg-in');
+  assert.ok(rec, 'the record is built by buildChatMessage');
+  assert.equal(rec.querySelector('.ask-chat-msg-untrusted'), null);
+  assert.equal(rec.querySelector('.ask-chat-msg-hint'), null);
+  assert.doesNotMatch(rec.querySelector('.ask-chat-msg-head').textContent, /Untrusted/);
+  assert.equal(ctx.doc.querySelector('.ask-msg-system .ask-notice'), null, 'no notice fallback for that row');
+  assert.match(rec.querySelector('.ask-chat-msg-head').textContent, /ask_1234abcd/, 'an unresolved chat keeps its plain id');
+  assert.ok(resolves.some((b) => b.refs.includes('chat:ask_1234abcd')), 'the ref chips were asked to resolve the sender');
+  assert.ok(!rec.querySelector('.ask-chat-msg-foot').textContent.includes('Replied'));
+  ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: row({ ...BLOCK, repliedWith: 'cmsg_0000ffff' }) });
+  ctx.flush();
+  await ctx.tick();
+  ctx.flush();
+  assert.match(ctx.doc.querySelector('.ask-msg-system .ask-chat-msg-foot').textContent, /Replied/, 'the patched row rebuilt with no reload');
+  ctx.panel.destroy();
+});
+
+// The record's chat chip: the other chat's stored title from the resolver (its id while untitled or gone), following
+// title frames. `state.refs` is what the resolve stub answers now; `state.asked` counts the POSTs naming the sender.
+function chatRecordPanel(state) {
+  const TID = 'ask_00000001';
+  const BLOCK = { kind: 'chat-message', id: 'cmsg_0000abcd', direction: 'in', intent: 'question', text: 'please look', conversationId: 'cxm_0000abcd',
+    hop: 1, maxHops: 6, replyTo: null, repliedWith: null,
+    from: { kind: 'chat', chatId: 'ask_1234abcd', title: 'Active Chats About README', scope: { kind: 'none', key: null, label: 'No project' }, owner: 'local' },
+    to: { chatId: TID, title: 'T' }, sentAt: 't' };
+  const row = { id: 'askm_s0000001', threadId: TID, seq: 1, role: 'system', text: 'Message from ask_1234abcd (Question, untrusted)', blocks: [BLOCK], status: null, createdAt: 't' };
+  state.asked = 0;
+  const ctx = makePanel({ fetchHandler: (url, opts) => {
+    const method = ((opts || {}).method || 'GET').toUpperCase();
+    if (url === `/api/ask/threads/${TID}` && method === 'GET') {
+      return { ok: true, status: 200, json: async () => ({ thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} },
+        messages: [row], attachments: [], runLinks: [], worktrees: [], inFlight: null }) };
+    }
+    if (url === '/api/ask/refs/resolve') {
+      const body = JSON.parse(opts.body);
+      if (body.refs.includes('chat:ask_1234abcd')) state.asked++;
+      return { ok: true, status: 200, json: async () => ({ refs: Object.fromEntries(body.refs.filter((k) => k in state.refs).map((k) => [k, state.refs[k]])) }) };
+    }
+    return { ok: true, status: 200, json: async () => ({}) };
+  } });
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  const head = () => ctx.doc.querySelector('.ask-msg-system .ask-chat-msg-head');
+  const title = () => head().querySelector('.ask-ref-chip-chat .ask-ref-title')?.textContent;
+  const settle = async (n = 8) => { for (let i = 0; i < n; i++) await ctx.tick(); ctx.flush(); };
+  return { ctx, head, title, settle };
+}
+
+test("a chat-message record's chip shows the other chat's stored title, never the block's send-time title, and follows a rename", async () => {
+  const state = { refs: { 'chat:ask_1234abcd': { ok: true, kind: 'chat', title: 'Release notes' } } };
+  const { ctx, head, title, settle } = chatRecordPanel(state);
+  ctx.panel.open();
+  await settle();
+  assert.equal(title(), 'Release notes');
+  assert.equal(head().querySelector('a.ask-ref-chip-chat').getAttribute('href'), '#chat/ask_1234abcd');
+  assert.ok(!head().textContent.includes('Active Chats About README'));
+  const before = state.asked;
+  state.refs['chat:ask_1234abcd'] = { ok: true, kind: 'chat', title: 'Renamed' };
+  ctx.panel.pushServerFrame({ type: 'ask-title', threadId: 'ask_1234abcd', title: 'Renamed' });
+  await settle();
+  assert.equal(title(), 'Renamed');
+  assert.equal(state.asked, before + 1, 'exactly one more lookup of that chat');
+  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'T', "another chat's title frame never re-titles the open chat");
+  ctx.panel.destroy();
+});
+
+test('an untitled other chat shows its ask_ id, not New chat', async () => {
+  const state = { refs: { 'chat:ask_1234abcd': { ok: true, kind: 'chat', title: '' } } };
+  const { ctx, head, title, settle } = chatRecordPanel(state);
+  ctx.panel.open();
+  await settle();
+  assert.equal(title(), 'ask_1234abcd');
+  assert.ok(!head().closest('.ask-chat-msg').textContent.includes('New chat'));
+  ctx.panel.destroy();
+});
+
+test('a history clear naming the other chat turns its chip back into its id', async () => {
+  const state = { refs: { 'chat:ask_1234abcd': { ok: true, kind: 'chat', title: 'Release notes' } } };
+  const { ctx, head, title, settle } = chatRecordPanel(state);
+  ctx.panel.open();
+  await settle();
+  assert.equal(title(), 'Release notes');
+  const before = state.asked;
+  state.refs = {};
+  ctx.panel.pushServerFrame({ type: 'ask-history-cleared', threadIds: ['ask_1234abcd'] });
+  await settle();
+  assert.equal(state.asked, before + 1);
+  const text = head().textContent;
+  assert.match(text, /ask_1234abcd/);
+  assert.doesNotMatch(text, /Release notes|\bChat\b|New chat/);
+  assert.ok(ctx.doc.querySelector('.ask-msg-system .ask-chat-msg'), 'the open chat (another id) did not reset');
+  ctx.panel.destroy();
+});
+
+// ── cross-chat messaging slice 2: a run's record in the real panel (the run chip, the forwarded painter, U7) ─────────
+test('a run record decorates its chip into a run chip and forwards paintRunQuestion; U7 a typed draft survives a row rebuild while the question stays open', async () => {
+  const TID = 'ask_00000002';
+  const Q = { askId: 'questions-x:n_plan:1-r1', kind: 'questions', questions: [{ id: 'q1', question: 'Which storage?', options: ['Redis', 'Postgres'], allowFreeText: true }], state: 'open', answer: null };
+  const BLOCK = { kind: 'chat-message', id: 'cmsg_0000beef', direction: 'in', intent: 'question', text: '1. Which storage?', conversationId: 'cxm_0000beef',
+    hop: 1, maxHops: 6, replyTo: null, repliedWith: null,
+    from: { kind: 'run', runId: 'aaaaaaaa', liveRunId: '11111111-2222-3333-4444-555555555555', title: 'Fix login', scope: { kind: 'project', key: 'k1', label: 'worca-cc' }, owner: null },
+    to: { chatId: TID, title: 'T' }, sentAt: 't', question: Q };
+  const row = (b, createdAt = 't') => ({ id: 'askm_s0000002', threadId: TID, seq: 1, role: 'system', text: 'Message from run aaaaaaaa (Question, untrusted)', blocks: [b], status: null, createdAt });
+  const resolves = [];
+  const painted = [];
+  const paintRunQuestion = (ref, host) => {
+    painted.push(ref);
+    const panel = host.querySelector('.qpanel');
+    if (!panel.querySelector('textarea')) { panel.classList.remove('hidden'); panel.appendChild(host.ownerDocument.createElement('textarea')); }
+    return true;
+  };
+  const ctx = makePanel({ deps: { paintRunQuestion }, fetchHandler: (url, opts) => {
+    const method = ((opts || {}).method || 'GET').toUpperCase();
+    if (url === `/api/ask/threads/${TID}` && method === 'GET') {
+      return { ok: true, status: 200, json: async () => ({ thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} },
+        messages: [row(BLOCK)], attachments: [], runLinks: [], worktrees: [], inFlight: null }) };
+    }
+    if (url === '/api/ask/refs/resolve') {
+      const body = JSON.parse(opts.body);
+      resolves.push(body);
+      return { ok: true, status: 200, json: async () => ({ refs: Object.fromEntries(body.refs.filter((r) => r === 'run:aaaaaaaa').map((r) => [r, { ok: true, kind: 'run', id: 'aaaaaaaa', runId: null, title: 'Fix login', status: 'running', home: 'k1' }])) }) };
+    }
+    return { ok: true, status: 200, json: async () => ({}) };
+  } });
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  ctx.panel.open();
+  for (let i = 0; i < 8; i++) await ctx.tick();
+  ctx.flush();
+  const rec = ctx.doc.querySelector('.ask-msg-system .ask-chat-msg.ask-chat-msg-in');
+  assert.ok(rec);
+  assert.ok(resolves.some((b) => b.refs.includes('run:aaaaaaaa')), 'the bare run id went to the ref chips');
+  for (let i = 0; i < 4; i++) await ctx.tick();
+  ctx.flush();
+  assert.ok(ctx.doc.querySelector('.ask-msg-system .ask-chat-msg-head a.ask-ref-chip-run'), 'decorated into a run chip');
+  assert.deepEqual(painted[0], { runId: BLOCK.from.liveRunId, pipelineId: 'aaaaaaaa', askId: Q.askId }, 'the panel forwards its painter');
+  ctx.doc.querySelector('.ask-chat-msg-q .qpanel textarea').value = 'my draft';
+
+  // U7: the same row comes again with the question still open (another field changed, so the row itself rebuilds).
+  ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: row(BLOCK, 't2') });
+  ctx.flush(); await ctx.tick(); ctx.flush();
+  assert.equal(ctx.doc.querySelector('.ask-chat-msg-q .qpanel textarea')?.value, 'my draft', 'the draft survives');
+
+  ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: row({ ...BLOCK, question: { ...Q, state: 'answered', answer: { actedBy: { kind: 'person', label: 'ada@x' }, answers: [], at: 't' } } }, 't3') });
+  ctx.flush(); await ctx.tick(); ctx.flush();
+  assert.equal(ctx.doc.querySelector('.ask-chat-msg-q .qpanel'), null, 'the form is gone');
+  assert.equal(ctx.doc.querySelector('.ask-chat-msg-q [role="status"]').textContent, 'Answered by ada@x');
+  ctx.panel.destroy();
+});

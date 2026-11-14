@@ -289,6 +289,8 @@ app.patch('/api/ask/threads/:id', async (req, res) => {
     if (scopeNext) { try { await switchThreadScope(id, scopeNext.body, { divider: scopeNext.divider }); } catch (err) { if (err.code === 'TURN_IN_FLIGHT') return res.status(409).json({ error: ASK_SCOPE_BUSY, code: 'TURN_IN_FLIGHT' }); throw err; } }
     const thread = Object.keys(patch).length ? askUpdateThread(id, patch) : askGetThread(id);
     if (!thread) return res.status(404).json({ error: 'thread not found' });
+    // A rename reaches every tab of the owner: the open chat's head, the Chats list and the chips naming this chat.
+    if (patch.title !== undefined) broadcast({ type: 'ask-title', threadId: id, title: thread.title });
     res.json({ thread });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });

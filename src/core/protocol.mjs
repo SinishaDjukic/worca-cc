@@ -237,6 +237,9 @@ export async function readQuestionsFile(absPath) {
   return { ...normalizeClarify(parsed), malformed: false };
 }
 
+/** A full chat id (`ask_` + 8 hex): the only `chat` an ask file or a chat post may name. */
+export const CHAT_TARGET_RE = /^ask_[0-9a-f]{8}$/;
+
 /**
  * Classify one parsed ask payload into the two shapes the runtime protocol
  * allows (spec §4).
@@ -249,14 +252,17 @@ export async function readQuestionsFile(absPath) {
  * path: a payload today's readers already accept must never change meaning.
  * Anything else is `{ kind: 'none' }`. PURE — the file reader below wraps it.
  * @param {unknown} data
- * @returns {{kind:'questions', questions:Array}|{kind:'form', form:string, data:object}|{kind:'none'}}
+ * @returns {{kind:'questions', questions:Array, chat:string|null}|{kind:'form', form:string, data:object, chat:string|null}|{kind:'none'}}
  */
 export function classifyAskPayload(data) {
   if (!data || typeof data !== 'object') return { kind: 'none' };
-  if (Array.isArray(data.questions)) return { kind: 'questions', ...normalizeClarify(data) };
+  // Slice 2 of cross-chat messaging: an optional `"chat":"ask_<8 hex>"` posts a plain questions round into that chat.
+  // The form arm carries it too, only so the loop can audit that forms are not posted.
+  const chat = typeof data.chat === 'string' && CHAT_TARGET_RE.test(data.chat) ? data.chat : null;
+  if (Array.isArray(data.questions)) return { kind: 'questions', ...normalizeClarify(data), chat };
   const form = typeof data.form === 'string' ? data.form.trim() : '';
   if (!form) return { kind: 'none' };
-  return { kind: 'form', form, data: data.data === undefined ? {} : data.data };
+  return { kind: 'form', form, data: data.data === undefined ? {} : data.data, chat };
 }
 
 /**

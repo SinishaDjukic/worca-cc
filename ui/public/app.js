@@ -185,7 +185,7 @@ import {
   channelBadge, renderNeedsGit,
 } from './plugins-view.mjs';
 import { mountMarketplace, tabFromParam, targetFromParam } from './marketplace/index.mjs';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields, renderCrossChatToggle, collectCrossChatToggle } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
@@ -17454,6 +17454,8 @@ function paintAskSettings(data) {
   // the GET and from every save response without a second fetch.
   const scriptHost = document.getElementById('ask-script-tools-host');
   if (scriptHost) scriptHost.replaceChildren(renderScriptToolsToggle({ prefs: data.chat || {} }, { doc: document }));
+  const crossChatHost = document.getElementById('ask-cross-chat-host');
+  if (crossChatHost) crossChatHost.replaceChildren(renderCrossChatToggle({ prefs: data.chat || {} }, { doc: document }));
   const suggestHost = document.getElementById('ask-suggestions-host');
   if (suggestHost) suggestHost.replaceChildren(renderSuggestionsToggle({ prefs: data.chat || {} }, { doc: document }));
   const summariesHost = document.getElementById('ask-summaries-host');
@@ -17512,6 +17514,7 @@ function saveAskLimits(e) {
   const summariesHost = document.getElementById('ask-summaries-host');
   const chat = {
     ...(scriptHost ? collectScriptToolsToggle(scriptHost) : {}),
+    ...collectCrossChatToggle(document.getElementById('ask-cross-chat-host')),
     ...(suggestHost ? collectSuggestionsToggle(suggestHost) : {}),
     ...(summariesHost ? collectSummariesToggle(summariesHost) : {}),
   };
@@ -41849,6 +41852,22 @@ askPanel = createAskPanel({
   doc: document,
   win: window,
   fetch: (...args) => fetch(...args),
+  // Cross-chat slice 2: a run's question posted into a chat shows the Runs page's form there, only while that run's
+  // live question IS the posted one (a stale record keeps its "Open run" link instead).
+  paintRunQuestion: (ref, host) => {
+    const r = chatLiveRun(ref);
+    if (!r || r.pendingQuestion?.id !== ref.askId) return false;
+    // The record's Submit answers through the one question delegate (as the run card and the group page do), only while
+    // the run's live question is still the posted one; bound once per record host.
+    if (!host.__offQ) {
+      const cur = () => { const c = chatLiveRun(ref); return c && c.pendingQuestion?.id === ref.askId ? c : null; };
+      host.__offQ = delegateQuestion(host, {
+        question: () => { const c = cur(); return c ? c.pendingQuestion : null; },
+        send: (payload) => { const c = cur(); if (c) void postAnswer(c, payload); },
+      });
+    }
+    return !!chatPaintQuestion(ref, host);
+  },
   // Shared terminal (#574): a click on a command card's folder shows its tab in the pane below (Ask's own commands never do).
   showTerminal: (sessionId) => terminalPane?.showSession(sessionId),
   sendWs: (obj) => {

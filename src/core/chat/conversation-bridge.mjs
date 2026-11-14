@@ -5,7 +5,8 @@ import { parseCommand } from './parser.mjs';
 import { createAllowlistGuard, parseIdList, parseChatMembers } from './allowlist.mjs';
 import { TokenBucket } from './rate-limiter.mjs';
 import * as conv from './conversations.mjs';
-import { renderMessageParts, runBodyFromCard, isNativeRunCard, NO_LINK_HINT } from './card-render.mjs';
+import { renderMessageParts, runBodyFromCard, isNativeRunCard, NO_LINK_HINT, chatMessageState } from './card-render.mjs';
+import { chatActor } from '../identity.mjs';
 import { WORKING, INTERRUPTED, DONE_EMPTY, STATUS_TICK_MS, activityOf, statusText, statusMessage } from './live-status.mjs';
 
 const { HEADER_CONTROL_TTL_MS } = conv;
@@ -106,9 +107,15 @@ export function followUpError(r) {
 /** deps: { host: {sendMessage, replyInteraction, history?}, ask: {createThread, deleteThread, getThread, listMessages, findCard,
  *  initialScope (async), threadScope, scopeLabel (async), scopeOptions (async → {options, hidden}), refreshProjects (async), projectDirOf,
  *  startTurn, applyCard, takeDeferredReply, startRun,
- *  switchScope, stopTurn}, readConfig(plugin, channelId), linksFor(threadId), watch(threadId), now(), log(level,msg),
+ *  switchScope, stopTurn,
+ *  findChatMessage(threadId, messageId) → an incoming chat-message block copy|null,
+ *  answerRunQuestion({threadId, messageId, choices, by}) → {status, body} (a run question answered from the channel),
+ *  replyToChatMessage({threadId, messageId, text, by}) → Promise<{status, body}> (a person's reply to a chat message)},
+ *  readConfig(plugin, channelId), linksFor(threadId), watch(threadId), now(), log(level,msg),
  *  ratePerMin?, receipts?: {ack(target), settle(target, outcome)} (createReceipts; absent = no reactions),
  *  liveStatus?(plugin, channelId) → true when the channel shows a live status message per turn (host.typing optional),
+ *  interactive?(plugin, channelId) → true when the channel shows controls (chat-message posts then carry reply /
+ *  answer controls and are edited when they change; otherwise they are text only and never edited),
  *  setInterval?/clearInterval? (tests) } */
 const NOT_FOUND = /not found/i;
 /** A ref minter that mints nothing: parts are rendered to learn their names (reconcile, receipts). */
@@ -158,6 +165,7 @@ export function createConversationBridge(deps) {
   const setI = deps.setInterval || globalThis.setInterval;
   const clearI = deps.clearInterval || globalThis.clearInterval;
   const liveOn = (c) => { try { return deps.liveStatus?.(c.plugin, c.channelId) === true; } catch { return false; } };
+  const interactiveOn = (c) => { try { return deps.interactive?.(c.plugin, c.channelId) === true; } catch { return false; } };
   const activeIn = (c) => [...statuses.values()].filter((st) => st.c.id === c.id);
 
   function typing(c, on) {
@@ -583,7 +591,7 @@ export function createConversationBridge(deps) {
    *  platform refused for good — skipPart records it without a message id), ⏹️ stop. */
   function replyOutcome(c, m, links) {
     if (m.role !== 'assistant' || !m.status || m.status === 'streaming') return null;
-    const parts = renderMessageParts(m, { issue: DRY_ISSUE, links, fromWorca: false });
+    const parts = renderMessageParts(m, { issue: DRY_ISSUE, links, fromWorca: false, interactive: interactiveOn(c) });
     const have = new Map(conv.deliveredParts(c.id, m.id).map((d) => [d.part, d]));
     if (!parts.every((p) => have.has(p.part))) return null;
     if (m.status === 'error' || parts.some((p) => !have.get(p.part).platformMessageId)) return 'fail';
@@ -614,6 +622,7 @@ export function createConversationBridge(deps) {
     if (why) return ephemeral(why === 'off' ? SAY.off : SAY.notMember);
     if (Date.parse(ctl.expiresAt) <= deps.now() || ctl.usedAt) return ephemeral(SAY.stale);
     if (ctl.action.startsWith('header:')) return handleHeader(c, ctl, evt, ephemeral);
+    if (ctl.action.startsWith('cmsg:')) return handleChatMessageControl(c, ctl, evt, ephemeral);
     const found = deps.ask.findCard(c.askThreadId, ctl.cardId);
     if (!found || found.block.state !== ctl.issuedState) { await reconcile(c).catch(() => {}); return ephemeral(SAY.stale); }
     if (!conv.claimControl(evt.ref, { now: deps.now() })) return ephemeral(SAY.stale);
@@ -654,6 +663,36 @@ export function createConversationBridge(deps) {
       }
       default: return { status: 400, body: { error: 'unknown control' } };
     }
+  }
+
+  /** A reply / answer control on a chat-message post (cross-chat messaging, slice 3). The owner and member checks
+   *  already ran; the post's state must still be the one the control was issued at (chatMessageState). */
+  async function handleChatMessageControl(c, ctl, evt, ephemeral) {
+    let block = null;
+    try { block = deps.ask.findChatMessage(c.askThreadId, ctl.cardId); } catch (err) { log('warn', `chat message not read: ${err?.message || err}`); }
+    if (!block || chatMessageState(block) !== ctl.issuedState) { await reconcile(c).catch(() => {}); return ephemeral(SAY.stale); }
+    if (!conv.claimControl(evt.ref, { now: deps.now() })) return ephemeral(SAY.stale);
+    const meta = evt.meta && typeof evt.meta === 'object' ? evt.meta : {};
+    // The channel user, as /answer records it ("ada via Discord"); refusal() proved they map to this conversation.
+    const by = chatActor({ platform: c.platform, userName: meta.username ?? meta.name ?? null, userId: evt.userId });
+    let r;
+    try {
+      if (ctl.action === 'cmsg:answer') {
+        const choices = evt.kind === 'select' ? [{ index: 0, value: (evt.values || [])[0] }] : [{ index: 0, text: evt.fields?.text ?? '' }];
+        r = await deps.ask.answerRunQuestion({ threadId: c.askThreadId, messageId: ctl.cardId, choices, by });
+      } else if (ctl.action === 'cmsg:reply') {
+        const text = String(evt.fields?.text ?? '').trim();
+        r = text ? await deps.ask.replyToChatMessage({ threadId: c.askThreadId, messageId: ctl.cardId, text, by }) : { status: 400, body: { error: 'empty reply' } };
+      } else r = { status: 400, body: { error: 'unknown control' } };
+    } catch (err) { r = { status: 500, body: { error: err?.message || String(err) } }; }
+    if (!r || r.status >= 400) {
+      conv.releaseControl(evt.ref);
+      return ephemeral(cardRefusal(r, deps.linksFor(c.askThreadId)).text);
+    }
+    conv.retireCardControls(c.id, ctl.cardId, { now: deps.now() });
+    await ephemeral(SAY.done);
+    // An answer's record is marked by the run (chatPoster.answered), maybe after this pass: its broadcast edits the post.
+    await reconcile(c).catch((err) => log('warn', `post update failed: ${err?.message || err}`));
   }
 
   async function handleHeader(c, ctl, evt, ephemeral) {
@@ -733,9 +772,13 @@ export function createConversationBridge(deps) {
 
   async function deliverAll(c) {
     const links = deps.linksFor(c.askThreadId);
+    const interactive = interactiveOn(c);
     const DRY = DRY_ISSUE;
     const realIssue = (action, cardId, state) => conv.issueControl({ conversationId: c.id, cardId, action, issuedState: state,
       ownerUserId: c.ownerUserId, singleUse: !REUSABLE_CARD_ACTIONS.has(action) }, { now: deps.now() });
+    // A chat-message post names the other chat by its stored title at the moment it is posted or edited (card-render
+    // falls back to the id, and catches a throw). A rename alone edits nothing: edits follow state only.
+    const chatTitle = (id) => { const t = deps.ask.getThread?.(id); return t && t.mode !== 'composer' && typeof t.title === 'string' ? t.title : null; };
     for (const m of deps.ask.listMessages(c.askThreadId)) {
       if (m.createdAt < c.createdAt) continue;                       // history from before the binding stays in worca
       if (m.role === 'assistant' && m.status === 'streaming') continue;
@@ -745,13 +788,13 @@ export function createConversationBridge(deps) {
       if (m.role === 'assistant' && !have.size && activeIn(c).some((st) => st.phase === 'starting')) continue;
       const fromWorca = m.role === 'user' && !isSyntheticUserRow(m);
       const st = m.role === 'assistant' ? activeIn(c).find((x) => x.phase === 'bound' && x.assistantId === m.id && !x.used) : null;
-      const parts = renderMessageParts(m, { issue: DRY, links, fromWorca });
+      const parts = renderMessageParts(m, { issue: DRY, links, fromWorca, interactive, chatTitle });
       for (const part of parts) {
         const prev = have.get(part.part);
         if (prev && (!part.cardId || prev.shownState === part.state)) continue;   // delivered and current
         // Order matters: spend the card's older refs FIRST, then mint the ones this post will carry.
         if (part.cardId) conv.retireCardControls(c.id, part.cardId, { now: deps.now() });
-        const real = renderCardOrPart(m, part.part, { issue: realIssue, links, fromWorca });
+        const real = renderCardOrPart(m, part.part, { issue: realIssue, links, fromWorca, interactive, chatTitle });
         // The reply's first new part goes INTO the status message. A transient failure stops the pass (retried with the
         // same edit: nothing is posted twice); a refusal (deleted message, no access) posts the part as a new message.
         if (!prev && st && !st.used) {
@@ -783,7 +826,7 @@ export function createConversationBridge(deps) {
           }
         }
         if (editFailed) conv.retireCardControls(c.id, part.cardId, { now: deps.now() });   // the failed edit's refs were never shown
-        const post = editFailed ? renderCardOrPart(m, part.part, { issue: realIssue, links, fromWorca }) : real;
+        const post = editFailed ? renderCardOrPart(m, part.part, { issue: realIssue, links, fromWorca, interactive, chatTitle }) : real;
         try {
           const r = await send(c, post.message);
           const ids = r?.detail?.messageIds || r?.messageIds || [];

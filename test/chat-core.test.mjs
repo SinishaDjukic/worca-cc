@@ -123,6 +123,18 @@ test('rate limiting: FIFO + 429 ladder, TokenBucket pacing, RingBuffer drop coun
       t += 30000; // half a minute at 2/min -> one token back
       assert.equal(bucket.tryConsume(), true);
 
+      // canConsume refills and never spends (cross-chat messaging D11).
+      const peek = new TokenBucket(2, { now: () => t });
+      for (let i = 0; i < 5; i++) assert.equal(peek.canConsume(), true, 'asking spends nothing');
+      assert.equal(peek.tryConsume(), true);
+      assert.equal(peek.tryConsume(), true);
+      assert.equal(peek.canConsume(), false);
+      t += 30000;
+      assert.equal(peek.canConsume(), true, 'refilled');
+      assert.equal(peek.canConsume(), true);
+      assert.equal(peek.tryConsume(), true);
+      assert.equal(peek.canConsume(), false);
+
       const ring = new RingBuffer(2);
       ring.push(1); ring.push(2); ring.push(3);
       assert.deepEqual(ring.toArray(), [2, 3]);

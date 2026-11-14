@@ -12,16 +12,19 @@ const PR = 'https://github.com/SinishaDjukic/worca-cc/pull/777';
 const UUID = '0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0';
 const realLoad = async () => ({ marked: (await import('marked')).marked, createDOMPurify: (await import('dompurify')).default });
 
-async function world({ results = {}, store = null, fail = false, visible } = {}) {
+async function world({ results = {}, store = null, fail = false, visible, hold = false } = {}) {
   const { window } = new JSDOM('<!doctype html><body><div class="ask-transcript"></div></body>', { url: 'http://localhost:4317/' });
   const doc = window.document;
   const md = createMarkdownRenderer({ doc, load: realLoad, hljsLoader: { forLanguage: async () => null } });
   assert.equal(await md.ensure(), true);
   const calls = [];
+  const gates = [];                        // hold: each lookup waits here until the test releases it
   const fetch = async (url, init = {}) => {
-    calls.push({ url, body: init.body ? JSON.parse(init.body) : null });
+    const call = { url, body: init.body ? JSON.parse(init.body) : null };
+    calls.push(call);
     if (fail) throw new Error('offline');
-    const asked = calls.at(-1).body.refs;
+    if (hold) await new Promise((r) => gates.push(r));
+    const asked = call.body.refs;
     return { ok: true, status: 200, json: async () => ({ refs: Object.fromEntries(asked.filter((k) => k in results).map((k) => [k, results[k]])) }) };
   };
   let t = 1_000_000;
@@ -37,7 +40,7 @@ async function world({ results = {}, store = null, fail = false, visible } = {})
     return div;
   };
   const settle = () => new Promise((r) => setTimeout(r, 0));
-  return { doc, calls, chips, answer, settle, scans, advance: (ms) => { t += ms; } };
+  return { doc, calls, gates, chips, answer, settle, scans, advance: (ms) => { t += ms; } };
 }
 
 test('ask-ref-chips: a rendered answer turns its refs into chips, never inside code', async () => {
@@ -270,6 +273,140 @@ test('ask-ref-chips: a run link the server does not know is never polled; its to
   w.chips.tick();
   await w.settle();
   assert.equal(w.calls.length, 1, 'a miss is asked again on a later render, never on the 30 s tick');
+});
+
+// A chat-message record's head (ask-panel.mjs buildChatRecord): plain id text, decorated with the id label.
+const record = (w, text) => {
+  const div = w.doc.createElement('div');
+  div.className = 'ask-chat-msg-head';
+  div.textContent = text;
+  w.doc.querySelector('.ask-transcript').appendChild(div);
+  w.chips.decorate(div, { chatIdLabel: true });
+  return div;
+};
+const chatTitles = (el) => [...el.querySelectorAll('a.ask-ref-chip-chat .ask-ref-title')].map((n) => n.textContent);
+
+test('ask-ref-chips: chatIdLabel: an untitled chat shows its id; a titled one its title; without the option an untitled chat still reads New chat', async () => {
+  const w = await world({ results: { 'chat:ask_1a2b3c4d': { ok: true, kind: 'chat', title: '' }, 'chat:ask_2b3c4d5e': { ok: true, kind: 'chat', title: 'Release notes' } } });
+  const rec = record(w, 'ask_1a2b3c4d and ask_2b3c4d5e');
+  assert.equal(rec.querySelectorAll('.ask-ref-cand').length, 2, 'ids wait as text until confirmed');
+  await w.settle(); await w.settle();
+  assert.deepEqual(chatTitles(rec), ['ask_1a2b3c4d', 'Release notes']);
+  assert.doesNotMatch(rec.textContent, /New chat/);
+  assert.equal(rec.querySelector('a.ask-ref-chip-chat').getAttribute('href'), '#chat/ask_1a2b3c4d');
+  const ans = w.answer('chat ask_1a2b3c4d');
+  assert.deepEqual(chatTitles(ans), ['New chat'], 'an answer chip keeps its label');
+});
+
+test('ask-ref-chips: chatIdLabel: a confirmed chip whose re-lookup misses shows its id, not Chat', async () => {
+  const results = { 'chat:ask_1a2b3c4d': { ok: true, kind: 'chat', title: 'Release notes' } };
+  const w = await world({ results });
+  const rec = record(w, 'ask_1a2b3c4d');
+  const ans = w.answer('chat ask_1a2b3c4d');
+  await w.settle(); await w.settle();
+  assert.deepEqual(chatTitles(rec), ['Release notes']);
+  assert.deepEqual(chatTitles(ans), ['Release notes']);
+  delete results['chat:ask_1a2b3c4d'];
+  w.chips.refresh(['chat:ask_1a2b3c4d']);
+  await w.settle(); await w.settle();
+  assert.deepEqual(chatTitles(rec), ['ask_1a2b3c4d']);
+  assert.deepEqual(chatTitles(ans), ['Chat'], 'an answer chip keeps its old fallback');
+});
+
+test('ask-ref-chips: refresh re-asks only the keys with a chip on screen, in one POST, and repaints the new title', async () => {
+  const results = { 'chat:ask_1a2b3c4d': { ok: true, kind: 'chat', title: 'One' }, 'chat:ask_2b3c4d5e': { ok: true, kind: 'chat', title: 'Two' },
+    'chat:ask_3c4d5e6f': { ok: true, kind: 'chat', title: 'Three' } };
+  const w = await world({ results });
+  const rec = record(w, 'ask_1a2b3c4d ask_2b3c4d5e');
+  w.answer('chat ask_3c4d5e6f').remove();          // cached, then off screen
+  await w.settle(); await w.settle();
+  assert.deepEqual(chatTitles(rec), ['One', 'Two']);
+  const before = w.calls.length;
+  results['chat:ask_1a2b3c4d'] = { ok: true, kind: 'chat', title: 'Uno' };
+  results['chat:ask_2b3c4d5e'] = { ok: true, kind: 'chat', title: 'Dos' };
+  w.chips.refresh(['chat:ask_1a2b3c4d', 'chat:ask_2b3c4d5e', 'chat:ask_3c4d5e6f']);
+  await w.settle(); await w.settle();
+  assert.equal(w.calls.length, before + 1, 'one POST');
+  assert.deepEqual(w.calls.at(-1).body.refs.sort(), ['chat:ask_1a2b3c4d', 'chat:ask_2b3c4d5e']);
+  assert.deepEqual(chatTitles(rec), ['Uno', 'Dos']);
+  w.answer('chat ask_3c4d5e6f');
+  await w.settle(); await w.settle();
+  assert.deepEqual(w.calls.at(-1).body.refs, ['chat:ask_3c4d5e6f'], 'an off-screen key is only marked stale: the next render asks again');
+});
+
+test('ask-ref-chips: refresh during an in-flight lookup asks again after it and paints the newer answer', async () => {
+  const results = { 'chat:ask_1a2b3c4d': { ok: true, kind: 'chat', title: 'Old' } };
+  const w = await world({ results, hold: true });
+  const rec = record(w, 'ask_1a2b3c4d');
+  await w.settle();
+  assert.equal(w.calls.length, 1);
+  w.chips.refresh(['chat:ask_1a2b3c4d']);
+  await w.settle();
+  assert.equal(w.calls.length, 1, 'nothing more while the first lookup is out');
+  w.gates[0]();
+  await w.settle(); await w.settle();
+  assert.equal(w.calls.length, 2, 'asked again once the stale answer landed');
+  assert.ok(![...rec.querySelectorAll('.ask-ref-title')].some((n) => n.textContent === 'Old'), 'the stale answer is never painted');
+  const again = record(w, 'ask_1a2b3c4d');
+  assert.equal(again.querySelectorAll('a.ask-ref-chip').length, 0, 'nor cached');
+  results['chat:ask_1a2b3c4d'] = { ok: true, kind: 'chat', title: 'New' };
+  w.gates[1]();
+  await w.settle(); await w.settle();
+  assert.deepEqual(chatTitles(rec), ['New']);
+  assert.deepEqual(chatTitles(again), ['New']);
+  assert.equal(w.calls.length, 2);
+});
+
+test('ask-ref-chips: refresh keeps the painted title until the new answer lands', async () => {
+  const results = { 'chat:ask_1a2b3c4d': { ok: true, kind: 'chat', title: 'Release notes' } };
+  const w = await world({ results, hold: true });
+  const rec = record(w, 'ask_1a2b3c4d');
+  await w.settle();
+  w.gates[0]();
+  await w.settle(); await w.settle();
+  assert.deepEqual(chatTitles(rec), ['Release notes']);
+  results['chat:ask_1a2b3c4d'] = { ok: true, kind: 'chat', title: 'Renamed' };
+  w.chips.refresh(['chat:ask_1a2b3c4d']);
+  await w.settle(); await w.settle();
+  assert.equal(w.calls.length, 2);
+  assert.deepEqual(chatTitles(rec), ['Release notes'], 'not Chat, not the id');
+  const rebuilt = record(w, 'ask_1a2b3c4d');        // a row rebuilt while the lookup is out
+  assert.deepEqual(chatTitles(rebuilt), ['Release notes']);
+  await w.settle();
+  assert.equal(w.calls.length, 2, 'the rebuild asks nothing more');
+  w.gates[1]();
+  await w.settle(); await w.settle();
+  assert.deepEqual(chatTitles(rec), ['Renamed']);
+  assert.deepEqual(chatTitles(rebuilt), ['Renamed']);
+});
+
+test('ask-ref-chips: refresh(null) re-asks every chat key on screen, never a run or PR key', async () => {
+  const results = { 'chat:ask_1a2b3c4d': { ok: true, kind: 'chat', title: 'One' }, 'chat:ask_2b3c4d5e': { ok: true, kind: 'chat', title: 'Two' },
+    'chat:ask_3c4d5e6f': { ok: true, kind: 'chat', title: 'Three' },
+    'run:5c40dcc6': { ok: true, kind: 'run', id: '5c40dcc6', runId: null, title: 'Plan', status: 'done', home: 'k-1234abcd' },
+    'gh:o/r#7': { ok: true, kind: 'pr', title: 'Fix', state: 'open' } };
+  const w = await world({ results });
+  record(w, 'ask_1a2b3c4d');
+  w.answer('[plan](#history/k-1234abcd/5c40dcc6), o/r#7 and chat ask_2b3c4d5e');
+  w.answer('chat ask_3c4d5e6f').remove();
+  await w.settle(); await w.settle();
+  const before = w.calls.length;
+  w.chips.refresh(null);
+  await w.settle(); await w.settle();
+  assert.equal(w.calls.length, before + 1);
+  assert.deepEqual(w.calls.at(-1).body.refs.sort(), ['chat:ask_1a2b3c4d', 'chat:ask_2b3c4d5e']);
+});
+
+test('ask-ref-chips: refresh after destroy does nothing and never fetches', async () => {
+  const w = await world({ results: { 'chat:ask_1a2b3c4d': { ok: true, kind: 'chat', title: 'One' } } });
+  record(w, 'ask_1a2b3c4d');
+  await w.settle(); await w.settle();
+  const before = w.calls.length;
+  w.chips.destroy();
+  assert.equal(w.chips.refresh(['chat:ask_1a2b3c4d']), undefined);
+  assert.equal(w.chips.refresh(null), undefined);
+  await w.settle(); await w.settle();
+  assert.equal(w.calls.length, before);
 });
 
 test('workItemTone: process states map to tones; unknown states stay neutral', () => {

@@ -127,10 +127,24 @@ test('⋯: Archive is disabled with the busy text on a busy chat; an archived ch
   const arch = busy.find((i) => i.key === 'archive');
   assert.equal(arch.disabled, true);
   assert.equal(arch.title, CHAT_BUSY.replying);
-  assert.deepEqual(busy.filter((i) => i.label).map((i) => i.hint), ['Space', 'R', 'P', 'G', 'E', '⌫']);
+  assert.deepEqual(busy.filter((i) => i.label && i.hint).map((i) => i.hint), ['Space', 'R', 'P', 'G', 'E', '⌫']);
   const archived = chatRowMenuItems(chatRow(thread('c', { archivedAt: daysAgo(2) }), { now: NOW }), { mac: false, on });
   assert.equal(archived.find((i) => i.key === 'archive').label, 'Restore');
   assert.equal(archived.find((i) => i.key === 'delete').hint, 'Backspace');
+});
+
+test('row menu has Copy chat id and onSelect passes the row', () => {
+  const seen = [];
+  const r = chatRow(thread('ask_1234abcd'), { now: NOW });
+  const items = chatRowMenuItems(r, { mac: true, on: { copyId: (row) => seen.push(row) } });
+  const labels = items.filter((i) => i.label).map((i) => i.label);
+  assert.equal(labels[labels.indexOf('Rename…') + 1], 'Copy chat id', 'right after Rename…');
+  const copy = items.find((i) => i.key === 'copy-id');
+  assert.equal(copy.label, 'Copy chat id');
+  copy.onSelect();
+  assert.deepEqual(seen, [r]);
+  const archived = chatRowMenuItems(chatRow(thread('c', { archivedAt: daysAgo(2) }), { now: NOW }), { mac: false, on: {} });
+  assert.ok(archived.some((i) => i.key === 'copy-id'), 'always present');
 });
 
 test('Show = Archived and Group by None are flat (bare); the chip names the view and the count', () => {

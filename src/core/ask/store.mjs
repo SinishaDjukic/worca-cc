@@ -494,6 +494,32 @@ export function firstUserText(threadId) {
   return r ? String(r.text || '') : '';
 }
 
+/** list_chats' candidates (the messenger applies the owner rule and the paging): every Ask chat but `excludeId`, composer
+ *  chats never, archived ones only with `includeArchived`, newest activity first. A `query` matches the title or the FULL
+ *  first message the person typed (case-insensitive, ASCII folding as in the History search), nothing else. Each row
+ *  carries at most `snippetChars` (1..4000) of that first message, read by one indexed seek per chat. */
+export function listChatCandidates({ excludeId = null, includeArchived = false, query = '', snippetChars = 480 } = {}) {
+  getDb();
+  const n = Math.trunc(Number(snippetChars));
+  const chars = Number.isFinite(n) ? Math.min(4000, Math.max(1, n)) : 480;
+  const first = `SELECT m.text FROM ask_messages m WHERE m.thread_id = t.id AND m.role = 'user' AND ${SEARCHED_MESSAGE} ORDER BY m.seq LIMIT 1`;
+  const where = [`(t.mode IS NULL OR t.mode NOT IN (${SURFACE_LIST}))`];
+  const args = [chars];
+  if (excludeId) { where.push('t.id <> ?'); args.push(excludeId); }
+  if (!includeArchived) where.push('t.archived_at IS NULL');
+  const q = searchText(query);
+  if (q) {
+    where.push(`(t.title LIKE ? ESCAPE '\\' OR (${first}) LIKE ? ESCAPE '\\')`);
+    args.push(likeContains(q), likeContains(q));
+  }
+  const rows = prepare(`SELECT t.id, t.title, t.context, t.created_by, t.archived_at, t.updated_at, substr((${first}), 1, ?) AS first_text
+    FROM ask_threads t WHERE ${where.join(' AND ')} ORDER BY t.updated_at DESC, t.id`).all(...args);
+  return rows.map((r) => ({
+    id: r.id, title: r.title ?? null, context: parse(r.context, null), createdBy: r.created_by ?? null,
+    archivedAt: r.archived_at ?? null, updatedAt: r.updated_at, firstText: String(r.first_text ?? ''),
+  }));
+}
+
 /** Total saved chats — the History popover shows this, not the capped page listThreads returns. With a `query`, the
  *  chats the search matches (same filter as listThreads). */
 export function countThreads({ visibleTo = null, mode = null, query = '', show = null, ids = null } = {}) {

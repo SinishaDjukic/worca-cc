@@ -1,0 +1,98 @@
+{
+  "experiment": "e7",
+  "quick": false,
+  "method": "real touch pattern of a past Decompose run; content = its real final diff applied hunk by hunk to the real base blobs; Bash replayed without effects; fix cycle counted, not armed; layer 3 modelled",
+  "env": {
+    "node": "v26.0.0",
+    "os": "darwin 24.6.0",
+    "cpu": "Apple M3 Pro",
+    "cpus": 12
+  },
+  "durationMs": 20369,
+  "summary": {
+    "e7.replay.calls": 171,
+    "e7.replay.armedCalls": 69,
+    "e7.replay.bashCalls": 77,
+    "e7.fixCycle.calls": 25,
+    "e7.replay.baseMissing": 0,
+    "e7.replay.unapplied": 0,
+    "e7.replay.nonUnique": 0,
+    "e7.replay.contentlessCalls": 0,
+    "e7.replay.finalMismatch": 0,
+    "e7.replay.unarmedPaths": 15,
+    "e7.replay.degraded": false,
+    "e7.detectErrors": 0,
+    "e7.tasks": 14,
+    "e7.layer1.messages": 36,
+    "e7.layer2.messages": 0,
+    "e7.layer3.modelledMessages": 15,
+    "e7.agentShown.total": 26,
+    "e7.perReader.meanTokens": 105.9,
+    "e7.perReader.maxTokens": 303,
+    "e7.perReader.maxMessages": 6,
+    "e7.headerTokensPerMessage": 21.6,
+    "e7.layer3.promptTokens": 6072,
+    "e7.lifecycleShownToOwnStep": 0,
+    "e7.secretLeaks": 0
+  },
+  "layer2": [],
+  "readers": {
+    "p1t1": {
+      "messages": 0,
+      "tokens": 0
+    },
+    "p2t1": {
+      "messages": 2,
+      "tokens": 152
+    },
+    "p2t2": {
+      "messages": 3,
+      "tokens": 177
+    },
+    "p2t3": {
+      "messages": 6,
+      "tokens": 303
+    },
+    "p2t4": {
+      "messages": 4,
+      "tokens": 219
+    },
+    "p3t1": {
+      "messages": 0,
+      "tokens": 0
+    },
+    "p4t1": {
+      "messages": 4,
+      "tokens": 202
+    },
+    "p4t2": {
+      "messages": 2,
+      "tokens": 118
+    },
+    "p4t3": {
+      "messages": 1,
+      "tokens": 76
+    },
+    "p5t1": {
+      "messages": 2,
+      "tokens": 118
+    },
+    "p5t2": {
+      "messages": 0,
+      "tokens": 0
+    },
+    "p6t1": {
+      "messages": 2,
+      "tokens": 118
+    },
+    "p6t2": {
+      "messages": 0,
+      "tokens": 0
+    },
+    "p7t1": {
+      "messages": 0,
+      "tokens": 0
+    }
+  },
+  "mismatched": []
+}

@@ -264,6 +264,49 @@ test('R renames through chatDeps.prompt, P pins, . opens the row menu with its k
   assert.deepEqual([...doc.querySelectorAll('.wfv-menu .wfv-menu-hint')].map((n) => n.textContent), ['Space', 'R', 'P', 'G', 'E', '⌫']);
 });
 
+test('⋯ › Copy chat id writes the full ask_ id to the clipboard and toasts it; a failed copy says so', async () => {
+  const { ctx, doc, col } = await bootOn();
+  const copied = [];
+  Object.defineProperty(ctx.window.navigator, 'clipboard', { value: { writeText: async (t) => { copied.push(t); } }, configurable: true });
+  const pick = async () => {
+    const row = rowLink(col, 'ask_00000002');
+    row.focus();
+    key(doc, row, { key: '.' });
+    const item = [...doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Copy chat id');
+    assert.ok(item, 'the row menu lists Copy chat id');
+    doc.getElementById('toasts')?.replaceChildren();
+    item.click();
+    await ticks(ctx);
+  };
+  await pick();
+  assert.deepEqual(copied, ['ask_00000002']);
+  assert.deepEqual(toastTitles(doc), ['Copied chat id']);
+  assert.equal(doc.querySelector('.toast .td')?.textContent, 'ask_00000002');
+  // A refusing clipboard and no execCommand fallback: writeClipboard answers false.
+  Object.defineProperty(ctx.window.navigator, 'clipboard', { value: { writeText: async () => { throw new Error('denied'); } }, configurable: true });
+  doc.execCommand = () => false;
+  await pick();
+  assert.deepEqual(toastTitles(doc), ['Could not copy the chat id']);
+});
+
+test('⋯ › the side column (dock host) has no Copy chat id; back on the Chat page it returns (D21)', async () => {
+  const { ctx, doc, col } = await bootOn();
+  const labels = () => {
+    const row = rowLink(col, 'ask_00000002');
+    row.focus();
+    key(doc, row, { key: '.' });
+    const out = [...doc.querySelectorAll('.wfv-menu [role="menuitem"]')].map((b) => b.querySelector('.wfv-menu-l').textContent);
+    key(doc, doc.activeElement, { key: 'Escape' });
+    return out;
+  };
+  ctx.panel.setHost('dock');
+  const side = labels();
+  assert.ok(side.includes('Rename…'), 'the side column row menu opened');
+  assert.ok(!side.includes('Copy chat id'), 'the side column lists no Copy chat id');
+  ctx.panel.setHost('page');
+  assert.ok(labels().includes('Copy chat id'), 'the Chat page lists it again');
+});
+
 test('View › Archived re-fetches with show=archived, loads, then shows the chip; × resets; the view is kept per browser', async () => {
   const { ctx, doc, col, rec } = await bootOn();
   col.querySelector('#chats-view-btn').click();

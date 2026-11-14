@@ -181,6 +181,16 @@ function fakeChild() {
   child.exit = (code) => { child.exitCode = code; child.stdout.end(); child.stderr.end(); setImmediate(() => child.emit('close', code, null)); };
   return child;
 }
+/**
+ * The render's own timers (the grace after a stop, the stall watch) are unref'd, so the server can end while one
+ * waits. A test that waits on such a timer alone must hold the event loop itself: Node 22 ends the file otherwise
+ * ("Promise resolution is still pending") and cancels every later test. A render that never settles fails as 'hung'.
+ */
+function held(run, ms = 3000) {
+  let timer = null;
+  const hung = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('hung')), ms); });
+  return Promise.race([run, hung]).finally(() => clearTimeout(timer));
+}
 function fakeSpawn() {
   const spawned = [];
   const spawnImpl = (cmd, args, opts) => { const child = fakeChild(); spawned.push({ cmd, args, opts, child }); return child; };
@@ -233,7 +243,7 @@ test('a stop closes the child\'s stdin (its own stop), kills its tree if it ling
   ac.abort();
   await waitUntil(() => child.stdinEnded);
   assert.deepEqual(killed, [], 'the child gets its grace to close its browsers');
-  await assert.rejects(run, { name: 'AbortError' });
+  await assert.rejects(held(run), { name: 'AbortError' });
   assert.deepEqual(killed, ['SIGKILL']);
   // A child that ends by itself inside the grace is never killed.
   const second = fakeSpawn(); const ac2 = new AbortController(); const killed2 = [];
@@ -248,7 +258,7 @@ test('a render that says nothing for too long is killed and fails', async () => 
   const killed = [];
   const run = renderFilmMp4({ dir: '/job', chrome: 'c', ffmpeg: 'f', spawnImpl, stallMs: 30, kill: (child, sig) => { killed.push(sig); child.exit(null); } });
   spawned[0].child.out('{"type":"progress","done":1,"total":300}\n');
-  await assert.rejects(run, /stopped making progress/);
+  await assert.rejects(held(run), /stopped making progress/);
   assert.deepEqual(killed, ['SIGKILL']);
 });
 

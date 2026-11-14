@@ -1,0 +1,132 @@
+{
+  "experiment": "e1",
+  "quick": false,
+  "env": {
+    "node": "v26.0.0",
+    "os": "darwin 24.6.0",
+    "cpu": "Apple M3 Pro",
+    "cpus": 12
+  },
+  "durationMs": 27203,
+  "summary": {
+    "e1.publish.n": 50000,
+    "e1.publish.single.msgsPerSec": 30491,
+    "e1.publish.batch100.msgsPerSec": 138652,
+    "e1.publish.twoWriters.msgsPerSec": 26237,
+    "e1.publish.twoWriters.busyErrors": 0,
+    "e1.publish.twoWriters.seqGapFree": true,
+    "e1.latency.n": 2000,
+    "e1.latency.ratePerSec": 500,
+    "e1.latency.poll-10.p50Ms": 5,
+    "e1.latency.poll-10.p99Ms": 12.27,
+    "e1.latency.poll-10.received": 2000,
+    "e1.latency.poll-50.p50Ms": 24.3,
+    "e1.latency.poll-50.p99Ms": 51.44,
+    "e1.latency.poll-50.received": 2000,
+    "e1.latency.poll-250.p50Ms": 125.27,
+    "e1.latency.poll-250.p99Ms": 249.15,
+    "e1.latency.poll-250.received": 2000,
+    "e1.latency.watch.p50Ms": 1.84,
+    "e1.latency.watch.p99Ms": 7.65,
+    "e1.latency.watch.received": 2000,
+    "e1.latency.emitter.p50Ms": 0.19,
+    "e1.latency.emitter.p99Ms": 0.64,
+    "e1.latency.emitter.received": 2000,
+    "e1.restart.transactional.published": 10000,
+    "e1.restart.transactional.lost": 0,
+    "e1.restart.transactional.duplicateEffects": 0,
+    "e1.restart.transactional.redeliveries": 1,
+    "e1.restart.naive.published": 10000,
+    "e1.restart.naive.lost": 0,
+    "e1.restart.naive.duplicateEffects": 1,
+    "e1.restart.naive.redeliveries": 1,
+    "e1.prune.n": 100000,
+    "e1.prune.ms": 202.99
+  },
+  "publish": {
+    "n": 50000,
+    "single": {
+      "ms": 1639.814208984375,
+      "msgsPerSec": 30491.259147563847
+    },
+    "batch100": {
+      "ms": 360.614013671875,
+      "msgsPerSec": 138652.40424487583
+    },
+    "twoWriters": {
+      "ms": 1905.69384765625,
+      "msgsPerSec": 26237.162942774543,
+      "busyErrors": 0,
+      "seqGapFree": true
+    }
+  },
+  "latency": {
+    "rate": 500,
+    "n": 2000,
+    "modes": {
+      "poll-10": {
+        "received": 2000,
+        "p50": 5.0029296875,
+        "p99": 12.267333984375
+      },
+      "poll-50": {
+        "received": 2000,
+        "p50": 24.296875,
+        "p99": 51.44482421875
+      },
+      "poll-250": {
+        "received": 2000,
+        "p50": 125.273681640625,
+        "p99": 249.1513671875
+      },
+      "watch": {
+        "received": 2000,
+        "p50": 1.8408203125,
+        "p99": 7.64697265625
+      },
+      "emitter": {
+        "received": 2000,
+        "p50": 0.191650390625,
+        "p99": 0.642822265625
+      }
+    }
+  },
+  "restart": {
+    "transactional": {
+      "published": 10000,
+      "firstRun": "killed",
+      "secondRun": "done",
+      "diedAfterEffectOfRow": 4000,
+      "lost": 0,
+      "duplicateEffects": 0,
+      "redeliveries": 1
+    },
+    "naive": {
+      "published": 10000,
+      "firstRun": "killed",
+      "secondRun": "done",
+      "diedAfterEffectOfRow": 4000,
+      "lost": 0,
+      "duplicateEffects": 1,
+      "redeliveries": 1
+    }
+  },
+  "prune": {
+    "n": 100000,
+    "deleted": 90000,
+    "left": 10000,
+    "ms": 202.9931640625
+  },
+  "pids": [
+    72925,
+    72926,
+    72932,
+    72937,
+    72947,
+    72980,
+    73038,
+    73039,
+    73044,
+    73045
+  ]
+}

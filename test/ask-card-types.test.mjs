@@ -16,6 +16,7 @@ const NOT_CARD_TYPES = Object.freeze({
   'design-questions': "a Design chat's card: design threads are a surface mode Chat never lists, like the composer's",
   'round-changed': 'a WS frame', 'ask-title': 'a WS frame', 'ask-suggestion': 'a WS frame', 'ask-start': 'a WS frame',
   'ask-error': 'a WS frame', 'ask-done': 'a WS frame', 'ask-command-summary': 'a WS frame',
+  'ask-message': 'a WS frame (cross-chat messages, chat-messages.mjs)',
 });
 const LITERAL = /\btype:\s*'([a-z][a-z0-9-]*)'/g;
 /** The literals of `src` that are neither cards nor listed non-cards. */

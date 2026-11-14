@@ -137,7 +137,7 @@ import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
   listThreads as askListThreads, updateThread as askUpdateThread, addThreadContexts as askAddThreadContexts,
   deleteThread as askDeleteThread, sweepEmptyThreads, sweepStreamingMessages, sweepCloningCards, sweepDesignRoundCards,
-  countThreads as askCountThreads, listThreadIds as askListThreadIds,
+  countThreads as askCountThreads, listThreadIds as askListThreadIds, listChatCandidates as askListChatCandidates,
   countWorktrees as askCountWorktrees, countAttachments as askCountAttachments,
   appendMessage as askAppendMessage, getMessage as askGetMessage,
   listMessages as askListMessages, setMessageBlocks as askSetMessageBlocks,
@@ -348,6 +348,8 @@ import { conversationForThread, listActiveConversations } from '../src/core/chat
 import { scopeSelectOptions } from '../src/core/chat/card-render.mjs';
 import { EventEmitter } from 'node:events';
 import { chatScopeOf, withChatScope, sameScope, scopeBody, targetInScope, scopeRefusalText, noProjectRunText, scopeEventPrompt, scopeNoticeText } from '../src/core/ask/scope.mjs';
+import { createChatMessenger, CHAT_MESSAGE_CODES } from '../src/core/ask/chat-messages.mjs';
+import { createRunChatBridge } from '../src/core/ask/run-chat-bridge.mjs';
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
@@ -1345,6 +1347,7 @@ function resolvePending(entry, { id = null, reason = 'resolved' } = {}) {
   if (!pq || (id && pq.id !== id)) return false;
   entry.pendingQuestion = null;
   broadcast(bufferEvent(entry, { type: 'question-resolved', id: pq.id, reason }));
+  if (pq.chat) runChatBridge.closed(pq, reason);   // a question posted into a chat closes there unless answered
   syncKeepAwake();
   return true;
 }
@@ -1491,6 +1494,7 @@ function wireRun(entry) {
   if ((entry.kind || 'run') === 'run' || entry.kind === 'workspace-run') {
     try { chatNotifier.attach(orch, { runId: id, entry }); }
     catch (err) { console.error(`[worca-ui] chat notifier attach failed: ${err && err.message ? err.message : err}`); }
+    orch.chatPoster = runChatBridge;   // cross-chat slice 2: the run's agents may post into chats
   }
 
   const record = (event) => {
@@ -4624,6 +4628,8 @@ const chatBridge = createConversationBridge({
   receipts: chatReceipts,
   // Live status messages (discord-chat 0.5.0): only a channel whose manifest declares capabilities.liveStatus.
   liveStatus: (plugin, channelId) => channelHost.list().find((x) => x.plugin === plugin && x.channelId === channelId)?.capabilities?.liveStatus === true,
+  // Cross-chat slice 3: chat-message posts carry reply / answer controls only where the channel shows controls.
+  interactive: (plugin, channelId) => channelHost.list().find((e) => e.plugin === plugin && e.channelId === channelId)?.capabilities?.interactive === true,
   readConfig: (plugin, channelId) => { const e = channelHost.list().find((x) => x.plugin === plugin && x.channelId === channelId); return e ? readPluginConfig(plugin, e.configSchema) : null; },
   linksFor: (threadId) => chatLinksFor(threadId),
   now: () => Date.now(),
@@ -4683,6 +4689,13 @@ const chatBridge = createConversationBridge({
         ...chatTurnIdentity(fresh, actor), onUserRow, ...(inbound ? { files, chatContext } : {}) });
     },
     applyCard: (a) => invokeAskCard(a),
+    // Cross-chat slice 3. chatMessenger / runChatBridge are declared further down: these arrows read them at call time.
+    findChatMessage: (t, id) => chatMessenger.readIncoming(t, id),
+    answerRunQuestion: ({ threadId, messageId, choices, by }) => runChatBridge.answerFromChat({ chatId: threadId, messageId, choices, by }),
+    replyToChatMessage: async ({ threadId, messageId, text, by }) => {
+      const r = await chatMessenger.send(threadId, { replyTo: messageId, text, intent: 'note' }, { actedBy: { kind: 'person', label: by } });
+      return r.ok ? { status: 200, body: r } : { status: CHAT_MESSAGE_CODES[r.code] || 400, body: { error: r.error, code: r.code } };
+    },
     takeDeferredReply: (cardId) => { const v = askDeferredReplies.get(cardId) || null; if (v) askDeferredReplies.delete(cardId); return v; },
     startRun: ({ body, actor }) => invokeStartRun(body, null, { startedBy: actor }),
     switchScope: async ({ threadId, value }) => {
@@ -7780,7 +7793,7 @@ async function askPrCardFacts(row) {
 
 const askRelays = new Map();   // token -> { rpc, out, billTo, owner }
 
-function askAgentRelay({ threadId, reader, web = null, engine = 'claude', model = null, skillRoot = null, designRoots = null }) {
+function askAgentRelay({ threadId, reader, web = null, engine = 'claude', model = null, skillRoot = null, toolset = null, designRoots = null }) {
   const token = randomBytes(24).toString('base64url');
   const life = new AbortController();
   const entry = { out: [], billTo: currentBillTo(), owner: currentOwner() };
@@ -7811,6 +7824,8 @@ function askAgentRelay({ threadId, reader, web = null, engine = 'claude', model 
       ...defaultShapeToolDeps({ threadId, live: (id) => liveSliceOf(id) }),
       // Corporate proxy: read in-process; Test is refused under agent isolation (relayProxyDeps).
       proxy: relayProxyDeps(),
+      // Cross-chat messaging: send_to_chat in-process, and a chat-message event turn's read-only toolset.
+      ...askChatMessageExtraDeps(threadId, { toolset }),
     },
   });
   askRelays.set(token, entry);
@@ -8382,6 +8397,26 @@ function askProxyBridge({ threadId }) {
   return { url: `http://127.0.0.1:${port}/api/ask/proxy`, token, dispose: () => askProxyBridges.delete(token) };
 }
 
+// Cross-chat messaging (slice 1): the per-turn message bridge (src/core/ask/chat-message-deps.mjs), classic mode only —
+// relay mode passes askChatMessageExtraDeps instead. null while the person's "Messages between chats" is off. The
+// calling chat is the token's thread, never a request field (R-arch-3).
+const askChatMessageBridges = new Map();   // token -> threadId
+function askChatMessageBridge({ threadId }) {
+  if (!chatPrefs().crossChat) return null;
+  const token = randomBytes(24).toString('base64url');
+  askChatMessageBridges.set(token, threadId);
+  const port = server.address()?.port || PORT;
+  return { url: `http://127.0.0.1:${port}/api/ask/chat-messages`, token, dispose: () => askChatMessageBridges.delete(token) };
+}
+/** Relay mode's in-process share of the same: send_to_chat and list_chats bound to this turn's chat, and an event turn's
+ *  read-only toolset (D22). */
+function askChatMessageExtraDeps(threadId, { toolset = null } = {}) {
+  return {
+    ...(chatPrefs().crossChat ? { chatMessages: { send: (input) => chatMessenger.send(threadId, input), list: (input) => chatMessenger.list(threadId, input) } } : {}),
+    ...(toolset === 'chat-message' ? { askMode: 'chat-message' } : {}),
+  };
+}
+
 /** Relay mode (agent isolation): the proxy tools run here; reading is allowed (GET /api/proxy/status is not agent-refused), Test is not. */
 const relayProxyDeps = () => ({
   status: async () => proxyHost.chatStatus(),
@@ -8472,6 +8507,9 @@ const askJobs = new Map();      // threadId -> {turn, messageId, userMessageId, 
 // about to cascade (review of PR #376 — a turn started in that window outlived
 // the delete as a live job holding a global slot).
 const askDeleting = new Set();
+// The per-turn MCP and skills resolvers, held in one object so a test can count which turns resolve them (D22: a
+// chat-message event turn never does).
+const askTurnResolvers = { mcp: resolveAskMcp, skills: resolveAskSkills };
 const askFollowers = new Map(); // threadId -> Set<{detach}>
 const ASK_JOB_MAX_BUFFER = 5000; // same arithmetic as MAX_BUFFER: deltas dominate; eviction ⇒ client seq-gap re-sync
 const askDeferred = new Map();  // threadId → Array<() => Promise>: workflow-card event turns that arrived while a turn was running (PD5/PD26), FIFO
@@ -8675,6 +8713,7 @@ async function deleteAskThreadFully(id) {
   // Outside the `if (job)` block below: a thread deleted while it had a queued
   // event turn but no live job entry would otherwise keep its queue forever.
   askDeferred.delete(id);
+  askChatMessageQueued.delete(id);                          // cross-chat messaging: its queued message turns went with the queue
   await askCommands.closeThread(id).catch(() => {});        // #574: its Ask terminal sessions
   try {
     const stopJob = () => {
@@ -8766,10 +8805,10 @@ function askWebAccessFor(threadId, ctx) {
  *  (`edits`) — with the runtimes this host actually has (the python probe, cached 60 s); plus the web section when `web`
  *  (askWebAccess() for this turn) is on, and the MCP servers section when the turn has registry copies (`mcp`,
  *  askMcpPromptInput()). Memory is mounted, not rendered. */
-async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude', chat = null } = {}) {
+async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude', chat = null, chatMessages = false } = {}) {
   const scripts = { ...(await askScriptPromptInput({ enabled: true })), edits: scriptToolsEnabled() };
   return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands, git: gitAvailable(),
-    ...(engine !== 'claude' ? { engine } : {}), shape: true, ...(chat ? { chat } : {}) });
+    ...(engine !== 'claude' ? { engine } : {}), shape: true, ...(chat ? { chat } : {}), ...(chatMessages ? { chatMessages: true } : {}) });
 }
 
 /** The Workflows chat's system prompt (D10): composer rules + catalog + scripts/web — no MCP, no commands, no hosting rule. */
@@ -9102,7 +9141,10 @@ function askSignedIn(req) {
   return who.source === 'local' ? null : who.name;
 }
 
-async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null, onUserRow = null, chatContext = null }) {
+/** One Ask turn. `cause` (cross-chat messaging): what woke a synthetic event turn, stored on the job as `job.cause`
+ *  ({kind:'chat-message', conversationId, hop} for a message from another chat). Such a turn runs with a read-only
+ *  toolset (D22): no command bridge, no web, no third-party MCP or skills, `toolset:'chat-message'` for the tools. */
+async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null, onUserRow = null, chatContext = null, cause = null }) {
   // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
   // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
   // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
@@ -9140,7 +9182,9 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     turn: null, messageId: null, userMessageId: null, // ids filled once the rows exist;
     events: [], seq: 0, status: 'running',            // askHello()/GET inFlight skip a null messageId
     startedAt: new Date().toISOString(), graceTimer: null,
+    cause: cause && typeof cause === 'object' ? cause : null,
   };
+  const chatMessageTurn = job.cause?.kind === 'chat-message';
   askJobs.set(id, job);
 
   let asstMsg = null;
@@ -9229,7 +9273,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // Web access (docs/guardrails.md "Web access"): resolved ONCE per turn — local settings ⊕ the pinned project's
     // team policy — so the prompt section, the sub-agent note and the MCP child's tools agree.
     const pinned = chatScopeOf(ctx);   // P4: the chat scope, null = No project — proposal default + scope gate
-    const web = askWebAccessFor(id, ctx);
+    const web = chatMessageTurn ? null : askWebAccessFor(id, ctx);
     // MCP registry §9.1–9.3: General + the targets in play (the tagged dropdown fallback excluded), minus the chat's
     // picker choices — resolved ONCE per turn, so the per-turn file, the spawn and the prompt section agree.
     // D12: the chat's engine is its (validated, engine-locked) model's. Every chat gets the registry copies its engine
@@ -9245,17 +9289,17 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const dKey = did ? getDesign(did)?.projectKey : null;
     const dProj = dKey ? (await listProjects()).find((p) => p.key === dKey)?.path : null;
     const designRoots = did ? { workDir: designWorkDir(did), ...(dProj ? { projectDir: dProj } : {}) } : null;
-    const mcp = surfaceMode ? { result: null } : await resolveAskMcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model, engine });
+    const mcp = surfaceMode || chatMessageTurn ? { result: null } : await askTurnResolvers.mcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model, engine });
     // Skills registry §4.4: the same targets and choices for the skills from sets — resolved ONCE per turn; the turn
     // mounts them and appends the prompt section naming exactly what it wrote (a Codex chat reads them through read_file).
-    const skills = surfaceMode ? { result: null } : await resolveAskSkills({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff });
+    const skills = surfaceMode || chatMessageTurn ? { result: null } : await askTurnResolvers.skills({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff });
     // Agent mode (#574; worca Chat R5): an Ask chat is ALWAYS in agent mode where the host allows commands at all.
     // The thread's agentMode column and a message's agentMode are still validated and stored — never read here.
-    const agentOn = !surfaceMode && chatAgentModeFor(id, chatBound);
+    const agentOn = !surfaceMode && !chatMessageTurn && chatAgentModeFor(id, chatBound);
     const systemPrompt = designMode ? await askDesignSystemPromptFor({ web, engine }) : composerMode
       ? await askComposerSystemPromptFor(catalog, { web, engine })
-      : await askSystemPromptFor(catalog, { web, mcp: await askMcpPromptInput(mcp), commands: agentOn, engine,
-        chat: chatConv ? { platform: chatConv.platform } : null });
+      : await askSystemPromptFor(catalog, { web, mcp: mcp.result ? await askMcpPromptInput(mcp) : null, commands: agentOn, engine,
+        chat: chatConv ? { platform: chatConv.platform } : null, chatMessages: chatPrefs().crossChat });
     // Shared terminal: what the user ran in this chat's Ask tabs since its last user turn (their commands never wake
     // the chat; an event turn leaves them for the next user turn).
     if (!synthetic && !chatBound && askCommandsEnabled()) headerCtx.personCommands = askCommands.takePersonCommands(id);
@@ -9299,6 +9343,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       design: designMode,
       ...(designRoots ? { designRoots } : {}),
       suggest: helpers.suggest,                     // ask-suggestion: a user's message only — an event turn suggests nothing
+      ...(chatMessageTurn ? { toolset: 'chat-message' } : {}),   // D22: read tools plus send_to_chat, fixed here
       ...(lockedDown ? {
         engine,
         // D16: this message's images ride the turn on an engine that takes them (`codex exec -i`); the route refused
@@ -9315,13 +9360,14 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         agentRelay: agentIdentity() ? (o) => askAgentRelay({ ...o, engine }) : null,
         commandBridge: askCommandBridge,                     // #574: null unless agent mode can work here
         proxyBridge: askProxyBridge,                         // the corporate proxy bridge: null for an agent caller
+        chatMessageBridge: askChatMessageBridge,             // cross-chat messaging: null while the setting is off
         onFrame: stampAskFrames(id, job),
         onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
         onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
         onWorktreeMutation: () => { emitAskWorktrees(id); },
         // §9.1 (D17): at turn end, name the copies a worktree opened this turn brings into the next one.
         // A Codex chat's notice names only the skills that join (#635): it starts no copy.
-        mcpJoinNotice: surfaceMode ? () => '' : () => askMcpJoinNotice({ before: { ...mcp, skills: skills.result }, ctx, threadId: id, off: askGetThread(id)?.mcpOff ?? null, model, engine }),
+        mcpJoinNotice: surfaceMode || chatMessageTurn ? () => '' : () => askMcpJoinNotice({ before: { ...mcp, skills: skills.result }, ctx, threadId: id, off: askGetThread(id)?.mcpOff ?? null, model, engine }),
         // A remember/forget in the MCP child is the same scope change a REST write makes (B29).
         // The key is parsed out of worca's OWN tool result, never written by the model; shape-check
         // it anyway before it rides a broadcast (I2-#22).
@@ -9577,10 +9623,15 @@ async function startMetricsEventTurn(threadId, block) {
 /** P4 (CONTRACT §4): switch the chat (when `scope` is given) and start the event turn that continues the user's
  *  message — or queue both while a reply runs (PD5/PD26), so the scope never changes under a running turn. The
  *  switch and the turn's reservation have no I/O between them. P2's create card uses it too (U7). */
-async function startScopeEventTurn(threadId, { scope = null, text, notice, onDeferredStart = null }) {
+async function startScopeEventTurn(threadId, { scope = null, text, notice, onDeferredStart = null, cause = null, gate = null }) {
   const thread = askGetThread(threadId);
   if (!thread) return null;
   const mv = await askEventPick(threadId, thread);
+  let run = null;
+  const enqueue = () => {
+    if (!askDeferred.has(threadId)) askDeferred.set(threadId, []);
+    askDeferred.get(threadId).push(run);
+  };
   const start = async () => {
     if (scope) {
       const cur = askGetThread(threadId);
@@ -9590,24 +9641,93 @@ async function startScopeEventTurn(threadId, { scope = null, text, notice, onDef
     // CONTRACT §4 / U7: the pick switches the chat even when no model can continue the message.
     if (!mv) return { ok: false, status: 503, error: 'no model available' };
     const t = askGetThread(threadId) || thread;
-    return startAskTurn({ threadId, thread: t, ctx: t.context || {}, model: mv.model, effort: mv.effort, text, synthetic: { notice, quiet: true } });
+    // `gate` (cross-chat messaging D20): the send gates no person ran, at START time (a queued turn checks when it runs).
+    if (gate) {
+      const refused = await gate(t, mv);
+      if (refused) return { ok: false, status: refused.status || 409, error: refused.error || 'refused' };
+      // The gate awaited: a typed message (or a drained turn) may have taken the slot meanwhile. Queue behind it, as
+      // if it had been busy at the call, instead of failing the wake (its settleJob drains the queue again).
+      if (askDeleting.has(threadId)) return { ok: false, status: 409, error: 'thread is being deleted' };
+      if (askInFlight(threadId)) { enqueue(); return { ok: true, requeued: true }; }
+    }
+    return startAskTurn({ threadId, thread: t, ctx: t.context || {}, model: mv.model, effort: mv.effort, text, synthetic: { notice, quiet: true }, cause });
   };
+  // A caller that must know what its queued turn became (a chat answer's receipt) hears it when the drain runs it;
+  // a turn re-queued behind a slot taken during its gate is still waiting, so the observer hears nothing yet.
+  run = onDeferredStart ? async () => {
+    let r;
+    try { r = await start(); } catch (e) { r = { ok: false, error: e && e.message ? e.message : String(e) }; }
+    if (!r?.requeued) { try { onDeferredStart(r); } catch { /* an observer never stops the drain */ } }
+    return r;
+  } : start;
   if (askInFlight(threadId)) {
-    if (!askDeferred.has(threadId)) askDeferred.set(threadId, []);
-    // A caller that must know what its queued turn became (a chat answer's receipt) hears it when the drain runs it.
-    const run = onDeferredStart ? async () => {
-      let r;
-      try { r = await start(); } catch (e) { r = { ok: false, error: e && e.message ? e.message : String(e) }; }
-      try { onDeferredStart(r); } catch { /* an observer never stops the drain */ }
-      return r;
-    } : start;
-    askDeferred.get(threadId).push(run);
+    enqueue();
     return { deferred: true };
   }
   const r = await start();
+  if (r.requeued) return { deferred: true };
   if (r.ok) return { assistantMessageId: r.assistantMessageId };
   return failedEventTurn(threadId, { error: r.error, status: r.status, ...(r.budget ? { budget: r.budget } : {}) });
 }
+
+// ---- cross-chat messaging (slice 1): wiring only; every guard lives in src/core/ask/chat-messages.mjs ----
+const askChatMessageQueued = new Map();   // threadId -> chat-message event turns waiting in askDeferred
+const askChatMessageQueuedFrom = new Map();   // `<threadId> <origin>` -> those of them a run post queued (slice 2)
+
+/** D20: a chat-message wake spends the target's engine and its owner's key, so it runs the user-message send gates
+ *  that other event turns skip. → Promise<null | {status, error}>. */
+async function chatMessageGate(thread, mv) {
+  const engineRefusal = askChatEngineGate(thread.id, thread);
+  if (engineRefusal) return engineRefusal;
+  return chatMessageGateDeps.credentialGate(chatActorReq(thread.createdBy || 'local'), mv.model);
+}
+// The credential half of the gate, swappable so a test reaches it without a live credential broker.
+const chatMessageGateDeps = { credentialGate: askCredentialGate };
+
+/** Wake the target for one event turn (the target's own stored context: scope null), or queue it behind its reply.
+ *  The wake's queue slot is reserved before the first await: send() calls this straight after its commit section, so
+ *  the next send's CHAT_MESSAGE_QUEUE_MAX check already counts it while the gate awaits. A wake that starts or fails
+ *  releases it; a queued one keeps it until the drain runs it (onDeferredStart). */
+async function chatMessageStartEvent(threadId, { text, notice, cause, origin = null }) {
+  const key = origin ? `${threadId} ${origin}` : null;
+  const bump = (map, k, d) => { const n = (map.get(k) || 0) + d; if (n > 0) map.set(k, n); else map.delete(k); };
+  const release = () => {
+    bump(askChatMessageQueued, threadId, -1);
+    if (key) bump(askChatMessageQueuedFrom, key, -1);
+  };
+  bump(askChatMessageQueued, threadId, 1);
+  if (key) bump(askChatMessageQueuedFrom, key, 1);
+  let r;
+  try { r = await startScopeEventTurn(threadId, { scope: null, text, notice, cause, gate: chatMessageGate, onDeferredStart: release }); }
+  catch (e) { release(); return { delivery: 'failed', error: e && e.message ? e.message : String(e) }; }
+  if (r && r.deferred) return { delivery: 'queued' };
+  release();
+  if (r && r.assistantMessageId) return { delivery: 'started' };
+  return { delivery: 'failed', error: (r && r.error) || 'the chat could not start' };
+}
+
+const chatMessenger = createChatMessenger({
+  enabled: () => chatPrefs().crossChat,
+  getThread: askGetThread, listChats: askListChatCandidates,
+  listMessages: askListMessages,
+  appendMessage: askAppendMessage,
+  setMessageBlocks: askSetMessageBlocks,
+  broadcast,
+  scopeLabel: (ctx) => askScopeLabel(scopeBody(chatScopeOf(ctx ?? null))),
+  sharedOwner: (t) => askSharedOwner(t),
+  turnCause: (id) => askInFlight(id)?.cause ?? null,
+  queuedCount: (id) => askChatMessageQueued.get(id) || 0,
+  queuedFrom: (id, origin) => askChatMessageQueuedFrom.get(`${id} ${origin}`) || 0,
+  startEvent: chatMessageStartEvent,
+  newId: (prefix) => newAskId(prefix),
+  now: () => Date.now(),
+});
+const runChatBridge = createRunChatBridge({
+  messenger: chatMessenger,
+  findLiveRun: (pid) => [...runs.values()].find((e) => e.pipelineId === pid && !SETTLED_RUN.has(e.status)) || null,
+  answerRun,
+  log: (level, msg) => console.warn(`[worca-ui] ${msg}`),
+});
 
 /** Follow a clone card's job to its end: flip the card to applied | failed and start the event turn.
  *  Reads the job object startCloneJob returned (it is updated in place when the clone ends). */
@@ -10500,8 +10620,11 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export { AGENTS_DIR, invokeStartRun, prWatcherDeps, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, designBuilds, designChatActions, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, soundCards, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
+export { AGENTS_DIR, invokeStartRun, prWatcherDeps, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askChatMessageBridges, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatMessenger, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, designBuilds, designChatActions, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, soundCards, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
 export const _testing = {
+  runChatBridge,
+  askChatMessageBridge, askChatMessageExtraDeps, askChatMessageQueued, askChatMessageQueuedFrom, chatMessageStartEvent, chatMessageGate,
+  chatMessageGateDeps, askTurnResolvers,
   chatBridge, invokeAskCard, askBus, chatAgentModeFor, chatTurnIdentity,
   updateChecker,
   // Chat context: tests never reach a CDN (null = the real fetch again).
