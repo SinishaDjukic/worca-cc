@@ -9,12 +9,15 @@ import * as m_feature_flags from './feature-flags/index.mjs';
 import * as m_git_automations from './git-automations/index.mjs';
 import * as m_guardrails from './guardrails/index.mjs';
 import * as m_history from './history/index.mjs';
+import * as m_images from './images/index.mjs';
 import * as m_marketplace from './marketplace/index.mjs';
 import * as m_mcp_servers from './mcp-servers/index.mjs';
 import * as m_models from './models/index.mjs';
 import * as m_network_proxy from './network-proxy/index.mjs';
 import * as m_new_run from './new-run/index.mjs';
+import * as m_worca_levels from './worca-levels/index.mjs';
 import * as m_projects from './projects/index.mjs';
+import * as m_prompt_check from './prompt-check/index.mjs';
 import * as m_run_presets from './run-presets/index.mjs';
 import * as m_runs from './runs/index.mjs';
 import * as m_scheduled_runs from './scheduled-runs/index.mjs';
@@ -24,6 +27,7 @@ import * as m_setup_assistant from './setup-assistant/index.mjs';
 import * as m_shape from './shape/index.mjs';
 import * as m_shell from './shell/index.mjs';
 import * as m_skills from './skills/index.mjs';
+import * as m_sound from './sound/index.mjs';
 import * as m_speech from './speech/index.mjs';
 import * as m_statistics from './statistics/index.mjs';
 import * as m_team_metrics from './team-metrics/index.mjs';
@@ -32,8 +36,8 @@ import * as m_terminal from './terminal/index.mjs';
 import * as m_workflows from './workflows/index.mjs';
 import * as m_workspace_map from './workspace-map/index.mjs';
 export const ROUTE_SEGMENTS = Object.freeze([
-  Object.freeze([...m_runs.SEGMENTS[0], ...m_mcp_servers.SEGMENTS[0], ...m_scheduled_runs.SEGMENTS[0], ...m_settings.SEGMENTS[0], ...m_shape.SEGMENTS[0], ...m_new_run.SEGMENTS[0], ...m_history.SEGMENTS[0], ...m_statistics.SEGMENTS[0], ...m_projects.SEGMENTS[0], ...m_team_metrics.SEGMENTS[0], ...m_workspace_map.SEGMENTS[0], ...m_team_policy.SEGMENTS[0]]),   // before app.use('/api/automations', requireFlag('gitAutomations'));
-  Object.freeze([...m_workspace_map.SEGMENTS[1], ...m_chat.SEGMENTS[1], ...m_marketplace.SEGMENTS[1], ...m_runs.SEGMENTS[1], ...m_git_automations.SEGMENTS[1], ...m_terminal.SEGMENTS[1], ...m_projects.SEGMENTS[1], ...m_actions.SEGMENTS[1], ...m_browser_extension.SEGMENTS[1], ...m_history.SEGMENTS[1], ...m_shell.SEGMENTS[1], ...m_settings.SEGMENTS[1], ...m_models.SEGMENTS[1], ...m_feature_flags.SEGMENTS[1], ...m_speech.SEGMENTS[1], ...m_workflows.SEGMENTS[1], ...m_network_proxy.SEGMENTS[1], ...m_setup_assistant.SEGMENTS[1], ...m_run_presets.SEGMENTS[1], ...m_guardrails.SEGMENTS[1], ...m_scripts.SEGMENTS[1]]),   // before app.use('/api/mcp', (req, res, next) => {
+  Object.freeze([...m_runs.SEGMENTS[0], ...m_mcp_servers.SEGMENTS[0], ...m_scheduled_runs.SEGMENTS[0], ...m_settings.SEGMENTS[0], ...m_shape.SEGMENTS[0], ...m_new_run.SEGMENTS[0], ...m_history.SEGMENTS[0], ...m_statistics.SEGMENTS[0], ...m_projects.SEGMENTS[0], ...m_team_metrics.SEGMENTS[0], ...m_workspace_map.SEGMENTS[0], ...m_team_policy.SEGMENTS[0], ...m_worca_levels.SEGMENTS[0], ...m_prompt_check.SEGMENTS[0]]),   // before app.use('/api/automations', requireFlag('gitAutomations'));
+  Object.freeze([...m_workspace_map.SEGMENTS[1], ...m_chat.SEGMENTS[1], ...m_marketplace.SEGMENTS[1], ...m_runs.SEGMENTS[1], ...m_git_automations.SEGMENTS[1], ...m_terminal.SEGMENTS[1], ...m_projects.SEGMENTS[1], ...m_actions.SEGMENTS[1], ...m_browser_extension.SEGMENTS[1], ...m_history.SEGMENTS[1], ...m_shell.SEGMENTS[1], ...m_settings.SEGMENTS[1], ...m_images.SEGMENTS[1], ...m_sound.SEGMENTS[1], ...m_models.SEGMENTS[1], ...m_feature_flags.SEGMENTS[1], ...m_speech.SEGMENTS[1], ...m_workflows.SEGMENTS[1], ...m_network_proxy.SEGMENTS[1], ...m_setup_assistant.SEGMENTS[1], ...m_run_presets.SEGMENTS[1], ...m_guardrails.SEGMENTS[1], ...m_scripts.SEGMENTS[1]]),   // before app.use('/api/mcp', (req, res, next) => {
   Object.freeze([]),   // before app.use((req, res, next) => {
   Object.freeze([...m_mcp_servers.SEGMENTS[3]]),   // before app.use('/api/skills', (req, res, next) => {
   Object.freeze([...m_skills.SEGMENTS[4], ...m_new_run.SEGMENTS[4], ...m_runs.SEGMENTS[4], ...m_chat.SEGMENTS[4]]),   // before the SPA fallback

@@ -185,7 +185,7 @@ import {
   channelBadge, renderNeedsGit,
 } from './plugins-view.mjs';
 import { mountMarketplace, tabFromParam, targetFromParam } from './marketplace/index.mjs';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderPromptCheckToggle, collectPromptCheckToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
@@ -210,7 +210,7 @@ import {
 import {
   renderProvidersCard, collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
   applyProviderPreset, endpointRowMatches, ENDPOINT_PRESETS,
-  setModelUpstream,
+  setModelUpstream, applyImagesPreset, collectImagesRow, showImagesTest, showImagesSaveError, collectSoundRow,
 } from './bridge-view.mjs';
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
@@ -251,7 +251,8 @@ import { createArtifactBrowser } from './artifacts/browser.mjs';
 import { baseName as artifactBaseName } from './artifacts/common.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
 import { buildFeedbackRows as ntBuildFeedbackRows } from './loop-rows.mjs';
-import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody, renderRolesSection, readRolesValues, rolesPatchToSettingsBody, paintRoleFallbacks } from './engine-settings-view.mjs';
+import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, designRowId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody, renderRolesSection, readRolesValues, rolesPatchToSettingsBody, paintRoleFallbacks } from './engine-settings-view.mjs';
+import { DESIGN_ENGINE_NAMES } from '../../src/shared/design-names.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
 import { mountHouseBrief } from './house-brief-view.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
@@ -293,6 +294,9 @@ import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/a
 import { createSchedulesView } from './schedules-view.mjs';
 import { createRunPrFields, mountWorkspacePrSetting, paintRunPrAuto } from './pr-auto-view.mjs';
 import { createRequirementsView } from './requirements-view.mjs';
+import { mountDesignView, pushDesignFrame, pushDesignAskFrame, repaintDesignChat, designHello, designNavCount, paintDesignNav } from './design/view.mjs';
+import { createDesignChat } from './design/chat.mjs';
+import { createDesignActivity } from './design/activity.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, currentFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
 import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
@@ -310,6 +314,7 @@ import { createFlagsView, bindFlagSwitch } from './flags-view.mjs';
 import { createSmartNaming } from './smart-naming.mjs';
 import { renderPattern, patternProblem, PRESET_TYPES, TYPE_RE } from '../../src/shared/naming/pattern.mjs';
 import { createFlyout } from './side-flyout.mjs';
+import { renderReadinessChip, readinessAddedToast, readinessMenuModel, renderLevelLabel, LEVEL_WORDS } from './readiness-chip.mjs';
 import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
 import { createSearchUnlock } from './search-unlock.mjs';
@@ -344,6 +349,10 @@ import { openLabelPicker, closeLabelPickerFor, fetchLabels, labelChip } from './
 import { labelStates, applyLabelChange, normaliseLabel } from '../../src/shared/run-labels.mjs';
 import { renderLabelsSection, runCount } from './labels-settings.mjs';
 import { makeSwitch } from './switch.mjs';
+import { watchRailReload, mountDesignSwitch, mountStillhetAsk, shouldAskStillhet, stillhetLabsRow } from './stillhet.mjs';
+// Stillhet: the server-rendered value of `rail`, read before any flags frame or the boot re-read can change it.
+const RAIL_BOOT = flagOn('rail');
+import { createWorcaLevelWiring } from './worca-level/app-wiring.mjs';
 
 // With site data blocked, Chrome throws SecurityError on merely reading `localStorage`. Every bare `localStorage` in
 // this module resolves here: the browser's storage, else an in-memory stand-in, so the page boots and forgets on reload.
@@ -546,9 +555,10 @@ async function paintShapeFeature(host) {
     },
     runsOpen: !!opts.runsOpen,
     ...(opts.ask ? { mountAsk: (slot, step) => featureMountAsk(host, slot, step) } : {}),
+    ...(host.__shapeFallback ? { focusFallback: host.__shapeFallback } : {}),
   }));
   host.dataset.painted = id;
-  focusFeatureControl(host, act);
+  focusFeatureControl(host, act, host.__shapeFallback ? host.__shapeFallback() : null);
 }
 /** Mount (or re-point) a host. F41: the run card calls it on every repaint (once a second), so it fetches only when
  *  the host is pointed at a new id. A pending or failed fetch is not retried from here: `shape-feature`,
@@ -559,6 +569,8 @@ function mountShapeFeature(host, id, opts = {}) {
   if (host.__shapeWant === id && was && was.ask === o.ask && was.runsOpen === o.runsOpen && was.loading === o.loading
     && was.inGroup === o.inGroup) return;
   host.__shapeWant = id; host.__shapeOpts = o;
+  // Where the focus goes when the control it was on and the view's ⋯ are both gone (the group page's header ⋯).
+  host.__shapeFallback = typeof opts.focusFallback === 'function' ? opts.focusFallback : null;
   SHAPE_FEATURE_HOSTS.set(host, id);
   host.__shapeErr = null;
   paintShapeFeature(host);
@@ -646,6 +658,12 @@ async function featureThreadFor(ref) {
 if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, refresh: refreshShapeFeatures, paintAsk: (ref, host) => chatPaintQuestion(ref, host),
   shaperCard: shaperCardFor, threadForRun: featureThreadFor };   // test seam
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
+// The open Design builds Activity lists (design/activity.mjs), from hello's list and the design-build frames. A build
+// first met in a frame reads "Design" until its title loads (asked once; a 404 or a bad body keeps "Design").
+const designActivity = createDesignActivity({
+  loadTitle: async (id) => (await safeJson(await fetch(`/api/design/${encodeURIComponent(id)}`))).design?.title,
+  onChange: () => updateNavCounts(),
+});
 let awayScreensaver = null;    // the away screensaver easter egg (away-screensaver.mjs) — assigned beside Activity; timerTick uses awayScreensaver?.
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
@@ -1225,12 +1243,13 @@ function applySidebarCollapsed() {
   // `data-rail-title` marks the ones WE wrote, so expanding removes only those.
   // Runs is excluded — updateNavCounts owns its title (the needs-you/live
   // counts). It has not run yet at the boot call below; showView does.
+  // Design is excluded too: paintDesignNav (below) owns its title and live count.
   // `:scope >` mirrors the CSS rule exactly: only the label span is a direct child.
   // The dataset.nav fallback can only fire if a button ever loses its label
   // span; an empty title would otherwise leave the button both tooltip-less and
   // silently "handled".
   // The rail's own squares only (children of .nav).
-  for (const b of $$('.nav > button[data-nav]:not([data-nav="runs"])')) {
+  for (const b of $$('.nav > button[data-nav]:not([data-nav="runs"]):not([data-nav="design"])')) {
     if (collapsed) {
       if (!b.dataset.railTitle) {
         const t = b.querySelector(':scope > span:not(.nav-count):not(.nav-rollup)');
@@ -1242,6 +1261,8 @@ function applySidebarCollapsed() {
       delete b.dataset.railTitle;
     }
   }
+  // One call covers boot, repaintNavMode and the Ask side's onLayout: the rail state just moved.
+  paintDesignNav(document, designNavCount());
 }
 
 /** Everything that renders differently on the rail: one call after the rail state moves
@@ -1698,8 +1719,14 @@ const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', foc
 // Interface mode's side menu hangs off the menu (side-flyout closes it with the menu, and Escape
 // closes it first); ui-level.mjs fills it, and a pick there is a choose like a dialog card.
 createFlyout({ trigger: document.getElementById('acct-lvl'), menu: document.getElementById('lvl-menu'), mode: 'beside', parent: acctMenu });
+// The worca level (worca-level/app-wiring.mjs): the last served view feeds the corner avatar, the shelf and the menu row.
+const worca = createWorcaLevelWiring({ trigger: acctBtn, menu: acctMenu, repaint: () => { paintAccount(); paintShelf(); }, isSettled: () => gs.settled, setupOpen: () => !!setupDialog });
 function paintAccount() {
-  paintAccountCorner(acctBtn, acctState.account, { budget: budgetState.budget, away: acctState.away?.state === 'away', fmt: { usd: fmtUsd, usd4: fmtUsd4 } });
+  const level = worca.state.view && worca.state.view.level;
+  paintAccountCorner(acctBtn, acctState.account, {
+    budget: budgetState.budget, away: acctState.away?.state === 'away', fmt: { usd: fmtUsd, usd4: fmtUsd4 },
+    avatar: level ? { src: level.avatar, alt: level.name } : null,
+  });
 }
 paintAccount();                // the first paint: "Profile" until /api/whoami answers
 
@@ -1747,6 +1774,7 @@ function handleServerMessage(msg) {
     if (Array.isArray(msg.extensionPairs)) msg.extensionPairs.forEach((r) => void promptExtensionPair(r));
     return;
   }
+  worca.onServerMessage(msg.type);   // the level may have moved; the handlers below still run
   if (msg.type === 'flags') {                 // D6: a flag changed (Settings in any tab, or the API)
     applyFlags(msg.flags);
     if (flagsTabCtl && currentView() === 'settings' && currentSettingsTab === 'experimental') void flagsTabCtl.load();
@@ -1767,6 +1795,10 @@ function handleServerMessage(msg) {
     return;
   }
 
+  // Design frames are tagged by designId + buildId (no runId) and reach every socket: the Design view keeps the
+  // nav count and the open stage. Handle them BEFORE the !msg.runId early-return below.
+  if (typeof msg.type === 'string' && msg.type.startsWith('design-')) { pushDesignFrame(msg); if (msg.type === 'design-build' && designActivity.frame(msg)) updateNavCounts(); return; }
+
   // Ask Worca frames are tagged by threadId (job frames also carry messageId +
   // seq) and ride the same broadcast socket. Handle them BEFORE the
   // !msg.runId early-return below.
@@ -1775,6 +1807,7 @@ function handleServerMessage(msg) {
     awayScreensaver?.onAskFrame(msg);   // chat turns and proposals it counts
     askPanel?.pushServerFrame(msg);
     wfvChat?.pushFrame(msg);          // the Workflows chat keeps only its own composer thread's frames
+    pushDesignAskFrame(msg);          // the open design's chat keeps only its own thread's frames
     // D12: a settled chat turn moves the combined spend — repaint the sidebar
     // indicator and, when open, the Statistics view. ask-error included: an
     // error turn that saw a result frame carries recorded spend. refreshBudget
@@ -2051,6 +2084,22 @@ function handleServerMessage(msg) {
     return;
   }
 
+  // The server's frame names the project in `action` (emitChanged(type, action)); a null one has nothing to refetch.
+  if (msg.type === 'readiness-changed') {
+    // Repaint whatever shows this project's readiness: the Projects list (chip, open popover) or a settings card.
+    const key = msg.action;
+    const shown = key && (currentView() === 'projects'
+      || [...document.querySelectorAll('.readiness-settings-card')].some((c) => c.dataset.key === key));
+    if (shown) void refreshReadiness(key);
+    return;
+  }
+  // A project just added evaluated not-ready: one nudge per project, opening its breakdown.
+  if (msg.type === 'readiness-added') {
+    const toast = readinessAddedToast(msg, { run: () => openReadinessBreakdown(msg.projectKey) });
+    if (toast) notify(toast);
+    return;
+  }
+
   // Tagged per-run event. Ignore anything without a runId.
   if (msg.type === 'project-sync-changed') {
     const v = currentView();
@@ -2288,6 +2337,8 @@ function onHello(msg) {
   pokeAskRuns(null, 'hello');
   askPanel?.onHello(msg.ask);
   wfvChat?.onHello();
+  designHello(msg.design ?? [], { rebooted });   // the live builds (an older server's hello has none)
+  designActivity.hello(msg.design);              // Activity's builds, paused ones too (refreshAllCounts below repaints)
 
   // diff-comments-changed is a plain global broadcast with no per-socket buffer
   // (ui/server.mjs:389-398), so any comment written while the socket was down is
@@ -12555,7 +12606,14 @@ function buildProjectRow(p) {
   path.className = 'proj-path';
   appendBreakable(path, p.displayPath || p.path);   // a narrow column breaks it after a /, not mid-name
   path.title = p.path;
-  main.append(name, path);
+  // The title line: the name, then the readiness chip (paintReadinessChips fills the slot). A long name pushes
+  // the chip onto the next line instead of cutting the name.
+  const title = document.createElement('div');
+  title.className = 'pl-title';
+  const rdSlot = document.createElement('span');
+  rdSlot.className = 'pl-rd-slot';
+  title.append(name, rdSlot);
+  main.append(title, path);
   row.appendChild(main);
   // #527 / design 2026-10-01: the sync bar's own column (branch | origin status | action). A keyed
   // row's bar is always there; paintSyncChips fills it, and hides it only for a project the
@@ -13090,6 +13148,480 @@ if (el.projectsSyncAll) {
   });
 }
 
+// ---- Agent readiness: a chip per project row, its popover, the ignore list and the per-tool setting ----------
+// The row chip paints from the cache-only `readiness` summary on GET /api/projects. A project with no
+// summary yet is evaluated once per page load (warmReadiness) and the summaries are re-read after.
+// The row chip is status only (the whole row opens the project page); the project page header's chip opens the
+// popover with the final report (GET /api/projects/:key/readiness): only the tools the project uses are
+// judged. `readiness-changed` frames refetch it. Every string in a report is server data: textContent only.
+const readinessReports = {};        // projectKey → last full report
+const readinessHeadChips = new Map();   // projectKey → { chip, menu, fly }: the header chip's popover, reused across repaints
+/** The header chip record of one project, or of all projects. */
+const readinessRecs = (key) => (key ? [readinessHeadChips.get(key)] : [...readinessHeadChips.values()]).filter(Boolean);
+const readinessTried = new Set();   // keys the cold-start warm-up already asked for
+let readinessOff = false;           // GET answered {disabled: true}: no chips, no more asking
+
+async function fetchReadinessReport(key, { refresh = false } = {}) {
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(key)}/readiness${refresh ? '?refresh=1' : ''}`);
+    const data = await safeJson(res);
+    if (data && data.disabled) { readinessOff = true; return null; }
+    const report = res.ok && data && data.readiness ? data.readiness : null;
+    if (report) readinessReports[key] = report;
+    return report;
+  } catch {
+    return null;
+  }
+}
+
+// The row summary of a fresh report (the server's summaryOf, report.mjs).
+const summaryOfClient = (r) => ({ level: r.level, failingCount: r.counts.mustFix + r.counts.shouldFix, ...r.counts });
+function applyReadinessReport(key, report) {
+  const p = projectByKey(key);
+  if (!p || !report || !report.counts) return;
+  p.readiness = summaryOfClient(report);
+}
+
+async function syncReadinessSummaries() {
+  try {
+    const data = await safeJson(await fetch('/api/projects'));
+    for (const q of (data && Array.isArray(data.projects)) ? data.projects : []) {
+      const p = q && projectByKey(q.key);
+      if (p) p.readiness = q.readiness || null;
+    }
+  } catch { /* keep the summaries we have */ }
+}
+
+async function warmReadiness() {
+  if (readinessOff) return;
+  const cold = state.projects.filter((p) => p && p.key && p.exists && !p.readiness && !readinessTried.has(p.key));
+  if (!cold.length) return;
+  for (const p of cold) readinessTried.add(p.key);
+  for (const p of cold) {
+    if (readinessOff) break;
+    await fetchReadinessReport(p.key);
+  }
+  if (!readinessOff) await syncReadinessSummaries();
+  if (currentShownView === 'projects') paintReadinessChips();
+}
+
+// Re-read one project's report (`refresh` re-evaluates past the server cache) and repaint what shows it:
+// the row chip, the open flyout and the project settings cards (`cards: false` for the card that asked).
+async function refreshReadiness(key, { refresh = false, cards = true } = {}) {
+  const report = await fetchReadinessReport(key, { refresh });
+  if (!report) return;
+  applyReadinessReport(key, report);
+  if (currentShownView === 'projects') paintReadinessChips();
+  if (projDetail && projDetail.key === key) paintReadinessHeadChip(projDetail.screen, key);
+  for (const rec of readinessRecs(key)) if (rec.fly.isOpen()) { paintReadinessMenu(key, rec); rec.fly.reposition(); }
+  if (cards) for (const card of document.querySelectorAll('.readiness-settings-card')) if (card.dataset.key === key) void fillReadinessCard(card, key);
+}
+
+// Show one project's page with its report open (the add-project toast's action): the header chip opens it once painted.
+let readinessOpenOnPaint = null;
+function openReadinessBreakdown(key) {
+  readinessOpenOnPaint = key;
+  if (location.hash === `#projects/${key}` && projDetail && projDetail.key === key) paintReadinessHeadChip(projDetail.screen, key);
+  else location.hash = `projects/${key}`;
+}
+
+// The row chip is status only, like the row's other chips: the row stays a row and the whole of it opens the page. The
+// row names the chip in aria-describedby, so its state is read with the row.
+function paintReadinessChips() {
+  for (const item of document.querySelectorAll('#projects-list .pl-item[data-key]')) {
+    const key = item.dataset.key;
+    const p = projectByKey(key);
+    const slot = item.querySelector('.pl-rd-slot');
+    if (!slot) continue;
+    const chip = readinessOff ? null : renderReadinessChip(p && p.readiness, { doc: document });
+    if (!chip) { slot.replaceChildren(); continue; }
+    chip.id = `pl-rd-${key.replace(/[^\w-]/g, '_')}`;
+    slot.replaceChildren(chip);
+    item.querySelector('.pl-row')?.setAttribute('aria-describedby', chip.id);
+  }
+}
+
+// The chip is the flyout's trigger (createFlyout toggles it on click); the menu lives on <body> and is
+// filled when it opens. One per project for the page's life — createFlyout's document listeners are never removed.
+function newReadinessChip(key, chip, { closeOn = document.querySelector('.main') } = {}) {
+  chip.setAttribute('role', 'button');
+  chip.tabIndex = 0;
+  chip.setAttribute('aria-haspopup', 'dialog');
+  const menu = document.createElement('div');
+  menu.className = 'activity-pop readiness-pop';
+  menu.setAttribute('role', 'dialog');
+  menu.setAttribute('aria-label', 'Agent readiness');
+  menu.hidden = true;
+  document.body.appendChild(menu);
+  const rec = { chip, menu, fly: null };
+  // 'below': under the chip, left-aligned, height limited to the room below; only .rp-body scrolls.
+  rec.fly = createFlyout({ doc: document, win: window, trigger: chip, menu, mode: 'below', closeOn, onOpen: () => void openReadinessMenu(key, rec) });
+  chip.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    e.preventDefault();
+    e.stopPropagation();
+    chip.click();   // detail 0: createFlyout reads it as a keyboard open
+  });
+  return rec;
+}
+
+// The project page header's chip, beside the name: the list row's chip and popover, kept in its own record. A page
+// opened straight from a link has no summary yet: read the report once, then paint.
+function paintReadinessHeadChip(screen, key) {
+  const slot = screen && screen.querySelector('.pd-rd-slot');
+  if (!slot || !key) return;
+  const p = projectByKey(key);
+  if (p && !p.readiness && !readinessOff && p.exists && !readinessTried.has(key)) {
+    readinessTried.add(key);
+    void refreshReadiness(key, { cards: false });
+  }
+  const fresh = readinessOff ? null : renderReadinessChip(p && p.readiness, { doc: document });
+  let rec = readinessHeadChips.get(key);
+  if (!fresh) { slot.replaceChildren(); return; }
+  if (rec) {
+    rec.chip.className = fresh.className;
+    rec.chip.title = fresh.title;
+    rec.chip.setAttribute('aria-label', fresh.getAttribute('aria-label'));
+    rec.chip.replaceChildren(...fresh.childNodes);
+  } else {
+    rec = newReadinessChip(key, fresh, { closeOn: screen });
+    readinessHeadChips.set(key, rec);
+  }
+  if (rec.chip.parentNode !== slot) slot.replaceChildren(rec.chip);
+  // The toast's "See what to add": open once this navigation is over (a hashchange closes every popover).
+  if (readinessOpenOnPaint === key) {
+    readinessOpenOnPaint = null;
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (rec.chip.isConnected) rec.fly.open({ focus: true }); }));
+  }
+}
+
+// The Settings card's "View report": the header chip's popover, opened once this click is over (the flyout closes on
+// a click outside it) and after the header is scrolled into view (it closes on a scroll of the page).
+function openReadinessFromCard(key) {
+  const rec = readinessHeadChips.get(key);
+  if (!rec || !rec.chip.isConnected) return;
+  (rec.chip.closest('.pd-header') || rec.chip).scrollIntoView({ block: 'start' });
+  requestAnimationFrame(() => requestAnimationFrame(() => { if (rec.chip.isConnected) rec.fly.open({ focus: true }); }));
+}
+
+async function openReadinessMenu(key, rec) {
+  if (!readinessReports[key]) {
+    rec.menu.replaceChildren(Object.assign(document.createElement('div'), { className: 'rp-head', textContent: 'Checking...' }));
+    rec.fly.reposition();
+    await fetchReadinessReport(key);
+  }
+  if (rec.fly.isOpen()) { paintReadinessMenu(key, rec); rec.fly.reposition(); }
+}
+
+function paintReadinessMenu(key, rec) {
+  const report = readinessReports[key];
+  if (!report) {
+    rec.menu.replaceChildren(Object.assign(document.createElement('div'), { className: 'rp-head', textContent: 'Readiness could not be read.' }));
+    return;
+  }
+  // Keep the reader's place across a repaint (spec 5): which boxes are open and where the body is scrolled.
+  const open = [...rec.menu.querySelectorAll('.rp-more')].map((d) => d.open);
+  const body = rec.menu.querySelector('.rp-body');
+  const top = body ? body.scrollTop : 0;
+  rec.menu.replaceChildren(buildReadinessMenu(key, report));
+  rec.menu.querySelectorAll('.rp-more').forEach((d, i) => { if (open[i]) d.open = true; });
+  const next = rec.menu.querySelector('.rp-body');
+  if (next) next.scrollTop = top;
+}
+
+// The popover (spec 5): head with the level and "N of M checks pass"; the tools this project uses; one line naming
+// the tools that are not judged; failing repository checks; the passed and ignored boxes; a fixed foot.
+// Every string from the report is server data: textContent only.
+function buildReadinessMenu(key, report) {
+  const m = readinessMenuModel(report, { engineLabel });
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
+  const frag = document.createDocumentFragment();
+
+  const head = el('div', 'rp-head');
+  const title = el('div', 'rp-title', 'Agent readiness');
+  const p = projectByKey(key);
+  title.append(el('span', 'rp-sub', p ? p.name : key));
+  head.append(title);
+  const end = el('div', 'rp-head-end');
+  if (LEVEL_WORDS[m.level]) end.append(renderLevelLabel(m.level, { doc: document }));
+  // Closes this popover like Escape: a pointer click lets go of focus, a key press hands it back to the chip.
+  const close = el('button', 'btn btn-sm btn-quiet btn-icon rp-close');
+  close.append(icon(document, 'x', 14));
+  close.type = 'button';
+  close.title = 'Close';
+  close.setAttribute('aria-label', 'Close');
+  close.addEventListener('click', (e) => {
+    const rec = readinessRecs().find((r) => r.menu.contains(close));
+    if (rec) rec.fly.close(e.detail === 0 ? { refocus: true } : { blur: true });
+  });
+  end.append(close);
+  head.append(end);
+  frag.append(head);
+
+  const body = el('div', 'rp-body');
+  const sec = (h, note) => { const s = el('div', 'rp-sec'); s.append(el('h3', '', h)); if (note) s.append(el('span', '', note)); return s; };
+
+  body.append(sec('Tools this project uses'));
+  for (const t of m.tools) {
+    const row = el('div', 'rp-tool');
+    const name = el('span', 'rp-tool-n', t.label);
+    if (t.reason) name.append(' ', el('small', '', `(${t.reason})`));
+    row.append(name);
+    if (LEVEL_WORDS[t.level]) row.append(renderLevelLabel(t.level, { doc: document }));
+    if (t.detail) row.append(el('span', 'rp-tool-d', t.detail));
+    if (t.fix) row.append(el('span', 'rp-tool-f', t.fix));
+    // The run engine is always judged: its "(runs use it)" reason says so, and it gets no button.
+    if (!t.runs) {
+      const btn = el('button', 'btn btn-sm btn-quiet rp-act', 'Not used here');
+      btn.type = 'button';
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        const prev = await setReadinessTool(key, t.name, 'unused');
+        if (prev === null) { btn.disabled = false; notify({ tone: 'err', title: `Could not save. ${t.label} is still judged.` }); return; }
+        await refreshReadiness(key);
+        notify({ tone: 'info', title: `${t.label} marked as not used`, key: `readiness-unused-${key}-${t.name}`,
+          action: { label: 'Undo', run: async () => { if ((await setReadinessTool(key, t.name, prev)) !== null) await refreshReadiness(key); } } });
+      });
+      row.append(btn);
+    }
+    body.append(row);
+  }
+  // Plain text: the foot's Settings link is the one way to change it.
+  if (m.notJudged.length) body.append(el('div', 'rp-notjudged', `Not judged: ${m.notJudged.join(', ')}.`));
+
+  body.append(sec('Repository', 'Applies to every tool'));
+  const GROUP = { blocker: 'Must fix', warn: 'Should fix', info: 'Advice' };
+  for (const sev of ['blocker', 'warn', 'info']) {
+    for (const c of m.failing[sev]) {
+      const row = el('div', 'rp-chk');
+      const dot = el('span', `rp-sevdot ${sev}`);
+      dot.setAttribute('aria-label', GROUP[sev]);
+      const ign = el('button', 'btn btn-sm btn-quiet rp-ign', 'Ignore');
+      ign.type = 'button';
+      ign.addEventListener('click', async () => { if (await setReadinessIgnore(key, c.id, true)) await refreshReadiness(key, { refresh: true }); });
+      row.append(dot, el('span', 'rp-chk-t', c.title), ign);
+      if (c.detail) row.append(el('span', 'rp-chk-d', c.detail));
+      row.append(el('span', 'rp-chk-f', c.fix));
+      body.append(row);
+    }
+  }
+
+  const box = (lead, text) => {
+    const d = el('details', 'rp-more');
+    const s = el('summary');
+    s.append(el('span', lead), el('span', '', text), el('span', 'rp-chev'));
+    d.append(s);
+    return d;
+  };
+  const passedBox = box('rp-tick', `${m.passed.length} checks pass`);
+  const list = el('ul');
+  for (const it of m.passed) { const li = el('li'); li.append(el('b', '', it.title), el('span', '', it.detail)); list.append(li); }
+  passedBox.append(list);
+  body.append(passedBox);
+
+  if (m.ignored.length) {
+    const ignBox = box('rp-gdot', `${m.ignored.length} ignored for this project`);
+    const ul = el('ul');
+    for (const it of m.ignored) {
+      const li = el('li');
+      const back = el('button', 'btn btn-sm btn-quiet rp-ign', 'Stop ignoring');
+      back.type = 'button';
+      back.addEventListener('click', async () => { if (await setReadinessIgnore(key, it.id, false)) await refreshReadiness(key, { refresh: true }); });
+      li.append(el('b', '', it.title), back);
+      ul.append(li);
+    }
+    ignBox.append(ul);
+    body.append(ignBox);
+  }
+  frag.append(body);
+
+  const foot = el('div', 'rp-foot');
+  const when = el('span', '', report.checkedAt ? `Checked ${ago(report.checkedAt)}` : '');
+  const settings = el('a', '', 'Settings');
+  settings.href = `#projects/${key}/settings`;
+  settings.addEventListener('click', (e) => { e.preventDefault(); openReadinessSettings(key); });
+  const recheck = el('button', 'btn btn-sm', 'Recheck');
+  recheck.type = 'button';
+  recheck.addEventListener('click', async () => { recheck.disabled = true; await refreshReadiness(key, { refresh: true }); recheck.disabled = false; });
+  foot.append(when, el('span', 'rp-sp'), settings, recheck);
+  frag.append(foot);
+  return frag;
+}
+
+// The settings PATCH replaces a whole value, so each write reads the list (or map) and writes it back. One chain per
+// project keeps those read-then-write pairs in click order: a second quick click reads what the first one wrote.
+const readinessWrites = new Map();   // projectKey → the tail of its write chain
+function queueReadinessWrite(key, fn) {
+  const next = (readinessWrites.get(key) || Promise.resolve()).then(fn, fn);
+  readinessWrites.set(key, next.catch(() => {}));
+  return next;
+}
+
+// Add (`ignored`) or drop one check id on the project's own `readiness.ignore` list. Resolves true once
+// the PATCH landed; the other ids on the list, known or not, are kept. A failed read writes nothing.
+function setReadinessIgnore(key, checkId, ignored) {
+  const url = `/api/projects/${encodeURIComponent(key)}/settings`;
+  return queueReadinessWrite(key, async () => {
+    try {
+      const got = await fetch(url);
+      if (!got.ok) return false;
+      const data = await safeJson(got);
+      const own = data && data.own && data.own['readiness.ignore'];
+      const cur = Array.isArray(own) ? own : [];
+      const next = ignored ? [...new Set([...cur, checkId])] : cur.filter((id) => id !== checkId);
+      const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ 'readiness.ignore': next.length ? next : null }) });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  });
+}
+
+// Set one tool's readiness choice ('used' | 'unused' | 'detect') on the project's own readiness.tools map.
+// Resolves to the previous choice (for Undo), or null when the read or the PATCH failed.
+function setReadinessTool(key, engine, value) {
+  const url = `/api/projects/${encodeURIComponent(key)}/settings`;
+  return queueReadinessWrite(key, async () => {
+    try {
+      const got = await fetch(url);
+      if (!got.ok) return null;
+      const data = await safeJson(got);
+      const own = data && data.own && data.own['readiness.tools'];
+      const cur = own && typeof own === 'object' && !Array.isArray(own) ? { ...own } : {};
+      const prev = cur[engine] || 'detect';
+      if (value === 'detect') delete cur[engine]; else cur[engine] = value;
+      const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 'readiness.tools': Object.keys(cur).length ? cur : null }) });
+      if (!res.ok) return null;
+      return prev;
+    } catch {
+      return null;
+    }
+  });
+}
+
+// The popovers live on <body>, outside every view: any hash navigation (Back, a link) closes them.
+function closeReadinessPopovers() {
+  for (const rec of readinessRecs()) if (rec.fly.isOpen()) rec.fly.close();
+}
+window.addEventListener('hashchange', closeReadinessPopovers);
+
+// The project's Settings tab, scrolled to the Agent readiness card once that card has filled (fillReadinessCard).
+let readinessScrollTo = null;
+function openReadinessSettings(key) {
+  closeReadinessPopovers();
+  const hash = `projects/${key}/settings`;
+  // Already on that tab (the header chip's popover): no hashchange will refill the card, so go to it now.
+  const card = location.hash === `#${hash}` && [...document.querySelectorAll('.readiness-settings-card')].find((c) => c.dataset.key === key);
+  if (card) { card.scrollIntoView({ block: 'start' }); card.focus({ preventScroll: true }); return; }
+  readinessScrollTo = key;
+  location.hash = hash;
+}
+
+// The project page's Settings tab: a Detect / Used / Not used control per tool, then one switch per check
+// (on = skipped for this project).
+function buildReadinessSettingsCard(key) {
+  const card = document.createElement('section');
+  card.className = 'card readiness-settings-card';
+  card.dataset.key = key;
+  card.tabIndex = -1;   // openReadinessSettings focuses it
+  void fillReadinessCard(card, key);
+  return card;
+}
+
+async function fillReadinessCard(card, key) {
+  const mine = (card.rdSeq = (card.rdSeq || 0) + 1);
+  const head = document.createElement('div');
+  head.className = 'rs-head';
+  const view = Object.assign(document.createElement('button'), { type: 'button', className: 'btn btn-sm btn-quiet rs-view', textContent: 'View report' });
+  view.addEventListener('click', () => openReadinessFromCard(key));
+  head.append(Object.assign(document.createElement('h3'), { textContent: 'Agent readiness' }), view);
+  const hint = Object.assign(document.createElement('small'), { className: 'hint', textContent: 'Which tools this project uses. Detect lets Worca decide from runs and files.' });
+  const msg = Object.assign(document.createElement('small'), { className: 'hint' });
+  card.replaceChildren(head, hint);
+  const [settings, report] = await Promise.all([
+    fetch(`/api/projects/${encodeURIComponent(key)}/settings`).then(safeJson, () => ({})),
+    readinessReports[key] ? Promise.resolve(readinessReports[key]) : fetchReadinessReport(key),
+  ]);
+  if (mine !== card.rdSeq) return;
+  const CHOICES = [['detect', 'Detect'], ['used', 'Used'], ['unused', 'Not used']];
+  for (const [name, e] of Object.entries((report && report.engines) || {})) {
+    if (e.level === 'locked') continue;
+    const runs = (e.reasons || []).some((r) => r.kind === 'run-engine');
+    const row = document.createElement('div');
+    row.className = 'rs-row';
+    row.append(Object.assign(document.createElement('span'), { className: 'rs-name', textContent: engineLabel(name) }));
+    const seg = document.createElement('div');
+    seg.className = 'seg seg-sm';
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', engineLabel(name));
+    for (const [v, label] of CHOICES) {
+      const b = Object.assign(document.createElement('button'), { type: 'button', textContent: label });
+      b.setAttribute('aria-pressed', String(e.setting === v));
+      b.classList.toggle('on', e.setting === v);
+      if (runs && v === 'unused') { b.disabled = true; b.title = 'Runs use this tool'; }
+      b.addEventListener('click', async () => {
+        if (b.disabled || e.setting === v) return;
+        msg.textContent = '';
+        const hadFocus = document.activeElement === b;   // before the disable: a browser blurs a disabled button
+        const was = [...seg.children].map((x) => x.disabled);
+        for (const x of seg.children) x.disabled = true;
+        const prev = await setReadinessTool(key, name, v);
+        if (prev === null) {
+          // Nothing changed: keep the card (a refresh would rebuild it and wipe the message) and hand the buttons back.
+          msg.textContent = 'Could not save.';
+          [...seg.children].forEach((x, i) => { x.disabled = was[i]; });
+          if (hadFocus) b.focus();
+          return;
+        }
+        void refreshReadiness(key, { cards: true });
+      });
+      seg.append(b);
+    }
+    row.append(seg);
+    const finds = e.detectedReason ? `Detect finds: ${e.detectedReason}` : 'Detect finds nothing';
+    const judged = e.used ? `Judged: ${LEVEL_WORDS[e.level] || e.level}.` : 'Not judged.';
+    // The run engine's note below already says runs use it: its line says only how it is judged.
+    row.append(Object.assign(document.createElement('span'), { className: 'rs-find', textContent: runs ? judged : `${finds}. ${judged}` }));
+    if (runs) row.append(Object.assign(document.createElement('span'), { className: 'rs-note', textContent: 'Runs use this tool, so it is always judged. To stop, change the Run engine setting.' }));
+    card.append(row);
+  }
+  if (readinessScrollTo === key && card.isConnected) {
+    readinessScrollTo = null;
+    requestAnimationFrame(() => { card.scrollIntoView({ block: 'start' }); card.focus({ preventScroll: true }); });
+  }
+  const own = settings && settings.own && settings.own['readiness.ignore'];
+  const ignored = new Set(Array.isArray(own) ? own : []);
+  const seen = new Set();
+  const checks = ((report && report.checks) || []).filter((c) => !seen.has(c.id) && seen.add(c.id));
+  if (!checks.length) hint.textContent = readinessOff ? 'Agent readiness is switched off.' : 'No readiness report yet.';
+  else card.append(Object.assign(document.createElement('small'), { className: 'hint rs-skip', textContent: 'Switch a check on to skip it for this project.' }));
+  for (const check of checks) {
+    const label = document.createElement('label');
+    label.className = 'qtune-sw';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.className = 'sw-input';
+    input.checked = ignored.has(check.id);
+    input.setAttribute('aria-label', `Skip ${check.title}`);
+    input.addEventListener('change', async () => {
+      msg.textContent = '';
+      const want = input.checked;
+      if (await setReadinessIgnore(key, check.id, want)) {
+        void refreshReadiness(key, { refresh: true, cards: false });
+      } else {
+        input.checked = !want;
+        msg.textContent = 'Could not save.';
+      }
+    });
+    const knob = Object.assign(document.createElement('span'), { className: 'switch' });
+    const text = Object.assign(document.createElement('span'), { className: 'qtune-sw-t', textContent: check.title });
+    label.append(input, knob, text);
+    card.appendChild(label);
+  }
+  card.appendChild(msg);
+}
+
 function renderProjectsList() {
   const host = el.projectsList;
   if (!host) return;
@@ -13155,6 +13687,8 @@ function renderProjectsList() {
   paintProjectPolicyCells();
   paintSyncChips();
   void refreshSyncChips();
+  paintReadinessChips();
+  void warmReadiness();
 }
 
 // Fills the .pl-tm chips left by buildProjectRow, and the open project page's team-metrics
@@ -13303,6 +13837,7 @@ function paintProjHeader(screen, p) {
     copy.dataset.wired = '1';
     copy.addEventListener('click', () => copyFromButton(copy, (projectByKey(projDetail && projDetail.key) || p).path));
   }
+  paintReadinessHeadChip(screen, p.key);
   const fresh = screen.querySelector('.pd-new');
   fresh.disabled = !p.exists;
   fresh.title = p.exists ? 'Start a pipeline in this project' : 'The folder is missing on disk';
@@ -13692,6 +14227,7 @@ function buildPdSettings(sec, key) {
   const brief = document.createElement('div'); brief.className = 'pd-house-brief'; sec.appendChild(brief);
   mountHouseBrief(brief, { projectKey: p.key });
   sec.appendChild(buildPdNightCard(p));
+  sec.appendChild(buildReadinessSettingsCard(p.key));
 }
 
 // The project's Away mode layer (project_config.extra.nightMode): fields set here beat the
@@ -16920,6 +17456,8 @@ function paintAskSettings(data) {
   if (scriptHost) scriptHost.replaceChildren(renderScriptToolsToggle({ prefs: data.chat || {} }, { doc: document }));
   const suggestHost = document.getElementById('ask-suggestions-host');
   if (suggestHost) suggestHost.replaceChildren(renderSuggestionsToggle({ prefs: data.chat || {} }, { doc: document }));
+  const promptCheckHost = document.getElementById('ask-prompt-check-host');
+  if (promptCheckHost) promptCheckHost.replaceChildren(renderPromptCheckToggle({ prefs: data.chat || {} }, { doc: document }));
   const summariesHost = document.getElementById('ask-summaries-host');
   if (summariesHost) summariesHost.replaceChildren(renderSummariesToggle({ prefs: data.chat || {} }, { doc: document }));
   setChatSummariesPref(data.chat);
@@ -16974,10 +17512,12 @@ function saveAskLimits(e) {
   const askWebBody = webHost ? collectAskWebFields(webHost) : null;   // null = the web fields were not touched
   const suggestHost = document.getElementById('ask-suggestions-host');
   const summariesHost = document.getElementById('ask-summaries-host');
+  const promptCheckHost = document.getElementById('ask-prompt-check-host');
   const chat = {
     ...(scriptHost ? collectScriptToolsToggle(scriptHost) : {}),
     ...(suggestHost ? collectSuggestionsToggle(suggestHost) : {}),
     ...(summariesHost ? collectSummariesToggle(summariesHost) : {}),
+    ...(promptCheckHost ? collectPromptCheckToggle(promptCheckHost) : {}),
   };
   postAskLimits({ askMaxTurns, askMaxBudgetUsd,
     ...(Object.keys(chat).length ? { chat } : {}),
@@ -18307,7 +18847,8 @@ function loadFlagsTab(sub = '') {
   if (!el.flagsHost) return;
   if (!flagsTabCtl) {
     flagsTabCtl = createFlagsView({ host: el.flagsHost, msgEl: el.flagsMsg, resetBtn: el.flagsReset,
-      api: (method, body) => mcpApi(method, '/api/flags', body), confirm: confirmModal });
+      api: (method, body) => mcpApi(method, '/api/flags', body), confirm: confirmModal,
+      keep: stillhetLabsRow() });
   }
   void flagsTabCtl.load(sub ? safeDecode(sub) : '');
 }
@@ -19298,6 +19839,9 @@ async function paintEngineSettings(data, { force = false } = {}) {
   for (const engine of HELPER_ENGINES.filter((e) => e !== 'claude')) {
     for (const job of CODEX_HELPER_JOBS) fields[utilityId(engine, job)] = { own: data.utilityModels?.[engine]?.[job], inherited: { value: undefined, source: 'default' } };
   }
+  // Design's lead and builders per engine (Engines card › Design), while the design flag is on.
+  const designEngines = flagOn('design') ? DESIGN_ENGINE_NAMES.filter((e) => ENGINE_NAMES.includes(e)) : [];
+  for (const engine of designEngines) for (const role of ['lead', 'builder']) fields[designRowId(engine, role)] = { own: data.designModels?.[engine]?.[role], inherited: { value: undefined, source: 'default' } };
   const claudeOwn = CLAUDE_USER_HELPER_OWN(data || {});
   const claudeJobs = claudeUserHelperJobs();
   for (const job of claudeJobs) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
@@ -19332,7 +19876,7 @@ async function paintEngineSettings(data, { force = false } = {}) {
     renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
       noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
       defaultLabels: { claude: 'the default model' }, stepHints: { claude: claudeStepHints },
-      jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] }, modelRoles: data.modelRoles || {} });
+      jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] }, modelRoles: data.modelRoles || {}, designEngines });
   }
   lastEngineSettingsData = data;
   paintModelRoles(data);
@@ -19381,6 +19925,8 @@ async function paintEngineCardStatus(root) {
 // The flag flips while the Models page is open: the Engines card gains / loses the interview row. Refetched, since
 // GET /api/settings carries the row's stored pair and its default only while the flag is on.
 onFlagChange('requirements', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintHelperModelCards({ force: true }); });
+// The design flag flips while the Models page is open: the Engines card gains / loses its Design rows.
+onFlagChange('design', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintEngineSettings(lastEngineSettingsData, { force: true }); });
 document.getElementById('engineSettingsSave')?.addEventListener('click', async () => {
   const root = document.getElementById('engine-settings-root');
   const body = enginePatchToSettingsBody(readEngineSection(root));
@@ -19488,6 +20034,7 @@ function setProviderMsg(name, text, err, title = 'Something went wrong') {
   if (!row) return;
   row.textContent = text || '';
   row.className = 'hint mv-pv-msg';
+  row.removeAttribute('role');
 }
 
 async function reloadProviders() {
@@ -19558,7 +20105,8 @@ async function copilotSignOutFlow() {
 
 // #555: the row's Save button shows busy → "Saved"; the row's line carries only errors. A change
 // on a select (account type, concurrency) has no button, so its success is the new value itself.
-async function patchProviderFlow(name, body, { btn = null } = {}) {
+// `onError(message)`, when given, shows a refused Save in the row's own place instead of the card's alert.
+async function patchProviderFlow(name, body, { btn = null, onError = null } = {}) {
   setProviderMsg(name, '');
   const r = await withButton(btn, async () => {
     const res = await fetch(`/api/providers/${encodeURIComponent(name)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -19571,10 +20119,14 @@ async function patchProviderFlow(name, body, { btn = null } = {}) {
     return { ok: true };
   }, { done: 'Saved' });
   if (r.skipped) return;
-  if (!r.ok) { setProviderMsg(name, r.error, true, 'Not saved'); return; }
+  if (!r.ok) {
+    if (onError) onError(r.error);
+    else setProviderMsg(name, r.error, true, 'Not saved');
+    return;
+  }
   // The repaint replaced the clicked button: give its successor the "Saved" state.
   if (btn && !btn.isConnected) {
-    const cls = btn.classList.contains('mv-sp-save') ? 'mv-sp-save' : 'mv-pv-save';
+    const cls = ['mv-sp-save', 'mv-im-save', 'mv-so-save'].find((c) => btn.classList.contains(c)) || 'mv-pv-save';
     const next = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"] .${cls}`);
     if (next) await withButton(next, () => undefined, { done: 'Saved' });
   }
@@ -19621,6 +20173,44 @@ async function testSpeechFlow(btn) {
   if (r.skipped) return;
   if (r.ok) notify({ tone: 'ok', key: `speech-test-${kind}`, title: `${what} works`, detail: r.detail ? `${r.detail}.` : '' });
   else setProviderMsg('speech', r.error, true, `${what} test failed`);
+}
+
+/** The Image generation row's Test picture: makes one picture from what is on screen, like testSpeechFlow.
+ *  Testing… → Works on the button; the picture and its time, or the reason it failed, in the row itself. */
+async function testImagesFlow(btn) {
+  const typed = collectImagesRow(providerRoot()) || {};
+  setProviderMsg('images', '');
+  const r = await withButton(btn, async () => {
+    try {
+      const res = await fetch('/api/images/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(typed) });
+      const data = (await safeJson(res)) || {};
+      if (data.ok) return data;
+      return { ok: false, message: data.message || data.error || `The server answered ${res.status}.` };
+    } catch (e) { return { ok: false, message: `worca did not answer (${e.message}).` }; }
+  }, { busy: 'Testing…', done: 'Works' });
+  if (r.skipped) return;
+  showImagesTest(providerRoot(), r);
+}
+
+/** The Sound row's Test: lists the voices the key reaches. An unchanged key is not sent, so the saved one is tested.
+ *  Testing… → Works on the button; "Key works · n voices", or the reason it failed, in the row itself. */
+async function testSoundFlow(btn) {
+  const typed = collectSoundRow(providerRoot()) || {};
+  setProviderMsg('sound', '');
+  const r = await withButton(btn, async () => {
+    try {
+      const res = await fetch('/api/providers/sound/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(typed) });
+      const data = (await safeJson(res)) || {};
+      if (data.ok) return data;
+      return { ok: false, message: data.message || data.error || `The server answered ${res.status}.` };
+    } catch (e) { return { ok: false, message: `worca did not answer (${e.message}).` }; }
+  }, { busy: 'Testing…', done: 'Works' });
+  if (r.skipped) return;
+  const line = providerRoot()?.querySelector('.mv-pv-row[data-provider="sound"] .mv-so-result');
+  if (!line) return;
+  line.hidden = false;
+  line.className = r.ok ? 'hint mv-so-result' : 'hint err mv-so-result';
+  line.textContent = r.ok ? `Key works · ${r.voices} voices` : (r.message || '');
 }
 
 async function testProviderFlow(btn) {
@@ -20062,6 +20652,10 @@ if (el.providersList) {
       const body = collectSpeechRow(providerRoot());
       if (body) patchProviderFlow('speech', body, { btn: t });
     } else if (t.classList.contains('mv-sp-test')) testSpeechFlow(t);
+    else if (t.classList.contains('mv-im-save')) patchProviderFlow('images', collectImagesRow(providerRoot()), { btn: t, onError: (msg) => showImagesSaveError(providerRoot(), msg) });
+    else if (t.classList.contains('mv-im-test')) testImagesFlow(t);
+    else if (t.classList.contains('mv-so-save')) patchProviderFlow('sound', collectSoundRow(providerRoot()), { btn: t });
+    else if (t.classList.contains('mv-so-test')) testSoundFlow(t);
     else if (t.classList.contains('mv-sp-clear')) clearSpeechCacheFlow(t);
     else if (t.classList.contains('mv-pv-preset')) {
       // Fills the fields only; the row's Test / Save do the rest, exactly as for a typed URL.
@@ -20078,6 +20672,7 @@ if (el.providersList) {
     const t = ev.target;
     if (!t || !t.classList) return;
     if (t.classList.contains('mv-cp-account')) patchProviderFlow('copilot', { accountType: t.value });
+    else if (t.classList.contains('mv-im-service')) applyImagesPreset(providerRoot(), t.value);
     else if (t.classList.contains('mv-pv-conc') && t.dataset.provider === 'copilot') patchProviderFlow('copilot', { maxConcurrent: Number(t.value) });
   });
 }
@@ -33443,10 +34038,26 @@ const requirementsView = createRequirementsView({
   msgEl: $('#requirements-msg'),
   // who: the signed-in person on a shared deployment (the start-before-Ready dialog's "Recorded as"), else nobody
   // openRun: a started run is where the person goes next (the run page, #running/<runId>)
-  deps: { route: (p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; }, who: () => viewer.name, openRun: (runId) => { location.hash = `#running/${runId}`; } },
+  // confirm: the model switch asks it (9c board 4), in the shared confirm modal
+  deps: { route: (p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; }, who: () => viewer.name, openRun: (runId) => { location.hash = `#running/${runId}`; },
+    confirm: (o) => confirmModal(o) },
 });
 // Turning the flag off while the page is open leaves it for Chat (a hidden page must not stay up).
 onFlagChange('requirements', (on) => { if (!on && currentView() === 'requirements') showView('chat', ''); });
+
+// Design (behind the design flag): the page module owns #design-host and the nav row's live count; app.js routes and
+// relays the design-* frames and hello's design list.
+const designView = mountDesignView({ doc: document, win: window, host: $('#design-host'), fetch: (...a) => fetch(...a), sendWs: (obj) => { const s = state.ws; if (s && state.wsReady) { try { s.send(JSON.stringify(obj)); } catch { /* ignore */ } } }, route: (p) => { location.hash = p ? `#design/${p}` : '#design'; }, prompt: (o) => promptModal(o),
+  createChat: createDesignChat, confirm: (o) => confirmModal(o),
+  // As the Workflows chat's: once marked loads, the open design chat paints its replies again.
+  renderMarkdown: (text, mount) => {
+    const out = hdMarkdown.render(text);
+    if (out && out.kind === 'md') { mount.classList.add('ask-md'); mount.replaceChildren(out.frag); return; }
+    mount.textContent = text;
+    if (!hdMarkdown.isReady() && !hdMarkdown.isFailed()) void hdMarkdown.ensure().then((ok) => { if (ok) repaintDesignChat(); });
+  },
+});
+onFlagChange('design', (on) => { if (!on && currentView() === 'design') showView('chat', ''); updateNavCounts(); });
 
 /** The workspace read-model, loaded once: a scheduled run card names "Workspace · <name>", not an id. */
 function withWorkspaces() {
@@ -33608,7 +34219,8 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
     const run = r ? withChainPr(rdModelRun(r), m) : (m.pipelineId ? memberRun(m)
       : { ticket: { status: m.ticket ? m.ticket.status : 'scheduled', runAt: m.ticket && !m.ticket.after ? m.ticket.runAt : null,
         // #1096: a chain root that only waits for another run names that run ("starts after <title>").
-        after: m.after ? { index: m.after } : m.waitsFor && m.waitsFor.title ? { title: m.waitsFor.title } : null } });
+        after: m.after ? { index: m.after } : m.waitsFor && m.waitsFor.title ? { title: m.waitsFor.title } : null,
+        held: !!(m.ticket && m.ticket.held) } });
     const pk = m.historyKey || m.projectKey || histPk(m.pipelineId);
     const href = r ? `#running/${r.runId}` : m.pipelineId && pk ? `#history/${pk}/${m.pipelineId}`
       : groupKind === 'feature' ? `#feature/${encodeURIComponent(id)}` : m.ticketId ? '#schedules/once' : '#runs';
@@ -33801,7 +34413,8 @@ function paintGroupPageNow() {
       const omit = (row.model && Array.isArray(row.model.actions)) ? row.model.actions.slice() : [];
       const changed = String(h.__groupOmit || '') !== String(omit);
       h.__groupOmit = omit;
-      if (h.__shapeWant !== row.groupId || !(h.__shapeOpts && h.__shapeOpts.inGroup)) mountShapeFeature(h, row.groupId, { loading: true, inGroup: true });
+      if (h.__shapeWant !== row.groupId || !(h.__shapeOpts && h.__shapeOpts.inGroup)) mountShapeFeature(h, row.groupId, { loading: true, inGroup: true,
+        focusFallback: () => (host.__gp ? host.__gp.querySelector('.gpage-more') : null) });   // openGroupMoreMenu's anchor
       else if (GROUP_PAGE.reentered || changed) paintShapeFeature(h);   // away: the hidden page skipped frames
       GROUP_PAGE.reentered = false;
     },
@@ -38129,14 +38742,18 @@ function renderPipelineTabs() {
 
 // Needs you, counted without building the list (this runs on every WS frame): the same rule
 // as the Runs list's Needs-you group, over the same rows (runs-list.mjs countNeedsYou). The top
-// bar's Activity badge reads the SAME items (activity-model.mjs activityCounts), so its amber
-// number is this one; `active` is every live run: the grey Runs number, Activity's running count.
+// bar's Activity badge reads the SAME items plus the Design builds (activity-model.mjs
+// activityCounts), so its amber number is this one plus the builds that need you, while the Runs
+// badge (countNeedsYou) stays runs only; `active` is every live run: the grey Runs number,
+// Activity's running count. `designs` only while the design flag is on: hello lists the builds
+// either way, and a #design/<id> row would then lead nowhere.
 function runsNeedsInput() {
   return {
     live: overviewRuns().map((r) => ({ runId: r.runId, pipelineId: r.pipelineId || '', status: r.status, ask: r.pendingQuestion != null, unread: isLingering(r),
       roundOf: runsRoundOf(r) })),   // a live fix round: its run is Working, not Needs you (runs-list needsYouItems, D5)
     history: Array.isArray(state.historyAll) ? state.historyAll : [],
     active: liveRuns().map((r) => ({ runId: r.runId })),
+    designs: flagOn('design') ? designActivity.items() : [],
   };
 }
 function runsNeedsCount() {
@@ -38238,7 +38855,7 @@ function paintScheduleCounts(c) {
 // and PATH — never written here); this block only paints it and runs guides.
 // A guide is transient state: a reload clears it, the shelf re-summons it.
 // ---------------------------------------------------------------------------
-const gs = { status: null, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, setupShown: false, refreshTimer: 0, poll: 0, startedRunId: "" };
+const gs = { status: null, settled: false, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, setupShown: false, refreshTimer: 0, poll: 0, startedRunId: "" };
 let gsPillHost = null;
 let gsWelcomeUnbind = null;
 let setupDialog = null;
@@ -38248,6 +38865,7 @@ function openSetup({ entry = 'rerun', step = 'check', team = null, teamHash = nu
   setMobileNavOpen(false);
   setupDialog = openSetupAssistant({ doc: document, entry, step, team, onClose: (how, { applied = false } = {}) => {
     setupDialog = null;
+    queueMicrotask(worca.maybeDialog);   // after the branch below has shown (or not shown) the first-run welcome
     // A7: a first start always continues to the welcome; a finished re-run that applied something ends on the
     // doors, and a Finish with nothing applied goes back to the page; a fix-it run (entry 'fix') returns to
     // the page it came from (product-1-2).
@@ -38306,6 +38924,27 @@ async function loadOnboarding({ recheck = false } = {}) {
   gs.status = data;
   paintOnboarding();
   maybeWelcome();
+  void stillhetBoot();
+  if (flagsTabCtl) void flagsTabCtl.load();   // the Labs row follows the ask switch
+}
+
+// Stillhet's opt-in and opt-out (ui/public/stillhet.mjs): idempotent, so a socket reconnect that reruns the boot path adds nothing.
+let railReloadWatch = null;
+async function stillhetBoot() {
+  const status = gs.status;
+  if (!status) return;
+  const toastText = (text) => notify({ tone: 'info', title: text });
+  if (!railReloadWatch) railReloadWatch = watchRailReload({ doc: document, win: window, bootOn: RAIL_BOOT, toast: toastText });
+  if (status.stillhetAsk !== true) return;
+  const r = await mcpApi('GET', '/api/flags');
+  const flag = r.ok && Array.isArray(r.data?.flags) ? r.data.flags.find((f) => f.key === 'rail') : null;
+  if (!flag) return;
+  mountDesignSwitch({ doc: document, status, flag, fetchJson: mcpApi, toast: toastText });
+  const dialogOpen = [...document.querySelectorAll('dialog[open], .viewer-modal:not(.hidden), .keys-modal')].some((d) => d.getClientRects().length > 0);   // a hidden modal keeps its node
+  if (shouldAskStillhet({ ask: true, asked: status.stillhetAsked === true, fresh: status.fresh === true, flagKnown: true, on: flag.on, locked: flag.locked,
+    welcomeThisLoad: gs.welcomeShown, setupOpen: !!setupDialog, dialogOpen })) {
+    mountStillhetAsk({ doc: document, status, fetchJson: mcpApi });
+  }
 }
 /** Coalesce the change broadcasts (a finished run fires several) into one refetch. */
 function scheduleOnboardingRefresh() {
@@ -38338,6 +38977,7 @@ function paintShelf({ entering = false } = {}) {
     hideLabel: gs.status.hidden ? 'Show in sidebar' : 'Hide from sidebar',
     animate: appearing,
     level: currentLevel(),
+    worcaLevel: worca.state.view,
   });
 }
 
@@ -38393,7 +39033,7 @@ function showWelcome({ force = false } = {}) {
   try { markWhatsNewSeen(localStorage); } catch { /* blocked storage: the note just shows */ }   // nothing is "new" to a new install
   if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; }   // A6: never two sets of door listeners
   setMobileNavOpen(false);   // a phone drawer opened before the onboarding fetch landed must not stay up behind the dialog
-  const close = () => { modal.classList.add('hidden'); if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; } };
+  const close = () => { modal.classList.add('hidden'); if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; } worca.maybeDialog(); };
   gsWelcomeUnbind = bindWelcome(modal, {
     win: window,
     onDoor: (step) => { close(); setOnboardingPrefs({ welcomeSeen: true }); startGuide(step); },
@@ -39010,7 +39650,7 @@ function onboardingViewChanged(name) {
   document.querySelector('.gs-pill')?.classList.toggle('active', name === 'getting-started');
 }
 
-loadOnboarding();
+void loadOnboarding().finally(() => { gs.settled = true; worca.maybeDialog(); });   // the first answer (or its failure) lets the worca dialog know what the first-run welcome will do
 void paintTeamNotice();
 
 const views = $$('.view');
@@ -39021,7 +39661,7 @@ const navLinks = $$('.nav button[data-nav], #acct-settings');
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
 // (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
 // Settings tabs once, pages of their own now.
-const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'feature', 'group'];
+const VIEW_NAMES = ['chat', 'design', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'profile', 'feature', 'group'];
 // One Runs page, five route names: the bare list (#runs), the two run routes every deep link already uses
 // (#running/<id>…, #history/<projectKey>/<id>…) and the group page's two (#feature/<id>…, #group/<id>…, run 3 D1).
 // All five render the `data-view="runs"` section and light the one Runs nav button.
@@ -39061,7 +39701,7 @@ const VIEW_TITLES = Object.freeze({
   guardrails: 'Guardrails', memory: 'Memory', ask: 'Chat', tags: 'Labels & cost tags',
   marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
   schedules: 'Schedules', presets: 'Presets',
-  requirements: 'Requirements',
+  requirements: 'Requirements', design: 'Design',
 });
 function pageMinLevel() {
   if (currentShownView === 'settings') return { key: currentSettingsTab, min: SETTINGS_TAB_MIN_LEVEL[currentSettingsTab] || 'simple' };
@@ -39202,6 +39842,8 @@ function showView(name, param = '') {
   }
   // Requirements is behind its flag (docs/feature-flags.md): a deep link while it is off lands on Chat.
   if (name === 'requirements' && !flagOn('requirements')) return showView('chat', '');
+  // Design too: a deep link while the design flag is off lands on Chat.
+  if (name === 'design' && !flagOn('design')) return showView('chat', '');
   // A bare #running / #history is the Runs list now (both lists merged into it). Replace the
   // entry rather than letting the hash sync below PUSH #runs: Back would land on #history
   // again, normalize again, and never get past it.
@@ -39348,6 +39990,7 @@ function showView(name, param = '') {
   document.body.classList.toggle('view-workspaces', name === 'workspaces');
   document.body.classList.toggle('view-workflows', name === 'workflows');
   document.body.classList.toggle('view-chat', name === 'chat');   // worca Chat: the page fills the column (style.css)
+  document.body.classList.toggle('view-design', name === 'design');   // Design: full-bleed, the stage fills the column
   if (RUNS_VIEWS.has(name)) {
     const entering = !RUNS_VIEWS.has(prevView);
     // The section is visible now (the toggle above): measure before anything opens, so the
@@ -39390,6 +40033,8 @@ function showView(name, param = '') {
   if (name === 'stats') loadStatsView();
   if (name === 'requirements') void requirementsView.show(param);
   else requirementsView.leave();   // the Feature chat phone sheet and an export dialog make the page inert; leaving the view puts it back
+  if (name === 'design') void designView.show(param);
+  else designView.leave();
   if (name === 'schedules') { schedulesView.showTab(param); void withWorkspaces().then(() => schedulesView.load()); }
   if (name === 'team-metrics') {
     // #team-metrics/timeline opens the Timeline tab. Switching tabs inside the page only repaints:
@@ -39433,6 +40078,8 @@ function showView(name, param = '') {
     void loadModelsView().then(() => { if (modelId) revealModelCard(modelId, param); });
   }
   if (name === 'providers') void loadProvidersView().then(() => revealProviderRow(param));
+  if (prevView !== name) worca.onViewShown(name);   // once per navigation, not per repaint: Statistics, Team metrics and Team policy feed the level
+  if (name === 'profile') worca.showProfile(document.getElementById('profile-level-host'), () => currentShownView === 'profile');   // #profile/level
   if (name === 'new') {
     loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights();
     paintNewRunAwayHint();
@@ -39547,7 +40194,7 @@ function revealModelCard(id, param) {
   const card = [...el.modelsList.querySelectorAll('.mv-card[data-id]')].find((n) => n.dataset.id === id);
   if (card) markFound(card, card.querySelector('button'));
 }
-// '#providers/<copilot|openai|anthropic|speech>': the provider's row, highlighted, with its sign-in or key field
+// '#providers/<copilot|openai|anthropic|speech|images|sound>': the provider's row, highlighted, with its sign-in or key field
 // focused (focusProviderRow's choice), else its first control.
 function revealProviderRow(param) {
   if (!param || currentView() !== 'providers' || parseHash()[1] !== param || !el.providersList) return;
@@ -39646,9 +40293,11 @@ $('#topnav-new')?.addEventListener('click', () => {
 
 // Activity (#topnav-activity, activity-menu.mjs): what needs you, what is running and what is
 // scheduled, a list with no actions. Its badge repaints with the Runs badge (updateNavCounts),
-// from the same items; the open popover reads the Runs list's full rows (live: the Runs list's
-// live runs, active: every live run, agent-generation jobs too) and fetches the schedules when it
-// opens. A row routes like any page link: the route hides the Chat page when it is the one showing.
+// from the same items plus the Design builds (designActivity, while the design flag is on), so its
+// amber number includes the builds that need you while the Runs badge stays runs only; the open
+// popover reads the Runs list's full rows (live: the Runs list's live runs, active: every live run,
+// agent-generation jobs too) and the builds, and fetches the schedules when it opens. A row routes
+// like any page link: the route hides the Chat page when it is the one showing.
 activityMenu = $('#topnav-activity') ? createActivityMenu({
   button: $('#topnav-activity'), badge: $('#topnav-activity-n'), pop: $('#activity-pop'),
   getCounts: () => activityCounts(runsNeedsInput()),
@@ -39656,6 +40305,7 @@ activityMenu = $('#topnav-activity') ? createActivityMenu({
     live: overviewRuns().map(runsLiveItem),
     history: (Array.isArray(state.historyAll) ? state.historyAll : []).filter(Boolean).map(runsHistItem),
     active: liveRuns().sort(cmpTabRuns).map(runsLiveItem),
+    designs: flagOn('design') ? designActivity.items() : [],
   }),
   loadSchedules: async () => {
     await withWorkspaces();                              // a workspace's ticket names its workspace
@@ -39834,8 +40484,9 @@ function chatRoute(threadId, { replace = false } = {}) {
   location.hash = target;
 }
 /** Ask worca beside the page: which host the ONE chat page has on this route (showView, after the leave-Chat block and
- *  before enterChatView). Chat: the page — the column and its button hide, the person's choice kept. Workflows: no
- *  column (no top bar). Every other page: the button, and the column when the person left it open. */
+ *  before enterChatView). Chat: the page — the column and its button hide, the person's choice kept. Workflows and
+ *  Design: no column (Workflows has no top bar, Design its own chat). Every other page: the button, and the column
+ *  when the person left it open. */
 function syncAskSide(name) {
   if (!askSide || !askPanel) return;
   const btn = $('#topnav-ask');
@@ -39849,8 +40500,9 @@ function syncAskSide(name) {
     return;
   }
   askHistoryOnChat = false;
-  if (btn) btn.hidden = name === 'workflows';
-  askSide.setAvailable(name !== 'workflows');
+  const noColumn = name === 'workflows' || name === 'design';
+  if (btn) btn.hidden = noColumn;
+  askSide.setAvailable(!noColumn);
 }
 /** Below 1081px the side column covers the main column: the page behind it is inert while it shows (with the phone drawer's). */
 function paintAskSideCover() {
@@ -41244,8 +41896,8 @@ askPanel = createAskPanel({
   },
 });
 ($('section.view[data-view="chat"]') || document.body).appendChild(askPanel.root);
-// Ask worca beside the page: the header toggle docks this same panel in aside#ask-side on every page but Chat and
-// Workflows (syncAskSide decides per route). Made here, after the panel and before the boot route below.
+// Ask worca beside the page: the header toggle docks this same panel in aside#ask-side on every page but Chat,
+// Workflows and Design (syncAskSide decides per route). Made here, after the panel and before the boot route below.
 if ($('#ask-side') && $('#topnav-ask')) {
   askSide = createAskSide({
     doc: document,
@@ -41343,7 +41995,7 @@ else showView(VIEW_NAMES.includes(bootView) ? bootView : 'chat', VIEW_NAMES.incl
 refreshAllCounts();
 refreshBudget();
 startBudgetTick();
-loadWhoami();
+void loadWhoami().then(worca.boot);
 void refreshVersionStatus();   // sidebar "Update available" marker (#841)
 // ...and again when the tab regains focus, so a tab left open for days still sees a new release. A GET
 // only: the server's cache decides whether npm is asked.

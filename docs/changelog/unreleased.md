@@ -3,6 +3,20 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Choose who interviews, per feature
+
+**Pick the harness, model and effort for a feature's Requirements.**
+
+New feature has a **Who interviews** group: Harness, Model and Effort. Rounds, code looks, file reads and Feature chat run on the choice, on Claude, Codex, Copilot, Gemini CLI or another harness Worca can lock down. What a harness cannot do is skipped with a note, never sent to Claude: a code look on a harness that cannot read the repo, a PDF on one that takes text only. Each step names what ran it and its cost (billed, ≈ estimated or cost unknown), and the **so far** chip opens **Cost of this feature**. The model chip changes a running feature from the next step, with a confirm when the switch loses something. The code look shows as a step with **Show what it found**, and the Product brief has **Who makes it** and **⋯ › Refresh the brief**.
+
+Chips: harness, model and effort · Cursor never offered · skipped with a note · cost billed or ≈ · code look as a step · brief per choice
+
+Read it: [Requirements](../requirements.md#choosing-the-harness-and-model)
+
+Pull requests (add each number when it opens):
+
+- Requirements: choose the harness and model per feature and per Product brief (#1234)
+
 ## Shaper keeps going while you're away
 
 **You answer what to build. Away mode handles how to build it.**
@@ -16,6 +30,12 @@ Read it: [Shape it first](../shape-it-first.md)
 Pull requests (add each number when it opens):
 
 - Shaper keeps going while you're away
+
+## Ask me before each run asks before each run
+
+**Ask me before each run** on a slice outline now means what it says: with it on, each later run waits, not started, and the feature card shows *Needs you · Run 2 waits for you to start* with **Start now**. A later slice's plan continues by itself when its checks pass, either way. Away mode keeps a held run held.
+
+Read it: [Shape it first](../shape-it-first.md)
 
 ## A lighter Requirements card
 
@@ -95,15 +115,15 @@ Pull requests (add each number when it opens):
 - Ticket updates (#1072)
 - Ticket updates: Azure Boards and GitHub Issues (#1133)
 
-## Shaper: requirements first, the three cards (experimental)
+## Shaper: requirements first, the three cards
 
 **Agree the requirements before the plan, in cards that read like a conversation.**
 
-With Labs › Requirements first on, a medium or large Shaper task opens with one sentence, `You lead as Product, supported by QA and Security`, and a primary **Shape requirements**. The Requirements card lists what the perspectives agreed, then asks only what they could not settle: Worca's pick is already chosen and marked `recommended`, worded for the role you lead as. **Agree and plan** is the one primary; **Ask for changes** sends your words and your picks back. The plan card gains a **Requirements 7/8** fold that names any requirement no step delivers, and **Fix all** takes the primary until every one is covered. The Chat run card shows the same count while the run plans. A card proposed directly as Shaper now gets the same sentence and **Shape requirements** when medium or large. For a Product or Design lead, a code term with no plain wording now reads in words: `project:read` becomes `read access`, so a decision no longer loses half a sentence.
+A medium or large Shaper task opens with one sentence, `You lead as Product, supported by QA and Security`, and a primary **Shape requirements**. The Requirements card lists what the perspectives agreed, then asks only what they could not settle: Worca's pick is already chosen and marked `recommended`, worded for the role you lead as. **Agree and plan** is the one primary; **Ask for changes** sends your words and your picks back. The plan card gains a **Requirements 7/8** fold that names any requirement no step delivers, and **Fix all** takes the primary until every one is covered. The Chat run card shows the same count while the run plans. A card proposed directly as Shaper now gets the same sentence and **Shape requirements** when medium or large. For a Product or Design lead, a code term with no plain wording now reads in words: `project:read` becomes `read access`, so a decision no longer loses half a sentence.
 
 Chips: Shape requirements · lead role · supporters · Requirements card · recommended picks · Requirements fold · Fix all · experimental: turn it on in Settings › Labs
 
-Read it: [Requirements first](../shape-it-first.md#requirements-first-labs)
+Read it: [Requirements first](../shape-it-first.md#requirements-first)
 
 Pull requests (add each number when it opens):
 

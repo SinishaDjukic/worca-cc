@@ -45,14 +45,15 @@ function stackOf(doc) {
  *  mode 'up'    : left = trigger.left; top = trigger.top - menu height - gap (opens upward)
  *  mode 'beside': left = parent.right + 4, or parent.left - width - 4 when there is no room; top = trigger.top - 5
  *  mode 'down'  : left = trigger.right - menu width (right edges aligned); top = trigger.bottom + gap (opens downward)
+ *  mode 'below' : 'down' left-aligned (left = trigger.left), with `fit` always on
  *  Writes menu.style.left/top in px; un-hides the menu first so it can be measured.
- *  `fit` (opt-in, 'down' only) never lets the popup cover its trigger: it opens below when it fits, else above when there
+ *  `fit` (opt-in for 'down', always for 'below') never lets the popup cover its trigger: it opens below when it fits, else above when there
  *  is more room above (trigger.top - gap - margin) than below, else below. Where it goes it is capped to that room with
  *  menu.style.maxHeight (cleared before measuring, so a repaint measures its own height again) and scrolls. Without `fit`
  *  the vertical clamp may slide a tall popup up over its trigger (the pickers that open without it keep that). */
 export function placeFlyout(menu, trigger, { mode = 'side', parent = null, win = globalThis.window, gap = 6, margin = 8, fit = false } = {}) {
   menu.hidden = false;
-  const fits = fit && mode === 'down';
+  const fits = (fit && mode === 'down') || mode === 'below';
   if (fits) menu.style.maxHeight = '';
   const w = menu.offsetWidth;
   const h = menu.offsetHeight;
@@ -66,6 +67,9 @@ export function placeFlyout(menu, trigger, { mode = 'side', parent = null, win =
     top = t.top - h - gap;
   } else if (mode === 'down') {
     left = t.right - w;
+    top = t.bottom + gap;
+  } else if (mode === 'below') {
+    left = t.left;
     top = t.bottom + gap;
   } else if (mode === 'beside') {
     const p = (parent || trigger).getBoundingClientRect();
@@ -159,12 +163,14 @@ export function createFlyout({
   const toggle = () => (isOpen() ? close() : open());
   const reposition = () => { if (isOpen()) placeFlyout(menu, trigger, { mode, parent, win }); };
 
-  trigger.addEventListener('click', (e) => {
+  // Every handler is named, so destroy() can remove exactly what this call added (jsdom accepts only its own
+  // AbortSignal, so the listeners are not tied to one).
+  const onTriggerClick = (e) => {
     const byKey = e.detail === 0;                         // Enter / Space on a button
     if (!isOpen()) open({ focus: byKey });
     else close(byKey ? { refocus: true } : { blur: true });
-  });
-  menu.addEventListener('keydown', (e) => {
+  };
+  const onMenuKeydown = (e) => {
     // A key typed in the popup is the popup's: no page-level handler may act on it too (the Workflow
     // Composer moves its selected node on the arrows, with or without a modifier, deletes it on Delete
     // or Backspace and swallows Space). Escape (the stack's), Tab (focus leaves) and other shortcuts
@@ -182,8 +188,8 @@ export function createFlyout({
           : list[i <= 0 ? list.length - 1 : i - 1];
     e.preventDefault();
     next.focus();
-  });
-  doc.addEventListener('click', (e) => {
+  };
+  const onDocClick = (e) => {
     if (!isOpen()) return;
     const t = e.target;
     if (!t || !t.isConnected) return;                     // re-rendered under the click: cannot tell
@@ -191,7 +197,7 @@ export function createFlyout({
     if (menu.contains(t)) { if (t.closest('[data-nav]')) close(how); return; }
     if (trigger.contains(t) || inside(t) || inSubmenu(menu, t)) return;
     close(how);
-  });
+  };
   // Focus leaving the popup (Tab away, a shortcut opening a pane) closes it, so a popup never lingers
   // over the page and takes the Escape meant for where focus went. Only focus that LEAVES counts: it
   // comes from the popup, its trigger, inside() or an open submenu. Focus put back on a re-rendered
@@ -201,17 +207,41 @@ export function createFlyout({
   // The press is read on the window in the capture phase, before any document listener acts on it; a
   // right-click's context menu takes the mouseup on macOS and Linux, so `contextmenu` ends the press too.
   let press = null;   // the target of the pointer press in progress
-  win.addEventListener('pointerdown', (e) => { press = e.target; }, true);
-  win.addEventListener('pointerup', () => { press = null; }, true);
-  win.addEventListener('pointercancel', () => { press = null; }, true);
-  win.addEventListener('contextmenu', () => { press = null; }, true);
+  const onPress = (e) => { press = e.target; };
+  const onPressEnd = () => { press = null; };
   const ours = (n) => !!n && (menu.contains(n) || trigger.contains(n) || inside(n) || inSubmenu(menu, n));
-  doc.addEventListener('focusin', (e) => {
+  const onFocusIn = (e) => {
     if (!isOpen() || ours(e.target) || !ours(e.relatedTarget) || ours(press)) return;
     close();
-  });
-  win.addEventListener('resize', () => close());
-  closeOn?.addEventListener('scroll', () => close(), { passive: true });
+  };
+  const onAway = () => close();
 
-  return { open, close, toggle, isOpen, reposition };
+  trigger.addEventListener('click', onTriggerClick);
+  menu.addEventListener('keydown', onMenuKeydown);
+  doc.addEventListener('click', onDocClick);
+  win.addEventListener('pointerdown', onPress, true);
+  win.addEventListener('pointerup', onPressEnd, true);
+  win.addEventListener('pointercancel', onPressEnd, true);
+  win.addEventListener('contextmenu', onPressEnd, true);
+  doc.addEventListener('focusin', onFocusIn);
+  win.addEventListener('resize', onAway);
+  closeOn?.addEventListener('scroll', onAway, { passive: true });
+
+  /** For a popup that lives shorter than its page: close it and remove every listener this call added. The
+   *  document's shared Escape listener stays; it serves every other popup of the document. */
+  function destroy() {
+    close();
+    trigger.removeEventListener('click', onTriggerClick);
+    menu.removeEventListener('keydown', onMenuKeydown);
+    doc.removeEventListener('click', onDocClick);
+    win.removeEventListener('pointerdown', onPress, true);
+    win.removeEventListener('pointerup', onPressEnd, true);
+    win.removeEventListener('pointercancel', onPressEnd, true);
+    win.removeEventListener('contextmenu', onPressEnd, true);
+    doc.removeEventListener('focusin', onFocusIn);
+    win.removeEventListener('resize', onAway);
+    closeOn?.removeEventListener('scroll', onAway);
+  }
+
+  return { open, close, toggle, isOpen, reposition, destroy };
 }

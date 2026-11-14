@@ -44,7 +44,7 @@ const decls = (body, prop) => [...body.matchAll(new RegExp(`(?:^|;)\\s*(${prop})
 const where = (r, v) => `style.css:${r.line} ${r.sel.slice(0, 80)} → ${v}`;
 const bodyOf = (sel) => ALL.filter((r) => splitTop(r.sel).includes(sel)).map((r) => r.body).join(';');
 const lastCompound = (s) => s.split(/\s*[>+~]\s*|\s+/).at(-1);
-const SKIP = new Set(['node_modules', 'vendor', 'fonts', 'assets']);
+const SKIP = new Set(['node_modules', 'vendor', 'fonts', 'assets', 'stillhet']);   // stillhet: the prototype's code, moved from plans/rail/prototype/ (never read by this scan); it has its own gates (docs/rail/gate.md)
 const walk = (dir, out = []) => { for (const n of readdirSync(dir)) { if (SKIP.has(n)) continue; const f = join(dir, n);
   if (statSync(f).isDirectory()) walk(f, out); else if (/\.(mjs|js)$/.test(n)) out.push(f); } return out; };
 const JS = walk(join(ROOT, 'ui/public'));
@@ -157,7 +157,8 @@ const JS_CHECKBOX_OK = [
   ['requirements-view.mjs', 'ipv-crit-', 'picks the ticket criteria to start from'], ['requirements-view.mjs', 'ipv-com-', 'picks the ticket comments to take'],
   ['requirements-view.mjs', 'ipv-att-', 'picks the ticket attachments to add as files'],
   ['marketplace/remove-view.mjs', 'mk-purge-box', 'opt-in consent in the Remove dialog'],
-  ['marketplace/update-view.mjs', 'mk-reviewed', 'acknowledges the reviewed changes'], ['marketplace/update-view.mjs', 'mk-include', 'picks updates'],
+  ['design-system/components/checkbox.mjs', 'export function checkbox', 'Rail\'s Checkbox: picking items, an opt-out, a consent'], ['marketplace/update-view.mjs', 'mk-reviewed', 'acknowledges the reviewed changes'], ['marketplace/update-view.mjs', 'mk-include', 'picks updates'],
+  ['design/export-dialog.mjs', 'dsx-replace', 'consent: replace the listed files'],
   ['mcp-server-import.mjs', 'mcp-imp-pick', 'picks servers to import'],
 ].map(([file, token, reason]) => ({ file: `ui/public/${file}`, token, reason }));
 function checkboxEmitters(files) {

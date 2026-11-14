@@ -129,14 +129,14 @@ test('board 15: dropped files become chips (name, kind · size, ×); a refused o
 test('board 15: with files the cost words say each file is read once before round 1, about $X a file; "$0.05–0.20" without estimates', async () => {
   const { host, zone } = await openNew({ ...LIST, lookCostUsd: 0.25, readEstimates: { text: 0.05, image: null, binary: 0.12 } });
   const cost = () => host.querySelector('.req-new-cost').textContent;
-  assert.equal(cost(), 'Worca interviews with Opus 5.5 at medium effort · about $0.25 for the code look, then cents per round');
+  assert.equal(cost(), 'About $0.25 for the code look, then cents per round.');
   drop(zone, [mkFile('a.md', 'a')]);
-  assert.equal(cost(), 'Worca interviews with Opus 5.5 at medium effort · about $0.25 for the code look, reads each file once before round 1, about $0.05 a file, then cents per round');
+  assert.equal(cost(), 'About $0.25 for the code look, reads each file once before round 1, about $0.05 a file, then cents per round.');
   drop(zone, [mkFile('b.pdf', '%PDF-1.7', 'application/pdf')]);
-  assert.match(cost(), / · about \$0\.25 for the code look, reads each file once before round 1, about \$0\.05–0\.12 a file, then cents per round$/);
+  assert.match(cost(), /^About \$0\.25 for the code look, reads each file once before round 1, about \$0\.05–0\.12 a file, then cents per round\.$/);
   const none = await openNew({ ...LIST, readEstimates: { text: null, image: null, binary: null } });
   drop(none.zone, [mkFile('c.png', 'png', 'image/png')]);
-  assert.equal(none.host.querySelector('.req-new-cost').textContent, 'Worca interviews with Opus 5.5 at medium effort · reads each file once before round 1, about $0.05–0.20 a file, then cents per round');
+  assert.equal(none.host.querySelector('.req-new-cost').textContent, 'Reads each file once before round 1, about $0.05–0.20 a file, then cents per round.');
   const a2 = await openNew({ ...LIST, interview: null, lookCostUsd: null });
   assert.equal(a2.host.querySelector('.req-new-cost'), null, "A2's page without a look estimate has no cost line");
   drop(a2.zone, [mkFile('d.md', 'd')]);
@@ -389,7 +389,7 @@ test('a question that came from a file says "From <name>:" before its why; What 
   const { host } = await openFeature(feature({ pending: { turnId: 9, questions: q, note: '' }, brief, orientation: { summary: '', files: [], skipped: 'brief' } }));
   assert.equal(text(host.querySelector('.req-why')), 'From support-tickets.pdf: 38 of the 52 tickets came before pick-up.');
   assert.equal(host.querySelector('.req-knows-text').textContent,
-    'Worca works from the shop brief and the files below. Orders is described in the brief. It has not looked at the code for this feature.');
+    'Worca works from the shop brief and the files below. Orders is described in the brief. It has not done a code look for this feature.');
 });
 
 // Upstream's design-language test bans a 44px height on a control (OFF_SCALE), so the 44 px targets at 390 px are
@@ -1256,7 +1256,7 @@ test('board 19: the first card of the right column; head, hint, Add documents, r
   assert.equal(card.querySelector('.req-docs-foot').textContent, 'Interviews use a new document right away. The brief\'s sections change only when you Refresh it. '
     + '“Send with every run” adds the document to every run started from a shop feature; each start card lists it.');
   assert.ok([...host.querySelectorAll('.req-brief-chips .chip')].some((c) => c.textContent === '1 document'));
-  assert.match(text(host.querySelector('.req-brief-how > p')), /^Every interview round for shop reads the brief and these documents\. New features no longer need their own look/);
+  assert.match(text(host.querySelector('.req-brief-how > p')), /^Every interview round for shop reads the brief and these documents\. New features no longer need their own code look/);
 });
 
 test('board 19: brief items from a document end in "(from <name>)"; Add documents posts to the brief; the switch posts sendWithEveryRun', async () => {
@@ -1445,7 +1445,7 @@ test('board 19: names, summaries and sources are text only', async () => {
 
 test("board 19: without documents the page is A7's: How Worca uses it reads the brief, no chip; a pre-A8 view has no card; Delete names 2", async () => {
   const empty = await openBriefPage(madeBrief({ documents: [] }));
-  assert.match(text(empty.host.querySelector('.req-brief-how > p')), /^Every interview round for shop reads it\. New features no longer need their own look/);
+  assert.match(text(empty.host.querySelector('.req-brief-how > p')), /^Every interview round for shop reads it\. New features no longer need their own code look/);
   assert.ok(![...empty.host.querySelectorAll('.req-brief-chips .chip')].some((c) => /document/.test(c.textContent)));
   const { documents, interview, resetPeriod, ...old } = madeBrief();
   const a7 = await openBriefPage(old);

@@ -147,6 +147,12 @@ be skipped by forgetting it.
 | Add-ons: Models, Providers | E — like every page, the open one keeps its row at a lower mode while the banner names its level |
 | Schedules | A — kept visible at every level while anything is scheduled, missed, repeating or unread; its grey count and amber unread pill each hide at zero |
 | Team metrics, Team policy | E |
+| The level avatar art in the corner (the round art on the account corner and the spend ring's avatar) | all — a level is shown to everyone, whatever the mode |
+| The level tooltip (hover or focus on the corner avatar: the level, its items, a link to Profile) | all |
+| The account-menu level card (above Interface mode) | all |
+| Profile (the level section) | all — it has no sidebar entry; it opens from the menu card, the tooltip and the Getting started level line |
+
+Levels are not Interface modes: no level element carries `data-min-level`; Try next / Open links to higher-mode pages open them with the banner.
 
 ### New pipeline
 
@@ -212,6 +218,16 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Log filters (source, level, node, cycle) | E |
 | Graph node totals, fan and execution strips, Away mode chips and bands, loop badges | E |
 | Agents tab, worktree row, Auto proposal tunables table | E |
+
+### The Rail run page
+
+Rail's run page (`docs/rail/thing-page.md`) has one rule in place of the rows above, in code as `runPartShows`:
+
+| Element | Level |
+|---|---|
+| All four tabs: Overview, Changes, Activity, Decisions | S |
+| Inside them: the Logs, the Workflow graph, Sessions and Actions | A |
+| Inside them: Agents and the log filters | E |
 
 ### History
 
@@ -304,6 +320,8 @@ inside the view.
 | Element | Level |
 |---|---|
 | Projects list, add, project page Overview, remove, Use git (Folder projects) and Link remote (Git projects without origin) | S |
+| Agent readiness chip (Projects row, project page header) and its report, incl. Not used here / Undo and Recheck | S — status of the project a run starts in; its Settings links open the project Settings tab by deep link |
+| Project Settings tab: Agent readiness card (Detect / Used / Not used per tool, skipped checks) | A — the tab's level |
 | Project Memory tab (view and edit files) | A |
 | Project Memory tab › Team view (Local · Team · Both choice, note states, share existing notes, Compare, Undo seeding); project Settings › Team memory | A |
 | Project page Overview › "Your team shares memory for this repository" (Turn on, Not now); the "team memory available" mark in the Projects list and the workspace wizard's import list | A |
@@ -375,9 +393,9 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Decide the assumptions: Confirm / Reject, Show the other N, Confirm the N left, "Done, ask about A-n" | S |
 | Ready to build: what Start does, the Workflow and Branch from chips, Change (the Workflow and Branch from pickers), Start in Worca and its Set up this run overlay (a preset, each agent's model and effort, each loop's cycles) | S — a product owner picks the workflow and branch at every level |
 | A started feature: Runs from this feature (each run's pill, spec version, "started before Ready", cost and link; the total; Start again with v<n>), Changed since the run started and Undo my changes, the "v<n> draft / v<n> started" switch | S |
-| What Worca found in the code (a feature whose project or workspace has no product brief): the summary, how often Worca looked and what it cost, Look again | S |
-| What Worca found in the code: the files Worca read | A |
-| What Worca knows (a feature with a product brief): "from the product brief · <age>", what the brief describes, "Look closer · about $X" and its hint ("Worca works from the <name> brief and the files below." when the feature has files); after a closer look, "brief + a closer look · N files · $X", the summary, Add this to the brief, Look again | S |
+| Code look: what Worca found (a feature whose project or workspace has no product brief): the summary, how often Worca looked and what it cost, Look again | S |
+| Code look: what Worca found: the files Worca read | A |
+| What Worca knows (a feature with a product brief): "from the product brief · <age>", what the brief describes, "Look closer · about $X" and its hint ("Worca works from the <name> brief and the files below." when the feature has files); after a code look, "brief + a code look · N files · $X", the summary, Add this to the brief, Look again | S |
 | New feature: the Files field (the drop zone, the picked files, the refusal line), the privacy note, "Files stay on the feature…"; the feature page's "Reading N files…" | S — product owners are its users |
 | The Files card: Files · N, Add files, the privacy note, "No files yet. Add emails, a spec, screenshots or a mockup.", each file (name, kind · size · cost, What Worca took from it, edited by you, Show all, the answers, Reading… / Asking… / could not read / Not read yet, Try again), Send with the run, "The spec mentions this file", the pencil and the ⋯ menu (Open, Edit, Ask about this file…, Replace with a newer version…, Read again, Remove); the header's "N files" chip | S — the switch shows its value at every level (rule 2) |
 | Replace and its dialog; Ask about this file and its panel; the source tags on criteria and assumptions, "From <file>:" on questions | S |
@@ -385,7 +403,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Decide: Ask about <file> (a file added or replaced after the interview), the "<file> to ask about" hint; Changed since the run started: the file lines and what Undo puts back | S |
 | Product brief page, made: the Documents card (as the Files card, with Send with every run), "N documents", "(from <document>)" on brief items | S |
 | A file's "Earlier text" history | A — as the files of a code look |
-| Product brief page, none yet: Give Worca a head start (the four parts), the look box (branch, estimate, model, Create the brief / Try again, and why it cannot), the members left out, Your notes for Worca (the notes, "Let Worca look at the code", Save notes) | S — the switch shows its value on this page at every level (rule 2) |
+| Product brief page, none yet: Give Worca a head start (the four parts), the look box (branch, estimate, model, Create the brief / Try again, and why it cannot), the members left out, Your notes for Worca (the notes, "Let Worca do code looks", Save notes) | S — the switch shows its value on this page at every level (rule 2) |
 | Product brief page, made: the chips (Made from <branch> @ <commit> · <age>, cost, Used by N features, Built from the workspace map), Export ▾ (Copy Markdown, Download .md), ⋯ (Refresh the brief · about $X, Delete the brief), Refreshing and the failed-refresh line, "The code moved on since this brief" and Refresh, the four sections with their pencils, "edited by you" and Let Worca rewrite this, How Worca uses it, Your notes for Worca and Edit notes | S |
 | Product brief page: What Worca read (the files) | A — as the files of a code look |
 
@@ -396,10 +414,12 @@ missing (`data-needs-git`), at every level.
 
 | Element | Level |
 |---|---|
+| The level welcome and celebration (the dialogs that open at boot and after a level-up) | all — they wait while a blocking prompt or another dialog is on screen (rule 1) |
+| The Getting started level line (the current level and what is next, linking to Profile) | all |
 | Statistics page | A |
 | Statistics: the Requirements tile (spend, features, a link to the page; behind the `requirements` flag), the Requirements row in the Group by tables and in the Cost report (money already spent there stays listed while the flag is off) | A — with the page |
 | Team metrics page and every surface of it elsewhere | E |
-| Team policy page and its Policy / Plugins / Catalog tabs | E |
+| Team policy page and its Policy / Plugins / Catalog tabs | E (in Rail: A to read, E to change) |
 | Team-policy notes on New pipeline; the team caps readout under Budget & cost limits | all — a team cap applies in every mode, so the reason it applies is never hidden |
 | The Installed tab's Team policy card and the setup checklist (the Marketplace page) | A — with the page that holds them |
 | Ask: chat, history, attachments, run card (its progress bar and stage text), proposal title / project / workflow / brief / Start | S |

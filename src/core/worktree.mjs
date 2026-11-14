@@ -28,6 +28,7 @@ import {
   readRunManifest, rmGuarded, rescueModifiedMounts, scanStrayEntries, copyRunManifestTo, liveRetainMembers,
   removeInjectedPaths,
 } from './run-manifest.mjs';
+import { removeRunScratch } from './run-manifest.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
 import { guardedGitEnv, guardedWorktreeAdd } from './git-guard.mjs';
 import { stripHostCredentials } from './host-credentials.mjs';
@@ -861,6 +862,7 @@ export async function sweepRunRoots({
       }
     }
     if (retained) {
+      await removeRunScratch(dir);
       out.keep.push(dir);
       say('info', `keep ${dir} (${status || 'no row'}, retained: ${retained.reason || 'unknown'})`);
       continue;

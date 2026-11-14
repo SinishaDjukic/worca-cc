@@ -7,99 +7,16 @@
 import { decorFromState, applyDecor, manifestTemplate, manifestPortsFn, manifestAgents, isGraphManifest, fmtDur, fmtUsd } from './graph/run-decor.mjs';
 import { mountStaticGraph } from './graph/view.mjs';
 import { FLOW_SCALE } from './graph/model.mjs';
-import { engineReportsCost } from '../../src/shared/engine-switch.mjs';
-import { runProgress } from '../../src/shared/run-progress.mjs';
-import { workModeOf } from './run-kind.mjs';
+import { snapshotFromState as sharedSnapshot, TERMINAL_RUN_STATUS, LIVE_STATUS } from '../../src/shared/ask-run-snapshot.mjs';
+export { PROGRESS_CARD_TYPE, TERMINAL_RUN_STATUS, activeAgents } from '../../src/shared/ask-run-snapshot.mjs';
 
-export const PROGRESS_CARD_TYPE = 'progress';
-/** app.js isTerminalStatus's set, verbatim (app.js:4304-4306). */
-export const TERMINAL_RUN_STATUS = new Set(['done', 'error', 'stopped', 'aborted', 'failed', 'complete', 'completed', 'interrupted']);
-/** app.js isLive's status arm (app.js:14663-14666): a run that is scheduling work. A REST row carries no pendingQuestion. */
-const LIVE_STATUS = new Set(['starting', 'running', 'pausing']);
 /** The six manifest colours the view's h-* / --c vocabulary knows (style.css .gv-world .h-*; app.js PILL_FAMILIES). */
 const NODE_COLORS = new Set(['violet', 'blue', 'green', 'red', 'peach', 'amber']);
 const PAUSE_WHY = { cost_pipeline: 'cost limit', cost_total: 'total budget', cost_pipeline_policy: 'team cap', cost_total_policy: 'team total', error: 'error', recoverable: 'recoverable', usage_limit: 'usage limit', drain: 'restart' };
 
-/** Chat P3 (U10): the active nodes with what the chat run card's agent chips show — the node's model (the run's
- *  manifest cell, as app.js activeNodes reads it) named through `modelLabel` (app.js: the catalog label; REST: the
- *  raw id) and the cycle the in-flight execution is on (its ledger ordinal). [] without a decor bag. */
-export function activeAgents(decor, stepper, { modelLabel = null } = {}) {
-  if (!decor || !Array.isArray(decor.activeNodes)) return [];
-  const byId = new Map((isGraphManifest(stepper) ? stepper.graph.nodes : []).filter(Boolean).map((n) => [n.id, n]));
-  return decor.activeNodes.map((a) => {
-    const n = byId.get(a.nodeId);
-    const rows = (decor.footers && decor.footers[a.nodeId] && decor.footers[a.nodeId].rows) || [];
-    const row = rows.find((x) => x.executionId === a.executionId) || rows[rows.length - 1] || null;
-    const model = a.model || (n && n.model) || '';
-    const named = model && typeof modelLabel === 'function' ? modelLabel(model) : null;
-    return { ...a, model, effort: a.effort || (n && n.effort) || '', modelLabel: model ? (named || model) : '', cycle: row ? (Number(row.ordinal) || 1) : 1 };
-  });
-}
-
-/** A frozen snapshot from GET /api/ask/runs/:id `state` (artifacts.mjs rowToState). null for a non-object.
- *  `extras` is the same response's `extras` (Chat P3): a finished run's results.json counts + top files, its last
- *  (newest) artifacts and its PR — null / false when absent. */
-export function snapshotFromState(state, { now = Date.now(), extras = null } = {}) {
-  if (!state || typeof state !== 'object') return null;
-  const status = String(state.status || '').toLowerCase();
-  const graph = isGraphManifest(state.stepper);
-  // live derives from the status exactly as app.js isLive does for the Running list: a row that is still running
-  // marches its ants and paints unfinished executions active; a paused/finished row is resolved (run-decor.mjs:162).
-  const live = LIVE_STATUS.has(status);
-  const decor = graph ? decorFromState(state, { live, now }) : null;
-  const ws = state.target === 'workspace';
-  const x = extras && typeof extras === 'object' ? extras : null;
-  const pr = x && x.pr && typeof x.pr.url === 'string' && x.pr.url ? x.pr : null;
-  return {
-    source: 'rest',
-    runId: null,
-    pipelineId: state.id || null,
-    kind: ws ? 'workspace-run' : 'run',
-    title: state.title || '',
-    projectKey: ws ? null : (state.projectKey || null),
-    workspaceId: ws ? (state.workspaceId || null) : null,
-    projectDir: state.projectDir || '',
-    projectNames: ws && Array.isArray(state.projects) ? state.projects.map((p) => p && p.projectName).filter(Boolean) : null,
-    status,
-    pauseReason: state.pauseReason || null,
-    pendingQuestion: null,
-    labels: Array.isArray(state.labels) ? state.labels : [],
-    live,
-    terminal: TERMINAL_RUN_STATUS.has(status),
-    startedAt: state.startedAt || null,
-    elapsedMs: Number(state.totalActiveMs) || 0,
-    costUsd: engineReportsCost(state.runEngine) ? (Number(state.totalCostUsd) || 0) : null,   // null: cost unknown (Cursor), never $0.00
-    progress: decor ? decor.progress : null,
-    stageProgress: graph ? runProgress(state) : null,   // a frozen state is final: no memo
-    active: decor ? activeAgents(decor, state.stepper) : [],   // a v1 row names no agent even when state.active is set
-    stepper: graph ? state.stepper : null,
-    decor,
-    auto: (state.stepper && typeof state.stepper === 'object' && state.stepper.auto) || null,
-    branch: state.branch && typeof state.branch === 'object' && typeof state.branch.feature === 'string' ? state.branch.feature : '',
-    results: x && x.results && typeof x.results === 'object' ? x.results : null,
-    artifacts: x && Array.isArray(x.artifacts) ? x.artifacts : null,
-    moreArtifacts: !!(x && x.moreArtifacts),
-    artifactsTotal: x && Number.isInteger(x.artifactsTotal) ? x.artifactsTotal : null,   // P3: the run card's Artifacts · <n>
-    pr,
-    // A run on its source branch (extras.source, sourceShipFacts): the run page's Push rule reads these.
-    ...(x && x.source && x.source.sameAsSource === true ? { sameAsSource: true, sourceBranch: x.source.sourceBranch || null, mergeBack: x.source.mergeBack || null, push: x.source.push || null } : {}),
-    rounds: x && Array.isArray(x.rounds) ? x.rounds : [],          // Shaper s5: the run's rounds (askRunCardExtras)
-    watch: x && x.watch && typeof x.watch === 'object' ? x.watch : null,   // Shaper s5: a watch that gave up on its PR
-    archived: !!state.archivedAt,                    // archived: the run folder and its History row are gone
-    ...(workModeOf(state) !== 'git' ? { workMode: workModeOf(state), changes: x && x.changes && typeof x.changes === 'object' ? x.changes : null } : {}),
-    ...(state && state.shaping ? { shaping: state.shaping } : {}),
-    // Runs redesign slice 4 (D9): the raw state runModel reads, so the card draws the same model as the list and the page.
-    run: { stepper: state.stepper || null, status, steps: state.steps || [], active: state.active || [],
-      endReached: !!state.endReached, tokens: state.tokens || {}, progressFacts: state.progressFacts || null,
-      pendingQuestion: null, pauseReason: state.pauseReason || '', pr,
-      // Tri-state: a live state carries no flag (it stays resumable); only the saved detail's `false` means never.
-      ...(typeof state.resumable === 'boolean' ? { resumable: state.resumable } : {}),
-      // D24: the round marker (branch.roundOf) and the Watch PR fact (extras.watch) pass through; the model words them.
-      branch: state.branch && typeof state.branch === 'object' ? state.branch : null, round: state.round || null,
-      watch: (x && x.watch) || null,
-      // Review A12: the live role rows read the picked perspectives and the role-review rounds.
-      shaping: state.shaping || null, roleReviews: state.roleReviews || null },
-  };
+/** The REST snapshot with this card's decor (run-decor.mjs decorFromState); the shape lives in src/shared/. */
+export function snapshotFromState(state, opts = {}) {
+  return sharedSnapshot(state, { ...opts, decorOf: decorFromState });
 }
 
 /** {family, text} — app.js statusPill + activeCopy, in the SAME branch order (parked-ness before the question, the question before done/stopped/error). */

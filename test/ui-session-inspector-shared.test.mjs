@@ -89,7 +89,7 @@ test('v3 — One conversation with sub-agents gated off: no "Separate sessions" 
   assert.equal(sub.querySelector('.ins-sess-mode .ins-resolved').textContent, 'Separate sessions (sub-agents not available yet)');
   assert.deepEqual(segOf(sub), [['One conversation', 'shared', 'false', '']]);
   assert.equal(harnessOf(sub), 'Every engine runs these steps as separate sessions.');
-  assert.equal(harnessOf(panel(S(['n_impl', 'n_review'], 'subagents'), { verified: { claude: true } })), 'Sub-agents on Claude; every other engine runs these steps as separate sessions.');
+  assert.equal(harnessOf(panel(S(['n_impl', 'n_review'], 'subagents'), { verified: { claude: true } })), 'Sub-agents on Claude Code; every other engine runs these steps as separate sessions.');
 });
 
 // ── v4: the flag-off panel and the blurb say nothing a One conversation session does not do ──

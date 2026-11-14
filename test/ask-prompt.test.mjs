@@ -299,6 +299,14 @@ test('context header: the spec layout, exactly — plus the [pinned by the user]
     } },
     { name: 'P4: a scope-switch card names its summary on the cards: line', run: async () => { assert.ok(buildContextHeader({ view: 'chat', noProject: true, cards: [{ id: 'card_0000ab01', type: 'scope-switch', state: 'answered', summary: 'Havn Android / Havn IOS' }], now: CTX.now }).includes('\ncards: scope-switch card_0000ab01 answered "Havn Android / Havn IOS"\n')); } },
     { name: 'P2: a project card names its summary on the cards: line', run: async () => { assert.ok(buildContextHeader({ view: 'chat', noProject: true, cards: [{ id: 'card_0000ab09', type: 'project', state: 'applied', summary: 'Create site' }], now: CTX.now }).includes('\ncards: project card_0000ab09 applied "Create site"\n')); } },
+    { name: 'P5: a design card names its type, state and summary on the cards: line, never the run-card shape', run: async () => {
+      const h = buildContextHeader({ view: 'chat', noProject: true, now: CTX.now, cards: [
+        { id: 'card_1234abcd', type: 'design-questions', state: 'asking', summary: 'Your turn: pick a tone' },
+        { id: 'card_5678abcd', type: 'design-round', state: 'running', summary: 'Round 2: building' },
+        { id: 'card_9abcabcd', type: 'design-sound', state: 'asking', summary: 'Sound for this video' }] });
+      assert.ok(h.includes('\ncards: design-questions card_1234abcd asking "Your turn: pick a tone", design-round card_5678abcd running "Round 2: building", design-sound card_9abcabcd asking "Sound for this video"\n'), h);
+      assert.doesNotMatch(h, / on \)/);
+    } },
   ]);
 });
 

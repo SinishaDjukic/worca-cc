@@ -11,6 +11,8 @@
 // state.steps[] IS the execution ledger: one row per execution, key ===
 // executionId. There is no separate executions[] array.
 import { join, isAbsolute, extname, dirname, basename, sep } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { runScratchDir } from './run-manifest.mjs';
 import { rm, readFile, readdir, access, stat, writeFile, mkdir, realpath } from 'node:fs/promises';
 import { readDirections, pendingDirections } from './directions.mjs';
 import { runsOn } from '../shared/connections.mjs';
@@ -25,7 +27,7 @@ import { loadAgentRegistry } from './agent-registry.mjs';
 import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared/graph/manifest.mjs';
-import { DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../shared/graph/constants.mjs';
+import { DEFAULT_MAX_CYCLES, FLOW_KINDS, KEYED_KINDS } from '../shared/graph/constants.mjs';
 import { pickDropWarnings } from '../shared/graph/role-slots.mjs';
 import { factoryFallbackLines } from './factory-models.mjs';
 import { scriptNodeCtx, pythonMissingSentence } from '../shared/graph/script-meta.mjs';
@@ -37,7 +39,8 @@ import { registryPortsFn } from './graph/registry-ports.mjs';
 import { checkPlan } from './shape/check.mjs';
 import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
-import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureApprovesEach, featureClarify, featureNotes } from './shape/features.mjs';
+import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureClarify, featureNotes } from './shape/features.mjs';
+import { fileSha, planOutputOf } from './shape/outline-file.mjs';
 import { readRunPrAuto } from './pr-auto.mjs';
 import { checkSlices, applyOutlineEdits, normalizeOutline, settleLeftOut, sliceRequirementIds, OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX } from '../shared/shape/slices.mjs';
 import { onlyCriteria } from '../shared/review/requirements-coverage.mjs';
@@ -997,6 +1000,7 @@ export class GraphOrchestrator extends RunHarness {
         // starts next while a gate is held.
         this.state.resumePoint = this._buildResumePoint(snap);
         void this._persist();
+        this._stepRecorded();   // Pause after this step lands only after the finished step is in the point
       },
       // P3 contract: onGate is the state.gate NOTIFIER ({wireId, fromNode, toNode,
       // askId} | null); onAsk is the ONE ask channel (gates today).
@@ -1398,12 +1402,12 @@ export class GraphOrchestrator extends RunHarness {
       const outlineChange = await this._outlineChangeText();
       // Shaper s5 (D12): notes from the chat force the stop, like outlineChange.
       const notes = (await this._shapeSliceScope())?.notes || [];
-      if (sl && sl.index > 1 && !featureApprovesEach(sl.feature)) {
+      if (sl && sl.index > 1) {
         // D19: plan once, confirm later: the plan stops only when its check fails or the planner says the slice
         // cannot be built as outlined. A missing check (null: it errored) stops too.
         if (check?.ok === true && !outlineChange && !notes.length && !concern) {
-          this._log('orchestrator', 'info', `plan approval ${q.id}: approved (Approve each slice's plan is off)`);
-          await appendAudit(this.pipeline.dir, 'Plan approval **approve** (Approve each slice\'s plan is off).').catch(() => {});
+          this._log('orchestrator', 'info', `plan approval ${q.id}: approved (the plan passed its checks)`);
+          await appendAudit(this.pipeline.dir, 'Plan approval **approve** (the plan passed its checks).').catch(() => {});
           return { decision: 'approve' };
         }
         const why = outlineChange ? 'the planner says this slice cannot be built as outlined'
@@ -1680,8 +1684,9 @@ export class GraphOrchestrator extends RunHarness {
       // asked (the loop re-asks that outline after a pause, F25) or when the paused session resumes.
       if (!rounds.length && !resuming) await rm(file, { force: true });
       out.shapeSlicing = { file, size: this.runShape?.size || null, ...(ctx.bindings?.requirements?.path ? { requirements: true } : {}) };
-      // A pause during a revise spawn: put the person's feedback back (the outline file was removed before it).
+      // A pause during a revise spawn: put the person's feedback back, and the asked round's baseline (D11).
       const last = rounds[rounds.length - 1];
+      if (last?.decision === 'revise') out.shapeSlicing.baseline = this._outlineBaseline();
       if (last?.decision === 'revise' && this._outlineRevise) out.shapeOutlineNote = { decision: 'revise', feedback: this._outlineRevise };
     }
     return out;
@@ -1733,14 +1738,26 @@ export class GraphOrchestrator extends RunHarness {
     const label = nc.meta?.displayName || nc.key || ctx.nodeId;
     let error = null;
     let carried = null;                                     // the edits of an approval whose feature creation failed
-    let carriedEach = null;                                 // and its Approve each slice's plan choice
+    let carriedEach = null;                                 // and its Ask me before each run choice
     let retry = 0;
     const agreed = await this._outlineAgreed(ctx);
+    let classified = null;                                  // the spawn result whose outlineState was acted on
     for (;;) {
       this._checkAbort();
+      // D10: the executor classified the outline file after the spawn (outline-file.mjs); a feature-creation retry
+      // re-asks without a spawn, so a result is acted on once.
+      const state = result !== classified ? result?.outlineState : null;
+      classified = result;
+      if (state === 'flat') {                               // the Planner wrote its plan instead (also after a revise)
+        this._slicingDone = true;
+        this._retireOrphanFeature();
+        if (this.state.shaping?.outline?.rounds?.length) this._shapingOutlineDecision(null, { decision: 'flat' });
+        return result;
+      }
+      if (state === 'unchanged') await appendAudit(this.pipeline.dir, `${label}: The planner left the outline unchanged.`).catch(() => {});
       let raw = null;
       try { raw = JSON.parse(await readFile(file, 'utf8')); } catch (err) {
-        if (err?.code === 'ENOENT') {                       // the Planner wrote its plan instead (also after a revise)
+        if (err?.code === 'ENOENT') {                       // defensive: the executor's outlineState says flat first
           this._slicingDone = true;
           this._retireOrphanFeature();
           if (this.state.shaping?.outline?.rounds?.length) this._shapingOutlineDecision(null, { decision: 'flat' });
@@ -1765,7 +1782,8 @@ export class GraphOrchestrator extends RunHarness {
       const revisable = round < OUTLINE_ROUNDS_MAX;
       const check = checkSlices(outline);
       const id = `plan-outline-${ctx.nodeId}-${round}${retry ? `-e${retry}` : ''}`;
-      this._shapingOutlineRound({ round, outline, check });
+      // D9: what was asked, so a revise spawn can tell an edited outline from an untouched one and a fresh plan from a stale one.
+      this._shapingOutlineRound({ round, outline, check, sha: await fileSha(file), planSha: await fileSha(planOutputOf(ctx.outputs)) });
       if (!reasked) await appendAudit(this.pipeline.dir, `${label} proposed ${outline.slices.length} slices (outline round ${round}).`).catch(() => {});
       const payload = await this._enqueueAsk(() => this._ask({
         id, kind: PLAN_ASK_KIND, nodeId: ctx.nodeId, executionId: ctx.executionId,
@@ -1831,6 +1849,14 @@ export class GraphOrchestrator extends RunHarness {
       if (this.runShape?.replaces) this._emit('shape-feature', { id: this.runShape.replaces });
       return this._resumeOutline(nc, ctx, payload);
     }
+  }
+
+  /** D14: every agreed requirement id of the feature, for the planner's and refiner's numbering and `Covers:` lines: a slice
+   *  run's outline (all slices', not only its own), else the bound requirements file. [] when there are none. */
+  async _shapeAgreedIds(ctx) {
+    const agreed = this.runShape?.slice?.outline?.agreed;
+    if (Array.isArray(agreed) && agreed.length) return agreed.map((a) => a.id).filter(Boolean);
+    return (await this._outlineAgreed(ctx)).map((c) => c.id);
   }
 
   /** The agreed criteria the Planner's `requirements` input holds, for the outline; [] without one or when unreadable. */
@@ -1962,7 +1988,8 @@ export class GraphOrchestrator extends RunHarness {
   /** Resume the Planner's session with the decision (F2: the prompt is rebuilt from ctx on every spawn). */
   async _resumeOutline(nc, ctx, payload) {
     const d = payload?.decision;
-    if (d === 'revise') await rm(ctx.shapeSlicing.file, { force: true });   // only a rewritten outline is read next
+    // D9: the outline file stays for the Planner to edit; the asked round's shas tell an edit from an untouched file.
+    if (d === 'revise') ctx.shapeSlicing.baseline = this._outlineBaseline();
     else { ctx.shapeSlicing = null; this._slicingDone = true; this._outlineRevise = null; }
     ctx.shapeOutlineNote = d === 'flat' ? { decision: 'flat' } : d === 'revise' ? { decision: 'revise', feedback: payload.feedback } : null;
     if (d === 'approve') ctx.shapeSliceScope = await this._shapeSliceScope();
@@ -1984,14 +2011,20 @@ export class GraphOrchestrator extends RunHarness {
     };
   }
 
-  _shapingOutlineRound({ round, outline, check }) {
+  _shapingOutlineRound({ round, outline, check, sha = null, planSha = null }) {
     const s = this.state.shaping;
     if (!s) return;
     const o = s.outline || (s.outline = { rounds: [], decided: null });
-    const row = { round, count: outline.slices.length, passed: check.passed, total: check.total, decision: null };
+    const row = { round, count: outline.slices.length, passed: check.passed, total: check.total, decision: null, sha, planSha };
     const i = o.rounds.findIndex((r) => r.round === round);
     if (i >= 0) o.rounds[i] = row; else o.rounds.push(row);
     this._emit('state', this.getState());
+  }
+
+  /** D9: the last asked round's outline and plan shas (the revise baseline), or null before any round. */
+  _outlineBaseline() {
+    const last = this.state.shaping?.outline?.rounds?.at(-1);
+    return last ? { sha: last.sha ?? null, planSha: last.planSha ?? null } : null;
   }
 
   _shapingOutlineDecision(round, payload) {
@@ -2119,7 +2152,16 @@ export class GraphOrchestrator extends RunHarness {
         return this._settleUnstarted(nc, node, args, err);
       }
     }
+    // Pause after this step: a node does not start while one is pending and another runs; the last one out pauses.
+    // A flow card runs inline on the scheduler's loop, so it cannot wait there (the running steps' completions would
+    // never be recorded): it settles as paused (non-terminal, re-run on resume) and the last step out converts the pause.
+    if (FLOW_KINDS.includes(node.kind) && this.state.pauseAfterStep && this._inFlight > 0) return { paused: true };
+    await this._awaitStepBoundary();
+    try { return await this._executeNode(args, node, nc); } finally { this._leaveStep(); }
+  }
 
+  /** One ordinary (non-composite) execution of `node`: _execute's body, counted in flight by its caller. */
+  async _executeNode(args, node, nc) {
     let ctx;
     try {
       ctx = this._execCtx(node, nc, args);
@@ -2171,6 +2213,7 @@ export class GraphOrchestrator extends RunHarness {
       await this._primeDirections(ctx);
       if (this.runShape && nc.key === CHECKLIST_REVIEWER_KEY) ctx.checklistItems = await this._reviewChecklistItems(ctx);
       if (this.runShape && SLICE_SCOPE_AGENT_KEYS.has(nc.key)) Object.assign(ctx, await this._shapeSliceCtx(nc, ctx));
+      if (this.runShape && SLICE_SCOPE_AGENT_KEYS.has(nc.key)) ctx.shapeAgreedIds = await this._shapeAgreedIds(ctx);
       ctx.planConcern = this._planConcernCtx(nc, ctx);
       if (ctx.planConcern && this._planConcernOverridden(planConcernAskId(ctx))) {
         ctx.planConcernOverride = this._planConcernHeld.concern;   // paused during the override re-run (D9): resume as it
@@ -2330,6 +2373,9 @@ export class GraphOrchestrator extends RunHarness {
     // P1 (v3, defence in depth): a Folder run's nodes never start on the REAL folder, whatever reattach path left runCwd unset.
     if (this.workMode === 'folder' && !this.runCwd) throw new Error('a Folder run has no copy to work on');
     const { resumeSessionId, coldRedispatch } = this._reattachFor(executionId, node.id);
+    // The agent's TMPDIR points here, and a TMPDIR that does not exist fails every tool that reads it.
+    const scratch = runScratchDir(this.runRoot);
+    if (scratch) mkdirSync(scratch, { recursive: true });
     return {
       // When this execution began. _indexExtraFiles compares it against each
       // candidate's mtime to tell the files this execution WROTE from the ones it

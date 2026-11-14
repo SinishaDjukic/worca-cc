@@ -3,10 +3,15 @@
 import { budgetStatus } from '../../../src/core/cost-budget.mjs';
 import { isInContainer } from '../../../src/core/remote-access.mjs';
 import { budgetWindowSavings } from '../../../src/core/stats.mjs';
+import { usageLimits } from '../../../src/core/usage-limits.mjs';
 import process from 'node:process';
 import { bearerMatches, drainServer } from '../../server.mjs';
 
 export function register(app) {
+
+// GET /api/usage-limits -> { harnesses: [{ engine, observedAt, windows: [{ kind: 'session'|'week', pct, resetsAt }] }] }:
+// the plan-limit readings the harnesses' CLIs reported (the profile's usage rings, D7). Only real readings; none is [].
+app.get('/api/usage-limits', (_req, res) => { res.json(usageLimits()); });
 
 // POST /api/drain: drain without exiting (a platform about to stop the container asks first, so
 // the stop itself is quick). From inside the container, or with WORCA_HEARTBEAT_TOKEN as Bearer.

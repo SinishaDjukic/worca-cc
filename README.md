@@ -1,3 +1,6 @@
+> [!NOTE]
+> This project will soon move to a new organization: [github.com/worca-org](https://github.com/worca-org).
+
 # Worca
 
 [![npm](https://img.shields.io/npm/v/@worca/app)](https://www.npmjs.com/package/@worca/app)
@@ -54,7 +57,7 @@ From a terminal, inside a project:
 worca "Add a /search endpoint with pagination"
 ```
 
-See [Install](docs/install.md) for npm install scripts, Windows, the container image and a
+See [Install](docs/install.md) for npm install scripts, Gentoo, Windows, the container image and a
 hosted setup, and [CLI](docs/cli.md) for every command.
 
 ## How a run works
@@ -101,10 +104,11 @@ for it, which you review before it runs. More in [Runs](docs/runs.md).
 | Outputs | Presentation decks, Architecture (C4) models, Promo videos | [Workflows](docs/workflows.md#presentations) |
 | Projects | Git repositories, plain folders, or no project; workspaces of related repos with a code-derived map | [Workspace map](docs/workspace-map.md), [Storage](docs/storage.md) |
 | | Actions: check out a result and run its dev server or tests; a terminal pane | [Actions](docs/actions.md), [Terminal](docs/terminal.md) |
+| | Agent readiness: whether a project is ready for the coding agents it uses, and how to fix each gap | [Agent readiness](docs/agent-readiness.md) |
 | Chat | Ask Worca about runs and code; changes become cards you confirm; agent mode, memory, voice | [Chat](docs/chat.md), [Voice](docs/speech.md) |
 | Integrations | Plugins and marketplaces, GitHub Issues, Azure Boards, Jira | [Plugins](docs/plugins.md), [Azure DevOps](docs/azure-devops.md), [Bitbucket](docs/bitbucket.md) |
 | | Worca's own MCP registry and skill sets | [MCP servers](docs/mcp-servers.md), [Skills](docs/skills.md) |
-| Models | Engines, bring your own models, Copilot and OpenAI-compatible providers | [Models](docs/models.md) |
+| Models | Engines, bring your own models, Copilot and OpenAI-compatible providers | [Models](docs/models.md), [Image generation](docs/image-generation.md), [Sound](docs/sound.md) |
 | Governance | Guardrail policy sets (Permissive, Normal, Strict) | [Guardrails](docs/guardrails.md) |
 | | Cost per run, Statistics, hard limits, cost tags | [Costs](docs/costs.md), [Statistics](docs/statistics.md) |
 | | Team metrics and team policy, shared through git | [Team metrics](docs/team-metrics.md), [Team policy](docs/team-policy.md) |

@@ -1,0 +1,13 @@
+/* The Projects center mock: only what the shelves add to the center frame. */
+#m .pc-sec{margin:30px 0 0;}
+#m .pc-sec:first-of-type{margin-top:22px;}
+#m .pc-sec .pg-shelf-h{margin:0;}
+#m .pc-sec .pc-map{margin-left:6px;font:400 var(--fs-meta)/1 var(--sans);}
+#m .pc-sec .pg-shelf-m{margin:4px 0 8px;}
+#m .pc-sec .center-quiet{margin-top:0;}
+#m .pg-state.is-fail,#m .pc-w.is-fail{color:var(--red);}
+#m .pg-state.is-ask,#m .pg-state.is-act,#m .pc-w.is-ask{color:var(--amber);}
+#m .pc-grid-flat{margin-top:14px;}
+#m .pc-also{display:flex;align-items:center;gap:12px;margin:12px 0 0;padding-top:12px;border-top:1px solid var(--line);font-size:var(--fs-body);color:var(--ink-2);}
+#m .pc-also b{font-weight:500;color:var(--ink);}
+#m .note{margin-top:28px;}

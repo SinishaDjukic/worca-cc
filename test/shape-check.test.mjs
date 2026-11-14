@@ -77,3 +77,33 @@ test('a stray checklist id names a perspective the plan does not have', () => {
   const r = shape(md);
   assert.match(r.items.find((i) => i.id === 'checklists').detail, /R-sec-1 names a perspective this plan does not have/);
 });
+
+// D16: code shorthand in a code note is not a placeholder; real placeholders in prose still are.
+const withNote = (note) => wellShapedPlan().replace('- `src/app.mjs`: registers the charts route.', `- \`src/app.mjs\`: registers the charts route. ${note}`);
+
+test('code shorthand is not a placeholder', () => {
+  for (const note of [
+    'It returns { items: [...] } for the list.',
+    'The cache is a Map<id, {...}> keyed by chart id.',
+    'Results are an Array<string>.',
+    'It is held as ``Map<id, {...}>`` in memory.',
+    'Nested { a: { b: [...] } } stays one line.',
+  ]) assert.deepEqual(fail(withNote(note)), [], note);
+});
+
+test('real placeholders still fail', () => {
+  for (const note of ['Then <placeholder> runs.', 'It lists [...] here.', 'TODO wire it.', 'TBD later.', 'Lorem ipsum.',
+    'Returns { items: TODO }.', 'An unmatched { then [...] here.', 'An unclosed ` then TBD.']) {
+    assert.deepEqual(fail(withNote(note)), ['placeholders'], note);
+  }
+});
+
+test('the placeholder check is linear on deep nesting and long backtick runs', () => {
+  for (const note of ['{'.repeat(100_000) + '}'.repeat(100_000), '{'.repeat(100_000) + 'x', '`'.repeat(50_000) + 'x'.repeat(50_000),
+    '``x'.repeat(30_000) + '`', 'a`'.repeat(50_000)]) {
+    const md = withNote(note);
+    const t = performance.now();
+    shape(md);
+    assert.ok(performance.now() - t < 200, `${note.slice(0, 6)}… took ${performance.now() - t} ms`);
+  }
+});

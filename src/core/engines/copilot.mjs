@@ -59,6 +59,14 @@ import { copilotWireModel, COPILOT_EFFORTS as MODEL_ENV_COPILOT_EFFORTS } from '
 
 export const COPILOT_DEFAULT_BIN = process.env.WORCA_COPILOT_BIN || 'copilot';
 
+/** The instruction files the Copilot CLI reads from the repository root and its cwd, all combined
+ *  (docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions). */
+export const COPILOT_INSTRUCTION_FILES = Object.freeze([
+  '.github/copilot-instructions.md', 'AGENTS.md', 'CLAUDE.md', '.claude/CLAUDE.md', 'GEMINI.md',
+]);
+/** Path-specific instructions: each one applies only to files matching its `applyTo` frontmatter. */
+export const COPILOT_INSTRUCTION_GLOBS = Object.freeze(['.github/instructions/**/*.instructions.md']);
+
 /** Stored session ids are engine-qualified so a resume never hands a Copilot session to
  *  another engine (or another engine's session to Copilot). */
 export const COPILOT_SESSION_PREFIX = 'copilot:';
@@ -643,6 +651,7 @@ export async function runCopilotProcess({
   const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(runEnv).length ? { runEnv } : {}) });
   // P3-D20: the run env stays out of this child's env (its shell would read the registry secrets), but the git ceiling
   // of a run without a project is no secret and must reach the agent's own git.
+  if (typeof runSpawnEnv?.TMPDIR === 'string') env.TMPDIR = runSpawnEnv.TMPDIR;   // the run's scratch folder, no secret
   if (typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string') env.GIT_CEILING_DIRECTORIES = runSpawnEnv.GIT_CEILING_DIRECTORIES;
   env.COPILOT_AUTO_UPDATE = 'false';
   // Either would widen the allow list buildCopilotArgs sets (see the notes at the top).
@@ -763,7 +772,7 @@ export const copilotChat = makeChatDescriptor({
   preflight: (_ctx, impl = copilotPreflight) => impl(),
   resumeNotFound: copilotResumeNotFound,
   docsAnchor: 'github-copilot-cli',
-  shellTrippedMessage: 'Copilot tried to run a shell command although it was given none — worca stopped the turn.',
+  shellTrippedMessage: 'GitHub Copilot tried to run a shell command although it was given none — worca stopped the turn.',
   titles: true,
   // GPT-5 Mini is one of Copilot's included models (0× premium requests on a paid plan): a suggestion after every reply
   // costs no premium request there (one on the free plan).

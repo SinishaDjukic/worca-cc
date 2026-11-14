@@ -132,6 +132,18 @@ const completed = (c) => c.type === 'status' || c.__typename === 'StatusContext'
 const passing = (c) => c.type === 'status' || c.__typename === 'StatusContext'
   ? ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(c.state) : PASSING.has(c.conclusion);
 
+/** Re-run checks (a person's press): the workflow runs of the head's failing checks that are the PR's own (not failing on
+ *  the base head too), each once, in order. */
+export function failingCheckRuns(pr) {
+  const inherited = new Set(pr?.baseFailing || []);
+  const out = [];
+  for (const c of Array.isArray(pr?.contexts) ? pr.contexts : []) {
+    if (c.type !== 'check' || !c.runId || !completed(c) || passing(c) || inherited.has(c.name)) continue;
+    if (!out.includes(c.runId)) out.push(c.runId);
+  }
+  return out;
+}
+
 /**
  * What the watch should do next. A merge conflict with the base goes alone: GitHub runs no fresh checks
  * on a conflicting PR, and the rest is looked at again once the merge is pushed. It counts once per PR
@@ -147,11 +159,11 @@ const passing = (c) => c.type === 'status' || c.__typename === 'StatusContext'
  *     batch on the conflict path (`conflict.why: 'behind'`), once per check name;
  *   - anything else is the PR's own and is fixed by hand.
  */
-export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false, baseWaitOver = false } = {}) {
+export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false, checksOnly = false, baseWaitOver = false } = {}) {
   const seen = new Set(alreadyHandled);
   const none = { fire: false, checksSettled: false, failures: [], threads: [], reviews: [], reviewOnlyComment: false, conflict: null,
     handledKeys: [], skipped: [], waitingOnBase: [], reruns: [] };
-  if (pr.mergeable === 'CONFLICTING' && pr.base && pr.baseSha) {
+  if (!checksOnly && pr.mergeable === 'CONFLICTING' && pr.base && pr.baseSha) {
     const key = `conflict:${pr.headSha}@${pr.baseSha}`;
     if (conflictOnly || !seen.has(key)) return { ...none, fire: true, conflict: { base: pr.base, baseSha: pr.baseSha }, handledKeys: [key] };
   }
@@ -165,7 +177,11 @@ export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false,
   const failed = settled ? scoped.filter((c) => completed(c) && !passing(c)) : [];
   const inherited = new Set(pr.baseFailing || []);
   const skipped = [...new Set(failed.filter((c) => inherited.has(nameOf(c))).map(nameOf))];
-  let failures = failed.filter((c) => !inherited.has(nameOf(c)) && !seen.has(keyOf(c)));
+  // checksOnly (Fix checks, a person's press): every failing check of the head, handled or not; no re-run, no merge-first.
+  let failures = failed.filter((c) => !inherited.has(nameOf(c)) && (checksOnly || !seen.has(keyOf(c))));
+  if (checksOnly) {
+    return { ...none, fire: failures.length > 0, checksSettled: settled, failures, skipped, handledKeys: failures.map(keyOf).filter((k) => !seen.has(k)) };
+  }
   // A check the base head has no finished result for, while the base is still running (a job that
   // needs another one does not exist until that one finishes): it may yet turn out to be the base's.
   const baseDone = new Set([...(pr.baseFailing || []), ...(pr.basePassing || [])]);
@@ -423,7 +439,7 @@ export function createPrWatcher(deps = {}) {
     return { ok: true, startSha: s.headSha, expectedRemoteSha: s.remoteSha };
   }
 
-  async function prepareAndStart(w, origin, pr, triggers, { once = false } = {}) {
+  async function prepareAndStart(w, origin, pr, triggers, { once = false, checksOnly = false } = {}) {
     if (pr.branch !== origin.branch) return needsPerson(w, 'branch-mismatch');
     if (await deps.liveOnBranch({ projectDir: origin.projectDir, branch: origin.branch })) return w;
     try { await deps.freeCheckout({ projectDir: origin.projectDir, branch: origin.branch }); }
@@ -435,7 +451,7 @@ export function createPrWatcher(deps = {}) {
       if (!snap?.ok) return retry(w, 'read', snap);
       w = resetRetry(w, 'read');
       if (snap.pr.state !== 'OPEN') return endWatch(w, snap.pr.state);
-      pr = snap.pr; triggers = collectTriggers(pr, w.handled, { conflictOnly: once, baseWaitOver: baseWaitOver(w) });
+      pr = snap.pr; triggers = collectTriggers(pr, w.handled, checksOnly ? { checksOnly } : { conflictOnly: once, baseWaitOver: baseWaitOver(w) });
       if (!triggers.fire || triggers.reruns.length) return w;
       pre = await preflight(w, origin, pr);
     }
@@ -514,7 +530,7 @@ export function createPrWatcher(deps = {}) {
       if (cur?.status === 'starting' && cur.activeRunId === runId) return needsPerson(cur, 'start-refused', { activeRunId: null, pending: null });
       return cur;
     }
-    notify('started', cur || reserved, once ? 'Conflict fix started.' : `Fix run ${reserved.fixRuns} of ${MAX_FIX_RUNS} started.`);
+    notify('started', cur || reserved, checksOnly ? 'Checks fix started.' : once ? 'Conflict fix started.' : `Fix run ${reserved.fixRuns} of ${MAX_FIX_RUNS} started.`);
     fixRun({ phase: 'started', watch: cur || reserved, runId, trigger: fixTrigger(pending), once });
     return cur;
   }
@@ -694,6 +710,23 @@ export function createPrWatcher(deps = {}) {
       : { ok: false, code: next?.status === 'needs-person' ? 'NEEDS_PERSON' : 'NOT_STARTED', watch: next };
   }
 
+  /** Fix checks on a task page: one fix run for the PR's failing checks, outside the loop, Watch on or off (the twin of
+   *  resolveOnce). It counts in fix_runs but MAX_FIX_RUNS does not stop it, as Resolve. → { ok, code?, watch } */
+  async function fixChecksOnce(w) {
+    if (!w || ACTIVE.has(w.status)) return { ok: false, code: 'BUSY', watch: w };
+    if (paused()) return { ok: false, code: 'RATE_LIMITED', watch: w };
+    const origin = await deps.originOf?.(w);
+    if (!origin) return { ok: false, code: 'ORIGIN_GONE', watch: w };
+    const snap = await deps.host.snapshot({ projectDir: origin.projectDir, prUrl: w.prUrl });
+    if (!snap?.ok) return { ok: false, code: 'READ_FAILED', error: snap?.error, watch: w };
+    if (snap.pr.state !== 'OPEN') return { ok: false, code: 'PR_CLOSED', watch: w };
+    const triggers = collectTriggers(snap.pr, w.handled, { checksOnly: true });
+    if (!triggers.fire) return { ok: false, code: 'NO_FAILING_CHECKS', watch: w };
+    const next = await prepareAndStart(w, origin, snap.pr, triggers, { once: true, checksOnly: true });
+    return ACTIVE.has(next?.status) ? { ok: true, watch: next }
+      : { ok: false, code: next?.status === 'needs-person' ? 'NEEDS_PERSON' : 'NOT_STARTED', watch: next };
+  }
+
   async function tick() {
     const byUrl = new Map([...listLifecycleWatches(), ...listTriggerWatches()].map((w) => [w.prUrl, w]));
     for (const w of byUrl.values()) {
@@ -701,7 +734,7 @@ export function createPrWatcher(deps = {}) {
       catch (err) { deps.log?.(`pr-watch: ${w.prUrl}: ${err?.message || err}`); }
     }
   }
-  return { tick, tickOne, resolveOnce, runner: createPrWatchRunner({ tick, intervalMs: deps.intervalMs, env: deps.env }) };
+  return { tick, tickOne, resolveOnce, fixChecksOnce, runner: createPrWatchRunner({ tick, intervalMs: deps.intervalMs, env: deps.env }) };
 }
 
 export const _testing = { resetRateLimitPause() { hostPauseUntil = 0; }, rateLimitPause() { return hostPauseUntil; } };

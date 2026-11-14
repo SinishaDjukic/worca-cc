@@ -1,4 +1,4 @@
-// Segmented (docs/design-system.md › Worca Rail › Segmented): two to four views of the same thing, one pressed.
+// Segmented (docs/rail/components.md): two or three views of the same thing, one pressed.
 import { attrs, esc } from './html.mjs';
 
 /**

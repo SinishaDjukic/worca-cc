@@ -54,6 +54,9 @@ export async function startWorca() {
   // z-index 50 overlay) over the transcript and block visual.spec's clicks. Same fix as tools/verify-theme-cdp.mjs:120.
   const onb = await fetch(`${url}/api/onboarding`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ welcomeSeen: true }) });
   if (!onb.ok) throw new Error(`POST /api/onboarding → ${onb.status}; the welcome modal would block the Chat page (v7)`);
+  // The worca-level welcome is a second boot-time modal, tracked apart from welcomeSeen: acknowledge it too.
+  const lvl = await fetch(`${url}/api/worca-level/ack`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ what: 'welcome' }) });
+  if (!lvl.ok) throw new Error(`POST /api/worca-level/ack → ${lvl.status}; the level welcome would block the Chat page`);
   return { url, port, home, child, stop };
 }
 

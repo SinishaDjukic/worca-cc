@@ -110,7 +110,9 @@ test('detached: a completed run removes <worcaHome>/runs/<id>, copies run.json t
     const warnings = [];
     orch.on('log', (e) => { if (e.level === 'warn') warnings.push(e.text); });
     let planted = false;
+    let sawScratch = false;
     orch.on('state', (s) => {
+      if (s.id && existsSync(join(worcaHome(), 'runs', s.id, '.scratch'))) sawScratch = true;
       if (planted || !s.branch?.worktreeDir) return;
       const runRoot = join(worcaHome(), 'runs', s.id);
       if (!existsSync(runRoot)) return;
@@ -147,6 +149,7 @@ test('detached: a completed run removes <worcaHome>/runs/<id>, copies run.json t
       { name: 'detached: an unexpected file at the run root is copied to <pipelineDir>/stray/ with a warning', run: async () => {
         assert.equal(res.status, 'done', JSON.stringify(res));
         assert.ok(planted, 'precondition: a stray was planted at the run root');
+        assert.ok(sawScratch, 'the run had its scratch folder while nodes ran');
         assert.equal(await readFile(join(pdir, 'stray', 'oops-notes.md'), 'utf8'), '# valuable notes\n');
         assert.equal(await readFile(join(pdir, 'stray', 'scratch', 'deep.txt'), 'utf8'), 'deep\n');
         assert.ok(warnings.some((w) => /oops-notes\.md/.test(w) && /run root/.test(w)),
@@ -227,6 +230,7 @@ test('detached: a failed teardown commit retains the worktree + run root and per
     assert.equal(saved.state.branch.worktreeRemoved, false);
     const liveManifest = await readRunManifest(runRoot);
     assert.equal(liveManifest.retain.reason, 'commit_failed');
+    assert.equal(existsSync(join(runRoot, '.scratch')), false, 'a retained root keeps its checkouts, not its scratch folder');
     assert.equal(liveManifest.retain.members[0].worktreeDir, st.branch.worktreeDir);
     assert.deepEqual(Object.keys(liveManifest.retain.members[0]).sort(), ['at', 'branch', 'message', 'projectKey', 'step', 'worktreeDir'],
       'a git member carries no reason (P1: only a Folder member does)');

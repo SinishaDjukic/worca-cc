@@ -23,6 +23,13 @@ export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto wor
 const OWN_RUN_JOBS = new Set(['memoryDefrag', 'workspaceScan', 'requirementsInterview', 'secondOpinion']);
 export const utilityId = (engine, job) => (OWN_RUN_JOBS.has(job) ? `models.${engine}.${job}` : `models.${engine}.utility.${job}`);
 const EMPTY = Object.freeze({ own: undefined, inherited: { value: undefined, source: 'default' } });
+// Design's agents (Engines card › Design): one row each per engine Design builds on.
+export const DESIGN_ROW_LABELS = Object.freeze({ lead: 'Design lead', builder: 'Design builders' });
+export const DESIGN_ROW_HINTS = Object.freeze({
+  lead: 'The main agent of a Design build: plans the sections, then puts them together. A design can pick its own.',
+  builder: 'The agents that build one section each, side by side. A design can pick its own.',
+});
+export const designRowId = (engine, role) => `models.${engine}.design.${role}`;
 // What each helper job does, as the hover hint on its row's name.
 export const JOB_HINTS = Object.freeze({
   title: 'Writes the short title every run and chat gets.',
@@ -34,7 +41,7 @@ export const JOB_HINTS = Object.freeze({
   naming: 'Suggests the title and branch name on the New run form (Smart run naming). Unset: the cheapest ready Claude model.',
   commandSummary: 'Writes the one-line summary of a chat command when the chat gave none, from the command alone (secrets hidden, never its output). Turn it off in Settings › Chat › Summarise commands. Unset: the cheapest ready Claude model; with none ready, commands keep their raw text.',
   workspaceScan: 'Runs the workspace scan that maps how member projects connect.',
-  requirementsInterview: 'Makes product briefs, looks at the code for a feature and runs the interview rounds on the Requirements page.',
+  requirementsInterview: 'Makes product briefs, does code looks for a feature and runs the interview rounds on the Requirements page.',
   secondOpinion: 'The one role review that runs on another model than its step, so one reviewer judges on its own (Shaper\'s Product reviewer).',
 });
 
@@ -162,13 +169,20 @@ export function renderEngineSection(host, options) {
     card.append(slotTable(doc, 'engine-steps', 'Step models', steps, { what: 'step', from, onTest: options.onTest }));
     const jobs = options.jobs?.[engine] || [];
     if (jobs.length) {
-      const helpers = jobs.map((job) => row(utilityId(engine, job), JOB_LABELS[job] || job, options.defaultLabels?.[engine] || (engine === 'codex' ? "Codex's default model (GPT-5.6 Sol)" : 'the default model'), JOB_HINTS[job]));
+      const helpers = jobs.map((job) => row(utilityId(engine, job), JOB_LABELS[job] || job, options.defaultLabels?.[engine] || (engine === 'codex' ? `${engineLabel('codex')}'s default model (GPT-5.6 Sol)` : 'the default model'), JOB_HINTS[job]));
       card.append(slotTable(doc, 'engine-helpers', 'Helper jobs', helpers, { what: 'helper job', from, onTest: options.onTest }));
     } else if (SIGN_IN_ENGINE_NAMES.includes(engine) || engine === 'copilot') {
       const sec = doc.createElement('section'); sec.className = 'engine-slots engine-helpers';
       const bar = doc.createElement('div'); bar.className = 'engine-slot-bar'; bar.append(Object.assign(doc.createElement('h4'), { textContent: 'Helper jobs' }));
       sec.append(bar, Object.assign(doc.createElement('small'), { className: 'hint engine-slot-rest', textContent: helpersNote(engine) }));
       card.append(sec);
+    }
+    // options.designEngines: the engines Design builds on, while the design flag is on. Lead and builders, each
+    // falling back to its role (Deep thinking, Everyday coding) and then the engine's default model.
+    if ((options.designEngines || []).includes(engine)) {
+      const dflt = SIGN_IN_ENGINE_NAMES.includes(engine) || engine === 'copilot' ? `${engineLabel(engine)}'s default model` : (options.defaultLabels?.[engine] || (engine === 'codex' ? "Codex's default model (GPT-5.6 Sol)" : 'the default model'));
+      const rows = ['lead', 'builder'].map((role) => row(designRowId(engine, role), DESIGN_ROW_LABELS[role], dflt, DESIGN_ROW_HINTS[role]));
+      card.append(slotTable(doc, 'engine-design', 'Design', rows, { what: 'Design agent', from, onTest: options.onTest }));
     }
     host.append(card); cards[engine] = card;
   }
@@ -285,6 +299,9 @@ export function enginePatchToSettingsBody(patch) {
   for (const [id, value] of Object.entries(patch || {})) {
     if (id === 'run.engine') { body.runEngine = value; continue; }
     let match = new RegExp(`^models\\.(${MODEL_ENGINE_NAMES.join('|')})\\.steps\\.(.+)$`).exec(id); if (match) { ((body.stepModels ||= {})[match[1]] ||= {})[match[2]] = value; continue; }
+    // Design's agents: { designModels: { <engine>: { lead|builder: { model, effort } | null } } }; a pick names a model.
+    match = new RegExp(`^models\\.(${MODEL_ENGINE_NAMES.join('|')})\\.design\\.(lead|builder)$`).exec(id);
+    if (match) { ((body.designModels ||= {})[match[1]] ||= {})[match[2]] = value && value.model ? { model: value.model, ...(value.effort ? { effort: value.effort } : {}) } : null; continue; }
     match = /^models\.(codex)\.(?:utility\.)?(title|classifier|overview|prDescription|memoryDefrag|workspaceScan|secondOpinion)$/.exec(id); if (match) ((body.utilityModels ||= {})[match[1]] ||= {})[match[2]] = value;
     // Claude's helper slots live in their own settings keys: a model id (title, Auto, PR description), and the
     // Memory defragment, Agent generation and Run naming pairs; the Requirements interview pair is its own key.
@@ -322,11 +339,11 @@ export function renderAskEngineSection(host, { catalog = [], askEngine, askModel
   const oldVersion = rest.filter((x) => !ENGINES[x].signin);
   if (oldVersion.length === 1) sentences.push(`Chat on ${engineLabel(oldVersion[0])} is unavailable on this ${oldVersion[0]} version.`);
   else if (oldVersion.length > 1) sentences.push(`Chat on ${list(oldVersion.map(engineLabel))} is unavailable on these engine versions.`);
-  if (broker.length || rest.length > needModel.length) sentences.push('New chats start on Claude.');
+  if (broker.length || rest.length > needModel.length) sentences.push(`New chats start on ${engineLabel('claude')}.`);
   const notes = sentences.join(' ');
   host.append(renderInheritField(doc, { id: 'askEngine', label: 'Engine for new chats', kind: 'select', level: 'user',
     hint: `New chats start here. A chat can move to another engine later, from its model picker.${notes ? ` ${notes}` : ''}`,
-    options: [{ value: 'claude', label: 'Claude' }, ...others.map((e) => ({ value: e, label: offered[e] ? engineChoiceLabel(e) : `${engineLabel(e)} (unavailable)` }))],
+    options: [{ value: 'claude', label: engineLabel('claude') }, ...others.map((e) => ({ value: e, label: offered[e] ? engineChoiceLabel(e) : `${engineLabel(e)} (unavailable)` }))],
     own: askEngine ?? undefined, inherited: { value: 'claude', source: 'default' }, format: engineName }));
   applyEngineLocks(host);
   // The chat models: the Engines card's table, one row per engine and always listed (no switch, nothing folded).

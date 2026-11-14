@@ -660,10 +660,25 @@
         "selectors": [
           ".pd-settings",
           ".card.house-brief",
-          ".house-brief"
+          ".house-brief",
+          ".readiness-settings-card",
+          ".rs-"
         ],
         "feature": "projects",
         "name": "project-settings"
+      },
+      {
+        "section": "^Projects two-screen shell",
+        "selectors": [
+          ".pl-rd",
+          ".rd-",
+          ".readiness-pop",
+          ".rp-",
+          ".pd-rd-slot",
+          ".pd-row1"
+        ],
+        "feature": "projects",
+        "name": "readiness"
       },
       {
         "section": "^Actions",
@@ -875,7 +890,7 @@
         "name": "away-screensaver"
       },
       {
-        "section": "^marketplace P7$",
+        "section": "^Design$",
         "selectors": [
           ":is(.ask-card,.chat-rc,.shape-feature)"
         ],
@@ -1316,6 +1331,26 @@
       "html": []
     },
     {
+      "name": "prompt-check",
+      "doc": "docs/prompt-check.md",
+      "routes": [
+        "/api/prompt-check"
+      ],
+      "css": [],
+      "html": []
+    },
+    {
+      "name": "worca-levels",
+      "doc": "docs/worca-levels.md",
+      "routes": [],
+      "css": [
+        "^Worca level"
+      ],
+      "html": [
+        "<!-- ===== VIEW: PROFILE"
+      ]
+    },
+    {
       "name": "ui-levels",
       "doc": "docs/ui-levels.md",
       "routes": [],
@@ -1426,6 +1461,17 @@
       ],
       "css": [],
       "html": []
+    },
+    {
+      "name": "design",
+      "doc": "docs/design.md",
+      "routes": [],
+      "css": [
+        "^Design$"
+      ],
+      "html": [
+        "<!-- ===== VIEW: DESIGN"
+      ]
     }
   ]
 }

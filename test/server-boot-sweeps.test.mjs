@@ -246,7 +246,7 @@ test('boot: a product brief left making by a restart becomes INTERRUPTED', async
   const b = getBrief('project', 'boot-brief-1');
   assert.equal(b.status, 'empty', 'never made: back to empty');
   assert.equal(b.error.code, 'INTERRUPTED');
-  assert.equal(b.error.message, 'The look at the code did not finish because Worca restarted. Try again.');
+  assert.equal(b.error.message, 'The code look did not finish because Worca restarted. Try again.');
   assert.equal((await bootMaintenance({ log: () => {} })).recoveredBriefs, 0, 'idempotent');
 });
 

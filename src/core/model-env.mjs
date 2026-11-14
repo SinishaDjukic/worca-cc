@@ -208,11 +208,13 @@ export function withStreamTimeouts(env) {
 // entry silently flooring every fan-out child would contradict the per-node
 // control the UI shows. CLAUDE_CODE_FORK_SUBAGENT is worca's own: the Claude adapter sets it to 0 on
 // every spawn (engines/claude.mjs CLAUDE_SPAWN_ENV), and an entry that turned forks back on would
-// bypass the pinned investigator and that same per-node policy.
+// bypass the pinned investigator and that same per-node policy. CLAUDE_CODE_SIMPLE and CLAUDE_CODE_SAFE_MODE switch
+// every settings hook off, the fail-closed read and write guards included (engines/claude.mjs HOOKS_OFF_ENV_KEYS).
 export const RESERVED_MODEL_ENV_KEYS = [
   'PATH', 'HOME', 'TMPDIR', 'SHELL', 'USER', 'LOGNAME', 'TERM',
   'NODE_OPTIONS', 'NODE_EXTRA_CA_CERTS',
   'CLAUDECODE', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', 'CLAUDE_CODE_SUBAGENT_MODEL', 'CLAUDE_CODE_FORK_SUBAGENT',
+  'CLAUDE_CODE_SIMPLE', 'CLAUDE_CODE_SAFE_MODE',
 ];
 export const RESERVED_MODEL_ENV_PREFIXES = ['WORCA_'];
 

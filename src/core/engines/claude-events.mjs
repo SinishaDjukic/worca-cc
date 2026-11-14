@@ -18,6 +18,7 @@ const textOf = (content) => (typeof content === 'string' ? content
 export function createClaudeNormalizer({ rootParentId = null } = {}) {
   const agents = new Set();
   const messageIds = new Map();
+  const toolBlocks = new Map(); // index → {id,name}; main stream only, per message
 
   function assistant(raw, parentId, e) {
     const msg = raw.message && typeof raw.message === 'object' ? raw.message : {};
@@ -81,11 +82,39 @@ export function createClaudeNormalizer({ rootParentId = null } = {}) {
     if (ev.type === 'message_start') {
       const id = str(ev.message?.id) ?? null;
       messageIds.set(key, id);
+      if (parentId === null) toolBlocks.clear();
       return [{ type: 'usage', messageId: id, parentId, usage: ev.message?.usage ?? null, phase: 'start' }];
     }
     if (ev.type === 'message_delta') return [{ type: 'usage', messageId: messageIds.get(key) ?? null, parentId, usage: ev.usage ?? null, phase: 'delta' }];
     if (parentId === null && ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && typeof ev.delta.text === 'string') {
       return [defined({ type: 'text', text: ev.delta.text, parentId, from: 'assistant', delta: true, messageId: messageIds.get(key) ?? undefined })];
+    }
+    if (parentId === null) return toolInput(ev, messageIds.get(key) ?? null);
+    return [];
+  }
+
+  // A main-stream tool_use block's arguments as they stream (C-4): start, then each
+  // input_json_delta, then stop, which forgets the index. Child streams and unknown
+  // indexes emit nothing.
+  function toolInput(ev, messageId) {
+    const index = ev.index;
+    if (ev.type === 'content_block_start') {
+      const b = ev.content_block;
+      if (b?.type !== 'tool_use') return [];
+      const block = { id: str(b.id) ?? null, name: str(b.name) ?? null };
+      toolBlocks.set(index, block);
+      return [{ type: 'toolInput', phase: 'start', parentId: null, messageId, index, toolUseId: block.id, name: block.name }];
+    }
+    const block = toolBlocks.get(index);
+    if (!block) return [];
+    const base = { type: 'toolInput', parentId: null, messageId, index, toolUseId: block.id, name: block.name };
+    if (ev.type === 'content_block_delta' && ev.delta?.type === 'input_json_delta') {
+      const partialJson = typeof ev.delta.partial_json === 'string' ? ev.delta.partial_json : '';
+      return [{ ...base, phase: 'delta', partialJson }];
+    }
+    if (ev.type === 'content_block_stop') {
+      toolBlocks.delete(index);
+      return [{ ...base, phase: 'stop' }];
     }
     return [];
   }
@@ -175,9 +204,22 @@ export function createClaudeNormalizer({ rootParentId = null } = {}) {
       case 'user': return user(raw, parentId, e);
       case 'stream_event': return streamEvent(raw, parentId);
       case 'result': return result(raw, e);
+      case 'rate_limit_event': return parentId === null ? [limitOf(raw.rate_limit_info)] : otherText();
       default: return otherText();
     }
   };
+}
+
+/** The CLI's plan-limit reading (the usage rings' source, D7): rate_limit_info carries either `unifiedWindows`
+ *  ({five_hour: {utilization, resetsAt}, seven_day: …}) or one window (`rateLimitType`, `utilization`, `resetsAt`).
+ *  resetsAt is in seconds; the event's is in ms. A window without a numeric utilization keeps it null. */
+function limitOf(info) {
+  const i = info && typeof info === 'object' ? info : {};
+  const win = (window, w) => ({ window, utilization: Number.isFinite(w?.utilization) ? w.utilization : null,
+    resetsAt: Number.isFinite(w?.resetsAt) ? w.resetsAt * 1000 : null });
+  const unified = i.unifiedWindows && typeof i.unifiedWindows === 'object' ? Object.entries(i.unifiedWindows) : null;
+  const windows = unified ? unified.map(([k, w]) => win(k, w)) : typeof i.rateLimitType === 'string' ? [win(i.rateLimitType, i)] : [];
+  return { type: 'limit', status: typeof i.status === 'string' ? i.status : null, windows };
 }
 
 /** Wrap a consumer so it only ever sees normalized events (one normalizer per wrapper = per stream). */

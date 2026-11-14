@@ -658,10 +658,26 @@ export function resumeWaitError(after, pipelineId) {
 
 /** The run whose feature branch `pipelineId` started from: its latest ticket's predecessor when that ticket
  *  started it "from its branch" (source_from_previous). null = no previous run (or its ticket was purged). */
-function chainPredecessorOf(pipelineId) {
+export function chainPredecessorOf(pipelineId) {
   const t = getDb().prepare('SELECT after_kind, after_id, source_from_previous FROM scheduled_runs WHERE pipeline_id = ? ORDER BY updated_at DESC LIMIT 1').get(String(pipelineId));
   if (!t || !t.source_from_previous || !t.after_id) return null;
   return (t.after_kind === 'ticket' ? getTicket(t.after_id)?.pipelineId : t.after_id) || null;
+}
+
+/** The runs started "from the branch" of `pipelineId` (Merge PR's retarget): every pipeline whose chainPredecessorOf is
+ *  it, through a `pipeline` after-link or a `ticket` after-link whose ticket started it. Oldest ticket first. */
+export function chainSuccessorsOf(pipelineId) {
+  const id = String(pipelineId || ''); if (!id) return [];
+  const db = getDb();
+  const tickets = db.prepare('SELECT id FROM scheduled_runs WHERE pipeline_id = ?').all(id).map((r) => r.id);
+  const rows = db.prepare(`SELECT pipeline_id, after_kind, after_id FROM scheduled_runs
+    WHERE source_from_previous = 1 AND pipeline_id IS NOT NULL AND after_id IS NOT NULL ORDER BY created_at ASC`).all();
+  const out = [];
+  for (const r of rows) {
+    const linked = r.after_kind === 'ticket' ? tickets.includes(r.after_id) : r.after_id === id;
+    if (linked && !out.includes(r.pipeline_id) && chainPredecessorOf(r.pipeline_id) === id) out.push(r.pipeline_id);
+  }
+  return out;
 }
 
 /**
@@ -1196,11 +1212,16 @@ export function skipTicket(t, reason, { now = Date.now(), schedule = t.scheduleI
   else removeStage(t.id);
 }
 
+/** A hold predicate that throws never holds: a broken lookup must not strand a run. */
+function safeHold(hold, t) {
+  try { return hold(t) === true; } catch { return false; }
+}
+
 export async function runDueTickets({
   now = Date.now(), start, isLive = null, pid = process.pid, host = hostname(), pidAlive = defaultPidAlive,
-  onlyOwned = false, staggerMs = 0, sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  onlyOwned = false, staggerMs = 0, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), hold = null,
 } = {}) {
-  const out = { fired: [], missed: [], skipped: [], failed: [], retried: [], waiting: [] };
+  const out = { fired: [], missed: [], skipped: [], failed: [], retried: [], waiting: [], held: [] };
   let startedAny = false;
   for (const t of dueTickets({ now })) {
     const mine = t.ownerPid === pid && t.ownerHost === host;
@@ -1221,6 +1242,8 @@ export async function runDueTickets({
       if (!t.forced) {
         if (p.state === 'waiting') { out.waiting.push(t.id); continue; }
         if (p.state !== 'ok') { missAfter(t, now, p); out.missed.push(t.id); continue; }
+        // A caller's hold (Shaper's "Ask me before each run"): the ticket stays scheduled and unwritten, asked again each tick.
+        if (hold && safeHold(hold, t)) { out.held.push(t.id); continue; }
       }
       // D11: due from now — the late / retry maths below start here, never at the sentinel.
       if (t.attempts === 0) { touchTicket(t.id, 'run_at = ?', [iso(now)], now); t.runAt = iso(now); }

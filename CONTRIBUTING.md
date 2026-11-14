@@ -1,3 +1,6 @@
+> [!NOTE]
+> This project will soon move to a new organization: [github.com/worca-org](https://github.com/worca-org).
+
 # Contributing to Worca
 
 Thanks for your interest in contributing! This document covers developing Worca
@@ -165,6 +168,24 @@ docs/            RELEASING.md and other docs
 Note: `agents/` (the shipped, data-driven agent set) is **not** the same thing
 as `.claude/agents/` (Claude Code agents used to develop this repo). Changes to
 pipeline agent behavior belong in `agents/`.
+
+## Design system
+
+UI work starts at [docs/rail/README.md](docs/rail/README.md): the rules, one concern per file. Pages are built from
+the library in `ui/public/design-system/components/` (components and shared logic), and
+`docs/design-system-catalog.json` says which one meets which need. The prototype in
+`plans/rail/prototype/` is the design and wins; `npm run rail` builds it and opens it in your browser. The plan is
+`plans/rail/implementation-prompt.md`.
+
+`npm test` fails new UI code that writes a component's markup or a state's words by hand (`test/rail-gate.test.mjs`). Old
+pages are frozen by a ratchet that can only shrink: after moving a page to the library, run
+`node tools/rail-gate.mjs --update`. Something the design system lacks is added there first: the rule, the catalog entry,
+the component, its test and its gallery example; `test/rail-docs.test.mjs` checks they agree.
+
+A PR that changes today's UI must change the Stillhet prototype too, or add a `wire to` row under `## Dev surfaces` in
+`plans/rail/stillhet-wiring.md`, or carry the `no-ui-change` label plus a "No UI change: …" line in its body (CI's
+`prototype` job, `gate.prototype` in [docs/rail/gate.md](docs/rail/gate.md)); re-run that job after a label or body
+edit, and on a fork PR a maintainer applies the label.
 
 ## UI levels
 
