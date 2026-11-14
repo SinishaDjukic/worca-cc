@@ -192,3 +192,23 @@ test('POST /api/workflows/import-json with script commands: dryRun 200 lists the
     } },
   ]);
 });
+
+// Stillhet slice 7: Workflows exports then imports through these routes (stillhet-workflows-host-roundtrip.test.mjs)
+test('route round trip: GET /api/workflows/:id/json then POST /api/workflows/import-json gives a new row with the same nodes and wires', async () => {
+  const exported = await (await fetch(`${base}/api/workflows/wf_default/json`)).json();
+  const r = await post('/api/workflows/import-json', { workflow: exported, name: 'Default round trip' });   // "Default" itself is reserved
+  assert.equal(r.status, 201);
+  const { workflow } = await r.json();
+  assert.notEqual(workflow.id, 'wf_default');
+  const row = await (await fetch(`${base}/api/workflows/${workflow.id}`)).json();
+  assert.deepEqual(row.nodes.map((n) => [n.id, n.kind, n.key]), exported.nodes.map((n) => [n.id, n.kind, n.key]));
+  assert.deepEqual(row.wires.map((w) => [w.from, w.to, w.config?.maxCycles]), exported.wires.map((w) => [w.from, w.to, w.config?.maxCycles]));
+});
+
+test('a 422 import leaves the GET /api/workflows ids unchanged (nothing written)', async () => {
+  const ids = async () => (await (await fetch(`${base}/api/workflows`)).json()).workflows.map((w) => w.id).sort();
+  const was = await ids();
+  const r = await post('/api/workflows/import-json', { workflow: { version: 2, name: 'Broken one', domain: 'coding', nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} }, { id: 'n_p', kind: 'agent', key: 'planner', x: 1, y: 0, config: {} }], wires: [] } });
+  assert.equal(r.status, 422);
+  assert.deepEqual(await ids(), was);
+});

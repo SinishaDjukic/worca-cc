@@ -76,10 +76,14 @@
         hidden: function () { return document.hidden; },
         toast: toast,
         go: function (h) { if (window.RailShell) window.RailShell.go(h); },
+        // Workflows (slice 7): a JSON export downloads through a link, and a list read again redraws the place
+        download: function (url, name) { var a = document.createElement('a'); a.href = url; a.download = name || ''; a.hidden = true; document.body.appendChild(a); a.click(); a.remove(); },
+        workflowsChanged: function () { var p = window.RailPlaces && window.RailPlaces.workflows; if (p && p.changed) p.changed(); },
         on: function (ev, fn) { window.addEventListener(ev, fn); }
       });
       window.RailChatLive = live.chat;   // the live chat's reads and actions (D5): chat/conversation.js and chats-column.js
       window.RailTaskLive = live.task;   // the live Tasks reads and actions (Tasks D4): the task page, the list, the center, the card
+      window.RailWorkflowLive = live.workflow;   // the live Workflows reads and actions (slice 7 D2): workflows/workflows.js
       window.RailScheduleLive = live.schedule;   // the live Schedules actions, a schedule's runs and Delete's Undo window (Schedules D4)
       window.addEventListener('hashchange', function () { live.seen(); });
       readyDone(live);

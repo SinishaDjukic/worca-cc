@@ -203,6 +203,8 @@ export function taskPageOf(input = {}, { now = 0 } = {}) {
     stages: ENDED.test(lc(state.status)) && !arr(state.steps).some((s) => s && !bookend(s)) && !arr(state.stepper?.graph?.nodes).length ? [] : stagesOf(state.steps, state.stepper?.graph?.nodes),
     ...(failedChecks ? { failedChecks } : {}),
     pauseAfterStep: state.pauseAfterStep === true,
+    // the workflow the task ran (its stepper's template, slice 7 D17): the Workflow dialog opens it in Workflows
+    workflow: str(state.stepper?.template?.id) ? { id: str(state.stepper.template.id), name: str(state.stepper.template.name) || str(state.stepper.template.id) } : null,
   };
 }
 

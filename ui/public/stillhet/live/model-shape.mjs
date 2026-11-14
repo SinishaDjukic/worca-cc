@@ -18,6 +18,10 @@ export const SHAPES = Object.freeze({
   costs: { budget: 'object|null', usage: 'array' },
   space: { id: 'string', title: 'string', home: 'string', runs: 'number|null', scanned: 'string', model: 'string', about: 'string', projects: 'array', links: 'array' },   // a workspace (D10)
   update: { id: 'string', e: 'string', g: 'string', sev: 'string', title: 'string', meta: 'string', time: 'string', day: 'string', unread: 'boolean', go: 'string', to: 'string', run: 'string?', fix: 'string?' },
+  // Workflows (slice 7): workflows/workflows.js data, and live/workflow-map.mjs workflowOf, agentOf and scriptOf
+  workflow: { id: 'string', title: 'string', own: 'boolean', domain: 'string', what: 'string', tasks: 'number|null', merged: 'number|null', from: 'string', steps: 'array', loops: 'array', team: 'boolean?', running: 'boolean?', pinned: 'boolean?', plugin: 'string?' },
+  agent: { id: 'string', title: 'string', own: 'boolean', domain: 'string', type: 'string', ins: 'string', outs: 'string', model: 'string', effort: 'string', asks: 'boolean', fan: 'boolean', plugin: 'string?' },
+  script: { id: 'string', title: 'string', own: 'boolean', domain: 'string', runtime: 'string', what: 'string', param: 'array', timeout: 'string', cases: 'number|null' },
 });
 
 const is = {
@@ -102,7 +106,7 @@ export function turnErrors(turn) {
 export const TASK_PAGE_SHAPE = Object.freeze({
   id: 'string', case: 'string', title: 'string', branch: 'string', base: 'string', pr: 'string', prUrl: 'string', detail: 'string', why: 'array', git: 'string',
   cost: 'number|null', cap: 'number|null', mins: 'number|null', startedAgo: 'number|null', startedAt: 'string', project: 'string', labels: 'array', tags: 'array',
-  prompt: 'string', stages: 'array', pauseAfterStep: 'boolean',
+  prompt: 'string', stages: 'array', pauseAfterStep: 'boolean', workflow: 'object|null',
 });
 /** [] when `page` has every TASK_PAGE_SHAPE field with its type, else one line per wrong field ("taskPage.cost: expected number|null"). */
 export function taskPageErrors(page) {

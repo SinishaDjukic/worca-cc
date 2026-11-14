@@ -16,7 +16,20 @@ test('every demo seed of the 8 kinds meets its shape', () => {
   check('project', w.RailProjects.all());
   check('space', w.RailSpaces.list());   // the live adapter's spacesOf draws the same shape (D10)
   for (const c of w.PulseModel.CASES) { check('update', c.updates); check('costs', [{ budget: c.budget, usage: c.usage }]); }
+  const wf = w.RailPlaces.workflows.records();   // Workflows (slice 7): the place's own demo lists
+  check('workflow', wf.workflow); check('agent', wf.agent); check('script', wf.script);
   for (const [k, n] of Object.entries(seen)) assert.ok(n > 0, `${k}: seeds checked`);
+});
+
+test('the live Workflows records (workflow-map.mjs) meet the same shapes (slice 7)', async () => {
+  const { workflowOf, agentOf, scriptOf } = await import('../ui/public/stillhet/live/workflow-map.mjs');
+  const { SEED_TEMPLATES } = await import('../src/core/graph/seed-templates.mjs');
+  const { loadAgentRegistry } = await import('../src/core/agent-registry.mjs');
+  const agents = loadAgentRegistry(undefined, { userAgentsDir: null, includePlugins: false });
+  for (const t of SEED_TEMPLATES) assert.deepEqual(shapeErrors('workflow', workflowOf(t, { agentsByKey: agents })), [], t.id);
+  assert.deepEqual(shapeErrors('workflow', workflowOf({ ...SEED_TEMPLATES[0], origin: 'plugin:x' }, { agentsByKey: agents, usage: { wf_full: { tasks: 1, merged: null, running: 1, nodes: {} } } })), []);
+  for (const a of Object.values(agents)) assert.deepEqual(shapeErrors('agent', agentOf(a)), [], a.key);
+  assert.deepEqual(shapeErrors('script', scriptOf({ key: 'k', runtime: 'python', caseCount: 0 })), []);
 });
 
 test('a seeded wrong type is named once', () => {

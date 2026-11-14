@@ -142,6 +142,20 @@ test('Tasks (slice 5): every Tasks row is wired, new: built, or not offered live
   }
 });
 
+test('Workflows (slice 7): every Workflows row is wired, except the Team way, which says why it is not offered live', () => {
+  const wf = doc.split('\n').filter((l) => /^\| `(ui\/public\/stillhet\/workflows\/|workflows\/)/.test(l));
+  assert.ok(wf.length >= 6, `the Workflows rows are read (${wf.length})`);
+  for (const r of wf) {
+    if (r.includes('› the Team way`')) {
+      const m = /\| not offered live \| ([^|]*) \|$/.exec(r);
+      assert.ok(m && m[1].trim().length > 40, `the Team way says why: ${r.slice(0, 100)}`);
+      continue;
+    }
+    assert.match(r, /\| wired \|/, r.slice(0, 100));
+  }
+  assert.ok(doc.includes('| `design-system/components/run-state.mjs › open the workflow` | wired |'), 'open the workflow from a task');
+});
+
 // The Dev surfaces rows (tools/stillhet-surfaces.mjs and tools/prototype-pr-check.mjs read them through the same parser).
 test('surfaceRows: the id, status and why of each Dev surfaces row, and nothing from another table', () => {
   const doc = '# x\n\n## Action rows\n\n| `a › open` | wire to | y |\n\n## Dev surfaces\n\n| Surface | Status | Why |\n|---|---|---|\n'

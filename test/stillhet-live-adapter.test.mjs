@@ -378,3 +378,25 @@ test('chat.runOf gives a run\'s scope for dev\'s scoped routes (POST /api/pr, re
   assert.deepEqual(pick(r.live.chat.runOf('pf')), ['docs-0a0b0c0d', '/src/docs', true]);
   assert.deepEqual(pick(r.live.chat.runOf('run-b')), ['', '/src/web', false], 'a live run not saved yet: its folder');
 });
+
+test('Workflows (slice 7): its lists load when the place asks; workflows-changed and scripts-changed read them again, no other frame does', async () => {
+  const WF = { '/api/workflows': { workflows: [] }, '/api/agents': { agents: [] }, '/api/scripts': { scripts: [] }, '/api/workflow-usage': { usage: {} }, '/api/chat-home/pins': { pins: [] } };
+  const r = rig({ answer: (u) => WF[u] ?? ANSWER[u] ?? {} });
+  await r.tick();
+  assert.ok(!gets(r.calls).some((u) => u in WF), 'nothing of Workflows on the first load');
+  r.frame(r.sockets[0], hello); await r.tick();
+  assert.equal(r.live.workflow.status(), 'loading');
+  await r.tick();
+  assert.equal(r.live.workflow.status(), 'ready');
+  assert.deepEqual(gets(r.calls).filter((u) => u in WF).sort(), Object.keys(WF).sort());
+  const wfGets = () => gets(r.calls).filter((u) => u in WF);
+  let n = wfGets().length;
+  for (const type of ['pipelines-changed', 'schedules-changed', 'settings-changed', 'ask-done', 'projects-changed']) r.frame(r.sockets[0], { type });
+  await r.tick(300);
+  assert.equal(wfGets().length, n, 'a frame of another kind reads no Workflows list (a dev-page write elsewhere shows after a reload)');
+  r.frame(r.sockets[0], { type: 'workflows-changed', action: 'saved' }); await r.tick(300);
+  assert.deepEqual(wfGets().slice(n), ['/api/workflows']);
+  n = wfGets().length;
+  r.frame(r.sockets[0], { type: 'scripts-changed', action: 'updated' }); await r.tick(300);
+  assert.deepEqual(wfGets().slice(n), ['/api/scripts']);
+});

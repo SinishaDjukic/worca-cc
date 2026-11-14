@@ -77,3 +77,39 @@ test('jsdom shell: #stats, #team-metrics, #pipelines and #activity are replaced 
   assert.equal(w.document.getElementById('route-runs').hidden, false, 'Tasks drawn at #runs');
   assert.equal(w.document.getElementById('topnav-title').textContent, 'Tasks');
 });
+
+// Slice 7 D18: dev's ten Workflows forms (app.js routeWorkflows), each to its fixed Stillhet place
+const DEV_WORKFLOW_FORMS = [
+  ['#workflows/wf_full', '#workflows/workflow:wf_full'],
+  ['#workflows/agents', '#workflows/~agents'],
+  ['#workflows/agents/new', '#workflows/~agents'],
+  ['#workflows/agents/new/planner', '#workflows/~agents'],
+  ['#workflows/agents/planner', '#workflows/agent:planner'],
+  ['#workflows/agents/planner/edit', '#workflows/agent:planner'],
+  ['#workflows/scripts', '#workflows/~scripts'],
+  ['#workflows/scripts/new', '#workflows/~scripts'],
+  ['#workflows/scripts/new/node', '#workflows/~scripts'],
+  ['#workflows/scripts/diffGate', '#workflows/script:diffGate'],
+];
+
+test('Stillhet on: each of dev\'s 10 Workflows forms lands on its place (never asking has); Stillhet\'s own Workflows routes stay', () => {
+  assert.equal(DEV_WORKFLOW_FORMS.length, 10);
+  const has = () => { throw new Error('the dev-workflows rule never asks has'); };
+  for (const [from, to] of DEV_WORKFLOW_FORMS) { const r = resolve(from, { has }); assert.equal(r?.hash, to, from); assert.equal(r.pulse, '', from); }
+  for (const r of ['#workflows', '#workflows/~agents', '#workflows/~for-you', '#workflows/workflow:wf_full', '#workflows/agent:planner', '#workflows/script:diffGate', '#workflows/edit:wf_mine']) assert.equal(resolve(r), null, r);
+  for (const [from, to] of [['#composer', '#workflows'], ['#agent-create', '#workflows']]) assert.equal(resolve(from, { has: () => false }).hash, to);
+  assert.equal(resolve('#agents', { has: () => true }).hash, '#workflows/~agents');
+  assert.equal(resolve('#scripts', { has: () => true }).hash, '#workflows/~scripts');
+});
+
+test('Stillhet off: dev\'s Workflows forms are dev\'s (MOVED_ROUTES has no workflows key, so each hash reaches routeWorkflows byte-equal)', () => {
+  const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+  const block = app.slice(app.indexOf('const MOVED_ROUTES'), app.indexOf('});', app.indexOf('const MOVED_ROUTES')));
+  const keys = [...block.matchAll(/^\s*'?([a-z/-]+)'?:\s*'/gm)].map((m) => m[1]);
+  assert.ok(keys.length >= 10);
+  for (const [from] of DEV_WORKFLOW_FORMS) {
+    const path = from.slice(1);
+    assert.ok(!keys.some((k) => path === k || path.startsWith(`${k}/`)), `${from} is not moved by dev`);
+  }
+  assert.match(app, /async function routeWorkflows\(param = ''\)/, 'dev routes them itself');
+});

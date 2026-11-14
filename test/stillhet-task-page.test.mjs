@@ -198,6 +198,12 @@ test('a plan waiting for approval has no reason line under its word (the prototy
   assert.equal(taskPageOf({ ...TASK_DETAILS.plan, row: { ...TASK_DETAILS.plan.row, detail: 'Waits for your OK on the plan' } }).detail, '');
 });
 
+test('slice 7 D17: taskPageOf names the task\'s workflow from stepper.template, and null without one', () => {
+  const input = { ...TASK_DETAILS.approved, state: { ...TASK_DETAILS.approved.state, stepper: { template: { id: 'wf_full', name: 'Full' } } } };
+  assert.deepEqual(taskPageOf(input, { now: NOW }).workflow, { id: 'wf_full', name: 'Full' });
+  assert.equal(taskPageOf({ ...TASK_DETAILS.approved, state: { ...TASK_DETAILS.approved.state, stepper: null } }, { now: NOW }).workflow, null);
+});
+
 test('stageOf returns the case\'s labels: a task with no PR ends at Done, a ready one at Merged (#1266)', () => {
   const window = { RailUI: R, RailWould: (p) => 'Would ' + p };
   vm.runInNewContext(readFileSync(new URL('../ui/public/stillhet/runs/run-page-model.js', import.meta.url), 'utf8'), { window, console, Math, Object, String, Set, JSON, parseFloat, Error });

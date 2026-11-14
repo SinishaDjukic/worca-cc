@@ -63,6 +63,23 @@ export const TASK_STATES = [['task-loading-run', '?state=task-loading#run/workin
 for (const [id, q] of TASK_STATES) PARTS.push({ id: `state-${id}`, route: true, app: { route: q }, proto: { route: q } });
 PARTS.push({ id: 'action-failed-run', route: true, seed: ['#card [data-key="act-main"]', '#card [data-confirm="yes"]'], wait: 1400, app: { route: '?state=action-failed#run/approved' }, proto: { route: '?state=action-failed#run/approved' } });
 PARTS.push({ id: 'terminal-chat', route: true, seed: '#route-chat [data-terminal]', app: { route: '#chat/c2' }, proto: { route: '#chat/c2' } });   // c2: its failed command opens itself, so Show in terminal is in view
+// Workflows' own cells (slice 7): its ways, its list states, the canvas, a draft, the delete, export and import confirms, an
+// agent's draft, a thing not found, a workflow built by hand, and a task's Workflow dialog. A seed is the clicks that open it.
+const SF = '#workflows/workflow:security-first', more = (v) => ['[data-menu="wf-more"]', `[data-menu-pick="wf-more|${v}"]`];
+export const WORKFLOWS_STATES = [
+  ['wf-way-agents', '#workflows/~agents'], ['wf-way-scripts', '#workflows/~scripts'], ['wf-way-drafts-empty', '#workflows/~drafts'], ['wf-way-for-you', '#workflows/~for-you'], ['wf-way-team-empty', '#workflows/~team'],
+  ['wf-list-loading', '?state=loading#workflows'], ['wf-list-failed', '?state=failed#workflows'],
+  ['wf-canvas', '#workflows/edit:security-first'], ['wf-canvas-picked', '#workflows/edit:security-first', ['#wf-canvas-g [data-node-id="n1"]']],
+  ['wf-draft', SF, ['[data-menu="wfm-0"]', '[data-menu-pick="wfm-0|Sonnet 5.5"]']],
+  ['wf-delete-confirm', SF, more('delete')], ['wf-export-form', SF, more('export')], ['wf-export-plugin', SF, [...more('export'), '[data-menu="wf-as"]', '[data-menu-pick="wf-as|a Worca plugin"]']],
+  ['wf-import-scripts', '#workflows/edit:security-first', ['[data-menu="ed-io"]', '[data-menu-pick="ed-io|import"]']],
+  ['wf-agent-draft', '#workflows/agent:security', ['[data-wf-sw="asks"]']], ['wf-not-found', '#workflows/workflow:nope'],
+  ['wf-fresh', '#workflows', (w) => [...(w <= 760 ? ['#mbar-menu'] : []), '#bar-head [data-bar-new="place"]', '[data-menu-pick="bar-new|hand"]']],   // narrow: the bar is the drawer
+  ['run-graph-open-workflow', '#run/approved', ['[data-tab="activity"]', '[data-graph]']],
+];
+/** A part's clicks at one width: a list, or a function of the width (the bar's + sits in the drawer at 360). */
+export const seedsOf = (part, width) => [].concat((typeof part.seed === 'function' ? part.seed(width) : part.seed) || []);
+for (const [id, q, seed] of WORKFLOWS_STATES) PARTS.push({ id, route: true, ...(seed ? { seed } : {}), app: { route: q }, proto: { route: q } });
 // Schedules' own cells (Schedules D14): the bar's list states on the Schedules center, a skipped next time, and two that open by
 // a click in both hosts: a time picked (the DraftBar) and Delete (its notice with Undo).
 export const SCHEDULE_STATES = [['schedules-empty', '?state=empty#schedules'], ['schedules-loading', '?state=loading#schedules'], ['schedules-failed', '?state=failed#schedules'], ['schedule-skipped', '#schedule/s6']];
@@ -86,6 +103,10 @@ export const deepPart = (hash) => ({ id: `route-${hash.replace(/[^\w@.-]+/g, '-'
 // page route, the task page's own states, the failed action and the chat TaskCards c17 and c18.
 export const TASKS_CELL_IDS = Object.freeze(['route-runs', ...STATES.filter(([s, r]) => r === 'runs').map(([s]) => `state-${s}`),
   ...TASK_STATES.map(([id]) => `state-${id}`), 'action-failed-run', 'route-chat-c17', 'route-chat-c18', 'route-run-failed', 'route-run-approved']);
+// Every Workflows cell: its whole page, its own states above, and (derived from the prototype's routes, never a count) every
+// deep route under workflows/.
+export const WORKFLOWS_CELL_IDS = Object.freeze(['route-workflows', ...WORKFLOWS_STATES.map(([id]) => id)]);
+export const workflowsCellIds = (deep = []) => [...WORKFLOWS_CELL_IDS, ...deep.filter((h) => h.startsWith('workflows/')).map((h) => deepPart(h).id)];
 /** The Tasks cells a run's cells lack: one line per id, theme and width of CELLS that has no compared cell. */
 export function tasksCoverage(cells, ids = TASKS_CELL_IDS) {
   const have = new Set(cells.map((c) => `${c.part}|${c.theme}|${c.width}`));
@@ -392,7 +413,7 @@ export async function shootCell(browser, app, part, theme, width, outRoot) {
     if (part.route) { await freezeClock(a); await a.addInitScript(setLook, theme); }
     await a.goto(app.base + '/' + part.app.route);
     await a.evaluate((t) => { document.documentElement.dataset.theme = t; }, theme);
-    for (const sel of [].concat(part.seed || [])) { await a.locator(sel).first().click(); await a.waitForTimeout(part.wait || 300); }   // a part opened by a click (terminal-chat)
+    for (const sel of seedsOf(part, width)) { await a.locator(sel).first().click(); await a.waitForTimeout(part.wait || 300); }   // a part opened by a click (terminal-chat)
     const A = await shoot(a, part.id, join(out, `${part.id}-${theme}-${width}-app.png`), part.route);
     const p = await ctx.newPage();
     watch(p, 'prototype', errors);
@@ -402,7 +423,7 @@ export async function shootCell(browser, app, part, theme, width, outRoot) {
     if (!part.route) await p.goto(protoUrl);
     if (!part.route) await p.evaluate((t) => { localStorage.setItem('worca-rail.mode', 'expert'); localStorage.setItem('worca-rail.appearance', t); localStorage.removeItem('worca-rail.stillhetAsked'); }, theme);
     await p.goto(protoUrl.replace(/index\.html.*$/, 'index.html') + part.proto.route);
-    for (const sel of [].concat(part.seed || [])) { await p.locator(sel).first().click(); await p.waitForTimeout(part.wait || 300); }
+    for (const sel of seedsOf(part, width)) { await p.locator(sel).first().click(); await p.waitForTimeout(part.wait || 300); }
     const P = await shoot(p, part.id, join(out, `${part.id}-${theme}-${width}-proto.png`), part.route);
     const diff = A.box.w === P.box.w && A.box.h === P.box.h ? countDiffPixels(A.rgba, P.rgba, A.w, A.h) : A.w * A.h;
     cell = { part: part.id, theme, width, appBox: A.box, protoBox: P.box, diff, errors };
