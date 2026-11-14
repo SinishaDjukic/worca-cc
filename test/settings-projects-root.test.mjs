@@ -35,7 +35,7 @@ import {
 } from '../src/core/settings.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { checkRows } from './helpers/rows.mjs';
 
 let home, srv, apiBase;
@@ -315,6 +315,9 @@ test('unknown-key preservation: a foreign key written by a future version surviv
 
 // ── /api/settings round-trip ─────────────────────────────────────────────────
 
+// The sorted top-level keys of GET /api/settings; the Dev surfaces gate (tools/stillhet-surfaces.mjs) reads the same file.
+const SETTINGS_API_KEYS = JSON.parse(readFileSync(new URL('./fixtures/settings-api-keys.json', import.meta.url), 'utf8'));
+
 const getApi = () => fetch(`${apiBase}/api/settings`).then((r) => r.json());
 const postApi = (body) => fetch(`${apiBase}/api/settings`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -325,9 +328,7 @@ test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, defaul
     const j = await getApi();
     // `app` = static identity for the Settings ▸ About card (version, repo URL,
     // release-tag URL — read from package.json). GET-only: POST still echoes settingsState() + chat.
-    assert.deepEqual(Object.keys(j).sort(), ['actions', 'actionsDetected', 'actionsGate', 'agentGenModel', 'agentGenModelEffective', 'app', 'askEngine', 'askMaxBudgetUsd', 'askMaxTurns', 'askModels', 'askWeb', 'autoGeneratePrDescription', 'autoWorkflowModel', 'autoWorkflowModelEffective', 'chat', 'commandSummaryModel', 'commandSummaryModelEffective', 'costLimitResetPeriod',
-      'debugSpawnEffective', 'debugSpawnEnabled', 'default', 'designModels', 'enforceTags', 'factoryModels', 'flags', 'git', 'hideBuiltinModels', 'humanRateUsdPerHour', 'keepAwake', 'memoryDefrag', 'memoryDefragDefault', 'modelRoles', 'namingModel', 'namingModelEffective', 'networkWait', 'nightMode', 'nightModeEffective', 'nightModeToggle', 'pipelineCostLimitUsd', 'prDescriptionModel', 'prDescriptionModelEffective', 'projectsRoot', 'projectsRootDefault', 'pulseFor', 'resumeAfterUsageLimit', 'root', 'runEngine', 'runLimits',
-      'schedule', 'secondOpinionModel', 'smartNaming', 'stepModels', 'sync', 'tagDimensions', 'testWorkersAuto', 'theme', 'titleModel', 'titleModelEffective', 'totalCostLimitUsd', 'uiLevel', 'updateCheck', 'utilityModels', 'workspaceScan', 'workspaceScanDefault', 'workspaceScanFromRole']);
+    assert.deepEqual(Object.keys(j).sort(), SETTINGS_API_KEYS, 'test/fixtures/settings-api-keys.json is the gate\'s list (tools/stillhet-surfaces.mjs)');
     assert.deepEqual(Object.keys(j.actionsDetected).sort(), ['editor', 'terminal'], 'what blank Editor / Terminal fall back to');
     assert.equal(j.autoWorkflowModel, '', 'no classifier model stored -> the catalog default applies');
     assert.equal(j.titleModel, null, 'no title model stored -> the run\'s model');
