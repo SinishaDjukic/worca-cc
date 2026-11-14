@@ -14,7 +14,7 @@ import { RUN_STATE, THREAD, NOW } from './helpers/stillhet-live-fixture.mjs';
 const EXPECT = {
   question: 'question', progress: 'task', workflow: 'change', 'workflow-build': 'change', 'run-stop': 'act', 'pull-request': 'act',
   ship: 'ship', changes: 'act', route: 'act', 'scope-switch': 'change', model: 'change', schedule: 'change', away: 'change',
-  proxy: 'change', web: 'change', clone: 'change', project: 'change', workspace: 'change', actions: 'change', metrics: 'change',
+  proxy: 'change', web: 'change', clone: 'change', project: 'change', workspace: 'change', actions: 'change', mcp: 'change', metrics: 'change',
   policy: 'change', receipt: 'change', 'script-approval': 'act', command: 'cmd', files: 'filesgrid',
 };
 const ctx = { tasks: [{ id: 'run-a', run: 'run-a', title: 'Ask me', case: 'working', detail: 'Working' }], runLinks: [{ runId: 'run-a', pipelineId: 'pa', cardId: 'card_run', started: true }], now: NOW };
