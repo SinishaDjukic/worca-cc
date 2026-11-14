@@ -124,6 +124,8 @@ Workers never get this Secret: see `worker.credentialsSecret`.
 | `worker.env` | `{}` | `name: value` pairs on every worker |
 | `worker.envFrom` | `[]` | |
 | `worker.nodeSelector`, `tolerations`, `affinity`, `priorityClassName` | | |
+| `worker.serviceAccountName` | `""` = `default` | the worker pods' account (no token mounted); for per-account grants such as an OpenShift SCC |
+| `worker.podSecurityContext` | uid/gid/fsGroup 1000, `RuntimeDefault` | `fsGroup: null` where the platform assigns it (same for `controller.podSecurityContext`); `supplementalGroups` for an NFS share's group |
 | `worker.tmpSizeLimit` | `2Gi` | emptyDir at `/tmp` |
 | `worker.shmSizeLimit` | `256Mi` | memory emptyDir at `/dev/shm` |
 | `worker.terminationGracePeriodSeconds` | `30` | |

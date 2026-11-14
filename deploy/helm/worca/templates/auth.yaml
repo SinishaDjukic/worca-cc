@@ -95,11 +95,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 65532
-        runAsGroup: 65532
-        seccompProfile:
-          type: RuntimeDefault
+        {{- toYaml .Values.auth.podSecurityContext | nindent 8 }}
       containers:
         - name: oauth2-proxy
           image: {{ include "worca.authImage" . }}

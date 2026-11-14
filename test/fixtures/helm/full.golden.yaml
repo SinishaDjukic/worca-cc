@@ -680,7 +680,7 @@ spec:
         app.kubernetes.io/component: controller
       annotations:
         # A changed worker pod template restarts the controller, which re-reads it at boot.
-        checksum/worker-pod: 05c631251d84a2f14779ad71673fdea035ca217de8f15214a8957f17a042713c
+        checksum/worker-pod: cde36c65313bec6a5838ddbd0b3cca2bb29811defea993d4c23ff4af08a37194
     spec:
       serviceAccountName: worca
       # The executor backend talks to the API server (RBAC: role.yaml).

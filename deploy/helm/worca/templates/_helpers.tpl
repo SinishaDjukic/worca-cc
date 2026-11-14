@@ -253,14 +253,11 @@ spec:
   imagePullSecrets:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+  {{- with .Values.worker.serviceAccountName }}
+  serviceAccountName: {{ . }}
+  {{- end }}
   securityContext:
-    runAsNonRoot: true
-    runAsUser: 1000
-    runAsGroup: 1000
-    fsGroup: 1000
-    fsGroupChangePolicy: OnRootMismatch
-    seccompProfile:
-      type: RuntimeDefault
+    {{- toYaml .Values.worker.podSecurityContext | nindent 4 }}
   {{- with .Values.worker.nodeSelector }}
   nodeSelector:
     {{- toYaml . | nindent 4 }}

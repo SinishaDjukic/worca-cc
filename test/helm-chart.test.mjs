@@ -430,6 +430,39 @@ test('auth.existingSecret: no chart-made Secret; the proxy reads the named one',
   assert.equal(dep.spec.template.spec.volumes.find((v) => v.name === 'secret').secret.secretName, 'my-auth');
 });
 
+test('pod security for a platform that assigns ids (OpenShift): worker account and contexts, imagePullSecrets on the proxy', { skip }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-helm-'));
+  try {
+    const values = join(dir, 'openshift.yaml');
+    writeFileSync(values, YAML.stringify({
+      imagePullSecrets: [{ name: 'registry-pull' }],
+      controller: { podSecurityContext: { fsGroup: null, fsGroupChangePolicy: null, supplementalGroups: [4711] } },
+      worker: {
+        serviceAccountName: 'worca-worker',
+        podSecurityContext: { fsGroup: null, fsGroupChangePolicy: null, supplementalGroups: [4711] },
+      },
+      auth: { podSecurityContext: { runAsUser: null, runAsGroup: null } },
+    }));
+    const r = run('helm', ['template', RELEASE, CHART, '--namespace', NAMESPACE, '-f', AUTH_VALUES, '-f', values]);
+    ok(r, 'helm template (openshift-style pod security)');
+    const all = docs(r.stdout);
+    const pod = JSON.parse(byKind(all, 'ConfigMap', `${RELEASE}-worker-pod`).data['worker-pod.json']);
+    assert.equal(pod.spec.serviceAccountName, 'worca-worker');
+    assert.equal(pod.spec.automountServiceAccountToken, false);
+    assert.equal(pod.spec.securityContext.fsGroup, undefined, 'no fsGroup: the platform assigns it');
+    assert.deepEqual(pod.spec.securityContext.supplementalGroups, [4711]);
+    assert.equal(pod.spec.securityContext.runAsUser, 1000);
+    const sts = byKind(all, 'StatefulSet', RELEASE);
+    assert.equal(sts.spec.template.spec.securityContext.fsGroup, undefined);
+    const dep = byKind(all, 'Deployment', `${RELEASE}-auth`);
+    assert.equal(dep.spec.template.spec.securityContext.runAsUser, undefined, 'the platform picks the proxy\'s uid');
+    assert.equal(dep.spec.template.spec.securityContext.runAsNonRoot, true);
+    assert.deepEqual(dep.spec.template.spec.imagePullSecrets, [{ name: 'registry-pull' }]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('auth: an incomplete or conflicting block fails the render with what to set', { skip }, () => {
   const fails = (sets, re) => {
     const r = run('helm', ['template', RELEASE, CHART, '--namespace', NAMESPACE, '-f', AUTH_VALUES, ...sets.flatMap((x) => ['--set', x])]);

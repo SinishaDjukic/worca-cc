@@ -518,9 +518,9 @@ spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
       securityContext:
+        runAsGroup: 65532
         runAsNonRoot: true
         runAsUser: 65532
-        runAsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -643,7 +643,7 @@ spec:
         app.kubernetes.io/component: controller
       annotations:
         # A changed worker pod template restarts the controller, which re-reads it at boot.
-        checksum/worker-pod: 28378b22e2df212d293e7212efd59692770ded81b7b2f24d8d7914786260be64
+        checksum/worker-pod: 0ee18c6abb5af1005b8f60daef9a4b6206f708a0bd7e39512c95e1c599256d4b
     spec:
       serviceAccountName: worca
       # The executor backend talks to the API server (RBAC: role.yaml).

@@ -177,6 +177,21 @@ worker:
   tolerations: []
   affinity: {}
   priorityClassName: ""
+  # The worker pods' service account; empty = the namespace's `default`. Workers never get its
+  # token (automountServiceAccountToken: false); it matters where a platform grants per account,
+  # e.g. an OpenShift SCC or a storage self-service that binds a volume to one account.
+  serviceAccountName: ""
+  # The image runs as uid/gid 1000 (`worca`), like the controller. Where the platform assigns
+  # fsGroup itself (OpenShift: a range per project), drop it: `fsGroup: null` (Helm merges maps,
+  # so a key is removed only by null); supplementalGroups give access to an NFS share by group.
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
   # emptyDir limits: /tmp (checkouts' build output, npm caches) and /dev/shm (browsers).
   tmpSizeLimit: 2Gi
   shmSizeLimit: 256Mi
@@ -297,6 +312,14 @@ auth:
     tag: v7.15.6
     pullPolicy: IfNotPresent
   port: 4180
+  # The proxy runs as the image's nonroot user. Where the platform assigns uids (OpenShift's
+  # restricted-v2), set runAsUser/runAsGroup to null and let it pick one.
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
   # Plain name: value environment for the proxy (OAUTH2_PROXY_*), overriding the chart's.
   env: {}
   resources:
