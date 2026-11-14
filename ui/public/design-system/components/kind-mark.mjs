@@ -445,10 +445,11 @@ export function refChip({ text, mark = '', title = '', attrs: a = {} }) {
  * @param {string[]} [o.files]
  * @param {{text:string, mark?:string, attrs?:object}[]} [o.refs]   tasks named in it: chips that lead to their cards
  * @param {object} [o.attrs]
+ * @param {string} [o.time]   its TurnTime (turn-time.mjs turnTime), the bubble's last child
  */
-export function youTurn({ text, quote = '', files = [], refs = [], attrs: a = {} }) {
+export function youTurn({ text, quote = '', files = [], refs = [], attrs: a = {}, time = '' }) {
   const chips = refs.map((r) => refChip(r)).join('');
-  return `<div class="convo-you"${attrs(a)}>${quote ? `<blockquote class="you-quote">${esc(quote)}</blockquote>` : ''}${esc(text)}${files.length || chips ? `<span class="you-files">${files.map((f) => `<span class="kind-chip">${icon('file', 12)}${esc(f)}</span>`).join('')}${chips}</span>` : ''}</div>`;
+  return `<div class="convo-you"${attrs(a)}>${quote ? `<blockquote class="you-quote">${esc(quote)}</blockquote>` : ''}${esc(text)}${files.length || chips ? `<span class="you-files">${files.map((f) => `<span class="kind-chip">${icon('file', 12)}${esc(f)}</span>`).join('')}${chips}</span>` : ''}${time}</div>`;
 }
 
 /**
