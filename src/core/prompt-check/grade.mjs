@@ -11,6 +11,7 @@ import { worcaHome } from '../projects.mjs';
 import { checkShape } from '../../shared/shape/shape.mjs';
 import { KIND_RUBRICS, KIND_LABELS, PROMPT_KINDS, normalizeAssessment } from '../../shared/prompt-check/assessment.mjs';
 import { deterministicAssessment } from '../../shared/prompt-check/filter.mjs';
+import { hasOpenGaps } from '../../shared/prompt-check/improve.mjs';
 
 export const GRADE_TIMEOUT_MS = 20_000;
 export const GRADE_ERRORS = Object.freeze(['model unavailable', 'timeout', 'unreadable reply', 'model call failed', 'total cost limit reached']);
@@ -44,7 +45,8 @@ export function gradeModel(engine, opts) {
 }
 
 /** Text between the delimiters: every run of 3+ '=' collapses to '==', so the text cannot close its block. */
-const quote = (text) => `${PROMPT_DELIMITERS.begin}\n${String(text ?? '').replace(/={3,}/g, '==')}\n${PROMPT_DELIMITERS.end}`;
+export const quotePromptText = (text) => `${PROMPT_DELIMITERS.begin}\n${String(text ?? '').replace(/={3,}/g, '==')}\n${PROMPT_DELIMITERS.end}`;
+const quote = quotePromptText;
 
 const SYSTEM = [
   'You grade how clear a task prompt is before a coding agent starts on it.',
@@ -146,7 +148,10 @@ const rejectOnAbort = (signal) => new Promise((_, reject) => {
   signal.addEventListener('abort', () => reject(signal.reason), { once: true });
 });
 
-/** The plan rules (D15): the deterministic plan kind wins under 0.5 confidence; a plan's grade is the shape check. */
+/**
+ * The plan rules (D15): the deterministic plan kind wins under 0.5 confidence; a plan's grade is the shape check.
+ * Gap marks `Use this` left unfilled keep any graded task `needs-detail` (docs/prompt-check.md, "Improve").
+ */
 function finalAssessment(parsed, source, text, det, forceTask, fixed) {
   let raw = fixed ? { ...parsed, source, kind: fixed, isTask: true } : { ...parsed, source };
   let a = normalizeAssessment(raw, { forceTask, text });
@@ -156,8 +161,10 @@ function finalAssessment(parsed, source, text, det, forceTask, fixed) {
   }
   if (a.kind === 'plan') {
     const size = a.size === 'very-large' ? 'large' : a.size || undefined;
-    a = normalizeAssessment({ ...raw, grade: checkShape(text, size ? { size } : {}).ok ? 'clear' : 'needs-detail' }, { forceTask, text });
+    raw = { ...raw, grade: checkShape(text, size ? { size } : {}).ok ? 'clear' : 'needs-detail' };
+    a = normalizeAssessment(raw, { forceTask, text });
   }
+  if (a.grade === 'clear' && hasOpenGaps(text)) a = normalizeAssessment({ ...raw, grade: 'needs-detail' }, { forceTask, text });
   return a;
 }
 

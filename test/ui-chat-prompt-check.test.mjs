@@ -16,6 +16,7 @@ const TID = 'ask_00000001';
 const NEW_TID = 'ask_00000777';
 const THREAD = { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} };
 const TASK = 'Add a CSV export button to the Insights page so that a team lead can share the weekly cost with finance.';
+const REWRITE = 'Change: Add the export.\nWhere: [Architect · decide: which files or modules?]';
 const OTHER = 'Build a Slack notifier that posts a message when a run fails, with the run title, the step and a link.';
 
 beforeEach(() => _resetChatExtensions());
@@ -51,6 +52,12 @@ function api(rec) {
         }) });
         rec.grades.push(call);
       });
+    }
+    if (url === '/api/prompt-check/improve') {
+      const b = JSON.parse(opts.body);
+      (rec.improves ||= []).push(b);
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ requestId: b.requestId, source: 'model', kind: b.kind, model: 'Sonnet 5.5',
+        rewrite: { kind: b.kind, sections: [{ id: 'change', label: 'Change', text: 'Add the export.', gaps: [] }] }, text: REWRITE, paths: [] }) });
     }
     if (url === '/api/prompt-check/kind-correction') {
       rec.corrections.push(JSON.parse(opts.body));
@@ -331,4 +338,26 @@ test('a re-check never empties the lead row: typing a new task keeps the chip un
   await s.settle();
   assert.equal(chips(s)[0], node);
   assert.equal(node.querySelector('.pcheck-grade').textContent, 'Clear');
+});
+
+test('Improve: Use this writes into the composer through its input path (re-check) with Undo shown; Undo restores it', async (t) => {
+  const s = await open(t);
+  await s.graded();
+  s.doc.querySelector('[data-prompt-improve-open]').click();
+  await s.settle();
+  assert.equal(s.rec.improves.length, 1);
+  assert.equal(s.rec.improves[0].text, TASK);
+  s.doc.querySelector('[data-improve-act="use"]').click();
+  await s.settle();
+  assert.equal(s.input.value, REWRITE);
+  assert.ok(s.input.style.height.endsWith('px'), 'fitInput ran');
+  assert.equal(s.doc.activeElement, s.input);
+  s.timers.advance(PROMPT_CHECK_DEBOUNCE_MS);
+  assert.equal(s.rec.grades.at(-1).body.text, REWRITE, 'the rewrite is re-checked');
+  s.rec.grades.at(-1).reply();
+  await s.settle();
+  assert.ok(s.doc.querySelector('[data-improve-act="undo"]'), 'Undo still shown');
+  s.doc.querySelector('[data-improve-act="undo"]').click();
+  await s.settle();
+  assert.equal(s.input.value, TASK);
 });

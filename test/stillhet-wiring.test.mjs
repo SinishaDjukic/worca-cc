@@ -141,3 +141,13 @@ test('Tasks (slice 5): every Tasks row is wired, new: built, or not offered live
     assert.match(cap, new RegExp('\\| ' + what.replace(/[()]/g, '\\$&') + '[^\\n]*\\| wired \\|'), what);
   }
 });
+
+test('the prompt check Moves rows: the chip and Improve stay open, waiting for the owner, as 4-column rows', () => {
+  for (const name of ['Prompt check chip (composer)', 'Prompt check Improve (composer)']) {
+    const row = doc.split('\n').find((l) => l.startsWith(`| ${name} |`));
+    assert.ok(row, name);
+    const cells = row.split('|').slice(1, -1).map((c) => c.trim());
+    assert.equal(cells.length, 4, name);
+    assert.match(cells[1], /^open: waits for the owner/, name);
+  }
+});

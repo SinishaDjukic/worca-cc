@@ -27,7 +27,7 @@ export { stillhetInvitation } from './invitation.mjs';
 export { designSwitch } from './design-switch.mjs';
 export { checkbox } from './checkbox.mjs';
 export { optionList } from './option-list.mjs';
-export { suggestionField, suggestionFail, suggestButton, suggestedChip, stopWriting, failureLink, previewToggle, suggestionPreview } from './suggestion-field.mjs';
+export { suggestionField, suggestionFail, suggestButton, suggestedChip, stopWriting, failureLink, previewToggle, suggestionPreview, gapMark, rewriteFail, rewriteSuggestion } from './suggestion-field.mjs';
 export { tagGroup, fitTags, listEditor } from './tag-group.mjs';
 export { stepper, stepDot, stepRow, stackRow, lineRow, fileRow, stackedPrRow } from './stepper.mjs';
 export { table } from './table.mjs';

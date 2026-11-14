@@ -5,8 +5,10 @@
 // place: a re-check never empties, remounts or moves it. It never touches the field's or the send button's state.
 import { KIND_LABELS, GRADE_LABELS, PROMPT_KINDS } from '../../../src/shared/prompt-check/assessment.mjs';
 import { createPromptGrader } from './grader.mjs';
+import { createImproveView } from './improve-view.mjs';
 import { sentencePicker } from '../design-system/components/settings-row.mjs';
 import { chip } from '../design-system/components/chip.mjs';
+import { button } from '../design-system/components/button.mjs';
 import { toElement } from '../design-system/components/html.mjs';
 import { toggleMenu, closeMenus } from '../workflows/menu.mjs';
 import { announce as feedbackAnnounce } from '../feedback.mjs';
@@ -38,11 +40,14 @@ const sayOf = (kind, grade) => `Prompt check: ${KIND_LABELS[kind]}${grade ? `, $
 /**
  * @param {{doc:Document, host:HTMLElement, before?:Node|null, surface:{kind:string,id:string},
  *   ids?:{threadId?:string, cardId?:string}, forceTask?:boolean, deferCorrection?:boolean|(()=>boolean),
- *   held?:{proposedKind:string, chosenKind:string}|null, announce?:(text:string)=>void, fetchImpl?:Function, timers?:object}} o
+ *   held?:{proposedKind:string, chosenKind:string}|null, announce?:(text:string)=>void, fetchImpl?:Function, timers?:object,
+ *   field?:{read:()=>string, write:(text:string)=>void, focus?:()=>void}, project?:()=>(string|{projectDir:string}|null),
+ *   engine?:()=>string|null, chatModel?:()=>string|null}} o
+ * `field` wires Improve (docs/prompt-check.md, "Improve"): without it the chip never shows the Improve button.
  */
 export function mountPromptCheckChip({
   doc, host, before = null, surface, ids = {}, forceTask = false, deferCorrection = false, held = null,
-  announce = null, fetchImpl = (...a) => fetch(...a), timers,
+  announce = null, fetchImpl = (...a) => fetch(...a), timers, field = null, project = null, engine = null, chatModel = null,
 }) {
   const say = typeof announce === 'function' ? announce : (text) => feedbackAnnounce(text, doc);
   const el = doc.createElement('span');
@@ -67,6 +72,27 @@ export function mountPromptCheckChip({
   let lastSaid = null;
   let silentNext = false;      // the next applied result is the mount-time check: shown, never announced
   let disposed = false;
+  let openDecisions = [];      // the last assessment's open questions: hints for Improve
+
+  // Improve (D11): only a surface that hands over its field gets the button and the view.
+  const view = field ? createImproveView({
+    doc, surface, field, project, engine, chatModel, fetchImpl, announce: (t) => say(t),
+    onState: (st) => { if (st === 'hidden') view.el.remove(); syncImprove(); },
+  }) : null;
+  const improveBtn = view ? toElement(doc, button({ label: 'Improve', kind: 'quiet', cls: 'pcheck-improve-btn', attrs: { 'data-prompt-improve-open': '' } })) : null;
+  function syncImprove() {
+    if (!view) return;
+    const st = view.state();
+    if (shown() && grade === 'needs-detail' && (st === 'hidden' || st === 'busy')) {
+      if (improveBtn.parentNode !== el || el.lastChild !== improveBtn) el.appendChild(improveBtn);
+      improveBtn.disabled = st === 'busy';
+    } else improveBtn.remove();
+  }
+  improveBtn?.addEventListener('click', () => {
+    if (!kind || grade !== 'needs-detail' || view.state() === 'busy') return;
+    if (view.el.parentNode !== host) el.after(view.el);   // directly under the chip, inside its host
+    view.open(kind, openDecisions);
+  });
 
   const shown = () => el.parentNode === host;
   function show() {
@@ -75,6 +101,7 @@ export function mountPromptCheckChip({
   }
   function hide() {
     if (pick.getAttribute('aria-expanded') === 'true') closeMenus();
+    view?.close();
     el.remove();
   }
   function paint(k, g) {
@@ -90,6 +117,7 @@ export function mountPromptCheckChip({
       badge.classList.toggle('is-needs-detail', g === 'needs-detail');
       if (badge.parentNode !== el) el.appendChild(badge);
     } else badge.remove();
+    syncImprove();
   }
 
   function onResult(r) {
@@ -101,8 +129,12 @@ export function mountPromptCheckChip({
     if (!a || !a.isTask || !PROMPT_KINDS.includes(a.kind)) { hide(); return; }
     const g = a.grade === 'clear' || a.grade === 'needs-detail' ? a.grade : null;
     if (proposedKind === null) proposedKind = a.kind;
+    openDecisions = Array.isArray(a.openDecisions) ? a.openDecisions.filter((d) => typeof d === 'string') : [];
+    // A regrade that leaves Needs detail closes a busy or ready rewrite (a used one keeps its Undo).
+    if (view && g !== 'needs-detail' && (view.state() === 'busy' || view.state() === 'ready')) view.close();
     paint(a.kind, g);
     show();
+    syncImprove();
     const key = `${a.kind}|${g || ''}`;
     if (key !== lastSaid && !silent) say(sayOf(a.kind, g));
     lastSaid = key;
@@ -151,6 +183,7 @@ export function mountPromptCheckChip({
     input(text, { answering = false, silent = false } = {}) {
       if (disposed) return;
       const t = String(text ?? '');
+      view?.fieldEdited(t);
       lastInput = { text: t, answering };
       if (!t.trim()) { proposedKind = null; pending = null; hide(); grader.forget(); }   // a cleared draft takes its held correction with it
       silentNext = silent;
@@ -180,6 +213,7 @@ export function mountPromptCheckChip({
       pending = null;
       grader.dispose();
       hide();
+      view?.dispose();
       mounts.delete(mount);
     },
   };

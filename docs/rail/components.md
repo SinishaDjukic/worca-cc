@@ -54,6 +54,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | **Entering** | | |
 | Text or a number in a form | Field | Branch, Budget |
 | Text Worca writes for you | SuggestionField | PR title and description, a drafted answer |
+| A whole-text rewrite Worca suggests | RewriteSuggestion | Prompt check Improve |
 | Finding anything | the top bar's search (`searchResults` with areas): settings, chats, tasks, schedules, places, each under its area's head with its own mark; a result lands with the flash | Search or ask |
 | Context sent with a message | ListEditor's removable item, in the composer | This page × |
 | **Showing** | | |

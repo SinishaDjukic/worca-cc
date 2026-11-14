@@ -6,7 +6,7 @@ The prompt check tells you, while you type a task, what kind of task it is and w
 This page is the one place that describes the assessment. Every surface that shows a kind or a grade reads it.
 
 What ships so far: the engine (the assessment, the free skip rules, the grading call, the route, the browser grader),
-the setting and the chip with its kind picker (below). Improve and the run card's perspective chips come later.
+the setting, the chip with its kind picker, and Improve (below). The run card's perspective chips come later.
 
 ## How a prompt is checked
 
@@ -146,6 +146,68 @@ hides the chip. Stillhet's composer has no chip yet (it waits for the owner's an
 - The row (`prompt_kind_corrections`, schema v96) holds `surface`, `thread_id`, `card_id`, `run_id`, `proposed_kind`,
   `chosen_kind` and the server's `at`. No prompt text, ever; any other body key is ignored. It has no foreign key: rows
   stay after their thread or run is deleted. The route logs one line with the surface and the duration, no id.
+
+## Improve
+
+A chip that grades **Needs detail** shows an `Improve` button after the badge, on every surface that hands the chip
+its field (all four above). Nothing is sent until it is clicked: typing, grading, a kind correction and a re-check make
+no Improve call. One click sends one request, which makes one model call.
+
+The call (`src/core/prompt-check/improve.mjs`) uses the strong tier: the person's `deep` role model, else
+`claude-sonnet-5-5` on Claude when it is in the catalog and ready, else the chat's own model on another engine; with
+none, it answers "model unavailable". The effort is `medium` on every engine that has an effort setting (none on
+Cursor). It runs with grading's lockdown (no tools, no MCP, a scrubbed env, a fresh empty folder) through the same
+helper call as grading, with the text quoted between delimiters it cannot close. The prompt tells the model to keep the
+person's language, wording and intent and never to add a fact, name, number, path or requirement.
+
+The reply is normalised into the kind's template (`src/shared/prompt-check/improve.mjs`): every section, in order; a
+section the prompt does not state carries at least one gap, shown as an amber mark `Product · decide: who uses it?`.
+Section labels and the default questions are Worca's English words; section texts and the model's questions keep the
+person's language.
+
+| Kind | Sections (default perspective) |
+|---|---|
+| `requirement` | Who, Problem, Outcome (product), Done when (qa), Scope (product), Constraints (architect) |
+| `implementation` | Change, Where (architect), Tests, Done when (qa) |
+| `bug` | Steps (qa), Expected (product), Actual (qa), Where (architect), Logs, Frequency (qa) |
+| `plan` | `## Problem and goal` (product), `## Testing` (qa), `## Out of scope`, `## Open questions` (product) |
+| `idea` | Goal (product) |
+| `run-change` | Change (product) |
+| `deliverable` | Audience, Purpose, Length, Sources (product) |
+
+`Use this` writes one `Label: text` line per section (a plan's sections as `## ` headings), each unfilled gap as
+`[Product · decide: who uses it?]`, so the re-check keeps grading Needs detail until the gaps are filled.
+
+`POST /api/prompt-check/improve {requestId, surface, text, kind, openDecisions?, projectKey? | projectDir?, engine?, chatModel?}`
+
+| Answer | When |
+|---|---|
+| `400 {error}` | "requestId is required", "surface is required", "text is required", "text is too long" (over 20 000), "kind is invalid", "openDecisions is invalid" (at most 6 strings), "project is invalid" (both given, a non-string, or over 1 024 characters), "unknown engine", "chatModel is invalid"; checked before the setting and any model call |
+| `409 {error: 'prompt check is off'}` | the setting is off |
+| `429 {error: 'too many rewrites, try again in a moment'}` | more than 10 a minute |
+| `{requestId, source: 'failed', error, model}` | the cost limit is reached, no model, a timeout (60 s), an unreadable reply, a failed call |
+| `{requestId, source: 'superseded'}` | a newer Improve on the same surface replaced it |
+| `{requestId, source: 'model' \| 'mock', kind, model, rewrite, text, paths}` | success; `paths` lists each backticked path of `text` as `{path, inRepo}` |
+| `500 {error: 'prompt check failed'}` | an unexpected failure |
+
+Cited paths are checked inside the project only: a known `projectKey` or a registered `projectDir`. A missing,
+absolute, `..` or symlink-escaping path, and every path when there is no project, is "not in the repo". The answer holds
+only `{path, inRepo}` pairs (each path at most 300 characters), never file contents. The cost is booked as utility
+spend (`prompt-improve`). One log line per request carries the source, the error code, the surface kind and the path
+counts; no prompt text, reply, path or project is logged.
+
+States of the view (`ui/public/prompt-check/improve-view.mjs`, the library's RewriteSuggestion):
+
+| State | What shows | The field |
+|---|---|---|
+| Busy | "Suggested rewrite: requirement", the violet shimmer "Rewriting…"; `Improve` disabled | unchanged and editable |
+| Ready | the sections with their gap marks, "Not in the repo: …" when a path is missing, "Rewritten by Sonnet 5.5 · your language and intent kept", `Use this` and `Keep mine` | unchanged |
+| Used | "Rewrite used." with `Undo`, until the next edit or send | the rewrite |
+| Failed | the grey line ("Could not rewrite it: … Your text is as it was. Try again"); no Try again on the cost limit or with no model | unchanged |
+
+`Undo` restores the exact text `Use this` replaced; `Keep mine` closes the view. Emptying or sending the field, the
+setting turning off, the chip hiding, or a regrade that leaves Needs detail closes a busy or ready view.
+Stillhet's composer has no Improve yet; it waits for the owner, with the chip.
 
 ## The setting
 

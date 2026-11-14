@@ -5365,6 +5365,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       doc, host: briefFoot, before: count,
       surface: { kind: 'run-card', id: block.id }, ids: { threadId: st.threadId, cardId: block.id },
       forceTask: true, fetchImpl: (...a) => fetch(...a), timers: promptCheckTimers,
+      field: {   // Improve writes through the brief's own input path (count, height, re-check)
+        read: () => brief.value,
+        write: (text) => { brief.value = text; brief.dispatchEvent(new win.Event('input', { bubbles: true })); },
+        focus: () => brief.focus(),
+      },
+      project: () => st.scope.projectKey,
     });
     if (card.source) {
       // The task IS a tracker task (propose_run source): the run reads it when it starts, so the
@@ -7667,6 +7673,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     setPlaceholder: (text) => { st.basePlaceholder = typeof text === 'string' && text ? text : INPUT_PLACEHOLDER; updateSuggestion(); },
     focus: () => focusComposer(),
     announce: (text) => announce(text),
+    // Prompt check Improve (docs/prompt-check.md): the composer's text, a write through its input path, its project.
+    text: () => el.input.value,
+    setText: (text) => { el.input.value = text; fitInput(); addonsInput(); updateSendStop(); },
+    projectKey: () => st.scope.projectKey,
   };
   function mountAddons() {
     for (const addon of composerAddons()) {

@@ -85,4 +85,20 @@
 .pcheck{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;max-width:100%;font-size:var(--fs-caption);}
 .pcheck-grade{padding:0 6px;background:var(--hover);color:var(--ink-2);}
 .pcheck-grade.is-needs-detail{background:var(--amber-bg);color:var(--amber-ink);}
+/* The rewrite suggestion (docs/rail/forms.md form.rewrite): Worca's whole-text rewrite under the chip, gaps as amber
+   marks naming a perspective. Head, marks and foot wrap at narrow widths; no text is cut off. */
+.pd-rewrite{display:flex;flex-direction:column;gap:6px;flex-basis:100%;max-width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-sm);font-size:var(--fs-meta);overflow-wrap:anywhere;}
+.pd-rewrite.is-used{flex-direction:row;flex-wrap:wrap;align-items:center;}
+.pd-rewrite-head{font-weight:500;color:var(--ink);}
+.pd-rewrite-sec,.pd-rewrite-missing{margin:0;white-space:pre-wrap;}
+.pd-rewrite-label{font-weight:500;}
+.pd-rewrite-missing{color:var(--ink-2);}
+.pd-gap{padding:0 4px;border-radius:var(--r-xs);background:var(--amber-bg);color:var(--amber-ink);}
+.pd-rewrite-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px;color:var(--ink-2);}
+.pd-rewrite-acts{display:inline-flex;flex-wrap:wrap;gap:6px;}
+.pd-rewrite-busy{padding:6px 8px;border-radius:var(--r-xs);color:var(--violet-ink);background:linear-gradient(90deg,var(--field),var(--violet-wash),var(--field));background-size:200% 100%;animation:pd-rewrite-wash 1.4s linear infinite;}
+@keyframes pd-rewrite-wash{from{background-position:200% 0;}to{background-position:0 0;}}
+@media (prefers-reduced-motion: reduce){.pd-rewrite-busy{animation:none;background:var(--violet-wash);}}
+.pd-rewrite .pd-fail{margin:0;color:var(--ink-2);}
+.pd-rewrite .pd-retry{padding:0;border:0;background:none;color:var(--ink);font:inherit;text-decoration:underline;text-underline-offset:2px;cursor:pointer;}
 

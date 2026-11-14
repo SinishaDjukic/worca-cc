@@ -814,6 +814,24 @@
       "example": "PR title and description"
     },
     {
+      "name": "RewriteSuggestion",
+      "code": "ui/public/design-system/components/suggestion-field.mjs#rewriteSuggestion",
+      "kind": "entering",
+      "needs": [
+        "a whole-text rewrite Worca suggests"
+      ],
+      "parts": [
+        "head",
+        "sections",
+        "gap marks",
+        "not-in-repo line",
+        "foot",
+        "Use this / Keep mine / Undo",
+        "grey line"
+      ],
+      "example": "Prompt check Improve"
+    },
+    {
       "name": "Stepper",
       "code": "ui/public/design-system/components/stepper.mjs#stepper",
       "kind": "showing",

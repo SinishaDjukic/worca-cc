@@ -18,6 +18,7 @@ One map, from the prototype's own code (the places list in `shell/shell.js`, the
 | Workspaces | Projects (by workspace from Advanced) | the workspaces routes | `#workspaces`, `#workspaces/…`, `#workspace-create` |
 | Check how clear a task prompt is (chat pref `promptCheck`, `docs/prompt-check.md`) | Settings › Chat › Assistant › Abilities › Prompt check (wired) | `src/core/settings.mjs` `chatPrefs` and `src/shared/prompt-check/assessment.mjs` | none |
 | Prompt check chip (composer) | open: waits for the owner (Chat › composer sentence row, after the intent chip) | `ui/public/prompt-check/grader.mjs`, `POST /api/prompt-check/grade`, `POST /api/prompt-check/kind-correction` | none |
+| Prompt check Improve (composer) | open: waits for the owner, with the chip row | `ui/public/prompt-check/improve-view.mjs`, `POST /api/prompt-check/improve` | none |
 
 With Stillhet on, every old address lands through one table, `ui/public/stillhet/shell/old-addresses.js` (`docs/rail/navigation.md` `nav.old-address`), in place; with it off they stay dev's.
 
