@@ -97,7 +97,7 @@ test('snapshotOf: pulseFor follows settings, an unknown value is until-read', ()
 
 test("partOf('settings') replaces keep and pulseFor", () => {
   const p = partOf('settings', { pulseFor: 'never' }, SOURCES, { now: NOW });
-  assert.deepEqual(Object.keys(p), ['keep', 'pulseFor']);
+  assert.deepEqual(Object.keys(p), ['keep', 'chatPrefs', 'pulseFor']);
   assert.equal(p.pulseFor, 'never');
   assert.equal(p.keep, true);
 });

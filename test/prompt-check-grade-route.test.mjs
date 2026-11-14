@@ -275,3 +275,48 @@ test('a non-local Host or a cross-site Origin is refused exactly like POST /api/
   }
   assert.equal(calls.length, 0);
 });
+
+test('a forced kind: an invalid kind answers 400; on chat and new-run it grades a short question and returns the kind', async (t) => {
+  await promptCheck(true);
+  const { calls, run } = counting({ kind: 'implementation', grade: 'needs-detail', confidence: 0.6 });
+  withRunner(t, run);
+  for (const kind of ['nope', 'question', 7]) {
+    const r = await post(body({ kind }));
+    assert.equal(r.status, 400);
+    assert.deepEqual(r.body, { error: 'kind is invalid' });
+  }
+  assert.equal(calls.length, 0);
+  const q = 'What does the review step do?';
+  for (const surface of [{ kind: 'chat', id: 'fk1' }, { kind: 'new-run', id: 'fk2' }]) {
+    const b = body({ text: q, surface, kind: 'bug' });
+    const r = await post(b);
+    assert.equal(r.status, 200, surface.kind);
+    assert.equal(r.body.source, 'model');
+    assert.equal(r.body.assessment.kind, 'bug');
+    assert.equal(r.body.assessment.isTask, true);
+    assert.deepEqual(Object.keys(r.body).sort(), ['assessment', 'requestId', 'source', 'textHash']);
+  }
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].prompt, /The kind is fixed: bug/);
+});
+
+test('a forced kind past the bucket still answers 429, and the log line says only kind=forced', async (t) => {
+  await promptCheck(true);
+  const { run } = counting();
+  withRunner(t, run, () => null);
+  const lines = [];
+  const keep = console.log;
+  console.log = (...a) => lines.push(a.join(' '));
+  t.after(() => { console.log = keep; });
+  const r = await post(body({ text: 'zebra-5521 what?', kind: 'idea' }));
+  console.log = keep;
+  assert.equal(r.body.source, 'deterministic');
+  assert.equal(r.body.assessment.kind, 'idea');
+  assert.ok(lines.some((l) => /prompt-check deterministic .*kind=forced/.test(l)), lines.join('\n'));
+  for (const l of lines) assert.ok(!l.includes('zebra-5521') && !l.includes('idea'), l);
+  _setGradeBucketForTest(new TokenBucket(1, { now: () => 0 }));
+  t.after(() => _setGradeBucketForTest(null));
+  assert.equal((await post(body({ kind: 'bug' }))).status, 200);
+  const over = await post(body({ kind: 'bug' }));
+  assert.equal(over.status, 429);
+});

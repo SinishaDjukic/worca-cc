@@ -16,7 +16,8 @@ One map, from the prototype's own code (the places list in `shell/shell.js`, the
 | Providers | Settings | the providers routes | `#providers`, `#settings/providers` |
 | Team policy | Settings | the team policy routes | `#team-policy`, `#team-policy/…` |
 | Workspaces | Projects (by workspace from Advanced) | the workspaces routes | `#workspaces`, `#workspaces/…`, `#workspace-create` |
-| Check how clear a task prompt is (chat pref `promptCheck`, `docs/prompt-check.md`) | Settings › Chat › Assistant › Abilities › Prompt check (the prototype row waits for the owner's answer; until then Stillhet has no row) | `src/core/settings.mjs` `chatPrefs` and `src/shared/prompt-check/assessment.mjs` | none |
+| Check how clear a task prompt is (chat pref `promptCheck`, `docs/prompt-check.md`) | Settings › Chat › Assistant › Abilities › Prompt check (wired) | `src/core/settings.mjs` `chatPrefs` and `src/shared/prompt-check/assessment.mjs` | none |
+| Prompt check chip (composer) | open: waits for the owner (Chat › composer sentence row, after the intent chip) | `ui/public/prompt-check/grader.mjs`, `POST /api/prompt-check/grade`, `POST /api/prompt-check/kind-correction` | none |
 
 With Stillhet on, every old address lands through one table, `ui/public/stillhet/shell/old-addresses.js` (`docs/rail/navigation.md` `nav.old-address`), in place; with it off they stay dev's.
 
@@ -247,11 +248,12 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 
 | Surface | Status | Where in Stillhet, or why not yet |
 |---|---|---|
-| `route › /api/prompt-check/grade` | wire to | The prompt check's grade; Stillhet's composer chip that calls it is Shaper Tracks slice 2 (the chip and kind picker), building now |
-| `ui/public/app.js` | wire to | Starts the prompt check's grader in today's UI; Stillhet's composer gets it with the chip in Shaper Tracks slice 2 |
-| `ui/public/chat-settings-view.mjs` | wire to | The "Check how clear a task prompt is" row in today's Settings › Chat; Stillhet's Settings row is built in Shaper Tracks slice 2 (owner approved) |
-| `ui/public/prompt-check/` | wire to | The browser grader (cheapest-first check); Stillhet's composer uses it from Shaper Tracks slice 2 |
-| `ui/public/settings/settings.html` | wire to | The setting's place in today's Settings page; Stillhet's Settings row is Shaper Tracks slice 2 |
+| `route › /api/prompt-check/grade` | wire to | The prompt check's grade; today's Chat, New run and run card chip calls it (Shaper Tracks slice 2). Stillhet's composer chip waits for the owner (the Prompt check chip row above) |
+| `route › /api/prompt-check/kind-correction` | wire to | A person's kind pick on the chip (ids only, schema v96); Stillhet records it once its composer chip is built (waits for the owner, the Prompt check chip row above) |
+| `ui/public/app.js` | wire to | Starts the prompt check's grader in today's UI; Stillhet's composer gets it with its chip, which waits for the owner (the Prompt check chip row above) |
+| `ui/public/chat-settings-view.mjs` | wired | The "Check how clear a task prompt is" row: Stillhet's Settings › Chat › Assistant › Abilities › Prompt check (`stillhet/settings/settings-model.js`, a live switch on `chat.promptCheck` through `live/live-map.mjs` `chatPrefs`) |
+| `ui/public/prompt-check/` | wire to | The browser grader and the chip's controller (`chip-host.mjs`); Stillhet's composer uses them once its chip is built (waits for the owner, the Prompt check chip row above) |
+| `ui/public/settings/settings.html` | wired | The setting's place in today's Settings page: Stillhet's Settings › Chat › Assistant › Abilities › Prompt check (`stillhet/settings/settings-model.js`) |
 | `setting › pulseFor` | wired | Settings › Notifications, the Pulse animation row (`pulse.js` reads it through the live map; #1258) |
 
 ## Opt-in

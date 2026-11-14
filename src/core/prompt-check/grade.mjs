@@ -52,15 +52,22 @@ const SYSTEM = [
   'Reply with ONE JSON object and nothing else.',
 ].join(' ');
 
-/** The grading call's prompt: the rubric per kind, the earlier window messages, then the current text. */
-export function gradingPrompt({ text, window = [], deterministic = null } = {}) {
-  const rubrics = PROMPT_KINDS.map((k) => `- ${k} (${KIND_LABELS[k]}): ${KIND_RUBRICS[k].join(', ')}`).join('\n');
+const forcedKind = (kind) => (PROMPT_KINDS.includes(kind) ? kind : null);
+
+/**
+ * The grading call's prompt: the rubric per kind, the earlier window messages, then the current text. A forced `kind`
+ * (a person's correction) is stated as fixed, and only its rubric is listed.
+ */
+export function gradingPrompt({ text, window = [], deterministic = null, kind = null } = {}) {
+  const fixed = forcedKind(kind);
+  const rubrics = (fixed ? [fixed] : PROMPT_KINDS).map((k) => `- ${k} (${KIND_LABELS[k]}): ${KIND_RUBRICS[k].join(', ')}`).join('\n');
   const earlier = (Array.isArray(window) ? window : []).filter((w) => typeof w === 'string' && w.trim());
-  const guess = deterministic && typeof deterministic.kind === 'string' ? `A text-signal guess of the kind (may be wrong): ${deterministic.kind}.\n\n` : '';
+  const guess = !fixed && deterministic && typeof deterministic.kind === 'string' ? `A text-signal guess of the kind (may be wrong): ${deterministic.kind}.\n\n` : '';
   return [
-    'Kinds and what a Clear prompt of each kind states (rubric item ids):',
+    fixed ? 'The rubric of this kind (rubric item ids):' : 'Kinds and what a Clear prompt of each kind states (rubric item ids):',
     rubrics,
-    'A conversation or a question is not a task: kind "conversation" or "question", isTask false.',
+    fixed ? `The kind is fixed: ${fixed}. The person chose it; it is a task (isTask true).`
+      : 'A conversation or a question is not a task: kind "conversation" or "question", isTask false.',
     '',
     earlier.length ? 'Earlier task messages of the same requirement, oldest first:' : 'There are no earlier task messages.',
     ...earlier.map(quote),
@@ -87,9 +94,9 @@ export function parseGradeReply(raw) {
 
 const wordCount = (t) => String(t ?? '').split(/\s+/).filter(Boolean).length;
 
-/** The mock reply for `text`: deterministic, spawns nothing. */
-export function mockGrade(text) {
-  const d = deterministicAssessment(text);
+/** The mock reply for `text`: deterministic, spawns nothing. A valid forced `kind` pins its kind. */
+export function mockGrade(text, { kind = null } = {}) {
+  const d = deterministicAssessment(text, { kind });
   const words = wordCount(text);
   return {
     isTask: d.isTask,
@@ -140,10 +147,10 @@ const rejectOnAbort = (signal) => new Promise((_, reject) => {
 });
 
 /** The plan rules (D15): the deterministic plan kind wins under 0.5 confidence; a plan's grade is the shape check. */
-function finalAssessment(parsed, source, text, det, forceTask) {
-  let raw = { ...parsed, source };
+function finalAssessment(parsed, source, text, det, forceTask, fixed) {
+  let raw = fixed ? { ...parsed, source, kind: fixed, isTask: true } : { ...parsed, source };
   let a = normalizeAssessment(raw, { forceTask, text });
-  if (det.kind === 'plan' && a.kind !== 'plan' && a.confidence < PLAN_KIND_MIN_CONFIDENCE) {
+  if (!fixed && det.kind === 'plan' && a.kind !== 'plan' && a.confidence < PLAN_KIND_MIN_CONFIDENCE) {
     raw = { ...raw, kind: 'plan', isTask: true, minorKinds: [a.kind, ...a.minorKinds] };
     a = normalizeAssessment(raw, { forceTask, text });
   }
@@ -155,12 +162,14 @@ function finalAssessment(parsed, source, text, det, forceTask) {
 }
 
 /**
- * Grade one prompt. Never throws.
+ * Grade one prompt. Never throws. A valid `kind` pins the result's kind (a person's correction).
  * @returns {Promise<{source:'model'|'mock', assessment:object}|{source:'deterministic', assessment:object, error:string}|{source:'aborted'}>}
  */
-export async function gradePrompt({ text, window = [], forceTask = false }, { model, engine, signal, onCost, timeoutMs = GRADE_TIMEOUT_MS } = {}) {
+export async function gradePrompt({ text, window = [], forceTask = false, kind = null }, { model, engine, signal, onCost, timeoutMs = GRADE_TIMEOUT_MS } = {}) {
   const t = String(text ?? '');
-  const det = deterministicAssessment(t, { forceTask });
+  const fixed = forcedKind(kind);
+  const force = forceTask || Boolean(fixed);   // a person's kind pick is a task on every surface (D10)
+  const det = deterministicAssessment(t, { forceTask: force, kind: fixed });
   const fallback = (error) => ({ source: 'deterministic', assessment: det, error });
   const run = gradeRunner();
   const mock = run === mockRun;
@@ -173,7 +182,7 @@ export async function gradePrompt({ text, window = [], forceTask = false }, { mo
     const root = join(worcaHome(), 'tmp', 'prompt-check');
     mkdirSync(root, { recursive: true });
     cwd = mkdtempSync(join(root, 'g-'));
-    const call = auxTextCall({ systemPrompt: SYSTEM, prompt: gradingPrompt({ text: t, window, deterministic: det }), model: model || undefined, engine: otherEngine }, {
+    const call = auxTextCall({ systemPrompt: SYSTEM, prompt: gradingPrompt({ text: t, window, deterministic: det, kind: fixed }), model: model || undefined, engine: otherEngine }, {
       ...GRADE_CALL_OPTS,
       tools: [...GRADE_CALL_OPTS.tools],
       settingSources: [...GRADE_CALL_OPTS.settingSources],
@@ -189,7 +198,7 @@ export async function gradePrompt({ text, window = [], forceTask = false }, { mo
     const parsed = parseGradeReply(reply);
     if (!parsed) return fallback('unreadable reply');
     const source = mock ? 'mock' : 'model';
-    return { source, assessment: finalAssessment(parsed, source, t, det, forceTask) };
+    return { source, assessment: finalAssessment(parsed, source, t, det, force, fixed) };
   } catch (err) {
     if (timeout.aborted && !signal?.aborted) return fallback('timeout');
     if (signal?.aborted || err?.name === 'AbortError') return { source: 'aborted' };

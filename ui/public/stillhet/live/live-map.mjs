@@ -382,6 +382,7 @@ export function snapshotOf(src = {}, { now = 0, unread = [], checksOf = null } =
     actions: arr(src.actions).filter((a) => ['starting', 'running', 'ready'].includes(a?.status)).map((a) => ({ id: str(a.instanceId), runId: str(a.runId), run: str(a.runTitle) || 'A removed run', label: str(a.label), go: a.runId ? 'run' : '' })),
     away: awayOf(away),
     keep: src.settings?.keepAwake !== false,   // dev's rule: on unless turned off
+    chatPrefs: { promptCheck: src.settings?.chat?.promptCheck === true },   // Settings' live switches (sw.live: 'chat.…'); off unless on
     // Settings › Notifications › Pulse icon (until-read | 10s | 1m | never); anything else is the default
     pulseFor: PULSE_FOR_IDS.includes(src.settings?.pulseFor) ? src.settings.pulseFor : 'until-read',
     spaces: spacesOf(src.workspaces),
@@ -436,7 +437,7 @@ export function spacesOf(src = null) {
 // What each source feeds: a refetch of one source replaces only these parts (D11).
 export const SOURCE_PARTS = Object.freeze({
   hello: ['runs', 'costs', 'chats', 'groups'], history: ['runs', 'updates', 'chats', 'groups'], threads: ['chats', 'chatsNeeds'], runLinks: ['chats'], groups: ['chatGroups'], runGroups: ['groups', 'runs'], schedules: ['schedules', 'runs'],
-  projects: ['projects', 'runs'], sync: ['projects'], budget: ['costs'], usageLimits: ['costs'], workspaces: ['spaces'], actions: ['actions'], notifications: ['updates'], away: ['away'], settings: ['keep', 'pulseFor'],
+  projects: ['projects', 'runs'], sync: ['projects'], budget: ['costs'], usageLimits: ['costs'], workspaces: ['spaces'], actions: ['actions'], notifications: ['updates'], away: ['away'], settings: ['keep', 'chatPrefs', 'pulseFor'],
 });
 /** The parts a single-source refetch replaces: `answer` stands for `source` among the last answers `sources`. */
 export function partOf(source, answer, sources = {}, { now = 0, unread = [], checksOf = null } = {}) {
