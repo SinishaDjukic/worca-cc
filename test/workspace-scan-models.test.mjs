@@ -85,7 +85,7 @@ test('resolveScanModels: explicit > stored > default; a stale stored pick degrad
   const none = resolveScanModels({ models: CATALOG });
   assert.deepEqual({ ...none }, { ...WORKSPACE_SCAN_DEFAULT_MODELS, source: 'default', warning: null });
   assert.throws(() => resolveScanModels({ explicit: { ...PICK, agentModel: 'haiku' }, models: CATALOG }), /agentModel/);
-  assert.equal(describeScanModels(none), 'scan agent claude-sonnet-5 · medium, project agents sonnet · medium');
+  assert.equal(describeScanModels(none), 'scan agent claude-sonnet-5 · medium, project agents Sonnet (everyday coding) · medium');
 });
 
 test('resolveScanModels: precedence explicit > workspace > settings > default', () => {
@@ -117,4 +117,14 @@ test('resolveScanModels: with no stored pick and the default NOT in the catalog,
   // but the default IS usable when it is in the catalog, with no warning
   const ok = resolveScanModels({ stored: null, models: SONNET_ONLY_CATALOG });
   assert.deepEqual({ scanModel: ok.scanModel, source: ok.source, warning: ok.warning }, { scanModel: 'claude-sonnet-5', source: 'default', warning: null });
+});
+
+test('resolveScanModels: the Everyday coding role standing in for Settings reports source role, and names it when it no longer fits', async () => {
+  const role = { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'sonnet', agentEffort: 'medium' };
+  const got = resolveScanModels({ stored: role, storedSource: 'role', models: CATALOG });
+  assert.equal(got.source, 'role');
+  assert.equal(got.scanModel, 'claude-opus-5-5');
+  const gone = resolveScanModels({ stored: { ...role, scanModel: 'claude-gone-1' }, storedSource: 'role', models: CATALOG });
+  assert.equal(gone.source, 'default');
+  assert.match(gone.warning, /\(your Everyday coding role\) no longer fit/);
 });

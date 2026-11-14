@@ -116,7 +116,36 @@ test('--yes never answers a plan approval', async () => {
   assert.equal((await h.done).status, 'done');
 });
 
-test('Away mode never arms or decides a plan approval', async () => {
+/** The ask _planAsk raises, at its seam: no agent runs. */
+async function askedBy(orch, spec = {}) {
+  let seen = null;
+  orch.pipeline = { id: 'x', dir: gitDir('plan-seam') };
+  orch._planCheck = async () => ({ ok: true, passed: 8, total: 8, items: [] });
+  orch._approveSpec = () => spec;
+  orch._ask = async (a) => { seen = a; return { decision: 'withdrawn' }; };
+  await orch._planAsk({ id: 'plan-n_refine-1', nodeId: 'n_refine', plan: { file: 'none.md', round: 1 } });
+  return seen;
+}
+
+test('unreadable coverage reaches the ask as null', async () => {
+  const orch = createOrchestrator({ projectDir: gitDir('plan-cov'), workflowId: 'wf_shape', prompt: 'demo', claude: { mock: true }, shape: SHAPE });
+  orch._planCoverage = async () => null;
+  const q = await askedBy(orch, { coverage: 'criteria' });
+  assert.equal(Object.hasOwn(q.plan, 'coverage'), true);
+  assert.equal(q.plan.coverage, null);
+  const none = await askedBy(createOrchestrator({ projectDir: gitDir('plan-cov-none'), workflowId: 'wf_shape', prompt: 'demo', claude: { mock: true }, shape: SHAPE }));
+  assert.equal(Object.hasOwn(none.plan, 'coverage'), false, 'no coverage configured: no key');
+});
+
+test('open conflicts reach the ask as a count', async () => {
+  const orch = createOrchestrator({ projectDir: gitDir('plan-conf'), workflowId: 'wf_shape', prompt: 'demo', claude: { mock: true }, shape: SHAPE });
+  orch.state.roleReviews = { rounds: [{ node: 'n_roles', target: 'plan', pass: 1, round: 1, roles: [], conflicts: [{ id: 'conflict-1' }, { id: 'conflict-2' }] }] };
+  assert.equal((await askedBy(orch)).plan.openConflicts, 2);
+  const clean = createOrchestrator({ projectDir: gitDir('plan-noconf'), workflowId: 'wf_shape', prompt: 'demo', claude: { mock: true }, shape: SHAPE });
+  assert.equal(Object.hasOwn((await askedBy(clean)).plan, 'openConflicts'), false);
+});
+
+test('--yes never arms or decides a plan approval, even with the run marked', async () => {
   const dir = gitDir('plan-away');
   const clock = { now: () => Date.now(), setTimeout: () => 0, clearTimeout: () => {} };
   const armed = [];

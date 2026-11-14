@@ -135,9 +135,10 @@ export function paintRunStatus(host, m, { hold = false } = {}) {
  * handler; one element may stand for two ids (Pause / Resume). Every other id gets a small button made here (kept in
  * `host.__made`, never confused with an own element), which calls `onAction(id, button)`. Every action shown carries
  * data-model-action. Own elements that live inside `host` (the chat card's Pause / Stop) are ordered with the made
- * ones; own elements elsewhere (the run page's bar) are only shown or hidden.
+ * ones; own elements elsewhere (the run page's bar) are only shown or hidden. `plain`: actions that are not the primary
+ * here for now (Answer, while the waiting card's own field holds the primary).
  */
-export function syncActions(host, m, { own = {}, pool = [], covered = {}, disable = {}, labels = {}, skip = [], onAction = () => {} } = {}) {
+export function syncActions(host, m, { own = {}, pool = [], covered = {}, disable = {}, labels = {}, skip = [], plain = [], onAction = () => {} } = {}) {
   if (!host) return;
   const doc = host.ownerDocument;
   // `skip`: actions this host leaves to another control (the run page's ⋯ owns Archive and Report, slice 2).
@@ -158,7 +159,7 @@ export function syncActions(host, m, { own = {}, pool = [], covered = {}, disabl
   // An own element inside the host (the chat card's Resume) is ranked like a made one; one elsewhere keeps its
   // painter's look.
   const inHost = (id) => !!own[id] && own[id].parentNode === host;
-  const primary = want.find((id) => PRIMARY.has(id) && (!drawn(id) || inHost(id))) || null;
+  const primary = want.find((id) => PRIMARY.has(id) && !plain.includes(id) && (!drawn(id) || inHost(id))) || null;
   for (const b of new Set(Object.values(own).filter((o) => o && o.parentNode === host))) {
     b.classList.toggle('btn-primary', !!primary && own[primary] === b);
   }

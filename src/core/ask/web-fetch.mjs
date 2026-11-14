@@ -52,7 +52,7 @@ export function checkWebUrl(raw, allowedDomains, { redirect = false, limits = WE
   const query = u.search.replace(/^\?/, '');
   if (query.length > limits.queryMaxChars) throw new WebAccessError(`${pre}query string longer than ${limits.queryMaxChars} characters — URLs must not carry data`);
   if (u.pathname.length > limits.pathMaxChars) throw new WebAccessError(`${pre}path longer than ${limits.pathMaxChars} characters — URLs must not carry data`);
-  if (looksLikeData(safeDecode(u.pathname)) || looksLikeData(safeDecode(query))) throw new WebAccessError(`${pre}the URL looks like it carries encoded data — refused`);
+  if (looksLikeData(safeDecode(u.pathname), limits.dataRunChars) || looksLikeData(safeDecode(query), limits.dataRunChars)) throw new WebAccessError(`${pre}the URL looks like it carries encoded data — refused`);
   u.hash = '';
   return u;
 }

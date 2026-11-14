@@ -9,6 +9,7 @@ export const KIND_LABELS = Object.freeze({
   workflow: 'Approving a proposed workflow',
   recovery: 'A step failed: retry or give up',
   'cost-cap': "Continuing past the team's cost cap",   // a record kind only (run-harness.mjs), not in NIGHT_KINDS
+  plan: 'Approving a plan',                            // a record kind only too: no "Always wait for me on…" tick
 });
 export const kindLabel = (k) => KIND_LABELS[k] || String(k);
 
@@ -21,6 +22,7 @@ export const KIND_SHORT = Object.freeze({
   workflow: 'Proposed workflow',
   recovery: 'Failed step',
   'cost-cap': "Team's cost cap",
+  plan: 'Plan approval',
 });
 export const kindShort = (k) => KIND_SHORT[k] || String(k);
 
@@ -30,6 +32,7 @@ const OUTCOMES = Object.freeze({
   workflow: { accept: 'Accepted' },
   recovery: { retry: 'Retried', pause: 'Stopped retrying' },
   'cost-cap': { continue: 'Continued past the cap' },
+  plan: { approve: 'Approved' },
 });
 const LIMITS = Object.freeze({ maxDecisions: 'Paused: answer limit reached', spendCap: 'Paused: spending cap reached' });
 const sentence = (s) => {

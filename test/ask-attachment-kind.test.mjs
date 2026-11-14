@@ -8,6 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   TEXT_EXTENSIONS, BINARY_EXTENSIONS, classifyExtension, sniffMime, extensionForAttachment,
+  safeAttachmentExt, isGenericBinary, isInlineServableMime,
 } from '../src/core/ask/attachment-kind.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -34,7 +35,7 @@ test('classifyExtension: text kinds (HTML as text), image kinds, pdf as binary, 
       assert.deepEqual(classifyExtension('.jpeg'), { kind: 'image', mime: 'image/jpeg' });
       assert.deepEqual(classifyExtension('.webp'), { kind: 'image', mime: 'image/webp' });
       assert.deepEqual(classifyExtension('.PDF'), { kind: 'binary', mime: 'application/pdf' });
-      assert.equal(classifyExtension('.svg'), null, 'scriptable markup is deliberately not allowed');
+      assert.equal(classifyExtension('.svg'), null, 'SVG is not a listed type (uploads classify it by content)');
       assert.equal(classifyExtension('.exe'), null);
       assert.equal(classifyExtension(''), null);
       assert.equal(classifyExtension(undefined), null);
@@ -50,7 +51,7 @@ test('classifyExtension: text kinds (HTML as text), image kinds, pdf as binary, 
       assert.deepEqual(classifyExtension('.xml'), { kind: 'text', mime: 'application/xml' });
       assert.deepEqual(classifyExtension('.XML'), { kind: 'text', mime: 'application/xml' });
       assert.equal(extensionForAttachment('text', 'application/xml'), '.txt');
-      assert.equal(classifyExtension('.svg'), null, 'SVG stays out: it is scriptable markup');
+      assert.equal(classifyExtension('.svg'), null, 'SVG is not a listed type');
     } },
   ]);
 });
@@ -99,10 +100,42 @@ test('extensionForAttachment: text -> .txt, sniffed mime -> its extension, unkno
   assert.equal(extensionForAttachment('binary', 'application/x-unknown'), '.bin');
 });
 
-test('extensionForAttachment: show_files snapshot mimes get their own extension; uploads still refuse them', () => {
+test('extensionForAttachment: show_files snapshot mimes get their own extension; uploads never assign them', () => {
   assert.equal(extensionForAttachment('image', 'image/svg+xml'), '.svg');
   assert.equal(extensionForAttachment('binary', 'video/mp4'), '.mp4');
   assert.equal(extensionForAttachment('binary', 'application/x-thing'), '.bin');
   assert.equal(classifyExtension('.svg'), null, 'the upload allow-list is unchanged');
   assert.equal(classifyExtension('.mp4'), null);
+});
+
+test('safeAttachmentExt: last dot-segment of the basename, lower-cased, sanitised', () => {
+  assert.equal(safeAttachmentExt('a.ZIP'), '.zip');
+  assert.equal(safeAttachmentExt('x.tar.gz'), '.gz');
+  assert.equal(safeAttachmentExt('.bashrc'), '');
+  assert.equal(safeAttachmentExt('README'), '');
+  assert.equal(safeAttachmentExt('a.b c'), '');
+  assert.equal(safeAttachmentExt('../../x.sh'), '.sh');
+  assert.equal(safeAttachmentExt('a.' + 'x'.repeat(17)), '');
+  assert.equal(safeAttachmentExt(null), '');
+});
+
+test('generic binary: isGenericBinary, isInlineServableMime, extensionForAttachment', () => {
+  assert.equal(isGenericBinary({ kind: 'binary', mime: 'application/octet-stream' }), true);
+  assert.equal(isGenericBinary({ kind: 'text', mime: 'application/octet-stream' }), false);
+  assert.equal(isGenericBinary({ kind: 'binary', mime: 'application/pdf' }), false);
+  assert.equal(isGenericBinary(null), false);
+  assert.equal(isInlineServableMime('image/png'), true);
+  assert.equal(isInlineServableMime('video/mp4'), true);
+  assert.equal(isInlineServableMime('application/octet-stream'), false);
+  assert.equal(isInlineServableMime('text/html'), false);
+  assert.equal(extensionForAttachment('binary', 'application/octet-stream', 'a.ZIP'), '.zip');
+  assert.equal(extensionForAttachment('binary', 'application/octet-stream', 'README'), '.bin');
+  assert.equal(extensionForAttachment('binary', 'application/octet-stream'), '.bin');
+});
+
+test('name never changes a known mime\'s ext', () => {
+  assert.equal(extensionForAttachment('image', 'image/png', 'x.zip'), '.png');
+  assert.equal(extensionForAttachment('binary', 'application/pdf', 'x.zip'), '.pdf');
+  assert.equal(extensionForAttachment('text', 'text/plain', 'x.zip'), '.txt');
+  assert.equal(extensionForAttachment('binary', 'application/x-unknown', 'x.zip'), '.bin');
 });

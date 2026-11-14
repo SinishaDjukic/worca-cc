@@ -88,9 +88,8 @@ Run status arrives as messages in the thread (started, questions, finished, fail
 - **Files.** Files on your message, on the replied-to message and on the history messages are downloaded by worca —
   only from Discord's file hosts (`cdn.discordapp.com`, `media.discordapp.net`, declared in the plugin manifest as
   `attachmentHosts`) — and saved as attachments of the chat, so the model can read them and they show in worca.
-  Limits: the chat attachment types worca accepts (text, images, PDF; what the chat's engine can view), **25 MB per
-  file, 4 files per Discord message, 8 files and 50 MB per message with its context**. A file that is too large, of
-  another type, or fails to download is listed by name with the reason; the reply still goes ahead.
+  Any file type is saved (an image or PDF the chat's engine cannot view is refused). Limits: **25 MB per
+  file, 4 files per Discord message, 8 files and 50 MB per message with its context**. A file that is too large or fails to download is listed by name with the reason; the reply still goes ahead.
 - **Permissions.** Reading a replied-to message the event did not include, and reading history, need **Read Message
   History** — already in the invite above. Without it the reply or history is left out (and the log says why).
 - Everything quoted is treated as untrusted data: text that looks like an instruction is never followed.

@@ -12,6 +12,7 @@ const issues = new Map(); const add = (k, where) => { if (!issues.has(k)) issues
 for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
   const p = await b.newPage({ viewport: { width: w, height: 900 }, colorScheme: scheme, reducedMotion: 'reduce' });
   await p.goto(URL);
+  await p.evaluate(() => { for (const k of ['runTelemetry', 'commandSummaries']) window.RailUI.prefs.setFlag(k, true); });   // what a flag shows passes too
   const cases = await p.evaluate(() => [...document.querySelectorAll('#case option')].map((o) => o.value));
   for (const c of cases) {
     await p.selectOption('#case', c);
@@ -85,6 +86,21 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
       if (r.side) add('page scrolls sideways with a menu open', `${scheme}/${w}/${c}: ${key}`);
       await p.keyboard.press('Escape');
       await p.selectOption('#case', 'starting'); await p.selectOption('#case', c); await p.evaluate(() => window.scrollTo(0, 260));
+    }
+  }
+  await p.close();
+}
+// Every case in Simple, narrow: the page keeps its shape with Logs, the graph and Agents gone (docs/rail/thing-page.md).
+{
+  const p = await b.newPage({ viewport: { width: 375, height: 900 }, colorScheme: 'dark', reducedMotion: 'reduce' });
+  await p.goto(URL);
+  await p.evaluate(() => window.RailUI.prefs.setMode('simple'));
+  for (const c of await p.evaluate(() => [...document.querySelectorAll('#case option')].map((o) => o.value))) {
+    await p.selectOption('#case', c);
+    for (const t of await p.$$eval('.rc-tabs .tab', (x) => x.map((e) => e.dataset.tab))) {
+      await p.click(`.tab[data-tab="${t}"]`);
+      if (await p.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)) add('page scrolls sideways', `simple/375/${c}/${t}`);
+      if (await p.evaluate(() => /Open the graph|^Logs/.test(document.querySelector('.rtab-panel').innerText))) add('a part shows below its level', `simple/375/${c}/${t}`);
     }
   }
   await p.close();

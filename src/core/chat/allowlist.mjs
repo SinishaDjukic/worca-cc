@@ -46,8 +46,8 @@ export function parseIdList(value) {
 // a regex literal is a line terminator.
 const MEMBER_BAD_CHARS = new RegExp('[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029<>]');
 
-/** "discordUserId=worca identity" pairs (comma or newline separated) → Map(userId → identity). Bad entries are skipped;
- *  ids must be platform snowflake-ish (1–32 of [A-Za-z0-9_-]); identities one printable line ≤ 200. */
+/** "platformUserId=worca identity" pairs (comma or newline separated) → Map(userId → identity). Bad entries are skipped;
+ *  ids are 1–64 of [A-Za-z0-9_-] (a Discord snowflake, a Teams Entra object id GUID); identities one printable line ≤ 200. */
 export function parseChatMembers(raw) {
   const out = new Map();
   for (const item of String(raw ?? '').split(/[,\n]/)) {
@@ -55,7 +55,7 @@ export function parseChatMembers(raw) {
     if (eq <= 0) continue;
     const id = item.slice(0, eq).trim();
     const who = item.slice(eq + 1).trim();
-    if (!/^[A-Za-z0-9_-]{1,32}$/.test(id) || !who || who.length > 200 || MEMBER_BAD_CHARS.test(who)) continue;
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || !who || who.length > 200 || MEMBER_BAD_CHARS.test(who)) continue;
     out.set(id, who);
   }
   return out;

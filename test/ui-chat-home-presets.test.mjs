@@ -82,7 +82,7 @@ test('a chip\'s tooltip is the scope, the workflow name and the engine label, ne
   ui.render({ target: { kind: 'project', ref: 'api-1' }, workflowNames: { wf_default: 'Default' }, presets: [
     p('a', { workflowId: 'wf_auto', engine: 'codex' }, 'project', 'api-1'), p('b', { workflowId: 'wf_gone99' })] });
   assert.deepEqual([...ui.el.querySelectorAll('.chat-home-preset')].map((b) => b.title),
-    ['Only this project · Auto workflow · Codex', 'Any project · Workflow removed · Claude']);
+    ['Only this project · Auto workflow · OpenAI Codex', 'Any project · Workflow removed · Claude Code']);
 });
 
 for (const [level, want] of [['simple', '#new'], ['advanced', '#settings/presets'], ['expert', '#settings/presets']]) {

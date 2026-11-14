@@ -54,6 +54,19 @@ test('After a run: the kind switch hides the time controls, candidates fill the 
   assert.deepEqual(await done, { after: { kind: 'ticket', id: 't1', title: 'Nightly lint' }, afterPolicy: 'any' });
 });
 
+test('After a run: an interrupted candidate reads "interrupted, waits for a Resume" in the select and the sentence', async () => {
+  const { doc, done, mod } = await open({ mode: 'create', candidates: async () => ({
+    runs: [{ pipelineId: 'p7', runId: null, title: 'Slice 1', status: 'interrupted' }], tickets: [] }) });
+  doc.querySelector('button[data-kind="after"]').click();
+  await tick(2);
+  const sel = doc.getElementById('sched-after');
+  assert.deepEqual([...sel.options].map((o) => o.textContent), ['Slice 1 · interrupted, waits for a Resume']);
+  assert.equal(doc.querySelector('.sched-sentence b').textContent, 'After ‘Slice 1’ finishes');
+  assert.equal(doc.querySelector('.sched-sentence .sched-next').textContent, 'Slice 1 is interrupted, waits for a Resume');
+  assert.equal(doc.querySelector('.sched-ok').disabled, false, 'it can be picked');
+  mod.closeScheduleSheet(); await done;
+});
+
 test('back to At a time: the time controls return and the result is a time', async () => {
   const { doc, done } = await open({ mode: 'create', candidates: CANDS });
   doc.querySelector('button[data-kind="after"]').click();

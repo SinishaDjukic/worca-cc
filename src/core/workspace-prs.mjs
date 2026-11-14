@@ -81,3 +81,56 @@ export function withRelatedPrsBlock(body, block) {
     : text.trimEnd();
   return base ? `${base}\n\n${block}` : block;
 }
+
+const DRAFT_REFUSED = /draft/i;
+
+/**
+ * Create a PR through `create(args)`; when a draft is refused (the forge's error names drafts) retry it ready for review.
+ * `onDraftFallback({ memberKey, error })` runs once the ready PR exists; the result carries `fellBack: true`.
+ * A call that did not ask for a draft is never retried.
+ */
+export async function createPrWithDraftRetry(create, args, onDraftFallback = null) {
+  const out = await create(args);
+  if (out.ok || !args.draft || !DRAFT_REFUSED.test(out.error || '')) return out;
+  const retry = await create({ ...args, draft: false });
+  if (!retry.ok) return retry;
+  if (onDraftFallback) onDraftFallback({ memberKey: args.memberKey ?? null, error: out.error });
+  return { ...retry, fellBack: true };
+}
+
+/**
+ * A workspace run's PRs: one per member whose branch has commits (a member the planner left untouched gets none), each
+ * on its own base, Watch PR on each (enabled by `actor`), then the PRs cross-linked. Only the issue's own repository's PR
+ * closes the issue. `draft` opens them as drafts (a refused draft retries ready: `onDraftFallback({ memberKey, error })`).
+ * Every I/O call is in `deps`. → { ok, url, prs, fellBack, existed (every PR was already there), newDraft (some PR is a new draft) } with `url` that PR's (else the first), or { ok:false, error }
+ * when no member changed or none opened.
+ */
+export async function openWorkspaceRunPrs(pipelineId, state, { draft = true, actor = 'automation', onDraftFallback = null } = {}, deps) {
+  const prs = []; let changed = 0;
+  for (const m of deps.prStateMembers(state)) {
+    if (m.workMode === 'folder' || !m.projectDir || !m.feature || !m.source) continue;
+    if (!(await deps.branchExists(m.projectDir, m.feature)) || !((await deps.commitsAhead(m.projectDir, m.source, m.feature)) > 0)) continue;
+    changed++;
+    const target = deps.prTargetFor(state, m.memberKey);
+    if (target.error) { prs.push({ name: m.name, repo: null, url: null, error: target.error }); continue; }
+    const out = await createPrWithDraftRetry(deps.createRunPr, { id: pipelineId, state, target, base: m.source, memberKey: m.memberKey, draft, actor },
+      (e) => onDraftFallback?.({ ...e, name: m.name }));
+    if (!out.ok) { prs.push({ name: m.name, repo: null, url: null, error: out.error }); continue; }
+    prs.push({ name: m.name, repo: out.repo, url: out.pr.url, closes: !!out.closes, draft: !!out.newDraft, existed: !!out.pr.existed, fellBack: !!out.fellBack });
+    if (!out.pr.existed && deps.watchablePrUrl(out.pr.url)) {
+      try {
+        deps.setWatch({ prUrl: out.pr.url, pipelineId: out.pipelineIdForPr, memberKey: m.memberKey, pushRemote: out.pushRemote, enabled: true, enabledBy: actor });
+        deps.broadcast(deps.prWatchFrame(out.pipelineIdForPr, m.memberKey));
+      } catch (err) { console.error(`[worca-ui] ${actor}: could not watch ${out.pr.url}: ${err?.message || err}`); }
+    }
+  }
+  if (!changed) return { ok: false, error: 'the run changed no repository' };
+  const opened = prs.filter((p) => p.url);
+  if (!opened.length) return { ok: false, error: prs.map((p) => `${p.name}: ${p.error}`).join('; ') };
+  deps.kickPrWatch();
+  if (opened.length >= 2) {
+    const r = await deps.crosslinkMemberPrs(pipelineId, deps.readPipelineStateById(pipelineId) || state).catch((err) => ({ failed: [{ error: err?.message || String(err) }] }));
+    if (r.edited?.length) deps.appendAuditById(pipelineId, `Cross-linked ${r.edited.length} pull requests to their siblings (${actor}).`, { actor });
+  }
+  return { ok: true, url: (opened.find((p) => p.closes) || opened[0]).url, prs, fellBack: opened.some((p) => p.fellBack), existed: opened.every((p) => p.existed), newDraft: opened.some((p) => p.draft) };
+}

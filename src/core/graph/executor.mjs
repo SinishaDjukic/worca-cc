@@ -53,11 +53,13 @@ import { SUBAGENT_MODELS } from '../model-env.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
 import { withRecheck } from '../../shared/graph/verdict.mjs';
 import { perspectivesBlock } from '../../shared/shape/perspectives.mjs';
+import { clarifyPerspectivesBlock, capClarifyByPerspective, CLARIFY_TOTAL } from '../../shared/shape/perspective-set.mjs';
 import { roleChecklistOf, genericRoleBrief, roleTargetOf } from '../../shared/graph/role-review-step.mjs';
 import { reviewChecklistBlock } from '../../shared/shape/review-checklist.mjs';
 import { slicingBlock, outlineFeedbackBlock, FLAT_NOTE, sliceScopeBlock } from '../../shared/shape/slices.mjs';
 import { planConcernBlock, planConcernOverrideBlock, requirementConcernBlock } from '../../shared/review/plan-concern.mjs';
 import { criterionIds } from '../../shared/review/coverage.mjs';
+import { outlineFileState, planOutputOf } from '../shape/outline-file.mjs';
 import { runScriptExecution } from './script-runner.mjs';
 // Skills registry §4.1: the CLI's refusal of `--plugin-dir` under managed `disableSideloadFlags` (P3's one regex).
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
@@ -497,6 +499,8 @@ const joinHints = (a, b) => [a, b].map((s) => String(s || '').trim()).filter(Boo
 
 /** The agents whose prompt carries the Perspectives block (spec D5: the planner writes for them, Refine checks them). */
 const PERSPECTIVE_AGENT_KEYS = new Set(['planner', 'refiner']);
+/** The agent whose prompt and questions follow a run's chosen perspective set (flag proposedPerspectives). */
+const CLARIFY_AGENT_KEY = 'clarify';
 /** Spec §3.8: the agent that may write the slice outline, and the agents that get the slice scope (F15). */
 export const SLICE_PLANNER_KEY = 'planner';
 export const SLICE_SCOPE_AGENT_KEYS = PERSPECTIVE_AGENT_KEYS;
@@ -606,8 +610,11 @@ export function buildAgentPrompt(ctx) {
   const routed = ctxEndpointRouted(ctx);
   const hints = substituteHints(joinHints(meta.promptHints, node?.config?.promptHints), ctx);
   const perspectives = PERSPECTIVE_AGENT_KEYS.has(node?.key) && Array.isArray(ctx.shape?.perspectives)
-    ? perspectivesBlock(ctx.shape.perspectives, { refiner: node.key === 'refiner' })
+    ? perspectivesBlock(ctx.shape.perspectives, { refiner: node.key === 'refiner', agreedIds: ctx.shapeAgreedIds || [] })
     : '';
+  // A run with a chosen perspective set only (ctx.chosenPerspectives): every other Clarify prompt stays byte-identical.
+  const clarifyPersp = node?.key === CLARIFY_AGENT_KEY && Array.isArray(ctx.chosenPerspectives)
+    ? clarifyPerspectivesBlock(ctx.chosenPerspectives) : '';
   const slicing = node?.key === SLICE_PLANNER_KEY ? slicingPromptBlock(ctx) : '';
   const sliceScope = SLICE_SCOPE_AGENT_KEYS.has(node?.key) && ctx.shapeSliceScope
     ? sliceScopeBlock({ ...ctx.shapeSliceScope, refiner: node.key !== SLICE_PLANNER_KEY })
@@ -635,7 +642,7 @@ export function buildAgentPrompt(ctx) {
     '\n## What to do\n\n' +
     baseInstruction(meta.runnerType, meta) + '\n\n' +
     (hints ? hints + '\n\n' : '') +
-    perspectives +
+    perspectives + clarifyPersp +
     roleBrief +
     sliceScope +
     slicing +
@@ -878,8 +885,12 @@ export async function runAgentExecution(ctx) {
   // An agent that stopped to ask (the questions loop resumes it with the answers), or a slicing Planner
   // that stopped at its slice outline (the outline loop resumes it), has not finished: its outputs and
   // verdict come on the resumed spawn, which is checked like any other.
+  // D10: the outline file's state is classified once, here; the orchestrator's outline loop reads `outlineState`.
+  const outlineState = typeof ctx.shapeSlicing?.file === 'string'
+    ? await outlineFileState(ctx.shapeSlicing.file, { baseline: ctx.shapeSlicing.baseline || null, planFile: planOutputOf(outputs) })
+    : null;
   const asked = (ctx.questionsFile ? (await readAskFile(ctx.questionsFile)).kind !== 'none' : false)
-    || (typeof ctx.shapeSlicing?.file === 'string' && existsSync(ctx.shapeSlicing.file));
+    || (outlineState != null && outlineState !== 'flat');
   if (!asked) {
     checkVerdict(ctx, verdict?.path, review, warnings);          // E1: a missing verdict throws
     await assertOutputsWritten(ctx, ports, outputs, review);      // E8: so does an unwritten output
@@ -893,6 +904,7 @@ export async function runAgentExecution(ctx) {
     sessionId,
     prompt,
     systemPrompt,
+    ...(outlineState ? { outlineState } : {}),
   };
 }
 
@@ -1052,6 +1064,17 @@ export async function runClarifierExecution(ctx) {
     }
     questions = gate.questions;               // the downgrade takes the legacy arm below
     sessionId = gate.sessionId ?? sessionId;
+  }
+
+  // A run with a chosen perspective set: one question per perspective, 3 in total, on the questions arm only and before
+  // the node's own cap, so the cap holds even when the agent ignores the prompt's block. Gated like that block: the
+  // Clarify node only.
+  if (node?.key === CLARIFY_AGENT_KEY && Array.isArray(ctx.chosenPerspectives)) {
+    const kept = capClarifyByPerspective(questions, ctx.chosenPerspectives);
+    if (kept.dropped.length) {
+      warnings.push(`${node.id}: Clarify asked ${questions.length} questions; keeping ${kept.questions.length} (one per perspective, ${CLARIFY_TOTAL} in total)`);
+      questions = kept.questions;
+    }
   }
 
   // Shape it first (spec D3): a node may cap its questions below the protocol's 8. normalizeClarify already

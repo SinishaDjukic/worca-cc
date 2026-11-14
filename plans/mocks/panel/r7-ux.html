@@ -1,0 +1,170 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Plain sentence r7</title><style>
+@font-face{font-family:P;font-weight:400;src:url(../../../ui/public/fonts/poppins-latin-400-normal.woff2)}
+@font-face{font-family:P;font-weight:500;src:url(../../../ui/public/fonts/poppins-latin-500-normal.woff2)}
+@font-face{font-family:P;font-weight:600;src:url(../../../ui/public/fonts/poppins-latin-600-normal.woff2)}
+:root{--bg:#161614;--panel:#222220;--field:#2C2C29;--ink:#ECECE8;--ink-2:#B4B4AE;--ink-3:#9E9E98;--line:#30302D;--line-2:#3d3d39;--hover:#2a2a27;--amber:#E6962A;--violet-wash:#262336;--violet-ink:#B3A8EE}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--ink);font:400 13px/1.5 P,sans-serif;padding:28px 24px 36px;width:1440px}
+h1{font-size:20px;font-weight:600;letter-spacing:-.02em}
+.sub{color:var(--ink-2);margin:4px 0 20px}
+.g2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 28px}
+.g3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 28px}
+.lab{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin:22px 0 10px}
+h3{font-size:13px;font-weight:600;margin-bottom:8px}h3 span{font-weight:400;color:var(--ink-2)}
+.comp-n{font-size:11px;color:var(--ink-3);margin-bottom:6px}
+.note{color:var(--ink-2);font-size:12px;margin-top:10px}
+.note b{color:var(--ink);font-weight:500}
+.sep{height:1px;background:var(--line);margin:22px 0 0}
+svg{display:inline-block;vertical-align:middle}
+/* Composer (prototype .composer: --bg, --line-2, r-lg) */
+.composer{width:100%;max-width:648px;display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line-2);border-radius:12px;background:var(--bg)}
+.ct{min-height:44px;color:var(--ink-3);font-size:14px}.ct.f{color:var(--ink)}
+.cf{display:flex;align-items:center;gap:10px}
+.ib{color:var(--ink-2);flex:none;display:grid;place-items:center;width:24px;height:24px}
+.send{flex:none;width:28px;height:28px;border-radius:6px;background:var(--ink);display:grid;place-items:center}
+/* SentencePicker, standard: 600 + chevron */
+.sp{font-weight:600;color:var(--ink);white-space:nowrap}
+.sp i{font-style:normal;color:var(--ink-2);font-size:10px;margin-left:3px}
+/* SentencePicker variant quiet: 400 ink, no chevron, first (where) 500, spacing not dots */
+.line{display:flex;align-items:baseline;gap:14px;font-size:13px;white-space:nowrap;min-width:0;flex:1}
+.qv{color:var(--ink)}
+.qv i{font-style:normal;color:var(--ink-3);font-size:10px;margin-left:3px}
+.mi2{padding:5px 12px}.mi2 .d{color:var(--ink-3);font-size:11px}.mi2.sel{background:var(--hover)}
+.mi2 .t{color:var(--ink)}
+.mi2 .t span{color:var(--ink-3);font-size:11px;float:right}.qv.w{font-weight:500}
+.qv.hv{background:var(--hover);box-shadow:0 0 0 3px var(--hover);border-radius:4px}
+.set-dot{display:inline-block;width:5px;height:5px;margin-left:6px;border-radius:50%;background:var(--ink-3);vertical-align:middle}
+.cust{color:var(--ink-2);font-size:12px;flex:none}
+.sp-gap{margin-left:auto}
+/* overlays */
+.tip{display:inline-block;background:var(--field);border:1px solid var(--line-2);border-radius:6px;padding:4px 9px;font-size:11px;color:var(--ink-2);line-height:1.45}
+.tip b{color:var(--ink);font-weight:500}
+.menu{width:250px;background:var(--field);border:1px solid var(--line-2);border-radius:8px;padding:4px 0;box-shadow:0 8px 24px #0007;font-size:12px}
+.mi{display:flex;justify-content:space-between;align-items:center;padding:5px 12px;color:var(--ink)}
+.mi span{color:var(--ink-3);font-size:11px}
+.mi.sel{background:var(--hover)}
+.mfind{margin:2px 8px 4px;padding:4px 8px;border:1px solid var(--line-2);border-radius:6px;color:var(--ink);font-size:12px}
+.mh{padding:6px 12px 2px;font-size:11px;color:var(--ink-3)}
+.mr{border-top:1px solid var(--line);margin:4px 0}
+.ovl{display:flex;gap:18px;align-items:flex-start;margin-top:8px}
+/* TaskProposal */
+.msg{margin-left:auto;width:82%;background:var(--field);border-radius:8px;padding:8px 12px}
+.tp{margin-top:12px}
+.chd{display:grid;grid-template-columns:20px 1fr;gap:0 12px;align-items:center}
+.km{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--ink-3)}
+.kick{font-size:12px;color:var(--ink-2)}
+.tpt{grid-column:2;font-size:15px;font-weight:600;letter-spacing:-.01em;padding:2px 6px;margin-left:-6px;border-radius:4px;background:linear-gradient(90deg,var(--bg),var(--violet-wash) 60%,var(--bg))}
+.why{grid-column:2;color:var(--ink-3);font-size:12px;min-height:18px}
+.rc{margin:8px 0 0 32px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.tps{display:flex;gap:14px;flex-wrap:wrap;color:var(--ink-2)}
+.acts{display:flex;align-items:center;gap:12px;margin-top:12px}
+.btn{background:var(--ink);color:#161614;font-weight:500;border-radius:6px;padding:4px 14px;outline:2px solid var(--ink);outline-offset:2px}
+.qb{color:var(--ink-2)}
+.kh{margin-left:auto;font-size:11px;color:var(--ink-3)}
+/* bar */
+.bar{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:0 10px 12px;width:300px}
+.bh{display:flex;align-items:center;gap:6px;height:48px}
+.logo{width:20px;height:20px;border-radius:50%;background:var(--ink-2);color:#161614;font-size:11px;font-weight:600;display:grid;place-items:center}
+.bt{font-size:18px;font-weight:600;letter-spacing:-.02em}
+.bt i{font-style:normal;font-size:11px;color:var(--ink-2);margin-left:4px}
+.nb{margin-left:auto;display:flex;align-items:center;gap:6px;color:var(--ink);font-weight:500;padding:4px 8px;border-radius:6px}
+.nb.hv{background:var(--hover)}
+.hide{color:var(--ink-2);width:28px;display:grid;place-items:center}
+.ls{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 6px;padding:2px 2px 8px;color:var(--ink-3);white-space:nowrap}
+.ls .rs{color:var(--ink-2);font-size:12px}
+.sh{display:flex;align-items:center;font-weight:600;padding:6px 2px 4px}
+.sh .n{color:var(--ink-3);font-weight:400;margin-left:6px}
+.sh .dots{margin-left:auto;color:var(--ink-2);width:22px;text-align:center;border-radius:4px}
+.sh .dots.on{background:var(--hover)}
+.row{display:grid;grid-template-columns:20px 1fr auto;gap:12px;align-items:center;height:30px;padding:0 2px}
+.row .e{color:var(--ink-3);font-size:12px}
+.row.c{padding-left:22px}
+.mk{width:16px;height:16px;display:grid;place-items:center;color:var(--ink-2)}
+.ring{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--amber);color:var(--amber);font-size:10px;font-weight:600;display:grid;place-items:center}
+.ring.ok{font-size:9px}
+.rt{position:relative}
+.rtip{position:absolute;left:34px;top:30px;z-index:2;width:210px}
+
+.lsq{display:flex;align-items:center;gap:12px;padding:6px 2px 6px;white-space:nowrap}
+.lsq .qv{font-weight:500}
+.lsq .x{color:var(--ink-2);font-size:12px;width:20px;height:20px;display:grid;place-items:center;border-radius:4px}
+.lsq .n{margin-left:auto;color:var(--ink-3)}
+.sh .scope{margin-left:auto;font-weight:400;font-size:12px;color:var(--ink-2)}
+.sh .scope i{font-style:normal;color:var(--ink-3);font-size:10px;margin-left:3px}
+.sh .scope.on{background:var(--hover);box-shadow:0 0 0 3px var(--hover);border-radius:4px}
+.row .rw{font-size:12px;color:var(--ink-2)}
+.row .tt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ring.f{border-color:#D9534F;color:#D9534F}
+.tabn{display:inline-grid;place-items:center;width:15px;height:15px;border-radius:4px;background:var(--field);border:1px solid var(--line-2);color:var(--ink-2);font-size:9px;font-weight:600;margin-left:4px;vertical-align:2px}
+.phone{width:375px;border:1px solid var(--line-2);border-radius:8px;background:var(--bg);overflow:hidden}
+.pst{height:22px;font-size:10px;color:var(--ink-3);padding:4px 14px}
+.drawer{width:328px;background:var(--panel);border-right:1px solid var(--line);padding:0 10px 12px;min-height:330px}
+.phrow{display:flex;gap:28px;align-items:flex-start}
+.bt.el{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+
+.menu .mi.off{color:var(--ink-3)}
+.mi .ck{color:var(--ink-2)}
+.lbl{flex:none;background:var(--ink);color:#161614;font-weight:500;border-radius:6px;padding:4px 12px;font-size:13px}
+.con{color:var(--ink-3);font-size:12px}
+.pchip{display:inline-flex;align-items:center;gap:6px;flex:none;color:var(--ink);font-size:12px;border:1px solid var(--line-2);border-radius:4px;padding:1px 7px}
+.pchip .x{color:var(--ink-3)}
+.tpw{color:var(--ink-3);font-size:12px;margin-top:8px}
+.mf{border-top:1px solid var(--line);margin-top:4px;padding:6px 12px 3px;font-size:11px;color:var(--ink-3)}
+.g3b{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.1fr);gap:14px 28px}
+
+.mi .ck{color:var(--ink-2)}
+.gal{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap}
+.cell h4{font-size:12px;font-weight:600;margin-bottom:6px}.cell h4 span{font-weight:400;color:var(--ink-3)}
+.trig{display:inline-block;font-size:13px;margin-bottom:4px}
+.trig .qv,.trig .sp{font-size:13px}
+.cell .menu{position:static}
+.cnt{display:inline-block;margin-left:6px;font-size:10px;color:var(--ink-3);border:1px solid var(--line-2);border-radius:4px;padding:0 5px;vertical-align:1px}
+.mi.ff{color:var(--ink-3)}
+.mi2 .t{display:flex;justify-content:space-between}
+
+.tw{display:flex;justify-content:flex-end;margin-top:6px;max-width:648px}
+.tip.s{max-width:380px;font-size:12px;color:var(--ink-2);line-height:1.5;padding:7px 10px}
+.tip.s b{color:var(--ink);font-weight:500}
+.why2{grid-column:2;color:var(--ink-2);font-size:12px;line-height:1.5;margin-top:2px}
+.why2 b{color:var(--ink);font-weight:500}
+.foot2{border-top:1px solid var(--line);margin-top:4px;padding:6px 12px 3px;font-size:12px;color:var(--ink-2);display:flex;justify-content:space-between}
+.foot2 span{color:var(--ink-3)}
+.mi .hint2{color:var(--ink-3);font-size:11px}
+</style></head><body>
+<h1>Round 7: the sentence comes back as what will happen</h1>
+<p class="sub">A template builds one plain sentence from the values: no model, so it is instant and always true. It sits in the button's tooltip and as the proposal's reason line. A value you changed is in ink.</p>
+
+<div class="lab">The button's tooltip · hover, focus, long-press</div>
+<div class="g2">
+<div><h3>Task <span>· at its defaults</span></h3>
+<div class="composer"><div class="ct f">Bump Node to 24 in CI and the Dockerfile</div><div class="cf"><span class="ib"><svg width="15" height="15" viewBox="0 0 15 15"><path d="M7.5 2v11M2 7.5h11" stroke="currentColor" stroke-width="1.8" fill="none"/></svg></span><span class="sp">Task<i>⌄</i></span><div class="line"><span class="qv w">billing-api<i>⌄</i></span><span class="qv">Opus 5.5, thorough<i>⌄</i></span><span class="qv">opens a PR<i>⌄</i></span></div><span class="cust">Customise</span><span class="ib"><svg width="15" height="15" viewBox="0 0 16 16"><rect x="5.5" y="1.5" width="5" height="8.5" rx="2.5" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M3 8a5 5 0 0 0 10 0M8 13v2" stroke="currentColor" stroke-width="1.6" fill="none"/></svg></span><span class="lbl">Propose</span></div></div><div class="tw"><div class="tip s">Worca will change billing-api with Opus 5.5, thinking longer than usual, starting from the latest dev branch, then open a PR. Nothing starts until you press Start.</div></div></div>
+<div><h3>Task <span>· two values changed</span></h3>
+<div class="composer"><div class="ct f">Bump Node to 24 in CI and the Dockerfile</div><div class="cf"><span class="ib"><svg width="15" height="15" viewBox="0 0 15 15"><path d="M7.5 2v11M2 7.5h11" stroke="currentColor" stroke-width="1.8" fill="none"/></svg></span><span class="sp">Task<i>⌄</i></span><div class="line"><span class="qv w">billing-api<i>⌄</i></span><span class="qv">Sonnet 5.5, quick<span class="set-dot"></span><i>⌄</i></span><span class="qv">push only<span class="set-dot"></span><i>⌄</i></span></div><span class="cust">Customise</span><span class="ib"><svg width="15" height="15" viewBox="0 0 16 16"><rect x="5.5" y="1.5" width="5" height="8.5" rx="2.5" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M3 8a5 5 0 0 0 10 0M8 13v2" stroke="currentColor" stroke-width="1.6" fill="none"/></svg></span><span class="lbl">Propose</span></div></div><div class="tw"><div class="tip s">Worca will change billing-api with <b>Sonnet 5.5, working quickly</b>, starting from the latest dev branch, then <b>push to the source branch</b>. Nothing starts until you press Start.</div></div></div>
+<div><h3>Ask</h3>
+<div class="composer"><div class="ct f">Why does the invoice export time out?</div><div class="cf"><span class="ib"><svg width="15" height="15" viewBox="0 0 15 15"><path d="M7.5 2v11M2 7.5h11" stroke="currentColor" stroke-width="1.8" fill="none"/></svg></span><span class="sp">Ask<i>⌄</i></span><div class="line"><span class="qv w">billing-api<i>⌄</i></span><span class="qv">Opus 5.5, thorough<i>⌄</i></span></div><span class="ib"><svg width="15" height="15" viewBox="0 0 16 16"><rect x="5.5" y="1.5" width="5" height="8.5" rx="2.5" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M3 8a5 5 0 0 0 10 0M8 13v2" stroke="currentColor" stroke-width="1.6" fill="none"/></svg></span><div class="send"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M7 12V2M3 6l4-4 4 4" stroke="#161614" stroke-width="1.8" fill="none"/></svg></div></div></div><div class="tw"><div class="tip s">Worca will answer from billing-api with Opus 5.5, thinking longer than usual. Nothing is changed.</div></div></div>
+<div><h3>Schedule</h3>
+<div class="composer"><div class="ct f">Check the nightly build and fix what broke</div><div class="cf"><span class="ib"><svg width="15" height="15" viewBox="0 0 15 15"><path d="M7.5 2v11M2 7.5h11" stroke="currentColor" stroke-width="1.8" fill="none"/></svg></span><span class="sp">Schedule<i>⌄</i></span><div class="line"><span class="qv w">billing-api<i>⌄</i></span><span class="qv">every day<i>⌄</i></span><span class="con">at</span><span class="qv">02:00<i>⌄</i></span></div><span class="ib"><svg width="15" height="15" viewBox="0 0 16 16"><rect x="5.5" y="1.5" width="5" height="8.5" rx="2.5" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M3 8a5 5 0 0 0 10 0M8 13v2" stroke="currentColor" stroke-width="1.6" fill="none"/></svg></span><span class="lbl">Schedule</span></div></div><div class="tw"><div class="tip s">Worca will run this on billing-api every day at 02:00, each time as a new task that opens a PR. The first run is tomorrow at 02:00.</div></div></div>
+</div>
+
+<div class="sep"></div>
+<div class="lab">The proposal's reason line · the same sentence</div>
+<div class="g2">
+<div><h3>Starts now</h3>
+<div class="msg">Bump Node to 24 in CI and the Dockerfile</div>
+<div class="tp"><div class="chd"><div class="km"></div><div class="kick">Proposed task</div><div></div><div class="tpt" style="background:none">Update Node to 24</div><div></div><div class="why2">Worca will change billing-api with Opus 5.5, thinking longer than usual, starting from the latest dev branch, then open a PR. Nothing starts until you press Start.</div></div><div class="rc"><div class="line" style="flex-wrap:wrap;gap:6px 14px;white-space:normal"><span class="qv w">billing-api<i>⌄</i></span><span class="qv">Opus 5.5, thorough<i>⌄</i></span><span class="qv"><span class="con">starts</span> now<i>⌄</i></span><span class="qv">opens a PR<i>⌄</i></span></div><div class="acts"><span class="btn">Start</span><span class="qb">Not now</span><span class="qb" style="margin-left:auto">Customise</span><span class="kh" style="margin-left:0">⋯</span></div></div></div></div>
+<div><h3>Starts later <span>· Start becomes Schedule</span></h3>
+<div class="msg">Bump Node to 24 in CI and the Dockerfile</div>
+<div class="tp"><div class="chd"><div class="km"></div><div class="kick">Proposed task</div><div></div><div class="tpt" style="background:none">Update Node to 24</div><div></div><div class="why2">Worca will change billing-api with Opus 5.5, thinking longer than usual, starting from the latest dev branch, then open a PR. It starts <b>tonight at 02:00</b>; nothing runs before then.</div></div><div class="rc"><div class="line" style="flex-wrap:wrap;gap:6px 14px;white-space:normal"><span class="qv w">billing-api<i>⌄</i></span><span class="qv">Opus 5.5, thorough<i>⌄</i></span><span class="qv"><span class="con">starts</span> tonight at 02:00<span class="set-dot"></span><i>⌄</i></span><span class="qv">opens a PR<i>⌄</i></span></div><div class="acts"><span class="btn">Schedule</span><span class="qb">Not now</span><span class="qb" style="margin-left:auto">Customise</span><span class="kh" style="margin-left:0">⋯</span></div></div></div></div>
+</div>
+<p class="note" style="max-width:1100px">The title is the only model text (under the violet shimmer). The reason line is the template, so it is there at once and changes as you change a value on the card.</p>
+
+<div class="sep"></div>
+<div class="lab">Fixes from the last nits</div>
+<div class="gal">
+<div class="cell"><h4>Chat row ⋯ · Select first<span class="cnt">7</span></h4><div class="trig"></div><div class="menu" style="width:210px"><div class="mi">Select<span>Space</span></div><div class="mi">In view<span></span></div><div class="mi">Pin<span>P</span></div><div class="mi">Rename<span>R</span></div><div class="mi">Archive<span>E</span></div><div class="mr"></div><div class="mi">More<span>›</span></div></div></div>
+<div class="cell"><h4>More ›<span class="cnt">3</span></h4><div class="trig"></div><div class="menu" style="width:180px"><div class="mi">Add to group<span>G</span></div><div class="mr"></div><div class="mi">Delete<span>⌫</span></div></div></div>
+<div class="cell"><h4>Showing all ⌄ · shortcuts at its foot<span class="cnt">7</span></h4><div class="trig"></div><div class="menu" style="width:230px"><div class="mi sel">All chats<span>14</span></div><div class="mi">Needs you<span>2</span></div><div class="mi">Running<span>3</span></div><div class="mi">Archived<span>6</span></div><div class="mi">From a project<span>›</span></div><div class="mi">Group and sort<span>›</span></div><div class="foot2">Keyboard shortcuts<span>?</span></div></div></div>
+<div class="cell"><h4>Engine, typing "gem"<span class="cnt">3</span></h4><div class="trig"></div><div class="menu" style="width:230px"><div class="mfind">gem</div><div class="mi sel">Gemini Pro<span>Gemini CLI</span></div><div class="mi">Gemini Flash<span>Gemini CLI</span></div></div></div>
+<div class="cell"><h4>Engine, recent in a stable order<span class="cnt">7</span></h4><div class="trig"></div><div class="menu" style="width:230px"><div class="mfind" style="color:var(--ink-3)">Find an engine or a level</div><div class="mi">Opus 5.5<span>✓</span></div><div class="mi">Sonnet 5.5<span></span></div><div class="mi">Codex<span></span></div><div class="mr"></div><div class="mi">Thinks: thorough<span>›</span></div><div class="mi">Other engines<span>›</span></div></div></div>
+</div>
+</body></html>

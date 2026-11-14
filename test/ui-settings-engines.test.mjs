@@ -221,7 +221,7 @@ test('the Models page: the Requirements interview row shows only while the requi
   const row = doc.querySelector('.engine-card[data-engine="claude"] .engine-helpers [data-setting="models.claude.requirementsInterview"]');
   assert.ok(row, 'a Claude Helper jobs row');
   assert.equal(row.querySelector('.label-row label').textContent, 'Requirements interview');
-  assert.equal(row.querySelector('.label-row label').title, 'Makes product briefs, looks at the code for a feature and runs the interview rounds on the Requirements page.');
+  assert.equal(row.querySelector('.label-row label').title, 'Makes product briefs, does code looks for a feature and runs the interview rounds on the Requirements page.');
   assert.equal(row.querySelector('.inherit-model').options[0].textContent, 'Opus 5.5 (default)');
   assert.ok(row.querySelector('.inherit-effort'), 'it has an Effort');
   assert.match(row.querySelector('.inherit-effort').options[0].textContent, /medium \(default\)/);
@@ -581,7 +581,7 @@ test('the Models page: the Plan Review row keeps the Deep role\'s text, and its 
   const row = stepRow(doc);
   assert.match(row.querySelector('.inherit-model option[value=""]').textContent, /^From Deep thinking/);
   assert.equal(row.dataset.role, 'deep', 'a Roles-card edit still repaints it');
-  assert.equal(row.querySelector('.label-row label').title, 'Role reviews (Shaper) default to Sonnet 5.5 · medium');
+  assert.equal(row.querySelector('.label-row label').title, 'Role reviews (Shaper) use your role; with none set, Sonnet 5.5 · medium');
   assert.equal(doc.querySelector('.engine-card[data-engine="claude"] [data-setting="models.claude.steps.reviewer"] .label-row label').title, '', 'other steps name no factory default');
   assert.equal(doc.querySelector('.engine-card[data-engine="codex"] [data-setting="models.codex.steps.planReviewer"] .label-row label').title, '', 'the factory default is Claude\'s');
   const noRole = (await boot({ factoryModels: FACTORY }, { hash: 'models', steps, catalog: FACTORY_CATALOG })).doc;
@@ -602,7 +602,7 @@ test('the Models page: the Codex tab offers the Second-opinion reviewer with Cod
   const { doc, window, posts, tick } = await boot({ utilityModels: {}, factoryModels: FACTORY }, { hash: 'models' });
   const row = doc.querySelector('.engine-card[data-engine="codex"] .engine-helpers [data-setting="models.codex.secondOpinion"]');
   assert.ok(row);
-  assert.match(row.querySelector('.inherit-model option[value=""]').textContent, /^Codex's default model/);
+  assert.match(row.querySelector('.inherit-model option[value=""]').textContent, /^OpenAI Codex's default model/);
   const model = row.querySelector('.inherit-model');
   model.value = 'gpt-5.5'; model.dispatchEvent(new window.Event('change', { bubbles: true }));
   doc.getElementById('engineSettingsSave').click();

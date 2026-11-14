@@ -77,25 +77,24 @@ test('auth unknown / no claudeAuth: no probe, identical result keys and nodes', 
   assert.deepEqual(a.nodes, b.nodes);
   assert.equal('factoryNotes' in a || 'signInBlocked' in a, false);
   assert.ok(unknown.calls <= 1);
-  assert.deepEqual(pairOf(b.nodes.n_roles), ['claude-sonnet-5-5', 'medium'], 'the factory beats the Deep role');
+  assert.deepEqual(pairOf(b.nodes.n_roles), [GW, 'medium'], 'the Deep role beats the factory');
 });
 
-test('signed out, Copilot roles: n_roles and n_reqroles take the roles, Product varies the effort, one note per setting', async () => {
+test('signed out, Copilot roles: n_roles and n_reqroles take the roles (no step note: the role beats the factory), Product varies the effort', async () => {
   writeUser(ROLES_COPILOT);
   const out = auth('signed-out');
   const r = await resolve('wf_shape', { claudeAuth: out });
   const nc = r.nodes.n_roles;
   assert.deepEqual(pairOf(nc), [GW, 'medium']);
-  assert.deepEqual(nc.wanted, { model: 'claude-sonnet-5-5', effort: 'medium', source: 'default' });
+  assert.equal(nc.wanted, undefined, 'the role is the pick: the factory default was never wanted');
   assert.deepEqual(nc.roles.product, { effort: 'high', source: 'default', wanted: { model: 'claude-opus-5-5', effort: 'medium' } });
-  assert.deepEqual(r.factoryNotes.map((n) => [n.setting, n.nodeId, n.role || null]), [['steps.planReviewer', 'n_roles', null], ['secondOpinion', 'n_roles', 'product']]);
-  assert.deepEqual(r.factoryNotes[0].used, { model: GW, effort: 'medium' });
-  assert.deepEqual(r.factoryNotes[1].used, { model: GW, effort: 'high' });
+  assert.deepEqual(r.factoryNotes.map((n) => [n.setting, n.nodeId, n.role || null]), [['secondOpinion', 'n_roles', 'product']]);
+  assert.deepEqual(r.factoryNotes[0].used, { model: GW, effort: 'high' });
   assert.equal(r.signInBlocked, undefined, 'routed role models need no sign-in');
   assert.equal(out.calls, 1, 'one probe for many candidates');
   const req = await resolve(SHAPE_REQ_WORKFLOW_ID, { claudeAuth: auth('signed-out') });
   assert.deepEqual(pairOf(req.nodes.n_reqroles), [GW, 'medium']);
-  assert.deepEqual(req.factoryNotes.map((n) => n.setting).sort(), ['secondOpinion', 'steps.planReviewer', 'steps.requirementsReviewer'], 'it holds the plan review too');
+  assert.deepEqual(req.factoryNotes.map((n) => n.setting).sort(), ['secondOpinion'], 'the roles cover the plan and requirements reviews too');
 });
 
 test('signed out, no role: the defrag node names no model and records the factory as wanted', async () => {
@@ -161,7 +160,7 @@ test('second opinion falls back with a 1-effort model: no effort, wanted recorde
   const r = await resolve('wf_shape', { claudeAuth: auth('signed-out') });
   assert.deepEqual(pairOf(r.nodes.n_roles), ['gw-one', 'medium']);
   assert.deepEqual(r.nodes.n_roles.roles.product, { source: 'default', wanted: { model: 'claude-opus-5-5', effort: 'medium' } });
-  assert.deepEqual(r.factoryNotes[1].used, { model: 'gw-one', effort: null });
+  assert.deepEqual(r.factoryNotes.at(-1).used, { model: 'gw-one', effort: null });
 });
 
 test('precedence: run overlay > project node pick > user step slot > factory; overlay and project role picks > helper job > factory', async () => {
@@ -179,14 +178,17 @@ test('precedence: run overlay > project node pick > user step slot > factory; ov
   assert.deepEqual(r.nodes.n_roles.roles.product, { model: 'claude-opus-5-5', source: 'run' });
   writeUser({ modelRoles: { claude: { deep: { model: 'claude-haiku-4-5' } } } });
   r = await resolve('wf_shape');
-  assert.equal(r.nodes.n_roles.model, 'claude-sonnet-5-5', 'the factory beats the Deep role');
+  assert.equal(r.nodes.n_roles.model, 'claude-haiku-4-5', 'the Deep role beats the factory');
+  writeUser({});
+  r = await resolve('wf_shape');
+  assert.equal(r.nodes.n_roles.model, 'claude-sonnet-5-5', 'with no role, the factory default fills the slot');
 });
 
 test('user-set Second-opinion reviewer beats the factory and needs no factory note', async () => {
   writeUser({ ...ROLES_COPILOT, secondOpinionModel: { model: 'gw-one' } });
   const r = await resolve('wf_shape', { claudeAuth: auth('signed-out') });
   assert.deepEqual(r.nodes.n_roles.roles.product, { model: 'gw-one', source: 'slot' });
-  assert.deepEqual(r.factoryNotes.map((n) => n.setting), ['steps.planReviewer']);
+  assert.equal(r.factoryNotes, undefined, 'the role covers the step and the user set the second opinion: nothing dropped');
 });
 
 test('user-set sign-in step model while signed out: kept, listed in signInBlocked with source slot', async () => {
@@ -230,3 +232,17 @@ test('the emitted config is the authored config', async () => {
   assert.equal(s.nodes.n_roles.config.roleReview.secondOpinion, 'product');
   assert.equal('model' in s.nodes.n_roles.config.roleReview.roles.find((x) => x.key === 'product'), false);
 });
+
+test('every engine has roles: a Copilot run takes its steps from the Copilot roles, never from Claude\'s', async () => {
+  writeUser({ modelRoles: {
+    claude: { deep: { model: 'claude-opus-5-5' }, everyday: { model: 'claude-sonnet-5-5' } },
+    copilot: { deep: { model: 'copilot/claude-fable-5.1', effort: 'high' }, everyday: { model: 'copilot/claude-sonnet-5.5', effort: 'medium' } },
+  } });
+  const r = await resolve('wf_default', { engine: 'copilot' });
+  const byKey = (k) => Object.values(r.nodes).find((n) => n.authoredKey === k);
+  assert.deepEqual(pairOf(byKey('planner')), ['copilot/claude-fable-5.1', 'high'], 'Plan: the Copilot Deep thinking role');
+  assert.deepEqual(pairOf(byKey('implementer')), ['copilot/claude-sonnet-5.5', 'medium'], 'Implement: the Copilot Everyday coding role');
+  const claude = await resolve('wf_default');
+  assert.equal(byKeyOf(claude, 'planner').model, 'claude-opus-5-5', 'a Claude run keeps the Claude roles');
+});
+const byKeyOf = (r, k) => Object.values(r.nodes).find((n) => n.authoredKey === k);

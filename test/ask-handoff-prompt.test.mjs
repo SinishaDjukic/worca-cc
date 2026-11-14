@@ -19,9 +19,9 @@ const HISTORY = [
 test('text plus one bracketed line per tool, card and attachment — never a tool\'s input or output', () => {
   const { prompt, droppedTurns, totalTurns } = buildHandoffPrompt(HISTORY, 'NEXT', { to: 'codex' });
   assert.deepEqual([totalTurns, droppedTurns], [1, 0]);
-  assert.match(prompt, /^Conversation so far in this chat\. You start a fresh Codex session: this transcript is your context/);
-  assert.match(prompt, /User: What failed in run 42\?\n {2}\[attachment att_00000001 trace\.pdf — Codex cannot view it; only its name is here\]/);
-  assert.match(prompt, /Assistant \(Claude, claude-opus-5-5\): The deploy step timed out\.\n {2}\[tool get_run — done\]/);
+  assert.match(prompt, /^Conversation so far in this chat\. You start a fresh OpenAI Codex session: this transcript is your context/);
+  assert.match(prompt, /User: What failed in run 42\?\n {2}\[attachment att_00000001 trace\.pdf — OpenAI Codex cannot view it; only its name is here\]/);
+  assert.match(prompt, /Assistant \(Claude Code, claude-opus-5-5\): The deploy step timed out\.\n {2}\[tool get_run — done\]/);
   assert.match(prompt, /\[proposed run "Fix the deploy timeout" — started\]/);
   assert.match(prompt, /\[schedule card "Every night at 02:00" — applied\]/);
   assert.match(prompt, /System: Switched from Claude to Codex/);
@@ -92,4 +92,9 @@ test('needsHandoff: no session but replies already (a switch, a cleared session)
   assert.equal(needsHandoff({ sessionId: 'codex:t1' }, prior), false);
   assert.equal(needsHandoff({ sessionId: null }, [M(1, 'user', 'hi')]), false, 'a first turn has nothing to hand over');
   assert.equal(needsHandoff({ sessionId: null, mode: 'composer' }, prior), false);
+});
+
+test('a generic binary attachment is never "cannot view it": it needs no viewing capability', () => {
+  const generic = [M(1, 'user', 'see zip', { blocks: [{ kind: 'attachment', id: 'att_00000009', name: 'a.zip', bytes: 9, attKind: 'binary', mime: 'application/octet-stream' }] })];
+  assert.match(buildHandoffPrompt(generic, '', { to: 'codex' }).prompt, /\[attachment att_00000009 a\.zip — read_attachment reads it\]/);
 });

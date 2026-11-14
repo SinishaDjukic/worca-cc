@@ -166,8 +166,11 @@ test('the P7 CSS block sits after P6\'s and uses tokens only (SM56, SM69, the ch
   const p6 = css.indexOf('/* ── marketplace P6 ── */');
   const at = css.indexOf('/* ── marketplace P7 ── */');
   assert.ok(p6 > 0 && at > p6, 'after P6');
-  const end = css.indexOf('/* ── marketplace', at + 1);
-  const block = css.slice(at, end === -1 ? undefined : end);
+  // The block ends at the next one-line section header (`/* ── … ── */`, `/* ---------- … ---------- */`), so a later
+  // feature's stylesheet (Design's, after it in parts.json) is not read as this block.
+  const header = /\n\/\* (?:──|-{3,}) [^\n]*? (?:──|-{3,}) \*\/(?=\n)/g;
+  header.lastIndex = at + 1;
+  const block = css.slice(at, header.exec(css)?.index);
   assert.doesNotMatch(block, /#[0-9a-f]{3,8}\b|rgba?\(|box-shadow|text-transform|border-left|\bwhite\b(?!-)|\bblack\b(?!-)|isolation:isolate|\b298\b|76px/i);
   assert.deepEqual([...block.matchAll(/font-size:([^;}]+)/g)].map((m) => m[1]).filter((v) => !v.startsWith('var(--fs-')), []);
   // .badge is nowrap and never shrinks: at 390px a long "Can't reach · …" or branch chip ran past the card (cycle 4).

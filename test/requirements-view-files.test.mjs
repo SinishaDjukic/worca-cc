@@ -42,6 +42,7 @@ const make = () => {
 const text = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : null);
 const mkFile = (name, content, type = 'text/plain') => new window.File([content], name, { type });
 const drop = (el, files) => { const ev = new window.Event('drop', { bubbles: true, cancelable: true }); ev.dataTransfer = { types: ['Files'], files }; el.dispatchEvent(ev); };
+const overCap = (name) => mkFile(name, 'x'.repeat(25 * 1024 * 1024 + 1));   // the one refusal left: over 25 MB
 const pick = (input, files) => { Object.defineProperty(input, 'files', { value: files, configurable: true }); input.dispatchEvent(new window.Event('change')); };
 
 const INTERVIEW = { model: 'claude-opus-5-5', label: 'Opus 5.5', effort: 'medium', source: 'default' };
@@ -90,7 +91,8 @@ function assertInRequirementsBlock(selectors) {
 
 test('board 15: a Files field after Describe it: the drop zone, its limits, the privacy note naming the model; no chips yet', async () => {
   const { host, zone } = await openNew();
-  const ids = [...host.querySelectorAll('.req-new .field > label')].map((l) => l.getAttribute('for'));
+  // A6.1: Describe it's label shares a row with From a ticket… (.req-import-labrow)
+  const ids = [...host.querySelectorAll('.req-new .field > label, .req-new .field > .req-import-labrow > label')].map((l) => l.getAttribute('for'));
   assert.deepEqual(ids, ['req-new-title', 'req-new-desc', 'req-new-files-input', 'req-new-target']);
   assert.equal(text(host.querySelector('.req-new-files > label')), 'Files optional: emails, a spec, screenshots, a mockup');
   assert.equal(zone.firstChild.textContent, 'Drop files here, paste them, or ');
@@ -109,7 +111,7 @@ test('board 15: without the interview model the privacy note says "the interview
 
 test('board 15: dropped files become chips (name, kind · size, ×); a refused one shows the amber alert and is not added', async () => {
   const { host, zone } = await openNew();
-  drop(zone, [mkFile('tickets.pdf', '%PDF-1.7 x', 'application/pdf'), mkFile('plan.docx', 'x'), mkFile('notes.md', '# n')]);
+  drop(zone, [mkFile('tickets.pdf', '%PDF-1.7 x', 'application/pdf'), overCap('plan.docx'), mkFile('notes.md', '# n')]);
   const chips = [...host.querySelectorAll('.req-new-chip')];
   assert.deepEqual(chips.map((c) => c.querySelector('.req-new-chip-name').textContent), ['tickets.pdf', 'notes.md']);
   assert.equal(chips[0].querySelector('.hint').textContent, 'PDF · 10 B');
@@ -117,7 +119,7 @@ test('board 15: dropped files become chips (name, kind · size, ×); a refused o
   assert.equal(chips[0].querySelector('button').getAttribute('aria-label'), 'Remove tickets.pdf');
   const alert = host.querySelector('.req-new-files .req-file-refused');
   assert.deepEqual([alert.getAttribute('role'), alert.hidden, alert.textContent],
-    ['alert', false, 'plan.docx was not added: Worca reads text, images and PDF. Save it as PDF to attach it here.']);
+    ['alert', false, 'plan.docx was not added: it is over 25 MB.']);
   assert.equal(host.querySelector('.req-new-files-note').hidden, false);
   assert.equal(host.querySelector('.req-new-files-note').textContent, 'Files stay on the feature. Which files go with a run is chosen later, on the feature page.');
   chips[0].querySelector('button').click();
@@ -127,14 +129,14 @@ test('board 15: dropped files become chips (name, kind · size, ×); a refused o
 test('board 15: with files the cost words say each file is read once before round 1, about $X a file; "$0.05–0.20" without estimates', async () => {
   const { host, zone } = await openNew({ ...LIST, lookCostUsd: 0.25, readEstimates: { text: 0.05, image: null, binary: 0.12 } });
   const cost = () => host.querySelector('.req-new-cost').textContent;
-  assert.equal(cost(), 'Worca interviews with Opus 5.5 at medium effort · about $0.25 for the code look, then cents per round');
+  assert.equal(cost(), 'About $0.25 for the code look, then cents per round.');
   drop(zone, [mkFile('a.md', 'a')]);
-  assert.equal(cost(), 'Worca interviews with Opus 5.5 at medium effort · about $0.25 for the code look, reads each file once before round 1, about $0.05 a file, then cents per round');
+  assert.equal(cost(), 'About $0.25 for the code look, reads each file once before round 1, about $0.05 a file, then cents per round.');
   drop(zone, [mkFile('b.pdf', '%PDF-1.7', 'application/pdf')]);
-  assert.match(cost(), / · about \$0\.25 for the code look, reads each file once before round 1, about \$0\.05–0\.12 a file, then cents per round$/);
+  assert.match(cost(), /^About \$0\.25 for the code look, reads each file once before round 1, about \$0\.05–0\.12 a file, then cents per round\.$/);
   const none = await openNew({ ...LIST, readEstimates: { text: null, image: null, binary: null } });
   drop(none.zone, [mkFile('c.png', 'png', 'image/png')]);
-  assert.equal(none.host.querySelector('.req-new-cost').textContent, 'Worca interviews with Opus 5.5 at medium effort · reads each file once before round 1, about $0.05–0.20 a file, then cents per round');
+  assert.equal(none.host.querySelector('.req-new-cost').textContent, 'Reads each file once before round 1, about $0.05–0.20 a file, then cents per round.');
   const a2 = await openNew({ ...LIST, interview: null, lookCostUsd: null });
   assert.equal(a2.host.querySelector('.req-new-cost'), null, "A2's page without a look estimate has no cost line");
   drop(a2.zone, [mkFile('d.md', 'd')]);
@@ -195,9 +197,9 @@ test('board 15: removing a chip hands the focus to the next chip, then Choose fi
   assert.equal(document.activeElement.textContent, 'Choose files');
   const input = host.querySelector('#req-new-files-input');
   assert.deepEqual([input.type, input.multiple, input.hidden], ['file', true, true]);
-  pick(input, [mkFile('c.md', 'c'), mkFile('d.exe', 'x')]);
+  pick(input, [mkFile('c.md', 'c'), overCap('d.exe')]);
   assert.deepEqual([...host.querySelectorAll('.req-new-chip-name')].map((c) => c.textContent), ['c.md']);
-  assert.equal(host.querySelector('.req-file-refused').textContent, 'd.exe was not added: Worca reads text, images and PDF.');
+  assert.equal(host.querySelector('.req-file-refused').textContent, 'd.exe was not added: it is over 25 MB.');
   assert.equal(host.querySelector('.req-file-refused b').textContent, 'd.exe');
   drop(zone, [mkFile('e.md', 'e')]);
   assert.equal(host.querySelector('.req-file-refused').hidden, true, 'a clean pick clears the alert');
@@ -374,11 +376,11 @@ test('board 16: no files yet; Add files is disabled while the feature is busy or
 test('board 16: Add files posts the accepted picks and names the refused ones in the card', async () => {
   const add = 'POST /api/requirements/4/attachments';
   const { host, calls } = await openFeature(feature(), { [add]: { feature: feature(), turns: [] } });
-  pick(host.querySelector('.req-files input[type="file"]'), [mkFile('notes.md', '# n'), mkFile('deck.pptx', 'x')]);
+  pick(host.querySelector('.req-files input[type="file"]'), [mkFile('notes.md', '# n'), overCap('deck.pptx')]);
   await settle();
   const post = calls.find((c) => c.method === 'POST' && c.url === '/api/requirements/4/attachments');
   assert.deepEqual(post.body.attachments.map((x) => x.name), ['notes.md']);
-  assert.equal(host.querySelector('.req-files .req-file-refused').textContent, 'deck.pptx was not added: Worca reads text, images and PDF. Save it as PDF to attach it here.');
+  assert.equal(host.querySelector('.req-files .req-file-refused').textContent, 'deck.pptx was not added: it is over 25 MB.');
 });
 
 test('a question that came from a file says "From <name>:" before its why; What Worca knows says "and the files below"', async () => {
@@ -387,7 +389,7 @@ test('a question that came from a file says "From <name>:" before its why; What 
   const { host } = await openFeature(feature({ pending: { turnId: 9, questions: q, note: '' }, brief, orientation: { summary: '', files: [], skipped: 'brief' } }));
   assert.equal(text(host.querySelector('.req-why')), 'From support-tickets.pdf: 38 of the 52 tickets came before pick-up.');
   assert.equal(host.querySelector('.req-knows-text').textContent,
-    'Worca works from the shop brief and the files below. Orders is described in the brief. It has not looked at the code for this feature.');
+    'Worca works from the shop brief and the files below. Orders is described in the brief. It has not done a code look for this feature.');
 });
 
 // Upstream's design-language test bans a 44px height on a control (OFF_SCALE), so the 44 px targets at 390 px are
@@ -465,7 +467,7 @@ test("a11y: a failed line and the refusal line stay the same role=alert nodes ac
   const alertNode = host.querySelector('.req-file-failed');
   const live = host.querySelector('.req-files-live');
   assert.deepEqual([live.getAttribute('role'), live.classList.contains('sr-only'), live.textContent], ['status', true, '']);
-  pick(host.querySelector('.req-files input[type="file"]'), [mkFile('deck.pptx', 'x')]);
+  pick(host.querySelector('.req-files input[type="file"]'), [overCap('deck.pptx')]);
   const refused = host.querySelector('.req-files .req-file-refused');
   assert.deepEqual([refused.getAttribute('role'), refused.hidden], ['alert', false]);
   f = feature({ attachments: [att({ id: 'ratt_000000000001', name: 'r.md' }),
@@ -781,10 +783,10 @@ test('board 21: Replace without an edited summary has no choice; Escape and Canc
   [...document.querySelectorAll('.req-dialog button')].find((b) => b.textContent === 'Cancel').click();
   assert.equal(document.querySelector('.req-dialog'), null);
   assert.equal(document.activeElement.getAttribute('data-ui'), 'file-more-ratt_00000000000a');
-  pick(input(), [mkFile('deck.pptx', 'x')]);
+  pick(input(), [overCap('deck.pptx')]);
   assert.equal(document.querySelector('.req-dialog'), null);
   const line = host.querySelector('.req-files .req-file-refused');
-  assert.deepEqual([line.hidden, line.textContent], [false, 'deck.pptx was not added: Worca reads text, images and PDF. Save it as PDF to attach it here.']);
+  assert.deepEqual([line.hidden, line.textContent], [false, 'deck.pptx was not added: it is over 25 MB.']);
   const big = mkFile('huge.pdf', 'x', 'application/pdf');
   Object.defineProperty(big, 'size', { value: 26 * 1024 * 1024 });
   pick(input(), [big]);
@@ -1254,7 +1256,7 @@ test('board 19: the first card of the right column; head, hint, Add documents, r
   assert.equal(card.querySelector('.req-docs-foot').textContent, 'Interviews use a new document right away. The brief\'s sections change only when you Refresh it. '
     + '“Send with every run” adds the document to every run started from a shop feature; each start card lists it.');
   assert.ok([...host.querySelectorAll('.req-brief-chips .chip')].some((c) => c.textContent === '1 document'));
-  assert.match(text(host.querySelector('.req-brief-how > p')), /^Every interview round for shop reads the brief and these documents\. New features no longer need their own look/);
+  assert.match(text(host.querySelector('.req-brief-how > p')), /^Every interview round for shop reads the brief and these documents\. New features no longer need their own code look/);
 });
 
 test('board 19: brief items from a document end in "(from <name>)"; Add documents posts to the brief; the switch posts sendWithEveryRun', async () => {
@@ -1406,11 +1408,11 @@ test("board 19: a refused pick says so in the card's alert line (bold names); th
   const { host, calls } = await openBriefPage(madeBrief({ documents: nine }), { [`POST ${BRIEF_URL}/documents`]: madeBrief({ documents: nine }) });
   const alert = host.querySelector('.req-docs .req-file-refused');
   assert.deepEqual([alert.getAttribute('role'), alert.hidden], ['alert', true], 'one stable alert node, hidden while empty');
-  pick(host.querySelector('.req-docs input[type="file"]'), [mkFile('plan.docx', 'x'), mkFile('a.md', 'a'), mkFile('b.md', 'b')]);
+  pick(host.querySelector('.req-docs input[type="file"]'), [overCap('plan.docx'), mkFile('a.md', 'a'), mkFile('b.md', 'b')]);
   await settle();
   const now = host.querySelector('.req-docs .req-file-refused');
   assert.equal(now, alert, 'the same node');
-  assert.equal(text(now), 'plan.docx was not added: Worca reads text, images and PDF. Save it as PDF to attach it here. b.md was not added: a brief takes up to 10 documents.');
+  assert.equal(text(now), 'plan.docx was not added: it is over 25 MB. b.md was not added: a brief takes up to 10 documents.');
   assert.deepEqual([...now.querySelectorAll('b')].map((b) => b.textContent), ['plan.docx', 'b.md']);
   assert.deepEqual(calls.find((c) => c.method === 'POST').body.attachments.map((x) => x.name), ['a.md']);
   assert.equal(document.activeElement.getAttribute('data-ui'), 'docs-add');
@@ -1443,7 +1445,7 @@ test('board 19: names, summaries and sources are text only', async () => {
 
 test("board 19: without documents the page is A7's: How Worca uses it reads the brief, no chip; a pre-A8 view has no card; Delete names 2", async () => {
   const empty = await openBriefPage(madeBrief({ documents: [] }));
-  assert.match(text(empty.host.querySelector('.req-brief-how > p')), /^Every interview round for shop reads it\. New features no longer need their own look/);
+  assert.match(text(empty.host.querySelector('.req-brief-how > p')), /^Every interview round for shop reads it\. New features no longer need their own code look/);
   assert.ok(![...empty.host.querySelectorAll('.req-brief-chips .chip')].some((c) => /document/.test(c.textContent)));
   const { documents, interview, resetPeriod, ...old } = madeBrief();
   const a7 = await openBriefPage(old);

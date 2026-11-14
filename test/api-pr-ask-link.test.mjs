@@ -48,6 +48,7 @@ function stubGh(seen, create = { ok: true, stdout: 'https://github.com/x/y/pull/
   gitInfo.setRunner((cmd, args) => {
     seen.push([cmd, ...args]);
     if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+    if (cmd === 'git' && args[0] === 'remote') return Promise.resolve({ ok: true, stdout: 'origin\thttps://github.com/x/y.git (push)\n', stderr: '', code: 0 });
     if (cmd === 'git' && args[0] === 'push') return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'create') return Promise.resolve(create);
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view') return Promise.resolve({ ok: true, stdout: 'MERGEABLE\n', stderr: '', code: 0 });
@@ -153,6 +154,7 @@ test('ask-link refusals name the reason; a failed push leaves the card proposed 
       gitInfo.setRunner((cmd, args) => {
         seen.push([cmd, ...args]);
         if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+        if (cmd === 'git' && args[0] === 'remote') return Promise.resolve({ ok: true, stdout: 'origin\thttps://github.com/x/y.git (push)\n', stderr: '', code: 0 });
         if (cmd === 'git' && args[0] === 'push') return Promise.resolve({ ok: false, stdout: '', stderr: 'denied', code: 1 });
         return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
       });

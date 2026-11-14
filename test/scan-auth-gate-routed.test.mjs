@@ -137,13 +137,14 @@ test('POST /api/workspaces/scan: signed out with a stored first-party scan pick 
   } finally { await post('/api/settings', { workspaceScan: null }); }
 });
 
-test('POST /api/workspaces/scan: signed out, no scan pick, a routed Quick role → the scan starts', { skip }, async () => {
-  await post('/api/settings', { modelRoles: { claude: { quick: { model: 'gw-model' } } } });
+test('POST /api/workspaces/scan: signed out, no scan pick, a routed Everyday coding role → the scan starts', { skip }, async () => {
+  // The scan agent takes the Everyday coding role (it was Quick jobs).
+  await post('/api/settings', { modelRoles: { claude: { everyday: { model: 'gw-model' } } } });
   try {
-    const r = await post('/api/workspaces/scan', { projectPaths: [await repo('k'), await repo('l')], name: 'Quick role WS' });
+    const r = await post('/api/workspaces/scan', { projectPaths: [await repo('k'), await repo('l')], name: 'Everyday role WS' });
     const body = await r.json();
     assert.notEqual(body.code, 'claude-signed-out', JSON.stringify(body));
     assert.equal(r.status, 200, JSON.stringify(body));
     await settled(body.runId);
-  } finally { await post('/api/settings', { modelRoles: { claude: { quick: null } } }); }
+  } finally { await post('/api/settings', { modelRoles: { claude: { everyday: null } } }); }
 });

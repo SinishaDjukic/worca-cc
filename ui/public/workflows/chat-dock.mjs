@@ -9,7 +9,7 @@
 import { icon } from '../icons.mjs';
 import { createComposerChatClient } from './chat-client.mjs';
 import { createDotOrbs, turnPhase } from '../dot-orb.mjs';
-import { ATTACH_ACCEPT, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
+import { bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
 import { createCardController } from './chat-cards.mjs';
 import { toggleMenu, closeMenus } from './menu.mjs';
 import { NO_PROJECT_LABEL, scopeIcon, scopeKind, kindChip, projectKind } from '../chat/scope-ui.mjs';
@@ -155,7 +155,6 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
   const fileInput = h('input', 'wfc-file-input');
   fileInput.type = 'file';
   fileInput.multiple = true;
-  fileInput.accept = ATTACH_ACCEPT;
   fileInput.hidden = true;
   row.append(spark, input, attachBtn, fileInput, scopeBtn, stopBtn, sendBtn);
   const fileRow = h('div', 'wfc-files');

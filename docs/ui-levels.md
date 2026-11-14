@@ -14,8 +14,8 @@ and update the [catalogue](#catalogue).
 
 | Level | Who | What it shows |
 |---|---|---|
-| `simple` | New to Worca | The core loop: pick a project, describe the task, watch the run, answer its questions, read the result. Budget limits. The Workflows view: workflows, agents and scripts. Nothing here can break a run. |
-| `advanced` | Regular use | How a run executes and what it changed: branches, guardrails, per-agent model and effort, the live log, the diff, pull requests, plugins, memory files. |
+| `simple` | New to Worca | The core loop: pick a project, describe the task, watch the run, answer its questions, read the result and its diff. Budget limits. The Workflows view: workflows, agents and scripts. Nothing here can break a run. |
+| `advanced` | Regular use | How a run executes: branches, guardrails, per-agent model and effort, the live log, pull requests, plugins, memory files. |
 | `expert` | Authoring and team setup | Everything: model and guardrail authoring, routing env and secrets, fan-out and loop limits, log filters, per-node run detail, diagnostics, team metrics. |
 
 Levels are **cumulative**. Advanced shows everything Simple shows; Expert shows
@@ -78,8 +78,7 @@ Then check two things:
 - **Can it hold a non-default value?** If yes, keep it visible when it does
   (rule 2).
 - **Is it the only way to reach something a lower level needs?** If hiding it
-  strands a Simple user, either lower it or give Simple a plain substitute (the
-  "Files changed" list on the History overview stands in for the Diff tab).
+  strands a Simple user, either lower it or give Simple a plain substitute.
 
 Whole pages follow the same questions: tag the **entry points** (the nav item,
 the tab button), never the page container, so deep links keep working.
@@ -124,7 +123,8 @@ be skipped by forgetting it.
   The guides open that dialog too when a save failed.
 - `ui-level.mjs` paints all three (the menu row and side menu, the Settings card,
   the dialog) from one controller.
-- Stored as `uiLevel` in `settings.json`. Absent means "never chosen".
+- Stored as `uiLevel` in the server's `settings.json`, so a choice applies in every browser that
+  opens this Worca. Absent means "never chosen".
 
 ## Catalogue
 
@@ -147,6 +147,12 @@ be skipped by forgetting it.
 | Add-ons: Models, Providers | E — like every page, the open one keeps its row at a lower mode while the banner names its level |
 | Schedules | A — kept visible at every level while anything is scheduled, missed, repeating or unread; its grey count and amber unread pill each hide at zero |
 | Team metrics, Team policy | E |
+| The level avatar art in the corner (the round art on the account corner and the spend ring's avatar) | all — a level is shown to everyone, whatever the mode |
+| The level tooltip (hover or focus on the corner avatar: the level, its items, a link to Profile) | all |
+| The account-menu level card (above Interface mode) | all |
+| Profile (the level section) | all — it has no sidebar entry; it opens from the menu card, the tooltip and the Getting started level line |
+
+Levels are not Interface modes: no level element carries `data-min-level`; Try next / Open links to higher-mode pages open them with the banner.
 
 ### New pipeline
 
@@ -154,7 +160,7 @@ be skipped by forgetting it.
 |---|---|
 | Project, prompt, title, extra files, Start run; "Reuse last task" after a run starts (#687) | S |
 | Start run's caret menu (Schedule…) | A |
-| Workflow picker | S — lists Auto and Default only; the selected workflow always stays listed |
+| Workflow picker | S — lists Auto, Default and the workflows saved from Chat (Auto cards and Ask graph cards); every other saved workflow from A; the selected workflow always stays listed |
 | Mock mode | S — sits beside Start run, outside the Advanced disclosure |
 | Preset ▾ button and its menu (presets, Rename…, Delete…, Save as preset), its ✕, Update preset | S |
 | Preset picker's "Manage presets…" entry | A |
@@ -177,7 +183,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | "Scheduled" group (runs due within 24 h) | S — it only exists when something is scheduled |
 | Needs-input pill and banner; clarify questions; Auto proposal ("Review the workflow": preview that opens a pan/zoom popup, Accept) — all answered on the run page | S |
 | Recovery prompt, cycle gate, cost-pause banner | all |
-| Run page card head: the status line, the head buttons (Try it, Create PR, Push, View PR │ ▾, Fix conflicts, Ask for changes, Discard / Apply to branch, How to merge, Discard / Apply to folder, Report) and the route (Where the work is) | S |
+| Run page card head: the status line, the head buttons (Try it and its next step: Checking out… / Setting up…, Start <service>, Open :port and Stop, a failed setup's error, Create PR, Push, View PR │ ▾, Fix conflicts, Ask for changes, Discard / Apply to branch, How to merge, Discard / Apply to folder, Report) and the route (Where the work is) | S |
 | View PR ▾ › Watch | A |
 | Summary card › a live checkout: the Results row with Discard / Unlink | S |
 | Summary card › the Actions row value (`Local copy open · since 18:12`, `Try it on this machine`) and the Actions tab's Download patch | A |
@@ -200,7 +206,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Workflow graph with status colours, gate pip, End result; Workflow, Overview and Q&A tabs | S |
 | Run header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the Overview cost card's Away mode share | S |
 | "Answered for you": one group per ask (kind · time · model · cost of its review, or "review stopped" and its lower bound), the answers, Check; the heading's answer count and what the Away mode reviews cost | S |
-| Diff tab (live worktree while running, the final patch after) | A |
+| Diff tab (live worktree while running, the final patch after) | S |
 | Folder run (a Folder project): Changes tab, the Folder chip, the "<n> files · on a copy" bar with Discard and Apply to folder, the Apply to folder dialog | S |
 | Run without a project (No project): the Artifacts tab, opened first; the No project chip | S |
 | Live log pane (run page › Logs), log search / copy / auto-scroll, Summaries / Raw switch (flag `commandSummaries`) | A |
@@ -213,6 +219,16 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Graph node totals, fan and execution strips, Away mode chips and bands, loop badges | E |
 | Agents tab, worktree row, Auto proposal tunables table | E |
 
+### The Rail run page
+
+Rail's run page (`docs/rail/thing-page.md`) has one rule in place of the rows above, in code as `runPartShows`:
+
+| Element | Level |
+|---|---|
+| All four tabs: Overview, Changes, Activity, Decisions | S |
+| Inside them: the Logs, the Workflow graph, Sessions and Actions | A |
+| Inside them: Agents and the log filters | E |
+
 ### History
 
 | Element | Level |
@@ -223,11 +239,12 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Save as preset (a run with a stored setup) | S |
 | Run page bar: Back (every layout) and ⋯ (Away mode while live, Save as preset, Terminal, Report this run, Archive / Restore) | S |
 | History: usage-limit notice | S |
-| "Files changed" list on the Overview | S — the stand-in for the Diff tab |
+| "Files changed" list on the Overview | S |
 | Folder run: Changes tab, the Folder chip, the Apply bar and dialog, Discard; the Git / Folder chip on a project's group in the Runs list | S |
 | Run without a project: the Artifacts tab, opened first; the No project group and its chip in the Runs list | S |
 | Overview: Perspective checklists, as on the run page (shaped runs) | S |
-| Diff tab, diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; Artifacts tab | A |
+| Run page head on a project with no remote: Link remote, How to merge | S |
+| Diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; Artifacts tab | A |
 | Actions tab, Overview actions strip, Create PR 'Try it first' button and strip | A |
 | Create PR dialog: Draft switch, "Will close owner/repo#N" line | A — ungated inside the modal (no `data-min-level`), so they show wherever the modal opens |
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
@@ -287,7 +304,8 @@ gated: the view shows the same controls at every level.
 | The canvas, the top bar (Back, Workflows ▾ with New canvas, Open…, Import… and Export…, the name and its validation chip, the Library toggle, Save), Auto-layout and the zoom menu | all |
 | The "+" menu: Task, End, AND, OR, Combine, Agent…, Script…, New agent…, New script… | all |
 | The selection toolbar and its More / Params popover: model, effort, fan-out, ask questions, await all inputs, input count, seed the plan store, loop max cycles; a script's params, timeout and port editor | all |
-| The Library: its Agents / Scripts / Workflows selector with each registry count, the domain folders that expand in place (Flow, Archived), the header search, every row action (Add to canvas, View, Edit, Duplicate, Delete, Open, Export), New agent and New script, legacy and archived rows | all |
+| The Library: its Workflows / Agents / Scripts selector with each registry count, the domain folders that expand in place (Flow; Workflows' Yours, Built-in and Archived), the header search, every row action (Add to canvas, View, Edit, Duplicate, Delete, Open, Use as template, Export), New agent and New script, legacy and archived rows | all |
+| The canvas badge beside the name: Editing / Unsaved copy / Built-in / Not saved | all |
 | The agent sheet: the full agent form (runner type, ports, side effect, mock role, workspace variants) and the agent wizard | all |
 | The script sheet: the runtime step, the workspace and the bench under its editor; the Import dialog's command list | all |
 | The composer chat in the dock | all |
@@ -302,6 +320,8 @@ inside the view.
 | Element | Level |
 |---|---|
 | Projects list, add, project page Overview, remove, Use git (Folder projects) and Link remote (Git projects without origin) | S |
+| Agent readiness chip (Projects row, project page header) and its report, incl. Not used here / Undo and Recheck | S — status of the project a run starts in; its Settings links open the project Settings tab by deep link |
+| Project Settings tab: Agent readiness card (Detect / Used / Not used per tool, skipped checks) | A — the tab's level |
 | Project Memory tab (view and edit files) | A |
 | Project Memory tab › Team view (Local · Team · Both choice, note states, share existing notes, Compare, Undo seeding); project Settings › Team memory | A |
 | Project page Overview › "Your team shares memory for this repository" (Turn on, Not now); the "team memory available" mark in the Projects list and the workspace wizard's import list | A |
@@ -323,6 +343,7 @@ inside the view.
 | General: Appearance, Alerts, Interface mode, Getting started, About | S |
 | Runs tab: Budget & cost limits (incl. Resume runs automatically when a usage limit resets) | S |
 | Runs tab: Pull requests (Draft the PR description with AI automatically) | S |
+| Runs tab: the filter box above its cards | S |
 | Runs tab: Network proxy | S — timeouts and the local port under More |
 | Labs tab (feature flags) | S — flags are independent of levels (docs/feature-flags.md) |
 | General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Chat tab (limits, tools, web access, chat history) | A |
@@ -362,6 +383,8 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Export to a tracker: Export ▾'s Export to Jira… and Export setup…, the setup dialog, the preview (fields, labels, the description, Export anyway), Export again and the comment preview, the failure states, the header's ticket chip, "Created SHOP-123", the History card, Report back on Ready to build, the start dialog and the runs card; on a phone (900 px and narrower) the dialogs as full-screen sheets | S — product owners are its users |
 | Connect a tracker… (the menu item and its dialog) | S |
 | Connect a tracker's Open the Marketplace page | A — the Marketplace page is Advanced |
+| Start from a ticket: New feature's From a ticket…, the pick and the preview and their phone sheets, the filled form (Starting from SHOP-124, Change ticket…, the criteria, the ticket's files), Downloading… and the download states on the Files card, "from SHOP-124", the criteria's ticket tag, History's import line, Export to Jira… on an imported feature | S — product owners are its users |
+| Start from a ticket's "Fix the connection on the Marketplace page (Installed › Jira), then try again." | A — the Marketplace page is Advanced |
 | A feature's interview: the question card (options, Recommended, your own answer, Finish now, Skip, use recommended, Submit), Earlier rounds and Change, the working line, the error line and Try again | S |
 | Feature chat: the header's Feature chat, Help me answer on each open question, the panel beside the spec and the phone sheet (Back), the first-open text and its three questions, the composer and its cost line, Answering… and Stop, the failed, stopped and spending-limit lines, Try again, ⋯ Clear chat | S — product owners are its users |
 | Feature chat's drafts in the question card (drafted by Worca, ×, "Worca's draft: …") and its proposal cards (Before / After, New, Remove, Confirm / Reject, Why, Reject / Accept / Ask again, Accepted, Rejected, "The spec changed since Worca proposed this.") | S |
@@ -370,9 +393,9 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Decide the assumptions: Confirm / Reject, Show the other N, Confirm the N left, "Done, ask about A-n" | S |
 | Ready to build: what Start does, the Workflow and Branch from chips, Change (the Workflow and Branch from pickers), Start in Worca and its Set up this run overlay (a preset, each agent's model and effort, each loop's cycles) | S — a product owner picks the workflow and branch at every level |
 | A started feature: Runs from this feature (each run's pill, spec version, "started before Ready", cost and link; the total; Start again with v<n>), Changed since the run started and Undo my changes, the "v<n> draft / v<n> started" switch | S |
-| What Worca found in the code (a feature whose project or workspace has no product brief): the summary, how often Worca looked and what it cost, Look again | S |
-| What Worca found in the code: the files Worca read | A |
-| What Worca knows (a feature with a product brief): "from the product brief · <age>", what the brief describes, "Look closer · about $X" and its hint ("Worca works from the <name> brief and the files below." when the feature has files); after a closer look, "brief + a closer look · N files · $X", the summary, Add this to the brief, Look again | S |
+| Code look: what Worca found (a feature whose project or workspace has no product brief): the summary, how often Worca looked and what it cost, Look again | S |
+| Code look: what Worca found: the files Worca read | A |
+| What Worca knows (a feature with a product brief): "from the product brief · <age>", what the brief describes, "Look closer · about $X" and its hint ("Worca works from the <name> brief and the files below." when the feature has files); after a code look, "brief + a code look · N files · $X", the summary, Add this to the brief, Look again | S |
 | New feature: the Files field (the drop zone, the picked files, the refusal line), the privacy note, "Files stay on the feature…"; the feature page's "Reading N files…" | S — product owners are its users |
 | The Files card: Files · N, Add files, the privacy note, "No files yet. Add emails, a spec, screenshots or a mockup.", each file (name, kind · size · cost, What Worca took from it, edited by you, Show all, the answers, Reading… / Asking… / could not read / Not read yet, Try again), Send with the run, "The spec mentions this file", the pencil and the ⋯ menu (Open, Edit, Ask about this file…, Replace with a newer version…, Read again, Remove); the header's "N files" chip | S — the switch shows its value at every level (rule 2) |
 | Replace and its dialog; Ask about this file and its panel; the source tags on criteria and assumptions, "From <file>:" on questions | S |
@@ -380,7 +403,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Decide: Ask about <file> (a file added or replaced after the interview), the "<file> to ask about" hint; Changed since the run started: the file lines and what Undo puts back | S |
 | Product brief page, made: the Documents card (as the Files card, with Send with every run), "N documents", "(from <document>)" on brief items | S |
 | A file's "Earlier text" history | A — as the files of a code look |
-| Product brief page, none yet: Give Worca a head start (the four parts), the look box (branch, estimate, model, Create the brief / Try again, and why it cannot), the members left out, Your notes for Worca (the notes, "Let Worca look at the code", Save notes) | S — the switch shows its value on this page at every level (rule 2) |
+| Product brief page, none yet: Give Worca a head start (the four parts), the look box (branch, estimate, model, Create the brief / Try again, and why it cannot), the members left out, Your notes for Worca (the notes, "Let Worca do code looks", Save notes) | S — the switch shows its value on this page at every level (rule 2) |
 | Product brief page, made: the chips (Made from <branch> @ <commit> · <age>, cost, Used by N features, Built from the workspace map), Export ▾ (Copy Markdown, Download .md), ⋯ (Refresh the brief · about $X, Delete the brief), Refreshing and the failed-refresh line, "The code moved on since this brief" and Refresh, the four sections with their pencils, "edited by you" and Let Worca rewrite this, How Worca uses it, Your notes for Worca and Edit notes | S |
 | Product brief page: What Worca read (the files) | A — as the files of a code look |
 
@@ -391,10 +414,12 @@ missing (`data-needs-git`), at every level.
 
 | Element | Level |
 |---|---|
+| The level welcome and celebration (the dialogs that open at boot and after a level-up) | all — they wait while a blocking prompt or another dialog is on screen (rule 1) |
+| The Getting started level line (the current level and what is next, linking to Profile) | all |
 | Statistics page | A |
 | Statistics: the Requirements tile (spend, features, a link to the page; behind the `requirements` flag), the Requirements row in the Group by tables and in the Cost report (money already spent there stays listed while the flag is off) | A — with the page |
 | Team metrics page and every surface of it elsewhere | E |
-| Team policy page and its Policy / Plugins / Catalog tabs | E |
+| Team policy page and its Policy / Plugins / Catalog tabs | E (in Rail: A to read, E to change) |
 | Team-policy notes on New pipeline; the team caps readout under Budget & cost limits | all — a team cap applies in every mode, so the reason it applies is never hidden |
 | The Installed tab's Team policy card and the setup checklist (the Marketplace page) | A — with the page that holds them |
 | Ask: chat, history, attachments, run card (its progress bar and stage text), proposal title / project / workflow / brief / Start | S |

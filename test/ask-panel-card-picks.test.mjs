@@ -296,7 +296,7 @@ test('K12 a lane that could not load names the picks its Start sends (the rows t
   const ctx = await openWithCard({ ...PROJECT_CARD, workflowId: 'wf_review', nodes: { n_impl: { model: 'claude-haiku-4-5', effort: 'medium', reason: 'x' }, n_rev: { model: 'claude-opus-5-5', effort: '', subagentModel: 'sonnet', reason: 'y' } } }, rec);
   const lane = await laneOf(ctx);
   assert.deepEqual([...lane.querySelectorAll('.ask-rp-lane-msg')].map((m) => m.textContent), ['Could not load agent settings.',
-    "Start runs Chat's picks as proposed (checked again at Start): n_impl → claude-haiku-4-5 · medium, n_rev → claude-opus-5-5 · sub-agents sonnet"]);
+    "Start runs Chat's picks as proposed (checked again at Start): n_impl → claude-haiku-4-5 · medium, n_rev → claude-opus-5-5 · sub-agents Sonnet (everyday coding)"]);
   assert.equal(lane.dataset.levelKeep, '1');
   await start(ctx);
   assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_impl: { model: 'claude-haiku-4-5', effort: 'medium' }, n_rev: { model: 'claude-opus-5-5', effort: '', subagentModel: 'sonnet' } } });

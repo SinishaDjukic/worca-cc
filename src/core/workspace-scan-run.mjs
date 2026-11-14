@@ -22,6 +22,7 @@ import { resolveProjectPolicy, autoPolicyHome } from './policy/sync.mjs';
 import { assertWorkspaceScanInput } from './settings.mjs';
 import { WORKSPACE_SCAN_DEFAULT_MODELS } from './graph/builtin-workflows.mjs';
 import { scanDescriptionBudget } from '../shared/workspace-size.mjs';
+import { subagentAliasLabel } from '../shared/model-roles.mjs';
 
 /** The render card's output file (scripts/workspaceMapRender.meta.json outputs[0].filename): the
  *  description the pipeline rendered with the overrides the run froze at start (wsmap M15; none on a
@@ -60,9 +61,9 @@ export function scanRunPrompt({ name, projectNames = [], rescan = false, partial
   return lines.join('\n\n');
 }
 
-/** `scan agent claude-sonnet-5 · medium, project agents sonnet · medium` */
+/** `scan agent claude-sonnet-5 · medium, project agents Everyday coding · medium` */
 export function describeScanModels(m) {
-  return `scan agent ${m.scanModel}${m.scanEffort ? ` · ${m.scanEffort}` : ''}, project agents ${m.agentModel} · ${m.agentEffort}`;
+  return `scan agent ${m.scanModel}${m.scanEffort ? ` · ${m.scanEffort}` : ''}, project agents ${subagentAliasLabel(m.agentModel)} · ${m.agentEffort}`;
 }
 
 /** The signed-out refusal of a scan whose scan model needs the Claude Code sign-in, naming where the model came from.
@@ -72,7 +73,8 @@ export function scanSignInMessage(models) {
   if (!models || !models.source || models.source === 'default') {
     return `Workspace scan: ${models?.scanModel || WORKSPACE_SCAN_DEFAULT_MODELS.scanModel} needs Claude Code sign-in and no other scan model is set — pick one in Settings › Runs › Workspaces, ${tail}`;
   }
-  const where = models.source === 'explicit' ? "this scan's pick" : models.source === 'workspace' ? "the workspace's scan pick" : 'Settings › Runs › Workspaces';
+  const where = models.source === 'explicit' ? "this scan's pick" : models.source === 'workspace' ? "the workspace's scan pick"
+    : models.source === 'role' ? 'your Everyday coding role' : 'Settings › Runs › Workspaces';
   return `Claude Code isn't signed in, and ${where} names ${models.scanModel}, which needs it — pick a routed model in Settings › Runs › Workspaces, ${tail}`;
 }
 
@@ -101,26 +103,27 @@ function defaultScanModelsOrThrow(models, warning) {
  * defaults; the defaults are only used when a known catalog actually offers the default scan agent
  * model, otherwise resolveScanModels THROWS so the caller blocks with clear guidance (D19).
  * `models` = the catalog of the scan's primary member (what the run resolves against).
- * @param {{explicit?:object, stored?:object|null, workspacePick?:object|null, models?:Array|null}} opts
+ * @param {{explicit?:object, stored?:object|null, storedSource?:'settings'|'role', workspacePick?:object|null, models?:Array|null}} opts
  * @returns {{scanModel:string, scanEffort:(string|null), agentModel:string, agentEffort:string,
- *   source:'explicit'|'workspace'|'settings'|'default', warning:(string|null)}}
+ *   source:'explicit'|'workspace'|'settings'|'role'|'default', warning:(string|null)}}
  * @throws {Error} on a malformed/unknown explicit pick, or when the last resort has no usable model
  */
-export function resolveScanModels({ explicit, stored = null, workspacePick = null, models = null } = {}) {
+export function resolveScanModels({ explicit, stored = null, storedSource = 'settings', workspacePick = null, models = null } = {}) {
   const picked = assertWorkspaceScanInput(explicit, models);
   if (picked) return { ...picked, source: 'explicit', warning: null };
 
   let degraded = null;
   for (const [source, label, pick] of [
     ['workspace', 'the workspace\'s create-time scan pick', workspacePick],
-    ['settings', 'Settings › Runs › Workspaces', stored],
+    // `stored` is Settings › Runs › Workspaces, or (storedSource 'role') the Everyday coding role standing in for it.
+    [storedSource, storedSource === 'role' ? 'your Everyday coding role' : 'Settings › Runs › Workspaces', stored],
   ]) {
     if (!pick) continue;
     try {
       return { ...assertWorkspaceScanInput(pick, models), source, warning: null };
     } catch (err) {
       // A stored pick that no longer fits this catalog degrades (never refuses)…
-      degraded = `${source === 'settings' ? 'Workspace scan models' : 'The workspace\'s scan pick'} (${label}) no longer fit: ${err.message} — this scan uses ${describeScanModels(WORKSPACE_SCAN_DEFAULT_MODELS)}`;
+      degraded = `${source === 'workspace' ? 'The workspace\'s scan pick' : 'Workspace scan models'} (${label}) no longer fit: ${err.message} — this scan uses ${describeScanModels(WORKSPACE_SCAN_DEFAULT_MODELS)}`;
       // …and falls through to the next source; the last resort blocks when the default is absent.
     }
   }

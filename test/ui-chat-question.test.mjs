@@ -213,6 +213,21 @@ test('U7: no new spec field → the markup of an option list without recommended
   assert.equal(plain.includes('data-preset'), false);
 });
 
+test('head:false names the section from heading with no h3; numbers:false drops .qn; undefined leaves the markup unchanged', () => {
+  const { doc } = rig();
+  const plain = buildChatQuestion(doc, spec(doc)).el.outerHTML;
+  assert.equal(buildChatQuestion(doc, spec(doc, { head: undefined, numbers: undefined })).el.outerHTML, plain);
+  const { el } = buildChatQuestion(doc, spec(doc, { head: false, heading: 'Decisions' }));
+  assert.equal(el.querySelector('h3'), null);
+  assert.equal(el.getAttribute('aria-label'), 'Decisions');
+  assert.equal(el.hasAttribute('aria-labelledby'), false);
+  assert.ok(el.querySelector('.qn'), 'head:false keeps the numbers');
+  const bare = buildChatQuestion(doc, spec(doc, { numbers: false })).el;
+  assert.equal(bare.querySelector('.qn'), null);
+  assert.equal(bare.querySelector('.qtext > .qtext-t').textContent, 'Which project is this for?');
+  assert.ok(bare.querySelector('h3.chat-rc-q-head'), 'numbers:false keeps the heading');
+});
+
 test('U7: recommended:true appends span.qrec "recommended" after the option text', () => {
   const { doc } = rig();
   const { el } = buildChatQuestion(doc, decisionsSpec(doc));

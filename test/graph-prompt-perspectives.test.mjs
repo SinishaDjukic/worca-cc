@@ -112,3 +112,17 @@ test('byte identity: empty or absent checklistItems change nothing, for every bu
     assert.equal(buildAgentPrompt({ ...ctx, checklistItems: undefined }), buildAgentPrompt(ctx), key);
   }
 });
+
+test('Clarify: without chosenPerspectives the prompt is byte-identical; with them it carries the block once', () => {
+  const ctx = ctxFor('clarify');
+  const plain = buildAgentPrompt(ctx);
+  assert.equal(plain, buildAgentPrompt({ ...ctx, chosenPerspectives: undefined }));
+  assert.ok(!plain.includes('## Perspectives for your questions'));
+  const withSet = buildAgentPrompt({ ...ctx, chosenPerspectives: ['product', 'qa', 'security'] });
+  assert.equal(withSet.split('## Perspectives for your questions').length - 1, 1);
+  assert.ok(withSet.includes('Security (security)'));
+  for (const key of BUILTIN_KEYS.filter((k) => k !== 'clarify')) {
+    const c = ctxFor(key);
+    assert.equal(buildAgentPrompt({ ...c, chosenPerspectives: ['product', 'qa'] }), buildAgentPrompt(c), key);
+  }
+});

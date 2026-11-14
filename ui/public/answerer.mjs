@@ -13,7 +13,7 @@ export const LEAD_LABELS = Object.freeze({
   product: 'Product', architect: 'Engineering', ux: 'Design', qa: 'QA', security: 'Security', devops: 'DevOps',
 });
 /** One label for a perspective key, on every card: `LEAD_LABELS`, else the perspective's own label, else the key. */
-export const leadLabel = (key) => LEAD_LABELS[key] || (perspectiveByKey(key) || {}).label || String(key);
+export const leadLabel = (key) => (Object.hasOwn(LEAD_LABELS, key) && LEAD_LABELS[key]) || (perspectiveByKey(key) || {}).label || String(key);
 
 /** The profile, `{ lead }`; `{ lead: null }` on any failure or after `ANSWERER_TIMEOUT_MS`. One request per page,
  *  whoever asks first; a failure or a timeout is not kept, so the next call asks again. */

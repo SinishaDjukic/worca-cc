@@ -211,7 +211,7 @@ test('P4 switchThreadScope: the stored scope, a "Switched to <name>" divider row
       assert.equal((await post(`/api/ask/threads/${t.id}/messages`, { text: 'again', ...MODEL, context: { view: 'chat', pinned: true, projectKey: android.key } })).status, 202);
       await idle();
       assert.deepEqual(store.listMessages(t.id).slice(4).map((m) => m.role), ['user', 'assistant'], 'the same scope adds no divider');
-      const bad = await post(`/api/ask/threads/${t.id}/messages`, { text: 'x', ...MODEL, context: { view: 'chat', pinned: true, projectKey: ios.key }, attachments: [{ name: 'a.exe', dataBase64: 'AA==' }] });
+      const bad = await post(`/api/ask/threads/${t.id}/messages`, { text: 'x', ...MODEL, context: { view: 'chat', pinned: true, projectKey: ios.key }, attachments: [{ name: 'a.txt', dataBase64: '' }] });
       assert.equal(bad.status, 400);
       assert.deepEqual([store.getThread(t.id).context.projectKey, store.listMessages(t.id).length], [android.key, 6], 'a refused send switches nothing and leaves no row');
       const { thread: fresh } = await (await post('/api/ask/threads', {})).json();

@@ -1,0 +1,115 @@
+<!doctype html>
+<!-- Mock (Wave 3, second pass): Workflows explored as the Marketplace is (Emil, 8 Nov: "exploring the marketplace for the
+     ones that were built … option for manual build, else everything defined via the chat"). The bar holds only ways in,
+     each with its count: yours (workflows, agents, scripts), your team's, more from the Marketplace; Build it by hand is
+     the quiet last line. The page is cards; a card's action uses it in a chat. Below: one workflow opened, a view of its
+     steps and what it costs, with Change it in a chat. Library pieces: List, ListRow, PlaceHead, PluginCard, SettingsRow,
+     the list sentence; new: none. Render: node plans/rail/mocks/wave-3/render.mjs workflows-2 1280 -->
+<html lang="en"><head><meta charset="utf-8"><title>Workflows explored</title>
+<link rel="stylesheet" href="../../prototype/app.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail-look.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail.css">
+<link rel="stylesheet" href="../../prototype/shell/shell.css">
+<link rel="stylesheet" href="../../../../ui/public/workflows/node-graph.css">
+<style>
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);}
+  #m{width:1280px;}
+  .fr{display:grid;grid-template-columns:280px 1fr;min-height:760px;border-bottom:1px solid var(--line);}
+  .bar{background:var(--side,var(--panel));border-right:1px solid var(--line);padding:16px 12px;box-sizing:border-box;}
+  .bar h1{margin:4px 8px 14px;font:600 15px/1.2 var(--sans);display:flex;gap:8px;align-items:center;}
+  .main{padding:28px 0 36px;display:flex;justify-content:center;}
+  .col{width:680px;}
+  .sent{display:flex;gap:6px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);margin:18px 0 6px;}
+  .more{margin:14px 0 0;}
+  .cap{margin:0 0 4px;font:600 12px/1.4 var(--sans);color:var(--ink-3);}
+  .note{margin:22px 0 0;font-size:12px;color:var(--ink-3);}
+  .acts{display:flex;gap:6px;margin:14px 0 0;}
+  /* dev's graph (ui/public/graph/view.mjs) in the Rail look: a wide well, plain words (no port types, no await rows) */
+  .well{position:relative;height:auto;padding:0;margin:18px -130px 8px;border-radius:var(--r-md);background:var(--panel);border:1px solid var(--line);overflow:hidden;}
+  .skin .prow .pt,.skin.view .prow.gate,.skin.view .cond{display:none;}
+  .skin.view .wbadge{white-space:nowrap;padding:0 6px;}
+  .lib{border-right:1px solid var(--line);padding:14px 10px;}
+  .skin .node.is-picked{outline:2px solid var(--ink-2);outline-offset:3px;border-radius:var(--r-sm);}
+  .flow{position:relative;padding:4px 0 36px;margin:18px 0 8px;}
+  .flow .wg-stages{flex-direction:row;gap:30px;align-items:flex-start;}
+  .flow .wg-stage{flex:none;gap:6px;} .flow .wg-stage + .wg-stage{border-top:0;padding-top:0;position:relative;}
+  .flow .wg-stage + .wg-stage::before{content:'';position:absolute;left:-26px;top:38px;width:22px;border-top:1px solid var(--ink-3);}
+  .flow .wg-stage + .wg-stage::after{content:'';position:absolute;left:-8px;top:35px;border:3.5px solid transparent;border-left:5px solid var(--ink-3);}
+  .flow .loop{position:absolute;bottom:2px;font-size:var(--fs-meta);color:var(--ink-2);}
+  .flow .loop svg{position:absolute;bottom:16px;left:0;overflow:visible;}
+  .story{margin:14px 0 4px;font-size:var(--fs-body);line-height:1.6;color:var(--ink);} .story-by{margin:0 0 10px;font-size:var(--fs-meta);color:var(--ink-3);display:flex;gap:6px;align-items:center;}
+  /* proposed: WorkflowStory, the workflow told as a storyboard: a panel a step (what happens to your task there), the loop
+     drawn back under the panels it joins, then the ways a task can go, each with its time and cost */
+  .sb{position:relative;display:grid;grid-template-columns:repeat(4,1fr);gap:22px;margin:18px 0 58px;}
+  .sb-p{position:relative;display:grid;gap:4px;align-content:start;}
+  .sb-p + .sb-p::before{content:'';position:absolute;left:-18px;top:11px;width:14px;border-top:1px solid var(--ink-3);}
+  .sb-n{display:flex;align-items:center;gap:8px;font:600 var(--fs-body)/1.3 var(--sans);}
+  .sb-k{width:22px;height:22px;border-radius:50%;border:1px solid var(--line-2);display:grid;place-items:center;font:500 11px/1 var(--sans);color:var(--ink-2);flex:none;}
+  .sb-p.is-check .sb-k{border-color:var(--amber-ink);color:var(--amber-ink);}
+  .sb-t{font-size:var(--fs-body);line-height:1.45;color:var(--ink);} .sb-m{font-size:var(--fs-meta);color:var(--ink-3);font-variant-numeric:tabular-nums;}
+  .sb-loop{position:absolute;left:37.5%;width:25%;bottom:-40px;height:30px;font-size:var(--fs-meta);color:var(--amber-ink);text-align:center;}
+  .sb-loop svg{position:absolute;inset:0 0 auto 0;width:100%;height:16px;overflow:visible;} .sb-loop span{position:absolute;left:-40%;right:-40%;top:16px;white-space:nowrap;}
+  .ways{margin:6px 0 4px;}
+  .tog{display:flex;align-items:center;gap:8px;margin:18px 0 0;font-size:var(--fs-meta);color:var(--ink-2);}
+  .fr.ed{grid-template-columns:220px 1fr 320px;}
+  .ed-top{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);}
+  .ed-top b{color:var(--ink);font-size:var(--fs-body);} .ed-top .sp{flex:1;}
+  .canvas{position:relative;height:470px;background-image:radial-gradient(var(--line-2) 1px,transparent 1px);background-size:18px 18px;}
+  .canvas .gv{position:absolute;left:24px;top:24px;}
+  .ed-tools{position:absolute;right:16px;bottom:14px;display:flex;gap:4px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);}
+  .ed-add{position:absolute;left:16px;bottom:14px;}
+  .ed-add .cmenu,.ed-add .compact-menu{position:absolute;left:0;bottom:40px;min-width:220px;}
+  .insp{border-left:1px solid var(--line);padding:18px 18px 24px;}
+  .insp h2{margin:0 0 2px;font:600 var(--fs-section)/1.3 var(--sans);} .insp .m{margin:0 0 12px;font-size:var(--fs-meta);color:var(--ink-2);}
+</style></head>
+<body><div id="m"></div>
+<script src="../../prototype/components.js"></script>
+<script src="graph-mock.js"></script>
+<script>
+  const R = window.RailUI;
+  const row = (title, mark, end, cur = false) => R.listRow({ title, mark, endText: end, open: { 'data-x': title }, current: cur });
+  const wf = (tone) => R.kindMark({ kind: 'workflow', tone: tone || 'idle' });
+  const bar = (cur) => `<h1>${R.icon('nav-workflows', 18)} Workflows</h1>${R.list({ groups: [
+    { title: 'Yours', rows: [row('Workflows', wf(), '6', cur === 'w'), row('Agents', R.kindMark({ kind: 'agent' }), '9'), row('Scripts', R.kindMark({ kind: 'script' }), '4')] },
+    { title: 'Browse', rows: [row('For you', R.kindMark({ kind: 'event' }), '2'), row('Your team’s', R.kindMark({ kind: 'group' }), '5'), row('From the Marketplace', R.kindMark({ kind: 'plugin', icon: 'nav-marketplace' }), '24')] },
+    { title: '', rows: [row('Build it by hand', R.kindMark({ kind: 'plugin', icon: 'edit' }), '', cur === 'h')] }] })}`;
+  const W = [
+    ['Default', 'Plan, build, review, PR: what every task runs unless you pick another.', '4 steps · used by 41 tasks', '$0.62 a task · 18 min · 92% merged', 'Made with Worca'],
+    ['Security-first review', 'A security pass before each PR; it sends the build back up to twice.', '4 steps · a loop · used by 6', '$1.02 a task · 24 min · 100% merged', 'From the chat Release checklist'],
+    ['Hotfix', 'Skips the plan; one review; straight to a PR into main.', '3 steps · used by 9', '$0.31 a task · 7 min · 89% merged', 'From the chat Node 24'],
+    ['Docs only', 'Writes and checks docs; never touches code.', '2 steps · used by 12', '$0.18 a task · 5 min · 100% merged', 'From the chat Changelog draft'],
+    ['API rewrite', 'Plans the contract, builds it in slices, reviews each slice.', '5 steps · slices · used by 1', '$4.80 so far · running', 'From the chat Plan the API rewrite'],
+    ['Data migration', 'A dry run on a copy, a check you sign off, then the real run.', '4 steps · asks you once · used by 2', '$0.95 a task · 31 min · 100% merged', 'From the chat Tidy the migrations']];
+  const cards = W.map(([t, what, kicker, facts, from], k) => R.pluginCard({ mark: wf(k === 4 ? 'run' : 'idle'), kicker: `${kicker}`, title: t, what, facts, action: R.button({ label: 'Use it', kind: '' }), more: R.button({ label: 'Change it in a chat', kind: 'quiet' }) })).join('');
+  const browse = `<div class="col convo-col" style="margin:0"><p class="cap">1 · Explore: what you built, as the Marketplace shows plugins</p>${R.placeHead({ title: 'Your workflows', facts: '6 workflows · each made in a chat · cost and outcomes from Insights' })}
+    <div class="sent">Showing ${R.sentencePicker({ id: 's', text: 'most used', items: [], chevron: R.icon('chevron', 10) })} from ${R.sentencePicker({ id: 'f', text: 'every project', items: [], chevron: R.icon('chevron', 10) })}</div>
+    <div class="pg-grid">${cards}</div>
+    <p class="note">Mock. Use it starts a task in a chat with this workflow in the sentence; Change it in a chat opens a chat that proposes the change as a card (as Security-first review was). Making one: say it in any chat, or Build it by hand (the bar's last line), the one manual way in. Your team's and From the Marketplace open here the same way; installing one is the Marketplace's Install.</p></div>`;
+  const flow = `<div class="flow">${R.workflowGraph({ label: 'Security-first review', stages: [
+    { label: 'Plan', nodes: [{ key: 'p', name: 'Plan', state: 'next' }] }, { label: 'Build', nodes: [{ key: 'b', name: 'Build', state: 'next' }] },
+    { label: 'Security', nodes: [{ key: 's', name: 'Security check', state: 'next' }] }, { label: 'Review', nodes: [{ key: 'r', name: 'Review', state: 'next' }] }] })}<span class="loop" style="left:96px"><svg width="132" height="20" aria-hidden="true"><path d="M128 2 C128 18 4 18 4 2" fill="none" stroke="var(--amber-ink)" stroke-dasharray="3 3"/><path d="M0 6 L4 0 L8 6" fill="none" stroke="var(--amber-ink)"/></svg>sends fixes back, up to 2×</span></div>`;
+  // the workflow told in plain words: a storyboard of what happens to your task, and the ways it can go (Haiku 5.5 writes the words)
+  const panel = (n, name, says, meta, cls = '') => `<div class="sb-p ${cls}"><div class="sb-n"><span class="sb-k">${n}</span>${name}</div><div class="sb-t">${says}</div><div class="sb-m">${meta}</div></div>`;
+  const story = `<div class="sb">${panel(1, 'Plan', 'Thinks before touching anything: reads your task and the code, writes the plan.', 'about 3 min · $0.40')}${panel(2, 'Build', 'Makes the change and runs your tests until they pass.', 'about 9 min · $0.31')}${panel(3, 'Security check', 'Looks for trouble: injection, secrets, unsafe input.', 'about 4 min · $0.19', 'is-check')}${panel(4, 'Review', 'Reads it the way a colleague would, then opens the pull request.', 'about 2 min · $0.12')}<div class="sb-loop"><svg viewBox="0 0 100 16" preserveAspectRatio="none" aria-hidden="true"><path d="M100 0 C100 14 0 14 0 0" fill="none" stroke="var(--amber-ink)" stroke-dasharray="2 2" vector-effect="non-scaling-stroke"/></svg><span>found something? back to Build, at most twice</span></div></div>
+    ${R.list({ groups: [{ title: 'How a task goes through it', rows: [R.listRow({ title: 'Straight through', meta: 'Plan, build, check, review · about 18 min, $1.02 · 3 of 6 tasks', mark: R.kindMark({ kind: 'task', tone: 'ok', stage: 4 }) }), R.listRow({ title: 'The check finds something', meta: 'Back to Build once or twice · each round about 6 min, $0.24 · 3 of 6 tasks', mark: R.kindMark({ kind: 'task', tone: 'act', stage: 2 }) }), R.listRow({ title: 'Still unsafe after two fixes', meta: 'It stops and asks you what to do · never yet', mark: R.kindMark({ kind: 'task', tone: 'ask', stage: 2 }) })] }] })}
+    <p class="story-by">${R.icon('sparkle', 12)} Told by Haiku 5.5 from this workflow and its last 6 tasks · renewed when either changes</p>`;
+  const pk = (id, t, items) => R.sentencePicker({ id, text: t, items: items.map((v) => ({ id: v, text: v, checked: v === t })), chevron: R.icon('chevron', 10) });
+  // each step: what it does, in plain words, then who does it and what it costs a task
+  let edit = false;
+  const step = (n, name, does, who, m, e, cost) => R.settingsRow({ name: `${n}. ${name}`, sentence: `${does}<br><span style="color:var(--ink-2)">${who} on ${edit ? `${pk(`m${n}`, m, ['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'])} ${pk(`e${n}`, e, ['low', 'medium', 'high'])}` : `<b>${m}</b>, ${e}`} · ${cost} a task</span>` });
+  const pageOf = (mode) => { edit = mode !== 'simple'; return `<div class="col convo-col" style="margin:0"><p class="cap">${mode === 'simple' ? '2 · One opened, in Simple: the steps drawn plainly' : '3 · One opened, in Advanced and Expert: the real graph, model and effort changed in place'}</p>${R.placeHead({ title: 'Security-first review', facts: '4 steps · a loop · used by 6 tasks · from the chat Release checklist', mark: wf(), word: '$1.02 a task', why: '$0.40 more than Default · 100% merged', action: R.button({ label: 'Change it in a chat', kind: '' }) + (mode === 'expert' ? R.button({ label: 'Edit by hand', kind: 'quiet' }) : ''), menu: R.moreMenu({ id: 'x', label: 'More', icon: R.icon('more', 16), open: false, items: [] }) })}
+    ${mode === 'simple' ? story : `${story}<div class="tog">Showing ${pk('tg', 'the graph', ['the graph', 'the steps'])}</div><div class="well skin view" id="gv-view"></div>`}
+    ${mode === 'simple' ? '' : R.settingsSection({ title: 'What each step does', rows: step(1, 'Plan', 'Reads the task and the code, and writes the plan every other step follows.', 'An agent', 'Opus 5.5', 'high', '$0.40') + step(2, 'Build', 'Changes the code to the plan and runs the tests until they pass.', 'An agent', 'Sonnet 5.5', 'high', '$0.31') + step(3, 'Security check', 'Looks for injection, secrets and unsafe input; anything it finds goes back to Build.', 'An agent', 'Opus 5.5', 'high', '$0.19') + step(4, 'Review', 'Reads the change as a colleague would, against the plan.', 'An agent', 'Opus 5.5', 'medium', '$0.12') + R.settingsRow({ name: 'Loop', sentence: 'Security check sends fixes back to Build up to <b>2</b> times · it did 3 times in 6 tasks' }) })}
+    <div class="acts">${R.button({ label: 'Use it', kind: 'quiet' })}</div>
+    ${mode === 'simple' ? '<p class="note">Mock. The workflow told as a storyboard, in every mode: a panel a step saying what happens to your task there, with its time and cost, the loop drawn back under the two it joins; then how a task goes through it, from its last tasks. Haiku 5.5 writes the words from the workflow and its tasks (a fraction of a cent), again when either changes. In Simple this is the drawing; nothing to change here; Change it in a chat. Advanced and Expert show the real graph (below), and keep this drawing one pick away (Showing the steps): raising the mode never removes anything (docs/ui-levels.md).</p>' : `<p class="note">Mock. The graph is dev's own drawing (the renderer the chat's proposals use), tidied by auto-align, wider than the reading column because it is the selling point; the Rail look keeps it plain: each step's name, what it does, its model in words; no port types and no await rows until you edit. Under it what each step does, who and what it costs a task (Insights). Change it in a chat leads; Edit by hand beside it in Expert. Simple and Expert see the graph alike: steps, models, the loop in words; wiring shows only on the canvas. Advanced changes a step's model and effort in place (per-agent model and effort is Advanced, docs/ui-levels.md); Edit by hand is Expert.</p>`}</div>`; };
+  const pick = (t) => R.sentencePicker({ id: t, text: t, items: [], chevron: R.icon('chevron', 10) });
+  const addMenu = R.compactMenu({ label: 'Add', items: [{ header: 'From your library' }, { id: 'a', text: 'Agent…', help: '9 yours, 24 more in the Marketplace' }, { id: 's', text: 'Script…', help: '4 yours' }, { sep: true }, { header: 'Flow' }, { id: 't', text: 'Task', help: 'Where the task comes in' }, { id: 'e', text: 'End', help: 'What it comes to' }, { id: 'and', text: 'AND', help: 'Waits for every input' }, { id: 'or', text: 'OR', help: 'Goes on with the first' }, { id: 'c', text: 'Combine', help: 'Joins inputs into one' }] });
+  const editor = `<div><div class="ed-top">${R.button({ label: 'Back to Security-first review', kind: 'quiet', iconOnly: true, icon: R.icon('chevL', 14) })}<b>Security-first review</b><span>not saved</span><span class="sp"></span>${R.button({ label: 'Undo', kind: 'quiet' })}${R.button({ label: 'Redo', kind: 'quiet' })}${R.moreMenu({ id: 'ie', label: 'Import, Export', icon: R.icon('download', 14), open: false, items: [] })}${R.button({ label: 'Ask Worca', kind: 'quiet', icon: R.icon('ask-worca', 14) })}${R.button({ label: 'Save', kind: '' })}${R.moreMenu({ id: 'z', label: 'More', icon: R.icon('more', 16), open: false, items: [] })}</div>
+    <div class="canvas"><div class="gv skin edit" id="gv-edit"></div><div class="ed-add">${R.button({ label: 'Add', kind: '', icon: R.icon('plus', 13) })}</div><div class="ed-tools">${R.button({ label: 'Auto-align', kind: 'quiet' })}${R.button({ label: 'Zoom out', kind: 'quiet', iconOnly: true, icon: R.icon('x', 1) })}<span>82%</span>${R.button({ label: 'Fit', kind: 'quiet' })}</div></div>
+    <p class="note" style="margin:14px 24px">Mock. Expert only, on a wide screen. Dev's canvas, kept whole (its engine, its 138 test files, its format: a workflow made in a chat, here, imported or built in opens and runs as today); Rail is the skin: the dot grid, the Library as a list you drag from (the top bar's search finds in it), Undo, Redo, Import and Export in its head, Auto-align beside zoom, ports and their types shown (Expert wires), the step you pick opens on the right as sentences. Ports show while you wire. The canvas's own chat is Ask Worca beside the page (⌘J), one chat; what it proposes shows on the graph as a change to Apply or Undo.</p></div>`;
+  const insp = `<aside class="insp"><h2>Security check</h2><p class="m">Step 3 of 4 · an agent</p>${R.settingsSection({ rows: R.settingsRow({ name: 'Does', sentence: 'Looks for injection, secrets and unsafe input; what it finds goes back to Build.' }) + R.settingsRow({ name: 'Runs on', sentence: `${pick('Opus 5.5')} ${pick('high')}` }) + R.settingsRow({ name: 'Loop', sentence: `Findings go back up to ${pick('2')} times, then ${pick('it asks you')}` }) + R.settingsRow({ name: 'Stops after', sentence: `${pick('30 min')}` }) + R.settingsRow({ name: 'Costs', sentence: 'About $0.19 a task; a round back adds $0.24' }) })}<div class="acts">${R.button({ label: 'More settings', kind: 'quiet', icon: R.icon('chevR', 12) })}</div><p class="m" style="margin:4px 0 0">Its session, sub-agents, which session it continues. A script step shows its inputs here; a picked wire shows what it carries, when it fires and Delete.</p><div class="acts">${R.button({ label: 'Try it on a task', kind: 'quiet' })}${R.button({ label: 'Remove', kind: 'quiet' })}</div></aside>`;
+  const lib = `<aside class="lib">${R.list({ groups: [{ title: 'Agents · drag onto the canvas', rows: ['Plan', 'Build', 'Security check', 'Review', 'Docs writer'].map((t) => R.listRow({ title: t, mark: R.kindMark({ kind: 'agent' }), open: {} })) }, { title: 'Scripts', rows: ['Run the tests', 'Lint'].map((t) => R.listRow({ title: t, mark: R.kindMark({ kind: 'script' }), open: {} })) }, { title: 'Flow', rows: ['Task', 'End', 'AND: waits for all', 'OR: the first wins', 'Combine'].map((t) => R.listRow({ title: t, mark: R.kindMark({ kind: 'plugin', icon: 'kind-workflow' }), open: {} })) }] })}</aside>`;
+  document.getElementById('m').innerHTML = `<div class="fr"><aside class="bar pz-app rail-page">${bar('w')}</aside><main class="main">${browse}</main></div><div class="fr"><aside class="bar pz-app rail-page">${bar('')}</aside><main class="main">${pageOf('simple')}</main></div><div class="fr"><aside class="bar pz-app rail-page">${bar('')}</aside><main class="main">${pageOf('expert')}</main></div><div class="fr ed">${lib}${editor}${insp}</div>`;
+  mockGraph(document.getElementById('gv-view'), { width: 940 });
+  mockGraph(document.getElementById('gv-edit'), { width: 660, mode: 'edit', select: 'n_sec' });
+</script></body></html>

@@ -8,6 +8,8 @@ import { actorOf } from '../../../src/core/identity.mjs';
 import { enableTeamMetrics, projectMetricsStatus, setRecordMyRuns } from '../../../src/core/metrics/sync.mjs';
 import { enableTeamPolicy, projectPolicyStatus } from '../../../src/core/policy/sync.mjs';
 import { effectiveSyncSettings, projectSyncBlock, projectSyncEvents } from '../../../src/core/project-sync.mjs';
+import { readinessEnabled } from '../../../src/core/repo-readiness/evaluate.mjs';
+import { getReadiness } from '../../../src/core/repo-readiness/projects.mjs';
 import { DEFAULT_SYNC_SETTINGS, assertSyncSettingsInput, syncDefaults } from '../../../src/core/settings.mjs';
 import { normaliseTags } from '../../../src/shared/run-tags.mjs';
 import { applyProjectSettingsPatch, badRequest, projectSettingsState, sendMetricsError, sendPolicyError, syncProjectAction, syncRoute, tmProject, unsyncableBlock } from '../../server.mjs';
@@ -73,6 +75,12 @@ app.post('/api/projects/:key/sync', syncRoute(async (req, res) => {
   const p = await tmProject(req, res); if (!p) return;
   return syncProjectAction(res, p, req.body || {});
 }));
+app.get('/api/projects/:key/readiness', async (req, res) => {
+  if (!readinessEnabled()) return res.json({ disabled: true });
+  const p = await tmProject(req, res); if (!p) return;
+  if (!p.exists) return res.json({ readiness: null });          // missing folder: no chip
+  res.json({ readiness: await getReadiness(p, { refresh: req.query.refresh === '1' }) });
+});
 app.put('/api/projects/:key/sync/settings', syncRoute(async (req, res) => {
   const p = await tmProject(req, res); if (!p) return;
   const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : null;

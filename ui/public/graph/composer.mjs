@@ -39,7 +39,7 @@ export const UNDO_LIMIT = 50;
  *  Save dialog prefills a copy name). */
 export const RESERVED_WORKFLOW_ID = 'wf_default';
 /** Every built-in the server lists and refuses to delete: wf_default, wf_lean_build + the Memory defragment
- *  workflow. All open read-only here (Save is Save-a-copy). wf_auto never reaches the composer. */
+ *  workflow. The Library offers them only as templates (#1127); loaded in place, Save is Save-a-copy. wf_auto never reaches the composer. */
 export const RESERVED_WORKFLOW_IDS = new Set([RESERVED_WORKFLOW_ID, 'wf_lean_build', 'wf_memory_defrag', 'wf_shape', 'wf_shape_ux']);
 /** Shaper's requirements-stage ids, apart from the list above (whose members are pinned): open read-only too. */
 export const SHAPE_REQ_WORKFLOW_IDS = new Set(['wf_shape_req', 'wf_shape_ux_req', 'wf_shape_slice_req', 'wf_shape_ux_slice_req']);
@@ -51,6 +51,9 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
  *  composer keeps it beside the template. */
 export const pluginOriginName = (origin) => (typeof origin === 'string' && origin.startsWith('plugin:')
   ? origin.slice('plugin:'.length) : '');
+/** A workflow Worca ships (#1127): a reserved built-in, or a plugin's row (`worca plugin update` overwrites it). Neither
+ *  is ever saved in place: the Library offers it only as a template, and Save on one loaded in place is Save a copy. */
+export const isBuiltinWorkflow = (w) => Boolean(w) && (isReservedWorkflowId(w.id) || Boolean(pluginOriginName(w.origin)));
 const isTyping = (t) => !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
 
 export function createComposer(hostEls, { doc = globalThis.document, api, raf = null, viewport = null, storage = null, portsFn, highlight = null, notify = null, allLevels = false, insetRight: insetRightOpt = null,
@@ -63,6 +66,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
 
   let tpl = emptyCanvas();
   let tplOrigin = '';             // 'plugin:<name>' of the LOADED row ('' = user-created)
+  let copyOf = null;              // {id, name} of the row a Use as template copy came from; null otherwise (#1127)
   let sel = null;                 // {kind:'node'|'wire'|'session', id}
   let dirty = false;
   let savedHash = '';
@@ -216,6 +220,31 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     return !dirty && tpl.wires.length === 0 && tpl.nodes.length === 2
       && tpl.nodes.every((n) => n.kind === 'task' || n.kind === 'end');
   }
+  /** The canvas badge's words per document kind: [text, tooltip]. */
+  const DOC_STATE = {
+    edit: () => ['Editing', 'Your workflow. Save changes it.'],
+    copy: (d) => ['Unsaved copy', `A new copy of “${d.of.name}”. Save keeps it as your own workflow; “${d.of.name}” stays as it is.`],
+    builtin: () => ['Built-in', 'Worca ships this workflow: Save makes a copy of your own.'],
+    new: () => ['Not saved', 'A new workflow. Save keeps it.'],
+  };
+  /** What the open document is (#1127): `edit` = a saved workflow of the user's (Save changes it in place); `copy` = a new
+   *  unsaved copy of a saved row (Use as template); `builtin` = a built-in or plugin row loaded in place (a chat card's
+   *  Undo can bring one back), whose Save is Save a copy; `new` = anything else not saved yet. */
+  function docState() {
+    if (tpl.id) return { kind: isBuiltinWorkflow({ id: tpl.id, origin: tplOrigin }) ? 'builtin' : 'edit', id: tpl.id };
+    if (copyOf) return { kind: 'copy', of: { ...copyOf } };
+    return { kind: 'new' };
+  }
+  function paintDocState() {
+    const el = hostEls.docState;
+    if (!el) return;
+    const d = docState();
+    const [text, tip] = DOC_STATE[d.kind](d);
+    el.hidden = d.kind === 'new' && isPristine();     // a blank, untouched canvas says nothing
+    el.dataset.kind = d.kind;
+    el.textContent = text;
+    el.title = tip;
+  }
   function paintChrome() {
     const n = lastReport.errors.length;
     const real = lastReport.errors.filter((e) => !e.incomplete).length;
@@ -244,6 +273,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
           : warned ? `${warn} warning${warn === 1 ? '' : 's'}` : '';
       hostEls.errors.setAttribute('aria-label', hostEls.errors.hidden ? '' : `${hostEls.errors.textContent}. Show the first one`);
     }
+    paintDocState();
   }
 
   // ------------------------------------------------------------------- ghost
@@ -1040,7 +1070,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
    *  @returns {{copy: boolean, plugin: string}} */
   function saveMode(saveAs) {
     const plugin = pluginOriginName(tplOrigin);
-    return { copy: Boolean(saveAs) || isReservedWorkflowId(tpl.id) || Boolean(plugin), plugin };
+    return { copy: Boolean(saveAs) || isBuiltinWorkflow({ id: tpl.id, origin: tplOrigin }), plugin };
   }
 
   // `then(workflow)`: runs once after THIS dialog saves (Export… saves first, then exports
@@ -1241,9 +1271,10 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   }
 
   let token = mintId('d_');                       // the open DOCUMENT: new on every load, never on an edit or a save
-  function loadTemplate(next) {
+  function loadTemplate(next, { copyOf: from = null } = {}) {
     tpl = next ? normalizeTemplate(next) : emptyCanvas();
     tplOrigin = (next && typeof next.origin === 'string') ? next.origin : '';
+    copyOf = from && from.id ? { id: String(from.id), name: String(from.name || from.id) } : null;
     sel = null;
     undoStack.length = 0; redoStack.length = 0;
     savedHash = snapshot();
@@ -1264,6 +1295,11 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     dirty = true;
     paintChrome();
     return tpl;
+  }
+  /** Use as template (#1127): a NEW unsaved document from a saved row, named "<name> copy", with no id and no origin, so
+   *  Save mints a new workflow and the source never changes. Clean: nothing is lost yet, the source still exists. */
+  function loadCopy(src) {
+    return loadTemplate({ ...src, id: '', origin: '', name: `${(src && src.name) || 'Untitled'} copy` }, { copyOf: src });
   }
   /** Apply a canvas-ops batch (canvas-ops.mjs) as ONE undo step; refused whole on the first bad op, and (D12) when
    *  it would add a NEW real validation error HERE: the chat validated it on the canvas its message carried, but the
@@ -1337,6 +1373,12 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     /** The saved list's Open. Asks before discarding (MAJ-6).
      *  @returns {Promise<object|null>} the loaded template, or null when refused. */
     openTemplate: async (next) => ((await guardDiscard()) ? loadTemplate(next) : null),
+    /** A Library row's Use as template (#1127). Asks before discarding (MAJ-6).
+     *  @returns {Promise<object|null>} the new copy, or null when refused. */
+    openCopy: async (src) => ((await guardDiscard()) ? loadCopy(src) : null),
+    /** {id, name} of the row the open copy came from; null when it is not a Use as template copy. */
+    copyOf: () => (copyOf ? { ...copyOf } : null),
+    docState: () => docState(),
     template: () => tpl,
     serialize: () => serializeTemplate(tpl),
     report: () => lastReport,
@@ -1360,7 +1402,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       // What was just written is a row of the USER's, whatever the source row
       // was: a copy of a plugin template is not itself plugin-owned.
       if (id && id !== tpl.id) tplOrigin = '';
-      if (id) tpl.id = id;
+      if (id) { tpl.id = id; copyOf = null; }           // a saved copy is the user's own now: Editing
       if (name != null) tpl.name = name;
       if (name != null && hostEls.name) hostEls.name.value = name;   // the header follows the saved name (a forced copy renames)
       if (domain != null) tpl.domain = domain;

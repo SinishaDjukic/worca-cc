@@ -157,3 +157,9 @@ test('reduced motion: every phase is one still frame, nothing scheduled; destroy
   assert.equal(r2.pending(), false);
   r.win.close(); r2.win.close();
 });
+
+test('orbInW: the W facing you, its strokes in and its gaps out; no orb has it unless asked', async () => {
+  const { orbInW } = await import('../ui/public/dot-orb.mjs');
+  assert.ok(orbInW(-0.38, 0.48)); assert.ok(orbInW(0, -0.1)); assert.ok(orbInW(0.56, 0.04));
+  assert.ok(!orbInW(0, 0.45)); assert.ok(!orbInW(-0.9, 0.9)); assert.ok(!orbInW(0, -0.8));
+});

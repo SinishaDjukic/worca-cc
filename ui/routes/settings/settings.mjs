@@ -15,7 +15,7 @@ import { defragDefaultModel } from '../../../src/core/memory-defrag-model.mjs';
 import { approveProposal, listProposals, rejectProposal } from '../../../src/core/memory-proposals.mjs';
 import { memoryRoot } from '../../../src/core/memory-store.mjs';
 import { queueTeamChanges, teamClientText } from '../../../src/core/memory-team.mjs';
-import { withRole } from '../../../src/core/model-roles.mjs';
+import { withRole, withScanRole } from '../../../src/core/model-roles.mjs';
 import { resolveNamingModel } from '../../../src/core/naming.mjs';
 import { resolveNightConfig } from '../../../src/core/night/config.mjs';
 import { syncPluginSlots } from '../../../src/core/plugin-broker-slots.mjs';
@@ -23,7 +23,7 @@ import { resolvePrDescriptionModel } from '../../../src/core/pr-description.mjs'
 import { listProjects, normalizeProjectPath } from '../../../src/core/projects.mjs';
 import { DEFAULT_INTERVIEW_EFFORT, requirementsModel } from '../../../src/core/requirements/interview.mjs';
 import { settingsErrorReply } from '../../../src/core/settings-errors.mjs';
-import { actionsSettings, agentGenModel as storedAgentGenModel, askEngineSetting, askMaxBudgetUsd, askMaxTurns, askModelsSetting, askWeb, autoGeneratePrDescription, autoTestWorkers, autoWorkflowModel as storedAutoWorkflowModel, chatLinksInPanel, chatPrefs, commandSummaryModel as storedCommandSummaryModel, costLimitResetPeriod, debugSpawnEnabled as storedDebugSpawnEnabled, defaultProjectsRoot, defaultRoot, effectiveDebugSpawn, getWorcaRoot, hideBuiltinModels, humanRateUsdPerHour, keepAwakeEnabled, memoryCaps, memoryDefragModel, modelRolesSetting, namingModel as storedNamingModel, networkWaitSettings, nightModeSettings, nightModeToggle, nightModeToggleFor, pipelineCostLimitUsd, prDescriptionModel as storedPrDescriptionModel, rawProjectsRoot, requirementsInterviewSetting, resumeAfterUsageLimit, runEngineSetting, runLimits, scheduleDefaults, secondOpinionModelSetting, smartNaming, stepModelsSetting, syncDefaults, theme as storedTheme, titleModel as storedTitleModel, totalCostLimitUsd, updateCheckEnabled, userEnforceTags, userTagDimensions, utilityModelsSetting, workspaceScanModels } from '../../../src/core/settings.mjs';
+import { actionsSettings, agentGenModel as storedAgentGenModel, askEngineSetting, askMaxBudgetUsd, askMaxTurns, askModelsSetting, askWeb, autoGeneratePrDescription, autoTestWorkers, autoWorkflowModel as storedAutoWorkflowModel, chatLinksInPanel, chatPrefs, commandSummaryModel as storedCommandSummaryModel, costLimitResetPeriod, debugSpawnEnabled as storedDebugSpawnEnabled, defaultProjectsRoot, designModelsSetting, defaultRoot, effectiveDebugSpawn, getWorcaRoot, hideBuiltinModels, humanRateUsdPerHour, keepAwakeEnabled, memoryCaps, memoryDefragModel, modelRolesSetting, namingModel as storedNamingModel, networkWaitSettings, nightModeSettings, nightModeToggle, nightModeToggleFor, pipelineCostLimitUsd, prDescriptionModel as storedPrDescriptionModel, rawProjectsRoot, requirementsInterviewSetting, resumeAfterUsageLimit, runEngineSetting, runLimits, scheduleDefaults, secondOpinionModelSetting, smartNaming, stepModelsSetting, syncDefaults, theme as storedTheme, pulseFor as storedPulseFor, titleModel as storedTitleModel, totalCostLimitUsd, updateCheckEnabled, userEnforceTags, userTagDimensions, utilityModelsSetting, workspaceScanModels } from '../../../src/core/settings.mjs';
 import { describeTitleModel } from '../../../src/core/title.mjs';
 import process from 'node:process';
 import { APP_INFO, REMOTE_MODE, actionsEnabledHere, agentMayBeCaller, applySettingsPatch, autoDetectedBuiltins, awayPersonOf, effectiveUiLevel, emitMemoryChanged, liveDefragRun, memoryError, previewPortMode, refuseAgentCaller, requireFsAllowed, teamOriginOk, teamWarn } from '../../server.mjs';
@@ -120,6 +120,7 @@ const settingsState = () => ({
   titleModelEffective: describeTitleModel(),              // env override / stale id, for the hint line (#422)
   hideBuiltinModels: hideBuiltinModels(),
   theme: storedTheme(),                                   // system | light | dark (dark-mode design §6)
+  pulseFor: storedPulseFor(),                             // Stillhet Settings › Notifications › Pulse icon
   schedule: scheduleDefaults(),                           // defaults a NEW schedule inherits
   tagDimensions: userTagDimensions(),                     // Settings › Tags › Tag dimensions (local; a team policy's list wins)
   enforceTags: userEnforceTags(),                         // Settings › Tags (local; a team policy's runs.enforceTags wins)
@@ -135,9 +136,12 @@ const settingsState = () => ({
   secondOpinionModel: secondOpinionModelSetting(),        // Models › Helper jobs › Second-opinion reviewer: the STORED pair (null = the factory default)
   factoryModels: factoryModelsPayload(),                  // what "(default)" means on the Claude tab's helper and step rows
   workspaceScan: workspaceScanModels(),                   // Settings › Runs › Workspaces: the STORED pick (null = the defaults)
-  workspaceScanDefault: WORKSPACE_SCAN_DEFAULT_MODELS,    // what null means: Sonnet 5 · medium, project agents sonnet · medium
+  // What null means: the Everyday coding role as the scan model when set, else Sonnet 5 · medium; project agents sonnet · medium.
+  workspaceScanDefault: withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS) || WORKSPACE_SCAN_DEFAULT_MODELS,
+  workspaceScanFromRole: !!withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS),   // the wizard stores no pick of its own then (re-scans follow the role)
   runEngine: runEngineSetting() ?? null,
   stepModels: stepModelsSetting(),
+  designModels: designModelsSetting(),                    // Models › Engines › Design: { <engine>: { lead|builder: { model, effort } } }
   modelRoles: modelRolesSetting(),                         // Models › Roles (D1): { <engine>: { deep|everyday|quick: { model, effort } } }
   utilityModels: utilityModelsSetting(),
   askEngine: askEngineSetting() ?? null,                  // Chat: the engine new chats start on (D17)

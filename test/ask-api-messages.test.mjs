@@ -292,10 +292,7 @@ test('attachments: stored + block on the user message; caps enforced', async () 
   const t2 = await newThread();
   const send = (atts) => post(`/api/ask/threads/${t2.id}/messages`, { text: 'x', ...MODEL, attachments: atts, context: { view: 'history' } });
   const before = (await snapshot(t2.id)).thread;
-  assert.equal((await send([{ name: 'evil.exe', dataBase64: b64('x') }])).status, 400);
   assert.equal((await send([{ name: 'big.md', dataBase64: Buffer.alloc(100 * 1024 * 1024 + 1, 97).toString('base64') }])).status, 413);
-  assert.equal((await send([{ name: 'bad.md', dataBase64: Buffer.from([0xff, 0xfe, 0xfd]).toString('base64') }])).status, 400);
-  assert.equal((await send([{ name: 'nul.md', dataBase64: Buffer.from('a\u0000b', 'utf8').toString('base64') }])).status, 400);
   assert.equal((await send(Array.from({ length: 9 }, (_, i) => ({ name: `f${i}.md`, dataBase64: b64('x') })))).status, 400);
   // Every check precedes the FIRST write (all-or-nothing): a rejected message
   // must leave the thread untouched — no context/model/title write, no rows.
@@ -308,7 +305,36 @@ test('attachments: stored + block on the user message; caps enforced', async () 
   ws.close();
 });
 
-test('HTML attachments: .html / .htm accepted as TEXT, stored as .txt, served back as text/plain + nosniff; non-UTF-8 or NUL HTML refused', async () => {
+const b64 = (x) => Buffer.from(x).toString('base64');
+test('any file type is accepted: .py text, .zip generic binary, mislabelled .png; the generic body downloads as an attachment', async () => {
+  const zip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 1, 2, 3]);
+  const t = await newThread();
+  const { ws, msgs, opened } = openWs(`?threadId=${t.id}`);
+  await opened;
+  const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'look', ...MODEL, attachments: [
+    { name: 'tool.py', dataBase64: b64('print(1)\n') }, { name: 'a.ZIP', dataBase64: zip.toString('base64') },
+    { name: 'spoof.png', dataBase64: b64('plain text, not a png') }, { name: 'vector.svg', dataBase64: b64('<svg onload="x"/>') },
+    { name: 'README', dataBase64: zip.toString('base64') }] });
+  assert.equal(r.status, 202, JSON.stringify(await r.clone().json()));
+  await waitFor(() => framesFor(msgs, t.id).some((f) => f.type === 'ask-done'));
+  const rows = Object.fromEntries((await snapshot(t.id)).attachments.map((a) => [a.name, a]));
+  assert.deepEqual(['tool.py', 'a.ZIP', 'spoof.png', 'vector.svg', 'README'].map((n) => [rows[n].kind, rows[n].mime]), [
+    ['text', 'text/plain'], ['binary', 'application/octet-stream'], ['text', 'text/plain'], ['text', 'text/plain'], ['binary', 'application/octet-stream']]);
+  assert.ok(existsSync(join(homeDir, '.worca-cc', 'ask', t.id, 'att', `${rows['a.ZIP'].id}.zip`)), 'the original extension is kept on disk');
+  assert.ok(existsSync(join(homeDir, '.worca-cc', 'ask', t.id, 'att', `${rows.README.id}.bin`)), 'no extension -> .bin');
+  const dl = await fetch(`${base}/api/ask/threads/${t.id}/attachments/${rows['a.ZIP'].id}`);
+  assert.equal(dl.headers.get('content-type'), 'application/octet-stream');
+  assert.match(dl.headers.get('content-disposition'), /^attachment;.*a\.ZIP/);
+  assert.equal(dl.headers.get('x-content-type-options'), 'nosniff');
+  assert.deepEqual(Buffer.from(await dl.arrayBuffer()), zip);
+  assert.equal((await fetch(`${base}/api/ask/threads/${t.id}/attachments/${rows['a.ZIP'].id}?as=text`)).status, 415);
+  const svg = await fetch(`${base}/api/ask/threads/${t.id}/attachments/${rows['vector.svg'].id}`);
+  assert.equal(svg.headers.get('content-type'), 'text/plain; charset=utf-8');
+  assert.equal(svg.headers.get('x-content-type-options'), 'nosniff');
+  ws.close();
+});
+
+test('HTML attachments: .html / .htm accepted as TEXT, stored as .txt, served back as text/plain + nosniff; an over-cap one refused', async () => {
   const page = '<!doctype html><html><head><title>Hi</title><script>alert(1)</script></head><body><p>hello</p></body></html>';
   const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
   const t = await newThread();
@@ -334,10 +360,6 @@ test('HTML attachments: .html / .htm accepted as TEXT, stored as .txt, served ba
 
   const t2 = await newThread();
   const send = (atts) => post(`/api/ask/threads/${t2.id}/messages`, { text: 'x', ...MODEL, attachments: atts });
-  const latin1 = await send([{ name: 'legacy.html', dataBase64: Buffer.from('<p>caf\xe9</p>', 'latin1').toString('base64') }]);
-  assert.equal(latin1.status, 400);
-  assert.match((await latin1.json()).error, /not valid UTF-8: legacy\.html/);
-  assert.equal((await send([{ name: 'nul.htm', dataBase64: Buffer.from('<p>a\u0000b</p>', 'utf8').toString('base64') }])).status, 400);
   assert.equal((await send([{ name: 'big.html', dataBase64: Buffer.alloc(100 * 1024 * 1024 + 1, 97).toString('base64') }])).status, 413, 'the 100 MB text cap applies');
   const after2 = await snapshot(t2.id);
   assert.deepEqual(after2.messages, [], 'no message rows written');
@@ -345,7 +367,7 @@ test('HTML attachments: .html / .htm accepted as TEXT, stored as .txt, served ba
   ws.close();
 });
 
-test('binary attachments (#398): png + pdf stored with kind/mime, served with their real type; spoofed or oversized bodies refused', async () => {
+test('binary attachments (#398): png + pdf stored with kind/mime, served with their real type; oversized bodies refused', async () => {
   const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from([0, 1, 2, 0xfe, 0xff])]);
   const pdf = Buffer.from('%PDF-1.7\nfake body\n%%EOF\n', 'latin1');
   const t = await newThread();
@@ -402,13 +424,9 @@ test('binary attachments (#398): png + pdf stored with kind/mime, served with th
   // refusals, all before any write (the all-or-nothing shape of the text test)
   const t2 = await newThread();
   const send = (atts) => post(`/api/ask/threads/${t2.id}/messages`, { text: 'x', ...MODEL, attachments: atts });
-  const spoof = await send([{ name: 'spoof.png', dataBase64: Buffer.from('plain text, not a png').toString('base64') }]);
-  assert.equal(spoof.status, 400);
-  assert.match((await spoof.json()).error, /does not match its extension/);
   const big = await send([{ name: 'big.png', dataBase64: Buffer.alloc(100 * 1024 * 1024 + 1).toString('base64') }]);
   assert.equal(big.status, 413);
   assert.match((await big.json()).error, /attachment over 104857600 bytes: big\.png/, 'the route, not the parser, answered');
-  assert.equal((await send([{ name: 'vector.svg', dataBase64: Buffer.from('<svg/>').toString('base64') }])).status, 400, 'svg stays off the allowlist');
   // The ~134 MB JSON window belongs to THIS route only: two in-cap images one
   // byte over the 100 MB message total (~133 MB of base64) reach the route's own
   // per-message 413 …

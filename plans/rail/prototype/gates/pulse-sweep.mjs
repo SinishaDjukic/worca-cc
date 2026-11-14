@@ -10,24 +10,25 @@ const b = await chromium.launch({ channel: 'chrome' });
 const issues = new Map(); const add = (k, where) => { if (!issues.has(k)) issues.set(k, []); if (issues.get(k).length < 4) issues.get(k).push(where); };
 const click = (p, sel) => p.evaluate((s) => document.querySelector(s)?.click(), sel);
 // every Settings section the model holds (but Notifications, swept above): read from settings-model.js, never listed by hand
-global.window = {}; await import('../settings/settings-model.js');
+global.window = {}; await import('../../../../ui/public/stillhet/settings/settings-model.js');
 const SECTION_IDS = window.SettingsModel.GROUPS.flatMap((g) => g.items).filter((id) => id !== 'notifications');
 const VIEWS = {
   now: async () => {},
-  popNow: async (p) => click(p, '[data-pop]'),
+  popVitals: async (p) => click(p, '[data-pop]'),
   popUpdates: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); },
   account: async (p) => click(p, '[data-acct]'),
   usage: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-sub="usage"]'); },
   popSelect: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); await click(p, '[data-menu="more"]'); await click(p, '[data-pick="more|select"]'); await click(p, '[data-sel]'); },
-  popNowFiltered: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-menu="nowShow"]'); await click(p, '[data-pick="nowShow|running"]'); },
+  popVitalsFiltered: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-menu="vitalsShow"]'); await click(p, '[data-pick="vitalsShow|running"]'); },
+  popActions: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-menu="vitalsShow"]'); await click(p, '[data-pick="vitalsShow|actions"]'); },
+  levelFly: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-sub="lvl"]'); },
   popMore: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); await click(p, '[data-menu="more"]'); },
   newrun: async (p) => click(p, '[data-newrun]'),
-  newrunSmall: async (p) => { await click(p, '[data-newrun]'); await click(p, '[data-menu="nr-size"]'); await click(p, '[data-pick="nr-size|small"]'); },
   settings: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, '[data-sset="notifications"]'); await click(p, '[data-custom="usage"]'); },
   // every other Settings section: their rows are the same components, each with its own pickers, switches and buttons
   ...Object.fromEntries(SECTION_IDS
     .map((id) => ['settings-' + id, async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, `[data-sset="${id}"]`); }])),
-  settingsWait: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, '[data-sset="notifications"]'); await click(p, '[data-menu="auto"]'); await click(p, '[data-pick="auto|wait"]'); await click(p, '[data-menu="mine"]'); await click(p, '[data-pick="mine|wait"]'); await click(p, '[data-newrun]'); },
+  settingsWait: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, '[data-sset="runs"]'); await click(p, '[data-menu="auto"]'); await click(p, '[data-pick="auto|wait"]'); await click(p, '[data-menu="mine"]'); await click(p, '[data-pick="mine|wait"]'); await click(p, '[data-newrun]'); },
 };
 let clicks = 0;
 for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
@@ -57,7 +58,9 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
         const big = parseFloat(cs.fontSize) >= 18.6 || (parseFloat(cs.fontSize) >= 14 && +cs.fontWeight >= 700);
         if (ratio < (big ? 3 : 4.5) && !/pz-sep|pz-dotsep/.test(e.className)) out.push(['contrast ' + ratio.toFixed(2), e.className + ': ' + s]);
       }
-      for (const row of app.querySelectorAll('.pz-row,.pz-bar,.runs-bulk,.pz-srow,.pz-sv,.pz-urow,.pz-uhead,.pz-head,.pz-top,.pz-erow,.mc-head,.pz-advice,.pz-advice-acts,.mi,.pz-phead')) {
+      // a state word is never cut, and a row's reason wraps (narrow.state-word)
+      for (const e of app.querySelectorAll('.pz-resolved,.pz-row-m')) if (e.offsetParent && e.scrollWidth > e.clientWidth + 1) out.push(['a state word or a reason is cut', e.textContent.slice(0, 30)]);
+      for (const row of app.querySelectorAll('.pz-row,.pz-bar,.runs-bulk,.pz-srow,.pz-sv,.pz-urow,.pz-uhead,.pz-head,.pz-top,.pz-erow,.mc-head,.pz-advice,.pz-advice-acts,.mi,.panel-head')) {
         const kids = [...row.children].filter((k) => k.offsetParent && getComputedStyle(k).position !== 'absolute');
         for (let i = 0; i < kids.length; i++) for (let j = i + 1; j < kids.length; j++) {
           const a = kids[i].getBoundingClientRect(), d = kids[j].getBoundingClientRect();
@@ -83,13 +86,17 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
       await reset(c, v);
       await p.evaluate(() => [...document.querySelectorAll('#app button, #app input[type=checkbox]')].filter((x) => x.offsetParent).forEach((x, i) => { x.dataset.k = 'k' + i; }));
       await p.evaluate(() => window.scrollTo(0, 200));
-      const r = await p.evaluate((key) => {
+      const r = await p.evaluate(async (key) => {
         const el = document.querySelector(`[data-k="${key}"]`); if (!el) return null;
+        const titleOf = () => [...document.querySelectorAll('.pz-title')].filter((t) => t.offsetParent).map((t) => t.textContent).join();
+        const pageWas = titleOf();
         const before = document.getElementById('app').innerHTML + document.querySelector('.rc-toast').textContent, y = window.scrollY, label = el.getAttribute('aria-label') || el.textContent.trim().slice(0, 30) || el.className;
         el.click();
-        const after = document.getElementById('app').innerHTML.replace(/ data-k="k\d+"/g, '') + document.querySelector('.rc-toast').textContent;
+        const now = () => document.getElementById('app').innerHTML.replace(/ data-k="k\d+"/g, '') + document.querySelector('.rc-toast').textContent;
+        let after = now();
+        if (after === before.replace(/ data-k="k\d+"/g, '')) { await new Promise((res) => setTimeout(res, 20)); after = now(); }   // a Settings row's link goes next tick
         const maxY = document.documentElement.scrollHeight - window.innerHeight;   // a page that got shorter may have to give some back
-        const goes = el.matches('[data-sset], [data-go]');   // to another page: it opens at its top
+        const goes = el.matches('[data-sset], [data-go], [data-land], [data-team]') || titleOf() !== pageWas;   // to another page: it opens at its top
         return { label, moved: !goes && Math.abs(window.scrollY - Math.min(y, maxY)) > 1, dead: after === before.replace(/ data-k="k\d+"/g, ''), side: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1 };
       }, k);
       if (!r) continue; clicks++;
@@ -100,5 +107,9 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
   }
   await p.close();
 }
+// the catalogue reaches the page: every event of every group has a row in the case that holds them all
+const pc = await b.newPage(); await pc.goto(URL);
+for (const miss of await pc.evaluate(() => { const M = window.PulseModel, every = M.CASES.find((c) => c.id === 'every'); return Object.keys(M.EVENT).filter((e) => !every.updates.some((u) => u.e === e)); })) add('an event no case shows', miss);
+await pc.close();
 console.log(`${clicks} clicks · ` + (issues.size ? '\n' + [...issues].map(([k, v]) => `${k}\n   ${v.join('\n   ')}`).join('\n') : 'no glitches found'));
 await b.close();

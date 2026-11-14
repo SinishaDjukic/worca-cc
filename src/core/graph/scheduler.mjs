@@ -730,7 +730,7 @@ export function createScheduler(opts) {
 
   function route(node, port, token, verdict, executionId, { approved = false } = {}) {
     if (ended) return;
-    // The node approval stop: the approved port's token goes NOWHERE until a person answers — before any
+    // The node approval stop: the approved port's token goes NOWHERE until the ask is answered — before any
     // wire (and before loop accounting), so no downstream node can start (spec D2).
     if (!approved && approveOf(node)?.port === port.id) { holdForApproval(node, port, token, executionId); return; }
     const outs = outWires.get(`${node.id}.${port.id}`) || [];

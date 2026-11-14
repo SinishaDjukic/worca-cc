@@ -945,3 +945,32 @@ test('E10: a registered import row whose project has team memory available carri
   assert.equal(mark('/a/svc-iam').textContent, 'team memory available');
   assert.equal(mark('/x/api'), null, 'a new row is not a project yet');
 });
+
+test('with an Everyday coding role covering the scan, Scan sends no pick (re-scans follow the role) unless a picker was changed', async () => {
+  const roleSettings = { workspaceScan: null, workspaceScanFromRole: true,
+    workspaceScanDefault: { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'sonnet', agentEffort: 'medium' } };
+  const posts = [];
+  const { window } = await boot({ fetchHandler: withModels(posts, roleSettings) });
+  goCreate(window);
+  await tick(); await tick(); await tick();
+  const doc = window.document;
+  assert.equal(doc.querySelector('#wiz-scan-model').value, 'claude-opus-5-5', 'the column shows the role');
+  doc.querySelector('#wiz-name').value = 'Role WS';
+  pick(window, ['/a/svc-iam', '/a/svc-ui']);
+  click(window, doc.querySelector('#wiz-start-scan'));
+  await tick(); await tick();
+  assert.equal('models' in posts.at(-1), false, 'nothing chosen: no pick, so none is stored on the workspace');
+
+  const posts2 = [];
+  const second = await boot({ fetchHandler: withModels(posts2, roleSettings) });
+  goCreate(second.window);
+  await tick(); await tick(); await tick();
+  const d2 = second.window.document;
+  const agent = d2.querySelector('#wiz-agent-model');
+  agent.value = 'opus'; agent.dispatchEvent(new second.window.Event('change'));
+  d2.querySelector('#wiz-name').value = 'Chosen WS';
+  pick(second.window, ['/a/svc-iam', '/a/svc-ui']);
+  click(second.window, d2.querySelector('#wiz-start-scan'));
+  await tick(); await tick();
+  assert.deepEqual(posts2.at(-1).models, { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'opus', agentEffort: 'medium' }, 'a changed picker is a choice: it is sent');
+});

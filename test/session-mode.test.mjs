@@ -18,7 +18,7 @@ test('the decision table', async () => {
     { name: 'shared opted in, any engine that resumes', run: () => assert.deepEqual(pick({ spec: spec('shared'), engine: 'cursor', caps: { subagents: false } }), ['shared', 'chosen in the session settings']) },
     { name: 'shared on an engine that cannot resume', run: () => assert.deepEqual(pick({ spec: spec('shared'), engine: 'cursor', caps: { resume: false } }), ['separate', 'Cursor cannot resume a session']) },
     { name: 'no sub-agents', run: () => assert.deepEqual(pick({ engine: 'gemini', caps: { subagents: false } }), ['separate', 'Gemini CLI has no sub-agents']) },
-    { name: 'gate closed', run: () => assert.deepEqual(pick({ verified: { claude: false } }), ['separate', 'sub-agents are not available on Claude yet']) },
+    { name: 'gate closed', run: () => assert.deepEqual(pick({ verified: { claude: false } }), ['separate', 'sub-agents are not available on Claude Code yet']) },
     { name: 'version unknown', run: () => assert.deepEqual(pick({ cliVersion: null }), ['separate', 'the Claude Code version is unknown']) },
     { name: 'old CLI', run: () => assert.deepEqual(pick({ cliVersion: '2.1.278' }), ['separate', 'Claude Code 2.1.278 is older than 2.1.281']) },
     { name: 'the floor itself passes', run: () => assert.deepEqual(pick({ cliVersion: '2.1.281' }), ['subagents', 'ok']) },
@@ -44,10 +44,10 @@ test('v2 — rule order, exact matches and `requested`', async () => {
     { name: 'only "1" is the kill switch', run: () => { for (const v of ['0', 'true', '']) assert.deepEqual(pick({ env: { WORCA_SESSIONS_DISABLE: v } }), ['subagents', 'ok']); } },
     { name: 'the kill switch beats the flag', run: () => assert.deepEqual(pick({ env: { WORCA_SESSIONS_DISABLE: '1' }, flagOn: false }), ['separate', 'WORCA_SESSIONS_DISABLE=1']) },
     { name: 'the flag beats shared', run: () => assert.deepEqual(pick({ flagOn: false, spec: spec('shared') }), ['separate', 'the Labs flag sessionGroups is off']) },
-    { name: 'shared on Claude with no resume', run: () => assert.deepEqual(pick({ spec: spec('shared'), caps: { resume: false } }), ['separate', 'Claude cannot resume a session']) },
-    { name: 'no sub-agents beats the gate', run: () => assert.deepEqual(pick({ caps: { subagents: false }, verified: { claude: false } }), ['separate', 'Claude has no sub-agents']) },
-    { name: 'the gate needs exactly true', run: () => assert.deepEqual(pick({ verified: { claude: 1 } }), ['separate', 'sub-agents are not available on Claude yet']) },
-    { name: 'the gate beats the version', run: () => assert.deepEqual(pick({ verified: {}, cliVersion: null }), ['separate', 'sub-agents are not available on Claude yet']) },
+    { name: 'shared on Claude Code with no resume', run: () => assert.deepEqual(pick({ spec: spec('shared'), caps: { resume: false } }), ['separate', 'Claude Code cannot resume a session']) },
+    { name: 'no sub-agents beats the gate', run: () => assert.deepEqual(pick({ caps: { subagents: false }, verified: { claude: false } }), ['separate', 'Claude Code has no sub-agents']) },
+    { name: 'the gate needs exactly true', run: () => assert.deepEqual(pick({ verified: { claude: 1 } }), ['separate', 'sub-agents are not available on Claude Code yet']) },
+    { name: 'the gate beats the version', run: () => assert.deepEqual(pick({ verified: {}, cliVersion: null }), ['separate', 'sub-agents are not available on Claude Code yet']) },
     { name: 'an unknown version beats mixed endpoints', run: () => assert.deepEqual(pick({ cliVersion: '', modelEnvs: ['a', 'b'] }), ['separate', 'the Claude Code version is unknown']) },
     { name: 'an old CLI beats the missing flag', run: () => assert.deepEqual(pick({ cliVersion: '2.1.280', caps: { forwardSubagentText: false } }), ['separate', 'Claude Code 2.1.280 is older than 2.1.281']) },
     { name: 'the missing flag beats mixed endpoints', run: () => assert.deepEqual(pick({ caps: { forwardSubagentText: false }, modelEnvs: ['a', 'b'] }), ['separate', 'Claude Code 2.1.308 cannot forward sub-agent text']) },
@@ -57,9 +57,9 @@ test('v2 — rule order, exact matches and `requested`', async () => {
   ]);
 });
 
-test('v2 — C13: Claude follows SESSION_SUBAGENTS_VERIFIED; a mock run passes { [engine]: true } (Task 44) and runs sub-agents', () => {
+test('v2 — C13: Claude Code follows SESSION_SUBAGENTS_VERIFIED; a mock run passes { [engine]: true } (Task 44) and runs sub-agents', () => {
   const real = chooseSessionMode({ ...OK, verified: SESSION_SUBAGENTS_VERIFIED });
-  assert.deepEqual([real.mode, real.reason], SESSION_SUBAGENTS_VERIFIED.claude === true ? ['subagents', 'ok'] : ['separate', 'sub-agents are not available on Claude yet']);
+  assert.deepEqual([real.mode, real.reason], SESSION_SUBAGENTS_VERIFIED.claude === true ? ['subagents', 'ok'] : ['separate', 'sub-agents are not available on Claude Code yet']);
   assert.deepEqual(pick({ verified: { claude: true }, cliVersion: CLAUDE_AGENTS_FILE_MIN }), ['subagents', 'ok']);
 });
 

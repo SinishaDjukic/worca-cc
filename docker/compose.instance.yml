@@ -1,0 +1,74 @@
+# docker/compose.instance.yml — one hosted-style instance: worca, broker, cloudflared
+# (docs/instance-contract.md).
+#
+#   docker compose -f compose.yml -f compose.broker.yml -f compose.instance.yml up -d
+#   docker compose -f compose.yml -f compose.broker.yml -f compose.instance.yml --profile tunnel up -d
+#
+# On its own (no tunnel profile) this is the regular container with the credential broker, a
+# drain long enough for a stop, and the hosted-mode variables below left commented. The
+# `tunnel` profile adds cloudflared: create a remotely managed tunnel at Cloudflare whose
+# ingress sends your instance host to http://worca:4317 and your key-page host to
+# http://broker:8081 (never 8080), put its token in .env as TUNNEL_TOKEN, and uncomment the
+# hosted-mode variables: worca then answers only through the tunnel, with an identity token
+# your gate signs (or Cloudflare Access, docs/remote-access.md).
+#
+# Needs in .env: WORCA_BROKER_SECRET (`docker compose run --rm broker worca broker secrets`),
+# and for single mode WORCA_BROKER_KEY_ANTHROPIC. compose.yml's own variables apply as usual.
+
+services:
+  worca:
+    # The drain waits up to WORCA_DRAIN_TIMEOUT_MS (20 s); give it room before SIGKILL.
+    stop_grace_period: 60s
+    environment:
+      # ── Hosted mode (docs/instance-contract.md "Variables"). Uncomment together. ──
+      # WORCA_HOST: "::"
+      # WORCA_ALLOWED_HOSTS: ${WORCA_INSTANCE_HOST:?set WORCA_INSTANCE_HOST}
+      # WORCA_IDENTITY_ISSUER: ${WORCA_IDENTITY_ISSUER:?set WORCA_IDENTITY_ISSUER}
+      # WORCA_IDENTITY_AUDIENCE: ${WORCA_INSTANCE_HOST}
+      # WORCA_IDENTITY_JWKS_URL: ${WORCA_IDENTITY_ISSUER}/.well-known/jwks.json
+      # WORCA_BROKER_REQUIRED: "1"
+      # WORCA_TERMINAL_REMOTE: "0"
+      # WORCA_ACTIONS_REMOTE: "0"
+      # WORCA_AWAY_PER_PERSON: "1"
+      # WORCA_AUTO_RESUME: "1"
+      # WORCA_MAX_PARALLEL: "4"
+      # WORCA_MAX_PARALLEL_SCRIPTS: "2"
+      # ── A control plane's heartbeat (both, or neither). ──
+      # WORCA_HEARTBEAT_URL: ${WORCA_HEARTBEAT_URL}
+      # WORCA_HEARTBEAT_TOKEN: ${WORCA_HEARTBEAT_TOKEN}
+      # ── Outbound network policy. ──
+      # WORCA_EGRESS_MODE: allow
+      # WORCA_EGRESS_ALLOW: ${WORCA_EGRESS_ALLOW}
+      # WORCA_EGRESS_DENY: .invalid
+
+  broker:
+    environment:
+      # ── Hosted mode: several people, each with their own keys (docs/credential-broker.md
+      # "Multi mode"). WORCA_BROKER_MODE and WORCA_BROKER_VAULT_KEY come from .env through
+      # compose.broker.yml; set WORCA_BROKER_MODE=multi there. ──
+      # WORCA_BROKER_HOST: "::"
+      # WORCA_BROKER_PUBLIC_URL: https://${WORCA_KEYPAGE_HOST}
+      # WORCA_BROKER_RETURN_URL: https://${WORCA_INSTANCE_HOST}
+      # WORCA_ALLOWED_HOSTS: ${WORCA_KEYPAGE_HOST}
+      # WORCA_IDENTITY_ISSUER: ${WORCA_IDENTITY_ISSUER}
+      # WORCA_IDENTITY_AUDIENCE: ${WORCA_KEYPAGE_HOST}
+      # WORCA_IDENTITY_JWKS_URL: ${WORCA_IDENTITY_ISSUER}/.well-known/jwks.json
+
+  cloudflared:
+    profiles: ["tunnel"]
+    image: cloudflare/cloudflared:${CLOUDFLARED_TAG:-2026.10.3}
+    # The image's ENTRYPOINT is `cloudflared --no-autoupdate`; `tunnel run` reads TUNNEL_TOKEN.
+    command: ["tunnel", "run"]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    # Its own container, never worca's network namespace: worca would take its requests for local
+    # ones (docs/remote-access.md "Callers inside the box").
+    depends_on:
+      - worca
+      - broker
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    restart: unless-stopped

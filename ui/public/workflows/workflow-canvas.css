@@ -36,6 +36,10 @@ input.wfv-name{width:auto;height:32px;min-width:56px;max-width:280px;field-sizin
 input.wfv-name:hover{background:var(--hover);}
 input.wfv-name:focus{background:var(--field);outline:none;}
 input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
+/* What the canvas holds (#1127): Editing (yours) / Unsaved copy (Use as template) / Built-in / Not saved. */
+.wfv-doc{flex:0 1 auto;min-width:0;max-width:160px;height:22px;margin:0 4px 0 2px;padding:0 8px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font:500 11px/22px var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wfv-doc[data-kind="edit"]{background:var(--green-bg);color:var(--green-ink-strong);}
+.wfv-doc:is([data-kind="copy"],[data-kind="new"]){background:var(--amber-bg);color:var(--amber-ink-strong);}
 .wfv-errchip{flex:0 0 auto;margin:0 4px 0 2px;}
 .wfv-errchip.is-incomplete{background:var(--field);color:var(--ink-2);}
 .wfv-errchip.is-warning{background:var(--amber-bg);color:var(--amber-ink-strong);}
@@ -169,8 +173,10 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfl-arch .wfl-main{cursor:default;}
 .wfl-arch .wfl-main:hover{background:none;}
 .wfl-wf.is-legacy{opacity:.55;}
-.wfl-tb{flex:0 0 auto;width:120px;height:44px;border-radius:var(--r-sm);background:var(--canvas-2);border:1px solid var(--line);display:grid;place-items:center;overflow:hidden;font:11px var(--mono);color:var(--ink-2);}
-.wfl-wf-actions{display:flex;flex:0 0 auto;}
+.wfl-tb{flex:0 0 auto;width:88px;height:40px;border-radius:var(--r-sm);background:var(--canvas-2);border:1px solid var(--line);display:grid;place-items:center;overflow:hidden;font:11px var(--mono);color:var(--ink-2);}
+.wfl-wf-actions{display:flex;flex:0 0 auto;align-items:center;gap:2px;padding-right:2px;}
+.wfl-act{flex:0 0 auto;white-space:nowrap;}
+.wfl-fold > .wfl-empty{margin:6px 8px 8px;text-align:left;}
 .wfl-empty{margin:20px 10px;color:var(--ink-2);text-align:center;font-size:13px;}
 .wfl-foot{flex:0 0 auto;height:38px;display:flex;align-items:center;padding:0 14px;border-top:1px solid var(--line);color:var(--ink-2);font-size:12px;}
 @media (max-width:760px){.wfl{position:absolute;top:8px;right:8px;bottom:8px;z-index:35;width:min(380px,calc(100% - 16px));box-shadow:var(--shadow-sheet);}}

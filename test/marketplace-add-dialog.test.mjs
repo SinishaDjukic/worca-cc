@@ -660,7 +660,12 @@ test('a job ends once, late reloads, the fields and marks each view leaves, and 
 
 test('P7 CSS: progress lines stay readable and whole; long titles wrap; the card name sits on the actions row (cycle 2); the meta line\'s icon stays by its path (cycle 3); a field error\'s long path wraps (cycle 4); the result fits a 290px screen and the spinner keeps its gap in forced colours (cycle 5)', () => {
   const css = readStyleCss();
-  const block = css.slice(css.indexOf('/* ── marketplace P7 ── */'));
+  // The block ends at the next one-line section header (`/* ── … ── */`, `/* ---------- … ---------- */`), so a later
+  // feature's stylesheet (Design's, after it in parts.json) is not read as this block.
+  const at = css.indexOf('/* ── marketplace P7 ── */');
+  const header = /\n\/\* (?:──|-{3,}) [^\n]*? (?:──|-{3,}) \*\/(?=\n)/g;
+  header.lastIndex = at + 1;
+  const block = css.slice(at, header.exec(css)?.index);
   const rule = (sel) => {
     const at = block.indexOf(`\n${sel}{`);
     assert.ok(at >= 0, sel);

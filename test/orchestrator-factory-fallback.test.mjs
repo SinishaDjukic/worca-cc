@@ -65,8 +65,8 @@ test('signed out, Copilot roles: a Shaper run starts and logs exactly one warnin
   const h = start({ claudeAuth: auth });
   const res = await h.done;
   assert.equal(res.status, 'done', res.error);
+  // The Deep thinking role covers Plan Review, so its factory default is never wanted: only the second opinion warns.
   assert.deepEqual(factoryLogs(h), [
-    'Plan Review: Sonnet 5.5 needs Claude Code sign-in; using Copilot Claude Sonnet 4.6',
     'Second-opinion reviewer: Opus 5.5 needs Claude Code sign-in; using Copilot Claude Sonnet 4.6 · high',
   ]);
   assert.deepEqual(h.orch.getState().warnings.filter((w) => FACTORY_RE.test(w)), factoryLogs(h), 'kept in the run warnings');
@@ -94,7 +94,7 @@ test('defrag, routed Copilot Quick role, signed out: the pair is the Quick role,
   assert.deepEqual(factoryLogs(h), []);
 });
 
-test('a mock run with no injected claudeAuth never probes; the Shaper nodes keep the signed-in values', async () => {
+test('a mock run with no injected claudeAuth never probes; the Shaper nodes take the roles, the second opinion its factory default', async () => {
   writeUser(ROLES_COPILOT);
   const orch = createOrchestrator({ projectDir: gitDir('factory-orch-noseam'), workflowId: 'wf_shape', prompt: 'demo', claude: { mock: true }, shape: SHAPE });
   let calls = 0;
@@ -105,7 +105,7 @@ test('a mock run with no injected claudeAuth never probes; the Shaper nodes keep
   assert.equal(res.status, 'done', res.error);
   assert.equal(calls, 0);
   const nc = orch.resolved.nodeCtx.n_roles;
-  assert.deepEqual([nc.model, nc.effort], ['claude-sonnet-5-5', 'medium']);
+  assert.deepEqual([nc.model, nc.effort], [GW, 'medium'], 'the Deep thinking role beats the factory default');
   assert.deepEqual(nc.roles.product, { model: 'claude-opus-5-5', effort: 'medium', source: 'template' });
 });
 
@@ -152,18 +152,20 @@ test('resume: a paused fallback run keeps its pairs with no new warning lines; a
   let paused = false;
   const h = start({ projectDir: dir, claudeAuth: authOf('signed-out') }, (q, orch) => { if (!paused) { paused = true; orch.pause(); } });
   assert.equal((await h.done).status, 'paused');
-  assert.equal(factoryLogs(h).length, 2);
+  assert.equal(factoryLogs(h).length, 1, 'the second opinion only: the role covers Plan Review');
   const saved = readPipelineForResume(h.orch.getState().id);
-  assert.equal(saved.resumePoint.pickWarnings.filter((w) => FACTORY_RE.test(w)).length, 2, 'the resume point carries them');
+  assert.equal(saved.resumePoint.pickWarnings.filter((w) => FACTORY_RE.test(w)).length, 1, 'the resume point carries it');
 
   const h2 = start({ projectDir: dir, resume: saved, shape: undefined, claudeAuth: authOf('signed-out') });
   const res = await h2.done;
   assert.equal(res.status, 'done', res.error);
   assert.deepEqual(factoryLogs(h2), [], 'not logged again');
-  assert.equal(h2.orch.getState().warnings.filter((w) => FACTORY_RE.test(w)).length, 2, 'still in the run warnings');
+  assert.equal(h2.orch.getState().warnings.filter((w) => FACTORY_RE.test(w)).length, 1, 'still in the run warnings');
   assert.equal(h2.orch.resolved.nodeCtx.n_roles.model, GW, 'the manifest pair');
 
   // A run started before this change: its cell carries the old template pins and resumes on them, signed out or not.
+  // No roles here, so the pin is the factory default the old template carried.
+  writeUser({});
   const h3 = start({ projectDir: gitDir('factory-orch-resume-old'), claudeAuth: authOf('signed-in') }, (q, orch) => orch.pause());
   assert.equal((await h3.done).status, 'paused');
   const old = readPipelineForResume(h3.orch.getState().id);

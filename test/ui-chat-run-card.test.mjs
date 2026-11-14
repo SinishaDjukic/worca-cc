@@ -1457,6 +1457,23 @@ test('feature card: a reviewed slice\'s member row draws its Requirements fold, 
   assert.equal(lineOf().getAttribute('aria-expanded'), 'true', 'a second repaint does not toggle it shut');
 });
 
+test('feature card: a held run shows Needs you and Start now once, the member row reads Waiting, and "for you to start" occurs once in the card text', () => {
+  const HELD_RUN = { ticket: { status: 'scheduled', after: { index: 1 }, held: true } };
+  const row = featureRow([DONE_RUN, HELD_RUN, WAITING]);
+  row.members[0].pipelineId = 'p1';
+  const { card, $$, el = card.el } = mk({ controls: { memoFor: () => ({}), groupOf: () => row } });
+  card.update(shaped({ pipelineId: 'abcd1234', log: [],
+    feature: VIEW3([SL(1, 'done', { pipelineId: 'p1' }), SL(2, 'held'), SL(3, 'planned')], { open: true, held: { index: 2, ticketId: 't2' } }) }));
+  const text = el.textContent;
+  assert.equal(text.split('for you to start').length - 1, 1);
+  assert.equal($$('.shape-feature-held').length, 1);
+  assert.equal(text.split('Needs you').length - 1, 1, 'Needs you once in the card');
+  assert.equal($$('button').filter((b) => b.textContent === 'Start now' && !b.hidden).length, 1, 'one start action');
+  const member = $$('.chat-rc-members .run-member').find((li) => li.querySelector('.run-member-title').textContent === 'Part 2');
+  assert.equal(member.querySelector('.run-member-line').textContent, 'Waiting');
+  assert.doesNotMatch(member.textContent, /starts after/);
+});
+
 test('feature card: the step log shows Clarify · 2 answers, Plan approved, Split into 3 runs; Show unfolds in place', () => {
   const { card, $, el = card.el } = mk();
   const log = [{ key: 'clarify', run: null, text: 'Clarify · 2 answers', detail: ['Where? → Redis', 'How? → JSON'] },

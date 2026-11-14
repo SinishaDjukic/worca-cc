@@ -48,6 +48,9 @@ group, then Ungrouped. Archive group is blocked while a chat in it is busy. With
 suggests a name from the chat titles and first messages on the Run naming model; off, it is a plain name field and
 `POST /api/ask/groups/suggest-name` answers 404.
 
+A design's chat is a thread with mode `design`, titled after the design and shown only in the design's own dock. As
+Workflows chats are, it is kept out of Chat's list, counts and search, and out of the browser extension.
+
 ## Ask worca beside the page
 
 Every page with the top bar, except Chat, has an **Ask worca** button left of Activity. It opens the

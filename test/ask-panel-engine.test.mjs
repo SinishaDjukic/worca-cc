@@ -32,11 +32,11 @@ test('a new chat lists its engine\'s models; every other engine is one row that 
   const ctx = makePanel({ fetchHandler: handler() });
   ctx.panel.open(); await ctx.tick(); await ctx.tick();
   ctx.doc.querySelector('[data-ask-model-btn]').click(); await ctx.tick();
-  assert.deepEqual(groups(ctx), ['Claude']);
+  assert.deepEqual(groups(ctx), ['Claude Code']);
   assert.deepEqual(names(ctx), ['Opus 5.5']);
-  assert.deepEqual(engineRows(ctx), ['Codex (beta)']);
+  assert.deepEqual(engineRows(ctx), ['OpenAI Codex (beta)']);
   await openEngine(ctx, 'codex');
-  assert.equal(ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').textContent, '‹ Codex (beta)');
+  assert.equal(ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').textContent, '‹ OpenAI Codex (beta)');
   assert.deepEqual(names(ctx), ['GPT-5.5']);
   ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').click(); await ctx.tick();
   assert.deepEqual(names(ctx), ['Opus 5.5'], 'back returns to the main list');
@@ -269,9 +269,9 @@ test('each engine\'s list holds the newest of each family; its More models the r
   const ctx = makePanel({ fetchHandler: handler({ catalog: CATALOG_MORE }) });
   ctx.panel.open(); await ctx.tick(); await ctx.tick();
   ctx.doc.querySelector('[data-ask-model-btn]').click(); await ctx.tick();
-  assert.deepEqual(groups(ctx), ['Claude']);
+  assert.deepEqual(groups(ctx), ['Claude Code']);
   assert.deepEqual(names(ctx), ['Opus 5.5']);
-  assert.deepEqual(engineRows(ctx), ['Codex (beta)', 'Copilot (beta)']);
+  assert.deepEqual(engineRows(ctx), ['OpenAI Codex (beta)', 'GitHub Copilot (beta)']);
   ctx.doc.querySelector('[data-ask-more-models]').click(); await ctx.tick();
   assert.deepEqual(names(ctx), ['Opus 5'], 'only the shown engine\'s more models');
   ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').click(); await ctx.tick();
@@ -279,7 +279,7 @@ test('each engine\'s list holds the newest of each family; its More models the r
   assert.deepEqual(names(ctx), ['Claude Sonnet 5.5', 'GPT-6.1 Sol', 'Gemini 4 Argon'], 'the newest of each family');
   ctx.doc.querySelector('.ask-pop-model [data-ask-more-models]').click(); await ctx.tick();
   assert.deepEqual(names(ctx), ['Claude Sonnet 5', 'GPT-5.4 Mini']);
-  assert.equal(ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').textContent, '‹ Copilot (beta)');
+  assert.equal(ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').textContent, '‹ GitHub Copilot (beta)');
   ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').click(); await ctx.tick();
   assert.deepEqual(names(ctx), ['Claude Sonnet 5.5', 'GPT-6.1 Sol', 'Gemini 4 Argon'], 'back to Copilot\'s list, not the main one');
 });
@@ -325,9 +325,9 @@ test('inside a Codex chat the picker lists every engine and marks the chat\'s ow
   const ctx = await openCodexChat({ fetchHandler: handler(CODEX_CHAT) });
   assert.equal(modelBtn(ctx).dataset.engine, 'codex');
   modelBtn(ctx).click(); await ctx.tick();
-  assert.deepEqual(groups(ctx), ['Codex (beta) · this chat']);
+  assert.deepEqual(groups(ctx), ['OpenAI Codex (beta) · this chat']);
   assert.deepEqual(names(ctx), ['GPT-5.5']);
-  assert.deepEqual(engineRows(ctx), ['Claude']);
+  assert.deepEqual(engineRows(ctx), ['Claude Code']);
   await openEngine(ctx, 'claude');
   assert.deepEqual(names(ctx), ['Opus 5.5']);
 });
@@ -342,7 +342,7 @@ test('picking a Claude model in a Codex chat previews, asks, then switches in pl
   assert.deepEqual(posts, [
     { engine: 'claude', model: 'claude-opus-5-5', effort: 'high', dryRun: true },
     { engine: 'claude', model: 'claude-opus-5-5', effort: 'high', dropTurns: 0 }]);
-  assert.equal(confirms[0].title, 'Switch this chat to Claude?');
+  assert.equal(confirms[0].title, 'Switch this chat to Claude Code?');
   assert.match(confirms[0].message, /• Claude reads with its own Read/);
   assert.match(modelBtn(ctx).textContent, /Opus 5\.5/);
   assert.equal(modelBtn(ctx).dataset.engine, 'claude');
@@ -425,7 +425,7 @@ test('another engine\'s section leads with the model last used there, tagged', a
 test('the model button names the chat\'s engine in text when the catalog has more than one engine, and none with one', async () => {
   const ctx = await openCodexChat({ fetchHandler: handler(CODEX_CHAT) });
   const eng = ctx.doc.querySelector('.ask-model-btn-engine');
-  assert.deepEqual([eng.hidden, eng.textContent], [false, 'Codex']);
+  assert.deepEqual([eng.hidden, eng.textContent], [false, 'OpenAI Codex']);
   const one = await openCodexChat({ fetchHandler: handler({ ...CODEX_CHAT, catalog: { ...CATALOG, models: [CATALOG.models[1]] } }) });
   assert.deepEqual([one.doc.querySelector('.ask-model-btn-engine').hidden, one.doc.querySelector('.ask-model-btn-engine').textContent], [true, '']);
 });

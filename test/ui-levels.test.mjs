@@ -356,3 +356,24 @@ test('mode dialog: a settings read that answers while a pick is saving never und
   ctl.confirm('expert');
   assert.equal(currentLevel(doc), 'expert', 'once the save answered, a value from elsewhere applies again');
 });
+
+// ── (3) the Worca level elements in the catalogue ─────────────────────────────
+
+test('catalogue lists level elements', async () => {
+  const doc = readFileSync(join(__dir, '..', 'docs', 'ui-levels.md'), 'utf8');
+  const rows = doc.split('\n').filter((l) => l.startsWith('|'));
+  const rowFor = (re) => rows.find((l) => re.test(l));
+  await checkRows([
+    ['the level avatar art in the corner', /level avatar art in the corner/i],
+    ['the level tooltip', /level tooltip/i],
+    ['the account-menu level card', /account-menu level card/i],
+    ['Profile (the level section)', /Profile \(the level section\)/],
+    ['the level welcome and celebration', /level welcome and celebration/i],
+    ['the Getting started level line', /Getting started level line/i],
+  ].map(([name, re]) => ({ name, run: () => {
+    const row = rowFor(re);
+    assert.ok(row, `the catalogue has no row for ${name}`);
+    assert.match(row, /\|\s*all\b[^|]*\|\s*$/, `${name} is not marked all`);
+  } })));
+  assert.match(doc, /Levels are not Interface modes: no level element carries `data-min-level`/);
+});

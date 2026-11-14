@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import {
-  SETUP_STEPS, TEST_PASS_MS, LOGIN_RETRY_STEPS, proxyKey, initialAnswers, rolePatch, diffRows, buildApplyBody, nextGate,
+  SETUP_STEPS, TEST_PASS_MS, LOGIN_RETRY_STEPS, proxyKey, initialAnswers, rolePatch, diffRows, buildApplyBody, nextGate, networkAnswered, CLAUDE_MISSING_LINE,
   stepOfField, setupStepForSignIn, safeHttpUrl, openSetupAssistant, teamNotice, askEngineOf, NO_CHANGES_LINE,
 } from '../ui/public/setup-assistant.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -981,12 +981,65 @@ test('Model access › Claude: Sign in again shows the terminal steps; Check aga
     assert.match(h.$('.sa-claude').textContent, /run claude, then \/logout and \/login/);
     await h.click('.sa-recheck');
     assert.ok(h.log.some((r) => r.url === '/api/setup/detect?recheck=1'));
-    assert.match(h.$('.sa-claude').textContent, /Checked again just now\./);
+    assert.match(h.$('.sa-claude').textContent, /Checked just now: signed in\./);
     assert.equal(h.$('.sa-recheck'), null, 'the steps close once it is signed in');
     signedIn = false;
     await h.click('.sa-claude-relogin');
     await h.click('.sa-recheck');
     assert.match(h.$('.sa-claude').textContent, /Run claude, then \/login, in a terminal/, 'signed out now: the usual Check row');
+    assert.match(h.$('.sa-claude').textContent, /Checked just now: still not signed in\./);
+  } finally { h.close(); }
+});
+
+test('Model access › Claude: Check again is busy while it checks, then says what it found every time, and why when it fails', async () => {
+  const dir = '/tmp/scratch-home/.claude';
+  const signedOut = { checks: [check('claude', 'no', { facts: { configDirectory: dir } }), check('git', 'ok'), check('direct', 'ok')] };
+  let gate = null; let fail = false;
+  const answer = async () => { if (gate) await gate.promise; return fail ? reply({ error: 'detect broke' }, 500) : reply(signedOut); };
+  const h = await open({ entry: 'rerun', detect: signedOut, routes: { '/api/setup/detect?recheck=1': () => answer() } });
+  try {
+    await h.goTo('access');
+    const where = () => h.$('.sa-claude .sa-claude-where')?.textContent;
+    assert.equal(where(), `Worca checked ${dir}. If your terminal is signed in, Worca may be running with a different HOME or CLAUDE_CONFIG_DIR.`);
+    gate = deferred();
+    const b = h.$('.sa-recheck'); b.focus();
+    await h.click(b);
+    assert.equal(b.textContent, 'Checking…');
+    assert.equal(b.disabled, true, 'busy while the detect runs');
+    assert.equal(h.doc.activeElement, b, 'the pressed button keeps the focus');
+    b.dispatchEvent(new h.window.Event('click', { bubbles: true }));   // a press on the disabled button still dispatches
+    await h.settle();
+    await h.goTo('access');                                             // a repaint while it checks
+    assert.equal(h.$('.sa-recheck').textContent, 'Checking…', 'a repaint keeps it busy');
+    assert.equal(h.$('.sa-recheck').disabled, true);
+    gate.resolve(); gate = null; await h.settle();
+    assert.equal(h.log.filter((r) => r.url === '/api/setup/detect?recheck=1').length, 1, 'one check for the two presses');
+    assert.equal(h.$('.sa-recheck').textContent, 'Check again');
+    assert.equal(h.$('.sa-recheck').disabled, false);
+    assert.match(h.$('.sa-claude').textContent, /Checked just now: still not signed in\./, 'an unchanged answer still shows it was asked');
+    assert.ok(where(), 'still signed out: where it was checked stays');
+    fail = true;
+    await h.click('.sa-recheck');
+    assert.match(h.$('.sa-claude').textContent, /Couldn't check just now: detect broke/);
+    assert.doesNotMatch(h.$('.sa-claude').textContent, /Checked just now/, 'the old answer is replaced');
+    assert.equal(h.$('.sa-recheck').disabled, false, 'usable again after a failure');
+    fail = false;
+    const signedIn = { checks: [check('claude', 'ok'), check('git', 'ok'), check('direct', 'ok')] };
+    signedOut.checks = signedIn.checks;
+    await h.click('.sa-recheck');
+    assert.match(h.$('.sa-claude').textContent, /Claude Code is signed in.*Checked just now: signed in\./);
+    assert.equal(where(), undefined, 'signed in: no folder line');
+  } finally { h.close(); }
+});
+
+test('Model access › Claude: a Check row that names no folder (CLI not found) shows no "Worca checked" line', async () => {
+  const notFound = { checks: [check('claude', 'no'), check('git', 'ok'), check('direct', 'ok')] };
+  const h = await open({ entry: 'rerun', detect: notFound });
+  try {
+    await h.goTo('access');
+    assert.ok(h.$('.sa-claude .sa-recheck'), 'the Check row is shown');
+    assert.equal(h.$('.sa-claude .sa-claude-where'), null);
+    assert.doesNotMatch(h.$('.sa-claude').textContent, /Worca checked/);
   } finally { h.close(); }
 });
 
@@ -1537,4 +1590,41 @@ test('Share: a failed draft shows the server error in the err class', async () =
     assert.equal(h.status().textContent, 'Worca could not prepare the team setup. Try again.');
     assert.ok(h.status().classList.contains('err'));
   } finally { h.close(); }
+});
+
+test('Models step: roles for Claude and every engine the check found ready, with the engine switch at every level', async () => {
+  const engines = check('harnesses', 'warn', { label: 'Engines', line: '2 of 3 engines are ready.', facts: { engines: [
+    { name: 'claude', label: 'Claude', ready: true, line: 'Ready.' },
+    { name: 'copilot', label: 'Copilot', ready: true, line: 'Ready.' },
+    { name: 'goose', label: 'Goose', ready: false, line: 'Install the Goose CLI.' }] } });
+  const h = await open({ entry: 'rerun', detect: { checks: [check('claude', 'ok'), engines, check('git', 'ok')] } });
+  try {
+    await h.goTo('models');
+    const sw = h.$('.sa-roles .engine-switch');
+    assert.ok(sw, 'two engines: a switch');
+    assert.equal(sw.dataset.minLevel, undefined, 'shown at every interface level, not Expert only');
+    assert.deepEqual(h.$$('.sa-roles .engine-switch button').map((b) => b.dataset.engine), ['claude', 'copilot'], 'Goose is not ready: no roles step for it');
+    assert.ok(h.$('.inherit-field[data-setting="models.copilot.roles.deep"]'), 'the Copilot roles are there to set');
+    assert.equal(h.$('.inherit-field[data-setting="models.goose.roles.deep"]'), null);
+  } finally { h.close(); }
+});
+
+test('a signed-out Claude: the first start never says the setup works, and Review names it', () => {
+  const s0 = saved(); const a = initialAnswers({ saved: s0, entry: 'first' });
+  a.access.claude = true;
+  const line = (detect) => nextGate('review', a, { saved: s0, entry: 'first', detect }).reason;
+  assert.equal(line({ checks: [{ id: 'claude', state: 'no' }] }), CLAUDE_MISSING_LINE);
+  assert.equal(line({ checks: [{ id: 'claude', state: 'ok' }] }), 'Nothing to change: your current setup already works.');
+  const row = diffRows(s0, a, { detect: { checks: [{ id: 'claude', state: 'no' }] } }).find((r) => r.group === 'access');
+  assert.match(row.value, /Claude Code \(not signed in\)/);
+});
+
+test('networkAnswered: only a working direct connection, no proxy in the environment, none chosen', () => {
+  const a = { network: { mode: 'direct' } };
+  const d = (direct, proxyEnv) => ({ checks: [{ id: 'direct', state: direct }, { id: 'proxyEnv', state: proxyEnv }] });
+  assert.equal(networkAnswered(a, d('ok', 'no')), true);
+  assert.equal(networkAnswered(a, d('no', 'no')), false, 'direct failed: the proxy question is the point');
+  assert.equal(networkAnswered(a, d('ok', 'ok')), false, 'a proxy is set here');
+  assert.equal(networkAnswered({ network: { mode: 'proxy' } }, d('ok', 'no')), false);
+  assert.equal(networkAnswered(a, null), false, 'no check, no answer');
 });

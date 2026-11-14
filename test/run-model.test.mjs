@@ -115,6 +115,13 @@ test('spec §2.1, group: the current member decides; finished groups use their o
   } })));
 });
 
+test('group: a held current member reads "Run 3 of 3 · waiting", never the stale "waiting for run 2" (D18)', () => {
+  const g = groupModel({ kind: 'feature', members: [DONE, DONE, { ticket: { status: 'scheduled', after: { index: 2 }, held: { index: 3 } } }] }, OPTS);
+  assert.equal(g.state, 'waiting');
+  assert.equal(g.line, 'Run 3 of 3 · waiting');
+  assert.ok(!g.actions.includes('start-now'));
+});
+
 test('group: shipped as one PR reads "In review · 1 PR"; count "2/3" leaves Planning out; the bar counts Planning', () => {
   const one = groupModel({ kind: 'feature', members: [DONE, DONE, DONE], pr: PR }, OPTS);
   assert.equal(one.line, 'In review · 1 PR');
@@ -463,4 +470,29 @@ test('barLine: beside a stage bar a working run names only its step; nodes mode,
   const stepper = { version: 2, graph: { wires: [], nodes: [{ id: 'n_defrag', kind: 'agent', key: 'memoryDefragmenter', label: 'Memory defragment', ports: { inputs: [], outputs: [] } }] } };
   assert.equal(runModel(R({ stepper, steps: [row('n_defrag', 'start')], active: [live('n_defrag')] }), OPTS).barLine, null,
     'nodes mode draws no stage names, so the line stays whole');
+});
+
+test('D8 (pr-fix-rounds-stacking): a round never needs you through its PR or its watch; its origin does', () => {
+  const pr947 = { url: 'https://github.com/SinishaDjukic/worca-cc/pull/947', number: 947, state: 'OPEN', mergeable: 'CONFLICTING' };
+  const done = R({ status: 'done', endReached: true, pr: pr947 });
+  const marker = { pipelineId: 'ba22d7fd', round: 8, request: 'merge dev in', by: 'watch', kinds: ['conflicts'] };
+  const round = runModel({ ...done, round: marker }, OPTS);
+  assert.notEqual(round.state, 'needs-you', 'a done round with a conflicting PR is not Needs you');
+  assert.equal(round.prNeeds, false);
+  assert.equal(round.pr.word, 'Conflicts', 'its PR chip stays');
+  assert.equal(finishedNeedsYou({ pr: pr947, round: marker }), false);
+  assert.equal(finishedNeedsYou({ pr: pr947, branch: { roundOf: marker } }), false, 'the raw marker reads the same');
+  const origin = runModel(done, OPTS);
+  assert.deepEqual([origin.state, origin.prNeeds], ['needs-you', true], 'the origin with the same PR needs you');
+  assert.equal(finishedNeedsYou({ pr: pr947 }), true);
+
+  const stopped = { status: 'needs-person', reason: 'cap', fixRuns: 6 };
+  const plainPr = { ...pr947, mergeable: 'MERGEABLE' };
+  const rw = runModel(R({ status: 'done', endReached: true, pr: plainPr, watch: stopped, round: marker }), OPTS);
+  assert.notEqual(rw.state, 'needs-you', 'a round with a stopped watch is not Needs you');
+  assert.equal(rw.prNeeds, false);
+  assert.equal(finishedNeedsYou({ pr: plainPr, watch: stopped, round: marker }), false);
+  const ow = runModel(R({ status: 'done', endReached: true, pr: plainPr, watch: stopped }), OPTS);
+  assert.equal(ow.state, 'needs-you');
+  assert.match(ow.line, /Watch stopped/);
 });

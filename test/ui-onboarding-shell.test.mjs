@@ -52,11 +52,20 @@ async function boot({ onboarding = status(['claude']), projects = [], level = nu
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
   const posts = [];
   let current = onboarding;
+  // ob.hold: a promise a later GET waits on; ob.fail: the next GETs answer 500 with this error;
+  // ob.down: the next GETs reject (the server is not answering at all).
+  const ob = { hold: null, fail: null, down: null, gets: 0 };
   window.fetch = (u, init = {}) => {
     const url = String(u);
     const json = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
     if (url.includes('/api/onboarding')) {
       if (init.method === 'POST') { const b = JSON.parse(init.body); posts.push(b); current = { ...current, ...b }; }
+      if (init.method !== 'POST') ob.gets += 1;
+      if (init.method !== 'POST' && ob.down) return Promise.reject(new TypeError(ob.down));
+      if (init.method !== 'POST' && (ob.hold || ob.fail)) {
+        const answer = () => (ob.fail ? { ok: false, status: 500, json: async () => ({ error: ob.fail }) } : { ok: true, status: 200, json: async () => current });
+        return ob.hold ? ob.hold.then(answer) : Promise.resolve(answer());
+      }
       // holdOnboarding: a promise the GET waits on (the async onboarding load lands after the user acted).
       return init.method !== 'POST' && holdOnboarding ? holdOnboarding.then(() => json(current)) : json(current);
     }
@@ -76,7 +85,7 @@ async function boot({ onboarding = status(['claude']), projects = [], level = nu
   window.localStorage.clear();
   await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await settle();
-  return { window, doc: window.document, posts, setStatus: (s) => { current = s; } };
+  return { window, doc: window.document, posts, ob, setStatus: (s) => { current = s; } };
 }
 
 // ---- app.js wiring ----
@@ -89,7 +98,7 @@ test('boot: the pill mounts at the top of the sidebar and routes to the page (wh
   assert.ok(pillHost && pillHost.classList.contains('gs-pill-host'), 'the pill host is the first child of the nav (New run has no row)');
   assert.equal(pillHost.nextElementSibling.dataset.nav, 'chat', 'right above Chat');
   assert.equal(pillHost.querySelector('.gs-pill .nav-count').textContent, '1/9');
-  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 14, 'the nav census (Chat, Schedules, Team policy, Workflows, Requirements and the four Add-ons pages included; Running and History are one Runs item; Settings is in the account menu; New run is the top bar\'s button)');
+  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 15, 'the nav census (Chat, Design, Schedules, Team policy, Workflows, Requirements and the four Add-ons pages included; Running and History are one Runs item; Settings is in the account menu; New run is the top bar\'s button)');
   assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false, 'first visit to the home page (Chat): welcome up');
   assert.deepEqual(posts, [], 'showing the welcome writes nothing until a choice');
   click(window, doc.querySelector('#welcome-modal .ob-skip'));
@@ -195,6 +204,64 @@ test('Connect Claude Code re-checks on open: a page that loaded while signed out
   const line = doc.getElementById('claude-setup-status');
   assert.match(line.textContent, /installed and signed in/);
   assert.match(line.className, /\bok\b/);
+});
+
+test('Connect Claude Code › Check again: busy while it asks, a result line every time, the error when it fails, and where it checked when signed out', async () => {
+  const dir = '/tmp/scratch-home/.claude';
+  const signedOut = status([], { welcomeSeen: true, claude: { bin: 'claude', hint: null, auth: 'signed-out', configDirectory: dir } });
+  const { doc, window, ob, setStatus } = await boot({ onboarding: signedOut });
+  click(window, doc.querySelector('.gs-pill'));
+  await settle();
+  click(window, doc.querySelector('.gs-tile[data-step="claude"]'));
+  await settle();
+  const box = doc.getElementById('claude-setup-status');
+  const btn = doc.getElementById('claude-setup-check');
+  const where = () => box.querySelector('.ob-claude-where')?.textContent;
+  const checked = () => box.querySelector('.ob-claude-checked')?.textContent;
+  assert.match(box.textContent, /not signed in yet/);
+  assert.equal(where(), `Worca checked ${dir}. If your terminal is signed in, Worca may be running with a different HOME or CLAUDE_CONFIG_DIR.`);
+  assert.equal(checked(), undefined, 'the check on open leaves no "Checked just now" line');
+  let release; ob.hold = new Promise((r) => { release = r; });
+  click(window, btn);
+  await settle();
+  assert.equal(btn.textContent, 'Checking…');
+  assert.equal(btn.disabled, true, 'busy while it asks');
+  const gets = ob.gets;
+  click(window, btn);                       // a second press while busy asks nothing more
+  ob.hold = null; release();
+  await settle();
+  assert.equal(ob.gets, gets, 'one check for the two presses');
+  assert.equal(btn.textContent, 'Check again');
+  assert.equal(btn.disabled, false);
+  assert.equal(checked(), 'Checked just now: still not signed in.', 'an unchanged answer still shows it was asked');
+  assert.ok(where(), 'still signed out: where it was checked');
+  ob.fail = 'probe exploded';
+  click(window, btn);
+  await settle();
+  assert.equal(checked(), "Couldn't check just now: probe exploded");
+  assert.equal(btn.disabled, false, 'usable again after a failure');
+  ob.fail = null;
+  ob.down = 'Failed to fetch';               // the server is down: the request itself rejects
+  click(window, btn);
+  await settle();
+  assert.equal(checked(), "Couldn't check just now: Failed to fetch", 'a rejected request is a failure, not an answer');
+  assert.equal(btn.disabled, false);
+  ob.down = null;
+  setStatus(status([], { welcomeSeen: true, claude: { bin: 'claude', hint: null, auth: null, configDirectory: null } }));
+  click(window, btn);
+  await settle();
+  assert.equal(checked(), 'Checked just now: still not found.', 'no CLI found: the line says so');
+  assert.equal(where(), undefined, 'not found: no folder line');
+  setStatus(status(['claude'], { welcomeSeen: true, claude: { bin: 'claude', hint: null, auth: 'signed-in', configDirectory: dir } }));
+  click(window, btn);
+  await settle();
+  assert.match(box.textContent, /installed and signed in/);
+  assert.equal(checked(), 'Checked just now: signed in.');
+  assert.equal(where(), undefined, 'signed in: no folder line');
+  click(window, doc.getElementById('claude-setup-close'));
+  click(window, doc.querySelector('.gs-tile[data-step="claude"]'));
+  await settle();
+  assert.equal(checked(), undefined, 'opened again: no stale "Checked just now" line');
 });
 
 test('a tile guide: "Connect Claude Code" opens the setup dialog; "Chat" rings the sidebar Chat row, then the composer; nav hops survive navigation', async () => {

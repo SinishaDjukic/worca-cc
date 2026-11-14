@@ -40,10 +40,10 @@ test('a Claude model in a Codex chat is still refused on POST and PATCH: switchi
   const id = codexChat();
   const post = await send('POST', `/api/ask/threads/${id}/messages`, { text: 'again', model: 'claude-opus-5-5', effort: 'high' });
   assert.equal(post.status, 400);
-  assert.equal(post.body.error, 'this chat runs on Codex; switch it to Claude from the Chat model picker first');
+  assert.equal(post.body.error, 'this chat runs on OpenAI Codex; switch it to Claude Code from the Chat model picker first');
   const patch = await send('PATCH', `/api/ask/threads/${id}`, { model: 'claude-opus-5-5', effort: 'high' });
   assert.equal(patch.status, 400);
-  assert.equal(patch.body.error, 'this chat runs on Codex; switch it to Claude from the Chat model picker first');
+  assert.equal(patch.body.error, 'this chat runs on OpenAI Codex; switch it to Claude Code from the Chat model picker first');
   assert.equal(store.getThread(id).model, 'gpt-5.5');
 });
 
@@ -146,9 +146,10 @@ test('POST …/engine dryRun names the PDFs and the MCP servers the destination 
   store.appendMessage(th.id, { role: 'assistant', text: 'read', status: 'done', model: 'claude-opus-5-5', effort: 'high', engine: 'claude' });
   const pdf = store.addAttachment(th.id, user.id, { name: 'spec.pdf', kind: 'binary', mime: 'application/pdf', data: Buffer.from('%PDF-1.4\n') });
   store.addAttachment(th.id, user.id, { name: 'notes.txt', text: 'plain text travels' });
+  store.addAttachment(th.id, user.id, { name: 'bundle.zip', kind: 'binary', mime: 'application/octet-stream', data: Buffer.from([0x50, 0x4b, 3, 4, 0]) });
   const r = await SWITCH(th.id, { engine: 'codex', model: 'gpt-5.5', effort: 'low', dryRun: true });
   assert.equal(r.status, 200, JSON.stringify(r.body));
-  assert.deepEqual(r.body.attachments, [{ id: pdf.id, name: 'spec.pdf' }], 'the PDF only: Codex reads text');
+  assert.deepEqual(r.body.attachments, [{ id: pdf.id, name: 'spec.pdf' }], 'the PDF only: Codex reads text, a generic file needs no viewing');
   assert.deepEqual(r.body.mcpLost, ['docs'], 'the remote server Codex cannot start');
   assert.deepEqual(store.getThread(th.id).engine, 'claude');
 });
@@ -165,15 +166,15 @@ test('POST …/engine switches in one step; the next turn starts a fresh session
   const rows = store.listMessages(id);
   assert.deepEqual(rows.slice(0, 2).map((m) => m.text), ['hi', 'hello'], 'earlier messages are untouched');
   const div = rows.at(-1);
-  assert.deepEqual([div.role, div.text], ['system', 'Switched from Codex to Claude']);
+  assert.deepEqual([div.role, div.text], ['system', 'Switched from OpenAI Codex to Claude Code']);
   assert.deepEqual(div.blocks[0].engineSwitch, { from: 'codex', to: 'claude', model: 'claude-opus-5-5', effort: 'high', droppedTurns: 0 });
   assert.equal((await (await fetch(`${base}/api/ask/threads/${id}`)).json()).thread.engine, 'claude');
   const post = await send('POST', `/api/ask/threads/${id}/messages`, { text: 'and now?', model: 'claude-opus-5-5', effort: 'high' });
   assert.equal(post.status, 202, JSON.stringify(post.body));
   const job = mod._testing.askJobs.get(id);
   assert.equal(job.turn.resumeSessionId, null, 'never the other engine\'s session');
-  assert.match(job.turn.prompt, /^Conversation so far in this chat\. You start a fresh Claude session/);
-  assert.match(job.turn.prompt, /User: hi\n\nAssistant \(Codex, gpt-5\.5\): hello/);
+  assert.match(job.turn.prompt, /^Conversation so far in this chat\. You start a fresh Claude Code session/);
+  assert.match(job.turn.prompt, /User: hi\n\nAssistant \(OpenAI Codex, gpt-5\.5\): hello/);
   assert.match(job.turn.prompt, /and now\?$/);
   await idle(id);
   const reply = store.listMessages(id).filter((m) => m.role === 'assistant').at(-1);
@@ -191,7 +192,7 @@ test('refused, nothing changes: a running turn, a model the destination does not
   } finally { mod._testing.askJobs.delete(id); }
   const wrong = await SWITCH(id, { engine: 'claude', model: 'gpt-5.5', effort: 'low' });
   assert.equal(wrong.status, 400);
-  assert.equal(wrong.body.error, 'gpt-5.5 does not run on Claude: pick a model from its section');
+  assert.equal(wrong.body.error, 'gpt-5.5 does not run on Claude Code: pick a model from its section');
   assert.equal((await SWITCH(id, { engine: 'codex', model: 'gpt-5.5', effort: 'low' })).status, 400, 'already there');
   for (const fill of ['x', 'y']) {
     store.appendMessage(id, { role: 'user', text: fill.repeat(250_000) });

@@ -542,6 +542,103 @@ test('feature (group) page: the plan gate with 1 open issue is approvable', asyn
   assert.equal(posts[0].decision, 'approve');
 });
 
+// ---- the Requirements card's Ask for changes field: the bar must not stand in for the foot it hides ----------------
+
+const REQ_ASK = (over = {}) => ({ id: 'q-req', kind: 'plan', nodeId: 'requirements', executionId: 'e1', plan: { file: '/x/requirements.md', round: 1, revisable: true,
+  nodeId: 'requirements', lead: 'product', decisions: [], criteria: { ok: true, passed: 1, total: 1, items: [{ id: 'R-po-1', label: 'R-po-1 · Export', pass: true }],
+    criteria: [{ id: 'R-po-1', text: 'Export' }] }, ...over } });
+const FAILING_CHECK = { ok: false, passed: 0, total: 1, items: [{ id: 'R-po-1', label: 'R-po-1 · listed twice', pass: false }], criteria: [{ id: 'R-po-1', text: 'Export' }] };
+const reqRun = (pendingQuestion) => rrRun({ pendingQuestion });
+const barAnswer = (root) => root.querySelector('[data-model-action="answer"]');
+const barReads = (b) => [b.textContent, b.classList.contains('btn-primary')];
+
+test('run page, Ask for changes open: the bar drops Agree and plan, is not a primary, and its click posts nothing; Cancel restores it', async () => {
+  const posts = [];
+  const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', posts) });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', runs: [reqRun(REQ_ASK())] });
+  ctx.go('running/run-rr');
+  await ctx.settle();
+  const panel = runPanel(ctx);
+  const bar = panel.closest('.rd').querySelector('.rd-actions');
+  assert.deepEqual(barReads(barAnswer(bar)), ['Agree and plan', true]);
+  click(ctx, panel.querySelector('.plan-ask-changes'));
+  await ctx.settle();
+  assert.deepEqual(barReads(barAnswer(bar)), ['Answer', false]);
+  panel.querySelector('.plan-feedback').value = 'Also cover XLSX';
+  click(ctx, barAnswer(bar));
+  await ctx.settle();
+  assert.deepEqual(posts, [], 'the typed words are not dropped by an approve');
+  assert.equal(ctx.window.document.activeElement, panel.querySelector('.plan-feedback'));
+  assert.equal(panel.querySelector('.plan-feedback').value, 'Also cover XLSX');
+  click(ctx, panel.querySelector('.plan-typed-cancel'));
+  await ctx.settle();
+  assert.deepEqual(barReads(barAnswer(bar)), ['Agree and plan', true]);
+  click(ctx, barAnswer(bar));
+  await ctx.settle();
+  assert.deepEqual(posts.map((p) => p.decision), ['approve'], 'closed again, the bar is the card\'s primary');
+});
+
+test('run page, a failing requirement: the bar is Ask for changes until the field opens, then a plain Answer', async () => {
+  const posts = [];
+  const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', posts) });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', runs: [reqRun(REQ_ASK({ criteria: FAILING_CHECK }))] });
+  ctx.go('running/run-rr');
+  await ctx.settle();
+  const panel = runPanel(ctx);
+  const bar = panel.closest('.rd').querySelector('.rd-actions');
+  assert.deepEqual(barReads(barAnswer(bar)), ['Ask for changes', true]);
+  click(ctx, barAnswer(bar));
+  await ctx.settle();
+  assert.equal(panel.querySelector('.plan-typed').hidden, false, 'the bar\'s click is the card\'s click');
+  assert.deepEqual(barReads(barAnswer(bar)), ['Answer', false]);
+  assert.deepEqual(posts, []);
+});
+
+test('Chat run card, Ask for changes open: Answer is not a primary and its click reaches the field; Cancel restores it', async () => {
+  const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', []) });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', runs: [reqRun(REQ_ASK())] });
+  await ctx.settle();
+  const doc = ctx.window.document;
+  const built = chatCardBuilder('progress')(
+    { kind: 'card', id: 'c-req', state: 'tracked', card: { type: 'progress', pipelineId: 'p-rr', runId: 'run-rr', projectKey: 'p', title: 'Requirements' } },
+    { doc, win: ctx.window, fetch: (...a) => ctx.window.fetch(...a), openRunPanel() {}, openArtifact() {}, announce() {} });
+  doc.body.appendChild(built.el);
+  await ctx.settle();
+  const foot = built.el.querySelector('.chat-rc-actions');
+  assert.deepEqual(barReads(barAnswer(foot)), ['Answer', true]);
+  click(ctx, built.el.querySelector('.plan-ask-changes'));
+  await ctx.settle();
+  assert.deepEqual(barReads(barAnswer(foot)), ['Answer', false]);
+  doc.body.focus();
+  click(ctx, barAnswer(foot));
+  await ctx.settle();
+  assert.equal(doc.activeElement, built.el.querySelector('.plan-feedback'));
+  click(ctx, built.el.querySelector('.plan-typed-cancel'));
+  await ctx.settle();
+  assert.deepEqual(barReads(barAnswer(foot)), ['Answer', true]);
+  built.dispose();
+});
+
+test('feature (group) page, Ask for changes open: the bar drops Agree and plan and is not a primary', async () => {
+  const posts = [];
+  const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE());
+  server.groups[0].members = [groupMember(1, 'p1'), groupMember(2, 'p2', 'running'), groupMember(3, null, null)];
+  server.fetchHandler = recordAnswers('r2', posts, server.fetchHandler);
+  const { ctx, page } = await openFeaturePage({ server, runs: [rrRun({ runId: 'r2', pipelineId: 'p2', title: 'Run tags', pendingQuestion: REQ_ASK() })] });
+  const bar = page.querySelector('.gpage-actions');
+  assert.deepEqual(barReads(barAnswer(bar)), ['Agree and plan', true]);
+  click(ctx, page.querySelector('.gpage-question .plan-ask-changes'));
+  await ctx.settle(6);
+  assert.deepEqual(barReads(barAnswer(bar)), ['Answer', false]);
+  assert.equal(page.querySelector('.gpage-question .plan-typed').hidden, false, 'the repaint keeps the field open');
+  click(ctx, barAnswer(bar));
+  await ctx.settle();
+  assert.deepEqual(posts, []);
+});
+
 // ---- one ship flow (slice 2): the group page's Create PR opens the shared dialog ----------------------------------
 
 const doneGroup = () => [{ id: 'feat_1', kind: 'feature', title: 'Big change', projectKey: 'pk', planning: null,

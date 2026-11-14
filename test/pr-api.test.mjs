@@ -206,6 +206,7 @@ test('POST /api/pr pushes, creates the PR, returns url + mergeable', async () =>
   gitInfo.setRunner((cmd, args) => {
     seen.push([cmd, ...args]);
     if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+    if (cmd === 'git' && args[0] === 'remote') return Promise.resolve({ ok: true, stdout: 'origin\thttps://github.com/x/y.git (fetch)\norigin\thttps://github.com/x/y.git (push)\n', stderr: '', code: 0 });
     if (cmd === 'git' && args[0] === 'push') return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'create')
       return Promise.resolve({ ok: true, stdout: 'https://github.com/x/y/pull/7\n', stderr: '', code: 0 });
@@ -1049,7 +1050,7 @@ test('POST /api/pr names the host in a create failure: Azure DevOps and GitHub',
     gitInfo.setRunner((cmd, args) => Promise.resolve(
       cmd === 'gh' && args[0] === 'pr' && args[1] === 'create'
         ? { ok: false, stdout: '', stderr: 'no such base\n', code: 1 }
-        : { ok: true, stdout: cmd === 'gh' ? 'gh 2.x' : '', stderr: '', code: 0 }));
+        : { ok: true, stdout: cmd === 'gh' ? 'gh 2.x' : cmd === 'git' && args[0] === 'remote' ? 'origin\thttps://github.com/x/y.git (push)\n' : '', stderr: '', code: 0 }));
     const r = await post({ projectKey: betaKey, id: betaId });
     assert.equal(r.status, 500);
     assert.equal((await r.json()).error, 'GitHub pull request failed: no such base');
@@ -1536,4 +1537,18 @@ test('a requirements slice\'s PR body says which R-ids it satisfies', async () =
     assert.ok(body.startsWith('Part of Export: slice 1 of 2\nSatisfies: R-po-1, R-po-2, R-arch-1, R-ux-1\n\n'), body);
   });
   await rm(dir, { recursive: true, force: true });
+});
+
+test('POST /api/pr with no remote at all: a 409 that says so, and nothing is pushed', async () => {
+  const seen = [];
+  gitInfo.setRunner((cmd, args) => {
+    seen.push([cmd, ...args]);
+    if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+    return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
+  });
+  const r = await post({ id: betaId, projectKey: betaKey });
+  const body = await r.json();
+  assert.equal(r.status, 409, JSON.stringify(body));
+  assert.match(body.error, /no git remote/);
+  assert.equal(seen.some((a) => a[1] === 'push'), false);
 });

@@ -11,9 +11,12 @@
 // state.steps[] IS the execution ledger: one row per execution, key ===
 // executionId. There is no separate executions[] array.
 import { join, isAbsolute, extname, dirname, basename, sep } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { runScratchDir } from './run-manifest.mjs';
 import { rm, readFile, readdir, access, stat, writeFile, mkdir, realpath } from 'node:fs/promises';
 import { readDirections, pendingDirections } from './directions.mjs';
 import { runsOn } from '../shared/connections.mjs';
+import { codeReviewRoleKeys } from '../shared/shape/perspective-set.mjs';
 
 import {
   RunHarness, isAbort, isPause, pauseErr, firstLine, jsonClone,
@@ -25,7 +28,7 @@ import { loadAgentRegistry } from './agent-registry.mjs';
 import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared/graph/manifest.mjs';
-import { DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../shared/graph/constants.mjs';
+import { DEFAULT_MAX_CYCLES, FLOW_KINDS, KEYED_KINDS } from '../shared/graph/constants.mjs';
 import { pickDropWarnings } from '../shared/graph/role-slots.mjs';
 import { factoryFallbackLines } from './factory-models.mjs';
 import { scriptNodeCtx, pythonMissingSentence } from '../shared/graph/script-meta.mjs';
@@ -37,10 +40,12 @@ import { registryPortsFn } from './graph/registry-ports.mjs';
 import { checkPlan } from './shape/check.mjs';
 import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
-import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureApprovesEach, featureClarify, featureNotes } from './shape/features.mjs';
+import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureClarify, featureNotes } from './shape/features.mjs';
+import { fileSha, planOutputOf } from './shape/outline-file.mjs';
+import { readRunPrAuto } from './pr-auto.mjs';
 import { checkSlices, applyOutlineEdits, normalizeOutline, settleLeftOut, sliceRequirementIds, OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX } from '../shared/shape/slices.mjs';
 import { onlyCriteria } from '../shared/review/requirements-coverage.mjs';
-import { DEFAULT_PERSPECTIVES } from '../shared/shape/perspectives.mjs';
+import { DEFAULT_PERSPECTIVES, normalizePerspectives } from '../shared/shape/perspectives.mjs';
 import { normalizePlanConcern, planConcernFileName, concernFeedbackSection, requirementConcernOf, requirementConcernFeedbackSection } from '../shared/review/plan-concern.mjs';
 import { ensureHouseBrief } from './house-brief.mjs';
 import { extractChecklist } from '../shared/shape/checklist.mjs';
@@ -72,7 +77,7 @@ import { autoCandidates, findEquivalentWorkflow } from './auto/match.mjs';
 import { buildProposal, sanitizeProposalAnswer, remapTunables, mintAutoWorkflowId } from './auto/proposal.mjs';
 import { resolveAutoModel } from './auto/model.mjs';
 import { autoModelsFor } from './auto/runnable.mjs';
-import { probeClaudeAuth } from './preflight.mjs';
+import { probeClaudeAuth, isClaudeSignedOutError, CLAUDE_SIGNED_OUT_MESSAGE } from './preflight.mjs';
 import { configuredClaudeBin } from './cli-resolve.mjs';
 import { helperEngineFor } from './model-env.mjs';
 import {
@@ -118,6 +123,9 @@ export class GraphOrchestrator extends RunHarness {
     super(opts);
     // The graph default. createOrchestratorFor always passes an explicit id.
     if (!this.opts.workflowId) this.workflowId = GRAPH_DEFAULT_WORKFLOW.id;
+    // The run's chosen perspective set (flag proposedPerspectives), read once at start by the route: `{ chosen }` or
+    // null. resolveGraph bakes its role specs into the manifest; Clarify reads it through ctx.chosenPerspectives.
+    this.perspectiveSet = this.opts.perspectiveSet && Array.isArray(this.opts.perspectiveSet.chosen) ? { chosen: [...this.opts.perspectiveSet.chosen] } : null;
     // (this._runners is assigned by the _initRunners hook the base constructor calls.)
     this.resolved = null;        // resolveGraph's { template, ports, loops, nodes→nodeCtx, wires, agentsByKey, agentKeys }
     this.scriptRegistry = null;   // loadScriptRegistry() for this run (D16-filtered); tests override the built-in dir with opts.scriptsDir
@@ -129,6 +137,7 @@ export class GraphOrchestrator extends RunHarness {
     this._planVersion = 0;       // {vsuffix} ticks, carried across a resume
     this._planRevise = null;     // {id, path}: a revise answered just before a pause (F19), carried across a resume
     this._planConcernAnswer = null; // {id, payload}: a plan concern answered just before a pause (#990 s5), carried across a resume
+    this._planAwayApproved = null;  // {id}: a plan ask Away mode approved just before a pause, carried across a resume
     this._planConcernSeen = {};     // {[id]: 'raised' | 'decided'}: audited once per concern across resumes (#990 s5)
     this._planConcernHeld = null;   // {id, concern}: the parsed concern, carried across a resume (the agent need not rewrite it)
     this._slicingDone = false;   // L2: the Planner's slicing offer is over (no outline, or one decided); carried across a resume
@@ -215,8 +224,10 @@ export class GraphOrchestrator extends RunHarness {
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
       engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(overlay ? { overlay } : {}), ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
       ...(scan ? { agentPair: scan.agentPair, subagentPin: scan.subagentPin } : {}), claudeAuth: this._resolveClaudeAuth(),
+      ...(this.perspectiveSet ? { perspectiveSet: this.perspectiveSet } : {}),
     });
     this._adoptResolvedGraph(resolved);
+    this._notePerspectiveSet();
     // A model a person set that needs the Claude Code sign-in while it is signed out: the engine gate refuses the start
     // (RunHarness#_engineGate). Fresh starts only: resume never resolves, so this stays null there.
     this._signInBlocked = resolved.signInBlocked
@@ -444,6 +455,8 @@ export class GraphOrchestrator extends RunHarness {
           // pause, reason 'error', detail = the message) and the resume point keeps
           // auto.status 'deciding' + this loop's state, so resume() re-decides.
           this._log('orchestrator', 'warn', `auto: classifier failed: ${firstLine(err.detail || err.message)}`);
+          // The pause shows this message: signed out mid-run reads as what to do, not as a failed helper.
+          if (isClaudeSignedOutError(err.detail || err.message)) err.message = CLAUDE_SIGNED_OUT_MESSAGE;
         }
         throw err;
       }
@@ -643,6 +656,7 @@ export class GraphOrchestrator extends RunHarness {
     const resolved = await resolveGraph(this.projectDir, workflowId, registry, this.agentsDir, {
       engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
       claudeAuth: this._resolveClaudeAuth(),
+      ...(this.perspectiveSet ? { perspectiveSet: this.perspectiveSet } : {}),
     });
     if (!this.humanInLoop) {
       // spec D3: no agent may stop the run to ask (generic — every agent node).
@@ -650,6 +664,7 @@ export class GraphOrchestrator extends RunHarness {
     }
     this.workflowId = workflowId;
     this._adoptResolvedGraph(resolved);
+    this._notePerspectiveSet();
     // Auto picks runnable models itself and skips the user slots, so it has no user-set model to refuse
     // (signInBlocked is ignored); a dropped factory default is still said once.
     await this._noteFactoryFallbacks(resolved.factoryNotes);
@@ -796,6 +811,15 @@ export class GraphOrchestrator extends RunHarness {
    */
   _adoptResolvedGraph(resolved) {
     this.resolved = { ...resolved, nodeCtx: resolved.nodes };
+  }
+
+  /** A run with a perspective set: one audit line naming its code review roles, by keys only (fresh starts only). */
+  _notePerspectiveSet() {
+    if (!this.perspectiveSet) return;
+    const keys = codeReviewRoleKeys(Object.values(this.resolved?.nodeCtx || {}).map((nc) => nc?.config));
+    const line = `Perspective set: ${this.perspectiveSet.chosen.join(', ')}; code review roles: ${keys.join(', ') || 'none'}.`;
+    if (this.pipeline?.dir) appendAudit(this.pipeline.dir, line).catch(() => {});   // Auto's decision: the run is under way
+    else this._pendingAudits.push(line);
   }
 
   /** The sign-in seam resolveGraph probes with: an injected `claudeAuth` always; the real probe only off mock, so a mock
@@ -993,6 +1017,7 @@ export class GraphOrchestrator extends RunHarness {
         // starts next while a gate is held.
         this.state.resumePoint = this._buildResumePoint(snap);
         void this._persist();
+        this._stepRecorded();   // Pause after this step lands only after the finished step is in the point
       },
       // P3 contract: onGate is the state.gate NOTIFIER ({wireId, fromNode, toNode,
       // askId} | null); onAsk is the ONE ask channel (gates today).
@@ -1139,6 +1164,7 @@ export class GraphOrchestrator extends RunHarness {
       planVersion: this._planVersion,
       ...(this._planRevise ? { planRevise: { ...this._planRevise } } : {}),
       ...(this._planConcernAnswer ? { planConcernAnswer: { ...this._planConcernAnswer } } : {}),
+      ...(this._planAwayApproved ? { planAwayApproved: { ...this._planAwayApproved } } : {}),
       ...(Object.keys(this._planConcernSeen).length ? { planConcernSeen: { ...this._planConcernSeen } } : {}),
       ...(this._planConcernHeld ? { planConcernHeld: jsonClone(this._planConcernHeld) } : {}),
       ...(this.state.roleReviews ? { roleReviews: jsonClone(this.state.roleReviews) } : {}),
@@ -1175,6 +1201,7 @@ export class GraphOrchestrator extends RunHarness {
       memoryScope: this.memoryScope || null,   // agent memory §7.3: a paused defrag resumes with ONE scope (B10)
       ...(this.memoryOff ? { noMemory: true } : {}),   // #943: a run started without memory resumes without it
       ...(this.runShape ? { shape: this.runShape } : {}),
+      ...(this.perspectiveSet ? { perspectiveSet: this.perspectiveSet } : {}),
       ...(this.state.shaping ? { shaping: jsonClone(this.state.shaping) } : {}),
       checkpointRef: this.checkpointRef || null,
       checkpointRefs: { ...this.checkpointRefs },
@@ -1369,6 +1396,14 @@ export class GraphOrchestrator extends RunHarness {
       );
     }
     this._planRevise = null;
+    // Away's approve, answered just before a pause, the same way: deciding again would store a second record, spend a
+    // second answer, and could hit the limit and lose it. Kept until another id: a replay can be paused too.
+    if (this._planAwayApproved?.id === q.id) {
+      this._answeredBy.set(q.id, NIGHT_ACTOR);
+      this._log('orchestrator', 'info', `plan approval ${q.id}: Away mode's approve replayed after a pause`);
+      return Promise.resolve({ decision: 'approve' });
+    }
+    this._planAwayApproved = null;
     const spec = this._approveSpec(q.nodeId);
     if (spec?.check === 'criteria') return this._criteriaAsk(q, spec);
     let check = null;
@@ -1385,12 +1420,12 @@ export class GraphOrchestrator extends RunHarness {
       const outlineChange = await this._outlineChangeText();
       // Shaper s5 (D12): notes from the chat force the stop, like outlineChange.
       const notes = (await this._shapeSliceScope())?.notes || [];
-      if (sl && sl.index > 1 && !featureApprovesEach(sl.feature) && !this._nightActiveNow()) {
+      if (sl && sl.index > 1) {
         // D19: plan once, confirm later: the plan stops only when its check fails or the planner says the slice
         // cannot be built as outlined. A missing check (null: it errored) stops too.
         if (check?.ok === true && !outlineChange && !notes.length && !concern) {
-          this._log('orchestrator', 'info', `plan approval ${q.id}: approved (Approve each slice's plan is off)`);
-          await appendAudit(this.pipeline.dir, 'Plan approval **approve** (Approve each slice\'s plan is off).').catch(() => {});
+          this._log('orchestrator', 'info', `plan approval ${q.id}: approved (the plan passed its checks)`);
+          await appendAudit(this.pipeline.dir, 'Plan approval **approve** (the plan passed its checks).').catch(() => {});
           return { decision: 'approve' };
         }
         const why = outlineChange ? 'the planner says this slice cannot be built as outlined'
@@ -1401,12 +1436,15 @@ export class GraphOrchestrator extends RunHarness {
       const perspectives = this._shapePerspectives();
       return this._enqueueAsk(() => this._ask({
         id: q.id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId, ...(concern ? { concern } : {}),
-        plan: { ...q.plan, nodeId: q.nodeId, check, perspectives, ...(coverage ? { coverage } : {}), ...(outlineChange ? { outlineChange } : {}), ...(notes.length ? { notes } : {}) },
+        // coverage: null = it could not be read, which is not "no coverage configured"; Away waits on it (planRule).
+        plan: { ...q.plan, nodeId: q.nodeId, check, perspectives, ...(spec?.coverage ? { coverage } : {}), ...(outlineChange ? { outlineChange } : {}), ...(notes.length ? { notes } : {}),
+          ...(conflicts.length ? { openConflicts: conflicts.length } : {}) },
         validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true, perspectives, conflicts }),
       }));
     })();
     return asked.then(
       async (payload) => {
+        if (payload?.decision === 'approve' && this.answeredBy(q.id) === NIGHT_ACTOR) this._planAwayApproved = { id: q.id };   // before any await: the pause window
         this._shapingDecision(q, payload);
         if (payload?.decision === 'stop') {
           this._log('orchestrator', 'info', `plan approval ${q.id}: stop`);
@@ -1615,7 +1653,7 @@ export class GraphOrchestrator extends RunHarness {
       decision: null, ...(coverage ? { coverage: { ok: coverage.ok, passed: coverage.passed, total: coverage.total } } : {}) };
     const i = s.rounds.findIndex((r) => r.round === row.round);
     if (i >= 0) s.rounds[i] = row; else s.rounds.push(row);
-    // An approve answered just before a pause is not replayed: the resume re-asks the same round. Drop the stale
+    // A person's approve answered just before a pause is not replayed: the resume re-asks the same round. Drop the stale
     // `approved`, or the run card would show "while shaping" over an open plan ask.
     if (s.approved && s.approved.round === row.round) s.approved = null;
     this._emit('state', this.getState());
@@ -1664,8 +1702,9 @@ export class GraphOrchestrator extends RunHarness {
       // asked (the loop re-asks that outline after a pause, F25) or when the paused session resumes.
       if (!rounds.length && !resuming) await rm(file, { force: true });
       out.shapeSlicing = { file, size: this.runShape?.size || null, ...(ctx.bindings?.requirements?.path ? { requirements: true } : {}) };
-      // A pause during a revise spawn: put the person's feedback back (the outline file was removed before it).
+      // A pause during a revise spawn: put the person's feedback back, and the asked round's baseline (D11).
       const last = rounds[rounds.length - 1];
+      if (last?.decision === 'revise') out.shapeSlicing.baseline = this._outlineBaseline();
       if (last?.decision === 'revise' && this._outlineRevise) out.shapeOutlineNote = { decision: 'revise', feedback: this._outlineRevise };
     }
     return out;
@@ -1707,8 +1746,8 @@ export class GraphOrchestrator extends RunHarness {
   /**
    * Spec §3.8, L1: in slicing mode the Planner either writes its plan (no outline: it chose not to slice) or writes
    * slices.json and stops. Ask a person, then resume the SAME session (as _questionsLoop does): slice 1's plan, the
-   * whole task (flat), or a rewritten outline (revise, at most OUTLINE_ROUNDS_MAX rounds). kind 'plan' keeps every
-   * human-only guard (F3): --yes, Away mode and the night decider never answer it.
+   * whole task (flat), or a rewritten outline (revise, at most OUTLINE_ROUNDS_MAX rounds). --yes never answers it (F3);
+   * Away mode approves one whose check passed (planRule).
    */
   async _outlineLoop(nc, ctx, firstResult) {
     let result = firstResult;
@@ -1717,14 +1756,26 @@ export class GraphOrchestrator extends RunHarness {
     const label = nc.meta?.displayName || nc.key || ctx.nodeId;
     let error = null;
     let carried = null;                                     // the edits of an approval whose feature creation failed
-    let carriedEach = null;                                 // and its Approve each slice's plan choice
+    let carriedEach = null;                                 // and its Ask me before each run choice
     let retry = 0;
     const agreed = await this._outlineAgreed(ctx);
+    let classified = null;                                  // the spawn result whose outlineState was acted on
     for (;;) {
       this._checkAbort();
+      // D10: the executor classified the outline file after the spawn (outline-file.mjs); a feature-creation retry
+      // re-asks without a spawn, so a result is acted on once.
+      const state = result !== classified ? result?.outlineState : null;
+      classified = result;
+      if (state === 'flat') {                               // the Planner wrote its plan instead (also after a revise)
+        this._slicingDone = true;
+        this._retireOrphanFeature();
+        if (this.state.shaping?.outline?.rounds?.length) this._shapingOutlineDecision(null, { decision: 'flat' });
+        return result;
+      }
+      if (state === 'unchanged') await appendAudit(this.pipeline.dir, `${label}: The planner left the outline unchanged.`).catch(() => {});
       let raw = null;
       try { raw = JSON.parse(await readFile(file, 'utf8')); } catch (err) {
-        if (err?.code === 'ENOENT') {                       // the Planner wrote its plan instead (also after a revise)
+        if (err?.code === 'ENOENT') {                       // defensive: the executor's outlineState says flat first
           this._slicingDone = true;
           this._retireOrphanFeature();
           if (this.state.shaping?.outline?.rounds?.length) this._shapingOutlineDecision(null, { decision: 'flat' });
@@ -1749,7 +1800,8 @@ export class GraphOrchestrator extends RunHarness {
       const revisable = round < OUTLINE_ROUNDS_MAX;
       const check = checkSlices(outline);
       const id = `plan-outline-${ctx.nodeId}-${round}${retry ? `-e${retry}` : ''}`;
-      this._shapingOutlineRound({ round, outline, check });
+      // D9: what was asked, so a revise spawn can tell an edited outline from an untouched one and a fresh plan from a stale one.
+      this._shapingOutlineRound({ round, outline, check, sha: await fileSha(file), planSha: await fileSha(planOutputOf(ctx.outputs)) });
       if (!reasked) await appendAudit(this.pipeline.dir, `${label} proposed ${outline.slices.length} slices (outline round ${round}).`).catch(() => {});
       const payload = await this._enqueueAsk(() => this._ask({
         id, kind: PLAN_ASK_KIND, nodeId: ctx.nodeId, executionId: ctx.executionId,
@@ -1790,7 +1842,7 @@ export class GraphOrchestrator extends RunHarness {
           outline: applied.outline, proposed: outline.slices.length, merges: applied.merges, removals: applied.removals,
           approveEach: payload.approveEach === true, perspectives: this._shapePerspectives(),
           workflowId: this._shapePerspectives().includes('ux') ? SHAPE_UX_WORKFLOW_ID : SHAPE_WORKFLOW_ID,
-          base: this._sliceRequestBase(), replaces: this.runShape?.replaces || null, startedBy: this._runStarter(),
+          base: this._sliceRequestBase(), replaces: this.runShape?.replaces || null, startedBy: this._runStarter(), pr: this._featurePr(),
         });
       } catch (err) {
         this._log('orchestrator', 'warn', `slices: cannot create the feature: ${err?.message || err}`);
@@ -1817,6 +1869,14 @@ export class GraphOrchestrator extends RunHarness {
     }
   }
 
+  /** D14: every agreed requirement id of the feature, for the planner's and refiner's numbering and `Covers:` lines: a slice
+   *  run's outline (all slices', not only its own), else the bound requirements file. [] when there are none. */
+  async _shapeAgreedIds(ctx) {
+    const agreed = this.runShape?.slice?.outline?.agreed;
+    if (Array.isArray(agreed) && agreed.length) return agreed.map((a) => a.id).filter(Boolean);
+    return (await this._outlineAgreed(ctx)).map((c) => c.id);
+  }
+
   /** The agreed criteria the Planner's `requirements` input holds, for the outline; [] without one or when unreadable. */
   async _outlineAgreed(ctx) {
     const path = ctx.bindings?.requirements?.path;
@@ -1839,7 +1899,7 @@ export class GraphOrchestrator extends RunHarness {
     return { file: join(this.pipeline.dir, planConcernFileName(ctx.nodeId, ctx.ordinal)), approvalNodeId: src.id };
   }
 
-  /** True when concern `id` was already decided as Approve (by a person or --yes): its execution is the override re-run. */
+  /** True when concern `id` was already decided as Approve (by a person, Away mode or --yes): its execution is the override re-run. */
   _planConcernOverridden(id) {
     return this._planConcernSeen[id] === 'decided' && this._planConcernHeld?.id === id
       && (this.auto || (this._planConcernAnswer?.id === id && this._planConcernAnswer.payload?.decision === 'approve'));
@@ -1862,7 +1922,7 @@ export class GraphOrchestrator extends RunHarness {
 
   /** #990 s5: the implementer said the plan's design is wrong. Re-raise the plan approval (kind 'plan', a `concern`
    *  field): Ask for changes (revise) rewinds to the Planner (D4); Approve builds as written (D5). A concern always
-   *  stops (D7); only --yes overrides it without a person (D6). */
+   *  stops (D7); --yes overrides it without an ask (D6), and Away mode approves the ask and flags it (planRule). */
   async _planConcernLoop(nc, ctx, result) {
     const pc = ctx.planConcern;
     if (!pc || result?.paused || result?.error) return result;
@@ -1931,6 +1991,12 @@ export class GraphOrchestrator extends RunHarness {
     } catch (err) { this._log('orchestrator', 'warn', `slices: cannot retire an earlier feature: ${err?.message || err}`); }
   }
 
+  /** The run's saved PR-when-done decision as the feature keeps it. Read from the row, so a resume and the carried-edits retry see it too. */
+  _featurePr() {
+    const pa = readRunPrAuto(this.pipeline.id);
+    return pa ? { open: pa.open, slices: pa.slices ?? 'each', source: pa.source } : null;
+  }
+
   /** F37: who started this run. A resumed orchestrator has no opts.startedBy (ui/server.mjs:4333-4340); the harness
    *  reads the pipelines row first, the same way it does at run-harness.mjs:1711, 2169. */
   _runStarter() {
@@ -1940,7 +2006,8 @@ export class GraphOrchestrator extends RunHarness {
   /** Resume the Planner's session with the decision (F2: the prompt is rebuilt from ctx on every spawn). */
   async _resumeOutline(nc, ctx, payload) {
     const d = payload?.decision;
-    if (d === 'revise') await rm(ctx.shapeSlicing.file, { force: true });   // only a rewritten outline is read next
+    // D9: the outline file stays for the Planner to edit; the asked round's shas tell an edit from an untouched file.
+    if (d === 'revise') ctx.shapeSlicing.baseline = this._outlineBaseline();
     else { ctx.shapeSlicing = null; this._slicingDone = true; this._outlineRevise = null; }
     ctx.shapeOutlineNote = d === 'flat' ? { decision: 'flat' } : d === 'revise' ? { decision: 'revise', feedback: payload.feedback } : null;
     if (d === 'approve') ctx.shapeSliceScope = await this._shapeSliceScope();
@@ -1958,17 +2025,24 @@ export class GraphOrchestrator extends RunHarness {
       ...(this.claude.model ? { model: this.claude.model } : {}),
       ...(engine && engine !== 'claude' ? { engine } : {}),
       ...(this.claude.mock ? { mock: true } : {}),
+      ...(this._night.optIn ? { nightMode: true } : {}),      // the run's mark; "Never on this run" stays on its one run
     };
   }
 
-  _shapingOutlineRound({ round, outline, check }) {
+  _shapingOutlineRound({ round, outline, check, sha = null, planSha = null }) {
     const s = this.state.shaping;
     if (!s) return;
     const o = s.outline || (s.outline = { rounds: [], decided: null });
-    const row = { round, count: outline.slices.length, passed: check.passed, total: check.total, decision: null };
+    const row = { round, count: outline.slices.length, passed: check.passed, total: check.total, decision: null, sha, planSha };
     const i = o.rounds.findIndex((r) => r.round === round);
     if (i >= 0) o.rounds[i] = row; else o.rounds.push(row);
     this._emit('state', this.getState());
+  }
+
+  /** D9: the last asked round's outline and plan shas (the revise baseline), or null before any round. */
+  _outlineBaseline() {
+    const last = this.state.shaping?.outline?.rounds?.at(-1);
+    return last ? { sha: last.sha ?? null, planSha: last.planSha ?? null } : null;
   }
 
   _shapingOutlineDecision(round, payload) {
@@ -2096,7 +2170,16 @@ export class GraphOrchestrator extends RunHarness {
         return this._settleUnstarted(nc, node, args, err);
       }
     }
+    // Pause after this step: a node does not start while one is pending and another runs; the last one out pauses.
+    // A flow card runs inline on the scheduler's loop, so it cannot wait there (the running steps' completions would
+    // never be recorded): it settles as paused (non-terminal, re-run on resume) and the last step out converts the pause.
+    if (FLOW_KINDS.includes(node.kind) && this.state.pauseAfterStep && this._inFlight > 0) return { paused: true };
+    await this._awaitStepBoundary();
+    try { return await this._executeNode(args, node, nc); } finally { this._leaveStep(); }
+  }
 
+  /** One ordinary (non-composite) execution of `node`: _execute's body, counted in flight by its caller. */
+  async _executeNode(args, node, nc) {
     let ctx;
     try {
       ctx = this._execCtx(node, nc, args);
@@ -2148,6 +2231,7 @@ export class GraphOrchestrator extends RunHarness {
       await this._primeDirections(ctx);
       if (this.runShape && nc.key === CHECKLIST_REVIEWER_KEY) ctx.checklistItems = await this._reviewChecklistItems(ctx);
       if (this.runShape && SLICE_SCOPE_AGENT_KEYS.has(nc.key)) Object.assign(ctx, await this._shapeSliceCtx(nc, ctx));
+      if (this.runShape && SLICE_SCOPE_AGENT_KEYS.has(nc.key)) ctx.shapeAgreedIds = await this._shapeAgreedIds(ctx);
       ctx.planConcern = this._planConcernCtx(nc, ctx);
       if (ctx.planConcern && this._planConcernOverridden(planConcernAskId(ctx))) {
         ctx.planConcernOverride = this._planConcernHeld.concern;   // paused during the override re-run (D9): resume as it
@@ -2307,6 +2391,9 @@ export class GraphOrchestrator extends RunHarness {
     // P1 (v3, defence in depth): a Folder run's nodes never start on the REAL folder, whatever reattach path left runCwd unset.
     if (this.workMode === 'folder' && !this.runCwd) throw new Error('a Folder run has no copy to work on');
     const { resumeSessionId, coldRedispatch } = this._reattachFor(executionId, node.id);
+    // The agent's TMPDIR points here, and a TMPDIR that does not exist fails every tool that reads it.
+    const scratch = runScratchDir(this.runRoot);
+    if (scratch) mkdirSync(scratch, { recursive: true });
     return {
       // When this execution began. _indexExtraFiles compares it against each
       // candidate's mtime to tell the files this execution WROTE from the ones it
@@ -2339,6 +2426,7 @@ export class GraphOrchestrator extends RunHarness {
       taskPrompt: this.pipeline.promptText,
       toolInstruction: this.toolInstruction,
       shape: this.runShape,
+      ...(this.perspectiveSet ? { chosenPerspectives: [...this.perspectiveSet.chosen] } : {}),
       claudeSettingSources: this._claudeSettingSources(),   // #943 C3: ['project'], or null = every source (opt-in / sign-in)
       // #943: the memory this step loads, for the per-execution manifest: 'frozen' | 'off' | null (a defragment run, a
       // failed mount), and the frozen set ({ set, files }: memory-sync.mjs frozenManifest; role notes carry `roles`).
@@ -3534,6 +3622,11 @@ export class GraphOrchestrator extends RunHarness {
   async _restoreFromResumePoint(rp) {
     this._resumeSnapshot = rp.snapshot || null;
     this._graphSnapshot = rp.snapshot || null;
+    // The start-time perspective set: the code roles are in the manifest already; Clarify still reads it.
+    if (rp.perspectiveSet && Array.isArray(rp.perspectiveSet.chosen)) {
+      const n = normalizePerspectives(rp.perspectiveSet.chosen, { compliance: true });
+      if (n.ok) this.perspectiveSet = { chosen: n.perspectives };
+    }
     // Session groups (Task 46): the hosts' snapshots for createSessionHosts' restore (Task 47) and the re-attach rule (C42).
     // Before any preflight: a re-preflight that pauses again builds its point from these fields (_engineLastPoint).
     this._sessionRestore = rp.sessionHosts && typeof rp.sessionHosts === 'object' ? rp.sessionHosts : null;
@@ -3543,6 +3636,7 @@ export class GraphOrchestrator extends RunHarness {
     const pca = rp.planConcernAnswer;
     this._planConcernAnswer = pca && typeof pca.id === 'string' && pca.payload && typeof pca.payload === 'object'
       ? { id: pca.id, payload: { ...pca.payload } } : null;
+    this._planAwayApproved = typeof rp.planAwayApproved?.id === 'string' ? { id: rp.planAwayApproved.id } : null;
     const seen = rp.planConcernSeen;
     this._planConcernSeen = Object.fromEntries(Object.entries(seen && typeof seen === 'object' ? seen : {})
       .filter(([, v]) => v === 'raised' || v === 'decided'));

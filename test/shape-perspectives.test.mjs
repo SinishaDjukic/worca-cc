@@ -154,3 +154,37 @@ test('Devil\'s advocate: not a default; picked, it adds no plan section and no c
   assert.ok(!brief.includes('judge "Problem and goal"'), 'not Product\'s rule');
   assert.equal(roleBriefBlock('product', ''), PRODUCT_BRIEF, 'Product\'s brief is byte-identical');
 });
+
+test('agreedIds: listed, numbering starts after the highest agreed number per prefix; fit keeps 1..5; none given → unchanged text', () => {
+  const plain = perspectivesBlock(['product', 'architect', 'qa', 'fit']);
+  assert.equal(perspectivesBlock(['product', 'architect', 'qa', 'fit'], { agreedIds: [] }), plain);
+  const ids = ['R-po-1', 'R-po-3', 'R-arch-2', 'R-qa-1', 'R-qa-5', 'R-fit-2'];
+  const block = perspectivesBlock(['product', 'architect', 'qa', 'fit'], { agreedIds: ids });
+  for (const id of ids) assert.ok(block.includes(`\`${id}\``), id);
+  assert.match(block, /start at `R-po-4`, `R-arch-3`, `R-qa-6`\./);
+  assert.doesNotMatch(block, /start at [^\n]*R-fit/, 'Fit is never renumbered');
+  assert.ok(block.includes('`R-fit-5`'), 'Fit still lists its five fixed items');
+  assert.match(block, /Never reuse an agreed id for a checklist item/);
+  assert.match(block, /`- Step 2 · Covers: R-po-1, R-arch-2`/);
+  assert.equal(block.replace(/These requirement ids are already agreed[\s\S]*?Only `Covers:` lines count as coverage\.\n\n/, ''), plain);
+});
+
+// Compliance (proposedPerspectives): a separate perspective that only the gate admits.
+test('Compliance: PERSPECTIVES keeps its 9, the default normalizer refuses compliance, the option admits it last', async () => {
+  const { COMPLIANCE, COMPLIANCE_KEY, perspectivesWith } = await import('../src/shared/shape/perspectives.mjs');
+  assert.equal(PERSPECTIVES.length, 9);
+  assert.equal(PERSPECTIVE_KEYS.includes('compliance'), false);
+  assert.equal(COMPLIANCE_KEY, 'compliance');
+  assert.ok(Object.isFrozen(COMPLIANCE));
+  assert.deepEqual(COMPLIANCE.sections, []);
+  assert.equal(perspectiveByKey('compliance'), COMPLIANCE);
+  assert.equal(perspectivesWith(), PERSPECTIVES);
+  assert.deepEqual(perspectivesWith({ compliance: true }).map((p) => p.key), [...PERSPECTIVE_KEYS, 'compliance']);
+  const off = normalizePerspectives(['compliance']);
+  assert.deepEqual(off, { ok: false, error: `unknown perspective(s): compliance — known: ${PERSPECTIVE_KEYS.join(', ')}` });
+  assert.deepEqual(normalizePerspectives(['nope'], { compliance: true }), { ok: false, error: `unknown perspective(s): nope — known: ${[...PERSPECTIVE_KEYS, 'compliance'].join(', ')}` });
+  assert.deepEqual(normalizePerspectives(['compliance', 'qa'], { compliance: true }), { ok: true, perspectives: ['product', 'qa', 'compliance'] });
+  assert.deepEqual(sectionsFor(['qa', 'compliance']), sectionsFor(['qa']));
+  assert.ok(perspectivesBlock(['qa', 'compliance']).includes('Compliance'));
+  assert.ok(roleBriefBlock('compliance', '').includes(COMPLIANCE.roleRule));
+});

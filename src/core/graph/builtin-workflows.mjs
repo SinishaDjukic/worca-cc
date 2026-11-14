@@ -365,7 +365,7 @@ export const GRAPH_SHAPE_UX_WORKFLOW = deepFreeze({
   ],
 });
 
-/** Shaper's requirements stage (Labs flag shapeRequirements): the same workflows with Clarify replaced by three nodes
+/** Shaper's requirements stage: the same workflows with Clarify replaced by three nodes
  *  that mirror the plan head (draft, role reviews, refine) and hold for the person on the agreed requirements. The
  *  agreed file is an extra `requirements` input of Plan, its role reviews and Refine; Refine's hold shows coverage. */
 export const SHAPE_REQ_WORKFLOW_ID = 'wf_shape_req';

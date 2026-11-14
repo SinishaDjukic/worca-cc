@@ -4,6 +4,7 @@
 // the step's existing routing blocks on it. Also the per-slice check a slice row draws. Pure and browser-safe.
 import { criteriaList, criterionIds } from './coverage.mjs';
 import { genericRoleBrief } from '../graph/role-review-step.mjs';
+import { perspectiveByKey } from '../shape/perspectives.mjs';
 
 export const COVERAGE_ROLE = Object.freeze({ key: 'requirements', label: 'Requirements' });
 
@@ -57,7 +58,8 @@ export const REQUIREMENTS_COVERAGE_CHECKLIST = Object.freeze({
   items: (key, planText, requirementsText) => (key === COVERAGE_ROLE.key ? criterionIds(requirementsText) : []),
   brief(key) {
     if (key === COVERAGE_ROLE.key) return coverageBrief();
-    return genericRoleBrief({ key, label: ROLES.find((r) => r.key === key)?.label || key }, 'diff');
+    // A perspective role (a chosen set's code review, flag proposedPerspectives) keeps its perspective's label.
+    return genericRoleBrief({ key, label: ROLES.find((r) => r.key === key)?.label || perspectiveByKey(key)?.label || key }, 'diff');
   },
   wantsHouseBrief: () => false,
   feedsPlanChecklist: (key) => key !== COVERAGE_ROLE.key,

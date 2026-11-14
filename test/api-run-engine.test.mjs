@@ -9,7 +9,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
+import { stopAndSettle } from './helpers/stop-and-settle.mjs';
 
+// after hooks run FIFO: every run's launch (preflight's pip3 probes write into the sandbox HOME) settles
+// before useTempHome swaps WORCA_HOME and before the file's own after() deletes HOME.
+after(() => runs && stopAndSettle(runs));
 useTempHome(after);   // outer isolation: mock runs below finish ASYNC in-process
 
 let sandboxHome, projectsRoot, srv, base, runs;

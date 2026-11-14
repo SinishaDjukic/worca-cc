@@ -12,7 +12,9 @@ const isNode = (v) => !!v && typeof v === 'object' && typeof v.nodeType === 'num
  *          answered?: Map<qid,value> }   // answered: the card stays, its picks marked, nothing left to press (B9)
  *  Opt-in (absent = the markup above): an option's `recommended: true` appends `span.qrec` (Worca's pick);
  *  `preset: Map<qid,value>` pre-picks a tile and marks it `data-preset="1"` until a person picks in that block;
- *  `foot: false` drops the footer (the host owns the submit), and Enter then picks without submitting.
+ *  `foot: false` drops the footer (the host owns the submit), and Enter then picks without submitting;
+ *  `head: false` draws no heading (and so no `?` disc), and `heading` names the section through aria-label;
+ *  `numbers: false` drops each question's number.
  *  opts = { lead?, strip?, register? }: the reader's lead perspective (src/shared/answerer.mjs wordsFor); none = the
  *  entry's words, unless `register: 'plain'`
  *  → { el, picks: () => Map, destroy: () => void } */
@@ -30,7 +32,9 @@ export function buildChatQuestion(doc, spec, { lead = null, strip = false, regis
 
   const el = h('section', answered ? 'chat-rc-q chat-q is-answered' : 'chat-rc-q chat-q');
   const headId = `${spec.id}-h`;
-  el.setAttribute('aria-labelledby', headId);
+  const headed = spec.head !== false;
+  if (headed) el.setAttribute('aria-labelledby', headId);
+  else el.setAttribute('aria-label', spec.heading);
   const head = h('h3', 'chat-rc-q-head', spec.heading);
   head.id = headId;
   const body = h('div', 'chat-rc-qbody');
@@ -43,7 +47,8 @@ export function buildChatQuestion(doc, spec, { lead = null, strip = false, regis
     block.dataset.q = q.id;
     const text = h('div', 'qtext');
     const qText = wordsFor(q, 'text', lead, { strip, register });
-    text.append(h('span', 'qn', String(i + 1)), h('span', 'qtext-t', qText));
+    if (spec.numbers !== false) text.appendChild(h('span', 'qn', String(i + 1)));
+    text.appendChild(h('span', 'qtext-t', qText));
     if (nonEmpty(q.why)) text.appendChild(h('span', 'qwhy', q.why));
     const group = h('div', 'qopts');
     group.setAttribute('role', 'group');
@@ -73,7 +78,8 @@ export function buildChatQuestion(doc, spec, { lead = null, strip = false, regis
   const err = h('div', 'chat-rc-q-err');
   err.setAttribute('role', 'status');
   err.hidden = true;
-  el.append(head, body, err);
+  if (headed) el.appendChild(head);
+  el.append(body, err);
 
   function mark(entry, btn) {
     for (const t of entry.tiles) {

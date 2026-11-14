@@ -697,7 +697,7 @@ export async function ghPrChecks({ projectDir, prUrl }) {
   if (!repo || !(await ghUsable())) return null;
   try {
     const [r, base] = await Promise.all([
-      _run('gh', ['pr', 'view', prUrl, '--json', 'mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup'],
+      _run('gh', ['pr', 'view', prUrl, '--json', 'mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,latestReviews,headRefOid'],
         { cwd: projectDir, env: (await githubEnv('read', { repo })).env }),
       ghPrBaseFailing({ projectDir, prUrl }).catch(() => ({ base: null, failing: [] })),
     ]);
@@ -705,7 +705,10 @@ export async function ghPrChecks({ projectDir, prUrl }) {
     const v = JSON.parse(r.stdout);
     const checks = rollupChecks(v.statusCheckRollup, { baseFailing: base.failing });
     const mergeable = normalizeMergeable(v.mergeable);
-    return { checks, mergeable, base: base.base,
+    const reviews = (Array.isArray(v.latestReviews) ? v.latestReviews : [])
+      .filter((x) => x?.author?.login && x.state).map((x) => ({ by: String(x.author.login), state: String(x.state) }));
+    return { checks, mergeable, base: base.base, reviews, headSha: typeof v.headRefOid === 'string' ? v.headRefOid : null,
+      draft: v.isDraft === true, reviewDecision: v.reviewDecision || null,
       status: prMergeStatus({ checks, mergeable, mergeState: v.mergeStateStatus, reviewDecision: v.reviewDecision, draft: v.isDraft === true, base: base.base }) };
   } catch { return null; }
 }
@@ -1387,6 +1390,42 @@ export function closePr(opts = {}) {
   if (!opts.prUrl) return Promise.resolve({ ok: false, error: 'prUrl is required' });
   return restWatch(opts.prUrl) ? restWatch(opts.prUrl).closePr(opts) : ghClosePr(opts);
 }
+const GH_MERGE_METHODS = [['squashMergeAllowed', 'squash'], ['mergeCommitAllowed', 'merge'], ['rebaseMergeAllowed', 'rebase']];
+async function ghMergePr({ projectDir = null, prUrl, headSha = null } = {}) {
+  const repo = ownerRepoOfPrUrl(prUrl); if (!repo) return { ok: false, class: 'failed', error: 'invalid GitHub pull request URL' };
+  const cred = await githubEnv('write', { repo });
+  if (cred.error) return { ok: false, class: 'auth', error: cred.error };
+  const v = await _run('gh', ['repo', 'view', repo, '--json', GH_MERGE_METHODS.map(([k]) => k).join(',')], { cwd: projectDir || undefined, env: cred.env });
+  if (!v.ok) return { ok: false, class: ghWatchFailure(v), error: (v.stderr || '').trim() || `gh exited ${v.code}` };
+  let allowed = {}; try { allowed = JSON.parse(v.stdout) || {}; } catch { /* unreadable: gh's default below */ }
+  const method = GH_MERGE_METHODS.find(([k]) => allowed[k] === true)?.[1] || 'squash';
+  // The head whose checks the caller read: gh refuses the merge when the branch moved since (no unchecked commit lands).
+  const r = await _run('gh', ['pr', 'merge', prUrl, `--${method}`, ...(headSha ? ['--match-head-commit', String(headSha)] : [])],
+    { cwd: projectDir || undefined, env: cred.env });
+  if (!r.ok && headSha && /head branch was modified|match-head-commit|expected head/i.test(r.stderr || '')) {
+    return { ok: false, class: 'head-moved', error: (r.stderr || '').trim(), method };
+  }
+  return r.ok ? { ok: true, method } : { ok: false, class: ghWatchFailure(r), error: (r.stderr || '').trim() || `gh exited ${r.code}`, method };
+}
+async function ghRetargetPr({ projectDir = null, prUrl, base } = {}) {
+  const cred = await githubEnv('write', { repo: ownerRepoOfPrUrl(prUrl) });
+  if (cred.error) return { ok: false, error: cred.error };
+  const r = await _run('gh', ['pr', 'edit', prUrl, '--base', String(base)], { cwd: projectDir || undefined, env: cred.env });
+  return r.ok ? { ok: true } : { ok: false, error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+}
+/** Merge PR (Stillhet Tasks): merge an open PR by its forge, with the repository's first allowed method of squash, merge,
+ *  rebase on GitHub (the forge's own default elsewhere). `headSha` pins the head the caller checked: a moved head is
+ *  refused with class 'head-moved'. → { ok, method } | { ok: false, class: 'rate-limit'|'auth'|'head-moved'|'failed', error }. */
+export function prMerge(opts = {}) {
+  if (!opts.prUrl) return Promise.resolve({ ok: false, class: 'failed', error: 'prUrl is required' });
+  return restWatch(opts.prUrl) ? restWatch(opts.prUrl).mergePr(opts) : ghMergePr(opts);
+}
+/** Point an open PR at another base branch (a stacked successor after its predecessor merged). → { ok } | { ok: false, error }. */
+export function prRetarget(opts = {}) {
+  if (!opts.prUrl || !opts.base) return Promise.resolve({ ok: false, error: 'prUrl and base are required' });
+  return restWatch(opts.prUrl) ? restWatch(opts.prUrl).retargetPr(opts) : ghRetargetPr(opts);
+}
+
 /** The PR card's checks rollup, mergeability and merge verdict, by forge (see ghPrChecks). null on any failure. */
 export async function prChecks({ projectDir, prUrl } = {}) {
   const rest = restWatch(prUrl);
@@ -1394,7 +1433,8 @@ export async function prChecks({ projectDir, prUrl } = {}) {
   const f = await rest.prCheckFacts({ prUrl });
   if (!f) return null;
   const checks = rollupChecks(f.items, { baseFailing: f.baseFailing });
-  return { checks, mergeable: f.mergeable, base: f.base,
+  return { checks, mergeable: f.mergeable, base: f.base, reviews: Array.isArray(f.reviews) ? f.reviews : [], headSha: f.headSha || null,
+    draft: f.draft === true, reviewDecision: f.reviewDecision || null,
     status: prMergeStatus({ checks, mergeable: f.mergeable, mergeState: f.mergeState, reviewDecision: f.reviewDecision, draft: f.draft, base: f.base }) };
 }
 

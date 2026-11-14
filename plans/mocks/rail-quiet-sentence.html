@@ -1,0 +1,111 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Quiet sentence</title>
+<style>
+@font-face{font-family:'Poppins';font-weight:400;src:url('../../ui/public/fonts/poppins-latin-400-normal.woff2') format('woff2');}
+@font-face{font-family:'Poppins';font-weight:500;src:url('../../ui/public/fonts/poppins-latin-500-normal.woff2') format('woff2');}
+@font-face{font-family:'Poppins';font-weight:600;src:url('../../ui/public/fonts/poppins-latin-600-normal.woff2') format('woff2');}
+:root{--bg:#161614;--panel:#222220;--field:#2C2C29;--ink:#ECECE8;--ink-2:#B4B4AE;--ink-3:#9E9E98;--line:#30302D;--red:#E76A5A;--hover:#353531}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--ink);font:13px/1.4 Poppins,system-ui,sans-serif;padding:28px;width:1240px}
+h1{font-size:18px;font-weight:500;margin-bottom:4px}
+.sub{color:var(--ink-3);margin-bottom:22px}
+.row{display:grid;grid-template-columns:150px 1fr 1fr 1fr;gap:20px;align-items:start;margin-bottom:28px}
+.lab{color:var(--ink-3);font-size:11px;text-transform:uppercase;letter-spacing:.06em;padding-top:4px}
+.col h2{font-size:12px;font-weight:500;color:var(--ink-2);margin-bottom:8px}
+.col h2 b{color:var(--ink);font-weight:600}
+/* composer */
+.comp{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px 14px;width:320px}
+.words{color:var(--ink-3);padding-bottom:14px}
+.sent{display:flex;gap:10px;align-items:flex-start}
+.plus{color:var(--ink-3);font-size:18px;line-height:20px;flex:none}
+.s{font-size:14px;line-height:22px;color:var(--ink-3)}
+.p{color:var(--ink);font-weight:600;white-space:nowrap}
+.p.c::after{content:" ⌄";font-size:11px;color:var(--ink-3);font-weight:400}
+.p.d{font-weight:400;color:var(--ink-2)}
+.p.h{text-decoration:underline dotted var(--ink-3);text-underline-offset:4px}
+.more{color:var(--ink-3);padding:0 4px;border-radius:3px}
+.more.hov{background:var(--hover);color:var(--ink)}
+.hint{color:var(--ink-3);font-size:12px;margin-top:8px}
+.meas{color:var(--ink-3);font-size:11px;margin-top:6px;font-family:ui-monospace,monospace}
+/* sidebar */
+.side{background:var(--panel);border:1px solid var(--line);border-radius:6px;width:250px;padding:10px 12px 12px}
+.head{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:500;margin-bottom:10px}
+.logo{width:20px;height:20px;border-radius:50%;background:#B4B4AE;color:#161614;font-size:11px;font-weight:600;display:grid;place-items:center}
+.head .sp{flex:1}
+.head .ic{color:var(--ink-3);font-size:15px;font-weight:400}
+.filt{font-size:12px;color:var(--ink-3);font-weight:400}
+.filt b{color:var(--ink);font-weight:500}
+.ls{font-size:13px;color:var(--ink-3);line-height:22px;margin-bottom:12px}
+.grp{font-weight:600;font-size:13px;margin-bottom:6px}
+.grp span{color:var(--ink-3);font-weight:400;margin-left:4px}
+.it{display:flex;align-items:center;gap:8px;height:26px}
+.it .t{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.it .m{color:var(--ink-3);font-size:12px}
+.sub2{padding-left:22px}
+.x{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--red);color:var(--red);font-size:8px;display:grid;place-items:center;flex:none}
+.bub{width:14px;height:12px;border:1.5px solid var(--ink-3);border-radius:2px;flex:none}
+.note{color:var(--ink-3);font-size:11.5px;margin-top:8px;max-width:320px}
+</style></head><body>
+<h1>Quiet sentence: say only what isn't the default</h1>
+<div class="sub">Dark theme, same words and tokens as the prototype. Left: today. Middle: all defaults. Right: some choices changed.</div>
+
+<div class="row">
+  <div class="lab">Composer</div>
+  <div class="col"><h2><b>Today</b>, every picker, 2 lines</h2>
+    <div class="comp"><div class="words">Describe the task…</div>
+      <div class="sent"><span class="plus">+</span><div class="s">
+        <span class="p c">Task</span> on <span class="p c">billing-api</span> with <span class="p c">Default</span> on <span class="p c">Opus 5.5</span> <span class="p c">high</span> from <span class="p c">origin · latest</span> then <span class="p c">open a PR</span>
+      </div></div></div>
+    <div class="hint">Every task you start is in the list beside, with its chat.</div>
+    <div class="meas">7 pickers · 7 chevrons · 2 lines</div>
+  </div>
+  <div class="col"><h2><b>Quiet</b>, defaults hidden behind ⋯</h2>
+    <div class="comp"><div class="words">Describe the task…</div>
+      <div class="sent"><span class="plus">+</span><div class="s">
+        <span class="p h">Task</span> on <span class="p h">billing-api</span> <span class="more">⋯</span>
+      </div></div></div>
+    <div class="meas">2 pickers · 1 line · hint shown once, then gone</div>
+    <div class="note">Workflow, model, effort, source and finish are all defaults, so the line leaves them out. ⋯ opens the full sentence. Picker affordance: dotted underline, chevron on hover.</div>
+  </div>
+  <div class="col"><h2><b>Changed</b>, only the change shows</h2>
+    <div class="comp"><div class="words">Describe the task…</div>
+      <div class="sent"><span class="plus">+</span><div class="s">
+        <span class="p h">Task</span> on <span class="p h">billing-api</span> on <span class="p h">Opus 5.5 max</span> then <span class="p h">push only</span> <span class="more hov">⋯</span>
+      </div></div></div>
+    <div class="meas">model + effort as one word · 4 pickers, wraps only once 2 choices change</div>
+    <div class="note">A changed choice joins the sentence in its usual place. Setting it back to the default hides it again.</div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="lab">Chat list</div>
+  <div class="col"><h2><b>Today</b>, the sentence takes 2 lines</h2>
+    <div class="side">
+      <div class="head"><span class="logo">W</span>Chat <span class="ic">⌄</span><span class="sp"></span><span class="ic">＋</span><span class="ic">◫</span></div>
+      <div class="ls">Showing <span class="p c">all</span> from <span class="p c">all projects</span><br>by <span class="p c">date</span> &nbsp;⋯</div>
+      <div class="grp">Needs you <span>2</span></div>
+      <div class="it"><span class="bub"></span><span class="t">Node 24</span><span class="m">12:40</span></div>
+      <div class="it sub2"><span class="x">✕</span><span class="t">Update Node to 24</span><span class="m">⑂</span></div>
+    </div>
+  </div>
+  <div class="col"><h2><b>Quiet</b>, nothing filtered, no sentence</h2>
+    <div class="side">
+      <div class="head"><span class="logo">W</span>Chat <span class="ic">⌄</span><span class="sp"></span><span class="ic">⋯</span><span class="ic">＋</span><span class="ic">◫</span></div>
+      <div class="grp">Needs you <span>2</span></div>
+      <div class="it"><span class="bub"></span><span class="t">Node 24</span><span class="m">12:40</span></div>
+      <div class="it sub2"><span class="x">✕</span><span class="t">Update Node to 24</span><span class="m">⑂</span></div>
+    </div>
+    <div class="meas">−2 lines · the sentence lives behind ⋯</div>
+  </div>
+  <div class="col"><h2><b>Filtered</b>, the sentence returns, changes only</h2>
+    <div class="side">
+      <div class="head"><span class="logo">W</span>Chat <span class="ic">⌄</span><span class="sp"></span><span class="ic">⋯</span><span class="ic">＋</span><span class="ic">◫</span></div>
+      <div class="ls">Showing <span class="p h">billing-api</span> <span class="more">✕</span></div>
+      <div class="grp">Needs you <span>1</span></div>
+      <div class="it"><span class="bub"></span><span class="t">Node 24</span><span class="m">12:40</span></div>
+      <div class="it sub2"><span class="x">✕</span><span class="t">Update Node to 24</span><span class="m">⑂</span></div>
+    </div>
+    <div class="note">A filter you set stays visible, so a short list never looks empty without a reason. ✕ clears it.</div>
+  </div>
+</div>
+</body></html>

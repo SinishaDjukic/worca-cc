@@ -110,3 +110,34 @@ test('coverageOf: 0 ids is ok; the same input always gives the same result', () 
   assert.deepEqual(coverageOf([], PLAN), { ok: true, passed: 0, total: 0, items: [] });
   assert.deepEqual(coverageOf(['R-sec-2'], PLAN), coverageOf(['R-sec-2'], PLAN));
 });
+
+// Covers lines (D13): once a plan names its coverage on `Covers:` lines, only those lines count.
+test('Covers lines cover; an id only in a Checklist is not covered; a reused checklist id neither covers nor hides', async () => {
+  const { COVERS_AGREED, COVERS_PLAN } = await import('./helpers/covers-plan.mjs');
+  const ids = Object.keys(COVERS_AGREED);
+  const c = coverageOf(ids, COVERS_PLAN, { texts: COVERS_AGREED });
+  assert.deepEqual([c.ok, c.passed, c.total], [false, 8, 9]);
+  const miss = c.items.filter((i) => !i.pass);
+  assert.deepEqual(miss, [{ id: 'R-ops-2', label: 'R-ops-2 · not covered by any step', pass: false, detail: 'The held run shows on the dashboard' }]);
+  const by = Object.fromEntries(c.items.map((i) => [i.id, i.label]));
+  assert.equal(by['R-qa-2'], 'R-qa-2 · covered by Step 2', 'reused in a checklist, covered by its Covers line');
+  assert.equal(by['R-qa-5'], 'R-qa-5 · covered by Step 3');
+  assert.equal(by['R-arch-1'], 'R-arch-1 · covered by Decisions');
+  // R-arch-4 is only a checklist item: not covered
+  assert.equal(coverageOf(['R-arch-4'], COVERS_PLAN).items[0].pass, false);
+});
+
+test('a heading naming an id never covers; a Covers line in Risks or Out of scope never covers', () => {
+  const plan = [
+    '## Steps', '', '### Step 1 · R-po-1', '', '- Step 1 · Covers: R-po-2', '',
+    '## Risks and edge cases', '', '- Step 9 · Covers: R-po-3', '',
+    '## Out of scope', '', '- Covers: R-po-4', '',
+  ].join('\n');
+  const c = coverageOf(['R-po-1', 'R-po-2', 'R-po-3', 'R-po-4'], plan);
+  assert.deepEqual(c.items.map((i) => [i.id, i.pass]), [['R-po-1', false], ['R-po-2', true], ['R-po-3', false], ['R-po-4', false]]);
+});
+
+test('a plan with no Covers line keeps the first-mention rule', () => {
+  const c = coverageOf(['R-po-1'], '## Steps\n\n- Step 4: R-po-1 is delivered here\n');
+  assert.deepEqual(c.items.map((i) => [i.label, i.pass]), [['R-po-1 · covered by Step 4', true]]);
+});

@@ -216,7 +216,7 @@ test('AC-3.3 full order: every side-effect kind, roles labelled with their engin
   assert.deepEqual(calls, ['proxy-swap', 'proxy-login', 'copilot-signin', 'copilot-import', 'openai-import', 'test:claude-sonnet-5-5', 'test:gpt-5.5-mini']);
   assert.equal(out.results[0].line, SAVED_TEXT);
   assert.equal(out.results[4].line, 'Imported 1 model from http://127.0.0.1:8080/v1.');
-  assert.deepEqual(out.results.slice(-2).map((r) => r.label), ['Everyday coding · Claude', 'Quick jobs · Codex']);
+  assert.deepEqual(out.results.slice(-2).map((r) => r.label), ['Everyday coding · Claude Code', 'Quick jobs · OpenAI Codex']);
 });
 
 test('proxy-swap lines are the card\'s sentences', async () => {
@@ -311,7 +311,7 @@ test('a pending Copilot model on a Codex role is refused: Copilot imports run on
   await assert.rejects(planSetupApply({
     access: { copilot: { importModels: ['claude-opus-5.5'] } },
     models: { modelRoles: { codex: { deep: { model: 'copilot-claude-opus-5.5' } } } },
-  }, deps), (err) => err.field.startsWith('models.modelRoles') && /runs on Claude — this slot picks a model Codex can run/.test(err.message));
+  }, deps), (err) => err.field.startsWith('models.modelRoles') && /runs on Claude Code — this slot picks a model OpenAI Codex can run/.test(err.message));
 });
 
 test('a failed import marks its role tests not run and offers Retry from the import', async () => {

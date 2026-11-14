@@ -7,10 +7,12 @@ const OPTIONS_MIN = 2;
 const OPTIONS_MAX = 4;
 const TEXT_MAX = 300;
 const LABEL_MAX = 200;
+const REASON_MAX = 200;
 const VALUE_MAX = 60;
 const LIST_MAX = 12;
 const oneLine = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+const oneLineString = (v) => (typeof v === 'string' ? oneLine(v) : '');
 const strings = (v) => (Array.isArray(v) ? [...new Set(v.slice(0, LIST_MAX).map(oneLine).filter(Boolean))] : []);
 
 function optionOf(raw) {
@@ -19,7 +21,12 @@ function optionOf(raw) {
   const label = oneLine(raw.label);
   if (!value || value.length > VALUE_MAX || !label || label.length > LABEL_MAX) return null;
   const plain = oneLine(raw.plain);
-  return { value, label, ...(plain && plain.length <= LABEL_MAX ? { plain } : {}) };
+  const persona = oneLineString(raw.persona);
+  const reason = oneLineString(raw.reason);
+  return {
+    value, label, ...(plain && plain.length <= LABEL_MAX ? { plain } : {}),
+    ...(persona && persona.length <= VALUE_MAX ? { persona } : {}), ...(reason && reason.length <= REASON_MAX ? { reason } : {}),
+  };
 }
 
 /** One raw entry → a decision without its id, or the reason it is dropped. */
@@ -63,22 +70,22 @@ export function normalizeDecisions(raw) {
 const slug = (s) => oneLine(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, VALUE_MAX) || 'option';
 
 /** Role conflicts (findings.mjs normalizeConflicts) as decisions, numbered after `after` existing ones within the cap.
- *  Option i is roles[i]'s side; when one side is the lead's role, that option is recommended (the lead's final say),
- *  else the first. */
+ *  Option i is roles[i]'s side, and names it as its `persona`; when one side is the lead's role, that option is
+ *  recommended (the lead's final say), else the first. */
 export function conflictDecisions(conflicts, { lead = null, after = 0 } = {}) {
   const out = [];
   for (const c of Array.isArray(conflicts) ? conflicts : []) {
     if (after + out.length >= DECISIONS_MAX) break;
     const labels = (Array.isArray(c?.options) ? c.options : []).map(oneLine).filter(Boolean).slice(0, OPTIONS_MAX);
     if (labels.length < OPTIONS_MIN || !oneLine(c?.question)) continue;
+    const roles = Array.isArray(c.roles) ? c.roles.map(String) : [];
     const used = new Set();
-    const options = labels.map((label) => {
+    const options = labels.map((label, i) => {
       let value = slug(label);
       for (let n = 2; used.has(value); n += 1) value = `${slug(label).slice(0, VALUE_MAX - 3)}-${n}`;
       used.add(value);
-      return { value, label };
+      return { value, label, ...(roles[i] ? { persona: roles[i] } : {}) };
     });
-    const roles = Array.isArray(c.roles) ? c.roles.map(String) : [];
     const side = lead ? roles.indexOf(lead) : -1;
     out.push({
       id: `d-${after + out.length + 1}`, text: oneLine(c.question), options,

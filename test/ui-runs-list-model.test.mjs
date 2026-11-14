@@ -9,6 +9,7 @@ import {
   buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, dateBucket, DATE_BUCKETS, DAY_BUCKETS, dayBucket, isFolded, setFolded, listLine, groupRow, groupCostUsd, costTitle, memberCostUsd, memberLine,
 } from '../ui/public/runs-list.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
+import * as RL from '../ui/public/runs-list.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 
@@ -59,8 +60,8 @@ test('live row states: questions name their step, pause reasons, a named failure
   assert.equal(liveRowState({ status: 'running', ask: { kind: 'plan', step: 'Plan' } }).word, 'Approve the plan');
   assert.equal(liveRowState({ status: 'running', ask: { kind: 'plan', step: 'Plan', outline: true } }).word, 'Approve the slices');
   assert.equal(liveRowState({ status: 'paused', pauseReason: 'cost_pipeline' }).word, 'Cost limit');
-  assert.equal(liveRowState({ status: 'paused', pauseReason: 'usage_limit', limitEngine: 'codex' }).word, 'Codex usage limit', 'a usage limit names its engine');
-  assert.equal(histRowState({ status: 'paused', pauseReason: 'usage_limit', limitEngine: 'claude' }).word, 'Claude usage limit');
+  assert.equal(liveRowState({ status: 'paused', pauseReason: 'usage_limit', limitEngine: 'codex' }).word, 'OpenAI Codex usage limit', 'a usage limit names its engine');
+  assert.equal(histRowState({ status: 'paused', pauseReason: 'usage_limit', limitEngine: 'claude' }).word, 'Claude Code usage limit');
   assert.equal(liveRowState({ status: 'paused', pauseReason: 'usage_limit' }).word, 'Usage limit', 'a limit that was not the engine\'s (OpenRouter) names none');
   assert.equal(liveRowState({ status: 'paused', pauseReason: null }).word, 'Paused');
   assert.equal(liveRowState({ status: 'paused', pauseReason: 'usage_limit', limitEngine: 'claude', limitNote: 'resets 18:00' }).detail, 'resets 18:00', 'a usage-limit pause carries its reset note');
@@ -781,4 +782,185 @@ test('#1067 a staged row\'s fill moves in place: the state replay after a first 
   assert.equal(fill(), '0%', 'not begun from hello alone');
   paintStageBlocks(host, after);
   assert.equal(fill(), '10%', 'START_SHARE once the clarify row exists');
+});
+
+// ── PR fix rounds stack under their run (plans/pr-fix-rounds-stacking-plan.md, Tasks 1, 3, 4) ──
+const PR947 = { url: 'https://github.com/SinishaDjukic/worca-cc/pull/947', number: 947, state: 'OPEN', mergeable: 'CONFLICTING' };
+const REVIEW = (n) => ({ url: `https://github.com/SinishaDjukic/worca-cc/pull/${n}`, number: n, state: 'OPEN', mergeable: 'MERGEABLE' });
+const marker = (n, extra = {}) => ({ pipelineId: 'ba22d7fd', round: n, request: 'merge dev in', by: 'watch', kinds: ['conflicts'],
+  outcome: { kind: 'pushed', sha: `${n}e4f5a6` }, ...extra });
+// Round n: done, its own PR chip on #947 (attachPr), finished on Sep (20 + n).
+const roundIt = (n, extra = {}) => histIt(`rnd${n}`, { title: 'Merge dev into PR 947 and resolve conflicts', mtime: Date.parse(at(20 + n, 10, 0)),
+  roundOf: marker(n), run: { status: 'done', pr: PR947, round: marker(n) }, ...extra });
+const ROUNDS = [2, 3, 4, 5, 6, 7, 8].map((n) => roundIt(n));
+const ORIGIN = histIt('ba22d7fd', { title: 'Route swallowed step failures', mtime: Date.parse(at(20, 9, 0)), run: { status: 'done', pr: PR947 } });
+const FEATURE = { id: 'feat_flag', groupKind: 'feature', title: 'Flag runs that finish without being successful', members: [
+  { position: 1, title: 'Catch a run that finished without success', pipelineId: 'm1', kind: 'hist', run: { status: 'done', pr: REVIEW(940) } },
+  { position: 2, title: 'Show done, unsuccessful in the list', pipelineId: 'm2', kind: 'hist', run: { status: 'done', pr: REVIEW(941) } },
+  { position: 3, title: 'Route swallowed step failures', pipelineId: 'ba22d7fd', kind: 'hist', run: { status: 'done', pr: PR947 } }] };
+const HIST947 = [histIt('m1', { run: { status: 'done', pr: REVIEW(940) } }), histIt('m2', { run: { status: 'done', pr: REVIEW(941) } }), ORIGIN, ...ROUNDS];
+// The badge reads raw History rows: { id, status, pr, roundOf, mtime }.
+const rawOf = (h) => ({ id: h.id, status: h.status, pr: h.run.pr, mtime: h.mtime, ...(h.roundOf ? { roundOf: h.roundOf } : {}) });
+const roundPids = new Set(ROUNDS.map((r) => r.id));
+const everyRow = (m) => rowsOf(m).flatMap((r) => [r, ...(r.members || [])]);
+
+test('rounds (Task 1): histRow / liveRow copy the marker; a malformed one is dropped', () => {
+  assert.deepEqual(buildRunsModel({ history: [roundIt(8)], now: NOW }).sections[0].rows[0].roundOf, marker(8));
+  const lv = liveIt('run9', { pipelineId: 'rnd9', roundOf: marker(9, { outcome: undefined }) });
+  const { liveRow, histRow } = RL;
+  assert.equal(liveRow(lv, NOW).roundOf.round, 9);
+  assert.equal(histRow(roundIt(8), NOW).roundOf.pipelineId, 'ba22d7fd');
+  assert.equal(histRow(histIt('x', { roundOf: { pipelineId: 'o', round: 1 } }), NOW).roundOf, null, 'round 1 is the run itself');
+  assert.equal(histRow(histIt('x'), NOW).roundOf, null);
+});
+
+test('rounds (Task 3, D8): one open PR raises one Needs-you item — #947 counts 1, not 8', () => {
+  assert.equal(countNeedsYou({ history: HIST947.map(rawOf) }), 1, 'the origin only; its 7 rounds never count through the PR');
+  const a = { id: 'u1', status: 'done', pr: PR947, mtime: 1000 };
+  const b = { id: 'u2', status: 'done', pr: { ...PR947, url: `${PR947.url}/` }, mtime: 2000 };
+  assert.deepEqual(needsYouItems({ history: [a, b] }).history.map((p) => p.id), ['u2'], 'two unmarked runs on one open PR: the newest');
+  assert.equal(countNeedsYou({ history: [a, { ...b, pr: { ...PR947, url: `${PR947.url}0`, number: 9470 } }] }), 2, 'two PRs: two');
+  const paused = { id: 'rp', status: 'paused', roundOf: marker(9, { outcome: undefined }), pr: PR947 };
+  assert.equal(countNeedsYou({ history: [...HIST947.map(rawOf), paused] }), 2, 'a paused round still needs you for its pause');
+  const fixing = { runId: 'run9', pipelineId: 'rnd9', status: 'running', roundOf: marker(9, { outcome: undefined }) };
+  assert.equal(countNeedsYou({ live: [fixing], history: HIST947.map(rawOf) }), 0, 'a live fix round: the origin is Working (D5)');
+});
+
+test('rounds (Task 4): #947 folds into the group — one Needs-you row, member 3 carries its 7 rounds', () => {
+  const m = buildRunsModel({ history: HIST947, groups: [FEATURE], now: NOW });
+  const needs = m.sections.find((s) => s.id === 'needs');
+  assert.deepEqual(needs.rows.map((r) => r.key), ['chain:feat_flag']);
+  assert.equal(m.counts.needs, needs.count);
+  assert.equal(needs.count, countNeedsYou({ history: HIST947.map(rawOf) }), 'the section and the badge agree');
+  const mb = needs.rows[0].members.find((x) => x.pipelineId === 'ba22d7fd');
+  assert.equal(mb.rounds.length, 7);
+  assert.deepEqual(mb.rounds.map((rd) => rd.n), [8, 7, 6, 5, 4, 3, 2], 'newest first');
+  assert.match(mb.roundsLine, /^Round 8 · merge dev in · pushed 8e4f5a6/);
+  assert.equal(needs.rows[0].count, '3/3', 'rounds are not members');
+  assert.equal(everyRow(m).some((r) => roundPids.has(r.pipelineId)), false, 'no round lists anywhere else');
+  assert.equal(listLine(needs.rows[0], { section: 'needs' }), 'Run 3 needs you · Conflicts · 7 rounds');
+  // Selecting a round marks its member's group (isMemberOpen).
+  assert.equal(isMemberOpen(needs.rows[0], { pipelineId: 'rnd5' }), true);
+});
+
+test('rounds (Task 4): a top-level origin and its rounds are one row; a round page selects it', () => {
+  const m = buildRunsModel({ history: [ORIGIN, roundIt(2), roundIt(3)], now: NOW });
+  const rows = rowsOf(m);
+  assert.deepEqual(rows.map((r) => r.pipelineId), ['ba22d7fd']);
+  assert.deepEqual(rows[0].rounds.map((rd) => rd.n), [3, 2]);
+  assert.equal(rows[0].activityMs, Date.parse(at(23, 10, 0)), 'the stack moves up with its newest round');
+  assert.equal(isRowSelected(rows[0], { pipelineId: 'rnd2' }), true);
+  assert.equal(isRowSelected(rows[0], { pipelineId: 'other' }), false);
+});
+
+test('rounds (Task 4, D5): a live round runs the stack — Working, its line, Fixing, in Running not Needs you', () => {
+  const run9 = { status: 'running', steps: [{ nodeId: 'n_impl', status: 'start' }], active: [{ nodeId: 'n_impl' }],
+    branch: { roundOf: marker(9, { outcome: undefined }) } };
+  const live = [liveIt('run9', { pipelineId: 'rnd9', roundOf: marker(9, { outcome: undefined }), run: run9 })];
+  const top = buildRunsModel({ live, history: [ORIGIN, roundIt(8)], now: NOW });
+  const head = rowsOf(top).find((r) => r.pipelineId === 'ba22d7fd');
+  assert.equal(rowsOf(top).length, 1);
+  assert.equal(head.model.state, 'working');
+  assert.equal(head.roundsLine, 'Running · Round 9 · merge dev in');
+  assert.equal(head.model.pr.word, 'Fixing');
+  assert.equal(head.href, ORIGIN && `#history/worca-00000002/ba22d7fd`, 'the origin\'s href');
+  assert.equal(head.title, 'Route swallowed step failures');
+  assert.deepEqual(top.sections.map((s) => s.id), ['running']);
+  const grp = buildRunsModel({ live, history: HIST947, groups: [FEATURE], now: NOW });
+  assert.deepEqual(grp.sections.map((s) => [s.id, s.rows.map((r) => r.key)]), [['running', ['chain:feat_flag']]]);
+  const g = grp.sections[0].rows[0];
+  const mb = g.members.find((x) => x.pipelineId === 'ba22d7fd');
+  assert.deepEqual([mb.model.state, mb.model.pr.word, mb.roundsLine], ['working', 'Fixing', 'Running · Round 9 · merge dev in']);
+  assert.equal(g.count, '3/3', 'rounds are not members: the count holds while round 9 runs');
+  assert.equal(listLine(g, { section: 'running' }), 'Run 3 · Round 9 · merge dev in');
+  assert.equal(isMemberOpen(g, { runId: 'run9' }), true);
+});
+
+test('rounds (Task 4): a paused round raises its stack to Needs you', () => {
+  const paused = roundIt(9, { status: 'paused', mtime: Date.parse(at(29, 10, 0)), roundOf: marker(9, { outcome: undefined }),
+    run: { status: 'paused', pr: PR947, round: marker(9, { outcome: undefined }) } });
+  const m = buildRunsModel({ history: [ORIGIN, roundIt(8), paused], now: NOW });
+  const head = rowsOf(m)[0];
+  assert.deepEqual([rowsOf(m).length, head.needs, head.model.state], [1, true, 'paused']);
+  assert.equal(m.sections[0].id, 'needs');
+});
+
+test('rounds (Task 4, D3): an orphan stack — the newest round heads, titled with its round; nothing disappears', () => {
+  const m = buildRunsModel({ history: [roundIt(7), roundIt(8)], now: NOW });
+  const rows = rowsOf(m);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].pipelineId, 'rnd8');
+  assert.equal(rows[0].title, 'Merge dev into PR 947 and resolve conflicts · Round 8');
+  assert.equal(rows[0].href, '#history/worca-00000002/rnd8', 'its own page');
+  assert.deepEqual(rows[0].rounds.map((rd) => rd.n), [7]);
+  // The origin is a member of a group that is not listed: its title names the stack.
+  const named = buildRunsModel({ history: [roundIt(8)], groups: [FEATURE], now: NOW });
+  assert.equal(rowsOf(named)[0].title, 'Route swallowed step failures · Round 8');
+});
+
+test('rounds (Task 4, D4): an archived origin hides its rounds from the active list; Show = Archived folds them', () => {
+  const active = buildRunsModel({ history: [roundIt(7), roundIt(8)], archivedIds: new Set(['ba22d7fd']), now: NOW });
+  assert.equal(rowsOf(active).length, 0);
+  const archived = buildRunsModel({ show: 'archived', archivedIds: new Set(['ba22d7fd']), now: NOW,
+    history: [{ ...ORIGIN, archived: true }, roundIt(7, { archived: true }), roundIt(8, { archived: true })] });
+  assert.deepEqual(rowsOf(archived).map((r) => [r.pipelineId, r.rounds.length]), [['ba22d7fd', 2]]);
+});
+
+test('rounds (D4 with D3 / D5): an archived run\'s round that is live or needs you still lists, as the badge counts it', () => {
+  const ids = new Set(['ba22d7fd']);
+  const pausedMk = marker(9, { outcome: undefined });
+  const paused = roundIt(9, { status: 'paused', mtime: Date.parse(at(29, 10, 0)), roundOf: pausedMk, run: { status: 'paused', pr: PR947, round: pausedMk } });
+  const m1 = buildRunsModel({ history: [roundIt(7), roundIt(8), paused], archivedIds: ids, now: NOW });
+  assert.deepEqual(m1.sections.map((s) => [s.id, s.rows.map((r) => r.pipelineId)]), [['needs', ['rnd9']]], 'the paused round heads an orphan stack');
+  assert.equal(rowsOf(m1)[0].title, 'Merge dev into PR 947 and resolve conflicts · Round 9');
+  assert.equal(rowsOf(m1)[0].rounds, undefined, 'its archived run\'s finished rounds stay out');
+  assert.equal(m1.counts.needs, countNeedsYou({ history: [rawOf(roundIt(7)), rawOf(roundIt(8)), { ...rawOf(paused), status: 'paused' }] }));
+  const asking = liveIt('run9', { pipelineId: 'rnd9', roundOf: pausedMk, ask: { q: 'which?' },
+    run: { status: 'running', pendingQuestion: 'which?', branch: { roundOf: pausedMk } } });
+  const m2 = buildRunsModel({ live: [asking], history: [roundIt(8)], archivedIds: ids, now: NOW });
+  assert.deepEqual(m2.sections.map((s) => [s.id, s.rows.map((r) => r.key)]), [['needs', ['live:run9']]]);
+  assert.equal(m2.counts.needs, countNeedsYou({ live: [asking], history: [rawOf(roundIt(8))] }));
+  const running = liveIt('run9', { pipelineId: 'rnd9', roundOf: pausedMk,
+    run: { status: 'running', steps: [{ nodeId: 'n', status: 'start' }], active: [{ nodeId: 'n' }], branch: { roundOf: pausedMk } } });
+  const m3 = buildRunsModel({ live: [running], history: [roundIt(8)], archivedIds: ids, now: NOW });
+  assert.deepEqual(m3.sections.map((s) => [s.id, s.rows.map((r) => r.key)]), [['running', ['live:run9']]], 'a running round never vanishes');
+  // An archived origin row that IS in the feed (its own row archived): the live round still lists, not under the hidden row.
+  const m4 = buildRunsModel({ live: [running], history: [{ ...ORIGIN, archived: true }], now: NOW });
+  assert.deepEqual(m4.sections.map((s) => [s.id, s.rows.map((r) => r.key)]), [['running', ['live:run9']]]);
+});
+
+test('rounds (Task 4): the person and label filters apply to the head only', () => {
+  const hist = [{ ...ORIGIN, by: 'ann', labels: ['ux'] }, roundIt(7, { by: 'bob' }), roundIt(8, { by: 'bob' })];
+  const ann = buildRunsModel({ history: hist, person: 'ann', now: NOW });
+  assert.deepEqual(rowsOf(ann).map((r) => [r.pipelineId, r.rounds.length]), [['ba22d7fd', 2]], 'her run keeps its rounds');
+  const lab = buildRunsModel({ history: hist, labels: ['ux'], now: NOW });
+  assert.deepEqual(rowsOf(lab).map((r) => r.pipelineId), ['ba22d7fd']);
+  const bob = buildRunsModel({ history: hist, person: 'bob', now: NOW });
+  assert.deepEqual(rowsOf(bob).map((r) => [r.pipelineId, r.rounds.length]), [['rnd8', 1]], 'the origin filtered out: an orphan stack');
+});
+
+test('rounds (Task 3, D8): two unmarked runs on one open PR — the newest in Needs you, the other under Recent', () => {
+  const a = histIt('u1', { mtime: Date.parse(at(28, 9, 0)), run: { status: 'done', pr: PR947 } });
+  const b = histIt('u2', { mtime: Date.parse(at(29, 9, 0)), run: { status: 'done', pr: PR947 } });
+  const m = buildRunsModel({ history: [a, b], now: NOW });
+  assert.deepEqual(m.sections.map((s) => [s.id, s.rows.map((r) => r.pipelineId)]), [['needs', ['u2']], ['recent', ['u1']]]);
+  assert.equal(m.counts.needs, 1);
+  const older = m.sections[1].rows[0];
+  assert.deepEqual([older.needs, older.model.state, older.model.prNeeds], [false, 'in-review', false], 'the deduped run reads In review');
+  assert.doesNotMatch(listLine(older, { section: 'recent', time: 'Mon' }), /Needs you|Conflicts/);
+  assert.equal(older.model.pr.word, 'Conflicts', 'its PR chip still says what is wrong');
+  // A group variant: G's member B (older) loses to the newer top-level run A on the same PR.
+  const G = { id: 'g', groupKind: 'feature', title: 'G', members: [
+    { position: 1, title: 'one', pipelineId: 'g1', kind: 'hist', run: { status: 'done', pr: REVIEW(940) } },
+    { position: 2, title: 'B', pipelineId: 'gB', kind: 'hist', startedAt: at(27, 9, 0), run: { status: 'done', pr: PR947 } }] };
+  const A = histIt('uA', { startedAt: at(29, 9, 0), mtime: Date.parse(at(29, 9, 0)), run: { status: 'done', pr: PR947 } });
+  const gm = buildRunsModel({ history: [A, histIt('g1', { run: G.members[0].run }), histIt('gB', { startedAt: at(27, 9, 0), run: G.members[1].run })],
+    groups: [G], now: NOW });
+  assert.deepEqual(gm.sections.map((s) => [s.id, s.rows.map((r) => r.key)]), [['needs', ['hist:worca-00000002/uA']], ['recent', ['chain:g']]]);
+  const g = gm.sections[1].rows[0];
+  assert.equal(g.needs, false);
+  assert.doesNotMatch(listLine(g, { section: 'recent', time: 'Mon' }), /[Nn]eeds you/);
+  assert.equal(g.members[1].model.state, 'in-review');
+  const two = buildRunsModel({ history: [a, histIt('u3', { run: { status: 'done', pr: { ...PR947, url: `${PR947.url}0` } } })], now: NOW });
+  assert.equal(two.counts.needs, 2);
 });

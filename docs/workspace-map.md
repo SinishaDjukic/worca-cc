@@ -5,7 +5,10 @@ other: which member calls another's API, consumes the messages it publishes, bui
 package or shares its tables. Every scanned edge carries file:line evidence and a confidence,
 every member a coverage level. The map is stored with the workspace, shown on the workspace
 page's **Map** tab, and rendered into the workspace description that every agent of a
-workspace run receives (`## Workspace Context`).
+workspace run receives (`## Workspace Context`). Workspaces group 2–40 related projects, Git
+repositories or Folder projects, under **Workspaces** (Advanced level).
+
+![The Nimbus workspace's Map tab: coverage chips for nimbus-crm, nimbus-web and nimbus-jobs, a graph of REST API, message/queue and shared DB edges, and the Edges table with confidence badges, file:line evidence and Confirm/Reject buttons above the Add edge form](screenshots/workspace-map.png)
 
 ## How a scan works
 
@@ -40,13 +43,20 @@ extracts facts and does all the matching; agents fill the gaps code leaves and c
   the overview is generated.
 - The scan agent model runs survey, usage and synth; the project agent model runs their
   investigators (Settings › Runs › Workspaces, or the scan's own Models pick).
-- A scan runs on the workspace's **saved scan model** — captured at creation, or set any time
-  (and cleared) with the **Scan model** control on the workspace header. A re-scan uses that
-  saved pick silently. A workspace without one (a legacy workspace, or a saved pick whose model
-  left the catalog) does not fall back to a default: the re-scan opens the pick-a-model window,
-  pre-filled from Settings › Runs › Workspaces — save your choice and the scan runs on it and
-  keeps it for later; close the window and the re-scan is skipped. A pick you never chose
-  (Settings or the built-in default) is never stored on the workspace.
+- With nothing chosen, the scan agent runs on your **Everyday coding** role (else Sonnet 5 ·
+  medium) and the project agents on `sonnet` · medium. Settings › Runs › Workspaces overrides that
+  for every workspace.
+- A workspace can also have its own **saved scan model**: chosen when you change the Models pick
+  while creating it, or set any time (and cleared) with the **Scan model** control on the
+  workspace header. A re-scan uses that saved pick silently. Create workspace saves a pick only
+  when you change one, or when you have no Everyday coding role; otherwise its re-scans follow
+  your role as it changes.
+- A workspace without a usable pick (a legacy workspace, one created without a pick, or a saved
+  pick whose model left the catalog) re-scans silently when your Everyday coding role covers the
+  scan: on Settings › Runs › Workspaces when that is set, else on the role. Without a role it does
+  not fall back to a default: the re-scan opens the pick-a-model window, pre-filled from Settings ›
+  Runs › Workspaces — save your choice and the scan runs on it and keeps it for later; close the
+  window and the re-scan is skipped. A pick you never chose is never stored on the workspace.
 - A scan changes no member: it never creates a repository and never commits. A Git member must be
   the top folder of its own git repository and have a commit; a scan or re-scan with any other
   Git member (a folder inside a monorepo, a repository with no commit) is refused and names it: add
@@ -105,7 +115,9 @@ A re-scan replaces the description, hand edits included.
 ## Reviewing the map
 
 On the **Map** tab you can confirm an edge or reject it, clear either, add an edge the scan
-missed (from, to, kind, a one-line name and an optional detail) and delete it again.
+missed (from, to, kind, a one-line name and an optional detail) and delete it again. The edge
+list filters by project (either end), kind, confidence and state; a manual edge has no
+confidence, so a confidence filter never shows it.
 
 - A rejected edge leaves the description and the Map tab's graph; the merged graph file (see
   below) keeps every scanned edge. A manual edge is marked `(manual)` unless the description is
@@ -164,7 +176,7 @@ yet come in through **Add…** or the box under it — paste paths, one per line
   existing rows start ticked, up to the 40-project limit; untick what you do not want.
 - **Scan interconnections** registers the ticked new rows as projects first — named after the
   `.code-workspace` entry or the folder; a name already taken gets its parent folder's name in
-  front — then starts the scan.
+  front — then starts the scan. The workspace is saved when that scan ends.
 - Importing only reads: it lists folders, reads the `.code-workspace` file and runs
   `git rev-parse`. It never writes into a repository. The projects Scan registers are ordinary
   projects from then on, with the same background fetches as a project added under **Projects**.
@@ -177,7 +189,7 @@ yet come in through **Add…** or the box under it — paste paths, one per line
 ## Changing members
 
 A workspace's members can change after it is created: **Add projects** and **Remove** on the
-workspace page's Projects card, `POST /api/workspaces/:id/members` with `{ "add": [paths] }` or
+Projects card of the workspace page's Overview tab, `POST /api/workspaces/:id/members` with `{ "add": [paths] }` or
 `{ "remove": path }`, or Chat's workspace card. The workspace keeps its id, so its runs,
 schedules, homes and map reviews stay attached; runs already started keep the members they
 started with.
@@ -241,6 +253,14 @@ A partial re-scan saves exactly like a full one: a member change while it runs m
 (`SET_CHANGED`). If the stored map no longer covers the members when it is about to start, worca runs
 a full re-scan instead and says so; a partial run that still cannot read a matching map ends as
 failed (never paused), so Re-scan stays available.
+
+## Workspace runs
+
+In **New pipeline**, set **Target** to **Workspace**. The planner writes one plan whose every
+task is tagged with the projects it touches (`Projects: <projectKey>[, ...]`), and each
+implementer edits only those. Every Git member gets its own branch and worktree; every Folder
+member gets its own copy, which you apply to its folder (or discard) on its own. **Workspace
+Review** reviews each changed member and merges the findings into one verdict per review cycle.
 
 ## Cross-project graph
 

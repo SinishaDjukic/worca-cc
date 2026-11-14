@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createRunLogWriter, RUN_LOG_FILE } from '../src/core/run-log.mjs';
+import { createRunLogWriter, appendRunLog, RUN_LOG_FILE } from '../src/core/run-log.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 function readLines(text) {
@@ -53,4 +53,21 @@ test('close() is idempotent, a push after close is a no-op, and close() without 
       await assert.doesNotReject(w.close());
     } },
   ]);
+});
+
+test('appendRunLog appends one line after the writer closed; a missing dir never rejects', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'worca-cc-rlw-'));
+  try {
+    const w = createRunLogWriter({ flushMs: 5 });
+    w.bind(dir);
+    w.push({ source: 'planner', level: 'info', text: 'run line', ts: 't0' });
+    await w.close();
+    await appendRunLog(dir, { source: 'pr', level: 'info', text: 'after', ts: 't1' });
+    const lines = readLines(await readFile(join(dir, RUN_LOG_FILE), 'utf8'));
+    assert.deepEqual(lines.map((l) => l.text), ['run line', 'after']);
+    assert.equal(lines[1].source, 'pr');
+    await appendRunLog(join(dir, 'nope', 'deeper'), { text: 'x' });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

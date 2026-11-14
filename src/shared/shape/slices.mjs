@@ -279,8 +279,8 @@ export function outlineFixAllFeedback(items) {
 
 export function outlineFeedbackBlock(feedback) {
   return '## Changes asked for the outline\n\n'
-    + 'The person reviewing your outline asked for these changes. Rewrite the outline file and STOP again; do not '
-    + `write the plan yet.\n\n${String(feedback).trim()}\n\n`;
+    + 'The outline you wrote is still in the outline file. Edit it to address these changes, keep what they do not '
+    + `touch, and STOP again; do not write the plan yet.\n\n${String(feedback).trim()}\n\n`;
 }
 
 // Neutral wording: the note also reaches later Planner executions (a Refine revise, a resume), and `decided:'flat'`

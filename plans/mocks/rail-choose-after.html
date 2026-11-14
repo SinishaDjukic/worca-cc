@@ -1,0 +1,145 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Choose after</title>
+<style>
+@font-face{font-family:'Poppins';font-weight:400;src:url('../../ui/public/fonts/poppins-latin-400-normal.woff2') format('woff2');}
+@font-face{font-family:'Poppins';font-weight:500;src:url('../../ui/public/fonts/poppins-latin-500-normal.woff2') format('woff2');}
+@font-face{font-family:'Poppins';font-weight:600;src:url('../../ui/public/fonts/poppins-latin-600-normal.woff2') format('woff2');}
+:root{--bg:#161614;--panel:#222220;--field:#2C2C29;--surface:#34342F;--ink:#ECECE8;--ink-2:#B4B4AE;--ink-3:#9E9E98;--line:#30302D;--red:#E76A5A;--hover:#353531;--violet:#8C7FD6;--violet-ink:#B3A8EE}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--ink);font:13px/1.4 Poppins,system-ui,sans-serif;padding:28px;width:1240px}
+h1{font-size:18px;font-weight:500;margin-bottom:4px}
+.sub{color:var(--ink-3);margin-bottom:22px}
+.row{display:grid;grid-template-columns:120px 1fr 1fr 1fr;gap:22px;align-items:start;margin-bottom:30px}
+.lab{color:var(--ink-3);font-size:11px;text-transform:uppercase;letter-spacing:.06em;padding-top:4px}
+.col h2{font-size:12px;font-weight:500;color:var(--ink-2);margin-bottom:8px}
+.col h2 b{color:var(--ink);font-weight:600}
+.note{color:var(--ink-3);font-size:11.5px;margin-top:8px}
+.pos{position:relative}
+/* composer */
+.comp{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px 14px;width:330px}
+.words{color:var(--ink-3);padding-bottom:16px}
+.words.f{color:var(--ink)}
+.bar{display:flex;align-items:center;gap:12px;color:var(--ink-3)}
+.bar .sp{flex:1}
+.mode{color:var(--ink);font-weight:600}
+.mode::after{content:" ⌄";font-size:11px;color:var(--ink-3);font-weight:400}
+.send{width:26px;height:26px;border-radius:5px;background:var(--ink);color:var(--bg);display:grid;place-items:center;font-size:13px;font-weight:600}
+.send.off{background:var(--field);color:var(--ink-3)}
+/* chat + proposal */
+.msg{background:var(--field);border-radius:6px;padding:8px 12px;margin:0 0 12px auto;width:max-content;max-width:260px}
+.prop{width:330px;border-left:2px solid var(--violet);padding:2px 0 2px 14px}
+.kick{color:var(--violet-ink);font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em}
+.ttl{font-size:15px;font-weight:500;margin:2px 0 4px}
+.why{color:var(--ink-2);font-size:12.5px;margin-bottom:10px}
+.read{font-size:12.5px;color:var(--ink-3);line-height:22px}
+.v{color:var(--ink);border-radius:3px;padding:1px 3px;margin:0 -3px}
+.v.on{background:var(--hover);outline:1px solid var(--ink-3)}
+.v.ch{color:var(--violet-ink)}
+.acts{display:flex;gap:14px;align-items:center;margin-top:12px}
+.btn{background:var(--ink);color:var(--bg);font-weight:500;border-radius:5px;padding:5px 14px}
+.lnk{color:var(--ink-2)}
+.menu{position:absolute;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:4px;width:200px;box-shadow:0 8px 24px rgba(0,0,0,.4);z-index:2}
+.mi{display:flex;justify-content:space-between;gap:16px;white-space:nowrap;padding:5px 10px;border-radius:4px;color:var(--ink-2)}
+.mi.sel{background:var(--hover);color:var(--ink)}
+.mi span{color:var(--ink-3);font-size:12px}
+.mi.sel span{color:var(--ink-2)}
+.sep{height:1px;background:var(--line);margin:4px 2px}
+/* sidebar */
+.side{background:var(--panel);border:1px solid var(--line);border-radius:6px;width:250px;padding:10px 12px 12px;min-height:150px}
+.head{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:500;margin-bottom:12px}
+.logo{width:20px;height:20px;border-radius:50%;background:#B4B4AE;color:#161614;font-size:11px;font-weight:600;display:grid;place-items:center;flex:none}
+.head .sp{flex:1}
+.ic{color:var(--ink-3);font-size:15px;font-weight:400}
+.scope{white-space:nowrap}
+.scope i{font-style:normal;color:var(--ink-3);font-weight:400}
+.clr{color:var(--ink-3);font-size:12px;margin-left:-2px}
+.grp{font-weight:600;font-size:13px;margin-bottom:6px}
+.grp span{color:var(--ink-3);font-weight:400;margin-left:4px}
+.it{display:flex;align-items:center;gap:8px;height:26px}
+.it .t{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.it .m{color:var(--ink-3);font-size:12px}
+.sub2{padding-left:22px}
+.x{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--red);color:var(--red);font-size:8px;display:grid;place-items:center;flex:none}
+.dot{width:8px;height:8px;border-radius:50%;background:#5BAE5B;flex:none;margin:0 3px}
+.bub{width:14px;height:12px;border:1.5px solid var(--ink-3);border-radius:2px;flex:none}
+.mh{color:var(--ink-3);font-size:11px;padding:4px 10px 2px}
+</style></head><body>
+<h1>Choose after: a choice shows where its result shows, only when it differs</h1>
+<div class="sub">Composer: no sentence line; Worca's picks appear in the proposal. List: the header title is the scope; no sentence above the list.</div>
+
+<div class="row">
+  <div class="lab">Start a task</div>
+  <div class="col"><h2><b>1 · Type</b>, only words and the mode</h2>
+    <div class="comp"><div class="words f">Add a CSV export to the invoices page</div>
+      <div class="bar"><span>+</span><span class="mode">Task</span><span class="sp"></span><span>🎙</span><span class="send">↑</span></div></div>
+    <div class="note">One line of chrome, as for an ordinary message. Ask stays Ask: a chat message is never read as a task.</div>
+  </div>
+  <div class="col"><h2><b>2 · Proposal</b>, Worca's picks as one readout</h2>
+    <div class="msg">Add a CSV export to the invoices page</div>
+    <div class="prop">
+      <div class="kick">Proposed task</div>
+      <div class="ttl">Add a CSV export to invoices</div>
+      <div class="why">Touches the invoices list and its API; one PR.</div>
+      <div class="read"><span class="v">billing-api</span> · <span class="v">Opus 5.5 high</span> · <span class="v">from latest</span> · <span class="v">opens a PR</span></div>
+      <div class="acts"><span class="btn">Start</span><span class="lnk">Not now</span></div>
+    </div>
+    <div class="note">Every value is a picker. No connector words, no chevrons: the readout is the summary.</div>
+  </div>
+  <div class="col"><h2><b>3 · Change one</b>, only if Worca guessed wrong</h2>
+    <div class="msg">Add a CSV export to the invoices page</div>
+    <div class="prop pos">
+      <div class="kick">Proposed task</div>
+      <div class="ttl">Add a CSV export to invoices</div>
+      <div class="why">Touches the invoices list and its API; one PR.</div>
+      <div class="read"><span class="v">billing-api</span> · <span class="v on">Opus 5.5 high</span> · <span class="v">from latest</span> · <span class="v">opens a PR</span></div>
+      <div class="menu" style="left:96px;top:118px;width:250px">
+        <div class="mh">Engine</div>
+        <div class="mi sel">Opus 5.5 · high <span>Worca's pick</span></div>
+        <div class="mi">Opus 5.5 · max</div>
+        <div class="mi">Sonnet 5.5 · medium</div>
+        <div class="mi">Haiku 5.5 · low</div>
+      </div>
+      <div class="acts" style="visibility:hidden"><span class="btn">Start</span></div>
+    </div>
+    <div class="note" style="margin-top:150px">Model and effort are one choice. A changed value turns violet, so you see what you overrode.</div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="lab">Chat list</div>
+  <div class="col"><h2><b>Everything</b>, title says where you are</h2>
+    <div class="side">
+      <div class="head"><span class="logo">W</span><span class="scope">Chat</span><span class="ic">⌄</span><span class="sp"></span><span class="ic">⋯</span><span class="ic">＋</span><span class="ic">◫</span></div>
+      <div class="grp">Needs you <span>2</span></div>
+      <div class="it"><span class="bub"></span><span class="t">Node 24</span><span class="m">12:40</span></div>
+      <div class="it sub2"><span class="x">✕</span><span class="t">Update Node to 24</span><span class="m">⑂</span></div>
+      <div class="it"><span class="bub"></span><span class="t">CSV export</span><span class="m">11:02</span></div>
+    </div>
+    <div class="note">No sentence above the list. Grouping and sorting live in ⋯: rarely changed.</div>
+  </div>
+  <div class="col"><h2><b>Pick a scope</b>, the title is the control</h2>
+    <div class="side pos" style="min-height:330px">
+      <div class="head"><span class="logo">W</span><span class="scope">Chat</span><span class="ic">⌄</span><span class="sp"></span><span class="ic">⋯</span><span class="ic">＋</span><span class="ic">◫</span></div>
+      <div class="menu" style="left:36px;top:40px;width:210px">
+        <div class="mi">Everything <span>14</span></div>
+        <div class="mi sel">Needs you <span>2</span></div>
+        <div class="mi">Running <span>3</span></div>
+        <div class="sep"></div>
+        <div class="mh">Project</div>
+        <div class="mi">All projects</div>
+        <div class="mi sel">billing-api <span>5</span></div>
+        <div class="mi">worca-cc <span>9</span></div>
+      </div>
+    </div>
+    <div class="note">One menu, two parts: what (state) and where (project). Each with its count.</div>
+  </div>
+  <div class="col"><h2><b>Scoped</b>, the title carries both words</h2>
+    <div class="side">
+      <div class="head"><span class="logo">W</span><span class="scope">Needs you <i>·</i> billing-api</span><span class="ic">⌄</span><span class="clr">✕</span><span class="sp"></span><span class="ic">＋</span></div>
+      <div class="it"><span class="bub"></span><span class="t">Node 24</span><span class="m">12:40</span></div>
+      <div class="it sub2"><span class="x">✕</span><span class="t">Update Node to 24</span><span class="m">⑂</span></div>
+    </div>
+    <div class="note">A short list always says why it is short; ✕ goes back to everything. The group header goes: the title already says it.</div>
+  </div>
+</div>
+</body></html>

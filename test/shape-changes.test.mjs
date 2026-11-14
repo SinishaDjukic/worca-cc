@@ -193,7 +193,7 @@ const shippedFeature = (merged, over = {}) => {
 
 test('requirements first: a round runs shaped (medium, no slices) and its prompt lists the agreed requirements as criteria', async () => {
   const { criterionIds } = await import('../src/shared/review/coverage.mjs');
-  const card = changesCard({ text: 'make it blue', facts: shippedFeature(false), requirementsOn: true });
+  const card = changesCard({ text: 'make it blue', facts: shippedFeature(false) });
   assert.equal(card.landing.kind, 'round');
   assert.deepEqual(card.run.shape, { perspectives: ['product', 'qa'], size: 'medium', slices: 'off' });
   assert.match(card.run.prompt, /^make it blue\n\n## Agreed requirements\n/);
@@ -209,7 +209,7 @@ test('requirements first: a round runs shaped (medium, no slices) and its prompt
 
 test('requirements first: a follow-up appends its run with requirementsFirst and the agreed requirements in its goal', async () => {
   const appended = [];
-  const card = changesCard({ text: 'add a pie', facts: shippedFeature(true), requirementsOn: true });
+  const card = changesCard({ text: 'add a pie', facts: shippedFeature(true) });
   assert.equal(card.landing.kind, 'follow-up');
   assert.equal('run' in card, false);
   await applyChanges(card, { appendRun: (id, o) => { appended.push([id, o]); return { index: 2, ticketId: 't2' }; }, tick: () => {} });
@@ -218,22 +218,21 @@ test('requirements first: a follow-up appends its run with requirementsFirst and
   assert.match(appended[0][1].goal, /^add a pie\n\n## Agreed requirements\n[\s\S]*^- \*\*R-sec-2\*\* Sign every export$/m);
 });
 
-test('requirements first is off: flag off, not shipped or no agreed requirements → today\'s round and follow-up', async () => {
-  for (const [facts, on] of [[shippedFeature(false), false], [shippedFeature(false, { shipped: false }), true], [shippedFeature(false, { agreed: [] }), true]]) {
-    const card = changesCard({ text: 'make it blue', facts, requirementsOn: on });
+test('requirements first does not apply: not shipped or no agreed requirements → today\'s round and follow-up', async () => {
+  for (const facts of [shippedFeature(false, { shipped: false }), shippedFeature(false, { agreed: [] })]) {
+    const card = changesCard({ text: 'make it blue', facts });
     assert.equal('shape' in card.run, false);
     assert.equal(card.run.prompt, 'make it blue');
     assert.equal('requirementsFirst' in card, false);
   }
   const appended = [];
-  const off = changesCard({ text: 'add a pie', facts: shippedFeature(true) });
+  const off = changesCard({ text: 'add a pie', facts: shippedFeature(true, { agreed: [] }) });
   await applyChanges(off, { appendRun: (id, o) => { appended.push(o); return { index: 2 }; }, tick: () => {} });
   assert.deepEqual(appended, [{ title: 'add a pie', goal: 'add a pie', kind: 'follow-up' }]);
 });
 
-test('requirements first through propose_changes: the parent\'s requirementsOn reaches the card', () => {
+test('requirements first through propose_changes: the card says so', () => {
   const work = { feature: { id: 'f1', title: 'Charts', status: 'done', slices: [{ index: 1, state: 'done' }] }, facts: shippedFeature(false), open: null };
-  const on = shapeToolFit('changes', { pipelineId: 'p1', request: 'make it blue' }, work, { requirementsOn: true });
+  const on = shapeToolFit('changes', { pipelineId: 'p1', request: 'make it blue' }, work);
   assert.equal(on.card.requirementsFirst.count, 2);
-  assert.equal('requirementsFirst' in shapeToolFit('changes', { pipelineId: 'p1', request: 'make it blue' }, work).card, false);
 });

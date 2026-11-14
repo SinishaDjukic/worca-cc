@@ -226,7 +226,6 @@ test('ledger: no acceptance draws today\'s card (no fold, no pickers, Create PR 
 
 test('chat card: marks go through saveAcceptance; the server\'s new ledger is taken in place, any other change rebuilds', async () => {
   const doc = docOf(); const saved = [];
-  doc.documentElement.dataset.flags = 'shapeRequirements';
   const block = { kind: 'card', id: 'card_1', state: 'proposed', card: { ...READY, acceptance: LEDGER([]) } };
   const ctx = { doc, postCard: async () => ({}), saveAcceptance: async (id, entries) => { saved.push([id, entries]); return { ok: true }; } };
   const { el, handle } = buildShipChatCard(block, ctx);
@@ -239,13 +238,3 @@ test('chat card: marks go through saveAcceptance; the server\'s new ledger is ta
   assert.equal('handle' in buildShipChatCard({ ...block, card: READY }, ctx), false, 'no ledger, no handle');
 });
 
-test('chat card with the flag off: a stored ledger is not drawn; Create PR enabled and primary, in ready and applied', () => {
-  for (const state of ['proposed', 'applied']) {
-    const { el } = chat({ id: 'card_1', state, card: { ...READY, result: { mode: 'one' }, acceptance: LEDGER([]) } });
-    assert.equal(el.querySelector('.plan-check-line'), null, `${state}: no Requirements fold`);
-    assert.equal(el.querySelector('.ask-shipcard-mark'), null, `${state}: no pickers`);
-    assert.equal(el.querySelector('.ask-shipcard-left'), null, `${state}: no "left" line`);
-    const create = el.querySelector('[data-act="ship-create"]');
-    if (create) assert.deepEqual([create.disabled, create.classList.contains('btn-primary')], [false, true]);
-  }
-});

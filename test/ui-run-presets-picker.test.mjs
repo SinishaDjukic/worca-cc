@@ -18,7 +18,7 @@ test('presetHiddenItems names picks, loops, Away mark, opt-outs, engine and mock
   // `c` holds only its toggles (the stored full picks name every agent node, n_clarify included): not a model pick.
   const nodes = { a: { model: 'm1', effort: '' }, b: { model: 'm2', effort: 'high', fanOut: true }, c: { fanOut: false, askQuestions: true } };
   assert.deepEqual(presetHiddenItems({ overlay: { nodes, wires: { w: { maxCycles: 2 } } }, nightMode: true, mcpOptOut: ['x'], engine: 'codex', mock: true }),
-    ['2 agent picks', '1 loop budget', 'Away mark', '1 Sets opt-out', 'Codex engine', 'Mock mode']);
+    ['2 agent picks', '1 loop budget', 'Away mark', '1 Sets opt-out', 'OpenAI Codex engine', 'Mock mode']);
   assert.deepEqual(presetHiddenItems({ engine: 'gemini-x' }), ['Unknown engine']);
   assert.deepEqual(presetHiddenItems({ engine: 'claude' }), []);
   assert.deepEqual(presetHiddenItems(null), []);

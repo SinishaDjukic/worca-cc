@@ -45,7 +45,7 @@ const isReqAsk = (q) => q.kind === 'plan' && !!(q.plan?.criteria || q.plan?.erro
 /** A mock Shaper run. `onAsk(q, orch)` answers every plan ask (default approve); Clarify is answered empty. */
 function start(opts = {}, onAsk = approve) {
   const dir = opts.projectDir || gitDir('shapereq');
-  const req = resolveShapeRequest({ shape: opts.shape ?? { size: 'large', lead: 'security' } }, { requirementsOn: opts.flag !== false, internal: !!opts.internal });
+  const req = resolveShapeRequest({ shape: opts.shape ?? { size: 'large', lead: 'security' } }, { internal: !!opts.internal });
   assert.equal(req.ok, true, req.error);
   const orch = createOrchestrator({ projectDir: dir, workflowId: opts.workflowId || req.workflowId, prompt: opts.prompt || 'demo',
     claude: { mock: true }, ...(opts.savedShape ? {} : { shape: req.shape }), ...(opts.resume ? { resume: opts.resume } : {}),
@@ -74,6 +74,12 @@ test('a large task: one requirements hold, then one plan hold, no Clarify; 2 app
   assert.equal(reqAsk.criteria.ok, true);
   assert.equal(reqAsk.criteria.total, 8);
   assert.equal(reqAsk.decisions.length, 3);
+  assert.deepEqual(reqAsk.decisions[0].options.map((o) => [o.persona, o.reason]), [
+    ['security', 'emails are personal data, and exports get forwarded'], ['ux', 'people use them to tell who started a run'],
+  ]);
+  assert.deepEqual(reqAsk.decisions[1].options.map((o) => o.persona ?? null), ['security', null], 'an option nobody asked for stays bare');
+  assert.equal(reqAsk.decisions[2].plain, 'What access does exporting need?');
+  assert.deepEqual(reqAsk.decisions[2].options.map((o) => [o.plain, o.persona ?? null]), [['View access', null], ['Edit access', null]]);
   assert.equal(reqAsk.lead, 'security');
   assert.equal(reqAsk.check, undefined, 'the criteria hold skips the shape check');
   assert.deepEqual(plans[1].plan.coverage && [plans[1].plan.coverage.passed, plans[1].plan.coverage.total], [8, 8]);
@@ -274,14 +280,14 @@ test('the pre-change wf_shape fixture, paused inside n_roles, resumes to done wi
   assert.equal(JSON.stringify(saved.resumePoint.manifest.graph), before, 'the frozen graph is the old one');
 });
 
-test('a wf_shape_req run paused at the requirements hold resumes with the flag off', async () => {
+test('a wf_shape_req run paused at the requirements hold resumes', async () => {
   const dir = gitDir('shapereq-off');
   let paused = false;
   const h = start({ projectDir: dir }, (q, orch) => { if (!paused && isReqAsk(q)) { paused = true; orch.pause(); } else approve(q, orch); });
   assert.equal((await h.done).status, 'paused');
   const saved = readPipelineForResume(h.orch.getState().id);
   assert.equal(saved.resumePoint.workflowId, 'wf_shape_req');
-  const h2 = start({ projectDir: dir, resume: saved, flag: false, workflowId: 'wf_shape_req' });
+  const h2 = start({ projectDir: dir, resume: saved, workflowId: 'wf_shape_req' });
   const res = await h2.done;
   assert.equal(res.status, 'done', res.error);
   assert.deepEqual(h2.asks.filter((q) => q.kind === 'plan').map((q) => q.nodeId), ['n_reqrefine', 'n_refine']);
@@ -349,7 +355,7 @@ test('the slice 2 ticket\'s prompt contains `Satisfies: R-qa-1, R-sec-1, R-sec-2
   assert.match(request.prompt, /^- \*\*R-qa-1\*\* A test proves the CSV columns$/m);
   assert.doesNotMatch(request.prompt, /^- \*\*R-po-1\*\*/m);
   assert.equal(request.workflowId, 'wf_shape', 'the stored request keeps wf_shape; the variant is picked at fire');
-  const fired = resolveShapeRequest({ shape: request.shape, workflowId: request.workflowId }, { internal: true, requirementsOn: true });
+  const fired = resolveShapeRequest({ shape: request.shape, workflowId: request.workflowId }, { internal: true });
   assert.equal(fired.workflowId, 'wf_shape_slice_req');
 });
 
@@ -423,6 +429,19 @@ const withConcern = async (fn) => {
   try { return await fn(); } finally { delete process.env.WORCA_MOCK_ROLE_REVIEW; }
 };
 
+test('Away on: the run holds at Requirements, nothing answered', async () => {
+  const h = start({}, () => {});
+  h.orch.setNightOverride('on');
+  for (const end = Date.now() + 60000; !h.asks.some(isReqAsk) && Date.now() < end;) await new Promise((r) => setTimeout(r, 10));
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(h.orch.pendingQuestion?.id, 'plan-n_reqrefine-1');
+  assert.equal(h.orch.state.night.openedAt, null, 'no countdown');
+  assert.equal(h.orch.state.night.decisions, 0);
+  assert.equal(h.orch.answeredBy('plan-n_reqrefine-1') === 'night-mode', false);
+  h.orch.stop();
+  await h.done;
+});
+
 test('a QA finding naming R-po-1: one plan approval carries the concern; no extra round; the Planner runs once', () => withConcern(async () => {
   const h = start({});
   const res = await h.done;
@@ -479,7 +498,7 @@ const SHIPPED_FACTS = { feature: { id: 'f1', title: 'Charts', base: 'dev', proje
 
 test('a Changes round of a shipped feature asks the requirements hold before the plan approval', async () => {
   const { changesCard } = await import('../src/core/shape/changes.mjs');
-  const card = changesCard({ text: 'make it blue', facts: SHIPPED_FACTS, requirementsOn: true });
+  const card = changesCard({ text: 'make it blue', facts: SHIPPED_FACTS });
   assert.equal(card.landing.kind, 'round');
   const h = start({ shape: card.run.shape, prompt: card.run.prompt,
     branch: { roundOf: { pipelineId: 'aaaa0001', round: 2, request: 'make it blue' } } });

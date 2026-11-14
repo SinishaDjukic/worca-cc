@@ -1,10 +1,6 @@
 [
   {"file": "test/git-sync.test.mjs", "test": "a timed-out fetch kills its whole process group …", "symptom": "~780 ms budget; about 1 in 3 even alone, on the untouched checkpoint too", "alone": "fails alone too"},
-  {"file": "test/graph-script-runner.test.mjs", "test": "shell runtime …", "symptom": "fails when FORCE_COLOR=1 is inherited (ANSI codes in the streamed lines)", "alone": "environment"},
   {"file": "test/ui-chat-run-card.test.mjs", "test": "feature card: an answered step shows once …", "symptom": "ReferenceError: setShapeFirst is not defined (missing helper in the test)", "alone": "fails alone too"},
-  {"file": "test/api-run-engine.test.mjs", "test": "*", "symptom": "file-level ENOTEMPTY rmdir …/Library/Caches/com.apple.python in the temp-HOME cleanup hook; every named test passes", "alone": "environment"},
-  {"file": "test/api-run-engine-default.test.mjs", "test": "*", "symptom": "file-level ENOTEMPTY rmdir …/Library/Caches/com.apple.python in the temp-HOME cleanup hook; every named test passes", "alone": "environment"},
-  {"file": "test/api-run-engine-dispatch.test.mjs", "test": "*", "symptom": "file-level ENOTEMPTY rmdir …/Library/Caches/com.apple.python in the temp-HOME cleanup hook; every named test passes", "alone": "environment"},
   {"file": "test/api-mcp-pipeline.test.mjs", "test": "*", "symptom": "file-level ENOTEMPTY rmdir …/.git temp cleanup race under full-suite load; every named test passes", "alone": "environment"},
   {"file": "test/orchestrator-workspace.test.mjs", "test": "*", "symptom": "after() hook deepEquals the machine-wide git worktree list; another worca run adds or removes a worktree", "alone": "environment"},
   {"file": "test/wsmap-redact.test.mjs", "test": "redactSecrets and redactLines stay linear on long single-line input (ReDoS guard)", "symptom": "wall-clock ReDoS budget under full-suite load", "alone": "passes alone"},
@@ -54,9 +50,9 @@
   {"file": "test/secret-scan.test.mjs", "test": "linear on long single-line input (ReDoS guard) …", "symptom": "~9.8 s under load; 7/7 alone", "alone": "passes alone"},
   {"file": "test/mcp-launch.test.mjs", "test": "SIGINT, SIGTERM and SIGHUP to the launcher reach the server", "symptom": "~5.5 s; 11/11 alone", "alone": "passes alone"},
   {"file": "test/engine-spawn.test.mjs", "test": "Claude synthetic usage-limit frame terminates a lingering CLI …", "symptom": "~2.6 s under load; 12/12 alone", "alone": "passes alone"},
-  {"file": "test/egress-policy.test.mjs", "test": "corporate proxy end to end: a child process fetch with the child env reaches the NTLM upstream", "symptom": "fails from an agent run, on the untouched checkpoint too", "alone": "fails alone too"},
   {"file": "test/qwen-gemini-ask-adapter.test.mjs", "test": "Gemini chat spawn: the chat folder", "symptom": "cwd is /private/var/folders/… vs /var/folders/… (macOS tmp realpath); untouched checkpoint too", "alone": "fails alone too"},
   {"file": "test/api-attribution-audit.test.mjs", "test": "PR created and run archived are audited with who did it", "symptom": "500 ENOTEMPTY rmdir of a temp store pipelines dir under full-suite load (split:verify iteration 2, split tree); 3/3 green alone", "alone": "passes alone"},
   {"file": "test/orchestrator-workspace-scan.test.mjs", "test": "v3 end to end (detached): read-only scan maps the npm dependency …", "symptom": "run-root/worktree class under load; 46/46 alone on split tree", "alone": "passes alone"},
-  {"file": "test/run-root-teardown.test.mjs", "test": "detached + keep on-success: a finished run keeps its checkout …", "symptom": "run-root/worktree class under load; 46/46 alone on split tree", "alone": "passes alone"}
+  {"file": "test/run-root-teardown.test.mjs", "test": "detached + keep on-success: a finished run keeps its checkout …", "symptom": "run-root/worktree class under load; 46/46 alone on split tree", "alone": "passes alone"},
+  {"file": "test/parity-visual.test.mjs", "test": "steady in Chrome: transitions are off …", "symptom": "~7.8 s under another run driving Chrome; 3/3 alone", "alone": "passes alone"}
 ]

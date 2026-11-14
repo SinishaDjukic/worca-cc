@@ -65,7 +65,7 @@ test('no priced booking: cost stays null (blank, never 0); an engine switch upda
 test('audit lines are pinned; a warn-level watchdog is a log line only; the event carries the §6.4 shape', () => {
   const summary = { sid: SID, label: 'One session', engine: 'claude', mode: 'subagents', transport: 'turns', hostEpoch: 1, hostSessionId: 'H1', members: ['n_a', 'n_b'] };
   assert.equal(sessionAuditLine(R('open', { engine: 'claude', mode: 'subagents', members: ['n_a', 'n_b'], label: 'One session' }), summary),
-    `Session ${SID} "One session" (Claude, sub-agents): opened for 2 steps.`);
+    `Session ${SID} "One session" (Claude Code, sub-agents): opened for 2 steps.`);
   assert.equal(sessionAuditLine(R('degrade', { from: 'subagents', to: 'separate', reason: 'the main agent did not dispatch' }), summary),
     `Session ${SID}: runs as separate sessions — the main agent did not dispatch.`);
   assert.equal(sessionAuditLine(R('watchdog', { dispatchId: 'd:x:n_a:1:a1', code: 'SESSION_HOST_NO_DISPATCH', level: 'error' }), summary),
@@ -163,7 +163,7 @@ test('v2 — the other pinned audit lines, and the event fields', async () => {
   const summary = { sid: SID, label: 'One session', engine: 'claude', mode: 'subagents', transport: 'turns', hostEpoch: 1, hostSessionId: 'H1', members: ['n_a', 'n_b'] };
   await checkRows([
     { name: 'open in shared mode', run: () => assert.equal(sessionAuditLine(R('open', { engine: 'codex', mode: 'shared', members: ['n_a', 'n_b', 'n_c'], label: 'Build' }), summary),
-      `Session ${SID} "Build" (Codex, one conversation): opened for 3 steps.`) },
+      `Session ${SID} "Build" (OpenAI Codex, one conversation): opened for 3 steps.`) },
     { name: 'rotate', run: () => assert.equal(sessionAuditLine(R('rotate', { reason: 'dispatches', fromEpoch: 2 }), summary), `Session ${SID}: rotated to a fresh host session (dispatches; epoch 3).`) },
     { name: 'restart', run: () => assert.equal(sessionAuditLine(R('restart', { reason: 'vanished' }), summary), `Session ${SID}: restarted fresh (vanished).`) },
     { name: 'resume', run: () => assert.equal(sessionAuditLine(R('resume', { hostSessionId: 'H7', after: 'crash' }), summary), `Session ${SID}: resumed host session H7 after crash.`) },
@@ -204,7 +204,7 @@ test('v3 — Summary times, the watchdog order, member_bound, a cost-only row, t
   assert.deepEqual(rows.map((r) => [r.turnId, r.watchdog?.code ?? null, r.memberAgentId, r.executionId, r.nodeId]),
     [['w1', 'warn-a', null, null, null], ['w2', 'err-a', null, null, null], ['m', null, 'T7', null, null], ['c', null, null, 'x:n_c:1', 'n_c']]);
   const summary = { sid: SID, label: 'One session', engine: 'codex', mode: 'subagents', members: ['n_a', 'n_b'] };
-  assert.equal(sessionAuditLine(R('open', {}), summary), `Session ${SID} "One session" (Codex, sub-agents): opened for 2 steps.`);
+  assert.equal(sessionAuditLine(R('open', {}), summary), `Session ${SID} "One session" (OpenAI Codex, sub-agents): opened for 2 steps.`);
   assert.equal(sessionAuditLine(R('rotate', { reason: 'context' }), summary), `Session ${SID}: rotated to a fresh host session (context; epoch 2).`);
   assert.equal(sessionAuditLine(R('reconcile', { turnId: 't:2', ok: false, checks: [
     { method: 'hook', harnessUsd: 0.5, otherUsd: 0.5, tolerance: 0.01, ok: true },
@@ -241,9 +241,9 @@ test('v4 — the defaults, open and mode fill the summary, a host-only booking c
     ts: d.ts, turnId: 't:1', dispatchId: 'd:x:n_a:1:a2', executionId: 'x:n_a:1', nodeId: 'n_a', attempt: 2, reason: undefined }, 'every §6.4 key, and nothing else the record has');
   assert.equal(sessionHostEvent(R('member_bound', { turnId: 't:1', dispatchId: 'd', memberAgentId: 'T1' }), summary).memberAgentId, 'T1');
   assert.equal(sessionAuditLine(R('open', { engine: 'claude', mode: 'separate', members: ['n_a', 'n_b'], label: 'Build' }), summary),
-    `Session ${SID} "Build" (Claude, separate sessions): opened for 2 steps.`);
+    `Session ${SID} "Build" (Claude Code, separate sessions): opened for 2 steps.`);
   assert.equal(sessionAuditLine(R('open', { engine: 'claude', mode: 'later-mode', members: ['n_a', 'n_b'], label: 'Build' }), summary),
-    `Session ${SID} "Build" (Claude, later-mode): opened for 2 steps.`, 'a mode with no words prints as itself');
+    `Session ${SID} "Build" (Claude Code, later-mode): opened for 2 steps.`, 'a mode with no words prints as itself');
   assert.equal(sessionAuditLine(R('resume', { hostSessionId: null, after: 'crash' }), summary), `Session ${SID}: resumed host session H1 after crash.`);
 });
 

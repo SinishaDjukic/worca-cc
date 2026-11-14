@@ -9,7 +9,7 @@ import {
   readSettings, pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod, humanRateUsdPerHour, askMaxTurns, askMaxBudgetUsd, hideBuiltinModels, askWeb,
   modelRolesSetting,
 } from '../settings.mjs';
-import { hasProjectSetting } from '../settings-cascade.mjs';
+import { hasProjectSetting, resolveSetting } from '../settings-cascade.mjs';
 import { readConfigRow, readTeamMetricsPrefs } from '../config.mjs';
 import { projectKey } from '../store.mjs';
 import { readPluginsLock } from '../plugins-lock.mjs';
@@ -72,6 +72,7 @@ export function localSnapshot(projectDir = null) {
     out['models.steps'] = { value: steps && typeof steps === 'object' ? steps : {}, set: !!steps && Object.keys(steps).length > 0 };
     const tm = readTeamMetricsPrefs(key);
     out['metrics.record'] = { value: tm ? tm.record !== false : null, set: !!tm && tm.record === false };
+    for (const id of ['pr.open', 'pr.slices']) out[id] = { value: resolveSetting(id, { projectDir }).layers.project ?? null, set: proj(id) };
   }
   // Night mode: the developer's own layers (project only with a project), never the team layer.
   const { config: nc, sources: ns } = effectiveNightConfigLocalOnly(projectDir);

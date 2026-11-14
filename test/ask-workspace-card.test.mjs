@@ -420,6 +420,33 @@ test('route apply: add_members then remove_member, rename and create change the 
       const made = await readWs(j.block.card.result.workspaceId);
       assert.equal(made.name, 'Fresh');
     } },
+    { name: 'route: a create card starts the new workspace\'s first scan on the Settings/default model and saves it as the workspace\'s pick (#1129)', run: async () => {
+      const mk = await seedCard({ kind: 'create', summary: 'Create workspace First', change: { name: 'First', projectPaths: [projects[1].path, projects[3].path] } });
+      const j = await (await post(`/api/ask/threads/${mk.threadId}/cards/${mk.cardId}`, { state: 'applied' })).json();
+      assert.equal(j.block.state, 'applied', JSON.stringify(j.block));
+      const res = j.block.card.result;
+      assert.doesNotMatch(res.detail, /undefined/);
+      assert.match(res.detail, /re-scanning the workspace/);
+      assert.ok(res.rescanRunId && mod.runs.get(res.rescanRunId)?.autoRescan, 'the create card started the first scan');
+      const made = await readWs(res.workspaceId);
+      assert.ok(made.scanModels && made.scanModels.scanModel, 'the model the scan runs on is saved as the workspace\'s pick');
+      await stopAndSettle(mod.runs, (e) => e.autoRescan);
+    } },
+    { name: 'route: an add on a pick-less workspace says it needs a scan model, never "undefined" (#1129)', run: async () => {
+      const mk = await seedCard({ kind: 'create', summary: 'Create workspace Pickless', change: { name: 'Pickless', projectPaths: [projects[1].path, projects[2].path] } });
+      mod._testing.setAutoRescan(false);
+      let j;
+      try { j = await (await post(`/api/ask/threads/${mk.threadId}/cards/${mk.cardId}`, { state: 'applied' })).json(); }
+      finally { mod._testing.setAutoRescan(true); }
+      const wid = j.block.card.result.workspaceId;
+      assert.equal((await readWs(wid)).scanModels, null, 'the seam skipped the scan, so no pick was saved');
+      const add = await seedCard({ kind: 'add_members', summary: 'Add p3 to Pickless', change: { workspaceId: wid, projectPaths: [projects[3].path] } });
+      j = await (await post(`/api/ask/threads/${add.threadId}/cards/${add.cardId}`, { state: 'applied' })).json();
+      assert.equal(j.block.state, 'applied', JSON.stringify(j.block));
+      assert.equal(j.block.card.result.rescanRunId, undefined);
+      assert.doesNotMatch(j.block.card.result.detail, /undefined/);
+      assert.match(j.block.card.result.detail, /no re-scan \(the workspace has no scan model yet/);
+    } },
   ]);
 });
 

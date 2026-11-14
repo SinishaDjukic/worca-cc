@@ -41,7 +41,7 @@ test('threads: create/get/update/setThreadTitle; listThreads newest-first with r
       const t = createThread({ model: 'claude-opus-5-5', effort: 'high' });
       assert.match(t.id, /^ask_[0-9a-f]{8}$/);
       assert.deepEqual(Object.keys(t).sort(),
-        ['agentMode', 'archivedAt', 'context', 'contexts', 'createdAt', 'createdBy', 'effort', 'engine', 'groupId', 'id', 'mcpOff', 'model', 'pinnedAt', 'sessionId', 'title', 'totals', 'updatedAt']);
+        ['agentMode', 'archivedAt', 'context', 'contexts', 'createdAt', 'createdBy', 'effort', 'engine', 'groupId', 'id', 'labels', 'mcpOff', 'model', 'pinnedAt', 'sessionId', 'title', 'totals', 'updatedAt']);
       assert.equal(t.mcpOff, null, 'no MCP picker choices yet (v45)');
       assert.equal(t.agentMode, true, 'agent mode is on by default (v51, #574)');
       assert.equal(t.engine, null, 'no engine until the first turn stores one (v53, #635)');
@@ -824,4 +824,16 @@ test('appendMessage keeps a reply\'s engine; switchThreadEngine moves the chat a
   assert.deepEqual(['ctx' in thread.totals, 'ctxWindow' in thread.totals], [false, false], 'the context meter starts over');
   assert.throws(() => switchThreadEngine('ask_ffffffff', { engine: 'claude', model: 'm', effort: 'high', text: 't', blocks: [] }), /unknown thread/);
   assert.equal(listMessages(t.id).length, 3, 'nothing half-written');
+});
+
+test('a generic binary keeps its original extension on disk; attachmentPath and readAttachmentRaw agree; no ext -> .bin', () => {
+  const t = createThread();
+  const m = appendMessage(t.id, { role: 'user', text: 'zip' });
+  const data = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 1, 2]);
+  const z = addAttachment(t.id, m.id, { name: 'Archive.ZIP', kind: 'binary', mime: 'application/octet-stream', data });
+  const bare = addAttachment(t.id, m.id, { name: 'README', kind: 'binary', mime: 'application/octet-stream', data });
+  assert.ok(existsSync(join(attachmentsDir(t.id), `${z.id}.zip`)));
+  assert.ok(existsSync(join(attachmentsDir(t.id), `${bare.id}.bin`)));
+  assert.equal(attachmentPath(t.id, z.id), join(attachmentsDir(t.id), `${z.id}.zip`));
+  assert.deepEqual(readAttachmentRaw(t.id, z.id).buffer, data);
 });

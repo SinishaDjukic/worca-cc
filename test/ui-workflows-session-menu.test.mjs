@@ -150,17 +150,17 @@ test('the view reads the Labs flag per render when the host passes no sessionsOn
   const t = loopFixture();
   for (const id of ['n_agent', 'n_rev']) t.nodes.find((n) => n.id === id).config.session = 's_aaaaaaaa';
   view.render(t, {});
-  assert.equal(host.querySelector('.gv-sess-head .st').textContent, 'One session · Claude: separate sessions');
+  assert.equal(host.querySelector('.gv-sess-head .st').textContent, 'One session · Claude Code: separate sessions');
   doc.documentElement.dataset.flags = 'sessionGroups';
   view.render(t, {});
-  assert.equal(host.querySelector('.gv-sess-head .st').textContent, 'One session · Claude · 2 sub-agents');
+  assert.equal(host.querySelector('.gv-sess-head .st').textContent, 'One session · Claude Code · 2 sub-agents');
   // A Labs flip shows on the next render; a drag frame in between keeps the words and the chips in step.
   delete doc.documentElement.dataset.flags;
   view.moveNodes(['n_task']);
-  assert.equal(host.querySelector('.gv-sess-head .st').textContent, 'One session · Claude · 2 sub-agents');
+  assert.equal(host.querySelector('.gv-sess-head .st').textContent, 'One session · Claude Code · 2 sub-agents');
   assert.ok(view.nodeEl('n_agent').querySelector('.nsess'));
   view.render(t, {});
-  assert.equal(host.querySelector('.gv-sess-head .st').textContent, 'One session · Claude: separate sessions');
+  assert.equal(host.querySelector('.gv-sess-head .st').textContent, 'One session · Claude Code: separate sessions');
   assert.equal(view.nodeEl('n_agent').querySelector('.nsess'), null);
 });
 
@@ -171,11 +171,11 @@ test('the gate open (Task 53): the Composer says sub-agents only while the Labs 
     return t;
   };
   const on = await bootShell({ template: grouped(), flags: 'sessionGroups', sessionVerified: { claude: true } });
-  assert.equal(on.c.view.stage.querySelector('.gv-sess-head .st').textContent, 'One session · Claude · 2 sub-agents');
+  assert.equal(on.c.view.stage.querySelector('.gv-sess-head .st').textContent, 'One session · Claude Code · 2 sub-agents');
   on.c.select({ kind: 'session', id: 's_aaaaaaaa' });
   assert.match(tb(on, 'sessMode').textContent, /How Sub-agents/);
   const off = await bootShell({ template: grouped(), flags: '', sessionVerified: { claude: true } });
-  assert.equal(off.c.view.stage.querySelector('.gv-sess-head .st').textContent, 'One session · Claude: separate sessions');
+  assert.equal(off.c.view.stage.querySelector('.gv-sess-head .st').textContent, 'One session · Claude Code: separate sessions');
   off.c.select({ kind: 'session', id: 's_aaaaaaaa' });
   assert.match(tb(off, 'sessMode').textContent, /How Separate sessions/);
   click(tb(off, 'sessMode'));

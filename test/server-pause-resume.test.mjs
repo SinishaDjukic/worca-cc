@@ -209,3 +209,21 @@ test('POST /api/resume: a v1 resume point is refused with 409 ENGINE_RETIRED', a
   assert.equal(getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(id).status, 'paused',
     'refusing does not mutate the run');
 });
+
+test('POST /api/pause { afterStep: true } calls the flag, leaves the run going, and a second request is 409 ALREADY_PAUSING; a plain pause still pauses at once', async () => {
+  const calls = [];
+  let flagged = false;
+  runs.set('r-after', { id: 'r-after', status: 'running', events: [], pendingQuestion: { id: 'q-9', kind: 'gate' },
+    orch: { pause: () => { calls.push('pause'); return true; }, pauseAfterStep: () => { calls.push('after'); if (flagged) return 'already'; flagged = true; return true; } } });
+  let res = await post('/api/pause', { runId: 'r-after', afterStep: true });
+  assert.deepEqual([res.status, await res.json()], [200, { ok: true }]);
+  assert.equal(runs.get('r-after').status, 'running', 'the step runs on');
+  assert.deepEqual(runs.get('r-after').pendingQuestion, { id: 'q-9', kind: 'gate' }, 'an open question is not resolved');
+  res = await post('/api/pause', { runId: 'r-after', afterStep: true });
+  assert.deepEqual([res.status, await res.json()], [409, { error: 'A pause after this step is already on its way.', code: 'ALREADY_PAUSING' }]);
+  res = await post('/api/pause', { runId: 'r-after' });
+  assert.equal(res.status, 200);
+  assert.equal(runs.get('r-after').status, 'pausing', 'Pause (now) stays offered and pauses at once');
+  assert.deepEqual(calls, ['after', 'after', 'pause']);
+  runs.delete('r-after');
+});

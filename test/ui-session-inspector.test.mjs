@@ -25,7 +25,7 @@ test('gate closed: no "Sub-agents" button, the honest line instead', () => {
   const el = renderSessionInspector(spec, { ...base, engine: 'claude', verified: { claude: false } });
   assert.equal([...el.querySelectorAll('.seg button')].some((b) => b.textContent === 'Sub-agents'), false);
   assert.match(el.textContent, /Separate sessions \(sub-agents not available yet\)/);
-  assert.match(el.textContent, /Sub-agents are not available on Claude yet: these steps run as separate sessions\./);
+  assert.match(el.textContent, /Sub-agents are not available on Claude Code yet: these steps run as separate sessions\./);
 });
 
 test('One conversation is expert-only', () => {

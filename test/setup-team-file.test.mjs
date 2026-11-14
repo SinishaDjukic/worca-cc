@@ -172,3 +172,11 @@ test('SHARE_SETTING_KEYS lists only modelRoles and the work fields', () => {
   assert.deepEqual([...SHARE_SETTING_KEYS].sort(), ['autoGeneratePrDescription', 'costLimitResetPeriod', 'hideBuiltinModels', 'modelRoles', 'networkWait',
     'pipelineCostLimitUsd', 'runEngine', 'smartNaming', 'sync', 'totalCostLimitUsd', 'uiLevel']);
 });
+
+test('buildTeamSetup: another engine\'s roles are left out with a warning, never a refused draft (team roles are Claude\'s and Codex\'s)', () => {
+  const catalog = [{ id: 'claude-opus-5-5', harnesses: ['claude'] }];
+  const settings = { modelRoles: { claude: { deep: { model: 'claude-opus-5-5' } }, copilot: { deep: { model: 'copilot/claude-sonnet-5.5' } } } };
+  const { doc, warnings } = buildTeamSetup({ settings, catalog });
+  assert.deepEqual(Object.keys(doc.fields['models.roles'].value), ['claude']);
+  assert.ok(warnings.some((w) => /models\.roles\.copilot\.deep: a team setup shares Claude's and Codex's roles only/.test(w)), warnings.join('\n'));
+});

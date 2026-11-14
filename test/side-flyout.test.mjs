@@ -528,6 +528,36 @@ test('createFlyout: a mouse click on its own trigger closes a keyboard-opened po
   assert.equal(doc.activeElement, doc.body, 'a pointer close: focus is not handed to the trigger');
 });
 
+test('createFlyout: destroy() closes it and removes every listener it added, by name and capture flag; the shared Escape listener stays', () => {
+  const { window, doc, $, fly, click, key } = setup();          // the first flyout made the shared Escape listener
+  const live = [];
+  const capture = (o) => (typeof o === 'boolean' ? o : !!o?.capture);
+  const track = (target) => {
+    const add = target.addEventListener.bind(target); const remove = target.removeEventListener.bind(target);
+    target.addEventListener = (t, fn, o) => { live.push({ target, t, fn, c: capture(o) }); add(t, fn, o); };
+    target.removeEventListener = (t, fn, o) => {
+      const i = live.findIndex((x) => x.target === target && x.t === t && x.fn === fn && x.c === capture(o));
+      if (i >= 0) live.splice(i, 1);
+      remove(t, fn, o);
+    };
+  };
+  $('menu2').closest('[hidden]');   // jsdom's selector engine adds its own window listeners on its first use
+  for (const target of [window, doc, $('trig2'), $('menu2'), $('aside')]) track(target);
+  const other = createFlyout({ doc, win: window, trigger: $('trig2'), menu: $('menu2'), closeOn: $('aside') });
+  assert.ok(live.length >= 9, `it listens: ${live.length}`);
+  other.open();
+  other.destroy();
+  assert.deepEqual(live.map((x) => `${x.t}:${x.c}`), [], 'none of its handlers is left');
+  assert.equal($('menu2').hidden, true, 'closed');
+  assert.equal($('trig2').getAttribute('aria-expanded'), 'false');
+  click($('trig2'));
+  assert.equal($('menu2').hidden, true, 'its trigger no longer opens it');
+  click($('trig'), 0);
+  assert.equal(fly.isOpen(), true);
+  key(doc.activeElement, 'Escape');
+  assert.equal(fly.isOpen(), false, 'the shared Escape listener still serves the others');
+});
+
 test('createFlyout: a right-click on the popup (its context menu takes the mouseup) does not leave a press in progress', () => {
   const { window, $, fly, click } = setup();
   click($('trig'), 0);
@@ -536,4 +566,42 @@ test('createFlyout: a right-click on the popup (its context menu takes the mouse
   $('a').focus();
   $('out').focus();
   assert.equal(fly.isOpen(), false, 'focus leaving after a right-click still closes it');
+});
+
+// 'below' is 'down' with `fit` always on, left-aligned to its trigger (the readiness chip sits at the left of a row).
+const belowSetup = (rect) => {
+  const { window } = new JSDOM('<button id="t"></button><div id="m"></div>');
+  const doc = window.document;
+  const trigger = doc.getElementById('t');
+  const menu = doc.getElementById('m');
+  trigger.getBoundingClientRect = () => rect;
+  Object.defineProperty(menu, 'offsetWidth', { value: 460 });
+  Object.defineProperty(menu, 'offsetHeight', { value: 560, configurable: true });
+  return { trigger, menu, win: { innerWidth: 1200, innerHeight: 900 } };
+};
+
+test('placeFlyout below: under the trigger and left-aligned when it fits; shifted left near the right edge', () => {
+  const { trigger, menu, win } = belowSetup({ left: 300, right: 420, top: 100, bottom: 122, width: 120, height: 22 });
+  placeFlyout(menu, trigger, { mode: 'below', win });
+  assert.equal(menu.style.left, '300px');
+  assert.equal(menu.style.top, '128px');
+  assert.equal(menu.style.maxHeight, '');
+  trigger.getBoundingClientRect = () => ({ left: 1000, right: 1120, top: 100, bottom: 122, width: 120, height: 22 });
+  placeFlyout(menu, trigger, { mode: 'below', win });
+  assert.equal(menu.style.left, '732px');        // 1200 - 460 - 8
+  assert.equal(menu.style.top, '128px');
+});
+
+test('placeFlyout below: a low trigger opens above, never over it; with no room either way it is capped and scrolls', () => {
+  const { trigger, menu, win } = belowSetup({ left: 300, right: 420, top: 760, bottom: 782, width: 120, height: 22 });
+  placeFlyout(menu, trigger, { mode: 'below', win });
+  // room below: 900 - 782 - 6 - 8 = 104; room above: 760 - 6 - 8 = 746, which holds all 560px
+  assert.equal(menu.style.top, '194px');         // 760 - 6 - 560: its bottom edge sits gap px over the trigger
+  assert.equal(menu.style.maxHeight, '');
+  trigger.getBoundingClientRect = () => ({ left: 300, right: 420, top: 400, bottom: 422, width: 120, height: 22 });
+  Object.defineProperty(menu, 'offsetHeight', { value: 800 });
+  placeFlyout(menu, trigger, { mode: 'below', win });
+  // room below 464, above 386: stays below, capped to the room there
+  assert.equal(menu.style.top, '428px');
+  assert.equal(menu.style.maxHeight, '464px');
 });

@@ -1,0 +1,6 @@
+/* DesignSwitch (docs/rail/navigation.md `nav.design-switch`): the Stillhet UI switch in the top bar. */
+.rl-design-switch{display:inline-flex;align-items:center;gap:6px;color:var(--ink-2);font-size:var(--fs-meta);}
+.rl-design-switch .switch{flex:none;}
+.rl-design-switch-l{white-space:nowrap;}
+.rl-design-switch [hidden]{display:none;}
+@media (max-width: 480px){ .rl-design-switch-l,.rl-design-switch .chip{display:none;} }

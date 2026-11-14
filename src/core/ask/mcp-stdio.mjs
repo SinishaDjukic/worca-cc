@@ -46,6 +46,7 @@ import { defaultFileDeps } from './file-deps.mjs';
 import { defaultCommandDeps } from './command-deps.mjs';
 import { defaultBranchDeps } from './branch-deps.mjs';
 import { defaultComposerDeps } from './composer-deps.mjs';
+import { defaultDesignDeps } from './design-deps.mjs';
 import { defaultChatActionDeps } from './chat-action-deps.mjs';
 import { gitAvailable, gitState } from '../git-available.mjs';
 import { defaultShapeToolDeps } from './shape-tool-deps.mjs';
@@ -112,6 +113,8 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       // The composer family (composer-deps.mjs): all of it on a composer thread (Workflows view, D10); an Ask thread gets
       // the drafts and build_workflow without the canvas.
       ...defaultComposerDeps({ threadId }),
+      // The Design chat (P5): its four tools on a design thread only (design-deps.mjs); composer-deps sets its askMode.
+      ...defaultDesignDeps({ threadId }),
       // worca Chat P2: settings and run controls — validate here, applied by the parent (chat-action-deps.mjs).
       ...defaultChatActionDeps(),
       // Shaper: propose_changes / route_message — only with the gate and a thread (shape-tool-deps.mjs); relay overrides it.

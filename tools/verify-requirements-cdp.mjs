@@ -20,9 +20,11 @@
 // preview and its dark theme, Create with the chip, the History card and Created SHOP-123, Export again with the comment
 // preview, Export anyway, the 390 px sheet with its phone title, Back, Show all, 44 px targets and the page inert until the
 // view is left, Tab kept inside a dialog, AA text in light and dark, the states of a tracker that cannot be reached, Start
-// with Report back writing back to the ticket; `--only=a6` runs it alone); no page errors.
-// NOT part of `npm test`. REQ_SHOTS=<dir> also writes the Feature chat and export screens there (a3-*.png, a6-*.png) for a
-// human look.
+// with Report back writing back to the ticket; `--only=a6` runs it alone); start from a ticket (A6.1: jira-source linked in mock
+// mode; New feature › From a ticket…, the search, the preview, Use this ticket, Start the interview with the files downloaded and
+// read, the feature linked to SHOP-124, Export to Jira… on it, the 390 px sheet; `--only=a61` runs it alone); no page errors.
+// NOT part of `npm test`. REQ_SHOTS=<dir> also writes the Feature chat, export and start-from-a-ticket screens there (a3-*.png,
+// a6-*.png, a61-*.png) for a human look.
 // Run: npm run verify:requirements   (set CHROME_BIN to a Chrome/Chromium binary if it is not auto-found,
 // e.g. CHROME_BIN="C:/Program Files/Google/Chrome/Application/chrome.exe" on Windows)
 //
@@ -48,6 +50,10 @@ const SANDBOX = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 
   ? ['--no-sandbox', '--disable-dev-shm-usage'] : [];
 // --only=a6: the boot, the flag and the A6 section (export to a tracker) alone, then the page-error gate.
 const ONLY_A6 = process.argv.includes('--only=a6');
+// --only=a61: the boot, the flag and the A6.1 section (start from a ticket) alone, then the page-error gate.
+const ONLY_A61 = process.argv.includes('--only=a61');
+// --only=9c: the boot, the flag and the 9c section (harness and model choice) alone, then the page-error gate.
+const ONLY_9C = process.argv.includes('--only=9c');
 const SHOTS = process.env.REQ_SHOTS || '';
 if (!existsSync(CHROME)) { console.error(`no Chrome at ${CHROME} - set CHROME_BIN`); process.exit(1); }
 const PORT = Number(process.env.CDP_PORT || 9344);
@@ -88,6 +94,7 @@ const READ_MS = 1500;
 const HOLD_MS = 6000;
 const AFTER_HOLD_MS = HOLD_MS + 14_000;
 process.env.WORCA_MOCK_READ_MS = String(READ_MS);
+process.env.WORCA_MOCK_DOWNLOAD_MS = '2500';   // A6.1: a mock download waits, so "Downloading…" can be seen
 delete process.env.WORCA_FLAGS;
 const projDir = path.join(home, 'shop');
 await mkdir(projDir, { recursive: true });
@@ -183,11 +190,13 @@ await sleep(500);
 check('flag off: no Requirements row', !(await navShown()));
 await A.evalJs(`window.__np.flags.set('requirements', true)`);
 check('flag on: the row appears without a reload', await until(navShown, 2000));
-if (!ONLY_A6) {   // --only=a6 skips to the A6 section
+if (!ONLY_A6 && !ONLY_A61 && !ONLY_9C) {   // --only=a6 / --only=a61 / --only=9c skip to their section
   await A.evalJs(`location.hash = '#requirements/new'`);
   check('the new-feature form renders', await until(() => A.evalJs(`!!document.getElementById('req-new-title')`)));
-  check('the New feature page names the interview model ("Worca interviews with …")',
-    await until(() => A.evalJs(`(document.querySelector('.req-new .req-new-cost')?.textContent || '').startsWith('Worca interviews with')`), 4000));
+  check('the New feature page shows Who interviews (9c): the three selects and the note under them',
+    await until(() => A.evalJs(`(() => { const b = document.querySelector('.req-new .req-who-box'); return !!b && !b.hidden
+      && b.querySelector('.req-who legend')?.textContent === 'Who interviews' && b.querySelectorAll('.req-who select').length === 3
+      && (b.querySelector('.req-new-note')?.textContent || '').length > 0; })()`), 8000));
   const filled = await A.evalJs(`(() => { const sel = document.getElementById('req-new-target');
     const opt = [...sel.options].find((o) => o.text === 'shop'); if (!opt) return false; sel.value = opt.value;
     document.getElementById('req-new-title').value = 'Cancel an order';
@@ -306,10 +315,10 @@ if (!ONLY_A6) {   // --only=a6 skips to the A6 section
   const picked = await until(() => A.evalJs(`(() => { const sel = document.getElementById('req-new-target'); if (!sel) return false;
     const opt = [...sel.options].find((o) => o.text === 'shop'); if (!opt) return false; sel.value = opt.value;
     sel.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`));
-  check('New feature for that project shows "Worca knows shop from its product brief" and cents per round',
+  check('New feature for that project shows "Worca knows shop from its product brief" and the note under Who interviews',
     picked && await until(() => A.evalJs(`(() => { const l = document.querySelector('.req-new .req-brief-line');
       return !!l && /^Worca knows shop from its product brief/.test(l.textContent)
-        && /cents per round/.test(document.querySelector('.req-new .req-new-cost')?.textContent || ''); })()`)));
+        && !!document.querySelector('.req-new .req-who-box .req-new-note'); })()`)));
   await A.evalJs(`(() => { document.getElementById('req-new-title').value = 'Orders report';
     document.getElementById('req-new-desc').value = 'A report of orders per day';
     [...document.querySelectorAll('.req-new .btn-primary')].at(-1).click(); })()`);
@@ -445,10 +454,12 @@ if (!ONLY_A6) {   // --only=a6 skips to the A6 section
   await A.evalJs(`location.hash = ${JSON.stringify(briefHash)}`);
   await until(() => A.evalJs(`!!document.querySelector('#requirements-host .req-docs')`), BRIEF_WAIT_MS);
   await pickFiles('#requirements-host .req-docs input[type="file"]', [['tone.md', 'Tone: friendly and short.\n', 'text/markdown']]);
+  // The upload's POST and the refresh it triggers each wait for the brief's git probes (up to STALENESS_TIMEOUT_MS), so the
+  // card can take two of the server's bounds on a busy machine, not one.
   check("the brief's Documents card lists the document, read, with Send with every run, and the header says 1 document",
     await until(() => A.evalJs(`(() => { const r = document.querySelector('#requirements-host .req-docs .req-file');
       return !!r && /What Worca took from it/.test(r.textContent) && !!r.querySelector('[aria-label="Send tone.md with every run"]')
-        && [...document.querySelectorAll('#requirements-host .chip')].some((c) => c.textContent === '1 document'); })()`), 10000));
+        && [...document.querySelectorAll('#requirements-host .chip')].some((c) => c.textContent === '1 document'); })()`), 2 * STALENESS_TIMEOUT_MS + 10_000));
   // ---- A3: Feature chat (boards 22–25), in mock mode. A mock reply drafts the first option of the first question that is not the
   // recommended one ("Support agents") and proposes the criterion "[mock] A criterion Worca suggests."; WORCA_MOCK_HELPER_MS holds a
   // reply so Answering… and Stop can be seen. A mock proposal is always an add (stale only once its text is a criterion), so the stale card is made by
@@ -758,11 +769,82 @@ const HIT_FN = `const hit = (b) => { const r = b.getBoundingClientRect(); const 
   }
   return { hh, ww }; };`;
 
+// The screens, the theme, the contrast and the Tab walk: shared by the A6 and A6.1 sections.
+/** REQ_SHOTS=<dir>: a screenshot of the viewport for a human look (nothing is written without it). */
+const shot = async (name) => {
+  if (!SHOTS) return;
+  await mkdir(SHOTS, { recursive: true });
+  const { data } = await A.send('Page.captureScreenshot', { format: 'png' });
+  writeFileSync(path.join(SHOTS, `${name}.png`), Buffer.from(data, 'base64'));
+};
+/** The theme the page shows ('' = the system's), once its colours have finished changing. */
+const setTheme = async (t) => {
+  await A.evalJs(`(() => { const r = document.documentElement; if (${JSON.stringify(t)}) r.dataset.theme = ${JSON.stringify(t)}; else delete r.dataset.theme; })()`);
+  await sleep(150);
+  await until(() => A.evalJs(`document.getAnimations().length === 0`), 3000);
+};
+/** The text in `sels` below WCAG AA against what is drawn under it (4.5:1; 3:1 for large text): [text, ratio, ink, ground].
+ *  A colour is read back through a canvas, so any CSS colour syntax works; a disabled control and hidden text are skipped.
+ *  Selectors that reach no visible text are a failure too (a renamed class never passes unseen). */
+const lowContrast = (sels) => A.evalJs(`(() => {
+  const cv = document.createElement('canvas'); cv.width = 1; cv.height = 1; const cx = cv.getContext('2d', { willReadFrequently: true });
+  const rgba = (c) => { cx.clearRect(0, 0, 1, 1); cx.fillStyle = '#000'; cx.fillStyle = c; cx.fillRect(0, 0, 1, 1);
+    const d = cx.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
+  const over = (top, under) => [0, 1, 2].map((i) => top[i] * top[3] + under[i] * (1 - top[3])).concat(1);
+  const ground = (el) => { const layers = [];
+    for (let n = el; n; n = n.parentElement) { const c = rgba(getComputedStyle(n).backgroundColor); if (c[3] > 0) layers.push(c); if (c[3] >= 1) break; }
+    let g = [255, 255, 255, 1]; for (const l of layers.reverse()) g = over(l, g); return g; };
+  const lum = (c) => { const v = c.slice(0, 3).map((x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
+  const out = [];
+  let seen = 0;
+  for (const root of document.querySelectorAll(${JSON.stringify(sels.join(', '))})) {
+    for (const el of [root, ...root.querySelectorAll('*')]) {
+      if (![...el.childNodes].some((t) => t.nodeType === 3 && t.textContent.trim())) continue;
+      if (!el.getClientRects().length || el.closest('[hidden], [aria-hidden="true"], button:disabled')) continue;
+      const cs = getComputedStyle(el); if (cs.visibility === 'hidden') continue;
+      seen += 1;
+      const bg = ground(el); const ink = over(rgba(cs.color), bg);
+      const [a, b] = [lum(ink), lum(bg)]; const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      const px = parseFloat(cs.fontSize); const large = px >= 24 || (px >= 18.66 && Number(cs.fontWeight) >= 700);
+      if (ratio < (large ? 3 : 4.5)) out.push([el.textContent.trim().slice(0, 40), Math.round(ratio * 100) / 100, cs.color, 'rgb(' + bg.slice(0, 3).map(Math.round).join(', ') + ')']);
+    }
+  }
+  if (!seen) out.push(['no visible text matched', ${JSON.stringify(sels.join(', '))}]);
+  return out; })()`);
+/** lowContrast in the light and the dark theme; the page's theme is put back after. */
+const contrastBoth = async (sels, darkShot = null) => {
+  const was = await A.evalJs(`document.documentElement.dataset.theme || ''`);
+  await setTheme('light');
+  const light = await lowContrast(sels);
+  await setTheme('dark');
+  const dark = await lowContrast(sels);
+  if (darkShot) await shot(darkShot);
+  await setTheme(was);
+  return { light, dark };
+};
+/** Tab (or Shift+Tab) as the keyboard sends it; where the focus is after: inside the open dialog or not. */
+const tabKey = async (shift) => {
+  const k = { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, modifiers: shift ? 8 : 0 };
+  await A.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...k });
+  await A.send('Input.dispatchKeyEvent', { type: 'keyUp', ...k });   // answered once the page has handled the key
+  return A.evalJs(`(() => { const a = document.activeElement; const d = document.querySelector('.req-dlg-wrap [role="dialog"]');
+    return { inDlg: !!d && !!a && d.contains(a), el: a ? (a.getAttribute('data-ui') || a.id || a.tagName) : null }; })()`);
+};
+/** From the dialog's title (where it puts the focus): Shift+Tab, then `n` Tabs round the dialog. Every stop is inside it. */
+const tabWalk = async (n) => {
+  await A.evalJs(`document.querySelector('.req-dlg-wrap [role="dialog"] h2').focus()`);
+  const back = await tabKey(true);
+  const fwd = [];
+  for (let i = 0; i < n; i += 1) fwd.push(await tabKey(false));
+  return { back, fwd, out: [back, ...fwd].filter((t) => !t.inDlg).map((t) => t.el) };
+};
+
 // ---- A6: export to a tracker (boards 26–31), in mock mode: jira-source linked with one connection; the shim's canned export
 // answers (SHOP — Shop web, Story, tickets SHOP-123, 124, …, doneStatus Done). This server runs in this process, so a Ready
 // feature is made straight in the store, and a tracker that cannot be reached is the shim's answer swapped for one op
 // (setMockSourceResponses; `{}` puts the canned answers back without restarting the ticket numbers). Runs alone with --only=a6.
-{
+if (!ONLY_A61 && !ONLY_9C) {
   const store = await import(new URL('../src/core/requirements/store.mjs', import.meta.url).href);
   const { emptySpec } = await import(new URL('../src/core/requirements/spec.mjs', import.meta.url).href);
   const { linkPlugin } = await import(new URL('../src/core/plugin-store.mjs', import.meta.url).href);
@@ -770,75 +852,6 @@ const HIT_FN = `const hit = (b) => { const r = b.getBoundingClientRect(); const 
   const { retryWriteback } = await import(new URL('../src/core/sources.mjs', import.meta.url).href);
   const { setMockSourceResponses } = await import(new URL('../src/core/plugin-shim.mjs', import.meta.url).href);
   const { getDb } = await import(new URL('../src/core/db.mjs', import.meta.url).href);
-  /** REQ_SHOTS=<dir>: a screenshot of the viewport for a human look (nothing is written without it). */
-  const shot = async (name) => {
-    if (!SHOTS) return;
-    await mkdir(SHOTS, { recursive: true });
-    const { data } = await A.send('Page.captureScreenshot', { format: 'png' });
-    writeFileSync(path.join(SHOTS, `${name}.png`), Buffer.from(data, 'base64'));
-  };
-  /** The theme the page shows ('' = the system's), once its colours have finished changing. */
-  const setTheme = async (t) => {
-    await A.evalJs(`(() => { const r = document.documentElement; if (${JSON.stringify(t)}) r.dataset.theme = ${JSON.stringify(t)}; else delete r.dataset.theme; })()`);
-    await sleep(150);
-    await until(() => A.evalJs(`document.getAnimations().length === 0`), 3000);
-  };
-  /** The text in `sels` below WCAG AA against what is drawn under it (4.5:1; 3:1 for large text): [text, ratio, ink, ground].
-   *  A colour is read back through a canvas, so any CSS colour syntax works; a disabled control and hidden text are skipped.
-   *  Selectors that reach no visible text are a failure too (a renamed class never passes unseen). */
-  const lowContrast = (sels) => A.evalJs(`(() => {
-    const cv = document.createElement('canvas'); cv.width = 1; cv.height = 1; const cx = cv.getContext('2d', { willReadFrequently: true });
-    const rgba = (c) => { cx.clearRect(0, 0, 1, 1); cx.fillStyle = '#000'; cx.fillStyle = c; cx.fillRect(0, 0, 1, 1);
-      const d = cx.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
-    const over = (top, under) => [0, 1, 2].map((i) => top[i] * top[3] + under[i] * (1 - top[3])).concat(1);
-    const ground = (el) => { const layers = [];
-      for (let n = el; n; n = n.parentElement) { const c = rgba(getComputedStyle(n).backgroundColor); if (c[3] > 0) layers.push(c); if (c[3] >= 1) break; }
-      let g = [255, 255, 255, 1]; for (const l of layers.reverse()) g = over(l, g); return g; };
-    const lum = (c) => { const v = c.slice(0, 3).map((x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; });
-      return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
-    const out = [];
-    let seen = 0;
-    for (const root of document.querySelectorAll(${JSON.stringify(sels.join(', '))})) {
-      for (const el of [root, ...root.querySelectorAll('*')]) {
-        if (![...el.childNodes].some((t) => t.nodeType === 3 && t.textContent.trim())) continue;
-        if (!el.getClientRects().length || el.closest('[hidden], [aria-hidden="true"], button:disabled')) continue;
-        const cs = getComputedStyle(el); if (cs.visibility === 'hidden') continue;
-        seen += 1;
-        const bg = ground(el); const ink = over(rgba(cs.color), bg);
-        const [a, b] = [lum(ink), lum(bg)]; const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
-        const px = parseFloat(cs.fontSize); const large = px >= 24 || (px >= 18.66 && Number(cs.fontWeight) >= 700);
-        if (ratio < (large ? 3 : 4.5)) out.push([el.textContent.trim().slice(0, 40), Math.round(ratio * 100) / 100, cs.color, 'rgb(' + bg.slice(0, 3).map(Math.round).join(', ') + ')']);
-      }
-    }
-    if (!seen) out.push(['no visible text matched', ${JSON.stringify(sels.join(', '))}]);
-    return out; })()`);
-  /** lowContrast in the light and the dark theme; the page's theme is put back after. */
-  const contrastBoth = async (sels, darkShot = null) => {
-    const was = await A.evalJs(`document.documentElement.dataset.theme || ''`);
-    await setTheme('light');
-    const light = await lowContrast(sels);
-    await setTheme('dark');
-    const dark = await lowContrast(sels);
-    if (darkShot) await shot(darkShot);
-    await setTheme(was);
-    return { light, dark };
-  };
-  /** Tab (or Shift+Tab) as the keyboard sends it; where the focus is after: inside the open dialog or not. */
-  const tabKey = async (shift) => {
-    const k = { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, modifiers: shift ? 8 : 0 };
-    await A.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...k });
-    await A.send('Input.dispatchKeyEvent', { type: 'keyUp', ...k });   // answered once the page has handled the key
-    return A.evalJs(`(() => { const a = document.activeElement; const d = document.querySelector('.req-dlg-wrap [role="dialog"]');
-      return { inDlg: !!d && !!a && d.contains(a), el: a ? (a.getAttribute('data-ui') || a.id || a.tagName) : null }; })()`);
-  };
-  /** From the dialog's title (where it puts the focus): Shift+Tab, then `n` Tabs round the dialog. Every stop is inside it. */
-  const tabWalk = async (n) => {
-    await A.evalJs(`document.querySelector('.req-dlg-wrap [role="dialog"] h2').focus()`);
-    const back = await tabKey(true);
-    const fwd = [];
-    for (let i = 0; i < n; i += 1) fwd.push(await tabKey(false));
-    return { back, fwd, out: [back, ...fwd].filter((t) => !t.inDlg).map((t) => t.el) };
-  };
   const unreachable = () => { const e = new Error('401 Unauthorized'); e.kind = 'auth'; throw e; };
 
   // The first-visit Welcome dialog (upstream onboarding) may still sit over the page: Skip it, so the screens and the inert
@@ -1118,6 +1131,344 @@ const HIT_FN = `const hit = (b) => { const r = b.getBoundingClientRect(); const 
     check('A6 D15: the run reports back to SHOP-123 through the existing write-back', wb.ok === true && last.id === 'SHOP-123', JSON.stringify({ wb, last }));
   }
   for (const r of runs.values()) { try { r.orch?.stop?.(); } catch {} }
+}
+// ---- A6.1: start from a ticket (boards 32–36), in mock mode: jira-source linked with one connection; the shim's canned import answers
+// (four tickets; SHOP-124 with six comments, one by an app, and five attachments, two of them not offered); a mock download writes a tiny
+// body after WORCA_MOCK_DOWNLOAD_MS, a mock read takes READ_MS. Runs alone with --only=a61.
+if (!ONLY_A6 && !ONLY_9C) {
+  const { linkPlugin } = await import(new URL('../src/core/plugin-store.mjs', import.meta.url).href);
+  const { createProfile } = await import(new URL('../src/core/plugin-config.mjs', import.meta.url).href);
+  try { await linkPlugin('jira-source', fileURLToPath(new URL('../plugins/jira-source', import.meta.url))); } catch { /* the A6 section linked it */ }
+  try { createProfile('jira-source', 'acme', 'acme.atlassian.net (Cloud)'); } catch { /* the A6 section made it */ }
+  // After the A6 section, SHOP-124 is a ticket A6 created and one of its features follows it, so an import of it would start
+  // unlinked (D12). This section starts a feature linked to SHOP-124: the mock tracker starts afresh (null puts the canned answers
+  // back and restarts its ticket numbers and fingerprints) and A6's feature forgets the link, as Forget the link does (A6 D12).
+  // Alone (--only=a61) there is nothing to undo.
+  const { setMockSourceResponses } = await import(new URL('../src/core/plugin-shim.mjs', import.meta.url).href);
+  const { forgetLink } = await import(new URL('../src/core/requirements/export.mjs', import.meta.url).href);
+  const { getDb } = await import(new URL('../src/core/db.mjs', import.meta.url).href);
+  setMockSourceResponses(null);
+  for (const r of getDb().prepare(`SELECT feature_seq FROM req_export_links WHERE UPPER(ticket_key) = 'SHOP-124'`).all()) forgetLink(r.feature_seq);
+  await A.evalJs(`fetch('/api/onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ welcomeSeen: true }) })
+    .then(() => { document.querySelector('#welcome-modal:not(.hidden) .ob-skip')?.click(); })`);
+  await A.send('Emulation.clearDeviceMetricsOverride');
+  const DLG = `document.querySelector('.req-dlg-wrap [role="dialog"]')`;
+  const HOST = `document.querySelector('#requirements-host')`;
+  const othersInert = () => A.evalJs(`[...document.body.children].filter((el) => !el.classList.contains('req-dlg-wrap')).every((el) => el.hasAttribute('inert'))`);
+  const noneInert = () => A.evalJs(`[...document.body.children].every((el) => !el.hasAttribute('inert'))`);
+  const click = (sel) => A.evalJs(`document.querySelector(${JSON.stringify(sel)}).click()`);
+  const search = (words) => A.evalJs(`(() => { const s = document.querySelector('[data-ui="pick-search"]'); s.value = ${JSON.stringify(words)};
+    s.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  const newFeature = async () => {
+    await A.evalJs(`location.hash = '#requirements'`);
+    await sleep(300);
+    await A.evalJs(`location.hash = '#requirements/new'`);
+    return until(() => A.evalJs(`(() => { const b = ${HOST}?.querySelector('[data-ui="import-open"]'); return !!b && !b.hidden && !!b.closest('.req-import-labrow'); })()`), 15000);
+  };
+
+  check('A6.1 D1 (board 32): New feature shows From a ticket… at the right of the Describe it label', await newFeature());
+  await shot('a61-board32-new-feature');
+  await click('#requirements-host [data-ui="import-open"]');
+  check('A6.1 board 33: Start from a ticket opens with its title focused and four recently updated tickets; every other child of <body> is inert',
+    await until(async () => (await A.evalJs(`(() => { const d = ${DLG}; return !!d && d.querySelector('h2').textContent === 'Start from a ticket'
+      && document.activeElement === d.querySelector('h2') && d.querySelectorAll('[role="radiogroup"] input').length === 4; })()`)) && (await othersInert()), 15000));
+  // D3: the pick opens on the export setup's project (SHOP after the A6 section) or on All projects (no setup: --only=a61). Pick SHOP
+  // in the Jira project select as a user does, so the count line below names it either way.
+  check('A6.1 D3: the Jira project select offers SHOP — Shop web; picking it lists "Recently updated in SHOP"',
+    await until(() => A.evalJs(`(() => { const d = ${DLG}; const p = d?.querySelector('[data-ui="pick-project"]'); const o = p && p.querySelector('option[value="SHOP"]');
+      if (!o || o.textContent !== 'SHOP — Shop web') return false;
+      if (p.value !== 'SHOP') { p.value = 'SHOP'; p.dispatchEvent(new Event('change')); }
+      return d.querySelector('.req-import-status')?.textContent === 'Recently updated in SHOP' && d.querySelectorAll('[role="radiogroup"] input').length === 4; })()`),
+    15000));
+  await search('cancel');
+  const pickStatus = () => A.evalJs(`${DLG}?.querySelector('.req-import-status')?.textContent ?? null`);
+  check('A6.1 D4: the search runs after a pause: "4 tickets in SHOP match “cancel”."',
+    await until(async () => (await pickStatus()) === '4 tickets in SHOP match “cancel”.', 15000), JSON.stringify(await pickStatus()));
+  await shot('a61-board33-pick');
+  const pickAA = await contrastBoth(['.req-dlg-wrap .req-import-pick'], 'a61-board33-pick-dark');
+  check('A6.1 board 33: the pick is AA in light and dark', pickAA.light.length === 0 && pickAA.dark.length === 0, JSON.stringify(pickAA));
+  await click('[data-ui="pick-SHOP-124"]');
+  await click('[data-ui="pick-continue"]');
+  check('A6.1 board 34: the preview: three criteria ticked, the app comment unticked, the Office file and the 31 MB scan not offered, nothing sent to Jira',
+    await until(() => A.evalJs(`(() => { const d = ${DLG}; if (!d || d.querySelector('h2').textContent !== 'Start from SHOP-124') return false;
+      const crit = [...d.querySelectorAll('[data-ui^="ipv-crit-"]')]; const app = d.querySelector('[data-ui="ipv-com-10234"]');
+      const off = ['10044', '10045'].map((id) => d.querySelector('[data-ui="ipv-att-' + id + '"]'));
+      return crit.length === 3 && crit.every((c) => c.checked) && !!app && !app.checked && off.every((x) => !!x && x.disabled && !x.checked)
+        && d.textContent.includes('Nothing is sent to Jira.') && d.textContent.includes('Worca hid 1 thing that looked like a key or password.'); })()`), 15000));
+  await shot('a61-board34-preview');
+  const previewAA = await contrastBoth(['.req-dlg-wrap .req-import-preview'], 'a61-board34-preview-dark');
+  check('A6.1 board 34: the preview is AA in light and dark', previewAA.light.length === 0 && previewAA.dark.length === 0, JSON.stringify(previewAA));
+  // §9 says "untick the automation comment"; D8 has it unticked already (checked above), so the proof unticks a person's comment
+  await click('[data-ui="ipv-com-10235"]');
+  await click('[data-ui="ipv-use"]');
+  check('A6.1 board 32: Use this ticket fills the form (title, the strip, three criteria, the comments file and three attachments) and releases the page',
+    await until(async () => (await A.evalJs(`(() => { const h = ${HOST}; return !${DLG} && h.querySelector('#req-new-title').value === 'Partial cancel for multi-item orders'
+      && h.querySelector('[data-ui="import-chip"]')?.textContent === 'SHOP-124' && h.querySelectorAll('.req-import-critlist li').length === 3
+      && [...h.querySelectorAll('.req-import-chips .req-new-chip-name')].map((n) => n.textContent).join('|')
+        === 'SHOP-124 comments.md|packing-slip.png|partial-cancel-flow.pdf|support-macro.txt'; })()`)) && (await noneInert()), 15000));
+  await shot('a61-board32-filled');
+  const formAA = await contrastBoth(['#requirements-host .req-import-strip', '#requirements-host .req-import-critfield', '#requirements-host .req-import-chips'],
+    'a61-board32-filled-dark');
+  check('A6.1 board 32: the strip, the criteria and the ticket files are AA in light and dark', formAA.light.length === 0 && formAA.dark.length === 0, JSON.stringify(formAA));
+  await click('#requirements-host .req-new-btns .btn-primary');
+  let seq = null;
+  check('A6.1 D10 (board 35): Start the interview opens the feature at once: the chip SHOP-124, R-po-1 to R-po-3 tagged SHOP-124, a file Downloading…',
+    await until(async () => {
+      const r = await A.evalJs(`(() => { const h = ${HOST}; const head = h.querySelector('[data-req-feature]'); if (!head) return null;
+        return { seq: head.getAttribute('data-req-feature'), chip: h.querySelector('[data-ui="export-chip"]')?.textContent || '',
+          tags: [...h.querySelectorAll('.req-src-ticket')].map((t) => t.textContent),
+          downloading: [...h.querySelectorAll('.req-file .badge')].some((b) => b.textContent === 'Downloading…') }; })()`);
+      if (!r) return false;
+      seq = r.seq;
+      return r.chip === 'SHOP-124' && r.tags.length === 3 && r.tags.every((t) => t === 'SHOP-124') && r.downloading;
+    }, 20000));
+  check('A6.1 board 35: the working line reads "Getting … from SHOP-124…"',
+    await until(() => A.evalJs(`/^Getting [1-3] files? from SHOP-124…$/.test(${HOST}.querySelector('.req-reading .badge')?.textContent || '')`), 10000));
+  await shot('a61-board35-downloading');
+  const filesAA = await contrastBoth(['#requirements-host .req-files', '#requirements-host .req-reading'], 'a61-board35-downloading-dark');
+  check('A6.1 board 35: the Files card while files are downloaded is AA in light and dark', filesAA.light.length === 0 && filesAA.dark.length === 0, JSON.stringify(filesAA));
+  check('A6.1 D10: every file is downloaded and read, each "from SHOP-124", then round 1 asks',
+    await until(() => A.evalJs(`(() => { const h = ${HOST}; const metas = [...h.querySelectorAll('.req-files .req-file-meta')].map((m) => m.textContent);
+      return metas.length === 4 && metas.every((m) => m.includes('from SHOP-124'))
+        && ![...h.querySelectorAll('.req-file .badge')].some((b) => /Downloading|Reading/.test(b.textContent)) && !!h.querySelector('.qpanel .qopt'); })()`),
+      AFTER_HOLD_MS + 30000));
+  check('A6.1 board 35: History records the import',
+    await until(() => A.evalJs(`/^Imported SHOP-124 from Jira · /.test(${HOST}.querySelector('.req-history li span')?.textContent || '')`), 10000));
+  await shot('a61-board35-read');
+  // Export ▾ › Export to Jira… on the imported feature: not Ready yet, so A6 asks for a reason first, then the again dialog in the import's words
+  await A.evalJs(`(() => { document.querySelector('#requirements-host [data-ui="menu-export"]').click(); document.querySelector('#requirements-host [data-ui="mi-export"]').click(); })()`);
+  await until(() => A.evalJs(`!!document.querySelector('[data-ui="export-reason"]')`), 10000);
+  await A.evalJs(`(() => { const a = document.querySelector('[data-ui="export-reason"]'); a.value = 'The team refines it in Jira.';
+    a.dispatchEvent(new Event('input')); document.querySelector('[data-ui="export-anyway"]').click(); })()`);
+  check('A6.1 D11 (board 35): Export to Jira… on it opens "Export FEAT-n to Jira" — "FEAT-n started from SHOP-124 on <day>. …"',
+    await until(() => A.evalJs(`(() => { const d = ${DLG}; return !!d && d.querySelector('h2').textContent === 'Export FEAT-${seq} to Jira'
+      && /^FEAT-${seq} started from SHOP-124 on \\d{1,2} [A-Z][a-z]{2}\\. The spec has changed since\\. What should happen\\?$/.test(d.querySelector('#req-again-desc')?.textContent || ''); })()`), 15000));
+  await shot('a61-board35-export');
+  await click('[data-ui="again-cancel"]');
+  await until(() => A.evalJs(`!${DLG}`), 5000);
+
+  // 390 px (board 36, D19): the preview as a full-screen sheet that fits the screen, ← New feature first, three comments then Show all, 44 px targets
+  await A.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await newFeature();
+  await click('#requirements-host [data-ui="import-open"]');
+  await until(() => A.evalJs(`${DLG}?.querySelectorAll('[role="radiogroup"] input').length === 4`), 15000);
+  await search('cancel');
+  await until(() => A.evalJs(`${DLG}?.querySelector('.req-import-status')?.textContent === '4 tickets in SHOP match “cancel”.'`), 15000);
+  await click('[data-ui="pick-SHOP-124"]');
+  await click('[data-ui="pick-continue"]');
+  await until(() => A.evalJs(`!!${DLG}?.querySelector('[data-ui="ipv-use"]') && !${DLG}.querySelector('[data-ui="ipv-use"]').disabled`), 15000);
+  const sheet = await A.evalJs(`(() => { const d = ${DLG}; const r = d.getBoundingClientRect(); const vw = document.documentElement.clientWidth; const vh = window.innerHeight;
+    const back = d.querySelector('[data-ui="import-back"]'); const all = d.querySelector('[data-ui="ipv-showall"]');
+    const btns = ['ipv-back', 'ipv-use'].map((u) => { const b = d.querySelector('[data-ui="' + u + '"]'); const br = b.getBoundingClientRect();
+      const top = document.elementFromPoint(br.left + br.width / 2, br.top + br.height / 2);
+      return br.left >= 0 && br.top >= 0 && br.right <= vw && br.bottom <= vh && !!top && b.contains(top); });
+    return { fixed: getComputedStyle(d).position === 'fixed', fits: Math.round(r.left) === 0 && Math.round(r.top) === 0 && Math.round(r.width) === vw && Math.round(r.height) === vh,
+      back: back && getComputedStyle(back).display !== 'none' ? back.getAttribute('aria-label') : null,
+      showAll: !!all && getComputedStyle(all).display !== 'none' ? all.textContent : null,
+      shown: [...d.querySelectorAll('.req-import-com')].filter((li) => getComputedStyle(li).display !== 'none').length,
+      bodyHidden: [...d.querySelectorAll('.req-import-cbody')].every((b) => getComputedStyle(b).display === 'none'),
+      btns, noScroll: document.documentElement.scrollWidth === document.documentElement.clientWidth }; })()`);
+  check('A6.1 board 36: at 390 x 844 the preview is a full-screen sheet with ← New feature, three comments by author and date, Show all 6 comments, Back and Use this ticket on screen',
+    sheet.fixed && sheet.fits && sheet.back === 'Back to New feature' && sheet.showAll === 'Show all 6 comments' && sheet.shown === 3 && sheet.bodyHidden
+      && sheet.btns.every(Boolean) && sheet.noScroll, JSON.stringify(sheet));
+  const small = await A.evalJs(`(() => { const d = ${DLG}; ${HIT_FN}
+    return [...d.querySelectorAll('.btn, .req-export-back, .req-import-check, .req-import-showall')].filter((b) => b.offsetParent !== null)
+      .map((b) => [b, hit(b)]).filter(([, s]) => s.hh < 44).map(([b, s]) => (b.getAttribute('data-ui') || b.className) + ':' + Math.round(s.hh)); })()`);
+  check('A6.1 D19: every row and button of the sheet is a 44 px target', small.length === 0, JSON.stringify(small));
+  await shot('a61-board36-phone-sheet');
+  const walk = await tabWalk(24);
+  check('A6.1 D19: on the 390 px sheet Tab and Shift+Tab stay inside it', walk.out.length === 0, JSON.stringify({ back: walk.back, fwd: walk.fwd.map((t) => t.el) }));
+  const phoneAA = await contrastBoth(['.req-dlg-wrap .req-import-preview'], 'a61-board36-phone-dark');
+  check('A6.1 board 36: the sheet is AA in light and dark', phoneAA.light.length === 0 && phoneAA.dark.length === 0, JSON.stringify(phoneAA));
+  await A.evalJs(`location.hash = '#runs'`);
+  check('A6.1 D19: leaving the Requirements view closes the sheet and puts the page back (nothing left inert)',
+    await until(async () => !(await A.evalJs(`!!${DLG}`)) && (await noneInert()), 8000));
+  await A.send('Emulation.clearDeviceMetricsOverride');
+}
+// ---- 9c: choosing the harness and model (boards 1-9), in mock mode. The mock offers Claude, Codex, Copilot and (greyed for the
+// repo) Gemini CLI, but the catalog has no Gemini model, so this section seeds one the way a user would: a model of the global
+// catalog that names its harness. A project of its own (git, one commit, no brief) lets a new feature start with a code look.
+// Nothing here makes a real model call. Runs alone with --only=9c.
+if (!ONLY_A6 && !ONLY_A61) {
+  const { settingsFile, readSettings } = await import(new URL('../src/core/settings.mjs', import.meta.url).href);
+  // settingsFile() is under HOME / USERPROFILE (settings.mjs defaultRoot), not WORCA_HOME: this write reaches the proof's temp home
+  // only because the top of this file points WORCA_HOME, HOME and USERPROFILE at it. Never run this section without that.
+  const cur = readSettings();
+  writeFileSync(settingsFile(), JSON.stringify({ ...cur, models: [...(Array.isArray(cur.models) ? cur.models : []), { id: 'gemini-3-pro', label: 'Gemini 3 Pro', engine: 'gemini' }] }, null, 2));
+  const dir9c = path.join(home, 'orders9c');
+  await mkdir(dir9c, { recursive: true });
+  const g9 = (...a) => execFileSync('git', a, { cwd: dir9c, stdio: 'ignore' });
+  g9('init'); g9('config', 'user.name', 'proof'); g9('config', 'user.email', 'proof@example.invalid'); g9('commit', '--allow-empty', '-m', 'init');
+  const key9c = (await (await import(new URL('../src/core/projects.mjs', import.meta.url).href)).addProject({ name: 'orders9c', path: dir9c })).find((p) => p.name === 'orders9c').key;
+  await A.evalJs(`fetch('/api/onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ welcomeSeen: true }) })
+    .then(() => { document.querySelector('#welcome-modal:not(.hidden) .ob-skip')?.click(); })`);
+  const DESKTOP = { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false };
+  const PHONE = { width: 390, height: 844, deviceScaleFactor: 1, mobile: true };
+  await A.send('Emulation.setDeviceMetricsOverride', DESKTOP);
+  const DLG = `document.querySelector('.req-dlg-wrap [role="dialog"]')`;
+  const click = (sel) => A.evalJs(`document.querySelector(${JSON.stringify(sel)}).click()`);
+  const setSel = (sel, v) => A.evalJs(`(() => { const s = document.querySelector(${JSON.stringify(sel)}); s.value = ${JSON.stringify(v)}; s.dispatchEvent(new Event('change', { bubbles: true })); return s.value; })()`);
+  const opts = (sel) => A.evalJs(`[...document.querySelector(${JSON.stringify(sel)}).options].map((o) => o.value)`);
+  const dlgTitle = () => A.evalJs(`${DLG}?.querySelector('h2')?.textContent || null`);
+  const closeDlg = async (ui) => { await click(`.req-dlg-wrap [data-ui="${ui}"]`); await until(async () => !(await A.evalJs(`!!${DLG}`)), 4000); };
+  const newForm = async () => {
+    await A.evalJs(`location.hash = '#requirements'`);
+    await sleep(300);
+    await A.evalJs(`location.hash = '#requirements/new'`);
+    return until(() => A.evalJs(`(() => { const b = document.querySelector('.req-new .req-who-box'); return !!b && !b.hidden && !!b.querySelector('.req-new-note') && !!document.getElementById('req-new-target'); })()`), 15000);
+  };
+  const WHO = '.req-new .req-who-box';
+  const stacked = (root) => A.evalJs(`(() => { const f = [...${root}.querySelectorAll('.req-who-field')].filter((x) => !x.hidden).map((x) => x.getBoundingClientRect());
+    return { n: f.length, stacked: f.every((r, i) => i === 0 || (r.top >= f[i - 1].bottom - 1 && Math.abs(r.left - f[0].left) < 1)), fits: document.documentElement.scrollWidth === document.documentElement.clientWidth }; })()`);
+
+  // New feature (boards 1, 2, 7)
+  check('9c board 1: New feature shows Who interviews (Harness, Model, Effort) and a note under them', await newForm());
+  const who = await A.evalJs(`(() => { const b = document.querySelector('${WHO}'); return { legend: b.querySelector('.req-who legend')?.textContent,
+    labels: [...b.querySelectorAll('.req-who-field > label')].map((l) => l.textContent), note: b.querySelector('.req-new-note')?.textContent || '' }; })()`);
+  check('9c board 1: the legend reads "Who interviews", the labels Harness, Model, Effort, and the note names a cost',
+    who.legend === 'Who interviews' && who.labels.join('|') === 'Harness|Model|Effort' && /\$|no estimate|cost unknown/i.test(who.note), JSON.stringify(who));
+  const harnesses = await opts(`${WHO} .req-who-harness`);
+  const harnessText = await A.evalJs(`[...document.querySelector('${WHO} .req-who-harness').options].map((o) => o.textContent).join(' | ')`);
+  check('9c D6: the harness list offers Claude, Codex and Gemini CLI, and never Cursor',
+    ['claude', 'codex', 'gemini'].every((e) => harnesses.includes(e)) && !harnesses.includes('cursor') && !/cursor/i.test(harnessText), harnessText);
+  const claudeModels = await opts(`${WHO} .req-who-model`);
+  await setSel(`${WHO} .req-who-harness`, 'codex');
+  const codexModels = await opts(`${WHO} .req-who-model`);
+  const codexNow = await A.evalJs(`document.querySelector('${WHO} .req-who-model').value`);
+  check('9c board 2: changing the harness to Codex refills Model with Codex models (no Claude one) and picks its default',
+    codexModels.length > 0 && codexModels.join() !== claudeModels.join() && codexModels.every((m) => !m.startsWith('claude-')) && codexNow === 'gpt-6.1-sol', JSON.stringify({ codexNow, codexModels }));
+  check('9c board 2: a line says what Codex can do ("OpenAI Codex reads the repo read-only. Files go to it as text.")',
+    await until(() => A.evalJs(`(document.querySelector('${WHO} .req-new-harness')?.textContent || '') === 'OpenAI Codex reads the repo read-only. Files go to it as text.'`), 4000));
+  await setSel(`${WHO} .req-who-harness`, 'claude');
+  check('9c board 2: back to Claude refills Model with Claude models', (await opts(`${WHO} .req-who-model`)).join() === claudeModels.join());
+  await setSel(`${WHO} .req-who-harness`, 'codex');
+  const newAA = await contrastBoth([WHO], '9c-board1-new-dark');
+  check('9c board 1: Who interviews and its note are AA in light and dark at 1280 px', newAA.light.length === 0 && newAA.dark.length === 0, JSON.stringify(newAA));
+  await shot('9c-board1-new');
+  await A.send('Emulation.setDeviceMetricsOverride', PHONE);
+  await sleep(300);
+  const stack = await stacked(`document.querySelector('${WHO}')`);
+  check('9c board 7: at 390 px the three selects stack in one column and the page does not scroll sideways', stack.n === 3 && stack.stacked && stack.fits, JSON.stringify(stack));
+  const newPhoneAA = await contrastBoth([WHO], '9c-board7-new-phone-dark');
+  check('9c board 7: Who interviews is AA in light and dark at 390 px', newPhoneAA.light.length === 0 && newPhoneAA.dark.length === 0, JSON.stringify(newPhoneAA));
+  await shot('9c-board7-new-phone');
+  await A.send('Emulation.setDeviceMetricsOverride', DESKTOP);
+
+  // Start a feature on Codex in the project that has no brief: the mock round asks, the mock code look is a step row.
+  // orders9c was added behind the page's back: wait for the For list to offer it, and reload once if it never comes
+  // (CI ran ahead of the project list once).
+  const has9c = () => A.evalJs(`[...(document.getElementById('req-new-target')?.options || [])].some((o) => o.text === 'orders9c')`);
+  if (!(await until(has9c, 5000))) {
+    await A.evalJs('location.reload()');
+    await sleep(1500);
+    await newForm();
+    if (!(await until(has9c, 15000))) throw new Error('9c: the For list never offered orders9c');
+  }
+  await A.evalJs(`(() => { const sel = document.getElementById('req-new-target'); const opt = [...sel.options].find((o) => o.text === 'orders9c'); sel.value = opt.value;
+    sel.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await setSel(`${WHO} .req-who-harness`, 'codex');
+  await A.evalJs(`(() => { document.getElementById('req-new-title').value = 'Cancel an order';
+    document.getElementById('req-new-desc').value = 'Customers cancel before it ships';
+    [...document.querySelectorAll('.req-new .btn-primary')].at(-1).click(); })()`);
+  check('9c: a feature made with Codex shows the question card (mock round) and its model chip names Codex',
+    await until(() => A.evalJs(`!!document.querySelector('#requirements-host .qpanel .qopt') && /Codex/.test(document.querySelector('#requirements-host [data-ui="model-chip"]')?.textContent || '')`), 20000));
+  const seq9 = await A.evalJs(`/feature\\/(\\d+)/.exec(location.hash)[1]`);
+  check('9c: the stored choice is Codex with its default model',
+    await A.evalJs(`fetch('/api/requirements/${seq9}').then((r) => r.json()).then((d) => d.feature.model?.engine === 'codex' && d.feature.model?.model === 'gpt-6.1-sol')`));
+
+  // The code look as a step (board 5, D17)
+  check('9c board 5 (D17): the code look is a step row "Code look" with Show what it found',
+    await until(() => A.evalJs(`(() => { const r = document.querySelector('#requirements-host .req-step-look'); return !!r && /^Code look/.test(r.querySelector('.req-round-n')?.textContent || '')
+      && r.querySelector('[data-ui="look-show"]')?.textContent === 'Show what it found'; })()`), 10000));
+  await shot('9c-board5-step');
+  await click('#requirements-host [data-ui="look-show"]');
+  check('9c board 5: Show what it found opens the card "Code look: what Worca found"',
+    await until(() => A.evalJs(`(() => { const c = document.querySelector('#requirements-host .req-orient'); return !!c && c.open && c.querySelector('summary')?.textContent.startsWith('Code look: what Worca found'); })()`), 4000));
+
+  // The model chip and its dialog (boards 3, 4); the confirm on Codex -> Gemini
+  await click('#requirements-host [data-ui="model-chip"]');
+  check('9c board 3: the model chip opens the dialog "Model for this feature" on the feature\'s harness',
+    await until(async () => (await dlgTitle()) === 'Model for this feature', 6000) && (await A.evalJs(`${DLG}.querySelector('.req-who-harness').value`)) === 'codex');
+  const gem = await setSel('.req-dlg-wrap .req-who-harness', 'gemini');
+  check('9c board 3: choosing Gemini CLI refills Model with the Gemini model', gem === 'gemini' && (await A.evalJs(`${DLG}.querySelector('.req-who-model').value`)) === 'gemini-3-pro');
+  await shot('9c-board3-model-dialog');
+  await click('.req-dlg-wrap [data-ui="model-save"]');
+  check('9c board 4: Save on Codex -> Gemini CLI asks the switch confirm: title, what changes (no repo, kept copy) and Switch to Gemini CLI',
+    await until(() => A.evalJs(`(() => { const m = document.getElementById('confirm-modal'); if (!m || m.classList.contains('hidden')) return false;
+      const t = document.getElementById('confirm-message').textContent;
+      return document.getElementById('confirm-title').textContent === 'Switch this feature to Gemini CLI?'
+        && t.includes("Gemini CLI can't read the repo: code looks are skipped, for this feature and for the Product brief.")
+        && t.includes('Gemini CLI keeps its own copy of each step in its history on this computer.')
+        && document.getElementById('confirm-ok').textContent === 'Switch to Gemini CLI'; })()`), 8000));
+  await shot('9c-board4-switch-confirm');
+  await click('#confirm-cancel');
+  check('9c board 4: Cancel saves nothing (the feature stays on Codex) and leaves the dialog open',
+    await until(() => A.evalJs(`document.getElementById('confirm-modal').classList.contains('hidden')`), 4000)
+      && (await A.evalJs(`!!${DLG}`))
+      && await A.evalJs(`fetch('/api/requirements/${seq9}').then((r) => r.json()).then((d) => d.feature.model.engine === 'codex')`));
+  const modelAA = await contrastBoth(['.req-dlg-wrap .req-model-dialog'], '9c-board3-model-dialog-dark');
+  check('9c board 3: the model dialog is AA in light and dark', modelAA.light.length === 0 && modelAA.dark.length === 0, JSON.stringify(modelAA));
+  await closeDlg('model-cancel');
+
+  // The cost chip and its dialog (board 6)
+  await click('#requirements-host [data-ui="cost-chip"]');
+  check('9c board 6: the cost chip opens "Cost of this feature": the Step / Ran on / Cost table ends with "So far" (the mock books no step)',
+    await until(async () => (await dlgTitle()) === 'Cost of this feature', 6000)
+      && await A.evalJs(`(() => { const d = ${DLG}; return [...d.querySelectorAll('thead th')].map((x) => x.textContent).join('|') === 'Step|Ran on|Cost' && d.querySelector('.req-cost-total td')?.textContent === 'So far'; })()`));
+  await shot('9c-board6-cost-dialog');
+  const costAA = await contrastBoth(['.req-dlg-wrap .req-cost-dialog'], '9c-board6-cost-dialog-dark');
+  check('9c board 6: the cost dialog is AA in light and dark', costAA.light.length === 0 && costAA.dark.length === 0, JSON.stringify(costAA));
+  await closeDlg('cost-close');
+
+  // The feature page, light and dark, at 1280 and 390 px
+  const pageSel = ['#requirements-host .req-head .req-chips', '#requirements-host .req-step-look'];
+  const pageAA = await contrastBoth(pageSel, '9c-feature-dark');
+  check('9c: the feature header (cost and model chips) and the code look step are AA in light and dark at 1280 px', pageAA.light.length === 0 && pageAA.dark.length === 0, JSON.stringify(pageAA));
+  await A.send('Emulation.setDeviceMetricsOverride', PHONE);
+  await sleep(300);
+  const phoneFit = await A.evalJs(`document.documentElement.scrollWidth === document.documentElement.clientWidth`);
+  const pagePhoneAA = await contrastBoth(pageSel, '9c-feature-phone-dark');
+  check('9c: at 390 px the feature page does not scroll sideways, and chips and code look step are AA in light and dark',
+    phoneFit && pagePhoneAA.light.length === 0 && pagePhoneAA.dark.length === 0, JSON.stringify({ phoneFit, pagePhoneAA }));
+  await click('#requirements-host [data-ui="model-chip"]');
+  await until(async () => (await dlgTitle()) === 'Model for this feature', 6000);
+  const dlgStack = await stacked(DLG);
+  check('9c board 7: at 390 px the dialog\'s selects stack too', dlgStack.n >= 2 && dlgStack.stacked, JSON.stringify(dlgStack));
+  const modelPhoneAA = await contrastBoth(['.req-dlg-wrap .req-model-dialog'], '9c-board7-model-phone-dark');
+  check('9c board 7: the model dialog is AA in light and dark at 390 px', modelPhoneAA.light.length === 0 && modelPhoneAA.dark.length === 0, JSON.stringify(modelPhoneAA));
+  await closeDlg('model-cancel');
+  await A.send('Emulation.setDeviceMetricsOverride', DESKTOP);
+
+  // The product brief: Who makes it (board 9), then ⋯ > Refresh the brief
+  await A.evalJs(`location.hash = '#requirements/brief/project/${key9c}'`);
+  check('9c board 9: the brief page (none yet) shows Who makes it with the three selects',
+    await until(() => A.evalJs(`(() => { const b = document.querySelector('#requirements-host .req-brief-who'); return !!b && b.querySelector('.req-who legend')?.textContent === 'Who makes it'
+      && b.querySelectorAll('.req-who select').length === 3; })()`), BRIEF_WAIT_MS));
+  const briefBoxAA = await contrastBoth(['#requirements-host .req-brief-who'], '9c-board9-brief-dark');
+  check('9c board 9: Who makes it is AA in light and dark', briefBoxAA.light.length === 0 && briefBoxAA.dark.length === 0, JSON.stringify(briefBoxAA));
+  await shot('9c-board9-brief');
+  await A.send('Emulation.setDeviceMetricsOverride', PHONE);
+  await sleep(300);
+  const briefStack = await stacked(`document.querySelector('#requirements-host .req-brief-who')`);
+  const briefPhoneAA = await contrastBoth(['#requirements-host .req-brief-who'], '9c-board9-brief-phone-dark');
+  check('9c board 9: at 390 px Who makes it stacks its selects, the page does not scroll sideways, and the box is AA in light and dark',
+    briefStack.n === 3 && briefStack.stacked && briefStack.fits && briefPhoneAA.light.length === 0 && briefPhoneAA.dark.length === 0, JSON.stringify({ briefStack, briefPhoneAA }));
+  await A.send('Emulation.setDeviceMetricsOverride', DESKTOP);
+  await click('#requirements-host [data-ui="brief-create"]');
+  check('9c board 9: Create (mock) makes the brief',
+    await until(() => A.evalJs(`document.querySelectorAll('#requirements-host .req-brief-card [data-section]').length === 4`), BRIEF_PRESS_PROBE_MS + 10_000));
+  await click('#requirements-host [data-ui="brief-more"]');
+  check('9c board 9: the brief box has Who makes it; its ⋯ menu offers Refresh the brief',
+    await until(() => A.evalJs(`!!document.querySelector('#requirements-host [data-ui="mi-brief-refresh"]')`), 4000));
+  await click('#requirements-host [data-ui="mi-brief-refresh"]');
+  check('9c board 9: Refresh the brief opens the dialog "Refresh the brief" with Who makes it and its button',
+    await until(async () => (await dlgTitle()) === 'Refresh the brief', 6000)
+      && await A.evalJs(`${DLG}.querySelectorAll('.req-who select').length === 3 && !!${DLG}.querySelector('[data-ui="brief-refresh-go"]')`));
+  await shot('9c-board9-refresh-dialog');
+  const refreshAA = await contrastBoth(['.req-dlg-wrap .req-brief-refresh'], '9c-board9-refresh-dark');
+  check('9c board 9: the Refresh dialog is AA in light and dark', refreshAA.light.length === 0 && refreshAA.dark.length === 0, JSON.stringify(refreshAA));
+  await closeDlg('brief-refresh-cancel');
+  await A.send('Emulation.clearDeviceMetricsOverride');
 }
 await sleep(1000);
 check('no page errors', A.pageErrors.length === 0, A.pageErrors.join(' | '));

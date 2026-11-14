@@ -90,7 +90,7 @@ test('askCatalog: Copilot rows, their default, and askEngine copilot', async () 
 test('a Copilot chat takes only Copilot models', async () => {
   const m = mk();
   assert.deepEqual(await m.validateModelEffort('copilot/gpt-5.4', 'high', { engine: 'copilot' }), { ok: true, model: 'copilot/gpt-5.4', effort: 'high' });
-  assert.deepEqual(await m.validateModelEffort('gpt-5.5', 'low', { engine: 'copilot' }), { ok: false, error: 'this chat runs on Copilot; switch it to Codex from the Chat model picker first' });
+  assert.deepEqual(await m.validateModelEffort('gpt-5.5', 'low', { engine: 'copilot' }), { ok: false, error: 'this chat runs on GitHub Copilot; switch it to OpenAI Codex from the Chat model picker first' });
   assert.equal(chatEngine({ model: 'x', engine: 'copilot' }), 'copilot');
 });
 
@@ -193,11 +193,11 @@ test('a copilot without the lockdown flags: copilot-not-ready, a notice with the
   assert.equal(err.code, COPILOT_NOT_READY_CODE);
   const notice = getMessage(s.asst.id).blocks.find((b) => b.kind === 'notice' && b.copilotSetup);
   assert.equal(notice.href, COPILOT_SETUP_DOCS_URL);
-  assert.match(notice.text, /^Copilot isn't ready: this copilot has no --available-tools/);
+  assert.match(notice.text, /^GitHub Copilot isn't ready: this copilot has no --available-tools/);
 });
 
 test('the watchdog: a shell call or a tool that is not worca\'s ends a Copilot turn as an error', async () => {
-  for (const [name, re] of [['Bash', /^Copilot tried to run a shell command/], ['WebFetch', /^Copilot used WebFetch, which a chat must not have/]]) {
+  for (const [name, re] of [['Bash', /^GitHub Copilot tried to run a shell command/], ['WebFetch', /^GitHub Copilot used WebFetch, which a chat must not have/]]) {
     const s = seed();
     const { turn, frames } = makeTurn(s, {}, { runClaudeImpl: async (o) => {
       reply(o, { calls: [{ id: 't1', name, input: {} }] });

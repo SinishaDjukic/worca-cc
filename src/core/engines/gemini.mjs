@@ -61,6 +61,9 @@ import { GEMINI_CLI } from './cli-specs.mjs';
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const geminiDefaultBin = () => process.env.WORCA_GEMINI_BIN || 'gemini';
 export const GEMINI_SESSION_PREFIX = 'gemini:';
+/** The instruction file Gemini CLI reads from its cwd: its default context file name, which worca does not change
+ *  (geminicli.com/docs/cli/gemini-md/; AGENTS.md only when `context.fileName` names it). */
+export const GEMINI_INSTRUCTION_FILES = Object.freeze(['GEMINI.md']);
 
 const GEMINI_FALSE = new Set(['systemPromptFlag', 'allowedTools', 'cost', 'subagents', 'hookTelemetry', 'skills', 'subagentSystemPrompt', 'turnBudget']);
 

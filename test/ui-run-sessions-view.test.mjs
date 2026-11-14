@@ -24,7 +24,7 @@ const labelOf = (id) => ({ n_impl: 'Implementation', n_review: 'Review' })[id];
 test('header, copy button, stacked bar and per-turn table', () => {
   const el = renderSessionCard(S, { doc, labelOf, engineCost: true });
   assert.match(el.querySelector('.rs-head').textContent, /Build and review/);
-  assert.match(el.querySelector('.rs-head').textContent, /Sub-agents · turns · Claude · main agent claude-haiku-4-5/);
+  assert.match(el.querySelector('.rs-head').textContent, /Sub-agents · turns · Claude Code · main agent claude-haiku-4-5/);
   assert.equal(el.querySelector('[data-copy]').dataset.copy, 'b1f0c2');
   const segs = [...el.querySelectorAll('.rs-bar > span')].map((s) => s.getAttribute('title'));
   assert.deepEqual(segs, ['Implementation $1.70 (71%)', 'Review $0.65 (27%)', 'Hand-offs $0.06 (2%)']);
@@ -58,7 +58,7 @@ test('tab visibility', () => {
 
 test('v2 — the card: separate and shared heads, no host yet, the bar only with a cost, history, skipped lines, an epoch check', () => {
   const sep = renderSessionCard({ ...S, mode: 'separate', modeReason: 'the Labs flag sessionGroups is off', hostSessionId: null, costUsd: 2.41 }, { doc, labelOf, engineCost: true });
-  assert.equal(sep.querySelector('.rs-meta').textContent, 'Separate sessions · Claude', 'no transport, no main agent');
+  assert.equal(sep.querySelector('.rs-meta').textContent, 'Separate sessions · Claude Code', 'no transport, no main agent');
   assert.equal(sep.querySelector('[data-copy]'), null, 'no host session, nothing to copy');
   assert.equal(sep.querySelector('.rs-why').textContent, 'Its steps ran as separate sessions: the One session Labs flag is off.', 'the flag key is not copy (never "group")');
   assert.match(renderSessionCard({ ...S, mode: 'shared' }, { doc, labelOf }).querySelector('.rs-head').textContent, /One conversation · turns · Claude/);
@@ -360,7 +360,7 @@ test('v3 — the reconcile words (the mock\'s three), history with no reason, me
   assert.doesNotMatch(booking.querySelector('.rs-legend').textContent, /Review/, 'a turn with no cost record yet is no $0.00 share');
   assert.doesNotMatch(booking.querySelector('.rs-bar').getAttribute('aria-label'), /\$0\.00/);
   const torn = renderSessionCard({ ...S, engine: null }, { doc, labelOf, runEngine: 'codex' });
-  assert.match(torn.querySelector('.rs-meta').textContent, /Sub-agents · turns · Codex · main agent/, 'the open line was torn: the run\'s engine');
+  assert.match(torn.querySelector('.rs-meta').textContent, /Sub-agents · turns · OpenAI Codex · main agent/, 'the open line was torn: the run\'s engine');
   assert.doesNotMatch(renderSessionCard({ ...S, engine: null }, { doc, labelOf }).querySelector('.rs-meta').textContent, /Claude/, 'no engine made up');
 });
 

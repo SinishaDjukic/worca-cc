@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { getDb, prepare, tx } from '../db.mjs';
 import { REQ_ATT_ID_RE } from './attachments.mjs';
 import {
-  RequirementsError, SCOPE_TYPES, STATUSES, TURN_KINDS, LIMITS, emptySpec, featureId,
+  RequirementsError, SCOPE_TYPES, STATUSES, TURN_KINDS, LIMITS, emptySpec, featureId, clip,
 } from './spec.mjs';
 
 const iso = () => new Date().toISOString();
@@ -33,20 +33,31 @@ function toFeature(r) {
     status: r.status, spec: { ...emptySpec(), ...json(r.spec_json, {}) }, orientation: json(r.orientation_json, null),
     criteriaSeq: Number(r.criteria_seq), assumptionSeq: Number(r.assumption_seq), rounds: Number(r.rounds),
     costUsd: Math.round((Number(r.cost_usd) || 0) * 1e4) / 1e4, savedPath: r.saved_path || null,
-    earlyStartReason: r.early_start_reason || null,
+    earlyStartReason: r.early_start_reason || null, model: json(r.model_json, null),
     createdBy: r.created_by || null, createdAt: r.created_at, updatedBy: r.updated_by || null, updatedAt: r.updated_at,
   };
 }
 
-export function createFeature({ scopeType, scopeKey, title, description } = {}, { by = null } = {}) {
+/** A1 §3; 9c: `model` ({ engine, model, effort }, null = before 9c) is the feature's harness choice. A6.1 D7: `criteria` ([{ text, source }]) start the spec as the product owner's own R-po-1… (edited, with their source). */
+export function createFeature({ scopeType, scopeKey, title, description, criteria = [], model = null } = {}, { by = null } = {}) {
   checkScope(scopeType, scopeKey);
   const t = requiredText(title, 'title', LIMITS.title, { oneLine: true });   // one line: the Markdown heading cannot break
   const d = requiredText(description, 'description', LIMITS.description);
+  const spec = emptySpec();
+  const seen = new Set();
+  for (const c of Array.isArray(criteria) ? criteria : []) {
+    if (spec.criteria.length >= LIMITS.items) break;
+    const text = clip(c && c.text, LIMITS.item);
+    if (!text || seen.has(text.toLowerCase())) continue;
+    seen.add(text.toLowerCase());
+    const source = clip(c && c.source, 100);
+    spec.criteria.push({ id: `R-po-${spec.criteria.length + 1}`, text, edited: true, ...(source ? { source } : {}) });
+  }
   getDb();
   const ts = iso();
-  const r = prepare(`INSERT INTO req_features (scope_type, scope_key, title, description, status, spec_json,
-      created_by, created_at, updated_by, updated_at) VALUES (?, ?, ?, ?, 'looking', ?, ?, ?, ?, ?)`)
-    .run(scopeType, scopeKey.trim(), t, d, JSON.stringify(emptySpec()), by, ts, by, ts);
+  const r = prepare(`INSERT INTO req_features (scope_type, scope_key, title, description, status, spec_json, criteria_seq,
+      model_json, created_by, created_at, updated_by, updated_at) VALUES (?, ?, ?, ?, 'looking', ?, ?, ?, ?, ?, ?, ?)`)
+    .run(scopeType, scopeKey.trim(), t, d, JSON.stringify(spec), spec.criteria.length, model ? JSON.stringify(model) : null, by, ts, by, ts);
   return getFeature(Number(r.lastInsertRowid));
 }
 
@@ -72,9 +83,9 @@ export function listFeatures({ scopeType = null, scopeKey = null, archived = fal
 const COLUMNS = Object.freeze({
   title: 'title', description: 'description', scopeType: 'scope_type', scopeKey: 'scope_key', status: 'status',
   spec: 'spec_json', orientation: 'orientation_json', criteriaSeq: 'criteria_seq', assumptionSeq: 'assumption_seq',
-  rounds: 'rounds', savedPath: 'saved_path',
+  rounds: 'rounds', savedPath: 'saved_path', model: 'model_json',
 });
-const JSON_FIELDS = new Set(['spec', 'orientation']);
+const JSON_FIELDS = new Set(['spec', 'orientation', 'model']);
 
 export function updateFeature(seq, patch = {}, { by = null } = {}) {
   const sets = [];
@@ -106,12 +117,13 @@ export function setEarlyStartReason(seq, reason) {
   prepare('UPDATE req_features SET early_start_reason = ? WHERE seq = ?').run(reason == null ? null : String(reason), Number(seq));
 }
 
-export function appendTurn(seq, { kind, payload = {}, model = null, costUsd = null } = {}, { by = null } = {}) {
+export function appendTurn(seq, { kind, payload = {}, model = null, costUsd = null, engine = null, notices = null } = {}, { by = null } = {}) {
   if (!TURN_KINDS.includes(kind)) throw new Error(`appendTurn: unknown kind "${kind}"`);
   getDb();
-  const r = prepare(`INSERT INTO req_turns (feature_seq, kind, payload_json, model, cost_usd, created_by, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`)
-    .run(Number(seq), kind, JSON.stringify(payload), model, Number.isFinite(costUsd) ? costUsd : null, by, iso());
+  const r = prepare(`INSERT INTO req_turns (feature_seq, kind, payload_json, model, cost_usd, engine, notices_json, created_by, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(Number(seq), kind, JSON.stringify(payload), model, Number.isFinite(costUsd) ? costUsd : null, engine || null,
+      Array.isArray(notices) && notices.length ? JSON.stringify(notices) : null, by, iso());
   return Number(r.lastInsertRowid);
 }
 
@@ -119,7 +131,8 @@ export function listTurns(seq) {
   getDb();
   return prepare('SELECT * FROM req_turns WHERE feature_seq = ? ORDER BY id').all(Number(seq)).map((r) => ({
     id: Number(r.id), kind: r.kind, payload: json(r.payload_json, {}), model: r.model || null,
-    costUsd: r.cost_usd == null ? null : Number(r.cost_usd), by: r.created_by || null, at: r.created_at,
+    costUsd: r.cost_usd == null ? null : Number(r.cost_usd), engine: r.engine || null, notices: json(r.notices_json, []),
+    by: r.created_by || null, at: r.created_at,
   }));
 }
 
@@ -196,7 +209,7 @@ export function linkPipeline(runId, pipelineId) {
   return Number(r.changes) > 0;
 }
 
-/** Costs of the newest orientation ("look at the code") turns that cost something, newest first.
+/** Costs of the newest orientation (code look) turns that cost something, newest first.
  *  With `model`, only the looks made on that model. */
 export function recentLookCosts(limit = 10, { model = null } = {}) {
   getDb();
@@ -204,6 +217,59 @@ export function recentLookCosts(limit = 10, { model = null } = {}) {
       ORDER BY id DESC LIMIT ?`;
   const args = model ? [String(model), Number(limit)] : [Number(limit)];
   return prepare(sql).all(...args).map((r) => Number(r.cost_usd));
+}
+
+/** 9c: the costs of the newest runs of one step on one model, newest first, only those that cost something. `step` is 'look'
+ *  (orientation turns), 'round' (round turns) or 'brief' (ledger rows with a brief id, a document's read left out). */
+export function recentStepCosts(step, { model = null, limit = 10 } = {}) {
+  getDb();
+  if (step === 'look' || step === 'round') {
+    const kind = step === 'look' ? 'orientation' : 'round';
+    return prepare('SELECT cost_usd FROM req_turns WHERE kind = ? AND model = ? AND cost_usd > 0 ORDER BY id DESC LIMIT ?')
+      .all(kind, String(model), Number(limit)).map((r) => Number(r.cost_usd));
+  }
+  if (step === 'brief') {
+    return prepare('SELECT amount_usd FROM req_cost_ledger WHERE brief_id IS NOT NULL AND attachment_id IS NULL AND model = ? AND amount_usd > 0 ORDER BY id DESC LIMIT ?')
+      .all(String(model), Number(limit)).map((r) => Number(r.amount_usd));
+  }
+  throw new Error(`recentStepCosts: unknown step "${step}"`);
+}
+
+/** 9c: the token counts of the newest calls of one step (ledger rows with both counts set), newest first. */
+export function recentStepTokens(step, limit = 10) {
+  getDb();
+  return prepare('SELECT input_tokens, output_tokens FROM req_cost_ledger WHERE step = ? AND input_tokens IS NOT NULL AND output_tokens IS NOT NULL ORDER BY id DESC LIMIT ?')
+    .all(String(step), Number(limit)).map((r) => ({ input: Number(r.input_tokens), output: Number(r.output_tokens) }));
+}
+
+/** 9c: a feature's ledger rows, oldest first, each with its turn's kind and payload, its file's name and its helper message id. */
+export function featureCostRows(seq) {
+  getDb();
+  return prepare(`SELECT l.*, t.kind AS turn_kind, t.payload_json AS turn_payload, a.name AS attachment_name
+      FROM req_cost_ledger l LEFT JOIN req_turns t ON t.id = l.turn_id LEFT JOIN req_attachments a ON a.id = l.attachment_id
+      WHERE l.feature_seq = ? ORDER BY l.id`).all(Number(seq)).map((r) => ({
+    id: Number(r.id), ts: Number(r.ts), amountUsd: Number(r.amount_usd), model: r.model || null, engine: r.engine || null, step: r.step || null,
+    costKind: r.cost_kind || 'billed', inputTokens: r.input_tokens == null ? null : Number(r.input_tokens),
+    outputTokens: r.output_tokens == null ? null : Number(r.output_tokens), turnId: r.turn_id == null ? null : Number(r.turn_id),
+    turnKind: r.turn_kind || null, turnPayload: r.turn_kind ? json(r.turn_payload, {}) : null,
+    attachmentId: r.attachment_id || null, attachmentName: r.attachment_name || null,
+    helperMessageId: r.helper_message_id == null ? null : Number(r.helper_message_id),
+  }));
+}
+
+/** 9c: how many of a feature's ledger rows have no known cost (cost_kind 'unknown') and how many are estimated: the list row's
+ *  cost words, counted as featureCostRows would. */
+export function featureCostKindCounts(seq) {
+  getDb();
+  const r = prepare(`SELECT SUM(CASE WHEN cost_kind = 'unknown' THEN 1 ELSE 0 END) AS unknown,
+      SUM(CASE WHEN cost_kind = 'estimated' THEN 1 ELSE 0 END) AS estimated FROM req_cost_ledger WHERE feature_seq = ?`).get(Number(seq));
+  return { unknown: Number(r && r.unknown) || 0, estimated: Number(r && r.estimated) || 0 };
+}
+
+/** 9c: how many Requirements calls since `fromMs` had no cost to book (cost_kind 'unknown'). */
+export function unknownCostCount(fromMs = 0) {
+  getDb();
+  return Number(prepare("SELECT count(*) AS n FROM req_cost_ledger WHERE cost_kind = 'unknown' AND ts >= ?").get(Number(fromMs)).n);
 }
 
 // ---- product briefs (plans/requirements-a7-design.md §3) ----
@@ -216,7 +282,9 @@ function toBrief(r) {
     id: Number(r.id), scopeType: r.scope_type, scopeKey: r.scope_key, status: r.status,
     sections: { ...emptySections(), ...json(r.sections_json, {}) }, edited: json(r.edited_json, {}),
     sources: json(r.sources_json, []), files: json(r.files_json, []), seed: json(r.seed_json, null),
-    model: r.model || null, costUsd: Math.round((Number(r.cost_usd) || 0) * 1e4) / 1e4,
+    model: r.model || null, engine: r.engine || null, costUsd: Math.round((Number(r.cost_usd) || 0) * 1e4) / 1e4,
+    // 9c: the cost of the last make alone and its kind (null: not booked); costUsd stays what the brief cost in all (A7)
+    madeCostUsd: r.made_cost_usd == null ? null : Math.round(Number(r.made_cost_usd) * 1e4) / 1e4, madeCostKind: r.made_cost_kind || null,
     error: json(r.error_json, null), madeBy: r.made_by || null, madeAt: r.made_at || null,
     createdBy: r.created_by || null, createdAt: r.created_at, updatedBy: r.updated_by || null, updatedAt: r.updated_at,
   };
@@ -261,13 +329,13 @@ export function beginBrief(scopeType, scopeKey, { by = null } = {}) {
   return getBrief(scopeType, key);
 }
 
-export function saveBriefResult(id, { sections, edited, sources, files, seed, model } = {}, { by = null } = {}) {
+export function saveBriefResult(id, { sections, edited, sources, files, seed, model, engine } = {}, { by = null } = {}) {
   getDb();
   const ts = iso();
   prepare(`UPDATE req_briefs SET status = 'ready', sections_json = ?, edited_json = ?, sources_json = ?, files_json = ?,
-      seed_json = ?, model = ?, error_json = NULL, made_by = ?, made_at = ?, updated_by = ?, updated_at = ? WHERE id = ?`)
+      seed_json = ?, model = ?, engine = ?, made_cost_usd = NULL, made_cost_kind = NULL, error_json = NULL, made_by = ?, made_at = ?, updated_by = ?, updated_at = ? WHERE id = ?`)
     .run(JSON.stringify(sections || emptySections()), JSON.stringify(edited || {}), JSON.stringify(sources || []),
-      JSON.stringify(files || []), seed ? JSON.stringify(seed) : null, model || null, by, ts, by, ts, Number(id));
+      JSON.stringify(files || []), seed ? JSON.stringify(seed) : null, model || null, engine || null, by, ts, by, ts, Number(id));
   return briefById(id);
 }
 
@@ -285,6 +353,13 @@ export function setBriefSections(id, { sections, edited } = {}, { by = null } = 
   prepare('UPDATE req_briefs SET sections_json = ?, edited_json = ?, updated_by = ?, updated_at = ? WHERE id = ?')
     .run(JSON.stringify(sections || emptySections()), JSON.stringify(edited || {}), by, iso(), Number(id));
   return briefById(id);
+}
+
+/** 9c: the cost of the make just saved and its kind ('billed' | 'estimated' | 'unknown'), replacing the previous make's. */
+export function setBriefMadeCost(id, { costUsd, costKind } = {}) {
+  getDb();
+  prepare('UPDATE req_briefs SET made_cost_usd = ?, made_cost_kind = ? WHERE id = ?')
+    .run(costKind === 'unknown' ? 0 : Number(costUsd) || 0, costKind || null, Number(id));
 }
 
 export function addBriefCost(id, usd) {
@@ -319,14 +394,14 @@ export function briefUsers(scopeType, scopeKey) {
 export function recentBriefCosts(limit = 10) {
   getDb();
   // a document's read is not a look (A8 D5)
-  return prepare('SELECT amount_usd FROM req_cost_ledger WHERE brief_id IS NOT NULL AND attachment_id IS NULL ORDER BY id DESC LIMIT ?')
+  return prepare('SELECT amount_usd FROM req_cost_ledger WHERE brief_id IS NOT NULL AND attachment_id IS NULL AND amount_usd > 0 ORDER BY id DESC LIMIT ?')
     .all(Number(limit)).map((r) => Number(r.amount_usd));
 }
 
 // ---- attachments (plans/requirements-a8-design.md §3, D9): a feature's files and a made brief's documents ----
 
 const OWNER_TYPES = Object.freeze(['feature', 'brief']);
-const ATT_STATUSES = Object.freeze(['reading', 'done', 'failed', 'unread-budget']);
+const ATT_STATUSES = Object.freeze(['downloading', 'reading', 'done', 'failed', 'unread-budget']);
 
 /** The id a body and its row are named by: the only part of a body's path that is not the store's own. */
 export const mintAttachmentId = () => `ratt_${randomBytes(6).toString('hex')}`;
@@ -335,23 +410,23 @@ function toAttachment(r) {
   if (!r) return null;
   return {
     id: r.id, ownerType: r.owner_type, ownerId: Number(r.owner_id), name: r.name, kind: r.kind, mime: r.mime, bytes: Number(r.bytes),
-    sha256: r.sha256, status: r.status, error: json(r.error_json, null), summary: r.summary || '', summaryEdited: !!r.summary_edited,
+    sha256: r.sha256, fetch: json(r.fetch_json, null), status: r.status, error: json(r.error_json, null), summary: r.summary || '', summaryEdited: !!r.summary_edited,
     asks: json(r.asks_json, []), history: json(r.history_json, []), sendWithRun: !!r.send_with_run,
     costUsd: Math.round((Number(r.cost_usd) || 0) * 1e4) / 1e4, readCostUsd: r.read_cost_usd == null ? null : Number(r.read_cost_usd),
-    readModel: r.read_model || null, readAt: r.read_at || null,
+    readModel: r.read_model || null, readAt: r.read_at || null, readEngine: r.read_engine || null,
     createdBy: r.created_by || null, createdAt: r.created_at, updatedBy: r.updated_by || null, updatedAt: r.updated_at,
   };
 }
 
-export function insertAttachment({ id, ownerType, ownerId, name, kind, mime, bytes, sha256, status = 'reading' } = {}, { by = null } = {}) {
+export function insertAttachment({ id, ownerType, ownerId, name, kind, mime, bytes, sha256, status = 'reading', fetch = null } = {}, { by = null } = {}) {
   if (typeof id !== 'string' || !REQ_ATT_ID_RE.test(id)) throw new Error('insertAttachment: refusing an id the store never minted');
   if (!OWNER_TYPES.includes(ownerType)) throw new Error(`insertAttachment: unknown owner type "${ownerType}"`);
   if (!ATT_STATUSES.includes(status)) throw new Error(`insertAttachment: unknown status "${status}"`);
   getDb();
   const ts = iso();
-  prepare(`INSERT INTO req_attachments (id, owner_type, owner_id, name, kind, mime, bytes, sha256, status, created_by, created_at,
-      updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, ownerType, Number(ownerId), name, kind, mime, Number(bytes), sha256, status, by, ts, by, ts);
+  prepare(`INSERT INTO req_attachments (id, owner_type, owner_id, name, kind, mime, bytes, sha256, status, fetch_json, created_by, created_at,
+      updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, ownerType, Number(ownerId), name, kind, mime, Number(bytes), sha256, status, fetch ? JSON.stringify(fetch) : null, by, ts, by, ts);
   return getAttachment(id);
 }
 
@@ -369,7 +444,7 @@ export function listAttachments(ownerType, ownerId) {
 const ATT_COLUMNS = Object.freeze({
   name: 'name', kind: 'kind', mime: 'mime', bytes: 'bytes', sha256: 'sha256', status: 'status', error: 'error_json', summary: 'summary',
   summaryEdited: 'summary_edited', asks: 'asks_json', history: 'history_json', sendWithRun: 'send_with_run',
-  readCostUsd: 'read_cost_usd', readModel: 'read_model', readAt: 'read_at',
+  readCostUsd: 'read_cost_usd', readModel: 'read_model', readAt: 'read_at', readEngine: 'read_engine',
 });
 const ATT_JSON = new Set(['error', 'asks', 'history']);
 const ATT_BOOL = new Set(['summaryEdited', 'sendWithRun']);
@@ -414,6 +489,12 @@ export function listReadingAttachments() {
   return prepare("SELECT * FROM req_attachments WHERE status = 'reading' ORDER BY rowid").all().map(toAttachment);
 }
 
+/** A6.1 D10: the rows still waiting for their tracker download (a restart turns them failed, recoverDownloads). */
+export function listDownloadingAttachments() {
+  getDb();
+  return prepare("SELECT * FROM req_attachments WHERE status = 'downloading' ORDER BY rowid").all().map(toAttachment);
+}
+
 /** The last reads' costs of one kind, newest finished first (the estimates, D5 / §5). */
 export function recentReadCosts(kind, limit = 10) {
   getDb();
@@ -436,20 +517,21 @@ function toHelperMessage(r) {
     id: Number(r.id), featureSeq: Number(r.feature_seq), role: r.role, text: r.text || '', focus: json(r.focus_json, null),
     roundTurnId: r.round_turn_id == null ? null : Number(r.round_turn_id), drafts: json(r.drafts_json, []), proposals: json(r.proposals_json, []),
     error: json(r.error_json, null), costUsd: r.cost_usd == null ? null : Math.round(Number(r.cost_usd) * 1e4) / 1e4, model: r.model || null,
+    engine: r.engine || null, notices: json(r.notices_json, []),
     createdBy: r.created_by || null, createdAt: r.created_at, updatedBy: r.updated_by || null, updatedAt: r.updated_at,
   };
 }
 
 export function insertHelperMessage({ featureSeq, role, text = '', focus = null, roundTurnId = null, drafts = [], proposals = [], error = null,
-  costUsd = null, model = null } = {}, { by = null } = {}) {
+  costUsd = null, model = null, engine = null, notices = null } = {}, { by = null } = {}) {
   if (!HELPER_ROLES.includes(role)) throw new Error(`insertHelperMessage: unknown role "${role}"`);
   getDb();
   const ts = iso();
   const r = prepare(`INSERT INTO req_helper_messages (feature_seq, role, text, focus_json, round_turn_id, drafts_json, proposals_json, error_json,
-      cost_usd, model, created_by, created_at, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      cost_usd, model, engine, notices_json, created_by, created_at, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(Number(featureSeq), role, String(text ?? ''), focus ? JSON.stringify(focus) : null, roundTurnId == null ? null : Number(roundTurnId),
       JSON.stringify(drafts || []), JSON.stringify(proposals || []), error ? JSON.stringify(error) : null,
-      Number.isFinite(costUsd) ? costUsd : null, model || null, by, ts, by, ts);
+      Number.isFinite(costUsd) ? costUsd : null, model || null, engine || null, Array.isArray(notices) && notices.length ? JSON.stringify(notices) : null, by, ts, by, ts);
   return getHelperMessage(Number(r.lastInsertRowid));
 }
 
@@ -498,7 +580,7 @@ export function deleteHelperMessages(seq) {
 /** The amounts of the newest helper calls (ledger rows with a helper_message_id), newest first: the composer's estimate (D13). */
 export function recentHelperCosts(limit = 10) {
   getDb();
-  return prepare('SELECT amount_usd FROM req_cost_ledger WHERE helper_message_id IS NOT NULL ORDER BY id DESC LIMIT ?')
+  return prepare('SELECT amount_usd FROM req_cost_ledger WHERE helper_message_id IS NOT NULL AND amount_usd > 0 ORDER BY id DESC LIMIT ?')
     .all(Number(limit)).map((r) => Number(r.amount_usd));
 }
 
@@ -554,7 +636,7 @@ function toLink(r) {
     featureSeq: Number(r.feature_seq), plugin: r.plugin, sourceId: r.source_id, profile: r.profile || null, trackerProject: r.tracker_project,
     key: r.ticket_key || null, url: r.ticket_url || null, createdAt: r.created_at || null, exportedAt: r.exported_at || null,
     spec: json(r.spec_json, null), fields: json(r.fields_json, null), fingerprint: r.fingerprint || null,
-    pendingMarker: r.pending_marker || null, pendingAt: r.pending_at || null, updatedBy: r.updated_by || null, updatedAt: r.updated_at,
+    pendingMarker: r.pending_marker || null, pendingAt: r.pending_at || null, origin: r.origin === 'import' ? 'import' : 'export', updatedBy: r.updated_by || null, updatedAt: r.updated_at,
   };
 }
 
@@ -577,20 +659,22 @@ export function setPendingExport(seq, { plugin, sourceId, profile = null, tracke
 }
 
 /** The feature's current ticket, whole (D7, D8, D9): written after a create, an update, a comment, a new ticket or a
- *  ticket found again; the pending marker goes. Keys of the argument this table has no column for are ignored. */
+ *  ticket found again; the pending marker goes. `origin` (A6.1 D11): 'import' for a link an import made; a save that passes
+ *  the link on ({ ...link }) keeps it; anything else is 'export'. Keys this table has no column for are ignored. */
 export function saveExportLink(seq, { plugin, sourceId, profile = null, trackerProject, key, url = null, createdAt = null, exportedAt = null, spec = null,
-  fields = null, fingerprint = null } = {}, { by = null } = {}) {
+  fields = null, fingerprint = null, origin = 'export' } = {}, { by = null } = {}) {
   getDb();
   const ts = iso();
   prepare(`INSERT INTO req_export_links (feature_seq, plugin, source_id, profile, tracker_project, ticket_key, ticket_url, created_at, exported_at,
-      spec_json, fields_json, fingerprint, pending_marker, pending_at, updated_by, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+      spec_json, fields_json, fingerprint, origin, pending_marker, pending_at, updated_by, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
       ON CONFLICT (feature_seq) DO UPDATE SET plugin = excluded.plugin, source_id = excluded.source_id, profile = excluded.profile,
         tracker_project = excluded.tracker_project, ticket_key = excluded.ticket_key, ticket_url = excluded.ticket_url,
         created_at = excluded.created_at, exported_at = excluded.exported_at, spec_json = excluded.spec_json, fields_json = excluded.fields_json,
-        fingerprint = excluded.fingerprint, pending_marker = NULL, pending_at = NULL, updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
+        fingerprint = excluded.fingerprint, origin = excluded.origin, pending_marker = NULL, pending_at = NULL, updated_by = excluded.updated_by,
+        updated_at = excluded.updated_at`)
     .run(Number(seq), plugin, sourceId, profile || null, trackerProject, key, url || null, createdAt || null, exportedAt || null,
-      spec ? JSON.stringify(spec) : null, fields ? JSON.stringify(fields) : null, fingerprint || null, by, ts);
+      spec ? JSON.stringify(spec) : null, fields ? JSON.stringify(fields) : null, fingerprint || null, origin === 'import' ? 'import' : 'export', by, ts);
   return getExportLink(seq);
 }
 
@@ -605,4 +689,13 @@ export function clearPendingExport(seq) {
 export function deleteExportLink(seq) {
   getDb();
   return Number(prepare('DELETE FROM req_export_links WHERE feature_seq = ?').run(Number(seq)).changes);
+}
+
+/** A6.1 D12: the feature (archived ones too) already linked to this ticket on this connection, else null. */
+export function linkByTicket({ plugin, sourceId, profile = null, key } = {}) {
+  getDb();
+  const r = prepare(`SELECT l.feature_seq, f.title FROM req_export_links l JOIN req_features f ON f.seq = l.feature_seq
+      WHERE l.plugin = ? AND l.source_id = ? AND COALESCE(l.profile, '') = ? AND UPPER(l.ticket_key) = UPPER(?) ORDER BY l.feature_seq LIMIT 1`)
+    .get(String(plugin || ''), String(sourceId || ''), profile || '', String(key || ''));
+  return r ? { seq: Number(r.feature_seq), id: featureId(r.feature_seq), title: r.title } : null;
 }

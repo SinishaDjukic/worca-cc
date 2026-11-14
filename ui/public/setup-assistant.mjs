@@ -14,6 +14,7 @@ import { LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { ROLE_LABELS, MODEL_ROLES, ROLE_HARNESSES } from '../../src/shared/model-roles.mjs';
 import { CHAT_ENGINE_NAMES, engineLabel } from '../../src/shared/engine-switch.mjs';
 import { UPSTREAM_TIMEOUTS } from '../../src/shared/proxy-timeouts.mjs';
+import { claudeCheckedWhere } from '../../src/shared/claude-sign-in.mjs';
 
 export const SETUP_STEPS = Object.freeze([
   { id: 'check', label: 'Check this machine' },
@@ -217,9 +218,10 @@ export function buildApplyBody(saved, answers) {
 }
 
 /** Review rows: one per group; `changed` when the body would carry that group (D19). */
-export function diffRows(saved, answers) {
+export function diffRows(saved, answers, { detect = null } = {}) {
   const body = buildApplyBody(saved, answers); const n = answers.network; const a = answers.access; const w = answers.work;
-  const sources = [a.claude && 'Claude Code', a.copilot && 'GitHub Copilot', a.openai && 'OpenAI-compatible', a.anthropic && 'Anthropic-compatible'].filter(Boolean);
+  const claudeOff = (detect?.checks || []).some((c) => c.id === 'claude' && c.state !== 'ok');
+  const sources = [a.claude && (claudeOff ? 'Claude Code (not signed in)' : 'Claude Code'), a.copilot && 'GitHub Copilot', a.openai && 'OpenAI-compatible', a.anthropic && 'Anthropic-compatible'].filter(Boolean);
   const roles = answers.models.modelRoles[w.runEngine || 'claude'] || {};
   const chatLine = { role: 'Chat', model: answers.models.askModel?.model || null, fallback: chatFallback(askEngineOf(saved.settings)) };
   const money = (v) => (v == null ? 'none' : `$${v}`);
@@ -233,7 +235,7 @@ export function diffRows(saved, answers) {
       value: [...MODEL_ROLES.map((r) => `${ROLE_LABELS[r]} · ${roles[r]?.model || 'each job’s own default'}`), `Chat · ${chatLine.model || chatLine.fallback}`].join('; '),
       lines: [...MODEL_ROLES.map((r) => ({ role: ROLE_LABELS[r], model: roles[r]?.model || null })), chatLine] },
     { group: 'work', step: 'work', label: 'How you work', changed: !!body.work, team: teamIn('work'),
-      value: `${LEVEL_INFO[w.uiLevel || 'simple']?.label || 'Simple'} interface · per run ${money(w.pipelineCostLimitUsd)} · total ${money(w.totalCostLimitUsd)}` },
+      value: `${LEVEL_INFO[w.uiLevel || 'simple']?.label || 'Simple'} interface · per run ${money(w.pipelineCostLimitUsd)} · total ${money(w.totalCostLimitUsd)}${w.totalCostLimitUsd == null ? '' : `, resets ${w.costLimitResetPeriod === 'weekly' ? 'weekly' : 'monthly'}`}` },
   ];
 }
 
@@ -257,13 +259,29 @@ export function nextGate(step, answers, { saved, tested = null, now = Date.now()
   }
   if (step === 'review' && !diffRows(saved, answers).some((r) => r.changed)) {
     if (netSaved) return { ok: true, finish: true, reason: `${netSaved} Nothing else to change.` };
-    if (entry === 'first') return { ok: true, finish: true, reason: 'Nothing to change: your current setup already works.' };
+    if (entry === 'first') return { ok: true, finish: true, reason: claudeMissing(answers, detect) ? CLAUDE_MISSING_LINE : 'Nothing to change: your current setup already works.' };
     // 'team' finishes like 'first' (T17): Finish closes with done, which marks the notice seen.
     if (entry === 'team') return { ok: true, finish: true, reason: answers.found?.teamGone ? TEAM_GONE_LINE : TEAM_MATCHES_LINE };
     if (entry === 'rerun' || entry === 'fix') return { ok: true, finish: true, reason: NO_CHANGES_LINE };
     return { ok: false, reason: 'Nothing changed.' };
   }
   return { ok: true, reason: '' };
+}
+
+/** Skipped past the sign-in with nothing else to run on: Claude Code is the only source and it did not check out. */
+export const CLAUDE_MISSING_LINE = 'Nothing to change, but Claude Code still isn’t signed in, so only mock runs will work until you run claude, then /login, in a terminal.';
+function claudeMissing(answers, detect) {
+  const a = answers.access; const c = (detect?.checks || []).find((x) => x.id === 'claude');
+  return !!(a.claude && c && c.state !== 'ok' && !a.copilot && !a.openai && !a.anthropic);
+}
+
+/** Ollama's OpenAI-compatible endpoint on its default port (the port detect.mjs checks). */
+export const OLLAMA_OPENAI_URL = 'http://127.0.0.1:11434/v1';
+
+/** The check already answered Network: a direct connection works, no proxy is set here, and none is saved or chosen. */
+export function networkAnswered(answers, detect) {
+  const state = (id) => (detect?.checks || []).find((c) => c.id === id)?.state;
+  return answers?.network?.mode === 'direct' && state('direct') === 'ok' && state('proxyEnv') !== 'ok';
 }
 
 /** The step that owns an apply 400's `field` ('work.pipelineCostLimitUsd' → 'work'); 'review' when unknown (A20). */
@@ -328,7 +346,10 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     netJob: false, netRetry: null, netPending: null, netSaved: '',
     // Model access with the credential broker: cpChecking while a /api/providers read is in flight, cpChecked the line
     // a manual Check again leaves, provSeq a counter that drops an answer a newer load or read has overtaken.
-    cpChecking: false, cpChecked: '', provSeq: 0 };
+    cpChecking: false, cpChecked: '', provSeq: 0,
+    // Model access › Claude › Check again: claudeChecking while /api/setup/detect?recheck=1 is in flight,
+    // claudeChecked the line every answer leaves (signed in, still not signed in, or why it failed).
+    claudeChecking: false, claudeChecked: '' };
 
   const stepOf = el('span', 'sa-step-of'); const title = el('h2', null); title.id = 'setup-title'; const sub = el('p', 'sa-sub');
   // One segment per step, above "Step N of 7". Decorative: the step line says the same to a screen reader.
@@ -387,6 +408,10 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     isDirty: () => S.step !== 'apply' && !S.retryLogin && !!S.answers && !!S.opened && JSON.stringify(S.answers) !== S.opened });
 
   const idx = () => SETUP_STEPS.findIndex((s) => s.id === S.step);
+  // First start only: a re-run opened from Settings is there to change things.
+  const skipsNetwork = () => entry === 'first' && networkAnswered(S.answers, S.detect);
+  const stepAfter = () => (S.step === 'check' && skipsNetwork() ? 'access' : SETUP_STEPS[idx() + 1].id);
+  const stepBefore = () => (S.step === 'access' && skipsNetwork() ? 'check' : SETUP_STEPS[idx() - 1].id);
   function goTo(id) { S.step = SETUP_STEPS.some((s) => s.id === id) ? id : 'check'; S.error = ''; S.errField = null; S.cpChecked = ''; paint(); }
   // A second openSetup while the dialog is up (A5): the same entry fix as initialAnswers, never mid-apply (architect-2-2).
   function focusStep(id) {
@@ -623,6 +648,13 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     body.append(list);
   }
 
+  /** Claude's Check again: "Checking…" and disabled while the detect is in flight. */
+  function claudeRecheckBtn(relogin) {
+    const b = btn(S.claudeChecking ? 'Checking…' : 'Check again', 'btn btn-sm sa-recheck', (e) => { void recheck({ relogin, button: e.currentTarget }); });
+    b.disabled = S.claudeChecking;
+    return b;
+  }
+
   function paintAccess() {
     const a = S.answers.access; const broker = !!S.saved.providers?.broker?.enabled; const pv = S.saved.providers || {};
     const toggle = (name) => (on) => { a[name] = on; paint(); };
@@ -636,14 +668,17 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       const list = rows('sa-claude', li);
       if (S.claudeRelogin) {
         const steps = row(null, 'In a terminal, run claude, then /logout and /login. Then check again here.');
-        steps.append(btn('Check again', 'btn btn-sm sa-recheck', () => { void recheck({ relogin: true }); }),
+        steps.append(claudeRecheckBtn(true),
           btn('Cancel', 'btn btn-sm btn-quiet sa-claude-relogin-cancel', () => { S.claudeRelogin = false; paint(); }));
         list.append(steps);
       }
       body.append(list);
     } else if (a.claude && claude && claude.state !== 'ok') {
-      const list = rows('sa-claude'); const li = row(badge('amber', 'Check'), 'Run claude, then /login, in a terminal');
-      li.append(btn('Check again', 'btn btn-sm sa-recheck', () => { void recheck(); }));
+      const list = rows('sa-claude'); const li = row(badge('amber', 'Check'), 'Run claude, then /login, in a terminal', S.claudeChecked || '');
+      // Signed out: say which config folder the CLI read; a server with another HOME reads another sign-in.
+      const dir = claude.facts?.configDirectory;
+      if (dir) li.querySelector('.sa-row-main').append(el('div', 'sa-row-line sa-claude-where', claudeCheckedWhere(dir)));
+      li.append(claudeRecheckBtn(false));
       list.append(li); body.append(list);
     }
     body.append(sw('GitHub Copilot', a.copilot, toggle('copilot'), 'sa-src-copilot'));
@@ -688,7 +723,10 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       body.append(box);
     }
     for (const [name, label] of [['openai', 'OpenAI-compatible'], ['anthropic', 'Anthropic-compatible']]) {
-      body.append(sw(label, a[name], toggle(name), `sa-src-${name}`));
+      // Ollama found by the check: its address is known, so turning this on fills it.
+      const ollama = name === 'openai' && (S.detect?.checks || []).some((c) => c.id === 'ollama' && c.state === 'ok');
+      body.append(sw(label, a[name], (on) => { if (on && ollama && !a.openaiUrl) a.openaiUrl = OLLAMA_OPENAI_URL; toggle(name)(on); }, `sa-src-${name}`));
+      if (ollama && !a[name]) body.append(el('p', 'hint', 'Ollama is running on this machine. Turn this on to use it.'));
       if (!a[name]) continue;
       const box = el('div', 'sa-step');
       box.append(field('Address', textInput('url', a[`${name}Url`], (v) => { a[`${name}Url`] = v; }, { placeholder: 'https://llm.acme.example/v1', spellcheck: 'false' }), `access.${name}.baseUrl`));
@@ -739,6 +777,13 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     if (closed) return;
     if (list.ok && Array.isArray(list.data?.models)) { S.copilotModels = list.data.models; if (S.step === 'models') paintBody(); }
   }
+  // The engines the Models step sets roles for: Claude always, every engine the machine check found ready, the run
+  // engine, and any engine that already has roles (so a saved one never hides).
+  function roleEngines() {
+    const ready = ((S.detect?.checks || []).find((c) => c.id === 'harnesses')?.facts?.engines || []).filter((e) => e.ready).map((e) => e.name);
+    const saved = Object.keys(S.answers.models.modelRoles || {}).filter((h) => Object.values(S.answers.models.modelRoles[h] || {}).some((v) => v && v.model));
+    return ['claude', ...ready, S.answers.work.runEngine || 'claude', ...saved];
+  }
   function paintModels() {
     const a = S.answers.access;
     if (a.copilot && a.copilotConnected && !S.copilotModels.length && !S.copilotModelsAsked) void loadCopilotModels();
@@ -776,7 +821,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     chatHost.addEventListener('change', readChat);
     chatHost.addEventListener('click', (e) => { if (e.target.closest?.('.inherit-clear')) readChat(); });
     body.append(host);
-    renderRolesSection(host, { roles: m.modelRoles, catalog, engine: S.answers.work.runEngine || 'claude', onChange: (next) => {
+    renderRolesSection(host, { roles: m.modelRoles, catalog, engine: S.answers.work.runEngine || 'claude', engines: roleEngines(), switchLevel: null, onChange: (next) => {
       // A click that changes nothing (the harness switch) keeps the answers as they were.
       if (!Object.keys(rolePatch(m.modelRoles, next)).length) return;
       m.modelRoles = next;
@@ -812,7 +857,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   function paintReview() {
     const list = el('table', 'sa-review'); const tbody = el('tbody'); list.append(tbody);
     const labelOf = (() => { const all = [...S.saved.catalog, ...pendingCopilotModels(S.copilotModels)]; return (id) => all.find((m) => m.id === id)?.label || id; })();
-    for (const r of diffRows(S.saved, S.answers)) {
+    for (const r of diffRows(S.saved, S.answers, { detect: S.detect })) {
       const netSaved = r.group === 'network' && !!S.netSaved && !r.changed;
       if (entry !== 'first' && !r.changed && !netSaved) continue;
       const tr = el('tr'); tr.dataset.group = r.group;
@@ -869,7 +914,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     if (S.applying || S.netJob) { status.className = 'hint sa-status'; status.textContent = 'Working…'; return; }
     if (S.netRetry && S.step === 'network') {             // a failed network apply: Retry from its step
       const needPw = S.netRetry.login && !String(S.answers.network.password || '').trim();
-      actions.append(btn('Back', 'btn sa-back', () => goTo(SETUP_STEPS[idx() - 1].id)));
+      actions.append(btn('Back', 'btn sa-back', () => goTo(stepBefore())));
       actions.append(btn('Skip for now', 'btn btn-quiet sa-skip', () => { void skip(); }));
       const again = btn('Retry', 'btn btn-primary sa-next', () => applyNetwork(S.netRetry.body, S.netRetry));
       again.disabled = needPw; actions.append(again);
@@ -885,12 +930,12 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       return;
     }
     actions.append(first ? btn(entry === 'first' ? 'Set up later' : 'Cancel', 'btn btn-quiet sa-later', () => guard.cancel())
-      : btn('Back', 'btn sa-back', () => goTo(SETUP_STEPS[idx() - 1].id)));
+      : btn('Back', 'btn sa-back', () => goTo(stepBefore())));
     const gate = S.answers ? nextGate(S.step, S.answers, { saved: S.saved, tested: S.tested, now: now(), detect: S.detect, entry, netSaved: S.netSaved }) : { ok: false, reason: '' };
     const skipLabel = S.answers && idx() >= 1 && idx() <= 4 ? skipLabelFor(gate) : null;
     if (skipLabel) actions.append(btn(skipLabel, 'btn btn-quiet sa-skip', () => { void skip(); }));
     const label = S.step === 'check' ? 'Start' : S.step === 'review' ? (gate.finish ? 'Finish' : 'Apply') : 'Next';
-    const onNext = () => (S.step === 'network' ? nextFromNetwork() : S.step !== 'review' ? goTo(SETUP_STEPS[idx() + 1].id) : gate.finish ? teardown('done', { applied: !!S.netSaved }) : startApply(null));
+    const onNext = () => (S.step === 'network' ? nextFromNetwork() : S.step !== 'review' ? goTo(stepAfter()) : gate.finish ? teardown('done', { applied: !!S.netSaved }) : startApply(null));
     const next = btn(label, 'btn btn-primary sa-next', onNext);
     next.disabled = !gate.ok || S.testing; actions.append(next);
     status.className = `hint sa-status${S.error ? ' err' : ''}`; status.textContent = S.error || gate.reason;
@@ -1000,16 +1045,26 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     if (changed || manual) paint();
   }
 
-  // Model access › Claude › Check again: detect once more, past its cache. After "Sign in again", a signed-in answer
-  // closes the steps and says it was checked; any other answer shows the usual Check row.
-  async function recheck({ relogin = false } = {}) {
+  // Model access › Claude › Check again: detect once more, past its cache. The button reads "Checking…" meanwhile, and
+  // every answer leaves a line, so an unchanged answer still shows it was asked. After "Sign in again", a signed-in
+  // answer closes the steps; any other answer shows the usual Check row. A failed request keeps the rows and says so.
+  async function recheck({ relogin = false, button = null } = {}) {
+    if (S.claudeChecking) return;
+    S.claudeChecking = true;
+    // In place, not a repaint: the pressed button keeps the focus while it is busy (paintBody puts it back after).
+    if (button) { button.disabled = true; button.textContent = 'Checking…'; }
     const r = await call('/api/setup/detect?recheck=1');
+    S.claudeChecking = false;
     if (closed) return;
-    if (r.ok) S.detect = r.data;
-    const ok = (S.detect?.checks || []).find((c) => c.id === 'claude')?.state === 'ok';
-    if (relogin) {
-      S.claudeRelogin = !ok; S.claudeChecked = ok ? 'Checked again just now.' : '';
-      if (!ok) { S.answers.found.claude = false; S.answers.access.claude = true; }   // shows the Check row with its steps
+    if (!r.ok) S.claudeChecked = `Couldn't check just now: ${r.data?.error || `HTTP ${r.status}`}`;
+    else {
+      S.detect = r.data;
+      const ok = (S.detect?.checks || []).find((c) => c.id === 'claude')?.state === 'ok';
+      S.claudeChecked = ok ? 'Checked just now: signed in.' : 'Checked just now: still not signed in.';
+      if (relogin) {
+        S.claudeRelogin = !ok;
+        if (!ok) { S.answers.found.claude = false; S.answers.access.claude = true; }   // shows the Check row with its steps
+      }
     }
     paint();
   }

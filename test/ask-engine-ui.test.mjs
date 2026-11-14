@@ -17,19 +17,19 @@ test('engineOfEntry / chatEngineOf: a chat with an assistant row is locked to it
 });
 
 test('pickerGroups: one group per engine present, Claude first; a lock keeps one', () => {
-  assert.deepEqual(pickerGroups(CAT.models).map((g) => [g.label, g.models.map((m) => m.id)]), [['Claude', ['claude-opus-5-5']], ['Codex (beta)', ['gpt-5.5']]]);
+  assert.deepEqual(pickerGroups(CAT.models).map((g) => [g.label, g.models.map((m) => m.id)]), [['Claude Code', ['claude-opus-5-5']], ['OpenAI Codex (beta)', ['gpt-5.5']]]);
   assert.deepEqual(pickerGroups(CAT.models, { lock: 'codex' }).map((g) => g.engine), ['codex']);
 });
 
 test('attachRefusal: a Codex chat refuses PDFs and names the chats that view them', () => {
-  assert.equal(attachRefusal({ ext: '.pdf', engine: 'codex' }), 'a Codex chat cannot view PDFs (Claude, Copilot, Gemini CLI, OpenCode or Qwen Code chats can)');
+  assert.equal(attachRefusal({ ext: '.pdf', engine: 'codex' }), 'an OpenAI Codex chat cannot view PDFs (Claude Code, GitHub Copilot, Gemini CLI, OpenCode or Qwen Code chats can)');
   assert.equal(attachRefusal({ ext: '.pdf', engine: 'claude' }), null);
   assert.equal(attachRefusal({ ext: '.png', engine: 'codex' }), null);
 });
 
 test('pickerGroups: `active` marks the chat\'s own engine and hides none (#943)', () => {
-  assert.deepEqual(pickerGroups(CAT.models, { active: 'codex' }).map((g) => g.label), ['Claude', 'Codex (beta) · this chat']);
-  assert.deepEqual(pickerGroups(CAT.models, { lock: 'codex', active: 'codex' }).map((g) => g.label), ['Codex (beta) · this chat']);
+  assert.deepEqual(pickerGroups(CAT.models, { active: 'codex' }).map((g) => g.label), ['Claude Code', 'OpenAI Codex (beta) · this chat']);
+  assert.deepEqual(pickerGroups(CAT.models, { lock: 'codex', active: 'codex' }).map((g) => g.label), ['OpenAI Codex (beta) · this chat']);
 });
 
 test('chatSwitchChanges: what moving a chat from one engine to another changes (#943)', () => {
@@ -38,21 +38,21 @@ test('chatSwitchChanges: what moving a chat from one engine to another changes (
   assert.deepEqual(chatSwitchChanges('claude', 'copilot').map((c) => c.key), ['tools', 'cost']);
   assert.deepEqual(chatSwitchChanges('codex', 'copilot').map((c) => c.key), ['cost']);
   assert.deepEqual(chatSwitchChanges('claude', 'cursor'), [], 'not a chat engine');
-  assert.match(chatSwitchChanges('claude', 'codex')[0].text, /^Codex has no file tools or sub-agents of its own/);
+  assert.match(chatSwitchChanges('claude', 'codex')[0].text, /^OpenAI Codex has no file tools or sub-agents of its own/);
 });
 
 test('engineSwitchConfirm: the engine, what changes, lost MCP servers, unviewable files, dropped turns', () => {
   const c = engineSwitchConfirm({ from: 'claude', to: 'codex', model: 'gpt-5.5', effort: 'medium',
     changes: chatSwitchChanges('claude', 'codex'), mcpLost: ['notion'], attachments: [{ id: 'att_1', name: 'trace.pdf' }],
     transcript: { totalTurns: 12, droppedTurns: 3 } }, 'GPT-5.5');
-  assert.equal(c.title, 'Switch this chat to Codex?');
-  assert.equal(c.confirmLabel, 'Switch to Codex');
+  assert.equal(c.title, 'Switch this chat to OpenAI Codex?');
+  assert.equal(c.confirmLabel, 'Switch to OpenAI Codex');
   assert.equal(c.danger, true);
-  assert.match(c.message, /^Your next message runs on Codex with GPT-5\.5 \(medium\)\. This chat keeps/);
-  assert.match(c.message, /\nWhat changes:\n• Codex has no file tools/);
-  assert.match(c.message, /• These MCP servers will not start on Codex: notion\./);
-  assert.match(c.message, /• Codex cannot view trace\.pdf: it gets only the name\./);
-  assert.match(c.message, /• The transcript does not fit Codex's context: the 3 oldest of 12 turns are left out, and Codex will not see their text\./);
+  assert.match(c.message, /^Your next message runs on OpenAI Codex with GPT-5\.5 \(medium\)\. This chat keeps/);
+  assert.match(c.message, /\nWhat changes:\n• OpenAI Codex has no file tools/);
+  assert.match(c.message, /• These MCP servers will not start on OpenAI Codex: notion\./);
+  assert.match(c.message, /• OpenAI Codex cannot view trace\.pdf: it gets only the name\./);
+  assert.match(c.message, /• The transcript does not fit OpenAI Codex's context: the 3 oldest of 12 turns are left out, and OpenAI Codex will not see their text\./);
   const plain = engineSwitchConfirm({ from: 'codex', to: 'claude', model: 'claude-opus-5-5', effort: 'high', changes: [],
     mcpLost: [], attachments: [], transcript: { totalTurns: 2, droppedTurns: 0 } }, 'Opus 5.5');
   assert.equal('danger' in plain, false);
@@ -80,12 +80,12 @@ test('per-engine picks: remembered per engine; a switch leads with the last one,
 test('engineSwitchConfirm: always says what can differ, and the context window when it changes (#943)', () => {
   const c = engineSwitchConfirm({ from: 'claude', to: 'codex', model: 'gpt-5.5', effort: 'medium', changes: [], mcpLost: [], attachments: [],
     context: { from: 1_000_000, to: 200_000 }, transcript: { totalTurns: 2, droppedTurns: 0 } }, 'GPT-5.5');
-  assert.match(c.message, /Its tools, skills, security limits, context window and pricing can differ from Claude's\./);
+  assert.match(c.message, /Its tools, skills, security limits, context window and pricing can differ from Claude Code's\./);
   assert.match(c.message, /\nWhat changes:\n• Context window: 1M → 200k tokens\.$/);
   const same = engineSwitchConfirm({ from: 'codex', to: 'copilot', model: 'copilot/gpt-5.4', effort: 'high', changes: [], mcpLost: [], attachments: [],
     context: { from: 200_000, to: 200_000 }, transcript: { totalTurns: 2, droppedTurns: 0 } }, 'GPT-5.4');
   assert.doesNotMatch(same.message, /What changes/, 'an equal window is no change');
-  assert.match(same.message, /can differ from Codex's\.$/);
+  assert.match(same.message, /can differ from OpenAI Codex's\.$/);
   const unknown = engineSwitchConfirm({ from: 'codex', to: 'claude', effort: 'high', context: { from: null, to: 1_000_000 }, transcript: {} }, 'Opus 5.5');
   assert.doesNotMatch(unknown.message, /Context window/, 'an unknown window is not compared');
   assert.match(unknown.message, /with Opus 5\.5 \(high\)\./);
@@ -94,8 +94,8 @@ test('engineSwitchConfirm: always says what can differ, and the context window w
 });
 
 test('pickerEngineName: the button names the engine whenever the catalog offers more than one (#943)', () => {
-  assert.equal(pickerEngineName(CAT.models, 'codex'), 'Codex');
-  assert.equal(pickerEngineName(CAT.models, 'claude'), 'Claude');
+  assert.equal(pickerEngineName(CAT.models, 'codex'), 'OpenAI Codex');
+  assert.equal(pickerEngineName(CAT.models, 'claude'), 'Claude Code');
   assert.equal(pickerEngineName([CAT.models[0]], 'claude'), '', 'one engine: nothing to tell apart');
 });
 

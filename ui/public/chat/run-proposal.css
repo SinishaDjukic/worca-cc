@@ -110,7 +110,9 @@
 .ask-wfcard-saved svg{flex:0 0 auto;stroke:var(--green);}
 .ask-wfcard-saved span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ask-wfcard-savedline{margin-top:4px;font-size:13px;line-height:1.55;color:var(--ink-2);}
-.ask-wfcard-savedline+.ask-wfcard-graph,.ask-wfcard-saved+.ask-wfcard-graph{margin-top:16px;}
+.ask-wfcard-savedto{margin-top:4px;font-size:13px;line-height:1.55;color:var(--ink-2);}
+.ask-wfcard-savedlink{color:var(--ink);font-weight:600;text-decoration:underline;text-underline-offset:2px;}
+.ask-wfcard-savedline+.ask-wfcard-graph,.ask-wfcard-savedto+.ask-wfcard-graph,.ask-wfcard-saved+.ask-wfcard-graph{margin-top:16px;}
 .ask-wfcard .ask-card-err{margin-top:8px;}
 .ask-wfcard-actions{display:flex;align-items:center;gap:8px;margin-top:20px;}
 /* .ask-pop-chip itself lives with the other popover panels (below .ask-pop): both

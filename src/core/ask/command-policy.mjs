@@ -132,6 +132,36 @@ function rmOutside(tokens, dir, root, xargs, P = POSIX_PATHS) {
 const GIT_VALUE_OPTS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env']);
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
 
+/** The subcommand words of gh, glab or az: up to the first option, past gh's `-R o/r` (`gh issue -R o/r delete 1`). */
+function cliWords(rest) {
+  const words = [];
+  for (let i = 0; i < rest.length; i += 1) {
+    if (rest[i] === '-R' || rest[i] === '--repo') i += 1;
+    else if (rest[i].startsWith('--repo=')) continue;
+    else if (rest[i].startsWith('-')) break;
+    else words.push(rest[i]);
+  }
+  return words;
+}
+
+/** gh and glab: a delete, an API delete or forced ref, going public, and an admin merge past branch protection. */
+function codeHostHardToUndo(base, rest) {
+  const words = cliWords(rest);
+  const cmd = words.slice(0, 2).join(' ');
+  if (words[0] !== 'search' && words.slice(0, 3).includes('delete')) return `${base} delete`;
+  if (cmd === 'repo edit' && rest.some((t, i) => t === '--visibility=public' || (t === '--visibility' && rest[i + 1] === 'public'))) return `${base} repo edit --visibility public`;
+  if (cmd === 'pr merge' && rest.includes('--admin')) return `${base} pr merge --admin`;
+  if (cmd === 'gist create' && rest.some((t) => t === '--public' || t === '-p')) return `${base} gist create --public`;
+  if (words[0] !== 'api') return null;
+  const method = rest.flatMap((t, i) => {
+    const m = /^(?:-X|--method=?)(.*)$/.exec(t);
+    return m ? [m[1] || rest[i + 1] || ''] : [];
+  });
+  if (method.some((m) => m.toUpperCase() === 'DELETE')) return `${base} api DELETE`;
+  if (rest.some((t) => /^(?:-[fF]|--(?:raw-)?field=)?(?:force=true|visibility=public|private=false)$/i.test(t))) return `${base} api force or visibility change`;
+  return null;
+}
+
 function hardToUndo({ tokens, xargs }, dir, root, depth, P = POSIX_PATHS) {
   const [cmd, ...rest] = tokens;
   const base = cmdName(cmd, P.win);
@@ -146,6 +176,8 @@ function hardToUndo({ tokens, xargs }, dir, root, depth, P = POSIX_PATHS) {
     if (c >= 0 && rest[c + 1]) return hardToUndoIn(rest[c + 1], dir, root, depth + 1, P);
   }
   if (base === 'eval' && rest.length) return hardToUndoIn(rest.join(' '), dir, root, depth + 1, P);
+  if (base === 'gh' || base === 'glab') return codeHostHardToUndo(base, rest);
+  if (base === 'az' && cliWords(rest).includes('delete')) return 'az delete';
   if (base === 'git') {
     let j = 0;
     while (j < rest.length && rest[j].startsWith('-')) j += GIT_VALUE_OPTS.has(rest[j]) ? 2 : 1;

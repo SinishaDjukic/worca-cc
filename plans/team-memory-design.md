@@ -44,7 +44,9 @@ defragmenting the team layer.
   Amended by team-memory-load-choice.md: `memory.team` also takes `"only"` — on, and runs and chats load team notes
   only; the Team view's switch is one Local · Team · Both choice (Local = off).
 - **D7 Separate caps.** The local store keeps `memory.maxFilesPerScope`; `memory.teamMaxFiles` (default 50) caps how many
-  team notes a run or chat loads per project, newest `updated` first. Team-only notes never count against the local cap.
+  always-on team notes (no `paths:`) a run or chat loads per project, newest `updated` first; a note with `paths:` costs
+  no context until a matching file is read, so up to 4× as many of those load (2026-11-08: the age cap had dropped old,
+  precise notes). A glob whose first segment is a wildcard (`**`, `*.mjs`) matches anywhere and counts as always-on. Team-only notes never count against the local cap.
 - **D8 The branch is created lazily** by the first share (an orphan: `README.md` + `.worca-memory/config.json`
   `{schema:1}`) and started again the same way if deleted. Removals alone never start it. Switching on refuses a project
   with no `origin` (`NO_ORIGIN`), a Folder project (`FOLDER_PROJECT`) and a machine without git (`NO_GIT`): team memory
@@ -193,7 +195,7 @@ refreshTeamLayer(key)  [lock; TTL 5 min after a fetch OR a failed attempt, re-ch
                     keep (`kept`) · switched off during the push that wrote the snapshot ⇒ no follow at all
                     tracked, the team holds it, its record dropped (off and on again) ⇒ sharedHash restored first
 mountTeamLayer({rules, dirs}) — per opted-in project dir: teamMountNames (snapshot notes − shadowed by a local note
-                    or a queued intent − over the local per-file cap, newest teamMaxFiles) → rules/team[/<key>]/
+                    or a queued intent − over the local per-file cap; newest teamMaxFiles always-on, up to 4× as many scoped) → rules/team[/<key>]/
 ```
 
 ### 2.6 Note states (status API, pure `teamNoteStates`)

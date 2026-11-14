@@ -445,10 +445,11 @@ export async function probeClaudeCapabilities(bin = 'claude') {
 
 /** Env vars that authenticate the CLI without a stored sign-in, which `claude
  *  auth status` does not (reliably) report: a custom endpoint or the model bridge
- *  (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN), an API key or OAuth token, and
- *  the cloud transports (Bedrock / Vertex / Foundry). */
+ *  (ANTHROPIC_AUTH_TOKEN), an API key or OAuth token, and the cloud transports
+ *  (Bedrock / Vertex / Foundry). ANTHROPIC_BASE_URL is not one: it says where
+ *  calls go, and the CLI still answers "Not logged in" without a credential. */
 export const CLAUDE_AUTH_ENV_KEYS = Object.freeze([
-  'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN',
 ]);
 export const CLAUDE_AUTH_ENV_FLAGS = Object.freeze([
   'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY',
@@ -481,6 +482,21 @@ export function parseClaudeAuthStatus(text) {
   if (/\bnot (logged|signed) in\b|\blogged out\b|\bsigned out\b/i.test(s)) return 'signed-out';
   if (/\b(logged|signed) in\b/i.test(s)) return 'signed-in';
   return 'unknown';
+}
+
+/**
+ * The config folder `claude auth status` says it read (its JSON `configDirectory`), or null. Pure.
+ * A server started with another HOME or CLAUDE_CONFIG_DIR reads another sign-in than the terminal.
+ * @param {string} text  stdout + stderr
+ * @returns {string|null}
+ */
+export function parseClaudeAuthConfigDir(text) {
+  const json = /\{[\s\S]*\}/.exec(String(text || ''));
+  if (!json) return null;
+  try {
+    const dir = JSON.parse(json[0])?.configDirectory;
+    return typeof dir === 'string' && dir.trim() ? dir.trim() : null;
+  } catch { return null; }
 }
 
 /** Run a command with any exit code: resolves {code, out} (stdout+stderr), or
@@ -525,7 +541,8 @@ export function clearClaudeAuthCache() { _authCache.clear(); }
  *    (concurrent callers share one spawn); `force` skips the remembered answer.
  * @param {{bin?:string, env?:Record<string,string|undefined>, mock?:boolean, force?:boolean,
  *   now?:()=>number, run?:(exe:string, args:string[])=>Promise<{code:number,out:string}|null>}} [o]
- * @returns {Promise<{state:'signed-in'|'signed-out'|'unknown', source:'mock'|'env'|'cli', detail:string|null}>}
+ *  The CLI answer also carries `configDirectory`: the folder it read (null when it named none).
+ * @returns {Promise<{state:'signed-in'|'signed-out'|'unknown', source:'mock'|'env'|'cli', detail:string|null, configDirectory?:string|null}>}
  */
 export async function probeClaudeAuth({
   bin = 'claude', env = process.env, mock, force = false, now = Date.now, run = execAnyExit,
@@ -544,8 +561,8 @@ export async function probeClaudeAuth({
   if (!force && hit && now() - hit.at < CLAUDE_AUTH_TTL_MS) return hit.promise;
   const promise = Promise.resolve()
     .then(() => run(exe, ['auth', 'status']))
-    .then((r) => ({ state: r ? parseClaudeAuthStatus(r.out) : 'unknown', source: 'cli', detail: null }))
-    .catch(() => ({ state: 'unknown', source: 'cli', detail: null }));
+    .then((r) => ({ state: r ? parseClaudeAuthStatus(r.out) : 'unknown', source: 'cli', detail: null, configDirectory: r ? parseClaudeAuthConfigDir(r.out) : null }))
+    .catch(() => ({ state: 'unknown', source: 'cli', detail: null, configDirectory: null }));
   _authCache.set(exe, { at: now(), promise });
   return promise;
 }

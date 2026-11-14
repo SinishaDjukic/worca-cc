@@ -25,7 +25,7 @@ test('the .gv-sessions layer is the first child of .gv-world, before svg.gv-wire
   const head = tray.querySelector('.gv-sess-head');
   assert.equal(head.getAttribute('role'), 'button');
   assert.equal(head.getAttribute('tabindex'), '0');
-  assert.match(head.querySelector('.st').textContent, /^One session · Claude · 2 sub-agents$/);
+  assert.match(head.querySelector('.st').textContent, /^One session · Claude Code · 2 sub-agents$/);
 });
 
 test('members carry the sub-agent chip; non-members do not', async () => {
@@ -42,7 +42,7 @@ test('gate closed (the default today): the header says separate sessions and no 
   const { createGraphView } = await import(viewPath);
   const view = createGraphView(host, { doc, mode: 'edit', portsFn, agents: AGENTS });
   view.render(grouped(), {});
-  assert.equal(host.querySelector('.gv-sess-head .st').textContent, 'One session · Claude: separate sessions');
+  assert.equal(host.querySelector('.gv-sess-head .st').textContent, 'One session · Claude Code: separate sessions');
   assert.ok(host.querySelector('.gv-sess').classList.contains('fallback'));
   assert.equal(view.nodeEl('n_agent').querySelector('.nsess'), null);
 });
@@ -105,12 +105,12 @@ test('moveNodes re-routes once; setSessionChrome is a class/text toggle', async 
   view.setSessionChrome(S, { status: 'stopped', text: null, right: null, aria: 'One session: Plan, Plan. stopped' });
   assert.ok(tray.classList.contains('is-stopped') && !tray.classList.contains('is-active'));
   assert.equal(tray.querySelector('.sr').textContent, '');
-  assert.equal(tray.querySelector('.st').textContent, 'One session · Claude: separate sessions');
+  assert.equal(tray.querySelector('.st').textContent, 'One session · Claude Code: separate sessions');
   assert.equal(tray.querySelector('.gv-sess-head').getAttribute('aria-label'), 'One session: Plan, Plan. stopped');
   view.setSessionChrome(S, { status: 'interrupted', aria: null });
   assert.ok(tray.classList.contains('is-interrupted'));
   assert.equal(tray.querySelector('.gv-sess-head').getAttribute('aria-label'), 'One session: Plan, Plan. 2 steps, separate sessions.');
-  assert.equal(tray.querySelector('.st').textContent, 'One session · Claude: separate sessions', 'a key left out keeps its value');
+  assert.equal(tray.querySelector('.st').textContent, 'One session · Claude Code: separate sessions', 'a key left out keeps its value');
 });
 
 // ── corrections: every branch the plan pins has its own case ──
@@ -156,7 +156,7 @@ test('shared mode: its own header words and the shared chip; aria-label names th
   t.sessions = { [S]: { label: 'Build and review', mode: 'shared' } };
   view.render(t, {});
   const head = host.querySelector('.gv-sess-head');
-  assert.equal(head.querySelector('.st').textContent, 'Build and review · Claude · shared conversation · 2 steps');
+  assert.equal(head.querySelector('.st').textContent, 'Build and review · Claude Code · shared conversation · 2 steps');
   assert.equal(head.getAttribute('aria-label'), 'Build and review: Plan, Plan. 2 steps, one conversation.');
   assert.equal(view.nodeEl('n_rev').querySelector('.nsess .t').textContent, 'shared');
 });
@@ -166,12 +166,12 @@ test('the Labs flag off draws the open gate as separate sessions too (C14); a lo
   const { createGraphView } = await import(viewPath);
   const view = createGraphView(host, { doc, mode: 'edit', portsFn, agents: AGENTS, sessionVerified: { claude: true }, sessionsOn: false });
   view.render(grouped(), {});
-  assert.equal(host.querySelector('.gv-sess-head .st').textContent, 'One session · Claude: separate sessions');
+  assert.equal(host.querySelector('.gv-sess-head .st').textContent, 'One session · Claude Code: separate sessions');
   assert.equal(view.nodeEl('n_rev').querySelector('.nsess'), null);
   const shared = grouped();
   shared.sessions = { [S]: { mode: 'shared' } };
   view.render(shared, {});
-  assert.equal(host.querySelector('.gv-sess-head .st').textContent, 'One session · Claude: separate sessions', 'shared falls back too');
+  assert.equal(host.querySelector('.gv-sess-head .st').textContent, 'One session · Claude Code: separate sessions', 'shared falls back too');
   assert.equal(view.nodeEl('n_rev').querySelector('.nsess'), null);
   const lone = loopFixture();
   lone.nodes.find((n) => n.id === 'n_agent').config.session = S;
@@ -189,7 +189,7 @@ test('with the flag on and the gate open, a lone member still runs on its own: s
   view.render(lone, {});
   const tray = host.querySelector('.gv-sess');
   assert.ok(tray.classList.contains('lone') && tray.classList.contains('fallback'));
-  assert.equal(tray.querySelector('.st').textContent, 'One session · Claude: separate sessions');
+  assert.equal(tray.querySelector('.st').textContent, 'One session · Claude Code: separate sessions');
   assert.equal(view.nodeEl('n_agent').querySelector('.nsess'), null, 'no "sub-agent" chip on a step that runs on its own');
 });
 
@@ -230,7 +230,7 @@ test('a static host keeps the strip (routes match the monitor), shows no chip, a
   view.render(grouped(), {});
   const head = host.querySelector('.gv-sess-head');
   assert.equal(head.hidden, false);
-  assert.equal(head.title, 'One session · Claude · 2 sub-agents');
+  assert.equal(head.title, 'One session · Claude Code · 2 sub-agents');
   assert.ok(head.querySelector('.sdot'));
   assert.equal(host.querySelector('.nsess'), null);
 });
@@ -240,7 +240,7 @@ test('flag on with the gate shut: a lanes host draws separate sessions and no ch
   const { createGraphView } = await import(viewPath);
   const view = createGraphView(host, { doc, mode: 'edit', portsFn, agents: AGENTS, sessionsOn: true, sessionVerified: { claude: false } });
   view.render(grouped(), {});
-  assert.equal(host.querySelector('.gv-sess-head .st').textContent, 'One session · Claude: separate sessions');
+  assert.equal(host.querySelector('.gv-sess-head .st').textContent, 'One session · Claude Code: separate sessions');
   assert.ok(host.querySelector('.gv-sess').classList.contains('fallback'));
   assert.equal(view.nodeEl('n_agent').querySelector('.nsess'), null);
 });

@@ -278,7 +278,7 @@ test('Save as preset names the workflow and says when it is the project\'s defau
   await waitFor(() => ctx.doc.querySelector('#workflowSelect').value === 'wf_auto');
   openPresetMenu(ctx.doc); menuItem(ctx.doc, 'Save as preset').click();
   await waitFor(() => !ctx.doc.querySelector('#confirm-modal').classList.contains('hidden'));
-  assert.match(ctx.doc.querySelector('#confirm-fields').textContent, /Saved: Auto workflow \(this project's default\) · Claude, guardrails/);
+  assert.match(ctx.doc.querySelector('#confirm-fields').textContent, /Saved: Auto workflow \(this project's default\) · Claude Code, guardrails/);
   ctx.doc.querySelector('#confirm-cancel').click();
   await tick();
 });
@@ -402,10 +402,10 @@ test('Simple: no "Manage presets…", the broken scope hint names ⋯; switching
 test('a picker option\'s tooltip and Settings › Presets name the workflow and engine, with no ids', async () => {
   const ctx = await boot({ presets: [preset({ setup: { workflowId: 'wf_auto', engine: 'codex' } })] });
   await waitFor(() => ctx.doc.querySelector('#presetSelect option[value="rp_aaaaaaaaaaaa"]'));
-  assert.equal(ctx.doc.querySelector('#presetSelect option[value="rp_aaaaaaaaaaaa"]').title, 'Auto workflow · Codex');
+  assert.equal(ctx.doc.querySelector('#presetSelect option[value="rp_aaaaaaaaaaaa"]').title, 'Auto workflow · OpenAI Codex');
   ctx.window.location.hash = '#settings/presets';
   await waitFor(() => ctx.doc.querySelector('#presets-list .preset-meta'));
-  assert.match(ctx.doc.querySelector('#presets-list .preset-meta').textContent, /^Auto workflow · Codex · Updated/);
+  assert.match(ctx.doc.querySelector('#presets-list .preset-meta').textContent, /^Auto workflow · OpenAI Codex · Updated/);
   ctx.window.location.hash = '#new';
 });
 

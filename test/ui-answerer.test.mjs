@@ -35,6 +35,7 @@ test('leadLabel: one word per lead key; an unknown key falls back to the perspec
   assert.deepEqual(Object.keys(LEAD_LABELS), [...ANSWERER_LEAD_KEYS]);
   assert.equal(leadLabel('release'), 'Release');
   assert.equal(leadLabel('nobody'), 'nobody');
+  for (const key of ['__proto__', 'constructor', 'toString']) assert.equal(leadLabel(key), key, 'an Object.prototype member is just an unknown key');
 });
 
 test('loadAnswerer times out to { lead: null } and the next call fetches again', async () => {

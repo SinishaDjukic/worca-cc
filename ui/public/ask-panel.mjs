@@ -22,6 +22,7 @@ import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
 import { buildNodeConfigRows, buildRoleRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
+import { PR_OPEN, PR_OPEN_LABELS, prSourceText } from '../../src/shared/pr-auto.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
 import { runsOn, modelGroups } from '../../src/shared/connections.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
@@ -31,10 +32,11 @@ import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
 import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES, isEngineSetupNotice, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName } from './ask-engine.mjs';
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
-import { ATTACH_ACCEPT, ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
+import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
+import { mountPromptCheckChip, promptCheckOn } from './prompt-check/chip-host.mjs';
 import { keepFocus } from './chat/keep-focus.mjs';
 import { flagOn } from './flags.mjs';
 import { mountChatsColumn } from './chats-column.mjs';
@@ -42,7 +44,7 @@ import { CHATS_PAGE } from './chats-list.mjs';
 import { chatPageKeyAction, keyHint, isMac, LIST_FIELD } from './list-keys.mjs';
 import { openKeysSheet } from './keys-sheet.mjs';
 import { gitOn } from './git-gate.mjs';
-import { originMark } from './chat-origin.mjs';
+import { originMark, platformName } from './chat-origin.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NEEDS_REPO_NOTE } from '../../src/shared/no-project.mjs';
 import { createTagInput, fetchTagVocabulary, createTagRulesLine } from './tag-input.mjs';
 import { INTENTS, splitIntentLead } from './chat/intent.mjs';
@@ -58,6 +60,7 @@ import { toElement } from './design-system/components/html.mjs';
 import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
 import { cardKit, scriptApprovalCardView } from './workflows/card-views.mjs';
 import { applyPresetStart } from '../../src/shared/run-presets.mjs';
+import { subagentAliasLabel, subagentAliasTitle } from '../../src/shared/model-roles.mjs';
 import {
   fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT, kTok,
   fmtWindow, ctxTrigger, ctxLevel, ctxPercent, fmtCtx, ctxTitle, fmtShare, ctxBreakdown, fmtUsd,
@@ -186,7 +189,7 @@ const HISTORY_KEY = 'worca-cc.chat.history';
 const HISTORY_OPEN_MIN_W = 1600;
 const HISTORY_OVERLAY_BELOW = 1100;
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null, onToolScope = () => {}, onChatsClosed = () => {} }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null, onToolScope = () => {}, onChatsClosed = () => {}, promptCheckTimers = undefined }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
   const st = {
     open: false,
@@ -906,6 +909,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const cur = el.input.value;
     el.input.value = cur && !/\s$/.test(cur) ? `${cur} ${text}` : `${cur}${text}`;
     fitInput();                                   // a programmatic write fires no input event
+    addonsInput();
     if (!autoSend) { focusComposer(); return; }
     // While a reply runs (barge-in included) sendMessage() queues it like a typed send; the queue sends it after.
     voiceSend();
@@ -953,12 +957,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (st.quote === quoted) setQuote(null);
         el.input.value = '';
         fitInput();                                  // a programmatic clear fires no input event
+        addonsInput();
         updateSendStop();
         return true;
       }
     }
+    // The add-ons see the draft as sent once it is taken: queued behind a running reply, or the message accepted (202).
+    // A refused send keeps the draft, and the add-ons keep what they show for it (a new chat made for it included).
+    let told = false;
+    const tellSent = () => { if (!queued && !told && st.addons.length) { told = true; addonsSent(draft.text); } };
     // A reply is running (or loaded, not yet adopted): the composer's message waits in this chat's queue.
-    if (turnBusy()) return queued ? 'busy' : enqueueDraft(draft);
+    if (turnBusy()) {
+      if (queued) return 'busy';
+      const r = enqueueDraft(draft);
+      if (r) tellSent();
+      return r;
+    }
     // …or one the user started while an add-on decided (the same check, above the add-ons).
     if (typeof st.wantThread === 'string' && st.wantThread !== st.threadId) return false;
     if (st.addons.length) text = addonsTransform(text);
@@ -988,6 +1002,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         loadGen += 1;                     // a pending loadThread() must not replace this fresh model
         st.threadId = id;
         onToolScope({ created: id });     // the tool panel: the same chat, now with an id (it keeps its open state)
+        madeThread = id;
         st.model = createThreadModel({ threadId: id });
         st.model.load({ thread: body.thread, messages: [], attachments: [], runLinks: [], inFlight: null });
         setContexts(body.thread && body.thread.contexts);
@@ -1045,6 +1060,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // the ask-title frame lands (ask-model marks title dirty, flushExtra repaints).
       // A drained queue item leaves the composer alone: it holds whatever the user is typing now.
       if (!queued) {
+        tellSent();
         el.input.value = '';
         fitInput();                                    // a programmatic clear fires no input event
         st.pendingFiles = [];
@@ -1373,6 +1389,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.hist.idx >= 0) st.hist = { idx: -1, draft: '' };
     // Anything typed after a reply retires that reply's suggestion — also one still being written.
     if (el.input.value) st.suggestDismissed = newestAssistantId();
+    addonsInput();
     updateSendStop();
   }
 
@@ -1410,6 +1427,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function showHistory(text) {
     el.input.value = text;
     fitInput();                                      // a programmatic write fires no input event
+    addonsInput();
     try { el.input.selectionStart = el.input.selectionEnd = text.length; } catch { /* jsdom */ }
     updateSendStop();
   }
@@ -1526,7 +1544,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.fileInput = doc.createElement('input');
     el.fileInput.type = 'file';
     el.fileInput.multiple = true;
-    el.fileInput.accept = ATTACH_ACCEPT;
     el.fileInput.hidden = true;
     el.fileInput.addEventListener('change', () => { addFiles(el.fileInput.files); el.fileInput.value = ''; });
     row.appendChild(el.fileInput);
@@ -1749,6 +1766,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const cur = el.input.value;
     el.input.value = cur ? `${cur.replace(/\s*$/, '')}\n${add}` : add;
     fitInput();                                    // a programmatic write fires no input event
+    addonsInput();
     focusComposer();
     try { el.input.selectionStart = el.input.selectionEnd = el.input.value.length; } catch { /* jsdom */ }
     return true;
@@ -3587,6 +3605,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // the node rows' in `reviewRoleEdits[nodeId][roleKey]` (`row.role` already names Default's legacy step role).
     return { wf, registry, runConfig, rows, edits: {}, reviewRoleRows: buildRoleRows(wf, rows, runConfig), reviewRoleEdits: {},
       editable: true, explicit: !projectDir, engine, defaultEngine, allModels, proposal: {}, proposed: {}, warnings: [],
+      prDefault: defaults && defaults.pr && defaults.pr.scope === 'project' ? defaults.pr : null,
       models, efforts: engine === 'claude' ? (Array.isArray(cfg.efforts) ? cfg.efforts : []) : [...(ENGINE_EFFORTS[engine] || [])],
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
@@ -3923,7 +3942,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       subWrap.appendChild(make('span', null, 'Sub-agents'));
       const subSel = rpSelect('ask-rp-subagent', `Sub-agent model for ${row.label}`);
       subSel.appendChild(opt('', 'subs: default (agent picks)'));
-      for (const v of lane.subagentModels) subSel.appendChild(opt(v, v === 'auto' ? 'subs: agent picks' : `subs: ${v}`));
+      for (const v of lane.subagentModels) { const o = opt(v, `subs: ${subagentAliasLabel(v)}`); const t = subagentAliasTitle(v); if (t) o.title = t; subSel.appendChild(o); }
       subSel.value = lane.subagentModels.includes(c.subagentModel) ? c.subagentModel : '';
       subSel.disabled = !lane.editable;
       subSel.title = 'Model for the sub-agents this node spawns (needs fan-out)';
@@ -4151,6 +4170,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     };
   }
 
+  /** "Saved to Workflows: <name>" under a saved card's name (#1126). The name is a real link to the row's address;
+   *  with the app's openComposer the click takes the card's own way in (the Library then shows the row). */
+  function savedToLine(workflowId, name) {
+    const line = make('div', 'ask-wfcard-savedto', 'Saved to Workflows: ');
+    const a = make('a', 'ask-wfcard-savedlink', name || workflowId);
+    a.href = `#workflows/${encodeURIComponent(workflowId)}`;
+    a.setAttribute('data-ask-wf-link', '');
+    a.addEventListener('click', (e) => {
+      if (typeof openComposer !== 'function') return;      // a bare host: the href navigates
+      e.preventDefault();
+      openComposer(workflowId);
+    });
+    line.appendChild(a);
+    return line;
+  }
+
   function buildWorkflowCard(block, prev) {
     const card = block.card || {};
     const name = card.name || '';
@@ -4198,6 +4233,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       handle.parts.name.replaceWith(saved);
       // The chip says Saved and the tag says Auto: the line stays only when it says something new.
       if (card.adopted) saved.after(make('div', 'ask-wfcard-savedline', 'Uses a workflow you already had'));
+      else if (block.workflowId) saved.after(savedToLine(block.workflowId, name));   // a new row: say where it went (#1126)
     } else if (matched) {
       const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow. Edit them in the Workflows view.');
       handle.parts.match.after(hint);
@@ -5073,7 +5109,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     head.appendChild(tagRow);
     if (typeof card.note === 'string' && card.note) head.appendChild(make('p', 'ask-rp-why', card.note));
     // A shaped card follows card.shape; the nudge is advisory.
-    const shapeUi = card.shape || card.nudge ? shapeCardExtras(doc, card, { fetch }) : null;
+    // Proposed perspectives (flag): every card shows the chips, a plain one too, and the prompt check proposes them.
+    const proposedOn = flagOn('proposedPerspectives', doc);
+    const shapeUi = card.shape || card.nudge || proposedOn
+      ? shapeCardExtras(doc, card, { fetch, ...(proposedOn ? { proposedPerspectives: true } : {}) }) : null;
     local.shapeUi = shapeUi;
     // A direct Shaper card on the requirements workflow: Shape requirements is its only start button.
     const direct = !!(card.shape && shapeUi && shapeUi.requirements);
@@ -5138,6 +5177,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     lvTag(engineField, 'advanced', !!card.engine && card.engine !== 'claude');
     wfRow.append(wfField, engineField, guardField);
     targetSec.appendChild(wfRow);
+    // Pull request when the run finishes: "Use the setting" sends nothing (the project's or workspace's value, with its source, once the lane has read it); a pick is this run's own choice.
+    const prSel = rpSelect('ask-card-pr', 'Pull request when done');
+    fillSelect(prSel, [{ value: '', label: 'Use the setting' }, ...PR_OPEN.map((v) => ({ value: v, label: PR_OPEN_LABELS[v] }))], (card.pr && card.pr.open) || '');
+    const prField = lvTag(rpField('Pull request when done', prSel), 'advanced', !!(card.pr && card.pr.open));
+    const prRow = make('div', 'ask-rp-grid wf-row');
+    prRow.appendChild(prField);
+    targetSec.appendChild(prRow);
     if (shapeUi) rootEl.appendChild(shapeUi.el);
     rootEl.appendChild(targetSec);
     engineSel.addEventListener('change', () => reloadLane());   // the agent rows offer the engine's models
@@ -5176,6 +5222,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const count = make('span', 'ask-rp-count');
     briefFoot.append(hint, count);
     briefSec.appendChild(briefFoot);
+    // The prompt check chip (docs/prompt-check.md "The chip"): a brief is always a task. A tracker task has no brief.
+    const pcheck = card.source ? null : mountPromptCheckChip({
+      doc, host: briefFoot, before: count,
+      surface: { kind: 'run-card', id: block.id }, ids: { threadId: st.threadId, cardId: block.id },
+      forceTask: true, fetchImpl: (...a) => fetch(...a), timers: promptCheckTimers,
+      field: {   // Improve writes through the brief's own input path (count, height, re-check)
+        read: () => brief.value,
+        write: (text) => { brief.value = text; brief.dispatchEvent(new win.Event('input', { bubbles: true })); },
+        focus: () => brief.focus(),
+      },
+      project: () => st.scope.projectKey,
+      ...(proposedOn && promptCheckOn() ? { onAssessment: (a) => local.shapeUi?.proposeFrom?.(a, brief.value) } : {}),
+    });
     if (card.source) {
       // The task IS a tracker task (propose_run source): the run reads it when it starts, so the
       // card shows the reference — never an editable copy that would silently go stale.
@@ -5215,6 +5274,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     };
     brief.addEventListener('input', () => {
       grow();
+      if (pcheck) pcheck.input(brief.value);
       const pos = typeof brief.selectionStart === 'number' ? brief.selectionStart : brief.value.length;
       if (brief.value[pos - 1] === '@') openAtPopover(brief, pos, local, renderPills);
       else if (st.popover && st.popover.trigger === brief) closePopover({ focusTrigger: false });   // typed past the @: the picker never filters, so it goes
@@ -5331,13 +5391,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     // Shape it first: Start holds an icon and a text node, so only the text node is relabelled.
     let shapeBtn = null;
-    if (shapeUi) {
+    if (shapeUi && !shapeUi.plain) {
       const setLabel = (b, t) => { const n = [...b.childNodes].find((x) => x.nodeType === 3); if (n) n.textContent = t; else b.append(t); };
       if (card.shape && !shapeUi.requirements) {
         setLabel(startBtn, 'Start planning');            // a shaped card is never scheduled
       } else {
         if (shapeUi.requirements) {
-          // Medium or large with shapeRequirements on: Shape requirements is the one primary, Run as is steps back. Until a
+          // Medium or large: Shape requirements is the one primary, Run as is steps back. Until a
           // lead is picked it stays in the tab order, aria-disabled, described by "You lead as".
           shapeBtn = toElement(doc, railButton({ label: 'Shape requirements', kind: 'primary', attrs: { 'data-ask-card-shape': '' } }));
           if (!card.shape) startBtn.classList.replace('btn-primary', 'btn-quiet');
@@ -5597,6 +5657,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         }
         if (lane) {
           engineSel.options[0].textContent = `${engineLabel(lane.defaultEngine)} (default)`;
+          prSel.options[0].textContent = lane.prDefault && local.target === 'project' ? `Use the setting: ${PR_OPEN_LABELS[lane.prDefault.open.value]} (${prSourceText(lane.prDefault.open.source)})` : 'Use the setting';
           for (const o of engineSel.options) o.hidden = o.value !== '' && o.value === lane.defaultEngine && engineSel.value !== o.value;   // listed once
         }
         wfDesc.textContent = lane ? workflowDesc(lane.wf, lane.registry, lane.runConfig) : '';
@@ -5607,7 +5668,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const unseen = lane ? null : proposalOverlay(card, workflowId);
         if (unseen) {
           laneSec.dataset.levelKeep = '1';
-          const list = Object.entries(unseen.nodes).map(([id, p]) => `${id} → ${p.model}${p.effort ? ` · ${p.effort}` : ''}${p.subagentModel ? ` · sub-agents ${p.subagentModel}` : ''}`);
+          const list = Object.entries(unseen.nodes).map(([id, p]) => `${id} → ${p.model}${p.effort ? ` · ${p.effort}` : ''}${p.subagentModel ? ` · sub-agents ${subagentAliasLabel(p.subagentModel)}` : ''}`);
           laneSec.appendChild(make('div', 'ask-rp-lane-msg', `Start runs Chat's picks as proposed (checked again at Start): ${list.join(', ')}`));
         } else if (!lane) delete laneSec.dataset.levelKeep;
       });
@@ -5672,7 +5733,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       rootEl.__rp.refreshTagRules = refreshTagRules;
       refreshTagRules();
     }
-    return rootEl;
+    if (pcheck) pcheck.input(brief.value, { silent: true });   // graded once on mount; its first result is not announced
+    return { el: rootEl, dispose: pcheck ? () => pcheck.dispose() : null };
   }
 
   function collectCardBody(rootEl, local, card) {
@@ -5690,6 +5752,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (tags.length) body.tags = tags;                      // none: a legacy body, byte for byte
     const engine = (rootEl.querySelector('.ask-card-engine') || {}).value;
     if (engine) body.engine = engine;                       // none: /api/run's default engine
+    // Pull request when done: only an explicit pick (and the proposal's slices mode on a project run); none: the setting decides.
+    const prOpen = (rootEl.querySelector('.ask-card-pr') || {}).value;
+    const pr = { ...(prOpen ? { open: prOpen } : {}), ...(card.pr && card.pr.slices && local.target === 'project' ? { slices: card.pr.slices } : {}) };
+    if (local.target !== 'none' && Object.keys(pr).length) body.pr = pr;
     // A tracker task: the reference, never a prompt (POST /api/run takes source OR prompt).
     if (card.source) {
       delete body.prompt;
@@ -5768,6 +5834,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       }
       const body = { ...collectCardBody(rootEl, local, block.card || {}), askThreadId: st.threadId, askCardId: block.id, ...(schedule || {}) };
       if (local.shapeUi && (shaped || (block.card || {}).shape)) Object.assign(body, local.shapeUi.body());
+      // Proposed perspectives (flag): an unshaped start sends the chosen set and the proposal, never the Shaper.
+      else if (local.shapeUi?.proposeFrom && flagOn('proposedPerspectives', doc)) Object.assign(body, local.shapeUi.body(false));
       if (overlay) body.overlay = overlay;
       // Run chains: "the branch of the run before it" is a flag, and the wire refuses it next to a branch name.
       // Keyed off the schedule being POSTED — a Start now on an after-proposal carries none and keeps the picked branch.
@@ -6128,7 +6196,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isScriptApproval ? buildScriptApprovalCard(block)
       : isProgress ? buildProgressCard(block)
         : custom ? { el: make('div', 'ask-card-stub', (block.card && (block.card.summary || block.card.title)) || 'Card unavailable') }
-        : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
+        : block.state === 'proposed' ? buildCardForm(block) : { el: buildCardTerminal(block) };
     st.cardEls.set(block.id, { el: built.el, state: block.state, view, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1, sum: summariesOn() });
     return built.el;
   }
@@ -6729,7 +6797,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (history.length) parts.push(`${history.length} earlier message${history.length === 1 ? '' : 's'}`);
     const own = Array.isArray(b.files) ? b.files.filter((f) => f && typeof f.name === 'string') : [];
     if (own.length) parts.push(`${own.length} file${own.length === 1 ? '' : 's'} not saved`);
-    const where = b.platform === 'discord' ? 'Discord' : 'chat';
+    const where = platformName(b.platform) || 'chat';
     box.appendChild(make('summary', 'ask-user-context-h', `Context from ${where}${parts.length ? `: ${parts.join(', ')}` : ''}`));
     const fileLine = (f) => make('div', 'ask-user-context-f', f.note ? `${f.name} — ${String(f.note)}` : f.name);
     const quote = (q) => {
@@ -7498,14 +7566,20 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       runLinks: [...st.model.runLinks()].map(([runId, l]) => ({ runId, ...l })),
     };
   }
+  let madeThread = null;
   const addonCtx = {
     doc, fetch,
     threadId: () => st.threadId,
+    madeThread: () => madeThread,         // the thread the composer's last first send created (null until one does)
     thread: () => threadSnapshot(),
     runStore,
     setPlaceholder: (text) => { st.basePlaceholder = typeof text === 'string' && text ? text : INPUT_PLACEHOLDER; updateSuggestion(); },
     focus: () => focusComposer(),
     announce: (text) => announce(text),
+    // Prompt check Improve (docs/prompt-check.md): the composer's text, a write through its input path, its project.
+    text: () => el.input.value,
+    setText: (text) => { el.input.value = text; fitInput(); addonsInput(); updateSendStop(); },
+    projectKey: () => st.scope.projectKey,
   };
   function mountAddons() {
     for (const addon of composerAddons()) {
@@ -7547,6 +7621,27 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       } catch (err) { console.warn(`[worca] composer add-on "${a.id}" transformSend failed`, err); }
     }
     return out;
+  }
+  /** The optional input hook (CONTRACT §2): the composer's text after every edit, typed or programmatic. `answering`
+   *  is true while an add-on routes the send elsewhere (holdsSend, e.g. the direction chip). */
+  function addonsInput() {
+    if (!st.addons.length) return;
+    const text = el.input.value;
+    let answering = false;
+    for (const a of st.addons) {
+      try { if (typeof a.handle.holdsSend === 'function' && a.handle.holdsSend()) answering = true; } catch { /* a dead hook counts as not holding */ }
+    }
+    for (const a of st.addons) {
+      if (typeof a.handle.input !== 'function') continue;
+      try { a.handle.input(text, { answering }); } catch (err) { console.warn(`[worca] composer add-on "${a.id}" input failed`, err); }
+    }
+  }
+  /** The optional sent hook: the raw draft (never the transformSend result), once it is taken. */
+  function addonsSent(text) {
+    for (const a of st.addons) {
+      if (typeof a.handle.sent !== 'function') continue;
+      try { a.handle.sent(text); } catch (err) { console.warn(`[worca] composer add-on "${a.id}" sent failed`, err); }
+    }
   }
   function destroyAddons() {
     for (const a of st.addons.splice(0)) {

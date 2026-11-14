@@ -50,11 +50,17 @@ test('runLimits: 3 runs at once by default, workers and retention unset; a patch
 });
 
 test('every agent env carries WORCA_TEST_CONCURRENCY (the setting, else half the cores); a value already set wins', async () => {
-  await setRunLimits({ testWorkers: 3 });
+  // An agent shell inherits the variable, and an inherited value wins: the test owns its input.
+  const inherited = process.env.WORCA_TEST_CONCURRENCY;
   try {
+    delete process.env.WORCA_TEST_CONCURRENCY;
+    await setRunLimits({ testWorkers: 3 });
     assert.equal(composeSpawnEnv({}).env.WORCA_TEST_CONCURRENCY, '3');
     assert.equal(composeSpawnEnv({ overlay: { WORCA_TEST_CONCURRENCY: '7' } }).env.WORCA_TEST_CONCURRENCY, '7');
-  } finally { await setRunLimits(null); }
+  } finally {
+    await setRunLimits(null);
+    if (inherited === undefined) delete process.env.WORCA_TEST_CONCURRENCY; else process.env.WORCA_TEST_CONCURRENCY = inherited;
+  }
 });
 
 test('run slots: at most max runs hold one, the next waits until a release, a dead process frees its slot, a check can end the wait', async () => {

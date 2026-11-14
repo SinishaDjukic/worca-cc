@@ -20,7 +20,7 @@ after(() => { process.env.HOME = REAL_HOME; });
 const { claudeReady, onboardingStatus } = await import('../src/core/onboarding.mjs');
 const { onboardingPrefs, setOnboardingPrefs, assertOnboardingPrefsInput } = await import('../src/core/settings.mjs');
 const { addProject } = await import('../src/core/projects.mjs');
-const { createThread } = await import('../src/core/ask/store.mjs');
+const { createThread, appendMessage, finishMessage } = await import('../src/core/ask/store.mjs');
 const { setActiveWorkflow, writeTeamPolicyPrefs } = await import('../src/core/config.mjs');
 const { projectKey } = await import('../src/core/store.mjs');
 
@@ -94,11 +94,16 @@ test('derived ticks: project, run, realRun, ask, workflows, teamPolicy (one stor
       s = await onboardingStatus();
       assert.equal(s.steps.realRun, true, 'any spend is a real run, whatever its outcome');
     } },
-    { name: 'an Ask thread ticks "ask"; a picked workflow (the persisted picker choice) ticks "workflows"', run: async () => {
+    { name: 'an answer in a chat ticks "ask", a failed turn does not; a picked workflow (the persisted picker choice) ticks "workflows"', run: async () => {
       let s = await onboardingStatus();
       assert.equal(s.steps.ask, false);
       assert.equal(s.steps.workflows, false, 'nothing picked yet');
-      createThread({ title: 'hello' });
+      const thread = createThread({ title: 'hello' });
+      const failed = appendMessage(thread.id, { role: 'assistant', status: 'streaming' });
+      finishMessage(failed.id, { status: 'error' });
+      assert.equal((await onboardingStatus()).steps.ask, false, 'a turn that failed showed nothing');
+      const ok = appendMessage(thread.id, { role: 'assistant', status: 'streaming' });
+      finishMessage(ok.id, { status: 'done' });
       await setActiveWorkflow(join(home, 'proj'), 'wf_auto');
       s = await onboardingStatus();
       assert.equal(s.steps.ask, true);
@@ -118,6 +123,13 @@ test('derived ticks: project, run, realRun, ask, workflows, teamPolicy (one stor
   ]);
 });
 
+test('the claude block carries where the CLI checked (configDirectory) to /api/onboarding', async () => {
+  const detect = async () => ({ ready: true, bin: '/usr/local/bin/claude', hint: null, auth: 'signed-out', connected: false, configDirectory: '/tmp/scratch/.claude' });
+  const s = await onboardingStatus({ detect });
+  assert.deepEqual(s.claude, { bin: '/usr/local/bin/claude', hint: null, auth: 'signed-out', configDirectory: '/tmp/scratch/.claude' });
+  assert.equal(s.steps.claude, false);
+});
+
 // ---- stored flags ----
 
 test('onboarding prefs: booleans only, unknown keys refused, all-false drops the key', async () => {
@@ -125,14 +137,14 @@ test('onboarding prefs: booleans only, unknown keys refused, all-false drops the
   assert.throws(() => assertOnboardingPrefsInput({ workspaceGuideSeen: 1 }), /onboarding\.workspaceGuideSeen must be true or false/);
   assert.throws(() => assertOnboardingPrefsInput({ nope: true }), /unknown onboarding key/);
   assert.throws(() => assertOnboardingPrefsInput(null), /object/);
-  assert.deepEqual(await setOnboardingPrefs({ hidden: true }), { hidden: true, welcomeSeen: false, workspaceGuideSeen: false });
-  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: true }), { hidden: true, welcomeSeen: true, workspaceGuideSeen: false });
-  assert.deepEqual(await setOnboardingPrefs({ hidden: false }), { hidden: false, welcomeSeen: true, workspaceGuideSeen: false }, 'Show again keeps the welcome seen');
-  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false });
-  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: true }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: true }, 'the walkthrough flag alone keeps the key');
+  assert.deepEqual(await setOnboardingPrefs({ hidden: true }), { hidden: true, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false });
+  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: true }), { hidden: true, welcomeSeen: true, workspaceGuideSeen: false, stillhetAsked: false });
+  assert.deepEqual(await setOnboardingPrefs({ hidden: false }), { hidden: false, welcomeSeen: true, workspaceGuideSeen: false, stillhetAsked: false }, 'Show again keeps the welcome seen');
+  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false });
+  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: true, stillhetAsked: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: true, stillhetAsked: false }, 'the walkthrough flag alone keeps the key');
   assert.equal((await onboardingStatus()).workspaceGuideSeen, true, 'GET /api/onboarding carries it');
-  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false });
-  assert.deepEqual(onboardingPrefs(), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false });
+  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: false, stillhetAsked: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false });
+  assert.deepEqual(onboardingPrefs(), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false });
   const s = await onboardingStatus();
   assert.equal(s.hidden, false);
 });

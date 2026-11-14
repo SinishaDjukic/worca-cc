@@ -29,7 +29,7 @@ const STATUSES = { SHOP: [[S.open, S.prog, S.done, S.wontdo], [S.open, S.resolve
 
 test('capabilities: ticketUpdates beside export; write-back still follows the run\'s input', async () => {
   const { src } = await site();
-  assert.deepEqual(src.capabilities({ inputs: { writeBack: 'yes' } }), { writeBack: true, incrementalSync: false, export: true, ticketUpdates: true });
+  assert.deepEqual(src.capabilities({ inputs: { writeBack: 'yes' } }), { writeBack: true, incrementalSync: false, export: true, import: true, ticketUpdates: true });
   assert.equal(src.capabilities({}).writeBack, false);
 });
 
@@ -86,7 +86,7 @@ const RESULT = { status: 'completed', summary: 'done', links: [{ title: 'Pull re
 const LINK = '* [Pull request|https://github.com/acme/shop/pull/5]';
 /** One report against a fresh fake Jira holding SHOP-12 in `from` with `transitions`. */
 async function report(move, { from = S.prog, transitions = [], deployment = 'cloud', ...more } = {}) {
-  const { jira, src, logs } = await site({ deployment, projectStatuses: STATUSES, seed: [{ key: 'SHOP-12', project: 'SHOP', status: from, transitions }], ...more });
+  const { jira, src, logs } = await site({ deployment, projectStatuses: STATUSES, transitionSeed: [{ key: 'SHOP-12', project: 'SHOP', status: from, transitions }], ...more });
   const out = await src.reportResult('SHOP-12', { ...RESULT, move });
   const i = jira.issues.get('SHOP-12');
   return { out, comment: i.comments.at(-1), posts: jira.requests.filter((r) => r.method === 'POST' && /\/transitions$/.test(r.path)),
@@ -215,14 +215,14 @@ test("a 4xx refusal of the transition still comments with Jira's reason (D10, De
   const silent = await report({ category: 'done' }, { transitions: [tr('71', 'Finish', S.done)],
     refuseTransition: { status: 409, body: {} } });
   assert.equal(silent.out.note, 'Not moved: Jira refused the move to Done: Jira gave no reason.', 'no message (decided 2026-10-30)');
-  const { jira, src } = await site({ projectStatuses: STATUSES, seed: [{ key: 'SHOP-12', project: 'SHOP', status: S.prog, transitions: [] }], refuseToken: true });
+  const { jira, src } = await site({ projectStatuses: STATUSES, transitionSeed: [{ key: 'SHOP-12', project: 'SHOP', status: S.prog, transitions: [] }], refuseToken: true });
   await assert.rejects(src.reportResult('SHOP-12', { ...RESULT, move: { category: 'done' } }), (e) => e.kind === 'auth');
   assert.deepEqual(jira.issues.get('SHOP-12').comments, [], 'no comment after a refused token');
   // S4: the boundary is the transition POST itself: these throw there, so the write-back fails and Report result retries
   for (const [refusal, kind] of [[{ status: 429, body: {} }, 'rate-limit'], [{ status: 401, body: {} }, 'auth'],
     [{ status: 500, body: { errorMessages: ['Internal server error'] } }, 'plugin']]) {
     const site2 = await site({ projectStatuses: STATUSES, refuseTransition: refusal,
-      seed: [{ key: 'SHOP-12', project: 'SHOP', status: S.prog, transitions: [tr('71', 'Finish', S.done)] }] });
+      transitionSeed: [{ key: 'SHOP-12', project: 'SHOP', status: S.prog, transitions: [tr('71', 'Finish', S.done)] }] });
     await assert.rejects(site2.src.reportResult('SHOP-12', { ...RESULT, move: { category: 'done' } }), (e) => e.kind === kind, String(refusal.status));
     assert.ok(site2.jira.requests.some((q) => q.method === 'POST' && /\/transitions$/.test(q.path)), `${refusal.status}: the POST was tried`);
     assert.deepEqual(site2.jira.issues.get('SHOP-12').comments, [], `${refusal.status}: no comment`);
@@ -248,7 +248,7 @@ test("Don't move: no read, no transition, no line; a failed run passes none and 
 
 test('without a move: exactly the old behaviour (transitionOnComplete, its line before the links)', async () => {
   const { jira, src } = await site({ done: 'Done', projectStatuses: STATUSES,
-    seed: [{ key: 'SHOP-12', project: 'SHOP', status: S.prog, transitions: [tr('71', 'Finish', S.done)] }] });
+    transitionSeed: [{ key: 'SHOP-12', project: 'SHOP', status: S.prog, transitions: [tr('71', 'Finish', S.done)] }] });
   const out = await src.reportResult('SHOP-12', RESULT);
   assert.deepEqual(out, { commented: true, transitioned: true });
   assert.equal(jira.issues.get('SHOP-12').comments.at(-1), `done\n\nMoved to Done.\n\n${LINK}`);

@@ -4,7 +4,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  probeClaudeAuth, parseClaudeAuthStatus, claudeAuthFromEnv, clearClaudeAuthCache, CLAUDE_AUTH_TTL_MS,
+  probeClaudeAuth, parseClaudeAuthStatus, parseClaudeAuthConfigDir, claudeAuthFromEnv, clearClaudeAuthCache, CLAUDE_AUTH_TTL_MS,
   isClaudeSignedOutError,
 } from '../src/core/preflight.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -46,8 +46,20 @@ test('probeClaudeAuth: reads `claude auth status` whatever its exit code; a fail
     { name: 'probeClaudeAuth: reads `claude auth status`, whatever its exit code', run: async () => {
       const out = fakeRun('{"loggedIn": false}', 1);
       const r = await probeClaudeAuth({ bin: 'claude', env: {}, run: out.run });
-      assert.deepEqual(r, { state: 'signed-out', source: 'cli', detail: null });
+      assert.deepEqual(r, { state: 'signed-out', source: 'cli', detail: null, configDirectory: null });
       assert.deepEqual(out.calls, [['claude', 'auth', 'status']]);
+    } },
+    { name: 'probeClaudeAuth: keeps the JSON configDirectory (where the CLI looked), remembered with the answer', run: async () => {
+      clearClaudeAuthCache();
+      const out = fakeRun('{"loggedIn": false, "configDirectory": "/tmp/scratch/.claude"}', 1);
+      const r = await probeClaudeAuth({ bin: 'claude', env: {}, run: out.run });
+      assert.deepEqual(r, { state: 'signed-out', source: 'cli', detail: null, configDirectory: '/tmp/scratch/.claude' });
+      assert.equal((await probeClaudeAuth({ bin: 'claude', env: {}, run: out.run })).configDirectory, '/tmp/scratch/.claude', 'the cached answer keeps it');
+      assert.equal(out.calls.length, 1);
+      assert.equal(parseClaudeAuthConfigDir('{"loggedIn": true, "configDirectory": "  "}'), null, 'blank is none');
+      assert.equal(parseClaudeAuthConfigDir('{"loggedIn": true, "configDirectory": 7}'), null, 'not a string is none');
+      assert.equal(parseClaudeAuthConfigDir('Not logged in'), null, 'the text form has none');
+      assert.equal(parseClaudeAuthConfigDir('{broken'), null);
     } },
     { name: 'probeClaudeAuth: a failed spawn / timeout (no result) is unknown, never signed out', run: async () => {
       clearClaudeAuthCache();   // the file's beforeEach, once per former test
@@ -62,7 +74,7 @@ test('probeClaudeAuth: reads `claude auth status` whatever its exit code; a fail
 
 test('probeClaudeAuth: an auth env var counts as signed in without asking the CLI', async () => {
   for (const env of [
-    { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9/m/x' },
+    { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9/m/x', ANTHROPIC_AUTH_TOKEN: 'secret' },
     { ANTHROPIC_AUTH_TOKEN: 'secret' },
     { CLAUDE_CODE_USE_BEDROCK: '1' },
     { CLAUDE_CODE_USE_VERTEX: 'true' },
@@ -75,6 +87,7 @@ test('probeClaudeAuth: an auth env var counts as signed in without asking the CL
   }
   // An explicit off ('0' / 'false') or an empty value is not a sign-in.
   assert.equal(claudeAuthFromEnv({ CLAUDE_CODE_USE_BEDROCK: '0', CLAUDE_CODE_USE_VERTEX: 'false', ANTHROPIC_API_KEY: ' ' }), null);
+  assert.equal(claudeAuthFromEnv({ ANTHROPIC_BASE_URL: 'http://127.0.0.1:9' }), null, 'a base URL alone signs nothing in');
 });
 
 test('probeClaudeAuth: mock mode never starts claude', async () => {

@@ -123,20 +123,20 @@ test('pickDropWarnings: one line per dropped node or role pick, in node order, e
   const roleLabel = (nc, key) => ({ security: 'Security', product: 'Product', qa: 'QA' })[key] || key;
   const lines = pickDropWarnings(NODES(), { engine: 'codex', roleLabel });
   assert.deepEqual(lines, [
-    "Plan: claude-opus-5-5 is not on Codex, runs Codex's default model",
-    'reviewer: claude-opus-5-5 is not on Codex, runs gpt-5.5',
-    "Plan Review: claude-sonnet-5-5 is not on Codex, runs Codex's default model",
-    "Plan Review · Security: claude-opus-5-5 is not on Codex, runs the node's model",
-    "Plan Review · Product: claude-opus-5-5 is not on Codex, runs the node's model",
-    "Plan Review · QA: effort max is not on Codex, runs the node's effort",
-    "implementer: effort max is not on Codex, runs Codex's default effort",
+    "Plan: claude-opus-5-5 is not on OpenAI Codex, runs OpenAI Codex's default model",
+    'reviewer: claude-opus-5-5 is not on OpenAI Codex, runs gpt-5.5',
+    "Plan Review: claude-sonnet-5-5 is not on OpenAI Codex, runs OpenAI Codex's default model",
+    "Plan Review · Security: claude-opus-5-5 is not on OpenAI Codex, runs the node's model",
+    "Plan Review · Product: claude-opus-5-5 is not on OpenAI Codex, runs the node's model",
+    "Plan Review · QA: effort max is not on OpenAI Codex, runs the node's effort",
+    "implementer: effort max is not on OpenAI Codex, runs OpenAI Codex's default effort",
   ]);
   const quiet = pickDropWarnings(NODES(), { engine: 'codex', quietTemplate: true, roleLabel });
   assert.equal(quiet.filter((l) => /claude-sonnet-5-5|Product/.test(l)).length, 0, 'built-in template drops stay quiet');
   assert.equal(quiet.length, 5);
   const twice = { ...NODES(), n_copy: { ...NODES().n_plan } };
   assert.equal(pickDropWarnings(twice, { engine: 'codex' }).filter((l) => l.startsWith('Plan: ')).length, 1, 'deduped');
-  assert.deepEqual(pickDropWarnings(NODES(), { engine: 'codex' }).find((l) => l.includes('· security')), "Plan Review · security: claude-opus-5-5 is not on Codex, runs the node's model", 'the role key is the default label');
+  assert.deepEqual(pickDropWarnings(NODES(), { engine: 'codex' }).find((l) => l.includes('· security')), "Plan Review · security: claude-opus-5-5 is not on OpenAI Codex, runs the node's model", 'the role key is the default label');
   assert.deepEqual(pickDropWarnings(null, { engine: 'codex' }), []);
 });
 

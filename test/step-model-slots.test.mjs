@@ -120,7 +120,7 @@ function pausingRunners(getOrch, seen) {
     },
   };
 }
-const PLAN_DROP = "Plan: claude-opus-5-5 is not on Codex, runs Codex's default model";
+const PLAN_DROP = "Plan: claude-opus-5-5 is not on OpenAI Codex, runs OpenAI Codex's default model";
 const auditOf = (id) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(id).map((r) => r.text);
 const warnLines = (logs, line) => logs.filter((l) => l.level === 'warn' && String(l.text || l.message || '').includes(line)).length;
 
@@ -174,6 +174,6 @@ test('a resume that switches the Codex run to Claude Code keeps the start lines,
   const res = await orch2.resume();
   assert.equal(res.status, 'done', res.error);
   const warnings = orch2.getState().warnings;
-  assert.equal(warnings.filter((w) => w.includes('is not on Claude,')).length, 0, 'no false line for the engine the run switched to');
+  assert.equal(warnings.filter((w) => w.includes('is not on Claude Code,')).length, 0, 'no false line for the engine the run switched to');
   assert.equal(warnings.filter((w) => w === PLAN_DROP).length, 1, 'the line judged at start is kept once');
 });

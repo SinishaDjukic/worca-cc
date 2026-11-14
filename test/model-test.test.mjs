@@ -166,3 +166,14 @@ test('the hints name the page that fixes the problem: the Models page, the Provi
   assert.equal(bridgeHintFor('terms'), '');   // no such reason any more
   assert.equal(bridgeHintFor('no_key', 'openai'), "set an API key for openai on the Providers page, or on this model's Connection");
 });
+
+test('testModel on Copilot names no effort: Copilot refuses one on a model without reasoning (Claude Haiku 4.5)', async () => {
+  let seen = null;
+  const run = async (o) => { seen = o; return { text: 'OK', exitCode: 0 }; };
+  const res = await testModel('copilot/claude-haiku-4.5', { engine: 'copilot', signedOut: notSignedOut, run });
+  assert.equal(res.ok, true);
+  assert.equal(seen.engine, 'copilot');
+  assert.equal('effort' in seen, false, 'no --reasoning-effort on the Copilot test');
+  await testModel('glm-4.7', { signedOut: notSignedOut, run });
+  assert.equal(seen.effort, 'low', 'every other engine keeps the cheap effort');
+});

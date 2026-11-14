@@ -74,7 +74,7 @@ test('run head: no kind chip in either template; the h1 stays the focus target',
 test('facts block: Group is the last row in both templates', () => {
   for (const id of ['run-detail-tpl', 'hist-detail-tpl']) {
     const kv = tpl(id).querySelector('dl.rd-kv[aria-label="Run facts"]');
-    assert.deepEqual([...kv.children].map((r) => r.dataset.fact), ['project', 'labels', 'tags', 'group'], id);
+    assert.deepEqual([...kv.children].map((r) => r.dataset.fact), ['project', 'labels', 'tags', 'pr-auto', 'group'], id);
     assert.ok(kv.lastElementChild.querySelector('.rd-group-line'), `${id}: the group line is in the last row`);
   }
 });

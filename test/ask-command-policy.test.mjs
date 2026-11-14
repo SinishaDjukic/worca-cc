@@ -84,6 +84,25 @@ test('gh commands that print the stored GitHub token are refused', () => {
     assert.equal(checkAskCommand(c, ctx), null, c);
 });
 
+test('code host and cloud CLI commands that are hard to undo are refused', () => {
+  for (const c of ['gh repo delete owner/repo --yes', 'gh issue delete 1 --yes', 'gh release delete v1 -y', 'gh repo deploy-key delete 5',
+    'gh issue -R o/r delete 1', 'gh --repo=o/r issue delete 1', 'gh "repo" delete o/r', 'glab repo delete o/r --yes', 'glab mr delete 3',
+    'gh repo edit --visibility public --accept-visibility-change-consequences', 'gh repo edit o/r --visibility=public',
+    'gh api -X DELETE repos/o/r/git/refs/heads/main', 'gh api -XDELETE repos/o/r', 'gh api --method delete repos/o/r', 'gh api --method=DELETE repos/o/r',
+    'glab api -X DELETE projects/1', 'gh api -X PATCH repos/o/r/git/refs/heads/main -f sha=abc -F force=true', 'gh api repos/o/r/git/refs/heads/main --field=force=true',
+    'gh api -X PATCH repos/o/r -f visibility=public', 'gh api -X PATCH repos/o/r -F private=false',
+    'gh pr merge 1 --admin --squash', 'gh gist create --public README.md', 'gh gist create -p README.md',
+    'az group delete -n prod --yes', 'az boards work-item delete --id 1', 'az repos delete --id x',
+    'bash -c "gh repo delete o/r --yes"', 'npm test && gh repo delete o/r --yes', 'timeout 5 az group delete -n prod', '/usr/local/bin/gh repo delete o/r'])
+    assert.match(checkAskCommand(c, ctx) ?? '', /blocked/, c);
+  for (const c of ['gh issue create --title "x" --body "y"', 'gh issue comment 5 --body delete', 'gh issue create --title delete --body-file b.md',
+    'gh issue create --title "x" --body "run gh repo delete; az group delete"', 'gh pr merge 1 --squash', 'gh pr create --fill', 'gh gist create README.md',
+    'gh repo edit --description "public"', 'gh repo edit --visibility private --accept-visibility-change-consequences', 'gh search issues delete me',
+    'gh api user --jq .login', 'gh api repos/o/r/issues -f title=x', 'gh api repos/o/r/issues -f title=force=true', 'glab mr create --fill',
+    'az boards work-item create --title delete', 'az repos pr list', 'az account show', 'npm run delete'])
+    assert.equal(checkAskCommand(c, ctx), null, c);
+});
+
 test('quoted data is not a command', () => {
   assert.equal(checkAskCommand('git commit -m "fix rm -rf / handling"', ctx), null);
   assert.equal(checkAskCommand('git commit -m "a; sudo reboot"', ctx), null);

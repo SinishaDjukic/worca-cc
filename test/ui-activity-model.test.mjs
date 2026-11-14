@@ -189,3 +189,25 @@ test('Scheduled day edges: midnight is the zone\'s, not UTC\'s; a week with a DS
     } },
   ]);
 });
+
+const D = (id, status, waiting = 0) => ({ designId: id, title: `T ${id}`, status, waiting });
+test('design rows: Running while live, Needs you while a question waits or it is paused', () => {
+  const m = activityModel({ live: [], history: [], active: [], now: NOW, tz: 'UTC', designs: [D('d1', 'building'), D('d2', 'planning'), D('d3', 'integrating'), D('d4', 'building', 2), D('d5', 'building', 1), D('d6', 'paused')] });
+  assert.deepEqual(m.running.map((r) => [r.kind, r.key, r.href, r.sub, r.tone]), [
+    ['design', 'design:d1', '#design/d1', 'Design · Building', 'run'], ['design', 'design:d2', '#design/d2', 'Design · Building', 'run'], ['design', 'design:d3', '#design/d3', 'Design · Building', 'run']]);
+  assert.deepEqual(m.needs.map((r) => [r.key, r.sub, r.tone]), [
+    ['design:d4', 'Design · 2 questions', 'need'], ['design:d5', 'Design · 1 question', 'need'], ['design:d6', 'Design · Paused', 'need']]);
+  assert.deepEqual([m.counts.needs, m.counts.running], [3, 3]);
+});
+test('design rows come after run rows; a finished design is not listed; the Runs badge never counts them', () => {
+  const input = { ...RUNS, designs: [D('d1', 'building', 1), D('d2', 'building'), D('d3', 'done')] };
+  const m = activityModel({ ...input, now: NOW, tz: 'UTC' });
+  assert.equal(m.needs.at(-1).key, 'design:d1'); assert.equal(m.running.at(-1).key, 'design:d2');
+  assert.equal(m.needs.some((r) => r.key === 'design:d3') || m.running.some((r) => r.key === 'design:d3'), false);
+  assert.equal(countNeedsYou(input), countNeedsYou(RUNS));
+  const base = activityCounts(RUNS);
+  assert.deepEqual(activityCounts(input), { needs: base.needs + 1, running: base.running + 1 });
+});
+test('a paused design with a question waiting names the question', () => {
+  assert.deepEqual(activityModel({ now: NOW, tz: 'UTC', designs: [D('d7', 'paused', 1)] }).needs.map((r) => r.sub), ['Design · 1 question']);
+});

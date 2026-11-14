@@ -1356,7 +1356,7 @@ test('propose_run: shape and assess exist only with the perspective keys', async
   const schemaOf = (deps) => createAskTools({ ...fake, ...deps }).list().find((d) => d.name === 'propose_run').inputSchema;
   const today = schemaOf({});
   assert.deepEqual(Object.keys(today.properties), ['projectKey', 'workspaceId', 'noProject', 'workflowId', 'presetId', 'brief', 'source', 'title', 'guardrailsId', 'tags', 'memoryScope',
-    'engine', 'sourceBranch', 'featureBranch', 'sameAsSource', 'note', 'nodes', 'attachmentIds', 'sourceBranchByKey', 'commentIds',
+    'engine', 'sourceBranch', 'featureBranch', 'sameAsSource', 'note', 'nodes', 'attachmentIds', 'sourceBranchByKey', 'commentIds', 'pr',
     'when', 'every', 'until', 'count', 'overlap', 'maxFailures', 'after', 'afterPolicy', 'sourceFromPrevious'], 'no deps: today\'s schema');
   assert.deepEqual(today.required, ['brief']);
   await checkRows([
@@ -1490,4 +1490,19 @@ test('temp home: list_runs pr and get_run read real pr_url, member PRs and pr_wa
   assert.deepEqual((await real.call('get_run', { id: creator.id })).pr, { url, number: 1069, state: 'OPEN' });
   assert.equal((await real.call('get_run', { id: fixer.id })).fixesPr.number, 1069);
   assert.equal((await real.call('get_run', { id: ws.id, workspaceId: 'wks-pr-0000abcd' })).prs[0].number, 77);
+});
+
+test('read_attachment: a generic binary returns a path on Claude, and neither a path nor a content block on a locked-down engine', async () => {
+  const generic = { name: 'a.zip', kind: 'binary', mime: 'application/octet-stream', bytes: 4096, path: '/home/ask/ask_00000001/att/att_00000009.zip' };
+  const claude = createAskTools({ ...fake, readAttachment: () => generic });
+  const r = await claude.call('read_attachment', { id: 'att_00000009' });
+  assert.deepEqual([r.name, r.kind, r.mime, r.totalBytes, r.path], ['a.zip', 'binary', 'application/octet-stream', 4096, generic.path]);
+  assert.match(r.note, /not an image or a PDF/);
+  const locked = createAskTools({ ...fake, engine: 'codex', chatImages: true, chatPdfs: true, readAttachment: () => generic,
+    readAttachmentBody: () => { throw new Error('a generic body must never be read as media'); } });
+  const l = await locked.call('read_attachment', { id: 'att_00000009' });
+  assert.equal('path' in l, false);
+  assert.deepEqual(Object.getOwnPropertySymbols(l), [], 'no MCP content block');
+  assert.equal(Object.keys(l).includes('content'), false);
+  assert.match(l.note, /not an image or a PDF/);
 });

@@ -1,0 +1,20 @@
+/* ConfirmStrip (docs/rail/components.md) and the text link: moved here once from the prototype's rail.css and shell.css,
+   so the app and the prototype draw them from one rule. */
+.dc-link{padding:0;border:0;background:none;font:inherit;color:var(--ink);text-decoration:underline;text-underline-offset:3px;cursor:pointer;}
+.rc-confirm{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--panel);font-size:var(--fs-body);}
+.pz-page > .rc-confirm{position:sticky;top:8px;z-index:6;}   /* a page with no shell: the strip stays on screen too */
+.rc-confirm-t{color:var(--ink);font-weight:500;}
+.rc-confirm-acts{display:flex;gap:8px;}
+.rc-confirm.is-form{justify-content:flex-start;}
+.rc-confirm.is-form .rc-confirm-t{flex:1 0 100%;}
+.rc-confirm.is-form .input{flex:1 1 220px;min-width:0;}
+.rc-confirm.is-form .select{flex:0 0 auto;width:auto;}
+.rc-confirm.is-form .rc-confirm-acts{margin-left:auto;}
+.rc-confirm-t.is-err{display:flex;flex-direction:column;gap:2px;color:var(--red-ink);}
+.rc-confirm-why{color:var(--ink-2);font-weight:400;font-size:var(--fs-meta);}
+.dc-link[data-c-filter]{color:inherit;text-decoration:none;}
+.dc-link[data-c-filter]:hover{text-decoration:underline;text-underline-offset:2px;}
+.rc-confirm.is-form .fld{flex-direction:column;align-items:stretch;}
+.rc-confirm.is-form .fld>.input{flex:0 0 auto;}
+#rail-strip:empty{display:none;}
+#rail-strip{flex:none;padding:0 16px;}

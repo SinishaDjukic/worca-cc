@@ -79,9 +79,9 @@ test('codexPreflight refusal: ask-error code codex-not-ready, a notice with the 
   assert.equal(err.code, CODEX_NOT_READY_CODE);
   assert.equal(err.message, 'codex is not signed in — run `codex login`');
   const notice = getMessage(s.asst.id).blocks.find((b) => b.kind === 'notice');
-  assert.equal(notice.text, "Codex isn't ready: codex is not signed in — run `codex login`");
+  assert.equal(notice.text, "OpenAI Codex isn't ready: codex is not signed in — run `codex login`");
   assert.equal(notice.href, CODEX_SETUP_DOCS_URL);
-  assert.equal(notice.hrefLabel, 'Codex setup');
+  assert.equal(notice.hrefLabel, 'OpenAI Codex setup');
 });
 
 test('a relayed Codex turn skips the preflight: it would check the server user\'s codex, not the agent user\'s', async () => {

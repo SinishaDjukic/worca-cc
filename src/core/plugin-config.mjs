@@ -17,7 +17,7 @@
 // value never touches disk. Explicitly NOT in worca-cc.db.
 // All functions are sync (contract; callers are the shim + server routes).
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { pluginDataDir } from './plugins-lock.mjs';
 import { writeJsonAtomic } from './json-atomic.mjs';
@@ -100,6 +100,13 @@ function files(name) {
     // Ticket updates (plans/ticket-updates-design.md §4): Worca's own record per profile and task source, never a connector's.
     ticketUpdates: join(dir, 'ticket-updates.json'),
   };
+}
+
+/** Changes whenever a plugin's profiles, configuration or secrets are saved (each write is a new file: modified time and size). For a
+ *  caller that keeps an answer made through those settings and must drop it when they change; reads nothing, never throws. */
+export function configStamp(name) {
+  const f = files(name);
+  return [f.profiles, f.config, f.secrets].map((p) => { try { const s = statSync(p); return `${s.mtimeMs}:${s.size}`; } catch { return '-'; } }).join('|');
 }
 
 // ── profiles ──────────────────────────────────────────────────────────────────

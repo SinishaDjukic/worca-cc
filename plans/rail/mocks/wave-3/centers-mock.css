@@ -1,0 +1,66 @@
+/* The tasks and schedules center mocks: page frame only. */
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);}
+#m{position:relative;width:1440px;}
+.strip{height:30px;display:flex;align-items:center;padding:0 16px;box-sizing:border-box;font:500 12px/1 var(--sans);color:var(--ink-2);border-bottom:1px solid var(--line);}
+#m #worca{height:auto;min-height:870px;align-items:stretch;}
+#m #side-rail{position:relative;height:auto;overflow:visible;z-index:20;}
+#m #side-rail .brand{overflow:visible;}
+#m .main-col{min-height:0;height:auto;}
+#m .main{overflow:visible;height:auto;padding:30px 0 48px;}
+#m .center{width:720px;max-width:720px;}
+#m .center .rc-figs{gap:4px 28px;}
+#m .note{margin:6px 0 0;font-size:var(--fs-meta);line-height:1.5;color:var(--ink-3);}
+#m .bar-head .rc-pop{position:relative;}
+#m .bar-head .rc-pop .menu{position:absolute;top:30px;left:0;right:auto;min-width:190px;z-index:30;}
+#m .viewer-modal{position:absolute;inset:30px 0 0;align-items:flex-start;display:flex;justify-content:center;padding-top:40px;box-sizing:border-box;}
+#m .viewer-modal .card{width:640px;max-height:none;}
+#m .viewer-modal .dlg-body{max-height:none;overflow:visible;}
+.frame{margin:0 0 14px;font-size:var(--fs-body);line-height:1.9;color:var(--ink-2);}
+.lines{display:grid;gap:8px;margin:14px 0 0;font-size:var(--fs-body);color:var(--ink-2);line-height:1.7;}
+.lines b{font-weight:500;color:var(--ink);}
+.sub{margin:18px 0 6px;font:600 var(--fs-meta)/1.3 var(--sans);color:var(--ink);}
+.proof{margin:6px 0 0;font-size:var(--fs-meta);color:var(--ink-3);}
+.seg-l{margin:0 0 12px;}
+
+/* a still picture: no pulse caught half way */
+#m .kind-mark{animation:none;opacity:1;}
+/* what needs you: the tint runs the whole row, end column included, on the one rail */
+#m .list-row:has(> .lr-rail > .kind-mark.is-breathe){position:relative;isolation:isolate;}
+#m .list-row:has(> .lr-rail > .kind-mark.is-breathe) > .lr-main::before{display:none;}
+#m .list-row:has(> .lr-rail > .kind-mark.is-breathe)::before{content:'';position:absolute;inset:0 -8px;z-index:-1;border-radius:var(--r-sm);background:color-mix(in srgb,var(--attn,var(--amber)) 11%,transparent);}
+
+.fold{display:flex;align-items:center;gap:8px;width:100%;margin:14px 0 0;padding:8px 0 0;border:0;border-top:1px solid var(--line);background:none;color:var(--ink-2);font:inherit;font-size:var(--fs-meta);text-align:left;cursor:pointer;}
+.fold b{font-weight:600;color:var(--ink);}
+.lbl-line{position:relative;}
+.lbl-line .seg{position:absolute;right:0;top:-6px;}
+.lbl-line .seg button{height:24px;padding:0 10px;font-size:var(--fs-meta);}
+#m .seg button[aria-pressed="true"]{background:var(--line-2);}
+.fold b{white-space:nowrap;}
+
+.acts{display:inline-flex;gap:6px;margin-left:auto;align-items:center;}
+#m .list-row.tint-ok{position:relative;isolation:isolate;}
+#m .list-row.tint-ok::before{content:'';position:absolute;inset:0 -8px;z-index:-1;border-radius:var(--r-sm);background:color-mix(in srgb,var(--green) 11%,transparent);}
+#m .center .lr-end{padding-right:0;margin-right:0;}
+.way{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+.way a{color:var(--ink);text-decoration:underline;text-underline-offset:3px;}
+/* dialogs: one gap */
+#m .dlg-body{display:flex;flex-direction:column;gap:16px;}
+#m .dlg-body > *{margin:0;}
+.fr-w{display:grid;gap:2px;}
+.fr-w .frame{margin:0;line-height:1.75;}
+.fr-w .proof{margin:0;}
+.when{font-size:var(--fs-body);color:var(--ink-2);line-height:1.75;}
+.when .proof{margin:2px 0 0;}
+#m .dlg-body .fold{margin:0;padding-top:10px;}
+
+.sent{display:flex;gap:6px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);}
+#m .pg-card .rc-figs{grid-column:2;gap:2px 12px;font-size:var(--fs-meta);}
+#m .pg-card .rc-figs b{font-size:var(--fs-body);margin-left:4px;}
+.runs{grid-column:2;display:flex;align-items:center;gap:3px;font-size:var(--fs-meta);color:var(--ink-2);margin:2px 0;}
+.runs i ~ span{margin-left:5px;}
+.runs i{width:9px;height:9px;border-radius:2px;box-sizing:border-box;}
+.runs .is-ok{background:var(--green);} .runs .is-fail{background:var(--red);}
+.runs .is-run{border:1.5px solid var(--ink-2);} .runs .is-miss{border:1.5px solid var(--amber);}
+
+#m .pg-card .pg-w a{color:inherit;text-decoration:underline;text-underline-offset:2px;}
+.runs a{color:inherit;text-decoration:underline;text-underline-offset:2px;}

@@ -78,12 +78,11 @@ test('attach: a picked file becomes a chip, × removes it, Send carries it befor
   assert.deepEqual(fileChips(h), [], 'sent files leave the composer');
 });
 
-test('attach: a refused type says so in the composer line', async () => {
+test('attach: any file type attaches', async () => {
   const { route } = rig();
   const h = await bootSidebar({ storage: STORE, route });
   await pickFiles(h, [new h.win.File(['x'], 'tool.exe')]);
-  assert.match(h.$('.ask-composer-msg').textContent, /attachment type not allowed: tool\.exe/);
-  assert.equal(h.$('.ask-composer-msg').hidden, false);
+  assert.equal(fileChips(h).length, 1);
 });
 
 test('model: the popover lists the catalog; a pick relabels the button, is stored and PATCHes the open thread', async () => {
@@ -416,15 +415,15 @@ test('#943: a chat that has run names its engine, offers only that engine\'s mod
   const h = await bootSidebar({ storage: STORE, route });
   await h.change(h.$('.chat-head select[aria-label="Chat"]'), TID);
   assert.equal(h.$('.ask-model-btn').dataset.engine, 'codex');
-  assert.equal(h.$('.ask-model-btn-engine').textContent, 'Codex', 'the engine is on the button in text');
+  assert.equal(h.$('.ask-model-btn-engine').textContent, 'OpenAI Codex', 'the engine is on the button in text');
   await h.click(h.$('.ask-model-btn'));
-  assert.deepEqual(h.$$('.ask-pop-model .ask-pop-group').map((g) => g.textContent), ['Codex (beta) · this chat']);
+  assert.deepEqual(h.$$('.ask-pop-model .ask-pop-group').map((g) => g.textContent), ['OpenAI Codex (beta) · this chat']);
   assert.deepEqual(h.$$('.ask-pop-model .ask-model-name').map((n) => n.textContent), ['GPT-5.5']);
   assert.match(h.$('.ask-pop-model .ask-pop-empty').textContent, /use the model picker in Chat/);
   h.sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'ask-engine', threadId: TID, engine: 'claude', model: 'claude-opus-5-5', effort: 'high' }) });
   await h.flush();
   assert.equal(h.$('.ask-model-btn-label').textContent, 'Opus 5.5');
   assert.equal(h.$('.ask-model-btn').dataset.engine, 'claude');
-  assert.equal(h.$('.ask-model-btn-engine').textContent, 'Claude');
-  assert.deepEqual(h.$$('.ask-pop-model .ask-pop-group').map((g) => g.textContent), ['Claude · this chat'], 'the open menu now lists the new engine');
+  assert.equal(h.$('.ask-model-btn-engine').textContent, 'Claude Code');
+  assert.deepEqual(h.$$('.ask-pop-model .ask-pop-group').map((g) => g.textContent), ['Claude Code · this chat'], 'the open menu now lists the new engine');
 });

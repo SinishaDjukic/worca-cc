@@ -25,7 +25,7 @@ test('addsRows: one row per contribution in kind order, the canvas meta line per
     ['taskSources', 'GitHub Issues', false, 'Task source · github', false],
     ['chatChannels', 'Telegram', false, 'Chat channel · tg · outbound', true],
     ['mcpServers', 'jira', true, 'MCP server · stdio · node <plugin-dir>/mcp/jira.mjs', false],
-    ['models', 'DS fast', false, 'Model · ds-fast · Codex · routes to https://llm.example/v1', false],
+    ['models', 'DS fast', false, 'Model · ds-fast · OpenAI Codex · routes to https://llm.example/v1', false],
     ['models', 'plain', false, 'Model · plain', false],
     ['agents', 'triager', true, 'Agent · tools: Bash, Read · 1 form: review · may display md from the run folder', false],
     ['agents', 'quiet', true, 'Agent · tools: none declared', false],

@@ -52,7 +52,7 @@ test('src/shared/** is non-empty (required core files exist) and pure, relative-
 });
 
 test('ui/public leaves the static root only into src/shared, at the URL the mount serves', () => {
-  for (const f of walk(PUBLIC)) {
+  for (const f of walk(PUBLIC).filter((x) => !x.includes(path.sep + 'stillhet' + path.sep))) {   // stillhet/graph/graph-entry.mjs is an esbuild entry (bundled, never served), and the prototype's code has its own gates
     for (const s of specs(readFileSync(f, 'utf8'))) {
       if (/^https?:|^\/vendor\//.test(s)) continue;
       assert.match(s, /^\.\.?\//, `${f}: "${s}" must be relative (absolute specifiers break Node)`);

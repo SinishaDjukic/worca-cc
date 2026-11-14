@@ -323,7 +323,7 @@ export default async function () {
 
 test('shell runtime: exit 0 clean, exit 1 blocking with a synthesized major issue and the report, exit 2 an error, streamed lines interleaved', async () => {
   const cmdOf = (code, lines = '') => `${NODE} -e "${lines}process.exit(${code})"`;
-  const cleanCtx = ctxFor({ meta: shellMeta(), params: { command: cmdOf(0, 'console.log(1);console.error(2);console.log(3);') }, ports: { ...PORTS, outputs: PORTS.outputs.filter((o) => o.id !== 'report') } });
+  const cleanCtx = ctxFor({ meta: shellMeta(), params: { command: cmdOf(0, 'console.log(\'1\');console.error(\'2\');console.log(\'3\');') }, ports: { ...PORTS, outputs: PORTS.outputs.filter((o) => o.id !== 'report') } });
   const clean = await runScriptExecution(cleanCtx);
   assert.equal(clean.exitCode, 0);
   assert.equal(clean.runtime, 'shell');

@@ -70,8 +70,16 @@ test('commandSummaries is a beta flag, on by default (#911)', () => {
   assert.equal(f.docs, 'docs/feature-flags.md');
 });
 
-test('shapeRequirements is an experimental Labs flag, off by default, documented with the Shaper', () => {
-  const f = FLAGS.find((x) => x.key === 'shapeRequirements');
-  assert.ok(f, 'shapeRequirements is registered');
-  assert.deepEqual([f.stage, f.default, f.added, f.reviewBy, f.docs], ['experimental', false, '2026-11-05', '2027-02-01', 'docs/shape-it-first.md']);
+test('design is a beta flag, on by default, documented, with its window restarted', () => {
+  const f = flagByKey('design');
+  assert.deepEqual([f.stage, f.default, f.docs], ['beta', true, 'docs/design.md']);
+  assert.match(f.extendedOn, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(f.extendedOn > f.added, 'the move to beta restarts the review window');
+  assert.ok(typeof f.extendReason === 'string' && f.extendReason.trim(), 'the restart says why');
+});
+
+test('proposedPerspectives: an experimental flag, off by default, reviewed within 90 days', () => {
+  const f = flagByKey('proposedPerspectives');
+  assert.deepEqual([f.title, f.stage, f.default, f.owner, f.added, f.reviewBy, f.docs],
+    ['Proposed perspectives', 'experimental', false, 'e-angelov', '2026-11-14', '2027-02-11', 'docs/feature-flags.md']);
 });

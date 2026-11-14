@@ -185,6 +185,8 @@ const AFTER_ROWS = {
   aaaa: { kind: 'ticket', id: 'aaaa', title: 'Tests', status: 'scheduled', pipelineId: null, projectKey: 'proj-1', workspaceId: null, scheduleId: null },
   e1: { kind: 'pipeline', id: 'e1', title: 'Broken', status: 'error', pipelineId: 'e1', projectKey: 'proj-1', workspaceId: null, scheduleId: null },
   c1: { kind: 'ticket', id: 'c1', title: 'Gone', status: 'canceled', pipelineId: null, projectKey: 'proj-1', workspaceId: null, scheduleId: null },
+  i1: { kind: 'pipeline', id: 'i1', title: 'Slice 1', status: 'interrupted', resumable: true, pipelineId: 'i1', projectKey: 'proj-1', workspaceId: null, scheduleId: null },
+  i2: { kind: 'pipeline', id: 'i2', title: 'Swept', status: 'interrupted', resumable: false, pipelineId: 'i2', projectKey: 'proj-1', workspaceId: null, scheduleId: null },
 };
 const afterRef = (id) => AFTER_ROWS[id] || null;
 
@@ -216,6 +218,11 @@ test('run chains: after a run id (refusals), sourceFromPrevious vs a branch, a m
       assert.deepEqual(resolveScheduleSpec({ after: 'e1' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).errors, ['after: ‘Broken’ ended with an error — nothing to wait for']);
       assert.equal(resolveScheduleSpec({ after: 'e1', afterPolicy: 'any' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).ok, true, 'any: an ended run is fine');
       assert.deepEqual(resolveScheduleSpec({ after: 'c1', afterPolicy: 'any' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).errors, ['after: ‘Gone’ was canceled — nothing to wait for'], 'a ticket that ended is refused under either policy');
+      // An interrupted run that can resume is waited for (it has not ended); one with no resume point ended.
+      const parked = resolveScheduleSpec({ after: 'i1', sourceFromPrevious: true, projectKey: 'proj-1' }, { nowMs: NOW, timeZone: 'UTC', afterRef });
+      assert.deepEqual(parked, { ok: true, schedule: { kind: 'after', after: { kind: 'pipeline', id: 'i1', title: 'Slice 1', status: 'interrupted' }, policy: 'done', sourceFromPrevious: true, text: 'After ‘Slice 1’ finishes' } });
+      assert.deepEqual(resolveScheduleSpec({ after: 'i2' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).errors, ['after: ‘Swept’ was interrupted — nothing to wait for']);
+      assert.equal(resolveScheduleSpec({ after: 'i2', afterPolicy: 'any' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).ok, true, 'any: an ended run is fine');
     } },
     { name: 'propose_run refuses sourceFromPrevious together with a branch; the card carries the after schedule', run: async () => {
       const v = createProposalValidator({

@@ -7,7 +7,7 @@ import { migrate, SCHEMA_VERSION } from '../src/core/db.mjs';
 
 const cols = (db, t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
 const COLS = ['id', 'feature_seq', 'role', 'text', 'focus_json', 'round_turn_id', 'drafts_json', 'proposals_json', 'error_json',
-  'cost_usd', 'model', 'created_by', 'created_at', 'updated_by', 'updated_at'];
+  'cost_usd', 'model', 'created_by', 'created_at', 'updated_by', 'updated_at', 'engine', 'notices_json'];   // engine, notices_json: v89
 const version = (db) => db.prepare('PRAGMA user_version').get().user_version;
 const hasIndex = (db, name) => db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='index' AND name=?").get(name).n === 1;
 

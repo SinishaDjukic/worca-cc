@@ -30,6 +30,10 @@
   column-gap:24px;align-items:center;padding:8px 20px;cursor:default;}
 #projects-list .pl-main{grid-area:proj;min-width:0;}
 #projects-list .pl-name{font-weight:600;font-size:var(--fs-body);letter-spacing:-.01em;color:var(--ink);overflow-wrap:anywhere;}
+#projects-list .pl-title{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-width:0;}
+#projects-list .pl-title .pl-name{min-width:0;}
+#projects-list .pl-rd-slot{display:inline-flex;}
+#projects-list .pl-rd-slot:empty{display:none;}
 #projects-list .proj-path{margin-top:2px;word-break:normal;overflow-wrap:anywhere;}
 #projects-list .pl-sync{grid-area:sync;min-width:0;container:ps / inline-size;}
 #projects-list .pl-sync:not(:has(> .proj-sync:not([hidden]), > .proj-nogit)){display:none;}

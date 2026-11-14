@@ -30,7 +30,7 @@ const PRESETS = [
 const KINDS = [['time', 'At a time'], ['after', 'After a run']];
 const AFTER_STATE_WORD = { running: 'running', starting: 'starting', created: 'starting', pausing: 'pausing', paused: 'paused',
   scheduled: 'scheduled', firing: 'starting', missed: 'missed', fired: 'starting',
-  done: 'finished', error: 'ended with an error', stopped: 'stopped', interrupted: 'interrupted', canceled: 'canceled',
+  done: 'finished', error: 'ended with an error', stopped: 'stopped', interrupted: 'interrupted, waits for a Resume', canceled: 'canceled',
   failed: 'could not start', skipped: 'skipped' };
 /** How a repeating rule fills its day: one time, a list of times, or every N minutes/hours. */
 const DAY_PLANS = [['time', 'Once'], ['times', 'At set times'], ['step', 'Every few minutes or hours']];

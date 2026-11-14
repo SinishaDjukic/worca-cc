@@ -890,3 +890,120 @@ test('chat context: replyTo/history/attachments cross the child; a refused or ov
     (e) => e.permanent === true && /not interactive/.test(e.message));
   await host.stop();
 });
+
+test('worker file fetch (fake spawn): chunks assembled in order; the host cuts a worker off at maxBytes; out-of-order, short, refused or silent answers fail', async () => {
+  const { host, spawned } = makeFakeHost();
+  host.start();
+  const p = spawned[0];
+  p.stdout.write(frameLine({ type: 'ready', identity: '@bot' }));
+  await new Promise((r) => setTimeout(r, 20));
+  const REF = 'A'.repeat(24);
+  const ask = (o = {}) => host.fetchFile({ plugin: NAME, channelId: 'main', ref: REF, maxBytes: 10, timeoutMs: 1000, ...o });
+  const lastFile = async () => { await new Promise((r) => setTimeout(r, 10)); return JSON.parse(p.stdin.written.filter((l) => l.includes('"type":"file"')).at(-1)); };
+  const chunk = (id, seq, s) => p.stdout.write(frameLine({ type: 'file-chunk', id, seq, dataB64: Buffer.from(s).toString('base64') }));
+  const result = (id, body) => p.stdout.write(frameLine({ type: 'send-result', id, ...body }));
+
+  let pr = ask();
+  let f = await lastFile();
+  assert.deepEqual([f.ref, f.maxBytes, f.timeoutMs], [REF, 10, 1000]);
+  chunk(f.id, 0, 'abc'); chunk(f.id, 1, 'de');
+  result(f.id, { ok: true, detail: { bytes: 5, chunks: 2, contentType: 'text/plain' } });
+  assert.deepEqual(await pr, { buf: Buffer.from('abcde'), contentType: 'text/plain' });
+
+  pr = ask();
+  f = await lastFile();
+  chunk(f.id, 0, '123456'); chunk(f.id, 1, '7890X');            // 11 bytes > 10: settled at once
+  assert.deepEqual(await pr, { tooBig: true });
+  chunk(f.id, 2, 'late'); result(f.id, { ok: true, detail: { bytes: 15, chunks: 3 } });   // dropped: nothing pending
+
+  pr = ask();
+  f = await lastFile();
+  chunk(f.id, 1, 'b');
+  await assert.rejects(pr, (e) => e.kind === 'protocol' && /out of order/.test(e.message));
+
+  for (const detail of [{ bytes: 5, chunks: 1 }, { bytes: 2, chunks: 2 }]) {   // the byte count, then the chunk count disagrees
+    pr = ask();
+    f = await lastFile();
+    chunk(f.id, 0, 'ab');
+    result(f.id, { ok: true, detail });
+    await assert.rejects(pr, (e) => e.kind === 'protocol' && /incomplete file/.test(e.message), JSON.stringify(detail));
+  }
+
+  // The worker's own send-result cannot pose as a host verdict on its chunks: top-level `tooBig` / `bad` are ignored.
+  pr = ask();
+  f = await lastFile();
+  chunk(f.id, 0, 'ab');
+  result(f.id, { ok: true, tooBig: true, bad: 'sekret text the host never logs', detail: { bytes: 2, chunks: 1 } });
+  assert.deepEqual(await pr, { buf: Buffer.from('ab'), contentType: null });
+
+  // A file-chunk naming another RPC's id (a send) is ignored: that RPC still settles on its own send-result.
+  const sent = host.sendMessage({ plugin: NAME, channelId: 'main', chatId: 'A', message: MSG, timeoutMs: 2000 });
+  await new Promise((r) => setTimeout(r, 10));
+  const s = JSON.parse(p.stdin.written.filter((l) => l.includes('"type":"send"')).at(-1));
+  chunk(s.id, 0, 'x');
+  result(s.id, { ok: true });
+  assert.deepEqual(await sent, { ok: true });
+
+  pr = ask();
+  f = await lastFile();
+  result(f.id, { ok: false, error: { kind: 'plugin', message: 'Slack refused the file for sekret', permanent: true } });
+  await assert.rejects(pr, (e) => e.permanent === true && !e.message.includes('sekret') && e.message.includes('<redacted>'));
+
+  pr = ask();
+  f = await lastFile();
+  result(f.id, { ok: false, error: { kind: 'plugin', message: 'file is over the size limit', tooBig: true, permanent: true } });
+  assert.deepEqual(await pr, { tooBig: true });
+
+  const t0 = Date.now();
+  await assert.rejects(ask(), (e) => e.kind === 'timeout');      // nobody answers: the host's own deadline
+  assert.ok(Date.now() - t0 < 4000);
+
+  const before = p.stdin.written.length;
+  for (const bad of [{ ref: 'nope' }, { maxBytes: 0 }, { maxBytes: 200 * 1024 * 1024 }]) {
+    await assert.rejects(ask(bad), (e) => e.permanent === true && /invalid file request/.test(e.message), JSON.stringify(bad));
+  }
+  assert.equal(p.stdin.written.length, before, 'an invalid request writes no frame');
+  endWorkers(spawned);
+  await host.stop();
+});
+
+const FILE_WORKER = [
+  'export function createChannelWorker(ctx) {',
+  '  return {',
+  "    async start() { return { identity: 'fixture-bot' }; },",
+  '    async stop() {},',
+  '    async send() { return { ok: true }; },',
+  '    async fetchFile(ref, { maxBytes }) {',
+  "      if (ref === 'L'.repeat(24)) return { data: Buffer.alloc(1300000, 7), contentType: 'image/png' };",
+  "      if (ref === 'B'.repeat(24)) return { data: Buffer.alloc(maxBytes + 1) };",
+  "      if (ref === 'N'.repeat(24)) { const e = new Error('missing scope files:read with ' + ctx.config.token); e.kind = 'plugin'; e.permanent = true; throw e; }",
+  "      return { data: Buffer.from('# hi') };",
+  '    },',
+  '  };',
+  '}',
+].join('\n');
+
+test('worker file fetch (real child): 1.3 MB crosses as 3 chunks; the child refuses over maxBytes; errors are redacted; no fetchFile = permanent', async () => {
+  installFixture({ worker: FILE_WORKER });
+  let host = createChannelHost({ logger: () => {} });
+  const ask = (ref, maxBytes = 2 * 1024 * 1024) => host.fetchFile({ plugin: NAME, channelId: 'main', ref, maxBytes, timeoutMs: 5000 });
+  try {   // a red row must not leave a real child running: the file would never exit
+    host.start();
+    await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+    const big = await ask('L'.repeat(24));
+    assert.equal(big.buf.length, 1300000);
+    assert.ok(big.buf.every((b) => b === 7));
+    assert.equal(big.contentType, 'image/png');
+    assert.deepEqual(await ask('B'.repeat(24), 100), { tooBig: true });
+    await assert.rejects(ask('N'.repeat(24)), (e) => e.permanent === true && !e.message.includes('sekret') && e.message.includes('<redacted>'));
+    assert.deepEqual(await ask('S'.repeat(24)), { buf: Buffer.from('# hi'), contentType: null });
+  } finally { await host.stop(); }
+
+  installFixture();                                  // the plain fixture worker has no fetchFile()
+  host = createChannelHost({ logger: () => {} });
+  try {
+    host.start();
+    await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+    await assert.rejects(ask('S'.repeat(24)), (e) => e.permanent === true && /cannot download files/.test(e.message));
+  } finally { await host.stop(); }
+});

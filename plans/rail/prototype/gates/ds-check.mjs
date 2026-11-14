@@ -3,21 +3,23 @@
 // a colour, type size, corner or shadow that is not a token, and a token that does not exist; and, on every case of
 // every page, an inline style that sets a look (not layout or data), a class no stylesheet styles, and a control that
 // is not one of the design system's. A line marked `ds-ok: <reason>` is a known exception.
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { APP_CSS, writeAppCss } from './app-css.mjs';
-import { writeComponentsJs } from './components-js.mjs';
+import { indexUrl, pageUrl, buildBundles } from './target.mjs';
+import { APP_CSS } from './app-css.mjs';
 import { ALIGN } from './align-check.mjs';
-writeAppCss();   // the app's CSS, assembled from its parts
-writeComponentsJs();   // the Rail components, bundled for file://
+import { scanText } from '../../../../tools/rail-gate.mjs';
+buildBundles();   // the app's CSS and the Rail components for file:// (target.mjs)
 const here = (f) => fileURLToPath(new URL('../' + f, import.meta.url));   // the prototype's root
-const SHEETS = ['design-system/rail-look.css', 'design-system/rail.css', 'pulse/pulse.css'];
-const ALL = [APP_CSS, ...SHEETS.map(here), here('run-page.html'), here('pulse.html')];
-const SCRIPTS = ['runs/run-page.js', 'pulse/pulse.js', 'runs/run-page-model.js', 'pulse/pulse-model.js', 'settings/settings.js', 'settings/settings-model.js'].map(here);
+const shared = (f) => fileURLToPath(new URL('../../../../ui/public/stillhet/' + f, import.meta.url));   // the shared Stillhet code
+const SHEETS = ['css/rail-look.css', 'css/rail.css', 'pulse/pulse.css'];
+const ALL = [APP_CSS, ...SHEETS.map(shared), shared('shell/shell.css'), ...readdirSync(here('.')).filter((f) => f.endsWith('.html')).map(here)];
+const FOLDERS = ['runs', 'pulse', 'settings', 'shell', 'chat', 'schedules', 'projects', 'workflows', 'requirements', 'marketplace', 'insights', 'workspaces'];
+const SCRIPTS = FOLDERS.flatMap((d) => readdirSync(shared(d)).filter((f) => f.endsWith('.js')).map((f) => shared(`${d}/${f}`)));
 const issues = new Map(); const add = (k, where) => { if (!issues.has(k)) issues.set(k, new Set()); issues.get(k).add(where); };
 
-// Every control a page may draw, by the design-system component it belongs to (docs/design-system.md › Which component).
+// Every control a page may draw, by the design-system component it belongs to (docs/rail/components.md).
 // A <button> that is not .btn must match one of these; anything else is a control the design system does not have.
 const CONTROLS = {
   Button: '.btn',
@@ -30,8 +32,17 @@ const CONTROLS = {
   Switch: '.switch, .sw-item',
   TagGroup: '.rc-tags-mark, .rc-tag-x',
   OptionList: '.sc-ans-opt',
+  WorkflowGraph: '.wg-node',
   SideMenu: '.side-i',
+  'List by date': '.list-h-b',
   ListRow: '.lr-main, .row-btn, .sc-step, .ch-row, .st-head, .pz-nav-i, .pz-acct, .sc-loop.is-btn',
+  FigureRows: '.fr-row',
+  TurnRow: '.tr-line',
+  BarHead: '.bar-house',
+  BarStrip: '.bar-strip-i',
+  InView: '.in-view-i, .in-view-x',
+  StagePart: '.stage-part-b',
+  Timeline: '.tl-tick',
   'Text link': '.rc-fig-link, .rc-crumb, .rc-branch, .dc-link, .ov-art-name, .rl-back',
 };
 const CONTROL_SEL = Object.values(CONTROLS).join(', ');
@@ -46,7 +57,7 @@ for (const f of ALL) {
 for (const f of SCRIPTS) for (const m of readFileSync(f, 'utf8').matchAll(/(--[a-z][a-z0-9-]*)\s*:/g)) tokens.add(m[1]);   // set inline from data
 const SCALE = new Set([11, 12, 13, 15, 18, 22, 32]);
 for (const name of SHEETS) {
-  readFileSync(here(name), 'utf8').split('\n').forEach((line, i) => {
+  readFileSync(shared(name), 'utf8').split('\n').forEach((line, i) => {
     if (/ds-ok:/.test(line)) return;
     const at = `${name}:${i + 1}`;
     const code = line.replace(/\/\*.*?\*\//g, '').replace(/url\([^)]*\)/g, '');
@@ -63,32 +74,19 @@ for (const name of SHEETS) {
 }
 
 // --- the components ---
-// A page built from the components (ui/public/design-system/components/) writes none of their markup by hand: the
-// component brings it, so a fix or an upgrade reaches every page. BUILT lists the pages moved onto them; the others
-// move one at a time and join the list.
-const BUILT = ['runs/run-page.js', 'settings/settings.js'];
-const OWN = {
-  Button: /class="btn[ "]/, CompactMenu: /class="menu"/, StatusLine: /class="status-dot[ "]/, ConfirmStrip: /class="rc-confirm"/,
-  Tabs: /class="(tabs|tab)[ "]/, Segmented: /class="seg"/, Figures: /class="(rc-figs|rc-fig-link)[ "]/, Toast: /class="(rc-toast|toasts)[ "]/,
-  EmptyState: /class="empty-line[ "]/, 'Text link': /class="dc-link"/,
-  SettingsRow: /class="(set-row|set-rows|set-foot)[ "]/, SettingsSection: /class="set-sec[ "]/, SentencePicker: /class="spick[ "]/, Switch: /class="switch[ "]/,
-  ListRow: /class="(list-row|list|lr-main)[ "]/, Dialog: /class="viewer-modal[ "]/, Field: /class="fld[ "]/, SideMenu: /class="side-menu/, Search: /class="rl-search/, BackLink: /class="rl-back"/, Trail: /class="rc-crumbs"/, Pager: /class="rc-pager"/,
-};
-for (const name of BUILT) {
-  readFileSync(here(name), 'utf8').split('\n').forEach((line, i) => {
-    if (/ds-ok:/.test(line)) return;
-    for (const [c, re] of Object.entries(OWN)) if (re.test(line)) add('markup a component builds, written by hand (use the component)', `${name}:${i + 1} ${c}`);
-  });
-}
+// Every page writes none of their markup by hand: the component brings it, so a fix or an upgrade reaches every page.
+// The list reads itself: every script of every feature folder, by the same scan as npm test (tools/rail-gate.mjs).
+const PAGES_JS = FOLDERS.flatMap((d) => readdirSync(shared(d)).filter((f) => f.endsWith('.js')).map((f) => `${d}/${f}`));
+for (const name of PAGES_JS) for (const [c, n] of Object.entries(scanText(readFileSync(shared(name), 'utf8')))) add('markup or logic the library owns, written by hand (use the library)', `${name} ${c} × ${n}`);
 
-// --- names: a page, a menu item, a section head, a settings row (docs/design-system.md › Small rules › Names) ---
+// --- names: a page, a menu item, a section head, a settings row (docs/rail/small-rules.md) ---
 const NAMES = () => {
   const out = [];
-  const sel = '.pz-title, .side-menu .side-l, .set-sec-h, .set-name, .list-h, .dlg-title, .rc-tabs .tab';
+  const sel = '.pz-title, .side-menu .side-l, .set-sec-h, .set-name, .list-h, .dlg-title, .rc-tabs .tab, .menu-item:not(.pz-team) .mi-lbl';   // .pz-team is a notice, in the app's own words
   for (const e of document.querySelectorAll(sel)) {
     if (!e.offsetParent) continue;
     const t = (e.childNodes[0]?.textContent || e.textContent).trim();
-    if (!t) continue;
+    if (!t || t === 'Usage and costs') continue;   // small-rules: one thing, not two joined
     const why = /&| and /.test(t) ? 'joins two things' : /^(Your|My|This) /.test(t) ? 'starts with Your, My or This'
       : /\?$/.test(t) ? 'is a question' : /^(What|How|When|Where|Which|Up) /.test(t) ? 'is a phrase, not a name' : t.split(/\s+/).length > 3 && !e.matches('.dlg-title') ? 'is more than 3 words' : '';
     if (why) out.push(`"${t}" ${why}`);
@@ -96,7 +94,7 @@ const NAMES = () => {
   return out;
 };
 
-// --- heads: never smaller or weaker than what they head (docs/design-system.md › Type roles) ---
+// --- heads: never smaller or weaker than what they head (docs/rail/look.md) ---
 // A head is a step larger than its items (a page's sections), or the same size, heavier and in --ink (a list's or a
 // menu's groups).
 const HEADS = () => {
@@ -112,22 +110,11 @@ const HEADS = () => {
 };
 
 // --- the pages ---
-const b = await chromium.launch({ channel: 'chrome' });
-const OPEN = ['break:part', 'break:background', 'break:offline', '[data-pop]', '[data-acct]', '[data-newrun]', '[data-key="act-main"]', '[data-menu]', '.rc-tabs .tab:nth-child(2)', '.rc-tabs .tab:nth-child(3)', '.rc-tabs .tab:nth-child(4)', '.rc-tabs .tab:nth-child(5)'];
-for (const page of ['run-page.html', 'pulse.html']) {
-  const p = await b.newPage({ viewport: { width: 900, height: 900 } });
-  p.on('pageerror', (e) => add('script error', String(e)));
-  await p.goto('file://' + here(page));
-  const cases = await p.evaluate(() => [...document.querySelectorAll('#case option')].map((o) => o.value));
-  for (const c of cases) for (const o of [null, ...OPEN]) {
-    await p.selectOption('#case', cases[(cases.indexOf(c) + 1) % cases.length]); await p.selectOption('#case', c);
-    if (o && o.startsWith('break:')) { if (!(await p.$('#break'))) continue; await p.selectOption('#break', o.slice(6)); }   // the error cases
-    else if (o) { const hit = await p.evaluate((s) => { const x = document.querySelector(s); x?.click(); return !!x; }, o); if (!hit) continue; }
-    const found = await p.evaluate(([CONTROL_SEL, known]) => {
+const READ = ([CONTROL_SEL, known]) => {
       const out = []; const known_ = new Set(known);
       const root = document.querySelector('.mk-wrap, .pz-app') ? document.body : document.body;
       for (const e of root.querySelectorAll('*')) {
-        if (e.closest('.mk-bar, .mk-intro, .mk-proposed, svg')) continue;
+        if (e.closest('.mk-bar, .mk-intro, .mk-proposed, .mk-tools, #route-today, #side-rail, #topnav, svg')) continue;
         const st = e.getAttribute('style') || '';
         if (/#[0-9a-f]{3,8}\b|\b(rgba?|hsla?)\(/i.test(st)) out.push(['an inline colour', e.className + ': ' + st]);
         if (/(font|padding|margin|border|radius|shadow|color|background)[^:]*:\s*[^;]*\d+px/i.test(st)) out.push(['an inline style that sets a look', e.className + ': ' + st]);
@@ -136,12 +123,39 @@ for (const page of ['run-page.html', 'pulse.html']) {
         if (e.tagName === 'BUTTON' && /^[×+▾✕✓]$/.test(e.textContent.trim())) out.push(['a typed icon (use the line icon)', e.className + ' "' + e.textContent.trim() + '"']);
       }
       return out;
-    }, [CONTROL_SEL, [...classes]]);
+    };
+const b = await chromium.launch({ channel: 'chrome' });
+const OPEN = ['break:part', 'break:background', 'break:offline', '[data-pop]', '[data-acct]', '[data-newrun]', '[data-key="act-main"]', '[data-menu]', '.rc-tabs .tab:nth-child(2)', '.rc-tabs .tab:nth-child(3)', '.rc-tabs .tab:nth-child(4)', '.rc-tabs .tab:nth-child(5)'];
+for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f !== 'components.html')) {
+  const p = await b.newPage({ viewport: { width: 900, height: 900 } });
+  await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });   // the gates walk every place: Expert
+  p.on('pageerror', (e) => add('script error', String(e)));
+  await p.goto(pageUrl(page, here(page)));
+  const cases = page === 'index.html' ? [] : await p.evaluate(() => [...document.querySelectorAll('#case option')].map((o) => o.value));   // the one Worca's pages are read by route, below
+  for (const c of cases) for (const o of [null, ...OPEN]) {
+    await p.selectOption('#case', cases[(cases.indexOf(c) + 1) % cases.length]); await p.selectOption('#case', c);
+    if (o && o.startsWith('break:')) { if (!(await p.$('#break'))) continue; await p.selectOption('#break', o.slice(6)); }   // the error cases
+    else if (o) { const hit = await p.evaluate((s) => { const x = document.querySelector(s); x?.click(); return !!x; }, o); if (!hit) continue; }
+    const found = await p.evaluate(READ, [CONTROL_SEL, [...classes]]);
     for (const [k, wh] of found) add(k, `${page}: ${wh}`);
     for (const m of await p.evaluate(ALIGN)) add('misaligned (the components own alignment)', `${page} ${c}: ${m}`);
     for (const m of await p.evaluate(NAMES)) add('a name against the naming rule', `${page}: ${m}`);
     for (const m of await p.evaluate(HEADS)) add('a head smaller or weaker than what it heads', `${page}: ${m}`);
     await p.keyboard.press('Escape');
+  }
+  // the one Worca's own lists, in the states a click opens: read like a case
+  if (page === 'index.html') for (const [route, root] of [['runs', '#runs-root'], ['chat', '#chats-root']]) {
+    await p.goto(indexUrl('#' + route)); await p.waitForTimeout(80);
+    for (const o of ['', '[data-menu="show"]', '[data-menu="tools"]', '[data-menu^="row:"]', '[data-fold]', '[data-rounds]', '[data-pick="tools|select"]']) {
+      if (o) await p.evaluate((s) => document.querySelector(s)?.click(), `${root} ${o}`);
+      const found = await p.evaluate(READ, [CONTROL_SEL, [...classes]]);
+      for (const [k, wh] of found) add(k, `${page}#${route}: ${wh}`);
+      for (const m of await p.evaluate(NAMES)) add('a name against the naming rule', `${page}#${route}: ${m}`);
+      for (const m of await p.evaluate(HEADS)) add('a head smaller or weaker than what it heads', `${page}#${route}: ${m}`);
+    }
+    await p.evaluate((s) => { document.querySelector(`${s} [data-menu="tools"]`)?.click(); document.querySelector(`${s} [data-menu-pick="tools|select"]`)?.click(); }, root);
+    await p.evaluate((s) => document.querySelector(`${s} [data-sel]`)?.click(), root);
+    for (const [k, wh] of await p.evaluate(READ, [CONTROL_SEL, [...classes]])) add(k, `${page}#${route} selecting: ${wh}`);
   }
   // every settings section, wide and narrow
   if (await p.$('[data-acct]')) {   // Settings opens from the profile menu
@@ -157,6 +171,17 @@ for (const page of ['run-page.html', 'pulse.html']) {
       }
     }
   }
+  await p.close();
+}
+// --- the generated Worca Rail page draws every component, as the gallery does ---
+{
+  const { buildPage } = await import('../../../../tools/rail-artifact.mjs');
+  const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+  await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });   // the gates walk every place: Expert
+  p.on('pageerror', (e) => add('the generated Worca Rail page has a script error', String(e)));
+  await p.setContent(buildPage({ sha: 'check' }), { waitUntil: 'load' });
+  const missing = await p.evaluate(() => [...document.querySelectorAll('.ra-tile')].filter((a) => !document.querySelector(a.getAttribute('href')) || !document.querySelector(a.getAttribute('href')).querySelector('.gl-show *')).map((a) => a.querySelector('b').textContent));
+  for (const m of missing) add('a component on the generated Worca Rail page is not drawn', m);
   await p.close();
 }
 await b.close();

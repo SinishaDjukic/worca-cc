@@ -101,6 +101,10 @@ test('agent isolation: a worca-agent user, sudo only to it, set up on single-vol
   // G19: the run store and run checkouts are sticky too: an agent cannot rename or delete another
   // run's folder, and each run's own folder is its owner's group only (agent-pool.mjs claimRunDir).
   assert.match(block, /chmod 3770 "\$wh\/store" "\$wh\/runs"/, 'store/ and runs/ are setgid + sticky');
+  // Design P8 (L8.13): the design library joins the share every boot, setgid and sticky like runs/.
+  assert.match(block, /mkdir -p "\$wh\/store" "\$wh\/runs" "\$wh\/design" "\$ah"/);
+  assert.match(block, /chown worca:worca-share "\$wh\/store" "\$wh\/runs" "\$wh\/design" "\$data\/projects"/);
+  assert.match(block, /chmod 3770 "\$wh\/store" "\$wh\/runs" "\$wh\/design"/, 'design/ is setgid + sticky every boot');
   // V10: the Ask scratch dir holds each relayed turn's MCP config (its relay token): sticky, so no agent user
   // or plugin code replaces another turn's file.
   assert.match(e, /chmod 3770 "\$wh\/ask" "\$wh\/tmp\/ask"/, "ask/ and tmp/ask are setgid + sticky (1.4)");
@@ -113,6 +117,28 @@ test('agent isolation: a worca-agent user, sudo only to it, set up on single-vol
   assert.ok(block.indexOf('umask 0007') < block.indexOf('exec setpriv'), 'the server inherits the umask');
   assert.match(block, /WORCA_ALLOWED_HOSTS[\s\S]*exit 78/, 'a hosted worca refuses to run agents as the server when sudo fails');
   assert.doesNotMatch(e, /gh auth setup-git >/, 'no global credential helper');
+});
+
+// Design P8 (L8.13): volumes prepared before the design library joined the share have already fired the
+// .agent-isolation marker, so design/ has its own. An existing design must not open to every pool agent through
+// worca-share: each closes to worca alone until its owner's next claim (agent-pool.mjs claimRunDir).
+test('entrypoint shares design on old volumes, closed per design', () => {
+  const e = read('docker/entrypoint.sh');
+  const iso = e.indexOf('if [ "${WORCA_AGENT_ISOLATION:-1}" != 0 ]');
+  const once = e.indexOf('if [ ! -e "$wh/.agent-isolation" ]; then', iso);
+  const mark = e.indexOf('if [ ! -e "$wh/.design-share" ]');
+  assert.ok(iso > 0 && once > iso, 'the .agent-isolation block is inside the isolation preparation');
+  assert.ok(mark > e.indexOf('\n      fi\n', once), 'after the .agent-isolation block, not inside it: that marker has already fired on old volumes');
+  assert.ok(mark < e.indexOf('      umask 0007\n    fi\n', iso), 'before the isolation block closes: $wh is set only inside it');
+  const block = e.slice(mark, e.indexOf('\n      fi\n', mark));
+  assert.match(block, /chgrp -R worca-share "\$wh\/design"/);
+  assert.match(block, /chmod -R g\+rwX "\$wh\/design"/);
+  assert.match(block, /find "\$wh\/design" -type d -exec chmod g\+s \{\} \+/);
+  assert.match(block, /find "\$wh\/design" -mindepth 1 -maxdepth 1 -type d -exec chmod 0700 \{\} \+/, 'each existing design closes to worca alone');
+  assert.match(block, /touch "\$wh\/\.design-share"/);
+  assert.match(block, /chown worca:worca "\$wh\/\.design-share"/);
+  assert.ok(block.indexOf('chmod -R g+rwX') < block.indexOf('-exec chmod 0700'),
+    'closed after the group gets rwX: in the other order every design would reopen to every pool agent');
 });
 
 // 1.2: an agent user owns its HOME, so ~/.gitconfig may be a link it left (to /usr/bin/id, say). The root entrypoint
@@ -316,6 +342,19 @@ test('compose.broker.yml: worca gets the broker address and no key; the broker p
   assert.doesNotMatch(broker, /^\s+ports:/m, 'no published ports: worca reaches it on the compose network');
   assert.match(broker, /cap_drop:\s*\n\s*- ALL/);
   assert.match(broker, /\/healthz/, 'its own healthcheck (the image\'s targets worca\'s port)');
+});
+
+test('compose.instance.yml: cloudflared only under the tunnel profile, in its own container, nothing published', () => {
+  const c = read('docker/compose.instance.yml');
+  const cf = c.slice(c.indexOf('\n  cloudflared:'));
+  assert.match(cf, /profiles: \["tunnel"\]/, 'the tunnel is opt-in');
+  assert.match(cf, /command: \["tunnel", "run"\]/, 'the image entrypoint adds --no-autoupdate; tunnel run reads TUNNEL_TOKEN');
+  assert.match(cf, /TUNNEL_TOKEN: \$\{TUNNEL_TOKEN:-\}/, 'no :? check, which would fail every compose call without the profile');
+  assert.doesNotMatch(c, /network_mode:/, 'never worca\'s namespace: its requests would look local');
+  assert.doesNotMatch(c, /^\s+ports:/m, 'the tunnel is the only way in');
+  assert.match(cf, /cap_drop:\s*\n\s*- ALL/);
+  assert.match(c, /stop_grace_period: 60s/, 'longer than the 20 s drain');
+  assert.match(read('docs/instance-contract.md'), /compose\.instance\.yml/, 'the contract page points at it');
 });
 
 test('compose.isolation.yml: one volume, root only to prepare it, sudo to agents without no-new-privileges, the capabilities it needs', () => {

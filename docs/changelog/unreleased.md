@@ -3,6 +3,68 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Choose who interviews, per feature
+
+**Pick the harness, model and effort for a feature's Requirements.**
+
+New feature has a **Who interviews** group: Harness, Model and Effort. Rounds, code looks, file reads and Feature chat run on the choice, on Claude, Codex, Copilot, Gemini CLI or another harness Worca can lock down. What a harness cannot do is skipped with a note, never sent to Claude: a code look on a harness that cannot read the repo, a PDF on one that takes text only. Each step names what ran it and its cost (billed, ≈ estimated or cost unknown), and the **so far** chip opens **Cost of this feature**. The model chip changes a running feature from the next step, with a confirm when the switch loses something. The code look shows as a step with **Show what it found**, and the Product brief has **Who makes it** and **⋯ › Refresh the brief**.
+
+Chips: harness, model and effort · Cursor never offered · skipped with a note · cost billed or ≈ · code look as a step · brief per choice
+
+Read it: [Requirements](../requirements.md#choosing-the-harness-and-model)
+
+Pull requests (add each number when it opens):
+
+- Requirements: choose the harness and model per feature and per Product brief (#1234)
+
+## Shaper keeps going while you're away
+
+**You answer what to build. Away mode handles how to build it.**
+
+A sliced feature no longer stops at every plan while you are away. Away mode approves a slice outline and a plan whose checks passed, at once with a zero delay, and a later slice with **Ask me before each run** off continues the way it does when you are here. Clarify, the Requirements hold, a failed check, the planner's outline change and notes from the chat still wait for you, with no countdown. A requirement or plan concern is approved with the agreed text kept, and flagged *please check*. Every approval is a rule, costs nothing and reads `by Away mode` in the feature's log. This applies to anyone already using Away mode: *Never on this run* or pausing Away keeps a plan waiting, and a spend cap is worth setting, since a feature can now be built with no plan seen by anyone. `--yes` is unchanged.
+
+Chips: outline and plan approved · concerns flagged · what to build still waits · no decider cost · marks reach later slices
+
+Read it: [Shape it first](../shape-it-first.md)
+
+Pull requests (add each number when it opens):
+
+- Shaper keeps going while you're away
+
+## Ask me before each run asks before each run
+
+**Ask me before each run** on a slice outline now means what it says: with it on, each later run waits, not started, and the feature card shows *Needs you · Run 2 waits for you to start* with **Start now**. A later slice's plan continues by itself when its checks pass, either way. Away mode keeps a held run held.
+
+Read it: [Shape it first](../shape-it-first.md)
+
+## A lighter Requirements card
+
+**The Shaper's Requirements card now says what each persona wants, and why.**
+
+The decisions come first, with their answers stacked under each question, and an answer a perspective asked for carries its reason: `Security: emails are personal data, and exports get forwarded`. The agreed requirements fold into one line, `8 agreed · Product 2 · Engineering 1 · …`, and open grouped by perspective with your own first; ids move to the tooltip and to screen readers. The disc, the question numbers, the `Answered` pill and `Worca's picks marked` are gone. When a requirement fails its check, the fold opens by itself with that row first and **Ask for changes** becomes the primary. While the field is open, **Send changes** is the only primary. It reads the same in the chat run card, on the run page and on the feature page.
+
+Chips: decisions first · persona and reason · agreed fold · grouped by persona · one primary · three hosts
+
+Read it: [Shape it first](../shape-it-first.md)
+
+Pull requests (add each number when it opens):
+
+- A lighter Requirements card
+
+## Set your roles once
+
+**Pick your models in the setup assistant. Everything else follows.**
+
+Your roles now beat Worca's own defaults. Shaper's role reviews use your role, not the built-in Sonnet 5.5. Every engine has roles now, Copilot CLI and the other beta engines included. The setup assistant shows roles for Claude and each engine it finds ready. The workspace scan runs on your Everyday coding role. Create workspace saves no model of its own unless you change one, so its re-scans follow your roles. Old workspaces no longer ask for a model on every re-scan. The sub-agent picker says which Claude model each choice runs: sub-agents do not follow your roles yet.
+
+Chips: roles first · every engine · setup assistant · workspace scan · no re-scan prompt · honest sub-agent labels
+
+Read it: [Model roles](../models.md#model-roles)
+
+Pull requests (add each number when it opens):
+
+- #1153 Set your roles once
+
 ## Built-in workflow models live on the Models page
 
 **Shaper runs on a Copilot-only install that is not signed in to Claude Code.**
@@ -57,9 +119,9 @@ Pull requests (add each number when it opens):
 
 **Define a feature with Worca before anything is built.**
 
-A product owner describes a feature in a few sentences and Worca interviews them, a few questions at a time, into a testable spec: goal, actors, flow, edge cases, rules, acceptance criteria and assumptions. Six checks say when it is Ready, and **Start in Worca** starts a normal run with the spec as its task. A product brief, made once per project or workspace from its default branch, lets every interview there start from what the product already does; edits to the spec or the brief are kept. A feature can come with files (emails, tickets, a spec, screenshots): Worca reads each once, the interview uses what it took from them, and the files you switch on go to the run. **Feature chat** beside a feature answers from what Worca already knows about it, drafts answers to the open questions and proposes spec changes as cards; nothing changes until you submit or accept, and each message shows what it cost. A feature can be exported to the team's tracker (Jira first) as a ticket: a preview shows exactly what is sent, **Export again** updates the ticket or comments on it, and a run started from the feature reports back to the ticket.
+A product owner describes a feature in a few sentences and Worca interviews them, a few questions at a time, into a testable spec: goal, actors, flow, edge cases, rules, acceptance criteria and assumptions. Six checks say when it is Ready, and **Start in Worca** starts a normal run with the spec as its task. A product brief, made once per project or workspace from its default branch, lets every interview there start from what the product already does; edits to the spec or the brief are kept. A feature can come with files (emails, tickets, a spec, screenshots): Worca reads each once, the interview uses what it took from them, and the files you switch on go to the run. **Feature chat** beside a feature answers from what Worca already knows about it, drafts answers to the open questions and proposes spec changes as cards; nothing changes until you submit or accept, and each message shows what it cost. A feature can be exported to the team's tracker (Jira first) as a ticket: a preview shows exactly what is sent, **Export again** updates the ticket or comments on it, and a run started from the feature reports back to the ticket. A feature can also start from a ticket: **From a ticket…** on New feature takes its title, description, acceptance criteria, comments and the attachments you pick, and the feature stays linked to it (the Jira plugin's 0.2.0 update, which also brings Ticket updates).
 
-Chips: Requirements · interview · Ready · Start in Worca · product brief · Requirements interview model · files · Feature chat · export to Jira · experimental: turn it on in Settings › Labs
+Chips: Requirements · interview · Ready · Start in Worca · product brief · Requirements interview model · files · Feature chat · export to Jira · start from a ticket · experimental: turn it on in Settings › Labs
 
 Before a build starts with a workflow, **Start in Worca** opens **Set up this run**: pick a saved run preset and change each agent's model, effort and loop budget for this run only, at any interface level. The reason for starting before Ready is saved the moment you give it, and a started run opens its run page.
 
@@ -71,13 +133,14 @@ Pull requests (add each number when it opens):
 - Requirements: files (#975)
 - Requirements: Feature chat (#989)
 - Requirements: export to a tracker (#1010)
+- Requirements: start from a ticket (#1041)
 - Requirements: set up a run before it starts (FEAT-9)
 
 ## Ticket updates (experimental)
 
 **Say what a finished run does to its ticket, per project.**
 
-In Marketplace › Installed › Jira, Azure Boards or GitHub Issues › Settings, a saved connection gets **Ticket updates**: the projects you work on and, per project, Don't move, Any Done status or one of that project's own statuses. A run that writes back moves its ticket by that rule, and Worca's comment ends with a line saying what happened. In Jira, Any Done status never closes a ticket as Won't Do or Duplicate, and Worca fills in a required Resolution. A move the tracker refuses becomes a "Not moved" line and the comment still posts; a refused token, a rate limit, a server error or a timeout fails the write-back so it can be retried. Azure Boards moves a work item to its type's Completed state (Resolved is not done yet) or to a state you pick; GitHub Issues closes an issue as completed or as not planned, or reopens it, and a repository is a project. New run and the Requirements export list only the projects you work on. Until you save, each plugin's old setting (**Transition on completion**, **Close work item on completion**, **Close issue on completion**) works as before.
+In Marketplace › Installed › Jira, Azure Boards or GitHub Issues › Settings, a saved connection gets **Ticket updates**: the projects you work on and, per project, Don't move, Any Done status or one of that project's own statuses. A run that writes back moves its ticket by that rule, and Worca's comment ends with a line saying what happened. In Jira, Any Done status never closes a ticket as Won't Do or Duplicate, and Worca fills in a required Resolution. A move the tracker refuses becomes a "Not moved" line and the comment still posts; a refused token, a rate limit, a server error or a timeout fails the write-back so it can be retried. Azure Boards moves a work item to its type's Completed state (Resolved is not done yet) or to a state you pick; GitHub Issues closes an issue as completed or as not planned, or reopens it, and a repository is a project. New run and the Requirements export list only the projects you work on. Until you save, each plugin's old setting (**Transition on completion**, **Close work item on completion**, **Close issue on completion**) works as before. Jira needs the plugin’s 0.2.0 update, which also lets a Requirements feature start from a ticket.
 
 Chips: Ticket updates · Jira · Azure Boards · GitHub Issues · projects you work on · Any Done status · experimental: turn it on in Settings › Labs
 
@@ -88,15 +151,15 @@ Pull requests (add each number when it opens):
 - Ticket updates (#1072)
 - Ticket updates: Azure Boards and GitHub Issues (#1133)
 
-## Shaper: requirements first, the three cards (experimental)
+## Shaper: requirements first, the three cards
 
 **Agree the requirements before the plan, in cards that read like a conversation.**
 
-With Labs › Requirements first on, a medium or large Shaper task opens with one sentence, `You lead as Product, supported by QA and Security`, and a primary **Shape requirements**. The Requirements card lists what the perspectives agreed, then asks only what they could not settle: Worca's pick is already chosen and marked `recommended`, worded for the role you lead as. **Agree and plan** is the one primary; **Ask for changes** sends your words and your picks back. The plan card gains a **Requirements 7/8** fold that names any requirement no step delivers, and **Fix all** takes the primary until every one is covered. The Chat run card shows the same count while the run plans. A card proposed directly as Shaper now gets the same sentence and **Shape requirements** when medium or large. For a Product or Design lead, a code term with no plain wording now reads in words: `project:read` becomes `read access`, so a decision no longer loses half a sentence.
+A medium or large Shaper task opens with one sentence, `You lead as Product, supported by QA and Security`, and a primary **Shape requirements**. The Requirements card lists what the perspectives agreed, then asks only what they could not settle: Worca's pick is already chosen and marked `recommended`, worded for the role you lead as. **Agree and plan** is the one primary; **Ask for changes** sends your words and your picks back. The plan card gains a **Requirements 7/8** fold that names any requirement no step delivers, and **Fix all** takes the primary until every one is covered. The Chat run card shows the same count while the run plans. A card proposed directly as Shaper now gets the same sentence and **Shape requirements** when medium or large. For a Product or Design lead, a code term with no plain wording now reads in words: `project:read` becomes `read access`, so a decision no longer loses half a sentence.
 
 Chips: Shape requirements · lead role · supporters · Requirements card · recommended picks · Requirements fold · Fix all · experimental: turn it on in Settings › Labs
 
-Read it: [Requirements first](../shape-it-first.md#requirements-first-labs)
+Read it: [Requirements first](../shape-it-first.md#requirements-first)
 
 Pull requests (add each number when it opens):
 

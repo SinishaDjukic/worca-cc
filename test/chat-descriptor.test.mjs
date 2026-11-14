@@ -48,17 +48,17 @@ test('every descriptor: a lockdown, a not-ready code and docs link, attachments 
 test('Codex and Copilot keep their words', () => {
   const codex = chatDescriptor('codex');
   assert.equal(codex.notReady.docsUrl, 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md#codex');
-  assert.equal(codex.notReady.prefix, "Codex isn't ready");
-  assert.equal(codex.notReady.setupLabel, 'Codex setup');
+  assert.equal(codex.notReady.prefix, "OpenAI Codex isn't ready");
+  assert.equal(codex.notReady.setupLabel, 'OpenAI Codex setup');
   assert.equal(codex.notReady.flag, 'codexSetup');
-  assert.equal(codex.shellTrippedMessage, 'Codex tried to run a shell command although its shell was switched off — worca stopped the turn.');
+  assert.equal(codex.shellTrippedMessage, 'OpenAI Codex tried to run a shell command although its shell was switched off — worca stopped the turn.');
   assert.equal(codex.suggestionModel, 'gpt-5.6-luna');
   assert.equal(codex.titles, true);
   const copilot = chatDescriptor('copilot');
   assert.equal(copilot.notReady.docsUrl, 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md#github-copilot-cli');
   assert.equal(copilot.notReady.flag, 'copilotSetup');
   assert.equal(copilot.noLockdownMessage, 'Chat on Copilot is unavailable: this copilot cannot be locked down for a chat. Use a Claude chat.');
-  assert.equal(copilot.shellTrippedMessage, 'Copilot tried to run a shell command although it was given none — worca stopped the turn.');
+  assert.equal(copilot.shellTrippedMessage, 'GitHub Copilot tried to run a shell command although it was given none — worca stopped the turn.');
   assert.equal(copilot.suggestionModel, 'gpt-5-mini');
   assert.equal(chatCostCapRefusal(codex, 'nope', () => false), "A per-turn cost cap is set, and worca has no price for nope, so it cannot keep this turn under it. Set the model's price on the Models page, pick a priced model, or turn the cap off (Settings › Chat).");
   assert.equal(chatCostCapRefusal(codex, 'gpt-5.5', () => true), null);
@@ -68,9 +68,9 @@ test('Codex and Copilot keep their words', () => {
 test('what a chat takes, by engine', () => {
   assert.equal(chatAttachRefusal({ engine: 'claude', kind: 'binary', pdf: true }), null);
   assert.equal(chatAttachRefusal({ engine: 'codex', kind: 'image' }), null);
-  assert.equal(chatAttachRefusal({ engine: 'codex', kind: 'binary', pdf: true }), 'a Codex chat cannot view PDFs (Claude, Copilot, Gemini CLI, OpenCode or Qwen Code chats can)');
+  assert.equal(chatAttachRefusal({ engine: 'codex', kind: 'binary', pdf: true }), 'an OpenAI Codex chat cannot view PDFs (Claude Code, GitHub Copilot, Gemini CLI, OpenCode or Qwen Code chats can)');
   assert.equal(chatAttachRefusal({ engine: 'goose', kind: 'image' }), null);
-  assert.equal(chatAttachRefusal({ engine: 'goose', kind: 'binary', pdf: true }), 'a Goose chat cannot view PDFs (Claude, Copilot, Gemini CLI, OpenCode or Qwen Code chats can)');
+  assert.equal(chatAttachRefusal({ engine: 'goose', kind: 'binary', pdf: true }), 'a Goose chat cannot view PDFs (Claude Code, GitHub Copilot, Gemini CLI, OpenCode or Qwen Code chats can)');
   for (const engine of ['copilot', 'gemini', 'opencode', 'qwen']) {
     assert.equal(chatAttachRefusal({ engine, kind: 'image' }), null, engine);
     assert.equal(chatAttachRefusal({ engine, kind: 'binary', pdf: true }), null, engine);

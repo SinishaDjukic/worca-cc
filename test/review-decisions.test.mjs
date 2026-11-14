@@ -48,19 +48,62 @@ test('normalizeDecisions: a bad entry is dropped with one error each; a non-obje
   assert.deepEqual(normalizeDecisions({}), { decisions: [], errors: [] });
 });
 
+test('normalizeDecisions: an option keeps persona and reason; one with neither keeps its exact shape', () => {
+  const { decisions } = normalizeDecisions({ decisions: [entry(1, {
+    options: [{ value: 'a', label: 'One way', persona: ' security ', reason: 'emails are\n personal data' }, { value: 'b', label: 'Other way' }],
+  })] });
+  assert.deepEqual(decisions[0].options, [
+    { value: 'a', label: 'One way', persona: 'security', reason: 'emails are personal data' },
+    { value: 'b', label: 'Other way' },
+  ]);
+});
+
+test('normalizeDecisions: an over-long persona or reason is dropped, and the option and decision stay', () => {
+  const { decisions, errors } = normalizeDecisions({ decisions: [entry(1, {
+    options: [
+      { value: 'a', label: 'One way', persona: 'x'.repeat(61), reason: 'kept' },
+      { value: 'b', label: 'Other way', persona: 'ux', reason: 'x'.repeat(201) },
+    ],
+  })] });
+  assert.deepEqual(errors, []);
+  assert.deepEqual(decisions[0].options, [
+    { value: 'a', label: 'One way', reason: 'kept' },
+    { value: 'b', label: 'Other way', persona: 'ux' },
+  ]);
+  const atCap = normalizeDecisions({ decisions: [entry(1, {
+    options: [{ value: 'a', label: 'One way', persona: 'x'.repeat(60), reason: 'x'.repeat(200) }, { value: 'b', label: 'Other way' }],
+  })] }).decisions[0].options[0];
+  assert.deepEqual([atCap.persona.length, atCap.reason.length], [60, 200]);
+  // An agent's non-string field is dropped like an over-long one: never coerced to `[object Object]`, never a throw.
+  for (const bad of [{ toString: 1 }, { a: 1 }, ['x', 'y'], 7, true]) {
+    const { decisions, errors } = normalizeDecisions({ decisions: [{ text: 'Q?', recommended: 'a',
+      options: [{ value: 'a', label: 'One way', persona: bad, reason: bad }, { value: 'b', label: 'Other way' }] }] });
+    assert.deepEqual(errors, []);
+    assert.deepEqual(decisions[0].options[0], { value: 'a', label: 'One way' });
+  }
+});
+
 const CONFLICT = { id: 'conflict-1', findings: ['security-1-1', 'product-1-2'], roles: ['security', 'product'], section: 'Export',
   question: 'Email in export?', options: ['Leave them out', 'Include them'] };
 
 test('conflictDecisions: the lead\'s side is recommended, the other side the alternative; numbering continues within 8', () => {
   const sec = conflictDecisions([CONFLICT], { lead: 'security' });
   assert.deepEqual(sec, [{
-    id: 'd-1', text: 'Email in export?', options: [{ value: 'leave-them-out', label: 'Leave them out' }, { value: 'include-them', label: 'Include them' }],
+    id: 'd-1', text: 'Email in export?', options: [{ value: 'leave-them-out', label: 'Leave them out', persona: 'security' }, { value: 'include-them', label: 'Include them', persona: 'product' }],
     recommended: 'leave-them-out', from: ['security', 'product'],
   }]);
   assert.equal(conflictDecisions([CONFLICT], { lead: 'product' })[0].recommended, 'include-them');
   assert.equal(conflictDecisions([CONFLICT], {})[0].recommended, 'leave-them-out', 'no lead: the first option');
   assert.deepEqual(conflictDecisions([CONFLICT], { lead: 'security', after: 7 }).map((d) => d.id), ['d-8']);
   assert.deepEqual(conflictDecisions([CONFLICT], { lead: 'security', after: 8 }), [], 'the cap of 8 holds');
+});
+
+test('conflictDecisions: option i takes roles[i] as persona; an option past the roles has none', () => {
+  const [d] = conflictDecisions([{ ...CONFLICT, options: ['Leave them out', 'Include them', 'Ask each time'] }], {});
+  assert.deepEqual(d.options.map((o) => o.persona ?? null), ['security', 'product', null]);
+  assert.equal(Object.hasOwn(d.options[2], 'persona'), false);
+  const [noRoles] = conflictDecisions([{ ...CONFLICT, roles: undefined }], {});
+  assert.deepEqual(noRoles.options, [{ value: 'leave-them-out', label: 'Leave them out' }, { value: 'include-them', label: 'Include them' }]);
 });
 
 test('validateDecisionPicks: an unknown value is refused at decisions.d-2; a missing pick takes recommended', () => {
