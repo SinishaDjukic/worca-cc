@@ -104,7 +104,7 @@ curve; everything else is still. Filmed from the run page: `plans/rail/mocks/mot
 
 - **Never:** a transition between pages or tabs (they change at once), a slide, a spring, a bounce, a count-up, a
   spinner, a skeleton shimmer, a parallax, motion on scroll, or anything that runs without a state change.
-  The one named exception is the away screensaver: it starts after 5 idle minutes and is off under reduced motion.
+  The named exceptions are the away screensaver (it starts after 5 idle minutes and is off under reduced motion) and the Design stage (› Design stage exceptions).
 - **Reduced motion** (`prefers-reduced-motion`): every timing is 0; the breathing is a still colour, the shimmer a still
   wash, the flash a still outline that fades with the next click.
 - **In code:** a page that draws itself again after a change draws with `morph(target, html)` from
