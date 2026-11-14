@@ -76,6 +76,11 @@ worca's read-only investigator and the node's sub-agent model. A value set in
 the shell Worca starts from does not change this, and an entry's env may not
 set the key.
 
+**No hook-off switches.** An entry's env may not set `CLAUDE_CODE_SIMPLE` or
+`CLAUDE_CODE_SAFE_MODE` either. Each one switches off every hook a settings
+file adds, worca's fail-closed read and write guards included. A spawn that
+carries one of those guards also drops both keys from the shell's env.
+
 ## Engines
 
 Agents run on Claude Code by default. The other engines are all in **beta**: OpenAI's
@@ -124,8 +129,8 @@ them: you only set a model elsewhere to override a role.
 
 | Role | Setting key | What it covers |
 |---|---|---|
-| Deep thinking | `deep` | Plans and reviews: the Plan, Plan review, Refine plan, Review implementation, Deck review and Bug Root Cause steps, and Away mode's decider (`nightMode.deciderModel`) |
-| Everyday coding | `everyday` | Every other step, Chat (`askModels`), Agent generation (`agentGenModel`), the Requirements interview (`requirementsInterview`), Claude's Auto classifier (`autoWorkflowModel`) and the Workspace scan (`workspaceScan`, the scan agent; it surveys every member and writes the cross-project synthesis) |
+| Deep thinking | `deep` | Plans and reviews: the Plan, Plan review, Refine plan, Review implementation, Deck review and Bug Root Cause steps, Away mode's decider (`nightMode.deciderModel`) and the Design page's lead (`designLead`) |
+| Everyday coding | `everyday` | Every other step, Chat (`askModels`), Agent generation (`agentGenModel`), the Requirements interview (`requirementsInterview`), Claude's Auto classifier (`autoWorkflowModel`), the Workspace scan (`workspaceScan`, the scan agent; it surveys every member and writes the cross-project synthesis) and Design builders (`designBuilder`) |
 | Quick jobs | `quick` | Titles (`titleModel`), Run naming (`namingModel`), Command summaries (`commandSummaryModel`), PR description (`prDescriptionModel`), Memory defragment (`memoryDefrag`, including its step) and every other `utilityModels.<engine>.*` job, Codex's Auto classifier included (not `secondOpinion`, which has no role) |
 
 Where a slot looks, in order:
@@ -139,6 +144,10 @@ Where a slot looks, in order:
   default where the job has one, then today's fallback (for titles: the run's
   model, then the built-in Haiku). Memory defragment and the workspace scan read
   this way even as steps of their own run.
+
+**Design** has rows of its own on each engine's tab of the Engines card: **Design lead** and **Design builders**
+(`designModels.<engine>.lead|builder`, a `{ model, effort }` pair). An unset row falls back to its role, and a
+design's own pick in its composer wins over the row (see [Design › Models](design.md#models)).
 
 Roles are kept per harness (`modelRoles.claude`, `modelRoles.codex`,
 `modelRoles.copilot`, … one per engine): a Claude run never reads the Codex
@@ -258,6 +267,16 @@ default) or on a server you run (whisper.cpp, Kokoro-FastAPI, Piper), reached
 through the OpenAI audio API. It is not a model
 provider — nothing on it joins the catalog, the bridge or `/api/models`. See
 [docs/speech.md](speech.md).
+
+**Image generation (Design).** The same Providers page has an **Image
+generation (Design)** row: the image service a Design lead can have a picture made with
+(OpenAI, xAI, OpenRouter or any OpenAI-compatible server), its key and a price
+per picture. It is not a model provider — nothing on it joins the catalog, the
+bridge or `/api/models`. See [docs/image-generation.md](image-generation.md).
+
+**Sound (Design).** The **Sound (Design)** row after it holds the ElevenLabs key
+that gives a Design video a voice and music, and it is not a model provider
+either: see [docs/sound.md](sound.md).
 
 ## What the bridge does
 

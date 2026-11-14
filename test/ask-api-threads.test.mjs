@@ -928,3 +928,40 @@ test('GET /api/ask/threads: a chat a chat integration opened carries its origin 
     assert.equal(row(app.id).origin, null, q);
   }
 });
+
+test('chat labels: PUT /api/ask/threads/:id/labels sets and clears them with run labels\' rules; GET /api/ask/labels lists those in use', async () => {
+  const put = (id, body) => fetch(`${base}/api/ask/threads/${id}/labels`, { method: 'PUT', headers: JSONH, body: JSON.stringify(body) });
+  const { thread: a } = await (await post('/api/ask/threads', { title: 'labels-a' })).json();
+  const { thread: b } = await (await post('/api/ask/threads', { title: 'labels-b' })).json();
+  assert.deepEqual(a.labels, [], 'a new chat has none');
+  const before = (await (await fetch(`${base}/api/ask/threads/${a.id}`)).json()).thread.updatedAt;
+  let r = await put(a.id, { labels: ['  Hotfix ', 'billing', 'hotfix'] });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { labels: ['hotfix', 'billing'], changed: true }, 'normalised and deduped as run labels are');
+  assert.deepEqual(await (await put(a.id, { labels: ['hotfix', 'billing'] })).json(), { labels: ['hotfix', 'billing'], changed: false });
+  await put(b.id, { labels: ['billing'] });
+  // persists: a re-read (the page after a reload) and the list both carry them; labelling never bumps Last activity
+  const got = (await (await fetch(`${base}/api/ask/threads/${a.id}`)).json()).thread;
+  assert.deepEqual(got.labels, ['hotfix', 'billing']);
+  assert.equal(got.updatedAt, before);
+  const list = (await (await fetch(`${base}/api/ask/threads?show=all`)).json()).threads;
+  assert.deepEqual(list.find((t) => t.id === a.id).labels, ['hotfix', 'billing']);
+  const vocab = (await (await fetch(`${base}/api/ask/labels`)).json()).labels;
+  assert.deepEqual(vocab.filter((l) => ['hotfix', 'billing'].includes(l.label)), [{ label: 'billing', count: 2 }, { label: 'hotfix', count: 1 }]);
+  // the same refusals as PUT /api/runs/:id/labels
+  for (const [body, msg] of [[{}, /labels must be a list of strings/], [{ labels: [7] }, /a label must be a string/], [{ labels: ['x'.repeat(33)] }, /at most 32 characters/], [{ labels: [''] }, /a label needs a word/]]) {
+    r = await put(a.id, body);
+    assert.equal(r.status, 400, JSON.stringify(body));
+    assert.match((await r.json()).error, msg);
+  }
+  assert.equal((await put('ask_0000beef', { labels: ['x'] })).status, 404);
+  assert.equal((await put('nope', { labels: ['x'] })).status, 400);
+  // clearing
+  assert.deepEqual(await (await put(a.id, { labels: [] })).json(), { labels: [], changed: true });
+  assert.deepEqual((await (await fetch(`${base}/api/ask/threads/${a.id}`)).json()).thread.labels, []);
+  const after = (await (await fetch(`${base}/api/ask/labels`)).json()).labels;
+  assert.equal(after.find((l) => l.label === 'hotfix'), undefined, 'a label on no chat leaves the list');
+  // an archived chat's labels are not offered
+  await patch(`/api/ask/threads/${b.id}`, { archived: true });
+  assert.equal((await (await fetch(`${base}/api/ask/labels`)).json()).labels.find((l) => l.label === 'billing'), undefined);
+});

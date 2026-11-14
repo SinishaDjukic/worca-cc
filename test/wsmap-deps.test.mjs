@@ -27,7 +27,9 @@ test('yaml and smol-toml are exact-pinned runtime dependencies, locked with inte
     // gsap + playwright-core: the promo video kit (assets/promo-kit: the film runtime, real-UI plate capture on a system Chrome).
     // diff: Folder runs' changes.patch (src/core/folder-copy.mjs, jsdiff createTwoFilesPatch).
     // tar: GitHub's .tar.gz archives read without git (src/core/git-free/archive.mjs).
-    assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@highlightjs/cdn-assets', '@modelcontextprotocol/sdk', '@ricky0123/vad-web', '@xterm/addon-fit', '@xterm/xterm', 'diff', 'dompurify', 'express', 'gsap', 'htmlparser2', 'marked', 'onnxruntime-web', 'playwright-core', 'smol-toml', 'tar', 'undici', 'ws', 'yaml']);
+    // morphdom: the Design preview bridge's in-place section merge (src/core/design/preview/bridge.js, build doc only).
+    // fflate: Design's zip export (src/core/design/export.mjs, L25).
+    assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@highlightjs/cdn-assets', '@modelcontextprotocol/sdk', '@ricky0123/vad-web', '@xterm/addon-fit', '@xterm/xterm', 'diff', 'dompurify', 'express', 'fflate', 'gsap', 'htmlparser2', 'marked', 'morphdom', 'onnxruntime-web', 'playwright-core', 'smol-toml', 'tar', 'undici', 'ws', 'yaml']);
   }
 });
 

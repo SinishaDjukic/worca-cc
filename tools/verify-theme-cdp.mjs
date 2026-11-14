@@ -151,6 +151,8 @@ const api = async (p, opt) => {
 // Marking it seen is the only onboarding flag the proof touches; the sidebar pill stays and
 // is sampled with the rail like any other row.
 await api('/api/onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ welcomeSeen: true }) });
+// The worca-level welcome is a second boot-time dialog (it would take focus from the page under test).
+await api('/api/worca-level/ack', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ what: 'welcome' }) });
 
 // ---- chrome + cdp ------------------------------------------------------------
 profile = await mkdtemp(path.join(tmpdir(), 'worca-theme-profile-'));
@@ -807,7 +809,7 @@ const SLICE3_CHECKS = {
       return b && { bg: getComputedStyle(b).backgroundColor, built: probe('badge mk-chip mk-chip-built'), warn: probe('badge mk-chip mk-chip-warn') }; })()`);
     designChecks.push({ what: 'grey badge: the built-in marketplace chip is the built tone, not amber', ok: !!gb && gb.bg === gb.built && gb.bg !== gb.warn, got: gb });
   },
-  'settings-providers': dividedRows('Providers', '#providers-list .mv-pv-card', 4),
+  'settings-providers': dividedRows('Providers', '#providers-list .mv-pv-card', 6),
   'settings-models': quietChip('Models', '.mv-filters .filter-chip[aria-pressed="true"]'),
   'workflows-library-scripts': quietChip('Library', '.wfl .filter-chip[aria-pressed="true"]'),
   'team-policy': async () => {

@@ -1,0 +1,22 @@
+{
+  "ds-check": [],
+  "click-check": [],
+  "worca-sweep": [
+    "a journey breaks",
+    "light/1280: a Shaper slice is its own row with its type in the icon",
+    "light/1280: accepting a gate moves it everywhere",
+    "light/1280: answering moves the task everywhere",
+    "light/1280: one store: Pulse and the bar agree at the start",
+    "light/1280: pausing moves it everywhere",
+    "light/375: a Shaper slice is its own row with its type in the icon",
+    "light/760: a Shaper slice is its own row with its type in the icon",
+    "light/900: a Shaper slice is its own row with its type in the icon",
+    "light/900: accepting a gate moves it everywhere",
+    "light/900: answering moves the task everywhere",
+    "light/900: one store: Pulse and the bar agree at the start",
+    "light/900: pausing moves it everywhere"
+  ],
+  "colour-check": [],
+  "handover-check": [],
+  "settings-sentences": []
+}

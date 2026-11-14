@@ -11,6 +11,8 @@
 // state.steps[] IS the execution ledger: one row per execution, key ===
 // executionId. There is no separate executions[] array.
 import { join, isAbsolute, extname, dirname, basename, sep } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { runScratchDir } from './run-manifest.mjs';
 import { rm, readFile, readdir, access, stat, writeFile, mkdir, realpath } from 'node:fs/promises';
 import { readDirections, pendingDirections } from './directions.mjs';
 import { runsOn } from '../shared/connections.mjs';
@@ -25,7 +27,7 @@ import { loadAgentRegistry } from './agent-registry.mjs';
 import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared/graph/manifest.mjs';
-import { DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../shared/graph/constants.mjs';
+import { DEFAULT_MAX_CYCLES, FLOW_KINDS, KEYED_KINDS } from '../shared/graph/constants.mjs';
 import { pickDropWarnings } from '../shared/graph/role-slots.mjs';
 import { factoryFallbackLines } from './factory-models.mjs';
 import { scriptNodeCtx, pythonMissingSentence } from '../shared/graph/script-meta.mjs';
@@ -998,6 +1000,7 @@ export class GraphOrchestrator extends RunHarness {
         // starts next while a gate is held.
         this.state.resumePoint = this._buildResumePoint(snap);
         void this._persist();
+        this._stepRecorded();   // Pause after this step lands only after the finished step is in the point
       },
       // P3 contract: onGate is the state.gate NOTIFIER ({wireId, fromNode, toNode,
       // askId} | null); onAsk is the ONE ask channel (gates today).
@@ -2149,7 +2152,16 @@ export class GraphOrchestrator extends RunHarness {
         return this._settleUnstarted(nc, node, args, err);
       }
     }
+    // Pause after this step: a node does not start while one is pending and another runs; the last one out pauses.
+    // A flow card runs inline on the scheduler's loop, so it cannot wait there (the running steps' completions would
+    // never be recorded): it settles as paused (non-terminal, re-run on resume) and the last step out converts the pause.
+    if (FLOW_KINDS.includes(node.kind) && this.state.pauseAfterStep && this._inFlight > 0) return { paused: true };
+    await this._awaitStepBoundary();
+    try { return await this._executeNode(args, node, nc); } finally { this._leaveStep(); }
+  }
 
+  /** One ordinary (non-composite) execution of `node`: _execute's body, counted in flight by its caller. */
+  async _executeNode(args, node, nc) {
     let ctx;
     try {
       ctx = this._execCtx(node, nc, args);
@@ -2361,6 +2373,9 @@ export class GraphOrchestrator extends RunHarness {
     // P1 (v3, defence in depth): a Folder run's nodes never start on the REAL folder, whatever reattach path left runCwd unset.
     if (this.workMode === 'folder' && !this.runCwd) throw new Error('a Folder run has no copy to work on');
     const { resumeSessionId, coldRedispatch, pinnedAddon } = this._reattachFor(executionId, node.id);
+    // The agent's TMPDIR points here, and a TMPDIR that does not exist fails every tool that reads it.
+    const scratch = runScratchDir(this.runRoot);
+    if (scratch) mkdirSync(scratch, { recursive: true });
     return {
       // When this execution began. _indexExtraFiles compares it against each
       // candidate's mtime to tell the files this execution WROTE from the ones it

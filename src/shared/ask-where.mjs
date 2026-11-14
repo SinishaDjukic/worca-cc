@@ -4,7 +4,7 @@
 
 const page = (label, icon) => Object.freeze({ label, icon });
 
-/** Every view with a top bar but Chat and Workflows (app.js VIEW_NAMES, plus the resolved detail kinds). */
+/** Every view with a top bar but Chat, Workflows and Design (app.js VIEW_NAMES, plus the resolved detail kinds). */
 export const WHERE_PAGES = Object.freeze({
   runs: page('Runs', 'run'),
   history: page('Runs', 'run'),

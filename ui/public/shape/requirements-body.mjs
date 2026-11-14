@@ -1,4 +1,4 @@
-// ui/public/shape/requirements-body.mjs — the Shaper's Requirements step (shapeRequirements): the `plan` ask that carries
+// ui/public/shape/requirements-body.mjs — the Shaper's Requirements step: the `plan` ask that carries
 // `plan.criteria` (or `plan.error`). Head · sub line · the decisions as ONE stacked OptionList (chat/question.mjs
 // buildChatQuestion, Worca's pick pre-picked, each answer saying which persona wants it and why) · the agreed requirements
 // folded, grouped by persona (check-row.mjs) · the foot. It adds no control of its own: every part is an existing builder.

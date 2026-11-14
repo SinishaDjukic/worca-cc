@@ -23,59 +23,10 @@ test('no shape and no nudge → null', () => {
   assert.equal(shapeCardExtras(doc(), { title: 'Fix it', workflowId: 'wf_default' }), null);
 });
 
-test('a nudge lists the open decisions and shows both estimates', () => {
-  const ui = shapeCardExtras(doc(), { nudge: nudge() });
-  assert.equal(ui.el.querySelector('.shape-nudge-head').textContent, 'This task leaves 2 decisions open');
-  assert.deepEqual(texts(ui.el, '.shape-nudge-list li'), ['Storage engine', 'Auth model']);
-  const ests = texts(ui.el, '.shape-choice .shape-est');
-  assert.deepEqual(ests, ['Planning ≈ $0.50 + build ≈ $1.00 · ~12 min', `Planning ≈ $1.25 + build ≈ $1.00 · ~9 min · ${SHAPE_ATTENTION}`]);
-  assert.equal(ui.el.querySelector('.shape-est-shared'), null);
-  assert.equal(ui.el.querySelector('.shape-choice.primary b').textContent, 'Shaper');
-  assert.equal(ui.el.querySelector('.shape-choice.primary span').textContent,
-    'Up to 3 questions now, then a plan you approve before anything is built.');
-  assert.ok(ui.el.querySelector('.shape-chips'));
-});
-
-test('one open decision → singular head', () => {
-  const ui = shapeCardExtras(doc(), { nudge: nudge({ openDecisions: ['Storage engine'] }) });
-  assert.equal(ui.el.querySelector('.shape-nudge-head').textContent, 'This task leaves 1 decision open');
-});
-
-test('missing estimates → "no estimate yet"', () => {
-  const ui = shapeCardExtras(doc(), { nudge: nudge({ estimates: { asIs: null, shaped: null } }) });
-  assert.deepEqual(texts(ui.el, '.shape-choice .shape-est'), ['no estimate yet', `no estimate yet · ${SHAPE_ATTENTION}`]);
-  const none = shapeCardExtras(doc(), { nudge: nudge({ estimates: null }) });
-  assert.deepEqual(texts(none.el, '.shape-choice .shape-est'), ['no estimate yet', `no estimate yet · ${SHAPE_ATTENTION}`]);
-});
-
-test('asIsAuto → "Auto picks the workflow at start"', () => {
-  const ui = shapeCardExtras(doc(), { nudge: nudge({ asIsAuto: true }) });
-  assert.deepEqual(texts(ui.el, '.shape-choice .shape-est'),
-    ['Auto picks the workflow at start', `Planning ≈ $1.25 + build ≈ $1.00 · ~9 min · ${SHAPE_ATTENTION}`]);
-});
-
-test('no open decisions (large only) → "This is a large task"', () => {
-  const ui = shapeCardExtras(doc(), { nudge: nudge({ reason: 'large', openDecisions: [] }) });
-  assert.equal(ui.el.querySelector('.shape-nudge-head').textContent, 'This is a large task');
-  assert.equal(ui.el.querySelector('.shape-nudge-list'), null);
-});
-
-test('equal figures on both choices still show on both, and there is no shared line', () => {
-  const ui = shapeCardExtras(doc(), { nudge: nudge({ estimates: { asIs: est(2, 1.5, 9), shaped: est(2, 1.5, 9) } }) });
-  assert.deepEqual(texts(ui.el, '.shape-choice .shape-est'),
-    ['Planning ≈ $2.00 + build ≈ $1.50 · ~9 min', `Planning ≈ $2.00 + build ≈ $1.50 · ~9 min · ${SHAPE_ATTENTION}`]);
-  assert.equal(ui.el.querySelector('.shape-est-shared'), null);
-});
-
-test('a card stored before the split keeps its single figure', () => {
-  const ui = shapeCardExtras(doc(), { nudge: nudge({ estimates: { asIs: { costUsd: 1.5, minutes: 12, samples: 4 }, shaped: null } }) });
-  assert.deepEqual(texts(ui.el, '.shape-choice .shape-est'), ['≈ $1.50 · ~12 min', `no estimate yet · ${SHAPE_ATTENTION}`]);
-});
-
 test('a shaped card has chips but no choices; body() reflects a chip toggle', () => {
   const ui = shapeCardExtras(doc(), { shape: { perspectives: ['product', 'qa'] } });
   assert.equal(ui.el.querySelector('.shape-choices'), null);
-  assert.equal(ui.el.querySelector('.shape-nudge-head'), null);
+  assert.ok(ui.el.querySelector('.shape-facts'));
   assert.ok(ui.el.querySelector('.shape-chips'));
   assert.deepEqual(ui.body(), { workflowId: 'wf_shape', shape: { perspectives: ['product', 'qa'] } });
   ui.el.querySelector('.shape-chip[data-perspective="qa"]').click();
@@ -111,7 +62,7 @@ test('shapeAdvancedSummary', () => {
   assert.equal(shapeAdvancedSummary(), 'Advanced');
 });
 
-// Requirements first (shapeRequirements on): one facts line and the sentence "You lead as … supported by …".
+// Requirements first: one facts line and the sentence "You lead as … supported by …".
 const realFetch = globalThis.fetch;
 let puts;
 let profile;
@@ -131,7 +82,7 @@ function stubAnswerer({ lead = null, fail = false, putFails = false } = {}) {
 beforeEach(() => { _resetAnswerer(); });
 afterEach(() => { globalThis.fetch = realFetch; });
 const tick = () => new Promise((r) => setTimeout(r, 0));
-const flagDoc = (flags = 'shapeRequirements') => {
+const flagDoc = (flags = '') => {
   const win = new JSDOM(`<!doctype html><html data-flags="${flags}"><body></body></html>`).window;
   return win.document;
 };
@@ -146,7 +97,7 @@ async function reqCard(over = {}, { lead = 'architect', flags } = {}) {
   return { d, ui, triggers: () => [...ui.el.querySelectorAll('.spick-b')] };
 }
 
-test('flag on, large: one facts line, the sentence with two pickers, no choices and no chips row', async () => {
+test('large: one facts line, the sentence with two pickers, no choices and no chips row', async () => {
   const { ui, triggers } = await reqCard();
   assert.equal(ui.requirements, true);
   assert.deepEqual(texts(ui.el, '.shape-facts'), ['Large task · ≈ $2 · ~9 min']);
@@ -158,7 +109,7 @@ test('flag on, large: one facts line, the sentence with two pickers, no choices 
   assert.equal(ui.blocked(), false);
 });
 
-test('flag on: no estimate → "no estimate yet"; a nudge without a size reads "This task"', async () => {
+test('no estimate → "no estimate yet"; a nudge without a size reads "This task"', async () => {
   const a = await reqCard({ estimates: null });
   assert.deepEqual(texts(a.ui.el, '.shape-facts'), ['Large task · no estimate yet']);
   const b = await reqCard({ size: null, estimates: { asIs: null, shaped: est(30, 1, 84) } });
@@ -319,7 +270,7 @@ test('shape-lead-change fires when the sentence paints and when the lead is pick
   assert.equal(n, 2);
 });
 
-test('flag on, small: the facts line and today\'s chips; no sentence; today\'s body', async () => {
+test('small: the facts line and today\'s chips; no sentence; today\'s body', async () => {
   stubAnswerer({ lead: 'qa' });
   const d = flagDoc();
   const ui = shapeCardExtras(d, { nudge: nudge({ size: 'small', openDecisions: ['a', 'b'] }) });
@@ -333,25 +284,10 @@ test('flag on, small: the facts line and today\'s chips; no sentence; today\'s b
   assert.deepEqual(ui.body(), { workflowId: 'wf_shape', shape: { perspectives: ['product', 'architect'], size: 'small' } });
 });
 
-test('flag off: a large nudge renders today\'s choices and no sentence', () => {
-  const ui = shapeCardExtras(flagDoc(''), { nudge: nudge() });
-  assert.ok(ui.el.querySelector('.shape-choice.primary'));
-  assert.equal(ui.el.querySelector('.spick-b'), null);
-  assert.equal(ui.el.querySelector('.shape-facts'), null);
-  assert.equal(ui.requirements, false);
-  assert.equal(ui.blocked(), false);
-  assert.deepEqual(ui.body(), { workflowId: 'wf_shape', shape: { perspectives: ['product', 'architect'], size: 'large' } });
-});
-
 // Literal, captured before the direct-card change: with the flag off this card must never change, byte for byte.
 const GOLDEN_DIRECT_CARD = `<div class="shape-card"><div class="shape-chips" role="group" aria-label="Perspectives"><button type="button" class="shape-chip on" data-perspective="product" title="Problem, goal, users, success criteria, out of scope." aria-pressed="true" disabled="" data-locked="1">Product</button><button type="button" class="shape-chip on" data-perspective="qa" title="Acceptance criteria as testable checks, a test plan with file names." aria-pressed="true">QA</button><button type="button" class="shape-chip on" data-perspective="security" title="Trust boundaries, inputs, secrets, permissions, abuse cases." aria-pressed="true">Security</button><button type="button" class="shape-chip-more">+ 5 more</button></div></div>`;
 
-test('flag off: golden direct card', () => {
-  const ui = shapeCardExtras(flagDoc(''), { shape: { perspectives: ['qa', 'security'], size: 'large' } });
-  assert.equal(ui.el.outerHTML, GOLDEN_DIRECT_CARD);
-});
-
-// A direct Shaper card (card.shape) with shapeRequirements on: the same card as a nudged one when the run will use the
+// A direct Shaper card (card.shape): the same card as a nudged one when the run will use the
 // requirements workflow, the small rule otherwise. It has no estimates.
 async function directCard(shape, { lead = 'architect', flags } = {}) {
   stubAnswerer({ lead });
@@ -362,7 +298,7 @@ async function directCard(shape, { lead = 'architect', flags } = {}) {
   return { d, ui };
 }
 
-test('direct card, flag on, large: the requirements layout', async () => {
+test('direct card, large: the requirements layout', async () => {
   const { ui } = await directCard({ perspectives: ['qa', 'security'], size: 'large' });
   assert.equal(ui.requirements, true);
   assert.deepEqual(texts(ui.el, '.shape-facts'), ['Large task · no estimate yet']);
@@ -381,7 +317,7 @@ test('direct card body: the picks, slices and size', async () => {
   assert.ok(fit.ui.body().shape.perspectives.includes('fit'), 'a pick of fit stays in the body');
 });
 
-test('direct card, flag on, small: the facts line and chipsEl; no lead in the body', async () => {
+test('direct card, small: the facts line and chipsEl; no lead in the body', async () => {
   const { ui } = await directCard({ perspectives: ['qa'], size: 'small' }, { lead: 'qa' });
   assert.equal(ui.requirements, false);
   assert.deepEqual(texts(ui.el, '.shape-facts'), ['Small task · no estimate yet']);
@@ -391,7 +327,7 @@ test('direct card, flag on, small: the facts line and chipsEl; no lead in the bo
   assert.deepEqual(ui.body(), { workflowId: 'wf_shape', shape: { perspectives: ['product', 'qa'], size: 'small' } });
 });
 
-test('direct card, flag on, no size: "This task", the same as small', async () => {
+test('direct card, no size: "This task", the same as small', async () => {
   const { ui } = await directCard({ perspectives: ['qa'] }, { lead: 'qa' });
   assert.equal(ui.requirements, false);
   assert.deepEqual(texts(ui.el, '.shape-facts'), ['This task · no estimate yet']);
@@ -403,7 +339,7 @@ test('card and run agree for every size', async () => {
   for (const size of [undefined, 'small', 'medium', 'large']) {
     for (const perspectives of [['qa'], ['ux', 'qa']]) {
       const { ui } = await directCard({ perspectives, ...(size ? { size } : {}) });
-      const res = resolveShapeRequest(ui.body(), { requirementsOn: true });
+      const res = resolveShapeRequest(ui.body());
       assert.equal(res.ok, true, res.error);
       assert.equal(SHAPE_REQ_WORKFLOW_IDS.includes(res.workflowId), ui.requirements, `${size} ${perspectives}`);
       assert.match(res.workflowId, perspectives.includes('ux') ? /^wf_shape_ux/ : /^wf_shape(_req)?$/);

@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 88;
+export const SCHEMA_VERSION = 95;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -840,15 +840,21 @@ ${STEP_QUESTIONS_DDL}
  * against the live schema so the gap can be healed regardless of the stamp.
  */
 const INCREMENTAL_COLUMNS = {
-  req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13)
-  req_features:           { early_start_reason: 'TEXT' },   // v85: the reason given for starting a feature before Ready, kept until a run starts; NULL = none
+  designs:                { models_json: 'TEXT', pictures: 'INTEGER NOT NULL DEFAULT 1', sound_json: 'TEXT' },   // v93: the design's own lead and builder picks ({lead?, builder?}); NULL = the Models page's; v94: the design's Pictures switch, 1 = on; v95: the design's sound choice
+  req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER',
+                            engine: 'TEXT', step: 'TEXT', cost_kind: 'TEXT', input_tokens: 'INTEGER', output_tokens: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13); v89: 9c (engine, step, billed|estimated|unknown, tokens)
+  req_features:           { early_start_reason: 'TEXT', model_json: 'TEXT' },   // v85: the reason given for starting a feature before Ready, kept until a run starts; NULL = none; v89: the feature's { engine, model, effort } (9c D2); NULL = before 9c
+  req_turns:              { engine: 'TEXT', notices_json: 'TEXT' },   // v89: the harness a step ran on, its D12 notices (9c)
+  req_helper_messages:    { engine: 'TEXT', notices_json: 'TEXT' },   // v89: as req_turns
+  req_briefs:             { engine: 'TEXT', made_cost_usd: 'REAL', made_cost_kind: 'TEXT' },   // v89: the harness that made the brief (9c D18); NULL = Claude; the cost of its last make and its kind (billed | estimated | unknown); NULL = not booked (before 9c, a mock make)
   req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
   run_groups:             { name_source: "TEXT NOT NULL DEFAULT 'user'" },   // v79: 'suggested' | 'user' (Smart naming), as ask_chat_groups
   req_export_links:       { origin: "TEXT NOT NULL DEFAULT 'export'" },   // v88: where the link came from, 'export' | 'import' (A6.1 D11, D13)
-  req_attachments:        { fetch_json: 'TEXT' },   // v88: the tracker file a row comes from (A6.1 D10, D13); NULL for an upload
+  req_attachments:        { fetch_json: 'TEXT', read_engine: 'TEXT' },   // v88: the tracker file a row comes from (A6.1 D10, D13); NULL for an upload; v89: the harness that read the file (9c)
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
+                            cost_cap_usd: 'REAL',   // v91: a cap raised for this run (Stillhet's Raise the cap); NULL = the settings cap
                             pr_url: 'TEXT', pr_number: 'INTEGER', pr_state: 'TEXT', pr_checked_at: 'TEXT',
                             outcome: 'TEXT',
                             scheduled_for: 'TEXT', schedule_id: 'TEXT',   // v31: scheduled-run provenance (NULL = started by hand)
@@ -899,7 +905,8 @@ const INCREMENTAL_COLUMNS = {
                             composer: 'TEXT',        // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
                             archived_at: 'TEXT',     // v75 (#948 s2): when the chat was archived; NULL = not archived
                             pinned_at: 'TEXT',       // v75 (#948 s2): when the chat was pinned; NULL = not pinned
-                            group_id: 'TEXT' },      // v76 (#948 s3): the chat's topic group (ask_chat_groups.id); NULL = ungrouped
+                            group_id: 'TEXT',        // v76 (#948 s3): the chat's topic group (ask_chat_groups.id); NULL = ungrouped
+                            labels: 'TEXT' },        // v90 (Stillhet chat): JSON [label] (run labels' rules), in the order added; NULL = none
   shape_features:         { ship_mode: 'TEXT',        // v58 (D24): 'stacked' | 'one'; NULL = not shipped
                             ship_pr_url: 'TEXT',      // v58: the one PR (mode 'one'); NULL otherwise
                             shipped_at: 'TEXT',       // v58: when Ship as ran
@@ -1565,6 +1572,46 @@ CREATE TABLE IF NOT EXISTS req_export_links (
 );
 `;
 
+// v92 Design (SPEC C-9): the library row per design, one row per build round, one per agent process, and the spend
+// ledger (its rows outlive a deleted design). <home>/design/<designId>/ is the disk half. No spending limit of its own
+// (M13): spend counts toward worca's limits. Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES; no foreign keys.
+const DESIGN_DDL = `
+CREATE TABLE IF NOT EXISTS designs (
+  id TEXT PRIMARY KEY, title TEXT NOT NULL, kind TEXT NOT NULL, fast INTEGER NOT NULL DEFAULT 0,
+  project_key TEXT, thread_id TEXT, engine TEXT, status TEXT NOT NULL DEFAULT 'empty',
+  current_build TEXT, version INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, models_json TEXT,
+  pictures INTEGER NOT NULL DEFAULT 1, sound_json TEXT);
+CREATE INDEX IF NOT EXISTS designs_updated ON designs(updated_at);
+CREATE TABLE IF NOT EXISTS design_builds (
+  id TEXT PRIMARY KEY, design_id TEXT NOT NULL, round INTEGER NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
+  brief TEXT NOT NULL, fast INTEGER NOT NULL, reason TEXT, sections_json TEXT NOT NULL DEFAULT '[]',
+  agents_total INTEGER NOT NULL DEFAULT 0, layers INTEGER NOT NULL DEFAULT 0, cost_usd REAL NOT NULL DEFAULT 0,
+  started_at TEXT NOT NULL, ended_at TEXT, created_by TEXT);
+CREATE INDEX IF NOT EXISTS design_builds_design ON design_builds(design_id, round);
+CREATE TABLE IF NOT EXISTS design_agents (
+  id TEXT PRIMARY KEY, build_id TEXT NOT NULL, role TEXT NOT NULL, section_id TEXT, job TEXT NOT NULL,
+  engine TEXT NOT NULL, model TEXT, effort TEXT, session_id TEXT, status TEXT NOT NULL,
+  cost_usd REAL, cost_known INTEGER NOT NULL DEFAULT 1, tokens TEXT, asks INTEGER NOT NULL DEFAULT 0,
+  started_at TEXT NOT NULL, ended_at TEXT, error TEXT);
+CREATE INDEX IF NOT EXISTS design_agents_build ON design_agents(build_id);
+CREATE TABLE IF NOT EXISTS design_cost_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, design_id TEXT NOT NULL, build_id TEXT, agent_id TEXT,
+  amount_usd REAL NOT NULL, model TEXT, ts INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS design_cost_ledger_ts ON design_cost_ledger(ts);
+`;
+
+// v94 Design pictures (D10): one row per picture ask, written once when the ask ends (`made` or `failed`; "making" is a
+// frame only). A remake under the same name adds a row. Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES; no foreign
+// keys. designs.pictures (the design's Pictures switch) comes from INCREMENTAL_COLUMNS.
+const DESIGN_PICTURES_DDL = `
+CREATE TABLE IF NOT EXISTS design_pictures (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, design_id TEXT NOT NULL, build_id TEXT NOT NULL, round INTEGER NOT NULL,
+  name TEXT NOT NULL, shape TEXT NOT NULL, prompt TEXT NOT NULL, model TEXT, state TEXT NOT NULL,
+  file TEXT, w INTEGER, h INTEGER, cost_usd REAL, ms INTEGER, reason TEXT, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS design_pictures_design ON design_pictures(design_id, round, id);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1623,6 +1670,11 @@ const INCREMENTAL_TABLES = {
   req_helper_messages: REQUIREMENTS_HELPER_DDL,
   req_export_setups: REQUIREMENTS_EXPORT_DDL,  // v80 (A6)
   req_export_links:  REQUIREMENTS_EXPORT_DDL,  // v80 (A6)
+  designs:            DESIGN_DDL,  // v92 Design (C-9)
+  design_builds:      DESIGN_DDL,  // v92
+  design_agents:      DESIGN_DDL,  // v92
+  design_cost_ledger: DESIGN_DDL,  // v92
+  design_pictures:    DESIGN_PICTURES_DDL,  // v94
 };
 
 /**
@@ -2810,6 +2862,22 @@ export function migrate(db) {
     // freeform chat #1142 took 85, #1142 took 86 and PR-when-done #1156 took 87). The repair runs here, after the v77 and v80 rungs created
     // those tables on a DB coming from below them.
     if (current < 88) repairSchemaGaps(db, schemaGaps(db));
+    // v89 requirements 9c: the harness and cost kind of every step — req_features.model_json, req_briefs.{engine, made_cost_usd, made_cost_kind}, req_cost_ledger.{engine, step,
+    // cost_kind, input_tokens, output_tokens}, req_turns/req_helper_messages.{engine, notices_json}, req_attachments.read_engine
+    // (all nullable, INCREMENTAL_COLUMNS, so the whole step is the reconcile).
+    if (current < 89) repairSchemaGaps(db, schemaGaps(db));
+    // v90: ask_threads.labels (Stillhet chat labels) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v91: pipelines.cost_cap_usd (Raise the cap) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v92 Design: library, builds, agents, spend (first written as v87, then v89; PR-when-done #1156 took 87, Requirements A6.1 took 88,
+    // Requirements 9c took 89 and Stillhet's chat labels and run cost cap took 90 and 91). IF NOT EXISTS, so a DB an earlier Design
+    // numbering stamped 87 to 92 keeps its Design tables and gains dev's columns above.
+    if (current < 92) db.exec(DESIGN_DDL);
+    // v93: designs.models_json — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps (a v92 DB) or by the v92 DDL
+    // above (an older DB). First written as v88, then v90.
+    // v94 Design pictures: one row per ask (D10); designs.pictures comes from INCREMENTAL_COLUMNS. First written as v91.
+    if (current < 94) db.exec(DESIGN_PICTURES_DDL);
+    // v95 Design sound: designs.sound_json (the design's sound choice, D2) — INCREMENTAL_COLUMNS, added by the hoisted
+    // repairSchemaGaps (a v92+ DB) or by the v92 DDL above (an older DB). First written as v92.
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

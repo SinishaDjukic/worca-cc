@@ -20,6 +20,7 @@ import { readClarify, readReview } from './protocol.mjs';
 import { writeClarify, readClarifyRow } from './artifacts.mjs';
 import { renderDirectionsBlock } from './directions.mjs';
 import { basename, dirname, join } from 'node:path';
+import { runScratchDir } from './run-manifest.mjs';
 import { LIMITS } from '../shared/workspace-map/limits.mjs';
 import { QUOTED_TEXT_NOTE, ROLE_QUOTE_LABELS } from '../shared/workspace-map/render.mjs';
 
@@ -874,6 +875,8 @@ function nodeWritableDirs(ctx) {
   ];
   const dirs = files.filter((f) => typeof f === 'string' && f).map((f) => dirname(f));
   if (typeof ctx.pipelineDir === 'string' && ctx.pipelineDir) dirs.push(ctx.pipelineDir);
+  const scratch = runScratchDir(ctx.runRoot);
+  if (scratch) dirs.push(scratch);
   if (!isDetachedRun(ctx)) {
     for (const p of wsMembers(ctx)) if (typeof p?.worktreeDir === 'string' && p.worktreeDir) dirs.push(p.worktreeDir);
   }
@@ -889,6 +892,11 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   const mcpEnv = ctx.mcpEnv && Object.keys(ctx.mcpEnv).length ? ctx.mcpEnv : null;
   // P3: in a run without a project, an agent's own git never walks up from work/ into a repository that holds worcaHome.
   const ceilEnv = ctx.workMode === 'none' && ctx.projectDir ? { GIT_CEILING_DIRECTORIES: dirname(ctx.projectDir) } : null;
+  // A detached run's temp files live in its own scratch folder, which teardown removes: an agent's test run and its
+  // clones never pile up in the machine's temp dir. Claude Code keeps its own scratchpad under CLAUDE_CODE_TMPDIR.
+  const scratch = runScratchDir(ctx.runRoot);
+  const scratchEnv = scratch ? { TMPDIR: scratch, CLAUDE_CODE_TMPDIR: scratch } : null;
+  const addDirs = [ctx.memoryMount, scratch].filter((d) => typeof d === 'string' && d);
   const excluded = bridgedModelInfo(c.model)?.excludeTools;
   const allowed = effectiveAllowedTools(allowedTools, ctx.node?.tools, ctxFanOut(ctx));
   return {
@@ -934,7 +942,8 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // additionalDirectories" (documented), nothing else about the spawn changes, and the CLI loads
     // nothing from that dir (CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD is never set here).
     // undefined when the run has no mount ⇒ buildClaudeArgs emits nothing and the argv is byte-identical.
-    addDirs: typeof ctx.memoryMount === 'string' && ctx.memoryMount ? [ctx.memoryMount] : undefined,
+    // The run's scratch folder rides it too, so the file tools can write there as Bash can.
+    addDirs: addDirs.length ? addDirs : undefined,
     // The directories this node writes to outside the cwd (its outputs, verdict, questions
     // file and clarify.json live in the store and the pipeline dir). Claude ignores it: acceptEdits
     // already allows those writes. codex's workspace-write sandbox allows only the cwd, so its
@@ -954,7 +963,7 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // tasks off on the scan's two fan-out nodes (so the cap holds there), merged OVER the guardrail env
     // and UNDER modelEnv. undefined for every non-fan-out node ⇒ nothing merged ⇒ that spawn env is
     // byte-identical.
-    spawnEnv: fanEnv || mcpEnv || ceilEnv ? { ...ceilEnv, ...fanEnv, ...mcpEnv } : undefined,
+    spawnEnv: fanEnv || mcpEnv || ceilEnv || scratchEnv ? { ...ceilEnv, ...fanEnv, ...mcpEnv, ...scratchEnv } : undefined,
     // MCP registry (§5.5.3): every registry secret value is redacted from what the run records.
     redactValues: ctx.mcpRedact?.length ? ctx.mcpRedact : undefined,
     // Model bridge (model-bridge-design.md §5.3): a translated model has no
@@ -1051,6 +1060,11 @@ export function taskHeader(ctx, title) {
       `You are in no single project: the cwd is a worca-cc run root that belongs to no member, ` +
       `and ALL code work happens inside the listed member worktrees.\n`
     : `Project directory (your cwd): ${ctx.projectDir}\n`;
+  // The env already points temp files here; a literal /tmp path in a command would still escape it.
+  const scratchDir = runScratchDir(ctx.runRoot);
+  const scratchLine = scratchDir
+    ? `Scratch folder: ${scratchDir} — put every throwaway file, clone and test home here, never in /tmp. Use \`mktemp -d \"\$TMPDIR/x.XXXXXX\"\`: a bare mktemp ignores TMPDIR on macOS. The folder is deleted when the run ends.\n`
+    : '';
   // Skills hint. The detached sentence is truthful ONLY under detached, where
   // project + root skills are COPIED into `<cwd>/.claude/skills` for the run (§5.7);
   // legacy delivers neither (skills.mjs copies bundle/plugin entries only), so the
@@ -1076,6 +1090,7 @@ export function taskHeader(ctx, title) {
   return (
     `# Task: ${title}\n\n` +
     locationLine +
+    scratchLine +
     `Pipeline directory (shared artifacts): ${ctx.pipelineDir}\n\n` +
     folderRunNote(ctx) +
     noProjectRunNote(ctx) +

@@ -5,15 +5,8 @@
 import { NO_PROJECT_KEY, isNoProjectKey } from '../../src/shared/no-project.mjs';
 export { NO_PROJECT_KEY };
 
-const MODES = new Set(['git', 'folder', 'none']);
-
-export function workModeOf(x) {
-  if (!x || typeof x !== 'object') return 'git';
-  if (MODES.has(x.workMode)) return x.workMode;
-  if (x.state && typeof x.state === 'object' && MODES.has(x.state.workMode)) return x.state.workMode;
-  if (x.branch && typeof x.branch === 'object' && MODES.has(x.branch.workMode)) return x.branch.workMode;
-  return 'git';
-}
+export { workModeOf } from '../../src/shared/ask-run-snapshot.mjs';
+import { workModeOf } from '../../src/shared/ask-run-snapshot.mjs';
 
 export function isGitRun(x) { return workModeOf(x) === 'git'; }
 export function isFolderRun(x) { return workModeOf(x) === 'folder'; }

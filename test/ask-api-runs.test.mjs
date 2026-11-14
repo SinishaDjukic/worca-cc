@@ -72,3 +72,54 @@ test('GET /api/ask/runs/:id: a live runId or pipeline id resolves through the ru
     }
   } finally { mod.runs.delete(entry.id); mod.runs.delete(stale.id); }
 });
+
+// ── GET /api/ask/run-links: the run → chat lookup (Stillhet Chat, D7) ──────────────────────────────────────────────
+// Only POST /api/run with askCardId links a run WITH its card (`started`); track_run links without one. linkRun is that
+// write, so the cases seed it directly and read it back through the store and the route.
+test('runLinksForViewer: started only with a card, oldest first, kept on resume and archive, gone with the thread, owner-scoped', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const mine = store.createThread({ createdBy: 'ana' });
+  const follower = store.createThread({ createdBy: 'ana' });
+  const theirs = store.createThread({ createdBy: 'bo' });
+  const legacy = store.createThread({});
+  const gone = store.createThread({ createdBy: 'ana' });
+  store.linkRun(mine.id, { runId: 'run-first', pipelineId: 'aaaaaaa1', cardId: 'card-1' });
+  await new Promise((r) => setTimeout(r, 5));
+  store.linkRun(follower.id, { runId: 'run-first', pipelineId: 'aaaaaaa1' });
+  store.linkRun(mine.id, { runId: 'run-second', pipelineId: 'aaaaaaa2', cardId: 'card-2' });
+  store.linkRun(theirs.id, { runId: 'run-theirs', pipelineId: 'aaaaaaa3', cardId: 'card-3' });
+  store.linkRun(legacy.id, { runId: 'run-legacy', pipelineId: 'aaaaaaa4', cardId: 'card-4' });
+  store.linkRun(gone.id, { runId: 'run-gone', pipelineId: 'aaaaaaa5', cardId: 'card-5' });
+  // a resume moves the link to the new run id; it stays started
+  store.updateRunLink(mine.id, 'run-second', { runId: 'run-second-resumed' });
+  store.setArchived(mine.id, true);
+  store.deleteThread(gone.id);
+
+  const ana = store.runLinksForViewer({ visibleTo: 'ana' });
+  const mineRows = ana.filter((l) => l.threadId === mine.id);
+  assert.deepEqual(mineRows, [
+    { threadId: mine.id, runId: 'run-first', pipelineId: 'aaaaaaa1', started: true },
+    { threadId: mine.id, runId: 'run-second-resumed', pipelineId: 'aaaaaaa2', started: true },
+  ], 'oldest first, the resumed id kept as started, an archived thread kept');
+  assert.deepEqual(ana.find((l) => l.threadId === follower.id), { threadId: follower.id, runId: 'run-first', pipelineId: 'aaaaaaa1', started: false });
+  assert.ok(ana.some((l) => l.threadId === legacy.id), 'an ownerless legacy thread is visible to everyone');
+  assert.ok(!ana.some((l) => l.threadId === theirs.id), "another viewer's thread is left out");
+  assert.ok(!ana.some((l) => l.threadId === gone.id), "a deleted thread's links are gone");
+  const all = store.runLinksForViewer();
+  assert.ok(all.some((l) => l.threadId === theirs.id), 'no viewer (a local deployment): every thread');
+
+  const r = await fetch(`${base}/api/ask/run-links`);
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  assert.ok(Array.isArray(body.links));
+  assert.deepEqual(body.links.filter((l) => l.threadId === mine.id).map((l) => l.runId), ['run-first', 'run-second-resumed']);
+
+  // the route scopes by the request's own viewer: a signed-in 'ana' never gets 'bo''s link
+  process.env.WORCA_IDENTITY_HEADER = 'X-Forwarded-User';
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1';
+  try {
+    const asAna = await (await fetch(`${base}/api/ask/run-links`, { headers: { 'x-forwarded-user': 'ana' } })).json();
+    assert.ok(asAna.links.some((l) => l.threadId === mine.id), "ana's own link");
+    assert.ok(!asAna.links.some((l) => l.threadId === theirs.id), "bo's link is left out");
+  } finally { delete process.env.WORCA_IDENTITY_HEADER; delete process.env.WORCA_IDENTITY_TRUSTED_PROXIES; }
+});

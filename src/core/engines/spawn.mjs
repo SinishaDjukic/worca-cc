@@ -90,7 +90,8 @@ export function buildSpawnEnv(envScrub, envAllowlist, prefixes = ['ANTHROPIC_', 
 export function cleanRunEnv(env) {
   if (!env || typeof env !== 'object') return null;
   const out = {};
-  for (const [k, v] of Object.entries(env)) if (typeof v === 'string' && !isReservedModelEnvKey(k)) out[k] = v;
+  // TMPDIR is reserved for a MODEL's env; in the run env it is the run's own scratch folder (phases.mjs runOpts).
+  for (const [k, v] of Object.entries(env)) if (typeof v === 'string' && (k === 'TMPDIR' || !isReservedModelEnvKey(k))) out[k] = v;
   return Object.keys(out).length ? out : null;
 }
 
