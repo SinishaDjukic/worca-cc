@@ -247,6 +247,7 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 
 | Surface | Status | Where in Stillhet, or why not yet |
 |---|---|---|
+| `route › /api/prompt-check/grade` | wire to | The prompt check's grade; Stillhet's composer chip that calls it is Shaper Tracks slice 2 (the chip and kind picker), building now |
 | `setting › pulseFor` | wired | Settings › Notifications, the Pulse animation row (`pulse.js` reads it through the live map; #1258) |
 
 ## Opt-in
