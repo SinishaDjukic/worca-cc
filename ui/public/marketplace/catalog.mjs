@@ -31,6 +31,7 @@ export function buildCatalog(marketplaces, plugins) {
       marketplace: { id: m.id, name: m.name ?? m.id, stale: !!m.lastError, snapshotAt: m.lastSync?.at ?? null },
       counts,
       iconKind: pluginIconKind(counts),
+      icon: row?.icon ?? p.icon ?? null,
       secrets: secretsOf(p.inventory),
       installed: !!row || p.installed === true,
       row,

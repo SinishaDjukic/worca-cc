@@ -104,7 +104,7 @@ test('minimal { name } manifest normalizes with full defaults', () => {
   assert.equal(r.ok, true);
   assert.deepEqual(r.warnings, []);
   assert.deepEqual(r.manifest, {
-    name: 'my-plugin', version: null, description: '', author: '', homepage: '', license: '',
+    name: 'my-plugin', version: null, description: '', author: '', homepage: '', license: '', icon: null,
     engines: { worcaApi: null }, setup: { node: false, python: null }, taskSources: [], chatChannels: [],
     models: [], modelSecrets: [], mcpServers: Object.create(null),
   });
@@ -894,5 +894,18 @@ test('chatChannels attachmentHosts: lowercase host names, at most 8, deduped, ke
     const r = normalizeManifest({ name: 'p', chatChannels: [CH({ attachmentHosts: bad })] });
     assert.equal(r.ok, false, JSON.stringify(bad));
     assert.match(r.errors.join('\n'), /attachmentHosts/);
+  }
+});
+
+test('icon: an optional brand id; a malformed one warns and is dropped (#1104)', () => {
+  const ok = normalizeManifest({ name: 'p', icon: 'github' }, 'p');
+  assert.equal(ok.manifest.icon, 'github');
+  assert.deepEqual(ok.warnings, []);
+  assert.equal(normalizeManifest({ name: 'p' }, 'p').manifest.icon, null);
+  for (const icon of [7, '<svg>', '../x.svg', 'GitHub', 'a'.repeat(65)]) {
+    const r = normalizeManifest({ name: 'p', icon }, 'p');
+    assert.equal(r.ok, true);
+    assert.equal(r.manifest.icon, null);
+    assert.ok(r.warnings.some((w) => /"icon"/.test(w)));
   }
 });

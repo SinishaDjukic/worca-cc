@@ -138,6 +138,7 @@
     "runs/group-page.css",
     "chat/ref-chips.css",
     "requirements/requirements.css",
+    "shell/brand-marks.css",
     "marketplace/plugin-icons.css",
     "marketplace/plugin-sheet.css",
     "marketplace/installed-tab.css",

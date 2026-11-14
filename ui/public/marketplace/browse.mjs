@@ -1,6 +1,6 @@
 // ui/public/marketplace/browse.mjs — the Browse tab (marketplace P3, board 1.1, 4.2; CONTRACT §5): the search and facet
 // rail, the grouped plugin tiles, the header's health, refresh and Add marketplace, and the empty states.
-import { KIND_ORDER, KINDS, chip, glyphTile, kindTile, addsSummary, secretsSummary } from './kinds.mjs';
+import { KIND_ORDER, KINDS, chip, glyphTile, kindTile, pluginTile, addsSummary, secretsSummary } from './kinds.mjs';
 import { filterCatalog, groupCatalog, facetCounts, marketplaceHealth, shortDate } from './catalog.mjs';
 import { relTime, renderNeedsGit } from '../plugins-view.mjs';
 import { fieldError, clearFieldErrors } from '../feedback.mjs';
@@ -38,7 +38,7 @@ export function renderTile(doc, item) {
   const id = make(doc, 'span', 'mk-tile-id');
   id.append(make(doc, 'span', 'mk-tile-name', item.name), meta);
   const top = make(doc, 'span', 'mk-tile-top');
-  top.append(kindTile(doc, item.iconKind), id);
+  top.append(pluginTile(doc, item), id);
   const foot = make(doc, 'span', 'mk-tile-foot');
   const adds = addsSummary(item.counts);
   if (adds) foot.append(chip(doc, 'n', adds));

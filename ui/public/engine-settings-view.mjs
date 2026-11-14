@@ -1,5 +1,6 @@
 import { icon } from './icons.mjs';
 import { renderInheritField, readDirtyFields, readInheritField, inheritText, formatPair } from './inherit-field.mjs';
+import { engineMark } from './brand-marks.mjs';
 import { engineLabel, engineChoiceLabel, isBetaEngine, ENGINE_NAMES, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES, CHAT_ENGINE_NAMES, ENGINES } from '../../src/shared/engine-switch.mjs';
 import { applyEngineLocks, engineLock } from './engine-locks.mjs';
 import { MODEL_ROLES, ROLE_LABELS, ROLE_HINTS, ROLE_HARNESSES, roleOfSettingId } from '../../src/shared/model-roles.mjs';
@@ -142,7 +143,7 @@ export function renderEngineSection(host, options) {
   for (const engine of MODEL_ENGINE_NAMES) {
     const card = doc.createElement('section'); card.className = 'engine-card'; card.dataset.engine = engine; card.dataset.minLevel = 'advanced';
     // Advanced has no switch: the tab names its engine. Expert's switch already does (style.css hides this there).
-    const heading = doc.createElement('h3'); heading.className = 'engine-card-name'; heading.textContent = engineLabel(engine); if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'flag-chip flag-chip-beta beta-badge'; beta.textContent = 'Beta'; heading.append(beta); } card.append(heading);
+    const heading = doc.createElement('h3'); heading.className = 'engine-card-name'; heading.append(engineMark(doc, engine), engineLabel(engine)); if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'flag-chip flag-chip-beta beta-badge'; beta.textContent = 'Beta'; heading.append(beta); } card.append(heading);
     // A non-Claude tab's readiness line (GET /api/engines), filled by app.js on the Models page.
     if (engine !== 'claude') { const status = doc.createElement('small'); status.className = 'engine-card-status'; card.append(status); }
     if (options.notes?.[engine]) { const note = doc.createElement('small'); note.className = 'hint engine-card-note'; note.textContent = options.notes[engine]; card.append(note); }
@@ -197,7 +198,7 @@ export const readEngineSection = (host) => readDirtyFields(host);
 export function engineSwitch(doc, engines, onPick, { minLevel = 'expert' } = {}) {
   const sw = doc.createElement('div'); sw.className = 'seg engine-switch'; sw.setAttribute('role', 'group'); sw.setAttribute('aria-label', 'Engine'); if (minLevel) sw.dataset.minLevel = minLevel;
   for (const engine of engines) {
-    const btn = doc.createElement('button'); btn.type = 'button'; btn.dataset.engine = engine; btn.textContent = engineLabel(engine);
+    const btn = doc.createElement('button'); btn.type = 'button'; btn.dataset.engine = engine; btn.append(engineMark(doc, engine), engineLabel(engine));
     if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'flag-chip flag-chip-beta beta-badge'; beta.textContent = 'Beta'; btn.append(beta); }
     btn.addEventListener('click', () => onPick(engine)); sw.append(btn);
   }

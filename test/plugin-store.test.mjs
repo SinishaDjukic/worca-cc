@@ -189,6 +189,7 @@ test('setPluginEnabled toggles the lock flag; listInstalledPlugins reflects it',
   assert.equal(readPluginsLock()[NAME].enabled, false);
   let row = listInstalledPlugins().find((p) => p.name === NAME);
   assert.equal(row.enabled, false);
+  assert.equal(row.icon, null);   // the fixture names no brand (#1104)
   setPluginEnabled(NAME, true);
   row = listInstalledPlugins().find((p) => p.name === NAME);
   assert.deepEqual(

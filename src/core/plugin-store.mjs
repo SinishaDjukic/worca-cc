@@ -835,6 +835,7 @@ export function listInstalledPlugins({ marketplaces = null } = {}) {
       setup: manifest ? pluginSetupState(name, manifest) : { ok: true, missing: [], noProfiles: [] },
       hasSettings: manifest ? pluginHasSettings(manifest) : false,
       description: manifest?.description || null,
+      icon: manifest?.icon || null,
       ref: e.ref ?? null,
       notes,
       latest: pluginLatest(name, e, inv, marketplaces),

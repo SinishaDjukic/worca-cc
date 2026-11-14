@@ -1,0 +1,7 @@
+/* A third-party product's mark beside its name (brand-marks.mjs): always neutral ink, so a coloured chip or badge never
+   tints a logo. Inline, so a row's height and a name's ellipsis stay as they were. */
+.brand-mark{display:inline-flex;flex:none;line-height:0;vertical-align:-2px;margin-right:5px;color:var(--ink);}
+.brand-mark svg{display:block;}
+.brand-mark[data-brand="generic"]{color:var(--ink-3);}
+.mk-mt .brand-mark,.runs-pr .brand-mark{margin-right:0;}
+.ask-engine-row .brand-mark{margin-right:8px;}

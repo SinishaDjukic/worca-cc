@@ -39,7 +39,7 @@ function writeTree(root, files) {
   }
 }
 const PLUGIN = (name) => JSON.stringify({
-  name, version: '0.1.0', description: `${name} fixture`,
+  name, version: '0.1.0', description: `${name} fixture`, ...(name === 'aa' ? { icon: 'github' } : {}),
   taskSources: [{ id: 'main', displayName: name, module: './index.mjs',
     inputs: [{ key: 'task', type: 'task-browser', label: 'Task' }] }],
 });
@@ -112,6 +112,8 @@ test('addMarketplace: syncs the snapshot; duplicate add -> EXISTS; junk url not 
   assert.equal(entry.plugins[0].inventory.taskSources[0].id, 'main');
   assert.equal(entry.plugins[0].description, 'aa fixture'); // E8: discovery carries manifest fields
   assert.equal(entry.plugins[0].version, '0.1.0');
+  assert.equal(entry.plugins[0].icon, 'github');   // the Browse tile reads the snapshot (#1104)
+  assert.equal(Object.hasOwn(entry.plugins[1], 'icon'), false);
   await assert.rejects(() => addMarketplace(root), (e) => e.code === 'EXISTS');
   await assert.rejects(() => addMarketplace(join(scratch, 'no-such-repo')),
     (e) => e.code === 'BAD_REQUEST' && e.syncError?.code === 'UNREACHABLE' && /does not exist/.test(e.syncError.message));

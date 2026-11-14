@@ -754,6 +754,16 @@
         "name": "requirements"
       },
       {
+        "section": "^Shape it first",
+        "selectors": [
+          ".brand-mark",
+          ".mk-mt .brand-mark",
+          ".ask-engine-row .brand-mark"
+        ],
+        "feature": "shell",
+        "name": "brand-marks"
+      },
+      {
         "section": "^Top bar \\(\\#topnav\\)",
         "selectors": [
           ".chat-group-"

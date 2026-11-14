@@ -8,6 +8,7 @@
 // (mv-cp-*, mv-pv-*, mvi-*, mv-conn-*) plus data-provider / data-id.
 
 import { icon } from './icons.mjs';
+import { brandMark } from './brand-marks.mjs';
 import { copyButton, copyFromButton } from './copy-button.mjs';
 import { makeSwitch } from './switch.mjs';
 import { codexReaches, runsOnText } from '../../src/shared/connections.mjs';
@@ -330,7 +331,7 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
   cp.dataset.provider = 'copilot';
   const cpMain = h(doc, 'div', 'mv-pv-main');
   const cpHead = h(doc, 'div', 'mv-head');
-  cpHead.appendChild(h(doc, 'b', 'mv-name', 'GitHub Copilot'));
+  cpHead.append(brandMark(doc, 'copilot'), h(doc, 'b', 'mv-name', 'GitHub Copilot'));
   const brokered = !!(p.broker && p.broker.enabled);
   // With the broker, the broker's view of your sign-in.
   cpHead.appendChild(brokered ? brokerPill(doc, p.broker, 'copilot') : providerStatePill(doc, c));
@@ -391,7 +392,7 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
     row.dataset.provider = name;
     const main = h(doc, 'div', 'mv-pv-main');
     const rh = h(doc, 'div', 'mv-head');
-    rh.appendChild(h(doc, 'b', 'mv-name', PROVIDER_LABELS[name]));
+    rh.appendChild(h(doc, 'b', 'mv-name', PROVIDER_LABELS[name]));   // "OpenAI-compatible" may be any gateway: no maker's mark
     rh.appendChild(p.broker && p.broker.enabled ? brokerPill(doc, p.broker, name) : k.configured ? h(doc, 'span', 'badge green', 'key set')
       : k.keySet ? h(doc, 'span', 'badge red', 'key ${VAR} not set')
         : k.keyOptional ? h(doc, 'span', 'badge green', 'local, no key needed') : h(doc, 'span', 'badge grey', 'no key'));

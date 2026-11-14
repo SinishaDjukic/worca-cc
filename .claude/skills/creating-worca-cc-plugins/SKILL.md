@@ -64,6 +64,7 @@ Only `name` is required. Unknown fields are warnings (errors under `--strict`).
 |---|---|
 | `name` | kebab-case, ≤64 chars, machine-unique, used as a dir name |
 | `version` | optional — absent means the pinned SHA **is** the version; the Marketplace offers an update only when the marketplace lists a higher `x.y.z` on the branch your install follows |
+| `icon` | optional kebab-case brand id the host draws on the plugin's tile (`github`, `copilot`, `goose`; list in `docs/brand-marks.md`). Never artwork or a path. An id the host has no cleared mark for, or an older host, shows the kind tile. Only claim a brand your plugin actually integrates with |
 | `engines.worca-cc-api` | `">=4 <5"` (what `plugin init` writes); `">=5 <6"` to ship MCP servers. Integer host API. Unparseable → fails closed, won't install. Host APIs are a SET ([1, 2, 3, 4, 5]); the highest version your range admits is **negotiated**, and that is what decides which features you get. API 3 adds meta v2 sidecars and v2 graph templates; **API 4 honours an agent's `ask.forms`**; **API 5 honours the manifest's `mcpServers`** |
 | `setup.node` | `true` → `npm ci --ignore-scripts --omit=dev` at install. **Lockfile mandatory** |
 | `setup.python` | only `"pyproject"` → `uv sync`. Worca CC never *runs* python; your JS spawns it |

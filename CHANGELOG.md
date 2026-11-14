@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Brand marks for engines, models, code hosts and plugins (#1104)
+
+Engines, models, providers, PR chips, the Create PR dialog and plugin tiles show a product's small mono mark beside its name. GitHub, GitHub Copilot and Goose have artwork so far; every other product shows a generic icon until its brand rules are cleared (`docs/brand-marks.md`). Plugins can name a mark with the optional manifest field `icon`.
+
 ### Instance contract for hosting platforms
 
 - New [Instance contract](docs/instance-contract.md) page: what a hosted Worca instance is made of (the `worca`, `broker` and `cloudflared` containers, their start commands, ports and volumes) and everything a management interface sets or expects: every variable per container, the identity token, the heartbeat and what a receiver should do with it, stopping and draining, rotation and versions. For running Worca for others without a hosting platform, or for building a management interface of your own.
