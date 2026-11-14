@@ -260,7 +260,7 @@ export function finishedNeedsYou(run) {
 function roundLine(state, round, base, prog, finished) {
   if (!round) return { line: base, lineSaysState: false };
   if (state === 'working') {
-    const what = round.by === 'watch' && round.request ? round.request : (prog && prog.mode === 'stages' && prog.label) || 'working';
+    const what = (round.by === 'watch' || round.by === 'restart') && round.request ? round.request : (prog && prog.mode === 'stages' && prog.label) || 'working';
     return { line: join('Running', `Round ${round.n}`, what), lineSaysState: true };
   }
   if ((LIVE.has(state) && !finished) || state === 'failed') return { line: join(`Round ${round.n}`, base), lineSaysState: false };
@@ -374,7 +374,7 @@ export function groupModel(group, opts = {}) {
       case 'starting': return `${where} · starting`;
       case 'working': {
         const rd = current.round;
-        const what = rd && rd.by === 'watch' && rd.request ? rd.request : (current.progress && current.progress.label) || 'working';
+        const what = rd && (rd.by === 'watch' || rd.by === 'restart') && rd.request ? rd.request : (current.progress && current.progress.label) || 'working';
         return rd ? `${where} · round ${rd.n} · ${what}` : `${where} · ${what}`;
       }
       case 'needs-you': return `${where} · needs you`;

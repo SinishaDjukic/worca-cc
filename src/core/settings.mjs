@@ -2788,7 +2788,7 @@ export async function writeStoredFlags(map) {
 // `welcomeSeen` is the one-time welcome dialog; `workspaceGuideSeen` is the
 // "How workspaces work" walkthrough (FEAT-7) — set on every open, cleared when
 // the last workspace is deleted. All absent = all false.
-const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen']);
+const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen', 'stillhetAsked']);
 
 export function onboardingPrefs() {
   const o = readSettings().onboarding;

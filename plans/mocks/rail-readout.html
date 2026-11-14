@@ -1,0 +1,113 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Readout</title>
+<style>
+@font-face{font-family:'Poppins';font-weight:400;src:url('../../ui/public/fonts/poppins-latin-400-normal.woff2') format('woff2');}
+@font-face{font-family:'Poppins';font-weight:500;src:url('../../ui/public/fonts/poppins-latin-500-normal.woff2') format('woff2');}
+@font-face{font-family:'Poppins';font-weight:600;src:url('../../ui/public/fonts/poppins-latin-600-normal.woff2') format('woff2');}
+:root{--bg:#161614;--panel:#222220;--field:#2C2C29;--surface:#34342F;--ink:#ECECE8;--ink-2:#B4B4AE;--ink-3:#9E9E98;--line:#30302D;--red:#E76A5A;--hover:#353531;--violet-ink:#B3A8EE}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--ink);font:13px/1.4 Poppins,system-ui,sans-serif;padding:28px;width:1420px}
+h1{font-size:18px;font-weight:500;margin-bottom:4px}
+.sub{color:var(--ink-3);margin-bottom:22px}
+.row{display:grid;grid-template-columns:100px repeat(3,minmax(0,1fr));gap:18px;align-items:start;margin-bottom:30px}
+.lab{color:var(--ink-3);font-size:11px;text-transform:uppercase;letter-spacing:.06em;padding-top:4px}
+.col h2{font-size:12px;font-weight:500;color:var(--ink-2);margin-bottom:8px}
+.col h2 b{color:var(--ink);font-weight:600}
+.note{color:var(--ink-3);font-size:11.5px;margin-top:8px}
+.pos{position:relative}
+.comp{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px 14px;width:400px}
+.words{color:var(--ink-3);padding-bottom:16px}
+.bar{display:flex;align-items:center;gap:10px;color:var(--ink-3);white-space:nowrap}
+.bar .sp{flex:1}
+.mode{color:var(--ink);font-weight:600}
+.ro{font-size:12.5px;color:var(--ink-3);border-radius:4px;padding:2px 6px;margin-left:-6px;overflow:hidden;text-overflow:ellipsis}
+.ro b{font-weight:400;color:var(--ink-2)}
+.ro b.ch{color:var(--violet-ink)}
+.ro.on{background:var(--hover)}
+.send{width:26px;height:26px;border-radius:5px;background:var(--ink);color:var(--bg);display:grid;place-items:center;font-size:13px;font-weight:600;flex:none}
+.pop{position:absolute;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:12px 14px;box-shadow:0 8px 24px rgba(0,0,0,.45);z-index:2}
+.s{font-size:13.5px;line-height:24px;color:var(--ink-3)}
+.p{color:var(--ink);font-weight:500;white-space:nowrap}
+.p::after{content:" ⌄";font-size:10px;color:var(--ink-3)}
+.p.ch{color:var(--violet-ink)}
+.pf{display:flex;justify-content:space-between;border-top:1px solid var(--line);margin-top:10px;padding-top:8px;font-size:12px;color:var(--ink-3)}
+.pf u{text-decoration:none;color:var(--ink-2)}
+/* sidebar */
+.side{background:var(--panel);border:1px solid var(--line);border-radius:6px;width:250px;padding:10px 12px 12px}
+.head{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:500;margin-bottom:2px}
+.logo{width:20px;height:20px;border-radius:50%;background:#B4B4AE;color:#161614;font-size:11px;font-weight:600;display:grid;place-items:center;flex:none}
+.head .sp{flex:1}
+.ic{color:var(--ink-3);font-size:15px;font-weight:400}
+.lro{font-size:12px;color:var(--ink-3);padding:2px 6px;margin:0 0 10px 22px;border-radius:4px;width:max-content}
+.lro b{font-weight:400;color:var(--ink-2)}
+.lro b.ch{color:var(--violet-ink)}
+.lro.on{background:var(--hover)}
+.grp{font-weight:600;font-size:13px;margin-bottom:6px}
+.grp span{color:var(--ink-3);font-weight:400;margin-left:4px}
+.it{display:flex;align-items:center;gap:8px;height:26px}
+.it .t{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.it .m{color:var(--ink-3);font-size:12px}
+.sub2{padding-left:22px}
+.x{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--red);color:var(--red);font-size:8px;display:grid;place-items:center;flex:none}
+.bub{width:14px;height:12px;border:1.5px solid var(--ink-3);border-radius:2px;flex:none}
+</style></head><body>
+<h1>Readout: the sentence folds into one quiet line, and opens when you click it</h1>
+<div class="sub">You still choose before you send. The sentence stays the editor; what sits on the page is its summary, values only, at meta size.</div>
+
+<div class="row">
+  <div class="lab">Composer</div>
+  <div class="col"><h2><b>Resting</b>, one line of values</h2>
+    <div class="comp"><div class="words">Describe the task…</div>
+      <div class="bar"><span>+</span><span class="mode">Task</span><span class="ro"><b>billing-api</b> · Opus 5.5 high · PR</span><span class="sp"></span><span>🎙</span><span class="send">↑</span></div></div>
+    <div class="note">Values only, no connectors, no chevrons. The repo is brighter: it is the one you check. Defaults that say nothing (Default workflow, origin · latest) are left out.</div>
+  </div>
+  <div class="col"><h2><b>Click it</b>, the full sentence opens</h2>
+    <div class="comp pos"><div class="words">Describe the task…</div>
+      <div class="bar"><span>+</span><span class="mode">Task</span><span class="ro on"><b>billing-api</b> · Opus 5.5 high · PR</span><span class="sp"></span><span>🎙</span><span class="send">↑</span></div>
+      <div class="pop" style="left:30px;top:84px;width:320px">
+        <div class="s">On <span class="p">billing-api</span> with <span class="p">Default</span> workflow, <span class="p">Opus 5.5 high</span>, from <span class="p">origin · latest</span>, then <span class="p">open a PR</span></div>
+        <div class="pf"><span>Same as last time</span><u>Save as setup…</u></div>
+      </div></div>
+    <div class="note" style="margin-top:150px">The sentence you know, every picker, in a popover. The page never carries it.</div>
+  </div>
+  <div class="col"><h2><b>Changed</b>, the readout says so</h2>
+    <div class="comp"><div class="words">Describe the task…</div>
+      <div class="bar"><span>+</span><span class="mode">Task</span><span class="ro"><b>billing-api</b> · <b class="ch">Opus 5.5 max</b> · <b class="ch">push only</b></span><span class="sp"></span><span>🎙</span><span class="send">↑</span></div></div>
+    <div class="note">A value you changed turns violet and stays until you send. Still one line.</div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="lab">Chat list</div>
+  <div class="col"><h2><b>Resting</b>, one small line under the title</h2>
+    <div class="side">
+      <div class="head"><span class="logo">W</span>Chat <span class="sp"></span><span class="ic">＋</span><span class="ic">◫</span></div>
+      <div class="lro">All · by date</div>
+      <div class="grp">Needs you <span>2</span></div>
+      <div class="it"><span class="bub"></span><span class="t">Node 24</span><span class="m">12:40</span></div>
+      <div class="it sub2"><span class="x">✕</span><span class="t">Update Node to 24</span><span class="m">⑂</span></div>
+    </div>
+    <div class="note">One meta-size line instead of two body lines. "From all projects" goes: all is the default.</div>
+  </div>
+  <div class="col"><h2><b>Click it</b>, the list's sentence opens</h2>
+    <div class="side pos" style="min-height:200px">
+      <div class="head"><span class="logo">W</span>Chat <span class="sp"></span><span class="ic">＋</span><span class="ic">◫</span></div>
+      <div class="lro on">All · by date</div>
+      <div class="pop" style="left:30px;top:62px;width:230px">
+        <div class="s">Showing <span class="p">all</span> from <span class="p">all projects</span> by <span class="p">date</span></div>
+        <div class="pf"><span>14 chats</span><u>Reset</u></div>
+      </div>
+    </div>
+    <div class="note">The same ListSentence as today, only folded away.</div>
+  </div>
+  <div class="col"><h2><b>Filtered</b>, the line says why it is short</h2>
+    <div class="side">
+      <div class="head"><span class="logo">W</span>Chat <span class="sp"></span><span class="ic">＋</span><span class="ic">◫</span></div>
+      <div class="lro"><b class="ch">Needs you</b> · <b class="ch">billing-api</b> · by date &nbsp;✕</div>
+      <div class="it"><span class="bub"></span><span class="t">Node 24</span><span class="m">12:40</span></div>
+      <div class="it sub2"><span class="x">✕</span><span class="t">Update Node to 24</span><span class="m">⑂</span></div>
+    </div>
+    <div class="note">Changed values in violet, ✕ resets. Same rule as the composer.</div>
+  </div>
+</div>
+</body></html>

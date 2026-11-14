@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 88;
+export const SCHEMA_VERSION = 91;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -840,15 +840,20 @@ ${STEP_QUESTIONS_DDL}
  * against the live schema so the gap can be healed regardless of the stamp.
  */
 const INCREMENTAL_COLUMNS = {
-  req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13)
-  req_features:           { early_start_reason: 'TEXT' },   // v85: the reason given for starting a feature before Ready, kept until a run starts; NULL = none
+  req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER',
+                            engine: 'TEXT', step: 'TEXT', cost_kind: 'TEXT', input_tokens: 'INTEGER', output_tokens: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13); v89: 9c (engine, step, billed|estimated|unknown, tokens)
+  req_features:           { early_start_reason: 'TEXT', model_json: 'TEXT' },   // v85: the reason given for starting a feature before Ready, kept until a run starts; NULL = none; v89: the feature's { engine, model, effort } (9c D2); NULL = before 9c
+  req_turns:              { engine: 'TEXT', notices_json: 'TEXT' },   // v89: the harness a step ran on, its D12 notices (9c)
+  req_helper_messages:    { engine: 'TEXT', notices_json: 'TEXT' },   // v89: as req_turns
+  req_briefs:             { engine: 'TEXT', made_cost_usd: 'REAL', made_cost_kind: 'TEXT' },   // v89: the harness that made the brief (9c D18); NULL = Claude; the cost of its last make and its kind (billed | estimated | unknown); NULL = not booked (before 9c, a mock make)
   req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
   run_groups:             { name_source: "TEXT NOT NULL DEFAULT 'user'" },   // v79: 'suggested' | 'user' (Smart naming), as ask_chat_groups
   req_export_links:       { origin: "TEXT NOT NULL DEFAULT 'export'" },   // v88: where the link came from, 'export' | 'import' (A6.1 D11, D13)
-  req_attachments:        { fetch_json: 'TEXT' },   // v88: the tracker file a row comes from (A6.1 D10, D13); NULL for an upload
+  req_attachments:        { fetch_json: 'TEXT', read_engine: 'TEXT' },   // v88: the tracker file a row comes from (A6.1 D10, D13); NULL for an upload; v89: the harness that read the file (9c)
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
+                            cost_cap_usd: 'REAL',   // v91: a cap raised for this run (Stillhet's Raise the cap); NULL = the settings cap
                             pr_url: 'TEXT', pr_number: 'INTEGER', pr_state: 'TEXT', pr_checked_at: 'TEXT',
                             outcome: 'TEXT',
                             scheduled_for: 'TEXT', schedule_id: 'TEXT',   // v31: scheduled-run provenance (NULL = started by hand)
@@ -899,7 +904,8 @@ const INCREMENTAL_COLUMNS = {
                             composer: 'TEXT',        // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
                             archived_at: 'TEXT',     // v75 (#948 s2): when the chat was archived; NULL = not archived
                             pinned_at: 'TEXT',       // v75 (#948 s2): when the chat was pinned; NULL = not pinned
-                            group_id: 'TEXT' },      // v76 (#948 s3): the chat's topic group (ask_chat_groups.id); NULL = ungrouped
+                            group_id: 'TEXT',        // v76 (#948 s3): the chat's topic group (ask_chat_groups.id); NULL = ungrouped
+                            labels: 'TEXT' },        // v90 (Stillhet chat): JSON [label] (run labels' rules), in the order added; NULL = none
   shape_features:         { ship_mode: 'TEXT',        // v58 (D24): 'stacked' | 'one'; NULL = not shipped
                             ship_pr_url: 'TEXT',      // v58: the one PR (mode 'one'); NULL otherwise
                             shipped_at: 'TEXT',       // v58: when Ship as ran
@@ -2810,6 +2816,12 @@ export function migrate(db) {
     // freeform chat #1142 took 85, #1142 took 86 and PR-when-done #1156 took 87). The repair runs here, after the v77 and v80 rungs created
     // those tables on a DB coming from below them.
     if (current < 88) repairSchemaGaps(db, schemaGaps(db));
+    // v89 requirements 9c: the harness and cost kind of every step — req_features.model_json, req_briefs.{engine, made_cost_usd, made_cost_kind}, req_cost_ledger.{engine, step,
+    // cost_kind, input_tokens, output_tokens}, req_turns/req_helper_messages.{engine, notices_json}, req_attachments.read_engine
+    // (all nullable, INCREMENTAL_COLUMNS, so the whole step is the reconcile).
+    if (current < 89) repairSchemaGaps(db, schemaGaps(db));
+    // v90: ask_threads.labels (Stillhet chat labels) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v91: pipelines.cost_cap_usd (Raise the cap) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

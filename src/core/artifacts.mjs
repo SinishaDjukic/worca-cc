@@ -36,6 +36,7 @@ import { attachWatchPipeline, getWatch, watchActive } from './pr-watch.mjs';
 import { insertRunTags, readRunTags, readTagsFor } from './run-tags-store.mjs';
 import { insertRunLabels, readLabelsFor, readRunLabels } from './run-labels-store.mjs';
 import { workInBase } from './in-base.mjs';
+import { pipelineCostLimitUsd } from './settings.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -3247,6 +3248,10 @@ export async function readPipelineByKey(key, id) {
   if (state.resumable && !(dir && existsSync(dir))) state.resumable = false;
   // Nor without its project (workspace, member) onboarded on this machine: resumeRun refuses it, so the detail hides Resume.
   if (state.resumable && !runOnboarded(row)) state.resumable = false;
+  // Raise the cap (Stillhet): the cap raised for this run, null = the settings cap applies.
+  state.costCapUsd = typeof row.cost_cap_usd === 'number' ? row.cost_cap_usd : null;
+  // the cap the task is held to: its own, else Settings' (a project's override, as the harness scopes it; none for a workspace)
+  state.capUsd = state.costCapUsd ?? pipelineCostLimitUsd(row.workspace_key ? null : state.projectDir) ?? null;
   const results = await readJsonFile(join(dir, 'results.json'));
   const overview = await readJsonFile(join(dir, 'overview.json'));
   return {

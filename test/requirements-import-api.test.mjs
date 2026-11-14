@@ -109,6 +109,7 @@ test('Start the interview with a ticket (D10, D11, D14): 201 at once; R-po-1… 
   const f = r.json.feature;
   assert.deepEqual(f.spec.criteria.map((c) => [c.id, c.text, c.edited, c.source]), CRITERIA.map((t, i) => [`R-po-${i + 1}`, t, true, 'SHOP-124']));
   assert.equal(f.export.link.key, 'SHOP-124', 'the chip from the start (the view carries the origin from Task 10 on)');
+  assert.equal(getFeature(f.seq).model.engine, 'claude', '9c: a feature started from a ticket stores the default choice too');
   assert.deepEqual(f.attachments.map((a) => a.name), ['SHOP-124 comments.md', 'packing-slip.png', 'partial-cancel-flow.pdf', 'support-macro.txt']);
   assert.ok(['reading', 'done'].includes(f.attachments[0].status));
   assert.deepEqual(f.attachments.slice(1).map((a) => a.status), ['downloading', 'downloading', 'downloading']);

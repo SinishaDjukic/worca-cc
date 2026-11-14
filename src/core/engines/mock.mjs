@@ -523,6 +523,12 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
 
   await emitLog(onEvent, `[mock] starting role=${role || 'unknown'} cycle=${cycle}`);
   abortIfNeeded(signal);
+  // WORCA_MOCK_FAIL_STEP=<role> (the Tasks walk's seed): that step fails for real, with test-shaped lines, so dev's failure
+  // policy handles it as it would a real one (it pauses the run on that step).
+  if (role && String(process.env.WORCA_MOCK_FAIL_STEP || '').split(',').map((x) => x.trim()).includes(role)) {
+    await emitLog(onEvent, '[mock] failing as asked (WORCA_MOCK_FAIL_STEP)');
+    throw Object.assign(new Error('3 tests failed\n✗ test/a.test.mjs: timeout\n✗ test/b.test.mjs: expected 2\n✗ test/c.test.mjs: ENOENT'), { mockFailure: true });
+  }
 
   // Ask-then-resume (spec 2026-07-11): asking replaces the role side effects
   // for this invocation; the orchestrator gates the user and resumes. The
@@ -641,7 +647,10 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
   // No model was called, so the truthful spend is $0. Emit a result event the
   // orchestrator attributes to the current phase, so mock/demo runs still show
   // a (zero) per-phase and total cost in the UI.
-  safeEmit(onEvent, { type: 'result', costUsd: 0, raw: { mock: true, type: 'result', total_cost_usd: 0 } });
+  // WORCA_MOCK_STEP_COST_USD (the Tasks walk's seed): each step reports that spend, so a low cap really pauses the run.
+  const stepCost = Number(process.env.WORCA_MOCK_STEP_COST_USD);
+  const cost = Number.isFinite(stepCost) && stepCost > 0 ? stepCost : 0;
+  safeEmit(onEvent, { type: 'result', costUsd: cost, raw: { mock: true, type: 'result', total_cost_usd: cost } });
   await emitLog(onEvent, `[mock] done role=${role}`);
   return { text, exitCode: 0 };
 }

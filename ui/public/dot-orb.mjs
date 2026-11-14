@@ -29,6 +29,18 @@ export function turnPhase(live, blocks = []) {
   return 'think';
 }
 
+/** Worca's W, facing you: a point of the orb's front face (x right, y down, unit circle) lies on it. An orb asked for it
+ *  (data-pattern="w") lights its dots there while the sphere turns under it, at rest too; no orb has it unless asked. */
+const W_PATH = [[-0.74, -0.4], [-0.38, 0.48], [0, -0.1], [0.38, 0.48], [0.74, -0.4]];
+export function orbInW(x, y, width = 0.15) {
+  for (let i = 1; i < W_PATH.length; i++) {
+    const [ax, ay] = W_PATH[i - 1], [bx, by] = W_PATH[i], dx = bx - ax, dy = by - ay;
+    const k = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy)));
+    if (Math.hypot(x - (ax + k * dx), y - (ay + k * dy)) < width) return true;
+  }
+  return false;
+}
+
 /** Evenly spread points on a unit sphere (golden-angle spiral), flat [x, y, z, …]. */
 const spheres = new Map();
 export function orbSphere(n) {
@@ -65,7 +77,7 @@ export function createDotOrbs({ doc, win }) {
   function init(el) {
     const size = Number(el.dataset.s) || 22;
     const o = { el, ctx: null, size, px: 0, n: Math.round(Math.max(110, Math.min(460, size * 4.8))),
-      rot: 0.6, t: Math.random() * 20, phase: 'rest', cur: { ...ORB_PHASES.rest }, color: '', colored: false, drawn: false, idle: true, gone: 0 };
+      rot: 0.6, t: Math.random() * 20, phase: 'rest', cur: { ...ORB_PHASES.rest }, color: '', colored: false, drawn: false, idle: true, gone: 0, w: el.dataset.pattern === 'w' };
     // No animation frames = nothing could ever move: skip the canvas backend entirely (jsdom has none).
     if (raf) {
       const dpr = Math.min(3, Math.max(1, win.devicePixelRatio || 1));
@@ -115,6 +127,7 @@ export function createDotOrbs({ doc, win }) {
         const k = (x1 * sp[0] + y2 * sp[1] + z2 * sp[2] - SP) / (1 - SP);
         if (k > 0) b = Math.max(b, cur.spot * k * k * (3 - 2 * k));
       }
+      if (o.w && z2 > 0.15 && orbInW(x1, -y2)) b = Math.max(b, 0.9);   // the W facing you, the sphere turning under it
       if (b > 0) { b = Math.min(1, b); a += (1 - a) * b; s *= 1 + 0.75 * b; }
       ctx.globalAlpha = Math.min(1, a);
       ctx.beginPath(); ctx.arc(c + x1 * R, c - y2 * R, dot * s, 0, TAU); ctx.fill();

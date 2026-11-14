@@ -14,6 +14,9 @@ import { gitOn, onGitChange, GIT_MISSING_TEXT } from './git-gate.mjs';
 import { makeSwitch } from './switch.mjs';
 import { icon as sharedIcon } from './icons.mjs';
 import { openRunSetupOverlay } from './run-setup-overlay.mjs';
+import { engineLabel } from '../../src/shared/engine-switch.mjs';
+import { whoInterviews, recommendationNote, defaultLine, fallbackLine, harnessLine, otherHarnessPrivacy, modelChip, modelDialog, switchConfirm, choiceBox,
+  briefRefreshDialog, stepMeta, stepNotices, costDialog, costWord, totalCostWord } from './requirements-model.mjs';
 import {
   ATTACH_BINARY, ATTACH_TEXT_EXT, extOf, checkAttachment, bytesToBase64, carriesFiles, pastedFiles, createPasteNamer, REQ_ATTACH, reqLimits,
 } from './attach-files.mjs';
@@ -50,7 +53,7 @@ const BRIEF_SECTIONS = [['product', 'What the product does'], ['users', 'Who use
 const AREA_STATUS = Object.freeze({ exists: { label: 'Exists', cls: 'green' }, partly: { label: 'Partly', cls: 'amber' } });
 const BRIEF_FORMAT = Object.freeze({ users: 'One per line, as Name: what they can do.', terms: 'One per line, as Term: what it means.',
   areas: 'One per line, as Name (exists or partly): what exists. The status is optional.' });
-/** An area as the page names it: "<belongsTo>: <name>" for one added from a closer look (A7 D11). */
+/** An area as the page names it: "<belongsTo>: <name>" for one added from a code look (A7 D11). */
 const areaLabel = (a) => (a.belongsTo ? `${a.belongsTo}: ${a.name}` : a.name);
 /** A section as the editor's text (A7 §3, the server's `sectionText`): one item per line, split on the first ": ". */
 function briefSectionText(key, value) {
@@ -180,9 +183,15 @@ function readRange(kinds, estimates) {
   const hi = Math.max(...known);
   return lo === hi ? usd(lo) : `${usd(lo)}–${usd(hi).slice(1)}`;
 }
-/** D15: the privacy note, naming the interview model. */
-const privacyNote = (interview, id = null) => h('p', { class: 'hint req-files-privacy', id }, icon(ICONS.info, { size: 14 }),
-  h('span', { text: `Worca sends each file to ${(interview && (interview.label || interview.model)) || 'the interview model'} to read it. Text is checked for keys and passwords first; images and PDFs go as they are.` }));
+/** D15: the privacy note, naming the interview model. Claude keeps its exact words; another harness (9c) says who gets the files and
+ *  what is skipped. `interview` is a feature's { label, model, engine? } or the list's { default: { engine, label, model } }. */
+const privacyNote = (interview, id = null) => {
+  const i = interview && interview.default ? interview.default : interview;
+  const name = (i && (i.label || i.model)) || 'the interview model';
+  const words = i && i.engine && i.engine !== 'claude' ? otherHarnessPrivacy(name, engineLabel(i.engine))
+    : `Worca sends each file to ${name} to read it. Text is checked for keys and passwords first; images and PDFs go as they are.`;
+  return h('p', { class: 'hint req-files-privacy', id }, icon(ICONS.info, { size: 14 }), h('span', { text: words }));
+};
 /** A refusal line of the files' amber alert, the file's name in bold (board 15). */
 function refusalLine(message) {
   const m = /^(.+?) (was not added: .*)$/.exec(message);
@@ -201,6 +210,20 @@ const briefPath = (scopeType, scopeKey) => `brief/${scopeType}/${encodeURICompon
 const decodeKey = (k) => { try { return decodeURIComponent(k); } catch { return k; } };
 const sentence = (s) => { const t = String(s || '').replace(/[_-]+/g, ' ').trim(); return t ? t[0].toUpperCase() + t.slice(1) : ''; };
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** A moment as the thread says it (9c board 5): "9 Nov, 14:02", in local time; '' for something that is not a date. */
+function when(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}, ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+/** The first sentence of a look's summary, at most 200 characters (9c D17). */
+function firstSentence(s) {
+  const text = String(s || '').trim();
+  const at = text.indexOf('. ');
+  const one = at >= 0 ? text.slice(0, at + 1) : text;
+  return one.length > 200 ? `${one.slice(0, 199).trimEnd()}…` : one;
+}
 
 const badge = (state) => h('span', { class: `badge ${STATE[state]?.cls || ''}`.trim(), text: STATE[state]?.label || state });
 const runColour = (status) => (RUN_LIVE.includes(status) ? 'peach' : status === 'done' ? 'green'
@@ -237,7 +260,7 @@ function rowMeta(f) {
         : run && run.status ? ` · run ${run.status}${run.phase ? ` · ${sentence(run.phase)}` : ''}` : '';
       return { text: `Started${runText}${k ? ` · ${plural(k, 'question')} for you` : ''}`, need: k > 0 || waits };
     }
-    case 'looking': return { text: 'Worca is looking at the code…' };
+    case 'looking': return { text: 'Worca is doing the code look…' };
     case 'thinking': return { text: 'Worca is thinking…' };
     default: return null;
   }
@@ -266,6 +289,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // the notes as last painted and their unsaved text, and each feature's scope as the page has seen it
   // (seq -> '<type>:<key>'), so a feature's frame repaints the brief page of its scope only.
   let briefShown = null;     // { scopeType, scopeKey } | null
+  let briefCatalogLoading = false;   // a models load in flight; a load that failed or came back empty is asked again at the next paint
+  let briefCatalog = null;   // 9c board 9: the harnesses and models the brief's box picks from; null until loaded or when they cannot be
+  let briefBoxRef = null;    // the head-start box's choice, read by Create
+  let briefPick = null;      // { id, value }: that choice kept across repaints of the page
   let briefData = null;
   let creating = false;
   let notesBase = null;      // { body, look } as painted from the server
@@ -467,7 +494,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         });
         // already here (the usual case): the form is drawn whole; else drawn bare and filled in below
         const first = settled ? take(listVal) : take(null);
-        const fill = paintNew(first.look, first.interview, first.briefs, first.estimates);
+        const fill = paintNew(first.look, first.interview, first.briefs, first.estimates, settled);
         paintedKey = key;
         if (!settled) {
           const late = take(await listP);
@@ -575,7 +602,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('span', { class: 'req-title', text: f.title }),
         meta ? h('span', { class: `hint req-row-meta${meta.need ? ' need' : ''}`, text: meta.text }) : null),
       stateMark(f),
-      h('span', { class: 'req-cost', text: usd(f.costUsd) }));
+      h('span', { class: 'req-cost', text: totalCostWord(f.costUsd, f) }));
   }
 
   // A group header's brief (board 11, A7 §6 "Elsewhere"): none yet (no row, or an `empty` one) with Create,
@@ -619,7 +646,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('div', { class: 'card req-rows' }, g.items.map(listRow)))),
       spend && typeof spend.windowUsd === 'number'
         ? h('p', { class: 'hint req-spend', text: `Spent on requirements this ${spend.resetPeriod === 'weekly' ? 'week' : 'month'}: ${usd(spend.windowUsd)}${
-          typeof spend.totalLimitUsd === 'number' ? ` of your ${usd(spend.totalLimitUsd)} limit` : ''}.` })
+          typeof spend.totalLimitUsd === 'number' ? ` of your ${usd(spend.totalLimitUsd)} limit` : ''}${
+          spend.unknownSteps > 0 ? ` plus ${plural(spend.unknownSteps, 'step')} with cost unknown` : ''}.` })
         : null,
     );
     // a filter chosen from the keyboard keeps the focus on the tabs across the rebuild
@@ -635,37 +663,31 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
   const briefLink = (to) => h('a', { class: 'req-brief-link', href: `#requirements/${to}`, onclick: (e) => { e.preventDefault(); route(to); } }, 'product brief');
 
-  // The line under the form: who interviews (A1.1), then what it costs. With a usable brief for the chosen target (or
-  // without git) there is no code look (A7 D10), so only the cost words after the dot change; the model part never does.
-  // A8 (board 15): with files picked, the words say each file is read once before round 1. Without interview info:
-  // A2's sentence; with nothing to say (no look estimate, no files) there is no line at all, as in A2.
-  function costHint(lookCost, interview, estimates = {}) {
+  // The line under the form: what the files cost. With a usable brief for the chosen target (or without git) there is no code look
+  // (A7 D10), so only the cost words change. A8 (board 15): with files picked, the words say each file is read once before round 1.
+  // The model and the code look's cost are the note's (9c D8, recommendationNote); this line carries the code look's cost only while
+  // there is no note (the models could not be loaded: A2's sentence). With nothing to say there is no line at all, as in A2.
+  function costHint(lookCost, estimates = {}) {
     let noLook = false;
+    let noted = false;
     let kinds = [];
-    const lookPart = () => (lookCost != null && !noLook ? `about ${usd(lookCost)} for the code look, ` : '');
+    const lookPart = () => (lookCost != null && !noLook && !noted ? `about ${usd(lookCost)} for the code look, ` : '');
     const words = () => (kinds.length
       ? `${lookPart()}reads each file once before round 1, about ${readRange(kinds, estimates)} a file, then cents per round`
       : lookPart() ? `${lookPart()}then cents per round` : 'cents per round');
-    if (!interview) {
-      let el = lookCost != null ? h('span', { class: 'hint req-new-cost' }) : null;
-      const sync = () => {
-        if (!el && kinds.length) el = h('span', { class: 'hint req-new-cost' });
-        if (!el) return;
-        const w = words();
-        el.textContent = `${w[0].toUpperCase()}${w.slice(1)}.`;
-        el.hidden = !lookPart() && !kinds.length;
-      };
-      sync();
-      return { get el() { return el; }, brief: (on) => { noLook = on; sync(); }, files: (k) => { kinds = k; sync(); } };
-    }
-    const name = interview.label || interview.model;
-    const who = `Worca interviews with ${name}${interview.effort ? ` at ${interview.effort} effort` : ''}`;
-    const tail = document.createTextNode(` · ${words()}`);
-    const el = h('span', { class: 'hint req-new-cost' }, h('span', { class: 'req-new-model', text: who }), tail);
-    return { el, brief: (on) => { noLook = on; tail.data = ` · ${words()}`; }, files: (k) => { kinds = k; tail.data = ` · ${words()}`; } };
+    let el = lookCost != null ? h('span', { class: 'hint req-new-cost' }) : null;
+    const sync = () => {
+      if (!el && kinds.length) el = h('span', { class: 'hint req-new-cost' });
+      if (!el) return;
+      const w = words();
+      el.textContent = `${w[0].toUpperCase()}${w.slice(1)}.`;
+      el.hidden = !lookPart() && !kinds.length;
+    };
+    sync();
+    return { get el() { return el; }, brief: (on) => { noLook = on; sync(); }, files: (k) => { kinds = k; sync(); }, note: (on) => { noted = on; sync(); } };
   }
 
-  function paintNew(lookCost, interview = null, briefs = [], estimates = {}) {
+  function paintNew(lookCost, interview = null, briefs = [], estimates = {}, listKnown = true) {
     const select = h('select', { id: 'req-new-target' },
       targets.projects.length ? h('optgroup', { label: 'Projects' }, targets.projects.map((p) => h('option', { value: `project:${p.key}`, text: p.name }))) : null,
       targets.workspaces.length ? h('optgroup', { label: 'Workspaces' }, targets.workspaces.map((w) => h('option', { value: `workspace:${w.id}`, text: w.name }))) : null);
@@ -801,10 +823,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // A brief is usable once made (D10), also while it is being refreshed.
     const usableOf = (list) => new Map(list.filter((b) => b && b.scopeType && b.scopeKey && b.madeAt).map((b) => [scopeId(b), b]));
     let usable = usableOf(briefs);
-    let cost = costHint(lookCost, interview, estimates);
+    let cost = costHint(lookCost, estimates);
     let noLookNow = false;   // what sayLook last told the cost line, and the file kinds sync last told it: carried to a rebuilt line
     let kindsNow = [];
     let lookHint = h('span', { class: 'hint req-new-look' });
+    let refreshNote = () => {};   // redraws Who interviews' note once it exists (the code look is left out with a brief or without git)
     const sayLook = () => {
       const [scopeType, ...rest] = select.value.split(':');
       const s = { scopeType, scopeKey: rest.join(':') };
@@ -813,19 +836,122 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const git = gitOn();
       const next = b ? briefLine(s, select.options[select.selectedIndex]?.textContent || s.scopeKey, b)
         : h('span', { class: 'hint req-new-look', text: !git
-          ? `Worca does not look at the code: ${GIT_MISSING_TEXT}. It starts asking right away.`
+          ? `Worca does not do a code look: ${GIT_MISSING_TEXT}. It starts asking right away.`
           : scopeType === 'workspace'
-            ? "Worca looks at the code of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca."
-            : "Worca looks at this project's code once, read-only, to learn what already exists. Change that in Your notes for Worca." });
+            ? "Worca does a code look of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca."
+            : "Worca does a code look of this project once, read-only, to learn what already exists. Change that in Your notes for Worca." });
       if (lookHint.parentNode) lookHint.replaceWith(next);
       lookHint = next;
       // with a brief, or without git, the code look's cost is not said: only the words after the dot change (A7 §6 / §9)
       noLookNow = !!b || !git;
       cost.brief(noLookNow);
+      refreshNote();
     };
     select.addEventListener('change', sayLook);
     sayLook();
     relook = sayLook;
+    // 9c boards 1, 2, 7: Who interviews. The harness list, models and estimates load once the form is open; the default and the
+    // fallback reason come from the list call. The group is drawn when both are known. Until then the box says the models are
+    // loading, or that they could not be loaded with Try again (D5: who interviews is never left unsaid). A default that is not
+    // known is never filled in with Claude here (D4 names the only reasons for that): the selects wait, Create posts no model,
+    // and the server stores the default or refuses when it cannot tell one.
+    const whoBox = h('div', { class: 'req-who-box' });
+    const whoMsg = h('span', { class: 'req-who-msg' });
+    const whoStatus = h('p', { class: 'hint req-who-status', role: 'status' }, whoMsg);
+    // One Try again button for the life of the form: a retry never replaces it, so keyboard focus stays on it (aria-disabled
+    // while loading, as a disabled button would drop focus).
+    const whoRetry = h('button', { type: 'button', class: 'link-btn req-who-retry', onclick: () => { if (!whoLoading) loadWho(); } }, 'Try again');
+    let whoLoading = false;
+    const slots = { fallback: h('div'), def: h('div'), hint: h('div'), note: h('div', { 'aria-live': 'polite' }) };
+    whoBox.append(whoStatus, slots.fallback, slots.def, slots.hint, slots.note);
+    let catalog = null;
+    let listInterview = interview;
+    let listIn = listKnown;
+    let who = null;
+    let lastEst = null;
+    let estNo = 0;
+    const modelLabel = (id) => { const m = catalog && catalog.models.find((x) => x && x.id === id); return (m && (m.label || m.id)) || id; };
+    const harnessOf = (e) => catalog.harnesses.find((x) => x.engine === e) || {};
+    const knownDefault = () => { const d = listInterview && listInterview.default; return !!(d && d.model); };
+    const defaultOf = () => {
+      const d = listInterview.default;
+      return { engine: d.engine || 'claude', model: d.model, effort: d.effort || null };
+    };
+    const drawFallback = () => {
+      const line = fallbackLine(document, listInterview && listInterview.fallbackReason);
+      slots.fallback.replaceChildren(...(line ? [line] : []));
+    };
+    function drawNote() {
+      const c = who.value();
+      const rec = (catalog.recommended && catalog.recommended[c.engine]) || null;
+      const line = recommendationNote(document, { picked: c.model, recommended: rec, estimates: lastEst, repo: harnessOf(c.engine).repo !== false && !noLookNow,
+        labels: { harness: engineLabel(c.engine), picked: modelLabel(c.model), recommended: rec ? modelLabel(rec) : '' },
+        onUse: () => { who.set({ engine: c.engine, model: rec, effort: '' }); onPick(); } });
+      slots.note.replaceChildren(line);
+    }
+    // everything that follows the pick: the hint, "Your default", the privacy note, and the estimates behind the note
+    function onPick() {
+      const c = who.value();
+      const hint = harnessLine(c.engine, harnessOf(c.engine));
+      slots.hint.replaceChildren(...(hint ? [h('p', { class: 'hint req-new-harness', text: hint })] : []));
+      const d = defaultOf();
+      const dl = defaultLine(document, { choice: c, defaultChoice: d, labels: { model: modelLabel(d.model), harness: engineLabel(d.engine) },
+        onUse: () => { who.set(d); onPick(); } });
+      slots.def.replaceChildren(...(dl ? [dl] : []));
+      const privacy = host.querySelector('#req-new-files-privacy');
+      if (privacy) privacy.replaceWith(privacyNote({ label: modelLabel(c.model), engine: c.engine }, 'req-new-files-privacy'));
+      const mine = ++estNo;
+      const qs = `engine=${encodeURIComponent(c.engine)}&model=${encodeURIComponent(c.model)}`;
+      api('GET', `/api/requirements/estimates?${qs}`).then((e) => e, () => null).then((e) => {
+        if (mine !== estNo || !host.contains(whoBox)) return;
+        lastEst = e;
+        drawNote();
+      });
+    }
+    refreshNote = () => { if (who && lastEst) drawNote(); };
+    const whoFailed = () => {
+      whoMsg.textContent = 'The models could not be loaded. ';
+      whoRetry.removeAttribute('aria-disabled');
+      if (whoRetry.parentNode !== whoStatus) whoStatus.append(whoRetry);
+    };
+    function buildWho() {
+      if (who || whoLoading || !host.contains(whoBox)) return;
+      if (!catalog) { whoFailed(); return; }
+      if (!listIn) return;   // the list is still on its way: fill() calls back
+      if (!knownDefault()) { whoFailed(); return; }
+      const focused = document.activeElement === whoRetry;
+      who = whoInterviews(document, { models: catalog.models, harnesses: catalog.harnesses, choice: defaultOf(), defaults: catalog.defaults, onChange: onPick });
+      whoStatus.remove();
+      whoBox.prepend(who.el);
+      cost.note(true);
+      drawFallback();
+      onPick();
+      if (focused) { const first = who.el.querySelector('select'); if (first) first.focus(); }
+    }
+    // Loads what is missing: the models, and (once the list has answered without one) the default from the list call again.
+    function loadWho() {
+      whoLoading = true;
+      if (whoRetry.parentNode === whoStatus) {
+        // the button keeps focus and its place; the line reads "Loading the models…" through the button's own text
+        whoMsg.textContent = '';
+        whoRetry.setAttribute('aria-disabled', 'true');
+        whoRetry.textContent = 'Loading the models…';
+      } else whoMsg.textContent = 'Loading the models…';
+      const models = catalog ? Promise.resolve(catalog)
+        : api('GET', '/api/requirements/models').then((c) => (c && Array.isArray(c.harnesses) && c.harnesses.length && Array.isArray(c.models) ? c : null), () => null);
+      const askList = listIn && !knownDefault();
+      const listed = askList
+        ? api('GET', '/api/requirements').then((d) => (d && d.interview && typeof d.interview === 'object' ? d.interview : null), () => null)
+        : Promise.resolve(null);
+      Promise.all([models, listed]).then(([c, iv]) => {
+        whoLoading = false;
+        whoRetry.textContent = 'Try again';
+        catalog = c;
+        if (askList && iv && !knownDefault()) listInterview = iv;   // never over a default fill() brought meanwhile
+        buildWho();
+      });
+    }
+    loadWho();
     // A8 (board 15): the Files field. Picks are checked here (D7: 10 files, 25 MB each, 100 MB in all on this form);
     // a refused one is named in the amber alert and not added; a chip per accepted file.
     let picked = [];
@@ -908,7 +1034,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           const fromTicket = imp ? { ...imp.conn, key: imp.key, criteria: imp.criteria, comments: imp.comments.map((c) => c.id),
             attachments: imp.attachments.map((a) => a.id), descriptionFile: !!imp.descriptionFile } : undefined;
           const data = await api('POST', '/api/requirements', { scopeType, scopeKey: rest.join(':'), title: title.value, description: desc.value,
-            ...(attachments ? { attachments } : {}), ...(fromTicket ? { fromTicket } : {}) });
+            ...(attachments ? { attachments } : {}), ...(fromTicket ? { fromTicket } : {}), ...(who ? { model: who.value() } : {}) });
           // A file the server could not store, and what the ticket no longer has, are named on the feature page (the feature stays).
           const lines = (Array.isArray(data.filesNotStored) ? data.filesNotStored : []).map((n) => `${n} was not added: Worca could not store it. Add it on the feature page.`);
           lines.push(...notOnTicketLines(data.notOnTicket, sent));
@@ -948,21 +1074,28 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           h('label', { for: 'req-new-files-input' }, 'Files ', h('span', { class: 'opt', id: 'req-new-files-opt', text: 'optional: emails, a spec, screenshots, a mockup' })),
           input, zone, privacyNote(interview, 'req-new-files-privacy'), ticketChips, chips, ticketNote, refused),
         field('req-new-target', ['For'], h('div', { class: 'select-wrap' }, select), lookHint),
+        whoBox,
         createFail,
         actions),
       note));
     // What the feature list tells (drawn bare, the list arrived after the form): the interview line and its cost, the privacy note's
     // model and the briefs. Only these change; what was typed or picked stays.
-    return ({ look, interview: who, briefs: bs, estimates: est }) => {
+    return ({ look, interview: listed, briefs: bs, estimates: est }) => {
       const prev = cost;
-      const next = costHint(look, who, est);
+      const next = costHint(look, est);
       next.brief(noLookNow);
       next.files(kindsNow);
+      next.note(!!who);
       if (prev.el && prev.el.parentNode === actions) { if (next.el) prev.el.replaceWith(next.el); else prev.el.remove(); }
       else if (next.el) actions.prepend(next.el);
       cost = next;
-      const privacy = host.querySelector('#req-new-files-privacy');
-      if (privacy) privacy.replaceWith(privacyNote(who, 'req-new-files-privacy'));
+      listInterview = listed;
+      listIn = true;
+      if (who) { drawFallback(); onPick(); } else {
+        const privacy = host.querySelector('#req-new-files-privacy');
+        if (privacy) privacy.replaceWith(privacyNote(listed, 'req-new-files-privacy'));
+        buildWho();
+      }
       usable = usableOf(bs);
       sayLook();
     };
@@ -1009,6 +1142,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     }
     briefData = data;
     const s = briefShown;
+    if (!briefCatalog && !briefCatalogLoading) {
+      briefCatalogLoading = true;
+      void loadCatalog().then((c) => { briefCatalogLoading = false; if (c) { briefCatalog = c; redrawBrief(); } });
+    }
     for (const u of data.usedBy || []) if (u && u.seq != null) seqScope.set(Number(u.seq), scopeId(s));
     const kept = captureBrief();
     const name = (data.target && data.target.name) || s.scopeKey;
@@ -1043,7 +1180,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   // Create, and Refresh (the same POST, D7): every control that starts it is marked `data-brief-go` and disabled
   // at once, so a double press posts once.
-  function createBrief() {
+  function createBrief(choice) {
     if (creating || !briefShown) return;
     const s = briefShown;
     creating = true;
@@ -1052,7 +1189,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     void (async () => {
       try {
         const refresh = !!(briefData && briefData.brief && briefData.brief.madeAt);
-        const data = await api('POST', briefApi(s), {});
+        const data = await api('POST', briefApi(s), choice && choice.model ? { choice: { engine: choice.engine, model: choice.model, effort: choice.effort || null } } : {});
         creating = false;
         paintAnswer(s, data);
         // the pressed button is disabled now, so the focus is lost: the polite message line says the work started
@@ -1080,11 +1217,22 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // no repository: a project without a default branch, a workspace whose members have none (`repositories` 0)
     const noRepo = !slow && (s.scopeType === 'project' ? !t.branch : t.repositories === 0);
     const whyNot = making ? 'Worca is reading the code. This takes a few minutes; you can leave this page.'
-      : switchOff ? 'Looking at the code is off. Turn it on under Your notes for Worca.'
+      : switchOff ? 'Code looks are off. Turn them on under Your notes for Worca.'
         : noRepo ? 'There is no repository to look at.' : null;
+    // 9c board 9: with the models known the box picks who makes it and the note says the cost; else A7's line stays
+    const bd = data.briefDefault && data.briefDefault.choice && data.briefDefault.choice.model ? data.briefDefault : null;
+    const picker = briefCatalog && bd;
+    briefBoxRef = null;
+    if (picker) {
+      const id = scopeId(s);
+      const start = briefPick && briefPick.id === id ? briefPick.value : bd.choice;
+      briefBoxRef = choiceBox(document, { catalog: briefCatalog, choice: start, defaultChoice: null, fallbackReason: bd.fallbackReason, kind: 'brief', legend: 'Who makes it',
+        repoOnly: true, hint: false, fetchEstimate: estimateFor('brief'), onChange: (v) => { briefPick = { id, value: v }; } });
+      briefBoxRef.el.className = 'req-who-box req-brief-who';
+    }
     const facts = [
       s.scopeType === 'workspace' ? ["Each project's default branch"] : t.branch ? ['Branch ', h('code', { text: t.branch })] : null,
-      typeof est.costUsd === 'number' ? ['about ', h('code', { text: usd(est.costUsd) })] : null,
+      !picker && typeof est.costUsd === 'number' ? ['about ', h('code', { text: usd(est.costUsd) })] : null,
       ['3 to 5 minutes'],
     ].filter(Boolean).flatMap((part, i) => (i ? [' · ', ...part] : part));
     const leftOut = s.scopeType === 'workspace' && Array.isArray(t.leftOut) && t.leftOut.length ? t.leftOut : null;
@@ -1092,7 +1240,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     return h('section', { class: 'card req-brief-start', 'aria-label': 'Give Worca a head start' },
       h('div', { class: 'req-brief-main' },
         h('h3', { text: 'Give Worca a head start' }),
-        h('p', { class: 'req-brief-why', text: 'Today Worca looks at the code again for every new feature. A brief is one deeper look, done once, that every feature here reuses: interviews ask better questions sooner, and each feature saves its own look.' }),
+        h('p', { class: 'req-brief-why', text: 'Today Worca does a code look again for every new feature. A brief is one deeper look, done once, that every feature here reuses: interviews ask better questions sooner, and each feature saves its own code look.' }),
         h('ul', { class: 'req-brief-parts' },
           part('What the product does', ', in a few sentences'),
           part('Who uses it', ' and what each of them can do'),
@@ -1103,12 +1251,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('div', { class: 'req-brief-cost', 'data-needs-git': true },
         h('span', { class: 'req-brief-look', text: 'One look, read-only' }),
         h('span', { class: 'req-brief-facts' }, ...facts),
-        est.model && est.model.label ? h('span', { class: 'hint req-brief-model', text: `${est.model.label} · counts toward your limit` }) : null,
+        // a 9c page (it names the brief's default pick) waits for the models, never A7's line; a page without the pick keeps that line
+        picker ? briefBoxRef.el : !data.briefDefault && est.model && est.model.label ? h('span', { class: 'hint req-brief-model', text: `${est.model.label} · counts toward your limit` }) : null,
         slow ? h('span', { class: 'hint req-brief-slow', text: `Worca could not read ${joinAnd(t.slow)} in time; Create tries again.` }) : null,
         leftOut ? h('span', { class: 'hint req-brief-left-out',
           text: `Worca reads at most 8 projects of a workspace: ${joinAnd(leftOut)} ${leftOut.length === 1 ? 'is' : 'are'} left out.` }) : null,
         failed ? h('p', { class: 'form-msg err req-brief-failed', role: 'status', text: failed }) : null,
-        h('button', { type: 'button', class: 'btn btn-primary req-brief-create', 'data-ui': 'brief-create', 'data-brief-go': true, disabled: creating || !!whyNot, onclick: createBrief },
+        h('button', { type: 'button', class: 'btn btn-primary req-brief-create', 'data-ui': 'brief-create', 'data-brief-go': true, disabled: creating || !!whyNot,
+          onclick: () => createBrief(briefBoxRef ? briefBoxRef.value() : undefined) },
           making || creating ? 'Creating…' : failed ? 'Try again' : 'Create the brief'),
         whyNot ? h('span', { class: 'hint req-brief-why-not', text: whyNot }) : null),
       // shown only while git is missing (style.css), in place of the box above
@@ -1127,7 +1277,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     area.value = v.body;
     // the shared switch (switch.mjs): an on/off setting is a switch, not a checkbox (docs/design-system.md › Switch)
     const { row: lookRow, input: look } = makeSwitch(document, { checked: v.look, rowClass: 'req-brief-notes-look', data: { ui: 'notes-look' },
-      label: 'Let Worca look at the code (for the brief, and when you ask it to look closer at a feature)' });
+      label: 'Let Worca do code looks (for the brief, and when you press Look closer on a feature)' });
     const save = () => act(async () => {
       await api('PUT', `/api/requirements/context/${s.scopeType}/${encodeURIComponent(s.scopeKey)}`, { body: area.value, lookAtCode: look.checked });
       notesDraft = null; notesBase = null;
@@ -1181,13 +1331,41 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const used = (data.usedBy || []).length;
     const docs = docsOf(data).length;
     const seed = b.seed && b.seed.kind === 'workspace-map' ? b.seed : null;
+    // 9c D18: the cost of the make that made it ("cost unknown" for a harness that reports none); a brief with no booked make cost
+    // (made before 9c, a mock make) says what it cost in all, as before
+    const madeCost = b.madeCostKind ? costWord(b.madeCostKind, b.madeCostUsd) : usd(b.costUsd);
     return [
       h('span', { class: 'chip' }, ...from, when ? (srcs.length ? ` · ${when}` : ` ${when}`) : ''),
-      h('span', { class: 'chip', text: usd(b.costUsd) }),
+      h('span', { class: 'chip', text: data.madeWith && data.madeWith.model ? `${data.madeWith.label || data.madeWith.model} on ${engineLabel(data.madeWith.engine)}${madeCost ? ` · ${madeCost}` : ''}` : usd(b.costUsd) }),
       h('span', { class: 'chip', text: `Used by ${plural(used, 'feature')}` }),
       docs ? h('span', { class: 'chip', text: plural(docs, 'document') }) : null,   // A8 board 19
       seed ? h('span', { class: 'chip', text: `Built from the workspace map${seed.scannedAt ? `, scanned ${String(seed.scannedAt).slice(0, 10)}` : ''}` }) : null,
     ];
+  }
+
+  /** Board 9: Refresh asks who makes it first (starting from what made the brief last); without the models it refreshes at once, as before. */
+  async function openRefresh(trigger) {
+    if (creating || !briefShown) return;
+    closeDialog(false);
+    const gen = dlgGen;
+    const s = briefShown;
+    // a Refresh button is off while the models are asked for (no second press); the dialog or the post then takes over
+    const pressed = trigger && trigger.hasAttribute && trigger.hasAttribute('data-brief-go') ? trigger : null;
+    if (pressed) pressed.disabled = true;
+    const catalog = briefCatalog || await loadCatalog();
+    if (pressed && pressed.isConnected) pressed.disabled = false;
+    if (dlgGen !== gen || !briefShown || scopeId(briefShown) !== scopeId(s)) return;
+    const data = briefData;
+    const bd = data && data.briefDefault && data.briefDefault.choice && data.briefDefault.choice.model ? data.briefDefault.choice : null;
+    if (!catalog || !bd) { createBrief(); return; }   // the models are not there: refresh at once, as before
+    briefCatalog = catalog;
+    const mw = data.madeWith && data.madeWith.model ? data.madeWith : null;
+    const t = data.target || {};
+    const dlg = briefRefreshDialog(document, { catalog, choice: mw ? { engine: mw.engine, model: mw.model, effort: null } : bd, defaultChoice: bd, madeWith: mw,
+      branch: s.scopeType === 'project' ? t.branch || null : null, workspace: s.scopeType === 'workspace', fetchEstimate: estimateFor('brief'),
+      onCancel: () => closeDialog(true),
+      onSave: (c) => { closeDialog(true); createBrief(c); } });
+    openModal(dlg.card, { trigger, first: dlg.first });
   }
 
   const estimateText = (data) => (data.estimate && typeof data.estimate.costUsd === 'number' ? ` · about ${usd(data.estimate.costUsd)}` : '');
@@ -1195,7 +1373,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function refreshButton(data, label, key) {
     const making = !!(data.brief && data.brief.status === 'making');
     // a refresh checks out the code again: hidden while git is missing (git-gate.mjs)
-    return h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': key, 'data-brief-go': true, 'data-needs-git': true, disabled: creating || making, onclick: createBrief }, label);
+    return h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': key, 'data-brief-go': true, 'data-needs-git': true, disabled: creating || making,
+      onclick: (e) => { void openRefresh(e.currentTarget); } }, label);
   }
 
   function exportMenu() {
@@ -1216,14 +1395,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function moreMenu(data) {
     const s = briefShown;
     const making = data.brief.status === 'making';
-    const refresh = menuItem(`Refresh the brief${estimateText(data)}`, createBrief, { disabled: creating || making, ui: 'mi-brief-refresh' });
+    const refresh = menuItem(`Refresh the brief${estimateText(data)}`, () => { void openRefresh(host.querySelector('[data-ui="brief-more"]')); }, { disabled: creating || making, ui: 'mi-brief-refresh' });
     refresh.setAttribute('data-brief-go', '');
     refresh.dataset.needsGit = '';   // a refresh checks out the code again: hidden while git is missing (git-gate.mjs)
     const del = () => act(async () => {
       const ids = ((briefData && briefData.usedBy) || []).map((u) => u && (u.id || (u.seq != null ? `FEAT-${u.seq}` : null))).filter(Boolean);
       const who = !ids.length ? 'No feature uses this brief yet.'
-        : ids.length === 1 ? `${ids[0]} uses this brief; it goes back to looking at the code when asked.`
-          : `${joinAnd(ids)} use this brief; they go back to looking at the code when asked.`;
+        : ids.length === 1 ? `${ids[0]} uses this brief; it goes back to doing its own code look when asked.`
+          : `${joinAnd(ids)} use this brief; they go back to doing their own code look when asked.`;
       // A8 (design §6): the brief's documents go with it
       const nDocs = docsOf(briefData).length;
       const docsWord = nDocs === 1 ? ' Its 1 document is deleted too.' : nDocs ? ` Its ${nDocs} documents are deleted too.` : '';
@@ -1390,7 +1569,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       docsCard(data, name),
       h('section', { class: 'card req-brief-how', 'aria-label': 'How Worca uses it' },
         h('h3', { text: 'How Worca uses it' }),
-        h('p', {}, `${reads}New features no longer need their own look at the code; `,
+        h('p', {}, `${reads}New features no longer need their own code look; `,
           h('b', { text: 'Look closer' }), ' on a feature adds one when the brief is not enough.'),
         used.length ? h('p', { class: 'req-brief-used' }, 'Used by ', ...used.flatMap((u, i) => [i ? ', ' : null, featureLink(u)])) : null),
       notes,
@@ -1407,7 +1586,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     for (const t of turns) if (t.kind === 'answers') latest.set(t.payload.roundTurnId, t.payload.answers || []);
     let n = 0;
     return turns.filter((t) => t.kind === 'round').map((t) => ({
-      turnId: t.id, n: ++n, questions: t.payload.questions || [], note: t.payload.note || '',
+      turnId: t.id, n: ++n, turn: t, questions: t.payload.questions || [], note: t.payload.note || '',
       given: new Map((latest.get(t.id) || []).map((a) => [a.id, a])),
     }));
   }
@@ -1449,7 +1628,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('button', { type: 'button', class: 'btn btn-primary', onclick: () => post({}) }, 'Submit')];
     const panel = h('div', { class: `qpanel req-q${revise ? ' req-revise' : ''}` },
       h('div', { class: 'qpanel-head' }, h('b', { text: revise ? `Change round ${round.n}` : 'Your turn' }),
-        h('span', { class: 'qcount', text: plural(round.questions.length, 'question') })),
+        h('span', { class: 'qcount', text: plural(round.questions.length, 'question') }), stepMetaEl(round.turn, undefined, ' req-step-meta-head')),
+      stepNotices(document, round.turn && round.turn.notices),
       round.note ? h('p', { class: 'hint req-q-note', text: round.note }) : null,
       ...round.questions.map((q, i) => {
         const buttons = q.options.map((o, k) => h('button', { type: 'button', class: 'qopt', 'data-key': KEYS[k], 'data-ui': `q-${round.turnId}-${i}-${k}`,
@@ -1497,17 +1677,59 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   // Earlier rounds: one card, each answered question with its latest answer, a Change per round (D12).
   // The round waiting for answers is the question card instead.
-  function earlierRounds(f, rounds) {
+  /** The right-aligned "<model label> on <Harness> · <cost>" of a step; null when nothing is known of it. */
+  function stepMetaEl(item, opts, extra = '') {
+    const words = stepMeta(item, opts);
+    return words ? h('span', { class: `hint req-step-meta${extra}`, text: words }) : null;
+  }
+  /** A look that shows as a row (9c D17): every orientation turn but the ones skipped for the brief, the switch, no git or no repo. */
+  const looksAsRow = (t) => t.kind === 'orientation' && !['brief', 'off', 'no-git', 'no-repo'].includes(t.payload && t.payload.skipped);
+  /** "Show what it found": opens the folded Code look card (or the What Worca knows card, which carries the look with a brief) and scrolls to it. */
+  function showLook() {
+    const folded = host.querySelector('.req-orient');
+    if (folded) folded.open = true;   // the paint reads the fold's state off the page
+    ui.orientOpen = true;
+    redraw();
+    const card = host.querySelector('.req-orient, [data-ui="knows"]');
+    if (card && typeof card.scrollIntoView === 'function') card.scrollIntoView({ block: 'nearest' });
+  }
+  /** The code look as a step (board 5): its title with the file count, what ran it, the summary's first sentence, Show what it found. */
+  function lookRow(t) {
+    const p = t.payload || {};
+    const nFiles = Array.isArray(p.files) ? p.files.length : 0;
+    const first = p.skipped ? '' : firstSentence(p.summary);
+    return h('div', { class: 'req-step req-step-look', 'data-look': t.id },
+      h('div', { class: 'req-round-head' }, h('span', { class: 'req-round-n', text: nFiles ? `Code look · ${plural(nFiles, 'file')}` : 'Code look' }), stepMetaEl(t)),
+      stepNotices(document, t.notices),
+      first ? h('p', { class: 'req-step-first', text: first }) : null,
+      first ? h('button', { type: 'button', class: 'link-btn', 'data-ui': 'look-show', onclick: showLook }, 'Show what it found') : null);
+  }
+  /** A switch of the feature's model (a `model` turn): one plain row. */
+  function switchRow(t) {
+    const p = t.payload || {};
+    const at = when(t.at);
+    return h('p', { class: 'hint req-step req-step-switch', text:
+      `You switched this feature to ${t.modelLabel || p.model} on ${engineLabel(p.engine || 'claude')}${at ? ` · ${at}` : ''}` });
+  }
+  function earlierRounds(f, rounds, turns = []) {
     const open = !isLocked(f);
     const shown = rounds.filter((r) => !(f.pending && r.turnId === f.pending.turnId));
-    if (!shown.length) return null;
-    return h('section', { class: 'card req-rounds' }, h('h3', { text: 'Earlier rounds' }),
-      ...shown.map((r) => h('div', { class: 'req-round', 'data-round': r.turnId },
+    const steps = [
+      ...shown.map((r) => ({ id: r.turnId, el: roundRow(f, r, open) })),
+      ...turns.filter(looksAsRow).map((t) => ({ id: t.id, el: lookRow(t) })),
+      ...turns.filter((t) => t.kind === 'model' && t.payload && t.payload.model).map((t) => ({ id: t.id, el: switchRow(t) })),
+    ].sort((a, b) => a.id - b.id);
+    if (!steps.length) return null;
+    return h('section', { class: 'card req-rounds' }, h('h3', { text: shown.length ? 'Earlier rounds' : 'Steps' }), ...steps.map((s) => s.el));
+  }
+  function roundRow(f, r, open) {
+    return h('div', { class: 'req-round', 'data-round': r.turnId },
         h('div', { class: 'req-round-head' }, h('span', { class: 'req-round-n', text: `Round ${r.n}` }),
           open && r.questions.length && revising !== r.turnId
             ? h('button', { type: 'button', class: 'hint req-link req-change', 'data-ui': `change-${r.turnId}`, 'aria-label': `Change round ${r.n}`,
               onclick: () => { revising = r.turnId; revDraft = null; focusNext = `q-${r.turnId}-0-0`; redraw(); } }, 'Change')
-            : null),
+            : null, stepMetaEl(r.turn)),
+        stepNotices(document, r.turn && r.turn.notices),
         r.note ? h('p', { class: 'hint req-round-note', text: r.note }) : null,
         ...r.questions.map((q) => {
           const a = r.given.get(q.id);
@@ -1515,7 +1737,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
             h('div', { class: 'req-round-qt', text: q.question }),
             h('div', { class: 'req-round-answer' }, a ? `→ ${a.answer}` : 'Not answered',
               a && a.recommended ? ' ' : null, a && a.recommended ? h('code', { text: 'recommended' }) : null));
-        }))));
+        }));
   }
 
   // A8 D2, A6.1 D10: a feature created with files gets them (from the tracker) and reads them before round 1. One role=status node for
@@ -1549,7 +1771,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // The current card: a round being changed, the pending round, Ready to build, or Decide (A2 §5).
     const card = !open ? null
       : rev ? questionCard(f, rev, { revise: true })
-        : f.pending ? questionCard(f, { ...f.pending, n: rounds.find((r) => r.turnId === f.pending.turnId)?.n })
+        : f.pending ? questionCard(f, { ...f.pending, n: rounds.find((r) => r.turnId === f.pending.turnId)?.n, turn: rounds.find((r) => r.turnId === f.pending.turnId)?.turn })
           : buildCardShown(f) ? buildCard(f)
             : f.state === 'decide' || decideNeeded(f) ? decideCard(f)
               : null;
@@ -1557,13 +1779,36 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       hasStarts ? runsCard(f) : null,
       hasStarts && (f.changedSinceStart || []).length ? changedNotice(f) : null,
       f.status === 'archived' ? h('p', { class: 'hint req-note', text: 'This feature is archived. Restore it to continue.' }) : null,
-      readingLine(f) || (working ? h('p', { class: 'hint req-working', text: f.status === 'looking' ? 'Worca is looking at the code…' : 'Worca is thinking…' }) : null),
-      open && f.lastError ? h('div', { class: 'req-error form-msg err' }, f.lastError, ' ',
-        h('button', { type: 'button', class: 'btn btn-sm req-retry', onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/retry`, {}); await paint(); }) }, 'Try again')) : null,
+      readingLine(f) || (working ? h('p', { class: 'hint req-working', text: f.status === 'looking' ? 'Worca is doing the code look…' : 'Worca is thinking…' }) : null),
+      open && f.lastError ? errorBlock(f, turns, rounds) : null,
       card,
       moved,   // A3 D2: Ready to start?, Files and Spec, while Feature chat takes the right column
-      earlierRounds(f, rounds),
+      earlierRounds(f, rounds, turns),
       f.brief ? knowsCard(f, turns) : orientationBox(f, turns));
+  }
+
+  /** The newest turn's error (9c D13). A NOT_READY one is a block of its own: the step that stopped, what ran it, the sentence,
+   *  Change the model, Try again and the harness's sign-in page; any other error keeps its text and Try again. */
+  function errorBlock(f, turns, rounds) {
+    const retry = h('button', { type: 'button', class: 'btn btn-sm req-retry', onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/retry`, {}); await paint(); }) }, 'Try again');
+    const last = turns.filter((t) => !/^(file|export|import)$/.test(t.kind)).at(-1);
+    if (!last || last.kind !== 'error' || !last.payload || last.payload.code !== 'NOT_READY') {
+      return h('div', { class: 'req-error form-msg err' }, f.lastError, ' ', retry);
+    }
+    return notReadyBlock(f, { title: last.payload.job === 'look' ? 'Code look stopped' : `Round ${rounds.length + 1} stopped`, item: last,
+      message: last.payload.message || f.lastError, docsUrl: last.payload.docsUrl, retry });
+  }
+  /** A NOT_READY stop of a step: shared by the thread's error and a Feature chat reply. */
+  function notReadyBlock(f, { title, item, message, docsUrl, retry, cls = 'req-error', locked = false }) {
+    const safe = typeof docsUrl === 'string' && /^https?:\/\//i.test(docsUrl) ? docsUrl : null;
+    const harness = item && item.engine ? engineLabel(item.engine) : null;
+    return h('div', { class: `${cls} form-msg err`, role: 'status' },
+      h('div', { class: 'req-round-head' }, h('b', { class: 'req-error-title', text: title }), stepMetaEl(item, { error: true })),
+      h('p', { class: 'req-error-text', text: message }),
+      h('div', { class: 'req-error-btns' },
+        h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'error-change-model', disabled: !!locked, onclick: (e) => { void openModelDialog(current && current.f.seq === f.seq ? current.f : f, e.currentTarget); } }, 'Change the model'),
+        retry,
+        safe ? h('a', { class: 'req-error-docs', href: safe, target: '_blank', rel: 'noopener noreferrer', text: `How to sign in to ${harness || 'the harness'}` }) : null));
   }
 
   // ---- Decide (board Decisions.dc.html, A2 D3/D4): Confirm / Reject per assumption, Confirm the N left,
@@ -1802,6 +2047,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const changed = (f.changedSinceStart || []).length > 0;
     const build = starts.reduce((sum, s) => sum + (Number(s.run && s.run.costUsd) || 0), 0);
     const req = Number(f.costUsd) || 0;
+    const reqWord = totalCostWord(req, f);   // 9c: "cost unknown" when every requirements step is
     const row = (s) => {
       const early = Array.isArray(s.failing) && s.failing.length > 0;
       const label = h('span', { class: 'req-run-label', title: early && s.reason ? s.reason : null,
@@ -1821,8 +2067,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           onclick: (e) => startFlow(f, { trigger: e.currentTarget }) }, `Start again with v${nextVersion(f)}`)),
       h('div', { class: 'req-run-rows' }, ...starts.map(row)),
       reportRow(f, 'runs'),   // A6 D15: Start again reports back too
-      h('p', { class: 'hint req-run-total' }, `Total for ${f.id} so far: `, h('code', { text: usd(req + build) }),
-        ` (requirements ${usd(req)} + build ${usd(build)})`));
+      h('p', { class: 'hint req-run-total' }, `Total for ${f.id} so far: `, h('code', { text: `${f.anyEstimated && req > 0 ? '≈' : ''}${usd(req + build)}` }),
+        ` (requirements ${reqWord} + build ${usd(build)})`));
   }
 
   const sectionTitle = (key) => (SECTIONS.find(([k]) => k === key) || [key, sentence(key)])[1];
@@ -2165,6 +2411,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // On the document, in the capture phase: Escape and Tab work wherever the focus is, even after a click
     // on the scrim left it on <body>. Removed on close.
     const onKey = (e) => {
+      // the app's confirm (the model switch asks it over its dialog) owns Escape and Tab while it is up
+      const cm = document.getElementById('confirm-modal');
+      if (cm && !cm.classList.contains('hidden')) return;
       if (e.key === 'Escape') {
         if (e.isComposing) return;   // Escape that ends an IME composition is the input method's, not the dialog's
         e.preventDefault(); e.stopPropagation(); if (canClose()) closeDialog(true); return;
@@ -2539,11 +2788,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // A version that could not be stored (D11): the server's words, and Replace, which mends it (Read again is refused).
     const stuck = storeFailedOf(a);
     const dl = !!a.error && a.error.job === 'download';   // A6.1 D10: a tracker file that could not be got, or used
-    const said = stuck ? String(a.error.message || '')
+    const skipped = !!a.error && a.error.code === 'SKIPPED_ENGINE';   // 9c D12: this harness cannot take the file; Claude can (grey, not an alert)
+    const said = stuck || skipped ? String(a.error.message || '')
       : dl ? downloadSaid(a)
         : `Worca could not read this file${reasonOf(a.error) ? `: ${reasonOf(a.error)}` : ''}. ${ctx.doc ? 'Interviews list' : 'The interview lists'} it by name only.`;
     if (n.failed.words.textContent !== said) n.failed.words.textContent = said;
-    const label = stuck ? 'Replace with a newer version…' : 'Try again';
+    n.failed.p.classList.toggle('req-file-skipped', skipped);
+    if (skipped) n.failed.p.removeAttribute('role'); else n.failed.p.setAttribute('role', 'alert');
+    const label = stuck ? 'Replace with a newer version…' : skipped ? 'Read again' : 'Try again';
     if (n.failed.btn.textContent !== label) n.failed.btn.textContent = label;
     n.failed.btn.hidden = dl && a.error.code === 'REFUSED';   // the same file would be refused again: Remove is in the ⋯ menu
     n.failed.btn.setAttribute('data-ui', `${stuck ? 'file-replace' : 'file-retry'}-${a.id}`);
@@ -2750,10 +3002,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('p', { class: 'hint req-docs-foot', text: `Interviews use a new document right away. The brief's sections change only when you Refresh it. “Send with every run” adds the document to every run started from a ${name} feature; each start card lists it.` }));
   }
 
-  // The looks at the code this feature made (A2: the orientation turns not skipped), and what they cost.
+  // The code looks this feature made (A2: the orientation turns not skipped), and what they cost.
   function looksOf(turns) {
     const looks = turns.filter((t) => t.kind === 'orientation' && !(t.payload && t.payload.skipped));
-    return { looks, cost: looks.reduce((sum, t) => sum + (Number(t.costUsd) || 0), 0) };
+    const cost = looks.reduce((sum, t) => sum + (Number(t.costUsd) || 0), 0);
+    // 9c: the looks' cost in the cost words (each turn says its cost kind)
+    const word = totalCostWord(cost, { unknownSteps: looks.filter((t) => t.costKind === 'unknown').length, anyEstimated: looks.some((t) => t.costKind === 'estimated') });
+    return { looks, cost, word };
   }
   const postLook = (f) => act(async () => { await api('POST', `/api/requirements/${f.seq}/look`, {}); await paint(); });
 
@@ -2761,19 +3016,21 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // gone now (deleted, or the feature moved) says so and offers Look again (D10).
   function orientationBox(f, turns) {
     const o = f.orientation;
+    const lastLook = turns.filter((t) => t.kind === 'orientation').at(-1);
     const text = !o ? 'Not looked yet.'
-      : o.skipped === 'brief' ? 'Worca has not looked at the code for this feature.'
-        : o.skipped === 'off' ? 'Looking at the code is turned off for this one (Your notes for Worca).'
-          : o.skipped === 'no-git' ? `Worca did not look at the code: ${GIT_MISSING_TEXT}.`
+      : o.skipped === 'brief' ? 'Worca has not done a code look for this feature.'
+        : o.skipped === 'off' ? 'Code looks are turned off for this one (Your notes for Worca).'
+          : o.skipped === 'no-git' ? `Worca did not do a code look: ${GIT_MISSING_TEXT}.`
             : o.skipped === 'no-repo' ? 'There is no repository to look at yet.'
-              : o.skipped === 'failed' ? 'Worca could not look at the code this time; the interview runs without it.'
-                : o.summary || 'Nothing relevant found.';
-    const { looks, cost } = looksOf(turns);
+              : o.skipped === 'engine' ? (lastLook && lastLook.notices && lastLook.notices[0]) || 'Worca did not do a code look: the harness cannot read the repo.'
+                : o.skipped === 'failed' ? 'Worca could not do the code look this time; the interview runs without it.'
+                  : o.summary || 'Nothing relevant found.';
+    const { looks, cost, word } = looksOf(turns);
     const times = looks.length === 1 ? 'looked once' : looks.length === 2 ? 'looked twice' : `looked ${looks.length} times`;
     const nFiles = ((o && o.files) || []).length;
-    const meta = looks.length ? [times, nFiles ? plural(nFiles, 'file') : null, cost > 0 ? usd(cost) : null].filter(Boolean).join(' · ') : null;
+    const meta = looks.length ? [times, nFiles ? plural(nFiles, 'file') : null, cost > 0 || word === 'cost unknown' ? word : null].filter(Boolean).join(' · ') : null;
     return h('details', { class: 'card req-orient', open: ui.orientOpen }, // `open: false` is skipped by h()
-      h('summary', {}, 'What Worca found in the code', meta ? h('span', { class: 'hint req-orient-meta', text: meta }) : null),
+      h('summary', {}, 'Code look: what Worca found', meta ? h('span', { class: 'hint req-orient-meta', text: meta }) : null),
       h('p', { text }),
       o && o.skipped === 'brief' ? h('div', { class: 'req-actions' },
         h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'orient-look-again', 'data-needs-git': true, disabled: isLocked(f), onclick: () => postLook(f) }, 'Look again')) : null,
@@ -2781,7 +3038,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
 
   // What Worca knows (board 14, A7 D10/D11): the card that replaces A2's box when the scope has a usable brief.
-  // Before a closer look Worca works from the brief (Look closer offers one); after it, the look's summary, Add
+  // Before a code look Worca works from the brief (Look closer offers one); after it, the look's summary, Add
   // this to the brief (until added) and Look again. The switch off hides both looks; the A1 lock disables them.
   function knowsCard(f, turns) {
     const b = f.brief;
@@ -2801,11 +3058,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const isAre = names.length + more === 1 ? 'is' : 'are';
       const said = (f.attachments || []).length
         // A8 (board 16): the feature's files are part of what Worca works from
-        ? `Worca works from the ${targetName(f)} brief and the files below.${subject ? ` ${subject[0].toUpperCase()}${subject.slice(1)} ${isAre} described in the brief.` : ''} It has not looked at the code for this feature.`
-        : `Worca works from the ${targetName(f)} brief${names.length ? `: ${subject} ${isAre} described there.` : '.'} It has not looked at the code for this feature.`;
+        ? `Worca works from the ${targetName(f)} brief and the files below.${subject ? ` ${subject[0].toUpperCase()}${subject.slice(1)} ${isAre} described in the brief.` : ''} It has not done a code look for this feature.`
+        : `Worca works from the ${targetName(f)} brief${names.length ? `: ${subject} ${isAre} described there.` : '.'} It has not done a code look for this feature.`;
       meta = ['from the ', briefLink(to), ` · ${ageOld(b.madeAt)}`];
       body = [h('p', { class: 'req-knows-text', text: said }),
-        o && o.skipped === 'failed' ? h('p', { class: 'hint req-knows-failed', text: 'Worca could not look at the code this time.' }) : null];
+        o && o.skipped === 'failed' ? h('p', { class: 'hint req-knows-failed', text: 'Worca could not do the code look this time.' }) : null];
       if (lookOn) {
         // a look checks out the code: the hint and Look closer hide while git is missing (git-gate.mjs)
         foot = [h('span', { class: 'hint', 'data-needs-git': true, text: 'Worth it when the feature touches something the brief only skims.' }),
@@ -2813,9 +3070,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
             `Look closer${typeof f.lookCostUsd === 'number' ? ` · about ${usd(f.lookCostUsd)}` : ''}`)];
       }
     } else {
-      const { cost } = looksOf(turns);
+      const { word } = looksOf(turns);
       const nFiles = (Array.isArray(o.files) ? o.files : []).length;
-      meta = [['brief + a closer look', nFiles ? plural(nFiles, 'file') : null, usd(cost)].filter(Boolean).join(' · ')];
+      meta = [['brief + a code look', nFiles ? plural(nFiles, 'file') : null, word].filter(Boolean).join(' · ')];
       // The link goes once added: the focus moves to Look again (else to this card) and the message line names the area.
       const add = () => act(async () => {
         await api('POST', `/api/requirements/${f.seq}/brief-addition`, {});
@@ -2825,7 +3082,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       });
       // Only a look made for this scope against this brief can be added (the server refuses any other, A7 D11).
       const ofThisBrief = o.scopeType === f.scopeType && o.scopeKey === f.scopeKey && o.briefId != null && (b.id == null || o.briefId === b.id);
-      body = [h('p', { class: 'req-knows-text', text: o.summary || 'Nothing relevant found.' }),
+      body = [h('h4', { class: 'req-knows-look', text: 'Code look: what Worca found' }),
+        h('p', { class: 'req-knows-text', text: o.summary || 'Nothing relevant found.' }),
         o.summary && !o.addedToBrief && ofThisBrief ? h('p', { class: 'hint req-knows-add' }, 'Not in the brief yet. ',
           h('button', { type: 'button', class: 'link-btn', 'data-ui': 'brief-add', disabled: locked, onclick: add }, 'Add this to the brief')) : null];
       if (lookOn) foot = [h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'look-again', 'data-needs-git': true, disabled: locked, onclick: () => postLook(f) }, 'Look again')];
@@ -3132,6 +3390,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function helperLine(f, m, ctx) {
     const code = m && m.error ? m.error.code : null;
     if (code === 'BUDGET') return budgetLine(f);
+    if (code === 'NOT_READY' || code === 'NOT_OFFERED') {   // 9c D13: the harness is not ready; never a silent switch
+      const retry = ctx.newest && !ctx.answering && !ctx.archived
+        ? h('button', { type: 'button', class: 'btn btn-sm req-help-retry', 'data-ui': 'helper-retry', disabled: ctx.working,
+          onclick: () => helperPost(f, 'POST', '/retry', 'helper-in') }, 'Try again') : null;
+      return notReadyBlock(f, { title: 'Feature chat stopped', item: m, message: m.error.message || HELP_FAILED, docsUrl: m.error.docsUrl, retry, cls: 'req-help-fail req-help-notready', locked: ctx.archived });
+    }
     const again = ctx.newest && !ctx.answering && !ctx.archived
       ? h('button', { type: 'button', class: 'btn btn-sm req-help-retry', 'data-ui': 'helper-retry', disabled: ctx.working,
         onclick: () => helperPost(f, 'POST', '/retry', 'helper-in') }, 'Try again') : null;
@@ -3161,7 +3425,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       (m.drafts || []).some((x) => x.dropped) ? { k: 'dropped', sig: '',
         make: () => h('p', { class: 'hint req-help-dropped', text: "The question you asked about has been answered, so Worca's draft for it was dropped." }) } : null,
       ...(m.proposals || []).map((p) => ({ k: `card-${m.id}-${p.n}`, sig: JSON.stringify(p), make: () => proposalCard(f, m, p, ctx) })),
-      m.costUsd > 0 ? { k: 'cost', sig: String(m.costUsd), make: () => h('p', { class: 'hint req-help-cost', text: usd(m.costUsd) }) } : null,
+      (m.notices || []).length ? { k: 'notices', sig: JSON.stringify(m.notices), make: () => stepNotices(document, m.notices) } : null,
+      !(m.error && (code === 'NOT_READY' || code === 'NOT_OFFERED')) && stepMeta(m) ? { k: 'cost', sig: JSON.stringify([m.modelLabel, m.model, m.engine, m.costUsd, m.costKind]), make: () => h('p', { class: 'hint req-help-cost', text: stepMeta(m) }) } : null,
     ].filter(Boolean);
   }
   /** A Worca row's shell made what `parts` say: a part whose signature changed is replaced in place (`replaceWith`), the rest
@@ -3237,7 +3502,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
   /** Card 7: what Worca knows, and three questions that send at once (none on an archived feature). */
   const helperEmpty = (f, ctx) => h('div', { class: 'req-help-empty' },
-    h('p', { text: 'Ask about this feature here. It knows the spec, the interview so far, the product brief, your files and what it found in the code. It can draft answers to open questions and suggest spec changes — nothing changes until you accept.' }),
+    h('p', { text: 'Ask about this feature here. It knows the spec, the interview so far, the product brief, your files and what its code look found. It can draft answers to open questions and suggest spec changes — nothing changes until you accept.' }),
     ctx.archived ? null : h('div', { class: 'req-help-starters' }, ...HELP_STARTERS.map((q, i) => h('button', { type: 'button', class: 'btn btn-sm req-help-starter',
       'data-ui': `helper-starter-${i}`, disabled: ctx.working, onclick: () => sendHelper(f, q, null) }, q))));
   /** The composer (board 22): Enter sends, Shift+Enter adds a line; the count past 1,800; Send off when empty, past 2,000, while
@@ -3320,6 +3585,69 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         : helperComposer(f, data, ctx));
   }
 
+  // 9c boards 3, 4: the models and prices behind the pickers (GET /models), asked for each time a dialog opens; null when they cannot be read.
+  const loadCatalog = () => api('GET', '/api/requirements/models')
+    .then((c) => (c && Array.isArray(c.harnesses) && c.harnesses.length && Array.isArray(c.models) ? c : null), () => null);
+  const estimateFor = (step) => (c) => api('GET', `/api/requirements/estimates?engine=${encodeURIComponent(c.engine)}&model=${encodeURIComponent(c.model)}${step ? `&step=${step}` : ''}`);
+  const asConfirm = async (plan) => {
+    if (typeof deps.confirm === 'function') return !!(await deps.confirm(plan));
+    return window.confirm(`${plan.title}\n\n${plan.message}`);
+  };
+
+  /** Board 3: the chip's dialog. Save asks the switch confirm (board 4) when the new pick loses something or sends the text elsewhere. */
+  async function openModelDialog(f, trigger) {
+    closeDialog(false);
+    const gen = dlgGen;
+    const [catalog, listed] = await Promise.all([loadCatalog(),
+      api('GET', `/api/requirements?scopeType=${encodeURIComponent(f.scopeType)}&scopeKey=${encodeURIComponent(f.scopeKey)}`).catch(() => null)]);
+    if (dlgGen !== gen || seqShown !== f.seq) return;   // another dialog or page came first
+    if (!catalog) { say('The models could not be loaded. Try again.', 'err'); return; }
+    const cur = (current && current.f.seq === f.seq ? current.f : f).model || null;
+    const d = listed && listed.interview && listed.interview.default;
+    let busy = false;
+    const msg = h('p', { class: 'form-msg err req-dlg-msg', role: 'alert' });
+    const dlg = modelDialog(document, {
+      catalog, choice: cur, defaultChoice: d && d.model ? { engine: d.engine || 'claude', model: d.model, effort: d.effort || null } : null,
+      fetchEstimate: estimateFor(null),
+      onCancel: () => { if (!busy) closeDialog(true); },
+      onSave: async (c, saveBtn) => {
+        if (busy) return;
+        const unchanged = cur && c.engine === cur.engine && c.model === cur.model && (c.effort || null) === (cur.effort || null);
+        if (unchanged) { closeDialog(true); return; }
+        busy = true; saveBtn.disabled = true; msg.textContent = '';
+        try {
+          const plan = cur ? switchConfirm({ from: cur, to: c, harnesses: catalog.harnesses, models: catalog.models, feature: current && current.f.seq === f.seq ? current.f : f }) : null;
+          if (plan && !(await asConfirm(plan))) { busy = false; saveBtn.disabled = false; saveBtn.focus(); return; }   // Cancel: nothing is saved
+          await api('PUT', `/api/requirements/${f.seq}/model`, { engine: c.engine, model: c.model, effort: c.effort || null });
+          busy = false;
+          closeDialog(false);
+          await paint();
+          const chip = host.querySelector('[data-ui="model-chip"]');   // the header was rebuilt: the new chip takes the focus
+          if (chip) chip.focus();
+        } catch (err) {
+          busy = false; saveBtn.disabled = false;
+          msg.textContent = errText(err);
+        }
+      },
+    });
+    dlg.card.insertBefore(msg, dlg.card.querySelector('.req-dlg-btns'));
+    openModal(dlg.card, { trigger, first: dlg.first, canClose: () => !busy });
+  }
+
+  /** The header chip: "Cost unknown so far" when every step's cost is unknown, else the money (≈ when any part is estimated). */
+  const costChipText = (f) => (!(Number(f.costUsd) > 0) && Number(f.unknownSteps) > 0 ? 'Cost unknown so far' : `${f.anyEstimated ? '≈' : ''}${usd(f.costUsd)} so far`);
+  /** Board 6: the cost list, from GET /:seq/costs; the focus goes into the dialog and back to the chip. */
+  async function openCostDialog(f, trigger) {
+    closeDialog(false);
+    const gen = dlgGen;
+    let data = null;
+    try { data = await api('GET', `/api/requirements/${f.seq}/costs`); } catch { data = null; }
+    if (dlgGen !== gen || seqShown !== f.seq) return;   // another dialog or page came first
+    if (!data || !Array.isArray(data.rows)) { say('The costs could not be loaded. Try again.', 'err'); return; }
+    const dlg = costDialog(document, { data, onClose: () => closeDialog(true) });
+    openModal(dlg.card, { trigger, first: dlg.first });
+  }
+
   function header(f) {
     const save = () => act(async () => {
       try {
@@ -3347,7 +3675,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('div', { class: 'req-chips' },
           h('span', { class: 'chip', text: targetLabel(f) }),
           h('span', { class: 'chip', text: done ? `Interview done · ${plural(rounds, 'round')}` : `Round ${Math.min(rounds || 1, MAX_ROUNDS)} of ${MAX_ROUNDS}` }),
-          h('span', { class: 'chip', text: `${usd(f.costUsd)} so far` }),
+          h('button', { type: 'button', class: 'chip req-cost-chip', 'data-ui': 'cost-chip', 'aria-haspopup': 'dialog',
+            onclick: (e) => { void openCostDialog(f, e.currentTarget); } }, costChipText(f)),
+          f.modelLabel ? modelChip(document, f, (btn) => { void openModelDialog(f, btn); }) : null,   // 9c board 3: after the cost chip
           (f.attachments || []).length ? h('span', { class: 'chip', text: plural(f.attachments.length, 'file') }) : null,   // A8 (board 16)
           f.savedPath ? h('span', { class: 'chip', text: `Saved as ${f.savedPath}` }) : null,
           exportChip(f)),   // A6 board 28: the ticket, after the header chips

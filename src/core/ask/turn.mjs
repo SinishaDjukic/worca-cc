@@ -75,6 +75,7 @@ import {
 import { budgetStatus, recordAskCostDelta } from '../cost-budget.mjs';
 import { generateSuggestion, suggestionModel, claimSuggestion, releaseSuggestion, cancelSuggestion, SUGGESTION_TIMEOUT_MS } from './suggest.mjs';
 import { setPendingCardComments } from '../diff-comments.mjs';
+import { recordUsageLimit } from '../usage-limits.mjs';
 
 export function createAskTurn(opts) { return new AskTurn(opts); }
 
@@ -977,6 +978,7 @@ class AskTurn extends EventEmitter {
     try { liveRates = (this.lockedDown ? this._ratesFor() : d.liveCostRates(this.model)) ?? null; } catch { liveRates = null; }
     this.reducer = createTurnReducer({
       onFrame: (f) => this._frame(f),
+      onLimit: (evt) => recordUsageLimit(this.engine, evt),
       now: d.now,
       setTimeout: d.setTimeout,
       clearTimeout: d.clearTimeout,

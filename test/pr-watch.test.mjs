@@ -1056,3 +1056,22 @@ test('s2: a fix run carries the origin\'s tags and labels', async () => {
   const { body } = io.calls.start.at(-1);
   assert.deepEqual([body.tags, body.labels], [['client:acme'], ['hotfix']]);
 });
+
+test('Fix checks (fixChecksOnce): one round for the failing checks with Watch off, never a re-run; NO_FAILING_CHECKS when none fail', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: false });
+  // An Actions check with a runId: the loop would re-run it first; Fix checks starts the fix at once.
+  const { io, watcher } = harness({ pr: openPr({ contexts: [failing(5, { runId: 77 })], mergeable: 'CONFLICTING', base: 'main', baseSha: 'B1' }) });
+  const r = await watcher.fixChecksOnce(getWatch(URL));
+  assert.equal(r.ok, true);
+  assert.deepEqual([io.calls.start.length, io.calls.rerun], [1, []]);
+  assert.match(io.calls.start[0].body.prompt, /log 5/, 'the failing check, not the conflict');
+  assert.deepEqual(io.calls.start[0].opts.roundOf, { pipelineId: origin, request: 'fix failing checks', kinds: ['checks'] });
+  const w = getWatch(URL);
+  assert.deepEqual([w.enabled, w.status, w.fixRuns, w.pending.once], [false, 'fixing', 1, true]);
+  assert.equal((await watcher.fixChecksOnce(w)).code, 'BUSY');
+  getDb().exec('DELETE FROM pr_watch_runs; DELETE FROM pr_watches');
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: false });
+  io.pr = openPr();
+  assert.equal((await watcher.fixChecksOnce(getWatch(URL))).code, 'NO_FAILING_CHECKS');
+});

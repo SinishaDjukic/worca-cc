@@ -43,6 +43,19 @@ export const BRIEF_SYSTEM_PROMPT = [
   'Give "source" only to an item that comes from a document in <brief_documents>, with its name exactly as written there; otherwise null.',
 ].join('\n');
 
+const CLAUDE_BRIEF_TOOLS = [
+  'You have three read-only tools: Read, Grep and Glob. Glob finds files by name pattern, Grep searches file',
+  'contents, Read reads one file (use paths under the working directory the message names). You cannot run',
+  'commands or change anything. You have at most 40 tool calls: stop reading well before that and reply.',
+].join('\n');
+const FILES_BRIEF_TOOLS = 'You can only read, with the read_file, grep and glob tools (absolute paths under the folder the message names). You cannot run commands or change anything. You have at most 40 tool calls: stop reading well before that and reply.';
+const OTHER_BRIEF_PROMPT = BRIEF_SYSTEM_PROMPT.replace(CLAUDE_BRIEF_TOOLS, FILES_BRIEF_TOOLS);
+
+/** 9c D18: the brief look's system prompt for a harness. Claude: the same string as ever; Codex and Copilot read through the files server's tools. */
+export function briefSystemPrompt(engine = 'claude') {
+  return !engine || engine === 'claude' ? BRIEF_SYSTEM_PROMPT : OTHER_BRIEF_PROMPT;
+}
+
 const shortSha = (s) => String(s || '').slice(0, 7);
 const dayOf = (d) => String(d || '').slice(0, 10);
 const provLine = (o) => `Made from ${o.branch || '?'} @ ${shortSha(o.sha)} on ${dayOf(o.at)}`;
