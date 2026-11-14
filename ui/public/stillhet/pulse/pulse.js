@@ -533,7 +533,7 @@ function searchHits() {
   const own = [];
   if (SHELL && window.RailChats) for (const c of window.RailChats.data().chats) {
     if (plain(c.title).includes(q)) own.push({ label: c.title, where: c.project || 'No project', area: 'Chats', hash: `chat/${c.id}` });
-    const walk = (t) => { if (plain(t.title).includes(q)) own.push({ label: t.title, where: `in ${c.title}`, area: t.kind === 'schedule' ? 'Schedules' : 'Tasks', hash: t.kind === 'schedule' ? `schedule/${t.id}` : `run/${t.case}`, chat: c.id }); (t.after || []).forEach(walk); };
+    const walk = (t) => { if (plain(t.title).includes(q)) own.push({ label: t.title, where: `in ${c.title}`, area: t.kind === 'schedule' ? 'Schedules' : 'Tasks', hash: t.kind === 'schedule' ? `schedule/${t.id}` : `run/${t.case}`, chat: LIVE && t.followed ? '' : c.id, ...(LIVE ? { run: t.pid || t.run || '' } : {}) });   /* live: the chat that started it, and its own id */ (t.after || []).forEach(walk); };
     (c.tasks || []).forEach(walk);
   }
   const page = [];
@@ -597,7 +597,7 @@ function land(e) {
 function goTo(e) {
   if (e.sset) { land(e); return; }
   closeOverlays();
-  if (SHELL) { if (e.kind === 'label') window.RailRunsList?.label(e.label); if (e.go.startsWith('run/')) SHELL.openRun(e.go, e.label); else SHELL.go(e.go); render(); return; }
+  if (SHELL) { if (e.kind === 'label') window.RailRunsList?.label(e.label); if (e.go.startsWith('run/')) SHELL.openRun(e.go, e.label, LIVE ? e.run : undefined); else SHELL.go(e.go); render(); return; }
   toast(window.RailWould(`open ${e.label} · ${e.where}`)); render();
 }
 // The hand-off: a mode asks in the strip under the top bar; a flag goes to its row in Labs. Once nothing locks it, on to the result.
@@ -617,7 +617,7 @@ function pickResult(v) {
   const e = found[+v]; if (!e) return;
   if (e.look) { closeOverlays(); ui.acct = true; ui.sub = 'look'; opening = 'acct'; render(); return; }
   if (e.el) { closeOverlays(); render(); R.land(e.el.closest('.pg-card, .list-row, .set-row, .rc, .place-head, section') || e.el); return; }   // on this page: it lands where it is
-  if (e.hash) { closeOverlays(); if (e.chat) SHELL.openTask(e.hash.split('/')[1], e.chat); else SHELL.go(e.hash); render(); return; }
+  if (e.hash) { closeOverlays(); if (e.chat || e.run) SHELL.openTask(e.hash.split('/')[1], e.chat, LIVE ? e.label : undefined, e.run); else SHELL.go(e.hash); render(); return; }
   const locked = locksOf(e).length;
   closeOverlays();
   if (locked && SHELL && e.go && SHELL.locked(e.go.split('/')[0])) { goTo(e); return; }   // nav.locked: a locked place's own line and way on

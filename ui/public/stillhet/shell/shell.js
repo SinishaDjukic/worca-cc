@@ -197,11 +197,11 @@
     if (x.type === 'schedule') return { label: `${x.title}\nSchedule`, mark: R.kindMark({ kind: 'schedule', size: 20 }), hash: `schedule/${x.id}` };
     const t = x.chat ? allTasksOf(chats.find((c) => c.id === x.chat)).find((y) => y.id === x.id) : null, cs = t?.case || x.case;
     if (!cs) return null;
-    const st = R.runState(RM.stateOf(cs));
-    return { label: `${x.title}\n${st.word}${t?.detail ? ` · ${t.detail}` : ''}`, mark: R.kindMark({ kind: 'task', tone: R.markTone(st), stage: t?.stage ?? RM.stageOf(cs).stage ?? -1, size: 20 }), hash: `run/${cs}`, task: { cs, chat: x.chat || '', title: x.title, run: t?.run || '' } };
+    const st = R.runState(RM.stateOf(cs)), run = LIVE ? t?.pid || t?.run || x.run || '' : t?.run || '';   // the live kind opens it by its own id
+    return { label: `${x.title}\n${st.word}${t?.detail ? ` · ${t.detail}` : ''}`, mark: R.kindMark({ kind: 'task', tone: R.markTone(st), stage: t?.stage ?? RM.stageOf(cs).stage ?? -1, size: 20 }), hash: `run/${LIVE && run ? run : cs}`, task: { cs, chat: x.chat || '', title: x.title, run } };
   }
   // many tasks share a case: its tab is current on that very task's page (case and name), or in the chat its tab opens
-  const isOnTask = ({ cs, chat, title, run }) => location.hash === `#run/${cs}` ? RM?.titles?.[cs] === title : location.hash === `#chat/${chat || window.RailConversation?.chatOfTask({ run, title })}`;
+  const isOnTask = ({ cs, chat, title, run }) => LIVE && run && location.hash === `#run/${run}` ? true : location.hash === `#run/${cs}` ? RM?.titles?.[cs] === title : location.hash === `#chat/${chat || window.RailConversation?.chatOfTask({ run, title })}`;
   function drawInView() {
     const live = inViewList.map((x) => ({ x, now: inViewNow(x) })).filter((y) => y.now);
     const max = inViewMax(), shown = live.slice(0, max), hidden = live.slice(max), key = (x) => `${x.type}:${x.id}`;
@@ -412,7 +412,7 @@
     if ((hit = on('[data-task-retry]'))) { const id = hit.dataset.taskRetry; retryFocus = id; window.RailTaskLive?.open(id, { force: true }).then(() => { if (retryFocus === id) route(); }); return; }
     if ((hit = on('[data-in-view-drop]'))) { const [type, id] = hit.dataset.inViewDrop.split(':'), x = inViewList.find((y) => y.type === type && y.id === id); if (x) toggleInView(x); return; }
     if ((hit = on('[data-keep-view]'))) { toggleCaseInView(hit.dataset.keepView, document.querySelector('#card [data-title]')?.textContent); return; }
-    if ((hit = on('[data-in-view]'))) { inViewMenu = false; const [type, id] = hit.dataset.inView.split(':'), x = inViewList.find((y) => y.type === type && y.id === id), now = x && inViewNow(x); if (now?.task) window.RailShell.openTask(now.task.cs, now.task.chat, now.task.title); else if (x?.type === 'schedule') window.RailShell.openSchedule(x.id); else if (now) window.RailShell.go(now.hash); return; }
+    if ((hit = on('[data-in-view]'))) { inViewMenu = false; const [type, ...ids] = hit.dataset.inView.split(':'), id = ids.join(':'), x = inViewList.find((y) => y.type === type && y.id === id), now = x && inViewNow(x); if (now?.task) window.RailShell.openTask(now.task.cs, now.task.chat, now.task.title, now.task.run); else if (x?.type === 'schedule') window.RailShell.openSchedule(x.id); else if (now) window.RailShell.go(now.hash); return; }
     if (on('[data-in-view-more]')) { inViewMenu = !inViewMenu; drawInView(); return; }
     if ((hit = on('[data-mini]'))) { window.RailShell.go(hit.dataset.mini); return; }
     if (on('[data-pins-all]')) { pinsAll = true; drawBar(); return; }
@@ -549,7 +549,7 @@
         if (run) window.RailAdapter.seenRun(run);
         const cid = run ? chat || window.RailConversation?.chatOfTask({ run }) : '';   // a task with a starting chat opens there, at its card
         if (cid) { window.RailConversation.openTask(cid, run); return; }
-        window.RailShell.openTaskPage(cs, chat, title); return;
+        window.RailShell.openTaskPage(cs, chat, title, run); return;
       }
       if (RM && title) RM.titles[cs] = title;
       const w = run && window.RailWorld?.find(run);
@@ -575,7 +575,8 @@
       slot.append(card); card.classList.add('is-lent');
     },
     unembedRun: (from) => { const card = document.getElementById('card'); if (card && runAnchor && (!from || from.contains(card))) { runAnchor.after(card); card.classList.remove('is-lent'); } },
-    openTaskPage: (cs, chat, title) => { liveTask = { title: title || '' }; const t = title && findTask(title); if (RM && t?.branch) { RM.branches = RM.branches || {}; RM.branches[cs] = t.branch; } if (RM && t) { RM.asks = RM.asks || {}; RM.asks[cs] = t.ask || t.title; RM.whys = RM.whys || {}; RM.whys[cs] = t.why || null; }   /* the page says what this task was asked and what broke in it, never its mock's */ taskChat = chat || ''; if (RM && title) RM.titles[cs] = title; reopen = true; window.RailShell.go(`run/${cs}`); },
+    // the live kind opens a task by its own id (pipeline or run id), never a case; a live call with no id has no page to open
+    openTaskPage: (cs, chat, title, run) => { if (LIVE && /^group:/.test(cs)) run = cs;   /* a live group's page is its own id */ if (LIVE && !run) { window.RailShell.go('runs'); window.RailPulse?.say('This task has no page to open'); return; } liveTask = { title: title || '' }; const t = title && findTask(title); if (RM && t?.branch) { RM.branches = RM.branches || {}; RM.branches[cs] = t.branch; } if (RM && t) { RM.asks = RM.asks || {}; RM.asks[cs] = t.ask || t.title; RM.whys = RM.whys || {}; RM.whys[cs] = t.why || null; }   /* the page says what this task was asked and what broke in it, never its mock's */ taskChat = chat || ''; if (RM && title) RM.titles[cs] = title; reopen = true; window.RailShell.go(`run/${LIVE ? run : cs}`); },
     openSchedule: (sid) => {
       const s = window.RailSchedules?.find?.(sid), cid = s?.chat || '';
       if (!cid) { window.RailShell.go(`schedule/${sid}`); return; }

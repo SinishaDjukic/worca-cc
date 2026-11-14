@@ -114,4 +114,5 @@
 .ob-claude-status{min-height:18px;margin-top:12px;font-size:13px;line-height:1.45;}
 .ob-claude-status.ok{color:var(--green-ink);}
 .ob-claude-status.err{color:var(--red-ink);}
+.ob-claude-status :is(.ob-claude-where,.ob-claude-checked){display:block;margin-top:4px;color:var(--ink-2);}
 

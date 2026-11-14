@@ -956,7 +956,7 @@
   const memberAt = (groupId, i, ui) => { const g = ui.groupRun && ui.groupRun.id === groupId ? ui.groupRun : CASES.find((x) => x.id === groupId); return memberRaw(g, i, ui); };
   const moveMember = (groupId, i, ui, to, f) => move(memberAt(groupId, i, ui), to, f);
   const restored = (ui) => { const raw = rawOf(ui.caseId, ui); return Object.assign({}, raw.restoreTo || caseFor('merged'), { action: null, detail: 'Restored: its branch, worktree and logs were not brought back' }); };
-  const stageOf = (id) => { const c = CASES.find((x) => x.id === id), st = c?.stages; if (!st?.length || !st[0].subs) return {}; const live = st.findIndex((x) => R.stageState(x.subs) === 'live'); let done = -1; st.forEach((x, i) => { if (R.stageState(x.subs) === 'done') done = i; }); return { stage: live >= 0 ? live : done, stages: st.length }; };
+  const stageOf = (id) => { const c = CASES.find((x) => x.id === id), st = c?.stages; if (!st?.length || !st[0].subs) return {}; const live = st.findIndex((x) => R.stageState(x.subs) === 'live'); let done = -1; st.forEach((x, i) => { if (R.stageState(x.subs) === 'done') done = i; }); return { stage: live >= 0 ? live : done, stages: st.length, labels: st.map((x) => x.label) }; };   // labels: its page's stage names, which its card draws too
   // The live kind (Stillhet Tasks, D3): a task's page is its case's design with this task's own facts (live/task-page.mjs
   // taskPageOf), handed to view() as the run it draws (ui.run), so the prototype draws it and nothing is copied.
   const STAGE_SUB = { done: 'done', now: 'now', failed: 'failed', paused: 'paused', next: 'next' };
